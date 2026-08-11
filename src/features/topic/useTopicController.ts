@@ -15,11 +15,11 @@ import {
   type ReaderData,
   type ReaderDataMutationReason
 } from '@/domain/reader/readerData';
-import { removeReply, replyKey as replyIdentityKey } from '@/domain/forum/feed';
+import { replyKey as replyRenderKey } from '@/domain/forum/feed';
 import { isCanceledRequest } from '@/platform/network/errors';
 import {
   firstReplyData,
-  matchesReplyLocation,
+  matchesLoadedReplyLocation,
   mergedReplyPages,
   nextReplyPage,
   previousReplyPage,
@@ -32,11 +32,14 @@ import {
   type ReplyWindowEdge
 } from './model/replyPagination';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
-import { applyEditedReplyContent, shouldApplyEditedReplyFallback } from './actions/actionHelpers';
+import {
+  applyEditedReplyContent,
+  matchesReplyRefreshTarget,
+  removeRepliesForRefresh,
+  shouldApplyEditedReplyFallback
+} from './actions/actionHelpers';
 import type { TopicSessionController } from './useTopicSessionController';
 import {
-  isReplyCountRefreshRequired,
-  isV2exReplySnapshotStale,
   sourceErrorFromUnknown,
   sourceReadRecoveryOutcome,
   yaohuoErrorRequiresLoginPanel
@@ -68,17 +71,17 @@ import {
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
-import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
+import { isDiscourseSource, isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import { forumQueryKeys } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 type MutableRef<T> = { current: T };
 
 type ReplyWindowErrorSlot = ReplyWindowEdge | 'refresh';
 
-type ReplyRetryMode = 'query' | 'count' | 'whole' | 'none' | ReplyRefreshCommand;
+type ReplyRetryMode = 'query' | 'whole' | 'none' | ReplyRefreshCommand;
 
 type ReplyFailure = {
   error: SourceErrorInfo;
@@ -89,12 +92,11 @@ type ReplyFailure = {
 type ReplyWindowFailures = Record<ReplyWindowErrorSlot, ReplyFailure | null>;
 
 const EMPTY_REPLY_WINDOW_FAILURES: ReplyWindowFailures = { start: null, end: null, refresh: null };
-const V2EX_REPLY_SYNC_RETRIES = 5;
-const V2EX_REPLY_SYNC_RETRY_DELAY_MS = 5_000;
 
 function isCompleteV2exReplyPage(page: ReplyPage | undefined) {
   return Boolean(
     page &&
+    page.completeness === 'complete' &&
     page.hasMore === false &&
     page.nextPage === null &&
     page.nextOffset === null &&
@@ -118,9 +120,9 @@ const readOutcome = sourceReadRecoveryOutcome;
 export function useTopicController({
   active,
   commitReaderData,
-  identityBarriers = [],
   sessionEpochs = initialForumSessionEpochs,
   notify,
+  onRetryIdentityStatus,
   onNodeSeekTopicVerificationRequired,
   onOpenTopic,
   readerData,
@@ -134,9 +136,9 @@ export function useTopicController({
 }: {
   active: boolean;
   commitReaderData: (mutationReason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
-  identityBarriers?: readonly ForumIdentityBarrierSource[];
   sessionEpochs?: ForumSessionEpochs;
   notify: (message: string) => void;
+  onRetryIdentityStatus?: (source: SessionSource) => Promise<unknown> | unknown;
   onNodeSeekTopicVerificationRequired: (message: string, recovery: LinuxDoReadRecovery) => void;
   onOpenTopic: (topic: Topic) => void;
   readerData: ReaderData;
@@ -176,19 +178,21 @@ export function useTopicController({
   const targetWindowCacheOwnedRef = useRef(new Map<ReplyOrder, readonly unknown[]>());
   const handledRouteTargetRef = useRef('');
   const replyWindowGenerationRef = useRef(0);
-  const successfulV2exRepliesIdentityRef = useRef('');
   const selectedSource = selectedTopic?.source || 'v2ex';
   const selectedTopicId = selectedTopic?.id || '';
   const selectedTopicKey = selectedTopic ? topicKey(selectedTopic) : '';
-  const selectedIdentityPending = Boolean(
-    selectedTopic && selectedTopic.source !== 'v2ex' && identityBarriers.includes(selectedTopic.source)
-  );
-  const enabled = Boolean(active && !selectedIdentityPending);
+  const topicReadPlan = readGateway.getReadPlan(selectedSource, 'topic');
+  const repliesReadPlan = readGateway.getReadPlan(selectedSource, 'replies');
+  const topicReadBlocked = topicReadPlan.state === 'blocked';
+  const repliesReadBlocked = repliesReadPlan.state === 'blocked';
+  const selectedReadBlocked = topicReadBlocked || repliesReadBlocked;
+  const enabled = Boolean(active);
   const topicQueryKey = useMemo(
     () =>
       forumQueryKeys.topic({
         source: selectedSource,
         topicId: selectedTopicId,
+        readPlanScope: topicReadPlan.cacheScope,
         scope: sessionEpochs
       }),
     [
@@ -197,13 +201,18 @@ export function useTopicController({
       sessionEpochs.xiaoyinsi,
       sessionEpochs.yaohuo,
       selectedSource,
-      selectedTopicId
+      selectedTopicId,
+      topicReadPlan.cacheScope
     ]
   );
-  const repliesQueryKey = useMemo(() => forumQueryKeys.replies(topicQueryKey, replyOrder), [replyOrder, topicQueryKey]);
+  const repliesQueryKey = useMemo(
+    () => forumQueryKeys.replies(topicQueryKey, replyOrder, repliesReadPlan.cacheScope),
+    [repliesReadPlan.cacheScope, replyOrder, topicQueryKey]
+  );
   const otherRepliesQueryKey = useMemo(
-    () => forumQueryKeys.replies(topicQueryKey, replyOrder === 'oldest' ? 'newest' : 'oldest'),
-    [replyOrder, topicQueryKey]
+    () =>
+      forumQueryKeys.replies(topicQueryKey, replyOrder === 'oldest' ? 'newest' : 'oldest', repliesReadPlan.cacheScope),
+    [repliesReadPlan.cacheScope, replyOrder, topicQueryKey]
   );
   const repliesQueryIdentity = JSON.stringify(repliesQueryKey);
   const activeRepliesQueryIdentityRef = useCommittedRef(enabled ? repliesQueryIdentity : '');
@@ -232,6 +241,27 @@ export function useTopicController({
   );
   const targetReplyQueryRoot = useMemo(() => [...repliesQueryKey, 'target-floor'] as const, [repliesQueryKey]);
   const loadingTargetReply = useIsFetching({ queryKey: targetReplyQueryRoot }) > 0;
+  const topicReadQueryKey = useCallback(
+    (candidate: Pick<Topic, 'id' | 'source'>) =>
+      forumQueryKeys.topic({
+        readPlanScope: readGateway.getReadPlan(candidate.source, 'topic').cacheScope,
+        scope: sessionEpochs,
+        source: candidate.source,
+        topicId: candidate.id
+      }),
+    [readGateway, sessionEpochs]
+  );
+  const quotedReplyQueryKey = useCallback(
+    (reference: QuotedPostReference) =>
+      forumQueryKeys.reply({
+        postNumber: reference.postNumber,
+        readPlanScope: readGateway.getReadPlan(reference.source, 'reply').cacheScope,
+        scope: sessionEpochs,
+        source: reference.source,
+        topicId: reference.topicId
+      }),
+    [readGateway, sessionEpochs]
+  );
 
   useEffect(
     () => () => {
@@ -260,7 +290,7 @@ export function useTopicController({
             signal,
             timeoutMs: topic.source === 'nodeseek' || topic.source === 'linuxdo' ? 30000 : undefined
           },
-          { trace }
+          { readPlanScope: topicReadPlan.cacheScope, trace }
         );
         if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
           throw new Error('主题内容解析为空，无法显示，请重试。');
@@ -305,7 +335,7 @@ export function useTopicController({
           limit: REPLY_PAGE_SIZE,
           signal
         },
-        { trace }
+        { readPlanScope: repliesReadPlan.cacheScope, trace }
       );
       if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
         throw new Error(
@@ -332,20 +362,18 @@ export function useTopicController({
       }
       return page;
     },
-    [readGateway]
+    [readGateway, repliesReadPlan.cacheScope]
   );
   const initialReplies = useMemo(
     () => (topicDetail ? firstReplyData(topicDetail, replyOrder) : undefined),
     [detailQuery.dataUpdatedAt, replyOrder, topicDetail]
   );
-  const v2exRepliesNeedSync = Boolean(topicDetail?.source === 'v2ex' && !topicHasCompleteReplies(topicDetail));
   const repliesQuery = useInfiniteQuery({
     queryKey: repliesQueryKey,
-    enabled: enabled && Boolean(topicDetail),
+    enabled: enabled && Boolean(topicDetail) && (!targetReply || Boolean(initialReplies)),
     initialPageParam: { kind: 'start' } satisfies ReplyPageParam,
-    initialData: v2exRepliesNeedSync ? undefined : initialReplies,
-    initialDataUpdatedAt: v2exRepliesNeedSync ? undefined : detailQuery.dataUpdatedAt || undefined,
-    placeholderData: v2exRepliesNeedSync ? initialReplies : undefined,
+    initialData: initialReplies,
+    initialDataUpdatedAt: initialReplies ? detailQuery.dataUpdatedAt || undefined : undefined,
     queryFn: async ({ pageParam, signal }) => {
       const detail = topicDetail!;
       const trace = beginDiagnosticTrace('reply', pageParam.kind === 'start' ? 'refresh' : 'load-more', {
@@ -357,9 +385,6 @@ export function useTopicController({
       });
       try {
         const page = await loadReplyPage(detail, replyOrder, pageParam, signal, trace);
-        if (detail.source === 'v2ex') {
-          successfulV2exRepliesIdentityRef.current = repliesQueryIdentity;
-        }
         finishDiagnosticTrace(trace, 'success', {
           itemCount: page.items.length,
           hasMore: Boolean(nextReplyPage(page)),
@@ -378,21 +403,19 @@ export function useTopicController({
     },
     getNextPageParam: (lastPage, allPages) => nextReplyPage(lastPage, allPages),
     getPreviousPageParam: (firstPage, allPages) => previousReplyPage(firstPage, allPages),
-    retry: (failureCount, error) =>
-      selectedTopic?.source === 'v2ex' && failureCount < V2EX_REPLY_SYNC_RETRIES && isV2exReplySnapshotStale(error),
-    retryDelay: V2EX_REPLY_SYNC_RETRY_DELAY_MS
+    retry: false
   });
 
   useEffect(() => {
-    if (!topicDetail || v2exRepliesNeedSync) return;
+    if (!topicDetail) return;
     const seed = firstReplyData(topicDetail, replyOrder);
     if (!seed) return;
     queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, (current) => {
       return current || seed;
     });
-  }, [detailQuery.dataUpdatedAt, queryClient, repliesQueryKey, replyOrder, topicDetail, v2exRepliesNeedSync]);
+  }, [detailQuery.dataUpdatedAt, queryClient, repliesQueryKey, replyOrder, topicDetail]);
 
-  const visibleReplyData = repliesQuery.data || (v2exRepliesNeedSync ? initialReplies : undefined);
+  const visibleReplyData = repliesQuery.data;
 
   const topicReplies = useMemo(
     () => mergedReplyPages(visibleReplyData as InfiniteData<ReplyPage, ReplyPageParam> | undefined),
@@ -409,22 +432,17 @@ export function useTopicController({
     (confirmed, page) => (typeof page.totalCount === 'number' ? page.totalCount : confirmed),
     undefined
   );
+  const replyRowsPartial = Boolean(
+    repliesQuery.data?.pages.some((page) => page.completeness !== 'complete') ||
+    (!repliesQuery.data && topicDetail?.replies.length && topicDetail.replyCompleteness !== 'complete')
+  );
   const fetchedV2exReplyPage =
-    selectedTopic?.source === 'v2ex' &&
-    successfulV2exRepliesIdentityRef.current === repliesQueryIdentity &&
-    !repliesQuery.isPlaceholderData &&
-    repliesQuery.data?.pages.length === 1
-      ? repliesQuery.data.pages[0]
-      : undefined;
+    selectedTopic?.source === 'v2ex' && repliesQuery.data?.pages.length === 1 ? repliesQuery.data.pages[0] : undefined;
   const fetchedV2exRepliesComplete = isCompleteV2exReplyPage(fetchedV2exReplyPage);
   const replyCollectionComplete =
     selectedTopic?.source !== 'v2ex' ||
     Boolean(topicDetail && topicHasCompleteReplies(topicDetail)) ||
     fetchedV2exRepliesComplete;
-  const repliesSyncing = Boolean(
-    selectedTopic?.source === 'v2ex' && !replyCollectionComplete && repliesQuery.isFetching
-  );
-
   useEffect(() => {
     if (selectedTopic?.source !== 'v2ex' || !fetchedV2exRepliesComplete || !fetchedV2exReplyPage) return;
     const ascendingReplies =
@@ -435,6 +453,7 @@ export function useTopicController({
             ...current,
             replies: ascendingReplies,
             replyCount: fetchedV2exReplyPage.totalCount,
+            replyCompleteness: 'complete',
             replyHasMore: false,
             replyNextPage: null,
             replyNextOffset: null
@@ -463,7 +482,9 @@ export function useTopicController({
         activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
         replyWindowGenerationRef.current === generation;
       const replyKeys = clearOtherOrder
-        ? (['oldest', 'newest'] as const).map((order) => forumQueryKeys.replies(topicQueryKey, order))
+        ? (['oldest', 'newest'] as const).map((order) =>
+            forumQueryKeys.replies(topicQueryKey, order, repliesReadPlan.cacheScope)
+          )
         : [repliesQueryKey];
       await Promise.all(replyKeys.map((queryKey) => queryClient.cancelQueries({ queryKey })));
       if (!ownsWindow()) return false;
@@ -482,13 +503,8 @@ export function useTopicController({
             queryKey,
             staleTime: 0,
             queryFn: ({ signal }) => loadReplyPage(detail, replyOrder, { kind: 'start' }, signal, trace),
-            retry: (failureCount, error) =>
-              detail.source === 'v2ex' && failureCount < V2EX_REPLY_SYNC_RETRIES && isV2exReplySnapshotStale(error),
-            retryDelay: V2EX_REPLY_SYNC_RETRY_DELAY_MS
+            retry: false
           });
-          if (detail.source === 'v2ex') {
-            successfulV2exRepliesIdentityRef.current = repliesQueryIdentity;
-          }
           if (!ownsWindow()) {
             finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
             return false;
@@ -592,7 +608,7 @@ export function useTopicController({
     const active = { ...quoteRequests };
     if (!selectedTopic) return active;
     topicReplies.forEach((reply) => {
-      const replyKey = replyIdentityKey(reply);
+      const replyKey = replyRenderKey(reply);
       quotedPostsForSource(reply, selectedTopic.source).forEach(({ reference }) => {
         const instanceKey = replyQuotedPostInstanceKey(replyKey, reference);
         if (expandedQuotes[instanceKey] && !active[instanceKey]) {
@@ -619,47 +635,45 @@ export function useTopicController({
     [activeQuoteRequests]
   );
   const quoteQueries = useQueries({
-    queries: quoteReferences.map((reference) => ({
-      queryKey: forumQueryKeys.reply({
-        source: reference.source,
-        topicId: reference.topicId,
-        postNumber: reference.postNumber,
-        scope: sessionEpochs
-      }),
-      enabled: enabled && isDiscourseSource(reference.source) && !identityBarriers.includes(reference.source),
-      queryFn: async ({ signal }: { signal: AbortSignal }) => {
-        const trace = beginDiagnosticTrace(
-          'reply',
-          interactiveQuoteReferenceKeys.has(quotedPostReferenceKey(reference)) ? 'toggle-quote' : 'prefetch-post',
-          {
-            source: reference.source,
-            topicRef: diagnosticRef('topic', `${reference.source}:${reference.topicId}`)
-          }
-        );
-        try {
-          const loaded = await readGateway.getReply(
+    queries: quoteReferences.map((reference) => {
+      const readPlan = readGateway.getReadPlan(reference.source, 'reply');
+      return {
+        queryKey: quotedReplyQueryKey(reference),
+        enabled: enabled && isDiscourseSource(reference.source),
+        queryFn: async ({ signal }: { signal: AbortSignal }) => {
+          const trace = beginDiagnosticTrace(
+            'reply',
+            interactiveQuoteReferenceKeys.has(quotedPostReferenceKey(reference)) ? 'toggle-quote' : 'prefetch-post',
             {
               source: reference.source,
-              id: reference.topicId,
-              floor: reference.postNumber,
-              signal
-            },
-            { trace }
+              topicRef: diagnosticRef('topic', `${reference.source}:${reference.topicId}`)
+            }
           );
-          if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
-            throw new Error('引用内容解析为空，无法展开，请重试。');
+          try {
+            const loaded = await readGateway.getReply(
+              {
+                source: reference.source,
+                id: reference.topicId,
+                floor: reference.postNumber,
+                signal
+              },
+              { readPlanScope: readPlan.cacheScope, trace }
+            );
+            if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
+              throw new Error('引用内容解析为空，无法展开，请重试。');
+            }
+            finishDiagnosticTrace(trace, 'success');
+            return loaded;
+          } catch (error) {
+            finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
+              source: reference.source,
+              reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+            });
+            throw error;
           }
-          finishDiagnosticTrace(trace, 'success');
-          return loaded;
-        } catch (error) {
-          finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
-            source: reference.source,
-            reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
-          });
-          throw error;
         }
-      }
-    }))
+      };
+    })
   });
 
   const quoteResults = useMemo(
@@ -690,12 +704,7 @@ export function useTopicController({
       if (!interactiveQuoteReferenceKeys.has(referenceKey)) return;
       if (!result?.error || handledQuoteErrorsRef.current[referenceKey] === result.errorUpdatedAt) return;
       handledQuoteErrorsRef.current[referenceKey] = result.errorUpdatedAt;
-      const queryKey = forumQueryKeys.reply({
-        source: reference.source,
-        topicId: reference.topicId,
-        postNumber: reference.postNumber,
-        scope: sessionEpochs
-      });
+      const queryKey = quotedReplyQueryKey(reference);
       handleReadError(reference.source, result.error, {
         queryKey,
         resume: async () => {
@@ -709,12 +718,12 @@ export function useTopicController({
       });
     });
   }, [
-    sessionEpochs,
     handleReadError,
     interactiveQuoteReferenceKeys,
     queryClient,
     quoteQueries,
     quoteReferences,
+    quotedReplyQueryKey,
     selectedTopicKey,
     topicCommands
   ]);
@@ -722,22 +731,17 @@ export function useTopicController({
   const cancelTopicQueries = useCallback(
     (topic: Topic | null = selectedTopic) => {
       if (topic) {
-        const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: sessionEpochs });
+        const key = topicReadQueryKey(topic);
         void queryClient.cancelQueries({ queryKey: key });
       }
       Object.values(activeQuoteRequests).forEach(({ reference }) => {
         void queryClient.cancelQueries({
-          queryKey: forumQueryKeys.reply({
-            source: reference.source,
-            topicId: reference.topicId,
-            postNumber: reference.postNumber,
-            scope: sessionEpochs
-          }),
+          queryKey: quotedReplyQueryKey(reference),
           exact: true
         });
       });
     },
-    [activeQuoteRequests, sessionEpochs, queryClient, selectedTopic]
+    [activeQuoteRequests, queryClient, quotedReplyQueryKey, selectedTopic, topicReadQueryKey]
   );
 
   const openTopic = useCallback(
@@ -750,17 +754,18 @@ export function useTopicController({
         return 'completed';
       }
       if (refresh) {
-        const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: sessionEpochs });
+        const key = topicReadQueryKey(topic);
+        const replyScope = readGateway.getReadPlan(topic.source, 'replies').cacheScope;
         await queryClient.invalidateQueries({ queryKey: key, exact: true });
         await Promise.all(
           (['oldest', 'newest'] as const).map((order) =>
-            queryClient.invalidateQueries({ queryKey: forumQueryKeys.replies(key, order), exact: true })
+            queryClient.invalidateQueries({ queryKey: forumQueryKeys.replies(key, order, replyScope), exact: true })
           )
         );
       }
       return 'completed';
     },
-    [sessionEpochs, onOpenTopic, queryClient, topicCommands]
+    [onOpenTopic, queryClient, readGateway, topicCommands, topicReadQueryKey]
   );
 
   useEffect(() => {
@@ -768,8 +773,24 @@ export function useTopicController({
   }, [active, cancelTopicQueries]);
 
   const refreshWholeTopic = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!selectedTopic || selectedIdentityPending) return 'stale';
-    const countRetry = replyWindowFailures.refresh?.retryMode === 'count';
+    if (!selectedTopic) return 'stale';
+    if (selectedReadBlocked) {
+      const blockedPlan = topicReadBlocked ? topicReadPlan : repliesReadPlan;
+      if (
+        blockedPlan.state === 'blocked' &&
+        (blockedPlan.reason === 'identity-pending' || blockedPlan.reason === 'identity-unavailable') &&
+        isSessionSource(selectedTopic.source)
+      ) {
+        await onRetryIdentityStatus?.(selectedTopic.source);
+      } else if (
+        blockedPlan.state === 'blocked' &&
+        blockedPlan.reason === 'login-required' &&
+        selectedTopic.source === 'yaohuo'
+      ) {
+        showYaohuoLogin('请先登录妖火后再读取。');
+      }
+      return 'stale';
+    }
     const runAttempt = async (notifySuccess: boolean): Promise<LinuxDoReadResumeOutcome> => {
       const generation = ++replyWindowGenerationRef.current;
       const ownsWindow = () =>
@@ -795,15 +816,7 @@ export function useTopicController({
           resume: () => runAttempt(false)
         };
         const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
-        setReplyWindowFailure(
-          'refresh',
-          replyFailure(
-            selectedTopic.source,
-            error,
-            { kind: 'start' },
-            countRetry ? (isReplyCountRefreshRequired(error) ? 'none' : 'count') : 'whole'
-          )
-        );
+        setReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, { kind: 'start' }, 'whole'));
         handleReadError(selectedTopic.source, error, recovery, (candidate) =>
           onNodeSeekTopicVerificationRequired(sourceError.message, candidate)
         );
@@ -815,15 +828,19 @@ export function useTopicController({
     activeRepliesQueryIdentityRef,
     handleReadError,
     notify,
+    onRetryIdentityStatus,
     onNodeSeekTopicVerificationRequired,
     rebuildRepliesFromDetail,
     repliesQueryIdentity,
     repliesQueryKey,
-    replyWindowFailures.refresh?.retryMode,
-    selectedIdentityPending,
+    repliesReadPlan,
+    selectedReadBlocked,
     selectedTopic,
     setReplyWindowFailure,
-    detailQuery.refetch
+    showYaohuoLogin,
+    detailQuery.refetch,
+    topicReadBlocked,
+    topicReadPlan
   ]);
 
   const refreshTopicReplies = useCallback(
@@ -831,7 +848,7 @@ export function useTopicController({
       command: ReplyRefreshCommand = { kind: 'manual' },
       diagnosticTrace?: DiagnosticTrace
     ): Promise<LinuxDoReadResumeOutcome> {
-      if (!selectedTopic || !topicDetail || selectedIdentityPending) return 'stale';
+      if (!selectedTopic || !topicDetail || repliesReadBlocked) return 'stale';
 
       const generation = ++replyWindowGenerationRef.current;
       const ownsWindow = () =>
@@ -857,7 +874,7 @@ export function useTopicController({
       const target = command.kind === 'edited' || command.kind === 'deleted' ? command.target : undefined;
       const current = queryClient.getQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey);
       const targetPage = target
-        ? current?.pages.find((page) => page.items.some((reply) => matchesReplyLocation(reply, target)))
+        ? current?.pages.find((page) => page.items.some((reply) => matchesReplyRefreshTarget(reply, target)))
         : undefined;
       const capturedPosition = command.kind === 'edited' || command.kind === 'deleted' ? command.position : undefined;
       if (target && !capturedPosition && !targetPage) {
@@ -953,10 +970,10 @@ export function useTopicController({
 
           const deleted = command.kind === 'deleted' ? command.target : undefined;
           const edited =
-            command.kind === 'edited' && typeof command.target.commentId === 'number'
+            command.kind === 'edited'
               ? { commentId: command.target.commentId, contentMarkdown: command.contentMarkdown }
               : undefined;
-          const refreshedPage = { ...page, items: removeReply(page.items, deleted) };
+          const refreshedPage = { ...page, items: removeRepliesForRefresh(page.items, deleted) };
           const pageParam: ReplyCursorPosition = {
             kind: 'cursor',
             page: page.requestedPage,
@@ -979,7 +996,7 @@ export function useTopicController({
             }
             const filtered = pages.map((candidate) => ({
               ...candidate,
-              items: removeReply(candidate.items, deleted)
+              items: removeRepliesForRefresh(candidate.items, deleted)
             }));
             return shouldApplyEditedReplyFallback(refreshedPage.items, edited, selectedTopic.source)
               ? {
@@ -1068,7 +1085,7 @@ export function useTopicController({
       repliesQueryIdentity,
       repliesQueryKey,
       replyOrder,
-      selectedIdentityPending,
+      repliesReadBlocked,
       selectedTopic,
       setReplyWindowFailure,
       topicDetail,
@@ -1079,7 +1096,7 @@ export function useTopicController({
     async function retryReplyWindow(edge?: ReplyWindowEdge): Promise<LinuxDoReadResumeOutcome> {
       if (
         !selectedTopic ||
-        selectedIdentityPending ||
+        repliesReadBlocked ||
         activeRepliesQueryIdentityRef.current !== repliesQueryIdentity ||
         queryClient.isFetching({ queryKey: repliesQueryKey, exact: true }) > 0
       ) {
@@ -1088,7 +1105,7 @@ export function useTopicController({
       const slot = edge || 'refresh';
       const failure = replyWindowFailures[slot];
       if (!failure || failure.retryMode === 'none') return failure ? 'failed' : 'completed';
-      if (failure.retryMode === 'whole' || failure.retryMode === 'count') return refreshWholeTopic();
+      if (failure.retryMode === 'whole') return refreshWholeTopic();
       if (typeof failure.retryMode === 'object') return refreshTopicReplies(failure.retryMode);
       if (slot !== 'refresh') {
         const result = slot === 'start' ? await repliesQuery.fetchPreviousPage() : await repliesQuery.fetchNextPage();
@@ -1110,7 +1127,7 @@ export function useTopicController({
       repliesQueryIdentity,
       repliesQueryKey,
       replyWindowFailures,
-      selectedIdentityPending,
+      repliesReadBlocked,
       selectedTopic,
       setReplyWindowFailure
     ]
@@ -1132,7 +1149,7 @@ export function useTopicController({
         selectedTopic.source,
         repliesQuery.error,
         failedEdge ? replyEdgePosition(repliesQuery.data, failedEdge) : { kind: 'start' },
-        !failedEdge && isReplyCountRefreshRequired(repliesQuery.error) ? 'count' : 'query'
+        'query'
       )
     );
     handleReadError(
@@ -1162,7 +1179,7 @@ export function useTopicController({
 
   const locateReply = useCallback(
     async (target: ReplyLocationTarget, { silent = false }: { silent?: boolean } = {}) => {
-      if (!selectedTopic || !topicDetail || selectedIdentityPending) return 'stale';
+      if (!selectedTopic || !topicDetail || repliesReadBlocked) return 'stale';
       const commentId =
         target.commentId && Number.isSafeInteger(target.commentId) && target.commentId > 0
           ? target.commentId
@@ -1179,12 +1196,19 @@ export function useTopicController({
         ...(floor ? { floor } : {}),
         ...(pageHint ? { pageHint } : {})
       };
-      if (topicReplies.some((reply) => matchesReplyLocation(reply, normalizedTarget))) {
+      if (topicReplies.some((reply) => matchesLoadedReplyLocation(reply, normalizedTarget))) {
         replyWindowGenerationRef.current += 1;
         return 'completed';
       }
       if (selectedTopic.source === 'v2ex') {
-        if (!replyCollectionComplete) return 'stale';
+        if (!replyCollectionComplete) {
+          const outcome = await refreshTopicReplies({ kind: 'manual', silent: true });
+          if (outcome !== 'completed') return outcome;
+          const refreshedData = queryClient.getQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey);
+          const refreshedReplies = mergedReplyPages(refreshedData);
+          if (refreshedReplies.some((reply) => matchesLoadedReplyLocation(reply, normalizedTarget))) return 'completed';
+          if (!isCompleteV2exReplyPage(refreshedData?.pages[0])) return 'stale';
+        }
         if (!silent) notify('目标楼层未找到');
         return 'failed';
       }
@@ -1207,7 +1231,8 @@ export function useTopicController({
         const cachedReplies = mergedReplyPages(
           queryClient.getQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey)
         );
-        if (cachedReplies.some((reply) => matchesReplyLocation(reply, normalizedTarget))) return 'completed' as const;
+        if (cachedReplies.some((reply) => matchesLoadedReplyLocation(reply, normalizedTarget)))
+          return 'completed' as const;
         const currentDetail = queryClient.getQueryData<TopicDetail>(topicQueryKey) || topicDetail;
         const trace = beginDiagnosticTrace('reply', 'load-more', {
           source: selectedTopic.source,
@@ -1235,9 +1260,6 @@ export function useTopicController({
             return 'stale' as const;
           }
           const resolvedPage = page.currentPage!;
-          if (!page.items.some((reply) => matchesReplyLocation(reply, normalizedTarget))) {
-            throw new Error('目标楼层未找到，请重试。');
-          }
           const resolvedOffset = page.currentOffset ?? null;
           queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, {
             pages: [page],
@@ -1308,7 +1330,8 @@ export function useTopicController({
       repliesQueryKey,
       replyOrder,
       replyCollectionComplete,
-      selectedIdentityPending,
+      refreshTopicReplies,
+      repliesReadBlocked,
       selectedTopic,
       targetReplyQueryRoot,
       topicDetail,
@@ -1318,33 +1341,17 @@ export function useTopicController({
   );
 
   useEffect(() => {
-    if (!targetReply || !topicDetail || !selectedTopic || selectedIdentityPending) return;
-    if (
-      selectedTopic.source === 'v2ex' &&
-      !replyCollectionComplete &&
-      !topicReplies.some((reply) => matchesReplyLocation(reply, targetReply))
-    ) {
-      return;
-    }
+    if (!targetReply || !topicDetail || !selectedTopic || repliesReadBlocked) return;
     const sessionEpoch = selectedTopic.source === 'v2ex' ? 0 : sessionEpochs[selectedTopic.source];
     const targetKey = `${topicKey(selectedTopic)}:${sessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}`;
     if (handledRouteTargetRef.current === targetKey) return;
     handledRouteTargetRef.current = targetKey;
     void locateReply(targetReply, { silent: true });
-  }, [
-    locateReply,
-    replyCollectionComplete,
-    selectedIdentityPending,
-    selectedTopic,
-    sessionEpochs,
-    targetReply,
-    topicDetail,
-    topicReplies
-  ]);
+  }, [locateReply, repliesReadBlocked, selectedTopic, sessionEpochs, targetReply, topicDetail, topicReplies]);
 
   const loadPreviousReplies = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {
-      if (!selectedTopic || selectedIdentityPending) return 'stale';
+      if (!selectedTopic || repliesReadBlocked) return 'stale';
       if (!repliesQuery.hasPreviousPage || queryClient.isFetching({ queryKey: repliesQueryKey, exact: true }) > 0) {
         return 'completed';
       }
@@ -1368,7 +1375,7 @@ export function useTopicController({
       repliesQuery.hasPreviousPage,
       repliesQueryKey,
       replyOrder,
-      selectedIdentityPending,
+      repliesReadBlocked,
       selectedTopic,
       setReplyWindowFailure
     ]
@@ -1376,7 +1383,7 @@ export function useTopicController({
 
   const loadMoreReplies = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {
-      if (!selectedTopic || selectedIdentityPending) return 'stale';
+      if (!selectedTopic || repliesReadBlocked) return 'stale';
       if (!repliesQuery.hasNextPage || queryClient.isFetching({ queryKey: repliesQueryKey, exact: true }) > 0) {
         return 'completed';
       }
@@ -1399,7 +1406,7 @@ export function useTopicController({
       repliesQuery.fetchNextPage,
       repliesQuery.hasNextPage,
       repliesQueryKey,
-      selectedIdentityPending,
+      repliesReadBlocked,
       selectedTopic,
       setReplyWindowFailure
     ]
@@ -1412,9 +1419,7 @@ export function useTopicController({
       quotedPost,
       reference
     }: ToggleTopicBodyQuoteOptions): Promise<LinuxDoReadResumeOutcome> => {
-      if (reference.source !== 'v2ex' && identityBarriers.includes(reference.source)) {
-        return 'stale';
-      }
+      if (readGateway.getReadPlan(reference.source, 'reply').state === 'blocked') return 'stale';
       if (!prefetch && topicQuotes.isExpanded(instanceKey)) {
         topicQuotes.changeExpanded(instanceKey, false);
         return 'completed';
@@ -1422,11 +1427,7 @@ export function useTopicController({
       const cachedTopic =
         reference.postNumber === 1
           ? queryClient.getQueryData<TopicDetail>(
-              forumQueryKeys.topic({
-                source: reference.source,
-                topicId: reference.topicId,
-                scope: sessionEpochs
-              })
+              topicReadQueryKey({ source: reference.source, id: reference.topicId })
             )
           : undefined;
       const reusableQuotedPost = quotedPost || (cachedTopic ? topicOpeningPostAsReply(cachedTopic) : undefined);
@@ -1437,12 +1438,7 @@ export function useTopicController({
         }
         return 'failed';
       }
-      const queryKey = forumQueryKeys.reply({
-        source: reference.source,
-        topicId: reference.topicId,
-        postNumber: reference.postNumber,
-        scope: sessionEpochs
-      });
+      const queryKey = quotedReplyQueryKey(reference);
       const queryState = queryClient.getQueryState(queryKey);
       if (!reusableQuotedPost && queryState?.status === 'error') {
         handledQuoteErrorsRef.current[quotedPostReferenceKey(reference)] = queryState.errorUpdatedAt;
@@ -1455,7 +1451,7 @@ export function useTopicController({
       }
       return 'completed';
     },
-    [identityBarriers, sessionEpochs, notify, queryClient, topicQuotes]
+    [notify, queryClient, quotedReplyQueryKey, readGateway, topicQuotes, topicReadQueryKey]
   );
 
   const toggleTopicBodyQuote = useCallback(
@@ -1523,7 +1519,7 @@ export function useTopicController({
       ((repliesQuery.isPending && !repliesQuery.data) ||
         (Boolean(replyWindowFailures.refresh) && detailQuery.isFetching)),
     retryReplies: retryFailedReplies,
-    repliesSyncing,
+    replyRowsPartial,
     replyCollectionComplete,
     replyHasPrevious,
     replyHasMore,

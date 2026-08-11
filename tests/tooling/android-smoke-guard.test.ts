@@ -362,7 +362,9 @@ describe('Android release evidence guards', () => {
     const libraryReplay = readFileSync(path.join(deviceDir, 'library-return.ad'), 'utf8');
     expect(accountReplay).not.toMatch(/服务器代理|问题诊断|备份 \/ 恢复|外观/);
     expect(moreReplay).not.toMatch(/account-site-|查看等级|刷新等级|xiaoyinsi-level-settled/);
-    expect(moreReplay).toMatch(/服务器代理[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/);
+    expect(moreReplay).toMatch(
+      /内容源[\s\S]*content-source-drag-v2ex[\s\S]*服务器代理[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/
+    );
     expect(notificationsReplay).toContain('find "消息通知" click');
     for (const source of ['all', 'nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']) {
       expect(notificationsReplay).toContain(`notification-source-${source}`);

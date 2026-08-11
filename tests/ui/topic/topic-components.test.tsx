@@ -436,6 +436,26 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('登录后投票').props.accessibilityState.disabled).toBe(true);
   });
 
+  it('[REG-ACCOUNT-041] keeps an unavailable poll identity typed as awaiting reconciliation', async () => {
+    const onVotePoll = jest.fn();
+    const view = await render(
+      <TopicPolls
+        {...pollProps({
+          decisionFor: () => deniedDecision('identity-unavailable'),
+          onVotePoll,
+          pollSelections: { 'topic-poll-1': ['a', 'b'] },
+          source: 'nodeseek'
+        })}
+      />
+    );
+
+    expect(view.getByText('账号待核对')).toBeTruthy();
+    expect(view.getByLabelText('核对后投票').props.accessibilityState.disabled).toBe(true);
+    expect(view.queryByText('未登录')).toBeNull();
+    await fireEvent.press(view.getByLabelText('核对后投票'));
+    expect(onVotePoll).not.toHaveBeenCalled();
+  });
+
   it('[REG-TOPIC-026] renders duplicated accepted-answer polls as results without a login action', async () => {
     const view = await render(<TopicPolls {...pollProps({ decisionFor: denyAllActions, source: undefined })} />);
 

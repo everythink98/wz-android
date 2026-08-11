@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   registered: false,
   dismiss: vi.fn(async () => undefined),
   handler: vi.fn(),
+  nativeDismiss: vi.fn(async (_identifier: string) => undefined),
+  nativePresent: vi.fn(async (identifier: string) => identifier),
   register: vi.fn(async () => undefined),
   schedule: vi.fn(async ({ identifier }: { identifier: string }) => identifier),
   setChannel: vi.fn(async () => undefined),
@@ -12,6 +14,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('react-native', () => ({
   Linking: { openSettings: vi.fn(async () => undefined) },
+  NativeModules: {
+    NotificationDigestModule: {
+      dismiss: mocks.nativeDismiss,
+      present: mocks.nativePresent
+    }
+  },
   Platform: { OS: 'android' }
 }));
 vi.mock('expo-background-task', () => ({
@@ -35,9 +43,11 @@ vi.mock('expo-notifications', () => ({
 import { defaultNotificationState } from './notificationStore';
 import {
   dismissSourceNotification,
+  dismissSourceNotificationExact,
   ensureMessageNotificationChannel,
   installMessageNotificationHandler,
-  replaceSourceNotification,
+  presentSourceNotification,
+  reconcileSourceNotificationSlots,
   syncNotificationBackgroundRegistration
 } from './notificationSystem';
 
@@ -154,37 +164,80 @@ describe('Android notification system', () => {
     });
   });
 
-  it('uses one private Android channel and replaces the stable per-source summary', async () => {
+  it('presents a staged digest without dismissing the current digest', async () => {
     const identityIdentifier = 'wz-message-nodeseek-nodeseek%3A7';
     await ensureMessageNotificationChannel();
-    await replaceSourceNotification(
+    await presentSourceNotification(
       'nodeseek',
       { title: 'NodeSeek', body: '张三回复了你的主题', data: { source: 'nodeseek' } },
-      'previous-id',
-      identityIdentifier
+      `${identityIdentifier}-a`
     );
 
     expect(mocks.setChannel).toHaveBeenCalledWith(
       'message-notifications',
       expect.objectContaining({ lockscreenVisibility: 'private', lightColor: '#1677FF' })
     );
-    expect(mocks.dismiss).toHaveBeenCalledWith('previous-id');
-    expect(mocks.dismiss).toHaveBeenCalledWith(identityIdentifier);
-    expect(mocks.schedule).toHaveBeenCalledWith(
-      expect.objectContaining({
-        identifier: identityIdentifier,
-        content: expect.objectContaining({
-          title: 'NodeSeek',
-          body: '张三回复了你的主题',
-          data: { source: 'nodeseek' }
-        }),
-        trigger: { channelId: 'message-notifications' }
-      })
+    expect(mocks.dismiss).not.toHaveBeenCalled();
+    expect(mocks.nativePresent).toHaveBeenCalledWith(
+      `${identityIdentifier}-a`,
+      'NodeSeek',
+      '张三回复了你的主题',
+      'nodeseek'
     );
+    expect(mocks.schedule).not.toHaveBeenCalled();
 
     await dismissSourceNotification('nodeseek', undefined, 'nodeseek:7');
     expect(mocks.dismiss).toHaveBeenCalledWith(identityIdentifier);
+    expect(mocks.dismiss).toHaveBeenCalledWith(`${identityIdentifier}-a`);
+    expect(mocks.dismiss).toHaveBeenCalledWith(`${identityIdentifier}-b`);
     expect(mocks.dismiss).toHaveBeenCalledWith('wz-message-nodeseek');
     expect(mocks.dismiss).not.toHaveBeenCalledWith('wz-message-nodeseek-nodeseek%3A8');
+  });
+
+  it('[REG-NOTIFY-024] resolves presentation only after native notify acknowledges the exact identifier', async () => {
+    const nativeAcknowledgement = Promise.withResolvers<string>();
+    mocks.nativePresent.mockReturnValueOnce(nativeAcknowledgement.promise);
+    let settled = false;
+
+    const presentation = presentSourceNotification(
+      'nodeseek',
+      { title: 'NodeSeek', body: '张三回复了你的主题', data: { source: 'nodeseek' } },
+      'wz-message-nodeseek-nodeseek%3A7-a'
+    ).finally(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(() => expect(mocks.setChannel).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    nativeAcknowledgement.resolve('wz-message-nodeseek-nodeseek%3A7-a');
+    await expect(presentation).resolves.toBe('wz-message-nodeseek-nodeseek%3A7-a');
+  });
+
+  it('[REG-NOTIFY-024] dismisses only the exact transactional identifier and surfaces native failure', async () => {
+    const exactIdentifier = 'wz-message-nodeseek-nodeseek%3A7-a';
+
+    await dismissSourceNotificationExact(exactIdentifier);
+
+    expect(mocks.nativeDismiss).toHaveBeenCalledWith(exactIdentifier);
+    expect(mocks.nativeDismiss).not.toHaveBeenCalledWith('wz-message-nodeseek');
+    expect(mocks.dismiss).not.toHaveBeenCalled();
+
+    mocks.nativeDismiss.mockRejectedValueOnce(new Error('cancel failed'));
+    await expect(dismissSourceNotificationExact(exactIdentifier)).rejects.toThrow('cancel failed');
+  });
+
+  it('[REG-NOTIFY-024] reconciles known crash slots against the Store current identifier', async () => {
+    const currentIdentifier = 'wz-message-nodeseek-nodeseek%3A7-a';
+
+    await reconcileSourceNotificationSlots('nodeseek', 'nodeseek:7', currentIdentifier);
+
+    expect(mocks.nativeDismiss.mock.calls.map(([identifier]) => identifier)).toEqual([
+      'wz-message-nodeseek-nodeseek%3A7',
+      'wz-message-nodeseek-nodeseek%3A7-b',
+      'wz-message-nodeseek'
+    ]);
+    expect(mocks.nativeDismiss).not.toHaveBeenCalledWith(currentIdentifier);
   });
 });

@@ -262,4 +262,31 @@ describe('search read', () => {
 
     expect(result.items.map((item) => item.source)).toEqual(['linuxdo', 'v2ex', 'nodeseek']);
   });
+
+  it('[REG-SOURCE-010] confines aggregate search to the included source snapshot and keeps an empty snapshot transport-free', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com')) {
+        return new Response(`<script>${nodeSeekPayload}</script>`);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const result = await searchTopics({ source: 'all', query: 'NodeSeek', fetcher, includedSources: ['nodeseek'] });
+    expect(result.items.map((item) => item.source)).toEqual(['nodeseek']);
+    expect(fetcher.mock.calls.map(([input]) => input)).toEqual(
+      expect.arrayContaining([expect.stringContaining('nodeseek.com')])
+    );
+    expect(fetcher.mock.calls).toHaveLength(1);
+
+    const emptyFetcher = vi.fn();
+    await expect(
+      searchTopics({ source: 'all', query: 'NodeSeek', fetcher: emptyFetcher, includedSources: [] })
+    ).resolves.toEqual({
+      errors: {},
+      hasMore: false,
+      items: [],
+      nextPage: null
+    });
+    expect(emptyFetcher).not.toHaveBeenCalled();
+  });
 });

@@ -1,10 +1,10 @@
 import { QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import { createAppQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { accountQueryKeys, createAppQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import { canonicalEnabledSourcesKey } from '@/domain/reader/contentSourcePreferences';
 import {
-  commitChangedAccountStatusQuery,
-  commitExpiredAccountStatusQuery,
+  forumSessionEpochsAfterSourceChange,
   resetForumSourceQueries
 } from '@/features/account/sessionQueryOwnership';
 
@@ -43,6 +43,29 @@ describe('forum server state', () => {
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
 
+  it('[REG-XIAOYINSI-015] scopes feed caches by source, category, and filter', () => {
+    const latest = forumQueryKeys.feed({
+      feedFilter: 'latest',
+      scope: initialForumSessionEpochs,
+      source: 'xiaoyinsi'
+    });
+
+    expect(latest).not.toEqual(
+      forumQueryKeys.feed({ feedFilter: 'hot', scope: initialForumSessionEpochs, source: 'xiaoyinsi' })
+    );
+    expect(latest).not.toEqual(
+      forumQueryKeys.feed({
+        category: '开发',
+        feedFilter: 'latest',
+        scope: initialForumSessionEpochs,
+        source: 'xiaoyinsi'
+      })
+    );
+    expect(latest).not.toEqual(
+      forumQueryKeys.feed({ feedFilter: 'latest', scope: initialForumSessionEpochs, source: 'linuxdo' })
+    );
+  });
+
   it('[REG-TOPIC-067] never shares partial reply caches between traversal orders', () => {
     const topicKey = forumQueryKeys.topic({
       source: 'nodeseek',
@@ -69,57 +92,85 @@ describe('forum server state', () => {
     expect(profile).toEqual(['forum', 'nodeseek', 'user', { sessionEpoch: 0, userId: '23042' }]);
   });
 
-  it('[REG-LINUXDO-005] separates anonymous and confirmed linux.do search caches', () => {
-    const anonymous = forumQueryKeys.search({
-      authenticated: false,
-      query: 'codex',
-      scope: initialForumSessionEpochs,
-      sort: 'relevance',
-      source: 'linuxdo'
-    });
-    const authenticated = forumQueryKeys.search({
-      authenticated: true,
-      query: 'codex',
-      scope: initialForumSessionEpochs,
-      sort: 'relevance',
-      source: 'linuxdo'
-    });
+  it('[REG-SOURCE-011] isolates public and authenticated direct and aggregate read caches', () => {
+    const topic = (readPlanScope: string) =>
+      forumQueryKeys.topic({
+        readPlanScope,
+        source: 'xiaoyinsi',
+        topicId: '42',
+        scope: initialForumSessionEpochs
+      });
+    const reply = (readPlanScope: string) =>
+      forumQueryKeys.reply({
+        postNumber: 7,
+        readPlanScope,
+        source: 'linuxdo',
+        topicId: '42',
+        scope: initialForumSessionEpochs
+      });
+    const user = (readPlanScope: string) =>
+      forumQueryKeys.user({
+        readPlanScope,
+        source: 'xiaoyinsi',
+        userId: '7',
+        scope: initialForumSessionEpochs
+      });
+    const resolution = (readPlanScope: string) =>
+      forumQueryKeys.userResolution({ readPlanScope, scope: initialForumSessionEpochs, username: 'alice' });
+    const search = (readPlanScope: string) =>
+      forumQueryKeys.search({
+        query: 'codex',
+        readPlanScope,
+        scope: initialForumSessionEpochs,
+        sort: 'relevance',
+        source: 'nodeseek'
+      });
+    const feed = (readPlanScope: string) =>
+      forumQueryKeys.feed({ readPlanScope, scope: initialForumSessionEpochs, source: 'all' });
+    const categories = (readPlanScope: string) =>
+      forumQueryKeys.categories('all', initialForumSessionEpochs, undefined, readPlanScope);
 
-    expect(anonymous).not.toEqual(authenticated);
-    expect(JSON.stringify(anonymous)).not.toMatch(/_t|cookie|token/i);
-    expect(JSON.stringify(authenticated)).not.toMatch(/_t|cookie|token/i);
+    for (const key of [topic, reply, user, resolution, search, feed, categories]) {
+      expect(key('public:omit')).not.toEqual(key('authenticated:4'));
+      expect(JSON.stringify(key('public:omit'))).not.toMatch(/cookie|token/i);
+    }
+    expect(forumQueryKeys.replies(topic('public:omit'), 'oldest')).not.toEqual(
+      forumQueryKeys.replies(topic('authenticated:4'), 'oldest')
+    );
+    expect(forumQueryKeys.replies(topic('public:omit'), 'oldest', 'public:omit')).not.toEqual(
+      forumQueryKeys.replies(topic('public:omit'), 'oldest', 'authenticated:4')
+    );
   });
 
-  it('[REG-ACCOUNT-031] keeps an aggregate refresh with a pending identity out of the trusted aggregate cache', () => {
-    const trustedFeed = forumQueryKeys.feed({
-      source: 'all',
-      scope: initialForumSessionEpochs
-    });
-    const pendingFeed = forumQueryKeys.feed({
-      identityBarriers: ['nodeseek'],
-      source: 'all',
-      scope: initialForumSessionEpochs
-    });
-    const trustedCategories = forumQueryKeys.categories('all', initialForumSessionEpochs);
-    const pendingCategories = forumQueryKeys.categories('all', initialForumSessionEpochs, ['nodeseek']);
+  it('[REG-SOURCE-010] scopes all feed and categories keys by canonical enabled sources without changing single-source keys', () => {
+    const v2exAndNodeSeek = canonicalEnabledSourcesKey([
+      { source: 'v2ex', enabled: true },
+      { source: 'nodeseek', enabled: true },
+      { source: 'linuxdo', enabled: false }
+    ]);
+    const sameSetDifferentOrder = canonicalEnabledSourcesKey([
+      { source: 'nodeseek', enabled: true },
+      { source: 'linuxdo', enabled: false },
+      { source: 'v2ex', enabled: true }
+    ]);
+    const v2exOnly = canonicalEnabledSourcesKey([
+      { source: 'v2ex', enabled: true },
+      { source: 'nodeseek', enabled: false }
+    ]);
+    const feed = (enabledSourcesKey: string) =>
+      forumQueryKeys.feed({ enabledSourcesKey, scope: initialForumSessionEpochs, source: 'all' });
+    const categories = (enabledSourcesKey: string) =>
+      forumQueryKeys.categories('all', initialForumSessionEpochs, enabledSourcesKey);
 
-    expect(pendingFeed).not.toEqual(trustedFeed);
-    expect(pendingCategories).not.toEqual(trustedCategories);
-    expect(JSON.stringify(pendingFeed)).toContain('nodeseek');
-  });
-
-  it('[REG-ACCOUNT-031] ignores identity barriers on single-source keys', () => {
+    expect(feed(v2exAndNodeSeek)).toEqual(feed(sameSetDifferentOrder));
+    expect(categories(v2exAndNodeSeek)).toEqual(categories(sameSetDifferentOrder));
+    expect(feed(v2exAndNodeSeek)).not.toEqual(feed(v2exOnly));
+    expect(categories(v2exAndNodeSeek)).not.toEqual(categories(v2exOnly));
     expect(
-      forumQueryKeys.feed({
-        identityBarriers: ['nodeseek'],
-        source: 'linuxdo',
-        scope: initialForumSessionEpochs
-      })
-    ).toEqual(
-      forumQueryKeys.feed({
-        source: 'linuxdo',
-        scope: initialForumSessionEpochs
-      })
+      forumQueryKeys.feed({ enabledSourcesKey: v2exAndNodeSeek, scope: initialForumSessionEpochs, source: 'v2ex' })
+    ).toEqual(forumQueryKeys.feed({ enabledSourcesKey: v2exOnly, scope: initialForumSessionEpochs, source: 'v2ex' }));
+    expect(forumQueryKeys.categories('v2ex', initialForumSessionEpochs, v2exAndNodeSeek)).toEqual(
+      forumQueryKeys.categories('v2ex', initialForumSessionEpochs, v2exOnly)
     );
   });
 
@@ -139,33 +190,20 @@ describe('forum server state', () => {
     expect(client.getQueryData(linuxDoKey)).toBe('private linux.do topic');
   });
 
-  it('[REG-ACCOUNT-019] resets only the changed site active account projection', () => {
+  it('[REG-ACCOUNT-019] never resets stable account snapshots with forum content', () => {
     const sources = ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const;
     for (const changedSource of sources) {
       const client = createAppQueryClient();
-      const observers = sources.map((source) => {
-        const queryKey = forumQueryKeys.accountStatus({
-          sessionEpochs: initialForumSessionEpochs,
-          source
-        });
+      const snapshots = sources.map((source) => {
+        const queryKey = accountQueryKeys.snapshot(source);
         client.setQueryData(queryKey, `${source} logged-in`);
-        const observer = new QueryObserver(client, { enabled: false, queryKey });
-        const unsubscribe = observer.subscribe(() => undefined);
-        return { observer, source, unsubscribe };
+        return { queryKey, source };
       });
       resetForumSourceQueries(changedSource, client);
 
-      for (const { observer, source } of observers) {
-        if (source === changedSource) {
-          expect(observer.getCurrentResult()).toMatchObject({
-            data: undefined,
-            status: 'pending'
-          });
-        } else {
-          expect(observer.getCurrentResult().data).toBe(`${source} logged-in`);
-        }
+      for (const { queryKey, source } of snapshots) {
+        expect(client.getQueryData(queryKey)).toBe(`${source} logged-in`);
       }
-      observers.forEach(({ unsubscribe }) => unsubscribe());
     }
   });
 
@@ -185,49 +223,31 @@ describe('forum server state', () => {
     unsubscribe();
   });
 
-  it('[REG-ACCOUNT-019] migrates only a committed expired Account result to the next credential scope', async () => {
+  it('[REG-ACCOUNT-042] keeps the committed Account snapshot while advancing the forum scope', () => {
     const client = createAppQueryClient();
-    const accountKey = forumQueryKeys.accountStatus({
-      sessionEpochs: initialForumSessionEpochs,
-      source: 'nodeseek'
-    });
+    const accountKey = accountQueryKeys.snapshot('nodeseek');
     const feedKey = forumQueryKeys.feed({ source: 'nodeseek', scope: initialForumSessionEpochs });
+    const snapshot = {
+      site: 'nodeseek',
+      status: 'logged-in',
+      cookieSummary: ['session'],
+      isVerifying: false,
+      identityTrust: 'confirmed'
+    };
+    client.setQueryData(accountKey, snapshot);
     client.setQueryData(feedKey, 'private feed');
-    const observer = new QueryObserver(client, {
-      enabled: false,
-      queryKey: accountKey,
-      queryFn: async () => ({
-        failed: true,
-        session: { site: 'nodeseek', status: 'expired' }
-      })
-    });
-    const unsubscribe = observer.subscribe(() => undefined);
 
-    const result = await observer.refetch();
-    const nextScope = commitExpiredAccountStatusQuery('nodeseek', initialForumSessionEpochs, accountKey, client);
-    const nextAccountKey = forumQueryKeys.accountStatus({
-      sessionEpochs: nextScope,
-      source: 'nodeseek'
-    });
-    observer.setOptions({ enabled: false, queryKey: nextAccountKey });
+    resetForumSourceQueries('nodeseek', client);
+    const nextScope = forumSessionEpochsAfterSourceChange(initialForumSessionEpochs, 'nodeseek');
 
-    expect(result.data).toMatchObject({ session: { status: 'expired' } });
-    expect(observer.getCurrentResult().data).toMatchObject({ session: { status: 'expired' } });
+    expect(nextScope.nodeseek).toBe(1);
+    expect(client.getQueryData(accountKey)).toEqual(snapshot);
     expect(client.getQueryData(feedKey)).toBeUndefined();
-    unsubscribe();
   });
 
-  it('[REG-ACCOUNT-031] commits a changed identity only under the next source epoch', () => {
+  it('[REG-ACCOUNT-031] clears changed-identity content without changing the Account key', () => {
     const client = createAppQueryClient();
-    const oldAccountKey = forumQueryKeys.accountStatus({
-      sessionEpochs: initialForumSessionEpochs,
-      source: 'nodeseek'
-    });
-    const probeKey = forumQueryKeys.accountStatusProbe({
-      sessionEpochs: initialForumSessionEpochs,
-      generation: 3,
-      source: 'nodeseek'
-    });
+    const accountKey = accountQueryKeys.snapshot('nodeseek');
     const oldFeedKey = forumQueryKeys.feed({
       source: 'nodeseek',
       scope: initialForumSessionEpochs
@@ -237,41 +257,30 @@ describe('forum server state', () => {
       scope: initialForumSessionEpochs
     });
     const nextAccount = {
-      session: {
-        site: 'nodeseek' as const,
-        status: 'logged-in' as const,
-        cookieSummary: ['session'],
-        isVerifying: false,
-        currentUser: {
-          source: 'nodeseek' as const,
-          id: '18',
-          username: 'charlie',
-          url: 'https://www.nodeseek.com/space/18',
-          topics: []
-        }
+      site: 'nodeseek' as const,
+      status: 'logged-in' as const,
+      cookieSummary: ['session'],
+      isVerifying: false,
+      identityTrust: 'confirmed' as const,
+      currentUser: {
+        source: 'nodeseek' as const,
+        id: '18',
+        username: 'charlie',
+        url: 'https://www.nodeseek.com/space/18',
+        topics: []
       }
     };
-    client.setQueryData(oldAccountKey, {
-      session: {
-        ...nextAccount.session,
-        currentUser: { ...nextAccount.session.currentUser, id: '17', username: 'bob' }
-      }
-    });
-    client.setQueryData(probeKey, nextAccount);
+    client.setQueryData(accountKey, nextAccount);
     client.setQueryData(oldFeedKey, 'private account A feed');
     client.setQueryData(otherFeedKey, 'unrelated feed');
 
-    const nextScope = commitChangedAccountStatusQuery('nodeseek', initialForumSessionEpochs, probeKey, client);
-    const nextAccountKey = forumQueryKeys.accountStatus({
-      sessionEpochs: nextScope,
-      source: 'nodeseek'
-    });
+    resetForumSourceQueries('nodeseek', client);
+    const nextScope = forumSessionEpochsAfterSourceChange(initialForumSessionEpochs, 'nodeseek');
 
     expect(nextScope.nodeseek).toBe(1);
-    expect(client.getQueryData(oldAccountKey)).toBeUndefined();
     expect(client.getQueryData(oldFeedKey)).toBeUndefined();
     expect(client.getQueryData(otherFeedKey)).toBe('unrelated feed');
-    expect(client.getQueryData(nextAccountKey)).toEqual(nextAccount);
+    expect(client.getQueryData(accountKey)).toEqual(nextAccount);
   });
 
   it('does not preserve an inactive recovery query', () => {

@@ -446,6 +446,7 @@ function primaryCommand(view: SiteAccountView): AccountCenterCommand | null {
 
 export function AccountCenterPanel({
   credentials,
+  enabledSessionSources,
   expanded,
   forcedSite,
   pendingFillSite,
@@ -459,6 +460,7 @@ export function AccountCenterPanel({
   onExpandedChange
 }: {
   credentials: CredentialSummaries;
+  enabledSessionSources: readonly SessionSite[];
   expanded: boolean;
   forcedSite?: SessionSite | null;
   pendingFillSite?: SessionSite | null;
@@ -472,21 +474,54 @@ export function AccountCenterPanel({
   onExpandedChange: (expanded: boolean) => void;
 }) {
   const [expandedSite, setExpandedSite] = useState<SessionSite>('nodeseek');
-  const views = useMemo(
+  const availableViews = useMemo(
     () => createSiteAccountViews(sessions, credentials, nodeSeekUserId),
     [credentials, nodeSeekUserId, sessions]
   );
+  const views = useMemo(() => {
+    const viewsBySite = new Map(availableViews.map((view) => [view.site, view]));
+    return enabledSessionSources
+      .map((site) => viewsBySite.get(site))
+      .filter((view): view is SiteAccountView => Boolean(view));
+  }, [availableViews, enabledSessionSources]);
   const accountStyles = useMemo(() => createAccountCenterStyles(theme), [theme]);
-  const selectedView = views.find((view) => view.site === expandedSite) ?? views[0]!;
+  const selectedView = views.find((view) => view.site === expandedSite) ?? views[0];
+
+  useEffect(() => {
+    const requestedSite = forcedSite ?? pendingFillSite;
+    const nextView = requestedSite ? (views.find((view) => view.site === requestedSite) ?? views[0]) : selectedView;
+    if (nextView && nextView.site !== expandedSite) {
+      setExpandedSite(nextView.site);
+    }
+  }, [expandedSite, forcedSite, pendingFillSite, selectedView, views]);
+
+  if (!selectedView) {
+    return (
+      <ExpandablePanel
+        quiet
+        title="账号中心"
+        meta="0 个账号站点"
+        icon={User}
+        expanded={expanded}
+        onExpandedChange={onExpandedChange}
+      >
+        <View style={accountStyles.siteDetail}>
+          <View style={accountStyles.accountPanel}>
+            <View style={accountStyles.siteOverview}>
+              <View style={accountStyles.siteOverviewCopy}>
+                <Text style={styles.menuLabel}>尚未启用账号站点</Text>
+                <Text style={styles.meta}>请在“内容源”面板启用支持账号的站点。</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </ExpandablePanel>
+    );
+  }
+
   const primary = primaryCommand(selectedView);
   const waitingForForm = pendingFillSite === selectedView.site;
   const loggedIn = selectedView.isLoggedIn;
-
-  useEffect(() => {
-    if (forcedSite) {
-      setExpandedSite(forcedSite);
-    }
-  }, [forcedSite]);
 
   return (
     <ExpandablePanel

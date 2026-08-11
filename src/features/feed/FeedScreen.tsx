@@ -16,7 +16,7 @@ import type {
   Category,
   FeedFilterState,
   FeedSource,
-  SourceErrorInfo,
+  Source,
   SourceFeedFilter,
   SourceLoadOutcomeKind,
   Topic
@@ -27,7 +27,6 @@ import {
   feedFilterLabel,
   feedFilterMenuGroupsFor,
   feedReadingFilterItems,
-  feedSourceItems,
   shouldUseFeedFilter,
   shouldUseReadingFilter
 } from '@/domain/forum/feedOptions';
@@ -47,9 +46,9 @@ import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
+import { sourceLabel } from '@/domain/forum/presentation';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
-const FEED_PAGER_ROUTES = feedSourceItems.map((item) => ({ key: item.value, title: item.label }));
 function renderEmptyTabBar() {
   return null;
 }
@@ -65,8 +64,7 @@ export const FeedScreen = memo(function FeedScreen({
   feedFilter,
   feedFilters,
   feedSource,
-  identityChecking = false,
-  identityError,
+  enabledFeedSources,
   loadMoreFailureSignal,
   loadingMore,
   topicStateIndex,
@@ -76,10 +74,9 @@ export const FeedScreen = memo(function FeedScreen({
   onCategoryChange,
   onFeedFilterChange,
   onFeedSourceChange,
+  onManageContentSources,
   onLoadMore,
   onOpenTopic,
-  onCheckLinuxDoStatus,
-  onRetryIdentity,
   onReadingFilterChange,
   onRefresh
 }: {
@@ -93,8 +90,7 @@ export const FeedScreen = memo(function FeedScreen({
   feedFilter?: SourceFeedFilter;
   feedFilters: FeedFilterState;
   feedSource: FeedSource;
-  identityChecking?: boolean;
-  identityError?: SourceErrorInfo;
+  enabledFeedSources: readonly Source[];
   loadMoreFailureSignal: number;
   loadingMore: boolean;
   topicStateIndex: TopicListItemStateIndex;
@@ -104,10 +100,9 @@ export const FeedScreen = memo(function FeedScreen({
   onCategoryChange: (categoryId: string) => void;
   onFeedFilterChange: (filter: SourceFeedFilter) => void;
   onFeedSourceChange: (source: FeedSource) => void;
+  onManageContentSources: () => void;
   onLoadMore: () => void;
   onOpenTopic: (topic: Topic) => void;
-  onCheckLinuxDoStatus?: () => void;
-  onRetryIdentity?: () => void;
   onReadingFilterChange: (filter: ReadingFilter) => void;
   onRefresh: () => void;
 }) {
@@ -119,12 +114,21 @@ export const FeedScreen = memo(function FeedScreen({
   const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
   const autoLoadPausedAfterFailureRef = useRef(false);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
+  const enabledFeedSourceItems = useMemo(
+    () => [
+      { value: 'all' as const, label: '全部' },
+      ...enabledFeedSources.map((source) => ({ value: source, label: sourceLabel(source) }))
+    ],
+    [enabledFeedSources]
+  );
+  const allSourcesDisabled = enabledFeedSources.length === 0;
+  const visibleFeedItems = useMemo(() => (allSourcesDisabled ? [] : feedItems), [allSourcesDisabled, feedItems]);
   const activeFeedSourceIndex = Math.max(
     0,
-    feedSourceItems.findIndex((item) => item.value === feedSource)
+    enabledFeedSourceItems.findIndex((item) => item.value === feedSource)
   );
   const [pagerIndex, setPagerIndex] = useState(activeFeedSourceIndex);
-  const visualFeedSource = feedSourceItems[pagerIndex]?.value || feedSource;
+  const visualFeedSource = enabledFeedSourceItems[pagerIndex]?.value || feedSource;
   const visualCategoryFilter = visualFeedSource === feedSource ? categoryFilter : '';
   const visualFeedFilter =
     visualFeedSource !== 'all' && isFeedFilterSource(visualFeedSource) ? feedFilters[visualFeedSource] : undefined;
@@ -132,7 +136,13 @@ export const FeedScreen = memo(function FeedScreen({
   const pendingSourceIndexRef = useRef<number | null>(null);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const secondaryRailResetKey = visualFeedSource;
-  const feedNavigationState = useMemo(() => ({ index: pagerIndex, routes: FEED_PAGER_ROUTES }), [pagerIndex]);
+  const feedNavigationState = useMemo(
+    () => ({
+      index: pagerIndex,
+      routes: enabledFeedSourceItems.map((item) => ({ key: item.value, title: item.label }))
+    }),
+    [enabledFeedSourceItems, pagerIndex]
+  );
   const feedInitialLayout = useMemo(() => ({ width: pagerWidth }), [pagerWidth]);
   const showFeedFilter = shouldUseFeedFilter(visualFeedSource, visualCategoryFilter);
   const activeFeedFilterLabel = feedFilterLabel(visualFeedSource, visualFeedFilter);
@@ -236,7 +246,7 @@ export const FeedScreen = memo(function FeedScreen({
 
   const changeFeedSourceAtIndex = useCallback(
     (index: number) => {
-      const next = feedSourceItems[index];
+      const next = enabledFeedSourceItems[index];
       if (!next || (index === pagerIndex && pendingSourceIndexRef.current === null)) {
         return;
       }
@@ -244,7 +254,7 @@ export const FeedScreen = memo(function FeedScreen({
       setFilterMenuOpen(false);
       setPagerIndex(index);
     },
-    [pagerIndex]
+    [enabledFeedSourceItems, pagerIndex]
   );
   const settleFeedSource = useCallback(() => {
     const index = pendingSourceIndexRef.current;
@@ -252,19 +262,19 @@ export const FeedScreen = memo(function FeedScreen({
     if (index === null) {
       return;
     }
-    const next = feedSourceItems[index];
+    const next = enabledFeedSourceItems[index];
     if (!next) {
       return;
     }
     if (next.value !== feedSource) {
       onFeedSourceChange(next.value);
     }
-  }, [feedSource, onFeedSourceChange]);
+  }, [enabledFeedSourceItems, feedSource, onFeedSourceChange]);
   const changeFeedSourceValue = useCallback(
     (value: string) => {
-      changeFeedSourceAtIndex(feedSourceItems.findIndex((item) => item.value === value));
+      changeFeedSourceAtIndex(enabledFeedSourceItems.findIndex((item) => item.value === value));
     },
-    [changeFeedSourceAtIndex]
+    [changeFeedSourceAtIndex, enabledFeedSourceItems]
   );
   const changeReadingFilter = useCallback(
     (value: string) => {
@@ -377,30 +387,17 @@ export const FeedScreen = memo(function FeedScreen({
   );
   const renderFeedScene = useCallback(
     ({ route }: { route: { key: string } }) => {
-      const routeSource = feedSourceItems.find((item) => item.value === route.key)?.value;
+      const routeSource = enabledFeedSourceItems.find((item) => item.value === route.key)?.value;
       if (!routeSource || routeSource !== feedSource) {
         return renderFeedLoadingScene();
       }
-      if (feedItems.length === 0 && !identityError && (busy || identityChecking)) {
+      if (visibleFeedItems.length === 0 && busy) {
         return (
           <View style={styles.content}>
-            <LoadingState text={identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'} />
+            <LoadingState text="正在读取主题..." />
           </View>
         );
       }
-      const identityNotice = identityError ? (
-        <View style={styles.errorBox}>
-          <Text style={styles.errorText}>{identityError.message}</Text>
-          <View style={styles.actions}>
-            <AppButton label="重试检测" onPress={onRetryIdentity || onRefresh} />
-            {feedSource === 'linuxdo' && onCheckLinuxDoStatus ? (
-              <AppButton label="检查 L 站状态" variant="ghost" onPress={onCheckLinuxDoStatus} />
-            ) : null}
-          </View>
-        </View>
-      ) : identityChecking ? (
-        <LoadingState text="正在确认 L 站访问状态" />
-      ) : null;
       return (
         <FlashList
           testID={
@@ -411,11 +408,11 @@ export const FeedScreen = memo(function FeedScreen({
           ref={listRef}
           style={styles.content}
           contentContainerStyle={styles.feedListContentInner}
-          data={feedItems}
+          data={visibleFeedItems}
           keyExtractor={topicKey}
           keyboardShouldPersistTaps="handled"
           refreshControl={
-            busy && feedItems.length === 0 ? undefined : (
+            allSourcesDisabled || (busy && visibleFeedItems.length === 0) ? undefined : (
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={onRefresh}
@@ -428,9 +425,19 @@ export const FeedScreen = memo(function FeedScreen({
           onScrollBeginDrag={handleScrollBeginDrag}
           scrollEventThrottle={64}
           {...FEED_LIST_PERFORMANCE_PROPS}
-          ListHeaderComponent={identityNotice}
           ListEmptyComponent={
-            identityNotice ? null : busy ? <LoadingState text="正在读取主题..." /> : <EmptyText text={feedEmptyText} />
+            busy ? (
+              <LoadingState text="正在读取主题..." />
+            ) : allSourcesDisabled ? (
+              <View>
+                <EmptyText text="尚未启用内容源" />
+                <View style={styles.actions}>
+                  <AppButton label="前往更多管理" onPress={onManageContentSources} />
+                </View>
+              </View>
+            ) : (
+              <EmptyText text={feedEmptyText} />
+            )
           }
           ListFooterComponent={
             feedHasMore ? (
@@ -439,7 +446,7 @@ export const FeedScreen = memo(function FeedScreen({
                 disabled={busy || loadingMore}
                 onPress={() => requestFeedLoadMore('button')}
               />
-            ) : feedItems.length > 0 && !busy ? (
+            ) : visibleFeedItems.length > 0 && !busy ? (
               <Text style={styles.endOfListText}>已经到底了</Text>
             ) : null
           }
@@ -450,29 +457,28 @@ export const FeedScreen = memo(function FeedScreen({
     },
     [
       busy,
+      allSourcesDisabled,
+      enabledFeedSourceItems,
       feedEmptyText,
       feedFilter,
       feedHasMore,
-      feedItems,
       feedOutcomeKind,
       feedPage,
       feedSource,
-      identityChecking,
-      identityError,
       handleScroll,
       handleScrollBeginDrag,
       listRef,
       loadingMore,
-      onCheckLinuxDoStatus,
+      onManageContentSources,
       onRefresh,
-      onRetryIdentity,
       refreshing,
       renderFeedLoadingScene,
       renderTopicItem,
       renderTopicSeparator,
       requestFeedLoadMore,
       styles,
-      theme
+      theme,
+      visibleFeedItems
     ]
   );
 
@@ -482,7 +488,7 @@ export const FeedScreen = memo(function FeedScreen({
         <PillRail
           compactTabs
           variant="tabs"
-          items={feedSourceItems}
+          items={enabledFeedSourceItems}
           value={visualFeedSource}
           testIDPrefix="feed-source"
           onChange={changeFeedSourceValue}

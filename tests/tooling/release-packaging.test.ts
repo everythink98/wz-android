@@ -117,6 +117,35 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain("'android.enableShrinkResourcesInReleaseBuilds': 'true'");
   });
 
+  it('[REG-NOTIFY-024] generates the exact Android digest presentation bridge', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+    const plugin = readProjectFile('plugins', 'withNotificationDigestModule.js');
+
+    expect(app.expo.plugins).toContain('./plugins/withNotificationDigestModule');
+    expect(plugin).toContain("path.join(outputDir, 'NotificationDigestModule.kt')");
+    expect(plugin).toContain("path.join(outputDir, 'NotificationDigestPackage.kt')");
+    expect(plugin).toContain("path.join(testOutputDir, 'NotificationDigestExecutorTest.kt')");
+    expect(plugin).toContain('add(NotificationDigestPackage())');
+    expect(plugin).toContain('ExpoNotificationBuilder(');
+    expect(plugin).toContain('check(notificationManager.areNotificationsEnabled())');
+    expect(plugin).toContain('getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE');
+    expect(plugin).toContain('private val executor = Executors.newSingleThreadExecutor()');
+    expect(plugin.match(/executor\.execute \{/g)).toHaveLength(1);
+    expect(plugin).toContain('executor.shutdown()');
+    expect(plugin).not.toContain('executor.shutdownNow()');
+    expect(plugin).not.toContain('asCoroutineDispatcher');
+    expect(plugin).not.toContain('CoroutineScope');
+    expect(plugin).not.toContain('scope.cancel()');
+    expect(plugin).toContain('fun shutdownDrainsQueuedDismissAfterBlockedPresent()');
+    expect(plugin).toContain('assertEquals(listOf("notify", "cancel"), events)');
+    expect(plugin).toContain('fun executeAfterShutdownRejects()');
+    expect(plugin).toContain('.notify(identifier, 0, androidNotification)');
+    expect(plugin).toContain('.cancel(identifier, 0)');
+    expect(plugin.indexOf('.notify(identifier, 0, androidNotification)')).toBeLessThan(
+      plugin.indexOf('promise.resolve(identifier)')
+    );
+  });
+
   it('keeps APK inspection available before opening the Android installer', () => {
     const plugin = readProjectFile('plugins', 'withApkInstaller.js');
 

@@ -1,22 +1,24 @@
 import { useMemo } from 'react';
 import { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { Fetcher } from '@/platform/network/request';
-import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { SessionSite } from '@/domain/session/siteSessionState';
+import type { Source } from '@/domain/forum/sourceCatalog';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { createReadGateway } from '@/sources/readGateway';
 import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 
 export function useSessionReadGateway({
+  anonymousFetcher,
   fetcher,
-  forumSessionEpochsRef,
+  getEnabledSources,
   linuxDoUserAgentRef,
   nodeSeekUserAgentRef,
   readSessionRuntimeSnapshot,
   refreshXiaoyinsiAuthorization
 }: {
+  anonymousFetcher: Fetcher;
   fetcher: Fetcher;
-  forumSessionEpochsRef: { current: ForumSessionEpochs };
+  getEnabledSources: () => readonly Source[];
   linuxDoUserAgentRef: { current: string };
   nodeSeekUserAgentRef: { current: string };
   readSessionRuntimeSnapshot: (source: SessionSite) => SessionRuntimeSnapshot;
@@ -28,14 +30,10 @@ export function useSessionReadGateway({
   return useMemo(
     () =>
       createReadGateway({
-        currentSessionEpoch: (source) => forumSessionEpochsRef.current[source],
+        anonymousFetcher,
         currentXiaoyinsiCredentialGeneration,
         fetcher,
-        isSourceAuthenticated: (source) => readSessionRuntimeSnapshot(source).authenticated,
-        isSourceReadBlocked: (source) => {
-          const runtime = readSessionRuntimeSnapshot(source);
-          return runtime.identityTrust === 'pending' || runtime.authSurfaceOpen;
-        },
+        getEnabledSources,
         linuxDoUserAgent: () => linuxDoUserAgentRef.current,
         loadXiaoyinsiCredentialsForSource: async (_source, options) => {
           const generation = currentXiaoyinsiCredentialGeneration();
@@ -44,11 +42,13 @@ export function useSessionReadGateway({
           return generation === currentXiaoyinsiCredentialGeneration() ? credentials : undefined;
         },
         nodeSeekUserAgent: () => nodeSeekUserAgentRef.current,
+        readSessionRuntimeSnapshot,
         refreshXiaoyinsiAuthorization
       }),
     [
+      anonymousFetcher,
       fetcher,
-      forumSessionEpochsRef,
+      getEnabledSources,
       linuxDoUserAgentRef,
       nodeSeekUserAgentRef,
       readSessionRuntimeSnapshot,

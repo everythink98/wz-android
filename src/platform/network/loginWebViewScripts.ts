@@ -93,11 +93,6 @@ export const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
 true;
 `;
 
-export function linuxDoWebViewProbeScript(probeId: number) {
-  const safeProbeId = Number.isInteger(probeId) && probeId > 0 ? probeId : 0;
-  return 'window.__WZ_LINUXDO_LOGIN_PROBE_ID__ = ' + safeProbeId + ';\n' + LINUXDO_WEBVIEW_PROBE_SCRIPT;
-}
-
 const NODEIMAGE_API_BASE_URL = 'https://api.nodeimage.com';
 const NODEIMAGE_AUTH_NONCE_PATTERN = /^[0-9a-f]{32}$/;
 

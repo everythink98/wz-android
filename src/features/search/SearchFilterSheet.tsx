@@ -39,6 +39,7 @@ export function SearchFilterSheet({
   categories,
   sessionEpochs,
   requestsEnabled,
+  readPlanScopes,
   source,
   searchFilters,
   summary,
@@ -51,6 +52,7 @@ export function SearchFilterSheet({
   categories: Category[];
   sessionEpochs: ForumSessionEpochs;
   requestsEnabled: boolean;
+  readPlanScopes: { tags: string; users: string };
   source: Source;
   searchFilters: SearchFilterState;
   summary: string;
@@ -119,6 +121,7 @@ export function SearchFilterSheet({
     categories,
     discourseDraft,
     filterSheetVisible: visible,
+    readPlanScopes,
     sessionEpochs,
     requestsEnabled,
     searchDiscourseTags: onSearchDiscourseTags,

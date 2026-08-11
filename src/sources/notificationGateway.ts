@@ -1,5 +1,5 @@
 import type { SourceErrorInfo } from '@/domain/forum/models';
-import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
+import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification, NotificationDetail, NotificationPage } from '@/domain/notifications/models';
 import { beginDiagnosticTrace, finishDiagnosticTrace, withDiagnosticFetcher } from '@/platform/diagnostics/diagnostics';
 import {
@@ -17,10 +17,16 @@ import { uploadNodeSeekReplyImage } from '@/sources/nodeimage/upload';
 import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from './discourseActions';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { runXiaoyinsiAction } from '@/sources/xiaoyinsi/actionClient';
+import { withFetchGuard } from '@/platform/network/request';
 
 export type NotificationAccessReader = (
   source: NotificationSource
 ) => NotificationAdapterAccess | Promise<NotificationAdapterAccess>;
+export type NotificationSourceAllowed = (source: NotificationSource) => boolean | Promise<boolean>;
+export type NotificationPrivateAccessAllowed = (
+  source: NotificationSource,
+  identityKey: string
+) => boolean | Promise<boolean>;
 
 interface NotificationBatchResult {
   items: ForumNotification[];
@@ -80,11 +86,32 @@ async function runWithNotificationDiagnostics<T>(
 
 export function createNotificationGateway({
   adapters = notificationAdapters,
-  readAccess
+  privateAccessAllowed,
+  readAccess,
+  sourceAllowed
 }: {
   adapters?: Record<NotificationSource, NotificationAdapter>;
+  privateAccessAllowed: NotificationPrivateAccessAllowed;
   readAccess: NotificationAccessReader;
+  sourceAllowed: NotificationSourceAllowed;
 }) {
+  const assertSourceAllowed = async (source: NotificationSource) => {
+    if (await sourceAllowed(source)) return;
+    throw Object.assign(new Error('内容源已停用'), { reason: 'source-disabled', source });
+  };
+  const assertPrivateAccessCurrent = async (source: NotificationSource, identityKey: string, signal?: AbortSignal) => {
+    assertNotAborted(signal);
+    await assertSourceAllowed(source);
+    if (!(await privateAccessAllowed(source, identityKey))) {
+      throw Object.assign(new Error('账号状态已变化'), {
+        loginRequired: true,
+        reason: 'private-access-stale',
+        source
+      });
+    }
+    await assertSourceAllowed(source);
+    assertNotAborted(signal);
+  };
   const accessFor = async (
     source: NotificationSource,
     trace: DiagnosticTrace,
@@ -92,18 +119,37 @@ export function createNotificationGateway({
     expectedIdentityKey?: string
   ) => {
     assertNotAborted(signal);
+    await assertSourceAllowed(source);
+    if (expectedIdentityKey) await assertPrivateAccessCurrent(source, expectedIdentityKey, signal);
     const access = assertConfirmedAccess(source, await readAccess(source));
-    assertNotAborted(signal);
     if (expectedIdentityKey && access.identityKey !== expectedIdentityKey) {
-      const error = new Error('账号状态已变化');
-      Object.assign(error, { source, loginRequired: true });
-      throw error;
+      throw Object.assign(new Error('账号状态已变化'), {
+        loginRequired: true,
+        reason: 'private-access-stale',
+        source
+      });
     }
+    await assertPrivateAccessCurrent(source, access.identityKey, signal);
+    const assertCurrent = async () => {
+      await assertPrivateAccessCurrent(source, access.identityKey, signal);
+    };
     return {
       ...access,
-      fetcher: withDiagnosticFetcher(trace, access.fetcher || fetch),
+      fetcher: withFetchGuard(withDiagnosticFetcher(trace, access.fetcher || fetch), assertCurrent),
       ...(signal ? { signal } : {})
     };
+  };
+  const runWithAccess = async <T>(
+    source: NotificationSource,
+    trace: DiagnosticTrace,
+    signal: AbortSignal | undefined,
+    expectedIdentityKey: string | undefined,
+    run: (access: NotificationAdapterAccess) => Promise<T>
+  ) => {
+    const access = await accessFor(source, trace, signal, expectedIdentityKey);
+    const result = await run(access);
+    await assertPrivateAccessCurrent(source, access.identityKey, signal);
+    return result;
   };
 
   const listPage = async (
@@ -121,13 +167,15 @@ export function createNotificationGateway({
       source,
       'load',
       async (trace) =>
-        adapters[source].listPage({
-          ...(await accessFor(source, trace, options.signal, options.expectedIdentityKey)),
-          categoryId: options.categoryId,
-          cursor: options.cursor,
-          limit: options.limit,
-          unreadOnly: options.unreadOnly
-        }),
+        runWithAccess(source, trace, options.signal, options.expectedIdentityKey, async (access) =>
+          adapters[source].listPage({
+            ...access,
+            categoryId: options.categoryId,
+            cursor: options.cursor,
+            limit: options.limit,
+            unreadOnly: options.unreadOnly
+          })
+        ),
       (page) => ({ itemCount: page.items.length })
     );
 
@@ -136,20 +184,20 @@ export function createNotificationGateway({
 
     async getCategories(source: NotificationSource, expectedIdentityKey?: string, signal?: AbortSignal) {
       return runWithNotificationDiagnostics(source, 'load', async (trace) =>
-        adapters[source].getCategories(await accessFor(source, trace, signal, expectedIdentityKey))
+        runWithAccess(source, trace, signal, expectedIdentityKey, async (access) =>
+          adapters[source].getCategories(access)
+        )
       );
     },
 
-    async listAllPage(
-      options: {
-        cursors?: Partial<Record<NotificationSource, string | null>>;
-        limit?: number;
-        signal?: AbortSignal;
-        sources?: NotificationSource[];
-        unreadOnly?: boolean;
-      } = {}
-    ): Promise<NotificationBatchPage> {
-      const sources = (options.sources || notificationSources).filter((source) => options.cursors?.[source] !== null);
+    async listAllPage(options: {
+      cursors?: Partial<Record<NotificationSource, string | null>>;
+      limit?: number;
+      signal?: AbortSignal;
+      sources: readonly NotificationSource[];
+      unreadOnly?: boolean;
+    }): Promise<NotificationBatchPage> {
+      const sources = options.sources.filter((source) => options.cursors?.[source] !== null);
       const settled = await Promise.allSettled(
         sources.map((source) =>
           listPage(source, {
@@ -185,7 +233,10 @@ export function createNotificationGateway({
       return runWithNotificationDiagnostics(
         source,
         'refresh',
-        async (trace) => adapters[source].readUnreadSnapshot(await accessFor(source, trace, signal)),
+        async (trace) =>
+          runWithAccess(source, trace, signal, undefined, async (access) =>
+            adapters[source].readUnreadSnapshot(access)
+          ),
         (snapshot) => ({ count: snapshot.total })
       );
     },
@@ -196,7 +247,9 @@ export function createNotificationGateway({
       signal?: AbortSignal
     ): Promise<NotificationDetail> {
       return runWithNotificationDiagnostics(item.source, 'open', async (trace) =>
-        adapters[item.source].loadDetail(item, await accessFor(item.source, trace, signal, expectedIdentityKey))
+        runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) =>
+          adapters[item.source].loadDetail(item, access)
+        )
       );
     },
 
@@ -210,10 +263,8 @@ export function createNotificationGateway({
         item.source,
         'mutate',
         async (trace) =>
-          adapters[item.source].markRead(
-            item,
-            detail,
-            await accessFor(item.source, trace, signal, expectedIdentityKey)
+          runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) =>
+            adapters[item.source].markRead(item, detail, access)
           ),
         (result) => ({ isConfirmed: result.confirmed })
       );
@@ -228,15 +279,15 @@ export function createNotificationGateway({
       return runWithNotificationDiagnostics(
         item.source,
         'mutate',
-        async (trace) => {
-          const access = await accessFor(item.source, trace, signal, expectedIdentityKey);
-          if (item.source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(access.xiaoyinsiCredentials, 'write')) {
-            throw new Error('小隐寺需要升级写入授权');
-          }
-          if (!content.trim()) throw new Error('请输入回复内容');
-          assertNotAborted(signal);
-          return adapters[item.source].replyToConversation(item, content, access);
-        },
+        async (trace) =>
+          runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) => {
+            if (item.source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(access.xiaoyinsiCredentials, 'write')) {
+              throw new Error('小隐寺需要升级写入授权');
+            }
+            if (!content.trim()) throw new Error('请输入回复内容');
+            assertNotAborted(signal);
+            return adapters[item.source].replyToConversation(item, content, access);
+          }),
         (result) => ({ isConfirmed: result.confirmed })
       );
     },
@@ -250,57 +301,57 @@ export function createNotificationGateway({
         signal?: AbortSignal;
       }
     ) {
-      return runWithNotificationDiagnostics(source, 'mutate', async (trace) => {
-        const access = await accessFor(source, trace, options.signal, options.expectedIdentityKey);
-        if (source === 'yaohuo') throw new Error('妖火私信仅支持纯文本');
-        if (source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(access.xiaoyinsiCredentials, 'write')) {
-          throw new Error('小隐寺需要升级写入授权');
-        }
-        assertNotAborted(options.signal);
-        let imageUrl = '';
-        if (source === 'nodeseek') {
-          imageUrl = await uploadNodeSeekReplyImage({
-            apiKey: options.nodeImageApiKey || '',
-            file: options.file,
-            fetcher: access.fetcher,
-            signal: options.signal,
-            timeoutMs: access.timeoutMs
-          });
-        } else {
-          const request = buildDiscourseSourceActionRequest(source, { type: 'upload', file: options.file });
-          const data =
-            source === 'linuxdo'
-              ? await runLinuxDoAction({
-                  fetcher: access.fetcher,
-                  request,
-                  signal: options.signal,
-                  timeoutMs: access.timeoutMs,
-                  userAgent: access.userAgent
-                })
-              : await runXiaoyinsiAction({
-                  credentials: access.xiaoyinsiCredentials!,
-                  fetcher: access.fetcher,
-                  request,
-                  signal: options.signal,
-                  timeoutMs: access.timeoutMs
-                });
-          imageUrl = discourseSourceUploadUrl(source, data);
-        }
-        assertNotAborted(options.signal);
-        return { markup: replyImageMarkupForSource(source, imageUrl, options.file.name) };
-      });
+      return runWithNotificationDiagnostics(source, 'mutate', async (trace) =>
+        runWithAccess(source, trace, options.signal, options.expectedIdentityKey, async (access) => {
+          if (source === 'yaohuo') throw new Error('妖火私信仅支持纯文本');
+          if (source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(access.xiaoyinsiCredentials, 'write')) {
+            throw new Error('小隐寺需要升级写入授权');
+          }
+          assertNotAborted(options.signal);
+          let imageUrl = '';
+          if (source === 'nodeseek') {
+            imageUrl = await uploadNodeSeekReplyImage({
+              apiKey: options.nodeImageApiKey || '',
+              file: options.file,
+              fetcher: access.fetcher,
+              signal: options.signal,
+              timeoutMs: access.timeoutMs
+            });
+          } else {
+            const request = buildDiscourseSourceActionRequest(source, { type: 'upload', file: options.file });
+            const data =
+              source === 'linuxdo'
+                ? await runLinuxDoAction({
+                    fetcher: access.fetcher,
+                    request,
+                    signal: options.signal,
+                    timeoutMs: access.timeoutMs,
+                    userAgent: access.userAgent
+                  })
+                : await runXiaoyinsiAction({
+                    credentials: access.xiaoyinsiCredentials!,
+                    fetcher: access.fetcher,
+                    request,
+                    signal: options.signal,
+                    timeoutMs: access.timeoutMs
+                  });
+            imageUrl = discourseSourceUploadUrl(source, data);
+          }
+          assertNotAborted(options.signal);
+          return { markup: replyImageMarkupForSource(source, imageUrl, options.file.name) };
+        })
+      );
     },
 
     async markAllRead(source: NotificationSource, expectedIdentityKey: string, signal?: AbortSignal) {
       return runWithNotificationDiagnostics(
         source,
         'mutate',
-        async (trace) => {
-          const markAllRead = adapters[source].markAllRead;
-          return markAllRead
-            ? markAllRead(await accessFor(source, trace, signal, expectedIdentityKey))
-            : { confirmed: false, message: '该站点需要逐条打开消息' };
-        },
+        async (trace) =>
+          runWithAccess(source, trace, signal, expectedIdentityKey, async (access) => {
+            const markAllRead = adapters[source].markAllRead;
+            return markAllRead ? markAllRead(access) : { confirmed: false, message: '该站点需要逐条打开消息' };
+          }),
         (result) => ({ isConfirmed: result.confirmed })
       );
     }

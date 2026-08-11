@@ -69,6 +69,163 @@ describe('network proxy controller', () => {
     await expect(hook.result.current.ensureNetworkProxyReady()).resolves.toBeUndefined();
   });
 
+  it('[REG-PROXY-011] releases an already-waiting request fail-closed when the saved proxy read times out', async () => {
+    jest.useFakeTimers();
+    const load = deferred<NetworkProxyState>();
+    mockLoadNetworkProxyState.mockImplementationOnce(() => load.promise);
+    const notify = jest.fn();
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
+
+    try {
+      const request = expect(hook.result.current.networkProxyFetcher('https://example.com/private')).rejects.toThrow(
+        '超时'
+      );
+      expect(hook.result.current.loaded).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(3_000);
+      });
+
+      await request;
+      expect(hook.result.current.loaded).toBe(true);
+      expect(hook.result.current.applyStatus).toBe('failed');
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await hook.result.current.setProxyEnabled(false);
+      });
+      expect(hook.result.current.applyStatus).toBe('disabled');
+
+      load.resolve({ enabled: true, activeId: profileA.id, profiles: [profileA] });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(hook.result.current.proxyState).toEqual({ enabled: false, activeId: null, profiles: [] });
+      expect(hook.result.current.applyStatus).toBe('disabled');
+    } finally {
+      load.resolve({ enabled: false, activeId: null, profiles: [] });
+      fetchSpy.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-PROXY-011] releases a waiting request when its proxy runtime unmounts before storage settles', async () => {
+    jest.useFakeTimers();
+    const load = deferred<NetworkProxyState>();
+    mockLoadNetworkProxyState.mockImplementationOnce(() => load.promise);
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    let settled = false;
+
+    try {
+      void hook.result.current.networkProxyFetcher('https://example.com/private').then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        }
+      );
+      await hook.unmount();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(3_000);
+      });
+
+      expect(settled).toBe(true);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      load.resolve({ enabled: false, activeId: null, profiles: [] });
+      fetchSpy.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-PROXY-011] rejects a waiting request when storage resolves after its proxy runtime unmounts', async () => {
+    const load = deferred<NetworkProxyState>();
+    mockLoadNetworkProxyState.mockImplementationOnce(() => load.promise);
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+    const request = hook.result.current.networkProxyFetcher('https://example.com/private');
+    const rejection = expect(request).rejects.toThrow('代理运行时已结束');
+
+    try {
+      await hook.unmount();
+      load.resolve({ enabled: false, activeId: null, profiles: [] });
+
+      await rejection;
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      load.resolve({ enabled: false, activeId: null, profiles: [] });
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('[REG-PROXY-011] keeps a slow native startup apply authoritative and serializes a newer reset behind it', async () => {
+    jest.useFakeTimers();
+    const startupApply = deferred<unknown>();
+    mockLoadNetworkProxyState.mockResolvedValueOnce({
+      enabled: true,
+      activeId: profileA.id,
+      profiles: [profileA]
+    });
+    mockApplyNetworkProxy.mockImplementationOnce(() => startupApply.promise);
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+
+    try {
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(hook.result.current.applyStatus).toBe('applying');
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+      });
+      expect(hook.result.current.applyStatus).toBe('applying');
+
+      let reset!: Promise<void>;
+      await act(async () => {
+        reset = hook.result.current.setProxyEnabled(false);
+        await Promise.resolve();
+      });
+      expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        startupApply.resolve({ ok: true });
+        await reset;
+      });
+      expect(mockApplyNetworkProxy.mock.calls.map(([profile]) => profile?.id || null)).toEqual([profileA.id, null]);
+      expect(hook.result.current.proxyState.enabled).toBe(false);
+      expect(hook.result.current.applyStatus).toBe('disabled');
+    } finally {
+      startupApply.resolve({ ok: true });
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-PROXY-011] ignores a late startup apply failure after the runtime unmounts', async () => {
+    const startupApply = deferred<unknown>();
+    mockLoadNetworkProxyState.mockResolvedValueOnce({
+      enabled: true,
+      activeId: profileA.id,
+      profiles: [profileA]
+    });
+    mockApplyNetworkProxy.mockImplementationOnce(() => startupApply.promise);
+    const notify = jest.fn();
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
+    await waitFor(() => expect(mockApplyNetworkProxy).toHaveBeenCalledWith(profileA));
+
+    await hook.unmount();
+    const rejection = expect(startupApply.promise).rejects.toThrow('late native failure');
+    startupApply.reject(new Error('late native failure'));
+    await rejection;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it('[REG-PROXY-002] serializes profile persistence and builds a later edit from the committed state', async () => {
     const firstSave = deferred<NetworkProxyState>();
     const secondSave = deferred<NetworkProxyState>();

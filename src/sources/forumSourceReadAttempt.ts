@@ -137,7 +137,7 @@ export function withForumSourceReadEligibility(fetcher: Fetcher, isEligible: () 
 
 export async function runForumSourceReadAggregateAttempt<T>(
   fetcher: Fetcher,
-  read: (scopedFetcher: Fetcher) => Promise<T>,
+  read: (scopedFetcher: Fetcher, scopeFetcher: (sourceFetcher: Fetcher) => Fetcher) => Promise<T>,
   isEligible: () => boolean
 ): Promise<T> {
   const aggregate: ForumSourceReadAggregateAttempt = {
@@ -145,14 +145,17 @@ export async function runForumSourceReadAggregateAttempt<T>(
     open: true,
     settlements: []
   };
-  const scopedFetcher: Fetcher = (input, init) =>
-    fetcher(input, {
-      ...init,
-      [FORUM_SOURCE_READ_AGGREGATE_ATTEMPT]: aggregate
-    } as ForumSourceReadRequestInit);
+  const scopeFetcher =
+    (sourceFetcher: Fetcher): Fetcher =>
+    (input, init) =>
+      sourceFetcher(input, {
+        ...init,
+        [FORUM_SOURCE_READ_AGGREGATE_ATTEMPT]: aggregate
+      } as ForumSourceReadRequestInit);
+  const scopedFetcher = scopeFetcher(fetcher);
   let result: T;
   try {
-    result = await read(scopedFetcher);
+    result = await read(scopedFetcher, scopeFetcher);
   } catch (error) {
     aggregate.open = false;
     throw error;

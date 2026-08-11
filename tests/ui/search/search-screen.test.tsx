@@ -10,8 +10,23 @@ import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState
 import type { Category, FeedSource, Source, Topic } from '@/domain/forum/models';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { QueryTestWrapper } from '../QueryTestWrapper';
+import { aggregateSearchSources } from '@/domain/forum/sourceCatalog';
+import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
+import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
+import { appQueryClient } from '@/platform/query/serverState';
+import type { ReadGateway } from '@/sources/readGateway';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
+const mockSearchNavigationDispatch = jest.fn();
+
+jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as Record<string, unknown>),
+  useIsFocused: () => true,
+  useNavigation: () => ({ dispatch: mockSearchNavigationDispatch }),
+  useScrollToTop: () => undefined
+}));
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
@@ -133,6 +148,74 @@ const categories: Category[] = [
   { source: 'yaohuo', id: '177', name: '妖火茶馆' },
   { source: 'xiaoyinsi', id: '7', name: '寺务', slug: 'temple' }
 ];
+const publicCandidateReadPlanScopes = { tags: 'public:omit', users: 'public:omit' };
+
+function contentSourceReaderData(enabledSources: readonly Source[]) {
+  const data = createEmptyReaderData();
+  return {
+    ...data,
+    settings: {
+      ...data.settings,
+      contentSources: data.settings.contentSources.map((preference) => ({
+        ...preference,
+        enabled: enabledSources.includes(preference.source)
+      }))
+    }
+  };
+}
+
+function createSearchRouteRuntime({
+  linuxDoVerificationVisible = false,
+  readGateway,
+  readerData,
+  sessionViewModels
+}: {
+  linuxDoVerificationVisible?: boolean;
+  readGateway: ReadGateway;
+  readerData: ReturnType<typeof contentSourceReaderData>;
+  sessionViewModels: SearchRouteRuntimeValue['account']['sessionViewModels'];
+}): SearchRouteRuntimeValue {
+  return {
+    account: {
+      linuxDoVerificationVisible,
+      readGateway,
+      reconcileAccountStatus: jest.fn<(source: SessionSource) => Promise<void>>(async () => undefined),
+      requestNodeSeekVerification: jest.fn(),
+      sessionEpochs: initialForumSessionEpochs,
+      sessionViewModels,
+      showLinuxDoVerification: jest.fn<SearchRouteRuntimeValue['account']['showLinuxDoVerification']>(),
+      showYaohuoLogin: jest.fn()
+    },
+    catalogCategories: categories,
+    notify: jest.fn(),
+    readerData
+  };
+}
+
+function routeReadPlan(
+  source: Source,
+  operation: ForumReadOperation,
+  enabledSources: readonly Source[],
+  sessionViewModels: SearchRouteRuntimeValue['account']['sessionViewModels'],
+  linuxDoVerificationVisible = false
+) {
+  return resolveForumReadPlan(
+    source,
+    operation,
+    enabledSources.includes(source),
+    isSessionSource(source)
+      ? {
+          source,
+          authenticated: sessionViewModels[source].isLoggedIn,
+          authSurfaceOpen: source === 'linuxdo' && linuxDoVerificationVisible,
+          identityKey: `${source}:route-test`,
+          identityTrust: sessionViewModels[source].identityTrust,
+          sessionEpoch: initialForumSessionEpochs[source],
+          sourceEnabled: enabledSources.includes(source)
+        }
+      : undefined
+  );
+}
 
 const firstTopic: Topic = {
   source: 'v2ex',
@@ -241,18 +324,20 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
       busy={false}
       categories={categories}
       sessionEpochs={initialForumSessionEpochs}
+      searchCandidateReadPlanScopes={publicCandidateReadPlanScopes}
       requestsEnabled={true}
       query={query}
       recentSearches={[]}
       topicStateIndex={topicStateIndex}
       searchFilters={searchFilters}
       searchGroups={searchGroups}
+      expectedSearchSources={aggregateSearchSources}
       linuxDoAiState={{ status: 'idle', enabled: false, count: 0 }}
       linuxDoAiVisible={false}
-      searchSessionNotices={[]}
       searchSource={searchSource}
       submittedQuery={submittedQuery}
       onOpenTopic={() => setRoute('topic')}
+      onManageContentSources={jest.fn()}
       onLoadMoreSearchSource={loadMoreSearchSource}
       onRemoveRecentSearch={jest.fn()}
       onQueryChange={setQuery}
@@ -290,18 +375,20 @@ function RecentSearchHarness({
       busy={false}
       categories={categories}
       sessionEpochs={initialForumSessionEpochs}
+      searchCandidateReadPlanScopes={publicCandidateReadPlanScopes}
       requestsEnabled={true}
       query={query}
       recentSearches={['codex', 'react native']}
       topicStateIndex={topicStateIndex}
       searchFilters={DEFAULT_SEARCH_FILTERS}
       searchGroups={[]}
+      expectedSearchSources={aggregateSearchSources}
       linuxDoAiState={{ status: 'idle', enabled: false, count: 0 }}
       linuxDoAiVisible={false}
-      searchSessionNotices={[]}
       searchSource="all"
       submittedQuery=""
       onOpenTopic={jest.fn()}
+      onManageContentSources={jest.fn()}
       onLoadMoreSearchSource={jest.fn()}
       onRemoveRecentSearch={onRemoveRecentSearch}
       onQueryChange={setQuery}
@@ -317,7 +404,9 @@ function RecentSearchHarness({
   );
 }
 
-function createSearchScreenProps(overrides: Partial<React.ComponentProps<typeof SearchScreen>> = {}) {
+function createSearchScreenProps(
+  overrides: Partial<React.ComponentProps<typeof SearchScreen>> & { onManageContentSources?: () => void } = {}
+) {
   const props: React.ComponentProps<typeof SearchScreen> = {
     busy: false,
     categories,
@@ -328,12 +417,13 @@ function createSearchScreenProps(overrides: Partial<React.ComponentProps<typeof 
     topicStateIndex,
     searchFilters: DEFAULT_SEARCH_FILTERS,
     searchGroups: [],
+    expectedSearchSources: aggregateSearchSources,
     linuxDoAiState: { status: 'idle', enabled: false, count: 0 },
     linuxDoAiVisible: false,
-    searchSessionNotices: [],
     searchSource: 'all',
     submittedQuery: 'codex',
     onOpenTopic: jest.fn(),
+    onManageContentSources: jest.fn(),
     onLoadMoreSearchSource: jest.fn(),
     onRemoveRecentSearch: jest.fn(),
     onQueryChange: jest.fn(),
@@ -345,12 +435,15 @@ function createSearchScreenProps(overrides: Partial<React.ComponentProps<typeof 
     onSearchDiscourseUsers: jest.fn(async () => []),
     onToggleLinuxDoAiSearch: jest.fn(),
     onSearchSourceChange: jest.fn(),
-    ...overrides
+    ...overrides,
+    searchCandidateReadPlanScopes: overrides.searchCandidateReadPlanScopes ?? publicCandidateReadPlanScopes
   };
   return props;
 }
 
-function renderSearchScreen(overrides: Partial<React.ComponentProps<typeof SearchScreen>> = {}) {
+function renderSearchScreen(
+  overrides: Partial<React.ComponentProps<typeof SearchScreen>> & { onManageContentSources?: () => void } = {}
+) {
   return render(<SearchScreen {...createSearchScreenProps(overrides)} />);
 }
 
@@ -360,6 +453,220 @@ describe('Search state', () => {
     const tab = view.getByTestId('search-source-all');
     expect(StyleSheet.flatten(tab.props.style).minHeight).toBe(40);
     expect(StyleSheet.flatten(within(tab).getByText('全部').props.style).fontSize).toBe(13);
+  });
+
+  it('does not expose transient account reconciliation as a paused search on first entry', async () => {
+    const pausedMessage = 'linux.do 登录状态待确认，已暂停新请求和写入。';
+    const view = await renderSearchScreen({
+      query: '',
+      submittedQuery: '',
+      searchGroups: [
+        {
+          source: 'linuxdo',
+          label: 'linux.do',
+          items: [],
+          settled: false,
+          authNotice: { kind: 'verification-required', message: pausedMessage, tone: 'warning' }
+        }
+      ]
+    });
+
+    expect(view.queryByText(pausedMessage)).toBeNull();
+    expect(view.getByText('输入关键词后开始搜索')).toBeTruthy();
+  });
+
+  it('[REG-SEARCH-025] keeps account requirements source-local through the real Search route', async () => {
+    appQueryClient.clear();
+    const enabledSources = ['xiaoyinsi', 'yaohuo'] as const;
+    const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
+    const loginMessage = '妖火需要登录后使用此功能。';
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
+      if (source === 'yaohuo') {
+        throw Object.assign(new Error(loginMessage), { kind: 'login-required' as const });
+      }
+      return {
+        items: [
+          {
+            ...firstTopic,
+            source: 'xiaoyinsi',
+            id: `${source}-route-result`,
+            title: '小隐寺公开搜索正常结算',
+            url: 'https://www.xiaoyinsi.com/t/route-result'
+          }
+        ],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      };
+    });
+    const readGateway = {
+      getReadPlan: (source: Source, operation: ForumReadOperation) =>
+        routeReadPlan(source, operation, enabledSources, sessionViewModels),
+      searchSemanticTopics: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+      searchTagOptions: jest.fn(async () => []),
+      searchTopics,
+      searchUserOptions: jest.fn(async () => [])
+    } as unknown as ReadGateway;
+    const runtime = createSearchRouteRuntime({
+      readGateway,
+      readerData: contentSourceReaderData(enabledSources),
+      sessionViewModels
+    });
+    const view = await render(
+      <SearchRouteRuntimeProvider value={runtime}>
+        <SearchRoute />
+      </SearchRouteRuntimeProvider>
+    );
+
+    await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
+    await fireEvent.press(view.getByLabelText('提交搜索'));
+
+    await waitFor(() => expect(view.getByText('小隐寺公开搜索正常结算')).toBeTruthy());
+    expect(view.getAllByText(loginMessage)).toHaveLength(1);
+    expect(view.getByLabelText('搜索关键词').props.value).toBe('codex');
+    expect(searchTopics).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-LINUXDO-006] gates candidate reads by the selected source during linux.do verification', async () => {
+    appQueryClient.clear();
+    const enabledSources = ['linuxdo', 'xiaoyinsi'] as const;
+    const sessionViewModels = createSiteSessionViewModels(
+      createSiteSessionStates({
+        linuxdo: {
+          site: 'linuxdo',
+          status: 'logged-in',
+          cookieSummary: ['session-present'],
+          isVerifying: false,
+          currentUser: {
+            source: 'linuxdo',
+            id: '8',
+            username: 'linux-tester',
+            url: 'https://linux.do/u/linux-tester',
+            topics: []
+          }
+        },
+        xiaoyinsi: {
+          site: 'xiaoyinsi',
+          status: 'logged-in',
+          cookieSummary: ['session-present'],
+          isVerifying: false,
+          currentUser: {
+            source: 'xiaoyinsi',
+            id: '7',
+            username: 'tester',
+            url: 'https://www.xiaoyinsi.com/u/tester',
+            topics: []
+          }
+        }
+      })
+    );
+    const searchTagOptions = jest.fn<ReadGateway['searchTagOptions']>(async () => [{ name: '小隐寺候选' }]);
+    const readGateway = {
+      getReadPlan: (source: Source, operation: ForumReadOperation) =>
+        routeReadPlan(source, operation, enabledSources, sessionViewModels, true),
+      searchSemanticTopics: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+      searchTagOptions,
+      searchTopics: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+      searchUserOptions: jest.fn(async () => [])
+    } as unknown as ReadGateway;
+    const runtime = createSearchRouteRuntime({
+      linuxDoVerificationVisible: true,
+      readGateway,
+      readerData: contentSourceReaderData(enabledSources),
+      sessionViewModels
+    });
+    const view = await render(
+      <SearchRouteRuntimeProvider value={runtime}>
+        <SearchRoute />
+      </SearchRouteRuntimeProvider>
+    );
+
+    await fireEvent.press(view.getByTestId('search-source-xiaoyinsi'));
+    await waitFor(() =>
+      expect(view.getByTestId('search-source-xiaoyinsi').props.accessibilityState).toMatchObject({ selected: true })
+    );
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+
+    await waitFor(() => expect(view.getByLabelText('标签 小隐寺候选')).toBeTruthy());
+    expect(searchTagOptions).toHaveBeenCalledWith(expect.objectContaining({ source: 'xiaoyinsi' }), expect.anything());
+
+    await fireEvent.press(view.getAllByLabelText('关闭标签选择').at(-1)!);
+    await fireEvent.press(view.getByTestId('search-filter-close'));
+    await fireEvent.press(view.getByTestId('search-source-linuxdo'));
+    await waitFor(() =>
+      expect(view.getByTestId('search-source-linuxdo').props.accessibilityState).toMatchObject({ selected: true })
+    );
+    searchTagOptions.mockClear();
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+
+    expect(searchTagOptions).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] renders enabled sources in user order and replaces warm results with management guidance', async () => {
+    const onManageContentSources = jest.fn();
+    const onSearchSourceChange = jest.fn();
+    const view = await renderSearchScreen({
+      expectedSearchSources: ['nodeseek', 'v2ex'],
+      onManageContentSources,
+      onSearchSourceChange,
+      searchSource: 'v2ex',
+      searchGroups: [
+        { source: 'nodeseek', label: 'NodeSeek', items: [{ ...firstTopic, source: 'nodeseek' }] },
+        { source: 'v2ex', label: 'V2EX', items: [firstTopic] },
+        { source: 'linuxdo', label: 'linux.do', items: [{ ...firstTopic, source: 'linuxdo' }] }
+      ]
+    });
+
+    expect(view.getAllByTestId(/^search-source-/).map((tab) => tab.props.testID)).toEqual([
+      'search-source-all',
+      'search-source-nodeseek',
+      'search-source-v2ex'
+    ]);
+    expect(view.queryByTestId('search-source-linuxdo')).toBeNull();
+    expect(view.queryByText('linux.do')).toBeNull();
+    expect(view.getByTestId('search-source-v2ex').props.accessibilityState).toMatchObject({ selected: true });
+
+    await view.rerender(
+      <SearchScreen
+        {...createSearchScreenProps({
+          expectedSearchSources: ['v2ex', 'nodeseek'],
+          onManageContentSources,
+          onSearchSourceChange,
+          searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [firstTopic] }],
+          searchSource: 'v2ex'
+        })}
+      />
+    );
+
+    expect(view.getAllByTestId(/^search-source-/).map((tab) => tab.props.testID)).toEqual([
+      'search-source-all',
+      'search-source-v2ex',
+      'search-source-nodeseek'
+    ]);
+    expect(view.getByTestId('search-source-v2ex').props.accessibilityState).toMatchObject({ selected: true });
+    expect(onSearchSourceChange).not.toHaveBeenCalled();
+
+    await view.rerender(
+      <SearchScreen
+        {...createSearchScreenProps({
+          expectedSearchSources: [],
+          onManageContentSources,
+          searchGroups: [{ source: 'v2ex', label: 'V2EX', items: [firstTopic] }]
+        })}
+      />
+    );
+
+    expect(view.getAllByTestId(/^search-source-/).map((tab) => tab.props.testID)).toEqual(['search-source-all']);
+    expect(view.queryByText('第一页主题')).toBeNull();
+    expect(view.getByText('尚未启用内容源')).toBeTruthy();
+    expect(view.getByLabelText('搜索结果，尚未启用内容源')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('前往更多管理'));
+    expect(onManageContentSources).toHaveBeenCalledTimes(1);
   });
 
   it('submits a recent search immediately and removes only the selected entry', async () => {
@@ -405,40 +712,6 @@ describe('Search state', () => {
     fireEvent.press(view.getByText('重试 linux.do'));
     expect(onRetrySearchSource).toHaveBeenCalledTimes(1);
     expect(onRetrySearchSource).toHaveBeenCalledWith('linuxdo');
-  });
-
-  it('[REG-LINUXDO-007] shows the terminal Account error and identity actions for a single linux.do search', async () => {
-    const onRetryIdentity = jest.fn();
-    const onCheckLinuxDoStatus = jest.fn();
-    const view = await renderSearchScreen({
-      identityError: { kind: 'ordinary', message: 'Network request failed' },
-      onCheckLinuxDoStatus,
-      onRetryIdentity,
-      requestsEnabled: false,
-      searchSource: 'linuxdo',
-      searchSessionNotices: []
-    });
-
-    expect(view.getByText('Network request failed')).toBeTruthy();
-    expect(view.queryByText('正在搜索...')).toBeNull();
-    expect(view.queryByText('暂无搜索结果')).toBeNull();
-    expect(view.getByTestId('search-complete').props.accessibilityState).toEqual({ busy: false });
-    expect(view.getByTestId('search-complete').props.accessibilityLabel).toBe('搜索结果，L 站访问状态检查失败');
-    await fireEvent.press(view.getByLabelText('重试检测'));
-    await fireEvent.press(view.getByLabelText('检查 L 站状态'));
-    expect(onRetryIdentity).toHaveBeenCalledTimes(1);
-    expect(onCheckLinuxDoStatus).toHaveBeenCalledTimes(1);
-  });
-
-  it('[REG-LINUXDO-007] labels an active single-source Search identity probe', async () => {
-    const view = await renderSearchScreen({
-      identityChecking: true,
-      requestsEnabled: false,
-      searchSource: 'linuxdo',
-      searchSessionNotices: []
-    });
-
-    expect(view.getByText('正在确认 L 站访问状态')).toBeTruthy();
   });
 
   it('[REG-SEARCH-017] keeps loading and pending sources out of terminal search states', async () => {
@@ -533,6 +806,26 @@ describe('Search state', () => {
 
     expect(view.queryByTestId('search-all-sources-settled')).toBeNull();
     expect(view.getByLabelText('搜索结果，等待来源结算').props.accessibilityState.busy).toBe(true);
+  });
+
+  it('[REG-SOURCE-010] settles after every enabled aggregate source completes', async () => {
+    const view = await renderSearchScreen({
+      expectedSearchSources: ['v2ex', 'linuxdo'],
+      searchGroups: [
+        { source: 'v2ex', label: 'V2EX', items: [firstTopic] },
+        { source: 'linuxdo', label: 'linux.do', items: [] }
+      ]
+    });
+
+    expect(view.getByTestId('search-all-sources-settled')).toBeTruthy();
+    expect(view.getByLabelText('搜索结果，已完成，有可打开结果').props.accessibilityState.busy).toBe(false);
+  });
+
+  it('[REG-SOURCE-010] treats an empty enabled aggregate source set as settled', async () => {
+    const view = await renderSearchScreen({ expectedSearchSources: [], searchGroups: [] });
+
+    expect(view.getByTestId('search-all-sources-settled')).toBeTruthy();
+    expect(view.getByLabelText('搜索结果，尚未启用内容源').props.accessibilityState.busy).toBe(false);
   });
 
   it('shows fixed all-source previews and opens the selected source list', async () => {

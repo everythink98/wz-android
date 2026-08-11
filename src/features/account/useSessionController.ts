@@ -36,14 +36,7 @@ import {
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { appQueryClient } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import {
-  createSiteSessionViewModels,
-  createSiteSessionStates,
-  reduceSiteSessionState,
-  type ScopedSiteSessionEvent,
-  type SessionSite,
-  type SiteSessionEvent
-} from '@/domain/session/siteSessionState';
+import type { ScopedSiteSessionEvent, SessionSite, SiteSessionEvent } from '@/domain/session/siteSessionState';
 import {
   enqueueBrowserFetchRequest,
   linuxDoBrowserResponse,
@@ -54,10 +47,8 @@ import {
   startNextBrowserFetchRequest
 } from './browserFetchQueue';
 import {
-  commitChangedAccountStatusQuery,
   forumSessionEpochsAfterSourceChange,
-  resetForumSourceQueries,
-  siteSessionEventInvalidatesForumQueries
+  resetForumSourceQueries
 } from './sessionQueryOwnership';
 
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
@@ -183,6 +174,7 @@ export function useSessionController({
   nodeSeekRecoveryThreshold,
   nodeSeekWebViewUserAgentRef,
   notify,
+  onSiteSessionEvent,
   setLinuxDoWebViewUserAgent,
   setNodeSeekWebViewUserAgent,
   setWebLoginUserId,
@@ -196,6 +188,7 @@ export function useSessionController({
   nodeSeekRecoveryThreshold: number;
   nodeSeekWebViewUserAgentRef: MutableRef<string>;
   notify: (message: string) => void;
+  onSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
   setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setWebLoginUserId: Dispatch<SetStateAction<number | null>>;
@@ -220,9 +213,7 @@ export function useSessionController({
   const nodeSeekCredentialGateRef = useRef(createCredentialWriteGate());
   const linuxDoCredentialGateRef = useRef(createCredentialWriteGate());
   const yaohuoCredentialGateRef = useRef(createCredentialWriteGate());
-  const [siteSessionStates, setSiteSessionStates] = useState(() => createSiteSessionStates());
   const [forumSessionEpochs, setForumSessionEpochs] = useState(forumSessionEpochsRef.current);
-  const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
 
   const invalidateForumSourceQueryScope = useCallback((site: SessionSite, recoveryQueryKey?: readonly unknown[]) => {
     const preservedRecovery = resetForumSourceQueries(site, appQueryClient, recoveryQueryKey);
@@ -233,16 +224,12 @@ export function useSessionController({
     }
   }, []);
 
-  const commitAccountStatusChange = useCallback((site: SessionSite, recoveryQueryKey: readonly unknown[]) => {
-    const nextScope = commitChangedAccountStatusQuery(
-      site,
-      forumSessionEpochsRef.current,
-      recoveryQueryKey,
-      appQueryClient
-    );
-    forumSessionEpochsRef.current = nextScope;
-    setForumSessionEpochs(nextScope);
-  }, []);
+  const commitAccountStatusChange = useCallback(
+    (site: SessionSite, recoveryQueryKey?: readonly unknown[]) => {
+      invalidateForumSourceQueryScope(site, recoveryQueryKey);
+    },
+    [invalidateForumSourceQueryScope]
+  );
 
   const dispatchSiteSessionEvent = useCallback(
     (event: ScopedSiteSessionEvent) => {
@@ -250,10 +237,7 @@ export function useSessionController({
         source: event.site,
         eventType: event.type
       });
-      if (siteSessionEventInvalidatesForumQueries(event)) {
-        const recoveryQueryKey = 'recoveryQueryKey' in event ? event.recoveryQueryKey : undefined;
-        invalidateForumSourceQueryScope(event.site, recoveryQueryKey);
-      }
+      onSiteSessionEvent?.(event);
       if (
         event.site === 'nodeseek' &&
         (event.type === 'login-expired' ||
@@ -261,29 +245,18 @@ export function useSessionController({
           event.type === 'verification-required' ||
           event.type === 'verification-started' ||
           (event.type === 'cookie-loaded' && event.loggedIn === false) ||
-          (event.type === 'session-updated' && event.loggedIn !== true) ||
-          (event.type === 'verification-succeeded' && event.loggedIn !== true))
+          (event.type === 'session-updated' && event.loggedIn !== true))
       ) {
         setWebLoginUserId(null);
       }
-      setSiteSessionStates((current) => {
-        const previous = current[event.site];
-        const next = reduceSiteSessionState(previous, event);
-        markDiagnosticStage(trace, 'apply', {
-          source: event.site,
-          eventType: event.type,
-          previousState: previous.status,
-          nextState: next.status,
-          hasCredential: next.cookieSummary.length > 0
-        });
-        finishDiagnosticTrace(trace, 'success', { source: event.site, state: next.status });
-        return {
-          ...current,
-          [event.site]: next
-        };
+      markDiagnosticStage(trace, 'apply', {
+        source: event.site,
+        eventType: event.type,
+        state: 'published'
       });
+      finishDiagnosticTrace(trace, 'success', { source: event.site, state: 'published' });
     },
-    [invalidateForumSourceQueryScope, setWebLoginUserId]
+    [onSiteSessionEvent, setWebLoginUserId]
   );
 
   const updateNodeSeekSession = useCallback(
@@ -890,8 +863,6 @@ export function useSessionController({
     markLinuxDoBrowserFetchHttpError,
     markNodeSeekBrowserFetchHttpError,
     invalidateForumSourceQueryScope,
-    siteSessionStates,
-    siteSessionViewModels,
     updateLinuxDoSession,
     updateNodeSeekSession,
     updateYaohuoSession

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { NativeModules } from 'react-native';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useSessionController } from '@/features/account/useSessionController';
+import type { ScopedSiteSessionEvent } from '@/domain/session/siteSessionState';
 import {
   getReadNetworkRuntimeSnapshot,
   publishReadNetworkRuntimeRotation
@@ -31,7 +33,10 @@ jest.mock('@/platform/storage/legacyCookieSnapshotMigration', () => ({
   }))
 }));
 
-function renderSessionController(defaultFetcher: typeof fetch) {
+function renderSessionController(
+  defaultFetcher: typeof fetch,
+  onSiteSessionEvent: (event: ScopedSiteSessionEvent) => void = jest.fn()
+) {
   return renderHook(() =>
     useSessionController({
       defaultFetcher,
@@ -45,7 +50,8 @@ function renderSessionController(defaultFetcher: typeof fetch) {
       setLinuxDoWebViewUserAgent: jest.fn(),
       setNodeSeekWebViewUserAgent: jest.fn(),
       setWebLoginUserId: jest.fn(),
-      webLoginDetectedRef: { current: false }
+      webLoginDetectedRef: { current: false },
+      onSiteSessionEvent
     })
   );
 }
@@ -168,5 +174,88 @@ describe('session controller hidden Google flow', () => {
       requestStartGeneration,
       expect.objectContaining({ trace: expect.objectContaining({ traceId: expect.any(String) }) })
     );
+  });
+
+  it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
+    '[REG-ACCOUNT-035] publishes an authoritative %s clear without owning the account transition',
+    async (source) => {
+      const clearManagedLoginCookies = jest.fn(async () => true);
+      NativeModules.NetworkProxyModule = { clearManagedLoginCookies };
+      const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();
+      const hook = await renderSessionController(
+        jest.fn(async () => new Response('{}')),
+        onSiteSessionEvent
+      );
+
+      await act(async () => {
+        await hook.result.current[
+          source === 'nodeseek'
+            ? 'clearNodeSeekLoginState'
+            : source === 'linuxdo'
+              ? 'clearLinuxDoLoginState'
+              : 'clearYaohuoLoginState'
+        ]();
+      });
+
+      expect(clearManagedLoginCookies).toHaveBeenCalledWith(source);
+      expect(onSiteSessionEvent).toHaveBeenCalledWith({ site: source, type: 'cleared' });
+      expect(hook.result.current.forumSessionEpochs[source]).toBe(initialForumSessionEpochs[source]);
+    }
+  );
+
+  it('[REG-ACCOUNT-035] keeps a failed clear non-terminal', async () => {
+    NativeModules.NetworkProxyModule = {
+      clearManagedLoginCookies: jest.fn(async () => {
+        throw new Error('native clear failed');
+      })
+    };
+    const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();
+    const hook = await renderSessionController(
+      jest.fn(async () => new Response('{}')),
+      onSiteSessionEvent
+    );
+
+    await act(async () => {
+      await expect(hook.result.current.clearNodeSeekLoginState()).rejects.toThrow('native clear failed');
+    });
+
+    expect(onSiteSessionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ site: 'nodeseek', type: 'check-failed' })
+    );
+    expect(onSiteSessionEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ site: 'nodeseek', type: expect.stringMatching(/^(?:cleared|login-expired)$/) })
+    );
+  });
+
+  it('[REG-ACCOUNT-035] publishes no terminal event for a stale clear', async () => {
+    const firstNativeClear = Promise.withResolvers<boolean>();
+    const clearManagedLoginCookies = jest
+      .fn<() => Promise<boolean>>()
+      .mockImplementationOnce(async () => firstNativeClear.promise)
+      .mockResolvedValueOnce(true);
+    NativeModules.NetworkProxyModule = { clearManagedLoginCookies };
+    const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();
+    const hook = await renderSessionController(
+      jest.fn(async () => new Response('{}')),
+      onSiteSessionEvent
+    );
+    let stale!: ReturnType<typeof hook.result.current.clearNodeSeekLoginState>;
+    let current!: ReturnType<typeof hook.result.current.clearNodeSeekLoginState>;
+
+    await act(async () => {
+      stale = hook.result.current.clearNodeSeekLoginState();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(clearManagedLoginCookies).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      current = hook.result.current.clearNodeSeekLoginState();
+      firstNativeClear.resolve(true);
+      await expect(stale).resolves.toBe(false);
+      await expect(current).resolves.toBe(true);
+    });
+
+    expect(onSiteSessionEvent.mock.calls.filter(([event]) => event.type === 'cleared')).toEqual([
+      [{ site: 'nodeseek', type: 'cleared' }]
+    ]);
   });
 });

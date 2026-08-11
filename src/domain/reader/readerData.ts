@@ -4,6 +4,11 @@ import { decodeHtml } from '@/domain/forum/html';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { sourceCatalog, sourceValues } from '@/domain/forum/sourceCatalog';
 import type { AccessRequirement, Category, Source, Topic, UserProfile } from '@/domain/forum/models';
+import {
+  defaultContentSourcePreferences,
+  normalizeContentSourcePreferences,
+  type ContentSourcePreference
+} from './contentSourcePreferences';
 
 export const readerDataVersion = 2;
 export const MAX_HISTORY_RECORDS = 1000;
@@ -38,6 +43,7 @@ export interface ReaderSettings {
   lineHeight: 'compact' | 'standard' | 'loose';
   contentWidth: 'narrow' | 'standard' | 'wide';
   fontFamily: 'sans' | 'serif';
+  contentSources: ContentSourcePreference[];
 }
 
 export interface ReaderData {
@@ -59,15 +65,18 @@ export type ReaderDataMutationReason =
   | 'library-topic-removed'
   | 'settings-updated';
 
-const defaultReaderSettings: ReaderSettings = {
-  listDensity: 'standard',
-  theme: 'light',
-  fontScale: 1,
-  nodeSeekRecoveryThreshold: 1,
-  lineHeight: 'standard',
-  contentWidth: 'standard',
-  fontFamily: 'sans'
-};
+function createDefaultReaderSettings(): ReaderSettings {
+  return {
+    listDensity: 'standard',
+    theme: 'light',
+    fontScale: 1,
+    nodeSeekRecoveryThreshold: 1,
+    lineHeight: 'standard',
+    contentWidth: 'standard',
+    fontFamily: 'sans',
+    contentSources: defaultContentSourcePreferences()
+  };
+}
 
 const sourceSchema = z.enum(sourceValues as [Source, ...Source[]]);
 const storedStringSchema = z.string().max(MAX_READER_STRING_LENGTH);
@@ -112,7 +121,8 @@ const readerSettingsSchema = z
     nodeSeekRecoveryThreshold: z.unknown().optional(),
     lineHeight: z.unknown().optional(),
     contentWidth: z.unknown().optional(),
-    fontFamily: z.unknown().optional()
+    fontFamily: z.unknown().optional(),
+    contentSources: z.unknown().optional()
   })
   .passthrough();
 const readerDataSchema = z
@@ -356,7 +366,7 @@ export function createEmptyReaderData(): ReaderData {
     history: {},
     followedUsers: {},
     deletedRecords: createEmptyDeletedRecords(),
-    settings: { ...defaultReaderSettings }
+    settings: createDefaultReaderSettings()
   };
 }
 
@@ -477,7 +487,7 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
 export function sanitizeReaderSettings(value: unknown): ReaderSettings {
   const parsed = readerSettingsSchema.safeParse(value);
   const base = parsed.success ? (parsed.data as Record<string, unknown>) : {};
-  return mergeReaderSettings(defaultReaderSettings, base);
+  return mergeReaderSettings(createDefaultReaderSettings(), base);
 }
 
 export function normalizeFontScale(value: unknown, fallback = 1) {
@@ -519,7 +529,10 @@ function mergeReaderSettings(local: ReaderSettings, value: unknown): ReaderSetti
       base.contentWidth === 'narrow' || base.contentWidth === 'standard' || base.contentWidth === 'wide'
         ? base.contentWidth
         : local.contentWidth,
-    fontFamily: base.fontFamily === 'sans' || base.fontFamily === 'serif' ? base.fontFamily : local.fontFamily
+    fontFamily: base.fontFamily === 'sans' || base.fontFamily === 'serif' ? base.fontFamily : local.fontFamily,
+    contentSources: Array.isArray(base.contentSources)
+      ? normalizeContentSourcePreferences(base.contentSources)
+      : local.contentSources
   };
 }
 

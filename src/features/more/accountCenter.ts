@@ -1,6 +1,11 @@
 import { sourceLabel } from '@/domain/forum/presentation';
 import type { CredentialSummaries, CredentialProtection } from '@/platform/storage/credentialVault';
-import { sessionSources, type SessionSite, type SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import {
+  sessionSources,
+  type IdentityTrust,
+  type SessionSite,
+  type SiteSessionViewModels
+} from '@/domain/session/siteSessionState';
 import type { UserProfile } from '@/domain/forum/models';
 
 export type { CredentialSummaries } from '@/platform/storage/credentialVault';
@@ -21,6 +26,7 @@ export type SiteAccountView = {
   credential: SiteAccountCredentialView;
   supportsCredentialFill: boolean;
   isLoggedIn: boolean;
+  identityTrust: IdentityTrust;
   primaryAction: AccountPrimaryAction;
   primaryLabel: string;
   primaryDisabled: boolean;
@@ -94,6 +100,7 @@ export function createSiteAccountViews(
     const statusAndCredential = supportsCredentialFill
       ? `${session.summaryLabel} · ${credentialLabel}`
       : session.summaryLabel;
+    const needsReconcile = session.identityTrust === 'pending' || session.identityTrust === 'unknown';
     return {
       site,
       label: sourceLabel(site),
@@ -103,10 +110,12 @@ export function createSiteAccountViews(
       credential,
       supportsCredentialFill,
       isLoggedIn: session.isLoggedIn,
+      identityTrust: session.identityTrust,
       primaryAction: primary.action,
       primaryLabel: primary.label,
       primaryDisabled: primary.disabled,
       needsAttention:
+        needsReconcile ||
         (supportsCredentialFill && credential.state === 'invalidated') ||
         session.status === 'expired' ||
         session.status === 'verification-required',
@@ -116,8 +125,14 @@ export function createSiteAccountViews(
 }
 
 export function accountCenterSummary(views: SiteAccountView[]) {
-  const needsAttention = views.filter((view) => view.needsAttention).length;
-  const loggedIn = views.filter((view) => view.isLoggedIn).length;
+  const needsReconcile = views.filter(
+    (view) => view.identityTrust === 'pending' || view.identityTrust === 'unknown'
+  ).length;
+  const needsAttention = views.filter(
+    (view) => view.needsAttention && view.identityTrust !== 'pending' && view.identityTrust !== 'unknown'
+  ).length;
+  const loggedIn = views.filter((view) => view.isLoggedIn && view.identityTrust === 'confirmed').length;
   const saved = views.filter((view) => view.credential.hasCredential).length;
-  return `待处理 ${needsAttention} · 网站登录 ${loggedIn}/4 · 自动填入 ${saved}/3`;
+  const credentialSites = views.filter((view) => view.supportsCredentialFill).length;
+  return `${needsReconcile ? `待核对 ${needsReconcile} · ` : ''}待处理 ${needsAttention} · 网站登录 ${loggedIn}/${views.length} · 自动填入 ${saved}/${credentialSites}`;
 }

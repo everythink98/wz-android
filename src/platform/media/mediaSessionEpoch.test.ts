@@ -18,15 +18,24 @@ describe('managed media session epoch', () => {
   it('[REG-TOPIC-029] derives request provenance and cache generation from the content source', () => {
     expect(mediaRequestContextForSource('linuxdo', epochs)).toEqual({
       contentSource: 'linuxdo',
-      sessionIdentity: expect.stringMatching(/^linuxdo:[a-z0-9-]+:2$/)
+      sessionIdentity: expect.stringMatching(/^linuxdo:[a-z0-9-]+:2:ready$/)
     });
     expect(mediaRequestContextForSource(null, epochs)).toEqual({
       contentSource: null,
-      sessionIdentity: 'public:0'
+      sessionIdentity: 'public:0:ready'
     });
   });
   it('keeps public sources outside private media epochs', () => {
-    expect(mediaSessionIdentityForSource('v2ex', epochs)).toBe('public:0');
+    expect(mediaSessionIdentityForSource('v2ex', epochs)).toBe('public:0:ready');
+  });
+
+  it('[REG-PROXY-011] changes the media namespace when proxy readiness changes', () => {
+    expect(mediaSessionIdentityForSource('nodeseek', epochs, 'blocked')).not.toBe(
+      mediaSessionIdentityForSource('nodeseek', epochs, 'ready')
+    );
+    expect(mediaSessionIdentityForSource('v2ex', epochs, 'blocked')).not.toBe(
+      mediaSessionIdentityForSource('v2ex', epochs, 'ready')
+    );
   });
 
   it('[REG-TOPIC-042] gives private disk cache keys a new namespace after a process restart', async () => {
@@ -40,7 +49,7 @@ describe('managed media session epoch', () => {
     const secondIdentity = secondProcess.mediaSessionIdentityForSource('nodeseek', epochs);
 
     expect(secondIdentity).not.toBe(firstIdentity);
-    expect(firstIdentity).toMatch(/^nodeseek:[a-z0-9-]+:4$/);
-    expect(secondIdentity).toMatch(/^nodeseek:[a-z0-9-]+:4$/);
+    expect(firstIdentity).toMatch(/^nodeseek:[a-z0-9-]+:4:ready$/);
+    expect(secondIdentity).toMatch(/^nodeseek:[a-z0-9-]+:4:ready$/);
   });
 });

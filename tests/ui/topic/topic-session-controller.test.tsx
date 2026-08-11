@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useTopicController } from '@/features/topic/useTopicController';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
@@ -10,7 +10,10 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import type { ReadGateway } from '@/sources/readGateway';
-import type { RepliesResponse, Reply, ReplyLocationTarget, Topic, TopicDetail } from '@/domain/forum/models';
+import type { RepliesResponse, Reply, ReplyLocationTarget, Source, Topic, TopicDetail } from '@/domain/forum/models';
+import { resolveForumReadPlan } from '@/domain/forum/readPlan';
+import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
 const firstTopic: Topic = {
@@ -43,12 +46,6 @@ function replyRequestPage(request: ReplyRequest) {
 
 function replyRequestTarget(request: ReplyRequest) {
   return request.position.kind === 'target' ? request.position.target : undefined;
-}
-
-function v2exSnapshotStaleError() {
-  return Object.assign(new Error('V2EX 回复总数已变化，无法确认完整集合'), {
-    reason: 'v2ex-reply-snapshot-stale'
-  });
 }
 
 describe('topic route sessions', () => {
@@ -92,23 +89,31 @@ describe('topic route sessions', () => {
 function renderTopicController({
   getActive = () => true,
   getIdentityBarriers = () => [],
+  getIdentityTrust,
+  getSourceEnabled = () => true,
   getSessionEpochs = () => initialForumSessionEpochs,
   notify = jest.fn(),
+  onRetryIdentityStatus = jest.fn(),
   onNodeSeekTopicVerificationRequired = jest.fn(),
   onOpenTopic = jest.fn(),
   readGateway,
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+  showYaohuoLogin = jest.fn<(message?: string) => void>(),
   targetReply,
   topic = firstTopic
 }: {
   getActive?: () => boolean;
-  getIdentityBarriers?: () => ForumIdentityBarrierSource[];
+  getIdentityBarriers?: () => SessionSource[];
+  getIdentityTrust?: (source: SessionRuntimeSnapshot['source']) => SessionRuntimeSnapshot['identityTrust'];
+  getSourceEnabled?: (source: Source) => boolean;
   getSessionEpochs?: () => ForumSessionEpochs;
   notify?: (message: string) => void;
+  onRetryIdentityStatus?: (source: Source) => Promise<unknown> | unknown;
   onNodeSeekTopicVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
   onOpenTopic?: (topic: Topic) => void;
   readGateway: Partial<ReadGateway>;
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
+  showYaohuoLogin?: (message?: string) => void;
   targetReply?: ReplyLocationTarget;
   topic?: Topic;
 }) {
@@ -116,19 +121,43 @@ function renderTopicController({
   return renderNativeHook(
     () => {
       const session = useTopicSessionController({ notify, topic });
+      const gateway = {
+        ...readGateway,
+        getReadPlan: (source, operation) => {
+          const identityTrust = isSessionSource(source)
+            ? getIdentityTrust?.(source) || (getIdentityBarriers().includes(source) ? 'pending' : 'confirmed')
+            : undefined;
+          return resolveForumReadPlan(
+            source,
+            operation,
+            getSourceEnabled(source),
+            isSessionSource(source)
+              ? {
+                  source,
+                  authenticated: identityTrust === 'confirmed',
+                  authSurfaceOpen: false,
+                  identityKey: `${source}:test`,
+                  identityTrust: identityTrust!,
+                  sessionEpoch: getSessionEpochs()[source],
+                  sourceEnabled: getSourceEnabled(source)
+                }
+              : undefined
+          );
+        }
+      } as ReadGateway;
       const controller = useTopicController({
         active: getActive(),
         commitReaderData: jest.fn(),
-        identityBarriers: getIdentityBarriers(),
         sessionEpochs: getSessionEpochs(),
         notify,
+        onRetryIdentityStatus,
         onNodeSeekTopicVerificationRequired,
         onOpenTopic,
         readerData,
         readerDataRef: { current: readerData },
         showLinuxDoVerification,
-        showYaohuoLogin: jest.fn(),
-        readGateway: readGateway as ReadGateway,
+        showYaohuoLogin,
+        readGateway: gateway,
         targetReply,
         topic,
         topicSession: session
@@ -146,6 +175,183 @@ describe('topic query controller', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     setDiagnosticWriter(null);
+  });
+
+  it('[REG-SOURCE-011] reads a public Xiaoyinsi Topic while account identity remains pending', async () => {
+    const topic = {
+      ...firstTopic,
+      source: 'xiaoyinsi' as const,
+      url: 'https://forum.xiaoyinsi.com/t/1'
+    };
+    const detail = { ...firstDetail, ...topic };
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
+    const hook = await renderTopicController({
+      getIdentityBarriers: () => ['xiaoyinsi'],
+      readGateway: { getTopic },
+      topic
+    });
+
+    await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+    expect(getTopic).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'xiaoyinsi' }),
+      expect.objectContaining({ readPlanScope: 'public:omit' })
+    );
+  });
+
+  it('[REG-SOURCE-011] settles a pending Yaohuo Topic as a terminal read error instead of permanent loading', async () => {
+    const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => {
+      throw Object.assign(new Error('登录状态暂时无法确认'), {
+        kind: 'login-required' as const,
+        reason: 'identity-pending',
+        retryable: true,
+        source: 'yaohuo' as const
+      });
+    });
+    const hook = await renderTopicController({
+      getIdentityBarriers: () => ['yaohuo'],
+      readGateway: { getTopic },
+      topic
+    });
+
+    await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(hook.result.current.controller.topicError).not.toBeNull());
+    expect(hook.result.current.controller.topicBusy).toBe(false);
+  });
+
+  it('[REG-SOURCE-011] retries an unknown strict Topic by reconciling identity without replaying transport', async () => {
+    const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
+    const onRetryIdentityStatus = jest.fn(async () => undefined);
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => {
+      throw Object.assign(new Error('登录状态核对失败，请重试'), {
+        kind: 'ordinary' as const,
+        reason: 'identity-unavailable',
+        retryable: true,
+        source: 'yaohuo' as const
+      });
+    });
+    const hook = await renderTopicController({
+      getIdentityTrust: () => 'unknown',
+      onRetryIdentityStatus,
+      readGateway: { getTopic },
+      topic
+    });
+    await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await expect(hook.result.current.controller.refreshWholeTopic()).resolves.toBe('stale');
+    });
+
+    expect(onRetryIdentityStatus).toHaveBeenCalledTimes(1);
+    expect(onRetryIdentityStatus).toHaveBeenCalledWith('yaohuo');
+    expect(getTopic).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-SOURCE-011] opens Yaohuo login for a typed anonymous Topic block', async () => {
+    const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
+    const showYaohuoLogin = jest.fn();
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => {
+      throw Object.assign(new Error('请先登录该内容源'), {
+        kind: 'login-required' as const,
+        loginRequired: true,
+        reason: 'login-required',
+        source: 'yaohuo' as const
+      });
+    });
+    await renderTopicController({
+      getIdentityTrust: () => 'none',
+      readGateway: { getTopic },
+      showYaohuoLogin,
+      topic
+    });
+
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+    expect(showYaohuoLogin).toHaveBeenCalledWith('请先登录该内容源');
+  });
+
+  it('[REG-SOURCE-010] never reconciles identity for a disabled Topic', async () => {
+    const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
+    const onRetryIdentityStatus = jest.fn(async () => undefined);
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => {
+      throw Object.assign(new Error('内容源已停用'), { reason: 'source-disabled' });
+    });
+    const hook = await renderTopicController({
+      getIdentityTrust: () => 'unknown',
+      getSourceEnabled: () => false,
+      onRetryIdentityStatus,
+      readGateway: { getTopic },
+      topic
+    });
+    await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await hook.result.current.controller.refreshWholeTopic();
+    });
+
+    expect(onRetryIdentityStatus).not.toHaveBeenCalled();
+    expect(getTopic).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-077] replaces a partial Yaohuo reply seed with an authoritative start window', async () => {
+    const topic: Topic = {
+      ...firstTopic,
+      source: 'yaohuo',
+      url: 'https://www.yaohuo.me/bbs/book_view.aspx?id=1&classid=177'
+    };
+    const partialDetail: TopicDetail = {
+      ...firstDetail,
+      ...topic,
+      replies: [],
+      replyCompleteness: 'partial',
+      replyHasMore: true,
+      replyNextPage: null,
+      replyNextOffset: null
+    };
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => partialDetail);
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+      items: [firstReply],
+      currentPage: 1,
+      currentOffset: 0,
+      previousPage: null,
+      previousOffset: null,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null,
+      totalCount: 1
+    }));
+    const hook = await renderTopicController({ readGateway: { getReplies, getTopic }, topic });
+
+    await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+    expect(getReplies).toHaveBeenCalledWith(
+      expect.objectContaining({ position: { kind: 'start' }, source: 'yaohuo' }),
+      expect.objectContaining({ readPlanScope: expect.stringContaining('authenticated:') })
+    );
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+  });
+
+  it('[REG-TOPIC-077] exposes a non-V2EX partial reply window without disabling server order', async () => {
+    const detail: TopicDetail = {
+      ...firstDetail,
+      replyCount: 2,
+      replies: [firstReply],
+      replyCompleteness: 'partial',
+      replyHasMore: false,
+      replyNextPage: null,
+      replyNextOffset: null
+    };
+    const getReplies = jest.fn<ReadGateway['getReplies']>();
+    const hook = await renderTopicController({
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+        getReplies
+      }
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+    expect(hook.result.current.controller.replyRowsPartial).toBe(true);
+    expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
+    expect(getReplies).not.toHaveBeenCalled();
   });
 
   it('uses one transport for repeated opens of the same key', async () => {
@@ -263,8 +469,8 @@ describe('topic query controller', () => {
     });
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2]));
-    const oldestKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest');
-    const newestKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'newest');
+    const oldestKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest', 'authenticated:0');
+    const newestKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'newest', 'authenticated:0');
 
     await act(async () => {
       hook.result.current.session.commands.view.changeReplyOrder('newest');
@@ -339,10 +545,18 @@ describe('topic query controller', () => {
       { ...firstReply, floor: 3, commentId: 103 }
     ];
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 3 };
-    const detail = { ...firstDetail, ...topic, replies, replyHasMore: false, replyNextPage: null };
+    const detail = {
+      ...firstDetail,
+      ...topic,
+      replies,
+      replyCompleteness: 'complete' as const,
+      replyHasMore: false,
+      replyNextPage: null
+    };
     const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
     const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
       items: replies,
+      completeness: 'complete',
       currentPage: 1,
       currentOffset: 0,
       previousPage: null,
@@ -384,7 +598,7 @@ describe('topic query controller', () => {
     expect(getReplies).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-076] keeps the V2EX body and prefix visible until stale snapshots converge', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077] keeps a partial V2EX prefix visible without background convergence', async () => {
     jest.useFakeTimers();
     try {
       const prefix = [
@@ -398,24 +612,22 @@ describe('topic query controller', () => {
         ...topic,
         contentHtml: '<p>V2EX body</p>',
         replies: prefix,
+        replyCompleteness: 'partial',
         replyHasMore: true,
         replyNextPage: null
       };
-      const getReplies = jest
-        .fn<ReadGateway['getReplies']>()
-        .mockRejectedValueOnce(v2exSnapshotStaleError())
-        .mockRejectedValueOnce(v2exSnapshotStaleError())
-        .mockResolvedValueOnce({
-          items: fullReplies,
-          currentPage: 1,
-          currentOffset: 0,
-          previousPage: null,
-          previousOffset: null,
-          hasMore: false,
-          nextPage: null,
-          nextOffset: null,
-          totalCount: 3
-        });
+      const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+        items: fullReplies,
+        completeness: 'complete',
+        currentPage: 1,
+        currentOffset: 0,
+        previousPage: null,
+        previousOffset: null,
+        hasMore: false,
+        nextPage: null,
+        nextOffset: null,
+        totalCount: 3
+      }));
       const hook = await renderTopicController({
         readGateway: {
           getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
@@ -424,36 +636,30 @@ describe('topic query controller', () => {
         topic
       });
 
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(0);
-      });
+      await waitFor(() => expect(hook.result.current.controller.topicDetail?.contentHtml).toContain('V2EX body'));
       expect(hook.result.current.controller.topicDetail?.contentHtml).toContain('V2EX body');
       expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2]);
-      expect(hook.result.current.controller.repliesSyncing).toBe(true);
       expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
+      expect(getReplies).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(60_000);
+      });
+      expect(getReplies).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('completed');
+      });
       expect(getReplies).toHaveBeenCalledTimes(1);
-
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(5_000);
-      });
-      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2]);
-      expect(getReplies).toHaveBeenCalledTimes(2);
-
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(5_000);
-      });
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(0);
-      });
-      expect(getReplies).toHaveBeenCalledTimes(3);
       expect(
-        appQueryClient.getQueryData(forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest'))
+        appQueryClient.getQueryData(
+          forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest', 'public:omit')
+        )
       ).toMatchObject({ pages: [{ items: fullReplies }] });
       await act(async () => {
         hook.rerender(undefined);
       });
       expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2, 3]);
-      expect(hook.result.current.controller.repliesSyncing).toBe(false);
       expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
       expect(appQueryClient.getQueryData(hook.result.current.controller.topicQueryKey)).toMatchObject({
         replyCount: 3,
@@ -465,7 +671,7 @@ describe('topic query controller', () => {
     }
   });
 
-  it('[REG-TOPIC-076] keeps the V2EX prefix and exposes a reply-level retry after six stale reads', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077] keeps a partial V2EX prefix after one explicit refresh fails', async () => {
     jest.useFakeTimers();
     try {
       const prefix = [{ ...firstReply, floor: 1, commentId: 101 }];
@@ -474,11 +680,12 @@ describe('topic query controller', () => {
         ...firstDetail,
         ...topic,
         replies: prefix,
+        replyCompleteness: 'partial',
         replyHasMore: true,
         replyNextPage: null
       };
       const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
-        throw v2exSnapshotStaleError();
+        throw new Error('V2EX 回复总数已变化，无法确认完整集合');
       });
       const hook = await renderTopicController({
         readGateway: {
@@ -488,40 +695,54 @@ describe('topic query controller', () => {
         topic
       });
 
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual(prefix));
+      expect(getReplies).not.toHaveBeenCalled();
+
       await act(async () => {
-        await jest.advanceTimersByTimeAsync(0);
+        await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('failed');
       });
       expect(getReplies).toHaveBeenCalledTimes(1);
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(25_000);
-      });
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(0);
-      });
-      expect(getReplies).toHaveBeenCalledTimes(6);
       expect(hook.result.current.controller.topicReplies).toEqual(prefix);
-      expect(hook.result.current.controller.repliesSyncing).toBe(false);
-      expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
       expect(hook.result.current.controller.repliesError?.message).toContain('回复总数已变化');
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(60_000);
+      });
+      expect(getReplies).toHaveBeenCalledTimes(1);
+      expect(hook.result.current.controller.topicReplies).toEqual(prefix);
+      expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
       expect(hook.result.current.controller.topicError).toBeNull();
     } finally {
       jest.useRealTimers();
     }
   });
 
-  it('[REG-TOPIC-076] does not retry structural V2EX reply failures', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077] reads an empty partial V2EX window once and then settles', async () => {
     jest.useFakeTimers();
     try {
+      const recovered = { ...firstReply, floor: 2, commentId: 102 };
       const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
       const detail: TopicDetail = {
         ...firstDetail,
         ...topic,
+        replies: [],
+        replyCompleteness: 'partial',
+        replyCount: undefined,
         replyHasMore: true,
         replyNextPage: null
       };
-      const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
-        throw new Error('V2EX 回复集合未确认完整');
-      });
+      const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+        items: [recovered],
+        completeness: 'partial',
+        currentPage: 1,
+        currentOffset: 0,
+        previousPage: null,
+        previousOffset: null,
+        hasMore: false,
+        nextPage: null,
+        nextOffset: null,
+        totalCount: undefined
+      }));
       const hook = await renderTopicController({
         readGateway: {
           getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
@@ -530,54 +751,13 @@ describe('topic query controller', () => {
         topic
       });
 
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(30_000);
-      });
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([recovered]));
       expect(getReplies).toHaveBeenCalledTimes(1);
-      expect(appQueryClient.getQueryData(hook.result.current.controller.topicQueryKey)).toMatchObject({
-        replies: detail.replies,
-        replyHasMore: true
-      });
-      expect(hook.result.current.controller.topicReplies).toEqual(detail.replies);
-      expect(hook.result.current.controller.repliesError?.message).toBe('V2EX 回复集合未确认完整');
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  it('[REG-TOPIC-076] cancels delayed V2EX snapshot retries when the route becomes inactive', async () => {
-    jest.useFakeTimers();
-    try {
-      let active = true;
-      const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
-      const detail: TopicDetail = {
-        ...firstDetail,
-        ...topic,
-        replyHasMore: true,
-        replyNextPage: null
-      };
-      const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
-        throw v2exSnapshotStaleError();
-      });
-      const hook = await renderTopicController({
-        getActive: () => active,
-        readGateway: {
-          getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
-          getReplies
-        },
-        topic
-      });
+      expect(hook.result.current.controller.repliesLoading).toBe(false);
+      expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
 
       await act(async () => {
-        await jest.advanceTimersByTimeAsync(0);
-      });
-      expect(getReplies).toHaveBeenCalledTimes(1);
-      active = false;
-      await act(async () => {
-        hook.rerender(undefined);
-      });
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(30_000);
+        await jest.advanceTimersByTimeAsync(60_000);
       });
       expect(getReplies).toHaveBeenCalledTimes(1);
     } finally {
@@ -585,7 +765,7 @@ describe('topic query controller', () => {
     }
   });
 
-  it('[REG-TOPIC-076] rebuilds incomplete V2EX replies through the convergence query on a full refresh', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077] runs one reply read after an explicit full refresh of a partial V2EX topic', async () => {
     const prefix = [{ ...firstReply, floor: 1, commentId: 101 }];
     const fullReplies = [...prefix, { ...firstReply, floor: 2, commentId: 102 }];
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
@@ -593,12 +773,14 @@ describe('topic query controller', () => {
       ...firstDetail,
       ...topic,
       replies: prefix,
+      replyCompleteness: 'partial',
       replyHasMore: true,
       replyNextPage: null
     };
     const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
     const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
       items: fullReplies,
+      completeness: 'complete',
       currentPage: 1,
       currentOffset: 0,
       previousPage: null,
@@ -610,17 +792,19 @@ describe('topic query controller', () => {
     }));
     const hook = await renderTopicController({ readGateway: { getTopic, getReplies }, topic });
 
-    await waitFor(() => expect(hook.result.current.controller.replyCollectionComplete).toBe(true));
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual(prefix));
+    expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
     expect(getTopic).toHaveBeenCalledTimes(1);
-    expect(getReplies).toHaveBeenCalledTimes(1);
+    expect(getReplies).not.toHaveBeenCalled();
 
     await act(async () => {
       await expect(hook.result.current.controller.refreshWholeTopic()).resolves.toBe('completed');
     });
 
     expect(getTopic).toHaveBeenCalledTimes(2);
-    expect(getReplies).toHaveBeenCalledTimes(2);
+    expect(getReplies).toHaveBeenCalledTimes(1);
     expect(hook.result.current.controller.topicReplies).toEqual(fullReplies);
+    expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
   });
 
   it('[REG-TOPIC-067] rejects an unconfirmed tail without applying it and retries the same order', async () => {
@@ -667,7 +851,7 @@ describe('topic query controller', () => {
     ]);
   });
 
-  it('[REG-TOPIC-067] retries a stale tail once with a refreshed authoritative count', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-077] retries a failed reply read without a hidden topic-count refresh', async () => {
     const detail = {
       ...firstDetail,
       replyCount: 45,
@@ -675,97 +859,34 @@ describe('topic query controller', () => {
       replyNextPage: 2,
       replyNextOffset: 10
     };
-    const refreshedDetail = { ...detail, replyCount: 46 };
-    const refreshedTopic = Promise.withResolvers<TopicDetail>();
-    const getTopic = jest
-      .fn<ReadGateway['getTopic']>()
-      .mockResolvedValueOnce(detail)
-      .mockImplementation(async () => refreshedTopic.promise);
-    const getReplies = jest.fn<ReadGateway['getReplies']>(async (request) => {
-      if (request.replyCount === 45) {
-        throw Object.assign(new Error('NodeSeek 回复总数已变化，无法确认最新窗口'), {
-          reason: 'reply-count-refresh-required'
-        });
-      }
-      return {
-        items: [{ ...firstReply, floor: 46, commentId: 146 }],
+    const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
+    const getReplies = jest
+      .fn<ReadGateway['getReplies']>()
+      .mockRejectedValueOnce(new Error('NodeSeek 回复窗口暂时无法确认'))
+      .mockResolvedValue({
+        items: [{ ...firstReply, floor: 45, commentId: 145 }],
         currentPage: 5,
         currentOffset: 40,
         hasMore: true,
         nextPage: 4,
         nextOffset: 30,
-        totalCount: 46
-      };
-    });
-    const hook = await renderTopicController({ readGateway: { getReplies, getTopic } });
-
-    await act(async () => {
-      hook.result.current.session.commands.view.changeReplyOrder('newest');
-    });
-    await waitFor(() => expect(hook.result.current.controller.repliesError?.message).toContain('回复总数已变化'));
-
-    let retry!: Promise<LinuxDoReadResumeOutcome>;
-    await act(async () => {
-      retry = hook.result.current.controller.retryReplies();
-      await Promise.resolve();
-    });
-
-    expect(getTopic).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(hook.result.current.controller.repliesLoading).toBe(true));
-
-    await act(async () => {
-      refreshedTopic.resolve(refreshedDetail);
-      await expect(retry).resolves.toBe('completed');
-    });
-
-    await waitFor(() => expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([46]));
-    expect(hook.result.current.controller.repliesLoading).toBe(false);
-    expect(getTopic).toHaveBeenCalledTimes(2);
-    expect(getReplies.mock.calls.map(([request]) => request.replyCount)).toEqual([45, 46]);
-  });
-
-  it('[REG-TOPIC-067] does not reset the stale-count retry after an intermediate network failure', async () => {
-    const detail = {
-      ...firstDetail,
-      replyCount: 45,
-      replyHasMore: true,
-      replyNextPage: 2,
-      replyNextOffset: 10
-    };
-    const refreshedDetail = { ...detail, replyCount: 46 };
-    const countChanged = () =>
-      Object.assign(new Error('NodeSeek 回复总数已变化，无法确认最新窗口'), {
-        reason: 'reply-count-refresh-required'
+        totalCount: 45
       });
-    const getTopic = jest
-      .fn<ReadGateway['getTopic']>()
-      .mockResolvedValueOnce(detail)
-      .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValue(refreshedDetail);
-    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
-      throw countChanged();
-    });
     const hook = await renderTopicController({ readGateway: { getReplies, getTopic } });
 
     await act(async () => {
       hook.result.current.session.commands.view.changeReplyOrder('newest');
     });
-    await waitFor(() => expect(hook.result.current.controller.repliesError?.message).toContain('回复总数已变化'));
+    await waitFor(() => expect(hook.result.current.controller.repliesError?.message).toContain('暂时无法确认'));
     await act(async () => {
-      await expect(hook.result.current.controller.retryReplies()).resolves.toBe('failed');
+      await expect(hook.result.current.controller.retryReplies()).resolves.toBe('completed');
     });
-    await waitFor(() => expect(hook.result.current.controller.repliesError?.message).toBe('offline'));
-    await act(async () => {
-      await expect(hook.result.current.controller.retryReplies()).resolves.toBe('failed');
-    });
-    await waitFor(() => expect(hook.result.current.controller.repliesError?.message).toContain('回复总数已变化'));
-    expect(hook.result.current.controller.repliesError?.retryable).toBe(false);
 
-    await act(async () => {
-      await expect(hook.result.current.controller.retryReplies()).resolves.toBe('failed');
-    });
-    expect(getTopic).toHaveBeenCalledTimes(3);
+    await waitFor(() => expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([45]));
+    expect(hook.result.current.controller.repliesLoading).toBe(false);
+    expect(getTopic).toHaveBeenCalledTimes(1);
     expect(getReplies).toHaveBeenCalledTimes(2);
+    expect(getReplies.mock.calls.map(([request]) => request.replyCount)).toEqual([45, 45]);
   });
 
   it('[REG-TOPIC-057] isolates cached detail when the credential scope changes', async () => {
@@ -1204,7 +1325,7 @@ describe('topic query controller', () => {
         hook.result.current.controller.refreshTopicReplies({
           kind: 'edited',
           silent: true,
-          target: { commentId: 155, floor: 155 },
+          target: { kind: 'comment-id', commentId: 155 },
           contentMarkdown: 'edited'
         })
       ).resolves.toBe('completed');
@@ -1315,7 +1436,7 @@ describe('topic query controller', () => {
     );
     const hook = await renderTopicController({ readGateway: { getReplies, getTopic } });
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
-    const oldestKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest');
+    const oldestKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest', 'authenticated:0');
     appQueryClient.setQueryData(oldestKey, {
       pages: [{ items: [oldest], currentPage: 1, currentOffset: 0, hasMore: false, nextPage: null }],
       pageParams: [{ kind: 'start' }]
@@ -1387,10 +1508,67 @@ describe('topic query controller', () => {
     );
   });
 
+  it('[REG-TOPIC-077] accepts an adapter-confirmed target window without applying a second shared identity rule', async () => {
+    const topic: Topic = {
+      ...firstTopic,
+      source: 'yaohuo',
+      url: 'https://www.yaohuo.me/bbs-1.html'
+    };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      ...topic,
+      replies: [firstReply],
+      replyCompleteness: 'partial'
+    };
+    const sourceOwnedTarget: Reply = {
+      author: 'source-owned-target',
+      contentHtml: '<p>adapter confirmed this row</p>',
+      createdAt: '2026-08-10T00:00:00.000Z'
+    };
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+      items: [sourceOwnedTarget],
+      completeness: 'partial',
+      currentPage: 16,
+      currentOffset: 150,
+      previousPage: 15,
+      previousOffset: 140,
+      hasMore: true,
+      nextPage: 17,
+      nextOffset: 160
+    }));
+    const hook = await renderTopicController({
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+        getReplies
+      },
+      topic
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+    await act(async () => {
+      await expect(hook.result.current.controller.locateReply({ floor: 90 }, { silent: true })).resolves.toBe(
+        'completed'
+      );
+    });
+
+    expect(getReplies).toHaveBeenCalledWith(
+      expect.objectContaining({ position: { kind: 'target', target: { floor: 90 } } }),
+      expect.any(Object)
+    );
+    expect(hook.result.current.controller.topicReplies).toEqual([sourceOwnedTarget]);
+  });
+
   it('[REG-TOPIC-062][REG-TOPIC-069] locates V2EX only from its already loaded reply collection', async () => {
     const reply = { ...firstReply, floor: 12, commentId: 120 };
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1' };
-    const detail = { ...firstDetail, ...topic, replies: [reply], replyCount: 1, replyHasMore: false };
+    const detail = {
+      ...firstDetail,
+      ...topic,
+      replies: [reply],
+      replyCompleteness: 'complete' as const,
+      replyCount: 1,
+      replyHasMore: false
+    };
     const getReplies = jest.fn<ReadGateway['getReplies']>();
     const hook = await renderTopicController({
       readGateway: {
@@ -1407,7 +1585,7 @@ describe('topic query controller', () => {
     expect(getReplies).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-076] locates inside the V2EX prefix and waits for outside floors until convergence', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077] locates outside a V2EX prefix with one target-driven read and no polling', async () => {
     const prefixReply = { ...firstReply, floor: 1, commentId: 101 };
     const target = { ...firstReply, floor: 2, commentId: 102 };
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
@@ -1415,53 +1593,49 @@ describe('topic query controller', () => {
       ...firstDetail,
       ...topic,
       replies: [prefixReply],
+      replyCompleteness: 'partial',
       replyHasMore: true,
       replyNextPage: null
     };
-    const pending = Promise.withResolvers<RepliesResponse>();
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+      items: [prefixReply, target],
+      completeness: 'complete',
+      currentPage: 1,
+      currentOffset: 0,
+      previousPage: null,
+      previousOffset: null,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null,
+      totalCount: 2
+    }));
     const notify = jest.fn();
     const hook = await renderTopicController({
       notify,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
-        getReplies: jest.fn<ReadGateway['getReplies']>(async () => pending.promise)
+        getReplies
       },
       topic
     });
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([prefixReply]));
     await expect(hook.result.current.controller.locateReply({ floor: 1 })).resolves.toBe('completed');
-    await expect(hook.result.current.controller.locateReply({ floor: 2 })).resolves.toBe('stale');
-    expect(notify).not.toHaveBeenCalledWith('目标楼层未找到');
-
     await act(async () => {
-      pending.resolve({
-        items: [prefixReply, target],
-        currentPage: 1,
-        currentOffset: 0,
-        previousPage: null,
-        previousOffset: null,
-        hasMore: false,
-        nextPage: null,
-        nextOffset: null,
-        totalCount: 2
-      });
-      await pending.promise;
+      await expect(hook.result.current.controller.locateReply({ floor: 2 })).resolves.toBe('completed');
     });
+    expect(getReplies).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(hook.result.current.controller.replyCollectionComplete).toBe(true));
     await expect(hook.result.current.controller.locateReply({ floor: 2 })).resolves.toBe('completed');
     await expect(hook.result.current.controller.locateReply({ floor: 99 })).resolves.toBe('failed');
+    expect(getReplies).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith('目标楼层未找到');
   });
 
   it('[REG-TOPIC-062] preserves the current window when a source cannot confirm the target floor', async () => {
-    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
-      items: [{ ...firstReply, floor: 98 }],
-      currentPage: 10,
-      currentOffset: 90,
-      hasMore: false,
-      nextPage: null
-    }));
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
+      throw new Error('来源未确认目标楼层');
+    });
     const hook = await renderTopicController({
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => firstDetail),
@@ -1479,13 +1653,9 @@ describe('topic query controller', () => {
   it('[REG-TOPIC-062] requires a matching comment id when the target supplies one', async () => {
     const decoy = { ...firstReply, floor: 99, commentId: 998 };
     const detail = { ...firstDetail, replies: [decoy] };
-    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
-      items: [{ ...decoy, commentId: 997 }],
-      currentPage: 10,
-      currentOffset: 90,
-      hasMore: false,
-      nextPage: null
-    }));
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
+      throw new Error('来源未确认目标评论');
+    });
     const hook = await renderTopicController({
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
@@ -1747,12 +1917,14 @@ describe('topic query controller', () => {
     await act(async () => {
       await hook.result.current.controller.openTopic(xiaTopic);
     });
-    await waitFor(() => expect(hook.result.current.controller.topicDetail?.replyCount).toBe(100));
+    await waitFor(() => expect(hook.result.current.controller.topicDetail?.replyCount).toBe(7));
+    expect(getReplies).toHaveBeenCalledTimes(1);
     await act(async () => {
       await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('completed');
     });
 
     await waitFor(() => expect(hook.result.current.controller.topicDetail?.replyCount).toBe(7));
+    expect(getReplies).toHaveBeenCalledTimes(2);
     expect(hook.result.current.controller.topicReplies).toEqual([authoritativeReply]);
   });
 
@@ -1809,7 +1981,7 @@ describe('topic query controller', () => {
       await hook.result.current.controller.openTopic(discourseTopic);
     });
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(10));
-    const newestKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'newest');
+    const newestKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'newest', 'authenticated:0');
     appQueryClient.setQueryData(newestKey, { pages: [], pageParams: [] });
     await act(async () => {
       await expect(hook.result.current.controller.refreshTopicReplies({ kind: 'created' })).resolves.toBe('completed');
@@ -1825,7 +1997,11 @@ describe('topic query controller', () => {
     });
     expect(appQueryClient.getQueryData(newestKey)).toBeDefined();
     expect(appQueryClient.getQueryState(newestKey)?.isInvalidated).toBe(true);
-    const repliesQueryKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest');
+    const repliesQueryKey = forumQueryKeys.replies(
+      hook.result.current.controller.topicQueryKey,
+      'oldest',
+      'authenticated:0'
+    );
     expect(appQueryClient.getQueryData(repliesQueryKey)).toBeDefined();
 
     hook.unmount();
@@ -1887,7 +2063,6 @@ describe('topic query controller', () => {
       replyNextPage: 2,
       replyNextOffset: 10
     };
-    const deletedReply = { ...firstReply, floor: 31, commentId: 131 };
     const getTopic = jest
       .fn<ReadGateway['getTopic']>()
       .mockResolvedValueOnce(detail)
@@ -1916,7 +2091,7 @@ describe('topic query controller', () => {
         hook.result.current.controller.refreshTopicReplies({
           kind: 'deleted',
           silent: true,
-          target: deletedReply,
+          target: { kind: 'comment-id', commentId: 131 },
           position: { kind: 'cursor', page: 2, offset: 30 }
         })
       ).resolves.toBe('completed');
@@ -2147,7 +2322,12 @@ describe('topic query controller', () => {
     });
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
-    expect(recovery?.queryKey).toEqual(['forum', 'linuxdo', 'topic', { sessionEpoch: 0, topicId: '1' }]);
+    expect(recovery?.queryKey).toEqual([
+      'forum',
+      'linuxdo',
+      'topic',
+      { readPlanScope: 'authenticated:0', sessionEpoch: 0, topicId: '1' }
+    ]);
     await act(async () => {
       await recovery?.resume();
     });
@@ -2214,6 +2394,12 @@ describe('topic query controller', () => {
       topic: solvedTopic,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => solvedDetail),
+        getReplies: jest.fn<ReadGateway['getReplies']>(async () => ({
+          items: [],
+          completeness: 'partial',
+          hasMore: false,
+          nextPage: null
+        })),
         getReply
       }
     });
@@ -2247,7 +2433,15 @@ describe('topic query controller', () => {
       id: '207',
       url: 'https://linux.do/t/topic/207'
     };
-    const solvedDetail: TopicDetail = { ...firstDetail, ...solvedTopic, replies: [], solved: true };
+    const solvedDetail: TopicDetail = {
+      ...firstDetail,
+      ...solvedTopic,
+      replies: [],
+      replyCompleteness: 'complete',
+      replyCount: 0,
+      replyHasMore: false,
+      solved: true
+    };
     const notify = jest.fn();
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const getReply = jest.fn<ReadGateway['getReply']>(async () => {
@@ -2298,7 +2492,15 @@ describe('topic query controller', () => {
         id: '208',
         url: 'https://forum.xiaoyinsi.com/t/topic/208'
       };
-      const solvedDetail: TopicDetail = { ...firstDetail, ...solvedTopic, replies: [], solved: true };
+      const solvedDetail: TopicDetail = {
+        ...firstDetail,
+        ...solvedTopic,
+        replies: [],
+        replyCompleteness: 'complete',
+        replyCount: 0,
+        replyHasMore: false,
+        solved: true
+      };
       const acceptedReply: Reply = {
         acceptedAnswer: true,
         author: 'bob',
@@ -2519,6 +2721,7 @@ describe('topic query controller', () => {
     const targetTopicKey = forumQueryKeys.topic({
       source: 'linuxdo',
       topicId: cachedTarget.id,
+      readPlanScope: 'authenticated:0',
       scope: initialForumSessionEpochs
     });
     appQueryClient.setQueryData(targetTopicKey, cachedTarget);

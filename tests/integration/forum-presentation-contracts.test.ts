@@ -6,7 +6,7 @@ import {
   topicListDisplayTimeText
 } from '@/domain/forum/presentation';
 import { isCanceledRequest } from '@/platform/network/errors';
-import { isLinuxDoCloudflareError, isYaohuoLoginExpiredError, isYaohuoLoginRequiredError } from '@/sources/errors';
+import { isLinuxDoCloudflareError } from '@/sources/errors';
 import { parseForumTopicLink, parseInternalTopicOpenLink, parseForumUserLink } from '@/domain/forum/links';
 import { REQUEST_CANCELED_MESSAGE } from '@/platform/network/request';
 
@@ -49,16 +49,6 @@ describe('Android app utils', () => {
         detail: '权限不足'
       })
     ).toBe('需权限');
-  });
-
-  it('distinguishes expired yaohuo login from access verification', () => {
-    const expired = Object.assign(new Error('expired'), { loginRequired: true, reason: 'expired' });
-    const verification = Object.assign(new Error('verification'), { loginRequired: true, reason: 'verification' });
-
-    expect(isYaohuoLoginRequiredError(expired)).toBe(true);
-    expect(isYaohuoLoginExpiredError(expired)).toBe(true);
-    expect(isYaohuoLoginRequiredError(verification)).toBe(true);
-    expect(isYaohuoLoginExpiredError(verification)).toBe(false);
   });
 
   it('identifies linux.do Cloudflare verification errors', () => {

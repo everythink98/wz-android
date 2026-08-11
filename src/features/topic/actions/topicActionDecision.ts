@@ -8,6 +8,7 @@ export type TopicActionDecisionReason =
   | 'unsupported'
   | 'login-required'
   | 'identity-pending'
+  | 'identity-unavailable'
   | 'object-forbidden'
   | 'missing-target'
   | 'already-complete'
@@ -41,6 +42,8 @@ export function topicActionDecisionMessage(decision: TopicActionDecision) {
       return '请先登录后再操作';
     case 'identity-pending':
       return '登录状态待确认，请稍后重试';
+    case 'identity-unavailable':
+      return '账号状态暂不可确认，请重试账号核对';
     case 'object-forbidden':
       return '当前内容不允许此操作';
     case 'missing-target':
@@ -73,6 +76,7 @@ export function decideTopicAction({
 }): TopicActionDecision {
   if (!topic?.id) return { allowed: false, reason: 'missing-target' };
   if (!sourceSupportsTopicAction(topic.source, action)) return { allowed: false, reason: 'unsupported' };
+  if (account?.identityTrust === 'unknown') return { allowed: false, reason: 'identity-unavailable' };
   if (account?.identityTrust === 'pending') return { allowed: false, reason: 'identity-pending' };
   if (!account?.canWrite) return { allowed: false, reason: 'login-required' };
   if (!objectAllowed) return { allowed: false, reason: 'object-forbidden' };

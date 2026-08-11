@@ -3,7 +3,7 @@ import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, Swit
 import { FlashList } from '@shopify/flash-list';
 import RenderHTML from 'react-native-render-html';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { notificationSources, sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
+import { sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { parseForumTopicDestination } from '@/domain/forum/links';
 import type { ReplyLocationTarget, Topic } from '@/domain/forum/models';
 import type { ForumNotification, NotificationCategory, NotificationDetail } from '@/domain/notifications/models';
@@ -33,11 +33,6 @@ import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementMo
 import { createConversationAutoScrollController } from './conversationAutoScroll';
 
 export type NotificationFilterSource = 'all' | NotificationSource;
-
-const sourceItems = [
-  { value: 'all', label: '全部' },
-  ...notificationSources.map((source) => ({ value: source, label: sourceCatalog[source].label }))
-];
 
 function EmptyState({
   action,
@@ -112,6 +107,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   categories = [],
   categoryId = '',
   errors,
+  enabledSources,
   fetchingMore,
   hasMore,
   items,
@@ -120,6 +116,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   refreshing,
   source,
   sourcePending,
+  sourceUnknown = false,
   unreadOnly,
   xiaoyinsiNeedsUpgrade,
   onChangeCategory,
@@ -136,6 +133,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   categories?: readonly NotificationCategory[];
   categoryId?: string;
   errors: Partial<Record<NotificationSource, string>>;
+  enabledSources: readonly NotificationSource[];
   fetchingMore: boolean;
   hasMore: boolean;
   items: ForumNotification[];
@@ -144,6 +142,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   refreshing: boolean;
   source: NotificationFilterSource;
   sourcePending: boolean;
+  sourceUnknown?: boolean;
   unreadOnly: boolean;
   xiaoyinsiNeedsUpgrade: boolean;
   onChangeCategory?: (categoryId: string) => void;
@@ -157,42 +156,61 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onUpgradeXiaoyinsi: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
-  const errorSources = notificationSources.filter((candidate) => errors[candidate]);
+  const sourceItems = [
+    { value: 'all', label: '全部' },
+    ...enabledSources.map((candidate) => ({ value: candidate, label: sourceCatalog[candidate].label }))
+  ];
+  const errorSources = enabledSources.filter((candidate) => errors[candidate]);
   const sourceAvailable = source === 'all' ? activeSources.length > 0 : activeSources.includes(source);
-  const visibleItems = items.filter((item) => activeSources.includes(item.source));
-  const needsXiaoyinsiUpgrade = source === 'xiaoyinsi' && xiaoyinsiNeedsUpgrade;
-  const emptyTitle = needsXiaoyinsiUpgrade
-    ? '需要升级消息授权'
-    : sourcePending
-      ? '账号确认中'
-      : !sourceAvailable
-        ? '账号尚未就绪'
-        : unreadOnly
-          ? '暂无未读消息'
-          : '暂无消息';
-  const emptyText = !sourceAvailable
-    ? needsXiaoyinsiUpgrade
-      ? '原有读写授权仍然可用；升级授权后才能读取小隐寺消息。'
+  const visibleItems = items.filter(
+    (item) => enabledSources.includes(item.source) && activeSources.includes(item.source)
+  );
+  const noEnabledSources = enabledSources.length === 0;
+  const needsXiaoyinsiUpgrade = !noEnabledSources && source === 'xiaoyinsi' && xiaoyinsiNeedsUpgrade;
+  const emptyTitle = noEnabledSources
+    ? '尚未启用内容源'
+    : needsXiaoyinsiUpgrade
+      ? '需要升级消息授权'
       : sourcePending
-        ? `正在确认${sourceCatalog[source as NotificationSource].label}账号身份；完成后会自动加载消息。`
-        : source === 'all'
-          ? '登录任一支持的站点后，就能在这里统一查看消息。'
-          : `请先登录 ${sourceCatalog[source].label}，并确认账号身份。`
-    : unreadOnly
-      ? '切换“只看未读”可查看已读消息。'
-      : '原站有新消息时会显示在这里。';
+        ? '账号确认中'
+        : sourceUnknown
+          ? '账号状态暂不可确认'
+          : !sourceAvailable
+            ? '账号尚未就绪'
+            : unreadOnly
+              ? '暂无未读消息'
+              : '暂无消息';
+  const emptyText = noEnabledSources
+    ? '请前往“更多”中的“内容源”面板启用想看的站点。'
+    : !sourceAvailable
+      ? needsXiaoyinsiUpgrade
+        ? '原有读写授权仍然可用；升级授权后才能读取小隐寺消息。'
+        : sourcePending
+          ? source === 'all'
+            ? '正在确认已启用站点的账号身份；完成后会自动加载可用消息。'
+            : `正在确认${sourceCatalog[source].label}账号身份；完成后会自动加载消息。`
+          : sourceUnknown
+            ? '本次账号核对失败；消息请求已暂停，可在账号中心重试核对。'
+            : source === 'all'
+              ? '登录任一支持的站点后，就能在这里统一查看消息。'
+              : `请先登录 ${sourceCatalog[source].label}，并确认账号身份。`
+      : unreadOnly
+        ? '切换“只看未读”可查看已读消息。'
+        : '原站有新消息时会显示在这里。';
   const showMarkAll = source !== 'all' && source !== 'yaohuo' && sourceAvailable && categoryId === categories[0]?.id;
   const outcome = loading
     ? undefined
-    : !sourceAvailable
-      ? 'auth'
-      : visibleItems.length > 0
-        ? errorSources.length > 0
-          ? 'partial'
-          : 'data'
-        : errorSources.length > 0
-          ? 'error'
-          : 'empty';
+    : noEnabledSources
+      ? 'sources'
+      : !sourceAvailable
+        ? 'auth'
+        : visibleItems.length > 0
+          ? errorSources.length > 0
+            ? 'partial'
+            : 'data'
+          : errorSources.length > 0
+            ? 'error'
+            : 'empty';
   const header = (
     <View>
       <View style={styles.toolbar}>
@@ -314,6 +332,9 @@ function sourceSettingStatus(
   if (sessions[source].identityTrust === 'pending') {
     return '账号确认中；开关意图会保留';
   }
+  if (sessions[source].identityTrust === 'unknown') {
+    return '账号状态暂不可确认；开关意图会保留，可重试核对';
+  }
   if (!sessions[source].isLoggedIn || sessions[source].identityTrust !== 'confirmed') return '未登录；开关意图会保留';
   return state.sources[source].intentEnabled ? '已启用' : '已关闭';
 }
@@ -322,6 +343,7 @@ export function NotificationSettingsScreen({
   backgroundEnabled,
   backgroundError,
   busy,
+  enabledSources,
   permission,
   sessions,
   state,
@@ -334,6 +356,7 @@ export function NotificationSettingsScreen({
   backgroundEnabled: boolean;
   backgroundError: string;
   busy: boolean;
+  enabledSources: readonly NotificationSource[];
   permission: NotificationPermissionState;
   sessions: SiteSessionViewModels;
   state: NotificationState;
@@ -368,7 +391,7 @@ export function NotificationSettingsScreen({
             onValueChange={onToggleGlobal}
           />
         </View>
-        {notificationSources.map((source) => (
+        {enabledSources.map((source) => (
           <View key={source} style={styles.settingRow}>
             <View style={styles.settingBody}>
               <Text style={styles.settingLabel}>{sourceCatalog[source].label}</Text>
@@ -397,6 +420,7 @@ export function NotificationSettingsScreen({
             />
           </View>
         ))}
+        {!enabledSources.length ? <Text style={styles.settingMeta}>尚未启用内容源；通知开关意图会保留。</Text> : null}
       </View>
       {state.globalEnabled && permission === 'denied' ? (
         <View style={styles.permissionBox} accessibilityLiveRegion="polite">

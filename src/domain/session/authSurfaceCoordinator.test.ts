@@ -85,6 +85,20 @@ describe('auth surface coordinator', () => {
     });
   });
 
+  it('[REG-SOURCE-010] closes a disabled source surface without starting reconciliation', () => {
+    const registry = createAuthSurfaceRegistry();
+    beginAuthSurface(registry, {
+      source: 'nodeseek',
+      surface: 'nodeseek-login',
+      identityKey: 'nodeseek:17',
+      sessionEpoch: 4
+    });
+
+    expect(finishAuthSurface(registry, 'nodeseek-login', 'source-disabled')).toMatchObject({
+      shouldReconcile: false
+    });
+  });
+
   it('[REG-ACCOUNT-031] closes every other logical surface with switch-surface before opening a new one', () => {
     const handlers = {
       'linuxdo-login': vi.fn(),

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import { useCallback, useEffect, useRef, useState } from 'react';
 
 jest.mock('@/sources/readGateway', () => ({
   checkYaohuoLogin: jest.fn(),
@@ -10,12 +9,17 @@ jest.mock('@/sources/readGateway', () => ({
 
 import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/readGateway';
 import { useAccountStatusController } from '@/features/account/useAccountStatusController';
-import { useIdentityVerificationPrompt } from '@/ui/hooks/useIdentityVerificationPrompt';
 import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
-import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { commitChangedAccountStatusQuery } from '@/features/account/sessionQueryOwnership';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
+import {
+  createSiteSessionStates,
+  createSiteSessionViewModels,
+  type AccountSessionSnapshot,
+  type SiteSessionViewModels
+} from '@/domain/session/siteSessionState';
+import { sessionSources } from '@/domain/forum/sourceCatalog';
 import type { UserProfile } from '@/domain/forum/models';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
@@ -69,19 +73,20 @@ type ReadXiaoyinsiAuthorization = (
   trace?: Parameters<Parameters<typeof useAccountStatusController>[0]['readXiaoyinsiAuthorization']>[0],
   options?: { signal?: AbortSignal }
 ) => Promise<XiaoyinsiAuthorizationReadResult>;
-type AccountStatusChanged = Parameters<typeof useAccountStatusController>[0]['onAccountStatusChanged'];
 type ReadManagedCookieHeader = NonNullable<Parameters<typeof useAccountStatusController>[0]['readManagedCookieHeader']>;
 
 type StatusTestOptions = {
   readNodeSeekCookieHeader?: () => Promise<string | undefined>;
+  sessionEpochs?: ForumSessionEpochs;
+  sessionViewModels?: SiteSessionViewModels;
 };
 
 async function renderStatusController({
+  enabledSources = sessionSources,
   sessionEpochs = initialForumSessionEpochs,
   readNodeSeekCookieHeader = jest.fn(async () => undefined),
   notify = jest.fn(),
   onAccountStatusChanged = jest.fn(),
-  onAccountIdentityRuntimeChanged = jest.fn(),
   readManagedCookieHeader = async (exactUrl: string) => {
     if (exactUrl.includes('nodeseek.com')) {
       return {
@@ -109,54 +114,53 @@ async function renderStatusController({
       at: '2026-07-20T00:00:00.000Z'
     }
   })),
-  sessionViewModels = createSiteSessionViewModels(createSiteSessionStates())
+  sessionViewModels
 }: Partial<Parameters<typeof useAccountStatusController>[0]> & StatusTestOptions = {}) {
+  if (sessionViewModels) {
+    for (const source of sessionSources) {
+      const view = sessionViewModels[source];
+      appQueryClient.setQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source), {
+        site: view.site,
+        status: view.status,
+        cookieSummary: view.cookieSummary,
+        isVerifying: view.isVerifying,
+        identityTrust: view.identityTrust,
+        ...(view.currentUser ? { currentUser: view.currentUser } : {}),
+        ...(view.lastVerifiedAt ? { lastVerifiedAt: view.lastVerifiedAt } : {}),
+        ...(view.lastError ? { lastError: view.lastError } : {})
+      });
+    }
+  }
+  const commitAccountStatusChange: Parameters<typeof useAccountStatusController>[0]['onAccountStatusChanged'] = (
+    source,
+    recoveryQueryKey
+  ) => {
+    onAccountStatusChanged(source, recoveryQueryKey);
+    resetForumSourceQueries(source, appQueryClient, recoveryQueryKey);
+  };
   const hook = await renderNativeHook(
-    ({ renderedSessionEpochs }: { renderedSessionEpochs: ForumSessionEpochs }) => {
-      const [effectiveSessionEpochs, setEffectiveSessionEpochs] = useState(renderedSessionEpochs);
-      const effectiveSessionEpochsRef = useRef(renderedSessionEpochs);
-      const externalSessionEpochsRef = useRef(renderedSessionEpochs);
-      useEffect(() => {
-        if (externalSessionEpochsRef.current === renderedSessionEpochs) {
-          return;
-        }
-        externalSessionEpochsRef.current = renderedSessionEpochs;
-        effectiveSessionEpochsRef.current = renderedSessionEpochs;
-        setEffectiveSessionEpochs(renderedSessionEpochs);
-      }, [renderedSessionEpochs]);
-      const commitAccountStatusChange = useCallback<AccountStatusChanged>((source, recoveryQueryKey, session) => {
-        onAccountStatusChanged(source, recoveryQueryKey, session);
-        const nextScope = commitChangedAccountStatusQuery(
-          source,
-          effectiveSessionEpochsRef.current,
-          recoveryQueryKey,
-          appQueryClient
-        );
-        effectiveSessionEpochsRef.current = nextScope;
-        setEffectiveSessionEpochs(nextScope);
-      }, []);
-      return useAccountStatusController({
-        sessionEpochs: effectiveSessionEpochs,
+    ({ renderedEnabledSources }: {
+      renderedSessionEpochs: ForumSessionEpochs;
+      renderedEnabledSources?: readonly (typeof sessionSources)[number][];
+    }) =>
+      useAccountStatusController({
         fetcher: jest.fn(async () => new Response('{}')),
+        enabledSources: renderedEnabledSources || enabledSources,
         linuxDoUserAgentRef: { current: 'safe-agent' },
         nodeSeekUserAgentRef: { current: 'safe-agent' },
         notify,
         onAccountStatusChanged: commitAccountStatusChange,
-        onAccountIdentityRuntimeChanged,
         readManagedCookieHeader,
-        readXiaoyinsiAuthorization,
-        sessionViewModels
-      });
-    },
+        readXiaoyinsiAuthorization
+      }),
     {
-      initialProps: { renderedSessionEpochs: sessionEpochs },
+      initialProps: { renderedSessionEpochs: sessionEpochs, renderedEnabledSources: enabledSources },
       wrapper: QueryTestWrapper
     }
   );
   return {
     hook,
     notify,
-    onAccountIdentityRuntimeChanged,
     onAccountStatusChanged,
     readXiaoyinsiAuthorization
   };
@@ -186,6 +190,183 @@ describe('account status queries', () => {
     });
   });
 
+  it('[REG-SOURCE-010] probes only enabled sources and treats disabled reconciliation as stale', async () => {
+    const { hook, readXiaoyinsiAuthorization } = await renderStatusController({
+      enabledSources: ['nodeseek']
+    });
+
+    await act(async () => {
+      await hook.result.current.refreshAccountStatus({ silent: true });
+    });
+
+    expect(mockGetCurrentUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek' }));
+    expect(mockGetCurrentUser).not.toHaveBeenCalledWith(expect.objectContaining({ source: 'linuxdo' }));
+    expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
+    expect(readXiaoyinsiAuthorization).not.toHaveBeenCalled();
+    await expect(hook.result.current.reconcileAccountStatus('linuxdo')).resolves.toEqual({ status: 'stale' });
+  });
+
+  it('[REG-SOURCE-010] starts all-disabled without probes or an identity barrier', async () => {
+    const { hook, readXiaoyinsiAuthorization } = await renderStatusController({ enabledSources: [] });
+
+    await act(async () => {
+      await hook.result.current.refreshAccountStatus({ silent: true });
+    });
+
+    expect(mockGetCurrentUser).not.toHaveBeenCalled();
+    expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
+    expect(readXiaoyinsiAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] ignores an enabled-source reorder with unchanged membership', async () => {
+    const { hook } = await renderStatusController({ enabledSources: ['linuxdo', 'nodeseek'] });
+    await act(async () => {
+      await hook.result.current.refreshAccountStatus({ silent: true });
+    });
+    jest.clearAllMocks();
+
+    await act(async () => {
+      hook.rerender({
+        renderedEnabledSources: ['nodeseek', 'linuxdo'],
+        renderedSessionEpochs: initialForumSessionEpochs
+      });
+    });
+
+    expect(mockGetCurrentUser).not.toHaveBeenCalled();
+    expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] aborts a disabled probe and requires one pending reconciliation after re-enable', async () => {
+    const firstCookie = Promise.withResolvers<string | undefined>();
+    const secondCookie = Promise.withResolvers<string | undefined>();
+    const readNodeSeekCookieHeader = jest
+      .fn<() => Promise<string | undefined>>()
+      .mockImplementationOnce(async () => firstCookie.promise)
+      .mockImplementationOnce(async () => secondCookie.promise);
+    const { hook, onAccountStatusChanged } = await renderStatusController({
+      enabledSources: ['nodeseek'],
+      readNodeSeekCookieHeader
+    });
+    let probe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+
+    await act(async () => {
+      probe = hook.result.current.reconcileAccountStatus('nodeseek');
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSources: [] });
+      firstCookie.resolve(undefined);
+      await probe;
+    });
+    expect(onAccountStatusChanged).not.toHaveBeenCalled();
+
+    await act(async () => {
+      hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSources: ['nodeseek'] });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
+
+    secondCookie.resolve(undefined);
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).not.toBe('pending')
+    );
+  });
+
+  it('[REG-SOURCE-010] preserves the trusted identity key but invalidates trust before re-enable reconciliation', async () => {
+    const reenabledCookie = Promise.withResolvers<string | undefined>();
+    const readNodeSeekCookieHeader = jest
+      .fn<() => Promise<string | undefined>>()
+      .mockResolvedValueOnce('session=trusted')
+      .mockImplementationOnce(async () => reenabledCookie.promise);
+    mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? nodeSeekUser : linuxUser));
+    const { hook } = await renderStatusController({
+      enabledSources: ['nodeseek'],
+      readNodeSeekCookieHeader
+    });
+
+    await act(async () => {
+      await hook.result.current.reconcileAccountStatus('nodeseek');
+    });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: 'confirmed'
+      })
+    );
+
+    await act(async () => {
+      hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSources: [] });
+    });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: 'unknown'
+      })
+    );
+
+    await act(async () => {
+      hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSources: ['nodeseek'] });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
+
+    reenabledCookie.resolve('session=trusted');
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed'));
+  });
+
+  it('[REG-SOURCE-010] re-enable cancels only the source query and preserves a new aggregate query', async () => {
+    const cookie = Promise.withResolvers<string | undefined>();
+    const directResult = Promise.withResolvers<string>();
+    const aggregateResult = Promise.withResolvers<string>();
+    const directAbort = jest.fn();
+    const aggregateAbort = jest.fn();
+    const { hook } = await renderStatusController({
+      enabledSources: [],
+      readNodeSeekCookieHeader: jest.fn(async () => cookie.promise)
+    });
+    const directRequest = appQueryClient
+      .fetchQuery({
+        queryKey: ['forum', 'nodeseek', 'feed', { reenabled: true }],
+        queryFn: async ({ signal }) => {
+          signal.addEventListener('abort', directAbort, { once: true });
+          return directResult.promise;
+        }
+      })
+      .catch(() => undefined);
+    const aggregateRequest = appQueryClient
+      .fetchQuery({
+        queryKey: ['forum', 'all', 'feed', { reenabled: true }],
+        queryFn: async ({ signal }) => {
+          signal.addEventListener('abort', aggregateAbort, { once: true });
+          return aggregateResult.promise;
+        }
+      })
+      .catch(() => undefined);
+    await Promise.resolve();
+
+    await act(async () => {
+      hook.rerender({
+        renderedSessionEpochs: initialForumSessionEpochs,
+        renderedEnabledSources: ['nodeseek']
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(directAbort).toHaveBeenCalledTimes(1));
+    expect(aggregateAbort).not.toHaveBeenCalled();
+
+    cookie.resolve(undefined);
+    directResult.resolve('stale source result');
+    aggregateResult.resolve('current aggregate result');
+    await act(async () => {
+      await Promise.all([directRequest, aggregateRequest]);
+    });
+  });
+
   it('[REG-FEED-010] does not cancel a safe aggregate read when the startup identity probes begin', async () => {
     const aggregateResult = Promise.withResolvers<string>();
     const aggregateAbort = jest.fn();
@@ -204,7 +385,7 @@ describe('account status queries', () => {
     });
     expect(
       Object.values(hook.result.current.accountSessionViewModels).every(
-        (session) => session.identityTrust === 'pending'
+        (session) => session.identityTrust === 'unknown'
       )
     ).toBe(true);
     let reconciliation!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
@@ -223,43 +404,7 @@ describe('account status queries', () => {
     expect(aggregateAbort).not.toHaveBeenCalled();
   });
 
-  it('[REG-FEED-011] keeps aggregate identity bootstrap pending until all four probes settle', async () => {
-    const firstNodeSeekCookie = Promise.withResolvers<string | undefined>();
-    const secondNodeSeekCookie = Promise.withResolvers<string | undefined>();
-    const { hook } = await renderStatusController({
-      readNodeSeekCookieHeader: jest
-        .fn<() => Promise<string | undefined>>()
-        .mockImplementationOnce(async () => firstNodeSeekCookie.promise)
-        .mockImplementationOnce(async () => secondNodeSeekCookie.promise)
-    });
-    expect(hook.result.current.identityReconciliationPending).toBe(true);
-    let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
-
-    await act(async () => {
-      refresh = hook.result.current.refreshAccountStatus({ silent: true });
-      await Promise.resolve();
-    });
-
-    expect(hook.result.current.identityReconciliationPending).toBe(true);
-    firstNodeSeekCookie.resolve(undefined);
-    await act(async () => {
-      await refresh;
-    });
-    expect(hook.result.current.identityReconciliationPending).toBe(false);
-
-    await act(async () => {
-      refresh = hook.result.current.refreshAccountStatus({ silent: true });
-      await Promise.resolve();
-    });
-    expect(hook.result.current.identityReconciliationPending).toBe(true);
-    secondNodeSeekCookie.resolve(undefined);
-    await act(async () => {
-      await refresh;
-    });
-    expect(hook.result.current.identityReconciliationPending).toBe(false);
-  });
-
-  it('[REG-FEED-014] ends the account barrier after five active seconds while a source remains pending', async () => {
+  it('[REG-FEED-014] settles an unowned account probe as unknown after the aggregate budget', async () => {
     jest.useFakeTimers();
     const nodeSeekCookie = Promise.withResolvers<string | undefined>();
     const { hook } = await renderStatusController({
@@ -276,22 +421,27 @@ describe('account status queries', () => {
         });
         await Promise.resolve();
       });
-      expect(hook.result.current.identityReconciliationPending).toBe(true);
-
       await act(async () => {
         await jest.advanceTimersByTimeAsync(5_000);
         await Promise.resolve();
       });
       const settledAtBudget = settled;
-      const pendingAtBudget = hook.result.current.accountSessionViewModels.nodeseek.identityTrust;
+      const trustAtBudget = appQueryClient.getQueryData<AccountSessionSnapshot>(
+        accountQueryKeys.snapshot('nodeseek')
+      )?.identityTrust;
       nodeSeekCookie.resolve(undefined);
       await act(async () => {
         await refresh;
+        await Promise.resolve();
+        await jest.advanceTimersByTimeAsync(1);
       });
 
       expect(settledAtBudget).toBe(true);
-      expect(pendingAtBudget).toBe('pending');
-      expect(hook.result.current.identityReconciliationPending).toBe(false);
+      expect(trustAtBudget).toBe('unknown');
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        identityTrust: 'unknown',
+        lastError: 'NodeSeek 账号状态检查超时，请重试。'
+      });
     } finally {
       jest.useRealTimers();
     }
@@ -376,6 +526,186 @@ describe('account status queries', () => {
     }
   });
 
+  it('[REG-ACCOUNT-041] settles a standalone probe as terminal unknown after 25 seconds of active time', async () => {
+    jest.useFakeTimers();
+    const cookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
+    const onAccountStatusChanged = jest.fn();
+    const sessions = createSiteSessionViewModels(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session'],
+          isVerifying: false,
+          currentUser: nodeSeekUser
+        }
+      })
+    );
+    const { hook } = await renderStatusController({
+      onAccountStatusChanged,
+      readManagedCookieHeader: jest.fn(async () => cookieRead.promise),
+      sessionViewModels: sessions
+    });
+    let probe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+    let settled = false;
+
+    try {
+      await act(async () => {
+        probe = hook.result.current.reconcileAccountStatus('nodeseek');
+        void probe.then(() => {
+          settled = true;
+        });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(24_999);
+      });
+      expect(settled).toBe(false);
+      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending');
+
+      let result: Awaited<typeof probe> | undefined;
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1);
+        result = await probe;
+        await Promise.resolve();
+        await jest.advanceTimersByTimeAsync(1);
+      });
+
+      expect(result).toMatchObject({
+        status: 'unknown',
+        errorInfo: { reason: 'account_probe_timeout', retryable: true }
+      });
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: 'unknown'
+      });
+      expect(hook.result.current.statusBusy).toBe(false);
+      expect(
+        appQueryClient.getQueryState(
+          accountQueryKeys.probe('nodeseek', 1)
+        )
+      ).toBeUndefined();
+
+      cookieRead.resolve({ status: 'ok', header: 'session=late' });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(mockGetCurrentUser).not.toHaveBeenCalled();
+      expect(onAccountStatusChanged).not.toHaveBeenCalled();
+      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('unknown');
+    } finally {
+      cookieRead.resolve({ status: 'ok', header: '' });
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-ACCOUNT-041] does not renew the 25 second lifecycle when a standalone caller adopts a batch probe', async () => {
+    jest.useFakeTimers();
+    const cookieRead = Promise.withResolvers<string | undefined>();
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => cookieRead.promise)
+    });
+    let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
+    let adopted!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+    let adoptedSettled = false;
+
+    try {
+      await act(async () => {
+        refresh = hook.result.current.refreshAccountStatus({ silent: true });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(4_000);
+        adopted = hook.result.current.reconcileAccountStatus('nodeseek');
+        void adopted.then(() => {
+          adoptedSettled = true;
+        });
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(20_999);
+      });
+      expect(adoptedSettled).toBe(false);
+
+      let result: Awaited<typeof adopted> | undefined;
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1);
+        result = await adopted;
+        await refresh;
+        await Promise.resolve();
+        await jest.advanceTimersByTimeAsync(1);
+      });
+      expect(result).toMatchObject({ status: 'unknown', errorInfo: { reason: 'account_probe_timeout' } });
+      expect(hook.result.current.statusBusy).toBe(false);
+    } finally {
+      cookieRead.resolve(undefined);
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-ACCOUNT-041] allows a legitimate direct plus browser fallback chain to settle at 23 seconds', async () => {
+    jest.useFakeTimers();
+    const cookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
+    mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
+    const { hook } = await renderStatusController({
+      readManagedCookieHeader: jest.fn(async () => cookieRead.promise)
+    });
+    let probe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+
+    try {
+      await act(async () => {
+        probe = hook.result.current.reconcileAccountStatus('nodeseek');
+        await jest.advanceTimersByTimeAsync(23_000);
+        cookieRead.resolve({ status: 'ok', header: 'session=safe' });
+        await probe;
+        await jest.advanceTimersByTimeAsync(0);
+      });
+
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: 'confirmed'
+      });
+    } finally {
+      cookieRead.resolve({ status: 'ok', header: '' });
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-ACCOUNT-041] lets source disable win over an imminent probe deadline', async () => {
+    jest.useFakeTimers();
+    const cookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
+    const { hook } = await renderStatusController({
+      enabledSources: ['nodeseek'],
+      readManagedCookieHeader: jest.fn(async () => cookieRead.promise)
+    });
+    let probe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+
+    try {
+      await act(async () => {
+        probe = hook.result.current.reconcileAccountStatus('nodeseek');
+        await jest.advanceTimersByTimeAsync(24_999);
+      });
+      await act(async () => {
+        hook.rerender({
+          renderedSessionEpochs: initialForumSessionEpochs,
+          renderedEnabledSources: []
+        });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1);
+      });
+
+      await expect(probe).resolves.toEqual({ status: 'stale' });
+      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('unknown');
+      expect(hook.result.current.accountSessionViewModels.nodeseek.lastError).toBeUndefined();
+      expect(hook.result.current.statusBusy).toBe(false);
+    } finally {
+      cookieRead.resolve({ status: 'ok', header: '' });
+      jest.useRealTimers();
+    }
+  });
+
   it('[REG-FEED-010] still cancels private reads when a confirmed source later becomes pending', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const { hook } = await renderStatusController({
@@ -384,7 +714,9 @@ describe('account status queries', () => {
     await act(async () => {
       await hook.result.current.reconcileAccountStatus('nodeseek');
     });
-    expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed');
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed')
+    );
 
     const privateResult = Promise.withResolvers<string>();
     const privateAbort = jest.fn();
@@ -425,6 +757,7 @@ describe('account status queries', () => {
         currentUser: linuxUser
       });
       expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        identityTrust: 'unknown',
         status: 'anonymous',
         lastError: 'NodeSeek offline'
       });
@@ -457,19 +790,13 @@ describe('account status queries', () => {
 
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.linuxdo).toMatchObject({
+        identityTrust: 'unknown',
         status: 'verified',
         isLoggedIn: false,
+        summaryLabel: '本次核对失败，可重试',
         lastError: 'linux.do 状态暂时无法确认'
       })
     );
-    expect(hook.result.current.accountIdentityChecks.linuxdo).toEqual({
-      checking: false,
-      pending: true,
-      error: {
-        kind: 'ordinary',
-        message: 'linux.do 状态暂时无法确认'
-      }
-    });
   });
 
   it('[REG-LINUXDO-007] exposes a typed Account challenge without settling the identity barrier', async () => {
@@ -498,20 +825,12 @@ describe('account status queries', () => {
         verificationRequired: true
       }
     });
-    expect(hook.result.current.accountIdentityChecks.linuxdo).toMatchObject({
-      checking: false,
-      pending: true,
-      error: {
-        kind: 'verification-required',
-        verificationRequired: true
-      }
-    });
   });
 
-  it('[REG-ACCOUNT-019] projects the linux.do current user from one authoritative session response', async () => {
+  it('[REG-ACCOUNT-042] commits the linux.do current user to the stable snapshot in one response', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('cf_clearance=verification; _t=active-session');
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'linuxdo' ? linuxUser : (null as never)));
-    const { hook } = await renderStatusController();
+    const { hook } = await renderStatusController({ enabledSources: ['linuxdo'] });
 
     await act(async () => {
       await hook.result.current.refreshAccountStatus();
@@ -520,10 +839,16 @@ describe('account status queries', () => {
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.linuxdo).toMatchObject({
         status: 'logged-in',
-        currentUser: linuxUser
+        currentUser: linuxUser,
+        identityTrust: 'confirmed',
+        canWrite: true
       })
     );
-    expect(mockGetCurrentUser).toHaveBeenCalledTimes(2);
+    expect(appQueryClient.getQueryData(accountQueryKeys.snapshot('linuxdo'))).toMatchObject({
+      currentUser: linuxUser,
+      identityTrust: 'confirmed'
+    });
+    expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
     expect(mockGetCurrentUser).toHaveBeenCalledWith(
       expect.objectContaining({
         source: 'linuxdo',
@@ -532,9 +857,13 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-031] stages a changed identity until the source scope transaction commits it', async () => {
+  it('[REG-ACCOUNT-042] commits the changed snapshot before advancing the source scope', async () => {
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? nodeSeekUser : linuxUser));
-    const onAccountStatusChanged = jest.fn();
+    const committedSnapshots: AccountSessionSnapshot[] = [];
+    const onAccountStatusChanged = jest.fn(() => {
+      const snapshot = appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'));
+      if (snapshot) committedSnapshots.push(snapshot);
+    });
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe'),
       onAccountStatusChanged
@@ -552,31 +881,15 @@ describe('account status queries', () => {
       await hook.result.current.reconcileAccountStatus('nodeseek');
     });
 
-    expect(onAccountStatusChanged).toHaveBeenCalledWith(
-      'nodeseek',
-      expect.any(Array),
-      expect.objectContaining({ currentUser: nextNodeSeekUser, status: 'logged-in' })
+    expect(onAccountStatusChanged).toHaveBeenCalledWith('nodeseek', undefined);
+    expect(committedSnapshots.at(-1)).toMatchObject({ currentUser: nextNodeSeekUser, identityTrust: 'confirmed' });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser)
     );
-    expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser);
   });
 
-  it('[REG-ACCOUNT-035] commits the runtime identity before reconciliation resolves', async () => {
-    const runtime = {
-      identityKey: 'nodeseek:anonymous',
-      pending: false
-    };
+  it('[REG-ACCOUNT-042] commits the canonical snapshot before reconciliation resolves', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
-    const onAccountIdentityRuntimeChanged = jest.fn(
-      (
-        _source: 'nodeseek' | 'linuxdo' | 'yaohuo' | 'xiaoyinsi',
-        update: { identityKey?: string; pending: boolean }
-      ) => {
-        runtime.pending = update.pending;
-        if (update.identityKey) {
-          runtime.identityKey = update.identityKey;
-        }
-      }
-    );
     const sourceFeedKey = forumQueryKeys.feed({
       feedFilter: 'postTime',
       scope: initialForumSessionEpochs,
@@ -584,7 +897,6 @@ describe('account status queries', () => {
     });
     const sourceCategoriesKey = forumQueryKeys.categories('nodeseek', initialForumSessionEpochs);
     const aggregateFeedKey = forumQueryKeys.feed({
-      identityBarriers: ['nodeseek'],
       scope: initialForumSessionEpochs,
       source: 'all'
     });
@@ -592,14 +904,15 @@ describe('account status queries', () => {
     appQueryClient.setQueryData(sourceCategoriesKey, { private: true });
     appQueryClient.setQueryData(aggregateFeedKey, { safe: true });
     const { hook, onAccountStatusChanged } = await renderStatusController({
-      onAccountIdentityRuntimeChanged,
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
     });
 
     const settled = await act(async () =>
       hook.result.current.reconcileAccountStatus('nodeseek').then((result) => ({
         result,
-        runtimeAtResolution: { ...runtime }
+        snapshotAtResolution: appQueryClient.getQueryData<AccountSessionSnapshot>(
+          accountQueryKeys.snapshot('nodeseek')
+        )
       }))
     );
 
@@ -608,59 +921,192 @@ describe('account status queries', () => {
     expect(appQueryClient.getQueryData(sourceFeedKey)).toBeUndefined();
     expect(appQueryClient.getQueryData(sourceCategoriesKey)).toBeUndefined();
     expect(appQueryClient.getQueryData(aggregateFeedKey)).toEqual({ safe: true });
-    expect(settled.runtimeAtResolution).toEqual({
-      identityKey: 'nodeseek:17',
-      pending: false
-    });
-    expect(onAccountIdentityRuntimeChanged).toHaveBeenNthCalledWith(1, 'nodeseek', { pending: true });
-    expect(onAccountIdentityRuntimeChanged).toHaveBeenLastCalledWith('nodeseek', {
-      identityKey: 'nodeseek:17',
-      pending: false
+    expect(settled.snapshotAtResolution).toMatchObject({
+      status: 'logged-in',
+      currentUser: nodeSeekUser,
+      identityTrust: 'confirmed'
     });
   });
 
-  it('[REG-ACCOUNT-035] releases stale verification workflow state after canonical identity settles', async () => {
-    appQueryClient.setQueryData(
-      forumQueryKeys.accountStatus({
-        sessionEpochs: initialForumSessionEpochs,
-        source: 'nodeseek'
-      }),
-      {
-        session: {
-          site: 'nodeseek',
-          status: 'logged-in',
-          cookieSummary: [],
-          isVerifying: false,
-          currentUser: nodeSeekUser
-        }
-      }
+  it('[REG-ACCOUNT-042] renders the Account view from the same canonical snapshot', async () => {
+    mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
+    });
+
+    await act(async () => {
+      await hook.result.current.reconcileAccountStatus('nodeseek');
+    });
+    const snapshot = appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'));
+    expect(snapshot).toMatchObject({ currentUser: nodeSeekUser, identityTrust: 'confirmed' });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: snapshot?.identityTrust,
+        canWrite: true
+      })
     );
-    const workflowStates = createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'verification-required',
-        cookieSummary: [],
-        isVerifying: false,
-        lastError: '旧验证流程'
-      }
+  });
+
+  it('[REG-ACCOUNT-035] rejects confirmed trust without a logged-in current user', async () => {
+    appQueryClient.setQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'), {
+      site: 'nodeseek',
+      status: 'anonymous',
+      cookieSummary: [],
+      isVerifying: false,
+      identityTrust: 'confirmed'
+    });
+    const { hook } = await renderStatusController();
+
+    expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+      status: 'anonymous',
+      identityTrust: 'unknown',
+      canWrite: false
+    });
+    expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toBeUndefined();
+  });
+
+  it('[REG-ACCOUNT-035] rejects none trust paired with a logged-in current user', async () => {
+    appQueryClient.setQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'), {
+      site: 'nodeseek',
+      status: 'logged-in',
+      cookieSummary: ['session'],
+      isVerifying: false,
+      currentUser: nodeSeekUser,
+      identityTrust: 'none'
+    });
+    const { hook } = await renderStatusController();
+
+    expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+      status: 'logged-in',
+      currentUser: nodeSeekUser,
+      identityTrust: 'unknown',
+      canWrite: false
+    });
+  });
+
+  it('[REG-ACCOUNT-035] makes an authoritative terminal identity win over a late probe', async () => {
+    const identity = Promise.withResolvers<UserProfile>();
+    mockGetCurrentUser.mockImplementationOnce(async () => identity.promise);
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
+    });
+    let probe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+
+    await act(async () => {
+      probe = hook.result.current.reconcileAccountStatus('nodeseek');
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockGetCurrentUser).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      expect(
+        hook.result.current.applyAccountSessionEvent({ site: 'nodeseek', type: 'cleared' })
+      ).toBe(true);
+      identity.resolve(nodeSeekUser);
+      await probe;
+    });
+
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        status: 'anonymous',
+        identityTrust: 'none'
+      })
+    );
+  });
+
+  it('[REG-SOURCE-010] ignores authoritative terminal commits after a source is disabled', async () => {
+    const { hook } = await renderStatusController({ enabledSources: [] });
+
+    expect(hook.result.current.applyAccountSessionEvent({ site: 'nodeseek', type: 'cleared' })).toBe(false);
+    expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('unknown');
+  });
+
+  it('[REG-ACCOUNT-035] clears the prior probe error when authoritative identity settles', async () => {
+    mockGetCurrentUser.mockRejectedValueOnce(new Error('offline before clear'));
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
+    });
+
+    await act(async () => {
+      await hook.result.current.reconcileAccountStatus('nodeseek');
+    });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek.lastError).toBe('offline before clear')
+    );
+
+    await act(async () => {
+      hook.result.current.applyAccountSessionEvent({ site: 'nodeseek', type: 'cleared' });
+    });
+
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.lastError).toBeUndefined());
+  });
+
+  it('[REG-ACCOUNT-035] marks the single snapshot pending when a closing-surface check begins', async () => {
+    mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
+    const { hook } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
+    });
+    await act(async () => {
+      await hook.result.current.reconcileAccountStatus('nodeseek');
+    });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed')
+    );
+
+    await act(async () => {
+      hook.result.current.beginAccountIdentityCheck('nodeseek', 7);
+    });
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
+
+    const closingIdentity = Promise.withResolvers<UserProfile>();
+    mockGetCurrentUser.mockImplementationOnce(async () => closingIdentity.promise);
+    let closingProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
+    await act(async () => {
+      closingProbe = hook.result.current.reconcileAccountStatus('nodeseek', { surfaceGeneration: 7 });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
+
+    await act(async () => {
+      closingIdentity.reject(new Error('offline after surface close'));
+      await closingProbe;
+    });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: 'unknown'
+      })
+    );
+  });
+
+  it('[REG-ACCOUNT-035] releases stale verification workflow state after canonical identity settles', async () => {
+    appQueryClient.setQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'), {
+      site: 'nodeseek',
+      status: 'logged-in',
+      cookieSummary: [],
+      isVerifying: false,
+      currentUser: nodeSeekUser,
+      identityTrust: 'unknown',
+      lastError: '旧验证流程'
     });
 
     mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
     const { hook } = await renderStatusController({
-      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe'),
-      sessionViewModels: createSiteSessionViewModels(workflowStates)
+      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
     });
-    expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending');
+    expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('unknown');
 
     await act(async () => {
       await hook.result.current.reconcileAccountStatus('nodeseek');
     });
 
-    expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
-      status: 'logged-in',
-      identityTrust: 'confirmed',
-      currentUser: nodeSeekUser
-    });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        status: 'logged-in',
+        identityTrust: 'confirmed',
+        currentUser: nodeSeekUser
+      })
+    );
   });
 
   it('[REG-ACCOUNT-031] keeps the last confirmed identity read-only while a surface is open or reconciliation is unknown', async () => {
@@ -673,43 +1119,72 @@ describe('account status queries', () => {
     await act(async () => {
       await hook.result.current.refreshAccountStatus();
     });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed')
+    );
     onAccountStatusChanged.mockClear();
 
+    const failedIdentity = Promise.withResolvers<UserProfile>();
+    mockGetCurrentUser.mockImplementationOnce(async () => failedIdentity.promise);
+    let failedProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
     await act(async () => {
-      hook.result.current.beginAccountIdentityCheck('nodeseek');
+      failedProbe = hook.result.current.reconcileAccountStatus('nodeseek');
+      await Promise.resolve();
     });
-    expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
-      currentUser: nodeSeekUser,
-      identityTrust: 'pending',
-      canWrite: false
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: 'pending',
+        canWrite: false
+      })
+    );
+
+    await act(async () => {
+      failedIdentity.reject(new Error('offline'));
+      await failedProbe;
     });
 
-    mockGetCurrentUser.mockRejectedValueOnce(new Error('offline'));
-    await act(async () => {
-      await hook.result.current.reconcileAccountStatus('nodeseek');
-    });
-
-    expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
-      currentUser: nodeSeekUser,
-      identityTrust: 'pending',
-      canWrite: false,
-      lastError: 'offline'
-    });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: 'unknown',
+        canWrite: false,
+        summaryLabel: '本次核对失败，可重试',
+        lastError: 'offline'
+      })
+    );
     expect(onAccountStatusChanged).not.toHaveBeenCalled();
 
-    mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
+    const retryIdentity = Promise.withResolvers<UserProfile>();
+    mockGetCurrentUser.mockImplementationOnce(async () => retryIdentity.promise);
+    let retry!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
     await act(async () => {
-      await hook.result.current.reconcileAccountStatus('nodeseek');
+      retry = hook.result.current.reconcileAccountStatus('nodeseek');
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: 'pending',
+        canWrite: false
+      })
+    );
+
+    await act(async () => {
+      retryIdentity.resolve(nodeSeekUser);
+      await retry;
     });
 
-    expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
-      currentUser: nodeSeekUser,
-      identityTrust: 'confirmed',
-      canWrite: true
-    });
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        currentUser: nodeSeekUser,
+        identityTrust: 'confirmed',
+        canWrite: true
+      })
+    );
   });
 
-  it('[REG-ACCOUNT-031] treats anonymous to anonymous reconciliation as unchanged', async () => {
+  it('[REG-ACCOUNT-031] reports an explicitly confirmed anonymous session without changing scope', async () => {
     mockGetCurrentUser.mockRejectedValue(
       Object.assign(new Error('未登录'), {
         loginRequired: true,
@@ -726,7 +1201,7 @@ describe('account status queries', () => {
       result = await hook.result.current.reconcileAccountStatus('nodeseek');
     });
 
-    expect(result).toMatchObject({ status: 'same' });
+    expect(result).toMatchObject({ status: 'anonymous' });
     expect(onAccountStatusChanged).not.toHaveBeenCalled();
   });
 
@@ -990,7 +1465,9 @@ describe('account status queries', () => {
 
     expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
     expect(onAccountStatusChanged).not.toHaveBeenCalled();
-    expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser);
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser)
+    );
   });
 
   it('[REG-ACCOUNT-031] invalidates a closing probe when a newer login surface opens', async () => {
@@ -1018,7 +1495,7 @@ describe('account status queries', () => {
 
     expect(mockGetCurrentUser).not.toHaveBeenCalled();
     expect(onAccountStatusChanged).not.toHaveBeenCalled();
-    expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending');
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
   });
 
   it('[REG-ACCOUNT-031] deduplicates concurrent reconciliation for the same source', async () => {
@@ -1098,15 +1575,6 @@ describe('account status queries', () => {
     appQueryClient.setQueryData(xiaoyinsiFeedKey, { private: true });
     appQueryClient.setQueryData(allFeedKey, { mixed: true });
     appQueryClient.setQueryData(linuxDoFeedKey, { untouched: true });
-    appQueryClient.setQueryData(
-      forumQueryKeys.accountStatus({
-        sessionEpochs: initialForumSessionEpochs,
-        source: 'linuxdo'
-      }),
-      {
-        session: createSiteSessionStates().linuxdo
-      }
-    );
     const states = createSiteSessionStates({
       xiaoyinsi: {
         site: 'xiaoyinsi',
@@ -1117,6 +1585,7 @@ describe('account status queries', () => {
       }
     });
     const { hook } = await renderStatusController({
+      enabledSources: ['xiaoyinsi'],
       readXiaoyinsiAuthorization: jest.fn(async () => ({
         authenticated: false,
         sessionEvent: { type: 'login-expired' as const, message: '小隐寺授权已失效' }
@@ -1157,7 +1626,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-ACCOUNT-019] does not carry an old logged-in Account result into an ordinary new credential scope', async () => {
+  it('[REG-ACCOUNT-042] keeps the Account snapshot stable when only the forum epoch changes', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
@@ -1181,10 +1650,11 @@ describe('account status queries', () => {
     });
 
     expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
-      status: 'anonymous',
-      isLoggedIn: false
+      status: 'logged-in',
+      isLoggedIn: true,
+      currentUser: nodeSeekUser,
+      identityTrust: 'confirmed'
     });
-    expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toBeUndefined();
   });
 
   it('[REG-ACCOUNT-017] preserves the last confirmed Xiaoyinsi identity when refresh fails', async () => {
@@ -1444,112 +1914,4 @@ describe('account status queries', () => {
       })
     );
   });
-});
-
-describe('linux.do foreground identity prompt', () => {
-  it('[REG-LINUXDO-007] opens once for typed CF and does not reopen after the user closes the same intent', async () => {
-    const showLinuxDoVerification = jest.fn();
-    const challenge = {
-      kind: 'verification-required' as const,
-      message: 'linux.do 需要完成 Cloudflare 验证',
-      verificationRequired: true
-    };
-    const hook = await renderNativeHook(
-      (props: { error?: typeof challenge; identityPending: boolean; intentKey: string | null }) =>
-        useIdentityVerificationPrompt({
-          ...props,
-          showVerification: showLinuxDoVerification
-        }),
-      {
-        initialProps: {
-          error: challenge,
-          identityPending: true,
-          intentKey: 'topic:linuxdo:42'
-        }
-      }
-    );
-
-    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
-    await act(async () => {
-      hook.rerender({ error: undefined, identityPending: true, intentKey: 'topic:linuxdo:42' });
-    });
-    await act(async () => {
-      hook.rerender({ error: challenge, identityPending: true, intentKey: 'topic:linuxdo:42' });
-    });
-    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      hook.rerender({ error: undefined, identityPending: false, intentKey: null });
-    });
-    await act(async () => {
-      hook.rerender({ error: challenge, identityPending: true, intentKey: 'feed:linuxdo' });
-    });
-    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(2));
-  });
-
-  it('[REG-LINUXDO-007] ignores ordinary Account failures and absent foreground intents', async () => {
-    const showLinuxDoVerification = jest.fn();
-    const hook = await renderNativeHook(
-      (props: { error?: { kind: 'ordinary'; message: string }; intentKey: string | null }) =>
-        useIdentityVerificationPrompt({
-          error: props.error,
-          identityPending: true,
-          intentKey: props.intentKey,
-          showVerification: showLinuxDoVerification
-        }),
-      {
-        initialProps: {
-          error: { kind: 'ordinary', message: 'Network request failed' },
-          intentKey: 'topic:linuxdo:42'
-        }
-      }
-    );
-
-    await act(async () => {
-      hook.rerender({
-        error: undefined,
-        intentKey: null
-      });
-    });
-    expect(showLinuxDoVerification).not.toHaveBeenCalled();
-  });
-
-  it.each(['write', 'AI', 'background'])(
-    '[REG-LINUXDO-007] does not auto-open for a %s Account result',
-    async (reason) => {
-      const showLinuxDoVerification = jest.fn();
-      const challenge = {
-        kind: 'verification-required' as const,
-        message: 'linux.do 需要完成 Cloudflare 验证',
-        verificationRequired: true
-      };
-      const hook = await renderNativeHook(
-        (props: { enabled: boolean; error?: typeof challenge; intentKey: string | null }) =>
-          useIdentityVerificationPrompt({
-            enabled: props.enabled,
-            error: props.error,
-            identityPending: true,
-            intentKey: props.intentKey,
-            showVerification: showLinuxDoVerification
-          }),
-        {
-          initialProps: {
-            enabled: false,
-            error: undefined,
-            intentKey: `topic:linuxdo:blocked-${reason}`
-          }
-        }
-      );
-
-      await waitFor(() => expect(showLinuxDoVerification).not.toHaveBeenCalled());
-      await act(async () => {
-        hook.rerender({
-          enabled: true,
-          error: challenge,
-          intentKey: `topic:linuxdo:blocked-${reason}`
-        });
-      });
-      expect(showLinuxDoVerification).not.toHaveBeenCalled();
-    }
-  );
 });

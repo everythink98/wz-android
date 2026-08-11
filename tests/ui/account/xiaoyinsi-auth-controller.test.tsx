@@ -122,7 +122,8 @@ const pending = {
 async function renderController(
   dispatchSiteSessionEvent = jest.fn(),
   notify = jest.fn(),
-  isIdentityPending = () => false
+  isIdentityPending = () => false,
+  enabled = true
 ) {
   const fetcher = jest.fn(async () => new Response('{}'));
   const readGateway = {
@@ -132,9 +133,10 @@ async function renderController(
     dispatchSiteSessionEvent,
     hook: await (async () => {
       const hook = await renderHook(
-        () => {
+        ({ renderedEnabled }: { renderedEnabled: boolean }) => {
           const auth = useXiaoyinsiAuthController({
             dispatchSiteSessionEvent,
+            enabled: renderedEnabled,
             fetcher,
             notify
           });
@@ -148,13 +150,16 @@ async function renderController(
           return { ...auth, ...level };
         },
         {
+          initialProps: { renderedEnabled: enabled },
           wrapper: ({ children }) => <QueryClientProvider client={appQueryClient}>{children}</QueryClientProvider>
         }
       );
-      await act(async () => {
-        void hook.result.current.refreshAuthorization();
-        await Promise.resolve();
-      });
+      if (enabled) {
+        await act(async () => {
+          void hook.result.current.refreshAuthorization();
+          await Promise.resolve();
+        });
+      }
       return hook;
     })(),
     notify,
@@ -188,6 +193,171 @@ describe('小隐寺授权 controller', () => {
     setDiagnosticWriter(null);
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it('[REG-SOURCE-010] does not load credentials, poll, open, or revoke while disabled', async () => {
+    const { hook } = await renderController(jest.fn(), jest.fn(), () => false, false);
+
+    await act(async () => {
+      await hook.result.current.beginAuthorization();
+      await hook.result.current.openAuthorizationBrowser();
+      await hook.result.current.refreshAuthorization();
+      await hook.result.current.revokeAuthorization();
+    });
+
+    expect(mockLoadCredentials).not.toHaveBeenCalled();
+    expect(mockPoll).not.toHaveBeenCalled();
+    expect(mockBegin).not.toHaveBeenCalled();
+    expect(mockRevoke).not.toHaveBeenCalled();
+    expect(Linking.openURL).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] stops begin authorization after disable during its first storage read', async () => {
+    const cleanup = Promise.withResolvers<boolean>();
+    const { hook } = await renderController();
+    jest.clearAllMocks();
+    mockHasCleanup.mockReturnValueOnce(cleanup.promise);
+    let begin!: ReturnType<typeof hook.result.current.beginAuthorization>;
+
+    await act(async () => {
+      begin = hook.result.current.beginAuthorization();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      hook.rerender({ renderedEnabled: false });
+    });
+    await act(async () => {
+      cleanup.resolve(false);
+      await begin;
+    });
+
+    expect(mockLoadPending).not.toHaveBeenCalled();
+    expect(mockBegin).not.toHaveBeenCalled();
+    expect(mockRetryCleanup).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] aborts the active source helper when the source is disabled', async () => {
+    const created = Promise.withResolvers<typeof pending>();
+    let helperSignal: AbortSignal | undefined;
+    const { hook } = await renderController();
+    jest.clearAllMocks();
+    mockBegin.mockImplementationOnce((dependencies) => {
+      helperSignal = dependencies?.signal;
+      return created.promise;
+    });
+    let begin!: ReturnType<typeof hook.result.current.beginAuthorization>;
+
+    await act(async () => {
+      begin = hook.result.current.beginAuthorization();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockBegin).toHaveBeenCalledTimes(1));
+    expect(helperSignal?.aborted).toBe(false);
+
+    await act(async () => {
+      hook.rerender({ renderedEnabled: false });
+    });
+    expect(helperSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      created.resolve(pending);
+      await begin;
+    });
+    expect(hook.result.current.pending).toBeNull();
+  });
+
+  it('[REG-SOURCE-010] does not open the authorization browser after disable during clipboard copy', async () => {
+    mockLoadPending.mockResolvedValue(pending);
+    const copied = Promise.withResolvers<boolean>();
+    jest.mocked(Clipboard.setStringAsync).mockReturnValueOnce(copied.promise);
+    const { hook } = await renderController();
+    await waitFor(() => expect(hook.result.current.pending).toEqual(pending));
+    jest.clearAllMocks();
+    jest.mocked(Clipboard.setStringAsync).mockReturnValueOnce(copied.promise);
+    let open!: ReturnType<typeof hook.result.current.openAuthorizationBrowser>;
+
+    await act(async () => {
+      open = hook.result.current.openAuthorizationBrowser();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      hook.rerender({ renderedEnabled: false });
+    });
+    await act(async () => {
+      copied.resolve(true);
+      await open;
+    });
+
+    expect(Linking.openURL).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] ignores an authorization-browser rejection after disable', async () => {
+    mockLoadPending.mockResolvedValue(pending);
+    const opened = Promise.withResolvers<boolean>();
+    const { hook } = await renderController();
+    await waitFor(() => expect(hook.result.current.pending).toEqual(pending));
+    jest.clearAllMocks();
+    jest.spyOn(Linking, 'openURL').mockReturnValueOnce(opened.promise);
+    let open!: ReturnType<typeof hook.result.current.openAuthorizationBrowser>;
+
+    await act(async () => {
+      open = hook.result.current.openAuthorizationBrowser();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(Linking.openURL).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      hook.rerender({ renderedEnabled: false });
+    });
+    await act(async () => {
+      opened.reject(new Error('browser unavailable'));
+      await open;
+    });
+
+    expect(hook.result.current.message).toBe('');
+  });
+
+  it('[REG-SOURCE-010] does not revoke or clear pending authorization after disable during an await', async () => {
+    mockLoadPending.mockResolvedValue(pending);
+    const credentials = Promise.withResolvers<{ apiKey: string; clientId: string } | undefined>();
+    const canceled = Promise.withResolvers<void>();
+    const { hook } = await renderController();
+    await waitFor(() => expect(hook.result.current.pending).toEqual(pending));
+    jest.clearAllMocks();
+    mockLoadCredentials.mockReturnValueOnce(credentials.promise);
+    let revoke!: ReturnType<typeof hook.result.current.revokeAuthorization>;
+
+    await act(async () => {
+      revoke = hook.result.current.revokeAuthorization();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      hook.rerender({ renderedEnabled: false });
+    });
+    await act(async () => {
+      credentials.resolve({ apiKey: 'safe', clientId: 'client' });
+      await revoke;
+    });
+    expect(mockRevoke).not.toHaveBeenCalled();
+    expect(hook.result.current.pending).toEqual(pending);
+
+    let cancel!: ReturnType<typeof hook.result.current.cancelAuthorization>;
+    await act(async () => {
+      hook.rerender({ renderedEnabled: true });
+    });
+    await act(async () => {
+      mockCancel.mockReturnValueOnce(canceled.promise);
+      cancel = hook.result.current.cancelAuthorization();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      hook.rerender({ renderedEnabled: false });
+    });
+    await act(async () => {
+      canceled.resolve();
+      await cancel;
+    });
+    expect(hook.result.current.pending).toEqual(pending);
+    expect(mockLoadPending).not.toHaveBeenCalled();
   });
 
   it('恢复进程回收前的待授权状态，并只在系统浏览器打开服务器 URI', async () => {
@@ -412,7 +582,7 @@ describe('小隐寺授权 controller', () => {
     let result: XiaoyinsiAuthorizationReadResult | undefined;
     await act(async () => {
       result = await hook.result.current.readAuthorization(undefined, {
-        signal: { aborted: false } as AbortSignal
+        signal: new AbortController().signal
       });
     });
 
@@ -440,7 +610,7 @@ describe('小隐寺授权 controller', () => {
     let result: XiaoyinsiAuthorizationReadResult | undefined;
     await act(async () => {
       result = await hook.result.current.readAuthorization(undefined, {
-        signal: { aborted: false } as AbortSignal
+        signal: new AbortController().signal
       });
     });
 
@@ -465,7 +635,7 @@ describe('小隐寺授权 controller', () => {
     let result: XiaoyinsiAuthorizationReadResult | undefined;
     await act(async () => {
       result = await hook.result.current.readAuthorization(undefined, {
-        signal: { aborted: false } as AbortSignal
+        signal: new AbortController().signal
       });
     });
 
@@ -489,6 +659,32 @@ describe('小隐寺授权 controller', () => {
 
     await waitFor(() => expect(hook.result.current.phase).toBe(expectedPhase));
     expect(hook.result.current.message).toBe(expectedMessage);
+  });
+
+  it('[REG-SOURCE-010] does not publish a terminal poll result after disable during authorization restore', async () => {
+    jest.useFakeTimers();
+    const restoreCheck = Promise.withResolvers<boolean>();
+    mockHasCleanup.mockResolvedValueOnce(false).mockReturnValueOnce(restoreCheck.promise);
+    mockLoadPending.mockResolvedValueOnce({ ...pending, intervalMs: 1 }).mockResolvedValue(undefined);
+    mockPoll.mockResolvedValueOnce({ status: 'access_denied' });
+    const { dispatchSiteSessionEvent, hook } = await renderController();
+    await waitFor(() => expect(hook.result.current.phase).toBe('waiting'));
+    dispatchSiteSessionEvent.mockClear();
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockHasCleanup).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      hook.rerender({ renderedEnabled: false });
+      restoreCheck.resolve(false);
+      await Promise.resolve();
+    });
+
+    expect(hook.result.current.phase).toBe('waiting');
+    expect(hook.result.current.message).toBe('');
+    expect(dispatchSiteSessionEvent).not.toHaveBeenCalledWith({ site: 'xiaoyinsi', type: 'cleared' });
   });
 
   it('取消待授权状态并保留明确的未授权结果', async () => {

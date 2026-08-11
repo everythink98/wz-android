@@ -181,12 +181,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `FEED-02`、`FEED-04` |
 | 用户症状 | 单站首页已经显示主题，用户下拉刷新遇到来源错误后，旧列表和下一页 cursor 被空失败响应覆盖，只剩错误提示。 |
 | 触发条件 | 首屏刷新返回 `items=[]` 与站点 `errors`；controller 在判断错误前无条件执行 response apply。分页已有失败门禁，但 `reset/nocache` 路径没有复用。 |
-| 根因 seam | `src/features/feed/useFeedController.ts` 的错误响应应用边界，位于可信 `requestBaseState` 与 `nextFeedPageState` 提交之前。 |
+| 根因 seam | `src/features/feed/useFeedController.ts` 的 `validateFeedPage` 在 Infinite Query commit 前拒绝失败响应，避免覆盖已经提交的可信 pages。 |
 | 必须保持的行为 | 单站首屏或刷新返回来源错误时不应用响应，保留原列表、页码和 cursor，并显示可重试错误。聚合首屏只有确有成功条目时才应用 partial；聚合分页继续禁止混入半页结果。 |
 | 精确失败 oracle | `tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 的 `REG-FEED-004` 先加载带下一页 cursor 的 V2EX 列表，再让同站刷新返回空错误，要求主题和 cursor 均保持；修复前两者被清空。 |
 | 最低可靠自动测试层 | `UI_PASS`：真实 hook state 必须跨两次请求验证旧列表和 cursor；只看错误 Toast 或 trace 终态不能证明可信内容未被覆盖。 |
 | Replay 或真实验收路径 | 不主动制造来源故障；正常单站下拉刷新继续只读验收，自然失败时核对旧列表仍可见。 |
-| 负向验证方式 | 恢复错误判断前的无条件 `applyFeedResponse(data)`，编号测试会收到空列表和丢失 cursor。 |
+| 负向验证方式 | 让 `validateFeedPage` 接受带来源错误的单站刷新响应，编号测试会收到空列表和丢失 cursor。 |
 | 明确不覆盖范围 | 不把不同来源、分类或排序的旧列表保留到新请求 key，也不缓存跨启动的远端 Feed。 |
 
 ## `REG-SOURCE-001` 聚合读取被单站凭据存储失败整体阻断
@@ -421,12 +421,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `FEED-02`、`FEED-04` |
 | 用户症状 | 小隐寺“最新”已加载出主题后切换“热门”，页面继续显示最新列表且不发热门请求；反向切换也可能复用旧列表。 |
 | 触发条件 | 同一小隐寺分类已有非空 Feed state，再切换 latest/hot 或其他来源筛选；控制器用请求 key 判断是否可复用。 |
-| 根因 seam | `src/domain/forum/feed.ts` 的 `feedRequestKey` 只把 linux.do、V2EX 和 NodeSeek 的筛选写入请求身份，漏掉已经拥有独立排序的小隐寺；后续 `shouldReuseFeedStateForRequest` 因而把两个筛选误判为同一请求。 |
+| 根因 seam | `src/platform/query/serverState.ts` 的 `forumQueryKeys.feed` 与 `src/features/feed/useFeedController.ts` 的 `feedFilterForRequest` 共同定义真实请求身份；旧手写 state key 曾漏掉小隐寺筛选。 |
 | 必须保持的行为 | 小隐寺来源、分类或列表筛选任一变化都必须产生独立请求身份；切换后回到首项并读取目标筛选，旧请求不得覆盖；其他来源现有复用规则不变。 |
-| 精确失败 oracle | `src/domain/forum/feed.test.ts` 的 `REG-XIAOYINSI-015` 先建立同来源同分类但 latest/hot 不同的请求 key，修复前错误返回可复用；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 使用非空响应，依次选择 hot 和 new-replies，要求 Gateway 收到各自真实筛选。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定请求 key 与状态复用规则，`UI_PASS` 固定非空真实 controller 生命周期；只测菜单常量或空列表会绕过复用分支，不能拦住本缺陷。 |
+| 精确失败 oracle | `tests/integration/query-session-contracts.test.ts` 的 `REG-XIAOYINSI-015` 直接比较真实 `forumQueryKeys.feed`，证明来源、分类或筛选任一变化都会产生不同 key；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 使用非空响应，依次选择 hot 和 new-replies，要求 Gateway 收到各自真实筛选。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定真实 Query key，`UI_PASS` 固定非空真实 controller 生命周期；只测菜单常量、旧手写 state helper 或空列表会绕过生产 seam，不能拦住本缺陷。 |
 | Replay 或真实验收路径 | Agent Live 在身份匹配的 App 中进入小隐寺，先等待“最新”请求进入明确 outcome，再切“热门”及一个“新”筛选；有数据时打开首条，无数据或权限阻碍按数据轴报告。全程只读，不固定动态标题或数量。 |
-| 负向验证方式 | 从 `feedRequestKey` 的筛选来源集合移除 `xiaoyinsi`，编号单元测试会得到相同 key，非空 controller 用例不会发出后续筛选请求。 |
+| 负向验证方式 | 从 `forumQueryKeys.feed` 删除 `feedFilter`，或让 `feedFilterForRequest` 不返回小隐寺筛选；编号测试会得到相同 key，非空 controller 用例不会发出后续筛选请求。 |
 | 明确不覆盖范围 | 不保证原站各筛选当天都有非空主题；未授权 `/new.json` 可能要求登录，该动态权限结果由 Live 验收记录，不用假数据降级成 latest。 |
 
 ## `REG-XIAOYINSI-016` 小隐寺标签候选携带 limit 后固定失败
@@ -752,10 +752,10 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 读取触发验证后，面板在用户操作前自行检测、保存或关闭；用户关闭后原 Topic 又被重新打开并立即命中 CF，形成 close/reopen 循环。 |
 | 触发条件 | 可见 WebView 的 load/message 直接驱动 pending Topic、dismissed key、verified retry 和 `InteractionManager` 关闭后导航；Cookie 保存被误当成原读取成功，或旧 WebView 消息在关闭后回流。 |
 | 根因 seam | `src/features/account/useVerificationController.ts` 的验证生命周期和 Cookie generation、QueryClient 的结构化 key / exact active observer 边界、`src/features/account/useSessionController.ts` 的隐藏 Cookie 事件语义。 |
-| 必须保持的行为 | 验证 overlay 覆盖当前页面；打开时只读取当前候选基线，不清理原站 Cookie。用户点击“检测状态”后保存当前 WebView 候选，并只在 recovery 引用未被替换且完全相同的结构化 Query key 仍有 active observer 时携带该 key、精确 `resume()` 原 Feed/Search/Topic/User/Level 首屏或分页；首屏重读，分页、Topic 回复/引用和 User 双 cursor 保留原页面基线再合并。只有原读取不再返回 CF 才关闭；仍为 CF 或普通失败时保持打开、不 remount、不递归弹窗、不自动二次重试。用户关闭取消 recovery 并忽略迟到事件；Account 手动入口没有 recovery，检测后保持打开。登录结论只来自当前文档 probe，不由 clearance 或 `_t` 名称单独推断；任何 baseline/检测失败都不删除原站 Cookie。聚合、后台 AI/预取和写操作不自动弹出或重放。 |
-| 精确失败 oracle | `src/features/account/useVerificationController.test.ts` 固定 WebView message 不自动恢复、用户每次已结算的显式检测都可真实重试、恢复期间面板可见、仍为 CF 时保持打开、same-value clearance 也能进入最终原读 oracle、`session-updated` 只在事件发布瞬间 recovery 未被替换且 exact Query key 仍 active 时携带该 key、旧 baseline/检查迟到不能覆盖新结果、原读取成功后才发送观察型 `verification-succeeded` 并关闭，以及用户关闭、closing latest-wins、迟到检查和 recovery supersede 隔离；同文件的 `REG-ACCOUNT-026` 断言明确退出不调用清理。四类带 `QueryClientProvider` 的 read controller RNTL 固定 exact key 恢复后保留分页基线；`tests/integration/source-read-contracts.test.ts` 固定非 GET 写请求不得进入隐藏 WebView；`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts` 固定隐藏读取只发送 `cookie-loaded`。 |
+| 必须保持的行为 | 验证 overlay 覆盖当前页面；打开时只读取当前候选基线，不清理原站 Cookie。用户点击“检测状态”后只用 canonical Account probe 提交一次 snapshot，并只在 recovery 引用未被替换且完全相同的结构化 Query key 仍有 active observer 时精确 `resume()` 原 Feed/Search/Topic/User/Level 首屏或分页；首屏重读，分页、Topic 回复/引用和 User 双 cursor 保留原页面基线再合并。身份未确认或仍为 CF 时保持打开、不 remount、不递归弹窗、不自动二次重试；身份确认后关闭，原页面恢复失败只记录恢复错误。用户关闭取消 recovery 并忽略迟到事件；Account 手动入口成功检测后关闭并立即显示已提交 snapshot。登录结论只来自当前文档 probe，不由 clearance 或 `_t` 名称单独推断；任何 baseline/检测失败都不删除原站 Cookie。聚合、后台 AI/预取和写操作不自动弹出或重放。 |
+| 精确失败 oracle | `src/features/account/useVerificationController.test.ts` 固定 WebView message 不自动恢复、用户每次已结算的显式检测都可真实重试、身份未确认时面板可见、same-value clearance 也能进入最终原读 oracle、`session-updated` 只在事件发布瞬间 recovery 未被替换且 exact Query key 仍 active 时携带该 key、旧 baseline/检查迟到不能覆盖新结果，以及 canonical probe 成功后不补发第二份账号成功事件；同文件的 `REG-ACCOUNT-026` 断言明确退出不调用清理。四类带 `QueryClientProvider` 的 read controller RNTL 固定 exact key 恢复后保留分页基线；`tests/integration/source-read-contracts.test.ts` 固定非 GET 写请求不得进入隐藏 WebView；`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts` 固定隐藏读取只发送 `cookie-loaded`。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定验证状态机、Query key / exact active 判定和 Cookie 事件；`UI_PASS` 通过真实 QueryClient 固定 Feed/Search/Topic/User 恢复与隐藏 WebView 交互。源码字符串、拿到 `cf_clearance`、Modal 已关闭或 App 可启动都不能证明恢复成功。 |
-| Replay 或真实验收路径 | challenge 自然出现时，在单站前台读取完成验证：原页面和已有列表保持，原请求只恢复一次，overlay 只关闭一次且不重开；Account 手动入口检测后保持打开。无法自然触发时明确记 `NOT_VERIFIED`，不得用普通页面冒充。 |
+| Replay 或真实验收路径 | challenge 自然出现时，在单站前台读取完成验证：原页面和已有列表保持，原请求只恢复一次，overlay 只关闭一次且不重开；Account 手动入口成功检测后关闭，账号中心无需手动刷新即同步。无法自然触发时明确记 `NOT_VERIFIED`，不得用普通页面冒充。 |
 | 负向验证方式 | 临时让 Cookie 保存直接关闭面板、恢复旧 pending Topic/close settle 导航、移除 suppress，或把恢复仍为 CF 当成功；`REG-LINUXDO-002` 的状态机和 controller 用例必须失败，随后还原。 |
 | 明确不覆盖范围 | 不自动重放发帖、回复、点赞、投票、收藏等写操作；不新增持久化 schema、feature flag 或外部 API；聚合来源和后台任务保持局部失败。 |
 
@@ -767,8 +767,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | linux.do 验证 Cookie 已保存，但原 Feed/Search/Topic/User 请求随后遇到普通网络或解析失败时，overlay 仍提示“页面已恢复”并关闭；写成功后的回复刷新也会被诊断为完整成功。 |
 | 触发条件 | read recovery 的返回值只有 completed/verification-required/stale，controller 在普通 catch 或来源错误分支默认返回 completed；引用帖和写后刷新还丢失了显式失败结果。 |
 | 根因 seam | `LinuxDoReadResumeOutcome`、四类 read controller、引用帖恢复以及 `useVerificationController`/`useTopicActionsController` 对恢复终态的消费边界。 |
-| 必须保持的行为 | `completed` 只表示原读取已经成功应用；普通网络、来源或解析失败必须返回 `failed`。验证面板在 failed 时保持打开并提示用户显式重试，不发送 verification-succeeded；写请求本身已成功但跟随刷新失败时保持写成功结果，同时把诊断终态记为 `partial/refresh_failed`。 |
-| 精确失败 oracle | `src/features/account/useVerificationController.test.ts` 固定 failed recovery 不关闭面板；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 固定普通恢复失败返回 failed；`tests/ui/topic/topic-session-controller.test.tsx` 固定引用帖失败精确传播；`tests/ui/topic/topic-actions-controller.test.tsx` 固定写后 failed refresh 记录 partial；Search/User 既有 recovery 用例覆盖相同 union。 |
+| 必须保持的行为 | `completed` 只表示原读取已经成功应用；普通网络、来源或解析失败必须返回 `failed`。身份确认前的失败保持验证面板并提示用户显式重试；身份已经确认后的原页面恢复失败只记录恢复错误，不补发账号成功事件或撤销 confirmed。写请求本身已成功但跟随刷新失败时保持写成功结果，同时把诊断终态记为 `partial/refresh_failed`。 |
+| 精确失败 oracle | `src/features/account/useVerificationController.test.ts` 固定 unknown probe 保持面板、confirmed 后 recovery failure 只派发 `recovery-failed`；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 固定普通恢复失败返回 failed；`tests/ui/topic/topic-session-controller.test.tsx` 固定引用帖失败精确传播；`tests/ui/topic/topic-actions-controller.test.tsx` 固定写后 failed refresh 记录 partial；Search/User 既有 recovery 用例覆盖相同 union。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：状态机、controller 返回值和写后诊断必须共同固定；仅保存到 `cf_clearance` 或看到请求结束不能证明原页面已恢复。 |
 | Replay 或真实验收路径 | 只在自然 challenge 出现时完成验证；若原读取随后普通失败，overlay 应保留并允许“检测状态”重试，原列表/详情不被假成功覆盖。写操作不为制造该状态执行。 |
 | 负向验证方式 | 把任一普通失败分支恢复为 completed，或让 verification controller 在 failed 时 dispatch success，编号测试必须关闭面板或错误记录 success 并失败。 |
@@ -812,11 +812,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 用户已经离开 Search/Feed 后，旧搜索、AI 或分类请求仍在 More 页后台重启并拉起 linux.do、NodeSeek 或妖火面板；linux.do 验证开始后 Search 从登录 key 漂移到匿名 key，旧 recovery 失活，面板随即关闭又重开；“查看等级”命中 CF 时没有精确 recovery，验证流程清掉 Level cache 后反复取消、弹出或无法落地等级。 |
 | 触发条件 | App 级 controller 长期挂载，Query 只按提交数据或筛选条件 `enabled`，没有当前 `screen` 所有权；`enabled:false` 不会中止已经执行的 Query。`verification-started` 又把 canonical 会话暂时投影为未登录，使 Search key 和 transport 参数同时切换；Level 仅做 disabled Query 的一次 `refetch`，验证控制器却无条件重置 Level cache。 |
 | 根因 seam | `useAppRuntime` 当前页面与各 route 的 `active` / 验证 overlay → Feed、Search、Account controller 的 Query 执行权；Search 的稳定认证模式 → 结构化 Query key 与 Gateway 参数；Level 的 exact active Query → `LinuxDoReadRecovery` 与 session reset 保留边界。 |
-| 必须保持的行为 | `AppNavigator` 必须把每次根页面切换同步给 `useAppRuntime`，再投影到长期挂载 route 的 `active`；Feed 主列表只在 Feed 执行，Search 主查询只在 Search 执行；共享 `all categories` 只在 Feed/Search 执行，单站 categories 只归 Feed。离开所属页面立即 cancel 在途 Query，旧结果和后续 session epoch 变化不得后台重启或拉起任一站点面板；所有 action/error 回调先确认所属页面仍在前台。linux.do overlay 打开时保留已加载主内容只读，暂停新 Search AI、标签/作者候选和 Feed categories，关闭后先完成 Account 对账，再按当前前台页面恢复；身份 barrier 期间 `canWrite`/AI 均关闭。Level 只在 More 且用户已请求时 active；首次 CF 向验证控制器交付 exact Level key 和 recovery，一次用户显式检测成功时严格只有原请求一次、resume 一次，等级落地后关闭；离开 More、用户关闭或普通失败立即 cancel/stale，resume 再次遇到 CF 时保持 recovery 可供用户显式重试但不得自动循环。验证控制器不拥有或无条件重置 Level cache；真实登录失效、退出和换号统一走 Account reconciliation 与 epoch invalidation。 |
-| 精确失败 oracle | `src/app/AppNavigator.test.ts` 固定每次根 Tab 切换都提交新的 reactive screen；`tests/ui/search/search-controller-ai.test.tsx` 固定验证中认证 key 不漂移、原 recovery Query 仍 active、离页 signal abort、scope 更新不重启、三站面板不回调，以及 AI/标签候选验证期 cancel、关闭后恢复；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 固定 Feed 离页 cancel、验证期只停 categories、不停主读取，并证明 Search 只共享 aggregate categories 而不启动 Feed；`tests/ui/account/account-controller.test.tsx` 固定 Level 首次成功为原请求 + resume 恰好两次、exact Query active、离开 More 中止、手动关闭 stale、再次 CF 不自动循环，并证明验证准备被拒绝后可再次请求；`src/features/account/useVerificationController.test.ts` 用真实 QueryClient 的 active Level observer 固定验证准备、用户显式检测、凭据保存、exact resume、等级 cache 落地和面板关闭全链路，同时证明 closing 期间排队的 Level 准备失败会回告 owner，并覆盖用户关闭、仍为 CF 和 Account 手动入口。`tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/user/user-controller-session.test.tsx` 继续固定既有 exact recovery，不得因共享 seam 修改退化。 |
+| 必须保持的行为 | `AppNavigator` 必须把每次根页面切换同步给 `useAppRuntime`，再投影到长期挂载 route 的 `active`；Feed 主列表只在 Feed 执行，Search 主查询只在 Search 执行；共享 `all categories` 只在 Feed/Search 执行，单站 categories 只归 Feed。离开所属页面立即 cancel 在途 Query，旧结果和后续 session epoch 变化不得后台重启或拉起任一站点面板；所有 action/error 回调先确认所属页面仍在前台。linux.do overlay 打开时保留已加载主内容只读，暂停新 linux.do Search AI、当前选择 linux.do 时的标签/作者候选和 Feed categories；选择其他来源时，候选只按该来源 operation ReadPlan 运行。关闭后先完成 Account 对账，再按当前前台页面恢复；身份 barrier 期间 `canWrite`/AI 均关闭。Level 只在 More 且用户已请求时 active；首次 CF 向验证控制器交付 exact Level key 和 recovery，一次用户显式检测成功时严格只有原请求一次、resume 一次，等级落地后关闭；离开 More、用户关闭或普通失败立即 cancel/stale，resume 再次遇到 CF 时保持 recovery 可供用户显式重试但不得自动循环。验证控制器不拥有或无条件重置 Level cache；真实登录失效、退出和换号统一走 Account reconciliation 与 epoch invalidation。 |
+| 精确失败 oracle | `src/app/AppNavigator.test.ts` 固定每次根 Tab 切换都提交新的 reactive screen；`tests/ui/search/search-controller-ai.test.tsx` 固定验证中认证 key 不漂移、原 recovery Query 仍 active、离页 signal abort、scope 更新不重启、三站面板不回调，以及 linux.do AI/候选验证期 cancel、关闭后恢复；`tests/ui/search/search-screen.test.tsx` 的真实 SearchRoute 用例同时固定 linux.do 候选被阻断、小隐寺候选按自身 ready ReadPlan 继续；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 固定 Feed 离页 cancel、验证期只停 categories、不停主读取，并证明 Search 只共享 aggregate categories 而不启动 Feed；`tests/ui/account/account-controller.test.tsx` 固定 Level 首次成功为原请求 + resume 恰好两次、exact Query active、离开 More 中止、手动关闭 stale、再次 CF 不自动循环，并证明验证准备被拒绝后可再次请求；`src/features/account/useVerificationController.test.ts` 用真实 QueryClient 的 active Level observer 固定验证准备、用户显式检测、凭据保存、exact resume、等级 cache 落地和面板关闭全链路，同时证明 closing 期间排队的 Level 准备失败会回告 owner，并覆盖用户关闭、仍为 CF 和 Account 手动入口。`tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/user/user-controller-session.test.tsx` 继续固定既有 exact recovery，不得因共享 seam 修改退化。 |
 | 最低可靠自动测试层 | `UI_PASS` 通过真实 QueryClient 固定 observer active、AbortSignal、页面切换、恢复次数和面板回调；`UNIT_PASS` 固定 verification/session reset 对 exact key 的保留与终态。只检查 `enabled` 值、Modal 可见、Cookie 已保存或源码字符串不能证明后台请求已经停止。 |
 | Replay 或真实验收路径 | 在不清 App 数据、Cookie 或登录态的前提下，仅于自然 challenge 出现时验收：Search 触发 CF 后只出现一次 overlay、原请求只恢复一次；保留搜索后进入 More 查看等级，诊断中不得出现后台 Search/Feed，Level 应落地且 overlay 关闭；验证期间手动关闭后 recovery 失效且不重开。无法自然触发 CF 时记 `NOT_VERIFIED`。 |
-| 负向验证方式 | 临时移除 controller 的 `screen` 门禁/显式 cancel，恢复 Search 直接读取实时 `isLoggedIn`，让 AI/categories 在 overlay 内继续执行，删除 Level recovery 或重新在 verification controller 中 reset Level cache；对应 `REG-LINUXDO-006` 用例必须出现后台调用、inactive key、第三次 Level 请求或面板回调并失败。 |
+| 负向验证方式 | 临时移除 controller 的 `screen` 门禁/显式 cancel，恢复 Search 直接读取实时 `isLoggedIn`，让 linux.do AI/categories 在 overlay 内继续执行，或恢复 overlay 对所有来源候选的全局 gate，删除 Level recovery 或重新在 verification controller 中 reset Level cache；对应 `REG-LINUXDO-006` 用例必须出现后台调用、跨来源候选被停、inactive key、第三次 Level 请求或面板回调并失败。 |
 | 明确不覆盖范围 | 不新增全局 WebView/Query 优先级调度器，不重构完整 session 状态机，不改变外部 API、持久化 schema、原生配置或写权限契约；不人为制造 Cloudflare challenge。 |
 
 ## `REG-LINUXDO-007` Account 网络探测失败后前台读取永久 Loading
@@ -827,12 +827,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 打开 linux.do Topic 后页面一直 Loading，既不请求 Topic，也不出现验证窗口；用户手动进入 linux.do 验证、保存状态并再次打开后才正常加载。 |
 | 触发条件 | canonical Account probe 在收到 HTTP Response 前以 `network_error` 结束；身份 barrier 长期保持 pending，Topic Query 被禁用，而 UI 把“无数据、无 Query 错误”误解释为 Loading。现有 CF response 检测器没有运行，因此现场不能把底层 transport 错误直接认定为 Cloudflare。 |
 | 根因 seam | exact `/session/current.json` 的 canonical Account reader → direct/hidden WebView transport → 结构化身份检查终态 → `useAccountRuntime` 前台单站 intent → Feed/Search/Topic/User Query barrier 与验证面板。 |
-| 必须保持的行为 | linux.do Account 只走 canonical `getCurrentUserProfile`，当前用户为登录、404 或明确匿名字段为退出，其余为 unknown。只有 exact GET、`owner=account`、`priority=background` 的 direct `network_error` 可进入一次 hidden WebView；timeout、cancel、HTTP、其他 URL/owner/priority 和写操作不得进入。hidden 成功提交权威身份，并以同一 direct-failure + WebView-success 证据轮换 App 读取 runtime；轮换失败不得丢弃成功身份，该 background health request 也不得被旧代取消。可信 challenge 保持 `verification-required`，普通失败保持 ordinary。身份 checking 显示“正在确认 L 站访问状态”；unknown 终态停止无限 Loading，在前台单站 Feed/Search/Topic/User 显示真实错误、重试 Account probe 和“检查 L 站状态”，旧可信内容保持只读。typed challenge 每个前台 intent 最多自动打开一次，用户关闭后同 intent 不重开；聚合、后台、AI、预取、Level 和写操作不自动弹窗。用户显式检测成功先提交 canonical identity 再关闭，barrier 释放后未启动的原 Query 自然启动一次；已启动 Query 的 exact recovery 协议不变。 |
-| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定 direct network error 后 hidden success、可信 challenge、普通失败三终态以及 timeout/cancel/foreground Account/其他 owner/URL/POST 零 fallback；hidden success 必须只轮换一次 runtime，轮换失败仍返回同一权威身份，challenge/普通失败零轮换。`tests/ui/more/network-proxy-controller.test.tsx` 与生成 Kotlin 测试另固定 background Account intent 为 `health` 且旧代轮换不取消它。`src/sources/feedRead.test.ts`、`src/sources/searchRead.test.ts`、`src/sources/sourceTopicRead.test.ts`、`src/sources/sourceUserRead.test.ts`、`src/sources/sourceAccountRead.test.ts` 固定 current user、404、明确匿名字段和普通 401/403/429 语义；`tests/ui/account/account-status-controller.test.tsx` 固定结构化 error、同 intent 单弹和 ordinary/无前台 intent 零弹；`tests/ui/topic/topic-session-controller.test.tsx` 固定 route 已激活而 Topic request=0、auto panel=0；`src/features/account/useVerificationController.test.ts` 固定 barrier 内状态入口只开面板、不重试未启动 Query；Feed/Search/Topic/User 组件测试固定 checking、terminal error、重试与检查入口。 |
-| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：transport、canonical 身份语义、intent latch、Query 次数和用户可见终态必须共同固定；App 能启动、源码字符串或只看到 Modal 都不足以证明恢复链路。 |
-| Replay 或真实验收路径 | 基于当前 revision 构建 x86_64 Release 并覆盖安装，保留 App 数据、Cookie 和登录态；正常 linux.do Topic 不误弹，返回和状态保持正确。只有自然再次出现 challenge 时才验自动弹一次、用户检测成功后原页自然加载；否则 CF 专项记 `NOT_VERIFIED`，不得清数据制造 challenge。 |
-| 负向验证方式 | 恢复重复 Account client、让普通 `network_error` 直接保持永久 pending、放宽 fallback URL/intent/reason、把 hidden 普通失败升级成 CF、让 UI 在 terminal unknown 继续 Loading，或清空 intent latch 后同页重弹；对应编号测试必须失败。 |
-| 明确不覆盖范围 | 不证明现场 direct `network_error` 的底层原因就是 Cloudflare，不绕过验证、不自动登录、不清 Cookie、不增加全局重试器或状态平台，也不改变持久化 schema、原生配置、外部 API 和写权限。 |
+| 必须保持的行为 | linux.do Account 只走 canonical `getCurrentUserProfile`，当前用户为登录、404 或明确匿名字段为退出，其余为 unknown。只有 exact GET、`owner=account`、`priority=background` 的 direct `network_error` 可进入一次 hidden WebView；timeout、cancel、HTTP、其他 URL/owner/priority 和写操作不得进入。hidden 成功提交权威身份，并以同一 direct-failure + WebView-success 证据轮换 App 读取 runtime；轮换失败不得丢弃成功身份。普通失败必须在单 probe 创建时确定、累计 25 秒 active time 的绝对终期内结算 terminal unknown。Feed/Search/Topic/User 等公开 operation 不等待该账号终态，按 `REG-SOURCE-011` 使用 `credentials: omit` 的 public lane，且不自动打开验证；AI、候选、等级、写入和通知等 strict/private operation 继续 fail-closed，并提供账号重试或检查入口。可信 challenge 只属于触发它的严格/账号 intent，每个前台 intent 最多自动打开一次，用户关闭后同 intent 不重开。用户显式检测成功先提交 canonical identity 再关闭，随后 strict operation 使用新的 authenticated scope；已经在运行的 public Query 不因账号结果被改写。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定 direct network error 后 hidden success、可信 challenge、普通失败三终态以及 timeout/cancel/foreground Account/其他 owner/URL/POST 零 fallback；hidden success 只轮换一次读取 runtime，轮换失败仍返回同一权威身份。`src/domain/session/siteSessionState.test.ts` 与 `tests/ui/account/account-status-controller.test.tsx` 固定普通失败或 never-settling probe 在创建后累计 25 秒 active time 进入 terminal unknown。`src/domain/forum/readPlan.test.ts`、`src/sources/readGatewayContract.test.ts` 与 Feed/Search/Topic/User controller tests 固定 linux.do pending/unknown 的公开读取仍发一个 native no-cookie transport、credential/Cookie/managed fallback 为 0，strict operation 为 typed blocked 且不会让页面永久 Loading。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：Account fallback/终态、ReadPlan、实际 Gateway transport、Query 次数和用户可见恢复必须共同固定；App 能启动、源码字符串或只看到 Modal 都不足以证明公开读取未被账号状态冻结。 |
+| Replay 或真实验收路径 | 基于当前 revision 构建 x86_64 Release 并覆盖安装，保留 App 数据、Cookie 和登录态；在自然账号核对或 ordinary unknown 期间打开 linux.do Feed/Search/Topic/User，公开内容必须继续结算且不误弹验证，账号中心自身显示可重试终态。只有自然出现 challenge 时才验对应严格 intent 的单次恢复；否则该轴记 `NOT_VERIFIED`，不得清数据制造 challenge。 |
+| 负向验证方式 | 恢复 source-wide identity barrier、让普通 `network_error` 永久 pending、让 public lane 读取 Cookie 或 managed fallback、放宽 Account fallback URL/intent/reason、把 ordinary 失败升级成 challenge，或在公开页面自动打开面板；对应编号及 `REG-SOURCE-011/REG-ACCOUNT-041` 测试必须失败。 |
+| 明确不覆盖范围 | 不证明现场 direct `network_error` 的底层原因就是 Cloudflare，不绕过验证、不自动登录、不清 Cookie、不增加全局状态平台，也不把 AI、候选、等级、写入或通知降级为公开能力。 |
 
 ## `REG-VERIFICATION-001` WebView 页面事件取代用户检测
 
@@ -1861,7 +1861,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 聚合 Query 中 NodeSeek、linux.do 或妖火返回 `action-required`，Search controller 的 effect 扫描全部来源结果。 |
 | 根因 seam | `src/features/search/useSearchController.ts` 的生产 effect 没有聚合门禁；旧单元测试只调用生产链路未使用的 action helper，因此在错误实现下仍通过。 |
 | 必须保持的行为 | 聚合、后台 AI 和预取只在对应来源区块显示可理解且可重试的状态，不自动打开任何登录/验证面板；用户主动执行单站前台搜索时仍可打开并精确恢复。 |
-| 精确失败 oracle | `tests/ui/search/search-controller-ai.test.tsx` 的 `REG-SEARCH-007` 通过真实 Controller 同时让 linux.do、NodeSeek 和妖火要求动作，等待五个 Query 结算后断言三个面板回调均为零。修复前 NodeSeek 回调稳定为一次。 |
+| 精确失败 oracle | `tests/ui/search/search-controller-ai.test.tsx` 的 `REG-SEARCH-007` 通过真实 Controller 同时让 linux.do、NodeSeek 和妖火要求动作，等待五个 Query 结算后断言聚合面板回调均为零；成对的妖火单站用例对同类 `login-required` 断言登录面板恰好打开一次。 |
 | 最低可靠自动测试层 | `UI_PASS`：必须运行 effect 和 Query 状态；对脱离生产链路的纯 helper 断言不构成证据。 |
 | Replay 或真实验收路径 | 搜索 → 全部；自然遇到受限来源时确认状态留在区块内且其他站继续完成。不清 Cookie 或主动制造 challenge。 |
 | 负向验证方式 | 删除 effect 的 `source === 'all'` 门禁，编号测试必须看到 NodeSeek 验证回调。 |
@@ -2505,14 +2505,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`SEARCH-01`、`SEARCH-02`、`SEARCH-04`、`TOPIC-01`、`TOPIC-03`、`USER-01`、`ACCOUNT-01`、`ACCOUNT-02`、`MORE-01`、`WRITE-01`、`WRITE-03` |
 | 用户症状 | App 读取原站 Cookie 发起请求后，服务端响应的 `Set-Cookie` 又经 React Native 默认 CookieJar 改写 WebView 会话，导致账号状态、原站页面和后续请求相互污染。若为隔离 Cookie 另建 client，还可能绕过代理 fail-closed 与既有连接资源。 |
-| 触发条件 | React Native 使用 `credentials: include` 时沿用默认双向 `ForwardingCookieHandler`；它既从 `CookieManager` 读取，也把响应 Cookie 写回。此前改为 `omit` 虽阻止写回，却同时关闭了官方按 URL 自动读取。 |
-| 根因 seam | `src/platform/network/request.ts` 的 credentials 边界与 `plugins/withNetworkProxyModule.js` 生成的共享 OkHttp client 没有共同表达“只读 WebView CookieJar”。 |
-| 必须保持的行为 | 所有经过 `fetchWithTimeout` 的 React Native 请求最终强制 `credentials: 'include'`，使 NetworkingModule 沿用受管 client；该 client 安装的 `ReadOnlyWebViewCookieHandler` 允许受管域按 URL 读取，但 `put`/`saveFromResponse` 永远 no-op。method、body、非 Cookie header、AbortSignal 和诊断 fetcher 保持原样。WebView 页面内部站点脚本继续自行管理会话。请求仍先经过 `networkProxyFetcher` 的 load/apply fail-closed 门禁，并复用原 `ProxySelector`、dispatcher 和 connection pool，不另建绕过代理的 client。 |
+| 触发条件 | managed/authenticated React Native 请求使用 `credentials: include` 时会沿用 CookieJar；默认双向 `ForwardingCookieHandler` 既从 `CookieManager` 读取，也把响应 Cookie 写回。若把所有请求统一改为 `omit`，又会错误关闭受管请求按 URL 自动读取；public ReadPlan 则本来就要求独立的无 Cookie 最终 transport。 |
+| 根因 seam | `src/platform/network/request.ts` 的受管 credentials 边界、`src/sources/readGateway.ts` 的 public `native-no-cookie` 最外层边界与 `plugins/withNetworkProxyModule.js` 生成的共享 OkHttp client 必须共同表达两条不同 lane。 |
+| 必须保持的行为 | managed/authenticated lane 经过 `fetchWithTimeout` 时将交给受管 transport 的请求初始化为 `credentials: 'include'`；该 client 安装的 `ReadOnlyWebViewCookieHandler` 允许受管域按 URL 读取，但 `put`/`saveFromResponse` 永远 no-op。public ReadPlan 的最外层 `native-no-cookie` fetcher 在最终 transport 强制 `credentials: 'omit'`，credential loader、Cookie 和 managed WebView fallback 调用为 0。两条 lane 的 method、body、非 Cookie header、AbortSignal 和诊断 fetcher保持原样。WebView 页面内部站点脚本继续自行管理会话。请求仍经过配置的网络 fetcher 与代理 load/apply fail-closed 门禁，并复用原 `ProxySelector`、dispatcher 和 connection pool，不另建绕过代理的 client。 |
 | 来源证据 | Android [`CookieManager.getCookie(url)`](https://developer.android.com/reference/android/webkit/CookieManager#getCookie(java.lang.String)) 按具体 URL 返回 Cookie；[`React Native 0.81.5 NetworkingModule`](https://github.com/facebook/react-native/blob/v0.81.5/packages/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/network/NetworkingModule.kt) 在关闭 credentials 时替换为 `CookieJar.NO_COOKIES`；默认 [`ForwardingCookieHandler`](https://github.com/facebook/react-native/blob/v0.81.5/packages/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/network/ForwardingCookieHandler.kt) 同时实现读写；OkHttp [`CookieJar`](https://square.github.io/okhttp/5.x/okhttp/okhttp3/-cookie-jar/) 将请求加载与响应保存分开。 |
-| 精确失败 oracle | `src/platform/network/request.test.ts` 让调用方传入 `credentials: omit`、body、header 和父 signal，要求最终 fetcher 覆盖为 `include` 且其余输入保持；生成的 `NetworkProxyRuntimeTest` 把响应 `Set-Cookie` 交给只读 handler，要求零写入；`tests/ui/more/network-proxy-controller.test.tsx` 阻塞 native proxy apply，要求 apply 前零 transport、完成后仍由同一 `networkProxyFetcher` 发出。 |
+| 精确失败 oracle | `src/platform/network/request.test.ts` 让调用方传入 `credentials: omit`、body、header 和父 signal，要求 `fetchWithTimeout` 交给其 fetcher 的初始化值覆盖为 `include` 且其余输入保持；`src/sources/readGatewayContract.test.ts` 要求 public ReadPlan 的最终 anonymous transport 仍为 `omit`，且 credential/Cookie/fallback 为 0。生成的 `NetworkProxyRuntimeTest` 把响应 `Set-Cookie` 交给只读 handler，要求零写入；`tests/ui/more/network-proxy-controller.test.tsx` 阻塞 native proxy apply，要求 apply 前零 transport、完成后仍由同一 `networkProxyFetcher` 发出。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS` + 原生生成/编译：request 单测固定最终参数，Kotlin 行为测试固定响应 no-op 与同 client 资源，代理 controller 固定 apply 顺序；源码字符串不能单独证明 Cookie 不写回。 |
 | Replay 或真实验收路径 | 保留 App 数据与原站会话，从 More 确认账号后依次只读进入 Search、Feed、Topic，再返回原站 WebView，原站身份不得改变。真实代理只在用户提供并明确授权配置时验证；否则代理 Live 记 `NOT_VERIFIED`。 |
-| 负向验证方式 | 恢复默认 `ForwardingCookieHandler`、实现非空 `put`、允许调用方 `omit` 关闭受管 jar，或改为平行 client/global fetch；Kotlin、request 或代理组合测试必须分别观察到响应写入、Cookie 自动读取丢失或 apply 前 transport。 |
+| 负向验证方式 | 恢复默认 `ForwardingCookieHandler`、实现非空 `put`、让 managed/authenticated lane 最终变成 `omit`、让 public lane 最终变成 `include` 或调用 credential/fallback，或改为平行 client/global fetch；Kotlin、request、Gateway 或代理组合测试必须分别观察到响应写入、受管 Cookie 自动读取丢失、公开请求携带会话或 apply 前 transport。 |
 | 明确不覆盖范围 | 不清 App 数据或 Cookie，不改 WebView 页面内 fetch，不新增代理实现，也不在没有授权配置时连接真实代理。 |
 
 ## `REG-ACCOUNT-028` 空凭据被动读取误清可信身份
@@ -2632,12 +2632,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`FEED-01`、`SEARCH-01`、`TOPIC-01`、`USER-01`、`WRITE-01`、`WRITE-02`、`WRITE-03`、`WRITE-04` |
 | 用户症状 | 登录/验证已经确认同一账号或新账号，紧接着恢复的读取或写入仍看到旧 identity/epoch；linux.do/NodeSeek 面板还可能在原 Query 已恢复时继续挂载，使恢复请求再次落入登录 surface。 |
 | 触发条件 | Account probe Promise 完成与 React effect/ref 提交之间发起恢复；或验证成功回调先调用 `refetch/fetchNextPage`，随后才关闭并卸载 WebView。 |
-| 根因 seam | canonical Account Query、runtime identity ref、auth surface registry 和恢复回调分别结算，没有一个同步的请求时刻快照；UI 可见性被误当作事后清理而不是恢复前屏障。 |
-| 必须保持的行为 | `SessionRuntimeSnapshot` 同步包含 identity、epoch、pending、auth surface 和 mode。probe 开始及 canonical same/changed/anonymous commit 必须先同步 runtime，再完成 Promise；verification workflow 只在 pending 时拥有可见状态，结算后 Account Query 恢复为唯一身份事实。NodeSeek、linux.do 都必须先关闭并卸载面板，再恢复原 Query；关闭到 renderer 真正卸载之间继续保持短暂 recovery barrier。changed 只导航到新 epoch，不重放旧身份请求；unknown/stale 保持原错误与只读状态。 |
-| 精确失败 oracle | `tests/ui/account/account-status-controller.test.tsx` 要求 reconciliation Promise resolve 时 runtime 已是新 identity 且 `pending=false`，并要求旧 verification 状态在 canonical settle 后释放；`tests/ui/account/account-controller.test.tsx` 返回完整 NodeSeek 对账结果；`src/features/account/useVerificationController.test.ts` 固定 linux.do close-first 恢复、barrier 和 original Query outcome；Feed/Search/Topic/User consumer 测试用新 epoch canary 要求零旧 scope 落地。 |
+| 根因 seam | 稳定 Account snapshot、auth surface registry 和恢复回调的提交顺序；若身份再镜像到 React ref/workflow，probe Promise 与请求时刻读取会观察不同 owner。UI 可见性被误当作事后清理而不是恢复前屏障。 |
+| 必须保持的行为 | `SessionRuntimeSnapshot` 只是从稳定 Account snapshot、当前 epoch、来源启用和 auth surface 即时组合的请求视图，不保存身份。probe 开始及 canonical same/changed/anonymous commit 必须先原子替换 snapshot，再完成 Promise；verification workflow 只在 pending 时拥有可见状态，不复制账号事实。NodeSeek、linux.do 都必须先关闭并卸载面板，再恢复原 Query；关闭到 renderer 真正卸载之间继续保持短暂 recovery barrier。changed 只导航到新内容 epoch，不重放旧身份请求；unknown/stale 保持原错误与只读状态。 |
+| 精确失败 oracle | `tests/ui/account/account-status-controller.test.tsx` 要求 reconciliation Promise resolve 及内容 epoch 回调执行时稳定 snapshot 已是新 identity 且 `pending=false`，Account Center 与同步门禁从该 snapshot 得出同一结论；`tests/ui/account/account-controller.test.tsx` 返回完整 NodeSeek 对账结果；`src/features/account/useVerificationController.test.ts` 固定 linux.do close-first 恢复、barrier 和 original Query outcome；Feed/Search/Topic/User consumer 测试用新 epoch canary 要求零旧 scope 落地。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯状态 helper 固定恢复结果，RNTL 固定 Account/验证 hook 的 Promise、卸载和 Query 生命周期。 |
 | Replay 或真实验收路径 | 保留现有登录态，自然遇到或手动打开登录/验证页后只执行账号检测与只读请求；确认面板先消失，随后原页面只恢复一次，A→A 不丢内容，换号/退出须另获授权。 |
-| 负向验证方式 | 把 runtime 更新移回 effect、让 Promise 先 resolve，或恢复回调先于 surface close；编号测试必须观察到旧 identity/epoch、重复请求或面板仍挂载。 |
+| 负向验证方式 | 恢复身份 runtime/ref 镜像、让 Promise 先于 snapshot commit resolve，或恢复回调先于 surface close；编号测试必须观察到旧 identity/epoch、重复请求或面板仍挂载。 |
 | 明确不覆盖范围 | 不自动处理 Cloudflare、不重试非幂等写入、不以关闭 UI 证明登录成功，也不授权换号、退出或真实写操作。 |
 
 ## `REG-ACCOUNT-036` 妖火多 scope SID 选择了匿名值或错误账号
@@ -2830,11 +2830,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | App 偶发进入时四个可登录站点同时显示“暂不可用”，但 V2EX 等公开列表已经正常刷出；数秒后四个错误又自行消失。 |
 | 触发条件 | 冷启动账号 Query 正在核对四站身份时，聚合 Feed、Categories 或 Search 同时开始读取。 |
 | 根因 seam | `ReadGateway` 为了暂停 pending 来源把它们传入 `unavailableSources`；聚合 adapter 正确跳过请求，却生成与真实凭据故障相同的来源错误，Gateway 返回时没有移除这些内部 barrier 错误。 |
-| 必须保持的行为 | 身份 pending 的来源不得发起新私有请求，旧私有条目也不得混入当前聚合结果，但 pending 本身不显示为来源故障；V2EX 等已成功来源立即可用。真实凭据存储错误仍按来源显示；单站 pending 读取仍明确被 barrier 拒绝。 |
-| 精确失败 oracle | `src/sources/readGatewayContract.test.ts` 的 `REG-SOURCE-007` 让 NodeSeek pending，并让 Feed、Categories、Search adapter 同时返回公开项、NodeSeek 陈旧项和 NodeSeek error；三个聚合结果都必须只保留公开项且 `errors={}`，同时仍向 adapter 传入 `unavailableSources=['nodeseek']`。`REG-SOURCE-001` 继续证明真实凭据错误没有被吞掉。 |
-| 最低可靠自动测试层 | `UNIT_PASS`：共享 Gateway 边界可确定性证明请求暂停、条目过滤与错误投影三者同时成立。 |
-| Replay 或真实验收路径 | 保留当前登录态，连续三次 force-stop 冷启动到“全部”；列表可渐进出现，但身份核对期间不得闪现四站“暂不可用”。再进入聚合搜索确认同一行为；不得清数据制造状态。 |
-| 负向验证方式 | 返回 adapter 的原始 `errors` 而不删除 pending source，编号测试会重新看到 NodeSeek 错误；删除 `unavailableSources` 则会看到 pending 站点被实际读取或陈旧条目泄漏。 |
+| 必须保持的行为 | pending/unknown 只阻止该来源的 strict/private 请求，且 typed blocked 不显示为普通来源故障；公开 Feed/Categories/Search 按 `REG-SOURCE-011` 使用 public lane 继续读取。旧 authenticated 条目、错误和 cursor 不得混入 public scope；真实公开 transport、解析或站点错误仍按来源显示。妖火等严格远程读取保持零 transport并提供可恢复账号动作。 |
+| 精确失败 oracle | `src/domain/forum/readPlan.test.ts` 与 `src/sources/readGatewayContract.test.ts` 让 NodeSeek pending/unknown，要求 Feed/Categories/Search 仍使用显式 public child plan、`credentials: omit` 且 credential/Cookie/managed fallback 为 0；authenticated 陈旧项和错误不得投影到 public scope。对妖火执行同一操作必须得到 typed blocked、transport 为 0 且不冒充普通来源错误。`REG-SOURCE-001` 继续证明真实读取错误没有被吞掉。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：共享 ReadPlan/Gateway 边界可确定性证明公开 transport、严格阻止、scope 过滤与错误投影同时成立。 |
+| Replay 或真实验收路径 | 保留当前登录态，连续冷启动到“全部”；账号核对期间公开来源可渐进结算，不得闪现“账号未知/暂停”，妖火单独显示严格账号终态。再进入聚合搜索确认同一行为；不得清数据制造状态。 |
+| 负向验证方式 | 恢复 source-wide `unavailableSources`、让 public lane 带 Cookie、把 strict blocked 投影成 ordinary error，或允许 authenticated 陈旧项进入 public scope；`REG-SOURCE-007/011` 相关测试必须出现暂停、凭据调用、错误提示或缓存泄漏。 |
 | 明确不覆盖范围 | 不隐藏真实网络、解析、凭据存储或站点错误，不自动重试第三方站点，也不允许 pending 身份读取私有数据。 |
 
 ## `REG-TOPIC-024` linux.do 回复页复用模块全局旧 stream
@@ -3144,14 +3144,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `NAV-01`、`FEED-01`、`SEARCH-01`、`LIBRARY-01`、`MORE-01`、`RELEASE-02` |
 | 用户症状 | exact-revision APK 已正常启动且稍后能显示 Feed，但 Replay 在任何旅程操作前报告 Android accessibility hierarchy 为 0 个节点；`more-readonly.ad` 等待 `main-tab-more` 时未用满 60 秒 selector timeout 就失败。 |
-| 触发条件 | fresh build 或连续 relaunch 后，SecureStore 读取与原生代理 startup gate 在慢模拟器上需要数秒；`useAppRuntime` 尚未投影 routes。 |
+| 触发条件 | fresh build 或连续 relaunch 后，ReaderData 的本地读取尚未结算；`useAppRuntime` 因而尚未投影 routes。代理 SecureStore 是否完成不参与 route readiness。 |
 | 根因 seam | `AppComposition` 在 `runtime.routes === null` 时返回空节点。snapshot helper 因前台 App 没有 meaningful accessibility node 转入 stock UIAutomator，后者等待 idle 超时，selector wait 无法继续轮询。 |
-| 必须保持的行为 | startup gate 继续 fail-closed，不提前挂载 routes 或发网络请求；等待期间显示两个静态文本节点“阅坛 / 正在启动”，状态以 `role=status`、`busy=true`、polite live region 暴露且不使用无限动画。routes 放行后由真实导航树原位替换。 |
-| 精确失败 oracle | `tests/ui/app/app-composition.test.tsx` 在 `routes=null` 时要求 header、`阅坛正在启动` busy status 和零 `ActivityIndicator`；删除 fallback、恢复 `null` 或只留动画时失败。既有 `tests/tooling/android-smoke-guard.test.ts` 继续禁止 Replay 固定 sleep 与 retry。 |
+| 必须保持的行为 | routes 只等待 ReaderData 本轮结算，不等待 proxy。等待期间显示两个静态文本节点“阅坛 / 正在启动”，状态以 `role=status`、`busy=true`、polite live region 暴露且不使用无限动画；routes 放行后由真实导航树原位替换。ReaderSettings 缺失、损坏、reject 或 3 秒超时按 `REG-DATA-007` 使用五站全开默认值，不能形成第二个启动门。proxy 仍按 `REG-PROXY-011` 在 managed network/WebView transport 前 fail-closed。 |
+| 精确失败 oracle | `tests/ui/app/app-composition.test.tsx` 在 `routes=null` 时要求 header、`阅坛正在启动` busy status 和零 `ActivityIndicator`；`tests/ui/app/app-runtime-startup.test.tsx` 固定 proxy 未完成时本地 routes 仍已发布；删除 fallback、恢复空节点、只留动画或重新把 proxy 加入 route gate 时失败。既有 `tests/tooling/android-smoke-guard.test.ts` 继续禁止 Replay 固定 sleep 与 retry。 |
 | 最低可靠自动测试层 | `UI_PASS` 固定 bootstrap 可访问语义；匹配 revision/version/APK SHA 且零 retry 的七条普通 Replay 形成 `DEVICE_REPLAY_PASS`，两者不能互相替代。 |
 | Replay 或真实验收路径 | 安装 exact-revision smoke APK，在保留数据设备运行 `npm run test:device`；每条文件独立 relaunch，直接等待自己的 `main-tab-*`，冷启动期间不得出现零节点 snapshot failure。 |
 | 负向验证方式 | 把 fallback 改回 `null` 或仅含无限动画，UI 回归先失败；在 Replay 加固定 sleep、retry 或 Feed 全局前置，既有 tooling guard 必须失败。 |
-| 明确不覆盖范围 | 不缩短 SecureStore 或代理初始化、不放宽 fail-closed、不新增启动 timeout，不把 accessibility backend 异常误报为来源网络失败。 |
+| 明确不覆盖范围 | 不放宽 proxy transport 的 fail-closed，不把 ReaderData 真损坏伪装成首次安装，也不把 accessibility backend 异常误报为来源网络失败；proxy 的 3 秒 SecureStore load deadline 与原生 apply 语义由 `REG-PROXY-011` 单独固定。 |
 
 ## `REG-PROXY-004` 原生代理切换与 bridge 销毁遗留旧连接
 
@@ -3250,12 +3250,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-04` |
 | 用户症状 | 首页或单站列表向下加载下一页后，已经滑过的主题重新出现在顶部，当前阅读位置产生明显回跳。 |
 | 触发条件 | 新分页包含活跃时间晚于旧页的主题；聚合 Feed 还会在新页落地时重新执行跨来源平衡。 |
-| 根因 seam | `src/features/feed/useFeedController.ts` 的 `mergeFeedPages` 把顺序分页交给 `mergeFeedResponses`，混淆了“单页内来源聚合”和“跨页追加”，每次分页都全量按活跃度排序并重新平衡来源。 |
+| 根因 seam | `src/features/feed/useFeedController.ts` 的 `mergeFeedPages` 必须只按页序追加并去重；旧实现曾把跨页数据重新按活跃度排序并按来源平衡。 |
 | 必须保持的行为 | 加载下一页后，加载前的 `topicKey` 序列必须仍是新序列的完整前缀；新页唯一主题只追加到末尾，重复主题保持原位置；错误继续累积，分页元数据使用最新页。显式刷新仍可采用服务端最新顺序。 |
 | 精确失败 oracle | `tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 的 `REG-FEED-008` 分别建立聚合 Feed 和 NodeSeek 两页数据，让第二页主题拥有更新的 `lastReplyAt`，要求第一页 key 顺序不变且第二页追加；修复前聚合结果变为“第三、第二、第一”，NodeSeek 结果变为“第三、第一、第二”。 |
 | 最低可靠自动测试层 | `UI_PASS`：通过真实 `useFeedController`、Infinite Query 和 `loadFeed` 固定用户可见列表顺序；只测试纯合并函数或 FlashList 配置不能覆盖本次迁移 seam。 |
 | Replay 或真实验收路径 | App 内首页“全部”和 NodeSeek“新帖子”持续单向下滑触发下一页；请求结算后，已滑过主题不得重新出现，静止时同一可见主题及纵向位置保持。再抽查 linux.do 和一个其他单站。全程只读。 |
-| 负向验证方式 | 把 `mergeFeedPages` 恢复为通过 `mergeFeedResponses` 折叠全部页面，编号测试两个参数用例都必须失败。 |
+| 负向验证方式 | 让 `mergeFeedPages` 对全部 pages 重新按活跃度排序或按来源平衡，编号测试两个参数用例都必须失败。 |
 | 明确不覆盖范围 | 不修改 Search、User 或 Topic 列表，不处理 key 顺序保持时仍存在的动态高度位移；后者若能独立复现应建立新的 UI 回归。 |
 
 ## `REG-FEED-009` 身份屏障复用可信多页时再次重排
@@ -3281,11 +3281,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 关闭并重新打开 App 时，首页偶尔先显示上次或首个请求的列表，随后退回全屏 Loading，再显示新列表；分类栏也可能同步闪空。 |
 | 触发条件 | Feed/Categories 与四站 Account bootstrap 并发，旧 Feed 或温缓存先于身份 probe 结算；随后 barrier 或 session epoch 改变 Query key。 |
 | 根因 seam | `useAccountRuntime` 与 `useAccountStatusController` 把“本 runtime 尚未确认身份”初始化成匿名且已结算；首次可信身份建立因而被误判为换号。`useFeedController` 又把所有 pending 来源都当成可复用旧可信数据；TanStack 的 disabled 单站 Query 仍返回温缓存及其错误状态，聚合 observer 在 barrier key 变化时会中止已消费 signal 的旧请求，解除或替换 barrier 后还会直接命中 `staleTime: Infinity` 的旧目标缓存。多个已确认来源同时 pending 时，单站换号清除 aggregate cache 还会连同 presentation-only 的另一站可信条目一起丢失；无 barrier 的直接 epoch 变化在新 Feed 只结算第一页或新 Categories 只返回部分来源后过早覆盖 runtime 可信快照，会在下一次 render 丢掉未变化来源的安全尾页或分类。单站 disabled Query 无数据时若把 `feedBusy` 关掉，会把身份等待误报成空列表。 |
-| 必须保持的行为 | 所有 `managedSession` 来源从 App runtime 首帧起进入按来源身份屏障；默认“全部”启动读取还必须遵守 `REG-FEED-011` 的整批身份事务，只在最终快照上执行一次聚合。首次可信身份建立只提交 canonical identity，不触发换号 epoch/reset，并移除该来源尚未受信的服务端 Query；Account canonical/probe、聚合安全投影和其他来源必须保留。普通单站身份迁移中的在途安全读取必须按自己的 barrier snapshot 结算后再切 key。未在本 runtime 成功确认的来源不得从聚合或单站 Feed/Categories 温缓存回显，也不得投影旧 outcome、通知或验证动作；只有本 runtime 已确认后再次 pending 的来源才能只读复用。Feed/Categories 用本 controller runtime 的安全展示快照承接 Query cache reset，并按新旧 epoch 只过滤变化来源；多个来源同时 pending 时，A 换号不得删除仍可信的 B。barrier 变化但 epoch 不变时保留非空安全结果；解除 barrier 时不得回退旧目标缓存，并必须重新读取完整结果。已有非空安全列表时不得回到空列表或全屏 Loading；没有安全条目时正常显示 Loading，单站身份尚未确认也不得显示“当前筛选没有匹配主题”。占位或 barrier 迁移期间必须关闭 `hasMore`，不得使用旧 cursor 分页。 |
-| 精确失败 oracle | `tests/ui/account/account-status-controller.test.tsx` 要求四站初始均为 pending，首次身份建立不触发 change/reset、只清除该来源不可信缓存并保留聚合/其他已确认来源，而已确认来源后来再次 pending 必须取消私有读取；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 要求聚合与单站温缓存私有条目零帧可见，单站旧错误不产生 outcome、通知或验证弹层，无可信单站条目时保持 Loading，在途安全读取不因 barrier 缩小而 abort/restart，解除最后 barrier 后不命中旧 Feed/Categories 快照；两个 confirmed 来源同时 pending 时，NodeSeek epoch 变化并清除 aggregate cache 后，Feed 与 Categories 都必须移除 NodeSeek、继续保留 presentation-only 的 linux.do 和安全来源。该 Feed 场景先用 `old-account-cursor` 加载旧第二页，换号后新第一页返回 `new-account-cursor`，断言新第二页只收到新 cursor。另一个无 barrier 场景在旧第二页含 V2EX 条目时直接改变 NodeSeek epoch，要求新第一页结算和普通 rerender 后该安全尾页仍存在，继续分页只使用 `direct-new-cursor`；迁移期间显式刷新失败继续保留尾页，成功则立即采用该次新 epoch 原始结果并退出稳定占位；刷新尚未结算时离开 Feed 必须取消 owner，返回后仍保留尾页且不提示“列表已更新”。对称的 Categories 场景要求相同 rerender 后 NodeSeek 分类消失、linux.do 与 V2EX 分类仍保留。没有安全条目时回到 Loading，且全部迁移期间旧分页禁用。`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts` 固定首次确认缓存对目标来源、Account、aggregate 和其他来源的隔离边界；`src/sources/readGatewayContract.test.ts` 固定 query barrier snapshot 必须成为本次 aggregate read 的 unavailable sources。旧实现分别会触发 reset/abort、回显私有温缓存或旧错误、回退旧列表且不重读、误删未变化 managed 来源、制造空占位、提交旧账号 cursor 或暴露旧 `hasMore`。 |
-| 最低可靠自动测试层 | `UI_PASS`：必须通过真实 Account/Feed controller、TanStack Query key/placeholder 和逐次 render 记录固定启动竞态；源码字符串、App 能启动或单次 Smoke 不能证明无中间空帧。 |
-| Replay 或真实验收路径 | 在 revision、APK 和设备身份匹配且不清 App 数据/Cookie 的模拟器上连续 force-stop/relaunch 至少 10 次：默认“全部”只允许 `Loading → 最终安全列表`，禁止非空列表再次退回全屏 Loading，且未确认来源旧条目不得出现。再以同 PID 热恢复确认不重置身份或重复加载；Account unknown 时只屏障该站，其他来源继续可见。 |
-| 负向验证方式 | 把初始 pending 恢复为 false、让首次身份建立走换号事务、保留首次确认前的单站 Query、直接用最新 barrier 更换在途 Query key、去掉单站条目/错误门禁、runtime 安全快照或解除 barrier 前的安全投影/stale 标记，把 disabled pending 单站视为非 busy，或在 placeholder 暴露 next cursor；编号测试必须分别观察到 reset/abort、私有缓存或旧错误泄露、旧列表回退、误报空列表、变化来源残留/未变化来源消失或额外分页。 |
+| 必须保持的行为 | `managedSession` 来源首帧的 pending 只是账号事实，不是 Feed 的全局启动屏障。每个 Feed/Categories child 由当前 enabled set、operation 和 canonical 账号快照纯派生 ReadPlan：公开 child 立即使用 public scope，妖火等 strict child 以 typed blocked 终态结算；账号批量对账不得让公开聚合回到 Loading。首次可信身份建立只提交 canonical identity，不触发伪换号 epoch/reset。authenticated 温缓存、错误、验证动作和 cursor 不得投影到 public scope；Query 只复用 enabled set、ReadPlan scope 与 epoch 仍匹配的可信页。某来源 plan/epoch 真正变化时只过滤该来源，保留其他来源的顺序与安全尾页，关闭旧 cursor 并拒绝迟到结果；已有非空安全列表不得回到空列表或全屏 Loading。 |
+| 精确失败 oracle | `tests/ui/account/account-status-controller.test.tsx` 固定 startup probe 不取消公开聚合、首次身份建立不触发 change/reset，confirmed 后再次 pending 只取消私有读取；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 的 `REG-SOURCE-011/REG-FEED-010` 固定 pending/unknown 下公开 Feed/Categories 继续结算，authenticated 温缓存与旧错误零帧投影到 public scope，ReadPlan/epoch 变化只移除失效来源、保留其他来源的安全尾页与分类，并禁用旧 cursor。`src/sources/readGatewayContract.test.ts` 固定聚合 child 显式 plan、public 凭据为 0 与迟到 scope 拒绝。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：必须通过真实 Account/Feed controller、ReadGateway、TanStack Query key/placeholder 和逐次 render 固定启动竞态；源码字符串、App 能启动或单次 Smoke 不能证明无账号冻结或跨 scope 温缓存。 |
+| Replay 或真实验收路径 | 在 revision、APK 和设备身份匹配且不清 App 数据/Cookie 的模拟器上连续 force-stop/relaunch：默认“全部”允许公开来源立即进入本次合法 outcome，妖火单独进入严格账号终态；禁止非空列表再次退回全屏 Loading、未确认 authenticated 温缓存闪现或旧 cursor 继续分页。再以同 PID 热恢复确认账号核对不重置公开列表。 |
+| 负向验证方式 | 把 startup pending 恢复成 Feed 全局 gate、允许 authenticated cache 投影到 public scope、从 Query key 删除 ReadPlan scope、去掉单站条目/错误门禁或在占位中暴露旧 cursor；编号测试必须观察到公开请求为 0、私有缓存/旧错误泄露、列表回退或额外分页。 |
 | 明确不覆盖范围 | 不增加全局 Splash、缓存持久化、FlashList offset/MVCP 补偿或新依赖；如果 topic key 序列无空档且未变化来源顺序稳定后设备仍位移，另立动态高度或布局回归。 |
 
 ## `REG-FEED-011` 整批身份对账逐站发布导致聚合请求风暴
@@ -3296,12 +3296,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | v1.3.80 启动首页时 Loading 反复出现，站点可能提示操作过于频繁；一次启动日志在 3.536 秒内完成 3 次聚合 Feed、4 次聚合 Categories 和 4 个 Account probe，对应 28 个实际 HTTP，并在首批 30 条已可见后再次出现 2 个 busy 帧。 |
 | 触发条件 | 四站 Account probe 并发但依次结算；每移除一个 identity barrier，Feed/Categories 都把中间 barrier 集合发布成新 Query key。 |
 | 根因 seam | `useAccountStatusController` 没有表达“整批身份对账事务”，`useFeedController` 又允许逐站 pending/settled 中间态成为聚合 Query 身份；为保护在途安全读取而增加的延迟 key 迁移，反而保证了多个中间请求逐个完整执行。分页的 stable append/去重只处理已返回数据，不参与发请求。 |
-| 必须保持的行为 | 首次和后续手动四站对账都由同一个 identity reconciliation transaction 拥有。事务期间不得发起聚合 Feed/Categories，也不得创建中间 barrier Query key；启动保持一段 Loading，事务结算后以最终 barrier/epoch 快照各读取一次。后续对账若最终身份 scope 未变，Feed/Categories 零额外读取且既有列表不进入 Loading；若最终 scope 改变，变化来源立即从安全投影删除，并且最多只对最终快照读取一次。聚合列表的按钮、滚动哨兵和验证恢复都不得命令式绕过事务或沿用旧 cursor；四个 Account probe 仍各站一次，单站切换、登录/验证和分页只受自己的 source-scoped barrier 约束，分页顺序与 cursor 语义不变。 |
-| 精确失败 oracle | `tests/ui/account/account-status-controller.test.tsx` 的 `REG-FEED-011` 固定首次与后续整批刷新从开始到最后一个 probe 结算都保持 transaction pending；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 让四个 barrier 分四帧依次缩小，要求事务中 Feed/Categories 调用均为 0、Query cache 只有初始 barrier 快照，结算后调用各为 1 且使用最终 unknown barrier。随后再执行一次身份不变且旧聚合页仍有 cursor 的整批对账，要求调用数仍为 1、`loadFeed()` 返回 stale、没有中间 Query key，非空列表的所有 render 均 `busy=false`、`refreshing=false`；同时固定 V2EX 单站在无关来源 epoch 变化的整批事务中仍能用自己的 cursor 加载下一页，以及身份进入 pending 前保存的单站验证恢复在后续执行时返回 stale 且不触发 transport。 |
-| 最低可靠自动测试层 | `UI_PASS`：必须通过真实 Account/Feed controller、TanStack Query cache 与逐次 render 记录固定请求次数和 Loading 连续性。 |
-| Replay 或真实验收路径 | 在匹配 revision/APK/设备身份且不清 App 数据/Cookie 的设备上连续 force-stop/relaunch；每次默认“全部”只出现一段 Loading。导出诊断日志，确认一次启动只有 4 个 Account probe、1 个聚合 Feed 和 1 个聚合 Categories controller intent；再手动刷新账号状态，身份未变时聚合 intent 不增加。 |
-| 负向验证方式 | 去掉 reconciliation transaction、允许事务中同步 barrier key、在最终 barrier 尚未写入 controller query snapshot 时提前启用 Query，或只依赖 `enabled:false` 而不关闭命令式聚合分页；编号测试必须观察到中间 Query key、第二次聚合调用、旧 cursor 请求、单站分页被误停或非空列表 busy 帧。 |
-| 明确不覆盖范围 | 一个聚合 adapter 为完成单站协议而产生的多个不同 HTTP 不算重复聚合；本回归不改变站点协议、分页、列表排序、FlashList 或滚动位置。 |
+| 必须保持的行为 | 首次和手动批量对账只有一个 Account owner，负责复用逐站 probe；Account 可以把本批状态保持为 pending 直到当前 batch 结算，但它不是业务读取门禁或持久 transaction，也不拥有 Feed/Categories 启停。账号未确认时，公开可读的 child 先以 public lane 结算；某来源随后确认已登录时，只允许该来源按真实身份切换 `public → authenticated` scope（退出或失去确认时反向切换），并形成新的请求快照。batch pending、join/adopt 与无关来源 probe 进度本身不得改变其他来源 scope、冻结公开 sibling 或停止单站分页；strict child 同样只在自己的 blocked/authenticated 事实变化时切 scope。批量 5 秒预算只停止本批等待，单站 probe 仍由创建时确定、累计 25 秒 active time 的绝对终期结算。列表按钮、分页和验证恢复只使用当前 enabled set、ReadPlan scope 与 cursor；身份未变的批量刷新不重置公开列表。 |
+| 精确失败 oracle | `tests/ui/account/account-status-controller.test.tsx` 的 `REG-FEED-011/REG-ACCOUNT-041` 固定批量对账单一 owner、probe 复用、5 秒只停止 batch wait 且 join 不延长单 probe 的绝对终期；`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 固定聚合公开 lane 可在 batch 结算前启动、无关单站分页继续可用，且真实 per-source 身份确认才允许对应 plan scope 切换。`tests/integration/query-session-contracts.test.ts` 固定 public/authenticated scope key 隔离。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：必须通过 canonical Account owner、Feed controller、ReadPlan scope、TanStack Query cache 与逐次 render 固定请求次数和 Loading 连续性。 |
+| Replay 或真实验收路径 | 在匹配 revision/APK/设备身份且不清 App 数据/Cookie 的设备上连续 force-stop/relaunch；公开来源必须在整批账号对账结算前开始。真实身份确认造成该来源 public/authenticated scope 切换时允许一次对应新读取，但 batch pending 或无关 probe 进度不得造成全局反复 Loading。导出脱敏诊断区分真实 per-source scope transition 与批量进度；身份未变的手动账号刷新不得重置公开列表。 |
+| 负向验证方式 | 重新用 reconciliation transaction 阻断公开 Feed/Categories、让 batch pending/settled 集合进入 Query key、确认登录后仍强行沿用 public scope、在 join 时重建 probe deadline，或让无关来源变化中止单站分页；编号测试必须观察到公开请求为 0、跨身份 scope 复用、中间 Query key、deadline 延长或分页被误停。 |
+| 明确不覆盖范围 | 一个聚合 adapter 为完成单站协议而产生的多个不同 HTTP 不算重复聚合；本回归不改变站点协议、分页、列表排序或滚动位置，也不把妖火等 strict operation 降级公开。 |
 
 ## `REG-SOURCE-008` 会话来源清单与 source catalog 漂移
 
@@ -3333,13 +3333,28 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把 recovery 移回 `response.ok` 分支、让 child parser 完成后立即 commit、让顶层 source 成功一次性确认所有 child、删除 Response proof、aggregate transaction、Account scope、最终 eligibility 或逐 evidence 重检，或删除更新 direct ordinal；编号测试分别出现误轮换、跨站串证据、poll mask、旧候选复活、outer 取消后轮换、后续 evidence 越权提交或主候选被辅助 direct 清除。 |
 | 明确不覆盖范围 | 不改变 fallback 触发条件、阈值、HTTP/CF/写入/取消排除语义，不新增重试，不用 diagnostics 取代业务控制流，也不把所有空结果一律视为 parse failure。 |
 
+## `REG-SOURCE-010` 内容源已隐藏但账号、聚合、后台或旧路由仍出网
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-05`；共享 `FEED-01/02/04`、`SEARCH-01..04`、`LIBRARY-01..03`、`NAV-01/02`、`TOPIC-01`、`USER-01`、`ACCOUNT-01/02`、`NOTIFY-01..03`、`DATA-01..03` |
+| 用户症状 | 用户在“更多”停用没有账号或不想看的站点后，页面虽然隐藏，该站仍被账号探测、“全部”聚合、搜索预览、后台消息或旧详情链接请求；重新启用还可能补报停用期间消息。 |
+| 触发条件 | 只在某个页面过滤静态来源菜单，或把停用误写成 anonymous/unavailable；Query、Gateway、Account、headless worker 与 route controller 没有消费同一持久化 enabled set。 |
+| 根因 seam | `sourceCatalog` 的静态能力边界、`ReaderSettings.contentSources` 的用户选择和 Account identity 被混成一个状态；请求层没有 fail-closed allowlist，排序也与请求集合共用不稳定 key。 |
+| 必须保持的行为 | Catalog 始终保留五站能力；偏好清洗未知/重复并补齐新来源。用户顺序只控制展示，canonical enabled-set 控制 Query。停用后在 credential/fetch 前拒绝 direct read，只聚合 enabled snapshot，取消旧 source/aggregate Query 并拒绝迟到提交；Account 不 probe 且保留身份材料；本机收藏/历史/关注只隐藏不删除；Topic/User/NotificationDetail 外层拦截；通知保留 intent，撤摘要并清 baseline/delivered/unread，headless 在 probe 与投递前后复核。重新启用 managed 来源先 fresh reconcile，消息首次扫描只建 baseline。 |
+| 精确失败 oracle | `src/domain/reader/contentSourcePreferences.test.ts` 与 reader store/backup tests 固定默认、清洗、全关与兼容；`src/sources/readGatewayContract.test.ts`、`src/sources/feedRead.test.ts`、`src/sources/searchRead.test.ts` 固定 credential/fetch 前拒绝及 aggregate/cursor 子集；Account controller/runtime tests 固定冷启动、停用 stale 与重新启用一次对账；`tests/ui/app/content-source-query-cleanup.test.tsx`、Feed/Search/Library/More/Account tests 与 `tests/ui/app/content-source-route-gates.test.tsx` 固定 UI、选择回退、零 refetch/零 controller；NotificationGateway/worker/background/runtime/route/screen tests 固定 allowlist、竞态撤销、清水位、旧点击和不补报。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：纯投影/请求与 worker 用 Vitest，React 生命周期、route/controller 是否挂载和跨入口展示用 Jest/RNTL。源码字符串或只看菜单隐藏不能替代。 |
+| Replay 或真实验收路径 | 在匹配 revision/APK、保留登录态与本机数据的设备记录原偏好和 `firstInstallTime`；关闭妖火后重启并覆盖首页全部、搜索全部、收藏、账号、消息、前后台恢复和旧链接，以 host 级网络 oracle 确认妖火请求为 0。重新启用后只先发生一次账号核对，随后内容恢复且通知不补旧消息；最后恢复原偏好，禁止卸载或清数据/Cookie。 |
+| 负向验证方式 | 分别移除 Gateway 前置检查、aggregate includedSources、Account enabled filter、headless 持久化 allowlist、route 外层 gate、notification cleanup 或 canonical key；对应测试必须观察到 credential/fetch/probe/controller/投递调用、隐藏数据回显、排序 refetch 或旧消息补报。 |
+| 明确不覆盖范围 | “零请求”只约束 App 管理的论坛来源请求；检查更新、代理恢复及用户主动交给系统浏览器的普通外链不属于该来源 allowlist。已经进入网络层的 HTTP 字节只能尽力 abort，但其迟到结果仍必须被拒绝。 |
+
 ## `REG-ACCOUNT-039` linux.do 身份确认后 workflow 仍停在 verifying
 
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`TOPIC-01`、`SEARCH-04` |
 | 用户症状 | canonical Account 已确认登录，但验证弹层 workflow 仍显示 verified/verifying、丢失 current user 或关闭写入；原页面恢复失败时还可能把可信身份一起降级。 |
-| 触发条件 | `verification-succeeded` 在 recovery 成功分支才派发且缺少完整登录字段，no-recovery 与恢复异常分支没有一致提交。 |
+| 触发条件 | 旧实现只在 recovery 成功分支补发不完整账号成功事件，no-recovery 与恢复异常分支没有一致提交。 |
 | 根因 seam | `src/features/account/useVerificationController.ts` 的 authoritative reconcile 与 page recovery 顺序。 |
 | 必须保持的行为 | canonical reconcile 一旦确认登录，先在所有分支提交 `loggedIn/currentUser/cookieSummary`，再尝试恢复原页；恢复失败只记录原读取错误，不否定身份。没有明确匿名证据时不得通用 `verifying → anonymous`。 |
 | 精确失败 oracle | `src/features/account/useVerificationController.test.ts` 的 `REG-ACCOUNT-039` 覆盖无 recovery、recovery 成功和 recovery 抛错，最终 reducer 均保持完整 `logged-in`。 |
@@ -4195,29 +4210,29 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `NOTIFY-03` |
 | 用户症状 | 新消息已经写入 delivered IDs，但 Android 摘要创建失败；后续后台轮次把它当作已投递，用户永远收不到该条通知。 |
-| 触发条件 | worker 在调用 `replaceDigest` 前先持久化本轮新 IDs，系统通知调用 reject 后没有释放这些 ID。 |
+| 触发条件 | worker 在调用 native-acked `presentDigest` 前先持久化本轮新 IDs，系统通知调用 reject 后没有释放这些 ID。 |
 | 根因 seam | `src/platform/notifications/notificationStore.ts` 的投递记录事务与 `src/platform/notifications/notificationWorker.ts` 的系统投递失败处理。 |
-| 必须保持的行为 | record 返回仅释放本轮新 IDs 的 rollback；摘要创建或 identifier 保存失败时 worker 执行 rollback，使相同远端 ID 下一轮仍可投递。其他既有 IDs、账号、来源和 baseline 不得回退。 |
-| 精确失败 oracle | `src/platform/notifications/notificationStore.test.ts` 的 `REG-NOTIFY-008` 记录 `new`、rollback 后再次记录，要求两轮都返回 `newIds=['new']`；`src/platform/notifications/notificationWorker.test.ts` 让首次 `replaceDigest` 失败、第二次成功，要求首次 delivered=0/failedSources=1，第二次 delivered=1 且系统调用共两次。 |
+| 必须保持的行为 | worker 在 native ack 前只做纯预览，不写 delivered IDs 或 identifier；ack 后用一次 compound Store update 同时提交两者。native present reject、compound commit reject 或后续旧槽 exact dismiss reject 都使相同远端 ID 下一轮仍可投递；rollback 精确恢复提交前的 baseline、完整水位和 previous identifier，不得只过滤本轮 ID 而丢失 200-ID cap 截掉的旧尾部。 |
+| 精确失败 oracle | `src/platform/notifications/notificationWorker.test.ts` 的 `REG-NOTIFY-008/024` 让首次 native present reject、第二次 Store commit reject、第三次成功，要求前两轮均未消耗远端 ID；deferred native ack 未结算时 Store 两字段保持原值，ack 后只有一次 compound write。`src/platform/notifications/notificationStore.test.ts` 固定 rollback 后同一 ID 可重试，并用 200 个旧 ID + 1 个新 ID 证明 rollback 逐项恢复完整旧水位。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：确定性 store/worker 测试固定两阶段投递；只检查最终 AsyncStorage 或一次成功通知不能证明失败可重试。 |
 | Replay 或真实验收路径 | 不在真实设备故意破坏系统通知服务。一次性 AVD 可在可控 fake/native harness 补验，但本轮未执行时记 `NOT_VERIFIED`；无需真实站点消息。 |
-| 负向验证方式 | 删除 rollback、失败时保留本轮新 IDs，或 rollback 删除全部历史 IDs，编号测试必须失败或引入重复通知。 |
-| 明确不覆盖范围 | 不增加同轮重试、全局 retry 或云端队列；系统已经显示摘要但 identifier 保存失败时仍以“可重试优先”处理。 |
+| 负向验证方式 | 恢复 native ack 前先写 delivered IDs、把 identifier 拆成第二次写入、失败时保留本轮新 IDs，或 rollback 只做 `filter(newIds)`，编号测试必须失败。 |
+| 明确不覆盖范围 | 不增加同轮重试、全局 retry、pending log 或云端队列；native ack 后、compound commit 前强杀允许下轮重复覆盖，但不能永久漏报。 |
 
 ## `REG-NOTIFY-009` 后台记录后关闭开关或换号仍发送摘要
 
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `NOTIFY-03`；共享账号隔离 |
-| 用户症状 | 后台扫描已经记录新 ID 后，用户立即关闭全局/单站通知或切换账号，旧轮次仍可能发出摘要，并把旧 identifier 写回已关闭或新账号状态。 |
-| 触发条件 | worker 只在轮次开始读取一次 state，record 与系统发送之间存在 TOCTOU；identifier 保存也未再次绑定开关和 identity。 |
-| 根因 seam | `src/platform/notifications/notificationWorker.ts` 的 post-record 提交门禁，以及 `notificationStore.setNotificationIdentifier` 的 identity/intent 条件写入。 |
-| 必须保持的行为 | record 后、系统发送前重新读取最新 state；全局关闭、来源关闭或 identity 不一致时 rollback 本轮 IDs并零通知。identifier 仅在全局/来源仍启用且 identity 完全相同时保存，不能复活被清除的状态。 |
-| 精确失败 oracle | `src/platform/notifications/notificationWorker.test.ts` 的参数化 `REG-NOTIFY-009` 在 record 后分别关闭全局、关闭来源和改为 `nodeseek:8`，要求 delivered=0、`replaceDigest=0`、`setIdentifier=0`；`src/platform/notifications/notificationStore.test.ts` 固定同三种状态下 stale identifier 不落盘。 |
+| 用户症状 | 后台扫描或 native 展示期间，用户立即关闭全局/单站通知或切换账号，旧轮次仍可能把 delivered IDs 与旧 identifier 写回已关闭或新账号状态。 |
+| 触发条件 | worker 只在轮次开始读取一次 state；native ack 与 Store commit 之间存在 TOCTOU，或 Store commit 没有同时绑定开关、identity、expected new IDs 与 previous identifier。 |
+| 根因 seam | `src/platform/notifications/notificationWorker.ts` 的 ack 后 currentness 门禁，以及 `notificationStore.recordNotificationDelivery` 的 compound CAS。 |
+| 必须保持的行为 | native present 前后都复核 canonical private access；ack 后 compound commit 只有全局/来源仍启用、identity、expected new IDs 与 previous identifier 全部匹配才原子提交 delivered IDs + identifier。任一不匹配都保持 Store 原值并 strict exact-dismiss staged 槽，不能复活被清除的状态。 |
+| 精确失败 oracle | `src/platform/notifications/notificationWorker.test.ts` 的参数化 `REG-NOTIFY-009` 在 native ack 后、compound commit 前分别关闭全局、关闭来源和改为 `nodeseek:8`，要求 delivered=0、staged exact dismiss 一次且 Store 两字段不变；`src/platform/notifications/notificationStore.test.ts` 固定同三种状态下 compound commit 返回 `committed=false`。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：可控依赖在精确竞态点改变 state；普通设备轮询或只测关闭按钮无法稳定覆盖该窗口。 |
 | Replay 或真实验收路径 | 不用真实消息和主账号制造竞态。一次性 AVD 只补权限/摘要常规路径；该精确竞态以自动测试为最低证据，真实未执行记 `NOT_VERIFIED`。 |
-| 负向验证方式 | 删除 post-record reload、使用轮次初始 state、让 `setNotificationIdentifier` 无条件写入，或 mismatch 时仍 schedule，任一编号测试必须失败。 |
-| 明确不覆盖范围 | 不取消已经由 Android 成功显示的历史摘要，不承诺与 OS 调度绝对原子；只保证 App 在系统发送前最后一次可控提交点 fail-closed。 |
+| 负向验证方式 | 删除 ack 后 currentness、使用轮次初始 state、拆开 delivered IDs 与 identifier 写入，或 compound mismatch 时不撤 staged 槽，任一编号测试必须失败。 |
+| 明确不覆盖范围 | 不取消已经由 Android 成功显示的历史摘要，不承诺跨进程与 OS UI 绝对原子；以 Store current 和确定性双槽在下轮自愈。 |
 
 ## `REG-NOTIFY-010` 妖火消息列表与详情混入删除动作或聊天历史
 
@@ -4435,14 +4450,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `NOTIFY-03`；共享 Android 摘要与账号隐私 |
 | 用户症状 | 用户关闭通知或切换账号后，已经清除的旧账号摘要又出现在通知栏；旧 worker 还可能消耗该条投递 ID，之后无法正确重试。 |
-| 触发条件 | worker 只在调用 Android 前复核状态；Android schedule 与 identifier 保存之间发生关闭/换号时，没有发送后的补偿检查。所有账号共用同一个 source identifier 还会让旧账号清理误删新账号摘要。 |
-| 根因 seam | `src/platform/notifications/notificationWorker.ts` 的投递提交阶段与 `src/platform/notifications/notificationSystem.ts` 的 per-source identifier。 |
-| 必须保持的行为 | 每条摘要 identifier 同时绑定来源和公开 identity key；Android 返回后再次读取最新开关与身份。状态已变时撤销本次 exact identifier、释放本轮 ID 且不保存 identifier；schedule 或 identifier 保存失败也执行同一补偿。退出时继续兼容清理旧版 source-only identifier。 |
-| 精确失败 oracle | `src/platform/notifications/notificationWorker.test.ts` 的 `REG-NOTIFY-024` 在 Android 展示回调中关闭全局开关，要求最终 presented 集合为空、rollback 一次且 identifier 不保存；修复前 delivered=1 且摘要残留。`src/platform/notifications/notificationSystem.test.ts` 固定账号级 identifier 与旧 identifier 清理。 |
-| 最低可靠自动测试层 | `UNIT_PASS`：worker 状态机和 Expo system adapter 都要覆盖；只检查发送前门禁会遗漏 schedule 返回后的窗口。 |
+| 触发条件 | Expo `scheduleNotificationAsync()` 先 resolve，真正的 Android receive/present 后续才执行；worker 若把 schedule 当成展示完成，关闭、换号或 deadline cleanup 可能先撤一个尚不存在的 staged tag，迟到的 native `notify()` 随后把私有摘要复活。另一个漏报窗口是 worker 在 native ack 前持久化 delivered IDs：此时强杀会让消息永久被当作已投递。旧实现还让 native scope cancel 丢掉已经排队的 exact dismiss、transactional dismiss 复用 broad helper，且并发 worker 可对同一 A/B 槽发生 ABA rollback。 |
+| 根因 seam | `src/platform/notifications/notificationWorker.ts` 的投递 owner、`notificationStore` 的 identifier CAS、`notificationSystem` 的 strict/broad 撤销边界，以及 config plugin 生成的 native exact present/dismiss bridge 共同组成一项本机事务。 |
+| 必须保持的行为 | 每个 `source + identity` 只派生两个确定性 A/B identifier。worker 只纯预览非当前 staged identifier 与新 ID，不在 native ack 前写 Store；native bridge 复用 Expo notification builder 保留 click payload，只在 `NotificationManagerCompat.notify(identifier, 0, notification)` 返回后 resolve，并在权限或目标 channel 关闭时 reject。native present 与 exact dismiss 共用单线程 Executor，`invalidate()` graceful shutdown 并 drain 已接受任务，late notify 后的 cleanup 不会被取消或反向复活；shutdown 后新任务 reject。同身份 worker 使用进程内 single-flight。worker 在 probe 前以 Store current identifier 为真值清理 base/A/B/source-only 其他槽；notify ack 后复核 canonical private access，再以 expected new IDs、previous identifier、identity 与 intent 做一次 compound Store commit，成功后才 strict exact-dismiss 旧槽。明确 stale/撤销失败时 compound rollback 精确恢复 pre-commit baseline、完整水位和 previous identifier，rollback 成功后才只撤 staged 槽；deadline 不能启动可能失序的 rollback+dismiss：ack 后 commit pending 或已成功都保留 staged，late outcome 只有明确 false/reject 才 exact-dismiss，旧槽/orphan 交给下轮 Store-current reconcile。顶层 worker 对 settlements 做 deadline race 后 bounded 返回，但同身份 single-flight lane 继续持有到 pending commit outcome 和必要 exact dismiss 完成，下一轮不能按旧 Store 提前 reconcile。broad best-effort cleanup 不进入事务。强杀在 ack 与 commit 之间最多导致下轮重复覆盖，不能漏报；commit 后、旧槽 dismiss 前强杀由 Store current 自愈。启动/恢复只触发同一个 eligible worker，不另建 cleanup owner。 |
+| 精确失败 oracle | `src/platform/notifications/notificationWorker.test.ts` 的 `REG-NOTIFY-024` 覆盖 ack pending Store 不变、ack 后单次 compound write、commit reject、deadline 后 late present、旧槽 dismiss reject rollback、同身份并发 single-flight 与 worker 入口 crash-orphan 对账；另固定 deadline 命中 pending commit 时 bounded return 且当下 rollback/dismiss 均为 0，late true 继续为 0、late false/reject 才 exact-dismiss，以及 commit success 后 post-check deadline 仍不 rollback/dismiss。W1 deadline 已返回后立即启动同身份 W2，pending commit settle 前 W2 reconcile/probe 必须为 0；late true 后 W2 才以 staged current 进入，late false/reject 则阻塞 staged dismiss 并证明 dismiss resolve 前 W2 仍为 0。`src/platform/notifications/notificationStore.test.ts` 固定 compound CAS、stale rollback 和 200-ID cap 后精确恢复；`src/platform/notifications/notificationSystem.test.ts` 固定 strict exact 不删 legacy 与 Store-current slot reconciliation；fresh prebuild 生成的 `NotificationDigestExecutorTest.kt` 阻塞 present、排入 dismiss、invalidate 后释放，要求 `notify → cancel` 且两个 Promise 等价物都结算，并固定 shutdown 后 execute reject。`tests/tooling/release-packaging.test.ts` 固定生成 bridge 与 native test 形态。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + native unit + native compile：行为测试必须让 ack 前 Store 写入、只过滤 newIds 的 rollback、取消 queued dismiss、Expo schedule completion、broad swallow-errors dismiss 或缺 single-flight 真正失败；fresh Expo prebuild 后运行 `:app:testReleaseUnitTest` 与 `:app:compileReleaseKotlin`，不能用源码门禁代替生成形态的编译和生命周期 oracle。 |
 | Replay 或真实验收路径 | 一次性 AVD 可在 mock/development 注入的延迟窗口中关闭通知并检查通知栏；不要求朋友配合制造毫秒级竞态。未执行记 `NOT_VERIFIED`。 |
-| 负向验证方式 | 删除发送后 load/撤销、恢复 source-only identifier，或 identifier 保存失败不撤销，编号测试必须失败。 |
-| 明确不覆盖范围 | 不把 Android schedule 变成云端事务；目标是本机可补偿的一致性，不承诺系统 UI 零帧延迟。 |
+| 负向验证方式 | 恢复 Expo schedule 假 ack、ack 前记录 delivered IDs、把 delivered IDs 与 identifier 分两次写、deadline 后并行启动 Store rollback 与 staged dismiss、rollback 只过滤 new IDs、scope cancel/shutdownNow、同槽覆盖、展示前 dismiss old、让 present/exact dismiss 并发、transaction 调 broad helper，或删除 currentness/compound CAS/single-flight/Store-current 对账，任一编号测试必须失败。 |
+| 明确不覆盖范围 | 不把 Android 本机通知变成云端事务，不新增 persisted transaction log 或 pending 状态；强杀后 orphan 只保证在下一次 eligible worker 运行时按已知槽自愈（启动/恢复会触发该 worker），允许极端窗口重复覆盖，不允许永久漏报，也不承诺系统 UI 零帧延迟。 |
 
 ## `REG-NOTIFY-025` 消息中心可见时跳过系统通知并永久吞掉投递
 
@@ -4450,10 +4465,10 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `NOTIFY-03`；共享前台摘要展示策略 |
 | 用户症状 | App 在前台且消息中心可见时收到新回复，列表会刷新但 Android 系统通知不出现；投递 ID 已被记录，离开页面或重启后也不会补发。 |
-| 触发条件 | foreground worker 在消息中心可见时用伪 identifier 代替 `Notifications.scheduleNotificationAsync`，但仍提交水位与 identifier。 |
+| 触发条件 | foreground worker 在消息中心可见时用伪 identifier 代替 native-acked `presentSourceNotification`，但仍提交水位与 identifier。 |
 | 根因 seam | `src/features/notifications/useNotificationsRuntime.ts` 提供给共享 worker 的 foreground notification sink。 |
 | 必须保持的行为 | 用户已开启通知且权限有效时，前台所有页面（包括消息中心）发现新的 @我、回复或私信都必须调用 Android system sink；消息中心可见性只控制 60 秒刷新频率，不能改变投递提交。 |
-| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 的 `REG-NOTIFY-025` 在 worker 已启动后把消息中心设为可见，再调用该轮 system sink；`replaceSourceNotification` 必须收到 exact source/digest/identity identifier 并调用一次。修复前调用次数为 0。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 的 `REG-NOTIFY-025` 在 worker 已启动后把消息中心设为可见，再调用该轮 system sink；`presentSourceNotification` 必须收到 exact source/digest/identity identifier 并调用一次。修复前调用次数为 0。 |
 | 最低可靠自动测试层 | `UI_PASS`：必须经过 Hook ref 与异步 worker dependency；静态检查 callback 或只测固定页面状态不足。 |
 | Replay 或真实验收路径 | 匹配 APK 保持消息中心可见，由外部账号产生一条新消息，确认列表刷新且 Android 通知栏仍出现每站摘要；没有可控新消息时记 `NOT_VERIFIED`。 |
 | 负向验证方式 | 恢复任何基于 `centerVisible` 返回伪 identifier 或跳过 system sink 的分支，编号测试必须失败。 |
@@ -4947,7 +4962,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 点击很远的被回复楼层会从当前页逐页追赶，长帖产生请求风暴；即使跳到目标，中间缺失页面也可能被拼成连续列表。关系标签整块点击又会打开用户名片，用户无法单独点楼层。定位到中段后只能向下加载，编辑、删除或新回复还可能按已加载数量刷新错误页面。 |
 | 触发条件 | NodeSeek/Discourse/妖火主题包含远端楼层链接或通知携带目标，目标不在当前回复集合；列表采用无限滚动且当前缓存可能只含首屏、锚点中段或双向相邻窗口。V2EX 已经持有完整回复集合。 |
 | 根因 seam | Controller 把 Infinite Query 页组误认为“从第一页开始的完整前缀”，用 `loadMoreReplies` 反复追目标，并以 `topicReplies.length`、数组下标或扩大 page-size 推断绝对页面；route/parser 又使用零散的 reply Pick 类型并丢失 page/fragment。列表只支持 next cursor，写后刷新复用同一错误推断。 |
-| 必须保持的行为 | 使用统一 `ReplyLocationTarget { commentId?, floor?, pageHint? }`；存在 `commentId` 时它是强身份，同楼层不同实体不得命中。已加载目标零请求；未加载目标只请求一次来源确认的目标窗口并原子替换当前页组，随后 `fetchPreviousPage`/`fetchNextPage` 只读取紧邻 cursor。target 是 replace-window 命令：取消当前 Reply Query，并只在 route、Query identity、order 与 generation 仍一致时应用；后发命令直接使旧结果 stale，不建立等待队列。目标实体及可信 current page/offset 缺一即失败并保留原窗口，不猜页、不补中间页。NodeSeek 固定 10 楼精确页且定位请求禁用 fill-pages；linux.do/小隐寺使用 near-post window；妖火只接受响应 URL 或页码表单确认的 resolved page；V2EX 可在已确认前缀内本地定位，前缀外目标按 `REG-TOPIC-076` 等待全集。用户名与 `#楼层` 独立点击，定位前恢复全部/空搜索并保留当前顺序，成功滚动并短暂高亮。前插保持可见位置，指回任一已加载窗口的 cursor 立即停止。编辑/删除重读目标实体所在真实 `pageParam`，新回复按服务端权威尾窗重新锚定。 |
+| 必须保持的行为 | 使用统一 `ReplyLocationTarget { commentId?, floor?, pageHint? }`；存在 `commentId` 时它是强身份，同楼层不同实体不得命中。已加载目标零请求；未加载目标只请求一次来源确认的目标窗口并原子替换当前页组，随后 `fetchPreviousPage`/`fetchNextPage` 只读取紧邻 cursor。target 是 replace-window 命令：取消当前 Reply Query，并只在 route、Query identity、order 与 generation 仍一致时应用；后发命令直接使旧结果 stale，不建立等待队列。目标实体及可信 current page/offset 缺一即失败并保留原窗口，不猜页、不补中间页。NodeSeek 固定 10 楼精确页且定位请求禁用 fill-pages；linux.do/小隐寺使用 near-post window；妖火只接受响应 URL 或页码表单确认的 resolved page；V2EX 已加载目标本地定位，未加载目标由本次定位动作至多触发一次 `getReplies`，失败立即结算并保留当前评论，不等待后台全集。用户名与 `#楼层` 独立点击，定位前恢复全部/空搜索并保留当前顺序，成功滚动并短暂高亮。前插保持可见位置，指回任一已加载窗口的 cursor 立即停止。编辑/删除重读目标实体所在真实 `pageParam`，新回复按服务端权威尾窗重新锚定。 |
 | 精确失败 oracle | `src/domain/forum/links.test.ts` 固定五站原生 anchor 到统一 `ReplyLocationTarget`；`tests/ui/topic/topic-session-controller.test.tsx` 输入 155 楼只允许请求序列 `[targetReply.floor=155, page=15, page=17]`，编辑目标随后只能重读真实 `page=16, offset=150`，不得出现 2～14；同文件固定后发 target 胜过先发整帖刷新、同楼层不同 `commentId` 失败、验证恢复、来源 epoch 前进后重试、旧 route 目标不重放、目标无法确认时原列表不变及 V2EX 未加载目标零请求。`tests/integration/source-read-contracts.test.ts` 固定 NodeSeek 目标页和 linux.do near-post；小隐寺和妖火 reader 测试固定独立凭据与 resolved-page falsifier。Topic 组件测试固定用户名/楼层双目标、前后边缘、每手势单次自动加载、按钮重试、前插保持和一次滚动高亮。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：adapter/unit 固定五站协议和 cursor，Controller/UI 固定窗口状态机与交互；匹配 APK 的五站只读主题验证真实布局、导航和相邻加载。 |
 | Replay 或真实验收路径 | 从普通 Topic 和消息“查看完整回复”各进入一个已有远端目标；确认直接出现目标并高亮，向上/向下各触发一次相邻加载，点击作者进入用户页、返回后再点击楼层仍留在主题。linux.do 若出现验证，停在“更多 → 账号中心 → linux.do 原站”由用户手动处理后继续。全程不发回复、不清登录态。 |
@@ -4977,10 +4992,10 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 多页主题切换倒序后仍先看到第一页的倒排片段，继续下滚又混入后续正序页；用户误以为看到最新回复，实际既不完整也不连续。 |
 | 触发条件 | 正序只加载了部分窗口后切换倒序；主题有五页，或 Discourse stream 存在删除/拆帖造成的 post number 缺口；尾页计数或响应页码发生竞态。 |
 | 根因 seam | `ReplyFilter.newest` 在 UI 对本地数组执行 `reverse()`，回复 Query key 不区分遍历方向；Controller 根据已加载数量猜页，来源 adapter 没有拥有尾窗算法、页内顺序和 cursor 转换。 |
-| 必须保持的行为 | 使用独立 `ReplyOrder = oldest | newest` 和 `ReplyWindowPosition(start | cursor | target)`；`ReadGateway.getReplies` 同时接收两者，正倒序 Query key 永不混用。adapter 返回的 `items` 与 cursor 都按请求顺序解释，`next*` 始终是用户向下滚动的相邻窗口，`currentPage/currentOffset` 保留服务端真实位置。NodeSeek 以 `postPageCount`、严格 pager、响应页码和固定 10 楼页宽确认尾页，下一窗只读相邻前页；页外热门/置顶展示投影按 `REG-TOPIC-070` 在完整性证明前过滤。linux.do/小隐寺按 `post_stream.stream` 真实 ID 取尾组，普通 hydration 漏回单条时按 `REG-TOPIC-073` 展示已验证子集；妖火从主题页真实 `reply` / `tofloor` 链接取最大楼层，原站 page 1 为最新且 page + 1 更早，倒序从末楼向 page + 1、正序从 `tofloor=1` 向 page - 1 遍历，不能把“更多回帖(N)”当总数；V2EX 只有 `REG-TOPIC-069/071/076` 严格证明全集后才开放本地正倒序，首屏前缀不得反转。其他来源的部分集合切换顺序时清空旧列表并建立真实尾窗。非 V2EX 计数竞态只允许一次“刷新 Topic 权威计数后从当前顺序 start 重建”；V2EX typed 跨页快照重试由 `REG-TOPIC-076` 独立约束。Query 拥有 pages、cursor、取消和普通分页单飞；Controller 的 replace-window 命令只以 generation 实现 latest-command-wins，不保存 Promise 或恢复闭包。UI 保持左侧三种内容筛选和右侧顺序菜单；V2EX 同步中隐藏顺序菜单。末窗结算当次显示弱化边界文字，最终回复和系统事件无多余底边。 |
-| 精确失败 oracle | 来源测试固定 NodeSeek `[5, 4]` 且不出现 `[2, 3]`、Discourse 只请求 stream 尾部及相邻更早 IDs，漏回一条时保留可用子集，外来/重复/整窗空缺 hydration 失败、妖火区分总数文案与真实 `tofloor/reply`。V2EX 短集合不得作为完整结果，严格全集后切序零 transport；同步前缀与有限重试由 `REG-TOPIC-076` 固定。Query/Gateway 测试固定 order key 隔离、`order + position` 转发和脱敏 diagnostics；Controller/RNTL 固定首次 Loading、尾窗/相邻窗、边缘失败、latest-command-wins、整帖/写后重建及完整 V2EX 本地切序。 |
+| 必须保持的行为 | 使用独立 `ReplyOrder = oldest | newest` 和 `ReplyWindowPosition(start | cursor | target)`；`ReadGateway.getReplies` 同时接收两者，正倒序 Query key 永不混用。adapter 返回的 `items` 与 cursor 都按请求顺序解释，`next*` 始终是用户向下滚动的相邻窗口，`currentPage/currentOffset` 保留服务端真实位置。NodeSeek 以 `postPageCount`、严格 pager、响应页码和固定 10 楼页宽确认尾页，下一窗只读相邻前页；页外热门/置顶展示投影按 `REG-TOPIC-070` 在完整性证明前过滤。linux.do/小隐寺按 `post_stream.stream` 真实 ID 取尾组，普通 hydration 漏回单条时按 `REG-TOPIC-073` 展示已验证子集；妖火从主题页真实 `reply` / `tofloor` 链接取最大楼层，原站 page 1 为最新且 page + 1 更早，倒序从末楼向 page + 1、正序从 `tofloor=1` 向 page - 1 遍历，不能把“更多回帖(N)”当总数；V2EX 只有 `REG-TOPIC-069/071/076/077` 严格证明 complete 后才开放本地正倒序，partial 子集保持原站升序并继续可见。其他来源的部分集合切换顺序时清空旧列表并建立真实尾窗。非 V2EX 计数竞态只允许一次“刷新 Topic 权威计数后从当前顺序 start 重建”；V2EX 不做 typed 快照重试。Query 拥有 pages、cursor、取消和普通分页单飞；Controller 的 replace-window 命令只以 generation 实现 latest-command-wins，不保存 Promise 或恢复闭包。UI 保持左侧三种内容筛选和右侧顺序菜单；V2EX partial 隐藏顺序菜单。末窗结算当次显示弱化边界文字，最终回复和系统事件无多余底边。 |
+| 精确失败 oracle | 来源测试固定 NodeSeek `[5, 4]` 且不出现 `[2, 3]`、Discourse 只请求 stream 尾部及相邻更早 IDs，漏回一条时保留可用子集，外来/重复/整窗空缺 hydration 失败、妖火区分总数文案与真实 `tofloor/reply`。V2EX 短集合与单条 malformed 只返回 partial，严格全集后切序零 transport；非空 partial 60 秒零 Reply transport由 `REG-TOPIC-076/077` 固定。Query/Gateway 测试固定 order key 隔离、`order + position` 转发和脱敏 diagnostics；Controller/RNTL 固定首次 Loading、尾窗/相邻窗、边缘失败、latest-command-wins、整帖/写后重建及完整 V2EX 本地切序。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：adapter/gateway/Query 固定来源协议和 cache 隔离，Controller/RNTL 固定窗口状态机与交互；匹配 revision/APK 的五站只读 Live 才能证明真实尾窗。 |
-| 自动重试边界 | previous/next 失败后，所属 start/end 边缘的自动入口保持关闭，只能显式重试原 cursor；对侧仍可扩窗且不得清掉旧错误。同一 Reply Query 有分页 pending 时，另一普通分页零 transport；结算后才可读取相邻窗口。replace-window 命令不等待分页队列，直接取消旧 Query 并以 generation 丢弃旧结果。唯一额外自动重试是 `REG-TOPIC-076` 的 V2EX typed 跨页数字快照变化；它不放宽任何结构错误。 |
+| 自动重试边界 | previous/next 失败后，所属 start/end 边缘的自动入口保持关闭，只能显式重试原 cursor；对侧仍可扩窗且不得清掉旧错误。同一 Reply Query 有分页 pending 时，另一普通分页零 transport；结算后才可读取相邻窗口。replace-window 命令不等待分页队列，直接取消旧 Query 并以 generation 丢弃旧结果。V2EX 没有例外：partial、跨页数字变化和结构差异均不得创建 timer、轮询或后台重试。 |
 | Replay 或真实验收路径 | 保留当前登录态，在 NodeSeek、linux.do、妖火、小隐寺各选一个多页主题，在 V2EX 选一个多回复主题；确认左侧三种筛选与右侧排序菜单，切换倒序后首条必须等于原站最新回复，向下只出现相邻更早窗口，末窗当次显示“已到最早回复”，再切回正序恢复头窗。不得发送回复、编辑、删除、互动或清理登录态。 |
 | 负向验证方式 | NodeSeek 出现 `[2, 3]` 追页、部分集合在 UI/Controller 本地反转、正倒序共用 Query key、Discourse 猜尾页、因单条 hydration 漏回丢掉其他回复或接受外来/重复 ID、V2EX 集合与权威计数不等、妖火未确认页码/末楼或仍有 newer cursor、计数竞态或重复 cursor 仍应用结果、相邻窗口失败只弹 toast、Controller 恢复 Promise/队列，或写后 invalidate 启动竞争 refetch，编号测试必须失败。 |
 | 明确不覆盖范围 | 不引入 V2EX PAT 或 API 2.0 Token 分页，不新增全局顺序偏好或持久化迁移，不并发预抓全部历史，也不通过真实写操作制造尾楼。 |
@@ -5007,13 +5022,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01/03/04`；共享 `NAV-02/03` |
 | 用户症状 | 活跃主题 `https://www.v2ex.com/t/1232497` 的原站 HTML 已完整包含全部回复，App 却报“回复总数已变化，无法确认完整集合”；正倒序、楼层定位和评论刷新因此都无法使用。 |
 | 触发条件 | V2EX 的主题 API、公共回复 API 与主题 HTML 命中不同缓存时刻；现场曾同时出现回复 API 68 条、主题 API 71 条、HTML 声明并渲染 73 条。旧实现优先采用任意非空 API 回复，再用另一端点的数量否决它。超过 100 条时 HTML 还会通过同主题 `?p=N` 显式分页，详见 `REG-TOPIC-071`。 |
-| 根因 seam | `src/sources/v2ex/reader.ts` 把独立缓存端点错误拼成一个快照，并让跨响应计数投票决定完整性。首个 HTML 可证明正文旁的连续前缀；只有从同一 HTML 分页快照严格闭合的集合才可证明全集。公共 API 只能作为 HTML 不可用或无声明且无法自证时的独立降级，不能补洞或参与投票。 |
-| 必须保持的行为 | Topic 读取只并行请求主题 API 与第一页 HTML，不调用公共回复 API或第二页；单页已严格覆盖 `1..replyCount` 时直接返回完整回复，否则返回所有原始节点均可解析、comment ID/floor 唯一且从 1 连续的最大前缀，并以 `replyHasMore=true` 标记未完成。总数只采用同一 HTML 页内无冲突声明。独立 `getReplies` 从新第一页开始：有声明时只沿显式 HTML 分页链接严格聚合；无声明或 HTML 不可用时才用主题 API 自证 legacy HTML，仍不能自证才读取公共回复 API并要求数量严格相等，合法空数组也可成功。已声明 HTML 的冲突、malformed 节点、缺楼、重复和链接耗尽不得由公共 API 掩盖。HTML 元数据与 `Pro` badge 保持；完整响应固定终态 cursor。诊断只记录安全 parser variant 与计数。 |
-| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定单页 HTML 3/3 直接结算；声明 3 条但只有 2 节点、额外 malformed 节点、声明冲突和短集合时，Topic 仍返回可证明前缀/正文，而 `getReplies` 严格失败且零公共 API 掩盖。`commentCount`-only 自洽集合、合法空主题、legacy HTML、`Pro`、感谢数和回复目标保持。HTML 不可用时 `getReplies` 的 API 2/2 与 0/0 成功、2/3 与 0/1 失败；成功空数组优先于无法自证的 legacy HTML。`REG-TOPIC-071/076` 固定多页聚合与缓存窗口收敛。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：来源 fixture 固定前缀、单响应完整性和降级边界；Controller/RNTL 固定正文与前缀不会被回复失败清空；匹配 revision/APK 的目标主题只读验收真实数据。 |
+| 根因 seam | `src/sources/v2ex/reader.ts` 把独立缓存端点错误拼成一个快照，并让“能否证明全集”反向否决已经逐条解析成功的评论。完整性是附加能力，不是评论可见性的总闸门：同一 HTML 分页快照严格闭合时才证明全集；否则保留当前响应里身份唯一的可信子集。公共 API 只能作为 HTML 不可用或无声明且无法自证时的独立降级，不能补洞或参与投票。 |
+| 必须保持的行为 | Topic 读取只并行请求主题 API 与第一页 HTML，不调用公共回复 API或第二页；逐条保留能解析且 comment ID/floor 不重复的评论。单页严格覆盖 `1..replyCount` 时声明 complete；节点损坏、缺楼、重复或计数冲突时只丢无效/冲突项，返回 partial、隐藏权威总数并保留正文。独立 `getReplies` 从新第一页开始，可沿显式 HTML 分页链接尝试证明全集；任一页不闭合时返回已读取的可信子集，不抛整窗错误、不自动重试。无声明或 HTML 不可用时才用主题 API 自证 legacy HTML，仍不能自证才读取公共回复 API；API 非空可信子集同样可 partial，合法 0/0 才是 complete empty。HTML 元数据、`Pro` badge 和终态 cursor 保持；诊断只记录安全 parser variant 与计数。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定单页 HTML 3/3 直接 complete；声明 3 条但只有 2 节点、额外 malformed 中间节点、声明冲突和短集合时，Topic/getReplies 均保留其他可信评论、标 partial、总数缺失，且零公共 API 掩盖。`commentCount`-only 自洽集合、合法空主题、legacy HTML、`Pro`、感谢数和回复目标保持。HTML 不可用时 API 2/2 与 0/0 complete，2/3 返回两条 partial，0/1 才失败。`REG-TOPIC-071/076/077` 固定多页完整性与零后台重试。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：来源 fixture 固定可信子集、单响应完整性和降级边界；Controller/RNTL 固定正文与可信评论不会被回复失败清空；匹配 revision/APK 的目标主题只读验收真实数据。 |
 | Replay 或真实验收路径 | 使用匹配当前 revision、App 版本和 APK 身份的开发包直达 `https://www.v2ex.com/t/1232497` 与 `https://www.v2ex.com/t/1231874`；正文必须先可读，回复最终与当次 HTML 分页全集一致。全集后切换正序/倒序、定位已有楼层和仅刷新评论均保持完整；全程只读，不发回复、不互动、不清 App 数据、Cookie 或登录态。 |
-| 负向验证方式 | 恢复三端点并行投票、让非空回复 API 优先、用主题 API 否决自洽 HTML、在已声明 HTML 缺节点时用 API 掩盖、Topic 首读跨页、把前缀标成完整、猜测未链接页码或增加 cache-buster，编号测试必须失败。 |
-| 明确不覆盖范围 | 不修改 NodeSeek、linux.do、妖火和小隐寺的真实分页/stream 窗口，不增加 V2EX PAT/API 2.0、cache-buster 或持久化迁移。跨页数字声明的有限自动收敛由 `REG-TOPIC-076` 单独约束。 |
+| 负向验证方式 | 恢复三端点并行投票、让非空回复 API 优先、用主题 API 否决自洽 HTML、在已声明 HTML 缺节点时用 API 掩盖、Topic 首读跨页、把 partial 子集标成完整、猜测未链接页码或增加 cache-buster，编号测试必须失败。 |
+| 明确不覆盖范围 | 不修改 NodeSeek、linux.do、妖火和小隐寺的真实分页/stream 窗口，不增加 V2EX PAT/API 2.0、cache-buster、后台轮询或持久化迁移。 |
 
 ## `REG-TOPIC-070` NodeSeek 热门/置顶展示副本污染倒序窗口
 
@@ -5038,12 +5053,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | V2EX `t/1231874` 声明 107 条回复，旧 App 只解析第一页 100 条并报窗口错误；用户连正文和前 100 条也看不到，`#101..#107` 与倒序均不可用。 |
 | 触发条件 | 主题 HTML 第 1 页只包含 `#1..#100`，并明确链接同主题 `?p=2`；旧 adapter 假定 V2EX HTML 永远单页全集。 |
 | 根因 seam | `src/sources/v2ex/reader.ts` 把“最终完整集合”错误地放进 Topic 首读：旧版本要么假定单页全集，要么为闭合回复先跨页，导致回复快照问题阻断正文。Topic 首屏投影与严格全集读取需要是两个独立生命周期。 |
-| 必须保持的行为 | Topic 首读只解析第一页，不请求第二页；正文和 `#1..#100` 连续前缀立即返回并以 `replyHasMore=true` 标记未完成。`getReplies` 每次从新的第一页快照开始，只接受同 origin、同 `/t/{topicId}`、唯一正整数 `p` 参数的链接；query-relative `?p=N` 必须以当前主题 URL 解析后再校验。按未访问页升序读取并去重，不猜 `ceil(replyCount/100)`、不扩大 page size。每页必须声明相同总数，所有原始节点都可解析；合并后 comment ID/floor 唯一且精确覆盖 `1..replyCount`。缺楼、重复、外站/他主题链接或链接耗尽立即失败且零公共 API；只有跨页数字声明变化产生 `REG-TOPIC-076` 的 typed 瞬时错误。完整成功返回终态 `RepliesResponse`，正序升序、倒序反向且 cursor 固定结束。 |
-| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-TOPIC-071/076` 固定 Topic 首读第一页 `#1..#100` 时不请求 `?p=2`；随后 `getReplies` 从新第一页沿 query-relative `?p=2` 聚合 `#1..#107`，公共回复 API 零调用。缺楼/链接耗尽、外站分页、malformed/重复节点均立即失败；第二页数字声明变化必须携带 `v2ex-reply-snapshot-stale`。 |
+| 必须保持的行为 | Topic 首读只解析第一页，不请求第二页；正文和第一页所有可信唯一评论立即返回并标 partial。用户显式触发的 `getReplies` 从新的第一页快照开始，只接受同 origin、同 `/t/{topicId}`、唯一正整数 `p` 参数的链接；query-relative `?p=N` 必须以当前主题 URL 解析后再校验。按未访问页升序读取并去重，不猜 `ceil(replyCount/100)`、不扩大 page size。每页声明相同总数、所有原始节点可解析且合并后 comment ID/floor 唯一并精确覆盖 `1..replyCount` 时才 complete。缺楼、重复、外站/他主题链接、链接耗尽或数字声明变化只阻止完整性成立：返回已读取可信 partial、总数缺失且零公共 API掩盖，不抛整窗错误或后台重试。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-TOPIC-071/076/077` 固定 Topic 首读第一页 `#1..#100` 时不请求 `?p=2`；随后用户触发的 `getReplies` 可从新第一页沿 query-relative `?p=2` 聚合 `#1..#107`，公共回复 API 零调用。缺楼、链接耗尽、外站分页、malformed/重复节点和第二页数字声明变化均保留所有已读取页面的可信唯一行；第二页最后一条损坏只丢该条，不产生 typed stale。 |
 | 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：adapter fixture 固定链接发现、跨页完整性和降级边界；匹配 APK 的目标主题固定真实 100 条分页阈值与最高楼。 |
 | Replay 或真实验收路径 | 匹配 revision/APK 直达 `https://www.v2ex.com/t/1231874`；正序可到 `#101+`，倒序首条为当次最高楼，切换与仅刷新评论均不出现窗口错误。全程只读，不发送或互动。 |
 | 负向验证方式 | Topic 首读请求第二页、恢复单页假设、按 100 条硬猜未链接页码、接受外站/他主题 `p`、静默跳过失败页、允许重复/缺楼后仍声明完整，或用公共回复 API 补洞，编号测试必须失败。 |
-| 明确不覆盖范围 | 不把 V2EX 改造成 UI 分页窗口，不引入 PAT/API 2.0、预抓未链接历史、静默截断或 `TopicDetail` 新字段；有限重试只覆盖 `REG-TOPIC-076` 的 typed 数字快照变化。 |
+| 明确不覆盖范围 | 不把 V2EX 改造成 UI 分页窗口，不引入 PAT/API 2.0、预抓未链接历史、后台重试或持久化迁移；partial 明确展示为受影响状态，不伪装成完整集合。 |
 
 ## `REG-TOPIC-072` 妖火删除边缘楼层与新页码字段阻断整个评论区
 
@@ -5150,17 +5165,17 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 改回计数加一 + 原地 `cancel/evictAll`、漏换 media/image client、bridge 等待旧 call release、全局刷新 Query、remount 已显示媒体或自动重放写操作，编号测试必须失败。 |
 | 明确不覆盖范围 | 本修复不升级 Expo/React Native/OkHttp，不改变 DNS/地址族顺序，不强制 IPv4、HTTP/1.1、`Connection: close` 或禁用连接池；Native phase 诊断用于定位最初污染，不把尚无证据的 IPv6 解释写成根因。 |
 
-## `REG-FEED-014` 一个慢来源拖住聚合首页与账号屏障
+## `REG-FEED-014` 一个慢来源拖住聚合首页与账号批量对账
 
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `FEED-01/02/04`、`ACCOUNT-01/02` |
 | 用户症状 | 首页“全部”、分类或启动账号对账一直 Loading，实际只有一个站请求不结算，其他站已可用。 |
 | 触发条件 | Feed/Categories 的一个并发来源或四站 Account probe 在 active time 5 秒内不结算。 |
-| 根因 seam | `src/sources/readAggregation.ts` 的唯一 `AGGREGATE_SOURCE_BUDGET_MS`、`src/sources/feedRead.ts` 的 child AbortController/cursor 边界和 `useAccountStatusController` 的批量 barrier。 |
-| 必须保持的行为 | 每来源独立计时并发；全部完成或 5 秒后只发布一次最终聚合。超时 Feed/Categories 记 partial，并始终保留该来源当前 page 与 opaque source cursor；已有聚合 cursor 的分页即使只靠旧 buffer 结算且所有本次来源读取普通失败，也必须保留每站原 page/cursor 供重试。只有没有输入 cursor、没有内容且全部普通失败时才不制造空 cursor。Account 超时站保持 pending/unknown，其他站完成；纯批量 probe 可取消，但被单站检查复用后，批量预算无论先后都只能停止等待，不能截短单站 watchdog。父 Query 取消必须整体抛取消，5 秒不计入 NS 通道恢复阈值。 |
-| 精确失败 oracle | `src/sources/feedRead.test.ts` 让 NS Feed/Categories 永不结算，固定 5 秒 partial、child abort、空成功来源与全来源超时时 current page/opaque V2EX cursor 仍可重试、普通首屏全失败零空 cursor及父取消；另用一个 buffered V2EX 条目结算分页、让五站新读取全部失败，要求五站 page 与 opaque V2EX cursor 完整保留。`tests/ui/account/account-status-controller.test.tsx` 固定 barrier 结束、超时 pending、单站 probe 在批量前或批量后开始时均不被 5 秒预算取消。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter 测试固定主动时钟/cursor，RNTL 固定真实 Account barrier 状态。 |
+| 根因 seam | `src/sources/readAggregation.ts` 的唯一 `AGGREGATE_SOURCE_BUDGET_MS`、`src/sources/feedRead.ts` 的 child AbortController/cursor 边界和 `useAccountStatusController` 的批量等待 owner。 |
+| 必须保持的行为 | 每来源独立计时并发；全部完成或 5 秒后只发布一次最终聚合。超时 Feed/Categories 记 partial，并始终保留该来源当前 page 与 opaque source cursor；已有聚合 cursor 的分页即使只靠旧 buffer 结算且所有本次来源读取普通失败，也必须保留每站原 page/cursor 供重试。只有没有输入 cursor、没有内容且全部普通失败时才不制造空 cursor。Account 的 5 秒预算只停止本批等待，不把仍在运行的单站 probe 推断为退出，也不延长或截短它在创建时确定、累计 25 秒 active time 的绝对终期；probe 最终必须按 `REG-ACCOUNT-041` 结算为 confirmed、none 或 terminal unknown。父 Query 取消必须整体抛取消，5 秒不计入 NS 通道恢复阈值。 |
+| 精确失败 oracle | `src/sources/feedRead.test.ts` 让 NS Feed/Categories 永不结算，固定 5 秒 partial、child abort、空成功来源与全来源超时时 current page/opaque V2EX cursor 仍可重试、普通首屏全失败零空 cursor及父取消；另用一个 buffered V2EX 条目结算分页、让五站新读取全部失败，要求五站 page 与 opaque V2EX cursor 完整保留。`tests/ui/account/account-status-controller.test.tsx` 固定批量等待结束、单站 probe 在批量前或批量后开始时均不被 5 秒预算取消，并由创建时确定、累计 25 秒 active time 的 owner deadline 结算 terminal unknown。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter 测试固定主动时钟/cursor，RNTL 固定 Account 批量预算与单站绝对期限。 |
 | Replay 或真实验收路径 | 匹配 APK 运行 `four-source-feed.ad`、`account-readonly.ad` 和 `logged-out-readonly.ad`，确认单站动态失败时其他来源可见、超时账号不被推断为退出。 |
 | 负向验证方式 | 改回无界 `allSettled`、用普通墙钟 `setTimeout`、把父取消降级为 partial、丢失失败 cursor、让超时账号变 anonymous，或用批量 signal 取消已有单站消费者，编号测试必须失败。 |
 | 明确不覆盖范围 | 不对 Search 引入同样 barrier，不渐进重排列表，不把聚合超时当作通道损坏证据。 |
@@ -5300,20 +5315,155 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 任一 current/adjacent/underlay/poster 恢复 `memory-disk`、省略显式 downscaling/decode target、把 logical index 放回 Pager direct child key、在 stable outer slot 内又按 logical index 重建 raster/underlay owner、让旧 callback 结算新 source、把远程图片传给 Expo placeholder decoder、成为 current 后切到 `allowDownscaling=false`，或关闭时全局清图片内存缓存，对应 oracle 必须失败；设备 PSS 随已访问页近似线性增长也直接失败。 |
 | 明确不覆盖范围 | 不引入图片服务端缩略规则、全局 cache 清理或新 Native tiled viewer；本条保证稳定有界显示与原文件保存，不宣称在任意超大原图上提供 1:1 像素级深度缩放。 |
 
-## `REG-TOPIC-076` V2EX 跨页缓存窗口不同步阻断正文与已确认前缀
+## `REG-TOPIC-076` V2EX 完整性不确定时清空可信评论或进入后台轮询
 
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `TOPIC-01/03/04`；共享 `NAV-02/03` |
-| 用户症状 | 直达 `https://www.v2ex.com/t/1232881` 时首次出现整页“窗口错误”；重复进入数次后又能完整加载。故障期间主题正文和第一页已经可证明的评论也全部不可见。 |
-| 触发条件 | V2EX 第一页 HTML 声明并呈现 `#1..#100 / count=106`，显式第二页暂时仍是旧 `count`；稍后两个页面缓存快照收敛。现有证据只能确认页面快照不同步，不能继续区分 CDN 缓存与站内应用缓存。 |
-| 根因 seam | Topic 首读与完整回复聚合共用一个失败边界；adapter 把跨页数字声明变化作为普通结构错误，Controller 又把 Topic 内嵌回复设为 Infinite Query `initialData`，因此既不启动独立收敛 Query，也会让回复失败升级成整页错误。完整集能力和“正文 + 可证明连续前缀”没有分层。 |
-| 必须保持的行为 | Topic 首读只请求主题 API 与第一页 HTML。单页未闭合时仍成功返回正文及“所有原始节点可解析、ID/floor 唯一、从 1 连续”的最大前缀；同页无冲突声明可作为暂时总数，没有可靠声明则不显示权威总数，且 `replyHasMore=true` 明确未完成。Reply Query 以该前缀作 `placeholderData`，立即从新第一页开始严格聚合全集。只有后续页数字声明与第一页不一致时抛 typed `v2ex-reply-snapshot-stale`，初次失败后每 5 秒重试，最多重试 5 次，即最多 6 次完整读取、约 25 秒；网络、malformed、缺楼、重复、外站链接和链接耗尽立即结算评论错误。route inactive、卸载或 Query cancel 后零后续请求、零旧 cache 写入。同步中正文/前缀、筛选和评论内查找保持可用，显示已确认 `N / M`（M 未知时只显示 N），隐藏倒序和末尾确认；前缀内目标立即定位，前缀外目标等待。成功后升序全集与权威数量原子回写 Topic cache，随后正倒序只做本地投影；最终不存在的目标才报未找到。耗尽后保留正文/前缀并显示“重试评论”。仅刷新评论只 refetch Reply Query；完整刷新先 refetch Topic，再用同一收敛策略重建。 |
-| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 的 `REG-TOPIC-076` 固定 Topic 首屏 `#1..#100 / 106` 零第二页与零公共 API，并固定第二页旧声明返回 typed reason、收敛后得到精确 `#1..#106`。`tests/ui/topic/topic-session-controller.test.tsx` 用 fake timers 固定两次 stale 后成功、约 25 秒六次失败、结构错误零重试、离页取消、cache 回写、评论/完整刷新分流、本地切序及前缀内外定位。`tests/ui/topic/topic-reply-filters.test.tsx` 固定同步文案、未知总数、筛选/查找可用、倒序/末尾隐藏、评论级重试和全集后自动滚动。`src/platform/diagnostics/diagnostics.test.ts` 固定 typed reason 映射 `reply_count_stale`。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：fixture/fake timers 是瞬时不同步的确定性 oracle；匹配 revision/APK 的 Live 只证明真实站点当次正常或同步中体验，不通过真实写回复制造竞态。 |
-| Replay 或真实验收路径 | 保留主 AVD 数据覆盖安装匹配 APK，核对 `firstInstallTime` 不变后，从 App 内直达 `https://www.v2ex.com/t/1232881`。若原站已同步，只读确认正文、完整回复、正倒序、楼层定位与“仅刷新评论”；若现场再次出现不同步，正文和连续前缀必须立即可见，约 25 秒内保持同步提示且不出现整页错误。不得回复、点赞、清 App 数据、Cookie、登录态或重置模拟器。 |
-| 负向验证方式 | Topic 首读请求第二页或公共回复 API、跨页声明变化升级为整页错误、对所有错误自动重试、把缺楼/重复集合当完整、同步中开放倒序/末尾、前缀消失、前缀外目标提前报未找到、评论刷新重读正文、取消后仍请求或写 cache、增加 cache-buster/全局 Query 重试，编号测试必须失败。 |
-| 明确不覆盖范围 | 不判断不同步发生在 CDN 还是站内应用缓存，不增加全局重试、缓存参数、新 transport、依赖或 `TopicDetail` 字段；不把公共 API 与已声明 HTML 拼接，也不接受缺楼集合为成功。 |
+| 用户症状 | 直达 `https://www.v2ex.com/t/1232881` 时首次出现整页“窗口错误”；重复进入数次后又能完整加载。故障期间主题正文和第一页已经解析成功的评论也全部不可见，旧修复还会在后台反复读取。 |
+| 触发条件 | V2EX 第一页 HTML 声明并呈现 `#1..#100 / count=106`，显式第二页暂时仍是旧 `count`，或任意一条回复节点 malformed/重复/缺楼。页面稍后可能自行一致不是 App 等待或探测它的理由。 |
+| 根因 seam | adapter 把集合完整性和单行可信性合成一个失败边界，Controller 又把来源不确定性扩成 typed error、timer 和重试状态；一个不可信节点或计数因此同时清空可信行并制造后台请求。 |
+| 必须保持的行为 | Topic 首读只请求主题 API 与第一页 HTML，逐条保留可解析且 comment ID/floor 不重复的评论。完整性无法证明时以 partial 终态返回，权威总数缺失；非空 partial 初次展示时 Reply transport 为 0，空 partial 仅执行一次主读取。“仅刷新评论”、完整刷新和未加载 target 各由该次用户动作至多执行一次读取。失败保留现有可信子集并结算，零 timer、轮询、typed stale 或后台重试。partial 显示“部分评论未能读取，已显示 N 条”，筛选/查找继续可用，不显示权威总数、倒序或末尾确认；complete 后才回写权威数量并开放这些能力。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts.test.ts` 固定 malformed 中间节点仍保留 `#1/#3`，跨页声明变化、缺楼、重复和外站链接保留所有已读取页面的可信唯一行，API 非空数量不符也返回 partial。`tests/ui/topic/topic-session-controller.test.tsx` 固定非空 partial 60 秒零请求、空 partial 恰一次主读取、显式评论刷新/完整刷新/target 各恰一次且失败后 60 秒零追加。`tests/ui/topic/topic-reply-filters.test.tsx` 固定 partial 标记与确认条数，不出现“评论正在同步”。`src/features/topic/model/replyPagination.test.ts` 固定缺失/partial 不能被误判 complete。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：fixture 固定可信子集与完整性边界；fake timers 只证明长时间零追加请求，不模拟收敛。匹配 revision/APK 的 Live 只证明真实站点当次 partial 或 complete 体验，不通过真实写回复制造竞态。 |
+| Replay 或真实验收路径 | 保留主 AVD 数据覆盖安装匹配 APK，核对 `firstInstallTime` 不变后，从 App 内直达 `https://www.v2ex.com/t/1232881`。完整时只读确认正文、权威回复数、正倒序、楼层定位与“仅刷新评论”；partial 时正文和可信评论立即可见，显示受影响标记且用户不操作时不继续请求。不得回复、点赞、清 App 数据、Cookie、登录态或重置模拟器。 |
+| 负向验证方式 | Topic 首读请求第二页或公共回复 API、任一 malformed/计数差异让其他可信评论消失、partial 显示权威总数/倒序/末尾、创建 timer/polling/typed stale、失败后自动追加请求、评论刷新重读正文、取消后仍写旧 cache，编号测试必须失败。 |
+| 明确不覆盖范围 | 不判断不同步发生在 CDN 还是站内应用缓存，也不判断何时恢复一致；不增加后台探测、缓存参数、新 transport、依赖或持久状态，不把公共 API 与已声明 HTML 拼接。 |
+
+## `REG-DATA-007` 内容源设置未读到就按全关处理或永久阻塞启动
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `DATA-01/02/03`、`NAV-01`、`MORE-05`；共享 `FEED-01`、`SEARCH-01`、`LIBRARY-01`、`ACCOUNT-01`、`NOTIFY-03` |
+| 用户症状 | 首次或冷启动先看到所有来源消失、搜索显示“未启用/暂停”，甚至一直停在启动页；同时已经存在的收藏、历史或关注可能被空设置覆盖。 |
+| 触发条件 | `reader-settings` 缺失、损坏、非对象、AsyncStorage reject 或永不 settle；启动投影把“尚未读到”当成 deny-all，或无界等待独立设置 key。 |
+| 根因 seam | `src/platform/storage/readerDataStore.ts` 的双 key 读取、`src/app/useReaderRuntime.ts` 的启动结算和 `src/domain/reader/contentSourcePreferences.ts` 的默认投影没有共同区分“配置缺失可默认”与“ReaderData 损坏需恢复”。 |
+| 必须保持的行为 | `reader-data` 与 `reader-settings` 的本地读取均最多等待 3 秒。有效设置原样清洗；设置缺失、损坏、非对象、reject 或超时后，内容源以 Catalog 默认顺序五站全启用，且保留已经成功读取的 ReaderData 与其他有效设置。deadline 后迟到的设置不得二次发布。headless `loadReaderSettings()` 使用同一规则。routes 只在 ReaderData 本轮结算后发布；ReaderData 自身损坏、版本不支持或读取失败继续进入既有写入暂停的恢复模式，不用默认设置覆盖用户资料。storage key 和 ReaderData version 不变。 |
+| 精确失败 oracle | `src/platform/storage/readerDataStore.test.ts` 固定 headless 与完整 ReaderData 路径的 missing/malformed/non-object/reject/never-settle/late-result，并要求有效 history 保留、`contentSources` 恢复五站全开；`src/domain/reader/contentSourcePreferences.test.ts` 固定默认顺序与清洗；`src/app/useReaderRuntime.test.ts` 固定 ReaderData 失败进入恢复模式而非可写空数据；`tests/ui/app/app-composition.test.tsx` 固定等待期有可访问启动状态。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：存储 fake timer 固定 3 秒与迟到拒绝，runtime/UI 固定恢复和启动可达；只断言 `createEmptyReaderData()` 不足以证明有效 ReaderData 未被丢弃。 |
+| Replay 或真实验收路径 | 保留 App 数据覆盖安装并记录来源设置、收藏/历史摘要与 `firstInstallTime`，执行冷启动和 relaunch；确认本机数据、设置和入口保持。不得破坏 AsyncStorage 或清数据制造故障；超时分支由确定性测试固定。 |
+| 负向验证方式 | 移除 local-read deadline、让未加载投影返回空 enabled set、从 `reader-data` 回退旧 disabled 配置、设置失败时替换整份 ReaderData，或接受 deadline 后迟到结果，编号测试必须分别出现永久 pending、全关、资料丢失或二次布局变化。 |
+| 明确不覆盖范围 | 不把真实 ReaderData 损坏静默当成首次安装，不自动修复或覆盖损坏资料；恢复写仍只允许既有备份导入路径。 |
+
+## `REG-PROXY-011` 代理初始化冻结本地页面或失败后静默直连
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-01`、`NAV-01`、`LIBRARY-01`；共享 `FEED-01`、`SEARCH-01`、`TOPIC-01/02`、`USER-01`、`ACCOUNT-01/02`、`MORE-04` |
+| 用户症状 | SecureStore 或原生代理初始化稍慢时，App 白屏/启动页停留数秒甚至卡死，收藏和更多等本地页面也进不去；另一种修补会在配置读取超时或 runtime 卸载后放行直连，泄露本应经代理的请求。 |
+| 触发条件 | routes 与 proxy `loaded/applyStatus` 共用全局 startup gate；或给整个 load + native apply 套同一个 JS timeout，超时后把空配置当作“代理关闭且可直连”。 |
+| 根因 seam | `src/app/useAppRuntime.tsx` 的 route readiness、`src/platform/network/useNetworkProxyRuntime.ts` 的 SecureStore owner/load/apply queue，以及 `networkProxyFetcher`/WebView 的请求前 readiness 没有分离本地导航可用性与网络安全性。 |
+| 必须保持的行为 | routes 只等待 ReaderData，不等待代理。proxy SecureStore load 最多 3 秒；超时、reject 或 owner unmount 会把本 runtime 结算为 failed 并释放等待者，但 `networkProxyFetcher`、更新请求和 WebView 仍在 transport 前 fail-closed。saved state 成功后必须等待同一串行队列里的完整 native apply；native apply 自身不受 3 秒 load deadline，也不能被另一个短 JS deadline 误判为可直连。旧 owner 的迟到 load/apply 不能覆盖新 runtime。apply 状态进入媒体 transport identity，代理可用后温缓存 Avatar 等重新尝试。 |
+| 精确失败 oracle | `tests/ui/app/app-runtime-startup.test.tsx` 固定 proxy `loaded=false` 时本地 routes 已发布；`tests/ui/more/network-proxy-controller.test.tsx` 固定 never-settling load、unmount、late failure、慢 native apply 与后续 reset 串行；`src/platform/network/networkProxy.test.ts` 和 tooling guards 固定 failed 状态不直连；`src/platform/media/mediaSessionEpoch.test.ts`、`tests/ui/shared/avatar.test.tsx` 固定 readiness 进入媒体 identity 并在可用后恢复。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：hook 测试必须观察本地 route 与 transport waiter 两条独立生命周期；只看启动页出现或 proxy modal 文案不能证明未直连。 |
+| Replay 或真实验收路径 | 匹配 APK 冷启动后直接进入 Library 与 More，再核对服务器代理面板和正常来源 outcome；默认不启用真实代理、不损坏 SecureStore。真实 slow/failure 由 fake timers 固定，公网代理结果未经授权标 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复 `routes = readerDataLoaded && proxyLoaded`、在 load timeout 后使用裸 `fetch`、把 native apply 放进 3 秒 race、unmount 时 resolve 为可直连，或移除 media identity 的 apply status，对应测试必须失败。 |
+| 明确不覆盖范围 | 不放宽代理 transition、连接、DNS 或 relay 的既有 fail-closed 契约，不声明任意第三方代理可用，也不为缩短启动跳过 native apply。 |
+
+## `REG-SOURCE-011` 账号未知被当成整站不可用并锁死公开读取
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01/02/04`、`SEARCH-01..04`、`TOPIC-01/03`、`USER-01`、`ACCOUNT-01/02`、`MORE-05`；共享 `NAV-02`、`WRITE-01..04` |
+| 用户症状 | App 启动或账号检查暂时失败后，公开可读的 Feed/Search/Topic/User 全部显示“账号状态未知/暂停”，任一来源 pending 还能让“全部”永久 Loading；反向降级时，妖火或私有操作又可能被误走匿名 transport。 |
+| 触发条件 | source-wide identity barrier 同时代表账号核对、公开读取和私有权限；Controller 先用 `isLoggedIn/pending` 决定整页，再由 Gateway 猜 anonymous/authenticated，Query key 没有区分实际读取 lane。 |
+| 根因 seam | `src/domain/forum/readPlan.ts`、`src/sources/readGateway.ts`、聚合 child fetcher 与 Feed/Search/Topic/User Query key 是同一个 operation capability seam；账号事实不应拥有来源静态能力。 |
+| 必须保持的行为 | ReadPlan 是 `Catalog + enabled set + current SessionRuntimeSnapshot + operation` 的纯派生，不持久化。结果只能是 ready `local/public/authenticated` 或 typed blocked `source-disabled/identity-pending/identity-unavailable/login-required/capability-unavailable`。public lane 只用 native no-cookie fetcher 并强制 `credentials: omit`，credential loader、Cookie 和 managed WebView fallback 为 0；authenticated lane 才使用受管会话。V2EX 公开，NodeSeek/linux.do/小隐寺的 Feed/Search/Topic/Replies/Reply/User Profile 公开；用户名解析、筛选候选、AI、等级等严格。妖火仅 Categories 为 local，所有远程读取严格。每个 direct/aggregate Query key 和写操作 cache target 绑定 plan scope；Gateway 发网前后复核 scope，计划改变使迟到结果 stale。聚合显式给每个 child 选择 plan/fetcher，不从 URL 猜来源，blocked child 不阻断公开 sibling。 |
+| 精确失败 oracle | `src/domain/forum/readPlan.test.ts` 固定 operation 矩阵和 scope；`src/sources/readGatewayContract.test.ts` 固定 pending public 零 Cookie/credential/fallback、妖火 strict/local、typed login action、聚合 V2EX 显式 child plan 和 scope 迟到拒绝；`tests/integration/query-session-contracts.test.ts` 固定 public/authenticated cache 隔离；Feed、Search、Topic、User controller UI tests 固定 pending/unknown 公开读取、strict 终态与恢复；Topic action test 固定 mutation 只改当前 plan scope。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：必须穿过实际 Gateway 与 Query owner 观察 fetcher/credential 调用和 cache identity；只测纯矩阵或页面文案不能证明匿名 lane 没带 Cookie、也不能证明迟到 authenticated data 未串入。 |
+| Replay 或真实验收路径 | 保留账号与数据，在自然启动对账或单站刷新期间打开公开 Feed/Search/Topic/User，确认不出现永久暂停；妖火未确认时只显示可恢复登录/核对终态且零远程读。无法安全稳定制造 unknown 时，动态该分支标 `NOT_VERIFIED`，不清 Cookie、不人为断网。 |
+| 负向验证方式 | 把 pending 重新作为整个来源的 barrier、让 public lane 使用 managed fetcher、从 URL 推断 aggregate child、删除 plan scope key/currentness，或把妖火远程操作列为 public；对应测试必须出现暂停、credential/fallback 调用、缓存串用或越权请求。 |
+| 明确不覆盖范围 | 不改变各站真实匿名能力，不把写入、通知、AI、等级或 username resolution 降级公开；Google/站点当天可用性仍由 Live 证据判断。 |
+
+## `REG-SOURCE-012` 旧详情的“管理内容源”只进入 More、面板仍折叠
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-05`；共享 `FEED-01`、`SEARCH-01`、`LIBRARY-01`、`TOPIC-01`、`USER-01`、`NOTIFY-02`、`NAV-01/02` |
+| 用户症状 | 从已停用的 Topic、User 或旧 NotificationDetail 点击“管理内容源”后虽然返回 More，内容源面板仍折叠，用户还要再次寻找并展开入口。 |
+| 触发条件 | native stack 只 `popTo(MainTabs, screen=more)`，没有表达目标面板；More 也没有可消费的一次性导航意图。 |
+| 根因 seam | 所有内容源管理入口 → `MainTabs.more` route params → `MoreRoute` → `ContentSourcesPanel` 的导航意图边界。 |
+| 必须保持的行为 | Feed、Search、Library 与 disabled Topic/User/NotificationDetail 共用同一个 `manage-content-sources` action。More 获得该意图后展开内容源面板，并在 nested navigation 结算后消费参数；普通点击 More 仍以既有折叠状态进入，用户之后的开合状态不因普通重渲染被重置。该意图不持久化、不修改 ReaderSettings，也不触发来源请求。 |
+| 精确失败 oracle | `tests/ui/app/content-source-navigation.test.tsx` 挂载真实 Feed/Search/Library Route、Root Stack、Bottom Tabs 与 MoreRoute：三个入口均须到达已展开面板，当前 More route params 随后为空；用户收起、离开并普通返回 More 后仍保持收起。`tests/ui/app/content-source-route-gates.test.tsx` 继续真实渲染三个 disabled route 与 ContentSourcesPanel，固定其 action 和本地开合行为。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须由 RNTL 穿过真实 Stack/Tab router，观察实际 Route 的按钮、More 可访问展开状态、参数消费及离开返回后的状态；mock dispatch、源码字符串或只断言切到 More 均不足。 |
+| Replay 或真实验收路径 | 保留数据并停用一个来源，从其 Topic/User/旧通知详情分别点击“管理内容源”，确认直接看到已展开的内容源面板；再普通切换到 More，确认不会无故强制展开。 |
+| 负向验证方式 | 移除任一 Feed/Search/Library 入口的 shared action、删掉 nested intent、同步清参而被 nested 初始化覆盖、不消费 route param、清参时重置本地面板状态，或让普通 More 也携带意图；编号测试必须失败。 |
+| 明确不覆盖范围 | 不滚动到具体来源行，不改变停用、排序、账号对账或请求门禁语义。 |
+
+## `REG-SEARCH-024` 首次进入搜索被账号提示占据且来源不能独立结算
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01/02/03/04`；共享 `ACCOUNT-01/02` |
+| 用户症状 | 用户尚未输入关键词时就看到“账号状态未知/暂停搜索”；提交后一个站账号 pending/unknown 会让整页一直忙碌，公开来源结果也不出现。 |
+| 触发条件 | 未提交 Query 的 pending state、账号状态 chip 和已提交搜索共用一个页面 busy 模型；聚合搜索按全局 identity barrier 启停，而不是逐来源 ReadPlan。 |
+| 根因 seam | `src/features/search/useSearchController.ts` 的提交快照/逐来源 `useQueries`、`SearchScreen` 的 idle/blocked presentation 和 `forumQueryKeys.search` 的 ReadPlan scope。 |
+| 必须保持的行为 | 首次进入和清空关键词后不显示账号 unknown、核对中或暂停搜索提示，提交按钮仅由真实已提交请求控制。提交时只捕获当前 enabled 来源及用户顺序，每站按 ReadPlan 渐进结算；公开 lane 在 pending/unknown 下运行，strict blocked 形成有界来源终态和“重试核对/登录”动作且零搜索 transport，不能阻断 sibling 或 `search-all-sources-settled`。AI、tags/users candidates 等 authenticated operation 保持关闭。身份随后 confirmed 时创建新的 authenticated scope/key，只由当前提交重新读取，旧 public 结果和迟到响应不得串用。 |
+| 精确失败 oracle | `tests/ui/search/search-screen.test.tsx` 固定 idle 首屏与来源级状态；`tests/ui/search/search-controller-ai.test.tsx` 固定 pending public single/all、strict timeout 终态、核对重试、AI 仍 blocked 和 confirmed 后新 scope；`tests/integration/query-session-contracts.test.ts` 固定 public/authenticated search key 分离；`tests/integration/session-presentation-contracts.test.ts` 固定 pending/unknown 仍暴露公开 lane；`src/sources/readGatewayContract.test.ts` 固定 anonymous transport 与迟到 scope 拒绝。 |
+| 最低可靠自动测试层 | `UI_PASS + UNIT_PASS`：RNTL 必须从未提交到提交、逐站结算和身份切换完整观察；静态文案检查或单测 fallback parser 不能证明页面不会永久 busy。 |
+| Replay 或真实验收路径 | 打开 Search 首屏确认无暂停提示，提交同一关键词后观察所有已启用来源各自进入 data/empty/error/auth 等合法终态；账号自然核对期间公开来源继续，妖火单独提示登录/核对。Google/第三方受限可为来源错误，但不得永久 Loading。 |
+| 负向验证方式 | 把 identity pending chip 恢复到 idle 页、用任一 strict source 控制全局 `enabled/busy`、从 key 删除 plan scope、允许 AI 在 public lane 启动，或 blocked source 不计入 settled；对应 UI/contract 测试必须失败。 |
+| 明确不覆盖范围 | 不保证 Google、SoV2EX 或原站当天返回非空结果，不绕过 CAPTCHA/限流，也不把来源合法错误当成整页产品失败。 |
+
+## `REG-SEARCH-025` 页面级账号状态重复来源级搜索结果
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01/02/04`；共享 `ACCOUNT-01/02` |
+| 用户症状 | 一个站点需要登录或核对时，搜索页头先显示整页账号状态条，结果组又显示同一提示，用户会误以为整个搜索被暂停。 |
+| 触发条件 | 页面维护一份固定站点账号状态列表，同时每个搜索结果组又按本次 operation 的 ReadPlan/error 投影状态。 |
+| 根因 seam | `SearchScreen` 页头状态条与 `SearchGroup.authNotice` 重复拥有同一个来源操作状态。 |
+| 必须保持的行为 | 搜索页只展示本次受影响结果组的登录、验证或错误提示；其他来源继续独立结算。未提交首屏没有账号状态条，妖火等 strict 来源仍在自己的结果组提供恢复提示。 |
+| 精确失败 oracle | `tests/ui/search/search-screen.test.tsx` 的 `REG-SEARCH-025` 通过真实 `SearchRouteRuntimeProvider`、SearchRoute、Controller 和 Query 结算小隐寺公开结果与妖火 strict 结果，要求整个 route 只有妖火结果组的一份登录提示；恢复 Route 透传或 Screen 页头的页面级状态会出现第二份提示。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须运行真实 SearchRoute、Controller、Query effect 与来源结果组；只渲染 SearchScreen props、纯函数或字符串检查不能发现第二 owner。 |
+| Replay 或真实验收路径 | 在保留账号的匹配 APK 中提交“全部”搜索；某站需登录或核对时只在该站结果区提示，其他站结果和页面输入仍可操作。 |
+| 负向验证方式 | 恢复页头跨来源账号 chip、硬编码搜索账号来源列表，或在 result group 之外再投影同一状态；编号测试必须出现重复提示。 |
+| 明确不覆盖范围 | 不隐藏来源真实错误，不移除结果组的登录/验证恢复动作，也不放宽妖火远程读取。 |
+
+## `REG-ACCOUNT-041` 账号 probe 永久 pending、重复 owner 或 unknown 被计为已登录
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`、`MORE-05`；共享 `FEED-01`、`SEARCH-01/04`、`TOPIC-01`、`USER-01`、`WRITE-01..04`、`NOTIFY-01..03` |
+| 用户症状 | 单站网络/解析失败后长期显示“正在核对”，搜索和私有入口一直不可恢复；重复进入页面会延长或并发启动检测。账号中心还可能把保留的旧用户计作当前已确认登录，后台通知在用户关闭开关或换号后继续翻页。 |
+| 触发条件 | 不同 hook/workflow 各写一份身份；错误只写 error 不结束 pending；加入已有 Promise 时重置 timeout；UI 用 `currentUser != null` 计登录；notification worker 只信任务开始时的 store snapshot。 |
+| 根因 seam | `AccountSessionSnapshot` 的规范化与 `useAccountStatusController` 唯一提交 seam/probe lifecycle、账号中心 summary，以及 notification worker 在每次私有 transport 前的当前性检查。 |
+| 必须保持的行为 | 每来源只有一个 canonical identity owner 和一个可复用 probe。`pending` 只在该 probe 真实运行期间存在；每个 probe 的绝对终期在创建时确定，累计 25 秒 active time（覆盖 8 秒 direct、15 秒 browser fallback 与收尾余量），加入/复用不得延长。批量 5 秒预算只停止本批等待，不截断被单站保留的合法 probe。成功提交 confirmed/none；普通错误、verification、取消外的失败和最终期限提交 terminal unknown、释放 checking，并保留最后可信 identity/profile 供只读展示。unknown 不计已确认登录，计入“待核对”，private/write/foreground notifications 保持关闭；显式重试创建一次新 probe。后台可先执行一次有界 health probe，但在 list、每次分页和 state/system sink 前必须重读内容源 allowlist、global/source notification intent 与 exact identity key；任一变化后零后续 transport/commit。 |
+| 精确失败 oracle | `src/domain/session/siteSessionState.test.ts` 固定 snapshot 不变量与 terminal transition；`tests/ui/account/account-status-controller.test.tsx` 用 fake timers 固定唯一 owner、generation、never-settling probe 在创建后累计 25 秒 active time unknown、复用不续期，以及 direct 8 秒后 fallback 在剩余 15 秒内成功仍可提交；`tests/ui/account/account-center.test.tsx` 固定 confirmed-only 登录计数与 unknown 待核对；notification worker/background tests 固定 probe 期间或首个 page 后关闭 intent、换 identity/停用来源时后续 listPage/记录/投递为 0。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：fake timer 必须覆盖绝对 deadline 与合法迟到成功边界，worker 需在真实 await 边界修改 store；只断言最终文案或单次 Promise dedupe 不足。 |
+| Replay 或真实验收路径 | 保留四站登录态执行一次公共刷新，逐站观察 confirmed/none/unknown 终态和顶部计数；自然失败必须出现可重试 unknown，不得永久 pending。后台开关竞态由自动测试固定，主设备不启用通知、不换号、不清 Cookie 制造状态。 |
+| 负向验证方式 | 删除 25 秒 active-time owner deadline、在每次 join 重建 timer、错误后保留 pending、按 `currentUser` 计登录、让 worker 只在任务开始读取 store，或身份/开关变化后继续第二页；对应测试必须失败。 |
+| 明确不覆盖范围 | 不保证第三方身份端点 25 秒 active time 内健康，不自动重复 probe，不把 unknown 当退出或删除 Cookie/凭据；真实系统通知启用仍需独立授权。 |
+
+## `REG-ACCOUNT-042` L 站验证成功后账号状态未自动同步
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`；共享 `FEED-01/02`、`SEARCH-01/03/04`、`TOPIC-01/03`、`USER-01`、`WRITE-01..04`、`NOTIFY-01..03` |
+| 用户症状 | linux.do Cloudflare 验证通过并点击检查后面板退出，但账号中心与写权限仍显示旧状态；只有再点一次“刷新账号”才同步。 |
+| 触发条件 | authoritative probe 先写入包含 `forumSessionEpoch` 的 Account Query，身份变化随即推进内容 epoch，使刚提交的账号结果换 key 或被 reset；workflow/runtime 另存的身份又与 Query 更新时机不同。 |
+| 根因 seam | 稳定 Account key、`AccountSessionSnapshot` 唯一提交 seam、内容 epoch reset 与 `useVerificationController` 的成功/原页面恢复顺序。旧实现实际同时拥有 Query observation、workflow session 与 identity runtime 三份账号事实。 |
+| 必须保持的行为 | 每来源只保存一份稳定 snapshot，Account key 不包含 `forumSessionEpoch`。成功 observation 必须先原子提交 confirmed snapshot，再推进目标站内容 epoch；Account Center 与同步权限门禁立即读取同一份数据。A→A 不推进 epoch；内容 reset 只处理 `forum` root，不迁移或 preserve Account。L 检查成功不补发第二次账号成功事件；其后原页面恢复失败只写 `lastError`，不撤销 confirmed。`confirmed` 必须有同来源有效 current user；`none` 不得暴露 logged-in，任何 malformed 成功结果结算 unknown。 |
+| 精确失败 oracle | `src/domain/session/siteSessionState.test.ts` 固定 snapshot 规范化、矛盾组合 fail-closed 与 recovery error 保留 confirmed；`src/features/account/sessionQueryOwnership.test.ts` 和 `tests/integration/query-session-contracts.test.ts` 固定内容 epoch/reset 不影响稳定 Account key；`tests/ui/account/account-status-controller.test.tsx` 固定 L 成功后 snapshot、Account Center view 与同步 canWrite 在 reconcile Promise/epoch 回调前一致；`src/features/account/useVerificationController.test.ts` 固定零重复成功事件及 `recovery-failed` 语义；architecture guard 拒绝第二个 Account writer、epoch-scoped Account key、`AccountIdentityRuntime` 和 `setSiteSessionStates`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + STATIC_PASS`：纯 snapshot、真实 QueryClient/controller、verification 顺序和 architecture guard 必须共同固定；只看到面板关闭、手动刷新后成功或源码字符串都不足。 |
+| Replay 或真实验收路径 | 使用匹配当前 revision 的 APK 覆盖安装并保留 `firstInstallTime`、Cookie 与 App 数据。执行普通 linux.do A→A 检查，面板关闭时账号中心立即保持同步；若自然出现 Cloudflare，通过后点击检查并观察同一结果，禁止清 Cookie 强制制造。未自然出现时 CF 精确链路记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 把 Account key 重新放入内容 epoch、让 `resetForumSourceQueries` 清理 Account、恢复 Query→workflow→runtime 投影、在 L `onClose` 追加 reconcile/刷新或重复成功事件；对应测试或 guard 必须失败。 |
+| 明确不覆盖范围 | 不证明 Cloudflare 能稳定自然出现，不清 Cookie、不退出或换号，不执行真实回复、编辑、删除、点赞或通知投递；Headless notification 继续在独立 JS 生命周期现场鉴权。 |
+
+## `REG-TOPIC-077` 回复数或稀疏窗口不一致时整窗被丢弃
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/03`；共享 `NAV-02/03`、`WRITE-01/02`、`NOTIFY-02` |
+| 用户症状 | 原站回复数、页宽或返回行稍有不一致时，已经解析出的有效评论整块消失，详情显示空白/窗口错误；刷新又可能恢复。另一种路径把 partial Topic seed 当成 complete，错误开放权威计数、倒序或末尾确认。 |
+| 触发条件 | adapter 把“窗口是否完整”和“单行是否有效”混为一个 boolean；Controller 用调用方旧 `replyCount`、名义页宽或 `initialData` 决定整窗成败。删除楼层、并发回复、重复展示行与稀疏 hydration 会放大。 |
+| 根因 seam | `ReplyCompleteness`、各来源 reply-window validator、共享 page 投影、Topic target replacement 与写后精确 refresh target 共同定义完整性和身份；exact target/写后实体读取和普通浏览窗口需要不同严格度。 |
+| 必须保持的行为 | `complete | partial` 只描述当前窗口完整性；共享层按 page 顺序连接并展示 adapter 已返回的 `items`，不得再用正文、作者、时间、旧回复数或跨站 identity 规则过滤、合并或覆盖。adapter 已确认的 target window 直接成为当前窗口，共享 matcher 只用于已加载集合查找/高亮，不承担 adapter 有效性判断。NodeSeek 保留 embedded comment collection 和 rendered reply row 的既有成员语义、location 投影及 adapter 实际 completeness，普通重复 comment ID 按原 location 投影折叠并标 partial；Discourse hydration 保留非空已请求 ID 子集并按 stream 排序，缺失单条标 partial，重复 ID 保持既有严格失败；妖火保留既有 reply selector 的每一行，空展示字段合法，完整 `deletePath` 是删除身份，`reid` 不生成通用 `Reply.commentId`，floor 继续驱动回复和导航；V2EX 按自身 DOM/API 证据返回 complete 或 partial。写后 action key、目标页查找、乐观删除和刷新只使用精确 `comment-id` 或完整 `delete-path`，不得回退 floor。是否继续读取只由来源 cursor 或明确用户动作决定，不能由 completeness 隐式启动。各站原有错主题、错页、错误 cursor、空窗口及 exact/write 边界保持，不用共享 predicate 改写。 |
+| 精确失败 oracle | `src/features/topic/model/replyPagination.test.ts` 固定两个通用字段相同但 adapter 已认可的行都按 page 顺序保留；`src/features/topic/actions/actionHelpers.test.ts` 固定同 floor 不同强 ID/delete path 不误删；`src/sources/yaohuo/parser.test.ts` 固定删除链接保留完整 `deletePath` 但不产生 `commentId`。`tests/integration/source-read-contracts.test.ts` 继续固定五站 adapter 协议，并要求 NodeSeek target 保留实际 partial；各 provider reader tests 固定 adapter-specific completeness。`tests/ui/topic/topic-session-controller.test.tsx` 固定 adapter 已确认 target window 不被共享层二次否决、adapter 拒绝无效 target 时保留旧窗，以及 partial 不触发后台重试、显式刷新每次只读一次；`topic-reply-filters` 固定受影响提示且评论仍可查看。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：来源 fixture 固定协议有效性，RNTL 固定 partial seed 不会因 Query cache 时序卡死；只测试回复数量文案或 parser 单行不足以证明窗口仍可继续。 |
+| Replay 或真实验收路径 | 在匹配 APK 上只读打开自然有评论的五站主题，观察首屏评论、相邻窗口与刷新；遇到自然稀疏/计数变化时有效行必须保留并显示受影响状态，静置后不得继续请求。不得通过发帖、删帖、清缓存或人为改响应制造竞态。 |
+| 负向验证方式 | 恢复 `items.length === expectedCount` 的整窗硬失败、让普通 partial 自动请求/轮询、在共享层按正文或跨站 ID/floor 合并/过滤、二次否决 adapter target、让妖火 `reid` 进入通用 `commentId`，或让写后删除回退 floor；对应 adapter/controller/helper 测试必须失败。 |
+| 明确不覆盖范围 | 不伪造权威总回复数、不自动补抓任意中间页、不把一站的 comment ID/floor/reid 语义外推给另一站，也不改变写操作与原站确认要求。 |
 
 ## 待确认观察
 

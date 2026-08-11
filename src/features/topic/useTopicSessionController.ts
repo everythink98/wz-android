@@ -88,8 +88,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
       setReplyTarget({
         floor: reply.floor,
         author: reply.author,
-        authorId: reply.authorId,
-        commentId: reply.commentId
+        authorId: reply.authorId
       });
       setReplyEditTarget(null);
       setReplyFace('');

@@ -3,8 +3,8 @@ import { parseHtml } from '@/domain/forum/html';
 import type { TopicDetail } from '@/domain/forum/models';
 import {
   buildAcceptedAnswerContentItems,
+  buildAcceptedAnswerPresentation,
   buildTopicOpeningContent,
-  buildTopicOpeningPresentation,
   buildTopicQuotedPostContentItems
 } from './topicOpeningPresentation';
 
@@ -135,30 +135,35 @@ describe('topic opening presentation', () => {
       createdAt: '2026-08-01T00:01:00.000Z',
       floor: 2
     };
-    const result = buildTopicOpeningPresentation({
+    const content = buildTopicOpeningContent(topic);
+    const acceptedAnswer = buildAcceptedAnswerPresentation({
       loadedQuotedReplies: { 'linuxdo:42:2': accepted },
+      showsAccessNotice: content.showsAccessNotice,
       sourceReplies: [],
       topic
     });
 
-    expect(result.contentItems).toEqual([expect.objectContaining({ type: 'content', html: '<p>body</p>' })]);
-    expect(result.acceptedAnswer).toMatchObject({ floor: 2, reply: accepted });
+    expect(content.contentItems).toEqual([expect.objectContaining({ type: 'content', html: '<p>body</p>' })]);
+    expect(acceptedAnswer).toMatchObject({ floor: 2, reply: accepted });
   });
 
   it('replaces restricted content with one access notice and suppresses answer loading', () => {
-    const result = buildTopicOpeningPresentation({
+    const restrictedTopic = {
+      ...topic,
+      accessRequirement: { type: 'permission' as const, label: '需权限', detail: '暂无权限查看此内容' },
+      contentHtml: '<p>暂无权限查看此内容</p>'
+    };
+    const content = buildTopicOpeningContent(restrictedTopic);
+    const acceptedAnswer = buildAcceptedAnswerPresentation({
       loadedQuotedReplies: {},
+      showsAccessNotice: content.showsAccessNotice,
       sourceReplies: [],
-      topic: {
-        ...topic,
-        accessRequirement: { type: 'permission', label: '需权限', detail: '暂无权限查看此内容' },
-        contentHtml: '<p>暂无权限查看此内容</p>'
-      }
+      topic: restrictedTopic
     });
 
-    expect(result.contentItems).toEqual([
+    expect(content.contentItems).toEqual([
       { type: 'accessNotice', key: 'topic-access-notice', label: '需权限', detail: '暂无权限查看此内容' }
     ]);
-    expect(result.acceptedAnswer).toBeNull();
+    expect(acceptedAnswer).toBeNull();
   });
 });

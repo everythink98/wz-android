@@ -11,6 +11,7 @@ import { assertBackupJsonSize } from '@/domain/reader/readerBackup';
 
 const READER_DATA_STORAGE_KEY = 'reader-data';
 const READER_SETTINGS_STORAGE_KEY = 'reader-settings';
+const READER_STORAGE_LOAD_TIMEOUT_MS = 3_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -28,10 +29,33 @@ function settingsFromStorage(raw: string | null, fallback: ReaderSettings) {
   }
 }
 
+function readStorageItem(key: string, timeoutMessage: string) {
+  return new Promise<string | null>((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    const finish = (complete: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      complete();
+    };
+    timeout = setTimeout(() => finish(() => reject(new Error(timeoutMessage))), READER_STORAGE_LOAD_TIMEOUT_MS);
+    try {
+      void AsyncStorage.getItem(key).then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error))
+      );
+    } catch (error) {
+      finish(() => reject(error));
+    }
+  });
+}
+
 export async function loadReaderData() {
+  const defaultSettings = createEmptyReaderData().settings;
   const [raw, rawSettings] = await Promise.all([
-    AsyncStorage.getItem(READER_DATA_STORAGE_KEY),
-    AsyncStorage.getItem(READER_SETTINGS_STORAGE_KEY)
+    readStorageItem(READER_DATA_STORAGE_KEY, '本机资料读取超时；为防止覆盖，未自动重置。'),
+    readStorageItem(READER_SETTINGS_STORAGE_KEY, '阅读设置读取超时。').catch(() => null)
   ]);
   let clean: ReaderData;
   if (!raw) {
@@ -50,8 +74,20 @@ export async function loadReaderData() {
   }
   return {
     ...clean,
-    settings: settingsFromStorage(rawSettings, clean.settings)
+    settings: settingsFromStorage(rawSettings, {
+      ...clean.settings,
+      contentSources: defaultSettings.contentSources
+    })
   };
+}
+
+export async function loadReaderSettings() {
+  const fallback = createEmptyReaderData().settings;
+  try {
+    return settingsFromStorage(await readStorageItem(READER_SETTINGS_STORAGE_KEY, '阅读设置读取超时。'), fallback);
+  } catch {
+    return fallback;
+  }
 }
 
 export async function saveReaderSettings(settings: ReaderSettings) {

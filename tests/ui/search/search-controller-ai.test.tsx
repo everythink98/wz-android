@@ -10,6 +10,8 @@ import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { SearchResponse, Source, Topic } from '@/domain/forum/models';
+import { aggregateSearchSources, isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
 import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
@@ -55,6 +57,24 @@ const loggedInSessions = createSiteSessionViewModels(
   })
 );
 
+const loggedInYaohuoSessions = createSiteSessionViewModels(
+  createSiteSessionStates({
+    yaohuo: {
+      site: 'yaohuo',
+      status: 'logged-in',
+      cookieSummary: ['session-present'],
+      isVerifying: false,
+      currentUser: {
+        source: 'yaohuo',
+        id: '7',
+        username: 'tester',
+        url: 'https://www.yaohuo.me/space-7.html',
+        topics: []
+      }
+    }
+  })
+);
+
 function createGateway({
   searchSemanticTopics,
   searchTopics
@@ -63,6 +83,23 @@ function createGateway({
   searchTopics: ReadGateway['searchTopics'];
 }) {
   return {
+    getReadPlan: (source: Source, operation: ForumReadOperation) =>
+      resolveForumReadPlan(
+        source,
+        operation,
+        true,
+        isSessionSource(source)
+          ? {
+              source,
+              authenticated: true,
+              authSurfaceOpen: false,
+              identityKey: `${source}:test`,
+              identityTrust: 'confirmed',
+              sessionEpoch: 0,
+              sourceEnabled: true
+            }
+          : undefined
+      ),
     searchSemanticTopics:
       searchSemanticTopics ??
       jest.fn<ReadGateway['searchSemanticTopics']>(async () => ({
@@ -84,22 +121,63 @@ function renderSearchController(
   getSessionEpochs: () => ForumSessionEpochs = () => initialForumSessionEpochs,
   sessionViewModels: SiteSessionViewModels = loggedInSessions,
   showNodeSeekVerification = jest.fn<(message?: string) => void>(),
-  showYaohuoLogin = jest.fn<(message?: string) => void>()
+  showYaohuoLogin = jest.fn<(message?: string) => void>(),
+  getEnabledSearchSources: () => readonly Source[] = () => aggregateSearchSources,
+  onRetryIdentityStatus = jest.fn<(source: SessionSource) => void>()
 ) {
   appQueryClient.clear();
+  const getReadPlan = (source: Source, operation: ForumReadOperation) =>
+    resolveForumReadPlan(
+      source,
+      operation,
+      getEnabledSearchSources().includes(source),
+      isSessionSource(source)
+        ? {
+            source,
+            authenticated: sessionViewModels[source].isLoggedIn,
+            authSurfaceOpen: false,
+            identityKey: `${source}:test`,
+            identityTrust: sessionViewModels[source].identityTrust,
+            sessionEpoch: getSessionEpochs()[source],
+            sourceEnabled: true
+          }
+        : undefined
+    );
+  const readGatewayWithPlans = {
+    ...readGateway,
+    getReadPlan,
+    searchTopics: async (
+      request: Parameters<ReadGateway['searchTopics']>[0],
+      context?: Parameters<ReadGateway['searchTopics']>[1]
+    ) => {
+      if (request.source === 'all') throw new Error('Search controller must execute aggregate reads per source');
+      const plan = getReadPlan(request.source, 'search');
+      if (plan.state === 'blocked') {
+        throw Object.assign(new Error('登录状态核对失败，请重试'), {
+          kind: 'ordinary' as const,
+          reason: plan.reason,
+          retryable: true,
+          source: request.source
+        });
+      }
+      return readGateway.searchTopics(request, context);
+    }
+  } as ReadGateway;
   return renderHook(
     () =>
       useSearchController({
         categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
+        enabledSearchSources: getEnabledSearchSources(),
         sessionEpochs: getSessionEpochs(),
         linuxDoVerificationActive: false,
         notify,
+        onRetryIdentityStatus,
         active: true,
         sessionViewModels,
         showLinuxDoVerification,
         showNodeSeekVerification,
         showYaohuoLogin,
-        readGateway
+        readGateway: readGatewayWithPlans
       }),
     { wrapper: QueryTestWrapper }
   );
@@ -265,7 +343,7 @@ describe('linux.do AI search controller', () => {
             queryKey[0] === 'forum' &&
             queryKey[1] === 'linuxdo' &&
             queryKey[2] === 'search' &&
-            (queryKey[3] as { authenticated?: boolean })?.authenticated === false
+            (queryKey[3] as { readPlanScope?: string })?.readPlanScope === 'public:omit'
         )
     ).toBe(true);
     expect(hook.result.current.linuxDoAiState).toMatchObject({ status: 'idle', enabled: false });
@@ -296,6 +374,7 @@ describe('linux.do AI search controller', () => {
       () =>
         useSearchController({
           categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
+          enabledSearchSources: aggregateSearchSources,
           sessionEpochs: initialForumSessionEpochs,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
@@ -353,6 +432,7 @@ describe('linux.do AI search controller', () => {
       () =>
         useSearchController({
           categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
+          enabledSearchSources: aggregateSearchSources,
           sessionEpochs,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
@@ -424,6 +504,7 @@ describe('linux.do AI search controller', () => {
       () =>
         useSearchController({
           categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
+          enabledSearchSources: aggregateSearchSources,
           sessionEpochs: initialForumSessionEpochs,
           linuxDoVerificationActive,
           notify: jest.fn(),
@@ -476,6 +557,7 @@ describe('linux.do AI search controller', () => {
         useSearchCandidateQueries({
           sessionEpochs: initialForumSessionEpochs,
           enabled,
+          readPlanScopes: { tags: 'public:omit', users: 'public:omit' },
           searchDiscourseTags,
           searchDiscourseUsers: jest.fn(async () => []),
           tagRequest: {
@@ -732,7 +814,7 @@ describe('linux.do AI search controller', () => {
       jest.fn(),
       showLinuxDoVerification,
       () => initialForumSessionEpochs,
-      loggedInSessions,
+      loggedInYaohuoSessions,
       showNodeSeekVerification,
       showYaohuoLogin
     );
@@ -762,6 +844,30 @@ describe('linux.do AI search controller', () => {
       .at(-1);
     expect(nodeSeekQuery?.state.data).toBeUndefined();
     expect(nodeSeekQuery?.state.error).toEqual(expect.any(Error));
+  });
+
+  it('[REG-SEARCH-007] opens Yaohuo login exactly once for a single-source login failure', async () => {
+    const showYaohuoLogin = jest.fn<(message?: string) => void>();
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => {
+      throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required' as const });
+    });
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      loggedInYaohuoSessions,
+      jest.fn(),
+      showYaohuoLogin
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'yaohuo' });
+    });
+
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+    expect(showYaohuoLogin).toHaveBeenCalledWith('妖火需要登录');
+    expect(searchTopics).toHaveBeenCalledTimes(1);
   });
 
   it('[REG-SEARCH-009] keeps an initial source failure out of trusted Query data', async () => {
@@ -835,7 +941,7 @@ describe('linux.do AI search controller', () => {
         errorKind: 'ordinary'
       })
     );
-    expect(searchTopics).toHaveBeenCalledTimes(10);
+    expect(searchTopics).toHaveBeenCalledTimes(8);
   });
 
   it('REG-SEARCH-004 judges a whole-source retry by that source instead of unrelated aggregate errors', async () => {
@@ -1566,6 +1672,7 @@ describe('linux.do AI search controller', () => {
       () =>
         useSearchController({
           categories: [],
+          enabledSearchSources: aggregateSearchSources,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
           onNodeSeekSearchVerificationRequired: onVerificationRequired,
@@ -1846,7 +1953,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
   });
 
-  it('[REG-ACCOUNT-031] pauses a dirty single-source search and AI request without entering permanent loading', async () => {
+  it('[REG-SEARCH-024] runs an anonymous topic search for a pending public source while keeping AI blocked', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
@@ -1882,16 +1989,102 @@ describe('linux.do AI search controller', () => {
       await Promise.resolve();
     });
 
-    expect(searchTopics).not.toHaveBeenCalled();
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
     expect(searchSemanticTopics).not.toHaveBeenCalled();
-    expect(hook.result.current.searchBusy).toBe(false);
+    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
     expect(hook.result.current.searchGroups).toEqual([
-      expect.objectContaining({ source: 'linuxdo', settled: false, loading: false })
+      expect.objectContaining({ source: 'linuxdo', items: [standardTopic], loading: false })
     ]);
+    expect(
+      appQueryClient
+        .getQueryCache()
+        .getAll()
+        .some(
+          ({ queryKey }) =>
+            queryKey[0] === 'forum' &&
+            queryKey[1] === 'linuxdo' &&
+            queryKey[2] === 'search' &&
+            (queryKey[3] as { readPlanScope?: string })?.readPlanScope === 'public:omit'
+        )
+    ).toBe(true);
     expect(hook.result.current.linuxDoAiState.status).toBe('idle');
   });
 
-  it('[REG-ACCOUNT-031] skips only the dirty source during an aggregate search', async () => {
+  it('[REG-SEARCH-024] starts a new authenticated search scope after pending identity becomes confirmed', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const pendingLinuxDo: SiteSessionViewModels = {
+      ...loggedInSessions,
+      linuxdo: {
+        ...loggedInSessions.linuxdo,
+        canWrite: false,
+        identityTrust: 'pending',
+        summaryLabel: '登录状态待确认'
+      }
+    };
+    let sessionViewModels = pendingLinuxDo;
+    const gateway = createGateway({ searchTopics });
+    gateway.getReadPlan = (source: Source, operation: ForumReadOperation) =>
+      resolveForumReadPlan(
+        source,
+        operation,
+        true,
+        isSessionSource(source)
+          ? {
+              source,
+              authenticated: sessionViewModels[source].isLoggedIn,
+              authSurfaceOpen: false,
+              identityKey: `${source}:test`,
+              identityTrust: sessionViewModels[source].identityTrust,
+              sessionEpoch: 0,
+              sourceEnabled: true
+            }
+          : undefined
+      );
+    appQueryClient.clear();
+    const hook = await renderHook(
+      () =>
+        useSearchController({
+          categories: [],
+          enabledSearchSources: ['linuxdo'],
+          sessionEpochs: initialForumSessionEpochs,
+          linuxDoVerificationActive: false,
+          notify: jest.fn(),
+          active: true,
+          onRetryIdentityStatus: jest.fn(),
+          sessionViewModels,
+          showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+          showNodeSeekVerification: jest.fn(),
+          showYaohuoLogin: jest.fn(),
+          readGateway: gateway
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'identity scope', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
+
+    sessionViewModels = loggedInSessions;
+    await act(async () => {
+      hook.rerender(undefined);
+    });
+
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(2));
+    const readPlanScopes = appQueryClient
+      .getQueryCache()
+      .getAll()
+      .filter(({ queryKey }) => queryKey[0] === 'forum' && queryKey[1] === 'linuxdo' && queryKey[2] === 'search')
+      .map(({ queryKey }) => (queryKey[3] as { readPlanScope?: string }).readPlanScope);
+    expect(readPlanScopes).toEqual(expect.arrayContaining(['public:omit', 'authenticated:0']));
+  });
+
+  it('[REG-SEARCH-024] lets a pending anonymous-capable source settle inside aggregate search', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
       items: [{ ...standardTopic, source: source as Source, id: source }],
       errors: {},
@@ -1925,14 +2118,74 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics.mock.calls.map(([request]) => request.source)).toEqual([
       'v2ex',
       'linuxdo',
-      'yaohuo',
+      'nodeseek',
       'xiaoyinsi'
     ]);
     expect(hook.result.current.searchGroups.find(({ source }) => source === 'nodeseek')).toMatchObject({
-      items: [],
-      loading: false,
-      settled: false
+      items: [expect.objectContaining({ source: 'nodeseek' })],
+      loading: false
     });
+  });
+
+  it('[REG-SEARCH-024] settles a timed-out private source and retries identity from all or single-source search', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
+      items: [],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const retryIdentityStatus = jest.fn<(source: SessionSource) => void>();
+    const pendingSessions: SiteSessionViewModels = {
+      ...loggedInSessions,
+      yaohuo: {
+        ...loggedInSessions.yaohuo,
+        canWrite: false,
+        identityTrust: 'unknown',
+        summaryLabel: '登录状态核对失败'
+      }
+    };
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      pendingSessions,
+      jest.fn(),
+      jest.fn(),
+      () => ['yaohuo'],
+      retryIdentityStatus
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'aggregate terminal', source: 'all' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups).toHaveLength(1));
+    expect(searchTopics).not.toHaveBeenCalled();
+    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      source: 'yaohuo',
+      error: '登录状态核对失败，请重试',
+      loading: false
+    });
+    expect(hook.result.current.searchGroups[0]?.settled).not.toBe(false);
+    expect(retryIdentityStatus).not.toHaveBeenCalled();
+    await act(async () => {
+      hook.result.current.retrySearchSource('yaohuo');
+    });
+    expect(retryIdentityStatus).toHaveBeenCalledTimes(1);
+    expect(retryIdentityStatus).toHaveBeenLastCalledWith('yaohuo');
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'single terminal', source: 'yaohuo' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.error).toBe('登录状态核对失败，请重试'));
+    expect(searchTopics).not.toHaveBeenCalled();
+    expect(retryIdentityStatus).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      hook.result.current.retrySearchSource('yaohuo');
+    });
+    expect(retryIdentityStatus).toHaveBeenCalledTimes(2);
   });
 
   it('keeps an unrelated source search in flight when another credential session changes', async () => {
@@ -1974,7 +2227,10 @@ describe('linux.do AI search controller', () => {
 
   it('lets unaffected aggregate search sources finish when one source session changes', async () => {
     const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'];
-    const pendingSearches = new Map(sources.map((source) => [source, Promise.withResolvers<SearchResponse>()]));
+    const requestSources = sources.filter((source) => source !== 'yaohuo');
+    const pendingSearches = new Map<Source, ReturnType<typeof Promise.withResolvers<SearchResponse>>>(
+      requestSources.map((source) => [source, Promise.withResolvers<SearchResponse>()])
+    );
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(
       ({ source }) => pendingSearches.get(source as Source)!.promise
     );
@@ -1983,7 +2239,7 @@ describe('linux.do AI search controller', () => {
     await act(async () => {
       void hook.result.current.runSearch({ query: 'aggregate request', source: 'all' });
     });
-    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
     expect(hook.result.current.searchBusy).toBe(true);
 
     await act(async () => {
@@ -1992,7 +2248,7 @@ describe('linux.do AI search controller', () => {
     expect(hook.result.current.searchBusy).toBe(true);
 
     await act(async () => {
-      for (const source of sources) {
+      for (const source of requestSources) {
         pendingSearches.get(source)!.resolve({
           items: source === 'nodeseek' ? [] : [{ ...standardTopic, source, id: source }],
           errors: {},
@@ -2005,5 +2261,212 @@ describe('linux.do AI search controller', () => {
 
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
     expect(hook.result.current.searchGroups.map(({ source }) => source)).toEqual(sources);
+  });
+
+  it('[REG-SOURCE-010] aborts a removed aggregate source without interrupting an enabled source', async () => {
+    const requests = new Map<
+      Source,
+      {
+        deferred: ReturnType<typeof Promise.withResolvers<SearchResponse>>;
+        signal: AbortSignal;
+      }
+    >();
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(({ source, signal }) => {
+      if (source === 'all' || !signal) throw new Error('aggregate Search must dispatch one signaled source request');
+      const deferred = Promise.withResolvers<SearchResponse>();
+      signal.addEventListener('abort', () => deferred.reject(new DOMException('aborted', 'AbortError')), {
+        once: true
+      });
+      requests.set(source, { deferred, signal });
+      return deferred.promise;
+    });
+    let enabledSearchSources: readonly Source[] = ['v2ex', 'nodeseek'];
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      loggedInSessions,
+      jest.fn(),
+      jest.fn(),
+      () => enabledSearchSources
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'enabled sources', source: 'all' });
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(2));
+
+    enabledSearchSources = ['v2ex'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(requests.get('nodeseek')?.signal.aborted).toBe(true));
+    expect(requests.get('v2ex')?.signal.aborted).toBe(false);
+    await act(async () => {
+      requests.get('v2ex')?.deferred.resolve({
+        items: [{ ...standardTopic, source: 'v2ex', id: 'v2ex-enabled' }],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+      await requests.get('v2ex')?.deferred.promise;
+    });
+
+    await waitFor(() => expect(hook.result.current.searchGroups.map(({ source }) => source)).toEqual(['v2ex']));
+  });
+
+  it('[REG-SOURCE-010] reorders aggregate groups without refetching and settles an empty source set', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
+      if (source === 'all') throw new Error('aggregate Search must dispatch one source request');
+      return {
+        items: [{ ...standardTopic, source, id: `${source}-enabled` }],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      };
+    });
+    let enabledSearchSources: readonly Source[] = ['v2ex', 'linuxdo'];
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      loggedInSessions,
+      jest.fn(),
+      jest.fn(),
+      () => enabledSearchSources
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'ordered sources', source: 'all' });
+    });
+    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+    expect(searchTopics).toHaveBeenCalledTimes(2);
+
+    enabledSearchSources = ['linuxdo', 'v2ex'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    expect(searchTopics).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.searchGroups.map(({ source }) => source)).toEqual(['linuxdo', 'v2ex']);
+    expect(hook.result.current.searchSource).toBe('all');
+    expect(hook.result.current.submittedSearchQuery).toBe('ordered sources');
+
+    enabledSearchSources = [];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    expect(searchTopics).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.searchGroups).toEqual([]);
+    expect(hook.result.current.searchBusy).toBe(false);
+    expect(hook.result.current.searchQuery).toBe('ordered sources');
+    await act(async () => {
+      await hook.result.current.runSearch();
+    });
+    expect(searchTopics).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-SOURCE-010] gates a disabled direct Search across queries, retries, pagination, AI and filter candidates', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
+      items: [{ ...standardTopic, source: source === 'all' ? 'v2ex' : source, id: `${source}-result` }],
+      errors: {},
+      hasMore: true,
+      nextPage: 2
+    }));
+    const searchSemanticTopics = jest.fn<ReadGateway['searchSemanticTopics']>(async () => {
+      throw new Error('AI unavailable');
+    });
+    const readGateway = createGateway({ searchSemanticTopics, searchTopics });
+    const searchTagOptions = readGateway.searchTagOptions as jest.MockedFunction<ReadGateway['searchTagOptions']>;
+    const searchUserOptions = readGateway.searchUserOptions as jest.MockedFunction<ReadGateway['searchUserOptions']>;
+    let enabledSearchSources: readonly Source[] = ['linuxdo', 'v2ex'];
+    const hook = await renderSearchController(
+      readGateway,
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      loggedInSessions,
+      jest.fn(),
+      jest.fn(),
+      () => enabledSearchSources
+    );
+
+    await act(async () => {
+      hook.result.current.setSearchSource('linuxdo');
+      hook.result.current.setSearchQuery('direct source');
+    });
+    await act(async () => {
+      await hook.result.current.runSearch();
+    });
+    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+    await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(1));
+    expect(searchTopics).toHaveBeenCalledTimes(1);
+
+    enabledSearchSources = ['v2ex', 'linuxdo'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    expect(hook.result.current.searchSource).toBe('linuxdo');
+    expect(hook.result.current.submittedSearchQuery).toBe('direct source');
+    expect(hook.result.current.searchGroups.map(({ source }) => source)).toEqual(['linuxdo']);
+    expect(searchTopics).toHaveBeenCalledTimes(1);
+    expect(searchSemanticTopics).toHaveBeenCalledTimes(1);
+
+    enabledSearchSources = ['v2ex'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(hook.result.current.searchSource).toBe('all'));
+    await waitFor(() => expect(hook.result.current.searchGroups.map(({ source }) => source)).toEqual(['v2ex']));
+    expect(hook.result.current.submittedSearchQuery).toBe('direct source');
+    expect(hook.result.current.searchQuery).toBe('direct source');
+    const ordinaryRequestCount = searchTopics.mock.calls.length;
+    const aiRequestCount = searchSemanticTopics.mock.calls.length;
+
+    let loadOutcome: Awaited<ReturnType<typeof hook.result.current.loadMoreSearchSource>> | undefined;
+    let runOutcome: Awaited<ReturnType<typeof hook.result.current.runSearch>> | undefined;
+    await act(async () => {
+      hook.result.current.setSearchSource('linuxdo');
+      hook.result.current.retrySearchSource('linuxdo');
+      loadOutcome = await hook.result.current.loadMoreSearchSource('linuxdo', 2);
+      runOutcome = await hook.result.current.runSearch({ query: 'disabled source', source: 'linuxdo' });
+      hook.result.current.applySearchFilter('linuxdo', {
+        ...DEFAULT_SEARCH_FILTERS.linuxdo,
+        order: 'latest'
+      });
+      hook.result.current.retryLinuxDoAiSearch();
+      await hook.result.current.searchDiscourseTags({ source: 'linuxdo', query: 'ai', selectedTags: [] });
+      await hook.result.current.searchDiscourseUsers({ source: 'linuxdo', term: 'alice' });
+      await Promise.resolve();
+    });
+
+    expect(loadOutcome).toBe('stale');
+    expect(runOutcome).toBe('stale');
+    expect(hook.result.current.searchSource).toBe('all');
+    expect(hook.result.current.searchQuery).toBe('direct source');
+    expect(hook.result.current.searchFilters.linuxdo).toEqual(DEFAULT_SEARCH_FILTERS.linuxdo);
+    expect(searchTopics).toHaveBeenCalledTimes(ordinaryRequestCount);
+    expect(searchSemanticTopics).toHaveBeenCalledTimes(aiRequestCount);
+    expect(searchTagOptions).not.toHaveBeenCalled();
+    expect(searchUserOptions).not.toHaveBeenCalled();
+    expect(
+      appQueryClient
+        .getQueryCache()
+        .findAll({
+          predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[1] === 'linuxdo'
+        })
+        .every((query) => query.state.fetchStatus === 'idle')
+    ).toBe(true);
   });
 });

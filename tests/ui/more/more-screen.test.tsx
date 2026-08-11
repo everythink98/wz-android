@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '../render';
+import { act, fireEvent, render } from '../render';
 import React, { type ComponentProps } from 'react';
 import { StyleSheet } from 'react-native';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
@@ -29,28 +29,45 @@ jest.mock('react-native-gesture-handler', () => {
   return {
     Gesture: {
       Pan: () => ({
+        handlers: {} as Record<string, (...args: unknown[]) => void>,
+        activateAfterLongPress() {
+          return this;
+        },
         minDistance() {
           return this;
         },
         runOnJS() {
           return this;
         },
-        onBegin() {
+        onBegin(handler: (...args: unknown[]) => void) {
+          this.handlers.onGestureBegin = handler;
           return this;
         },
-        onUpdate() {
+        onStart(handler: (...args: unknown[]) => void) {
+          this.handlers.onGestureStart = handler;
           return this;
         },
-        onEnd() {
+        onUpdate(handler: (...args: unknown[]) => void) {
+          this.handlers.onGestureUpdate = handler;
           return this;
         },
-        onFinalize() {
+        onEnd(handler: (...args: unknown[]) => void) {
+          this.handlers.onGestureEnd = handler;
+          return this;
+        },
+        onFinalize(handler: (...args: unknown[]) => void) {
+          this.handlers.onGestureFinalize = handler;
           return this;
         }
       })
     },
-    GestureDetector: ({ children }: { children: React.ReactNode }) =>
-      ReactModule.createElement(ReactModule.Fragment, null, children),
+    GestureDetector: ({
+      children,
+      gesture
+    }: {
+      children: React.ReactElement<Record<string, unknown>>;
+      gesture: { handlers?: Record<string, (...args: unknown[]) => void> };
+    }) => ReactModule.cloneElement(children, gesture.handlers || {}),
     ScrollView: require('react-native').ScrollView
   };
 });
@@ -70,6 +87,7 @@ jest.mock('lucide-react-native', () => {
     DatabaseBackup: Icon,
     Image: Icon,
     Info: Icon,
+    GripVertical: Icon,
     RefreshCw: Icon,
     Server: Icon,
     Settings: Icon,
@@ -103,6 +121,7 @@ const authorizedXiaoyinsiSessions = createSiteSessionViewModels(
 type MoreScreenProps = ComponentProps<typeof MoreScreen>;
 type MoreScreenOverrides = {
   account?: {
+    enabledSessionSources?: MoreScreenProps['account']['enabledSessionSources'];
     read?: Partial<MoreScreenProps['account']['read']>;
     center?: {
       command?: MoreScreenProps['account']['center']['command'];
@@ -127,6 +146,7 @@ type MoreScreenOverrides = {
 
 function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
   const account: MoreScreenProps['account'] = {
+    enabledSessionSources: ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'],
     read: {
       sessions: sessionViewModels,
       statusBusy: false,
@@ -185,7 +205,10 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       nodeseek: false,
       yaohuo: false,
       ...overrides.account?.surfaces
-    }
+    },
+    ...(overrides.account?.enabledSessionSources
+      ? { enabledSessionSources: overrides.account.enabledSessionSources }
+      : {})
   };
   return {
     account,
@@ -258,6 +281,221 @@ function collectRenderedText(node: unknown): string[] {
 }
 
 describe('More screen state and actions', () => {
+  it('does not mount or refresh account-specific content after its source is disabled', async () => {
+    const refreshXiaoyinsiLevel = jest.fn();
+    const view = await render(
+      <MoreScreen
+        {...moreProps({
+          account: {
+            enabledSessionSources: ['xiaoyinsi', 'nodeseek'],
+            read: { sessions: authorizedXiaoyinsiSessions },
+            center: { xiaoyinsiLevel: { error: '暂不可用', refresh: refreshXiaoyinsiLevel } }
+          }
+        })}
+      />
+    );
+
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await fireEvent.press(view.getByTestId('account-site-xiaoyinsi'));
+    await fireEvent.press(view.getByText('查看等级'));
+    expect(refreshXiaoyinsiLevel).not.toHaveBeenCalled();
+
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          account: {
+            enabledSessionSources: ['nodeseek'],
+            read: { sessions: authorizedXiaoyinsiSessions },
+            center: { xiaoyinsiLevel: { error: '', refresh: refreshXiaoyinsiLevel } }
+          }
+        })}
+      />
+    );
+    expect(view.queryByTestId('account-site-xiaoyinsi')).toBeNull();
+    expect(view.queryByText('授权管理')).toBeNull();
+    expect(view.queryByText('查看等级')).toBeNull();
+    expect(refreshXiaoyinsiLevel).not.toHaveBeenCalled();
+  });
+
+  it('keeps all content sources in an accessible, collapsed settings-only panel', async () => {
+    const updateSettings = jest.fn();
+    const persistedPreferences = readerData.settings.contentSources;
+    const persistedSnapshot = JSON.stringify(persistedPreferences);
+    const command = jest.fn(
+      async (_command: Parameters<MoreScreenProps['account']['center']['command']>[0]) => undefined
+    );
+    const view = await render(
+      <MoreScreen
+        {...moreProps({
+          account: { center: { command } },
+          utilities: { settings: { update: updateSettings } }
+        })}
+      />
+    );
+
+    const contentSourceToggle = view.getByLabelText('展开内容源');
+    expect(contentSourceToggle.props.accessibilityState.expanded).toBe(false);
+    expect(StyleSheet.flatten(contentSourceToggle.parent?.props.style)).toMatchObject({
+      backgroundColor: 'transparent',
+      borderRadius: 0,
+      paddingHorizontal: 0
+    });
+    await fireEvent.press(contentSourceToggle);
+
+    const sourceSwitches = view
+      .getAllByRole('switch')
+      .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'));
+    expect(sourceSwitches.map((control) => control.props.accessibilityLabel)).toEqual([
+      'V2EX 内容源开关',
+      'linux.do 内容源开关',
+      'NodeSeek 内容源开关',
+      '妖火 内容源开关',
+      '小隐寺 内容源开关'
+    ]);
+    expect(sourceSwitches.every((control) => control.props.accessibilityState.checked === true)).toBe(true);
+    const firstHandle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 5 项');
+    const lastHandle = view.getByLabelText('拖动排序：小隐寺，第 5 项，共 5 项');
+    expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toMatchObject({
+      marginHorizontal: 4
+    });
+    expect(firstHandle.props.accessibilityActions).toEqual([{ name: 'moveDown', label: '下移' }]);
+    expect(lastHandle.props.accessibilityActions).toEqual([{ name: 'moveUp', label: '上移' }]);
+    expect(StyleSheet.flatten(firstHandle.props.style)).toMatchObject({
+      alignItems: 'flex-end',
+      backgroundColor: 'transparent',
+      height: 48,
+      paddingRight: 3,
+      width: 48
+    });
+    expect(StyleSheet.flatten(firstHandle.parent?.props.style)).toMatchObject({
+      flexDirection: 'row',
+      gap: 0
+    });
+
+    await fireEvent(firstHandle, 'accessibilityAction', { nativeEvent: { actionName: 'moveDown' } });
+    expect(updateSettings).toHaveBeenCalledWith({
+      contentSources: [
+        { source: 'linuxdo', enabled: true },
+        { source: 'v2ex', enabled: true },
+        { source: 'nodeseek', enabled: true },
+        { source: 'yaohuo', enabled: true },
+        { source: 'xiaoyinsi', enabled: true }
+      ]
+    });
+    expect(command).not.toHaveBeenCalled();
+    expect(JSON.stringify(persistedPreferences)).toBe(persistedSnapshot);
+
+    updateSettings.mockClear();
+    await fireEvent(view.getByLabelText('V2EX 内容源开关'), 'valueChange', false);
+    expect(updateSettings).toHaveBeenCalledWith({
+      contentSources: [
+        { source: 'v2ex', enabled: false },
+        { source: 'linuxdo', enabled: true },
+        { source: 'nodeseek', enabled: true },
+        { source: 'yaohuo', enabled: true },
+        { source: 'xiaoyinsi', enabled: true }
+      ]
+    });
+    expect(view.getByLabelText('V2EX 内容源开关').props.accessibilityState.checked).toBe(true);
+
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          account: { center: { command } },
+          utilities: { settings: { value: readerData.settings, update: updateSettings } }
+        })}
+      />
+    );
+    expect(
+      view
+        .getAllByRole('switch')
+        .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'))
+        .map((control) => control.props.accessibilityLabel)
+    ).toEqual([
+      'V2EX 内容源开关',
+      'linux.do 内容源开关',
+      'NodeSeek 内容源开关',
+      '妖火 内容源开关',
+      '小隐寺 内容源开关'
+    ]);
+    expect(view.getByLabelText('V2EX 内容源开关').props.accessibilityState.checked).toBe(true);
+    expect(JSON.stringify(persistedPreferences)).toBe(persistedSnapshot);
+
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          account: { enabledSessionSources: [] },
+          utilities: {
+            settings: {
+              value: {
+                ...readerData.settings,
+                contentSources: readerData.settings.contentSources.map((preference) => ({
+                  ...preference,
+                  enabled: false
+                }))
+              },
+              update: updateSettings
+            }
+          }
+        })}
+      />
+    );
+    const disabledSourceSwitches = view
+      .getAllByRole('switch')
+      .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'));
+    expect(disabledSourceSwitches).toHaveLength(5);
+    expect(disabledSourceSwitches.every((control) => control.props.accessibilityState.checked === false)).toBe(true);
+  });
+
+  it('previews a long-press drag locally and persists the final source order once', async () => {
+    const updateSettings = jest.fn();
+    const view = await render(<MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} />);
+    await fireEvent.press(view.getByLabelText('展开内容源'));
+
+    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'].entries()) {
+      await fireEvent(view.getByTestId(`content-source-row-${source}`), 'layout', {
+        nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
+      });
+    }
+    const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 5 项');
+    await act(async () => {
+      handle.props.onGestureStart({ translationY: 0 });
+      handle.props.onGestureUpdate({ translationY: 120 });
+    });
+    expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toMatchObject({
+      backgroundColor: '#F0F0F0',
+      borderRadius: 10,
+      borderTopWidth: 0,
+      elevation: 2,
+      marginHorizontal: 0,
+      paddingHorizontal: 8
+    });
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      handle.props.onGestureFinalize({}, true);
+    });
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith({
+      contentSources: [
+        { source: 'linuxdo', enabled: true },
+        { source: 'nodeseek', enabled: true },
+        { source: 'v2ex', enabled: true },
+        { source: 'yaohuo', enabled: true },
+        { source: 'xiaoyinsi', enabled: true }
+      ]
+    });
+
+    updateSettings.mockClear();
+    await act(async () => {
+      handle.props.onGestureStart({ translationY: 0 });
+      handle.props.onGestureUpdate({ translationY: 56 });
+      handle.props.onGestureFinalize({}, false);
+    });
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
   it('[REG-NOTIFY-052] shows which More entry owns the unread badge', async () => {
     const open = jest.fn();
     const view = await render(

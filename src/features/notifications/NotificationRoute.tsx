@@ -9,6 +9,7 @@ import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification } from '@/domain/notifications/models';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import { parseForumTopicLink } from '@/domain/forum/links';
+import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { errorMessage } from '@/platform/network/errors';
 import { forumQueryKeys } from '@/platform/query/serverState';
@@ -18,6 +19,7 @@ import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { appendReplyImageMarkup, normalizeReplyImageAsset } from '@/sources/imageUpload';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import { isNodeImageApiKeyExpiredError } from '@/sources/nodeimage/upload';
+import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
 import type { NotificationsRuntimeValue } from './useNotificationsRuntime';
 import { sortNotifications } from './notificationPresentation';
 import {
@@ -73,18 +75,34 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
   const isFocused = useIsFocused();
   const setCenterVisible = runtime.setCenterVisible;
   const queryClient = useQueryClient();
-  const [source, setSource] = useState<NotificationFilterSource>(route.params?.source || 'all');
+  const enabledSourcesKey = runtime.enabledNotificationSources.join('|');
+  const routeSourceRef = useRef(route.params?.source);
+  const [source, setSource] = useState<NotificationFilterSource>(() => {
+    const requested = route.params?.source;
+    return requested && runtime.enabledNotificationSources.includes(requested) ? requested : 'all';
+  });
   const [categoryId, setCategoryId] = useState('');
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [markAllBusy, setMarkAllBusy] = useState(false);
   const markAllControllerRef = useRef<AbortController | undefined>(undefined);
   const retryControllerRef = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
-    if (route.params?.source) {
-      setSource(route.params.source);
-      setCategoryId('');
-    }
-  }, [route.params?.source]);
+    const requested = route.params?.source;
+    if (routeSourceRef.current === requested) return;
+    routeSourceRef.current = requested;
+    setSource(requested && runtime.enabledNotificationSources.includes(requested) ? requested : 'all');
+    setCategoryId('');
+  }, [enabledSourcesKey, route.params?.source, runtime.enabledNotificationSources]);
+  useEffect(() => {
+    if (source === 'all' || runtime.enabledNotificationSources.includes(source)) return;
+    markAllControllerRef.current?.abort();
+    markAllControllerRef.current = undefined;
+    retryControllerRef.current?.abort();
+    retryControllerRef.current = undefined;
+    void queryClient.cancelQueries({ queryKey: forumQueryKeys.notifications(source) });
+    setCategoryId('');
+    setSource('all');
+  }, [enabledSourcesKey, queryClient, runtime.enabledNotificationSources, source]);
   useFocusEffect(
     useCallback(() => {
       setCenterVisible(true);
@@ -93,7 +111,18 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
   );
   const identityKey = source === 'all' ? runtime.identitySignature : runtime.identityKeys[source] || `${source}:none`;
   const sourceAvailable = source === 'all' ? runtime.activeSources.length > 0 : runtime.activeSources.includes(source);
-  const sourcePending = source !== 'all' && runtime.sessions[source].identityTrust === 'pending';
+  const aggregateSessions =
+    source === 'all' && !sourceAvailable
+      ? runtime.enabledNotificationSources.map((candidate) => runtime.sessions[candidate])
+      : [];
+  const sourcePending =
+    source === 'all'
+      ? aggregateSessions.some((session) => session.identityTrust === 'pending')
+      : runtime.enabledNotificationSources.includes(source) && runtime.sessions[source].identityTrust === 'pending';
+  const sourceUnknown =
+    source === 'all'
+      ? !sourcePending && aggregateSessions.some((session) => session.identityTrust === 'unknown')
+      : runtime.enabledNotificationSources.includes(source) && runtime.sessions[source].identityTrust === 'unknown';
   const categoriesQuery = useQuery({
     queryKey: forumQueryKeys.notificationCategories({ source, identityKey }),
     enabled: runtime.ready && source !== 'all' && sourceAvailable && isFocused,
@@ -204,13 +233,21 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
     if (source !== 'all' && categoriesQuery.error) {
       result[source] = sourceErrorFromUnknown(source, categoriesQuery.error).message;
     }
+    Object.keys(result).forEach((candidate) => {
+      if (!runtime.enabledNotificationSources.includes(candidate as NotificationSource)) {
+        delete result[candidate as NotificationSource];
+      }
+    });
     return result;
-  }, [categoriesQuery.error, listQuery.data, source]);
+  }, [categoriesQuery.error, listQuery.data, runtime.enabledNotificationSources, source]);
   const refetch = listQuery.refetch;
   const refetchCategories = categoriesQuery.refetch;
   const refresh = useCallback(() => void refetch(), [refetch]);
   const retrySource = useCallback(
     (candidate: NotificationSource) => {
+      if (!runtime.enabledNotificationSources.includes(candidate) || !runtime.activeSources.includes(candidate)) {
+        return;
+      }
       if (source !== 'all') {
         void (categoriesQuery.error ? refetchCategories() : refetch());
         return;
@@ -293,12 +330,22 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       refetchCategories,
       runtime.gateway,
       runtime.identityKeys,
+      runtime.activeSources,
+      runtime.enabledNotificationSources,
       source,
       unreadOnly
     ]
   );
   const markAll = useCallback(() => {
-    if (source === 'all' || source === 'yaohuo' || categoryId !== categories[0]?.id) return;
+    if (
+      source === 'all' ||
+      source === 'yaohuo' ||
+      !runtime.enabledNotificationSources.includes(source) ||
+      !runtime.activeSources.includes(source) ||
+      categoryId !== categories[0]?.id
+    ) {
+      return;
+    }
     const expectedIdentityKey = runtime.identityKeys[source];
     if (!expectedIdentityKey) return;
     Alert.alert('全部标记为已读', `将该站现有消息全部标记为已读？`, [
@@ -334,16 +381,21 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       }
     ]);
   }, [categories, categoryId, queryClient, runtime, source]);
-  const changeSource = useCallback((nextSource: NotificationFilterSource) => {
-    setCategoryId('');
-    setSource(nextSource);
-  }, []);
+  const changeSource = useCallback(
+    (nextSource: NotificationFilterSource) => {
+      if (nextSource !== 'all' && !runtime.enabledNotificationSources.includes(nextSource)) return;
+      setCategoryId('');
+      setSource(nextSource);
+    },
+    [runtime.enabledNotificationSources]
+  );
   return (
     <NotificationsScreen
       activeSources={runtime.activeSources}
       categories={categories}
       categoryId={categoryId}
       errors={errors}
+      enabledSources={runtime.enabledNotificationSources}
       fetchingMore={listQuery.isFetchingNextPage}
       hasMore={Boolean(listQuery.hasNextPage)}
       items={items}
@@ -352,12 +404,19 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       refreshing={listQuery.isRefetching && !listQuery.isFetchingNextPage}
       source={source}
       sourcePending={sourcePending}
+      sourceUnknown={sourceUnknown}
       unreadOnly={unreadOnly}
       xiaoyinsiNeedsUpgrade={runtime.xiaoyinsiNeedsUpgrade}
       onChangeCategory={setCategoryId}
       onChangeSource={changeSource}
       onChangeUnreadOnly={setUnreadOnly}
       onItemPress={(notification) => {
+        if (
+          !runtime.enabledNotificationSources.includes(notification.source) ||
+          !runtime.activeSources.includes(notification.source)
+        ) {
+          return;
+        }
         const identityKey = runtime.identityKeys[notification.source];
         if (identityKey) navigation.navigate('NotificationDetail', { identityKey, notification });
       }}
@@ -370,11 +429,28 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
   );
 }
 
-export function NotificationDetailRoute({
-  navigation,
-  route
-}: NativeStackScreenProps<RootStackParamList, 'NotificationDetail'>) {
+type NotificationDetailRouteProps = NativeStackScreenProps<RootStackParamList, 'NotificationDetail'>;
+
+export function NotificationDetailRoute({ navigation, route }: NotificationDetailRouteProps) {
   const runtime = useNotificationRouteRuntime();
+  const source = route.params.notification.source;
+  if (!runtime.enabledNotificationSources.includes(source)) {
+    return (
+      <ContentSourceDisabledState
+        source={source}
+        onBack={navigation.goBack}
+        onManage={() => navigation.dispatch(manageContentSourcesAction())}
+      />
+    );
+  }
+  return <EnabledNotificationDetailRoute navigation={navigation} route={route} runtime={runtime} />;
+}
+
+function EnabledNotificationDetailRoute({
+  navigation,
+  route,
+  runtime
+}: NotificationDetailRouteProps & { runtime: NotificationRouteRuntimeValue }) {
   const queryClient = useQueryClient();
   const item = route.params.notification;
   const identityKey = route.params.identityKey;
@@ -723,6 +799,7 @@ export function NotificationSettingsRoute() {
       backgroundEnabled={runtime.backgroundEnabled}
       backgroundError={runtime.backgroundError}
       busy={busy}
+      enabledSources={runtime.enabledNotificationSources}
       permission={runtime.permission}
       sessions={runtime.sessions}
       state={runtime.state}

@@ -8,7 +8,6 @@ import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diag
 import {
   activeNetworkProxyProfile,
   applyNetworkProxy,
-  canStartNetworkContent,
   createEmptyNetworkProxyState,
   createNetworkProxyProfile,
   loadNetworkProxyState,
@@ -26,6 +25,8 @@ import {
 
 type SettledApplyStatus = Extract<NetworkProxyApplyStatus, 'disabled' | 'applied'>;
 const RESOLVED_VOID_PROMISE: Promise<void> = Promise.resolve();
+const NETWORK_PROXY_LOAD_TIMEOUT_MS = 3_000;
+const NETWORK_PROXY_RUNTIME_ENDED_MESSAGE = '代理运行时已结束';
 
 function diagnosticProxyState(state: NetworkProxyState) {
   const profile = activeNetworkProxyProfile(state);
@@ -74,7 +75,6 @@ export function useNetworkProxyRuntime({ notify }: { notify: (message: string) =
   const [loaded, setLoaded] = useState(false);
   const [applyStatus, setApplyStatus] = useState<NetworkProxyApplyStatus>('loading');
   const [applyError, setApplyError] = useState('');
-  const [contentReady, setContentReady] = useState(false);
   const readyPromiseRef = useRef<Promise<void>>(RESOLVED_VOID_PROMISE);
   const proxyStateRef = useRef(proxyState);
   const loadedRef = useRef(loaded);
@@ -156,18 +156,34 @@ export function useNetworkProxyRuntime({ notify }: { notify: (message: string) =
 
   useEffect(() => {
     let canceled = false;
+    let loadTimedOut = false;
+    let loadTimer: ReturnType<typeof setTimeout> | undefined;
+    let releaseOwnerReadiness: () => void = () => undefined;
+    const ownerEnded = new Promise<void>((resolve) => {
+      releaseOwnerReadiness = resolve;
+    });
     const trace = beginDiagnosticTrace('proxy', 'load');
     const loadAndApply = async () => {
       let savedState: NetworkProxyState;
       try {
-        savedState = await loadNetworkProxyState();
+        savedState = await Promise.race([
+          loadNetworkProxyState(),
+          new Promise<NetworkProxyState>((_resolve, reject) => {
+            loadTimer = setTimeout(() => {
+              loadTimedOut = true;
+              reject(new Error('代理配置读取超时'));
+            }, NETWORK_PROXY_LOAD_TIMEOUT_MS);
+          })
+        ]);
       } catch {
         if (canceled) {
           finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
           return;
         }
         const emptyState = createEmptyNetworkProxyState();
-        const message = '代理配置读取失败，已阻止网络请求，请重启 App 后重试。';
+        const message = loadTimedOut
+          ? '代理配置读取超时，已阻止网络请求，请前往“更多”确认代理设置。'
+          : '代理配置读取失败，已阻止网络请求，请重启 App 后重试。';
         proxyStateRef.current = emptyState;
         loadedRef.current = true;
         setProxyState(emptyState);
@@ -175,8 +191,12 @@ export function useNetworkProxyRuntime({ notify }: { notify: (message: string) =
         setApplyState('failed', message);
         notifyRef.current(message);
         markDiagnosticStage(trace, 'persist', { store: 'secure-store', state: 'failure' });
-        finishDiagnosticTrace(trace, 'failure', { reason: 'storage_error' });
+        finishDiagnosticTrace(trace, 'failure', { reason: loadTimedOut ? 'timeout' : 'storage_error' });
         return;
+      } finally {
+        if (loadTimer) {
+          clearTimeout(loadTimer);
+        }
       }
       if (canceled) {
         finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
@@ -191,11 +211,19 @@ export function useNetworkProxyRuntime({ notify }: { notify: (message: string) =
       finishDiagnosticTrace(trace, 'success', fields);
       await applyPersistedProxyState(savedState, undefined, true).catch(() => undefined);
     };
-    const task = loadAndApply();
-    loadPromiseRef.current = task.then(() => undefined);
+    const task = Promise.race([loadAndApply(), ownerEnded]);
+    loadPromiseRef.current = task;
     readyPromiseRef.current = loadPromiseRef.current;
     return () => {
       canceled = true;
+      latestProxyApplyIdRef.current += 1;
+      loadedRef.current = true;
+      applyStatusRef.current = 'failed';
+      applyErrorRef.current = NETWORK_PROXY_RUNTIME_ENDED_MESSAGE;
+      releaseOwnerReadiness();
+      if (loadTimer) {
+        clearTimeout(loadTimer);
+      }
     };
   }, [applyPersistedProxyState, setApplyState]);
 
@@ -430,17 +458,10 @@ export function useNetworkProxyRuntime({ notify }: { notify: (message: string) =
     loaded
   });
 
-  useEffect(() => {
-    if (!contentReady && canStartNetworkContent({ applyStatus, enabled: proxyState.enabled, loaded })) {
-      setContentReady(true);
-    }
-  }, [applyStatus, contentReady, loaded, proxyState.enabled]);
-
   return {
     activeProfile,
     applyError,
     applyStatus,
-    contentReady,
     ensureNetworkProxyReady,
     loaded,
     networkProxyFetcher,

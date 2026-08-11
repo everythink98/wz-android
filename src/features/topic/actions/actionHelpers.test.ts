@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   canSubmitReplyToTopic,
   applyEditedReplyContent,
+  matchesReplyRefreshTarget,
   markCurrentNodeSeekOwnRepliesUnlikable,
+  removeRepliesForRefresh,
   shouldApplyEditedReplyFallback,
   topicEditReplyActionKey,
   topicPollVoteActionKey,
@@ -52,6 +54,34 @@ describe('topic action controller helpers', () => {
   it('keeps NodeSeek edit replies separate from new replies', () => {
     expect(topicEditReplyActionKey('nodeseek:123', 9)).toBe('edit-reply:nodeseek:123:9');
     expect(topicEditReplyActionKey('nodeseek:123', 9)).not.toBe(topicReplyActionKey('nodeseek:123'));
+  });
+
+  it('[REG-TOPIC-077] matches write refreshes only by their explicit identity kind', () => {
+    const replies: Reply[] = [
+      {
+        author: 'first',
+        commentId: 101,
+        deletePath: '/bbs/delete?reid=1',
+        floor: 8,
+        contentHtml: '<p>first</p>',
+        createdAt: ''
+      },
+      {
+        author: 'second',
+        commentId: 202,
+        deletePath: '/bbs/delete?reid=2',
+        floor: 8,
+        contentHtml: '<p>second</p>',
+        createdAt: ''
+      }
+    ];
+
+    expect(matchesReplyRefreshTarget(replies[0], { kind: 'comment-id', commentId: 101 })).toBe(true);
+    expect(matchesReplyRefreshTarget(replies[1], { kind: 'comment-id', commentId: 101 })).toBe(false);
+    expect(removeRepliesForRefresh(replies, { kind: 'comment-id', commentId: 101 })).toEqual([replies[1]]);
+    expect(removeRepliesForRefresh(replies, { kind: 'delete-path', deletePath: '/bbs/delete?reid=1' })).toEqual([
+      replies[1]
+    ]);
   });
 
   it('hides NodeSeek interactions on current user replies without inferring delete permission', () => {

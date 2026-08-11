@@ -164,6 +164,153 @@ describe('xiaoyinsi Device Code auth', () => {
     expect([...store.keys()]).not.toContain(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey);
   });
 
+  it('[REG-SOURCE-010] does not start a device-code request when canceled during capability detection', async () => {
+    memoryStore();
+    const capability = Promise.withResolvers<Response>();
+    const fetcher = vi.fn().mockReturnValueOnce(capability.promise);
+    const crypto = keystore();
+    const controller = new AbortController();
+    const begin = beginXiaoyinsiDeviceAuth({ fetcher, keystore: crypto, signal: controller.signal });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+    capability.resolve(new Response(null, { headers: { 'Auth-Api-Version': '4', 'Auth-Api-Device-Code': 'true' } }));
+
+    await expect(begin).rejects.toThrow('请求已取消');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(crypto.randomHex).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] does not start a device-code request when canceled during keystore setup', async () => {
+    const store = memoryStore();
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'c'.repeat(64));
+    const nonce = Promise.withResolvers<string>();
+    const crypto = keystore();
+    vi.mocked(crypto.randomHex).mockReset().mockReturnValueOnce(nonce.promise);
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(null, { headers: { 'Auth-Api-Version': '4', 'Auth-Api-Device-Code': 'true' } })
+      );
+    const controller = new AbortController();
+    const begin = beginXiaoyinsiDeviceAuth({ fetcher, keystore: crypto, signal: controller.signal });
+    void begin.catch(() => undefined);
+    await vi.waitFor(() => expect(crypto.randomHex).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+    nonce.resolve('e'.repeat(64));
+
+    await expect(begin).rejects.toThrow('请求已取消');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(crypto.getPublicKey).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] does not verify after cancellation during the credential read', async () => {
+    const apiKey = Promise.withResolvers<string | null>();
+    const clientId = Promise.withResolvers<string | null>();
+    vi.mocked(SecureStore.getItemAsync).mockImplementation((key) =>
+      key === XIAOYINSI_AUTH_STORAGE_KEYS.apiKey ? apiKey.promise : clientId.promise
+    );
+    const fetcher = vi.fn();
+    const controller = new AbortController();
+    const verify = verifyXiaoyinsiCredentials({ fetcher, signal: controller.signal });
+    await vi.waitFor(() => expect(SecureStore.getItemAsync).toHaveBeenCalledTimes(2));
+
+    controller.abort();
+    apiKey.resolve('secret');
+    clientId.resolve('client');
+
+    await expect(verify).rejects.toThrow('请求已取消');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] does not revoke after cancellation during its credential read', async () => {
+    const apiKey = Promise.withResolvers<string | null>();
+    const clientId = Promise.withResolvers<string | null>();
+    vi.mocked(SecureStore.getItemAsync).mockImplementation((key) =>
+      key === XIAOYINSI_AUTH_STORAGE_KEYS.apiKey ? apiKey.promise : clientId.promise
+    );
+    const fetcher = vi.fn();
+    const controller = new AbortController();
+    const revoke = revokeXiaoyinsiAuthorization({ fetcher, signal: controller.signal });
+    await vi.waitFor(() => expect(SecureStore.getItemAsync).toHaveBeenCalledTimes(2));
+
+    controller.abort();
+    apiKey.resolve('secret');
+    clientId.resolve('client');
+
+    await expect(revoke).rejects.toThrow('请求已取消');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] does not start revocation cleanup when canceled while reading the response body', async () => {
+    const store = memoryStore();
+    const crypto = keystore();
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, 'secret');
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.pending, 'retained-pending');
+    const response = json({ success: 'OK' });
+    const body = Promise.withResolvers<string>();
+    const responseText = vi.spyOn(response, 'text').mockReturnValueOnce(body.promise);
+    const controller = new AbortController();
+    const revoke = revokeXiaoyinsiAuthorization({
+      fetcher: async () => response,
+      keystore: crypto,
+      signal: controller.signal
+    });
+    void revoke.catch(() => undefined);
+    await vi.waitFor(() => expect(responseText).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+    body.resolve(JSON.stringify({ success: 'OK' }));
+
+    await expect(revoke).rejects.toThrow('请求已取消');
+    expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('secret');
+    expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe('retained-pending');
+    expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup)).toBe(false);
+    expect(fallbackStore.has(XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup)).toBe(false);
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+    expect(crypto.deleteKey).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] does not start local revocation cleanup when canceled during marker persistence', async () => {
+    const store = memoryStore();
+    const crypto = keystore();
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, 'secret');
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.pending, 'retained-pending');
+    const marker = Promise.withResolvers<void>();
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup) {
+        await marker.promise;
+      }
+      store.set(key, value);
+    });
+    const controller = new AbortController();
+    const revoke = revokeXiaoyinsiAuthorization({
+      fetcher: async () => json({ success: 'OK' }),
+      keystore: crypto,
+      signal: controller.signal
+    });
+    void revoke.catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
+        XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup,
+        '1',
+        expect.any(Object)
+      )
+    );
+
+    controller.abort();
+    marker.resolve();
+
+    await expect(revoke).rejects.toThrow('请求已取消');
+    expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('secret');
+    expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe('retained-pending');
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+    expect(crypto.deleteKey).not.toHaveBeenCalled();
+  });
+
   it('keeps pending state for pending/network responses and saves only a nonce-matched decrypted key', async () => {
     const store = memoryStore();
     const crypto = keystore();
@@ -269,6 +416,46 @@ describe('xiaoyinsi Device Code auth', () => {
 
     await expect(poll).rejects.toThrow('请求已取消');
     expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('old-key');
+  });
+
+  it('[REG-SOURCE-010] preserves pending key material when decrypt rejects after cancellation', async () => {
+    const store = memoryStore();
+    const crypto = keystore();
+    const decrypt = Promise.withResolvers<string>();
+    vi.mocked(crypto.decrypt).mockReset().mockReturnValueOnce(decrypt.promise);
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, 'old-key');
+    store.set(
+      XIAOYINSI_AUTH_STORAGE_KEYS.pending,
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'ABCD2345',
+        nonce: 'e'.repeat(64),
+        verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+        verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=SAFE1234',
+        expiresAt: 601_000,
+        intervalMs: 5_000,
+        createdAt: 1_000
+      })
+    );
+    const controller = new AbortController();
+    const poll = pollXiaoyinsiDeviceAuth({
+      fetcher: async () => json({ status: 'authorized', payload: 'cipher' }),
+      keystore: crypto,
+      now: () => 2_000,
+      signal: controller.signal
+    });
+    void poll.catch(() => undefined);
+    await vi.waitFor(() => expect(crypto.decrypt).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+    decrypt.reject(new Error('decrypt failed'));
+
+    await expect(poll).rejects.toThrow('请求已取消');
+    expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('old-key');
+    expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.pending)).toBe(true);
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+    expect(crypto.deleteKey).not.toHaveBeenCalled();
   });
 
   it('restores the previous credential when saving the upgraded bundle fails', async () => {

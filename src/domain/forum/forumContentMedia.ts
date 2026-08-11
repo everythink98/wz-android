@@ -64,17 +64,6 @@ export function normalizeForumContentMediaNodes(
   return dynamicV2exImages ? markDynamicV2exInlineImageNodes(root) : [];
 }
 
-export function normalizeForumContentMediaHtml(html: string) {
-  if (!/<(?:aside|img)\b/i.test(html) && !FORUM_STICKER_MEDIA_PATTERN.test(html)) return html;
-  try {
-    const root = parseHtml(html);
-    normalizeForumContentMediaNodes(root);
-    return root.toString();
-  } catch {
-    return html;
-  }
-}
-
 export function normalizeForumStickerMediaHtml(html: string) {
   if (!/<img\b/i.test(html) && !FORUM_STICKER_MEDIA_PATTERN.test(html)) return html;
   try {

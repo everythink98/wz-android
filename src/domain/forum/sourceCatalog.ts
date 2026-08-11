@@ -79,7 +79,6 @@ export const sourceCatalog = {
 } as const;
 
 export type Source = keyof typeof sourceCatalog;
-export type SourceFamily = (typeof sourceCatalog)[Source]['family'];
 export type DiscourseSource = {
   [Site in Source]: (typeof sourceCatalog)[Site]['family'] extends 'discourse' ? Site : never;
 }[Source];

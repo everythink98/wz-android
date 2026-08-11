@@ -23,19 +23,39 @@ export function nodeSeekTopicPagePath(id: string, page: number) {
   return `/post-${encodeURIComponent(id)}-${page}`;
 }
 
-function nodeSeekPostPageFromHref(href: string | undefined, id: string) {
+function nodeSeekPostLocationFromHref(href: string | undefined) {
   if (!href) {
     return null;
   }
   try {
     const pathname = new URL(href, NODESEEK_BASE_URL).pathname;
-    const prefix = `/post-${encodeURIComponent(id)}-`;
-    if (!pathname.startsWith(prefix)) {
-      return null;
-    }
-    return parsePositiveInteger(pathname.slice(prefix.length));
+    const match = pathname.match(/^\/post-(\d+)-(\d+)\/?$/);
+    const page = parsePositiveInteger(match?.[2]);
+    return match?.[1] && page ? { id: match[1], page } : null;
   } catch {
     return null;
+  }
+}
+
+function nodeSeekPostPageFromHref(href: string | undefined, id: string) {
+  const location = nodeSeekPostLocationFromHref(href);
+  return location?.id === id ? location.page : null;
+}
+
+export function assertNodeSeekTopicIdentity(html: string, id: string, responseUrl?: string) {
+  const embedded = extractNodeSeekEmbeddedData(html);
+  const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
+  const embeddedId = postData ? String(postData.postId || postData.id || '').trim() : '';
+  if (embeddedId && embeddedId !== id) throw new Error('NodeSeek 主题身份不一致');
+
+  const root = parseHtml(html);
+  for (const href of [
+    responseUrl,
+    root.querySelector('link[rel="canonical"][href]')?.getAttribute('href'),
+    root.querySelector('a.post-title[href], .post-title a[href], .post-title[href]')?.getAttribute('href')
+  ]) {
+    const location = nodeSeekPostLocationFromHref(href);
+    if (location && location.id !== id) throw new Error('NodeSeek 主题身份不一致');
   }
 }
 
@@ -120,7 +140,7 @@ export function withNodeSeekReplyPagination(topic: TopicDetail, html: string, id
       ...topic,
       replyHasMore: true,
       replyNextPage: nextPage,
-      replyNextOffset: topic.replies.length
+      replyNextOffset: currentPage * NODESEEK_FLOORS_PER_PAGE
     };
   }
   return topic;

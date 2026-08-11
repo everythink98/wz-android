@@ -29,10 +29,6 @@ import type { TopicSessionController } from './useTopicSessionController';
 
 const EMPTY_DISCOURSE_EMOJI_URLS: DiscourseEmojiUrlMap = {};
 
-export const TopicLoadingState = memo(function TopicLoadingState() {
-  return <LoadingState text="正在读取主题..." />;
-});
-
 export const TopicScreen = memo(function TopicScreen({
   active = true,
   actions,
@@ -58,8 +54,6 @@ export const TopicScreen = memo(function TopicScreen({
   bodyMediaPaused?: boolean;
   chrome: {
     favorite: boolean;
-    identityBlocked: boolean;
-    identityChecking: boolean;
     getDiscourseEmojiUrls: (options: {
       signal?: AbortSignal;
       source: DiscourseSource;
@@ -172,23 +166,17 @@ export const TopicScreen = memo(function TopicScreen({
             {topicAuthNotice?.message || topicReadableError}
           </Text>
           <View style={styles.actions}>
-            {item.source === 'linuxdo' && chrome.identityBlocked ? (
-              <AppButton label="检查 L 站状态" onPress={chrome.verifyLinuxDo} />
-            ) : null}
-            {item.source === 'linuxdo' && !chrome.identityBlocked && topicError.kind === 'verification-required' ? (
+            {item.source === 'linuxdo' && topicError.kind === 'verification-required' ? (
               <AppButton label="去验证" onPress={chrome.verifyLinuxDo} />
             ) : null}
             {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? (
               <AppButton label="去验证" onPress={chrome.verifyNodeSeek} />
             ) : null}
-            <AppButton label={chrome.identityBlocked ? '重试检测' : '重试'} onPress={chrome.refreshTopic} />
+            <AppButton label="重试" onPress={chrome.refreshTopic} />
           </View>
         </View>
       ) : null}
-      {topic && chrome.identityChecking ? <LoadingState text="正在确认 L 站访问状态" /> : null}
-      {!topic && !topicError ? (
-        <LoadingState text={chrome.identityChecking ? '正在确认 L 站访问状态' : '正在读取主题...'} />
-      ) : null}
+      {!topic && !topicError ? <LoadingState text="正在读取主题..." /> : null}
     </>
   );
 

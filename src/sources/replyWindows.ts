@@ -5,6 +5,7 @@ export function emptyReplyWindow(parserVariant: string): RepliesResponse {
   return annotateSourceDiagnosticSummary(
     {
       items: [],
+      completeness: 'complete',
       currentPage: 1,
       hasMore: false,
       nextPage: null,

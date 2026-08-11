@@ -14,7 +14,6 @@ import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostic
 import {
   NETWORK_PROXY_STORAGE_KEY,
   applyNetworkProxy,
-  canStartNetworkContent,
   createNetworkProxyProfile,
   loadNetworkProxyState,
   networkProxyModuleFromReactNativeImport,
@@ -166,13 +165,6 @@ describe('network proxy settings', () => {
         loaded: true
       })
     ).toBe('');
-  });
-
-  it('starts route content only after the persisted proxy decision is settled', () => {
-    expect(canStartNetworkContent({ applyStatus: 'loading', enabled: false, loaded: false })).toBe(false);
-    expect(canStartNetworkContent({ applyStatus: 'applying', enabled: true, loaded: true })).toBe(false);
-    expect(canStartNetworkContent({ applyStatus: 'disabled', enabled: false, loaded: true })).toBe(true);
-    expect(canStartNetworkContent({ applyStatus: 'applied', enabled: true, loaded: true })).toBe(true);
   });
 
   it('blocks enabled proxy mode when the native module is missing', async () => {

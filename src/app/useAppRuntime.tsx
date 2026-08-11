@@ -19,6 +19,8 @@ import { useNotificationsRuntime } from '@/features/notifications/useNotificatio
 import type { NotificationRouteRuntimeValue } from '@/features/notifications/NotificationRoute';
 import { moreBadgeState as notificationMoreBadgeState } from '@/ui/navigation/moreBadge';
 import { openNotificationsRoute, openXiaoyinsiAuthorization } from './appNavigation';
+import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
+import { useContentSourceQueryCleanup } from './useContentSourceQueryCleanup';
 
 export function useAppRuntime() {
   const lifecycle = useAppLifecycleRuntime();
@@ -44,15 +46,24 @@ export function useAppRuntime() {
   );
   const networkRuntime = useNetworkProxyRuntime({ notify });
   const {
-    contentReady: networkProxyContentReady,
     ensureNetworkProxyReady,
     networkProxyFetcher,
     proxyState: networkProxyState,
     webViewBlockMessage: networkProxyWebViewBlockMessage
   } = networkRuntime;
+  const contentSourceProjection = projectContentSourcePreferences(readerData.settings.contentSources, readerDataLoaded);
+  const {
+    enabledSources,
+    feedSources: enabledFeedSources,
+    notificationSources: enabledNotificationSources,
+    sessionSources: enabledSessionSources
+  } = contentSourceProjection;
+  const enabledSourcesKey = readerDataLoaded ? canonicalEnabledSourcesKey(readerData.settings.contentSources) : '';
+  useContentSourceQueryCleanup(enabledSources, enabledSourcesKey);
 
   const accountRuntime = useAccountRuntime({
     appActive,
+    enabledSources,
     fetcher: networkProxyFetcher,
     loginNavigation: lifecycle.loginNavigation,
     notify,
@@ -69,17 +80,13 @@ export function useAppRuntime() {
     notify
   });
   const {
-    accountIdentityChecks,
-    accountIdentityPending,
     accountSessionViewModels,
     forumSessionEpochs,
     getLinuxDoUserAgent,
     getNodeSeekUserAgent,
-    identityBarriers: accountIdentityBarriers,
-    identityReconciliationPending,
+    notificationPrivateAccessAllowed,
     readGateway,
     reconcileAccountStatus,
-    retainableIdentityBarriers: retainableAccountIdentityBarriers,
     statusBusy
   } = accountRuntime.read;
   const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, reconcileWritableSession } =
@@ -102,10 +109,13 @@ export function useAppRuntime() {
     appActive,
     authorizationRevision: xiaoyinsiAuthController.phase,
     beginXiaoyinsiAuthorization,
+    contentSourcesReady: readerDataLoaded,
+    enabledNotificationSources,
     fetcher: networkProxyFetcher,
     getLinuxDoUserAgent,
     getNodeSeekUserAgent,
     openSource: openNotificationsRoute,
+    privateAccessAllowed: notificationPrivateAccessAllowed,
     sessions: accountSessionViewModels
   });
   const notificationRouteRuntime = useMemo<NotificationRouteRuntimeValue>(
@@ -139,12 +149,11 @@ export function useAppRuntime() {
   };
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
-    active: (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
-    identityBarriers: accountIdentityBarriers,
-    identityReconciliationPending,
+    active: readerDataLoaded && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
+    enabledFeedSources,
+    enabledSourcesKey,
     notify,
     readGateway,
-    retainableIdentityBarriers: retainableAccountIdentityBarriers,
     sessionEpochs: forumSessionEpochs
   });
   const { appUpdateBusy, appUpdateDownloading, appUpdateInfo } = updateRuntime;
@@ -165,8 +174,6 @@ export function useAppRuntime() {
   const topicRouteRuntime = useMemo<TopicRouteRuntimeValue>(
     () => ({
       account: {
-        identityBarriers: accountIdentityBarriers,
-        identityChecks: accountIdentityChecks,
         beginXiaoyinsiAuthorization,
         sessionEpochs: forumSessionEpochs,
         sessionViewModels: accountSessionViewModels,
@@ -200,8 +207,6 @@ export function useAppRuntime() {
       readerStyle: readerStyleContext
     }),
     [
-      accountIdentityBarriers,
-      accountIdentityChecks,
       accountSessionViewModels,
       appActive,
       beginXiaoyinsiAuthorization,
@@ -236,8 +241,6 @@ export function useAppRuntime() {
   const userRouteRuntime = useMemo<UserRouteRuntimeValue>(
     () => ({
       account: {
-        identityBarriers: accountIdentityBarriers,
-        identityChecks: accountIdentityChecks,
         linuxDoVerificationVisible: showLinuxDoPanel,
         readGateway,
         reconcileAccountStatus,
@@ -254,8 +257,6 @@ export function useAppRuntime() {
       }
     }),
     [
-      accountIdentityBarriers,
-      accountIdentityChecks,
       appActive,
       commitReaderData,
       forumSessionEpochs,
@@ -273,14 +274,9 @@ export function useAppRuntime() {
   const feedRouteRuntime = useMemo<FeedRouteRuntimeValue>(
     () => ({
       account: {
-        identityBarriers: accountIdentityBarriers,
-        identityChecks: accountIdentityChecks,
-        identityReconciliationPending,
         linuxDoVerificationVisible: showLinuxDoPanel,
         readGateway,
-        reconcileAccountStatus,
         requestNodeSeekVerification,
-        retainableIdentityBarriers: retainableAccountIdentityBarriers,
         sessionEpochs: forumSessionEpochs,
         showLinuxDoVerification,
         showYaohuoLogin
@@ -294,19 +290,14 @@ export function useAppRuntime() {
       }
     }),
     [
-      accountIdentityBarriers,
-      accountIdentityChecks,
       appActive,
       catalogCategories,
       forumSessionEpochs,
-      identityReconciliationPending,
       notify,
       readGateway,
       readerData,
       readerDataLoaded,
-      reconcileAccountStatus,
       requestNodeSeekVerification,
-      retainableAccountIdentityBarriers,
       showLinuxDoPanel,
       showLinuxDoVerification,
       showYaohuoLogin
@@ -316,8 +307,6 @@ export function useAppRuntime() {
   const searchRouteRuntime = useMemo<SearchRouteRuntimeValue>(
     () => ({
       account: {
-        identityChecks: accountIdentityChecks,
-        identityPending: accountIdentityPending,
         linuxDoVerificationVisible: showLinuxDoPanel,
         readGateway,
         reconcileAccountStatus,
@@ -327,16 +316,12 @@ export function useAppRuntime() {
         showLinuxDoVerification,
         showYaohuoLogin
       },
-      appActive,
       catalogCategories,
       notify,
       readerData
     }),
     [
-      accountIdentityChecks,
-      accountIdentityPending,
       accountSessionViewModels,
-      appActive,
       catalogCategories,
       forumSessionEpochs,
       notify,
@@ -353,6 +338,7 @@ export function useAppRuntime() {
   const libraryRouteRuntime = useMemo<LibraryRouteRuntimeValue>(
     () => ({
       categories: catalogCategories,
+      enabledSources,
       notify,
       reader: {
         commit: commitReaderData,
@@ -361,12 +347,13 @@ export function useAppRuntime() {
         loaded: readerDataLoaded
       }
     }),
-    [catalogCategories, commitReaderData, notify, readerData, readerDataLoaded, readerDataRef]
+    [catalogCategories, commitReaderData, enabledSources, notify, readerData, readerDataLoaded, readerDataRef]
   );
 
   const moreRouteRuntime = useMemo<MoreRouteRuntimeValue>(
     () => ({
       account: {
+        enabledSessionSources,
         read: {
           sessions: accountRuntime.read.accountSessionViewModels,
           statusBusy: accountRuntime.read.statusBusy
@@ -461,6 +448,7 @@ export function useAppRuntime() {
       accountRuntime.read.statusBusy,
       commitReaderData,
       diagnosticMetadata,
+      enabledSessionSources,
       getCurrentScreen,
       networkRuntime.activeProfile,
       networkRuntime.applyError,
@@ -485,8 +473,9 @@ export function useAppRuntime() {
   return {
     accountHost: accountRuntime.hosts.element,
     appStyles,
+    mediaTransportIdentity: networkRuntime.applyStatus,
     readerStyleContext,
-    routes: networkProxyContentReady
+    routes: readerDataLoaded
       ? {
           feedRouteRuntime,
           libraryRouteRuntime,

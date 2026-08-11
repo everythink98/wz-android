@@ -28,6 +28,7 @@ import {
   NODESEEK_BASE_URL,
   NODESEEK_FLOORS_PER_PAGE,
   arrayField,
+  assertNodeSeekTopicIdentity,
   extractNodeSeekEmbeddedData,
   isNodeSeekChallengeResponse,
   lastNodeSeekPostPage,
@@ -339,10 +340,12 @@ export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
 }
 
 async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions) {
-  return fetchNodeSeekTextResult(
+  const result = await fetchNodeSeekTextResult(
     nodeSeekTopicPagePath(id, page),
     nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
   );
+  assertNodeSeekTopicIdentity(result.text, id, result.responseUrl);
+  return result;
 }
 
 async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions) {
@@ -354,6 +357,7 @@ async function fetchTopicPageData(id: string, page: number, options: NodeSeekOpt
     nodeSeekTopicPagePath(id, page),
     nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
   );
+  assertNodeSeekTopicIdentity(html, id, responseUrl);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER, page);
@@ -391,16 +395,17 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       id,
       1
     );
-    const result = paged;
     const comments = postData ? arrayField(postData.comments) : [];
+    const replyCandidates = Math.max(rendered.replies.length, Math.max(0, comments.length - 1));
+    const result = {
+      ...paged,
+      replyCompleteness: paged.replies.length === replyCandidates ? ('complete' as const) : ('partial' as const)
+    };
     const parsed = annotateSourceDiagnosticSummary(result, {
       parserVariant: 'rendered-topic',
-      candidateCount: 1 + Math.max(rendered.replies.length, Math.max(0, comments.length - 1)),
+      candidateCount: 1 + replyCandidates,
       validCount: 1 + result.replies.length,
-      droppedCount: Math.max(
-        0,
-        Math.max(rendered.replies.length, Math.max(0, comments.length - 1)) - result.replies.length
-      ),
+      droppedCount: Math.max(0, replyCandidates - result.replies.length),
       partialErrorCount: voteLinkPolls.partialErrorCount,
       missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length
     });
@@ -426,8 +431,11 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       id,
       1
     );
-    const result = paged;
     const replyCandidates = Math.max(0, comments.length - 1);
+    const result = {
+      ...paged,
+      replyCompleteness: paged.replies.length === replyCandidates ? ('complete' as const) : ('partial' as const)
+    };
     const missingFloorCount = comments
       .slice(1)
       .filter(
@@ -454,6 +462,7 @@ type NodeSeekChronologicalRepliesOptions = NodeSeekOptions & {
   offset?: number | null;
   fillPages?: boolean;
   orderedWindow?: boolean;
+  replyCount?: number;
   targetReply?: ReplyLocationTarget;
 };
 
@@ -528,10 +537,27 @@ function projectNodeSeekOrderedPage(result: NodeSeekChronologicalReplies, page: 
   const retainedFloors = new Set(
     items.map((reply) => positiveReplyLocation(reply.floor)).filter((floor): floor is number => Boolean(floor))
   );
+  const confirmedFloors = (result.confirmedFloors || []).filter((floor) => retainedFloors.has(floor));
+  const orderedConfirmedFloors = [...new Set(confirmedFloors)].sort((left, right) => left - right);
+  const confirmedFloorSet = new Set(orderedConfirmedFloors);
+  const hasConfirmedFloorGap = orderedConfirmedFloors.some(
+    (floor, index) => index > 0 && floor !== orderedConfirmedFloors[index - 1] + 1
+  );
+  const hasUnconfirmedItem = items.some((reply) => {
+    const floor = positiveReplyLocation(reply.floor);
+    return !floor || !confirmedFloorSet.has(floor);
+  });
   return copySourceDiagnosticSummary(
     {
       ...result,
-      confirmedFloors: (result.confirmedFloors || []).filter((floor) => retainedFloors.has(floor)),
+      completeness:
+        result.completeness === 'partial' ||
+        items.length !== result.items.length ||
+        hasConfirmedFloorGap ||
+        hasUnconfirmedItem
+          ? 'partial'
+          : 'complete',
+      confirmedFloors,
       items
     },
     result
@@ -544,15 +570,19 @@ function assertNodeSeekResolvedPage(result: NodeSeekChronologicalReplies, page: 
   }
 }
 
-function assertNodeSeekAdjacentPageEvidence(result: NodeSeekChronologicalReplies, page: number) {
+function assertNodeSeekAdjacentPageEvidence(
+  result: NodeSeekChronologicalReplies,
+  page: number,
+  { allowEmpty = false }: { allowEmpty?: boolean } = {}
+) {
   assertNodeSeekResolvedPage(result, page);
   const firstFloor = (page - 1) * NODESEEK_FLOORS_PER_PAGE + 1;
   const confirmedFloors = [...new Set(result.confirmedFloors || [])].sort((left, right) => left - right);
   if (confirmedFloors.some((floor) => floor < firstFloor || floor > page * NODESEEK_FLOORS_PER_PAGE)) {
     throw new Error('NodeSeek 原站未确认请求的回复页');
   }
-  if (confirmedFloors.some((floor, index) => index > 0 && floor !== confirmedFloors[index - 1] + 1)) {
-    throw new Error('NodeSeek 原站回复窗口不完整');
+  if (!allowEmpty && !result.items.length) {
+    throw new Error('NodeSeek 原站回复窗口为空');
   }
 }
 
@@ -564,22 +594,11 @@ function assertNodeSeekTerminalWindow(result: NodeSeekChronologicalReplies, page
     if (page === 1) return;
     throw new Error('NodeSeek 原站无法确认最新窗口');
   }
-  const confirmedFloors = new Set(result.confirmedFloors || []);
-  const itemFloors = new Set(
-    result.items.map((reply) => reply.floor).filter((floor): floor is number => typeof floor === 'number')
-  );
-  if (
-    confirmedFloors.size !== result.items.length ||
-    itemFloors.size !== result.items.length ||
-    [...confirmedFloors].some((floor) => !itemFloors.has(floor))
-  ) {
-    throw new Error('NodeSeek 原站无法确认最新窗口');
-  }
 }
 
 async function resolveNodeSeekTailChronological(
   id: string,
-  options: NodeSeekOptions,
+  options: NodeSeekChronologicalRepliesOptions,
   initialPage: number,
   initialResult: NodeSeekChronologicalReplies
 ) {
@@ -591,7 +610,9 @@ async function resolveNodeSeekTailChronological(
       throw new Error('NodeSeek 原站返回了重复的末页游标');
     }
     visitedPages.add(page);
-    assertNodeSeekAdjacentPageEvidence(result, page);
+    assertNodeSeekAdjacentPageEvidence(result, page, {
+      allowEmpty: page === 1 && options.replyCount === 0 && !result.hasMore && !result.nextPage
+    });
     const candidate = Math.max(page, result.nodeSeekLastPage || page, result.nextPage || page);
     if (candidate > page) {
       page = candidate;
@@ -620,6 +641,9 @@ async function fillNodeSeekRepliesLimit(
   result: RepliesResponse,
   limit: number
 ): Promise<RepliesResponse> {
+  if (!result.items.length && result.hasMore && result.nextPage) {
+    throw new Error('NodeSeek 原站回复窗口为空');
+  }
   if (result.items.length >= limit || !result.hasMore || !result.nextPage) {
     return result;
   }
@@ -636,6 +660,10 @@ async function fillNodeSeekRepliesLimit(
   });
   const combined = {
     ...extra,
+    completeness:
+      result.completeness === 'partial' || extra.completeness === 'partial'
+        ? ('partial' as const)
+        : ('complete' as const),
     items: [...result.items, ...extra.items]
   };
   return mergeSourceDiagnosticSummaries(combined, 'multi-page-replies', [result, extra], {
@@ -695,8 +723,8 @@ async function getNodeSeekRepliesChronological(
     const firstPage =
       hintedPage ||
       (floor ? Math.floor((floor - 1) / NODESEEK_FLOORS_PER_PAGE) + 1 : positiveReplyLocation(options.page) || 1);
-    const fetchPage = (page: number) =>
-      getNodeSeekRepliesChronological(id, {
+    const fetchPage = async (page: number) => {
+      const result = await getNodeSeekRepliesChronological(id, {
         ...options,
         fillPages: false,
         limit: NODESEEK_FLOORS_PER_PAGE,
@@ -704,6 +732,8 @@ async function getNodeSeekRepliesChronological(
         page,
         targetReply: undefined
       });
+      return result;
+    };
     const readPage = async (page: number) => {
       const result = await fetchPage(page);
       assertNodeSeekResolvedPage(result, page);
@@ -713,6 +743,12 @@ async function getNodeSeekRepliesChronological(
       result.nextPage && result.nextPage !== page
         ? { ...result, nextOffset: (result.nextPage - 1) * NODESEEK_FLOORS_PER_PAGE }
         : result;
+    const hasTarget = (result: NodeSeekChronologicalReplies) => {
+      if (!commentId && floor && !result.confirmedFloors?.includes(floor)) {
+        return false;
+      }
+      return result.items.some((reply) => matchesNodeSeekReplyLocation(reply, target));
+    };
     let seedPage = firstPage;
     let firstResult = await fetchPage(firstPage);
     if (firstResult.currentPage !== firstPage || firstResult.resolvedPageConfirmed !== true) {
@@ -722,7 +758,7 @@ async function getNodeSeekRepliesChronological(
       seedPage = firstResult.currentPage!;
       firstResult = await readPage(seedPage);
     }
-    if (firstResult.items.some((reply) => matchesNodeSeekReplyLocation(reply, target))) {
+    if (hasTarget(firstResult)) {
       return targetResult(firstResult, seedPage);
     }
     if (commentId) {
@@ -731,7 +767,7 @@ async function getNodeSeekRepliesChronological(
         if (page === seedPage) continue;
         const result = await readPage(page);
         lastPage = Math.max(lastPage, result.nodeSeekLastPage || page, result.nextPage || page);
-        if (result.items.some((reply) => matchesNodeSeekReplyLocation(reply, target))) {
+        if (hasTarget(result)) {
           return targetResult(result, page);
         }
       }
@@ -796,6 +832,7 @@ async function getNodeSeekRepliesChronological(
     const hasMore = hasPageRemainder || Boolean(nextPage);
     const result = {
       ...windowFields,
+      ...(orderedSource.length === source.length ? {} : { completeness: 'partial' as const }),
       confirmedFloors: [...new Set(explicitFloors)],
       items,
       hasMore,
@@ -805,7 +842,7 @@ async function getNodeSeekRepliesChronological(
           ? consumed
           : page > 1
             ? ((nextPage || page + 1) - 1) * NODESEEK_FLOORS_PER_PAGE
-            : floorOffset + items.length
+            : ((nextPage || page + 1) - 1) * NODESEEK_FLOORS_PER_PAGE
         : null
     };
     const annotated = annotateNodeSeekReplies(result, {
@@ -837,11 +874,14 @@ async function getNodeSeekRepliesChronological(
     const hasMore = hasPageRemainder || Boolean(nextPage);
     const result = {
       ...windowFields,
+      ...(allReplies.length === Math.max(0, comments.length - 1) && orderedReplies.length === allReplies.length
+        ? {}
+        : { completeness: 'partial' as const }),
       confirmedFloors: [...new Set(explicitFloors)],
       items,
       hasMore,
       nextPage: hasMore ? (hasPageRemainder ? 1 : nextPage || 2) : null,
-      nextOffset: hasMore ? consumed : null
+      nextOffset: hasMore ? (hasPageRemainder ? consumed : ((nextPage || 2) - 1) * NODESEEK_FLOORS_PER_PAGE) : null
     };
     const missingFloorCount = comments
       .slice(1)
@@ -868,6 +908,9 @@ async function getNodeSeekRepliesChronological(
   const hasMore = Boolean(nextPage);
   const result = {
     ...windowFields,
+    ...(normalizedItems.length === comments.length && items.length === normalizedItems.length
+      ? {}
+      : { completeness: 'partial' as const }),
     confirmedFloors: [...new Set(explicitFloors)],
     items,
     hasMore,
@@ -925,15 +968,31 @@ export async function getNodeSeekReplies(
     page = confirmedTail.page;
     chronological = confirmedTail.result;
   }
-  if (position.kind === 'cursor') {
-    assertNodeSeekAdjacentPageEvidence(chronological, page);
+  if (position.kind === 'cursor' || (position.kind === 'start' && !chronological.items.length)) {
+    assertNodeSeekAdjacentPageEvidence(chronological, page, {
+      allowEmpty:
+        position.kind === 'start' &&
+        options.replyCount === 0 &&
+        page === 1 &&
+        !chronological.hasMore &&
+        !chronological.nextPage
+    });
   }
   const {
     nodeSeekLastPage: _nodeSeekLastPage,
     responsePageResolved: _responsePageResolved,
     ...replyWindow
   } = chronological;
-  return orientReplyWindow(copySourceDiagnosticSummary(replyWindow, chronological), order);
+  return orientReplyWindow(
+    copySourceDiagnosticSummary(
+      {
+        ...replyWindow,
+        completeness: replyWindow.completeness || 'partial'
+      },
+      chronological
+    ),
+    order
+  );
 }
 
 export async function resolveNodeSeekUser(username: string, options: NodeSeekOptions = {}): Promise<UserReference> {

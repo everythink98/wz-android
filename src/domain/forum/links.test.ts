@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { parseForumTopicDestination, parseForumTopicReplyTarget } from './links';
+import { parseForumTopicDestination } from './links';
 
 describe('forum links', () => {
   it('[REG-NOTIFY-045] keeps the exact Yaohuo full-reply floor from the original link', () => {
     expect(
-      parseForumTopicReplyTarget(
+      parseForumTopicDestination(
         'https://www.yaohuo.me/bbs/book_re.aspx?classid=177&id=1560939&tofloor=90&fromuserid=1000'
-      )
+      )?.targetReply
     ).toEqual({ floor: 90 });
-    expect(parseForumTopicReplyTarget('https://www.yaohuo.me/bbs/book_re.aspx?id=1&tofloor=0')).toBeUndefined();
-    expect(parseForumTopicReplyTarget('https://www.yaohuo.me/bbs/book_re.aspx?id=1&tofloor=1.5')).toBeUndefined();
-    expect(parseForumTopicReplyTarget('https://www.yaohuo.me/bbs-1.html?tofloor=90')).toBeUndefined();
-    expect(parseForumTopicReplyTarget('https://evil.example/bbs/book_re.aspx?id=1&tofloor=90')).toBeUndefined();
+    expect(
+      parseForumTopicDestination('https://www.yaohuo.me/bbs/book_re.aspx?id=1&tofloor=0')?.targetReply
+    ).toBeUndefined();
+    expect(
+      parseForumTopicDestination('https://www.yaohuo.me/bbs/book_re.aspx?id=1&tofloor=1.5')?.targetReply
+    ).toBeUndefined();
+    expect(parseForumTopicDestination('https://www.yaohuo.me/bbs-1.html?tofloor=90')?.targetReply).toBeUndefined();
+    expect(parseForumTopicDestination('https://evil.example/bbs/book_re.aspx?id=1&tofloor=90')).toBeNull();
   });
 
   it('[REG-TOPIC-062] preserves native topic anchors for all five sources', () => {

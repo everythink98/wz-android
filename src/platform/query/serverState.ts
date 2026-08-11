@@ -1,10 +1,8 @@
 import { QueryClient } from '@tanstack/react-query';
 import type { SourceSearchFilter } from '@/domain/forum/searchFilters';
-import { isSessionSource, type NotificationSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import { isSessionSource, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { FeedSource, ReplyOrder, Source } from '@/domain/forum/models';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from './sessionEpochs';
-
-export type ForumIdentityBarrierSource = SessionSource;
 
 function sessionEpochKey(source: FeedSource, epochs: ForumSessionEpochs) {
   if (source === 'all') {
@@ -13,9 +11,11 @@ function sessionEpochKey(source: FeedSource, epochs: ForumSessionEpochs) {
   return isSessionSource(source) ? epochs[source] : 0;
 }
 
-function identityBarrierKey(source: FeedSource, barriers: readonly ForumIdentityBarrierSource[] = []) {
-  return source === 'all' ? [...new Set(barriers)].sort() : [];
-}
+export const accountQueryKeys = {
+  all: ['account'] as const,
+  snapshot: (source: Source) => ['account', source, 'snapshot'] as const,
+  probe: (source: Source, generation: number) => ['account', source, 'probe', generation] as const
+};
 
 export const forumQueryKeys = {
   all: ['forum'] as const,
@@ -23,27 +23,31 @@ export const forumQueryKeys = {
   categories: (
     source: FeedSource,
     scope: ForumSessionEpochs = initialForumSessionEpochs,
-    identityBarriers: readonly ForumIdentityBarrierSource[] = []
+    enabledSourcesKey?: string,
+    readPlanScope?: string
   ) =>
     [
       'forum',
       source,
       'categories',
       {
-        identityBarriers: identityBarrierKey(source, identityBarriers),
-        sessionEpoch: sessionEpochKey(source, scope)
+        ...(readPlanScope ? { readPlanScope } : {}),
+        sessionEpoch: sessionEpochKey(source, scope),
+        ...(source === 'all' && enabledSourcesKey !== undefined ? { enabledSources: enabledSourcesKey } : {})
       }
     ] as const,
   feed: ({
     category,
     feedFilter,
-    identityBarriers,
+    enabledSourcesKey,
+    readPlanScope,
     scope,
     source
   }: {
     category?: string;
     feedFilter?: string;
-    identityBarriers?: readonly ForumIdentityBarrierSource[];
+    enabledSourcesKey?: string;
+    readPlanScope?: string;
     scope: ForumSessionEpochs;
     source: FeedSource;
   }) =>
@@ -53,22 +57,23 @@ export const forumQueryKeys = {
       'feed',
       {
         category: category || null,
-        identityBarriers: identityBarrierKey(source, identityBarriers),
+        ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: sessionEpochKey(source, scope),
-        feedFilter: feedFilter || null
+        feedFilter: feedFilter || null,
+        ...(source === 'all' && enabledSourcesKey !== undefined ? { enabledSources: enabledSourcesKey } : {})
       }
     ] as const,
   search: ({
-    authenticated,
     filter,
     query,
+    readPlanScope,
     scope,
     sort,
     source
   }: {
-    authenticated?: boolean;
     filter?: SourceSearchFilter;
     query: string;
+    readPlanScope?: string;
     scope: ForumSessionEpochs;
     sort: string;
     source: Source;
@@ -78,7 +83,7 @@ export const forumQueryKeys = {
       source,
       'search',
       {
-        authenticated: source === 'linuxdo' && authenticated === true,
+        ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: sessionEpochKey(source, scope),
         filter: filter || null,
         query,
@@ -88,12 +93,14 @@ export const forumQueryKeys = {
   searchTags: ({
     categoryId,
     query,
+    readPlanScope,
     scope,
     selectedTags,
     source
   }: {
     categoryId?: string;
     query: string;
+    readPlanScope?: string;
     scope: ForumSessionEpochs;
     selectedTags: string[];
     source: Source;
@@ -104,6 +111,7 @@ export const forumQueryKeys = {
       'search-tags',
       {
         categoryId: categoryId || null,
+        ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: sessionEpochKey(source, scope),
         query,
         selectedTags
@@ -111,11 +119,13 @@ export const forumQueryKeys = {
     ] as const,
   searchUsers: ({
     categoryId,
+    readPlanScope,
     scope,
     source,
     term
   }: {
     categoryId?: string;
+    readPlanScope?: string;
     scope: ForumSessionEpochs;
     source: Source;
     term: string;
@@ -126,32 +136,52 @@ export const forumQueryKeys = {
       'search-users',
       {
         categoryId: categoryId || null,
+        ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: sessionEpochKey(source, scope),
         term
       }
     ] as const,
-  semanticSearch: (query: string, scope: ForumSessionEpochs) =>
-    ['forum', 'linuxdo', 'semantic-search', { sessionEpoch: scope.linuxdo, query }] as const,
-  topic: ({ scope, source, topicId }: { scope: ForumSessionEpochs; source: Source; topicId: string }) =>
+  semanticSearch: (query: string, scope: ForumSessionEpochs, readPlanScope?: string) =>
+    [
+      'forum',
+      'linuxdo',
+      'semantic-search',
+      { ...(readPlanScope ? { readPlanScope } : {}), sessionEpoch: scope.linuxdo, query }
+    ] as const,
+  topic: ({
+    readPlanScope,
+    scope,
+    source,
+    topicId
+  }: {
+    readPlanScope?: string;
+    scope: ForumSessionEpochs;
+    source: Source;
+    topicId: string;
+  }) =>
     [
       'forum',
       source,
       'topic',
       {
+        ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: sessionEpochKey(source, scope),
         topicId
       }
     ] as const,
-  replies: (topicQueryKey: readonly unknown[], order: ReplyOrder) => [...topicQueryKey, 'replies', { order }] as const,
+  replies: (topicQueryKey: readonly unknown[], order: ReplyOrder, readPlanScope?: string) =>
+    [...topicQueryKey, 'replies', { order, ...(readPlanScope ? { readPlanScope } : {}) }] as const,
   replyRefresh: (repliesQueryKey: readonly unknown[], page: number, offset: number | null, limit: number) =>
     [...repliesQueryKey, 'refresh', { limit, offset, page }] as const,
   reply: ({
     postNumber,
+    readPlanScope,
     scope,
     source,
     topicId
   }: {
     postNumber: number;
+    readPlanScope?: string;
     scope: ForumSessionEpochs;
     source: Source;
     topicId: string;
@@ -161,52 +191,53 @@ export const forumQueryKeys = {
       source,
       'topic-reply',
       {
+        ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: sessionEpochKey(source, scope),
         postNumber,
         topicId
       }
     ] as const,
-  user: ({ scope, source, userId }: { scope: ForumSessionEpochs; source: Source; userId: string }) =>
+  user: ({
+    readPlanScope,
+    scope,
+    source,
+    userId
+  }: {
+    readPlanScope?: string;
+    scope: ForumSessionEpochs;
+    source: Source;
+    userId: string;
+  }) =>
     [
       'forum',
       source,
       'user',
       {
+        ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: sessionEpochKey(source, scope),
         userId
       }
     ] as const,
-  userResolution: ({ scope, username }: { scope: ForumSessionEpochs; username: string }) =>
+  userResolution: ({
+    readPlanScope,
+    scope,
+    username
+  }: {
+    readPlanScope?: string;
+    scope: ForumSessionEpochs;
+    username: string;
+  }) =>
     [
       'forum',
       'nodeseek',
       'user-resolution',
       {
+        ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: scope.nodeseek,
         username: username.trim()
       }
     ] as const,
   userLane: (userKey: readonly unknown[], lane: 'topics' | 'replies') => [...userKey, lane] as const,
-  accountStatus: ({ sessionEpochs, source }: { sessionEpochs: ForumSessionEpochs; source: Source }) =>
-    ['forum', source, 'account-status', { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const,
-  accountStatusProbe: ({
-    sessionEpochs,
-    generation,
-    source
-  }: {
-    sessionEpochs: ForumSessionEpochs;
-    generation: number;
-    source: Source;
-  }) =>
-    [
-      'forum',
-      source,
-      'account-status-probe',
-      {
-        sessionEpoch: sessionEpochKey(source, sessionEpochs),
-        generation
-      }
-    ] as const,
   notifications: (source: NotificationSource | 'all') => ['forum', source, 'notifications'] as const,
   notificationList: ({
     categoryId,

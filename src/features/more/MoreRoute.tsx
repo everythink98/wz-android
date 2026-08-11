@@ -1,6 +1,13 @@
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from 'react';
 import { BackHandler, ScrollView } from 'react-native';
-import { useIsFocused, useScrollToTop } from '@react-navigation/native';
+import {
+  type NavigationProp,
+  type RouteProp,
+  useIsFocused,
+  useNavigation,
+  useRoute,
+  useScrollToTop
+} from '@react-navigation/native';
 import type { ReaderData, ReaderDataMutationReason } from '@/domain/reader/readerData';
 import type { Screen } from '@/ui/navigation/types';
 import type { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
@@ -12,6 +19,7 @@ import { useBackupStatusController } from './useBackupStatusController';
 import { useDiagnosticLogController } from './useDiagnosticLogController';
 import { useReaderSettingsController } from './useReaderSettingsController';
 import type { MoreAccountCapabilities } from './components/MoreAccountPanel';
+import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
 
 export type MoreRouteRuntimeValue = {
   account: MoreAccountCapabilities;
@@ -59,7 +67,10 @@ function useMoreRouteRuntime() {
 export function MoreRoute() {
   const runtime = useMoreRouteRuntime();
   const active = useIsFocused();
+  const navigation = useNavigation<NavigationProp<MainTabParamList, 'more'>>();
+  const route = useRoute<RouteProp<MainTabParamList, 'more'>>();
   const scrollRef = useRef<ScrollView | null>(null);
+  const [contentSourcesExpanded, setContentSourcesExpanded] = useState(false);
   const [showNetworkProxyPanel, setShowNetworkProxyPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   useScrollToTop(scrollRef);
@@ -80,6 +91,13 @@ export function MoreRoute() {
   const closeAccountSurfaces = runtime.account.surfaces.closeAll;
 
   useEffect(() => {
+    if (!active || route.params?.intent !== 'manage-content-sources') return;
+    setContentSourcesExpanded(true);
+    // The tab router applies nested params after this commit, so a synchronous clear is overwritten.
+    const frame = requestAnimationFrame(() => navigation.replaceParams({}));
+    return () => cancelAnimationFrame(frame);
+  }, [active, navigation, route.params?.intent]);
+  useEffect(() => {
     if (active) return;
     closeAccountSurfaces();
     setShowNetworkProxyPanel(false);
@@ -97,6 +115,7 @@ export function MoreRoute() {
   return (
     <MoreScreen
       account={runtime.account}
+      contentSourcesExpanded={contentSourcesExpanded}
       scrollRef={scrollRef}
       update={{
         busy: update.appUpdateBusy,
@@ -140,6 +159,7 @@ export function MoreRoute() {
           update: updateSettings
         }
       }}
+      onContentSourcesExpandedChange={setContentSourcesExpanded}
     />
   );
 }

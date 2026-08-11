@@ -1,27 +1,6 @@
 import type { FeedSource, SourceErrorInfo, SourceErrorKind, SourceErrors } from '@/domain/forum/models';
 import { isCanceledRequest } from '@/platform/network/errors';
 
-type LegacySourceErrorInfo = string | (Omit<SourceErrorInfo, 'kind'> & { kind?: SourceErrorKind });
-
-const REPLY_COUNT_REFRESH_REQUIRED = 'reply-count-refresh-required';
-const V2EX_REPLY_SNAPSHOT_STALE = 'v2ex-reply-snapshot-stale';
-
-export function replyCountRefreshRequiredError(message: string) {
-  return Object.assign(new Error(message), { reason: REPLY_COUNT_REFRESH_REQUIRED });
-}
-
-export function isReplyCountRefreshRequired(error: unknown) {
-  return errorProperty(error, 'reason') === REPLY_COUNT_REFRESH_REQUIRED;
-}
-
-export function v2exReplySnapshotStaleError(message: string) {
-  return Object.assign(new Error(message), { reason: V2EX_REPLY_SNAPSHOT_STALE });
-}
-
-export function isV2exReplySnapshotStale(error: unknown) {
-  return errorProperty(error, 'reason') === V2EX_REPLY_SNAPSHOT_STALE;
-}
-
 function unknownErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error || '读取失败');
 }
@@ -84,7 +63,11 @@ export function sourceErrorFromUnknown(source: FeedSource, error: unknown): Sour
   return {
     message,
     kind,
+    ...(typeof reason === 'string' ? { reason } : {}),
     ...(errorFlag(error, 'loginRequired') ? { loginRequired: true } : {}),
+    ...(Boolean(error && typeof error === 'object' && (error as { retryable?: unknown }).retryable)
+      ? { retryable: true }
+      : {}),
     ...(kind === 'verification-required' ? { verificationRequired: true } : {})
   };
 }
@@ -99,34 +82,21 @@ export function sourceReadRecoveryOutcome(
   return sourceErrorFromUnknown(source, error).kind === 'verification-required' ? 'verification-required' : 'failed';
 }
 
-export function normalizeSourceErrorInfo(error?: SourceErrorInfo | LegacySourceErrorInfo): SourceErrorInfo | undefined {
-  if (!error) {
-    return undefined;
-  }
-  if (typeof error === 'string') {
-    return { message: error, kind: 'ordinary' };
-  }
-  return {
-    ...error,
-    kind: classifiedKind(error)
-  };
+export function sourceErrorMessage(error?: SourceErrorInfo) {
+  return error?.message || '';
 }
 
-export function sourceErrorMessage(error?: SourceErrorInfo | LegacySourceErrorInfo) {
-  return normalizeSourceErrorInfo(error)?.message || '';
+export function sourceErrorRequiresVerification(error?: SourceErrorInfo) {
+  return error?.kind === 'verification-required';
 }
 
-export function sourceErrorRequiresVerification(error?: SourceErrorInfo | LegacySourceErrorInfo) {
-  return normalizeSourceErrorInfo(error)?.kind === 'verification-required';
-}
-
-export function yaohuoErrorRequiresLoginPanel(error?: SourceErrorInfo | LegacySourceErrorInfo) {
+export function yaohuoErrorRequiresLoginPanel(error?: SourceErrorInfo) {
   const kind = sourceErrorKind(error);
   return kind === 'login-required' || kind === 'login-expired' || kind === 'verification-required';
 }
 
-export function sourceErrorKind(error?: SourceErrorInfo | LegacySourceErrorInfo): SourceErrorKind {
-  return normalizeSourceErrorInfo(error)?.kind || 'ordinary';
+export function sourceErrorKind(error?: SourceErrorInfo): SourceErrorKind {
+  return error?.kind || 'ordinary';
 }
 
 export function formatSourceErrorMessages(errors: SourceErrors, sourceLabel: (source: FeedSource) => string) {

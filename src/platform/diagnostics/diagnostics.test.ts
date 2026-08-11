@@ -692,20 +692,6 @@ describe('diagnostic traces', () => {
     expect(normalizeDiagnosticReason(Object.assign(new Error('搜索结果缺少标题'), { reason: 'parse_empty' }))).toBe(
       'parse_empty'
     );
-    expect(
-      normalizeDiagnosticReason(
-        Object.assign(new Error('NodeSeek 原站未确认完整的相邻回复窗口'), {
-          reason: 'reply-count-refresh-required'
-        })
-      )
-    ).toBe('reply_count_stale');
-    expect(
-      normalizeDiagnosticReason(
-        Object.assign(new Error('V2EX 回复总数已变化，无法确认完整集合'), {
-          reason: 'v2ex-reply-snapshot-stale'
-        })
-      )
-    ).toBe('reply_count_stale');
   });
 
   it('redacts and bounds uncaught error details', () => {

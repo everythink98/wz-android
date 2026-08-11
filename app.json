@@ -28,6 +28,7 @@
       "./plugins/withAndroidReleaseDefaults",
       "./plugins/withApkInstaller",
       "./plugins/withXiaoyinsiAuthModule",
+      "./plugins/withNotificationDigestModule",
       "./plugins/withNetworkProxyModule",
       "./plugins/withSvgRendererModule",
       [

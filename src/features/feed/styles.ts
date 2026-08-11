@@ -151,5 +151,3 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderSettings) {
     }
   });
 }
-
-export type FeedStyles = ReturnType<typeof createFeedStyles>;

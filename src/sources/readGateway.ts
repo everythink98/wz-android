@@ -46,15 +46,12 @@ import {
   type DiagnosticFields,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
-import { sourceDiagnosticSummary } from './diagnostics';
+import { copySourceDiagnosticSummary, sourceDiagnosticSummary } from './diagnostics';
 import { runForumSourceReadAttempt, withForumSourceReadEligibility } from './forumSourceReadAttempt';
-import type { FeedSource, Source, SourceErrors, Topic } from '@/domain/forum/models';
-import {
-  isSessionSource,
-  sessionSources,
-  type DiscourseSource,
-  type SessionSource
-} from '@/domain/forum/sourceCatalog';
+import type { FeedSource, RepliesResponse, Source, SourceErrors, Topic, TopicDetail } from '@/domain/forum/models';
+import { resolveForumReadPlan, type ForumReadOperation, type ForumReadPlan } from '@/domain/forum/readPlan';
+import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
+import { isSessionSource, sourceValues, type DiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 
 export { getCurrentUserProfile } from './sourceRead';
 export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/sources/linuxdo/level';
@@ -96,40 +93,47 @@ export function searchTopics(options: SearchTopicsOptions) {
 
 type GetTopicOptions = Parameters<typeof getForumTopic>[0] & { topic?: Topic };
 
-export function getTopic(options: GetTopicOptions) {
-  if (options.source !== 'yaohuo') {
-    return getForumTopic(options);
-  }
-  if (!options.topic) {
-    throw new Error('妖火详情需要主题上下文');
-  }
-  return getYaohuoTopicDirect({
-    topic: options.topic,
-    yaohuoFetcher: options.fetcher,
-    signal: options.signal,
-    timeoutMs: options.timeoutMs
-  });
+export async function getTopic(options: GetTopicOptions): Promise<TopicDetail> {
+  const detail =
+    options.source !== 'yaohuo'
+      ? await getForumTopic(options)
+      : options.topic
+        ? await getYaohuoTopicDirect({
+            topic: options.topic,
+            yaohuoFetcher: options.fetcher,
+            signal: options.signal,
+            timeoutMs: options.timeoutMs
+          })
+        : (() => {
+            throw new Error('妖火详情需要主题上下文');
+          })();
+  return detail.replyCompleteness
+    ? detail
+    : copySourceDiagnosticSummary({ ...detail, replyCompleteness: 'partial' }, detail);
 }
 
 type GetRepliesOptions = Parameters<typeof getForumReplies>[0] & {
   categoryId?: string;
 };
 
-export function getReplies(options: GetRepliesOptions) {
-  if (options.source !== 'yaohuo') {
-    return getForumReplies(options);
-  }
-  return getYaohuoRepliesDirect({
-    id: options.id,
-    categoryId: options.categoryId,
-    order: options.order,
-    position: options.position,
-    limit: options.limit,
-    replyCount: options.replyCount,
-    yaohuoFetcher: options.fetcher,
-    signal: options.signal,
-    timeoutMs: options.timeoutMs
-  });
+export async function getReplies(options: GetRepliesOptions): Promise<RepliesResponse> {
+  const response =
+    options.source !== 'yaohuo'
+      ? await getForumReplies(options)
+      : await getYaohuoRepliesDirect({
+          id: options.id,
+          categoryId: options.categoryId,
+          order: options.order,
+          position: options.position,
+          limit: options.limit,
+          replyCount: options.replyCount,
+          yaohuoFetcher: options.fetcher,
+          signal: options.signal,
+          timeoutMs: options.timeoutMs
+        });
+  return response.completeness
+    ? response
+    : copySourceDiagnosticSummary({ ...response, completeness: 'partial' }, response);
 }
 
 type GetUserProfileOptions = Parameters<typeof getForumUserProfile>[0];
@@ -144,17 +148,17 @@ type ReadGatewayCredentialLoadOptions = {
 };
 
 type ReadGatewayDependencies = {
-  currentSessionEpoch?: (source: SessionSource) => number;
+  anonymousFetcher: Fetcher;
   currentXiaoyinsiCredentialGeneration?: () => number;
   fetcher: Fetcher;
-  isSourceAuthenticated?: (source: SessionSource) => boolean;
-  isSourceReadBlocked?: (source: SessionSource) => boolean;
+  getEnabledSources?: () => readonly Source[];
   linuxDoUserAgent?: () => string;
   loadXiaoyinsiCredentialsForSource?: (
     source: FeedSource,
     options?: ReadGatewayCredentialLoadOptions
   ) => Promise<XiaoyinsiApiCredentials | undefined>;
   nodeSeekUserAgent: () => string;
+  readSessionRuntimeSnapshot: (source: SessionSource) => SessionRuntimeSnapshot;
   refreshXiaoyinsiAuthorization?: (trace?: DiagnosticTrace) => Promise<boolean | null>;
 };
 
@@ -163,9 +167,11 @@ type GetReplyOptions = Parameters<typeof getForumReply>[0];
 type ManagedReadKeys =
   | 'discourseAuth'
   | 'fetcher'
+  | 'fetcherForSource'
   | 'linuxDoAuthenticated'
   | 'nodeSeekAuthenticated'
   | 'nodeSeekUserAgent'
+  | 'includedSources'
   | 'unavailableSources';
 type ManagedGetCategoriesOptions = Omit<GetCategoriesOptions, ManagedReadKeys>;
 type ManagedGetFeedOptions = Omit<GetFeedOptions, ManagedReadKeys>;
@@ -202,9 +208,20 @@ type ManagedLevelProfileOptions = Omit<XiaoyinsiOptions, 'credentials' | 'fetche
   source: 'xiaoyinsi';
 };
 export type ReadGatewayReadContext = {
-  identityBarriers?: readonly SessionSource[];
+  includedSources?: readonly Source[];
+  readPlanScope?: string;
+  readPlanScopes?: readonly (readonly [Source, string])[];
   trace?: DiagnosticTrace;
 };
+
+function normalizeEnabledSources(sources?: readonly Source[]) {
+  const enabled = new Set(sources || sourceValues);
+  return sourceValues.filter((source) => enabled.has(source));
+}
+
+function sameEnabledSources(left: readonly Source[], right: readonly Source[]) {
+  return left.length === right.length && left.every((source, index) => source === right[index]);
+}
 
 function summarizeReadResult(result: unknown) {
   const value = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
@@ -250,13 +267,44 @@ function summarizeReadResult(result: unknown) {
   return summary satisfies DiagnosticFields;
 }
 
+function blockedReadError(source: Source, plan: Extract<ForumReadPlan, { state: 'blocked' }>) {
+  const message =
+    plan.reason === 'source-disabled'
+      ? '内容源已停用'
+      : plan.reason === 'identity-pending'
+        ? '登录状态暂时无法确认'
+        : plan.reason === 'identity-unavailable'
+          ? '登录状态核对失败，请重试'
+          : plan.reason === 'login-required'
+            ? '请先登录该内容源'
+            : '该内容源不支持此读取';
+  return Object.assign(new Error(message), {
+    kind: plan.reason === 'login-required' ? ('login-required' as const) : ('ordinary' as const),
+    ...(plan.reason === 'login-required' ? { loginRequired: true } : {}),
+    reason: plan.reason,
+    retryable: plan.reason === 'identity-pending' || plan.reason === 'identity-unavailable',
+    source
+  });
+}
+
 export function createReadGateway<Dependencies extends ReadGatewayDependencies>(dependencies: Dependencies) {
+  const currentEnabledSources = () => normalizeEnabledSources(dependencies.getEnabledSources?.());
+  const readSessionSnapshot = (source: SessionSource) => dependencies.readSessionRuntimeSnapshot(source);
+  const getReadPlan = (source: Source, operation: ForumReadOperation) =>
+    resolveForumReadPlan(
+      source,
+      operation,
+      currentEnabledSources().includes(source),
+      isSessionSource(source) ? readSessionSnapshot(source) : undefined
+    );
   const read = async <T>(
     source: FeedSource,
     operationName: string,
+    readOperation: ForumReadOperation,
     operation: (credentials: {
       discourseAuth?: DiscourseReadAuth;
       fetcher: Fetcher;
+      fetcherForSource?: (source: Source) => Fetcher;
       linuxDoAuthenticated?: boolean;
       nodeSeekAuthenticated?: boolean;
       nodeSeekUserAgent?: string;
@@ -271,23 +319,57 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     if (context?.trace && Object.keys(intentFields).length) {
       markDiagnosticStage(trace, 'guard', { source, ...intentFields });
     }
-    const identitySources: readonly SessionSource[] =
-      source === 'all' ? sessionSources : isSessionSource(source) ? [source] : [];
-    const sessionEpochs = Object.fromEntries(
-      identitySources.map((identitySource) => [identitySource, dependencies.currentSessionEpoch?.(identitySource)])
-    ) as Partial<Record<SessionSource, number | undefined>>;
+    const enabledSnapshot = currentEnabledSources();
+    const includedSources =
+      source === 'all' ? normalizeEnabledSources(context?.includedSources || enabledSnapshot) : [];
+    if (
+      source === 'all' &&
+      dependencies.getEnabledSources &&
+      context?.includedSources &&
+      !sameEnabledSources(enabledSnapshot, includedSources)
+    ) {
+      if (ownsTrace) {
+        finishDiagnosticTrace(trace, 'stale', { reason: 'superseded', source });
+      }
+      throw new Error(REQUEST_CANCELED_MESSAGE);
+    }
+    const enabledSourcesAreCurrent = () =>
+      !dependencies.getEnabledSources ||
+      (source === 'all'
+        ? sameEnabledSources(currentEnabledSources(), includedSources)
+        : currentEnabledSources().includes(source));
+    const planSources = source === 'all' ? includedSources : [source];
+    const planSnapshot = new Map(planSources.map((planSource) => [planSource, getReadPlan(planSource, readOperation)]));
+    const expectedPlanScopes = new Map(context?.readPlanScopes || []);
+    const directPlan = source === 'all' ? undefined : planSnapshot.get(source);
+    if (
+      (source !== 'all' && context?.readPlanScope && directPlan?.cacheScope !== context.readPlanScope) ||
+      (source === 'all' &&
+        expectedPlanScopes.size > 0 &&
+        planSources.some(
+          (planSource) => expectedPlanScopes.get(planSource) !== planSnapshot.get(planSource)?.cacheScope
+        ))
+    ) {
+      if (ownsTrace) finishDiagnosticTrace(trace, 'stale', { reason: 'superseded', source });
+      throw new Error(REQUEST_CANCELED_MESSAGE);
+    }
+    if (source !== 'all' && directPlan?.state === 'blocked') {
+      const error = blockedReadError(source, directPlan);
+      if (ownsTrace) finishDiagnosticTrace(trace, 'blocked', { reason: normalizeDiagnosticReason(error), source });
+      throw error;
+    }
     let xiaoyinsiGeneration: number | undefined;
     let hasXiaoyinsiCredentials = false;
     const credentialGenerationsAreCurrent = () =>
-      identitySources.every(
-        (identitySource) =>
-          sessionEpochs[identitySource] === undefined ||
-          dependencies.currentSessionEpoch?.(identitySource) === sessionEpochs[identitySource]
-      ) &&
-      (xiaoyinsiGeneration === undefined ||
-        !dependencies.currentXiaoyinsiCredentialGeneration ||
-        dependencies.currentXiaoyinsiCredentialGeneration() === xiaoyinsiGeneration);
-    const readIsCurrent = credentialGenerationsAreCurrent;
+      xiaoyinsiGeneration === undefined ||
+      !dependencies.currentXiaoyinsiCredentialGeneration ||
+      dependencies.currentXiaoyinsiCredentialGeneration() === xiaoyinsiGeneration;
+    const readPlansAreCurrent = () =>
+      planSources.every(
+        (planSource) => getReadPlan(planSource, readOperation).cacheScope === planSnapshot.get(planSource)?.cacheScope
+      );
+    const readIsCurrent = () =>
+      credentialGenerationsAreCurrent() && enabledSourcesAreCurrent() && readPlansAreCurrent();
     const recoveryCommitIsEligible = () => readIsCurrent() && signal?.aborted !== true;
     const credentialErrors: SourceErrors = {};
     const loadCredential = async <T>(credentialSource: FeedSource, loader: () => Promise<T>) => {
@@ -307,24 +389,16 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       }
     };
     try {
-      const blockedIdentitySources = identitySources.filter(
-        (identitySource) =>
-          dependencies.isSourceReadBlocked?.(identitySource) === true ||
-          context?.identityBarriers?.includes(identitySource)
-      );
-      const linuxDoAuthenticated =
-        (source === 'linuxdo' || source === 'all') &&
-        dependencies.isSourceAuthenticated?.('linuxdo') === true &&
-        !blockedIdentitySources.includes('linuxdo');
-      const nodeSeekAuthenticated =
-        (source === 'nodeseek' || source === 'all') &&
-        dependencies.isSourceAuthenticated?.('nodeseek') === true &&
-        !blockedIdentitySources.includes('nodeseek');
-      if (source !== 'all' && blockedIdentitySources.length) {
-        throw new Error('登录状态待确认；已暂停该站的新请求');
-      }
+      const planFor = (planSource: Source) => planSnapshot.get(planSource);
+      const unavailablePlanSources = planSources.filter((planSource) => planFor(planSource)?.state === 'blocked');
+      const linuxDoPlan = planFor('linuxdo');
+      const nodeSeekPlan = planFor('nodeseek');
+      const yaohuoPlan = planFor('yaohuo');
+      const xiaoyinsiPlan = planFor('xiaoyinsi');
+      const linuxDoAuthenticated = linuxDoPlan?.state === 'ready' && linuxDoPlan.lane === 'authenticated';
+      const nodeSeekAuthenticated = nodeSeekPlan?.state === 'ready' && nodeSeekPlan.lane === 'authenticated';
       const xiaoyinsiCredentials =
-        (source === 'xiaoyinsi' || source === 'all') && !blockedIdentitySources.includes('xiaoyinsi')
+        xiaoyinsiPlan?.state === 'ready' && xiaoyinsiPlan.lane === 'authenticated'
           ? await loadCredential('xiaoyinsi', async () =>
               dependencies.loadXiaoyinsiCredentialsForSource?.(source, {
                 captureGeneration: (generation) => {
@@ -335,9 +409,9 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
             )
           : undefined;
       const discourseAuth: DiscourseReadAuth | undefined =
-        source === 'linuxdo' || source === 'all' || xiaoyinsiCredentials
+        linuxDoPlan?.state === 'ready' || xiaoyinsiCredentials
           ? {
-              ...(source === 'linuxdo' || source === 'all'
+              ...(linuxDoPlan?.state === 'ready'
                 ? {
                     linuxdo: {
                       authenticated: linuxDoAuthenticated,
@@ -357,36 +431,53 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           : undefined;
       const unavailableSources =
         source === 'all'
-          ? [...new Set([...(Object.keys(credentialErrors) as Source[]), ...blockedIdentitySources])]
+          ? [...new Set([...(Object.keys(credentialErrors) as Source[]), ...unavailablePlanSources])]
           : [];
       hasXiaoyinsiCredentials = Boolean(xiaoyinsiCredentials);
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
+      const anonymousFetcher: Fetcher = (input, init) =>
+        dependencies.anonymousFetcher(input, { ...init, credentials: 'omit' });
+      const localFetcher: Fetcher = async () => {
+        throw new Error('本地读取不得发起网络请求');
+      };
+      const sourcePlanFetcher = (planSource: Source): Fetcher => {
+        const plan = planFor(planSource);
+        if (!plan || plan.state === 'blocked' || plan.transport === 'none') return localFetcher;
+        return plan.transport === 'native-no-cookie' ? anonymousFetcher : dependencies.fetcher;
+      };
+      const operationFetcher = source === 'all' ? localFetcher : sourcePlanFetcher(source);
       markDiagnosticStage(trace, 'credential', {
         source,
         hasCredential: Boolean(
           linuxDoAuthenticated ||
           nodeSeekAuthenticated ||
-          ((source === 'yaohuo' || source === 'all') && dependencies.isSourceAuthenticated?.('yaohuo') === true) ||
+          (yaohuoPlan?.state === 'ready' && yaohuoPlan.lane === 'authenticated') ||
           xiaoyinsiCredentials
         ),
-        isCredentialKnown: blockedIdentitySources.length === 0
+        isCredentialKnown: unavailablePlanSources.length === 0
       });
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
+      const ownFetcher = (fetcher: Fetcher) =>
+        withForumSourceReadEligibility(withDiagnosticFetcher(trace, fetcher), recoveryCommitIsEligible);
       const runOperation = (fetcher: Fetcher) =>
         operation({
           discourseAuth,
-          fetcher: withForumSourceReadEligibility(withDiagnosticFetcher(trace, fetcher), recoveryCommitIsEligible),
+          fetcher: ownFetcher(fetcher),
+          ...(source === 'all'
+            ? { fetcherForSource: (planSource: Source) => ownFetcher(sourcePlanFetcher(planSource)) }
+            : {}),
           linuxDoAuthenticated,
           nodeSeekAuthenticated,
-          nodeSeekUserAgent: source === 'nodeseek' || source === 'all' ? dependencies.nodeSeekUserAgent() : undefined,
+          nodeSeekUserAgent: nodeSeekPlan?.state === 'ready' ? dependencies.nodeSeekUserAgent() : undefined,
+          ...(source === 'all' ? { includedSources } : {}),
           ...(unavailableSources.length ? { unavailableSources } : {})
         });
       const result =
         source === 'linuxdo' || source === 'nodeseek'
-          ? await runForumSourceReadAttempt(source, dependencies.fetcher, runOperation, recoveryCommitIsEligible)
-          : await runOperation(dependencies.fetcher);
+          ? await runForumSourceReadAttempt(source, operationFetcher, runOperation, recoveryCommitIsEligible)
+          : await runOperation(operationFetcher);
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
@@ -409,7 +500,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           );
         }
         const aggregateErrors = { ...aggregateResult.errors };
-        blockedIdentitySources.forEach((blockedSource) => {
+        unavailablePlanSources.forEach((blockedSource) => {
           delete aggregateErrors[blockedSource];
         });
         aggregateResult.errors = { ...aggregateErrors, ...credentialErrors };
@@ -505,16 +596,17 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
   };
 
   return {
+    getReadPlan,
     async hasYaohuoCredential() {
-      return (
-        dependencies.isSourceAuthenticated?.('yaohuo') === true && dependencies.isSourceReadBlocked?.('yaohuo') !== true
-      );
+      const plan = getReadPlan('yaohuo', 'feed');
+      return plan.state === 'ready' && plan.lane === 'authenticated';
     },
     getCategories(options: ManagedGetCategoriesOptions = {}, context?: ReadGatewayReadContext) {
       const source = options.source || 'all';
       return read(
         source,
         'getCategories',
+        'categories',
         (credentials) =>
           getForumCategories({
             ...options,
@@ -528,6 +620,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         options.source,
         'getFeed',
+        'feed',
         (credentials) =>
           getFeed({
             ...options,
@@ -541,6 +634,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         source,
         'getEmojiUrls',
+        'emoji',
         ({ discourseAuth, fetcher }) =>
           getDiscourseSourceEmojiUrls(source, {
             ...options,
@@ -555,6 +649,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         options.source,
         'searchTopics',
+        'search',
         (credentials) =>
           searchTopics({
             ...options,
@@ -569,6 +664,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         source,
         'searchTagOptions',
+        'search-tags',
         ({ discourseAuth, fetcher }) =>
           searchDiscourseSourceTagOptions(source, {
             ...options,
@@ -584,6 +680,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         source,
         'searchUserOptions',
+        'search-users',
         ({ discourseAuth, fetcher }) =>
           searchDiscourseSourceUserOptions(source, {
             ...options,
@@ -601,6 +698,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         source,
         'searchSemanticTopics',
+        'semantic-search',
         ({ discourseAuth, fetcher }) =>
           searchLinuxDoSemanticDirect(query, {
             ...options,
@@ -618,6 +716,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         source,
         'getLevelProfile',
+        'level',
         ({ discourseAuth, fetcher }) => {
           if (discourseAuth?.linuxdo?.authenticated !== true) {
             throw Object.assign(new Error('请先完成 linux.do 登录 / 验证。'), {
@@ -639,6 +738,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         options.source,
         'getTopic',
+        'topic',
         (credentials) =>
           getTopic({
             ...options,
@@ -652,6 +752,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         options.source,
         'getReplies',
+        'replies',
         (credentials) =>
           getReplies({
             ...options,
@@ -666,6 +767,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         options.source,
         'getReply',
+        'reply',
         (credentials) =>
           getForumReply({
             ...options,
@@ -679,6 +781,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         options.source,
         'getUserProfile',
+        'user-profile',
         (credentials) =>
           getUserProfile({
             ...options,
@@ -692,6 +795,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         'nodeseek',
         'resolveUser',
+        'user-resolution',
         ({ fetcher, nodeSeekAuthenticated, nodeSeekUserAgent }) =>
           resolveNodeSeekUserDirect(options.username, {
             authenticated: nodeSeekAuthenticated,
@@ -710,6 +814,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       return read(
         source,
         'getLevelProfile',
+        'level',
         ({ discourseAuth, fetcher }) => {
           const credentials = discourseAuth?.xiaoyinsi;
           if (!credentials) {

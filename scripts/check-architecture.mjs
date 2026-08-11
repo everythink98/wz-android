@@ -42,6 +42,7 @@ const ACCOUNT_RUNTIME_READ_CAPABILITIES = new Set([
   'forumSessionEpochs',
   'getLinuxDoUserAgent',
   'getNodeSeekUserAgent',
+  'notificationPrivateAccessAllowed',
   'identityBarriers',
   'identityReconciliationPending',
   'readGateway',
@@ -86,6 +87,7 @@ const FORBIDDEN_ACCOUNT_ESCAPE_MEMBER =
 const FORBIDDEN_ACCOUNT_CENTER_WRITE_MEMBER = new Set(['ensure', 'ensureNodeImageApiKey']);
 const FORBIDDEN_LEGACY_MODULE_NAMES = new Set([
   'AppControls',
+  'accountIdentityRuntime',
   'GlobalModalHost',
   'MorePanels',
   'TopicPresentationContext',
@@ -106,6 +108,35 @@ const FORBIDDEN_LEGACY_MODULE_NAMES = new Set([
   'userReturnSnapshot',
   'aggregateRead'
 ]);
+
+function accountSnapshotOwnershipIssues(filePath, fromFile) {
+  const sourceText = readFileSync(filePath, 'utf8');
+  const issues = [];
+  if (sourceText.includes('setSiteSessionStates')) {
+    issues.push({ code: 'account-snapshot-owner', message: `${fromFile} 不得恢复 workflow session 镜像` });
+  }
+  if (
+    fromFile !== 'features/account/useAccountStatusController.ts' &&
+    /setQueryData(?:<[^>]+>)?\s*\(\s*accountQueryKeys\.snapshot\s*\(/s.test(sourceText)
+  ) {
+    issues.push({ code: 'account-snapshot-owner', message: `${fromFile} 不得绕过 Account snapshot commit seam` });
+  }
+  if (fromFile === 'platform/query/serverState.ts') {
+    const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const declaration = sourceFile.statements
+      .filter(ts.isVariableStatement)
+      .flatMap((statement) => statement.declarationList.declarations)
+      .find((candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === 'accountQueryKeys');
+    const keyText = declaration?.initializer?.getText(sourceFile) || '';
+    if (!keyText.includes("['account', source, 'snapshot']") || keyText.includes('sessionEpoch')) {
+      issues.push({
+        code: 'account-query-key',
+        message: `${fromFile} 的 Account snapshot key 必须稳定且不得包含 sessionEpoch`
+      });
+    }
+  }
+  return issues;
+}
 
 function normalizedPath(filePath) {
   return path.resolve(filePath).toLowerCase();
@@ -656,6 +687,7 @@ export function analyzeArchitecture(srcDir) {
     issues.push(...routeRuntimeProjectionIssues(file, fromFile));
     issues.push(...rawAccountSessionIssues(file, fromFile));
     issues.push(...rawAccountCapabilityProjectionIssues(file, fromFile));
+    issues.push(...accountSnapshotOwnershipIssues(file, fromFile));
     issues.push(...domainIoIssues(file, fromFile));
     for (const specifier of importedModuleSpecifiers(file)) {
       const importedPath = internalModulePath(fromFile, specifier);

@@ -33,15 +33,21 @@ describe('foreground notification access', () => {
     ).resolves.toMatchObject({ identityKey: 'nodeseek:42', userId: '42', username: 'alice', fetcher });
   });
 
-  it('rejects a pending identity and a legacy Xiaoyinsi credential', async () => {
+  it.each(['pending', 'unknown'] as const)('rejects a %s identity before transport', async (identityTrust) => {
+    const fetcher = vi.fn<typeof fetch>();
+
     await expect(
       readForegroundNotificationAccess({
         source: 'linuxdo',
-        session: { ...session('linuxdo'), identityTrust: 'pending' },
-        fetcher: vi.fn<typeof fetch>()
+        session: { ...session('linuxdo'), identityTrust },
+        fetcher
       })
     ).rejects.toThrow('账号身份尚未确认');
 
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('rejects a legacy Xiaoyinsi credential', async () => {
     await expect(
       readForegroundNotificationAccess({
         source: 'xiaoyinsi',

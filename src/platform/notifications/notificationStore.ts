@@ -155,6 +155,21 @@ export function setSourceNotificationIntent(source: NotificationSource, enabled:
   }));
 }
 
+export function clearNotificationSourceForContentDisable(source: NotificationSource) {
+  return updateNotificationState((current) => ({
+    ...current,
+    sources: {
+      ...current.sources,
+      [source]: {
+        intentEnabled: current.sources[source].intentEnabled,
+        ...(current.sources[source].identityKey ? { identityKey: current.sources[source].identityKey } : {}),
+        baselineReady: false,
+        deliveredIds: []
+      }
+    }
+  }));
+}
+
 export function advanceNotificationDelivery(
   previous: NotificationSourceState | undefined,
   identityKey: string,
@@ -179,18 +194,43 @@ export function advanceNotificationDelivery(
   };
 }
 
+export interface NotificationDeliveryCommit {
+  expectedNewIds: readonly string[];
+  previousIdentifier: string | undefined;
+  notificationIdentifier: string;
+}
+
 export function recordNotificationDelivery(
   source: NotificationSource,
   identityKey: string,
   scannedIds: string[],
-  fields: { lastSuccessAt: string; unreadCount: number }
+  fields: { lastSuccessAt: string; unreadCount: number },
+  delivery?: NotificationDeliveryCommit
 ) {
   let newIds: string[] = [];
+  let committed = false;
+  let previousDeliveryState: Pick<NotificationSourceState, 'baselineReady' | 'deliveredIds'> | undefined;
   const operation = updateNotificationState((current) => {
     const sourceState = current.sources[source];
     if (!current.globalEnabled || !sourceState.intentEnabled || sourceState.identityKey !== identityKey) return current;
     const advanced = advanceNotificationDelivery(sourceState, identityKey, scannedIds);
     newIds = advanced.newIds;
+    const plannedIdsMatch = delivery
+      ? delivery.expectedNewIds.length === newIds.length &&
+        delivery.expectedNewIds.every((id, index) => id === newIds[index])
+      : false;
+    if (
+      delivery
+        ? !plannedIdsMatch || sourceState.notificationIdentifier !== delivery.previousIdentifier
+        : newIds.length > 0
+    ) {
+      return current;
+    }
+    previousDeliveryState = {
+      baselineReady: sourceState.baselineReady,
+      deliveredIds: sourceState.deliveredIds
+    };
+    committed = true;
     return {
       ...current,
       sources: {
@@ -198,7 +238,8 @@ export function recordNotificationDelivery(
         [source]: {
           ...advanced.state,
           lastSuccessAt: fields.lastSuccessAt,
-          unreadCount: fields.unreadCount
+          unreadCount: fields.unreadCount,
+          ...(delivery ? { notificationIdentifier: delivery.notificationIdentifier } : {})
         }
       }
     };
@@ -206,22 +247,30 @@ export function recordNotificationDelivery(
   return operation.then((state) => ({
     state,
     newIds,
+    committed,
     rollback: () =>
-      updateNotificationState((current) => {
-        const sourceState = current.sources[source];
-        if (sourceState.identityKey !== identityKey || !newIds.length) return current;
-        const released = new Set(newIds);
-        return {
-          ...current,
-          sources: {
-            ...current.sources,
-            [source]: {
-              ...sourceState,
-              deliveredIds: sourceState.deliveredIds.filter((id) => !released.has(id))
+      !committed || !delivery
+        ? Promise.resolve(state)
+        : updateNotificationState((current) => {
+            const sourceState = current.sources[source];
+            if (
+              sourceState.identityKey !== identityKey ||
+              sourceState.notificationIdentifier !== delivery.notificationIdentifier
+            ) {
+              return current;
             }
-          }
-        };
-      })
+            return {
+              ...current,
+              sources: {
+                ...current.sources,
+                [source]: {
+                  ...sourceState,
+                  ...previousDeliveryState,
+                  notificationIdentifier: delivery.previousIdentifier
+                }
+              }
+            };
+          })
   }));
 }
 
@@ -237,27 +286,6 @@ export function resetNotificationSourceIdentity(source: NotificationSource, iden
       }
     }
   }));
-}
-
-export function setNotificationIdentifier(
-  source: NotificationSource,
-  identityKey: string,
-  notificationIdentifier: string
-) {
-  return updateNotificationState((current) => {
-    const sourceState = current.sources[source];
-    if (!current.globalEnabled || !sourceState.intentEnabled || sourceState.identityKey !== identityKey) return current;
-    return {
-      ...current,
-      sources: {
-        ...current.sources,
-        [source]: {
-          ...sourceState,
-          notificationIdentifier
-        }
-      }
-    };
-  });
 }
 
 export function recordNotificationSnapshot(

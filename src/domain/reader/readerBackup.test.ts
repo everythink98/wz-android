@@ -36,6 +36,39 @@ describe('reader JSON backup', () => {
     expect(imported.version).toBe(2);
   });
 
+  it('preserves content source preferences through current JSON backups', () => {
+    const local = createEmptyReaderData();
+    const remote = createEmptyReaderData();
+    remote.settings.contentSources = [
+      { source: 'xiaoyinsi', enabled: false },
+      { source: 'v2ex', enabled: true },
+      { source: 'linuxdo', enabled: true },
+      { source: 'nodeseek', enabled: true },
+      { source: 'yaohuo', enabled: true }
+    ];
+
+    const imported = importReaderBackupJson(local, exportReaderBackupJson(remote));
+
+    expect(imported.version).toBe(2);
+    expect(imported.settings.contentSources[0]).toEqual({ source: 'xiaoyinsi', enabled: false });
+  });
+
+  it('adds default content sources when importing an old v2 backup', () => {
+    const oldBackup = JSON.parse(JSON.stringify(createEmptyReaderData()));
+    delete oldBackup.settings.contentSources;
+
+    const imported = importReaderBackupJson(createEmptyReaderData(), JSON.stringify(oldBackup));
+
+    expect(imported.version).toBe(2);
+    expect(imported.settings.contentSources).toEqual([
+      { source: 'v2ex', enabled: true },
+      { source: 'linuxdo', enabled: true },
+      { source: 'nodeseek', enabled: true },
+      { source: 'yaohuo', enabled: true },
+      { source: 'xiaoyinsi', enabled: true }
+    ]);
+  });
+
   it('rejects non-current backup versions', () => {
     const local = createEmptyReaderData();
     local.settings.theme = 'dark';

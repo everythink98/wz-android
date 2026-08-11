@@ -10,12 +10,11 @@ import type {
   DiscourseUserOption,
   FeedSource,
   Source,
-  SourceErrorInfo,
   Topic
 } from '@/domain/forum/models';
-import { aggregateSearchSources, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import { topicKey } from '@/domain/reader/readerData';
-import { feedSourceItems } from '@/domain/forum/feedOptions';
+import { sourceLabel } from '@/domain/forum/presentation';
 import { buildSearchListItems, searchGroupEmptyText, type SearchGroup, type SearchListItem } from './listItems';
 import type { LinuxDoAiSearchState } from './aiSearch';
 import {
@@ -32,8 +31,6 @@ import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
-import type { SearchSessionNoticeItem } from '@/domain/session/siteSessionPrompts';
-import { searchSessionNoticeLightTone } from '@/domain/session/siteSessionPrompts';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 
@@ -166,26 +163,24 @@ export const SearchScreen = memo(function SearchScreen({
   categories,
   sessionEpochs,
   requestsEnabled,
+  searchCandidateReadPlanScopes,
   query,
   recentSearches,
   topicStateIndex,
   searchFilters,
   searchGroups,
+  expectedSearchSources,
   linuxDoAiState,
   linuxDoAiVisible,
-  identityChecking = false,
-  identityError,
-  searchSessionNotices,
   searchSource,
   submittedQuery,
   scrollRef,
   onOpenTopic,
+  onManageContentSources,
   onLoadMoreSearchSource,
-  onCheckLinuxDoStatus,
   onRemoveRecentSearch,
   onQueryChange,
   onRetrySearchSource,
-  onRetryIdentity,
   onRetryLinuxDoAiSearch,
   onSearch,
   onSearchFilterApply,
@@ -198,26 +193,24 @@ export const SearchScreen = memo(function SearchScreen({
   categories: Category[];
   sessionEpochs: ForumSessionEpochs;
   requestsEnabled: boolean;
+  searchCandidateReadPlanScopes: { tags: string; users: string };
   query: string;
   recentSearches: string[];
   topicStateIndex: TopicListItemStateIndex;
   searchFilters: SearchFilterState;
   searchGroups: SearchGroup[];
+  expectedSearchSources: readonly Source[];
   linuxDoAiState: LinuxDoAiSearchState;
   linuxDoAiVisible: boolean;
-  identityChecking?: boolean;
-  identityError?: SourceErrorInfo;
-  searchSessionNotices: SearchSessionNoticeItem[];
   searchSource: FeedSource;
   submittedQuery: string;
   scrollRef?: RefObject<FlashListRef<SearchListItem> | null>;
   onOpenTopic: (topic: Topic) => void;
+  onManageContentSources: () => void;
   onLoadMoreSearchSource: (source: Source, page: number) => void;
-  onCheckLinuxDoStatus?: () => void;
   onRemoveRecentSearch: (query: string) => void;
   onQueryChange: (value: string) => void;
   onRetrySearchSource: (source: Source) => void;
-  onRetryIdentity?: () => void;
   onRetryLinuxDoAiSearch: () => void;
   onSearch: (queryOverride?: string) => void;
   onSearchFilterApply: (source: Source, filter: SourceSearchFilter) => void;
@@ -257,6 +250,16 @@ export const SearchScreen = memo(function SearchScreen({
     page: number;
     previousItemCount: number;
   } | null>(null);
+  const enabledSearchSourceItems = useMemo(
+    () => [
+      { value: 'all' as const, label: '全部' },
+      ...expectedSearchSources.map((source) => ({ value: source, label: sourceLabel(source) }))
+    ],
+    [expectedSearchSources]
+  );
+  const allSourcesDisabled = expectedSearchSources.length === 0;
+  const visibleSearchSource =
+    searchSource === 'all' || expectedSearchSources.includes(searchSource) ? searchSource : 'all';
   const resetPaginationFeedback = useCallback(() => {
     autoLoadArmedRef.current = false;
     pendingAutoLoadRef.current = null;
@@ -284,11 +287,12 @@ export const SearchScreen = memo(function SearchScreen({
   );
   const changeSearchSource = useCallback(
     (value: string) => {
+      if (value !== 'all' && !expectedSearchSources.includes(value as Source)) return;
       resetPaginationFeedback();
       scrollSearchToTop();
       onSearchSourceChange(value as FeedSource);
     },
-    [onSearchSourceChange, resetPaginationFeedback, scrollSearchToTop]
+    [expectedSearchSources, onSearchSourceChange, resetPaginationFeedback, scrollSearchToTop]
   );
   const applySearchFilter = useCallback(
     (source: Source, filter: SourceSearchFilter) => {
@@ -310,9 +314,18 @@ export const SearchScreen = memo(function SearchScreen({
     ),
     [onOpenTopic, query, styles, theme, topicStateIndex]
   );
-  const visibleSearchGroups = searchGroups;
+  const visibleSearchGroups = useMemo(
+    () =>
+      visibleSearchSource === 'all'
+        ? expectedSearchSources.flatMap((source) => {
+            const group = searchGroups.find((candidate) => candidate.source === source);
+            return group ? [group] : [];
+          })
+        : searchGroups.filter((group) => group.source === visibleSearchSource),
+    [expectedSearchSources, searchGroups, visibleSearchSource]
+  );
   const paginationBusy = busy || visibleSearchGroups.some((group) => group.loading || group.loadingMore);
-  const paginationContext = `${submittedQuery}\u0000${searchSource}`;
+  const paginationContext = `${submittedQuery}\u0000${visibleSearchSource}`;
   useLayoutEffect(() => {
     autoLoadArmedRef.current = false;
     pendingAutoLoadRef.current = null;
@@ -351,12 +364,12 @@ export const SearchScreen = memo(function SearchScreen({
   const hasSearchTerm = searchTerm.length > 0;
   const hasSubmittedQuery = hasSearchTerm && submittedQuery === searchTerm;
   const showSearchGroups = hasSubmittedQuery && visibleSearchGroups.length > 0;
-  const showIdleRecentSearches = !hasInputValue && recentSearches.length > 0;
+  const showIdleRecentSearches = !allSourcesDisabled && !hasInputValue && recentSearches.length > 0;
   const searchFilterEntrySummary =
-    searchSource !== 'all'
+    visibleSearchSource !== 'all'
       ? searchFilterSummary(
-          searchSource as Source,
-          searchFilterForSource(searchFilters, searchSource as Source),
+          visibleSearchSource as Source,
+          searchFilterForSource(searchFilters, visibleSearchSource as Source),
           categories
         )
       : '';
@@ -366,9 +379,9 @@ export const SearchScreen = memo(function SearchScreen({
     }
     const items = buildSearchListItems({
       groups: visibleSearchGroups,
-      mode: searchSource === 'all' ? 'overview' : 'source'
+      mode: visibleSearchSource === 'all' ? 'overview' : 'source'
     });
-    if (!completedPagination || completedPagination.context !== paginationContext || searchSource === 'all') {
+    if (!completedPagination || completedPagination.context !== paginationContext || visibleSearchSource === 'all') {
       return items;
     }
     const completedGroup = visibleSearchGroups.find((group) => group.source === completedPagination.source);
@@ -386,16 +399,16 @@ export const SearchScreen = memo(function SearchScreen({
     const pageStatus = { type: 'groupPageStatus' as const, group: completedGroup, page: completedPagination.page };
     const pageStatusIndex = insertionIndex >= 0 ? insertionIndex + 1 : items.length;
     return [...items.slice(0, pageStatusIndex), pageStatus, ...items.slice(pageStatusIndex)];
-  }, [completedPagination, paginationContext, searchSource, showSearchGroups, visibleSearchGroups]);
-  const expectedSearchSources = searchSource === 'all' ? aggregateSearchSources : [searchSource];
-  const searchGroupsSettled = expectedSearchSources.every((source) => {
+  }, [completedPagination, paginationContext, showSearchGroups, visibleSearchGroups, visibleSearchSource]);
+  const settledSearchSources = visibleSearchSource === 'all' ? expectedSearchSources : [visibleSearchSource];
+  const searchGroupsSettled = settledSearchSources.every((source) => {
     const group = visibleSearchGroups.find((candidate) => candidate.source === source);
     return Boolean(group && group.settled !== false && !group.loading && !group.loadingMore);
   });
-  const searchSettled = Boolean(identityError) || searchGroupsSettled;
-  const searchBusy = !identityError && busy;
-  const completedSearchAccessibilityLabel = identityError
-    ? '搜索结果，L 站访问状态检查失败'
+  const searchSettled = searchGroupsSettled;
+  const searchBusy = busy;
+  const completedSearchAccessibilityLabel = allSourcesDisabled
+    ? '搜索结果，尚未启用内容源'
     : !searchGroupsSettled
       ? '搜索结果，等待来源结算'
       : visibleSearchGroups.some((group) => group.items.length > 0)
@@ -456,7 +469,7 @@ export const SearchScreen = memo(function SearchScreen({
   );
   useLayoutEffect(() => {
     autoLoadArmedRef.current = false;
-  }, [query, searchSource, submittedQuery]);
+  }, [query, submittedQuery, visibleSearchSource]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(
     ({ item }) => {
       if (item.type === 'topic') {
@@ -619,70 +632,18 @@ export const SearchScreen = memo(function SearchScreen({
         <PillRail
           compactTabs
           variant="tabs"
-          items={feedSourceItems}
-          value={searchSource}
+          items={enabledSearchSourceItems}
+          value={visibleSearchSource}
           testIDPrefix="search-source"
           onChange={changeSearchSource}
         />
-        {identityChecking ? <LoadingState text="正在确认 L 站访问状态" /> : null}
-        {identityError ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{identityError.message}</Text>
-            <View style={styles.actions}>
-              {onRetryIdentity ? <AppButton label="重试检测" onPress={onRetryIdentity} /> : null}
-              {searchSource === 'linuxdo' && onCheckLinuxDoStatus ? (
-                <AppButton label="检查 L 站状态" variant="ghost" onPress={onCheckLinuxDoStatus} />
-              ) : null}
-            </View>
-          </View>
-        ) : null}
-        {searchSessionNotices.length ? (
-          <View style={styles.searchSessionStatusBar}>
-            {searchSessionNotices.map((item) => {
-              const chipStyle =
-                item.notice.tone === 'danger'
-                  ? styles.searchSessionStatusChipDanger
-                  : item.notice.tone === 'warning'
-                    ? styles.searchSessionStatusChipWarning
-                    : styles.searchSessionStatusChipNeutral;
-              const lightTone = searchSessionNoticeLightTone(item.notice);
-              const dotStyle =
-                lightTone === 'success'
-                  ? styles.searchSessionStatusDotSuccess
-                  : lightTone === 'danger'
-                    ? styles.searchSessionStatusDotDanger
-                    : lightTone === 'warning'
-                      ? styles.searchSessionStatusDotWarning
-                      : styles.searchSessionStatusDotNeutral;
-              const textStyle =
-                item.notice.tone === 'danger'
-                  ? styles.searchSessionStatusTextDanger
-                  : item.notice.tone === 'warning'
-                    ? styles.searchSessionStatusTextWarning
-                    : styles.searchSessionStatusTextNeutral;
-              return (
-                <View
-                  key={item.source}
-                  accessible
-                  accessibilityLabel={`${item.label}：${item.notice.message}`}
-                  style={[styles.searchSessionStatusChip, chipStyle]}
-                >
-                  <View style={[styles.searchSessionStatusDot, dotStyle]} />
-                  <Text style={styles.searchSessionStatusSource}>{item.label}</Text>
-                  <Text numberOfLines={2} style={[styles.searchSessionStatusText, textStyle]}>
-                    {item.notice.message}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
-        ) : null}
-        {searchSource !== 'all' ? (
+        {visibleSearchSource !== 'all' ? (
           <SearchFilterSheet
             categories={categories}
+            readPlanScopes={searchCandidateReadPlanScopes}
             sessionEpochs={sessionEpochs}
             requestsEnabled={requestsEnabled}
-            source={searchSource as Source}
+            source={visibleSearchSource as Source}
             searchFilters={searchFilters}
             summary={searchFilterEntrySummary}
             styles={styles}
@@ -742,33 +703,31 @@ export const SearchScreen = memo(function SearchScreen({
       busy,
       categories,
       changeSearchSource,
+      enabledSearchSourceItems,
+      expectedSearchSources,
       hasInputValue,
       hasSearchTerm,
       hasSubmittedQuery,
       linuxDoAiState,
       linuxDoAiVisible,
-      identityChecking,
-      identityError,
-      onCheckLinuxDoStatus,
       onQueryChange,
       onRemoveRecentSearch,
       onRetryLinuxDoAiSearch,
-      onRetryIdentity,
       onToggleLinuxDoAiSearch,
       onSearchDiscourseTags,
       onSearchDiscourseUsers,
       query,
       recentSearches,
       requestsEnabled,
+      searchCandidateReadPlanScopes,
       searchFilters,
       searchFilterEntrySummary,
-      searchSessionNotices,
-      searchSource,
       sessionEpochs,
       showIdleRecentSearches,
       styles,
       submitSearch,
-      theme
+      theme,
+      visibleSearchSource
     ]
   );
 
@@ -781,7 +740,7 @@ export const SearchScreen = memo(function SearchScreen({
         accessibilityState={{ busy: hasSubmittedQuery && (searchBusy || !searchSettled) }}
         testID={
           hasSubmittedQuery && !searchBusy && searchSettled
-            ? searchSource === 'all'
+            ? visibleSearchSource === 'all'
               ? 'search-all-sources-settled'
               : 'search-complete'
             : undefined
@@ -799,7 +758,12 @@ export const SearchScreen = memo(function SearchScreen({
         ListHeaderComponent={header}
         ListFooterComponent={null}
         ListEmptyComponent={
-          showSearchGroups || identityError ? null : searchBusy && hasSubmittedQuery ? (
+          allSourcesDisabled ? (
+            <View>
+              <EmptyText text="尚未启用内容源" />
+              <AppButton label="前往更多管理" onPress={onManageContentSources} />
+            </View>
+          ) : showSearchGroups ? null : searchBusy && hasSubmittedQuery ? (
             <LoadingState text="正在搜索..." />
           ) : !hasInputValue ? (
             showIdleRecentSearches ? null : (

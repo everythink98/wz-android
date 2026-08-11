@@ -3,9 +3,11 @@ import { StackActions, useNavigation, useScrollToTop } from '@react-navigation/n
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic, UserReference } from '@/domain/forum/models';
 import type { LibraryTab } from '@/domain/forum/feed';
+import type { Source } from '@/domain/forum/sourceCatalog';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { normalizeUserReference } from '@/domain/forum/userNavigation';
 import type { FollowedUserRecord, ReaderData, ReaderDataMutationReason } from '@/domain/reader/readerData';
+import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { LibraryListItem } from './libraryScreenItems';
 import { LibraryScreen } from './LibraryScreen';
 import { EMPTY_LIBRARY_RECORDS, sortLibraryRecords } from './model/libraryFilters';
@@ -13,6 +15,7 @@ import { useReaderDataActionsController } from './useReaderDataActionsController
 
 export type LibraryRouteRuntimeValue = {
   categories: Category[];
+  enabledSources: readonly Source[];
   notify: (message: string) => void;
   reader: {
     commit: (reason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
@@ -85,10 +88,12 @@ export function LibraryRoute() {
     },
     [navigation, runtime]
   );
+  const openContentSourceSettings = useCallback(() => navigation.dispatch(manageContentSourcesAction()), [navigation]);
 
   return (
     <LibraryScreen
       categories={runtime.categories}
+      enabledSources={runtime.enabledSources}
       followedUsers={followedUsers}
       libraryTab={libraryTab}
       loaded={runtime.reader.loaded}
@@ -96,6 +101,7 @@ export function LibraryRoute() {
       scrollRef={listRef}
       topicStateIndex={topicStateIndex}
       onClearHistory={actions.clearHistory}
+      onManageContentSources={openContentSourceSettings}
       onOpenTopic={openTopic}
       onOpenUser={openUser}
       onRemove={actions.removeLibraryTopic}

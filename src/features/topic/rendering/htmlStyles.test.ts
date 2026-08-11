@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as htmlRenderingStyles from './htmlStyles';
-import type { ReaderSettings } from '@/domain/reader/readerData';
+import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import { createTheme, LINK_COLOR } from '@/ui/theme/tokens';
 
 vi.mock('react-native', () => ({
@@ -17,7 +17,8 @@ describe('Android HTML rendering styles', () => {
     lineHeight: 'standard',
     contentWidth: 'standard',
     fontFamily: 'sans',
-    listDensity: 'standard'
+    listDensity: 'standard',
+    contentSources: createEmptyReaderData().settings.contentSources
   };
 
   it('keeps forum user mentions visually separate from ordinary links', () => {

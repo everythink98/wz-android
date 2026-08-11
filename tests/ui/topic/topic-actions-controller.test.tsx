@@ -147,6 +147,7 @@ async function renderActions({
   ensureWritableSession,
   isWritableSessionTicketCurrent,
   notify = jest.fn(),
+  readPlanScope = '',
   reconcileWritableSession = jest.fn(async () => ({ status: 'same' as const })),
   refreshTopicReplies = jest.fn(async () => 'completed'),
   siteSessionViewModels,
@@ -162,6 +163,7 @@ async function renderActions({
   ensureWritableSession?: (source: ActionSource) => Promise<WritableSessionTicket>;
   isWritableSessionTicketCurrent?: (ticket: WritableSessionTicket) => boolean;
   notify?: (message: string) => void;
+  readPlanScope?: string;
   reconcileWritableSession?: (source: ActionSource) => Promise<{
     status: 'anonymous' | 'changed' | 'same' | 'stale' | 'unknown';
   }>;
@@ -196,6 +198,15 @@ async function renderActions({
           isWritableSessionTicketCurrent || ((ticket) => ticket.sessionEpoch === props.sessionEpochs[ticket.source]),
         getNodeSeekUserAgent: () => 'safe-agent',
         notify,
+        readGateway: {
+          getReadPlan: () => ({
+            state: 'ready',
+            lane: 'authenticated',
+            authenticated: true,
+            transport: 'managed-session',
+            cacheScope: readPlanScope
+          })
+        },
         reconcileWritableSession,
         refreshTopicReplies,
         siteSessionViewModels:
@@ -221,10 +232,11 @@ async function renderActions({
 function seedTopicCache(
   topicDetail: TopicDetail = detail,
   topicReplies: Reply[] = [],
-  scope = initialForumSessionEpochs
+  scope = initialForumSessionEpochs,
+  readPlanScope = ''
 ) {
-  const detailKey = forumQueryKeys.topic({ source: topicDetail.source, topicId: topicDetail.id, scope });
-  const repliesKey = forumQueryKeys.replies(detailKey, 'oldest');
+  const detailKey = forumQueryKeys.topic({ source: topicDetail.source, topicId: topicDetail.id, scope, readPlanScope });
+  const repliesKey = forumQueryKeys.replies(detailKey, 'oldest', readPlanScope);
   appQueryClient.setQueryData(detailKey, topicDetail);
   appQueryClient.setQueryData(repliesKey, {
     pages: [{ items: topicReplies, hasMore: false, nextPage: null }],
@@ -319,6 +331,25 @@ describe('topic action query mutations', () => {
     expect(ensureWritableSession).toHaveBeenCalledWith('nodeseek');
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.collected).toBe(false);
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-011] applies optimistic writes only to the current read-plan cache scope', async () => {
+    const readPlanScope = 'authenticated:nodeseek:0';
+    const { detailKey } = seedTopicCache(detail, [], initialForumSessionEpochs, readPlanScope);
+    const legacyKey = forumQueryKeys.topic({
+      source: detail.source,
+      topicId: detail.id,
+      scope: initialForumSessionEpochs
+    });
+    appQueryClient.setQueryData(legacyKey, detail);
+    const hook = await renderActions({ readPlanScope });
+
+    await act(async () => {
+      await hook.result.current.actions.collectOnNodeSeekSite();
+    });
+
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.collected).toBe(true);
+    expect(appQueryClient.getQueryData<TopicDetail>(legacyKey)?.collected).toBe(false);
   });
 
   it('[REG-WRITE-023] blocks before optimistic state when identity changes during query cancellation', async () => {
@@ -1628,6 +1659,7 @@ describe('topic action query mutations', () => {
     expect(refreshTopicReplies).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'deleted',
+        target: { kind: 'comment-id', commentId: 101 },
         position: { kind: 'cursor', page: 2, offset: 30 }
       }),
       expect.any(Object)

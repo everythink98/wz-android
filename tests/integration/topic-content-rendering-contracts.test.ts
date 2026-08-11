@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { compileForumContent, resolveForumContentRowHtml } from '@/domain/forum/topicContentSplit';
-import { INLINE_FORUM_IMAGE_TAG, normalizeForumContentMediaHtml } from '@/domain/forum/forumContentMedia';
+import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
 import { createImagePreviewCatalog } from '@/platform/media/imagePreviewCatalog';
 
 describe('topic content rendering contracts', () => {
   it('[REG-TOPIC-030] keeps sanitized unsafe lazy candidates out of the active preview catalog', () => {
-    const rendered = normalizeForumContentMediaHtml(
-      sanitizeContentHtml('<img src="/safe.png" data-original="javascript:x.png">', 'https://linux.do/t/example/1')
-    );
+    const rendered = compileForumContent({
+      html: sanitizeContentHtml(
+        '<img src="/safe.png" data-original="javascript:x.png">',
+        'https://linux.do/t/example/1'
+      ),
+      role: 'reply',
+      source: 'linuxdo'
+    }).rows.flatMap((row) => (row.type === 'html' ? [row.html] : []));
 
-    expect(createImagePreviewCatalog([rendered], 300, 2).items).toEqual([
+    expect(createImagePreviewCatalog(rendered, 300, 2).items).toEqual([
       {
         displayUri: 'https://linux.do/safe.png',
         originalUri: 'https://linux.do/safe.png'

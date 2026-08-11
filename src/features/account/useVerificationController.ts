@@ -53,6 +53,7 @@ function isActiveRecoveryQuery(recovery: LinuxDoReadRecovery) {
 }
 
 export function useVerificationController({
+  canOpenLinuxDoPanel = () => true,
   changeNodeSeekLoginPanel,
   checkingRequestIdRef,
   closeYaohuoLoginPanel,
@@ -80,6 +81,7 @@ export function useVerificationController({
   updateLinuxDoSession,
   updateNodeSeekSession
 }: {
+  canOpenLinuxDoPanel?: () => boolean;
   changeNodeSeekLoginPanel: (visible: boolean, closeReason?: AuthSurfaceCloseReason) => void;
   checkingRequestIdRef: Ref<number>;
   closeYaohuoLoginPanel: (reason?: AuthSurfaceCloseReason) => void;
@@ -403,6 +405,11 @@ export function useVerificationController({
     (visible: boolean) => {
       if (visible) {
         const trace = currentLinuxDoVerificationTrace('open');
+        if (!canOpenLinuxDoPanel()) {
+          markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'disabled' });
+          finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'source_disabled' });
+          return false;
+        }
         if (linuxDoPanelClosingSessionRef.current !== null) {
           markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'busy' });
           finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'busy' });
@@ -436,6 +443,7 @@ export function useVerificationController({
     },
     [
       closeLinuxDoPanel,
+      canOpenLinuxDoPanel,
       currentLinuxDoVerificationTrace,
       finishLinuxDoVerificationTrace,
       invalidateLinuxDoCheck,
@@ -451,6 +459,7 @@ export function useVerificationController({
 
   const showLinuxDoVerification = useCallback(
     async (message = 'linux.do 需要完成 Cloudflare 验证', recovery?: LinuxDoReadRecovery) => {
+      if (!canOpenLinuxDoPanel()) return false;
       if (recovery && (linuxDoCanceledRecoveriesRef.current.has(recovery) || !isActiveRecoveryQuery(recovery))) {
         return false;
       }
@@ -510,6 +519,7 @@ export function useVerificationController({
     },
     [
       changeLinuxDoPanel,
+      canOpenLinuxDoPanel,
       changeNodeSeekLoginPanel,
       closeYaohuoLoginPanel,
       finishLinuxDoVerificationTrace,
@@ -659,13 +669,6 @@ export function useVerificationController({
         finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'login_required' });
         return;
       }
-      updateLinuxDoSession({
-        type: 'verification-succeeded',
-        loggedIn: true,
-        currentUser: result.session.currentUser,
-        cookieSummary: result.session.cookieSummary,
-        at: new Date().toISOString()
-      });
       setLinuxDoWebViewError('');
       const recovery = activeRecovery?.recovery;
       const recoveryIsCurrent = Boolean(
@@ -698,7 +701,7 @@ export function useVerificationController({
             return;
           }
           const message = `登录身份已确认，但原页面恢复失败：${errorMessage(error)}`;
-          updateLinuxDoSession({ type: 'check-failed', message });
+          updateLinuxDoSession({ type: 'recovery-failed', message });
           notify(message);
           finishLinuxDoVerificationTrace(trace, 'failure', {
             reason: normalizeDiagnosticReason(error)
@@ -725,7 +728,7 @@ export function useVerificationController({
         }
         if (outcome === 'failed') {
           const message = '登录身份已确认，但原页面恢复失败，请返回原页面重试。';
-          updateLinuxDoSession({ type: 'check-failed', message });
+          updateLinuxDoSession({ type: 'recovery-failed', message });
           notify(message);
           finishLinuxDoVerificationTrace(trace, 'failure', { reason: 'refresh_failed' });
           return;

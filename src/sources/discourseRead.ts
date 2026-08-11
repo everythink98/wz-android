@@ -176,8 +176,6 @@ const discourseSourceReaders = {
   }
 } satisfies Record<DiscourseSource, DiscourseSourceReader>;
 
-export const discourseReaderSources = Object.keys(discourseSourceReaders) as DiscourseSource[];
-
 export function getDiscourseSourceFeed(source: DiscourseSource, options: DiscourseFeedReadOptions) {
   return discourseSourceReaders[source].getFeed(options);
 }

@@ -3,6 +3,7 @@ import type { UserProfile } from '@/domain/forum/models';
 
 export type SessionSite = SessionSource;
 export { sessionSources };
+export type IdentityTrust = 'confirmed' | 'pending' | 'unknown' | 'none';
 export type SiteSessionStatus =
   'anonymous' | 'verified' | 'logged-in' | 'verification-required' | 'verifying' | 'authorizing' | 'expired';
 
@@ -21,6 +22,11 @@ export type AccountStatusObservation = {
   session: SiteSessionState;
 };
 
+export type AccountSessionSnapshot = SiteSessionState & {
+  identityTrust: IdentityTrust;
+};
+export type AccountSessionSnapshots = Record<SessionSite, AccountSessionSnapshot>;
+
 export type SiteSessionStates = Record<SessionSite, SiteSessionState>;
 export type SiteSessionViewModel = {
   site: SessionSite;
@@ -32,7 +38,7 @@ export type SiteSessionViewModel = {
   isLoggedIn: boolean;
   isVerifying: boolean;
   canWrite: boolean;
-  identityTrust: 'confirmed' | 'pending' | 'none';
+  identityTrust: IdentityTrust;
   currentUser?: UserProfile;
   lastVerifiedAt?: string;
   lastError?: string;
@@ -57,19 +63,12 @@ export type SiteSessionEvent =
       recoveryQueryKey?: readonly unknown[];
       at?: string;
     }
-  | { type: 'login-detected'; cookieSummary?: string[]; currentUser?: UserProfile | null; at?: string }
   | { type: 'verification-required'; message?: string; at?: string }
   | { type: 'verification-started'; at?: string }
   | { type: 'authorization-started'; at?: string }
-  | {
-      type: 'verification-succeeded';
-      cookieSummary?: string[];
-      loggedIn?: boolean;
-      currentUser?: UserProfile | null;
-      at: string;
-    }
   | { type: 'login-expired'; message?: string; recoveryQueryKey?: readonly unknown[]; at?: string }
   | { type: 'check-failed'; message: string; at?: string }
+  | { type: 'recovery-failed'; message: string; at?: string }
   | { type: 'cleared'; recoveryQueryKey?: readonly unknown[]; at?: string };
 export type ScopedSiteSessionEvent = SiteSessionEvent & { site: SessionSite };
 
@@ -102,6 +101,100 @@ export function createSiteSessionStates(states?: Partial<SiteSessionStates>): Si
   return Object.fromEntries(
     sessionSources.map((site) => [site, states?.[site] || createSiteState(site, 'anonymous')])
   ) as SiteSessionStates;
+}
+
+export function createAccountSessionSnapshot(site: SessionSite): AccountSessionSnapshot {
+  return {
+    ...createSiteState(site, 'anonymous'),
+    identityTrust: 'unknown'
+  };
+}
+
+function hasValidAccountUser(session: Pick<SiteSessionState, 'currentUser' | 'site' | 'status'>) {
+  return Boolean(
+    session.status === 'logged-in' &&
+      session.currentUser?.source === session.site &&
+      typeof session.currentUser.id === 'string' &&
+      session.currentUser.id.trim()
+  );
+}
+
+export function accountSessionIdentityKey(
+  session: Pick<AccountSessionSnapshot, 'currentUser' | 'site' | 'status'>
+) {
+  return hasValidAccountUser(session) ? `${session.site}:${session.currentUser!.id.trim()}` : `${session.site}:anonymous`;
+}
+
+export function accountSessionAccess(snapshot: AccountSessionSnapshot) {
+  const identityKey = accountSessionIdentityKey(snapshot);
+  const authenticated = identityKey !== `${snapshot.site}:anonymous`;
+  const identityTrust =
+    (snapshot.identityTrust === 'confirmed' && !authenticated) ||
+    (snapshot.identityTrust === 'none' && authenticated)
+      ? ('unknown' as const)
+      : snapshot.identityTrust;
+  return {
+    authenticated,
+    identityKey,
+    identityTrust,
+    canWrite: authenticated && identityTrust === 'confirmed'
+  };
+}
+
+export function accountSessionSnapshotFromObservation(
+  previous: AccountSessionSnapshot,
+  observation: AccountStatusObservation
+): AccountSessionSnapshot {
+  const session = observation.session;
+  if (session.site !== previous.site || (session.status === 'logged-in' && !hasValidAccountUser(session))) {
+    return {
+      ...previous,
+      isVerifying: false,
+      identityTrust: 'unknown',
+      lastError: session.lastError || '账号状态缺少有效的当前用户'
+    };
+  }
+  if (session.status === 'logged-in') {
+    return { ...session, identityTrust: 'confirmed' };
+  }
+  if (session.status === 'anonymous' || session.status === 'verified' || session.status === 'expired') {
+    return { ...session, currentUser: undefined, identityTrust: 'none' };
+  }
+  return { ...session, identityTrust: 'unknown' };
+}
+
+export function accountSessionSnapshotFromEvent(
+  previous: AccountSessionSnapshot,
+  event: SiteSessionEvent
+): AccountSessionSnapshot {
+  if (event.type === 'authorization-started' || event.type === 'verification-started') {
+    return { ...previous, isVerifying: true, identityTrust: 'pending', lastError: undefined };
+  }
+  if (event.type === 'verification-required') {
+    return {
+      ...previous,
+      isVerifying: false,
+      identityTrust: 'pending',
+      ...(event.message ? { lastError: event.message } : {})
+    };
+  }
+  if (event.type === 'check-failed') {
+    return { ...previous, isVerifying: false, identityTrust: 'unknown', lastError: event.message };
+  }
+  if (event.type === 'recovery-failed') {
+    return { ...previous, isVerifying: false, lastError: event.message };
+  }
+  if (
+    (event.type === 'cookie-loaded' || event.type === 'session-updated') &&
+    event.loggedIn === undefined
+  ) {
+    return {
+      ...reduceSiteSessionState(previous, { ...event, type: 'cookie-loaded' }),
+      identityTrust: previous.identityTrust
+    };
+  }
+  const session = reduceSiteSessionState(previous, event);
+  return accountSessionSnapshotFromObservation(previous, { session });
 }
 
 export function siteSessionStateFromEvents(site: SessionSite, events: SiteSessionEvent[]) {
@@ -181,18 +274,6 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
   if (event.type === 'cookie-loaded' || event.type === 'session-updated') {
     return stateWithCookieFacts(state, event);
   }
-  if (event.type === 'login-detected') {
-    const currentUser = currentUserForSite(state.site, event.currentUser, true);
-    return {
-      ...state,
-      status: 'logged-in',
-      cookieSummary: cleanCookieSummary(event.cookieSummary || state.cookieSummary),
-      isVerifying: false,
-      currentUser,
-      lastVerifiedAt: event.at || state.lastVerifiedAt,
-      lastError: undefined
-    };
-  }
   if (event.type === 'verification-required') {
     if (state.status === 'logged-in') {
       return {
@@ -232,18 +313,6 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
       lastError: undefined
     };
   }
-  if (event.type === 'verification-succeeded') {
-    const currentUser = currentUserForSite(state.site, event.currentUser, event.loggedIn);
-    return {
-      ...state,
-      status: event.loggedIn ? 'logged-in' : 'verified',
-      cookieSummary: cleanCookieSummary(event.cookieSummary || state.cookieSummary),
-      isVerifying: false,
-      currentUser,
-      lastVerifiedAt: event.at,
-      lastError: undefined
-    };
-  }
   if (event.type === 'login-expired') {
     return {
       ...state,
@@ -259,6 +328,13 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
       status: state.status === 'authorizing' ? 'anonymous' : state.status,
       isVerifying: false,
       ...(state.status === 'authorizing' ? { currentUser: undefined } : {}),
+      lastError: event.message
+    };
+  }
+  if (event.type === 'recovery-failed') {
+    return {
+      ...state,
+      isVerifying: false,
       lastError: event.message
     };
   }
@@ -326,6 +402,24 @@ export function createSiteSessionViewModel(state: SiteSessionState): SiteSession
     ...(state.currentUser ? { currentUser: state.currentUser } : {}),
     ...(state.lastVerifiedAt ? { lastVerifiedAt: state.lastVerifiedAt } : {}),
     ...(state.lastError ? { lastError: state.lastError } : {})
+  };
+}
+
+export function createAccountSessionViewModel(snapshot: AccountSessionSnapshot): SiteSessionViewModel {
+  const base = createSiteSessionViewModel(snapshot);
+  const access = accountSessionAccess(snapshot);
+  return {
+    ...base,
+    identityTrust: access.identityTrust,
+    canWrite: access.canWrite,
+    summaryLabel:
+      access.identityTrust === 'pending'
+        ? '登录状态待确认'
+        : access.identityTrust === 'unknown'
+          ? snapshot.lastError
+            ? '本次核对失败，可重试'
+            : '账号状态尚未核对'
+          : base.summaryLabel
   };
 }
 

@@ -126,6 +126,56 @@ describe('account center view', () => {
     });
   });
 
+  it('[REG-ACCOUNT-041] keeps a last-known profile while counting terminal unknown as awaiting reconciliation', () => {
+    const sessions = createSiteSessionViewModels(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session'],
+          isVerifying: false,
+          currentUser: {
+            source: 'nodeseek',
+            id: '7',
+            username: 'alice',
+            url: 'https://www.nodeseek.com/space/7',
+            topics: []
+          }
+        }
+      })
+    );
+    sessions.nodeseek = {
+      ...sessions.nodeseek,
+      canWrite: false,
+      identityTrust: 'unknown',
+      summaryLabel: '本次核对失败，可重试'
+    };
+
+    const views = createSiteAccountViews(sessions, emptyCredentialSummaries());
+
+    expect(views[0]).toMatchObject({
+      identityTrust: 'unknown',
+      identityLabel: 'alice',
+      needsAttention: true,
+      primaryAction: 'open-user',
+      user: { id: '7' }
+    });
+    expect(accountCenterSummary(views)).toBe('待核对 1 · 待处理 0 · 网站登录 0/4 · 自动填入 0/3');
+  });
+
+  it('[REG-ACCOUNT-041] derives account summary denominators from the enabled account capability subset', () => {
+    const sessions = createSiteSessionViewModels(
+      createSiteSessionStates({
+        linuxdo: { site: 'linuxdo', status: 'logged-in', cookieSummary: ['_t'], isVerifying: false }
+      })
+    );
+    const enabledViews = createSiteAccountViews(sessions, emptyCredentialSummaries()).filter((view) =>
+      ['linuxdo', 'xiaoyinsi'].includes(view.site)
+    );
+
+    expect(accountCenterSummary(enabledViews)).toBe('待处理 0 · 网站登录 1/2 · 自动填入 0/1');
+  });
+
   it('uses the NodeSeek web user id only while the canonical session is logged in', () => {
     const loggedIn = createSiteSessionViewModels(
       createSiteSessionStates({

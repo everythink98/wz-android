@@ -1,14 +1,25 @@
-import { Linking, Platform } from 'react-native';
+import { Linking, NativeModules, Platform } from 'react-native';
 import * as BackgroundTask from 'expo-background-task';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { NotificationState } from './notificationStore';
-import { notificationIdentifierForIdentity } from './notificationWorker';
+import { notificationIdentifiersForIdentity } from './notificationWorker';
 
 export const NOTIFICATION_BACKGROUND_TASK = 'wz-message-notifications';
 export const NOTIFICATION_CHANNEL_ID = 'message-notifications';
 const NOTIFICATION_COLOR = '#1677FF';
+
+type NotificationDigestNativeModule = {
+  dismiss(identifier: string): Promise<void>;
+  present(identifier: string, title: string, body: string, source: NotificationSource): Promise<string>;
+};
+
+function notificationDigestNativeModule() {
+  const module = NativeModules.NotificationDigestModule as NotificationDigestNativeModule | undefined;
+  if (!module?.present || !module.dismiss) throw new Error('Android 消息通知模块不可用');
+  return module;
+}
 
 export function installMessageNotificationHandler() {
   Notifications.setNotificationHandler({
@@ -72,29 +83,29 @@ export function syncNotificationBackgroundRegistration(
   return operation;
 }
 
-export async function replaceSourceNotification(
+export async function presentSourceNotification(
   source: NotificationSource,
   digest: { title: string; body: string; data: { source: NotificationSource } },
-  previousIdentifier: string | undefined,
   identifier: string
 ) {
   await ensureMessageNotificationChannel();
+  return notificationDigestNativeModule().present(identifier, digest.title, digest.body, source);
+}
+
+export function dismissSourceNotificationExact(identifier: string) {
+  return notificationDigestNativeModule().dismiss(identifier);
+}
+
+export async function reconcileSourceNotificationSlots(
+  source: NotificationSource,
+  identityKey: string,
+  currentIdentifier?: string
+) {
   await Promise.all(
-    [...new Set([previousIdentifier, identifier].filter((value): value is string => Boolean(value)))].map((value) =>
-      Notifications.dismissNotificationAsync(value).catch(() => undefined)
-    )
+    [...notificationIdentifiersForIdentity(source, identityKey), `wz-message-${source}`]
+      .filter((identifier) => identifier !== currentIdentifier)
+      .map(dismissSourceNotificationExact)
   );
-  return Notifications.scheduleNotificationAsync({
-    identifier,
-    content: {
-      title: digest.title,
-      body: digest.body,
-      data: { source },
-      color: NOTIFICATION_COLOR,
-      sound: 'default'
-    },
-    trigger: { channelId: NOTIFICATION_CHANNEL_ID }
-  });
 }
 
 export async function dismissSourceNotification(source: NotificationSource, identifier?: string, identityKey?: string) {
@@ -103,7 +114,7 @@ export async function dismissSourceNotification(source: NotificationSource, iden
       ...new Set(
         [
           identifier,
-          identityKey ? notificationIdentifierForIdentity(source, identityKey) : undefined,
+          ...(identityKey ? notificationIdentifiersForIdentity(source, identityKey) : []),
           `wz-message-${source}`
         ].filter((value): value is string => Boolean(value))
       )

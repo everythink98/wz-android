@@ -143,6 +143,7 @@ const notification: ForumNotification = {
 function listProps() {
   return {
     activeSources: ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const,
+    enabledSources: ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const,
     errors: {},
     fetchingMore: false,
     hasMore: false,
@@ -181,6 +182,43 @@ function notificationState(globalEnabled = true): NotificationState {
 }
 
 describe('notification screens', () => {
+  it('uses the enabled content-source order for tabs and hides disabled-source rows and errors', async () => {
+    const view = await render(
+      <NotificationsScreen
+        {...listProps()}
+        activeSources={['linuxdo', 'nodeseek']}
+        enabledSources={['linuxdo', 'nodeseek']}
+        errors={{ linuxdo: '暂不可用', yaohuo: '不应展示' }}
+      />
+    );
+
+    const sourceTabs = view
+      .getAllByRole('button')
+      .map((element) => element.props.testID as string | undefined)
+      .filter((testID): testID is string => Boolean(testID?.startsWith('notification-source-')));
+    expect(sourceTabs).toEqual([
+      'notification-source-all',
+      'notification-source-linuxdo',
+      'notification-source-nodeseek'
+    ]);
+    expect(view.getByText('linux.do：暂不可用')).toBeTruthy();
+    expect(view.queryByText('妖火：不应展示')).toBeNull();
+    expect(view.queryByTestId('notification-source-yaohuo')).toBeNull();
+    expect(view.queryByTestId('notification-source-xiaoyinsi')).toBeNull();
+  });
+
+  it('shows content-source management guidance and no cached rows when every source is disabled', async () => {
+    const view = await render(
+      <NotificationsScreen {...listProps()} activeSources={[]} enabledSources={[]} errors={{}} source="all" />
+    );
+
+    expect(view.getByText('尚未启用内容源')).toBeTruthy();
+    expect(view.getByText('请前往“更多”中的“内容源”面板启用想看的站点。')).toBeTruthy();
+    expect(view.getByTestId('notification-source-all')).toBeTruthy();
+    expect(view.queryByTestId('notification-source-nodeseek')).toBeNull();
+    expect(view.queryByLabelText('NodeSeek，未读，张三，回复了你，一个主题')).toBeNull();
+  });
+
   it('[REG-NOTIFY-015] renders one compact retry action for each failed source', async () => {
     const onItemPress = jest.fn();
     const onRetrySource = jest.fn();
@@ -326,6 +364,16 @@ describe('notification screens', () => {
     expect(view.getByText('账号确认中')).toBeTruthy();
     expect(view.getByText('正在确认小隐寺账号身份；完成后会自动加载消息。')).toBeTruthy();
     expect(view.queryByText(/请先登录/)).toBeNull();
+  });
+
+  it('[REG-ACCOUNT-031] presents a terminal unknown message source as retryable instead of logged out', async () => {
+    const view = await render(
+      <NotificationsScreen {...listProps()} activeSources={[]} items={[]} source="yaohuo" sourceUnknown />
+    );
+
+    expect(view.getByText('账号状态暂不可确认')).toBeTruthy();
+    expect(view.getByText('本次账号核对失败；消息请求已暂停，可在账号中心重试核对。')).toBeTruthy();
+    expect(view.queryByText('请先登录 妖火，并确认账号身份。')).toBeNull();
   });
 
   it('[REG-NOTIFY-019] never renders cached private rows for a pending source', async () => {
@@ -672,6 +720,33 @@ describe('notification screens', () => {
     expect(view.getByLabelText('ac04')).toBeTruthy();
   });
 
+  it('shows notification settings only for enabled sources in user order', async () => {
+    const view = await render(
+      <NotificationSettingsScreen
+        backgroundEnabled={false}
+        backgroundError=""
+        busy={false}
+        enabledSources={['linuxdo', 'nodeseek']}
+        permission="granted"
+        sessions={createSiteSessionViewModels(createSiteSessionStates())}
+        state={notificationState()}
+        xiaoyinsiNeedsUpgrade={false}
+        onOpenSystemSettings={jest.fn()}
+        onToggleGlobal={jest.fn()}
+        onToggleSource={jest.fn()}
+        onUpgradeXiaoyinsi={jest.fn()}
+      />
+    );
+
+    const sourceToggles = view
+      .getAllByRole('switch')
+      .map((element) => element.props.accessibilityLabel as string)
+      .filter((label) => label !== 'Android 消息通知');
+    expect(sourceToggles).toEqual(['linux.do 消息通知', 'NodeSeek 消息通知']);
+    expect(view.queryByLabelText('妖火 消息通知')).toBeNull();
+    expect(view.queryByLabelText('小隐寺 消息通知')).toBeNull();
+  });
+
   it('forwards every source toggle and the Xiaoyinsi authorization upgrade', async () => {
     const onToggleSource = jest.fn();
     const onUpgradeXiaoyinsi = jest.fn();
@@ -680,6 +755,7 @@ describe('notification screens', () => {
         backgroundEnabled={false}
         backgroundError=""
         busy={false}
+        enabledSources={['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']}
         permission="granted"
         sessions={createSiteSessionViewModels(createSiteSessionStates())}
         state={notificationState()}
@@ -728,6 +804,7 @@ describe('notification screens', () => {
         backgroundEnabled={false}
         backgroundError=""
         busy={false}
+        enabledSources={['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']}
         permission="granted"
         sessions={sessions}
         state={notificationState()}
@@ -751,6 +828,7 @@ describe('notification screens', () => {
         backgroundEnabled={false}
         backgroundError=""
         busy={false}
+        enabledSources={['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']}
         permission="granted"
         sessions={sessions}
         state={notificationState()}
@@ -766,6 +844,30 @@ describe('notification screens', () => {
     expect(view.getAllByText('未登录；开关意图会保留')).toHaveLength(3);
   });
 
+  it('[REG-ACCOUNT-031] shows terminal unknown as retryable instead of logged out', async () => {
+    const sessions = createSiteSessionViewModels(createSiteSessionStates());
+    sessions.yaohuo = { ...sessions.yaohuo, identityTrust: 'unknown' };
+    const view = await render(
+      <NotificationSettingsScreen
+        backgroundEnabled={false}
+        backgroundError=""
+        busy={false}
+        enabledSources={['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']}
+        permission="granted"
+        sessions={sessions}
+        state={notificationState()}
+        xiaoyinsiNeedsUpgrade={false}
+        onOpenSystemSettings={jest.fn()}
+        onToggleGlobal={jest.fn()}
+        onToggleSource={jest.fn()}
+        onUpgradeXiaoyinsi={jest.fn()}
+      />
+    );
+
+    expect(view.getByText('账号状态暂不可确认；开关意图会保留，可重试核对')).toBeTruthy();
+    expect(view.getAllByText('未登录；开关意图会保留')).toHaveLength(3);
+  });
+
   it('keeps denied permission intent visible and offers system settings', async () => {
     const onOpenSystemSettings = jest.fn();
     const view = await render(
@@ -773,6 +875,7 @@ describe('notification screens', () => {
         backgroundEnabled={false}
         backgroundError=""
         busy={false}
+        enabledSources={['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']}
         permission="denied"
         sessions={createSiteSessionViewModels(createSiteSessionStates())}
         state={notificationState()}

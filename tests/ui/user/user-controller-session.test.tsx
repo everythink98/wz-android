@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
-import { appQueryClient, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import { appQueryClient } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import { useUserController } from '@/features/user/useUserController';
@@ -9,7 +9,10 @@ import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { ReadGateway } from '@/sources/readGateway';
-import type { UserProfile, UserReference } from '@/domain/forum/models';
+import type { Source, UserProfile, UserReference } from '@/domain/forum/models';
+import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
+import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
 function renderHook<Result>(callback: () => Result) {
@@ -28,33 +31,65 @@ const user: UserProfile = {
 function renderUserController({
   getActive = () => true,
   getIdentityBarriers = () => [],
+  getIdentityTrust,
   getSessionEpochs = () => initialForumSessionEpochs,
+  getSourceEnabled = () => true,
   getUser = () => user,
   getUserProfile,
+  onRetryIdentityStatus = jest.fn(),
   resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(),
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
-  showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
+  showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
+  showYaohuoLogin = jest.fn<(message?: string) => void>()
 }: {
   getActive?: () => boolean;
-  getIdentityBarriers?: () => ForumIdentityBarrierSource[];
+  getIdentityBarriers?: () => SessionSource[];
+  getIdentityTrust?: (source: SessionRuntimeSnapshot['source']) => SessionRuntimeSnapshot['identityTrust'];
   getSessionEpochs?: () => ForumSessionEpochs;
+  getSourceEnabled?: (source: Source) => boolean;
   getUser?: () => UserReference;
   getUserProfile: ReadGateway['getUserProfile'];
+  onRetryIdentityStatus?: (source: Source) => Promise<unknown> | unknown;
   resolveNodeSeekUser?: ReadGateway['resolveNodeSeekUser'];
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showNodeSeekVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
+  showYaohuoLogin?: (message?: string) => void;
 }) {
   return renderHook(() =>
     useUserController({
       active: getActive(),
-      identityBarriers: getIdentityBarriers(),
       sessionEpochs: getSessionEpochs(),
       notify: jest.fn(),
+      onRetryIdentityStatus,
       readerData: createEmptyReaderData(),
       showLinuxDoVerification,
       showNodeSeekVerification,
-      showYaohuoLogin: jest.fn(),
-      readGateway: { getUserProfile, resolveNodeSeekUser } as unknown as ReadGateway,
+      showYaohuoLogin,
+      readGateway: {
+        getReadPlan: (source: Source, operation: ForumReadOperation) => {
+          const identityTrust = isSessionSource(source)
+            ? getIdentityTrust?.(source) || (getIdentityBarriers().includes(source) ? 'pending' : 'confirmed')
+            : undefined;
+          return resolveForumReadPlan(
+            source,
+            operation,
+            getSourceEnabled(source),
+            isSessionSource(source)
+              ? {
+                  source,
+                  authenticated: identityTrust === 'confirmed',
+                  authSurfaceOpen: false,
+                  identityKey: `${source}:test`,
+                  identityTrust: identityTrust!,
+                  sessionEpoch: getSessionEpochs()[source],
+                  sourceEnabled: getSourceEnabled(source)
+                }
+              : undefined
+          );
+        },
+        getUserProfile,
+        resolveNodeSeekUser
+      } as unknown as ReadGateway,
       user: getUser()
     })
   );
@@ -66,6 +101,119 @@ describe('user query controller', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+  });
+
+  it('[REG-SOURCE-011] reads a public Xiaoyinsi User while account identity remains pending', async () => {
+    const requested: UserReference = {
+      source: 'xiaoyinsi',
+      id: '7',
+      username: 'alice',
+      url: 'https://forum.xiaoyinsi.com/u/alice'
+    };
+    const profile: UserProfile = { ...user, ...requested, displayName: 'Alice', topics: [] };
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => profile);
+    const hook = await renderUserController({
+      getIdentityBarriers: () => ['xiaoyinsi'],
+      getUser: () => requested,
+      getUserProfile
+    });
+
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(hook.result.current.userProfile).toEqual(
+        expect.objectContaining({ source: profile.source, id: profile.id, username: profile.username })
+      )
+    );
+    expect(getUserProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'xiaoyinsi' }),
+      expect.objectContaining({ readPlanScope: 'public:omit' })
+    );
+  });
+
+  it('[REG-SOURCE-011] settles pending NodeSeek username resolution as a terminal blocked result', async () => {
+    const requested: UserReference = {
+      source: 'nodeseek',
+      username: 'alice',
+      url: 'https://www.nodeseek.com/member?t=alice'
+    };
+    const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async () => {
+      throw Object.assign(new Error('登录状态暂时无法确认'), {
+        kind: 'login-required' as const,
+        reason: 'identity-pending',
+        retryable: true,
+        source: 'nodeseek' as const
+      });
+    });
+    const hook = await renderUserController({
+      getIdentityBarriers: () => ['nodeseek'],
+      getUser: () => requested,
+      getUserProfile: jest.fn<ReadGateway['getUserProfile']>(),
+      resolveNodeSeekUser
+    });
+
+    await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(hook.result.current.userError).not.toBeNull());
+    expect(hook.result.current.userBusy).toBe(false);
+  });
+
+  it('[REG-SOURCE-011] retries an unknown strict User by reconciling identity without replaying transport', async () => {
+    const requested: UserReference = {
+      source: 'yaohuo',
+      id: '7',
+      username: 'alice',
+      url: 'https://www.yaohuo.me/space-7.html'
+    };
+    const onRetryIdentityStatus = jest.fn(async () => undefined);
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => {
+      throw Object.assign(new Error('登录状态核对失败，请重试'), {
+        kind: 'ordinary' as const,
+        reason: 'identity-unavailable',
+        retryable: true,
+        source: 'yaohuo' as const
+      });
+    });
+    const hook = await renderUserController({
+      getIdentityTrust: () => 'unknown',
+      getUser: () => requested,
+      getUserProfile,
+      onRetryIdentityStatus
+    });
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await expect(hook.result.current.refreshUser()).resolves.toBe('stale');
+    });
+
+    expect(onRetryIdentityStatus).toHaveBeenCalledTimes(1);
+    expect(onRetryIdentityStatus).toHaveBeenCalledWith('yaohuo');
+    expect(getUserProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-SOURCE-011] opens Yaohuo login for a typed anonymous User block', async () => {
+    const requested: UserReference = {
+      source: 'yaohuo',
+      id: '7',
+      username: 'alice',
+      url: 'https://www.yaohuo.me/space-7.html'
+    };
+    const showYaohuoLogin = jest.fn();
+    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => {
+      throw Object.assign(new Error('请先登录该内容源'), {
+        kind: 'login-required' as const,
+        loginRequired: true,
+        reason: 'login-required',
+        source: 'yaohuo' as const
+      });
+    });
+    await renderUserController({
+      getIdentityTrust: () => 'none',
+      getUser: () => requested,
+      getUserProfile,
+      showYaohuoLogin
+    });
+
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+    expect(showYaohuoLogin).toHaveBeenCalledWith('请先登录该内容源');
   });
 
   it('[REG-PERF-008][REG-ACCOUNT-031] gates route queries and commands while inactive', async () => {
@@ -253,7 +401,12 @@ describe('user query controller', () => {
     });
     await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
     const recovery = showNodeSeekVerification.mock.calls[0]?.[1];
-    expect(recovery?.queryKey).toEqual(['forum', 'nodeseek', 'user', { sessionEpoch: 0, userId: '1414' }]);
+    expect(recovery?.queryKey).toEqual([
+      'forum',
+      'nodeseek',
+      'user',
+      { readPlanScope: 'authenticated:0', sessionEpoch: 0, userId: '1414' }
+    ]);
 
     await act(async () => {
       await expect(recovery?.resume()).resolves.toBe('completed');
@@ -320,20 +473,29 @@ describe('user query controller', () => {
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-031] blocks username resolution at the identity barrier and re-resolves after the epoch changes', async () => {
+  it('[REG-ACCOUNT-031][REG-SOURCE-011] settles blocked resolution, then re-resolves after trust and epoch changes', async () => {
     const reference: UserReference = {
       source: 'nodeseek',
       username: 'xy',
       url: 'https://www.nodeseek.com/member?t=xy'
     };
-    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
+    let identityBarriers: SessionSource[] = ['nodeseek'];
     let sessionEpochs = initialForumSessionEpochs;
-    const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async () => ({
-      source: 'nodeseek',
-      id: '8052',
-      username: 'xy',
-      url: 'https://www.nodeseek.com/space/8052'
-    }));
+    const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async () => {
+      if (identityBarriers.includes('nodeseek')) {
+        throw Object.assign(new Error('登录状态暂时无法确认'), {
+          kind: 'login-required' as const,
+          reason: 'identity-pending',
+          source: 'nodeseek' as const
+        });
+      }
+      return {
+        source: 'nodeseek',
+        id: '8052',
+        username: 'xy',
+        url: 'https://www.nodeseek.com/space/8052'
+      };
+    });
     const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => ({
       ...user,
       id: '8052',
@@ -346,10 +508,8 @@ describe('user query controller', () => {
       getUserProfile,
       resolveNodeSeekUser
     });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(resolveNodeSeekUser).not.toHaveBeenCalled();
+    await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(hook.result.current.userError).not.toBeNull());
     expect(getUserProfile).not.toHaveBeenCalled();
 
     identityBarriers = [];
@@ -357,13 +517,13 @@ describe('user query controller', () => {
       hook.rerender(undefined);
     });
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
-    expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1);
+    expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2);
 
     sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
     await act(async () => {
       hook.rerender(undefined);
     });
-    await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
   });
 
@@ -450,8 +610,8 @@ describe('user query controller', () => {
     expect(getUserProfile.mock.calls[0]?.[0]).not.toHaveProperty('cursorType');
   });
 
-  it('[REG-ACCOUNT-031] keeps a loaded user profile read-only while its identity is pending', async () => {
-    let identityBarriers: ForumIdentityBarrierSource[] = [];
+  it('[REG-ACCOUNT-031][REG-SOURCE-011] isolates cached authenticated profile from a pending public read', async () => {
+    let identityBarriers: SessionSource[] = [];
     const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => user);
     const hook = await renderUserController({
       getIdentityBarriers: () => identityBarriers,
@@ -471,18 +631,26 @@ describe('user query controller', () => {
       hook.rerender(undefined);
       await Promise.resolve();
     });
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
     await act(async () => {
       await hook.result.current.refreshUser();
       await hook.result.current.loadMoreUserTopics();
     });
 
-    expect(getUserProfile).toHaveBeenCalledTimes(1);
-    expect(hook.result.current.userProfile).toMatchObject({
-      source: user.source,
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName
-    });
+    expect(getUserProfile).toHaveBeenCalledTimes(3);
+    expect(getUserProfile.mock.calls.map(([, context]) => context?.readPlanScope)).toEqual([
+      'authenticated:0',
+      'public:omit',
+      'public:omit'
+    ]);
+    await waitFor(() =>
+      expect(hook.result.current.userProfile).toMatchObject({
+        source: user.source,
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName
+      })
+    );
   });
 
   it('REG-USER-001 keeps topic and reply cursors independent', async () => {

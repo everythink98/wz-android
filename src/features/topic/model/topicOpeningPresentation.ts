@@ -252,24 +252,3 @@ export function buildTopicOpeningContent(topic: TopicOpeningSeed | null) {
     showsAccessNotice
   };
 }
-
-export function buildTopicOpeningPresentation({
-  loadedQuotedReplies,
-  sourceReplies,
-  topic
-}: {
-  loadedQuotedReplies: Record<string, Reply>;
-  sourceReplies: Reply[];
-  topic: TopicDetail | null;
-}) {
-  const content = buildTopicOpeningContent(topic);
-  return {
-    ...content,
-    acceptedAnswer: buildAcceptedAnswerPresentation({
-      loadedQuotedReplies,
-      showsAccessNotice: content.showsAccessNotice,
-      sourceReplies,
-      topic
-    })
-  };
-}

@@ -1,52 +1,15 @@
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { forumQueryKeys } from '@/platform/query/serverState';
+import { accountQueryKeys } from '@/platform/query/serverState';
 import {
   cancelForumSourceQueries,
-  commitChangedAccountStatusQuery,
   forumSessionEpochsAfterSourceChange,
   removeUnconfirmedForumSourceQueries,
-  resetForumSourceQueries,
-  siteSessionEventInvalidatesForumQueries
+  resetForumSourceQueries
 } from './sessionQueryOwnership';
 
 describe('session query ownership', () => {
-  it('invalidates forum queries only for definitive identity transitions', () => {
-    expect(
-      siteSessionEventInvalidatesForumQueries({
-        type: 'session-updated',
-        loggedIn: true
-      })
-    ).toBe(true);
-    expect(
-      siteSessionEventInvalidatesForumQueries({
-        type: 'login-detected'
-      })
-    ).toBe(true);
-    expect(
-      siteSessionEventInvalidatesForumQueries({
-        type: 'login-expired'
-      })
-    ).toBe(true);
-    expect(
-      siteSessionEventInvalidatesForumQueries({
-        type: 'cleared'
-      })
-    ).toBe(true);
-    expect(
-      siteSessionEventInvalidatesForumQueries({
-        type: 'verification-started'
-      })
-    ).toBe(false);
-    expect(
-      siteSessionEventInvalidatesForumQueries({
-        type: 'check-failed',
-        message: 'offline'
-      })
-    ).toBe(false);
-  });
-
   it('increments only the changed source epoch', () => {
     expect(
       forumSessionEpochsAfterSourceChange({ ...initialForumSessionEpochs, linuxdo: 2, nodeseek: 3 }, 'linuxdo')
@@ -113,11 +76,36 @@ describe('session query ownership', () => {
     expect(client.getQueryData(otherKey)).toBe('trusted linux.do topic');
     await client.cancelQueries();
   });
+  it('[REG-SOURCE-010] cancels only the disabled source when aggregate ownership has already changed', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const sourceKey = ['forum', 'nodeseek', 'feed'] as const;
+    const aggregateKey = ['forum', 'all', 'feed'] as const;
+    const sourceAbort = vi.fn();
+    const aggregateAbort = vi.fn();
+    const pendingRead =
+      (onAbort: () => void) =>
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise<string>((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            onAbort();
+            reject(new Error('aborted'));
+          });
+        });
+    void client.fetchQuery({ queryKey: sourceKey, queryFn: pendingRead(sourceAbort) }).catch(() => undefined);
+    void client.fetchQuery({ queryKey: aggregateKey, queryFn: pendingRead(aggregateAbort) }).catch(() => undefined);
+    await Promise.resolve();
+
+    await cancelForumSourceQueries('nodeseek', client, false);
+
+    expect(sourceAbort).toHaveBeenCalledOnce();
+    expect(aggregateAbort).not.toHaveBeenCalled();
+    await client.cancelQueries();
+  });
   it('[REG-FEED-010] removes unconfirmed source data without touching account or safe aggregate queries', () => {
     const client = new QueryClient();
     const sourceFeed = ['forum', 'nodeseek', 'feed'] as const;
-    const account = ['forum', 'nodeseek', 'account-status'] as const;
-    const probe = ['forum', 'nodeseek', 'account-status-probe'] as const;
+    const account = accountQueryKeys.snapshot('nodeseek');
+    const probe = accountQueryKeys.probe('nodeseek', 1);
     const aggregate = ['forum', 'all', 'feed'] as const;
     const otherSource = ['forum', 'linuxdo', 'feed'] as const;
     client.setQueryData(sourceFeed, 'untrusted');
@@ -155,34 +143,34 @@ describe('session query ownership', () => {
       unsubscribe();
     }
   });
-  it('atomically seeds the changed account result under the incremented epoch', () => {
-    const client = new QueryClient();
-    const probeKey = ['forum', 'linuxdo', 'account-status-probe', { epoch: 4, generation: 9 }] as const;
-    const account = {
-      session: {
-        site: 'linuxdo',
-        status: 'logged-in',
-        currentUser: { id: '42', username: 'alice' }
-      }
-    };
-    client.setQueryData(probeKey, account);
-
-    const next = commitChangedAccountStatusQuery(
-      'linuxdo',
+  it('[REG-ACCOUNT-042] keeps the canonical account snapshot outside the changing forum epoch', () => {
+    const before = accountQueryKeys.snapshot('linuxdo');
+    const nextEpochs = forumSessionEpochsAfterSourceChange(
       { ...initialForumSessionEpochs, linuxdo: 4 },
-      probeKey,
-      client
+      'linuxdo'
     );
+    const after = accountQueryKeys.snapshot('linuxdo');
 
-    expect(next.linuxdo).toBe(5);
-    expect(
-      client.getQueryData(
-        forumQueryKeys.accountStatus({
-          sessionEpochs: next,
-          source: 'linuxdo'
-        })
-      )
-    ).toEqual(account);
-    expect(client.getQueryData(probeKey)).toBeUndefined();
+    expect(before).toEqual(['account', 'linuxdo', 'snapshot']);
+    expect(after).toEqual(before);
+    expect(nextEpochs.linuxdo).toBe(5);
+  });
+  it('[REG-ACCOUNT-042] resets changed forum content without moving the canonical account snapshot', () => {
+    const client = new QueryClient();
+    const accountKey = accountQueryKeys.snapshot('linuxdo');
+    const account = {
+      site: 'linuxdo',
+      status: 'logged-in',
+      cookieSummary: [],
+      isVerifying: false,
+      identityTrust: 'confirmed'
+    };
+    client.setQueryData(accountKey, account);
+    client.setQueryData(['forum', 'linuxdo', 'topic'], 'old content');
+
+    resetForumSourceQueries('linuxdo', client);
+
+    expect(client.getQueryData(accountKey)).toEqual(account);
+    expect(client.getQueryData(['forum', 'linuxdo', 'topic'])).toBeUndefined();
   });
 });

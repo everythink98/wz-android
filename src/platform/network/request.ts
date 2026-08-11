@@ -1,5 +1,14 @@
 export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
+export function withFetchGuard(fetcher: Fetcher, assertCurrent: () => void | Promise<void>): Fetcher {
+  return async (input, init) => {
+    await assertCurrent();
+    const response = await fetcher(input, init);
+    await assertCurrent();
+    return response;
+  };
+}
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 export const REQUEST_CANCELED_MESSAGE = '请求已取消';

@@ -33,6 +33,7 @@ import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/sourc
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import {
+  assertDiscourseTopicIdentity,
   discourseCategories,
   discourseOriginalPoster,
   discoursePolls,
@@ -245,9 +246,9 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
   const authorLevelLabel = linuxDoLevelLabel(raw);
   return {
     ...replyFields,
-    authorId: fields.author,
+    authorId: fields.author || undefined,
     authorAvatar: avatarUrl(raw.avatar_template),
-    authorUrl: userUrl(fields.author),
+    authorUrl: fields.author ? userUrl(fields.author) : undefined,
     contentHtml: quotedReferences.html,
     ...(quotedReferences.quotedPosts.length ? { quotedPosts: quotedReferences.quotedPosts } : {}),
     ...(rawBoostCount || needsApproval
@@ -476,11 +477,13 @@ export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promis
 }
 
 async function topicData(id: string, options: LinuxDoOptions, targetFloor?: number) {
-  return fetchLinuxDoJson<Record<string, unknown>>(
+  const data = await fetchLinuxDoJson<Record<string, unknown>>(
     `/t/${encodeURIComponent(id)}${targetFloor ? `/${targetFloor}` : ''}.json`,
     options.trackVisit ? { track_visit: 'true', forceLoad: 'true' } : undefined,
     options
   );
+  assertDiscourseTopicIdentity(data, id);
+  return data;
 }
 
 export async function getLinuxDoTopic(
@@ -509,6 +512,7 @@ export async function getLinuxDoTopic(
         replyCount: 0,
         contentHtml,
         replies: [],
+        replyCompleteness: 'complete',
         replyHasMore: false,
         replyNextPage: null,
         accessRequirement
@@ -534,15 +538,13 @@ export async function getLinuxDoTopic(
   }
   const replyLimit = options.replyLimit || 30;
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
+  const initialReplyPosts = replyPosts.slice(0, replyLimit);
   const replies = await hydrateEditableReplyContent(
-    replyPosts
-      .slice(0, replyLimit)
-      .map((post) => normalizePost(post, topic.id))
-      .filter(Boolean) as Reply[],
+    initialReplyPosts.map((post) => normalizePost(post, topic.id)).filter(Boolean) as Reply[],
     options
   );
   const totalPosts = stream.length || (topic.replyCount || 0) + 1;
-  const replyHasMore = totalPosts > replies.length + 1;
+  const replyHasMore = totalPosts > initialReplyPosts.length + 1;
   const polls = discoursePolls(firstPost);
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -554,9 +556,10 @@ export async function getLinuxDoTopic(
     ...topic,
     contentHtml: sanitizedContentHtml,
     replies,
+    replyCompleteness: replies.length === initialReplyPosts.length ? ('complete' as const) : ('partial' as const),
     replyHasMore,
     replyNextPage: replyHasMore ? 2 : null,
-    replyNextOffset: replyHasMore ? replies.length : null,
+    replyNextOffset: replyHasMore ? initialReplyPosts.length : null,
     ...(firstPostFields?.commentId ? { commentId: firstPostFields.commentId } : {}),
     ...(firstPostFields?.likeCount === undefined ? {} : { likeCount: firstPostFields.likeCount }),
     ...(firstPostFields?.liked === undefined ? {} : { liked: firstPostFields.liked }),
@@ -608,12 +611,20 @@ export async function getLinuxDoReplies(
       window.posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],
       options
     );
-    if (!items.some((reply) => reply.floor === targetFloor)) {
+    const targetCommentId = options.position.target.commentId;
+    const hasTarget = items.some((reply) =>
+      targetCommentId === undefined ? reply.floor === targetFloor : reply.commentId === targetCommentId
+    );
+    if (!hasTarget) {
       throw new Error('linux.do 目标楼层未找到');
     }
     const { posts, ...windowState } = window;
     const chronological = annotateSourceDiagnosticSummary(
-      { items, ...windowState },
+      {
+        items,
+        ...windowState,
+        completeness: items.length === posts.length ? ('complete' as const) : ('partial' as const)
+      },
       {
         parserVariant: 'discourse-near-replies',
         candidateCount: posts.length,
@@ -652,7 +663,9 @@ export async function getLinuxDoReplies(
   const items = discourseRepliesInStreamOrder(normalizedItems, visiblePostIds, options.order);
   const result = {
     items,
-    ...windowState
+    ...windowState,
+    completeness:
+      posts.length === postIds.length && items.length === postIds.length ? ('complete' as const) : ('partial' as const)
   };
   return annotateSourceDiagnosticSummary(result, {
     parserVariant: 'discourse-replies',

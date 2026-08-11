@@ -1,5 +1,4 @@
 import type { InfiniteData } from '@tanstack/react-query';
-import { mergeReplies } from '@/domain/forum/feed';
 import type {
   RepliesResponse,
   Reply,
@@ -19,6 +18,7 @@ export type ReplyPage = RepliesResponse & { requestedOffset: number | null; requ
 
 export function topicHasCompleteReplies(detail: TopicDetail) {
   return (
+    detail.replyCompleteness === 'complete' &&
     typeof detail.replyCount === 'number' &&
     detail.replyHasMore === false &&
     detail.replies.length === detail.replyCount
@@ -30,6 +30,7 @@ function topicReplyPage(detail: TopicDetail, order: ReplyOrder): ReplyPage {
   const nextOffset = completeNewest ? null : (detail.replyNextOffset ?? null);
   return {
     items: completeNewest ? [...detail.replies].reverse() : detail.replies,
+    completeness: detail.replyCompleteness ?? 'partial',
     currentPage: 1,
     currentOffset: 0,
     previousPage: null,
@@ -52,12 +53,13 @@ export function firstReplyData(
   detail: TopicDetail,
   order: ReplyOrder
 ): InfiniteData<ReplyPage, ReplyPageParam> | undefined {
+  if (detail.replyCompleteness !== 'complete' && detail.replies.length === 0) return undefined;
   if (order === 'newest' && !topicHasCompleteReplies(detail)) return undefined;
   return { pages: [topicReplyPage(detail, order)], pageParams: [{ kind: 'start' }] };
 }
 
 export function mergedReplyPages(data: InfiniteData<ReplyPage, ReplyPageParam> | undefined) {
-  return data?.pages.reduce<Reply[]>((items, page) => mergeReplies(items, page.items), []) ?? [];
+  return data?.pages.flatMap((page) => page.items) ?? [];
 }
 
 function isLoadedReplyPage(pages: ReplyPage[], candidate: ReplyCursorPosition) {
@@ -91,7 +93,7 @@ export function replyEdgePosition(
   return cursor || { kind: 'start' };
 }
 
-export function matchesReplyLocation(reply: Reply, target: ReplyLocationTarget) {
+export function matchesLoadedReplyLocation(reply: Reply, target: ReplyLocationTarget) {
   if (target.commentId !== undefined) return reply.commentId === target.commentId;
   return target.floor !== undefined && reply.floor === target.floor;
 }

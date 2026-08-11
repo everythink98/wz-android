@@ -35,9 +35,10 @@ import {
   type InteractionType
 } from '@/domain/forum/topicActionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
-import type { ReplyEditTarget, ReplyRefreshCommand } from '../model/types';
+import type { ReplyEditTarget, ReplyRefreshCommand, ReplyRefreshTarget } from '../model/types';
 import { topicKey } from '@/domain/reader/readerData';
 import type { Fetcher } from '@/platform/network/request';
+import type { ReadGateway } from '@/sources/readGateway';
 import { errorMessage } from '@/platform/network/errors';
 import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
 import {
@@ -73,6 +74,8 @@ import {
   isNodeSeekActionTopic,
   isXiaoyinsiActionTopic,
   isYaohuoActionTopic,
+  matchesReplyRefreshTarget,
+  removeRepliesForRefresh,
   topicEditReplyActionKey,
   topicPollVoteActionKey,
   topicReplyActionKey,
@@ -98,16 +101,13 @@ type ReplyCache = InfiniteData<{ items: Reply[]; [key: string]: unknown }, unkno
 
 const REPLY_ORDERS = ['oldest', 'newest'] as const;
 
-function replyCacheKeys(detailKey: QueryKey) {
-  return REPLY_ORDERS.map((order) => forumQueryKeys.replies(detailKey, order));
-}
-
 type MutationVariables = {
   actionKey: string;
   busy: boolean;
   decision: TopicActionDecisionRequest;
   ticket: WritableSessionTicket;
   detailKey: QueryKey;
+  replyKeys: readonly QueryKey[];
   repliesKey: QueryKey;
   source: Source;
   task: (ticket: WritableSessionTicket) => Promise<unknown>;
@@ -143,8 +143,10 @@ function writeFailureRequiresIdentityProbe(source: SessionSite, error: unknown) 
   return kind === 'login-required' || kind === 'login-expired' || kind === 'verification-required';
 }
 
-function topicDeleteReplyActionKey(topicKeyValue: string, reply: Reply) {
-  return `delete-reply:${topicKeyValue}:${reply.commentId ?? reply.deletePath ?? reply.floor ?? 'reply'}`;
+function topicDeleteReplyActionKey(topicKeyValue: string, target: ReplyRefreshTarget) {
+  return `delete-reply:${topicKeyValue}:${target.kind}:${
+    target.kind === 'comment-id' ? target.commentId : target.deletePath
+  }`;
 }
 
 function updateReplyCache(
@@ -162,9 +164,9 @@ function updateReplyCache(
   );
 }
 
-function replyCursorFor(cache: ReplyCache | undefined, reply: Reply) {
+function replyCursorFor(cache: ReplyCache | undefined, target: ReplyRefreshTarget) {
   const page = cache?.pages.find((candidate) =>
-    candidate.items.some((item) => (reply.commentId ? item.commentId === reply.commentId : item.floor === reply.floor))
+    candidate.items.some((reply) => matchesReplyRefreshTarget(reply, target))
   );
   const pageNumber = Number(page?.currentPage ?? page?.requestedPage);
   const offset = page?.currentOffset ?? page?.requestedOffset ?? null;
@@ -213,6 +215,7 @@ export function useTopicActionsController({
   isWritableSessionTicketCurrent,
   getNodeSeekUserAgent,
   notify,
+  readGateway,
   reconcileWritableSession,
   refreshTopicReplies,
   siteSessionViewModels,
@@ -230,6 +233,7 @@ export function useTopicActionsController({
   isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
   getNodeSeekUserAgent: () => string;
   notify: (message: string) => void;
+  readGateway: Pick<ReadGateway, 'getReadPlan'>;
   reconcileWritableSession: (source: SessionSite) => Promise<WritableSessionReconcileResult>;
   refreshTopicReplies: (command?: ReplyRefreshCommand, trace?: DiagnosticTrace) => Promise<unknown>;
   siteSessionViewModels: SiteSessionViewModels;
@@ -326,7 +330,7 @@ export function useTopicActionsController({
       }
       await Promise.all([
         queryClient.cancelQueries({ queryKey: variables.detailKey, exact: true }),
-        ...replyCacheKeys(variables.detailKey).map((queryKey) => queryClient.cancelQueries({ queryKey, exact: true }))
+        ...variables.replyKeys.map((queryKey) => queryClient.cancelQueries({ queryKey, exact: true }))
       ]);
       if (!isWritableSessionTicketCurrent(variables.ticket)) {
         throw new HandledMutationError('登录状态已变化，请重试', 'stale', 'stale');
@@ -450,11 +454,18 @@ export function useTopicActionsController({
       const detailKey = forumQueryKeys.topic({
         source: actionTopic.source,
         topicId: actionTopic.id,
+        readPlanScope: readGateway.getReadPlan(actionTopic.source, 'topic').cacheScope,
         scope
       });
-      return { detailKey, repliesKey: forumQueryKeys.replies(detailKey, replyOrderRef.current) };
+      const repliesReadPlanScope = readGateway.getReadPlan(actionTopic.source, 'replies').cacheScope;
+      const replyKeys = REPLY_ORDERS.map((order) => forumQueryKeys.replies(detailKey, order, repliesReadPlanScope));
+      return {
+        detailKey,
+        replyKeys,
+        repliesKey: forumQueryKeys.replies(detailKey, replyOrderRef.current, repliesReadPlanScope)
+      };
     },
-    [replyOrderRef, sessionEpochsRef]
+    [readGateway, replyOrderRef, sessionEpochsRef]
   );
 
   const editReply = useCallback(
@@ -527,8 +538,8 @@ export function useTopicActionsController({
         return true;
       }
       if (topicCommands.getCurrentKey() !== topicKey(actionTopic)) {
-        const { detailKey } = cacheKeys(actionTopic);
-        replyCacheKeys(detailKey).forEach((queryKey) => queryClient.removeQueries({ queryKey, exact: true }));
+        const { detailKey, replyKeys } = cacheKeys(actionTopic);
+        replyKeys.forEach((queryKey) => queryClient.removeQueries({ queryKey, exact: true }));
         queryClient.removeQueries({ queryKey: detailKey, exact: true });
         markDiagnosticStage(trace, 'apply', { source: actionTopic.source, state: 'cache-removed' });
         return true;
@@ -542,7 +553,7 @@ export function useTopicActionsController({
   const executeMutation = useCallback(
     async (
       actionTopic: TopicDetail,
-      variables: Omit<MutationVariables, 'ticket' | 'detailKey' | 'repliesKey' | 'source' | 'topicId'>
+      variables: Omit<MutationVariables, 'ticket' | 'detailKey' | 'replyKeys' | 'repliesKey' | 'source' | 'topicId'>
     ) => {
       const reservationKey = `${actionTopic.source}:${actionTopic.id}:${variables.actionKey}`;
       const duplicate = queryClient
@@ -801,13 +812,13 @@ export function useTopicActionsController({
 
   const updateInteraction = useCallback(
     (actionTopic: TopicDetail, patch: Parameters<typeof applyInteractionToTopic>[1]) => {
-      const { detailKey } = cacheKeys(actionTopic);
+      const { detailKey, replyKeys } = cacheKeys(actionTopic);
       const apply = (nextPatch: Parameters<typeof applyInteractionToTopic>[1]) => {
         queryClient.setQueryData<TopicDetail>(
           detailKey,
           (current) => applyInteractionToTopic(current || null, nextPatch) || current
         );
-        replyCacheKeys(detailKey).forEach((repliesKey) =>
+        replyKeys.forEach((repliesKey) =>
           updateReplyCache(queryClient, repliesKey, (replies) => applyInteractionToReplies(replies, nextPatch))
         );
       };
@@ -895,8 +906,8 @@ export function useTopicActionsController({
             }
           );
         },
-        applyResult: (_result, { detailKey }) => {
-          replyCacheKeys(detailKey).forEach((repliesKey) => {
+        applyResult: (_result, { replyKeys }) => {
+          replyKeys.forEach((repliesKey) => {
             updateReplyCache(queryClient, repliesKey, (replies) =>
               applyEditedReplyContent(replies, edit, actionTopic.source)
             );
@@ -908,7 +919,7 @@ export function useTopicActionsController({
           refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
             kind: 'edited',
             silent: true,
-            target: replyEditTarget,
+            target: { kind: 'comment-id', commentId: replyEditTarget.commentId },
             contentMarkdown: edit.contentMarkdown
           }),
         successMessage: '回复已更新'
@@ -963,9 +974,9 @@ export function useTopicActionsController({
               ),
       applyResult: () => {
         if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
-        const { detailKey } = cacheKeys(actionTopic as TopicDetail);
+        const { detailKey, replyKeys } = cacheKeys(actionTopic as TopicDetail);
         void queryClient.invalidateQueries({ queryKey: detailKey, exact: true, refetchType: 'none' });
-        replyCacheKeys(detailKey).forEach(
+        replyKeys.forEach(
           (repliesKey) => void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' })
         );
       },
@@ -1020,34 +1031,31 @@ export function useTopicActionsController({
         finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
         return;
       }
+      const refreshTarget: ReplyRefreshTarget = isYaohuoActionTopic(actionTopic)
+        ? { kind: 'delete-path', deletePath: reply.deletePath! }
+        : { kind: 'comment-id', commentId: reply.commentId! };
       const actionTopicKey = topicKey(actionTopic);
       const targetPosition = replyCursorFor(
         queryClient.getQueryData<ReplyCache>(cacheKeys(actionTopic as TopicDetail).repliesKey),
-        reply
+        refreshTarget
       );
       const patch = () => {
-        const { detailKey } = cacheKeys(actionTopic as TopicDetail);
-        replyCacheKeys(detailKey).forEach((repliesKey) =>
-          updateReplyCache(queryClient, repliesKey, (replies) =>
-            replies.filter((item) =>
-              reply.commentId ? item.commentId !== reply.commentId : item.floor !== reply.floor
-            )
-          )
+        const { detailKey, replyKeys } = cacheKeys(actionTopic as TopicDetail);
+        replyKeys.forEach((repliesKey) =>
+          updateReplyCache(queryClient, repliesKey, (replies) => removeRepliesForRefresh(replies, refreshTarget))
         );
         queryClient.setQueryData<TopicDetail>(detailKey, (current) =>
           current
             ? {
                 ...current,
                 ...(typeof current.replyCount === 'number' ? { replyCount: Math.max(0, current.replyCount - 1) } : {}),
-                replies: current.replies.filter((item) =>
-                  reply.commentId ? item.commentId !== reply.commentId : item.floor !== reply.floor
-                )
+                replies: removeRepliesForRefresh(current.replies, refreshTarget)
               }
             : current
         );
       };
       await executeMutation(actionTopic as TopicDetail, {
-        actionKey: topicDeleteReplyActionKey(actionTopicKey, reply),
+        actionKey: topicDeleteReplyActionKey(actionTopicKey, refreshTarget),
         busy: true,
         decision: { action: 'delete', reply },
         trace,
@@ -1071,9 +1079,9 @@ export function useTopicActionsController({
                 trace,
                 ticket
               ),
-        applyResult: (_result, { detailKey }) => {
+        applyResult: (_result, { replyKeys }) => {
           patch();
-          replyCacheKeys(detailKey).forEach(
+          replyKeys.forEach(
             (repliesKey) =>
               void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' })
           );
@@ -1082,7 +1090,7 @@ export function useTopicActionsController({
           refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
             kind: 'deleted',
             silent: true,
-            target: reply,
+            target: refreshTarget,
             ...(targetPosition ? { position: targetPosition } : {})
           }),
         successMessage: '回复已删除'
@@ -1588,12 +1596,12 @@ export function useTopicActionsController({
               ...(voteResult.confirmedPoll ? { confirmedPoll: voteResult.confirmedPoll } : {}),
               ...(voteResult.refreshFailed ? { preserveUnknownCounts: true } : {})
             };
-            const { detailKey } = cacheKeys(actionTopic as TopicDetail);
+            const { detailKey, replyKeys } = cacheKeys(actionTopic as TopicDetail);
             queryClient.setQueryData<TopicDetail>(
               detailKey,
               (current) => applyPollVoteToTopic(current || null, patch) || current
             );
-            replyCacheKeys(detailKey).forEach((repliesKey) =>
+            replyKeys.forEach((repliesKey) =>
               updateReplyCache(queryClient, repliesKey, (replies) => applyPollVoteToReplies(replies, patch))
             );
             if (voteResult.refreshFailed) notify('提交成功但结果刷新失败，请手动刷新。');

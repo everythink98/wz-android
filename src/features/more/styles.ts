@@ -343,6 +343,40 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
     appearanceControlDisabled: {
       opacity: 0.38
     },
+    contentSourceRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 10,
+      marginHorizontal: 4,
+      minHeight: 56,
+      paddingVertical: 4
+    },
+    contentSourceCopy: {
+      flex: 1,
+      minWidth: 0
+    },
+    contentSourceActions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 0
+    },
+    contentSourceDragHandle: {
+      alignItems: 'flex-end',
+      backgroundColor: 'transparent',
+      height: 48,
+      justifyContent: 'center',
+      paddingRight: 3,
+      width: 48
+    },
+    contentSourceRowDragging: {
+      backgroundColor: theme.surface2,
+      borderRadius: 10,
+      borderTopWidth: 0,
+      elevation: 2,
+      marginHorizontal: 0,
+      paddingHorizontal: 8,
+      zIndex: 2
+    },
     appearanceSlider: {
       flex: 1,
       height: 48,

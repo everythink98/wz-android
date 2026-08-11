@@ -3,6 +3,7 @@ import type { Reply, TopicDetail, TopicPoll, TopicPollOption } from '@/domain/fo
 import {
   absoluteUrl,
   elementText,
+  hasRenderableHtmlContent,
   isRecord,
   parseHtml,
   parsePositiveInteger,
@@ -674,10 +675,17 @@ export function parseRenderedNodeSeekTopicHtml(
 ): TopicDetail | null {
   const root = parseHtml(html);
   const firstContentItem = root.querySelector('.content-item');
+  const firstContentItemIsReplyContainer = String(firstContentItem?.rawTagName || '').toLowerCase() === 'li';
   const identifiedFirstReply = Boolean(
     page > 1 &&
     firstContentItem &&
-    (renderedNodeSeekFloor(firstContentItem) || renderedNodeSeekCommentId(firstContentItem))
+    (renderedNodeSeekFloor(firstContentItem) ||
+      renderedNodeSeekCommentId(firstContentItem) ||
+      (firstContentItemIsReplyContainer &&
+        (renderedNodeSeekAuthor(firstContentItem) ||
+          hasRenderableHtmlContent(
+            firstContentItem.querySelector('.post-content, .comment-content, .reply-content, .content')?.innerHTML
+          ))))
   );
   const restrictedNotice = nodeSeekRestrictedNotice(root);
   const contentElement =
@@ -702,7 +710,7 @@ export function parseRenderedNodeSeekTopicHtml(
       : contentElement?.innerHTML || ''
   ).trim();
   const contentHtml = renderedContentHtml || restrictedNotice;
-  if (!title || !contentHtml) {
+  if (!title || (!contentHtml && !identifiedFirstReply)) {
     return null;
   }
   const accessRequirement = accessRequirementFromText(restrictedNotice);
@@ -727,8 +735,14 @@ export function parseRenderedNodeSeekTopicHtml(
   const replyRows = root
     .querySelectorAll('.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]')
     .filter((row) => {
+      if (row === firstContentItem && !identifiedFirstReply) return false;
       const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
-      return Boolean(replyContent?.innerHTML && (row !== firstContentItem || identifiedFirstReply));
+      return Boolean(
+        renderedNodeSeekCommentId(row) ||
+        renderedNodeSeekFloor(row) ||
+        renderedNodeSeekAuthor(row) ||
+        hasRenderableHtmlContent(replyContent?.innerHTML)
+      );
     });
   const allReplies = replyRows.map((row) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
@@ -742,7 +756,7 @@ export function parseRenderedNodeSeekTopicHtml(
       authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
       ...(authorLevelLabel ? { authorLevelLabel } : {}),
       contentHtml: sanitizeContentHtml(replyContent?.innerHTML || '', BASE_URL),
-      createdAt: renderedNodeSeekTime(row.querySelector('time')) || createdAt,
+      createdAt: renderedNodeSeekTime(row.querySelector('time')) || '',
       floor: renderedNodeSeekFloor(row),
       commentId: renderedNodeSeekCommentId(row),
       upvoteCount: renderedNodeSeekReactionCount(row, ['点赞', 'good-one', 'upvote']),

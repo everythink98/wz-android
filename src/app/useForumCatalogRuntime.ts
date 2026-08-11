@@ -1,68 +1,65 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { categoryKey } from '@/domain/reader/readerData';
-import { mergeCategories } from '@/domain/forum/feed';
-import type { CategoriesResponse, Category } from '@/domain/forum/models';
-import type { ReadGateway } from '@/sources/readGateway';
+import type { CategoriesResponse } from '@/domain/forum/models';
+import { forumReadPlanScopesKey } from '@/domain/forum/readPlan';
+import { sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
-import {
-  canRetainTrustedSource,
-  changedSessionSources,
-  changedSourcesForIdentityTransition,
-  identityBarriersOnlyRemoved,
-  normalizeIdentityBarriers,
-  sameIdentityBarriers,
-  sameSessionEpochs,
-  visibleIdentityErrors,
-  withoutChangedSourceErrors
-} from '@/platform/query/identityProjection';
+import { forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import type { ReadGateway } from '@/sources/readGateway';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 
-function mergeTrustedCategories(
-  current: Category[],
-  trusted: Category[],
-  blockedSources: ReadonlySet<ForumIdentityBarrierSource>,
-  retainableSources: ReadonlySet<ForumIdentityBarrierSource>
-) {
-  const visibleTrusted = trusted.filter((category) =>
-    canRetainTrustedSource(category.source, blockedSources, retainableSources)
-  );
-  const merged = mergeCategories(current, visibleTrusted);
-  const remaining = new Map(merged.map((category) => [categoryKey(category), category]));
-  const stable = visibleTrusted.flatMap((category) => {
-    const key = categoryKey(category);
-    const retained = remaining.get(key);
-    if (!retained) {
-      return [];
-    }
-    remaining.delete(key);
-    return [retained];
-  });
-  return [...stable, ...remaining.values()];
+type ForumCatalogRuntimeOptions = {
+  active: boolean;
+  enabledFeedSources: readonly Source[];
+  enabledSourcesKey: string;
+  notify: (message: string) => void;
+  readGateway: ReadGateway;
+  sessionEpochs?: ForumSessionEpochs;
+};
+
+function aggregateReadPlanScopes(queryKey: readonly unknown[]) {
+  const state = queryKey[3] as { readPlanScope?: unknown } | undefined;
+  if (typeof state?.readPlanScope !== 'string') return null;
+  const scopes = new Map<Source, string>();
+  for (const entry of state.readPlanScope.split(',')) {
+    const source = sourceValues.find((candidate) => entry.startsWith(`${candidate}:`));
+    if (source) scopes.set(source, entry.slice(source.length + 1));
+  }
+  return scopes;
 }
 
-function projectSafeCategoriesPlaceholder(
+function safeCategoriesPlaceholder(
   previousData: CategoriesResponse | undefined,
   previousQueryKey: readonly unknown[] | undefined,
   currentQueryKey: readonly unknown[]
 ) {
-  const changedSources = changedSourcesForIdentityTransition(previousQueryKey, currentQueryKey, 'categories');
-  if (!previousData || !changedSources) {
+  if (!previousData || !previousQueryKey) return undefined;
+  const previousState = previousQueryKey[3] as Record<string, unknown> | undefined;
+  const currentState = currentQueryKey[3] as Record<string, unknown> | undefined;
+  if (
+    previousQueryKey[0] !== currentQueryKey[0] ||
+    previousQueryKey[1] !== currentQueryKey[1] ||
+    previousQueryKey[2] !== currentQueryKey[2] ||
+    previousState?.enabledSources !== currentState?.enabledSources
+  ) {
     return undefined;
   }
-  if (!changedSources.size) {
-    return previousData.items.length ? previousData : undefined;
-  }
-  const items = previousData.items.filter(
-    (category) => !changedSources.has(category.source as ForumIdentityBarrierSource)
+  const previousScopes = aggregateReadPlanScopes(previousQueryKey);
+  const currentScopes = aggregateReadPlanScopes(currentQueryKey);
+  if (!previousScopes || !currentScopes) return undefined;
+  const changedSources = new Set(
+    sourceValues.filter((source) => previousScopes.get(source) !== currentScopes.get(source))
   );
+  if (!changedSources.size) return previousData;
+  const items = previousData.items.filter((category) => !changedSources.has(category.source));
   return items.length
     ? {
         ...previousData,
-        errors: withoutChangedSourceErrors(previousData.errors, changedSources),
+        errors: Object.fromEntries(
+          Object.entries(previousData.errors || {}).filter(([source]) => !changedSources.has(source as Source))
+        ),
         items
       }
     : undefined;
@@ -70,62 +67,30 @@ function projectSafeCategoriesPlaceholder(
 
 export function useForumCatalogRuntime({
   active,
-  identityBarriers = [],
-  identityReconciliationPending,
+  enabledFeedSources,
+  enabledSourcesKey,
   notify,
   readGateway,
-  retainableIdentityBarriers = [],
   sessionEpochs = initialForumSessionEpochs
-}: {
-  active: boolean;
-  identityBarriers?: readonly ForumIdentityBarrierSource[];
-  identityReconciliationPending: boolean;
-  notify: (message: string) => void;
-  readGateway: ReadGateway;
-  retainableIdentityBarriers?: readonly ForumIdentityBarrierSource[];
-  sessionEpochs?: ForumSessionEpochs;
-}) {
+}: ForumCatalogRuntimeOptions) {
   const queryClient = useQueryClient();
-  const [queryIdentityBarriers, setQueryIdentityBarriers] = useState(() => normalizeIdentityBarriers(identityBarriers));
-  const [queryRetainableIdentityBarriers, setQueryRetainableIdentityBarriers] = useState(() =>
-    normalizeIdentityBarriers(retainableIdentityBarriers)
-  );
-  const [querySessionEpochs, setQuerySessionEpochs] = useState(sessionEpochs);
-  const trustedCategoriesRef = useRef<{ data: CategoriesResponse; queryKey: readonly unknown[] } | undefined>(
-    undefined
-  );
   const handledErrorRef = useRef<unknown>(undefined);
-  const blockedSources = useMemo(() => new Set(identityBarriers), [identityBarriers]);
-  const retainableSources = useMemo(() => new Set(retainableIdentityBarriers), [retainableIdentityBarriers]);
-  const changedIdentitySources = useMemo(
-    () => changedSessionSources(querySessionEpochs, sessionEpochs),
-    [querySessionEpochs, sessionEpochs]
+  const readPlanScopes = enabledFeedSources.map(
+    (source) => [source, readGateway.getReadPlan(source, 'categories').cacheScope] as const
   );
-  const blockedIdentitySources = useMemo(
-    () => new Set([...blockedSources, ...changedIdentitySources]),
-    [blockedSources, changedIdentitySources]
-  );
-  const retainableIdentitySources = useMemo(
-    () => new Set([...retainableSources].filter((source) => !changedIdentitySources.has(source))),
-    [changedIdentitySources, retainableSources]
-  );
-  const identitySnapshotReady =
-    !identityReconciliationPending &&
-    sameIdentityBarriers(queryIdentityBarriers, identityBarriers) &&
-    sameSessionEpochs(querySessionEpochs, sessionEpochs);
-  const queryKey = forumQueryKeys.categories('all', querySessionEpochs, queryIdentityBarriers);
-  const visibleQueryKey = forumQueryKeys.categories('all', sessionEpochs, identityBarriers);
+  const readPlanScope = forumReadPlanScopesKey(readPlanScopes);
+  const queryKey = forumQueryKeys.categories('all', sessionEpochs, enabledSourcesKey, readPlanScope);
   const query = useQuery<CategoriesResponse>({
     queryKey,
-    enabled: active && identitySnapshotReady,
+    enabled: active && enabledFeedSources.length > 0,
     placeholderData: (previousData, previousQuery) =>
-      projectSafeCategoriesPlaceholder(previousData, previousQuery?.queryKey, queryKey),
+      safeCategoriesPlaceholder(previousData, previousQuery?.queryKey, queryKey),
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('feed', 'categories', { source: 'all' });
       try {
         const data = await readGateway.getCategories(
           { source: 'all', signal },
-          { identityBarriers: queryIdentityBarriers, trace }
+          { includedSources: enabledFeedSources, readPlanScopes, trace }
         );
         finishDiagnosticTrace(trace, Object.keys(data.errors || {}).length ? 'partial' : 'success', {
           source: 'all',
@@ -142,125 +107,15 @@ export function useForumCatalogRuntime({
       }
     }
   });
-  const effectiveRetainableIdentityBarriers = sameIdentityBarriers(queryIdentityBarriers, identityBarriers)
-    ? normalizeIdentityBarriers(retainableIdentityBarriers)
-    : queryRetainableIdentityBarriers;
-  const trustedState = trustedCategoriesRef.current;
-  const trustedChangedSources = trustedState
-    ? changedSourcesForIdentityTransition(trustedState.queryKey, visibleQueryKey, 'categories')
-    : null;
-  const trustedData =
-    trustedState && (effectiveRetainableIdentityBarriers.length || trustedChangedSources?.size)
-      ? projectSafeCategoriesPlaceholder(trustedState.data, trustedState.queryKey, visibleQueryKey)
-      : undefined;
-  const currentCategories = (query.data?.items || []).filter((category) =>
-    canRetainTrustedSource(category.source, blockedIdentitySources, retainableIdentitySources)
-  );
-  const categories = useMemo(() => {
-    if (!trustedData?.items.length) {
-      return currentCategories;
-    }
-    return mergeTrustedCategories(
-      currentCategories,
-      trustedData.items,
-      blockedIdentitySources,
-      retainableIdentitySources
-    );
-  }, [blockedIdentitySources, currentCategories, retainableIdentitySources, trustedData?.items]);
 
   useEffect(() => {
-    if (
-      queryIdentityBarriers.length ||
-      !query.isSuccess ||
-      query.isFetching ||
-      query.isPlaceholderData ||
-      !query.data
-    ) {
-      return;
-    }
-    if (trustedChangedSources?.size && trustedData?.items.length) {
-      const stableData = { ...query.data, items: categories };
-      trustedCategoriesRef.current = { data: stableData, queryKey };
-      queryClient.setQueryData<CategoriesResponse>(queryKey, stableData);
-      return;
-    }
-    trustedCategoriesRef.current = { data: query.data, queryKey };
-  }, [
-    categories,
-    query.data,
-    query.isFetching,
-    query.isPlaceholderData,
-    query.isSuccess,
-    queryClient,
-    queryIdentityBarriers.length,
-    queryKey,
-    trustedChangedSources?.size,
-    trustedData?.items.length
-  ]);
-
-  useEffect(() => {
-    if (identityReconciliationPending) {
-      return;
-    }
-    const nextRetainableIdentityBarriers = normalizeIdentityBarriers(retainableIdentityBarriers);
-    if (
-      sameIdentityBarriers(queryIdentityBarriers, identityBarriers) &&
-      sameSessionEpochs(querySessionEpochs, sessionEpochs)
-    ) {
-      if (!sameIdentityBarriers(queryRetainableIdentityBarriers, nextRetainableIdentityBarriers)) {
-        setQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
-      }
-      return;
-    }
-    if (query.isFetching) {
-      return;
-    }
-    const nextIdentityBarriers = normalizeIdentityBarriers(identityBarriers);
-    const targetQueryKey = forumQueryKeys.categories('all', sessionEpochs, nextIdentityBarriers);
-    if (identityBarriersOnlyRemoved(queryIdentityBarriers, nextIdentityBarriers)) {
-      if (categories.length) {
-        queryClient.setQueryData<CategoriesResponse>(targetQueryKey, {
-          errors: visibleIdentityErrors(query.data?.errors, blockedIdentitySources, retainableIdentitySources),
-          items: categories
-        });
-        void queryClient.invalidateQueries({ queryKey: targetQueryKey, exact: true, refetchType: 'none' });
-      } else {
-        queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
-      }
-    } else {
-      queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
-    }
-    setQueryIdentityBarriers(nextIdentityBarriers);
-    setQueryRetainableIdentityBarriers(nextRetainableIdentityBarriers);
-    setQuerySessionEpochs(sessionEpochs);
-  }, [
-    blockedIdentitySources,
-    categories,
-    identityBarriers,
-    identityReconciliationPending,
-    query.data?.errors,
-    query.isFetching,
-    queryClient,
-    queryIdentityBarriers,
-    queryRetainableIdentityBarriers,
-    querySessionEpochs,
-    retainableIdentityBarriers,
-    retainableIdentitySources,
-    sessionEpochs
-  ]);
-
-  useEffect(() => {
-    if (!active || !query.isError || query.isFetching || handledErrorRef.current === query.error) {
-      return;
-    }
+    if (!active || !query.isError || query.isFetching || handledErrorRef.current === query.error) return;
     handledErrorRef.current = query.error;
     notify(sourceErrorFromUnknown('all', query.error).message);
   }, [active, notify, query.error, query.errorUpdatedAt, query.isError, query.isFetching]);
 
   useEffect(() => {
-    if (active) {
-      return;
-    }
+    if (active) return;
     void queryClient.cancelQueries({ queryKey: ['forum', 'all', 'categories'] });
   }, [active, queryClient]);
 
@@ -271,5 +126,5 @@ export function useForumCatalogRuntime({
     [queryClient]
   );
 
-  return { categories };
+  return { categories: query.data?.items || [] };
 }

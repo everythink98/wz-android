@@ -1,7 +1,6 @@
 import { categoryKey, topicKey, type ReaderData } from '@/domain/reader/readerData';
-import type { Category, FeedResponse, FeedSource, Reply, SourceFeedFilter, Topic } from './models';
+import type { Category, Reply, Topic } from './models';
 import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, sourceLabel } from './presentation';
-import { sourceCatalog } from './sourceCatalog';
 
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
 export type SearchSort = 'relevance' | 'time';
@@ -47,26 +46,8 @@ export function applyFeedFilter(items: Topic[], data: ReaderData, filter: Readin
   return items;
 }
 
-export function feedRequestKey(source: FeedSource, category = '', feedFilter?: SourceFeedFilter) {
-  const base = `${source}:${category.trim()}`;
-  return feedFilter && source !== 'all' && sourceCatalog[source].feedFilter !== 'none' ? `${base}:${feedFilter}` : base;
-}
-
-export function shouldReuseFeedStateForRequest(
-  state: { items: Topic[]; loadingMore?: boolean; refreshing?: boolean; requestKey?: string },
-  requestKey: string
-) {
-  return Boolean(state.items.length && state.requestKey === requestKey && !state.refreshing && !state.loadingMore);
-}
-
 export function sortTopicsByCreatedAt(items: Topic[]) {
   return [...items].sort((left, right) => dateTime(right.createdAt) - dateTime(left.createdAt));
-}
-
-function sortTopicsByActivity(items: Topic[]) {
-  return [...items].sort(
-    (left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt)
-  );
 }
 
 function shouldUseIncomingAccessRequirement(current: Topic['accessRequirement'], incoming: Topic['accessRequirement']) {
@@ -180,47 +161,6 @@ export function balanceTopicsBySource(items: Topic[]) {
   return balanced;
 }
 
-export function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): FeedResponse {
-  return {
-    ...base,
-    items: balanceTopicsBySource(sortTopicsByActivity(mergeTopics(base.items, extra.items))),
-    errors: {
-      ...(base.errors || {}),
-      ...(extra.errors || {})
-    },
-    hasMore: Boolean(base.hasMore || extra.hasMore),
-    nextPage: base.nextPage ?? extra.nextPage ?? null,
-    nextCursor: base.nextCursor ?? extra.nextCursor ?? undefined
-  };
-}
-
-export function nextFeedPageState(
-  previous: { items: Topic[]; page: number; hasMore: boolean; nextCursor?: string },
-  response: FeedResponse,
-  { requestedPage, reset }: { requestedPage: number; reset: boolean }
-) {
-  const items = reset ? response.items : mergeTopics(previous.items, response.items);
-  const failedLoadMore = !reset && Boolean(Object.keys(response.errors || {}).length);
-  if (failedLoadMore) {
-    return {
-      items,
-      page: previous.page,
-      nextCursor: previous.nextCursor,
-      hasMore: previous.hasMore
-    };
-  }
-  const nextPage = response.nextPage ?? null;
-  const nextCursor = response.nextCursor ?? undefined;
-  const pageAdvanced = typeof nextPage === 'number' && nextPage > requestedPage;
-  const cursorAdvanced = Boolean(nextCursor && (reset || nextCursor !== previous.nextCursor));
-  return {
-    items,
-    page: pageAdvanced ? nextPage - 1 : requestedPage,
-    nextCursor: cursorAdvanced || nextCursor === undefined ? nextCursor : previous.nextCursor,
-    hasMore: Boolean(response.hasMore && (pageAdvanced || cursorAdvanced))
-  };
-}
-
 export function mergeCategories(base: Category[], extra: Category[]) {
   const seen = new Set<string>();
   return [...base, ...extra].filter((category) => {
@@ -241,42 +181,4 @@ export function replyKey(reply: Reply) {
     return `floor:${reply.floor}`;
   }
   return `body:${reply.author}:${reply.createdAt}:${reply.contentHtml.slice(0, 80)}`;
-}
-
-export type ReplyIdentity = Pick<Reply, 'commentId' | 'floor' | 'deletePath'>;
-
-export function isSameReply(reply: Reply, target?: ReplyIdentity | null) {
-  if (!target) {
-    return false;
-  }
-  if (typeof target.commentId === 'number' && reply.commentId === target.commentId) {
-    return true;
-  }
-  if (target.deletePath && reply.deletePath && reply.deletePath === target.deletePath) {
-    return true;
-  }
-  return typeof target.floor === 'number' && reply.floor === target.floor;
-}
-
-export function removeReply(replies: Reply[], target?: ReplyIdentity | null) {
-  return target ? replies.filter((reply) => !isSameReply(reply, target)) : replies;
-}
-
-export function mergeReplies(current: Reply[], incoming: Reply[]) {
-  const next = [...current];
-  const indexes = new Map<string, number>();
-  next.forEach((reply, index) => {
-    indexes.set(replyKey(reply), index);
-  });
-  for (const reply of incoming) {
-    const key = replyKey(reply);
-    const index = indexes.get(key);
-    if (index === undefined) {
-      indexes.set(key, next.length);
-      next.push(reply);
-    } else {
-      next[index] = reply;
-    }
-  }
-  return next;
 }

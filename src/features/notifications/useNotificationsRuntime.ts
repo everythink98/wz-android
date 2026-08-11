@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import * as Notifications from 'expo-notifications';
 import { isNotificationSource, notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
@@ -11,21 +11,23 @@ import { readForegroundNotificationAccess } from '@/sources/notificationForegrou
 import { loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 import { xiaoyinsiCredentialsHaveScope } from '@/sources/xiaoyinsi/credentials';
 import {
+  clearNotificationSourceForContentDisable,
   defaultNotificationState,
   loadNotificationState,
   recordNotificationDelivery,
   recordNotificationSnapshot,
   resetNotificationSourceIdentity,
   setGlobalNotificationIntent,
-  setNotificationIdentifier,
   setSourceNotificationIntent,
   type NotificationState
 } from '@/platform/notifications/notificationStore';
 import {
   dismissSourceNotification,
+  dismissSourceNotificationExact,
   notificationPermissionGranted,
   openNotificationSystemSettings,
-  replaceSourceNotification,
+  presentSourceNotification,
+  reconcileSourceNotificationSlots,
   requestNotificationPermission,
   syncNotificationBackgroundRegistration
 } from '@/platform/notifications/notificationSystem';
@@ -40,25 +42,56 @@ function confirmedIdentity(source: NotificationSource, sessions: SiteSessionView
   return session.isLoggedIn && session.identityTrust === 'confirmed' && userId ? `${source}:${userId}` : undefined;
 }
 
+function identityNeedsTrustedFallback(source: NotificationSource, sessions: SiteSessionViewModels) {
+  const trust = sessions[source].identityTrust;
+  return trust === 'pending' || trust === 'unknown';
+}
+
 export function useNotificationsRuntime({
   appActive,
   authorizationRevision,
   beginXiaoyinsiAuthorization,
+  contentSourcesReady,
+  enabledNotificationSources,
   fetcher,
   getLinuxDoUserAgent,
   getNodeSeekUserAgent,
   openSource,
+  privateAccessAllowed,
   sessions
 }: {
   appActive: boolean;
   authorizationRevision: string;
   beginXiaoyinsiAuthorization: () => void;
+  contentSourcesReady: boolean;
+  enabledNotificationSources: readonly NotificationSource[];
   fetcher: Fetcher;
   getLinuxDoUserAgent: () => string;
   getNodeSeekUserAgent: () => string;
   openSource: (source?: NotificationSource) => boolean;
+  privateAccessAllowed: (source: NotificationSource, identityKey: string) => boolean;
   sessions: SiteSessionViewModels;
 }) {
+  const enabledSourceOrder = enabledNotificationSources.join('|');
+  const enabledSources = useMemo(
+    () => (enabledSourceOrder ? (enabledSourceOrder.split('|') as NotificationSource[]) : []),
+    [enabledSourceOrder]
+  );
+  const enabledSourcesKey = notificationSources.filter((source) => enabledSources.includes(source)).join('|');
+  const enabledNetworkSources = useMemo(
+    () => (enabledSourcesKey ? (enabledSourcesKey.split('|') as NotificationSource[]) : []),
+    [enabledSourcesKey]
+  );
+  const enabledSourcesRef = useRef<readonly NotificationSource[]>(enabledSources);
+  const contentSourcesReadyRef = useRef(contentSourcesReady);
+  const runtimeReadyRef = useRef(false);
+  const operationalSourcesRef = useRef<readonly NotificationSource[]>([]);
+  const previousEnabledSourcesRef = useRef<readonly NotificationSource[]>(notificationSources);
+  const contentPreferenceChangedRef = useRef(false);
+  const contentDisablePendingRef = useRef(new Set<NotificationSource>());
+  const contentDisableOperationsRef = useRef<Partial<Record<NotificationSource, Promise<void>>>>({});
+  const privateAccessAllowedRef = useRef(privateAccessAllowed);
+  privateAccessAllowedRef.current = privateAccessAllowed;
   const readAccess = useMemo<NotificationAccessReader>(
     () => (source) =>
       readForegroundNotificationAccess({
@@ -71,7 +104,15 @@ export function useNotificationsRuntime({
       }),
     [fetcher, getLinuxDoUserAgent, getNodeSeekUserAgent, sessions]
   );
-  const gateway = useMemo(() => createNotificationGateway({ readAccess }), [readAccess]);
+  const gateway = useMemo(
+    () =>
+      createNotificationGateway({
+        privateAccessAllowed: (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
+        readAccess,
+        sourceAllowed: (source) => operationalSourcesRef.current.includes(source)
+      }),
+    [readAccess]
+  );
   const readAccessRef = useRef(readAccess);
   readAccessRef.current = readAccess;
   const stateRef = useRef<NotificationState>(defaultNotificationState());
@@ -89,6 +130,31 @@ export function useNotificationsRuntime({
   const [snapshotErrors, setSnapshotErrors] = useState<Partial<Record<NotificationSource, string>>>({});
   const [xiaoyinsiScopeChecked, setXiaoyinsiScopeChecked] = useState(false);
   const [xiaoyinsiNotificationsScope, setXiaoyinsiNotificationsScope] = useState(false);
+  const [operationalSources, setOperationalSources] = useState<readonly NotificationSource[]>([]);
+  const runtimeReady = ready && contentSourcesReady;
+  const xiaoyinsiContentEnabled = enabledSources.includes('xiaoyinsi');
+
+  useLayoutEffect(() => {
+    enabledSourcesRef.current = enabledSources;
+    contentSourcesReadyRef.current = contentSourcesReady;
+    runtimeReadyRef.current = runtimeReady;
+    if (contentSourcesReady) {
+      if (previousEnabledSourcesRef.current.join('|') !== enabledSources.join('|')) {
+        contentPreferenceChangedRef.current = true;
+      }
+      const removedSources = previousEnabledSourcesRef.current.filter((source) => !enabledSources.includes(source));
+      removedSources.forEach((source) => contentDisablePendingRef.current.add(source));
+      if (pendingOpenSourceRef.current && removedSources.includes(pendingOpenSourceRef.current)) {
+        pendingOpenSourceRef.current = undefined;
+      }
+      previousEnabledSourcesRef.current = enabledSources;
+    }
+    const next = runtimeReady
+      ? enabledNetworkSources.filter((source) => !contentDisablePendingRef.current.has(source))
+      : [];
+    operationalSourcesRef.current = next;
+    setOperationalSources((current) => (current.join('|') === next.join('|') ? current : next));
+  }, [contentSourcesReady, enabledNetworkSources, enabledSources, runtimeReady]);
 
   const commitState = useCallback((next: NotificationState) => {
     stateRef.current = next;
@@ -140,6 +206,13 @@ export function useNotificationsRuntime({
   }, [commitState]);
 
   useEffect(() => {
+    if (!runtimeReady || !xiaoyinsiContentEnabled) {
+      if (runtimeReady) {
+        setXiaoyinsiNotificationsScope(false);
+        setXiaoyinsiScopeChecked(true);
+      }
+      return undefined;
+    }
     let current = true;
     void loadXiaoyinsiCredentials()
       .then((credentials) => {
@@ -154,24 +227,20 @@ export function useNotificationsRuntime({
     return () => {
       current = false;
     };
-  }, [appActive, authorizationRevision]);
+  }, [appActive, authorizationRevision, runtimeReady, xiaoyinsiContentEnabled]);
 
-  const nodeseekIdentity =
-    sessions.nodeseek.identityTrust === 'pending'
-      ? state.sources.nodeseek.identityKey
-      : confirmedIdentity('nodeseek', sessions);
-  const linuxdoIdentity =
-    sessions.linuxdo.identityTrust === 'pending'
-      ? state.sources.linuxdo.identityKey
-      : confirmedIdentity('linuxdo', sessions);
-  const yaohuoIdentity =
-    sessions.yaohuo.identityTrust === 'pending'
-      ? state.sources.yaohuo.identityKey
-      : confirmedIdentity('yaohuo', sessions);
-  const xiaoyinsiIdentity =
-    sessions.xiaoyinsi.identityTrust === 'pending'
-      ? state.sources.xiaoyinsi.identityKey
-      : confirmedIdentity('xiaoyinsi', sessions);
+  const nodeseekIdentity = identityNeedsTrustedFallback('nodeseek', sessions)
+    ? state.sources.nodeseek.identityKey
+    : confirmedIdentity('nodeseek', sessions);
+  const linuxdoIdentity = identityNeedsTrustedFallback('linuxdo', sessions)
+    ? state.sources.linuxdo.identityKey
+    : confirmedIdentity('linuxdo', sessions);
+  const yaohuoIdentity = identityNeedsTrustedFallback('yaohuo', sessions)
+    ? state.sources.yaohuo.identityKey
+    : confirmedIdentity('yaohuo', sessions);
+  const xiaoyinsiIdentity = identityNeedsTrustedFallback('xiaoyinsi', sessions)
+    ? state.sources.xiaoyinsi.identityKey
+    : confirmedIdentity('xiaoyinsi', sessions);
   const identityKeys = useMemo<Partial<Record<NotificationSource, string>>>(
     () => ({
       nodeseek: nodeseekIdentity,
@@ -181,26 +250,152 @@ export function useNotificationsRuntime({
     }),
     [linuxdoIdentity, nodeseekIdentity, xiaoyinsiIdentity, yaohuoIdentity]
   );
-  const identitySignature = notificationSources.map((source) => identityKeys[source] || `${source}:none`).join('|');
+  const identitySignature = `${enabledSourcesKey}:${enabledNetworkSources
+    .map((source) => identityKeys[source] || `${source}:none`)
+    .join('|')}`;
   const activeSourceSignature = notificationSources
     .filter(
       (source) =>
+        enabledSources.includes(source) &&
+        operationalSources.includes(source) &&
         Boolean(identityKeys[source]) &&
         sessions[source].identityTrust === 'confirmed' &&
         (source !== 'xiaoyinsi' || xiaoyinsiNotificationsScope)
     )
     .join('|');
-  const activeSources = useMemo(
+  const activeNetworkSources = useMemo(
     () => (activeSourceSignature ? (activeSourceSignature.split('|') as NotificationSource[]) : []),
     [activeSourceSignature]
   );
+  const activeSources = useMemo(
+    () => enabledSources.filter((source) => activeNetworkSources.includes(source)),
+    [activeNetworkSources, enabledSources]
+  );
+  const eligibleSources = useMemo(
+    () => activeNetworkSources.filter((source) => state.sources[source].intentEnabled),
+    [activeNetworkSources, state]
+  );
+  const previousContentScopeRef = useRef<{
+    identitySignature: string;
+    sources: readonly NotificationSource[];
+    sourcesKey: string;
+  }>(undefined);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!runtimeReady) return;
+    const previousScope = previousContentScopeRef.current;
+    const membershipChanged = previousScope?.sourcesKey !== enabledSourcesKey;
+    const preferenceChanged = contentPreferenceChangedRef.current;
+    contentPreferenceChangedRef.current = false;
+    previousContentScopeRef.current = {
+      identitySignature,
+      sources: enabledNetworkSources,
+      sourcesKey: enabledSourcesKey
+    };
+    if (!membershipChanged && !preferenceChanged) return;
+    const previousSources = membershipChanged ? previousScope?.sources || notificationSources : enabledNetworkSources;
+    const disabledSources = previousSources.filter((source) => !enabledSources.includes(source));
+    disabledSources.forEach((source) => contentDisablePendingRef.current.add(source));
+    const sourcesToClean = notificationSources.filter((source) => contentDisablePendingRef.current.has(source));
+    if (!sourcesToClean.length) return;
+    setSnapshotErrors((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([source]) => !sourcesToClean.includes(source as NotificationSource))
+      )
+    );
+    void (async () => {
+      const ownsPreviousAggregate = (query: { queryKey: readonly unknown[] }) =>
+        Boolean(
+          membershipChanged &&
+          previousScope &&
+          query.queryKey[0] === 'forum' &&
+          query.queryKey[1] === 'all' &&
+          query.queryKey[2] === 'notifications' &&
+          query.queryKey.some(
+            (part) =>
+              part !== null &&
+              typeof part === 'object' &&
+              (part as Record<string, unknown>).identityKey === previousScope.identitySignature
+          )
+        );
+      await Promise.all([
+        ...sourcesToClean.map((source) =>
+          appQueryClient.cancelQueries({ queryKey: forumQueryKeys.notifications(source) })
+        ),
+        ...(membershipChanged && previousScope
+          ? [appQueryClient.cancelQueries({ predicate: ownsPreviousAggregate })]
+          : [])
+      ]);
+      sourcesToClean.forEach((source) =>
+        appQueryClient.removeQueries({ queryKey: forumQueryKeys.notifications(source) })
+      );
+      if (membershipChanged && previousScope) appQueryClient.removeQueries({ predicate: ownsPreviousAggregate });
+      await Promise.allSettled(
+        sourcesToClean.map((source) => {
+          const existing = contentDisableOperationsRef.current[source];
+          if (existing) return existing;
+          const previous = stateRef.current.sources[source];
+          const operation = (async () => {
+            try {
+              await dismissSourceNotification(source, previous.notificationIdentifier, previous.identityKey);
+            } finally {
+              await clearNotificationSourceForContentDisable(source);
+            }
+          })();
+          contentDisableOperationsRef.current[source] = operation;
+          void operation
+            .then(() => {
+              if (contentDisableOperationsRef.current[source] !== operation) return;
+              delete contentDisableOperationsRef.current[source];
+              contentDisablePendingRef.current.delete(source);
+              const next = runtimeReadyRef.current
+                ? notificationSources.filter(
+                    (candidate) =>
+                      enabledSourcesRef.current.includes(candidate) && !contentDisablePendingRef.current.has(candidate)
+                  )
+                : [];
+              operationalSourcesRef.current = next;
+              if (mountedRef.current) {
+                setOperationalSources((current) => (current.join('|') === next.join('|') ? current : next));
+              }
+            })
+            .catch((error) => {
+              if (contentDisableOperationsRef.current[source] !== operation) return;
+              delete contentDisableOperationsRef.current[source];
+              if (mountedRef.current) {
+                const message = error instanceof Error ? error.message : '内容源停用清理失败';
+                setSnapshotErrors((current) => ({ ...current, [source]: message }));
+              }
+            });
+          return operation;
+        })
+      );
+      const next = await loadNotificationState();
+      if (!mountedRef.current) return;
+      commitState(next);
+      await syncBackground(
+        next,
+        permissionRef.current,
+        activeNetworkSources.filter((source) => next.sources[source].intentEnabled)
+      );
+    })().catch(() => undefined);
+  }, [
+    activeNetworkSources,
+    commitState,
+    enabledNetworkSources,
+    enabledSourcesKey,
+    enabledSources,
+    identitySignature,
+    runtimeReady,
+    syncBackground
+  ]);
+
+  useEffect(() => {
+    if (!runtimeReady) return;
     let current = true;
     void (async () => {
       let changed = false;
-      for (const source of notificationSources) {
+      for (const source of enabledNetworkSources) {
         if (!current) return;
         const previous = stateRef.current.sources[source];
         const nextIdentity = identityKeys[source];
@@ -217,30 +412,38 @@ export function useNotificationsRuntime({
       const next = await loadNotificationState();
       if (!current) return;
       commitState(next);
-      await syncBackground(next, permissionRef.current, activeSources);
+      await syncBackground(next, permissionRef.current, eligibleSources);
     })();
     return () => {
       current = false;
     };
-  }, [activeSources, commitState, identityKeys, identitySignature, ready, syncBackground]);
+  }, [
+    commitState,
+    eligibleSources,
+    enabledNetworkSources,
+    identityKeys,
+    identitySignature,
+    runtimeReady,
+    syncBackground
+  ]);
 
   useEffect(() => {
-    if (ready) void syncBackground(stateRef.current, permissionRef.current, activeSources);
-  }, [activeSources, ready, syncBackground]);
+    if (runtimeReady) void syncBackground(stateRef.current, permissionRef.current, eligibleSources);
+  }, [eligibleSources, runtimeReady, syncBackground]);
   const snapshotQuery = useQuery({
     queryKey: forumQueryKeys.notificationSnapshots(identitySignature),
-    enabled: ready && appActive && activeSources.length > 0,
+    enabled: runtimeReady && appActive && activeNetworkSources.length > 0,
     staleTime: 0,
     refetchInterval: centerVisible ? 60_000 : 300_000,
     refetchIntervalInBackground: false,
     queryFn: async ({ signal }) => {
       const settled = await Promise.allSettled(
-        activeSources.map(async (source) => [source, await gateway.readUnreadSnapshot(source, signal)] as const)
+        activeNetworkSources.map(async (source) => [source, await gateway.readUnreadSnapshot(source, signal)] as const)
       );
       const snapshots: Partial<Record<NotificationSource, { total: number; checkedAt: string }>> = {};
       const errors: Partial<Record<NotificationSource, string>> = {};
       settled.forEach((result, index) => {
-        const source = activeSources[index]!;
+        const source = activeNetworkSources[index]!;
         if (result.status === 'fulfilled') snapshots[source] = result.value[1];
         else errors[source] = sourceErrorFromUnknown(source, result.reason).message;
       });
@@ -255,6 +458,8 @@ export function useNotificationsRuntime({
     }
     const operation = runNotificationBackgroundWorker({
       sources,
+      sourceAllowed: async (source) => operationalSourcesRef.current.includes(source),
+      privateAccessAllowed: async (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
       network: {
         restoreProxy: async () => undefined,
         probeAccess: async (source, signal) => ({ ...(await readAccessRef.current(source)), signal }),
@@ -262,14 +467,15 @@ export function useNotificationsRuntime({
           notificationAdapters[source].listPage({ ...access, signal, cursor, limit: 60 })
       },
       store: {
+        clearForContentDisable: clearNotificationSourceForContentDisable,
         load: loadNotificationState,
-        record: recordNotificationDelivery,
-        setIdentifier: setNotificationIdentifier
+        record: recordNotificationDelivery
       },
       system: {
         permissionGranted: notificationPermissionGranted,
-        replaceDigest: replaceSourceNotification,
-        dismissDigest: (source, identifier) => dismissSourceNotification(source, identifier)
+        reconcileDigests: reconcileSourceNotificationSlots,
+        presentDigest: presentSourceNotification,
+        dismissDigest: (_source, identifier) => dismissSourceNotificationExact(identifier)
       }
     })
       .then(() => undefined)
@@ -281,8 +487,8 @@ export function useNotificationsRuntime({
   }, []);
 
   useEffect(() => {
-    if (appActive && ready && activeSources.length) void refetchSnapshots();
-  }, [activeSources.length, appActive, ready, refetchSnapshots]);
+    if (appActive && runtimeReady && activeNetworkSources.length) void refetchSnapshots();
+  }, [activeNetworkSources.length, appActive, refetchSnapshots, runtimeReady]);
 
   useEffect(() => {
     const data = snapshotQuery.data;
@@ -292,7 +498,7 @@ export function useNotificationsRuntime({
       ...stateRef.current,
       sources: { ...stateRef.current.sources }
     };
-    const refreshedSources = activeSources.filter((source) => Boolean(data.snapshots[source]));
+    const refreshedSources = activeNetworkSources.filter((source) => Boolean(data.snapshots[source]));
     const writes = notificationSources.flatMap((source) => {
       const snapshot = data.snapshots[source];
       const identityKey = identityKeys[source];
@@ -307,33 +513,39 @@ export function useNotificationsRuntime({
     });
     commitState(next);
     void Promise.allSettled(writes).then(() => runForegroundDelivery(refreshedSources));
-  }, [activeSources, commitState, identityKeys, runForegroundDelivery, snapshotQuery.data]);
+  }, [activeNetworkSources, commitState, identityKeys, runForegroundDelivery, snapshotQuery.data]);
 
-  const unreadTotal = notificationSources.reduce(
-    (total, source) => total + (state.sources[source].unreadCount || 0),
-    0
-  );
+  const unreadTotal = enabledSources.reduce((total, source) => total + (state.sources[source].unreadCount || 0), 0);
 
   useEffect(() => {
-    if (!appActive || !ready) return;
+    if (!appActive || !runtimeReady) return;
     let current = true;
     void notificationPermissionGranted().then((granted) => {
       if (!current) return;
       const changed = permissionRef.current !== granted;
       permissionRef.current = granted;
       if (changed) setPermission(granted ? 'granted' : 'denied');
-      void syncBackground(stateRef.current, granted, activeSources);
+      void syncBackground(stateRef.current, granted, eligibleSources);
     });
     return () => {
       current = false;
     };
-  }, [activeSources, appActive, ready, syncBackground]);
+  }, [appActive, eligibleSources, runtimeReady, syncBackground]);
 
   const handleNotificationResponse = useCallback(
     (response: Notifications.NotificationResponse) => {
       const rawSource = response.notification.request.content.data?.source;
       const source = notificationSources.find((candidate) => candidate === rawSource);
-      if (!source || !isNotificationSource(source)) return;
+      if (
+        !contentSourcesReadyRef.current ||
+        !source ||
+        !isNotificationSource(source) ||
+        !enabledSourcesRef.current.includes(source) ||
+        !operationalSourcesRef.current.includes(source)
+      ) {
+        void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+        return;
+      }
       const key = `${response.notification.request.identifier}:${response.notification.date}`;
       if (lastResponseRef.current === key) return;
       lastResponseRef.current = key;
@@ -344,16 +556,22 @@ export function useNotificationsRuntime({
   );
 
   useEffect(() => {
+    if (!runtimeReady) return undefined;
     const subscription = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
     void Notifications.getLastNotificationResponseAsync().then((response) => {
       if (response) handleNotificationResponse(response);
     });
     return () => subscription.remove();
-  }, [handleNotificationResponse]);
+  }, [handleNotificationResponse, runtimeReady]);
 
   const onNavigationReady = useCallback(() => {
     const source = pendingOpenSourceRef.current;
-    if (source && openSource(source)) pendingOpenSourceRef.current = undefined;
+    if (!source) return;
+    if (!contentSourcesReadyRef.current || !operationalSourcesRef.current.includes(source)) {
+      pendingOpenSourceRef.current = undefined;
+      return;
+    }
+    if (openSource(source)) pendingOpenSourceRef.current = undefined;
   }, [openSource]);
 
   const setGlobalEnabled = useCallback(
@@ -376,11 +594,15 @@ export function useNotificationsRuntime({
           )
         );
       }
-      await syncBackground(next, granted, activeSources);
+      await syncBackground(
+        next,
+        granted,
+        activeNetworkSources.filter((source) => next.sources[source].intentEnabled)
+      );
       if (enabled) void refetchSnapshots();
       return granted;
     },
-    [activeSources, commitState, refetchSnapshots, syncBackground]
+    [activeNetworkSources, commitState, refetchSnapshots, syncBackground]
   );
 
   const setSourceEnabled = useCallback(
@@ -394,16 +616,17 @@ export function useNotificationsRuntime({
           next.sources[source].identityKey
         );
       }
-      await syncBackground(next, permissionRef.current, activeSources);
+      await syncBackground(
+        next,
+        permissionRef.current,
+        activeNetworkSources.filter((candidate) => next.sources[candidate].intentEnabled)
+      );
       if (enabled) void refetchSnapshots();
     },
-    [activeSources, commitState, refetchSnapshots, syncBackground]
+    [activeNetworkSources, commitState, refetchSnapshots, syncBackground]
   );
 
-  const backgroundEnabled =
-    state.globalEnabled &&
-    permission === 'granted' &&
-    activeSources.some((source) => state.sources[source].intentEnabled);
+  const backgroundEnabled = state.globalEnabled && permission === 'granted' && eligibleSources.length > 0;
 
   return {
     activeSources,
@@ -412,9 +635,10 @@ export function useNotificationsRuntime({
     gateway,
     identityKeys,
     identitySignature,
-    partialUnavailable: Object.keys(snapshotErrors).length > 0,
+    enabledNotificationSources: enabledSources,
+    partialUnavailable: enabledSources.some((source) => Boolean(snapshotErrors[source])),
     permission,
-    ready,
+    ready: runtimeReady,
     sessions,
     snapshotErrors,
     state,

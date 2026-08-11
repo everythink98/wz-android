@@ -7,7 +7,7 @@ export type MainTabParamList = {
   feed: undefined;
   search: undefined;
   library: undefined;
-  more: undefined;
+  more: { intent?: 'manage-content-sources' } | undefined;
 };
 
 export type RootStackParamList = {

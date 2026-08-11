@@ -3,13 +3,14 @@ import { act, fireEvent, render, within } from '../render';
 import React, { useState } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { FeedScreen } from '@/features/feed/FeedScreen';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { defaultFeedFilters } from '@/domain/forum/feedOptions';
 import type { ReadingFilter } from '@/domain/forum/feed';
-import type { Category, FeedFilterState, FeedSource, SourceFeedFilter, Topic } from '@/domain/forum/models';
+import type { Category, FeedFilterState, FeedSource, Source, SourceFeedFilter, Topic } from '@/domain/forum/models';
 
 let mockTabViewProps: {
   initialLayout?: { width: number };
@@ -174,6 +175,7 @@ jest.mock('@/ui/avatar/Avatar', () => {
 });
 
 const readerData = createEmptyReaderData();
+const defaultEnabledFeedSources = projectContentSourcePreferences(readerData.settings.contentSources).feedSources;
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const topicStateIndex = createTopicListItemStateIndex(readerData);
@@ -197,7 +199,10 @@ const categories: Category[] = [
 function renderFeed(
   busy: boolean,
   feedItems: Topic[],
-  overrides: Partial<React.ComponentProps<typeof FeedScreen>> = {}
+  overrides: Partial<React.ComponentProps<typeof FeedScreen>> & {
+    enabledFeedSources?: readonly Source[];
+    onManageContentSources?: () => void;
+  } = {}
 ) {
   return (
     <FeedScreen
@@ -210,6 +215,7 @@ function renderFeed(
       feedPage={1}
       feedFilters={defaultFeedFilters}
       feedSource="all"
+      enabledFeedSources={defaultEnabledFeedSources}
       loadMoreFailureSignal={0}
       loadingMore={false}
       topicStateIndex={topicStateIndex}
@@ -218,6 +224,7 @@ function renderFeed(
       onCategoryChange={jest.fn()}
       onFeedFilterChange={jest.fn()}
       onFeedSourceChange={jest.fn()}
+      onManageContentSources={jest.fn()}
       onLoadMore={jest.fn()}
       onOpenTopic={jest.fn()}
       onReadingFilterChange={jest.fn()}
@@ -277,6 +284,7 @@ function FeedFilterHarness() {
       feedPage={1}
       feedFilters={feedFilters}
       feedSource={feedSource}
+      enabledFeedSources={defaultEnabledFeedSources}
       loadMoreFailureSignal={0}
       loadingMore={false}
       topicStateIndex={topicStateIndex}
@@ -285,6 +293,7 @@ function FeedFilterHarness() {
       onCategoryChange={(value) => setFeedSelection((current) => ({ ...current, categoryFilter: value }))}
       onFeedFilterChange={changeFeedFilter}
       onFeedSourceChange={changeSource}
+      onManageContentSources={jest.fn()}
       onLoadMore={jest.fn()}
       onOpenTopic={jest.fn()}
       onReadingFilterChange={setReadingFilter}
@@ -315,6 +324,56 @@ describe('Feed loading', () => {
     expect(StyleSheet.flatten(within(view.getByTestId('feed-source-all')).getByText('全部').props.style).fontSize).toBe(
       13
     );
+  });
+
+  it('[REG-SOURCE-010] renders the enabled sources in user order and exposes a recoverable all-disabled state', async () => {
+    const onManageContentSources = jest.fn();
+    const onFeedSourceChange = jest.fn();
+    const view = await render(
+      renderFeed(false, [topic], {
+        enabledFeedSources: ['nodeseek', 'v2ex'],
+        feedSource: 'v2ex',
+        onFeedSourceChange,
+        onManageContentSources
+      })
+    );
+
+    expect(mockTabViewProps?.navigationState.routes.map((route) => route.key)).toEqual(['all', 'nodeseek', 'v2ex']);
+    expect(view.getAllByTestId(/^feed-source-/).map((tab) => tab.props.testID)).toEqual([
+      'feed-source-all',
+      'feed-source-nodeseek',
+      'feed-source-v2ex'
+    ]);
+    expect(view.queryByTestId('feed-source-linuxdo')).toBeNull();
+    expect(view.getByTestId('feed-source-v2ex').props.accessibilityState).toMatchObject({ selected: true });
+
+    await view.rerender(
+      renderFeed(false, [topic], {
+        enabledFeedSources: ['v2ex', 'nodeseek'],
+        feedSource: 'v2ex',
+        onFeedSourceChange,
+        onManageContentSources
+      })
+    );
+
+    expect(mockTabViewProps?.navigationState.routes.map((route) => route.key)).toEqual(['all', 'v2ex', 'nodeseek']);
+    expect(view.getByTestId('feed-source-v2ex').props.accessibilityState).toMatchObject({ selected: true });
+    expect(onFeedSourceChange).not.toHaveBeenCalled();
+
+    await view.rerender(
+      renderFeed(false, [topic], {
+        enabledFeedSources: [],
+        feedOutcomeKind: 'empty',
+        onManageContentSources
+      })
+    );
+
+    expect(mockTabViewProps?.navigationState.routes.map((route) => route.key)).toEqual(['all']);
+    expect(view.queryByText('topic')).toBeNull();
+    expect(view.getByText('尚未启用内容源')).toBeTruthy();
+    expect(view.queryByLabelText('列表，支持下拉刷新')).toBeNull();
+    await fireEvent.press(view.getByLabelText('前往更多管理'));
+    expect(onManageContentSources).toHaveBeenCalledTimes(1);
   });
 
   it('[REG-PERF-006] updates both Feed rails when the native pager selects the target', async () => {
@@ -661,42 +720,6 @@ describe('Feed loading', () => {
 
     expect(activeScene().queryByText('正在读取主题...')).toBeNull();
     expect(activeScene().getByLabelText('列表，支持下拉刷新')).toBeTruthy();
-  });
-
-  it('[REG-LINUXDO-007] replaces infinite Feed loading with Account recovery while retaining trusted items', async () => {
-    const onRetryIdentity = jest.fn();
-    const onCheckLinuxDoStatus = jest.fn();
-    const view = await render(
-      renderFeed(false, [{ ...topic, source: 'linuxdo' }], {
-        feedSource: 'linuxdo',
-        identityError: { kind: 'ordinary', message: 'Network request failed' },
-        onCheckLinuxDoStatus,
-        onRetryIdentity
-      })
-    );
-    const activeScene = within(view.getByTestId('mock-feed-scene-linuxdo'));
-
-    expect(activeScene.queryByText('正在读取主题...')).toBeNull();
-    expect(activeScene.getByText('Network request failed')).toBeTruthy();
-    expect(activeScene.getByTestId('mock-feed-first-visible')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('重试检测'));
-    await fireEvent.press(view.getByLabelText('检查 L 站状态'));
-    expect(onRetryIdentity).toHaveBeenCalledTimes(1);
-    expect(onCheckLinuxDoStatus).toHaveBeenCalledTimes(1);
-  });
-
-  it('[REG-LINUXDO-007] labels an active Feed identity probe', async () => {
-    const view = await render(
-      renderFeed(true, [{ ...topic, source: 'linuxdo' }], {
-        feedSource: 'linuxdo',
-        identityChecking: true
-      })
-    );
-    const activeScene = within(view.getByTestId('mock-feed-scene-linuxdo'));
-
-    expect(activeScene.getByText('正在确认 L 站访问状态')).toBeTruthy();
-    expect(activeScene.queryByText('正在读取主题...')).toBeNull();
-    expect(activeScene.getByTestId('mock-feed-first-visible')).toBeTruthy();
   });
 
   it('keeps the scrolled-list state when the same Feed screen is revisited', async () => {

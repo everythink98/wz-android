@@ -1,29 +1,23 @@
-import type { FeedSource, Source, SourceErrorInfo } from '@/domain/forum/models';
+import type { FeedSource, SourceErrorInfo } from '@/domain/forum/models';
+import { forumReadOperationIsPublic } from '@/domain/forum/readPlan';
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from './siteSessionState';
 
 export type AuthPromptSurface = 'search' | 'read' | 'action';
 export type AuthNoticeTone = 'neutral' | 'warning' | 'danger';
 export type AuthNoticeKind =
-  'anonymous' | 'logged-in' | 'verified' | 'login-required' | 'login-expired' | 'verification-required';
+  | 'anonymous'
+  | 'identity-unavailable'
+  | 'logged-in'
+  | 'verified'
+  | 'login-required'
+  | 'login-expired'
+  | 'verification-required';
 export type AuthNotice = {
   kind: AuthNoticeKind;
   message: string;
   tone: AuthNoticeTone;
 };
-export type SearchSessionNoticeItem = {
-  source: Source;
-  label: string;
-  notice: AuthNotice;
-};
-export type SearchSessionNoticeLightTone = AuthNoticeTone | 'success';
-
-const searchSessionSources: { source: Source; label: string }[] = [
-  { source: 'nodeseek', label: 'NodeSeek' },
-  { source: 'linuxdo', label: 'linux.do' },
-  { source: 'yaohuo', label: '妖火' },
-  { source: 'xiaoyinsi', label: '小隐寺' }
-];
-
 function notice(kind: AuthNoticeKind, message: string, tone: AuthNoticeTone): AuthNotice {
   return { kind, message, tone };
 }
@@ -37,6 +31,49 @@ export function authNoticeForSource(
     return null;
   }
   const session = sessions[source];
+  if (session.identityTrust === 'unknown') {
+    const label = sourceCatalog[source].label;
+    const accountLabel = source === 'nodeseek' || source === 'linuxdo' ? `${label} ` : label;
+    if (surface === 'search' && forumReadOperationIsPublic(source, 'search')) {
+      const searchMode = source === 'linuxdo' || source === 'nodeseek' ? 'Google 匿名搜索' : '匿名搜索';
+      return notice(
+        'identity-unavailable',
+        `${accountLabel}账号状态暂不可确认，本次使用 ${searchMode}；可在账号中心重试核对。`,
+        'warning'
+      );
+    }
+    if (surface === 'read' && forumReadOperationIsPublic(source, 'topic')) {
+      return notice(
+        'identity-unavailable',
+        `${accountLabel}账号状态暂不可确认，本次使用匿名读取；写入暂不可用，可在账号中心重试核对。`,
+        'warning'
+      );
+    }
+    return notice(
+      'identity-unavailable',
+      surface === 'action'
+        ? `${accountLabel}账号状态暂不可确认，写入暂不可用，可在账号中心重试核对。`
+        : `${accountLabel}账号状态暂不可确认，暂不能读取或写入，可在账号中心重试核对。`,
+      'warning'
+    );
+  }
+  if (
+    session.identityTrust === 'pending' &&
+    ((surface === 'search' && forumReadOperationIsPublic(source, 'search')) ||
+      (surface === 'read' && forumReadOperationIsPublic(source, 'topic')))
+  ) {
+    const mode =
+      surface === 'search'
+        ? source === 'linuxdo' || source === 'nodeseek'
+          ? 'Google 匿名搜索'
+          : '匿名搜索'
+        : '匿名读取';
+    return notice(
+      'anonymous',
+      `${sourceCatalog[source].label} 账号状态确认中，本次使用${mode === '匿名读取' ? '' : ' '}${mode}。`,
+      'neutral'
+    );
+  }
   if (session.identityTrust === 'pending') {
     const label =
       source === 'nodeseek' ? 'NodeSeek' : source === 'linuxdo' ? 'linux.do' : source === 'yaohuo' ? '妖火' : '小隐寺';
@@ -128,28 +165,6 @@ export function authNoticeForSource(
 
 export function authHintForSource(source: FeedSource, sessions: SiteSessionViewModels, surface: AuthPromptSurface) {
   return authNoticeForSource(source, sessions, surface)?.message || '';
-}
-
-export function searchSessionNoticeItems(
-  source: FeedSource,
-  sessions: SiteSessionViewModels
-): SearchSessionNoticeItem[] {
-  const sources =
-    source === 'all' ? searchSessionSources : searchSessionSources.filter((item) => item.source === source);
-  return sources.flatMap((item) => {
-    const notice = authNoticeForSource(item.source, sessions, 'search');
-    return notice ? [{ ...item, notice }] : [];
-  });
-}
-
-export function searchSessionNoticeLightTone(notice: AuthNotice): SearchSessionNoticeLightTone {
-  if (notice.kind === 'logged-in') {
-    return 'success';
-  }
-  if (notice.kind === 'login-expired' || notice.kind === 'login-required') {
-    return 'danger';
-  }
-  return notice.tone;
 }
 
 export function authNoticeForSourceError(error: SourceErrorInfo): AuthNotice | null {

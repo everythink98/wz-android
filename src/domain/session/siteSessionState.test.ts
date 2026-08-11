@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  accountSessionAccess,
+  accountSessionSnapshotFromEvent,
+  accountSessionSnapshotFromObservation,
+  createAccountSessionSnapshot,
+  createAccountSessionViewModel,
   createSiteSessionViewModels,
   nodeSeekUserIdForSession,
   reduceSiteSessionState,
@@ -12,6 +17,107 @@ import {
 import type { UserProfile } from '@/domain/forum/models';
 
 describe('site session state', () => {
+  it('[REG-ACCOUNT-042] keeps identity facts and trust in one normalized account snapshot', () => {
+    const initial = createAccountSessionSnapshot('linuxdo');
+    const confirmed = accountSessionSnapshotFromObservation(initial, {
+      session: {
+        site: 'linuxdo',
+        status: 'logged-in',
+        cookieSummary: ['_t'],
+        isVerifying: false,
+        currentUser: {
+          source: 'linuxdo',
+          id: '42',
+          username: 'alice',
+          url: 'https://linux.do/u/alice',
+          topics: []
+        }
+      }
+    });
+
+    expect(createAccountSessionViewModel(confirmed)).toMatchObject({
+      status: 'logged-in',
+      identityTrust: 'confirmed',
+      isLoggedIn: true,
+      canWrite: true,
+      currentUser: { id: '42' }
+    });
+    expect(accountSessionAccess(confirmed)).toEqual({
+      authenticated: true,
+      identityKey: 'linuxdo:42',
+      identityTrust: 'confirmed',
+      canWrite: true
+    });
+
+    const malformed = accountSessionSnapshotFromObservation(confirmed, {
+      session: {
+        site: 'linuxdo',
+        status: 'logged-in',
+        cookieSummary: [],
+        isVerifying: false
+      }
+    });
+    expect(createAccountSessionViewModel(malformed)).toMatchObject({
+      status: 'logged-in',
+      identityTrust: 'unknown',
+      isLoggedIn: true,
+      canWrite: false,
+      currentUser: { id: '42' }
+    });
+
+    const anonymous = accountSessionSnapshotFromObservation(confirmed, {
+      session: {
+        site: 'linuxdo',
+        status: 'anonymous',
+        cookieSummary: [],
+        isVerifying: false
+      }
+    });
+    expect(createAccountSessionViewModel(anonymous)).toMatchObject({
+      status: 'anonymous',
+      identityTrust: 'none',
+      isLoggedIn: false,
+      canWrite: false
+    });
+    expect(anonymous.currentUser).toBeUndefined();
+  });
+
+  it('keeps workflow and recovery events on the same account snapshot without revoking confirmed identity', () => {
+    const confirmed = accountSessionSnapshotFromObservation(createAccountSessionSnapshot('xiaoyinsi'), {
+      session: {
+        site: 'xiaoyinsi',
+        status: 'logged-in',
+        cookieSummary: [],
+        isVerifying: false,
+        currentUser: {
+          source: 'xiaoyinsi',
+          id: '7',
+          username: 'bob',
+          url: 'https://www.xiaoyinsi.com/user/7',
+          topics: []
+        }
+      }
+    });
+
+    const pending = accountSessionSnapshotFromEvent(confirmed, { type: 'authorization-started' });
+    expect(pending).toMatchObject({ status: 'logged-in', identityTrust: 'pending', currentUser: { id: '7' } });
+
+    const recoveryFailed = accountSessionSnapshotFromEvent(confirmed, {
+      type: 'recovery-failed',
+      message: '原页面恢复失败'
+    });
+    expect(recoveryFailed).toMatchObject({
+      status: 'logged-in',
+      identityTrust: 'confirmed',
+      currentUser: { id: '7' },
+      lastError: '原页面恢复失败'
+    });
+
+    const revoked = accountSessionSnapshotFromEvent(confirmed, { type: 'cleared' });
+    expect(revoked).toMatchObject({ status: 'anonymous', identityTrust: 'none' });
+    expect(revoked.currentUser).toBeUndefined();
+  });
+
   it('derives identity only from a confirmed logged-in user', () => {
     expect(
       siteSessionIdentityKey({ site: 'nodeseek', status: 'logged-in', currentUser: { id: '42' } as UserProfile })
@@ -49,7 +155,7 @@ describe('site session state', () => {
     });
 
     const verified = reduceSiteSessionState(verifying, {
-      type: 'verification-succeeded',
+      type: 'cookie-loaded',
       cookieSummary: ['cf_clearance', '_t'],
       loggedIn: true,
       at: '2026-06-06T01:07:00.000Z'
@@ -254,20 +360,21 @@ describe('site session state', () => {
     expect(nodeSeekUserIdForSession(view, null)).toBe(48872);
   });
 
-  it('moves login detection, verification success, expiry, and clearing through one reducer', () => {
+  it('moves observed login, verification status, expiry, and clearing through one reducer', () => {
     const initial = createSiteSessionStates();
     const loggedIn = {
       ...initial,
       linuxdo: reduceSiteSessionState(initial.linuxdo, {
-        type: 'login-detected',
+        type: 'cookie-loaded',
         cookieSummary: ['cf_clearance', '_t', '_forum_session'],
+        loggedIn: true,
         at: '2026-06-06T02:01:00.000Z'
       })
     };
     const verificationOnly = {
       ...loggedIn,
       linuxdo: reduceSiteSessionState(loggedIn.linuxdo, {
-        type: 'verification-succeeded',
+        type: 'cookie-loaded',
         cookieSummary: ['cf_clearance'],
         loggedIn: false,
         at: '2026-06-06T02:02:00.000Z'
@@ -341,7 +448,7 @@ describe('site session state', () => {
       topics: []
     };
     const loggedIn = reduceSiteSessionState(createSiteSessionStates().linuxdo, {
-      type: 'verification-succeeded',
+      type: 'cookie-loaded',
       cookieSummary: ['cf_clearance', '_t'],
       loggedIn: true,
       currentUser,
@@ -379,7 +486,7 @@ describe('site session state', () => {
         topics: []
       };
       const loggedIn = reduceSiteSessionState(createSiteSessionStates()[site], {
-        type: 'verification-succeeded',
+        type: 'cookie-loaded',
         cookieSummary: ['confirmed-credential'],
         loggedIn: true,
         currentUser,

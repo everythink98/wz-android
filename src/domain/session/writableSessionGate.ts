@@ -1,12 +1,13 @@
-import type { SessionSite } from './siteSessionState';
+import type { IdentityTrust, SessionSite } from './siteSessionState';
 
 export type SessionRuntimeSnapshot = {
   source: SessionSite;
   authenticated: boolean;
   authSurfaceOpen: boolean;
   identityKey: string;
-  identityTrust: 'confirmed' | 'pending' | 'none';
+  identityTrust: IdentityTrust;
   sessionEpoch: number;
+  sourceEnabled?: boolean;
 };
 export type WritableSessionSnapshot = SessionRuntimeSnapshot;
 
@@ -19,7 +20,8 @@ export type WritableSessionReconcileResult = {
 export class WritableSessionBlockedError extends Error {
   constructor(
     message: string,
-    readonly reason: 'identity_changed' | 'identity_pending' | 'login_required' | 'stale'
+    readonly reason:
+      'identity_changed' | 'identity_pending' | 'identity_unavailable' | 'login_required' | 'source-disabled' | 'stale'
   ) {
     super(message);
   }
@@ -34,7 +36,7 @@ function ticketFromSnapshot(snapshot: WritableSessionSnapshot): WritableSessionT
 }
 
 function canIssueTicket(snapshot: WritableSessionSnapshot) {
-  return snapshot.authenticated && snapshot.identityTrust === 'confirmed';
+  return snapshot.sourceEnabled !== false && snapshot.authenticated && snapshot.identityTrust === 'confirmed';
 }
 
 export async function ensureWritableSessionTicket(
@@ -42,10 +44,13 @@ export async function ensureWritableSessionTicket(
   reconcile: () => Promise<WritableSessionReconcileResult>
 ) {
   const before = readSnapshot();
+  if (before.sourceEnabled === false) {
+    throw new WritableSessionBlockedError('当前来源已停用', 'source-disabled');
+  }
   if (canIssueTicket(before) && !before.authSurfaceOpen) {
     return ticketFromSnapshot(before);
   }
-  if (!before.authenticated && before.identityTrust !== 'pending' && !before.authSurfaceOpen) {
+  if (!before.authenticated && before.identityTrust === 'none' && !before.authSurfaceOpen) {
     throw new WritableSessionBlockedError('当前账号未登录', 'login_required');
   }
 
@@ -58,7 +63,9 @@ export async function ensureWritableSessionTicket(
           ? 'login_required'
           : result.status === 'stale'
             ? 'stale'
-            : 'identity_pending';
+            : result.status === 'unknown'
+              ? 'identity_unavailable'
+              : 'identity_pending';
     throw new WritableSessionBlockedError(
       result.status === 'changed'
         ? '账号已切换，请确认当前页面后重试'
@@ -70,11 +77,14 @@ export async function ensureWritableSessionTicket(
   }
 
   const after = readSnapshot();
-  if (!after.authenticated || after.identityTrust === 'none') {
+  if (!after.authenticated && after.identityTrust === 'none') {
     throw new WritableSessionBlockedError('当前账号未登录', 'login_required');
   }
   if (after.identityTrust !== 'confirmed' || after.authSurfaceOpen) {
-    throw new WritableSessionBlockedError('登录状态暂时无法确认，请重试', 'identity_pending');
+    throw new WritableSessionBlockedError(
+      '登录状态暂时无法确认，请重试',
+      after.identityTrust === 'unknown' ? 'identity_unavailable' : 'identity_pending'
+    );
   }
   if (
     after.source !== before.source ||
@@ -89,6 +99,7 @@ export async function ensureWritableSessionTicket(
 export function validateWritableSessionTicket(ticket: WritableSessionTicket, snapshot: WritableSessionSnapshot) {
   return (
     snapshot.authenticated &&
+    snapshot.sourceEnabled !== false &&
     !snapshot.authSurfaceOpen &&
     snapshot.identityTrust === 'confirmed' &&
     snapshot.source === ticket.source &&

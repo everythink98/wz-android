@@ -7,6 +7,7 @@ import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from
 import { LibraryScreen } from '@/features/library/LibraryScreen';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { Category, Topic, UserProfile, UserReference } from '@/domain/forum/models';
+import type { Source } from '@/domain/forum/sourceCatalog';
 
 let mockFlashListMountCount = 0;
 const mockFlashListRenders: { dataLength: number; testID?: string }[] = [];
@@ -151,16 +152,20 @@ const followedUsers: FollowedUserRecord[] = [
 ];
 
 function LibraryHarness({
+  enabledSources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'],
   followedUsers: libraryUsers = followedUsers,
   onClearHistory = jest.fn(),
+  onManageContentSources = jest.fn(),
   onOpenTopic = jest.fn(),
   onOpenUser = jest.fn(),
   onRemove = jest.fn(),
   onRemoveUser = jest.fn(),
   records: libraryRecords = records
 }: {
+  enabledSources?: readonly Source[];
   followedUsers?: FollowedUserRecord[];
   onClearHistory?: () => void;
+  onManageContentSources?: () => void;
   onOpenTopic?: (topic: Topic) => void;
   onOpenUser?: (user: UserReference) => void;
   onRemove?: (topic: Topic) => void;
@@ -172,12 +177,14 @@ function LibraryHarness({
     <View>
       <LibraryScreen
         categories={categories}
+        enabledSources={enabledSources}
         followedUsers={libraryUsers}
         libraryTab={libraryTab}
         loaded
         records={libraryRecords}
         topicStateIndex={topicStateIndex}
         onClearHistory={onClearHistory}
+        onManageContentSources={onManageContentSources}
         onOpenTopic={onOpenTopic}
         onOpenUser={onOpenUser}
         onRemove={onRemove}
@@ -193,6 +200,133 @@ afterEach(() => {
 });
 
 describe('Library filters', () => {
+  it('projects source rails and local records in user order without mutating stored data, then restores re-enabled data', async () => {
+    const recordsSnapshot = JSON.stringify(records);
+    const recordReferences = [...records];
+    const followedUsersSnapshot = JSON.stringify(followedUsers);
+    const followedUserReferences = [...followedUsers];
+    const view = await render(<LibraryHarness enabledSources={['xiaoyinsi', 'linuxdo']} />);
+
+    expect(
+      view
+        .getAllByRole('button')
+        .map((button) => button.props.testID)
+        .filter((testID) => String(testID).startsWith('library-source-'))
+    ).toEqual(['library-source-all', 'library-source-xiaoyinsi', 'library-source-linuxdo']);
+    expect(view.queryByText('V2EX 问答主题')).toBeNull();
+    expect(view.getByText('linux.do 开发主题')).toBeTruthy();
+    expect(view.getByText('1 条')).toBeTruthy();
+
+    await view.rerender(<LibraryHarness enabledSources={['v2ex', 'linuxdo']} />);
+    expect(view.getByText('V2EX 问答主题')).toBeTruthy();
+    expect(view.getByText('V2EX 工作主题')).toBeTruthy();
+    expect(view.getByText('linux.do 开发主题')).toBeTruthy();
+    expect(JSON.stringify(records)).toBe(recordsSnapshot);
+    expect(records).toEqual(recordReferences);
+    expect(records.every((record, index) => record === recordReferences[index])).toBe(true);
+
+    await fireEvent.press(view.getByTestId('library-tab-users'));
+    await view.rerender(<LibraryHarness enabledSources={['linuxdo']} />);
+    expect(view.queryByText('Neo')).toBeNull();
+    expect(view.getByText('Alice')).toBeTruthy();
+    await view.rerender(<LibraryHarness enabledSources={['linuxdo', 'v2ex']} />);
+    expect(view.getByText('Neo')).toBeTruthy();
+    expect(view.getByText('Alice')).toBeTruthy();
+    expect(JSON.stringify(followedUsers)).toBe(followedUsersSnapshot);
+    expect(followedUsers).toEqual(followedUserReferences);
+    expect(followedUsers.every((record, index) => record === followedUserReferences[index])).toBe(true);
+  });
+
+  it('reorders the rail without changing selection, category or local data actions', async () => {
+    const onClearHistory = jest.fn();
+    const onRemove = jest.fn<(topic: Topic) => void>();
+    const onRemoveUser = jest.fn<(user: UserProfile) => void>();
+    const view = await render(
+      <LibraryHarness
+        enabledSources={['v2ex', 'linuxdo']}
+        onClearHistory={onClearHistory}
+        onRemove={onRemove}
+        onRemoveUser={onRemoveUser}
+      />
+    );
+    await fireEvent.press(view.getByTestId('library-source-v2ex'));
+    await fireEvent.press(view.getByLabelText('问与答'));
+
+    await view.rerender(
+      <LibraryHarness
+        enabledSources={['linuxdo', 'v2ex']}
+        onClearHistory={onClearHistory}
+        onRemove={onRemove}
+        onRemoveUser={onRemoveUser}
+      />
+    );
+    expect(view.getByTestId('library-source-v2ex').props.accessibilityState.selected).toBe(true);
+    expect(view.getByLabelText('问与答，已选择')).toBeTruthy();
+    expect(
+      view
+        .getAllByRole('button')
+        .map((button) => button.props.testID)
+        .filter((testID) => String(testID).startsWith('library-source-'))
+    ).toEqual(['library-source-all', 'library-source-linuxdo', 'library-source-v2ex']);
+    expect(onClearHistory).not.toHaveBeenCalled();
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(onRemoveUser).not.toHaveBeenCalled();
+  });
+
+  it('returns a disabled active source to all, clears category selection and restores it only as unfiltered data', async () => {
+    const view = await render(<LibraryHarness enabledSources={['v2ex', 'linuxdo']} />);
+    await fireEvent.press(view.getByTestId('library-source-v2ex'));
+    await fireEvent.press(view.getByLabelText('问与答'));
+    expect(view.getByText('1 / 3 条')).toBeTruthy();
+
+    await view.rerender(<LibraryHarness enabledSources={['linuxdo']} />);
+    expect(view.getByTestId('library-source-all').props.accessibilityState.selected).toBe(true);
+    expect(view.queryByTestId('library-source-v2ex')).toBeNull();
+    expect(view.getByText('linux.do 开发主题')).toBeTruthy();
+    expect(view.getByText('1 条')).toBeTruthy();
+    expect(view.getByLabelText('问与答').props.accessibilityState.selected).toBe(false);
+
+    await view.rerender(<LibraryHarness enabledSources={['linuxdo', 'v2ex']} />);
+    expect(view.getByTestId('library-source-all').props.accessibilityState.selected).toBe(true);
+    expect(view.getByText('3 条')).toBeTruthy();
+    expect(view.getByText('V2EX 问答主题')).toBeTruthy();
+    expect(view.getByText('V2EX 工作主题')).toBeTruthy();
+  });
+
+  it('shows management guidance with no destructive action when every source is disabled', async () => {
+    const onClearHistory = jest.fn();
+    const onManageContentSources = jest.fn();
+    const onRemove = jest.fn<(topic: Topic) => void>();
+    const onRemoveUser = jest.fn<(user: UserProfile) => void>();
+    const view = await render(
+      <LibraryHarness
+        enabledSources={[]}
+        onClearHistory={onClearHistory}
+        onManageContentSources={onManageContentSources}
+        onRemove={onRemove}
+        onRemoveUser={onRemoveUser}
+      />
+    );
+
+    expect(
+      view
+        .getAllByRole('button')
+        .map((button) => button.props.testID)
+        .filter((testID) => String(testID).startsWith('library-source-'))
+    ).toEqual(['library-source-all']);
+    expect(view.getByText('尚未启用内容源')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('管理内容源'));
+    expect(onManageContentSources).toHaveBeenCalledTimes(1);
+    expect(view.queryByText('V2EX 问答主题')).toBeNull();
+
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+    expect(view.getByText('尚未启用内容源')).toBeTruthy();
+    expect(view.queryByLabelText('清空历史')).toBeNull();
+    expect(onClearHistory).not.toHaveBeenCalled();
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(onRemoveUser).not.toHaveBeenCalled();
+  });
+
   it('[REG-PERF-001] reuses the list while switching between all three library tabs', async () => {
     mockFlashListMountCount = 0;
     const view = await render(<LibraryHarness />);

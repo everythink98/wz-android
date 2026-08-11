@@ -171,39 +171,6 @@ describe('User screen behavior', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-LINUXDO-007] exposes Account recovery actions on a blocked linux.do User route', async () => {
-    const onRefresh = jest.fn();
-    const onCheckLinuxDoStatus = jest.fn();
-    const view = await render(
-      userScreen({
-        error: { kind: 'ordinary', message: 'Network request failed' },
-        identityBlocked: true,
-        onCheckLinuxDoStatus,
-        onRefresh,
-        profile: null
-      })
-    );
-
-    expect(view.getByText('Network request failed')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('重试检测'));
-    await fireEvent.press(view.getByLabelText('检查 L 站状态'));
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(onCheckLinuxDoStatus).toHaveBeenCalledTimes(1);
-  });
-
-  it('[REG-LINUXDO-007] labels an active User identity probe', async () => {
-    const view = await render(
-      userScreen({
-        busy: true,
-        identityChecking: true,
-        profile: null
-      })
-    );
-
-    expect(view.getByText('正在确认 L 站访问状态')).toBeTruthy();
-    expect(view.queryByText('正在读取用户主页...')).toBeNull();
-  });
-
   it('[REG-TOPIC-039] keeps an unresolved NodeSeek user in the app without exposing follow', async () => {
     const requestedUser: UserReference = {
       source: 'nodeseek',

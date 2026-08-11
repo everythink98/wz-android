@@ -101,6 +101,45 @@ function postsForRequest(url: URL) {
 describe('xiaoyinsi adapter', () => {
   beforeEach(() => resetXiaoyinsiCategoryCacheForTests());
 
+  it('[REG-TOPIC-073][REG-TOPIC-077] keeps good 小隐寺 rows around garbage and marks the window partial', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/posts.json')) {
+        return json({ post_stream: { posts: [posts[1], {}, { ...posts[1], id: 102, post_number: 2 }] } });
+      }
+      return json({ id: 42, post_stream: { stream: [100, 101, 102], posts: [posts[0]] } });
+    });
+
+    const result = await getXiaoyinsiReplies('42', {
+      fetcher,
+      order: 'oldest',
+      position: { kind: 'start' },
+      limit: 2
+    });
+
+    expect(result.items.map(({ commentId }) => commentId)).toEqual([101, 102]);
+    expect(result).toMatchObject({ completeness: 'partial' });
+  });
+
+  it('[REG-TOPIC-077] rejects an explicit wrong 小隐寺 topic identity', async () => {
+    await expect(
+      getXiaoyinsiReplies('42', {
+        fetcher: vi.fn(async () => json({ id: 99, post_stream: { stream: [100], posts: [] } })),
+        order: 'oldest',
+        position: { kind: 'start' }
+      })
+    ).rejects.toThrow('主题身份不一致');
+  });
+
+  it('[REG-TOPIC-062][REG-TOPIC-077] requires a 小隐寺 exact comment ID to match its floor', async () => {
+    await expect(
+      getXiaoyinsiReplies('42', {
+        fetcher: vi.fn(async () => json({ id: 42, post_stream: { stream: [100, 101], posts: [posts[1]] } })),
+        order: 'oldest',
+        position: { kind: 'target', target: { commentId: 999, floor: 2 } }
+      })
+    ).rejects.toThrow('目标楼层未找到');
+  });
+
   it('[REG-XIAOYINSI-024] isolates category metadata across credential generations', async () => {
     const firstSite = Promise.withResolvers<Response>();
     const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
@@ -592,8 +631,24 @@ describe('xiaoyinsi adapter', () => {
       );
       expect(result).toMatchObject(
         order === 'oldest'
-          ? { currentPage: 1, currentOffset: 0, nextPage: 2, nextOffset: 10, hasMore: true, totalCount: 45 }
-          : { currentPage: 5, currentOffset: 40, nextPage: 4, nextOffset: 30, hasMore: true, totalCount: 45 }
+          ? {
+              completeness: 'partial',
+              currentPage: 1,
+              currentOffset: 0,
+              nextPage: 2,
+              nextOffset: 10,
+              hasMore: true,
+              totalCount: 45
+            }
+          : {
+              completeness: 'partial',
+              currentPage: 5,
+              currentOffset: 40,
+              nextPage: 4,
+              nextOffset: 30,
+              hasMore: true,
+              totalCount: 45
+            }
       );
     }
   );

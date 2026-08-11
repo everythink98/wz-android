@@ -13,6 +13,7 @@ import type {
 import { isRecord, parsePositiveInteger } from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
+  assertDiscourseTopicIdentity,
   discourseCategories,
   discourseOriginalPoster,
   discoursePolls,
@@ -397,7 +398,7 @@ export async function getXiaoyinsiEmojiUrls(options: XiaoyinsiOptions = {}) {
 }
 
 async function topicData(id: string, options: XiaoyinsiOptions, targetFloor?: number) {
-  return fetchXiaoyinsiJson<Record<string, unknown>>(
+  const data = await fetchXiaoyinsiJson<Record<string, unknown>>(
     `/t/${encodeURIComponent(id)}${targetFloor ? `/${targetFloor}` : ''}.json`,
     {
       ...(cleanCredentials(options.credentials) ? { include_raw: 1 } : {}),
@@ -405,6 +406,8 @@ async function topicData(id: string, options: XiaoyinsiOptions, targetFloor?: nu
     },
     options
   );
+  assertDiscourseTopicIdentity(data, id);
+  return data;
 }
 
 export async function getXiaoyinsiTopic(
@@ -437,6 +440,7 @@ export async function getXiaoyinsiTopic(
     ...normalized,
     contentHtml: sanitizeXiaoyinsiContentHtml(firstFields.cookedHtml, polls),
     replies,
+    replyCompleteness: replies.length === initialReplyPosts.length ? ('complete' as const) : ('partial' as const),
     replyHasMore: totalPosts > initialReplyPosts.length + 1,
     replyNextPage: totalPosts > initialReplyPosts.length + 1 ? 2 : null,
     replyNextOffset: totalPosts > initialReplyPosts.length + 1 ? initialReplyPosts.length : null,
@@ -491,12 +495,20 @@ export async function getXiaoyinsiReplies(
     }
     const window = discourseReplyWindow(await topicData(id, options, targetFloor), limit);
     const items = window.posts.map((post) => normalizePost(post, id)).filter((reply): reply is Reply => Boolean(reply));
-    if (!items.some((reply) => reply.floor === targetFloor)) {
+    const targetCommentId = options.position.target.commentId;
+    const hasTarget = items.some((reply) =>
+      targetCommentId === undefined ? reply.floor === targetFloor : reply.commentId === targetCommentId
+    );
+    if (!hasTarget) {
       throw new Error('小隐寺目标楼层未找到');
     }
     const { posts, ...windowState } = window;
     const chronological = annotateSourceDiagnosticSummary(
-      { items, ...windowState },
+      {
+        items,
+        ...windowState,
+        completeness: items.length === posts.length ? ('complete' as const) : ('partial' as const)
+      },
       {
         parserVariant: 'xiaoyinsi-discourse-near-replies',
         candidateCount: posts.length,
@@ -536,7 +548,11 @@ export async function getXiaoyinsiReplies(
   return annotateSourceDiagnosticSummary(
     {
       items,
-      ...windowState
+      ...windowState,
+      completeness:
+        posts.length === postIds.length && items.length === postIds.length
+          ? ('complete' as const)
+          : ('partial' as const)
     },
     {
       parserVariant: 'xiaoyinsi-discourse-replies',

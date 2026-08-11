@@ -61,10 +61,10 @@ describe('yaohuo reply parsing', () => {
       author: '流金岁月',
       authorId: '45245',
       floor: 3,
-      commentId: 17080475,
       canDelete: true,
       deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&lpage=1&page=1&reid=17080475&id=798458'
     });
+    expect(replies.items[0]).not.toHaveProperty('commentId');
     expect(replies.items[1]).toMatchObject({
       author: '别人',
       authorId: '99',

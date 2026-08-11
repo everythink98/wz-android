@@ -30,6 +30,7 @@ type SearchUserCandidatesRequest = {
 export function useSearchCandidateQueries({
   sessionEpochs,
   enabled,
+  readPlanScopes,
   searchDiscourseTags,
   searchDiscourseUsers,
   tagRequest,
@@ -37,6 +38,7 @@ export function useSearchCandidateQueries({
 }: {
   sessionEpochs: ForumSessionEpochs;
   enabled: boolean;
+  readPlanScopes: { tags: string; users: string };
   searchDiscourseTags: (
     options: SearchTagCandidatesRequest & { signal?: AbortSignal }
   ) => Promise<DiscourseTagOption[]>;
@@ -51,6 +53,7 @@ export function useSearchCandidateQueries({
     queryKey: forumQueryKeys.searchTags({
       categoryId: tagRequest?.categoryId,
       query: tagRequest?.query || '',
+      readPlanScope: readPlanScopes.tags,
       scope: sessionEpochs,
       selectedTags: tagRequest?.selectedTags || [],
       source: tagRequest?.source || 'linuxdo'
@@ -61,6 +64,7 @@ export function useSearchCandidateQueries({
   const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
     queryKey: forumQueryKeys.searchUsers({
       categoryId: userRequest?.categoryId,
+      readPlanScope: readPlanScopes.users,
       scope: sessionEpochs,
       source: userRequest?.source || 'linuxdo',
       term: userRequest?.term || ''
@@ -98,6 +102,7 @@ export function useDiscourseFilterPickers({
   discourseDraft,
   filterSheetVisible,
   requestsEnabled,
+  readPlanScopes,
   sessionEpochs,
   searchDiscourseTags,
   searchDiscourseUsers
@@ -106,6 +111,7 @@ export function useDiscourseFilterPickers({
   discourseDraft: DiscourseSearchFilter | null;
   filterSheetVisible: boolean;
   requestsEnabled: boolean;
+  readPlanScopes: { tags: string; users: string };
   sessionEpochs: ForumSessionEpochs;
   searchDiscourseTags: (
     options: SearchTagCandidatesRequest & { signal?: AbortSignal }
@@ -167,6 +173,7 @@ export function useDiscourseFilterPickers({
   const candidates = useSearchCandidateQueries({
     sessionEpochs,
     enabled: requestsEnabled && filterSheetVisible,
+    readPlanScopes,
     searchDiscourseTags,
     searchDiscourseUsers,
     tagRequest:

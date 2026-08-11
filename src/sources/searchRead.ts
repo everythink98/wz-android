@@ -61,6 +61,11 @@ function requireSearchTopicTitles(response: SearchResponse) {
   return response;
 }
 
+function includedAggregateSearchSources(includedSources?: readonly Source[]) {
+  const included = new Set(includedSources || aggregateSearchSources);
+  return aggregateSearchSources.filter((source) => included.has(source));
+}
+
 export async function searchTopics({
   source,
   query,
@@ -68,9 +73,11 @@ export async function searchTopics({
   page = 1,
   categories = [],
   fetcher,
+  fetcherForSource,
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
+  includedSources,
   linuxDoAuthenticated,
   unavailableSources,
   sort = 'relevance',
@@ -84,9 +91,11 @@ export async function searchTopics({
   page?: number;
   categories?: Category[];
   fetcher?: Fetcher;
+  fetcherForSource?: (source: Source) => Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
+  includedSources?: readonly Source[];
   linuxDoAuthenticated?: boolean;
   unavailableSources?: readonly Source[];
   sort?: SearchSort;
@@ -108,8 +117,8 @@ export async function searchTopics({
   if (source === 'all') {
     return runForumSourceReadAggregateAttempt(
       fetcher || fetch,
-      async (aggregateFetcher) => {
-        const sources = aggregateSearchSources;
+      async (aggregateFetcher, scopeFetcher) => {
+        const sources = includedAggregateSearchSources(includedSources);
         const results = await Promise.allSettled(
           sources.map(async (item) => {
             if (unavailableSources?.includes(item)) {
@@ -151,9 +160,10 @@ export async function searchTopics({
               }
               throw new Error(`${item} 未注册聚合搜索 adapter`);
             };
+            const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
             return item === 'linuxdo' || item === 'nodeseek'
-              ? runForumSourceReadAttempt(item, aggregateFetcher, readSource, () => signal?.aborted !== true)
-              : readSource(aggregateFetcher);
+              ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => signal?.aborted !== true)
+              : readSource(sourceFetcher);
           })
         );
         const expression = parseSearchExpression(query);

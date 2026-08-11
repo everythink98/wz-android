@@ -1,9 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { NotificationAdapter, NotificationAdapterAccess } from './notificationAdapter';
-import type { NotificationSource } from '@/domain/forum/sourceCatalog';
+import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
-import { createNotificationGateway } from './notificationGateway';
+import { createNotificationGateway as createProductionNotificationGateway } from './notificationGateway';
+
+type GatewayOptions = Parameters<typeof createProductionNotificationGateway>[0];
+
+function createNotificationGateway(
+  options: Omit<GatewayOptions, 'privateAccessAllowed' | 'sourceAllowed'> &
+    Partial<Pick<GatewayOptions, 'privateAccessAllowed' | 'sourceAllowed'>>
+) {
+  return createProductionNotificationGateway({
+    ...options,
+    privateAccessAllowed: options.privateAccessAllowed || (() => true),
+    sourceAllowed: options.sourceAllowed || (() => true)
+  });
+}
 
 function adapter(result: 'ok' | 'fail'): NotificationAdapter {
   return {
@@ -36,6 +49,234 @@ function adapter(result: 'ok' | 'fail'): NotificationAdapter {
 }
 
 describe('notification gateway', () => {
+  it('rejects every direct source operation before access or adapter work when the source is disabled', async () => {
+    const sourceAdapter = adapter('ok');
+    sourceAdapter.markAllRead = vi.fn(async () => ({ confirmed: true }));
+    const transport = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ url: 'https://img.example/node.png' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+    );
+    const readAccess = vi.fn(async () => ({
+      fetcher: transport,
+      identityKey: 'nodeseek:user',
+      userId: 'user'
+    }));
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: sourceAdapter,
+        linuxdo: adapter('ok'),
+        yaohuo: adapter('ok'),
+        xiaoyinsi: adapter('ok')
+      },
+      readAccess,
+      sourceAllowed: () => false
+    });
+    const item = {
+      source: 'nodeseek' as const,
+      id: 'message:user',
+      kind: 'private-message' as const,
+      actor: { name: 'alice' },
+      title: 'notification',
+      createdAt: null,
+      unread: true,
+      target: { type: 'private-conversation' as const, conversationId: '9' }
+    };
+    const detail = { notification: item, title: item.title };
+    const operations = [
+      gateway.getCategories('nodeseek', 'nodeseek:user'),
+      gateway.listPage('nodeseek', { expectedIdentityKey: 'nodeseek:user' }),
+      gateway.readUnreadSnapshot('nodeseek'),
+      gateway.loadDetail(item, 'nodeseek:user'),
+      gateway.markRead(item, detail, 'nodeseek:user'),
+      gateway.replyToConversation(item, 'reply', 'nodeseek:user'),
+      gateway.uploadReplyImage('nodeseek', {
+        expectedIdentityKey: 'nodeseek:user',
+        file: { uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png' },
+        nodeImageApiKey: 'key'
+      }),
+      gateway.markAllRead('nodeseek', 'nodeseek:user')
+    ];
+
+    await Promise.all(
+      operations.map((operation) =>
+        expect(operation).rejects.toMatchObject({ reason: 'source-disabled', source: 'nodeseek' })
+      )
+    );
+    expect(readAccess).not.toHaveBeenCalled();
+    expect(sourceAdapter.getCategories).not.toHaveBeenCalled();
+    expect(sourceAdapter.listPage).not.toHaveBeenCalled();
+    expect(sourceAdapter.readUnreadSnapshot).not.toHaveBeenCalled();
+    expect(sourceAdapter.loadDetail).not.toHaveBeenCalled();
+    expect(sourceAdapter.markRead).not.toHaveBeenCalled();
+    expect(sourceAdapter.replyToConversation).not.toHaveBeenCalled();
+    expect(sourceAdapter.markAllRead).not.toHaveBeenCalled();
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('rechecks source membership after access and adapter awaits so a mid-flight disable cannot continue or return data', async () => {
+    let allowed = true;
+    let resolveAccess!: (access: NotificationAdapterAccess) => void;
+    const access = new Promise<NotificationAdapterAccess>((resolve) => {
+      resolveAccess = resolve;
+    });
+    const sourceAdapter = adapter('ok');
+    const readAccess = vi.fn(async () => access);
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: sourceAdapter,
+        linuxdo: adapter('ok'),
+        yaohuo: adapter('ok'),
+        xiaoyinsi: adapter('ok')
+      },
+      readAccess,
+      sourceAllowed: () => allowed
+    });
+
+    const stoppedBeforeAdapter = gateway.listPage('nodeseek');
+    await vi.waitFor(() => expect(readAccess).toHaveBeenCalledTimes(1));
+    allowed = false;
+    resolveAccess({ identityKey: 'nodeseek:user', userId: 'user' });
+    await expect(stoppedBeforeAdapter).rejects.toMatchObject({ reason: 'source-disabled' });
+    expect(sourceAdapter.listPage).not.toHaveBeenCalled();
+
+    allowed = true;
+    let resolvePage!: (page: { items: []; cursor: null; hasMore: false }) => void;
+    sourceAdapter.listPage = vi.fn(
+      () =>
+        new Promise<{ items: []; cursor: null; hasMore: false }>((resolve) => {
+          resolvePage = resolve;
+        })
+    );
+    const stoppedAfterAdapter = gateway.listPage('nodeseek');
+    await vi.waitFor(() => expect(sourceAdapter.listPage).toHaveBeenCalledTimes(1));
+    allowed = false;
+    resolvePage({ items: [], cursor: null, hasMore: false });
+    await expect(stoppedAfterAdapter).rejects.toMatchObject({ reason: 'source-disabled' });
+  });
+
+  it('stops a multi-request adapter before its next transport when the source is disabled', async () => {
+    let allowed = true;
+    const transport = vi.fn(async (input: string) => {
+      if (input === '/first') allowed = false;
+      return new Response('{}', { status: 200 });
+    });
+    const sourceAdapter = adapter('ok');
+    sourceAdapter.markAllRead = vi.fn(async (options) => {
+      await options.fetcher!('/first');
+      await options.fetcher!('/second');
+      return { confirmed: true };
+    });
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: sourceAdapter,
+        linuxdo: adapter('ok'),
+        yaohuo: adapter('ok'),
+        xiaoyinsi: adapter('ok')
+      },
+      readAccess: async () => ({ fetcher: transport, identityKey: 'nodeseek:user', userId: 'user' }),
+      sourceAllowed: () => allowed
+    });
+
+    await expect(gateway.markAllRead('nodeseek', 'nodeseek:user')).rejects.toMatchObject({
+      reason: 'source-disabled',
+      source: 'nodeseek'
+    });
+    expect(transport.mock.calls.map(([input]) => input)).toEqual(['/first']);
+  });
+
+  it.each(['list', 'snapshot', 'detail', 'mutate'] as const)(
+    '[REG-ACCOUNT-041] stops %s before its next private transport when canonical account access closes mid-flight',
+    async (operationName) => {
+      let privateAccessCurrent = true;
+      const firstResponse = Promise.withResolvers<Response>();
+      const privateAccessAllowed = vi.fn(() => privateAccessCurrent);
+      const transport = vi.fn((input: string) =>
+        input === '/first' ? firstResponse.promise : Promise.resolve(new Response('{}', { status: 200 }))
+      );
+      const committed = vi.fn();
+      const runPrivateTransport = async (access: NotificationAdapterAccess) => {
+        await access.fetcher!('/first');
+        await access.fetcher!('/second');
+        committed();
+      };
+      const sourceAdapter = adapter('ok');
+      sourceAdapter.listPage = vi.fn(async (access) => {
+        await runPrivateTransport(access);
+        return { items: [], cursor: null, hasMore: false };
+      });
+      sourceAdapter.readUnreadSnapshot = vi.fn(async (access) => {
+        await runPrivateTransport(access);
+        return { total: 0, checkedAt: '2026-08-10T00:00:00Z' };
+      });
+      sourceAdapter.loadDetail = vi.fn(async (item, access) => {
+        await runPrivateTransport(access);
+        return { notification: item, title: item.title };
+      });
+      sourceAdapter.markRead = vi.fn(async (_item, _detail, access) => {
+        await runPrivateTransport(access);
+        return { confirmed: true };
+      });
+      const gateway = createNotificationGateway({
+        adapters: {
+          nodeseek: sourceAdapter,
+          linuxdo: adapter('ok'),
+          yaohuo: adapter('ok'),
+          xiaoyinsi: adapter('ok')
+        },
+        privateAccessAllowed,
+        readAccess: async () => ({ fetcher: transport, identityKey: 'nodeseek:user', userId: 'user' })
+      });
+      const item = {
+        source: 'nodeseek' as const,
+        id: 'reply:user',
+        kind: 'reply' as const,
+        actor: { name: 'alice' },
+        title: 'notification',
+        createdAt: null,
+        unread: true,
+        target: { type: 'information' as const }
+      };
+      const operations = {
+        list: () => gateway.listPage('nodeseek', { expectedIdentityKey: 'nodeseek:user' }),
+        snapshot: () => gateway.readUnreadSnapshot('nodeseek'),
+        detail: () => gateway.loadDetail(item, 'nodeseek:user'),
+        mutate: () => gateway.markRead(item, { notification: item, title: item.title }, 'nodeseek:user')
+      };
+
+      const operation = operations[operationName]();
+      await vi.waitFor(() => expect(transport).toHaveBeenCalledWith('/first', undefined));
+      privateAccessCurrent = false;
+      firstResponse.resolve(new Response('{}', { status: 200 }));
+
+      await expect(operation).rejects.toMatchObject({ reason: 'private-access-stale', source: 'nodeseek' });
+      expect(privateAccessAllowed).toHaveBeenCalledWith('nodeseek', 'nodeseek:user');
+      expect(transport).toHaveBeenCalledTimes(1);
+      expect(committed).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does no access or adapter work for an explicit empty aggregate allowlist', async () => {
+    const sourceAdapter = adapter('ok');
+    const readAccess = vi.fn(async () => ({ identityKey: 'nodeseek:user', userId: 'user' }));
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: sourceAdapter,
+        linuxdo: adapter('ok'),
+        yaohuo: adapter('ok'),
+        xiaoyinsi: adapter('ok')
+      },
+      readAccess,
+      sourceAllowed: () => true
+    });
+
+    await expect(gateway.listAllPage({ sources: [] })).resolves.toMatchObject({ items: [], hasMore: false });
+    expect(readAccess).not.toHaveBeenCalled();
+    expect(sourceAdapter.listPage).not.toHaveBeenCalled();
+  });
+
   it('[REG-NOTIFY-031] forwards adapter-owned categories into category-scoped list reads', async () => {
     const sourceAdapter = adapter('ok');
     const gateway = createNotificationGateway({
@@ -67,7 +308,7 @@ describe('notification gateway', () => {
     }));
     const gateway = createNotificationGateway({ adapters, readAccess });
 
-    const result = await gateway.listAllPage();
+    const result = await gateway.listAllPage({ sources: notificationSources });
 
     expect(result.items.map((item) => item.source)).toEqual(['nodeseek', 'yaohuo', 'xiaoyinsi']);
     expect(result.errors.linuxdo).toMatchObject({ message: 'source unavailable', kind: 'ordinary' });
@@ -410,8 +651,8 @@ describe('notification gateway', () => {
       readAccess: async (source) => ({ identityKey: `${source}:user`, userId: 'user' })
     });
 
-    const first = await gateway.listAllPage();
-    const second = await gateway.listAllPage({ cursors: first.nextCursors });
+    const first = await gateway.listAllPage({ sources: notificationSources });
+    const second = await gateway.listAllPage({ cursors: first.nextCursors, sources: notificationSources });
 
     expect(adapters.nodeseek.listPage).toHaveBeenCalledTimes(2);
     expect(adapters.linuxdo.listPage).toHaveBeenCalledTimes(1);

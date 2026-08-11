@@ -4,7 +4,6 @@ import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChal
 import {
   buildDiscourseLevelProfileFromSummary,
   displayDiscourseLevelChange,
-  type DiscourseActivityStats,
   type DiscourseLevelProfile,
   type DiscourseLevelRequirement,
   type DiscourseSummaryInput
@@ -17,7 +16,6 @@ const CONNECT_URL = 'https://connect.linux.do/';
 const SNAPSHOT_KEY_PREFIX = 'linuxdo-level-snapshot:';
 
 export type LinuxDoLevelRequirement = DiscourseLevelRequirement;
-export type LinuxDoActivityStats = DiscourseActivityStats;
 export type LinuxDoLevelProfile = DiscourseLevelProfile;
 type LinuxDoSummaryInput = DiscourseSummaryInput;
 export const buildLinuxDoLevelProfileFromSummary = buildDiscourseLevelProfileFromSummary;

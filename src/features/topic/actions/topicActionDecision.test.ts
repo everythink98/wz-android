@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createSiteSessionViewModel, createSiteSessionStates } from '@/domain/session/siteSessionState';
 import type { TopicDetail } from '@/domain/forum/models';
-import { decideTopicAction } from './topicActionDecision';
+import { decideTopicAction, topicActionDecisionMessage } from './topicActionDecision';
 
 const topic = { source: 'linuxdo', id: '42', canCreatePost: true } as TopicDetail;
 const loggedIn = createSiteSessionViewModel({
@@ -21,6 +21,7 @@ describe('topic action decision', () => {
     ['unsupported', { topic: { ...topic, source: 'v2ex' } }],
     ['login-required', { account: createSiteSessionViewModel(createSiteSessionStates().linuxdo) }],
     ['identity-pending', { account: { ...loggedIn, identityTrust: 'pending' } }],
+    ['identity-unavailable', { account: { ...loggedIn, canWrite: false, identityTrust: 'unknown' } }],
     ['object-forbidden', { account: loggedIn, objectAllowed: false }],
     ['missing-target', { account: loggedIn, targetPresent: false }],
     ['already-complete', { account: loggedIn, alreadyComplete: true }],
@@ -37,6 +38,17 @@ describe('topic action decision', () => {
       allowed: true,
       reason: 'allowed'
     });
+  });
+
+  it('[REG-ACCOUNT-031] explains terminal unknown without claiming that the user logged out', () => {
+    const decision = decideTopicAction({
+      account: { ...loggedIn, canWrite: false, identityTrust: 'unknown' },
+      action: 'reply',
+      topic
+    });
+
+    expect(decision).toEqual({ allowed: false, reason: 'identity-unavailable' });
+    expect(topicActionDecisionMessage(decision)).toBe('账号状态暂不可确认，请重试账号核对');
   });
 
   it('keeps an optimistic completed target visibly pending until transport settles', () => {

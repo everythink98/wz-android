@@ -405,9 +405,9 @@ export const TopicContentList = memo(function TopicContentList({
   const replyStartError = read.replyStartError;
   const replyEndError = read.replyEndError;
   const replyCollectionComplete = read.replyCollectionComplete;
+  const replyRowsPartial = read.replyRowsPartial;
   const repliesError = read.repliesError;
   const repliesLoading = read.repliesLoading;
-  const repliesSyncing = read.repliesSyncing;
   const retryReplies = read.retryReplies;
   const unreadReplyCount = read.unreadReplyCount;
   const onCommentQueryChange = commands.view.changeCommentQuery;
@@ -526,12 +526,11 @@ export const TopicContentList = memo(function TopicContentList({
   const replyDisplayCount =
     replyFilter === 'author' || replyFilter === 'images' || replyHighlightQuery.trim()
       ? replies.length
-      : replyTotalCount;
-  const repliesSyncStatus = repliesSyncing
-    ? `评论正在同步，暂已确认 ${sourceReplies.length}${
-        typeof topic?.replyCount === 'number' ? ` / ${topic.replyCount}` : ''
-      } 条`
-    : '';
+      : !replyRowsPartial
+        ? replyTotalCount
+        : sourceReplies.length;
+  const repliesPartialStatus =
+    replyRowsPartial && sourceReplies.length > 0 ? `部分评论未能读取，已显示 ${sourceReplies.length} 条` : '';
   const renderReplyErrorState = useCallback(
     (error: SourceErrorInfo | null, edge?: 'start' | 'end') =>
       error ? (
@@ -553,8 +552,7 @@ export const TopicContentList = memo(function TopicContentList({
       replyOrderMenuOpen,
       replyStartError,
       repliesError,
-      repliesLoading,
-      repliesSyncing
+      repliesLoading
     }),
     [
       actionBusy,
@@ -562,7 +560,6 @@ export const TopicContentList = memo(function TopicContentList({
       replyCollectionComplete,
       repliesError,
       repliesLoading,
-      repliesSyncing,
       replyComposerOpen,
       replyEndError,
       replyOrder,
@@ -766,7 +763,7 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const replyBoundaryConfirmed =
     canShowReplies &&
-    replyCollectionComplete &&
+    !replyRowsPartial &&
     sourceReplies.length > 0 &&
     !replyHasMore &&
     !repliesLoading &&
@@ -1809,7 +1806,7 @@ export const TopicContentList = memo(function TopicContentList({
                 />
               ) : null}
             </View>
-            {repliesSyncStatus ? <Text style={styles.noticeText}>{repliesSyncStatus}</Text> : null}
+            {repliesPartialStatus ? <Text style={styles.noticeText}>{repliesPartialStatus}</Text> : null}
             <View style={styles.replySelectionRow}>
               <View style={styles.replyFilterRailSlot}>
                 <PillRail
@@ -1900,16 +1897,8 @@ export const TopicContentList = memo(function TopicContentList({
       if (listItem.type === 'emptyReplies') {
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
-            {repliesLoading || repliesSyncing ? (
-              <LoadingState
-                text={
-                  repliesSyncing
-                    ? '评论正在同步...'
-                    : replyOrder === 'newest'
-                      ? '正在读取最新回复...'
-                      : '正在读取回复...'
-                }
-              />
+            {repliesLoading ? (
+              <LoadingState text={replyOrder === 'newest' ? '正在读取最新回复...' : '正在读取回复...'} />
             ) : repliesError ? (
               renderReplyErrorState(repliesError)
             ) : (
@@ -2046,8 +2035,7 @@ export const TopicContentList = memo(function TopicContentList({
       repliesByFloor,
       replyDisplayCount,
       repliesLoading,
-      repliesSyncing,
-      repliesSyncStatus,
+      repliesPartialStatus,
       scrollToAcceptedAnswer,
       selectReplyOrder,
       sourceReplies.length,

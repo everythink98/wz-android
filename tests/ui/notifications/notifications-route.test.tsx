@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import type { ForumNotification } from '@/domain/notifications/models';
+import { notificationSources } from '@/domain/forum/sourceCatalog';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import {
   NotificationDetailRoute,
@@ -152,6 +153,7 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
       isWritableSessionTicketCurrent: jest.fn(() => true)
     },
     contentWidth: 360,
+    enabledNotificationSources: notificationSources,
     gateway,
     identityKeys: { nodeseek: 'nodeseek:new-account' },
     identitySignature: 'nodeseek:new-account',
@@ -174,6 +176,126 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
 }
 
 describe('notification routes', () => {
+  it('falls back to All without mounting a source reader when a route parameter is disabled', async () => {
+    appQueryClient.clear();
+    const gateway = {
+      getCategories: jest.fn(),
+      listAllPage: jest.fn(),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: [],
+      enabledNotificationSources: []
+    } as NotificationRouteRuntimeValue;
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'Notifications', params: { source: 'nodeseek' } }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    expect(view.getByTestId('notification-source-all').props.accessibilityState.selected).toBe(true);
+    expect(view.getByText('尚未启用内容源')).toBeTruthy();
+    expect(gateway.getCategories).not.toHaveBeenCalled();
+    expect(gateway.listAllPage).not.toHaveBeenCalled();
+    expect(gateway.listPage).not.toHaveBeenCalled();
+  });
+
+  it('aborts a selected source reader and returns to All when that source is disabled', async () => {
+    appQueryClient.clear();
+    let categorySignal: AbortSignal | undefined;
+    const gateway = {
+      getCategories: jest.fn((_source: string, _identityKey: string, signal: AbortSignal) => {
+        categorySignal = signal;
+        return new Promise<never>(() => undefined);
+      }),
+      listAllPage: jest.fn(),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    let runtime = routeRuntime(gateway);
+    const screen = () => (
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'Notifications', params: { source: 'nodeseek' } }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>
+    );
+    const view = await render(screen(), { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(categorySignal).toBeDefined());
+
+    runtime = { ...runtime, activeSources: [], enabledNotificationSources: [] };
+    await act(async () => view.rerender(screen()));
+
+    await waitFor(() => expect(categorySignal?.aborted).toBe(true));
+    expect(view.getByTestId('notification-source-all').props.accessibilityState.selected).toBe(true);
+    expect(view.queryByTestId('notification-source-nodeseek')).toBeNull();
+  });
+
+  it('shows a disabled-source guide without mounting a notification detail controller', async () => {
+    appQueryClient.clear();
+    const gateway = {
+      getCategories: jest.fn(),
+      listAllPage: jest.fn(),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: ['nodeseek'],
+      enabledNotificationSources: ['linuxdo']
+    } as NotificationRouteRuntimeValue;
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NotificationDetailRoute
+          navigation={{ navigate: jest.fn() } as never}
+          route={{
+            key: 'notification-detail',
+            name: 'NotificationDetail',
+            params: { notification, identityKey: 'nodeseek:new-account' }
+          }}
+        />
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    expect(view.getByText('NodeSeek已停用')).toBeTruthy();
+    expect(view.getByText('该内容源已停用，启用后才能查看此内容。')).toBeTruthy();
+    expect(view.getByText('管理内容源')).toBeTruthy();
+    expect(
+      appQueryClient.getQueryState(
+        forumQueryKeys.notificationDetail({
+          source: notification.source,
+          identityKey: 'nodeseek:new-account',
+          notificationId: notification.id
+        })
+      )
+    ).toBeUndefined();
+    expect(gateway.loadDetail).not.toHaveBeenCalled();
+    expect(gateway.markRead).not.toHaveBeenCalled();
+  });
+
   it('[REG-NOTIFY-031] settles an empty aggregate list without waiting for the disabled category query', async () => {
     appQueryClient.clear();
     const getCategories = jest.fn();
@@ -418,6 +540,82 @@ describe('notification routes', () => {
     expect(view.queryByText('账号尚未就绪')).toBeNull();
     expect(gateway.listPage).not.toHaveBeenCalled();
   });
+
+  it('[REG-ACCOUNT-031] keeps terminal unknown distinct from logged out in the single-source route', async () => {
+    appQueryClient.clear();
+    const gateway = {
+      listAllPage: jest.fn(),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = routeRuntime(gateway);
+    runtime.sessions.yaohuo = { ...runtime.sessions.yaohuo, identityTrust: 'unknown' };
+    runtime.identityKeys.yaohuo = 'yaohuo:known-account';
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'Notifications', params: { source: 'yaohuo' } }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    expect(view.getByText('账号状态暂不可确认')).toBeTruthy();
+    expect(view.queryByText('账号尚未就绪')).toBeNull();
+    expect(view.queryByText(/请先登录/)).toBeNull();
+    expect(gateway.listPage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { identityTrust: 'pending' as const, title: '账号确认中', message: /正在确认已启用站点的账号身份/ },
+    { identityTrust: 'unknown' as const, title: '账号状态暂不可确认', message: /账号中心重试核对/ }
+  ])(
+    '[REG-ACCOUNT-041] presents an all-source $identityTrust identity state without claiming the user is logged out',
+    async ({ identityTrust, title, message }) => {
+      appQueryClient.clear();
+      const gateway = {
+        getCategories: jest.fn(),
+        listAllPage: jest.fn(),
+        listPage: jest.fn(),
+        loadDetail: jest.fn(),
+        markAllRead: jest.fn(),
+        markRead: jest.fn(),
+        readUnreadSnapshot: jest.fn()
+      } as unknown as NotificationRouteRuntimeValue['gateway'];
+      const runtime = routeRuntime(gateway);
+      runtime.activeSources = [];
+      for (const source of runtime.enabledNotificationSources) {
+        runtime.sessions[source] = { ...runtime.sessions[source], identityTrust };
+        runtime.identityKeys[source] = `${source}:known-account`;
+      }
+
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'Notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+
+      expect(view.getByText(title)).toBeTruthy();
+      expect(view.getByText(message)).toBeTruthy();
+      expect(view.queryByText(/登录任一|请先登录/)).toBeNull();
+      expect(gateway.getCategories).not.toHaveBeenCalled();
+      expect(gateway.listAllPage).not.toHaveBeenCalled();
+      expect(gateway.listPage).not.toHaveBeenCalled();
+    }
+  );
 
   it('[REG-NOTIFY-015] retries only the selected failed source in the aggregate list', async () => {
     appQueryClient.clear();
@@ -1067,13 +1265,15 @@ describe('notification routes', () => {
         yaohuo: sourceAdapter,
         xiaoyinsi: sourceAdapter
       },
+      privateAccessAllowed: () => true,
       readAccess: async () => {
         accessCalls += 1;
         if (accessCalls === 1) return { identityKey: 'nodeseek:new-account', userId: 'new-account' };
         return new Promise<NotificationAdapterAccess>((resolve) => {
           resolveWriteAccess = resolve;
         });
-      }
+      },
+      sourceAllowed: () => true
     });
     let runtime = routeRuntime(gateway);
     const route = {
@@ -1125,6 +1325,7 @@ describe('notification routes', () => {
         yaohuo: sourceAdapter,
         xiaoyinsi: sourceAdapter
       },
+      privateAccessAllowed: () => true,
       readAccess: async () => {
         accessCalls += 1;
         if (accessCalls <= 2) return { identityKey: 'nodeseek:new-account', userId: 'new-account' };
@@ -1134,7 +1335,8 @@ describe('notification routes', () => {
           });
         }
         return { identityKey: 'nodeseek:next-account', userId: 'next-account' };
-      }
+      },
+      sourceAllowed: () => true
     });
     let runtime = routeRuntime(gateway);
     const route = {

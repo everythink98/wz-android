@@ -110,8 +110,6 @@ const discourseActionRuntimes = {
   }
 } satisfies Record<DiscourseSource, DiscourseActionRuntime>;
 
-export const discourseActionRuntimeSources = Object.keys(discourseActionRuntimes) as DiscourseSource[];
-
 export function prepareDiscourseActionRuntime(
   source: DiscourseSource,
   context: DiscourseActionRuntimeContext

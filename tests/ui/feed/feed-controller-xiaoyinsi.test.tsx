@@ -4,14 +4,17 @@ import { useLayoutEffect } from 'react';
 import { useFeedController } from '@/features/feed/useFeedController';
 import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
+import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { ReadGateway } from '@/sources/readGateway';
-import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
-import { sessionSources } from '@/domain/forum/sourceCatalog';
+import { sessionSources, sourceValues, type SessionSource, type Source } from '@/domain/forum/sourceCatalog';
 import type { Category, SourceErrors, Topic } from '@/domain/forum/models';
+import { forumReadPlanScopesKey, resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
+import { isSessionSource } from '@/domain/forum/sourceCatalog';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
 function renderHook<Result>(callback: () => Result) {
@@ -19,21 +22,83 @@ function renderHook<Result>(callback: () => Result) {
   return renderNativeHook(callback, { wrapper: QueryTestWrapper });
 }
 
+const defaultEnabledSourcesKey = canonicalEnabledSourcesKey(createEmptyReaderData().settings.contentSources);
+
 type FeedRuntimeOptions = Omit<Parameters<typeof useFeedController>[0], 'catalogCategories'> & {
   catalogActive?: boolean;
+  identityBarriers?: readonly SessionSource[];
 };
 
+function testReadPlan(
+  source: Source,
+  operation: ForumReadOperation,
+  enabled: boolean,
+  identityBarriers: readonly SessionSource[] = [],
+  sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs
+) {
+  return resolveForumReadPlan(
+    source,
+    operation,
+    enabled,
+    isSessionSource(source)
+      ? {
+          source,
+          authenticated: !identityBarriers.includes(source),
+          authSurfaceOpen: false,
+          identityKey: `${source}:test`,
+          identityTrust: identityBarriers.includes(source) ? 'pending' : 'confirmed',
+          sessionEpoch: sessionEpochs[source],
+          sourceEnabled: enabled
+        }
+      : undefined
+  );
+}
+
+function aggregateReadPlanScope(
+  operation: ForumReadOperation,
+  enabledSources: readonly Source[] = sourceValues,
+  identityBarriers: readonly SessionSource[] = [],
+  sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs
+) {
+  return forumReadPlanScopesKey(
+    enabledSources.map(
+      (source) => [source, testReadPlan(source, operation, true, identityBarriers, sessionEpochs).cacheScope] as const
+    )
+  );
+}
+
 function useFeedRuntime({ catalogActive, ...options }: FeedRuntimeOptions) {
+  const sourceProjection = projectContentSourcePreferences(options.readerData.settings.contentSources);
+  const enabledSources = new Set(sourceProjection.enabledSources);
+  const readGateway = {
+    ...options.readGateway,
+    getReadPlan: (source: Source, operation: ForumReadOperation) =>
+      testReadPlan(source, operation, enabledSources.has(source), options.identityBarriers, options.sessionEpochs)
+  } as ReadGateway;
   const catalog = useForumCatalogRuntime({
     active: (catalogActive ?? options.active) && !options.linuxDoVerificationActive,
-    identityBarriers: options.identityBarriers,
-    identityReconciliationPending: options.identityReconciliationPending ?? false,
+    enabledFeedSources: sourceProjection.feedSources,
+    enabledSourcesKey: canonicalEnabledSourcesKey(options.readerData.settings.contentSources),
     notify: options.notify,
-    readGateway: options.readGateway,
-    retainableIdentityBarriers: options.retainableIdentityBarriers,
+    readGateway,
     sessionEpochs: options.sessionEpochs
   });
-  return useFeedController({ ...options, catalogCategories: catalog.categories });
+  return useFeedController({ ...options, readGateway, catalogCategories: catalog.categories });
+}
+
+function readerDataWithEnabledSources(enabledSources: readonly Source[]) {
+  const data = createEmptyReaderData();
+  const enabled = new Set(enabledSources);
+  return {
+    ...data,
+    settings: {
+      ...data.settings,
+      contentSources: [
+        ...enabledSources.map((source) => ({ source, enabled: true })),
+        ...sourceValues.filter((source) => !enabled.has(source)).map((source) => ({ source, enabled: false }))
+      ]
+    }
+  };
 }
 
 describe('小隐寺 Feed controller', () => {
@@ -41,6 +106,258 @@ describe('小隐寺 Feed controller', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+  });
+
+  it('[REG-SOURCE-011] does not pause public Feed or Categories while identity reconciliation is pending', async () => {
+    const topic: Topic = {
+      source: 'xiaoyinsi',
+      id: 'public-topic',
+      title: '公开主题',
+      author: 'alice',
+      url: 'https://forum.xiaoyinsi.com/t/public-topic',
+      createdAt: '2026-08-10T00:00:00.000Z',
+      replyCount: 0
+    };
+    const getCategories = jest.fn(
+      async (
+        _request: Parameters<ReadGateway['getCategories']>[0],
+        _context?: Parameters<ReadGateway['getCategories']>[1]
+      ) => ({
+        items: [],
+        errors: {}
+      })
+    );
+    const getFeed = jest.fn(
+      async (_request: Parameters<ReadGateway['getFeed']>[0], _context?: Parameters<ReadGateway['getFeed']>[1]) => ({
+        items: [topic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      })
+    );
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        active: true,
+        identityBarriers: ['xiaoyinsi'],
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData: readerDataWithEnabledSources(['xiaoyinsi']),
+        readerDataLoaded: true,
+        readGateway: { getCategories, getFeed } as unknown as ReadGateway,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn()
+      })
+    );
+
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(hook.result.current.shownFeedItems).toEqual([topic]));
+    expect(getCategories.mock.calls[0]?.[1]).toMatchObject({
+      readPlanScopes: [['xiaoyinsi', 'public:omit']]
+    });
+    expect(getFeed.mock.calls[0]?.[1]).toMatchObject({
+      readPlanScopes: [['xiaoyinsi', 'public:omit']]
+    });
+  });
+
+  it('[REG-SOURCE-010] replaces aggregate Feed with the same enabled-source snapshot', async () => {
+    type FeedResult = Awaited<ReturnType<ReadGateway['getFeed']>>;
+    const requests: {
+      context?: { includedSources?: readonly Source[] };
+      deferred: ReturnType<typeof Promise.withResolvers<FeedResult>>;
+      signal: AbortSignal;
+    }[] = [];
+    const getFeed = jest.fn(
+      ({ signal }: { signal: AbortSignal }, context?: { includedSources?: readonly Source[] }): Promise<FeedResult> => {
+        const deferred = Promise.withResolvers<FeedResult>();
+        signal.addEventListener('abort', () => deferred.reject(new DOMException('aborted', 'AbortError')), {
+          once: true
+        });
+        requests.push({ context, deferred, signal });
+        return deferred.promise;
+      }
+    );
+    const readGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as ReadGateway;
+    let readerData = readerDataWithEnabledSources(['v2ex', 'nodeseek']);
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData,
+        readerDataLoaded: true,
+        active: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway
+      })
+    );
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0].context?.includedSources).toEqual(['v2ex', 'nodeseek']);
+
+    readerData = readerDataWithEnabledSources(['v2ex']);
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[0].signal.aborted).toBe(true);
+    expect(requests[1].context?.includedSources).toEqual(['v2ex']);
+  });
+
+  it('[REG-SOURCE-010] keeps Feed selection on reorder and exposes no warm data when all sources are disabled', async () => {
+    const topic: Topic = {
+      source: 'v2ex',
+      id: 'enabled-topic',
+      title: '启用来源主题',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/enabled-topic',
+      createdAt: '2026-08-10T00:00:00.000Z',
+      replyCount: 0
+    };
+    const getFeed = jest.fn(async () => ({ items: [topic], errors: {}, hasMore: false, nextPage: null }));
+    const readGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as ReadGateway;
+    let readerData = readerDataWithEnabledSources(['v2ex', 'nodeseek']);
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData,
+        readerDataLoaded: true,
+        active: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway
+      })
+    );
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([topic]));
+    await act(async () => hook.result.current.setReadingFilter('unread'));
+    readerData = readerDataWithEnabledSources(['nodeseek', 'v2ex']);
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.feedSource).toBe('all');
+    expect(hook.result.current.readingFilter).toBe('unread');
+
+    readerData = readerDataWithEnabledSources([]);
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.activeFeedState.items).toEqual([]);
+    expect(hook.result.current.feedBusy).toBe(false);
+    expect(hook.result.current.feedOutcomeKind).toBe('empty');
+  });
+
+  it('[REG-SOURCE-010] gates a disabled direct Feed before fallback, refresh, pagination or reselection can read it', async () => {
+    const getFeed = jest.fn(async ({ source }: Parameters<ReadGateway['getFeed']>[0]) => ({
+      items: [
+        {
+          source: source === 'all' ? 'v2ex' : source,
+          id: `${source}-topic`,
+          title: `${source} topic`,
+          author: 'alice',
+          url: `https://example.com/${source}`,
+          createdAt: '2026-08-10T00:00:00.000Z',
+          replyCount: 0
+        }
+      ],
+      errors: {},
+      hasMore: true,
+      nextPage: 2
+    }));
+    const readGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as ReadGateway;
+    const notify = jest.fn();
+    const cancelQueries = jest.spyOn(appQueryClient, 'cancelQueries');
+    const removeQueries = jest.spyOn(appQueryClient, 'removeQueries');
+    let readerData = readerDataWithEnabledSources(['v2ex', 'nodeseek']);
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        linuxDoVerificationActive: false,
+        notify,
+        readerData,
+        readerDataLoaded: true,
+        active: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway
+      })
+    );
+
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
+    await act(async () => hook.result.current.changeFeedSource('v2ex'));
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(2));
+    await act(async () => hook.result.current.setCategoryFilter('qna'));
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(3));
+
+    const cancelCountBeforeReorder = cancelQueries.mock.calls.length;
+    const removeCountBeforeReorder = removeQueries.mock.calls.length;
+    readerData = readerDataWithEnabledSources(['nodeseek', 'v2ex']);
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    expect(hook.result.current.feedSource).toBe('v2ex');
+    expect(hook.result.current.categoryFilter).toBe('qna');
+    expect(getFeed).toHaveBeenCalledTimes(3);
+    expect(cancelQueries).toHaveBeenCalledTimes(cancelCountBeforeReorder);
+    expect(removeQueries).toHaveBeenCalledTimes(removeCountBeforeReorder);
+
+    readerData = readerDataWithEnabledSources([]);
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+
+    expect(hook.result.current.feedSource).toBe('all');
+    expect(hook.result.current.categoryFilter).toBe('');
+    const requestCount = getFeed.mock.calls.length;
+    let loadOutcome: Awaited<ReturnType<typeof hook.result.current.loadFeed>> | undefined;
+    await act(async () => {
+      loadOutcome = await hook.result.current.loadFeed();
+      await hook.result.current.refreshFeed();
+      hook.result.current.changeFeedSource('v2ex');
+      await Promise.resolve();
+    });
+
+    expect(loadOutcome).toBe('stale');
+    expect(hook.result.current.feedSource).toBe('all');
+    expect(getFeed).toHaveBeenCalledTimes(requestCount);
+    expect(notify).not.toHaveBeenCalled();
+    expect(
+      appQueryClient
+        .getQueryCache()
+        .findAll({
+          predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[1] === 'v2ex' && queryKey[2] === 'feed'
+        })
+        .every((query) => query.state.fetchStatus === 'idle')
+    ).toBe(true);
+    cancelQueries.mockRestore();
+    removeQueries.mockRestore();
   });
 
   it.each([
@@ -333,56 +650,28 @@ describe('小隐寺 Feed controller', () => {
     });
   });
 
-  it('[REG-FEED-011] starts the aggregate Feed and Categories only once after identity bootstrap settles', async () => {
-    const topic = {
-      source: 'v2ex' as const,
-      id: 'single-bootstrap-read',
-      title: '启动只读取一次',
+  it('[REG-SOURCE-011] starts aggregate public lanes without waiting for account bootstrap', async () => {
+    const topic: Topic = {
+      source: 'v2ex',
+      id: 'public-bootstrap',
+      title: '公开启动主题',
       author: 'alice',
-      url: 'https://www.v2ex.com/t/single-bootstrap-read',
-      createdAt: '2026-07-27T00:00:00.000Z',
+      url: 'https://www.v2ex.com/t/public-bootstrap',
+      createdAt: '2026-08-10T00:00:00.000Z',
       replyCount: 0
     };
-    const getCategories = jest.fn(
-      async (_request?: unknown, _context?: { identityBarriers?: readonly ForumIdentityBarrierSource[] }) => ({
-        items: [],
-        errors: {}
+    const getCategories = jest.fn(async () => ({ items: [], errors: {} }));
+    const getFeed = jest.fn(
+      async (_request: Parameters<ReadGateway['getFeed']>[0], _context?: Parameters<ReadGateway['getFeed']>[1]) => ({
+        items: [topic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
       })
     );
-    const getFeed = jest.fn(
-      async (
-        { page = 1 }: { page?: number },
-        _context?: { identityBarriers?: readonly ForumIdentityBarrierSource[] }
-      ) =>
-        page === 1
-          ? {
-              items: [topic],
-              errors: {},
-              hasMore: true as const,
-              nextCursor: 'bootstrap-cursor',
-              nextPage: 2 as const
-            }
-          : {
-              items: [],
-              errors: {},
-              hasMore: false as const,
-              nextPage: null
-            }
-    );
-    const readGateway = {
-      getCategories,
-      getFeed,
-      hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as ReadGateway;
-    let identityReconciliationPending = true;
-    let identityBarriers: ForumIdentityBarrierSource[] = [...sessionSources];
-    let sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs;
-    const renderedStates: { busy: boolean; itemCount: number; refreshing: boolean }[] = [];
-    const hook = await renderHook(() => {
-      const controller = useFeedRuntime({
-        identityBarriers,
-        identityReconciliationPending,
-        sessionEpochs,
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        identityBarriers: sessionSources,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
@@ -391,139 +680,20 @@ describe('小隐寺 Feed controller', () => {
         showLinuxDoVerification: jest.fn(),
         showNodeSeekVerification: jest.fn(),
         showYaohuoLogin: jest.fn(),
-        readGateway
-      });
-      renderedStates.push({
-        busy: controller.feedBusy,
-        itemCount: controller.activeFeedState.items.length,
-        refreshing: controller.activeFeedState.refreshing
-      });
-      return controller;
-    });
-
-    expect(hook.result.current.feedBusy).toBe(true);
-    expect(getFeed).not.toHaveBeenCalled();
-    expect(getCategories).not.toHaveBeenCalled();
-
-    for (const [barriers, epochs] of [
-      [['linuxdo', 'yaohuo', 'xiaoyinsi'], { ...initialForumSessionEpochs, nodeseek: 1 }],
-      [['yaohuo', 'xiaoyinsi'], { ...initialForumSessionEpochs, nodeseek: 1, linuxdo: 1 }],
-      [['xiaoyinsi'], { ...initialForumSessionEpochs, nodeseek: 1, linuxdo: 1, yaohuo: 1 }]
-    ] satisfies [ForumIdentityBarrierSource[], ForumSessionEpochs][]) {
-      identityBarriers = barriers;
-      sessionEpochs = epochs;
-      await act(async () => {
-        hook.rerender({});
-        await Promise.resolve();
-      });
-    }
-
-    expect(getFeed).not.toHaveBeenCalled();
-    expect(getCategories).not.toHaveBeenCalled();
-    const bootstrapBarrierSnapshots = new Set(
-      appQueryClient
-        .getQueryCache()
-        .getAll()
-        .filter(
-          (query) =>
-            query.queryKey[0] === 'forum' &&
-            query.queryKey[1] === 'all' &&
-            (query.queryKey[2] === 'feed' || query.queryKey[2] === 'categories')
-        )
-        .map((query) => {
-          const state = query.queryKey[3] as { identityBarriers: unknown; sessionEpoch: unknown };
-          return JSON.stringify({
-            identityBarriers: state.identityBarriers,
-            sessionEpoch: state.sessionEpoch
-          });
-        })
-    );
-    expect([...bootstrapBarrierSnapshots]).toEqual([
-      JSON.stringify({
-        identityBarriers: [...sessionSources].sort(),
-        sessionEpoch: initialForumSessionEpochs
+        readGateway: { getCategories, getFeed } as unknown as ReadGateway
       })
-    ]);
+    );
 
-    identityReconciliationPending = false;
-    await act(async () => {
-      hook.rerender({});
-      await Promise.resolve();
-    });
-
+    await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getCategories).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([topic]));
-    expect(getFeed).toHaveBeenCalledTimes(1);
-    expect(getCategories).toHaveBeenCalledTimes(1);
-    expect(getFeed.mock.calls[0]?.[1]).toMatchObject({ identityBarriers: ['xiaoyinsi'] });
-    expect(getCategories.mock.calls[0]?.[1]).toMatchObject({ identityBarriers: ['xiaoyinsi'] });
-    expect(
-      renderedStates.filter((state) => state.itemCount > 0).every((state) => !state.busy && !state.refreshing)
-    ).toBe(true);
-
-    identityReconciliationPending = true;
-    for (const barriers of [
-      [...sessionSources],
-      ['linuxdo', 'yaohuo', 'xiaoyinsi'],
-      ['yaohuo', 'xiaoyinsi'],
-      ['xiaoyinsi']
-    ] satisfies ForumIdentityBarrierSource[][]) {
-      identityBarriers = barriers;
-      await act(async () => {
-        hook.rerender({});
-        await Promise.resolve();
-      });
-    }
-
-    expect(getFeed).toHaveBeenCalledTimes(1);
-    expect(getCategories).toHaveBeenCalledTimes(1);
-    expect(hook.result.current.activeFeedState.items).toEqual([topic]);
-    expect(hook.result.current.feedBusy).toBe(false);
-    let loadOutcome: Awaited<ReturnType<typeof hook.result.current.loadFeed>> | undefined;
-    await act(async () => {
-      loadOutcome = await hook.result.current.loadFeed();
-    });
-    expect(loadOutcome).toBe('stale');
-    expect(getFeed).toHaveBeenCalledTimes(1);
-
-    identityReconciliationPending = false;
-    await act(async () => {
-      hook.rerender({});
-      await Promise.resolve();
-    });
-
-    expect(getFeed).toHaveBeenCalledTimes(1);
-    expect(getCategories).toHaveBeenCalledTimes(1);
-    const allBarrierSnapshots = new Set(
-      appQueryClient
-        .getQueryCache()
-        .getAll()
-        .filter(
-          (query) =>
-            query.queryKey[0] === 'forum' &&
-            query.queryKey[1] === 'all' &&
-            (query.queryKey[2] === 'feed' || query.queryKey[2] === 'categories')
-        )
-        .map((query) => {
-          const state = query.queryKey[3] as { identityBarriers: unknown; sessionEpoch: unknown };
-          return JSON.stringify({
-            identityBarriers: state.identityBarriers,
-            sessionEpoch: state.sessionEpoch
-          });
-        })
-    );
-    expect([...allBarrierSnapshots]).toEqual([
-      JSON.stringify({
-        identityBarriers: [...sessionSources].sort(),
-        sessionEpoch: initialForumSessionEpochs
-      }),
-      JSON.stringify({
-        identityBarriers: ['xiaoyinsi'],
-        sessionEpoch: sessionEpochs
-      })
+    expect(getFeed.mock.calls[0]?.[1]?.readPlanScopes).toEqual([
+      ['v2ex', 'public:omit'],
+      ['linuxdo', 'public:omit'],
+      ['nodeseek', 'public:omit'],
+      ['yaohuo', 'blocked:identity-pending'],
+      ['xiaoyinsi', 'public:omit']
     ]);
-    expect(
-      renderedStates.filter((state) => state.itemCount > 0).every((state) => !state.busy && !state.refreshing)
-    ).toBe(true);
   });
 
   it('[REG-FEED-011] keeps unrelated single-source pagination active during aggregate reconciliation', async () => {
@@ -536,37 +706,40 @@ describe('小隐寺 Feed controller', () => {
       createdAt: '2026-07-27T00:00:00.000Z',
       replyCount: 0
     }));
-    const getFeed = jest.fn(async ({ page = 1, source }: { page?: number; source: string }) => {
-      if (source !== 'v2ex') {
-        return { items: [], errors: {}, hasMore: false as const, nextPage: null };
+    const getFeed = jest.fn(
+      async (
+        { page = 1, source }: { page?: number; source: string },
+        _context?: Parameters<ReadGateway['getFeed']>[1]
+      ) => {
+        if (source !== 'v2ex') {
+          return { items: [], errors: {}, hasMore: false as const, nextPage: null };
+        }
+        return page === 1
+          ? {
+              items: [topics[0]],
+              errors: {},
+              hasMore: true as const,
+              nextCursor: 'v2ex-next',
+              nextPage: 2 as const
+            }
+          : {
+              items: [topics[1]],
+              errors: {},
+              hasMore: false as const,
+              nextPage: null
+            };
       }
-      return page === 1
-        ? {
-            items: [topics[0]],
-            errors: {},
-            hasMore: true as const,
-            nextCursor: 'v2ex-next',
-            nextPage: 2 as const
-          }
-        : {
-            items: [topics[1]],
-            errors: {},
-            hasMore: false as const,
-            nextPage: null
-          };
-    });
+    );
     const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
-    let identityBarriers: ForumIdentityBarrierSource[] = [];
-    let identityReconciliationPending = false;
+    let identityBarriers: SessionSource[] = [];
     let sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs;
     const hook = await renderHook(() =>
       useFeedRuntime({
         identityBarriers,
-        identityReconciliationPending,
         sessionEpochs,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
@@ -589,7 +762,6 @@ describe('小隐寺 Feed controller', () => {
       expect(hook.result.current.activeFeedState.items).toEqual([topics[0]]);
     });
 
-    identityReconciliationPending = true;
     identityBarriers = [...sessionSources];
     sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
     await act(async () => {
@@ -610,7 +782,7 @@ describe('小隐寺 Feed controller', () => {
     });
   });
 
-  it('[REG-FEED-011] blocks a saved source recovery after its identity becomes pending', async () => {
+  it('[REG-SOURCE-011] makes a saved authenticated recovery stale when the public plan takes ownership', async () => {
     const topic = {
       source: 'v2ex' as const,
       id: 'saved-recovery-topic',
@@ -627,38 +799,41 @@ describe('小隐寺 Feed controller', () => {
         verificationRequired: true
       }
     };
-    const getFeed = jest.fn(async ({ page = 1, source }: { page?: number; source: string }) => {
-      if (source !== 'linuxdo') {
-        return { items: [], errors: {}, hasMore: false as const, nextPage: null };
+    const getFeed = jest.fn(
+      async (
+        { page = 1, source }: { page?: number; source: string },
+        _context?: Parameters<ReadGateway['getFeed']>[1]
+      ) => {
+        if (source !== 'linuxdo') {
+          return { items: [], errors: {}, hasMore: false as const, nextPage: null };
+        }
+        return page === 1
+          ? {
+              items: [{ ...topic, source: 'linuxdo' as const, url: 'https://linux.do/t/saved-recovery-topic' }],
+              errors: {},
+              hasMore: true as const,
+              nextCursor: 'saved-recovery-cursor',
+              nextPage: 2 as const
+            }
+          : {
+              items: [],
+              errors: verificationError,
+              hasMore: true as const,
+              nextCursor: 'saved-recovery-cursor',
+              nextPage: 2 as const
+            };
       }
-      return page === 1
-        ? {
-            items: [{ ...topic, source: 'linuxdo' as const, url: 'https://linux.do/t/saved-recovery-topic' }],
-            errors: {},
-            hasMore: true as const,
-            nextCursor: 'saved-recovery-cursor',
-            nextPage: 2 as const
-          }
-        : {
-            items: [],
-            errors: verificationError,
-            hasMore: true as const,
-            nextCursor: 'saved-recovery-cursor',
-            nextPage: 2 as const
-          };
-    });
+    );
     const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
     const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
-    let identityBarriers: ForumIdentityBarrierSource[] = [];
-    let identityReconciliationPending = false;
+    let identityBarriers: SessionSource[] = [];
     const hook = await renderHook(() =>
       useFeedRuntime({
         identityBarriers,
-        identityReconciliationPending,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
@@ -690,7 +865,6 @@ describe('小隐寺 Feed controller', () => {
     expect(recovery).toBeDefined();
     expect(getFeed.mock.calls.filter(([request]) => request.source === 'linuxdo')).toHaveLength(2);
 
-    identityReconciliationPending = true;
     identityBarriers = ['linuxdo'];
     await act(async () => {
       hook.rerender({});
@@ -702,7 +876,8 @@ describe('小隐寺 Feed controller', () => {
       recoveryOutcome = await recovery!.resume();
     });
     expect(recoveryOutcome).toBe('stale');
-    expect(getFeed.mock.calls.filter(([request]) => request.source === 'linuxdo')).toHaveLength(2);
+    expect(getFeed.mock.calls.filter(([request]) => request.source === 'linuxdo')).toHaveLength(3);
+    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ readPlanScope: 'public:omit' });
   });
 
   it('[REG-LINUXDO-006] keeps shared categories on Search without starting Feed and cancels them after leaving both owners', async () => {
@@ -713,12 +888,14 @@ describe('小隐寺 Feed controller', () => {
         signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
       });
     });
-    const getFeed = jest.fn(async (_options: Parameters<ReadGateway['getFeed']>[0]) => ({
-      items: [],
-      errors: {},
-      hasMore: false,
-      nextPage: null
-    }));
+    const getFeed = jest.fn(
+      async (_options: Parameters<ReadGateway['getFeed']>[0], _context?: Parameters<ReadGateway['getFeed']>[1]) => ({
+        items: [],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      })
+    );
     const readGateway = {
       getCategories,
       getFeed,
@@ -964,7 +1141,8 @@ describe('小隐寺 Feed controller', () => {
     appQueryClient.clear();
     appQueryClient.setQueryData(
       forumQueryKeys.feed({
-        identityBarriers: [],
+        enabledSourcesKey: defaultEnabledSourcesKey,
+        readPlanScope: aggregateReadPlanScope('feed'),
         scope: initialForumSessionEpochs,
         source: 'all'
       }),
@@ -1051,23 +1229,28 @@ describe('小隐寺 Feed controller', () => {
     });
     const defaultV2exKey = forumQueryKeys.feed({
       feedFilter: 'all',
+      readPlanScope: 'public:omit',
       scope: initialForumSessionEpochs,
       source: 'v2ex'
     });
     const latestV2exKey = forumQueryKeys.feed({
       feedFilter: 'latest',
+      readPlanScope: 'public:omit',
       scope: initialForumSessionEpochs,
       source: 'v2ex'
     });
     const categoryV2exKey = forumQueryKeys.feed({
       category: 'qna',
       feedFilter: 'all',
+      readPlanScope: 'public:omit',
       scope: initialForumSessionEpochs,
       source: 'v2ex'
     });
     appQueryClient.clear();
     appQueryClient.setQueryData(
       forumQueryKeys.feed({
+        enabledSourcesKey: defaultEnabledSourcesKey,
+        readPlanScope: aggregateReadPlanScope('feed'),
         scope: initialForumSessionEpochs,
         source: 'all'
       }),
@@ -1147,10 +1330,13 @@ describe('小隐寺 Feed controller', () => {
       name: '目标站缓存分类'
     };
     appQueryClient.clear();
-    appQueryClient.setQueryData(forumQueryKeys.categories('nodeseek', initialForumSessionEpochs), {
-      items: [cachedTargetCategory],
-      errors: {}
-    });
+    appQueryClient.setQueryData(
+      forumQueryKeys.categories('nodeseek', initialForumSessionEpochs, undefined, 'authenticated:0'),
+      {
+        items: [cachedTargetCategory],
+        errors: {}
+      }
+    );
     const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
@@ -1240,6 +1426,8 @@ describe('小隐寺 Feed controller', () => {
     appQueryClient.clear();
     appQueryClient.setQueryData(
       forumQueryKeys.feed({
+        enabledSourcesKey: defaultEnabledSourcesKey,
+        readPlanScope: aggregateReadPlanScope('feed'),
         scope: initialForumSessionEpochs,
         source: 'all'
       }),
@@ -1248,6 +1436,7 @@ describe('小隐寺 Feed controller', () => {
     appQueryClient.setQueryData(
       forumQueryKeys.feed({
         feedFilter: 'all',
+        readPlanScope: 'public:omit',
         scope: initialForumSessionEpochs,
         source: 'v2ex'
       }),
@@ -1316,7 +1505,7 @@ describe('小隐寺 Feed controller', () => {
     expect(getFeed).toHaveBeenCalledTimes(4);
   });
 
-  it('[REG-FEED-010][REG-PERF-006] keeps a switched Feed cold while retaining trusted category metadata across identity barrier', async () => {
+  it('[REG-SOURCE-011] isolates switched public Feed and category reads from authenticated caches', async () => {
     const oldPrivateTopic = {
       source: 'nodeseek' as const,
       id: 'previous-runtime-single-source',
@@ -1326,12 +1515,14 @@ describe('小隐寺 Feed controller', () => {
       createdAt: '2026-07-20T00:00:00.000Z',
       replyCount: 0
     };
-    const getFeed = jest.fn(async (_options: Parameters<ReadGateway['getFeed']>[0]) => ({
-      items: [],
-      errors: {},
-      hasMore: false,
-      nextPage: null
-    }));
+    const getFeed = jest.fn(
+      async (_options: Parameters<ReadGateway['getFeed']>[0], _context?: Parameters<ReadGateway['getFeed']>[1]) => ({
+        items: [],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      })
+    );
     const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
@@ -1341,6 +1532,7 @@ describe('小隐寺 Feed controller', () => {
     appQueryClient.setQueryData(
       forumQueryKeys.feed({
         feedFilter: 'postTime',
+        readPlanScope: 'authenticated:0',
         scope: initialForumSessionEpochs,
         source: 'nodeseek'
       }),
@@ -1357,17 +1549,18 @@ describe('小隐寺 Feed controller', () => {
         pageParams: [{ page: 1 }]
       }
     );
-    appQueryClient.setQueryData(forumQueryKeys.categories('nodeseek', initialForumSessionEpochs), {
-      items: [{ source: 'nodeseek', id: 'private', name: '上次运行的私有分类' }],
-      errors: {}
-    });
-    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
-    let retainableIdentityBarriers: ForumIdentityBarrierSource[] = [];
+    appQueryClient.setQueryData(
+      forumQueryKeys.categories('nodeseek', initialForumSessionEpochs, undefined, 'authenticated:0'),
+      {
+        items: [{ source: 'nodeseek', id: 'private', name: '上次运行的私有分类' }],
+        errors: {}
+      }
+    );
+    let identityBarriers: SessionSource[] = ['nodeseek'];
     const hook = await renderNativeHook(
       () =>
         useFeedRuntime({
           identityBarriers,
-          retainableIdentityBarriers,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
@@ -1386,30 +1579,29 @@ describe('小隐寺 Feed controller', () => {
     expect(hook.result.current.activeFeedState.items).toEqual([]);
     expect(hook.result.current.categories).toEqual([]);
     expect(hook.result.current.feedCategories).toEqual([]);
-    expect(getFeed.mock.calls.some(([request]) => request.source === 'nodeseek')).toBe(false);
+    expect(getFeed.mock.calls.some(([request]) => request.source === 'nodeseek')).toBe(true);
+    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ readPlanScope: 'public:omit' });
 
-    retainableIdentityBarriers = ['nodeseek'];
     await act(async () => hook.rerender({}));
 
     expect(hook.result.current.activeFeedState.items).toEqual([]);
-    expect(hook.result.current.categories).toEqual([{ source: 'nodeseek', id: 'private', name: '上次运行的私有分类' }]);
-    expect(hook.result.current.feedCategories).toEqual([
-      { source: 'nodeseek', id: 'private', name: '上次运行的私有分类' }
-    ]);
+    expect(hook.result.current.categories).toEqual([]);
+    expect(hook.result.current.feedCategories).toEqual([]);
 
     identityBarriers = [];
-    retainableIdentityBarriers = [];
     await act(async () => hook.rerender({}));
 
     await waitFor(() =>
-      expect(getFeed.mock.calls.filter(([request]) => request.source === 'nodeseek')).toHaveLength(1)
+      expect(getFeed.mock.calls.filter(([request]) => request.source === 'nodeseek')).toHaveLength(2)
     );
+    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ readPlanScope: 'authenticated:0' });
     expect(hook.result.current.activeFeedState.items).toEqual([]);
   });
 
-  it('[REG-FEED-010] never projects warm single-source errors while identity is unconfirmed', async () => {
+  it('[REG-SOURCE-011] does not project an authenticated error into a pending public Feed', async () => {
     const sourceFeedKey = forumQueryKeys.feed({
       feedFilter: 'postTime',
+      readPlanScope: 'authenticated:0',
       scope: initialForumSessionEpochs,
       source: 'nodeseek'
     });
@@ -1430,7 +1622,7 @@ describe('小隐寺 Feed controller', () => {
       .catch(() => undefined);
     await appQueryClient
       .fetchQuery({
-        queryKey: forumQueryKeys.categories('nodeseek', initialForumSessionEpochs),
+        queryKey: forumQueryKeys.categories('nodeseek', initialForumSessionEpochs, undefined, 'authenticated:0'),
         queryFn: async () => {
           throw staleError;
         }
@@ -1465,12 +1657,13 @@ describe('小隐寺 Feed controller', () => {
       await Promise.resolve();
     });
 
-    expect(hook.result.current.feedOutcomeKind).toBeUndefined();
+    await waitFor(() => expect(hook.result.current.feedBusy).toBe(false));
+    expect(hook.result.current.feedOutcomeKind).toBe('empty');
     expect(notify).not.toHaveBeenCalled();
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
   });
 
-  it('[REG-FEED-010] lets an in-flight safe aggregate read settle before applying a narrower startup barrier', async () => {
+  it('[REG-SOURCE-011] aborts an in-flight aggregate plan before a narrower plan takes ownership', async () => {
     const safeTopic = {
       source: 'v2ex' as const,
       id: 'in-flight-bootstrap-safe',
@@ -1506,7 +1699,7 @@ describe('小隐寺 Feed controller', () => {
       }),
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
-    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek', 'linuxdo'];
+    let identityBarriers: SessionSource[] = ['nodeseek', 'linuxdo'];
     const hook = await renderHook(() =>
       useFeedRuntime({
         identityBarriers,
@@ -1529,20 +1722,20 @@ describe('小隐寺 Feed controller', () => {
       await Promise.resolve();
     });
 
-    expect(firstAbort).not.toHaveBeenCalled();
-    expect(readGateway.getFeed).toHaveBeenCalledTimes(1);
+    expect(firstAbort).toHaveBeenCalledTimes(1);
+    expect(readGateway.getFeed).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       safeRead.resolve({ items: [safeTopic], errors: {}, hasMore: false, nextPage: null });
       await safeRead.promise;
     });
-    await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(2));
-    expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
+    expect(hook.result.current.activeFeedState.items).toEqual([]);
 
     await act(async () => {
       nextRead.resolve({ items: [safeTopic], errors: {}, hasMore: false, nextPage: null });
       await nextRead.promise;
     });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]));
   });
 
   it('[REG-FEED-010] does not roll back to older warm aggregate lists when the last startup barrier clears', async () => {
@@ -1599,7 +1792,8 @@ describe('小隐寺 Feed controller', () => {
     appQueryClient.clear();
     appQueryClient.setQueryData(
       forumQueryKeys.feed({
-        identityBarriers: [],
+        enabledSourcesKey: defaultEnabledSourcesKey,
+        readPlanScope: aggregateReadPlanScope('feed'),
         scope: initialForumSessionEpochs,
         source: 'all'
       }),
@@ -1616,16 +1810,26 @@ describe('小隐寺 Feed controller', () => {
         pageParams: [{ page: 1 }]
       }
     );
-    appQueryClient.setQueryData(forumQueryKeys.categories('all', initialForumSessionEpochs), {
-      items: [oldSafeCategory],
-      errors: {}
-    });
-    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
+    appQueryClient.setQueryData(
+      forumQueryKeys.categories(
+        'all',
+        initialForumSessionEpochs,
+        defaultEnabledSourcesKey,
+        aggregateReadPlanScope('categories')
+      ),
+      {
+        items: [oldSafeCategory],
+        errors: {}
+      }
+    );
+    let identityBarriers: SessionSource[] = ['nodeseek'];
+    let sessionEpochs = initialForumSessionEpochs;
     const renderedKeys: string[][] = [];
     const hook = await renderNativeHook(
       () => {
         const controller = useFeedRuntime({
           identityBarriers,
+          sessionEpochs,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
           readerData: createEmptyReaderData(),
@@ -1646,6 +1850,7 @@ describe('小隐寺 Feed controller', () => {
     const firstSafeFrame = renderedKeys.length - 1;
 
     identityBarriers = [];
+    sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
@@ -1700,7 +1905,7 @@ describe('小隐寺 Feed controller', () => {
       }),
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
-    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
+    let identityBarriers: SessionSource[] = ['nodeseek'];
     const renderedKeys: string[][] = [];
     const hook = await renderHook(() => {
       const controller = useFeedRuntime({
@@ -1758,7 +1963,7 @@ describe('小隐寺 Feed controller', () => {
       }),
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
-    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
+    let identityBarriers: SessionSource[] = ['nodeseek'];
     const hook = await renderHook(() =>
       useFeedRuntime({
         identityBarriers,
@@ -1789,7 +1994,7 @@ describe('小隐寺 Feed controller', () => {
     });
   });
 
-  it('[REG-FEED-010] keeps safe aggregate categories through barrier release and source epoch changes', async () => {
+  it('[REG-SOURCE-011] keeps only cache-safe aggregate categories across plan and epoch changes', async () => {
     const safeCategory = { source: 'v2ex' as const, id: 'v2ex', name: 'V2EX' };
     const privateCategory = { source: 'nodeseek' as const, id: 'nodeseek', name: 'NodeSeek' };
     const unchangedCategory = { source: 'linuxdo' as const, id: 'linuxdo', name: 'linux.do' };
@@ -1820,14 +2025,12 @@ describe('小隐寺 Feed controller', () => {
       getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
-    let identityBarriers: ForumIdentityBarrierSource[] = ['nodeseek'];
-    let retainableIdentityBarriers: ForumIdentityBarrierSource[] = [];
+    let identityBarriers: SessionSource[] = ['nodeseek'];
     let sessionEpochs = initialForumSessionEpochs;
     const renderedCategoryKeys: string[][] = [];
     const hook = await renderHook(() => {
       const controller = useFeedRuntime({
         identityBarriers,
-        retainableIdentityBarriers,
         sessionEpochs,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
@@ -1861,32 +2064,28 @@ describe('小隐寺 Feed controller', () => {
     );
 
     identityBarriers = ['nodeseek', 'linuxdo'];
-    retainableIdentityBarriers = ['nodeseek', 'linuxdo'];
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
     });
     await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(3));
-    expect(hook.result.current.categories).toEqual([safeCategory, privateCategory, unchangedCategory]);
+    expect(hook.result.current.categories).toEqual([safeCategory]);
 
     await act(async () => {
       pendingRead.resolve({ items: [safeCategory], errors: {} });
       await pendingRead.promise;
     });
-    await waitFor(() =>
-      expect(hook.result.current.categories).toEqual([safeCategory, privateCategory, unchangedCategory])
-    );
+    await waitFor(() => expect(hook.result.current.categories).toEqual([safeCategory]));
 
     sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
     identityBarriers = ['linuxdo'];
-    retainableIdentityBarriers = ['linuxdo'];
     await act(async () => {
       resetForumSourceQueries('nodeseek', appQueryClient);
       hook.rerender({});
       await Promise.resolve();
     });
     await waitFor(() => expect(readGateway.getCategories).toHaveBeenCalledTimes(4));
-    expect(hook.result.current.categories).toEqual([safeCategory, unchangedCategory]);
+    expect(hook.result.current.categories).toEqual([safeCategory]);
     const firstSafeFrame = renderedCategoryKeys.findIndex((keys) => keys.includes('v2ex:v2ex'));
     expect(renderedCategoryKeys.slice(firstSafeFrame)).not.toContainEqual([]);
 
@@ -1897,10 +2096,10 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    expect(hook.result.current.categories).toEqual([safeCategory, unchangedCategory]);
+    expect(hook.result.current.categories).toEqual([safeCategory]);
   });
 
-  it('[REG-FEED-010] keeps unchanged categories across a direct epoch change rerender', async () => {
+  it('[REG-SOURCE-011] removes the aggregate category cache on a direct source epoch change', async () => {
     const changedCategory = { source: 'nodeseek' as const, id: 'direct-private', name: '旧账号分类' };
     const safeCategory = { source: 'v2ex' as const, id: 'direct-safe', name: 'V2EX 分类' };
     const unchangedCategory = { source: 'linuxdo' as const, id: 'direct-unchanged', name: 'linux.do 分类' };
@@ -1956,10 +2155,10 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    expect(hook.result.current.categories).toEqual([safeCategory, unchangedCategory]);
+    expect(hook.result.current.categories).toEqual([safeCategory]);
   });
 
-  it('[REG-ACCOUNT-031][REG-FEED-010] drops the changed source but keeps safe data visible across an epoch change', async () => {
+  it('[REG-ACCOUNT-031][REG-SOURCE-011] removes old-plan aggregate data across an epoch change', async () => {
     const oldTopic = {
       source: 'nodeseek' as const,
       id: 'old-account',
@@ -2013,14 +2212,12 @@ describe('小隐寺 Feed controller', () => {
       }),
       hasYaohuoCredential: jest.fn(async () => false)
     } as unknown as ReadGateway;
-    let identityBarriers: ForumIdentityBarrierSource[] = [];
+    let identityBarriers: SessionSource[] = [];
     let sessionEpochs = initialForumSessionEpochs;
     const notify = jest.fn();
-    const renderedKeys: string[][] = [];
     const hook = await renderHook(() => {
       const controller = useFeedRuntime({
         identityBarriers,
-        retainableIdentityBarriers: identityBarriers,
         sessionEpochs,
         linuxDoVerificationActive: false,
         notify,
@@ -2032,7 +2229,6 @@ describe('小隐寺 Feed controller', () => {
         showYaohuoLogin: jest.fn(),
         readGateway
       });
-      renderedKeys.push(controller.activeFeedState.items.map(topicKey));
       return controller;
     });
 
@@ -2044,7 +2240,7 @@ describe('小隐寺 Feed controller', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(2));
-    expect(hook.result.current.activeFeedState.items).toEqual([oldTopic]);
+    expect(hook.result.current.activeFeedState.items).toEqual([]);
 
     await act(async () => {
       dirtyRead.resolve({
@@ -2059,10 +2255,7 @@ describe('小隐寺 Feed controller', () => {
       await dirtyRead.promise;
     });
     await waitFor(() => {
-      expect(hook.result.current.activeFeedState.items).toHaveLength(3);
-      expect(hook.result.current.activeFeedState.items).toEqual(
-        expect.arrayContaining([oldTopic, dirtyPublicTopic, unchangedManagedTopic])
-      );
+      expect(hook.result.current.activeFeedState.items).toEqual([dirtyPublicTopic, unchangedManagedTopic]);
     });
     notify.mockClear();
 
@@ -2080,9 +2273,6 @@ describe('小隐寺 Feed controller', () => {
     const transitionMessages = notify.mock.calls.flat().join(' ');
     expect(transitionMessages).toContain('retained-source-error');
     expect(transitionMessages).not.toContain('removed-source-error');
-    const firstSafeFrame = renderedKeys.findIndex((keys) => keys.includes(topicKey(dirtyPublicTopic)));
-    expect(firstSafeFrame).toBeGreaterThanOrEqual(0);
-    expect(renderedKeys.slice(firstSafeFrame)).not.toContainEqual([]);
 
     await act(async () => {
       newEpochRead.resolve({ items: [newTopic], errors: {}, hasMore: false, nextPage: null });
@@ -2091,7 +2281,7 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([newTopic]));
   });
 
-  it('[REG-FEED-010] keeps an unchanged second page across a direct epoch change until explicit refresh', async () => {
+  it('[REG-SOURCE-011] keeps public aggregate pages while dropping a changed private source', async () => {
     const changedTopic = {
       source: 'nodeseek' as const,
       id: 'direct-epoch-private',
@@ -2235,7 +2425,7 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic, secondSafeTopic]);
+    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic]);
 
     notify.mockClear();
     let canceledRefresh: Promise<void> | undefined;
@@ -2257,12 +2447,12 @@ describe('小隐寺 Feed controller', () => {
       hook.rerender({});
       await Promise.resolve();
     });
-    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic, secondSafeTopic]);
+    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic]);
 
     await act(async () => {
       await hook.result.current.refreshFeed();
     });
-    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic, secondSafeTopic]);
+    expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic]);
     await act(async () => {
       await hook.result.current.refreshFeed();
     });
@@ -2295,7 +2485,7 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic, secondSafeTopic]));
   });
 
-  it('[REG-FEED-010] keeps another confirmed pending source when one source epoch changes', async () => {
+  it('[REG-SOURCE-011] removes authenticated aggregate pages when sources enter public plans', async () => {
     const changedTopic = {
       source: 'nodeseek' as const,
       id: 'changed-pending-source',
@@ -2345,8 +2535,7 @@ describe('小隐寺 Feed controller', () => {
       nextPage: null;
     }>();
     let phase: 'initial' | 'barrier' | 'changed-epoch' = 'initial';
-    let identityBarriers: ForumIdentityBarrierSource[] = [];
-    let retainableIdentityBarriers: ForumIdentityBarrierSource[] = [];
+    let identityBarriers: SessionSource[] = [];
     let sessionEpochs = initialForumSessionEpochs;
     const getFeed = jest.fn(async ({ page = 1 }: { page?: number; cursor?: string }) => {
       if (phase === 'initial') {
@@ -2373,7 +2562,6 @@ describe('小隐寺 Feed controller', () => {
     const hook = await renderHook(() =>
       useFeedRuntime({
         identityBarriers,
-        retainableIdentityBarriers,
         sessionEpochs,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
@@ -2404,7 +2592,6 @@ describe('小隐寺 Feed controller', () => {
 
     phase = 'barrier';
     identityBarriers = ['nodeseek', 'linuxdo'];
-    retainableIdentityBarriers = ['nodeseek', 'linuxdo'];
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
@@ -2414,19 +2601,11 @@ describe('小隐寺 Feed controller', () => {
       barrierRead.resolve({ items: [safeTopic], errors: {}, hasMore: false, nextPage: null });
       await barrierRead.promise;
     });
-    await waitFor(() =>
-      expect(hook.result.current.activeFeedState.items).toEqual([
-        changedTopic,
-        retainedTopic,
-        safeTopic,
-        secondSafeTopic
-      ])
-    );
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]));
 
     phase = 'changed-epoch';
     sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
     identityBarriers = ['linuxdo'];
-    retainableIdentityBarriers = ['linuxdo'];
     const changedEpochCallStart = getFeed.mock.calls.length;
     await act(async () => {
       resetForumSourceQueries('nodeseek', appQueryClient);
@@ -2434,7 +2613,7 @@ describe('小隐寺 Feed controller', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(getFeed.mock.calls.length).toBeGreaterThan(changedEpochCallStart));
-    expect(hook.result.current.activeFeedState.items).toEqual([retainedTopic, safeTopic, secondSafeTopic]);
+    expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
 
     await act(async () => {
       changedEpochFirstRead.resolve({
@@ -2446,6 +2625,12 @@ describe('小隐寺 Feed controller', () => {
       });
       await changedEpochFirstRead.promise;
     });
+    await waitFor(() => expect(hook.result.current.activeFeedState.hasMore).toBe(true));
+    let changedEpochLoad: Promise<unknown> | undefined;
+    await act(async () => {
+      changedEpochLoad = hook.result.current.loadFeed();
+      await Promise.resolve();
+    });
     await waitFor(() =>
       expect(getFeed.mock.calls.slice(changedEpochCallStart)).toContainEqual([
         expect.objectContaining({ cursor: 'new-account-cursor', page: 2 }),
@@ -2455,7 +2640,7 @@ describe('小隐寺 Feed controller', () => {
     expect(
       getFeed.mock.calls.slice(changedEpochCallStart).some(([request]) => request.cursor === 'old-account-cursor')
     ).toBe(false);
-    expect(hook.result.current.activeFeedState.items).toEqual([retainedTopic, safeTopic, secondSafeTopic]);
+    expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]);
 
     await act(async () => {
       changedEpochSecondRead.resolve({
@@ -2465,13 +2650,12 @@ describe('小隐寺 Feed controller', () => {
         nextPage: null
       });
       await changedEpochSecondRead.promise;
+      await changedEpochLoad;
     });
-    await waitFor(() =>
-      expect(hook.result.current.activeFeedState.items).toEqual([retainedTopic, safeTopic, secondSafeTopic])
-    );
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([safeTopic, secondSafeTopic]));
   });
 
-  it('[REG-FEED-009] keeps trusted multi-page order while an identity barrier refreshes safe sources', async () => {
+  it('[REG-SOURCE-011] keeps only public aggregate pages while an authenticated plan is unavailable', async () => {
     const firstPage = [
       {
         source: 'nodeseek' as const,
@@ -2529,7 +2713,8 @@ describe('小隐寺 Feed controller', () => {
       hasMore: false;
       nextPage: null;
     }>();
-    let identityBarriers: ForumIdentityBarrierSource[] = [];
+    let identityBarriers: SessionSource[] = [];
+    let sessionEpochs = initialForumSessionEpochs;
     let barrierCycleStarted = false;
     const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
@@ -2550,7 +2735,7 @@ describe('小隐寺 Feed controller', () => {
     const hook = await renderHook(() =>
       useFeedRuntime({
         identityBarriers,
-        retainableIdentityBarriers: identityBarriers,
+        sessionEpochs,
         linuxDoVerificationActive: false,
         notify: jest.fn(),
         readerData: createEmptyReaderData(),
@@ -2571,48 +2756,33 @@ describe('小隐寺 Feed controller', () => {
       await hook.result.current.loadFeed();
     });
     await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys));
-    appQueryClient.setQueryData(
-      forumQueryKeys.feed({
-        identityBarriers: ['nodeseek'],
-        scope: initialForumSessionEpochs,
-        source: 'all'
-      }),
-      {
-        pages: [
-          {
-            items: [{ ...firstPage[1], id: 'stale-barrier-cache', title: '旧屏障缓存' }],
-            errors: {},
-            hasMore: false,
-            nextPage: null,
-            page: 1
-          }
-        ],
-        pageParams: [{ page: 1 }]
-      }
-    );
-
     identityBarriers = ['nodeseek'];
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
     });
     await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(3));
-    expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys);
+    expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(
+      [firstPage[1], secondPageSafeTopic].map(topicKey)
+    );
 
     await act(async () => {
       barrierRead.resolve({ items: [firstPage[1]], errors: {}, hasMore: false, nextPage: null });
       await barrierRead.promise;
     });
     await waitFor(() => expect(hook.result.current.activeFeedState.refreshing).toBe(false));
-    await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys));
+    await waitFor(() =>
+      expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual([topicKey(firstPage[1])])
+    );
 
     identityBarriers = [];
+    sessionEpochs = { ...sessionEpochs, nodeseek: sessionEpochs.nodeseek + 1 };
     await act(async () => {
       hook.rerender({});
       await Promise.resolve();
     });
     await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(4));
-    expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys);
+    expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual([topicKey(firstPage[1])]);
 
     await act(async () => {
       releaseFirstRead.resolve({
@@ -2623,8 +2793,14 @@ describe('小隐寺 Feed controller', () => {
       });
       await releaseFirstRead.promise;
     });
+    await waitFor(() => expect(hook.result.current.activeFeedState.hasMore).toBe(true));
+    let releasedLoad: Promise<unknown> | undefined;
+    await act(async () => {
+      releasedLoad = hook.result.current.loadFeed();
+      await Promise.resolve();
+    });
     await waitFor(() => expect(readGateway.getFeed).toHaveBeenCalledTimes(5));
-    expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys);
+    expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(firstPage.map(topicKey));
 
     await act(async () => {
       releaseSecondRead.resolve({
@@ -2634,17 +2810,20 @@ describe('小隐寺 Feed controller', () => {
         nextPage: null
       });
       await releaseSecondRead.promise;
+      await releasedLoad;
     });
     await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys));
   });
 
-  it('[REG-ACCOUNT-031] does not start or manually refresh a dirty single-source feed', async () => {
-    const getFeed = jest.fn(async (_options: Parameters<ReadGateway['getFeed']>[0]) => ({
-      items: [],
-      errors: {},
-      hasMore: false,
-      nextPage: null
-    }));
+  it('[REG-SOURCE-011] keeps a pending public single-source Feed available', async () => {
+    const getFeed = jest.fn(
+      async (_options: Parameters<ReadGateway['getFeed']>[0], _context?: Parameters<ReadGateway['getFeed']>[1]) => ({
+        items: [],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      })
+    );
     const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
       getFeed,
@@ -2676,9 +2855,11 @@ describe('小隐寺 Feed controller', () => {
       await hook.result.current.refreshFeed();
     });
 
-    expect(getFeed.mock.calls.some(([request]) => request.source === 'nodeseek')).toBe(false);
-    expect(hook.result.current.feedBusy).toBe(true);
-    expect(hook.result.current.feedOutcomeKind).toBeUndefined();
+    expect(getFeed.mock.calls.some(([request]) => request.source === 'nodeseek')).toBe(true);
+    expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ readPlanScope: 'public:omit' });
+    await waitFor(() => expect(hook.result.current.feedBusy).toBe(false));
+    expect(hook.result.current.feedBusy).toBe(false);
+    expect(hook.result.current.feedOutcomeKind).toBe('empty');
   });
 
   it('REG-LINUXDO-002 preserves the loaded feed page across session reset before resuming pagination', async () => {

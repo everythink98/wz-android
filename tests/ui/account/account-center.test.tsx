@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Text } from 'react-native';
 import { CredentialVaultError, emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AccountCenterPanel } from '@/features/more/components/AccountCenterPanel';
@@ -22,12 +22,116 @@ const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const sessions = createSiteSessionViewModels(createSiteSessionStates());
+const allSessionSources = ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const;
 
 afterEach(() => {
   jest.restoreAllMocks();
 });
 
 describe('Account center user authentication', () => {
+  it('renders only enabled account sites in user order and fails closed for disabled forced or pending sites', async () => {
+    const disabledLinuxContentRender = jest.fn();
+    const DisabledLinuxContent = () => {
+      disabledLinuxContentRender();
+      return <Text>linux.do 专属内容</Text>;
+    };
+    const view = await render(
+      <AccountCenterPanel
+        key="forced-disabled"
+        credentials={emptyCredentialSummaries()}
+        enabledSessionSources={['xiaoyinsi', 'nodeseek']}
+        expanded
+        forcedSite="linuxdo"
+        nodeSeekUserId={null}
+        sessions={sessions}
+        siteContent={{
+          linuxdo: <DisabledLinuxContent />,
+          xiaoyinsi: <Text>小隐寺专属内容</Text>
+        }}
+        statusBusy={false}
+        styles={styles}
+        theme={theme}
+        onCommand={jest.fn(async (_command: AccountCenterCommand) => undefined)}
+        onExpandedChange={jest.fn()}
+      />
+    );
+
+    expect(view.getAllByRole('tab').map((tab) => tab.props.testID)).toEqual([
+      'account-site-xiaoyinsi',
+      'account-site-nodeseek'
+    ]);
+    expect(view.getByTestId('account-site-xiaoyinsi').props.accessibilityState.selected).toBe(true);
+    expect(view.getByText('小隐寺专属内容')).toBeTruthy();
+    expect(view.queryByText('linux.do 专属内容')).toBeNull();
+    expect(disabledLinuxContentRender).not.toHaveBeenCalled();
+
+    await view.rerender(
+      <AccountCenterPanel
+        key="pending-disabled"
+        credentials={emptyCredentialSummaries()}
+        enabledSessionSources={['xiaoyinsi', 'nodeseek']}
+        expanded
+        pendingFillSite="linuxdo"
+        nodeSeekUserId={null}
+        sessions={sessions}
+        siteContent={{ xiaoyinsi: <Text>小隐寺专属内容</Text> }}
+        statusBusy={false}
+        styles={styles}
+        theme={theme}
+        onCommand={jest.fn(async (_command: AccountCenterCommand) => undefined)}
+        onExpandedChange={jest.fn()}
+      />
+    );
+    expect(view.getByTestId('account-site-xiaoyinsi').props.accessibilityState.selected).toBe(true);
+  });
+
+  it('falls back to the first enabled site when the selected site is disabled', async () => {
+    const common = {
+      credentials: emptyCredentialSummaries(),
+      expanded: true,
+      nodeSeekUserId: null,
+      sessions,
+      siteContent: {},
+      statusBusy: false,
+      styles,
+      theme,
+      onCommand: jest.fn(async (_command: AccountCenterCommand) => undefined),
+      onExpandedChange: jest.fn()
+    };
+    const view = await render(<AccountCenterPanel {...common} enabledSessionSources={['nodeseek', 'linuxdo']} />);
+    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
+    expect(view.getByTestId('account-site-linuxdo').props.accessibilityState.selected).toBe(true);
+
+    await view.rerender(<AccountCenterPanel {...common} enabledSessionSources={['xiaoyinsi', 'nodeseek']} />);
+    expect(view.getByTestId('account-site-xiaoyinsi').props.accessibilityState.selected).toBe(true);
+    expect(view.queryByTestId('account-site-linuxdo')).toBeNull();
+  });
+
+  it('shows stable management guidance for an empty enabled account set', async () => {
+    const onCommand = jest.fn(async (_command: AccountCenterCommand) => undefined);
+    const view = await render(
+      <AccountCenterPanel
+        credentials={emptyCredentialSummaries()}
+        enabledSessionSources={[]}
+        expanded
+        nodeSeekUserId={null}
+        sessions={sessions}
+        siteContent={{}}
+        statusBusy={false}
+        styles={styles}
+        theme={theme}
+        onCommand={onCommand}
+        onExpandedChange={jest.fn()}
+      />
+    );
+
+    expect(view.getByText('尚未启用账号站点')).toBeTruthy();
+    expect(view.getByText('请在“内容源”面板启用支持账号的站点。')).toBeTruthy();
+    expect(view.queryAllByRole('tab')).toHaveLength(0);
+    expect(view.queryByLabelText('刷新账号状态')).toBeNull();
+    expect(onCommand).not.toHaveBeenCalled();
+  });
+
   it('routes each site status to the matching account action', async () => {
     const currentUser = {
       source: 'nodeseek' as const,
@@ -72,6 +176,7 @@ describe('Account center user authentication', () => {
     const view = await render(
       <AccountCenterPanel
         credentials={credentials}
+        enabledSessionSources={allSessionSources}
         expanded
         nodeSeekUserId={42}
         sessions={mixedSessions}
@@ -120,6 +225,7 @@ describe('Account center user authentication', () => {
     const view = await render(
       <AccountCenterPanel
         credentials={credentials}
+        enabledSessionSources={allSessionSources}
         expanded
         nodeSeekUserId={null}
         sessions={sessions}
@@ -170,6 +276,7 @@ describe('Account center user authentication', () => {
     const view = await render(
       <AccountCenterPanel
         credentials={emptyCredentialSummaries()}
+        enabledSessionSources={allSessionSources}
         expanded
         nodeSeekUserId={null}
         sessions={sessions}
@@ -200,6 +307,7 @@ describe('Account center user authentication', () => {
     const view = await render(
       <AccountCenterPanel
         credentials={credentials}
+        enabledSessionSources={allSessionSources}
         expanded
         nodeSeekUserId={null}
         sessions={sessions}

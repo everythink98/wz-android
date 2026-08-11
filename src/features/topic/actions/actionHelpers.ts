@@ -1,4 +1,4 @@
-import type { ReplyEditTarget } from '../model/types';
+import type { ReplyEditTarget, ReplyRefreshTarget } from '../model/types';
 import { nodeSeekMarkdownToHtml } from '@/sources/nodeseek/markdown';
 import { sourceSupportsTopicAction, sourceUsesTopicCreatePermission } from '@/domain/forum/sourceCatalog';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '@/domain/forum/models';
@@ -19,12 +19,6 @@ export function isNodeSeekActionTopic(
 
 export function isYaohuoActionTopic(topic: TopicActionTopic | null): topic is TopicActionTopic & { source: 'yaohuo' } {
   return topic?.source === 'yaohuo';
-}
-
-export function isLinuxDoActionTopic(
-  topic: TopicActionTopic | null
-): topic is TopicActionTopic & { source: 'linuxdo' } {
-  return topic?.source === 'linuxdo';
 }
 
 export function isXiaoyinsiActionTopic(
@@ -52,16 +46,20 @@ export function topicEditReplyActionKey(topicKey: string, commentId: string | nu
   return `edit-reply:${topicKey}:${commentId}`;
 }
 
+export function matchesReplyRefreshTarget(reply: Reply, target: ReplyRefreshTarget) {
+  return target.kind === 'comment-id' ? reply.commentId === target.commentId : reply.deletePath === target.deletePath;
+}
+
+export function removeRepliesForRefresh(replies: Reply[], target?: ReplyRefreshTarget) {
+  return target ? replies.filter((reply) => !matchesReplyRefreshTarget(reply, target)) : replies;
+}
+
 export function yaohuoFavoriteActionKey(topicKey: string) {
   return `yaohuo-favorite:${topicKey}`;
 }
 
 export function topicPollVoteActionKey(topicKey: string, poll: Pick<TopicPoll, 'id' | 'name' | 'postId'>) {
   return `vote:${topicKey}:${poll.id || poll.name || poll.postId || 'poll'}`;
-}
-
-export function nodeSeekAttendanceActionKey() {
-  return 'nodeseek:attendance';
 }
 
 export function applyEditedReplyContent(

@@ -14,13 +14,6 @@ import type { ReadingFilter } from './feed';
 
 const registeredSources = Object.keys(sourceCatalog) as Source[];
 
-export const feedSourceItems: { value: FeedSource; label: string }[] = [
-  { value: 'all', label: '全部' },
-  ...registeredSources.map((source) => ({ value: source, label: sourceCatalog[source].label }))
-];
-
-export const feedSources: Source[] = [...registeredSources];
-
 export const feedReadingFilterItems = [
   { value: 'all', label: '全部' },
   { value: 'unread', label: '未读' },

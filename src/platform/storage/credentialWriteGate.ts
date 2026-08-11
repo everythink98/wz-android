@@ -19,15 +19,6 @@ export function advanceCredentialWriteGeneration(gate: CredentialWriteGate) {
   return gate.generation;
 }
 
-export function enqueueCredentialWrite<T>(
-  gate: CredentialWriteGate,
-  task: ({ isCurrent }: { isCurrent: () => boolean }) => Promise<T> | T,
-  { advanceGeneration = false }: { advanceGeneration?: boolean } = {}
-) {
-  const generation = advanceGeneration ? advanceCredentialWriteGeneration(gate) : gate.generation;
-  return enqueueCredentialWriteForGeneration(gate, generation, task);
-}
-
 export function replaceCredentialWrite<T>(
   gate: CredentialWriteGate,
   task: ({ isCurrent }: { isCurrent: () => boolean }) => Promise<T> | T

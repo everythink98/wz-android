@@ -238,6 +238,22 @@ test('rejects legacy files and unresolved imports without compatibility shells',
   assert.equal(legacyIssues.length, 7);
 });
 
+test('rejects duplicate Account snapshot owners and epoch-scoped Account keys', () => {
+  const srcDir = architectureFixture({
+    'domain/session/accountIdentityRuntime.ts': 'export const runtime = true;',
+    'features/account/useSessionController.ts': 'const setSiteSessionStates = () => undefined;',
+    'features/topic/controller.ts':
+      "const client = { setQueryData() {} }; const accountQueryKeys = { snapshot: () => [] }; client.setQueryData(accountQueryKeys.snapshot('nodeseek'), {});",
+    'platform/query/serverState.ts':
+      "export const accountQueryKeys = { snapshot: (source) => ['account', source, 'snapshot', { sessionEpoch: 1 }] };"
+  });
+  const codes = analyzeArchitecture(srcDir).issues.map((issue) => issue.code);
+
+  assert.ok(codes.includes('legacy-path'));
+  assert.ok(codes.includes('account-snapshot-owner'));
+  assert.ok(codes.includes('account-query-key'));
+});
+
 test('rejects route entries that reach into another feature', () => {
   const srcDir = architectureFixture({
     'features/feed/FeedRoute.tsx':

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   linuxDoVerificationNavigationMessage,
   nodeSeekVerificationNavigationMessage,
-  normalizeSourceErrorInfo,
   sourceErrorFromUnknown,
   sourceErrorKind,
   yaohuoErrorRequiresLoginPanel
@@ -96,22 +95,5 @@ describe('source error navigation helpers', () => {
     expect(verification.kind).toBe('verification-required');
     expect(yaohuoErrorRequiresLoginPanel(verification)).toBe(true);
     expect(yaohuoErrorRequiresLoginPanel({ kind: 'ordinary', message: '网络失败' })).toBe(false);
-  });
-
-  it('normalizes legacy source errors to the structured kind and message contract', () => {
-    expect(normalizeSourceErrorInfo('旧版读取失败')).toEqual({
-      kind: 'ordinary',
-      message: '旧版读取失败'
-    });
-    expect(
-      normalizeSourceErrorInfo({
-        message: '需要验证',
-        reason: 'cloudflare',
-        verificationRequired: true
-      })
-    ).toMatchObject({
-      kind: 'verification-required',
-      message: '需要验证'
-    });
   });
 });

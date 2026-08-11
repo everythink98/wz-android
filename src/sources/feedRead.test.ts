@@ -923,4 +923,80 @@ describe('feed read', () => {
       vi.useRealTimers();
     }
   });
+
+  it('[REG-SOURCE-010] confines aggregate feed and cursor retries to the included source snapshot', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return new Response(
+          '<div class="cell item"><a class="topic-link" href="/t/401#reply0">V2EX topic</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>'
+        );
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const result = await getFeed({ source: 'all', includedSources: ['v2ex'], fetcher });
+    expect(result.items.map((item) => item.source)).toEqual(['v2ex']);
+    expect(fetcher.mock.calls.map(([input]) => input)).toEqual(['https://www.v2ex.com/?tab=all']);
+
+    const oldCursor = encodeURIComponent(
+      JSON.stringify({
+        nextPages: { nodeseek: 2, v2ex: 2 },
+        sourceCursors: { nodeseek: 'stale-node-cursor', v2ex: 'current-v2ex-cursor' }
+      })
+    );
+    const retry = await getFeed({
+      source: 'all',
+      cursor: oldCursor,
+      fetcher: vi.fn(),
+      includedSources: ['v2ex'],
+      page: 2,
+      unavailableSources: ['v2ex']
+    });
+    const retryCursor = JSON.parse(decodeURIComponent(retry.nextCursor || '')) as Record<
+      string,
+      Record<string, unknown>
+    >;
+
+    expect(retryCursor.nextPages).toEqual({ v2ex: 2 });
+    expect(retryCursor.sourceCursors).toEqual({ v2ex: 'current-v2ex-cursor' });
+  });
+
+  it('[REG-SOURCE-010] returns stable empty all-source feed and categories without transport', async () => {
+    const fetcher = vi.fn();
+
+    await expect(getFeed({ source: 'all', fetcher, includedSources: [] })).resolves.toEqual({
+      errors: {},
+      hasMore: false,
+      items: [],
+      nextCursor: undefined,
+      nextPage: null
+    });
+    await expect(getCategories({ source: 'all', fetcher, includedSources: [] })).resolves.toEqual({
+      items: [],
+      errors: {}
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('[REG-SOURCE-010] confines aggregate categories to the included source snapshot', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/api/topics/latest.json') {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 1,
+              node: { name: 'create', title: '分享创造' }
+            }
+          ]),
+          { headers: { 'content-type': 'application/json' } }
+        );
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const result = await getCategories({ source: 'all', fetcher, includedSources: ['v2ex'] });
+
+    expect(result.items).toEqual([{ source: 'v2ex', id: 'create', name: '分享创造' }]);
+    expect(fetcher.mock.calls.map(([input]) => input)).toEqual(['https://www.v2ex.com/api/topics/latest.json']);
+  });
 });

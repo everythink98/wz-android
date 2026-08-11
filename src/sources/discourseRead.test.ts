@@ -66,7 +66,6 @@ vi.mock('@/sources/xiaoyinsi/search', () => ({
 }));
 
 import {
-  discourseReaderSources,
   getDiscourseSourceCurrentUserProfile,
   getDiscourseSourceEmojiUrls,
   getDiscourseSourceFeed,
@@ -77,10 +76,6 @@ import {
 describe('Discourse source reader registration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  it('registers every current Discourse source', () => {
-    expect(discourseReaderSources).toEqual(['linuxdo', 'xiaoyinsi']);
   });
 
   it('normalizes the shared feed contract into site adapter options', async () => {

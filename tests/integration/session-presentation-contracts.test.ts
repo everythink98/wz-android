@@ -4,9 +4,7 @@ import { createSiteAccountViews } from '@/features/more/accountCenter';
 import {
   authActionMessageForSource,
   authNoticeForSource,
-  authNoticeForSourceError,
-  searchSessionNoticeItems,
-  searchSessionNoticeLightTone
+  authNoticeForSourceError
 } from '@/domain/session/siteSessionPrompts';
 import { createSiteSessionViewModels, createSiteSessionStates } from '@/domain/session/siteSessionState';
 
@@ -19,7 +17,7 @@ function emptyCredentialSummaries(): CredentialSummaries {
 }
 
 describe('site session prompts', () => {
-  it('[REG-ACCOUNT-031] never presents a pending trusted identity as confirmed', () => {
+  it('[REG-ACCOUNT-031][REG-SEARCH-024] keeps pending identity unconfirmed while exposing the anonymous search lane', () => {
     const confirmed = createSiteSessionViewModels(
       createSiteSessionStates({
         nodeseek: {
@@ -41,11 +39,61 @@ describe('site session prompts', () => {
     };
 
     expect(authNoticeForSource('nodeseek', sessions, 'search')).toEqual({
-      kind: 'verification-required',
-      message: 'NodeSeek 登录状态待确认，已暂停新请求和写入。',
+      kind: 'anonymous',
+      message: 'NodeSeek 账号状态确认中，本次使用 Google 匿名搜索。',
+      tone: 'neutral'
+    });
+    expect(authNoticeForSource('nodeseek', sessions, 'read')).toEqual({
+      kind: 'anonymous',
+      message: 'NodeSeek 账号状态确认中，本次使用匿名读取。',
+      tone: 'neutral'
+    });
+    expect(authNoticeForSource('nodeseek', sessions, 'action')?.message).toContain('已暂停写入');
+  });
+
+  it('[REG-ACCOUNT-031][REG-SEARCH-024] presents terminal unknown as retryable without losing public lanes', () => {
+    const confirmed = createSiteSessionViewModels(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session'],
+          isVerifying: false
+        },
+        yaohuo: {
+          site: 'yaohuo',
+          status: 'logged-in',
+          cookieSummary: ['sid'],
+          isVerifying: false
+        }
+      })
+    );
+    const sessions = {
+      ...confirmed,
+      nodeseek: { ...confirmed.nodeseek, canWrite: false, identityTrust: 'unknown' as const },
+      yaohuo: { ...confirmed.yaohuo, canWrite: false, identityTrust: 'unknown' as const }
+    };
+
+    expect(authNoticeForSource('nodeseek', sessions, 'search')).toEqual({
+      kind: 'identity-unavailable',
+      message: 'NodeSeek 账号状态暂不可确认，本次使用 Google 匿名搜索；可在账号中心重试核对。',
       tone: 'warning'
     });
-    expect(searchSessionNoticeLightTone(authNoticeForSource('nodeseek', sessions, 'search')!)).toBe('warning');
+    expect(authNoticeForSource('nodeseek', sessions, 'read')).toEqual({
+      kind: 'identity-unavailable',
+      message: 'NodeSeek 账号状态暂不可确认，本次使用匿名读取；写入暂不可用，可在账号中心重试核对。',
+      tone: 'warning'
+    });
+    expect(authNoticeForSource('nodeseek', sessions, 'action')).toEqual({
+      kind: 'identity-unavailable',
+      message: 'NodeSeek 账号状态暂不可确认，写入暂不可用，可在账号中心重试核对。',
+      tone: 'warning'
+    });
+    expect(authNoticeForSource('yaohuo', sessions, 'read')).toEqual({
+      kind: 'identity-unavailable',
+      message: '妖火账号状态暂不可确认，暂不能读取或写入，可在账号中心重试核对。',
+      tone: 'warning'
+    });
   });
 
   it('[REG-ACCOUNT-019] explains the NodeSeek Google fallback without showing a logged-in notice', () => {
@@ -57,7 +105,6 @@ describe('site session prompts', () => {
       message: '未登录搜索使用 Google，结果可能不完整。',
       tone: 'warning'
     });
-    expect(searchSessionNoticeLightTone(prompt!)).not.toBe('success');
   });
 
   it('[REG-ACCOUNT-019] projects one expired NodeSeek session consistently into More, Search, and Topic permissions', () => {
@@ -100,7 +147,6 @@ describe('site session prompts', () => {
       message: 'NodeSeek 登录已失效；未登录搜索使用 Google，结果可能不完整。',
       tone: 'danger'
     });
-    expect(searchSessionNoticeLightTone(searchNotice!)).not.toBe('success');
     expect(sessions.nodeseek.canWrite).toBe(false);
     expect([sessions.linuxdo.canWrite, sessions.yaohuo.canWrite, sessions.xiaoyinsi.canWrite]).toEqual([
       true,
@@ -151,58 +197,6 @@ describe('site session prompts', () => {
     expect(authNoticeForSource('v2ex', sessions, 'search')).toBeNull();
   });
 
-  it('builds compact search session notices for the active search source', () => {
-    const sessions = createSiteSessionViewModels(
-      createSiteSessionStates({
-        nodeseek: {
-          site: 'nodeseek',
-          status: 'logged-in',
-          cookieSummary: ['session'],
-          isVerifying: false
-        },
-        linuxdo: {
-          site: 'linuxdo',
-          status: 'anonymous',
-          cookieSummary: [],
-          isVerifying: false
-        },
-        yaohuo: {
-          site: 'yaohuo',
-          status: 'expired',
-          cookieSummary: ['sidyaohuo'],
-          isVerifying: false
-        }
-      })
-    );
-
-    expect(searchSessionNoticeItems('all', sessions)).toEqual([
-      {
-        source: 'nodeseek',
-        label: 'NodeSeek',
-        notice: { kind: 'logged-in', message: '已登录搜索。', tone: 'neutral' }
-      },
-      {
-        source: 'linuxdo',
-        label: 'linux.do',
-        notice: { kind: 'anonymous', message: '未登录搜索使用 Google，结果可能不完整。', tone: 'neutral' }
-      },
-      {
-        source: 'yaohuo',
-        label: '妖火',
-        notice: { kind: 'login-expired', message: '妖火登录已失效，请重新登录。', tone: 'danger' }
-      },
-      {
-        source: 'xiaoyinsi',
-        label: '小隐寺',
-        notice: { kind: 'anonymous', message: '匿名可阅读，授权后才能互动。', tone: 'neutral' }
-      }
-    ]);
-    expect(searchSessionNoticeItems('nodeseek', sessions)).toEqual([
-      { source: 'nodeseek', label: 'NodeSeek', notice: { kind: 'logged-in', message: '已登录搜索。', tone: 'neutral' } }
-    ]);
-    expect(searchSessionNoticeItems('v2ex', sessions)).toEqual([]);
-  });
-
   it('uses action messages that match the source capability', () => {
     const sessions = createSiteSessionViewModels(createSiteSessionStates());
 
@@ -244,17 +238,5 @@ describe('site session prompts', () => {
       tone: 'warning'
     });
     expect(authNoticeForSourceError({ kind: 'ordinary', message: '登录两个字不代表登录错误' })).toBeNull();
-  });
-
-  it('uses separate light colors for login status without changing copy tones', () => {
-    expect(searchSessionNoticeLightTone({ kind: 'logged-in', message: '任意文案', tone: 'neutral' })).toBe('success');
-    expect(searchSessionNoticeLightTone({ kind: 'anonymous', message: '任意文案', tone: 'neutral' })).toBe('neutral');
-    expect(searchSessionNoticeLightTone({ kind: 'verification-required', message: '任意文案', tone: 'warning' })).toBe(
-      'warning'
-    );
-    expect(searchSessionNoticeLightTone({ kind: 'login-required', message: '任意文案', tone: 'warning' })).toBe(
-      'danger'
-    );
-    expect(searchSessionNoticeLightTone({ kind: 'login-expired', message: '任意文案', tone: 'danger' })).toBe('danger');
   });
 });

@@ -8,7 +8,7 @@ import { type FollowedUserRecord, type TopicRecord } from '@/domain/reader/reade
 import { type LibraryTab } from '@/domain/forum/feed';
 import { filterLibraryRecords, libraryCategoryFilterItems } from './model/libraryFilters';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
-import { feedSources } from '@/domain/forum/feedOptions';
+import { sourceCatalog, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -34,11 +34,6 @@ const LIBRARY_TAB_ITEMS = [
   { value: 'users', label: '关注用户' },
   { value: 'history', label: '历史' }
 ];
-const LIBRARY_SOURCE_ITEMS = [
-  { value: 'all', label: '全部' },
-  ...feedSources.map((source) => ({ value: source, label: sourceLabel(source) }))
-];
-
 function pressLibraryAction(event: GestureResponderEvent, onPress: () => void) {
   event.stopPropagation?.();
   triggerPressFeedback();
@@ -94,12 +89,14 @@ function LibraryIconAction({
 export const LibraryScreen = memo(function LibraryScreen({
   libraryTab,
   categories,
+  enabledSources,
   followedUsers,
   loaded,
   records,
   scrollRef,
   topicStateIndex,
   onClearHistory,
+  onManageContentSources,
   onOpenTopic,
   onOpenUser,
   onRemove,
@@ -108,12 +105,14 @@ export const LibraryScreen = memo(function LibraryScreen({
 }: {
   libraryTab: LibraryTab;
   categories: Parameters<typeof libraryCategoryFilterItems>[0];
+  enabledSources: readonly Source[];
   followedUsers: FollowedUserRecord[];
   loaded: boolean;
   records: TopicRecord[];
   scrollRef?: RefObject<FlashListRef<FollowedUserRecord | LibraryListItem> | null>;
   topicStateIndex: TopicListItemStateIndex;
   onClearHistory: () => void;
+  onManageContentSources: () => void;
   onOpenTopic: (topic: Topic) => void;
   onOpenUser: (user: UserReference) => void;
   onRemove: (topic: Topic) => void;
@@ -125,18 +124,44 @@ export const LibraryScreen = memo(function LibraryScreen({
   const listRef = scrollRef || internalListRef;
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const userRecords = useMemo(
-    () => filterFollowedUsersBySource(followedUsers, sourceFilter),
-    [followedUsers, sourceFilter]
+  const enabledMembershipKey = sourceValues.filter((source) => enabledSources.includes(source)).join('|');
+  const enabledSourceSet = useMemo(
+    () => new Set<Source>(enabledMembershipKey ? (enabledMembershipKey.split('|') as Source[]) : []),
+    [enabledMembershipKey]
   );
-  const categoryItems = useMemo(() => libraryCategoryFilterItems(categories, sourceFilter), [categories, sourceFilter]);
+  const sourceItems = useMemo(
+    () => [
+      { value: 'all', label: '全部' },
+      ...enabledSources.map((source) => ({ value: source, label: sourceCatalog[source].label }))
+    ],
+    [enabledSources]
+  );
+  const effectiveSourceFilter =
+    sourceFilter === 'all' || enabledSourceSet.has(sourceFilter as Source) ? sourceFilter : 'all';
+  const effectiveCategoryFilter = effectiveSourceFilter === sourceFilter ? categoryFilter : 'all';
+  const visibleFollowedUsers = useMemo(
+    () => followedUsers.filter((record) => enabledSourceSet.has(record.user.source)),
+    [enabledSourceSet, followedUsers]
+  );
+  const visibleRecords = useMemo(
+    () => records.filter((record) => enabledSourceSet.has(record.topic.source)),
+    [enabledSourceSet, records]
+  );
+  const userRecords = useMemo(
+    () => filterFollowedUsersBySource(visibleFollowedUsers, effectiveSourceFilter),
+    [effectiveSourceFilter, visibleFollowedUsers]
+  );
+  const categoryItems = useMemo(
+    () => libraryCategoryFilterItems(categories, effectiveSourceFilter),
+    [categories, effectiveSourceFilter]
+  );
   const filteredRecords = useMemo(
     () =>
-      filterLibraryRecords(records, {
-        source: sourceFilter,
-        category: categoryFilter
+      filterLibraryRecords(visibleRecords, {
+        source: effectiveSourceFilter,
+        category: effectiveCategoryFilter
       }),
-    [categoryFilter, records, sourceFilter]
+    [effectiveCategoryFilter, effectiveSourceFilter, visibleRecords]
   );
   const listItems = useMemo<LibraryListItem[]>(() => createLibraryListItems(filteredRecords), [filteredRecords]);
   const scrollLibraryToTop = useCallback(() => {
@@ -157,10 +182,16 @@ export const LibraryScreen = memo(function LibraryScreen({
     setSourceFilter(value as FeedSource);
   }, []);
   useEffect(() => {
-    if (categoryFilter !== 'all' && !categoryItems.some((item) => item.value === categoryFilter)) {
+    if (sourceFilter !== 'all' && !enabledSourceSet.has(sourceFilter as Source)) {
+      setSourceFilter('all');
       setCategoryFilter('all');
     }
-  }, [categoryFilter, categoryItems]);
+  }, [enabledMembershipKey, enabledSourceSet, sourceFilter]);
+  useEffect(() => {
+    if (effectiveCategoryFilter !== 'all' && !categoryItems.some((item) => item.value === effectiveCategoryFilter)) {
+      setCategoryFilter('all');
+    }
+  }, [categoryItems, effectiveCategoryFilter]);
   const confirmRemoveFavorite = useCallback(
     (topic: Topic) => {
       Alert.alert('确定取消收藏吗？', topic.title || '这条收藏将从本机移除。', [
@@ -279,7 +310,13 @@ export const LibraryScreen = memo(function LibraryScreen({
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>收藏</Text>
           <Text style={styles.meta}>
-            {libraryCountLabel({ filteredRecords, followedUsers, libraryTab, records, userRecords })}
+            {libraryCountLabel({
+              filteredRecords,
+              followedUsers: visibleFollowedUsers,
+              libraryTab,
+              records: visibleRecords,
+              userRecords
+            })}
           </Text>
         </View>
         <PillRail
@@ -291,15 +328,20 @@ export const LibraryScreen = memo(function LibraryScreen({
         />
         <PillRail
           variant="subtabs"
-          items={LIBRARY_SOURCE_ITEMS}
-          value={sourceFilter}
+          items={sourceItems}
+          value={effectiveSourceFilter}
           testIDPrefix="library-source"
           onChange={changeSourceFilter}
         />
         {libraryTab !== 'users' && categoryItems.length > 1 ? (
-          <PillRail variant="subtabs" items={categoryItems} value={categoryFilter} onChange={setCategoryFilter} />
+          <PillRail
+            variant="subtabs"
+            items={categoryItems}
+            value={effectiveCategoryFilter}
+            onChange={setCategoryFilter}
+          />
         ) : null}
-        {libraryTab === 'history' && records.length ? (
+        {libraryTab === 'history' && visibleRecords.length ? (
           <View style={styles.actions}>
             <AppButton compact label="清空历史" variant="danger" onPress={confirmClearHistory} />
           </View>
@@ -308,19 +350,20 @@ export const LibraryScreen = memo(function LibraryScreen({
       </View>
     ),
     [
-      categoryFilter,
       categoryItems,
       changeLibraryTab,
       changeSourceFilter,
       confirmClearHistory,
       filteredRecords,
-      followedUsers,
+      effectiveCategoryFilter,
+      effectiveSourceFilter,
       libraryTab,
       loaded,
-      records,
-      sourceFilter,
+      sourceItems,
       styles,
-      userRecords
+      userRecords,
+      visibleFollowedUsers,
+      visibleRecords
     ]
   );
 
@@ -358,7 +401,20 @@ export const LibraryScreen = memo(function LibraryScreen({
             loaded && libraryTab === 'favorites' && !filteredRecords.length ? 'library-favorites-empty' : undefined
           }
         >
-          <EmptyText text={libraryTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} />
+          <EmptyText
+            text={
+              enabledSources.length === 0
+                ? '尚未启用内容源'
+                : libraryTab === 'users'
+                  ? '这里还没有关注用户'
+                  : '这里还没有内容'
+            }
+          />
+          {enabledSources.length === 0 ? (
+            <View style={styles.actions}>
+              <AppButton label="管理内容源" variant="primary" onPress={onManageContentSources} />
+            </View>
+          ) : null}
         </View>
       }
       renderItem={

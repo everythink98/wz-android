@@ -15,6 +15,7 @@ import {
   removeFollowedUsers,
   removeRecords,
   sanitizeReaderData,
+  sanitizeReaderSettings,
   toggleFavorite,
   toggleFollowedUser,
   topicKey,
@@ -530,6 +531,30 @@ describe('Android reader data helpers', () => {
     expect(data.settings).not.toHaveProperty('nodeseekCookie');
   });
 
+  it('adds default content sources to old v2 reader settings without changing the version', () => {
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      settings: { theme: 'dark' }
+    });
+
+    expect(data.version).toBe(2);
+    expect(data.settings.theme).toBe('dark');
+    expect(data.settings.contentSources).toEqual([
+      { source: 'v2ex', enabled: true },
+      { source: 'linuxdo', enabled: true },
+      { source: 'nodeseek', enabled: true },
+      { source: 'yaohuo', enabled: true },
+      { source: 'xiaoyinsi', enabled: true }
+    ]);
+  });
+
+  it('keeps default content sources isolated between new and sanitized settings', () => {
+    createEmptyReaderData().settings.contentSources[0].enabled = false;
+
+    expect(createEmptyReaderData().settings.contentSources[0]).toEqual({ source: 'v2ex', enabled: true });
+    expect(sanitizeReaderSettings({}).contentSources[0]).toEqual({ source: 'v2ex', enabled: true });
+  });
+
   it('sanitizes the NodeSeek read-channel recovery threshold for storage and backup data', () => {
     expect(createEmptyReaderData().settings.nodeSeekRecoveryThreshold).toBe(1);
     expect(
@@ -916,6 +941,27 @@ describe('Android reader data helpers', () => {
     expect(merged.settings.fontScale).toBe(1.2);
     expect(merged.settings.lineHeight).toBe('loose');
     expect(merged.settings.nodeSeekRecoveryThreshold).toBe(3);
+  });
+
+  it('merges a valid remote content source selection into reader settings', () => {
+    const local = createEmptyReaderData();
+    const remote = {
+      ...createEmptyReaderData(),
+      settings: {
+        contentSources: [
+          { source: 'xiaoyinsi', enabled: false },
+          { source: 'v2ex', enabled: true }
+        ]
+      }
+    };
+
+    expect(mergeReaderData(local, remote).settings.contentSources).toEqual([
+      { source: 'xiaoyinsi', enabled: false },
+      { source: 'v2ex', enabled: true },
+      { source: 'linuxdo', enabled: true },
+      { source: 'nodeseek', enabled: true },
+      { source: 'yaohuo', enabled: true }
+    ]);
   });
 
   it('keeps local reader settings when remote settings is not an object', () => {

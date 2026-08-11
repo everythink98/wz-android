@@ -107,11 +107,13 @@ export function TopicPolls({
                 ? '未登录'
                 : decision.reason === 'identity-pending' || decision.reason === 'pending'
                   ? '状态确认中'
-                  : !decision.allowed
-                    ? '不可操作'
-                    : !discoursePollReady
-                      ? '信息不完整'
-                      : '可投票';
+                  : decision.reason === 'identity-unavailable'
+                    ? '账号待核对'
+                    : !decision.allowed
+                      ? '不可操作'
+                      : !discoursePollReady
+                        ? '信息不完整'
+                        : '可投票';
         const pollMetaItems = [
           pollTypeLabel(poll),
           pollChoiceRangeLabel(poll),
@@ -128,11 +130,13 @@ export function TopicPolls({
                 ? '登录后投票'
                 : decision.reason === 'identity-pending' || decision.reason === 'pending'
                   ? '请稍后重试'
-                  : !decision.allowed
-                    ? '不可操作'
-                    : !discoursePollReady
-                      ? '刷新后投票'
-                      : selectionRangeStatus || '提交投票';
+                  : decision.reason === 'identity-unavailable'
+                    ? '核对后投票'
+                    : !decision.allowed
+                      ? '不可操作'
+                      : !discoursePollReady
+                        ? '刷新后投票'
+                        : selectionRangeStatus || '提交投票';
         const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
         return (
           <View

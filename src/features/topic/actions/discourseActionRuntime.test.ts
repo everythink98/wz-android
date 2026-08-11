@@ -13,11 +13,7 @@ vi.mock('@/sources/xiaoyinsi/auth', () => ({
   currentXiaoyinsiCredentialGeneration: mocks.currentXiaoyinsiCredentialGeneration,
   loadXiaoyinsiCredentials: mocks.loadXiaoyinsiCredentials
 }));
-import {
-  discourseActionRuntimeSources,
-  prepareDiscourseActionRuntime,
-  type DiscourseActionRuntimeContext
-} from './discourseActionRuntime';
+import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeContext } from './discourseActionRuntime';
 
 function runtimeContext(): DiscourseActionRuntimeContext {
   return {
@@ -34,10 +30,6 @@ beforeEach(() => {
 });
 
 describe('Discourse action runtime registry', () => {
-  it('registers every current Discourse source outside the Topic controller', () => {
-    expect(discourseActionRuntimeSources).toEqual(['linuxdo', 'xiaoyinsi']);
-  });
-
   it('prepares the independent transport for each registered source', async () => {
     const context = runtimeContext();
     const linuxdo = await prepareDiscourseActionRuntime('linuxdo', context);

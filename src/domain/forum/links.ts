@@ -132,10 +132,6 @@ export function parseForumTopicDestination(
   return { topic, ...(targetReply ? { targetReply } : {}) };
 }
 
-export function parseForumTopicReplyTarget(href: string, baseUrl?: string): ReplyLocationTarget | undefined {
-  return parseForumTopicDestination(href, baseUrl)?.targetReply;
-}
-
 export function parseInternalTopicOpenLink(value: string) {
   const url = forumLinkUrl(value);
   return url?.protocol === 'exp+wz-android:' && url.hostname === 'open-topic'

@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { MAX_BACKUP_JSON_BYTES } from '@/domain/reader/readerBackup';
-import { loadReaderData, saveCleanReaderData, saveReaderSettings } from './readerDataStore';
+import { loadReaderData, loadReaderSettings, saveCleanReaderData, saveReaderSettings } from './readerDataStore';
 import type { Topic } from '@/domain/forum/models';
 
 vi.mock('expo-secure-store', () => {
@@ -39,6 +39,14 @@ vi.mock('@react-native-async-storage/async-storage', () => {
 const secureStore = SecureStore as typeof SecureStore & { __store: Map<string, string> };
 const asyncStorage = AsyncStorage as typeof AsyncStorage & { __store: Map<string, string> };
 
+const defaultContentSources = [
+  { source: 'v2ex', enabled: true },
+  { source: 'linuxdo', enabled: true },
+  { source: 'nodeseek', enabled: true },
+  { source: 'yaohuo', enabled: true },
+  { source: 'xiaoyinsi', enabled: true }
+] as const;
+
 const topic: Topic = {
   source: 'nodeseek',
   id: '723704',
@@ -55,6 +63,17 @@ describe('reader data store', () => {
     secureStore.__store.clear();
     asyncStorage.__store.clear();
     vi.clearAllMocks();
+    vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) => asyncStorage.__store.get(key) ?? null);
+    vi.mocked(AsyncStorage.setItem).mockImplementation(async (key, value) => {
+      asyncStorage.__store.set(key, value);
+    });
+    vi.mocked(AsyncStorage.removeItem).mockImplementation(async (key) => {
+      asyncStorage.__store.delete(key);
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('saves reader data in AsyncStorage instead of SecureStore', async () => {
@@ -100,6 +119,204 @@ describe('reader data store', () => {
     asyncStorage.__store.set('reader-settings', JSON.stringify({ ...data.settings, theme: 'dark' }));
 
     await expect(loadReaderData()).resolves.toMatchObject({ settings: { theme: 'dark' } });
+  });
+
+  it('keeps a valid persisted content-source order and enabled set', async () => {
+    const data = createEmptyReaderData();
+    asyncStorage.__store.set('reader-data', JSON.stringify(data));
+    asyncStorage.__store.set(
+      'reader-settings',
+      JSON.stringify({
+        ...data.settings,
+        contentSources: [
+          { source: 'xiaoyinsi', enabled: false },
+          { source: 'v2ex', enabled: true },
+          { source: 'linuxdo', enabled: false },
+          { source: 'nodeseek', enabled: true },
+          { source: 'yaohuo', enabled: false }
+        ]
+      })
+    );
+
+    await expect(loadReaderData()).resolves.toMatchObject({
+      settings: {
+        contentSources: [
+          { source: 'xiaoyinsi', enabled: false },
+          { source: 'v2ex', enabled: true },
+          { source: 'linuxdo', enabled: false },
+          { source: 'nodeseek', enabled: true },
+          { source: 'yaohuo', enabled: false }
+        ]
+      }
+    });
+  });
+
+  it('[REG-DATA-007] loads headless settings only from the settings key and falls back safely', async () => {
+    asyncStorage.__store.set('reader-settings', '{bad json');
+
+    await expect(loadReaderSettings()).resolves.toEqual(createEmptyReaderData().settings);
+    expect(AsyncStorage.getItem).toHaveBeenCalledTimes(1);
+    expect(AsyncStorage.getItem).toHaveBeenCalledWith('reader-settings');
+    expect(AsyncStorage.getItem).not.toHaveBeenCalledWith('reader-data');
+  });
+
+  it('[REG-DATA-007] uses default settings when the headless settings key is missing', async () => {
+    await expect(loadReaderSettings()).resolves.toEqual(createEmptyReaderData().settings);
+    expect(AsyncStorage.getItem).toHaveBeenCalledTimes(1);
+    expect(AsyncStorage.getItem).toHaveBeenCalledWith('reader-settings');
+  });
+
+  it.each(['null', '[]', '"not settings"'])(
+    '[REG-DATA-007] uses default settings when the headless value is %s',
+    async (raw) => {
+      asyncStorage.__store.set('reader-settings', raw);
+
+      await expect(loadReaderSettings()).resolves.toMatchObject({ contentSources: defaultContentSources });
+    }
+  );
+
+  it('[REG-DATA-007] uses default settings when the headless settings read rejects', async () => {
+    vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('settings storage unavailable'));
+
+    await expect(loadReaderSettings()).resolves.toMatchObject({ contentSources: defaultContentSources });
+  });
+
+  it('[REG-DATA-007] uses default settings when the headless settings read never settles', async () => {
+    vi.useFakeTimers();
+    vi.mocked(AsyncStorage.getItem).mockReturnValueOnce(new Promise(() => undefined));
+    const load = loadReaderSettings();
+
+    await vi.runAllTimersAsync();
+
+    await expect(load).resolves.toMatchObject({ contentSources: defaultContentSources });
+  });
+
+  it('[REG-DATA-007] ignores a settings value that resolves after the local-read deadline', async () => {
+    vi.useFakeTimers();
+    const stored = Promise.withResolvers<string | null>();
+    vi.mocked(AsyncStorage.getItem).mockReturnValueOnce(stored.promise);
+    const load = loadReaderSettings();
+
+    await vi.runAllTimersAsync();
+    const settled = await load;
+    stored.resolve(
+      JSON.stringify({
+        ...createEmptyReaderData().settings,
+        contentSources: [{ source: 'v2ex', enabled: false }]
+      })
+    );
+    await Promise.resolve();
+
+    expect(settled.contentSources).toEqual(defaultContentSources);
+  });
+
+  it('normalizes missing and invalid content source settings in headless reads', async () => {
+    asyncStorage.__store.set('reader-settings', JSON.stringify({ theme: 'dark' }));
+
+    await expect(loadReaderSettings()).resolves.toMatchObject({
+      theme: 'dark',
+      contentSources: [
+        { source: 'v2ex', enabled: true },
+        { source: 'linuxdo', enabled: true },
+        { source: 'nodeseek', enabled: true },
+        { source: 'yaohuo', enabled: true },
+        { source: 'xiaoyinsi', enabled: true }
+      ]
+    });
+
+    asyncStorage.__store.set('reader-settings', JSON.stringify({ contentSources: [{ source: 'v2ex', enabled: 1 }] }));
+
+    await expect(loadReaderSettings()).resolves.toMatchObject({
+      contentSources: [
+        { source: 'v2ex', enabled: true },
+        { source: 'linuxdo', enabled: true },
+        { source: 'nodeseek', enabled: true },
+        { source: 'yaohuo', enabled: true },
+        { source: 'xiaoyinsi', enabled: true }
+      ]
+    });
+  });
+
+  it.each([
+    ['missing', null],
+    ['malformed', '{bad json'],
+    ['non-object', '[]']
+  ] as const)(
+    '[REG-DATA-007] defaults content sources when reader-settings is %s without discarding reader data',
+    async (_case, raw) => {
+      const data = createEmptyReaderData();
+      data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
+      data.settings = {
+        ...data.settings,
+        theme: 'dark',
+        contentSources: data.settings.contentSources.map((preference) => ({
+          ...preference,
+          enabled: preference.source !== 'linuxdo'
+        }))
+      };
+      vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) =>
+        key === 'reader-data' ? JSON.stringify(data) : raw
+      );
+
+      await expect(loadReaderData()).resolves.toMatchObject({
+        history: data.history,
+        settings: {
+          theme: 'dark',
+          contentSources: defaultContentSources
+        }
+      });
+    }
+  );
+
+  it('defaults content sources when neither settings store has a valid preference field', async () => {
+    const data = createEmptyReaderData();
+    const raw = JSON.stringify({
+      ...data,
+      settings: { ...data.settings, theme: 'dark', contentSources: 'invalid' }
+    });
+    vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) => (key === 'reader-data' ? raw : null));
+
+    await expect(loadReaderData()).resolves.toMatchObject({
+      settings: { theme: 'dark', contentSources: defaultContentSources }
+    });
+  });
+
+  it('[REG-DATA-007] keeps valid reader data and defaults content sources when the separate settings read rejects', async () => {
+    const data = createEmptyReaderData();
+    data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
+    data.settings.contentSources[1] = { source: 'linuxdo', enabled: false };
+    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
+      key === 'reader-data'
+        ? Promise.resolve(JSON.stringify(data))
+        : Promise.reject(new Error('settings storage unavailable'))
+    );
+
+    await expect(loadReaderData()).resolves.toMatchObject({
+      history: data.history,
+      settings: {
+        contentSources: defaultContentSources
+      }
+    });
+  });
+
+  it('[REG-DATA-007] keeps valid reader data and defaults content sources when the separate settings read exceeds the local deadline', async () => {
+    vi.useFakeTimers();
+    const data = createEmptyReaderData();
+    data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
+    data.settings.contentSources[1] = { source: 'linuxdo', enabled: false };
+    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
+      key === 'reader-data' ? Promise.resolve(JSON.stringify(data)) : new Promise(() => undefined)
+    );
+    const load = loadReaderData();
+
+    await vi.runAllTimersAsync();
+
+    await expect(load).resolves.toMatchObject({
+      history: data.history,
+      settings: {
+        contentSources: defaultContentSources
+      }
+    });
   });
 
   it('[REG-DATA-003] restores the previous full snapshot when the paired settings write fails', async () => {
@@ -170,6 +387,45 @@ describe('reader data store', () => {
 
     expect(asyncStorage.__store.get('reader-data')).toBe('{bad json');
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the reader-data read rejects even if settings can fall back', async () => {
+    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
+      key === 'reader-data' ? Promise.reject(new Error('reader data unavailable')) : Promise.resolve(null)
+    );
+
+    await expect(loadReaderData()).rejects.toThrow('reader data unavailable');
+  });
+
+  it('rejects when the reader-data read never settles', async () => {
+    vi.useFakeTimers();
+    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
+      key === 'reader-data' ? new Promise(() => undefined) : Promise.resolve(null)
+    );
+    const load = expect(loadReaderData()).rejects.toThrow('本机资料读取超时');
+
+    await vi.runAllTimersAsync();
+
+    await load;
+  });
+
+  it('keeps a reader-data timeout settled after the storage promise resolves late', async () => {
+    vi.useFakeTimers();
+    const stored = Promise.withResolvers<string | null>();
+    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
+      key === 'reader-data' ? stored.promise : Promise.resolve(null)
+    );
+    const outcome = loadReaderData().then(
+      () => 'loaded',
+      (error: Error) => error.message
+    );
+
+    await vi.runAllTimersAsync();
+    expect(await outcome).toBe('本机资料读取超时；为防止覆盖，未自动重置。');
+    stored.resolve(JSON.stringify(createEmptyReaderData()));
+    await Promise.resolve();
+
+    expect(await outcome).toBe('本机资料读取超时；为防止覆盖，未自动重置。');
   });
 
   it('preserves unsupported reader data versions instead of replacing them with empty data', async () => {

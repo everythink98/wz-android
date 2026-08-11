@@ -11,7 +11,9 @@ vi.mock('react-native', () => ({ NativeModules: {} }));
 import { getCategories, getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
 import { getReplies, getReply, getTopic } from '@/sources/sourceRead';
-import { createReadGateway } from '@/sources/readGateway';
+import { createReadGateway as createProductionReadGateway } from '@/sources/readGateway';
+import type { SessionSource } from '@/domain/forum/sourceCatalog';
+import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { readAccountStatus } from '@/sources/accountRead';
 import { isLinuxDoCloudflareError } from '@/sources/errors';
 import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
@@ -43,6 +45,29 @@ import {
 } from '@/platform/diagnostics/diagnostics';
 import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
 import { getReadNetworkRuntimeSnapshot } from '@/platform/network/readNetworkRuntime';
+
+function publicSessionSnapshot(source: SessionSource): SessionRuntimeSnapshot {
+  return {
+    source,
+    authenticated: false,
+    authSurfaceOpen: false,
+    identityKey: `${source}:anonymous`,
+    identityTrust: 'none',
+    sessionEpoch: 0,
+    sourceEnabled: true
+  };
+}
+
+function createReadGateway(
+  dependencies: Omit<Parameters<typeof createProductionReadGateway>[0], 'readSessionRuntimeSnapshot'> & {
+    readSessionRuntimeSnapshot?: (source: SessionSource) => SessionRuntimeSnapshot;
+  }
+) {
+  return createProductionReadGateway({
+    ...dependencies,
+    readSessionRuntimeSnapshot: dependencies.readSessionRuntimeSnapshot || publicSessionSnapshot
+  });
+}
 
 const nodeSeekPayload = Buffer.from(
   JSON.stringify({
@@ -1773,12 +1798,6 @@ describe('Android local sources', () => {
       resolvedPage: 3,
       floors: Array.from({ length: 10 }, (_, index) => index + 21),
       message: '未确认请求的回复页'
-    },
-    {
-      name: 'missing a middle floor',
-      resolvedPage: 4,
-      floors: [31, 32, 33, 34, 35, 37, 38, 39, 40],
-      message: '回复窗口不完整'
     }
   ])('[REG-TOPIC-068] classifies a NodeSeek adjacent cursor $name', async ({ resolvedPage, floors, message }) => {
     const fetcher = vi.fn(async (input: string) => {
@@ -1833,6 +1852,384 @@ describe('Android local sources', () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain(message);
     expect((error as { reason?: unknown }).reason).toBeUndefined();
+  });
+
+  it('[REG-TOPIC-068][REG-TOPIC-070] keeps a confirmed sparse NodeSeek ordinary cursor window', async () => {
+    const floors = [31, 32, 33, 34, 35, 37, 38, 39, 40];
+    const fetcher = vi.fn(async () =>
+      htmlAt(
+        `
+          <a class="post-title" href="/post-852808-4">NodeSeek topic</a>
+          ${floors
+            .map(
+              (floor) => `
+                <li id="${floor}" data-comment-id="${40000 + floor}" class="content-item">
+                  <a class="floor-link">#${floor}</a>
+                  <a href="/space/${floor}" class="author-name">user-${floor}</a>
+                  <article class="post-content"><p>reply ${floor}</p></article>
+                </li>
+              `
+            )
+            .join('')}
+          <div class="nsk-pager"><a href="/post-852808-5" rel="next">5</a></div>
+        `,
+        'https://www.nodeseek.com/post-852808-4'
+      )
+    );
+
+    const result = await getNodeSeekReplies('852808', {
+      fetcher,
+      order: 'oldest',
+      position: { kind: 'cursor', page: 4, offset: 30 },
+      limit: 10
+    });
+
+    expect(result.items.map((reply) => reply.floor)).toEqual(floors);
+    expect(result).toMatchObject({ currentPage: 4, completeness: 'partial' });
+  });
+
+  it('[REG-TOPIC-077] preserves empty records from the embedded NodeSeek comment collection', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 852808,
+          postPage: 1,
+          title: 'NodeSeek topic',
+          comments: [
+            { commentId: 1, poster: { name: 'op' }, markdown: 'body' },
+            { commentId: 2, floorIndex: 1, poster: { name: 'first' }, markdown: 'first' },
+            {},
+            { commentId: 4, poster: {}, markdown: '' }
+          ]
+        }
+      })
+    ).toString('base64');
+    const response = htmlAt(`<script>${payload}</script>`, 'https://www.nodeseek.com/post-852808-1');
+
+    const result = await getNodeSeekReplies('852808', {
+      fetcher: vi.fn(async () => response),
+      order: 'oldest',
+      position: { kind: 'start' },
+      limit: 10
+    });
+
+    expect(result.items.map(({ commentId, floor }) => ({ commentId, floor }))).toEqual([
+      { commentId: 2, floor: 1 },
+      { commentId: undefined, floor: 2 },
+      { commentId: 4, floor: 3 }
+    ]);
+    expect(result).toMatchObject({ completeness: 'partial' });
+  });
+
+  it('[REG-TOPIC-077] preserves partial evidence for an exact NodeSeek target window', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 852808,
+          postPage: 1,
+          title: 'NodeSeek topic',
+          comments: [
+            { commentId: 1, poster: { name: 'op' }, markdown: 'body' },
+            { commentId: 40031, floorIndex: 31, poster: { name: 'target' }, markdown: 'target' },
+            null
+          ]
+        }
+      })
+    ).toString('base64');
+
+    const result = await getNodeSeekReplies('852808', {
+      fetcher: vi.fn(async () => htmlAt(`<script>${payload}</script>`, 'https://www.nodeseek.com/post-852808-1')),
+      order: 'oldest',
+      position: { kind: 'target', target: { commentId: 40031, floor: 31, pageHint: 1 } },
+      limit: 10
+    });
+
+    expect(result.items).toEqual([expect.objectContaining({ commentId: 40031, floor: 31 })]);
+    expect(result).toMatchObject({ currentPage: 1, completeness: 'partial' });
+  });
+
+  it('[REG-TOPIC-077] rejects an explicit wrong NodeSeek topic identity before projecting replies', async () => {
+    const response = htmlAt(
+      `<a class="post-title" href="/post-999999-1">Wrong topic</a>
+       <li class="content-item"><article class="post-content"><p>body</p></article></li>
+       <li id="1" data-comment-id="40031" class="content-item">
+         <a class="floor-link">#1</a><a href="/space/1" class="author-name">user-1</a>
+         <article class="post-content"><p>reply</p></article>
+       </li>`,
+      'https://www.nodeseek.com/post-999999-1'
+    );
+
+    await expect(
+      getNodeSeekReplies('852808', {
+        fetcher: vi.fn(async () => response),
+        order: 'oldest',
+        position: { kind: 'start' },
+        limit: 10
+      })
+    ).rejects.toThrow('主题身份不一致');
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-070][REG-TOPIC-077] deduplicates duplicate ordinary NodeSeek reply identifiers', async () => {
+    const row = `
+      <li id="31" data-comment-id="40031" class="content-item">
+        <a class="floor-link">#31</a>
+        <a href="/space/31" class="author-name">user-31</a>
+        <article class="post-content"><p>reply 31</p></article>
+      </li>
+    `;
+    const fetcher = vi.fn(async () =>
+      htmlAt(
+        `<a class="post-title" href="/post-852808-4">NodeSeek topic</a>${row}${row}`,
+        'https://www.nodeseek.com/post-852808-4'
+      )
+    );
+
+    const result = await getNodeSeekReplies('852808', {
+      fetcher,
+      order: 'oldest',
+      position: { kind: 'cursor', page: 4, offset: 30 },
+      limit: 10
+    });
+
+    expect(result.items.map((reply) => reply.commentId)).toEqual([40031]);
+    expect(result).toMatchObject({ completeness: 'partial' });
+  });
+
+  it('[REG-TOPIC-070] keeps one ordinary NodeSeek row when a featured copy repeats its location', async () => {
+    const row = (featured = '') => `
+      <li id="31" data-comment-id="40031" class="content-item">
+        <div class="floor-link-wrapper">${featured}<a class="floor-link">#31</a></div>
+        <a href="/space/31" class="author-name">user-31</a>
+        <article class="post-content"><p>reply 31</p></article>
+      </li>
+    `;
+    const result = await getNodeSeekReplies('852808', {
+      fetcher: vi.fn(async () =>
+        htmlAt(
+          `<a class="post-title" href="/post-852808-4">NodeSeek topic</a>${row(
+            '<div class="hot-badge"></div>'
+          )}${row()}`,
+          'https://www.nodeseek.com/post-852808-4'
+        )
+      ),
+      order: 'oldest',
+      position: { kind: 'cursor', page: 4, offset: 30 },
+      limit: 10
+    });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ commentId: 40031, floor: 31, hot: undefined, pinned: undefined });
+  });
+
+  it('[REG-TOPIC-062][REG-TOPIC-077] rejects a floor-only NodeSeek exact target backed only by a synthesized floor', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 852808,
+          title: 'NodeSeek topic',
+          comments: [{ commentId: 40031, poster: { name: 'user-31' }, markdown: '' }]
+        }
+      })
+    ).toString('base64');
+
+    await expect(
+      getNodeSeekReplies('852808', {
+        fetcher: vi.fn(async () =>
+          htmlAt(
+            `<script>${payload}</script><a class="post-title" href="/post-852808-4">NodeSeek topic</a>`,
+            'https://www.nodeseek.com/post-852808-4'
+          )
+        ),
+        order: 'oldest',
+        position: { kind: 'target', target: { floor: 31, pageHint: 4 } },
+        limit: 10
+      })
+    ).rejects.toThrow('目标楼层未找到');
+  });
+
+  it('[REG-TOPIC-060][REG-TOPIC-077] keeps an author-only first NodeSeek reply on a later page', async () => {
+    const result = await getNodeSeekReplies('852808', {
+      fetcher: vi.fn(async () =>
+        htmlAt(
+          `<a class="post-title" href="/post-852808-2">NodeSeek topic</a>
+           <li class="content-item"><a href="/space/11" class="author-name">user-11</a><article class="post-content"></article></li>`,
+          'https://www.nodeseek.com/post-852808-2'
+        )
+      ),
+      order: 'oldest',
+      position: { kind: 'cursor', page: 2, offset: 10 },
+      limit: 10
+    });
+
+    expect(result.items).toEqual([expect.objectContaining({ author: 'user-11', floor: 11 })]);
+    expect(result).toMatchObject({ completeness: 'partial' });
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-077] advances a NodeSeek origin page by consumed collection rows', async () => {
+    const embedded = (page: number) => {
+      const comments =
+        page === 1
+          ? [
+              { commentId: 1, floorIndex: 0, poster: { name: 'op' }, markdown: 'topic' },
+              ...Array.from({ length: 10 }, (_, index) =>
+                index === 4
+                  ? {}
+                  : {
+                      commentId: 40001 + index,
+                      floorIndex: index + 1,
+                      poster: { name: `user-${index + 1}` },
+                      markdown: `reply ${index + 1}`
+                    }
+              )
+            ]
+          : [{ commentId: 40011, poster: { name: 'user-11' }, markdown: 'reply 11' }];
+      return Buffer.from(JSON.stringify({ postData: { postId: 852808, title: 'NodeSeek topic', comments } })).toString(
+        'base64'
+      );
+    };
+    const fetcher = vi.fn(async (input: string) => {
+      const page = input.includes('/post-852808-2') ? 2 : 1;
+      return htmlAt(
+        `<script>${embedded(page)}</script><a class="post-title" href="/post-852808-${page}">NodeSeek topic</a>${
+          page === 1 ? '<div class="nsk-pager"><a href="/post-852808-2" rel="next">2</a></div>' : ''
+        }`,
+        `https://www.nodeseek.com/post-852808-${page}`
+      );
+    });
+
+    const first = await getNodeSeekReplies('852808', {
+      fetcher,
+      order: 'oldest',
+      position: { kind: 'start' },
+      limit: 10
+    });
+    const second = await getNodeSeekReplies('852808', {
+      fetcher,
+      order: 'oldest',
+      position: { kind: 'cursor', page: first.nextPage!, offset: first.nextOffset ?? null },
+      limit: 10
+    });
+
+    expect(first).toMatchObject({ completeness: 'partial', nextPage: 2, nextOffset: 10 });
+    expect(second.items).toEqual([expect.objectContaining({ commentId: 40011, floor: 11 })]);
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-070] rejects an empty NodeSeek ordinary cursor window', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({ postData: { postId: 852808, title: 'NodeSeek topic', comments: [] } })
+    ).toString('base64');
+    const fetcher = vi.fn(async () =>
+      htmlAt(
+        `<script>${payload}</script><a class="post-title" href="/post-852808-4">NodeSeek topic</a>`,
+        'https://www.nodeseek.com/post-852808-4'
+      )
+    );
+
+    await expect(
+      getNodeSeekReplies('852808', {
+        fetcher,
+        order: 'oldest',
+        position: { kind: 'cursor', page: 4, offset: 30 },
+        limit: 10
+      })
+    ).rejects.toThrow('回复窗口为空');
+  });
+
+  it('[REG-TOPIC-077] keeps an empty record selected by the embedded NodeSeek comment collection', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 852808,
+          postPage: 1,
+          replyCount: 5,
+          title: 'NodeSeek topic',
+          comments: [{ commentId: 1, poster: { name: 'op' }, markdown: 'body' }, {}]
+        }
+      })
+    ).toString('base64');
+
+    const result = await getNodeSeekReplies('852808', {
+      fetcher: vi.fn(async () => htmlAt(`<script>${payload}</script>`, 'https://www.nodeseek.com/post-852808-1')),
+      order: 'oldest',
+      position: { kind: 'start' },
+      replyCount: 5,
+      limit: 10
+    });
+
+    expect(result.items).toEqual([expect.objectContaining({ author: '', contentHtml: '', floor: 1 })]);
+    expect(result).toMatchObject({ completeness: 'partial' });
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-070] rejects an empty oldest NodeSeek start window with a continuation', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({ postData: { postId: 852808, title: 'NodeSeek topic', comments: [] } })
+    ).toString('base64');
+
+    await expect(
+      getNodeSeekReplies('852808', {
+        fetcher: vi.fn(async () =>
+          htmlAt(
+            `<script>${payload}</script>
+             <a class="post-title" href="/post-852808-1">NodeSeek topic</a>
+             <div class="nsk-pager"><a href="/post-852808-2" rel="next">2</a></div>`,
+            'https://www.nodeseek.com/post-852808-1'
+          )
+        ),
+        order: 'oldest',
+        position: { kind: 'start' },
+        limit: 10
+      })
+    ).rejects.toThrow('回复窗口为空');
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-070] rejects an empty oldest NodeSeek page before filling from its continuation', async () => {
+    const payload = (comments: unknown[]) =>
+      Buffer.from(JSON.stringify({ postData: { postId: 852808, title: 'NodeSeek topic', comments } })).toString(
+        'base64'
+      );
+
+    await expect(
+      getNodeSeekReplies('852808', {
+        fetcher: vi.fn(async (input: string) =>
+          input.includes('/post-852808-2')
+            ? htmlAt(
+                `<script>${payload([
+                  { commentId: 40011, floorIndex: 11, poster: { name: 'user-11' }, markdown: 'reply 11' }
+                ])}</script><a class="post-title" href="/post-852808-2">NodeSeek topic</a>`,
+                'https://www.nodeseek.com/post-852808-2'
+              )
+            : htmlAt(
+                `<script>${payload([])}</script>
+                 <a class="post-title" href="/post-852808-1">NodeSeek topic</a>
+                 <div class="nsk-pager"><a href="/post-852808-2" rel="next">2</a></div>`,
+                'https://www.nodeseek.com/post-852808-1'
+              )
+        ),
+        order: 'oldest',
+        position: { kind: 'start' },
+        limit: 20,
+        fillPages: true
+      })
+    ).rejects.toThrow('回复窗口为空');
+  });
+
+  it('[REG-TOPIC-067][REG-TOPIC-077] rejects an empty first NodeSeek reply window without an authoritative zero count', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({ postData: { postId: 852808, title: 'NodeSeek topic', comments: [] } })
+    ).toString('base64');
+    await expect(
+      getNodeSeekReplies('852808', {
+        fetcher: vi.fn(async () =>
+          htmlAt(
+            `<script>${payload}</script><a class="post-title" href="/post-852808-1">NodeSeek topic</a>`,
+            'https://www.nodeseek.com/post-852808-1'
+          )
+        ),
+        order: 'oldest',
+        position: { kind: 'start' },
+        limit: 10
+      })
+    ).rejects.toThrow('回复窗口为空');
   });
 
   it('[REG-TOPIC-068] accepts an origin-confirmed adjacent page even when the previous reply count is stale', async () => {
@@ -1966,6 +2363,9 @@ describe('Android local sources', () => {
         htmlAt(
           `
             <a class="post-title" href="/post-861053-1">NodeSeek topic</a>
+            <li class="content-item">
+              <article class="post-content"><p>topic body</p></article>
+            </li>
             <li id="1" data-comment-id="11740001" class="content-item">
               <a class="floor-link">#1</a>
               <a href="/space/1" class="author-name">user-1</a>
@@ -2052,8 +2452,8 @@ describe('Android local sources', () => {
     expect(tail).not.toHaveProperty('totalCount');
   });
 
-  it('[REG-TOPIC-067] rejects a NodeSeek tail with a missing middle floor', async () => {
-    const error = await getNodeSeekReplies('852806', {
+  it('[REG-TOPIC-067][REG-TOPIC-070] keeps a confirmed sparse NodeSeek newest tail', async () => {
+    const tail = await getNodeSeekReplies('852806', {
       fetcher: vi.fn(async (input: string) => {
         const page = Number(input.match(/post-852806-(\d+)/)?.[1] || 1);
         const floors = page === 1 ? Array.from({ length: 10 }, (_, index) => index + 1) : [41, 42, 43, 45];
@@ -2077,14 +2477,10 @@ describe('Android local sources', () => {
       position: { kind: 'start' },
       replyCount: 45,
       limit: 10
-    }).then(
-      () => null,
-      (reason: unknown) => reason
-    );
+    });
 
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain('回复窗口不完整');
-    expect((error as { reason?: unknown }).reason).toBeUndefined();
+    expect(tail.items.map((reply) => reply.floor)).toEqual([45, 43, 42, 41]);
+    expect(tail).toMatchObject({ currentPage: 5, completeness: 'partial' });
   });
 
   it('[REG-TOPIC-067][REG-TOPIC-068] follows a newer NodeSeek pager cursor before accepting the tail', async () => {
@@ -2128,10 +2524,8 @@ describe('Android local sources', () => {
     expect(tail).not.toHaveProperty('totalCount');
   });
 
-  it.each([
-    { name: 'a different resolved page', resolvedPage: 4 },
-    { name: 'only locally inferred floors', resolvedPage: 5 }
-  ])('[REG-TOPIC-067] rejects a NodeSeek tail with $name', async ({ resolvedPage }) => {
+  it('[REG-TOPIC-067] rejects a NodeSeek tail with a different resolved page', async () => {
+    const resolvedPage = 4;
     const response = html(`
       <a class="post-title" href="/post-852807-${resolvedPage}">NodeSeek topic</a>
       ${Array.from(
@@ -2161,6 +2555,46 @@ describe('Android local sources', () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as { reason?: unknown }).reason).toBeUndefined();
+  });
+
+  it('[REG-TOPIC-070][REG-TOPIC-077] keeps a confirmed NodeSeek tail with locally inferred floors', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(input.match(/post-852807-(\d+)/)?.[1] || 1);
+      const response = html(`
+        <a class="post-title" href="/post-852807-${page}">NodeSeek topic</a>
+        ${
+          page === 1
+            ? `<li class="content-item"><article class="post-content"><p>body</p></article></li>
+               <li id="1" data-comment-id="29999" class="content-item">
+                 <a class="floor-link">#1</a><a href="/space/1" class="author-name">user-1</a>
+                 <article class="post-content"><p>reply 1</p></article>
+               </li>`
+            : Array.from(
+                { length: 5 },
+                (_, index) => `
+                  <li data-comment-id="${30000 + index}" class="content-item">
+                    <a href="/space/${index + 1}" class="author-name">user-${index + 1}</a>
+                    <article class="post-content"><p>reply ${index + 1}</p></article>
+                  </li>
+                `
+              ).join('')
+        }
+        ${page === 1 ? '<div class="nsk-pager"><a href="/post-852807-5" rel="next">5</a></div>' : ''}
+      `);
+      Object.defineProperty(response, 'url', { value: `https://www.nodeseek.com/post-852807-${page}` });
+      return response;
+    });
+
+    const result = await getNodeSeekReplies('852807', {
+      fetcher,
+      order: 'newest',
+      position: { kind: 'start' },
+      replyCount: 45,
+      limit: 10
+    });
+
+    expect(result.items.map(({ commentId }) => commentId)).toEqual([30004, 30003, 30002, 30001, 30000]);
+    expect(result).toMatchObject({ currentPage: 5, completeness: 'partial' });
   });
 
   it('does not fill normal NodeSeek replies from following origin pages', async () => {
@@ -2667,6 +3101,7 @@ describe('Android local sources', () => {
     });
     expect(replies.items.map((reply) => reply.floor)).toEqual([32]);
     expect(replies).toMatchObject({
+      completeness: 'partial',
       currentPage: 16,
       currentOffset: 30,
       nextPage: 17,
@@ -2678,6 +3113,59 @@ describe('Android local sources', () => {
       'https://linux.do/t/42.json',
       expect.stringContaining('https://linux.do/t/42/posts.json')
     ]);
+  });
+
+  it('[REG-TOPIC-073][REG-TOPIC-077] advances the linux.do topic seed by consumed source rows', async () => {
+    const topic = await getTopic({
+      source: 'linuxdo',
+      id: '42',
+      fetcher: vi.fn(async () =>
+        json({
+          id: 42,
+          title: 'linux.do topic',
+          created_at: '2026-05-20T00:00:00.000Z',
+          posts_count: 5,
+          post_stream: {
+            stream: [1, 2, 3, 4, 5],
+            posts: [
+              { id: 1, post_number: 1, username: 'op', cooked: '<p>body</p>', created_at: null },
+              { id: 2, post_number: 2, username: 'first', cooked: '', created_at: null },
+              {},
+              { id: 4, post_number: 4, username: 'last', cooked: '', created_at: null }
+            ]
+          }
+        })
+      )
+    });
+
+    expect(topic.replies.map(({ commentId }) => commentId)).toEqual([2, 4]);
+    expect(topic).toMatchObject({ replyCompleteness: 'partial', replyNextOffset: 3 });
+  });
+
+  it('[REG-TOPIC-077] rejects an explicit wrong linux.do topic identity before projecting replies', async () => {
+    await expect(
+      getReplies({
+        source: 'linuxdo',
+        id: '42',
+        order: 'oldest',
+        position: { kind: 'start' },
+        fetcher: vi.fn(async () => json({ id: 99, post_stream: { stream: [1], posts: [] } }))
+      })
+    ).rejects.toThrow('主题身份不一致');
+  });
+
+  it('[REG-TOPIC-077] uses the linux.do post ID when an exact target supplies one', async () => {
+    const target = { id: 101, post_number: 2, username: '', cooked: '', created_at: null };
+
+    await expect(
+      getReplies({
+        source: 'linuxdo',
+        id: '42',
+        order: 'oldest',
+        position: { kind: 'target', target: { commentId: 999, floor: 2 } },
+        fetcher: vi.fn(async () => json({ id: 42, post_stream: { stream: [1, 101], posts: [target] } }))
+      })
+    ).rejects.toThrow('目标楼层未找到');
   });
 
   it('maps linux.do Discourse polls from topic JSON', async () => {
@@ -4096,6 +4584,7 @@ describe('Android local sources', () => {
       canEdit: true,
       contentMarkdown: 'reply raw'
     });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('marks own linux.do posts unlikable while keeping other posts likable', async () => {
@@ -6130,7 +6619,7 @@ describe('Android local sources', () => {
         recoveryThreshold: 2,
         recoverReadChannel
       });
-      const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+      const gateway = createReadGateway({ anonymousFetcher: fetcher, fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
 
       const firstFallback = gateway.getFeed({ source: 'nodeseek' });
       await vi.advanceTimersByTimeAsync(8_000);
@@ -6178,7 +6667,7 @@ describe('Android local sources', () => {
       recoveryThreshold: 1,
       recoverReadChannel
     });
-    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+    const gateway = createReadGateway({ anonymousFetcher: fetcher, fetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
 
     const response = await gateway.getFeed({ source: 'nodeseek' });
 
@@ -6197,6 +6686,7 @@ describe('Android local sources', () => {
       recoverReadChannel
     });
     const gateway = createReadGateway({
+      anonymousFetcher: fallbackFetcher,
       fetcher: fallbackFetcher,
       nodeSeekUserAgent: () => 'NodeSeek UA'
     });
@@ -6249,6 +6739,7 @@ describe('Android local sources', () => {
       recoverReadChannel
     });
     const gateway = createReadGateway({
+      anonymousFetcher: fallbackFetcher,
       fetcher: fallbackFetcher,
       nodeSeekUserAgent: () => 'NodeSeek UA'
     });
@@ -6297,7 +6788,11 @@ describe('Android local sources', () => {
       recoveryThreshold: 1,
       recoverReadChannel
     });
-    const gateway = createReadGateway({ fetcher: fallbackFetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+    const gateway = createReadGateway({
+      anonymousFetcher: fallbackFetcher,
+      fetcher: fallbackFetcher,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
 
     const topic = await gateway.getTopic({ source: 'nodeseek', id: '743026' });
 
@@ -6342,7 +6837,11 @@ describe('Android local sources', () => {
       recoveryThreshold: 1,
       recoverReadChannel
     });
-    const gateway = createReadGateway({ fetcher: fallbackFetcher, nodeSeekUserAgent: () => 'NodeSeek UA' });
+    const gateway = createReadGateway({
+      anonymousFetcher: fallbackFetcher,
+      fetcher: fallbackFetcher,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
 
     const topic = await gateway.getTopic({ source: 'nodeseek', id: '743027' });
 
@@ -7601,7 +8100,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-076] exposes the V2EX body and continuous first-page prefix before reply pages converge', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077] exposes V2EX body and usable first-page rows without background convergence', async () => {
     const rows = (firstFloor: number, lastFloor: number) =>
       Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
         .map(
@@ -7651,15 +8150,15 @@ describe('Android local sources', () => {
     const topic = await getTopic({ source: 'v2ex', id: '1232881', fetcher });
 
     expect(topic.contentHtml).toContain('body remains available');
-    expect(topic.replyCount).toBe(106);
+    expect(topic.replyCount).toBeUndefined();
     expect(topic.replies.map(({ floor }) => floor)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
-    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: null });
-    expect(sourceDiagnosticSummary(topic)).toMatchObject({ parserVariant: 'html-topic-prefix' });
+    expect(topic).toMatchObject({ replyCompleteness: 'partial', replyHasMore: true, replyNextPage: null });
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({ parserVariant: 'html-topic-partial' });
     expect(pageCalls).toBe(0);
     expect(replyApiCalls).toBe(0);
   });
 
-  it('[REG-TOPIC-076] classifies a changed V2EX page declaration as a transient snapshot error', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077] keeps every parsed V2EX page row when a later declaration changes', async () => {
     const rows = (firstFloor: number, lastFloor: number) =>
       Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
         .map(
@@ -7685,18 +8184,82 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const error = await getReplies({
+    const replies = await getReplies({
       source: 'v2ex',
       id: '1232881',
       order: 'oldest',
       position: { kind: 'start' },
       fetcher
-    }).catch((caught) => caught);
-
-    expect(error).toMatchObject({
-      message: 'V2EX 回复总数已变化，无法确认完整集合',
-      reason: 'v2ex-reply-snapshot-stale'
     });
+
+    expect(replies.items.map(({ floor }) => floor)).toEqual(Array.from({ length: 105 }, (_, index) => index + 1));
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+  });
+
+  it.each([
+    { declaration: '<script type="application/ld+json">{"commentCount":1}</script>', name: 'stale-low' },
+    { declaration: '', name: 'missing' }
+  ])(
+    '[REG-TOPIC-071][REG-TOPIC-077] follows an explicit V2EX page link when the first declaration is $name',
+    async ({ declaration }) => {
+      let pageCalls = 0;
+      const fetcher = vi.fn(async (input: string) => {
+        if (input === 'https://www.v2ex.com/t/827') {
+          return html(`
+            ${declaration}
+            <div id="r_8271" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
+            <a href="?p=2">2</a>
+          `);
+        }
+        if (input === 'https://www.v2ex.com/t/827?p=2') {
+          pageCalls += 1;
+          return html(`
+            <script type="application/ld+json">{"commentCount":2}</script>
+            <div id="r_8272" class="cell"><span class="no">2</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second</div></div>
+          `);
+        }
+        throw new Error(`unexpected ${input}`);
+      });
+
+      const replies = await getReplies({
+        source: 'v2ex',
+        id: '827',
+        order: 'oldest',
+        position: { kind: 'start' },
+        fetcher
+      });
+
+      expect(pageCalls).toBe(1);
+      expect(replies.items.map(({ commentId }) => commentId)).toEqual([8271, 8272]);
+      expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+    }
+  );
+
+  it('[REG-TOPIC-069][REG-TOPIC-077] keeps distinct V2EX comment IDs that claim the same floor', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/t/828') {
+        return html(`
+          <script type="application/ld+json">{"commentCount":2}</script>
+          <div id="r_8281" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
+          <div id="r_8282" class="cell"><span class="no">1</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second</div></div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '828',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+
+    expect(replies.items.map(({ commentId, floor }) => ({ commentId, floor }))).toEqual([
+      { commentId: 8281, floor: 1 },
+      { commentId: 8282, floor: 1 }
+    ]);
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
   });
 
   it('[REG-TOPIC-071] resolves query-relative same-topic V2EX pages into one complete reply collection', async () => {
@@ -7750,9 +8313,9 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '1231874', fetcher });
 
-    expect(topic.replyCount).toBe(107);
+    expect(topic.replyCount).toBeUndefined();
     expect(topic.replies).toHaveLength(100);
-    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: null });
+    expect(topic).toMatchObject({ replyCompleteness: 'partial', replyHasMore: true, replyNextPage: null });
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain('https://www.v2ex.com/t/1231874?p=2');
 
     const replies = await getReplies({
@@ -7811,73 +8374,80 @@ describe('Android local sources', () => {
       secondFloors: Array.from({ length: 7 }, (_, index) => index + 101),
       expectedPageCalls: 0
     }
-  ])('[REG-TOPIC-071] rejects $name without using the replies API', async (scenario) => {
-    const rows = (floors: number[]) =>
-      floors
-        .map(
-          (floor) => `
+  ])(
+    '[REG-TOPIC-071][REG-TOPIC-077] keeps every unique parsed row for $name without using the replies API',
+    async (scenario) => {
+      const rows = (floors: number[]) =>
+        floors
+          .map(
+            (floor) => `
             <div id="r_${91000 + floor}" class="cell">
               <span class="no">${floor}</span>
               <strong><a href="/member/user-${floor}">user-${floor}</a></strong>
               <div class="reply_content">reply ${floor}</div>
             </div>
           `
-        )
-        .join('');
-    let replyApiCalls = 0;
-    let pageCalls = 0;
-    const declaration = (count: number) => `
+          )
+          .join('');
+      let replyApiCalls = 0;
+      let pageCalls = 0;
+      const declaration = (count: number) => `
       <script type="application/ld+json">{"commentCount":${count},"interactionStatistic":[{"interactionType":"https://schema.org/ReplyAction","userInteractionCount":${count}}]}</script>
     `;
-    const fetcher = vi.fn(async (input: string) => {
-      if (input.includes('/api/topics/show.json')) {
-        return json([
-          {
-            id: 1231875,
-            title: 'V2EX invalid paged replies',
-            url: 'https://www.v2ex.com/t/1231875',
-            created: 1780000000,
-            replies: 107,
-            member: { username: 'neo' }
-          }
-        ]);
-      }
-      if (input.includes('/api/replies/show.json')) {
-        replyApiCalls += 1;
-        return json([]);
-      }
-      if (input === 'https://www.v2ex.com/t/1231875') {
-        return html(`
+      const fetcher = vi.fn(async (input: string) => {
+        if (input.includes('/api/topics/show.json')) {
+          return json([
+            {
+              id: 1231875,
+              title: 'V2EX invalid paged replies',
+              url: 'https://www.v2ex.com/t/1231875',
+              created: 1780000000,
+              replies: 107,
+              member: { username: 'neo' }
+            }
+          ]);
+        }
+        if (input.includes('/api/replies/show.json')) {
+          replyApiCalls += 1;
+          return json([]);
+        }
+        if (input === 'https://www.v2ex.com/t/1231875') {
+          return html(`
           ${declaration(107)}
           ${rows(Array.from({ length: 100 }, (_, index) => index + 1))}
           <a href="${scenario.firstLink}">2</a>
         `);
-      }
-      if (input === 'https://www.v2ex.com/t/1231875?p=2') {
-        pageCalls += 1;
-        return html(`${declaration(scenario.secondCount)}${rows(scenario.secondFloors)}`);
-      }
-      throw new Error(`unexpected ${input}`);
-    });
+        }
+        if (input === 'https://www.v2ex.com/t/1231875?p=2') {
+          pageCalls += 1;
+          return html(`${declaration(scenario.secondCount)}${rows(scenario.secondFloors)}`);
+        }
+        throw new Error(`unexpected ${input}`);
+      });
 
-    const topic = await getTopic({ source: 'v2ex', id: '1231875', fetcher });
-    expect(topic.replies).toHaveLength(100);
-    expect(topic.replyHasMore).toBe(true);
+      const topic = await getTopic({ source: 'v2ex', id: '1231875', fetcher });
+      expect(topic.replies).toHaveLength(100);
+      expect(topic.replyHasMore).toBe(true);
 
-    await expect(
-      getReplies({
+      const replies = await getReplies({
         source: 'v2ex',
         id: '1231875',
         order: 'oldest',
         position: { kind: 'start' },
         fetcher
-      })
-    ).rejects.toThrow('V2EX 回复总数已变化，无法确认完整集合');
-    expect(replyApiCalls).toBe(0);
-    expect(pageCalls).toBe(scenario.expectedPageCalls);
-  });
+      });
+      const firstPageFloors = Array.from({ length: 100 }, (_, index) => index + 1);
+      const expectedFloors = scenario.expectedPageCalls
+        ? [...new Set([...firstPageFloors, ...scenario.secondFloors])].sort((left, right) => left - right)
+        : firstPageFloors;
+      expect(replies.items.map(({ floor }) => floor)).toEqual(expectedFloors);
+      expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+      expect(replyApiCalls).toBe(0);
+      expect(pageCalls).toBe(scenario.expectedPageCalls);
+    }
+  );
 
-  it('[REG-TOPIC-067][REG-TOPIC-069] rejects extra malformed V2EX reply nodes hidden by normalization', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-069][REG-TOPIC-077] keeps valid V2EX rows around a malformed node', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([
@@ -7886,39 +8456,57 @@ describe('Android local sources', () => {
             title: 'V2EX malformed reply node',
             url: 'https://www.v2ex.com/t/820',
             created: 1780000000,
-            replies: 1,
+            replies: 2,
             member: { username: 'neo' }
           }
         ]);
       }
       if (input.includes('/api/replies/show.json')) {
-        return json([{ id: 7501, member: { username: 'alice' }, content_rendered: '<p>first</p>' }]);
+        return json([
+          { id: 7501, member: { username: 'alice' }, content_rendered: '<p>first</p>' },
+          { id: 7503, member: { username: 'carol' }, content_rendered: '<p>third</p>' }
+        ]);
       }
       if (input === 'https://www.v2ex.com/t/820') {
         return html(`
           <script type="application/ld+json">
-            {"commentCount":1,"interactionStatistic":[
-              {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":1}
+            {"commentCount":2,"interactionStatistic":[
+              {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":2}
             ]}
           </script>
           <div id="r_7501" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
           <div id="r_7502" class="cell"><span class="no">2</span></div>
+          <div id="r_7503" class="cell"><span class="no">3</span><strong><a href="/member/carol">carol</a></strong><div class="reply_content">third</div></div>
+          <div id="r_invalid" class="cell"><span class="no">4</span><div class="reply_content"><p>&nbsp;</p></div></div>
+          <div id="r_author" class="cell"><span class="no">5</span><strong><a href="/member/dave">dave</a></strong><div class="reply_content"><p>&nbsp;</p></div></div>
+          <div id="r_image" class="cell"><span class="no">6</span><div class="reply_content"><img src="/static/reply.png"></div></div>
         `);
       }
       throw new Error(`unexpected ${input}`);
     });
 
     const topic = await getTopic({ source: 'v2ex', id: '820', fetcher });
-    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
-    await expect(
-      getReplies({
-        source: 'v2ex',
-        id: '820',
-        order: 'oldest',
-        position: { kind: 'start' },
-        fetcher
-      })
-    ).rejects.toThrow('回复总数已变化');
+    expect(topic).toMatchObject({
+      replies: [
+        expect.objectContaining({ commentId: 7501, floor: 1 }),
+        expect.objectContaining({ commentId: 7502, floor: 2 }),
+        expect.objectContaining({ commentId: 7503, floor: 3 }),
+        expect.objectContaining({ author: 'dave', floor: 5 }),
+        expect.objectContaining({ floor: 6 })
+      ],
+      replyCount: undefined,
+      replyCompleteness: 'partial',
+      replyHasMore: true
+    });
+    const refreshed = await getReplies({
+      source: 'v2ex',
+      id: '820',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+    expect(refreshed.items.map(({ floor }) => floor)).toEqual([1, 2, 3, 5, 6]);
+    expect(refreshed).toMatchObject({ completeness: 'partial', totalCount: undefined });
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
       'https://www.v2ex.com/api/replies/show.json?topic_id=820&page=1'
     );
@@ -7959,7 +8547,7 @@ describe('Android local sources', () => {
     expect(sourceDiagnosticSummary(topic)).toMatchObject({ parserVariant: 'html-topic' });
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-069] rejects conflicting V2EX reply declarations', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-069][REG-TOPIC-077] keeps rows with conflicting V2EX declarations', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([
@@ -7994,21 +8582,21 @@ describe('Android local sources', () => {
     expect(topic.replies.map(({ floor }) => floor)).toEqual([1, 2]);
     expect(topic.replyHasMore).toBe(true);
     expect(topic.replyCount).toBeUndefined();
-    await expect(
-      getReplies({
-        source: 'v2ex',
-        id: '822',
-        order: 'oldest',
-        position: { kind: 'start' },
-        fetcher
-      })
-    ).rejects.toThrow('回复总数已变化');
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '822',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+    expect(replies.items.map(({ floor }) => floor)).toEqual([1, 2]);
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
       'https://www.v2ex.com/api/replies/show.json?topic_id=822&page=1'
     );
   });
 
-  it('[REG-TOPIC-067] rejects a V2EX reply collection shorter than the authoritative topic count', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-077] keeps a V2EX reply collection shorter than the declared count', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([
@@ -8046,15 +8634,15 @@ describe('Android local sources', () => {
     const topic = await getTopic({ source: 'v2ex', id: '816', fetcher });
     expect(topic.replies.map(({ floor }) => floor)).toEqual([1, 2]);
     expect(topic.replyHasMore).toBe(true);
-    await expect(
-      getReplies({
-        source: 'v2ex',
-        id: '816',
-        order: 'oldest',
-        position: { kind: 'start' },
-        fetcher
-      })
-    ).rejects.toThrow('回复总数已变化');
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '816',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+    expect(replies.items.map(({ floor }) => floor)).toEqual([1, 2]);
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
       'https://www.v2ex.com/api/replies/show.json?topic_id=816&page=1'
     );
@@ -8303,7 +8891,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-069] rejects a nonempty V2EX API fallback against a zero topic count', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-069][REG-TOPIC-077] keeps a nonempty V2EX API fallback against a stale zero count', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([
@@ -8328,18 +8916,18 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '823', fetcher });
     expect(topic).toMatchObject({ replies: [], replyHasMore: true });
-    await expect(
-      getReplies({
-        source: 'v2ex',
-        id: '823',
-        order: 'oldest',
-        position: { kind: 'start' },
-        fetcher
-      })
-    ).rejects.toThrow('回复总数已变化');
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '823',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+    expect(replies.items.map(({ commentId }) => commentId)).toEqual([7801]);
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
   });
 
-  it('[REG-TOPIC-069] selects a matching empty V2EX API fallback over unproven HTML rows', async () => {
+  it('[REG-TOPIC-069][REG-TOPIC-077] keeps usable HTML rows when a stale API count says empty', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([
@@ -8373,6 +8961,7 @@ describe('Android local sources', () => {
     expect(topic.replies.map(({ floor }) => floor)).toEqual([1]);
     expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: null });
     expect(topic.replyCount).toBeUndefined();
+    fetcher.mockClear();
 
     const replies = await getReplies({
       source: 'v2ex',
@@ -8382,14 +8971,16 @@ describe('Android local sources', () => {
       fetcher
     });
 
-    expect(replies).toMatchObject({ totalCount: 0, items: [], hasMore: false, nextPage: null });
+    expect(replies.items.map(({ floor }) => floor)).toEqual([1]);
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined, hasMore: false, nextPage: null });
+    expect(fetcher.mock.calls.map(([input]) => input)).toEqual(['https://www.v2ex.com/t/819']);
     expect(sourceDiagnosticSummary(replies)).toMatchObject({
-      parserVariant: 'api-topic-fallback',
+      parserVariant: 'html-topic-partial',
       partialErrorCount: 0
     });
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-069] rejects an incomplete V2EX replies API fallback', async () => {
+  it('[REG-TOPIC-067][REG-TOPIC-069][REG-TOPIC-077] keeps an incomplete V2EX replies API fallback', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([
@@ -8417,15 +9008,123 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '813', fetcher });
     expect(topic).toMatchObject({ replies: [], replyHasMore: true });
-    await expect(
-      getReplies({
-        source: 'v2ex',
-        id: '813',
-        order: 'oldest',
-        position: { kind: 'start' },
-        fetcher
-      })
-    ).rejects.toThrow('回复总数已变化');
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '813',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+    expect(replies.items.map(({ floor }) => floor)).toEqual([1, 2]);
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+  });
+
+  it('[REG-TOPIC-069][REG-TOPIC-077] drops an empty API record without declaring the remaining row complete', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 824,
+            title: 'V2EX malformed API reply',
+            url: 'https://www.v2ex.com/t/824',
+            created: 1780000000,
+            replies: 2,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input === 'https://www.v2ex.com/t/824') throw new Error('origin HTML unavailable');
+      if (input.includes('/api/replies/show.json')) {
+        return json([{ id: 7901, member: { username: 'alice' }, content_rendered: '<p>usable</p>' }, {}]);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '824',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+
+    expect(replies.items.map(({ commentId, floor }) => ({ commentId, floor }))).toEqual([
+      { commentId: 7901, floor: 1 }
+    ]);
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+  });
+
+  it('[REG-TOPIC-069][REG-TOPIC-077] keeps identified empty and image-only API replies', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 826,
+            title: 'V2EX empty markup reply',
+            url: 'https://www.v2ex.com/t/826',
+            created: 1780000000,
+            replies: 4,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input === 'https://www.v2ex.com/t/826') throw new Error('origin HTML unavailable');
+      if (input.includes('/api/replies/show.json')) {
+        return json([
+          { id: 7961, member: { username: 'alice' }, content_rendered: '<p>usable</p>' },
+          { id: 7962, content_rendered: '<p>   </p>' },
+          { id: 7963, content_rendered: '<p>&nbsp;</p>' },
+          { id: 7964, content_rendered: '<p><img src="/static/reply.png"></p>' }
+        ]);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '826',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+
+    expect(replies.items.map(({ commentId, floor }) => ({ commentId, floor }))).toEqual([
+      { commentId: 7961, floor: 1 },
+      { commentId: 7962, floor: 2 },
+      { commentId: 7963, floor: 3 },
+      { commentId: 7964, floor: 4 }
+    ]);
+    expect(replies).toMatchObject({ completeness: 'complete', totalCount: 4 });
+  });
+
+  it('[REG-TOPIC-069][REG-TOPIC-077] keeps usable HTML rows when the topic API fallback fails', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) throw new Error('topic API unavailable');
+      if (input === 'https://www.v2ex.com/t/825') {
+        return html(`
+          <div id="r_7951" class="cell">
+            <span class="no">1</span>
+            <strong><a href="/member/alice">alice</a></strong>
+            <div class="reply_content">usable HTML reply</div>
+          </div>
+        `);
+      }
+      if (input.includes('/api/replies/show.json')) throw new Error('replies API must not run');
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '825',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+
+    expect(replies.items.map(({ commentId, floor }) => ({ commentId, floor }))).toEqual([
+      { commentId: 7951, floor: 1 }
+    ]);
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
   });
 
   it('keeps V2EX all feed pagination open through the recent HTML list', async () => {
@@ -8829,6 +9528,7 @@ describe('Android local sources', () => {
         webViewFetcher
       });
       const gateway = createReadGateway({
+        anonymousFetcher: fetcher,
         fetcher,
         linuxDoUserAgent: () => 'LinuxDo UA',
         nodeSeekUserAgent: () => 'NodeSeek UA'
@@ -8873,6 +9573,7 @@ describe('Android local sources', () => {
         webViewFetcher
       });
       const gateway = createReadGateway({
+        anonymousFetcher: fetcher,
         fetcher,
         linuxDoUserAgent: () => 'LinuxDo UA',
         nodeSeekUserAgent: () => 'NodeSeek UA'
@@ -8908,6 +9609,7 @@ describe('Android local sources', () => {
         recoverReadChannel
       });
       const gateway = createReadGateway({
+        anonymousFetcher: fallbackFetcher,
         fetcher: fallbackFetcher,
         linuxDoUserAgent: () => 'LinuxDo UA',
         nodeSeekUserAgent: () => 'NodeSeek UA'
@@ -9196,6 +9898,7 @@ describe('Android local sources', () => {
     });
 
     const nodeSeekRead = createReadGateway({
+      anonymousFetcher: nodeSeekFetcher,
       fetcher: nodeSeekFetcher,
       linuxDoUserAgent: () => 'LinuxDo UA',
       nodeSeekUserAgent: () => 'NodeSeek UA'

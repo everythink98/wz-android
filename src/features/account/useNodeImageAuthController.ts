@@ -312,6 +312,9 @@ export function useNodeImageAuthController({
   );
 
   const open = useCallback(() => {
+    if (readRuntime().sourceEnabled === false) {
+      return Promise.resolve(null);
+    }
     if (activeFlowRef.current) {
       return activeFlowRef.current.promise;
     }

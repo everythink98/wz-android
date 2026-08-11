@@ -282,16 +282,19 @@ export async function loadXiaoyinsiCredentials(
   return apiKey && clientId ? { apiKey, clientId, scopes: storedCredential?.scopes || [] } : undefined;
 }
 
-async function stableClientId(keystore: XiaoyinsiKeystore) {
+async function stableClientId(keystore: XiaoyinsiKeystore, dependencies: XiaoyinsiAuthDependencies) {
   const stored = (await SecureStore.getItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, secureStoreOptions))?.trim();
+  assertNotCanceled(dependencies);
   if (stored) {
     return stored;
   }
   const generated = (await keystore.randomHex(32)).trim().toLowerCase();
+  assertNotCanceled(dependencies);
   if (!/^[a-f0-9]{64}$/.test(generated)) {
     throw new XiaoyinsiAuthError('invalid-response', '无法生成小隐寺安装标识。');
   }
   await SecureStore.setItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, generated, secureStoreOptions);
+  assertNotCanceled(dependencies);
   return generated;
 }
 
@@ -304,6 +307,7 @@ export async function checkXiaoyinsiDeviceCodeCapability(dependencies: Xiaoyinsi
     },
     dependencies
   );
+  assertNotCanceled(dependencies);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -317,11 +321,15 @@ export async function checkXiaoyinsiDeviceCodeCapability(dependencies: Xiaoyinsi
 export async function beginXiaoyinsiDeviceAuth(dependencies: XiaoyinsiAuthDependencies = {}) {
   advanceXiaoyinsiCredentialGeneration();
   await checkXiaoyinsiDeviceCodeCapability(dependencies);
+  assertNotCanceled(dependencies);
   const keystore = dependencies.keystore || xiaoyinsiKeystore;
   try {
-    const clientId = await stableClientId(keystore);
+    const clientId = await stableClientId(keystore, dependencies);
+    assertNotCanceled(dependencies);
     const nonce = (await keystore.randomHex(32)).trim().toLowerCase();
+    assertNotCanceled(dependencies);
     const publicKey = (await keystore.getPublicKey()).trim();
+    assertNotCanceled(dependencies);
     if (!/^[a-f0-9]{64}$/.test(nonce) || !publicKey.includes('BEGIN PUBLIC KEY')) {
       throw new XiaoyinsiAuthError('invalid-response', '无法创建小隐寺安全授权请求。');
     }
@@ -337,12 +345,18 @@ export async function beginXiaoyinsiDeviceAuth(dependencies: XiaoyinsiAuthDepend
       },
       dependencies
     );
+    assertNotCanceled(dependencies);
     const data = await responseJson(response, '小隐寺授权请求返回内容格式不正确。');
+    assertNotCanceled(dependencies);
     const pending = parsePendingResponse(data, nonce, nowFrom(dependencies));
+    assertNotCanceled(dependencies);
     await SecureStore.setItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.pending, JSON.stringify(pending), secureStoreOptions);
+    assertNotCanceled(dependencies);
     return pending;
   } catch (error) {
-    await clearPending(keystore, true).catch(() => undefined);
+    if (!dependencies.signal?.aborted) {
+      await clearPending(keystore, true).catch(() => undefined);
+    }
     throw error;
   }
 }
@@ -489,6 +503,7 @@ export async function pollXiaoyinsiDeviceAuth(
     const decrypted = await keystore.decrypt(data.payload);
     apiKey = parseDecryptedPayload(decrypted, pending.nonce);
   } catch (error) {
+    assertNotCanceled(dependencies);
     await clearPending(keystore, true);
     throw error instanceof XiaoyinsiAuthError
       ? error
@@ -530,6 +545,7 @@ export async function cancelXiaoyinsiDeviceAuth(dependencies: Pick<XiaoyinsiAuth
 
 export async function verifyXiaoyinsiCredentials(dependencies: XiaoyinsiAuthDependencies = {}): Promise<UserProfile> {
   const credentials = await loadXiaoyinsiCredentials();
+  assertNotCanceled(dependencies);
   if (!credentials) {
     throw new Error('请先授权小隐寺');
   }
@@ -544,6 +560,7 @@ export async function verifyXiaoyinsiCredentials(dependencies: XiaoyinsiAuthDepe
 export async function revokeXiaoyinsiAuthorization(dependencies: XiaoyinsiAuthDependencies = {}) {
   advanceXiaoyinsiCredentialGeneration();
   const credentials = await loadXiaoyinsiCredentials();
+  assertNotCanceled(dependencies);
   if (!credentials) {
     throw new Error('请先授权小隐寺');
   }
@@ -552,7 +569,9 @@ export async function revokeXiaoyinsiAuthorization(dependencies: XiaoyinsiAuthDe
     'User-Api-Client-Id': credentials.clientId
   });
   await responseJson(response, '小隐寺撤销授权返回内容格式不正确。');
+  assertNotCanceled(dependencies);
   const cleanupMarkerPersisted = await persistRevocationCleanupMarker();
+  assertNotCanceled(dependencies);
   return clearRevokedLocalAuthorization(dependencies.keystore || xiaoyinsiKeystore, cleanupMarkerPersisted);
 }
 

@@ -112,6 +112,25 @@ describe('Avatar image fallback', () => {
     expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledTimes(2);
   });
 
+  it('[REG-PROXY-011] retries a warm cached avatar after the proxy transport becomes ready', async () => {
+    mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
+    const uri = 'https://www.nodeseek.com/avatar/58164.png';
+    const avatar = (transportIdentity: string) => (
+      <ForumSessionEpochProvider sessionEpochs={initialForumSessionEpochs} transportIdentity={transportIdentity}>
+        <Avatar contentSource="nodeseek" name="Alice" uri={uri} />
+      </ForumSessionEpochProvider>
+    );
+    const view = await render(avatar('loading'));
+
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    await fireEvent(view.getByTestId('native-avatar'), 'error');
+    await waitFor(() => expect(view.queryByTestId('native-avatar')).toBeNull());
+
+    await view.rerender(avatar('applied'));
+
+    expect(view.getByTestId('native-avatar')).toBeTruthy();
+  });
+
   it('shows the text initial when the native image and SVG fallback both fail', async () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
     const view = await render(

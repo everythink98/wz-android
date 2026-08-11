@@ -11,7 +11,10 @@ export function AppComposition() {
   const runtime = useAppRuntime();
   return (
     <ReaderStyleProvider value={runtime.readerStyleContext}>
-      <ForumSessionEpochProvider sessionEpochs={runtime.sessionEpochs}>
+      <ForumSessionEpochProvider
+        sessionEpochs={runtime.sessionEpochs}
+        transportIdentity={runtime.mediaTransportIdentity}
+      >
         <GestureHandlerRootView style={runtime.appStyles.screen}>
           <SafeAreaProvider>
             <KeyboardAvoidingView style={runtime.appStyles.screen}>

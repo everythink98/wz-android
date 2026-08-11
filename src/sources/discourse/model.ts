@@ -1,4 +1,11 @@
-import { decodeHtml, isRecord, textContentFromHtml, textExcerpt, toIsoString } from '@/domain/forum/html';
+import {
+  decodeHtml,
+  hasRenderableHtmlContent,
+  isRecord,
+  textContentFromHtml,
+  textExcerpt,
+  toIsoString
+} from '@/domain/forum/html';
 import { stripDiscourseCalloutMarkersFromExcerpt } from './content';
 import type {
   Category,
@@ -29,6 +36,7 @@ export function discourseStreamReplyWindow(
   if (totalCount === 0) {
     return {
       postIds: [],
+      completeness: 'complete',
       currentPage: 1,
       currentOffset: 0,
       previousPage: null,
@@ -66,6 +74,7 @@ export function discourseStreamReplyWindow(
   const newerPage = newerOffset === null ? null : currentPage + 1;
   return {
     postIds: stream.slice(1 + currentOffset, 1 + endOffset),
+    completeness: 'complete',
     currentPage,
     currentOffset,
     previousPage: order === 'oldest' ? olderPage : newerPage,
@@ -85,7 +94,9 @@ function availableDiscourseWindow<T>(items: T[], postIds: unknown[], idFor: (ite
   for (const item of items) {
     const rawId = idFor(item);
     const id = rawId === undefined || rawId === null ? '' : String(rawId);
-    if (!requested.has(id) || byId.has(id)) throw new Error('Discourse 回复窗口不完整');
+    if (!id) continue;
+    if (!requested.has(id)) throw new Error('Discourse 回复窗口不完整');
+    if (byId.has(id)) throw new Error('Discourse 回复窗口不完整');
     byId.set(id, item);
   }
   if (ids.length > 0 && byId.size === 0) throw new Error('Discourse 回复窗口不完整');
@@ -102,6 +113,13 @@ export function discourseVisiblePostIds(posts: unknown[], postIds: unknown[]) {
     .filter((post) => isRecord(post) && !post.deleted_at && post.user_deleted !== true)
     .map((post) => String((post as Record<string, unknown>).id));
 }
+
+export function assertDiscourseTopicIdentity(data: unknown, id: string) {
+  if (isRecord(data) && data.id !== undefined && data.id !== null && String(data.id) !== String(id)) {
+    throw new Error('Discourse 主题身份不一致');
+  }
+}
+
 export function discourseReplyWindow(data: unknown, limit: number) {
   const postStream = isRecord(data) && isRecord(data.post_stream) ? data.post_stream : {};
   const stream = Array.isArray(postStream.stream) ? postStream.stream : [];
@@ -127,6 +145,7 @@ export function discourseReplyWindow(data: unknown, limit: number) {
   const hasMore = stream.length - 1 > nextOffset;
   return {
     posts,
+    completeness: 'complete' as const,
     currentPage: Math.floor(currentOffset / pageSize) + 1,
     currentOffset,
     previousPage: previousOffset === null ? null : Math.floor(previousOffset / pageSize) + 1,
@@ -357,7 +376,7 @@ export function discoursePostFields(raw: unknown): DiscoursePostFields | null {
   const cookedHtml = typeof raw.cooked === 'string' ? raw.cooked : '';
   const createdAt = toIsoString(raw.created_at);
   const actionCode = String(raw.action_code || '').trim();
-  if (!commentId || !floor || !author || !createdAt || (!cookedHtml.trim() && !actionCode)) {
+  if (!commentId && !floor && !author && !actionCode && !hasRenderableHtmlContent(cookedHtml)) {
     return null;
   }
   const likeCount = nonNegativeNumber(raw.like_count);

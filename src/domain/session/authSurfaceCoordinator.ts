@@ -8,6 +8,7 @@ export type AuthSurfaceCloseReason =
   | 'close-button'
   | 'hardware-back'
   | 'navigation-away'
+  | 'source-disabled'
   | 'success'
   | 'switch-surface';
 
@@ -72,7 +73,7 @@ export function finishAuthSurface(
   return {
     ...ticket,
     closeReason,
-    shouldReconcile: closeReason !== 'authoritative-recovery'
+    shouldReconcile: closeReason !== 'authoritative-recovery' && closeReason !== 'source-disabled'
   };
 }
 

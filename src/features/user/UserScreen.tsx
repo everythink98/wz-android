@@ -105,8 +105,6 @@ export const UserScreen = memo(function UserScreen({
   busy,
   error,
   followed,
-  identityBlocked = false,
-  identityChecking = false,
   profile,
   requestedUser,
   topicStateIndex,
@@ -115,7 +113,6 @@ export const UserScreen = memo(function UserScreen({
   onBack,
   onLoadMoreReplies,
   onLoadMoreTopics,
-  onCheckLinuxDoStatus,
   onOpenOriginal,
   onOpenTopic,
   onRefresh,
@@ -124,8 +121,6 @@ export const UserScreen = memo(function UserScreen({
   busy: boolean;
   error: SourceErrorInfo | null;
   followed: boolean;
-  identityBlocked?: boolean;
-  identityChecking?: boolean;
   profile: UserProfile | null;
   requestedUser: UserReference | null;
   topicStateIndex: TopicListItemStateIndex;
@@ -134,7 +129,6 @@ export const UserScreen = memo(function UserScreen({
   onBack: () => void;
   onLoadMoreReplies: () => void;
   onLoadMoreTopics: () => void;
-  onCheckLinuxDoStatus?: () => void;
   onOpenOriginal: (url: string) => void;
   onOpenTopic: (topic: Topic) => void;
   onRefresh: () => void;
@@ -293,17 +287,9 @@ export const UserScreen = memo(function UserScreen({
             <Text style={userAuthNotice ? [styles.authNoticeText, userAuthNoticeTextStyle] : styles.errorText}>
               {userAuthNotice?.message || error.message}
             </Text>
-            {identityBlocked ? (
-              <View style={styles.actions}>
-                <AppButton label="重试检测" onPress={onRefresh} />
-                {user?.source === 'linuxdo' && onCheckLinuxDoStatus ? (
-                  <AppButton label="检查 L 站状态" variant="ghost" onPress={onCheckLinuxDoStatus} />
-                ) : null}
-              </View>
-            ) : null}
           </View>
         ) : null}
-        {busy ? <LoadingState text={identityChecking ? '正在确认 L 站访问状态' : '正在读取用户主页...'} /> : null}
+        {busy ? <LoadingState text="正在读取用户主页..." /> : null}
         <View style={styles.actions}>
           {followTarget ? (
             <AppButton
@@ -339,9 +325,6 @@ export const UserScreen = memo(function UserScreen({
       error,
       followTarget,
       followed,
-      identityBlocked,
-      identityChecking,
-      onCheckLinuxDoStatus,
       onOpenOriginal,
       onRefresh,
       onToggleFollow,

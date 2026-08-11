@@ -19,8 +19,6 @@ import {
   mergeSourceDiagnosticSummaries,
   sourceDiagnosticSummary
 } from '@/sources/diagnostics';
-import { emptyReplyWindow } from '@/sources/replyWindows';
-import { replyCountRefreshRequiredError } from '@/sources/sourceErrors';
 
 export interface DirectRequestOptions {
   signal?: AbortSignal;
@@ -82,6 +80,18 @@ export async function fetchYaohuoHtml(url: string, fetcher: Fetcher = fetch, opt
 
 function topicIdValue(id: string) {
   return String(id || '').match(/\d+/)?.[0] || String(id || '');
+}
+
+function assertYaohuoTopicIdentity(responseUrl: string, id: string) {
+  try {
+    const url = new URL(responseUrl);
+    const responseId = url.searchParams.get('id') || url.pathname.match(/\/bbs-(\d+)\.html$/i)?.[1];
+    if (responseId && topicIdValue(responseId) !== topicIdValue(id)) {
+      throw new Error('妖火主题身份不一致');
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === '妖火主题身份不一致') throw error;
+  }
 }
 
 export async function getYaohuoFeedDirect({
@@ -167,7 +177,6 @@ export async function searchYaohuoDirect({
 
 export async function getYaohuoTopicDirect({
   topic,
-  replyLimit = 30,
   yaohuoFetcher,
   signal,
   timeoutMs
@@ -181,36 +190,24 @@ export async function getYaohuoTopicDirect({
   const id = topicIdValue(topic.id);
   const topicUrl = topic.url || `${YAOHUO_BASE_URL}/bbs-${id}.html`;
   const topicPage = await fetchYaohuoHtml(topicUrl, yaohuoFetcher, { signal, timeoutMs });
+  assertYaohuoTopicIdentity(topicPage.url, id);
   const detail = parseYaohuoTopicHtml(topicPage.html, {
     id,
     url: topicPage.url
   });
 
-  const [replies, favoritePage] = await Promise.all([
-    getYaohuoRepliesDirect({
-      id: detail.id || id,
-      categoryId: detail.categoryId || topic.categoryId || DEFAULT_CLASS_ID,
-      order: 'oldest',
-      position: { kind: 'start' },
-      limit: replyLimit,
-      replyCount: detail.replyCount,
-      yaohuoFetcher,
-      signal,
-      timeoutMs
+  const favoritePage = await fetchYaohuoHtml(
+    yaohuoUrl('/bbs/favlist.aspx', {
+      key: detail.title || topic.title
     }),
-    fetchYaohuoHtml(
-      yaohuoUrl('/bbs/favlist.aspx', {
-        key: detail.title || topic.title
-      }),
-      yaohuoFetcher,
-      { signal, timeoutMs }
-    ).catch((error) => {
-      if (signal?.aborted) {
-        throw error;
-      }
-      return null;
-    })
-  ]);
+    yaohuoFetcher,
+    { signal, timeoutMs }
+  ).catch((error) => {
+    if (signal?.aborted) {
+      throw error;
+    }
+    return null;
+  });
   const favoriteId = favoritePage ? parseYaohuoFavoriteRecordId(favoritePage.html, detail.id || id) : undefined;
 
   const result = {
@@ -223,14 +220,15 @@ export async function getYaohuoTopicDirect({
           bookmarkId: favoriteId
         }
       : {}),
-    replyCount: Math.max(detail.replyCount || 0, topic.replyCount || 0, replies.items.length),
-    replies: replies.items,
-    replyHasMore: replies.hasMore,
-    replyNextPage: replies.nextPage,
-    replyNextOffset: replies.hasMore ? replies.items.length : null
+    replyCount: Math.max(detail.replyCount || 0, topic.replyCount || 0),
+    replies: [],
+    replyCompleteness: 'partial' as const,
+    replyHasMore: true,
+    replyNextPage: null,
+    replyNextOffset: null
   };
-  const mergedResult = mergeSourceDiagnosticSummaries(result, 'html-topic-with-replies', [detail, replies], {
-    validCount: 1 + replies.items.length
+  const mergedResult = mergeSourceDiagnosticSummaries(result, 'html-topic', [detail], {
+    validCount: 1
   });
   const summary = sourceDiagnosticSummary(mergedResult);
   return !favoritePage && summary
@@ -270,18 +268,7 @@ export async function getYaohuoRepliesDirect({
   } else if (position.kind === 'target') {
     targetFloor = position.target.floor;
   } else {
-    if (
-      typeof replyCount !== 'number' ||
-      !Number.isSafeInteger(replyCount) ||
-      replyCount < 0 ||
-      replyCount === Number.MAX_SAFE_INTEGER
-    ) {
-      throw replyCountRefreshRequiredError('妖火缺少可确认的回复总数');
-    }
-    if (replyCount === 0) {
-      return emptyReplyWindow('html-replies');
-    }
-    targetFloor = order === 'newest' ? replyCount : 1;
+    targetFloor = order === 'oldest' ? 1 : undefined;
   }
   if (targetFloor !== undefined && (!Number.isSafeInteger(targetFloor) || targetFloor <= 0)) {
     throw new Error('妖火目标楼层不正确');
@@ -295,6 +282,7 @@ export async function getYaohuoRepliesDirect({
     yaohuoFetcher,
     { signal, timeoutMs }
   );
+  assertYaohuoTopicIdentity(pageResult.url, id);
 
   const confirmedPage = (() => {
     try {
@@ -314,28 +302,71 @@ export async function getYaohuoRepliesDirect({
   if (position.kind === 'cursor' && resolvedPage !== page) {
     throw new Error('妖火未确认请求的回复页');
   }
+  if (position.kind === 'start' && order === 'newest' && confirmedPage !== 1) {
+    throw new Error('妖火未确认最新回复窗口');
+  }
   const result = parseYaohuoRepliesHtml(pageResult.html, {
     url: pageResult.url,
     page: resolvedPage,
     limit
   });
-  if (targetFloor !== undefined && !result.items.some((reply) => reply.floor === targetFloor)) {
+  const items = result.items;
+  if (position.kind === 'start' && replyCount === 0 && !items.length) {
+    return Object.assign(result, {
+      items: [],
+      completeness: 'complete' as const,
+      currentPage: resolvedPage,
+      currentOffset: null,
+      previousPage: null,
+      previousOffset: null,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null
+    });
+  }
+  if (position.kind === 'cursor' && !items.length) {
+    throw new Error('妖火普通回复窗口为空');
+  }
+  const hasTargetFloor = targetFloor !== undefined && items.some((reply) => reply.floor === targetFloor);
+  if (
+    position.kind === 'target' &&
+    (targetFloor === undefined || !result.confirmedFloors.includes(targetFloor) || !hasTargetFloor)
+  ) {
+    throw new Error('妖火目标楼层未找到');
+  }
+  if (targetFloor !== undefined && !hasTargetFloor) {
     if (position.kind === 'target') {
       throw new Error('妖火目标楼层未找到');
     }
     if (!result.items.length) {
-      throw replyCountRefreshRequiredError('妖火边缘回复窗口为空');
+      throw new Error('妖火边缘回复窗口为空');
     }
   }
-  const floors = result.items.map((reply) => reply.floor || 0).filter(Boolean);
-  const minFloor = Math.min(...floors);
-  if (order === 'newest' && position.kind === 'start' && resolvedPage !== 1) {
-    throw replyCountRefreshRequiredError('妖火回复总数已变化，无法确认最新窗口');
+  if (position.kind === 'start' && order === 'newest' && !result.items.length && replyCount !== 0) {
+    throw new Error('妖火普通回复窗口为空');
   }
+  const floors = items.map((reply) => reply.floor || 0).filter(Boolean);
+  const minFloor = Math.min(...floors);
+  const ascendingFloors = [...new Set(floors)].sort((left, right) => left - right);
+  const hasFloorGap = ascendingFloors.some((floor, index) => index > 0 && floor !== ascendingFloors[index - 1] + 1);
+  const edgeConfirmed =
+    position.kind === 'target' ||
+    position.kind === 'cursor' ||
+    (order === 'oldest'
+      ? floors.includes(1)
+      : typeof replyCount === 'number' && replyCount > 0 && Math.max(...floors) === replyCount);
+  const summary = sourceDiagnosticSummary(result);
+  const hasRowDegradation = Boolean(summary?.droppedCount) || Boolean(summary?.missingFloorCount);
+  const completeness = !items.length
+    ? ('complete' as const)
+    : !hasRowDegradation && !hasFloorGap && edgeConfirmed
+      ? ('complete' as const)
+      : ('partial' as const);
   const olderPage = order === 'oldest' && position.kind === 'start' ? null : minFloor > 1 ? result.nextPage : null;
   const newerPage = resolvedPage > 1 ? resolvedPage - 1 : null;
   return Object.assign(result, {
-    items: order === 'newest' ? [...result.items].reverse() : result.items,
+    items: order === 'newest' ? [...items].reverse() : items,
+    completeness,
     currentPage: resolvedPage,
     currentOffset: null,
     previousPage: order === 'newest' ? newerPage : olderPage,

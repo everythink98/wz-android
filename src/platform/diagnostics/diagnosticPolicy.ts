@@ -46,7 +46,7 @@ const DIAGNOSTIC_REASONS = [
   'share_unavailable',
   'renderer_gone',
   'refresh_failed',
-  'reply_count_stale',
+  'source_disabled',
   'unknown'
 ] as const;
 
@@ -485,12 +485,11 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
     'check-failed',
     'cleared',
     'cookie-loaded',
-    'login-detected',
     'login-expired',
+    'recovery-failed',
     'session-updated',
     'verification-required',
-    'verification-started',
-    'verification-succeeded'
+    'verification-started'
   ),
   result: closedValues('blocked', 'canceled', 'failure', 'noop', 'partial', 'stale', 'success'),
   level: closedValues('debug', 'error', 'info', 'warning'),
@@ -654,8 +653,8 @@ export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {
   if (typedReason === 'parse_empty') {
     return 'parse_empty';
   }
-  if (typedReason === 'reply-count-refresh-required' || typedReason === 'v2ex-reply-snapshot-stale') {
-    return 'reply_count_stale';
+  if (typedReason === 'source-disabled') {
+    return 'source_disabled';
   }
   const text =
     error instanceof Error

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { StyleSheet } from 'react-native';
-import { type ReaderSettings } from '@/domain/reader/readerData';
+import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import {
   createTheme,
   LINK_COLOR,
@@ -77,7 +77,8 @@ describe('Android reader theme safety rails', () => {
     lineHeight: 'standard',
     contentWidth: 'standard',
     fontFamily: 'sans',
-    listDensity: 'standard'
+    listDensity: 'standard',
+    contentSources: createEmptyReaderData().settings.contentSources
   };
 
   it('keeps scrollable content and user profiles clear of the Android status bar', () => {

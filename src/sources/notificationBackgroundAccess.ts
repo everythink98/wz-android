@@ -6,10 +6,12 @@ import { loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 import { xiaoyinsiCredentialsHaveScope } from '@/sources/xiaoyinsi/credentials';
 import { LINUXDO_USER_AGENT_STORAGE_KEY, sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
 import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
+import { withFetchGuard } from '@/platform/network/request';
 
 export async function probeBackgroundNotificationAccess(
   source: NotificationSource,
-  signal: AbortSignal
+  signal: AbortSignal,
+  assertCurrent: () => Promise<void>
 ): Promise<NotificationAdapterAccess | null> {
   const [nodeSeekUserAgentValue, linuxDoUserAgentValue] = await Promise.all([
     source === 'nodeseek' ? SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY) : null,
@@ -19,9 +21,10 @@ export async function probeBackgroundNotificationAccess(
   const linuxDoUserAgent = sanitizeLinuxDoUserAgent(linuxDoUserAgentValue || undefined);
   const xiaoyinsiCredentials = source === 'xiaoyinsi' ? await loadXiaoyinsiCredentials() : undefined;
   if (source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(xiaoyinsiCredentials, 'notifications')) return null;
+  await assertCurrent();
   const profile = await getCurrentUserProfile({
     source,
-    fetcher: fetch,
+    fetcher: withFetchGuard(fetch, assertCurrent),
     nodeSeekAuthenticated: source === 'nodeseek',
     nodeSeekUserAgent: nodeSeekUserAgent || undefined,
     discourseAuth:

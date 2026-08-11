@@ -18,8 +18,9 @@ import type {
 import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import { forumQueryKeys } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
+import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 
 type UserLane = 'topics' | 'replies';
 
@@ -92,9 +93,9 @@ function firstLaneData(profile: UserProfile): InfiniteData<UserProfile, string |
 
 export function useUserController({
   active,
-  identityBarriers = [],
   sessionEpochs = initialForumSessionEpochs,
   notify,
+  onRetryIdentityStatus,
   readerData,
   showLinuxDoVerification,
   showNodeSeekVerification,
@@ -103,9 +104,9 @@ export function useUserController({
   user
 }: {
   active: boolean;
-  identityBarriers?: readonly ForumIdentityBarrierSource[];
   sessionEpochs?: ForumSessionEpochs;
   notify: (message: string) => void;
+  onRetryIdentityStatus?: (source: SessionSource) => Promise<unknown> | unknown;
   readerData: ReaderData;
   showLinuxDoVerification: (
     message?: string,
@@ -133,18 +134,17 @@ export function useUserController({
   const selectedNeedsResolution = Boolean(
     selectedUser?.source === 'nodeseek' && !nodeSeekUserIdFromValue(selectedUser.id) && selectedUsername
   );
-  const selectedIdentityPending = Boolean(
-    selectedUser && selectedUser.source !== 'v2ex' && identityBarriers.includes(selectedUser.source)
-  );
+  const resolutionReadPlan = readGateway.getReadPlan('nodeseek', 'user-resolution');
   const resolutionKey = useMemo(
     () =>
       forumQueryKeys.userResolution({
+        readPlanScope: resolutionReadPlan.cacheScope,
         scope: sessionEpochs,
         username: selectedUsername
       }),
-    [sessionEpochs.nodeseek, selectedUsername]
+    [resolutionReadPlan.cacheScope, sessionEpochs.nodeseek, selectedUsername]
   );
-  const resolutionEnabled = Boolean(selectedNeedsResolution && active && !selectedIdentityPending);
+  const resolutionEnabled = Boolean(selectedNeedsResolution && active);
   const resolutionQuery = useQuery({
     queryKey: resolutionKey,
     enabled: resolutionEnabled,
@@ -160,7 +160,7 @@ export function useUserController({
             username: selectedUsername,
             signal
           },
-          { trace }
+          { readPlanScope: resolutionReadPlan.cacheScope, trace }
         );
         if (!/^\d+$/.test(resolved.id || '')) {
           throw new Error('NodeSeek 用户名解析结果缺少数字用户 ID');
@@ -178,9 +178,11 @@ export function useUserController({
   });
   const canonicalUser = selectedNeedsResolution ? resolutionQuery.data || null : selectedUser;
   const identity = canonicalUser?.id || '';
+  const profileReadPlan = readGateway.getReadPlan(selectedSource, 'user-profile');
   const profileKey = useMemo(
     () =>
       forumQueryKeys.user({
+        readPlanScope: profileReadPlan.cacheScope,
         source: selectedSource,
         userId: identity,
         scope: sessionEpochs
@@ -191,12 +193,13 @@ export function useUserController({
       sessionEpochs.xiaoyinsi,
       sessionEpochs.yaohuo,
       identity,
+      profileReadPlan.cacheScope,
       selectedSource
     ]
   );
   const topicKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'topics'), [profileKey]);
   const replyKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'replies'), [profileKey]);
-  const enabled = Boolean(canonicalUser && identity && active && !selectedIdentityPending);
+  const enabled = Boolean(canonicalUser && identity && active);
 
   const profileQuery = useQuery({
     queryKey: profileKey,
@@ -216,7 +219,7 @@ export function useUserController({
             username: user.username,
             signal
           },
-          { trace }
+          { readPlanScope: profileReadPlan.cacheScope, trace }
         );
         if (sourceDiagnosticSummary(profile)?.isParseEmpty) {
           throw new Error('用户主页解析为空，无法显示，请重试。');
@@ -264,7 +267,7 @@ export function useUserController({
             cursorType: lane,
             signal
           },
-          { trace }
+          { readPlanScope: profileReadPlan.cacheScope, trace }
         );
         if (sourceDiagnosticSummary(page)?.isParseEmpty) {
           throw new Error(`用户${lane === 'topics' ? '帖子' : '回复'}解析为空，无法加载下一页，请重试。`);
@@ -443,7 +446,18 @@ export function useUserController({
 
   const refreshUser = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!active || !selectedUser) return 'stale';
-    if (selectedIdentityPending) return 'stale';
+    const blockedPlan = selectedNeedsResolution ? resolutionReadPlan : profileReadPlan;
+    if (blockedPlan.state === 'blocked') {
+      if (
+        (blockedPlan.reason === 'identity-pending' || blockedPlan.reason === 'identity-unavailable') &&
+        isSessionSource(selectedUser.source)
+      ) {
+        await onRetryIdentityStatus?.(selectedUser.source);
+      } else if (blockedPlan.reason === 'login-required' && selectedUser.source === 'yaohuo') {
+        showYaohuoLogin('请先登录妖火后再读取。');
+      }
+      return 'stale';
+    }
     if (selectedNeedsResolution && !resolutionQuery.data) {
       const result = await resolutionQuery.refetch({ cancelRefetch: true });
       return result.isError ? 'failed' : 'completed';
@@ -459,19 +473,22 @@ export function useUserController({
   }, [
     active,
     identity,
+    onRetryIdentityStatus,
     profileKey,
+    profileReadPlan,
     queryClient,
     replyKey,
     resolutionQuery.data,
     resolutionQuery.refetch,
-    selectedIdentityPending,
+    resolutionReadPlan,
     selectedNeedsResolution,
     selectedUser,
+    showYaohuoLogin,
     topicKey
   ]);
 
   const loadMoreUserTopics = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!active || selectedIdentityPending) return 'stale';
+    if (!active) return 'stale';
     if (topicsQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
     seedUserLane(topicKey);
     if (queryClient.getQueryState(topicKey)?.fetchStatus === 'fetching') {
@@ -492,14 +509,13 @@ export function useUserController({
     profileQuery.data,
     queryClient,
     seedUserLane,
-    selectedIdentityPending,
     topicKey,
     topicsQuery.fetchNextPage,
     topicsQuery.isFetchingNextPage,
     topicsQuery.refetch
   ]);
   const loadMoreUserReplies = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
-    if (!active || selectedIdentityPending) return 'stale';
+    if (!active) return 'stale';
     if (repliesQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
     seedUserLane(replyKey);
     if (queryClient.getQueryState(replyKey)?.fetchStatus === 'fetching') {
@@ -523,8 +539,7 @@ export function useUserController({
     repliesQuery.isFetchingNextPage,
     repliesQuery.refetch,
     replyKey,
-    seedUserLane,
-    selectedIdentityPending
+    seedUserLane
   ]);
 
   useEffect(() => {

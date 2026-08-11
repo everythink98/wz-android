@@ -8,6 +8,15 @@ wait id="main-tab-more" 60000
 press id="main-tab-more"
 wait text="关于阅坛" 10000
 
+find "内容源" click
+wait label="V2EX 内容源开关" 10000
+wait label="linux.do 内容源开关" 10000
+wait label="NodeSeek 内容源开关" 10000
+wait label="妖火 内容源开关" 10000
+wait label="小隐寺 内容源开关" 10000
+wait id="content-source-drag-v2ex" 10000
+press label="收起内容源"
+
 press text="服务器代理"
 wait text="使用代理" 10000
 back --system

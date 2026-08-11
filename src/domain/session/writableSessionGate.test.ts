@@ -69,8 +69,21 @@ describe('writable session gate', () => {
     expect(validateWritableSessionTicket(ticket, { ...confirmed, authSurfaceOpen: true })).toBe(false);
   });
 
+  it('[REG-SOURCE-010] fails closed before reconciliation and invalidates old tickets when its source is disabled', async () => {
+    const reconcile = vi.fn();
+    const disabled = { ...confirmed, sourceEnabled: false };
+
+    await expect(ensureWritableSessionTicket(() => disabled, reconcile)).rejects.toMatchObject({
+      reason: 'source-disabled'
+    });
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(
+      validateWritableSessionTicket({ source: 'nodeseek', identityKey: 'nodeseek:42', sessionEpoch: 3 }, disabled)
+    ).toBe(false);
+  });
+
   it('[REG-WRITE-023] reports an unchanged anonymous reconciliation as login-required', async () => {
-    const anonymous: WritableSessionSnapshot = {
+    let anonymous: WritableSessionSnapshot = {
       ...confirmed,
       authenticated: false,
       identityKey: 'nodeseek:anonymous',
@@ -79,7 +92,10 @@ describe('writable session gate', () => {
     await expect(
       ensureWritableSessionTicket(
         () => anonymous,
-        async () => ({ status: 'same' })
+        async () => {
+          anonymous = { ...anonymous, identityTrust: 'none' };
+          return { status: 'same' };
+        }
       )
     ).rejects.toMatchObject({ reason: 'login_required' });
   });

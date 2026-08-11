@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeForumContentMediaHtml, normalizeForumStickerMediaHtml } from './forumContentMedia';
+import { parseHtml } from './html';
+import { normalizeForumContentMediaNodes, normalizeForumStickerMediaHtml } from './forumContentMedia';
+
+function normalizeForumContentMediaHtml(html: string) {
+  const root = parseHtml(html);
+  normalizeForumContentMediaNodes(root);
+  return root.toString();
+}
 
 describe('forum content media normalization', () => {
   it('[REG-NOTIFY-057] upgrades private-message stickers without taking over ordinary Markdown images', () => {

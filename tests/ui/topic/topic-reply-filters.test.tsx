@@ -513,9 +513,9 @@ function TopicFilterHarness({
   replyEndError = null,
   replyStartError = null,
   replyCollectionComplete = true,
+  replyRowsPartial = false,
   repliesError = null,
   repliesLoading = false,
-  repliesSyncing = false,
   selectedTopic = topic,
   topicReplies = sourceReplies,
   topicDetail = topic,
@@ -523,8 +523,6 @@ function TopicFilterHarness({
   topicFavorite = false,
   topicBusy = false,
   targetReply,
-  identityBlocked = false,
-  identityChecking = false,
   yaohuoVisualBookmarked
 }: {
   canUseLinuxDoActions?: boolean;
@@ -556,9 +554,9 @@ function TopicFilterHarness({
   replyEndError?: SourceErrorInfo | null;
   replyStartError?: SourceErrorInfo | null;
   replyCollectionComplete?: boolean;
+  replyRowsPartial?: boolean;
   repliesError?: SourceErrorInfo | null;
   repliesLoading?: boolean;
-  repliesSyncing?: boolean;
   selectedTopic?: Topic;
   topicReplies?: Reply[];
   topicDetail?: TopicDetail | null;
@@ -566,8 +564,6 @@ function TopicFilterHarness({
   topicFavorite?: boolean;
   topicBusy?: boolean;
   targetReply?: { commentId?: number; floor?: number; pageHint?: number };
-  identityBlocked?: boolean;
-  identityChecking?: boolean;
   yaohuoVisualBookmarked?: boolean;
 } = {}) {
   const [commentQuery, setCommentQuery] = useState('');
@@ -621,9 +617,9 @@ function TopicFilterHarness({
     replyEndError,
     replyStartError,
     replyCollectionComplete,
+    replyRowsPartial,
     repliesError,
     repliesLoading,
-    repliesSyncing,
     retryReplies: async (edge?: 'start' | 'end') => {
       onRetryReplies(edge);
       return 'completed';
@@ -678,8 +674,6 @@ function TopicFilterHarness({
           back: jest.fn(),
           favorite: topicFavorite,
           getDiscourseEmojiUrls,
-          identityBlocked,
-          identityChecking,
           onScroll: jest.fn(),
           openOriginal: jest.fn(),
           openReadingSettings: jest.fn(),
@@ -1855,54 +1849,6 @@ describe('Topic reply filters', () => {
     expect(onRefreshWholeTopic).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-LINUXDO-007] ends Topic loading and offers Account recovery after an ordinary identity probe failure', async () => {
-    const onRefreshWholeTopic = jest.fn<() => void>();
-    const onVerifyLinuxDo = jest.fn<() => void>();
-    const selectedTopic: Topic = {
-      ...topic,
-      source: 'linuxdo',
-      id: 'linuxdo-topic-1',
-      url: 'https://linux.do/t/topic/1'
-    };
-    const view = await render(
-      <TopicFilterHarness
-        identityBlocked
-        selectedTopic={selectedTopic}
-        topicDetail={null}
-        topicError={{ kind: 'ordinary', message: 'Network request failed' }}
-        onRefreshWholeTopic={onRefreshWholeTopic}
-        onVerifyLinuxDo={onVerifyLinuxDo}
-      />
-    );
-
-    expect(view.queryByText('正在读取主题...')).toBeNull();
-    expect(view.getByText('Network request failed')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('重试检测'));
-    await fireEvent.press(view.getByLabelText('检查 L 站状态'));
-    expect(onRefreshWholeTopic).toHaveBeenCalledTimes(1);
-    expect(onVerifyLinuxDo).toHaveBeenCalledTimes(1);
-  });
-
-  it('[REG-LINUXDO-007] identifies an active Account probe instead of showing Topic loading', async () => {
-    const selectedTopic: Topic = {
-      ...topic,
-      source: 'linuxdo',
-      id: 'linuxdo-topic-2',
-      url: 'https://linux.do/t/topic/2'
-    };
-    const view = await render(
-      <TopicFilterHarness
-        identityBlocked
-        identityChecking
-        selectedTopic={selectedTopic}
-        topicDetail={{ ...topic, ...selectedTopic }}
-      />
-    );
-
-    expect(view.getByText('正在确认 L 站访问状态')).toBeTruthy();
-    expect(view.queryByText('正在读取主题...')).toBeNull();
-  });
-
   it('disables reply pagination while the next page is loading', async () => {
     const onLoadMoreReplies = jest.fn<() => void>();
     const view = await render(<TopicFilterHarness replyHasMore onLoadMoreReplies={onLoadMoreReplies} />);
@@ -1945,52 +1891,82 @@ describe('Topic reply filters', () => {
     expect(view.getByText('已到最早回复')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-076] keeps V2EX prefix controls visible while withholding complete-collection controls', async () => {
-    const syncingTopic: TopicDetail = {
+  it('[REG-TOPIC-076][REG-TOPIC-077] shows a partial V2EX prefix as a settled visible result', async () => {
+    const partialTopic: TopicDetail = {
       ...topic,
       replyCount: 106,
       replies: sourceReplies,
+      replyCompleteness: 'partial',
       replyHasMore: true,
       replyNextPage: null
     };
     const view = await render(
       <TopicFilterHarness
         replyCollectionComplete={false}
-        repliesSyncing
-        selectedTopic={syncingTopic}
-        topicDetail={syncingTopic}
+        replyRowsPartial
+        selectedTopic={partialTopic}
+        topicDetail={partialTopic}
       />
     );
 
-    expect(view.getByText('评论正在同步，暂已确认 3 / 106 条')).toBeTruthy();
+    expect(view.getByText('部分评论未能读取，已显示 3 条')).toBeTruthy();
+    expect(view.getByText('3 条')).toBeTruthy();
+    expect(view.queryByText(/评论正在同步/)).toBeNull();
     expect(view.getByLabelText('评论内查找')).toBeTruthy();
     expect(view.getByLabelText('只看楼主')).toBeTruthy();
     expect(view.queryByLabelText('回复排序，当前正序')).toBeNull();
     expect(view.queryByLabelText('已到最新回复')).toBeNull();
 
-    const unknownCountTopic = { ...syncingTopic, replyCount: undefined };
+    const unknownCountTopic = { ...partialTopic, replyCount: undefined };
     await view.rerender(
       <TopicFilterHarness
         replyCollectionComplete={false}
-        repliesSyncing
+        replyRowsPartial
         selectedTopic={unknownCountTopic}
         topicDetail={unknownCountTopic}
       />
     );
-    expect(view.getByText('评论正在同步，暂已确认 3 条')).toBeTruthy();
+    expect(view.getByText('部分评论未能读取，已显示 3 条')).toBeTruthy();
 
     await view.rerender(
       <TopicFilterHarness
         replyCollectionComplete={false}
+        replyRowsPartial
         repliesError={{ kind: 'ordinary', message: '回复总数仍未同步', retryable: true }}
-        selectedTopic={syncingTopic}
-        topicDetail={syncingTopic}
+        selectedTopic={partialTopic}
+        topicDetail={partialTopic}
       />
     );
     expect(view.getAllByText(/^reply-/)).toHaveLength(3);
     expect(view.getByText('回复总数仍未同步')).toBeTruthy();
     expect(view.getByText('重试评论')).toBeTruthy();
     expect(view.queryByLabelText('回复排序，当前正序')).toBeNull();
+    expect(view.queryByLabelText('已到最新回复')).toBeNull();
+  });
+
+  it('[REG-TOPIC-077] shows a non-V2EX partial hint without hiding server reply order', async () => {
+    const partialTopic: TopicDetail = {
+      ...topic,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-1-1',
+      replyCount: 106,
+      replies: sourceReplies,
+      replyCompleteness: 'partial',
+      replyHasMore: false,
+      replyNextPage: null
+    };
+    const view = await render(
+      <TopicFilterHarness
+        replyRowsPartial
+        selectedTopic={partialTopic}
+        topicDetail={partialTopic}
+        topicReplies={sourceReplies}
+      />
+    );
+
+    expect(view.getByText('部分评论未能读取，已显示 3 条')).toBeTruthy();
+    expect(view.getByText('3 条')).toBeTruthy();
+    expect(view.getByLabelText('回复排序，当前正序')).toBeTruthy();
     expect(view.queryByLabelText('已到最新回复')).toBeNull();
   });
 
@@ -2006,7 +1982,7 @@ describe('Topic reply filters', () => {
     const view = await render(
       <TopicFilterHarness
         replyCollectionComplete={false}
-        repliesSyncing
+        replyRowsPartial
         selectedTopic={syncingTopic}
         targetReply={{ floor: 2 }}
         topicDetail={syncingTopic}

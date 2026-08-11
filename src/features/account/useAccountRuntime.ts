@@ -3,11 +3,19 @@ import type { WebView } from 'react-native-webview';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 import type { Fetcher } from '@/platform/network/request';
-import { appQueryClient, forumQueryKeys, type ForumIdentityBarrierSource } from '@/platform/query/serverState';
+import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { errorMessage } from '@/platform/network/errors';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
-import { sessionSources, siteSessionIdentityKey, type SessionSite } from '@/domain/session/siteSessionState';
+import {
+  accountSessionAccess,
+  createAccountSessionSnapshot,
+  sessionSources,
+  type AccountSessionSnapshot,
+  type ScopedSiteSessionEvent,
+  type SessionSite
+} from '@/domain/session/siteSessionState';
+import { sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 import {
   beginAuthSurface,
   closeOtherAuthSurfaces,
@@ -49,6 +57,7 @@ import { AccountHosts, type AccountHostsProps } from './AccountHosts';
 
 export function useAccountRuntime({
   appActive,
+  enabledSources,
   fetcher,
   loginNavigation,
   notify,
@@ -59,6 +68,7 @@ export function useAccountRuntime({
   webViewBlockMessage
 }: {
   appActive: boolean;
+  enabledSources: readonly Source[];
   fetcher: Fetcher;
   loginNavigation: AccountHostsProps['loginNavigation'];
   notify: (message: string) => void;
@@ -68,6 +78,15 @@ export function useAccountRuntime({
   screen: Screen;
   webViewBlockMessage: string;
 }) {
+  const enabledSourceMembershipKey = sourceValues.filter((source) => enabledSources.includes(source)).join(',');
+  const enabledSessionSources = useMemo(() => {
+    const enabledSourceSet = new Set(enabledSourceMembershipKey ? enabledSourceMembershipKey.split(',') : []);
+    return sessionSources.filter((source) => enabledSourceSet.has(source));
+  }, [enabledSourceMembershipKey]);
+  const enabledSessionSourceSet = useMemo(() => new Set(enabledSessionSources), [enabledSessionSources]);
+  const enabledSourcesRef = useRef<readonly Source[]>(enabledSources);
+  useCommitRefValue(enabledSourcesRef, enabledSources);
+  const getEnabledSources = useCallback(() => enabledSourcesRef.current, []);
   const webViewRef = useRef<WebView>(null);
   const yaohuoWebViewRef = useRef<WebView>(null);
   const linuxDoWebViewRef = useRef<WebView>(null);
@@ -121,73 +140,65 @@ export function useAccountRuntime({
   const authSurfaceRegistryRef = useRef(createAuthSurfaceRegistry());
   const linuxDoRecoveryBarrierRef = useRef(false);
   const pendingNodeSeekRecoveryRef = useRef<LinuxDoReadRecovery | null>(null);
-  const [authBarrierRevision, setAuthBarrierRevision] = useState(0);
-  const [linuxDoRecoveryBarrier, setLinuxDoRecoveryBarrierState] = useState(false);
-  const accountIdentityKeysRef = useRef<Record<SessionSite, string>>({
-    linuxdo: 'linuxdo:anonymous',
-    nodeseek: 'nodeseek:anonymous',
-    xiaoyinsi: 'xiaoyinsi:anonymous',
-    yaohuo: 'yaohuo:anonymous'
-  });
-  const accountIdentityPendingRef = useRef<Record<SessionSite, boolean>>({
-    ...Object.fromEntries(sessionSources.map((source) => [source, true]))
-  } as Record<SessionSite, boolean>);
-  const accountIdentityEstablishedRef = useRef<Record<SessionSite, boolean>>({
-    ...Object.fromEntries(sessionSources.map((source) => [source, false]))
-  } as Record<SessionSite, boolean>);
   const beginAccountIdentityCheckRef = useRef<(source: SessionSite, surfaceGeneration?: number) => void>(
     () => undefined
   );
   const reconcileAccountStatusRef = useRef<
     (source: SessionSite, options?: { surfaceGeneration?: number }) => Promise<AccountReconcileResult>
   >(async () => ({ status: 'stale' }));
-
-  const commitAccountIdentityRuntime = useCallback(
-    (source: SessionSite, update: { identityKey?: string; pending: boolean }) => {
-      accountIdentityPendingRef.current[source] = update.pending;
-      if (update.identityKey) {
-        accountIdentityKeysRef.current[source] = update.identityKey;
-        if (!update.pending) {
-          accountIdentityEstablishedRef.current[source] = true;
-        }
-      }
+  const applyAccountSessionEventRef = useRef<(event: ScopedSiteSessionEvent) => boolean>(() => false);
+  const readSessionRuntimeSnapshot = useCallback(
+    (source: SessionSite): SessionRuntimeSnapshot => {
+      const sourceEnabled = enabledSessionSourceSet.has(source);
+      const account =
+        appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source)) ||
+        createAccountSessionSnapshot(source);
+      const access = accountSessionAccess(account);
+      return {
+        source,
+        authenticated: access.authenticated,
+        authSurfaceOpen:
+          sourceEnabled &&
+          (hasOpenAuthSurfaceForSource(authSurfaceRegistryRef.current, source) ||
+            (source === 'linuxdo' && linuxDoRecoveryBarrierRef.current)),
+        identityKey: access.identityKey,
+        identityTrust: access.identityTrust,
+        sessionEpoch: forumSessionEpochsRef.current[source],
+        sourceEnabled
+      };
     },
-    []
+    [enabledSessionSourceSet]
   );
-  const readSessionRuntimeSnapshot = useCallback((source: SessionSite): SessionRuntimeSnapshot => {
-    const identityKey = accountIdentityKeysRef.current[source];
-    const pending = accountIdentityPendingRef.current[source];
-    return {
-      source,
-      authenticated: identityKey !== `${source}:anonymous`,
-      authSurfaceOpen:
-        hasOpenAuthSurfaceForSource(authSurfaceRegistryRef.current, source) ||
-        (source === 'linuxdo' && linuxDoRecoveryBarrierRef.current),
-      identityKey,
-      identityTrust: pending ? 'pending' : identityKey === `${source}:anonymous` ? 'none' : 'confirmed',
-      sessionEpoch: forumSessionEpochsRef.current[source]
-    };
-  }, []);
+  const notificationPrivateAccessAllowed = useCallback(
+    (source: SessionSite, identityKey: string) => {
+      const snapshot = readSessionRuntimeSnapshot(source);
+      return (
+        snapshot.sourceEnabled !== false &&
+        snapshot.authenticated &&
+        !snapshot.authSurfaceOpen &&
+        snapshot.identityTrust === 'confirmed' &&
+        snapshot.identityKey === identityKey
+      );
+    },
+    [readSessionRuntimeSnapshot]
+  );
   const updateLinuxDoRecoveryBarrier = useCallback((active: boolean) => {
     linuxDoRecoveryBarrierRef.current = active;
-    setLinuxDoRecoveryBarrierState(active);
   }, []);
   const beginAuthSurfaceTicket = useCallback((surface: AuthSurface, source: SessionSite, checkIdentity = true) => {
-    const wasOpen = Boolean(authSurfaceRegistryRef.current.active[surface]);
+    const account = readSessionRuntimeSnapshot(source);
     const ticket = beginAuthSurface(authSurfaceRegistryRef.current, {
       source,
       surface,
-      identityKey: accountIdentityKeysRef.current[source],
+      identityKey: account.identityKey,
       sessionEpoch: forumSessionEpochsRef.current[source]
     });
-    if (!wasOpen) setAuthBarrierRevision((current) => current + 1);
     if (checkIdentity) beginAccountIdentityCheckRef.current(source, ticket.generation);
     return ticket;
-  }, []);
+  }, [readSessionRuntimeSnapshot]);
   const finishAuthSurfaceTicket = useCallback(
     (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {
       const ticket = finishAuthSurface(authSurfaceRegistryRef.current, surface, reason);
-      if (ticket) setAuthBarrierRevision((current) => current + 1);
       if (!ticket?.shouldReconcile) return null;
       const reconciliation = reconcileAccountStatusRef
         .current(ticket.source, { surfaceGeneration: ticket.generation })
@@ -204,13 +215,16 @@ export function useAccountRuntime({
         } else if (result.status === 'anonymous') {
           notify('已退出登录，已切换为匿名模式');
         } else if (result.status === 'unknown') {
-          notify('登录状态待确认；已暂停该站写入，请稍后重试');
+          notify('登录状态暂时无法确认；写入已暂停，可稍后重试账号核对');
         }
       });
       return reconciliation;
     },
     [notify]
   );
+  const handleSiteSessionEvent = useCallback((event: ScopedSiteSessionEvent) => {
+    applyAccountSessionEventRef.current(event);
+  }, []);
 
   const session = useSessionController({
     defaultFetcher: fetcher,
@@ -221,6 +235,7 @@ export function useAccountRuntime({
     nodeSeekRecoveryThreshold,
     nodeSeekWebViewUserAgentRef,
     notify,
+    onSiteSessionEvent: handleSiteSessionEvent,
     setLinuxDoWebViewUserAgent,
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
@@ -232,74 +247,42 @@ export function useAccountRuntime({
   });
   const xiaoyinsiAuth = useXiaoyinsiAuthController({
     dispatchSiteSessionEvent: session.dispatchSiteSessionEvent,
+    enabled: enabledSessionSourceSet.has('xiaoyinsi'),
     fetcher,
     notify
   });
   const readGateway = useSessionReadGateway({
+    anonymousFetcher: fetcher,
     fetcher: session.forumFetchWithWebViewFallback,
-    forumSessionEpochsRef,
+    getEnabledSources,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     readSessionRuntimeSnapshot,
     refreshXiaoyinsiAuthorization: xiaoyinsiAuth.refreshAuthorization
   });
   const status = useAccountStatusController({
-    sessionEpochs: session.forumSessionEpochs,
+    enabledSources: enabledSessionSources,
     fetcher: session.forumFetchWithWebViewFallback,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
-    onAccountIdentityRuntimeChanged: commitAccountIdentityRuntime,
     onAccountStatusChanged: session.commitAccountStatusChange,
     readXiaoyinsiAuthorization: xiaoyinsiAuth.readAuthorization,
-    sessionViewModels: session.siteSessionViewModels
   });
   const reconcileAccountStatus = status.reconcileAccountStatus;
   const refreshAccountStatus = status.refreshAccountStatus;
   useCommitRefValue(beginAccountIdentityCheckRef, status.beginAccountIdentityCheck);
   useCommitRefValue(reconcileAccountStatusRef, reconcileAccountStatus);
+  useCommitRefValue(applyAccountSessionEventRef, status.applyAccountSessionEvent);
   useEffect(() => {
     if (!ready || initialStatusRefreshStartedRef.current) return;
     initialStatusRefreshStartedRef.current = true;
     void refreshAccountStatus({ silent: true });
   }, [ready, refreshAccountStatus]);
 
-  const accountIdentityKeys = useMemo<Record<SessionSite, string>>(
-    () => ({
-      linuxdo: siteSessionIdentityKey(status.accountSessionViewModels.linuxdo),
-      nodeseek: siteSessionIdentityKey(status.accountSessionViewModels.nodeseek),
-      xiaoyinsi: siteSessionIdentityKey(status.accountSessionViewModels.xiaoyinsi),
-      yaohuo: siteSessionIdentityKey(status.accountSessionViewModels.yaohuo)
-    }),
-    [status.accountSessionViewModels]
-  );
-  useCommitRefValue(accountIdentityKeysRef, accountIdentityKeys);
-  const accountIdentityPending = useMemo<Record<SessionSite, boolean>>(
-    () => ({
-      linuxdo: status.accountSessionViewModels.linuxdo.identityTrust === 'pending',
-      nodeseek: status.accountSessionViewModels.nodeseek.identityTrust === 'pending',
-      xiaoyinsi: status.accountSessionViewModels.xiaoyinsi.identityTrust === 'pending',
-      yaohuo: status.accountSessionViewModels.yaohuo.identityTrust === 'pending'
-    }),
-    [status.accountSessionViewModels]
-  );
-  useCommitRefValue(accountIdentityPendingRef, accountIdentityPending);
-  const identityBarriers = useMemo<ForumIdentityBarrierSource[]>(() => {
-    void authBarrierRevision;
-    return sessionSources.filter(
-      (source) =>
-        accountIdentityPending[source] ||
-        hasOpenAuthSurfaceForSource(authSurfaceRegistryRef.current, source) ||
-        (source === 'linuxdo' && linuxDoRecoveryBarrier)
-    );
-  }, [accountIdentityPending, authBarrierRevision, linuxDoRecoveryBarrier]);
-  const retainableIdentityBarriers = useMemo(
-    () => identityBarriers.filter((source) => accountIdentityEstablishedRef.current[source]),
-    [identityBarriers]
-  );
   const xiaoyinsiLevel = useXiaoyinsiLevelController({
     authorizationPhase: xiaoyinsiAuth.phase,
-    isIdentityPending: () => accountIdentityPendingRef.current.xiaoyinsi,
+    isIdentityPending: () => readSessionRuntimeSnapshot('xiaoyinsi').identityTrust !== 'confirmed',
     notify,
     readGateway,
     sessionEpochs: session.forumSessionEpochs
@@ -348,6 +331,7 @@ export function useAccountRuntime({
   const changeYaohuoLoginPanel = useCallback(
     (visible: boolean, closeReason: AuthSurfaceCloseReason = 'close-button') => {
       if (visible) {
+        if (!enabledSessionSourceSet.has('yaohuo')) return;
         if (showYaohuoLoginPanelRef.current) return;
         prepareAuthSurfaceOpenRef.current('yaohuo-login');
         showYaohuoLoginPanelRef.current = true;
@@ -360,11 +344,12 @@ export function useAccountRuntime({
       }
       closeYaohuoLoginPanel(closeReason);
     },
-    [beginAuthSurfaceTicket, closeYaohuoLoginPanel]
+    [beginAuthSurfaceTicket, closeYaohuoLoginPanel, enabledSessionSourceSet]
   );
   const changeNodeSeekLoginPanel = useCallback(
     (visible: boolean, closeReason: AuthSurfaceCloseReason = 'close-button') => {
       const wasVisible = showLoginPanelRef.current;
+      if (visible && !enabledSessionSourceSet.has('nodeseek')) return;
       if (visible === wasVisible) return;
       if (visible) prepareAuthSurfaceOpenRef.current('nodeseek-login');
       showLoginPanelRef.current = visible;
@@ -380,9 +365,10 @@ export function useAccountRuntime({
       setShowLoginPanel(visible);
       if (!visible) finishAuthSurfaceTicket('nodeseek-login', closeReason);
     },
-    [beginAuthSurfaceTicket, finishAuthSurfaceTicket, handleClearCredentialLoginIntent]
+    [beginAuthSurfaceTicket, enabledSessionSourceSet, finishAuthSurfaceTicket, handleClearCredentialLoginIntent]
   );
   const verification = useVerificationController({
+    canOpenLinuxDoPanel: () => enabledSessionSourceSet.has('linuxdo'),
     changeNodeSeekLoginPanel,
     checkingRequestIdRef,
     closeYaohuoLoginPanel,
@@ -431,6 +417,20 @@ export function useAccountRuntime({
     [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]
   );
   useCommitRefValue(prepareAuthSurfaceOpenRef, prepareAuthSurfaceOpen);
+  useEffect(() => {
+    if (!enabledSessionSourceSet.has('nodeseek')) {
+      changeNodeSeekLoginPanel(false, 'source-disabled');
+      closeNodeImageAuthPanel('source-disabled');
+    }
+    if (!enabledSessionSourceSet.has('yaohuo')) closeYaohuoLoginPanel('source-disabled');
+    if (!enabledSessionSourceSet.has('linuxdo')) closeLinuxDoPanel(true, 'source-disabled');
+  }, [
+    changeNodeSeekLoginPanel,
+    closeLinuxDoPanel,
+    closeNodeImageAuthPanel,
+    closeYaohuoLoginPanel,
+    enabledSessionSourceSet
+  ]);
   const previousLinuxDoPanelVisibleRef = useRef(showLinuxDoPanel);
   useEffect(() => {
     if (previousLinuxDoPanelVisibleRef.current && !showLinuxDoPanel) {
@@ -450,7 +450,7 @@ export function useAccountRuntime({
     notify,
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     linuxDoVerificationActive: showLinuxDoPanel,
-    linuxDoIdentityPending: accountIdentityPending.linuxdo,
+    linuxDoIdentityPending: readSessionRuntimeSnapshot('linuxdo').identityTrust !== 'confirmed',
     resetLinuxDoLevelState,
     resetLinuxDoWebView: verification.resetLinuxDoWebView,
     reconcileAccountStatus,
@@ -650,17 +650,13 @@ export function useAccountRuntime({
 
   return {
     read: {
-      accountIdentityChecks: status.accountIdentityChecks,
-      accountIdentityPending,
       accountSessionViewModels: status.accountSessionViewModels,
       forumSessionEpochs: session.forumSessionEpochs,
       getLinuxDoUserAgent,
       getNodeSeekUserAgent,
-      identityBarriers,
-      identityReconciliationPending: status.identityReconciliationPending,
+      notificationPrivateAccessAllowed,
       readGateway,
       reconcileAccountStatus,
-      retainableIdentityBarriers,
       statusBusy: status.statusBusy
     },
     write: {

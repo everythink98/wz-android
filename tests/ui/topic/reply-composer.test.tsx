@@ -157,7 +157,7 @@ describe('Reply composer local behavior', () => {
   it('labels floor replies and edits with distinct targets, placeholders and submit actions', async () => {
     submitReply.mockClear();
     const replyView = await render(
-      <ReplyHarness initialContent="楼层草稿" replyTarget={{ author: '@bob', commentId: 8, floor: 3 }} />
+      <ReplyHarness initialContent="楼层草稿" replyTarget={{ author: '@bob', floor: 3 }} />
     );
 
     expect(replyView.getByText('回复 @bob · #3')).toBeTruthy();

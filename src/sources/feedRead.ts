@@ -47,7 +47,7 @@ function cursorTopic(value: unknown): Topic | null {
   return topic.source && topic.id && topic.title && topic.url && topic.createdAt ? (topic as Topic) : null;
 }
 
-function decodeAllFeedCursor(cursor?: string): AllFeedCursorState {
+function decodeAllFeedCursor(cursor: string | undefined, sources: readonly Source[]): AllFeedCursorState {
   if (!cursor) {
     return {};
   }
@@ -56,7 +56,7 @@ function decodeAllFeedCursor(cursor?: string): AllFeedCursorState {
     const buffers: Partial<Record<Source, Topic[]>> = {};
     const nextPages: Partial<Record<Source, number | null>> = {};
     const sourceCursors: Partial<Record<Source, string | null>> = {};
-    for (const source of aggregateFeedSources) {
+    for (const source of sources) {
       const items = Array.isArray(parsed.buffers?.[source])
         ? (parsed.buffers[source]?.map(cursorTopic).filter(Boolean) as Topic[])
         : [];
@@ -77,11 +77,11 @@ function decodeAllFeedCursor(cursor?: string): AllFeedCursorState {
   }
 }
 
-function encodeAllFeedCursor(state: AllFeedCursorState) {
+function encodeAllFeedCursor(state: AllFeedCursorState, sources: readonly Source[]) {
   const buffers: Partial<Record<Source, Topic[]>> = {};
   const nextPages: Partial<Record<Source, number | null>> = {};
   const sourceCursors: Partial<Record<Source, string | null>> = {};
-  for (const source of aggregateFeedSources) {
+  for (const source of sources) {
     const items = state.buffers?.[source] || [];
     if (items.length) {
       buffers[source] = items;
@@ -100,6 +100,11 @@ function encodeAllFeedCursor(state: AllFeedCursorState) {
   }
   return encodeURIComponent(JSON.stringify({ buffers, nextPages, sourceCursors }));
 }
+
+function includedAggregateSources(includedSources: readonly Source[] | undefined, sources: readonly Source[]) {
+  const included = new Set(includedSources || sources);
+  return sources.filter((source) => included.has(source));
+}
 function topicIdentity(topic: Topic) {
   return `${topic.source}:${topic.id}`;
 }
@@ -112,9 +117,11 @@ export async function getFeed({
   category,
   feedFilter,
   fetcher,
+  fetcherForSource,
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
+  includedSources,
   unavailableSources,
   signal,
   timeoutMs
@@ -126,9 +133,11 @@ export async function getFeed({
   category?: string;
   feedFilter?: SourceFeedFilter;
   fetcher?: Fetcher;
+  fetcherForSource?: (source: Source) => Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
+  includedSources?: readonly Source[];
   unavailableSources?: readonly Source[];
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -147,10 +156,11 @@ export async function getFeed({
   if (source === 'all') {
     return runForumSourceReadAggregateAttempt(
       fetcher || fetch,
-      async (aggregateFetcher) => {
+      async (aggregateFetcher, scopeFetcher) => {
+        const sources = includedAggregateSources(includedSources, aggregateFeedSources);
         const unavailableSourceSet = new Set(unavailableSources);
-        const cursorState = decodeAllFeedCursor(cursor);
-        const bufferedItems = aggregateFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
+        const cursorState = decodeAllFeedCursor(cursor, sources);
+        const bufferedItems = sources.flatMap((item) => cursorState.buffers?.[item] || []);
         const hasRetryableCursor = Boolean(
           cursor &&
           (bufferedItems.length ||
@@ -159,13 +169,13 @@ export async function getFeed({
         );
         const shouldFetchSource = (item: Source) =>
           !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
-        const fetchedSources = aggregateFeedSources.map(shouldFetchSource);
+        const fetchedSources = sources.map(shouldFetchSource);
         const requestedPages = Object.fromEntries(
-          aggregateFeedSources.map((item) => [item, cursor ? cursorState.nextPages?.[item] || page : page])
-        ) as Record<(typeof aggregateFeedSources)[number], number>;
-        const adapterLimit = limit < 30 ? limit * aggregateFeedSources.length : limit;
+          sources.map((item) => [item, cursor ? cursorState.nextPages?.[item] || page : page])
+        ) as Record<Source, number>;
+        const adapterLimit = limit < 30 ? limit * sources.length : limit;
         const results = await Promise.allSettled(
-          aggregateFeedSources.map((item, index) =>
+          sources.map((item, index) =>
             readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
               if (unavailableSourceSet.has(item)) {
                 return unavailableSourceRead(item);
@@ -222,9 +232,10 @@ export async function getFeed({
                 }
                 throw new Error(`${item} 未注册聚合首页读取 adapter`);
               };
+              const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
               return item === 'linuxdo' || item === 'nodeseek'
-                ? runForumSourceReadAttempt(item, aggregateFetcher, readSource, () => !sourceSignal.aborted)
-                : readSource(aggregateFetcher);
+                ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
+                : readSource(sourceFetcher);
             })
           )
         );
@@ -245,7 +256,7 @@ export async function getFeed({
         const nextPages: Partial<Record<Source, number | null>> = {};
         const sourceCursors: Partial<Record<Source, string | null>> = {};
         const hasFulfilledSource = results.some((result) => result.status === 'fulfilled');
-        aggregateFeedSources.forEach((item, index) => {
+        sources.forEach((item, index) => {
           const result = results[index];
           if (result?.status === 'fulfilled') {
             if (result.value.nextPage) {
@@ -266,10 +277,10 @@ export async function getFeed({
             if (cursorState.sourceCursors?.[item]) sourceCursors[item] = cursorState.sourceCursors[item];
           }
         });
-        const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages, sourceCursors });
+        const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages, sourceCursors }, sources);
         const response = {
           items: selected,
-          errors: mergeSettledSourceErrors(results, aggregateFeedSources),
+          errors: mergeSettledSourceErrors(results, sources),
           hasMore: Boolean(nextCursor),
           nextPage: nextCursor ? page + 1 : null,
           nextCursor
@@ -314,18 +325,22 @@ export async function getFeed({
 export async function getCategories({
   source = 'all',
   fetcher,
+  fetcherForSource,
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
+  includedSources,
   unavailableSources,
   signal,
   timeoutMs
 }: {
   source?: FeedSource;
   fetcher?: Fetcher;
+  fetcherForSource?: (source: Source) => Fetcher;
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
+  includedSources?: readonly Source[];
   unavailableSources?: readonly Source[];
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -334,8 +349,8 @@ export async function getCategories({
   if (source === 'all') {
     return runForumSourceReadAggregateAttempt(
       fetcher || fetch,
-      async (aggregateFetcher) => {
-        const sources = sourceValues;
+      async (aggregateFetcher, scopeFetcher) => {
+        const sources = includedAggregateSources(includedSources, sourceValues);
         const results = await Promise.allSettled(
           sources.map((item) =>
             readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
@@ -362,9 +377,10 @@ export async function getCategories({
                 }
                 throw new Error(`${item} 未注册分类读取 adapter`);
               };
+              const sourceFetcher = fetcherForSource ? scopeFetcher(fetcherForSource(item)) : aggregateFetcher;
               return item === 'linuxdo' || item === 'nodeseek'
-                ? runForumSourceReadAttempt(item, aggregateFetcher, readSource, () => !sourceSignal.aborted)
-                : readSource(aggregateFetcher);
+                ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
+                : readSource(sourceFetcher);
             })
           )
         );

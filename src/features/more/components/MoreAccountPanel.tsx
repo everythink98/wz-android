@@ -28,6 +28,7 @@ const styles = StyleSheet.create({
 });
 
 export type MoreAccountCapabilities = {
+  enabledSessionSources: readonly SessionSite[];
   read: {
     sessions: SiteSessionViewModels;
     statusBusy: boolean;
@@ -94,6 +95,10 @@ export function MoreAccountPanel({
   const [linuxDoLevelExpanded, setLinuxDoLevelExpanded] = useState(false);
   const [xiaoyinsiLevelExpanded, setXiaoyinsiLevelExpanded] = useState(false);
   const sessions = runtime.read.sessions;
+  const nodeSeekEnabled = runtime.enabledSessionSources.includes('nodeseek');
+  const linuxDoEnabled = runtime.enabledSessionSources.includes('linuxdo');
+  const yaohuoEnabled = runtime.enabledSessionSources.includes('yaohuo');
+  const xiaoyinsiEnabled = runtime.enabledSessionSources.includes('xiaoyinsi');
   const linuxDoSession = sessions.linuxdo;
   const xiaoyinsiSession = sessions.xiaoyinsi;
   const auth = runtime.center.xiaoyinsiAuth;
@@ -109,7 +114,8 @@ export function MoreAccountPanel({
     profile: xiaoyinsiLevelProfile,
     refresh: refreshXiaoyinsiLevel
   } = runtime.center.xiaoyinsiLevel;
-  const authForcedOpen = auth.phase === 'requesting' || auth.phase === 'waiting' || auth.phase === 'cleanup';
+  const authForcedOpen =
+    xiaoyinsiEnabled && (auth.phase === 'requesting' || auth.phase === 'waiting' || auth.phase === 'cleanup');
   const projectedSessions =
     auth.phase === 'cleanup'
       ? {
@@ -130,14 +136,28 @@ export function MoreAccountPanel({
       : sessions;
 
   useEffect(() => {
-    if (runtime.surfaces.nodeseek || runtime.surfaces.yaohuo || runtime.surfaces.linuxdo || authForcedOpen) {
+    if (
+      (nodeSeekEnabled && runtime.surfaces.nodeseek) ||
+      (yaohuoEnabled && runtime.surfaces.yaohuo) ||
+      (linuxDoEnabled && runtime.surfaces.linuxdo) ||
+      authForcedOpen
+    ) {
       setExpanded(true);
     }
-  }, [authForcedOpen, runtime.surfaces.linuxdo, runtime.surfaces.nodeseek, runtime.surfaces.yaohuo]);
+  }, [
+    authForcedOpen,
+    linuxDoEnabled,
+    nodeSeekEnabled,
+    runtime.surfaces.linuxdo,
+    runtime.surfaces.nodeseek,
+    runtime.surfaces.yaohuo,
+    yaohuoEnabled
+  ]);
 
   useEffect(() => {
     if (
       linuxDoLevelExpanded &&
+      linuxDoEnabled &&
       linuxDoSession.canWrite &&
       !linuxDoLevelProfile &&
       !linuxDoLevelBusy &&
@@ -149,6 +169,7 @@ export function MoreAccountPanel({
     linuxDoLevelBusy,
     linuxDoLevelError,
     linuxDoLevelExpanded,
+    linuxDoEnabled,
     linuxDoLevelProfile,
     linuxDoSession.canWrite,
     refreshLinuxDoLevel
@@ -157,6 +178,7 @@ export function MoreAccountPanel({
   useEffect(() => {
     if (
       xiaoyinsiLevelExpanded &&
+      xiaoyinsiEnabled &&
       xiaoyinsiSession.canWrite &&
       !xiaoyinsiLevelProfile &&
       !xiaoyinsiLevelBusy &&
@@ -170,7 +192,8 @@ export function MoreAccountPanel({
     xiaoyinsiLevelBusy,
     xiaoyinsiLevelError,
     xiaoyinsiLevelProfile,
-    xiaoyinsiSession.canWrite
+    xiaoyinsiSession.canWrite,
+    xiaoyinsiEnabled
   ]);
   const linuxDoLevelMeta = !linuxDoSession.canWrite
     ? '登录后查看'
@@ -190,23 +213,26 @@ export function MoreAccountPanel({
   return (
     <AccountCenterPanel
       credentials={runtime.center.credentials.summaries}
+      enabledSessionSources={runtime.enabledSessionSources}
       expanded={expanded}
       forcedSite={
-        runtime.surfaces.nodeseek
+        nodeSeekEnabled && runtime.surfaces.nodeseek
           ? 'nodeseek'
-          : runtime.surfaces.yaohuo
+          : yaohuoEnabled && runtime.surfaces.yaohuo
             ? 'yaohuo'
-            : runtime.surfaces.linuxdo
+            : linuxDoEnabled && runtime.surfaces.linuxdo
               ? 'linuxdo'
               : authForcedOpen
                 ? 'xiaoyinsi'
                 : null
       }
       pendingFillSite={runtime.center.credentials.pendingFillSite}
-      nodeSeekUserId={nodeSeekUserIdForSession(sessions.nodeseek, runtime.center.nodeSeek.webLoginUserId)}
+      nodeSeekUserId={
+        nodeSeekEnabled ? nodeSeekUserIdForSession(sessions.nodeseek, runtime.center.nodeSeek.webLoginUserId) : null
+      }
       sessions={projectedSessions}
       siteContent={{
-        nodeseek: (
+        nodeseek: nodeSeekEnabled ? (
           <NodeSeekServicesPanel
             apiKeyBusy={runtime.center.nodeImageKey.busy}
             apiKeySaved={runtime.center.nodeImageKey.saved}
@@ -220,8 +246,8 @@ export function MoreAccountPanel({
             onRecoveryThresholdChange={onNodeSeekRecoveryThresholdChange}
             onSaveApiKey={(value) => void runtime.center.nodeImageKey.save(value)}
           />
-        ),
-        linuxdo: (
+        ) : null,
+        linuxdo: linuxDoEnabled ? (
           <>
             <MenuButton
               nested
@@ -246,9 +272,9 @@ export function MoreAccountPanel({
               />
             ) : null}
           </>
-        ),
-        yaohuo: null,
-        xiaoyinsi: (
+        ) : null,
+        yaohuo: yaohuoEnabled ? null : undefined,
+        xiaoyinsi: xiaoyinsiEnabled ? (
           <>
             <XiaoyinsiAuthPanel
               message={auth.message}
@@ -298,7 +324,7 @@ export function MoreAccountPanel({
               ) : null}
             </View>
           </>
-        )
+        ) : null
       }}
       statusBusy={runtime.read.statusBusy}
       styles={screenStyles}

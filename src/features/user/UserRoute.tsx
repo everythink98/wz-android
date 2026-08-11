@@ -2,31 +2,24 @@ import { createContext, type ReactNode, useCallback, useContext, useMemo } from 
 import { Linking } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { SourceErrorInfo, Topic } from '@/domain/forum/models';
+import type { Topic } from '@/domain/forum/models';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { toggleFollowedUser, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
+import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { errorMessage } from '@/platform/network/errors';
-import type { ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
-import { useIdentityVerificationPrompt } from '@/ui/hooks/useIdentityVerificationPrompt';
+import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
+import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { UserScreen } from './UserScreen';
 import { useUserController } from './useUserController';
 
-type IdentityCheck = {
-  checking: boolean;
-  pending: boolean;
-  error?: SourceErrorInfo;
-};
-
 export type UserRouteRuntimeValue = {
   account: {
-    identityBarriers: readonly ForumIdentityBarrierSource[];
-    identityChecks: Record<SessionSource, IdentityCheck>;
     linuxDoVerificationVisible: boolean;
     readGateway: ReadGateway;
     reconcileAccountStatus: (source: SessionSource) => Promise<unknown>;
@@ -58,14 +51,33 @@ function useUserRouteRuntime() {
   return runtime;
 }
 
-export function UserRoute({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'User'>) {
+type UserRouteProps = NativeStackScreenProps<RootStackParamList, 'User'>;
+
+export function UserRoute({ navigation, route }: UserRouteProps) {
   const runtime = useUserRouteRuntime();
+  const user = route.params.user;
+  const sourceEnabled = projectContentSourcePreferences(
+    runtime.reader.data.settings.contentSources
+  ).enabledSources.includes(user.source);
+  if (!sourceEnabled) {
+    return (
+      <ContentSourceDisabledState
+        source={user.source}
+        onBack={navigation.goBack}
+        onManage={() => navigation.dispatch(manageContentSourcesAction())}
+      />
+    );
+  }
+  return <EnabledUserRoute navigation={navigation} route={route} runtime={runtime} />;
+}
+
+function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { runtime: UserRouteRuntimeValue }) {
   const active = useIsFocused();
   const controller = useUserController({
     active,
-    identityBarriers: runtime.account.identityBarriers,
     sessionEpochs: runtime.account.sessionEpochs,
     notify: runtime.notify,
+    onRetryIdentityStatus: runtime.account.reconcileAccountStatus,
     readerData: runtime.reader.data,
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
     showNodeSeekVerification: (message, recovery) =>
@@ -74,9 +86,6 @@ export function UserRoute({ navigation, route }: NativeStackScreenProps<RootStac
     readGateway: runtime.account.readGateway,
     user: route.params.user
   });
-  const identityCheck =
-    controller.selectedUser?.source === 'linuxdo' ? runtime.account.identityChecks.linuxdo : undefined;
-  const identityError = identityCheck?.pending ? identityCheck.error : undefined;
   const topicStateIndex = useMemo(() => createTopicListItemStateIndex(runtime.reader.data), [runtime.reader.data]);
   const openExternalUrl = useCallback(
     (url: string) => {
@@ -89,12 +98,8 @@ export function UserRoute({ navigation, route }: NativeStackScreenProps<RootStac
     [runtime]
   );
   const refreshUser = useCallback(() => {
-    if (identityError && controller.selectedUser?.source === 'linuxdo') {
-      void runtime.account.reconcileAccountStatus('linuxdo');
-      return;
-    }
     void controller.refreshUser();
-  }, [controller, identityError, runtime]);
+  }, [controller]);
   const toggleUserFollow = useCallback(
     (user: Parameters<typeof toggleFollowedUser>[1]) => {
       runtime.reader.commit('follow-toggled', (current) => toggleFollowedUser(current, user));
@@ -103,24 +108,11 @@ export function UserRoute({ navigation, route }: NativeStackScreenProps<RootStac
   );
   const openTopic = useCallback((topic: Topic) => navigation.push('Topic', { topic }), [navigation]);
 
-  useIdentityVerificationPrompt({
-    enabled: active && runtime.appActive && !runtime.account.linuxDoVerificationVisible && !controller.userProfile,
-    error: identityCheck?.error,
-    identityPending: Boolean(identityCheck?.pending),
-    intentKey:
-      active && runtime.appActive && controller.selectedUser?.source === 'linuxdo'
-        ? `user:${controller.selectedUser.id || controller.selectedUser.username || ''}`
-        : null,
-    showVerification: runtime.account.showLinuxDoVerification
-  });
-
   return (
     <UserScreen
-      busy={(controller.userBusy && !identityError) || Boolean(identityCheck?.checking)}
-      error={identityError || controller.userError || null}
+      busy={controller.userBusy}
+      error={controller.userError || null}
       followed={controller.currentUserFollowed}
-      identityBlocked={Boolean(identityCheck?.pending)}
-      identityChecking={Boolean(identityCheck?.checking)}
       profile={controller.userProfile}
       requestedUser={controller.selectedUser}
       topicStateIndex={topicStateIndex}
@@ -129,9 +121,6 @@ export function UserRoute({ navigation, route }: NativeStackScreenProps<RootStac
       onBack={navigation.goBack}
       onLoadMoreReplies={controller.loadMoreUserReplies}
       onLoadMoreTopics={controller.loadMoreUserTopics}
-      onCheckLinuxDoStatus={() => {
-        void runtime.account.showLinuxDoVerification();
-      }}
       onOpenOriginal={openExternalUrl}
       onOpenTopic={openTopic}
       onRefresh={refreshUser}

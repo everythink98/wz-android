@@ -8,12 +8,6 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderSettings)
   const radiusSm = 10;
   const radiusMd = 14;
   return StyleSheet.create({
-    actions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
-    },
     authNoticeBox: {
       gap: 8,
       borderRadius: radiusMd,
@@ -244,77 +238,6 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderSettings)
     searchFilterEntrySummaryActive: {
       color: theme.primary,
       fontWeight: '600'
-    },
-    searchSessionStatusBar: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
-    },
-    searchSessionStatusChip: {
-      minHeight: 34,
-      maxWidth: '100%',
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 6,
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 9,
-      paddingVertical: 6
-    },
-    searchSessionStatusChipNeutral: {
-      backgroundColor: 'transparent',
-      borderColor: 'transparent'
-    },
-    searchSessionStatusChipWarning: {
-      backgroundColor: alphaColor(warningColor, theme.dark ? 0.14 : 0.07),
-      borderColor: alphaColor(warningColor, theme.dark ? 0.32 : 0.18)
-    },
-    searchSessionStatusChipDanger: {
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.07),
-      borderColor: alphaColor(theme.danger, theme.dark ? 0.32 : 0.22)
-    },
-    searchSessionStatusDot: {
-      width: 7,
-      height: 7,
-      borderRadius: 4
-    },
-    searchSessionStatusDotNeutral: {
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.48 : 0.34)
-    },
-    searchSessionStatusDotSuccess: {
-      backgroundColor: theme.success
-    },
-    searchSessionStatusDotWarning: {
-      backgroundColor: warningColor
-    },
-    searchSessionStatusDotDanger: {
-      backgroundColor: theme.danger
-    },
-    searchSessionStatusSource: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '700',
-      includeFontPadding: false,
-      lineHeight: 17
-    },
-    searchSessionStatusText: {
-      flexShrink: 1,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500',
-      includeFontPadding: false,
-      lineHeight: 17
-    },
-    searchSessionStatusTextNeutral: {
-      color: theme.muted
-    },
-    searchSessionStatusTextWarning: {
-      color: warningColor
-    },
-    searchSessionStatusTextDanger: {
-      color: theme.danger
     },
     searchFilterField: {
       gap: 8

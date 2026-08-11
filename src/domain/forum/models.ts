@@ -123,6 +123,8 @@ export interface ReplyLocationTarget {
 
 export type ReplyOrder = 'oldest' | 'newest';
 
+export type ReplyCompleteness = 'complete' | 'partial';
+
 export type ReplyWindowPosition =
   | { kind: 'start' }
   | { kind: 'cursor'; page: number; offset: number | null }
@@ -238,6 +240,7 @@ export interface TopicPoll {
 export interface TopicDetail extends Topic {
   contentHtml: string;
   replies: Reply[];
+  replyCompleteness?: ReplyCompleteness;
   currentUser?: UserProfile;
   polls?: TopicPoll[];
   replyHasMore?: boolean;
@@ -295,6 +298,7 @@ export interface FeedResponse {
 
 export interface RepliesResponse {
   items: Reply[];
+  completeness?: ReplyCompleteness;
   currentPage?: number;
   currentOffset?: number | null;
   previousPage?: number | null;

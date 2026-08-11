@@ -25,6 +25,7 @@ describe('App composition bootstrap', () => {
     jest.mocked(useAppRuntime).mockReturnValue({
       accountHost: (<></>) as ReturnType<typeof useAppRuntime>['accountHost'],
       appStyles: createAppStyles(theme),
+      mediaTransportIdentity: 'loading',
       readerStyleContext: { settings, theme },
       routes: null,
       sessionEpochs: { linuxdo: 0, nodeseek: 0, xiaoyinsi: 0, yaohuo: 0 },

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { aggregateSearchSources, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import { isSessionSource, type DiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import { mergeTopics, type SearchSort } from '@/domain/forum/feed';
 import {
   buildDiscourseSearchQuery,
@@ -26,11 +26,7 @@ import {
   sourceReadRecoveryOutcome,
   yaohuoErrorRequiresLoginPanel
 } from '@/sources/sourceErrors';
-import {
-  authNoticeForSource,
-  authNoticeForSourceError,
-  searchSessionNoticeItems
-} from '@/domain/session/siteSessionPrompts';
+import { authNoticeForSource, authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { Category, FeedSource, Source } from '@/domain/forum/models';
 import {
@@ -52,7 +48,6 @@ type SubmittedSearch = {
   query: string;
   source: FeedSource;
 };
-
 class SearchPageError extends Error {
   constructor(
     readonly page: number,
@@ -66,11 +61,7 @@ function remoteSearchResult(group: SearchGroup): RemoteSearchSourceResult {
   return group.error ? { kind: 'failed', group } : { kind: 'success', group };
 }
 
-function searchGroupForUnexpectedError(
-  source: Source,
-  error: unknown,
-  sessionViewModels: SiteSessionViewModels
-): SearchGroup {
+function searchGroupForUnexpectedError(source: Source, error: unknown): SearchGroup {
   const sourceError = sourceErrorFromUnknown(source, error);
   return {
     source,
@@ -78,8 +69,7 @@ function searchGroupForUnexpectedError(
     items: [],
     error: sourceError.message,
     errorKind: sourceError.kind,
-    authNotice:
-      authNoticeForSourceError(sourceError) || authNoticeForSource(source, sessionViewModels, 'search') || undefined,
+    authNotice: authNoticeForSourceError(sourceError) || undefined,
     hasMore: false,
     nextPage: null
   };
@@ -114,17 +104,15 @@ function mergeSearchPages(pages: RemoteSearchSourceResult[], error: unknown): Se
   return merged;
 }
 
-function isSourceIdentityPending(source: Source, sessions: SiteSessionViewModels) {
-  return source !== 'v2ex' && sessions[source].identityTrust === 'pending';
-}
-
 export function useSearchController({
   active,
   categories,
+  enabledSearchSources,
   sessionEpochs = initialForumSessionEpochs,
   linuxDoVerificationActive,
   notify,
   onNodeSeekSearchVerificationRequired,
+  onRetryIdentityStatus,
   sessionViewModels,
   showLinuxDoVerification,
   showNodeSeekVerification,
@@ -133,10 +121,12 @@ export function useSearchController({
 }: {
   active: boolean;
   categories: Category[];
+  enabledSearchSources: readonly Source[];
   sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
   onNodeSeekSearchVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
+  onRetryIdentityStatus?: (source: SessionSource) => void;
   sessionViewModels: SiteSessionViewModels;
   showLinuxDoVerification: (
     message?: string,
@@ -148,6 +138,7 @@ export function useSearchController({
 }) {
   const queryClient = useQueryClient();
   const searchActive = active;
+  const aggregateSources = enabledSearchSources;
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
   const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
   const recentSearchHistoryHydratedRef = useRef(false);
@@ -162,22 +153,19 @@ export function useSearchController({
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [recentSearchesHydrated, setRecentSearchesHydrated] = useState(false);
   const [recentSearchHistoryReadAttempt, setRecentSearchHistoryReadAttempt] = useState(0);
-  const searchSessionNotices = useMemo(
-    () => searchSessionNoticeItems(searchSource, sessionViewModels),
-    [searchSource, sessionViewModels]
-  );
-  const linuxDoVerificationInProgress =
-    sessionViewModels.linuxdo.status === 'verification-required' || sessionViewModels.linuxdo.status === 'verifying';
-  const [stableLinuxDoAuthenticated, setStableLinuxDoAuthenticated] = useState(sessionViewModels.linuxdo.isLoggedIn);
-  const linuxDoAuthenticated = linuxDoVerificationInProgress
-    ? stableLinuxDoAuthenticated
-    : sessionViewModels.linuxdo.isLoggedIn;
+  const enabledSearchSourcesRef = useRef(enabledSearchSources);
+  enabledSearchSourcesRef.current = enabledSearchSources;
+  const searchSourceIncluded = searchSource === 'all' || enabledSearchSources.includes(searchSource);
+  const submittedSearchSourceIncluded =
+    !submittedSearch || submittedSearch.source === 'all' || enabledSearchSources.includes(submittedSearch.source);
   useLayoutEffect(() => {
-    if (!linuxDoVerificationInProgress) {
-      setStableLinuxDoAuthenticated(sessionViewModels.linuxdo.isLoggedIn);
+    if (searchSourceIncluded && submittedSearchSourceIncluded) return;
+    if (!searchSourceIncluded) setSearchSourceState('all');
+    if (!submittedSearchSourceIncluded) {
+      setSubmittedSearch((current) => (current && current.source !== 'all' ? { ...current, source: 'all' } : current));
     }
-  }, [linuxDoVerificationInProgress, sessionViewModels.linuxdo.isLoggedIn]);
-
+    setLinuxDoAiEnabled(false);
+  }, [searchSourceIncluded, submittedSearchSourceIncluded]);
   useEffect(() => {
     let active = true;
     recentSearchHistoryReadFailedRef.current = false;
@@ -255,10 +243,15 @@ export function useSearchController({
       page: number,
       signal: AbortSignal,
       sort: SearchSort,
-      filter?: SourceSearchFilter
+      filter: SourceSearchFilter | undefined,
+      readPlanScope: string
     ): Promise<RemoteSearchSourceResult> => {
       const trace = beginDiagnosticTrace('search', page > 1 ? 'load-more' : 'run', { source, page });
-      const sourceStatusNotice = authNoticeForSource(source, sessionViewModels, 'search') || undefined;
+      const plan = readGateway.getReadPlan(source, 'search');
+      const sourceStatusNotice =
+        plan.state === 'ready' && plan.lane === 'public'
+          ? undefined
+          : authNoticeForSource(source, sessionViewModels, 'search') || undefined;
       try {
         markDiagnosticStage(trace, 'guard', { source, page, state: page > 1 ? 'load-more' : 'started' });
         const activeFilter = filter?.source === source ? filter : undefined;
@@ -273,7 +266,7 @@ export function useSearchController({
             filter: activeFilter,
             signal
           },
-          { trace }
+          { readPlanScope, trace }
         );
         const parserSummary = sourceDiagnosticSummary(data);
         const sourceError =
@@ -359,7 +352,7 @@ export function useSearchController({
         return { kind: 'failed', group };
       }
     },
-    [categories, linuxDoAuthenticated, sessionViewModels, readGateway]
+    [categories, sessionViewModels, readGateway]
   );
 
   const submittedSource = submittedSearch?.source === 'all' ? 'v2ex' : submittedSearch?.source || 'v2ex';
@@ -367,40 +360,40 @@ export function useSearchController({
   const submittedSort = submittedSearch
     ? remoteSearchSort(submittedSearch.source, submittedSearch.filters)
     : 'relevance';
+  const singleSearchPlan = readGateway.getReadPlan(submittedSource, 'search');
   const singleSearchKey = forumQueryKeys.search({
-    authenticated: submittedSource === 'linuxdo' && linuxDoAuthenticated,
     source: submittedSource,
     query: submittedSearch?.query || '',
+    readPlanScope: singleSearchPlan.cacheScope,
     sort: submittedSort,
     filter: submittedFilter,
     scope: sessionEpochs
   });
 
-  const aggregateKeys = aggregateSearchSources.map((source) =>
-    forumQueryKeys.search({
-      authenticated: source === 'linuxdo' && linuxDoAuthenticated,
+  const aggregatePlans = aggregateSources.map((source) => readGateway.getReadPlan(source, 'search'));
+  const aggregateKeys = aggregateSources.map((source, index) => {
+    const plan = aggregatePlans[index];
+    return forumQueryKeys.search({
       source,
       query: submittedSearch?.query || '',
+      readPlanScope: plan.cacheScope,
       sort: submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
       scope: sessionEpochs
-    })
-  );
+    });
+  });
   const aggregateQueries = useQueries({
-    queries: aggregateSearchSources.map((source, index) => ({
+    queries: aggregateSources.map((source, index) => ({
       queryKey: aggregateKeys[index],
-      enabled: Boolean(
-        searchActive &&
-        submittedSearch?.query &&
-        submittedSearch.source === 'all' &&
-        !isSourceIdentityPending(source, sessionViewModels)
-      ),
+      enabled: Boolean(searchActive && submittedSearch?.query && submittedSearch.source === 'all'),
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const result = await runRemoteSearchSource(
           source,
           submittedSearch?.query || '',
           1,
           signal,
-          submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance'
+          submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
+          undefined,
+          aggregatePlans[index].cacheScope
         );
         if (result.kind !== 'success') {
           throw new SearchPageError(1, result);
@@ -413,10 +406,7 @@ export function useSearchController({
   const singleSearchQuery = useInfiniteQuery({
     queryKey: singleSearchKey,
     enabled: Boolean(
-      searchActive &&
-      submittedSearch?.query &&
-      submittedSearch.source !== 'all' &&
-      !isSourceIdentityPending(submittedSource, sessionViewModels)
+      searchActive && submittedSearch?.query && submittedSearch.source !== 'all' && submittedSearchSourceIncluded
     ),
     initialPageParam: 1,
     queryFn: async ({ pageParam, signal }) => {
@@ -426,7 +416,8 @@ export function useSearchController({
         pageParam,
         signal,
         submittedSort,
-        submittedFilter
+        submittedFilter,
+        singleSearchPlan.cacheScope
       );
       if (result.kind !== 'success') {
         throw new SearchPageError(pageParam, result);
@@ -443,7 +434,7 @@ export function useSearchController({
 
   const aggregateGroups = useMemo(
     () =>
-      aggregateSearchSources.map((source, index): SearchGroup => {
+      aggregateSources.map((source, index): SearchGroup => {
         const query = aggregateQueries[index];
         if (query.error instanceof SearchPageError) {
           const failed = groupFromRemoteSearchResult(query.error.result);
@@ -460,7 +451,7 @@ export function useSearchController({
         }
         if (query.error) {
           return {
-            ...searchGroupForUnexpectedError(source, query.error, sessionViewModels),
+            ...searchGroupForUnexpectedError(source, query.error),
             loading: query.isFetching
           };
         }
@@ -471,19 +462,14 @@ export function useSearchController({
           source,
           label: sourceLabel(source),
           items: [],
-          authNotice: authNoticeForSource(source, sessionViewModels, 'search') || undefined,
           settled: false,
-          loading: Boolean(
-            searchActive &&
-            submittedSearch?.query &&
-            submittedSearch.source === 'all' &&
-            !isSourceIdentityPending(source, sessionViewModels)
-          )
+          loading: Boolean(searchActive && submittedSearch?.query && submittedSearch.source === 'all')
         };
       }),
-    [aggregateQueries, searchActive, sessionViewModels, submittedSearch?.query, submittedSearch?.source]
+    [aggregateQueries, aggregateSources, searchActive, submittedSearch?.query, submittedSearch?.source]
   );
   const singleGroup = useMemo(() => {
+    if (!submittedSearchSourceIncluded) return null;
     const merged = mergeSearchPages(singleSearchQuery.data?.pages || [], singleSearchQuery.error);
     if (merged) {
       return {
@@ -497,40 +483,28 @@ export function useSearchController({
     }
     if (singleSearchQuery.error) {
       return {
-        ...searchGroupForUnexpectedError(submittedSource, singleSearchQuery.error, sessionViewModels),
+        ...searchGroupForUnexpectedError(submittedSource, singleSearchQuery.error),
         loading: singleSearchQuery.isFetching
-      };
-    }
-    if (
-      searchActive &&
-      submittedSearch?.query &&
-      submittedSearch.source !== 'all' &&
-      isSourceIdentityPending(submittedSource, sessionViewModels)
-    ) {
-      return {
-        source: submittedSource,
-        label: sourceLabel(submittedSource),
-        items: [],
-        authNotice: authNoticeForSource(submittedSource, sessionViewModels, 'search') || undefined,
-        settled: false,
-        loading: false
       };
     }
     return null;
   }, [
-    searchActive,
-    sessionViewModels,
     singleSearchQuery.data?.pages,
     singleSearchQuery.error,
     singleSearchQuery.isFetching,
     singleSearchQuery.isFetchingNextPage,
-    submittedSearch?.query,
-    submittedSearch?.source,
+    submittedSearchSourceIncluded,
     submittedSource
   ]);
-  const baseSearchGroups = submittedSearch?.source === 'all' ? aggregateGroups : singleGroup ? [singleGroup] : [];
+  const baseSearchGroups =
+    submittedSearch?.source === 'all'
+      ? aggregateGroups
+      : submittedSearchSourceIncluded && singleGroup
+        ? [singleGroup]
+        : [];
 
   const linuxDoAiVisible = Boolean(
+    aggregateSources.includes('linuxdo') &&
     submittedSearch?.query &&
     submittedSearch.source === 'linuxdo' &&
     submittedSearch.filters.linuxdo.order === 'relevance' &&
@@ -540,13 +514,15 @@ export function useSearchController({
     linuxDoAiVisible && submittedSearch
       ? buildDiscourseSearchQuery(submittedSearch.query, submittedSearch.filters.linuxdo, categories)
       : '';
+  const linuxDoSemanticPlan = readGateway.getReadPlan('linuxdo', 'semantic-search');
   const linuxDoAiQuery = useQuery({
-    queryKey: forumQueryKeys.semanticSearch(linuxDoAiFullQuery, sessionEpochs),
+    queryKey: forumQueryKeys.semanticSearch(linuxDoAiFullQuery, sessionEpochs, linuxDoSemanticPlan.cacheScope),
     enabled: Boolean(
       searchActive &&
+      aggregateSources.includes('linuxdo') &&
       !linuxDoVerificationActive &&
       linuxDoAiFullQuery &&
-      !isSourceIdentityPending('linuxdo', sessionViewModels)
+      linuxDoSemanticPlan.state === 'ready'
     ),
     queryFn: async ({ signal }) => {
       const trace = beginDiagnosticTrace('search', 'searchSemanticTopics', { source: 'linuxdo' });
@@ -554,7 +530,7 @@ export function useSearchController({
         markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started' });
         const result = await readGateway.searchSemanticTopics(
           { source: 'linuxdo', query: linuxDoAiFullQuery, signal },
-          { trace }
+          { readPlanScope: linuxDoSemanticPlan.cacheScope, trace }
         );
         if (!result) throw new Error('AI 搜索未返回结果');
         if (signal.aborted) {
@@ -581,9 +557,7 @@ export function useSearchController({
   }, [linuxDoVerificationActive, queryClient]);
   const linuxDoAiState = useMemo<LinuxDoAiSearchState>(() => {
     if (!linuxDoAiVisible) return { status: 'idle', enabled: false, count: 0 };
-    if (isSourceIdentityPending('linuxdo', sessionViewModels) && !linuxDoAiQuery.data) {
-      return { status: 'idle', enabled: false, count: 0 };
-    }
+    if (linuxDoSemanticPlan.state === 'blocked') return { status: 'idle', enabled: false, count: 0 };
     if (linuxDoAiQuery.isPending) return { status: 'loading', enabled: false, count: 0 };
     if (linuxDoAiQuery.isError) return linuxDoAiFailureState(linuxDoAiQuery.error);
     const count = linuxDoAiQuery.data?.items.length || 0;
@@ -597,8 +571,8 @@ export function useSearchController({
     linuxDoAiQuery.error,
     linuxDoAiQuery.isError,
     linuxDoAiQuery.isPending,
-    linuxDoAiVisible,
-    sessionViewModels
+    linuxDoSemanticPlan.state,
+    linuxDoAiVisible
   ]);
   const searchGroups = useMemo(
     () =>
@@ -625,9 +599,18 @@ export function useSearchController({
 
   const retrySearchSource = useCallback(
     (source: Source) => {
-      if (!searchActive || isSourceIdentityPending(source, sessionViewModels)) return;
+      if (!searchActive || !enabledSearchSourcesRef.current.includes(source)) return;
+      const plan = readGateway.getReadPlan(source, 'search');
+      if (
+        plan.state === 'blocked' &&
+        (plan.reason === 'identity-pending' || plan.reason === 'identity-unavailable') &&
+        isSessionSource(source)
+      ) {
+        onRetryIdentityStatus?.(source);
+        return;
+      }
       if (submittedSearch?.source === 'all') {
-        const index = aggregateSearchSources.indexOf(source);
+        const index = aggregateSources.indexOf(source);
         if (index >= 0) void aggregateQueries[index].refetch({ cancelRefetch: false });
         return;
       }
@@ -640,8 +623,10 @@ export function useSearchController({
     },
     [
       aggregateQueries,
+      aggregateSources,
+      onRetryIdentityStatus,
+      readGateway,
       searchActive,
-      sessionViewModels,
       singleSearchQuery.fetchNextPage,
       singleSearchQuery.isFetchNextPageError,
       singleSearchQuery.refetch,
@@ -654,10 +639,10 @@ export function useSearchController({
     async (source: Source, page: number): Promise<LinuxDoReadResumeOutcome> => {
       if (
         !searchActive ||
+        !enabledSearchSourcesRef.current.includes(source) ||
         submittedSearch?.source === 'all' ||
         source !== submittedSource ||
-        singleSearchQuery.isFetchingNextPage ||
-        isSourceIdentityPending(source, sessionViewModels)
+        singleSearchQuery.isFetchingNextPage
       ) {
         return 'stale';
       }
@@ -673,7 +658,6 @@ export function useSearchController({
     },
     [
       searchActive,
-      sessionViewModels,
       singleSearchQuery.data?.pages,
       singleSearchQuery.error,
       singleSearchQuery.fetchNextPage,
@@ -688,6 +672,7 @@ export function useSearchController({
     if (
       !searchActive ||
       !submittedSearch ||
+      !submittedSearchSourceIncluded ||
       submittedSearch.source === 'all' ||
       searchQuery.trim() !== submittedSearch.query
     )
@@ -707,6 +692,7 @@ export function useSearchController({
         const recovery: LinuxDoReadRecovery = {
           queryKey: singleSearchKey,
           resume: async () => {
+            if (!enabledSearchSourcesRef.current.includes('linuxdo')) return 'stale';
             const resumed = loadMore
               ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
               : await singleSearchQuery.refetch({ cancelRefetch: false });
@@ -731,6 +717,7 @@ export function useSearchController({
         requireNodeSeekSearchVerification(result.action.message, {
           queryKey: singleSearchKey,
           resume: async () => {
+            if (!enabledSearchSourcesRef.current.includes('nodeseek')) return 'stale';
             const resumed = loadMore
               ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
               : await singleSearchQuery.refetch({ cancelRefetch: false });
@@ -766,7 +753,8 @@ export function useSearchController({
     singleSearchQuery.refetch,
     searchQuery,
     searchActive,
-    submittedSearch
+    submittedSearch,
+    submittedSearchSourceIncluded
   ]);
 
   const runSearch = useCallback(
@@ -774,6 +762,7 @@ export function useSearchController({
       if (!searchActive) return 'stale';
       const runOptions = typeof options === 'string' ? { sourceOverride: options } : options || {};
       if ('sourceOverride' in runOptions && runOptions.sourceOverride) {
+        if (!enabledSearchSourcesRef.current.includes(runOptions.sourceOverride as Source)) return 'stale';
         retrySearchSource(runOptions.sourceOverride as Source);
         return 'completed';
       }
@@ -783,6 +772,7 @@ export function useSearchController({
         return 'completed';
       }
       const source = runOptions.source ?? searchSource;
+      if (source !== 'all' && !enabledSearchSourcesRef.current.includes(source)) return 'stale';
       const filters = snapshotSearchFilters(runOptions.filters ?? searchFilters);
       if (runOptions.query !== undefined) setSearchQuery(query);
       if (runOptions.source !== undefined) setSearchSourceState(source);
@@ -797,11 +787,9 @@ export function useSearchController({
       if (same) {
         if (source === 'all') {
           aggregateQueries.forEach((result, index) => {
-            if (!isSourceIdentityPending(aggregateSearchSources[index], sessionViewModels)) {
-              void result.refetch({ cancelRefetch: false });
-            }
+            if (aggregateSources[index]) void result.refetch({ cancelRefetch: false });
           });
-        } else if (!isSourceIdentityPending(source, sessionViewModels)) {
+        } else {
           void singleSearchQuery.refetch({ cancelRefetch: false });
         }
       } else {
@@ -812,13 +800,13 @@ export function useSearchController({
     [
       addRecentSearch,
       aggregateQueries,
+      aggregateSources,
       notify,
       retrySearchSource,
       searchActive,
       searchFilters,
       searchQuery,
       searchSource,
-      sessionViewModels,
       singleSearchQuery.refetch,
       submittedSearch
     ]
@@ -837,6 +825,7 @@ export function useSearchController({
 
   const setSearchSource = useCallback(
     (source: FeedSource) => {
+      if (source !== 'all' && !enabledSearchSourcesRef.current.includes(source)) return;
       setSearchSourceState(() => source);
       setLinuxDoAiEnabled(false);
       setSubmittedSearch((current) =>
@@ -850,6 +839,7 @@ export function useSearchController({
 
   const applySearchFilter = useCallback(
     (source: Source, filter: SourceSearchFilter) => {
+      if (!enabledSearchSourcesRef.current.includes(source)) return;
       const next = { ...searchFilters, [source]: filter };
       setSearchFilters(next);
       setSubmittedSearch((submitted) =>
@@ -865,6 +855,8 @@ export function useSearchController({
   const searchDiscourseTags = useCallback(
     async (options: Omit<Parameters<ReadGateway['searchTagOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
       const source = options.source || 'linuxdo';
+      if (!enabledSearchSourcesRef.current.includes(source)) return [];
+      const readPlan = readGateway.getReadPlan(source, 'search-tags');
       const { source: _source, ...request } = options;
       const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source });
       markDiagnosticStage(trace, 'guard', {
@@ -874,7 +866,10 @@ export function useSearchController({
         selectedCount: options.selectedTags?.length || 0
       });
       try {
-        const items = await readGateway.searchTagOptions({ source, ...request }, { trace });
+        const items = await readGateway.searchTagOptions(
+          { source, ...request },
+          { readPlanScope: readPlan.cacheScope, trace }
+        );
         markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
         finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
         return items;
@@ -892,11 +887,16 @@ export function useSearchController({
   const searchDiscourseUsers = useCallback(
     async (options: Omit<Parameters<ReadGateway['searchUserOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
       const source = options.source || 'linuxdo';
+      if (!enabledSearchSourcesRef.current.includes(source)) return [];
+      const readPlan = readGateway.getReadPlan(source, 'search-users');
       const { source: _source, ...request } = options;
       const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source });
       markDiagnosticStage(trace, 'guard', { source, state: 'started', hasQuery: Boolean(options.term.trim()) });
       try {
-        const items = await readGateway.searchUserOptions({ source, ...request }, { trace });
+        const items = await readGateway.searchUserOptions(
+          { source, ...request },
+          { readPlanScope: readPlan.cacheScope, trace }
+        );
         markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
         finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
         return items;
@@ -912,18 +912,27 @@ export function useSearchController({
   );
 
   const toggleLinuxDoAiSearch = useCallback(() => {
-    if (linuxDoAiState.status === 'ready') setLinuxDoAiEnabled((current) => !current);
+    if (enabledSearchSourcesRef.current.includes('linuxdo') && linuxDoAiState.status === 'ready') {
+      setLinuxDoAiEnabled((current) => !current);
+    }
   }, [linuxDoAiState.status]);
   const retryLinuxDoAiSearch = useCallback(() => {
     if (
       searchActive &&
+      enabledSearchSourcesRef.current.includes('linuxdo') &&
       !linuxDoVerificationActive &&
-      !isSourceIdentityPending('linuxdo', sessionViewModels) &&
+      linuxDoSemanticPlan.state === 'ready' &&
       linuxDoAiQuery.isError
     ) {
       void linuxDoAiQuery.refetch({ cancelRefetch: false });
     }
-  }, [linuxDoAiQuery.isError, linuxDoAiQuery.refetch, linuxDoVerificationActive, searchActive, sessionViewModels]);
+  }, [
+    linuxDoAiQuery.isError,
+    linuxDoAiQuery.refetch,
+    linuxDoSemanticPlan.state,
+    linuxDoVerificationActive,
+    searchActive
+  ]);
   const abortSearchRequests = useCallback(() => {
     void queryClient.cancelQueries({
       predicate: ({ queryKey }) =>
@@ -950,18 +959,14 @@ export function useSearchController({
       !searchActive || !submittedSearch
         ? false
         : submittedSearch.source === 'all'
-          ? aggregateQueries.some(
-              (query, index) =>
-                !isSourceIdentityPending(aggregateSearchSources[index], sessionViewModels) && query.isPending
-            )
-          : singleSearchQuery.isFetching,
+          ? aggregateQueries.some((query) => query.isPending)
+          : submittedSearchSourceIncluded && singleSearchQuery.isFetching,
     searchFilters,
     searchGroups,
     searchDiscourseTags,
     searchDiscourseUsers,
     linuxDoAiState,
     linuxDoAiVisible,
-    searchSessionNotices,
     searchQuery,
     searchSource,
     submittedSearchQuery: submittedSearch?.query || '',

@@ -54,7 +54,7 @@ describe('source gateway reads', () => {
     expect((fetcher.mock.calls as unknown as [string, RequestInit][])[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
-  it('reads a yaohuo topic through the shared getTopic interface', async () => {
+  it('[REG-TOPIC-077] reads a partial yaohuo topic seed without duplicating the replies request', async () => {
     const topic: Topic = {
       source: 'yaohuo',
       id: '123',
@@ -83,7 +83,8 @@ describe('source gateway reads', () => {
     });
 
     expect(detail).toMatchObject({ source: 'yaohuo', id: '123', contentHtml: '<p>body</p>' });
-    expect(detail.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
+    expect(detail).toMatchObject({ replies: [], replyCompleteness: 'partial', replyHasMore: true });
+    expect(fetcher).not.toHaveBeenCalledWith(expect.stringContaining('book_re.aspx'), expect.anything());
   });
 
   it('reads yaohuo replies through the shared getReplies interface', async () => {

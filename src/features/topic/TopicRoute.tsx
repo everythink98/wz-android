@@ -8,14 +8,14 @@ import type { Fetcher } from '@/platform/network/request';
 import { errorMessage } from '@/platform/network/errors';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { type ImageDisplaySize } from '@/platform/media/imagePreviewCatalog';
-import { mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
+import { useForumMediaSessionIdentity } from '@/platform/media/mediaSessionEpoch';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
-import type { ForumIdentityBarrierSource } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { DiscourseActionRuntimeDependencies } from './actions/discourseActionRuntime';
 import { toggleFavorite, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
-import type { ReplyLocationTarget, SourceErrorInfo, Topic, UserReference } from '@/domain/forum/models';
+import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
+import type { ReplyLocationTarget, Topic, UserReference } from '@/domain/forum/models';
 import type { DiscourseSource, SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
@@ -24,8 +24,9 @@ import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
+import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
-import { useIdentityVerificationPrompt } from '@/ui/hooks/useIdentityVerificationPrompt';
+import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
 import { useTopicActionsController } from './actions/useTopicActionsController';
 import { useImagePreviewController } from './media/useImagePreviewController';
 import { replyHtmlWithSignature } from './model/topicDerivedData';
@@ -39,16 +40,8 @@ import { useTopicController } from './useTopicController';
 import { useTopicSessionController } from './useTopicSessionController';
 import { useTopicRouteBeforeRemove } from './useTopicRouteBeforeRemove';
 
-type IdentityCheck = {
-  checking: boolean;
-  pending: boolean;
-  error?: SourceErrorInfo;
-};
-
 export type TopicRouteRuntimeValue = {
   account: {
-    identityBarriers: readonly ForumIdentityBarrierSource[];
-    identityChecks: Record<SessionSource, IdentityCheck>;
     beginXiaoyinsiAuthorization: () => Promise<unknown>;
     sessionEpochs: ForumSessionEpochs;
     sessionViewModels: SiteSessionViewModels;
@@ -97,8 +90,27 @@ function useTopicRouteRuntime() {
   return runtime;
 }
 
-export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'Topic'>) {
+type TopicRouteProps = NativeStackScreenProps<RootStackParamList, 'Topic'>;
+
+export function TopicRoute({ navigation, route }: TopicRouteProps) {
   const runtime = useTopicRouteRuntime();
+  const topic = route.params.topic;
+  const sourceEnabled = projectContentSourcePreferences(
+    runtime.reader.data.settings.contentSources
+  ).enabledSources.includes(topic.source);
+  if (!sourceEnabled) {
+    return (
+      <ContentSourceDisabledState
+        source={topic.source}
+        onBack={navigation.goBack}
+        onManage={() => navigation.dispatch(manageContentSourcesAction())}
+      />
+    );
+  }
+  return <EnabledTopicRoute navigation={navigation} route={route} runtime={runtime} />;
+}
+
+function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { runtime: TopicRouteRuntimeValue }) {
   const active = useIsFocused();
   const topic = route.params.topic;
   const toggleTopicFavorite = useCallback(
@@ -119,9 +131,9 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
   const topicController = useTopicController({
     active,
     commitReaderData: runtime.reader.commit,
-    identityBarriers: runtime.account.identityBarriers,
     sessionEpochs: runtime.account.sessionEpochs,
     notify: runtime.notify,
+    onRetryIdentityStatus: runtime.account.reconcileAccountStatus,
     onNodeSeekTopicVerificationRequired: runtime.account.requestNodeSeekVerification,
     onOpenTopic: openTopicRoute,
     readerData: runtime.reader.data,
@@ -135,7 +147,6 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
   });
   const {
     loadedQuotedReplies,
-    locateReply,
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
@@ -156,17 +167,14 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
         topicView.changeCommentQuery('');
         topicView.changeReplyFilter('all');
         navigation.setParams({ targetReply });
-        void locateReply(targetReply);
         return;
       }
       openTopicRoute(nextTopic, targetReply);
     },
-    [locateReply, navigation, openTopic, openTopicRoute, topic.id, topic.source, topicView]
+    [navigation, openTopic, openTopicRoute, topic.id, topic.source, topicView]
   );
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
-  const identityCheck = topic.source === 'linuxdo' ? runtime.account.identityChecks.linuxdo : undefined;
-  const identityError = identityCheck?.pending ? identityCheck.error : undefined;
-  const mediaSessionIdentity = mediaSessionIdentityForSource(topic.source, runtime.account.sessionEpochs);
+  const mediaSessionIdentity = useForumMediaSessionIdentity(topic.source);
   const openExternalUrl = useCallback(
     (url: string) => {
       if (!isHttpOrHttpsUrl(url)) {
@@ -240,20 +248,13 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     getNodeSeekUserAgent: runtime.account.getNodeSeekUserAgent,
     ensureNodeImageApiKey: runtime.account.ensureNodeImageApiKey,
     notify: runtime.notify,
+    readGateway: runtime.account.readGateway,
     reconcileWritableSession: runtime.account.reconcileWritableSession,
     refreshTopicReplies,
     siteSessionViewModels: runtime.account.sessionViewModels,
     topicDetail,
     topicReplies,
     topicSession
-  });
-  useIdentityVerificationPrompt({
-    enabled:
-      active && runtime.appActive && !runtime.account.linuxDoVerificationVisible && !actions.actionBusy && !topicDetail,
-    error: identityCheck?.error,
-    identityPending: Boolean(identityCheck?.pending),
-    intentKey: active && runtime.appActive && topic.source === 'linuxdo' ? `topic:${topic.id}` : null,
-    showVerification: runtime.account.showLinuxDoVerification
   });
   const closeReplyComposer = useCallback(() => topicComposer.toggle(false), [topicComposer]);
   useTopicRouteBeforeRemove({
@@ -263,22 +264,18 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
     closeReplyComposer
   });
   const refreshCurrentTopic = useCallback(() => {
-    if (identityError) {
-      void runtime.account.reconcileAccountStatus('linuxdo');
-      return;
-    }
     void refreshWholeTopic();
-  }, [identityError, refreshWholeTopic, runtime]);
+  }, [refreshWholeTopic]);
   const verifyLinuxDo = useCallback(
     () =>
       verifyLinuxDoTopic({
-        identityPending: Boolean(identityCheck?.pending),
+        identityPending: false,
         refreshTopic: (current) => openTopic(current, true),
         selectedTopic,
         showVerification: () => Promise.resolve(runtime.account.showLinuxDoVerification()),
         topicDetail
       }),
-    [identityCheck?.pending, openTopic, runtime, selectedTopic, topicDetail]
+    [openTopic, runtime, selectedTopic, topicDetail]
   );
   const verifyNodeSeek = useCallback(() => {
     if (topic.source !== 'nodeseek') return;
@@ -319,8 +316,8 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
           active={active}
           actions={actions}
           article={{
-            busy: topicBusy && !identityError,
-            error: identityError || topicError || null,
+            busy: topicBusy,
+            error: topicError || null,
             topic: topicLayoutDetail,
             ...(topicDetail?.source === 'yaohuo' ? { yaohuoBookmarked: topicDetail.bookmarked } : {})
           }}
@@ -328,8 +325,6 @@ export function TopicRoute({ navigation, route }: NativeStackScreenProps<RootSta
             back: navigation.goBack,
             favorite: topicFavorite,
             getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
-            identityBlocked: Boolean(identityCheck?.pending),
-            identityChecking: Boolean(identityCheck?.checking),
             onScroll: handleTopicScroll,
             openOriginal: openExternalUrl,
             openReadingSettings: () => navigation.push('ReadingSettings'),

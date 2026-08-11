@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   advanceCredentialWriteGeneration,
   createCredentialWriteGate,
-  enqueueCredentialWrite,
   enqueueCredentialWriteForGeneration,
   replaceCredentialWrite
 } from './credentialWriteGate';
@@ -12,13 +11,13 @@ describe('credential write gate', () => {
     const gate = createCredentialWriteGate();
     const first = Promise.withResolvers<void>();
     const order: string[] = [];
-    const firstWrite = enqueueCredentialWrite(gate, async () => {
+    const firstWrite = enqueueCredentialWriteForGeneration(gate, gate.generation, async () => {
       order.push('first:start');
       await first.promise;
       order.push('first:end');
       return 'first';
     });
-    const secondWrite = enqueueCredentialWrite(gate, () => {
+    const secondWrite = enqueueCredentialWriteForGeneration(gate, gate.generation, () => {
       order.push('second');
       return 'second';
     });
@@ -36,7 +35,7 @@ describe('credential write gate', () => {
   it('invalidates queued and in-flight writes after a replacement', async () => {
     const gate = createCredentialWriteGate();
     const first = Promise.withResolvers<void>();
-    const oldWrite = enqueueCredentialWrite(gate, async ({ isCurrent }) => {
+    const oldWrite = enqueueCredentialWriteForGeneration(gate, gate.generation, async ({ isCurrent }) => {
       await first.promise;
       return isCurrent() ? 'old' : 'stale';
     });

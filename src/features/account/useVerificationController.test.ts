@@ -32,11 +32,7 @@ vi.mock('@/platform/android/linuxDoUserAgent', () => ({
   sanitizeLinuxDoUserAgent: (userAgent: string) => userAgent.trim()
 }));
 
-import {
-  reduceSiteSessionState,
-  type SiteSessionEvent,
-  type SiteSessionState
-} from '@/domain/session/siteSessionState';
+import type { SiteSessionEvent, SiteSessionState } from '@/domain/session/siteSessionState';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
 import { useVerificationController } from './useVerificationController';
 
@@ -202,18 +198,8 @@ describe('linux.do visible verification coordinator', () => {
 
     expect(reconcileAccountStatus).toHaveBeenCalledOnce();
     expect(reconcileAccountStatus).toHaveBeenCalledWith('linuxdo');
-    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'session-updated'
-      })
-    );
-    expect(updateLinuxDoSession).toHaveBeenCalledWith({
-      type: 'verification-succeeded',
-      loggedIn: true,
-      currentUser: loggedInSession.currentUser,
-      cookieSummary: loggedInSession.cookieSummary,
-      at: expect.any(String)
-    });
+    expect(updateLinuxDoSession).toHaveBeenCalledTimes(1);
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-started' }));
     expect(notify).toHaveBeenCalledWith('linux.do 登录身份已确认。');
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
@@ -273,14 +259,8 @@ describe('linux.do visible verification coordinator', () => {
     expect(reconcileAccountStatus).toHaveBeenCalledTimes(1);
     expect(resume).toHaveBeenCalledTimes(1);
     expect(onLinuxDoSurfaceClosed.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]);
-    expect(updateLinuxDoSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'verification-succeeded',
-        loggedIn: true,
-        currentUser: loggedInSession.currentUser,
-        cookieSummary: loggedInSession.cookieSummary
-      })
-    );
+    expect(updateLinuxDoSession).toHaveBeenCalledTimes(1);
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-started' }));
     expect(updateLinuxDoSession.mock.invocationCallOrder.at(-1)).toBeLessThan(resume.mock.invocationCallOrder[0]);
     expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
       authoritativeResult: true,
@@ -364,18 +344,10 @@ describe('linux.do visible verification coordinator', () => {
     });
     expect(notify).toHaveBeenCalledWith('登录身份已确认，但原页面恢复失败：resume exploded');
     expect(updateLinuxDoSession).toHaveBeenCalledWith({
-      type: 'check-failed',
+      type: 'recovery-failed',
       message: '登录身份已确认，但原页面恢复失败：resume exploded'
     });
-    const finalSession = updateLinuxDoSession.mock.calls.reduce(
-      (state, [event]) => reduceSiteSessionState(state, event),
-      anonymousSession
-    );
-    expect(finalSession).toMatchObject({
-      status: 'logged-in',
-      currentUser: loggedInSession.currentUser,
-      lastError: '登录身份已确认，但原页面恢复失败：resume exploded'
-    });
+    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'check-failed' }));
   });
 
   it('does not resume an inactive recovery query', async () => {
@@ -460,11 +432,8 @@ describe('linux.do visible verification coordinator', () => {
     await check;
 
     expect(notify).not.toHaveBeenCalledWith('linux.do 登录身份已确认。');
-    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'verification-succeeded'
-      })
-    );
+    expect(updateLinuxDoSession).toHaveBeenCalledTimes(1);
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-started' }));
   });
 
   it('closes as superseded when another site verification replaces it', async () => {

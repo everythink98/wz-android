@@ -125,6 +125,39 @@ describe('portable Discourse fields', () => {
     expect(() => discourseVisiblePostIds([{ id: 101 }], [101, 101])).toThrow('回复窗口不完整');
   });
 
+  it('[REG-TOPIC-077] keeps an identified Discourse reply when presentation fields are empty', () => {
+    expect(
+      discoursePostFields({
+        id: 101,
+        post_number: 2,
+        username: '',
+        cooked: '',
+        created_at: null
+      })
+    ).toMatchObject({
+      commentId: 101,
+      floor: 2,
+      author: '',
+      cookedHtml: '',
+      createdAt: ''
+    });
+  });
+
+  it('[REG-TOPIC-073][REG-TOPIC-077] keeps good Discourse rows around an invalid sibling', () => {
+    const reply = (commentId: number, author: string) => ({
+      author,
+      commentId,
+      contentHtml: '',
+      createdAt: '',
+      floor: 2
+    });
+
+    expect(discourseVisiblePostIds([{ id: 101 }, {}, { id: 103 }], [101, 102, 103])).toEqual(['101', '103']);
+    expect(discourseRepliesInStreamOrder([reply(101, 'first'), reply(103, 'last')], [101, 102, 103], 'oldest')).toEqual(
+      [reply(101, 'first'), reply(103, 'last')]
+    );
+  });
+
   it('[REG-TOPIC-067] rejects an oldest cursor whose page disagrees with its stream offset', () => {
     const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
 
@@ -359,7 +392,7 @@ describe('portable Discourse fields', () => {
         cooked: '<p>body</p>',
         created_at: '2026-01-02T03:04:05Z'
       })
-    ).toBeNull();
+    ).toMatchObject({ author: 'bob', floor: 2 });
     expect(
       discoursePostFields({
         id: 23,
@@ -368,7 +401,7 @@ describe('portable Discourse fields', () => {
         cooked: '<p>body</p>',
         created_at: '2026-01-02T03:04:05Z'
       })
-    ).toBeNull();
+    ).toMatchObject({ author: '', commentId: 23 });
     expect(
       discoursePostFields({
         id: 23,
@@ -377,7 +410,7 @@ describe('portable Discourse fields', () => {
         cooked: '',
         created_at: '2026-01-02T03:04:05Z'
       })
-    ).toBeNull();
+    ).toMatchObject({ commentId: 23, cookedHtml: '' });
     expect(
       discoursePostFields({
         id: 23,
@@ -386,7 +419,7 @@ describe('portable Discourse fields', () => {
         cooked: '<p>body</p>',
         created_at: 'invalid'
       })
-    ).toBeNull();
+    ).toMatchObject({ commentId: 23, createdAt: '' });
     expect(
       discoursePostFields({
         id: 23,
@@ -394,7 +427,8 @@ describe('portable Discourse fields', () => {
         cooked: '<p>body</p>',
         created_at: '2026-01-02T03:04:05Z'
       })
-    ).toBeNull();
+    ).toMatchObject({ commentId: 23, floor: undefined });
+    expect(discoursePostFields({})).toBeNull();
   });
 
   it('[REG-TOPIC-035] keeps a reply target display name separate from its navigable username', () => {

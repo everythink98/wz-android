@@ -1,5 +1,4 @@
 import type { DiscourseFeedFilter, Topic } from '@/domain/forum/models';
-import { isRecord } from '@/domain/forum/html';
 import { accessRequirementLevelValue, accessRequirementSpecificity } from '@/domain/forum/presentation';
 import { discourseAvatarUrl } from '@/sources/discourse/content';
 
@@ -25,17 +24,6 @@ export function linuxDoUserUrl(username: string) {
 
 export function linuxDoAvatarUrl(value: unknown) {
   return discourseAvatarUrl(value, LINUXDO_BASE_URL);
-}
-
-export function isLinuxDoUncategorizedCategory(category: unknown) {
-  if (!isRecord(category)) {
-    return false;
-  }
-  const name = String(category.name || '').trim();
-  const slug = String(category.slug || '')
-    .trim()
-    .toLowerCase();
-  return name === LINUXDO_UNCATEGORIZED_CATEGORY_NAME || slug === 'uncategorized';
 }
 
 export function preferredLinuxDoAccessRequirement(
