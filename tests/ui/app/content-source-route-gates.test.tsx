@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ReactNode } from 'react';
 import { StackActions } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -23,15 +23,27 @@ import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
-import { fireEvent, render, waitFor } from '../render';
+import { act, fireEvent, render, waitFor } from '../render';
 
 const mockTopicScreen = jest.fn((_props: unknown) => null);
 const mockMoreNavigation = { replaceParams: jest.fn() };
 let mockMoreRouteParams: { intent?: 'manage-content-sources' } | undefined;
+let mockMoreFocused = true;
+let mockMoreUtilities: {
+  proxy: { open: () => void; visible: boolean };
+  settings: { changeVisible: (visible: boolean) => void; visible: boolean };
+} | null = null;
 
 jest.mock('@react-navigation/native', () => ({
   ...(jest.requireActual('@react-navigation/native') as Record<string, unknown>),
-  useIsFocused: () => true,
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    const React = jest.requireActual<typeof import('react')>('react');
+    React.useEffect(() => {
+      if (!mockMoreFocused) return;
+      return effect();
+    }, [effect, mockMoreFocused]);
+  },
+  useIsFocused: () => mockMoreFocused,
   useNavigation: () => mockMoreNavigation,
   usePreventRemove: jest.fn(),
   useRoute: () => ({ params: mockMoreRouteParams }),
@@ -53,7 +65,12 @@ jest.mock('@/features/notifications/NotificationScreens', () => ({
 }));
 jest.mock('@/features/more/components/MoreAccountPanel', () => ({ MoreAccountPanel: () => null }));
 jest.mock('@/features/more/components/MoreUpdatePanel', () => ({ MoreUpdatePanel: () => null }));
-jest.mock('@/features/more/components/MoreUtilityPanels', () => ({ MoreUtilityPanels: () => null }));
+jest.mock('@/features/more/components/MoreUtilityPanels', () => ({
+  MoreUtilityPanels: ({ runtime }: { runtime: typeof mockMoreUtilities }) => {
+    mockMoreUtilities = runtime;
+    return null;
+  }
+}));
 jest.mock('react-native-gesture-handler', () => {
   return {
     Gesture: {
@@ -107,6 +124,13 @@ const notification: ForumNotification = {
 };
 
 const expectedManageContentSourcesAction = manageContentSourcesAction();
+
+beforeEach(() => {
+  mockMoreFocused = true;
+  mockMoreRouteParams = undefined;
+  mockMoreUtilities = null;
+  mockMoreNavigation.replaceParams.mockClear();
+});
 
 function disabledReaderData() {
   const data = createEmptyReaderData();
@@ -245,6 +269,70 @@ describe('disabled content source route gates', () => {
     await fireEvent.press(view.getByLabelText('收起内容源'));
     await view.rerender(tree());
     expect(view.getByLabelText('展开内容源').props.accessibilityState.expanded).toBe(false);
+  });
+
+  it('[REG-ACCOUNT-043] closes global account surfaces only after More really loses focus', async () => {
+    const data = createEmptyReaderData();
+    const firstCloseAll = jest.fn();
+    const secondCloseAll = jest.fn();
+    const latestCloseAll = jest.fn();
+    let runtime = {
+      account: { surfaces: { closeAll: firstCloseAll } },
+      diagnostics: { getCurrentScreen: () => 'more', metadata: {} },
+      notify: jest.fn(),
+      notifications: {},
+      proxy: {},
+      reader: {
+        commit: jest.fn(),
+        data,
+        dataRef: { current: data },
+        replace: jest.fn(async () => undefined),
+        waitForSave: jest.fn(async () => undefined)
+      },
+      update: {}
+    } as unknown as MoreRouteRuntimeValue;
+    const tree = () => (
+      <MoreRouteRuntimeProvider value={runtime}>
+        <MoreRoute />
+      </MoreRouteRuntimeProvider>
+    );
+
+    mockMoreFocused = false;
+    const view = await render(tree());
+    expect(firstCloseAll).not.toHaveBeenCalled();
+
+    runtime = {
+      ...runtime,
+      account: { ...runtime.account, surfaces: { ...runtime.account.surfaces, closeAll: secondCloseAll } }
+    };
+    await view.rerender(tree());
+    expect(firstCloseAll).not.toHaveBeenCalled();
+    expect(secondCloseAll).not.toHaveBeenCalled();
+
+    mockMoreFocused = true;
+    await view.rerender(tree());
+    expect(secondCloseAll).not.toHaveBeenCalled();
+
+    runtime = {
+      ...runtime,
+      account: { ...runtime.account, surfaces: { ...runtime.account.surfaces, closeAll: latestCloseAll } }
+    };
+    await view.rerender(tree());
+    expect(secondCloseAll).not.toHaveBeenCalled();
+    expect(latestCloseAll).not.toHaveBeenCalled();
+
+    await act(async () => {
+      mockMoreUtilities?.proxy.open();
+      mockMoreUtilities?.settings.changeVisible(true);
+    });
+    expect(mockMoreUtilities?.proxy.visible).toBe(true);
+    expect(mockMoreUtilities?.settings.visible).toBe(true);
+
+    mockMoreFocused = false;
+    await view.rerender(tree());
+    expect(latestCloseAll).toHaveBeenCalledTimes(1);
+    expect(mockMoreUtilities?.proxy.visible).toBe(false);
+    expect(mockMoreUtilities?.settings.visible).toBe(false);
   });
 
   it('[REG-PROXY-011][REG-TOPIC-076] remounts Topic media and leaves route targets to the controller', async () => {

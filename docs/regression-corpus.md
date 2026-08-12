@@ -5540,6 +5540,66 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 在任一 typed seam 删除 poster、让 poster 与视频共用 permit/identity、按 ready 而非首次 playing 隐藏封面、暂停时重新挂封面、poster error 触发 player 重建、恢复 `allowsFullscreen` 或固定重型按钮；编号测试必须失败。 |
 | 明确不覆盖范围 | 不增加进度条、音量控制、动画库、依赖或原生插件，不改变 WebView 视频/贴纸播放器、视频固有比例、codec/DRM 或服务端媒体可用性。 |
 
+## `REG-ACCOUNT-043` 后台 More 重渲染关闭全局登录或验证面板
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`；共享 `FEED-01/02`、`SEARCH-01/02/04`、`TOPIC-01/03`、`USER-01`、`NOTIFY-02`、`WRITE-01..04` |
+| 用户症状 | 在 Topic、Feed、Search 或 User 中自然触发 linux.do Cloudflare 验证后，面板刚出现就消失并回落到“账号冻结中”；用户只能去 More 手动打开验证。NodeImage 等其他全局授权面板也可能被同一路径提前关闭。 |
+| 触发条件 | Bottom Tabs 保持 MoreRoute 挂载但 inactive；任一账号 runtime 更新使 `closeAll` 回调引用变化，MoreRoute 的 inactive effect 再执行一次。自动面板通常在 WebView 挂载前数十毫秒被关闭，而 More 内手动打开时页面 active，所以表面正常。 |
+| 根因 seam | `src/features/more/MoreRoute.tsx` 把“More 当前 inactive”误当成“More 刚从 focused 变为 blurred”，让后台 route 拥有了全局 auth surface 的关闭权。 |
+| 必须保持的行为 | More 初始 inactive、后台重渲染或 `closeAll` 引用变化都不得关闭全局 surface；只有 More 曾经 focused 后真实 blur，才调用最新 `closeAll` 一次，并同时关闭 More 自己的代理和阅读设置面板。关闭按钮、系统返回、切换 surface、App 后台规则及 `REG-ACCOUNT-031` 的异步对账保持不变。 |
+| 精确失败 oracle | `tests/ui/app/content-source-route-gates.test.tsx` 的 `REG-ACCOUNT-043` 依次覆盖 inactive 初挂载、inactive 回调换代、focused 回调换代和真实 blur；前三段关闭次数必须为 0，最后只调用最新回调一次。修复前首个 inactive 挂载已经调用一次。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须挂载真实 MoreRoute 并驱动 focus/blur cleanup；只测账号 controller 或源码字符串不能证明后台 route 生命周期。 |
+| Replay 或真实验收路径 | 匹配 APK 从 More 手动打开任一 auth surface 后离开，确认仍关闭一次；另仅在 Topic/Feed/Search/User 自然出现 Cloudflare 时确认面板保持到 WebView 挂载、canonical 检查并只恢复原请求一次。未自然出现记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复 `active === false` effect，或让 focus callback 随 `closeAll` 引用换代而重新订阅；编号测试必须观察到初挂载或重渲染时的额外关闭。 |
+| 明确不覆盖范围 | 不修改 challenge 识别、WebView、Cookie、账号 snapshot、验证 controller、Query 恢复或错误文案；不清 Cookie、不退出账号、不人为制造 Cloudflare。 |
+
+## `REG-FEED-017` 来源重排后旧 Pager 会话卡在 Loading
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01/02/04`；共享 `MORE-05` 与 `REG-SOURCE-010` 的来源顺序投影 |
+| 用户症状 | 在 More 重排来源后返回首页，顶部仍像是原来源，但内容区一直显示“正在读取主题”；再切一次来源才恢复。 |
+| 触发条件 | Feed 位于后台、原生 Pager 已 detach 时修改来源顺序；同一数字位置随后代表另一来源，旧物理页或迟到回调可能与新 routes 不一致。 |
+| 根因 seam | PagerView 的页面适配是位置语义，而来源顺序是可变的；在同一 Feed 会话内热更新 children 后，旧数字位置不能稳定表示来源身份。inactive scene 又只允许 controller 当前来源渲染真实列表，因此错位物理页会永久显示 Loading。 |
+| 必须保持的行为 | 来源顺序变化定义为新的 Feed 会话。`FeedRoute` 以最新有序 `FeedSource` key 列表作为 session key，使 controller 与 Pager 一起重建；新会话固定从 `全部` 开始，不继承旧来源、Pager 位置或滚动位置。Query key、缓存、存储和网络协议不变；`全部` 可命中已有缓存，也可执行一次正常且可结算的读取。普通来源栏点击和横滑行为不变。 |
+| 精确失败 oracle | `tests/ui/app/content-source-navigation.test.tsx` 通过真实 Bottom Tabs 与 `FeedRoute`：Feed 第一次挂载后选中 V2EX，进入 More 改变来源顺序，再点首页必须看到 `全部` 且为第二次 Feed 挂载。移除 session key 时会保留 V2EX 和第一次挂载，测试必须失败。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须覆盖真实 FeedRoute 生命周期与 Bottom Tabs 往返；纯 index helper 或单独 FeedScreen 测试不足。 |
+| Replay 或真实验收路径 | `LIVE-LOCAL-04` 在匹配 APK 选中非 `全部` 来源，进入 More 重排后点首页，确认立即回到 `全部`，最终显示列表或明确错误而不是永久 Loading；反向重排再验证一次，结束后恢复原顺序。 |
+| 负向验证方式 | 移除 `FeedRouteSession` 的有序来源 key，或把 key 改成忽略顺序的集合；编号测试必须观察到旧 Feed 会话和旧来源仍被保留。只给 TabView 加 key 也不足，因为 controller 仍会保留旧来源。 |
+| 明确不覆盖范围 | 不保留重排前的来源与滚动位置；不改变来源查询参数、Query key、缓存、分类/排序偏好或 TabView 依赖，也不把正常冷启动 Loading 改成旧列表回显。 |
+
+## `REG-PERF-011` 内容源拖动逐帧跨入 JS 导致不跟手
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-05` |
+| 用户症状 | 长按来源排序后上下移动明显滞后，快速跨过多行时活动行跟不上手指。 |
+| 触发条件 | Gesture 整体配置 `.runOnJS(true)`，每个 `onUpdate` 都回到 JS，随后再写 React Native `Animated.Value`；JS 调度和 React 工作会直接进入逐帧路径。 |
+| 根因 seam | `src/features/more/components/ContentSourcesPanel.tsx` 的活动行位移、边界限制和最近槽计算属于 UI-thread 动画，却被放在 JS gesture callback 中。 |
+| 必须保持的行为 | 实测行中心、活动/目标索引和活动行位移保存在 Reanimated shared value；每帧 clamp、translateY 和最近槽计算在 worklet 完成。同一槽内任意帧零 JS bridge，只有开始、目标槽变化和结束/取消用 `scheduleOnRN` 同步现有 React preview/session。兄弟行越过阈值即进入目标槽，不留下跨过持久化提交的 timing animation。成功只持久化最终顺序一次，取消、非法布局或拖动中 preferences 变化零写；350ms、56dp 行、48dp 手柄、触觉、开关和 TalkBack 动作不变。 |
+| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `REG-PERF-011` 连续注入 20 个同槽 update 后跨槽，要求 Gesture 未启用整段 run-on-JS，bridge 只有 start、真实 slot change、finalize；另固定超界夹到末槽、成功单次写、取消零写、外部设置变化零写，并继续覆盖 Switch 与 TalkBack 排序。修复前 `.runOnJS(true)` 断言失败。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定线程/桥接与持久化契约；匹配 Android APK 用慢速和快速跨槽观察真实跟手性、滚动和边界。 |
+| Replay 或真实验收路径 | `LIVE-LOCAL-04` 在保留设置的匹配 APK 上分别慢速、快速跨槽，确认活动行跟手、兄弟行只在跨槽时预览、首尾不越界；再检查普通纵向滚动、开关和无障碍动作，最后恢复原顺序。 |
+| 负向验证方式 | 恢复 `.runOnJS(true)`、每帧 `scheduleOnRN`、硬编码行高、取消仍写入或 preferences 变化后提交旧 session；编号测试必须出现桥接次数、错误顺序或额外持久化。 |
+| 明确不覆盖范围 | 不增加依赖、拖拽状态机或通用排序抽象；不修改同页字号 Slider，也不改变来源开关或存储格式。 |
+
+## `REG-PERF-012` 内容源拖动抬手时回弹或闪空白
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-05` |
+| 用户症状 | 来源已经拖到目标槽，抬手时却短暂弹回旧槽，出现行重叠、空白或整块闪动；即使缺行消失，相邻两个名字仍会在放下后的连续帧补换一次位置。 |
+| 触发条件 | source-keyed 行按 preferences 顺序渲染时，提交会在 Fabric native child 数组中移动 host；改成 index-keyed 槽位后，提交又必须同时重绑槽内来源内容和清除预览 transform。两种方案都会让 native presentation 在提交边沿有可见中间态；若兄弟行还保留 120ms timing，快速松手会把该中间态进一步放大。 |
+| 根因 seam | `Source` 是不会在一次拖动中改变的 native 内容身份，index 只是实测列表中的视觉槽位。host 和内容应归 `Source`，视觉位置由当前/预览顺序映射到槽位；不能让 source host 随数组重排，也不能让 index host 在提交时更换来源内容。 |
+| 必须保持的行为 | 每个来源在面板本次挂载期间始终使用同一 native host；Reanimated 根据实测槽位中心把该 host 映射到当前或预览 index。兄弟行越阈值即进入目标槽，抬手先在 UI thread 把活动行对齐目标槽，再提交已显示的顺序；新 preferences 到达后每个来源的 settled transform 与提交前 preview transform 相同，因此提交不换 host、换内容或续跑尾动画。成功仍只持久化一次，取消和外部设置变化零写；不增加状态机、依赖或列表 remount。 |
+| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `REG-PERF-012` 延迟 finalize bridge并注入新持久化顺序；V2EX 与 linux.do 各自的 host instance 必须跨提交保持相同，最终分别映射到 `+56/-56` 的新视觉槽位，位置标签为第 2/1 项，跨槽不得调用 `withTiming`。index-keyed 槽位会因来源换 host 失败，恢复尾动画会因 `withTiming` 失败。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定跨 bridge 的提交契约；匹配 Android APK 必须录 raw 高质量视频，并按真实 presented frame 检查抬手窗口。 |
+| Replay 或真实验收路径 | `LIVE-LOCAL-04` 记录原顺序，以 400ms 长按执行相邻与跨多槽拖动，目标到位后立即抬手；raw 高质量录屏逐个 presented frame 要求最后拖动态到最终静态顺序之间名字保持同一最终顺序，且无旧槽回弹、行重叠、空白、重复文字或整块闪动。正反向都通过后恢复原顺序并核对持久化。 |
+| 负向验证方式 | 改回 source-keyed preferences render、index-keyed 槽内换内容或恢复跨提交的 sibling `withTiming`，编号测试必须出现 host identity 或 timing 失败；匹配旧 APK 在提交边沿会重新出现缺行、整块闪动或相邻名字补换位。只延后清理、增加 `collapsable={false}`、删除 `elevation/zIndex` 或给 index 槽做位移补偿都不能满足 raw-frame oracle。 |
+| 明确不覆盖范围 | 不引入释放弹簧、LayoutAnimation、通用拖拽框架或额外状态机；不改变 350ms 长按、触觉、开关、TalkBack 和存储格式。 |
+
 ## 待确认观察
 
 下表只保存本轮探索中出现过、但尚不足以认定为当前业务 bug 的线索。它们不等同于 `REG-*`，也不能据此增加猜测式 workaround。只有在身份匹配的当前 APK 上稳定复现并得到明确失败 oracle 后，才升级为回归条目和最低可靠测试。53 个失联 daemon、30 个工具录屏进程及设备录屏分片未清理已经有完整证据，归入 `REG-OPS-002`，不再作为“疑似”。

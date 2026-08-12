@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  Animated,
-  Easing,
   Switch,
   Text,
   View,
@@ -11,6 +9,8 @@ import {
   type ViewStyle
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import { GripVertical, ListTree } from 'lucide-react-native';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import type { ContentSourcePreference } from '@/domain/reader/contentSourcePreferences';
@@ -43,59 +43,75 @@ function reorderedPreferences(preferences: ContentSourcePreference[], from: numb
 }
 
 function nearestCenterIndex(centers: number[], value: number) {
-  return centers.reduce(
-    (nearest, center, index) => (Math.abs(center - value) < Math.abs(centers[nearest]! - value) ? index : nearest),
-    0
-  );
+  'worklet';
+  let nearest = 0;
+  for (let index = 1; index < centers.length; index += 1) {
+    if (Math.abs(centers[index]! - value) < Math.abs(centers[nearest]! - value)) {
+      nearest = index;
+    }
+  }
+  return nearest;
 }
 
-function shiftedRowOffset(index: number, preview: DragPreview | null) {
-  if (!preview || index === preview.originIndex) return 0;
+function hasValidRowCenters(centers: number[], expectedCount: number) {
+  'worklet';
+  if (centers.length !== expectedCount) return false;
+  for (let index = 0; index < centers.length; index += 1) {
+    const center = centers[index]!;
+    if (!Number.isFinite(center) || (index > 0 && center <= centers[index - 1]!)) return false;
+  }
+  return true;
+}
+
+function previewRowIndex(index: number, preview: DragPreview | null) {
+  if (!preview) return index;
+  if (index === preview.originIndex) return preview.targetIndex;
   if (preview.originIndex < preview.targetIndex && index > preview.originIndex && index <= preview.targetIndex) {
-    return preview.centers[index - 1]! - preview.centers[index]!;
+    return index - 1;
   }
   if (preview.originIndex > preview.targetIndex && index >= preview.targetIndex && index < preview.originIndex) {
-    return preview.centers[index + 1]! - preview.centers[index]!;
+    return index + 1;
   }
-  return 0;
+  return index;
 }
 
 function SortableRow({
   active,
   activeStyle,
   children,
+  currentIndex,
   dragTranslationY,
+  hostIndex,
   onLayout,
-  shift,
+  previewIndex,
+  rowCenters,
   style,
   testID
 }: {
   active: boolean;
   activeStyle: StyleProp<ViewStyle>;
   children: ReactNode;
-  dragTranslationY: Animated.Value;
+  currentIndex: number;
+  dragTranslationY: SharedValue<number>;
+  hostIndex: number;
   onLayout: (event: LayoutChangeEvent) => void;
-  shift: number;
+  previewIndex: number;
+  rowCenters: SharedValue<number[]>;
   style: StyleProp<ViewStyle>;
   testID: string;
 }) {
-  const shiftValue = useRef(new Animated.Value(shift)).current;
-
-  useEffect(() => {
-    Animated.timing(shiftValue, {
-      duration: 120,
-      easing: Easing.out(Easing.cubic),
-      toValue: shift,
-      useNativeDriver: true
-    }).start();
-  }, [shift, shiftValue]);
+  const animatedStyle = useAnimatedStyle(() => {
+    const centers = rowCenters.value;
+    const hostCenter = centers[hostIndex];
+    const targetCenter = centers[active ? currentIndex : previewIndex];
+    const settledOffset = hostCenter === undefined || targetCenter === undefined ? 0 : targetCenter - hostCenter;
+    return {
+      transform: [{ translateY: settledOffset + (active ? dragTranslationY.value : 0) }]
+    };
+  }, [active, currentIndex, hostIndex, previewIndex]);
 
   return (
-    <Animated.View
-      onLayout={onLayout}
-      style={[style, { transform: [{ translateY: active ? dragTranslationY : shiftValue }] }, active && activeStyle]}
-      testID={testID}
-    >
+    <Animated.View onLayout={onLayout} style={[style, animatedStyle, active && activeStyle]} testID={testID}>
       {children}
     </Animated.View>
   );
@@ -116,19 +132,21 @@ export function ContentSourcesPanel({
   const enabledCount = preferences.filter((preference) => preference.enabled).length;
   const preferencesRef = useCommittedRef(preferences);
   const onChangeRef = useCommittedRef(onChange);
-  const rowLayoutsRef = useRef(new Map<Source, RowLayout>());
+  const hostSources = useRef(preferences.map(({ source }) => source)).current;
+  const rowLayoutsRef = useRef(new Map<number, RowLayout>());
   const dragSessionRef = useRef<DragSession | null>(null);
-  const dragPreviewRef = useRef<DragPreview | null>(null);
-  const dragTranslationY = useRef(new Animated.Value(0)).current;
-  const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+  const rowCenters = useSharedValue<number[]>([]);
+  const dragActiveIndex = useSharedValue(-1);
+  const dragTargetIndex = useSharedValue(-1);
+  const dragTranslationY = useSharedValue(0);
+  const [dragPreview, setDragPreview] = useState<DragSession | null>(null);
   const preferenceIdentity = preferences.map(({ source, enabled }) => `${source}:${enabled}`).join('|');
+  const preferenceCount = preferences.length;
 
   const cancelDrag = useCallback(() => {
     dragSessionRef.current = null;
-    dragPreviewRef.current = null;
-    dragTranslationY.setValue(0);
     setDragPreview(null);
-  }, [dragTranslationY]);
+  }, []);
 
   useEffect(() => {
     const session = dragSessionRef.current;
@@ -139,6 +157,11 @@ export function ContentSourcesPanel({
       cancelDrag();
     }
   }, [cancelDrag, preferenceIdentity]);
+  const renderDragPreview =
+    dragPreview &&
+    dragPreview.preferences.map(({ source, enabled }) => `${source}:${enabled}`).join('|') === preferenceIdentity
+      ? dragPreview
+      : null;
 
   const move = (index: number, offset: -1 | 1) => {
     const current = preferencesRef.current;
@@ -148,55 +171,51 @@ export function ContentSourcesPanel({
     onChangeRef.current(reorderedPreferences(current, index, nextIndex));
   };
 
-  const beginDrag = (source: Source) => {
+  const beginDrag = (source: Source, expectedOriginIndex: number, centers: number[]) => {
     const current = preferencesRef.current;
     const originIndex = current.findIndex((preference) => preference.source === source);
-    const centers = current.map((preference) => {
-      const layout = rowLayoutsRef.current.get(preference.source);
-      return layout ? layout.y + layout.height / 2 : Number.NaN;
-    });
-    if (originIndex < 0 || centers.some((center) => !Number.isFinite(center))) return;
+    if (originIndex !== expectedOriginIndex || !hasValidRowCenters(centers, current.length)) {
+      cancelDrag();
+      return;
+    }
     const session: DragSession = {
-      centers,
+      centers: [...centers],
       originIndex,
       preferences: [...current],
       source,
       targetIndex: originIndex
     };
     dragSessionRef.current = session;
-    dragPreviewRef.current = session;
-    dragTranslationY.setValue(0);
     setDragPreview(session);
     triggerPressFeedback();
   };
 
-  const updateDrag = (source: Source, translationY: number) => {
+  const updateDragTarget = (source: Source, targetIndex: number) => {
     const session = dragSessionRef.current;
-    if (!session || session.source !== source || !Number.isFinite(translationY)) return;
-    const originCenter = session.centers[session.originIndex]!;
-    const minTranslation = session.centers[0]! - originCenter;
-    const maxTranslation = session.centers.at(-1)! - originCenter;
-    const clampedTranslation = Math.max(minTranslation, Math.min(maxTranslation, translationY));
-    const targetIndex = nearestCenterIndex(session.centers, originCenter + clampedTranslation);
-    dragTranslationY.setValue(clampedTranslation);
-    if (dragPreviewRef.current?.targetIndex === targetIndex) return;
-    const preview = { ...session, targetIndex };
-    dragPreviewRef.current = preview;
-    setDragPreview(preview);
+    if (!session || session.source !== source || targetIndex < 0 || targetIndex >= session.preferences.length) return;
+    setDragPreview((current) =>
+      current?.source === source && current.targetIndex === targetIndex ? current : { ...session, targetIndex }
+    );
   };
 
-  const finishDrag = (source: Source, success: boolean) => {
+  const finishDrag = (source: Source, success: boolean, targetIndex: number) => {
     const session = dragSessionRef.current;
-    const targetIndex = dragPreviewRef.current?.targetIndex ?? session?.originIndex;
-    cancelDrag();
+    const currentPreferenceIdentity = preferencesRef.current
+      .map(({ source: currentSource, enabled }) => `${currentSource}:${enabled}`)
+      .join('|');
     if (
       !success ||
       !session ||
       session.source !== source ||
-      targetIndex === undefined ||
+      session.preferences.map(({ source: currentSource, enabled }) => `${currentSource}:${enabled}`).join('|') !==
+        currentPreferenceIdentity ||
+      targetIndex < 0 ||
+      targetIndex >= session.preferences.length ||
       targetIndex === session.originIndex
-    )
+    ) {
+      cancelDrag();
       return;
+    }
     onChangeRef.current(reorderedPreferences(session.preferences, session.originIndex, targetIndex));
   };
 
@@ -210,16 +229,63 @@ export function ContentSourcesPanel({
       onExpandedChange={onExpandedChange}
     >
       <View>
-        {preferences.map((preference, index) => {
+        {hostSources.map((source, hostIndex) => {
+          const index = preferences.findIndex((preference) => preference.source === source);
+          const preference = preferences[index];
+          if (!preference) return null;
           const label = sourceCatalog[preference.source].label;
           const first = index === 0;
           const last = index === preferences.length - 1;
           const dragGesture = Gesture.Pan()
             .activateAfterLongPress(DRAG_ACTIVATION_DELAY_MS)
-            .runOnJS(true)
-            .onStart(() => beginDrag(preference.source))
-            .onUpdate(({ translationY }) => updateDrag(preference.source, translationY))
-            .onFinalize((_event, success) => finishDrag(preference.source, success));
+            .onStart(() => {
+              'worklet';
+              const centers = rowCenters.value;
+              if (!hasValidRowCenters(centers, preferenceCount)) {
+                dragActiveIndex.value = -1;
+                dragTargetIndex.value = -1;
+                dragTranslationY.value = 0;
+                scheduleOnRN(cancelDrag);
+                return;
+              }
+              dragActiveIndex.value = index;
+              dragTargetIndex.value = index;
+              dragTranslationY.value = 0;
+              scheduleOnRN(beginDrag, preference.source, index, centers);
+            })
+            .onUpdate(({ translationY }) => {
+              'worklet';
+              const originIndex = dragActiveIndex.value;
+              const centers = rowCenters.value;
+              if (originIndex !== index) return;
+              if (!Number.isFinite(translationY) || !hasValidRowCenters(centers, preferenceCount)) {
+                dragActiveIndex.value = -1;
+                dragTargetIndex.value = -1;
+                dragTranslationY.value = 0;
+                scheduleOnRN(cancelDrag);
+                return;
+              }
+              const originCenter = centers[originIndex]!;
+              const minTranslation = centers[0]! - originCenter;
+              const maxTranslation = centers[centers.length - 1]! - originCenter;
+              const clampedTranslation = Math.max(minTranslation, Math.min(maxTranslation, translationY));
+              const targetIndex = nearestCenterIndex(centers, originCenter + clampedTranslation);
+              dragTranslationY.value = clampedTranslation;
+              if (dragTargetIndex.value !== targetIndex) {
+                dragTargetIndex.value = targetIndex;
+                scheduleOnRN(updateDragTarget, preference.source, targetIndex);
+              }
+            })
+            .onFinalize((_event, success) => {
+              'worklet';
+              if (dragActiveIndex.value !== index) return;
+              const targetIndex = dragTargetIndex.value;
+              if (success) {
+                const centers = rowCenters.value;
+                dragTranslationY.value = centers[targetIndex]! - centers[index]!;
+              }
+              scheduleOnRN(finishDrag, preference.source, success, targetIndex);
+            });
           const accessibilityActions = [
             ...(first ? [] : [{ name: 'moveUp', label: '上移' }]),
             ...(last ? [] : [{ name: 'moveDown', label: '下移' }])
@@ -230,17 +296,25 @@ export function ContentSourcesPanel({
           };
           return (
             <SortableRow
-              active={dragPreview?.source === preference.source}
+              active={renderDragPreview?.source === preference.source}
               activeStyle={styles.contentSourceRowDragging}
+              currentIndex={index}
               dragTranslationY={dragTranslationY}
+              hostIndex={hostIndex}
               key={preference.source}
               onLayout={({ nativeEvent }) => {
-                rowLayoutsRef.current.set(preference.source, {
+                rowLayoutsRef.current.set(hostIndex, {
                   height: nativeEvent.layout.height,
                   y: nativeEvent.layout.y
                 });
+                const centers = hostSources.map((_, candidateIndex) => {
+                  const layout = rowLayoutsRef.current.get(candidateIndex);
+                  return layout ? layout.y + layout.height / 2 : Number.NaN;
+                });
+                rowCenters.value = hasValidRowCenters(centers, preferences.length) ? centers : [];
               }}
-              shift={shiftedRowOffset(index, dragPreview)}
+              previewIndex={previewRowIndex(index, renderDragPreview)}
+              rowCenters={rowCenters}
               style={[styles.contentSourceRow, index > 0 && styles.appearanceSettingRowDivided]}
               testID={`content-source-row-${preference.source}`}
             >

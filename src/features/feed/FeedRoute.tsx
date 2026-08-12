@@ -4,6 +4,7 @@ import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic } from '@/domain/forum/models';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { ReaderData } from '@/domain/reader/readerData';
+import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -44,8 +45,7 @@ function useFeedRouteRuntime() {
   return runtime;
 }
 
-export function FeedRoute() {
-  const runtime = useFeedRouteRuntime();
+function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
   const active = useIsFocused();
   const navigation = useNavigation();
   const listRef = useRef<FlashListRef<Topic> | null>(null);
@@ -103,4 +103,14 @@ export function FeedRoute() {
       onRefresh={controller.refreshFeed}
     />
   );
+}
+
+export function FeedRoute() {
+  const runtime = useFeedRouteRuntime();
+  const sourceOrderKey = projectContentSourcePreferences(
+    runtime.reader.data.settings.contentSources,
+    runtime.reader.loaded
+  ).feedSources.join('|');
+
+  return <FeedRouteSession key={sourceOrderKey} runtime={runtime} />;
 }

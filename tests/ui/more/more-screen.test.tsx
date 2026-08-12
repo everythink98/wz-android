@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
 import React, { type ComponentProps } from 'react';
 import { StyleSheet } from 'react-native';
@@ -9,9 +9,42 @@ import { MoreScreen } from '@/features/more/MoreScreen';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
 
+let mockDragRunsOnJS = false;
+let mockDeferScheduleOnRN = false;
+let mockDeferredRNCalls: (() => unknown)[] = [];
+let mockSharedValues: { value: unknown }[] = [];
+const mockScheduleOnRN = jest.fn((callback: (...args: unknown[]) => unknown, ...args: unknown[]) => callback(...args));
+const mockWithTiming = jest.fn((value: unknown) => value);
+
+beforeEach(() => {
+  mockDragRunsOnJS = false;
+  mockDeferScheduleOnRN = false;
+  mockDeferredRNCalls = [];
+  mockSharedValues = [];
+  mockScheduleOnRN.mockClear();
+  mockWithTiming.mockClear();
+});
+
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
 }));
+
+jest.mock('react-native-reanimated', () => {
+  const ReactModule = require('react') as typeof React;
+  const actual = jest.requireActual('react-native-reanimated/mock') as Record<string, unknown>;
+  return {
+    ...actual,
+    useSharedValue<Value>(initialValue: Value) {
+      const sharedValue = ReactModule.useRef<{ value: Value } | null>(null);
+      if (!sharedValue.current) {
+        sharedValue.current = { value: initialValue };
+        mockSharedValues.push(sharedValue.current);
+      }
+      return sharedValue.current;
+    },
+    withTiming: (value: unknown) => mockWithTiming(value)
+  };
+});
 
 jest.mock('react-native-webview', () => {
   const ReactModule = require('react') as typeof React;
@@ -36,7 +69,8 @@ jest.mock('react-native-gesture-handler', () => {
         minDistance() {
           return this;
         },
-        runOnJS() {
+        runOnJS(enabled = true) {
+          mockDragRunsOnJS = enabled;
           return this;
         },
         onBegin(handler: (...args: unknown[]) => void) {
@@ -71,6 +105,18 @@ jest.mock('react-native-gesture-handler', () => {
     ScrollView: require('react-native').ScrollView
   };
 });
+
+jest.mock('react-native-worklets', () => ({
+  ...(jest.requireActual('react-native-worklets') as Record<string, unknown>),
+  scheduleOnRN: (callback: (...args: unknown[]) => unknown, ...args: unknown[]) =>
+    mockScheduleOnRN(() => {
+      if (mockDeferScheduleOnRN) {
+        mockDeferredRNCalls.push(() => callback(...args));
+        return;
+      }
+      return callback(...args);
+    })
+}));
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
@@ -446,7 +492,7 @@ describe('More screen state and actions', () => {
     expect(disabledSourceSwitches.every((control) => control.props.accessibilityState.checked === false)).toBe(true);
   });
 
-  it('previews a long-press drag locally and persists the final source order once', async () => {
+  it('[REG-PERF-011] keeps drag frames off JS and persists the final source order once', async () => {
     const updateSettings = jest.fn();
     const view = await render(<MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} />);
     await fireEvent.press(view.getByLabelText('展开内容源'));
@@ -459,8 +505,13 @@ describe('More screen state and actions', () => {
     const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 5 项');
     await act(async () => {
       handle.props.onGestureStart({ translationY: 0 });
+      for (let translationY = 1; translationY <= 20; translationY += 1) {
+        handle.props.onGestureUpdate({ translationY });
+      }
       handle.props.onGestureUpdate({ translationY: 120 });
     });
+    expect(mockDragRunsOnJS).toBe(false);
+    expect(mockScheduleOnRN).toHaveBeenCalledTimes(2);
     expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toMatchObject({
       backgroundColor: '#F0F0F0',
       borderRadius: 10,
@@ -475,6 +526,7 @@ describe('More screen state and actions', () => {
       handle.props.onGestureFinalize({}, true);
     });
 
+    expect(mockScheduleOnRN).toHaveBeenCalledTimes(3);
     expect(updateSettings).toHaveBeenCalledTimes(1);
     expect(updateSettings).toHaveBeenCalledWith({
       contentSources: [
@@ -493,6 +545,131 @@ describe('More screen state and actions', () => {
       handle.props.onGestureFinalize({}, false);
     });
     expect(updateSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      handle.props.onGestureStart({ translationY: 0 });
+      handle.props.onGestureUpdate({ translationY: 10_000 });
+      handle.props.onGestureFinalize({}, true);
+    });
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenLastCalledWith({
+      contentSources: [
+        { source: 'linuxdo', enabled: true },
+        { source: 'nodeseek', enabled: true },
+        { source: 'yaohuo', enabled: true },
+        { source: 'xiaoyinsi', enabled: true },
+        { source: 'v2ex', enabled: true }
+      ]
+    });
+
+    updateSettings.mockClear();
+    await act(async () => {
+      handle.props.onGestureStart({ translationY: 0 });
+      handle.props.onGestureUpdate({ translationY: 56 });
+    });
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          utilities: {
+            settings: {
+              value: {
+                ...readerData.settings,
+                contentSources: readerData.settings.contentSources.map((preference) =>
+                  preference.source === 'v2ex' ? { ...preference, enabled: false } : preference
+                )
+              },
+              update: updateSettings
+            }
+          }
+        })}
+      />
+    );
+    await act(async () => handle.props.onGestureFinalize({}, true));
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-012] keeps each source on one native host across the persisted reorder', async () => {
+    const updateSettings = jest.fn();
+    const props = moreProps({ utilities: { settings: { update: updateSettings } } });
+    const view = await render(<MoreScreen {...props} />);
+    await fireEvent.press(view.getByLabelText('展开内容源'));
+
+    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'].entries()) {
+      await fireEvent(view.getByTestId(`content-source-row-${source}`), 'layout', {
+        nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
+      });
+    }
+    const v2exHost = view.getByTestId('content-source-row-v2ex');
+    const linuxDoHost = view.getByTestId('content-source-row-linuxdo');
+    const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 5 项');
+    mockWithTiming.mockClear();
+    await act(async () => {
+      handle.props.onGestureStart({ translationY: 0 });
+      handle.props.onGestureUpdate({ translationY: 56 });
+    });
+    expect(mockWithTiming).not.toHaveBeenCalled();
+    const dragTranslation = mockSharedValues[3];
+    expect(dragTranslation?.value).toBe(56);
+
+    mockDeferScheduleOnRN = true;
+    await act(async () => handle.props.onGestureFinalize({}, true));
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(dragTranslation?.value).toBe(56);
+
+    mockDeferScheduleOnRN = false;
+    await act(async () => {
+      for (const run of mockDeferredRNCalls.splice(0)) run();
+    });
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(dragTranslation?.value).toBe(56);
+
+    const reorderedContentSources = [
+      { source: 'linuxdo', enabled: true },
+      { source: 'v2ex', enabled: true },
+      { source: 'nodeseek', enabled: true },
+      { source: 'yaohuo', enabled: true },
+      { source: 'xiaoyinsi', enabled: true }
+    ] as const;
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          utilities: {
+            settings: {
+              value: { ...readerData.settings, contentSources: [...reorderedContentSources] },
+              update: updateSettings
+            }
+          }
+        })}
+      />
+    );
+    expect(
+      view
+        .getAllByRole('switch')
+        .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'))
+        .map((control) => control.props.accessibilityLabel)
+    ).toEqual([
+      'V2EX 内容源开关',
+      'linux.do 内容源开关',
+      'NodeSeek 内容源开关',
+      '妖火 内容源开关',
+      '小隐寺 内容源开关'
+    ]);
+    expect(view.getByLabelText('拖动排序：linux.do，第 1 项，共 5 项')).toBeTruthy();
+    expect(view.getByLabelText('拖动排序：V2EX，第 2 项，共 5 项')).toBeTruthy();
+    expect(view.getByTestId('content-source-row-v2ex')).toBe(v2exHost);
+    expect(view.getByTestId('content-source-row-linuxdo')).toBe(linuxDoHost);
+    expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toMatchObject({
+      transform: [{ translateY: 56 }]
+    });
+    expect(StyleSheet.flatten(view.getByTestId('content-source-row-linuxdo').props.style)).toMatchObject({
+      transform: [{ translateY: -56 }]
+    });
+
+    await act(async () =>
+      view.getByLabelText('拖动排序：V2EX，第 2 项，共 5 项').props.onGestureStart({ translationY: 0 })
+    );
+    expect(dragTranslation?.value).toBe(0);
   });
 
   it('[REG-NOTIFY-052] shows which More entry owns the unread badge', async () => {

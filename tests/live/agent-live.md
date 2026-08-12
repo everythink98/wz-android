@@ -130,6 +130,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - 从更多 → 账号中心刷新四个可登录来源状态；NodeSeek、linux.do、妖火登录或验证页只能从 App 内打开，小隐寺只通过 Device Code 获取独立 User API 会话，系统浏览器仅打开一次性授权页。
 - 小隐寺真实 Google / Discord 登录及确认由用户亲自操作；Agent 不读取、输入或截图账号凭据。回到 App 后核对账号身份，重启 App 再核对授权保持；取消、拒绝或过期必须返回明确状态。
 - oracle：登录、匿名、验证中、授权中、失效和失败不混淆；返回后账号中心仍可操作。前三站不得用桌面浏览器状态代替，小隐寺不得降级到 WebView。
+- 同轮若 Topic、Feed、Search 或 User 自然触发 linux.do Cloudflare，验证面板必须保持到 WebView 挂载并按全局 checkbox 协议完成 canonical 检查，随后只恢复原 Query 一次；后台 More 重渲染不得关闭它。没有自然 challenge 时本项记 `NOT_VERIFIED`，不得清 Cookie、退出账号或人为制造。
 
 ### LIVE-ACCOUNT-02 凭据与用户身份认证
 
@@ -176,6 +177,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 
 - 能力：`MORE-05`；共享 `FEED-01/02/04`、`SEARCH-01..04`、`LIBRARY-01..03`、`ACCOUNT-01/02`、`NOTIFY-01..03`、`NAV-01/02`、`DATA-01..03`。
 - 先只读记录 `firstInstallTime`、五站精确顺序与开关状态，以及 Feed、Search、Library、Account、Notifications 当前投影。选择相邻两站，用排序手柄完成一次语义化长按拖拽；按各入口支持的来源子集核对相对顺序后立即做反向拖拽，并重新进入 More 确认恢复。普通滚动和开关不得触发排序。
+- 重排前先在 Feed 选中一个非 `全部` 来源；重排后返回 Feed，必须按最新顺序从 `全部` 开始，并最终显示列表或明确错误，不能永久 Loading。反向重排后再验证一次回到 `全部`。拖动同时覆盖慢速跟随、快速跨槽、首尾边界和取消；活动行应跟手，兄弟行只在跨槽时预览。另以 raw 高质量录屏逐帧检查抬手窗口，拖动态到最终顺序之间不得回弹、重叠、闪空白或重复文字。
 - 记录妖火初始状态；若初始停用，先启用并等待一次账号结算作为前置。随后只停用一次，重启并做一次前后台往返；Feed、Search、Library、Account、Notifications 不得再显示妖火，旧 Topic/User/Notification 入口必须 fail-closed 到明确管理或错误状态。只有当前会话确实捕获到 host 级请求时才判定妖火请求为零；没有网络事件的日志不能冒充零请求，网络轴记 `NOT_VERIFIED`，由既有 Gateway、Query、Account 和 worker 确定性测试承担自动 oracle。
 - 最后恢复妖火原始开关和五站原始顺序，重启后逐项复读，并确认 `firstInstallTime` 未变化。任一恢复步骤失败立即停止后续 App/AVD 变更并报告残留；不得卸载、清数据、清 Cookie、退出账号或用默认顺序覆盖用户设置。
 - oracle：排序和开关持久化，五入口投影一致，恢复后与初始记录逐项相同。应用流程、网络轴和恢复结果分别报告，不得用 UI 隐藏推断零请求。

@@ -5,8 +5,9 @@ import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
 import { navigationRef, pushTopicRoute } from '@/app/appNavigation';
-import type { Topic } from '@/domain/forum/models';
+import type { FeedSource, Topic } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { FeedRoute, FeedRouteRuntimeProvider, type FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
 import { useFeedController } from '@/features/feed/useFeedController';
@@ -65,10 +66,28 @@ function mockManagementEntry(label: string, onPress: () => void) {
   );
 }
 
-jest.mock('@/features/feed/FeedScreen', () => ({
-  FeedScreen: ({ onManageContentSources }: { onManageContentSources: () => void }) =>
-    mockManagementEntry('首页', onManageContentSources)
-}));
+let mockFeedScreenMountCount = 0;
+function mockFeedScreen({
+  feedSource,
+  onFeedSourceChange,
+  onManageContentSources
+}: {
+  feedSource?: FeedSource;
+  onFeedSourceChange?: (source: FeedSource) => void;
+  onManageContentSources: () => void;
+}) {
+  const [mount] = React.useState(() => ++mockFeedScreenMountCount);
+  return (
+    <>
+      {mockManagementEntry('首页', onManageContentSources)}
+      <Pressable testID="feed-test-select-v2ex" onPress={() => onFeedSourceChange?.('v2ex')}>
+        <Text>{`首页来源 ${feedSource || 'all'} 挂载 ${mount}`}</Text>
+      </Pressable>
+    </>
+  );
+}
+
+jest.mock('@/features/feed/FeedScreen', () => ({ FeedScreen: mockFeedScreen }));
 jest.mock('@/features/search/SearchScreen', () => ({
   SearchScreen: ({ onManageContentSources }: { onManageContentSources: () => void }) =>
     mockManagementEntry('搜索', onManageContentSources)
@@ -135,6 +154,7 @@ const feedRuntime = {
   notify: jest.fn(),
   reader: { data: readerData, loaded: true }
 } as FeedRouteRuntimeValue;
+const FeedTestRuntimeContext = React.createContext(feedRuntime);
 const searchRuntime = {
   account: {
     ...feedRuntime.account,
@@ -173,8 +193,9 @@ const moreRuntime = {
 } as unknown as MoreRouteRuntimeValue;
 
 function FeedTab() {
+  const runtime = React.useContext(FeedTestRuntimeContext);
   return (
-    <FeedRouteRuntimeProvider value={feedRuntime}>
+    <FeedRouteRuntimeProvider value={runtime}>
       <FeedRoute />
     </FeedRouteRuntimeProvider>
   );
@@ -218,31 +239,34 @@ function EmptyRoute() {
   return null;
 }
 
-function Navigator() {
+function Navigator({ feedRuntimeValue = feedRuntime }: { feedRuntimeValue?: FeedRouteRuntimeValue }) {
   return (
-    <AppNavigator
-      moreBadgeState="none"
-      navigationTheme={DefaultTheme}
-      FeedRouteComponent={FeedTab}
-      LibraryRouteComponent={LibraryTab}
-      MoreRouteComponent={MoreTab}
-      NotificationDetailRouteComponent={EmptyRoute}
-      NotificationSettingsRouteComponent={EmptyRoute}
-      NotificationsRouteComponent={EmptyRoute}
-      ReadingSettingsRouteComponent={EmptyRoute}
-      SearchRouteComponent={SearchTab}
-      TopicRouteComponent={TopicScreen}
-      UserRouteComponent={EmptyRoute}
-      styles={styles}
-      theme={theme}
-      onReady={jest.fn()}
-      onScreenChange={jest.fn()}
-    />
+    <FeedTestRuntimeContext.Provider value={feedRuntimeValue}>
+      <AppNavigator
+        moreBadgeState="none"
+        navigationTheme={DefaultTheme}
+        FeedRouteComponent={FeedTab}
+        LibraryRouteComponent={LibraryTab}
+        MoreRouteComponent={MoreTab}
+        NotificationDetailRouteComponent={EmptyRoute}
+        NotificationSettingsRouteComponent={EmptyRoute}
+        NotificationsRouteComponent={EmptyRoute}
+        ReadingSettingsRouteComponent={EmptyRoute}
+        SearchRouteComponent={SearchTab}
+        TopicRouteComponent={TopicScreen}
+        UserRouteComponent={EmptyRoute}
+        styles={styles}
+        theme={theme}
+        onReady={jest.fn()}
+        onScreenChange={jest.fn()}
+      />
+    </FeedTestRuntimeContext.Provider>
   );
 }
 
 describe('[REG-SOURCE-012] content-source management navigation', () => {
   beforeEach(() => {
+    mockFeedScreenMountCount = 0;
     jest.mocked(useFeedController).mockReturnValue({
       activeFeedState: {
         hasMore: false,
@@ -290,6 +314,46 @@ describe('[REG-SOURCE-012] content-source management navigation', () => {
     await fireEvent.press(view.getByTestId('main-tab-more'));
 
     await waitFor(() => expect(view.getByText('内容源面板已折叠')).toBeTruthy());
+  });
+
+  it('[REG-FEED-017] rebuilds Feed at all after the source order changes in More', async () => {
+    jest.mocked(useFeedController).mockImplementation(({ readerData: currentReaderData }) => {
+      const [feedSource, setFeedSource] = React.useState<FeedSource>('all');
+      return {
+        activeFeedState: {
+          hasMore: false,
+          loadMoreFailureSignal: 0,
+          loadingMore: false,
+          page: 1,
+          refreshing: false
+        },
+        changeFeedSource: setFeedSource,
+        feedAllowsRemotePagination: false,
+        feedSource,
+        enabledFeedSources: projectContentSourcePreferences(currentReaderData.settings.contentSources).feedSources
+      } as never;
+    });
+    const view = await render(<Navigator />);
+    await waitFor(() => expect(view.getByText('首页来源 all 挂载 1')).toBeTruthy());
+    await fireEvent.press(view.getByTestId('feed-test-select-v2ex'));
+    await waitFor(() => expect(view.getByText('首页来源 v2ex 挂载 1')).toBeTruthy());
+    await fireEvent.press(view.getByTestId('main-tab-more'));
+
+    const [first, second, ...rest] = readerData.settings.contentSources;
+    const reorderedFeedRuntime = {
+      ...feedRuntime,
+      reader: {
+        ...feedRuntime.reader,
+        data: {
+          ...readerData,
+          settings: { ...readerData.settings, contentSources: [second, first, ...rest] }
+        }
+      }
+    };
+    await view.rerender(<Navigator feedRuntimeValue={reorderedFeedRuntime} />);
+    await fireEvent.press(view.getByTestId('main-tab-feed'));
+
+    await waitFor(() => expect(view.getByText('首页来源 all 挂载 2')).toBeTruthy());
   });
 
   it('carries a disabled Topic management intent through the real root stack and tabs', async () => {

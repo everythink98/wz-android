@@ -1,8 +1,9 @@
-import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { BackHandler, ScrollView } from 'react-native';
 import {
   type NavigationProp,
   type RouteProp,
+  useFocusEffect,
   useIsFocused,
   useNavigation,
   useRoute,
@@ -20,6 +21,7 @@ import { useDiagnosticLogController } from './useDiagnosticLogController';
 import { useReaderSettingsController } from './useReaderSettingsController';
 import type { MoreAccountCapabilities } from './components/MoreAccountPanel';
 import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 
 export type MoreRouteRuntimeValue = {
   account: MoreAccountCapabilities;
@@ -88,7 +90,7 @@ export function MoreRoute() {
   });
   const proxy = runtime.proxy;
   const update = runtime.update;
-  const closeAccountSurfaces = runtime.account.surfaces.closeAll;
+  const closeAccountSurfaces = useLatestCallback(runtime.account.surfaces.closeAll);
 
   useEffect(() => {
     if (!active || route.params?.intent !== 'manage-content-sources') return;
@@ -97,12 +99,16 @@ export function MoreRoute() {
     const frame = requestAnimationFrame(() => navigation.replaceParams({}));
     return () => cancelAnimationFrame(frame);
   }, [active, navigation, route.params?.intent]);
-  useEffect(() => {
-    if (active) return;
-    closeAccountSurfaces();
-    setShowNetworkProxyPanel(false);
-    setShowSettingsPanel(false);
-  }, [active, closeAccountSurfaces]);
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        closeAccountSurfaces();
+        setShowNetworkProxyPanel(false);
+        setShowSettingsPanel(false);
+      },
+      [closeAccountSurfaces]
+    )
+  );
   useEffect(() => {
     if (!active || !showSettingsPanel) return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
