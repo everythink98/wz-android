@@ -395,7 +395,11 @@ jest.mock('@/features/topic/components/ReplyComposerSheet', () => ({ ReplyCompos
 jest.mock('@/features/topic/components/TopicMenu', () => ({ TopicMenu: () => null }));
 jest.mock('@/features/topic/components/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
-  const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
+  const {
+    Pressable: NativePressable,
+    Text: NativeText,
+    View: NativeView
+  } = require('react-native') as typeof import('react-native');
   const actual = jest.requireActual<typeof import('@/features/topic/components/ReplyItem')>(
     '@/features/topic/components/ReplyItem'
   );
@@ -409,6 +413,7 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
     MemoizedReplyItem: (props: {
       bodyContent?: import('@/features/topic/model/replyListModel').ReplyRenderableContent;
       isTerminal?: boolean;
+      onLocateReply: (target: { floor?: number }) => void;
       onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
       reply: Reply;
       section?: {
@@ -452,7 +457,18 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
           NativeText,
           { testID: `reply-floor-${reply.floor}` },
           `reply-${reply.floor}-${reply.author}`
-        )
+        ),
+        reply.replyTarget?.floor
+          ? ReactModule.createElement(
+              NativePressable,
+              {
+                accessibilityLabel: `定位回复目标，第 ${reply.replyTarget.floor} 楼`,
+                accessibilityRole: 'link',
+                onPress: () => props.onLocateReply({ floor: reply.replyTarget!.floor })
+              },
+              ReactModule.createElement(NativeText, null, `#${reply.replyTarget.floor}`)
+            )
+          : null
       );
     },
     NodeSeekStatPill: ({ label, value }: { label: string; value: number }) =>
@@ -537,6 +553,7 @@ function TopicFilterHarness({
   loadingMoreReplies = false,
   loadingPreviousReplies = false,
   loadingQuotedFloors = {},
+  onLocateReply = jest.fn(async () => 'completed'),
   onLoadMoreReplies = jest.fn(),
   onLoadPreviousReplies = jest.fn(),
   onInteract = jest.fn(),
@@ -565,6 +582,7 @@ function TopicFilterHarness({
   topicFavorite = false,
   topicBusy = false,
   targetReply,
+  targetReplyRequestId,
   yaohuoVisualBookmarked
 }: {
   canUseLinuxDoActions?: boolean;
@@ -581,6 +599,7 @@ function TopicFilterHarness({
   onLoadMoreReplies?: (options?: { silent?: boolean }) => void;
   onLoadPreviousReplies?: (options?: { silent?: boolean }) => void;
   onInteract?: (type: InteractionType, commentId?: number) => void;
+  onLocateReply?: (target: { commentId?: number; floor?: number; pageHint?: number }) => Promise<string>;
   onRefreshWholeTopic?: () => void;
   onRetryReplies?: (edge?: 'start' | 'end') => void;
   onReplyComposerOpenChange?: (open: boolean) => void;
@@ -606,6 +625,7 @@ function TopicFilterHarness({
   topicFavorite?: boolean;
   topicBusy?: boolean;
   targetReply?: { commentId?: number; floor?: number; pageHint?: number };
+  targetReplyRequestId?: number;
   yaohuoVisualBookmarked?: boolean;
 } = {}) {
   const [commentQuery, setCommentQuery] = useState('');
@@ -666,7 +686,7 @@ function TopicFilterHarness({
       onRetryReplies(edge);
       return 'completed';
     },
-    locateReply: jest.fn(async () => 'completed'),
+    locateReply: onLocateReply,
     toggleReplyQuote: jest.fn(),
     toggleTopicBodyQuote: onToggleTopicBodyQuote,
     topicReplies,
@@ -752,6 +772,7 @@ function TopicFilterHarness({
           read={read}
           session={session}
           targetReply={targetReply}
+          targetReplyRequestId={targetReplyRequestId}
           topicScrollRef={topicScrollRef}
         />
         <Text testID="active-filter">{replyFilter}</Text>
@@ -835,6 +856,119 @@ describe('Topic reply filters', () => {
     expect(loadMore).not.toHaveBeenCalled();
     expect(mockScrollToIndex).toHaveBeenCalledTimes(1);
     expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ animated: true, viewPosition: 0.2 }));
+  });
+
+  it('[REG-TOPIC-092] reissues the same loaded reply location on every explicit press', async () => {
+    const replies: Reply[] = [
+      {
+        author: 'target',
+        contentHtml: '<p>目标回复</p>',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        floor: 3
+      },
+      {
+        author: 'caller',
+        contentHtml: '<p>回复关系</p>',
+        createdAt: '2026-08-01T00:01:00.000Z',
+        floor: 10,
+        replyTarget: { floor: 3 }
+      },
+      {
+        author: 'other-target',
+        contentHtml: '<p>另一个目标</p>',
+        createdAt: '2026-08-01T00:02:00.000Z',
+        floor: 4
+      },
+      {
+        author: 'other-caller',
+        contentHtml: '<p>另一条回复关系</p>',
+        createdAt: '2026-08-01T00:03:00.000Z',
+        floor: 11,
+        replyTarget: { floor: 4 }
+      }
+    ];
+    const targetTopic: TopicDetail = {
+      ...topic,
+      id: 'repeat-location-topic',
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-859086-2',
+      replies,
+      replyCount: replies.length
+    };
+    const locateReply = jest.fn(async () => 'completed');
+    mockScrollToIndex.mockClear();
+    const view = await render(
+      <TopicFilterHarness
+        onLocateReply={locateReply}
+        selectedTopic={targetTopic}
+        topicDetail={targetTopic}
+        topicReplies={replies}
+      />
+    );
+    const target = view.getByRole('link', { name: '定位回复目标，第 3 楼' });
+    const otherTarget = view.getByRole('link', { name: '定位回复目标，第 4 楼' });
+
+    await fireEvent.press(target);
+    await waitFor(() => {
+      expect(locateReply).toHaveBeenCalledTimes(1);
+      expect(mockScrollToIndex).toHaveBeenCalledTimes(1);
+    });
+    const targetHighlightStyle = () =>
+      StyleSheet.flatten(view.getByTestId('reply-floor-3').parent?.parent?.props.style);
+    expect(targetHighlightStyle()?.backgroundColor).toBeTruthy();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_850));
+    });
+    expect(targetHighlightStyle()?.backgroundColor).toBeUndefined();
+    await fireEvent.press(target);
+    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(2));
+    expect(targetHighlightStyle()?.backgroundColor).toBeTruthy();
+    await fireEvent.press(otherTarget);
+    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(3));
+    await fireEvent.press(target);
+    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(4));
+
+    expect(locateReply).toHaveBeenCalledTimes(4);
+    expect(mockScrollToIndex).toHaveBeenLastCalledWith(
+      expect.objectContaining({ animated: true, index: lastReplyListIndex(3), viewPosition: 0.2 })
+    );
+  });
+
+  it('[REG-TOPIC-092] consumes repeated same-topic HTML floor links as distinct route commands', async () => {
+    const replies: Reply[] = [
+      {
+        author: 'target',
+        contentHtml: '<p>目标回复</p>',
+        createdAt: '2026-08-01T00:00:00.000Z',
+        floor: 3
+      }
+    ];
+    const targetTopic: TopicDetail = {
+      ...topic,
+      id: 'repeat-html-location-topic',
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-859086-2',
+      replies,
+      replyCount: replies.length
+    };
+    const tree = (targetReplyRequestId: number) => (
+      <TopicFilterHarness
+        selectedTopic={targetTopic}
+        targetReply={{ floor: 3 }}
+        targetReplyRequestId={targetReplyRequestId}
+        topicDetail={targetTopic}
+        topicReplies={replies}
+      />
+    );
+    mockScrollToIndex.mockClear();
+    const view = await render(tree(1));
+    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(1));
+
+    await view.rerender(tree(2));
+    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(2));
+    expect(mockScrollToIndex).toHaveBeenLastCalledWith(
+      expect.objectContaining({ animated: true, index: lastReplyListIndex(3), viewPosition: 0.2 })
+    );
   });
 
   it('[REG-PERF-008] gives split opening-post blocks to FlashList instead of mounting them in its header', async () => {

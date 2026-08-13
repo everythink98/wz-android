@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ReactNode } from 'react';
 import { StackActions } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { RenderHTMLConfigProvider, TRenderEngineProvider } from 'react-native-render-html';
 import type { Topic, UserReference } from '@/domain/forum/models';
+import { compileForumContent } from '@/domain/forum/topicContentSplit';
 import type { ForumNotification } from '@/domain/notifications/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { MoreRoute, MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
@@ -17,15 +19,19 @@ import { useTopicSessionController } from '@/features/topic/useTopicSessionContr
 import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
+import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
+import { HTML_ALLOWED_INLINE_STYLES } from '@/features/topic/rendering/htmlStyles';
+import { HTML_CUSTOM_ELEMENT_MODELS } from '@/features/topic/rendering/htmlElementModels';
 import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
 import { useUserController } from '@/features/user/useUserController';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
+import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
 
-const mockTopicScreen = jest.fn((_props: unknown) => null);
+const mockTopicScreen = jest.fn<(_props: unknown) => ReactNode>(() => null);
 const mockMoreNavigation = { replaceParams: jest.fn() };
 let mockMoreRouteParams: { intent?: 'manage-content-sources' } | undefined;
 let mockMoreFocused = true;
@@ -52,9 +58,13 @@ jest.mock('@react-navigation/native', () => ({
 jest.mock('@/features/topic/useTopicController', () => ({ useTopicController: jest.fn() }));
 jest.mock('@/features/topic/useTopicSessionController', () => ({ useTopicSessionController: jest.fn() }));
 jest.mock('@/features/topic/actions/useTopicActionsController', () => ({ useTopicActionsController: jest.fn() }));
-jest.mock('@/features/topic/rendering/useHtmlRenderingController', () => ({ useHtmlRenderingController: jest.fn() }));
 jest.mock('@/features/topic/media/useImagePreviewController', () => ({ useImagePreviewController: jest.fn() }));
 jest.mock('@/ui/media/ImagePreviewModal', () => ({ ImagePreviewModal: () => null }));
+jest.mock('@shopify/flash-list', () => ({ useRecyclingState: (initialValue: unknown) => [initialValue, jest.fn()] }));
+jest.mock('expo-video', () => ({
+  VideoView: () => null,
+  useVideoPlayer: () => ({ pause: jest.fn(), play: jest.fn(), playing: false })
+}));
 jest.mock('@/features/topic/TopicScreen', () => ({ TopicScreen: (props: unknown) => mockTopicScreen(props) }));
 jest.mock('@/features/user/UserScreen', () => ({ UserScreen: () => null }));
 jest.mock('@/features/user/useUserController', () => ({ useUserController: jest.fn() }));
@@ -126,6 +136,8 @@ const notification: ForumNotification = {
 const expectedManageContentSourcesAction = manageContentSourcesAction();
 
 beforeEach(() => {
+  mockTopicScreen.mockReset();
+  mockTopicScreen.mockImplementation(() => null);
   mockMoreFocused = true;
   mockMoreRouteParams = undefined;
   mockMoreUtilities = null;
@@ -335,7 +347,7 @@ describe('disabled content source route gates', () => {
     expect(mockMoreUtilities?.settings.visible).toBe(false);
   });
 
-  it('[REG-PROXY-011][REG-TOPIC-076] remounts Topic media and leaves route targets to the controller', async () => {
+  it('[REG-PROXY-011][REG-TOPIC-076][REG-TOPIC-092] remounts Topic media and sequences same-topic targets', async () => {
     const data = createEmptyReaderData();
     const enabledTopic: Topic = {
       ...topic,
@@ -368,10 +380,6 @@ describe('disabled content source route gates', () => {
       topicReplies: []
     } as never);
     jest.mocked(useTopicActionsController).mockReturnValue({} as never);
-    jest.mocked(useHtmlRenderingController).mockReturnValue({
-      inlineSizedImageUrls: [],
-      topicImageDeriver: jest.fn()
-    } as never);
     jest.mocked(useImagePreviewController).mockReturnValue({
       closeImagePreview: jest.fn(),
       imagePreview: null,
@@ -386,7 +394,11 @@ describe('disabled content source route gates', () => {
       push: jest.fn(),
       setParams: jest.fn()
     } as unknown as NativeStackScreenProps<RootStackParamList, 'Topic'>['navigation'];
-    const route = { key: 'topic', name: 'Topic', params: { topic: enabledTopic } } as const;
+    const route = {
+      key: 'topic',
+      name: 'Topic',
+      params: { targetReply: { floor: 5 }, targetReplyRequestId: 7, topic: enabledTopic }
+    } as const;
     const runtime = {
       account: {
         ensureNodeImageApiKey: jest.fn(),
@@ -409,8 +421,14 @@ describe('disabled content source route gates', () => {
       nodeSeekMediaUserAgent: '',
       notify: jest.fn(),
       reader: { commit: jest.fn(), data, dataRef: { current: data } },
-      readerStyle: { settings: data.settings, theme: {} }
+      readerStyle: { settings: data.settings, theme: createTheme(data.settings) }
     } as unknown as TopicRouteRuntimeValue;
+    const floorLinkRow = compileForumContent({
+      html: '<a class="forum-floor-link" href="https://www.nodeseek.com/post-42-1#9">#9</a>',
+      role: 'opening',
+      source: 'nodeseek'
+    }).rows[0];
+    if (!floorLinkRow || floorLinkRow.type !== 'richText') throw new Error('Expected a floor-link rich-text row.');
     const tree = (transportIdentity: string) => (
       <ForumSessionEpochProvider sessionEpochs={initialForumSessionEpochs} transportIdentity={transportIdentity}>
         <TopicRouteRuntimeProvider value={runtime}>
@@ -431,9 +449,41 @@ describe('disabled content source route gates', () => {
     expect(appliedIdentity).toMatch(/:applied$/);
     expect(appliedIdentity).not.toBe(loadingIdentity);
 
-    const onOpenTopic = jest.mocked(useHtmlRenderingController).mock.calls.at(-1)?.[0].onOpenTopic;
-    onOpenTopic?.(enabledTopic, { floor: 9 });
-    expect(navigation.setParams).toHaveBeenCalledWith({ targetReply: { floor: 9 } });
+    mockTopicScreen.mockImplementation((rawProps) => {
+      const screen = rawProps as {
+        html: ReturnType<typeof useHtmlRenderingController> & { contentWidth: number };
+      };
+      return (
+        <TRenderEngineProvider
+          allowedStyles={HTML_ALLOWED_INLINE_STYLES}
+          baseStyle={screen.html.htmlBaseStyle}
+          classesStyles={screen.html.htmlClassesStyles}
+          customHTMLElementModels={HTML_CUSTOM_ELEMENT_MODELS}
+          ignoredDomTags={['script', 'style', 'noscript']}
+          ignoredStyles={screen.html.htmlIgnoredStyles}
+          tagsStyles={screen.html.htmlTagsStyles}
+        >
+          <RenderHTMLConfigProvider
+            renderers={screen.html.htmlRenderers}
+            renderersProps={screen.html.htmlRenderersProps}
+          >
+            <TopicContentBlock contentWidth={360} row={floorLinkRow} />
+          </RenderHTMLConfigProvider>
+        </TRenderEngineProvider>
+      );
+    });
+    await view.rerender(tree('applied'));
+    const floorLink = view.getByText('#9');
+    await fireEvent.press(floorLink);
+    await fireEvent.press(floorLink);
+    expect(navigation.setParams).toHaveBeenNthCalledWith(1, {
+      targetReply: { floor: 9, pageHint: 1 },
+      targetReplyRequestId: 8
+    });
+    expect(navigation.setParams).toHaveBeenNthCalledWith(2, {
+      targetReply: { floor: 9, pageHint: 1 },
+      targetReplyRequestId: 9
+    });
     expect(locateReply).not.toHaveBeenCalled();
   });
 });

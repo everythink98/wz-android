@@ -118,6 +118,7 @@ export function useTopicController({
   showYaohuoLogin,
   readGateway,
   targetReply,
+  targetReplyRequestId,
   topic,
   topicSession
 }: {
@@ -137,6 +138,7 @@ export function useTopicController({
   showYaohuoLogin: (message?: string) => void;
   readGateway: ReadGateway;
   targetReply?: ReplyLocationTarget;
+  targetReplyRequestId?: number;
   topic: Topic;
   topicSession: TopicSessionController;
 }) {
@@ -1289,11 +1291,20 @@ export function useTopicController({
   useEffect(() => {
     if (!targetReply || !topicDetail || !selectedTopic || repliesReadBlocked) return;
     const sessionEpoch = selectedTopic.source === 'v2ex' ? 0 : sessionEpochs[selectedTopic.source];
-    const targetKey = `${topicKey(selectedTopic)}:${sessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}`;
+    const targetKey = `${topicKey(selectedTopic)}:${sessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}:request:${targetReplyRequestId ?? ''}`;
     if (handledRouteTargetRef.current === targetKey) return;
     handledRouteTargetRef.current = targetKey;
     void locateReply(targetReply, { silent: true });
-  }, [locateReply, repliesReadBlocked, selectedTopic, sessionEpochs, targetReply, topicDetail, topicReplies]);
+  }, [
+    locateReply,
+    repliesReadBlocked,
+    selectedTopic,
+    sessionEpochs,
+    targetReply,
+    targetReplyRequestId,
+    topicDetail,
+    topicReplies
+  ]);
 
   const loadPreviousReplies = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}): Promise<LinuxDoReadResumeOutcome> => {

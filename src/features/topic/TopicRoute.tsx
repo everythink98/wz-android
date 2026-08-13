@@ -117,6 +117,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     [runtime.reader, topic]
   );
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
+  const targetReplyRequestIdRef = useRef(route.params.targetReplyRequestId ?? 0);
   const topicSession = useTopicSessionController({ notify: runtime.notify, topic });
   const {
     state: { replyComposerOpen, selectedTopic },
@@ -141,6 +142,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway,
     targetReply: route.params.targetReply,
+    targetReplyRequestId: route.params.targetReplyRequestId,
     topic,
     topicSession
   });
@@ -165,12 +167,14 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
       if (nextTopic.source === topic.source && nextTopic.id === topic.id) {
         topicView.changeCommentQuery('');
         topicView.changeReplyFilter('all');
-        navigation.setParams({ targetReply });
+        targetReplyRequestIdRef.current =
+          Math.max(targetReplyRequestIdRef.current, route.params.targetReplyRequestId ?? 0) + 1;
+        navigation.setParams({ targetReply, targetReplyRequestId: targetReplyRequestIdRef.current });
         return;
       }
       openTopicRoute(nextTopic, targetReply);
     },
-    [navigation, openTopic, openTopicRoute, topic.id, topic.source, topicView]
+    [navigation, openTopic, openTopicRoute, route.params.targetReplyRequestId, topic.id, topic.source, topicView]
   );
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
   const mediaSessionIdentity = useForumMediaSessionIdentity(topic.source);
@@ -345,6 +349,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
           read={topicController}
           session={topicSession}
           targetReply={route.params.targetReply}
+          targetReplyRequestId={route.params.targetReplyRequestId}
           topicScrollRef={topicScrollRef}
         />
         <ImagePreviewModal

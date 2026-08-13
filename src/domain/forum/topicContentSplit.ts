@@ -188,6 +188,7 @@ type PlanningNode = {
   rawAttrs?: unknown;
   rawText?: string;
   rawTagName?: unknown;
+  parentNode?: PlanningNode | null;
   querySelector?: (selector: string) => PlanningNode | null;
   tagName?: unknown;
   text?: string;
@@ -927,6 +928,15 @@ function flattenDescendantsAtDepthLimit(node: PlanningNode, metrics: WeakMap<obj
   return packFragments(fragments);
 }
 
+function continuousRichTextFragment(node: PlanningNode, metrics: NodeMetrics, preservedParentDepth: number) {
+  if (metrics.mediaSlots !== 0 || preservedParentDepth + metrics.elementDepth > MAX_PLANNED_ELEMENT_DEPTH) return null;
+  const tagName = nodeTagName(node);
+  const rawAttrs = String(node.rawAttrs || '').trim();
+  if (tagName && tagName.length * 2 + rawAttrs.length + 5 >= MAX_SERIALIZED_CHARS_PER_PLANNED_ROW) return null;
+  const html = node.toString();
+  return /^\s*(?:<(?:!--|!|\/)|&lt;!--|<p\b[^>]*>\s*&lt;!--)/i.test(html) ? null : fragmentFromMetrics(html, metrics);
+}
+
 function fragmentNode(
   node: PlanningNode,
   metrics: WeakMap<object, NodeMetrics>,
@@ -944,8 +954,9 @@ function fragmentNode(
     textChars: 0
   };
   const tagName = nodeTagName(node);
+  const continuousFragment = continuousRichTextFragment(node, nodeMetrics, preservedParentDepth);
   if (!tagName) {
-    return textFragments(node.toString());
+    return continuousFragment ? [continuousFragment] : textFragments(node.toString());
   }
   if (tagName === 'summary') {
     return metricsFitRow(nodeMetrics, preservedParentDepth, preservedParentReserve)
@@ -965,6 +976,7 @@ function fragmentNode(
       ? [fragmentFromMetrics(node.toString(), nodeMetrics)]
       : [fallbackNoticeFragment()];
   }
+  if (continuousFragment) return [continuousFragment];
   if (
     tagName === 'li' &&
     orderedListValue !== undefined &&
@@ -1354,45 +1366,6 @@ function combinedSemanticRowMetrics(rows: readonly CompiledForumContentRow[]) {
   return metrics.length === rows.length ? combinedNodeMetrics(metrics) : null;
 }
 
-function codeRunSerializedChars(runs: readonly ForumCodeTextRun[]) {
-  return runs.reduce((total, run) => total + run.text.length + JSON.stringify(run.style || null).length, 0);
-}
-
-function mergeCodeRun(target: ForumCodeTextRun[], run: ForumCodeTextRun) {
-  if (!run.text) return;
-  const previous = target.at(-1);
-  if (previous && sameCodeTextStyle(previous.style, run.style)) {
-    target[target.length - 1] = { ...previous, text: previous.text + run.text };
-    return;
-  }
-  target.push(run);
-}
-
-function codeLines(runs: readonly ForumCodeTextRun[]) {
-  const lines: ForumCodeTextRun[][] = [[]];
-  for (const run of runs) {
-    let offset = 0;
-    for (const match of run.text.matchAll(/\n/g)) {
-      const end = (match.index || 0) + 1;
-      mergeCodeRun(lines[lines.length - 1], { ...run, text: run.text.slice(offset, end) });
-      lines.push([]);
-      offset = end;
-    }
-    mergeCodeRun(lines[lines.length - 1], { ...run, text: run.text.slice(offset) });
-  }
-  if (!lines.at(-1)?.length) lines.pop();
-  return lines;
-}
-
-function codeRunsFitRow(runs: readonly ForumCodeTextRun[]) {
-  const textChars = runs.reduce((total, run) => total + run.text.length, 0);
-  return (
-    textChars <= MAX_UNSPLIT_TEXT_CHARS &&
-    codeRunSerializedChars(runs) <= MAX_SERIALIZED_CHARS_PER_PLANNED_ROW &&
-    runs.length + 1 <= MAX_DOM_NODES_PER_PLANNED_ROW
-  );
-}
-
 function codeRowsForNode(
   node: PlanningNode,
   nodePath: string,
@@ -1402,30 +1375,19 @@ function codeRowsForNode(
   const ownerRuns = variant
     ? normalizedRuns.map((run) => ({ ...run, text: run.text.replace(/\u00a0/g, ' ') }))
     : normalizedRuns;
-  const lines = codeLines(ownerRuns);
-  if (!lines.length || lines.some((line) => !codeRunsFitRow(line))) return null;
-  const segments: ForumCodeTextRun[][] = [];
-  let current: ForumCodeTextRun[] = [];
-  for (const line of lines) {
-    const candidate = [...current];
-    line.forEach((run) => mergeCodeRun(candidate, run));
-    if (current.length && !codeRunsFitRow(candidate)) {
-      segments.push(current);
-      current = [];
-    }
-    line.forEach((run) => mergeCodeRun(current, run));
-  }
-  if (current.length) segments.push(current);
+  if (!ownerRuns.length) return null;
   const semanticId = `node-${nodePath}`;
   const copyText = ownerRuns.map((run) => run.text).join('');
-  return segments.map((runs, index) => ({
-    ...semanticRowBase({ index, length: segments.length, networkMediaCount: 0, semanticId }),
-    ...(index === 0 ? { copyText } : {}),
-    runs,
-    text: runs.map((run) => run.text).join(''),
-    type: 'codeBlock',
-    ...(variant ? { variant } : {})
-  }));
+  return [
+    {
+      ...semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId }),
+      copyText,
+      runs: ownerRuns,
+      text: copyText,
+      type: 'codeBlock',
+      ...(variant ? { variant } : {})
+    }
+  ];
 }
 
 type SemanticTableRow = {
@@ -1572,6 +1534,7 @@ function semanticContainment(
     if (
       typedDirectives.has(current.node) ||
       tagName === 'pre' ||
+      isBlockCodeNode(current.node) ||
       tagName === 'table' ||
       tagName === 'details' ||
       tagName === 'blockquote' ||
@@ -1663,6 +1626,14 @@ function nodeHasClass(node: PlanningNode, className: string) {
 
 function isTerminalCodeNode(node: PlanningNode) {
   return nodeTagName(node) === 'div' && nodeHasClass(node, 'forum-terminal-code');
+}
+
+function isBlockCodeNode(node: PlanningNode) {
+  if (nodeTagName(node) !== 'code') return false;
+  const parentTag = nodeTagName(node.parentNode);
+  if (!parentTag) return true;
+  if (!/^(?:article|blockquote|body|details|div|li|section)$/.test(parentTag)) return false;
+  return (node.parentNode?.childNodes || []).filter((child) => child.toString().trim()).length === 1;
 }
 
 function innerHtml(node: PlanningNode | undefined) {
@@ -1847,6 +1818,10 @@ function compileSemanticEntries(
       continue;
     }
     if (tagName === 'pre') {
+      rows.push(...(codeRowsForNode(node, path) || [compilerNoticeRow(path)]));
+      continue;
+    }
+    if (isBlockCodeNode(node)) {
       rows.push(...(codeRowsForNode(node, path) || [compilerNoticeRow(path)]));
       continue;
     }

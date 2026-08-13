@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { ScrollView, StyleSheet, ToastAndroid, View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, ToastAndroid, View, type StyleProp, type ViewStyle } from 'react-native';
 import { compileForumContent, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import {
@@ -17,7 +17,108 @@ import {
 } from '@/features/topic/rendering/TopicSplitDisclosure';
 import { fireEvent, render } from '../render';
 
+type MockPanGesture = {
+  config: Record<string, unknown>;
+  handlers: Record<string, (...args: any[]) => void>;
+};
+
+let mockPanGestures: MockPanGesture[] = [];
+let mockAnimatedReactionRunners: (() => void)[] = [];
+const mockAnimatedScrollTo = jest.fn();
+const mockWithDecay = jest.fn(({ clamp }: { clamp: [number, number] }) => clamp[0]);
+
+beforeEach(() => {
+  mockPanGestures = [];
+  mockAnimatedReactionRunners = [];
+  mockAnimatedScrollTo.mockClear();
+  mockWithDecay.mockClear();
+});
+
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(() => Promise.resolve()) }));
+
+jest.mock('react-native-gesture-handler', () => {
+  const ReactModule = require('react') as typeof React;
+  const pan = () => {
+    const gesture: MockPanGesture & Record<string, any> = { config: {}, handlers: {} };
+    for (const name of ['activeOffsetX', 'enabled', 'failOffsetY', 'maxPointers']) {
+      gesture[name] = (value: unknown) => {
+        gesture.config[name] = value;
+        return gesture;
+      };
+    }
+    for (const name of ['onBegin', 'onEnd', 'onUpdate']) {
+      gesture[name] = (handler: (...args: any[]) => void) => {
+        gesture.handlers[name] = handler;
+        return gesture;
+      };
+    }
+    mockPanGestures.push(gesture);
+    return gesture;
+  };
+  return {
+    Gesture: { Pan: pan },
+    GestureDetector: ({
+      children,
+      gesture
+    }: {
+      children: React.ReactElement<Record<string, unknown>>;
+      gesture: MockPanGesture;
+    }) => ReactModule.cloneElement(children, { ...gesture.handlers, gestureConfig: gesture.config })
+  };
+});
+
+jest.mock('react-native-reanimated', () => {
+  const ReactModule = require('react') as typeof React;
+  const Native = require('react-native') as typeof import('react-native');
+  const actual = jest.requireActual('react-native-reanimated/mock') as Record<string, any>;
+  const sharedValue = <Value,>(initialValue: Value) => {
+    let value = initialValue;
+    return {
+      get value() {
+        return value;
+      },
+      set value(next: Value) {
+        value = next;
+        mockAnimatedReactionRunners.forEach((run) => run());
+      },
+      get: () => value,
+      set(next: Value) {
+        this.value = next;
+      }
+    };
+  };
+  const AnimatedScrollView = ReactModule.forwardRef(function AnimatedScrollView(
+    props: React.ComponentProps<typeof Native.ScrollView>,
+    ref: React.ForwardedRef<import('react-native').ScrollView>
+  ) {
+    return ReactModule.createElement(Native.ScrollView, { ...props, ref });
+  });
+  return {
+    ...actual,
+    default: { ...(actual.default || {}), ScrollView: AnimatedScrollView },
+    cancelAnimation: jest.fn(),
+    makeMutable: sharedValue,
+    scrollTo: (...args: unknown[]) => mockAnimatedScrollTo(...args),
+    useAnimatedReaction: (prepare: () => unknown, react: (value: unknown, previous: unknown) => void) => {
+      const previous = ReactModule.useRef<unknown>(null);
+      ReactModule.useEffect(() => {
+        const run = () => {
+          const value = prepare();
+          react(value, previous.current);
+          previous.current = value;
+        };
+        mockAnimatedReactionRunners.push(run);
+        run();
+        return () => {
+          mockAnimatedReactionRunners = mockAnimatedReactionRunners.filter((candidate) => candidate !== run);
+        };
+      }, [prepare, react]);
+    },
+    useAnimatedRef: () => ReactModule.useRef(null),
+    useSharedValue: <Value,>(initialValue: Value) => ReactModule.useRef(sharedValue(initialValue)).current,
+    withDecay: (options: { clamp: [number, number]; velocity: number }) => mockWithDecay(options)
+  };
+});
 
 jest.mock('react-native-render-html', () => ({
   RenderHTMLSource: () => null,
@@ -139,7 +240,7 @@ describe('native topic structured rendering', () => {
     toast.mockRestore();
   });
 
-  it('[REG-TOPIC-089][REG-TOPIC-090] exposes one complete copy action for split plain code and reports failure', async () => {
+  it('[REG-TOPIC-089][REG-TOPIC-090][REG-TOPIC-093] exposes one complete code frame and reports copy failure', async () => {
     const copy = jest.mocked(Clipboard.setStringAsync);
     copy.mockClear();
     copy.mockRejectedValueOnce(new Error('clipboard unavailable'));
@@ -147,7 +248,7 @@ describe('native topic structured rendering', () => {
     const sourceText = Array.from({ length: 180 }, (_, index) => `line-${index + 1}:${'x'.repeat(80)}`).join('\n');
     const screen = await render(<CompiledContentFixture html={`<pre>${sourceText}</pre>`} source="linuxdo" />);
 
-    expect(screen.getAllByTestId('topic-code-frame').length).toBeGreaterThan(1);
+    expect(screen.getAllByTestId('topic-code-frame')).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: '复制完整代码' })).toHaveLength(1);
     await fireEvent.press(screen.getByRole('button', { name: '复制完整代码' }));
     expect(copy).toHaveBeenCalledWith(sourceText);
@@ -235,12 +336,60 @@ describe('native topic structured rendering', () => {
     expect(StyleSheet.flatten(screen.getByTestId('last-cell').props.style)).toMatchObject({ width: 120 });
     expect(screen.getByTestId('topic-html-table-scroll').props).toMatchObject({
       accessibilityHint: '横向滑动查看更多',
-      scrollEnabled: true
+      scrollEnabled: false
     });
   });
 
-  it('[REG-TOPIC-084] keeps split table geometry continuous and restores one horizontal offset', async () => {
-    const scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(() => undefined);
+  it('[REG-TOPIC-094] gives table overflow one thresholded horizontal pan and a passive scroll owner', async () => {
+    const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
+    const Table = renderers.table as React.ComponentType<any>;
+    const source = table([[cell(), cell(), cell(), cell(), cell(), cell()]]);
+    const TableDefault = ({ style }: { style?: StyleProp<ViewStyle> }) => <View testID="gesture-table" style={style} />;
+
+    const screen = await render(
+      <TopicTableScrollProvider>
+        <TopicSplitDisclosureScope scopeKey="opening">
+          {semanticBoundary(<Table {...rendererProps(source, TableDefault)} />, {
+            columns: 6,
+            semanticId: 'gesture-table'
+          })}
+        </TopicSplitDisclosureScope>
+      </TopicTableScrollProvider>
+    );
+    const scroll = screen.getByTestId('topic-html-table-scroll');
+
+    expect(scroll.props.scrollEnabled).toBe(false);
+    expect(scroll.props.gestureConfig).toMatchObject({
+      activeOffsetX: [-10, 10],
+      enabled: true,
+      failOffsetY: [-10, 10],
+      maxPointers: 1
+    });
+    expect(scroll.props.accessibilityActions).toEqual([
+      { label: '向左滚动', name: 'decrement' },
+      { label: '向右滚动', name: 'increment' }
+    ]);
+
+    mockAnimatedScrollTo.mockClear();
+    await fireEvent(scroll, 'begin', {});
+    await fireEvent(scroll, 'update', { translationX: -999, translationY: 0 });
+    expect(mockAnimatedScrollTo).toHaveBeenLastCalledWith(expect.anything(), 256, 0, false);
+
+    mockAnimatedScrollTo.mockClear();
+    await fireEvent(scroll, 'begin', {});
+    await fireEvent(scroll, 'update', { translationX: 0, translationY: 100 });
+    expect(mockAnimatedScrollTo.mock.calls.every(([, x]) => x === 256)).toBe(true);
+
+    await fireEvent(scroll, 'accessibilityAction', { nativeEvent: { actionName: 'decrement' } });
+    expect(mockAnimatedScrollTo).toHaveBeenLastCalledWith(expect.anything(), 0, 0, false);
+    await fireEvent(scroll, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    expect(mockAnimatedScrollTo).toHaveBeenLastCalledWith(expect.anything(), 256, 0, false);
+
+    await fireEvent(scroll, 'end', { velocityX: -900 });
+    expect(mockWithDecay).toHaveBeenCalledWith({ clamp: [0, 256], velocity: 900 });
+  });
+
+  it('[REG-TOPIC-084][REG-TOPIC-094] keeps split table geometry continuous and shares one horizontal offset', async () => {
     const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
     const Table = renderers.table as React.ComponentType<any>;
     const source = table([[cell(), cell(), cell(), cell(), cell(), cell()]]);
@@ -283,59 +432,47 @@ describe('native topic structured rendering', () => {
     expect(scrolls[0].props.showsHorizontalScrollIndicator).toBe(false);
     expect(scrolls[1].props.showsHorizontalScrollIndicator).toBe(true);
 
-    await fireEvent.scroll(scrolls[0], { nativeEvent: { contentOffset: { x: 120, y: 0 } } });
-    expect(scrollTo).toHaveBeenCalledWith({ animated: false, x: 120 });
+    mockAnimatedScrollTo.mockClear();
+    await fireEvent(scrolls[0], 'begin', {});
+    await fireEvent(scrolls[0], 'update', { translationX: -120 });
+    expect(mockAnimatedScrollTo.mock.calls.filter(([, x]) => x === 120)).toHaveLength(2);
     await screen.rerender(pair(false));
+    mockAnimatedScrollTo.mockClear();
     await screen.rerender(pair(true));
-    await fireEvent(screen.getAllByTestId('topic-html-table-scroll')[1], 'contentSizeChange', 576, 100);
     expect(
-      scrollTo.mock.calls.filter(([value]) => typeof value === 'object' && value?.x === 120).length
-    ).toBeGreaterThanOrEqual(2);
-    scrollTo.mockRestore();
+      mockAnimatedScrollTo.mock.calls.some(([, x, y, animated]) => x === 120 && y === 0 && animated === false)
+    ).toBe(true);
   });
 
-  it('[REG-TOPIC-086/088] renders compiler code segments as one frame identity and shared offset', async () => {
+  it('[REG-TOPIC-086/088/093/094] renders 240 code lines in one frame with the shared pan policy', async () => {
     const lines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}\n`);
     const rows = compileForumContent({
       html: `<pre>${lines.join('')}</pre>`,
       role: 'reply',
       source: 'linuxdo'
     }).rows.filter((row): row is Extract<CompiledForumContentRow, { type: 'codeBlock' }> => row.type === 'codeBlock');
-    expect(rows.length).toBeGreaterThan(1);
-    const scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(() => undefined);
-    const pair = (showLast: boolean) => (
+    expect(rows).toHaveLength(1);
+    const screen = await render(
       <TopicTableScrollProvider>
         <TopicSplitDisclosureScope scopeKey="reply:9:body">
           <TopicContentBlock contentWidth={320} row={rows[0]} />
-          {showLast ? <TopicContentBlock contentWidth={320} row={rows.at(-1)!} /> : null}
         </TopicSplitDisclosureScope>
       </TopicTableScrollProvider>
     );
-    const screen = await render(pair(true));
-    const frames = screen.getAllByTestId('topic-code-frame');
-    const scrolls = screen.getAllByTestId('topic-code-scroll');
-    expect(StyleSheet.flatten(frames[0].props.style)).toMatchObject({
-      borderBottomWidth: 0,
-      borderTopLeftRadius: 10
+
+    expect(screen.getAllByTestId('topic-code-frame')).toHaveLength(1);
+    const codeScroll = screen.getByTestId('topic-code-scroll');
+    expect(codeScroll.props.scrollEnabled).toBe(false);
+    expect(codeScroll.props.gestureConfig).toMatchObject({
+      activeOffsetX: [-10, 10],
+      enabled: true,
+      failOffsetY: [-10, 10],
+      maxPointers: 1
     });
-    expect(StyleSheet.flatten(frames[1].props.style)).toMatchObject({
-      borderBottomLeftRadius: 10,
-      borderTopWidth: 0
-    });
-    expect(scrolls[0].props.showsHorizontalScrollIndicator).toBe(false);
-    expect(scrolls[1].props.showsHorizontalScrollIndicator).toBe(true);
+    expect(screen.getAllByRole('button', { name: '复制完整代码' })).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ copyText: lines.join(''), part: 'only', segmentIndex: 0, text: lines.join('') });
     expect(JSON.stringify(screen.toJSON())).toContain('line-1:');
     expect(JSON.stringify(screen.toJSON())).toContain('line-240:');
-
-    await fireEvent.scroll(scrolls[0], { nativeEvent: { contentOffset: { x: 84, y: 0 } } });
-    expect(scrollTo).toHaveBeenCalledWith({ animated: false, x: 84 });
-    await screen.rerender(pair(false));
-    await screen.rerender(pair(true));
-    await fireEvent(screen.getAllByTestId('topic-code-scroll')[1], 'contentSizeChange', 640, 100);
-    expect(
-      scrollTo.mock.calls.filter(([value]) => typeof value === 'object' && value?.x === 84).length
-    ).toBeGreaterThanOrEqual(2);
-    scrollTo.mockRestore();
   });
 
   it('[REG-TOPIC-088] keeps the LinuxDo 52-line decorated pre in one native code frame', async () => {

@@ -15,7 +15,7 @@ export type RootStackParamList = {
   Notifications: { source?: NotificationSource } | undefined;
   NotificationDetail: { notification: ForumNotification; identityKey: string };
   NotificationSettings: undefined;
-  Topic: { topic: Topic; targetReply?: ReplyLocationTarget };
+  Topic: { topic: Topic; targetReply?: ReplyLocationTarget; targetReplyRequestId?: number };
   ReadingSettings: undefined;
   User: { user: UserReference };
 };

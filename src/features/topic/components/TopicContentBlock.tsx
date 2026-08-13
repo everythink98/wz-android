@@ -16,7 +16,7 @@ import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from '../styles';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
 import { useTopicSplitDisclosure, useTopicTerminalReport } from '../rendering/TopicSplitDisclosure';
-import { TopicTableSemanticBoundary, useTopicSynchronizedHorizontalScroll } from '../rendering/topicTableRenderers';
+import { TopicHorizontalScroll, TopicTableSemanticBoundary } from '../rendering/topicTableRenderers';
 
 export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
 
@@ -78,7 +78,6 @@ function CodeBlock({
   row: Extract<CompiledForumContentRow, { type: 'codeBlock' }>;
 }) {
   const { settings, theme } = useReaderThemeStyles(createTopicStyles);
-  const horizontalScroll = useTopicSynchronizedHorizontalScroll(row.semanticId, row.part);
   const radius = 10;
   const terminal = row.variant === 'terminal';
   const copy = () => {
@@ -94,19 +93,14 @@ function CodeBlock({
         marginTop: row.part === 'middle' || row.part === 'last' ? 0 : 12
       }}
     >
-      <ScrollView
-        ref={horizontalScroll.scrollViewRef}
+      <TopicHorizontalScroll
         accessibilityHint="横向滑动查看完整代码"
         accessibilityLabel="代码块"
         contentContainerStyle={{ minWidth: contentWidth }}
-        contentOffset={horizontalScroll.contentOffset}
-        horizontal
-        nestedScrollEnabled
-        scrollEventThrottle={16}
+        semanticId={row.semanticId}
         showsHorizontalScrollIndicator={row.part === 'only' || row.part === 'last'}
         testID="topic-code-scroll"
-        onContentSizeChange={horizontalScroll.restoreScroll}
-        onScroll={horizontalScroll.onScroll}
+        viewportWidth={contentWidth}
       >
         <View
           style={[
@@ -135,7 +129,7 @@ function CodeBlock({
             {codeRunNodes(row.runs, query, theme.primarySoft)}
           </Text>
         </View>
-      </ScrollView>
+      </TopicHorizontalScroll>
       {row.copyText !== undefined ? (
         <Pressable
           accessibilityLabel="复制完整代码"

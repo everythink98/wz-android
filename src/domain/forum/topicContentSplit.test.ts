@@ -501,7 +501,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows[0]?.part).toBe('only');
   });
 
-  it('[REG-TOPIC-086] splits truly oversized code only between complete lines', () => {
+  it('[REG-TOPIC-093] keeps oversized code in one complete semantic owner', () => {
     const sourceLines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}\n`);
     const rows = compileForumContent({
       html: `<pre>${sourceLines.join('')}</pre>`,
@@ -512,15 +512,41 @@ describe('Android topic content splitting', () => {
       (row): row is Extract<CompiledForumContentRow, { type: 'codeBlock' }> => row.type === 'codeBlock'
     );
 
-    expect(codeRows.length).toBeGreaterThan(1);
-    expect(new Set(codeRows.map((row) => row.semanticId))).toEqual(new Set(['node-0']));
-    expect(codeRows.map((row) => row.part)).toEqual([
-      'first',
-      ...Array.from({ length: codeRows.length - 2 }, () => 'middle'),
-      'last'
-    ]);
-    expect(codeRows.map((row) => row.text).join('')).toBe(sourceLines.join(''));
-    expect(codeRows.every((row) => row.text.endsWith('\n'))).toBe(true);
+    expect(codeRows).toHaveLength(1);
+    expect(codeRows[0]).toMatchObject({
+      copyText: sourceLines.join(''),
+      part: 'only',
+      segmentIndex: 0,
+      semanticId: 'node-0',
+      text: sourceLines.join('')
+    });
+  });
+
+  it('[REG-TOPIC-093] keeps a standalone block code element as one typed owner without stealing inline code', () => {
+    const blockText = Array.from({ length: 240 }, (_, index) => `block-${index + 1}\n`).join('');
+    for (const role of ['opening', 'reply'] as const) {
+      const blockRows = compileForumContent({
+        html: `<code>${blockText}</code>`,
+        role,
+        source: 'linuxdo'
+      }).rows;
+      expect(blockRows).toHaveLength(1);
+      expect(blockRows[0]).toMatchObject({
+        copyText: blockText,
+        part: 'only',
+        segmentIndex: 0,
+        text: blockText,
+        type: 'codeBlock'
+      });
+    }
+    const inlineRows = compileForumContent({
+      html: '<p>before <code>inline</code> after</p>',
+      role: 'reply',
+      source: 'linuxdo'
+    }).rows;
+
+    expect(inlineRows).toHaveLength(1);
+    expect(inlineRows[0]).toMatchObject({ type: 'richText' });
   });
 
   it('[REG-TOPIC-088] compiles one semantic code block before planning physical rows', () => {
@@ -789,7 +815,7 @@ describe('Android topic content splitting', () => {
     });
   });
 
-  it('[REG-TOPIC-090] keeps one full-copy owner when terminal code spans physical rows', () => {
+  it('[REG-TOPIC-090][REG-TOPIC-093] keeps long terminal code in one full-copy owner', () => {
     const lines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}`);
     const html = `<forum-terminal-report><forum-terminal-tab title="Long"><div class="forum-terminal-code">${lines.join(
       '<br>'
@@ -799,14 +825,17 @@ describe('Android topic content splitting', () => {
       (row): row is Extract<CompiledForumContentRow, { type: 'codeBlock' }> => row.type === 'codeBlock'
     );
 
-    expect(codeRows.length).toBeGreaterThan(1);
-    expect(codeRows.map((row) => row.text).join('')).toBe(lines.join('\n'));
-    expect(codeRows[0]?.copyText).toBe(lines.join('\n'));
-    expect(codeRows.slice(1).every((row) => row.copyText === undefined)).toBe(true);
-    expect(codeRows.every((row) => row.variant === 'terminal')).toBe(true);
+    expect(codeRows).toHaveLength(1);
+    expect(codeRows[0]).toMatchObject({
+      copyText: lines.join('\n'),
+      part: 'only',
+      segmentIndex: 0,
+      text: lines.join('\n'),
+      variant: 'terminal'
+    });
   });
 
-  it('[REG-TOPIC-090] fail-closes only one unsafe tab body and keeps the rest of the report', () => {
+  it('[REG-TOPIC-090][REG-TOPIC-093] keeps terminal code beyond the old text budget with sibling tabs', () => {
     const html =
       '<forum-terminal-report>' +
       `<forum-terminal-tab title="Unsafe"><div class="forum-terminal-code">${'x'.repeat(
@@ -824,7 +853,14 @@ describe('Android topic content splitting', () => {
       ],
       type: 'terminalReportHeader'
     });
-    expect(rows[1]).toMatchObject({ html: '<p>内容过于复杂，请在原站查看。</p>', type: 'richText' });
+    expect(rows[1]).toMatchObject({
+      copyText: 'x'.repeat(13_000),
+      part: 'only',
+      segmentIndex: 0,
+      text: 'x'.repeat(13_000),
+      type: 'codeBlock',
+      variant: 'terminal'
+    });
     expect(rows[1]?.ancestorFrames).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'terminalTab', tabId: 'node-0-tab-0' })])
     );
@@ -947,39 +983,47 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('[REG-PERF-010] enforces node and serialized-size budgets in addition to media count', () => {
+  it('[REG-PERF-010][REG-TOPIC-093] keeps a media-free rich-text subtree in one owner beyond old budgets', () => {
     const text = '正文'.repeat(9000);
     const html = `<div>${Array.from({ length: 160 }, (_, index) => `<span>${index}</span>`).join('')}<p>${text}</p></div>`;
 
     const rows = planForumContent(html).rows;
 
-    expect(rows.length).toBeGreaterThan(2);
-    expect(rows.every((row) => domNodeCount(row.html) <= 80)).toBe(true);
-    expect(rows.every((row) => row.html.length <= 16_384)).toBe(true);
-    expect(rows.map((row) => parseHtml(row.html).text).join('')).toContain(text);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.part).toBe('only');
+    expect(rows[0]?.html).toBe(html);
+    expect(parseHtml(rows[0].html).text).toContain(text);
   });
 
-  it('[REG-PERF-010] never combines a large wrapper and child into an oversized row', () => {
+  it('[REG-TOPIC-093] does not cut a continuous rich-text owner at a serialized-size budget', () => {
     const html = `<div data-note="${'a'.repeat(9_000)}"><span>${'b'.repeat(9_000)}</span></div>`;
 
     const rows = planForumContent(html).rows;
 
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows.every((row) => row.html.length <= 16_384)).toBe(true);
-    expect(rows.map((row) => parseHtml(row.html).text).join('')).toBe('b'.repeat(9_000));
+    expect(rows).toHaveLength(1);
+    expect(parseHtml(rows[0].html).text).toBe('b'.repeat(9_000));
   });
 
-  it('[REG-PERF-010] splits oversized text without breaking an entity or Unicode grapheme', () => {
+  it('[REG-TOPIC-093] keeps oversized continuous text and its Unicode graphemes in one owner', () => {
     const visibleText = `${'a'.repeat(11_999)}👩‍💻&tail${'b'.repeat(4_500)}`;
     const html = `<p>${visibleText.replace('&', '&amp;')}</p>`;
 
     const rows = planForumContent(html).rows;
-    const rowTexts = rows.map((row) => parseHtml(row.html).text);
+    expect(rows).toHaveLength(1);
+    expect(parseHtml(rows[0].html).text).toBe(visibleText);
+    expect(rows[0]?.part).toBe('only');
+  });
 
-    expect(rows.length).toBeGreaterThan(1);
-    expect(rows.every((row) => row.html.length <= 16_384)).toBe(true);
-    expect(rowTexts.join('')).toBe(visibleText);
-    expect(rowTexts.every((text) => !/[\uD800-\uDBFF]$/.test(text) && !/^[\uDC00-\uDFFF]/.test(text))).toBe(true);
+  it('[REG-TOPIC-093] splits a mixed subtree only at discrete media boundaries', () => {
+    const leading = '前'.repeat(13_000);
+    const trailing = '后'.repeat(13_000);
+    const rows = planForumContent(
+      `<div><p>${leading}</p><img src="https://img.example/discrete.webp"><h2>${trailing}</h2></div>`
+    ).rows;
+
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.networkMediaCount)).toEqual([0, 1, 0]);
+    expect(rows.map((row) => parseHtml(row.html).text)).toEqual([leading, '', trailing]);
   });
 
   it('[REG-PERF-010] keeps an anchor identity only on the first continuation row', () => {

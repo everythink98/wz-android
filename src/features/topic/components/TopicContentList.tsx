@@ -278,6 +278,7 @@ export const TopicContentList = memo(function TopicContentList({
   read,
   session,
   targetReply,
+  targetReplyRequestId,
   topicScrollRef
 }: {
   active?: boolean;
@@ -300,6 +301,7 @@ export const TopicContentList = memo(function TopicContentList({
   read: ReturnType<typeof useTopicController>;
   session: TopicSessionController;
   targetReply?: ReplyLocationTarget;
+  targetReplyRequestId?: number;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
   const { state, commands } = session;
@@ -939,19 +941,25 @@ export const TopicContentList = memo(function TopicContentList({
     pendingReplyOrderScrollRef.current = false;
     topicScrollRef.current?.scrollToIndex({ animated: true, index: firstReplyIndex, viewPosition: 0.2 });
   }, [repliesError, repliesLoading, topicListItems, topicScrollRef]);
-  const [localTargetReply, setLocalTargetReply] = useState<{ request: number; target: ReplyLocationTarget } | null>(
-    null
-  );
-  const activeTargetReply = localTargetReply?.target || targetReply;
-  const targetReplyKeyBase =
+  const replyLocationRequestIdRef = useRef(0);
+  const [replyLocationCommand, setReplyLocationCommand] = useState<{
+    requestId: number;
+    target: ReplyLocationTarget;
+  } | null>(null);
+  const activeTargetReply = replyLocationCommand?.target || targetReply;
+  const targetReplyIdentity =
     typeof activeTargetReply?.commentId === 'number'
       ? `comment:${activeTargetReply.commentId}`
       : typeof activeTargetReply?.floor === 'number'
         ? `floor:${activeTargetReply.floor}`
         : '';
-  const targetReplyKey = localTargetReply
-    ? `${targetReplyKeyBase}:request:${localTargetReply.request}`
-    : targetReplyKeyBase;
+  const targetReplyCommandKey = replyLocationCommand
+    ? `request:${replyLocationCommand.requestId}`
+    : targetReplyIdentity
+      ? typeof targetReplyRequestId === 'number'
+        ? `route-request:${targetReplyRequestId}`
+        : `route:${targetReplyIdentity}`
+      : '';
   const targetReplyMatches = useCallback(
     (reply: Reply) =>
       typeof activeTargetReply?.commentId === 'number'
@@ -961,16 +969,16 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const targetReplyListIndex = useMemo(
     () =>
-      targetReplyKey
+      targetReplyCommandKey
         ? topicListItems.findIndex(
             (listItem) =>
               (listItem.type === 'reply' || listItem.type === 'replyStart') && targetReplyMatches(listItem.reply)
           )
         : -1,
-    [targetReplyKey, targetReplyMatches, topicListItems]
+    [targetReplyCommandKey, targetReplyMatches, topicListItems]
   );
   const targetIsOpeningPost = Boolean(
-    targetReplyKey &&
+    targetReplyCommandKey &&
     ((typeof activeTargetReply?.commentId === 'number' && topic?.commentId === activeTargetReply.commentId) ||
       (typeof activeTargetReply?.commentId !== 'number' &&
         activeTargetReply?.floor === 1 &&
@@ -983,10 +991,10 @@ export const TopicContentList = memo(function TopicContentList({
   useEffect(() => {
     handledTargetReplyRef.current = '';
     setHighlightedTargetKey('');
-  }, [detailTopicStateKey, targetReplyKey]);
+  }, [detailTopicStateKey, targetReplyCommandKey]);
   useEffect(() => {
-    setLocalTargetReply(null);
-  }, [detailTopicStateKey, targetReply?.commentId, targetReply?.floor, targetReply?.pageHint]);
+    setReplyLocationCommand(null);
+  }, [detailTopicStateKey, targetReply?.commentId, targetReply?.floor, targetReply?.pageHint, targetReplyRequestId]);
   useEffect(
     () => () => {
       if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
@@ -995,7 +1003,9 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const requestReplyLocation = useCallback(
     (target: ReplyLocationTarget) => {
-      setLocalTargetReply((current) => ({ request: (current?.request || 0) + 1, target }));
+      replyLocationRequestIdRef.current += 1;
+      const requestId = replyLocationRequestIdRef.current;
+      setReplyLocationCommand({ requestId, target });
       onCommentQueryChange('');
       onReplyFilterChange('all');
       void onLocateReply(target);
@@ -1003,21 +1013,21 @@ export const TopicContentList = memo(function TopicContentList({
     [onCommentQueryChange, onLocateReply, onReplyFilterChange]
   );
   useEffect(() => {
-    if (!targetReplyKey || !canShowReplies || handledTargetReplyRef.current === targetReplyKey) return;
+    if (!targetReplyCommandKey || !canShowReplies || handledTargetReplyRef.current === targetReplyCommandKey) return;
     if (commentQuery || replyFilter !== 'all') {
       onCommentQueryChange('');
       onReplyFilterChange('all');
       return;
     }
     if (targetIsOpeningPost) {
-      handledTargetReplyRef.current = targetReplyKey;
+      handledTargetReplyRef.current = targetReplyCommandKey;
       topicScrollRef.current?.scrollToOffset({ animated: true, offset: 0 });
       return;
     }
     if (targetReplyListIndex >= 0) {
-      handledTargetReplyRef.current = targetReplyKey;
+      handledTargetReplyRef.current = targetReplyCommandKey;
       if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
-      setHighlightedTargetKey(targetReplyKey);
+      setHighlightedTargetKey(targetReplyCommandKey);
       targetHighlightTimerRef.current = setTimeout(() => setHighlightedTargetKey(''), 1800);
       topicScrollRef.current?.scrollToIndex({
         animated: true,
@@ -1032,7 +1042,7 @@ export const TopicContentList = memo(function TopicContentList({
     onReplyFilterChange,
     replyFilter,
     targetIsOpeningPost,
-    targetReplyKey,
+    targetReplyCommandKey,
     targetReplyListIndex,
     topicScrollRef
   ]);

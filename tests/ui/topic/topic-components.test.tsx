@@ -96,9 +96,20 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
 }));
 
-jest.mock('react-native-gesture-handler', () => ({
-  ScrollView: require('react-native').ScrollView
-}));
+jest.mock('react-native-gesture-handler', () => {
+  const chain = () => {
+    const gesture: Record<string, any> = {};
+    for (const name of ['activeOffsetX', 'enabled', 'failOffsetY', 'maxPointers', 'onBegin', 'onEnd', 'onUpdate']) {
+      gesture[name] = () => gesture;
+    }
+    return gesture;
+  };
+  return {
+    Gesture: { Pan: chain },
+    GestureDetector: ({ children }: { children: React.ReactNode }) => children,
+    ScrollView: require('react-native').ScrollView
+  };
+});
 
 jest.mock('expo-video', () => ({
   VideoView: () => null,
@@ -621,7 +632,7 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('回复')).toBeNull();
   });
 
-  it('[REG-TOPIC-087] keeps reply target before every slice of a virtualized code body', async () => {
+  it('[REG-TOPIC-087] keeps reply target before the single virtualized code owner', async () => {
     const codeLines = Array.from(
       { length: 52 },
       (_, index) => `<span>code-line-${String(index + 1).padStart(2, '0')}</span>\n`

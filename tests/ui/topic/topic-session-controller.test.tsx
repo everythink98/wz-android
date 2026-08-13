@@ -100,6 +100,7 @@ function renderTopicController({
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
   showYaohuoLogin = jest.fn<(message?: string) => void>(),
   targetReply,
+  getTargetReplyRequestId = () => undefined,
   topic = firstTopic
 }: {
   getActive?: () => boolean;
@@ -115,6 +116,7 @@ function renderTopicController({
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showYaohuoLogin?: (message?: string) => void;
   targetReply?: ReplyLocationTarget;
+  getTargetReplyRequestId?: () => number | undefined;
   topic?: Topic;
 }) {
   const readerData = createEmptyReaderData();
@@ -159,6 +161,7 @@ function renderTopicController({
         showYaohuoLogin,
         readGateway: gateway,
         targetReply,
+        targetReplyRequestId: getTargetReplyRequestId(),
         topic,
         topicSession: session
       });
@@ -1722,6 +1725,30 @@ describe('topic query controller', () => {
       await expect(hook.result.current.controller.locateReply({ floor: 99 }, { silent: true })).resolves.toBe('failed');
     });
     expect(hook.result.current.controller.topicReplies).toEqual([firstReply]);
+  });
+
+  it('[REG-TOPIC-092] retries an unloaded route target when a new request command arrives', async () => {
+    let requestId = 1;
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
+      throw new Error('来源未确认目标楼层');
+    });
+    const hook = await renderTopicController({
+      getTargetReplyRequestId: () => requestId,
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => firstDetail),
+        getReplies
+      },
+      targetReply: { floor: 99 }
+    });
+
+    await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+    requestId = 2;
+    await act(async () => hook.rerender(undefined));
+    await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(2));
+    expect(getReplies.mock.calls.map(([request]) => request.position)).toEqual([
+      { kind: 'target', target: { floor: 99 } },
+      { kind: 'target', target: { floor: 99 } }
+    ]);
   });
 
   it('[REG-TOPIC-062] requires a matching comment id when the target supplies one', async () => {

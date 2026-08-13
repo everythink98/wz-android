@@ -43,6 +43,7 @@ export const TopicScreen = memo(function TopicScreen({
   read,
   session,
   targetReply,
+  targetReplyRequestId,
   topicScrollRef
 }: {
   active?: boolean;
@@ -79,6 +80,7 @@ export const TopicScreen = memo(function TopicScreen({
   read: ReturnType<typeof useTopicController>;
   session: TopicSessionController;
   targetReply?: ReplyLocationTarget;
+  targetReplyRequestId?: number;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
   const { state, commands } = session;
@@ -213,6 +215,7 @@ export const TopicScreen = memo(function TopicScreen({
         read={read}
         session={session}
         targetReply={targetReply}
+        targetReplyRequestId={targetReplyRequestId}
         topicScrollRef={topicScrollRef}
       />
       <TopicMenu

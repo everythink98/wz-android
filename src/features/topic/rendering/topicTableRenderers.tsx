@@ -1,13 +1,16 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
-import {
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  ScrollView,
-  StyleSheet,
-  View,
-  type StyleProp,
-  type ViewStyle
-} from 'react-native';
+import { createContext, type ComponentRef, type ReactNode, useCallback, useContext, useMemo } from 'react';
+import { StyleSheet, View, type AccessibilityActionEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  cancelAnimation,
+  makeMutable,
+  scrollTo,
+  useAnimatedReaction,
+  useAnimatedRef,
+  useSharedValue,
+  withDecay,
+  type SharedValue
+} from 'react-native-reanimated';
 import { useContentWidth, type CustomBlockRenderer } from 'react-native-render-html';
 import type { ForumContentPart } from '@/domain/forum/topicContentSplit';
 import type { HtmlRenderers } from './types';
@@ -21,10 +24,8 @@ type TopicTableNode = {
   parent?: TopicTableNode | null;
   tagName?: string | null;
 };
-type TopicTableScrollHandle = Pick<ScrollView, 'scrollTo'>;
 type TopicTableScrollStore = {
-  offsets: Map<string, number>;
-  views: Map<string, Set<TopicTableScrollHandle>>;
+  offsets: Map<string, SharedValue<number>>;
 };
 type TopicTableRendererStyles = {
   htmlTableFrame: StyleProp<ViewStyle>;
@@ -42,7 +43,7 @@ const TopicTableSemanticContext = createContext<TopicTableSemanticIdentity | nul
 const TopicTableScrollContext = createContext<TopicTableScrollStore | null>(null);
 
 export function TopicTableScrollProvider({ children }: { children: ReactNode }) {
-  const store = useMemo<TopicTableScrollStore>(() => ({ offsets: new Map(), views: new Map() }), []);
+  const store = useMemo<TopicTableScrollStore>(() => ({ offsets: new Map() }), []);
   return <TopicTableScrollContext.Provider value={store}>{children}</TopicTableScrollContext.Provider>;
 }
 
@@ -119,48 +120,125 @@ function frameContinuationStyle(part: ForumContentPart, style: ViewStyle): ViewS
   };
 }
 
-export function useTopicSynchronizedHorizontalScroll(semanticId: string, part: ForumContentPart) {
+function useTopicHorizontalOffset(semanticId: string) {
   const scopeKey = useTopicSplitDisclosureScopeKey();
   const store = useContext(TopicTableScrollContext);
-  const scrollViewRef = useRef<ScrollView>(null);
-  const syncKey = store && scopeKey && semanticId && part !== 'only' ? `${scopeKey}\u0000${semanticId}` : '';
+  const localOffset = useSharedValue(0);
+  const syncKey = store && scopeKey && semanticId ? `${scopeKey}\u0000${semanticId}` : '';
+  return useMemo(() => {
+    if (!store || !syncKey) return localOffset;
+    const current = store.offsets.get(syncKey) || makeMutable(0);
+    store.offsets.set(syncKey, current);
+    return current;
+  }, [localOffset, store, syncKey]);
+}
 
-  useEffect(() => {
-    const view = scrollViewRef.current;
-    if (!store || !syncKey || !view) return;
-    const views = store.views.get(syncKey) || new Set<TopicTableScrollHandle>();
-    views.add(view);
-    store.views.set(syncKey, views);
-    return () => {
-      views.delete(view);
-      if (!views.size) store.views.delete(syncKey);
-    };
-  }, [store, syncKey]);
+export function TopicHorizontalScroll({
+  accessibilityHint = '横向滑动查看更多',
+  accessibilityLabel,
+  children,
+  contentContainerStyle,
+  contentWidth,
+  enabled = true,
+  semanticId,
+  showsHorizontalScrollIndicator = true,
+  style,
+  testID,
+  viewportWidth
+}: {
+  accessibilityHint?: string;
+  accessibilityLabel: string;
+  children: ReactNode;
+  contentContainerStyle?: StyleProp<ViewStyle>;
+  contentWidth?: number;
+  enabled?: boolean;
+  semanticId: string;
+  showsHorizontalScrollIndicator?: boolean;
+  style?: StyleProp<ViewStyle>;
+  testID: string;
+  viewportWidth: number;
+}) {
+  const offset = useTopicHorizontalOffset(semanticId);
+  const initialMaximum = contentWidth === undefined ? 0 : Math.max(0, contentWidth - viewportWidth);
+  const maximumOffset = useSharedValue(initialMaximum);
+  const gestureStartOffset = useSharedValue(0);
+  const scrollViewRef = useAnimatedRef<ComponentRef<typeof Animated.ScrollView>>();
 
-  const onScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (!store || !syncKey) return;
-      const offset = event.nativeEvent.contentOffset.x;
-      if (!Number.isFinite(offset) || offset < 0 || Math.abs((store.offsets.get(syncKey) || 0) - offset) <= 0.5) return;
-      store.offsets.set(syncKey, offset);
-      store.views.get(syncKey)?.forEach((view) => {
-        if (view !== scrollViewRef.current) view.scrollTo({ animated: false, x: offset });
-      });
+  useAnimatedReaction(
+    () => offset.value,
+    (currentOffset, previousOffset) => {
+      if (currentOffset !== 0 || previousOffset !== null) scrollTo(scrollViewRef, currentOffset, 0, false);
     },
-    [store, syncKey]
+    [offset, scrollViewRef]
   );
-  const restoreScroll = useCallback(() => {
-    if (!store || !syncKey) return;
-    const offset = store.offsets.get(syncKey);
-    if (offset !== undefined) scrollViewRef.current?.scrollTo({ animated: false, x: offset });
-  }, [store, syncKey]);
 
-  return {
-    contentOffset: { x: syncKey ? store?.offsets.get(syncKey) || 0 : 0, y: 0 },
-    onScroll,
-    restoreScroll,
-    scrollViewRef
-  };
+  const horizontalPan = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(enabled)
+        .maxPointers(1)
+        .activeOffsetX([-10, 10])
+        .failOffsetY([-10, 10])
+        .onBegin(() => {
+          'worklet';
+          cancelAnimation(offset);
+          gestureStartOffset.value = offset.value;
+        })
+        .onUpdate((event) => {
+          'worklet';
+          offset.value = Math.max(0, Math.min(maximumOffset.value, gestureStartOffset.value - event.translationX));
+        })
+        .onEnd((event) => {
+          'worklet';
+          offset.value = withDecay({ clamp: [0, maximumOffset.value], velocity: -event.velocityX });
+        }),
+    [enabled, gestureStartOffset, maximumOffset, offset]
+  );
+  const handleContentSizeChange = useCallback(
+    (width: number) => {
+      const maximum = Number.isFinite(width) ? Math.max(0, width - viewportWidth) : 0;
+      maximumOffset.value = maximum;
+      if (offset.value > maximum) offset.value = maximum;
+    },
+    [maximumOffset, offset, viewportWidth]
+  );
+  const handleAccessibilityAction = useCallback(
+    ({ nativeEvent }: AccessibilityActionEvent) => {
+      const direction = nativeEvent.actionName === 'increment' ? 1 : nativeEvent.actionName === 'decrement' ? -1 : 0;
+      if (!direction) return;
+      const step = Math.max(48, viewportWidth * 0.8);
+      offset.value = Math.max(0, Math.min(maximumOffset.value, offset.value + direction * step));
+    },
+    [maximumOffset, offset, viewportWidth]
+  );
+  return (
+    <GestureDetector gesture={horizontalPan}>
+      <Animated.ScrollView
+        ref={scrollViewRef}
+        accessibilityActions={
+          enabled
+            ? [
+                { label: '向左滚动', name: 'decrement' },
+                { label: '向右滚动', name: 'increment' }
+              ]
+            : undefined
+        }
+        accessibilityHint={enabled ? accessibilityHint : undefined}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityRole={enabled ? 'adjustable' : undefined}
+        contentContainerStyle={contentContainerStyle}
+        horizontal
+        scrollEnabled={false}
+        showsHorizontalScrollIndicator={enabled && showsHorizontalScrollIndicator}
+        style={style}
+        testID={testID}
+        onAccessibilityAction={handleAccessibilityAction}
+        onContentSizeChange={handleContentSizeChange}
+      >
+        {children}
+      </Animated.ScrollView>
+    </GestureDetector>
+  );
 }
 
 export function createTopicTableRenderers({
@@ -196,26 +274,20 @@ export function createTopicTableRenderers({
     );
     const safeContentWidth = Number.isFinite(contentWidth) && contentWidth > 0 ? contentWidth : minColumnWidth;
     const tableWidth = Math.max(safeContentWidth, columns * Math.max(1, minColumnWidth));
-    const horizontalScroll = useTopicSynchronizedHorizontalScroll(semantic?.semanticId || '', part);
     const overflow = tableWidth > safeContentWidth + StyleSheet.hairlineWidth;
     const frameStyle = StyleSheet.flatten(styles.htmlTableFrame) as ViewStyle;
 
     return (
-      <ScrollView
-        ref={horizontalScroll.scrollViewRef}
-        accessibilityHint={overflow ? '横向滑动查看更多' : undefined}
+      <TopicHorizontalScroll
         accessibilityLabel="表格"
         contentContainerStyle={[styles.htmlTableScrollContent, { width: tableWidth }]}
-        contentOffset={horizontalScroll.contentOffset}
-        horizontal
-        nestedScrollEnabled
-        scrollEnabled={overflow}
-        scrollEventThrottle={16}
+        contentWidth={tableWidth}
+        enabled={overflow}
+        semanticId={semantic?.semanticId || ''}
         showsHorizontalScrollIndicator={overflow && (part === 'only' || part === 'last')}
         style={styles.htmlTableScroll}
         testID="topic-html-table-scroll"
-        onContentSizeChange={horizontalScroll.restoreScroll}
-        onScroll={horizontalScroll.onScroll}
+        viewportWidth={safeContentWidth}
       >
         <View
           style={[styles.htmlTableFrame, frameContinuationStyle(part, frameStyle), { width: tableWidth }]}
@@ -225,7 +297,7 @@ export function createTopicTableRenderers({
             <TDefaultRenderer {...props} style={[props.style, { width: tableWidth }]} />
           </TopicTableLayoutContext.Provider>
         </View>
-      </ScrollView>
+      </TopicHorizontalScroll>
     );
   };
 
