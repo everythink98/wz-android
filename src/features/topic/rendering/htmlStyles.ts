@@ -219,9 +219,7 @@ export function buildHtmlRenderingStyles({
       backgroundColor: theme.surface2
     },
     table: {
-      backgroundColor: 'transparent',
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth
+      backgroundColor: 'transparent'
     },
     tr: {
       flexDirection: 'row',
@@ -230,19 +228,19 @@ export function buildHtmlRenderingStyles({
     th: {
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderRightWidth: StyleSheet.hairlineWidth,
       flexShrink: 0,
       paddingHorizontal: 8,
-      paddingVertical: 7,
-      width: 118
+      paddingVertical: 7
     },
     td: {
       borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderRightWidth: StyleSheet.hairlineWidth,
       flexShrink: 0,
       paddingHorizontal: 8,
-      paddingVertical: 7,
-      width: 118
+      paddingVertical: 7
     }
   };
   const htmlClassesStyles: HtmlClassesStyles = {

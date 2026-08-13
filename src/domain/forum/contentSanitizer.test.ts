@@ -76,4 +76,17 @@ describe('forum content sanitizer media referrer policy', () => {
     expect(html).not.toContain('hidden attribute content');
     expect(html).not.toContain('hidden display content');
   });
+
+  it('[REG-TOPIC-090] preserves semantic siblings around a pre inside a magic-tab terminal container', () => {
+    const html = sanitizeContentHtml(
+      '<div class="nsk-magic-tabs"><div class="nsk-magic-tab-title">Report</div><div class="nsk-magic-tab-body"><div class="terminal-container"><pre>terminal output</pre><p>explanation</p><table><tbody><tr><td>value</td></tr></tbody></table></div></div></div>',
+      'https://www.nodeseek.com/post-1-1'
+    );
+
+    expect(html).toContain('<forum-terminal-report>');
+    expect(html).toContain('<div class="forum-terminal-code">terminal&nbsp;output</div>');
+    expect(html).toContain('<p>explanation</p>');
+    expect(html).toContain('<table><tbody><tr><td>value</td></tr></tbody></table>');
+    expect(html).not.toContain('terminal-container');
+  });
 });

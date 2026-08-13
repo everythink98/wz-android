@@ -1,11 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, Text, View, type ImageURISource } from 'react-native';
-import {
-  getNativePropsForTNode,
-  TChildrenRenderer,
-  type CustomBlockRenderer,
-  type CustomMixedRenderer
-} from 'react-native-render-html';
+import { getNativePropsForTNode, type CustomBlockRenderer, type CustomMixedRenderer } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { createTopicImageDeriver } from '../model/topicDerivedData';
 import { imageSourceFromUrl, isHttpOrHttpsUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
@@ -24,24 +19,11 @@ import type { HtmlRenderers, HtmlRenderersProps } from './types';
 import { buildHtmlRenderingStyles, createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
-import { ForumCallout } from '@/ui/content/ForumCallout';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
-import {
-  DISCOURSE_CALLOUT_ATTRIBUTE,
-  DISCOURSE_CALLOUT_CONTENT_CLASS,
-  DISCOURSE_CALLOUT_FOLD_ATTRIBUTE,
-  DISCOURSE_CALLOUT_TITLE_CLASS,
-  DISCOURSE_CALLOUT_TYPE_ATTRIBUTE,
-  DISCOURSE_CALLOUT_REGISTRY,
-  isDiscourseCalloutType,
-  type DiscourseCalloutFold
-} from '@/domain/forum/callouts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { createContentMediaRenderers } from './contentMediaRenderers';
 import { createPreviewRenderers } from './previewRenderers';
-import { createTerminalRenderers, terminalNodeHasClass, terminalNodeTagName, tnodeText } from './terminalRenderers';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
-import { useTopicSplitDisclosure } from './TopicSplitDisclosure';
 
 export function useHtmlRenderingController({
   mediaSessionIdentity,
@@ -175,55 +157,11 @@ export function useHtmlRenderingController({
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
     const BlockquoteRenderer: CustomBlockRenderer = (props) => {
       const boundarySpacing = useContentBoundarySpacing(props.tnode);
-      const renderOrdinaryQuote = () => {
-        const { InternalRenderer, ...internalRendererProps } = props;
-        return (
-          <InternalRenderer
-            {...internalRendererProps}
-            style={boundarySpacing ? { ...props.style, ...boundarySpacing } : props.style}
-          />
-        );
-      };
-      const attributes = props.tnode.attributes || {};
-      const type = attributes[DISCOURSE_CALLOUT_TYPE_ATTRIBUTE];
-      const foldValue = attributes[DISCOURSE_CALLOUT_FOLD_ATTRIBUTE];
-      const disclosure = useTopicSplitDisclosure({
-        attributes,
-        defaultExpanded: foldValue !== 'collapsed',
-        kind: 'callout'
-      });
-      if (
-        !isDiscourseSource(mediaContext.contentSource) ||
-        attributes[DISCOURSE_CALLOUT_ATTRIBUTE] !== 'true' ||
-        !isDiscourseCalloutType(type) ||
-        (foldValue !== undefined && foldValue !== 'collapsed' && foldValue !== 'expanded')
-      ) {
-        return renderOrdinaryQuote();
-      }
-      const titleNodes = props.tnode.children.filter(
-        (child) => terminalNodeTagName(child) === 'div' && terminalNodeHasClass(child, DISCOURSE_CALLOUT_TITLE_CLASS)
-      );
-      const contentNodes = props.tnode.children.filter(
-        (child) => terminalNodeTagName(child) === 'div' && terminalNodeHasClass(child, DISCOURSE_CALLOUT_CONTENT_CLASS)
-      );
-      if ((disclosure.headerVisible ? titleNodes.length !== 1 : titleNodes.length !== 0) || contentNodes.length > 1) {
-        return renderOrdinaryQuote();
-      }
-      const titleNode = titleNodes[0];
-      const contentNode = contentNodes[0];
+      const { InternalRenderer, ...internalRendererProps } = props;
       return (
-        <ForumCallout
-          body={contentNode ? <TChildrenRenderer tchildren={[contentNode]} /> : undefined}
-          boundarySpacing={boundarySpacing}
-          expanded={disclosure.expanded}
-          fold={foldValue as DiscourseCalloutFold | undefined}
-          foldable={disclosure.shared && disclosure.headerVisible && foldValue !== undefined ? true : undefined}
-          headerVisible={disclosure.headerVisible}
-          onExpandedChange={disclosure.toggle}
-          theme={theme}
-          title={titleNode ? <TChildrenRenderer tchildren={[titleNode]} /> : null}
-          titleLabel={titleNode ? tnodeText(titleNode) || DISCOURSE_CALLOUT_REGISTRY[type].title : ''}
-          type={type}
+        <InternalRenderer
+          {...internalRendererProps}
+          style={boundarySpacing ? { ...props.style, ...boundarySpacing } : props.style}
         />
       );
     };
@@ -299,7 +237,6 @@ export function useHtmlRenderingController({
         theme,
         webViewBlockMessage
       }),
-      ...createTerminalRenderers(theme),
       ...createPreviewRenderers({
         htmlBaseStyle,
         htmlRendererStyles,

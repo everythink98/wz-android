@@ -165,8 +165,23 @@ describe('portable Discourse content parts', () => {
     expect(html).toContain('<blockquote><p>Ordinary outer quote</p><blockquote data-forum-callout="true"');
     expect(html).toContain('<a href="https://linux.do/guide"><img src="https://linux.do/tip.png" alt="tip">Guide</a>');
     expect(html).toContain('<ul><li>List</li></ul>');
-    expect(html).toContain('<div class="forum-terminal-code">const&nbsp;value&nbsp;=&nbsp;1;</div>');
+    expect(html).toContain('<pre><code>const value = 1;</code></pre>');
     expect(html).toContain('<table><tbody><tr><td>Cell</td></tr></tbody></table>');
+  });
+
+  it('[REG-TOPIC-089] preserves a source pre for semantic compilation before row budgeting', () => {
+    const sourceText = Array.from(
+      { length: 52 },
+      (_, index) => `${String(index + 1).padStart(2, '0')}.${' '.repeat(50)}code-line-${index + 1}\n`
+    ).join('');
+    const html = sanitizeLinuxDoContentHtml(`<pre><code class="lang-auto">${sourceText}</code></pre><p>after</p>`, []);
+    const rows = compileForumContent({ html, role: 'reply', source: 'linuxdo' }).rows;
+    const codeRows = rows.filter((row) => row.type === 'codeBlock');
+
+    expect(html).toContain('<pre><code class="lang-auto">');
+    expect(html).not.toContain('forum-terminal-code');
+    expect(codeRows).toHaveLength(1);
+    expect(codeRows[0]?.type === 'codeBlock' ? codeRows[0].text : '').toBe(sourceText);
   });
 
   it('[REG-TOPIC-056] ignores forged semantics and caps nested Callouts at 100', () => {
@@ -226,10 +241,11 @@ describe('portable Discourse content parts', () => {
     const first = { name: 'first', options: [{ id: 'a', label: 'A' }] };
     const second = { name: 'second', options: [{ id: 'b', label: 'B' }] };
     const html = `<p>before</p>${discoursePollPlaceholder('first')}<p>after</p>`;
+    const rows = compileForumContent({ html, polls: [first, second], role: 'reply', source: 'linuxdo' }).rows;
 
     expect(
-      compileForumContent({ html, polls: [first, second], role: 'reply', source: 'linuxdo' }).rows.map((row) =>
-        row.type === 'poll' ? `poll:${row.poll.name}` : row.type === 'quote' ? 'quote' : row.html
+      rows.map((row) =>
+        row.type === 'poll' ? `poll:${row.poll.name}` : row.type === 'quote' ? 'quote' : 'html' in row ? row.html : ''
       )
     ).toEqual([
       '<div class="forum-reply-content"><p>before</p></div>',
@@ -237,6 +253,9 @@ describe('portable Discourse content parts', () => {
       '<div class="forum-reply-content"><p>after</p></div>',
       'poll:second'
     ]);
+    const contentRows = rows.filter((row) => row.type === 'richText');
+    expect(contentRows.map((row) => row.part)).toEqual(['only', 'only']);
+    expect(contentRows.every((row) => !row.html.includes('data-wz-'))).toBe(true);
   });
 
   it('escapes poll names used in placeholder attributes', () => {

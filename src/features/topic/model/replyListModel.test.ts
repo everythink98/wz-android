@@ -37,6 +37,52 @@ const listCases: [string, boolean, TopicReplyListItem[], boolean, TopicReplyList
 ];
 
 describe('topic reply list model', () => {
+  it('[REG-TOPIC-090] preserves terminal rows in reply, signature, and expanded complete-quote consumers', () => {
+    const report = (label: string) =>
+      `<forum-terminal-report><forum-terminal-tab title="${label}"><div class="forum-terminal-code">${label} result</div></forum-terminal-tab></forum-terminal-report>`;
+    const reference = { source: 'linuxdo' as const, topicId: 'quoted', postNumber: 4 };
+    const owner: Reply = {
+      ...reply,
+      commentId: 90,
+      contentHtml: report('body'),
+      quotedPosts: [{ reference }],
+      signatureHtml: report('signature')
+    };
+    const instanceKey = replyQuotedPostInstanceKey(getReplyKey(owner), reference);
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: { [instanceKey]: true },
+      loadedQuotedReplies: {
+        'linuxdo:quoted:4': { ...reply, contentHtml: report('quote'), floor: 4 }
+      },
+      loadingQuotedFloors: {},
+      primedQuoteContentTokens: new Map([[instanceKey, 'unused']]),
+      replies: [owner],
+      repliesByFloor: new Map(),
+      source: 'linuxdo',
+      topicId: 'owner'
+    });
+    const types = (kind: 'replyContent' | 'replyQuoteContent' | 'replySignatureContent') =>
+      items.flatMap((item) => (item.type === kind && 'content' in item ? [item.content.type] : []));
+
+    expect(types('replyContent')).toEqual(['terminalReportHeader', 'codeBlock']);
+    expect(types('replySignatureContent')).toEqual(['terminalReportHeader', 'codeBlock']);
+    expect(types('replyQuoteContent')).toEqual(['terminalReportHeader', 'codeBlock']);
+  });
+
+  it('[REG-TOPIC-088] treats absent signature content as a neutral single-cell budget', () => {
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [reply],
+      repliesByFloor: new Map(),
+      source: 'nodeseek',
+      topicId: '42'
+    });
+
+    expect(items).toEqual([expect.objectContaining({ plannedRowCount: 1, reply, type: 'reply' })]);
+  });
+
   it('[REG-PERF-010] promotes a poll-only reply into a parent-list content row', () => {
     const poll = { name: 'choice', options: [{ id: 'yes', label: 'Yes' }] };
     const items = buildVirtualizedReplyItems({
@@ -76,11 +122,9 @@ describe('topic reply list model', () => {
     expect(items.at(-1)?.type).toBe('replyEnd');
     const bodyRows = items.filter((item) => item.type === 'replyContent');
     expect(bodyRows).toHaveLength(500);
-    expect(bodyRows.map((item) => (item.content.type === 'html' ? item.content.networkMediaCount : 0))).toEqual(
-      Array.from({ length: 500 }, () => 4)
-    );
+    expect(bodyRows.map((item) => item.content.networkMediaCount)).toEqual(Array.from({ length: 500 }, () => 4));
     expect(
-      bodyRows.every((item) => item.content.type === 'html' && (item.content.html.match(/<img\b/g) || []).length <= 4)
+      bodyRows.every((item) => 'html' in item.content && (item.content.html.match(/<img\b/g) || []).length <= 4)
     ).toBe(true);
   });
 
@@ -107,9 +151,11 @@ describe('topic reply list model', () => {
     expect(items.map((item) => item.type)).toEqual(['replyStart', 'replyContent', 'replySignatureContent', 'replyEnd']);
     expect(items.find((item) => item.type === 'replyContent')?.content).toMatchObject({
       networkMediaCount: 4,
-      type: 'html'
+      type: 'richText'
     });
-    expect(items.find((item) => item.type === 'replySignatureContent')).toMatchObject({ networkMediaCount: 4 });
+    expect(items.find((item) => item.type === 'replySignatureContent')).toMatchObject({
+      content: { networkMediaCount: 4, type: 'richText' }
+    });
   });
 
   it('[REG-PERF-010] keeps a cheap body and short signature on the ordinary single-cell path', () => {
@@ -218,30 +264,33 @@ describe('topic reply list model', () => {
     });
 
     const body = items.filter(
-      (item): item is Extract<TopicReplyListItem, { type: 'replyContent' }> =>
-        item.type === 'replyContent' && item.content.type === 'html'
+      (item): item is Extract<TopicReplyListItem, { type: 'replyContent' }> => item.type === 'replyContent'
     );
     const signature = items.filter((item) => item.type === 'replySignatureContent');
     const quote = items.filter(
-      (item): item is Extract<TopicReplyListItem, { type: 'replyQuoteContent' }> =>
-        item.type === 'replyQuoteContent' && item.content.type === 'html'
+      (item): item is Extract<TopicReplyListItem, { type: 'replyQuoteContent' }> => item.type === 'replyQuoteContent'
     );
 
-    expect(body).toHaveLength(3);
-    expect(signature).toHaveLength(3);
-    expect(signature).toEqual([
-      expect.objectContaining({ continuation: 'first' }),
-      expect.objectContaining({ continuation: 'middle' }),
-      expect.objectContaining({ continuation: 'last' })
+    expect(body).toHaveLength(4);
+    expect(body.map((item) => item.content.type)).toEqual(['disclosureHeader', 'richText', 'richText', 'richText']);
+    expect(signature).toHaveLength(4);
+    expect(signature.map((item) => item.content.type)).toEqual([
+      'disclosureHeader',
+      'richText',
+      'richText',
+      'richText'
     ]);
-    expect(quote).toHaveLength(2);
-    expect(new Set(body.map((item) => item.content.type === 'html' && item.content.groupKey))).toEqual(
-      new Set(['0:block-0'])
-    );
-    expect(new Set(signature.map((item) => item.groupKey))).toEqual(new Set(['block-0']));
-    expect(new Set(quote.map((item) => item.content.type === 'html' && item.content.groupKey))).toEqual(
-      new Set(['0:block-0'])
-    );
+    expect(quote.map((item) => item.content.type)).toEqual(['disclosureHeader', 'richText']);
+    [body, signature, quote].forEach((contentRows) => {
+      expect(contentRows[0]?.content.semanticId).toBe('node-0');
+      expect(
+        contentRows
+          .slice(1)
+          .every((item) =>
+            item.content.ancestorFrames.some((frame) => frame.kind === 'details' && frame.semanticId === 'node-0')
+          )
+      ).toBe(true);
+    });
   });
 
   it.each([
@@ -279,20 +328,23 @@ describe('topic reply list model', () => {
         topicId: '863651'
       });
 
-      expect(items.map((item) => item.type)).toEqual([
-        'replyStart',
-        'replyContent',
-        'replySignatureContent',
-        'replyEnd'
-      ]);
-      const body = items.find((item) => item.type === 'replyContent');
-      const signature = items.find((item) => item.type === 'replySignatureContent');
-      expect(body?.content).toMatchObject({ type: 'html', networkMediaCount: 0 });
-      expect(body?.content.type === 'html' ? body.content.html : '').toContain(expectedBodyHtml);
-      expect(body?.content.type === 'html' ? body.content.html : '').toContain('class="forum-reply-content"');
-      expect(signature?.html).toContain(expectedSignatureHtml);
-      expect(signature?.html).toContain('class="forum-reply-content"');
-      expect(items.at(-1)).toMatchObject({ bodyVirtualized: true, signatureVirtualized: true });
+      expect(items).toHaveLength(1);
+      const rendered = items[0];
+      expect(rendered).toMatchObject({ networkMediaCount: 0, plannedRowCount: 2, type: 'reply' });
+      if (rendered?.type !== 'reply') throw new Error('Expected a coalesced reply item.');
+      expect(rendered.bodyContent).toMatchObject({ type: 'richText', networkMediaCount: 0 });
+      expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
+        expectedBodyHtml
+      );
+      expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
+        'class="forum-reply-content"'
+      );
+      expect(
+        rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
+      ).toContain(expectedSignatureHtml);
+      expect(
+        rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
+      ).toContain('class="forum-reply-content"');
     }
   );
 

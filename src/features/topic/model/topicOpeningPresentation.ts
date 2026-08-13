@@ -4,8 +4,8 @@ import { textContentFromHtml } from '@/domain/forum/html';
 import { forumAccessRequirementText } from '@/domain/forum/presentation';
 import {
   compileForumContent,
-  type ForumContentCompileRole,
-  type ForumContentRendering
+  type CompiledForumContentRow,
+  type ForumContentCompileRole
 } from '@/domain/forum/topicContentSplit';
 import {
   quotedPostReferenceFromReply,
@@ -15,36 +15,19 @@ import {
 } from '@/domain/forum/quotedPosts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { stableTextHash } from './contentIdentity';
-import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
+
+export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
 
 export type TopicContentItem =
-  | {
-      type: 'content';
-      key: string;
-      html: string;
-      rendering?: ForumContentRendering;
-      groupKey: string;
-      continuation: 'only' | 'first' | 'middle' | 'last';
-      networkMediaCount: number;
-    }
-  | {
-      type: 'contentVideo';
-      key: string;
-      src: string;
-      groupKey: string;
-      continuation: 'only' | 'first' | 'middle' | 'last';
-      networkMediaCount: number;
-      poster?: string;
-      rendering?: ForumContentRendering;
-      referrerPolicy?: MediaReferrerPolicy;
-    }
+  | { type: 'content'; key: string; row: TopicRenderableContentRow }
   | {
       type: 'quoteSummary';
       key: string;
       instanceKey: string;
       quote: QuotedPostMetadata;
+      row: Extract<CompiledForumContentRow, { type: 'quote' }>;
     }
-  | { type: 'poll'; key: string; poll: TopicPoll }
+  | { type: 'poll'; key: string; poll: TopicPoll; row: Extract<CompiledForumContentRow, { type: 'poll' }> }
   | { type: 'accessNotice'; key: string; label: string; detail: string };
 
 export type AcceptedAnswerPresentation = {
@@ -86,7 +69,8 @@ function plannedContentItems({
       return {
         type: 'poll',
         key: `${keyPrefix}-poll-${row.poll.name || row.poll.id || row.keySuffix}`,
-        poll: row.poll
+        poll: row.poll,
+        row
       };
     }
     if (row.type === 'quote') {
@@ -96,30 +80,14 @@ function plannedContentItems({
         type: 'quoteSummary',
         key: `${keyPrefix}-quote-${index}-${referenceKey}`,
         instanceKey: topicQuotedPostInstanceKey(topicId!, row.quote.reference),
-        quote: row.quote
-      };
-    }
-    if (row.type === 'video') {
-      return {
-        type: 'contentVideo',
-        key: `${keyPrefix}-video-${row.keySuffix}-${stableTextHash(row.src)}`,
-        continuation: row.continuation,
-        groupKey: row.groupKey,
-        networkMediaCount: row.networkMediaCount,
-        poster: row.poster,
-        referrerPolicy: row.referrerPolicy,
-        rendering: row.rendering,
-        src: row.src
+        quote: row.quote,
+        row
       };
     }
     return {
       type: 'content',
-      key: `${keyPrefix}-content-${row.keySuffix}-${stableTextHash(row.html)}`,
-      continuation: row.continuation,
-      groupKey: row.groupKey,
-      html: row.html,
-      rendering: row.rendering,
-      networkMediaCount: row.networkMediaCount
+      key: `${keyPrefix}-${row.type}-${row.semanticId}-${row.segmentIndex}`,
+      row
     };
   });
 }
@@ -190,10 +158,27 @@ export function buildAcceptedAnswerContentItems({
 }) {
   const fullItems = plannedReplyContentItems(reply, source, `accepted-answer-${floor}`, 'accepted-answer');
   const firstItem = fullItems[0];
+  const terminalDefaultTabId =
+    firstItem?.type === 'content' && firstItem.row.type === 'terminalReportHeader' ? firstItem.row.defaultTabId : '';
+  const firstTerminalBody = terminalDefaultTabId
+    ? fullItems
+        .slice(1)
+        .find(
+          (item) =>
+            'row' in item &&
+            item.row.ancestorFrames.some(
+              (frame) => frame.kind === 'terminalTab' && frame.tabId === terminalDefaultTabId
+            )
+        )
+    : undefined;
   const firstAdditionalPoll = fullItems.slice(1).find((item) => item.type === 'poll');
   return {
     fullItems,
-    previewItems: [firstItem, firstAdditionalPoll].filter((item): item is TopicContentItem => Boolean(item))
+    previewItems: Array.from(
+      new Set(
+        [firstItem, firstTerminalBody, firstAdditionalPoll].filter((item): item is TopicContentItem => Boolean(item))
+      )
+    )
   };
 }
 

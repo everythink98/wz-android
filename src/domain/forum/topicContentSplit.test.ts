@@ -1,18 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseHtml } from './html';
-import { compileForumContent, type CompiledForumContent, type CompiledForumContentRow } from './topicContentSplit';
+import {
+  compileForumContent,
+  type CompiledForumContent,
+  type CompiledForumContentRow,
+  type ForumContentAncestorFrame
+} from './topicContentSplit';
 
 function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
-  return compilation.rows.filter(
-    (row): row is Extract<CompiledForumContentRow, { type: 'html' | 'video' }> =>
-      row.type === 'html' || row.type === 'video'
-  );
+  return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
 }
 
-function planForumContent(html: string | undefined) {
-  const compilation = compileForumContent({ html, role: 'opening', source: 'nodeseek' });
+function planForumContent(html: string | undefined, source: 'linuxdo' | 'nodeseek' = 'nodeseek'): { rows: any[] } {
+  const compilation = compileForumContent({ html, role: 'opening', source });
   return {
-    rows: compilation.rows.flatMap((row) => {
+    rows: compilation.rows.flatMap<any>((row) => {
       if (row.type === 'poll' || row.type === 'quote') return [];
       const { type: _type, ...plannedRow } = row;
       if ('src' in plannedRow) {
@@ -22,6 +24,17 @@ function planForumContent(html: string | undefined) {
       return [plannedRow];
     })
   };
+}
+
+function logicalSliceForTag(
+  row: CompiledForumContentRow,
+  kind: 'blockquote' | 'callout' | 'details' | 'list' | 'listItem'
+) {
+  return row.ancestorFrames.find((frame) => frame.kind === kind);
+}
+
+function withoutCompilerBindings(html: string) {
+  return html.replace(/\s+data-wz-node="[^"]*"/g, '');
 }
 
 function maxElementDepth(html: string) {
@@ -120,7 +133,7 @@ describe('Android topic content splitting', () => {
       topicId: '77'
     });
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(['html', 'quote', 'html', 'poll', 'html']);
+    expect(compilation.rows.map((row) => row.type)).toEqual(['richText', 'quote', 'richText', 'poll', 'richText']);
     expect(compilation.rows[1]).toMatchObject({
       type: 'quote',
       quote: {
@@ -139,16 +152,14 @@ describe('Android topic content splitting', () => {
 
     const compilation = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(['html', 'poll', 'html']);
-    expect(compilation.rows[0]).toMatchObject({
-      html: '<div class="forum-reply-content"><section><p>before</p></section></div>',
-      type: 'html'
-    });
+    expect(compilation.rows.map((row) => row.type)).toEqual(['richText', 'poll', 'richText']);
+    expect(compilation.rows[0]?.type === 'richText' ? withoutCompilerBindings(compilation.rows[0].html) : '').toBe(
+      '<div class="forum-reply-content"><section><p>before</p></section></div>'
+    );
     expect(compilation.rows[1]).toMatchObject({ poll, type: 'poll' });
-    expect(compilation.rows[2]).toMatchObject({
-      html: '<div class="forum-reply-content"><section><p>after</p></section></div>',
-      type: 'html'
-    });
+    expect(compilation.rows[2]?.type === 'richText' ? withoutCompilerBindings(compilation.rows[2].html) : '').toBe(
+      '<div class="forum-reply-content"><section><p>after</p></section></div>'
+    );
   });
 
   it('[REG-PERF-010] preserves poll order when a typed marker appears inside a table cell', () => {
@@ -158,11 +169,19 @@ describe('Android topic content splitting', () => {
 
     const compilation = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
     const orderedContent = compilation.rows.map((row) =>
-      row.type === 'poll' ? 'POLL' : row.type === 'quote' ? 'QUOTE' : parseHtml(row.html).text
+      row.type === 'poll'
+        ? 'POLL'
+        : row.type === 'quote'
+          ? 'QUOTE'
+          : 'html' in row
+            ? parseHtml(row.html).text
+            : 'text' in row
+              ? row.text
+              : ''
     );
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(['html', 'poll', 'html']);
-    expect(orderedContent).toEqual(['beforecell-before', 'POLL', 'cell-afterend']);
+    expect(compilation.rows.map((row) => row.type)).toEqual(['richText', 'richText', 'poll', 'richText', 'richText']);
+    expect(orderedContent).toEqual(['before', 'cell-before', 'POLL', 'cell-after', 'end']);
   });
 
   it('[REG-PERF-010] fail-closes an opaque island instead of moving its typed marker to the end', () => {
@@ -172,13 +191,19 @@ describe('Android topic content splitting', () => {
 
     const compilation = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
     const orderedContent = compilation.rows.map((row) =>
-      row.type === 'poll' ? 'POLL' : row.type === 'quote' ? 'QUOTE' : parseHtml(row.html).text
+      row.type === 'poll'
+        ? 'POLL'
+        : row.type === 'quote'
+          ? 'QUOTE'
+          : 'html' in row
+            ? parseHtml(row.html).text
+            : 'text' in row
+              ? row.text
+              : ''
     );
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(['html', 'poll', 'html']);
-    expect(orderedContent[0]).toContain('before内容过于复杂');
-    expect(orderedContent[1]).toBe('POLL');
-    expect(orderedContent[2]).toBe('after');
+    expect(compilation.rows.map((row) => row.type)).toEqual(['richText', 'richText', 'poll', 'richText']);
+    expect(orderedContent).toEqual(['before', '内容过于复杂，请在原站查看。', 'POLL', 'after']);
     expect(renderedContentRows(compilation).every((row) => !row.html.includes('forum-link-card'))).toBe(true);
   });
 
@@ -188,54 +213,24 @@ describe('Android topic content splitting', () => {
       '<details id="panel" name="shared" open><summary>Title</summary><ol id="steps" start="7"><li id="entry">before<forum-discourse-poll name="choice"></forum-discourse-poll>after</li><li>tail</li></ol></details>';
 
     const rows = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' }).rows;
-    const htmlRows = rows.filter(
-      (row): row is Extract<CompiledForumContentRow, { type: 'html' | 'video' }> =>
-        row.type === 'html' || row.type === 'video'
-    );
-    const parsed = htmlRows.map((row) => parseHtml(row.html));
-
-    expect(rows.map((row) => row.type)).toEqual(['html', 'poll', 'html']);
-    expect(
-      htmlRows
-        .map((row) => row.html)
-        .join('')
-        .match(/\bid="panel"/g)
-    ).toHaveLength(1);
-    expect(
-      htmlRows
-        .map((row) => row.html)
-        .join('')
-        .match(/\bname="shared"/g)
-    ).toHaveLength(1);
-    expect(
-      htmlRows
-        .map((row) => row.html)
-        .join('')
-        .match(/\bid="steps"/g)
-    ).toHaveLength(1);
-    expect(
-      htmlRows
-        .map((row) => row.html)
-        .join('')
-        .match(/\bid="entry"/g)
-    ).toHaveLength(1);
-    expect(
-      htmlRows
-        .map((row) => row.html)
-        .join('')
-        .match(/<summary\b/g)
-    ).toHaveLength(1);
-    expect(parsed.map((root) => root.querySelector('details')?.getAttribute('data-wz-details-part'))).toEqual([
-      'first',
-      'last'
+    expect(rows.map((row) => row.type)).toEqual(['disclosureHeader', 'richText', 'poll', 'richText', 'richText']);
+    expect(rows[0]).toMatchObject({
+      defaultExpanded: true,
+      disclosureKind: 'details',
+      part: 'first',
+      semanticId: 'node-0',
+      titleLabel: 'Title'
+    });
+    expect(rows.slice(1).map((row) => row.ancestorFrames.map((frame) => `${frame.kind}:${frame.semanticId}`))).toEqual([
+      ['details:node-0', 'list:node-0.1', 'listItem:node-0.1.0'],
+      ['details:node-0', 'list:node-0.1', 'listItem:node-0.1.0'],
+      ['details:node-0', 'list:node-0.1', 'listItem:node-0.1.0'],
+      ['details:node-0', 'list:node-0.1', 'listItem:node-0.1.1']
     ]);
-    expect(
-      new Set(parsed.map((root) => root.querySelector('details')?.getAttribute('data-wz-details-group'))).size
-    ).toBe(1);
-    expect(parsed.map((root) => root.querySelector('ol')?.getAttribute('start'))).toEqual(['7', '7']);
-    expect(parsed[0]?.querySelectorAll('li').map((node) => node.getAttribute('value'))).toEqual(['7']);
-    expect(parsed[1]?.querySelectorAll('li').map((node) => node.getAttribute('value'))).toEqual(['7', '8']);
-    expect(parsed[1]?.querySelector('li')?.getAttribute('data-wz-list-continuation')).toBe('true');
+    expect(rows.flatMap((row) => ('html' in row ? [parseHtml(row.html).text] : [])).join('')).toContain(
+      'beforeaftertail'
+    );
+    expect(rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
   });
 
   it('[REG-PERF-010] keeps one disclosure group when both sides of a typed row need further planning', () => {
@@ -247,31 +242,22 @@ describe('Android topic content splitting', () => {
     )}</p><forum-discourse-poll name="choice"></forum-discourse-poll><p>${images('after')}</p></details>`;
 
     const rows = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' }).rows;
-    const htmlRows = renderedContentRows({ rows });
-    const details = htmlRows.map((row) => parseHtml(row.html).querySelector('details'));
-
-    expect(rows.map((row) => row.type)).toEqual(['html', 'html', 'poll', 'html', 'html']);
-    const detailGroups = new Set(details.map((node) => node?.getAttribute('data-wz-details-group')));
-    expect(detailGroups.size).toBe(1);
-    expect([...detailGroups][0]).toMatch(/^compile-/);
-    expect(details.map((node) => node?.getAttribute('data-wz-details-part'))).toEqual([
-      'first',
-      'middle',
-      'middle',
-      'last'
+    expect(rows.map((row) => row.type)).toEqual([
+      'disclosureHeader',
+      'richText',
+      'richText',
+      'poll',
+      'richText',
+      'richText'
     ]);
-    expect(
-      htmlRows
-        .map((row) => row.html)
-        .join('')
-        .match(/\bid="panel"/g)
-    ).toHaveLength(1);
-    expect(
-      htmlRows
-        .map((row) => row.html)
-        .join('')
-        .match(/<summary\b/g)
-    ).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ defaultExpanded: false, semanticId: 'node-0', type: 'disclosureHeader' });
+    expect(rows.slice(1).map((row) => row.ancestorFrames.find((frame) => frame.kind === 'details'))).toEqual([
+      expect.objectContaining({ part: 'middle', semanticId: 'node-0' }),
+      expect.objectContaining({ part: 'middle', semanticId: 'node-0' }),
+      expect.objectContaining({ part: 'middle', semanticId: 'node-0' }),
+      expect.objectContaining({ part: 'middle', semanticId: 'node-0' }),
+      expect.objectContaining({ part: 'last', semanticId: 'node-0' })
+    ]);
   });
 
   it('[REG-PERF-010] parses an ordinary native-video document exactly once', async () => {
@@ -319,6 +305,22 @@ describe('Android topic content splitting', () => {
     ]);
   });
 
+  it('[REG-PERF-010] keeps adjacent native videos as separate atomic semantic rows', () => {
+    const compilation = compileForumContent({
+      html: Array.from(
+        { length: 5 },
+        (_, index) => `<forum-video src="https://media.example/${index}.mp4"></forum-video>`
+      ).join(''),
+      role: 'opening',
+      source: 'linuxdo'
+    });
+
+    expect(compilation.rows.map((row) => row.type)).toEqual(Array.from({ length: 5 }, () => 'video'));
+    expect(compilation.rows.flatMap((row) => (row.type === 'video' ? [row.src] : []))).toEqual(
+      Array.from({ length: 5 }, (_, index) => `https://media.example/${index}.mp4`)
+    );
+  });
+
   it('[REG-PERF-010] parses one hostile 2000-image document exactly once', async () => {
     vi.resetModules();
     const actualHtml = await vi.importActual<typeof import('./html')>('./html');
@@ -357,7 +359,7 @@ describe('Android topic content splitting', () => {
       const compilation = compileTrackedContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
 
       expect(compilation.rows).toHaveLength(2_000);
-      expect(compilation.rows.filter((row) => row.type === 'html')).toHaveLength(1_000);
+      expect(compilation.rows.filter((row) => row.type === 'richText')).toHaveLength(1_000);
       expect(compilation.rows.filter((row) => row.type === 'poll')).toHaveLength(1_000);
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
     } finally {
@@ -384,7 +386,7 @@ describe('Android topic content splitting', () => {
       const rows = renderedContentRows(compilation);
 
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
-      expect(compilation.rows.every((row) => row.type === 'html')).toBe(true);
+      expect(compilation.rows.every((row) => row.type === 'richText')).toBe(true);
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.every((row) => row.html.length <= 16_384)).toBe(true);
       expect(rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
@@ -476,11 +478,13 @@ describe('Android topic content splitting', () => {
     expect(planForumContent(html)).toEqual({
       rows: [
         {
-          continuation: 'only',
-          groupKey: 'block-0',
+          ancestorFrames: [],
           html,
-          keySuffix: 'block-0:0',
-          networkMediaCount: 0
+          keySuffix: 'node-0:0',
+          networkMediaCount: 0,
+          part: 'only',
+          segmentIndex: 0,
+          semanticId: 'node-0'
         }
       ]
     });
@@ -494,7 +498,151 @@ describe('Android topic content splitting', () => {
 
     expect(plan.rows).toHaveLength(1);
     expect(plan.rows[0]?.html).toBe(html);
-    expect(plan.rows[0]?.continuation).toBe('only');
+    expect(plan.rows[0]?.part).toBe('only');
+  });
+
+  it('[REG-TOPIC-086] splits truly oversized code only between complete lines', () => {
+    const sourceLines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}\n`);
+    const rows = compileForumContent({
+      html: `<pre>${sourceLines.join('')}</pre>`,
+      role: 'reply',
+      source: 'linuxdo'
+    }).rows;
+    const codeRows = rows.filter(
+      (row): row is Extract<CompiledForumContentRow, { type: 'codeBlock' }> => row.type === 'codeBlock'
+    );
+
+    expect(codeRows.length).toBeGreaterThan(1);
+    expect(new Set(codeRows.map((row) => row.semanticId))).toEqual(new Set(['node-0']));
+    expect(codeRows.map((row) => row.part)).toEqual([
+      'first',
+      ...Array.from({ length: codeRows.length - 2 }, () => 'middle'),
+      'last'
+    ]);
+    expect(codeRows.map((row) => row.text).join('')).toBe(sourceLines.join(''));
+    expect(codeRows.every((row) => row.text.endsWith('\n'))).toBe(true);
+  });
+
+  it('[REG-TOPIC-088] compiles one semantic code block before planning physical rows', () => {
+    const sourceLines = Array.from(
+      { length: 52 },
+      (_, index) => `<span data-line="${index + 1}">line-${String(index + 1).padStart(2, '0')}</span>\n`
+    );
+
+    const compilation = compileForumContent({
+      html: `<pre>${sourceLines.join('')}</pre>`,
+      role: 'reply',
+      source: 'linuxdo'
+    });
+
+    expect(compilation.rows).toHaveLength(1);
+    expect(compilation.rows[0]).toMatchObject({
+      ancestorFrames: [],
+      part: 'only',
+      segmentIndex: 0,
+      semanticId: 'node-0',
+      type: 'codeBlock'
+    });
+    expect((compilation.rows[0] as { text?: string }).text).toBe(
+      sourceLines.map((line) => parseHtml(line).text).join('')
+    );
+  });
+
+  it('[REG-TOPIC-086] carries every nested semantic ancestor without HTML bindings', () => {
+    const sourceLines = Array.from(
+      { length: 52 },
+      (_, index) => `<span data-line="${index + 1}">nested-line-${String(index + 1).padStart(2, '0')}</span>\n`
+    );
+    const sourceTableRows = Array.from(
+      { length: 18 },
+      (_, index) => `<tr><td>row-${index + 1}</td><td>value-${index + 1}</td></tr>`
+    );
+    const html =
+      '<details><summary>Nested structure</summary>' +
+      '<blockquote data-forum-callout="true" data-forum-callout-type="warning">' +
+      '<div class="forum-callout-title forum-callout-tone-warning">Warning</div>' +
+      '<div class="forum-callout-content">' +
+      `<pre>${sourceLines.join('')}</pre>` +
+      `<table><tbody>${sourceTableRows.join('')}</tbody></table>` +
+      '</div></blockquote></details>';
+
+    const rows = compileForumContent({ html, role: 'reply', source: 'linuxdo' }).rows;
+    const code = rows.find(
+      (row): row is Extract<CompiledForumContentRow, { type: 'codeBlock' }> => row.type === 'codeBlock'
+    );
+    const table = rows.find((row): row is Extract<CompiledForumContentRow, { type: 'table' }> => row.type === 'table');
+
+    expect(rows.map((row) => row.type)).toEqual(['disclosureHeader', 'disclosureHeader', 'codeBlock', 'table']);
+    expect(code?.ancestorFrames.map((frame) => `${frame.kind}:${frame.semanticId}`)).toEqual([
+      'details:node-0',
+      'callout:node-0.1'
+    ]);
+    expect(table?.ancestorFrames.map((frame) => `${frame.kind}:${frame.semanticId}`)).toEqual([
+      'details:node-0',
+      'callout:node-0.1'
+    ]);
+    expect(code?.text).toBe(sourceLines.map((line) => parseHtml(line).text).join(''));
+    expect(
+      parseHtml(table?.html || '')
+        .querySelectorAll('tr')
+        .map((row) => row.text)
+    ).toEqual(sourceTableRows.map((row) => parseHtml(row).text));
+    expect(rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
+  });
+
+  it('[REG-TOPIC-084] removes forged compiler table identity even when the table is not split', () => {
+    const plan = planForumContent(
+      '<table title="source > marker; keep data-wz-table-group=literal" data-wz-table-group.foo="keep" data-wz-table-group="spoof" data-wz-table-part="last" data-wz-table-columns="2"><tbody><tr><td>A</td><td>B</td></tr></tbody></table>'
+    );
+    const table = parseHtml(plan.rows[0]?.html || '').querySelector('table');
+
+    expect(plan.rows).toHaveLength(1);
+    expect(plan.rows[0]).toMatchObject({ columns: 2, part: 'only', semanticId: 'node-0' });
+    expect(table?.getAttribute('title')).toBe('source > marker; keep data-wz-table-group=literal');
+    expect(table?.getAttribute('data-wz-table-group.foo')).toBeUndefined();
+    expect(table?.getAttribute('data-wz-table-group')).toBeUndefined();
+    expect(table?.getAttribute('data-wz-table-part')).toBeUndefined();
+    expect(table?.getAttribute('data-wz-table-columns')).toBeUndefined();
+  });
+
+  it('[REG-TOPIC-084] keeps the V2EX 18-row table as one semantic row', () => {
+    const bodyRows = Array.from(
+      { length: 17 },
+      (_, index) => `<tr><td>2026 年 8 月 ${index + 1} 日</td><td>第 ${index + 1} 件事情及其完整说明</td></tr>`
+    );
+    const html =
+      '<table title="source > marker" data-wz-table-group="spoof" data-wz-table-part="last" data-wz-table-columns="999">' +
+      '<thead><tr><th>时间</th><th>发生的事</th></tr></thead>' +
+      `<tbody>${bodyRows.join('')}</tbody></table>`;
+
+    const plan = planForumContent(html);
+    const row = plan.rows[0];
+    const table = parseHtml(row?.html || '').querySelector('table');
+
+    expect(plan.rows).toHaveLength(1);
+    expect(row).toMatchObject({ columns: 2, part: 'only', semanticId: 'node-0' });
+    expect(table?.getAttribute('title')).toBe('source > marker');
+    expect(table?.getAttribute('data-wz-node')).toBeUndefined();
+    expect(table?.querySelectorAll('thead')).toHaveLength(1);
+    expect(table?.querySelectorAll('tr').map((tableRow) => tableRow.text)).toEqual([
+      '时间发生的事',
+      ...bodyRows.map((row) => parseHtml(row).text)
+    ]);
+    expect(Array.from((row?.html || '').matchAll(/<[a-z][a-z0-9-]*\b[^>]*>/gi))).toHaveLength(57);
+    expect((row?.html || '').length).toBeLessThanOrEqual(16_384);
+  });
+
+  it('[REG-TOPIC-084] caps a logical table column model at the existing DOM-node budget', () => {
+    const bodyRows = Array.from(
+      { length: 20 },
+      (_, index) => `<tr><td colspan="80">row ${index + 1}</td><td colspan="80">value</td></tr>`
+    );
+
+    const plan = planForumContent(`<table><tbody>${bodyRows.join('')}</tbody></table>`);
+
+    expect(plan.rows).toHaveLength(1);
+    expect(plan.rows.map((row) => row.columns)).toEqual(Array.from({ length: plan.rows.length }, () => 80));
+    expect(new Set(plan.rows.map((row) => row.semanticId))).toEqual(new Set(['node-0']));
   });
 
   it('[REG-PERF-010] groups a multi-row table only at complete tr boundaries', () => {
@@ -512,9 +660,11 @@ describe('Android topic content splitting', () => {
     expect(tables.flatMap((table) => table.querySelectorAll('tr').map((row) => row.toString()))).toEqual(sourceRows);
     expect(
       plan.rows.flatMap((row) =>
-        parseHtml(row.html)
-          .querySelectorAll('img')
-          .map((image) => image.getAttribute('src'))
+        'html' in row
+          ? parseHtml(row.html)
+              .querySelectorAll('img')
+              .map((image) => image.getAttribute('src'))
+          : []
       )
     ).toEqual(sourceUrls);
     expect(plan.rows.every((row) => parseHtml(row.html).querySelectorAll('img').length <= 4)).toBe(true);
@@ -523,49 +673,186 @@ describe('Android topic content splitting', () => {
     expect(plan.rows.every((row) => row.html.length <= 16_384)).toBe(true);
   });
 
-  it('[REG-PERF-010] splits one oversized tr only along its safe descendants', () => {
+  it('[REG-TOPIC-084] never splits an active rowspan-connected table region', () => {
+    const connectedRows = [
+      '<tr><td rowspan="4">connected</td><td><img src="https://img.example/rowspan-0.webp"></td></tr>',
+      ...Array.from(
+        { length: 3 },
+        (_, index) => `<tr><td><img src="https://img.example/rowspan-${index + 1}.webp"></td></tr>`
+      )
+    ];
+    const independentRows = Array.from(
+      { length: 4 },
+      (_, index) => `<tr><td>independent-${index}</td><td><img src="https://img.example/after-${index}.webp"></td></tr>`
+    );
+
+    const plan = planForumContent(`<table><tbody>${[...connectedRows, ...independentRows].join('')}</tbody></table>`);
+    const renderedRowGroups = plan.rows.map((row) =>
+      parseHtml(row.html)
+        .querySelectorAll('tr')
+        .map((tableRow) => tableRow.toString())
+    );
+
+    expect(renderedRowGroups).toEqual([connectedRows, independentRows]);
+    expect(new Set(plan.rows.map((row) => row.semanticId))).toEqual(new Set(['node-0']));
+    expect(plan.rows.map((row) => row.part)).toEqual(['first', 'last']);
+  });
+
+  it('[REG-PERF-010] fail-closes one table row that cannot be split safely', () => {
     const sourceUrls = Array.from({ length: 9 }, (_, index) => `https://img.example/table-cell-${index}.webp`);
     const html = `<table><tbody><tr id="oversized-row"><td class="label">One logical row</td><td class="media">${sourceUrls
       .map((src) => `<img src="${src}">`)
       .join('')}</td></tr></tbody></table>`;
 
     const plan = planForumContent(html);
-    const tables = plan.rows.map((row) => parsedBalancedTable(row.html));
-    const plannedRows = tables.map((table) => table.querySelectorAll('tr'));
-
-    expect(plan.rows).toHaveLength(3);
-    expect(plannedRows.map((rows) => rows.length)).toEqual([1, 1, 1]);
-    expect(plannedRows.map((rows) => rows[0]?.getAttribute('id'))).toEqual(['oversized-row', undefined, undefined]);
-    expect(tables.map((table) => table.querySelectorAll('td.label').length)).toEqual([1, 0, 0]);
-    expect(tables.map((table) => table.querySelectorAll('img').length)).toEqual([4, 4, 1]);
-    expect(
-      plan.rows.flatMap((row) =>
-        parseHtml(row.html)
-          .querySelectorAll('img')
-          .map((image) => image.getAttribute('src'))
-      )
-    ).toEqual(sourceUrls);
-    expect(plan.rows.every((row) => domNodeCount(row.html) <= 80)).toBe(true);
-    expect(plan.rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
-    expect(plan.rows.every((row) => row.html.length <= 16_384)).toBe(true);
+    expect(plan.rows).toHaveLength(1);
+    expect(plan.rows[0]?.html).toBe('<p>内容过于复杂，请在原站查看。</p>');
+    expect(plan.rows[0]?.html).not.toContain('oversized-row');
+    expect(plan.rows[0]?.html).not.toContain(sourceUrls[0]);
   });
 
-  it('[REG-PERF-010] replaces one oversized interactive island instead of cloning it across rows', () => {
-    const html = `<forum-terminal-report id="single-report">${Array.from(
-      { length: 100 },
-      (_, index) => `<forum-terminal-tab title="tab-${index}"><p>${'content '.repeat(40)}</p></forum-terminal-tab>`
-    ).join('')}</forum-terminal-report>`;
+  it('[REG-TOPIC-090] keeps every terminal report tab when its code body exceeds one physical row budget', () => {
+    const tabs = Array.from({ length: 4 }, (_, tabIndex) => ({
+      id: `tab-${tabIndex}`,
+      text: Array.from(
+        { length: 24 },
+        (_, lineIndex) =>
+          `<span style="color: rgb(${tabIndex + 1}, ${lineIndex + 1}, 8)">tab-${tabIndex}-line-${lineIndex}</span>`
+      ).join('<br>')
+    }));
+    const html = `<forum-terminal-report>${tabs
+      .map(
+        (tab) =>
+          `<forum-terminal-tab title="${tab.id}"><div class="forum-terminal-code">${tab.text}</div></forum-terminal-tab>`
+      )
+      .join('')}</forum-terminal-report>`;
 
-    const plan = planForumContent(html);
+    const rows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows;
 
-    expect(plan.rows).toEqual([
-      expect.objectContaining({
-        html: '<p>内容过于复杂，请在原站查看。</p>',
-        networkMediaCount: 0
-      })
+    expect(rows[0]).toMatchObject({
+      defaultTabId: 'node-0-tab-0',
+      semanticId: 'node-0',
+      tabs: tabs.map((tab, index) => ({ id: `node-0-tab-${index}`, title: tab.id })),
+      type: 'terminalReportHeader'
+    });
+    expect(rows.slice(1).every((row) => row.type === 'codeBlock')).toBe(true);
+    expect(
+      rows
+        .slice(1)
+        .map((row) => (row.type === 'codeBlock' ? row.text : ''))
+        .join('')
+    ).toContain('tab-3-line-23');
+    expect(rows.slice(1).map((row) => row.ancestorFrames.find((frame) => frame.kind === 'terminalTab'))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reportSemanticId: 'node-0', tabId: 'node-0-tab-0' }),
+        expect.objectContaining({ reportSemanticId: 'node-0', tabId: 'node-0-tab-3' })
+      ])
+    );
+    expect(rows.some((row) => 'html' in row && row.html.includes('内容过于复杂'))).toBe(false);
+  });
+
+  it('[REG-TOPIC-090] recursively preserves mixed semantic rows inside every terminal tab', () => {
+    const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
+    const html =
+      '<forum-terminal-report>' +
+      '<forum-terminal-tab title="Mixed">' +
+      '<p>intro<img src="https://img.example/report.webp"></p>' +
+      '<table><tbody><tr><td>A</td><td>B</td></tr></tbody></table>' +
+      '<details open><summary>More</summary><pre>plain code</pre><forum-discourse-poll name="choice"></forum-discourse-poll></details>' +
+      '</forum-terminal-tab>' +
+      '<forum-terminal-tab title="Terminal"><div class="forum-terminal-code"><span style="color: #00ff00; background-color: #000087">done</span></div></forum-terminal-tab>' +
+      '</forum-terminal-report>';
+
+    const rows = compileForumContent({ html, polls: [poll], role: 'opening', source: 'linuxdo' }).rows;
+
+    expect(rows.map((row) => row.type)).toEqual([
+      'terminalReportHeader',
+      'richText',
+      'table',
+      'disclosureHeader',
+      'codeBlock',
+      'poll',
+      'codeBlock'
     ]);
-    expect(plan.rows[0]?.html).not.toContain('forum-terminal-report');
-    expect(plan.rows[0]?.html.length).toBeLessThanOrEqual(16_384);
+    expect(rows.slice(1).every((row) => row.ancestorFrames.some((frame) => frame.kind === 'terminalTab'))).toBe(true);
+    expect(rows.find((row) => row.type === 'richText')?.networkMediaCount).toBe(1);
+    expect(rows.find((row) => row.type === 'table')).toMatchObject({ columns: 2, part: 'only' });
+    expect(rows.find((row) => row.type === 'poll')).toMatchObject({ poll, type: 'poll' });
+    expect(rows.find((row) => row.type === 'poll')?.ancestorFrames.map((frame) => frame.kind)).toEqual([
+      'terminalTab',
+      'details'
+    ]);
+    expect(rows.at(-1)).toMatchObject({
+      runs: [expect.objectContaining({ style: { backgroundColor: '#000087', color: '#00ff00' }, text: 'done' })],
+      type: 'codeBlock',
+      variant: 'terminal'
+    });
+  });
+
+  it('[REG-TOPIC-090] keeps one full-copy owner when terminal code spans physical rows', () => {
+    const lines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}`);
+    const html = `<forum-terminal-report><forum-terminal-tab title="Long"><div class="forum-terminal-code">${lines.join(
+      '<br>'
+    )}</div></forum-terminal-tab></forum-terminal-report>`;
+
+    const codeRows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows.filter(
+      (row): row is Extract<CompiledForumContentRow, { type: 'codeBlock' }> => row.type === 'codeBlock'
+    );
+
+    expect(codeRows.length).toBeGreaterThan(1);
+    expect(codeRows.map((row) => row.text).join('')).toBe(lines.join('\n'));
+    expect(codeRows[0]?.copyText).toBe(lines.join('\n'));
+    expect(codeRows.slice(1).every((row) => row.copyText === undefined)).toBe(true);
+    expect(codeRows.every((row) => row.variant === 'terminal')).toBe(true);
+  });
+
+  it('[REG-TOPIC-090] fail-closes only one unsafe tab body and keeps the rest of the report', () => {
+    const html =
+      '<forum-terminal-report>' +
+      `<forum-terminal-tab title="Unsafe"><div class="forum-terminal-code">${'x'.repeat(
+        13_000
+      )}</div></forum-terminal-tab>` +
+      '<forum-terminal-tab title="Safe"><div class="forum-terminal-code">safe result</div></forum-terminal-tab>' +
+      '</forum-terminal-report>';
+
+    const rows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows;
+
+    expect(rows[0]).toMatchObject({
+      tabs: [
+        { id: 'node-0-tab-0', title: 'Unsafe' },
+        { id: 'node-0-tab-1', title: 'Safe' }
+      ],
+      type: 'terminalReportHeader'
+    });
+    expect(rows[1]).toMatchObject({ html: '<p>内容过于复杂，请在原站查看。</p>', type: 'richText' });
+    expect(rows[1]?.ancestorFrames).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'terminalTab', tabId: 'node-0-tab-0' })])
+    );
+    expect(rows[2]).toMatchObject({ text: 'safe result', type: 'codeBlock', variant: 'terminal' });
+    expect(rows[2]?.ancestorFrames).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'terminalTab', tabId: 'node-0-tab-1' })])
+    );
+  });
+
+  it('[REG-TOPIC-090] bounds individual headers and unexpected children without deleting the report', () => {
+    const tabs = Array.from(
+      { length: 90 },
+      (_, index) =>
+        `<forum-terminal-tab title="${index === 0 ? 'x'.repeat(13_000) : `Tab ${index + 1}`}"><div class="forum-terminal-code">body ${index + 1}</div></forum-terminal-tab>`
+    );
+    const html = `<forum-terminal-report>${tabs[0]}<aside>unexpected</aside>${tabs.slice(1).join('')}</forum-terminal-report>`;
+
+    const rows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows;
+    const headers = rows.filter(
+      (row): row is Extract<CompiledForumContentRow, { type: 'terminalReportHeader' }> =>
+        row.type === 'terminalReportHeader'
+    );
+
+    expect(headers.length).toBeGreaterThan(1);
+    expect(headers.flatMap((header) => header.tabs)).toHaveLength(90);
+    expect(headers.flatMap((header) => header.tabs)[0]?.title).toBe('Tab 1');
+    expect(rows.some((row) => row.type === 'codeBlock' && row.text === 'body 90')).toBe(true);
+    expect(rows.filter((row) => 'html' in row && row.html === '<p>内容过于复杂，请在原站查看。</p>')).toHaveLength(1);
   });
 
   it('[REG-PERF-010] bounds hostile nesting without losing ordered media', () => {
@@ -717,8 +1004,19 @@ describe('Android topic content splitting', () => {
 
     const rows = planForumContent(html).rows;
 
-    expect(rows).toHaveLength(3);
-    expect(rows.map((row) => parseHtml(row.html).querySelector('ol')?.getAttribute('start'))).toEqual(['3', '7', '11']);
+    expect(rows).toHaveLength(9);
+    expect(
+      rows.map(
+        (row) => row.ancestorFrames.find((frame: ForumContentAncestorFrame) => frame.kind === 'listItem')?.marker
+      )
+    ).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(
+      new Set(
+        rows.map(
+          (row) => row.ancestorFrames.find((frame: ForumContentAncestorFrame) => frame.kind === 'list')?.semanticId
+        )
+      )
+    ).toEqual(new Set(['node-0']));
   });
 
   it('[REG-PERF-010] keeps one logical ordered-list item number across its media continuations', () => {
@@ -729,27 +1027,15 @@ describe('Android topic content splitting', () => {
       .join('')}</li><li id="second-item"><img src="${sourceUrls[9]}"></li></ol>`;
 
     const rows = planForumContent(html).rows;
-    const lists = rows.map((row) => parseHtml(row.html).querySelector('ol'));
-    const listItems = lists.map((list) => list?.querySelectorAll('li') || []);
+    const itemFrames = rows.map((row) =>
+      row.ancestorFrames.find((frame: ForumContentAncestorFrame) => frame.kind === 'listItem')
+    );
 
-    expect(rows).toHaveLength(3);
-    expect(lists.map((list) => list?.getAttribute('start'))).toEqual(['3', '3', '3']);
-    expect(listItems.map((items) => items.map((item) => item.getAttribute('value')))).toEqual([
-      ['3'],
-      ['3'],
-      ['3', '4']
-    ]);
-    expect(listItems.map((items) => items.map((item) => item.getAttribute('data-wz-list-continuation')))).toEqual([
-      [undefined],
-      ['true'],
-      ['true', undefined]
-    ]);
-    expect(
-      listItems
-        .flat()
-        .filter((item) => item.getAttribute('data-wz-list-continuation') === 'true')
-        .every((item) => /list-style-type\s*:\s*none/i.test(item.getAttribute('style') || ''))
-    ).toBe(true);
+    expect(rows).toHaveLength(4);
+    expect(itemFrames.map((frame) => frame?.marker)).toEqual([3, 3, 3, 4]);
+    expect(itemFrames.map((frame) => frame?.part)).toEqual(['first', 'middle', 'last', 'only']);
+    expect(new Set(itemFrames.slice(0, 3).map((frame) => frame?.semanticId))).toEqual(new Set(['node-0.0']));
+    expect(rows.every((row) => !row.html.includes('data-wz-'))).toBe(true);
     expect(
       rows.flatMap((row) =>
         parseHtml(row.html)
@@ -766,28 +1052,24 @@ describe('Android topic content splitting', () => {
       .join('')}</p></details>`;
 
     const plan = planForumContent(html);
-    const repeatedPlan = planForumContent(html);
-    const details = plan.rows.map((row) => parseHtml(row.html).querySelector('details'));
-
-    expect(plan.rows).toHaveLength(3);
-    const group = details[0]?.getAttribute('data-wz-details-group');
-    expect(group).toBeTruthy();
-    expect(group).not.toBe('spoof');
-    expect(details.map((node) => node?.getAttribute('data-wz-details-group'))).toEqual([group, group, group]);
-    expect(
-      repeatedPlan.rows.map((row) =>
-        parseHtml(row.html).querySelector('details')?.getAttribute('data-wz-details-group')
-      )
-    ).toEqual([group, group, group]);
-    expect(details.map((node) => node?.getAttribute('data-wz-details-part'))).toEqual(['first', 'middle', 'last']);
-    expect(details.map((node) => node?.querySelectorAll('summary').length)).toEqual([1, 0, 0]);
-    expect(details.map((node) => node?.getAttribute('id'))).toEqual(['details-anchor', undefined, undefined]);
-    expect(details.map((node) => node?.getAttribute('name'))).toEqual(['details-name', undefined, undefined]);
+    expect(plan.rows).toHaveLength(4);
+    expect(plan.rows[0]).toMatchObject({
+      defaultExpanded: false,
+      part: 'first',
+      semanticId: 'node-0',
+      titleLabel: 'Stable summary'
+    });
+    const slices = plan.rows.slice(1).map((row) => logicalSliceForTag(row, 'details'));
+    expect(slices.map((slice) => slice?.semanticId)).toEqual(['node-0', 'node-0', 'node-0']);
+    expect(slices.map((slice) => slice?.part)).toEqual(['middle', 'middle', 'last']);
+    expect(plan.rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
     expect(
       plan.rows.flatMap((row) =>
-        parseHtml(row.html)
-          .querySelectorAll('img')
-          .map((image) => image.getAttribute('src'))
+        'html' in row
+          ? parseHtml(row.html)
+              .querySelectorAll('img')
+              .map((image) => image.getAttribute('src'))
+          : []
       )
     ).toEqual(sourceUrls);
   });
@@ -798,51 +1080,54 @@ describe('Android topic content splitting', () => {
       .map((src) => `<img src="${src}">`)
       .join('')}</div></blockquote>`;
 
-    const plan = planForumContent(html);
-    const repeatedPlan = planForumContent(html);
-    const callouts = plan.rows.map((row) => parseHtml(row.html).querySelector('blockquote'));
-
-    expect(plan.rows).toHaveLength(3);
-    const group = callouts[0]?.getAttribute('data-wz-callout-group');
-    expect(group).toBeTruthy();
-    expect(group).not.toBe('spoof');
-    expect(callouts.map((node) => node?.getAttribute('data-wz-callout-group'))).toEqual([group, group, group]);
-    expect(
-      repeatedPlan.rows.map((row) =>
-        parseHtml(row.html).querySelector('blockquote')?.getAttribute('data-wz-callout-group')
-      )
-    ).toEqual([group, group, group]);
-    expect(callouts.map((node) => node?.getAttribute('data-wz-callout-part'))).toEqual(['first', 'middle', 'last']);
-    expect(callouts.map((node) => node?.getAttribute('data-forum-callout-type'))).toEqual([
-      'warning',
-      'warning',
-      'warning'
-    ]);
-    expect(callouts.map((node) => node?.getAttribute('data-forum-callout-fold'))).toEqual([
-      'collapsed',
-      'collapsed',
-      'collapsed'
-    ]);
-    expect(callouts.map((node) => node?.querySelectorAll('.forum-callout-title').length)).toEqual([1, 0, 0]);
+    const plan = planForumContent(html, 'linuxdo');
+    expect(plan.rows).toHaveLength(4);
+    expect(plan.rows[0]).toMatchObject({
+      calloutType: 'warning',
+      defaultExpanded: false,
+      fold: 'collapsed',
+      part: 'first',
+      semanticId: 'node-0',
+      titleLabel: 'Warning title'
+    });
+    const slices = plan.rows.slice(1).map((row) => logicalSliceForTag(row, 'callout'));
+    expect(slices.map((slice) => slice?.semanticId)).toEqual(['node-0', 'node-0', 'node-0']);
+    expect(slices.map((slice) => slice?.part)).toEqual(['middle', 'middle', 'last']);
+    expect(plan.rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
     expect(
       plan.rows.flatMap((row) =>
-        parseHtml(row.html)
-          .querySelectorAll('img')
-          .map((image) => image.getAttribute('src'))
+        'html' in row
+          ? parseHtml(row.html)
+              .querySelectorAll('img')
+              .map((image) => image.getAttribute('src'))
+          : []
       )
     ).toEqual(sourceUrls);
   });
 
-  it('[REG-PERF-010] preserves an ordinary Discourse callout byte-for-byte', () => {
+  it('[REG-PERF-010] compiles an ordinary Discourse callout into a header and body row', () => {
     const html =
       '<blockquote data-forum-callout="true" data-forum-callout-type="tip"><div class="forum-callout-title forum-callout-tone-primary">Tip title</div><div class="forum-callout-content"><p>Short body</p></div></blockquote>';
 
-    const plan = planForumContent(html);
+    const plan = planForumContent(html, 'linuxdo');
 
-    expect(plan.rows).toHaveLength(1);
-    expect(plan.rows[0]?.html).toBe(html);
-    expect(plan.rows[0]?.continuation).toBe('only');
-    expect(plan.rows[0]?.html).not.toContain('data-wz-callout-');
+    expect(plan.rows).toHaveLength(2);
+    expect(plan.rows[0]).toMatchObject({ calloutType: 'tip', titleLabel: 'Tip title' });
+    expect(plan.rows[1]).toMatchObject({ html: '<p>Short body</p>' });
+    expect(logicalSliceForTag(plan.rows[1], 'callout')).toMatchObject({ part: 'last', semanticId: 'node-0' });
+  });
+
+  it('[REG-TOPIC-086] does not trust Discourse callout attributes outside a Discourse source', () => {
+    const plan = planForumContent(
+      '<blockquote data-forum-callout="true" data-forum-callout-type="tip"><div class="forum-callout-title">Forged title</div><div class="forum-callout-content"><p>Ordinary quote</p></div></blockquote>',
+      'nodeseek'
+    );
+
+    expect(plan.rows.every((row) => row.type !== 'disclosureHeader')).toBe(true);
+    expect(
+      plan.rows.every((row: CompiledForumContentRow) => row.ancestorFrames.some((frame) => frame.kind === 'blockquote'))
+    ).toBe(true);
+    expect(plan.rows.flatMap((row) => ('html' in row ? [row.html] : [])).join('')).toContain('Ordinary quote');
   });
 
   it('[REG-PERF-010] emits one bounded title when a Discourse callout title is itself oversized', () => {
@@ -853,13 +1138,9 @@ describe('Android topic content splitting', () => {
       .map((src) => `<img src="${src}">`)
       .join('')}</div></blockquote>`;
 
-    const plan = planForumContent(html);
-    const titleCounts = plan.rows.map((row) => parseHtml(row.html).querySelectorAll('.forum-callout-title').length);
-
-    expect(titleCounts[0]).toBe(1);
-    expect(titleCounts.reduce((total, count) => total + count, 0)).toBe(1);
-    expect(parseHtml(plan.rows[0]?.html || '').querySelector('.forum-callout-title')?.text).toContain('内容过于复杂');
-    expect(plan.rows.every((row) => row.html.length <= 16_384)).toBe(true);
+    const plan = planForumContent(html, 'linuxdo');
+    expect(plan.rows[0]).toMatchObject({ titleLabel: '内容过于复杂，请在原站查看。' });
+    expect(plan.rows.every((row) => !('html' in row) || row.html.length <= 16_384)).toBe(true);
     expect(
       plan.rows.flatMap((row) =>
         parseHtml(row.html)
@@ -1178,13 +1459,13 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('does not treat mixed content as a standalone video block', () => {
+  it('keeps a native video atomic without swallowing adjacent rich text', () => {
     expect(
       compileForumContent({
         html: '<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>',
         role: 'reply',
         source: 'yaohuo'
       }).rows.map((row) => row.type)
-    ).toEqual(['html']);
+    ).toEqual(['richText', 'video']);
   });
 });

@@ -6,10 +6,10 @@ import { compileForumContent, resolveForumContentRowHtml } from './topicContentS
 
 function renderedRow(html: string) {
   const row = compileForumContent({ html, role: 'reply', source: 'v2ex' }).rows.find(
-    (candidate) => candidate.type === 'html'
+    (candidate) => candidate.type === 'richText'
   );
-  expect(row?.type).toBe('html');
-  if (!row || row.type !== 'html') throw new Error('Expected a rendered HTML row.');
+  expect(row?.type).toBe('richText');
+  if (!row || row.type !== 'richText') throw new Error('Expected a rendered HTML row.');
   return row;
 }
 

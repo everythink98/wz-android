@@ -18,9 +18,17 @@ export function topicListItemKey(item: TopicListItem) {
 }
 
 export function topicListItemType(item: TopicListItem) {
+  if (item.type === 'reply') {
+    const contentTypes = [item.bodyContent?.type, item.signatureContent?.type].filter(Boolean);
+    return contentTypes.length ? `${item.type}:${contentTypes.join('+')}` : item.type;
+  }
   if (item.type === 'replyQuoteContent') return `${item.type}:${item.content.type}`;
+  if (item.type === 'replyContent') return `${item.type}:${item.content.type}`;
+  if (item.type === 'replySignatureContent') return `${item.type}:${item.content.type}`;
   if (item.type === 'topicContent' || item.type === 'topicQuoteContent' || item.type === 'topicAcceptedAnswerContent') {
-    return `${item.type}:${item.content.type}`;
+    return item.content.type === 'content'
+      ? `${item.type}:${item.content.row.type}`
+      : `${item.type}:${item.content.type}`;
   }
   return item.type;
 }
@@ -35,15 +43,13 @@ export function topicListMediaPlanStats(items: readonly TopicListItem[]) {
       continue;
     }
     if (item.type === 'replySignatureContent') {
-      networkMediaCount += item.networkMediaCount;
+      networkMediaCount += item.content.networkMediaCount;
       plannedRowCount += 1;
       continue;
     }
     if (item.type === 'replyContent' || item.type === 'replyQuoteContent') {
-      if (item.content.type === 'html') {
-        networkMediaCount += item.content.networkMediaCount;
-        plannedRowCount += 1;
-      }
+      networkMediaCount += item.content.networkMediaCount;
+      plannedRowCount += 1;
       continue;
     }
     if (
@@ -51,8 +57,8 @@ export function topicListMediaPlanStats(items: readonly TopicListItem[]) {
       item.type === 'topicQuoteContent' ||
       item.type === 'topicAcceptedAnswerContent'
     ) {
-      if (item.content.type === 'content' || item.content.type === 'contentVideo') {
-        networkMediaCount += item.content.networkMediaCount;
+      if (item.content.type === 'content') {
+        networkMediaCount += item.content.row.networkMediaCount;
         plannedRowCount += 1;
       }
     }

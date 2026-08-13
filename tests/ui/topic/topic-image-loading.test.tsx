@@ -11,6 +11,7 @@ import { createTestStyles as createStyles } from '../styleFixture';
 import type { MediaReferrerContext, MediaReferrerPolicy, TopicDetail } from '@/domain/forum/models';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { cachedImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
 import { FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG } from '@/domain/forum/forumContentMedia';
 import {
   markOriginalImageDisplayed,
@@ -32,6 +33,7 @@ import { TopicContentPresentationProvider } from '@/features/topic/rendering/Top
 const imageUrl = 'https://img.example.com/topic.png';
 let mockSourceHeaders: Record<string, string> | undefined;
 const mockExpoImageProps = jest.fn();
+const mockFlashListLayout = jest.fn();
 const mockUseImage = jest.fn();
 let mockVideoStatus = 'idle';
 let mockVideoPlaying = false;
@@ -152,6 +154,38 @@ jest.mock('expo-image', () => {
     },
     useImage: (source: { uri?: string }, options?: unknown, dependencies?: unknown[]) =>
       mockUseImage(source, options, dependencies)
+  };
+});
+
+jest.mock('@shopify/flash-list', () => {
+  const ReactModule = require('react') as typeof React;
+  return {
+    useLayoutState: <T,>(initialState: T | (() => T)) => {
+      const [state, setState] = ReactModule.useState(initialState);
+      const setLayoutState = ReactModule.useCallback(
+        (nextState: T | ((current: T) => T), skipParentLayout?: boolean) => {
+          setState(nextState);
+          if (!skipParentLayout) mockFlashListLayout();
+        },
+        []
+      );
+      return [state, setLayoutState] as const;
+    },
+    useRecyclingState: <T,>(initialState: T | (() => T), dependencies: React.DependencyList) => {
+      const value = ReactModule.useRef<T | undefined>(undefined);
+      ReactModule.useMemo(() => {
+        value.current = typeof initialState === 'function' ? (initialState as () => T)() : initialState;
+      }, dependencies);
+      const [, forceRender] = ReactModule.useState(0);
+      const setState = ReactModule.useCallback((nextState: T | ((mockCurrent: T) => T), skipParentLayout?: boolean) => {
+        const next = typeof nextState === 'function' ? (nextState as (mockCurrent: T) => T)(value.current!) : nextState;
+        if (next === value.current) return;
+        value.current = next;
+        forceRender((mockRevision) => mockRevision + 1);
+        if (!skipParentLayout) mockFlashListLayout();
+      }, []);
+      return [value.current!, setState] as const;
+    }
   };
 });
 
@@ -521,6 +555,7 @@ describe('topic block image loading', () => {
   beforeEach(() => {
     mockSourceHeaders = undefined;
     mockExpoImageProps.mockClear();
+    mockFlashListLayout.mockClear();
     mockUseImage.mockClear();
     mockUseVideoPlayer.mockClear();
     mockVideoStatus = 'idle';
@@ -666,8 +701,9 @@ describe('topic block image loading', () => {
     expect(latestImageProps(linkCardIconUrl).recyclingKey).toBe(icon.recyclingKey);
 
     await act(() => thumbnail.onError?.({ error: 'thumbnail failed' }));
-    await waitFor(() => expect(latestImageProps(linkCardThumbnailUrl).recyclingKey).not.toBe(thumbnail.recyclingKey));
+    await waitFor(() => expect(latestImageProps(linkCardThumbnailUrl).source).not.toBe(thumbnail.source));
     const retriedThumbnail = latestImageProps(linkCardThumbnailUrl);
+    expect(retriedThumbnail.recyclingKey).toBe(thumbnail.recyclingKey);
     await act(() => retriedThumbnail.onError?.({ error: 'thumbnail retry failed' }));
     await waitFor(() => expect(latestImageProps(trailingStickerUrl)).toBeTruthy());
     expect(latestImageProps(trailingStickerUrl)).toEqual(
@@ -1172,7 +1208,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-PROXY-010] remounts a same-source loading body image once on runtime rotation', async () => {
+  it('[REG-PROXY-010] restarts a same-source loading body image without changing visual identity', async () => {
     const view = await render(
       <TopicBodyMediaCoordinatorProvider
         active
@@ -1196,7 +1232,8 @@ describe('topic block image loading', () => {
     await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
     const retriedImage = latestImageProps(imageUrl);
-    expect(retriedImage.recyclingKey).not.toBe(firstImage.recyclingKey);
+    expect(retriedImage.recyclingKey).toBe(firstImage.recyclingKey);
+    expect(retriedImage.source).not.toBe(firstImage.source);
     await loadAndDisplayImage(firstImage, { height: 600, width: 400 });
     expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
     await loadAndDisplayImage(retriedImage, { height: 600, width: 400 });
@@ -1234,7 +1271,8 @@ describe('topic block image loading', () => {
 
       await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
-      expect(latestImageProps(imageUrl).recyclingKey).not.toBe(firstImage.recyclingKey);
+      expect(latestImageProps(imageUrl).recyclingKey).toBe(firstImage.recyclingKey);
+      expect(latestImageProps(imageUrl).source).not.toBe(firstImage.source);
       await act(async () => {
         jest.advanceTimersByTime(200);
       });
@@ -1306,7 +1344,8 @@ describe('topic block image loading', () => {
 
     const retriedOriginal = latestImageProps(originalUrl);
     expect(latestImageProps(displayUrl).recyclingKey).toBe(displayImage.recyclingKey);
-    expect(retriedOriginal.recyclingKey).not.toBe(firstOriginal.recyclingKey);
+    expect(retriedOriginal.recyclingKey).toBe(firstOriginal.recyclingKey);
+    expect(retriedOriginal.source).not.toBe(firstOriginal.source);
     await act(() => firstOriginal.onError?.({ error: 'stale old generation' }));
     expect(latestImageProps(originalUrl).recyclingKey).toBe(retriedOriginal.recyclingKey);
   });
@@ -1348,7 +1387,8 @@ describe('topic block image loading', () => {
 
       await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
-      expect(latestImageProps(originalUrl).recyclingKey).not.toBe(firstOriginal.recyclingKey);
+      expect(latestImageProps(originalUrl).recyclingKey).toBe(firstOriginal.recyclingKey);
+      expect(latestImageProps(originalUrl).source).not.toBe(firstOriginal.source);
       await act(async () => {
         jest.advanceTimersByTime(200);
       });
@@ -1387,7 +1427,8 @@ describe('topic block image loading', () => {
     const firstOriginal = latestImageProps(originalUrl);
     await act(() => firstOriginal.onError?.({ error: 'first original failure' }));
     const retriedOriginal = latestImageProps(originalUrl);
-    expect(retriedOriginal.recyclingKey).not.toBe(firstOriginal.recyclingKey);
+    expect(retriedOriginal.recyclingKey).toBe(firstOriginal.recyclingKey);
+    expect(retriedOriginal.source).not.toBe(firstOriginal.source);
     await act(() => retriedOriginal.onError?.({ error: 'second original failure' }));
     expect(view.queryByTestId('topic-image-original')).toBeNull();
     const originalRenderCount = mockExpoImageProps.mock.calls.filter(
@@ -1430,7 +1471,7 @@ describe('topic block image loading', () => {
     );
     const runningUrls = [inlineUrl, trailingStickerUrl, linkCardIconUrl, linkCardThumbnailUrl];
     await waitFor(() => runningUrls.forEach((url) => expect(latestImageProps(url)).toBeTruthy()));
-    const firstKeys = runningUrls.map((url) => latestImageProps(url).recyclingKey);
+    const firstImages = runningUrls.map((url) => latestImageProps(url));
     expect(
       mockWebView.mock.calls.some(([props]) =>
         String((props as { source?: { uri?: string } }).source?.uri || '').includes('aid=1')
@@ -1441,7 +1482,10 @@ describe('topic block image loading', () => {
     await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
     await waitFor(() =>
-      runningUrls.forEach((url, index) => expect(latestImageProps(url).recyclingKey).not.toBe(firstKeys[index]))
+      runningUrls.forEach((url, index) => expect(latestImageProps(url).source).not.toBe(firstImages[index]?.source))
+    );
+    runningUrls.forEach((url, index) =>
+      expect(latestImageProps(url).recyclingKey).toBe(firstImages[index]?.recyclingKey)
     );
     expect(
       mockWebView.mock.calls.some(([props]) =>
@@ -2746,6 +2790,110 @@ describe('topic block image loading', () => {
     expect(secondScreen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
   });
 
+  it('[REG-TOPIC-085] keeps decoded long-image geometry when its media lease is revoked before passive effects', async () => {
+    const longImageUrl = 'https://img.example.com/lease-race-long-image.png';
+    let revokeLease: () => void = () => undefined;
+    function LongImageLeaseHarness() {
+      const [active, setActive] = React.useState(true);
+      revokeLease = () => setActive(false);
+      return (
+        <TopicBodyMediaCoordinatorProvider active={active} paused={false} viewportRowKeys={['long-image-row']}>
+          <TopicBodyMediaRowBoundary rowKey="long-image-row">
+            <TopicImageHarness attributes={{ alt: '长图', src: longImageUrl }} />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+    }
+    const screen = await render(<LongImageLeaseHarness />);
+    const imageProps = latestImageProps(longImageUrl);
+
+    await act(() => {
+      imageProps.onLoad?.({
+        cacheType: 'memory',
+        source: { height: 5_000, mediaType: 'image/png', url: longImageUrl, width: 1_000 }
+      });
+      expect(cachedImageDisplayDimensions(String(imageProps.source?.cacheKey))).toEqual({
+        height: 5_000,
+        width: 1_000
+      });
+      revokeLease();
+    });
+
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-idle').props.style)).toMatchObject({
+      height: 1_600,
+      width: 320
+    });
+  });
+
+  it.each([
+    {
+      dimensions: { height: 500, width: 109 },
+      expected: { height: 500, width: 109 },
+      name: 'narrow portrait'
+    },
+    {
+      dimensions: { height: 90, width: 160 },
+      expected: { height: 90, width: 160 },
+      name: 'small landscape'
+    },
+    {
+      dimensions: { height: 900, width: 1_600 },
+      expected: { height: 180, width: 320 },
+      name: 'wide landscape'
+    }
+  ])('[REG-TOPIC-085] keeps $name pixels and geometry stable across viewport oscillation', async (testCase) => {
+    const imageUrl = `https://img.example.com/${testCase.name.replace(' ', '-')}.png`;
+    let setLeaseActive: (active: boolean) => void = () => undefined;
+    function RecycledImageLeaseHarness() {
+      const [active, setActive] = React.useState(true);
+      setLeaseActive = setActive;
+      return (
+        <TopicBodyMediaCoordinatorProvider active={active} paused={false} viewportRowKeys={['recycled-image-row']}>
+          <TopicBodyMediaRowBoundary rowKey="recycled-image-row">
+            <TopicImageHarness attributes={{ alt: testCase.name, src: imageUrl }} />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+    }
+    const screen = await render(<RecycledImageLeaseHarness />);
+
+    await loadAndDisplayImage(latestImageProps(imageUrl), testCase.dimensions, 'memory');
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject(testCase.expected);
+
+    const recyclingKey = latestImageProps(imageUrl).recyclingKey;
+    for (const active of Array.from({ length: 20 }, (_, index) => index % 2 === 1)) {
+      await act(() => setLeaseActive(active));
+      expect(screen.queryByTestId('topic-image-idle')).toBeNull();
+      expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject(testCase.expected);
+      expect(latestImageProps(imageUrl).recyclingKey).toBe(recyclingKey);
+    }
+  });
+
+  it('[REG-TOPIC-085] notifies FlashList once when a cold long image establishes its row height', async () => {
+    const longImageUrl = 'https://img.example.com/layout-state-long-image.png';
+    const attributes = { alt: '长图', src: longImageUrl };
+    const firstScreen = await render(<TopicImageHarness attributes={attributes} />);
+
+    await loadAndDisplayImage(latestImageProps(longImageUrl), { height: 5_000, width: 1_000 }, 'memory');
+
+    expect(mockFlashListLayout).toHaveBeenCalledTimes(1);
+    expect(StyleSheet.flatten(firstScreen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 1_600,
+      width: 320
+    });
+    await firstScreen.unmount();
+
+    mockFlashListLayout.mockClear();
+    const secondScreen = await render(<TopicImageHarness attributes={attributes} />);
+    await loadAndDisplayImage(latestImageProps(longImageUrl), { height: 5_000, width: 1_000 }, 'memory');
+
+    expect(mockFlashListLayout).not.toHaveBeenCalled();
+    expect(StyleSheet.flatten(secondScreen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 1_600,
+      width: 320
+    });
+  });
+
   it('stops loading and shows alt text when decoding fails', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => {
@@ -2968,7 +3116,8 @@ describe('topic block image loading', () => {
       const before = getReadNetworkRuntimeSnapshot();
 
       await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
-      expect(latestImageProps(svgImageUrl).recyclingKey).not.toBe(oldAttempt.recyclingKey);
+      expect(latestImageProps(svgImageUrl).recyclingKey).toBe(oldAttempt.recyclingKey);
+      expect(latestImageProps(svgImageUrl).source).not.toBe(oldAttempt.source);
       await act(async () => {
         resolvePendingResponse(
           new Response('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>', {

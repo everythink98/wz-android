@@ -2769,14 +2769,16 @@ describe('Android local sources', () => {
           <div class="nsk-magic-tabs enabled">
             <div class="nsk-magic-tab-title is-active"><span class="emoji">💻</span>基本信息</div>
             <div class="nsk-magic-tab-body">
-              <div class="terminal-container embedMode">
-                <div class="xterm-rows">
-                  <div class="xterm-row"><span style="color: rgb(34, 211, 238)">硬件质量体检报告</span></div>
-                  <div class="xterm-row"><span class="xterm-fg-46 xterm-bg-18">KVM 虚拟机</span></div>
-                  <div class="xterm-row"><span>https://github.com/xykt/HardwareQuality</span></div>
-                </div>
-              </div>
-            </div>
+               <div class="terminal-container embedMode">
+                 <div class="xterm-rows">
+                   <div class="xterm-row"><span style="color: rgb(34, 211, 238)">硬件质量体检报告</span></div>
+                   <div class="xterm-row"><span class="xterm-fg-46 xterm-bg-18">KVM 虚拟机</span></div>
+                   <div class="xterm-row"><span>https://github.com/xykt/HardwareQuality</span></div>
+                 </div>
+                 <p>终端之外的说明</p>
+                 <table><tbody><tr><td>套餐</td><td>Lite</td></tr></tbody></table>
+               </div>
+             </div>
             <div class="nsk-magic-tab-title"><span class="emoji">🎬</span>IP质量</div>
             <div class="nsk-magic-tab-body">
               <div class="terminal-container embedMode">
@@ -2798,6 +2800,12 @@ describe('Android local sources', () => {
     );
 
     const topic = await getNodeSeekTopic('812712', { fetcher });
+    const compiled = compileForumContent({ html: topic.contentHtml, role: 'opening', source: 'nodeseek' });
+    const report = compiled.rows.find((row) => row.type === 'terminalReportHeader');
+    const terminalRows = compiled.rows.filter((row) =>
+      row.ancestorFrames.some((frame) => frame.kind === 'terminalTab')
+    );
+    const terminalCodeRows = terminalRows.filter((row) => row.type === 'codeBlock');
 
     expect(topic.contentHtml).toContain('<forum-terminal-report>');
     expect(topic.contentHtml).toContain('<forum-terminal-tab title="💻基本信息">');
@@ -2831,6 +2839,39 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).not.toContain('[36m');
     expect(topic.contentHtml).not.toContain('[32m');
     expect(topic.contentHtml).not.toContain('[0m');
+    expect(report?.tabs.map((tab) => tab.title)).toEqual(['💻基本信息', '🎬IP质量', '🌐网络质量', '📍回程路由']);
+    expect(
+      new Set(
+        terminalRows.flatMap((row) =>
+          row.ancestorFrames.flatMap((frame) => (frame.kind === 'terminalTab' ? [frame.tabId] : []))
+        )
+      )
+    ).toEqual(new Set(report?.tabs.map((tab) => tab.id)));
+    expect(terminalCodeRows.map((row) => row.text).join('\n')).toContain('KVM 虚拟机');
+    expect(terminalCodeRows.map((row) => row.text).join('\n')).toContain('IP质量检测完成');
+    expect(terminalCodeRows.every((row) => row.variant === 'terminal')).toBe(true);
+    expect(terminalRows.find((row) => row.type === 'richText' && row.html.includes('终端之外的说明'))).toBeTruthy();
+    expect(terminalRows.find((row) => row.type === 'table' && row.html.includes('Lite'))).toBeTruthy();
+    expect(
+      terminalCodeRows.some((row) =>
+        row.runs.some((run) => run.style?.color === '#00ff00' && run.style.backgroundColor === '#000087')
+      )
+    ).toBe(true);
+    expect(
+      terminalRows
+        .filter((row) => 'html' in row)
+        .map((row) => row.html)
+        .join('')
+    ).toContain('https://i.111666.best/image/network.webp');
+    expect(compiled.rows.every((row) => !('html' in row) || !row.html.includes('<forum-terminal-report'))).toBe(true);
+    expect(
+      compiled.rows.some(
+        (row) =>
+          'html' in row &&
+          row.html.includes('HardwareQuality') &&
+          row.ancestorFrames.every((frame) => frame.kind !== 'terminalTab')
+      )
+    ).toBe(true);
   });
 
   it('cleans NodeSeek ansi code reports without showing source markup', async () => {
@@ -2883,7 +2924,7 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).not.toContain('[0m');
   });
 
-  it('renders NodeSeek plain code reports as terminal blocks', async () => {
+  it('[REG-TOPIC-089] preserves NodeSeek plain code reports for typed code rendering', async () => {
     const fetcher = vi.fn(async () =>
       html(`
       <a class="post-title" href="/post-814058-1">[留一下档🫠]LAX.AS3.Pro.TINY</a>
@@ -2907,11 +2948,10 @@ describe('Android local sources', () => {
     const topic = await getNodeSeekTopic('814058', { fetcher });
 
     expect(topic.contentHtml).toContain('买不起溢价的特价机');
-    expect(topic.contentHtml).toContain('forum-terminal-code');
+    expect(topic.contentHtml).toContain('<pre><code>');
     expect(topic.contentHtml).toContain('IP质量体检报告(Lite)');
-    expect(topic.contentHtml).toContain('A&nbsp;Bench&nbsp;Script&nbsp;By&nbsp;spiritlhl');
-    expect(topic.contentHtml).not.toContain('<pre');
-    expect(topic.contentHtml).not.toContain('<code');
+    expect(topic.contentHtml).toContain('A Bench Script By spiritlhl');
+    expect(topic.contentHtml).not.toContain('forum-terminal-code');
   });
 
   it('keeps embedded NodeSeek replies when only the topic body is rendered', async () => {
@@ -3249,7 +3289,7 @@ describe('Android local sources', () => {
       compileForumContent({ html: topic.contentHtml, polls: topic.polls, role: 'opening', source: 'linuxdo' }).rows.map(
         (row) => row.type
       )
-    ).toEqual(['html', 'poll', 'html']);
+    ).toEqual(['richText', 'poll', 'richText', 'richText']);
   });
 
   it('[REG-PERF-008] lets a queued Back cancellation win before Topic DOM parsing', async () => {
@@ -3353,7 +3393,7 @@ describe('Android local sources', () => {
         role: 'reply',
         source: 'linuxdo'
       }).rows.map((row) => row.type)
-    ).toEqual(['html', 'poll', 'html']);
+    ).toEqual(['richText', 'poll', 'richText']);
   });
 
   it('keeps linux.do tags and topic status markers from Discourse lists', async () => {
@@ -8079,7 +8119,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077] exposes V2EX body and usable first-page rows without background convergence', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077] exposes V2EX body and usable first-page rows without reading linked pages in the Topic query', async () => {
     const rows = (firstFloor: number, lastFloor: number) =>
       Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
         .map(
@@ -8129,12 +8169,53 @@ describe('Android local sources', () => {
     const topic = await getTopic({ source: 'v2ex', id: '1232881', fetcher });
 
     expect(topic.contentHtml).toContain('body remains available');
-    expect(topic.replyCount).toBeUndefined();
+    expect(topic.replyCount).toBe(106);
     expect(topic.replies.map(({ floor }) => floor)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
-    expect(topic).toMatchObject({ replyCompleteness: 'partial', replyHasMore: true, replyNextPage: null });
-    expect(sourceDiagnosticSummary(topic)).toMatchObject({ parserVariant: 'html-topic-partial' });
+    expect(topic).toMatchObject({ replyCompleteness: 'complete', replyHasMore: true, replyNextPage: 2 });
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({ parserVariant: 'html-topic' });
     expect(pageCalls).toBe(0);
     expect(replyApiCalls).toBe(0);
+  });
+
+  it('[REG-TOPIC-083] reads a linked V2EX page only when its cursor is requested and preserves its retry', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/t/1233404') {
+        return html(`
+          <script type="application/ld+json">{"commentCount":147}</script>
+          <div id="r_93401" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
+          <a href="?p=2">2</a>
+        `);
+      }
+      if (input === 'https://www.v2ex.com/t/1233404?p=2') {
+        throw new Error('page two unavailable');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const firstPage = await getReplies({
+      source: 'v2ex',
+      id: '1233404',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
+    expect(firstPage).toMatchObject({
+      completeness: 'partial',
+      currentPage: 1,
+      hasMore: true,
+      nextPage: 2,
+      totalCount: 147
+    });
+    await expect(
+      getReplies({
+        source: 'v2ex',
+        id: '1233404',
+        order: 'oldest',
+        position: { kind: 'cursor', page: 2, offset: null },
+        replyCount: 147,
+        fetcher
+      })
+    ).rejects.toThrow('page two unavailable');
   });
 
   it('[REG-TOPIC-076][REG-TOPIC-077] keeps every parsed V2EX page row when a later declaration changes', async () => {
@@ -8163,16 +8244,26 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const replies = await getReplies({
+    const firstPage = await getReplies({
       source: 'v2ex',
       id: '1232881',
       order: 'oldest',
       position: { kind: 'start' },
       fetcher
     });
+    const replies = await getReplies({
+      source: 'v2ex',
+      id: '1232881',
+      order: 'oldest',
+      position: { kind: 'cursor', page: 2, offset: null },
+      replyCount: firstPage.totalCount,
+      fetcher
+    });
 
-    expect(replies.items.map(({ floor }) => floor)).toEqual(Array.from({ length: 105 }, (_, index) => index + 1));
-    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+    expect(firstPage.items.map(({ floor }) => floor)).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
+    expect(firstPage).toMatchObject({ completeness: 'complete', nextPage: 2, totalCount: 106 });
+    expect(replies.items.map(({ floor }) => floor)).toEqual(Array.from({ length: 5 }, (_, index) => index + 101));
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: 106 });
   });
 
   it.each([
@@ -8193,14 +8284,14 @@ describe('Android local sources', () => {
         if (input === 'https://www.v2ex.com/t/827?p=2') {
           pageCalls += 1;
           return html(`
-            <script type="application/ld+json">{"commentCount":2}</script>
-            <div id="r_8272" class="cell"><span class="no">2</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second</div></div>
+            <script type="application/ld+json">{"commentCount":101}</script>
+            <div id="r_8272" class="cell"><span class="no">101</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second</div></div>
           `);
         }
         throw new Error(`unexpected ${input}`);
       });
 
-      const replies = await getReplies({
+      const firstPage = await getReplies({
         source: 'v2ex',
         id: '827',
         order: 'oldest',
@@ -8208,9 +8299,20 @@ describe('Android local sources', () => {
         fetcher
       });
 
+      expect(pageCalls).toBe(0);
+      expect(firstPage.items.map(({ commentId }) => commentId)).toEqual([8271]);
+      expect(firstPage).toMatchObject({ hasMore: true, nextPage: 2 });
+
+      const secondPage = await getReplies({
+        source: 'v2ex',
+        id: '827',
+        order: 'oldest',
+        position: { kind: 'cursor', page: 2, offset: null },
+        replyCount: firstPage.totalCount,
+        fetcher
+      });
       expect(pageCalls).toBe(1);
-      expect(replies.items.map(({ commentId }) => commentId)).toEqual([8271, 8272]);
-      expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+      expect(secondPage.items.map(({ commentId }) => commentId)).toEqual([8272]);
     }
   );
 
@@ -8238,10 +8340,10 @@ describe('Android local sources', () => {
       { commentId: 8281, floor: 1 },
       { commentId: 8282, floor: 1 }
     ]);
-    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: 2 });
   });
 
-  it('[REG-TOPIC-071] resolves query-relative same-topic V2EX pages into one complete reply collection', async () => {
+  it('[REG-TOPIC-071][REG-TOPIC-083] exposes each explicitly linked V2EX page as one reply window', async () => {
     const rows = (firstFloor: number, lastFloor: number) =>
       Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
         .map(
@@ -8292,36 +8394,64 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '1231874', fetcher });
 
-    expect(topic.replyCount).toBeUndefined();
+    expect(topic.replyCount).toBe(107);
     expect(topic.replies).toHaveLength(100);
-    expect(topic).toMatchObject({ replyCompleteness: 'partial', replyHasMore: true, replyNextPage: null });
+    expect(topic).toMatchObject({ replyCompleteness: 'complete', replyHasMore: true, replyNextPage: 2 });
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain('https://www.v2ex.com/t/1231874?p=2');
 
+    fetcher.mockClear();
     const replies = await getReplies({
       source: 'v2ex',
       id: '1231874',
       order: 'oldest',
-      position: { kind: 'start' },
+      position: { kind: 'cursor', page: 2, offset: null },
+      replyCount: topic.replyCount,
       fetcher
     });
 
-    expect(replies.items).toHaveLength(107);
-    expect(replies.items.map(({ floor }) => floor)).toEqual(Array.from({ length: 107 }, (_, index) => index + 1));
-    expect(replies).toMatchObject({ hasMore: false, nextPage: null, nextOffset: null });
+    expect(replies.items.map(({ floor }) => floor)).toEqual(Array.from({ length: 7 }, (_, index) => index + 101));
+    expect(replies).toMatchObject({
+      completeness: 'complete',
+      currentPage: 2,
+      previousPage: 1,
+      hasMore: false,
+      nextPage: null,
+      totalCount: 107
+    });
+    expect(replyApiCalls).toBe(0);
+    expect(fetcher.mock.calls.map(([input]) => input)).toEqual(['https://www.v2ex.com/t/1231874?p=2']);
 
+    fetcher.mockClear();
     const newestReplies = await getReplies({
       source: 'v2ex',
       id: '1231874',
       order: 'newest',
       position: { kind: 'start' },
+      replyCount: topic.replyCount,
       fetcher
     });
-    expect(newestReplies.items.map(({ floor }) => floor)).toEqual(
-      Array.from({ length: 107 }, (_, index) => 107 - index)
-    );
-    expect(newestReplies).toMatchObject({ hasMore: false, nextPage: null, nextOffset: null });
-    expect(replyApiCalls).toBe(0);
-    expect(fetcher.mock.calls.map(([input]) => input)).toContain('https://www.v2ex.com/t/1231874?p=2');
+    expect(newestReplies.items.map(({ floor }) => floor)).toEqual(Array.from({ length: 7 }, (_, index) => 107 - index));
+    expect(newestReplies).toMatchObject({ currentPage: 2, hasMore: true, nextPage: 1, totalCount: 107 });
+    expect(fetcher.mock.calls.map(([input]) => input)).toEqual([
+      'https://www.v2ex.com/t/1231874',
+      'https://www.v2ex.com/t/1231874?p=2'
+    ]);
+
+    fetcher.mockClear();
+    const targetReplies = await getReplies({
+      source: 'v2ex',
+      id: '1231874',
+      order: 'oldest',
+      position: { kind: 'target', target: { floor: 105 } },
+      replyCount: topic.replyCount,
+      fetcher
+    });
+    expect(targetReplies.items.map(({ floor }) => floor)).toEqual(Array.from({ length: 7 }, (_, index) => index + 101));
+    expect(targetReplies).toMatchObject({ currentPage: 2, previousPage: 1, hasMore: false, nextPage: null });
+    expect(fetcher.mock.calls.map(([input]) => input)).toEqual([
+      'https://www.v2ex.com/t/1231874',
+      'https://www.v2ex.com/t/1231874?p=2'
+    ]);
   });
 
   it.each([
@@ -8330,6 +8460,7 @@ describe('Android local sources', () => {
       firstLink: '/t/1231875?p=2',
       secondCount: 108,
       secondFloors: Array.from({ length: 7 }, (_, index) => index + 101),
+      expectedSecondFloors: Array.from({ length: 7 }, (_, index) => index + 101),
       expectedPageCalls: 1
     },
     {
@@ -8337,6 +8468,7 @@ describe('Android local sources', () => {
       firstLink: '/t/1231875?p=2',
       secondCount: 107,
       secondFloors: [101, 102, 103, 104, 106, 107],
+      expectedSecondFloors: [101, 102, 103, 104, 106, 107],
       expectedPageCalls: 1
     },
     {
@@ -8344,6 +8476,7 @@ describe('Android local sources', () => {
       firstLink: '/t/1231875?p=2',
       secondCount: 107,
       secondFloors: [100, 102, 103, 104, 105, 106, 107],
+      expectedSecondFloors: [102, 103, 104, 105, 106, 107],
       expectedPageCalls: 1
     },
     {
@@ -8351,6 +8484,7 @@ describe('Android local sources', () => {
       firstLink: 'https://example.com/t/1231875?p=2',
       secondCount: 107,
       secondFloors: Array.from({ length: 7 }, (_, index) => index + 101),
+      expectedSecondFloors: Array.from({ length: 7 }, (_, index) => index + 101),
       expectedPageCalls: 0
     }
   ])(
@@ -8406,23 +8540,36 @@ describe('Android local sources', () => {
 
       const topic = await getTopic({ source: 'v2ex', id: '1231875', fetcher });
       expect(topic.replies).toHaveLength(100);
-      expect(topic.replyHasMore).toBe(true);
+      expect(topic.replyHasMore).toBe(scenario.expectedPageCalls === 1);
 
-      const replies = await getReplies({
+      const firstPage = await getReplies({
         source: 'v2ex',
         id: '1231875',
         order: 'oldest',
         position: { kind: 'start' },
+        replyCount: topic.replyCount,
         fetcher
       });
       const firstPageFloors = Array.from({ length: 100 }, (_, index) => index + 1);
-      const expectedFloors = scenario.expectedPageCalls
-        ? [...new Set([...firstPageFloors, ...scenario.secondFloors])].sort((left, right) => left - right)
-        : firstPageFloors;
-      expect(replies.items.map(({ floor }) => floor)).toEqual(expectedFloors);
-      expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+      expect(firstPage.items.map(({ floor }) => floor)).toEqual(firstPageFloors);
       expect(replyApiCalls).toBe(0);
-      expect(pageCalls).toBe(scenario.expectedPageCalls);
+      expect(pageCalls).toBe(0);
+
+      if (scenario.expectedPageCalls) {
+        const secondPage = await getReplies({
+          source: 'v2ex',
+          id: '1231875',
+          order: 'oldest',
+          position: { kind: 'cursor', page: 2, offset: null },
+          replyCount: topic.replyCount,
+          fetcher
+        });
+        expect(secondPage.items.map(({ floor }) => floor)).toEqual(scenario.expectedSecondFloors);
+        expect(secondPage).toMatchObject({ completeness: 'partial', totalCount: 107 });
+        expect(pageCalls).toBe(1);
+      } else {
+        expect(firstPage).toMatchObject({ completeness: 'partial', hasMore: false, nextPage: null, totalCount: 107 });
+      }
     }
   );
 
@@ -8475,7 +8622,7 @@ describe('Android local sources', () => {
       ],
       replyCount: undefined,
       replyCompleteness: 'partial',
-      replyHasMore: true
+      replyHasMore: false
     });
     const refreshed = await getReplies({
       source: 'v2ex',
@@ -8559,17 +8706,18 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '822', fetcher });
     expect(topic.replies.map(({ floor }) => floor)).toEqual([1, 2]);
-    expect(topic.replyHasMore).toBe(true);
-    expect(topic.replyCount).toBeUndefined();
+    expect(topic.replyHasMore).toBe(false);
+    expect(topic.replyCount).toBe(2);
     const replies = await getReplies({
       source: 'v2ex',
       id: '822',
       order: 'oldest',
       position: { kind: 'start' },
+      replyCount: topic.replyCount,
       fetcher
     });
     expect(replies.items.map(({ floor }) => floor)).toEqual([1, 2]);
-    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: 2 });
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
       'https://www.v2ex.com/api/replies/show.json?topic_id=822&page=1'
     );
@@ -8612,7 +8760,7 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '816', fetcher });
     expect(topic.replies.map(({ floor }) => floor)).toEqual([1, 2]);
-    expect(topic.replyHasMore).toBe(true);
+    expect(topic.replyHasMore).toBe(false);
     const replies = await getReplies({
       source: 'v2ex',
       id: '816',
@@ -8621,7 +8769,7 @@ describe('Android local sources', () => {
       fetcher
     });
     expect(replies.items.map(({ floor }) => floor)).toEqual([1, 2]);
-    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: 3 });
     expect(fetcher.mock.calls.map(([input]) => input)).not.toContain(
       'https://www.v2ex.com/api/replies/show.json?topic_id=816&page=1'
     );
@@ -8799,8 +8947,8 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '812', fetcher });
 
-    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
-    expect(topic.replyCount).toBeUndefined();
+    expect(topic).toMatchObject({ replies: [], replyHasMore: false });
+    expect(topic.replyCount).toBe(2);
 
     const replies = await getReplies({
       source: 'v2ex',
@@ -8849,8 +8997,8 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'v2ex', id: '818', fetcher });
 
-    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
-    expect(topic.replyCount).toBeUndefined();
+    expect(topic).toMatchObject({ replies: [], replyHasMore: false });
+    expect(topic.replyCount).toBe(0);
 
     const replies = await getReplies({
       source: 'v2ex',
@@ -8894,7 +9042,7 @@ describe('Android local sources', () => {
     });
 
     const topic = await getTopic({ source: 'v2ex', id: '823', fetcher });
-    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
+    expect(topic).toMatchObject({ replies: [], replyHasMore: false });
     const replies = await getReplies({
       source: 'v2ex',
       id: '823',
@@ -8938,7 +9086,7 @@ describe('Android local sources', () => {
     const topic = await getTopic({ source: 'v2ex', id: '819', fetcher });
 
     expect(topic.replies.map(({ floor }) => floor)).toEqual([1]);
-    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: null });
+    expect(topic).toMatchObject({ replyHasMore: false, replyNextPage: null });
     expect(topic.replyCount).toBeUndefined();
     fetcher.mockClear();
 
@@ -8986,7 +9134,7 @@ describe('Android local sources', () => {
     });
 
     const topic = await getTopic({ source: 'v2ex', id: '813', fetcher });
-    expect(topic).toMatchObject({ replies: [], replyHasMore: true });
+    expect(topic).toMatchObject({ replies: [], replyHasMore: false });
     const replies = await getReplies({
       source: 'v2ex',
       id: '813',
@@ -8995,7 +9143,7 @@ describe('Android local sources', () => {
       fetcher
     });
     expect(replies.items.map(({ floor }) => floor)).toEqual([1, 2]);
-    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: 3 });
   });
 
   it('[REG-TOPIC-069][REG-TOPIC-077] drops an empty API record without declaring the remaining row complete', async () => {
@@ -9030,7 +9178,7 @@ describe('Android local sources', () => {
     expect(replies.items.map(({ commentId, floor }) => ({ commentId, floor }))).toEqual([
       { commentId: 7901, floor: 1 }
     ]);
-    expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
+    expect(replies).toMatchObject({ completeness: 'partial', totalCount: 2 });
   });
 
   it('[REG-TOPIC-069][REG-TOPIC-077] keeps identified empty and image-only API replies', async () => {

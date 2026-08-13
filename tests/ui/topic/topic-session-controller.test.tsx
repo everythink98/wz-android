@@ -598,36 +598,32 @@ describe('topic query controller', () => {
     expect(getReplies).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077] keeps a partial V2EX prefix visible without background convergence', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077][REG-TOPIC-083] keeps the first 100 V2EX replies without transport until loading the linked next page', async () => {
     jest.useFakeTimers();
     try {
-      const prefix = [
-        { ...firstReply, floor: 1, commentId: 101 },
-        { ...firstReply, floor: 2, commentId: 102 }
-      ];
-      const fullReplies = [...prefix, { ...firstReply, floor: 3, commentId: 103 }];
-      const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 3 };
+      const prefix = Array.from({ length: 100 }, (_, index) => ({
+        ...firstReply,
+        floor: index + 1,
+        commentId: index + 101
+      }));
+      const nextReplies = Array.from({ length: 47 }, (_, index) => ({
+        ...firstReply,
+        floor: index + 101,
+        commentId: index + 201
+      }));
+      const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 147 };
       const detail: TopicDetail = {
         ...firstDetail,
         ...topic,
         contentHtml: '<p>V2EX body</p>',
         replies: prefix,
-        replyCompleteness: 'partial',
+        replyCompleteness: 'complete',
         replyHasMore: true,
-        replyNextPage: null
+        replyNextPage: 2,
+        replyNextOffset: null
       };
-      const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
-        items: fullReplies,
-        completeness: 'complete',
-        currentPage: 1,
-        currentOffset: 0,
-        previousPage: null,
-        previousOffset: null,
-        hasMore: false,
-        nextPage: null,
-        nextOffset: null,
-        totalCount: 3
-      }));
+      const pendingReplies = Promise.withResolvers<RepliesResponse>();
+      const getReplies = jest.fn<ReadGateway['getReplies']>(() => pendingReplies.promise);
       const hook = await renderTopicController({
         readGateway: {
           getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
@@ -638,51 +634,125 @@ describe('topic query controller', () => {
 
       await waitFor(() => expect(hook.result.current.controller.topicDetail?.contentHtml).toContain('V2EX body'));
       expect(hook.result.current.controller.topicDetail?.contentHtml).toContain('V2EX body');
-      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2]);
-      expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
       expect(getReplies).not.toHaveBeenCalled();
+      expect(hook.result.current.controller.topicReplies).toHaveLength(100);
+      expect(hook.result.current.controller.topicReplies.at(-1)?.floor).toBe(100);
+      expect(hook.result.current.controller.replyHasMore).toBe(true);
+      expect(hook.result.current.controller.replyRowsPartial).toBe(false);
+
+      let loadMore: ReturnType<typeof hook.result.current.controller.loadMoreReplies>;
+      await act(async () => {
+        loadMore = hook.result.current.controller.loadMoreReplies({ silent: true });
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+      expect(getReplies).toHaveBeenCalledWith(
+        expect.objectContaining({ position: { kind: 'cursor', page: 2, offset: null } }),
+        expect.anything()
+      );
+
+      await act(async () => {
+        pendingReplies.resolve({
+          items: nextReplies,
+          completeness: 'complete',
+          currentPage: 2,
+          currentOffset: null,
+          previousPage: 1,
+          previousOffset: null,
+          hasMore: false,
+          nextPage: null,
+          nextOffset: null,
+          totalCount: 147
+        });
+        await loadMore;
+      });
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(147));
+      expect(hook.result.current.controller.topicReplies.at(-1)?.floor).toBe(147);
+      expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
+      expect(hook.result.current.controller.replyHasMore).toBe(false);
+      expect(hook.result.current.controller.replyRowsPartial).toBe(false);
 
       await act(async () => {
         await jest.advanceTimersByTimeAsync(60_000);
       });
-      expect(getReplies).not.toHaveBeenCalled();
-
-      await act(async () => {
-        await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('completed');
-      });
       expect(getReplies).toHaveBeenCalledTimes(1);
-      expect(
-        appQueryClient.getQueryData(
-          forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest', 'public:omit')
-        )
-      ).toMatchObject({ pages: [{ items: fullReplies }] });
-      await act(async () => {
-        hook.rerender(undefined);
-      });
-      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([1, 2, 3]);
-      expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
-      expect(appQueryClient.getQueryData(hook.result.current.controller.topicQueryKey)).toMatchObject({
-        replyCount: 3,
-        replyHasMore: false,
-        replyNextPage: null
-      });
     } finally {
       jest.useRealTimers();
     }
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077] keeps a partial V2EX prefix after one explicit refresh fails', async () => {
+  it('[REG-TOPIC-077][REG-TOPIC-083] keeps all 146 valid V2EX replies when one later-page row is malformed', async () => {
+    const prefix = Array.from({ length: 100 }, (_, index) => ({
+      ...firstReply,
+      floor: index + 1,
+      commentId: index + 101
+    }));
+    const partialReplies = Array.from({ length: 46 }, (_, index) => ({
+      ...firstReply,
+      floor: index + 101,
+      commentId: index + 201
+    }));
+    const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 147 };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      ...topic,
+      replies: prefix,
+      replyCompleteness: 'complete',
+      replyHasMore: true,
+      replyNextPage: 2,
+      replyNextOffset: null
+    };
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
+      items: partialReplies,
+      completeness: 'partial',
+      currentPage: 2,
+      currentOffset: null,
+      previousPage: 1,
+      previousOffset: null,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null,
+      totalCount: 147
+    }));
+    const hook = await renderTopicController({
+      readGateway: {
+        getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
+        getReplies
+      },
+      topic
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(100));
+    expect(getReplies).not.toHaveBeenCalled();
+    await act(async () => {
+      await hook.result.current.controller.loadMoreReplies({ silent: true });
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(146));
+    expect(hook.result.current.controller.topicReplies.at(-1)?.floor).toBe(146);
+    expect(hook.result.current.controller.replyRowsPartial).toBe(true);
+    expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
+    expect(hook.result.current.controller.topicDetail?.replyCount).toBe(147);
+    expect(getReplies).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-076][REG-TOPIC-077][REG-TOPIC-083] keeps a 100-reply V2EX prefix after an explicit next-page read fails', async () => {
     jest.useFakeTimers();
     try {
-      const prefix = [{ ...firstReply, floor: 1, commentId: 101 }];
-      const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
+      const prefix = Array.from({ length: 100 }, (_, index) => ({
+        ...firstReply,
+        floor: index + 1,
+        commentId: index + 101
+      }));
+      const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 147 };
       const detail: TopicDetail = {
         ...firstDetail,
         ...topic,
+        contentHtml: '<p>V2EX body</p>',
         replies: prefix,
-        replyCompleteness: 'partial',
+        replyCompleteness: 'complete',
         replyHasMore: true,
-        replyNextPage: null
+        replyNextPage: 2,
+        replyNextOffset: null
       };
       const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
         throw new Error('V2EX 回复总数已变化，无法确认完整集合');
@@ -695,22 +765,23 @@ describe('topic query controller', () => {
         topic
       });
 
-      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual(prefix));
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(100));
       expect(getReplies).not.toHaveBeenCalled();
-
       await act(async () => {
-        await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('failed');
+        await expect(hook.result.current.controller.loadMoreReplies({ silent: true })).resolves.toBe('failed');
       });
-      expect(getReplies).toHaveBeenCalledTimes(1);
-      expect(hook.result.current.controller.topicReplies).toEqual(prefix);
-      expect(hook.result.current.controller.repliesError?.message).toContain('回复总数已变化');
+      await waitFor(() => expect(hook.result.current.controller.replyEndError?.message).toContain('回复总数已变化'));
+      expect(hook.result.current.controller.topicDetail?.contentHtml).toContain('V2EX body');
+      expect(hook.result.current.controller.topicReplies).toHaveLength(100);
+      expect(hook.result.current.controller.topicReplies.at(-1)?.floor).toBe(100);
+      expect(hook.result.current.controller.replyRowsPartial).toBe(false);
 
       await act(async () => {
         await jest.advanceTimersByTimeAsync(60_000);
       });
       expect(getReplies).toHaveBeenCalledTimes(1);
-      expect(hook.result.current.controller.topicReplies).toEqual(prefix);
-      expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
+      expect(hook.result.current.controller.topicReplies).toHaveLength(100);
+      expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
       expect(hook.result.current.controller.topicError).toBeNull();
     } finally {
       jest.useRealTimers();
@@ -754,7 +825,7 @@ describe('topic query controller', () => {
       await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([recovered]));
       expect(getReplies).toHaveBeenCalledTimes(1);
       expect(hook.result.current.controller.repliesLoading).toBe(false);
-      expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
+      expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
 
       await act(async () => {
         await jest.advanceTimersByTimeAsync(60_000);
@@ -765,9 +836,8 @@ describe('topic query controller', () => {
     }
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077] runs one reply read after an explicit full refresh of a partial V2EX topic', async () => {
+  it('[REG-TOPIC-076][REG-TOPIC-077][REG-TOPIC-083] keeps an explicit full refresh on the refreshed V2EX page window', async () => {
     const prefix = [{ ...firstReply, floor: 1, commentId: 101 }];
-    const fullReplies = [...prefix, { ...firstReply, floor: 2, commentId: 102 }];
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
     const detail: TopicDetail = {
       ...firstDetail,
@@ -778,22 +848,11 @@ describe('topic query controller', () => {
       replyNextPage: null
     };
     const getTopic = jest.fn<ReadGateway['getTopic']>(async () => detail);
-    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
-      items: fullReplies,
-      completeness: 'complete',
-      currentPage: 1,
-      currentOffset: 0,
-      previousPage: null,
-      previousOffset: null,
-      hasMore: false,
-      nextPage: null,
-      nextOffset: null,
-      totalCount: 2
-    }));
+    const getReplies = jest.fn<ReadGateway['getReplies']>();
     const hook = await renderTopicController({ readGateway: { getTopic, getReplies }, topic });
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual(prefix));
-    expect(hook.result.current.controller.replyCollectionComplete).toBe(false);
+    expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
     expect(getTopic).toHaveBeenCalledTimes(1);
     expect(getReplies).not.toHaveBeenCalled();
 
@@ -802,8 +861,8 @@ describe('topic query controller', () => {
     });
 
     expect(getTopic).toHaveBeenCalledTimes(2);
-    expect(getReplies).toHaveBeenCalledTimes(1);
-    expect(hook.result.current.controller.topicReplies).toEqual(fullReplies);
+    expect(getReplies).not.toHaveBeenCalled();
+    expect(hook.result.current.controller.topicReplies).toEqual(prefix);
     expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
   });
 
@@ -1559,7 +1618,7 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicReplies).toEqual([sourceOwnedTarget]);
   });
 
-  it('[REG-TOPIC-062][REG-TOPIC-069] locates V2EX only from its already loaded reply collection', async () => {
+  it('[REG-TOPIC-062][REG-TOPIC-069][REG-TOPIC-083] reuses a loaded V2EX target and queries an unloaded target window', async () => {
     const reply = { ...firstReply, floor: 12, commentId: 120 };
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1' };
     const detail = {
@@ -1570,7 +1629,9 @@ describe('topic query controller', () => {
       replyCount: 1,
       replyHasMore: false
     };
-    const getReplies = jest.fn<ReadGateway['getReplies']>();
+    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
+      throw new Error('V2EX 目标楼层未找到');
+    });
     const hook = await renderTopicController({
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
@@ -1583,10 +1644,14 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([reply]));
     await expect(hook.result.current.controller.locateReply({ floor: 12 })).resolves.toBe('completed');
     await expect(hook.result.current.controller.locateReply({ floor: 99 }, { silent: true })).resolves.toBe('failed');
-    expect(getReplies).not.toHaveBeenCalled();
+    expect(getReplies).toHaveBeenCalledTimes(1);
+    expect(getReplies).toHaveBeenCalledWith(
+      expect.objectContaining({ position: { kind: 'target', target: { floor: 99 } } }),
+      expect.anything()
+    );
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077] locates outside a V2EX prefix with one target-driven read and no polling', async () => {
+  it('[REG-TOPIC-062][REG-TOPIC-076][REG-TOPIC-083] reads a V2EX route target once without a duplicate start read', async () => {
     const prefixReply = { ...firstReply, floor: 1, commentId: 101 };
     const target = { ...firstReply, floor: 2, commentId: 102 };
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
@@ -1594,43 +1659,51 @@ describe('topic query controller', () => {
       ...firstDetail,
       ...topic,
       replies: [prefixReply],
-      replyCompleteness: 'partial',
+      replyCompleteness: 'complete',
       replyHasMore: true,
-      replyNextPage: null
+      replyNextPage: 2,
+      replyNextOffset: null
     };
-    const getReplies = jest.fn<ReadGateway['getReplies']>(async () => ({
-      items: [prefixReply, target],
-      completeness: 'complete',
-      currentPage: 1,
-      currentOffset: 0,
-      previousPage: null,
-      previousOffset: null,
-      hasMore: false,
-      nextPage: null,
-      nextOffset: null,
-      totalCount: 2
-    }));
-    const notify = jest.fn();
+    const pendingReplies = Promise.withResolvers<RepliesResponse>();
+    const getReplies = jest.fn<ReadGateway['getReplies']>(() => pendingReplies.promise);
     const hook = await renderTopicController({
-      notify,
       readGateway: {
         getTopic: jest.fn<ReadGateway['getTopic']>(async () => detail),
         getReplies
       },
+      targetReply: { floor: 2 },
       topic
     });
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([prefixReply]));
-    await expect(hook.result.current.controller.locateReply({ floor: 1 })).resolves.toBe('completed');
+    await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+    expect(getReplies).toHaveBeenCalledWith(
+      expect.objectContaining({ position: { kind: 'target', target: { floor: 2 } } }),
+      expect.anything()
+    );
     await act(async () => {
-      await expect(hook.result.current.controller.locateReply({ floor: 2 })).resolves.toBe('completed');
+      await Promise.resolve();
+      await Promise.resolve();
     });
     expect(getReplies).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pendingReplies.resolve({
+        items: [target],
+        completeness: 'complete',
+        currentPage: 2,
+        currentOffset: null,
+        previousPage: 1,
+        previousOffset: null,
+        hasMore: false,
+        nextPage: null,
+        nextOffset: null,
+        totalCount: 2
+      });
+      await pendingReplies.promise;
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
     await waitFor(() => expect(hook.result.current.controller.replyCollectionComplete).toBe(true));
-    await expect(hook.result.current.controller.locateReply({ floor: 2 })).resolves.toBe('completed');
-    await expect(hook.result.current.controller.locateReply({ floor: 99 })).resolves.toBe('failed');
     expect(getReplies).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenCalledWith('目标楼层未找到');
   });
 
   it('[REG-TOPIC-062] preserves the current window when a source cannot confirm the target floor', async () => {
@@ -2279,7 +2352,15 @@ describe('topic query controller', () => {
       source: 'v2ex' as const,
       url: 'https://www.v2ex.com/t/1'
     };
-    const v2exDetail = { ...firstDetail, ...v2exTopic, replyCount: 1, replyHasMore: false };
+    const v2exDetail = {
+      ...firstDetail,
+      ...v2exTopic,
+      replyCount: 1,
+      replyCompleteness: 'complete' as const,
+      replyHasMore: false,
+      replyNextPage: null,
+      replyNextOffset: null
+    };
     const getTopic = jest.fn<ReadGateway['getTopic']>(async () => v2exDetail);
     const getReplies = jest.fn<ReadGateway['getReplies']>(async () => {
       throw new Error('V2EX refresh failed');

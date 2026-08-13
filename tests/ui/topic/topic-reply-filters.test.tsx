@@ -7,6 +7,7 @@ import type { ReplyFilter } from '@/features/topic/model/types';
 import type { TopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
+import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen } from '@/features/topic/TopicScreen';
@@ -31,6 +32,7 @@ const mockCompileForumContent = jest.fn();
 let lastFlashListItemTypes: string[] = [];
 let lastFlashListItemKeys: string[] = [];
 let lastFlashListProps: Record<string, any> = {};
+let mockBodyMediaViewportRowKeys: readonly string[] = [];
 
 function lastReplyListIndex(floor: number) {
   return ((lastFlashListProps.data || []) as { reply?: Reply }[]).findIndex((item) => item.reply?.floor === floor);
@@ -84,6 +86,22 @@ jest.mock('@shopify/flash-list', () => {
       );
     }),
     useMappingHelper: () => ({ getMappingKey: (key: string | number) => String(key) })
+  };
+});
+
+jest.mock('@/features/topic/media/TopicBodyMediaCoordinator', () => {
+  const ReactModule = require('react') as typeof React;
+  const actual = jest.requireActual<typeof import('@/features/topic/media/TopicBodyMediaCoordinator')>(
+    '@/features/topic/media/TopicBodyMediaCoordinator'
+  );
+  return {
+    ...actual,
+    TopicBodyMediaCoordinatorProvider: (
+      props: React.ComponentProps<typeof actual.TopicBodyMediaCoordinatorProvider>
+    ) => {
+      mockBodyMediaViewportRowKeys = props.viewportRowKeys;
+      return ReactModule.createElement(actual.TopicBodyMediaCoordinatorProvider, props);
+    }
   };
 });
 
@@ -222,28 +240,38 @@ jest.mock('@/features/topic/components/TopicActionBar', () => {
 jest.mock('@/features/topic/components/TopicContentBlock', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
+  const actual = jest.requireActual<typeof import('@/features/topic/components/TopicContentBlock')>(
+    '@/features/topic/components/TopicContentBlock'
+  );
   return {
-    MemoizedTopicContentBlock: ({
-      continuation = 'only',
-      html,
-      originalImageUpgradeEnabled
-    }: {
-      continuation?: 'only' | 'first' | 'middle' | 'last';
-      html: string;
+    MemoizedTopicContentBlock: (props: {
+      contentWidth: number;
+      html?: string;
       originalImageUpgradeEnabled?: boolean;
+      query?: string;
+      row: import('@/features/topic/model/topicOpeningPresentation').TopicRenderableContentRow;
+      trimTrailingBlockSpacing?: boolean;
     }) => {
+      const { html, originalImageUpgradeEnabled, row } = props;
+      if (row.type === 'codeBlock' || row.type === 'disclosureHeader' || row.type === 'terminalReportHeader') {
+        return ReactModule.createElement(actual.TopicContentBlock, props);
+      }
       const renderers = (
         require('react-native-render-html') as {
           __useMockRenderers: () => Record<string, React.ComponentType<any>>;
         }
       ).__useMockRenderers();
-      const compactShellMatch = html
+      const continuation = row.ancestorFrames[0]?.part || row.part;
+      const resolvedHtml = html ?? ('html' in row ? row.html : '');
+      const compactShellMatch = resolvedHtml
         .trim()
         .match(/^<div\b[^>]*\bclass=["'][^"']*\bforum-reply-content\b[^"']*["'][^>]*>([\s\S]*)<\/div>$/i);
-      const renderableHtml = compactShellMatch?.[1] || html.trim();
+      const renderableHtml = compactShellMatch?.[1] || resolvedHtml.trim();
       const detailsMatch = renderableHtml.match(/^<details\b([^>]*)>([\s\S]*)<\/details>$/i);
       const DetailsRenderer = renderers.details;
       if (detailsMatch && DetailsRenderer) {
+        const { TopicContentPresentationProvider } =
+          require('@/features/topic/rendering/TopicContentPresentation') as typeof import('@/features/topic/rendering/TopicContentPresentation');
         const attributes: Record<string, string> = {};
         for (const match of detailsMatch[1].matchAll(/([\w:-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) {
           attributes[match[1]] = match[2] ?? match[3] ?? match[4] ?? '';
@@ -263,31 +291,35 @@ jest.mock('@/features/topic/components/TopicContentBlock', () => {
           nodeIndex: 3,
           tagName: 'div'
         };
+        const detailsContent = ReactModule.createElement(DetailsRenderer, {
+          tnode: {
+            attributes,
+            children: [...(summaryNode ? [summaryNode] : []), bodyNode],
+            nodeIndex: 0,
+            parent: null,
+            tagName: 'details'
+          }
+        });
         return ReactModule.createElement(
           NativeView,
           {
             accessibilityLabel: `content-continuation-${continuation}`,
             testID: `topic-html-block-${originalImageUpgradeEnabled ? 'ready' : 'deferred'}`
           },
-          ReactModule.createElement(DetailsRenderer, {
-            tnode: {
-              attributes,
-              children: [...(summaryNode ? [summaryNode] : []), bodyNode],
-              nodeIndex: 0,
-              parent: null,
-              tagName: 'details'
-            }
+          ReactModule.createElement(TopicContentPresentationProvider, {
+            children: detailsContent,
+            continuation
           })
         );
       }
       const children: React.ReactNode[] = [];
       const pattern = /<forum-nodeseek-poll\b[^>]*\bid=["']([^"']+)["'][^>]*>\s*<\/forum-nodeseek-poll\s*>/gi;
       let offset = 0;
-      let match = pattern.exec(html);
+      let match = pattern.exec(resolvedHtml);
       while (match) {
         if (match.index > offset) {
           children.push(
-            ReactModule.createElement(NativeText, { key: `html-${offset}` }, html.slice(offset, match.index))
+            ReactModule.createElement(NativeText, { key: `html-${offset}` }, resolvedHtml.slice(offset, match.index))
           );
         }
         const Renderer = renderers['forum-nodeseek-poll'];
@@ -300,10 +332,10 @@ jest.mock('@/features/topic/components/TopicContentBlock', () => {
           );
         }
         offset = pattern.lastIndex;
-        match = pattern.exec(html);
+        match = pattern.exec(resolvedHtml);
       }
-      if (offset < html.length) {
-        children.push(ReactModule.createElement(NativeText, { key: `html-${offset}` }, html.slice(offset)));
+      if (offset < resolvedHtml.length) {
+        children.push(ReactModule.createElement(NativeText, { key: `html-${offset}` }, resolvedHtml.slice(offset)));
       }
       return ReactModule.createElement(
         NativeView,
@@ -375,6 +407,7 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
         `${stat.label} ${stat.value}${stat.imageUrl ? ` ${stat.imageUrl}` : ''}`
       ),
     MemoizedReplyItem: (props: {
+      bodyContent?: import('@/features/topic/model/replyListModel').ReplyRenderableContent;
       isTerminal?: boolean;
       onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
       reply: Reply;
@@ -387,6 +420,9 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
       };
     }) => {
       const { isTerminal, onQuoteContentLayout, reply, section } = props;
+      if (!section && props.bodyContent?.type === 'codeBlock') {
+        return ReactModule.createElement(actual.ReplyItem, props as never);
+      }
       if (
         section?.type === 'replyContent' ||
         section?.type === 'replySignatureContent' ||
@@ -394,20 +430,24 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
       ) {
         return ReactModule.createElement(actual.ReplyItem, props as never);
       }
+      if (section?.type === 'replyEnd') {
+        return isTerminal ? ReactModule.createElement(NativeView, { testID: 'terminal-reply' }) : null;
+      }
+      if (section?.type === 'replyQuoteSummary') {
+        return section.measureForMaterialization
+          ? ReactModule.createElement(NativeView, {
+              onLayout: () =>
+                onQuoteContentLayout?.({
+                  contentToken: section.contentToken!,
+                  instanceKey: section.instanceKey!
+                }),
+              testID: `reply-quote-materialization-${section.key}`
+            })
+          : null;
+      }
       return ReactModule.createElement(
         NativeView,
-        isTerminal
-          ? { testID: 'terminal-reply' }
-          : section?.measureForMaterialization
-            ? {
-                onLayout: () =>
-                  onQuoteContentLayout?.({
-                    contentToken: section.contentToken!,
-                    instanceKey: section.instanceKey!
-                  }),
-                testID: `reply-quote-materialization-${section.key}`
-              }
-            : undefined,
+        isTerminal ? { testID: 'terminal-reply' } : undefined,
         ReactModule.createElement(
           NativeText,
           { testID: `reply-floor-${reply.floor}` },
@@ -816,7 +856,71 @@ describe('Topic reply filters', () => {
     expect(lastFlashListItemTypes.indexOf('replyControls')).toBe(contentItemCount);
   });
 
-  it('[REG-TOPIC-081] removes virtual-list separators across adjacent opening article rows', async () => {
+  it('[REG-TOPIC-091] admits a newly selected terminal-tab long image without waiting for a scroll', async () => {
+    const terminalTopic: TopicDetail = {
+      ...topic,
+      contentHtml:
+        '<forum-terminal-report>' +
+        '<forum-terminal-tab title="Long image"><p><img src="https://img.example.com/long.png" width="630" height="1450"></p></forum-terminal-tab>' +
+        '<forum-terminal-tab title="Code"><div class="forum-terminal-code">second tab</div></forum-terminal-tab>' +
+        '</forum-terminal-report>',
+      id: 'terminal-tab-long-image',
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-812712-1'
+    };
+    const compiledRow = (item: TopicListItem) =>
+      item.type === 'topicContent' && item.content.type !== 'accessNotice' ? item.content.row : null;
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(
+      <TopicFilterHarness selectedTopic={terminalTopic} topicDetail={terminalTopic} topicReplies={[]} />
+    );
+    const initialItems = lastFlashListProps.data as TopicListItem[];
+    const headerItem = initialItems.find((item) => compiledRow(item)?.type === 'terminalReportHeader');
+    const headerRow = headerItem ? compiledRow(headerItem) : null;
+    if (!headerItem || headerRow?.type !== 'terminalReportHeader') throw new Error('terminal header missing');
+    const codeTabId = headerRow.tabs.find((tab) => tab.title === 'Code')?.id;
+    const imageItem = initialItems.find((item) =>
+      compiledRow(item)?.ancestorFrames.some(
+        (frame) => frame.kind === 'terminalTab' && frame.tabId === headerRow.defaultTabId
+      )
+    );
+    if (!imageItem || !codeTabId) throw new Error('terminal body missing');
+    expect(compiledRow(imageItem)?.networkMediaCount).toBe(1);
+
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [headerItem, imageItem].map((item) => ({
+          index: initialItems.indexOf(item),
+          isViewable: true,
+          item
+        }))
+      })
+    );
+    expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+
+    await fireEvent.press(view.getByRole('tab', { name: 'Code' }));
+    const codeItems = lastFlashListProps.data as TopicListItem[];
+    const codeHeaderItem = codeItems.find((item) => compiledRow(item)?.type === 'terminalReportHeader');
+    const codeItem = codeItems.find((item) =>
+      compiledRow(item)?.ancestorFrames.some((frame) => frame.kind === 'terminalTab' && frame.tabId === codeTabId)
+    );
+    if (!codeHeaderItem || !codeItem) throw new Error('selected code body missing');
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [codeHeaderItem, codeItem].map((item) => ({
+          index: codeItems.indexOf(item),
+          isViewable: true,
+          item
+        }))
+      })
+    );
+    expect(mockBodyMediaViewportRowKeys).toContain(codeItem.key);
+
+    await fireEvent.press(view.getByRole('tab', { name: 'Long image' }));
+    expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+  });
+
+  it('[REG-TOPIC-081][REG-TOPIC-090] removes virtual-list separators across adjacent semantic rows', async () => {
     await render(<TopicFilterHarness selectedTopic={topic} topicDetail={topic} topicReplies={[]} />);
     const separatorHeight = (leadingItem: TopicListItem, trailingItem: TopicListItem) => {
       const separator = lastFlashListProps.ItemSeparatorComponent({ leadingItem, trailingItem }) as React.ReactElement<{
@@ -826,13 +930,19 @@ describe('Topic reply filters', () => {
         ? (StyleSheet.flatten(separator.props.style as StyleProp<ViewStyle>) as ViewStyle | undefined)?.height || 0
         : 0;
     };
-    const content = (key: string, groupKey: string, continuation: 'only' | 'first' | 'middle' | 'last') => ({
+    const content = (key: string, semanticId: string, part: 'only' | 'first' | 'middle' | 'last') => ({
       type: 'content' as const,
       key,
-      groupKey,
-      continuation,
-      html: `<p>${key}</p>`,
-      networkMediaCount: 0
+      row: {
+        ancestorFrames: [],
+        html: `<p>${key}</p>`,
+        keySuffix: `${semanticId}:0`,
+        networkMediaCount: 0,
+        part,
+        segmentIndex: part === 'last' ? 1 : 0,
+        semanticId,
+        type: 'richText' as const
+      }
     });
     const openingFirst: TopicListItem = {
       type: 'topicContent',
@@ -863,7 +973,13 @@ describe('Topic reply filters', () => {
       instanceKey: 'quote-a',
       source: 'nodeseek'
     };
-    const otherQuoteLast: TopicListItem = { ...quoteLast, key: 'other-quote-last', instanceKey: 'quote-b' };
+    const otherQuoteLast: TopicListItem = {
+      type: 'topicQuoteContent',
+      key: 'other-quote-last',
+      content: quoteLast.content,
+      instanceKey: 'quote-b',
+      source: 'nodeseek'
+    };
     const acceptedFirst: TopicListItem = {
       type: 'topicAcceptedAnswerContent',
       key: 'accepted-first',
@@ -876,14 +992,66 @@ describe('Topic reply filters', () => {
       content: content('accepted-last', 'block-0', 'last'),
       preview: false
     };
+    const terminalHeader: TopicListItem = {
+      type: 'topicContent',
+      key: 'terminal-header',
+      content: {
+        type: 'content',
+        key: 'terminal-header',
+        row: {
+          ancestorFrames: [],
+          defaultTabId: 'report-tab-0',
+          keySuffix: 'report:0',
+          networkMediaCount: 0,
+          part: 'only',
+          segmentIndex: 0,
+          semanticId: 'report',
+          tabs: [{ id: 'report-tab-0', title: 'Overview' }],
+          type: 'terminalReportHeader'
+        }
+      }
+    };
+    const terminalBody: TopicListItem = {
+      type: 'topicContent',
+      key: 'terminal-body',
+      content: {
+        type: 'content',
+        key: 'terminal-body',
+        row: {
+          ancestorFrames: [
+            {
+              defaultTabId: 'report-tab-0',
+              kind: 'terminalTab',
+              part: 'last',
+              reportSemanticId: 'report',
+              semanticId: 'report-tab-0',
+              tabId: 'report-tab-0'
+            }
+          ],
+          copyText: 'result',
+          keySuffix: 'report-body:0',
+          networkMediaCount: 0,
+          part: 'only',
+          runs: [{ text: 'result' }],
+          segmentIndex: 0,
+          semanticId: 'report-body',
+          text: 'result',
+          type: 'codeBlock',
+          variant: 'terminal'
+        }
+      }
+    };
 
     expect(separatorHeight(openingFirst, openingLast)).toBe(0);
     expect(separatorHeight(quoteFirst, quoteLast)).toBe(0);
     expect(separatorHeight(acceptedFirst, acceptedLast)).toBe(0);
-    expect(separatorHeight(openingOnly, { ...openingOnly, key: 'opening-only-2' })).toBe(0);
-    expect(separatorHeight(openingFirst, { ...openingLast, content: content('different', 'block-2', 'last') })).toBe(0);
+    expect(separatorHeight(openingOnly, { ...openingOnly, key: 'opening-only-2' })).toBe(10);
+    expect(separatorHeight(openingFirst, { ...openingLast, content: content('different', 'block-2', 'last') })).toBe(
+      10
+    );
     expect(separatorHeight(quoteFirst, otherQuoteLast)).toBe(10);
     expect(separatorHeight(openingFirst, quoteLast)).toBe(10);
+    expect(separatorHeight(terminalHeader, terminalBody)).toBe(0);
   });
 
   it('[REG-TOPIC-081] gives a multi-row opening article only one top boundary', async () => {
@@ -1042,18 +1210,56 @@ describe('Topic reply filters', () => {
 
     await fireEvent.press(view.getByText('Main header'));
 
-    expect(view.getByText('Main body 1')).toBeTruthy();
-    expect(view.getByText('Main body 2')).toBeTruthy();
-    expect(view.getByText('Main body 3')).toBeTruthy();
-    expect(view.queryByText('Reply body 1')).toBeNull();
-    expect(view.queryByText('Signature body 1')).toBeNull();
+    expect(view.getByText(/Main body 1/)).toBeTruthy();
+    expect(view.getByText(/Main body 2/)).toBeTruthy();
+    expect(view.getByText(/Main body 3/)).toBeTruthy();
+    expect(view.queryByText(/Reply body 1/)).toBeNull();
+    expect(view.queryByText(/Signature body 1/)).toBeNull();
 
     await fireEvent.press(view.getByText('Reply header'));
 
-    expect(view.getByText('Reply body 1')).toBeTruthy();
-    expect(view.getByText('Reply body 2')).toBeTruthy();
-    expect(view.getByText('Reply body 3')).toBeTruthy();
-    expect(view.queryByText('Signature body 1')).toBeNull();
+    expect(view.getByText(/Reply body 1/)).toBeTruthy();
+    expect(view.getByText(/Reply body 2/)).toBeTruthy();
+    expect(view.getByText(/Reply body 3/)).toBeTruthy();
+    expect(view.queryByText(/Signature body 1/)).toBeNull();
+  });
+
+  it('[REG-TOPIC-087][REG-TOPIC-088][REG-TOPIC-089] carries one sanitized code owner through the real FlashList reply path', async () => {
+    const codeLines = Array.from(
+      { length: 52 },
+      (_, index) =>
+        `${String(index + 1).padStart(2, '0')}.${' '.repeat(50)}code-line-${String(index + 1).padStart(2, '0')}\n`
+    ).join('');
+    const codeReply: Reply = {
+      author: 'code-author',
+      commentId: 909,
+      contentHtml: sanitizeLinuxDoContentHtml(`<pre><code class="lang-auto">${codeLines}</code></pre>`, []),
+      createdAt: '2026-08-09T00:00:00.000Z',
+      floor: 9,
+      replyTarget: { author: { name: 'target-author' }, floor: 5 }
+    };
+    const codeTopic: TopicDetail = {
+      ...topic,
+      contentHtml: '<p>opening body</p>',
+      id: '2556285',
+      replies: [codeReply],
+      replyCount: 1,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/2556285'
+    };
+    const view = await render(
+      <TopicFilterHarness selectedTopic={codeTopic} topicDetail={codeTopic} topicReplies={[codeReply]} />
+    );
+
+    const replyItem = (lastFlashListProps.data as TopicListItem[]).find(
+      (item) => item.type === 'reply' && item.reply.floor === 9
+    );
+    expect(replyItem).toBeDefined();
+    expect(lastFlashListProps.getItemType(replyItem)).toBe('reply:codeBlock');
+    expect(view.getAllByTestId('topic-code-frame')).toHaveLength(1);
+    const rendered = JSON.stringify(view.toJSON());
+    expect(rendered.indexOf('target-author')).toBeLessThan(rendered.indexOf('code-line-01'));
+    expect(rendered.indexOf('code-line-01')).toBeLessThan(rendered.indexOf('code-line-52'));
   });
 
   it('[REG-PERF-010] emits one route aggregate with the actual bounded opening-post plan', async () => {
@@ -1258,8 +1464,8 @@ describe('Topic reply filters', () => {
 
     expect(lastFlashListItemTypes.filter((type) => type === 'topicAcceptedAnswer')).toHaveLength(1);
     expect(lastFlashListItemTypes.filter((type) => type === 'topicAcceptedAnswerContent')).toHaveLength(1);
-    expect(view.getByLabelText('content-continuation-only')).toBeTruthy();
-    expect(view.queryByLabelText('content-continuation-first')).toBeNull();
+    expect(view.getByLabelText('content-continuation-first')).toBeTruthy();
+    expect(view.queryByLabelText('content-continuation-only')).toBeNull();
 
     await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
     await waitFor(() =>
@@ -1332,8 +1538,8 @@ describe('Topic reply filters', () => {
       const measuredRows = view.getAllByTestId(/^reply-quote-materialization-/);
       expect(measuredRows).toHaveLength(2);
       expect(within(measuredRows[0]).getByLabelText('content-continuation-first')).toBeTruthy();
-      expect(within(measuredRows[1]).getByLabelText('content-continuation-last')).toBeTruthy();
-      expect(within(measuredRows[1]).queryByLabelText('content-continuation-middle')).toBeNull();
+      expect(within(measuredRows[1]).getByLabelText('content-continuation-middle')).toBeTruthy();
+      expect(within(measuredRows[1]).queryByLabelText('content-continuation-last')).toBeNull();
 
       await fireEvent(measuredRows[0], 'layout', {
         nativeEvent: { layout: { height: 300, width: 720, x: 0, y: 0 } }

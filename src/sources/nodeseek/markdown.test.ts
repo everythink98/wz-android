@@ -17,7 +17,7 @@ describe('NodeSeek Markdown', () => {
     expect(html).toContain('src="https://www.nodeseek.com/static/image/sticker/ac/04.png"');
     expect(html).toContain('alt="ac04"');
     expect(html).toContain('<code>:ac04:</code>');
-    expect(html).toContain('<div class="forum-terminal-code">:ac04:</div>');
+    expect(html).toContain('<pre><code class="language-text">:ac04:\n</code></pre>');
     expect(html).toContain(':unknown:');
     expect(html.match(/static\/image\/sticker\/ac\/04\.png/g)).toHaveLength(1);
   });

@@ -375,7 +375,7 @@ class TopicBodyMediaCoordinator {
 
   private snapshotFor(entry: TopicBodyMediaEntry): TopicBodyMediaSnapshot {
     return {
-      admitted: this.warmKeys.has(entry.key) && (entry.status === 'running' || entry.status === 'displayed'),
+      admitted: entry.status === 'displayed' || (this.warmKeys.has(entry.key) && entry.status === 'running'),
       attemptId: `${entry.key}:${entry.attempt}`,
       failure: entry.failure
     };
@@ -385,10 +385,10 @@ class TopicBodyMediaCoordinator {
     if (this.disposed) return;
     const rowOrder = new Map(this.viewportRowKeys.map((rowKey, index) => [rowKey, index]));
     const eligible = [...this.entries.values()]
-      .filter((entry) => rowOrder.has(entry.rowKey) && entry.status !== 'failed')
+      .filter((entry) => rowOrder.has(entry.rowKey) && entry.status !== 'failed' && entry.status !== 'displayed')
       .sort((left, right) => {
-        const leftRetained = left.status === 'running' || left.status === 'displayed' ? 0 : 1;
-        const rightRetained = right.status === 'running' || right.status === 'displayed' ? 0 : 1;
+        const leftRetained = left.status === 'running' ? 0 : 1;
+        const rightRetained = right.status === 'running' ? 0 : 1;
         return (
           PRIORITY_ORDER[left.priority] - PRIORITY_ORDER[right.priority] ||
           (rowOrder.get(left.rowKey) ?? 0) - (rowOrder.get(right.rowKey) ?? 0) ||
@@ -399,11 +399,8 @@ class TopicBodyMediaCoordinator {
     this.warmKeys = new Set(eligible.slice(0, MAX_WARM_BLOCK_MEDIA).map((entry) => entry.key));
 
     for (const entry of this.entries.values()) {
-      if (
-        (entry.status === 'running' || entry.status === 'displayed') &&
-        (!this.active || !this.warmKeys.has(entry.key))
-      ) {
-        if (entry.status === 'running') this.cancelCount += 1;
+      if (entry.status === 'running' && (!this.active || !this.warmKeys.has(entry.key))) {
+        this.cancelCount += 1;
         entry.deadline = null;
         entry.lastProgressValue = null;
         entry.status = 'waiting';

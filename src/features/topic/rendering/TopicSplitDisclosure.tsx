@@ -1,25 +1,91 @@
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import type { CompiledForumContentRow, ForumContentAncestorFrame } from '@/domain/forum/topicContentSplit';
 
-type TopicSplitDisclosureKind = 'callout' | 'details';
-type TopicSplitDisclosurePart = 'first' | 'middle' | 'last' | 'only';
+export type TopicSplitDisclosureKind = 'callout' | 'details';
 
-type TopicSplitDisclosureStoreValue = {
+export type TopicSplitDisclosureStoreValue = {
+  activeTabByKey: Readonly<Record<string, string>>;
   expandedByKey: Readonly<Record<string, boolean>>;
+  selectTab: (key: string, tabId: string) => void;
   toggle: (key: string, defaultExpanded: boolean) => void;
 };
 
 const TopicSplitDisclosureStoreContext = createContext<TopicSplitDisclosureStoreValue | null>(null);
 const TopicSplitDisclosureScopeContext = createContext<string | null>(null);
 
-export function TopicSplitDisclosureProvider({ children }: { children: ReactNode }) {
-  const [expandedByKey, setExpandedByKey] = useState<Record<string, boolean>>({});
-  const toggle = useCallback((key: string, defaultExpanded: boolean) => {
-    setExpandedByKey((current) => ({
-      ...current,
-      [key]: Object.prototype.hasOwnProperty.call(current, key) ? !current[key] : !defaultExpanded
-    }));
-  }, []);
-  const value = useMemo(() => ({ expandedByKey, toggle }), [expandedByKey, toggle]);
+type TopicSplitDisclosureState = {
+  activeTabByKey: Record<string, string>;
+  expandedByKey: Record<string, boolean>;
+  identity?: string;
+};
+
+const EMPTY_ACTIVE_TABS: Readonly<Record<string, string>> = {};
+const EMPTY_DISCLOSURES: Readonly<Record<string, boolean>> = {};
+
+export function useTopicSplitDisclosureStore(identity?: string) {
+  const [state, setState] = useState<TopicSplitDisclosureState>(() => ({
+    activeTabByKey: {},
+    expandedByKey: {},
+    identity
+  }));
+  const activeTabByKey = state.identity === identity ? state.activeTabByKey : EMPTY_ACTIVE_TABS;
+  const expandedByKey = state.identity === identity ? state.expandedByKey : EMPTY_DISCLOSURES;
+  useEffect(() => {
+    setState((current) =>
+      current.identity === identity ? current : { activeTabByKey: {}, expandedByKey: {}, identity }
+    );
+  }, [identity]);
+  const selectTab = useCallback(
+    (key: string, tabId: string) => {
+      setState((current) => {
+        const activeTabs = current.identity === identity ? current.activeTabByKey : {};
+        if (activeTabs[key] === tabId && current.identity === identity) return current;
+        return {
+          activeTabByKey: { ...activeTabs, [key]: tabId },
+          expandedByKey: current.identity === identity ? current.expandedByKey : {},
+          identity
+        };
+      });
+    },
+    [identity]
+  );
+  const toggle = useCallback(
+    (key: string, defaultExpanded: boolean) => {
+      setState((current) => {
+        const expanded = current.identity === identity ? current.expandedByKey : {};
+        return {
+          activeTabByKey: current.identity === identity ? current.activeTabByKey : {},
+          expandedByKey: {
+            ...expanded,
+            [key]: Object.prototype.hasOwnProperty.call(expanded, key) ? !expanded[key] : !defaultExpanded
+          },
+          identity
+        };
+      });
+    },
+    [identity]
+  );
+  return useMemo(
+    () => ({ activeTabByKey, expandedByKey, selectTab, toggle }),
+    [activeTabByKey, expandedByKey, selectTab, toggle]
+  );
+}
+
+export function TopicSplitDisclosureProvider({
+  children,
+  value
+}: {
+  children: ReactNode;
+  value?: TopicSplitDisclosureStoreValue;
+}) {
+  if (!value) return <OwnedTopicSplitDisclosureProvider>{children}</OwnedTopicSplitDisclosureProvider>;
+  return (
+    <TopicSplitDisclosureStoreContext.Provider value={value}>{children}</TopicSplitDisclosureStoreContext.Provider>
+  );
+}
+
+function OwnedTopicSplitDisclosureProvider({ children }: { children: ReactNode }) {
+  const value = useTopicSplitDisclosureStore();
   return (
     <TopicSplitDisclosureStoreContext.Provider value={value}>{children}</TopicSplitDisclosureStoreContext.Provider>
   );
@@ -31,51 +97,68 @@ export function TopicSplitDisclosureScope({ children, scopeKey }: { children: Re
   );
 }
 
-function disclosureAttributes(kind: TopicSplitDisclosureKind) {
-  return kind === 'details'
-    ? { group: 'data-wz-details-group', part: 'data-wz-details-part' }
-    : { group: 'data-wz-callout-group', part: 'data-wz-callout-part' };
+export function useTopicSplitDisclosureScopeKey() {
+  return useContext(TopicSplitDisclosureScopeContext);
 }
 
-function splitPart(value: string | undefined): TopicSplitDisclosurePart | null {
-  return value === 'first' || value === 'middle' || value === 'last' || value === 'only' ? value : null;
+export function topicSplitDisclosureKey(scopeKey: string, kind: TopicSplitDisclosureKind, semanticId: string) {
+  return `${scopeKey}\u0000${kind}\u0000${semanticId}`;
+}
+
+export function topicTerminalReportKey(scopeKey: string, semanticId: string) {
+  return `${scopeKey}\u0000terminalReport\u0000${semanticId}`;
+}
+
+function frameExpanded(
+  frame: Extract<ForumContentAncestorFrame, { kind: 'callout' | 'details' }>,
+  scopeKey: string,
+  store: Pick<TopicSplitDisclosureStoreValue, 'expandedByKey'>
+) {
+  const key = topicSplitDisclosureKey(scopeKey, frame.kind, frame.semanticId);
+  return Object.prototype.hasOwnProperty.call(store.expandedByKey, key)
+    ? store.expandedByKey[key]
+    : frame.defaultExpanded;
+}
+
+export function topicSemanticRowVisible(
+  row: CompiledForumContentRow,
+  scopeKey: string,
+  store: Pick<TopicSplitDisclosureStoreValue, 'activeTabByKey' | 'expandedByKey'>
+) {
+  return row.ancestorFrames.every((frame) => {
+    if (frame.kind === 'callout' || frame.kind === 'details') return frameExpanded(frame, scopeKey, store);
+    if (frame.kind !== 'terminalTab') return true;
+    const key = topicTerminalReportKey(scopeKey, frame.reportSemanticId);
+    return (store.activeTabByKey[key] || frame.defaultTabId) === frame.tabId;
+  });
 }
 
 export function useTopicSplitDisclosure({
-  attributes,
   defaultExpanded,
-  kind
+  kind,
+  semanticId
 }: {
-  attributes: Readonly<Record<string, string | undefined>>;
   defaultExpanded: boolean;
   kind: TopicSplitDisclosureKind;
+  semanticId: string;
 }) {
   const store = useContext(TopicSplitDisclosureStoreContext);
-  const scopeKey = useContext(TopicSplitDisclosureScopeContext);
-  const [localExpanded, setLocalExpanded] = useState(defaultExpanded);
-  const names = disclosureAttributes(kind);
-  const group = attributes[names.group] || '';
-  const part = splitPart(attributes[names.part]);
-  const isShared = Boolean(store && scopeKey && group && part && part !== 'only');
-  const sharedKey = isShared ? `${scopeKey}\u0000${kind}\u0000${group}` : '';
-  const expanded =
-    isShared && store
-      ? Object.prototype.hasOwnProperty.call(store.expandedByKey, sharedKey)
-        ? store.expandedByKey[sharedKey]
-        : defaultExpanded
-      : localExpanded;
-  const toggle = useCallback(() => {
-    if (isShared && store) {
-      store.toggle(sharedKey, defaultExpanded);
-      return;
-    }
-    setLocalExpanded((current) => !current);
-  }, [defaultExpanded, isShared, sharedKey, store]);
+  const scopeKey = useTopicSplitDisclosureScopeKey();
+  if (!store || !scopeKey) throw new Error('TopicSplitDisclosureProvider and scope are required');
+  const key = topicSplitDisclosureKey(scopeKey, kind, semanticId);
+  const expanded = Object.prototype.hasOwnProperty.call(store.expandedByKey, key)
+    ? store.expandedByKey[key]
+    : defaultExpanded;
+  const toggle = useCallback(() => store.toggle(key, defaultExpanded), [defaultExpanded, key, store]);
+  return { expanded, toggle };
+}
 
-  return {
-    expanded,
-    headerVisible: !(group && (part === 'middle' || part === 'last')),
-    shared: isShared,
-    toggle
-  };
+export function useTopicTerminalReport({ defaultTabId, semanticId }: { defaultTabId: string; semanticId: string }) {
+  const store = useContext(TopicSplitDisclosureStoreContext);
+  const scopeKey = useTopicSplitDisclosureScopeKey();
+  if (!store || !scopeKey) throw new Error('TopicSplitDisclosureProvider and scope are required');
+  const key = topicTerminalReportKey(scopeKey, semanticId);
+  const activeTabId = store.activeTabByKey[key] || defaultTabId;
+  const select = useCallback((tabId: string) => store.selectTab(key, tabId), [key, store]);
+  return { activeTabId, select };
 }

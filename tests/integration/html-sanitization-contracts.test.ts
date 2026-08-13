@@ -150,7 +150,7 @@ describe('Android local HTML helpers', () => {
     }
   });
 
-  it('turns plain code blocks into terminal blocks for any source', () => {
+  it('[REG-TOPIC-089] preserves plain code blocks for the semantic compiler', () => {
     const result = sanitizeContentHtml(
       `
       <p>before</p>
@@ -161,12 +161,10 @@ three &lt; four</code></pre>
       'https://example.com/base/'
     );
 
-    expect(result).toContain('<div class="forum-terminal-code">');
-    expect(result).toMatch(/one&nbsp;two<br\s*\/?>three&nbsp;&lt;&nbsp;four/);
+    expect(result).toContain('<pre><code>one two\nthree &lt; four</code></pre>');
     expect(result).toContain('<p>before</p>');
     expect(result).toContain('<p>after</p>');
-    expect(result).not.toContain('<pre');
-    expect(result).not.toContain('<code');
+    expect(result).not.toContain('forum-terminal-code');
   });
 
   it('keeps Bilibili player iframes while sanitizing their attributes', () => {

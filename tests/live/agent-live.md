@@ -81,6 +81,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 | V2EX × Topic 筛选 / Topic → User → Topic | `LIVE-READ-03` |
 | NodeSeek × Topic 用户链接 → User → Topic | `LIVE-READ-04` |
 | 五站 × Topic 回复顺序 | `LIVE-READ-05` |
+| NodeSeek/V2EX × 表格；linux.do × 长图 | `LIVE-READ-06` |
 | NodeSeek、linux.do、妖火、小隐寺 × 账号状态 | `LIVE-ACCOUNT-01` |
 | 小隐寺 × 等级与活跃数据 | `LIVE-ACCOUNT-04` |
 
@@ -117,10 +118,20 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 
 ### LIVE-READ-05 五站真实回复顺序
 
-- 能力：`TOPIC-01/03/04`；共享 `NAV-02`、`NAV-03`、`NOTIFY-02`、`WRITE-01`。保留当前登录态；用户给出主题 URL 时先按来源和 id 直达该目标，否则从 `LIVE-READ-01` 已读结果复用或逐站最多检查前 5 个 Topic。NodeSeek、linux.do、妖火、小隐寺选择一个原站明确多页的主题，V2EX 选择一个多回复且当前详情已完整结算的主题；没有合格目标的单站记 `NOT_VERIFIED`，不发送回复制造尾页。
+- 能力：`TOPIC-01/03/04`；共享 `NAV-02`、`NAV-03`、`NOTIFY-02`、`WRITE-01`。保留当前登录态；用户给出主题 URL 时先按来源和 id 直达该目标，否则从 `LIVE-READ-01` 已读结果复用或逐站最多检查前 5 个 Topic。五站都选择一个原站明确多页的主题；V2EX 优先选择原站明确超过 100 条且带同主题 `p=N` 链接的主题。没有合格目标的单站记 `NOT_VERIFIED`，不发送回复制造尾页。
 - 每站先确认三种内容筛选位于左侧、当前正序位于右侧单选菜单，并记录头窗首条稳定楼层或评论身份；切换倒序时，部分集合必须先进入“正在读取最新回复”而不能瞬间显示旧头窗倒排。结算后首条必须与 App 内原站同类页面的最新回复一致；向下滚动一次只能追加相邻更早窗口，列表方向持续由新到旧。最后一个窗口结算后当次显示“已到最早回复”，继续触底不得新增请求；切回正序必须恢复原头窗和内容筛选/查找状态，正序尾端对应显示“已到最新回复”。离开并返回该 Topic 后恢复该 route 的顺序。
-- NodeSeek 五页样本的脱敏 diagnostics 必须显示首次 resolved page 5、下一窗 4，不能出现为构造倒序而读取 2、3；linux.do/小隐寺按真实 stream 实体连续；妖火必须以主题页 `reply` / `tofloor` 链接中的最大真实楼层定位最新 page 1，下一窗只读 page 2，正序则以 `tofloor=1` 定位最早页后只读 page - 1，不能把“更多回帖(N)”当总数。V2EX 必须以当次主题 HTML 的 `ReplyAction/commentCount` 声明、原始回复节点数和有效回复数一致证明全集，详情 diagnostics 为 `html-topic`；即使公共主题/回复 API 缓存数量暂时不同也要正常结算，切换正倒序、定位已有楼层和仅刷新评论均不得产生独立回复 transport。边缘窗口无法确认、解析为空、重复 cursor 或来源自身的计数竞态时，应保留回复级错误和重试入口，不显示半真列表。
+- NodeSeek 五页样本的脱敏 diagnostics 必须显示首次 resolved page 5、下一窗 4，不能出现为构造倒序而读取 2、3；linux.do/小隐寺按真实 stream 实体连续；妖火必须以主题页 `reply` / `tofloor` 链接中的最大真实楼层定位最新 page 1，下一窗只读 page 2，正序则以 `tofloor=1` 定位最早页后只读 page - 1，不能把“更多回帖(N)”当总数。V2EX 首屏必须显示正文、可信总数和第一页评论，静置时最高可见楼保持在 `#100` 且零 Reply transport；向下滚动后才以显式 `p=2` cursor 追加到当次最高楼。倒序建立末页窗口并向下加载显式前页，未加载楼层使用一个 target Query；仅刷新评论只重建 start 窗口。即使公共主题/回复 API 缓存数量暂时不同也要保留 HTML 有效行。边缘窗口无法确认、解析为空、重复 cursor 或来源自身的计数竞态时，应保留已解析有效行、回复级错误和重试入口，不得退回第一页上限或显示整页窗口错误。
 - 全程只读，不提交回复、编辑、删除、互动，不打开未读通知，不清 App 数据、Cookie 或登录态。每站分别报告 App 流程、外部数据和基础设施；CF 只阻塞对应来源。
+
+### LIVE-READ-06 逻辑节点连续性与长图像素稳定
+
+- 能力：`TOPIC-01/02/03`；共享 `NAV-02/03`。仅在 targeted 包含 `REG-TOPIC-084/085/086/087/088/089/090` 时执行；五个目标均使用 `exp+wz-android://open-topic?url=<encoded URL>` 直达，不经过搜索或相似帖子。
+- NodeSeek 直达 `https://www.nodeseek.com/post-652056-1`：两张独立小表都铺满正文，表间有明确 `12dp` 间距，边框和长文字换行正确，页面纵向滚动不被横向容器截获。
+- V2EX 直达 `https://www.v2ex.com/t/1233470`：只验收正文“时间 / 发生的事”两列表；表头出现一次，18 行按原站顺序完整显示。该样本按当前硬预算应保持一个 typed table row；滚动时列宽、hairline 和横向位置稳定，无重复边框、空带或行跳动。返回再进入、修改阅读字号和切换主题后仍正确。`https://www.v2ex.com/t/1233404` 只属于 `LIVE-READ-05` 评论分页，不得替代表格目标。
+- linux.do 直达 `https://linux.do/t/topic/2556285`：通过“更多”进入原站对照第 9 层，确认 reply target 位于正文前，52 行代码完整有序且视觉上只有一个连续代码框。停在“对比一下5.5”及各张长图进入/离开边界分别无触摸观察 60 秒，目标文字可见性转换必须为 0，普通 scroll settle 能结束；滚过主楼前三张长图和一张回复长图，已显示像素、比例和高度稳定，不出现“显示 → 空白 → 再显示”或请求波。滚离再返回、打开图片预览再返回后位置和高度保持；按要求 `adb am force-stop com.wz.reader` 后重启并重新进入，再重复第 9 层与长图边界核对。
+- NodeSeek 直达 `https://www.nodeseek.com/post-812712-1`：逐个切换“💻基本信息 / 🎬IP质量 / 🌐网络质量 / 📍回程路由”，每个 Tab 的首末内容、ANSI 前景/背景色、图片与 report 外项目链接均存在；长图 Tab 首次显示后切到 code Tab，等待 viewability 结算但不滚动，再切回长图两轮，像素必须直接恢复且不得停在 `topic-image-idle`。代码可选择，复制得到当前完整 code owner，长行出现原生横向滚动条且切换/滚离/返回后 offset 与 active tab 不跳。组合评论查找把目标回复隐藏再恢复，并从详情内嵌套页面 Back，当前 route 的 active tab 必须保持；切到另一 Topic 后相同 semantic path 必须回到首 Tab。原站动态内容不匹配固定 fixture 时记录实际 tab/标题并记 `NOT_VERIFIED`，不得换相似帖子冒充。
+- NodeSeek 直达 `https://www.nodeseek.com/post-863650-1`：确认海量图片正文仍按每 row `<=4` 的父 FlashList typed rows 有界挂载，可正常滚动和返回；同一 PID 连续两轮执行相同滚动后，warm `<=8`、running `<=4`、原图 `<=1`，mounted media 与 PSS 不得持续增长，不得出现 ANR、OOM、Fatal 或 PID 意外重启。
+- 全程只读，不回复、不互动、不保存图片；每轮确认无 ANR、OOM、Fatal 或非预期 PID 重启，脱敏媒体诊断保持未完成 warm `<=8`、running `<=4`、原图 `<=1`。记录 mounted media 与 PSS，连续两轮相同滚动后不得持续增长。动态内容变化只影响数据轴；固定数量由自动测试承担，不创建依赖远端数量的 tracked Replay。
 
 ## 账号、验证与签到
 

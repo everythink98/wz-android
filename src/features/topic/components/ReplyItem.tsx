@@ -44,11 +44,11 @@ import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '../model/
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
-import { getReplyKey, type ReplyQuoteContent, type TopicReplyListItem } from '../model/replyListModel';
+import { getReplyKey, type ReplyRenderableContent, type TopicReplyListItem } from '../model/replyListModel';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 import { TopicSplitDisclosureScope } from '../rendering/TopicSplitDisclosure';
-import { resolveForumContentRowHtml, type ForumContentRendering } from '@/domain/forum/topicContentSplit';
+import { resolveForumContentRowHtml } from '@/domain/forum/topicContentSplit';
 
 type NodeSeekStat = { label: string; value: number };
 type ReplyItemSection = Extract<
@@ -223,7 +223,7 @@ export function ReplyItem({
   onToggleReplyQuote
 }: {
   actionBusy: boolean;
-  bodyContent?: Extract<ReplyQuoteContent, { type: 'html' }>;
+  bodyContent?: ReplyRenderableContent;
   decisionFor: TopicActionDecisionFor;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
@@ -240,12 +240,7 @@ export function ReplyItem({
   replyFloor: number;
   repliesByFloor: Map<number, Reply>;
   section?: ReplyItemSection;
-  signatureContent?: {
-    continuation: 'only' | 'first' | 'middle' | 'last';
-    groupKey: string;
-    html: string;
-    rendering?: ForumContentRendering;
-  };
+  signatureContent?: ReplyRenderableContent;
   source?: Source;
   styles: TopicStyles;
   theme: ReaderTheme;
@@ -288,7 +283,7 @@ export function ReplyItem({
     () =>
       rendersReplyBody
         ? highlightHtml(
-            bodyContent
+            bodyContent && 'html' in bodyContent
               ? resolveForumContentRowHtml(bodyContent, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage)
               : reply.contentHtml,
             query
@@ -298,7 +293,7 @@ export function ReplyItem({
   );
   const highlightedSectionHtml = useMemo(
     () =>
-      section?.type === 'replyContent' && section.content.type === 'html'
+      section?.type === 'replyContent' && section.content.type !== 'poll' && 'html' in section.content
         ? highlightHtml(
             resolveForumContentRowHtml(section.content, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage),
             query
@@ -355,12 +350,13 @@ export function ReplyItem({
               />
             </View>
           ) : (
-            <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:body:${section.content.groupKey}`}>
+            <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:body`}>
               <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
                 <MemoizedTopicContentBlock
                   contentWidth={replyContentWidth}
-                  continuation={section.content.continuation}
-                  html={highlightedSectionHtml}
+                  html={highlightedSectionHtml || undefined}
+                  query={query}
+                  row={section.content}
                 />
               </Pressable>
             </TopicSplitDisclosureScope>
@@ -373,12 +369,21 @@ export function ReplyItem({
     return (
       <View style={[styles.replyCard, styles.replyCardMiddle]} testID={`reply-signature-row-${section.key}`}>
         <View style={styles.replyContentArea}>
-          <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:signature:${section.groupKey}`}>
+          <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:signature`}>
             <View style={section.first ? styles.replySignature : undefined}>
               <MemoizedTopicContentBlock
                 contentWidth={replyContentWidth}
-                continuation={section.continuation}
-                html={resolveForumContentRowHtml(section, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage)}
+                html={
+                  'html' in section.content
+                    ? resolveForumContentRowHtml(
+                        section.content,
+                        inlineSizedImageUrls,
+                        topicImageDeriver?.isInlineSizedImage
+                      )
+                    : undefined
+                }
+                query={query}
+                row={section.content}
               />
             </View>
           </TopicSplitDisclosureScope>
@@ -430,16 +435,24 @@ export function ReplyItem({
                   theme={theme}
                 />
               ) : (
-                <TopicSplitDisclosureScope scopeKey={`reply-quote:${section.instanceKey}:${section.content.groupKey}`}>
+                <TopicSplitDisclosureScope scopeKey={`reply-quote:${section.instanceKey}`}>
                   <Pressable delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
                     <MemoizedTopicContentBlock
                       contentWidth={Math.max(220, replyContentWidth - 24)}
-                      continuation={section.content.continuation}
-                      html={resolveForumContentRowHtml(
-                        section.content,
-                        inlineSizedImageUrls,
-                        topicImageDeriver?.isInlineSizedImage
-                      )}
+                      html={
+                        'html' in section.content
+                          ? highlightHtml(
+                              resolveForumContentRowHtml(
+                                section.content,
+                                inlineSizedImageUrls,
+                                topicImageDeriver?.isInlineSizedImage
+                              ),
+                              query
+                            )
+                          : undefined
+                      }
+                      query={query}
+                      row={section.content}
                     />
                   </Pressable>
                 </TopicSplitDisclosureScope>
@@ -594,8 +607,33 @@ export function ReplyItem({
           </View>
         </>
       ) : null}
-      {showQuotes || showTail ? (
+      {showStart || showQuotes || showTail ? (
         <View style={styles.replyContentArea} testID="reply-content-area">
+          {showStart && (replyTargetName || replyTargetFloor) ? (
+            <View style={styles.replyTargetPill}>
+              <Text style={styles.replyTargetText}>回复</Text>
+              {replyTargetName ? (
+                <Pressable
+                  accessibilityRole="link"
+                  disabled={!replyTargetUser}
+                  hitSlop={12}
+                  onPress={() => replyTargetUser && onOpenUser(replyTargetUser)}
+                >
+                  <Text style={styles.replyTargetText}>@{replyTargetName.replace(/^@+/, '')}</Text>
+                </Pressable>
+              ) : null}
+              {replyTargetName && replyTargetFloor ? <Text style={styles.replyTargetText}>·</Text> : null}
+              {replyTargetFloor ? (
+                <Pressable
+                  accessibilityRole="link"
+                  hitSlop={12}
+                  onPress={() => onLocateReply({ floor: replyTargetFloor })}
+                >
+                  <Text style={styles.replyTargetText}>#{replyTargetFloor}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
           {showQuotes && replyQuotes.length ? (
             <View style={styles.quoteStack}>
               {replyQuotes.map((quote, index) => {
@@ -705,58 +743,39 @@ export function ReplyItem({
           ) : null}
           {showTail ? (
             <>
-              {replyTargetName || replyTargetFloor ? (
-                <View style={styles.replyTargetPill}>
-                  <Text style={styles.replyTargetText}>回复</Text>
-                  {replyTargetName ? (
-                    <Pressable
-                      accessibilityRole="link"
-                      disabled={!replyTargetUser}
-                      hitSlop={12}
-                      onPress={() => replyTargetUser && onOpenUser(replyTargetUser)}
-                    >
-                      <Text style={styles.replyTargetText}>@{replyTargetName.replace(/^@+/, '')}</Text>
-                    </Pressable>
-                  ) : null}
-                  {replyTargetName && replyTargetFloor ? <Text style={styles.replyTargetText}>·</Text> : null}
-                  {replyTargetFloor ? (
-                    <Pressable
-                      accessibilityRole="link"
-                      hitSlop={12}
-                      onPress={() => onLocateReply({ floor: replyTargetFloor })}
-                    >
-                      <Text style={styles.replyTargetText}>#{replyTargetFloor}</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
+              {!bodyVirtualized && bodyContent ? (
+                <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:body`}>
+                  <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
+                    <MemoizedTopicContentBlock
+                      contentWidth={replyContentWidth}
+                      html={'html' in bodyContent ? highlightedHtml : undefined}
+                      query={query}
+                      row={bodyContent}
+                      trimTrailingBlockSpacing
+                    />
+                  </Pressable>
+                </TopicSplitDisclosureScope>
               ) : null}
-              {!bodyVirtualized ? (
-                <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
-                  <MemoizedTopicContentBlock
-                    contentWidth={replyContentWidth}
-                    continuation={bodyContent?.continuation}
-                    html={highlightedHtml}
-                    trimTrailingBlockSpacing
-                  />
-                </Pressable>
-              ) : null}
-              {!signatureVirtualized && (signatureContent?.html || reply.signatureHtml) ? (
-                <View style={styles.replySignature}>
-                  <MemoizedTopicContentBlock
-                    contentWidth={replyContentWidth}
-                    continuation={signatureContent?.continuation}
-                    html={
-                      signatureContent
-                        ? resolveForumContentRowHtml(
-                            signatureContent,
-                            inlineSizedImageUrls,
-                            topicImageDeriver?.isInlineSizedImage
-                          )
-                        : reply.signatureHtml
-                    }
-                    trimTrailingBlockSpacing
-                  />
-                </View>
+              {!signatureVirtualized && signatureContent ? (
+                <TopicSplitDisclosureScope scopeKey={`reply:${replyInstanceKey}:signature`}>
+                  <View style={styles.replySignature}>
+                    <MemoizedTopicContentBlock
+                      contentWidth={replyContentWidth}
+                      html={
+                        'html' in signatureContent
+                          ? resolveForumContentRowHtml(
+                              signatureContent,
+                              inlineSizedImageUrls,
+                              topicImageDeriver?.isInlineSizedImage
+                            )
+                          : undefined
+                      }
+                      query={query}
+                      row={signatureContent}
+                      trimTrailingBlockSpacing
+                    />
+                  </View>
+                </TopicSplitDisclosureScope>
               ) : null}
               {source === 'v2ex' && typeof reply.thanksCount === 'number' && reply.thanksCount > 0 ? (
                 <Text style={styles.replyThanksText}>{reply.thanksCount} 感谢</Text>
@@ -984,38 +1003,14 @@ function sameReplyItemSection(previous: ReplyItemSection | undefined, next: Repl
       previous.last === next.last &&
       previous.contentToken === next.contentToken &&
       previous.measureForMaterialization === next.measureForMaterialization &&
-      previous.content.type === next.content.type &&
-      (previous.content.type === 'html' && next.content.type === 'html'
-        ? previous.content.continuation === next.content.continuation &&
-          previous.content.groupKey === next.content.groupKey &&
-          previous.content.html === next.content.html
-        : previous.content.type === 'poll' && next.content.type === 'poll'
-          ? previous.content.poll === next.content.poll
-          : false)
+      previous.content === next.content
     );
   }
   if (previous.type === 'replyContent' && next.type === 'replyContent') {
-    return (
-      previous.first === next.first &&
-      previous.last === next.last &&
-      previous.content.type === next.content.type &&
-      (previous.content.type === 'html' && next.content.type === 'html'
-        ? previous.content.continuation === next.content.continuation &&
-          previous.content.groupKey === next.content.groupKey &&
-          previous.content.html === next.content.html
-        : previous.content.type === 'poll' && next.content.type === 'poll'
-          ? previous.content.poll === next.content.poll
-          : false)
-    );
+    return previous.first === next.first && previous.last === next.last && previous.content === next.content;
   }
   if (previous.type === 'replySignatureContent' && next.type === 'replySignatureContent') {
-    return (
-      previous.first === next.first &&
-      previous.last === next.last &&
-      previous.continuation === next.continuation &&
-      previous.groupKey === next.groupKey &&
-      previous.html === next.html
-    );
+    return previous.first === next.first && previous.last === next.last && previous.content === next.content;
   }
   if (previous.type === 'replyEnd' && next.type === 'replyEnd') {
     return (

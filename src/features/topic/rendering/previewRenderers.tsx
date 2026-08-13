@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   PixelRatio,
@@ -13,6 +13,7 @@ import {
   type ViewStyle
 } from 'react-native';
 import { Image as ExpoImage, type ImageLoadEventData } from 'expo-image';
+import { useRecyclingState } from '@shopify/flash-list';
 import {
   useContentWidth,
   useIMGElementProps,
@@ -65,6 +66,13 @@ function imageDisplayCacheIdentity(source: ImageURISource) {
   return typeof (source as ImageURISource & { cacheKey?: unknown }).cacheKey === 'string'
     ? String((source as ImageURISource & { cacheKey: string }).cacheKey)
     : compatibleImageRequestIdentity(source);
+}
+
+function useImageSourceAttempt(source: ImageURISource, attemptId: string) {
+  return useMemo(() => {
+    void attemptId;
+    return { ...source };
+  }, [attemptId, source]);
 }
 
 type PreviewImageBlockProps = {
@@ -121,10 +129,10 @@ function ManagedOriginalImageLayer({
   useEffect(() => {
     if (lease.failure) onTerminalFailure();
   }, [lease.failure, onTerminalFailure]);
+  const attemptedSource = useImageSourceAttempt(source, lease.attemptId);
   if (!lease.admitted) return null;
   return (
     <ExpoImage
-      key={lease.attemptId}
       testID="topic-image-original"
       allowDownscaling
       cachePolicy="disk"
@@ -132,8 +140,8 @@ function ManagedOriginalImageLayer({
       placeholder={placeholder}
       placeholderContentFit="contain"
       priority={forced ? 'high' : 'low'}
-      recyclingKey={`${attemptIdentity}:body-original:${lease.attemptId}`}
-      source={source}
+      recyclingKey={`${attemptIdentity}:body-original`}
+      source={attemptedSource}
       style={StyleSheet.absoluteFillObject}
       transition={150}
       onDisplay={() => {
@@ -171,6 +179,7 @@ function AdmittedPreviewImageBlock({
 }: PreviewImageBlockProps & { bodyMediaLease: ReturnType<typeof useTopicBodyMediaLease> }) {
   const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
   const requestIdentity = compatibleImageRequestIdentity(imageSource);
+  const cacheKey = imageDisplayCacheIdentity(imageSource);
   const bodyRequestIdentity = `${requestIdentity}\u0000attempt:${bodyMediaLease.attemptId}`;
   const originalSource = useMemo(() => {
     const cleanOriginalUri = normalizeImagePreviewUrl(originalUri);
@@ -194,18 +203,20 @@ function AdmittedPreviewImageBlock({
   const requestIdentityRef = useRef(bodyRequestIdentity);
   const settledRequestIdentityRef = useRef('');
   const posterRefreshIdentityRef = useRef('');
-  const [loadedImage, setLoadedImage] = useState<{
+  const [loadedImage, setLoadedImage] = useRecyclingState<{
     cacheType: ImageLoadEventData['cacheType'];
     dimensions: CachedImageDimensions;
     imageLoadIdentity: string;
     requestIdentity: string;
-  } | null>(null);
-  const [displayedImageLoadIdentity, setDisplayedImageLoadIdentity] = useState('');
-  const [compatibleSvgArtifact, setCompatibleSvgArtifact] = useState<CompatibleSvgArtifact | null>(null);
-  const [failedRequestIdentity, setFailedRequestIdentity] = useState('');
-  const [forcedOriginalIdentity, setForcedOriginalIdentity] = useState('');
-  const [displayedOriginalIdentity, setDisplayedOriginalIdentity] = useState('');
-  const [failedOriginal, setFailedOriginal] = useState({ identity: '', revision: -1 });
+  } | null>(null, [requestIdentity]);
+  const [displayedImageLoadIdentity, setDisplayedImageLoadIdentity] = useRecyclingState('', [requestIdentity]);
+  const [compatibleSvgArtifact, setCompatibleSvgArtifact] = useRecyclingState<CompatibleSvgArtifact | null>(null, [
+    requestIdentity
+  ]);
+  const [failedRequestIdentity, setFailedRequestIdentity] = useRecyclingState('', [requestIdentity]);
+  const [forcedOriginalIdentity, setForcedOriginalIdentity] = useRecyclingState('', [requestIdentity]);
+  const [displayedOriginalIdentity, setDisplayedOriginalIdentity] = useRecyclingState('', [requestIdentity]);
+  const [failedOriginal, setFailedOriginal] = useRecyclingState({ identity: '', revision: -1 }, [requestIdentity]);
   const contentWidth = Math.max(1, imageProps.contentWidth || 1);
   const cachedArtifact = cachedCompatibleSvgArtifact(imageSource);
   useEffect(() => {
@@ -218,6 +229,8 @@ function AdmittedPreviewImageBlock({
   const activeFallbackSource = activeArtifact?.posterSource || null;
   const activeImageSource = activeFallbackSource || imageSource;
   const imageLoadIdentity = `${bodyRequestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
+  const imageVisualIdentity = `${requestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
+  const attemptedImageSource = useImageSourceAttempt(activeImageSource, bodyMediaLease.attemptId);
   useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -241,11 +254,11 @@ function AdmittedPreviewImageBlock({
         return;
       }
       if (artifact) {
-        setCompatibleSvgArtifact(artifact);
+        setCompatibleSvgArtifact(artifact, true);
         return;
       }
       settledRequestIdentityRef.current = bodyRequestIdentity;
-      setFailedRequestIdentity(bodyRequestIdentity);
+      setFailedRequestIdentity(bodyRequestIdentity, true);
     } catch {
       if (
         mountedRef.current &&
@@ -253,10 +266,10 @@ function AdmittedPreviewImageBlock({
         settledRequestIdentityRef.current !== bodyRequestIdentity
       ) {
         settledRequestIdentityRef.current = bodyRequestIdentity;
-        setFailedRequestIdentity(bodyRequestIdentity);
+        setFailedRequestIdentity(bodyRequestIdentity, true);
       }
     }
-  }, [bodyRequestIdentity, compatibleSvgConsumption, imageSource]);
+  }, [bodyRequestIdentity, compatibleSvgConsumption, imageSource, setCompatibleSvgArtifact, setFailedRequestIdentity]);
   const refreshSvgPoster = useCallback(
     async (artifact: CompatibleSvgArtifact) => {
       try {
@@ -270,7 +283,7 @@ function AdmittedPreviewImageBlock({
         ) {
           return;
         }
-        setCompatibleSvgArtifact(refreshed);
+        setCompatibleSvgArtifact(refreshed, true);
       } catch {
         if (
           mountedRef.current &&
@@ -278,11 +291,11 @@ function AdmittedPreviewImageBlock({
           settledRequestIdentityRef.current !== bodyRequestIdentity
         ) {
           settledRequestIdentityRef.current = bodyRequestIdentity;
-          setFailedRequestIdentity(bodyRequestIdentity);
+          setFailedRequestIdentity(bodyRequestIdentity, true);
         }
       }
     },
-    [bodyRequestIdentity, compatibleSvgConsumption]
+    [bodyRequestIdentity, compatibleSvgConsumption, setCompatibleSvgArtifact, setFailedRequestIdentity]
   );
   const handleImageError = useCallback(() => {
     if (
@@ -295,7 +308,7 @@ function AdmittedPreviewImageBlock({
     if (activeArtifact) {
       if (posterRefreshIdentityRef.current === bodyRequestIdentity) {
         settledRequestIdentityRef.current = bodyRequestIdentity;
-        setFailedRequestIdentity(bodyRequestIdentity);
+        setFailedRequestIdentity(bodyRequestIdentity, true);
         return;
       }
       posterRefreshIdentityRef.current = bodyRequestIdentity;
@@ -303,7 +316,7 @@ function AdmittedPreviewImageBlock({
       return;
     }
     void recoverSvgArtifact();
-  }, [activeArtifact, bodyRequestIdentity, recoverSvgArtifact, refreshSvgPoster]);
+  }, [activeArtifact, bodyRequestIdentity, recoverSvgArtifact, refreshSvgPoster, setFailedRequestIdentity]);
   const handleImageLoad = useCallback(
     (event: ImageLoadEventData) => {
       if (
@@ -318,14 +331,19 @@ function AdmittedPreviewImageBlock({
       if (!(width > 0 && height > 0)) {
         return;
       }
-      setLoadedImage({
-        cacheType: event.cacheType,
-        dimensions: { height, width },
-        imageLoadIdentity,
-        requestIdentity: bodyRequestIdentity
-      });
+      const knownDimensions = cachedImageDisplayDimensions(cacheKey);
+      rememberImageDisplayDimensions(cacheKey, { height, width });
+      setLoadedImage(
+        {
+          cacheType: event.cacheType,
+          dimensions: { height, width },
+          imageLoadIdentity,
+          requestIdentity: bodyRequestIdentity
+        },
+        knownDimensions?.height === height && knownDimensions.width === width
+      );
     },
-    [bodyRequestIdentity, imageLoadIdentity]
+    [bodyRequestIdentity, cacheKey, imageLoadIdentity, setLoadedImage]
   );
   const handleImageDisplay = useCallback(() => {
     if (
@@ -335,8 +353,8 @@ function AdmittedPreviewImageBlock({
     ) {
       return;
     }
-    setDisplayedImageLoadIdentity(imageLoadIdentity);
-  }, [bodyRequestIdentity, imageLoadIdentity]);
+    setDisplayedImageLoadIdentity(imageLoadIdentity, true);
+  }, [bodyRequestIdentity, imageLoadIdentity, setDisplayedImageLoadIdentity]);
   const handleImageProgress = useCallback(
     (event: { loaded: number }) => {
       if (
@@ -351,13 +369,7 @@ function AdmittedPreviewImageBlock({
     [bodyMediaLease, bodyRequestIdentity]
   );
   const loadFailed = failedRequestIdentity === bodyRequestIdentity;
-  const cacheKey = imageDisplayCacheIdentity(imageSource);
   const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
-  useEffect(() => {
-    if (cachedDimensions) {
-      rememberImageDisplayDimensions(cacheKey, cachedDimensions);
-    }
-  }, [cacheKey, cachedDimensions]);
   const activeLoadedImage =
     loadedImage?.requestIdentity === bodyRequestIdentity && loadedImage.imageLoadIdentity === imageLoadIdentity
       ? loadedImage
@@ -379,15 +391,14 @@ function AdmittedPreviewImageBlock({
     width: undefined
   });
   useEffect(() => {
-    if (!activeLoadedImage || !cacheKey) {
+    if (!activeLoadedImage) {
       return;
     }
     const dimensions = activeLoadedImage.dimensions;
-    rememberImageDisplayDimensions(cacheKey, dimensions);
     if (shouldMarkLoadedImageInline(attributes, dimensions.width, dimensions.height)) {
       markInlineSizedImageUrl(src, referrerPolicy);
     }
-  }, [activeLoadedImage, attributes, cacheKey, markInlineSizedImageUrl, referrerPolicy, src]);
+  }, [activeLoadedImage, attributes, markInlineSizedImageUrl, referrerPolicy, src]);
   const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
   const sharedContainerStyle = [
     { flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const },
@@ -449,7 +460,7 @@ function AdmittedPreviewImageBlock({
       onPress={(event) => {
         event.stopPropagation?.();
         if (originalRequestIdentity) {
-          setForcedOriginalIdentity(originalRequestIdentity);
+          setForcedOriginalIdentity(originalRequestIdentity, true);
         }
         if (referrerPolicy) {
           onOpenImagePreview(
@@ -470,8 +481,8 @@ function AdmittedPreviewImageBlock({
             cachePolicy="disk"
             contentFit="contain"
             priority="normal"
-            recyclingKey={imageLoadIdentity}
-            source={activeImageSource}
+            recyclingKey={imageVisualIdentity}
+            source={attemptedImageSource}
             style={[imageState.dimensions, imageState.type === 'success' ? imageState.imageStyle : null]}
             onDisplay={handleImageDisplay}
             onError={handleImageError}
@@ -494,7 +505,7 @@ function AdmittedPreviewImageBlock({
               ) {
                 return;
               }
-              setDisplayedOriginalIdentity(progressiveIdentity);
+              setDisplayedOriginalIdentity(progressiveIdentity, true);
               markOriginalImageDisplayed(originalSource);
             }}
             onRequestError={() => {
@@ -515,7 +526,7 @@ function AdmittedPreviewImageBlock({
               ) {
                 return;
               }
-              setFailedOriginal({ identity: originalAttemptIdentity, revision: originalDisplayRevision });
+              setFailedOriginal({ identity: originalAttemptIdentity, revision: originalDisplayRevision }, true);
             }}
           />
         ) : null}
@@ -541,14 +552,15 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
   const contentWidth = Math.max(1, props.imageProps.contentWidth || 1);
   const cacheKey = imageDisplayCacheIdentity(props.imageSource);
   const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
+  const displayWidth = cachedDimensions ? Math.min(cachedDimensions.width, contentWidth) : contentWidth;
   const dimensions = cachedDimensions
     ? {
-        height: Math.max(1, Math.round((cachedDimensions.height * contentWidth) / cachedDimensions.width)),
-        width: contentWidth
+        height: Math.max(1, Math.round((cachedDimensions.height * displayWidth) / cachedDimensions.width)),
+        width: displayWidth
       }
     : { height: Math.round(contentWidth * 0.75), width: contentWidth };
   if (bodyMediaLease.admitted) {
-    return <AdmittedPreviewImageBlock {...props} bodyMediaLease={bodyMediaLease} key={bodyMediaLease.attemptId} />;
+    return <AdmittedPreviewImageBlock {...props} bodyMediaLease={bodyMediaLease} />;
   }
   const frameStyle = [
     {
@@ -589,15 +601,15 @@ function ManagedInlineForumImage({
 }) {
   const requestIdentity = compatibleImageRequestIdentity(source);
   const lease = useTopicBodyMediaLease({ kind: 'inline', requestIdentity });
+  const attemptedSource = useImageSourceAttempt(source, lease.attemptId);
   if (!lease.admitted) return <View style={style} />;
   return (
     <ExpoImage
-      key={lease.attemptId}
       allowDownscaling
       cachePolicy="disk"
       contentFit="contain"
-      recyclingKey={`${requestIdentity}:${lease.attemptId}`}
-      source={source}
+      recyclingKey={requestIdentity}
+      source={attemptedSource}
       style={style}
       onDisplay={() => lease.settle('displayed')}
       onError={() => lease.settle('error')}

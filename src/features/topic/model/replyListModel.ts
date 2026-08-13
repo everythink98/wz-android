@@ -1,25 +1,17 @@
-import type { QuotedPostMetadata, QuotedPostReference, Reply, Source, TopicPoll } from '@/domain/forum/models';
+import type { QuotedPostMetadata, QuotedPostReference, Reply, Source } from '@/domain/forum/models';
 import { replyKey } from '@/domain/forum/feed';
 import {
   canCoalesceForumContentRows,
   compileForumContent,
   type CompiledForumContent,
-  type ForumContentCompileRole,
-  type ForumContentRendering
+  type CompiledForumContentRow,
+  type ForumContentCompileRole
 } from '@/domain/forum/topicContentSplit';
 import { quotedPostsForSource, replyForQuotedPost, replyQuotedPostInstanceKey } from '@/domain/forum/quotedPosts';
 import { stableTextHash } from './contentIdentity';
 
-export type ReplyQuoteContent =
-  | {
-      type: 'html';
-      continuation: 'only' | 'first' | 'middle' | 'last';
-      groupKey: string;
-      html: string;
-      networkMediaCount: number;
-      rendering?: ForumContentRendering;
-    }
-  | { type: 'poll'; poll: TopicPoll };
+export type ReplyQuoteContent = Exclude<CompiledForumContentRow, { type: 'quote' }>;
+export type ReplyRenderableContent = Exclude<ReplyQuoteContent, { type: 'poll' }>;
 
 export type TopicReplyListItem =
   | { type: 'replyControls'; key: string }
@@ -30,15 +22,10 @@ export type TopicReplyListItem =
       key: string;
       reply: Reply;
       replyFloor: number;
-      bodyContent?: Extract<ReplyQuoteContent, { type: 'html' }>;
+      bodyContent?: ReplyRenderableContent;
       networkMediaCount?: number;
       plannedRowCount?: number;
-      signatureContent?: {
-        continuation: 'only' | 'first' | 'middle' | 'last';
-        groupKey: string;
-        html: string;
-        rendering?: ForumContentRendering;
-      };
+      signatureContent?: ReplyRenderableContent;
     }
   | { type: 'replyStart'; key: string; reply: Reply; replyFloor: number }
   | {
@@ -79,11 +66,7 @@ export type TopicReplyListItem =
       key: string;
       reply: Reply;
       replyFloor: number;
-      continuation: 'only' | 'first' | 'middle' | 'last';
-      html: string;
-      rendering?: ForumContentRendering;
-      groupKey: string;
-      networkMediaCount: number;
+      content: ReplyRenderableContent;
       first: boolean;
       last: boolean;
     }
@@ -105,14 +88,7 @@ const quotedPostContentCache = new WeakMap<Reply, Map<Source, QuotedPostContentE
 type PlannedReplyContentEntry = {
   bodyRows: QuotedPostContentRow[];
   canMaterializeInOneCell: boolean;
-  signatureRows: {
-    continuation: 'only' | 'first' | 'middle' | 'last';
-    groupKey: string;
-    html: string;
-    key: string;
-    networkMediaCount: number;
-    rendering?: ForumContentRendering;
-  }[];
+  signatureRows: { content: ReplyRenderableContent; key: string }[];
 };
 const plannedReplyContentCache = new WeakMap<Reply, Map<Source, PlannedReplyContentEntry>>();
 
@@ -121,7 +97,7 @@ function replyRowsFromCompilation(compilation: CompiledForumContent): QuotedPost
     if (row.type === 'poll') {
       return [
         {
-          content: { type: 'poll', poll: row.poll },
+          content: row,
           key: `poll:${row.keySuffix}:${row.poll.name || row.poll.id || stableTextHash(JSON.stringify(row.poll))}`
         }
       ];
@@ -129,15 +105,8 @@ function replyRowsFromCompilation(compilation: CompiledForumContent): QuotedPost
     if (row.type === 'quote') return [];
     return [
       {
-        content: {
-          type: 'html',
-          continuation: row.continuation,
-          groupKey: row.groupKey.includes(':') ? row.groupKey : `0:${row.groupKey}`,
-          html: row.html,
-          networkMediaCount: row.networkMediaCount,
-          rendering: row.rendering
-        },
-        key: `html:${row.keySuffix}:${stableTextHash(row.html)}`
+        content: row,
+        key: `${row.type}:${row.semanticId}:${row.segmentIndex}`
       }
     ];
   });
@@ -160,15 +129,11 @@ function plannedReplyContent(reply: Reply, source: Source): PlannedReplyContentE
   const signature = compileForumContent({ html: reply.signatureHtml, role: 'signature', source });
   const bodyRows = body.rows;
   const signatureRows = signature.rows.flatMap((row) =>
-    row.type === 'html' || row.type === 'video'
+    row.type !== 'poll' && row.type !== 'quote'
       ? [
           {
-            continuation: row.continuation,
-            groupKey: row.groupKey,
-            html: row.html,
-            key: `signature:${row.keySuffix}:${stableTextHash(row.html)}`,
-            networkMediaCount: row.networkMediaCount,
-            rendering: row.rendering
+            content: row,
+            key: `signature:${row.type}:${row.semanticId}:${row.segmentIndex}`
           }
         ]
       : []
@@ -239,14 +204,12 @@ export function buildVirtualizedReplyItems({
           key,
           reply,
           replyFloor,
-          bodyContent: bodyRows[0]?.content.type === 'html' ? bodyRows[0].content : undefined,
+          bodyContent: bodyRows[0]?.content.type !== 'poll' ? bodyRows[0]?.content : undefined,
           networkMediaCount:
-            bodyRows.reduce(
-              (total, item) => total + (item.content.type === 'html' ? item.content.networkMediaCount : 0),
-              0
-            ) + signatureRows.reduce((total, item) => total + item.networkMediaCount, 0),
-          plannedRowCount: bodyRows.filter((item) => item.content.type === 'html').length + signatureRows.length,
-          signatureContent: signatureRows[0]
+            bodyRows.reduce((total, item) => total + item.content.networkMediaCount, 0) +
+            signatureRows.reduce((total, item) => total + item.content.networkMediaCount, 0),
+          plannedRowCount: bodyRows.length + signatureRows.length,
+          signatureContent: signatureRows[0]?.content
         }
       ];
     }
@@ -305,11 +268,7 @@ export function buildVirtualizedReplyItems({
         key: `${key}:${item.key}`,
         reply,
         replyFloor,
-        continuation: item.continuation,
-        html: item.html,
-        rendering: item.rendering,
-        groupKey: item.groupKey,
-        networkMediaCount: item.networkMediaCount,
+        content: item.content,
         first: index === 0,
         last: index === signatureRows.length - 1
       });

@@ -760,11 +760,10 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       lineHeight: 18
     },
     htmlTableScroll: {
-      marginBottom: 12,
-      marginTop: 10
+      width: '100%'
     },
     htmlTableScrollContent: {
-      paddingRight: 12
+      alignItems: 'flex-start'
     },
     htmlTableFrame: {
       borderColor: theme.line,

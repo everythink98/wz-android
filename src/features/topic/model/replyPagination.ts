@@ -36,12 +36,11 @@ function topicReplyPage(detail: TopicDetail, order: ReplyOrder): ReplyPage {
     previousPage: null,
     previousOffset: null,
     hasMore: completeNewest ? false : Boolean(detail.replyHasMore),
-    nextPage:
-      nextOffset === null
+    nextPage: isDiscourseSource(detail.source)
+      ? nextOffset === null
         ? null
-        : isDiscourseSource(detail.source)
-          ? Math.floor(nextOffset / REPLY_PAGE_SIZE) + 1
-          : (detail.replyNextPage ?? null),
+        : Math.floor(nextOffset / REPLY_PAGE_SIZE) + 1
+      : (detail.replyNextPage ?? null),
     nextOffset,
     totalCount: detail.replyCount,
     requestedPage: 1,

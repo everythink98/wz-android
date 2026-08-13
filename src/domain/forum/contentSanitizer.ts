@@ -680,17 +680,42 @@ function xtermRowsTerminalHtml(xtermRows: HTMLElement) {
 }
 
 function nodeSeekMagicTabContentHtml(body: HTMLElement) {
-  const xtermRows = body.querySelector('.xterm-rows');
-  if (xtermRows) {
-    return xtermRowsTerminalHtml(xtermRows);
-  }
-  const hasTerminalContent = Boolean(body.querySelector('.terminal-container, pre, code, textarea'));
-  if (hasTerminalContent) {
-    const text = nodeSeekTerminalText(body);
-    if (text) {
-      return terminalCodeBlockHtml(text);
+  const candidates = body.querySelectorAll('.terminal-container, .xterm-rows, pre, textarea');
+  const candidateSet = new Set(candidates);
+  const roots = candidates.filter((node) => {
+    let parent = node.parentNode;
+    while (parent && parent !== body) {
+      if (candidateSet.has(parent)) return false;
+      parent = parent.parentNode;
     }
+    return true;
+  });
+  const meaningfulChildren = body.childNodes.filter((node) => Boolean(node.toString().trim()));
+  if (!roots.length && meaningfulChildren.length === 1) {
+    const onlyChild = meaningfulChildren[0] as HTMLElement;
+    if (safeTagName(onlyChild) === 'code') roots.push(onlyChild);
   }
+  roots.forEach((root) => {
+    const xtermRows = root.matches('.xterm-rows') ? root : root.querySelector('.xterm-rows');
+    if (xtermRows) {
+      const replacement = xtermRowsTerminalHtml(xtermRows);
+      if (replacement) xtermRows.replaceWith(replacement);
+      if (root !== xtermRows) root.replaceWith(root.innerHTML);
+      return;
+    }
+    if (root.matches('.terminal-container')) {
+      const nestedTerminalRoots = root.querySelectorAll('pre, textarea');
+      if (nestedTerminalRoots.length) {
+        nestedTerminalRoots.forEach((nestedRoot) => {
+          nestedRoot.replaceWith(terminalCodeBlockHtml(nodeSeekTerminalText(nestedRoot)));
+        });
+        root.replaceWith(root.innerHTML);
+        return;
+      }
+    }
+    const replacement = terminalCodeBlockHtml(nodeSeekTerminalText(root));
+    if (replacement) root.replaceWith(replacement);
+  });
   return body.innerHTML.trim();
 }
 
@@ -726,16 +751,6 @@ function terminalTextFromAnsiCodeHtml(value: string) {
   );
 }
 
-function terminalTextFromCodeHtml(value: string) {
-  return normalizeTerminalText(
-    decodeHtml(
-      String(value || '')
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<[^>]*>/g, '')
-    )
-  );
-}
-
 function sanitizeNodeSeekAnsiCodeBlocksHtml(html: unknown) {
   const source = String(html || '');
   return source
@@ -766,18 +781,6 @@ function sanitizeNodeSeekAnsiReportSectionsHtml(html: unknown) {
   return `${source.slice(0, start)}${terminalReportHtml(tabs)}${source.slice(end)}`;
 }
 
-function sanitizePlainCodeBlocks(root: HTMLElement) {
-  root.querySelectorAll('pre').forEach((node) => {
-    const match = String(node.innerHTML || '').match(
-      /^\s*<code\b(?![^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>\s*$/i
-    );
-    const text = match ? terminalTextFromCodeHtml(match[1]) : '';
-    if (text) {
-      node.replaceWith(terminalCodeBlockHtml(text));
-    }
-  });
-}
-
 export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoot?: (root: HTMLElement) => void) {
   const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
   removeHiddenContent(root);
@@ -786,7 +789,6 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoo
     root.querySelectorAll(selector).forEach((node) => node.remove());
   }
   sanitizeNodeSeekMagicTabs(root);
-  sanitizePlainCodeBlocks(root);
   sanitizeNodeSeekStickerVideos(root, baseUrl);
   sanitizePlayableVideos(root, baseUrl);
   sanitizeIframes(root, baseUrl);

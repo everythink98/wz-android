@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Reply } from '@/domain/forum/models';
-import { topicListMediaPlanStats, type TopicListItem } from './topicListModel';
+import { topicListItemType, topicListMediaPlanStats, type TopicListItem } from './topicListModel';
 
 const reply: Reply = {
   author: 'alice',
@@ -10,6 +10,57 @@ const reply: Reply = {
 };
 
 describe('topic list model', () => {
+  it('[REG-TOPIC-090] gives terminal headers a stable FlashList item type', () => {
+    const row = {
+      defaultTabId: 'node-0-tab-0',
+      ancestorFrames: [],
+      keySuffix: 'node-0:0',
+      networkMediaCount: 0,
+      part: 'only' as const,
+      segmentIndex: 0,
+      semanticId: 'node-0',
+      tabs: [{ id: 'node-0-tab-0', title: 'Overview' }],
+      type: 'terminalReportHeader' as const
+    };
+
+    expect(
+      topicListItemType({ type: 'topicContent', key: 'topic-terminal', content: { type: 'content', key: 'row', row } })
+    ).toBe('topicContent:terminalReportHeader');
+    expect(
+      topicListItemType({
+        type: 'replyContent',
+        key: 'reply-terminal',
+        content: row,
+        first: true,
+        last: false,
+        reply,
+        replyFloor: 2
+      })
+    ).toBe('replyContent:terminalReportHeader');
+  });
+
+  it('[REG-TOPIC-088] includes a single-cell reply payload kind in its FlashList view type', () => {
+    expect(
+      topicListItemType({
+        bodyContent: {
+          ancestorFrames: [],
+          keySuffix: 'node-0:0',
+          networkMediaCount: 0,
+          part: 'only',
+          runs: [{ text: 'code' }],
+          segmentIndex: 0,
+          semanticId: 'node-0',
+          text: 'code',
+          type: 'codeBlock'
+        },
+        key: 'reply-floor-2',
+        reply,
+        replyFloor: 2,
+        type: 'reply'
+      })
+    ).toBe('reply:codeBlock');
+  });
+
   it('[REG-PERF-010] aggregates only planned parent rows and opaque media counts', () => {
     const items: TopicListItem[] = [
       {
@@ -18,10 +69,16 @@ describe('topic list model', () => {
         content: {
           type: 'content',
           key: 'content-1',
-          html: '<p><img src="https://secret.example/1.jpg"></p>',
-          groupKey: 'opening',
-          continuation: 'first',
-          networkMediaCount: 4
+          row: {
+            type: 'richText',
+            ancestorFrames: [],
+            html: '<p><img src="https://secret.example/1.jpg"></p>',
+            keySuffix: 'node-0:0',
+            networkMediaCount: 4,
+            part: 'only',
+            segmentIndex: 0,
+            semanticId: 'node-0'
+          }
         }
       },
       { type: 'replyStart', key: 'reply-start', reply, replyFloor: 2 },
@@ -31,11 +88,14 @@ describe('topic list model', () => {
         reply,
         replyFloor: 2,
         content: {
-          type: 'html',
-          continuation: 'only',
-          groupKey: '0:block-0',
+          type: 'richText',
+          ancestorFrames: [],
           html: '<img src="https://secret.example/2.jpg">',
-          networkMediaCount: 1
+          keySuffix: 'node-0:0',
+          networkMediaCount: 1,
+          part: 'only',
+          segmentIndex: 0,
+          semanticId: 'node-0'
         },
         first: true,
         last: true
@@ -45,10 +105,16 @@ describe('topic list model', () => {
         key: 'reply-signature',
         reply,
         replyFloor: 2,
-        html: '<img src="https://secret.example/3.jpg">',
-        continuation: 'only',
-        groupKey: 'block-0',
-        networkMediaCount: 1,
+        content: {
+          type: 'richText',
+          ancestorFrames: [],
+          html: '<img src="https://secret.example/3.jpg">',
+          keySuffix: 'node-0:0',
+          networkMediaCount: 1,
+          part: 'only',
+          segmentIndex: 0,
+          semanticId: 'node-0'
+        },
         first: true,
         last: true
       },

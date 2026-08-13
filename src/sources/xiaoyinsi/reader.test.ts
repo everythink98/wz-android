@@ -360,7 +360,7 @@ describe('xiaoyinsi adapter', () => {
         role: 'opening',
         source: 'xiaoyinsi'
       }).rows.map((row) => row.type)
-    ).toEqual(['html', 'poll']);
+    ).toEqual(['richText', 'poll']);
     expect(replies).toMatchObject({ totalCount: 2 });
     expect(replies.items[0]).toMatchObject({
       author: 'carol',

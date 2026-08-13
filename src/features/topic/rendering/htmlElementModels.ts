@@ -1,12 +1,6 @@
 import { HTMLContentModel, HTMLElementModel, defaultHTMLElementModels } from 'react-native-render-html';
 import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
-import {
-  FORUM_LINK_CARD_TAG,
-  FORUM_TERMINAL_REPORT_TAG,
-  FORUM_TERMINAL_TAB_TAG,
-  FORUM_VIDEO_STICKER_TAG,
-  FORUM_VIDEO_TAG
-} from '@/domain/forum/html';
+import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
 import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
@@ -38,16 +32,6 @@ export const HTML_CUSTOM_ELEMENT_MODELS = {
     tagName: FORUM_LINK_CARD_TAG,
     contentModel: HTMLContentModel.block,
     isOpaque: true
-  }),
-  [FORUM_TERMINAL_REPORT_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_TERMINAL_REPORT_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: false
-  }),
-  [FORUM_TERMINAL_TAB_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: FORUM_TERMINAL_TAB_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: false
   }),
   [FORUM_VIDEO_STICKER_TAG]: HTMLElementModel.fromCustomModel({
     tagName: FORUM_VIDEO_STICKER_TAG,

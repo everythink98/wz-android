@@ -36,13 +36,15 @@ function renderedHtml(view: Awaited<ReturnType<typeof render>>) {
 
 describe('render-ready forum content rows', () => {
   it('[REG-PERF-010] forwards compiler-owned HTML to RenderHTMLSource without a post-compile wrapper or rewrite', async () => {
-    const html =
-      '<div class="forum-reply-content"><p>already <forum-inline-image src="https://cdn.example/smile.png">smile</forum-inline-image></p></div>';
-    const view = await render(
-      <TopicContentBlock contentWidth={360} continuation="middle" html={html} trimTrailingBlockSpacing />
-    );
+    const [row] = compileForumContent({
+      html: '<p>already <forum-inline-image src="https://cdn.example/smile.png">smile</forum-inline-image></p>',
+      role: 'reply',
+      source: 'nodeseek'
+    }).rows;
+    if (!row || row.type !== 'richText') throw new Error('Expected one rich-text row.');
+    const view = await render(<TopicContentBlock contentWidth={360} row={row} trimTrailingBlockSpacing />);
 
-    expect(renderedHtml(view)).toBe(html);
+    expect(renderedHtml(view)).toBe(row.html);
   });
 
   it('[REG-PERF-010] budgets the compact presentation shell in the final RenderHTMLSource HTML', async () => {
@@ -51,13 +53,11 @@ describe('render-ready forum content rows', () => {
       role: 'reply',
       source: 'v2ex'
     });
-    const rows = compilation.rows.filter((row) => row.type === 'html');
+    const rows = compilation.rows.filter((row) => row.type === 'richText');
 
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      const view = await render(
-        <TopicContentBlock contentWidth={360} continuation={row.continuation} html={row.html} />
-      );
+      const view = await render(<TopicContentBlock contentWidth={360} row={row} />);
       const source = renderedHtml(view);
       expect(source).toBe(row.html);
       expect(domNodeCount(source)).toBeLessThanOrEqual(80);
@@ -71,11 +71,11 @@ describe('render-ready forum content rows', () => {
       role: 'reply',
       source: 'nodeseek'
     });
-    const row = compilation.rows.find((candidate) => candidate.type === 'html');
-    expect(row?.type).toBe('html');
-    if (!row || row.type !== 'html') return;
+    const row = compilation.rows.find((candidate) => candidate.type === 'richText');
+    expect(row?.type).toBe('richText');
+    if (!row || row.type !== 'richText') return;
 
-    const view = await render(<TopicContentBlock contentWidth={360} html={row.html} />);
+    const view = await render(<TopicContentBlock contentWidth={360} row={row} />);
     const source = renderedHtml(view);
 
     expect(row.html).toContain('<forum-reply-reference');
@@ -91,15 +91,15 @@ describe('render-ready forum content rows', () => {
       role: 'reply',
       source: 'v2ex'
     });
-    const row = compilation.rows.find((candidate) => candidate.type === 'html');
-    expect(row?.type).toBe('html');
-    if (!row || row.type !== 'html') return;
+    const row = compilation.rows.find((candidate) => candidate.type === 'richText');
+    expect(row?.type).toBe('richText');
+    if (!row || row.type !== 'richText') return;
 
     const unknownView = await render(
-      <TopicContentBlock contentWidth={360} html={resolveForumContentRowHtml(row, {})} />
+      <TopicContentBlock contentWidth={360} html={resolveForumContentRowHtml(row, {})} row={row} />
     );
     const learnedView = await render(
-      <TopicContentBlock contentWidth={360} html={resolveForumContentRowHtml(row, { [imageUrl]: true })} />
+      <TopicContentBlock contentWidth={360} html={resolveForumContentRowHtml(row, { [imageUrl]: true })} row={row} />
     );
 
     expect(renderedHtml(unknownView)).toBe(row.html);

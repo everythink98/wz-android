@@ -25,7 +25,6 @@ import {
   previousReplyPage,
   REPLY_PAGE_SIZE,
   replyEdgePosition,
-  topicHasCompleteReplies,
   type ReplyCursorPosition,
   type ReplyPage,
   type ReplyPageParam,
@@ -92,18 +91,6 @@ type ReplyFailure = {
 type ReplyWindowFailures = Record<ReplyWindowErrorSlot, ReplyFailure | null>;
 
 const EMPTY_REPLY_WINDOW_FAILURES: ReplyWindowFailures = { start: null, end: null, refresh: null };
-
-function isCompleteV2exReplyPage(page: ReplyPage | undefined) {
-  return Boolean(
-    page &&
-    page.completeness === 'complete' &&
-    page.hasMore === false &&
-    page.nextPage === null &&
-    page.nextOffset === null &&
-    typeof page.totalCount === 'number' &&
-    page.items.length === page.totalCount
-  );
-}
 
 function replyFailure(
   source: Source,
@@ -415,11 +402,9 @@ export function useTopicController({
     });
   }, [detailQuery.dataUpdatedAt, queryClient, repliesQueryKey, replyOrder, topicDetail]);
 
-  const visibleReplyData = repliesQuery.data;
-
   const topicReplies = useMemo(
-    () => mergedReplyPages(visibleReplyData as InfiniteData<ReplyPage, ReplyPageParam> | undefined),
-    [visibleReplyData]
+    () => mergedReplyPages(repliesQuery.data as InfiniteData<ReplyPage, ReplyPageParam> | undefined),
+    [repliesQuery.data]
   );
   const lastReplyPage = repliesQuery.data?.pages.at(-1);
   const replyHasPrevious = Boolean(repliesQuery.hasPreviousPage);
@@ -436,31 +421,7 @@ export function useTopicController({
     repliesQuery.data?.pages.some((page) => page.completeness !== 'complete') ||
     (!repliesQuery.data && topicDetail?.replies.length && topicDetail.replyCompleteness !== 'complete')
   );
-  const fetchedV2exReplyPage =
-    selectedTopic?.source === 'v2ex' && repliesQuery.data?.pages.length === 1 ? repliesQuery.data.pages[0] : undefined;
-  const fetchedV2exRepliesComplete = isCompleteV2exReplyPage(fetchedV2exReplyPage);
-  const replyCollectionComplete =
-    selectedTopic?.source !== 'v2ex' ||
-    Boolean(topicDetail && topicHasCompleteReplies(topicDetail)) ||
-    fetchedV2exRepliesComplete;
-  useEffect(() => {
-    if (selectedTopic?.source !== 'v2ex' || !fetchedV2exRepliesComplete || !fetchedV2exReplyPage) return;
-    const ascendingReplies =
-      replyOrder === 'newest' ? [...fetchedV2exReplyPage.items].reverse() : fetchedV2exReplyPage.items;
-    queryClient.setQueryData<TopicDetail>(topicQueryKey, (current) =>
-      current
-        ? {
-            ...current,
-            replies: ascendingReplies,
-            replyCount: fetchedV2exReplyPage.totalCount,
-            replyCompleteness: 'complete',
-            replyHasMore: false,
-            replyNextPage: null,
-            replyNextOffset: null
-          }
-        : current
-    );
-  }, [fetchedV2exRepliesComplete, fetchedV2exReplyPage, queryClient, replyOrder, selectedTopic?.source, topicQueryKey]);
+  const replyCollectionComplete = true;
   useEffect(() => {
     if (
       selectedTopic?.source !== 'xiaoyinsi' ||
@@ -489,8 +450,7 @@ export function useTopicController({
       await Promise.all(replyKeys.map((queryKey) => queryClient.cancelQueries({ queryKey })));
       if (!ownsWindow()) return false;
 
-      let rebuilt =
-        detail.source === 'v2ex' && !topicHasCompleteReplies(detail) ? undefined : firstReplyData(detail, replyOrder);
+      let rebuilt = firstReplyData(detail, replyOrder);
       if (!rebuilt) {
         const queryKey = [...repliesQueryKey, 'rebuild-start'] as const;
         const trace = beginDiagnosticTrace('reply', 'refresh', {
@@ -1200,18 +1160,6 @@ export function useTopicController({
         replyWindowGenerationRef.current += 1;
         return 'completed';
       }
-      if (selectedTopic.source === 'v2ex') {
-        if (!replyCollectionComplete) {
-          const outcome = await refreshTopicReplies({ kind: 'manual', silent: true });
-          if (outcome !== 'completed') return outcome;
-          const refreshedData = queryClient.getQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey);
-          const refreshedReplies = mergedReplyPages(refreshedData);
-          if (refreshedReplies.some((reply) => matchesLoadedReplyLocation(reply, normalizedTarget))) return 'completed';
-          if (!isCompleteV2exReplyPage(refreshedData?.pages[0])) return 'stale';
-        }
-        if (!silent) notify('目标楼层未找到');
-        return 'failed';
-      }
       const targetQueryKey = [...targetReplyQueryRoot, floor ?? null, commentId ?? null, pageHint ?? null] as const;
       const generation = ++replyWindowGenerationRef.current;
       const loadTargetWindow = async () => {
@@ -1329,8 +1277,6 @@ export function useTopicController({
       queryClient,
       repliesQueryKey,
       replyOrder,
-      replyCollectionComplete,
-      refreshTopicReplies,
       repliesReadBlocked,
       selectedTopic,
       targetReplyQueryRoot,

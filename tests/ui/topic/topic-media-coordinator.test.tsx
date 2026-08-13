@@ -448,7 +448,7 @@ describe('TopicBodyMediaCoordinator', () => {
     }
   });
 
-  it('does not issue new permits while paused and revokes every native source while inactive', async () => {
+  it('does not issue new permits while paused and cancels only unfinished sources while inactive', async () => {
     const probes = (active: boolean, paused: boolean) => (
       <CoordinatorHarness active={active} paused={paused}>
         {Array.from({ length: 5 }, (_, index) => (
@@ -467,8 +467,9 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getByTestId('media-image-4').props.children).toBe('idle');
 
     await view.rerender(probes(false, false));
-    expect(view.queryAllByText('admitted')).toHaveLength(0);
-    expect(view.getByTestId('media-image-0').props.children).toBe('idle');
+    expect(view.queryAllByText('admitted')).toHaveLength(1);
+    expect(view.getByTestId('media-image-0').props.children).toBe('admitted');
+    expect(view.getByTestId('media-image-1').props.children).toBe('idle');
   });
 
   it('admits only one renderer for the same request identity at a time', async () => {
@@ -611,18 +612,19 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(latestLease!.failure).toBe('error');
   });
 
-  it('reacquires a running permit when a displayed renderer leaves and re-enters the warm window', async () => {
+  it('[REG-TOPIC-085] retains a displayed renderer when viewport scheduling oscillates', async () => {
     const probe = <MediaProbe id="reenter" />;
     const view = await render(<CoordinatorHarness>{probe}</CoordinatorHarness>);
     await fireEvent.press(view.getByLabelText('display-reenter'));
     const displayedAttempt = view.getByTestId('attempt-reenter').props.children;
 
-    await view.rerender(<CoordinatorHarness viewportRowKeys={[]}>{probe}</CoordinatorHarness>);
-    expect(view.getByTestId('media-reenter').props.children).toBe('idle');
-
-    await view.rerender(<CoordinatorHarness>{probe}</CoordinatorHarness>);
-    expect(view.getByTestId('media-reenter').props.children).toBe('admitted');
-    expect(view.getByTestId('attempt-reenter').props.children).not.toBe(displayedAttempt);
+    for (let index = 0; index < 20; index += 1) {
+      await view.rerender(
+        <CoordinatorHarness viewportRowKeys={index % 2 === 0 ? [] : VIEWPORT_ROW_KEYS}>{probe}</CoordinatorHarness>
+      );
+      expect(view.getByTestId('media-reenter').props.children).toBe('admitted');
+      expect(view.getByTestId('attempt-reenter').props.children).toBe(displayedAttempt);
+    }
   });
 
   it('gives a newly visible row warm capacity ahead of retained prefetch media', async () => {
@@ -647,7 +649,7 @@ describe('TopicBodyMediaCoordinator', () => {
     await view.rerender(tree(['visible-row', 'prefetch-row']));
 
     expect(view.getByTestId('media-new-visible').props.children).toBe('admitted');
-    expect(view.getAllByText('admitted')).toHaveLength(8);
+    expect(view.getAllByText('admitted')).toHaveLength(9);
   });
 
   it('never exposes the old admitted snapshot after a recycled renderer changes identity', async () => {

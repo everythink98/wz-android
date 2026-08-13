@@ -58,6 +58,10 @@ vi.mock('expo-image', () => ({
   useImage: vi.fn()
 }));
 
+vi.mock('@shopify/flash-list', () => ({
+  useLayoutState: vi.fn()
+}));
+
 vi.mock('expo', () => ({
   useEvent: vi.fn((_player, _eventName, initialValue) => initialValue)
 }));
@@ -102,12 +106,12 @@ vi.mock('react-native-render-html', () => ({
 }));
 
 import { cachedImageDisplayDimensions, rememberImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
+import { FORUM_CALLOUT_TRANSITION_MS } from '@/ui/content/ForumCallout';
 import { readManagedWebViewCookieHeader } from './contentMediaRenderers';
-import './useHtmlRenderingController';
 
 describe('HTML topic media loading state', () => {
   it('[REG-TOPIC-056] configures the Callout layout transition with system Reduce Motion', () => {
-    expect(reanimatedTransition.duration).toHaveBeenCalledWith(100);
+    expect(reanimatedTransition.duration).toHaveBeenCalledWith(FORUM_CALLOUT_TRANSITION_MS);
     expect(reanimatedTransition.reduceMotion).toHaveBeenCalledWith('system');
   });
 

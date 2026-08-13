@@ -21,6 +21,12 @@ const topic: TopicDetail = {
   acceptedAnswerFloor: 2
 };
 
+const terminalReportHtml =
+  '<forum-terminal-report>' +
+  '<forum-terminal-tab title="Overview"><div class="forum-terminal-code">overview result</div></forum-terminal-tab>' +
+  '<forum-terminal-tab title="Benchmark"><div class="forum-terminal-code">benchmark result</div></forum-terminal-tab>' +
+  '</forum-terminal-report>';
+
 function maxElementDepth(html: string) {
   const body = parseHtml(`<body>${html}</body>`).querySelector('body');
   type TestNode = { childNodes?: TestNode[]; rawTagName?: unknown; tagName?: unknown };
@@ -37,6 +43,24 @@ function maxElementDepth(html: string) {
 }
 
 describe('topic opening presentation', () => {
+  it('[REG-TOPIC-090] preserves terminal rows in opening, complete quote, and accepted preview/full consumers', () => {
+    const opening = buildTopicOpeningContent({ ...topic, contentHtml: terminalReportHtml });
+    const reply = { author: 'bob', contentHtml: terminalReportHtml, createdAt: '2026-08-01T00:01:00.000Z', floor: 2 };
+    const quote = buildTopicQuotedPostContentItems({ instanceKey: 'quote-1', reply, source: 'linuxdo' });
+    const accepted = buildAcceptedAnswerContentItems({ floor: 2, reply, source: 'linuxdo' });
+    const rowTypes = (items: typeof quote) =>
+      items.flatMap((item) => (item.type === 'content' ? [item.row.type] : [item.type]));
+
+    expect(rowTypes(opening.contentItems)).toEqual(['terminalReportHeader', 'codeBlock', 'codeBlock']);
+    expect(rowTypes(quote)).toEqual(['terminalReportHeader', 'codeBlock', 'codeBlock']);
+    expect(rowTypes(accepted.fullItems)).toEqual(['terminalReportHeader', 'codeBlock', 'codeBlock']);
+    expect(rowTypes(accepted.previewItems)).toEqual(['terminalReportHeader', 'codeBlock']);
+    expect(accepted.previewItems[1]).toMatchObject({
+      type: 'content',
+      row: expect.objectContaining({ text: 'overview result', type: 'codeBlock' })
+    });
+  });
+
   it('[REG-TOPIC-078] keeps an element referrer policy on a native opening video', () => {
     const result = buildTopicOpeningContent({
       ...topic,
@@ -46,10 +70,13 @@ describe('topic opening presentation', () => {
 
     expect(result.contentItems).toEqual([
       expect.objectContaining({
-        poster: 'https://media.example/poster.webp',
-        referrerPolicy: 'no-referrer',
-        src: 'https://media.example/video.mp4',
-        type: 'contentVideo'
+        type: 'content',
+        row: expect.objectContaining({
+          poster: 'https://media.example/poster.webp',
+          referrerPolicy: 'no-referrer',
+          src: 'https://media.example/video.mp4',
+          type: 'video'
+        })
       })
     ]);
   });
@@ -62,7 +89,10 @@ describe('topic opening presentation', () => {
     });
 
     expect(result.contentItems.map((item) => item.type)).toEqual(['content', 'quoteSummary', 'content']);
-    expect(result.contentItems[0]).toMatchObject({ type: 'content', html: '<section><p>before</p></section>' });
+    expect(result.contentItems[0]).toMatchObject({
+      type: 'content',
+      row: expect.objectContaining({ html: expect.stringContaining('<p>before</p>'), type: 'richText' })
+    });
     expect(result.contentItems[1]).toMatchObject({
       type: 'quoteSummary',
       instanceKey: 'topic:42:linuxdo:77:8',
@@ -72,8 +102,19 @@ describe('topic opening presentation', () => {
         reference: { source: 'linuxdo', topicId: '77', postNumber: 8 }
       }
     });
-    expect(result.contentItems[2]).toMatchObject({ type: 'content', html: '<section><p>after</p></section>' });
-    expect(result.contentItems.some((item) => item.type === 'content' && item.html.includes('<aside'))).toBe(false);
+    expect(result.contentItems[2]).toMatchObject({
+      type: 'content',
+      row: expect.objectContaining({ html: expect.stringContaining('<p>after</p>'), type: 'richText' })
+    });
+    const first = result.contentItems[0];
+    const last = result.contentItems[2];
+    if (first.type !== 'content' || last.type !== 'content') throw new Error('Expected split content rows');
+    expect(first.row.semanticId).not.toBe(last.row.semanticId);
+    expect(
+      result.contentItems.some(
+        (item) => item.type === 'content' && 'html' in item.row && item.row.html.includes('<aside')
+      )
+    ).toBe(false);
   });
 
   it('[REG-PERF-010] projects compiler fail-closed rows for over-deep opening quote candidates', () => {
@@ -84,8 +125,8 @@ describe('topic opening presentation', () => {
 
     expect(result.contentItems.every((item) => item.type === 'content')).toBe(true);
     expect(contentRows.length).toBeGreaterThan(0);
-    expect(contentRows.every((item) => item.html.length <= 16_384)).toBe(true);
-    expect(contentRows.every((item) => maxElementDepth(item.html) <= 64)).toBe(true);
+    expect(contentRows.every((item) => 'html' in item.row && item.row.html.length <= 16_384)).toBe(true);
+    expect(contentRows.every((item) => 'html' in item.row && maxElementDepth(item.row.html) <= 64)).toBe(true);
   });
 
   it('[REG-PERF-010] plans a giant expanded topic quote as bounded parent-list content rows', () => {
@@ -137,11 +178,13 @@ describe('topic opening presentation', () => {
 
     expect(result.contentItems).toHaveLength(500);
     expect(result.contentItems.every((item) => item.type === 'content')).toBe(true);
-    expect(result.contentItems.map((item) => (item.type === 'content' ? item.networkMediaCount : 0))).toEqual(
+    expect(result.contentItems.map((item) => (item.type === 'content' ? item.row.networkMediaCount : 0))).toEqual(
       Array.from({ length: 500 }, () => 4)
     );
     expect(
-      result.contentItems.flatMap((item) => (item.type === 'content' ? [...item.html.matchAll(/<img\b/g)] : [])).length
+      result.contentItems.flatMap((item) =>
+        item.type === 'content' && 'html' in item.row ? [...item.row.html.matchAll(/<img\b/g)] : []
+      ).length
     ).toBe(2000);
   });
 
@@ -160,7 +203,9 @@ describe('topic opening presentation', () => {
       topic
     });
 
-    expect(content.contentItems).toEqual([expect.objectContaining({ type: 'content', html: '<p>body</p>' })]);
+    expect(content.contentItems).toEqual([
+      expect.objectContaining({ type: 'content', row: expect.objectContaining({ html: '<p>body</p>' }) })
+    ]);
     expect(acceptedAnswer).toMatchObject({ floor: 2, reply: accepted });
   });
 

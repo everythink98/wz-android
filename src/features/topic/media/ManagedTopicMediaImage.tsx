@@ -39,12 +39,15 @@ export function ManagedTopicMediaImage({
   );
   const requestIdentity = compatibleImageRequestIdentity(source);
   const lease = useTopicBodyMediaLease({ enabled: Boolean(normalizedSrc), kind, requestIdentity });
+  const attemptedSource = useMemo(() => {
+    void lease.attemptId;
+    return { ...source };
+  }, [lease.attemptId, source]);
   if (!normalizedSrc || !lease.admitted) {
     return <View pointerEvents="none" style={style} />;
   }
   return (
     <ExpoImage
-      key={lease.attemptId}
       accessibilityLabel={decorative ? undefined : accessibilityLabel}
       accessibilityRole={decorative ? undefined : 'image'}
       accessible={!decorative}
@@ -55,8 +58,8 @@ export function ManagedTopicMediaImage({
       onError={() => lease.settle('error')}
       onLoad={onLoad}
       onProgress={(event) => lease.progress(event.loaded)}
-      recyclingKey={`${requestIdentity}:${lease.attemptId}`}
-      source={source}
+      recyclingKey={requestIdentity}
+      source={attemptedSource}
       style={style}
     />
   );

@@ -123,13 +123,13 @@ export function textExcerpt(value: unknown, maxLength = 120) {
   return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text;
 }
 
-export function parseHtml(value: unknown) {
+export function parseHtml(value: unknown, { parsePreContent = false }: { parsePreContent?: boolean } = {}) {
   return parse(String(value || ''), {
     blockTextElements: {
       script: true,
       noscript: true,
       style: true,
-      pre: true
+      ...(!parsePreContent ? { pre: true } : {})
     }
   });
 }

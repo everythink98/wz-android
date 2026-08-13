@@ -14,7 +14,17 @@ import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock
 import { TopicPolls } from '@/features/topic/components/TopicPolls';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
-import { buildVirtualizedReplyItems, type TopicReplyListItem } from '@/features/topic/model/replyListModel';
+import {
+  buildVirtualizedReplyItems,
+  getReplyKey,
+  type TopicReplyListItem
+} from '@/features/topic/model/replyListModel';
+import { compileForumContent, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
+import {
+  TopicSplitDisclosureProvider,
+  topicSemanticRowVisible,
+  useTopicSplitDisclosureStore
+} from '@/features/topic/rendering/TopicSplitDisclosure';
 import type { Reply, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type {
   TopicActionDecision,
@@ -27,10 +37,6 @@ import {
   DISCOURSE_CALLOUT_TITLE_CLASS,
   DISCOURSE_CALLOUT_TYPE_ATTRIBUTE
 } from '@/domain/forum/callouts';
-import {
-  TopicSplitDisclosureProvider,
-  TopicSplitDisclosureScope
-} from '@/features/topic/rendering/TopicSplitDisclosure';
 
 jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({
@@ -239,6 +245,18 @@ const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 
+function compiledRichText(html: string, role: 'opening' | 'quoted-reply' | 'reply' | 'signature' = 'reply') {
+  const row = compileForumContent({ html, role, source: 'nodeseek' }).rows.find(
+    (candidate): candidate is Extract<CompiledForumContentRow, { type: 'richText' }> => candidate.type === 'richText'
+  );
+  if (!row) throw new Error('Expected one rich-text row.');
+  return row;
+}
+
+function semanticRowPart<T extends CompiledForumContentRow>(row: T, part: T['part']): T {
+  return { ...row, part };
+}
+
 const multiplePoll: TopicPoll = {
   id: 'poll-1',
   name: 'poll-1',
@@ -345,7 +363,13 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
 
 type RenderableReplyListItem = Extract<TopicReplyListItem, { reply: Reply }>;
 
-function VirtualizedReplyRows({ props }: { props: ComponentProps<typeof ReplyItem> }) {
+function VirtualizedReplyRows({
+  contentVisible,
+  props
+}: {
+  contentVisible?: (row: CompiledForumContentRow) => boolean;
+  props: ComponentProps<typeof ReplyItem>;
+}) {
   const items = buildVirtualizedReplyItems({
     expandedQuotes: props.expandedQuotes,
     loadedQuotedReplies: props.loadedQuotedReplies,
@@ -354,7 +378,9 @@ function VirtualizedReplyRows({ props }: { props: ComponentProps<typeof ReplyIte
     repliesByFloor: props.repliesByFloor,
     source: props.source,
     topicId: props.topicId
-  }).filter((item): item is RenderableReplyListItem => 'reply' in item);
+  })
+    .filter((item): item is RenderableReplyListItem => 'reply' in item)
+    .filter((item) => item.type !== 'replyContent' || !contentVisible || contentVisible(item.content));
   return (
     <>
       {items.map((item) => (
@@ -369,6 +395,16 @@ function VirtualizedReplyRows({ props }: { props: ComponentProps<typeof ReplyIte
         />
       ))}
     </>
+  );
+}
+
+function VirtualizedTerminalReplyRows({ props }: { props: ComponentProps<typeof ReplyItem> }) {
+  const store = useTopicSplitDisclosureStore(props.topicStateKey);
+  const scopeKey = `reply:${getReplyKey(props.reply)}:body`;
+  return (
+    <TopicSplitDisclosureProvider value={store}>
+      <VirtualizedReplyRows contentVisible={(row) => topicSemanticRowVisible(row, scopeKey, store)} props={props} />
+    </TopicSplitDisclosureProvider>
   );
 }
 
@@ -537,13 +573,7 @@ describe('Topic real child components', () => {
       key: 'comment:22:body:chunk-1',
       reply,
       replyFloor: 2,
-      content: {
-        type: 'html',
-        continuation: 'only',
-        groupKey: '0:block-0',
-        html: '<p>needle chunk only</p>',
-        networkMediaCount: 0
-      },
+      content: compiledRichText('<p>needle chunk only</p>'),
       first: true,
       last: false
     };
@@ -557,14 +587,14 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('回复')).toBeNull();
   });
 
-  it('[REG-PERF-010] keeps virtualized body and signature out of reply-end while preserving tail controls', async () => {
+  it('[REG-TOPIC-087] keeps reply target in reply-start and virtualized body out of reply-end', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       contentHtml: '<p>virtualized reply body</p>',
       quotedPosts: [],
       signatureHtml: '<p>virtualized reply signature</p>'
     };
-    const section: Extract<TopicReplyListItem, { type: 'replyEnd' }> = {
+    const endSection: Extract<TopicReplyListItem, { type: 'replyEnd' }> = {
       type: 'replyEnd',
       key: 'comment:22:body',
       reply,
@@ -572,12 +602,68 @@ describe('Topic real child components', () => {
       bodyVirtualized: true,
       signatureVirtualized: true
     };
-    const view = await render(<ReplyItem {...replyProps({ reply, section })} />);
+    const view = await render(<ReplyItem {...replyProps({ reply, section: endSection })} />);
 
     expect(view.queryByText('virtualized reply body')).toBeNull();
     expect(view.queryByText('virtualized reply signature')).toBeNull();
-    expect(view.getByText('@bob')).toBeTruthy();
+    expect(view.queryByText('@bob')).toBeNull();
     expect(view.getByLabelText('回复')).toBeTruthy();
+
+    const startSection: Extract<TopicReplyListItem, { type: 'replyStart' }> = {
+      type: 'replyStart',
+      key: 'comment:22',
+      reply,
+      replyFloor: 2
+    };
+    await view.rerender(<ReplyItem {...replyProps({ reply, section: startSection })} />);
+
+    expect(view.getByText('@bob')).toBeTruthy();
+    expect(view.queryByLabelText('回复')).toBeNull();
+  });
+
+  it('[REG-TOPIC-087] keeps reply target before every slice of a virtualized code body', async () => {
+    const codeLines = Array.from(
+      { length: 52 },
+      (_, index) => `<span>code-line-${String(index + 1).padStart(2, '0')}</span>\n`
+    ).join('');
+    const props = replyProps({
+      reply: {
+        ...replyProps().reply,
+        contentHtml: `<pre>${codeLines}</pre>`,
+        quotedPosts: []
+      }
+    });
+    const view = await render(<VirtualizedReplyRows props={props} />);
+    const visibleText = JSON.stringify(view.toJSON());
+
+    expect(view.getByText('@bob')).toBeTruthy();
+    expect(view.getAllByTestId('topic-code-frame')).toHaveLength(1);
+    expect(visibleText.indexOf('"children":["@","bob"]')).toBeLessThan(visibleText.indexOf('code-line-01'));
+    expect(visibleText.indexOf('code-line-01')).toBeLessThan(visibleText.indexOf('code-line-52'));
+  });
+
+  it('[REG-TOPIC-090] carries terminal tabs through reply modeling, filtering, and real row rendering', async () => {
+    const props = replyProps({
+      reply: {
+        ...replyProps().reply,
+        contentHtml:
+          '<forum-terminal-report>' +
+          '<forum-terminal-tab title="Overview"><div class="forum-terminal-code">overview result</div></forum-terminal-tab>' +
+          '<forum-terminal-tab title="Benchmark"><div class="forum-terminal-code">benchmark result</div></forum-terminal-tab>' +
+          '</forum-terminal-report>',
+        quotedPosts: []
+      }
+    });
+    const view = await render(<VirtualizedTerminalReplyRows props={props} />);
+
+    expect(view.getByText('overview result')).toBeTruthy();
+    expect(view.queryByText('benchmark result')).toBeNull();
+    await fireEvent.press(view.getByRole('tab', { name: 'Benchmark' }));
+    expect(view.queryByText('overview result')).toBeNull();
+    expect(view.getByText('benchmark result')).toBeTruthy();
+
+    await view.rerender(<VirtualizedTerminalReplyRows props={{ ...props }} />);
+    expect(view.getByText('benchmark result')).toBeTruthy();
   });
 
   it('[REG-PERF-010] renders a virtualized signature as its own reply row', async () => {
@@ -592,10 +678,7 @@ describe('Topic real child components', () => {
       key: 'comment:22:signature:chunk-1',
       reply,
       replyFloor: 2,
-      html: '<p>signature chunk only</p>',
-      continuation: 'only',
-      groupKey: 'block-0',
-      networkMediaCount: 0,
+      content: compiledRichText('<p>signature chunk only</p>', 'signature'),
       first: true,
       last: false
     };
@@ -622,13 +705,7 @@ describe('Topic real child components', () => {
         key: 'comment:22:body:middle',
         reply,
         replyFloor: 2,
-        content: {
-          type: 'html',
-          continuation: 'middle',
-          groupKey: '0:block-0',
-          html: '<div class="forum-reply-content"><p>reply middle</p></div>',
-          networkMediaCount: 0
-        },
+        content: semanticRowPart(compiledRichText('<p>reply middle</p>'), 'middle'),
         first: false,
         last: false
       },
@@ -641,13 +718,7 @@ describe('Topic real child components', () => {
         instanceKey: 'reply:comment:22:nodeseek:topic-1:1',
         measureForMaterialization: false,
         reference: { source: 'nodeseek', topicId: 'topic-1', postNumber: 1 },
-        content: {
-          type: 'html',
-          continuation: 'middle',
-          groupKey: '0:block-0',
-          html: '<div class="forum-reply-content"><p>quote middle</p></div>',
-          networkMediaCount: 0
-        },
+        content: semanticRowPart(compiledRichText('<p>quote middle</p>', 'quoted-reply'), 'middle'),
         first: false,
         last: false
       },
@@ -656,10 +727,7 @@ describe('Topic real child components', () => {
         key: 'comment:22:signature:middle',
         reply,
         replyFloor: 2,
-        continuation: 'middle',
-        groupKey: 'block-0',
-        html: '<div class="forum-reply-content"><p>signature middle</p></div>',
-        networkMediaCount: 0,
+        content: semanticRowPart(compiledRichText('<p>signature middle</p>', 'signature'), 'middle'),
         first: false,
         last: false
       }
@@ -697,7 +765,12 @@ describe('Topic real child components', () => {
       key: 'comment:22:body:poll-1',
       reply,
       replyFloor: 2,
-      content: { type: 'poll', poll: multiplePoll },
+      content: compileForumContent({
+        html: '',
+        polls: [multiplePoll],
+        role: 'reply',
+        source: 'linuxdo'
+      }).rows[0] as Extract<CompiledForumContentRow, { type: 'poll' }>,
       first: false,
       last: true
     };
@@ -769,7 +842,9 @@ describe('Topic real child components', () => {
       expect(source.props.accessibilityHint).toContain(`class="${HTML_REPLY_CONTENT_CLASS}"`);
     }
 
-    const articleView = await render(<TopicContentBlock contentWidth={360} html="<p>主楼正文</p>" />);
+    const articleView = await render(
+      <TopicContentBlock contentWidth={360} row={compiledRichText('<p>主楼正文</p>', 'opening')} />
+    );
     const articleSource = articleView.getByTestId('html-source');
     expect(articleSource.props.style).toEqual({ width: 360 });
     expect(articleSource.props.accessibilityHint).not.toContain(HTML_REPLY_CONTENT_CLASS);
@@ -782,14 +857,13 @@ describe('Topic real child components', () => {
       ['last', true, false],
       ['only', false, false]
     ] as const;
-    const compiledRowHtml = `<div class="${HTML_REPLY_CONTENT_CLASS}"><p>fragment</p></div>`;
+    const compiledRow = compiledRichText('<p>fragment</p>');
 
     for (const [continuation, trimsLeading, trimsTrailing] of expectations) {
-      const view = await render(
-        <TopicContentBlock contentWidth={360} continuation={continuation} html={compiledRowHtml} />
-      );
+      const row = semanticRowPart(compiledRow, continuation);
+      const view = await render(<TopicContentBlock contentWidth={360} row={row} />);
       const source = view.getByTestId('html-source');
-      expect(source.props.accessibilityHint).toBe(compiledRowHtml);
+      expect(source.props.accessibilityHint).toBe(compiledRow.html);
       expect(StyleSheet.flatten(source.props.style)).toEqual({
         width: 360,
         ...(trimsLeading ? { marginTop: 0 } : {}),
@@ -845,7 +919,7 @@ describe('Topic real child components', () => {
       });
       return (
         <RenderHTMLConfigProvider renderers={rendering.htmlRenderers} renderersProps={rendering.htmlRenderersProps}>
-          <TopicContentBlock contentWidth={720} html={topic.contentHtml} />
+          <TopicContentBlock contentWidth={720} row={compiledRichText(topic.contentHtml, 'opening')} />
           <VirtualizedReplyRows
             props={replyProps({
               expandedQuotes: { 'reply:comment:22:nodeseek:832584:1': true },
@@ -913,7 +987,7 @@ describe('Topic real child components', () => {
       });
       return (
         <RenderHTMLConfigProvider renderers={rendering.htmlRenderers} renderersProps={rendering.htmlRenderersProps}>
-          <TopicContentBlock contentWidth={720} html={topic.contentHtml} />
+          <TopicContentBlock contentWidth={720} row={compiledRichText(topic.contentHtml, 'opening')} />
         </RenderHTMLConfigProvider>
       );
     }
@@ -1183,7 +1257,26 @@ describe('Topic real child components', () => {
         quotedPosts: [],
         replyTarget: undefined
       };
-      const view = await render(<ReplyItem {...replyProps({ reply, source })} />);
+      const [planned] = buildVirtualizedReplyItems({
+        expandedQuotes: {},
+        loadedQuotedReplies: {},
+        loadingQuotedFloors: {},
+        replies: [reply],
+        repliesByFloor: new Map(),
+        source,
+        topicId: 'topic-1'
+      });
+      if (planned?.type !== 'reply') throw new Error('Expected a single-cell accepted reply.');
+      const view = await render(
+        <ReplyItem
+          {...replyProps({
+            bodyContent: planned.bodyContent,
+            reply,
+            signatureContent: planned.signatureContent,
+            source
+          })}
+        />
+      );
 
       expect(view.getByLabelText('已采纳的解决方案')).toBeTruthy();
       expect(view.getByText('已解决')).toBeTruthy();
@@ -1356,13 +1449,25 @@ describe('Topic real child components', () => {
       replyTarget: undefined,
       signatureHtml: '<p>签名内容</p>'
     };
+    const [planned] = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [fullReply],
+      repliesByFloor: new Map(),
+      source: 'xiaoyinsi',
+      topicId: 'topic-1'
+    });
+    if (planned?.type !== 'reply') throw new Error('Expected a single-cell signed reply.');
     const view = await render(
       <ReplyItem
         {...replyProps({
+          bodyContent: planned.bodyContent,
           discourseEmojiUrls: {
             heart: 'https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15'
           },
           reply: fullReply,
+          signatureContent: planned.signatureContent,
           source: 'xiaoyinsi'
         })}
       />
@@ -1455,7 +1560,7 @@ describe('Topic real child components', () => {
     expect(view.getAllByLabelText('avatar source xiaoyinsi').length).toBeGreaterThan(0);
   });
 
-  it('[REG-TOPIC-056] routes only canonical Discourse blockquotes through the shared Callout renderer', async () => {
+  it('[REG-TOPIC-056] leaves blockquote rendering structural after Callout classification moved to the compiler', async () => {
     const onOpenExternalUrl = jest.fn();
     const discourseTopic: TopicDetail = {
       author: 'alice',
@@ -1514,9 +1619,7 @@ describe('Topic real child components', () => {
     const callout = await render(
       <BlockquoteRenderer InternalRenderer={InternalRenderer} style={{}} tnode={canonicalTNode} />
     );
-    expect(callout.getByText('警告标题')).toBeTruthy();
-    expect(callout.getByText('Callout 正文')).toBeTruthy();
-    expect(callout.queryByText('普通引用 renderer')).toBeNull();
+    expect(callout.getByText('普通引用 renderer')).toBeTruthy();
 
     const ordinary = await render(
       <BlockquoteRenderer
@@ -1527,33 +1630,6 @@ describe('Topic real child components', () => {
     );
     expect(ordinary.getByText('普通引用 renderer')).toBeTruthy();
 
-    const nodeSeekTopic = {
-      ...discourseTopic,
-      source: 'nodeseek' as const,
-      url: 'https://www.nodeseek.com/post-callout-topic-1'
-    };
-    const nonDiscourseController = await renderHook(() =>
-      useHtmlRenderingController({
-        mediaSessionIdentity: 'nodeseek:0',
-        onOpenExternalUrl,
-        onOpenImagePreview: () => undefined,
-        onOpenTopic: () => undefined,
-        onOpenUser: () => undefined,
-        selectedTopic: nodeSeekTopic,
-        settings: readerData.settings,
-        theme,
-        topicDetail: nodeSeekTopic,
-        topicKey: 'nodeseek:callout-topic',
-        webViewBlockMessage: ''
-      })
-    );
-    const NonDiscourseBlockquoteRenderer = nonDiscourseController.result.current.htmlRenderers
-      .blockquote as unknown as React.ComponentType<Record<string, unknown>>;
-    const forged = await render(
-      <NonDiscourseBlockquoteRenderer InternalRenderer={InternalRenderer} style={{}} tnode={canonicalTNode} />
-    );
-    expect(forged.getByText('普通引用 renderer')).toBeTruthy();
-
     const event = { stopPropagation: jest.fn() };
     controller.result.current.htmlRenderersProps.a?.onPress?.(
       event as never,
@@ -1563,92 +1639,6 @@ describe('Topic real child components', () => {
     );
     expect(event.stopPropagation).toHaveBeenCalledTimes(1);
     expect(onOpenExternalUrl).toHaveBeenCalledWith('https://example.com/path');
-  });
-
-  it('[REG-PERF-010] shares one folded Callout across split rows without repeating the title', async () => {
-    const discourseTopic: TopicDetail = {
-      author: 'alice',
-      contentHtml: '',
-      createdAt: '2026-08-01T00:00:00.000Z',
-      id: 'split-callout-topic',
-      replies: [],
-      replyCount: 0,
-      source: 'linuxdo',
-      title: 'Split Callout renderer',
-      url: 'https://linux.do/t/topic/split-callout-topic'
-    };
-    const controller = await renderHook(() =>
-      useHtmlRenderingController({
-        mediaSessionIdentity: 'linuxdo:0',
-        onOpenExternalUrl: () => undefined,
-        onOpenImagePreview: () => undefined,
-        onOpenTopic: () => undefined,
-        onOpenUser: () => undefined,
-        selectedTopic: discourseTopic,
-        settings: readerData.settings,
-        theme,
-        topicDetail: discourseTopic,
-        topicKey: 'linuxdo:split-callout-topic',
-        webViewBlockMessage: ''
-      })
-    );
-    const BlockquoteRenderer = controller.result.current.htmlRenderers.blockquote as unknown as React.ComponentType<
-      Record<string, unknown>
-    >;
-    const InternalRenderer = () => <Text>不得退化为普通引用</Text>;
-    const attributes = {
-      [DISCOURSE_CALLOUT_ATTRIBUTE]: 'true',
-      'data-forum-callout-fold': 'collapsed',
-      [DISCOURSE_CALLOUT_TYPE_ATTRIBUTE]: 'warning',
-      'data-wz-callout-group': 'block-0',
-      'data-wz-callout-part': 'first'
-    };
-    const contentNode = (text: string, nodeIndex: number) => ({
-      attributes: { class: DISCOURSE_CALLOUT_CONTENT_CLASS },
-      children: [{ data: text, nodeIndex: nodeIndex + 1, type: 'text' }],
-      nodeIndex,
-      tagName: 'div'
-    });
-    const firstTNode = {
-      attributes,
-      children: [
-        {
-          attributes: { class: DISCOURSE_CALLOUT_TITLE_CLASS },
-          children: [{ data: '唯一警告标题', nodeIndex: 1, type: 'text' }],
-          nodeIndex: 0,
-          tagName: 'div'
-        }
-      ],
-      nodeIndex: 0,
-      parent: null,
-      tagName: 'blockquote'
-    };
-    const middleTNode = {
-      attributes: { ...attributes, 'data-wz-callout-part': 'middle' },
-      children: [contentNode('续段正文', 4)],
-      nodeIndex: 3,
-      parent: null,
-      tagName: 'blockquote'
-    };
-    const view = await render(
-      <TopicSplitDisclosureProvider key="linuxdo:split-callout-topic">
-        <TopicSplitDisclosureScope scopeKey="opening:block-0">
-          <BlockquoteRenderer InternalRenderer={InternalRenderer} style={{}} tnode={firstTNode} />
-        </TopicSplitDisclosureScope>
-        <TopicSplitDisclosureScope scopeKey="opening:block-0">
-          <BlockquoteRenderer InternalRenderer={InternalRenderer} style={{}} tnode={middleTNode} />
-        </TopicSplitDisclosureScope>
-      </TopicSplitDisclosureProvider>
-    );
-
-    expect(view.getAllByTestId('forum-callout')).toHaveLength(2);
-    expect(view.getAllByText('唯一警告标题')).toHaveLength(1);
-    expect(view.queryByText('不得退化为普通引用')).toBeNull();
-    expect(view.queryByText('续段正文')).toBeNull();
-
-    await fireEvent.press(view.getByRole('button', { name: '唯一警告标题' }));
-
-    expect(view.getByText('续段正文')).toBeTruthy();
   });
 
   it('keeps the composer sheet visibility and close gesture connected to the parent state', async () => {

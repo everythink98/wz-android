@@ -101,4 +101,23 @@ describe('Android HTML rendering styles', () => {
     });
     expect(htmlClassesStyles['forum-attachment-title']).toMatchObject({ fontWeight: '700' });
   });
+
+  it('[REG-TOPIC-084] leaves table geometry to the native logical-table renderer', () => {
+    const theme = createTheme(settings);
+    const { htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+
+    expect(htmlTagsStyles.table).not.toHaveProperty('borderWidth');
+    expect(htmlTagsStyles.th).toMatchObject({
+      borderBottomWidth: 1,
+      borderRightWidth: 1,
+      flexShrink: 0
+    });
+    expect(htmlTagsStyles.td).toMatchObject({
+      borderBottomWidth: 1,
+      borderRightWidth: 1,
+      flexShrink: 0
+    });
+    expect(htmlTagsStyles.th).not.toHaveProperty('width');
+    expect(htmlTagsStyles.td).not.toHaveProperty('width');
+  });
 });
