@@ -17,6 +17,7 @@ import type { HtmlRenderers } from './types';
 import { useTopicSplitDisclosureScopeKey } from './TopicSplitDisclosure';
 
 const MAX_TABLE_COLUMNS = 80;
+const HORIZONTAL_INTENT_LOCK_DISTANCE = 4;
 
 type TopicTableNode = {
   attributes?: Readonly<Record<string, string | undefined>>;
@@ -161,6 +162,9 @@ export function TopicHorizontalScroll({
   const offset = useTopicHorizontalOffset(semanticId);
   const initialMaximum = contentWidth === undefined ? 0 : Math.max(0, contentWidth - viewportWidth);
   const maximumOffset = useSharedValue(initialMaximum);
+  const horizontalPanClaimed = useSharedValue(false);
+  const pointerStartX = useSharedValue(0);
+  const pointerStartY = useSharedValue(0);
   const gestureStartOffset = useSharedValue(0);
   const scrollViewRef = useAnimatedRef<ComponentRef<typeof Animated.ScrollView>>();
 
@@ -176,9 +180,42 @@ export function TopicHorizontalScroll({
     () =>
       Gesture.Pan()
         .enabled(enabled)
+        .manualActivation(true)
         .maxPointers(1)
-        .activeOffsetX([-10, 10])
-        .failOffsetY([-10, 10])
+        .onTouchesDown((event, state) => {
+          'worklet';
+          horizontalPanClaimed.value = false;
+          const touch = event.allTouches[0];
+          if (event.numberOfTouches !== 1 || maximumOffset.value <= 0 || !touch) {
+            state.fail();
+            return;
+          }
+          pointerStartX.value = touch.absoluteX;
+          pointerStartY.value = touch.absoluteY;
+        })
+        .onTouchesMove((event, state) => {
+          'worklet';
+          if (event.numberOfTouches !== 1 || maximumOffset.value <= 0) {
+            horizontalPanClaimed.value = false;
+            state.fail();
+            return;
+          }
+          if (horizontalPanClaimed.value) return;
+          const touch = event.allTouches[0];
+          if (!touch) {
+            state.fail();
+            return;
+          }
+          const deltaX = touch.absoluteX - pointerStartX.value;
+          const deltaY = touch.absoluteY - pointerStartY.value;
+          if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < HORIZONTAL_INTENT_LOCK_DISTANCE) return;
+          if (Math.abs(deltaX) > Math.abs(deltaY)) {
+            horizontalPanClaimed.value = true;
+            state.activate();
+            return;
+          }
+          state.fail();
+        })
         .onBegin(() => {
           'worklet';
           cancelAnimation(offset);
@@ -192,7 +229,7 @@ export function TopicHorizontalScroll({
           'worklet';
           offset.value = withDecay({ clamp: [0, maximumOffset.value], velocity: -event.velocityX });
         }),
-    [enabled, gestureStartOffset, maximumOffset, offset]
+    [enabled, gestureStartOffset, horizontalPanClaimed, maximumOffset, offset, pointerStartX, pointerStartY]
   );
   const handleContentSizeChange = useCallback(
     (width: number) => {

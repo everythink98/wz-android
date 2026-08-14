@@ -20,9 +20,9 @@ const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string
   width: 920
 }));
 let mockZoomScale = 1;
-let mockPagerNextToken = 0;
-let mockDeferProgrammaticPagerSelections = false;
-const mockPendingProgrammaticPagerSelections: number[] = [];
+let mockGestureNextToken = 0;
+let mockDeferAnimations = false;
+const mockDeferredAnimationCallbacks: (() => void)[] = [];
 let mockZoomNextToken = 0;
 const mockZoomResets = jest.fn<(index: string) => void>();
 const mockPreviewImageUnmounts = jest.fn<(testID: string) => void>();
@@ -112,6 +112,34 @@ jest.mock('expo-image', () => {
   };
 });
 
+jest.mock('react-native-reanimated', () => {
+  const ReactModule = require('react') as typeof React;
+  const actual = jest.requireActual('react-native-reanimated/mock') as Record<string, unknown>;
+  return {
+    ...actual,
+    useSharedValue<Value>(initialValue: Value) {
+      const sharedValue = ReactModule.useRef<{ value: Value } | null>(null);
+      if (!sharedValue.current) {
+        sharedValue.current = { value: initialValue };
+      }
+      return sharedValue.current;
+    },
+    withTiming: (value: unknown, _config?: unknown, callback?: (finished: boolean) => void) => {
+      if (callback && mockDeferAnimations) {
+        mockDeferredAnimationCallbacks.push(() => callback(true));
+      } else {
+        callback?.(true);
+      }
+      return value;
+    }
+  };
+});
+
+jest.mock('react-native-worklets', () => ({
+  ...(jest.requireActual('react-native-worklets') as Record<string, unknown>),
+  scheduleOnRN: (callback: (...args: unknown[]) => unknown, ...args: unknown[]) => callback(...args)
+}));
+
 jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
@@ -119,10 +147,10 @@ jest.mock('react-native-gesture-handler', () => {
   const gesture = () => {
     const handlers: Record<string, (...args: unknown[]) => void> = {};
     const value: Record<string, unknown> = { handlers };
-    for (const name of ['activeOffsetX', 'activeOffsetY', 'enabled', 'failOffsetX', 'failOffsetY', 'maxPointers']) {
+    for (const name of ['manualActivation', 'maxPointers']) {
       value[name] = () => value;
     }
-    for (const name of ['onEnd', 'onFinalize', 'onUpdate']) {
+    for (const name of ['onEnd', 'onFinalize', 'onStart', 'onTouchesDown', 'onTouchesMove', 'onUpdate']) {
       value[name] = (handler: (...args: unknown[]) => void) => {
         handlers[name] = handler;
         return value;
@@ -132,20 +160,7 @@ jest.mock('react-native-gesture-handler', () => {
   };
   return {
     Gesture: {
-      Native: gesture,
-      Pan: gesture,
-      Simultaneous: (...gestures: { handlers?: Record<string, (...args: unknown[]) => void> }[]) => ({
-        handlers: Object.fromEntries(
-          ['onEnd', 'onFinalize', 'onUpdate'].map((name) => [
-            name,
-            (...args: unknown[]) => {
-              for (const item of gestures) {
-                item.handlers?.[name]?.(...args);
-              }
-            }
-          ])
-        )
-      })
+      Pan: gesture
     },
     GestureDetector: ({
       children,
@@ -153,99 +168,78 @@ jest.mock('react-native-gesture-handler', () => {
     }: {
       children?: React.ReactNode;
       gesture?: { handlers?: Record<string, (...args: unknown[]) => void> };
-    }) =>
-      ReactModule.createElement(
-        GestureView,
-        {
-          testID: 'image-preview-pull-gesture',
-          onEnd: value?.handlers?.onEnd,
-          onFinalize: value?.handlers?.onFinalize,
-          onUpdate: value?.handlers?.onUpdate
-        },
-        children
-      ),
-    GestureHandlerRootView: ({ children, ...props }: { children?: React.ReactNode }) =>
-      ReactModule.createElement(NativeView, props, children)
-  };
-});
-
-jest.mock('react-native-pager-view', () => {
-  const ReactModule = require('react') as typeof React;
-  const { View: NativeView } = require('react-native') as typeof import('react-native');
-  const PagerMockView = NativeView as React.ComponentType<Record<string, unknown>>;
-  return {
-    __esModule: true,
-    default: ReactModule.forwardRef(
-      (
-        {
-          children,
-          initialPage = 0,
-          onPageSelected,
-          onPageScrollStateChanged,
-          ...props
-        }: {
-          children?: React.ReactNode;
-          initialPage?: number;
-          onPageSelected?: (event: { nativeEvent: { position: number } }) => void;
-          onPageScrollStateChanged?: (event: { nativeEvent: { pageScrollState: string } }) => void;
-        },
-        ref: React.ForwardedRef<{
-          setPage: (index: number) => void;
-          setPageWithoutAnimation: (index: number) => void;
-          setScrollEnabled: (enabled: boolean) => void;
-        }>
-      ) => {
-        const token = ReactModule.useRef(0);
-        if (token.current === 0) {
-          token.current = ++mockPagerNextToken;
-        }
-        const [index, setIndex] = ReactModule.useState(initialPage);
-        const select = (nextIndex: number, userDriven = false) => {
-          if (userDriven) {
-            onPageScrollStateChanged?.({ nativeEvent: { pageScrollState: 'dragging' } });
-          }
-          setIndex(nextIndex);
-          if (!userDriven && mockDeferProgrammaticPagerSelections) {
-            mockPendingProgrammaticPagerSelections.push(nextIndex);
-            return;
-          }
-          onPageSelected?.({ nativeEvent: { position: nextIndex } });
-          if (userDriven) {
-            onPageScrollStateChanged?.({ nativeEvent: { pageScrollState: 'idle' } });
+    }) => {
+      const token = ReactModule.useRef(0);
+      if (token.current === 0) {
+        token.current = ++mockGestureNextToken;
+      }
+      const mockGesture = ({
+        pointers = 1,
+        pointersOnMove = pointers,
+        translationX = 0,
+        translationY = 0,
+        velocityX = 0,
+        velocityY = 0
+      }: {
+        pointers?: number;
+        pointersOnMove?: number;
+        translationX?: number;
+        translationY?: number;
+        velocityX?: number;
+        velocityY?: number;
+      }) => {
+        let active = false;
+        let failed = false;
+        const state = {
+          activate: () => {
+            if (!failed) {
+              active = true;
+            }
+          },
+          fail: () => {
+            failed = true;
+            active = false;
           }
         };
-        ReactModule.useImperativeHandle(ref, () => ({
-          setPage: select,
-          setPageWithoutAnimation: select,
-          setScrollEnabled: () => undefined
-        }));
-        return ReactModule.createElement(
-          PagerMockView,
-          {
-            ...props,
-            mockPageCount: ReactModule.Children.count(children),
-            mockPageKeys: ReactModule.Children.toArray(children).map((child) =>
-              ReactModule.isValidElement(child) ? child.key : null
-            ),
-            mockPagerToken: token.current,
-            mockFlushProgrammaticPageSelections: () => {
-              for (const position of mockPendingProgrammaticPagerSelections.splice(0)) {
-                onPageSelected?.({ nativeEvent: { position } });
-              }
-            },
-            mockUserSelectPage: (nextIndex: number) => select(nextIndex, true),
-            onPageSelected,
-            onPageScrollStateChanged,
-            testID: 'image-preview-pager'
-          },
-          children,
-          ReactModule.createElement(NativeView, {
-            accessibilityLabel: 'mock-next-gallery-page',
-            onTouchEnd: () => select(Math.min(index + 1, ReactModule.Children.count(children) - 1), true)
-          })
-        );
-      }
-    )
+        const touches = (count: number, moved: boolean) =>
+          Array.from({ length: count }, (_, index) => ({
+            absoluteX: 200 + (moved ? translationX : 0) + index * 40,
+            absoluteY: 400 + (moved ? translationY : 0) + index * 40,
+            id: index,
+            x: 200 + (moved ? translationX : 0) + index * 40,
+            y: 400 + (moved ? translationY : 0) + index * 40
+          }));
+        const touchEvent = (count: number, moved: boolean) => ({
+          allTouches: touches(count, moved),
+          changedTouches: touches(count, moved),
+          numberOfTouches: count
+        });
+        value?.handlers?.onTouchesDown?.(touchEvent(pointers, false), state);
+        if (pointersOnMove !== pointers) {
+          value?.handlers?.onTouchesDown?.(touchEvent(pointersOnMove, false), state);
+        }
+        value?.handlers?.onTouchesMove?.(touchEvent(pointersOnMove, true), state);
+        const panEvent = { translationX, translationY, velocityX, velocityY };
+        if (active && !failed) {
+          value?.handlers?.onStart?.(panEvent);
+          value?.handlers?.onUpdate?.(panEvent);
+          value?.handlers?.onEnd?.(panEvent, true);
+        }
+        value?.handlers?.onFinalize?.(panEvent, active && !failed);
+        return { active, failed };
+      };
+      return ReactModule.createElement(
+        GestureView,
+        {
+          mockGesture,
+          mockGestureToken: token.current,
+          testID: 'image-preview-gesture'
+        },
+        children
+      );
+    },
+    GestureHandlerRootView: ({ children, ...props }: { children?: React.ReactNode }) =>
+      ReactModule.createElement(NativeView, props, children)
   };
 });
 
@@ -325,12 +319,43 @@ function callbacks(
   };
 }
 
+type PreviewGestureInput = {
+  pointers?: number;
+  pointersOnMove?: number;
+  translationX?: number;
+  translationY?: number;
+  velocityX?: number;
+  velocityY?: number;
+};
+
+type PreviewRender = Awaited<ReturnType<typeof render>>;
+
+async function performPreviewGesture(view: PreviewRender, input: PreviewGestureInput) {
+  let result: { active: boolean; failed: boolean } | undefined;
+  await act(() => {
+    result = view.getByTestId('image-preview-gesture').props.mockGesture(input);
+  });
+  return result;
+}
+
+async function swipePreviewNext(view: PreviewRender) {
+  return performPreviewGesture(view, { translationX: -500, translationY: 10, velocityX: -1_000 });
+}
+
+async function swipePreviewPrevious(view: PreviewRender) {
+  return performPreviewGesture(view, { translationX: 500, translationY: 10, velocityX: 1_000 });
+}
+
+async function flushNextPreviewAnimation() {
+  await act(() => mockDeferredAnimationCallbacks.shift()?.());
+}
+
 describe('Image preview', () => {
   beforeEach(() => {
     mockZoomScale = 1;
-    mockPagerNextToken = 0;
-    mockDeferProgrammaticPagerSelections = false;
-    mockPendingProgrammaticPagerSelections.splice(0);
+    mockGestureNextToken = 0;
+    mockDeferAnimations = false;
+    mockDeferredAnimationCallbacks.splice(0);
     mockZoomNextToken = 0;
     mockZoomResets.mockClear();
     mockPreviewImageUnmounts.mockClear();
@@ -343,6 +368,35 @@ describe('Image preview', () => {
       fetchSvgDocument: mockFetchSvgDocument,
       renderPoster: mockRenderSvgPoster
     };
+  });
+
+  it('[REG-TOPIC-096] applies the tapped-item override without replacing the logical catalog', async () => {
+    const items = [
+      previewItem('https://example.com/first.png'),
+      previewItem('https://example.com/original.png', 'https://example.com/catalog-display.png'),
+      previewItem('https://example.com/third.png')
+    ];
+    const view = await render(
+      <ImagePreviewModal
+        preview={{
+          contentSource: null,
+          index: 1,
+          itemOverride: {
+            displaySize: { height: 360, width: 640 },
+            displayUri: 'https://example.com/tapped-display.png',
+            originalUri: 'https://example.com/original.png'
+          },
+          itemOverrideIndex: 1,
+          items
+        }}
+        {...callbacks()}
+      />
+    );
+
+    expect(view.getByTestId('preview-display-underlay-1').props.source).toEqual(
+      expect.objectContaining({ uri: 'https://example.com/tapped-display.png' })
+    );
+    expect(items[1]?.displayUri).toBe('https://example.com/catalog-display.png');
   });
 
   it('[REG-TOPIC-078] isolates raster recycling by final Referer', async () => {
@@ -412,7 +466,7 @@ describe('Image preview', () => {
     await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
     expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(inactiveKey);
-    await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(1));
+    await swipePreviewNext(view);
     const retriedKey = await waitFor(() => {
       const key = view.getByTestId('preview-image-1').props.recyclingKey;
       expect(key).not.toBe(inactiveKey);
@@ -441,7 +495,7 @@ describe('Image preview', () => {
     await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
     expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(loadedKey);
-    await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(1));
+    await swipePreviewNext(view);
     await view.rerender(modal(1));
 
     expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(loadedKey);
@@ -485,7 +539,7 @@ describe('Image preview', () => {
     expect(view.queryByTestId('preview-image-4')).toBeNull();
     expect(view.queryByTestId('preview-thumbnail-image')).toBeNull();
 
-    await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
+    await swipePreviewNext(view);
     expect(view.getByTestId('preview-image-2').props.allowDownscaling).toBe(true);
     expect(view.getByTestId('preview-image-3').props.allowDownscaling).toBe(true);
     expect(view.getByTestId('preview-image-2').props.transition).toBeUndefined();
@@ -500,12 +554,12 @@ describe('Image preview', () => {
     );
     const view = await render(modal(0));
 
-    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBeLessThanOrEqual(3);
+    expect(view.getAllByTestId(/^preview-physical-slot-/)).toHaveLength(3);
     expect(view.getAllByTestId(/^preview-image-/)).toHaveLength(2);
 
     await view.rerender(modal(1_379));
     await waitFor(() => expect(view.getByText('1380/2000')).toBeTruthy());
-    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
+    expect(view.getAllByTestId(/^preview-physical-slot-/)).toHaveLength(3);
     expect(view.getAllByTestId(/^preview-image-/)).toHaveLength(3);
     expect(view.getAllByTestId(/^preview-image-/)).toEqual(
       expect.arrayContaining([
@@ -517,20 +571,22 @@ describe('Image preview', () => {
       expect(image.props.cachePolicy).toBe('disk');
     }
 
-    const physicalPageKeys = view.getByTestId('image-preview-pager').props.mockPageKeys;
     const leavingSourceOwner = view.getByTestId('preview-image-1378').props;
+    const currentOwner = view.getByTestId('preview-image-1379').props.mockImageInstanceToken;
+    const targetOwner = view.getByTestId('preview-image-1380').props.mockImageInstanceToken;
     mockPreviewImageUnmounts.mockClear();
 
-    await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
+    await swipePreviewNext(view);
     expect(onSelect).toHaveBeenLastCalledWith(1_380);
     expect(view.getByText('1381/2000')).toBeTruthy();
-    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
-    expect(view.getByTestId('image-preview-pager').props.mockPageKeys).toEqual(physicalPageKeys);
+    expect(view.getAllByTestId(/^preview-physical-slot-/)).toHaveLength(3);
     expect(view.getAllByTestId(/^preview-image-/)).toHaveLength(3);
-    const reusedSourceOwner = view.getByTestId('preview-image-1379').props;
+    const reusedSourceOwner = view.getByTestId('preview-image-1381').props;
     expect(reusedSourceOwner.mockImageInstanceToken).toBe(leavingSourceOwner.mockImageInstanceToken);
-    expect(reusedSourceOwner.source.uri).toBe(items[1_379]?.originalUri);
+    expect(reusedSourceOwner.source.uri).toBe(items[1_381]?.originalUri);
     expect(reusedSourceOwner.recyclingKey).not.toBe(leavingSourceOwner.recyclingKey);
+    expect(view.getByTestId('preview-image-1379').props.mockImageInstanceToken).toBe(currentOwner);
+    expect(view.getByTestId('preview-image-1380').props.mockImageInstanceToken).toBe(targetOwner);
     expect(mockPreviewImageUnmounts).not.toHaveBeenCalled();
   });
 
@@ -580,7 +636,7 @@ describe('Image preview', () => {
     await settleMountedOwners();
 
     for (let index = 21; index <= 30; index += 1) {
-      await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(2));
+      await swipePreviewNext(view);
       await view.rerender(modal());
       expect(view.getByText(`${index + 1}/100`)).toBeTruthy();
       rememberOwners();
@@ -607,23 +663,26 @@ describe('Image preview', () => {
       previewItem(`https://example.com/reset-original-${index}.png`, `https://example.com/reset-display-${index}.png`)
     );
     const view = await render(<ImagePreviewModal preview={previewProps(items, 2)} {...callbacks()} />);
-    const previousImage = view.getByTestId('preview-image-2');
-    const previousOwnerToken = previousImage.props.mockImageInstanceToken;
-    const latePreviousDisplay = previousImage.props.onDisplay as () => void;
+    const leavingImage = view.getByTestId('preview-image-1');
+    const leavingOwnerToken = leavingImage.props.mockImageInstanceToken;
+    const targetOwnerToken = view.getByTestId('preview-image-3').props.mockImageInstanceToken;
+    const lateLeavingDisplay = leavingImage.props.onDisplay as () => void;
 
-    await fireEvent(previousImage, 'display');
-    expect(view.queryByTestId('preview-display-underlay-2')).toBeNull();
+    await fireEvent(leavingImage, 'display');
+    expect(view.queryByTestId('preview-display-underlay-1')).toBeNull();
 
-    await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(2));
+    await swipePreviewNext(view);
     const nextImage = view.getByTestId('preview-image-3');
-    expect(nextImage.props.mockImageInstanceToken).toBe(previousOwnerToken);
-    expect(view.getByTestId('preview-display-underlay-3')).toBeTruthy();
+    const recycledImage = view.getByTestId('preview-image-4');
+    expect(nextImage.props.mockImageInstanceToken).toBe(targetOwnerToken);
+    expect(recycledImage.props.mockImageInstanceToken).toBe(leavingOwnerToken);
+    expect(view.getByTestId('preview-display-underlay-4')).toBeTruthy();
 
-    await act(latePreviousDisplay);
-    expect(view.getByTestId('preview-display-underlay-3')).toBeTruthy();
+    await act(lateLeavingDisplay);
+    expect(view.getByTestId('preview-display-underlay-4')).toBeTruthy();
 
-    await fireEvent(nextImage, 'display');
-    await waitFor(() => expect(view.queryByTestId('preview-display-underlay-3')).toBeNull());
+    await fireEvent(recycledImage, 'display');
+    await waitFor(() => expect(view.queryByTestId('preview-display-underlay-4')).toBeNull());
   });
 
   it('[REG-TOPIC-075] never routes a remote continuity image through the Expo placeholder decoder', async () => {
@@ -668,7 +727,72 @@ describe('Image preview', () => {
     }
   });
 
-  it('[REG-PERF-010] ignores a delayed physical selection from the pager window before an arbitrary jump', async () => {
+  it('[REG-TOPIC-095] keeps the selected target centered through page settlement', async () => {
+    const items = Array.from({ length: 6 }, (_, index) => previewItem(`https://example.com/settle-${index}.png`));
+    const onSelect = jest.fn<(index: number) => void>();
+    const view = await render(<ImagePreviewModal preview={previewProps(items, 2)} {...callbacks({ onSelect })} />);
+    const currentOwner = view.getByTestId('preview-image-2').props.mockImageInstanceToken;
+    const targetOwner = view.getByTestId('preview-image-3').props.mockImageInstanceToken;
+    const recycledOwner = view.getByTestId('preview-image-1').props.mockImageInstanceToken;
+    const centeredImage = () => {
+      const selectedSlot = view
+        .getAllByTestId(/^preview-physical-slot-/)
+        .find((slot) => slot.props.pointerEvents === 'auto');
+      expect(selectedSlot).toBeTruthy();
+      return within(selectedSlot!).getByTestId(/^preview-image-/);
+    };
+
+    expect(centeredImage().props.mockImageInstanceToken).toBe(currentOwner);
+    expect(await swipePreviewNext(view)).toEqual({ active: true, failed: false });
+
+    expect(onSelect).toHaveBeenLastCalledWith(3);
+    expect(centeredImage().props.testID).toBe('preview-image-3');
+    expect(centeredImage().props.mockImageInstanceToken).toBe(targetOwner);
+    expect(view.getByTestId('preview-image-4').props.mockImageInstanceToken).toBe(recycledOwner);
+
+    await swipePreviewPrevious(view);
+    expect(onSelect.mock.calls.map(([index]) => index)).toEqual([3, 2]);
+    expect(centeredImage().props.testID).toBe('preview-image-2');
+    expect(centeredImage().props.mockImageInstanceToken).toBe(currentOwner);
+  });
+
+  it('[REG-TOPIC-095] gives pinch and a late second finger exclusive ownership of the index', async () => {
+    const items = Array.from({ length: 3 }, (_, index) => previewItem(`https://example.com/pinch-${index}.png`));
+    const onSelect = jest.fn<(index: number) => void>();
+    const view = await render(<ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect })} />);
+
+    await performPreviewGesture(view, { pointers: 2, translationX: -500, translationY: 80, velocityX: -1_000 });
+    await performPreviewGesture(view, {
+      pointers: 1,
+      pointersOnMove: 2,
+      translationX: -500,
+      translationY: 10,
+      velocityX: -1_000
+    });
+    mockZoomScale = 2;
+    await fireEvent(view.getByTestId('preview-zoom-1'), 'update', { scale: 2 });
+    await fireEvent(view.getByTestId('preview-zoom-1'), 'gestureEnd');
+    await performPreviewGesture(view, { translationX: -500, translationY: 10, velocityX: -1_000 });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(view.getByText('2/3')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-095] commits a slow swipe only after the distance threshold', async () => {
+    const items = Array.from({ length: 3 }, (_, index) => previewItem(`https://example.com/slow-${index}.png`));
+    const onSelect = jest.fn<(index: number) => void>();
+    const view = await render(<ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect })} />);
+
+    await performPreviewGesture(view, { translationX: -50, translationY: 4, velocityX: -100 });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(view.getByText('2/3')).toBeTruthy();
+
+    await performPreviewGesture(view, { translationX: -200, translationY: 4, velocityX: -200 });
+    expect(onSelect).toHaveBeenLastCalledWith(2);
+    expect(view.getByText('3/3')).toBeTruthy();
+  });
+
+  it('[REG-PERF-010] rebuilds an idle non-adjacent external index without emitting a selection', async () => {
     const items = Array.from({ length: 6 }, (_, index) => previewItem(`https://example.com/window-${index}.png`));
     let selectedIndex = 2;
     const savedIndices: number[] = [];
@@ -690,18 +814,16 @@ describe('Image preview', () => {
     mockZoomResets.mockClear();
     onSelect.mockClear();
 
-    await fireEvent(view.getByTestId('image-preview-pager'), 'pageSelected', {
-      nativeEvent: { position: 2 }
-    });
     await fireEvent.press(view.getByLabelText('保存图片'));
 
     expect(view.getByText('5/6')).toBeTruthy();
+    expect(view.getByTestId('preview-image-4')).toBeTruthy();
     expect(onSelect).not.toHaveBeenCalled();
     expect(mockZoomResets).not.toHaveBeenCalled();
     expect(savedIndices).toEqual([4]);
   });
 
-  it('[REG-PERF-010] fences a stale native drag transaction after publishing a new pager window', async () => {
+  it('[REG-PERF-010] keeps the ring usable after a non-adjacent external rebuild', async () => {
     const items = Array.from({ length: 6 }, (_, index) => previewItem(`https://example.com/fenced-${index}.png`));
     let selectedIndex = 2;
     const savedIndices: number[] = [];
@@ -716,29 +838,18 @@ describe('Image preview', () => {
     );
     const view = await render(modal(selectedIndex));
 
-    mockDeferProgrammaticPagerSelections = true;
     selectedIndex = 4;
     await view.rerender(modal(selectedIndex));
     await waitFor(() => expect(view.getByText('5/6')).toBeTruthy());
     onSelect.mockClear();
 
-    await fireEvent(view.getByTestId('image-preview-pager'), 'pageScrollStateChanged', {
-      nativeEvent: { pageScrollState: 'dragging' }
-    });
-    await fireEvent(view.getByTestId('image-preview-pager'), 'pageSelected', {
-      nativeEvent: { position: 0 }
-    });
-    await fireEvent(view.getByTestId('image-preview-pager'), 'pageScrollStateChanged', {
-      nativeEvent: { pageScrollState: 'idle' }
-    });
     await fireEvent.press(view.getByLabelText('保存图片'));
 
     expect(view.getByText('5/6')).toBeTruthy();
     expect(onSelect).not.toHaveBeenCalled();
     expect(savedIndices).toEqual([4]);
 
-    await act(() => view.getByTestId('image-preview-pager').props.mockFlushProgrammaticPageSelections());
-    await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(2));
+    await swipePreviewNext(view);
     await waitFor(() => expect(view.getByText('6/6')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('保存图片'));
 
@@ -746,7 +857,7 @@ describe('Image preview', () => {
     expect(savedIndices).toEqual([4, 5]);
   });
 
-  it('[REG-PERF-010] owns continuous middle transitions and both pager edges without losing logical order', async () => {
+  it('[REG-PERF-010] owns continuous middle transitions and both ring edges without losing logical order', async () => {
     const items = Array.from({ length: 7 }, (_, index) => previewItem(`https://example.com/ordered-${index}.png`));
     let selectedIndex = 0;
     const savedIndices: number[] = [];
@@ -757,28 +868,26 @@ describe('Image preview', () => {
       savedIndices.push(selectedIndex);
     });
     const view = await render(<ImagePreviewModal preview={previewProps(items)} {...callbacks({ onSave, onSelect })} />);
-    const userSelectPhysicalPage = async (position: number) => {
-      await act(() => view.getByTestId('image-preview-pager').props.mockUserSelectPage(position));
-    };
-
-    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
-    await userSelectPhysicalPage(1);
+    expect(view.getAllByTestId(/^preview-physical-slot-/)).toHaveLength(3);
+    await swipePreviewNext(view);
     for (let logicalIndex = 2; logicalIndex <= 6; logicalIndex += 1) {
-      await userSelectPhysicalPage(2);
+      await swipePreviewNext(view);
       expect(view.getByText(`${logicalIndex + 1}/7`)).toBeTruthy();
     }
-    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
+    expect(view.getAllByTestId(/^preview-physical-slot-/)).toHaveLength(3);
+    await swipePreviewNext(view);
+    expect(view.getByText('7/7')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('保存图片'));
     expect(savedIndices).toEqual([6]);
 
-    await userSelectPhysicalPage(1);
+    await swipePreviewPrevious(view);
     expect(view.getByText('6/7')).toBeTruthy();
     for (let logicalIndex = 4; logicalIndex >= 0; logicalIndex -= 1) {
-      await userSelectPhysicalPage(0);
+      await swipePreviewPrevious(view);
       expect(view.getByText(`${logicalIndex + 1}/7`)).toBeTruthy();
     }
 
-    expect(view.getByTestId('image-preview-pager').props.mockPageCount).toBe(3);
+    expect(view.getAllByTestId(/^preview-physical-slot-/)).toHaveLength(3);
     expect(onSelect.mock.calls.map(([index]) => index)).toEqual([1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1, 0]);
     expect(mockZoomResets.mock.calls.map(([index]) => Number(index))).toEqual([0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1]);
   });
@@ -881,21 +990,10 @@ describe('Image preview', () => {
     expect(view.getByText('2/3')).toBeTruthy();
     expect(view.queryByLabelText('上一张图片')).toBeNull();
     expect(view.queryByLabelText('下一张图片')).toBeNull();
-    const galleryGesture = view.getByTestId('image-preview-pull-gesture');
-    await fireEvent(galleryGesture, 'end', {
-      translationX: -500,
-      translationY: 10,
-      velocityX: -1_000,
-      velocityY: 0
-    });
+    await swipePreviewNext(view);
     expect(onSelect).toHaveBeenLastCalledWith(2);
     expect(view.getByText('3/3')).toBeTruthy();
-    await fireEvent(galleryGesture, 'end', {
-      translationX: -500,
-      translationY: 10,
-      velocityX: -1_000,
-      velocityY: 0
-    });
+    await swipePreviewNext(view);
     expect(onSelect).toHaveBeenCalledTimes(1);
 
     await fireEvent(view.getByTestId('preview-zoom-2'), 'tap', {});
@@ -964,7 +1062,7 @@ describe('Image preview', () => {
     );
     await fireEvent(view.getByTestId('preview-image-0'), 'display');
     await fireEvent(view.getByTestId('preview-image-1'), 'display');
-    await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
+    await swipePreviewNext(view);
 
     expect(view.queryByText('图片加载中...')).toBeNull();
   });
@@ -1020,6 +1118,64 @@ describe('Image preview', () => {
     expect(view.getByLabelText('图片预览，第 2 张，共 2 张').props.accessibilityValue.text).toBe('第 2 张，共 2 张');
     await fireEvent(view.root!, 'requestClose');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-095] applies the latest requested index after the active transition settles', async () => {
+    const items = Array.from({ length: 4 }, (_, index) => previewItem(`https://example.com/queued-${index}.png`));
+    const onSelect = jest.fn<(index: number) => void>();
+    const view = await render(<ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect })} />);
+    const accessibility = view.getByLabelText('图片预览，第 2 张，共 4 张');
+    mockDeferAnimations = true;
+
+    await fireEvent(accessibility, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    await fireEvent(accessibility, 'accessibilityAction', { nativeEvent: { actionName: 'decrement' } });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    await flushNextPreviewAnimation();
+    expect(onSelect).toHaveBeenLastCalledWith(2);
+    await flushNextPreviewAnimation();
+
+    expect(onSelect.mock.calls.map(([index]) => index)).toEqual([2, 1]);
+    expect(view.getByText('2/4')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-095] queues a rapid physical swipe without disturbing the active transition', async () => {
+    const items = Array.from({ length: 5 }, (_, index) => previewItem(`https://example.com/rapid-${index}.png`));
+    const onSelect = jest.fn<(index: number) => void>();
+    const view = await render(<ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect })} />);
+    mockDeferAnimations = true;
+
+    expect(await swipePreviewNext(view)).toEqual({ active: true, failed: false });
+    expect(await swipePreviewNext(view)).toEqual({ active: true, failed: false });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    await flushNextPreviewAnimation();
+    await flushNextPreviewAnimation();
+
+    expect(onSelect.mock.calls.map(([index]) => index)).toEqual([2, 3]);
+    expect(view.getByText('4/5')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-095] rebuilds to the latest external index only after the active transition settles', async () => {
+    const items = Array.from({ length: 4 }, (_, index) => previewItem(`https://example.com/external-${index}.png`));
+    const onSelect = jest.fn<(index: number) => void>();
+    const modal = (index: number) => (
+      <ImagePreviewModal preview={previewProps(items, index)} {...callbacks({ onSelect })} />
+    );
+    const view = await render(modal(1));
+    mockDeferAnimations = true;
+
+    await fireEvent(view.getByLabelText('图片预览，第 2 张，共 4 张'), 'accessibilityAction', {
+      nativeEvent: { actionName: 'increment' }
+    });
+    await view.rerender(modal(3));
+    expect(view.getByText('2/4')).toBeTruthy();
+
+    await flushNextPreviewAnimation();
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(view.getByText('4/4')).toBeTruthy();
+    expect(view.getByTestId('preview-image-3')).toBeTruthy();
   });
 
   it('shows a disabled save state until the save promise settles', async () => {
@@ -1079,7 +1235,7 @@ describe('Image preview', () => {
       const timeoutEvent = events.find((event) => event.outcome === 'failure' && event.terminalReason === 'timeout');
       expect(timeoutEvent).toBeTruthy();
       expect(timeoutEvent).not.toHaveProperty('displayMs');
-      await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
+      await swipePreviewNext(view);
       expect(view.getByTestId('preview-image-1').props.allowDownscaling).toBe(true);
       expect(view.getByTestId('preview-image-1').props.cachePolicy).toBe('disk');
     } finally {
@@ -1232,7 +1388,7 @@ describe('Image preview', () => {
       await fireEvent(view.getByTestId('preview-image-0'), 'display');
       await fireEvent(view.getByTestId('preview-image-1'), 'loadStart');
       jest.setSystemTime(6_000);
-      await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
+      await swipePreviewNext(view);
       jest.setSystemTime(6_010);
       await fireEvent(view.getByTestId('preview-image-1'), 'load', {
         cacheType: 'disk',
@@ -1270,7 +1426,7 @@ describe('Image preview', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(view.queryByTestId('compatible-svg-document-view')).toBeNull();
 
-      await fireEvent(view.getByLabelText('mock-next-gallery-page'), 'touchEnd');
+      await swipePreviewNext(view);
       expect(view.queryByTestId('preview-image-1')?.props.allowDownscaling).toBe(true);
       await act(async () =>
         resolveFetch?.(
@@ -1396,25 +1552,24 @@ describe('Image preview', () => {
       expect(view.getByTestId('compatible-svg-document-view').props.mockWebViewToken).toBe(documentToken);
       expect(mockWebViewMounts).toBe(1);
       expect(mockWebViewUnmounts).toBe(0);
-      expect(view.getByTestId('image-preview-pager').props.scrollEnabled).toBe(false);
       await fireEvent(view.getByTestId('preview-continuity-0'), 'display');
       expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-view').props.style).opacity).toBe(0);
       expect(view.getByTestId('preview-continuity-0').props.recyclingKey).toBe(posterKey);
 
       mockZoomScale = 3;
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 3 });
       await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
       expect(view.getByTestId('compatible-svg-document-view').props.mockWebViewToken).toBe(documentToken);
       expect(mockWebViewMounts).toBe(1);
       expect(mockWebViewUnmounts).toBe(0);
       expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-view').props.style).opacity).toBe(0);
-      expect(view.getByTestId('image-preview-pager').props.scrollEnabled).toBe(false);
 
       mockZoomScale = 1;
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 1 });
       await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
       await waitFor(() =>
         expect(StyleSheet.flatten(view.getByTestId('compatible-svg-document-view').props.style).opacity).not.toBe(0)
       );
-      expect(view.getByTestId('image-preview-pager').props.scrollEnabled).toBe(true);
       expect(view.queryByTestId('preview-continuity-0')).toBeNull();
       expect(view.getByTestId('compatible-svg-document-view').props.mockWebViewToken).toBe(documentToken);
       expect(mockWebViewMounts).toBe(1);
@@ -1769,14 +1924,14 @@ describe('Image preview', () => {
     const epochFourImage = view.getByTestId('preview-image-0');
     const epochFourSource = epochFourImage.props.source;
     const epochFourRecyclingKey = epochFourImage.props.recyclingKey;
-    const epochFourPagerToken = view.getByTestId('image-preview-pager').props.mockPagerToken;
+    const epochFourGestureToken = view.getByTestId('image-preview-gesture').props.mockGestureToken;
     const epochFourZoomToken = view.getByTestId('preview-zoom-0').props.mockZoomToken;
-    const staleNextPage = view.getByLabelText('mock-next-gallery-page').props.onTouchEnd;
+    const staleNextPage = view.getByTestId('image-preview-gesture').props.mockGesture;
     expect(epochFourRecyclingKey).toEqual(expect.stringContaining(epochFourIdentity));
     await fireEvent(view.getByTestId('preview-zoom-0'), 'doubleTapStart', {});
     mockZoomScale = 3;
+    await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 3 });
     await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
-    expect(view.getByTestId('image-preview-pager').props.scrollEnabled).toBe(false);
     expect(view.getByTestId('preview-zoom-0').props.panEnabled).toBe(true);
 
     await view.rerender(modal(5));
@@ -1788,11 +1943,10 @@ describe('Image preview', () => {
       expect.objectContaining({ cacheKey: `${epochFiveIdentity}:${imageUrl}` })
     );
     expect(epochFiveImage.props.source).not.toBe(epochFourSource);
-    expect(view.getByTestId('image-preview-pager').props.scrollEnabled).toBe(true);
     expect(view.getByTestId('preview-zoom-0').props.panEnabled).toBe(false);
-    expect(view.getByTestId('image-preview-pager').props.mockPagerToken).not.toBe(epochFourPagerToken);
+    expect(view.getByTestId('image-preview-gesture').props.mockGestureToken).not.toBe(epochFourGestureToken);
     expect(view.getByTestId('preview-zoom-0').props.mockZoomToken).not.toBe(epochFourZoomToken);
-    await act(() => staleNextPage?.());
+    await act(() => staleNextPage?.({ translationX: -500, translationY: 10, velocityX: -1_000 }));
     expect(sharedCallbacks.onSelect).not.toHaveBeenCalled();
   });
 
@@ -1804,13 +1958,11 @@ describe('Image preview', () => {
         {...callbacks({ onClose })}
       />
     );
-    const pullGesture = view.getByTestId('image-preview-pull-gesture');
-
-    await fireEvent(pullGesture, 'end', { translationY: -1_000, velocityY: -2_000 });
+    await performPreviewGesture(view, { translationY: -1_000, velocityY: -2_000 });
     expect(onClose).not.toHaveBeenCalled();
-    await fireEvent(pullGesture, 'end', { translationY: 100, velocityY: 400 });
+    await performPreviewGesture(view, { translationY: 100, velocityY: 400 });
     expect(onClose).not.toHaveBeenCalled();
-    await fireEvent(pullGesture, 'end', { translationY: 100, velocityY: 1_200 });
+    await performPreviewGesture(view, { translationY: 100, velocityY: 1_200 });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

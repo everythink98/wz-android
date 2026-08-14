@@ -8,6 +8,7 @@ import { sourceLabel } from '@/domain/forum/presentation';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
 import { isDiscourseSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { ReplyLocationTarget, SourceErrorInfo, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { replyImageUploadSupported } from '@/sources/imageUpload';
@@ -40,6 +41,7 @@ export const TopicScreen = memo(function TopicScreen({
   currentNodeSeekUser,
   html,
   nodeSeekUserId,
+  onImagePreviewDescriptors,
   read,
   session,
   targetReply,
@@ -77,6 +79,7 @@ export const TopicScreen = memo(function TopicScreen({
   currentNodeSeekUser: SiteSessionViewModels['nodeseek']['currentUser'];
   html: ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string };
   nodeSeekUserId: number | null;
+  onImagePreviewDescriptors: (descriptors: readonly ForumImagePreviewDescriptor[]) => void;
   read: ReturnType<typeof useTopicController>;
   session: TopicSessionController;
   targetReply?: ReplyLocationTarget;
@@ -209,6 +212,7 @@ export const TopicScreen = memo(function TopicScreen({
         headerState={headerState}
         html={html}
         nodeSeekUserId={nodeSeekUserId}
+        onImagePreviewDescriptors={onImagePreviewDescriptors}
         onOpenTopic={chrome.openTopic}
         onOpenUser={chrome.openUser}
         onScroll={chrome.onScroll}

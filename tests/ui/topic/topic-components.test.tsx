@@ -99,7 +99,18 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('react-native-gesture-handler', () => {
   const chain = () => {
     const gesture: Record<string, any> = {};
-    for (const name of ['activeOffsetX', 'enabled', 'failOffsetY', 'maxPointers', 'onBegin', 'onEnd', 'onUpdate']) {
+    for (const name of [
+      'activeOffsetX',
+      'enabled',
+      'failOffsetY',
+      'manualActivation',
+      'maxPointers',
+      'onBegin',
+      'onEnd',
+      'onTouchesDown',
+      'onTouchesMove',
+      'onUpdate'
+    ]) {
       gesture[name] = () => gesture;
     }
     return gesture;

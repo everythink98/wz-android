@@ -1,4 +1,5 @@
 import type { QuotedPostMetadata, Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import { accessRequirementFromNoticeText } from '@/domain/forum/accessRequirements';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { forumAccessRequirementText } from '@/domain/forum/presentation';
@@ -15,6 +16,7 @@ import {
 } from '@/domain/forum/quotedPosts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { stableTextHash } from './contentIdentity';
+import { replyBodyCompilation } from './replyListModel';
 
 export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
 
@@ -40,7 +42,12 @@ export type AcceptedAnswerPresentation = {
 type TopicOpeningSeed = Pick<TopicDetail, 'accessRequirement' | 'contentHtml' | 'id' | 'polls' | 'source'>;
 type AcceptedAnswerSeed = Pick<TopicDetail, 'acceptedAnswerFloor' | 'id' | 'replies' | 'source'>;
 
-const plannedReplyContentCache = new WeakMap<Reply, Map<string, TopicContentItem[]>>();
+type PlannedTopicContent = {
+  contentItems: TopicContentItem[];
+  previewImages: readonly ForumImagePreviewDescriptor[];
+};
+
+const plannedReplyContentCache = new WeakMap<Reply, Map<string, PlannedTopicContent>>();
 
 function isAccessNotice(topic: TopicOpeningSeed) {
   if (!topic.accessRequirement) return false;
@@ -62,46 +69,61 @@ function plannedContentItems({
   role: ForumContentCompileRole;
   source: Source;
   topicId?: string;
-}): TopicContentItem[] {
-  let quoteIndex = 0;
-  return compileForumContent({ html, polls, role, source, topicId }).rows.map((row): TopicContentItem => {
-    if (row.type === 'poll') {
-      return {
-        type: 'poll',
-        key: `${keyPrefix}-poll-${row.poll.name || row.poll.id || row.keySuffix}`,
-        poll: row.poll,
-        row
-      };
-    }
-    if (row.type === 'quote') {
-      const index = quoteIndex++;
-      const referenceKey = quotedPostReferenceKey(row.quote.reference);
-      return {
-        type: 'quoteSummary',
-        key: `${keyPrefix}-quote-${index}-${referenceKey}`,
-        instanceKey: topicQuotedPostInstanceKey(topicId!, row.quote.reference),
-        quote: row.quote,
-        row
-      };
-    }
-    return {
-      type: 'content',
-      key: `${keyPrefix}-${row.type}-${row.semanticId}-${row.segmentIndex}`,
-      row
-    };
-  });
+}): PlannedTopicContent {
+  const compilation = compileForumContent({ html, polls, role, source, topicId });
+  return plannedContentItemsFromCompilation(compilation, keyPrefix, topicId);
 }
 
-function topicContentItems(topic: TopicOpeningSeed, showsAccessNotice: boolean): TopicContentItem[] {
-  if (showsAccessNotice) {
-    return [
-      {
-        type: 'accessNotice',
-        key: 'topic-access-notice',
-        label: forumAccessRequirementText(topic.accessRequirement),
-        detail: topic.accessRequirement?.detail || '当前账号暂无权限查看这个帖子'
+function plannedContentItemsFromCompilation(
+  compilation: ReturnType<typeof compileForumContent>,
+  keyPrefix: string,
+  topicId?: string
+): PlannedTopicContent {
+  let quoteIndex = 0;
+  return {
+    contentItems: compilation.rows.map((row): TopicContentItem => {
+      if (row.type === 'poll') {
+        return {
+          type: 'poll',
+          key: `${keyPrefix}-poll-${row.poll.name || row.poll.id || row.keySuffix}`,
+          poll: row.poll,
+          row
+        };
       }
-    ];
+      if (row.type === 'quote') {
+        const index = quoteIndex++;
+        const referenceKey = quotedPostReferenceKey(row.quote.reference);
+        return {
+          type: 'quoteSummary',
+          key: `${keyPrefix}-quote-${index}-${referenceKey}`,
+          instanceKey: topicQuotedPostInstanceKey(topicId!, row.quote.reference),
+          quote: row.quote,
+          row
+        };
+      }
+      return {
+        type: 'content',
+        key: `${keyPrefix}-${row.type}-${row.semanticId}-${row.segmentIndex}`,
+        row
+      };
+    }),
+    previewImages: compilation.previewImages
+  };
+}
+
+function topicContent(topic: TopicOpeningSeed, showsAccessNotice: boolean): PlannedTopicContent {
+  if (showsAccessNotice) {
+    return {
+      contentItems: [
+        {
+          type: 'accessNotice',
+          key: 'topic-access-notice',
+          label: forumAccessRequirementText(topic.accessRequirement),
+          detail: topic.accessRequirement?.detail || '当前账号暂无权限查看这个帖子'
+        }
+      ],
+      previewImages: []
+    };
   }
   return plannedContentItems({
     html: topic.contentHtml || '',
@@ -122,14 +144,10 @@ function plannedReplyContentItems(
   const cacheKey = `${source}:${keyPrefix}:${role}`;
   const cached = plannedReplyContentCache.get(reply)?.get(cacheKey);
   if (cached) return cached;
-  const items = plannedContentItems({
-    html: reply.contentHtml,
-    keyPrefix,
-    polls: reply.polls,
-    role,
-    source
-  });
-  const replyCache = plannedReplyContentCache.get(reply) || new Map<string, TopicContentItem[]>();
+  const items = isDiscourseSource(source)
+    ? plannedContentItemsFromCompilation(replyBodyCompilation(reply, source), keyPrefix)
+    : plannedContentItems({ html: reply.contentHtml, keyPrefix, polls: reply.polls, role, source });
+  const replyCache = plannedReplyContentCache.get(reply) || new Map<string, PlannedTopicContent>();
   replyCache.set(cacheKey, items);
   plannedReplyContentCache.set(reply, replyCache);
   return items;
@@ -144,7 +162,8 @@ export function buildTopicQuotedPostContentItems({
   reply: Reply;
   source: Source;
 }) {
-  return plannedReplyContentItems(reply, source, `topic-quote-${stableTextHash(instanceKey)}`, 'quoted-reply');
+  return plannedReplyContentItems(reply, source, `topic-quote-${stableTextHash(instanceKey)}`, 'quoted-reply')
+    .contentItems;
 }
 
 export function buildAcceptedAnswerContentItems({
@@ -156,7 +175,7 @@ export function buildAcceptedAnswerContentItems({
   reply: Reply;
   source: Source;
 }) {
-  const fullItems = plannedReplyContentItems(reply, source, `accepted-answer-${floor}`, 'accepted-answer');
+  const fullItems = plannedReplyContentItems(reply, source, `accepted-answer-${floor}`, 'accepted-answer').contentItems;
   const firstItem = fullItems[0];
   const terminalDefaultTabId =
     firstItem?.type === 'content' && firstItem.row.type === 'terminalReportHeader' ? firstItem.row.defaultTabId : '';
@@ -229,16 +248,19 @@ export function buildTopicOpeningContent(topic: TopicOpeningSeed | null) {
       contentItems: [] as TopicContentItem[],
       legacyPollsVisible: false,
       polls: [] as TopicPoll[],
+      previewImages: [] as readonly ForumImagePreviewDescriptor[],
       showsAccessNotice: false
     };
   }
   const showsAccessNotice = isAccessNotice(topic);
   const polls = topic.polls || [];
+  const content = topicContent(topic, showsAccessNotice);
   return {
-    contentItems: topicContentItems(topic, showsAccessNotice),
+    contentItems: content.contentItems,
     legacyPollsVisible:
       !isDiscourseSource(topic.source) && topic.source !== 'nodeseek' && !showsAccessNotice && polls.length > 0,
     polls,
+    previewImages: content.previewImages,
     showsAccessNotice
   };
 }

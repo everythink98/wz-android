@@ -6,6 +6,7 @@ import { compileForumContent, type CompiledForumContentRow } from '@/domain/foru
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import {
   createTopicTableRenderers,
+  TopicHorizontalScroll,
   TopicTableScrollProvider,
   TopicTableSemanticBoundary
 } from '@/features/topic/rendering/topicTableRenderers';
@@ -40,13 +41,13 @@ jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
   const pan = () => {
     const gesture: MockPanGesture & Record<string, any> = { config: {}, handlers: {} };
-    for (const name of ['activeOffsetX', 'enabled', 'failOffsetY', 'maxPointers']) {
+    for (const name of ['activeOffsetX', 'enabled', 'failOffsetY', 'manualActivation', 'maxPointers']) {
       gesture[name] = (value: unknown) => {
         gesture.config[name] = value;
         return gesture;
       };
     }
-    for (const name of ['onBegin', 'onEnd', 'onUpdate']) {
+    for (const name of ['onBegin', 'onEnd', 'onTouchesDown', 'onTouchesMove', 'onUpdate']) {
       gesture[name] = (handler: (...args: any[]) => void) => {
         gesture.handlers[name] = handler;
         return gesture;
@@ -360,11 +361,12 @@ describe('native topic structured rendering', () => {
 
     expect(scroll.props.scrollEnabled).toBe(false);
     expect(scroll.props.gestureConfig).toMatchObject({
-      activeOffsetX: [-10, 10],
       enabled: true,
-      failOffsetY: [-10, 10],
+      manualActivation: true,
       maxPointers: 1
     });
+    expect(scroll.props.gestureConfig).not.toHaveProperty('activeOffsetX');
+    expect(scroll.props.gestureConfig).not.toHaveProperty('failOffsetY');
     expect(scroll.props.accessibilityActions).toEqual([
       { label: '向左滚动', name: 'decrement' },
       { label: '向右滚动', name: 'increment' }
@@ -387,6 +389,149 @@ describe('native topic structured rendering', () => {
 
     await fireEvent(scroll, 'end', { velocityX: -900 });
     expect(mockWithDecay).toHaveBeenCalledWith({ clamp: [0, 256], velocity: 900 });
+  });
+
+  it('[REG-TOPIC-097] claims a deliberate horizontal drag before native text selection can own it', async () => {
+    const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
+    const Table = renderers.table as React.ComponentType<any>;
+    const source = table([[cell(), cell(), cell(), cell(), cell(), cell()]]);
+    const TableDefault = ({ style }: { style?: StyleProp<ViewStyle> }) => <View style={style} />;
+    const screen = await render(
+      <TopicTableScrollProvider>
+        <TopicSplitDisclosureScope scopeKey="opening">
+          {semanticBoundary(<Table {...rendererProps(source, TableDefault)} />, {
+            columns: 6,
+            semanticId: 'selection-race-table'
+          })}
+        </TopicSplitDisclosureScope>
+      </TopicTableScrollProvider>
+    );
+    const scroll = screen.getByTestId('topic-html-table-scroll');
+    const stateManager = { activate: jest.fn(), fail: jest.fn() };
+
+    scroll.props.onTouchesDown?.(
+      { allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 },
+      stateManager
+    );
+    scroll.props.onTouchesMove?.(
+      { allTouches: [{ absoluteX: 105, absoluteY: 201 }], numberOfTouches: 1 },
+      stateManager
+    );
+
+    expect(scroll.props.gestureConfig).toMatchObject({ manualActivation: true, maxPointers: 1 });
+    expect(stateManager.activate).toHaveBeenCalledTimes(1);
+    expect(stateManager.fail).not.toHaveBeenCalled();
+
+    scroll.props.onTouchesMove?.(
+      { allTouches: [{ absoluteX: 105, absoluteY: 220 }], numberOfTouches: 1 },
+      stateManager
+    );
+    expect(stateManager.activate).toHaveBeenCalledTimes(1);
+    expect(stateManager.fail).not.toHaveBeenCalled();
+
+    const belowLock = { activate: jest.fn(), fail: jest.fn() };
+    scroll.props.onTouchesDown?.({ allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 }, belowLock);
+    scroll.props.onTouchesMove?.({ allTouches: [{ absoluteX: 103, absoluteY: 203 }], numberOfTouches: 1 }, belowLock);
+    expect(belowLock.activate).not.toHaveBeenCalled();
+    expect(belowLock.fail).not.toHaveBeenCalled();
+
+    for (const { x, y } of [
+      { x: 102, y: 205 },
+      { x: 104, y: 204 }
+    ]) {
+      const verticalOwner = { activate: jest.fn(), fail: jest.fn() };
+      scroll.props.onTouchesDown?.(
+        { allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 },
+        verticalOwner
+      );
+      scroll.props.onTouchesMove?.({ allTouches: [{ absoluteX: x, absoluteY: y }], numberOfTouches: 1 }, verticalOwner);
+      expect(verticalOwner.activate).not.toHaveBeenCalled();
+      expect(verticalOwner.fail).toHaveBeenCalledTimes(1);
+    }
+
+    const extraPointer = { activate: jest.fn(), fail: jest.fn() };
+    scroll.props.onTouchesDown?.(
+      { allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 },
+      extraPointer
+    );
+    scroll.props.onTouchesMove?.(
+      {
+        allTouches: [
+          { absoluteX: 105, absoluteY: 201 },
+          { absoluteX: 140, absoluteY: 240 }
+        ],
+        numberOfTouches: 2
+      },
+      extraPointer
+    );
+    expect(extraPointer.activate).not.toHaveBeenCalled();
+    expect(extraPointer.fail).toHaveBeenCalledTimes(1);
+
+    for (const invalidStart of [
+      {
+        allTouches: [
+          { absoluteX: 100, absoluteY: 200 },
+          { absoluteX: 140, absoluteY: 240 }
+        ],
+        numberOfTouches: 2
+      },
+      { allTouches: [], numberOfTouches: 1 }
+    ]) {
+      const invalidStartOwner = { activate: jest.fn(), fail: jest.fn() };
+      scroll.props.onTouchesDown?.(invalidStart, invalidStartOwner);
+      expect(invalidStartOwner.activate).not.toHaveBeenCalled();
+      expect(invalidStartOwner.fail).toHaveBeenCalledTimes(1);
+    }
+
+    const missingMove = { activate: jest.fn(), fail: jest.fn() };
+    scroll.props.onTouchesDown?.({ allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 }, missingMove);
+    scroll.props.onTouchesMove?.({ allTouches: [], numberOfTouches: 1 }, missingMove);
+    expect(missingMove.activate).not.toHaveBeenCalled();
+    expect(missingMove.fail).toHaveBeenCalledTimes(1);
+
+    const latePointer = { activate: jest.fn(), fail: jest.fn() };
+    scroll.props.onTouchesDown?.({ allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 }, latePointer);
+    scroll.props.onTouchesMove?.({ allTouches: [{ absoluteX: 105, absoluteY: 201 }], numberOfTouches: 1 }, latePointer);
+    scroll.props.onTouchesMove?.(
+      {
+        allTouches: [
+          { absoluteX: 106, absoluteY: 201 },
+          { absoluteX: 140, absoluteY: 240 }
+        ],
+        numberOfTouches: 2
+      },
+      latePointer
+    );
+    expect(latePointer.activate).toHaveBeenCalledTimes(1);
+    expect(latePointer.fail).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-097] leaves a non-overflowing horizontal region unowned', async () => {
+    const screen = await render(
+      <TopicTableScrollProvider>
+        <TopicSplitDisclosureScope scopeKey="opening">
+          <TopicHorizontalScroll
+            accessibilityLabel="测试区域"
+            contentWidth={320}
+            semanticId="non-overflow"
+            testID="non-overflow-scroll"
+            viewportWidth={320}
+          >
+            <View />
+          </TopicHorizontalScroll>
+        </TopicSplitDisclosureScope>
+      </TopicTableScrollProvider>
+    );
+    const scroll = screen.getByTestId('non-overflow-scroll');
+    const stateManager = { activate: jest.fn(), fail: jest.fn() };
+
+    scroll.props.onTouchesDown?.(
+      { allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 },
+      stateManager
+    );
+
+    expect(stateManager.activate).not.toHaveBeenCalled();
+    expect(stateManager.fail).toHaveBeenCalledTimes(1);
   });
 
   it('[REG-TOPIC-084][REG-TOPIC-094] keeps split table geometry continuous and shares one horizontal offset', async () => {
@@ -444,7 +589,7 @@ describe('native topic structured rendering', () => {
     ).toBe(true);
   });
 
-  it('[REG-TOPIC-086/088/093/094] renders 240 code lines in one frame with the shared pan policy', async () => {
+  it('[REG-TOPIC-086/088/093/094/097] renders 240 selectable code lines with the shared pan policy', async () => {
     const lines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}\n`);
     const rows = compileForumContent({
       html: `<pre>${lines.join('')}</pre>`,
@@ -464,15 +609,27 @@ describe('native topic structured rendering', () => {
     const codeScroll = screen.getByTestId('topic-code-scroll');
     expect(codeScroll.props.scrollEnabled).toBe(false);
     expect(codeScroll.props.gestureConfig).toMatchObject({
-      activeOffsetX: [-10, 10],
       enabled: true,
-      failOffsetY: [-10, 10],
+      manualActivation: true,
       maxPointers: 1
     });
+    await fireEvent(codeScroll, 'contentSizeChange', 960, 21);
+    const stateManager = { activate: jest.fn(), fail: jest.fn() };
+    codeScroll.props.onTouchesDown?.(
+      { allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 },
+      stateManager
+    );
+    codeScroll.props.onTouchesMove?.(
+      { allTouches: [{ absoluteX: 105, absoluteY: 201 }], numberOfTouches: 1 },
+      stateManager
+    );
+    expect(stateManager.activate).toHaveBeenCalledTimes(1);
+    expect(stateManager.fail).not.toHaveBeenCalled();
     expect(screen.getAllByRole('button', { name: '复制完整代码' })).toHaveLength(1);
     expect(rows[0]).toMatchObject({ copyText: lines.join(''), part: 'only', segmentIndex: 0, text: lines.join('') });
     expect(JSON.stringify(screen.toJSON())).toContain('line-1:');
     expect(JSON.stringify(screen.toJSON())).toContain('line-240:');
+    expect(JSON.stringify(screen.toJSON())).toContain('"selectable":true');
   });
 
   it('[REG-TOPIC-088] keeps the LinuxDo 52-line decorated pre in one native code frame', async () => {

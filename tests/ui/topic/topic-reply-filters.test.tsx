@@ -3,6 +3,7 @@ import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import type { Reply, ReplyOrder, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import type { ReplyFilter } from '@/features/topic/model/types';
 import type { TopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
@@ -557,6 +558,7 @@ function TopicFilterHarness({
   onLoadMoreReplies = jest.fn(),
   onLoadPreviousReplies = jest.fn(),
   onInteract = jest.fn(),
+  onImagePreviewDescriptors = jest.fn(),
   onRefreshWholeTopic = jest.fn(),
   onRetryReplies = jest.fn(),
   onReplyComposerOpenChange = jest.fn(),
@@ -599,6 +601,7 @@ function TopicFilterHarness({
   onLoadMoreReplies?: (options?: { silent?: boolean }) => void;
   onLoadPreviousReplies?: (options?: { silent?: boolean }) => void;
   onInteract?: (type: InteractionType, commentId?: number) => void;
+  onImagePreviewDescriptors?: (descriptors: readonly ForumImagePreviewDescriptor[]) => void;
   onLocateReply?: (target: { commentId?: number; floor?: number; pageHint?: number }) => Promise<string>;
   onRefreshWholeTopic?: () => void;
   onRetryReplies?: (edge?: 'start' | 'end') => void;
@@ -769,6 +772,7 @@ function TopicFilterHarness({
             } as ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string }
           }
           nodeSeekUserId={null}
+          onImagePreviewDescriptors={onImagePreviewDescriptors}
           read={read}
           session={session}
           targetReply={targetReply}
@@ -800,6 +804,84 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it('[REG-TOPIC-096] keeps the ready preview catalog independent of filtering and reply order', async () => {
+    const quoteInstanceKey = 'topic:preview-catalog-owner:linuxdo:quoted-topic:9';
+    const replies: Reply[] = [
+      {
+        author: 'first',
+        contentHtml: '<p>needle</p><img src="https://img.example/reply-1.webp">',
+        createdAt: '2026-08-14T00:01:00.000Z',
+        floor: 2,
+        signatureHtml: '<img src="https://img.example/signature-1.webp">'
+      },
+      {
+        author: 'second',
+        contentHtml: '<img src="https://img.example/reply-2.webp">',
+        createdAt: '2026-08-14T00:02:00.000Z',
+        floor: 3
+      }
+    ];
+    const quotedReply = {
+      author: 'quoted',
+      contentHtml: '<img src="https://img.example/quoted.webp">',
+      createdAt: '2026-08-14T00:03:00.000Z',
+      floor: 9,
+      signatureHtml: '<img src="https://img.example/quoted-signature.webp">'
+    } satisfies Reply;
+    const loadedQuotedReplies = { 'linuxdo:quoted-topic:9': quotedReply };
+    const imageTopic = {
+      ...topic,
+      id: 'preview-catalog-owner',
+      source: 'linuxdo' as const,
+      url: 'https://linux.do/t/preview-catalog-owner',
+      contentHtml:
+        '<img src="https://img.example/opening.webp"><aside class="quote" data-post="9" data-topic="quoted-topic" data-username="quoted"><div class="title">quoted:</div><blockquote>preview</blockquote></aside>',
+      replies
+    };
+    const onImagePreviewDescriptors = jest.fn<(descriptors: readonly ForumImagePreviewDescriptor[]) => void>();
+    const harnessProps = {
+      loadedQuotedReplies,
+      onImagePreviewDescriptors,
+      selectedTopic: imageTopic,
+      topicDetail: imageTopic,
+      topicReplies: replies
+    };
+    mockCompileForumContent.mockClear();
+    const view = await render(<TopicFilterHarness {...harnessProps} expandedQuotes={{ [quoteInstanceKey]: true }} />);
+
+    await waitFor(() => expect(onImagePreviewDescriptors).toHaveBeenCalled());
+    expect(onImagePreviewDescriptors.mock.calls.at(-1)?.[0].map((descriptor) => descriptor.source)).toEqual([
+      'https://img.example/opening.webp',
+      'https://img.example/reply-1.webp',
+      'https://img.example/signature-1.webp',
+      'https://img.example/reply-2.webp',
+      'https://img.example/quoted.webp',
+      'https://img.example/quoted-signature.webp'
+    ]);
+    expect(lastFlashListItemTypes).toContain('topicQuoteContent');
+    expect(
+      mockCompileForumContent.mock.calls.filter(
+        ([options]) => (options as { html?: string }).html === quotedReply.contentHtml
+      )
+    ).toHaveLength(1);
+    const registrationCount = onImagePreviewDescriptors.mock.calls.length;
+
+    await fireEvent.changeText(view.getByPlaceholderText('评论内查找'), 'needle');
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
+    await act(() => lastFlashListProps.onViewableItemsChanged({ viewableItems: [] }));
+    await view.rerender(<TopicFilterHarness {...harnessProps} expandedQuotes={{}} />);
+    expect(lastFlashListItemTypes).not.toContain('topicQuoteContent');
+    await view.rerender(<TopicFilterHarness {...harnessProps} expandedQuotes={{ [quoteInstanceKey]: true }} />);
+
+    expect(onImagePreviewDescriptors).toHaveBeenCalledTimes(registrationCount);
+    expect(
+      mockCompileForumContent.mock.calls.filter(
+        ([options]) => (options as { html?: string }).html === quotedReply.contentHtml
+      )
+    ).toHaveLength(1);
+  });
+
   it('[REG-TOPIC-062] scrolls an atomically anchored notification window without chasing pages', async () => {
     const pages: Reply[][] = [
       [

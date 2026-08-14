@@ -5,6 +5,7 @@ import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import {
   createImagePreviewCatalog,
   extractImageUrlsFromHtml,
+  imagePreviewItemAt,
   imagePreviewListFromCatalog,
   isPreviewableImageUrl,
   selectImageDisplaySource,
@@ -324,22 +325,17 @@ describe('image preview catalog', () => {
   it('reuses the responsive body candidate that was actually tapped as the preview placeholder', () => {
     const html =
       '<a class="lightbox" href="https://cdn.example.com/original.png"><img src="https://cdn.example.com/fallback.png" srcset="https://cdn.example.com/320.png 320w, https://cdn.example.com/640.png 640w"></a>';
+    const catalog = createImagePreviewCatalog([html], 300, 2);
+    const preview = imagePreviewListFromCatalog(catalog, 'https://cdn.example.com/640.png', null, {
+      width: 640,
+      height: 360
+    });
 
-    expect(
-      imagePreviewListFromCatalog(createImagePreviewCatalog([html], 300, 2), 'https://cdn.example.com/640.png', null, {
-        width: 640,
-        height: 360
-      })
-    ).toEqual({
-      contentSource: null,
-      items: [
-        {
-          displayUri: 'https://cdn.example.com/640.png',
-          originalUri: 'https://cdn.example.com/original.png',
-          displaySize: { width: 640, height: 360 }
-        }
-      ],
-      index: 0
+    expect(preview.items).toBe(catalog.items);
+    expect(imagePreviewItemAt(preview, 0)).toEqual({
+      displayUri: 'https://cdn.example.com/640.png',
+      originalUri: 'https://cdn.example.com/original.png',
+      displaySize: { width: 640, height: 360 }
     });
   });
 

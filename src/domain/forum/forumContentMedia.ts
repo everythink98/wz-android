@@ -24,6 +24,19 @@ export type DynamicInlineImageDescriptor = {
   url: string;
 };
 
+export type ForumImagePreviewDescriptor = {
+  readonly dataOriginal?: string;
+  readonly dataSource?: string;
+  readonly displayCandidateKind?: 'data-original' | 'data-src' | 'src';
+  readonly height?: string;
+  readonly lightboxOriginal?: string;
+  readonly originalSource?: string;
+  readonly referrerPolicy?: MediaReferrerPolicy;
+  readonly source: string;
+  readonly sourceSet?: string;
+  readonly width?: string;
+};
+
 export type ParsedForumImageNode = {
   tagName: string;
   rawTagName?: string | null;
@@ -56,14 +69,17 @@ export function normalizeForumContentMediaNodes(
   { dynamicV2exImages = false }: { dynamicV2exImages?: boolean } = {}
 ) {
   scrubForgedDynamicInlineImages(root);
-  upgradeBlockImageSources(root);
+  const previewImages = upgradeBlockImageSources(root);
   upgradeForumStickerMedia(root);
   root.querySelectorAll('p').forEach((paragraph) => {
     flowImagesInMixedContainer(paragraph as ParsedForumImageNode);
   });
   flowQuoteTitleAvatars(root);
   flowImagesInMixedContainer(root as unknown as ParsedForumImageNode, true);
-  return dynamicV2exImages ? markDynamicV2exInlineImageNodes(root) : [];
+  return {
+    dynamicInlineImages: dynamicV2exImages ? markDynamicV2exInlineImageNodes(root) : [],
+    previewImages
+  };
 }
 
 export function normalizeForumStickerMediaHtml(html: string) {
@@ -94,6 +110,25 @@ export function forumImageAttributesFromText(value: string): Record<string, stri
     match = pattern.exec(value);
   }
   return attributes;
+}
+
+export function forumImagePreviewDescriptorsFromHtmlFallback(html: string): ForumImagePreviewDescriptor[] {
+  const descriptors: ForumImagePreviewDescriptor[] = [];
+  const imagePattern = /<img\b([^>]*)>/gi;
+  let match = imagePattern.exec(html);
+  while (match) {
+    try {
+      const attributes = forumImageAttributesFromText(match[1] || '');
+      if (!isInlineForumImage(attributes)) {
+        const descriptor = forumImagePreviewDescriptorFromAttributes(attributes);
+        if (descriptor) descriptors.push(descriptor);
+      }
+    } catch {
+      return descriptors;
+    }
+    match = imagePattern.exec(html);
+  }
+  return descriptors;
 }
 
 export function forumImageTagName(value: unknown) {
@@ -186,6 +221,7 @@ function markDynamicV2exInlineImageNodes(root: ForumContentMediaRoot) {
 }
 
 function upgradeBlockImageSources(root: ForumContentMediaRoot) {
+  const descriptors: ForumImagePreviewDescriptor[] = [];
   root.querySelectorAll('img').forEach((image) => {
     if (isInlineForumImage(image.attributes)) return;
     const displaySource = fallbackForumBodyImageSource(image.attributes);
@@ -195,7 +231,46 @@ function upgradeBlockImageSources(root: ForumContentMediaRoot) {
       image.setAttribute(DISPLAY_CANDIDATE_KIND_ATTR, displaySource.candidateKind);
       image.setAttribute('src', displaySource.uri);
     }
+    const descriptor = forumImagePreviewDescriptorFromAttributes(image.attributes, lightboxHrefForForumImage(image));
+    if (descriptor) descriptors.push(descriptor);
   });
+  return descriptors;
+}
+
+function forumImagePreviewDescriptorFromAttributes(
+  attributes: Record<string, string | undefined>,
+  lightboxOriginal = ''
+): ForumImagePreviewDescriptor | null {
+  const fallbackSource = fallbackForumBodyImageSource(attributes);
+  const source = normalizeForumImageUrl(fallbackSource?.uri || forumImageAttributeValue(attributes, 'src'));
+  const sourceSet = forumImageAttributeValue(attributes, 'srcset');
+  const dataSource = normalizeForumImageUrl(forumImageAttributeValue(attributes, 'data-src'));
+  const dataOriginal = normalizeForumImageUrl(forumImageAttributeValue(attributes, 'data-original'));
+  const originalSource = normalizeForumImageUrl(forumImageAttributeValue(attributes, ORIGINAL_IMAGE_SOURCE_ATTR));
+  const normalizedLightboxOriginal = normalizeForumImageUrl(lightboxOriginal);
+  const width = forumImageAttributeValue(attributes, 'width');
+  const height = forumImageAttributeValue(attributes, 'height');
+  const referrerPolicy = normalizeMediaReferrerPolicy(forumImageAttributeValue(attributes, 'referrerpolicy'));
+  const displayCandidateKind = forumImageAttributeValue(attributes, DISPLAY_CANDIDATE_KIND_ATTR);
+  if (!source && !sourceSet && !dataSource && !dataOriginal && !originalSource && !normalizedLightboxOriginal) {
+    return null;
+  }
+  return {
+    source,
+    ...(sourceSet ? { sourceSet } : {}),
+    ...(dataSource ? { dataSource } : {}),
+    ...(dataOriginal ? { dataOriginal } : {}),
+    ...(originalSource ? { originalSource } : {}),
+    ...(normalizedLightboxOriginal ? { lightboxOriginal: normalizedLightboxOriginal } : {}),
+    ...(displayCandidateKind === 'src' ||
+    displayCandidateKind === 'data-src' ||
+    displayCandidateKind === 'data-original'
+      ? { displayCandidateKind }
+      : {}),
+    ...(width ? { width } : {}),
+    ...(height ? { height } : {}),
+    ...(referrerPolicy ? { referrerPolicy } : {})
+  };
 }
 
 function fallbackForumBodyImageSource(attributes: Record<string, string | undefined>) {

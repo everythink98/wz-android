@@ -336,6 +336,7 @@ describe('Android topic content splitting', () => {
       const compilation = compileTrackedContent({ html, role: 'reply', source: 'nodeseek' });
 
       expect(compilation.rows).toHaveLength(500);
+      expect(compilation.previewImages).toHaveLength(2_000);
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
     } finally {
       vi.doUnmock('./html');
@@ -939,6 +940,34 @@ describe('Android topic content splitting', () => {
       expect(rows.every((row) => parseHtml(row.html).querySelectorAll('img').length <= 4)).toBe(true);
       expect(rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
       expect(plannedUrls).toEqual(sourceUrls);
+    } finally {
+      vi.doUnmock('./html');
+      vi.resetModules();
+    }
+  });
+
+  it('[REG-TOPIC-096] keeps preview descriptors in parser fallback without a second parse', async () => {
+    vi.resetModules();
+    const actualHtml = await vi.importActual<typeof import('./html')>('./html');
+    const trackedParseHtml = vi.fn(() => {
+      throw new Error('parser unavailable');
+    });
+    vi.doMock('./html', () => ({ ...actualHtml, parseHtml: trackedParseHtml }));
+    try {
+      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
+      const compilation = compileWithFallback({
+        html: [
+          '<img class="emoji" width="20" height="20" src="https://img.example/emoji.webp">',
+          '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" data-src="https://img.example/lazy.webp" referrerpolicy="no-referrer">'
+        ].join(''),
+        role: 'opening',
+        source: 'nodeseek'
+      });
+
+      expect(compilation.previewImages).toEqual([
+        expect.objectContaining({ referrerPolicy: 'no-referrer', source: 'https://img.example/lazy.webp' })
+      ]);
+      expect(trackedParseHtml).toHaveBeenCalledTimes(1);
     } finally {
       vi.doUnmock('./html');
       vi.resetModules();

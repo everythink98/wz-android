@@ -28,7 +28,6 @@ import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
 import { useTopicActionsController } from './actions/useTopicActionsController';
 import { useImagePreviewController } from './media/useImagePreviewController';
-import { replyHtmlWithSignature } from './model/topicDerivedData';
 import { verifyLinuxDoTopic } from './model/topicVerification';
 import { useHtmlRenderingController } from './rendering/useHtmlRenderingController';
 import { shareTopicWithClipboardFallback } from './shareTopic';
@@ -147,7 +146,6 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     topicSession
   });
   const {
-    loadedQuotedReplies,
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
@@ -207,21 +205,11 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     topicKey: `${topic.source}:${topic.id}`,
     webViewBlockMessage: runtime.networkProxyWebViewBlockMessage
   });
-  const getTopicHtmlParts = useCallback(
-    () =>
-      [
-        topicDetail?.contentHtml || '',
-        ...topicReplies.map(replyHtmlWithSignature),
-        ...Object.values(loadedQuotedReplies).map(replyHtmlWithSignature)
-      ].filter(Boolean),
-    [loadedQuotedReplies, topicDetail?.contentHtml, topicReplies]
-  );
   const imagePreviewController = useImagePreviewController({
     beforeSave: runtime.ensureNetworkProxyReady,
     contentSource: topic.source,
     contentWidth: runtime.contentWidth,
     fetcher: runtime.fetcher,
-    htmlParts: getTopicHtmlParts,
     inlineSizedImageUrls: html.inlineSizedImageUrls,
     mediaReferrer: html.mediaContext?.referrer,
     nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
@@ -346,6 +334,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
           bodyMediaPaused={Boolean(imagePreviewController.imagePreview)}
           html={{ ...html, contentWidth: runtime.contentWidth, mediaSessionIdentity }}
           nodeSeekUserId={runtime.account.nodeSeekUserId}
+          onImagePreviewDescriptors={imagePreviewController.registerImagePreviewDescriptors}
           read={topicController}
           session={topicSession}
           targetReply={route.params.targetReply}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -12,12 +12,8 @@ import {
   type ImageURISource
 } from 'react-native';
 import type { ImageLoadEventData } from 'expo-image';
-import PagerView, {
-  type PageScrollStateChangedNativeEvent,
-  type PagerViewOnPageSelectedEvent
-} from 'react-native-pager-view';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-native-zoom-toolkit';
@@ -49,8 +45,10 @@ const EMPTY_PREVIEW_ITEMS: ImagePreviewItem[] = [];
 const IMAGE_LOAD_TIMEOUT_MS = 30_000;
 const PAGE_SWIPE_DISTANCE_RATIO = 0.18;
 const PAGE_SWIPE_VELOCITY = 800;
+const PAGE_TRANSITION_DURATION_MS = 220;
 const PULL_CLOSE_DISTANCE_RATIO = 0.25;
 const PULL_CLOSE_VELOCITY = 1_200;
+const GESTURE_DIRECTION_LOCK_DISTANCE = 12;
 
 type PreviewStatus = 'failed' | 'loaded' | 'loading';
 type PreviewResolution = { height: number; width: number };
@@ -89,6 +87,7 @@ type PreviewPageProps = {
   onToggleChrome: () => void;
   onZoomGestureSettled: (index: number, scale: number) => void;
   onZoomGestureStart: (index: number) => void;
+  onZoomUpdate: (index: number, scale: number) => void;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   width: number;
@@ -100,27 +99,23 @@ type VerticalPullState = {
   velocityY: number;
 };
 
-type PreviewPagerWindowPage = {
+type PreviewRingPage = {
   index: number;
   item: ImagePreviewItem;
+};
+
+type PreviewRingRole = -1 | 0 | 1;
+
+type PreviewRingSlot = {
+  page: PreviewRingPage | null;
+  role: PreviewRingRole;
   slot: number;
 };
 
-type PreviewPagerCommand = {
-  animated: boolean;
-  position: number;
-  targetIndex: number;
-};
-
-type PreviewPagerDrag = {
-  pages: readonly (PreviewPagerWindowPage | null)[] | null;
-  selectionHandled: boolean;
-};
-
-type PreviewPagerOwnership = {
-  command: PreviewPagerCommand | null;
-  drag: PreviewPagerDrag | null;
-  pendingCommand: PreviewPagerCommand | null;
+type PreviewRingState = {
+  activeIndex: number;
+  activeSlot: number;
+  slots: PreviewRingSlot[];
 };
 
 export function ImagePreviewModal(props: ImagePreviewModalProps) {
@@ -144,54 +139,60 @@ function ImagePreviewModalContent({
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const previewItems = preview?.items || EMPTY_PREVIEW_ITEMS;
+  const itemOverride = preview?.itemOverride;
+  const itemOverrideIndex = preview?.itemOverrideIndex;
   const previewCount = previewItems.length;
   const requestedIndex = clampIndex(preview?.index ?? 0, previewCount);
-  const [activeIndex, setActiveIndex] = useState(requestedIndex);
+  const [ring, setRing] = useState(() =>
+    createPreviewRingState(previewItems, requestedIndex, itemOverrideIndex, itemOverride)
+  );
+  const activeIndex = ring.activeIndex;
   const [activeZoomed, setActiveZoomed] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(true);
-  const [pagerScrollEnabled, setPagerScrollEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [animatedSvgZoomSuspended, setAnimatedSvgZoomSuspended] = useState(false);
   const [resolutions, setResolutions] = useState<Record<string, PreviewResolution>>({});
-  const pagerRef = useRef<PagerView>(null);
   const zoomRefs = useRef(new Map<number, ResumableZoomRefType>());
+  const ringRef = useRef(ring);
+  const previewItemsRef = useRef(previewItems);
+  const itemOverrideRef = useRef(itemOverride);
+  const itemOverrideIndexRef = useRef(itemOverrideIndex);
   const activeIndexRef = useRef(requestedIndex);
   const requestedIndexRef = useRef(requestedIndex);
+  const desiredIndexRef = useRef(requestedIndex);
+  const pendingExternalRebuildRef = useRef(false);
+  const transitioningRef = useRef(false);
+  const releaseTransitionAfterCommitRef = useRef(false);
   const previewOpenRef = useRef(Boolean(preview));
   const mountedRef = useRef(true);
   const overlayOpacity = useSharedValue(1);
   const pullTranslateY = useSharedValue(0);
   const closing = useSharedValue(false);
-  const pagerWindow = useMemo(() => createPreviewPagerWindow(previewItems, activeIndex), [activeIndex, previewItems]);
-  const pagerWindowIdentity = useMemo(
-    () =>
-      `${activeIndex}\u0001${pagerWindow.slots
-        .map(({ page }) =>
-          page ? `${page.index}\u0000${page.item.originalUri}\u0000${page.item.displayUri}` : 'empty'
-        )
-        .join('\u0001')}`,
-    [activeIndex, pagerWindow.slots]
+  const ringTranslateX = useSharedValue(0);
+  const activeZoomScale = useSharedValue(1);
+  const activeIndexOnUI = useSharedValue(requestedIndex);
+  const transitioning = useSharedValue(false);
+  const gestureAxis = useSharedValue(0);
+  const gestureQueuesTransition = useSharedValue(false);
+  const gestureStartX = useSharedValue(0);
+  const gestureStartY = useSharedValue(0);
+  const slot0Role = useSharedValue<PreviewRingRole>(ring.slots.find(({ slot }) => slot === 0)?.role ?? 0);
+  const slot1Role = useSharedValue<PreviewRingRole>(ring.slots.find(({ slot }) => slot === 1)?.role ?? 0);
+  const slot2Role = useSharedValue<PreviewRingRole>(ring.slots.find(({ slot }) => slot === 2)?.role ?? 0);
+
+  const setSlotRole = useCallback(
+    (slot: number, role: PreviewRingRole) => {
+      'worklet';
+      if (slot === 0) {
+        slot0Role.value = role;
+      } else if (slot === 1) {
+        slot1Role.value = role;
+      } else {
+        slot2Role.value = role;
+      }
+    },
+    [slot0Role, slot1Role, slot2Role]
   );
-  const pagerOwnershipRef = useRef<PreviewPagerOwnership>({
-    command: null,
-    drag: null,
-    pendingCommand: null
-  });
-  const publishPagerCommand = useCallback((command: PreviewPagerCommand) => {
-    const ownership = pagerOwnershipRef.current;
-    if (ownership.drag) {
-      ownership.drag.pages = null;
-      ownership.pendingCommand = command;
-      return;
-    }
-    ownership.command = command;
-    ownership.pendingCommand = null;
-    if (command.animated) {
-      pagerRef.current?.setPage(command.position);
-    } else {
-      pagerRef.current?.setPageWithoutAnimation(command.position);
-    }
-  }, []);
 
   useLayoutEffect(() => {
     mountedRef.current = true;
@@ -200,47 +201,93 @@ function ImagePreviewModalContent({
     };
   }, []);
 
-  useEffect(() => {
-    if (requestedIndexRef.current === requestedIndex) {
-      return;
-    }
-    requestedIndexRef.current = requestedIndex;
-    zoomRefs.current.get(activeIndexRef.current)?.reset(false);
-    activeIndexRef.current = requestedIndex;
-    setActiveZoomed(false);
-    setAnimatedSvgZoomSuspended(false);
-    setPagerScrollEnabled(true);
-    setActiveIndex(requestedIndex);
-    pagerRef.current?.setScrollEnabled(true);
-  }, [requestedIndex]);
-
   useLayoutEffect(() => {
-    if (previewCount === 0) {
+    if (!releaseTransitionAfterCommitRef.current) {
       return;
     }
-    publishPagerCommand({
-      animated: false,
-      position: pagerWindow.activePageIndex,
-      targetIndex: activeIndex
-    });
-  }, [activeIndex, pagerWindow.activePageIndex, pagerWindowIdentity, previewCount, publishPagerCommand]);
+    releaseTransitionAfterCommitRef.current = false;
+    transitioningRef.current = false;
+    transitioning.value = false;
+  }, [ring, transitioning]);
 
-  useEffect(() => {
-    const previewOpen = Boolean(preview);
-    if (previewOpen && !previewOpenRef.current) {
-      setChromeVisible(true);
+  const rebuildRing = useCallback(
+    (index: number) => {
+      const nextRing = createPreviewRingState(
+        previewItemsRef.current,
+        index,
+        itemOverrideIndexRef.current,
+        itemOverrideRef.current
+      );
+      zoomRefs.current.get(activeIndexRef.current)?.reset(false);
+      for (const slot of nextRing.slots) {
+        setSlotRole(slot.slot, slot.role);
+      }
+      ringTranslateX.value = 0;
+      pullTranslateY.value = 0;
+      overlayOpacity.value = 1;
+      activeZoomScale.value = 1;
+      activeIndexOnUI.value = nextRing.activeIndex;
+      transitioning.value = false;
+      transitioningRef.current = false;
+      releaseTransitionAfterCommitRef.current = false;
+      pendingExternalRebuildRef.current = false;
+      activeIndexRef.current = nextRing.activeIndex;
+      desiredIndexRef.current = nextRing.activeIndex;
+      ringRef.current = nextRing;
       setActiveZoomed(false);
       setAnimatedSvgZoomSuspended(false);
-      setPagerScrollEnabled(true);
-      pagerRef.current?.setScrollEnabled(true);
-    }
+      setRing(nextRing);
+    },
+    [activeIndexOnUI, activeZoomScale, overlayOpacity, pullTranslateY, ringTranslateX, setSlotRole, transitioning]
+  );
+
+  useEffect(() => {
+    const previewOpen = Boolean(preview && previewCount > 0);
+    const reopening = previewOpen && !previewOpenRef.current;
+    const catalogChanged =
+      previewItemsRef.current !== previewItems ||
+      itemOverrideRef.current !== itemOverride ||
+      itemOverrideIndexRef.current !== itemOverrideIndex;
+    previewItemsRef.current = previewItems;
+    itemOverrideRef.current = itemOverride;
+    itemOverrideIndexRef.current = itemOverrideIndex;
     previewOpenRef.current = previewOpen;
     closing.value = false;
     overlayOpacity.value = 1;
     pullTranslateY.value = 0;
-  }, [closing, overlayOpacity, preview, pullTranslateY]);
+    if (!previewOpen) {
+      return;
+    }
+    if (reopening) {
+      setChromeVisible(true);
+      setActiveZoomed(false);
+      setAnimatedSvgZoomSuspended(false);
+    }
+    if (!reopening && !catalogChanged && requestedIndexRef.current === requestedIndex) {
+      return;
+    }
+    requestedIndexRef.current = requestedIndex;
+    desiredIndexRef.current = requestedIndex;
+    if (transitioningRef.current || transitioning.value) {
+      pendingExternalRebuildRef.current = true;
+      return;
+    }
+    rebuildRing(requestedIndex);
+  }, [
+    closing,
+    overlayOpacity,
+    preview,
+    previewCount,
+    previewItems,
+    itemOverride,
+    itemOverrideIndex,
+    pullTranslateY,
+    rebuildRing,
+    requestedIndex,
+    transitioning
+  ]);
 
-  const activeItem = previewItems[activeIndex];
+  const activeItem = previewItemAtIndex(previewItems, activeIndex, itemOverrideIndex, itemOverride);
   const activeRequestIdentity = activeItem ? previewResolutionIdentity(mediaContext, activeItem) : '';
   const activeResolution = resolutions[activeRequestIdentity] || activeItem?.displaySize || null;
   const imagePreviewMaxScale = useMemo(() => {
@@ -265,127 +312,218 @@ function ImagePreviewModalContent({
     });
   }, []);
 
-  const handleIndexChange = useCallback(
-    (index: number) => {
+  const registerZoom = useCallback((index: number, reference: ResumableZoomRefType | null) => {
+    if (reference) {
+      zoomRefs.current.set(index, reference);
+    } else {
+      zoomRefs.current.delete(index);
+    }
+  }, []);
+  const handleZoomGestureStart = useCallback((index: number) => {
+    if (activeIndexRef.current !== index) {
+      return;
+    }
+    setAnimatedSvgZoomSuspended(true);
+  }, []);
+  const handleZoomGestureSettled = useCallback((index: number, scale: number) => {
+    if (activeIndexRef.current !== index) {
+      return;
+    }
+    const zoomed = Math.abs(scale - 1) > 0.001;
+    setActiveZoomed(zoomed);
+    setAnimatedSvgZoomSuspended(zoomed);
+  }, []);
+  const handleZoomUpdate = useCallback(
+    (index: number, scale: number) => {
+      'worklet';
+      if (activeIndexOnUI.value === index) {
+        activeZoomScale.value = scale;
+      }
+    },
+    [activeIndexOnUI, activeZoomScale]
+  );
+
+  const markTransitionStarted = useCallback(
+    (targetIndex: number) => {
       if (!mountedRef.current) {
         return;
       }
-      const nextIndex = clampIndex(index, previewCount);
-      const previousIndex = activeIndexRef.current;
-      if (nextIndex === previousIndex) {
-        return;
+      transitioningRef.current = true;
+      if (desiredIndexRef.current === activeIndexRef.current) {
+        desiredIndexRef.current = targetIndex;
       }
-      zoomRefs.current.get(previousIndex)?.reset(false);
-      requestedIndexRef.current = nextIndex;
-      activeIndexRef.current = nextIndex;
+      zoomRefs.current.get(activeIndexRef.current)?.reset(false);
+      activeZoomScale.value = 1;
       setActiveZoomed(false);
       setAnimatedSvgZoomSuspended(false);
-      setPagerScrollEnabled(true);
-      pagerRef.current?.setScrollEnabled(true);
-      setActiveIndex(nextIndex);
-      onSelect(nextIndex);
     },
-    [onSelect, previewCount]
+    [activeZoomScale]
   );
 
-  const handlePageSelected = useCallback(
-    (event: PagerViewOnPageSelectedEvent) => {
-      const ownership = pagerOwnershipRef.current;
-      const position = event.nativeEvent.position;
-      if (ownership.drag) {
-        if (ownership.drag.selectionHandled) {
-          return;
-        }
-        ownership.drag.selectionHandled = true;
-        const page = ownership.drag.pages?.[position];
-        if (page) {
-          handleIndexChange(page.index);
-        }
+  const cancelTransition = useCallback(() => {
+    transitioningRef.current = false;
+    if (pendingExternalRebuildRef.current) {
+      rebuildRing(desiredIndexRef.current);
+    } else {
+      desiredIndexRef.current = activeIndexRef.current;
+    }
+  }, [rebuildRing]);
+
+  const commitRingStep = useCallback(
+    (direction: -1 | 1, targetIndex: number, targetSlot: number, recycleSlot: number) => {
+      if (!mountedRef.current) {
         return;
       }
-      if (ownership.command) {
-        if (ownership.command.position !== position) {
-          return;
+      const currentRing = ringRef.current;
+      const target = currentRing.slots.find(({ slot }) => slot === targetSlot);
+      if (target?.page?.index !== targetIndex || targetIndex !== currentRing.activeIndex + direction) {
+        transitioningRef.current = false;
+        transitioning.value = false;
+        return;
+      }
+      const recycledIndex = targetIndex + direction;
+      const recycledItem = previewItemAtIndex(
+        previewItemsRef.current,
+        recycledIndex,
+        itemOverrideIndexRef.current,
+        itemOverrideRef.current
+      );
+      const nextSlots = currentRing.slots.map((slot) => {
+        if (slot.slot === currentRing.activeSlot) {
+          return { ...slot, role: (direction === 1 ? -1 : 1) as PreviewRingRole };
         }
-        const targetIndex = ownership.command.targetIndex;
-        ownership.command = null;
-        handleIndexChange(targetIndex);
+        if (slot.slot === targetSlot) {
+          return { ...slot, role: 0 as PreviewRingRole };
+        }
+        if (slot.slot === recycleSlot) {
+          return {
+            ...slot,
+            page: recycledItem ? { index: recycledIndex, item: recycledItem } : null,
+            role: direction
+          };
+        }
+        return slot;
+      });
+      const nextRing = { activeIndex: targetIndex, activeSlot: targetSlot, slots: nextSlots };
+      const notifySelection = !pendingExternalRebuildRef.current;
+      if (notifySelection) {
+        requestedIndexRef.current = targetIndex;
+      }
+      activeIndexRef.current = targetIndex;
+      activeIndexOnUI.value = targetIndex;
+      ringRef.current = nextRing;
+      releaseTransitionAfterCommitRef.current = true;
+      setRing(nextRing);
+      if (notifySelection) {
+        onSelect(targetIndex);
       }
     },
-    [handleIndexChange]
+    [activeIndexOnUI, onSelect, transitioning]
   );
 
-  const handlePageScrollStateChanged = useCallback(
-    (event: PageScrollStateChangedNativeEvent) => {
-      const ownership = pagerOwnershipRef.current;
-      if (event.nativeEvent.pageScrollState === 'dragging') {
-        if (ownership.drag) {
-          return;
-        }
-        if (ownership.command) {
-          ownership.pendingCommand = ownership.command;
-          ownership.command = null;
-          ownership.drag = { pages: null, selectionHandled: false };
-          return;
-        }
-        ownership.drag = {
-          pages: pagerWindow.slots.map(({ page }) => page),
-          selectionHandled: false
-        };
+  const animateRingStep = useCallback(
+    (direction: -1 | 1, targetIndex: number, currentSlot: number, targetSlot: number, recycleSlot: number) => {
+      'worklet';
+      if (transitioning.value) {
         return;
       }
-      if (event.nativeEvent.pageScrollState === 'idle' && ownership.drag) {
-        ownership.drag = null;
-        const pendingCommand = ownership.pendingCommand;
-        ownership.pendingCommand = null;
-        if (pendingCommand) {
-          publishPagerCommand(pendingCommand);
+      transitioning.value = true;
+      activeZoomScale.value = 1;
+      scheduleOnRN(markTransitionStarted, targetIndex);
+      ringTranslateX.value = withTiming(-direction * width, { duration: PAGE_TRANSITION_DURATION_MS }, (finished) => {
+        if (!finished) {
+          ringTranslateX.value = 0;
+          transitioning.value = false;
+          scheduleOnRN(cancelTransition);
+          return;
         }
-      }
+        setSlotRole(currentSlot, direction === 1 ? -1 : 1);
+        setSlotRole(targetSlot, 0);
+        if (recycleSlot >= 0) {
+          setSlotRole(recycleSlot, direction);
+        }
+        activeIndexOnUI.value = targetIndex;
+        ringTranslateX.value = 0;
+        scheduleOnRN(commitRingStep, direction, targetIndex, targetSlot, recycleSlot);
+      });
     },
-    [pagerWindow.slots, publishPagerCommand]
+    [
+      activeIndexOnUI,
+      activeZoomScale,
+      cancelTransition,
+      commitRingStep,
+      markTransitionStarted,
+      ringTranslateX,
+      setSlotRole,
+      transitioning,
+      width
+    ]
+  );
+
+  const startRingStep = useCallback(
+    (direction: -1 | 1) => {
+      if (transitioningRef.current || transitioning.value) {
+        return false;
+      }
+      const currentRing = ringRef.current;
+      const targetIndex = currentRing.activeIndex + direction;
+      const target = currentRing.slots.find(({ page, role }) => role === direction && page?.index === targetIndex);
+      if (!target) {
+        return false;
+      }
+      const recycle =
+        currentRing.slots.length === 3
+          ? (currentRing.slots.find(({ role }) => role === (direction === 1 ? -1 : 1))?.slot ?? -1)
+          : -1;
+      markTransitionStarted(targetIndex);
+      animateRingStep(direction, targetIndex, currentRing.activeSlot, target.slot, recycle);
+      return true;
+    },
+    [animateRingStep, markTransitionStarted, transitioning]
   );
 
   const moveToIndex = useCallback(
     (index: number) => {
-      const nextIndex = clampIndex(index, previewCount);
-      if (nextIndex === activeIndexRef.current) {
-        return;
-      }
-      zoomRefs.current.get(activeIndexRef.current)?.reset(false);
-      setActiveZoomed(false);
-      setAnimatedSvgZoomSuspended(false);
-      setPagerScrollEnabled(true);
-      pagerRef.current?.setScrollEnabled(true);
-      const targetPage = pagerWindow.pages.find((page) => page.index === nextIndex);
-      if (targetPage) {
-        publishPagerCommand({ animated: true, position: targetPage.slot, targetIndex: nextIndex });
-      } else {
-        handleIndexChange(nextIndex);
+      const nextIndex = clampIndex(index, previewItemsRef.current.length);
+      desiredIndexRef.current = nextIndex;
+      pendingExternalRebuildRef.current = false;
+      if (!transitioningRef.current && !transitioning.value && nextIndex !== activeIndexRef.current) {
+        startRingStep(nextIndex > activeIndexRef.current ? 1 : -1);
       }
     },
-    [handleIndexChange, pagerWindow.pages, previewCount, publishPagerCommand]
+    [startRingStep, transitioning]
   );
 
-  const moveFromIndex = useCallback(
-    (startIndex: number, delta: number) => {
-      if (activeIndexRef.current !== startIndex) {
-        return;
-      }
-      moveToIndex(startIndex + delta);
+  const queueGestureStep = useCallback(
+    (direction: -1 | 1) => {
+      moveToIndex(desiredIndexRef.current + direction);
     },
     [moveToIndex]
   );
 
+  useEffect(() => {
+    if (transitioningRef.current || transitioning.value) {
+      return;
+    }
+    if (pendingExternalRebuildRef.current) {
+      rebuildRing(desiredIndexRef.current);
+      return;
+    }
+    const desiredIndex = desiredIndexRef.current;
+    if (desiredIndex !== ring.activeIndex) {
+      startRingStep(desiredIndex > ring.activeIndex ? 1 : -1);
+    }
+  }, [rebuildRing, ring, startRingStep, transitioning]);
+
   const handleAccessibilityAction = useCallback(
     (event: AccessibilityActionEvent) => {
       if (event.nativeEvent.actionName === 'increment') {
-        moveToIndex(activeIndex + 1);
+        moveToIndex(desiredIndexRef.current + 1);
       } else if (event.nativeEvent.actionName === 'decrement') {
-        moveToIndex(activeIndex - 1);
+        moveToIndex(desiredIndexRef.current - 1);
       }
     },
-    [activeIndex, moveToIndex]
+    [moveToIndex]
   );
 
   const handleSave = useCallback(async () => {
@@ -401,32 +539,6 @@ function ImagePreviewModalContent({
       }
     }
   }, [onSave, saving]);
-
-  const registerZoom = useCallback((index: number, reference: ResumableZoomRefType | null) => {
-    if (reference) {
-      zoomRefs.current.set(index, reference);
-    } else {
-      zoomRefs.current.delete(index);
-    }
-  }, []);
-  const handleZoomGestureStart = useCallback((index: number) => {
-    if (activeIndexRef.current !== index) {
-      return;
-    }
-    setPagerScrollEnabled(false);
-    pagerRef.current?.setScrollEnabled(false);
-    setAnimatedSvgZoomSuspended(true);
-  }, []);
-  const handleZoomGestureSettled = useCallback((index: number, scale: number) => {
-    if (activeIndexRef.current !== index) {
-      return;
-    }
-    const zoomed = Math.abs(scale - 1) > 0.001;
-    setActiveZoomed(zoomed);
-    setPagerScrollEnabled(!zoomed);
-    pagerRef.current?.setScrollEnabled(!zoomed);
-    setAnimatedSvgZoomSuspended(zoomed);
-  }, []);
 
   const handleVerticalPull = useCallback(
     ({ released, translateY, velocityY }: VerticalPullState) => {
@@ -450,72 +562,149 @@ function ImagePreviewModalContent({
     [closing, height, onClose, overlayOpacity, pullTranslateY]
   );
 
-  const pullToCloseGesture = useMemo(
+  const previousSlot = ring.slots.find(({ page, role }) => role === -1 && page?.index === activeIndex - 1)?.slot ?? -1;
+  const nextSlot = ring.slots.find(({ page, role }) => role === 1 && page?.index === activeIndex + 1)?.slot ?? -1;
+  const recycleForPrevious = ring.slots.length === 3 ? (ring.slots.find(({ role }) => role === 1)?.slot ?? -1) : -1;
+  const recycleForNext = ring.slots.length === 3 ? (ring.slots.find(({ role }) => role === -1)?.slot ?? -1) : -1;
+  const previewGesture = useMemo(
     () =>
       Gesture.Pan()
-        .enabled(pagerScrollEnabled)
+        .manualActivation(true)
         .maxPointers(1)
-        .activeOffsetY(12)
-        .failOffsetX([-12, 12])
+        .onTouchesDown((event, state) => {
+          'worklet';
+          if (event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001) {
+            state.fail();
+            return;
+          }
+          const touch = event.allTouches[0];
+          if (!touch) {
+            state.fail();
+            return;
+          }
+          gestureAxis.value = 0;
+          gestureQueuesTransition.value = transitioning.value;
+          gestureStartX.value = touch.absoluteX;
+          gestureStartY.value = touch.absoluteY;
+        })
+        .onTouchesMove((event, state) => {
+          'worklet';
+          if (event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001) {
+            state.fail();
+            return;
+          }
+          const touch = event.allTouches[0];
+          if (!touch) {
+            state.fail();
+            return;
+          }
+          if (transitioning.value) {
+            gestureQueuesTransition.value = true;
+          }
+          const deltaX = touch.absoluteX - gestureStartX.value;
+          const deltaY = touch.absoluteY - gestureStartY.value;
+          if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < GESTURE_DIRECTION_LOCK_DISTANCE) {
+            return;
+          }
+          gestureAxis.value = Math.abs(deltaX) > Math.abs(deltaY) ? 1 : 2;
+          state.activate();
+        })
         .onUpdate((event) => {
           'worklet';
-          handleVerticalPull({
-            released: false,
-            translateY: Math.max(0, event.translationY),
-            velocityY: event.velocityY
-          });
-        })
-        .onEnd((event) => {
-          'worklet';
-          handleVerticalPull({
-            released: true,
-            translateY: Math.max(0, event.translationY),
-            velocityY: event.velocityY
-          });
-        })
-        .onFinalize((_event, success) => {
-          'worklet';
-          if (!success) {
-            pullTranslateY.value = withTiming(0);
-            overlayOpacity.value = withTiming(1);
+          if (gestureQueuesTransition.value) {
+            return;
           }
-        }),
-    [handleVerticalPull, overlayOpacity, pagerScrollEnabled, pullTranslateY]
-  );
-  const horizontalPageGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .enabled(pagerScrollEnabled)
-        .maxPointers(1)
-        .activeOffsetX([-12, 12])
-        .failOffsetY([-12, 12])
+          if (gestureAxis.value === 1) {
+            const atBoundary = (event.translationX > 0 && previousSlot < 0) || (event.translationX < 0 && nextSlot < 0);
+            ringTranslateX.value = event.translationX * (atBoundary ? 0.25 : 1);
+          } else if (gestureAxis.value === 2) {
+            handleVerticalPull({
+              released: false,
+              translateY: Math.max(0, event.translationY),
+              velocityY: event.velocityY
+            });
+          }
+        })
         .onEnd((event) => {
           'worklet';
+          if (gestureAxis.value === 2) {
+            if (!gestureQueuesTransition.value) {
+              handleVerticalPull({
+                released: true,
+                translateY: Math.max(0, event.translationY),
+                velocityY: event.velocityY
+              });
+            }
+            return;
+          }
+          if (gestureAxis.value !== 1) {
+            return;
+          }
           const horizontalDistance = Math.abs(event.translationX);
           const verticalDistance = Math.abs(event.translationY);
           const horizontalVelocity = Math.abs(event.velocityX);
           const verticalVelocity = Math.abs(event.velocityY);
-          if (
-            horizontalDistance <= verticalDistance ||
-            (horizontalDistance < width * PAGE_SWIPE_DISTANCE_RATIO &&
-              (horizontalVelocity < PAGE_SWIPE_VELOCITY || horizontalVelocity <= verticalVelocity))
-          ) {
+          const shouldMove =
+            horizontalDistance > verticalDistance &&
+            (horizontalDistance >= width * PAGE_SWIPE_DISTANCE_RATIO ||
+              (horizontalVelocity >= PAGE_SWIPE_VELOCITY && horizontalVelocity > verticalVelocity));
+          const signedMovement = horizontalDistance > 1 ? event.translationX : event.velocityX;
+          const direction = signedMovement < 0 ? 1 : -1;
+          if (gestureQueuesTransition.value) {
+            if (shouldMove && signedMovement !== 0) {
+              scheduleOnRN(queueGestureStep, direction);
+            }
             return;
           }
-          const signedMovement = horizontalDistance > 1 ? event.translationX : event.velocityX;
-          if (signedMovement !== 0) {
-            scheduleOnRN(moveFromIndex, activeIndex, signedMovement < 0 ? 1 : -1);
+          const targetSlot = direction === 1 ? nextSlot : previousSlot;
+          if (!shouldMove || signedMovement === 0 || targetSlot < 0) {
+            ringTranslateX.value = withTiming(0, { duration: PAGE_TRANSITION_DURATION_MS });
+            return;
+          }
+          animateRingStep(
+            direction,
+            activeIndex + direction,
+            ring.activeSlot,
+            targetSlot,
+            direction === 1 ? recycleForNext : recycleForPrevious
+          );
+        })
+        .onFinalize((_event, success) => {
+          'worklet';
+          const queuedTransition = gestureQueuesTransition.value;
+          gestureAxis.value = 0;
+          gestureQueuesTransition.value = false;
+          if (!success && !queuedTransition) {
+            ringTranslateX.value = withTiming(0, { duration: PAGE_TRANSITION_DURATION_MS });
+            pullTranslateY.value = withTiming(0);
+            overlayOpacity.value = withTiming(1);
           }
         }),
-    [activeIndex, moveFromIndex, pagerScrollEnabled, width]
-  );
-  const pagerGesture = useMemo(
-    () => Gesture.Simultaneous(pullToCloseGesture, horizontalPageGesture, Gesture.Native()),
-    [horizontalPageGesture, pullToCloseGesture]
+    [
+      activeIndex,
+      activeZoomScale,
+      animateRingStep,
+      gestureAxis,
+      gestureQueuesTransition,
+      gestureStartX,
+      gestureStartY,
+      handleVerticalPull,
+      nextSlot,
+      overlayOpacity,
+      previousSlot,
+      pullTranslateY,
+      queueGestureStep,
+      recycleForNext,
+      recycleForPrevious,
+      ring.activeSlot,
+      ringTranslateX,
+      transitioning,
+      width
+    ]
   );
 
   const backgroundStyle = useAnimatedStyle(() => ({ opacity: overlayOpacity.value }), [overlayOpacity]);
-  const pagerPullStyle = useAnimatedStyle(
+  const previewPullStyle = useAnimatedStyle(
     () => ({
       transform: [{ translateY: pullTranslateY.value }]
     }),
@@ -530,47 +719,47 @@ function ImagePreviewModalContent({
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
       <GestureHandlerRootView style={[styles.imagePreviewOverlay, componentStyles.transparentOverlay]}>
         <Animated.View pointerEvents="none" style={[componentStyles.overlayBackground, backgroundStyle]} />
-        <GestureDetector gesture={pagerGesture}>
-          <Animated.View style={[styles.imagePreviewScroll, pagerPullStyle]}>
-            <PagerView
-              ref={pagerRef}
-              testID="image-preview-pager"
-              initialPage={pagerWindow.activePageIndex}
-              offscreenPageLimit={1}
-              orientation="horizontal"
-              overScrollMode="never"
-              overdrag={false}
-              scrollEnabled={pagerScrollEnabled}
-              style={componentStyles.pagerPage}
-              onPageSelected={handlePageSelected}
-              onPageScrollStateChanged={handlePageScrollStateChanged}
-            >
-              {pagerWindow.slots.map(({ page, slot }) => (
-                <View key={`preview-physical-slot-${slot}`} collapsable={false} style={componentStyles.pagerPage}>
-                  {page ? (
-                    <PreviewPagerPage
-                      active={page.index === activeIndex}
-                      activeZoomed={page.index === activeIndex && activeZoomed}
-                      animatedSvgZoomSuspended={page.index === activeIndex && animatedSvgZoomSuspended}
-                      height={height}
-                      index={page.index}
-                      item={page.item}
-                      maxScale={imagePreviewMaxScale}
-                      mediaContext={mediaContext}
-                      nodeSeekUserAgent={nodeSeekMediaUserAgent}
-                      onRegisterZoom={registerZoom}
-                      onResolution={handleResolution}
-                      onToggleChrome={() => setChromeVisible((current) => !current)}
-                      onZoomGestureSettled={handleZoomGestureSettled}
-                      onZoomGestureStart={handleZoomGestureStart}
-                      styles={styles}
-                      theme={theme}
-                      width={width}
-                    />
-                  ) : null}
-                </View>
-              ))}
-            </PagerView>
+        <GestureDetector gesture={previewGesture}>
+          <Animated.View style={[styles.imagePreviewScroll, previewPullStyle]}>
+            <View testID="image-preview-ring" style={componentStyles.ringViewport}>
+              {ring.slots.map(({ page, slot }) => {
+                const selected = page?.index === activeIndex;
+                const role = slot === 0 ? slot0Role : slot === 1 ? slot1Role : slot2Role;
+                return (
+                  <PreviewRingSlotView
+                    key={`preview-physical-slot-${slot}`}
+                    role={role}
+                    selected={selected}
+                    slot={slot}
+                    translateX={ringTranslateX}
+                    width={width}
+                  >
+                    {page ? (
+                      <PreviewPage
+                        active={selected}
+                        activeZoomed={selected && activeZoomed}
+                        animatedSvgZoomSuspended={selected && animatedSvgZoomSuspended}
+                        height={height}
+                        index={page.index}
+                        item={page.item}
+                        maxScale={imagePreviewMaxScale}
+                        mediaContext={mediaContext}
+                        nodeSeekUserAgent={nodeSeekMediaUserAgent}
+                        onRegisterZoom={registerZoom}
+                        onResolution={handleResolution}
+                        onToggleChrome={() => setChromeVisible((current) => !current)}
+                        onZoomGestureSettled={handleZoomGestureSettled}
+                        onZoomGestureStart={handleZoomGestureStart}
+                        onZoomUpdate={handleZoomUpdate}
+                        styles={styles}
+                        theme={theme}
+                        width={width}
+                      />
+                    ) : null}
+                  </PreviewRingSlotView>
+                );
+              })}
+            </View>
           </Animated.View>
         </GestureDetector>
         <View
@@ -628,6 +817,37 @@ function ImagePreviewModalContent({
   );
 }
 
+function PreviewRingSlotView({
+  children,
+  role,
+  selected,
+  slot,
+  translateX,
+  width
+}: {
+  children: ReactNode;
+  role: SharedValue<PreviewRingRole>;
+  selected: boolean;
+  slot: number;
+  translateX: SharedValue<number>;
+  width: number;
+}) {
+  const positionStyle = useAnimatedStyle(
+    () => ({ transform: [{ translateX: role.value * width + translateX.value }] }),
+    [role, translateX, width]
+  );
+  return (
+    <Animated.View
+      collapsable={false}
+      pointerEvents={selected ? 'auto' : 'none'}
+      testID={`preview-physical-slot-${slot}`}
+      style={[componentStyles.ringSlot, positionStyle]}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
 function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
@@ -682,7 +902,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   });
 }
 
-function PreviewPagerPage({
+function PreviewPage({
   active,
   activeZoomed,
   animatedSvgZoomSuspended,
@@ -697,6 +917,7 @@ function PreviewPagerPage({
   onToggleChrome,
   onZoomGestureSettled,
   onZoomGestureStart,
+  onZoomUpdate,
   styles,
   theme,
   width
@@ -1197,20 +1418,24 @@ function PreviewPagerPage({
   }, [active, requestIdentity, retry, runtimeGeneration, status]);
 
   return (
-    <View testID={`preview-page-${index}`} style={componentStyles.pagerPage}>
+    <View testID={`preview-page-${index}`} style={componentStyles.page}>
       <ResumableZoom
         ref={attachZoomRef}
         extendGestures
         maxScale={maxScale}
         panEnabled={active && activeZoomed}
         pinchEnabled={active}
-        style={componentStyles.pagerPage}
+        style={componentStyles.page}
         tapsEnabled={active}
         onDoubleTapStart={() => onZoomGestureStart(index)}
         onGestureEnd={settleZoomGesture}
         onPanStart={() => onZoomGestureStart(index)}
         onPinchStart={() => onZoomGestureStart(index)}
         onTap={onToggleChrome}
+        onUpdate={(state) => {
+          'worklet';
+          onZoomUpdate(index, state.scale);
+        }}
       >
         <View testID={`preview-zoom-content-${index}`} style={[componentStyles.previewPage, imageSize]}>
           {status !== 'failed' ? (
@@ -1363,13 +1588,25 @@ function clampIndex(index: number, count: number) {
   return Math.max(0, Math.min(index, Math.max(0, count - 1)));
 }
 
-function createPreviewPagerWindow(items: readonly ImagePreviewItem[], activeIndex: number) {
-  const slots = Array.from({ length: Math.min(3, items.length) }, (_, slot) => ({
-    page: null as PreviewPagerWindowPage | null,
-    slot
-  }));
-  const pages: PreviewPagerWindowPage[] = [];
+function previewItemAtIndex(
+  items: readonly ImagePreviewItem[],
+  index: number,
+  itemOverrideIndex?: number,
+  itemOverride?: ImagePreviewItem
+) {
+  return itemOverrideIndex === index && itemOverride ? itemOverride : items[index];
+}
+
+function createPreviewRingState(
+  items: readonly ImagePreviewItem[],
+  activeIndex: number,
+  itemOverrideIndex?: number,
+  itemOverride?: ImagePreviewItem
+): PreviewRingState {
   const clampedActiveIndex = clampIndex(activeIndex, items.length);
+  if (items.length === 0) {
+    return { activeIndex: clampedActiveIndex, activeSlot: 0, slots: [] };
+  }
   const activeSlot =
     items.length <= 2
       ? clampedActiveIndex
@@ -1378,20 +1615,29 @@ function createPreviewPagerWindow(items: readonly ImagePreviewItem[], activeInde
         : clampedActiveIndex === items.length - 1
           ? 2
           : 1;
-  for (let index = clampedActiveIndex - 1; index <= clampedActiveIndex + 1; index += 1) {
-    const item = items[index];
+  const slots: PreviewRingSlot[] = Array.from({ length: Math.min(3, items.length) }, (_, slot) => ({
+    page: null,
+    role: 0,
+    slot
+  }));
+  const assignedRoles = new Set<PreviewRingRole>();
+  for (let role = -1 as PreviewRingRole; role <= 1; role += 1) {
+    const index = clampedActiveIndex + role;
+    const item = previewItemAtIndex(items, index, itemOverrideIndex, itemOverride);
     if (item) {
-      const slot = activeSlot + index - clampedActiveIndex;
-      const page = { index, item, slot };
-      pages.push(page);
-      slots[slot] = { page, slot };
+      const slot = activeSlot + role;
+      slots[slot] = { page: { index, item }, role, slot };
+      assignedRoles.add(role);
     }
   }
-  return {
-    activePageIndex: activeSlot,
-    pages,
-    slots
-  };
+  const unassignedRole = ([-1, 1] as const).find((role) => !assignedRoles.has(role));
+  if (unassignedRole !== undefined) {
+    const emptySlot = slots.find(({ page }) => page === null);
+    if (emptySlot) {
+      emptySlot.role = unassignedRole;
+    }
+  }
+  return { activeIndex: clampedActiveIndex, activeSlot, slots };
 }
 
 function previewResolutionIdentity(mediaContext: ForumMediaRequestContext, item: ImagePreviewItem) {
@@ -1450,12 +1696,19 @@ const componentStyles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000000'
   },
-  pagerPage: {
+  page: {
     flex: 1
   },
   previewPage: {
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  ringSlot: {
+    ...StyleSheet.absoluteFillObject
+  },
+  ringViewport: {
+    flex: 1,
+    overflow: 'hidden'
   },
   transparentOverlay: {
     backgroundColor: 'transparent'

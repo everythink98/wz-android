@@ -34,6 +34,7 @@ import type {
   TopicPoll,
   UserReference
 } from '@/domain/forum/models';
+import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { HtmlRenderers } from '../rendering/types';
 import type { ReplyFilter } from '../model/types';
@@ -87,6 +88,7 @@ import {
   buildReplyListItems,
   buildVirtualizedReplyItems,
   getReplyKey,
+  imagePreviewDescriptorsForReplies,
   topicListItemSpacing,
   type TopicReplyListItem
 } from '../model/replyListModel';
@@ -272,6 +274,7 @@ export const TopicContentList = memo(function TopicContentList({
   headerState,
   html,
   nodeSeekUserId,
+  onImagePreviewDescriptors,
   onOpenTopic,
   onOpenUser,
   onScroll: onTopicScroll,
@@ -295,6 +298,7 @@ export const TopicContentList = memo(function TopicContentList({
   headerState: ReactNode;
   html: ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string };
   nodeSeekUserId: number | null;
+  onImagePreviewDescriptors: (descriptors: readonly ForumImagePreviewDescriptor[]) => void;
   onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
   onOpenUser: (user: UserReference) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -655,8 +659,24 @@ export const TopicContentList = memo(function TopicContentList({
     contentItems: topicContentItems,
     legacyPollsVisible: legacyTopicPollsVisible,
     polls: topicPolls,
+    previewImages: openingPreviewImages,
     showsAccessNotice: topicShowsAccessNotice
   } = openingContent;
+  const loadedQuotedReplyValues = useMemo(() => Object.values(loadedQuotedReplies), [loadedQuotedReplies]);
+  const imagePreviewDescriptors = useMemo(
+    () =>
+      itemSource
+        ? [
+            ...openingPreviewImages,
+            ...imagePreviewDescriptorsForReplies(sourceReplies, itemSource),
+            ...imagePreviewDescriptorsForReplies(loadedQuotedReplyValues, itemSource)
+          ]
+        : openingPreviewImages,
+    [itemSource, loadedQuotedReplyValues, openingPreviewImages, sourceReplies]
+  );
+  useLayoutEffect(() => {
+    onImagePreviewDescriptors(imagePreviewDescriptors);
+  }, [imagePreviewDescriptors, onImagePreviewDescriptors]);
   const acceptedAnswer = useMemo(
     () =>
       buildAcceptedAnswerPresentation({

@@ -8,6 +8,7 @@ import {
   isInlineForumImageUrl,
   ORIGINAL_IMAGE_SOURCE_ATTR,
   parseForumImageDimension as parseImageDimension,
+  type ForumImagePreviewDescriptor,
   type ParsedForumImageNode
 } from '@/domain/forum/forumContentMedia';
 import { linkDiagnosticRefs } from '@/platform/diagnostics/diagnosticPolicy';
@@ -37,6 +38,8 @@ export interface ImagePreviewList {
   contentSource: ForumMediaRequestContext['contentSource'];
   items: ImagePreviewItem[];
   index: number;
+  itemOverride?: ImagePreviewItem;
+  itemOverrideIndex?: number;
   referrer?: MediaReferrerContext;
 }
 
@@ -101,8 +104,51 @@ export function createImagePreviewCatalog(
   pixelRatio: number,
   mediaContext?: ForumMediaRequestContext
 ): ImagePreviewCatalog {
+  return createImagePreviewCatalogFromEntries(
+    htmlParts.flatMap((html) => extractImagePreviewEntriesFromHtml(html, contentWidth, pixelRatio)),
+    mediaContext
+  );
+}
+
+export function createImagePreviewCatalogFromDescriptors(
+  descriptors: readonly ForumImagePreviewDescriptor[],
+  contentWidth: number,
+  pixelRatio: number,
+  mediaContext?: ForumMediaRequestContext,
+  isInlineSizedImage?: (url: string, referrerPolicy?: MediaReferrerPolicy) => boolean
+): ImagePreviewCatalog {
+  return createImagePreviewCatalogFromEntries(
+    descriptors.flatMap((descriptor) => {
+      if (isInlineSizedImage?.(descriptor.source, descriptor.referrerPolicy)) return [];
+      const entry = imagePreviewEntryFromAttributes(
+        {
+          src: descriptor.source,
+          ...(descriptor.sourceSet ? { srcset: descriptor.sourceSet } : {}),
+          ...(descriptor.dataSource ? { 'data-src': descriptor.dataSource } : {}),
+          ...(descriptor.dataOriginal ? { 'data-original': descriptor.dataOriginal } : {}),
+          ...(descriptor.originalSource ? { [ORIGINAL_IMAGE_SOURCE_ATTR]: descriptor.originalSource } : {}),
+          ...(descriptor.displayCandidateKind
+            ? { [DISPLAY_CANDIDATE_KIND_ATTR]: descriptor.displayCandidateKind }
+            : {}),
+          ...(descriptor.width ? { width: descriptor.width } : {}),
+          ...(descriptor.height ? { height: descriptor.height } : {}),
+          ...(descriptor.referrerPolicy ? { referrerpolicy: descriptor.referrerPolicy } : {})
+        },
+        descriptor.lightboxOriginal || '',
+        contentWidth,
+        pixelRatio
+      );
+      return entry ? [entry] : [];
+    }),
+    mediaContext
+  );
+}
+
+function createImagePreviewCatalogFromEntries(
+  entries: readonly ImagePreviewEntry[],
+  mediaContext?: ForumMediaRequestContext
+): ImagePreviewCatalog {
   const itemIndexBySourceUrl: Record<string, number> = {};
-  const entries = htmlParts.flatMap((html) => extractImagePreviewEntriesFromHtml(html, contentWidth, pixelRatio));
   const items: ImagePreviewItem[] = [];
   const itemIndexByOriginalUri = new Map<string, number>();
   entries.forEach((entry) => {
@@ -147,26 +193,27 @@ export function imagePreviewListFromCatalog(
     tappedDisplaySize.height > 0
       ? tappedDisplaySize
       : undefined;
-  const items = [...catalog.items];
+  let items = catalog.items;
   let index = mappedIndex;
+  let itemOverride: ImagePreviewItem | undefined;
   if (index !== undefined && tappedUri && items[index]) {
-    items[index] = {
-      ...items[index],
-      displayUri: tappedUri,
-      ...(displaySize ? { displaySize } : {}),
-      ...(referrerPolicy ? { referrerPolicy } : {})
-    };
+    itemOverride = imagePreviewItemOverride(items[index], tappedUri, displaySize, referrerPolicy);
   }
   if (index === undefined && tappedUri) {
     index = items.findIndex((item) => item.originalUri === tappedUri && item.referrerPolicy === referrerPolicy);
     if (index < 0) {
       index = items.length;
-      items.push({
-        displayUri: tappedUri,
-        originalUri: tappedUri,
-        ...(displaySize ? { displaySize } : {}),
-        ...(referrerPolicy ? { referrerPolicy } : {})
-      });
+      items = [
+        ...items,
+        {
+          displayUri: tappedUri,
+          originalUri: tappedUri,
+          ...(displaySize ? { displaySize } : {}),
+          ...(referrerPolicy ? { referrerPolicy } : {})
+        }
+      ];
+    } else {
+      itemOverride = imagePreviewItemOverride(items[index], tappedUri, displaySize, referrerPolicy);
     }
   }
   if (index === undefined || index < 0) {
@@ -181,7 +228,36 @@ export function imagePreviewListFromCatalog(
     contentSource,
     items,
     index,
+    ...(itemOverride ? { itemOverride, itemOverrideIndex: index } : {}),
     ...(catalog.mediaContext?.referrer ? { referrer: catalog.mediaContext.referrer } : {})
+  };
+}
+
+export function imagePreviewItemAt(preview: ImagePreviewList, index: number) {
+  return preview.itemOverrideIndex === index && preview.itemOverride ? preview.itemOverride : preview.items[index];
+}
+
+function imagePreviewItemOverride(
+  item: ImagePreviewItem,
+  displayUri: string,
+  displaySize?: ImageDisplaySize,
+  referrerPolicy?: MediaReferrerPolicy
+) {
+  const changesDisplaySize = Boolean(
+    displaySize && (displaySize.width !== item.displaySize?.width || displaySize.height !== item.displaySize?.height)
+  );
+  if (
+    displayUri === item.displayUri &&
+    !changesDisplaySize &&
+    (!referrerPolicy || referrerPolicy === item.referrerPolicy)
+  ) {
+    return undefined;
+  }
+  return {
+    ...item,
+    displayUri,
+    ...(displaySize ? { displaySize } : {}),
+    ...(referrerPolicy ? { referrerPolicy } : {})
   };
 }
 

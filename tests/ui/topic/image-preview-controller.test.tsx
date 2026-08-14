@@ -1,14 +1,41 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
+import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { PixelRatio } from 'react-native';
+import { compileForumContent } from '@/domain/forum/topicContentSplit';
 import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
-import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
+import { useImagePreviewController as useRawImagePreviewController } from '@/features/topic/media/useImagePreviewController';
+import { imagePreviewItemAt } from '@/platform/media/imagePreviewCatalog';
+import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 
 const mockSaveImageUriToLibrary = jest.fn<(...args: unknown[]) => Promise<void>>();
 
 jest.mock('@/platform/media/imageSave', () => ({
   saveImageUriToLibrary: (...args: unknown[]) => mockSaveImageUriToLibrary(...args)
 }));
+
+const compiledPreviewImages = new Map<string, ReturnType<typeof compileForumContent>['previewImages']>();
+
+function useImagePreviewController({
+  htmlParts,
+  ...options
+}: Parameters<typeof useRawImagePreviewController>[0] & { htmlParts?: string[] }) {
+  const controller = useRawImagePreviewController(options);
+  const cacheKey = htmlParts ? `${options.contentSource || 'nodeseek'}\n${htmlParts.join('\n')}` : '';
+  let previewImages = cacheKey ? compiledPreviewImages.get(cacheKey) : undefined;
+  if (cacheKey && !previewImages) {
+    previewImages = htmlParts!.flatMap(
+      (html) =>
+        compileForumContent({ html, role: 'opening', source: options.contentSource || 'nodeseek' }).previewImages
+    );
+    compiledPreviewImages.set(cacheKey, previewImages);
+  }
+  useLayoutEffect(() => {
+    if (previewImages) controller.registerImagePreviewDescriptors(previewImages);
+  }, [controller.registerImagePreviewDescriptors, previewImages]);
+  return controller;
+}
 
 describe('Image preview controller', () => {
   beforeEach(() => {
@@ -73,7 +100,7 @@ describe('Image preview controller', () => {
     await act(() => {
       hook.result.current.openImagePreview(displayUrl, { width: 640, height: 360 });
     });
-    expect(hook.result.current.imagePreview?.items[0]).toEqual({
+    expect(imagePreviewItemAt(hook.result.current.imagePreview!, 0)).toEqual({
       displayUri: displayUrl,
       originalUri: imageUrl,
       displaySize: { width: 640, height: 360 }
@@ -115,11 +142,13 @@ describe('Image preview controller', () => {
     await act(() => {
       hook.result.current.openImagePreview(imageUrl, undefined, undefined, 'no-referrer');
     });
-    expect(hook.result.current.imagePreview).toEqual({
-      contentSource: 'v2ex',
-      index: 0,
-      items: [{ displayUri: imageUrl, originalUri: imageUrl, referrerPolicy: 'no-referrer' }],
-      referrer: mediaReferrer
+    expect(hook.result.current.imagePreview).toEqual(
+      expect.objectContaining({ contentSource: 'v2ex', index: 0, referrer: mediaReferrer })
+    );
+    expect(imagePreviewItemAt(hook.result.current.imagePreview!, 0)).toEqual({
+      displayUri: imageUrl,
+      originalUri: imageUrl,
+      referrerPolicy: 'no-referrer'
     });
 
     await act(async () => {
@@ -163,7 +192,7 @@ describe('Image preview controller', () => {
     expect(hook.result.current.imagePreview).toBeNull();
 
     await act(() => hook.result.current.openImagePreview(imageUrl, undefined, undefined, 'origin'));
-    expect(hook.result.current.imagePreview?.items[hook.result.current.imagePreview.index]).toEqual(
+    expect(imagePreviewItemAt(hook.result.current.imagePreview!, hook.result.current.imagePreview!.index)).toEqual(
       expect.objectContaining({ originalUri: imageUrl, referrerPolicy: 'origin' })
     );
   });
@@ -211,7 +240,7 @@ describe('Image preview controller', () => {
       hook.result.current.openImagePreview(displayUrl, { width: 640, height: 360 }, renderedPoster);
     });
 
-    expect(hook.result.current.imagePreview?.items[0]).toEqual({
+    expect(imagePreviewItemAt(hook.result.current.imagePreview!, 0)).toEqual({
       displayUri: renderedPoster,
       originalUri: originalUrl,
       displaySize: { width: 640, height: 360 }
@@ -246,5 +275,202 @@ describe('Image preview controller', () => {
       { displayUri: 'https://images.example/b-720.jpg', originalUri: 'https://images.example/b-original.jpg' }
     ]);
     pixelRatioSpy.mockRestore();
+  });
+
+  it('[REG-TOPIC-096] opens a registered 2000-image catalog without receiving source HTML', async () => {
+    const urls = Array.from({ length: 2_000 }, (_, index) => `https://images.example/${index}.webp`);
+    const previewImages = compileForumContent({
+      html: urls.map((url) => `<img src="${url}">`).join(''),
+      role: 'opening',
+      source: 'nodeseek'
+    }).previewImages;
+    const hook = await renderHook(() =>
+      useImagePreviewController({
+        contentSource: 'nodeseek',
+        contentWidth: 360,
+        inlineSizedImageUrls: {},
+        notify: jest.fn(),
+        topicImageDeriver: createTopicImageDeriver()
+      })
+    );
+
+    await act(() => hook.result.current.registerImagePreviewDescriptors(previewImages));
+    await act(() => hook.result.current.openImagePreview(urls[1_380]));
+
+    expect(hook.result.current.imagePreview?.items).toHaveLength(2_000);
+    expect(hook.result.current.imagePreview?.index).toBe(1_380);
+  });
+
+  it('[REG-TOPIC-096] keeps equivalent registrations and invalidates semantic catalog inputs', async () => {
+    let pixelRatio = 2;
+    const pixelRatioSpy = jest.spyOn(PixelRatio, 'get').mockImplementation(() => pixelRatio);
+    const firstUrl = 'https://images.example/first-640.webp';
+    const secondUrl = 'https://images.example/second.webp';
+    const previewImages = compileForumContent({
+      html: `<img src="${firstUrl}" srcset="${firstUrl} 640w, https://images.example/first-1280.webp 1280w"><img src="${secondUrl}">`,
+      role: 'opening',
+      source: 'nodeseek'
+    }).previewImages;
+    const topicImageDeriver = createTopicImageDeriver();
+    const hook = await renderHook(
+      ({
+        contentSource,
+        inlineSizedImageUrls,
+        mediaReferrer,
+        width
+      }: {
+        contentSource: 'nodeseek' | 'v2ex';
+        inlineSizedImageUrls: Record<string, true>;
+        mediaReferrer?: { documentUrl: string };
+        width: number;
+      }) =>
+        useRawImagePreviewController({
+          contentSource,
+          contentWidth: width,
+          inlineSizedImageUrls,
+          mediaReferrer,
+          notify: jest.fn(),
+          topicImageDeriver
+        }),
+      {
+        initialProps: {
+          contentSource: 'nodeseek' as const,
+          inlineSizedImageUrls: {},
+          mediaReferrer: undefined,
+          width: 300
+        }
+      }
+    );
+
+    await act(() => hook.result.current.registerImagePreviewDescriptors(previewImages));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    const firstCatalogItem = hook.result.current.imagePreview!.items[0];
+    expect(firstCatalogItem.displayUri).toBe(firstUrl);
+
+    await act(() => hook.result.current.closeImagePreview());
+    await hook.rerender({
+      contentSource: 'nodeseek',
+      inlineSizedImageUrls: {},
+      mediaReferrer: undefined,
+      width: 300
+    });
+    await act(() => hook.result.current.registerImagePreviewDescriptors([...previewImages]));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    expect(hook.result.current.imagePreview!.items[0]).toBe(firstCatalogItem);
+
+    await act(() => hook.result.current.closeImagePreview());
+    await hook.rerender({
+      contentSource: 'nodeseek',
+      inlineSizedImageUrls: {},
+      mediaReferrer: undefined,
+      width: 700
+    });
+    await act(() => hook.result.current.registerImagePreviewDescriptors(previewImages));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    expect(hook.result.current.imagePreview!.items[0].displayUri).toBe('https://images.example/first-1280.webp');
+    const widthCatalogItem = hook.result.current.imagePreview!.items[0];
+
+    pixelRatio = 3;
+    await act(() => hook.result.current.closeImagePreview());
+    await hook.rerender({
+      contentSource: 'nodeseek',
+      inlineSizedImageUrls: {},
+      mediaReferrer: undefined,
+      width: 700
+    });
+    await act(() => hook.result.current.registerImagePreviewDescriptors(previewImages));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    expect(hook.result.current.imagePreview!.items[0]).not.toBe(widthCatalogItem);
+    const pixelRatioCatalogItem = hook.result.current.imagePreview!.items[0];
+
+    await act(() => hook.result.current.closeImagePreview());
+    await hook.rerender({
+      contentSource: 'nodeseek',
+      inlineSizedImageUrls: {},
+      mediaReferrer: { documentUrl: 'https://www.nodeseek.com/post-1-1' },
+      width: 700
+    });
+    await act(() => hook.result.current.registerImagePreviewDescriptors(previewImages));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    expect(hook.result.current.imagePreview!.items[0]).not.toBe(pixelRatioCatalogItem);
+    expect(hook.result.current.imagePreview?.referrer?.documentUrl).toBe('https://www.nodeseek.com/post-1-1');
+    const referrerCatalogItem = hook.result.current.imagePreview!.items[0];
+
+    await act(() => hook.result.current.closeImagePreview());
+    await hook.rerender({
+      contentSource: 'v2ex',
+      inlineSizedImageUrls: {},
+      mediaReferrer: { documentUrl: 'https://www.nodeseek.com/post-1-1' },
+      width: 700
+    });
+    await act(() => hook.result.current.registerImagePreviewDescriptors(previewImages));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    expect(hook.result.current.imagePreview!.items[0]).not.toBe(referrerCatalogItem);
+
+    const changedPreviewImages = [
+      ...previewImages,
+      ...compileForumContent({
+        html: '<img src="https://images.example/third.webp">',
+        role: 'opening',
+        source: 'v2ex'
+      }).previewImages
+    ];
+    await act(() => hook.result.current.closeImagePreview());
+    await act(() => hook.result.current.registerImagePreviewDescriptors(changedPreviewImages));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    expect(hook.result.current.imagePreview?.items).toHaveLength(3);
+    const changedCatalogItem = hook.result.current.imagePreview!.items[0];
+
+    await act(() => hook.result.current.closeImagePreview());
+    await act(() => hook.result.current.registerImagePreviewDescriptors([...changedPreviewImages]));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    expect(hook.result.current.imagePreview!.items[0]).toBe(changedCatalogItem);
+
+    await act(() => hook.result.current.closeImagePreview());
+    await hook.rerender({
+      contentSource: 'v2ex',
+      inlineSizedImageUrls: { [firstUrl]: true },
+      mediaReferrer: { documentUrl: 'https://www.nodeseek.com/post-1-1' },
+      width: 700
+    });
+    await act(() => hook.result.current.registerImagePreviewDescriptors(changedPreviewImages));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    expect(hook.result.current.imagePreview?.items).toHaveLength(2);
+    pixelRatioSpy.mockRestore();
+  });
+
+  it('[REG-TOPIC-096] rebuilds the ready catalog when the same source advances its media session', async () => {
+    const imageUrl = 'https://www.nodeseek.com/uploads/session-scoped.webp';
+    let setSessionEpoch: ((epoch: number) => void) | undefined;
+    const SessionEpochHarness = ({ children }: { children: ReactNode }) => {
+      const [sessionEpoch, updateSessionEpoch] = useState(0);
+      setSessionEpoch = updateSessionEpoch;
+      return (
+        <ForumSessionEpochProvider sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: sessionEpoch }}>
+          {children}
+        </ForumSessionEpochProvider>
+      );
+    };
+    const hook = await renderHook(
+      () =>
+        useImagePreviewController({
+          contentSource: 'nodeseek',
+          contentWidth: 360,
+          htmlParts: [`<img src="${imageUrl}">`],
+          inlineSizedImageUrls: {},
+          notify: jest.fn(),
+          topicImageDeriver: createTopicImageDeriver()
+        }),
+      { wrapper: SessionEpochHarness }
+    );
+
+    await act(() => hook.result.current.openImagePreview(imageUrl));
+    const firstSessionItem = hook.result.current.imagePreview!.items[0];
+    await act(() => hook.result.current.closeImagePreview());
+
+    await act(() => setSessionEpoch?.(1));
+    await act(() => hook.result.current.openImagePreview(imageUrl));
+
+    expect(hook.result.current.imagePreview!.items[0]).not.toBe(firstSessionItem);
   });
 });

@@ -1,10 +1,13 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { PixelRatio } from 'react-native';
+import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import { normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import {
-  createImagePreviewCatalog,
+  createImagePreviewCatalogFromDescriptors,
+  imagePreviewItemAt,
   imagePreviewListFromCatalog,
   type ImageDisplaySize,
+  type ImagePreviewCatalog,
   type ImagePreviewList
 } from '@/platform/media/imagePreviewCatalog';
 import type { TopicImageDeriver } from '../model/topicDerivedData';
@@ -12,6 +15,7 @@ import { errorMessage } from '@/platform/network/errors';
 import { saveImageUriToLibrary } from '@/platform/media/imageSave';
 import type { Fetcher } from '@/platform/network/request';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
+import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import type { Source } from '@/domain/forum/models';
 import type { MediaReferrerContext, MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
@@ -22,10 +26,13 @@ function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
 }
 
-type HtmlPartsSource = string[] | (() => string[]);
-
-function htmlPartsFromSource(source: HtmlPartsSource) {
-  return typeof source === 'function' ? source() : source;
+function sameDescriptorSequence(
+  previous: readonly ForumImagePreviewDescriptor[],
+  next: readonly ForumImagePreviewDescriptor[]
+) {
+  return (
+    previous === next || (previous.length === next.length && previous.every((item, index) => item === next[index]))
+  );
 }
 
 export function useImagePreviewController({
@@ -33,7 +40,6 @@ export function useImagePreviewController({
   contentSource,
   contentWidth,
   fetcher,
-  htmlParts,
   inlineSizedImageUrls,
   mediaReferrer,
   nodeSeekMediaUserAgent,
@@ -44,7 +50,6 @@ export function useImagePreviewController({
   contentSource: Source | null;
   contentWidth: number;
   fetcher?: Fetcher;
-  htmlParts: HtmlPartsSource;
   inlineSizedImageUrls: Record<string, true>;
   mediaReferrer?: MediaReferrerContext;
   nodeSeekMediaUserAgent?: string;
@@ -53,7 +58,7 @@ export function useImagePreviewController({
 }) {
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
   const catalogSessionContext = useForumMediaRequestContext(contentSource);
-  const catalogMediaContext = useMemo(
+  const catalogMediaContext = useMemo<ForumMediaRequestContext>(
     () => (mediaReferrer ? { ...catalogSessionContext, referrer: mediaReferrer } : catalogSessionContext),
     [catalogSessionContext, mediaReferrer]
   );
@@ -64,25 +69,74 @@ export function useImagePreviewController({
     [imagePreview?.referrer, previewSessionContext]
   );
   const saveBusyRef = useRef(false);
+  const catalogRef = useRef<ImagePreviewCatalog | null>(null);
+  const catalogRegistrationRef = useRef<{
+    descriptors: readonly ForumImagePreviewDescriptor[];
+    inlineSizedImageSignature: string;
+    mediaRevision: string;
+    pixelRatio: number;
+    topicImageDeriver: TopicImageDeriver;
+    width: number;
+  } | null>(null);
+  const contentSourceRef = useCommittedRef(contentSource);
+  const catalogMediaContextRef = useCommittedRef(catalogMediaContext);
   const inlineSizedImageUrlsRef = useCommittedRef(inlineSizedImageUrls);
   const topicImageDeriverRef = useCommittedRef(topicImageDeriver);
-  const resolveImagePreview = useMemo(() => {
-    let catalog: ReturnType<typeof createImagePreviewCatalog> | null = null;
-    return (tappedUrl: string, tappedDisplaySize?: ImageDisplaySize, tappedReferrerPolicy?: MediaReferrerPolicy) => {
-      if (!catalog) {
-        catalog = createImagePreviewCatalog(
-          htmlPartsFromSource(htmlParts).map((html) =>
-            topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls)
-          ),
-          contentWidth,
-          PixelRatio.get(),
-          catalogMediaContext
-        );
+  const inlineSizedImageSignature = useMemo(
+    () =>
+      Object.keys(inlineSizedImageUrls)
+        .filter((identity) => inlineSizedImageUrls[identity])
+        .sort()
+        .join('\n'),
+    [inlineSizedImageUrls]
+  );
+  const mediaRevision = [
+    catalogMediaContext.contentSource || '',
+    catalogMediaContext.sessionIdentity,
+    catalogMediaContext.referrer?.documentUrl || '',
+    catalogMediaContext.referrer?.documentPolicy || ''
+  ].join('\n');
+  const pixelRatio = PixelRatio.get();
+  const registerImagePreviewDescriptors = useCallback(
+    (descriptors: readonly ForumImagePreviewDescriptor[]) => {
+      const current = catalogRegistrationRef.current;
+      if (
+        current &&
+        sameDescriptorSequence(current.descriptors, descriptors) &&
+        current.inlineSizedImageSignature === inlineSizedImageSignature &&
+        current.mediaRevision === mediaRevision &&
+        current.pixelRatio === pixelRatio &&
+        current.topicImageDeriver === topicImageDeriver &&
+        current.width === contentWidth
+      ) {
+        return;
       }
-      return imagePreviewListFromCatalog(catalog, tappedUrl, contentSource, tappedDisplaySize, tappedReferrerPolicy);
-    };
-  }, [catalogMediaContext, contentSource, contentWidth, htmlParts, inlineSizedImageUrls, topicImageDeriver]);
-  const resolveImagePreviewRef = useCommittedRef(resolveImagePreview);
+      catalogRef.current = createImagePreviewCatalogFromDescriptors(
+        descriptors,
+        contentWidth,
+        pixelRatio,
+        catalogMediaContext,
+        (url, referrerPolicy) => topicImageDeriver.isInlineSizedImage(url, referrerPolicy, inlineSizedImageUrls)
+      );
+      catalogRegistrationRef.current = {
+        descriptors,
+        inlineSizedImageSignature,
+        mediaRevision,
+        pixelRatio,
+        topicImageDeriver,
+        width: contentWidth
+      };
+    },
+    [
+      catalogMediaContext,
+      contentWidth,
+      inlineSizedImageUrls,
+      inlineSizedImageSignature,
+      mediaRevision,
+      pixelRatio,
+      topicImageDeriver
+    ]
+  );
 
   const openImagePreview = useCallback(
     (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string, referrerPolicy?: MediaReferrerPolicy) => {
@@ -93,13 +147,26 @@ export function useImagePreviewController({
       ) {
         return;
       }
-      const nextPreview = resolveImagePreviewRef.current(url, displaySize, referrerPolicy);
+      const catalog = catalogRef.current || {
+        items: [],
+        itemIndexBySourceUrl: {},
+        mediaContext: catalogMediaContextRef.current
+      };
+      const nextPreview = imagePreviewListFromCatalog(
+        catalog,
+        url,
+        contentSourceRef.current,
+        displaySize,
+        referrerPolicy
+      );
       const posterUri = normalizeImagePreviewUrl(renderedPosterUri || '');
-      if (posterUri.startsWith('file://') && nextPreview.items[nextPreview.index]) {
-        nextPreview.items[nextPreview.index] = {
-          ...nextPreview.items[nextPreview.index],
+      const selectedItem = imagePreviewItemAt(nextPreview, nextPreview.index);
+      if (posterUri.startsWith('file://') && selectedItem) {
+        nextPreview.itemOverride = {
+          ...selectedItem,
           displayUri: posterUri
         };
+        nextPreview.itemOverrideIndex = nextPreview.index;
       }
       if (nextPreview.items.length > 0) {
         setImagePreview(nextPreview);
@@ -134,7 +201,7 @@ export function useImagePreviewController({
     }
     saveBusyRef.current = true;
     try {
-      const item = imagePreview.items[imagePreview.index] || imagePreview.items[0];
+      const item = imagePreviewItemAt(imagePreview, imagePreview.index) || imagePreview.items[0];
       const uri = item.originalUri;
       markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeSave?.();
@@ -164,6 +231,7 @@ export function useImagePreviewController({
     closeImagePreview,
     imagePreview,
     openImagePreview,
+    registerImagePreviewDescriptors,
     savePreviewImage,
     selectPreviewImage
   };

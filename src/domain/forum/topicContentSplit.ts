@@ -27,8 +27,10 @@ import {
   FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE,
   INLINE_FORUM_IMAGE_TAG,
   FORUM_STICKER_TAG,
+  forumImagePreviewDescriptorsFromHtmlFallback,
   normalizeForumContentMediaNodes,
-  type DynamicInlineImageDescriptor
+  type DynamicInlineImageDescriptor,
+  type ForumImagePreviewDescriptor
 } from './forumContentMedia';
 
 const MAX_MEDIA_PER_PLANNED_ROW = 4;
@@ -170,6 +172,7 @@ export type CompiledForumContentRow =
 
 export type CompiledForumContent = {
   materializationBudget: ForumContentMaterializationBudget;
+  previewImages: readonly ForumImagePreviewDescriptor[];
   rows: readonly CompiledForumContentRow[];
 };
 
@@ -2072,7 +2075,8 @@ function materializeCompiledRows(
 function compiledForumContentResult(
   rows: readonly CompiledForumContentRow[],
   materializationMetrics: NodeMetrics | null,
-  dynamicInlineImages: readonly DynamicInlineImageDescriptor[] = []
+  dynamicInlineImages: readonly DynamicInlineImageDescriptor[] = [],
+  previewImages: readonly ForumImagePreviewDescriptor[] = []
 ): CompiledForumContent {
   const materializedRows = materializeCompiledRows(rows, dynamicInlineImages);
   const renderedRowCount = materializedRows.filter((row) => row.type !== 'poll' && row.type !== 'quote').length;
@@ -2081,6 +2085,7 @@ function compiledForumContentResult(
       materializationMetrics,
       renderedRowCount > 0 ? 1 : 0
     ),
+    previewImages,
     rows: materializedRows
   };
 }
@@ -2105,6 +2110,7 @@ export function compileForumContent({
   const matchedPolls = new Set<TopicPoll>();
   const extractsOpeningQuotes = role === 'opening' && Boolean(topicId) && isDiscourseSource(source);
   let dynamicInlineImages: readonly DynamicInlineImageDescriptor[] = [];
+  let previewImages: readonly ForumImagePreviewDescriptor[] = [];
   try {
     clean = raw
       ? role === 'opening'
@@ -2114,7 +2120,9 @@ export function compileForumContent({
     const body = parseHtml(`<body>${clean}</body>`, { parsePreContent: true }).querySelector('body');
     if (body) {
       if (source === 'nodeseek') markNodeSeekReplyReferenceNodes(body, 'https://www.nodeseek.com/');
-      dynamicInlineImages = normalizeForumContentMediaNodes(body, { dynamicV2exImages: source === 'v2ex' });
+      const media = normalizeForumContentMediaNodes(body, { dynamicV2exImages: source === 'v2ex' });
+      dynamicInlineImages = media.dynamicInlineImages;
+      previewImages = media.previewImages;
       const materializedHtml = body.innerHTML;
       if (materializedHtml.trim() || !clean.trim()) clean = materializedHtml;
     }
@@ -2138,7 +2146,8 @@ export function compileForumContent({
     return compiledForumContentResult(
       rows,
       rows.length === 1 ? combinedSemanticRowMetrics(rows) : null,
-      dynamicInlineImages
+      dynamicInlineImages,
+      previewImages
     );
   } catch {
     const fallbackClean = raw
@@ -2149,7 +2158,9 @@ export function compileForumContent({
     const segments = compileFallbackSegments({ clean: fallbackClean, pollList, source });
     return compiledForumContentResult(
       semanticRowsFromFallbackSegments(segments),
-      fallbackClean ? null : combinedNodeMetrics([])
+      fallbackClean ? null : combinedNodeMetrics([]),
+      [],
+      forumImagePreviewDescriptorsFromHtmlFallback(raw)
     );
   }
 }
