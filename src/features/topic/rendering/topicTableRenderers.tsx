@@ -167,6 +167,7 @@ export function TopicHorizontalScroll({
   const pointerStartY = useSharedValue(0);
   const gestureStartOffset = useSharedValue(0);
   const scrollViewRef = useAnimatedRef<ComponentRef<typeof Animated.ScrollView>>();
+  const nativeContentGesture = useMemo(() => Gesture.Native(), []);
 
   useAnimatedReaction(
     () => offset.value,
@@ -182,6 +183,7 @@ export function TopicHorizontalScroll({
         .enabled(enabled)
         .manualActivation(true)
         .maxPointers(1)
+        .blocksExternalGesture(nativeContentGesture)
         .onTouchesDown((event, state) => {
           'worklet';
           horizontalPanClaimed.value = false;
@@ -229,7 +231,16 @@ export function TopicHorizontalScroll({
           'worklet';
           offset.value = withDecay({ clamp: [0, maximumOffset.value], velocity: -event.velocityX });
         }),
-    [enabled, gestureStartOffset, horizontalPanClaimed, maximumOffset, offset, pointerStartX, pointerStartY]
+    [
+      enabled,
+      gestureStartOffset,
+      horizontalPanClaimed,
+      maximumOffset,
+      nativeContentGesture,
+      offset,
+      pointerStartX,
+      pointerStartY
+    ]
   );
   const handleContentSizeChange = useCallback(
     (width: number) => {
@@ -272,7 +283,9 @@ export function TopicHorizontalScroll({
         onAccessibilityAction={handleAccessibilityAction}
         onContentSizeChange={handleContentSizeChange}
       >
-        {children}
+        <GestureDetector gesture={nativeContentGesture}>
+          <View collapsable={false}>{children}</View>
+        </GestureDetector>
       </Animated.ScrollView>
     </GestureDetector>
   );

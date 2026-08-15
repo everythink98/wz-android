@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { cancelRequestTimeoutForFallback, fetchWithTimeout, REQUEST_CANCELED_MESSAGE } from './request';
+import {
+  cancelRequestTimeoutForFallback,
+  fetchWithTimeout,
+  RequestCanceledError,
+  REQUEST_CANCELED_MESSAGE,
+  RequestTimeoutError
+} from './request';
 
 const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 
@@ -61,6 +67,7 @@ describe('Android request helpers', () => {
       await vi.advanceTimersByTimeAsync(1000);
 
       await assertion;
+      await expect(request).rejects.toBeInstanceOf(RequestTimeoutError);
     } finally {
       vi.useRealTimers();
     }
@@ -82,6 +89,7 @@ describe('Android request helpers', () => {
 
       expect(rejectedMessage).toBe(REQUEST_TIMEOUT_MESSAGE);
       await expect(request).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+      await expect(request).rejects.toBeInstanceOf(RequestTimeoutError);
     } finally {
       vi.useRealTimers();
     }
@@ -129,6 +137,7 @@ describe('Android request helpers', () => {
     controller.abort();
 
     await expect(request).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+    await expect(request).rejects.toBeInstanceOf(RequestCanceledError);
   });
 
   it('rejects with a cancel message even when the native fetch ignores abort', async () => {
@@ -139,6 +148,7 @@ describe('Android request helpers', () => {
     controller.abort();
 
     await expect(request).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+    await expect(request).rejects.toBeInstanceOf(RequestCanceledError);
   });
 
   it('cleans timers and abort listeners when the fetcher throws synchronously', async () => {

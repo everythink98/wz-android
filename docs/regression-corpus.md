@@ -5141,10 +5141,10 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `MORE-01`；共享 `FEED-01/02/04`、`SEARCH-01/02/04`、`TOPIC-01/03`、`USER-01`、`ACCOUNT-01/02` 网络 seam |
 | 用户症状 | 为恢复 NodeSeek 或 linux.do 读取而全局 `cancelAll` 或替换只有后续 client 才能看到的 pool，会连带取消其他站读取，或显示恢复成功但既有 client 仍复用故障连接。 |
-| 触发条件 | 旧 generation 同时有 trigger 来源和无关来源、读取和写入，然后以五站任一合法来源调用 Native bridge；NodeSeek/linux.do 是当前自动提交该 trigger 的 adapter，不构成底层专用 runtime。 |
+| 触发条件 | 旧 generation 同时有 trigger 来源和无关来源、读取和写入，然后以五站任一合法来源调用 Native bridge；NodeSeek/linux.do 以成功且可解析的 WebView fallback 提交 trigger，V2EX/妖火/小隐寺以 `REG-PROXY-012` 的当前页面内容超时提交 trigger，五站都不构成底层专用 runtime。 |
 | 根因 seam | `plugins/withNetworkProxyModule.js` 生成的 App 级 `ReadNetworkRuntimeGeneration`、受控来源/方法识别和旧代 drain；`src/platform/network/networkProxy.ts` 以 `expectedGeneration` 做跨来源 single-flight/CAS。 |
-| 必须保持的行为 | 原生层只接受 source catalog 的五个受控来源，不接受任意 Host；全 App Native fetch 边界把已有 intent 映射为内部 `source + content/health/retained`，Native 在出网前移除 header 并以 request tag 保留归属。轮换只取消旧 generation 中 trigger 来源的 `content GET/HEAD` 与对应非视频媒体；旧无 tag 同源读取只作兼容性 content fallback。同站后台 Account health、retained、带播放器 lease 的视频、无关来源和 `POST/PUT/PATCH/DELETE` 继续并自然 drain。CookieJar 与代理行为保持，新 generation 的 ProxySelector wrapper、Dispatcher、forum/media pool 和图片 client 身份必须全部变化。代理切换仍按已有安全边界全局取消并清所有 generation 的两个 pool。 |
-| 精确失败 oracle | fresh prebuild 生成的 `NetworkProxyRuntimeTest.kt` 固定五站 host/method/tag 边界，并以真实 OkHttp Dispatcher 同时运行 forum 与 media 两条 lane、排队 trigger GET、trigger POST 和无关 GET，验证只取消目标读取、稳定 CookieJar 及新 generation 网络对象身份；`src/platform/network/networkProxy.test.ts` 固定同一 expected generation 的跨来源 single-flight/CAS、player lease bridge 与失败后可重试；tooling 测试固定生成接线。 |
+| 必须保持的行为 | 原生层只接受 source catalog 的五个受控来源，不接受任意 Host；全 App Native fetch 边界把已有 intent 映射为内部 `source + content/health/retained`，Native 在出网前移除 header 并以 request tag 保留归属。轮换只取消旧 generation 中 trigger 来源显式标记的 `content GET/HEAD` 与对应非视频媒体；未标记请求不再按同域猜成内容请求。同站后台 Account health、retained、带播放器 lease 的视频、无关来源和 `POST/PUT/PATCH/DELETE` 继续并自然 drain。CookieJar 与代理行为保持，新 generation 的 ProxySelector wrapper、Dispatcher、forum/media pool 和图片 client 身份必须全部变化。代理切换仍按已有安全边界全局取消并清所有 generation 的两个 pool。 |
+| 精确失败 oracle | fresh prebuild 生成的 `NetworkProxyRuntimeTest.kt` 固定五站显式 `content GET/HEAD` 可取消，未标记请求、health、retained、视频、写请求和其他来源不可取消；并以真实 OkHttp Dispatcher 同时运行 forum 与 media 两条 lane，验证只取消目标读取、稳定 CookieJar 及新 generation 网络对象身份。`src/platform/network/networkProxy.test.ts` 固定同一 expected generation 的跨来源 single-flight/CAS、player lease bridge 与失败后可重试；tooling 测试固定生成接线。 |
 | 最低可靠自动测试层 | `UNIT_PASS + STATIC_PASS`：Kotlin JUnit 执行真实 Dispatcher/Call 取消，JS 测试固定 bridge 协调；fresh prebuild 与 Kotlin 编译证明生成接线。 |
 | Replay 或真实验收路径 | 在匹配 APK 上只读同时打开目标站与另一站读取，自然触发恢复后确认无关请求结算；不用真实写操作制造并发。 |
 | 负向验证方式 | 改回 `dispatcher.cancelAll()`、放开任意 Host/写方法、按来源各建 runtime、重建 CookieJar，或让无关/写请求被取消，Kotlin/JS 编号测试必须失败。 |
@@ -5164,6 +5164,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 匹配 revision/APK 保留数据覆盖安装；自然命中 fallback 时核对诊断中的旧 generation → `publish/cancel/drain/finish` → 紧随直连成功及图片显示。不能自然复现初始污染时该项记 `NOT_VERIFIED`，不得清数据、重置模拟器、切 IPv6 或破坏网络制造故障。 |
 | 负向验证方式 | 改回计数加一 + 原地 `cancel/evictAll`、漏换 media/image client、bridge 等待旧 call release、全局刷新 Query、remount 已显示媒体或自动重放写操作，编号测试必须失败。 |
 | 明确不覆盖范围 | 本修复不升级 Expo/React Native/OkHttp，不改变 DNS/地址族顺序，不强制 IPv4、HTTP/1.1、`Connection: close` 或禁用连接池；Native phase 诊断用于定位最初污染，不把尚无证据的 IPv6 解释写成根因。 |
+
+## `REG-PROXY-012` V2EX、妖火或小隐寺当前读取超时后持续卡住
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01/02/04`、`SEARCH-01/02/04`、`TOPIC-01/02/03`、`USER-01`；共享 `MORE-01/02`、`ACCOUNT-01/02` 与 `REG-PROXY-009/010` 的 App 级读取 runtime seam |
+| 用户症状 | V2EX、妖火或小隐寺的当前列表、搜索、帖子、回复或用户读取偶发一直转圈或报请求失败；完全退出 App 后重新进入却立即成功，说明故障可能留在进程内的 Native 读取 runtime，而不是该页面数据永久不可用。 |
+| 触发条件 | 用户当前仍停留在该页面，属于该页面的显式 foreground `content GET/HEAD` 自身等待满生产默认 15 秒并抛出可判型 `RequestTimeoutError`；请求 signal、来源开关、ReadPlan、账号 generation 均未失效。这里“当前页面”是仍持有该 Query 的 route，不是泛指 App 曾经在前台。页面切换或 App 进后台会取消该 Query，因此不得触发恢复。 |
+| 根因 seam | `fetchWithTimeout` 过去只抛同文案的普通 `Error`，`ReadGateway` 无法把“请求自身达到 deadline”与 HTTP、解析、登录、调用方取消区分；NodeSeek/linux.do 只有 parser-proof fallback 路径会调用 `recoverReadNetworkRuntime`，另外三站即使命中同一进程级故障也只把错误交回页面，App 重启才间接换掉 runtime。 |
+| 必须保持的行为 | `fetchWithTimeout` 保留既有中文文案，但分别抛 `RequestTimeoutError` 和 `RequestCanceledError`。每次逻辑读取在 transport 前捕获 `expectedGeneration`；V2EX/妖火/小隐寺第一次合格超时调用既有 `recoverReadNetworkRuntime(source, expectedGeneration, { trace })`，复用全局 CAS/single-flight，成功后把整个 Feed/Search/Topic/Replies/User 读取从头重放一次。旧代被同来源轮换取消的其他当前页面读取，仅在 snapshot 的 generation 已前进、`triggerSource` 相同且自身仍有效时重放一次，不再发起恢复。第二次失败直接结算错误，Loading 必须结束。NodeSeek/linux.do 仍只在 Direct 失败、WebView fallback 成功且 parser 接受内容时恢复，并直接使用 fallback 结果。`all` 的单来源 5 秒聚合预算、普通网络/HTTP/解析/登录错误、页面或后台取消、后台任务、health、retained、写 intent、上传、收藏、投票、通知和视频均不触发或自动重放。 |
+| 精确失败 oracle | `src/platform/network/request.test.ts` 固定 timeout/cancel 类型与中文文案；`src/sources/readGatewayContract.test.ts` 固定三站第一次内容超时均调用同一恢复函数、一次恢复后最多两次逻辑读取、多 HTTP Topic 从第一步整体重放、同来源旧代取消只重放一次、其他来源轮换不误重放，并固定 HTTP/解析/登录、caller abort、background/write intent、无 owned request、NodeSeek/linux.do 与 `all` 零 timeout recovery。诊断必须同时出现旧 generation 的 `reason=timeout` trigger 和新 generation 的 `state=retry/retryCount=1`。`src/platform/network/networkProxy.test.ts` 继续固定同 generation 只发布一次；fresh prebuild Kotlin JUnit 固定 `REG-PROXY-009` 的显式 ownership 与取消边界。`tests/ui/feed/feed-controller-xiaoyinsi.test.tsx` 固定内部恢复期间仍为 Loading，成功后显示列表；重放失败后退出 Loading 并显示错误。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + STATIC_PASS + APK_SANITY`：Vitest 固定错误类型、逻辑重放、generation 与负例，RNTL 固定可见 Loading/数据/错误结算，fresh prebuild、Kotlin JUnit 与 Release Kotlin 编译固定 Native ownership。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 在主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；仅在 V2EX、妖火或小隐寺自然出现 15 秒内容超时时核对诊断链 `timeout → rotate-read-runtime → retryCount=1 → data/error`，并确认切页与前后台切换不会启动新恢复。不得断网、清数据、删 Cookie、重置模拟器或破坏代理来制造故障；未自然命中则真实恢复记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 删除 typed error、移除 Gateway recovery、只重放失败的单个 HTTP call、允许第二轮再恢复、取消同来源 `triggerSource` 校验、把聚合 5 秒/普通错误/后台或写请求纳入触发，或恢复 Native 未标记同域 GET/HEAD fallback；对应编号测试必须失败。 |
+| 明确不覆盖范围 | 不新增 recovery manager、Native bridge、每站恢复实现、第三方重试库、配置或存储；不把普通第三方服务失败解释成 runtime 损坏，不自动重放任何 mutation，也不人为制造线上网络故障做验收。 |
 
 ## `REG-FEED-014` 一个慢来源拖住聚合首页与账号批量对账
 
@@ -5736,6 +5751,22 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复 `activeOffsetX/failOffsetY` 的隐式阈值、仅把 10dp 改小、用 React state 异步关闭选择、删除 `selectable`、开启内层原生 ScrollView、按 NodeSeek/Tab 特判或只运行 Jest；编号测试或真实设备正/负控制必须失败。 |
 | 明确不覆盖范围 | 不增加独立代码预览页、选择模式、语法编辑、缩放、依赖或原生模块。任意慢且在长按超时前始终未越过 4dp 的移动与静止长按物理上不可区分；若 UI-thread 激活后真实 TextView 仍取得选择，停止调阈值并另行决定是否采用独立代码页。 |
 
+## `REG-TOPIC-098` 横滑已接管但 Android selectable Text 未收到取消事件
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-A11Y-001` 与 `REG-TOPIC-084/090/093/094/097` 的 code/table 横向 owner seam |
+| 用户症状 | `REG-TOPIC-097` 后在 NodeSeek terminal code 空白处慢横拖，代码已经横向移动，仍会出现放大镜、选择 handles 或 ActionMode；说明 JS Pan 获胜并未终止 Android selectable Text 的原生长按链路。 |
+| 触发条件 | RNGH 2.28 的外层 manual Pan 激活时只改变手势 handler 状态；未纳入 RNGH 关系的后代 `ReactTextView` 仍持有同一 Android touch stream，因此随后进入原生选择。用户提供的 386 帧录屏中，内容先于选择状态移动，约 1.73 秒后出现 handles/菜单。 |
+| 根因 seam | `TopicHorizontalScroll` 必须同时拥有横纵方向仲裁与后代原生触摸取消边界。内容树挂在直接、不可折叠的 `Gesture.Native()` owner 下，横向 Pan 通过 `blocksExternalGesture()` 声明优先关系；Pan 激活取消 Native handler，由 RNGH 2.28 的 `NativeViewGestureHandler` 向 wrapper 子树派发 Android `ACTION_CANCEL`。 |
+| 成熟项目证据 | [RNGH #3866](https://github.com/software-mansion/react-native-gesture-handler/issues/3866) 记录相同 RN 0.81/RNGH 2.28 selectable Text 横滑问题；上游 [RNGH #4273](https://github.com/software-mansion/react-native-gesture-handler/pull/4273) 的根修复同样在 RNGH root 开始截获时向原触摸路径派发 `ACTION_CANCEL`。本项目保持稳定依赖，复用 RNGH 2.28 已有的 `Gesture.Native()` 与 external-gesture relation，不引入平台升级或新依赖。 |
+| 必须保持的行为 | 横向意图超过既有 `4dp` 且占优时只由共享 Pan 接管，Native owner 必须取消 selectable Text；阈值内未决或静止长按继续到达 Text，保留原生选择。纵向/相等、多指和无 overflow 继续失败让行；被动 ScrollView、clamp/decay、table segment offset、完整复制、查询高亮、ANSI、四个 Tab、无障碍动作与外层纵向滚动不变。不得同时叠加原生源码补丁。 |
+| 精确失败 oracle | `tests/ui/topic/topic-table-rendering.test.tsx` 的 `[REG-TOPIC-098]` 从真实 code renderer 固定共享 Pan block 同一内容树的 Native gesture，并继续证明 240 行 Text selectable、完整复制和既有方向仲裁。匹配 APK 直达 NodeSeek `post-812712-1` 后，UI hierarchy 在手势前必须无 focused App TextView；对代码空白处执行 `240px / 5s` 横拖，内容必须移动且结束后仍无 focused TextView、放大镜、handles 或 ActionMode。修复前该 oracle 两次稳定得到 `focused-after=1`。 |
+| 最低可靠证据层 | `UI_PASS + LIVE_PASS`：RNTL 只固定 Native/Pan 关系与未降级能力；只有匹配 APK 的真实 Android touch stream、录屏和 UI hierarchy 能证明 `ACTION_CANCEL` 到达 selectable Text。坐标 pan 不进入 tracked Replay。 |
+| Replay 或真实验收路径 | 保留数据覆盖安装匹配 APK 后，监督式 Agent Live 直达 `https://www.nodeseek.com/post-812712-1`，执行 `gesture pan 675 1305 -240 0 5000` 并逐帧/UI hierarchy 排除原生选择，同时确认横向内容位移；静止长按必须仍可选择，第一次 Back 只关闭选择，第二次返回。再回归 linux.do plain code、V2EX table、外层纵向滚动、快速/反向/斜向拖和四个 terminal Tab。 |
+| 负向验证方式 | 删除 Native owner、移除 `blocksExternalGesture`、改为 simultaneous、允许 wrapper 被折叠、仅继续缩短阈值、删除 selectable、恢复内层原生 ScrollView、叠加站点特判或只运行 Jest；编号测试或真实设备 focus/录屏 oracle 必须失败。 |
+| 明确不覆盖范围 | 不升级 Expo/RN/RNGH，不新增依赖、原生模块、独立代码页、选择模式或语法编辑。若 Native bridge 在匹配 APK 上仍失败，撤销该桥接后才可单独回补上游 #4273；两种方案不得叠加。 |
+
 ## `REG-TOPIC-095` 三槽图片预览翻页闪回错误图片且 pinch 误改 index
 
 | 字段 | 内容 |
@@ -5827,6 +5858,22 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | `LIVE-LOCAL-04` 记录原顺序，以 400ms 长按执行相邻与跨多槽拖动，目标到位后立即抬手；raw 高质量录屏逐个 presented frame 要求最后拖动态到最终静态顺序之间名字保持同一最终顺序，且无旧槽回弹、行重叠、空白、重复文字或整块闪动。正反向都通过后恢复原顺序并核对持久化。 |
 | 负向验证方式 | 改回 source-keyed preferences render、index-keyed 槽内换内容或恢复跨提交的 sibling `withTiming`，编号测试必须出现 host identity 或 timing 失败；匹配旧 APK 在提交边沿会重新出现缺行、整块闪动或相邻名字补换位。只延后清理、增加 `collapsable={false}`、删除 `elevation/zIndex` 或给 index 槽做位移补偿都不能满足 raw-frame oracle。 |
 | 明确不覆盖范围 | 不引入释放弹簧、LayoutAnimation、通用拖拽框架或额外状态机；不改变 350ms 长按、触觉、开关、TalkBack 和存储格式。 |
+
+## `REG-NAV-001` 底部导航只在图文附近响应点击
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NAV-01`；保持 `NOTIFY-03`、`REG-NOTIFY-052` 的 More 红点 |
+| 用户症状 | 首页、搜索、收藏、更多必须点得非常准；图标左右虽仍属于对应 tab 的视觉槽位，点击却没有跳转。 |
+| 触发条件 | 在底栏同一 tab 的图标或文字中心之外、相邻 tab 中点边界之内点击。 |
+| 根因 seam | `src/app/styles.ts` 把 App 级 `tabBarItemStyle.navItem.alignItems` 设为 `center`。React Navigation 的外层 item 虽然 `flex: 1`，其直接子 `PlatformPressable` 却在横向交叉轴收缩到图文固有宽度；`src/ui/navigation/NavBar.tsx` 的内部居中视觉样式不是根因。 |
+| 成熟项目证据 | [React Navigation BottomTabItem](https://github.com/react-navigation/react-navigation/blob/main/packages/bottom-tabs/src/views/BottomTabItem.tsx) 让默认 `PlatformPressable` 消费整个 flex item；[Mattermost tab bar](https://github.com/mattermost/mattermost-mobile/blob/main/app/screens/home/tab_bar/index.tsx) 与 [Bluesky BottomBar](https://github.com/bluesky-social/social-app/blob/main/src/view/shell/bottom-bar/BottomBar.tsx) 同样让每个非重叠 flex item 整格响应，不给图标叠加相邻 `hitSlop`。 |
+| 必须保持的行为 | App 级 tab item 在横轴 `stretch`，四个按钮铺满保留既有外层 padding 后的等宽内容 slot、首尾相接且互不重叠。底栏高度、安全区、padding、图标、文字、间距、颜色、选中态、触觉和 More 红点不变；点击区不进入页面内容或系统手势区。 |
+| 精确失败 oracle | 匹配的 1080×2400 Android APK 修复前 UI hierarchy 显示四个按钮仅约 `107×126px`，相邻中心距约 `257px`；首页选中时点击 `(300,2280)` 仍为首页，搜索中心可切到搜索；搜索选中时点击 `(570,2280)` 仍为搜索，收藏中心才切到收藏。`tests/integration/style-ownership.test.ts` 的 `[REG-NAV-001]` 修复前精确得到 `alignItems=center`，要求 `stretch` 时失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：Vitest 固定 App 样式模块对 React Navigation item 的布局契约；只有匹配 Android 的 UI hierarchy 与真实坐标点击能证明 native hit bounds 已扩展。 |
+| Replay 或真实验收路径 | `LIVE-NAV-01` 从当前 hierarchy 推导每格四边内侧和相邻边界两侧坐标，逐点确认只切到所属 tab，再恢复首页并对比底栏截图。现有 `.ad` 继续以稳定 `main-tab-*` selector 验证四个路由；固定坐标不得进入 tracked Replay。 |
+| 负向验证方式 | 把 App 级 `alignItems` 恢复为 `center`，编号 Vitest 必须失败，匹配 APK 的按钮 bounds 再次缩到图文附近且格内空白点击无效。仅添加 `hitSlop`、`pressRetentionOffset`、透明 overlay 或自定义 TabBar 不满足该 oracle。 |
+| 明确不覆盖范围 | 不改变视觉布局、底栏高度、外层 padding、安全区、路由状态、重复点击回顶、More badge 语义或页面底部内容；不向底栏外扩展点击区。 |
 
 ## 待确认观察
 

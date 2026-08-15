@@ -5,6 +5,9 @@ vi.mock('expo-secure-store', () => ({
   setItemAsync: vi.fn(async () => undefined),
   deleteItemAsync: vi.fn(async () => undefined)
 }));
+vi.mock('@/platform/network/networkProxy', () => ({
+  recoverReadNetworkRuntime: vi.fn()
+}));
 
 import { getFeed, getReplies, getTopic, getUserProfile, searchTopics } from './readGateway';
 import type { Topic } from '@/domain/forum/models';

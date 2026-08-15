@@ -23,13 +23,22 @@ type MockPanGesture = {
   handlers: Record<string, (...args: any[]) => void>;
 };
 
+type MockGestureDetectorBinding = {
+  child: React.ReactElement<Record<string, unknown>>;
+  gesture: MockPanGesture;
+};
+
 let mockPanGestures: MockPanGesture[] = [];
+let mockNativeGestures: MockPanGesture[] = [];
+let mockGestureDetectorBindings: MockGestureDetectorBinding[] = [];
 let mockAnimatedReactionRunners: (() => void)[] = [];
 const mockAnimatedScrollTo = jest.fn();
 const mockWithDecay = jest.fn(({ clamp }: { clamp: [number, number] }) => clamp[0]);
 
 beforeEach(() => {
   mockPanGestures = [];
+  mockNativeGestures = [];
+  mockGestureDetectorBindings = [];
   mockAnimatedReactionRunners = [];
   mockAnimatedScrollTo.mockClear();
   mockWithDecay.mockClear();
@@ -39,6 +48,11 @@ jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(() => Promise.resol
 
 jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
+  const native = () => {
+    const gesture: MockPanGesture = { config: {}, handlers: {} };
+    mockNativeGestures.push(gesture);
+    return gesture;
+  };
   const pan = () => {
     const gesture: MockPanGesture & Record<string, any> = { config: {}, handlers: {} };
     for (const name of ['activeOffsetX', 'enabled', 'failOffsetY', 'manualActivation', 'maxPointers']) {
@@ -53,18 +67,25 @@ jest.mock('react-native-gesture-handler', () => {
         return gesture;
       };
     }
+    gesture.blocksExternalGesture = (...gestures: MockPanGesture[]) => {
+      gesture.config.blocksExternalGesture = gestures;
+      return gesture;
+    };
     mockPanGestures.push(gesture);
     return gesture;
   };
   return {
-    Gesture: { Pan: pan },
+    Gesture: { Native: native, Pan: pan },
     GestureDetector: ({
       children,
       gesture
     }: {
       children: React.ReactElement<Record<string, unknown>>;
       gesture: MockPanGesture;
-    }) => ReactModule.cloneElement(children, { ...gesture.handlers, gestureConfig: gesture.config })
+    }) => {
+      mockGestureDetectorBindings.push({ child: children, gesture });
+      return ReactModule.cloneElement(children, { ...gesture.handlers, gestureConfig: gesture.config });
+    }
   };
 });
 
@@ -589,7 +610,7 @@ describe('native topic structured rendering', () => {
     ).toBe(true);
   });
 
-  it('[REG-TOPIC-086/088/093/094/097] renders 240 selectable code lines with the shared pan policy', async () => {
+  it('[REG-TOPIC-086/088/093/094/097/098] renders 240 selectable code lines with the shared pan policy', async () => {
     const lines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}\n`);
     const rows = compileForumContent({
       html: `<pre>${lines.join('')}</pre>`,
@@ -613,6 +634,12 @@ describe('native topic structured rendering', () => {
       manualActivation: true,
       maxPointers: 1
     });
+    expect(mockNativeGestures).toHaveLength(1);
+    expect(mockPanGestures[0]?.config.blocksExternalGesture).toEqual([mockNativeGestures[0]]);
+    const nativeBinding = mockGestureDetectorBindings.find(({ gesture }) => gesture === mockNativeGestures[0]);
+    expect(nativeBinding?.child.type).toBe(View);
+    expect(nativeBinding?.child.props.collapsable).toBe(false);
+    expect(nativeBinding?.child.props.children).toMatchObject({ props: { testID: 'topic-code-frame' } });
     await fireEvent(codeScroll, 'contentSizeChange', 960, 21);
     const stateManager = { activate: jest.fn(), fail: jest.fn() };
     codeScroll.props.onTouchesDown?.(

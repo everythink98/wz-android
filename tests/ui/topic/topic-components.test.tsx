@@ -101,6 +101,7 @@ jest.mock('react-native-gesture-handler', () => {
     const gesture: Record<string, any> = {};
     for (const name of [
       'activeOffsetX',
+      'blocksExternalGesture',
       'enabled',
       'failOffsetY',
       'manualActivation',
@@ -116,7 +117,7 @@ jest.mock('react-native-gesture-handler', () => {
     return gesture;
   };
   return {
-    Gesture: { Pan: chain },
+    Gesture: { Native: chain, Pan: chain },
     GestureDetector: ({ children }: { children: React.ReactNode }) => children,
     ScrollView: require('react-native').ScrollView
   };

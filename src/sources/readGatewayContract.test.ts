@@ -15,12 +15,13 @@ import {
   markDiagnosticStage,
   setDiagnosticWriter
 } from '@/platform/diagnostics/diagnostics';
-import type { Fetcher } from '@/platform/network/request';
+import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
+import { RequestCanceledError, RequestTimeoutError, type Fetcher } from '@/platform/network/request';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import { annotateSourceDiagnosticSummary } from './diagnostics';
 import { acceptForumReadResponse, registerForumReadResponseEvidence } from './forumSourceReadAttempt';
-import { getYaohuoTopicDirect } from '@/sources/yaohuo/reader';
+import { getYaohuoFeedDirect, getYaohuoTopicDirect } from '@/sources/yaohuo/reader';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
@@ -76,6 +77,11 @@ const xiaoyinsiMocks = vi.hoisted(() => ({
   searchXiaoyinsiTags: vi.fn(async (): Promise<DiscourseTagOption[]> => []),
   searchXiaoyinsiUsers: vi.fn(async (): Promise<DiscourseUserOption[]> => [])
 }));
+const readNetworkRuntimeMocks = vi.hoisted(() => ({
+  generation: 0,
+  triggerSource: null as Source | null,
+  recoverReadNetworkRuntime: vi.fn()
+}));
 
 vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(),
@@ -111,6 +117,17 @@ vi.mock('@/sources/yaohuo/reader', () => ({
   getYaohuoRepliesDirect: vi.fn(),
   getYaohuoTopicDirect: vi.fn(),
   searchYaohuoDirect: vi.fn()
+}));
+vi.mock('@/platform/network/networkProxy', () => ({
+  recoverReadNetworkRuntime: readNetworkRuntimeMocks.recoverReadNetworkRuntime
+}));
+vi.mock('@/platform/network/readNetworkRuntime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/platform/network/readNetworkRuntime')>()),
+  currentReadNetworkRuntimeGeneration: () => readNetworkRuntimeMocks.generation,
+  getReadNetworkRuntimeSnapshot: () => ({
+    generation: readNetworkRuntimeMocks.generation,
+    triggerSource: readNetworkRuntimeMocks.triggerSource
+  })
 }));
 
 import {
@@ -164,6 +181,20 @@ function createReadGateway(dependencies: ReadGatewayTestDependencies) {
 describe('source gateway read contract', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    readNetworkRuntimeMocks.generation = 7;
+    readNetworkRuntimeMocks.triggerSource = null;
+    readNetworkRuntimeMocks.recoverReadNetworkRuntime.mockImplementation(async (source, expectedGeneration) => {
+      readNetworkRuntimeMocks.generation = Math.max(readNetworkRuntimeMocks.generation, expectedGeneration + 1);
+      readNetworkRuntimeMocks.triggerSource = source;
+      return {
+        ok: true,
+        rotated: true,
+        previousGeneration: expectedGeneration,
+        generation: readNetworkRuntimeMocks.generation,
+        canceledQueued: 0,
+        canceledRunning: 1
+      };
+    });
   });
 
   afterEach(() => {
@@ -1100,6 +1131,315 @@ describe('source gateway read contract', () => {
     expect(lines.map((line) => JSON.parse(line).phase)).toEqual(['intent', 'credential', 'transport', 'parse']);
     finishDiagnosticTrace(trace, 'success');
     expect(lines.map((line) => JSON.parse(line).phase).filter((phase) => phase === 'finish')).toHaveLength(1);
+  });
+
+  it('[REG-PROXY-012] rebuilds the shared read runtime and settles a V2EX feed after one direct timeout', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockRejectedValueOnce(new RequestTimeoutError())
+      .mockResolvedValueOnce(new Response('{}'));
+    const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
+      await scopedFetcher('https://www.v2ex.com/?tab=all');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    };
+    forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+    await expect(gateway.getFeed({ source: 'v2ex' })).resolves.toMatchObject({ items: [], errors: {} });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledWith(
+      'v2ex',
+      7,
+      expect.objectContaining({ trace: expect.any(Object) })
+    );
+    expect(browserFetchIntentFromInit(fetcher.mock.calls[0]?.[1])).toEqual({ owner: 'feed', priority: 'foreground' });
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'rotate-read-runtime',
+          phase: 'intent',
+          source: 'v2ex',
+          generation: 7,
+          reason: 'timeout'
+        }),
+        expect.objectContaining({
+          phase: 'transport',
+          source: 'v2ex',
+          state: 'retry',
+          generation: 8,
+          reason: 'timeout',
+          retryCount: 1
+        })
+      ])
+    );
+  });
+
+  it.each([
+    ['typed cancellation', () => new RequestCanceledError()],
+    ['native network cancellation', () => new TypeError('Network request failed')]
+  ])(
+    '[REG-PROXY-012] replays a current foreground read rejected by a completed runtime rotation: %s',
+    async (_kind, cancellation) => {
+      const fetcher = vi
+        .fn<Fetcher>()
+        .mockImplementationOnce(async () => {
+          readNetworkRuntimeMocks.generation = 8;
+          readNetworkRuntimeMocks.triggerSource = 'v2ex';
+          throw cancellation();
+        })
+        .mockResolvedValueOnce(new Response('{}'));
+      const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
+        await scopedFetcher('https://www.v2ex.com/?tab=all');
+        return { items: [], errors: {}, hasMore: false, nextPage: null };
+      };
+      forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
+      const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+      await expect(gateway.getFeed({ source: 'v2ex' })).resolves.toMatchObject({ items: [], errors: {} });
+
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+    }
+  );
+
+  it('[REG-PROXY-012] does not replay a cancellation caused by another source rotation', async () => {
+    const fetcher = vi.fn<Fetcher>().mockImplementationOnce(async () => {
+      readNetworkRuntimeMocks.generation = 8;
+      readNetworkRuntimeMocks.triggerSource = 'linuxdo';
+      throw new RequestCanceledError();
+    });
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      await scopedFetcher('https://www.v2ex.com/?tab=all');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+    await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toBeInstanceOf(RequestCanceledError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PROXY-012] reuses the shared runtime recovery for one Yaohuo feed timeout', async () => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockRejectedValueOnce(new RequestTimeoutError())
+      .mockResolvedValueOnce(new Response('{}'));
+    const readFeed = async (options: Parameters<typeof getYaohuoFeedDirect>[0]) => {
+      if (!options.yaohuoFetcher) throw new Error('missing Yaohuo fetcher');
+      await options.yaohuoFetcher('https://www.yaohuo.me/bbs/book_list.aspx');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    };
+    vi.mocked(getYaohuoFeedDirect).mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
+    const gateway = createReadGateway({
+      fetcher,
+      isSourceAuthenticated: (source) => source === 'yaohuo',
+      nodeSeekUserAgent: () => ''
+    });
+
+    await expect(gateway.getFeed({ source: 'yaohuo' })).resolves.toMatchObject({ items: [], errors: {} });
+
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledWith(
+      'yaohuo',
+      7,
+      expect.objectContaining({ trace: expect.any(Object) })
+    );
+    expect(fetcher.mock.calls.every(([, init]) => browserFetchIntentFromInit(init)?.owner === 'feed')).toBe(true);
+  });
+
+  it('[REG-PROXY-012] reuses the shared runtime recovery for one Xiaoyinsi feed timeout', async () => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockRejectedValueOnce(new RequestTimeoutError())
+      .mockResolvedValueOnce(new Response('{}'));
+    const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
+      await scopedFetcher('https://forum.xiaoyinsi.com/latest.json');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    };
+    forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
+    const gateway = createReadGateway({
+      fetcher,
+      isSourceAuthenticated: (source) => source === 'xiaoyinsi',
+      loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
+      nodeSeekUserAgent: () => ''
+    });
+
+    await expect(gateway.getFeed({ source: 'xiaoyinsi' })).resolves.toMatchObject({ items: [], errors: {} });
+
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledWith(
+      'xiaoyinsi',
+      7,
+      expect.objectContaining({ trace: expect.any(Object) })
+    );
+    expect(fetcher.mock.calls.every(([, init]) => browserFetchIntentFromInit(init)?.owner === 'feed')).toBe(true);
+  });
+
+  it('[REG-PROXY-012] stops after one recovery when the replay also times out', async () => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockRejectedValueOnce(new RequestTimeoutError())
+      .mockRejectedValueOnce(new RequestTimeoutError());
+    const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
+      await scopedFetcher('https://www.v2ex.com/?tab=all');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    };
+    forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+    await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toBeInstanceOf(RequestTimeoutError);
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-PROXY-012] restarts the whole logical Topic read instead of retrying only its timed-out HTTP call', async () => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(new Response('{}'))
+      .mockRejectedValueOnce(new RequestTimeoutError())
+      .mockResolvedValueOnce(new Response('{}'))
+      .mockResolvedValueOnce(new Response('{}'));
+    let logicalAttempts = 0;
+    const readTopic = async ({ fetcher: scopedFetcher, id, source }: Parameters<typeof getTopic>[0]) => {
+      if (!scopedFetcher) throw new Error('missing Topic fetcher');
+      logicalAttempts += 1;
+      await scopedFetcher(`https://www.v2ex.com/api/topics/show.json?id=${id}`);
+      await scopedFetcher(`https://www.v2ex.com/t/${id}`);
+      return {
+        source,
+        id,
+        title: '',
+        author: '',
+        url: '',
+        createdAt: '',
+        replyCount: 0,
+        contentHtml: '',
+        replies: []
+      };
+    };
+    forumMocks.getTopic.mockImplementationOnce(readTopic).mockImplementationOnce(readTopic);
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+    await expect(gateway.getTopic({ source: 'v2ex', id: '123' })).resolves.toMatchObject({ id: '123' });
+
+    expect(logicalAttempts).toBe(2);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      'https://www.v2ex.com/api/topics/show.json?id=123',
+      'https://www.v2ex.com/t/123',
+      'https://www.v2ex.com/api/topics/show.json?id=123',
+      'https://www.v2ex.com/t/123'
+    ]);
+    expect(fetcher.mock.calls.every(([, init]) => browserFetchIntentFromInit(init)?.owner === 'topic')).toBe(true);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-PROXY-012] ignores a timeout that was not produced by an owned content request', async () => {
+    forumMocks.getFeed.mockRejectedValueOnce(new RequestTimeoutError());
+    const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
+
+    await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toBeInstanceOf(RequestTimeoutError);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PROXY-012] preserves the original timeout when runtime recovery fails before publication', async () => {
+    const timeout = new RequestTimeoutError();
+    const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(timeout);
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      await scopedFetcher('https://www.v2ex.com/?tab=all');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    readNetworkRuntimeMocks.recoverReadNetworkRuntime.mockRejectedValueOnce(new Error('recovery failed'));
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+    await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toBe(timeout);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['HTTP 500', '解析失败', '登录已失效'])(
+    '[REG-PROXY-012] does not rebuild for an ordinary %s failure',
+    async (message) => {
+      const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(new Error(message));
+      forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+        await scopedFetcher('https://www.v2ex.com/?tab=all');
+        return { items: [], errors: {}, hasMore: false, nextPage: null };
+      });
+      const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+      await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toThrow(message);
+      expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+    }
+  );
+
+  it('[REG-PROXY-012] does not rebuild after the current page aborts its timed-out read', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(new RequestTimeoutError());
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      await scopedFetcher('https://www.v2ex.com/?tab=all');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+    const read = gateway.getFeed({ source: 'v2ex', signal: controller.signal });
+    controller.abort();
+
+    await expect(read).rejects.toBeInstanceOf(RequestTimeoutError);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PROXY-012] does not rebuild or replay a write-owned GET routed through the read boundary', async () => {
+    const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(new RequestTimeoutError());
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      await scopedFetcher(
+        'https://www.v2ex.com/write-like-get',
+        withBrowserFetchIntent({}, { owner: 'write', priority: 'write' })
+      );
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+    await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toBeInstanceOf(RequestTimeoutError);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-PROXY-012] does not rebuild or replay a background-owned GET routed through the read boundary', async () => {
+    const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(new RequestTimeoutError());
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      await scopedFetcher(
+        'https://www.v2ex.com/background-check',
+        withBrowserFetchIntent({}, { owner: 'account', priority: 'background' })
+      );
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+
+    await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toBeInstanceOf(RequestTimeoutError);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['nodeseek', 'linuxdo'] as const)(
+    '[REG-PROXY-012] leaves %s recovery behind its parsed WebView evidence',
+    async (source) => {
+      forumMocks.getFeed.mockRejectedValueOnce(new RequestTimeoutError());
+      const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
+
+      await expect(gateway.getFeed({ source })).rejects.toBeInstanceOf(RequestTimeoutError);
+      expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+    }
+  );
+
+  it('[REG-PROXY-012] does not treat the all-source aggregate timeout as runtime damage', async () => {
+    forumMocks.getFeed.mockRejectedValueOnce(new RequestTimeoutError());
+    const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
+
+    await expect(gateway.getFeed({ source: 'all' })).rejects.toBeInstanceOf(RequestTimeoutError);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
   });
 
   it('classifies an unexpected HTTP-success parse-empty adapter result as a failure', async () => {

@@ -897,22 +897,16 @@ internal fun requireReadNetworkGeneration(value: Double): Long {
 }
 
 internal fun isForumReadChannelRequest(source: String, request: okhttp3.Request): Boolean {
-  val suffix = forumReadChannelHostSuffix(source)
-  val host = request.url.host.lowercase(Locale.US)
   val readTag = request.tag(ForumReadRequestTag::class.java)
   val readSource = request.header(FORUM_READ_SOURCE_HEADER) ?: readTag?.source
   val readCancelClass = request.header(FORUM_READ_CANCEL_CLASS_HEADER) ?: readTag?.cancelClass
-  if (readSource == source && (readCancelClass == "health" || readCancelClass == "retained")) return false
-  val taggedSource = readSource
-    ?: request.header(FORUM_MEDIA_SOURCE_HEADER)
+  val mediaSource = request.header(FORUM_MEDIA_SOURCE_HEADER)
     ?: request.tag(ForumMediaRequestTag::class.java)?.source
-  val sourceMatches = if (taggedSource != null) {
-    taggedSource == source
-  } else {
-    host == suffix || host.endsWith(".$suffix")
-  }
+  val explicitlyOwned =
+    (readSource == source && readCancelClass == "content") ||
+      (readSource == null && mediaSource == source)
   return (request.method == "GET" || request.method == "HEAD") &&
-    sourceMatches
+    explicitlyOwned
 }
 
 internal fun isRetainedVideoReadRequest(request: okhttp3.Request): Boolean =
@@ -4378,7 +4372,7 @@ class NetworkProxyRuntimeTest {
   }
 
   @Test
-  fun regProxy009MatchesOnlyControlledReadHostsAndMethods() {
+  fun regProxy012CancelsOnlyExplicitlyOwnedReadRequests() {
     listOf(
       "nodeseek" to "https://www.nodeseek.com/read",
       "linuxdo" to "https://api.linux.do/read",
@@ -4386,22 +4380,50 @@ class NetworkProxyRuntimeTest {
       "v2ex" to "https://www.v2ex.com/read",
       "xiaoyinsi" to "https://forum.xiaoyinsi.com/read"
     ).forEach { (source, url) ->
-      assertTrue(isForumReadChannelRequest(source, Request.Builder().url(url).head().build()))
+      assertFalse(isForumReadChannelRequest(source, Request.Builder().url(url).head().build()))
+      assertTrue(
+        isForumReadChannelRequest(
+          source,
+          Request.Builder()
+            .url(url)
+            .head()
+            .header(FORUM_READ_SOURCE_HEADER, source)
+            .header(FORUM_READ_CANCEL_CLASS_HEADER, "content")
+            .build()
+        )
+      )
     }
     assertFalse(isForumReadChannelRequest("nodeseek", Request.Builder().url("https://evilnodeseek.com/read").build()))
     assertFalse(
       isForumReadChannelRequest(
         "nodeseek",
-        Request.Builder().url("https://www.nodeseek.com/write").post(ByteArray(0).toRequestBody()).build()
+        Request.Builder()
+          .url("https://www.nodeseek.com/write")
+          .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, "content")
+          .post(ByteArray(0).toRequestBody())
+          .build()
       )
     )
+    listOf("health", "retained").forEach { cancelClass ->
+      assertFalse(
+        isForumReadChannelRequest(
+          "nodeseek",
+          Request.Builder()
+            .url("https://www.nodeseek.com/api/account/status")
+            .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+            .header(FORUM_READ_CANCEL_CLASS_HEADER, cancelClass)
+            .build()
+        )
+      )
+    }
     assertFalse(
       isForumReadChannelRequest(
         "nodeseek",
         Request.Builder()
-          .url("https://www.nodeseek.com/api/account/status")
-          .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
-          .header(FORUM_READ_CANCEL_CLASS_HEADER, "health")
+          .url("https://linux.do/latest.json")
+          .header(FORUM_READ_SOURCE_HEADER, "linuxdo")
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, "content")
           .build()
       )
     )

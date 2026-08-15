@@ -14,6 +14,22 @@ const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 export const REQUEST_CANCELED_MESSAGE = '请求已取消';
 const REQUEST_TIMEOUT_CANCEL = Symbol.for('wz.requestTimeoutCancel');
 
+export class RequestTimeoutError extends Error {
+  readonly name = 'RequestTimeoutError';
+
+  constructor() {
+    super(REQUEST_TIMEOUT_MESSAGE);
+  }
+}
+
+export class RequestCanceledError extends Error {
+  readonly name = 'RequestCanceledError';
+
+  constructor() {
+    super(REQUEST_CANCELED_MESSAGE);
+  }
+}
+
 type RequestInitWithTimeoutCancel = RequestInit & {
   [REQUEST_TIMEOUT_CANCEL]?: () => void;
 };
@@ -103,7 +119,7 @@ export async function fetchWithTimeout(
   }
 
   const abortPromise = new Promise<never>((_resolve, reject) => {
-    const rejectAborted = () => reject(new Error(timedOut ? REQUEST_TIMEOUT_MESSAGE : REQUEST_CANCELED_MESSAGE));
+    const rejectAborted = () => reject(timedOut ? new RequestTimeoutError() : new RequestCanceledError());
     if (controller.signal.aborted) {
       rejectAborted();
       return;
@@ -116,7 +132,7 @@ export async function fetchWithTimeout(
           cancelTimeout = scheduleRequestTimeout(() => {
             timedOut = true;
             controller.abort();
-            reject(new Error(REQUEST_TIMEOUT_MESSAGE));
+            reject(new RequestTimeoutError());
           }, timeoutMs);
         })
       : undefined;
@@ -136,7 +152,7 @@ export async function fetchWithTimeout(
       })
       .catch((error) => {
         if (isAbortLikeError(error) || controller.signal.aborted) {
-          throw new Error(timedOut ? REQUEST_TIMEOUT_MESSAGE : REQUEST_CANCELED_MESSAGE);
+          throw timedOut ? new RequestTimeoutError() : new RequestCanceledError();
         }
         throw error;
       });

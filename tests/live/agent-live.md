@@ -19,7 +19,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 
 - 每个场景从可确认的根状态开始，先确认入口和前置状态；只有冷启动或重启本身是 oracle 时才 relaunch。可复用同一请求证据，但不得依赖未确认的页面、选项或草稿。
 - 不卸载 App，不清 App 数据、Cookie、登录态，不退出账号，不重置模拟器；MCP、ADB 和共享模拟器保持运行。
-- 优先使用可见文案、accessibility role/label 和稳定 `testID`；禁止坐标点击和固定长等待替代状态断言。
+- 优先使用可见文案、accessibility role/label 和稳定 `testID`；除明确要求验证物理触控几何的 `REG-NAV-001` 等受监督场景外，禁止坐标点击和固定长等待替代状态断言。物理几何坐标必须从当前匹配设备的 UI hierarchy 推导、只点击 App 本机只读控件并在场景结束后恢复根状态，不得写入 tracked Replay。
 - App 内原站 WebView 出现普通 Cloudflare checkbox 时按下文自动恢复协议处理，不暂停整轮，也不在运行中等待用户。登录表单、账号授权、一次性验证码、选图/文字题或其他交互式 CAPTCHA 仍是人工边界；只阻塞对应来源，随后继续其他独立场景。
 - 动态目标按场景规定的关键词和控件查找；没有合格目标记 `NOT_VERIFIED`，不能拿搜索结果页、普通主题或一次空结果冒充成功。
 - 用户给出 NodeSeek、linux.do、V2EX、妖火或小隐寺主题 URL 时，该 URL 是验收目标：先按来源和主题 id 直达 App 内详情，不得用搜索路径、相似主题或桌面浏览器替代。搜索只用于没有给定目标，或在给定目标已完成只读检查后寻找额外未投只读样本。
@@ -86,6 +86,16 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 | NodeSeek × 1381 图预览首次/重开延迟 | `LIVE-READ-08` |
 | NodeSeek、linux.do、妖火、小隐寺 × 账号状态 | `LIVE-ACCOUNT-01` |
 | 小隐寺 × 等级与活跃数据 | `LIVE-ACCOUNT-04` |
+
+## 本机导航
+
+### LIVE-NAV-01 底部导航整格点击
+
+- 能力：`NAV-01`；保持 `NOTIFY-03`、`REG-NOTIFY-052` 的 More 红点和无障碍文案。
+- 前置：使用身份匹配的当前 APK、竖屏主 AVD 和无弹层的首页；只读记录 `firstInstallTime`，从 UI hierarchy 读取底栏与 `main-tab-feed/search/library/more` 的实际 bounds，并保存首页选中态的底栏截图。
+- 点击 oracle：四个按钮在保留既有外层 padding 的底栏内容区内首尾相接、互不重叠且高度保持现有 `48dp`。每个按钮分别从另一个 tab 开始，在其上、下、左、右边缘内侧 2px 点击；相邻边界两侧各点一次，均必须只选中坐标所属 tab，并显示对应首页、搜索、收藏或更多页面。坐标每次从当前 hierarchy 推导，不复用其他设备或分辨率的固定值。
+- 视觉 oracle：恢复首页后对比修复前后底栏截图，底栏高度、外层留白、安全区、四个图标与文字的位置/尺寸/颜色、选中态及 More 红点保持一致；只允许按钮 accessibility bounds 扩展。
+- 结束：恢复首页，确认 `firstInstallTime` 未变化且无 crash、ANR、RedBox 或意外 PID 重启；本场景不发搜索、不打开动态内容、不执行任何本机或远端写操作。坐标步骤不得录成 `.ad`。
 
 ## 动态读取与返回
 

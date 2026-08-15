@@ -234,4 +234,12 @@ describe('Android reader theme safety rails', () => {
     expect('height' in styles.nav).toBe(false);
     expect('paddingBottom' in styles.nav).toBe(false);
   });
+
+  it('[REG-NAV-001] lets each bottom tab button fill its existing slot without changing bar geometry', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.navItem).toMatchObject({ alignItems: 'stretch', flex: 1, minHeight: 48 });
+    expect(styles.nav).toMatchObject({ paddingHorizontal: 10, paddingTop: 4 });
+  });
 });

@@ -108,6 +108,104 @@ describe('小隐寺 Feed controller', () => {
     });
   });
 
+  it('[REG-PROXY-012] keeps the current Feed loading until the runtime recovery replay succeeds', async () => {
+    const topic: Topic = {
+      source: 'v2ex',
+      id: 'runtime-recovered',
+      title: '重建后的列表',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/runtime-recovered',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      replyCount: 0
+    };
+    const recoveredFeed = Promise.withResolvers<{
+      items: Topic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const getFeed = jest.fn(async ({ source }: { source: string }) =>
+      source === 'v2ex' ? recoveredFeed.promise : { items: [], errors: {}, hasMore: false as const, nextPage: null }
+    );
+    const notify = jest.fn();
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        linuxDoVerificationActive: false,
+        notify,
+        readerData: readerDataWithEnabledSources(['v2ex']),
+        readerDataLoaded: true,
+        active: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway: {
+          getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+          getFeed,
+          hasYaohuoCredential: jest.fn(async () => false)
+        } as unknown as ReadGateway
+      })
+    );
+
+    await act(async () => hook.result.current.changeFeedSource('v2ex'));
+    await waitFor(() =>
+      expect(getFeed).toHaveBeenCalledWith(expect.objectContaining({ source: 'v2ex' }), expect.any(Object))
+    );
+    expect(hook.result.current.feedBusy).toBe(true);
+    expect(hook.result.current.feedOutcomeKind).toBeUndefined();
+
+    await act(async () => {
+      recoveredFeed.resolve({ items: [topic], errors: {}, hasMore: false, nextPage: null });
+      await recoveredFeed.promise;
+    });
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([topic]));
+    expect(hook.result.current.feedBusy).toBe(false);
+    expect(hook.result.current.feedOutcomeKind).toBe('data');
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PROXY-012] leaves Loading and reports the error when the runtime recovery replay also fails', async () => {
+    const failedFeed = Promise.withResolvers<{
+      items: Topic[];
+      errors: Record<string, never>;
+      hasMore: false;
+      nextPage: null;
+    }>();
+    const getFeed = jest.fn(async ({ source }: { source: string }) =>
+      source === 'v2ex' ? failedFeed.promise : { items: [], errors: {}, hasMore: false as const, nextPage: null }
+    );
+    const notify = jest.fn();
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        linuxDoVerificationActive: false,
+        notify,
+        readerData: readerDataWithEnabledSources(['v2ex']),
+        readerDataLoaded: true,
+        active: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway: {
+          getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+          getFeed,
+          hasYaohuoCredential: jest.fn(async () => false)
+        } as unknown as ReadGateway
+      })
+    );
+
+    await act(async () => hook.result.current.changeFeedSource('v2ex'));
+    await waitFor(() => expect(hook.result.current.feedBusy).toBe(true));
+
+    await act(async () => {
+      failedFeed.reject(new Error('请求超时，请稍后重试'));
+      await expect(failedFeed.promise).rejects.toThrow('请求超时，请稍后重试');
+    });
+
+    await waitFor(() => expect(hook.result.current.feedBusy).toBe(false));
+    expect(hook.result.current.feedOutcomeKind).toBe('error');
+    expect(notify).toHaveBeenCalledWith('请求超时，请稍后重试');
+  });
+
   it('[REG-SOURCE-011] does not pause public Feed or Categories while identity reconciliation is pending', async () => {
     const topic: Topic = {
       source: 'xiaoyinsi',

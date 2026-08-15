@@ -32,7 +32,19 @@ import {
   type DiscourseTagOptionReadOptions,
   type DiscourseUserOptionReadOptions
 } from './discourseRead';
-import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import {
+  RequestCanceledError,
+  REQUEST_CANCELED_MESSAGE,
+  RequestTimeoutError,
+  type Fetcher
+} from '@/platform/network/request';
+import {
+  browserFetchIntentFromInit,
+  withBrowserFetchIntent,
+  type BrowserFetchIntent
+} from '@/platform/network/browserFetchIntent';
+import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
+import { getReadNetworkRuntimeSnapshot } from '@/platform/network/readNetworkRuntime';
 import { sourceErrorFromUnknown } from './sourceErrors';
 import {
   beginDiagnosticTrace,
@@ -221,6 +233,51 @@ function normalizeEnabledSources(sources?: readonly Source[]) {
 
 function sameEnabledSources(left: readonly Source[], right: readonly Source[]) {
   return left.length === right.length && left.every((source, index) => source === right[index]);
+}
+
+const browserFetchOwnerByReadOperation: Record<ForumReadOperation, BrowserFetchIntent['owner']> = {
+  categories: 'feed',
+  emoji: 'topic',
+  feed: 'feed',
+  level: 'user',
+  replies: 'topic',
+  reply: 'topic',
+  search: 'search',
+  'search-tags': 'search',
+  'search-users': 'search',
+  'semantic-search': 'search',
+  topic: 'topic',
+  'user-profile': 'user',
+  'user-resolution': 'user'
+};
+
+type ReadAttempt = {
+  contentRequestStarted: boolean;
+  replayable: boolean;
+};
+
+function withManagedReadIntent(fetcher: Fetcher, operation: ForumReadOperation, attempt: ReadAttempt): Fetcher {
+  const defaultIntent: BrowserFetchIntent = {
+    owner: browserFetchOwnerByReadOperation[operation],
+    priority: 'foreground'
+  };
+  return (input, init) => {
+    const method = String(init?.method || 'GET').toUpperCase();
+    const existingIntent = browserFetchIntentFromInit(init);
+    const intent = existingIntent || defaultIntent;
+    if ((method !== 'GET' && method !== 'HEAD') || intent.owner === 'write' || intent.priority !== 'foreground') {
+      attempt.replayable = false;
+    } else {
+      attempt.contentRequestStarted = true;
+    }
+    return fetcher(input, existingIntent ? init : withBrowserFetchIntent(init || {}, defaultIntent));
+  };
+}
+
+function sourceUsesDirectTimeoutRecovery(
+  source: FeedSource
+): source is Extract<Source, 'v2ex' | 'yaohuo' | 'xiaoyinsi'> {
+  return source === 'v2ex' || source === 'yaohuo' || source === 'xiaoyinsi';
 }
 
 function summarizeReadResult(result: unknown) {
@@ -459,14 +516,17 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         isCredentialKnown: unavailablePlanSources.length === 0
       });
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
-      const ownFetcher = (fetcher: Fetcher) =>
-        withForumSourceReadEligibility(withDiagnosticFetcher(trace, fetcher), recoveryCommitIsEligible);
-      const runOperation = (fetcher: Fetcher) =>
+      const ownFetcher = (fetcher: Fetcher, attempt: ReadAttempt) =>
+        withForumSourceReadEligibility(
+          withManagedReadIntent(withDiagnosticFetcher(trace, fetcher), readOperation, attempt),
+          recoveryCommitIsEligible
+        );
+      const runOperation = (fetcher: Fetcher, attempt: ReadAttempt) =>
         operation({
           discourseAuth,
-          fetcher: ownFetcher(fetcher),
+          fetcher: ownFetcher(fetcher, attempt),
           ...(source === 'all'
-            ? { fetcherForSource: (planSource: Source) => ownFetcher(sourcePlanFetcher(planSource)) }
+            ? { fetcherForSource: (planSource: Source) => ownFetcher(sourcePlanFetcher(planSource), attempt) }
             : {}),
           linuxDoAuthenticated,
           nodeSeekAuthenticated,
@@ -474,10 +534,67 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           ...(source === 'all' ? { includedSources } : {}),
           ...(unavailableSources.length ? { unavailableSources } : {})
         });
-      const result =
+      const runReadAttempt = (attempt: ReadAttempt) =>
         source === 'linuxdo' || source === 'nodeseek'
-          ? await runForumSourceReadAttempt(source, operationFetcher, runOperation, recoveryCommitIsEligible)
-          : await runOperation(operationFetcher);
+          ? runForumSourceReadAttempt(
+              source,
+              operationFetcher,
+              (fetcher) => runOperation(fetcher, attempt),
+              recoveryCommitIsEligible
+            )
+          : runOperation(operationFetcher, attempt);
+      const expectedGeneration = getReadNetworkRuntimeSnapshot().generation;
+      const firstAttempt: ReadAttempt = { contentRequestStarted: false, replayable: true };
+      let result: T;
+      try {
+        result = await runReadAttempt(firstAttempt);
+      } catch (error) {
+        const runtimeAfterFailure = getReadNetworkRuntimeSnapshot();
+        const retryAfterRotation =
+          source !== 'all' &&
+          runtimeAfterFailure.generation > expectedGeneration &&
+          runtimeAfterFailure.triggerSource === source &&
+          firstAttempt.contentRequestStarted &&
+          firstAttempt.replayable &&
+          recoveryCommitIsEligible();
+        const recoverAfterTimeout =
+          !retryAfterRotation &&
+          error instanceof RequestTimeoutError &&
+          sourceUsesDirectTimeoutRecovery(source) &&
+          firstAttempt.contentRequestStarted &&
+          firstAttempt.replayable &&
+          recoveryCommitIsEligible();
+        if (!retryAfterRotation && !recoverAfterTimeout) {
+          throw error;
+        }
+        if (recoverAfterTimeout) {
+          const recoveryTrace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
+            source,
+            generation: expectedGeneration,
+            reason: 'timeout'
+          });
+          try {
+            await recoverReadNetworkRuntime(source, expectedGeneration, { trace: recoveryTrace });
+          } catch {
+            if (getReadNetworkRuntimeSnapshot().generation <= expectedGeneration) {
+              throw error;
+            }
+          }
+        }
+        if (!recoveryCommitIsEligible()) {
+          throw new RequestCanceledError();
+        }
+        const generation = getReadNetworkRuntimeSnapshot().generation;
+        markDiagnosticStage(trace, 'transport', {
+          source,
+          channel: 'direct',
+          state: 'retry',
+          reason: recoverAfterTimeout ? 'timeout' : 'runtime_rotation',
+          retryCount: 1,
+          generation
+        });
+        result = await runReadAttempt({ contentRequestStarted: false, replayable: true });
+      }
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }

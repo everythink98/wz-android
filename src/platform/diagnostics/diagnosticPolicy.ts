@@ -189,6 +189,7 @@ const operationValues = closedValues(
   'request',
   'resolveUser',
   'restore-webview',
+  'rotate-read-runtime',
   'run',
   'save',
   'save-image',

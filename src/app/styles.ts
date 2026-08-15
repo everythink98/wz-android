@@ -24,7 +24,7 @@ export function createAppStyles(theme: ReaderTheme) {
     },
     navItem: {
       flex: 1,
-      alignItems: 'center' as const,
+      alignItems: 'stretch' as const,
       justifyContent: 'center' as const,
       gap: 3,
       minHeight: 48,
