@@ -104,7 +104,8 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
       notify('无法访问本机缓存目录。');
       return;
     }
-    const target = `${baseDirectory}wz-update.apk`;
+    const targetName = `wz-update-${appUpdateInfo.versionCode}-${appUpdateInfo.sha256}.apk`;
+    const target = `${baseDirectory}${targetName}`;
     appUpdateDownloadingRef.current = true;
     setAppUpdateDownloading(true);
     let latestProgress = formatAppUpdateDownloadProgress(appUpdateInfo.version, 0, -1);
@@ -121,6 +122,15 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
         method: 'GET',
         state: 'start'
       });
+      const cachedFiles = await FileSystem.readDirectoryAsync(baseDirectory).catch(() => []);
+      await Promise.all(
+        cachedFiles
+          .filter(
+            (name) =>
+              name !== targetName && (name === 'wz-update.apk' || /^wz-update-\d+-[a-f0-9]{64}\.apk$/i.test(name))
+          )
+          .map((name) => FileSystem.deleteAsync(`${baseDirectory}${name}`, { idempotent: true }).catch(() => undefined))
+      );
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
       targetPrepared = true;
       const download = FileSystem.createDownloadResumable(appUpdateInfo.apkUrl, target, {}, (progress) => {

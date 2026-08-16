@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   createDownloadResumable: vi.fn(),
   deleteAsync: vi.fn(async () => undefined),
   installVerifiedApk: vi.fn(async () => undefined),
+  readDirectoryAsync: vi.fn(async () => [] as string[]),
   initialUpdateInfo: null as null | {
     version: string;
     apkUrl: string;
@@ -39,7 +40,8 @@ vi.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/',
   documentDirectory: 'file:///documents/',
   createDownloadResumable: mocks.createDownloadResumable,
-  deleteAsync: mocks.deleteAsync
+  deleteAsync: mocks.deleteAsync,
+  readDirectoryAsync: mocks.readDirectoryAsync
 }));
 
 vi.mock('./appUpdate', async () => ({
@@ -104,8 +106,31 @@ describe('app update controller', () => {
     );
   });
 
-  it('[REG-UPDATE-005] reuses one cache target across versions and keeps a successful APK', async () => {
+  it('[REG-UPDATE-005] prunes only old update APKs and keeps the successful target', async () => {
     const beforeRequest = vi.fn(async () => undefined);
+    const oldTarget = `wz-update-139-${'c'.repeat(64)}.apk`;
+    mocks.initialUpdateInfo = updateInfo('1.4.0');
+    mocks.readDirectoryAsync.mockResolvedValueOnce(['wz-update.apk', oldTarget, 'avatar.png']);
+    mocks.createDownloadResumable.mockImplementation((_url, target) => ({
+      downloadAsync: vi.fn(async () => ({ status: 200, uri: target }))
+    }));
+
+    await useAppUpdateRuntime({ beforeRequest, fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
+
+    const target = `file:///cache/wz-update-140-${'a'.repeat(64)}.apk`;
+    expect(mocks.createDownloadResumable).toHaveBeenCalledWith(expect.any(String), target, {}, expect.any(Function));
+    expect(mocks.deleteAsync).toHaveBeenCalledTimes(3);
+    expect(mocks.deleteAsync).toHaveBeenCalledWith('file:///cache/wz-update.apk', { idempotent: true });
+    expect(mocks.deleteAsync).toHaveBeenCalledWith(`file:///cache/${oldTarget}`, { idempotent: true });
+    expect(mocks.deleteAsync).toHaveBeenCalledWith(target, { idempotent: true });
+    expect(mocks.deleteAsync).not.toHaveBeenCalledWith('file:///cache/avatar.png', expect.anything());
+    expect(mocks.installVerifiedApk).toHaveBeenCalledTimes(1);
+    expect(beforeRequest.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.createDownloadResumable.mock.invocationCallOrder[0]!
+    );
+  });
+
+  it('[REG-UPDATE-006] gives different APK contents distinct installer file identities', async () => {
     mocks.createDownloadResumable.mockImplementation((_url, target) => ({
       downloadAsync: vi.fn(async () => ({ status: 200, uri: target }))
     }));
@@ -113,24 +138,17 @@ describe('app update controller', () => {
     for (const version of ['1.4.0', '1.5.0']) {
       mocks.initialUpdateInfo = updateInfo(version);
       mocks.nullStateIndex = 0;
-      await useAppUpdateRuntime({ beforeRequest, fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
+      await useAppUpdateRuntime({ fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
     }
 
-    expect(mocks.createDownloadResumable.mock.calls.map((call) => call[1])).toEqual([
-      'file:///cache/wz-update.apk',
-      'file:///cache/wz-update.apk'
+    const targets = mocks.createDownloadResumable.mock.calls.map((call) => call[1]);
+    expect(targets).toEqual([
+      `file:///cache/wz-update-140-${'a'.repeat(64)}.apk`,
+      `file:///cache/wz-update-150-${'a'.repeat(64)}.apk`
     ]);
-    expect(mocks.deleteAsync).toHaveBeenCalledTimes(2);
-    expect(mocks.installVerifiedApk).toHaveBeenCalledTimes(2);
-    expect(beforeRequest).toHaveBeenCalledTimes(2);
-    for (const index of [0, 1]) {
-      expect(beforeRequest.mock.invocationCallOrder[index]).toBeLessThan(
-        mocks.createDownloadResumable.mock.invocationCallOrder[index]!
-      );
-    }
   });
 
-  it('[REG-UPDATE-005] removes the fixed partial APK after a failed download', async () => {
+  it('[REG-UPDATE-005] removes the prepared partial APK after a failed download', async () => {
     mocks.initialUpdateInfo = updateInfo('1.6.0');
     mocks.createDownloadResumable.mockReturnValue({
       downloadAsync: vi.fn(async () => {
@@ -141,7 +159,9 @@ describe('app update controller', () => {
     await useAppUpdateRuntime({ fetcher: vi.fn(), notify: vi.fn() }).downloadAppUpdate();
 
     expect(mocks.deleteAsync).toHaveBeenCalledTimes(2);
-    expect(mocks.deleteAsync).toHaveBeenNthCalledWith(2, 'file:///cache/wz-update.apk', { idempotent: true });
+    expect(mocks.deleteAsync).toHaveBeenNthCalledWith(2, `file:///cache/wz-update-160-${'a'.repeat(64)}.apk`, {
+      idempotent: true
+    });
     expect(mocks.installVerifiedApk).not.toHaveBeenCalled();
   });
 });

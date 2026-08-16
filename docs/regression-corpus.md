@@ -3940,14 +3940,29 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `MORE-04` |
 | 用户症状 | 每个更新版本使用不同 cache 文件名，连续下载会留下多个历史 APK；下载失败还可能保留 partial。 |
-| 触发条件 | 目标文件名包含版本号，catch 路径未清理已经准备的下载目标。 |
+| 触发条件 | 目标文件名包含版本身份，但新下载前未清理旧更新文件，或 catch 路径未清理已经准备的下载目标。 |
 | 根因 seam | `useAppUpdateRuntime.downloadAppUpdate` 的 cache target 与失败清理。 |
-| 必须保持的行为 | 所有版本固定使用 `wz-update.apk`；新下载前删除旧文件，失败或取消后删除 partial，成功后保留给系统安装器读取。 |
-| 精确失败 oracle | `src/platform/update/useAppUpdateRuntime.test.ts` 的 `REG-UPDATE-005` 连续下载两个版本要求同一 target 且成功只执行下载前清理；失败要求第二次幂等删除 partial、零安装。 |
+| 必须保持的行为 | 当前 target 由可信 manifest 的 versionCode/SHA 唯一确定；新下载前只删除 legacy `wz-update.apk` 和旧的合法更新 target，不碰无关 cache 文件；失败或取消后删除当前 partial，成功后保留给系统安装器读取。 |
+| 精确失败 oracle | `src/platform/update/useAppUpdateRuntime.test.ts` 的 `REG-UPDATE-005` 让目录同时包含 legacy、旧版更新 APK 和无关文件，要求只清前两者并保留成功 target；失败要求再次幂等删除当前 partial、零安装。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：mock FileSystem 与 installer 精确观察 target、删除次数和成功/失败顺序。 |
 | Replay 或真实验收路径 | APK 下载与安装属于发布风险操作，本轮保持 `NOT_VERIFIED`；只有明确授权后检查 cache 与系统安装确认。 |
-| 负向验证方式 | 恢复版本化文件名或移除 catch 清理，编号测试必须看到两个路径或少一次删除。 |
+| 负向验证方式 | 移除旧文件筛选、误删无关文件或移除 catch 清理，编号测试必须看到遗留文件、越界删除或少一次 partial 删除。 |
 | 明确不覆盖范围 | 不自动删除安装器正在读取的成功 APK，不下载真实 release，不改变签名/hash 校验。 |
+
+## `REG-UPDATE-006` App 内新版仍打开上一版安装包
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-04` |
+| 用户症状 | App 已检测并显示新版本，下载后 Android 安装确认仍提示上一版；同一 Release 由浏览器直接下载时正常。 |
+| 触发条件 | 不同内容的连续 Release 都覆盖固定 `wz-update.apk`，使 FileProvider 对系统安装器暴露相同 URI。 |
+| 根因 seam | `useAppUpdateRuntime.downloadAppUpdate` 的文件身份与 `ApkInstallerModule.installApk` 的 FileProvider URI。 |
+| 必须保持的行为 | 不同 versionCode/SHA 的 APK 必须得到不同 cache 路径，从而得到不同安装器 URI；既有包名、版本、SHA 与 signer 校验顺序不变。 |
+| 精确失败 oracle | `src/platform/update/useAppUpdateRuntime.test.ts` 的 `REG-UPDATE-006` 连续下载两个不同 Release，要求 `createDownloadResumable` 收到两个不同且由 versionCode/SHA 派生的 target；恢复固定文件名时集合大小从 2 退化为 1。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：真实 runtime hook 配合 FileSystem/installer mock，观察交给 Native 安装边界的文件 URI。 |
+| Replay 或真实验收路径 | 新 Release 构建后，在受影响设备由 App 内更新入口下载，系统确认页必须显示目标 versionName/versionCode；发布前无法用当前最新版本自更新时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复固定 `wz-update.apk`，`REG-UPDATE-006` 必须失败；浏览器直下不能替代 App 内入口。 |
+| 明确不覆盖范围 | 不清系统安装器数据，不卸载 App，不降低签名/hash 校验，也不假定所有 OEM 都以同样方式缓存 URI。 |
 
 ## `REG-PERF-007` 进程级缓存与通知无容量或 identity 边界
 
