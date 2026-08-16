@@ -5908,6 +5908,22 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除 Yoga 首帧高度、恢复 native ShadowNode 双写、接受 stale native 高度、等 child layout 后才占位、禁用 FlashList、扩大 render window、预先挂载全部媒体、为该 URL/站点写特判、后台预计算第二份 HTML、deep link 绕过历史导航或只测最终静止截图；编号测试或录屏首帧 oracle 必须失败。 |
 | 明确不覆盖范围 | 不预载或解码 1300 张图片，不遍历完整预览目录，不修改图片网络/缓存/许可策略；若稳定首帧后点击预览仍慢，继续由 `REG-TOPIC-096` 单独处理。 |
 
+## `REG-TOPIC-106` 块级媒体仍渲染来源换行导致图片间出现空白行
+
+| 字段 | 内容 |
+| --- | --- |
+| 当前状态 | `IMPLEMENTED / LIVE_PASS / APK_SANITY`；匹配 v1.3.110 x86_64 Release 开发签名包已按正常历史入口完成冷、热缓存视觉与 View 树验收。 |
+| 能力 ID | `TOPIC-01/02/03`；共享 `REG-TOPIC-100/102/103/105` 与 `REG-PERF-019` 的选择文档、媒体槽、排版和单次 TTree seam |
+| 用户症状 | NodeSeek `post-863650-1` 的连续图片之间出现约一整行空白；UI hierarchy 可见每个媒体槽后多出内容为 `\n` 加复制哨兵的独立 Compose `TextView`。 |
+| 触发条件 | 来源用单个 `<br>` 把 HTML 内联图片换到下一行；选择适配器已把图片物化为全宽块级媒体槽，却仍把该 `<br>` 翻译成独立文本节点。图片本身已经结束当前行，因此同一个换行被执行两次。 |
+| 根因 seam | RNRH TTree 是唯一语义输入；TTree→typed document 在把媒体提升为块级槽时，必须同时消费与它相邻的一次行分隔。该规则属于布局语义转换，不属于站点 sanitizer、图片高度、Compose 补偿或 URL 特判。 |
+| 必须保持的行为 | 与块级媒体相邻的一组 `<br>` 只消耗一个冗余换行；两个及以上 `<br>` 仍保留其余真实空行。普通文本内部换行、inline 图片、图片真实尺寸、媒体 `4/4/1` 物化、跨媒体选择、预览、缓存、Referrer 和单次 TTree 不变。 |
+| 精确失败 oracle | `src/features/topic/rendering/forumSelectionDocument.test.ts` 的 `[REG-TOPIC-106]` 固定真实 `<img><br>\n<img><br>` 输出两个媒体节点、零空白文本节点，并固定 `<img><br><br><img>` 仍输出一个换行。修复前前者稳定输出两个 `"\n"` 文本节点。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS + APK_SANITY`：Vitest 固定 typed document 语义；只有匹配 APK 的截图和 UI hierarchy 能证明媒体槽之间不再出现空白 `TextView`。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；重新打开 App，从“收藏 → 历史 → 整活帖”进入，核对首两图紧邻且 UI hierarchy 在两个 `topic-image-frame` 之间没有 `\n` 文本节点。2026-08-17 实测间距由 192px 收敛到样式拥有的 58px，原 118px 空白 TextView 消失；Back 后热缓存重进约 1.23s 即出现首批媒体，未卡在历史或先显示回复。 |
+| 负向验证方式 | 按 NodeSeek/URL 删除 `<br>`、把所有 `<br>` 全删、按像素减高度、用负 margin 遮空白或在 Compose 隐藏所有空文本；编号测试、普通正文换行或真实 View 树必须失败。 |
+| 明确不覆盖范围 | 不改变作者明确给出的额外空行，不预载图片，不调整图片网络/缓存/预览策略，也不增加第二套 HTML 解释器。 |
+
 ## `REG-TOPIC-095` 三槽图片预览翻页闪回错误图片且 pinch 误改 index
 
 | 字段 | 内容 |

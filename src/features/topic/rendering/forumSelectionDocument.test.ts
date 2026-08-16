@@ -125,6 +125,40 @@ describe('forum native selection document', () => {
     expect(mediaNodes).toEqual(expect.arrayContaining([expect.objectContaining({ height: 240, width: 320 })]));
   });
 
+  it('[REG-TOPIC-106] drops formatting whitespace between block media instead of laying out blank text rows', () => {
+    const settings = createEmptyReaderData().settings;
+    const build = (html: string) => {
+      const region = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).regions[0];
+      if (region?.kind !== 'selectable') throw new Error('Expected a selectable media region.');
+      return buildForumSelectionDocument({
+        contentWidth: 320,
+        engine: forumSelectionTestEngine,
+        fontScale: settings.fontScale,
+        inlineSizedImageUrls: {},
+        region,
+        tableOffsets: {},
+        tableScrollKeys: {},
+        trimTrailingBlockSpacing: false
+      }).document.nodes;
+    };
+    const nodes = allNodes(
+      build('<p><img src="https://img.example/1.webp"><br>\n<img src="https://img.example/2.webp"><br>\n</p>')
+    );
+
+    expect(nodes.filter((node) => node.type === 'media')).toHaveLength(2);
+    expect(
+      nodes
+        .filter((node): node is Extract<ForumSelectionNode, { type: 'text' }> => node.type === 'text')
+        .map((node) => node.parts.flatMap((part) => (part.type === 'run' ? [part.text] : [])).join(''))
+    ).toEqual([]);
+
+    expect(
+      textFromNodes(
+        build('<p><img src="https://img.example/1.webp"><br><br><img src="https://img.example/2.webp"></p>')
+      )
+    ).toBe('\n');
+  });
+
   it('[REG-TOPIC-102] renders typed outer table cells without remapping nested descendants', () => {
     const settings = createEmptyReaderData().settings;
     const compilation = compileForumContent({

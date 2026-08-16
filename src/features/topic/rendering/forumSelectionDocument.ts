@@ -251,6 +251,23 @@ function isInlineMediaNode(node: TNode) {
   return isInlineForumImage(node.attributes);
 }
 
+function containsOnlyLineBreaks(node: TNode): boolean {
+  if (node.tagName === 'br') return true;
+  return node.children.length > 0 && node.children.every(containsOnlyLineBreaks);
+}
+
+function isRedundantBlockMediaBreak(children: readonly TNode[], index: number) {
+  if (!children[index] || !containsOnlyLineBreaks(children[index])) return false;
+  let first = index;
+  let last = index;
+  while (children[first - 1] && containsOnlyLineBreaks(children[first - 1])) first -= 1;
+  while (children[last + 1] && containsOnlyLineBreaks(children[last + 1])) last += 1;
+  if (index !== first) return false;
+  return [children[first - 1], children[last + 1]].some(
+    (node) => node && isMediaNode(node) && !isInlineMediaNode(node)
+  );
+}
+
 function appendMedia(
   node: TNode,
   context: TranslationContext,
@@ -351,7 +368,14 @@ function translateChildren(node: TNode, context: TranslationContext) {
     pendingParts = [];
     pendingStyle = {};
   };
-  node.children.forEach((child) => {
+  node.children.forEach((child, index) => {
+    if (isRedundantBlockMediaBreak(node.children, index)) {
+      const remainingBreaks = textParts(child, context).slice(1);
+      if (!remainingBreaks.length) return;
+      if (!pendingParts.length) pendingStyle = selectionStyle(child.getNativeStyles());
+      pendingParts.push(...remainingBreaks);
+      return;
+    }
     if (
       child.tagName === 'br' ||
       child.type === 'phrasing' ||
