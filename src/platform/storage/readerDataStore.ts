@@ -8,14 +8,11 @@ import {
   type ReaderSettings
 } from '@/domain/reader/readerData';
 import { assertBackupJsonSize } from '@/domain/reader/readerBackup';
+import { isRecord } from '@/domain/forum/html';
 
 const READER_DATA_STORAGE_KEY = 'reader-data';
 const READER_SETTINGS_STORAGE_KEY = 'reader-settings';
 const READER_STORAGE_LOAD_TIMEOUT_MS = 3_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
 
 function settingsFromStorage(raw: string | null, fallback: ReaderSettings) {
   if (!raw) {

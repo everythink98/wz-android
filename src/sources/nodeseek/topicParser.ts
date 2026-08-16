@@ -10,7 +10,7 @@ import {
   textExcerpt,
   toIsoString
 } from '@/domain/forum/html';
-import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import {
   NODESEEK_BASE_URL,
@@ -22,10 +22,11 @@ import {
   nodeSeekTopicUrl,
   optionalBoolean,
   optionalInteger,
-  parseViewCount
+  parseViewCount,
+  type NodeSeekPageDocument
 } from './protocol';
-import { nodeSeekMarkdownToHtml } from './markdown';
-import { nodeSeekPollPlaceholderHtml } from './polls';
+import { nodeSeekMarkdownCandidateHtml } from './markdown';
+import { nodeSeekPollPlaceholderHtml, normalizeNodeSeekPollPlaceholderNodes } from './polls';
 
 const BASE_URL = NODESEEK_BASE_URL;
 
@@ -33,16 +34,24 @@ function hasHtmlTag(value: string) {
   return /<\/?[a-z][\s\S]*>/i.test(value);
 }
 
-function nodeSeekDisplayHtml(content: unknown, markdown: unknown) {
+function nodeSeekContentCandidateHtml(content: unknown, markdown: unknown) {
   const renderedHtml = typeof content === 'string' ? content.trim() : '';
   if (renderedHtml && hasHtmlTag(renderedHtml)) {
-    return sanitizeContentHtml(renderedHtml, BASE_URL);
+    return renderedHtml;
   }
   const markdownText = typeof markdown === 'string' ? markdown.trim() : '';
   if (markdownText && hasHtmlTag(markdownText)) {
-    return sanitizeContentHtml(markdownText, BASE_URL);
+    return markdownText;
   }
-  return nodeSeekMarkdownToHtml(markdownText || renderedHtml);
+  return nodeSeekMarkdownCandidateHtml(markdownText || renderedHtml);
+}
+
+function prepareNodeSeekContent(html: unknown, role: 'reply' | 'signature') {
+  return prepareSanitizedForumContent(html, { baseUrl: BASE_URL, role, source: 'nodeseek' });
+}
+
+function nodeSeekDisplayContent(content: unknown, markdown: unknown) {
+  return prepareNodeSeekContent(nodeSeekContentCandidateHtml(content, markdown), 'reply');
 }
 
 function nodeSeekEditableMarkdown(markdown: unknown) {
@@ -50,12 +59,12 @@ function nodeSeekEditableMarkdown(markdown: unknown) {
   return raw.trim() && !hasHtmlTag(raw) ? raw : '';
 }
 
-function nodeSeekSignatureHtml(signature: unknown) {
+function nodeSeekSignatureContent(signature: unknown) {
   const raw = String(signature || '').trim();
   if (!raw) {
     return undefined;
   }
-  return hasHtmlTag(raw) ? sanitizeContentHtml(raw, BASE_URL) : nodeSeekMarkdownToHtml(raw);
+  return prepareNodeSeekContent(hasHtmlTag(raw) ? raw : nodeSeekMarkdownCandidateHtml(raw), 'signature');
 }
 
 export function extractNodeSeekVoteIds(...values: unknown[]) {
@@ -202,9 +211,7 @@ function removeEmptyRenderedNodeSeekPollShells(root: HTMLElement) {
   });
 }
 
-function parseRenderedNodeSeekPollForms(html: string) {
-  const wrappedHtml = `<body>${html}</body>`;
-  const root = parseHtml(wrappedHtml);
+function parseRenderedNodeSeekPollForms(root: HTMLElement, html: string, contentOffset: number) {
   const forms = root.querySelectorAll('form').filter((form) => {
     const marker = [
       form.getAttribute('class'),
@@ -221,6 +228,9 @@ function parseRenderedNodeSeekPollForms(html: string) {
         .some((input) => /^(?:ids?|ids\[\]|vote|vote-item|option)$/i.test(String(input.getAttribute('name') || '')))
     );
   });
+  if (!forms.length) {
+    return { html, polls: undefined };
+  }
   const parsedPolls = forms.map((form, index): TopicPoll | null => {
     const inputs = form.querySelectorAll('input[type="radio"], input[type="checkbox"]');
     const options = inputs
@@ -251,7 +261,11 @@ function parseRenderedNodeSeekPollForms(html: string) {
   forms.forEach((form, index) => {
     const poll = parsedPolls[index];
     const target = poll?.id ? form.closest('.vote-panel') || form : form;
-    const [start, end] = target.range;
+    const start = target.range[0] - contentOffset;
+    const end = target.range[1] - contentOffset;
+    if (start < 0 || end < start || end > html.length) {
+      return;
+    }
     replacements.set(`${start}:${end}`, {
       end,
       html: poll?.id ? nodeSeekPollPlaceholderHtml(poll.id) : '',
@@ -263,15 +277,17 @@ function parseRenderedNodeSeekPollForms(html: string) {
     .reduce(
       (source, replacement) =>
         `${source.slice(0, replacement.start)}${replacement.html}${source.slice(replacement.end)}`,
-      wrappedHtml
+      html
     );
-  const cleanedRoot = parseHtml(replacedHtml);
-  removeEmptyRenderedNodeSeekPollShells(cleanedRoot);
-  const cleaned = cleanedRoot.querySelector('body')?.innerHTML || '';
   return {
-    html: cleaned.trim(),
+    html: replacedHtml.trim(),
     polls: polls.length ? polls : undefined
   };
+}
+
+export function normalizeRenderedNodeSeekPollRoot(root: HTMLElement, pollIds: Iterable<string>) {
+  removeEmptyRenderedNodeSeekPollShells(root);
+  normalizeNodeSeekPollPlaceholderNodes(root, pollIds);
 }
 
 export function mergeNodeSeekPolls(...groups: (TopicPoll[] | undefined)[]) {
@@ -292,9 +308,27 @@ export function mergeNodeSeekPolls(...groups: (TopicPoll[] | undefined)[]) {
 
 export function normalizeReplies(
   comments: unknown[],
-  { skipFirst, start = 0, floorOffset = 0 }: { skipFirst: boolean; start?: number; floorOffset?: number }
+  {
+    skipFirst,
+    start = 0,
+    floorOffset = 0,
+    contentOverrides = [],
+    skipUnmatchedContent = false
+  }: {
+    skipFirst: boolean;
+    start?: number;
+    floorOffset?: number;
+    contentOverrides?: readonly Reply[];
+    skipUnmatchedContent?: boolean;
+  }
 ) {
   const source = skipFirst ? comments.slice(1) : comments;
+  const overridesByCommentId = new Map(
+    contentOverrides.flatMap((reply) => (reply.commentId ? [[reply.commentId, reply] as const] : []))
+  );
+  const overridesByFloor = new Map(
+    contentOverrides.flatMap((reply) => (reply.floor ? [[reply.floor, reply] as const] : []))
+  );
   return source
     .slice(start)
     .filter(isRecord)
@@ -305,19 +339,31 @@ export function normalizeReplies(
       const authorLevelLabel = nodeSeekRoleLabel(poster);
       const rawMarkdown = typeof comment.markdown === 'string' ? comment.markdown : '';
       const contentMarkdown = nodeSeekEditableMarkdown(rawMarkdown);
-      const signatureHtml = nodeSeekSignatureHtml(comment.signature);
       const floorIndex = optionalInteger(comment.floorIndex ?? comment.floor);
+      const floor = floorIndex ?? floorOffset + start + index + 1;
+      const commentId = optionalInteger(comment.commentId);
+      const contentOverride =
+        (commentId ? overridesByCommentId.get(commentId) : undefined) || overridesByFloor.get(floor);
+      const preparedContent =
+        contentOverride?.preparedContent ||
+        (skipUnmatchedContent ? undefined : nodeSeekDisplayContent(comment.content, rawMarkdown));
+      const preparedSignature =
+        contentOverride?.preparedSignature ||
+        (skipUnmatchedContent ? undefined : nodeSeekSignatureContent(comment.signature));
+      const contentHtml = contentOverride?.contentHtml || preparedContent?.contentHtml || '';
+      const signatureHtml = contentOverride?.signatureHtml || preparedSignature?.contentHtml;
       return {
         author: String(poster.name || ''),
         authorAvatar: absoluteUrl(poster.avatar, BASE_URL),
         authorId: authorId || undefined,
         authorUrl,
         ...(authorLevelLabel ? { authorLevelLabel } : {}),
-        contentHtml: nodeSeekDisplayHtml(comment.content, rawMarkdown),
+        contentHtml,
+        ...(preparedContent ? { preparedContent } : {}),
         ...(contentMarkdown ? { contentMarkdown } : {}),
         createdAt: toIsoString(isRecord(comment.time) ? comment.time.createdDate : comment.createdDate),
-        floor: floorIndex ?? floorOffset + start + index + 1,
-        commentId: optionalInteger(comment.commentId),
+        floor,
+        commentId,
         upvoteCount: optionalInteger(comment.upvoteCount),
         likeCount: optionalInteger(comment.likeCount),
         dislikeCount: optionalInteger(comment.dislikeCount),
@@ -328,7 +374,8 @@ export function normalizeReplies(
         isOp: poster.isOp === true || String(poster.info || '').trim() === '楼主' || undefined,
         hot: comment.hot === true || undefined,
         pinned: comment.pined === true || comment.pinned === true || undefined,
-        signatureHtml
+        signatureHtml,
+        ...(preparedSignature ? { preparedSignature } : {})
       };
     });
 }
@@ -337,7 +384,8 @@ export function normalizePostData(
   data: Record<string, unknown>,
   id: string,
   url: string,
-  replyLimit = 30
+  replyLimit = 30,
+  rendered?: TopicDetail
 ): TopicDetail {
   const comments = arrayField(data.comments);
   const first = isRecord(comments[0]) ? comments[0] : {};
@@ -357,7 +405,11 @@ export function normalizePostData(
       : typeof data.categoryWord === 'string'
         ? data.categoryWord
         : undefined;
-  const allReplies = normalizeReplies(comments, { skipFirst: true });
+  const allReplies = normalizeReplies(comments, {
+    skipFirst: true,
+    contentOverrides: rendered?.replies,
+    skipUnmatchedContent: Boolean(rendered?.replies.length)
+  });
   const replies = allReplies.slice(0, replyLimit);
   const replyCount = nodeSeekExplicitReplyCount(data);
   const hasLocalRemainder = allReplies.length > replyLimit;
@@ -390,8 +442,8 @@ export function normalizePostData(
     lastReplyAt,
     ...(replyCount !== undefined ? { replyCount } : {}),
     viewCount: parseViewCount(data.views),
-    excerpt: textExcerpt(first.content || first.markdown),
-    contentHtml: nodeSeekDisplayHtml(first.content, first.markdown),
+    excerpt: rendered?.excerpt || textExcerpt(first.content || first.markdown),
+    contentHtml: rendered?.contentHtml || nodeSeekContentCandidateHtml(first.content, first.markdown),
     commentId: optionalInteger(first.commentId),
     upvoteCount: optionalInteger(first.upvoteCount),
     likeCount: optionalInteger(first.likeCount),
@@ -583,7 +635,7 @@ function renderedNodeSeekReactionClicked(element: HTMLElement | null | undefined
 
 function renderedNodeSeekSignature(element: HTMLElement | null | undefined) {
   const signature = element?.querySelector('.signature, .post-signature, .content-signature');
-  return signature?.innerHTML ? sanitizeContentHtml(signature.innerHTML, BASE_URL) : undefined;
+  return signature?.innerHTML ? prepareNodeSeekContent(signature.innerHTML, 'signature') : undefined;
 }
 
 function renderedNodeSeekIsOp(element: HTMLElement | null | undefined) {
@@ -668,12 +720,12 @@ function nodeSeekRestrictedNotice(root: ReturnType<typeof parseHtml>) {
 }
 
 export function parseRenderedNodeSeekTopicHtml(
-  html: string,
+  document: NodeSeekPageDocument,
   id: string,
   replyLimit = 30,
   page = 1
 ): TopicDetail | null {
-  const root = parseHtml(html);
+  const { html, root } = document;
   const firstContentItem = root.querySelector('.content-item');
   const firstContentItemIsReplyContainer = String(firstContentItem?.rawTagName || '').toLowerCase() === 'li';
   const identifiedFirstReply = Boolean(
@@ -704,11 +756,19 @@ export function parseRenderedNodeSeekTopicHtml(
     renderedContentOpeningEnd >= 0 && renderedContentClosingStart > renderedContentOpeningEnd
       ? renderedContentOuterHtml.slice(renderedContentOpeningEnd + 1, renderedContentClosingStart)
       : '';
-  const renderedContentHtml = String(
-    contentElement?.querySelector('.vote-panel') && rawRenderedContentHtml
-      ? rawRenderedContentHtml
-      : contentElement?.innerHTML || ''
-  ).trim();
+  const renderedContentHasForm = Boolean(contentElement?.querySelector('form'));
+  const renderedContentSource = String(
+    renderedContentHasForm && rawRenderedContentHtml ? rawRenderedContentHtml : contentElement?.innerHTML || ''
+  );
+  const renderedPolls =
+    contentElement && renderedContentHasForm && rawRenderedContentHtml
+      ? parseRenderedNodeSeekPollForms(
+          contentElement,
+          renderedContentSource,
+          contentElement.range[0] + renderedContentOpeningEnd + 1
+        )
+      : { html: renderedContentSource, polls: undefined };
+  const renderedContentHtml = renderedPolls.html.trim();
   const contentHtml = renderedContentHtml || restrictedNotice;
   if (!title || (!contentHtml && !identifiedFirstReply)) {
     return null;
@@ -730,7 +790,6 @@ export function parseRenderedNodeSeekTopicHtml(
         root.querySelector('.post-detail time') ||
         root.querySelector('time')
     ) || new Date().toISOString();
-  const renderedPolls = parseRenderedNodeSeekPollForms(renderedContentHtml);
   const cleanedContentHtml = renderedContentHtml ? renderedPolls.html : contentHtml;
   const replyRows = root
     .querySelectorAll('.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]')
@@ -746,6 +805,8 @@ export function parseRenderedNodeSeekTopicHtml(
     });
   const allReplies = replyRows.map((row) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
+    const preparedContent = prepareNodeSeekContent(replyContent?.innerHTML || '', 'reply');
+    const preparedSignature = renderedNodeSeekSignature(row);
     const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
     const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
     const authorLevelLabel = renderedNodeSeekRoleLabel(row);
@@ -755,7 +816,8 @@ export function parseRenderedNodeSeekTopicHtml(
       authorId,
       authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
       ...(authorLevelLabel ? { authorLevelLabel } : {}),
-      contentHtml: sanitizeContentHtml(replyContent?.innerHTML || '', BASE_URL),
+      contentHtml: preparedContent.contentHtml,
+      preparedContent,
       createdAt: renderedNodeSeekTime(row.querySelector('time')) || '',
       floor: renderedNodeSeekFloor(row),
       commentId: renderedNodeSeekCommentId(row),
@@ -768,7 +830,8 @@ export function parseRenderedNodeSeekTopicHtml(
       isOp: renderedNodeSeekIsOp(row),
       hot: Boolean(row.querySelector('.hot-badge')) || undefined,
       pinned: Boolean(row.querySelector('.pined-badge, .pinned-badge, .pin-badge')) || undefined,
-      signatureHtml: renderedNodeSeekSignature(row)
+      signatureHtml: preparedSignature?.contentHtml,
+      ...(preparedSignature ? { preparedSignature } : {})
     };
   });
   const replies = allReplies.slice(0, replyLimit);
@@ -791,7 +854,7 @@ export function parseRenderedNodeSeekTopicHtml(
     createdAt,
     lastReplyAt,
     excerpt: textExcerpt(cleanedContentHtml || contentHtml),
-    contentHtml: sanitizeContentHtml(cleanedContentHtml, BASE_URL),
+    contentHtml: cleanedContentHtml,
     ...(renderedPolls.polls ? { polls: renderedPolls.polls } : {}),
     ...(accessRequirement ? { accessRequirement } : {}),
     commentId: firstContentItem ? renderedNodeSeekCommentId(firstContentItem) : undefined,

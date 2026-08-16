@@ -107,6 +107,11 @@ export function useAccountRuntime({
   >(() => undefined);
   const credentialClearIntentHandlerRef = useRef<(site: CredentialSite) => void>(() => undefined);
   const initialStatusRefreshStartedRef = useRef(false);
+  const initialStatusBatchActiveRef = useRef(false);
+  const initialStatusBatchSnapshotsRef = useRef<Record<SessionSite, SessionRuntimeSnapshot> | null>(null);
+  const initialStatusBatchEpochsRef = useRef<ForumSessionEpochs | null>(null);
+  const [initialStatusBatchActive, setInitialStatusBatchActive] = useState(false);
+  const [initialStatusBatchComplete, setInitialStatusBatchComplete] = useState(false);
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
@@ -166,6 +171,12 @@ export function useAccountRuntime({
       };
     },
     [enabledSessionSourceSet]
+  );
+  const readStableSessionRuntimeSnapshot = useCallback(
+    (source: SessionSite) =>
+      (initialStatusBatchActiveRef.current && initialStatusBatchSnapshotsRef.current?.[source]) ||
+      readSessionRuntimeSnapshot(source),
+    [readSessionRuntimeSnapshot]
   );
   const notificationPrivateAccessAllowed = useCallback(
     (source: SessionSite, identityKey: string) => {
@@ -259,6 +270,15 @@ export function useAccountRuntime({
     readSessionRuntimeSnapshot,
     refreshXiaoyinsiAuthorization: xiaoyinsiAuth.refreshAuthorization
   });
+  const feedReadGateway = useSessionReadGateway({
+    anonymousFetcher: fetcher,
+    fetcher: session.forumFetchWithWebViewFallback,
+    getEnabledSources,
+    linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    readSessionRuntimeSnapshot: readStableSessionRuntimeSnapshot,
+    refreshXiaoyinsiAuthorization: xiaoyinsiAuth.refreshAuthorization
+  });
   const status = useAccountStatusController({
     enabledSources: enabledSessionSources,
     fetcher: session.forumFetchWithWebViewFallback,
@@ -266,7 +286,8 @@ export function useAccountRuntime({
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     onAccountStatusChanged: session.commitAccountStatusChange,
-    readXiaoyinsiAuthorization: xiaoyinsiAuth.readAuthorization
+    readXiaoyinsiAuthorization: xiaoyinsiAuth.readAuthorization,
+    reconcileNewlyEnabledSources: ready
   });
   const reconcileAccountStatus = status.reconcileAccountStatus;
   const refreshAccountStatus = status.refreshAccountStatus;
@@ -276,8 +297,22 @@ export function useAccountRuntime({
   useEffect(() => {
     if (!ready || initialStatusRefreshStartedRef.current) return;
     initialStatusRefreshStartedRef.current = true;
-    void refreshAccountStatus({ silent: true });
-  }, [ready, refreshAccountStatus]);
+    initialStatusBatchSnapshotsRef.current = Object.fromEntries(
+      sessionSources.map((source) => [source, readSessionRuntimeSnapshot(source)])
+    ) as Record<SessionSite, SessionRuntimeSnapshot>;
+    initialStatusBatchEpochsRef.current = { ...session.forumSessionEpochs };
+    initialStatusBatchActiveRef.current = true;
+    setInitialStatusBatchActive(true);
+    void refreshAccountStatus({ silent: true }).finally(() => {
+      initialStatusBatchActiveRef.current = false;
+      setInitialStatusBatchActive(false);
+      setInitialStatusBatchComplete(true);
+    });
+  }, [ready, readSessionRuntimeSnapshot, refreshAccountStatus, session.forumSessionEpochs]);
+  const stableForumSessionEpochs =
+    initialStatusBatchActive && initialStatusBatchEpochsRef.current
+      ? initialStatusBatchEpochsRef.current
+      : session.forumSessionEpochs;
 
   const xiaoyinsiLevel = useXiaoyinsiLevelController({
     authorizationPhase: xiaoyinsiAuth.phase,
@@ -650,9 +685,12 @@ export function useAccountRuntime({
   return {
     read: {
       accountSessionViewModels: status.accountSessionViewModels,
+      feedReadGateway,
+      feedSessionEpochs: stableForumSessionEpochs,
       forumSessionEpochs: session.forumSessionEpochs,
       getLinuxDoUserAgent,
       getNodeSeekUserAgent,
+      identityReconciliationPending: !initialStatusBatchComplete,
       notificationPrivateAccessAllowed,
       readGateway,
       reconcileAccountStatus,

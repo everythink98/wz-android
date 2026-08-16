@@ -13,10 +13,15 @@ import {
 } from './reader';
 import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
 import { parseYaohuoCurrentUserHtml } from './sessionParser';
-import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesHtml, parseYaohuoTopicHtml } from './topicParser';
-import { yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl } from './protocol';
+import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesDocument, parseYaohuoTopicHtml } from './topicParser';
+import { yaohuoReplyListNextPageUrlFromRoot, yaohuoTopicListNextPageUrlFromRoot } from './protocol';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { parseHtml } from '@/domain/forum/html';
 import type { ReplyOrder, ReplyWindowPosition, Topic } from '@/domain/forum/models';
+
+function parseReplies(html: string, options?: Parameters<typeof parseYaohuoRepliesDocument>[1]) {
+  return parseYaohuoRepliesDocument(parseHtml(html), options);
+}
 
 describe('Android direct yaohuo API', () => {
   it('[REG-ACCOUNT-029] fetches yaohuo through the native read-only cookie jar', async () => {
@@ -989,7 +994,7 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('does not treat yaohuo reply user ids as author levels', () => {
-    const result = parseYaohuoRepliesHtml(
+    const result = parseReplies(
       `
       <div class="line1">[261楼][回]口乞..<a href="/bbs/userinfo.aspx?touserid=45264">孟婆烤串</a>(45264) 06-28 23:22</div>
     `,
@@ -1257,7 +1262,7 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('[REG-NOTIFY-046] ignores a Yaohuo user named 下一页 when deriving the real reply cursor', () => {
-    const result = parseYaohuoRepliesHtml(
+    const result = parseReplies(
       `
       <div class="list-reply line1" id="floor-288" data-floor="288">
         <span class="retext">reply</span>
@@ -1276,16 +1281,18 @@ describe('Android direct yaohuo API', () => {
     const misleadingUser = '<a href="/bbs/userinfo.aspx?touserid=39170">下一页</a>';
 
     expect(
-      yaohuoTopicListNextPageUrl(
-        `${misleadingUser}<a href="/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=11">下一页</a>`,
+      yaohuoTopicListNextPageUrlFromRoot(
+        parseHtml(
+          `${misleadingUser}<a href="/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=11">下一页</a>`
+        ),
         'https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=10',
         10,
         1
       )
     ).toBe('https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&type=pub&key=7&page=11');
     expect(
-      yaohuoReplyListNextPageUrl(
-        `${misleadingUser}<a href="/bbs/book_re_my.aspx?touserid=7&page=11">下一页</a>`,
+      yaohuoReplyListNextPageUrlFromRoot(
+        parseHtml(`${misleadingUser}<a href="/bbs/book_re_my.aspx?touserid=7&page=11">下一页</a>`),
         'https://www.yaohuo.me/bbs/book_re_my.aspx?touserid=7&page=10',
         1
       )
@@ -1676,7 +1683,7 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('parses yaohuo activity replies from list-reply rows with real floors and rewards', () => {
-    const result = parseYaohuoRepliesHtml(
+    const result = parseReplies(
       `
       <div class="recontent">
         <div class="list-reply line1" id="floor-1732" data-floor="1732">
@@ -1714,7 +1721,7 @@ describe('Android direct yaohuo API', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T07:30:00+08:00'));
     try {
-      const result = parseYaohuoRepliesHtml(`
+      const result = parseReplies(`
         <div class="line1">
           回复内容 <span class="retime">今天 午夜</span>
           <a href="/bbs/userinfo.aspx?touserid=1">bob</a>
@@ -1728,7 +1735,7 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('uses the page offset as the fallback floor for yaohuo replies without floor labels', () => {
-    const result = parseYaohuoRepliesHtml(
+    const result = parseReplies(
       '<div class="line1">回复内容 <a href="/userinfo.aspx?touserid=1">bob</a> 05-20 10:01</div>',
       {
         page: 3,

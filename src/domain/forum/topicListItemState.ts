@@ -12,7 +12,11 @@ export interface TopicListItemStateIndex {
   listDensity: ReaderSettings['listDensity'];
 }
 
-export function createTopicListItemStateIndex(data: ReaderData): TopicListItemStateIndex {
+type TopicListItemStateData = Pick<ReaderData, 'favorites' | 'history'> & {
+  settings: Pick<ReaderSettings, 'listDensity'>;
+};
+
+export function createTopicListItemStateIndex(data: TopicListItemStateData): TopicListItemStateIndex {
   return {
     favorites: new Set(Object.keys(data.favorites)),
     history: new Set(Object.keys(data.history)),

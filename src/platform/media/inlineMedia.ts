@@ -1,4 +1,3 @@
-import { parseHtml } from '@/domain/forum/html';
 import {
   INLINE_EMOJI_MAX_SIZE,
   forumImageAttributeValue as attributeValue,
@@ -8,7 +7,6 @@ import {
   knownForumStickerSourceDimensions,
   parseForumImageDimension as parseImageDimension
 } from '@/domain/forum/forumContentMedia';
-import { normalizeImagePreviewUrl } from './imageRequestSource';
 import type { ImageDisplaySize } from './imagePreviewCatalog';
 
 const STICKER_ROW_ATTR = 'data-forum-sticker-row';
@@ -26,24 +24,6 @@ export function shouldMarkLoadedImageInline(
 ) {
   const maxDimension = Math.max(safeImageDimension(width), safeImageDimension(height));
   return maxDimension > 0 && maxDimension <= INLINE_EMOJI_MAX_SIZE && isV2exEmbeddedImageAttributes(attributes);
-}
-
-export function markInlineSizedImageHtml(html: string, url: string) {
-  const target = normalizeImagePreviewUrl(url);
-  if (!target) return html;
-  try {
-    const root = parseHtml(html);
-    let changed = false;
-    root.querySelectorAll('img').forEach((image) => {
-      const src = attributeValue(image.attributes, 'src');
-      if (normalizeImagePreviewUrl(src) !== target) return;
-      image.setAttribute('data-forum-inline-sized', 'true');
-      changed = true;
-    });
-    return changed ? root.toString() : html;
-  } catch {
-    return html;
-  }
 }
 
 export function inlineForumImageDisplaySize(

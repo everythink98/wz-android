@@ -210,9 +210,8 @@ export function googleResultTargetUrl(href: string) {
   }
 }
 
-export function hasGoogleSiteSearchNextPage(html: string, site: string, nextPage: number) {
+export function hasGoogleSiteSearchNextPage(root: ReturnType<typeof parseHtml>, site: string, nextPage: number) {
   const nextStart = (nextPage - 1) * 10;
-  const root = parseHtml(html);
   return root.querySelectorAll('a[href]').some((link) => {
     const href = link.getAttribute('href') || '';
     const label = elementText(link);
@@ -229,8 +228,7 @@ export function hasGoogleSiteSearchNextPage(html: string, site: string, nextPage
   });
 }
 
-export function isGoogleSiteSearchResponse(html: string, site: string) {
-  const root = parseHtml(html);
+export function isGoogleSiteSearchResponse(root: ReturnType<typeof parseHtml>, site: string) {
   const title = elementText(root.querySelector('title')).toLowerCase();
   const siteText = site.toLowerCase();
   if (!title.includes('google') && !title.includes(`site:${siteText}`)) {

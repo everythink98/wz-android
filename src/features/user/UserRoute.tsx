@@ -1,9 +1,9 @@
-import { createContext, type ReactNode, useCallback, useContext, useMemo } from 'react';
+import { createContext, type ReactNode, useCallback, useContext } from 'react';
 import { Linking } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { Topic } from '@/domain/forum/models';
-import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { toggleFollowedUser, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
@@ -33,6 +33,7 @@ export type UserRouteRuntimeValue = {
   };
   appActive: boolean;
   notify: (message: string) => void;
+  topicStateIndex: TopicListItemStateIndex;
   reader: {
     commit: (reason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
     data: ReaderData;
@@ -86,7 +87,6 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     readGateway: runtime.account.readGateway,
     user: route.params.user
   });
-  const topicStateIndex = useMemo(() => createTopicListItemStateIndex(runtime.reader.data), [runtime.reader.data]);
   const openExternalUrl = useCallback(
     (url: string) => {
       if (!isHttpOrHttpsUrl(url)) {
@@ -115,7 +115,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
       followed={controller.currentUserFollowed}
       profile={controller.userProfile}
       requestedUser={controller.selectedUser}
-      topicStateIndex={topicStateIndex}
+      topicStateIndex={runtime.topicStateIndex}
       loadingMoreReplies={controller.userLoadingMoreReplies}
       loadingMoreTopics={controller.userLoadingMoreTopics}
       onBack={navigation.goBack}

@@ -21,6 +21,7 @@ import { moreBadgeState as notificationMoreBadgeState } from '@/ui/navigation/mo
 import { openNotificationsRoute, openXiaoyinsiAuthorization } from './appNavigation';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { useContentSourceQueryCleanup } from './useContentSourceQueryCleanup';
+import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 
 export function useAppRuntime() {
   const lifecycle = useAppLifecycleRuntime();
@@ -29,7 +30,10 @@ export function useAppRuntime() {
     changeScreen,
     getCurrentScreen,
     height,
+    initialForegroundReady,
     notify,
+    onCatalogSettled,
+    onFeedInitialContentReady,
     onReady: handleNavigationReady,
     onScreenChange: handleNavigationScreenChange,
     openUserRoute,
@@ -39,7 +43,12 @@ export function useAppRuntime() {
   const { commitReaderData, readerData, readerDataLoaded, readerDataRef, replaceReaderData, waitForReaderDataSave } =
     useReaderRuntime({ notify });
 
-  const { fontScale } = readerData.settings;
+  const { favorites, history } = readerData;
+  const { fontScale, listDensity } = readerData.settings;
+  const topicStateIndex = useMemo(
+    () => createTopicListItemStateIndex({ favorites, history, settings: { listDensity } }),
+    [favorites, history, listDensity]
+  );
   const { appStyles, contentWidth, navigationTheme, readerStyleContext, theme } = useAppTheme(
     readerData.settings,
     width
@@ -69,21 +78,24 @@ export function useAppRuntime() {
     notify,
     nodeSeekRecoveryThreshold: readerData.settings.nodeSeekRecoveryThreshold,
     openUser: openUserRoute,
-    ready: readerDataLoaded,
+    ready: readerDataLoaded && (initialForegroundReady || screen === 'more'),
     screen,
     webViewBlockMessage: networkProxyWebViewBlockMessage
   });
   const updateRuntime = useAppUpdateRuntime({
-    autoCheck: true,
+    autoCheck: initialForegroundReady,
     beforeRequest: ensureNetworkProxyReady,
     fetcher: networkProxyFetcher,
     notify
   });
   const {
     accountSessionViewModels,
+    feedReadGateway,
+    feedSessionEpochs,
     forumSessionEpochs,
     getLinuxDoUserAgent,
     getNodeSeekUserAgent,
+    identityReconciliationPending,
     notificationPrivateAccessAllowed,
     readGateway,
     reconcileAccountStatus,
@@ -116,6 +128,7 @@ export function useAppRuntime() {
     getNodeSeekUserAgent,
     openSource: openNotificationsRoute,
     privateAccessAllowed: notificationPrivateAccessAllowed,
+    remoteReady: !identityReconciliationPending,
     sessions: accountSessionViewModels
   });
   const notificationRouteRuntime = useMemo<NotificationRouteRuntimeValue>(
@@ -153,8 +166,9 @@ export function useAppRuntime() {
     enabledFeedSources,
     enabledSourcesKey,
     notify,
-    readGateway,
-    sessionEpochs: forumSessionEpochs
+    onSettled: readerDataLoaded ? onCatalogSettled : undefined,
+    readGateway: feedReadGateway,
+    sessionEpochs: feedSessionEpochs
   });
   const { appUpdateBusy, appUpdateDownloading, appUpdateInfo } = updateRuntime;
   const { metadata: diagnosticMetadata } = useAppDiagnosticsRuntime({
@@ -254,7 +268,8 @@ export function useAppRuntime() {
       reader: {
         commit: commitReaderData,
         data: readerData
-      }
+      },
+      topicStateIndex
     }),
     [
       appActive,
@@ -267,7 +282,8 @@ export function useAppRuntime() {
       requestNodeSeekVerification,
       showLinuxDoPanel,
       showLinuxDoVerification,
-      showYaohuoLogin
+      showYaohuoLogin,
+      topicStateIndex
     ]
   );
 
@@ -275,9 +291,9 @@ export function useAppRuntime() {
     () => ({
       account: {
         linuxDoVerificationVisible: showLinuxDoPanel,
-        readGateway,
+        readGateway: feedReadGateway,
         requestNodeSeekVerification,
-        sessionEpochs: forumSessionEpochs,
+        sessionEpochs: feedSessionEpochs,
         showLinuxDoVerification,
         showYaohuoLogin
       },
@@ -287,20 +303,24 @@ export function useAppRuntime() {
       reader: {
         data: readerData,
         loaded: readerDataLoaded
-      }
+      },
+      onInitialContentReady: onFeedInitialContentReady,
+      topicStateIndex
     }),
     [
       appActive,
       catalogCategories,
-      forumSessionEpochs,
+      feedReadGateway,
+      feedSessionEpochs,
+      onFeedInitialContentReady,
       notify,
-      readGateway,
       readerData,
       readerDataLoaded,
       requestNodeSeekVerification,
       showLinuxDoPanel,
       showLinuxDoVerification,
-      showYaohuoLogin
+      showYaohuoLogin,
+      topicStateIndex
     ]
   );
 
@@ -318,7 +338,8 @@ export function useAppRuntime() {
       },
       catalogCategories,
       notify,
-      readerData
+      readerData,
+      topicStateIndex
     }),
     [
       accountSessionViewModels,
@@ -331,7 +352,8 @@ export function useAppRuntime() {
       requestNodeSeekVerification,
       showLinuxDoPanel,
       showLinuxDoVerification,
-      showYaohuoLogin
+      showYaohuoLogin,
+      topicStateIndex
     ]
   );
 
@@ -345,9 +367,19 @@ export function useAppRuntime() {
         data: readerData,
         dataRef: readerDataRef,
         loaded: readerDataLoaded
-      }
+      },
+      topicStateIndex
     }),
-    [catalogCategories, commitReaderData, enabledSources, notify, readerData, readerDataLoaded, readerDataRef]
+    [
+      catalogCategories,
+      commitReaderData,
+      enabledSources,
+      notify,
+      readerData,
+      readerDataLoaded,
+      readerDataRef,
+      topicStateIndex
+    ]
   );
 
   const moreRouteRuntime = useMemo<MoreRouteRuntimeValue>(

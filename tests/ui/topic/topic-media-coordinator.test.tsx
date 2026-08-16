@@ -83,6 +83,7 @@ function CoordinatorHarness({
   diagnosticSession?: {
     networkMediaCount: number;
     plannedRowCount: number;
+    responseReadyAt?: number;
     source: 'nodeseek';
     topicRef: string;
   };
@@ -838,6 +839,35 @@ describe('TopicBodyMediaCoordinator', () => {
         topicRef: 'topic-first-row'
       })
     );
+  });
+
+  it('records the first admitted media request relative to the ready topic revision', async () => {
+    const nowSpy = jest.spyOn(globalThis.performance, 'now').mockReturnValue(1_000);
+    const onDiagnosticFinish = jest.fn<void, [TopicBodyMediaAggregate]>();
+    try {
+      const view = await render(
+        <CoordinatorHarness
+          diagnosticSession={{
+            networkMediaCount: 1,
+            plannedRowCount: 1,
+            responseReadyAt: 750,
+            source: 'nodeseek',
+            topicRef: 'topic-first-media'
+          }}
+          onDiagnosticFinish={onDiagnosticFinish}
+        >
+          <MediaProbe id="first-media" />
+        </CoordinatorHarness>
+      );
+
+      await view.unmount();
+
+      expect(onDiagnosticFinish).toHaveBeenCalledWith(
+        expect.objectContaining({ firstMediaElapsedMs: 250, topicRef: 'topic-first-media' })
+      );
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('finishes the previous provider session once and isolates metrics when the topic identity changes', async () => {

@@ -1,16 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
+import { parseHtml } from '@/domain/forum/html';
 import { parseYaohuoListHtml } from './feedParser';
-import { parseYaohuoRepliesHtml } from './topicParser';
-import { parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './userParser';
+import { parseYaohuoRepliesDocument } from './topicParser';
+import { parseYaohuoUserProfileDocument, parseYaohuoUserRepliesDocument } from './userParser';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+
+function parseReplies(html: string, options?: Parameters<typeof parseYaohuoRepliesDocument>[1]) {
+  return parseYaohuoRepliesDocument(parseHtml(html), options);
+}
+
+function parseUserProfile(html: string, options: Parameters<typeof parseYaohuoUserProfileDocument>[1]) {
+  return parseYaohuoUserProfileDocument(parseHtml(html), options);
+}
+
+function parseUserReplies(html: string, options: Parameters<typeof parseYaohuoUserRepliesDocument>[1]) {
+  return parseYaohuoUserRepliesDocument(parseHtml(html), options);
+}
 
 describe('yaohuo reply parsing', () => {
   it('summarizes invalid list candidates and source replies with synthesized floors', () => {
     const list = parseYaohuoListHtml('<div class="listdata">broken row</div>');
-    const replies = parseYaohuoRepliesHtml(
-      '<div class="line1">reply <a href="/userinfo.aspx?touserid=1">bob</a></div>'
-    );
+    const replies = parseReplies('<div class="line1">reply <a href="/userinfo.aspx?touserid=1">bob</a></div>');
     const repeated = parseYaohuoListHtml(
       `
       <div class="listdata"><a href="/bbs-1.html">topic</a>/author/阅1/2026-07-10 10:00</div>
@@ -36,7 +47,7 @@ describe('yaohuo reply parsing', () => {
   });
 
   it('marks only replies with the original own-delete link as deletable', () => {
-    const replies = parseYaohuoRepliesHtml(
+    const replies = parseReplies(
       `
       <div class="reline list-reply" data-floor="3">
         [<span class="floornumber">3</span><span>楼</span>]
@@ -75,7 +86,7 @@ describe('yaohuo reply parsing', () => {
   });
 
   it('[REG-TOPIC-061][REG-TOPIC-062] sorts Yaohuo windows by floor and preserves reply targets', () => {
-    const replies = parseYaohuoRepliesHtml(
+    const replies = parseReplies(
       `
       <div class="list-reply line1" id="floor-90" data-floor="90">
         [<span class="floornumber">90</span><span>楼</span>]
@@ -112,7 +123,7 @@ describe('yaohuo reply parsing', () => {
       }
     });
 
-    const crossPage = parseYaohuoRepliesHtml(
+    const crossPage = parseReplies(
       `
       <div class="list-reply line1" id="floor-61" data-floor="61">
         <span class="reother">回复<a href="/bbs/book_re.aspx?id=1560939&amp;tofloor=30">30楼</a></span>
@@ -127,7 +138,7 @@ describe('yaohuo reply parsing', () => {
   });
 
   it('does not duplicate user reply rows when the page wraps replies in outer divs', () => {
-    const replies = parseYaohuoUserRepliesHtml(
+    const replies = parseUserReplies(
       `
       <div>
         <div>火友 (7) #71 妖火回复内容。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
@@ -147,7 +158,7 @@ describe('yaohuo reply parsing', () => {
   });
 
   it('ignores outer containers that wrap multiple user reply rows', () => {
-    const replies = parseYaohuoUserRepliesHtml(
+    const replies = parseUserReplies(
       `
       <div>
         <div>火友 (7) #71 妖火回复内容。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
@@ -164,7 +175,7 @@ describe('yaohuo reply parsing', () => {
   });
 
   it('drops link-only duplicate blocks for the same topic and reply time', () => {
-    const replies = parseYaohuoUserRepliesHtml(
+    const replies = parseUserReplies(
       `
       <div>火友 (7) #71 阿根廷没问题。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
       <div>火友 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
@@ -180,14 +191,14 @@ describe('yaohuo reply parsing', () => {
   });
 
   it('keeps yaohuo user topic and reply display times identical to the source text', () => {
-    const profile = parseYaohuoUserProfileHtml(
+    const profile = parseUserProfile(
       `
       <div class="content">昵称:火友<br/>贴子(1).回复(1)</div>
       <div class="listdata"><a href="/bbs-66.html?classid=177">妖火主题</a>/火友/阅1/2026-05-20 10:30</div>
     `,
       { id: '7', username: '火友' }
     );
-    const replies = parseYaohuoUserRepliesHtml(
+    const replies = parseUserReplies(
       `
       <div>火友 (7) #71 阿根廷没问题。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
     `,
@@ -204,7 +215,7 @@ describe('yaohuo reply parsing', () => {
   });
 
   it('REG-USER-005 preserves explicit zero statistics for a new Yaohuo user', () => {
-    const profile = parseYaohuoUserProfileHtml(
+    const profile = parseUserProfile(
       `
       <div class="content">昵称:新用户<br/>贴子(0).回复(0)</div>
     `,
@@ -215,7 +226,7 @@ describe('yaohuo reply parsing', () => {
   });
 
   it('[REG-ACCOUNT-025] replaces a current-account id placeholder with the profile nickname', () => {
-    const profile = parseYaohuoUserProfileHtml(
+    const profile = parseUserProfile(
       `
       <div class="content">昵称:火友<br/>贴子(0).回复(0)</div>
     `,

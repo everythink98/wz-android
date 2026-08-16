@@ -1,19 +1,5 @@
 import type { RepliesResponse, ReplyOrder } from '@/domain/forum/models';
-import { annotateSourceDiagnosticSummary, copySourceDiagnosticSummary } from './diagnostics';
-
-export function emptyReplyWindow(parserVariant: string): RepliesResponse {
-  return annotateSourceDiagnosticSummary(
-    {
-      items: [],
-      completeness: 'complete',
-      currentPage: 1,
-      hasMore: false,
-      nextPage: null,
-      totalCount: 0
-    },
-    { parserVariant, candidateCount: 0, validCount: 0, droppedCount: 0, isExpectedEmpty: true }
-  );
-}
+import { copySourceDiagnosticSummary } from './diagnostics';
 
 export function orientReplyWindow(result: RepliesResponse, order: ReplyOrder): RepliesResponse {
   if (order === 'oldest') return result;

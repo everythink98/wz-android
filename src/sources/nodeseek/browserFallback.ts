@@ -1,4 +1,4 @@
-import { cancelRequestTimeoutForFallback, scheduleRequestTimeout, type Fetcher } from '@/platform/network/request';
+import { cancelRequestTimeoutForFallback, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
 import {
   isGoogleSiteSearchNavigationUrl,
   isGoogleSiteSearchUrl,
@@ -61,29 +61,11 @@ export function isNodeSeekBrowserResultUrl(input: string, initialRequestUrl: str
 }
 
 async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, init?: RequestInit) {
-  const controller = new AbortController();
-  const parentSignal = init?.signal;
-  const abortFromParent = () => controller.abort();
-  let cancelTimeout: (() => void) | undefined;
-  let timeoutPromise: Promise<never> | undefined;
-  if (parentSignal?.aborted) {
-    controller.abort();
-  } else {
-    parentSignal?.addEventListener('abort', abortFromParent, { once: true });
-    timeoutPromise = new Promise<never>((_resolve, reject) => {
-      cancelTimeout = scheduleRequestTimeout(() => {
-        reject(new Error(NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE));
-        controller.abort();
-      }, NODESEEK_DIRECT_FETCH_TIMEOUT_MS);
-    });
-  }
-  try {
-    const fetchPromise = defaultFetcher(input, { ...init, signal: controller.signal });
-    return await (timeoutPromise ? Promise.race([fetchPromise, timeoutPromise]) : fetchPromise);
-  } finally {
-    cancelTimeout?.();
-    parentSignal?.removeEventListener('abort', abortFromParent);
-  }
+  return withAbortableTimeout((signal) => defaultFetcher(input, { ...init, signal }), {
+    signal: init?.signal,
+    timeoutMs: NODESEEK_DIRECT_FETCH_TIMEOUT_MS,
+    timeoutError: () => new Error(NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE)
+  });
 }
 
 async function fetchNodeSeekThroughWebView(

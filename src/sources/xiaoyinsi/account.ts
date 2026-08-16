@@ -8,7 +8,11 @@ import {
   toIsoString
 } from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
-import { buildDiscourseLevelProfileFromSummary, type DiscourseLevelProfile } from '@/sources/discourse/level';
+import {
+  buildDiscourseLevelProfileFromSummary,
+  discourseAccountCount,
+  type DiscourseLevelProfile
+} from '@/sources/discourse/level';
 import { discourseOriginalPoster, discourseUsersById } from '@/sources/discourse/model';
 import { stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
 import { XIAOYINSI_BASE_URL } from './protocol';
@@ -19,7 +23,6 @@ import {
   categoryMapForTopics,
   fetchXiaoyinsiJson,
   levelLabel,
-  nonNegativeNumber,
   normalizeTopic,
   positiveNumber,
   topicId,
@@ -137,9 +140,9 @@ export async function getXiaoyinsiUserProfile(
           : typeof user.bio_excerpt === 'string'
             ? user.bio_excerpt
             : undefined,
-      topicCount: nonNegativeNumber(summary.topic_count) ?? (topics.length || undefined),
-      replyCount: nonNegativeNumber(summary.reply_count),
-      postCount: nonNegativeNumber(summary.post_count),
+      topicCount: discourseAccountCount(summary.topic_count) ?? (topics.length || undefined),
+      replyCount: discourseAccountCount(summary.reply_count),
+      postCount: discourseAccountCount(summary.post_count),
       ...(trustLevel ? { levelLabel: trustLevel } : {}),
       topics: sortTopicsByCreatedAt(topics),
       hasMoreTopics: Boolean(topicList.more_topics_url),

@@ -1,8 +1,8 @@
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useRef } from 'react';
 import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic } from '@/domain/forum/models';
-import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { ReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
@@ -27,6 +27,8 @@ export type FeedRouteRuntimeValue = {
   appActive: boolean;
   catalogCategories: Category[];
   notify: (message: string) => void;
+  onInitialContentReady: () => void;
+  topicStateIndex: TopicListItemStateIndex;
   reader: {
     data: ReaderData;
     loaded: boolean;
@@ -64,10 +66,10 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway
   });
-  const topicStateIndex = useMemo(() => createTopicListItemStateIndex(runtime.reader.data), [runtime.reader.data]);
+  const { feedAllowsRemotePagination, loadFeed } = controller;
   const loadMore = useCallback(() => {
-    if (controller.feedAllowsRemotePagination) void controller.loadFeed();
-  }, [controller]);
+    if (feedAllowsRemotePagination) void loadFeed();
+  }, [feedAllowsRemotePagination, loadFeed]);
   const openTopic = useCallback(
     (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),
     [navigation]
@@ -81,7 +83,7 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
       categoryFilter={controller.categoryFilter}
       feedHasMore={controller.activeFeedState.hasMore && controller.feedAllowsRemotePagination}
       feedItems={controller.shownFeedItems}
-      feedOutcomeKind={controller.feedOutcomeKind}
+      feedOutcomeKind={active ? controller.feedOutcomeKind : undefined}
       feedPage={controller.activeFeedState.page}
       feedSource={controller.feedSource}
       feedFilter={controller.feedFilter}
@@ -89,7 +91,7 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
       enabledFeedSources={controller.enabledFeedSources}
       loadMoreFailureSignal={controller.activeFeedState.loadMoreFailureSignal}
       loadingMore={controller.activeFeedState.loadingMore}
-      topicStateIndex={topicStateIndex}
+      topicStateIndex={runtime.topicStateIndex}
       readingFilter={controller.readingFilter}
       refreshing={controller.activeFeedState.refreshing}
       scrollRef={listRef}
@@ -97,6 +99,7 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
       onFeedSourceChange={controller.changeFeedSource}
       onManageContentSources={manageContentSources}
       onFeedFilterChange={controller.setFeedFilter}
+      onInitialContentReady={runtime.onInitialContentReady}
       onLoadMore={loadMore}
       onOpenTopic={openTopic}
       onReadingFilterChange={controller.setReadingFilter}

@@ -60,7 +60,15 @@ import {
 } from '@/platform/diagnostics/diagnosticPolicy';
 import { copySourceDiagnosticSummary, sourceDiagnosticSummary } from './diagnostics';
 import { runForumSourceReadAttempt, withForumSourceReadEligibility } from './forumSourceReadAttempt';
-import type { FeedSource, RepliesResponse, Source, SourceErrors, Topic, TopicDetail } from '@/domain/forum/models';
+import type { FeedSource, Source, SourceErrors, Topic } from '@/domain/forum/models';
+import {
+  prepareRepliesContent,
+  prepareReplyContent,
+  prepareTopicContent,
+  type PreparedRepliesResponse,
+  type PreparedReply,
+  type PreparedTopicDetail
+} from '@/domain/forum/topicContentSplit';
 import { resolveForumReadPlan, type ForumReadOperation, type ForumReadPlan } from '@/domain/forum/readPlan';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { isSessionSource, sourceValues, type DiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
@@ -105,10 +113,10 @@ export function searchTopics(options: SearchTopicsOptions) {
 
 type GetTopicOptions = Parameters<typeof getForumTopic>[0] & { topic?: Topic };
 
-export async function getTopic(options: GetTopicOptions): Promise<TopicDetail> {
+export async function getTopic(options: GetTopicOptions, trace?: DiagnosticTrace): Promise<PreparedTopicDetail> {
   const detail =
     options.source !== 'yaohuo'
-      ? await getForumTopic(options)
+      ? await getForumTopic({ ...options, diagnosticTrace: trace })
       : options.topic
         ? await getYaohuoTopicDirect({
             topic: options.topic,
@@ -119,16 +127,34 @@ export async function getTopic(options: GetTopicOptions): Promise<TopicDetail> {
         : (() => {
             throw new Error('妖火详情需要主题上下文');
           })();
-  return detail.replyCompleteness
-    ? detail
-    : copySourceDiagnosticSummary({ ...detail, replyCompleteness: 'partial' }, detail);
+  const sourcePreparedAndTraced = options.source === 'nodeseek' && Boolean(detail.preparedContent);
+  if (trace && !sourcePreparedAndTraced) {
+    markDiagnosticStage(trace, 'parse', { source: options.source, state: 'source-parsed' });
+  }
+  const preparedDetail = prepareTopicContent(detail);
+  if (trace && !sourcePreparedAndTraced) {
+    markDiagnosticStage(trace, 'parse', {
+      source: options.source,
+      state: 'content-plan-ready',
+      plannedRowCount: preparedDetail.preparedContent.contentPlan.rows.length,
+      networkMediaCount: preparedDetail.preparedContent.contentPlan.previewImages.length
+    });
+  }
+  const prepared = preparedDetail === detail ? preparedDetail : copySourceDiagnosticSummary(preparedDetail, detail);
+  const result: PreparedTopicDetail = prepared.replyCompleteness
+    ? prepared
+    : copySourceDiagnosticSummary({ ...prepared, replyCompleteness: 'partial' }, prepared);
+  return result;
 }
 
 type GetRepliesOptions = Parameters<typeof getForumReplies>[0] & {
   categoryId?: string;
 };
 
-export async function getReplies(options: GetRepliesOptions): Promise<RepliesResponse> {
+export async function getReplies(
+  options: GetRepliesOptions,
+  trace?: DiagnosticTrace
+): Promise<PreparedRepliesResponse> {
   const response =
     options.source !== 'yaohuo'
       ? await getForumReplies(options)
@@ -143,9 +169,27 @@ export async function getReplies(options: GetRepliesOptions): Promise<RepliesRes
           signal: options.signal,
           timeoutMs: options.timeoutMs
         });
-  return response.completeness
-    ? response
-    : copySourceDiagnosticSummary({ ...response, completeness: 'partial' }, response);
+  if (trace) markDiagnosticStage(trace, 'parse', { source: options.source, state: 'source-parsed' });
+  const preparedResponse = prepareRepliesContent(response, options.source);
+  if (trace) markDiagnosticStage(trace, 'parse', { source: options.source, state: 'content-plan-ready' });
+  const prepared =
+    preparedResponse === response ? preparedResponse : copySourceDiagnosticSummary(preparedResponse, response);
+  const result: PreparedRepliesResponse = prepared.completeness
+    ? prepared
+    : copySourceDiagnosticSummary({ ...prepared, completeness: 'partial' }, prepared);
+  return result;
+}
+
+export async function getReply(
+  options: Parameters<typeof getForumReply>[0],
+  trace?: DiagnosticTrace
+): Promise<PreparedReply> {
+  const reply = await getForumReply(options);
+  if (trace) markDiagnosticStage(trace, 'parse', { source: options.source, state: 'source-parsed' });
+  const prepared = prepareReplyContent(reply, options.source, 'quoted-reply');
+  if (trace) markDiagnosticStage(trace, 'parse', { source: options.source, state: 'content-plan-ready' });
+  const result: PreparedReply = prepared === reply ? prepared : copySourceDiagnosticSummary(prepared, reply);
+  return result;
 }
 
 type GetUserProfileOptions = Parameters<typeof getForumUserProfile>[0];
@@ -177,6 +221,7 @@ type ReadGatewayDependencies = {
 type GetCategoriesOptions = NonNullable<Parameters<typeof getForumCategories>[0]>;
 type GetReplyOptions = Parameters<typeof getForumReply>[0];
 type ManagedReadKeys =
+  | 'diagnosticTrace'
   | 'discourseAuth'
   | 'fetcher'
   | 'fetcherForSource'
@@ -365,6 +410,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       linuxDoAuthenticated?: boolean;
       nodeSeekAuthenticated?: boolean;
       nodeSeekUserAgent?: string;
+      trace: DiagnosticTrace;
       unavailableSources?: readonly Source[];
     }) => Promise<T>,
     context?: ReadGatewayReadContext,
@@ -472,6 +518,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
                 ? {
                     linuxdo: {
                       authenticated: linuxDoAuthenticated,
+                      categoryCacheScope: linuxDoPlan.cacheScope,
                       userAgent: dependencies.linuxDoUserAgent?.()
                     }
                   }
@@ -531,6 +578,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           linuxDoAuthenticated,
           nodeSeekAuthenticated,
           nodeSeekUserAgent: nodeSeekPlan?.state === 'ready' ? dependencies.nodeSeekUserAgent() : undefined,
+          trace,
           ...(source === 'all' ? { includedSources } : {}),
           ...(unavailableSources.length ? { unavailableSources } : {})
         });
@@ -856,11 +904,14 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         options.source,
         'getTopic',
         'topic',
-        (credentials) =>
-          getTopic({
-            ...options,
-            ...credentials
-          }),
+        ({ trace, ...credentials }) =>
+          getTopic(
+            {
+              ...options,
+              ...credentials
+            },
+            trace
+          ),
         context,
         options.signal
       );
@@ -870,11 +921,14 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         options.source,
         'getReplies',
         'replies',
-        (credentials) =>
-          getReplies({
-            ...options,
-            ...credentials
-          }),
+        ({ trace, ...credentials }) =>
+          getReplies(
+            {
+              ...options,
+              ...credentials
+            },
+            trace
+          ),
         context,
         options.signal,
         { replyOrder: options.order, positionKind: options.position.kind }
@@ -885,11 +939,14 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         options.source,
         'getReply',
         'reply',
-        (credentials) =>
-          getForumReply({
-            ...options,
-            ...credentials
-          }),
+        ({ trace, ...credentials }) =>
+          getReply(
+            {
+              ...options,
+              ...credentials
+            },
+            trace
+          ),
         context,
         options.signal
       );

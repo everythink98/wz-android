@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries } from '@tanstack/react-query';
 import * as Notifications from 'expo-notifications';
 import { isNotificationSource, notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
@@ -59,6 +59,7 @@ export function useNotificationsRuntime({
   getNodeSeekUserAgent,
   openSource,
   privateAccessAllowed,
+  remoteReady,
   sessions
 }: {
   appActive: boolean;
@@ -71,6 +72,7 @@ export function useNotificationsRuntime({
   getNodeSeekUserAgent: () => string;
   openSource: (source?: NotificationSource) => boolean;
   privateAccessAllowed: (source: NotificationSource, identityKey: string) => boolean;
+  remoteReady: boolean;
   sessions: SiteSessionViewModels;
 }) {
   const enabledSourceOrder = enabledNotificationSources.join('|');
@@ -121,6 +123,8 @@ export function useNotificationsRuntime({
   const backgroundErrorRef = useRef('');
   const mountedRef = useRef(true);
   const foregroundDeliveryRef = useRef<Promise<void> | undefined>(undefined);
+  const pendingForegroundDeliveryBatchesRef = useRef<NotificationSource[][]>([]);
+  const snapshotResultRevisionRef = useRef(0);
   const pendingOpenSourceRef = useRef<NotificationSource | undefined>(undefined);
   const lastResponseRef = useRef('');
   const [state, setState] = useState(stateRef.current);
@@ -392,6 +396,7 @@ export function useNotificationsRuntime({
     let current = true;
     void (async () => {
       let changed = false;
+      let nextState: NotificationState | undefined;
       for (const source of enabledNetworkSources) {
         if (!current) return;
         const previous = stateRef.current.sources[source];
@@ -399,17 +404,25 @@ export function useNotificationsRuntime({
         if (previous.identityKey === nextIdentity) continue;
         await dismissSourceNotification(source, previous.notificationIdentifier, previous.identityKey);
         if (!current) return;
-        await resetNotificationSourceIdentity(source, nextIdentity);
+        nextState = await resetNotificationSourceIdentity(source, nextIdentity);
         if (!current) return;
-        appQueryClient.removeQueries({ queryKey: forumQueryKeys.notifications(source) });
+        appQueryClient.removeQueries({
+          queryKey: forumQueryKeys.notifications(source),
+          predicate: ({ queryKey }) =>
+            queryKey[3] !== 'snapshot' &&
+            !queryKey.some(
+              (part) =>
+                part !== null &&
+                typeof part === 'object' &&
+                (part as Record<string, unknown>).identityKey === nextIdentity
+            )
+        });
         changed = true;
       }
       if (changed) appQueryClient.removeQueries({ queryKey: forumQueryKeys.notifications('all') });
-      if (!current || !changed) return;
-      const next = await loadNotificationState();
-      if (!current) return;
-      commitState(next);
-      await syncBackground(next, permissionRef.current, eligibleSources);
+      if (!current || !nextState) return;
+      commitState(nextState);
+      await syncBackground(nextState, permissionRef.current, eligibleSources);
     })();
     return () => {
       current = false;
@@ -427,82 +440,113 @@ export function useNotificationsRuntime({
   useEffect(() => {
     if (runtimeReady) void syncBackground(stateRef.current, permissionRef.current, eligibleSources);
   }, [eligibleSources, runtimeReady, syncBackground]);
-  const snapshotQuery = useQuery({
-    queryKey: forumQueryKeys.notificationSnapshots(identitySignature),
-    enabled: runtimeReady && appActive && activeNetworkSources.length > 0,
-    staleTime: 0,
-    refetchInterval: centerVisible ? 60_000 : 300_000,
-    refetchIntervalInBackground: false,
-    queryFn: async ({ signal }) => {
-      const settled = await Promise.allSettled(
-        activeNetworkSources.map(async (source) => [source, await gateway.readUnreadSnapshot(source, signal)] as const)
-      );
-      const snapshots: Partial<Record<NotificationSource, { total: number; checkedAt: string }>> = {};
-      const errors: Partial<Record<NotificationSource, string>> = {};
-      settled.forEach((result, index) => {
-        const source = activeNetworkSources[index]!;
-        if (result.status === 'fulfilled') snapshots[source] = result.value[1];
-        else errors[source] = sourceErrorFromUnknown(source, result.reason).message;
-      });
-      return { errors, snapshots };
-    }
+  const remoteQueryEnabled = runtimeReady && remoteReady && appActive;
+  const snapshotSourcesKey = activeNetworkSources
+    .filter((source) => state.sources[source].identityKey === identityKeys[source])
+    .join('|');
+  const snapshotSources = useMemo(
+    () => (snapshotSourcesKey ? (snapshotSourcesKey.split('|') as NotificationSource[]) : []),
+    [snapshotSourcesKey]
+  );
+  const snapshotQueries = useQueries({
+    queries: snapshotSources.map((source) => ({
+      queryKey: forumQueryKeys.notificationSnapshot({ source, identityKey: identityKeys[source]! }),
+      enabled: remoteQueryEnabled,
+      staleTime: 0,
+      refetchOnMount: 'always' as const,
+      refetchInterval: centerVisible ? 60_000 : 300_000,
+      refetchIntervalInBackground: false,
+      queryFn: async ({ signal }: { signal: AbortSignal }) => ({
+        revision: ++snapshotResultRevisionRef.current,
+        snapshot: await gateway.readUnreadSnapshot(source, signal)
+      })
+    }))
   });
-  const refetchSnapshots = snapshotQuery.refetch;
+  const snapshotQueriesRef = useRef(snapshotQueries);
+  const remoteQueryEnabledRef = useRef(remoteQueryEnabled);
+  useCommitRefValue(snapshotQueriesRef, snapshotQueries);
+  useCommitRefValue(remoteQueryEnabledRef, remoteQueryEnabled);
+  const refetchSnapshots = useCallback(
+    () =>
+      remoteQueryEnabledRef.current
+        ? Promise.all(snapshotQueriesRef.current.map((query) => query.refetch()))
+        : Promise.resolve([]),
+    []
+  );
 
   const runForegroundDelivery = useCallback((sources: readonly NotificationSource[]) => {
-    if (!sources.length || foregroundDeliveryRef.current || !stateRef.current.globalEnabled || !permissionRef.current) {
+    if (!sources.length || !stateRef.current.globalEnabled || !permissionRef.current) {
       return;
     }
-    const operation = runNotificationBackgroundWorker({
-      sources,
-      sourceAllowed: async (source) => operationalSourcesRef.current.includes(source),
-      privateAccessAllowed: async (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
-      network: {
-        restoreProxy: async () => undefined,
-        probeAccess: async (source, signal) => ({ ...(await readAccessRef.current(source)), signal }),
-        listPage: (source, access, signal, cursor) =>
-          notificationAdapters[source].listPage({ ...access, signal, cursor, limit: 60 })
-      },
-      store: {
-        clearForContentDisable: clearNotificationSourceForContentDisable,
-        load: loadNotificationState,
-        record: recordNotificationDelivery
-      },
-      system: {
-        permissionGranted: notificationPermissionGranted,
-        reconcileDigests: reconcileSourceNotificationSlots,
-        presentDigest: presentSourceNotification,
-        dismissDigest: (_source, identifier) => dismissSourceNotificationExact(identifier)
+    pendingForegroundDeliveryBatchesRef.current.push([...sources]);
+    if (foregroundDeliveryRef.current) return;
+    const operation = (async () => {
+      while (pendingForegroundDeliveryBatchesRef.current.length) {
+        const batch = pendingForegroundDeliveryBatchesRef.current.shift()!;
+        await runNotificationBackgroundWorker({
+          sources: batch,
+          sourceAllowed: async (source) => operationalSourcesRef.current.includes(source),
+          privateAccessAllowed: async (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
+          network: {
+            restoreProxy: async () => undefined,
+            probeAccess: async (source, signal) => ({ ...(await readAccessRef.current(source)), signal }),
+            listPage: (source, access, signal, cursor) =>
+              notificationAdapters[source].listPage({ ...access, signal, cursor, limit: 60 })
+          },
+          store: {
+            clearForContentDisable: clearNotificationSourceForContentDisable,
+            load: loadNotificationState,
+            record: recordNotificationDelivery
+          },
+          system: {
+            permissionGranted: notificationPermissionGranted,
+            reconcileDigests: reconcileSourceNotificationSlots,
+            presentDigest: presentSourceNotification,
+            dismissDigest: (_source, identifier) => dismissSourceNotificationExact(identifier)
+          }
+        }).catch(() => undefined);
       }
-    })
-      .then(() => undefined)
-      .catch(() => undefined);
+    })();
     foregroundDeliveryRef.current = operation;
     void operation.finally(() => {
       if (foregroundDeliveryRef.current === operation) foregroundDeliveryRef.current = undefined;
     });
   }, []);
 
+  const handledSnapshotUpdateRef = useRef(new Map<string, number>());
+  const snapshotRevision = snapshotQueries
+    .map((query, index) => `${snapshotSources[index]}:${query.data?.revision || 0}:${query.errorUpdatedAt}`)
+    .join('|');
   useEffect(() => {
-    if (appActive && runtimeReady && activeNetworkSources.length) void refetchSnapshots();
-  }, [activeNetworkSources.length, appActive, refetchSnapshots, runtimeReady]);
-
-  useEffect(() => {
-    const data = snapshotQuery.data;
-    if (!data) return;
-    setSnapshotErrors(data.errors);
-    const refreshedSources = activeNetworkSources.filter((source) => Boolean(data.snapshots[source]));
-    const writes = notificationSources.flatMap((source) => {
-      const snapshot = data.snapshots[source];
+    const errors: Partial<Record<NotificationSource, string>> = {};
+    const refreshedSources: NotificationSource[] = [];
+    const writes = snapshotSources.flatMap((source, index) => {
+      const query = snapshotQueriesRef.current[index];
+      if (!query) return [];
+      if (query.isError) errors[source] = sourceErrorFromUnknown(source, query.error).message;
+      const result = query.data;
+      const snapshot = result?.snapshot;
       const identityKey = identityKeys[source];
+      const revision = result?.revision || 0;
       if (!snapshot || !identityKey) return [];
+      const handledKey = `${source}\u0000${identityKey}`;
+      if (handledSnapshotUpdateRef.current.get(handledKey) === revision) return [];
+      handledSnapshotUpdateRef.current.set(handledKey, revision);
+      refreshedSources.push(source);
       return [recordNotificationSnapshot(source, identityKey, snapshot.total, snapshot.checkedAt)];
     });
-    void Promise.allSettled(writes).then(() => runForegroundDelivery(refreshedSources));
-  }, [activeNetworkSources, identityKeys, runForegroundDelivery, snapshotQuery.data]);
+    setSnapshotErrors(errors);
+    if (writes.length) void Promise.allSettled(writes).then(() => runForegroundDelivery(refreshedSources));
+  }, [identityKeys, runForegroundDelivery, snapshotRevision, snapshotSources]);
+
+  const currentSnapshots: Partial<Record<NotificationSource, { checkedAt: string; total: number }>> = {};
+  snapshotSources.forEach((source, index) => {
+    const snapshot = snapshotQueries[index]?.data?.snapshot;
+    if (snapshot) currentSnapshots[source] = snapshot;
+  });
 
   const unreadTotal = enabledSources.reduce((total, source) => {
-    const snapshot = snapshotQuery.data?.snapshots[source];
+    const snapshot = currentSnapshots[source];
     if (snapshot) return total + snapshot.total;
     const persisted = state.sources[source];
     return total + (persisted.identityKey === identityKeys[source] ? persisted.unreadCount || 0 : 0);

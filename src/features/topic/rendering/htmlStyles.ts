@@ -15,23 +15,11 @@ export const HTML_REPLY_CONTENT_CLASS = 'forum-reply-content';
 
 export type ContentContinuation = 'only' | 'first' | 'middle' | 'last';
 
-export type ContentBoundary = {
-  trimLeading: boolean;
-  trimTrailing: boolean;
-};
-
-export function contentBoundaryForContinuation(continuation: ContentContinuation): ContentBoundary {
+export function contentBoundaryForContinuation(continuation: ContentContinuation) {
   return {
     trimLeading: continuation === 'middle' || continuation === 'last',
     trimTrailing: continuation === 'first' || continuation === 'middle'
   };
-}
-
-export function contentContinuationForBoundary({ trimLeading, trimTrailing }: ContentBoundary): ContentContinuation {
-  if (trimLeading && trimTrailing) return 'middle';
-  if (trimLeading) return 'last';
-  if (trimTrailing) return 'first';
-  return 'only';
 }
 
 export function createHtmlRendererStyles(settings: ReaderSettings, theme: ReaderTheme) {

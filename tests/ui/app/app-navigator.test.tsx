@@ -249,6 +249,23 @@ describe('App navigator UI state', () => {
     expect(settingsHeader?.props.hideShadow).toBe(true);
   });
 
+  it('[REG-PERF-015] mounts only the active tab initially and preserves a visited tab instance', async () => {
+    const view = await renderNavigator();
+
+    expect(view.getByText('首页页面')).toBeTruthy();
+    expect(view.queryByText('搜索页面', { includeHiddenElements: true })).toBeNull();
+    expect(view.queryByText('收藏页面', { includeHiddenElements: true })).toBeNull();
+    expect(view.queryByText('更多页面', { includeHiddenElements: true })).toBeNull();
+
+    await fireEvent.press(view.getByTestId('main-tab-search'));
+    await waitFor(() => expect(view.getByText('搜索页面')).toBeTruthy());
+    await fireEvent.changeText(view.getByLabelText('搜索状态'), 'kept');
+    await fireEvent.press(view.getByTestId('main-tab-feed'));
+    await fireEvent.press(view.getByTestId('main-tab-search'));
+
+    await waitFor(() => expect(view.getByLabelText('搜索状态').props.value).toBe('kept'));
+  });
+
   it('[REG-PERF-002][REG-PERF-008][REG-TOPIC-002][REG-WRITE-006] keeps tab and native route state owned by their mounted route instances', async () => {
     const view = await renderNavigator(true);
     await fireEvent.changeText(view.getByLabelText('首页状态'), 'feed-state');

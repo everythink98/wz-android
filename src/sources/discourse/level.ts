@@ -1,3 +1,5 @@
+import { isRecord } from '@/domain/forum/html';
+
 export interface DiscourseLevelRequirement {
   key:
     | 'days_visited'
@@ -81,16 +83,18 @@ const LEVEL_REQUIREMENTS: Record<number, LevelRequirementConfig[]> = {
   ]
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function numberValue(value: unknown) {
+export function numberValue(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
-function trustLevelFromRecord(value: Record<string, unknown>) {
+export function discourseAccountCount(value: unknown) {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+export function trustLevelFromRecord(value: Record<string, unknown>) {
   const raw = value.trust_level ?? value.trustLevel;
   if (raw === undefined || raw === null || raw === '') {
     return null;

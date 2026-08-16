@@ -5,6 +5,8 @@ import {
   type BrowserFetchPriority
 } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
 import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from '@/sources/searchFallback';
 import type { NodeSeekSearchFilter } from '@/domain/forum/searchFilters';
@@ -29,7 +31,6 @@ import {
   NODESEEK_FLOORS_PER_PAGE,
   arrayField,
   assertNodeSeekTopicIdentity,
-  extractNodeSeekEmbeddedData,
   isNodeSeekChallengeResponse,
   lastNodeSeekPostPage,
   nextNodeSeekListPage,
@@ -38,6 +39,7 @@ import {
   nodeSeekTopicPagePath,
   nodeSeekTopicUrl,
   optionalInteger,
+  parseNodeSeekPageDocument,
   resolvedNodeSeekPostPage,
   withNodeSeekReplyPagination
 } from './protocol';
@@ -59,19 +61,25 @@ import {
   mergeNodeSeekPolls,
   mergeRenderedNodeSeekReply,
   mergeRenderedNodeSeekTopic,
+  normalizeRenderedNodeSeekPollRoot,
   normalizePostData,
   normalizeReplies,
   parseRenderedNodeSeekTopicHtml
 } from './topicParser';
 import {
-  isNodeSeekLoggedOutHtml,
+  isNodeSeekLoggedOutRoot,
   nodeSeekCurrentUserFromConfig,
-  parseNodeSeekCurrentUserHtml,
+  parseNodeSeekCurrentUserRoot,
   parseNodeSeekUserIdentity,
   parseNodeSeekUserProfile,
   parseNodeSeekUserReference
 } from './userParser';
-import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo, stripLoadedNodeSeekVoteMarkers } from './polls';
+import {
+  NODESEEK_POLL_PLACEHOLDER_TAG,
+  NODESEEK_VOTE_API_HEADERS,
+  normalizeNodeSeekVoteInfo,
+  replaceLoadedNodeSeekVoteMarkers
+} from './polls';
 import {
   annotateSourceDiagnosticSummary,
   copySourceDiagnosticSummary,
@@ -83,6 +91,8 @@ import {
   rejectForumReadResponse
 } from '@/sources/forumSourceReadAttempt';
 import { orientReplyWindow } from '@/sources/replyWindows';
+import { sanitizeContentHtmlWithRoot } from '@/domain/forum/contentSanitizer';
+import { prepareParsedForumContent } from '@/domain/forum/topicContentSplit';
 
 const BASE_URL = NODESEEK_BASE_URL;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
@@ -163,7 +173,8 @@ function isNodeSeekCloudflareError(error: unknown) {
 async function fetchNodeSeekTextResult(
   path: string,
   options: NodeSeekOptions = {},
-  requestHeaders: Record<string, string> = {}
+  requestHeaders: Record<string, string> = {},
+  bodyReadyTrace?: DiagnosticTrace
 ) {
   const requestOptions = { ...options, timeoutMs: options.timeoutMs ?? NODESEEK_READ_TIMEOUT_MS };
   const headers: HeadersInit = {
@@ -183,26 +194,31 @@ async function fetchNodeSeekTextResult(
     requestOptions
   );
   const text = await response.text();
-  if (isNodeSeekChallengeResponse(response, text, `${BASE_URL}${path}`)) {
+  if (bodyReadyTrace) markDiagnosticStage(bodyReadyTrace, 'parse', { source: 'nodeseek', state: 'body-ready' });
+  const pageDocument =
+    /html/i.test(response.headers.get('content-type') || '') || /^\s*</.test(text)
+      ? parseNodeSeekPageDocument(text)
+      : undefined;
+  if (isNodeSeekChallengeResponse(response, text, `${BASE_URL}${path}`, pageDocument)) {
     throw nodeSeekCloudflareError();
   }
   if (!response.ok && requestOptions.browserFetchIntent?.owner === 'account') {
     throw new Error(`HTTP ${response.status}`);
   }
   if (!response.ok && (response.status === 403 || response.status === 404) && accessRequirementFromText(text)) {
-    return { response, responseUrl: response.url, text };
+    return { pageDocument, response, responseUrl: response.url, text };
   }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  return { response, responseUrl: response.url, text };
+  return { pageDocument, response, responseUrl: response.url, text };
 }
 
 function hasLoggedInNodeSeekCookie(options: NodeSeekOptions) {
   return options.authenticated === true;
 }
 
-async function fetchNodeSeekGoogleSearchText(query: string, page: number, options: NodeSeekOptions = {}) {
+async function fetchNodeSeekGoogleSearchDocument(query: string, page: number, options: NodeSeekOptions = {}) {
   const requestOptions = { ...options, timeoutMs: options.timeoutMs ?? NODESEEK_READ_TIMEOUT_MS };
   const response = await fetchWithTimeout(
     googleSiteSearchUrl('nodeseek.com', query, page),
@@ -221,7 +237,7 @@ async function fetchNodeSeekGoogleSearchText(query: string, page: number, option
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  return text;
+  return parseNodeSeekPageDocument(text);
 }
 
 async function fetchNodeSeekJson(
@@ -264,19 +280,21 @@ export async function getNodeSeekFeed(
   const page = options.page || 1;
   const limit = options.limit || 30;
   const feedFilter = options.category ? 'postTime' : options.feedFilter || 'postTime';
-  const { response, text: html } = await fetchNodeSeekTextResult(
-    listPath(page, options.category, feedFilter),
-    requestOptions
-  );
-  const embedded = extractNodeSeekEmbeddedData(html);
-  const renderedItems = parseHtmlTopics(html);
+  const {
+    pageDocument,
+    response,
+    text: html
+  } = await fetchNodeSeekTextResult(listPath(page, options.category, feedFilter), requestOptions);
+  const document = pageDocument ?? parseNodeSeekPageDocument(html);
+  const embedded = document.embedded;
+  const renderedItems = parseHtmlTopics(document);
   const items = renderedItems.length ? renderedItems : embedded ? embeddedTopics(embedded) : [];
   const filtered = options.category
     ? items.filter(
         (item) => !item.categoryId || item.categoryId === options.category || item.category === options.category
       )
     : items;
-  const nextPage = nextNodeSeekListPage(html, page);
+  const nextPage = nextNodeSeekListPage(document, page);
   const hasMore = Boolean(nextPage);
   const result = {
     items: filtered.slice(0, limit),
@@ -313,10 +331,11 @@ export async function getNodeSeekFeed(
 
 export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'foreground');
-  const { response, text: html } = await fetchNodeSeekTextResult('/', requestOptions);
-  const embedded = extractNodeSeekEmbeddedData(html);
+  const { pageDocument, response, text: html } = await fetchNodeSeekTextResult('/', requestOptions);
+  const document = pageDocument ?? parseNodeSeekPageDocument(html);
+  const embedded = document.embedded;
   const embeddedCategories = embedded ? normalizeCategories(embedded) : ([] as Category[]);
-  const htmlCategories = parseHtmlCategories(html);
+  const htmlCategories = parseHtmlCategories(document);
   const result = {
     items: mergeNodeSeekCategories([...embeddedCategories, ...htmlCategories]),
     errors: {}
@@ -339,63 +358,94 @@ export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   return parsed;
 }
 
-async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions) {
+async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions, trace?: DiagnosticTrace) {
   const result = await fetchNodeSeekTextResult(
     nodeSeekTopicPagePath(id, page),
-    nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
+    nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground'),
+    {},
+    trace
   );
-  assertNodeSeekTopicIdentity(result.text, id, result.responseUrl);
-  return result;
+  const pageDocument = result.pageDocument || parseNodeSeekPageDocument(result.text);
+  assertNodeSeekTopicIdentity(pageDocument, id, result.responseUrl);
+  return { ...result, pageDocument };
 }
 
 async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions) {
-  const {
-    response,
-    responseUrl,
-    text: html
-  } = await fetchNodeSeekTextResult(
-    nodeSeekTopicPagePath(id, page),
-    nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
-  );
-  assertNodeSeekTopicIdentity(html, id, responseUrl);
-  const embedded = extractNodeSeekEmbeddedData(html);
+  const { pageDocument, response, responseUrl, text: html } = await fetchTopicHtml(id, page, options);
+  const embedded = pageDocument.embedded;
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
-  const rendered = parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER, page);
+  const rendered = parseRenderedNodeSeekTopicHtml(pageDocument, id, Number.MAX_SAFE_INTEGER, page);
   if (!postData && !rendered) {
     rejectForumReadResponse(response);
     throw new Error('NodeSeek 主题解析失败');
   }
   acceptForumReadResponse(response);
-  return { html, postData, rendered, resolvedPage: resolvedNodeSeekPostPage(html, id, responseUrl) };
+  return {
+    html,
+    pageDocument,
+    postData,
+    rendered,
+    resolvedPage: resolvedNodeSeekPostPage(pageDocument, id, responseUrl)
+  };
 }
 
-export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { replyLimit?: number } = {}) {
+function prepareNodeSeekOpeningContent(
+  topic: ReturnType<typeof mergeRenderedNodeSeekTopic>,
+  polls?: TopicPoll[],
+  trace?: DiagnosticTrace
+) {
+  if (trace) markDiagnosticStage(trace, 'parse', { source: 'nodeseek', state: 'source-parsed' });
+  const pollIds = (polls || []).map((poll) => poll.id).filter((id): id is string => Boolean(id));
+  const contentHtml = replaceLoadedNodeSeekVoteMarkers(topic.contentHtml, pollIds);
+  const sanitized = sanitizeContentHtmlWithRoot(
+    contentHtml,
+    BASE_URL,
+    contentHtml.includes(`<${NODESEEK_POLL_PLACEHOLDER_TAG}`)
+      ? (root) => normalizeRenderedNodeSeekPollRoot(root, pollIds)
+      : undefined
+  );
+  const preparedContent = prepareParsedForumContent(sanitized.root, {
+    contentHtml: sanitized.contentHtml,
+    polls,
+    role: 'opening',
+    source: 'nodeseek',
+    topicId: topic.id
+  });
+  if (trace) {
+    markDiagnosticStage(trace, 'parse', {
+      source: 'nodeseek',
+      state: 'content-plan-ready',
+      plannedRowCount: preparedContent.contentPlan.rows.length,
+      networkMediaCount: preparedContent.contentPlan.previewImages.length
+    });
+  }
+  return {
+    ...topic,
+    contentHtml: preparedContent.contentHtml,
+    preparedContent,
+    ...(polls ? { polls } : {})
+  };
+}
+
+export async function getNodeSeekTopic(
+  id: string,
+  options: NodeSeekOptions & { replyLimit?: number } = {},
+  trace?: DiagnosticTrace
+) {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
-  const { response, responseUrl, text: html } = await fetchTopicHtml(id, 1, requestOptions);
+  const { pageDocument, response, responseUrl, text: html } = await fetchTopicHtml(id, 1, requestOptions, trace);
   const documentUrl = responseUrl || nodeSeekTopicUrl(id);
-  const embedded = extractNodeSeekEmbeddedData(html);
+  const embedded = pageDocument.embedded;
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
-  const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
+  const rendered = parseRenderedNodeSeekTopicHtml(pageDocument, id, options.replyLimit || 30);
   if (rendered) {
     const embeddedTopic = postData
-      ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30)
+      ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30, rendered)
       : undefined;
     const topic = mergeRenderedNodeSeekTopic(rendered, embeddedTopic);
     const voteLinkPolls = await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], requestOptions, topic.polls);
     const polls = mergeNodeSeekPolls(topic.polls, voteLinkPolls.polls);
-    const paged = withNodeSeekReplyPagination(
-      {
-        ...topic,
-        contentHtml: stripLoadedNodeSeekVoteMarkers(
-          topic.contentHtml,
-          (polls || []).map((poll) => poll.id)
-        ),
-        ...(polls ? { polls } : {})
-      },
-      html,
-      id,
-      1
-    );
+    const paged = withNodeSeekReplyPagination(prepareNodeSeekOpeningContent(topic, polls, trace), pageDocument, id, 1);
     const comments = postData ? arrayField(postData.comments) : [];
     const replyCandidates = Math.max(rendered.replies.length, Math.max(0, comments.length - 1));
     const result = {
@@ -420,19 +470,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const topic = normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30);
     const voteLinkPolls = await readNodeSeekPollsFromVoteLinks([first.markdown, html], requestOptions);
     const polls = mergeNodeSeekPolls(voteLinkPolls.polls);
-    const paged = withNodeSeekReplyPagination(
-      {
-        ...topic,
-        contentHtml: stripLoadedNodeSeekVoteMarkers(
-          topic.contentHtml,
-          (polls || []).map((poll) => poll.id)
-        ),
-        ...(polls ? { polls } : {})
-      },
-      html,
-      id,
-      1
-    );
+    const paged = withNodeSeekReplyPagination(prepareNodeSeekOpeningContent(topic, polls, trace), pageDocument, id, 1);
     const replyCandidates = Math.max(0, comments.length - 1);
     const result = {
       ...paged,
@@ -779,16 +817,16 @@ async function getNodeSeekRepliesChronological(
   }
   const page = options.page || 1;
   const limit = options.limit || 30;
-  const { html, postData, rendered, resolvedPage } = await fetchTopicPageData(id, page, requestOptions);
+  const { pageDocument, postData, rendered, resolvedPage } = await fetchTopicPageData(id, page, requestOptions);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
   const offset = hasOffset ? (options.offset as number) : 0;
   const floorOffset = hasOffset ? offset : (page - 1) * limit;
   const originLastPage = Math.max(
     page,
-    lastNodeSeekPostPage(html, id, page),
+    lastNodeSeekPostPage(pageDocument, id, page),
     postData ? nodeSeekEmbeddedPostPageCount(postData) || page : page
   );
-  const originNextPage = nextNodeSeekPostPage(html, id, page) || (page < originLastPage ? page + 1 : null);
+  const originNextPage = nextNodeSeekPostPage(pageDocument, id, page) || (page < originLastPage ? page + 1 : null);
   const windowFields = {
     confirmedFloors: [] as number[],
     currentPage: resolvedPage || page,
@@ -1077,17 +1115,21 @@ function nodeSeekLoginExpiredError() {
 export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {}): Promise<UserProfile> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'account', 'background');
   for (const path of ['/', '/setting']) {
-    const { response, text: html } = await fetchNodeSeekTextResult(path, requestOptions);
-    const embeddedUser = nodeSeekCurrentUserFromConfig(extractNodeSeekEmbeddedData(html));
+    const { pageDocument, response } = await fetchNodeSeekTextResult(path, requestOptions);
+    if (!pageDocument) {
+      rejectForumReadResponse(response);
+      continue;
+    }
+    const embeddedUser = nodeSeekCurrentUserFromConfig(pageDocument.embedded);
     if (embeddedUser) {
       acceptForumReadResponse(response);
       return embeddedUser;
     }
-    if (isNodeSeekLoggedOutHtml(html)) {
+    if (isNodeSeekLoggedOutRoot(pageDocument.root)) {
       acceptForumReadResponse(response);
       throw nodeSeekLoginExpiredError();
     }
-    const user = parseNodeSeekCurrentUserHtml(html, { allowUidText: path === '/setting' });
+    const user = parseNodeSeekCurrentUserRoot(pageDocument.root, { allowUidText: path === '/setting' });
     if (user) {
       acceptForumReadResponse(response);
       return user;
@@ -1125,33 +1167,32 @@ export async function searchNodeSeek(
   let sourceResponse: Response | undefined;
   try {
     const useGoogleSearch = !hasLoggedInNodeSeekCookie(requestOptions);
-    let html: string;
+    let document;
     if (useGoogleSearch) {
-      html = await fetchNodeSeekGoogleSearchText(trimmedQuery, page, requestOptions);
+      document = await fetchNodeSeekGoogleSearchDocument(trimmedQuery, page, requestOptions);
     } else {
       const result = await fetchNodeSeekTextResult(
         searchPath(trimmedQuery, page, requestOptions.filter),
         requestOptions
       );
-      html = result.text;
+      document = result.pageDocument ?? parseNodeSeekPageDocument(result.text);
       sourceResponse = result.response;
     }
-    parserVariant =
-      useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com') ? 'google-search' : 'rendered-search';
-    const parsedSearch = parseNodeSeekSearchTopics(html);
+    const isGoogleSearch = useGoogleSearch || isGoogleSiteSearchResponse(document.root, 'nodeseek.com');
+    parserVariant = isGoogleSearch ? 'google-search' : 'rendered-search';
+    const parsedSearch = parseNodeSeekSearchTopics(document);
     candidateCount = parsedSearch.candidateCount;
     items = parsedSearch.items;
-    if (isIncompleteNodeSeekSearchPage(html, items)) {
+    if (isIncompleteNodeSeekSearchPage(document, items)) {
       throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
     }
-    nextPage =
-      useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com')
-        ? hasGoogleSiteSearchNextPage(html, 'nodeseek.com', page + 1)
-          ? page + 1
-          : null
-        : nextSearchPath(html, page + 1)
-          ? page + 1
-          : null;
+    nextPage = isGoogleSearch
+      ? hasGoogleSiteSearchNextPage(document.root, 'nodeseek.com', page + 1)
+        ? page + 1
+        : null
+      : nextSearchPath(document, page + 1)
+        ? page + 1
+        : null;
   } catch (error) {
     if (isNodeSeekCloudflareError(error)) {
       throw error;

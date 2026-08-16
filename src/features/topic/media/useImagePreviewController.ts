@@ -3,12 +3,14 @@ import { PixelRatio } from 'react-native';
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import { normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import {
-  createImagePreviewCatalogFromDescriptors,
   imagePreviewItemAt,
   imagePreviewListFromCatalog,
+  prepareImagePreviewCatalog,
+  projectImagePreviewCatalog,
   type ImageDisplaySize,
   type ImagePreviewCatalog,
-  type ImagePreviewList
+  type ImagePreviewList,
+  type PreparedImagePreviewCatalog
 } from '@/platform/media/imagePreviewCatalog';
 import type { TopicImageDeriver } from '../model/topicDerivedData';
 import { errorMessage } from '@/platform/network/errors';
@@ -75,6 +77,7 @@ export function useImagePreviewController({
     inlineSizedImageSignature: string;
     mediaRevision: string;
     pixelRatio: number;
+    prepared: PreparedImagePreviewCatalog;
     topicImageDeriver: TopicImageDeriver;
     width: number;
   } | null>(null);
@@ -100,29 +103,35 @@ export function useImagePreviewController({
   const registerImagePreviewDescriptors = useCallback(
     (descriptors: readonly ForumImagePreviewDescriptor[]) => {
       const current = catalogRegistrationRef.current;
-      if (
-        current &&
+      const canReusePrepared =
+        current !== null &&
         sameDescriptorSequence(current.descriptors, descriptors) &&
+        current.pixelRatio === pixelRatio &&
+        current.width === contentWidth;
+      if (
+        canReusePrepared &&
         current.inlineSizedImageSignature === inlineSizedImageSignature &&
         current.mediaRevision === mediaRevision &&
-        current.pixelRatio === pixelRatio &&
-        current.topicImageDeriver === topicImageDeriver &&
-        current.width === contentWidth
+        current.topicImageDeriver === topicImageDeriver
       ) {
         return;
       }
-      catalogRef.current = createImagePreviewCatalogFromDescriptors(
-        descriptors,
-        contentWidth,
-        pixelRatio,
+      const prepared = canReusePrepared
+        ? current.prepared
+        : prepareImagePreviewCatalog(descriptors, contentWidth, pixelRatio);
+      catalogRef.current = projectImagePreviewCatalog(
+        prepared,
         catalogMediaContext,
-        (url, referrerPolicy) => topicImageDeriver.isInlineSizedImage(url, referrerPolicy, inlineSizedImageUrls)
+        inlineSizedImageSignature
+          ? (url, referrerPolicy) => topicImageDeriver.isInlineSizedImage(url, referrerPolicy, inlineSizedImageUrls)
+          : undefined
       );
       catalogRegistrationRef.current = {
         descriptors,
         inlineSizedImageSignature,
         mediaRevision,
         pixelRatio,
+        prepared,
         topicImageDeriver,
         width: contentWidth
       };

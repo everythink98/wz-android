@@ -190,5 +190,3 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderSett
     }
   });
 }
-
-export type MoreAccountStyles = ReturnType<typeof createMoreAccountStyles>;

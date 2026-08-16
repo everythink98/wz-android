@@ -23,7 +23,7 @@ import {
   textContentFromHtml,
   toIsoString
 } from '@/domain/forum/html';
-import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
 import {
   accessRequirementFromObject,
   accessRequirementFromNoticeText,
@@ -63,6 +63,7 @@ type V2exHtmlReplyMeta = {
 };
 
 type V2exHtmlDetail = {
+  accessRequirement?: TopicDetail['accessRequirement'];
   linkedPages: number[];
   replyCount?: number;
   replyCountConflict: boolean;
@@ -338,7 +339,7 @@ function parseV2exSupplements(root: ReturnType<typeof parseHtml>) {
       const titleTime = element.querySelector('.fade span[title]')?.getAttribute('title') || '';
       const displayTime = titleTime ? toV2exHtmlIsoString(titleTime) || titleTime : '';
       const label = `补充 ${index + 1}${displayTime ? ` · ${displayTime}` : ''}`;
-      return `<blockquote><p><strong>${escapeHtml(label)}</strong></p>${sanitizeContentHtml(content, BASE_URL)}</blockquote>`;
+      return `<blockquote><p><strong>${escapeHtml(label)}</strong></p>${content}</blockquote>`;
     })
     .filter(Boolean)
     .join('\n');
@@ -387,7 +388,12 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
       element.querySelector('a[href^="/member/"]');
     const author = elementText(authorLink);
     const authorHref = authorLink?.getAttribute('href') || '';
-    const contentHtml = sanitizeContentHtml(replyContent, BASE_URL);
+    const preparedContent = prepareSanitizedForumContent(replyContent, {
+      baseUrl: BASE_URL,
+      role: 'reply',
+      source: 'v2ex'
+    });
+    const contentHtml = preparedContent.contentHtml;
     const reply: Reply | null = shouldKeepV2exReply(commentId, author, contentHtml)
       ? {
           author,
@@ -395,6 +401,7 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
           authorAvatar: absoluteUrl(element.querySelector('img.avatar')?.getAttribute('src'), BASE_URL),
           authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : author ? memberUrl(author) : undefined,
           contentHtml,
+          preparedContent,
           createdAt,
           ...(authorLevelLabel ? { authorLevelLabel } : {}),
           ...(floor ? { floor } : {}),
@@ -440,6 +447,7 @@ function parseV2exHtmlDetail(html: string, id: string): V2exHtmlDetail {
   const replyActionCount = parseV2exInteractionCount(root, /ReplyAction/i);
   const commentCount = parseV2exCommentCount(root);
   return {
+    accessRequirement: v2exHtmlAccessRequirement(root),
     linkedPages: parseV2exLinkedTopicPages(root, id),
     replyCount: replyActionCount ?? commentCount,
     replyCountConflict:
@@ -546,8 +554,7 @@ function v2exReplyMatchesTarget(reply: Reply, target: ReplyLocationTarget) {
   return target.commentId !== undefined ? reply.commentId === target.commentId : reply.floor === target.floor;
 }
 
-function v2exHtmlAccessRequirement(html: string) {
-  const root = parseHtml(html);
+function v2exHtmlAccessRequirement(root: ReturnType<typeof parseHtml>) {
   const text = elementText(root.querySelector('#Main')) || elementText(root.querySelector('body'));
   return accessRequirementFromNoticeText(text, { requireStart: true });
 }
@@ -877,7 +884,12 @@ function normalizeReply(raw: unknown, index: number): Reply | null {
   }
   const member = isRecord(raw.member) ? raw.member : {};
   const author = String(member.username || '').trim();
-  const contentHtml = sanitizeContentHtml(raw.content_rendered || raw.content || '', BASE_URL);
+  const preparedContent = prepareSanitizedForumContent(raw.content_rendered || raw.content || '', {
+    baseUrl: BASE_URL,
+    role: 'reply',
+    source: 'v2ex'
+  });
+  const contentHtml = preparedContent.contentHtml;
   const commentId = typeof raw.id === 'number' ? raw.id : parsePositiveInteger(raw.id);
   if (!shouldKeepV2exReply(commentId, author, contentHtml)) return null;
   const replyTargetAuthor = v2exReplyTargetAuthor(raw.content_rendered || raw.content || contentHtml);
@@ -891,6 +903,7 @@ function normalizeReply(raw: unknown, index: number): Reply | null {
     authorAvatar: absoluteUrl(member.avatar_large || member.avatar_normal || member.avatar_mini, BASE_URL),
     authorUrl: typeof member.username === 'string' ? memberUrl(member.username) : undefined,
     contentHtml,
+    preparedContent,
     createdAt: toIsoString(raw.created),
     floor: index + 1,
     ...(commentId ? { commentId } : {}),
@@ -939,9 +952,16 @@ export async function getV2exTopic(
   }
   const rawTopic = Array.isArray(topicData) && isRecord(topicData[0]) ? topicData[0] : {};
   const htmlDetail = detailHtml ? parseV2exHtmlDetail(detailHtml, id) : null;
-  const apiContentHtml = sanitizeContentHtml(rawTopic.content_rendered || rawTopic.content || '', BASE_URL);
-  const htmlAccessRequirement =
-    detailHtml && !textContentFromHtml(apiContentHtml) ? v2exHtmlAccessRequirement(detailHtml) : undefined;
+  const preparedContent = prepareSanitizedForumContent(
+    appendV2exSupplementHtml(
+      String(rawTopic.content_rendered || rawTopic.content || ''),
+      htmlDetail?.supplementHtml || ''
+    ),
+    { baseUrl: BASE_URL, role: 'opening', source: 'v2ex', topicId: id }
+  );
+  const htmlAccessRequirement = !textContentFromHtml(preparedContent.contentHtml)
+    ? htmlDetail?.accessRequirement
+    : undefined;
   const replies = visibleV2exHtmlReplyPage(htmlDetail, 1);
   const htmlReplyCount = htmlDetail?.replyCountConflict ? undefined : htmlDetail?.replyCount;
   const htmlReplyNodeCount = htmlDetail?.replyNodeCount || 0;
@@ -965,7 +985,8 @@ export async function getV2exTopic(
     ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
     replyCount,
     replyCompleteness: replyWindowComplete ? ('complete' as const) : ('partial' as const),
-    contentHtml: appendV2exSupplementHtml(apiContentHtml, htmlDetail?.supplementHtml || ''),
+    contentHtml: preparedContent.contentHtml,
+    preparedContent,
     replies,
     replyHasMore: replyNextPage !== null,
     replyNextPage,

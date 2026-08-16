@@ -38,6 +38,8 @@ describe('diagnostic traces', () => {
     });
 
     finishDiagnosticTrace(trace, 'success', {
+      catalogReadyElapsedMs: 120,
+      firstMediaElapsedMs: 180,
       firstRowElapsedMs: 250,
       plannedRowCount: 500,
       networkMediaCount: 2000,
@@ -57,6 +59,8 @@ describe('diagnostic traces', () => {
       expect.objectContaining({
         operation: 'topic-body-media',
         phase: 'finish',
+        catalogReadyElapsedMs: 120,
+        firstMediaElapsedMs: 180,
         firstRowElapsedMs: 250,
         plannedRowCount: 500,
         networkMediaCount: 2000,

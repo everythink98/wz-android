@@ -11,7 +11,7 @@ import {
   isHttpOrHttpsUrl,
   normalizeImagePreviewUrl
 } from './imageRequestSource';
-import { extractImageUrlsFromHtml, isPreviewableImageUrl } from './imagePreviewCatalog';
+import { isPreviewableImageUrl } from './imagePreviewCatalog';
 
 const publicMediaContext = { contentSource: null, sessionIdentity: 'public:0' } as const;
 
@@ -21,9 +21,7 @@ describe('image request source', () => {
   it('keeps svg data images out of preview and saving', () => {
     expect(isPreviewableImageUrl('data:image/png;base64,abc')).toBe(true);
     expect(isPreviewableImageUrl('data:image/svg+xml;base64,abc')).toBe(false);
-    expect(
-      extractImageUrlsFromHtml('<img src="data:image/svg+xml;base64,abc"><img src="data:image/webp;base64,ok">')
-    ).toEqual(['data:image/webp;base64,ok']);
+    expect(isPreviewableImageUrl('data:image/webp;base64,ok')).toBe(true);
     expect(dataImageFileFromUrl('data:image/svg+xml;base64,abc')).toBeNull();
   });
 

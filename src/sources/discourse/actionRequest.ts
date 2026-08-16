@@ -46,6 +46,19 @@ export type DiscourseAction =
       file: NormalizedReplyImageAsset;
     };
 
+export function discourseActionResponseMessage(data: Record<string, unknown>, fallback: string) {
+  if (typeof data.error === 'string' && data.error.trim()) return data.error.trim();
+  if (typeof data.message === 'string' && data.message.trim()) return data.message.trim();
+  if (Array.isArray(data.errors)) {
+    const message = data.errors
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .join('；');
+    if (message) return message;
+  }
+  return fallback;
+}
+
 function positiveInteger(value: string | number, name: string) {
   const text = String(value).trim();
   if (!/^\d+$/.test(text) || Number(text) <= 0) {

@@ -7,7 +7,12 @@ import type { DiscourseTagOption, DiscourseUserOption, SearchResponse, Topic } f
 import { decodeHtml, elementText, isRecord, parseHtml, textExcerpt } from '@/domain/forum/html';
 import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from '@/sources/searchFallback';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
-import { discourseOriginalPoster, discourseUsersById } from '@/sources/discourse/model';
+import {
+  discourseOriginalPoster,
+  discourseTagOptions,
+  discourseUserOptions,
+  discourseUsersById
+} from '@/sources/discourse/model';
 import { stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
 import { LINUXDO_BASE_URL as BASE_URL, linuxDoAvatarUrl as avatarUrl } from './protocol';
 import {
@@ -47,17 +52,7 @@ export async function searchLinuxDoTags(
     },
     options
   );
-  const results = Array.isArray(data.results) ? data.results : [];
-  const seen = new Set<string>();
-  return results.filter(isRecord).flatMap((item) => {
-    const name = String(item.name || item.id || '').trim();
-    if (!name || seen.has(name)) {
-      return [];
-    }
-    seen.add(name);
-    const count = Number(item.count ?? item.topic_count);
-    return [{ name, ...(Number.isInteger(count) && count >= 0 ? { topicCount: count } : {}) }];
-  });
+  return discourseTagOptions(data.results);
 }
 
 export async function searchLinuxDoUsers(
@@ -82,21 +77,7 @@ export async function searchLinuxDoUsers(
     },
     options
   );
-  const users = Array.isArray(data.users) ? data.users : [];
-  return users.filter(isRecord).flatMap((user) => {
-    const username = String(user.username || '').trim();
-    if (!username) {
-      return [];
-    }
-    return [
-      {
-        id: String(user.id || username),
-        username,
-        ...(String(user.name || '').trim() ? { displayName: String(user.name).trim() } : {}),
-        ...(avatarUrl(user.avatar_template) ? { avatar: avatarUrl(user.avatar_template) } : {})
-      }
-    ];
-  });
+  return discourseUserOptions(data.users, avatarUrl);
 }
 
 async function linuxDoCsrfToken(options: LinuxDoOptions) {
@@ -196,8 +177,7 @@ function isExplicitEmptyGoogleSearchPage(root: ReturnType<typeof parseHtml>) {
   );
 }
 
-function parseLinuxDoGoogleSearchTopics(html: string) {
-  const root = parseHtml(html);
+function parseLinuxDoGoogleSearchTopics(root: ReturnType<typeof parseHtml>) {
   const candidates = new Map<string, { id: string; target: string; title: string; rowText: string }>();
   const now = new Date().toISOString();
   for (const link of root.querySelectorAll('a[href]')) {
@@ -280,8 +260,9 @@ async function searchLinuxDoGoogle(
     );
   }
   const html = await fetchLinuxDoGoogleSearchText(cleanQuery, page, options);
-  const nextPage = hasGoogleSiteSearchNextPage(html, 'linux.do', page + 1) ? page + 1 : null;
-  const parsed = parseLinuxDoGoogleSearchTopics(html);
+  const root = parseHtml(html);
+  const nextPage = hasGoogleSiteSearchNextPage(root, 'linux.do', page + 1) ? page + 1 : null;
+  const parsed = parseLinuxDoGoogleSearchTopics(root);
   const items = parsed.items.slice(0, options.limit || 30);
   const parseError =
     parsed.candidateCount > 0 && parsed.items.length === 0
@@ -338,7 +319,7 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   const start = Math.max(0, (page - 1) * limit);
   const firstSearchPage = Math.floor(start / SEARCH_PAGE_SIZE) + 1;
   const firstOffset = start % SEARCH_PAGE_SIZE;
-  const needed = firstOffset + limit + 1;
+  const needed = firstOffset + limit;
   const collected: Topic[] = [];
   let searchPage = firstSearchPage;
   let searchHasMore = false;
@@ -360,7 +341,11 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
       candidateCount += pageSummary?.candidateCount || result.items.length;
       droppedCount += pageSummary?.droppedCount || 0;
       if (!result.items.length) {
-        searchHasMore = false;
+        searchHasMore = result.hasMore;
+        if (result.hasMore && (pageSummary?.candidateCount || 0) > 0) {
+          searchPage += 1;
+          continue;
+        }
         break;
       }
       collected.push(...result.items);

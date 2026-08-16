@@ -76,7 +76,8 @@ export function useAccountStatusController({
   notify,
   onAccountStatusChanged,
   readManagedCookieHeader = readManagedCookieHeaderFromNative,
-  readXiaoyinsiAuthorization
+  readXiaoyinsiAuthorization,
+  reconcileNewlyEnabledSources = true
 }: {
   enabledSources?: readonly StatusSource[];
   linuxDoUserAgentRef: { current: string };
@@ -89,6 +90,7 @@ export function useAccountStatusController({
     trace?: DiagnosticTrace,
     options?: { signal?: AbortSignal }
   ) => Promise<XiaoyinsiAuthorizationReadResult>;
+  reconcileNewlyEnabledSources?: boolean;
 }) {
   const enabledMembershipKey = sessionSources.filter((source) => enabledSources.includes(source)).join(',');
   const enabledSourceSet = useMemo(
@@ -367,10 +369,18 @@ export function useAccountStatusController({
     }
     for (const source of current) {
       if (previous.has(source)) continue;
-      void reconcileAccountStatus(source, { includeAggregateCancellation: false });
+      if (reconcileNewlyEnabledSources) {
+        void reconcileAccountStatus(source, { includeAggregateCancellation: false });
+      }
     }
     previousEnabledSourcesRef.current = new Set(current);
-  }, [commitAccountSnapshot, enabledMembershipKey, reconcileAccountStatus, supersedeProbe]);
+  }, [
+    commitAccountSnapshot,
+    enabledMembershipKey,
+    reconcileAccountStatus,
+    reconcileNewlyEnabledSources,
+    supersedeProbe
+  ]);
 
   const statusBusy = sessionSources.some(
     (source) => enabledSourcesRef.current.has(source) && snapshots[source].identityTrust === 'pending'

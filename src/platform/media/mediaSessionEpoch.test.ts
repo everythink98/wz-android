@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { mediaRequestContextForSource, mediaSessionIdentityForSource } from './mediaSessionEpoch';
+import { mediaSessionIdentityForSource } from './mediaSessionEpoch';
 
 const epochs = {
   ...initialForumSessionEpochs,
@@ -16,14 +16,8 @@ describe('managed media session epoch', () => {
   });
 
   it('[REG-TOPIC-029] derives request provenance and cache generation from the content source', () => {
-    expect(mediaRequestContextForSource('linuxdo', epochs)).toEqual({
-      contentSource: 'linuxdo',
-      sessionIdentity: expect.stringMatching(/^linuxdo:[a-z0-9-]+:2:ready$/)
-    });
-    expect(mediaRequestContextForSource(null, epochs)).toEqual({
-      contentSource: null,
-      sessionIdentity: 'public:0:ready'
-    });
+    expect(mediaSessionIdentityForSource('linuxdo', epochs)).toMatch(/^linuxdo:[a-z0-9-]+:2:ready$/);
+    expect(mediaSessionIdentityForSource(null, epochs)).toBe('public:0:ready');
   });
   it('keeps public sources outside private media epochs', () => {
     expect(mediaSessionIdentityForSource('v2ex', epochs)).toBe('public:0:ready');

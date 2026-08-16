@@ -49,6 +49,7 @@ jest.mock('@shopify/flash-list', () => {
         ListEmptyComponent,
         ListFooterComponent,
         ListHeaderComponent,
+        onLoad,
         onScroll,
         onScrollBeginDrag,
         pointerEvents,
@@ -63,6 +64,7 @@ jest.mock('@shopify/flash-list', () => {
         ListEmptyComponent?: React.ReactNode;
         ListFooterComponent?: React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
+        onLoad?: () => void;
         onScroll?: React.ComponentProps<typeof NativeScrollView>['onScroll'];
         onScrollBeginDrag?: () => void;
         pointerEvents?: React.ComponentProps<typeof NativeScrollView>['pointerEvents'];
@@ -80,6 +82,7 @@ jest.mock('@shopify/flash-list', () => {
         mockFlashListMountCount += 1;
         return undefined;
       });
+      ReactModule.useEffect(() => onLoad?.(), [onLoad]);
       ReactModule.useImperativeHandle(ref, () => ({
         scrollToOffset: (options: { animated: boolean; offset: number }) => {
           mockFlashListScrollToOffset(options);
@@ -237,6 +240,18 @@ function renderFeed(
 async function settlePager() {
   await act(async () => mockTabViewProps?.onSwipeEnd?.());
 }
+
+describe('feed initial content readiness', () => {
+  it('[REG-PERF-014] reports readiness only after a terminal FlashList has loaded', async () => {
+    const onInitialContentReady = jest.fn();
+    const view = await render(renderFeed(true, [], { onInitialContentReady }));
+
+    expect(onInitialContentReady).not.toHaveBeenCalled();
+    await view.rerender(renderFeed(false, [], { onInitialContentReady }));
+
+    expect(onInitialContentReady).toHaveBeenCalledTimes(1);
+  });
+});
 
 function FeedSourceHarness({ onSourceChange }: { onSourceChange?: (source: FeedSource) => void }) {
   const [feedSource, setFeedSource] = useState<FeedSource>('all');

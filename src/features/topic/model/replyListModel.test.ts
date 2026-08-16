@@ -1,13 +1,38 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildReplyListItems,
-  buildVirtualizedReplyItems,
+  buildVirtualizedReplyItems as buildVirtualizedReplyItemsFromPlan,
   getReplyKey,
   topicListItemSpacing,
   type TopicReplyListItem
 } from './replyListModel';
 import { replyQuotedPostInstanceKey, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
-import type { Reply, TopicDetail } from '@/domain/forum/models';
+import type { Reply, Source, TopicDetail } from '@/domain/forum/models';
+import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
+
+function preparedReply<T extends Reply>(reply: T, source: Source) {
+  const signatureHtml = String(reply.signatureHtml || '');
+  reply.preparedContent = prepareForumContentHtml(reply.contentHtml, {
+    polls: reply.polls,
+    role: 'reply',
+    source
+  });
+  reply.preparedSignature = signatureHtml.trim()
+    ? prepareForumContentHtml(signatureHtml, { role: 'signature', source })
+    : undefined;
+  return reply;
+}
+
+function buildVirtualizedReplyItems(options: Parameters<typeof buildVirtualizedReplyItemsFromPlan>[0]) {
+  const source = options.source;
+  if (!source) return buildVirtualizedReplyItemsFromPlan(options);
+  options.replies.forEach((reply) => preparedReply(reply, source));
+  options.repliesByFloor.forEach((reply) => preparedReply(reply, source));
+  Object.entries(options.loadedQuotedReplies).forEach(([key, reply]) =>
+    preparedReply(reply, key.split(':')[0] as Source)
+  );
+  return buildVirtualizedReplyItemsFromPlan(options);
+}
 
 const reply: Reply = {
   author: 'alice',
@@ -37,6 +62,21 @@ const listCases: [string, boolean, TopicReplyListItem[], boolean, TopicReplyList
 ];
 
 describe('topic reply list model', () => {
+  it('[REG-PERF-010] rejects non-empty reply content without a gateway content plan', () => {
+    const unprepared = { ...reply, preparedContent: undefined };
+    expect(() =>
+      buildVirtualizedReplyItemsFromPlan({
+        expandedQuotes: {},
+        loadedQuotedReplies: {},
+        loadingQuotedFloors: {},
+        replies: [unprepared],
+        repliesByFloor: new Map(),
+        source: 'nodeseek',
+        topicId: '42'
+      })
+    ).toThrow('论坛内容缺少匹配的预编译计划');
+  });
+
   it('[REG-TOPIC-090] preserves terminal rows in reply, signature, and expanded complete-quote consumers', () => {
     const report = (label: string) =>
       `<forum-terminal-report><forum-terminal-tab title="${label}"><div class="forum-terminal-code">${label} result</div></forum-terminal-tab></forum-terminal-report>`;
@@ -124,8 +164,16 @@ describe('topic reply list model', () => {
     expect(bodyRows).toHaveLength(500);
     expect(bodyRows.map((item) => item.content.networkMediaCount)).toEqual(Array.from({ length: 500 }, () => 4));
     expect(
-      bodyRows.every((item) => 'html' in item.content && (item.content.html.match(/<img\b/g) || []).length <= 4)
+      bodyRows.every(
+        (item) => item.content.type === 'richText' && (item.content.html.match(/<img\b/g)?.length || 0) <= 4
+      )
     ).toBe(true);
+    expect(
+      bodyRows.reduce(
+        (count, item) => count + ('html' in item.content ? item.content.html.match(/<img\b/g)?.length || 0 : 0),
+        0
+      )
+    ).toBe(2000);
   });
 
   it('[REG-PERF-010] never combines independently safe body and signature media into one oversized reply cell', () => {
@@ -297,20 +345,16 @@ describe('topic reply list model', () => {
     {
       label: 'reply body',
       contentHtml: `<p data-oversized="${'x'.repeat(20_000)}">safe reply body</p>`,
-      expectedBodyHtml: 'safe reply body',
-      expectedSignatureHtml: '<p>safe signature</p>',
       signatureHtml: '<p>safe signature</p>'
     },
     {
       label: 'reply signature',
       contentHtml: '<p>safe reply body</p>',
-      expectedBodyHtml: '<p>safe reply body</p>',
-      expectedSignatureHtml: 'safe signature',
       signatureHtml: `<p data-oversized="${'x'.repeat(20_000)}">safe signature</p>`
     }
   ])(
     '[REG-PERF-010] renders planner output when an oversized $label attribute is rewritten',
-    ({ contentHtml, expectedBodyHtml, expectedSignatureHtml, signatureHtml }) => {
+    ({ contentHtml, signatureHtml }) => {
       const unsafeReply: Reply = {
         ...reply,
         commentId: 863651,
@@ -334,14 +378,14 @@ describe('topic reply list model', () => {
       if (rendered?.type !== 'reply') throw new Error('Expected a coalesced reply item.');
       expect(rendered.bodyContent).toMatchObject({ type: 'richText', networkMediaCount: 0 });
       expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
-        expectedBodyHtml
+        'safe reply body'
       );
       expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
         'class="forum-reply-content"'
       );
       expect(
         rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
-      ).toContain(expectedSignatureHtml);
+      ).toContain('safe signature');
       expect(
         rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
       ).toContain('class="forum-reply-content"');
@@ -385,6 +429,7 @@ describe('topic reply list model', () => {
   );
 
   it('reuses the already-loaded opening post when a reply quotes floor 1', () => {
+    const contentHtml = '<p>Complete opening post.</p>';
     const topic: TopicDetail = {
       source: 'linuxdo',
       id: '42',
@@ -393,7 +438,12 @@ describe('topic reply list model', () => {
       url: 'https://linux.do/t/topic/42',
       createdAt: '2026-07-03T00:00:00.000Z',
       replyCount: 1,
-      contentHtml: '<p>Complete opening post.</p>',
+      contentHtml,
+      preparedContent: prepareForumContentHtml(contentHtml, {
+        role: 'opening',
+        source: 'linuxdo',
+        topicId: '42'
+      }),
       replies: [],
       polls: [{ id: 'poll', title: 'Poll', options: [{ id: 'yes', label: 'Yes' }] }]
     };
@@ -404,6 +454,7 @@ describe('topic reply list model', () => {
       floor: 1,
       polls: topic.polls
     });
+    expect(topicOpeningPostAsReply(topic).preparedContent).toBeUndefined();
   });
 
   it('[REG-TOPIC-054] keeps multiple quote rows ordered and removes only collapsed content', () => {

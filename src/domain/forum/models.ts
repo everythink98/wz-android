@@ -127,6 +127,12 @@ export type ReplyOrder = 'oldest' | 'newest';
 
 export type ReplyCompleteness = 'complete' | 'partial';
 
+export type PreparedForumContent<ContentPlan = unknown> = {
+  contentHtml: string;
+  contentPlan: ContentPlan;
+  contentPlanKey: string;
+};
+
 export type ReplyWindowPosition =
   | { kind: 'start' }
   | { kind: 'cursor'; page: number; offset: number | null }
@@ -139,6 +145,7 @@ export interface Reply {
   authorLevelLabel?: string;
   authorUrl?: string;
   contentHtml: string;
+  preparedContent?: PreparedForumContent;
   createdAt: string;
   floor?: number;
   quotedPosts?: QuotedPostMetadata[];
@@ -157,6 +164,7 @@ export interface Reply {
   hot?: boolean;
   pinned?: boolean;
   signatureHtml?: string;
+  preparedSignature?: PreparedForumContent;
   contentMarkdown?: string;
   bookmarkId?: number;
   bookmarked?: boolean;
@@ -241,6 +249,7 @@ export interface TopicPoll {
 
 export interface TopicDetail extends Topic {
   contentHtml: string;
+  preparedContent?: PreparedForumContent;
   mediaReferrer?: MediaReferrerContext;
   replies: Reply[];
   replyCompleteness?: ReplyCompleteness;

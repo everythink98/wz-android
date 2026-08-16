@@ -13,7 +13,7 @@ import type {
 } from '@/domain/forum/models';
 import { checkYaohuoLoginHtml, ensureYaohuoHtmlLoggedIn } from './sessionParser';
 import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
-import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesHtml, parseYaohuoTopicHtml } from './topicParser';
+import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesDocument, parseYaohuoTopicHtml } from './topicParser';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL, requireYaohuoRequestUrl } from './protocol';
 import {
   annotateSourceDiagnosticSummary,
@@ -289,6 +289,7 @@ export async function getYaohuoRepliesDirect({
     { signal, timeoutMs }
   );
   assertYaohuoTopicIdentity(pageResult.url, id);
+  const pageRoot = parseHtml(pageResult.html);
 
   const confirmedPage = (() => {
     try {
@@ -296,7 +297,7 @@ export async function getYaohuoRepliesDirect({
       if (Number.isSafeInteger(value) && value > 0) return value;
     } catch {}
     return parsePositiveInteger(
-      parseHtml(pageResult.html)
+      pageRoot
         .querySelector('input[name="page"], input#Action_page, input[name="replyPage"], input#Action_replyPage')
         ?.getAttribute('value')
     );
@@ -311,7 +312,7 @@ export async function getYaohuoRepliesDirect({
   if (position.kind === 'start' && order === 'newest' && confirmedPage !== 1) {
     throw new Error('妖火未确认最新回复窗口');
   }
-  const result = parseYaohuoRepliesHtml(pageResult.html, {
+  const result = parseYaohuoRepliesDocument(pageRoot, {
     url: pageResult.url,
     page: resolvedPage,
     limit

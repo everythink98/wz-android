@@ -3,11 +3,7 @@ import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMed
 import { accessRequirementFromNoticeText } from '@/domain/forum/accessRequirements';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { forumAccessRequirementText } from '@/domain/forum/presentation';
-import {
-  compileForumContent,
-  type CompiledForumContentRow,
-  type ForumContentCompileRole
-} from '@/domain/forum/topicContentSplit';
+import { type CompiledForumContentRow, requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import {
   quotedPostReferenceFromReply,
   quotedPostReferenceKey,
@@ -16,7 +12,6 @@ import {
 } from '@/domain/forum/quotedPosts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { stableTextHash } from './contentIdentity';
-import { replyBodyCompilation } from './replyListModel';
 
 export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
 
@@ -39,7 +34,10 @@ export type AcceptedAnswerPresentation = {
   reply?: Reply;
 };
 
-type TopicOpeningSeed = Pick<TopicDetail, 'accessRequirement' | 'contentHtml' | 'id' | 'polls' | 'source'>;
+type TopicOpeningSeed = Pick<
+  TopicDetail,
+  'accessRequirement' | 'contentHtml' | 'id' | 'polls' | 'preparedContent' | 'source'
+>;
 type AcceptedAnswerSeed = Pick<TopicDetail, 'acceptedAnswerFloor' | 'id' | 'replies' | 'source'>;
 
 type PlannedTopicContent = {
@@ -55,27 +53,8 @@ function isAccessNotice(topic: TopicOpeningSeed) {
   return !text || Boolean(accessRequirementFromNoticeText(text));
 }
 
-function plannedContentItems({
-  html,
-  keyPrefix,
-  polls,
-  role,
-  source,
-  topicId
-}: {
-  html: string;
-  keyPrefix: string;
-  polls?: TopicPoll[];
-  role: ForumContentCompileRole;
-  source: Source;
-  topicId?: string;
-}): PlannedTopicContent {
-  const compilation = compileForumContent({ html, polls, role, source, topicId });
-  return plannedContentItemsFromCompilation(compilation, keyPrefix, topicId);
-}
-
 function plannedContentItemsFromCompilation(
-  compilation: ReturnType<typeof compileForumContent>,
+  compilation: ReturnType<typeof requirePreparedForumContent>,
   keyPrefix: string,
   topicId?: string
 ): PlannedTopicContent {
@@ -125,14 +104,16 @@ function topicContent(topic: TopicOpeningSeed, showsAccessNotice: boolean): Plan
       previewImages: []
     };
   }
-  return plannedContentItems({
-    html: topic.contentHtml || '',
-    keyPrefix: 'topic',
-    polls: topic.polls,
-    role: 'opening',
-    source: topic.source,
-    topicId: topic.id
-  });
+  return plannedContentItemsFromCompilation(
+    requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
+      polls: topic.polls,
+      role: 'opening',
+      source: topic.source,
+      topicId: topic.id
+    }),
+    'topic',
+    topic.id
+  );
 }
 
 function plannedReplyContentItems(
@@ -144,9 +125,14 @@ function plannedReplyContentItems(
   const cacheKey = `${source}:${keyPrefix}:${role}`;
   const cached = plannedReplyContentCache.get(reply)?.get(cacheKey);
   if (cached) return cached;
-  const items = isDiscourseSource(source)
-    ? plannedContentItemsFromCompilation(replyBodyCompilation(reply, source), keyPrefix)
-    : plannedContentItems({ html: reply.contentHtml, keyPrefix, polls: reply.polls, role, source });
+  const items = plannedContentItemsFromCompilation(
+    requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
+      polls: reply.polls,
+      role,
+      source
+    }),
+    keyPrefix
+  );
   const replyCache = plannedReplyContentCache.get(reply) || new Map<string, PlannedTopicContent>();
   replyCache.set(cacheKey, items);
   plannedReplyContentCache.set(reply, replyCache);

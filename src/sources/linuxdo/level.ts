@@ -4,10 +4,13 @@ import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChal
 import {
   buildDiscourseLevelProfileFromSummary,
   displayDiscourseLevelChange,
+  numberValue,
+  trustLevelFromRecord,
   type DiscourseLevelProfile,
   type DiscourseLevelRequirement,
   type DiscourseSummaryInput
 } from '@/sources/discourse/level';
+import { isRecord } from '@/domain/forum/html';
 import { withLinuxDoConnectSessionRecoveryIntent } from './browserFallback';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 
@@ -33,27 +36,6 @@ type LinuxDoRequestOptions = {
   signal?: AbortSignal;
   timeoutMs?: number;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function numberValue(value: unknown) {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : 0;
-}
-
-function trustLevelFromRecord(value: Record<string, unknown>) {
-  const raw = value.trust_level ?? value.trustLevel;
-  if (raw === undefined || raw === null || raw === '') {
-    return null;
-  }
-  const level = Number(raw);
-  if (!Number.isFinite(level) || level < 0) {
-    return null;
-  }
-  return Math.floor(level);
-}
 
 function noteForOfficialConnect(level: number) {
   if (level >= 4) {

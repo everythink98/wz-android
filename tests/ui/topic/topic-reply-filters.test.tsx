@@ -2,12 +2,12 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import type { Reply, ReplyOrder, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { Reply, ReplyOrder, Source, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import type { ReplyFilter } from '@/features/topic/model/types';
 import type { TopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
-import { discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
+import { discoursePollPlaceholder, prepareReplyContent, prepareTopicContent } from '@/domain/forum/topicContentSplit';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -30,6 +30,7 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockScrollToIndex = jest.fn();
 const mockCompileForumContent = jest.fn();
+const mockNodeSeekTopicReactionStats = jest.fn<(item: TopicDetail) => { label: string; value: number }[]>(() => []);
 let lastFlashListItemTypes: string[] = [];
 let lastFlashListItemKeys: string[] = [];
 let lastFlashListProps: Record<string, any> = {};
@@ -474,7 +475,7 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
     },
     NodeSeekStatPill: ({ label, value }: { label: string; value: number }) =>
       ReactModule.createElement(NativeText, { testID: `readonly-stat-${label}` }, `${label} ${value}`),
-    nodeSeekTopicReactionStats: () => []
+    nodeSeekTopicReactionStats: (item: TopicDetail) => mockNodeSeekTopicReactionStats(item)
   };
 });
 
@@ -569,6 +570,7 @@ function TopicFilterHarness({
   onVotePoll = jest.fn(),
   onDiscourseBookmark = jest.fn(),
   onToggleTopicBodyQuote = jest.fn(),
+  prepareContent = true,
   replyHasMore = false,
   replyHasPrevious = false,
   replyEndError = null,
@@ -613,6 +615,7 @@ function TopicFilterHarness({
   onVotePoll?: (poll: TopicPoll, optionIds: string[]) => void;
   onDiscourseBookmark?: () => void;
   onToggleTopicBodyQuote?: (options: ToggleTopicBodyQuoteOptions) => void;
+  prepareContent?: boolean;
   replyHasMore?: boolean;
   replyHasPrevious?: boolean;
   replyEndError?: SourceErrorInfo | null;
@@ -636,6 +639,25 @@ function TopicFilterHarness({
   const [replyOrder, setReplyOrder] = useState<ReplyOrder>('oldest');
   const topicScrollRef = useRef(null);
   const effectiveCommentQuery = filteredCommentQuery ?? commentQuery;
+  const preparedTopicDetail = React.useMemo(
+    () => (topicDetail && prepareContent ? prepareTopicContent(topicDetail) : topicDetail),
+    [prepareContent, topicDetail]
+  );
+  const contentSource = preparedTopicDetail?.source || selectedTopic?.source || 'v2ex';
+  const preparedTopicReplies = React.useMemo(
+    () => (prepareContent ? topicReplies.map((reply) => prepareReplyContent(reply, contentSource)) : topicReplies),
+    [contentSource, prepareContent, topicReplies]
+  );
+  const preparedLoadedQuotedReplies = React.useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(loadedQuotedReplies).map(([key, reply]) => [
+          key,
+          prepareContent ? prepareReplyContent(reply, key.split(':')[0] as Source, 'quoted-reply') : reply
+        ])
+      ),
+    [loadedQuotedReplies, prepareContent]
+  );
   const decisionFor = (({ action }) => {
     const source = topicDetail?.source || selectedTopic?.source;
     const sourceAllowed = {
@@ -673,7 +695,7 @@ function TopicFilterHarness({
       onLoadMoreReplies(options);
       return true;
     },
-    loadedQuotedReplies,
+    loadedQuotedReplies: preparedLoadedQuotedReplies,
     loadingMoreReplies,
     loadingPreviousReplies,
     loadingQuotedFloors,
@@ -692,7 +714,7 @@ function TopicFilterHarness({
     locateReply: onLocateReply,
     toggleReplyQuote: jest.fn(),
     toggleTopicBodyQuote: onToggleTopicBodyQuote,
-    topicReplies,
+    topicReplies: preparedTopicReplies,
     unreadReplyCount: 0
   } as unknown as ReturnType<typeof useTopicController>;
   const session = {
@@ -733,8 +755,8 @@ function TopicFilterHarness({
           article={{
             busy: topicBusy,
             error: topicError,
-            topic: topicDetail,
-            yaohuoBookmarked: yaohuoVisualBookmarked ?? topicDetail?.bookmarked
+            topic: preparedTopicDetail,
+            yaohuoBookmarked: yaohuoVisualBookmarked ?? preparedTopicDetail?.bookmarked
           }}
           chrome={{
             back: jest.fn(),
@@ -764,10 +786,10 @@ function TopicFilterHarness({
               htmlTagsStyles: htmlStyles.htmlTagsStyles,
               inlineSizedImageUrls: {},
               mediaContext: {
-                contentSource: topicDetail?.source || null,
-                sessionIdentity: `${topicDetail?.source || 'public'}:0`
+                contentSource: preparedTopicDetail?.source || null,
+                sessionIdentity: `${preparedTopicDetail?.source || 'public'}:0`
               },
-              mediaSessionIdentity: `${topicDetail?.source || 'public'}:0`,
+              mediaSessionIdentity: `${preparedTopicDetail?.source || 'public'}:0`,
               topicImageDeriver
             } as ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string }
           }
@@ -804,6 +826,27 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it('[REG-PERF-018] computes NodeSeek topic reactions once per render without changing the visible stats', async () => {
+    const nodeSeekTopic: TopicDetail = {
+      ...topic,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-topic-1-1'
+    };
+    mockNodeSeekTopicReactionStats.mockClear();
+    mockNodeSeekTopicReactionStats.mockReturnValue([{ label: '点赞', value: 7 }]);
+
+    try {
+      const view = await render(
+        <TopicFilterHarness selectedTopic={nodeSeekTopic} topicDetail={nodeSeekTopic} topicReplies={[]} />
+      );
+
+      expect(mockNodeSeekTopicReactionStats).toHaveBeenCalledTimes(1);
+      expect(view.getByTestId('readonly-stat-点赞').props.children).toBe('点赞 7');
+    } finally {
+      mockNodeSeekTopicReactionStats.mockReturnValue([]);
+    }
+  });
+
   it('[REG-TOPIC-096] keeps the ready preview catalog independent of filtering and reply order', async () => {
     const quoteInstanceKey = 'topic:preview-catalog-owner:linuxdo:quoted-topic:9';
     const replies: Reply[] = [
@@ -863,7 +906,7 @@ describe('Topic reply filters', () => {
       mockCompileForumContent.mock.calls.filter(
         ([options]) => (options as { html?: string }).html === quotedReply.contentHtml
       )
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     const registrationCount = onImagePreviewDescriptors.mock.calls.length;
 
     await fireEvent.changeText(view.getByPlaceholderText('评论内查找'), 'needle');
@@ -879,7 +922,7 @@ describe('Topic reply filters', () => {
       mockCompileForumContent.mock.calls.filter(
         ([options]) => (options as { html?: string }).html === quotedReply.contentHtml
       )
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 
   it('[REG-TOPIC-062] scrolls an atomically anchored notification window without chasing pages', async () => {
@@ -1136,7 +1179,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('[REG-TOPIC-081][REG-TOPIC-090] removes virtual-list separators across adjacent semantic rows', async () => {
+  it('[REG-TOPIC-081][REG-TOPIC-090][REG-TOPIC-099] removes virtual-list separators across adjacent semantic rows', async () => {
     await render(<TopicFilterHarness selectedTopic={topic} topicDetail={topic} topicReplies={[]} />);
     const separatorHeight = (leadingItem: TopicListItem, trailingItem: TopicListItem) => {
       const separator = lastFlashListProps.ItemSeparatorComponent({ leadingItem, trailingItem }) as React.ReactElement<{
@@ -1182,10 +1225,34 @@ describe('Topic reply filters', () => {
       instanceKey: 'quote-a',
       source: 'nodeseek'
     };
+    const quoteMetadata = {
+      reference: { source: 'nodeseek' as const, topicId: 'quote-topic', postNumber: 1 },
+      preview: 'quote preview'
+    };
+    const quoteSummary: TopicListItem = {
+      type: 'topicQuoteSummary',
+      key: 'quote-summary',
+      content: {
+        type: 'quoteSummary',
+        key: 'quote-summary',
+        instanceKey: 'quote-a',
+        quote: quoteMetadata,
+        row: {
+          ancestorFrames: [],
+          keySuffix: 'quote-directive:0',
+          networkMediaCount: 0,
+          part: 'only',
+          quote: quoteMetadata,
+          segmentIndex: 0,
+          semanticId: 'quote-directive',
+          type: 'quote'
+        }
+      }
+    };
     const quoteLast: TopicListItem = {
       type: 'topicQuoteContent',
       key: 'quote-last',
-      content: content('quote-last', 'block-0', 'last'),
+      content: content('quote-last', 'block-1', 'only'),
       instanceKey: 'quote-a',
       source: 'nodeseek'
     };
@@ -1259,6 +1326,7 @@ describe('Topic reply filters', () => {
     };
 
     expect(separatorHeight(openingFirst, openingLast)).toBe(0);
+    expect(separatorHeight(quoteSummary, quoteFirst)).toBe(0);
     expect(separatorHeight(quoteFirst, quoteLast)).toBe(0);
     expect(separatorHeight(acceptedFirst, acceptedLast)).toBe(0);
     expect(separatorHeight(openingOnly, { ...openingOnly, key: 'opening-only-2' })).toBe(10);
@@ -1646,6 +1714,43 @@ describe('Topic reply filters', () => {
     expect(view.getByText('preview')).toBeTruthy();
   });
 
+  it('[REG-TOPIC-003] expands a same-topic opening quote from the current reply instead of stale quote cache', async () => {
+    const topicId = 'same-topic-quote-owner';
+    const currentReply: Reply = {
+      author: 'current-author',
+      contentHtml: '<p>current same-topic body</p>',
+      createdAt: '2026-08-15T00:00:00.000Z',
+      floor: 2
+    };
+    const cachedReply: Reply = {
+      ...currentReply,
+      author: 'cached-author',
+      contentHtml: '<p>stale cached body</p>'
+    };
+    const quoteTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      id: topicId,
+      url: `https://linux.do/t/topic/${topicId}`,
+      contentHtml: `<aside class="quote" data-post="2" data-topic="${topicId}" data-username="current-author"><div class="title">current-author:</div><blockquote>preview</blockquote></aside>`,
+      replies: [currentReply],
+      replyCount: 1
+    };
+    const view = await render(
+      <TopicFilterHarness
+        expandedQuotes={{ [`topic:${topicId}:linuxdo:${topicId}:2`]: true }}
+        loadedQuotedReplies={{ [`linuxdo:${topicId}:2`]: cachedReply }}
+        selectedTopic={quoteTopic}
+        topicDetail={quoteTopic}
+        topicReplies={[currentReply]}
+      />
+    );
+    const rendered = JSON.stringify(view.toJSON());
+
+    expect(rendered).toContain('current same-topic body');
+    expect(rendered).not.toContain('stale cached body');
+  });
+
   it('[REG-PERF-010] keeps a giant accepted answer to one preview row until explicitly expanded', async () => {
     const acceptedFloor = 42;
     const acceptedTopic: TopicDetail = {
@@ -1792,25 +1897,46 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-PERF-008] does not split an unchanged opening post after unrelated topic state changes', async () => {
-    const openingTopic: TopicDetail = {
+  it('[REG-PERF-008][REG-PERF-010] never compiles opening content after it reaches the UI', async () => {
+    const openingTopic = prepareTopicContent({
       ...topic,
       source: 'linuxdo',
       contentHtml: '<p>opening body</p>',
       polls: []
-    };
+    });
     mockCompileForumContent.mockClear();
-    const view = await render(<TopicFilterHarness selectedTopic={openingTopic} topicDetail={openingTopic} />);
-    const initialCalls = mockCompileForumContent.mock.calls.length;
-    expect(initialCalls).toBeGreaterThan(0);
+    const view = await render(
+      <TopicFilterHarness
+        prepareContent={false}
+        selectedTopic={openingTopic}
+        topicDetail={openingTopic}
+        topicReplies={[]}
+      />
+    );
+    expect(mockCompileForumContent).not.toHaveBeenCalled();
 
     const likedTopic = { ...openingTopic, liked: true };
-    await view.rerender(<TopicFilterHarness selectedTopic={likedTopic} topicDetail={likedTopic} />);
-    expect(mockCompileForumContent).toHaveBeenCalledTimes(initialCalls);
+    await view.rerender(
+      <TopicFilterHarness
+        prepareContent={false}
+        selectedTopic={likedTopic}
+        topicDetail={likedTopic}
+        topicReplies={[]}
+      />
+    );
+    expect(mockCompileForumContent).not.toHaveBeenCalled();
 
-    const changedBodyTopic = { ...likedTopic, contentHtml: '<p>changed opening body</p>' };
-    await view.rerender(<TopicFilterHarness selectedTopic={changedBodyTopic} topicDetail={changedBodyTopic} />);
-    expect(mockCompileForumContent.mock.calls.length).toBeGreaterThan(initialCalls);
+    const changedBodyTopic = prepareTopicContent({ ...likedTopic, contentHtml: '<p>changed opening body</p>' });
+    mockCompileForumContent.mockClear();
+    await view.rerender(
+      <TopicFilterHarness
+        prepareContent={false}
+        selectedTopic={changedBodyTopic}
+        topicDetail={changedBodyTopic}
+        topicReplies={[]}
+      />
+    );
+    expect(mockCompileForumContent).not.toHaveBeenCalled();
   });
 
   it('[REG-TOPIC-048] enables original-image upgrades when FlashList mounts an opening-post chunk', async () => {

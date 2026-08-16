@@ -3,12 +3,12 @@ import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMed
 import { replyKey } from '@/domain/forum/feed';
 import {
   canCoalesceForumContentRows,
-  compileForumContent,
+  requirePreparedForumContent,
   type CompiledForumContent,
-  type CompiledForumContentRow
+  type CompiledForumContentRow,
+  type ForumContentCompileRole
 } from '@/domain/forum/topicContentSplit';
 import { quotedPostsForSource, replyForQuotedPost, replyQuotedPostInstanceKey } from '@/domain/forum/quotedPosts';
-import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { stableTextHash } from './contentIdentity';
 
 export type ReplyQuoteContent = Exclude<CompiledForumContentRow, { type: 'quote' }>;
@@ -90,7 +90,7 @@ type ReplyBodyContentEntry = {
   compilation: CompiledForumContent;
   rows: QuotedPostContentRow[];
 };
-const replyBodyContentCache = new WeakMap<Reply, Map<Source, ReplyBodyContentEntry>>();
+const replyBodyContentCache = new WeakMap<Reply, Map<string, ReplyBodyContentEntry>>();
 
 type PlannedReplyContentEntry = {
   bodyRows: QuotedPostContentRow[];
@@ -120,31 +120,30 @@ function replyRowsFromCompilation(compilation: CompiledForumContent): QuotedPost
   });
 }
 
-function replyBodyContent(reply: Reply, source: Source) {
-  const cached = replyBodyContentCache.get(reply)?.get(source);
+function replyBodyContent(reply: Reply, source: Source, role: ForumContentCompileRole = 'reply') {
+  const cacheKey = `${source}:${role}`;
+  const cached = replyBodyContentCache.get(reply)?.get(cacheKey);
   if (cached) return cached;
-  const compilation = compileForumContent({
-    html: reply.contentHtml,
+  const compilation = requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
     polls: reply.polls,
-    role: 'reply',
+    role,
     source
   });
   const entry = { compilation, rows: replyRowsFromCompilation(compilation) };
-  const sourceCache = replyBodyContentCache.get(reply) || new Map<Source, ReplyBodyContentEntry>();
-  sourceCache.set(source, entry);
+  const sourceCache = replyBodyContentCache.get(reply) || new Map<string, ReplyBodyContentEntry>();
+  sourceCache.set(cacheKey, entry);
   replyBodyContentCache.set(reply, sourceCache);
   return entry;
-}
-
-export function replyBodyCompilation(reply: Reply, source: Source) {
-  return replyBodyContent(reply, source).compilation;
 }
 
 function plannedReplyContent(reply: Reply, source: Source): PlannedReplyContentEntry {
   const cached = plannedReplyContentCache.get(reply)?.get(source);
   if (cached) return cached;
   const body = replyBodyContent(reply, source);
-  const signature = compileForumContent({ html: reply.signatureHtml, role: 'signature', source });
+  const signature = requirePreparedForumContent(reply.preparedSignature, reply.signatureHtml, {
+    role: 'signature',
+    source
+  });
   const bodyRows = body.rows;
   const signatureRows = signature.rows.flatMap((row) =>
     row.type !== 'poll' && row.type !== 'quote'
@@ -178,11 +177,7 @@ export function imagePreviewDescriptorsForReplies(replies: readonly Reply[], sou
 function quotedPostContent(reply: Reply, source: Source): QuotedPostContentEntry {
   const cached = quotedPostContentCache.get(reply)?.get(source);
   if (cached) return cached;
-  const content = isDiscourseSource(source)
-    ? replyBodyContent(reply, source).rows
-    : replyRowsFromCompilation(
-        compileForumContent({ html: reply.contentHtml, polls: reply.polls, role: 'quoted-reply', source })
-      );
+  const content = replyBodyContent(reply, source, 'quoted-reply').rows;
   const entry = {
     rows: content,
     token: `${source}:${reply.contentHtml.length}:${content.map((item) => item.key).join('|')}`

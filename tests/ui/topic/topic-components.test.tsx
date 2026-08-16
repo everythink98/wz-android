@@ -8,24 +8,28 @@ import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRe
 import { HTML_REPLY_CONTENT_CLASS } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReplyComposerSheet } from '@/features/topic/components/ReplyComposerSheet';
-import { ReplyItem } from '@/features/topic/components/ReplyItem';
+import { MemoizedReplyItem, ReplyItem } from '@/features/topic/components/ReplyItem';
 import { TopicBodyQuoteCard } from '@/features/topic/components/TopicBodyQuoteCard';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import { TopicPolls } from '@/features/topic/components/TopicPolls';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import {
-  buildVirtualizedReplyItems,
+  buildVirtualizedReplyItems as buildVirtualizedReplyItemsFromPlan,
   getReplyKey,
   type TopicReplyListItem
 } from '@/features/topic/model/replyListModel';
-import { compileForumContent, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
+import {
+  compileForumContent,
+  prepareReplyContent,
+  type CompiledForumContentRow
+} from '@/domain/forum/topicContentSplit';
 import {
   TopicSplitDisclosureProvider,
   topicSemanticRowVisible,
   useTopicSplitDisclosureStore
 } from '@/features/topic/rendering/TopicSplitDisclosure';
-import type { Reply, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type {
   TopicActionDecision,
   TopicActionDecisionFor,
@@ -268,6 +272,24 @@ const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 
+function buildVirtualizedReplyItems(options: Parameters<typeof buildVirtualizedReplyItemsFromPlan>[0]) {
+  const source = options.source;
+  if (!source) return buildVirtualizedReplyItemsFromPlan(options);
+  return buildVirtualizedReplyItemsFromPlan({
+    ...options,
+    loadedQuotedReplies: Object.fromEntries(
+      Object.entries(options.loadedQuotedReplies).map(([key, reply]) => [
+        key,
+        prepareReplyContent(reply, key.split(':')[0] as Source)
+      ])
+    ),
+    replies: options.replies.map((reply) => prepareReplyContent(reply, source)),
+    repliesByFloor: new Map(
+      [...options.repliesByFloor].map(([floor, reply]) => [floor, prepareReplyContent(reply, source)])
+    )
+  });
+}
+
 function compiledRichText(html: string, role: 'opening' | 'quoted-reply' | 'reply' | 'signature' = 'reply') {
   const row = compileForumContent({ html, role, source: 'nodeseek' }).rows.find(
     (candidate): candidate is Extract<CompiledForumContentRow, { type: 'richText' }> => candidate.type === 'richText'
@@ -432,6 +454,82 @@ function VirtualizedTerminalReplyRows({ props }: { props: ComponentProps<typeof 
 }
 
 describe('Topic real child components', () => {
+  it('[REG-PERF-018] rerenders only the compiled reply row whose inline image state changed', async () => {
+    const firstImage = 'https://i.imgur.com/first-dynamic.png';
+    const secondImage = 'https://i.imgur.com/second-dynamic.png';
+    const replyRow = (url: string) => {
+      const row = compileForumContent({
+        html: `<p><img class="embedded_image" src="${url}"></p>`,
+        role: 'reply',
+        source: 'v2ex'
+      }).rows.find(
+        (candidate): candidate is Extract<CompiledForumContentRow, { type: 'richText' }> =>
+          candidate.type === 'richText'
+      );
+      if (!row) throw new Error('Expected one dynamic reply row.');
+      return row;
+    };
+    const firstReply = { ...replyProps().reply, contentHtml: `<img src="${firstImage}">`, floor: 1 };
+    const secondReply = { ...replyProps().reply, contentHtml: `<img src="${secondImage}">`, floor: 2 };
+    const firstRow = replyRow(firstImage);
+    const secondRow = replyRow(secondImage);
+    const firstRender = jest.fn();
+    const secondRender = jest.fn();
+    const countedStyles = (onReplyRender: () => void) =>
+      new Proxy(styles, {
+        get(target, property, receiver) {
+          if (property === 'replyCard') onReplyRender();
+          return Reflect.get(target, property, receiver);
+        }
+      });
+    const firstProps = replyProps({
+      reply: firstReply,
+      replyFloor: 1,
+      section: {
+        type: 'replyContent',
+        key: 'comment:1:body:dynamic',
+        reply: firstReply,
+        replyFloor: 1,
+        content: firstRow,
+        first: true,
+        last: true
+      },
+      source: 'v2ex',
+      styles: countedStyles(firstRender)
+    });
+    const secondProps = replyProps({
+      reply: secondReply,
+      section: {
+        type: 'replyContent',
+        key: 'comment:2:body:dynamic',
+        reply: secondReply,
+        replyFloor: 2,
+        content: secondRow,
+        first: true,
+        last: true
+      },
+      source: 'v2ex',
+      styles: countedStyles(secondRender)
+    });
+    const rows = (inlineSizedImageUrls: Record<string, true>) => (
+      <>
+        <MemoizedReplyItem key="first" {...firstProps} inlineSizedImageUrls={inlineSizedImageUrls} />
+        <MemoizedReplyItem key="second" {...secondProps} inlineSizedImageUrls={inlineSizedImageUrls} />
+      </>
+    );
+    const view = await render(rows({}));
+    firstRender.mockClear();
+    secondRender.mockClear();
+
+    await view.rerender(rows({ [firstImage]: true }));
+
+    expect(firstRender).toHaveBeenCalled();
+    expect(secondRender).not.toHaveBeenCalled();
+    const renderedHtml = view.getAllByTestId('html-source').map((source) => source.props.accessibilityHint as string);
+    expect(renderedHtml[0]).toContain('<forum-inline-image');
+    expect(renderedHtml[1]).toContain(`<img class="embedded_image" src="${secondImage}"`);
+  });
+
   it('shows poll constraints and submits only the controlled valid selection', async () => {
     const onTogglePollSelection = jest.fn();
     const onVotePoll = jest.fn();
@@ -554,7 +652,7 @@ describe('Topic real child components', () => {
     expect(onToggleReplyQuote).toHaveBeenCalledWith({
       replyKey: 'comment:22',
       reference: { source: 'nodeseek', topicId: 'topic-1', postNumber: 1 },
-      quotedReply
+      quotedReply: expect.objectContaining({ ...quotedReply })
     });
 
     await view.rerender(
@@ -576,7 +674,7 @@ describe('Topic real child components', () => {
     await fireEvent.press(view.getByLabelText('点赞'));
     await fireEvent.press(view.getByLabelText('加鸡腿'));
     await fireEvent.press(view.getByLabelText('反对'));
-    expect(onReplyToFloor).toHaveBeenCalledWith(props.reply);
+    expect(onReplyToFloor).toHaveBeenCalledWith(expect.objectContaining({ ...props.reply }));
     expect(onInteract.mock.calls).toEqual([
       ['upvote', 22],
       ['like', 22],
@@ -1075,7 +1173,7 @@ describe('Topic real child components', () => {
     expect(onToggleReplyQuote).toHaveBeenCalledWith({
       replyKey: 'comment:22',
       reference: { source: 'linuxdo', topicId: '2679944', postNumber: 1 },
-      quotedReply
+      quotedReply: expect.objectContaining({ ...quotedReply })
     });
 
     await view.rerender(
@@ -1131,7 +1229,7 @@ describe('Topic real child components', () => {
     expect(onToggleReplyQuote).toHaveBeenCalledWith({
       replyKey: 'comment:22',
       reference,
-      quotedReply
+      quotedReply: expect.objectContaining({ ...quotedReply })
     });
 
     await view.rerender(
@@ -1434,6 +1532,26 @@ describe('Topic real child components', () => {
     expect(view.getByTestId('topic-quote-complete-20-1')).toBeTruthy();
     expect(view.queryByText('正文引用简介')).toBeNull();
     expect(view.getByText('正文引用完整帖子')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-099] leaves the expanded topic quote header open for its external body rows', async () => {
+    const view = await render(
+      <TopicBodyQuoteCard
+        completeContentMountedExternally
+        expanded
+        header={<Text>正文引用作者</Text>}
+        loading={false}
+        styles={styles}
+        testID="topic-quote-continuous"
+        theme={theme}
+      />
+    );
+
+    expect(StyleSheet.flatten(view.getByTestId('topic-quote-continuous').props.style)).toMatchObject({
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 0,
+      borderBottomWidth: 0
+    });
   });
 
   it('exposes only the actions allowed by each reply source', async () => {

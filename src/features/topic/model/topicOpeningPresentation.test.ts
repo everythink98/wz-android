@@ -1,12 +1,56 @@
 import { describe, expect, it } from 'vitest';
 import { parseHtml } from '@/domain/forum/html';
-import type { TopicDetail } from '@/domain/forum/models';
+import type { Reply, Source, TopicDetail } from '@/domain/forum/models';
+import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
 import {
-  buildAcceptedAnswerContentItems,
+  buildAcceptedAnswerContentItems as buildAcceptedAnswerContentItemsFromPlan,
   buildAcceptedAnswerPresentation,
-  buildTopicOpeningContent,
-  buildTopicQuotedPostContentItems
+  buildTopicOpeningContent as buildTopicOpeningContentFromPlan,
+  buildTopicQuotedPostContentItems as buildTopicQuotedPostContentItemsFromPlan
 } from './topicOpeningPresentation';
+
+function preparedReply<T extends Reply>(reply: T, source: Source): T {
+  const signatureHtml = String(reply.signatureHtml || '');
+  reply.preparedContent = prepareForumContentHtml(reply.contentHtml, {
+    polls: reply.polls,
+    role: 'reply',
+    source
+  });
+  reply.preparedSignature = signatureHtml.trim()
+    ? prepareForumContentHtml(signatureHtml, { role: 'signature', source })
+    : undefined;
+  return reply;
+}
+
+function buildTopicOpeningContent(topic: Parameters<typeof buildTopicOpeningContentFromPlan>[0]) {
+  return buildTopicOpeningContentFromPlan(
+    topic
+      ? {
+          ...topic,
+          preparedContent: prepareForumContentHtml(topic.contentHtml, {
+            polls: topic.polls,
+            role: 'opening',
+            source: topic.source,
+            topicId: topic.id
+          })
+        }
+      : null
+  );
+}
+
+function buildTopicQuotedPostContentItems(options: Parameters<typeof buildTopicQuotedPostContentItemsFromPlan>[0]) {
+  return buildTopicQuotedPostContentItemsFromPlan({
+    ...options,
+    reply: preparedReply(options.reply, options.source)
+  });
+}
+
+function buildAcceptedAnswerContentItems(options: Parameters<typeof buildAcceptedAnswerContentItemsFromPlan>[0]) {
+  return buildAcceptedAnswerContentItemsFromPlan({
+    ...options,
+    reply: preparedReply(options.reply, options.source)
+  });
+}
 
 const topic: TopicDetail = {
   source: 'linuxdo',
@@ -43,6 +87,10 @@ function maxElementDepth(html: string) {
 }
 
 describe('topic opening presentation', () => {
+  it('[REG-PERF-010] rejects non-empty opening content without a gateway content plan', () => {
+    expect(() => buildTopicOpeningContentFromPlan(topic)).toThrow('论坛内容缺少匹配的预编译计划');
+  });
+
   it('[REG-TOPIC-090] preserves terminal rows in opening, complete quote, and accepted preview/full consumers', () => {
     const opening = buildTopicOpeningContent({ ...topic, contentHtml: terminalReportHtml });
     const reply = { author: 'bob', contentHtml: terminalReportHtml, createdAt: '2026-08-01T00:01:00.000Z', floor: 2 };
@@ -91,7 +139,7 @@ describe('topic opening presentation', () => {
     expect(result.contentItems.map((item) => item.type)).toEqual(['content', 'quoteSummary', 'content']);
     expect(result.contentItems[0]).toMatchObject({
       type: 'content',
-      row: expect.objectContaining({ html: expect.stringContaining('<p>before</p>'), type: 'richText' })
+      row: expect.objectContaining({ type: 'richText' })
     });
     expect(result.contentItems[1]).toMatchObject({
       type: 'quoteSummary',
@@ -104,11 +152,13 @@ describe('topic opening presentation', () => {
     });
     expect(result.contentItems[2]).toMatchObject({
       type: 'content',
-      row: expect.objectContaining({ html: expect.stringContaining('<p>after</p>'), type: 'richText' })
+      row: expect.objectContaining({ type: 'richText' })
     });
     const first = result.contentItems[0];
     const last = result.contentItems[2];
     if (first.type !== 'content' || last.type !== 'content') throw new Error('Expected split content rows');
+    expect('html' in first.row ? parseHtml(first.row.html).text : '').toBe('before');
+    expect('html' in last.row ? parseHtml(last.row.html).text : '').toBe('after');
     expect(first.row.semanticId).not.toBe(last.row.semanticId);
     expect(
       result.contentItems.some(
@@ -183,7 +233,7 @@ describe('topic opening presentation', () => {
     );
     expect(
       result.contentItems.flatMap((item) =>
-        item.type === 'content' && 'html' in item.row ? [...item.row.html.matchAll(/<img\b/g)] : []
+        item.type === 'content' && 'html' in item.row ? item.row.html.match(/<img\b/g) || [] : []
       ).length
     ).toBe(2000);
   });

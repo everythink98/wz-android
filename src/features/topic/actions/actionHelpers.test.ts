@@ -196,6 +196,7 @@ describe('topic action controller helpers', () => {
       contentMarkdown: '新回复 **重点**'
     });
     expect(updated[0].contentHtml).toContain('<strong>重点</strong>');
+    expect(updated[0].preparedContent?.contentHtml).toBe(updated[0].contentHtml);
     expect(updated[1]).toBe(replies[1]);
   });
 

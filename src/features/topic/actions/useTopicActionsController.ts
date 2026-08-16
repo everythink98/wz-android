@@ -164,6 +164,18 @@ function updateReplyCache(
   );
 }
 
+function updateBookmarkCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  queryKey: QueryKey,
+  active: boolean,
+  bookmarkId?: number
+) {
+  queryClient.setQueryData<TopicDetail>(
+    queryKey,
+    (current) => applyBookmarkToTopic(current || null, { bookmarked: active, bookmarkId }) || current
+  );
+}
+
 function replyCursorFor(cache: ReplyCache | undefined, target: ReplyRefreshTarget) {
   const page = cache?.pages.find((candidate) =>
     candidate.items.some((reply) => matchesReplyRefreshTarget(reply, target))
@@ -1394,17 +1406,8 @@ export function useTopicActionsController({
       finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
       return;
     }
-    const patch = (active: boolean, bookmarkId?: number) => {
-      const { detailKey } = cacheKeys(actionDetail);
-      queryClient.setQueryData<TopicDetail>(
-        detailKey,
-        (current) =>
-          applyBookmarkToTopic(current || null, {
-            bookmarked: active,
-            bookmarkId
-          }) || current
-      );
-    };
+    const patch = (active: boolean, bookmarkId?: number) =>
+      updateBookmarkCache(queryClient, cacheKeys(actionDetail).detailKey, active, bookmarkId);
     await executeMutation(actionDetail, {
       actionKey: yaohuoFavoriteActionKey(topicKey(actionTopic)),
       busy: false,
@@ -1481,17 +1484,8 @@ export function useTopicActionsController({
     }
     const actionDetail = actionTopic as TopicDetail;
     const bookmarked = Boolean(actionDetail.bookmarked);
-    const patch = (active: boolean, bookmarkId?: number) => {
-      const { detailKey } = cacheKeys(actionDetail);
-      queryClient.setQueryData<TopicDetail>(
-        detailKey,
-        (current) =>
-          applyBookmarkToTopic(current || null, {
-            bookmarked: active,
-            bookmarkId
-          }) || current
-      );
-    };
+    const patch = (active: boolean, bookmarkId?: number) =>
+      updateBookmarkCache(queryClient, cacheKeys(actionDetail).detailKey, active, bookmarkId);
     await executeMutation(actionDetail, {
       actionKey: topicActionStateKey({ topicKey: topicKey(actionTopic), targetId: actionTopic.id, action: 'bookmark' }),
       busy: false,
@@ -1602,7 +1596,9 @@ export function useTopicActionsController({
               (current) => applyPollVoteToTopic(current || null, patch) || current
             );
             replyKeys.forEach((repliesKey) =>
-              updateReplyCache(queryClient, repliesKey, (replies) => applyPollVoteToReplies(replies, patch))
+              updateReplyCache(queryClient, repliesKey, (replies) =>
+                applyPollVoteToReplies(replies, patch, actionTopic.source)
+              )
             );
             if (voteResult.refreshFailed) notify('提交成功但结果刷新失败，请手动刷新。');
           },

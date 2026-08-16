@@ -15,7 +15,7 @@ import {
   YAOHUO_CATEGORIES,
   extractYaohuoTopicParts as extractTopicParts,
   extractYaohuoUserIdFromHref as extractUserIdFromHref,
-  nextYaohuoPageFromHtml as nextPageFromHtml,
+  nextYaohuoPage,
   yaohuoUserUrl as userUrl
 } from './protocol';
 import { categoryNames, currentYaohuoClock, parseYaohuoDate } from './normalization';
@@ -147,16 +147,22 @@ function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClass
 
 export function parseYaohuoListHtml(
   html: string,
+  options: { classId?: string; limit?: number; page?: number; preserveOrder?: boolean; url?: string } = {}
+): FeedResponse {
+  ensureYaohuoHtmlLoggedIn(html, options.url);
+  return parseYaohuoListDocument(parseHtml(html), html, options);
+}
+
+export function parseYaohuoListDocument(
+  root: ReturnType<typeof parseHtml>,
+  html: string,
   {
     classId,
     limit = 30,
     page = 1,
-    preserveOrder = false,
-    url
+    preserveOrder = false
   }: { classId?: string; limit?: number; page?: number; preserveOrder?: boolean; url?: string } = {}
 ): FeedResponse {
-  ensureYaohuoHtmlLoggedIn(html, url);
-  const root = parseHtml(html);
   let rows = root.querySelectorAll('.listdata');
   if (!rows.length) {
     rows = root.querySelectorAll('div.line1, div.line2');
@@ -191,7 +197,7 @@ export function parseYaohuoListHtml(
   if (!items.length) {
     items.push(...parseCompactListItems(root, classId, limit));
   }
-  const nextPage = nextPageFromHtml(html, page, items.length, limit);
+  const nextPage = nextYaohuoPage(root, page, items.length, limit);
   const result = {
     items: preserveOrder ? items : sortTopicsByTime(items),
     errors: {},

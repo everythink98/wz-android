@@ -1,6 +1,8 @@
+import type { ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import type { ReaderSettings } from '@/domain/reader/readerData';
+import type { AuthNotice } from '@/domain/session/siteSessionPrompts';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from './ButtonControls';
@@ -8,6 +10,18 @@ import { AppButton } from './ButtonControls';
 function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
+    authNoticeBox: {
+      gap: 8,
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      padding: 12
+    },
+    authNoticeText: { fontFamily, fontSize: 13, lineHeight: 19 },
+    authNoticeDanger: { color: theme.danger },
+    authNoticeNeutral: { color: theme.muted },
+    authNoticeWarning: { color: theme.warning },
     empty: { color: theme.muted, fontFamily, fontSize: 13, paddingVertical: 24, textAlign: 'center' },
     state: {
       width: '100%',
@@ -33,6 +47,22 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     shortLine: { width: '42%' },
     mutedLine: { width: '68%' }
   });
+}
+
+export function AuthNoticeBox({ notice, children }: { notice: AuthNotice; children?: ReactNode }) {
+  const { styles } = useReaderThemeStyles(createStyles);
+  const toneStyle =
+    notice.tone === 'danger'
+      ? styles.authNoticeDanger
+      : notice.tone === 'warning'
+        ? styles.authNoticeWarning
+        : styles.authNoticeNeutral;
+  return (
+    <View style={styles.authNoticeBox}>
+      <Text style={[styles.authNoticeText, toneStyle]}>{notice.message}</Text>
+      {children}
+    </View>
+  );
 }
 
 export function EmptyText({ text }: { text: string }) {

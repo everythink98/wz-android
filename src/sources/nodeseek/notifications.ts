@@ -1,4 +1,4 @@
-import { absoluteUrl, isRecord, toIsoString } from '@/domain/forum/html';
+import { absoluteUrl, isRecord, recordText as text, toIsoString } from '@/domain/forum/html';
 import type {
   ForumNotification,
   NotificationCategory,
@@ -56,14 +56,6 @@ const explicitKinds: Record<string, ForumNotification['kind']> = {
   privatemessage: 'private-message',
   pm: 'private-message'
 };
-
-function text(record: Record<string, unknown>, ...keys: string[]) {
-  for (const key of keys) {
-    const value = record[key];
-    if ((typeof value === 'string' || typeof value === 'number') && String(value).trim()) return String(value).trim();
-  }
-  return '';
-}
 
 function bool(record: Record<string, unknown>, ...keys: string[]) {
   for (const key of keys) {

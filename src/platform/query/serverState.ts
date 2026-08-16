@@ -263,8 +263,8 @@ export const forumQueryKeys = {
     notificationId: string;
     source: NotificationSource;
   }) => ['forum', source, 'notifications', 'detail', { identityKey, notificationId }] as const,
-  notificationSnapshots: (identityKey: string) =>
-    ['forum', 'all', 'notifications', 'snapshots', { identityKey }] as const,
+  notificationSnapshot: ({ identityKey, source }: { identityKey: string; source: NotificationSource }) =>
+    ['forum', source, 'notifications', 'snapshot', { identityKey }] as const,
   level: (source: Source) => ['forum', source, 'level'] as const,
   levelProfile: ({ sessionEpochs, source }: { sessionEpochs: ForumSessionEpochs; source: Source }) =>
     ['forum', source, 'level', { sessionEpoch: sessionEpochKey(source, sessionEpochs) }] as const

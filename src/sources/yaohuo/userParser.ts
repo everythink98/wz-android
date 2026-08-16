@@ -14,14 +14,11 @@ import {
   yaohuoDisplayTimeText,
   yaohuoProfileLevelLabel
 } from './normalization';
-import { ensureYaohuoHtmlLoggedIn } from './sessionParser';
 
-export function parseYaohuoUserProfileHtml(
-  html: string,
-  { id, username, url }: { id: string; username?: string; url?: string }
+export function parseYaohuoUserProfileDocument(
+  root: ReturnType<typeof parseHtml>,
+  { id, username }: { id: string; username?: string }
 ): UserProfile {
-  ensureYaohuoHtmlLoggedIn(html, url);
-  const root = parseHtml(html);
   const visibleText = elementText(root);
   const displayName =
     safeYaohuoProfileName(visibleText.match(/(?:昵称|用户名)\s*[:：]\s*([^\s<]+)/)?.[1]) ||
@@ -86,12 +83,10 @@ export function parseYaohuoUserProfileHtml(
   });
 }
 
-export function parseYaohuoUserRepliesHtml(
-  html: string,
-  { id, username, url }: { id: string; username?: string; url?: string }
+export function parseYaohuoUserRepliesDocument(
+  root: ReturnType<typeof parseHtml>,
+  { id, username }: { id: string; username?: string }
 ): UserReplyActivity[] {
-  ensureYaohuoHtmlLoggedIn(html, url);
-  const root = parseHtml(html);
   const author = username || id;
   const seen = new Set<string>();
   const seenTopicDates = new Set<string>();

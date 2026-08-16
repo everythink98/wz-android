@@ -8,7 +8,6 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const topicRowBackground = theme.surface;
-  const warningColor = theme.warning;
   const radiusMd = 14;
   return StyleSheet.create({
     actions: {
@@ -23,38 +22,6 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderSettings) {
       fontSize: Math.round(22 * titleFontScale),
       fontWeight: '700',
       lineHeight: Math.round(31 * titleFontScale)
-    },
-    authNoticeBox: {
-      gap: 8,
-      borderRadius: radiusMd,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: 12
-    },
-    authNoticeBoxDanger: {
-      backgroundColor: theme.surface2,
-      borderColor: theme.line
-    },
-    authNoticeBoxNeutral: {
-      backgroundColor: theme.surface2,
-      borderColor: theme.line
-    },
-    authNoticeBoxWarning: {
-      backgroundColor: theme.surface2,
-      borderColor: theme.line
-    },
-    authNoticeText: {
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 19
-    },
-    authNoticeTextDanger: {
-      color: theme.danger
-    },
-    authNoticeTextNeutral: {
-      color: theme.muted
-    },
-    authNoticeTextWarning: {
-      color: warningColor
     },
     cardTitle: {
       color: theme.ink,

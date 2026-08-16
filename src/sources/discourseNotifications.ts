@@ -1,4 +1,4 @@
-import { isRecord, textContentFromHtml, toIsoString } from '@/domain/forum/html';
+import { isRecord, recordText as text, textContentFromHtml, toIsoString } from '@/domain/forum/html';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type {
   ForumNotification,
@@ -77,14 +77,6 @@ const discourseExcludedFromOtherTypeNames = new Set([
   'group_message_summary',
   'bookmark_reminder'
 ]);
-
-function text(record: Record<string, unknown>, ...keys: string[]) {
-  for (const key of keys) {
-    const value = record[key];
-    if ((typeof value === 'string' || typeof value === 'number') && String(value).trim()) return String(value).trim();
-  }
-  return '';
-}
 
 function integer(value: unknown) {
   const number = Number(value);

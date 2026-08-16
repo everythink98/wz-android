@@ -9,6 +9,8 @@ import {
 import { stripDiscourseCalloutMarkersFromExcerpt } from './content';
 import type {
   Category,
+  DiscourseTagOption,
+  DiscourseUserOption,
   ReactionSummary,
   Reply,
   RepliesResponse,
@@ -18,6 +20,36 @@ import type {
   TopicPoll,
   TopicPollOption
 } from '@/domain/forum/models';
+
+export function discourseTagOptions(value: unknown): DiscourseTagOption[] {
+  const seen = new Set<string>();
+  return (Array.isArray(value) ? value : []).filter(isRecord).flatMap((item) => {
+    const name = String(item.name || item.id || '').trim();
+    if (!name || seen.has(name)) return [];
+    seen.add(name);
+    const count = Number(item.count ?? item.topic_count);
+    return [{ name, ...(Number.isInteger(count) && count >= 0 ? { topicCount: count } : {}) }];
+  });
+}
+
+export function discourseUserOptions(
+  value: unknown,
+  avatarUrl: (template: unknown) => string | undefined
+): DiscourseUserOption[] {
+  return (Array.isArray(value) ? value : []).filter(isRecord).flatMap((user) => {
+    const username = String(user.username || '').trim();
+    if (!username) return [];
+    const avatar = avatarUrl(user.avatar_template);
+    return [
+      {
+        id: String(user.id || username),
+        username,
+        ...(String(user.name || '').trim() ? { displayName: String(user.name).trim() } : {}),
+        ...(avatar ? { avatar } : {})
+      }
+    ];
+  });
+}
 
 export function discourseStreamReplyWindow(
   stream: unknown[],

@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Fetcher } from '@/platform/network/request';
+import { forumReadEvidenceFetcher } from '../../tests/helpers/forumReadEvidence';
 import {
   acceptForumReadResponse,
-  registerForumReadResponseEvidence,
   runForumSourceReadAggregateAttempt,
   runForumSourceReadAttempt,
   withForumSourceReadEligibility
@@ -19,16 +18,7 @@ describe('forum source read-attempt eligibility', () => {
     const childFinished = Promise.withResolvers<void>();
     const finishSibling = Promise.withResolvers<void>();
     const recoverReadChannel = vi.fn(async () => undefined);
-    const transport: Fetcher = async (_input, init) => {
-      const response = new Response('{}');
-      registerForumReadResponseEvidence(init, response, {
-        commit: recoverReadChannel,
-        kind: 'fallback',
-        ordinal: 1,
-        source: 'nodeseek'
-      });
-      return response;
-    };
+    const transport = forumReadEvidenceFetcher(recoverReadChannel);
     const gatewayFetcher = withForumSourceReadEligibility(transport, gatewayIsEligible);
     const read = runForumSourceReadAggregateAttempt(
       gatewayFetcher,
@@ -93,16 +83,7 @@ describe('forum source read-attempt eligibility', () => {
     const parsed = Promise.withResolvers<void>();
     const finishAuxiliaryWork = Promise.withResolvers<void>();
     const recoverReadChannel = vi.fn(async () => undefined);
-    const transport: Fetcher = async (_input, init) => {
-      const response = new Response('{}');
-      registerForumReadResponseEvidence(init, response, {
-        commit: recoverReadChannel,
-        kind: 'fallback',
-        ordinal: 1,
-        source: 'nodeseek'
-      });
-      return response;
-    };
+    const transport = forumReadEvidenceFetcher(recoverReadChannel);
     const aggregateFetcher = withForumSourceReadEligibility(transport, () => gatewayIsCurrent);
     const read = runForumSourceReadAttempt(
       'nodeseek',

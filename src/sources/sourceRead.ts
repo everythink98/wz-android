@@ -4,17 +4,18 @@ import {
   getNodeSeekTopic,
   getNodeSeekUserProfile
 } from '@/sources/nodeseek/reader';
-import { parseYaohuoListHtml } from '@/sources/yaohuo/feedParser';
-import { parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from '@/sources/yaohuo/userParser';
+import { parseYaohuoListDocument } from '@/sources/yaohuo/feedParser';
+import { parseYaohuoUserProfileDocument, parseYaohuoUserRepliesDocument } from '@/sources/yaohuo/userParser';
 import {
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
   requireYaohuoRequestUrl,
-  yaohuoReplyListNextPageUrl,
-  yaohuoTopicListNextPageUrl,
-  yaohuoUserProfileReplyListUrl,
-  yaohuoUserProfileTopicListUrl
+  yaohuoReplyListNextPageUrlFromRoot,
+  yaohuoTopicListNextPageUrlFromRoot,
+  yaohuoUserProfileReplyListUrlFromRoot,
+  yaohuoUserProfileTopicListUrlFromRoot
 } from '@/sources/yaohuo/protocol';
+import { ensureYaohuoHtmlLoggedIn } from '@/sources/yaohuo/sessionParser';
 import { getV2exReplies, getV2exTopic } from '@/sources/v2ex/reader';
 import { getV2exUserProfile } from '@/sources/v2ex/account';
 import { checkYaohuoLoginDirect } from '@/sources/yaohuo/reader';
@@ -39,8 +40,10 @@ import type {
   UserProfile
 } from '@/domain/forum/models';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
+import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { copySourceDiagnosticSummary, mergeSourceDiagnosticSummaries, sourceDiagnosticSummary } from './diagnostics';
 import { dispatchSourceRead } from './readAggregation';
+import { parseHtml } from '@/domain/forum/html';
 function pageNumberFromUrl(url: string) {
   try {
     const parsed = new URL(url);
@@ -58,6 +61,7 @@ export function getTopic({
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
+  diagnosticTrace,
   signal,
   timeoutMs
 }: {
@@ -67,6 +71,7 @@ export function getTopic({
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
+  diagnosticTrace?: DiagnosticTrace;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
@@ -80,7 +85,7 @@ export function getTopic({
     });
   }
   return dispatchSourceRead(source, {
-    nodeseek: () => getNodeSeekTopic(id, options),
+    nodeseek: () => getNodeSeekTopic(id, options, diagnosticTrace),
     v2ex: () => getV2exTopic(id, options)
   });
 }
@@ -262,17 +267,19 @@ export function getUserProfile({
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
+        const resolvedUrl = requireYaohuoRequestUrl(response.url || safeUrl, safeUrl);
+        ensureYaohuoHtmlLoggedIn(html, resolvedUrl);
         return {
           html,
-          url: requireYaohuoRequestUrl(response.url || safeUrl, safeUrl)
+          root: parseHtml(html),
+          url: resolvedUrl
         };
       };
       const readProfilePage = async (pageUrl: string) => {
         const page = await readHtml(pageUrl);
-        const profile = parseYaohuoUserProfileHtml(page.html, {
+        const profile = parseYaohuoUserProfileDocument(page.root, {
           id: targetId,
-          username,
-          url: page.url
+          username
         });
         diagnosticSources.push(profile);
         return {
@@ -283,7 +290,7 @@ export function getUserProfile({
       const readTopicPage = async (pageUrl: string) => {
         const page = await readHtml(pageUrl);
         const pageNumber = pageNumberFromUrl(page.url);
-        const result = parseYaohuoListHtml(page.html, {
+        const result = parseYaohuoListDocument(page.root, page.html, {
           classId: '0',
           limit: 30,
           page: pageNumber,
@@ -293,21 +300,20 @@ export function getUserProfile({
         return {
           ...page,
           result,
-          nextUrl: yaohuoTopicListNextPageUrl(page.html, page.url, pageNumber, result.items.length, 30)
+          nextUrl: yaohuoTopicListNextPageUrlFromRoot(page.root, page.url, pageNumber, result.items.length, 30)
         };
       };
       const readReplyPage = async (pageUrl: string, authorFallback?: string) => {
         const page = await readHtml(pageUrl);
-        const replies = parseYaohuoUserRepliesHtml(page.html, {
+        const replies = parseYaohuoUserRepliesDocument(page.root, {
           id: targetId,
-          username: authorFallback || username || targetId,
-          url: page.url
+          username: authorFallback || username || targetId
         });
         diagnosticSources.push(replies);
         return {
           ...page,
           replies,
-          nextUrl: yaohuoReplyListNextPageUrl(page.html, page.url, replies.length)
+          nextUrl: yaohuoReplyListNextPageUrlFromRoot(page.root, page.url, replies.length)
         };
       };
       const seen = new Set<string>();
@@ -357,7 +363,7 @@ export function getUserProfile({
 
       const firstPage = await readProfilePage(url);
       const authorFallback = firstPage.profile.displayName || firstPage.profile.username || targetId;
-      const firstReplyUrl = yaohuoUserProfileReplyListUrl(firstPage.html, targetId, firstPage.url);
+      const firstReplyUrl = yaohuoUserProfileReplyListUrlFromRoot(firstPage.root, targetId, firstPage.url);
       let firstReplyPage: { replies: NonNullable<UserProfile['replies']>; nextUrl: string } = {
         replies: [],
         nextUrl: ''
@@ -369,7 +375,7 @@ export function getUserProfile({
           partialErrorCount += 1;
         }
       }
-      let nextUrl = yaohuoUserProfileTopicListUrl(firstPage.html, targetId, firstPage.url);
+      let nextUrl = yaohuoUserProfileTopicListUrlFromRoot(firstPage.root, targetId, firstPage.url);
       if (!nextUrl) {
         return annotateUserProfile({
           ...firstPage.profile,

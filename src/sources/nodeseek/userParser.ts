@@ -105,7 +105,13 @@ export function parseNodeSeekCurrentUserHtml(html: string, { allowUidText = fals
   if (embeddedUser) {
     return embeddedUser;
   }
-  const root = parseHtml(html);
+  return parseNodeSeekCurrentUserRoot(parseHtml(html), { allowUidText });
+}
+
+export function parseNodeSeekCurrentUserRoot(
+  root: ReturnType<typeof parseHtml>,
+  { allowUidText = false }: { allowUidText?: boolean } = {}
+) {
   const text = elementText(root);
   const uid = allowUidText ? text.match(/UID\s*[:：]\s*(\d+)/i)?.[1] || '' : '';
   const explicitUserLink =
@@ -135,7 +141,10 @@ export function parseNodeSeekCurrentUserHtml(html: string, { allowUidText = fals
 }
 
 export function isNodeSeekLoggedOutHtml(html: string) {
-  const root = parseHtml(html);
+  return isNodeSeekLoggedOutRoot(parseHtml(html));
+}
+
+export function isNodeSeekLoggedOutRoot(root: ReturnType<typeof parseHtml>) {
   if (root.querySelector('meta[name="nodeseekAccountState"][content="anonymous"]')) {
     return true;
   }

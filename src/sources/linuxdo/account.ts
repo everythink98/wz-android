@@ -14,6 +14,7 @@ import {
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import { stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
+import { discourseAccountCount } from '@/sources/discourse/level';
 import {
   LINUXDO_BASE_URL as BASE_URL,
   linuxDoAvatarUrl as avatarUrl,
@@ -72,14 +73,6 @@ function normalizeUserActionReply(
     ...(floor ? { floor } : {}),
     excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(raw.excerpt || raw.content || raw.markdown || ''))
   };
-}
-
-function nonNegativeNumber(value: unknown) {
-  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) {
-    return undefined;
-  }
-  const number = Number(value);
-  return Number.isFinite(number) && number >= 0 ? number : undefined;
 }
 
 export async function getLinuxDoUserProfile(
@@ -167,9 +160,9 @@ export async function getLinuxDoUserProfile(
         : typeof user.bio_excerpt === 'string'
           ? user.bio_excerpt
           : undefined,
-    topicCount: nonNegativeNumber(summary.topic_count) ?? (visibleTopics.length || undefined),
-    replyCount: nonNegativeNumber(summary.reply_count),
-    postCount: nonNegativeNumber(summary.post_count),
+    topicCount: discourseAccountCount(summary.topic_count) ?? (visibleTopics.length || undefined),
+    replyCount: discourseAccountCount(summary.reply_count),
+    postCount: discourseAccountCount(summary.post_count),
     ...(levelLabel ? { levelLabel } : {}),
     topics: visibleTopics,
     hasMoreTopics: false,

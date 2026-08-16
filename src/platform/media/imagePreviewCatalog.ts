@@ -1,19 +1,21 @@
-import { isAllowedDataImageUrl, parseHtml } from '@/domain/forum/html';
+import { isAllowedDataImageUrl } from '@/domain/forum/html';
 import {
   DISPLAY_CANDIDATE_KIND_ATTR,
-  forumImageAttributesFromText as imageAttributesFromText,
   forumImageAttributeValue as attributeValue,
-  forumImageTagName as safeTagName,
-  isInlineForumImage as isInlineForumImageAttributes,
   isInlineForumImageUrl,
   ORIGINAL_IMAGE_SOURCE_ATTR,
+  parseSrcsetCandidates,
   parseForumImageDimension as parseImageDimension,
-  type ForumImagePreviewDescriptor,
-  type ParsedForumImageNode
+  type ForumImagePreviewDescriptor
 } from '@/domain/forum/forumContentMedia';
 import { linkDiagnosticRefs } from '@/platform/diagnostics/diagnosticPolicy';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
-import { imageRequestHeadersForUrl, isHttpOrHttpsUrl, normalizeImagePreviewUrl } from './imageRequestSource';
+import {
+  createImageRequestReferrerResolver,
+  imageRequestHeadersForUrl,
+  isHttpOrHttpsUrl,
+  normalizeImagePreviewUrl
+} from './imageRequestSource';
 import {
   normalizeMediaReferrerPolicy,
   type MediaReferrerContext,
@@ -49,37 +51,19 @@ export interface ImagePreviewCatalog {
   mediaContext?: ForumMediaRequestContext;
 }
 
+type ImagePreviewEntry = {
+  item: ImagePreviewItem;
+  sourceUrls: string[];
+};
+
+export interface PreparedImagePreviewCatalog {
+  readonly entries: readonly {
+    readonly descriptor: ForumImagePreviewDescriptor;
+    readonly entry: ImagePreviewEntry | null;
+  }[];
+}
+
 const MAX_BODY_IMAGE_PIXEL_WIDTH = 2048;
-
-export function extractImageUrlsFromHtml(html: string): string[] {
-  return extractImagePreviewEntriesFromHtml(html).map((entry) => entry.item.originalUri);
-}
-
-function extractImagePreviewEntriesFromHtml(html: string, contentWidth = 0, pixelRatio = 1): ImagePreviewEntry[] {
-  try {
-    const root = parseHtml(html);
-    return root
-      .querySelectorAll('img')
-      .filter((image) => !isInlineForumImageAttributes(image.attributes))
-      .map((image) => imagePreviewEntryFromImage(image, contentWidth, pixelRatio))
-      .filter((entry): entry is ImagePreviewEntry => Boolean(entry));
-  } catch {
-    const entries: ImagePreviewEntry[] = [];
-    const imagePattern = /<img\b([^>]*)>/gi;
-    let match = imagePattern.exec(html);
-    while (match) {
-      const attributes = imageAttributesFromText(match[1] || '');
-      const entry = !isInlineForumImageAttributes(attributes)
-        ? imagePreviewEntryFromAttributes(attributes, '', contentWidth, pixelRatio)
-        : null;
-      if (entry) {
-        entries.push(entry);
-      }
-      match = imagePattern.exec(html);
-    }
-    return entries;
-  }
-}
 
 export function isPreviewableImageUrl(url: unknown): boolean {
   const clean = typeof url === 'string' ? url.trim() : '';
@@ -98,50 +82,80 @@ export function isPreviewableImageUrl(url: unknown): boolean {
   return /\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|webp)(?:[?#].*)?$/i.test(clean);
 }
 
-export function createImagePreviewCatalog(
-  htmlParts: string[],
-  contentWidth: number,
-  pixelRatio: number,
-  mediaContext?: ForumMediaRequestContext
-): ImagePreviewCatalog {
-  return createImagePreviewCatalogFromEntries(
-    htmlParts.flatMap((html) => extractImagePreviewEntriesFromHtml(html, contentWidth, pixelRatio)),
-    mediaContext
-  );
-}
-
-export function createImagePreviewCatalogFromDescriptors(
+export function prepareImagePreviewCatalog(
   descriptors: readonly ForumImagePreviewDescriptor[],
   contentWidth: number,
-  pixelRatio: number,
+  pixelRatio: number
+): PreparedImagePreviewCatalog {
+  return {
+    entries: descriptors.map((descriptor) => ({
+      descriptor,
+      entry: imagePreviewEntryFromDescriptor(descriptor, contentWidth, pixelRatio)
+    }))
+  };
+}
+
+export function projectImagePreviewCatalog(
+  prepared: PreparedImagePreviewCatalog,
   mediaContext?: ForumMediaRequestContext,
   isInlineSizedImage?: (url: string, referrerPolicy?: MediaReferrerPolicy) => boolean
 ): ImagePreviewCatalog {
   return createImagePreviewCatalogFromEntries(
-    descriptors.flatMap((descriptor) => {
-      if (isInlineSizedImage?.(descriptor.source, descriptor.referrerPolicy)) return [];
-      const entry = imagePreviewEntryFromAttributes(
-        {
-          src: descriptor.source,
-          ...(descriptor.sourceSet ? { srcset: descriptor.sourceSet } : {}),
-          ...(descriptor.dataSource ? { 'data-src': descriptor.dataSource } : {}),
-          ...(descriptor.dataOriginal ? { 'data-original': descriptor.dataOriginal } : {}),
-          ...(descriptor.originalSource ? { [ORIGINAL_IMAGE_SOURCE_ATTR]: descriptor.originalSource } : {}),
-          ...(descriptor.displayCandidateKind
-            ? { [DISPLAY_CANDIDATE_KIND_ATTR]: descriptor.displayCandidateKind }
-            : {}),
-          ...(descriptor.width ? { width: descriptor.width } : {}),
-          ...(descriptor.height ? { height: descriptor.height } : {}),
-          ...(descriptor.referrerPolicy ? { referrerpolicy: descriptor.referrerPolicy } : {})
-        },
-        descriptor.lightboxOriginal || '',
-        contentWidth,
-        pixelRatio
-      );
-      return entry ? [entry] : [];
-    }),
+    prepared.entries.flatMap(({ descriptor, entry }) =>
+      entry && !isInlineSizedImage?.(descriptor.source, descriptor.referrerPolicy)
+        ? [{ ...entry, item: { ...entry.item } }]
+        : []
+    ),
     mediaContext
   );
+}
+
+function imagePreviewEntryFromDescriptor(
+  descriptor: ForumImagePreviewDescriptor,
+  contentWidth: number,
+  pixelRatio: number
+): ImagePreviewEntry | null {
+  const sourceSet = String(descriptor.sourceSet || '');
+  const sourceSetCandidates = parseSrcsetCandidates(sourceSet);
+  const displaySize = imageDisplaySizeFromDescriptor(descriptor);
+  const displayUri = firstPreparedPreviewImageSource([
+    selectResponsiveSrcsetImageUrlFromCandidates(sourceSetCandidates, contentWidth, pixelRatio),
+    descriptor.source,
+    descriptor.dataSource,
+    descriptor.dataOriginal,
+    descriptor.originalSource,
+    descriptor.lightboxOriginal
+  ]);
+  const originalUri = firstPreparedPreviewImageSource([
+    descriptor.lightboxOriginal,
+    descriptor.dataOriginal,
+    bestSrcsetImageUrlFromCandidates(sourceSetCandidates),
+    descriptor.dataSource,
+    displayUri,
+    descriptor.source,
+    descriptor.originalSource
+  ]);
+  if (!originalUri) return null;
+  const sourceUrls = uniqueStrings(
+    [
+      descriptor.lightboxOriginal,
+      ...srcsetImageUrlsFromCandidates(sourceSetCandidates),
+      descriptor.dataOriginal,
+      descriptor.dataSource,
+      descriptor.source
+    ]
+      .map((url) => normalizeImagePreviewUrl(url || ''))
+      .filter(isPreparedPreviewImageSource)
+  );
+  return {
+    item: {
+      displayUri: displayUri || originalUri,
+      originalUri,
+      ...(displaySize ? { displaySize } : {}),
+      ...(descriptor.referrerPolicy ? { referrerPolicy: descriptor.referrerPolicy } : {})
+    },
+    sourceUrls
+  };
 }
 
 function createImagePreviewCatalogFromEntries(
@@ -151,13 +165,23 @@ function createImagePreviewCatalogFromEntries(
   const itemIndexBySourceUrl: Record<string, number> = {};
   const items: ImagePreviewItem[] = [];
   const itemIndexByOriginalUri = new Map<string, number>();
+  const requestIdentityCache = new Map<string, string>();
+  const referrerForUrl = mediaContext?.referrer ? createImageRequestReferrerResolver(mediaContext) : undefined;
+  const requestIdentity = (url: string, referrerPolicy?: MediaReferrerPolicy) => {
+    const key = `${url}\u0000${referrerPolicy || ''}`;
+    const cached = requestIdentityCache.get(key);
+    if (cached) return cached;
+    const identity = previewRequestIdentity(url, referrerPolicy, mediaContext, referrerForUrl);
+    requestIdentityCache.set(key, identity);
+    return identity;
+  };
   entries.forEach((entry) => {
     const originalUri = normalizeImagePreviewUrl(entry.item.originalUri);
-    const aliases = [entry.item.displayUri, originalUri, ...entry.sourceUrls]
-      .map(normalizeImagePreviewUrl)
-      .filter(Boolean);
+    const aliases = uniqueStrings(
+      [entry.item.displayUri, originalUri, ...entry.sourceUrls].map(normalizeImagePreviewUrl).filter(Boolean)
+    );
     linkDiagnosticRefs('media', aliases);
-    const originalIdentity = previewRequestIdentity(originalUri, entry.item.referrerPolicy, mediaContext);
+    const originalIdentity = requestIdentity(originalUri, entry.item.referrerPolicy);
     let itemIndex = itemIndexByOriginalUri.get(originalIdentity);
     if (itemIndex === undefined) {
       itemIndex = items.length;
@@ -165,7 +189,7 @@ function createImagePreviewCatalogFromEntries(
       items.push(entry.item);
     }
     aliases.forEach((url) => {
-      itemIndexBySourceUrl[previewRequestIdentity(url, entry.item.referrerPolicy, mediaContext)] = itemIndex;
+      itemIndexBySourceUrl[requestIdentity(url, entry.item.referrerPolicy)] = itemIndex;
     });
   });
   return { items, itemIndexBySourceUrl, ...(mediaContext ? { mediaContext } : {}) };
@@ -264,63 +288,15 @@ function imagePreviewItemOverride(
 function previewRequestIdentity(
   url: string,
   referrerPolicy?: MediaReferrerPolicy,
-  mediaContext?: ForumMediaRequestContext
+  mediaContext?: ForumMediaRequestContext,
+  referrerForUrl?: (url: string, referrerPolicy?: MediaReferrerPolicy) => string | undefined
 ) {
   if (!mediaContext?.referrer) return url;
-  const referrer = imageRequestHeadersForUrl(url, { mediaContext, referrerPolicy })?.Referer || 'none';
+  const referrer =
+    (referrerForUrl
+      ? referrerForUrl(url, referrerPolicy)
+      : imageRequestHeadersForUrl(url, { mediaContext, referrerPolicy })?.Referer) || 'none';
   return `${url}\u0000referrer:${referrer}`;
-}
-
-type ImagePreviewEntry = {
-  item: ImagePreviewItem;
-  sourceUrls: string[];
-};
-
-export function imagePreviewEntryFromImage(
-  image: ParsedForumImageNode,
-  contentWidth = 0,
-  pixelRatio = 1
-): ImagePreviewEntry | null {
-  return imagePreviewEntryFromAttributes(image.attributes, lightboxHrefForImage(image), contentWidth, pixelRatio);
-}
-
-function imagePreviewEntryFromAttributes(
-  attributes: Record<string, string | undefined>,
-  linkedUrl = '',
-  contentWidth = 0,
-  pixelRatio = 1
-): ImagePreviewEntry | null {
-  const displaySource = selectImageDisplaySource(attributes, contentWidth, pixelRatio);
-  const referrerPolicy = normalizeMediaReferrerPolicy(attributeValue(attributes, 'referrerpolicy'));
-  const sourceUrls = uniqueStrings(
-    [
-      linkedUrl,
-      ...srcsetImageUrls(attributeValue(attributes, 'srcset')),
-      attributeValue(attributes, 'data-original'),
-      attributeValue(attributes, 'data-src'),
-      attributeValue(attributes, 'src')
-    ].filter((url) => isAllowedPreviewImageSource(url) && !isKnownPlaceholderImageUrl(normalizeImagePreviewUrl(url)))
-  );
-  const originalUri = firstAllowedPreviewImageSource([
-    linkedUrl,
-    attributeValue(attributes, 'data-original'),
-    bestSrcsetImageUrl(attributeValue(attributes, 'srcset')),
-    attributeValue(attributes, 'data-src'),
-    displaySource?.uri || '',
-    attributeValue(attributes, 'src')
-  ]);
-  if (!originalUri) {
-    return null;
-  }
-  return {
-    item: {
-      displayUri: displaySource?.uri || originalUri,
-      originalUri,
-      ...(displaySource?.displaySize ? { displaySize: displaySource.displaySize } : {}),
-      ...(referrerPolicy ? { referrerPolicy } : {})
-    },
-    sourceUrls
-  };
 }
 
 export function selectImageDisplaySource(
@@ -374,6 +350,21 @@ function imageDisplaySizeFromAttributes(attributes: Record<string, string | unde
   return width > 0 && height > 0 ? { width, height } : undefined;
 }
 
+function imageDisplaySizeFromDescriptor(descriptor: ForumImagePreviewDescriptor): ImageDisplaySize | undefined {
+  const width = parseImageDimension(descriptor.width || '');
+  const height = parseImageDimension(descriptor.height || '');
+  return width > 0 && height > 0 ? { width, height } : undefined;
+}
+
+function isPreparedPreviewImageSource(url: string) {
+  const clean = normalizeImagePreviewUrl(url);
+  return !isKnownPlaceholderImageUrl(clean) && (/^https?:\/\//i.test(clean) || isAllowedDataImageUrl(clean));
+}
+
+function firstPreparedPreviewImageSource(urls: readonly (string | undefined)[]) {
+  return urls.map((url) => normalizeImagePreviewUrl(url || '')).find(isPreparedPreviewImageSource) || '';
+}
+
 function isKnownPlaceholderImageUrl(url: string) {
   const clean = normalizeImagePreviewUrl(url);
   if (
@@ -382,12 +373,8 @@ function isKnownPlaceholderImageUrl(url: string) {
   ) {
     return true;
   }
-  try {
-    const basename = new URL(clean).pathname.split('/').pop() || '';
-    return /^(?:blank|spacer|transparent)(?:[-_.@].*)?\.(?:gif|png|webp)$/i.test(basename);
-  } catch {
-    return false;
-  }
+  const basename = clean.split(/[?#]/)[0].split('/').pop() || '';
+  return /^(?:blank|spacer|transparent)(?:[-_.@].*)?\.(?:gif|png|webp)$/i.test(basename);
 }
 
 function isAllowedPreviewImageSource(url: string) {
@@ -412,32 +399,8 @@ function firstAllowedPreviewImageSource(urls: string[]) {
   );
 }
 
-function splitSrcsetCandidates(srcset: string) {
-  const candidates: string[] = [];
-  let current = '';
-  let dataUrlCommaSeen = false;
-  for (const char of String(srcset || '')) {
-    if (char === ',') {
-      if (current.trim().toLowerCase().startsWith('data:') && !dataUrlCommaSeen) {
-        current += char;
-        dataUrlCommaSeen = true;
-        continue;
-      }
-      candidates.push(current);
-      current = '';
-      dataUrlCommaSeen = false;
-      continue;
-    }
-    current += char;
-  }
-  if (current.trim()) {
-    candidates.push(current);
-  }
-  return candidates;
-}
-
-function srcsetImageUrls(srcset: string) {
-  return splitSrcsetCandidates(srcset)
+function srcsetImageUrlsFromCandidates(candidates: readonly string[]) {
+  return candidates
     .map((candidate) => (candidate.trim().split(/\s+/)[0] || '').trim())
     .filter(isAllowedPreviewImageSource);
 }
@@ -449,7 +412,14 @@ type ResponsiveSrcsetCandidate = {
 };
 
 function selectResponsiveSrcsetImageUrl(srcset: string, contentWidth: number, pixelRatio: number) {
-  const rawCandidates = splitSrcsetCandidates(srcset);
+  return selectResponsiveSrcsetImageUrlFromCandidates(parseSrcsetCandidates(srcset), contentWidth, pixelRatio);
+}
+
+function selectResponsiveSrcsetImageUrlFromCandidates(
+  rawCandidates: readonly string[],
+  contentWidth: number,
+  pixelRatio: number
+) {
   if (!rawCandidates.length || !Number.isFinite(pixelRatio) || pixelRatio <= 0) {
     return '';
   }
@@ -483,9 +453,13 @@ function selectResponsiveSrcsetImageUrl(srcset: string, contentWidth: number, pi
 }
 
 function bestSrcsetImageUrl(srcset: string) {
+  return bestSrcsetImageUrlFromCandidates(parseSrcsetCandidates(srcset));
+}
+
+function bestSrcsetImageUrlFromCandidates(candidates: readonly string[]) {
   let bestUrl = '';
   let bestScore = -1;
-  splitSrcsetCandidates(srcset).forEach((candidate, index) => {
+  candidates.forEach((candidate, index) => {
     const parts = candidate.trim().split(/\s+/);
     const url = String(parts.shift() || '').trim();
     if (!isAllowedPreviewImageSource(url)) {
@@ -513,28 +487,4 @@ function uniqueStrings(items: string[]): string[] {
     }
   }
   return result;
-}
-
-function lightboxHrefForImage(image: { parentNode?: unknown; parent?: unknown }) {
-  let current = image.parentNode || image.parent;
-  while (current && typeof current === 'object') {
-    const element = current as {
-      tagName?: string;
-      rawTagName?: string | null;
-      classNames?: string;
-      attributes?: Record<string, string | undefined>;
-      parentNode?: unknown;
-      parent?: unknown;
-    };
-    const tagName = safeTagName(element);
-    const className = String(element.classNames || element.attributes?.class || '');
-    if (tagName === 'a' && /(^|\s)lightbox(\s|$)/i.test(className)) {
-      return attributeValue(element.attributes || {}, 'href');
-    }
-    if (/(^|\s)lightbox-wrapper(\s|$)/i.test(className)) {
-      return '';
-    }
-    current = element.parentNode || element.parent;
-  }
-  return '';
 }

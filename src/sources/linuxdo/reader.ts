@@ -4,7 +4,12 @@ import {
   type BrowserFetchOwner,
   type BrowserFetchPriority
 } from '@/platform/network/browserFetchIntent';
-import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import {
+  fetchWithTimeout,
+  REQUEST_CANCELED_MESSAGE,
+  withAbortableTimeout,
+  type Fetcher
+} from '@/platform/network/request';
 import type {
   CategoriesResponse,
   DiscourseFeedFilter,
@@ -45,16 +50,21 @@ import {
   discourseUsersById,
   discourseVisiblePostIds
 } from '@/sources/discourse/model';
-import { discourseQuoteMetadata } from '@/sources/discourse/content';
-import { sanitizeLinuxDoContentHtml } from './parser';
+import { prepareLinuxDoContent } from './parser';
 import { orientReplyWindow } from '@/sources/replyWindows';
 
 export const LIST_PAGE_SIZE = 30;
 
 let emojiUrlCache: DiscourseEmojiUrlMap | null = null;
+type LinuxDoCategoryMap = Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>;
+let categoryCacheScope: string | null = null;
+let categoryCache: LinuxDoCategoryMap = new Map();
+let categoryData: Record<string, unknown> | null = null;
+let categoryRequest: Promise<Record<string, unknown>> | null = null;
 
 export interface LinuxDoOptions {
   browserFetchIntent?: BrowserFetchIntent;
+  categoryCacheScope?: string;
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
@@ -105,11 +115,59 @@ export function categoryMapFromData(data: unknown) {
   return map;
 }
 
-function topicsNeedCategoryMap(
-  topics: unknown[],
-  categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>
-) {
+function topicsNeedCategoryMap(topics: unknown[], categoryMap: LinuxDoCategoryMap) {
   return topics.some((topic) => isRecord(topic) && topic.category_id && !categoryMap.has(String(topic.category_id)));
+}
+
+function activateCategoryCacheScope(options: LinuxDoOptions) {
+  const scope = options.categoryCacheScope?.trim() || null;
+  if (scope !== categoryCacheScope) {
+    categoryCacheScope = scope;
+    categoryCache = new Map();
+    categoryData = null;
+    categoryRequest = null;
+  }
+  return scope;
+}
+
+function fetchCategoryData(options: LinuxDoOptions) {
+  const scope = activateCategoryCacheScope(options);
+  if (!scope) {
+    return fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
+  }
+  if (categoryData) return Promise.resolve(categoryData);
+  if (!categoryRequest) {
+    const request = fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, {
+      ...options,
+      signal: undefined
+    })
+      .then((data) => {
+        if (categoryCacheScope === scope && categoryRequest === request) {
+          categoryData = data;
+          categoryCache = new Map([...categoryCache, ...categoryMapFromData(data)]);
+        }
+        return data;
+      })
+      .finally(() => {
+        if (categoryCacheScope === scope && categoryRequest === request) {
+          categoryRequest = null;
+        }
+      });
+    categoryRequest = request;
+  }
+  return categoryRequest;
+}
+
+function waitForCategoryData(options: LinuxDoOptions) {
+  const request = fetchCategoryData(options);
+  return options.signal ? withAbortableTimeout(() => request, { signal: options.signal }) : request;
+}
+
+export function resetLinuxDoCategoryCacheForTests() {
+  categoryCacheScope = null;
+  categoryCache = new Map();
+  categoryData = null;
+  categoryRequest = null;
 }
 
 export async function categoryMapForTopics(
@@ -118,12 +176,13 @@ export async function categoryMapForTopics(
   categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>,
   options: LinuxDoOptions
 ) {
-  let nextCategoryMap = new Map([...categoryMap, ...categoryMapFromData(data)]);
+  activateCategoryCacheScope(options);
+  let nextCategoryMap = new Map([...categoryCache, ...categoryMap, ...categoryMapFromData(data)]);
   if (!topicsNeedCategoryMap(topics, nextCategoryMap)) {
     return nextCategoryMap;
   }
   try {
-    const siteData = await fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
+    const siteData = await waitForCategoryData(options);
     nextCategoryMap = new Map([...nextCategoryMap, ...categoryMapFromData(siteData)]);
   } catch (error) {
     if (error instanceof LinuxDoCloudflareError) {
@@ -239,8 +298,7 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
   }
   const { cookedHtml, ...replyFields } = fields;
   const polls = discoursePolls(raw);
-  const contentHtml = sanitizeLinuxDoContentHtml(cookedHtml, polls);
-  const quotedReferences = discourseQuoteMetadata(contentHtml, 'linuxdo', topicId);
+  const prepared = prepareLinuxDoContent(cookedHtml, polls, { role: 'reply', topicId });
   const rawBoostCount = boostCountFromPost(raw);
   const needsApproval = raw.needs_category_expert_approval === true;
   const authorLevelLabel = linuxDoLevelLabel(raw);
@@ -249,8 +307,9 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
     authorId: fields.author || undefined,
     authorAvatar: avatarUrl(raw.avatar_template),
     authorUrl: fields.author ? userUrl(fields.author) : undefined,
-    contentHtml: quotedReferences.html,
-    ...(quotedReferences.quotedPosts.length ? { quotedPosts: quotedReferences.quotedPosts } : {}),
+    contentHtml: prepared.preparedContent.contentHtml,
+    preparedContent: prepared.preparedContent,
+    ...(prepared.quotedPosts.length ? { quotedPosts: prepared.quotedPosts } : {}),
     ...(rawBoostCount || needsApproval
       ? {
           siteExtension: {
@@ -408,7 +467,7 @@ export async function getLinuxDoFeed(
   let hasMore = false;
   let droppedCount = 0;
   let categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>();
-  while (collected.length < limit + 1) {
+  while (collected.length < limit) {
     const data = await fetchLinuxDoJson<Record<string, unknown>>(
       linuxDoFeedPath(linuxDoFilter),
       linuxDoFeedParams(listPage, options.category, linuxDoFilter),
@@ -424,15 +483,13 @@ export async function getLinuxDoFeed(
       })
       .filter(Boolean) as Topic[];
     droppedCount += Math.max(0, topics.length - items.length);
-    if (!items.length) {
-      break;
-    }
+    const serverHasMore = Boolean(isRecord(data.topic_list) && data.topic_list.more_topics_url);
     collected.push(...(listPage === firstListPage && firstOffset > 0 ? items.slice(firstOffset) : items));
-    if (collected.length > limit) {
-      hasMore = true;
+    if (collected.length >= limit) {
+      hasMore = collected.length > limit || serverHasMore;
       break;
     }
-    if (isRecord(data.topic_list) && data.topic_list.more_topics_url) {
+    if (serverHasMore && (items.length > 0 || topics.length > 0)) {
       listPage += 1;
       continue;
     }
@@ -457,7 +514,7 @@ export async function getLinuxDoFeed(
 
 export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promise<CategoriesResponse> {
   options = linuxDoOptionsWithBrowserIntent(options, 'feed', 'foreground');
-  const data = await fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
+  const data = await waitForCategoryData(options);
   const categories = Array.isArray(data.categories)
     ? data.categories
     : isRecord(data.category_list) && Array.isArray(data.category_list.categories)
@@ -551,11 +608,15 @@ export async function getLinuxDoTopic(
   if (options.signal?.aborted) {
     throw new Error(REQUEST_CANCELED_MESSAGE);
   }
-  const sanitizedContentHtml = sanitizeLinuxDoContentHtml(firstPostFields.cookedHtml, polls);
+  const preparedContent = prepareLinuxDoContent(firstPostFields.cookedHtml, polls, {
+    role: 'opening',
+    topicId: topic.id
+  }).preparedContent;
   const result = {
     ...topic,
     mediaReferrer: { documentUrl: topic.url },
-    contentHtml: sanitizedContentHtml,
+    contentHtml: preparedContent.contentHtml,
+    preparedContent,
     replies,
     replyCompleteness: replies.length === initialReplyPosts.length ? ('complete' as const) : ('partial' as const),
     replyHasMore,

@@ -1,6 +1,6 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
+import { discourseActionResponseMessage, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 
@@ -22,27 +22,8 @@ function linuxDoLoginRequiredError() {
   return error;
 }
 
-function linuxDoResponseMessage(data: Record<string, unknown>, fallback: string) {
-  if (typeof data.error === 'string' && data.error.trim()) {
-    return data.error.trim();
-  }
-  if (typeof data.message === 'string' && data.message.trim()) {
-    return data.message.trim();
-  }
-  if (Array.isArray(data.errors)) {
-    const message = data.errors
-      .map((item) => String(item || '').trim())
-      .filter(Boolean)
-      .join('；');
-    if (message) {
-      return message;
-    }
-  }
-  return fallback;
-}
-
 function linuxDoActionError(data: Record<string, unknown>, status: number) {
-  const message = linuxDoResponseMessage(data, `linux.do 请求失败：HTTP ${status}`);
+  const message = discourseActionResponseMessage(data, `linux.do 请求失败：HTTP ${status}`);
   if (status === 401 || /login|log in|csrf|登录已失效|重新登录|请先.*登录/i.test(message)) {
     return linuxDoLoginRequiredError();
   }

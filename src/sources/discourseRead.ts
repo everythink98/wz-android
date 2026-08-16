@@ -40,6 +40,7 @@ import type {
 export interface DiscourseReadAuthMap {
   linuxdo: {
     authenticated?: boolean;
+    categoryCacheScope?: string;
     userAgent?: string;
   };
   xiaoyinsi: XiaoyinsiApiCredentials;
@@ -112,12 +113,22 @@ type DiscourseSourceReader = {
 function withLinuxDoAuth<T extends DiscourseReadOptions>(
   options: T
 ): Omit<T, 'auth'> & {
+  categoryCacheScope?: string;
   linuxDoAccess?: DiscourseReadAuthMap['linuxdo'];
 } {
   const { auth, ...requestOptions } = options;
+  const linuxDoAuth = auth?.linuxdo;
   return {
     ...requestOptions,
-    ...(auth?.linuxdo ? { linuxDoAccess: auth.linuxdo } : {})
+    ...(linuxDoAuth?.categoryCacheScope ? { categoryCacheScope: linuxDoAuth.categoryCacheScope } : {}),
+    ...(linuxDoAuth
+      ? {
+          linuxDoAccess: {
+            authenticated: linuxDoAuth.authenticated,
+            userAgent: linuxDoAuth.userAgent
+          }
+        }
+      : {})
   };
 }
 

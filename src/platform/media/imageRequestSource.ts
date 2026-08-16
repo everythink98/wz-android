@@ -39,20 +39,7 @@ function cleanReferrerUrl(value: unknown) {
   }
 }
 
-function referrerForMediaUrl(targetUrl: URL, options: ImageRequestOptions) {
-  const context = options.mediaContext?.referrer;
-  if (!context) {
-    const contentSource = options.mediaContext?.contentSource;
-    return contentSource ? `${new URL(sourceCatalog[contentSource].baseUrl).origin}/` : undefined;
-  }
-  const documentUrl = cleanReferrerUrl(context.documentUrl);
-  if (!documentUrl) {
-    return undefined;
-  }
-  const policy =
-    normalizeMediaReferrerPolicy(options.referrerPolicy) ||
-    normalizeMediaReferrerPolicy(context.documentPolicy) ||
-    DEFAULT_REFERRER_POLICY;
+function referrerForParsedMediaUrls(targetUrl: URL, documentUrl: URL, policy: MediaReferrerPolicy) {
   const sameOrigin = documentUrl.origin === targetUrl.origin;
   const downgrade = documentUrl.protocol === 'https:' && targetUrl.protocol === 'http:';
   const fullReferrer = documentUrl.toString();
@@ -75,6 +62,42 @@ function referrerForMediaUrl(targetUrl: URL, options: ImageRequestOptions) {
     case 'unsafe-url':
       return fullReferrer;
   }
+}
+
+function referrerForMediaUrl(targetUrl: URL, options: ImageRequestOptions) {
+  const context = options.mediaContext?.referrer;
+  if (!context) {
+    const contentSource = options.mediaContext?.contentSource;
+    return contentSource ? `${new URL(sourceCatalog[contentSource].baseUrl).origin}/` : undefined;
+  }
+  const documentUrl = cleanReferrerUrl(context.documentUrl);
+  if (!documentUrl) {
+    return undefined;
+  }
+  const policy =
+    normalizeMediaReferrerPolicy(options.referrerPolicy) ||
+    normalizeMediaReferrerPolicy(context.documentPolicy) ||
+    DEFAULT_REFERRER_POLICY;
+  return referrerForParsedMediaUrls(targetUrl, documentUrl, policy);
+}
+
+export function createImageRequestReferrerResolver(mediaContext: ForumMediaRequestContext) {
+  const context = mediaContext.referrer;
+  const documentUrl = context ? cleanReferrerUrl(context.documentUrl) : null;
+  const contentSource = mediaContext.contentSource;
+  const defaultReferrer =
+    !context && contentSource ? `${new URL(sourceCatalog[contentSource].baseUrl).origin}/` : undefined;
+  return (url: string, referrerPolicy?: MediaReferrerPolicy) => {
+    const targetUrl = cleanReferrerUrl(url);
+    if (!targetUrl) return undefined;
+    if (!context) return defaultReferrer;
+    if (!documentUrl) return undefined;
+    const policy =
+      normalizeMediaReferrerPolicy(referrerPolicy) ||
+      normalizeMediaReferrerPolicy(context.documentPolicy) ||
+      DEFAULT_REFERRER_POLICY;
+    return referrerForParsedMediaUrls(targetUrl, documentUrl, policy);
+  };
 }
 
 export function isHttpOrHttpsUrl(url: unknown): boolean {

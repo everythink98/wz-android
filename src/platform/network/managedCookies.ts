@@ -16,28 +16,6 @@ export function managedCookieHeaderOrThrow(result: ManagedCookieReadResult) {
   throw new Error(result.status === 'unsupported' ? '当前安装包不支持读取 WebView Cookie' : result.message);
 }
 
-export function managedCookieSourceForUrl(exactUrl: string): ManagedLoginCookieSource | null {
-  try {
-    const url = new URL(exactUrl);
-    if (url.protocol !== 'https:' || url.username || url.password) {
-      return null;
-    }
-    const host = url.hostname.toLowerCase();
-    if (host === 'nodeseek.com' || host.endsWith('.nodeseek.com')) {
-      return 'nodeseek';
-    }
-    if (host === 'linux.do' || host.endsWith('.linux.do')) {
-      return 'linuxdo';
-    }
-    if (host === 'yaohuo.me' || host.endsWith('.yaohuo.me')) {
-      return 'yaohuo';
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 function nativeManagedCookieModule() {
   return NativeModules?.NetworkProxyModule as ManagedCookieNativeModule | undefined;
 }

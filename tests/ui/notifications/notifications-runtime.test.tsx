@@ -221,6 +221,7 @@ function runtimeOptions(
     getNodeSeekUserAgent: jest.fn(() => 'NodeSeek'),
     openSource,
     privateAccessAllowed,
+    remoteReady: true,
     sessions
   };
 }
@@ -470,6 +471,233 @@ describe('notification runtime', () => {
     expect(syncNotificationBackgroundRegistration).toHaveBeenCalledTimes(registrationCount);
     cancelQueries.mockRestore();
     removeQueries.mockRestore();
+    await settleStartedRuntimeTasks();
+  });
+
+  it('[REG-NOTIFY-058] reads only the newly added source without rereading a stable sibling', async () => {
+    const stored = defaultNotificationState();
+    stored.sources.nodeseek.identityKey = 'nodeseek:42';
+    stored.sources.linuxdo.identityKey = 'linuxdo:84';
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
+    const fetcher = jest.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      return new Response(
+        JSON.stringify(
+          url.includes('nodeseek')
+            ? { atMe: 0, reply: 1, message: 0 }
+            : { total_rows_notifications: 2, notifications: [] }
+        ),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    });
+    let enabledNotificationSources: readonly NotificationSource[] = ['nodeseek'];
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(
+            jest.fn(() => true),
+            nodeSeekAndLinuxDoSessions()
+          ),
+          appActive: true,
+          enabledNotificationSources,
+          fetcher
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+    await waitFor(() => expect(hook.result.current.unreadTotal).toBe(1));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await settleStartedRuntimeTasks(false);
+    enabledNotificationSources = ['nodeseek', 'linuxdo'];
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(hook.result.current.activeSources).toContain('linuxdo'));
+    await waitFor(() => expect(hook.result.current.snapshotErrors).toEqual({}));
+    await waitFor(() => expect(hook.result.current.unreadTotal).toBe(3));
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await settleStartedRuntimeTasks();
+  });
+
+  it('[REG-NOTIFY-058] runs one source read and one persistence per ready, resume, and explicit refresh event', async () => {
+    const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.hasOptedIn = true;
+    stored.sources.nodeseek.identityKey = 'nodeseek:42';
+    stored.sources.nodeseek.intentEnabled = true;
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
+    jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
+    const fetcher = jest.fn(
+      async () =>
+        new Response(JSON.stringify({ atMe: 0, reply: 1, message: 0 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+    );
+    let appActive = true;
+    let remoteReady = false;
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(
+            jest.fn(() => true),
+            nodeSeekSessions('confirmed'),
+            ['nodeseek']
+          ),
+          appActive,
+          fetcher,
+          remoteReady
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(hook.result.current.activeSources).toEqual(['nodeseek']));
+    expect(fetcher).not.toHaveBeenCalled();
+
+    remoteReady = true;
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(1));
+    await act(async () => hook.rerender({}));
+    expect(recordNotificationSnapshot).toHaveBeenCalledTimes(1);
+
+    appActive = false;
+    await act(async () => hook.rerender({}));
+    appActive = true;
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(2));
+
+    await act(async () => hook.result.current.refreshSnapshots());
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(3));
+    await settleStartedRuntimeTasks();
+  });
+
+  it('[REG-NOTIFY-058] does not replay a cached snapshot when an identity returns before its refetch completes', async () => {
+    const stored = defaultNotificationState();
+    stored.sources.nodeseek.identityKey = 'nodeseek:42';
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
+    let blockNextFetch = false;
+    let releaseReturningIdentity: (() => void) | undefined;
+    const response = () =>
+      new Response(JSON.stringify({ atMe: 0, reply: 1, message: 0 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    const fetcher = jest.fn(async () => {
+      if (blockNextFetch) {
+        blockNextFetch = false;
+        await new Promise<void>((resolve) => {
+          releaseReturningIdentity = resolve;
+        });
+      }
+      return response();
+    });
+    let sessions = nodeSeekSessions('confirmed', '42');
+    let remoteReady = false;
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(
+            jest.fn(() => true),
+            sessions,
+            ['nodeseek']
+          ),
+          appActive: true,
+          fetcher,
+          remoteReady
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(hook.result.current.activeSources).toEqual(['nodeseek']));
+    remoteReady = true;
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    await waitFor(() => expect(hook.result.current.snapshotErrors).toEqual({}));
+    await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(1));
+    sessions = nodeSeekSessions('confirmed', '84');
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(2));
+
+    const previousFetchCount = fetcher.mock.calls.length;
+    blockNextFetch = true;
+    sessions = nodeSeekSessions('confirmed', '42');
+    await act(async () => hook.rerender({}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(previousFetchCount + 1));
+    expect(recordNotificationSnapshot).toHaveBeenCalledTimes(2);
+
+    await act(async () => releaseReturningIdentity?.());
+    await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(3));
+    await settleStartedRuntimeTasks();
+  });
+
+  it('[REG-NOTIFY-058] waits for identity reset before reading and persisting its first snapshot', async () => {
+    const stored = defaultNotificationState();
+    stored.sources.nodeseek.identityKey = 'nodeseek:42';
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    let fetchCount = 0;
+    const fetcher = jest.fn(async () => {
+      fetchCount += 1;
+      const total = fetchCount === 1 ? 1 : 5;
+      return new Response(JSON.stringify({ atMe: 0, reply: total, message: 0 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    });
+    let sessions = nodeSeekSessions('confirmed', '42');
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(
+            jest.fn(() => true),
+            sessions,
+            ['nodeseek']
+          ),
+          appActive: true,
+          fetcher
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(1));
+    let releaseDismissal!: () => void;
+    const dismissalBlocked = new Promise<void>((resolve) => {
+      releaseDismissal = resolve;
+    });
+    let dismissalStarted!: () => void;
+    const dismissalDidStart = new Promise<void>((resolve) => {
+      dismissalStarted = resolve;
+    });
+    jest.mocked(dismissSourceNotification).mockImplementationOnce(async () => {
+      dismissalStarted();
+      await dismissalBlocked;
+    });
+
+    sessions = nodeSeekSessions('confirmed', '84');
+    await act(async () => hook.rerender({}));
+    await dismissalDidStart;
+    await act(async () => Promise.resolve());
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    releaseDismissal();
+    await act(async () => dismissalBlocked);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(JSON.parse(persisted).sources.nodeseek).toEqual(
+        expect.objectContaining({
+          identityKey: 'nodeseek:84',
+          unreadCount: 5
+        })
+      )
+    );
     await settleStartedRuntimeTasks();
   });
 

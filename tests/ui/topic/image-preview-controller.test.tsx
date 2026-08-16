@@ -301,6 +301,41 @@ describe('Image preview controller', () => {
     expect(hook.result.current.imagePreview?.index).toBe(1_380);
   });
 
+  it('[REG-PERF-018] reprojects inline exclusions without preparing registered descriptors again', async () => {
+    const firstUrl = 'https://images.example/prepared-640.webp';
+    const secondUrl = 'https://images.example/second.webp';
+    const stringifySourceSet = jest.fn(() => `${firstUrl} 640w, https://images.example/prepared-1280.webp 1280w`);
+    const descriptors = [
+      { source: firstUrl, sourceSet: { toString: stringifySourceSet } as unknown as string },
+      { source: secondUrl }
+    ];
+    const topicImageDeriver = createTopicImageDeriver();
+    const hook = await renderHook(
+      ({ inlineSizedImageUrls }: { inlineSizedImageUrls: Record<string, true> }) =>
+        useRawImagePreviewController({
+          contentSource: 'v2ex',
+          contentWidth: 360,
+          inlineSizedImageUrls,
+          notify: jest.fn(),
+          topicImageDeriver
+        }),
+      { initialProps: { inlineSizedImageUrls: {} } }
+    );
+
+    await act(() => hook.result.current.registerImagePreviewDescriptors(descriptors));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+    expect(hook.result.current.imagePreview?.items).toHaveLength(2);
+    expect(stringifySourceSet).toHaveBeenCalledTimes(1);
+
+    await act(() => hook.result.current.closeImagePreview());
+    await hook.rerender({ inlineSizedImageUrls: { [firstUrl]: true } });
+    await act(() => hook.result.current.registerImagePreviewDescriptors(descriptors));
+    await act(() => hook.result.current.openImagePreview(secondUrl));
+
+    expect(hook.result.current.imagePreview?.items).toHaveLength(1);
+    expect(stringifySourceSet).toHaveBeenCalledTimes(1);
+  });
+
   it('[REG-TOPIC-096] keeps equivalent registrations and invalidates semantic catalog inputs', async () => {
     let pixelRatio = 2;
     const pixelRatioSpy = jest.spyOn(PixelRatio, 'get').mockImplementation(() => pixelRatio);

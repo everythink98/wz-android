@@ -11,6 +11,20 @@ import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 export const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 export const NODESEEK_FLOORS_PER_PAGE = 10;
 
+export type NodeSeekPageDocument = {
+  embedded: Record<string, unknown> | null;
+  html: string;
+  root: ReturnType<typeof parseHtml>;
+};
+
+export function parseNodeSeekPageDocument(html: string): NodeSeekPageDocument {
+  return {
+    embedded: extractNodeSeekEmbeddedData(html),
+    html,
+    root: parseHtml(html)
+  };
+}
+
 export function nodeSeekTopicUrl(id: string) {
   return `${NODESEEK_BASE_URL}/post-${id}-1`;
 }
@@ -42,40 +56,36 @@ function nodeSeekPostPageFromHref(href: string | undefined, id: string) {
   return location?.id === id ? location.page : null;
 }
 
-export function assertNodeSeekTopicIdentity(html: string, id: string, responseUrl?: string) {
-  const embedded = extractNodeSeekEmbeddedData(html);
-  const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
+export function assertNodeSeekTopicIdentity(document: NodeSeekPageDocument, id: string, responseUrl?: string) {
+  const postData = document.embedded && isRecord(document.embedded.postData) ? document.embedded.postData : null;
   const embeddedId = postData ? String(postData.postId || postData.id || '').trim() : '';
   if (embeddedId && embeddedId !== id) throw new Error('NodeSeek 主题身份不一致');
 
-  const root = parseHtml(html);
   for (const href of [
     responseUrl,
-    root.querySelector('link[rel="canonical"][href]')?.getAttribute('href'),
-    root.querySelector('a.post-title[href], .post-title a[href], .post-title[href]')?.getAttribute('href')
+    document.root.querySelector('link[rel="canonical"][href]')?.getAttribute('href'),
+    document.root.querySelector('a.post-title[href], .post-title a[href], .post-title[href]')?.getAttribute('href')
   ]) {
     const location = nodeSeekPostLocationFromHref(href);
     if (location && location.id !== id) throw new Error('NodeSeek 主题身份不一致');
   }
 }
 
-export function resolvedNodeSeekPostPage(html: string, id: string, responseUrl?: string) {
+export function resolvedNodeSeekPostPage(document: NodeSeekPageDocument, id: string, responseUrl?: string) {
   const responsePage = nodeSeekPostPageFromHref(responseUrl, id);
   if (responsePage) return responsePage;
-  const embedded = extractNodeSeekEmbeddedData(html);
-  const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
+  const postData = document.embedded && isRecord(document.embedded.postData) ? document.embedded.postData : null;
   if (postData && String(postData.postId || postData.id || '') === id) {
     const embeddedPage = parsePositiveInteger(postData.postPage ?? postData.post_page);
     if (embeddedPage) return embeddedPage;
   }
-  const root = parseHtml(html);
   for (const selector of [
     'link[rel="canonical"][href]',
     'a.post-title[href]',
     '.post-title a[href]',
     '.post-title[href]'
   ]) {
-    const page = nodeSeekPostPageFromHref(root.querySelector(selector)?.getAttribute('href'), id);
+    const page = nodeSeekPostPageFromHref(document.root.querySelector(selector)?.getAttribute('href'), id);
     if (page) return page;
   }
   return null;
@@ -89,10 +99,9 @@ function nodeSeekPostPagerLinks(root: ReturnType<typeof parseHtml>) {
   ];
 }
 
-export function nextNodeSeekPostPage(html: string, id: string, currentPage = 1) {
+export function nextNodeSeekPostPage(document: NodeSeekPageDocument, id: string, currentPage = 1) {
   let nextPage: number | null = null;
-  const root = parseHtml(html);
-  for (const link of nodeSeekPostPagerLinks(root)) {
+  for (const link of nodeSeekPostPagerLinks(document.root)) {
     const page = nodeSeekPostPageFromHref(link.getAttribute('href'), id);
     if (page && page > currentPage && (!nextPage || page < nextPage)) {
       nextPage = page;
@@ -101,10 +110,9 @@ export function nextNodeSeekPostPage(html: string, id: string, currentPage = 1) 
   return nextPage;
 }
 
-export function lastNodeSeekPostPage(html: string, id: string, currentPage = 1) {
+export function lastNodeSeekPostPage(document: NodeSeekPageDocument, id: string, currentPage = 1) {
   let lastPage = currentPage;
-  const root = parseHtml(html);
-  for (const link of nodeSeekPostPagerLinks(root)) {
+  for (const link of nodeSeekPostPagerLinks(document.root)) {
     const page = nodeSeekPostPageFromHref(link.getAttribute('href'), id);
     if (page && page > lastPage) {
       lastPage = page;
@@ -113,9 +121,9 @@ export function lastNodeSeekPostPage(html: string, id: string, currentPage = 1) 
   return lastPage;
 }
 
-export function nextNodeSeekListPage(html: string, currentPage = 1) {
+export function nextNodeSeekListPage(document: NodeSeekPageDocument, currentPage = 1) {
   let nextPage: number | null = null;
-  for (const link of parseHtml(html).querySelectorAll('a[href]')) {
+  for (const link of document.root.querySelectorAll('a[href]')) {
     try {
       const pathname = new URL(link.getAttribute('href') || '', NODESEEK_BASE_URL).pathname;
       const page = parsePositiveInteger(pathname.match(/(?:^|\/)page-(\d+)$/)?.[1]);
@@ -129,12 +137,16 @@ export function nextNodeSeekListPage(html: string, currentPage = 1) {
   return nextPage;
 }
 
-export function withNodeSeekReplyPagination(topic: TopicDetail, html: string, id: string, currentPage = 1) {
-  const embedded = extractNodeSeekEmbeddedData(html);
-  const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
+export function withNodeSeekReplyPagination(
+  topic: TopicDetail,
+  document: NodeSeekPageDocument,
+  id: string,
+  currentPage = 1
+) {
+  const postData = document.embedded && isRecord(document.embedded.postData) ? document.embedded.postData : null;
   const pageCount = postData ? nodeSeekEmbeddedPostPageCount(postData) : undefined;
   const nextPage =
-    nextNodeSeekPostPage(html, id, currentPage) || (pageCount && currentPage < pageCount ? currentPage + 1 : null);
+    nextNodeSeekPostPage(document, id, currentPage) || (pageCount && currentPage < pageCount ? currentPage + 1 : null);
   if (!topic.replyHasMore && nextPage) {
     return {
       ...topic,
@@ -252,8 +264,8 @@ function hasNodeSeekSearchResultSurface(root: ReturnType<typeof parseHtml>, url?
   );
 }
 
-export function hasReadableNodeSeekHtml(html: string, url?: string) {
-  const embedded = extractNodeSeekEmbeddedData(html);
+export function hasReadableNodeSeekHtml(html: string, url?: string, document?: NodeSeekPageDocument) {
+  const embedded = document ? document.embedded : extractNodeSeekEmbeddedData(html);
   if (
     embedded &&
     (isRecord(embedded.postData) ||
@@ -263,7 +275,7 @@ export function hasReadableNodeSeekHtml(html: string, url?: string) {
   ) {
     return true;
   }
-  const root = parseHtml(html);
+  const root = document?.root ?? parseHtml(html);
   return (
     hasReadableNodeSeekListItem(root) ||
     hasReadableNodeSeekTopic(root) ||
@@ -275,7 +287,8 @@ export function hasReadableNodeSeekHtml(html: string, url?: string) {
 export function isNodeSeekChallengeResponse(
   response: Pick<Response, 'status' | 'headers'>,
   html: string,
-  url?: string
+  url?: string,
+  document?: NodeSeekPageDocument
 ) {
   if (/challenge/i.test(response.headers.get('cf-mitigated') || '')) {
     return true;
@@ -283,7 +296,7 @@ export function isNodeSeekChallengeResponse(
   if (!canContainCloudflareChallengePage(response.headers)) {
     return false;
   }
-  if (hasReadableNodeSeekHtml(html, url)) {
+  if (hasReadableNodeSeekHtml(html, url, document)) {
     return false;
   }
   return isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: html });

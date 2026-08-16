@@ -5,7 +5,8 @@ import {
   useQueries,
   useQuery,
   useQueryClient,
-  type InfiniteData
+  type InfiniteData,
+  type UseQueryResult
 } from '@tanstack/react-query';
 import type { ReadGateway } from '@/sources/readGateway';
 import {
@@ -75,8 +76,24 @@ import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
+import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 
 type MutableRef<T> = { current: T };
+
+type QuoteQueryProjection = Pick<
+  UseQueryResult<Reply>,
+  'data' | 'error' | 'errorUpdatedAt' | 'isFetching' | 'isPending'
+>;
+
+function combineQuoteQueryResults(results: QuoteQueryProjection[]): QuoteQueryProjection[] {
+  return results.map(({ data, error, errorUpdatedAt, isFetching, isPending }) => ({
+    data,
+    error,
+    errorUpdatedAt,
+    isFetching,
+    isPending
+  }));
+}
 
 type ReplyWindowErrorSlot = ReplyWindowEdge | 'refresh';
 
@@ -635,7 +652,8 @@ export function useTopicController({
           }
         }
       };
-    })
+    }),
+    combine: combineQuoteQueryResults
   });
 
   const quoteResults = useMemo(
@@ -1387,7 +1405,10 @@ export function useTopicController({
               topicReadQueryKey({ source: reference.source, id: reference.topicId })
             )
           : undefined;
-      const reusableQuotedPost = quotedPost || (cachedTopic ? topicOpeningPostAsReply(cachedTopic) : undefined);
+      const reusableCandidate = quotedPost || (cachedTopic ? topicOpeningPostAsReply(cachedTopic) : undefined);
+      const reusableQuotedPost = reusableCandidate
+        ? prepareReplyContent(reusableCandidate, reference.source, 'quoted-reply')
+        : undefined;
       if (!isDiscourseSource(reference.source) && !reusableQuotedPost) {
         if (!prefetch) {
           topicQuotes.changeExpanded(instanceKey, true);

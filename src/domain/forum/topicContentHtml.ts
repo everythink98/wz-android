@@ -1,4 +1,5 @@
 import { elementText, escapeQuotedHtmlTagDelimiters, parseHtml } from './html';
+import { TextNode, type HTMLElement } from 'node-html-parser';
 
 export const FORUM_REPLY_REFERENCE_TAG = 'forum-reply-reference';
 const FORUM_USER_MENTION_CLASS = 'forum-user-mention';
@@ -58,6 +59,24 @@ function markForumUserMentions(html: string) {
           ? `<a${addHtmlClass(attributes, FORUM_USER_MENTION_CLASS)}>${mentionLabel(label)}</a>`
           : match
     );
+}
+
+export function normalizeForumUserMentionNodes(root: HTMLElement) {
+  root.querySelectorAll('a[href]').forEach((link) => {
+    const href = link.getAttribute('href') || '';
+    const label = elementText(link);
+    if (!isForumUserMentionHref(href) || /<[a-z][^>]*>/i.test(link.innerHTML)) return;
+    const children = link.parentNode?.childNodes || [];
+    const index = children.indexOf(link);
+    const previous = index > 0 ? children[index - 1] : undefined;
+    const previousText = previous && !previous.rawTagName ? String(previous.rawText || '') : '';
+    if (!label.startsWith('@') && !previousText.endsWith('@')) return;
+    if (!label.startsWith('@') && previous) {
+      previous.rawText = previousText.slice(0, -1);
+    }
+    appendClass(link, FORUM_USER_MENTION_CLASS);
+    link.set_content([new TextNode(mentionLabel(label))]);
+  });
 }
 
 function isNodeSeekHost(hostname: string) {

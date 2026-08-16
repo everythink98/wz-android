@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const readManagedCookieHeader = vi.hoisted(() => vi.fn());
 const reanimatedTransition = vi.hoisted(() => {
   const reduceMotion = vi.fn();
   const transition = { reduceMotion };
@@ -10,10 +9,6 @@ const reanimatedTransition = vi.hoisted(() => {
     reduceMotion
   };
 });
-
-vi.mock('@/platform/network/managedCookies', () => ({
-  readManagedCookieHeader
-}));
 
 vi.mock('@/platform/network/networkProxy', () => ({
   releaseReadNetworkRuntimeGeneration: vi.fn(async () => true),
@@ -107,33 +102,11 @@ vi.mock('react-native-render-html', () => ({
 
 import { cachedImageDisplayDimensions, rememberImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
 import { FORUM_CALLOUT_TRANSITION_MS } from '@/ui/content/ForumCallout';
-import { readManagedWebViewCookieHeader } from './contentMediaRenderers';
 
 describe('HTML topic media loading state', () => {
   it('[REG-TOPIC-056] configures the Callout layout transition with system Reduce Motion', () => {
     expect(reanimatedTransition.duration).toHaveBeenCalledWith(FORUM_CALLOUT_TRANSITION_MS);
     expect(reanimatedTransition.reduceMotion).toHaveBeenCalledWith('system');
-  });
-
-  it('reads the live Cookie header for the exact managed WebView URL', async () => {
-    readManagedCookieHeader.mockResolvedValueOnce({
-      status: 'ok',
-      header: 'future_cookie=future'
-    });
-
-    await expect(
-      readManagedWebViewCookieHeader('https://www.nodeseek.com/uploads/private/video.webm?version=2')
-    ).resolves.toBe('future_cookie=future');
-    expect(readManagedCookieHeader).toHaveBeenCalledWith(
-      'https://www.nodeseek.com/uploads/private/video.webm?version=2'
-    );
-  });
-
-  it('[REG-ACCOUNT-029] fails closed when the managed Cookie reader is unavailable', async () => {
-    readManagedCookieHeader.mockResolvedValueOnce({ status: 'unsupported' });
-    await expect(readManagedWebViewCookieHeader('https://www.nodeseek.com/uploads/private/video.webm')).rejects.toThrow(
-      '原生 Cookie 读取能力不可用'
-    );
   });
 
   it('[REG-PERF-007][REG-PERF-009] bounds preview dimensions with pure reads and committed promotion', () => {

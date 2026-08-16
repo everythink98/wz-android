@@ -33,7 +33,7 @@ export function TopicBodyQuoteCard({
 }) {
   const StateIcon = expanded ? ChevronUp : ChevronDown;
   return (
-    <View style={styles.quoteBox} testID={testID}>
+    <View style={[styles.quoteBox, completeContentMountedExternally && styles.quoteRowTop]} testID={testID}>
       <View style={styles.quotePanelHeader}>
         <View style={styles.quoteAuthorSummary}>{header}</View>
         {onToggle ? (

@@ -1,7 +1,7 @@
 import type { XiaoyinsiApiCredentials } from './credentials';
 import { XIAOYINSI_BASE_URL } from './protocol';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
+import { discourseActionResponseMessage, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 
 type XiaoyinsiActionErrorFields = {
   source: 'xiaoyinsi';
@@ -15,25 +15,6 @@ function actionError(message: string, fields: Omit<XiaoyinsiActionErrorFields, '
   const error = new Error(message) as Error & XiaoyinsiActionErrorFields;
   Object.assign(error, { source: 'xiaoyinsi' as const, ...fields });
   return error;
-}
-
-function responseMessage(data: Record<string, unknown>, fallback: string) {
-  if (typeof data.error === 'string' && data.error.trim()) {
-    return data.error.trim();
-  }
-  if (typeof data.message === 'string' && data.message.trim()) {
-    return data.message.trim();
-  }
-  if (Array.isArray(data.errors)) {
-    const message = data.errors
-      .map((item) => String(item || '').trim())
-      .filter(Boolean)
-      .join('；');
-    if (message) {
-      return message;
-    }
-  }
-  return fallback;
 }
 
 async function readJsonResponse(response: Response) {
@@ -85,7 +66,7 @@ export async function runXiaoyinsiAction({
   );
   const data = await readJsonResponse(response);
   if (!response.ok) {
-    const message = responseMessage(data, `小隐寺请求失败：HTTP ${response.status}`);
+    const message = discourseActionResponseMessage(data, `小隐寺请求失败：HTTP ${response.status}`);
     throw actionError(message, {
       status: response.status,
       ...(response.status === 401 || response.status === 403 ? { authorizationCheckRequired: true as const } : {}),

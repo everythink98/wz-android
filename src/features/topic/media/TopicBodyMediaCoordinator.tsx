@@ -25,15 +25,17 @@ type TopicBodyMediaEntryStatus = 'waiting' | 'running' | 'displayed' | 'failed';
 export type TopicBodyMediaDiagnosticSession = Readonly<{
   networkMediaCount: number;
   plannedRowCount: number;
+  responseReadyAt?: number;
   source: Source;
   topicRef: string;
 }>;
 
 export type TopicBodyMediaAggregate = Readonly<
-  TopicBodyMediaDiagnosticSession & {
+  Omit<TopicBodyMediaDiagnosticSession, 'responseReadyAt'> & {
     cancelCount: number;
     displayCount: number;
     errorCount: number;
+    firstMediaElapsedMs?: number;
     firstRowElapsedMs?: number;
     operation: 'topic-body-media';
     phase: 'finish';
@@ -93,6 +95,7 @@ class TopicBodyMediaCoordinator {
   private errorCount = 0;
   private explicitlyRetriedIdentities = new Set<string>();
   private failedIdentities = new Map<string, Exclude<TopicBodyMediaFailure, null>>();
+  private firstMediaElapsedMs: number | undefined;
   private firstRowElapsedMs: number | undefined;
   private onDiagnosticFinish: TopicBodyMediaAggregateReporter | undefined;
   private paused: boolean;
@@ -195,7 +198,8 @@ class TopicBodyMediaCoordinator {
               plannedRowCount: Math.max(
                 safeAggregateCount(currentSession.plannedRowCount),
                 safeAggregateCount(diagnosticSession.plannedRowCount)
-              )
+              ),
+              responseReadyAt: currentSession.responseReadyAt ?? diagnosticSession.responseReadyAt
             }
           : diagnosticSession;
     }
@@ -353,6 +357,7 @@ class TopicBodyMediaCoordinator {
       cancelCount: this.cancelCount,
       displayCount: this.displayCount,
       errorCount: this.errorCount,
+      ...(this.firstMediaElapsedMs === undefined ? {} : { firstMediaElapsedMs: this.firstMediaElapsedMs }),
       ...(this.firstRowElapsedMs === undefined ? {} : { firstRowElapsedMs: this.firstRowElapsedMs }),
       networkMediaCount: safeAggregateCount(session.networkMediaCount),
       operation: 'topic-body-media',
@@ -425,6 +430,14 @@ class TopicBodyMediaCoordinator {
         entry.failure = null;
         entry.lastProgressValue = null;
         entry.status = 'running';
+        const responseReadyAt = this.diagnosticSession?.responseReadyAt;
+        if (
+          this.firstMediaElapsedMs === undefined &&
+          typeof responseReadyAt === 'number' &&
+          Number.isFinite(responseReadyAt)
+        ) {
+          this.firstMediaElapsedMs = Math.max(0, Math.floor(monotonicNowMs() - responseReadyAt));
+        }
         runningCount += 1;
         if (entry.kind === 'original') runningOriginalCount += 1;
         runningIdentities.add(entry.requestIdentity);
@@ -484,6 +497,10 @@ class TopicBodyMediaCoordinator {
       Math.max(0, nextDeadline - Date.now())
     );
   }
+}
+
+function monotonicNowMs() {
+  return typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now();
 }
 
 function safeAggregateCount(value: number) {

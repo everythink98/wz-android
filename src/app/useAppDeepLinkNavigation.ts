@@ -12,18 +12,26 @@ export function useAppDeepLinkNavigation(
   const openUrl = useCallback(
     (url: string | null) => {
       const topic = url ? parseInternalTopicOpenLink(url) : null;
-      if (topic && !pushTopic(topic)) pendingTopicRef.current = topic;
+      if (!topic) return;
+      if (!pushTopic(topic)) pendingTopicRef.current = topic;
     },
     [pushTopic]
   );
 
   useEffect(() => {
+    let active = true;
     const subscription = linking.addEventListener('url', ({ url }) => openUrl(url));
     void linking
       .getInitialURL()
-      .then(openUrl)
+      .then((url) => {
+        if (!active) return;
+        openUrl(url);
+      })
       .catch(() => undefined);
-    return () => subscription.remove();
+    return () => {
+      active = false;
+      subscription.remove();
+    };
   }, [linking, openUrl]);
 
   return useCallback(() => {

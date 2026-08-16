@@ -83,6 +83,7 @@ type StatusTestOptions = {
 
 async function renderStatusController({
   enabledSources = sessionSources,
+  reconcileNewlyEnabledSources = true,
   sessionEpochs = initialForumSessionEpochs,
   readNodeSeekCookieHeader = jest.fn(async () => undefined),
   notify = jest.fn(),
@@ -153,7 +154,8 @@ async function renderStatusController({
         notify,
         onAccountStatusChanged: commitAccountStatusChange,
         readManagedCookieHeader,
-        readXiaoyinsiAuthorization
+        readXiaoyinsiAuthorization,
+        reconcileNewlyEnabledSources
       }),
     {
       initialProps: { renderedSessionEpochs: sessionEpochs, renderedEnabledSources: enabledSources },
@@ -218,6 +220,30 @@ describe('account status queries', () => {
     expect(mockGetCurrentUser).not.toHaveBeenCalled();
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
     expect(readXiaoyinsiAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-014] leaves initial hydration probes to the foreground-ready batch', async () => {
+    const { hook } = await renderStatusController({
+      enabledSources: [],
+      reconcileNewlyEnabledSources: false
+    });
+
+    await act(async () => {
+      hook.rerender({
+        renderedEnabledSources: ['nodeseek'],
+        renderedSessionEpochs: initialForumSessionEpochs
+      });
+      await Promise.resolve();
+    });
+
+    expect(mockGetCurrentUser).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await hook.result.current.refreshAccountStatus({ silent: true });
+    });
+
+    expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
+    expect(mockGetCurrentUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek' }));
   });
 
   it('[REG-SOURCE-010] ignores an enabled-source reorder with unchanged membership', async () => {

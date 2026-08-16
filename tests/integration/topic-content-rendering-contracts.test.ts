@@ -1,28 +1,41 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import type { Reply } from '@/domain/forum/models';
-import { compileForumContent, resolveForumContentRowHtml } from '@/domain/forum/topicContentSplit';
+import {
+  compileForumContent,
+  prepareForumContentHtml,
+  resolveForumContentRowHtml
+} from '@/domain/forum/topicContentSplit';
 import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
 import { imagePreviewDescriptorsForReplies } from '@/features/topic/model/replyListModel';
 import {
-  createImagePreviewCatalog,
-  createImagePreviewCatalogFromDescriptors,
   imagePreviewItemAt,
-  imagePreviewListFromCatalog
+  imagePreviewListFromCatalog,
+  prepareImagePreviewCatalog,
+  projectImagePreviewCatalog
 } from '@/platform/media/imagePreviewCatalog';
+
+function previewCatalog(
+  descriptors: Parameters<typeof prepareImagePreviewCatalog>[0],
+  contentWidth: number,
+  pixelRatio: number,
+  mediaContext?: Parameters<typeof projectImagePreviewCatalog>[1]
+) {
+  return projectImagePreviewCatalog(prepareImagePreviewCatalog(descriptors, contentWidth, pixelRatio), mediaContext);
+}
 
 describe('topic content rendering contracts', () => {
   it('[REG-TOPIC-030] keeps sanitized unsafe lazy candidates out of the active preview catalog', () => {
-    const rendered = compileForumContent({
+    const compilation = compileForumContent({
       html: sanitizeContentHtml(
         '<img src="/safe.png" data-original="javascript:x.png">',
         'https://linux.do/t/example/1'
       ),
       role: 'reply',
       source: 'linuxdo'
-    }).rows.flatMap((row) => ('html' in row ? [row.html] : []));
+    });
 
-    expect(createImagePreviewCatalog(rendered, 300, 2).items).toEqual([
+    expect(previewCatalog(compilation.previewImages, 300, 2).items).toEqual([
       {
         displayUri: 'https://linux.do/safe.png',
         originalUri: 'https://linux.do/safe.png'
@@ -39,9 +52,21 @@ describe('topic content rendering contracts', () => {
     expect(row?.type).toBe('richText');
     if (!row || row.type !== 'richText') throw new Error('Expected a rendered HTML row.');
 
-    expect(createImagePreviewCatalog([rawHtml], 360, 2).items.map((item) => item.originalUri)).toEqual(urls);
+    expect(
+      previewCatalog(
+        compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).previewImages,
+        360,
+        2
+      ).items.map((item) => item.originalUri)
+    ).toEqual(urls);
     expect(resolveForumContentRowHtml(row, { [urls[0]]: true })).toContain(`<${INLINE_FORUM_IMAGE_TAG}`);
-    expect(createImagePreviewCatalog([rawHtml], 360, 2).items.map((item) => item.originalUri)).toEqual(urls);
+    expect(
+      previewCatalog(
+        compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).previewImages,
+        360,
+        2
+      ).items.map((item) => item.originalUri)
+    ).toEqual(urls);
   });
 
   it('[REG-TOPIC-096] publishes a complete 2000-image preview catalog from the compiler output', () => {
@@ -55,13 +80,9 @@ describe('topic content rendering contracts', () => {
       role: 'opening',
       source: 'nodeseek'
     });
-    const catalog = createImagePreviewCatalogFromDescriptors(compilation.previewImages, 360, 2);
+    const catalog = previewCatalog(compilation.previewImages, 360, 2);
     const preview = imagePreviewListFromCatalog(catalog, urls[1_380], 'nodeseek');
-    const duplicateCatalog = createImagePreviewCatalogFromDescriptors(
-      [...compilation.previewImages, compilation.previewImages[0]!],
-      360,
-      2
-    );
+    const duplicateCatalog = previewCatalog([...compilation.previewImages, compilation.previewImages[0]!], 360, 2);
 
     expect(catalog.items).toHaveLength(2_000);
     expect(catalog.items.map((item) => item.originalUri)).toEqual([
@@ -88,26 +109,63 @@ describe('topic content rendering contracts', () => {
     expect(imagePreviewItemAt(preview, preview.index)?.originalUri).toBe(urls[1_380]);
   });
 
+  it('[REG-TOPIC-096] builds a prepared preview catalog with at most one URL parse per image', () => {
+    const urls = Array.from({ length: 2_000 }, (_, index) => `https://img.example/${index}.webp`);
+    const descriptors = compileForumContent({
+      html: urls.map((url) => `<img src="${url}">`).join(''),
+      role: 'opening',
+      source: 'nodeseek'
+    }).previewImages;
+    const NativeUrl = globalThis.URL;
+    let urlConstructionCount = 0;
+    class CountingUrl extends NativeUrl {
+      constructor(url: string | URL, base?: string | URL) {
+        urlConstructionCount += 1;
+        super(url, base);
+      }
+    }
+    vi.stubGlobal('URL', CountingUrl);
+    try {
+      const catalog = previewCatalog(descriptors, 360, 2, {
+        contentSource: 'nodeseek',
+        referrer: { documentUrl: 'https://www.nodeseek.com/post-863650-1' },
+        sessionIdentity: 'catalog-performance'
+      });
+      expect(catalog.items).toHaveLength(urls.length);
+      expect(urlConstructionCount).toBeLessThanOrEqual(urls.length + 1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('[REG-TOPIC-096] preserves source reply body and signature order independently of list presentation', () => {
     const replies: Reply[] = [
       {
         author: 'first',
         contentHtml: '<img src="https://img.example/reply-1.webp">',
+        preparedContent: prepareForumContentHtml('<img src="https://img.example/reply-1.webp">', {
+          role: 'reply',
+          source: 'nodeseek'
+        }),
         createdAt: '2026-08-14T00:00:00.000Z',
-        signatureHtml: '<img src="https://img.example/signature-1.webp">'
+        signatureHtml: '<img src="https://img.example/signature-1.webp">',
+        preparedSignature: prepareForumContentHtml('<img src="https://img.example/signature-1.webp">', {
+          role: 'signature',
+          source: 'nodeseek'
+        })
       },
       {
         author: 'second',
         contentHtml: '<img src="https://img.example/reply-2.webp">',
+        preparedContent: prepareForumContentHtml('<img src="https://img.example/reply-2.webp">', {
+          role: 'reply',
+          source: 'nodeseek'
+        }),
         createdAt: '2026-08-14T00:01:00.000Z'
       }
     ];
 
-    const catalog = createImagePreviewCatalogFromDescriptors(
-      imagePreviewDescriptorsForReplies(replies, 'nodeseek'),
-      360,
-      2
-    );
+    const catalog = previewCatalog(imagePreviewDescriptorsForReplies(replies, 'nodeseek'), 360, 2);
 
     expect(catalog.items.map((item) => item.originalUri)).toEqual([
       'https://img.example/reply-1.webp',

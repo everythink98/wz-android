@@ -1,7 +1,12 @@
 import type { DiscourseTagOption, DiscourseUserOption, SearchResponse, Topic } from '@/domain/forum/models';
 import { isRecord, textExcerpt } from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
-import { discourseOriginalPoster, discourseUsersById } from '@/sources/discourse/model';
+import {
+  discourseOriginalPoster,
+  discourseTagOptions,
+  discourseUserOptions,
+  discourseUsersById
+} from '@/sources/discourse/model';
 import { stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
 import {
   LIST_PAGE_SIZE,
@@ -83,20 +88,7 @@ export async function searchXiaoyinsiTags(
     },
     options
   );
-  const results = Array.isArray(data.results) ? data.results : [];
-  const seen = new Set<string>();
-  return results
-    .filter(isRecord)
-    .flatMap((item) => {
-      const name = String(item.name || item.id || '').trim();
-      if (!name || seen.has(name)) {
-        return [];
-      }
-      seen.add(name);
-      const count = Number(item.count ?? item.topic_count);
-      return [{ name, ...(Number.isInteger(count) && count >= 0 ? { topicCount: count } : {}) }];
-    })
-    .slice(0, limit);
+  return discourseTagOptions(data.results).slice(0, limit);
 }
 
 export async function searchXiaoyinsiUsers(
@@ -120,19 +112,5 @@ export async function searchXiaoyinsiUsers(
     },
     options
   );
-  const users = Array.isArray(data.users) ? data.users : [];
-  return users.filter(isRecord).flatMap((user) => {
-    const username = String(user.username || '').trim();
-    if (!username) {
-      return [];
-    }
-    return [
-      {
-        id: String(user.id || username),
-        username,
-        ...(String(user.name || '').trim() ? { displayName: String(user.name).trim() } : {}),
-        ...(avatarUrl(user.avatar_template) ? { avatar: avatarUrl(user.avatar_template) } : {})
-      }
-    ];
-  });
+  return discourseUserOptions(data.users, avatarUrl);
 }

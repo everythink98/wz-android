@@ -1,6 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { Source } from '@/domain/forum/models';
-import type { ForumMediaRequestContext } from './mediaRequestContext';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 
 type ForumMediaEpochContext = {
@@ -22,17 +21,6 @@ export function mediaSessionIdentityForSource(
   return source && source !== 'v2ex'
     ? `${source}:${mediaProcessIdentity}:${sessionEpochs[source]}:${transportIdentity}`
     : `public:0:${transportIdentity}`;
-}
-
-export function mediaRequestContextForSource(
-  source: Source | null | undefined,
-  sessionEpochs: ForumSessionEpochs,
-  transportIdentity = 'ready'
-): ForumMediaRequestContext {
-  return {
-    contentSource: source || null,
-    sessionIdentity: mediaSessionIdentityForSource(source, sessionEpochs, transportIdentity)
-  };
 }
 
 export function ForumSessionEpochProvider({

@@ -13,6 +13,7 @@ import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useAppDeepLinkNavigation } from './useAppDeepLinkNavigation';
 import { navigateAppScreen, pushUserRoute, shouldUpdateAppRootScreen } from './appNavigation';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { useInitialForegroundRuntime } from './useInitialForegroundRuntime';
 
 export function useAppLifecycleRuntime() {
   const { height, width } = useWindowDimensions();
@@ -21,6 +22,8 @@ export function useAppLifecycleRuntime() {
     () => AppState.currentState !== 'background' && AppState.currentState !== 'inactive'
   );
   const screenRef = useRef<Screen>('feed');
+  const onNavigationReady = useAppDeepLinkNavigation();
+  const initialForeground = useInitialForegroundRuntime();
   useCommitRefValue(screenRef, screen);
 
   const notify = useCallback((message: string) => {
@@ -98,6 +101,7 @@ export function useAppLifecycleRuntime() {
     changeScreen,
     getCurrentScreen,
     height,
+    initialForegroundReady: initialForeground.initialForegroundReady,
     loginNavigation: {
       linuxdo: (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.linuxdo),
       nodeimage: (request: LoginNavigationRequest) =>
@@ -107,7 +111,9 @@ export function useAppLifecycleRuntime() {
       yaohuo: (request: LoginNavigationRequest) => handleLoginNavigation(request, LOGIN_WEBVIEW_ALLOWED_HOSTS.yaohuo)
     },
     notify,
-    onReady: useAppDeepLinkNavigation(),
+    onCatalogSettled: initialForeground.onCatalogSettled,
+    onFeedInitialContentReady: initialForeground.onFeedInitialContentReady,
+    onReady: onNavigationReady,
     onScreenChange,
     openUserRoute,
     screen,

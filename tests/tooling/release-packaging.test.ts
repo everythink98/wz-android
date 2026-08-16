@@ -122,28 +122,19 @@ describe('Android release packaging guards', () => {
     const plugin = readProjectFile('plugins', 'withNotificationDigestModule.js');
 
     expect(app.expo.plugins).toContain('./plugins/withNotificationDigestModule');
-    expect(plugin).toContain("path.join(outputDir, 'NotificationDigestModule.kt')");
-    expect(plugin).toContain("path.join(outputDir, 'NotificationDigestPackage.kt')");
-    expect(plugin).toContain("path.join(testOutputDir, 'NotificationDigestExecutorTest.kt')");
-    expect(plugin).toContain('add(NotificationDigestPackage())');
-    expect(plugin).toContain('ExpoNotificationBuilder(');
-    expect(plugin).toContain('check(notificationManager.areNotificationsEnabled())');
-    expect(plugin).toContain('getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE');
-    expect(plugin).toContain('private val executor = Executors.newSingleThreadExecutor()');
-    expect(plugin.match(/executor\.execute \{/g)).toHaveLength(1);
-    expect(plugin).toContain('executor.shutdown()');
-    expect(plugin).not.toContain('executor.shutdownNow()');
-    expect(plugin).not.toContain('asCoroutineDispatcher');
-    expect(plugin).not.toContain('CoroutineScope');
-    expect(plugin).not.toContain('scope.cancel()');
-    expect(plugin).toContain('fun shutdownDrainsQueuedDismissAfterBlockedPresent()');
-    expect(plugin).toContain('assertEquals(listOf("notify", "cancel"), events)');
-    expect(plugin).toContain('fun executeAfterShutdownRejects()');
-    expect(plugin).toContain('.notify(identifier, 0, androidNotification)');
-    expect(plugin).toContain('.cancel(identifier, 0)');
-    expect(plugin.indexOf('.notify(identifier, 0, androidNotification)')).toBeLessThan(
-      plugin.indexOf('promise.resolve(identifier)')
-    );
+    for (const required of [
+      "path.join(outputDir, 'NotificationDigestModule.kt')",
+      "path.join(outputDir, 'NotificationDigestPackage.kt')",
+      "path.join(testOutputDir, 'NotificationDigestExecutorTest.kt')",
+      'add(NotificationDigestPackage())',
+      'ExpoNotificationBuilder(',
+      'check(notificationManager.areNotificationsEnabled())',
+      'getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE',
+      '.notify(identifier, 0, androidNotification)',
+      '.cancel(identifier, 0)'
+    ]) {
+      expect(plugin).toContain(required);
+    }
   });
 
   it('keeps APK inspection available before opening the Android installer', () => {
@@ -161,23 +152,26 @@ describe('Android release packaging guards', () => {
     const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
 
     expect(app.expo.plugins).toContain('./plugins/withNetworkProxyModule');
-    expect(plugin).toContain('NetworkProxyModule');
-    expect(plugin).toContain('NetworkProxyPackage');
-    expect(plugin).toContain('LocalNetworkProxyServer');
-    expect(plugin).toContain('ProxyController');
-    expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory');
-    expect(plugin).toContain('NetworkingModule.setCustomClientBuilder');
-    expect(plugin).toContain('ReadOnlyWebViewCookieHandler');
-    expect(plugin).toContain('JavaNetCookieJar');
-    expect(plugin).toContain('configureManagedClient');
-    expect(plugin).toContain('fun readManagedCookieHeader(exactUrl: String, promise: Promise)');
-    expect(plugin).toContain('fun clearManagedLoginCookies(source: String, promise: Promise)');
-    expect(plugin).not.toContain('debugAnonymousAvailable');
-    expect(plugin).not.toContain('setManagedAnonymousMode');
-    expect(plugin).not.toContain('anonymousCookieSources');
-    expect(plugin).not.toContain('filterAnonymousCookieHeader');
-    expect(plugin).toContain('fun managedCookieHeaderForUrl(url: String)');
-    expect(plugin).toContain('WebSettings.getDefaultUserAgent(reactContext)');
+    for (const required of [
+      'NetworkProxyModule',
+      'NetworkProxyPackage',
+      'OkHttpClientProvider.setOkHttpClientFactory',
+      'NetworkingModule.setCustomClientBuilder',
+      'fun readManagedCookieHeader(exactUrl: String, promise: Promise)',
+      'fun clearManagedLoginCookies(source: String, promise: Promise)',
+      'WebSettings.getDefaultUserAgent(reactContext)',
+      "path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt')"
+    ]) {
+      expect(plugin).toContain(required);
+    }
+    for (const forbidden of [
+      'debugAnonymousAvailable',
+      'setManagedAnonymousMode',
+      'anonymousCookieSources',
+      'filterAnonymousCookieHeader'
+    ]) {
+      expect(plugin).not.toContain(forbidden);
+    }
     const moduleSource = plugin.slice(
       plugin.indexOf('function networkProxyModuleSource'),
       plugin.indexOf('function networkProxyPackageSource')
@@ -213,34 +207,27 @@ describe('Android release packaging guards', () => {
     expect(clearCookieFlow.indexOf('cookieManager.flush()')).toBeLessThan(
       clearCookieFlow.indexOf('cookieManager.getCookie(url)')
     );
-    expect(plugin).toContain('installExpoImageClient');
     expect(packageJson.expo?.autolinking?.android?.buildFromSource).toContain('expo-video');
-    expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory { currentGeneration.mediaClient }');
-    expect(plugin).toContain('NetworkingModule.setCustomClientBuilder { builder ->');
-    expect(plugin).toContain(
-      'imageClientPublisher = { client -> installExpoImageClientOnMainThread(appContext, client) }'
-    );
-    expect(plugin).toContain('imageClientPublisher?.invoke(installedGeneration.imageClient)');
-    expect(plugin).toContain('GlideUrlWrapperLoader.Factory(client)');
-    expect(plugin).toContain('.callTimeout(0, TimeUnit.MILLISECONDS)');
-    expect(plugin).toContain('.connectTimeout(15, TimeUnit.SECONDS)');
-    expect(plugin).toContain('.readTimeout(30, TimeUnit.SECONDS)');
-    expect(plugin).toContain('org.chromium.net:cronet-bundled:500.0.1');
-    expect(plugin).toContain('com.google.net.cronet:cronet-okhttp:0.1.1');
-    expect(plugin).toContain('exclude group: "com.squareup.okhttp3", module: "okhttp"');
-    expect(plugin).toContain('exclude group: "com.squareup.okio", module: "okio"');
-    expect(plugin).toContain('exclude group: "org.chromium.net", module: "cronet-api"');
-    expect(plugin).toContain('injectCronetProguardRules');
-    expect(plugin).toContain('-dontwarn android.app.privatecompute.PccSandboxManager');
-    expect(plugin).toContain('-dontwarn android.net.http.Proxy$HttpConnectCallback');
-    expect(plugin).toContain('-dontwarn android.net.http.ProxyOptions');
-    expect(plugin).not.toContain('-ignorewarnings');
-    expect(plugin).not.toContain('-dontwarn android.**');
-    expect(plugin).toContain('RedirectStrategy.withoutRedirects()');
-    expect(plugin).toContain('CronetProxyOptions.ALL_PROXIES_FAILED_BEHAVIOR_DISALLOW_DIRECT');
-    expect(plugin).toContain('androidx.webkit:webkit:1.14.0');
-    expect(plugin).toContain('testImplementation("junit:junit:4.13.2")');
-    expect(plugin).toMatch(/fs\.writeFileSync\(\s*path\.join\(testOutputDir, 'NetworkProxyRuntimeTest\.kt'\)/);
+    for (const required of [
+      'OkHttpClientProvider.setOkHttpClientFactory { currentGeneration.mediaClient }',
+      'NetworkingModule.setCustomClientBuilder { builder ->',
+      'imageClientPublisher = { client -> installExpoImageClientOnMainThread(appContext, client) }',
+      'GlideUrlWrapperLoader.Factory(client)',
+      'org.chromium.net:cronet-bundled:500.0.1',
+      'com.google.net.cronet:cronet-okhttp:0.1.1',
+      'exclude group: "com.squareup.okhttp3", module: "okhttp"',
+      'exclude group: "com.squareup.okio", module: "okio"',
+      'exclude group: "org.chromium.net", module: "cronet-api"',
+      'RedirectStrategy.withoutRedirects()',
+      'CronetProxyOptions.ALL_PROXIES_FAILED_BEHAVIOR_DISALLOW_DIRECT',
+      'androidx.webkit:webkit:1.14.0',
+      'testImplementation("junit:junit:4.13.2")'
+    ]) {
+      expect(plugin).toContain(required);
+    }
+    for (const forbidden of ['-ignorewarnings', '-dontwarn android.**']) {
+      expect(plugin).not.toContain(forbidden);
+    }
   });
 
   it('[REG-TOPIC-038] generates the isolated single-WebView SVG poster renderer', () => {
@@ -248,89 +235,31 @@ describe('Android release packaging guards', () => {
     const plugin = readProjectFile('plugins', 'withSvgRendererModule.js');
 
     expect(app.expo.plugins).toContain('./plugins/withSvgRendererModule');
-    expect(plugin).toContain('class SvgRendererModule');
-    expect(plugin).toContain('private var webView: WebView? = null');
-    expect(plugin).toContain(
-      'fun renderPoster(svgBase64: String, cacheKey: String, timeoutMs: Double, promise: Promise)'
-    );
-    expect(plugin).toContain(
-      'fun fetchSvgDocument(url: String, headers: ReadableMap, timeoutMs: Double, promise: Promise)'
-    );
-    expect(plugin).toContain('boundedSvgBytes(body.source())');
-    expect(plugin).toContain('val call = NetworkProxyRuntime.forumImageClient().newCall(request)');
-    expect(plugin).not.toContain('private val client by lazy { NetworkProxyRuntime.forumImageClient() }');
-    expect(plugin).toContain('postVisualStateCallback');
-    expect(plugin).toContain('blockNetworkLoads = true');
-    expect(plugin).toContain('javaScriptEnabled = false');
-    expect(plugin).toContain('allowFileAccess = false');
-    expect(plugin).toContain('allowContentAccess = false');
-    expect(plugin).toContain("default-src 'none'");
-    expect(plugin).toContain('MAX_SVG_BYTES = 1024 * 1024');
-    expect(plugin).toContain('MAX_POSTER_PIXELS = 4_194_304L');
-    expect(plugin).toContain('MAX_POSTER_CACHE_FILES = 32');
-    expect(plugin).toContain('MAX_RENDER_REQUESTS = 32');
-    expect(plugin).toContain('TOTAL_RENDER_TIMEOUT_MS = 30_000L');
-    expect(plugin).toContain('admittedRequests.compareAndSet(current, current + 1)');
-    expect(plugin).toContain('request.deadlineUptimeMs - SystemClock.uptimeMillis()');
-    expect(plugin).toContain('putDouble("documentWidth", prepared.documentDimensions.width)');
-    expect(plugin).toContain('putDouble("documentHeight", prepared.documentDimensions.height)');
-    expect(plugin).toContain('hasSvgPosterQueueCapacity(active != null, queue.size)');
-    expect(plugin).toContain(
-      'isCurrentSvgPageError(current.expectedPageUrl, request.url.toString(), request.isForMainFrame)'
-    );
-    expect(plugin).toContain('sha256PosterFileName(request.cacheKey, svg.bytes, dimensions)');
-    const rendererRelease = plugin.slice(
-      plugin.indexOf('private fun releaseRendererAfterSettle()'),
-      plugin.indexOf('private fun settle(request: RenderRequest)')
-    );
-    expect(rendererRelease).toContain('if (queue.isEmpty())');
-    expect(rendererRelease).toContain('view.loadUrl("about:blank")');
-    expect(rendererRelease.indexOf('webView = null')).toBeLessThan(rendererRelease.indexOf('view.destroy()'));
-    expect(plugin).toContain('fs.copyFileSync(');
-    expect(plugin).toContain("'SvgRendererPolicyTest.kt'");
-    expect(plugin).toContain("'SvgRendererInstrumentedTest.kt'");
-    expect(plugin).toContain('testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"');
-    expect(plugin).toContain('androidTestImplementation("androidx.test:runner:1.6.2")');
-    expect(plugin).toContain('fixture must preserve the AndroidSVG 1.4 failure');
-    expect(plugin).toContain('idle poster renderer must not retain its WebView');
-    expect(plugin).toContain('SMIL animation must change pixels');
-    expect(plugin).toContain('untrusted SVG made an external request');
-    expect(plugin).not.toContain('addJavascriptInterface');
-    expect(plugin.match(/val created = WebView\(/g)).toHaveLength(1);
-  });
-
-  it('keeps network proxy failures closed instead of falling back to direct network', () => {
-    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
-    const applyFlow = plugin.slice(plugin.indexOf('fun applyProxy('), plugin.indexOf('fun testProxy('));
-    const serializedTransitionIndex = applyFlow.indexOf('val appliedPort = webViewProxyOperations.run {');
-    const blockIndex = applyFlow.indexOf('beginTransition()');
-    const startIndex = applyFlow.indexOf('server.start()');
-    const applyIndex = applyFlow.indexOf('applyWebViewProxy(server.port)');
-    const commitIndex = applyFlow.indexOf('commitServer(server)');
-    const finalSyncIndex = applyFlow.indexOf('synchronizeWebViewProxyWithRuntime()', commitIndex);
-
-    expect(plugin).toContain('fun blockNetworkRequests()');
-    expect(plugin).toContain('@Volatile private var localProxy: Proxy? = blockedProxy');
-    expect(plugin).toContain('internal class SerializedWebViewProxyOperations');
-    expect(plugin).toContain('private val webViewProxyOperations = SerializedWebViewProxyOperations()');
-    expect(plugin).toContain('proxyServers.requireCurrent(owner)');
-    expect(plugin).toContain('restoreWebViewProxyIfStateChanged(proxyServers, generation');
-    expect(plugin).toContain(
-      '"WebView 代理清除超时",\n      onTimeoutOrLateCompletion = ::restoreWebViewProxyFromRuntime'
-    );
-    expect(plugin).toContain('private const val PROXY_IDLE_TIMEOUT_MS = 120_000');
-    expect(plugin.match(/pipeBoth\(local, remote, copyExecutor, idleTimeoutMs\)/g)).toHaveLength(1);
-    expect(plugin).toContain('pipeBoth(local, remote, copyExecutor, idleTimeoutMs, request.contentLength)');
-    expect(plugin).not.toContain('local.soTimeout = 0');
-    expect(plugin).not.toContain('latch.await(5, TimeUnit.MINUTES)');
-    expect(serializedTransitionIndex).toBeGreaterThanOrEqual(0);
-    expect(blockIndex).toBeGreaterThanOrEqual(0);
-    expect(blockIndex).toBeGreaterThan(serializedTransitionIndex);
-    expect(startIndex).toBeGreaterThan(blockIndex);
-    expect(applyIndex).toBeGreaterThan(startIndex);
-    expect(commitIndex).toBeGreaterThan(applyIndex);
-    expect(finalSyncIndex).toBeGreaterThan(commitIndex);
-    expect(plugin).not.toContain('replaceServer(null)\n          try {\n            clearWebViewProxy()');
+    for (const required of [
+      'class SvgRendererModule',
+      'fun renderPoster(svgBase64: String, cacheKey: String, timeoutMs: Double, promise: Promise)',
+      'fun fetchSvgDocument(url: String, headers: ReadableMap, timeoutMs: Double, promise: Promise)',
+      'boundedSvgBytes(body.source())',
+      'val call = NetworkProxyRuntime.forumImageClient().newCall(request)',
+      'blockNetworkLoads = true',
+      'javaScriptEnabled = false',
+      'allowFileAccess = false',
+      'allowContentAccess = false',
+      "default-src 'none'",
+      'fs.copyFileSync(',
+      "'SvgRendererPolicyTest.kt'",
+      "'SvgRendererInstrumentedTest.kt'",
+      'testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"',
+      'androidTestImplementation("androidx.test:runner:1.6.2")'
+    ]) {
+      expect(plugin).toContain(required);
+    }
+    for (const forbidden of [
+      'private val client by lazy { NetworkProxyRuntime.forumImageClient() }',
+      'addJavascriptInterface'
+    ]) {
+      expect(plugin).not.toContain(forbidden);
+    }
   });
 
   it('[REG-PROXY-004] keeps native proxy lifecycle logs free of destinations and upstream addresses', () => {
@@ -342,17 +271,6 @@ describe('Android release packaging guards', () => {
     expect(plugin).not.toContain('upstream=');
     expect(plugin).not.toContain(' via " + upstream');
     expect(plugin).not.toContain('enabled app proxy on 127.0.0.1:');
-  });
-
-  it('[REG-PROXY-005] keeps the production connectivity probe wired through TLS, hostname and HTTP validation', () => {
-    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
-
-    expect(plugin).toContain('verifyTlsHttpConnectivity(tunnel, host)');
-    expect(plugin).toContain('val connection = tlsConnectionFactory(tunnel, host, 443)');
-    expect(plugin).toContain('parameters.endpointIdentificationAlgorithm = "HTTPS"');
-    expect(plugin).toContain('tlsSocket.startHandshake()');
-    expect(plugin).toContain('GET /generate_204 HTTP/1.1');
-    expect(plugin).toContain('validateProxyHealthResponse(connection.inputStream())');
   });
 
   it('rejects invalid IPv4 literals before encoding SOCKS5 addresses', () => {

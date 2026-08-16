@@ -1,3 +1,4 @@
+import { withTrackedParseHtml } from '../../../tests/helpers/trackedParseHtml';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   categoryMapForTopics,
@@ -100,6 +101,65 @@ function postsForRequest(url: URL) {
 
 describe('xiaoyinsi adapter', () => {
   beforeEach(() => resetXiaoyinsiCategoryCacheForTests());
+
+  it('[REG-PERF-017] prepares opening and reply content from one DOM parse each', async () => {
+    await withTrackedParseHtml(async (trackedParseHtml) => {
+      const openingMarker = 'data-content-marker="xiaoyinsi-opening-once"';
+      const replyMarker = 'data-content-marker="xiaoyinsi-reply-once"';
+      const fetcher = vi.fn(async () =>
+        json({
+          id: 818,
+          slug: 'prepared-topic',
+          title: 'Prepared topic',
+          created_at: '2026-08-15T00:00:00.000Z',
+          bumped_at: '2026-08-15T00:01:00.000Z',
+          posts_count: 2,
+          post_stream: {
+            stream: [1, 2],
+            posts: [
+              {
+                id: 1,
+                post_number: 1,
+                username: 'alice',
+                cooked: `<p ${openingMarker}>正文</p>`,
+                created_at: '2026-08-15T00:00:00.000Z'
+              },
+              {
+                id: 2,
+                post_number: 2,
+                username: 'bob',
+                cooked: `<p ${replyMarker}>回复</p>`,
+                created_at: '2026-08-15T00:01:00.000Z'
+              }
+            ]
+          }
+        })
+      );
+
+      const [{ getXiaoyinsiTopic: readTopic }, { requirePreparedForumContent }] = await Promise.all([
+        import('./reader'),
+        import('@/domain/forum/topicContentSplit')
+      ]);
+      const detail = await readTopic('818', { fetcher });
+      const reply = detail.replies[0];
+
+      expect(
+        requirePreparedForumContent(detail.preparedContent, detail.contentHtml, {
+          role: 'opening',
+          source: 'xiaoyinsi',
+          topicId: detail.id
+        }).rows
+      ).not.toHaveLength(0);
+      expect(
+        requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
+          role: 'reply',
+          source: 'xiaoyinsi'
+        }).rows
+      ).not.toHaveLength(0);
+      expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(openingMarker))).toHaveLength(1);
+      expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(replyMarker))).toHaveLength(1);
+    });
+  });
 
   it('[REG-TOPIC-073][REG-TOPIC-077] keeps good 小隐寺 rows around garbage and marks the window partial', async () => {
     const fetcher = vi.fn(async (input: string) => {

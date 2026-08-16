@@ -3,7 +3,7 @@ import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@reac
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic } from '@/domain/forum/models';
 import { isDiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
-import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { ReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
@@ -32,6 +32,7 @@ export type SearchRouteRuntimeValue = {
   catalogCategories: Category[];
   notify: (message: string) => void;
   readerData: ReaderData;
+  topicStateIndex: TopicListItemStateIndex;
 };
 
 const SearchRouteRuntimeContext = createContext<SearchRouteRuntimeValue | null>(null);
@@ -58,8 +59,9 @@ export function SearchRoute() {
   const navigation = useNavigation();
   const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
   useScrollToTop(listRef);
-  const { searchSources: enabledSearchSources } = projectContentSourcePreferences(
-    runtime.readerData.settings.contentSources
+  const enabledSearchSources = useMemo(
+    () => projectContentSourcePreferences(runtime.readerData.settings.contentSources).searchSources,
+    [runtime.readerData.settings.contentSources]
   );
   const retryIdentityStatus = useCallback(
     (source: SessionSource) => {
@@ -83,7 +85,6 @@ export function SearchRoute() {
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway
   });
-  const topicStateIndex = useMemo(() => createTopicListItemStateIndex(runtime.readerData), [runtime.readerData]);
   const candidateSource =
     controller.searchSource !== 'all' && isDiscourseSource(controller.searchSource)
       ? controller.searchSource
@@ -109,7 +110,7 @@ export function SearchRoute() {
       searchCandidateReadPlanScopes={{ tags: tagReadPlan.cacheScope, users: userReadPlan.cacheScope }}
       requestsEnabled={active && tagReadPlan.state === 'ready' && userReadPlan.state === 'ready'}
       query={controller.searchQuery}
-      topicStateIndex={topicStateIndex}
+      topicStateIndex={runtime.topicStateIndex}
       recentSearches={controller.recentSearches}
       searchFilters={controller.searchFilters}
       searchGroups={controller.searchGroups}

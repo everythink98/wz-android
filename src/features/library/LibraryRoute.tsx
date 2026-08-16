@@ -4,7 +4,7 @@ import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic, UserReference } from '@/domain/forum/models';
 import type { LibraryTab } from '@/domain/forum/feed';
 import type { Source } from '@/domain/forum/sourceCatalog';
-import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { normalizeUserReference } from '@/domain/forum/userNavigation';
 import type { FollowedUserRecord, ReaderData, ReaderDataMutationReason } from '@/domain/reader/readerData';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
@@ -17,6 +17,7 @@ export type LibraryRouteRuntimeValue = {
   categories: Category[];
   enabledSources: readonly Source[];
   notify: (message: string) => void;
+  topicStateIndex: TopicListItemStateIndex;
   reader: {
     commit: (reason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
     data: ReaderData;
@@ -72,7 +73,6 @@ export function LibraryRoute() {
       ),
     [libraryTab, runtime.reader.data.favorites, runtime.reader.data.history]
   );
-  const topicStateIndex = useMemo(() => createTopicListItemStateIndex(runtime.reader.data), [runtime.reader.data]);
   const openTopic = useCallback(
     (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),
     [navigation]
@@ -99,7 +99,7 @@ export function LibraryRoute() {
       loaded={runtime.reader.loaded}
       records={records}
       scrollRef={listRef}
-      topicStateIndex={topicStateIndex}
+      topicStateIndex={runtime.topicStateIndex}
       onClearHistory={actions.clearHistory}
       onManageContentSources={openContentSourceSettings}
       onOpenTopic={openTopic}

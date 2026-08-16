@@ -10,7 +10,7 @@ import {
   createReplyTextIndexForQuery
 } from '@/features/topic/model/replySearch';
 import { highlightHtml, highlightTextParts } from '@/ui/text/highlight';
-import { parseHtml } from '@/domain/forum/html';
+import { domNodeCount as htmlDomNodeCount } from '../helpers/domNodeCount';
 import { stripHtml } from '@/domain/forum/text';
 import type { Category, Reply, Topic } from '@/domain/forum/models';
 import type { TopicRecord } from '@/domain/reader/readerData';
@@ -26,18 +26,6 @@ const topic: Topic = {
   createdAt: '2026-05-20T00:00:00.000Z',
   replyCount: 2
 };
-
-function htmlDomNodeCount(html: string) {
-  const body = parseHtml(`<body>${html}</body>`).querySelector('body');
-  const pending = [...(body?.childNodes || [])];
-  let count = 0;
-  while (pending.length) {
-    const current = pending.pop()!;
-    count += 1;
-    pending.push(...(current.childNodes || []));
-  }
-  return count;
-}
 
 function record(patch: Partial<TopicRecord> & { id: string; savedAt: string }): TopicRecord {
   return {

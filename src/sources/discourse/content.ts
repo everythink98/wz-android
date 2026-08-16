@@ -1,6 +1,6 @@
 import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 
-import { absoluteUrl, decodeHtml, parseHtml } from '@/domain/forum/html';
+import { absoluteUrl, decodeHtml } from '@/domain/forum/html';
 import { discourseQuotedPostMetadataFromNode, quotedPostReferenceKey } from '@/domain/forum/quotedPosts';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { QuotedPostMetadata } from '@/domain/forum/models';
@@ -277,9 +277,8 @@ export function discourseAvatarUrl(value: unknown, baseUrl: string) {
   return url && /^https?:\/\//i.test(url) ? url : undefined;
 }
 
-export function discourseQuoteMetadata(html: string, source: DiscourseSource, topicId?: string) {
+export function discourseQuoteMetadataFromRoot(root: HTMLElement, source: DiscourseSource, topicId?: string) {
   const quotedPosts = new Map<string, QuotedPostMetadata>();
-  const root = parseHtml(html);
   root.querySelectorAll('aside').forEach((node) => {
     const metadata = discourseQuotedPostMetadataFromNode(node, source, topicId);
     if (!metadata) return;
@@ -290,5 +289,5 @@ export function discourseQuoteMetadata(html: string, source: DiscourseSource, to
     });
     node.remove();
   });
-  return { html: root.toString(), quotedPosts: [...quotedPosts.values()] };
+  return [...quotedPosts.values()];
 }

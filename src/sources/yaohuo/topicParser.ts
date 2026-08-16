@@ -9,14 +9,14 @@ import {
   textContentFromHtml,
   textExcerpt
 } from '@/domain/forum/html';
-import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   YAOHUO_BASE_URL as BASE_URL,
   extractYaohuoTopicParts as extractTopicParts,
   extractYaohuoUserIdFromHref as extractUserIdFromHref,
-  nextYaohuoPageFromHtml as nextPageFromHtml,
+  nextYaohuoPage,
   yaohuoUserUrl as userUrl
 } from './protocol';
 import { normalizeYaohuoReplyDeletePath } from './actionRequest';
@@ -329,8 +329,7 @@ function yaohuoActivitySummaryHtml(root: ReturnType<typeof parseHtml>) {
     : '';
 }
 
-function parseVoteOptions(html: string) {
-  const root = parseHtml(html);
+function parseVoteOptions(root: ReturnType<typeof parseHtml>) {
   const options: TopicPollOption[] = [];
   root.querySelectorAll('.toupiao').forEach((element) => {
     element.querySelectorAll('a[href*="vid="]').forEach((link) => {
@@ -361,12 +360,12 @@ function parseYaohuoVoteChoiceLimits(text: string) {
   return { min, max };
 }
 
-function parseVotePolls(html: string, topicId: string): TopicPoll[] | undefined {
-  const options = parseVoteOptions(html);
+function parseVotePolls(root: ReturnType<typeof parseHtml>, topicId: string): TopicPoll[] | undefined {
+  const options = parseVoteOptions(root);
   if (!options.length) {
     return undefined;
   }
-  const text = textContentFromHtml(html);
+  const text = elementText(root);
   const { min, max } = parseYaohuoVoteChoiceLimits(text);
   const multiple = /多选|可选\s*\d+\s*项|至少\s*(?:选择\s*)?\d+\s*项|至少\s*选择|最多\s*(?:选择)?\s*\d+\s*项/i.test(
     text
@@ -445,7 +444,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
         contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1] ||
         contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     ) || new Date().toISOString();
-  const polls = parseVotePolls(html, String(id || ''));
+  const polls = parseVotePolls(root, String(id || ''));
   const accessRequirement =
     yaohuoTopicAccessRequirementFromContent(contentHtml) || yaohuoTopicAccessRequirementFromContent(html);
   const latestReplyFloor = Math.max(
@@ -456,6 +455,14 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
         parsePositiveInteger(link.getAttribute('href')?.match(/[?&](?:amp;)?(?:tofloor|reply)=(\d+)/i)?.[1])
       )
   );
+  const preparedContent = prepareSanitizedForumContent(contentHtml, {
+    baseUrl: BASE_URL,
+    polls,
+    role: 'opening',
+    source: 'yaohuo',
+    topicId: String(id || ''),
+    transformRoot: normalizeYaohuoTopicContent
+  });
   const result: TopicDetail = {
     source: 'yaohuo',
     id: String(id || ''),
@@ -471,7 +478,8 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     replyCount: latestReplyFloor || parsePositiveInteger(html.match(/更多回帖\((\d+)\)/)?.[1]),
     viewCount: parsePositiveInteger(contentText.match(/\(阅\s*(\d+)\)/)?.[1]) || undefined,
     excerpt: textExcerpt(contentHtml),
-    contentHtml: sanitizeContentHtml(contentHtml, BASE_URL, normalizeYaohuoTopicContent),
+    contentHtml: preparedContent.contentHtml,
+    preparedContent,
     replies: [],
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(accessRequirement ? { accessRequirement } : {}),
@@ -557,12 +565,10 @@ function yaohuoReplyTargetFloor(row: HTMLElement, url?: string) {
   }
 }
 
-export function parseYaohuoRepliesHtml(
-  html: string,
+export function parseYaohuoRepliesDocument(
+  root: ReturnType<typeof parseHtml>,
   { page = 1, limit = 30, url }: { page?: number; limit?: number; url?: string } = {}
 ): RepliesResponse & { confirmedFloors: number[] } {
-  ensureYaohuoHtmlLoggedIn(html, url);
-  const root = parseHtml(html);
   const rows = root.querySelectorAll('div.list-reply, div.line1, div.line2');
   const floorOffset = Math.max(0, page - 1) * limit;
   let missingFloorCount = 0;
@@ -594,12 +600,18 @@ export function parseYaohuoRepliesHtml(
       missingFloorCount += 1;
     }
     const floor = explicitFloor || floorOffset + index + 1;
+    const preparedContent = prepareSanitizedForumContent(contentOnly, {
+      baseUrl: url || `${BASE_URL}/bbs/book_re.aspx`,
+      role: 'reply',
+      source: 'yaohuo'
+    });
     return {
       reply: {
         author,
         ...(authorId ? { authorId } : {}),
         ...(authorId ? { authorUrl: userUrl(authorId) } : {}),
-        contentHtml: sanitizeContentHtml(contentOnly, url || `${BASE_URL}/bbs/book_re.aspx`),
+        contentHtml: preparedContent.contentHtml,
+        preparedContent,
         createdAt,
         floor,
         ...(deletePath ? { canDelete: true, deletePath } : {})
@@ -630,7 +642,7 @@ export function parseYaohuoRepliesHtml(
     })
     .sort((left, right) => (left.floor ?? Number.MAX_SAFE_INTEGER) - (right.floor ?? Number.MAX_SAFE_INTEGER))
     .slice(0, limit);
-  const nextPage = nextPageFromHtml(html, page, items.length, limit);
+  const nextPage = nextYaohuoPage(root, page, items.length, limit);
   const result = {
     items,
     confirmedFloors,

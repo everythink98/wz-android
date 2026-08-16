@@ -74,9 +74,9 @@ export function extractYaohuoUserIdFromHref(href?: string) {
   );
 }
 
-function nextYaohuoPageHref(html: string, acceptsHref: (href: string) => boolean = () => true) {
+function nextYaohuoPageHref(root: ReturnType<typeof parseHtml>, acceptsHref: (href: string) => boolean = () => true) {
   return (
-    parseHtml(html)
+    root
       .querySelectorAll('a[href]')
       .filter((link) => /^(下一页|下页)$/.test(elementText(link)))
       .map((link) => link.getAttribute('href') || '')
@@ -84,12 +84,11 @@ function nextYaohuoPageHref(html: string, acceptsHref: (href: string) => boolean
   );
 }
 
-export function nextYaohuoPageFromHtml(html: string, page: number, itemCount: number, limit: number) {
+export function nextYaohuoPage(root: ReturnType<typeof parseHtml>, page: number, itemCount: number, limit: number) {
   if (!itemCount) {
     return null;
   }
-  const root = parseHtml(html);
-  const next = nextYaohuoPageHref(html).match(/[?&]page=(\d+)/i)?.[1];
+  const next = nextYaohuoPageHref(root).match(/[?&]page=(\d+)/i)?.[1];
   if (next) {
     return Number(next);
   }
@@ -121,8 +120,11 @@ function isYaohuoUserReplyListUrl(url: URL, userId: string) {
   return /\/bbs\/book_re_my\.aspx$/i.test(url.pathname) && queryValue(url, 'touserid') === userId;
 }
 
-export function yaohuoUserProfileTopicListUrl(html: string, userId: string, currentUrl = YAOHUO_BASE_URL) {
-  const root = parseHtml(html);
+export function yaohuoUserProfileTopicListUrlFromRoot(
+  root: ReturnType<typeof parseHtml>,
+  userId: string,
+  currentUrl = YAOHUO_BASE_URL
+) {
   const href =
     root
       .querySelectorAll('a[href]')
@@ -147,8 +149,11 @@ export function yaohuoUserProfileTopicListUrl(html: string, userId: string, curr
   }
 }
 
-export function yaohuoUserProfileReplyListUrl(html: string, userId: string, currentUrl = YAOHUO_BASE_URL) {
-  const root = parseHtml(html);
+export function yaohuoUserProfileReplyListUrlFromRoot(
+  root: ReturnType<typeof parseHtml>,
+  userId: string,
+  currentUrl = YAOHUO_BASE_URL
+) {
   const href =
     root
       .querySelectorAll('a[href]')
@@ -173,8 +178,8 @@ export function yaohuoUserProfileReplyListUrl(html: string, userId: string, curr
   }
 }
 
-export function yaohuoTopicListNextPageUrl(
-  html: string,
+export function yaohuoTopicListNextPageUrlFromRoot(
+  root: ReturnType<typeof parseHtml>,
   currentUrl: string,
   page: number,
   itemCount: number,
@@ -183,7 +188,7 @@ export function yaohuoTopicListNextPageUrl(
   if (!itemCount) {
     return '';
   }
-  const href = nextYaohuoPageHref(html, (candidate) => /\/bbs\/book_list(?:_search)?\.aspx/i.test(candidate));
+  const href = nextYaohuoPageHref(root, (candidate) => /\/bbs\/book_list(?:_search)?\.aspx/i.test(candidate));
   const linkedUrl = absoluteUrl(href, currentUrl);
   if (linkedUrl) {
     try {
@@ -192,7 +197,7 @@ export function yaohuoTopicListNextPageUrl(
       return '';
     }
   }
-  const nextPage = nextYaohuoPageFromHtml(html, page, itemCount, limit);
+  const nextPage = nextYaohuoPage(root, page, itemCount, limit);
   if (!nextPage) {
     return '';
   }
@@ -205,11 +210,15 @@ export function yaohuoTopicListNextPageUrl(
   }
 }
 
-export function yaohuoReplyListNextPageUrl(html: string, currentUrl: string, itemCount: number) {
+export function yaohuoReplyListNextPageUrlFromRoot(
+  root: ReturnType<typeof parseHtml>,
+  currentUrl: string,
+  itemCount: number
+) {
   if (!itemCount) {
     return '';
   }
-  const href = nextYaohuoPageHref(html, (candidate) => /\/bbs\/book_re_my\.aspx/i.test(candidate));
+  const href = nextYaohuoPageHref(root, (candidate) => /\/bbs\/book_re_my\.aspx/i.test(candidate));
   const linkedUrl = absoluteUrl(href, currentUrl);
   if (!linkedUrl) {
     return '';

@@ -72,8 +72,8 @@ describe('render-ready dynamic forum image variants', () => {
     expect(learnedHtml).not.toContain('data-wz-dynamic-inline-image');
   });
 
-  it('[REG-PERF-010] verifies every one of the bounded 2^4 row variants against all four hard budgets', () => {
-    const urls = Array.from({ length: 4 }, (_, index) => `https://i.imgur.com/dynamic-${index}.png`);
+  it('[REG-PERF-010] resolves every bounded four-image presentation state', () => {
+    const urls = Array.from({ length: 4 }, (_, index) => `https://i.imgur.com/bounded-${index}.png`);
     const row = renderedRow(
       `<p>${urls
         .map((url, index) => `before-${index}<img class="embedded_image" src="${url}" alt="dynamic-${index}">`)
@@ -86,6 +86,7 @@ describe('render-ready dynamic forum image variants', () => {
       )
     );
 
+    expect(row.rendering).not.toHaveProperty('variants');
     expect(new Set(variants)).toHaveLength(16);
     variants.forEach((html) => {
       const variantMetrics = metrics(html);

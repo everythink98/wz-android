@@ -27,8 +27,7 @@ const atomParser = new XMLParser({
   trimValues: true
 });
 
-function parseV2exMemberTopics(html: string, username: string, avatar?: string) {
-  const root = parseHtml(html);
+function parseV2exMemberTopics(root: ReturnType<typeof parseHtml>, username: string, avatar?: string) {
   return root
     .querySelectorAll('.cell, .box .item')
     .map((element) => normalizeHtmlTopic(element))
@@ -58,8 +57,7 @@ function v2exMemberActivityDisplayTime(text: string) {
   return text.match(/^\s*(.+?)\s*回复了/)?.[1]?.trim() || '';
 }
 
-function nextV2exMemberPageCursor(html: string, page: number) {
-  const root = parseHtml(html);
+function nextV2exMemberPageCursor(root: ReturnType<typeof parseHtml>, page: number) {
   const pages = root
     .querySelectorAll('a[href*="?p="], a[href*="&p="]')
     .map((link) => parsePositiveInteger(link.getAttribute('href')))
@@ -67,8 +65,12 @@ function nextV2exMemberPageCursor(html: string, page: number) {
   return pages.length ? String(Math.min(...pages)) : null;
 }
 
-function parseV2exMemberReplies(html: string, username: string, avatar: string | undefined, page: number) {
-  const root = parseHtml(html);
+function parseV2exMemberReplies(
+  root: ReturnType<typeof parseHtml>,
+  username: string,
+  avatar: string | undefined,
+  page: number
+) {
   const items = root
     .querySelectorAll('.dock_area')
     .map((element) => {
@@ -112,7 +114,7 @@ function parseV2exMemberReplies(html: string, username: string, avatar: string |
     .filter(Boolean) as UserReplyActivity[];
   return {
     items,
-    nextCursor: nextV2exMemberPageCursor(html, page)
+    nextCursor: nextV2exMemberPageCursor(root, page)
   };
 }
 
@@ -163,7 +165,8 @@ async function fetchV2exMemberTopics(username: string, avatar: string | undefine
   const pageQuery = page > 1 ? `?p=${encodeURIComponent(String(page))}` : '';
   try {
     const html = await fetchText(`${memberUrl(username)}/topics${pageQuery}`, options);
-    const items = parseV2exMemberTopics(html, username, avatar).slice(0, 30);
+    const root = parseHtml(html);
+    const items = parseV2exMemberTopics(root, username, avatar).slice(0, 30);
     const candidateCount = Math.max(
       (html.match(/class=["'][^"']*\bitem\b/gi) || []).length,
       (html.match(/<a\b[^>]*href=["'][^"']*\/t\//gi) || []).length
@@ -171,7 +174,7 @@ async function fetchV2exMemberTopics(username: string, avatar: string | undefine
     return annotateSourceDiagnosticSummary(
       {
         items,
-        nextCursor: nextV2exMemberPageCursor(html, page)
+        nextCursor: nextV2exMemberPageCursor(root, page)
       },
       {
         parserVariant: 'html-user-topics',
@@ -200,7 +203,8 @@ async function fetchV2exMemberTopics(username: string, avatar: string | undefine
 async function fetchV2exMemberReplies(username: string, avatar: string | undefined, options: V2exOptions, page = 1) {
   const pageQuery = page > 1 ? `?p=${encodeURIComponent(String(page))}` : '';
   const html = await fetchText(`${memberUrl(username)}/replies${pageQuery}`, options);
-  return parseV2exMemberReplies(html, username, avatar, page);
+  const root = parseHtml(html);
+  return parseV2exMemberReplies(root, username, avatar, page);
 }
 
 async function fetchV2exMemberFeedTopics(username: string, avatar: string | undefined, options: V2exOptions) {

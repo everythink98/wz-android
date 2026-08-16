@@ -1,4 +1,5 @@
-import type { Reply, TopicDetail, TopicPoll } from './models';
+import type { Reply, Source, TopicDetail, TopicPoll } from './models';
+import { prepareReplyContent, prepareTopicContent } from './topicContentSplit';
 
 export type InteractionType = 'upvote' | 'like' | 'dislike';
 type InteractionMode = 'add' | 'remove';
@@ -127,7 +128,7 @@ function applyPollVoteToPolls(polls: TopicDetail['polls'], patch: PollVotePatch)
     return polls;
   }
   const selectedIds = new Set(patch.optionIds.map(String));
-  return polls.map((poll) => {
+  const next = polls.map((poll) => {
     if (patch.pollPostId && poll.postId !== patch.pollPostId) {
       return poll;
     }
@@ -171,22 +172,25 @@ function applyPollVoteToPolls(polls: TopicDetail['polls'], patch: PollVotePatch)
       })
     };
   });
+  return next.every((poll, index) => poll === polls[index]) ? polls : next;
 }
 
 export function applyPollVoteToTopic<T extends TopicDetail | null>(topic: T, patch: PollVotePatch): T {
   if (!topic?.polls?.length) {
     return topic;
   }
-  return {
+  const polls = applyPollVoteToPolls(topic.polls, patch);
+  if (polls === topic.polls) return topic;
+  return prepareTopicContent({
     ...topic,
-    polls: applyPollVoteToPolls(topic.polls, patch)
-  } as T;
+    polls
+  }) as T;
 }
 
-export function applyPollVoteToReplies(replies: Reply[], patch: PollVotePatch) {
+export function applyPollVoteToReplies(replies: Reply[], patch: PollVotePatch, source: Source) {
   return replies.map((reply) => {
     const polls = applyPollVoteToPolls(reply.polls, patch);
-    return polls === reply.polls ? reply : { ...reply, polls };
+    return polls === reply.polls ? reply : prepareReplyContent({ ...reply, polls }, source);
   });
 }
 

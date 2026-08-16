@@ -1,4 +1,4 @@
-import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import { fetchWithTimeout, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
 import type {
   CategoriesResponse,
   DiscourseFeedFilter,
@@ -25,9 +25,9 @@ import {
   discourseUsersById,
   discourseVisiblePostIds
 } from '@/sources/discourse/model';
-import { discourseAvatarUrl, discourseQuoteMetadata } from '@/sources/discourse/content';
+import { discourseAvatarUrl } from '@/sources/discourse/content';
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
-import { sanitizeXiaoyinsiContentHtml } from './parser';
+import { prepareXiaoyinsiContent } from './parser';
 import { XIAOYINSI_BASE_URL } from './protocol';
 import { cleanCredentials, requestHeaders, type XiaoyinsiApiCredentials } from './credentials';
 import { orientReplyWindow } from '@/sources/replyWindows';
@@ -120,14 +120,6 @@ export function positiveNumber(value: unknown) {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
-export function nonNegativeNumber(value: unknown) {
-  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) {
-    return undefined;
-  }
-  const number = Number(value);
-  return Number.isFinite(number) && number >= 0 ? number : undefined;
-}
-
 export function topicId(value: unknown) {
   const text = String(value || '').trim();
   return /^\d+$/.test(text) && Number(text) > 0 ? text : '';
@@ -213,26 +205,7 @@ function fetchPublicCategoryData(options: XiaoyinsiOptions) {
 
 function waitForPublicCategoryData(options: XiaoyinsiOptions) {
   const request = fetchPublicCategoryData(options);
-  const signal = options.signal;
-  if (!signal) return request;
-  if (signal.aborted) return Promise.reject(new Error(REQUEST_CANCELED_MESSAGE));
-  return new Promise<Record<string, unknown>>((resolve, reject) => {
-    const onAbort = () => {
-      signal.removeEventListener('abort', onAbort);
-      reject(new Error(REQUEST_CANCELED_MESSAGE));
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    request.then(
-      (data) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(data);
-      },
-      (error) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(error);
-      }
-    );
-  });
+  return options.signal ? withAbortableTimeout(() => request, { signal: options.signal }) : request;
 }
 
 export function resetXiaoyinsiCategoryCacheForTests() {
@@ -312,8 +285,7 @@ function normalizePost(raw: unknown, currentTopicId?: string): Reply | null {
   }
   const { cookedHtml, ...replyFields } = fields;
   const polls = discoursePolls(raw, { includeType: true });
-  const sanitized = sanitizeXiaoyinsiContentHtml(cookedHtml, polls);
-  const quote = discourseQuoteMetadata(sanitized, 'xiaoyinsi', currentTopicId);
+  const prepared = prepareXiaoyinsiContent(cookedHtml, polls, { role: 'reply', topicId: currentTopicId });
   const username = String(raw.username || '').trim();
   const authorTrustLevel = levelLabel(raw);
   return {
@@ -321,8 +293,9 @@ function normalizePost(raw: unknown, currentTopicId?: string): Reply | null {
     authorId: username,
     authorAvatar: avatarUrl(raw.avatar_template),
     authorUrl: username ? userUrl(username) : undefined,
-    contentHtml: quote.html,
-    ...(quote.quotedPosts.length ? { quotedPosts: quote.quotedPosts } : {}),
+    contentHtml: prepared.preparedContent.contentHtml,
+    preparedContent: prepared.preparedContent,
+    ...(prepared.quotedPosts.length ? { quotedPosts: prepared.quotedPosts } : {}),
     ...(authorTrustLevel ? { authorLevelLabel: authorTrustLevel } : {}),
     ...(polls ? { polls } : {})
   };
@@ -436,10 +409,15 @@ export async function getXiaoyinsiTopic(
   const details = isRecord(data.details) ? data.details : {};
   const bookmarkId = firstFields.bookmarkId || positiveNumber(data.bookmark_id);
   const totalPosts = stream.length || (normalized.replyCount || 0) + 1;
+  const preparedContent = prepareXiaoyinsiContent(firstFields.cookedHtml, polls, {
+    role: 'opening',
+    topicId: normalized.id
+  }).preparedContent;
   const result: TopicDetail = {
     ...normalized,
     mediaReferrer: { documentUrl: normalized.url },
-    contentHtml: sanitizeXiaoyinsiContentHtml(firstFields.cookedHtml, polls),
+    contentHtml: preparedContent.contentHtml,
+    preparedContent,
     replies,
     replyCompleteness: replies.length === initialReplyPosts.length ? ('complete' as const) : ('partial' as const),
     replyHasMore: totalPosts > initialReplyPosts.length + 1,

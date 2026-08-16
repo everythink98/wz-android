@@ -13,7 +13,7 @@ import type {
   NotificationAdapterAccess,
   NotificationListOptions
 } from '@/sources/notificationAdapter';
-import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { sanitizeContentHtmlWithRoot } from '@/domain/forum/contentSanitizer';
 import { fetchYaohuoHtml } from './reader';
 import { YAOHUO_BASE_URL } from './protocol';
 import { buildYaohuoMessageReplyRequest } from './actionRequest';
@@ -26,6 +26,8 @@ const yaohuoNotificationCategories = [
 ] as const satisfies readonly NotificationCategory[];
 
 const absoluteChatTimePattern = /\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?/;
+
+type ParsedNotificationMessage = NotificationMessage & { contentKey: string };
 
 function messageId(href: string) {
   try {
@@ -117,10 +119,9 @@ function currentPage(root: ReturnType<typeof parseHtml>) {
   return Number(match?.[1]) || 1;
 }
 
-function detailContentHtml(html: string, detailUrl: string) {
-  const root = parseHtml(html);
+function detailContent(root: ReturnType<typeof parseHtml>, detailUrl: string) {
   const label = root.querySelectorAll('b').find((candidate) => /^内容\s*[：:]$/.test(elementText(candidate)));
-  if (!label) return '';
+  if (!label) return null;
   const siblings = label.parentNode?.childNodes || [];
   const fragments: string[] = [];
   for (const node of siblings.slice(siblings.indexOf(label) + 1)) {
@@ -129,24 +130,22 @@ function detailContentHtml(html: string, detailUrl: string) {
     if (/\/bbs\/messagelist_(?:add|del)\.aspx/i.test(href)) break;
     fragments.push(node.toString());
   }
-  const content = sanitizeContentHtml(fragments.join(''), detailUrl);
-  return hasRenderableHtmlContent(content) ? content : '';
+  const content = sanitizeContentHtmlWithRoot(fragments.join(''), detailUrl);
+  return hasRenderableHtmlContent(content.contentHtml, content.root) ? content : null;
 }
 
-function chatContentHtml(value: string, detailUrl: string) {
-  const wrapper = parseHtml(`<div id="yaohuo-chat-content">${value}</div>`).querySelector('#yaohuo-chat-content');
-  const content = (wrapper?.innerHTML || '')
+function chatContent(value: string, detailUrl: string) {
+  const content = value
     .replace(
       /^(?:\s|&nbsp;)*回复时间\s*[：:]\s*\d{4}[/-]\d{1,2}[/-]\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?(?:(?:\s|&nbsp;)*<br\s*\/?>(?:\s|&nbsp;)*)?/i,
       ''
     )
     .replace(/^(?:\s|&nbsp;)*回复内容\s*[：:]?(?:(?:\s|&nbsp;)*<br\s*\/?>(?:\s|&nbsp;)*)?/i, '')
     .replace(/(?:(?:\s|&nbsp;)|<br\s*\/?>|\|)+$/gi, '');
-  return sanitizeContentHtml(content, detailUrl);
+  return sanitizeContentHtmlWithRoot(content, detailUrl);
 }
 
-function messageContentKey(value: string) {
-  const root = parseHtml(value);
+function messageContentKey(root: ReturnType<typeof parseHtml>) {
   const text = elementText(root).replace(/\s+/g, ' ').trim();
   const images = root
     .querySelectorAll('img[src]')
@@ -156,42 +155,41 @@ function messageContentKey(value: string) {
   return `${text}\u0000${images}`;
 }
 
-function removeOriginalMessage(messages: NotificationMessage[], contentHtml: string) {
-  const originalKey = messageContentKey(contentHtml);
-  const duplicateIndex = messages.findIndex((message) => messageContentKey(message.contentHtml || '') === originalKey);
-  return duplicateIndex < 0 ? messages : messages.filter((_, index) => index !== duplicateIndex);
+function removeOriginalMessage(messages: ParsedNotificationMessage[], originalKey: string) {
+  const duplicateIndex = messages.findIndex((message) => message.contentKey === originalKey);
+  return messages
+    .filter((_, index) => index !== duplicateIndex)
+    .map(({ contentKey: _contentKey, ...message }) => message);
 }
 
-function chatMessages(html: string, detailUrl: string, otherAuthor: string) {
-  const messages = parseHtml(html)
-    .querySelectorAll('.listmms')
-    .flatMap((row, index) => {
-      const className = row.getAttribute('class') || '';
-      const mine = /(?:^|\s)the_me(?:\s|$)/.test(className);
-      if (!mine && !/(?:^|\s)the_user(?:\s|$)/.test(className)) return [];
-      const content = row.querySelector('.bubble .con') || row.querySelector('.con');
-      const rawContent = content?.innerHTML || '';
-      const contentHtml = chatContentHtml(rawContent, detailUrl);
-      if (!hasRenderableHtmlContent(contentHtml)) return [];
-      const info = row.querySelector('.info');
-      const infoText = elementText(info);
-      const replyTime = elementText(row).match(
-        new RegExp(`回复时间\\s*[：:]\\s*(${absoluteChatTimePattern.source})`, 'i')
-      )?.[1];
-      const displayTime = infoText.match(absoluteChatTimePattern)?.[0] || replyTime || '';
-      const authorCandidate = elementText(info?.querySelector('.u_name label'));
-      const author =
-        authorCandidate && !absoluteChatTimePattern.test(authorCandidate) ? authorCandidate : mine ? '我' : otherAuthor;
-      return [
-        {
-          id: `chat:${index}`,
-          author: author || '妖火用户',
-          contentHtml,
-          createdAt: toIsoString(displayTime, '+08:00') || null,
-          mine
-        }
-      ];
-    });
+function chatMessages(root: ReturnType<typeof parseHtml>, detailUrl: string, otherAuthor: string) {
+  const messages = root.querySelectorAll('.listmms').flatMap((row, index) => {
+    const className = row.getAttribute('class') || '';
+    const mine = /(?:^|\s)the_me(?:\s|$)/.test(className);
+    if (!mine && !/(?:^|\s)the_user(?:\s|$)/.test(className)) return [];
+    const content = row.querySelector('.bubble .con') || row.querySelector('.con');
+    const sanitized = chatContent(content?.innerHTML || '', detailUrl);
+    if (!hasRenderableHtmlContent(sanitized.contentHtml, sanitized.root)) return [];
+    const info = row.querySelector('.info');
+    const infoText = elementText(info);
+    const replyTime = elementText(row).match(
+      new RegExp(`回复时间\\s*[：:]\\s*(${absoluteChatTimePattern.source})`, 'i')
+    )?.[1];
+    const displayTime = infoText.match(absoluteChatTimePattern)?.[0] || replyTime || '';
+    const authorCandidate = elementText(info?.querySelector('.u_name label'));
+    const author =
+      authorCandidate && !absoluteChatTimePattern.test(authorCandidate) ? authorCandidate : mine ? '我' : otherAuthor;
+    return [
+      {
+        id: `chat:${index}`,
+        author: author || '妖火用户',
+        contentHtml: sanitized.contentHtml,
+        createdAt: toIsoString(displayTime, '+08:00') || null,
+        mine,
+        contentKey: messageContentKey(sanitized.root)
+      } satisfies ParsedNotificationMessage
+    ];
+  });
   return messages.sort((left, right) => {
     if (!left.createdAt) return right.createdAt ? 1 : 0;
     if (!right.createdAt) return -1;
@@ -282,16 +280,20 @@ export const yaohuoNotificationAdapter = {
       signal: options.signal,
       timeoutMs: options.timeoutMs
     });
-    const contentHtml = detailContentHtml(result.html, detailUrl);
-    if (!contentHtml) throw new Error('妖火消息对应的正文未找到');
+    const root = parseHtml(result.html);
+    const content = detailContent(root, detailUrl);
+    if (!content) throw new Error('妖火消息对应的正文未找到');
     const replyable = item.kind === 'private-message';
     return {
       notification: item,
       title: item.title,
-      contentHtml,
+      contentHtml: content.contentHtml,
       ...(replyable
         ? {
-            messages: removeOriginalMessage(chatMessages(result.html, detailUrl, item.actor.name), contentHtml),
+            messages: removeOriginalMessage(
+              chatMessages(root, detailUrl, item.actor.name),
+              messageContentKey(content.root)
+            ),
             reply: { format: 'plain-text' as const },
             historyNotice: '原站仅提供最近 20 条聊天记录。'
           }

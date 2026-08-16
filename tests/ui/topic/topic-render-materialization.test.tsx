@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { render } from '../render';
-import { parseHtml } from '@/domain/forum/html';
+import { domNodeCount } from '../../helpers/domNodeCount';
 import { compileForumContent, resolveForumContentRowHtml } from '@/domain/forum/topicContentSplit';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 
@@ -17,18 +17,6 @@ jest.mock('react-native-render-html', () => {
       })
   };
 });
-
-function domNodeCount(html: string) {
-  const body = parseHtml(`<body>${html}</body>`).querySelector('body');
-  const pending = [...(body?.childNodes || [])];
-  let count = 0;
-  while (pending.length) {
-    const current = pending.pop()!;
-    count += 1;
-    pending.push(...(current.childNodes || []));
-  }
-  return count;
-}
 
 function renderedHtml(view: Awaited<ReturnType<typeof render>>) {
   return view.getByTestId('render-html-source').props.accessibilityHint as string;

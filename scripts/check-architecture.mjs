@@ -39,6 +39,8 @@ const ACCOUNT_RUNTIME_READ_CAPABILITIES = new Set([
   'accountIdentityChecks',
   'accountIdentityPending',
   'accountSessionViewModels',
+  'feedReadGateway',
+  'feedSessionEpochs',
   'forumSessionEpochs',
   'getLinuxDoUserAgent',
   'getNodeSeekUserAgent',

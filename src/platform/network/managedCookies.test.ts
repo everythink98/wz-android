@@ -2,22 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', () => ({ NativeModules: {} }));
 
-import {
-  clearManagedLoginCookies,
-  managedCookieSourceForUrl,
-  readManagedCookieHeader,
-  type ManagedCookieNativeModule
-} from './managedCookies';
+import { clearManagedLoginCookies, readManagedCookieHeader, type ManagedCookieNativeModule } from './managedCookies';
 
 describe('managed WebView Cookie boundary', () => {
-  it('recognizes only exact managed HTTPS hosts', () => {
-    expect(managedCookieSourceForUrl('https://www.nodeseek.com/private/image.png')).toBe('nodeseek');
-    expect(managedCookieSourceForUrl('https://linux.do/session/current.json')).toBe('linuxdo');
-    expect(managedCookieSourceForUrl('https://evil-linux.do.example/image.png')).toBeNull();
-    expect(managedCookieSourceForUrl('http://linux.do/image.png')).toBeNull();
-    expect(managedCookieSourceForUrl('https://user@linux.do/image.png')).toBeNull();
-  });
-
   it('[REG-ACCOUNT-031] preserves the difference between an empty exact-url result and an unsupported bridge', async () => {
     const exactUrl = 'https://linux.do/session/current.json';
     const supported: ManagedCookieNativeModule = {

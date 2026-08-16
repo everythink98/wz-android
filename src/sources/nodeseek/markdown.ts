@@ -22,10 +22,14 @@ md.renderer.rules.text = (tokens, index, options, env, renderer) => {
   });
 };
 
-export function nodeSeekMarkdownToHtml(markdown: unknown) {
+export function nodeSeekMarkdownCandidateHtml(markdown: unknown) {
   const input = String(markdown || '');
   const oversized =
     input.length > MAX_NODESEEK_MARKDOWN_BYTES ||
     new TextEncoder().encode(input).byteLength > MAX_NODESEEK_MARKDOWN_BYTES;
-  return sanitizeContentHtml(oversized ? OVERSIZED_MARKDOWN_NOTICE : md.render(input), NODESEEK_URL);
+  return oversized ? OVERSIZED_MARKDOWN_NOTICE : md.render(input);
+}
+
+export function nodeSeekMarkdownToHtml(markdown: unknown) {
+  return sanitizeContentHtml(nodeSeekMarkdownCandidateHtml(markdown), NODESEEK_URL);
 }

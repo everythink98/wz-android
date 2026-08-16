@@ -2,6 +2,7 @@ import type { ReplyEditTarget, ReplyRefreshTarget } from '../model/types';
 import { nodeSeekMarkdownToHtml } from '@/sources/nodeseek/markdown';
 import { sourceSupportsTopicAction, sourceUsesTopicCreatePermission } from '@/domain/forum/sourceCatalog';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '@/domain/forum/models';
+import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
 
 type TopicActionTopic = Topic | TopicDetail;
 
@@ -84,7 +85,8 @@ export function applyEditedReplyContent(
     return {
       ...reply,
       contentHtml,
-      contentMarkdown
+      contentMarkdown,
+      preparedContent: prepareForumContentHtml(contentHtml, { polls: reply.polls, role: 'reply', source })
     };
   });
   return changed ? next : replies;

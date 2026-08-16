@@ -40,7 +40,7 @@ import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { normalizeUserReference, userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicActionState';
-import { sameInlineSizedImagesForReply, type TopicImageDeriver } from '../model/topicDerivedData';
+import type { TopicImageDeriver } from '../model/topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
@@ -48,7 +48,7 @@ import { getReplyKey, type ReplyRenderableContent, type TopicReplyListItem } fro
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 import { TopicSplitDisclosureScope } from '../rendering/TopicSplitDisclosure';
-import { resolveForumContentRowHtml } from '@/domain/forum/topicContentSplit';
+import { resolveForumContentRowHtml, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 
 type NodeSeekStat = { label: string; value: number };
 type ReplyItemSection = Extract<
@@ -1020,6 +1020,47 @@ function sameReplyItemSection(previous: ReplyItemSection | undefined, next: Repl
   return true;
 }
 
+const defaultIsInlineSizedImage: TopicImageDeriver['isInlineSizedImage'] = (url, _referrerPolicy, identities) =>
+  Boolean(identities[url]);
+
+function compiledRowInlineImageStateChanged(
+  row: CompiledForumContentRow | undefined,
+  previousUrls: Readonly<Record<string, boolean | undefined>>,
+  nextUrls: Readonly<Record<string, boolean | undefined>>,
+  topicImageDeriver: TopicImageDeriver | undefined
+) {
+  if (!row || !('html' in row) || !row.rendering) return false;
+  const isInlineSizedImage = topicImageDeriver?.isInlineSizedImage || defaultIsInlineSizedImage;
+  return row.rendering.dynamicImages.some(
+    ({ url, referrerPolicy }) =>
+      isInlineSizedImage(url, referrerPolicy, previousUrls) !== isInlineSizedImage(url, referrerPolicy, nextUrls)
+  );
+}
+
+type ReplyItemProps = Parameters<typeof ReplyItem>[0];
+
+function replyItemInlineImageStateChanged(
+  props: ReplyItemProps,
+  previousUrls: Readonly<Record<string, boolean | undefined>>,
+  nextUrls: Readonly<Record<string, boolean | undefined>>
+) {
+  const section = props.section;
+  if (
+    section?.type === 'replyQuoteContent' ||
+    section?.type === 'replyContent' ||
+    section?.type === 'replySignatureContent'
+  ) {
+    return compiledRowInlineImageStateChanged(section.content, previousUrls, nextUrls, props.topicImageDeriver);
+  }
+  if (section && section.type !== 'replyEnd') return false;
+  return (
+    (!section?.bodyVirtualized &&
+      compiledRowInlineImageStateChanged(props.bodyContent, previousUrls, nextUrls, props.topicImageDeriver)) ||
+    (!section?.signatureVirtualized &&
+      compiledRowInlineImageStateChanged(props.signatureContent, previousUrls, nextUrls, props.topicImageDeriver))
+  );
+}
+
 export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
   if (
     previous.actionBusy !== next.actionBusy ||
@@ -1042,6 +1083,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.onVotePoll !== next.onVotePoll ||
     previous.pollSelections !== next.pollSelections ||
     previous.query !== next.query ||
+    previous.reply !== next.reply ||
     previous.reply.replyTarget !== next.reply.replyTarget ||
     previous.replyFloor !== next.replyFloor ||
     !sameReplyItemSection(previous.section, next.section) ||
@@ -1053,11 +1095,8 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.topicBaseUrl !== next.topicBaseUrl ||
     previous.topicId !== next.topicId ||
     previous.topicImageDeriver !== next.topicImageDeriver ||
-    ((next.section?.type === 'replyQuoteContent' ||
-      next.section?.type === 'replyContent' ||
-      next.section?.type === 'replySignatureContent') &&
-      previous.inlineSizedImageUrls !== next.inlineSizedImageUrls) ||
-    !sameInlineSizedImagesForReply(previous.reply, next.reply, previous.inlineSizedImageUrls, next.inlineSizedImageUrls)
+    (previous.inlineSizedImageUrls !== next.inlineSizedImageUrls &&
+      replyItemInlineImageStateChanged(next, previous.inlineSizedImageUrls, next.inlineSizedImageUrls))
   ) {
     return false;
   }

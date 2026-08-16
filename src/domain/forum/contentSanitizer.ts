@@ -781,7 +781,11 @@ function sanitizeNodeSeekAnsiReportSectionsHtml(html: unknown) {
   return `${source.slice(0, start)}${terminalReportHtml(tabs)}${source.slice(end)}`;
 }
 
-export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoot?: (root: HTMLElement) => void) {
+export function sanitizeContentHtmlWithRoot(
+  html: unknown,
+  baseUrl: string,
+  transformRoot?: (root: HTMLElement) => void
+) {
   const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
   removeHiddenContent(root);
   transformRoot?.(root);
@@ -852,5 +856,9 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoo
       }
     }
   });
-  return root.toString();
+  return { contentHtml: root.toString(), root };
+}
+
+export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoot?: (root: HTMLElement) => void) {
+  return sanitizeContentHtmlWithRoot(html, baseUrl, transformRoot).contentHtml;
 }

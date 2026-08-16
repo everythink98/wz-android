@@ -63,7 +63,7 @@ import type { InteractionType } from '@/domain/forum/topicActionState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
-import { quotedPostReferenceKey, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
+import { replyForQuotedPost, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { TopicPolls } from './TopicPolls';
 import { AcceptedAnswerPreview } from './AcceptedAnswerPreview';
@@ -149,9 +149,10 @@ function topicListCompiledRow(item: TopicListItem): CompiledForumContentRow | nu
 }
 
 function topicListContentScope(item: TopicListItem) {
+  if (item.type === 'topicQuoteSummary') return `topic-quote:${item.content.instanceKey}`;
   if (item.type === 'topicQuoteContent') return `topic-quote:${item.instanceKey}`;
   if (item.type === 'topicAcceptedAnswerContent') return 'accepted-answer';
-  if (item.type === 'topicContent' || item.type === 'topicQuoteSummary') return 'opening';
+  if (item.type === 'topicContent') return 'opening';
   if (item.type === 'replyQuoteContent') return `reply-quote:${item.instanceKey}`;
   if (item.type === 'replyContent') return `reply:${getReplyKey(item.reply)}:body`;
   if (item.type === 'replySignatureContent') return `reply:${getReplyKey(item.reply)}:signature`;
@@ -160,6 +161,20 @@ function topicListContentScope(item: TopicListItem) {
 
 function continuesSameLogicalContentGroup(leadingItem: TopicListItem, trailingItem: TopicListItem) {
   if (topicListContentScope(leadingItem) !== topicListContentScope(trailingItem)) return false;
+  if (
+    leadingItem.type === 'topicQuoteSummary' &&
+    trailingItem.type === 'topicQuoteContent' &&
+    leadingItem.content.instanceKey === trailingItem.instanceKey
+  ) {
+    return true;
+  }
+  if (
+    leadingItem.type === 'topicQuoteContent' &&
+    trailingItem.type === 'topicQuoteContent' &&
+    leadingItem.instanceKey === trailingItem.instanceKey
+  ) {
+    return true;
+  }
   const leadingRow = topicListCompiledRow(leadingItem);
   const trailingRow = topicListCompiledRow(trailingItem);
   if (!leadingRow || !trailingRow) return false;
@@ -216,7 +231,7 @@ function TopicListItemFrame({
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
       onLayout?.(event);
-      if (firstRowStartedAt === undefined || markedRef.current) return;
+      if (markedRef.current || firstRowStartedAt === undefined) return;
       markedRef.current = true;
       markFirstRow(monotonicNowMs() - firstRowStartedAt);
     },
@@ -331,11 +346,20 @@ export const TopicContentList = memo(function TopicContentList({
         commentQuery: state.debouncedCommentQuery,
         inlineSizedImageUrls,
         replyFilter: state.replyFilter,
+        source: state.selectedTopic.source,
         topicDetail: topic,
         topicImageDeriver,
         topicReplies: read.topicReplies
       }),
-    [inlineSizedImageUrls, read.topicReplies, state.debouncedCommentQuery, state.replyFilter, topic, topicImageDeriver]
+    [
+      inlineSizedImageUrls,
+      read.topicReplies,
+      state.debouncedCommentQuery,
+      state.replyFilter,
+      state.selectedTopic.source,
+      topic,
+      topicImageDeriver
+    ]
   );
   const replies = useMemo(
     () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, currentNodeSeekUser, nodeSeekUserId),
@@ -427,6 +451,7 @@ export const TopicContentList = memo(function TopicContentList({
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
+  const detailTopicDiagnosticRef = item ? diagnosticRef('topic', `${item.source}:${item.id}`) : '';
   const topicResponseReadyRef = useRef<{ readyAt?: number; topicKey: string }>({ topicKey: '' });
   const topicResponseReadyCandidate =
     topic &&
@@ -638,6 +663,7 @@ export const TopicContentList = memo(function TopicContentList({
   const openingContentHtml = topic?.contentHtml;
   const openingTopicId = topic?.id;
   const openingPolls = topic?.polls;
+  const openingPreparedContent = topic?.preparedContent;
   const openingReplies = topic?.replies;
   const openingSource = topic?.source;
   const openingContent = useMemo(
@@ -649,11 +675,12 @@ export const TopicContentList = memo(function TopicContentList({
               contentHtml: openingContentHtml || '',
               id: openingTopicId || '',
               polls: openingPolls,
+              preparedContent: openingPreparedContent,
               source: openingSource
             }
           : null
       ),
-    [openingAccessRequirement, openingContentHtml, openingPolls, openingSource, openingTopicId]
+    [openingAccessRequirement, openingContentHtml, openingPolls, openingPreparedContent, openingSource, openingTopicId]
   );
   const {
     contentItems: topicContentItems,
@@ -674,9 +701,20 @@ export const TopicContentList = memo(function TopicContentList({
         : openingPreviewImages,
     [itemSource, loadedQuotedReplyValues, openingPreviewImages, sourceReplies]
   );
+  const catalogReadyElapsedRef = useRef<{ elapsedMs?: number; topicRef: string }>({ topicRef: '' });
   useLayoutEffect(() => {
     onImagePreviewDescriptors(imagePreviewDescriptors);
-  }, [imagePreviewDescriptors, onImagePreviewDescriptors]);
+    if (!detailTopicDiagnosticRef || topicResponseReadyCandidate === undefined) {
+      catalogReadyElapsedRef.current = { topicRef: detailTopicDiagnosticRef };
+      return;
+    }
+    const current = catalogReadyElapsedRef.current;
+    if (current.topicRef === detailTopicDiagnosticRef && current.elapsedMs !== undefined) return;
+    catalogReadyElapsedRef.current = {
+      elapsedMs: Math.max(0, Math.floor(monotonicNowMs() - topicResponseReadyCandidate)),
+      topicRef: detailTopicDiagnosticRef
+    };
+  }, [detailTopicDiagnosticRef, imagePreviewDescriptors, onImagePreviewDescriptors, topicResponseReadyCandidate]);
   const acceptedAnswer = useMemo(
     () =>
       buildAcceptedAnswerPresentation({
@@ -805,7 +843,7 @@ export const TopicContentList = memo(function TopicContentList({
   const topicHasPostActions = Boolean(
     topic &&
     !topicShowsAccessNotice &&
-    ((topic.source === 'nodeseek' && (canWriteNodeSeek || nodeSeekTopicReactionStats(topic).length > 0)) ||
+    ((topic.source === 'nodeseek' && (canWriteNodeSeek || topicReactionStats.length > 0)) ||
       (isDiscourseSource(topic.source) && (canUseDiscourseInteractions || discourseTopicReactionStats.length > 0)) ||
       (topic.source === 'yaohuo' && canWriteYaohuo) ||
       (topic.source === 'v2ex' && typeof topic.upvoteCount === 'number'))
@@ -827,9 +865,7 @@ export const TopicContentList = memo(function TopicContentList({
           return [{ type: 'topicContent', key: content.key, content }];
         }
         const reference = content.quote.reference;
-        const quotedPost =
-          (reference.topicId === item?.id ? repliesByFloor.get(reference.postNumber) : undefined) ||
-          loadedQuotedReplies[quotedPostReferenceKey(reference)];
+        const quotedPost = replyForQuotedPost(reference, itemSource, item?.id, repliesByFloor, loadedQuotedReplies);
         const expanded = Boolean(expandedQuotes[content.instanceKey]);
         return [
           { type: 'topicQuoteSummary', key: content.key, content },
@@ -848,7 +884,7 @@ export const TopicContentList = memo(function TopicContentList({
             : [])
         ];
       }),
-    [expandedQuotes, item?.id, loadedQuotedReplies, repliesByFloor, topicContentItems]
+    [expandedQuotes, item?.id, itemSource, loadedQuotedReplies, repliesByFloor, topicContentItems]
   );
   const firstOpeningRowKey = topicOpeningListItems[0]?.key;
   const firstOpeningRowStartedAt = topicResponseReadyCandidate;
@@ -902,11 +938,12 @@ export const TopicContentList = memo(function TopicContentList({
       item
         ? {
             ...bodyMediaPlanStats,
+            responseReadyAt: topicResponseReadyCandidate,
             source: item.source,
-            topicRef: diagnosticRef('topic', `${item.source}:${item.id}`)
+            topicRef: detailTopicDiagnosticRef
           }
         : undefined,
-    [bodyMediaPlanStats, item]
+    [bodyMediaPlanStats, detailTopicDiagnosticRef, item, topicResponseReadyCandidate]
   );
   const finishBodyMediaDiagnostic = useCallback((aggregate: TopicBodyMediaAggregate) => {
     const trace = beginDiagnosticTrace('media', 'topic-body-media', {
@@ -917,6 +954,11 @@ export const TopicContentList = memo(function TopicContentList({
       cancelCount: aggregate.cancelCount,
       displayCount: aggregate.displayCount,
       errorCount: aggregate.errorCount,
+      ...(catalogReadyElapsedRef.current.topicRef === aggregate.topicRef &&
+      catalogReadyElapsedRef.current.elapsedMs !== undefined
+        ? { catalogReadyElapsedMs: catalogReadyElapsedRef.current.elapsedMs }
+        : {}),
+      ...(aggregate.firstMediaElapsedMs === undefined ? {} : { firstMediaElapsedMs: aggregate.firstMediaElapsedMs }),
       ...(aggregate.firstRowElapsedMs === undefined ? {} : { firstRowElapsedMs: aggregate.firstRowElapsedMs }),
       networkMediaCount: aggregate.networkMediaCount,
       plannedRowCount: aggregate.plannedRowCount,
@@ -1300,6 +1342,8 @@ export const TopicContentList = memo(function TopicContentList({
       options?: {
         context?: 'accepted' | 'quote' | 'topic';
         frameKey?: string;
+        quoteBodyFirst?: boolean;
+        quoteBodyLast?: boolean;
         scopeKey?: string;
         source?: Topic['source'];
       }
@@ -1321,14 +1365,21 @@ export const TopicContentList = memo(function TopicContentList({
         context === 'accepted'
           ? styles.topicAcceptedAnswerBody
           : context === 'quote'
-            ? [styles.quoteBody, styles.quotePanelBody]
+            ? options?.quoteBodyFirst
+              ? [styles.quoteBody, styles.quotePanelBody]
+              : undefined
             : styles.articleBody;
       const contentContainerStyle = [baseContentContainerStyle, trimLeadingStyle, trimTrailingStyle];
       const baseRowStyle =
         context === 'accepted'
           ? [styles.replyListItem, styles.topicAcceptedAnswer, topicColumnStyle]
           : context === 'quote'
-            ? [styles.replyListItem, styles.quoteBox, topicColumnStyle]
+            ? [
+                styles.replyListItem,
+                styles.quoteBox,
+                options?.quoteBodyLast ? styles.quoteRowBottom : styles.quoteRowContinuation,
+                topicColumnStyle
+              ]
             : [styles.replyListItem, topicColumnStyle];
       const rowStyle = [baseRowStyle, trimLeadingStyle, trimTrailingStyle];
       const wrapContent = (children: ReactNode, onLayout?: (event: LayoutChangeEvent) => void) =>
@@ -1631,16 +1682,14 @@ export const TopicContentList = memo(function TopicContentList({
   ]);
 
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(
-    ({ item: listItem }) => {
+    ({ index, item: listItem }) => {
       if (listItem.type === 'topicContent') {
         return renderTopicContentItem(listItem.content);
       }
       if (listItem.type === 'topicQuoteSummary') {
         const { instanceKey, quote } = listItem.content;
         const { reference } = quote;
-        const quotedPost =
-          (reference.topicId === item?.id ? repliesByFloor.get(reference.postNumber) : undefined) ||
-          loadedQuotedReplies[quotedPostReferenceKey(reference)];
+        const quotedPost = replyForQuotedPost(reference, itemSource, item?.id, repliesByFloor, loadedQuotedReplies);
         const expanded = Boolean(expandedQuotes[instanceKey]);
         const canOpenReference = reference.topicId === item?.id || Boolean(quote.topicUrl);
         return renderTopicListItemFrame(
@@ -1691,9 +1740,14 @@ export const TopicContentList = memo(function TopicContentList({
         );
       }
       if (listItem.type === 'topicQuoteContent') {
+        const previousItem = topicListItems[index - 1];
+        const nextItem = topicListItems[index + 1];
         return renderTopicContentItem(listItem.content, {
           context: 'quote',
           frameKey: listItem.key,
+          quoteBodyFirst:
+            previousItem?.type !== 'topicQuoteContent' || previousItem.instanceKey !== listItem.instanceKey,
+          quoteBodyLast: nextItem?.type !== 'topicQuoteContent' || nextItem.instanceKey !== listItem.instanceKey,
           scopeKey: `topic-quote:${listItem.instanceKey}`,
           source: listItem.source
         });
@@ -1951,6 +2005,7 @@ export const TopicContentList = memo(function TopicContentList({
       onVotePoll,
       pollSelections,
       renderTopicContentItem,
+      topicListItems,
       renderTopicListItemFrame,
       requestWindowStartLoad,
       requestReplyLocation,

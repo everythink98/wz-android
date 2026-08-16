@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { QueryClient } from '@tanstack/react-query';
 
 import type { Reply, TopicDetail } from './models';
 import {
@@ -10,6 +11,7 @@ import {
   discourseBookmarkIdFromActionResult,
   topicActionStateKey
 } from './topicActionState';
+import { prepareTopicContent, requirePreparedForumContent } from './topicContentSplit';
 
 const topic: TopicDetail = {
   source: 'linuxdo',
@@ -269,6 +271,66 @@ describe('topic action state patches', () => {
         ]
       }
     ]);
+  });
+
+  it('[REG-PERF-010] recompiles a prepared poll plan after a local vote', () => {
+    const prepared = prepareTopicContent({
+      ...topic,
+      polls: [
+        {
+          id: 'poll-1',
+          name: 'choice',
+          voted: false,
+          options: [
+            { id: 'a', label: 'A', selected: false },
+            { id: 'b', label: 'B', selected: false }
+          ]
+        }
+      ],
+      contentHtml: '<forum-discourse-poll name="choice"></forum-discourse-poll>'
+    });
+
+    const next = applyPollVoteToTopic(prepared, { pollId: 'poll-1', optionIds: ['b'] });
+    const pollRow = requirePreparedForumContent(next?.preparedContent, next?.contentHtml, {
+      polls: next?.polls,
+      role: 'opening',
+      source: 'linuxdo',
+      topicId: '1'
+    }).rows.find((row) => row.type === 'poll');
+
+    expect(next?.preparedContent).not.toBe(prepared.preparedContent);
+    expect(pollRow).toMatchObject({
+      type: 'poll',
+      poll: {
+        voted: true,
+        options: [
+          { id: 'a', selected: false },
+          { id: 'b', selected: true }
+        ]
+      }
+    });
+  });
+
+  it('[REG-PERF-010] keeps the poll plan verifiable after Query structural sharing', () => {
+    const client = new QueryClient();
+    const queryKey = ['topic', 'linuxdo', '1'];
+    const prepared = prepareTopicContent({
+      ...topic,
+      polls: [{ name: 'choice', options: [{ id: 'a', label: 'A' }] }],
+      contentHtml: '<forum-discourse-poll name="choice"></forum-discourse-poll>'
+    });
+    client.setQueryData(queryKey, prepared);
+    client.setQueryData(queryKey, applyPollVoteToTopic(prepared, { pollName: 'choice', optionIds: ['a'] }));
+    const cached = client.getQueryData<TopicDetail>(queryKey)!;
+
+    expect(
+      requirePreparedForumContent(cached.preparedContent, cached.contentHtml, {
+        polls: cached.polls,
+        role: 'opening',
+        source: cached.source,
+        topicId: cached.id
+      }).rows.find((row) => row.type === 'poll')
+    ).toMatchObject({ type: 'poll', poll: { voted: true } });
   });
 
   it('[REG-WRITE-007] applies the authoritative server poll snapshot after a NodeSeek vote', () => {

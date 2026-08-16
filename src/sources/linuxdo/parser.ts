@@ -1,8 +1,13 @@
-import type { TopicPoll } from '@/domain/forum/models';
+import type { QuotedPostMetadata, TopicPoll } from '@/domain/forum/models';
+import type { HTMLElement } from 'node-html-parser';
 import { FORUM_LINK_CARD_TAG } from '@/domain/forum/html';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
-import { discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
-import { discourseContentNeedsCalloutNormalization, normalizeDiscourseCallouts } from '@/sources/discourse/content';
+import { discoursePollPlaceholder, prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
+import {
+  discourseContentNeedsCalloutNormalization,
+  discourseQuoteMetadataFromRoot,
+  normalizeDiscourseCallouts
+} from '@/sources/discourse/content';
 import { LINUXDO_BASE_URL } from './protocol';
 
 function escapeLinuxDoContentAttribute(value: string) {
@@ -26,10 +31,10 @@ function redditSourceUrl(value: unknown) {
   }
 }
 
-export function sanitizeLinuxDoContentHtml(html: unknown, polls: TopicPoll[] | undefined) {
+function linuxDoContentTransform(html: unknown, polls: TopicPoll[] | undefined) {
   const pollNames = new Set((polls || []).map((poll) => poll.name).filter((name): name is string => Boolean(name)));
   const normalizeCallouts = discourseContentNeedsCalloutNormalization(html);
-  return sanitizeContentHtml(html, LINUXDO_BASE_URL, (root) => {
+  return (root: HTMLElement) => {
     root.querySelectorAll('.poll').forEach((node) => {
       const name = String(node.getAttribute('data-poll-name') || '').trim();
       if (name && pollNames.has(name)) {
@@ -48,5 +53,33 @@ export function sanitizeLinuxDoContentHtml(html: unknown, polls: TopicPoll[] | u
     if (normalizeCallouts) {
       normalizeDiscourseCallouts(root);
     }
+  };
+}
+
+export function sanitizeLinuxDoContentHtml(html: unknown, polls: TopicPoll[] | undefined) {
+  return sanitizeContentHtml(html, LINUXDO_BASE_URL, linuxDoContentTransform(html, polls));
+}
+
+export function prepareLinuxDoContent(
+  html: unknown,
+  polls: TopicPoll[] | undefined,
+  { role, topicId }: { role: 'opening' | 'reply'; topicId?: string }
+) {
+  let quotedPosts: QuotedPostMetadata[] = [];
+  const preparedContent = prepareSanitizedForumContent(html, {
+    baseUrl: LINUXDO_BASE_URL,
+    polls,
+    role,
+    source: 'linuxdo',
+    topicId,
+    transformRoot: linuxDoContentTransform(html, polls),
+    ...(role === 'reply'
+      ? {
+          afterSanitizeRoot: (root) => {
+            quotedPosts = discourseQuoteMetadataFromRoot(root, 'linuxdo', topicId);
+          }
+        }
+      : {})
   });
+  return { preparedContent, quotedPosts };
 }

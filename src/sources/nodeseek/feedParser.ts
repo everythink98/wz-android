@@ -12,8 +12,8 @@ import {
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import {
   NODESEEK_BASE_URL,
+  type NodeSeekPageDocument,
   arrayField,
-  extractNodeSeekEmbeddedData,
   isNodeSeekHost,
   nodeSeekAccessRequirementFromListRow,
   nodeSeekCreatedAt,
@@ -95,8 +95,8 @@ function nodeSeekSearchTopicUrl(id: string, href: string) {
   }
 }
 
-export function parseHtmlTopics(html: string) {
-  const root = parseHtml(html);
+export function parseHtmlTopics(document: NodeSeekPageDocument) {
+  const { root } = document;
   const renderedItems: Topic[] = [];
   for (const row of root.querySelectorAll('li.post-list-item')) {
     const link = row.querySelector('.post-title a[href*="post-"]') || row.querySelector('a[href*="post-"]');
@@ -171,10 +171,9 @@ export function parseHtmlTopics(html: string) {
   return items;
 }
 
-export function parseNodeSeekSearchTopics(html: string) {
-  const embedded = extractNodeSeekEmbeddedData(html);
-  const renderedItems = parseHtmlTopics(html);
-  const root = parseHtml(html);
+export function parseNodeSeekSearchTopics(document: NodeSeekPageDocument) {
+  const { embedded, html, root } = document;
+  const renderedItems = parseHtmlTopics(document);
   const hasSearchSurface = Boolean(
     root.querySelector('form[action*="/search"], input[name="q"], .post-list, .empty-state, .notice, .alert')
   );
@@ -212,11 +211,11 @@ export function parseNodeSeekSearchTopics(html: string) {
   };
 }
 
-export function isIncompleteNodeSeekSearchPage(html: string, items: Topic[]) {
+export function isIncompleteNodeSeekSearchPage(document: NodeSeekPageDocument, items: Topic[]) {
   if (items.length) {
     return false;
   }
-  const root = parseHtml(html);
+  const { root } = document;
   const hasResultSurface = Boolean(root.querySelector('li.post-list-item, .post-list, .empty-state, .notice, .alert'));
   if (hasResultSurface) {
     return false;
@@ -246,8 +245,8 @@ export function mergeNodeSeekCategories(categories: Category[]) {
   });
 }
 
-export function parseHtmlCategories(html: string) {
-  const root = parseHtml(html);
+export function parseHtmlCategories(document: NodeSeekPageDocument) {
+  const { root } = document;
   return mergeNodeSeekCategories(
     root.querySelectorAll('a[href*="/categories/"]').flatMap((link) => {
       const id = link.getAttribute('href')?.match(/\/categories\/([^/?#]+)/)?.[1];
@@ -278,8 +277,8 @@ export function searchPath(query: string, page = 1, filter?: NodeSeekSearchFilte
   return `/search?${params.toString()}`;
 }
 
-export function nextSearchPath(html: string, fallbackPage: number) {
-  const root = parseHtml(html);
+export function nextSearchPath(document: NodeSeekPageDocument, fallbackPage: number) {
+  const { root } = document;
   const links = [...root.querySelectorAll('a[rel="next"]'), ...root.querySelectorAll('a[href*="page="]')];
   const href = links
     .map((link) => ({

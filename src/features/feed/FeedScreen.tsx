@@ -74,6 +74,7 @@ export const FeedScreen = memo(function FeedScreen({
   onCategoryChange,
   onFeedFilterChange,
   onFeedSourceChange,
+  onInitialContentReady,
   onManageContentSources,
   onLoadMore,
   onOpenTopic,
@@ -100,6 +101,7 @@ export const FeedScreen = memo(function FeedScreen({
   onCategoryChange: (categoryId: string) => void;
   onFeedFilterChange: (filter: SourceFeedFilter) => void;
   onFeedSourceChange: (source: FeedSource) => void;
+  onInitialContentReady?: () => void;
   onManageContentSources: () => void;
   onLoadMore: () => void;
   onOpenTopic: (topic: Topic) => void;
@@ -122,6 +124,21 @@ export const FeedScreen = memo(function FeedScreen({
     [enabledFeedSources]
   );
   const allSourcesDisabled = enabledFeedSources.length === 0;
+  const initialListLoadedRef = useRef(false);
+  const initialContentReadyReportedRef = useRef(false);
+  const initialContentTerminal = !busy && (allSourcesDisabled || Boolean(feedOutcomeKind));
+  const reportInitialContentReady = useCallback(() => {
+    if (initialContentReadyReportedRef.current) return;
+    initialContentReadyReportedRef.current = true;
+    onInitialContentReady?.();
+  }, [onInitialContentReady]);
+  const handleInitialListLoad = useCallback(() => {
+    initialListLoadedRef.current = true;
+    if (initialContentTerminal) reportInitialContentReady();
+  }, [initialContentTerminal, reportInitialContentReady]);
+  useEffect(() => {
+    if (initialListLoadedRef.current && initialContentTerminal) reportInitialContentReady();
+  }, [initialContentTerminal, reportInitialContentReady]);
   const visibleFeedItems = useMemo(() => (allSourcesDisabled ? [] : feedItems), [allSourcesDisabled, feedItems]);
   const activeFeedSourceIndex = Math.max(
     0,
@@ -422,6 +439,7 @@ export const FeedScreen = memo(function FeedScreen({
             )
           }
           onScroll={handleScroll}
+          onLoad={handleInitialListLoad}
           onScrollBeginDrag={handleScrollBeginDrag}
           scrollEventThrottle={64}
           {...FEED_LIST_PERFORMANCE_PROPS}
@@ -469,6 +487,7 @@ export const FeedScreen = memo(function FeedScreen({
       handleScrollBeginDrag,
       listRef,
       loadingMore,
+      handleInitialListLoad,
       onManageContentSources,
       onRefresh,
       refreshing,

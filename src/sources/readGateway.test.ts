@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => null),
@@ -9,10 +9,17 @@ vi.mock('@/platform/network/networkProxy', () => ({
   recoverReadNetworkRuntime: vi.fn()
 }));
 
-import { getFeed, getReplies, getTopic, getUserProfile, searchTopics } from './readGateway';
+import { getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './readGateway';
 import type { Topic } from '@/domain/forum/models';
+import type { PreparedRepliesResponse, PreparedReply, PreparedTopicDetail } from '@/domain/forum/topicContentSplit';
 
 describe('source gateway reads', () => {
+  it('[REG-PERF-010] exposes prepared content at every Topic cache boundary', () => {
+    expectTypeOf<Awaited<ReturnType<typeof getTopic>>>().toEqualTypeOf<PreparedTopicDetail>();
+    expectTypeOf<Awaited<ReturnType<typeof getReplies>>>().toEqualTypeOf<PreparedRepliesResponse>();
+    expectTypeOf<Awaited<ReturnType<typeof getReply>>>().toEqualTypeOf<PreparedReply>();
+  });
+
   it('reads the yaohuo feed through the shared getFeed interface', async () => {
     const fetcher = vi.fn(
       async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>')
@@ -87,6 +94,10 @@ describe('source gateway reads', () => {
 
     expect(detail).toMatchObject({ source: 'yaohuo', id: '123', contentHtml: '<p>body</p>' });
     expect(detail).toMatchObject({ replies: [], replyCompleteness: 'partial', replyHasMore: true });
+    expect(detail.preparedContent).toMatchObject({
+      contentHtml: '<p>body</p>',
+      contentPlan: { rows: [expect.objectContaining({ type: 'richText' })] }
+    });
     expect(fetcher).not.toHaveBeenCalledWith(expect.stringContaining('book_re.aspx'), expect.anything());
   });
 
@@ -107,6 +118,9 @@ describe('source gateway reads', () => {
     });
 
     expect(result.items[0]).toMatchObject({ author: 'bob', floor: 61 });
+    expect(result.items[0]?.preparedContent).toMatchObject({
+      contentPlan: { rows: [expect.objectContaining({ type: 'richText' })] }
+    });
     expect(fetcher).toHaveBeenCalledWith(
       'https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3',
       expect.objectContaining({ credentials: 'include' })

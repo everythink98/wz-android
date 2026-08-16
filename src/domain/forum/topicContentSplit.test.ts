@@ -1,14 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseHtml } from './html';
+import { domNodeCount } from '../../../tests/helpers/domNodeCount';
+import { withTrackedParseHtml } from '../../../tests/helpers/trackedParseHtml';
 import {
   compileForumContent,
+  prepareReplyContent,
+  prepareTopicContent,
+  requirePreparedForumContent,
   type CompiledForumContent,
   type CompiledForumContentRow,
   type ForumContentAncestorFrame
 } from './topicContentSplit';
+import { topicOpeningPostAsReply } from './quotedPosts';
 
 function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
   return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
+}
+
+function imageUrlsInPlannedRow(row: { html?: string }) {
+  return parseHtml(row.html || '')
+    .querySelectorAll('img')
+    .map((image) => image.getAttribute('src'));
 }
 
 function planForumContent(html: string | undefined, source: 'linuxdo' | 'nodeseek' = 'nodeseek'): { rows: any[] } {
@@ -49,18 +61,6 @@ function maxElementDepth(html: string) {
     children.forEach((node) => pending.push({ depth: current.depth + 1, node }));
   }
   return maxDepth;
-}
-
-function domNodeCount(html: string) {
-  const body = parseHtml(`<body>${html}</body>`).querySelector('body');
-  const pending = [...(body?.childNodes || [])];
-  let count = 0;
-  while (pending.length) {
-    const current = pending.pop()!;
-    count += 1;
-    pending.push(...(current.childNodes || []));
-  }
-  return count;
 }
 
 function rawHtmlStructure(html: string) {
@@ -119,6 +119,104 @@ function parsedBalancedTable(html: string) {
 }
 
 describe('Android topic content splitting', () => {
+  it('[REG-PERF-010] keeps pure block-image paragraphs in bounded rich-text rows', () => {
+    const urls = Array.from({ length: 9 }, (_, index) => `https://img.example/${index}.webp`);
+    const pure = compileForumContent({
+      html: `<p>${urls.map((url) => `<img src="${url}" alt="image">`).join('')}</p>`,
+      role: 'opening',
+      source: 'nodeseek'
+    });
+    const mixed = compileForumContent({
+      html: '<p>caption <img src="https://img.example/mixed.webp" alt="mixed"></p>',
+      role: 'opening',
+      source: 'nodeseek'
+    });
+    const lightbox = compileForumContent({
+      html: '<p><a class="lightbox" href="https://img.example/original.webp"><img src="https://img.example/thumb.webp" alt="lightbox"></a></p>',
+      role: 'opening',
+      source: 'nodeseek'
+    });
+
+    expect(pure.rows.map((row) => row.type)).toEqual(['richText', 'richText', 'richText']);
+    expect(pure.rows.flatMap((row) => ('html' in row ? urls.filter((url) => row.html.includes(url)) : []))).toEqual(
+      urls
+    );
+    expect(pure.rows.map((row) => ('html' in row ? row.html.match(/<img\b/g)?.length || 0 : 0))).toEqual([4, 4, 1]);
+    expect(pure.previewImages.map((image) => image.source)).toEqual(urls);
+    expect(mixed.rows.map((row) => row.type)).toEqual(['richText']);
+    expect(lightbox.rows).toEqual([
+      expect.objectContaining({
+        type: 'richText',
+        html: expect.stringContaining('https://img.example/original.webp')
+      })
+    ]);
+  });
+
+  it('[REG-PERF-017] serializes one sanitized pure-image root only once', async () => {
+    vi.resetModules();
+    const actualSanitizer = await vi.importActual<typeof import('./contentSanitizer')>('./contentSanitizer');
+    const rootToString = vi.fn<() => string>();
+    vi.doMock('./contentSanitizer', () => ({
+      ...actualSanitizer,
+      sanitizeContentHtmlWithRoot: (...args: Parameters<typeof actualSanitizer.sanitizeContentHtmlWithRoot>) => {
+        const sanitized = actualSanitizer.sanitizeContentHtmlWithRoot(...args);
+        const serialize = sanitized.root.toString.bind(sanitized.root);
+        rootToString.mockImplementation(serialize);
+        sanitized.root.toString = rootToString;
+        return sanitized;
+      }
+    }));
+    try {
+      const { prepareSanitizedForumContent } = await import('./topicContentSplit');
+
+      const prepared = prepareSanitizedForumContent(
+        `<p>${Array.from({ length: 2_000 }, (_, index) => `<img src="https://img.example/${index}.webp">`).join('')}</p>`,
+        {
+          baseUrl: 'https://www.nodeseek.com/',
+          role: 'opening',
+          source: 'nodeseek'
+        }
+      );
+
+      expect(prepared.contentPlan.rows).toHaveLength(500);
+      expect(rootToString).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.doUnmock('./contentSanitizer');
+      vi.resetModules();
+    }
+  });
+
+  it('[REG-PERF-010] does not reuse an opening plan when the opening post becomes quoted reply content', () => {
+    const contentHtml =
+      '<aside class="quote" data-post="8" data-topic="77" data-username="bob"><div class="title">bob:</div><blockquote>preview</blockquote></aside>';
+    const topic = prepareTopicContent({
+      source: 'linuxdo',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://linux.do/t/topic/42',
+      createdAt: '2026-08-15T00:00:00.000Z',
+      contentHtml,
+      replies: []
+    });
+    const openingPlan = requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
+      role: 'opening',
+      source: topic.source,
+      topicId: topic.id
+    });
+
+    const quotedReply = prepareReplyContent(topicOpeningPostAsReply(topic), topic.source);
+    const quotedPlan = requirePreparedForumContent(quotedReply.preparedContent, quotedReply.contentHtml, {
+      role: 'reply',
+      source: topic.source
+    });
+
+    expect(openingPlan.rows.map((row) => row.type)).toEqual(['quote']);
+    expect(quotedReply.preparedContent).not.toBe(topic.preparedContent);
+    expect(quotedPlan.rows.length).toBeGreaterThan(0);
+    expect(quotedPlan.rows.every((row) => row.type === 'richText')).toBe(true);
+  });
+
   it('[REG-PERF-010] compiles nested opening quotes and polls into ordered typed parent rows', () => {
     const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
     const html =
@@ -261,11 +359,7 @@ describe('Android topic content splitting', () => {
   });
 
   it('[REG-PERF-010] parses an ordinary native-video document exactly once', async () => {
-    vi.resetModules();
-    const actualHtml = await vi.importActual<typeof import('./html')>('./html');
-    const trackedParseHtml = vi.fn(actualHtml.parseHtml);
-    vi.doMock('./html', () => ({ ...actualHtml, parseHtml: trackedParseHtml }));
-    try {
+    await withTrackedParseHtml(async (trackedParseHtml) => {
       const { compileForumContent: compileTrackedContent } = await import('./topicContentSplit');
 
       const compilation = compileTrackedContent({
@@ -283,10 +377,7 @@ describe('Android topic content splitting', () => {
         })
       ]);
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('[REG-PERF-010] keeps native video rows ordered around a typed poll marker', () => {
@@ -322,11 +413,7 @@ describe('Android topic content splitting', () => {
   });
 
   it('[REG-PERF-010] parses one hostile 2000-image document exactly once', async () => {
-    vi.resetModules();
-    const actualHtml = await vi.importActual<typeof import('./html')>('./html');
-    const trackedParseHtml = vi.fn(actualHtml.parseHtml);
-    vi.doMock('./html', () => ({ ...actualHtml, parseHtml: trackedParseHtml }));
-    try {
+    await withTrackedParseHtml(async (trackedParseHtml) => {
       const { compileForumContent: compileTrackedContent } = await import('./topicContentSplit');
       const html = `<p>${Array.from(
         { length: 2_000 },
@@ -338,18 +425,29 @@ describe('Android topic content splitting', () => {
       expect(compilation.rows).toHaveLength(500);
       expect(compilation.previewImages).toHaveLength(2_000);
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('[REG-PERF-010] keeps attribute decoding linear for one hostile 2000-image document', () => {
+    const parseSpy = vi.spyOn(JSON, 'parse');
+    const html = `<p>${Array.from(
+      { length: 2_000 },
+      (_, index) => `<img src="https://img.example/${index}.webp" alt="image-${index}">`
+    ).join('')}</p>`;
+
+    try {
+      const compilation = compileForumContent({ html, role: 'reply', source: 'nodeseek' });
+
+      expect(compilation.rows).toHaveLength(500);
+      expect(compilation.previewImages).toHaveLength(2_000);
+      expect(parseSpy.mock.calls.length).toBeLessThanOrEqual(20_000);
     } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
+      parseSpy.mockRestore();
     }
   });
 
   it('[REG-PERF-010] parses one hostile document with 1000 typed markers exactly once', async () => {
-    vi.resetModules();
-    const actualHtml = await vi.importActual<typeof import('./html')>('./html');
-    const trackedParseHtml = vi.fn(actualHtml.parseHtml);
-    vi.doMock('./html', () => ({ ...actualHtml, parseHtml: trackedParseHtml }));
-    try {
+    await withTrackedParseHtml(async (trackedParseHtml) => {
       const { compileForumContent: compileTrackedContent } = await import('./topicContentSplit');
       const poll = { name: 'choice', options: [{ id: 'yes', label: 'Yes' }] };
       const html = Array.from(
@@ -363,18 +461,11 @@ describe('Android topic content splitting', () => {
       expect(compilation.rows.filter((row) => row.type === 'richText')).toHaveLength(1_000);
       expect(compilation.rows.filter((row) => row.type === 'poll')).toHaveLength(1_000);
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('[REG-PERF-010] bounds over-deep opening quote candidates in the single compiler parse', async () => {
-    vi.resetModules();
-    const actualHtml = await vi.importActual<typeof import('./html')>('./html');
-    const trackedParseHtml = vi.fn(actualHtml.parseHtml);
-    vi.doMock('./html', () => ({ ...actualHtml, parseHtml: trackedParseHtml }));
-    try {
+    await withTrackedParseHtml(async (trackedParseHtml) => {
       const { compileForumContent: compileTrackedContent } = await import('./topicContentSplit');
       const html = `${'<aside>'.repeat(1_000)}body${'</aside>'.repeat(1_000)}`;
 
@@ -391,10 +482,7 @@ describe('Android topic content splitting', () => {
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.every((row) => row.html.length <= 16_384)).toBe(true);
       expect(rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('[REG-PERF-010] keeps a 2000-image paragraph ordered while bounding every planned row', () => {
@@ -403,14 +491,10 @@ describe('Android topic content splitting', () => {
 
     const plan = planForumContent(html);
     const rows = plan.rows;
-    const plannedUrls = rows.flatMap((row) =>
-      parseHtml(row.html)
-        .querySelectorAll('img')
-        .map((image) => image.getAttribute('src'))
-    );
+    const plannedUrls = rows.flatMap(imageUrlsInPlannedRow);
 
     expect(rows).toHaveLength(500);
-    expect(rows.every((row) => parseHtml(row.html).querySelectorAll('img').length <= 4)).toBe(true);
+    expect(rows.every((row) => imageUrlsInPlannedRow(row).length <= 4)).toBe(true);
     expect(plannedUrls).toEqual(sourceUrls);
   });
 
@@ -947,13 +1031,10 @@ describe('Android topic content splitting', () => {
   });
 
   it('[REG-TOPIC-096] keeps preview descriptors in parser fallback without a second parse', async () => {
-    vi.resetModules();
-    const actualHtml = await vi.importActual<typeof import('./html')>('./html');
-    const trackedParseHtml = vi.fn(() => {
-      throw new Error('parser unavailable');
-    });
-    vi.doMock('./html', () => ({ ...actualHtml, parseHtml: trackedParseHtml }));
-    try {
+    await withTrackedParseHtml(async (trackedParseHtml) => {
+      trackedParseHtml.mockImplementation(() => {
+        throw new Error('parser unavailable');
+      });
       const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
       const compilation = compileWithFallback({
         html: [
@@ -968,10 +1049,7 @@ describe('Android topic content splitting', () => {
         expect.objectContaining({ referrerPolicy: 'no-referrer', source: 'https://img.example/lazy.webp' })
       ]);
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.doUnmock('./html');
-      vi.resetModules();
-    }
+    });
   });
 
   it('[REG-PERF-010] fail-closes every unsafe row in a multi-fragment parser fallback', async () => {
@@ -1109,13 +1187,7 @@ describe('Android topic content splitting', () => {
     expect(itemFrames.map((frame) => frame?.part)).toEqual(['first', 'middle', 'last', 'only']);
     expect(new Set(itemFrames.slice(0, 3).map((frame) => frame?.semanticId))).toEqual(new Set(['node-0.0']));
     expect(rows.every((row) => !row.html.includes('data-wz-'))).toBe(true);
-    expect(
-      rows.flatMap((row) =>
-        parseHtml(row.html)
-          .querySelectorAll('img')
-          .map((image) => image.getAttribute('src'))
-      )
-    ).toEqual(sourceUrls);
+    expect(rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
   });
 
   it('[REG-PERF-010] gives oversized details fragments one stable group and unique part semantics', () => {
@@ -1136,15 +1208,7 @@ describe('Android topic content splitting', () => {
     expect(slices.map((slice) => slice?.semanticId)).toEqual(['node-0', 'node-0', 'node-0']);
     expect(slices.map((slice) => slice?.part)).toEqual(['middle', 'middle', 'last']);
     expect(plan.rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
-    expect(
-      plan.rows.flatMap((row) =>
-        'html' in row
-          ? parseHtml(row.html)
-              .querySelectorAll('img')
-              .map((image) => image.getAttribute('src'))
-          : []
-      )
-    ).toEqual(sourceUrls);
+    expect(plan.rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
   });
 
   it('[REG-PERF-010] keeps one oversized Discourse callout identity while showing its title once', () => {
@@ -1186,7 +1250,7 @@ describe('Android topic content splitting', () => {
 
     expect(plan.rows).toHaveLength(2);
     expect(plan.rows[0]).toMatchObject({ calloutType: 'tip', titleLabel: 'Tip title' });
-    expect(plan.rows[1]).toMatchObject({ html: '<p>Short body</p>' });
+    expect('html' in plan.rows[1] ? plan.rows[1].html : '').toBe('<p>Short body</p>');
     expect(logicalSliceForTag(plan.rows[1], 'callout')).toMatchObject({ part: 'last', semanticId: 'node-0' });
   });
 
@@ -1214,13 +1278,7 @@ describe('Android topic content splitting', () => {
     const plan = planForumContent(html, 'linuxdo');
     expect(plan.rows[0]).toMatchObject({ titleLabel: '内容过于复杂，请在原站查看。' });
     expect(plan.rows.every((row) => !('html' in row) || row.html.length <= 16_384)).toBe(true);
-    expect(
-      plan.rows.flatMap((row) =>
-        parseHtml(row.html)
-          .querySelectorAll('img')
-          .map((image) => image.getAttribute('src'))
-      )
-    ).toEqual(sourceUrls);
+    expect(plan.rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
   });
 
   it('[REG-PERF-010] never returns an oversized parser-fallback row for hostile text', async () => {

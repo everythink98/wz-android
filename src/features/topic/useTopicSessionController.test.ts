@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
 import { createTopicImageDeriver } from './model/topicDerivedData';
+import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import {
   filterTopicSessionReplies,
   replyContentAfterComposerClose,
@@ -25,12 +26,13 @@ describe('topic local session helpers', () => {
       { author: 'alice', contentHtml: '<p>first</p>', createdAt: '', floor: 1 },
       { author: 'bob', contentHtml: '<p>needle</p><img src="https://img/2.png">', createdAt: '', floor: 2 },
       { author: 'alice', contentHtml: '<p>third needle</p>', createdAt: '', floor: 3 }
-    ];
+    ].map((reply) => prepareReplyContent(reply, 'linuxdo'));
     const filter = (replyFilter: 'all' | 'author' | 'images', commentQuery = '') =>
       filterTopicSessionReplies({
         commentQuery,
         inlineSizedImageUrls: {},
         replyFilter,
+        source: 'linuxdo',
         topicDetail: { ...topic, replies },
         topicImageDeriver: createTopicImageDeriver(),
         topicReplies: replies

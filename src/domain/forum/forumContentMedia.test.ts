@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { parseHtml } from './html';
 import { normalizeForumContentMediaNodes, normalizeForumStickerMediaHtml } from './forumContentMedia';
@@ -10,6 +10,89 @@ function normalizeForumContentMediaHtml(html: string) {
 }
 
 describe('forum content media normalization', () => {
+  it('[REG-PERF-013] analyzes each unique non-empty image URL at most once per normalization', () => {
+    const urls = Array.from({ length: 1_413 }, (_, index) => `https://img.example/${index}.webp`);
+    const root = parseHtml(urls.map((url) => `<img src="${url}">`).join(''));
+    const NativeUrl = globalThis.URL;
+    let constructionCount = 0;
+    let exceptionCount = 0;
+    const CountingUrl = new Proxy(NativeUrl, {
+      construct(target, argumentsList, newTarget) {
+        constructionCount += 1;
+        try {
+          return Reflect.construct(target, argumentsList, newTarget);
+        } catch (error) {
+          exceptionCount += 1;
+          throw error;
+        }
+      }
+    });
+    vi.stubGlobal('URL', CountingUrl);
+
+    try {
+      const result = normalizeForumContentMediaNodes(root);
+
+      expect(result.previewImages).toHaveLength(urls.length);
+      expect(constructionCount).toBeLessThanOrEqual(urls.length);
+      expect(exceptionCount).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('[REG-PERF-013] reuses the URL analysis when a mixed-text sticker is relaid out', () => {
+    const root = parseHtml(
+      '<p>正文 <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01"> 结尾</p>'
+    );
+    const NativeUrl = globalThis.URL;
+    let constructionCount = 0;
+    vi.stubGlobal(
+      'URL',
+      new Proxy(NativeUrl, {
+        construct(target, argumentsList, newTarget) {
+          constructionCount += 1;
+          return Reflect.construct(target, argumentsList, newTarget);
+        }
+      })
+    );
+
+    try {
+      normalizeForumContentMediaNodes(root);
+      expect(constructionCount).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('[REG-PERF-010] indexes media from one selector pass instead of rescanning image paragraphs', () => {
+    const root = parseHtml(
+      `<p>${Array.from(
+        { length: 20 },
+        (_, index) => `<img class="embedded_image" src="https://img.example/${index}.webp">`
+      ).join('')}</p>`
+    );
+    const paragraph = root.querySelector('p')!;
+    const rootQuery = vi.spyOn(root, 'querySelectorAll');
+    const paragraphQuery = vi.spyOn(paragraph, 'querySelectorAll');
+
+    normalizeForumContentMediaNodes(root, { dynamicV2exImages: true });
+
+    expect(rootQuery.mock.calls.map(([selector]) => selector)).toEqual(['*']);
+    expect(paragraphQuery).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-010] skips sticker HTML serialization for ordinary giant image paragraphs', () => {
+    const root = parseHtml(
+      `<p>${Array.from({ length: 2_000 }, (_, index) => `<img src="https://img.example/${index}.webp">`).join('')}</p>`
+    );
+    const paragraph = root.querySelector('p')!;
+    const innerHtml = vi.spyOn(paragraph, 'innerHTML', 'get');
+
+    normalizeForumContentMediaNodes(root);
+
+    expect(innerHtml).not.toHaveBeenCalled();
+  });
+
   it('[REG-NOTIFY-057] upgrades private-message stickers without taking over ordinary Markdown images', () => {
     const html =
       '<p><strong>私信正文</strong> <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/04.png" alt="ac04"> <img src="https://example.com/ordinary.png" alt="ordinary"></p>';

@@ -79,13 +79,6 @@ describe('Android HTML rendering styles', () => {
       trimLeading: false,
       trimTrailing: false
     });
-    for (const continuation of ['first', 'middle', 'last', 'only'] as const) {
-      expect(
-        htmlRenderingStyles.contentContinuationForBoundary(
-          htmlRenderingStyles.contentBoundaryForContinuation(continuation)
-        )
-      ).toBe(continuation);
-    }
   });
 
   it('[REG-TOPIC-081] defines one shared article rhythm and semantic attachment card', () => {

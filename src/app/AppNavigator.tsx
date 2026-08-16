@@ -37,8 +37,8 @@ function MainTabsHost({
       screenOptions={({ route }) => {
         const item = tabNavItems.find((entry) => entry.value === route.name) || tabNavItems[0];
         return {
+          freezeOnBlur: true,
           headerShown: false,
-          lazy: false,
           tabBarShowLabel: false,
           tabBarStyle: styles.nav,
           tabBarItemStyle: styles.navItem,

@@ -11,7 +11,6 @@ import type { HtmlRenderers } from './types';
 import { createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
 import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
-import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { useTopicBodyMediaLease } from '../media/TopicBodyMediaCoordinator';
@@ -22,14 +21,6 @@ import {
   type MediaReferrerContext,
   type MediaReferrerPolicy
 } from '@/domain/forum/mediaReferrer';
-
-export async function readManagedWebViewCookieHeader(url: string) {
-  const result = await readManagedCookieHeader(url);
-  if (result.status === 'ok') {
-    return result.header;
-  }
-  throw new Error(result.status === 'unsupported' ? '原生 Cookie 读取能力不可用' : result.message);
-}
 
 function isVideoStickerUrl(url: string) {
   return /\.(?:webm|mp4|mov)(?:[?#].*)?$/i.test(url);

@@ -26,7 +26,7 @@ import {
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
@@ -529,23 +529,7 @@ export const SearchScreen = memo(function SearchScreen({
         if (!authNotice) {
           return null;
         }
-        const noticeBoxStyle =
-          authNotice.tone === 'danger'
-            ? styles.authNoticeBoxDanger
-            : authNotice.tone === 'warning'
-              ? styles.authNoticeBoxWarning
-              : styles.authNoticeBoxNeutral;
-        const noticeTextStyle =
-          authNotice.tone === 'danger'
-            ? styles.authNoticeTextDanger
-            : authNotice.tone === 'warning'
-              ? styles.authNoticeTextWarning
-              : styles.authNoticeTextNeutral;
-        return (
-          <View style={[styles.authNoticeBox, noticeBoxStyle]}>
-            <Text style={[styles.authNoticeText, noticeTextStyle]}>{authNotice.message}</Text>
-          </View>
-        );
+        return <AuthNoticeBox notice={authNotice} />;
       }
       if (item.type === 'groupLoading') {
         return <LoadingState text={`${item.group.label} 搜索中...`} />;

@@ -3,7 +3,7 @@ import { createReplyTextIndexForQuery, filterRepliesByQuery } from './model/repl
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
 import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from './model/topicDerivedData';
-import type { Reply, ReplyOrder, Topic, TopicDetail } from '@/domain/forum/models';
+import type { Reply, ReplyOrder, Source, Topic, TopicDetail } from '@/domain/forum/models';
 
 export function replyContentAfterComposerClose(content: string, replyEditTarget: ReplyEditTarget | null) {
   return replyEditTarget ? '' : content;
@@ -23,6 +23,7 @@ export function filterTopicSessionReplies({
   commentQuery,
   inlineSizedImageUrls,
   replyFilter,
+  source,
   topicDetail,
   topicImageDeriver,
   topicReplies
@@ -30,6 +31,7 @@ export function filterTopicSessionReplies({
   commentQuery: string;
   inlineSizedImageUrls: InlineSizedImageUrlMap;
   replyFilter: ReplyFilter;
+  source: Source;
   topicDetail: TopicDetail | null;
   topicImageDeriver: TopicImageDeriver;
   topicReplies: Reply[];
@@ -38,7 +40,7 @@ export function filterTopicSessionReplies({
   if (replyFilter === 'author') {
     replies = topicDetail ? replies.filter((reply) => reply.author === topicDetail.author) : replies;
   } else if (replyFilter === 'images') {
-    replies = filterRepliesWithImages(replies, inlineSizedImageUrls, topicImageDeriver);
+    replies = filterRepliesWithImages(replies, inlineSizedImageUrls, topicImageDeriver, source);
   }
   return filterRepliesByQuery(replies, commentQuery, createReplyTextIndexForQuery(topicReplies, commentQuery));
 }

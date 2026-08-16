@@ -91,5 +91,3 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSet
     }
   });
 }
-
-export type LoginWebViewStyles = ReturnType<typeof createLoginWebViewStyles>;

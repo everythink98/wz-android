@@ -1,8 +1,23 @@
-import { describe, expect, it, jest } from '@jest/globals';
-import { renderHook } from '@testing-library/react-native';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { act, renderHook } from '@testing-library/react-native';
 import { useAppRuntime } from '@/app/useAppRuntime';
+import { useInitialForegroundRuntime } from '@/app/useInitialForegroundRuntime';
+import type { ReaderData } from '@/domain/reader/readerData';
 
 const mockUseAccountRuntime = jest.fn();
+const mockUseAppUpdateRuntime = jest.fn();
+const mockUseForumCatalogRuntime = jest.fn();
+let mockReaderData: ReaderData | undefined;
+let mockReaderDataLoaded = true;
+let mockInitialForegroundReady = false;
+let mockScreen = 'feed';
+const mockReadGateway = { getEmojiUrls: jest.fn() };
+const mockFeedReadGateway = { getEmojiUrls: jest.fn() };
+const mockForumSessionEpochs = { linuxdo: 7, nodeseek: 7, xiaoyinsi: 7, yaohuo: 7 };
+const mockFeedSessionEpochs = { linuxdo: 3, nodeseek: 3, xiaoyinsi: 3, yaohuo: 3 };
+const mockOnFeedInitialContentReady = jest.fn(() => {
+  mockInitialForegroundReady = true;
+});
 
 jest.mock('@/app/useAppLifecycleRuntime', () => ({
   useAppLifecycleRuntime: () => ({
@@ -10,12 +25,15 @@ jest.mock('@/app/useAppLifecycleRuntime', () => ({
     changeScreen: jest.fn(),
     getCurrentScreen: jest.fn(() => 'feed'),
     height: 800,
+    initialForegroundReady: mockInitialForegroundReady,
     loginNavigation: {},
     notify: jest.fn(),
+    onCatalogSettled: jest.fn(),
+    onFeedInitialContentReady: mockOnFeedInitialContentReady,
     onReady: jest.fn(),
     onScreenChange: jest.fn(),
     openUserRoute: jest.fn(),
-    screen: 'more',
+    screen: mockScreen,
     width: 400
   })
 }));
@@ -24,11 +42,11 @@ jest.mock('@/app/useReaderRuntime', () => ({
   useReaderRuntime: () => {
     const { createEmptyReaderData } =
       jest.requireActual<typeof import('@/domain/reader/readerData')>('@/domain/reader/readerData');
-    const readerData = createEmptyReaderData();
+    const readerData = (mockReaderData ||= createEmptyReaderData());
     return {
       commitReaderData: jest.fn(),
       readerData,
-      readerDataLoaded: true,
+      readerDataLoaded: mockReaderDataLoaded,
       readerDataRef: { current: readerData },
       replaceReaderData: jest.fn(),
       waitForReaderDataSave: jest.fn(async () => undefined)
@@ -113,11 +131,14 @@ jest.mock('@/features/account/useAccountRuntime', () => ({
       read: {
         accountIdentityPending: false,
         accountSessionViewModels: { nodeseek: { isLoggedIn: false } },
-        forumSessionEpochs: { linuxdo: 0, nodeseek: 0, xiaoyinsi: 0, yaohuo: 0 },
+        feedReadGateway: mockFeedReadGateway,
+        feedSessionEpochs: mockFeedSessionEpochs,
+        forumSessionEpochs: mockForumSessionEpochs,
         getLinuxDoUserAgent: jest.fn(),
         getNodeSeekUserAgent: jest.fn(),
         identityBarriers: {},
-        readGateway: { getEmojiUrls: jest.fn() },
+        identityReconciliationPending: false,
+        readGateway: mockReadGateway,
         reconcileAccountStatus: jest.fn(),
         statusBusy: false
       },
@@ -132,7 +153,10 @@ jest.mock('@/features/account/useAccountRuntime', () => ({
 }));
 
 jest.mock('@/platform/update/useAppUpdateRuntime', () => ({
-  useAppUpdateRuntime: () => ({ appUpdateBusy: false, appUpdateDownloading: false, appUpdateInfo: null })
+  useAppUpdateRuntime: (options: unknown) => {
+    mockUseAppUpdateRuntime(options);
+    return { appUpdateBusy: false, appUpdateDownloading: false, appUpdateInfo: null };
+  }
 }));
 
 jest.mock('@/features/notifications/useNotificationsRuntime', () => ({
@@ -144,12 +168,27 @@ jest.mock('@/features/notifications/useNotificationsRuntime', () => ({
   })
 }));
 
-jest.mock('@/app/useForumCatalogRuntime', () => ({ useForumCatalogRuntime: () => ({ categories: [] }) }));
+jest.mock('@/app/useForumCatalogRuntime', () => ({
+  useForumCatalogRuntime: (options: unknown) => {
+    mockUseForumCatalogRuntime(options);
+    return { categories: [], settled: true };
+  }
+}));
 jest.mock('@/app/useAppDiagnosticsRuntime', () => ({ useAppDiagnosticsRuntime: () => ({ metadata: {} }) }));
 jest.mock('@/app/useAppBackHandler', () => ({ useAppBackHandler: jest.fn() }));
 jest.mock('@/app/useContentSourceQueryCleanup', () => ({ useContentSourceQueryCleanup: jest.fn() }));
 
 describe('app runtime startup', () => {
+  beforeEach(() => {
+    mockReaderDataLoaded = true;
+    mockInitialForegroundReady = false;
+    mockScreen = 'feed';
+    mockOnFeedInitialContentReady.mockClear();
+    mockUseAccountRuntime.mockClear();
+    mockUseAppUpdateRuntime.mockClear();
+    mockUseForumCatalogRuntime.mockClear();
+  });
+
   it('[REG-PROXY-001][REG-PROXY-011] exposes local routes while keeping WebViews blocked during proxy load', async () => {
     const hook = await renderHook(() => useAppRuntime());
 
@@ -159,5 +198,119 @@ describe('app runtime startup', () => {
     expect(mockUseAccountRuntime).toHaveBeenCalledWith(
       expect.objectContaining({ webViewBlockMessage: '代理状态读取中。' })
     );
+  });
+
+  it('[REG-PERF-015] shares one Reader index and ignores unrelated ReaderData changes', async () => {
+    mockReaderData = undefined;
+    const hook = await renderHook(
+      ({ revision }: { revision: number }) => {
+        void revision;
+        return useAppRuntime();
+      },
+      { initialProps: { revision: 0 } }
+    );
+    const routes = hook.result.current.routes!;
+    const feedIndex = (routes.feedRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex;
+
+    expect(feedIndex).toBeDefined();
+    expect((routes.searchRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex).toBe(feedIndex);
+    expect((routes.libraryRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex).toBe(feedIndex);
+    expect((routes.userRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex).toBe(feedIndex);
+
+    mockReaderData = { ...mockReaderData!, followedUsers: { ...mockReaderData!.followedUsers } };
+    await act(async () => hook.rerender({ revision: 1 }));
+    expect(
+      (hook.result.current.routes!.feedRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex
+    ).toBe(feedIndex);
+
+    mockReaderData = { ...mockReaderData!, favorites: { ...mockReaderData!.favorites } };
+    await act(async () => hook.rerender({ revision: 2 }));
+    expect(
+      (hook.result.current.routes!.feedRouteRuntime as unknown as { topicStateIndex?: unknown }).topicStateIndex
+    ).not.toBe(feedIndex);
+  });
+
+  it('[REG-PERF-014] settles only after Feed and Categories reach terminal state', async () => {
+    const hook = await renderHook(() => useInitialForegroundRuntime());
+
+    expect(hook.result.current.initialForegroundReady).toBe(false);
+    await act(async () => hook.result.current.onFeedInitialContentReady());
+    expect(hook.result.current.initialForegroundReady).toBe(false);
+    await act(async () => hook.result.current.onCatalogSettled(true));
+    expect(hook.result.current.initialForegroundReady).toBe(true);
+    await act(async () => hook.result.current.onCatalogSettled(false));
+    expect(hook.result.current.initialForegroundReady).toBe(true);
+  });
+
+  it('[REG-PERF-014] ignores the empty catalog projection before ReaderData is loaded', async () => {
+    mockReaderDataLoaded = false;
+    const hook = await renderHook(
+      ({ revision }: { revision: number }) => {
+        void revision;
+        return useAppRuntime();
+      },
+      { initialProps: { revision: 0 } }
+    );
+
+    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ active: false, onSettled: undefined })
+    );
+
+    mockReaderDataLoaded = true;
+    await act(async () => hook.rerender({ revision: 1 }));
+    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ active: true, onSettled: expect.any(Function) })
+    );
+  });
+
+  it('[REG-PERF-014] starts foreground transport immediately and background work after first Feed content', async () => {
+    const hook = await renderHook(
+      ({ revision }: { revision: number }) => {
+        void revision;
+        return useAppRuntime();
+      },
+      { initialProps: { revision: 0 } }
+    );
+
+    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ active: true }));
+    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ readGateway: mockFeedReadGateway, sessionEpochs: mockFeedSessionEpochs })
+    );
+    expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: false }));
+    expect(mockUseAppUpdateRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ autoCheck: false }));
+    expect(hook.result.current.routes!.feedRouteRuntime.account.readGateway).toBe(mockFeedReadGateway);
+    expect(hook.result.current.routes!.feedRouteRuntime.account.sessionEpochs).toBe(mockFeedSessionEpochs);
+    expect(hook.result.current.routes!.topicRouteRuntime.account.readGateway).toBe(mockReadGateway);
+    expect(hook.result.current.routes!.topicRouteRuntime.account.sessionEpochs).toBe(mockForumSessionEpochs);
+    expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: false }));
+
+    await act(async () =>
+      (
+        hook.result.current.routes!.feedRouteRuntime as unknown as {
+          onInitialContentReady?: () => void;
+        }
+      ).onInitialContentReady?.()
+    );
+    await act(async () => hook.rerender({ revision: 1 }));
+    expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: true }));
+    expect(mockUseAppUpdateRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ autoCheck: true }));
+  });
+
+  it('[REG-PERF-014] lets More own the initial account batch when Feed has not settled', async () => {
+    const hook = await renderHook(
+      ({ revision }: { revision: number }) => {
+        void revision;
+        return useAppRuntime();
+      },
+      { initialProps: { revision: 0 } }
+    );
+
+    expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: false }));
+
+    mockScreen = 'more';
+    await act(async () => hook.rerender({ revision: 1 }));
+
+    expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ ready: true }));
+    expect(mockUseAppUpdateRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ autoCheck: false }));
   });
 });

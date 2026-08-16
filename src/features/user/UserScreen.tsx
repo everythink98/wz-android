@@ -9,7 +9,7 @@ import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { Avatar } from '@/ui/avatar/Avatar';
@@ -169,18 +169,6 @@ export const UserScreen = memo(function UserScreen({
   const pendingScrollTopRef = useRef(false);
   const followTarget = profile;
   const userAuthNotice = error ? authNoticeForSourceError(error) : null;
-  const userAuthNoticeBoxStyle =
-    userAuthNotice?.tone === 'danger'
-      ? styles.authNoticeBoxDanger
-      : userAuthNotice?.tone === 'warning'
-        ? styles.authNoticeBoxWarning
-        : styles.authNoticeBoxNeutral;
-  const userAuthNoticeTextStyle =
-    userAuthNotice?.tone === 'danger'
-      ? styles.authNoticeTextDanger
-      : userAuthNotice?.tone === 'warning'
-        ? styles.authNoticeTextWarning
-        : styles.authNoticeTextNeutral;
   useEffect(() => {
     autoLoadArmedRef.current = false;
     setUserTab('topics');
@@ -283,11 +271,13 @@ export const UserScreen = memo(function UserScreen({
           </View>
         ) : null}
         {error ? (
-          <View style={userAuthNotice ? [styles.authNoticeBox, userAuthNoticeBoxStyle] : styles.errorBox}>
-            <Text style={userAuthNotice ? [styles.authNoticeText, userAuthNoticeTextStyle] : styles.errorText}>
-              {userAuthNotice?.message || error.message}
-            </Text>
-          </View>
+          userAuthNotice ? (
+            <AuthNoticeBox notice={userAuthNotice} />
+          ) : (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error.message}</Text>
+            </View>
+          )
         ) : null}
         {busy ? <LoadingState text="正在读取用户主页..." /> : null}
         <View style={styles.actions}>
@@ -336,8 +326,6 @@ export const UserScreen = memo(function UserScreen({
       topics.length,
       user,
       userAuthNotice,
-      userAuthNoticeBoxStyle,
-      userAuthNoticeTextStyle,
       userTab
     ]
   );

@@ -3,11 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   discourseAvatarUrl,
-  discourseQuoteMetadata,
+  discourseQuoteMetadataFromRoot,
   stripDiscourseCalloutMarkersFromExcerpt
 } from '@/sources/discourse/content';
 import { compileForumContent, discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
+import { parseHtml } from '@/domain/forum/html';
+
+function discourseQuoteMetadata(html: string, source: 'linuxdo' | 'xiaoyinsi', topicId?: string) {
+  const root = parseHtml(html);
+  const quotedPosts = discourseQuoteMetadataFromRoot(root, source, topicId);
+  return {
+    html: root.toString(),
+    quotedPosts
+  };
+}
 
 describe('portable Discourse content parts', () => {
   it('[REG-TOPIC-056] renders a leading warning marker as semantic Callout content', () => {

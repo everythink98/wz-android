@@ -15,7 +15,7 @@ import { replyImageUploadSupported } from '@/sources/imageUpload';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -140,35 +140,28 @@ export const TopicScreen = memo(function TopicScreen({
     );
   const topicReadableError = topicError ? readableTopicError(topicError.message) : '';
   const topicAuthNotice = topicError ? authNoticeForSourceError(topicError) : null;
-  const topicAuthNoticeBoxStyle =
-    topicAuthNotice?.tone === 'danger'
-      ? styles.authNoticeBoxDanger
-      : topicAuthNotice?.tone === 'warning'
-        ? styles.authNoticeBoxWarning
-        : styles.authNoticeBoxNeutral;
-  const topicAuthNoticeTextStyle =
-    topicAuthNotice?.tone === 'danger'
-      ? styles.authNoticeTextDanger
-      : topicAuthNotice?.tone === 'warning'
-        ? styles.authNoticeTextWarning
-        : styles.authNoticeTextNeutral;
+  const topicErrorActions = topicError ? (
+    <View style={styles.actions}>
+      {item.source === 'linuxdo' && topicError.kind === 'verification-required' ? (
+        <AppButton label="去验证" onPress={chrome.verifyLinuxDo} />
+      ) : null}
+      {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? (
+        <AppButton label="去验证" onPress={chrome.verifyNodeSeek} />
+      ) : null}
+      <AppButton label="重试" onPress={refreshWholeTopic} />
+    </View>
+  ) : null;
   const headerState = (
     <>
       {topicError ? (
-        <View style={topicAuthNotice ? [styles.authNoticeBox, topicAuthNoticeBoxStyle] : styles.errorBox}>
-          <Text style={topicAuthNotice ? [styles.authNoticeText, topicAuthNoticeTextStyle] : styles.errorText}>
-            {topicAuthNotice?.message || topicReadableError}
-          </Text>
-          <View style={styles.actions}>
-            {item.source === 'linuxdo' && topicError.kind === 'verification-required' ? (
-              <AppButton label="去验证" onPress={chrome.verifyLinuxDo} />
-            ) : null}
-            {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? (
-              <AppButton label="去验证" onPress={chrome.verifyNodeSeek} />
-            ) : null}
-            <AppButton label="重试" onPress={refreshWholeTopic} />
+        topicAuthNotice ? (
+          <AuthNoticeBox notice={topicAuthNotice}>{topicErrorActions}</AuthNoticeBox>
+        ) : (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{topicReadableError}</Text>
+            {topicErrorActions}
           </View>
-        </View>
+        )
       ) : null}
       {!topic && !topicError ? <LoadingState text="正在读取主题..." /> : null}
     </>

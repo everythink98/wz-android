@@ -20,6 +20,7 @@ import type { ReadGateway } from '@/sources/readGateway';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
 const mockSearchNavigationDispatch = jest.fn();
+let lastSearchListData: readonly unknown[] = [];
 
 jest.mock('@react-navigation/native', () => ({
   ...(jest.requireActual('@react-navigation/native') as Record<string, unknown>),
@@ -73,6 +74,7 @@ jest.mock('@shopify/flash-list', () => {
         scrollToOffset: (options: { offset: number; animated: boolean }) => void;
       }>
     ) {
+      lastSearchListData = data;
       ReactModule.useImperativeHandle(ref, () => ({
         recordInteraction: () => undefined,
         recomputeViewableItems: () => undefined,
@@ -188,7 +190,8 @@ function createSearchRouteRuntime({
     },
     catalogCategories: categories,
     notify: jest.fn(),
-    readerData
+    readerData,
+    topicStateIndex: createTopicListItemStateIndex(readerData)
   };
 }
 
@@ -475,7 +478,7 @@ describe('Search state', () => {
     expect(view.getByText('输入关键词后开始搜索')).toBeTruthy();
   });
 
-  it('[REG-SEARCH-025] keeps account requirements source-local through the real Search route', async () => {
+  it('[REG-SEARCH-025][REG-PERF-018] keeps settled route results stable across an unrelated runtime rerender', async () => {
     appQueryClient.clear();
     const enabledSources = ['xiaoyinsi', 'yaohuo'] as const;
     const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
@@ -524,6 +527,16 @@ describe('Search state', () => {
     await waitFor(() => expect(view.getByText('小隐寺公开搜索正常结算')).toBeTruthy());
     expect(view.getAllByText(loginMessage)).toHaveLength(1);
     expect(view.getByLabelText('搜索关键词').props.value).toBe('codex');
+    expect(searchTopics).toHaveBeenCalledTimes(2);
+    const settledListItems = lastSearchListData;
+
+    await view.rerender(
+      <SearchRouteRuntimeProvider value={{ ...runtime, notify: jest.fn() }}>
+        <SearchRoute />
+      </SearchRouteRuntimeProvider>
+    );
+
+    expect(lastSearchListData).toBe(settledListItems);
     expect(searchTopics).toHaveBeenCalledTimes(2);
   });
 

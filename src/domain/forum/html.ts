@@ -14,6 +14,14 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+export function recordText(record: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if ((typeof value === 'string' || typeof value === 'number') && String(value).trim()) return String(value).trim();
+  }
+  return '';
+}
+
 function htmlEntityCodePoint(entity: string, codePoint: number) {
   try {
     return String.fromCodePoint(codePoint);
@@ -134,13 +142,13 @@ export function parseHtml(value: unknown, { parsePreContent = false }: { parsePr
   });
 }
 
-export function hasRenderableHtmlContent(value: unknown) {
-  if (textContentFromHtml(value)) {
+export function hasRenderableHtmlContent(value: unknown, parsedRoot?: ReturnType<typeof parseHtml>) {
+  if (parsedRoot ? elementText(parsedRoot) : textContentFromHtml(value)) {
     return true;
   }
   try {
     return Boolean(
-      parseHtml(value).querySelector(
+      (parsedRoot || parseHtml(value)).querySelector(
         `img, iframe, video, ${FORUM_VIDEO_TAG}, ${FORUM_VIDEO_STICKER_TAG}, ${FORUM_LINK_CARD_TAG}, ${FORUM_TERMINAL_REPORT_TAG}`
       )
     );

@@ -4,6 +4,7 @@ import type {
   DiscourseTagOption,
   DiscourseUserOption,
   FeedResponse,
+  Reply,
   RepliesResponse,
   SearchResponse,
   Source,
@@ -21,6 +22,7 @@ import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGat
 import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import { annotateSourceDiagnosticSummary } from './diagnostics';
 import { acceptForumReadResponse, registerForumReadResponseEvidence } from './forumSourceReadAttempt';
+import { forumReadEvidenceFetcher } from '../../tests/helpers/forumReadEvidence';
 import { getYaohuoFeedDirect, getYaohuoTopicDirect } from '@/sources/yaohuo/reader';
 
 const forumMocks = vi.hoisted(() => ({
@@ -33,7 +35,7 @@ const forumMocks = vi.hoisted(() => ({
     nextPage: null
   })),
   getReplies: vi.fn(async (): Promise<RepliesResponse> => ({ items: [], hasMore: false, nextPage: null })),
-  getReply: vi.fn(),
+  getReply: vi.fn(async (): Promise<Reply> => ({ author: '', contentHtml: '', createdAt: '' })),
   getTopic: vi.fn(async ({ id, source }) => ({
     source,
     id,
@@ -662,16 +664,7 @@ describe('source gateway read contract', () => {
     const parsed = Promise.withResolvers<void>();
     const allowFetch = Promise.withResolvers<void>();
     const recoverReadChannel = vi.fn(async () => undefined);
-    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
-      const response = new Response('{}');
-      registerForumReadResponseEvidence(init, response, {
-        commit: recoverReadChannel,
-        kind: 'fallback',
-        ordinal: 1,
-        source: 'nodeseek'
-      });
-      return response;
-    });
+    const fetcher = vi.fn(forumReadEvidenceFetcher(recoverReadChannel));
     forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
       parsed.resolve();
       await allowFetch.promise;
@@ -705,16 +698,7 @@ describe('source gateway read contract', () => {
       const parsed = Promise.withResolvers<void>();
       const finishRead = Promise.withResolvers<void>();
       const recoverReadChannel = vi.fn(async () => undefined);
-      const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
-        const response = new Response('{}');
-        registerForumReadResponseEvidence(init, response, {
-          commit: recoverReadChannel,
-          kind: 'fallback',
-          ordinal: 1,
-          source: 'nodeseek'
-        });
-        return response;
-      });
+      const fetcher = vi.fn(forumReadEvidenceFetcher(recoverReadChannel));
       forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
         const response = await scopedFetcher('https://www.nodeseek.com/');
         acceptForumReadResponse(response);
@@ -1641,7 +1625,12 @@ describe('source gateway read contract', () => {
     finishDiagnosticTrace(trace, 'success');
 
     const serialized = lines.join('');
+    const parseStates = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ phase }) => phase === 'parse')
+      .map(({ state }) => state);
     const terminal = lines.map((line) => JSON.parse(line)).filter(({ phase }) => phase === 'finish');
+    expect(parseStates).toEqual(['source-parsed', 'content-plan-ready', undefined]);
     expect(terminal).toEqual([expect.objectContaining({ outcome: 'partial' })]);
     expect(serialized).not.toMatch(
       /private-topic-id|private title|private author|private body|yaohuo\.me|sidyaohuo=secret/
@@ -1691,7 +1680,7 @@ describe('source gateway read contract', () => {
       replyOrder: 'newest',
       positionKind: 'start'
     });
-    expect(events.find(({ phase }) => phase === 'parse')).toMatchObject({ resolvedPage: 5 });
+    expect(events.find(({ resolvedPage }) => resolvedPage === 5)).toMatchObject({ phase: 'parse' });
     expect(lines.join('')).not.toMatch(/private-topic-id|private-author|private-body/);
   });
 
@@ -1716,6 +1705,7 @@ describe('source gateway read contract', () => {
         discourseAuth: {
           linuxdo: {
             authenticated: true,
+            categoryCacheScope: 'authenticated:0',
             userAgent: 'linux.do UA'
           }
         }
@@ -1897,16 +1887,7 @@ describe('source gateway read contract', () => {
     const parsed = Promise.withResolvers<void>();
     const finishAuxiliaryWork = Promise.withResolvers<void>();
     const recoverReadChannel = vi.fn(async () => undefined);
-    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
-      const response = new Response('{}');
-      registerForumReadResponseEvidence(init, response, {
-        commit: recoverReadChannel,
-        kind: 'fallback',
-        ordinal: 1,
-        source: 'nodeseek'
-      });
-      return response;
-    });
+    const fetcher = vi.fn(forumReadEvidenceFetcher(recoverReadChannel));
     forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
       const response = await scopedFetcher('https://www.nodeseek.com/');
       acceptForumReadResponse(response);
@@ -1935,16 +1916,7 @@ describe('source gateway read contract', () => {
     const parsed = Promise.withResolvers<void>();
     const finishAuxiliaryWork = Promise.withResolvers<void>();
     const recoverReadChannel = vi.fn(async () => undefined);
-    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
-      const response = new Response('{}');
-      registerForumReadResponseEvidence(init, response, {
-        commit: recoverReadChannel,
-        kind: 'fallback',
-        ordinal: 1,
-        source: 'nodeseek'
-      });
-      return response;
-    });
+    const fetcher = vi.fn(forumReadEvidenceFetcher(recoverReadChannel));
     forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
       const response = await scopedFetcher('https://www.nodeseek.com/', { signal: controller.signal });
       acceptForumReadResponse(response);

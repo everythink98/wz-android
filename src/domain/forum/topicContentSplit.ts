@@ -1,3 +1,5 @@
+import { HTMLElement } from 'node-html-parser';
+import { sanitizeContentHtmlWithRoot } from './contentSanitizer';
 import {
   FORUM_LINK_CARD_TAG,
   FORUM_TERMINAL_REPORT_TAG,
@@ -17,10 +19,22 @@ import {
   type DiscourseCalloutFold,
   type DiscourseCalloutType
 } from './callouts';
-import type { QuotedPostMetadata, Source, TopicPoll } from './models';
+import type {
+  PreparedForumContent,
+  QuotedPostMetadata,
+  RepliesResponse,
+  Reply,
+  Source,
+  TopicDetail,
+  TopicPoll
+} from './models';
 import { discourseQuotedPostMetadataFromNode } from './quotedPosts';
 import { isDiscourseSource, type DiscourseSource } from './sourceCatalog';
-import { markNodeSeekReplyReferenceNodes, normalizeRenderableHtml } from './topicContentHtml';
+import {
+  markNodeSeekReplyReferenceNodes,
+  normalizeForumUserMentionNodes,
+  normalizeRenderableHtml
+} from './topicContentHtml';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaReferrer';
 import {
   FORUM_DYNAMIC_INLINE_IMAGE_TAG,
@@ -70,9 +84,8 @@ export type ForumContentMaterializationBudget = {
 };
 
 export type ForumContentRendering = {
-  readonly referrerPolicies?: readonly (MediaReferrerPolicy | undefined)[];
-  readonly urls: readonly string[];
-  readonly variants: readonly string[];
+  readonly dynamicImages: readonly DynamicInlineImageDescriptor[];
+  readonly template: string;
 };
 
 export type ForumContentPart = 'only' | 'first' | 'middle' | 'last';
@@ -176,11 +189,33 @@ export type CompiledForumContent = {
   rows: readonly CompiledForumContentRow[];
 };
 
+export type PreparedReply = Reply & {
+  preparedContent: PreparedForumContent<CompiledForumContent>;
+  preparedSignature?: PreparedForumContent<CompiledForumContent>;
+};
+
+export type PreparedTopicDetail = TopicDetail & {
+  preparedContent: PreparedForumContent<CompiledForumContent>;
+  replies: PreparedReply[];
+};
+
+export type PreparedRepliesResponse = RepliesResponse & { items: PreparedReply[] };
+
+export const EMPTY_COMPILED_FORUM_CONTENT: CompiledForumContent = {
+  materializationBudget: { metrics: null, regionCount: 0 },
+  previewImages: [],
+  rows: []
+};
+
 const PLANNED_ISLAND_TAGS = new Set(['iframe', FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG]);
 
 function nodeTagName(node: unknown) {
   const record = node as { rawTagName?: unknown; tagName?: unknown };
   return String(record.rawTagName || record.tagName || '').toLowerCase();
+}
+
+function planningNodeHasContent(node: PlanningNode) {
+  return Boolean(nodeTagName(node)) || node.toString().trim().length > 0;
 }
 
 type PlanningNode = {
@@ -266,7 +301,7 @@ function sourceSemanticNodes(nodes: readonly PlanningNode[], role: ForumContentC
   const shell = nodes[0];
   const classes = nodeAttribute(shell, 'class').split(/\s+/);
   return nodeTagName(shell) === 'div' && classes.includes(FORUM_COMPACT_CONTENT_CLASS)
-    ? (shell.childNodes || []).filter((node) => node.toString().trim())
+    ? (shell.childNodes || []).filter(planningNodeHasContent)
     : nodes;
 }
 
@@ -288,13 +323,23 @@ export function resolveForumContentRowHtml(
   ) => boolean = (url, _referrerPolicy, identities) => Boolean(identities[normalizeDynamicInlineImageUrl(url)])
 ) {
   if (!row.rendering) return row.html;
-  const mask = row.rendering.urls.reduce(
-    (value, url, index) =>
-      value |
-      (isInlineSizedImage(url, row.rendering?.referrerPolicies?.[index], inlineSizedImageUrls) ? 1 << index : 0),
-    0
+  const inlineIds = new Set(
+    row.rendering.dynamicImages.flatMap((image) =>
+      isInlineSizedImage(image.url, image.referrerPolicy, inlineSizedImageUrls) ? [image.id] : []
+    )
   );
-  return row.rendering.variants[mask] || row.html;
+  const descriptorsById = new Map(row.rendering.dynamicImages.map((image) => [image.id, image] as const));
+  DYNAMIC_INLINE_IMAGE_PATTERN.lastIndex = 0;
+  return stripCompilerOwnedAttributes(
+    row.rendering.template.replace(DYNAMIC_INLINE_IMAGE_PATTERN, (_tag, rawAttrs: string, label: string) => {
+      const id = fallbackAttribute(rawAttrs, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE);
+      if (!descriptorsById.has(id)) return '';
+      const publicAttrs = rawAttrsWithoutValue(rawAttrs, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE);
+      return inlineIds.has(id)
+        ? `<${FORUM_INLINE_IMAGE_TAG}${publicAttrs ? ` ${publicAttrs}` : ''}>${label}</${FORUM_INLINE_IMAGE_TAG}>`
+        : `<img${publicAttrs ? ` ${publicAttrs}` : ''}>`;
+    })
+  );
 }
 
 function createForumContentMaterializationBudget(metrics: NodeMetrics | null, regionCount: number) {
@@ -355,7 +400,8 @@ type PlannedCompileSegment =
 
 function rawNodeAttribute(node: PlanningNode | null | undefined, name: string) {
   if (!node) return '';
-  return String(node.getAttribute?.(name) || node.attributes?.[name] || '');
+  if (node.getAttribute) return String(node.getAttribute(name) || '');
+  return String(node.attributes?.[name] || '');
 }
 
 function nodeAttribute(node: PlanningNode | null | undefined, name: string) {
@@ -364,8 +410,8 @@ function nodeAttribute(node: PlanningNode | null | undefined, name: string) {
 
 function nodeHasAttribute(node: PlanningNode | null | undefined, name: string) {
   if (!node) return false;
-  if (node.attributes && Object.prototype.hasOwnProperty.call(node.attributes, name)) return true;
-  return node.getAttribute?.(name) !== undefined;
+  if (node.getAttribute) return node.getAttribute(name) !== undefined;
+  return Boolean(node.attributes && Object.prototype.hasOwnProperty.call(node.attributes, name));
 }
 
 function tableColumnCount(node: PlanningNode) {
@@ -441,6 +487,7 @@ function analyzeNodes(
 ) {
   const metrics = new WeakMap<object, NodeMetrics>();
   const typedDirectives = new WeakMap<object, TypedForumContentDirective>();
+  const containsSemantic = new WeakSet<object>();
   const containsTypedDirective = new WeakSet<object>();
   const pending = nodes.map((node) => ({ node, visited: false }));
   while (pending.length) {
@@ -456,25 +503,39 @@ function analyzeNodes(
     const children = current.node.childNodes || [];
     const childMetrics = children.map((child) => metrics.get(child)!);
     const tagName = nodeTagName(current.node);
-    const ownSerialized = tagName
-      ? tagName.length * 2 + String(current.node.rawAttrs || '').length + 5
-      : current.node.toString().length;
+    const text = tagName ? '' : current.node.toString();
+    const ownSerialized = tagName ? tagName.length * 2 + String(current.node.rawAttrs || '').length + 5 : text.length;
     metrics.set(current.node, {
       domNodes: 1 + childMetrics.reduce((total, child) => total + child.domNodes, 0),
       elementDepth: tagName ? 1 + childMetrics.reduce((maximum, child) => Math.max(maximum, child.elementDepth), 0) : 0,
       mediaSlots: ownMediaSlots(current.node) + childMetrics.reduce((total, child) => total + child.mediaSlots, 0),
       serializedChars: ownSerialized + childMetrics.reduce((total, child) => total + child.serializedChars, 0),
-      textChars: tagName
-        ? childMetrics.reduce((total, child) => total + child.textChars, 0)
-        : current.node.toString().length
+      textChars: tagName ? childMetrics.reduce((total, child) => total + child.textChars, 0) : text.length
     });
     const typedDirective = typedDirectiveFromNode(current.node);
     if (typedDirective) typedDirectives.set(current.node, typedDirective);
     if (typedDirective || children.some((child) => containsTypedDirective.has(child))) {
       containsTypedDirective.add(current.node);
     }
+    if (
+      typedDirective ||
+      tagName === 'pre' ||
+      isBlockCodeNode(current.node) ||
+      tagName === 'table' ||
+      tagName === 'details' ||
+      tagName === 'blockquote' ||
+      tagName === 'ol' ||
+      tagName === 'ul' ||
+      tagName === FORUM_TERMINAL_REPORT_TAG ||
+      tagName === FORUM_TERMINAL_TAB_TAG ||
+      isTerminalCodeNode(current.node) ||
+      PLANNED_ISLAND_TAGS.has(tagName) ||
+      children.some((child) => containsSemantic.has(child))
+    ) {
+      containsSemantic.add(current.node);
+    }
   }
-  return { containsTypedDirective, metrics, typedDirectives };
+  return { containsSemantic, containsTypedDirective, metrics, typedDirectives };
 }
 
 function metricsFitRow(
@@ -677,6 +738,14 @@ function stripCompilerOwnedAttributes(html: string) {
       (match, compilerOwnedName: string | undefined) => (compilerOwnedName ? '' : match)
     )
   );
+}
+
+function stripCompilerOwnedNodeAttributes(root: HTMLElement) {
+  root.querySelectorAll('*').forEach((node) => {
+    Object.keys(node.attributes).forEach((name) => {
+      if (name.toLowerCase().startsWith('data-wz-')) node.removeAttribute(name);
+    });
+  });
 }
 
 function elementHtmlWithChildren(node: unknown, childrenHtml: string, rawAttrsOverride?: string) {
@@ -1276,6 +1345,7 @@ type SemanticHtmlWrapper = {
 type SemanticCompileContext = {
   readonly containsSemantic: WeakSet<object>;
   readonly containsTypedDirective: WeakSet<object>;
+  readonly metrics: WeakMap<object, NodeMetrics>;
   readonly recognizesDiscourseCallouts: boolean;
   readonly typedDirectives: WeakMap<object, TypedForumContentDirective>;
 };
@@ -1517,44 +1587,6 @@ function compilerNoticeRow(nodePath: string): Extract<CompiledForumContentRow, {
   };
 }
 
-function semanticContainment(
-  nodes: readonly PlanningNode[],
-  typedDirectives: WeakMap<object, TypedForumContentDirective>
-) {
-  const containsSemantic = new WeakSet<object>();
-  const pending = nodes.map((node) => ({ node, visited: false }));
-  while (pending.length) {
-    const current = pending.pop()!;
-    if (!current.visited) {
-      pending.push({ node: current.node, visited: true });
-      const children = current.node.childNodes || [];
-      for (let index = children.length - 1; index >= 0; index -= 1) {
-        pending.push({ node: children[index], visited: false });
-      }
-      continue;
-    }
-    const tagName = nodeTagName(current.node);
-    if (
-      typedDirectives.has(current.node) ||
-      tagName === 'pre' ||
-      isBlockCodeNode(current.node) ||
-      tagName === 'table' ||
-      tagName === 'details' ||
-      tagName === 'blockquote' ||
-      tagName === 'ol' ||
-      tagName === 'ul' ||
-      tagName === FORUM_TERMINAL_REPORT_TAG ||
-      tagName === FORUM_TERMINAL_TAB_TAG ||
-      isTerminalCodeNode(current.node) ||
-      PLANNED_ISLAND_TAGS.has(tagName) ||
-      (current.node.childNodes || []).some((child) => containsSemantic.has(child))
-    ) {
-      containsSemantic.add(current.node);
-    }
-  }
-  return containsSemantic;
-}
-
 function wrapperReserve(wrappers: readonly SemanticHtmlWrapper[]): HtmlFragmentReserve {
   return wrappers.reduce<HtmlFragmentReserve>(
     (total, wrapper) => ({
@@ -1578,10 +1610,12 @@ function wrapSemanticHtml(html: string, wrappers: readonly SemanticHtmlWrapper[]
   }, html);
 }
 
-function plainSemanticRows(entries: readonly SemanticCompileEntry[], wrappers: readonly SemanticHtmlWrapper[]) {
+function plainSemanticRows(
+  entries: readonly SemanticCompileEntry[],
+  wrappers: readonly SemanticHtmlWrapper[],
+  metrics: WeakMap<object, NodeMetrics>
+) {
   if (!entries.length) return [];
-  const nodes = entries.map((entry) => entry.node);
-  const metrics = analyzeNodes(nodes).metrics;
   const reserve = wrapperReserve(wrappers);
   const fragments = entries.flatMap((entry) =>
     fragmentNode(entry.node, metrics, wrappers.length, entry.path, 0, undefined, reserve)
@@ -1636,7 +1670,7 @@ function isBlockCodeNode(node: PlanningNode) {
   const parentTag = nodeTagName(node.parentNode);
   if (!parentTag) return true;
   if (!/^(?:article|blockquote|body|details|div|li|section)$/.test(parentTag)) return false;
-  return (node.parentNode?.childNodes || []).filter((child) => child.toString().trim()).length === 1;
+  return (node.parentNode?.childNodes || []).filter(planningNodeHasContent).length === 1;
 }
 
 function innerHtml(node: PlanningNode | undefined) {
@@ -1763,7 +1797,7 @@ function terminalReportRows(
     })
   );
   const unexpectedRows = childEntries.flatMap((entry) =>
-    nodeTagName(entry.node) !== FORUM_TERMINAL_TAB_TAG && entry.node.toString().trim()
+    nodeTagName(entry.node) !== FORUM_TERMINAL_TAB_TAG && planningNodeHasContent(entry.node)
       ? [compilerNoticeRow(entry.path)]
       : []
   );
@@ -1778,7 +1812,7 @@ function compileSemanticEntries(
   const rows: CompiledForumContentRow[] = [];
   let pending: SemanticCompileEntry[] = [];
   const flush = () => {
-    rows.push(...plainSemanticRows(pending, wrappers));
+    rows.push(...plainSemanticRows(pending, wrappers, context.metrics));
     pending = [];
   };
   for (const entry of entries) {
@@ -1816,7 +1850,7 @@ function compileSemanticEntries(
       rows.push(
         ...(context.containsTypedDirective.has(node)
           ? [compilerNoticeRow(path), ...typedRowsInSubtree(node, path, context.typedDirectives)]
-          : plainSemanticRows([entry], wrappers))
+          : plainSemanticRows([entry], wrappers, context.metrics))
       );
       continue;
     }
@@ -1937,7 +1971,7 @@ function compileSemanticEntries(
         );
         const nonEmptyRows = itemRows.length
           ? itemRows
-          : plainSemanticRows([{ node: child, path: childPath }], wrappers);
+          : plainSemanticRows([{ node: child, path: childPath }], wrappers, context.metrics);
         listRows.push(
           ...prependAncestorFrame(nonEmptyRows, {
             kind: 'listItem',
@@ -1981,10 +2015,10 @@ function semanticRowsFromParsedContent({
   source: Source;
   unmatchedPolls: readonly TopicPoll[];
 }) {
-  const containsSemantic = semanticContainment(nodes, analysis.typedDirectives);
   const context: SemanticCompileContext = {
-    containsSemantic,
+    containsSemantic: analysis.containsSemantic,
     containsTypedDirective: analysis.containsTypedDirective,
+    metrics: analysis.metrics,
     recognizesDiscourseCallouts: isDiscourseSource(source),
     typedDirectives: analysis.typedDirectives
   };
@@ -2036,29 +2070,14 @@ function renderingForCompiledRow(html: string, dynamicImagesById: ReadonlyMap<st
   if (descriptors.length > MAX_MEDIA_PER_PLANNED_ROW) {
     throw new Error('Dynamic inline image row exceeded the compiler media budget.');
   }
-  const descriptorIndexById = new Map(descriptors.map((descriptor, index) => [descriptor.id, index] as const));
-  const variants = Array.from({ length: 1 << descriptors.length }, (_, mask) => {
-    DYNAMIC_INLINE_IMAGE_PATTERN.lastIndex = 0;
-    const variant = html.replace(DYNAMIC_INLINE_IMAGE_PATTERN, (_tag, rawAttrs: string, label: string) => {
-      const id = fallbackAttribute(rawAttrs, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE);
-      const index = descriptorIndexById.get(id);
-      if (index === undefined) return '';
-      const publicAttrs = rawAttrsWithoutValue(rawAttrs, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE);
-      return mask & (1 << index)
-        ? `<${FORUM_INLINE_IMAGE_TAG}${publicAttrs ? ` ${publicAttrs}` : ''}>${label}</${FORUM_INLINE_IMAGE_TAG}>`
-        : `<img${publicAttrs ? ` ${publicAttrs}` : ''}>`;
-    });
-    if (!renderedHtmlFitsBudget(variant)) {
-      throw new Error('Dynamic inline image variant exceeded the compiler render budget.');
-    }
-    return stripCompilerOwnedAttributes(variant);
-  });
   const rendering: ForumContentRendering = {
-    referrerPolicies: descriptors.map((descriptor) => descriptor.referrerPolicy),
-    urls: descriptors.map((descriptor) => normalizeDynamicInlineImageUrl(descriptor.url)),
-    variants
+    dynamicImages: descriptors.map((descriptor) => ({
+      ...descriptor,
+      url: normalizeDynamicInlineImageUrl(descriptor.url)
+    })),
+    template: html
   };
-  return { html: variants[0], rendering };
+  return { html: resolveForumContentRowHtml({ html: '', rendering }, {}), rendering };
 }
 
 function materializeCompiledRows(
@@ -2090,44 +2109,75 @@ function compiledForumContentResult(
   };
 }
 
-export function compileForumContent({
-  html,
-  polls = [],
-  role,
-  source,
-  topicId
-}: {
-  html: string | undefined;
+type ForumContentCompileOptions = {
   polls?: readonly TopicPoll[];
   role: ForumContentCompileRole;
   source: Source;
   topicId?: string;
+};
+
+function preparedForumContentKey(options: ForumContentCompileOptions) {
+  const polls = compileRoleIncludesPolls(options.role, options.source) ? options.polls || [] : [];
+  const topicId = options.role === 'opening' && isDiscourseSource(options.source) ? options.topicId || '' : '';
+  return JSON.stringify([options.source, options.role === 'opening' ? 'opening' : 'compact', topicId, polls]);
+}
+
+function preparedForumContentMatches(
+  prepared: PreparedForumContent | undefined,
+  contentHtml: string,
+  options: ForumContentCompileOptions
+): prepared is PreparedForumContent<CompiledForumContent> {
+  return Boolean(
+    prepared && prepared.contentHtml === contentHtml && prepared.contentPlanKey === preparedForumContentKey(options)
+  );
+}
+
+function fallbackCompiledForumContent(
+  raw: string,
+  pollList: readonly TopicPoll[],
+  role: ForumContentCompileRole,
+  source: Source
+) {
+  const fallbackClean = raw
+    ? role === 'opening'
+      ? raw
+      : `<div class="${FORUM_COMPACT_CONTENT_CLASS}">${raw}</div>`
+    : '';
+  const segments = compileFallbackSegments({ clean: fallbackClean, pollList, source });
+  return compiledForumContentResult(
+    semanticRowsFromFallbackSegments(segments),
+    fallbackClean ? null : combinedNodeMetrics([]),
+    [],
+    forumImagePreviewDescriptorsFromHtmlFallback(raw)
+  );
+}
+
+function compileParsedForumContent({
+  body,
+  pollList,
+  raw,
+  role,
+  source,
+  topicId
+}: ForumContentCompileOptions & {
+  body: HTMLElement | null;
+  pollList: readonly TopicPoll[];
+  raw: string;
 }): CompiledForumContent {
-  const raw = stripCompilerOwnedAttributes(String(html || '').trim());
-  let clean = raw;
-  const pollList = compileRoleIncludesPolls(role, source) ? polls : [];
   const pollsByName = new Map(pollList.flatMap((poll) => (poll.name ? [[poll.name, poll] as const] : [])));
   const matchedPolls = new Set<TopicPoll>();
   const extractsOpeningQuotes = role === 'opening' && Boolean(topicId) && isDiscourseSource(source);
   let dynamicInlineImages: readonly DynamicInlineImageDescriptor[] = [];
   let previewImages: readonly ForumImagePreviewDescriptor[] = [];
   try {
-    clean = raw
-      ? role === 'opening'
-        ? normalizeRenderableHtml(raw)
-        : `<div class="${FORUM_COMPACT_CONTENT_CLASS}">${normalizeRenderableHtml(raw)}</div>`
-      : '';
-    const body = parseHtml(`<body>${clean}</body>`, { parsePreContent: true }).querySelector('body');
     if (body) {
       if (source === 'nodeseek') markNodeSeekReplyReferenceNodes(body, 'https://www.nodeseek.com/');
       const media = normalizeForumContentMediaNodes(body, { dynamicV2exImages: source === 'v2ex' });
       dynamicInlineImages = media.dynamicInlineImages;
       previewImages = media.previewImages;
-      const materializedHtml = body.innerHTML;
-      if (materializedHtml.trim() || !clean.trim()) clean = materializedHtml;
     }
-    const nodes = (body?.childNodes || []).filter((node) => node.toString().trim()) as PlanningNode[];
-    if (clean.trim() && !nodes.length) throw new Error('Parser returned no renderable content.');
+    const nodes = (body?.childNodes || []).filter(planningNodeHasContent) as PlanningNode[];
+    if (raw.trim() && !nodes.length) throw new Error('Parser returned no renderable content.');
     const analysis = analyzeNodes(nodes, (node) => {
       const tagName = nodeTagName(node);
       if (isDiscourseSource(source) && tagName === DISCOURSE_POLL_PLACEHOLDER_TAG) {
@@ -2150,17 +2200,189 @@ export function compileForumContent({
       previewImages
     );
   } catch {
-    const fallbackClean = raw
-      ? role === 'opening'
-        ? raw
-        : `<div class="${FORUM_COMPACT_CONTENT_CLASS}">${raw}</div>`
-      : '';
-    const segments = compileFallbackSegments({ clean: fallbackClean, pollList, source });
-    return compiledForumContentResult(
-      semanticRowsFromFallbackSegments(segments),
-      fallbackClean ? null : combinedNodeMetrics([]),
-      [],
-      forumImagePreviewDescriptorsFromHtmlFallback(raw)
-    );
+    return fallbackCompiledForumContent(raw, pollList, role, source);
   }
+}
+
+export function compileForumContent({
+  html,
+  polls = [],
+  role,
+  source,
+  topicId
+}: ForumContentCompileOptions & { html: string | undefined }): CompiledForumContent {
+  const raw = stripCompilerOwnedAttributes(String(html || '').trim());
+  const pollList = compileRoleIncludesPolls(role, source) ? polls : [];
+  try {
+    const clean = raw
+      ? role === 'opening'
+        ? normalizeRenderableHtml(raw)
+        : `<div class="${FORUM_COMPACT_CONTENT_CLASS}">${normalizeRenderableHtml(raw)}</div>`
+      : '';
+    const body = parseHtml(`<body>${clean}</body>`, { parsePreContent: true }).querySelector('body');
+    return compileParsedForumContent({ body, pollList, raw, role, source, topicId });
+  } catch {
+    return fallbackCompiledForumContent(raw, pollList, role, source);
+  }
+}
+
+export function prepareForumContentHtml(
+  contentHtml: string | undefined,
+  { polls, role, source, topicId }: ForumContentCompileOptions
+): PreparedForumContent<CompiledForumContent> {
+  const normalizedContentHtml = String(contentHtml || '');
+  const options = { polls, role, source, topicId };
+  return {
+    contentHtml: normalizedContentHtml,
+    contentPlan: compileForumContent({ html: normalizedContentHtml, ...options }),
+    contentPlanKey: preparedForumContentKey(options)
+  };
+}
+
+export function prepareParsedForumContent(
+  root: HTMLElement,
+  { contentHtml, polls = [], role, source, topicId }: ForumContentCompileOptions & { contentHtml: string }
+): PreparedForumContent<CompiledForumContent> {
+  const normalizedContentHtml = String(contentHtml || '');
+  const trimmedContentHtml = normalizedContentHtml.trim();
+  const raw = stripCompilerOwnedAttributes(trimmedContentHtml);
+  const compactShell = (root.childNodes || []).find(
+    (node) =>
+      nodeTagName(node) === 'div' &&
+      nodeAttribute(node as PlanningNode, 'class')
+        .split(/\s+/)
+        .includes(FORUM_COMPACT_CONTENT_CLASS)
+  ) as HTMLElement | undefined;
+  if (
+    raw !== trimmedContentHtml ||
+    (raw && normalizeRenderableHtml(raw) !== raw) ||
+    (role !== 'opening' && (!compactShell || compactShell.innerHTML !== raw))
+  ) {
+    return prepareForumContentHtml(normalizedContentHtml, { polls, role, source, topicId });
+  }
+  const pollList = compileRoleIncludesPolls(role, source) ? polls : [];
+  const options = { polls, role, source, topicId };
+  return {
+    contentHtml: normalizedContentHtml,
+    contentPlan: compileParsedForumContent({ body: root, pollList, raw, ...options }),
+    contentPlanKey: preparedForumContentKey(options)
+  };
+}
+
+export function prepareSanitizedForumContent(
+  html: unknown,
+  {
+    afterSanitizeRoot,
+    baseUrl,
+    polls,
+    role,
+    source,
+    topicId,
+    transformRoot
+  }: ForumContentCompileOptions & {
+    afterSanitizeRoot?: (root: HTMLElement) => void;
+    baseUrl: string;
+    transformRoot?: (root: HTMLElement) => void;
+  }
+): PreparedForumContent<CompiledForumContent> {
+  const sourceHtml =
+    role === 'opening' ? String(html || '') : `<div class="${FORUM_COMPACT_CONTENT_CLASS}">${String(html || '')}</div>`;
+  const sanitized = sanitizeContentHtmlWithRoot(sourceHtml, baseUrl, transformRoot);
+  afterSanitizeRoot?.(sanitized.root);
+  const compactShell = sanitized.root.querySelector(`.${FORUM_COMPACT_CONTENT_CLASS}`);
+  const contentRoot = role === 'opening' ? sanitized.root : compactShell;
+  const contentHtml = role === 'opening' ? sanitized.root.toString() : compactShell?.innerHTML || '';
+  const trimmedContentHtml = contentHtml.trim();
+  const raw = stripCompilerOwnedAttributes(trimmedContentHtml);
+  const normalized = normalizeRenderableHtml(raw);
+  if (!contentRoot) {
+    return prepareForumContentHtml(contentHtml, { polls, role, source, topicId });
+  }
+  stripCompilerOwnedNodeAttributes(contentRoot);
+  normalizeForumUserMentionNodes(contentRoot);
+  if (normalized !== raw) {
+    if (!/<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*)?>/.test(raw)) {
+      const paragraph = new HTMLElement('p', {});
+      paragraph.set_content([...contentRoot.childNodes]);
+      contentRoot.set_content([paragraph]);
+    }
+  }
+  const options = { polls, role, source, topicId };
+  const pollList = compileRoleIncludesPolls(role, source) ? polls || [] : [];
+  return {
+    contentHtml,
+    contentPlan: compileParsedForumContent({
+      body: sanitized.root,
+      pollList,
+      raw,
+      ...options
+    }),
+    contentPlanKey: preparedForumContentKey(options)
+  };
+}
+
+export function prepareReplyContent(
+  reply: Reply,
+  source: Source,
+  role: Extract<ForumContentCompileRole, 'accepted-answer' | 'quoted-reply' | 'reply'> = 'reply'
+): PreparedReply {
+  const contentOptions = { polls: reply.polls, role, source } as const;
+  const preparedContent = preparedForumContentMatches(reply.preparedContent, reply.contentHtml, contentOptions)
+    ? reply.preparedContent
+    : prepareForumContentHtml(reply.contentHtml, contentOptions);
+  const signatureHtml = String(reply.signatureHtml || '');
+  const signatureOptions = { role: 'signature', source } as const;
+  const preparedSignature = signatureHtml.trim()
+    ? preparedForumContentMatches(reply.preparedSignature, signatureHtml, signatureOptions)
+      ? reply.preparedSignature
+      : prepareForumContentHtml(signatureHtml, signatureOptions)
+    : undefined;
+  if (reply.preparedContent === preparedContent && reply.preparedSignature === preparedSignature) {
+    return reply as PreparedReply;
+  }
+  return { ...reply, preparedContent, preparedSignature };
+}
+
+export function prepareTopicContent(detail: TopicDetail): PreparedTopicDetail {
+  const contentOptions = {
+    polls: detail.polls,
+    role: 'opening',
+    source: detail.source,
+    topicId: detail.id
+  } as const;
+  const preparedContent = preparedForumContentMatches(detail.preparedContent, detail.contentHtml, contentOptions)
+    ? detail.preparedContent
+    : prepareForumContentHtml(detail.contentHtml, contentOptions);
+  const replies = detail.replies.map((reply) => prepareReplyContent(reply, detail.source));
+  if (detail.preparedContent === preparedContent && replies.every((reply, index) => reply === detail.replies[index])) {
+    return detail as PreparedTopicDetail;
+  }
+  return { ...detail, preparedContent, replies };
+}
+
+export function prepareRepliesContent(response: RepliesResponse, source: Source): PreparedRepliesResponse {
+  const items = response.items.map((reply) => prepareReplyContent(reply, source));
+  return items.every((reply, index) => reply === response.items[index])
+    ? (response as PreparedRepliesResponse)
+    : { ...response, items };
+}
+
+export function requirePreparedForumContent(
+  prepared: PreparedForumContent | undefined,
+  contentHtml: string | undefined,
+  options?: ForumContentCompileOptions
+) {
+  const normalizedContentHtml = String(contentHtml || '');
+  const requiresPollPlan = Boolean(
+    options && compileRoleIncludesPolls(options.role, options.source) && options.polls?.length
+  );
+  if (!prepared && !normalizedContentHtml.trim() && !requiresPollPlan) return EMPTY_COMPILED_FORUM_CONTENT;
+  if (
+    !prepared ||
+    prepared.contentHtml !== normalizedContentHtml ||
+    (options && !preparedForumContentMatches(prepared, normalizedContentHtml, options))
+  ) {
+    throw new Error('论坛内容缺少匹配的预编译计划');
+  }
+  return prepared.contentPlan as CompiledForumContent;
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueries, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isSessionSource, type DiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import { mergeTopics, type SearchSort } from '@/domain/forum/feed';
@@ -49,6 +49,22 @@ type SubmittedSearch = {
   query: string;
   source: FeedSource;
 };
+type AggregateSearchQueryProjection = Pick<
+  UseQueryResult<RemoteSearchSourceResult>,
+  'data' | 'error' | 'errorUpdatedAt' | 'isFetching' | 'isPending' | 'refetch'
+>;
+
+function combineAggregateSearchQueries(results: AggregateSearchQueryProjection[]): AggregateSearchQueryProjection[] {
+  return results.map(({ data, error, errorUpdatedAt, isFetching, isPending, refetch }) => ({
+    data,
+    error,
+    errorUpdatedAt,
+    isFetching,
+    isPending,
+    refetch
+  }));
+}
+
 class SearchPageError extends Error {
   constructor(
     readonly page: number,
@@ -401,7 +417,8 @@ export function useSearchController({
         }
         return result;
       }
-    }))
+    })),
+    combine: combineAggregateSearchQueries
   });
 
   const singleSearchQuery = useInfiniteQuery({

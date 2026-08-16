@@ -6,6 +6,7 @@ import { Pressable, Text } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
 import { navigationRef, pushTopicRoute } from '@/app/appNavigation';
 import type { FeedSource, Topic } from '@/domain/forum/models';
+import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
@@ -67,16 +68,20 @@ function mockManagementEntry(label: string, onPress: () => void) {
 }
 
 let mockFeedScreenMountCount = 0;
+let mockFeedLoadMoreCallbacks: ((() => void) | undefined)[] = [];
 function mockFeedScreen({
   feedSource,
   onFeedSourceChange,
+  onLoadMore,
   onManageContentSources
 }: {
   feedSource?: FeedSource;
   onFeedSourceChange?: (source: FeedSource) => void;
+  onLoadMore?: () => void;
   onManageContentSources: () => void;
 }) {
   const [mount] = React.useState(() => ++mockFeedScreenMountCount);
+  mockFeedLoadMoreCallbacks.push(onLoadMore);
   return (
     <>
       {mockManagementEntry('首页', onManageContentSources)}
@@ -135,6 +140,7 @@ const disabledTopic: Topic = {
 };
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
+const topicStateIndex = createTopicListItemStateIndex(readerData);
 const readGateway = {
   getReadPlan: () => ({ state: 'ready', cacheScope: 'public:test' })
 } as unknown as ReadGateway;
@@ -152,7 +158,9 @@ const feedRuntime = {
   appActive: true,
   catalogCategories: [],
   notify: jest.fn(),
-  reader: { data: readerData, loaded: true }
+  onInitialContentReady: jest.fn(),
+  reader: { data: readerData, loaded: true },
+  topicStateIndex
 } as FeedRouteRuntimeValue;
 const FeedTestRuntimeContext = React.createContext(feedRuntime);
 const searchRuntime = {
@@ -163,7 +171,8 @@ const searchRuntime = {
   },
   catalogCategories: [],
   notify: jest.fn(),
-  readerData
+  readerData,
+  topicStateIndex
 } as SearchRouteRuntimeValue;
 const libraryRuntime = {
   categories: [],
@@ -174,7 +183,8 @@ const libraryRuntime = {
     data: readerData,
     dataRef: { current: readerData },
     loaded: true
-  }
+  },
+  topicStateIndex
 } as LibraryRouteRuntimeValue;
 const moreRuntime = {
   account: { surfaces: { closeAll: jest.fn() } },
@@ -228,7 +238,11 @@ function MoreTab() {
 function TopicScreen(props: React.ComponentProps<typeof TopicRoute>) {
   return (
     <TopicRouteRuntimeProvider
-      value={{ reader: { data: disabledTopicReaderData } } as unknown as TopicRouteRuntimeValue}
+      value={
+        {
+          reader: { data: disabledTopicReaderData }
+        } as unknown as TopicRouteRuntimeValue
+      }
     >
       <TopicRoute {...props} />
     </TopicRouteRuntimeProvider>
@@ -267,6 +281,7 @@ function Navigator({ feedRuntimeValue = feedRuntime }: { feedRuntimeValue?: Feed
 describe('[REG-SOURCE-012] content-source management navigation', () => {
   beforeEach(() => {
     mockFeedScreenMountCount = 0;
+    mockFeedLoadMoreCallbacks = [];
     jest.mocked(useFeedController).mockReturnValue({
       activeFeedState: {
         hasMore: false,
@@ -354,6 +369,30 @@ describe('[REG-SOURCE-012] content-source management navigation', () => {
     await fireEvent.press(view.getByTestId('main-tab-feed'));
 
     await waitFor(() => expect(view.getByText('首页来源 all 挂载 2')).toBeTruthy());
+  });
+
+  it('[REG-PERF-015] keeps load-more callback stable across unrelated runtime renders', async () => {
+    const loadFeed = jest.fn(async () => undefined);
+    jest.mocked(useFeedController).mockImplementation(
+      () =>
+        ({
+          activeFeedState: {
+            hasMore: true,
+            loadMoreFailureSignal: 0,
+            loadingMore: false,
+            page: 1,
+            refreshing: false
+          },
+          feedAllowsRemotePagination: true,
+          loadFeed
+        }) as never
+    );
+    const view = await render(<Navigator />);
+    const firstCallback = mockFeedLoadMoreCallbacks.at(-1);
+
+    await view.rerender(<Navigator feedRuntimeValue={{ ...feedRuntime, appActive: false }} />);
+
+    expect(mockFeedLoadMoreCallbacks.at(-1)).toBe(firstCallback);
   });
 
   it('carries a disabled Topic management intent through the real root stack and tabs', async () => {

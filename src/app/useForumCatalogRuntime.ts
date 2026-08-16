@@ -15,6 +15,7 @@ type ForumCatalogRuntimeOptions = {
   enabledFeedSources: readonly Source[];
   enabledSourcesKey: string;
   notify: (message: string) => void;
+  onSettled?: (settled: boolean) => void;
   readGateway: ReadGateway;
   sessionEpochs?: ForumSessionEpochs;
 };
@@ -70,6 +71,7 @@ export function useForumCatalogRuntime({
   enabledFeedSources,
   enabledSourcesKey,
   notify,
+  onSettled,
   readGateway,
   sessionEpochs = initialForumSessionEpochs
 }: ForumCatalogRuntimeOptions) {
@@ -126,5 +128,11 @@ export function useForumCatalogRuntime({
     [queryClient]
   );
 
-  return { categories: query.data?.items || [] };
+  const settled = enabledFeedSources.length === 0 || query.isSuccess || query.isError;
+  useEffect(() => onSettled?.(settled), [onSettled, settled]);
+
+  return {
+    categories: query.data?.items || [],
+    settled
+  };
 }

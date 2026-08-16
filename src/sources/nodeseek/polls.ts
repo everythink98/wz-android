@@ -1,5 +1,7 @@
-import { decodeHtml, isRecord, parseHtml } from '@/domain/forum/html';
+import { decodeHtml, isRecord } from '@/domain/forum/html';
 import type { TopicPoll, TopicPollOption } from '@/domain/forum/models';
+import type { HTMLElement } from 'node-html-parser';
+import { optionalBoolean, optionalInteger } from './protocol';
 
 export const NODESEEK_VOTE_API_HEADERS = {
   accept: 'application/json, text/plain, */*',
@@ -11,34 +13,75 @@ export function nodeSeekPollPlaceholderHtml(id: string) {
   return `<${NODESEEK_POLL_PLACEHOLDER_TAG} id="${encodeURIComponent(id)}"></${NODESEEK_POLL_PLACEHOLDER_TAG}>`;
 }
 
-function optionalInteger(value: unknown) {
-  if (value === undefined || value === null || value === '') {
-    return undefined;
+export function normalizeNodeSeekPollPlaceholderNodes(root: HTMLElement, pollIds: Iterable<string>) {
+  const placeholderIds = new Set(pollIds);
+  if (!placeholderIds.size) {
+    return;
   }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return Math.trunc(value);
-  }
-  const match = String(value).replace(/,/g, '').match(/\d+/);
-  return match ? Number(match[0]) : undefined;
-}
-
-function optionalBoolean(value: unknown) {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  if (typeof value === 'number') {
-    return value !== 0;
-  }
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (['true', '1', 'yes'].includes(normalized)) {
-      return true;
+  root.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).forEach((element) => {
+    const id = String(element.getAttribute('id') || '');
+    if (!placeholderIds.has(id)) {
+      return;
     }
-    if (['false', '0', 'no'].includes(normalized)) {
-      return false;
+    const nearestDiv = element.closest('div');
+    const container =
+      element.closest('p') ||
+      (nearestDiv?.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1 ? nearestDiv : null);
+    const markerPrefix = decodeHtml(container?.textContent || '').replace(/\s/g, '');
+    const containerHasOtherContent = Boolean(
+      container?.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
+    );
+    if (
+      container &&
+      container.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1 &&
+      !containerHasOtherContent &&
+      (!markerPrefix || /^"?>$/.test(markerPrefix))
+    ) {
+      container.replaceWith(nodeSeekPollPlaceholderHtml(id));
     }
-  }
-  return undefined;
+  });
+  root.querySelectorAll('p, div').forEach((element) => {
+    const markerPrefix = decodeHtml(element.textContent || '').replace(/\s/g, '');
+    if (
+      !/^"?>$/.test(markerPrefix) ||
+      element.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
+    ) {
+      return;
+    }
+    const adjacentPollId = [element.previousElementSibling, element.nextElementSibling]
+      .find((sibling) => String(sibling?.rawTagName || '').toLowerCase() === NODESEEK_POLL_PLACEHOLDER_TAG)
+      ?.getAttribute('id');
+    if (placeholderIds.has(String(adjacentPollId || ''))) {
+      element.remove();
+    }
+  });
+  const seen = new Set<string>();
+  root.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).forEach((element) => {
+    const id = String(element.getAttribute('id') || '');
+    if (!placeholderIds.has(id)) {
+      return;
+    }
+    const adjacentPrefix = element.previousSibling;
+    const adjacentPrefixText = decodeHtml(adjacentPrefix?.textContent || '').replace(/\s/g, '');
+    if (adjacentPrefix && /^"?>$/.test(adjacentPrefixText)) {
+      adjacentPrefix.remove();
+    }
+    const anchor = element.closest('p') || element;
+    const previous = anchor.previousElementSibling;
+    const previousPrefix = decodeHtml(previous?.textContent || '').replace(/\s/g, '');
+    if (
+      previous &&
+      /^"?>$/.test(previousPrefix) &&
+      !previous.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
+    ) {
+      previous.remove();
+    }
+    if (seen.has(id)) {
+      element.remove();
+      return;
+    }
+    seen.add(id);
+  });
 }
 
 export function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): TopicPoll | null {
@@ -85,13 +128,13 @@ export function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): T
   };
 }
 
-export function stripLoadedNodeSeekVoteMarkers(html: string, pollIds: (string | undefined)[]) {
+export function replaceLoadedNodeSeekVoteMarkers(html: string, pollIds: (string | undefined)[]) {
   const ids = [...new Set(pollIds.filter((id): id is string => /^\d+$/.test(id || '')))];
   if (!ids.length) {
     return html;
   }
   const marker = 'nsapp:\\/\\/vote\\?id=(' + ids.join('|') + ')';
-  let cleaned = html
+  return html
     .replace(
       new RegExp(
         `<(p|div)\\b[^>]*>\\s*(?:(?:&quot;|")?\\s*(?:&gt;|>)\\s*)?(?:提交投票\\s*)?${marker}(?:\\s*[（(][^<)）]*[)）])?\\s*<\\/\\1>`,
@@ -100,59 +143,4 @@ export function stripLoadedNodeSeekVoteMarkers(html: string, pollIds: (string | 
       (_match, _tag, id: string) => nodeSeekPollPlaceholderHtml(id)
     )
     .replace(new RegExp(marker, 'gi'), (_match, id: string) => nodeSeekPollPlaceholderHtml(id));
-  const placeholderIds = new Set(ids.filter((id) => cleaned.includes(nodeSeekPollPlaceholderHtml(id))));
-  if (!placeholderIds.size) {
-    return cleaned;
-  }
-  const root = parseHtml(`<body>${cleaned}</body>`);
-  root.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).forEach((element) => {
-    const id = String(element.getAttribute('id') || '');
-    if (!placeholderIds.has(id)) {
-      return;
-    }
-    const nearestDiv = element.closest('div');
-    const container =
-      element.closest('p') ||
-      (nearestDiv?.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1 ? nearestDiv : null);
-    const markerPrefix = decodeHtml(container?.textContent || '').replace(/\s/g, '');
-    const containerHasOtherContent = Boolean(
-      container?.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
-    );
-    if (
-      container &&
-      container.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1 &&
-      !containerHasOtherContent &&
-      (!markerPrefix || /^"?>$/.test(markerPrefix))
-    ) {
-      container.replaceWith(nodeSeekPollPlaceholderHtml(id));
-    }
-  });
-  const seen = new Set<string>();
-  root.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).forEach((element) => {
-    const id = String(element.getAttribute('id') || '');
-    if (!placeholderIds.has(id)) {
-      return;
-    }
-    const adjacentPrefix = element.previousSibling;
-    const adjacentPrefixText = decodeHtml(adjacentPrefix?.textContent || '').replace(/\s/g, '');
-    if (adjacentPrefix && /^"?>$/.test(adjacentPrefixText)) {
-      adjacentPrefix.remove();
-    }
-    const anchor = element.closest('p') || element;
-    const previous = anchor.previousElementSibling;
-    const previousPrefix = decodeHtml(previous?.textContent || '').replace(/\s/g, '');
-    if (
-      previous &&
-      /^"?>$/.test(previousPrefix) &&
-      !previous.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
-    ) {
-      previous.remove();
-    }
-    if (seen.has(id)) {
-      element.remove();
-      return;
-    }
-    seen.add(id);
-  });
-  return root.querySelector('body')?.innerHTML || cleaned;
 }

@@ -10,6 +10,7 @@ import {
 import { XIAOYINSI_BASE_URL } from './protocol';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import type { UserProfile } from '@/domain/forum/models';
+import { isRecord } from '@/domain/forum/html';
 import { xiaoyinsiKeystore, type XiaoyinsiKeystore } from '@/platform/android/xiaoyinsiKeystore';
 
 const APPLICATION_NAME = '阅坛 Android';
@@ -88,10 +89,6 @@ export class XiaoyinsiAuthError extends Error {
     this.name = 'XiaoyinsiAuthError';
     this.code = code;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function nowFrom(dependencies: XiaoyinsiAuthDependencies) {

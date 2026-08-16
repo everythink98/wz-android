@@ -25,7 +25,6 @@ export type AccountStatusObservation = {
 export type AccountSessionSnapshot = SiteSessionState & {
   identityTrust: IdentityTrust;
 };
-export type AccountSessionSnapshots = Record<SessionSite, AccountSessionSnapshot>;
 
 export type SiteSessionStates = Record<SessionSite, SiteSessionState>;
 export type SiteSessionViewModel = {
