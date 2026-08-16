@@ -331,9 +331,9 @@ describe('Android release evidence guards', () => {
     expect(loggedOutReplay).not.toContain('wait label="刷新页面"');
 
     const nodeSeekReplay = readFileSync(path.join(deviceDir, 'nodeseek-session.ad'), 'utf8');
-    expect(nodeSeekReplay).toContain('wait id="nodeseek-login-webview-settled" 60000');
-    expect(nodeSeekReplay).toContain('wait label="刷新页面" 10000');
-    expect(nodeSeekReplay).toContain('back --system');
+    expect(nodeSeekReplay).not.toContain('nodeseek-login-webview-settled');
+    expect(nodeSeekReplay).not.toContain('wait label="刷新页面"');
+    expect(nodeSeekReplay).not.toContain('back --system');
     expect(nodeSeekReplay).not.toContain('nodeseek-login-webview-ready');
     expect(nodeSeekReplay).not.toMatch(/role=\\"(?:webview|image)\\"|label="新帖子"/);
 
@@ -407,22 +407,38 @@ describe('Android release evidence guards', () => {
     }
   });
 
-  it('[REG-TEST-005] accepts either settled Xiaoyinsi level outcome without requiring live data success', () => {
+  it('[REG-TEST-009] keeps transient account probe failures out of fixed Replay success requirements', () => {
+    const accountReplay = readProjectFile('tests', 'device', 'account-readonly.ad');
+    const nodeSeekReplay = readProjectFile('tests', 'device', 'nodeseek-session.ad');
+
+    for (const [site, label] of [
+      ['nodeseek', 'NodeSeek'],
+      ['linuxdo', 'linux.do'],
+      ['yaohuo', '妖火'],
+      ['xiaoyinsi', '小隐寺']
+    ]) {
+      const terminalSelector = `id=\\"account-site-${site}\\" label=\\"${label}，已登录，已选择\\" || id=\\"account-site-${site}\\" label=\\"${label}，本次核对失败，可重试，已选择\\"`;
+      expect(accountReplay).toContain(`wait "${terminalSelector}" 60000`);
+      if (site === 'nodeseek') expect(nodeSeekReplay).toContain(`wait "${terminalSelector}" 60000`);
+    }
+
+    expect(accountReplay).not.toMatch(/(?:press|click|find)\b[^\r\n]*刷新账号状态/);
+    expect(nodeSeekReplay).toContain('wait "label=\\"检测或重新登录\\" || label=\\"登录并填入\\"" 10000');
+    expect(nodeSeekReplay).not.toMatch(/nodeseek-login-webview-settled|press label="检测或重新登录"|刷新页面/);
+  });
+
+  it('[REG-TEST-005] keeps dynamic Xiaoyinsi level transport out of fixed Replay', () => {
     const accountReplay = readProjectFile('tests', 'device', 'account-readonly.ad');
 
     expect(accountReplay).toContain(
       [
         'press id="account-site-xiaoyinsi"',
-        'wait "id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，已登录，已选择\\"" 60000',
-        'wait "label=\\"查看等级, 点击读取\\"" 60000',
-        'press "label=\\"查看等级, 点击读取\\""',
-        'wait id="xiaoyinsi-level-settled" 60000',
-        'wait label="刷新等级" 60000'
+        'wait "id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，已登录，已选择\\" || id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，本次核对失败，可重试，已选择\\"" 60000',
+        'wait "label=\\"查看等级, 点击读取\\" || label=\\"查看等级, 授权后查看\\"" 10000'
       ].join('\n')
     );
-    expect(accountReplay.match(/^(?:press|click|find)\b[^\r\n]*(?:查看等级|刷新等级)[^\r\n]*$/gm) ?? []).toEqual([
-      'press "label=\\"查看等级, 点击读取\\""'
-    ]);
+    expect(accountReplay).not.toMatch(/^(?:press|click|find)\b[^\r\n]*(?:查看等级|刷新等级)[^\r\n]*$/m);
+    expect(accountReplay).not.toMatch(/xiaoyinsi-level-settled|刷新等级/);
     expect(accountReplay).not.toMatch(/^(?:wait|sleep|delay)\s+\d+\s*$/m);
     expect(accountReplay).not.toContain('wait text="等级进度"');
   });

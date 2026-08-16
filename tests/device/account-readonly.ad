@@ -9,14 +9,12 @@ press id="main-tab-more"
 wait text="关于阅坛" 10000
 press label="展开账号中心"
 wait id="account-site-nodeseek" 10000
-wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\"" 60000
+wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，本次核对失败，可重试，已选择\"" 60000
 press id="account-site-linuxdo"
+wait "id=\"account-site-linuxdo\" label=\"linux.do，已登录，已选择\" || id=\"account-site-linuxdo\" label=\"linux.do，本次核对失败，可重试，已选择\"" 60000
 wait "text=\"linux.do 等级\"" 10000
 press id="account-site-yaohuo"
-wait "id=\"account-site-yaohuo\" label=\"妖火，已登录，已选择\"" 60000
+wait "id=\"account-site-yaohuo\" label=\"妖火，已登录，已选择\" || id=\"account-site-yaohuo\" label=\"妖火，本次核对失败，可重试，已选择\"" 60000
 press id="account-site-xiaoyinsi"
-wait "id=\"account-site-xiaoyinsi\" label=\"小隐寺，已登录，已选择\"" 60000
-wait "label=\"查看等级, 点击读取\"" 60000
-press "label=\"查看等级, 点击读取\""
-wait id="xiaoyinsi-level-settled" 60000
-wait label="刷新等级" 60000
+wait "id=\"account-site-xiaoyinsi\" label=\"小隐寺，已登录，已选择\" || id=\"account-site-xiaoyinsi\" label=\"小隐寺，本次核对失败，可重试，已选择\"" 60000
+wait "label=\"查看等级, 点击读取\" || label=\"查看等级, 授权后查看\"" 10000

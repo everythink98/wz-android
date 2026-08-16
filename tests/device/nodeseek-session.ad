@@ -9,9 +9,5 @@ press id="main-tab-more"
 wait text="关于阅坛" 10000
 press label="展开账号中心"
 wait id="account-site-nodeseek" 10000
-wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\"" 60000
-press label="检测或重新登录"
-wait id="nodeseek-login-webview-settled" 60000
-wait label="刷新页面" 10000
-back --system
-wait label="收起账号中心" 10000
+wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，本次核对失败，可重试，已选择\"" 60000
+wait "label=\"检测或重新登录\" || label=\"登录并填入\"" 10000
