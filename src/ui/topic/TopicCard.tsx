@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Eye, MessageCircle } from 'lucide-react-native';
@@ -20,6 +20,7 @@ import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 
 const TOPIC_CARD_TAG_LIMIT = 3;
+const TOPIC_OPEN_GUARD_MS = 500;
 
 type TopicCardProps = {
   highlightQuery?: string;
@@ -81,7 +82,11 @@ export function TopicCard({
 }: TopicCardProps) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
   const { getMappingKey } = useMappingHelper();
+  const lastOpenAt = useRef(Number.NEGATIVE_INFINITY);
   const openTopicPress = useCallback(() => {
+    const now = Date.now();
+    if (now - lastOpenAt.current < TOPIC_OPEN_GUARD_MS) return;
+    lastOpenAt.current = now;
     onOpenTopic(topic);
   }, [onOpenTopic, topic]);
   const authorMeta = [

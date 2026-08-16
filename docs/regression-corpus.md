@@ -53,6 +53,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把 Topic controller 提回全局组合层、用 `popTo(MainTabs)` 返回，或在 native pop 后重建/恢复 Topic state，编号测试必须丢失或回滚原 route 状态。 |
 | 明确不覆盖范围 | 第三方请求当天延迟、随机目标是否存在和未经授权的论坛写操作不由该回归固定。 |
 
+## `REG-NAV-002` 列表主题快速连点压入两个相同详情页
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NAV-02`、`NAV-03`；共享 `FEED-01/02`、`SEARCH-01/02`、`LIBRARY-01/03`、`USER-01` 的 TopicCard 入口 |
+| 用户症状 | 在列表中快速点击同一主题后进入两层相同 Topic；第一次返回仍停在重复详情，必须再返回一次才能回到列表。 |
+| 触发条件 | 第一次 `onPress` 已同步派发 native stack push，但来源页面尚未失焦或冻结时，同一卡片又收到一次 press。 |
+| 根因 seam | `src/ui/topic/TopicCard.tsx` 是 Feed、Search、Library 和 User 主题列表的共享打开入口；旧实现每次 press 都直接调用 `onOpenTopic`，没有同步的重复激活门禁。 |
+| 必须保持的行为 | 同一卡片在一次快速连点窗口内只调用一次打开回调；窗口结束后仍可再次打开。不同卡片、Topic 内链接、回复关系和返回栈保持原行为。 |
+| 精确失败 oracle | `tests/ui/feed/feed-screen.test.tsx` 的 `[REG-NAV-002]` 在同一共享 TopicCard 上连续 press 两次，要求回调只发生一次；推进 500ms 后再次 press 必须发生第二次，证明门禁会释放。修复前第一次断言稳定得到两次调用。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定共享入口的同步门禁；匹配 APK 才能证明真实 Android press 与 native stack 时序只产生一个详情 route。 |
+| Replay 或真实验收路径 | 在身份匹配主 AVD 的 Feed、Search、Library 和 User 主题列表各选固定主题快速连点；每次只进入一层 Topic，单次 Android Back 返回原列表并保留位置。全程只读。 |
+| 负向验证方式 | 删除共享 guard、把 guard 放到单个页面、在异步 push 后才置位或永久禁用卡片；编号 UI 测试或任一 sibling 入口必须失败。 |
+| 明确不覆盖范围 | 不合并不同主题的明确点击，不改变 Topic 内链接、楼层重复定位、导航动画或 native stack 的 route identity。 |
+
 ## `REG-PERF-003` Feed 来源切换把列表工作压进 Pager 收尾帧
 
 | 字段 | 内容 |
@@ -5781,6 +5796,22 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 保留数据覆盖安装匹配 APK 后，监督式 Agent Live 直达 `https://www.nodeseek.com/post-812712-1`，执行 `gesture pan 675 1305 -240 0 5000` 并逐帧/UI hierarchy 排除原生选择，同时确认横向内容位移；静止长按必须仍可选择，第一次 Back 只关闭选择，第二次返回。再回归 linux.do plain code、V2EX table、外层纵向滚动、快速/反向/斜向拖和四个 terminal Tab。 |
 | 负向验证方式 | 删除 Native owner、移除 `blocksExternalGesture`、改为 simultaneous、允许 wrapper 被折叠、仅继续缩短阈值、删除 selectable、恢复内层原生 ScrollView、叠加站点特判或只运行 Jest；编号测试或真实设备 focus/录屏 oracle 必须失败。 |
 | 明确不覆盖范围 | 不升级 Expo/RN/RNGH，不新增依赖、原生模块、独立代码页、选择模式或语法编辑。若 Native bridge 在匹配 APK 上仍失败，撤销该桥接后才可单独回补上游 #4273；两种方案不得叠加。 |
+
+## `REG-TOPIC-100` 未切割正文仍无法把选择范围拖入表格
+
+| 字段 | 内容 |
+| --- | --- |
+| 当前状态 | `CONFIRMED / NOT_FIXED`；用户已明确“未发生正文切割时，选择应能从文本继续拖入表格”，实现路线仍需确认。 |
+| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-PERF-010` 与 `REG-TOPIC-084/093/094` 的正文 compiler、table 和选择 owner seam |
+| 用户症状 | NodeSeek `post-877083-1` 长按表格前正文后，“全选”只选中当前段落；选择手柄不能越过“配置”标题继续进入表格和表后文字。 |
+| 触发条件 | 目标正文没有触发物理预算切割，三个 compiler row 都是 `part="only"`；但 `richText → table → richText` 被分别渲染，首段、标题、两个表格单元和表后说明形成至少五个顶层 selectable Android Text owner。 |
+| 根因 seam | compiler 的语义/调度 row 与 Android 原生选择 owner 被错误等同。React Native `selectable` 只作用于各自 `TextView`；table 又是独立 View 树，因此给每块都加 `selectable` 不能形成文档级连续选择。 |
+| 必须保持的行为 | 没有真实预算切割的同一正文文档只有一个用户可见选择 owner；选择可从表格前文本跨标题、表格单元继续到表后文字，复制顺序与文档顺序一致。表格布局、链接、字号/主题、横向查看、外层纵向滚动和动态内容安全边界不得以“可复制”为由静默降级。 |
+| 精确失败 oracle | `tests/ui/topic/topic-rich-text-selection.test.tsx` 的 `[REG-TOPIC-100]` 固定 `richText/table/richText` 全部 `part="only"`，并要求顶层 selectable owner 数为 1；当前真实 RNRH 树得到 5。用例暂为 `it.failing`，只证明已确认失败，不计 `UI_PASS`；修复时必须改为普通用例。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定 compiler 到真实 renderer 的选择 owner 数；只有匹配 APK 的 Android ActionMode/handles 能证明可跨表格拖选和复制。 |
+| Replay 或真实验收路径 | 匹配主 AVD 只读直达 `https://www.nodeseek.com/post-877083-1`；长按首段并拖动或“全选”，高亮必须覆盖“配置”、表格内容及表后文字，复制文本顺序正确。不得清 Cookie/App 数据或执行论坛写操作。 |
+| 负向验证方式 | 只把 `p/h*` 改成嵌套 Text、只增加“复制全文”按钮、把 table 每个 cell 继续留作独立选择 owner、把表格静默拍平成普通文本，或未经性能/媒体/链接/安全回归就把所有 Topic/回复改成 WebView；编号用例或既有 table/media 回归必须失败。 |
+| 明确不覆盖范围 | 本条先固定产品目标与反证；在用户确认“默认正文直接使用单一文档表面”或“保留 native 阅读、进入按需选择表面”前，不用局部补丁伪装完成。 |
 
 ## `REG-TOPIC-095` 三槽图片预览翻页闪回错误图片且 pinch 误改 index
 

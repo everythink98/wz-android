@@ -330,6 +330,22 @@ function FeedSortHarness({ onFilterChange }: { onFilterChange: (filter: SourceFe
 }
 
 describe('Feed loading', () => {
+  it('[REG-NAV-002] opens a list topic only once when the card is pressed twice before navigation settles', async () => {
+    const onOpenTopic = jest.fn();
+    const view = await render(renderFeed(false, [topic], { onOpenTopic }));
+    const topicCard = view.getByTestId('feed-topic-first');
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+
+    await fireEvent.press(topicCard);
+    await fireEvent.press(topicCard);
+
+    expect(onOpenTopic).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(1_500);
+    await fireEvent.press(topicCard);
+    expect(onOpenTopic).toHaveBeenCalledTimes(2);
+  });
+
   it('[REG-FEED-016] keeps the home source tabs at the old compact 100% geometry', async () => {
     const view = await render(renderFeed(false, [topic]));
     const tabStyle = StyleSheet.flatten(view.getByTestId('feed-source-all').props.style);
