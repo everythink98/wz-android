@@ -786,7 +786,9 @@ export function sanitizeContentHtmlWithRoot(
   baseUrl: string,
   transformRoot?: (root: HTMLElement) => void
 ) {
-  const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
+  const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)), {
+    parsePreContent: true
+  });
   removeHiddenContent(root);
   transformRoot?.(root);
   for (const selector of ['script', 'style', 'noscript']) {

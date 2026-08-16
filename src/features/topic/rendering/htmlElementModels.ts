@@ -2,8 +2,9 @@ import { HTMLContentModel, HTMLElementModel, defaultHTMLElementModels } from 're
 import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
 import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
-import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
 import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
+
+export const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
 
 export const HTML_CUSTOM_ELEMENT_MODELS = {
   details: defaultHTMLElementModels.details.extend({
@@ -20,11 +21,6 @@ export const HTML_CUSTOM_ELEMENT_MODELS = {
   ...FORUM_STICKER_ELEMENT_MODELS,
   [FORUM_REPLY_REFERENCE_TAG]: HTMLElementModel.fromCustomModel({
     tagName: FORUM_REPLY_REFERENCE_TAG,
-    contentModel: HTMLContentModel.block,
-    isOpaque: true
-  }),
-  [NODESEEK_POLL_PLACEHOLDER_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: NODESEEK_POLL_PLACEHOLDER_TAG,
     contentModel: HTMLContentModel.block,
     isOpaque: true
   }),

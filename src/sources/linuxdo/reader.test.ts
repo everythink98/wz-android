@@ -69,13 +69,13 @@ describe('linux.do reader', () => {
           role: 'opening',
           source: 'linuxdo',
           topicId: topic.id
-        }).rows
+        }).regions
       ).not.toHaveLength(0);
       expect(
         requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
           role: 'reply',
           source: 'linuxdo'
-        }).rows
+        }).regions
       ).not.toHaveLength(0);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(openingMarker))).toHaveLength(1);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(replyMarker))).toHaveLength(1);

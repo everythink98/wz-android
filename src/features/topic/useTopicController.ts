@@ -85,6 +85,9 @@ type QuoteQueryProjection = Pick<
   'data' | 'error' | 'errorUpdatedAt' | 'isFetching' | 'isPending'
 >;
 
+const EMPTY_LOADED_QUOTED_REPLIES: Record<string, Reply> = {};
+const EMPTY_LOADING_QUOTED_FLOORS: Record<string, boolean> = {};
+
 function combineQuoteQueryResults(results: QuoteQueryProjection[]): QuoteQueryProjection[] {
   return results.map(({ data, error, errorUpdatedAt, isFetching, isPending }) => ({
     data,
@@ -661,6 +664,7 @@ export function useTopicController({
     [quoteQueries, quoteReferences]
   );
   const loadedQuotedReplies = useMemo<Record<string, Reply>>(() => {
+    if (!quoteReferences.length) return EMPTY_LOADED_QUOTED_REPLIES;
     const loaded: Record<string, Reply> = {};
     quoteReferences.forEach((reference, index) => {
       const reply = quoteQueries[index]?.data;
@@ -669,6 +673,7 @@ export function useTopicController({
     return loaded;
   }, [quoteQueries, quoteReferences]);
   const loadingQuotedFloors = useMemo<Record<string, boolean>>(() => {
+    if (!Object.keys(activeQuoteRequests).length) return EMPTY_LOADING_QUOTED_FLOORS;
     const loading: Record<string, boolean> = {};
     Object.entries(activeQuoteRequests).forEach(([instanceKey, { reference }]) => {
       const result = quoteResults.get(quotedPostReferenceKey(reference));

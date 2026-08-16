@@ -7,6 +7,7 @@ import { browserFetchIntentFromInit } from '@/platform/network/browserFetchInten
 import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
 import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
+import { forumContentSegments } from '../../helpers/forumContentSegments';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { DEFAULT_SEARCH_FILTERS } from '@/domain/forum/searchFilters';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
@@ -289,9 +290,9 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).toContain('href="https://www.reddit.com/r/OpenAI/comments/abc123/topic/"');
     expect(topic.contentHtml).not.toContain('嵌入内容 · embed.reddit.com');
     expect(
-      compileForumContent({ html: topic.contentHtml, polls: topic.polls, role: 'opening', source: 'linuxdo' }).rows.map(
-        (row) => row.type
-      )
+      forumContentSegments(
+        compileForumContent({ html: topic.contentHtml, polls: topic.polls, role: 'opening', source: 'linuxdo' })
+      ).map((row) => row.type)
     ).toEqual(['richText', 'poll', 'richText', 'richText']);
   });
 
@@ -390,12 +391,14 @@ describe('Android local sources', () => {
     ]);
     expect(topic.replies[0].contentHtml).not.toContain('原始回复选项');
     expect(
-      compileForumContent({
-        html: topic.replies[0].contentHtml,
-        polls: topic.replies[0].polls,
-        role: 'reply',
-        source: 'linuxdo'
-      }).rows.map((row) => row.type)
+      forumContentSegments(
+        compileForumContent({
+          html: topic.replies[0].contentHtml,
+          polls: topic.replies[0].polls,
+          role: 'reply',
+          source: 'linuxdo'
+        })
+      ).map((row) => row.type)
     ).toEqual(['richText', 'poll', 'richText']);
   });
 

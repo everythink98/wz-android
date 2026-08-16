@@ -5,6 +5,7 @@ import { getReplies, getTopic } from '@/sources/sourceRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
+import { forumContentSegments } from '../../helpers/forumContentSegments';
 import {
   getNodeSeekCurrentUserProfile,
   getNodeSeekReplies,
@@ -2592,10 +2593,9 @@ describe('Android local sources', () => {
 
     const topic = await getNodeSeekTopic('812712', { fetcher });
     const compiled = compileForumContent({ html: topic.contentHtml, role: 'opening', source: 'nodeseek' });
-    const report = compiled.rows.find((row) => row.type === 'terminalReportHeader');
-    const terminalRows = compiled.rows.filter((row) =>
-      row.ancestorFrames.some((frame) => frame.kind === 'terminalTab')
-    );
+    const segments = forumContentSegments(compiled);
+    const report = segments.find((row) => row.type === 'terminalReportHeader');
+    const terminalRows = segments.filter((row) => row.ancestorFrames.some((frame) => frame.kind === 'terminalTab'));
     const terminalCodeRows = terminalRows.filter((row) => row.type === 'codeBlock');
 
     expect(topic.contentHtml).toContain('<forum-terminal-report>');
@@ -2651,9 +2651,9 @@ describe('Android local sources', () => {
     expect(
       terminalRows.some((row) => 'html' in row && row.html.includes('https://i.111666.best/image/network.webp'))
     ).toBe(true);
-    expect(compiled.rows.every((row) => !('html' in row) || !row.html.includes('<forum-terminal-report'))).toBe(true);
+    expect(segments.every((row) => !('html' in row) || !row.html.includes('<forum-terminal-report'))).toBe(true);
     expect(
-      compiled.rows.some(
+      segments.some(
         (row) =>
           'html' in row &&
           row.html.includes('HardwareQuality') &&

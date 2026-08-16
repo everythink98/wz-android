@@ -40,7 +40,6 @@ import type { HtmlRenderers } from '../rendering/types';
 import type { ReplyFilter } from '../model/types';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '@/domain/forum/presentation';
 import { contentBoundaryForContinuation, HTML_ALLOWED_INLINE_STYLES } from '../rendering/htmlStyles';
-import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
 import {
   androidRipple,
   replyContextBadgeStyle,
@@ -98,8 +97,7 @@ import {
   topicListMediaPlanStats,
   type TopicListItem
 } from '../model/topicListModel';
-import { highlightHtml } from '@/ui/text/highlight';
-import { HTML_CUSTOM_ELEMENT_MODELS } from '../rendering/htmlElementModels';
+import { HTML_CUSTOM_ELEMENT_MODELS, HTML_IGNORED_DOM_TAGS } from '../rendering/htmlElementModels';
 import {
   TopicBodyMediaCoordinatorProvider,
   useTopicBodyMediaFirstRowMarker,
@@ -112,12 +110,12 @@ import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnost
 import {
   TopicSplitDisclosureProvider,
   TopicSplitDisclosureScope,
-  topicSemanticRowVisible,
+  topicMaterializationRegionVisible,
   useTopicSplitDisclosureStore
 } from '../rendering/TopicSplitDisclosure';
 import { useContentBoundarySpacing } from '../rendering/TopicContentPresentation';
-import { resolveForumContentRowHtml, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
-import { createTopicTableRenderers, TopicTableScrollProvider } from '../rendering/topicTableRenderers';
+import type { CompiledForumContentSegment, ForumContentMaterializationRegion } from '@/domain/forum/topicContentSplit';
+import { TopicTableScrollProvider } from '../rendering/topicTableRenderers';
 
 const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
 const EMPTY_NEARBY_TOPIC_CONTENT_KEYS: ReadonlySet<string> = new Set();
@@ -138,14 +136,22 @@ const CONTENT_ROW_TRIM_TRAILING: ViewStyle = {
   paddingBottom: 0
 };
 
-function topicListCompiledRow(item: TopicListItem): CompiledForumContentRow | null {
+function topicListContentRegion(item: TopicListItem): ForumContentMaterializationRegion | null {
   if (item.type === 'topicContent' || item.type === 'topicQuoteContent' || item.type === 'topicAcceptedAnswerContent') {
-    return item.content.type === 'accessNotice' ? null : item.content.row;
+    return item.content.type === 'accessNotice' ? null : item.content.region;
   }
-  if (item.type === 'topicQuoteSummary') return item.content.row;
+  if (item.type === 'topicQuoteSummary') return item.content.region;
   if (item.type === 'replyContent' || item.type === 'replyQuoteContent') return item.content;
   if (item.type === 'replySignatureContent') return item.content;
   return null;
+}
+
+function leadingSegment(region: ForumContentMaterializationRegion) {
+  return region.kind === 'island' ? region.segment : region.segments[0];
+}
+
+function trailingSegment(region: ForumContentMaterializationRegion) {
+  return region.kind === 'island' ? region.segment : region.segments[region.segments.length - 1];
 }
 
 function topicListContentScope(item: TopicListItem) {
@@ -175,22 +181,24 @@ function continuesSameLogicalContentGroup(leadingItem: TopicListItem, trailingIt
   ) {
     return true;
   }
-  const leadingRow = topicListCompiledRow(leadingItem);
-  const trailingRow = topicListCompiledRow(trailingItem);
-  if (!leadingRow || !trailingRow) return false;
-  const terminalReportId = (row: CompiledForumContentRow) =>
-    row.type === 'terminalReportHeader'
-      ? row.semanticId
-      : row.ancestorFrames.find((frame) => frame.kind === 'terminalTab')?.reportSemanticId;
+  const leadingRegion = topicListContentRegion(leadingItem);
+  const trailingRegion = topicListContentRegion(trailingItem);
+  if (!leadingRegion || !trailingRegion) return false;
+  const leadingRow = trailingSegment(leadingRegion);
+  const trailingRow = leadingSegment(trailingRegion);
+  const terminalReportId = (segment: CompiledForumContentSegment) =>
+    segment.type === 'terminalReportHeader'
+      ? segment.semanticId
+      : segment.ancestorFrames.find((frame) => frame.kind === 'terminalTab')?.reportSemanticId;
   const leadingReportId = terminalReportId(leadingRow);
   if (leadingReportId && leadingReportId === terminalReportId(trailingRow)) return true;
   const trailingParts = new Map([
-    [trailingRow.semanticId, trailingRow.part],
-    ...trailingRow.ancestorFrames.map((frame) => [frame.semanticId, frame.part] as const)
+    [trailingRow.semanticId, trailingRow.semanticContinuation],
+    ...trailingRow.ancestorFrames.map((frame) => [frame.semanticId, frame.semanticContinuation] as const)
   ]);
   return [
-    [leadingRow.semanticId, leadingRow.part] as const,
-    ...leadingRow.ancestorFrames.map((frame) => [frame.semanticId, frame.part] as const)
+    [leadingRow.semanticId, leadingRow.semanticContinuation] as const,
+    ...leadingRow.ancestorFrames.map((frame) => [frame.semanticId, frame.semanticContinuation] as const)
   ].some(([semanticId, part]) => {
     const trailingPart = trailingParts.get(semanticId);
     return (
@@ -201,8 +209,9 @@ function continuesSameLogicalContentGroup(leadingItem: TopicListItem, trailingIt
   });
 }
 
-function rowPresentationPart(row: CompiledForumContentRow) {
-  return row.ancestorFrames[0]?.part || row.part;
+function regionPresentationPart(region: ForumContentMaterializationRegion) {
+  const segment = leadingSegment(region);
+  return segment.ancestorFrames[0]?.semanticContinuation || segment.semanticContinuation;
 }
 
 type QuoteContentLayoutProgress = {
@@ -273,7 +282,6 @@ function YaohuoFavoriteButton({
   );
 }
 
-const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
 const ContentBoundarySpacingRenderer: CustomBlockRenderer = ({ InternalRenderer, ...props }) => {
   const boundarySpacing = useContentBoundarySpacing(props.tnode);
   return <InternalRenderer {...props} style={boundarySpacing ? { ...props.style, ...boundarySpacing } : props.style} />;
@@ -338,6 +346,7 @@ export const TopicContentList = memo(function TopicContentList({
     mediaContext,
     mediaSessionIdentity,
     nodeSeekMediaUserAgent,
+    openHtmlLink,
     topicImageDeriver
   } = html;
   const filteredReplies = useMemo(
@@ -926,9 +935,9 @@ export const TopicContentList = memo(function TopicContentList({
   const topicListItems = useMemo(
     () =>
       unfilteredTopicListItems.filter((listItem) => {
-        const row = topicListCompiledRow(listItem);
+        const region = topicListContentRegion(listItem);
         const scopeKey = topicListContentScope(listItem);
-        return !row || !scopeKey || topicSemanticRowVisible(row, scopeKey, disclosureStore);
+        return !region || !scopeKey || topicMaterializationRegionVisible(region, scopeKey, disclosureStore);
       }),
     [disclosureStore, unfilteredTopicListItems]
   );
@@ -1225,17 +1234,9 @@ export const TopicContentList = memo(function TopicContentList({
     windowStartWithinPrefetchRef.current = false;
     pendingAcceptedAnswerScrollRef.current = false;
   }, [item?.id, item?.source]);
-  const genericHtmlRenderers = useMemo<HtmlRenderers>(() => {
-    const tableRenderers = createTopicTableRenderers({
-      minColumnWidth: Math.round(
-        96 *
-          (typeof htmlBaseStyle.fontSize === 'number' && htmlBaseStyle.fontSize > 0 ? htmlBaseStyle.fontSize / 16 : 1)
-      ),
-      styles
-    });
-    return {
+  const genericHtmlRenderers = useMemo<HtmlRenderers>(
+    () => ({
       ...htmlRenderers,
-      ...tableRenderers,
       h1: ContentBoundarySpacingRenderer,
       h2: ContentBoundarySpacingRenderer,
       h3: ContentBoundarySpacingRenderer,
@@ -1245,50 +1246,9 @@ export const TopicContentList = memo(function TopicContentList({
       ol: ContentBoundarySpacingRenderer,
       p: ContentBoundarySpacingRenderer,
       ul: ContentBoundarySpacingRenderer
-    };
-  }, [htmlBaseStyle.fontSize, htmlRenderers, styles]);
-  const topicBodyHtmlRenderers = useMemo<HtmlRenderers>(() => {
-    const NodeSeekPollRenderer: CustomBlockRenderer = (props) => {
-      const encodedId = String(props.tnode.attributes.id || '');
-      const poll =
-        itemSource === 'nodeseek'
-          ? topicPolls.find((candidate) => candidate.id && encodeURIComponent(candidate.id) === encodedId)
-          : undefined;
-      if (!poll) {
-        return null;
-      }
-      return (
-        <TopicPolls
-          actionBusy={actionBusy}
-          decisionFor={decisionFor}
-          embeddedInArticle
-          keyPrefix="topic"
-          onTogglePollSelection={togglePollSelection}
-          onVotePoll={onVotePoll}
-          pollSelections={pollSelections}
-          polls={[poll]}
-          source="nodeseek"
-          styles={styles}
-          theme={theme}
-        />
-      );
-    };
-    return {
-      ...genericHtmlRenderers,
-      [NODESEEK_POLL_PLACEHOLDER_TAG]: NodeSeekPollRenderer
-    };
-  }, [
-    actionBusy,
-    decisionFor,
-    genericHtmlRenderers,
-    itemSource,
-    onVotePoll,
-    pollSelections,
-    styles,
-    theme,
-    togglePollSelection,
-    topicPolls
-  ]);
+    }),
+    [htmlRenderers]
+  );
   const renderTopicListItemFrame = useCallback(
     (children: ReactNode, key?: string, onLayout?: (event: LayoutChangeEvent) => void) => {
       const frame = (
@@ -1308,11 +1268,13 @@ export const TopicContentList = memo(function TopicContentList({
   const TopicListItemSeparator = useCallback(
     ({ leadingItem, trailingItem }: { leadingItem: TopicListItem; trailingItem: TopicListItem }) => {
       if (continuesSameLogicalContentGroup(leadingItem, trailingItem)) return null;
-      const leadingRow = topicListCompiledRow(leadingItem);
-      const trailingRow = topicListCompiledRow(trailingItem);
+      const leadingRegion = topicListContentRegion(leadingItem);
+      const trailingRegion = topicListContentRegion(trailingItem);
       if (
-        leadingRow?.type === 'table' &&
-        trailingRow?.type === 'table' &&
+        leadingRegion?.kind === 'selectable' &&
+        leadingRegion.segments.every((segment) => segment.type === 'table') &&
+        trailingRegion?.kind === 'selectable' &&
+        trailingRegion.segments.every((segment) => segment.type === 'table') &&
         topicListContentScope(leadingItem) === topicListContentScope(trailingItem)
       ) {
         return <View style={{ height: 12 }} />;
@@ -1350,8 +1312,8 @@ export const TopicContentList = memo(function TopicContentList({
     ) => {
       const context = options?.context || 'topic';
       const frameKey = options?.frameKey || contentItem.key;
-      const row = contentItem.type === 'content' ? contentItem.row : undefined;
-      const continuationBoundary = row ? contentBoundaryForContinuation(rowPresentationPart(row)) : null;
+      const region = contentItem.type === 'content' ? contentItem.region : undefined;
+      const continuationBoundary = region ? contentBoundaryForContinuation(regionPresentationPart(region)) : null;
       const trimLeadingStyle = continuationBoundary?.trimLeading ? CONTENT_ROW_TRIM_LEADING : undefined;
       const trimTrailingStyle = continuationBoundary?.trimTrailing ? CONTENT_ROW_TRIM_TRAILING : undefined;
       const contentBoundarySpacing =
@@ -1422,28 +1384,28 @@ export const TopicContentList = memo(function TopicContentList({
       }
 
       if (contentItem.type === 'content') {
-        if (contentItem.row.type === 'video') {
+        const video =
+          contentItem.region.kind === 'island' && contentItem.region.segment.type === 'video'
+            ? contentItem.region.segment
+            : null;
+        if (video) {
           return wrapContent(
             <ManagedTopicContentVideo
-              key={`${mediaSessionIdentity}:${contentItem.row.src}`}
+              key={`${mediaSessionIdentity}:${video.src}`}
               boundarySpacing={contentBoundarySpacing}
               mediaContext={mediaContext}
               nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-              poster={contentItem.row.poster}
-              referrerPolicy={contentItem.row.referrerPolicy}
-              src={contentItem.row.src}
+              poster={video.poster}
+              referrerPolicy={video.referrerPolicy}
+              src={video.src}
               theme={theme}
             />
           );
         }
-        const resolvedHtml =
-          'html' in contentItem.row
-            ? resolveForumContentRowHtml(contentItem.row, inlineSizedImageUrls, topicImageDeriver.isInlineSizedImage)
-            : undefined;
         return wrapContent(
           <TopicSplitDisclosureScope scopeKey={options?.scopeKey || 'opening'}>
             <RenderHTMLConfigProvider
-              renderers={topicBodyHtmlRenderers}
+              renderers={genericHtmlRenderers}
               renderersProps={htmlRenderersProps}
               defaultTextProps={{ selectable: true }}
               enableExperimentalBRCollapsing
@@ -1452,14 +1414,12 @@ export const TopicContentList = memo(function TopicContentList({
             >
               <MemoizedTopicContentBlock
                 contentWidth={context === 'topic' ? contentWidth : Math.max(220, contentWidth - 24)}
-                html={
-                  resolvedHtml === undefined || context === 'topic'
-                    ? resolvedHtml
-                    : highlightHtml(resolvedHtml, replyHighlightQuery)
-                }
+                inlineSizedImageUrls={inlineSizedImageUrls}
+                isInlineSizedImage={topicImageDeriver.isInlineSizedImage}
+                onLinkPress={openHtmlLink}
                 originalImageUpgradeEnabled={nearbyTopicContentKeys.has(frameKey)}
                 query={context === 'topic' ? '' : replyHighlightQuery}
-                row={contentItem.row}
+                region={contentItem.region}
               />
             </RenderHTMLConfigProvider>
           </TopicSplitDisclosureScope>,
@@ -1479,6 +1439,7 @@ export const TopicContentList = memo(function TopicContentList({
       mediaContext,
       mediaSessionIdentity,
       nodeSeekMediaUserAgent,
+      openHtmlLink,
       nearbyTopicContentKeys,
       onVotePoll,
       pollSelections,
@@ -1489,7 +1450,7 @@ export const TopicContentList = memo(function TopicContentList({
       theme,
       togglePollSelection,
       topic?.source,
-      topicBodyHtmlRenderers,
+      genericHtmlRenderers,
       topicColumnStyle,
       topicImageDeriver
     ]
@@ -1946,6 +1907,7 @@ export const TopicContentList = memo(function TopicContentList({
             onDeleteReply={onDeleteReply}
             onEditReply={onEditReply}
             onLocateReply={requestReplyLocation}
+            onLinkPress={openHtmlLink}
             onOpenTopic={onOpenTopic}
             onQuoteContentLayout={markReplyQuoteContentLayout}
             onVotePoll={onVotePoll}
@@ -1994,6 +1956,7 @@ export const TopicContentList = memo(function TopicContentList({
       onEditReply,
       onInteract,
       onOpenTopic,
+      openHtmlLink,
       onToggleTopicBodyQuote,
       openReplyOrderMenu,
       markReplyQuoteContentLayout,

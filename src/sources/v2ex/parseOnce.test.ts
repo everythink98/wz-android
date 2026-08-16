@@ -88,13 +88,13 @@ describe('V2EX detail parsing', () => {
           role: 'opening',
           source: 'v2ex',
           topicId: topic.id
-        }).rows
+        }).regions
       ).not.toHaveLength(0);
       expect(
         requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
           role: 'reply',
           source: 'v2ex'
-        }).rows
+        }).regions
       ).not.toHaveLength(0);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(openingMarker))).toHaveLength(1);
       expect(

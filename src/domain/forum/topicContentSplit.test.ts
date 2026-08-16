@@ -5,41 +5,51 @@ import { withTrackedParseHtml } from '../../../tests/helpers/trackedParseHtml';
 import {
   compileForumContent,
   prepareReplyContent,
+  prepareSanitizedForumContent,
   prepareTopicContent,
   requirePreparedForumContent,
   type CompiledForumContent,
-  type CompiledForumContentRow,
+  type CompiledForumContentSegment,
   type ForumContentAncestorFrame
 } from './topicContentSplit';
 import { topicOpeningPostAsReply } from './quotedPosts';
+import { forumContentSegments } from '../../../tests/helpers/forumContentSegments';
 
-function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
-  return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
+function renderedContentRows(compilation: Pick<CompiledForumContent, 'regions'>) {
+  return forumContentSegments(compilation).filter(
+    (row): row is Extract<CompiledForumContentSegment, { html: string }> => 'html' in row
+  );
 }
 
-function imageUrlsInPlannedRow(row: { html?: string }) {
-  return parseHtml(row.html || '')
+function imageUrlsInPlannedRow(row: CompiledForumContentSegment) {
+  return parseHtml('html' in row ? row.html : '')
     .querySelectorAll('img')
     .map((image) => image.getAttribute('src'));
 }
 
-function planForumContent(html: string | undefined, source: 'linuxdo' | 'nodeseek' = 'nodeseek'): { rows: any[] } {
+function plannedForumSegments(html: string | undefined, source: 'linuxdo' | 'nodeseek' = 'nodeseek') {
   const compilation = compileForumContent({ html, role: 'opening', source });
+  return forumContentSegments(compilation).filter(
+    (segment): segment is Exclude<CompiledForumContentSegment, { type: 'poll' | 'quote' }> =>
+      segment.type !== 'poll' && segment.type !== 'quote'
+  );
+}
+
+function planForumContent(html: string | undefined, source: 'linuxdo' | 'nodeseek' = 'nodeseek') {
   return {
-    rows: compilation.rows.flatMap<any>((row) => {
-      if (row.type === 'poll' || row.type === 'quote') return [];
-      const { type: _type, ...plannedRow } = row;
-      if ('src' in plannedRow) {
-        const { src: _src, ...htmlRow } = plannedRow;
-        return [htmlRow];
-      }
-      return [plannedRow];
-    })
+    rows: plannedForumSegments(html, source).filter(
+      (segment): segment is Extract<CompiledForumContentSegment, { type: 'richText' | 'table' }> =>
+        segment.type === 'richText' || segment.type === 'table'
+    )
   };
 }
 
+function planSemanticForumContent(html: string | undefined, source: 'linuxdo' | 'nodeseek' = 'nodeseek') {
+  return { rows: plannedForumSegments(html, source) };
+}
+
 function logicalSliceForTag(
-  row: CompiledForumContentRow,
+  row: CompiledForumContentSegment,
   kind: 'blockquote' | 'callout' | 'details' | 'list' | 'listItem'
 ) {
   return row.ancestorFrames.find((frame) => frame.kind === kind);
@@ -119,6 +129,25 @@ function parsedBalancedTable(html: string) {
 }
 
 describe('Android topic content splitting', () => {
+  it('[REG-TOPIC-101] preserves a sanitized LinuxDo pre/code element as one code owner', () => {
+    const preparedContent = prepareSanitizedForumContent(
+      '<pre><code class="lang-auto">first line\nsecond line</code></pre>',
+      {
+        baseUrl: 'https://linux.do/',
+        polls: [],
+        role: 'reply',
+        source: 'linuxdo'
+      }
+    );
+
+    const segments = forumContentSegments(preparedContent.contentPlan);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({
+      copyText: 'first line\nsecond line',
+      text: 'first line\nsecond line',
+      type: 'codeBlock'
+    });
+  });
   it('[REG-PERF-010] keeps pure block-image paragraphs in bounded rich-text rows', () => {
     const urls = Array.from({ length: 9 }, (_, index) => `https://img.example/${index}.webp`);
     const pure = compileForumContent({
@@ -136,15 +165,18 @@ describe('Android topic content splitting', () => {
       role: 'opening',
       source: 'nodeseek'
     });
+    const pureSegments = forumContentSegments(pure);
+    const mixedSegments = forumContentSegments(mixed);
+    const lightboxSegments = forumContentSegments(lightbox);
 
-    expect(pure.rows.map((row) => row.type)).toEqual(['richText', 'richText', 'richText']);
-    expect(pure.rows.flatMap((row) => ('html' in row ? urls.filter((url) => row.html.includes(url)) : []))).toEqual(
+    expect(pureSegments.map((row) => row.type)).toEqual(['richText', 'richText', 'richText']);
+    expect(pureSegments.flatMap((row) => ('html' in row ? urls.filter((url) => row.html.includes(url)) : []))).toEqual(
       urls
     );
-    expect(pure.rows.map((row) => ('html' in row ? row.html.match(/<img\b/g)?.length || 0 : 0))).toEqual([4, 4, 1]);
+    expect(pureSegments.map((row) => ('html' in row ? row.html.match(/<img\b/g)?.length || 0 : 0))).toEqual([4, 4, 1]);
     expect(pure.previewImages.map((image) => image.source)).toEqual(urls);
-    expect(mixed.rows.map((row) => row.type)).toEqual(['richText']);
-    expect(lightbox.rows).toEqual([
+    expect(mixedSegments.map((row) => row.type)).toEqual(['richText']);
+    expect(lightboxSegments).toEqual([
       expect.objectContaining({
         type: 'richText',
         html: expect.stringContaining('https://img.example/original.webp')
@@ -178,7 +210,7 @@ describe('Android topic content splitting', () => {
         }
       );
 
-      expect(prepared.contentPlan.rows).toHaveLength(500);
+      expect(forumContentSegments(prepared.contentPlan)).toHaveLength(500);
       expect(rootToString).toHaveBeenCalledTimes(1);
     } finally {
       vi.doUnmock('./contentSanitizer');
@@ -211,10 +243,10 @@ describe('Android topic content splitting', () => {
       source: topic.source
     });
 
-    expect(openingPlan.rows.map((row) => row.type)).toEqual(['quote']);
+    expect(forumContentSegments(openingPlan).map((row) => row.type)).toEqual(['quote']);
     expect(quotedReply.preparedContent).not.toBe(topic.preparedContent);
-    expect(quotedPlan.rows.length).toBeGreaterThan(0);
-    expect(quotedPlan.rows.every((row) => row.type === 'richText')).toBe(true);
+    expect(forumContentSegments(quotedPlan).length).toBeGreaterThan(0);
+    expect(forumContentSegments(quotedPlan).every((row) => row.type === 'richText')).toBe(true);
   });
 
   it('[REG-PERF-010] compiles nested opening quotes and polls into ordered typed parent rows', () => {
@@ -231,8 +263,9 @@ describe('Android topic content splitting', () => {
       topicId: '77'
     });
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(['richText', 'quote', 'richText', 'poll', 'richText']);
-    expect(compilation.rows[1]).toMatchObject({
+    const segments = forumContentSegments(compilation);
+    expect(segments.map((row) => row.type)).toEqual(['richText', 'quote', 'richText', 'poll', 'richText']);
+    expect(segments[1]).toMatchObject({
       type: 'quote',
       quote: {
         author: { label: 'bob', username: 'bob' },
@@ -240,7 +273,7 @@ describe('Android topic content splitting', () => {
         reference: { postNumber: 8, source: 'linuxdo', topicId: '77' }
       }
     });
-    expect(compilation.rows[3]).toEqual(expect.objectContaining({ poll, type: 'poll' }));
+    expect(segments[3]).toEqual(expect.objectContaining({ poll, type: 'poll' }));
   });
 
   it('[REG-PERF-010] lifts a nested poll marker to its original parent-row position', () => {
@@ -250,14 +283,29 @@ describe('Android topic content splitting', () => {
 
     const compilation = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(['richText', 'poll', 'richText']);
-    expect(compilation.rows[0]?.type === 'richText' ? withoutCompilerBindings(compilation.rows[0].html) : '').toBe(
+    const segments = forumContentSegments(compilation);
+    expect(segments.map((row) => row.type)).toEqual(['richText', 'poll', 'richText']);
+    expect(segments[0]?.type === 'richText' ? withoutCompilerBindings(segments[0].html) : '').toBe(
       '<div class="forum-reply-content"><section><p>before</p></section></div>'
     );
-    expect(compilation.rows[1]).toMatchObject({ poll, type: 'poll' });
-    expect(compilation.rows[2]?.type === 'richText' ? withoutCompilerBindings(compilation.rows[2].html) : '').toBe(
+    expect(segments[1]).toMatchObject({ poll, type: 'poll' });
+    expect(segments[2]?.type === 'richText' ? withoutCompilerBindings(segments[2].html) : '').toBe(
       '<div class="forum-reply-content"><section><p>after</p></section></div>'
     );
+  });
+
+  it('[REG-WRITE-009] lifts a NodeSeek poll marker into an ordered interaction island', () => {
+    const poll = { id: 'source-poll', title: '来源投票', options: [{ id: 'yes', label: '赞成' }] };
+    const compilation = compileForumContent({
+      html: '<p>投票前正文<forum-nodeseek-poll id="source-poll"></forum-nodeseek-poll>投票后正文</p>',
+      polls: [poll],
+      role: 'opening',
+      source: 'nodeseek'
+    });
+
+    const segments = forumContentSegments(compilation);
+    expect(segments.map((segment) => segment.type)).toEqual(['richText', 'poll', 'richText']);
+    expect(segments[1]).toMatchObject({ poll, type: 'poll' });
   });
 
   it('[REG-PERF-010] preserves poll order when a typed marker appears inside a table cell', () => {
@@ -266,7 +314,8 @@ describe('Android topic content splitting', () => {
       '<p>before</p><table><tbody><tr><td>cell-before<forum-discourse-poll name="choice"></forum-discourse-poll>cell-after</td></tr></tbody></table><p>end</p>';
 
     const compilation = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
-    const orderedContent = compilation.rows.map((row) =>
+    const segments = forumContentSegments(compilation);
+    const orderedContent = segments.map((row) =>
       row.type === 'poll'
         ? 'POLL'
         : row.type === 'quote'
@@ -278,7 +327,7 @@ describe('Android topic content splitting', () => {
               : ''
     );
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(['richText', 'richText', 'poll', 'richText', 'richText']);
+    expect(segments.map((row) => row.type)).toEqual(['richText', 'richText', 'poll', 'richText', 'richText']);
     expect(orderedContent).toEqual(['before', 'cell-before', 'POLL', 'cell-after', 'end']);
   });
 
@@ -288,7 +337,8 @@ describe('Android topic content splitting', () => {
       '<p>before</p><forum-link-card href="https://example.com"><span>island-before</span><forum-discourse-poll name="choice"></forum-discourse-poll><span>island-after</span></forum-link-card><p>after</p>';
 
     const compilation = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
-    const orderedContent = compilation.rows.map((row) =>
+    const segments = forumContentSegments(compilation);
+    const orderedContent = segments.map((row) =>
       row.type === 'poll'
         ? 'POLL'
         : row.type === 'quote'
@@ -300,7 +350,7 @@ describe('Android topic content splitting', () => {
               : ''
     );
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(['richText', 'richText', 'poll', 'richText']);
+    expect(segments.map((row) => row.type)).toEqual(['richText', 'richText', 'poll', 'richText']);
     expect(orderedContent).toEqual(['before', '内容过于复杂，请在原站查看。', 'POLL', 'after']);
     expect(renderedContentRows(compilation).every((row) => !row.html.includes('forum-link-card'))).toBe(true);
   });
@@ -310,12 +360,12 @@ describe('Android topic content splitting', () => {
     const html =
       '<details id="panel" name="shared" open><summary>Title</summary><ol id="steps" start="7"><li id="entry">before<forum-discourse-poll name="choice"></forum-discourse-poll>after</li><li>tail</li></ol></details>';
 
-    const rows = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' }).rows;
+    const rows = forumContentSegments(compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' }));
     expect(rows.map((row) => row.type)).toEqual(['disclosureHeader', 'richText', 'poll', 'richText', 'richText']);
     expect(rows[0]).toMatchObject({
       defaultExpanded: true,
       disclosureKind: 'details',
-      part: 'first',
+      semanticContinuation: 'first',
       semanticId: 'node-0',
       titleLabel: 'Title'
     });
@@ -339,7 +389,7 @@ describe('Android topic content splitting', () => {
       'before'
     )}</p><forum-discourse-poll name="choice"></forum-discourse-poll><p>${images('after')}</p></details>`;
 
-    const rows = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' }).rows;
+    const rows = forumContentSegments(compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' }));
     expect(rows.map((row) => row.type)).toEqual([
       'disclosureHeader',
       'richText',
@@ -350,11 +400,11 @@ describe('Android topic content splitting', () => {
     ]);
     expect(rows[0]).toMatchObject({ defaultExpanded: false, semanticId: 'node-0', type: 'disclosureHeader' });
     expect(rows.slice(1).map((row) => row.ancestorFrames.find((frame) => frame.kind === 'details'))).toEqual([
-      expect.objectContaining({ part: 'middle', semanticId: 'node-0' }),
-      expect.objectContaining({ part: 'middle', semanticId: 'node-0' }),
-      expect.objectContaining({ part: 'middle', semanticId: 'node-0' }),
-      expect.objectContaining({ part: 'middle', semanticId: 'node-0' }),
-      expect.objectContaining({ part: 'last', semanticId: 'node-0' })
+      expect.objectContaining({ semanticContinuation: 'middle', semanticId: 'node-0' }),
+      expect.objectContaining({ semanticContinuation: 'middle', semanticId: 'node-0' }),
+      expect.objectContaining({ semanticContinuation: 'middle', semanticId: 'node-0' }),
+      expect.objectContaining({ semanticContinuation: 'middle', semanticId: 'node-0' }),
+      expect.objectContaining({ semanticContinuation: 'last', semanticId: 'node-0' })
     ]);
   });
 
@@ -368,7 +418,7 @@ describe('Android topic content splitting', () => {
         source: 'yaohuo'
       });
 
-      expect(compilation.rows).toEqual([
+      expect(forumContentSegments(compilation)).toEqual([
         expect.objectContaining({
           poster: 'https://media.example/poster.webp',
           referrerPolicy: 'no-referrer',
@@ -389,8 +439,9 @@ describe('Android topic content splitting', () => {
       source: 'linuxdo'
     });
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(['video', 'poll', 'video']);
-    expect(compilation.rows.flatMap((row) => (row.type === 'video' ? [row.src] : []))).toEqual([
+    const segments = forumContentSegments(compilation);
+    expect(segments.map((row) => row.type)).toEqual(['video', 'poll', 'video']);
+    expect(segments.flatMap((row) => (row.type === 'video' ? [row.src] : []))).toEqual([
       'https://media.example/before.mp4',
       'https://media.example/after.mp4'
     ]);
@@ -406,8 +457,9 @@ describe('Android topic content splitting', () => {
       source: 'linuxdo'
     });
 
-    expect(compilation.rows.map((row) => row.type)).toEqual(Array.from({ length: 5 }, () => 'video'));
-    expect(compilation.rows.flatMap((row) => (row.type === 'video' ? [row.src] : []))).toEqual(
+    const segments = forumContentSegments(compilation);
+    expect(segments.map((row) => row.type)).toEqual(Array.from({ length: 5 }, () => 'video'));
+    expect(segments.flatMap((row) => (row.type === 'video' ? [row.src] : []))).toEqual(
       Array.from({ length: 5 }, (_, index) => `https://media.example/${index}.mp4`)
     );
   });
@@ -422,7 +474,7 @@ describe('Android topic content splitting', () => {
 
       const compilation = compileTrackedContent({ html, role: 'reply', source: 'nodeseek' });
 
-      expect(compilation.rows).toHaveLength(500);
+      expect(forumContentSegments(compilation)).toHaveLength(500);
       expect(compilation.previewImages).toHaveLength(2_000);
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
     });
@@ -438,7 +490,7 @@ describe('Android topic content splitting', () => {
     try {
       const compilation = compileForumContent({ html, role: 'reply', source: 'nodeseek' });
 
-      expect(compilation.rows).toHaveLength(500);
+      expect(compilation.regions).toHaveLength(500);
       expect(compilation.previewImages).toHaveLength(2_000);
       expect(parseSpy.mock.calls.length).toBeLessThanOrEqual(20_000);
     } finally {
@@ -457,9 +509,10 @@ describe('Android topic content splitting', () => {
 
       const compilation = compileTrackedContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
 
-      expect(compilation.rows).toHaveLength(2_000);
-      expect(compilation.rows.filter((row) => row.type === 'richText')).toHaveLength(1_000);
-      expect(compilation.rows.filter((row) => row.type === 'poll')).toHaveLength(1_000);
+      const segments = forumContentSegments(compilation);
+      expect(segments).toHaveLength(2_000);
+      expect(segments.filter((row) => row.type === 'richText')).toHaveLength(1_000);
+      expect(segments.filter((row) => row.type === 'poll')).toHaveLength(1_000);
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
     });
   });
@@ -478,7 +531,7 @@ describe('Android topic content splitting', () => {
       const rows = renderedContentRows(compilation);
 
       expect(trackedParseHtml).toHaveBeenCalledTimes(1);
-      expect(compilation.rows.every((row) => row.type === 'richText')).toBe(true);
+      expect(forumContentSegments(compilation).every((row) => row.type === 'richText')).toBe(true);
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.every((row) => row.html.length <= 16_384)).toBe(true);
       expect(rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
@@ -567,9 +620,10 @@ describe('Android topic content splitting', () => {
           html,
           keySuffix: 'node-0:0',
           networkMediaCount: 0,
-          part: 'only',
+          semanticContinuation: 'only',
           segmentIndex: 0,
-          semanticId: 'node-0'
+          semanticId: 'node-0',
+          type: 'richText'
         }
       ]
     });
@@ -583,24 +637,26 @@ describe('Android topic content splitting', () => {
 
     expect(plan.rows).toHaveLength(1);
     expect(plan.rows[0]?.html).toBe(html);
-    expect(plan.rows[0]?.part).toBe('only');
+    expect(plan.rows[0]?.semanticContinuation).toBe('only');
   });
 
   it('[REG-TOPIC-093] keeps oversized code in one complete semantic owner', () => {
     const sourceLines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}\n`);
-    const rows = compileForumContent({
-      html: `<pre>${sourceLines.join('')}</pre>`,
-      role: 'reply',
-      source: 'linuxdo'
-    }).rows;
+    const rows = forumContentSegments(
+      compileForumContent({
+        html: `<pre>${sourceLines.join('')}</pre>`,
+        role: 'reply',
+        source: 'linuxdo'
+      })
+    );
     const codeRows = rows.filter(
-      (row): row is Extract<CompiledForumContentRow, { type: 'codeBlock' }> => row.type === 'codeBlock'
+      (row): row is Extract<CompiledForumContentSegment, { type: 'codeBlock' }> => row.type === 'codeBlock'
     );
 
     expect(codeRows).toHaveLength(1);
     expect(codeRows[0]).toMatchObject({
       copyText: sourceLines.join(''),
-      part: 'only',
+      semanticContinuation: 'only',
       segmentIndex: 0,
       semanticId: 'node-0',
       text: sourceLines.join('')
@@ -610,25 +666,29 @@ describe('Android topic content splitting', () => {
   it('[REG-TOPIC-093] keeps a standalone block code element as one typed owner without stealing inline code', () => {
     const blockText = Array.from({ length: 240 }, (_, index) => `block-${index + 1}\n`).join('');
     for (const role of ['opening', 'reply'] as const) {
-      const blockRows = compileForumContent({
-        html: `<code>${blockText}</code>`,
-        role,
-        source: 'linuxdo'
-      }).rows;
+      const blockRows = forumContentSegments(
+        compileForumContent({
+          html: `<code>${blockText}</code>`,
+          role,
+          source: 'linuxdo'
+        })
+      );
       expect(blockRows).toHaveLength(1);
       expect(blockRows[0]).toMatchObject({
         copyText: blockText,
-        part: 'only',
+        semanticContinuation: 'only',
         segmentIndex: 0,
         text: blockText,
         type: 'codeBlock'
       });
     }
-    const inlineRows = compileForumContent({
-      html: '<p>before <code>inline</code> after</p>',
-      role: 'reply',
-      source: 'linuxdo'
-    }).rows;
+    const inlineRows = forumContentSegments(
+      compileForumContent({
+        html: '<p>before <code>inline</code> after</p>',
+        role: 'reply',
+        source: 'linuxdo'
+      })
+    );
 
     expect(inlineRows).toHaveLength(1);
     expect(inlineRows[0]).toMatchObject({ type: 'richText' });
@@ -646,17 +706,16 @@ describe('Android topic content splitting', () => {
       source: 'linuxdo'
     });
 
-    expect(compilation.rows).toHaveLength(1);
-    expect(compilation.rows[0]).toMatchObject({
+    const segments = forumContentSegments(compilation);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({
       ancestorFrames: [],
-      part: 'only',
+      semanticContinuation: 'only',
       segmentIndex: 0,
       semanticId: 'node-0',
       type: 'codeBlock'
     });
-    expect((compilation.rows[0] as { text?: string }).text).toBe(
-      sourceLines.map((line) => parseHtml(line).text).join('')
-    );
+    expect((segments[0] as { text?: string }).text).toBe(sourceLines.map((line) => parseHtml(line).text).join(''));
   });
 
   it('[REG-TOPIC-086] carries every nested semantic ancestor without HTML bindings', () => {
@@ -677,11 +736,13 @@ describe('Android topic content splitting', () => {
       `<table><tbody>${sourceTableRows.join('')}</tbody></table>` +
       '</div></blockquote></details>';
 
-    const rows = compileForumContent({ html, role: 'reply', source: 'linuxdo' }).rows;
+    const rows = forumContentSegments(compileForumContent({ html, role: 'reply', source: 'linuxdo' }));
     const code = rows.find(
-      (row): row is Extract<CompiledForumContentRow, { type: 'codeBlock' }> => row.type === 'codeBlock'
+      (row): row is Extract<CompiledForumContentSegment, { type: 'codeBlock' }> => row.type === 'codeBlock'
     );
-    const table = rows.find((row): row is Extract<CompiledForumContentRow, { type: 'table' }> => row.type === 'table');
+    const table = rows.find(
+      (row): row is Extract<CompiledForumContentSegment, { type: 'table' }> => row.type === 'table'
+    );
 
     expect(rows.map((row) => row.type)).toEqual(['disclosureHeader', 'disclosureHeader', 'codeBlock', 'table']);
     expect(code?.ancestorFrames.map((frame) => `${frame.kind}:${frame.semanticId}`)).toEqual([
@@ -708,7 +769,7 @@ describe('Android topic content splitting', () => {
     const table = parseHtml(plan.rows[0]?.html || '').querySelector('table');
 
     expect(plan.rows).toHaveLength(1);
-    expect(plan.rows[0]).toMatchObject({ columns: 2, part: 'only', semanticId: 'node-0' });
+    expect(plan.rows[0]).toMatchObject({ columns: 2, semanticContinuation: 'only', semanticId: 'node-0' });
     expect(table?.getAttribute('title')).toBe('source > marker; keep data-wz-table-group=literal');
     expect(table?.getAttribute('data-wz-table-group.foo')).toBeUndefined();
     expect(table?.getAttribute('data-wz-table-group')).toBeUndefined();
@@ -731,7 +792,7 @@ describe('Android topic content splitting', () => {
     const table = parseHtml(row?.html || '').querySelector('table');
 
     expect(plan.rows).toHaveLength(1);
-    expect(row).toMatchObject({ columns: 2, part: 'only', semanticId: 'node-0' });
+    expect(row).toMatchObject({ columns: 2, semanticContinuation: 'only', semanticId: 'node-0' });
     expect(table?.getAttribute('title')).toBe('source > marker');
     expect(table?.getAttribute('data-wz-node')).toBeUndefined();
     expect(table?.querySelectorAll('thead')).toHaveLength(1);
@@ -750,9 +811,12 @@ describe('Android topic content splitting', () => {
     );
 
     const plan = planForumContent(`<table><tbody>${bodyRows.join('')}</tbody></table>`);
+    const tables = plan.rows.filter(
+      (segment): segment is Extract<CompiledForumContentSegment, { type: 'table' }> => segment.type === 'table'
+    );
 
     expect(plan.rows).toHaveLength(1);
-    expect(plan.rows.map((row) => row.columns)).toEqual(Array.from({ length: plan.rows.length }, () => 80));
+    expect(tables.map((row) => row.columns)).toEqual(Array.from({ length: tables.length }, () => 80));
     expect(new Set(plan.rows.map((row) => row.semanticId))).toEqual(new Set(['node-0']));
   });
 
@@ -806,7 +870,7 @@ describe('Android topic content splitting', () => {
 
     expect(renderedRowGroups).toEqual([connectedRows, independentRows]);
     expect(new Set(plan.rows.map((row) => row.semanticId))).toEqual(new Set(['node-0']));
-    expect(plan.rows.map((row) => row.part)).toEqual(['first', 'last']);
+    expect(plan.rows.map((row) => row.semanticContinuation)).toEqual(['first', 'last']);
   });
 
   it('[REG-PERF-010] fail-closes one table row that cannot be split safely', () => {
@@ -838,7 +902,7 @@ describe('Android topic content splitting', () => {
       )
       .join('')}</forum-terminal-report>`;
 
-    const rows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows;
+    const rows = forumContentSegments(compileForumContent({ html, role: 'opening', source: 'nodeseek' }));
 
     expect(rows[0]).toMatchObject({
       defaultTabId: 'node-0-tab-0',
@@ -874,7 +938,7 @@ describe('Android topic content splitting', () => {
       '<forum-terminal-tab title="Terminal"><div class="forum-terminal-code"><span style="color: #00ff00; background-color: #000087">done</span></div></forum-terminal-tab>' +
       '</forum-terminal-report>';
 
-    const rows = compileForumContent({ html, polls: [poll], role: 'opening', source: 'linuxdo' }).rows;
+    const rows = forumContentSegments(compileForumContent({ html, polls: [poll], role: 'opening', source: 'linuxdo' }));
 
     expect(rows.map((row) => row.type)).toEqual([
       'terminalReportHeader',
@@ -887,7 +951,7 @@ describe('Android topic content splitting', () => {
     ]);
     expect(rows.slice(1).every((row) => row.ancestorFrames.some((frame) => frame.kind === 'terminalTab'))).toBe(true);
     expect(rows.find((row) => row.type === 'richText')?.networkMediaCount).toBe(1);
-    expect(rows.find((row) => row.type === 'table')).toMatchObject({ columns: 2, part: 'only' });
+    expect(rows.find((row) => row.type === 'table')).toMatchObject({ columns: 2, semanticContinuation: 'only' });
     expect(rows.find((row) => row.type === 'poll')).toMatchObject({ poll, type: 'poll' });
     expect(rows.find((row) => row.type === 'poll')?.ancestorFrames.map((frame) => frame.kind)).toEqual([
       'terminalTab',
@@ -906,14 +970,14 @@ describe('Android topic content splitting', () => {
       '<br>'
     )}</div></forum-terminal-tab></forum-terminal-report>`;
 
-    const codeRows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows.filter(
-      (row): row is Extract<CompiledForumContentRow, { type: 'codeBlock' }> => row.type === 'codeBlock'
+    const codeRows = forumContentSegments(compileForumContent({ html, role: 'opening', source: 'nodeseek' })).filter(
+      (row): row is Extract<CompiledForumContentSegment, { type: 'codeBlock' }> => row.type === 'codeBlock'
     );
 
     expect(codeRows).toHaveLength(1);
     expect(codeRows[0]).toMatchObject({
       copyText: lines.join('\n'),
-      part: 'only',
+      semanticContinuation: 'only',
       segmentIndex: 0,
       text: lines.join('\n'),
       variant: 'terminal'
@@ -929,7 +993,7 @@ describe('Android topic content splitting', () => {
       '<forum-terminal-tab title="Safe"><div class="forum-terminal-code">safe result</div></forum-terminal-tab>' +
       '</forum-terminal-report>';
 
-    const rows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows;
+    const rows = forumContentSegments(compileForumContent({ html, role: 'opening', source: 'nodeseek' }));
 
     expect(rows[0]).toMatchObject({
       tabs: [
@@ -940,7 +1004,7 @@ describe('Android topic content splitting', () => {
     });
     expect(rows[1]).toMatchObject({
       copyText: 'x'.repeat(13_000),
-      part: 'only',
+      semanticContinuation: 'only',
       segmentIndex: 0,
       text: 'x'.repeat(13_000),
       type: 'codeBlock',
@@ -963,9 +1027,9 @@ describe('Android topic content splitting', () => {
     );
     const html = `<forum-terminal-report>${tabs[0]}<aside>unexpected</aside>${tabs.slice(1).join('')}</forum-terminal-report>`;
 
-    const rows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows;
+    const rows = forumContentSegments(compileForumContent({ html, role: 'opening', source: 'nodeseek' }));
     const headers = rows.filter(
-      (row): row is Extract<CompiledForumContentRow, { type: 'terminalReportHeader' }> =>
+      (row): row is Extract<CompiledForumContentSegment, { type: 'terminalReportHeader' }> =>
         row.type === 'terminalReportHeader'
     );
 
@@ -1097,7 +1161,7 @@ describe('Android topic content splitting', () => {
     const rows = planForumContent(html).rows;
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.part).toBe('only');
+    expect(rows[0]?.semanticContinuation).toBe('only');
     expect(rows[0]?.html).toBe(html);
     expect(parseHtml(rows[0].html).text).toContain(text);
   });
@@ -1118,7 +1182,7 @@ describe('Android topic content splitting', () => {
     const rows = planForumContent(html).rows;
     expect(rows).toHaveLength(1);
     expect(parseHtml(rows[0].html).text).toBe(visibleText);
-    expect(rows[0]?.part).toBe('only');
+    expect(rows[0]?.semanticContinuation).toBe('only');
   });
 
   it('[REG-TOPIC-093] splits a mixed subtree only at discrete media boundaries', () => {
@@ -1184,7 +1248,7 @@ describe('Android topic content splitting', () => {
 
     expect(rows).toHaveLength(4);
     expect(itemFrames.map((frame) => frame?.marker)).toEqual([3, 3, 3, 4]);
-    expect(itemFrames.map((frame) => frame?.part)).toEqual(['first', 'middle', 'last', 'only']);
+    expect(itemFrames.map((frame) => frame?.semanticContinuation)).toEqual(['first', 'middle', 'last', 'only']);
     expect(new Set(itemFrames.slice(0, 3).map((frame) => frame?.semanticId))).toEqual(new Set(['node-0.0']));
     expect(rows.every((row) => !row.html.includes('data-wz-'))).toBe(true);
     expect(rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
@@ -1196,17 +1260,17 @@ describe('Android topic content splitting', () => {
       .map((src) => `<img src="${src}">`)
       .join('')}</p></details>`;
 
-    const plan = planForumContent(html);
+    const plan = planSemanticForumContent(html);
     expect(plan.rows).toHaveLength(4);
     expect(plan.rows[0]).toMatchObject({
       defaultExpanded: false,
-      part: 'first',
+      semanticContinuation: 'first',
       semanticId: 'node-0',
       titleLabel: 'Stable summary'
     });
     const slices = plan.rows.slice(1).map((row) => logicalSliceForTag(row, 'details'));
     expect(slices.map((slice) => slice?.semanticId)).toEqual(['node-0', 'node-0', 'node-0']);
-    expect(slices.map((slice) => slice?.part)).toEqual(['middle', 'middle', 'last']);
+    expect(slices.map((slice) => slice?.semanticContinuation)).toEqual(['middle', 'middle', 'last']);
     expect(plan.rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
     expect(plan.rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
   });
@@ -1217,19 +1281,19 @@ describe('Android topic content splitting', () => {
       .map((src) => `<img src="${src}">`)
       .join('')}</div></blockquote>`;
 
-    const plan = planForumContent(html, 'linuxdo');
+    const plan = planSemanticForumContent(html, 'linuxdo');
     expect(plan.rows).toHaveLength(4);
     expect(plan.rows[0]).toMatchObject({
       calloutType: 'warning',
       defaultExpanded: false,
       fold: 'collapsed',
-      part: 'first',
+      semanticContinuation: 'first',
       semanticId: 'node-0',
       titleLabel: 'Warning title'
     });
     const slices = plan.rows.slice(1).map((row) => logicalSliceForTag(row, 'callout'));
     expect(slices.map((slice) => slice?.semanticId)).toEqual(['node-0', 'node-0', 'node-0']);
-    expect(slices.map((slice) => slice?.part)).toEqual(['middle', 'middle', 'last']);
+    expect(slices.map((slice) => slice?.semanticContinuation)).toEqual(['middle', 'middle', 'last']);
     expect(plan.rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
     expect(
       plan.rows.flatMap((row) =>
@@ -1246,23 +1310,28 @@ describe('Android topic content splitting', () => {
     const html =
       '<blockquote data-forum-callout="true" data-forum-callout-type="tip"><div class="forum-callout-title forum-callout-tone-primary">Tip title</div><div class="forum-callout-content"><p>Short body</p></div></blockquote>';
 
-    const plan = planForumContent(html, 'linuxdo');
+    const plan = planSemanticForumContent(html, 'linuxdo');
 
     expect(plan.rows).toHaveLength(2);
     expect(plan.rows[0]).toMatchObject({ calloutType: 'tip', titleLabel: 'Tip title' });
     expect('html' in plan.rows[1] ? plan.rows[1].html : '').toBe('<p>Short body</p>');
-    expect(logicalSliceForTag(plan.rows[1], 'callout')).toMatchObject({ part: 'last', semanticId: 'node-0' });
+    expect(logicalSliceForTag(plan.rows[1], 'callout')).toMatchObject({
+      semanticContinuation: 'last',
+      semanticId: 'node-0'
+    });
   });
 
   it('[REG-TOPIC-086] does not trust Discourse callout attributes outside a Discourse source', () => {
-    const plan = planForumContent(
+    const plan = planSemanticForumContent(
       '<blockquote data-forum-callout="true" data-forum-callout-type="tip"><div class="forum-callout-title">Forged title</div><div class="forum-callout-content"><p>Ordinary quote</p></div></blockquote>',
       'nodeseek'
     );
 
     expect(plan.rows.every((row) => row.type !== 'disclosureHeader')).toBe(true);
     expect(
-      plan.rows.every((row: CompiledForumContentRow) => row.ancestorFrames.some((frame) => frame.kind === 'blockquote'))
+      plan.rows.every((row: CompiledForumContentSegment) =>
+        row.ancestorFrames.some((frame) => frame.kind === 'blockquote')
+      )
     ).toBe(true);
     expect(plan.rows.flatMap((row) => ('html' in row ? [row.html] : [])).join('')).toContain('Ordinary quote');
   });
@@ -1275,7 +1344,7 @@ describe('Android topic content splitting', () => {
       .map((src) => `<img src="${src}">`)
       .join('')}</div></blockquote>`;
 
-    const plan = planForumContent(html, 'linuxdo');
+    const plan = planSemanticForumContent(html, 'linuxdo');
     expect(plan.rows[0]).toMatchObject({ titleLabel: '内容过于复杂，请在原站查看。' });
     expect(plan.rows.every((row) => !('html' in row) || row.html.length <= 16_384)).toBe(true);
     expect(plan.rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
@@ -1380,7 +1449,7 @@ describe('Android topic content splitting', () => {
   it.each(['forum-video', 'video'])(
     '[REG-PERF-010] counts a %s source and poster as two potential network media',
     (tag) => {
-      const plan = planForumContent(
+      const plan = planSemanticForumContent(
         `<${tag} src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></${tag}>`
       );
 
@@ -1513,20 +1582,24 @@ describe('Android topic content splitting', () => {
 
   it('detects standalone playable video blocks for native rendering', () => {
     expect(
-      compileForumContent({
-        html: '<forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>',
-        role: 'reply',
-        source: 'yaohuo'
-      }).rows
+      forumContentSegments(
+        compileForumContent({
+          html: '<forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>',
+          role: 'reply',
+          source: 'yaohuo'
+        })
+      )
     ).toEqual([expect.objectContaining({ src: 'https://yaohuo.me/uploads/demo.mp4', type: 'video' })]);
   });
 
   it('[REG-TOPIC-078] rejects whitespace-wrapped standalone video policies', () => {
-    const [video] = compileForumContent({
-      html: '<forum-video src="https://media.example/video.mp4" referrerpolicy=" unsafe-url "></forum-video>',
-      role: 'reply',
-      source: 'yaohuo'
-    }).rows;
+    const [video] = forumContentSegments(
+      compileForumContent({
+        html: '<forum-video src="https://media.example/video.mp4" referrerpolicy=" unsafe-url "></forum-video>',
+        role: 'reply',
+        source: 'yaohuo'
+      })
+    );
 
     expect(video).not.toHaveProperty('referrerPolicy');
   });
@@ -1546,11 +1619,13 @@ describe('Android topic content splitting', () => {
       const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
 
       expect(
-        compileWithFallback({
-          html: '<forum-video src="https://media.example/video.mp4" poster="https://media.example/poster.webp"></forum-video>',
-          role: 'reply',
-          source: 'yaohuo'
-        }).rows
+        forumContentSegments(
+          compileWithFallback({
+            html: '<forum-video src="https://media.example/video.mp4" poster="https://media.example/poster.webp"></forum-video>',
+            role: 'reply',
+            source: 'yaohuo'
+          })
+        )
       ).toEqual([
         expect.objectContaining({
           poster: 'https://media.example/poster.webp',
@@ -1577,11 +1652,13 @@ describe('Android topic content splitting', () => {
     }));
     try {
       const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-      const [video] = compileWithFallback({
-        html: '<forum-video src="https://media.example/video.mp4" referrerpolicy=" unsafe-url "></forum-video>',
-        role: 'reply',
-        source: 'yaohuo'
-      }).rows;
+      const [video] = forumContentSegments(
+        compileWithFallback({
+          html: '<forum-video src="https://media.example/video.mp4" referrerpolicy=" unsafe-url "></forum-video>',
+          role: 'reply',
+          source: 'yaohuo'
+        })
+      );
 
       expect(video).not.toHaveProperty('referrerPolicy');
     } finally {
@@ -1592,11 +1669,13 @@ describe('Android topic content splitting', () => {
 
   it('keeps a native video atomic without swallowing adjacent rich text', () => {
     expect(
-      compileForumContent({
-        html: '<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>',
-        role: 'reply',
-        source: 'yaohuo'
-      }).rows.map((row) => row.type)
+      forumContentSegments(
+        compileForumContent({
+          html: '<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>',
+          role: 'reply',
+          source: 'yaohuo'
+        })
+      ).map((row) => row.type)
     ).toEqual(['richText', 'video']);
   });
 });

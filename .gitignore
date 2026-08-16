@@ -1,4 +1,5 @@
 node_modules/
+modules/*/android/build/
 .env*.local
 .expo/
 .expo-shared/
@@ -19,6 +20,8 @@ docs/*
 !docs/handoff.md
 !docs/code-cleanup-map.md
 !docs/code-standards.md
+!docs/adr/
+!docs/adr/*.md
 .idea/
 tmp/*
 代码审查报告-*.md

@@ -136,7 +136,7 @@ export async function getTopic(options: GetTopicOptions, trace?: DiagnosticTrace
     markDiagnosticStage(trace, 'parse', {
       source: options.source,
       state: 'content-plan-ready',
-      plannedRowCount: preparedDetail.preparedContent.contentPlan.rows.length,
+      plannedRowCount: preparedDetail.preparedContent.contentPlan.regions.length,
       networkMediaCount: preparedDetail.preparedContent.contentPlan.previewImages.length
     });
   }

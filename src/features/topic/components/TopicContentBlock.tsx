@@ -1,45 +1,70 @@
-import { memo, type ReactNode, useMemo } from 'react';
+import { memo, type ReactNode, useCallback, useMemo, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { Pressable, ScrollView, StyleSheet, Text, ToastAndroid, View, type ViewStyle } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  ToastAndroid,
+  View,
+  type NativeSyntheticEvent,
+  type ViewStyle
+} from 'react-native';
 import { ChevronDown, ChevronRight } from 'lucide-react-native';
-import { RenderHTMLSource } from 'react-native-render-html';
+import { RenderHTMLSource, TNodeRenderer, useAmbientTRenderEngine } from 'react-native-render-html';
 import type {
-  CompiledForumContentRow,
+  CompiledForumContentSegment,
   ForumCodeTextRun,
   ForumContentAncestorFrame,
-  ForumContentPart
+  ForumContentMaterializationRegion,
+  ForumContentSemanticContinuation,
+  ForumContentSelectableRegion
 } from '@/domain/forum/topicContentSplit';
+import {
+  NativeForumSelectionSurface,
+  type ForumSelectionContentSizeEvent,
+  type ForumSelectionLinkEvent,
+  type ForumSelectionTableScrollEvent
+} from '@/platform/android/forumContentSelection';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import { ForumCallout, forumCalloutPalette } from '@/ui/content/ForumCallout';
-import { androidRipple } from '@/ui/theme/tokens';
+import { androidRipple, fontFamilyValue, lineHeightMultiplier } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from '../styles';
-import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
+import { stableTextHash } from '../model/contentIdentity';
 import { useTopicSplitDisclosure, useTopicTerminalReport } from '../rendering/TopicSplitDisclosure';
-import { TopicHorizontalScroll, TopicTableSemanticBoundary } from '../rendering/topicTableRenderers';
+import { TopicHorizontalScroll, useTopicNativeTableScroll } from '../rendering/topicTableRenderers';
+import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
+import { buildForumSelectionDocument } from '../rendering/forumSelectionDocument';
 
-export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
+import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 
 type TopicContentBlockProps = {
   contentWidth: number;
-  html?: string;
+  inlineSizedImageUrls?: Readonly<Record<string, boolean | undefined>>;
+  isInlineSizedImage?: (
+    url: string,
+    referrerPolicy: MediaReferrerPolicy | undefined,
+    identities: Readonly<Record<string, boolean | undefined>>
+  ) => boolean;
+  onLinkPress?: (href: string) => void;
   originalImageUpgradeEnabled?: boolean;
   query?: string;
-  row: TopicRenderableContentRow;
+  region: ForumContentMaterializationRegion;
   trimTrailingBlockSpacing?: boolean;
 };
 
-function continuationFrameStyle(part: ForumContentPart, radius: number): ViewStyle {
-  if (part === 'only') return {};
+function continuationFrameStyle(continuation: ForumContentSemanticContinuation, radius: number): ViewStyle {
+  if (continuation === 'only') return {};
   return {
-    borderBottomLeftRadius: part === 'last' ? radius : 0,
-    borderBottomRightRadius: part === 'last' ? radius : 0,
-    borderBottomWidth: part === 'last' ? StyleSheet.hairlineWidth : 0,
-    borderTopLeftRadius: part === 'first' ? radius : 0,
-    borderTopRightRadius: part === 'first' ? radius : 0,
-    borderTopWidth: part === 'first' ? StyleSheet.hairlineWidth : 0,
-    marginBottom: part === 'first' || part === 'middle' ? 0 : undefined,
-    marginTop: part === 'middle' || part === 'last' ? 0 : undefined
+    borderBottomLeftRadius: continuation === 'last' ? radius : 0,
+    borderBottomRightRadius: continuation === 'last' ? radius : 0,
+    borderBottomWidth: continuation === 'last' ? StyleSheet.hairlineWidth : 0,
+    borderTopLeftRadius: continuation === 'first' ? radius : 0,
+    borderTopRightRadius: continuation === 'first' ? radius : 0,
+    borderTopWidth: continuation === 'first' ? StyleSheet.hairlineWidth : 0,
+    ...(continuation === 'first' || continuation === 'middle' ? { marginBottom: 0 } : {}),
+    ...(continuation === 'middle' || continuation === 'last' ? { marginTop: 0 } : {})
   };
 }
 
@@ -71,34 +96,36 @@ function codeRunNodes(runs: readonly ForumCodeTextRun[], query: string, highligh
 function CodeBlock({
   contentWidth,
   query,
-  row
+  segment
 }: {
   contentWidth: number;
   query: string;
-  row: Extract<CompiledForumContentRow, { type: 'codeBlock' }>;
+  segment: Extract<CompiledForumContentSegment, { type: 'codeBlock' }>;
 }) {
   const { settings, theme } = useReaderThemeStyles(createTopicStyles);
   const radius = 10;
-  const terminal = row.variant === 'terminal';
+  const terminal = segment.variant === 'terminal';
   const copy = () => {
-    if (row.copyText === undefined) return;
-    void Clipboard.setStringAsync(row.copyText)
+    if (segment.copyText === undefined) return;
+    void Clipboard.setStringAsync(segment.copyText)
       .then(() => ToastAndroid.show('代码已复制', ToastAndroid.SHORT))
       .catch(() => ToastAndroid.show('复制失败', ToastAndroid.SHORT));
   };
   return (
     <View
       style={{
-        marginBottom: row.part === 'first' || row.part === 'middle' ? 0 : 12,
-        marginTop: row.part === 'middle' || row.part === 'last' ? 0 : 12
+        marginBottom: segment.semanticContinuation === 'first' || segment.semanticContinuation === 'middle' ? 0 : 12,
+        marginTop: segment.semanticContinuation === 'middle' || segment.semanticContinuation === 'last' ? 0 : 12
       }}
     >
       <TopicHorizontalScroll
         accessibilityHint="横向滑动查看完整代码"
         accessibilityLabel="代码块"
         contentContainerStyle={{ minWidth: contentWidth }}
-        semanticId={row.semanticId}
-        showsHorizontalScrollIndicator={row.part === 'only' || row.part === 'last'}
+        semanticId={segment.semanticId}
+        showsHorizontalScrollIndicator={
+          segment.semanticContinuation === 'only' || segment.semanticContinuation === 'last'
+        }
         testID="topic-code-scroll"
         viewportWidth={contentWidth}
       >
@@ -111,9 +138,9 @@ function CodeBlock({
               borderWidth: StyleSheet.hairlineWidth,
               minWidth: contentWidth,
               padding: 12,
-              paddingRight: row.copyText === undefined ? 12 : 64
+              paddingRight: segment.copyText === undefined ? 12 : 64
             },
-            continuationFrameStyle(row.part, radius)
+            continuationFrameStyle(segment.semanticContinuation, radius)
           ]}
           testID="topic-code-frame"
         >
@@ -126,11 +153,11 @@ function CodeBlock({
               lineHeight: Math.round((terminal ? 19 : 21) * settings.fontScale)
             }}
           >
-            {codeRunNodes(row.runs, query, theme.primarySoft)}
+            {codeRunNodes(segment.runs, query, theme.primarySoft)}
           </Text>
         </View>
       </TopicHorizontalScroll>
-      {row.copyText !== undefined ? (
+      {segment.copyText !== undefined ? (
         <Pressable
           accessibilityLabel="复制完整代码"
           accessibilityRole="button"
@@ -158,13 +185,17 @@ function CodeBlock({
   );
 }
 
-function TerminalReportHeader({ row }: { row: Extract<CompiledForumContentRow, { type: 'terminalReportHeader' }> }) {
+function TerminalReportHeader({
+  segment
+}: {
+  segment: Extract<CompiledForumContentSegment, { type: 'terminalReportHeader' }>;
+}) {
   const { theme } = useReaderThemeStyles(createTopicStyles);
-  const report = useTopicTerminalReport({ defaultTabId: row.defaultTabId, semanticId: row.semanticId });
+  const report = useTopicTerminalReport({ defaultTabId: segment.defaultTabId, semanticId: segment.semanticId });
   return (
     <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        {row.tabs.map((tab, index) => {
+        {segment.tabs.map((tab, index) => {
           const active = report.activeTabId === tab.id;
           return (
             <Pressable
@@ -178,10 +209,10 @@ function TerminalReportHeader({ row }: { row: Extract<CompiledForumContentRow, {
                 backgroundColor: active ? theme.surface : theme.surface2,
                 borderColor: theme.line,
                 borderTopLeftRadius: index === 0 ? 8 : 0,
-                borderTopRightRadius: index === row.tabs.length - 1 ? 8 : 0,
+                borderTopRightRadius: index === segment.tabs.length - 1 ? 8 : 0,
                 borderWidth: StyleSheet.hairlineWidth,
                 justifyContent: 'center',
-                marginRight: index === row.tabs.length - 1 ? 0 : -StyleSheet.hairlineWidth,
+                marginRight: index === segment.tabs.length - 1 ? 0 : -StyleSheet.hairlineWidth,
                 minHeight: 48,
                 paddingHorizontal: 12,
                 zIndex: active ? 2 : 1
@@ -199,15 +230,19 @@ function TerminalReportHeader({ row }: { row: Extract<CompiledForumContentRow, {
   );
 }
 
-function DisclosureHeader({ row }: { row: Extract<CompiledForumContentRow, { type: 'disclosureHeader' }> }) {
+function DisclosureHeader({
+  segment
+}: {
+  segment: Extract<CompiledForumContentSegment, { type: 'disclosureHeader' }>;
+}) {
   const { styles, theme } = useReaderThemeStyles(createTopicStyles);
   const disclosure = useTopicSplitDisclosure({
-    defaultExpanded: row.defaultExpanded,
-    kind: row.disclosureKind,
-    semanticId: row.semanticId
+    defaultExpanded: segment.defaultExpanded,
+    kind: segment.disclosureKind,
+    semanticId: segment.semanticId
   });
-  const visualPart = row.hasBody && disclosure.expanded ? row.part : 'only';
-  if (row.calloutType) {
+  const visualPart = segment.hasBody && disclosure.expanded ? segment.semanticContinuation : 'only';
+  if (segment.calloutType) {
     return (
       <ForumCallout
         boundarySpacing={[
@@ -215,17 +250,17 @@ function DisclosureHeader({ row }: { row: Extract<CompiledForumContentRow, { typ
           { marginBottom: visualPart === 'first' ? 0 : 12, paddingBottom: visualPart === 'first' ? 0 : 12 }
         ]}
         expanded={disclosure.expanded}
-        fold={row.fold}
-        foldable={row.hasBody}
+        fold={segment.fold}
+        foldable={segment.hasBody}
         onExpandedChange={disclosure.toggle}
         theme={theme}
         title={
           <Text selectable style={styles.detailsPanelSummaryText}>
-            {row.titleLabel}
+            {segment.titleLabel}
           </Text>
         }
-        titleLabel={row.titleLabel}
-        type={row.calloutType}
+        titleLabel={segment.titleLabel}
+        type={segment.calloutType}
       />
     );
   }
@@ -244,7 +279,7 @@ function DisclosureHeader({ row }: { row: Extract<CompiledForumContentRow, { typ
         </View>
         <View style={styles.detailsPanelSummary}>
           <Text selectable style={styles.detailsPanelSummaryText}>
-            {row.titleLabel}
+            {segment.titleLabel}
           </Text>
         </View>
       </Pressable>
@@ -264,10 +299,10 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
             borderColor: theme.line,
             borderRadius: 8,
             borderWidth: StyleSheet.hairlineWidth,
-            marginBottom: frame.part === 'last' || frame.part === 'only' ? 12 : 0,
+            marginBottom: frame.semanticContinuation === 'last' || frame.semanticContinuation === 'only' ? 12 : 0,
             padding: 8
           },
-          continuationFrameStyle(frame.part, 8)
+          continuationFrameStyle(frame.semanticContinuation, 8)
         ]}
         testID="topic-terminal-tab-panel"
       >
@@ -279,8 +314,8 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
     return (
       <View
         style={{
-          marginBottom: frame.part === 'last' || frame.part === 'only' ? 10 : 0,
-          marginTop: frame.part === 'first' || frame.part === 'only' ? 8 : 0
+          marginBottom: frame.semanticContinuation === 'last' || frame.semanticContinuation === 'only' ? 10 : 0,
+          marginTop: frame.semanticContinuation === 'first' || frame.semanticContinuation === 'only' ? 8 : 0
         }}
       >
         {children}
@@ -290,7 +325,12 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
   if (frame.kind === 'listItem') {
     const marker = frame.marker === undefined ? '•' : `${frame.marker}.`;
     return (
-      <View style={{ flexDirection: 'row', marginBottom: frame.part === 'last' || frame.part === 'only' ? 4 : 0 }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          marginBottom: frame.semanticContinuation === 'last' || frame.semanticContinuation === 'only' ? 4 : 0
+        }}
+      >
         <Text
           selectable
           style={{
@@ -300,7 +340,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
             width: Math.round(28 * settings.fontScale)
           }}
         >
-          {frame.part === 'first' || frame.part === 'only' ? marker : ''}
+          {frame.semanticContinuation === 'first' || frame.semanticContinuation === 'only' ? marker : ''}
         </Text>
         <View style={{ flex: 1, minWidth: 0 }}>{children}</View>
       </View>
@@ -316,7 +356,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
             borderColor: palette.borderColor,
             borderRadius: 8,
             borderWidth: StyleSheet.hairlineWidth,
-            marginBottom: frame.part === 'last' || frame.part === 'only' ? 12 : 0,
+            marginBottom: frame.semanticContinuation === 'last' || frame.semanticContinuation === 'only' ? 12 : 0,
             marginTop: 0,
             overflow: 'hidden',
             paddingBottom: 12,
@@ -324,7 +364,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
             paddingRight: 12,
             paddingTop: 8
           },
-          continuationFrameStyle(frame.part, 8)
+          continuationFrameStyle(frame.semanticContinuation, 8)
         ]}
         testID="forum-callout-body"
       >
@@ -334,7 +374,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
   }
   if (frame.kind === 'details') {
     return (
-      <View style={[styles.detailsPanel, continuationFrameStyle(frame.part, 8)]}>
+      <View style={[styles.detailsPanel, continuationFrameStyle(frame.semanticContinuation, 8)]}>
         <View style={styles.detailsPanelBody}>{children}</View>
       </View>
     );
@@ -352,7 +392,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
           paddingHorizontal: 14,
           paddingVertical: 12
         },
-        continuationFrameStyle(frame.part, 10)
+        continuationFrameStyle(frame.semanticContinuation, 10)
       ]}
     >
       {children}
@@ -371,40 +411,182 @@ function wrapAncestorFrames(children: ReactNode, frames: readonly ForumContentAn
   );
 }
 
+const EMPTY_INLINE_IMAGE_IDENTITIES: Readonly<Record<string, boolean | undefined>> = {};
+const defaultIsInlineSizedImage: NonNullable<TopicContentBlockProps['isInlineSizedImage']> = (
+  url,
+  _referrerPolicy,
+  identities
+) => Boolean(identities[url]);
+
+function commonInteractiveAncestorFrames(segments: ForumContentSelectableRegion['segments']) {
+  const first = segments[0]?.ancestorFrames || [];
+  const last = segments.at(-1)?.ancestorFrames || [];
+  return first.flatMap((frame) => {
+    if (frame.kind !== 'callout' && frame.kind !== 'details' && frame.kind !== 'terminalTab') return [];
+    if (
+      !segments.every((segment) =>
+        segment.ancestorFrames.some(
+          (candidate) => candidate.kind === frame.kind && candidate.semanticId === frame.semanticId
+        )
+      )
+    ) {
+      return [];
+    }
+    const lastFrame = last.find(
+      (candidate) => candidate.kind === frame.kind && candidate.semanticId === frame.semanticId
+    );
+    const starts = frame.semanticContinuation === 'first' || frame.semanticContinuation === 'only';
+    const ends = lastFrame?.semanticContinuation === 'last' || lastFrame?.semanticContinuation === 'only';
+    const semanticContinuation: ForumContentSemanticContinuation = starts
+      ? ends
+        ? 'only'
+        : 'first'
+      : ends
+        ? 'last'
+        : 'middle';
+    return [{ ...frame, semanticContinuation }];
+  });
+}
+
 export function TopicContentBlock({
   contentWidth,
-  html,
+  inlineSizedImageUrls = EMPTY_INLINE_IMAGE_IDENTITIES,
+  isInlineSizedImage = defaultIsInlineSizedImage,
+  onLinkPress,
   originalImageUpgradeEnabled = true,
   query = '',
-  row,
+  region,
   trimTrailingBlockSpacing = false
 }: TopicContentBlockProps) {
-  const source = useMemo(() => ({ html: html ?? ('html' in row ? row.html : '') }), [html, row]);
-  let content: ReactNode;
-  if (row.type === 'codeBlock') {
-    content = <CodeBlock contentWidth={contentWidth} query={query} row={row} />;
-  } else if (row.type === 'disclosureHeader') {
-    content = <DisclosureHeader row={row} />;
-  } else if (row.type === 'terminalReportHeader') {
-    content = <TerminalReportHeader row={row} />;
-  } else {
-    const rendered = (
-      <TopicContentPresentationProvider continuation={row.part} trimTrailing={trimTrailingBlockSpacing}>
-        <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
-          <RenderHTMLSource contentWidth={contentWidth} source={source} />
-        </OriginalImageUpgradeBoundary>
-      </TopicContentPresentationProvider>
-    );
-    content =
-      row.type === 'table' ? (
-        <TopicTableSemanticBoundary columns={row.columns} part={row.part} semanticId={row.semanticId}>
-          {rendered}
-        </TopicTableSemanticBoundary>
-      ) : (
-        rendered
+  const { settings, theme } = useReaderThemeStyles(createTopicStyles);
+  const renderEngine = useAmbientTRenderEngine();
+  const fontFamily = fontFamilyValue(settings.fontFamily);
+  const fontSize = Math.round(16 * settings.fontScale);
+  const lineHeight = Math.round(16 * settings.fontScale * lineHeightMultiplier(settings.lineHeight));
+  const tableSemanticIds = useMemo(
+    () =>
+      region.kind === 'selectable'
+        ? region.segments.flatMap((segment) => (segment.type === 'table' ? [segment.semanticId] : []))
+        : [],
+    [region]
+  );
+  const nativeTableScroll = useTopicNativeTableScroll(tableSemanticIds);
+  const nativeContent = useMemo(
+    () =>
+      region.kind === 'selectable'
+        ? buildForumSelectionDocument({
+            contentWidth,
+            engine: renderEngine,
+            fontScale: settings.fontScale,
+            inlineSizedImageUrls,
+            isInlineSizedImage,
+            region,
+            tableOffsets: nativeTableScroll.offsets,
+            tableScrollKeys: nativeTableScroll.scrollKeys,
+            trimTrailingBlockSpacing
+          })
+        : null,
+    [
+      contentWidth,
+      inlineSizedImageUrls,
+      isInlineSizedImage,
+      nativeTableScroll.offsets,
+      nativeTableScroll.scrollKeys,
+      region,
+      renderEngine,
+      settings.fontScale,
+      trimTrailingBlockSpacing
+    ]
+  );
+  const nativeDocument = useMemo(() => (nativeContent ? JSON.stringify(nativeContent.document) : ''), [nativeContent]);
+  const layoutKey = useMemo(
+    () =>
+      `${region.keySuffix}:${contentWidth}:${fontFamily || ''}:${fontSize}:${lineHeight}:${nativeDocument.length}:${stableTextHash(nativeDocument)}`,
+    [contentWidth, fontFamily, fontSize, lineHeight, nativeDocument, region.keySuffix]
+  );
+  const initialSurfaceHeight = nativeContent
+    ? nativeContent.media.reduce(
+        (height, media) => (media.display === 'block' ? Math.max(height, media.height || 0) : height),
+        lineHeight
+      )
+    : lineHeight;
+  const [measuredSurface, setMeasuredSurface] = useState<{ height: number; layoutKey: string } | null>(null);
+  const surfaceHeight = measuredSurface?.layoutKey === layoutKey ? measuredSurface.height : initialSurfaceHeight;
+  const handleContentSizeChange = useCallback(
+    ({ nativeEvent }: NativeSyntheticEvent<ForumSelectionContentSizeEvent>) => {
+      if (nativeEvent.layoutKey !== layoutKey || !Number.isFinite(nativeEvent.height) || nativeEvent.height < 0) {
+        return;
+      }
+      setMeasuredSurface((current) =>
+        current?.layoutKey === layoutKey && current.height === nativeEvent.height
+          ? current
+          : { height: nativeEvent.height, layoutKey }
       );
+    },
+    [layoutKey]
+  );
+
+  if (region.kind === 'selectable' && nativeContent) {
+    const surface = (
+      <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
+        <NativeForumSelectionSurface
+          content={nativeDocument}
+          contentWidth={contentWidth}
+          fallbackText={region.fallbackText}
+          fontFamily={fontFamily}
+          fontSize={fontSize}
+          highlightColor={theme.primarySoft}
+          layoutKey={layoutKey}
+          lineColor={theme.line}
+          lineHeight={lineHeight}
+          linkColor={theme.primaryStrong}
+          query={query}
+          style={{ alignSelf: 'stretch', height: surfaceHeight }}
+          testID="native-forum-selection-surface"
+          textColor={theme.ink}
+          onContentSizeChange={handleContentSizeChange}
+          onLinkPress={(event: NativeSyntheticEvent<ForumSelectionLinkEvent>) => onLinkPress?.(event.nativeEvent.href)}
+          onTableScroll={(event: NativeSyntheticEvent<ForumSelectionTableScrollEvent>) => {
+            nativeTableScroll.onTableScroll(event.nativeEvent.semanticId, event.nativeEvent.offset);
+          }}
+        >
+          {nativeContent.media.map((media, index) => (
+            <View
+              key={`${region.keySuffix}:media:${index}`}
+              style={
+                media.display === 'inline'
+                  ? { height: media.height, left: 0, position: 'absolute', top: 0, width: media.width }
+                  : { left: 0, position: 'absolute', top: 0, width: contentWidth }
+              }
+            >
+              <TopicContentPresentationProvider continuation="middle">
+                <TNodeRenderer renderIndex={index} renderLength={nativeContent.media.length} tnode={media.tnode} />
+              </TopicContentPresentationProvider>
+            </View>
+          ))}
+        </NativeForumSelectionSurface>
+      </OriginalImageUpgradeBoundary>
+    );
+    return <>{wrapAncestorFrames(surface, commonInteractiveAncestorFrames(region.segments))}</>;
   }
-  return <>{wrapAncestorFrames(content, row.ancestorFrames)}</>;
+
+  if (region.kind === 'selectable') return null;
+  const segment = region.segment;
+  let content: ReactNode;
+  if (segment.type === 'codeBlock') {
+    content = <CodeBlock contentWidth={contentWidth} query={query} segment={segment} />;
+  } else if (segment.type === 'disclosureHeader') {
+    content = <DisclosureHeader segment={segment} />;
+  } else if (segment.type === 'terminalReportHeader') {
+    content = <TerminalReportHeader segment={segment} />;
+  } else if ('html' in segment) {
+    content = (
+      <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
+        <RenderHTMLSource contentWidth={contentWidth} source={{ html: segment.html }} />
+      </OriginalImageUpgradeBoundary>
+    );
+  } else return null;
+  return <>{wrapAncestorFrames(content, segment.ancestorFrames)}</>;
 }
 
 export const MemoizedTopicContentBlock = memo(TopicContentBlock);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseHtml } from '@/domain/forum/html';
 import type { Reply, Source, TopicDetail } from '@/domain/forum/models';
 import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
+import { forumContentRegionSegments, singleForumContentSegment } from '../../../../tests/helpers/forumContentSegments';
 import {
   buildAcceptedAnswerContentItems as buildAcceptedAnswerContentItemsFromPlan,
   buildAcceptedAnswerPresentation,
@@ -97,7 +98,9 @@ describe('topic opening presentation', () => {
     const quote = buildTopicQuotedPostContentItems({ instanceKey: 'quote-1', reply, source: 'linuxdo' });
     const accepted = buildAcceptedAnswerContentItems({ floor: 2, reply, source: 'linuxdo' });
     const rowTypes = (items: typeof quote) =>
-      items.flatMap((item) => (item.type === 'content' ? [item.row.type] : [item.type]));
+      items.flatMap((item) =>
+        item.type === 'content' ? forumContentRegionSegments(item.region).map((segment) => segment.type) : [item.type]
+      );
 
     expect(rowTypes(opening.contentItems)).toEqual(['terminalReportHeader', 'codeBlock', 'codeBlock']);
     expect(rowTypes(quote)).toEqual(['terminalReportHeader', 'codeBlock', 'codeBlock']);
@@ -105,7 +108,10 @@ describe('topic opening presentation', () => {
     expect(rowTypes(accepted.previewItems)).toEqual(['terminalReportHeader', 'codeBlock']);
     expect(accepted.previewItems[1]).toMatchObject({
       type: 'content',
-      row: expect.objectContaining({ text: 'overview result', type: 'codeBlock' })
+      region: expect.objectContaining({
+        kind: 'island',
+        segment: expect.objectContaining({ text: 'overview result', type: 'codeBlock' })
+      })
     });
   });
 
@@ -119,11 +125,14 @@ describe('topic opening presentation', () => {
     expect(result.contentItems).toEqual([
       expect.objectContaining({
         type: 'content',
-        row: expect.objectContaining({
-          poster: 'https://media.example/poster.webp',
-          referrerPolicy: 'no-referrer',
-          src: 'https://media.example/video.mp4',
-          type: 'video'
+        region: expect.objectContaining({
+          kind: 'island',
+          segment: expect.objectContaining({
+            poster: 'https://media.example/poster.webp',
+            referrerPolicy: 'no-referrer',
+            src: 'https://media.example/video.mp4',
+            type: 'video'
+          })
         })
       })
     ]);
@@ -139,7 +148,7 @@ describe('topic opening presentation', () => {
     expect(result.contentItems.map((item) => item.type)).toEqual(['content', 'quoteSummary', 'content']);
     expect(result.contentItems[0]).toMatchObject({
       type: 'content',
-      row: expect.objectContaining({ type: 'richText' })
+      region: expect.objectContaining({ kind: 'selectable', segments: [expect.objectContaining({ type: 'richText' })] })
     });
     expect(result.contentItems[1]).toMatchObject({
       type: 'quoteSummary',
@@ -152,17 +161,23 @@ describe('topic opening presentation', () => {
     });
     expect(result.contentItems[2]).toMatchObject({
       type: 'content',
-      row: expect.objectContaining({ type: 'richText' })
+      region: expect.objectContaining({ kind: 'selectable', segments: [expect.objectContaining({ type: 'richText' })] })
     });
     const first = result.contentItems[0];
     const last = result.contentItems[2];
     if (first.type !== 'content' || last.type !== 'content') throw new Error('Expected split content rows');
-    expect('html' in first.row ? parseHtml(first.row.html).text : '').toBe('before');
-    expect('html' in last.row ? parseHtml(last.row.html).text : '').toBe('after');
-    expect(first.row.semanticId).not.toBe(last.row.semanticId);
+    const firstSegment = singleForumContentSegment(first.region);
+    const lastSegment = singleForumContentSegment(last.region);
+    expect('html' in firstSegment ? parseHtml(firstSegment.html).text : '').toBe('before');
+    expect('html' in lastSegment ? parseHtml(lastSegment.html).text : '').toBe('after');
+    expect(firstSegment.semanticId).not.toBe(lastSegment.semanticId);
     expect(
       result.contentItems.some(
-        (item) => item.type === 'content' && 'html' in item.row && item.row.html.includes('<aside')
+        (item) =>
+          item.type === 'content' &&
+          forumContentRegionSegments(item.region).some(
+            (segment) => 'html' in segment && segment.html.includes('<aside')
+          )
       )
     ).toBe(false);
   });
@@ -175,8 +190,18 @@ describe('topic opening presentation', () => {
 
     expect(result.contentItems.every((item) => item.type === 'content')).toBe(true);
     expect(contentRows.length).toBeGreaterThan(0);
-    expect(contentRows.every((item) => 'html' in item.row && item.row.html.length <= 16_384)).toBe(true);
-    expect(contentRows.every((item) => 'html' in item.row && maxElementDepth(item.row.html) <= 64)).toBe(true);
+    expect(
+      contentRows.every((item) =>
+        forumContentRegionSegments(item.region).every((segment) => 'html' in segment && segment.html.length <= 16_384)
+      )
+    ).toBe(true);
+    expect(
+      contentRows.every((item) =>
+        forumContentRegionSegments(item.region).every(
+          (segment) => 'html' in segment && maxElementDepth(segment.html) <= 64
+        )
+      )
+    ).toBe(true);
   });
 
   it('[REG-PERF-010] plans a giant expanded topic quote as bounded parent-list content rows', () => {
@@ -228,12 +253,16 @@ describe('topic opening presentation', () => {
 
     expect(result.contentItems).toHaveLength(500);
     expect(result.contentItems.every((item) => item.type === 'content')).toBe(true);
-    expect(result.contentItems.map((item) => (item.type === 'content' ? item.row.networkMediaCount : 0))).toEqual(
+    expect(result.contentItems.map((item) => (item.type === 'content' ? item.region.networkMediaCount : 0))).toEqual(
       Array.from({ length: 500 }, () => 4)
     );
     expect(
       result.contentItems.flatMap((item) =>
-        item.type === 'content' && 'html' in item.row ? item.row.html.match(/<img\b/g) || [] : []
+        item.type === 'content'
+          ? forumContentRegionSegments(item.region).flatMap((segment) =>
+              'html' in segment ? segment.html.match(/<img\b/g) || [] : []
+            )
+          : []
       ).length
     ).toBe(2000);
   });
@@ -254,7 +283,13 @@ describe('topic opening presentation', () => {
     });
 
     expect(content.contentItems).toEqual([
-      expect.objectContaining({ type: 'content', row: expect.objectContaining({ html: '<p>body</p>' }) })
+      expect.objectContaining({
+        type: 'content',
+        region: expect.objectContaining({
+          kind: 'selectable',
+          segments: [expect.objectContaining({ html: '<p>body</p>' })]
+        })
+      })
     ]);
     expect(acceptedAnswer).toMatchObject({ floor: 2, reply: accepted });
   });

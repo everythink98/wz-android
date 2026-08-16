@@ -296,7 +296,9 @@ describe('topic action state patches', () => {
       role: 'opening',
       source: 'linuxdo',
       topicId: '1'
-    }).rows.find((row) => row.type === 'poll');
+    }).regions.flatMap((region) =>
+      region.kind === 'island' && region.segment.type === 'poll' ? [region.segment] : []
+    )[0];
 
     expect(next?.preparedContent).not.toBe(prepared.preparedContent);
     expect(pollRow).toMatchObject({
@@ -329,7 +331,9 @@ describe('topic action state patches', () => {
         role: 'opening',
         source: cached.source,
         topicId: cached.id
-      }).rows.find((row) => row.type === 'poll')
+      }).regions.flatMap((region) =>
+        region.kind === 'island' && region.segment.type === 'poll' ? [region.segment] : []
+      )[0]
     ).toMatchObject({ type: 'poll', poll: { voted: true } });
   });
 

@@ -7,6 +7,7 @@ import {
   stripDiscourseCalloutMarkersFromExcerpt
 } from '@/sources/discourse/content';
 import { compileForumContent, discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
+import { forumContentSegments } from '../helpers/forumContentSegments';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { parseHtml } from '@/domain/forum/html';
 
@@ -185,7 +186,7 @@ describe('portable Discourse content parts', () => {
       (_, index) => `${String(index + 1).padStart(2, '0')}.${' '.repeat(50)}code-line-${index + 1}\n`
     ).join('');
     const html = sanitizeLinuxDoContentHtml(`<pre><code class="lang-auto">${sourceText}</code></pre><p>after</p>`, []);
-    const rows = compileForumContent({ html, role: 'reply', source: 'linuxdo' }).rows;
+    const rows = forumContentSegments(compileForumContent({ html, role: 'reply', source: 'linuxdo' }));
     const codeRows = rows.filter((row) => row.type === 'codeBlock');
 
     expect(html).toContain('<pre><code class="lang-auto">');
@@ -251,7 +252,9 @@ describe('portable Discourse content parts', () => {
     const first = { name: 'first', options: [{ id: 'a', label: 'A' }] };
     const second = { name: 'second', options: [{ id: 'b', label: 'B' }] };
     const html = `<p>before</p>${discoursePollPlaceholder('first')}<p>after</p>`;
-    const rows = compileForumContent({ html, polls: [first, second], role: 'reply', source: 'linuxdo' }).rows;
+    const rows = forumContentSegments(
+      compileForumContent({ html, polls: [first, second], role: 'reply', source: 'linuxdo' })
+    );
 
     expect(
       rows.map((row) =>
@@ -264,7 +267,7 @@ describe('portable Discourse content parts', () => {
       'poll:second'
     ]);
     const contentRows = rows.filter((row) => row.type === 'richText');
-    expect(contentRows.map((row) => row.part)).toEqual(['only', 'only']);
+    expect(contentRows.map((row) => row.semanticContinuation)).toEqual(['only', 'only']);
     expect(contentRows.every((row) => !row.html.includes('data-wz-'))).toBe(true);
   });
 

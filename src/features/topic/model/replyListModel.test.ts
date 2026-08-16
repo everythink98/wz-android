@@ -9,6 +9,7 @@ import {
 import { replyQuotedPostInstanceKey, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
 import type { Reply, Source, TopicDetail } from '@/domain/forum/models';
 import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
+import { forumContentRegionSegments } from '../../../../tests/helpers/forumContentSegments';
 
 function preparedReply<T extends Reply>(reply: T, source: Source) {
   const signatureHtml = String(reply.signatureHtml || '');
@@ -102,7 +103,11 @@ describe('topic reply list model', () => {
       topicId: 'owner'
     });
     const types = (kind: 'replyContent' | 'replyQuoteContent' | 'replySignatureContent') =>
-      items.flatMap((item) => (item.type === kind && 'content' in item ? [item.content.type] : []));
+      items.flatMap((item) =>
+        item.type === kind && 'content' in item
+          ? forumContentRegionSegments(item.content).map((segment) => segment.type)
+          : []
+      );
 
     expect(types('replyContent')).toEqual(['terminalReportHeader', 'codeBlock']);
     expect(types('replySignatureContent')).toEqual(['terminalReportHeader', 'codeBlock']);
@@ -136,7 +141,10 @@ describe('topic reply list model', () => {
     });
 
     expect(items.map((item) => item.type)).toEqual(['replyStart', 'replyContent', 'replyEnd']);
-    expect(items[1]).toMatchObject({ content: { poll, type: 'poll' }, type: 'replyContent' });
+    expect(items[1]).toMatchObject({
+      content: { kind: 'island', segment: { poll, type: 'poll' } },
+      type: 'replyContent'
+    });
   });
 
   it('[REG-PERF-010] promotes a giant nested reply body into bounded parent-list rows', () => {
@@ -165,12 +173,21 @@ describe('topic reply list model', () => {
     expect(bodyRows.map((item) => item.content.networkMediaCount)).toEqual(Array.from({ length: 500 }, () => 4));
     expect(
       bodyRows.every(
-        (item) => item.content.type === 'richText' && (item.content.html.match(/<img\b/g)?.length || 0) <= 4
+        (item) =>
+          item.content.kind === 'selectable' &&
+          item.content.segments.every(
+            (segment) => segment.type === 'richText' && (segment.html.match(/<img\b/g)?.length || 0) <= 4
+          )
       )
     ).toBe(true);
     expect(
       bodyRows.reduce(
-        (count, item) => count + ('html' in item.content ? item.content.html.match(/<img\b/g)?.length || 0 : 0),
+        (count, item) =>
+          count +
+          forumContentRegionSegments(item.content).reduce(
+            (total, segment) => total + ('html' in segment ? segment.html.match(/<img\b/g)?.length || 0 : 0),
+            0
+          ),
         0
       )
     ).toBe(2000);
@@ -198,11 +215,12 @@ describe('topic reply list model', () => {
 
     expect(items.map((item) => item.type)).toEqual(['replyStart', 'replyContent', 'replySignatureContent', 'replyEnd']);
     expect(items.find((item) => item.type === 'replyContent')?.content).toMatchObject({
+      kind: 'selectable',
       networkMediaCount: 4,
-      type: 'richText'
+      segments: [expect.objectContaining({ type: 'richText' })]
     });
     expect(items.find((item) => item.type === 'replySignatureContent')).toMatchObject({
-      content: { networkMediaCount: 4, type: 'richText' }
+      content: { kind: 'selectable', networkMediaCount: 4, segments: [expect.objectContaining({ type: 'richText' })] }
     });
   });
 
@@ -320,22 +338,29 @@ describe('topic reply list model', () => {
     );
 
     expect(body).toHaveLength(4);
-    expect(body.map((item) => item.content.type)).toEqual(['disclosureHeader', 'richText', 'richText', 'richText']);
-    expect(signature).toHaveLength(4);
-    expect(signature.map((item) => item.content.type)).toEqual([
+    expect(body.flatMap((item) => forumContentRegionSegments(item.content).map((segment) => segment.type))).toEqual([
       'disclosureHeader',
       'richText',
       'richText',
       'richText'
     ]);
-    expect(quote.map((item) => item.content.type)).toEqual(['disclosureHeader', 'richText']);
+    expect(signature).toHaveLength(4);
+    expect(
+      signature.flatMap((item) => forumContentRegionSegments(item.content).map((segment) => segment.type))
+    ).toEqual(['disclosureHeader', 'richText', 'richText', 'richText']);
+    expect(quote.flatMap((item) => forumContentRegionSegments(item.content).map((segment) => segment.type))).toEqual([
+      'disclosureHeader',
+      'richText'
+    ]);
     [body, signature, quote].forEach((contentRows) => {
-      expect(contentRows[0]?.content.semanticId).toBe('node-0');
+      expect(contentRows[0] && forumContentRegionSegments(contentRows[0].content)[0]?.semanticId).toBe('node-0');
       expect(
         contentRows
           .slice(1)
           .every((item) =>
-            item.content.ancestorFrames.some((frame) => frame.kind === 'details' && frame.semanticId === 'node-0')
+            forumContentRegionSegments(item.content).every((segment) =>
+              segment.ancestorFrames.some((frame) => frame.kind === 'details' && frame.semanticId === 'node-0')
+            )
           )
       ).toBe(true);
     });
@@ -376,19 +401,25 @@ describe('topic reply list model', () => {
       const rendered = items[0];
       expect(rendered).toMatchObject({ networkMediaCount: 0, plannedRowCount: 2, type: 'reply' });
       if (rendered?.type !== 'reply') throw new Error('Expected a coalesced reply item.');
-      expect(rendered.bodyContent).toMatchObject({ type: 'richText', networkMediaCount: 0 });
-      expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
-        'safe reply body'
-      );
-      expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
-        'class="forum-reply-content"'
-      );
-      expect(
-        rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
-      ).toContain('safe signature');
-      expect(
-        rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
-      ).toContain('class="forum-reply-content"');
+      expect(rendered.bodyContent).toMatchObject({
+        kind: 'selectable',
+        networkMediaCount: 0,
+        segments: [expect.objectContaining({ type: 'richText' })]
+      });
+      const bodyHtml = rendered.bodyContent
+        ? forumContentRegionSegments(rendered.bodyContent)
+            .flatMap((segment) => ('html' in segment ? [segment.html] : []))
+            .join('')
+        : '';
+      const renderedSignatureHtml = rendered.signatureContent
+        ? forumContentRegionSegments(rendered.signatureContent)
+            .flatMap((segment) => ('html' in segment ? [segment.html] : []))
+            .join('')
+        : '';
+      expect(bodyHtml).toContain('safe reply body');
+      expect(bodyHtml).toContain('class="forum-reply-content"');
+      expect(renderedSignatureHtml).toContain('safe signature');
+      expect(renderedSignatureHtml).toContain('class="forum-reply-content"');
     }
   );
 
