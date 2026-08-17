@@ -17,38 +17,33 @@ function emptyCredentialSummaries(): CredentialSummaries {
 }
 
 describe('site session prompts', () => {
-  it('[REG-ACCOUNT-031][REG-SEARCH-024] keeps pending identity unconfirmed while exposing the anonymous search lane', () => {
-    const confirmed = createSiteSessionViewModels(
+  it('[REG-PERF-019] keeps a confirmed identity available while its account check is running', () => {
+    const sessions = createSiteSessionViewModels(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
           status: 'logged-in',
           cookieSummary: ['session'],
-          isVerifying: false
+          isVerifying: true
         }
       })
     );
-    const sessions = {
-      ...confirmed,
-      nodeseek: {
-        ...confirmed.nodeseek,
-        canWrite: false,
-        identityTrust: 'pending' as const,
-        summaryLabel: '登录状态待确认'
-      }
-    };
 
     expect(authNoticeForSource('nodeseek', sessions, 'search')).toEqual({
-      kind: 'anonymous',
-      message: 'NodeSeek 账号状态确认中，本次使用 Google 匿名搜索。',
+      kind: 'logged-in',
+      message: '已登录搜索。',
       tone: 'neutral'
     });
     expect(authNoticeForSource('nodeseek', sessions, 'read')).toEqual({
-      kind: 'anonymous',
-      message: 'NodeSeek 账号状态确认中，本次使用匿名读取。',
+      kind: 'logged-in',
+      message: 'NodeSeek 已登录。',
       tone: 'neutral'
     });
-    expect(authNoticeForSource('nodeseek', sessions, 'action')?.message).toContain('已暂停写入');
+    expect(authNoticeForSource('nodeseek', sessions, 'action')).toEqual({
+      kind: 'logged-in',
+      message: 'NodeSeek 已登录。',
+      tone: 'neutral'
+    });
   });
 
   it('[REG-ACCOUNT-031][REG-SEARCH-024] presents terminal unknown as retryable without losing public lanes', () => {

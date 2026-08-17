@@ -43,10 +43,10 @@ function testReadPlan(
     isSessionSource(source)
       ? {
           source,
-          authenticated: !identityBarriers.includes(source),
-          authSurfaceOpen: false,
+          authenticated: true,
+          authSurfaceOpen: identityBarriers.includes(source),
           identityKey: `${source}:test`,
-          identityTrust: identityBarriers.includes(source) ? 'pending' : 'confirmed',
+          identityTrust: 'confirmed',
           sessionEpoch: sessionEpochs[source],
           sourceEnabled: enabled
         }

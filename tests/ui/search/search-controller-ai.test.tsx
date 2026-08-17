@@ -1953,7 +1953,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
   });
 
-  it('[REG-SEARCH-024] runs an anonymous topic search for a pending public source while keeping AI blocked', async () => {
+  it('[REG-SEARCH-024] runs an anonymous topic search for an unknown public source while keeping AI blocked', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
@@ -1966,13 +1966,13 @@ describe('linux.do AI search controller', () => {
       hasMore: false,
       nextPage: null
     }));
-    const pendingSessions: SiteSessionViewModels = {
+    const unknownSessions: SiteSessionViewModels = {
       ...loggedInSessions,
       linuxdo: {
         ...loggedInSessions.linuxdo,
         canWrite: false,
-        identityTrust: 'pending',
-        summaryLabel: '登录状态待确认'
+        identityTrust: 'unknown',
+        summaryLabel: '账号状态尚未核对'
       }
     };
     const hook = await renderSearchController(
@@ -1980,7 +1980,7 @@ describe('linux.do AI search controller', () => {
       jest.fn(),
       jest.fn(),
       () => initialForumSessionEpochs,
-      pendingSessions
+      unknownSessions
     );
 
     await prepareLinuxDoSearch(hook, 'pending identity');
@@ -2010,23 +2010,23 @@ describe('linux.do AI search controller', () => {
     expect(hook.result.current.linuxDoAiState.status).toBe('idle');
   });
 
-  it('[REG-SEARCH-024] starts a new authenticated search scope after pending identity becomes confirmed', async () => {
+  it('[REG-SEARCH-024] starts a new authenticated search scope after unknown identity becomes confirmed', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
       hasMore: false,
       nextPage: null
     }));
-    const pendingLinuxDo: SiteSessionViewModels = {
+    const unknownLinuxDo: SiteSessionViewModels = {
       ...loggedInSessions,
       linuxdo: {
         ...loggedInSessions.linuxdo,
         canWrite: false,
-        identityTrust: 'pending',
-        summaryLabel: '登录状态待确认'
+        identityTrust: 'unknown',
+        summaryLabel: '账号状态尚未核对'
       }
     };
-    let sessionViewModels = pendingLinuxDo;
+    let sessionViewModels = unknownLinuxDo;
     const gateway = createGateway({ searchTopics });
     gateway.getReadPlan = (source: Source, operation: ForumReadOperation) =>
       resolveForumReadPlan(
@@ -2084,22 +2084,22 @@ describe('linux.do AI search controller', () => {
     expect(readPlanScopes).toEqual(expect.arrayContaining(['public:omit', 'authenticated:0']));
   });
 
-  it('[REG-SEARCH-024] lets a pending anonymous-capable source settle inside aggregate search', async () => {
+  it('[REG-SEARCH-024] lets an unknown anonymous-capable source settle inside aggregate search', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
       items: [{ ...standardTopic, source: source as Source, id: source }],
       errors: {},
       hasMore: false,
       nextPage: null
     }));
-    const pendingSessions: SiteSessionViewModels = {
+    const unknownSessions: SiteSessionViewModels = {
       ...loggedInSessions,
       nodeseek: {
         ...loggedInSessions.nodeseek,
         status: 'logged-in',
         isLoggedIn: true,
         canWrite: false,
-        identityTrust: 'pending',
-        summaryLabel: '登录状态待确认'
+        identityTrust: 'unknown',
+        summaryLabel: '账号状态尚未核对'
       }
     };
     const hook = await renderSearchController(
@@ -2107,7 +2107,7 @@ describe('linux.do AI search controller', () => {
       jest.fn(),
       jest.fn(),
       () => initialForumSessionEpochs,
-      pendingSessions
+      unknownSessions
     );
 
     await act(async () => {

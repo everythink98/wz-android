@@ -782,40 +782,24 @@ describe('notification screens', () => {
     expect(onUpgradeXiaoyinsi).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    {
-      title: 'shows a signed-in Xiaoyinsi account as confirming instead of logged out',
-      createSessions: () => {
-        const sessions = createSiteSessionViewModels(
-          createSiteSessionStates({
-            xiaoyinsi: {
-              site: 'xiaoyinsi',
-              status: 'logged-in',
-              cookieSummary: [],
-              isVerifying: true,
-              currentUser: {
-                source: 'xiaoyinsi',
-                id: '7',
-                username: 'temple-user',
-                url: 'https://xiaoyinsi.net/u/temple-user',
-                topics: []
-              }
-            }
-          })
-        );
-        sessions.xiaoyinsi = { ...sessions.xiaoyinsi, isLoggedIn: true, identityTrust: 'pending' };
-        return sessions;
-      }
-    },
-    {
-      title: '[REG-NOTIFY-016] shows a pending identity as confirming before login is established',
-      createSessions: () => {
-        const sessions = createSiteSessionViewModels(createSiteSessionStates());
-        sessions.yaohuo = { ...sessions.yaohuo, identityTrust: 'pending' };
-        return sessions;
-      }
-    }
-  ])('$title', async ({ createSessions }) => {
+  it('[REG-PERF-019] keeps a signed-in Xiaoyinsi notification source available while its account check runs', async () => {
+    const sessions = createSiteSessionViewModels(
+      createSiteSessionStates({
+        xiaoyinsi: {
+          site: 'xiaoyinsi',
+          status: 'logged-in',
+          cookieSummary: [],
+          isVerifying: true,
+          currentUser: {
+            source: 'xiaoyinsi',
+            id: '7',
+            username: 'temple-user',
+            url: 'https://xiaoyinsi.net/u/temple-user',
+            topics: []
+          }
+        }
+      })
+    );
     const view = await render(
       <NotificationSettingsScreen
         backgroundEnabled={false}
@@ -823,7 +807,7 @@ describe('notification screens', () => {
         busy={false}
         enabledSources={['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']}
         permission="granted"
-        sessions={createSessions()}
+        sessions={sessions}
         state={notificationState()}
         xiaoyinsiNeedsUpgrade={false}
         onOpenSystemSettings={jest.fn()}
@@ -833,7 +817,7 @@ describe('notification screens', () => {
       />
     );
 
-    expect(view.getByText('账号确认中；开关意图会保留')).toBeTruthy();
+    expect(view.getByText('已关闭')).toBeTruthy();
     expect(view.getAllByText('未登录；开关意图会保留')).toHaveLength(3);
   });
 

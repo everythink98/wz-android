@@ -28,7 +28,7 @@ describe('writable session gate', () => {
   });
 
   it('[REG-WRITE-023] only issues a ticket after a dirty session reconciles to the same identity', async () => {
-    let snapshot: WritableSessionSnapshot = { ...confirmed, identityTrust: 'pending' };
+    let snapshot: WritableSessionSnapshot = { ...confirmed, identityTrust: 'unknown' };
     const reconcile = vi.fn(async () => {
       snapshot = confirmed;
       return { status: 'same' as const };
@@ -45,7 +45,7 @@ describe('writable session gate', () => {
   it.each(['changed', 'anonymous', 'unknown', 'stale'] as const)(
     '[REG-WRITE-023] rejects %s without issuing a stale identity ticket',
     async (status) => {
-      const snapshot = { ...confirmed, identityTrust: 'pending' as const };
+      const snapshot = { ...confirmed, identityTrust: 'unknown' as const };
       await expect(
         ensureWritableSessionTicket(
           () => snapshot,
@@ -65,7 +65,7 @@ describe('writable session gate', () => {
     expect(validateWritableSessionTicket(ticket, confirmed)).toBe(true);
     expect(validateWritableSessionTicket(ticket, { ...confirmed, sessionEpoch: 4 })).toBe(false);
     expect(validateWritableSessionTicket(ticket, { ...confirmed, identityKey: 'nodeseek:84' })).toBe(false);
-    expect(validateWritableSessionTicket(ticket, { ...confirmed, identityTrust: 'pending' })).toBe(false);
+    expect(validateWritableSessionTicket(ticket, { ...confirmed, identityTrust: 'unknown' })).toBe(false);
     expect(validateWritableSessionTicket(ticket, { ...confirmed, authSurfaceOpen: true })).toBe(false);
   });
 
@@ -87,7 +87,7 @@ describe('writable session gate', () => {
       ...confirmed,
       authenticated: false,
       identityKey: 'nodeseek:anonymous',
-      identityTrust: 'pending'
+      identityTrust: 'unknown'
     };
     await expect(
       ensureWritableSessionTicket(
@@ -98,5 +98,14 @@ describe('writable session gate', () => {
         }
       )
     ).rejects.toMatchObject({ reason: 'login_required' });
+  });
+
+  it('[REG-PERF-019] blocks an open auth surface without probing the account endpoint', async () => {
+    const reconcile = vi.fn();
+
+    await expect(
+      ensureWritableSessionTicket(() => ({ ...confirmed, authSurfaceOpen: true }), reconcile)
+    ).rejects.toMatchObject({ reason: 'identity_pending' });
+    expect(reconcile).not.toHaveBeenCalled();
   });
 });

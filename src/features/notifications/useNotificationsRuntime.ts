@@ -44,8 +44,7 @@ function confirmedIdentity(source: NotificationSource, sessions: SiteSessionView
 }
 
 function identityNeedsTrustedFallback(source: NotificationSource, sessions: SiteSessionViewModels) {
-  const trust = sessions[source].identityTrust;
-  return trust === 'pending' || trust === 'unknown';
+  return sessions[source].identityTrust === 'unknown';
 }
 
 export function useNotificationsRuntime({

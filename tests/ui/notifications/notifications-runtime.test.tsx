@@ -114,7 +114,7 @@ function notificationResponse(source: string, identifier: string, date: number):
   };
 }
 
-function nodeSeekSessions(identityTrust: 'confirmed' | 'pending' | 'unknown' | 'none', userId = '42') {
+function nodeSeekSessions(identityTrust: 'confirmed' | 'unknown' | 'none', userId = '42') {
   const sessions = createSiteSessionViewModels(
     createSiteSessionStates({
       nodeseek: {
@@ -997,7 +997,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it.each(['pending', 'unknown'] as const)(
+  it.each(['unknown'] as const)(
     '[REG-NOTIFY-006] retains the trusted identity, cache, and delivery watermark while identity is %s',
     async (identityTrust) => {
       const stored = defaultNotificationState();

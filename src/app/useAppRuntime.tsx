@@ -78,7 +78,7 @@ export function useAppRuntime() {
     notify,
     nodeSeekRecoveryThreshold: readerData.settings.nodeSeekRecoveryThreshold,
     openUser: openUserRoute,
-    ready: readerDataLoaded && (initialForegroundReady || screen === 'more'),
+    ready: readerDataLoaded,
     screen,
     webViewBlockMessage: networkProxyWebViewBlockMessage
   });
@@ -90,15 +90,13 @@ export function useAppRuntime() {
   });
   const {
     accountSessionViewModels,
-    feedReadGateway,
-    feedSessionEpochs,
     forumSessionEpochs,
     getLinuxDoUserAgent,
     getNodeSeekUserAgent,
-    identityReconciliationPending,
     notificationPrivateAccessAllowed,
     readGateway,
     reconcileAccountStatus,
+    sessionsReady,
     statusBusy
   } = accountRuntime.read;
   const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, reconcileWritableSession } =
@@ -128,7 +126,7 @@ export function useAppRuntime() {
     getNodeSeekUserAgent,
     openSource: openNotificationsRoute,
     privateAccessAllowed: notificationPrivateAccessAllowed,
-    remoteReady: !identityReconciliationPending,
+    remoteReady: initialForegroundReady && sessionsReady,
     sessions: accountSessionViewModels
   });
   const notificationRouteRuntime = useMemo<NotificationRouteRuntimeValue>(
@@ -162,13 +160,13 @@ export function useAppRuntime() {
   };
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
-    active: readerDataLoaded && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
+    active: readerDataLoaded && sessionsReady && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
     enabledFeedSources,
     enabledSourcesKey,
     notify,
-    onSettled: readerDataLoaded ? onCatalogSettled : undefined,
-    readGateway: feedReadGateway,
-    sessionEpochs: feedSessionEpochs
+    onSettled: readerDataLoaded && sessionsReady ? onCatalogSettled : undefined,
+    readGateway,
+    sessionEpochs: forumSessionEpochs
   });
   const { appUpdateBusy, appUpdateDownloading, appUpdateInfo } = updateRuntime;
   const { metadata: diagnosticMetadata } = useAppDiagnosticsRuntime({
@@ -291,9 +289,9 @@ export function useAppRuntime() {
     () => ({
       account: {
         linuxDoVerificationVisible: showLinuxDoPanel,
-        readGateway: feedReadGateway,
+        readGateway,
         requestNodeSeekVerification,
-        sessionEpochs: feedSessionEpochs,
+        sessionEpochs: forumSessionEpochs,
         showLinuxDoVerification,
         showYaohuoLogin
       },
@@ -310,8 +308,7 @@ export function useAppRuntime() {
     [
       appActive,
       catalogCategories,
-      feedReadGateway,
-      feedSessionEpochs,
+      forumSessionEpochs,
       onFeedInitialContentReady,
       notify,
       readerData,
@@ -506,23 +503,24 @@ export function useAppRuntime() {
     appStyles,
     mediaTransportIdentity: networkRuntime.applyStatus,
     readerStyleContext,
-    routes: readerDataLoaded
-      ? {
-          feedRouteRuntime,
-          libraryRouteRuntime,
-          moreBadgeState: notificationMoreBadgeState(Boolean(appUpdateInfo), notificationsRuntime.unreadTotal > 0),
-          moreRouteRuntime,
-          navigationTheme,
-          notificationRouteRuntime,
-          onReady: onNavigationReady,
-          onScreenChange: handleNavigationScreenChange,
-          searchRouteRuntime,
-          styles: appStyles,
-          theme,
-          topicRouteRuntime,
-          userRouteRuntime
-        }
-      : null,
+    routes:
+      readerDataLoaded && sessionsReady
+        ? {
+            feedRouteRuntime,
+            libraryRouteRuntime,
+            moreBadgeState: notificationMoreBadgeState(Boolean(appUpdateInfo), notificationsRuntime.unreadTotal > 0),
+            moreRouteRuntime,
+            navigationTheme,
+            notificationRouteRuntime,
+            onReady: onNavigationReady,
+            onScreenChange: handleNavigationScreenChange,
+            searchRouteRuntime,
+            styles: appStyles,
+            theme,
+            topicRouteRuntime,
+            userRouteRuntime
+          }
+        : null,
     sessionEpochs: forumSessionEpochs,
     theme
   };

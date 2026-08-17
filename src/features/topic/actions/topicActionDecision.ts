@@ -77,7 +77,6 @@ export function decideTopicAction({
   if (!topic?.id) return { allowed: false, reason: 'missing-target' };
   if (!sourceSupportsTopicAction(topic.source, action)) return { allowed: false, reason: 'unsupported' };
   if (account?.identityTrust === 'unknown') return { allowed: false, reason: 'identity-unavailable' };
-  if (account?.identityTrust === 'pending') return { allowed: false, reason: 'identity-pending' };
   if (!account?.canWrite) return { allowed: false, reason: 'login-required' };
   if (!objectAllowed) return { allowed: false, reason: 'object-forbidden' };
   if (!targetPresent) return { allowed: false, reason: 'missing-target' };

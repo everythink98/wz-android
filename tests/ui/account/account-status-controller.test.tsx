@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
+);
+
 jest.mock('@/sources/readGateway', () => ({
   checkYaohuoLogin: jest.fn(),
   getCurrentUserProfile: jest.fn(),
@@ -22,6 +26,7 @@ import {
 import { sessionSources } from '@/domain/forum/sourceCatalog';
 import type { UserProfile } from '@/domain/forum/models';
 import { QueryTestWrapper } from '../QueryTestWrapper';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const mockCheckYaohuoLogin = jest.mocked(checkYaohuoLogin);
 const mockGetCurrentUser = jest.mocked(getCurrentUserProfile);
@@ -83,7 +88,7 @@ type StatusTestOptions = {
 
 async function renderStatusController({
   enabledSources = sessionSources,
-  reconcileNewlyEnabledSources = true,
+  enabledSourcesReady = false,
   sessionEpochs = initialForumSessionEpochs,
   readNodeSeekCookieHeader = jest.fn(async () => undefined),
   notify = jest.fn(),
@@ -155,7 +160,7 @@ async function renderStatusController({
         onAccountStatusChanged: commitAccountStatusChange,
         readManagedCookieHeader,
         readXiaoyinsiAuthorization,
-        reconcileNewlyEnabledSources
+        enabledSourcesReady
       }),
     {
       initialProps: { renderedSessionEpochs: sessionEpochs, renderedEnabledSources: enabledSources },
@@ -171,8 +176,9 @@ async function renderStatusController({
 }
 
 describe('account status queries', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     appQueryClient.clear();
+    await AsyncStorage.clear();
     jest.clearAllMocks();
     mockReadLinuxDoCookieHeader.mockResolvedValue(undefined);
     mockReadYaohuoCookieHeader.mockResolvedValue(undefined);
@@ -186,6 +192,51 @@ describe('account status queries', () => {
     });
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? (null as never) : linuxUser));
     mockGetUserProfile.mockResolvedValue(yaohuoUser);
+  });
+
+  it('[REG-PERF-019] restores the last confirmed identity without probing the account endpoint', async () => {
+    await AsyncStorage.multiSet([
+      ['account-session.migration.v1', '1'],
+      [
+        'account-session.v1.nodeseek',
+        JSON.stringify({
+          version: 1,
+          state: 'authenticated',
+          identity: {
+            source: 'nodeseek',
+            id: '17',
+            username: 'bob',
+            url: 'https://www.nodeseek.com/space/17'
+          }
+        })
+      ]
+    ]);
+
+    const { hook, readXiaoyinsiAuthorization } = await renderStatusController({ enabledSourcesReady: true });
+
+    await waitFor(() => expect(hook.result.current.hydrated).toBe(true));
+    expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+      identityTrust: 'confirmed',
+      currentUser: { id: '17', username: 'bob' }
+    });
+    expect(mockGetCurrentUser).not.toHaveBeenCalled();
+    expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
+    expect(readXiaoyinsiAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-019] probes only migration candidates and marks the one-time migration complete', async () => {
+    mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
+    const readNodeSeekCookieHeader = jest.fn(async () => 'session=candidate');
+    const first = await renderStatusController({
+      enabledSources: ['nodeseek'],
+      enabledSourcesReady: true,
+      readNodeSeekCookieHeader
+    });
+
+    await waitFor(() => expect(first.hook.result.current.hydrated).toBe(true));
+    expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
+    expect(await AsyncStorage.getItem('account-session.migration.v1')).toBe('1');
+    expect(await AsyncStorage.getItem('account-session.v1.nodeseek')).toContain('"state":"authenticated"');
   });
 
   afterEach(async () => {
@@ -224,8 +275,7 @@ describe('account status queries', () => {
 
   it('[REG-PERF-014] leaves initial hydration probes to the foreground-ready batch', async () => {
     const { hook } = await renderStatusController({
-      enabledSources: [],
-      reconcileNewlyEnabledSources: false
+      enabledSources: []
     });
 
     await act(async () => {
@@ -264,13 +314,11 @@ describe('account status queries', () => {
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-010] aborts a disabled probe and requires one pending reconciliation after re-enable', async () => {
+  it('[REG-SOURCE-010] aborts a disabled probe without reconciling automatically after re-enable', async () => {
     const firstCookie = Promise.withResolvers<string | undefined>();
-    const secondCookie = Promise.withResolvers<string | undefined>();
     const readNodeSeekCookieHeader = jest
       .fn<() => Promise<string | undefined>>()
-      .mockImplementationOnce(async () => firstCookie.promise)
-      .mockImplementationOnce(async () => secondCookie.promise);
+      .mockImplementationOnce(async () => firstCookie.promise);
     const { hook, onAccountStatusChanged } = await renderStatusController({
       enabledSources: ['nodeseek'],
       readNodeSeekCookieHeader
@@ -294,21 +342,13 @@ describe('account status queries', () => {
       hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSources: ['nodeseek'] });
       await Promise.resolve();
     });
-    await waitFor(() => expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
-
-    secondCookie.resolve(undefined);
-    await waitFor(() =>
-      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).not.toBe('pending')
-    );
+    expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-010] preserves the trusted identity key but invalidates trust before re-enable reconciliation', async () => {
-    const reenabledCookie = Promise.withResolvers<string | undefined>();
+  it('[REG-SOURCE-010] preserves the trusted identity without reconciling automatically after re-enable', async () => {
     const readNodeSeekCookieHeader = jest
       .fn<() => Promise<string | undefined>>()
-      .mockResolvedValueOnce('session=trusted')
-      .mockImplementationOnce(async () => reenabledCookie.promise);
+      .mockResolvedValueOnce('session=trusted');
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? nodeSeekUser : linuxUser));
     const { hook } = await renderStatusController({
       enabledSources: ['nodeseek'],
@@ -331,7 +371,7 @@ describe('account status queries', () => {
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
         currentUser: nodeSeekUser,
-        identityTrust: 'unknown'
+        identityTrust: 'confirmed'
       })
     );
 
@@ -339,22 +379,18 @@ describe('account status queries', () => {
       hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSources: ['nodeseek'] });
       await Promise.resolve();
     });
-    await waitFor(() => expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
-
-    reenabledCookie.resolve('session=trusted');
-    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed'));
+    expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed');
   });
 
-  it('[REG-SOURCE-010] re-enable cancels only the source query and preserves a new aggregate query', async () => {
-    const cookie = Promise.withResolvers<string | undefined>();
+  it('[REG-SOURCE-010] re-enable does not reconcile or cancel active reads', async () => {
     const directResult = Promise.withResolvers<string>();
     const aggregateResult = Promise.withResolvers<string>();
     const directAbort = jest.fn();
     const aggregateAbort = jest.fn();
     const { hook } = await renderStatusController({
       enabledSources: [],
-      readNodeSeekCookieHeader: jest.fn(async () => cookie.promise)
+      readNodeSeekCookieHeader: jest.fn(async () => undefined)
     });
     const directRequest = appQueryClient
       .fetchQuery({
@@ -384,10 +420,9 @@ describe('account status queries', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(directAbort).toHaveBeenCalledTimes(1));
+    expect(directAbort).not.toHaveBeenCalled();
     expect(aggregateAbort).not.toHaveBeenCalled();
 
-    cookie.resolve(undefined);
     directResult.resolve('stale source result');
     aggregateResult.resolve('current aggregate result');
     await act(async () => {
@@ -475,262 +510,7 @@ describe('account status queries', () => {
     }
   });
 
-  it('[REG-FEED-014] stops waiting at the aggregate budget without canceling a reused single-source probe', async () => {
-    jest.useFakeTimers();
-    const nodeSeekCookie = Promise.withResolvers<string | undefined>();
-    const { hook } = await renderStatusController({
-      readNodeSeekCookieHeader: jest.fn(async () => nodeSeekCookie.promise)
-    });
-
-    try {
-      let existingProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
-      let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
-      let existingProbeSettled = false;
-      await act(async () => {
-        existingProbe = hook.result.current.reconcileAccountStatus('nodeseek');
-        void existingProbe.then(() => {
-          existingProbeSettled = true;
-        });
-        refresh = hook.result.current.refreshAccountStatus({ silent: true });
-        await Promise.resolve();
-      });
-
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(5_000);
-        await refresh;
-      });
-
-      expect(existingProbeSettled).toBe(false);
-      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending');
-      let existingResult: Awaited<typeof existingProbe> | undefined;
-      await act(async () => {
-        nodeSeekCookie.resolve(undefined);
-        existingResult = await existingProbe;
-      });
-      expect(existingResult).not.toMatchObject({ status: 'stale' });
-    } finally {
-      nodeSeekCookie.resolve(undefined);
-      jest.useRealTimers();
-    }
-  });
-
-  it('[REG-FEED-014] lets a single-source check adopt a batch probe past the aggregate budget', async () => {
-    jest.useFakeTimers();
-    const nodeSeekCookie = Promise.withResolvers<string | undefined>();
-    const readNodeSeekCookieHeader = jest.fn(async () => nodeSeekCookie.promise);
-    const { hook } = await renderStatusController({ readNodeSeekCookieHeader });
-
-    try {
-      let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
-      let singleSourceProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
-      let singleSourceSettled = false;
-      await act(async () => {
-        refresh = hook.result.current.refreshAccountStatus({ silent: true });
-        await Promise.resolve();
-        await Promise.resolve();
-        singleSourceProbe = hook.result.current.reconcileAccountStatus('nodeseek');
-        void singleSourceProbe.then(() => {
-          singleSourceSettled = true;
-        });
-      });
-      expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(1);
-
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(5_000);
-        await refresh;
-      });
-
-      expect(singleSourceSettled).toBe(false);
-      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending');
-      let singleSourceResult: Awaited<typeof singleSourceProbe> | undefined;
-      await act(async () => {
-        nodeSeekCookie.resolve(undefined);
-        singleSourceResult = await singleSourceProbe;
-      });
-      expect(singleSourceResult).not.toMatchObject({ status: 'stale' });
-    } finally {
-      nodeSeekCookie.resolve(undefined);
-      jest.useRealTimers();
-    }
-  });
-
-  it('[REG-ACCOUNT-041] settles a standalone probe as terminal unknown after 25 seconds of active time', async () => {
-    jest.useFakeTimers();
-    const cookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
-    const onAccountStatusChanged = jest.fn();
-    const sessions = createSiteSessionViewModels(
-      createSiteSessionStates({
-        nodeseek: {
-          site: 'nodeseek',
-          status: 'logged-in',
-          cookieSummary: ['session'],
-          isVerifying: false,
-          currentUser: nodeSeekUser
-        }
-      })
-    );
-    const { hook } = await renderStatusController({
-      onAccountStatusChanged,
-      readManagedCookieHeader: jest.fn(async () => cookieRead.promise),
-      sessionViewModels: sessions
-    });
-    let probe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
-    let settled = false;
-
-    try {
-      await act(async () => {
-        probe = hook.result.current.reconcileAccountStatus('nodeseek');
-        void probe.then(() => {
-          settled = true;
-        });
-        await Promise.resolve();
-      });
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(24_999);
-      });
-      expect(settled).toBe(false);
-      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending');
-
-      let result: Awaited<typeof probe> | undefined;
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(1);
-        result = await probe;
-        await Promise.resolve();
-        await jest.advanceTimersByTimeAsync(1);
-      });
-
-      expect(result).toMatchObject({
-        status: 'unknown',
-        errorInfo: { reason: 'account_probe_timeout', retryable: true }
-      });
-      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
-        currentUser: nodeSeekUser,
-        identityTrust: 'unknown'
-      });
-      expect(hook.result.current.statusBusy).toBe(false);
-      expect(appQueryClient.getQueryState(accountQueryKeys.probe('nodeseek', 1))).toBeUndefined();
-
-      cookieRead.resolve({ status: 'ok', header: 'session=late' });
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(mockGetCurrentUser).not.toHaveBeenCalled();
-      expect(onAccountStatusChanged).not.toHaveBeenCalled();
-      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('unknown');
-    } finally {
-      cookieRead.resolve({ status: 'ok', header: '' });
-      jest.useRealTimers();
-    }
-  });
-
-  it('[REG-ACCOUNT-041] does not renew the 25 second lifecycle when a standalone caller adopts a batch probe', async () => {
-    jest.useFakeTimers();
-    const cookieRead = Promise.withResolvers<string | undefined>();
-    const { hook } = await renderStatusController({
-      readNodeSeekCookieHeader: jest.fn(async () => cookieRead.promise)
-    });
-    let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
-    let adopted!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
-    let adoptedSettled = false;
-
-    try {
-      await act(async () => {
-        refresh = hook.result.current.refreshAccountStatus({ silent: true });
-        await Promise.resolve();
-      });
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(4_000);
-        adopted = hook.result.current.reconcileAccountStatus('nodeseek');
-        void adopted.then(() => {
-          adoptedSettled = true;
-        });
-      });
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(20_999);
-      });
-      expect(adoptedSettled).toBe(false);
-
-      let result: Awaited<typeof adopted> | undefined;
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(1);
-        result = await adopted;
-        await refresh;
-        await Promise.resolve();
-        await jest.advanceTimersByTimeAsync(1);
-      });
-      expect(result).toMatchObject({ status: 'unknown', errorInfo: { reason: 'account_probe_timeout' } });
-      expect(hook.result.current.statusBusy).toBe(false);
-    } finally {
-      cookieRead.resolve(undefined);
-      jest.useRealTimers();
-    }
-  });
-
-  it('[REG-ACCOUNT-041] allows a legitimate direct plus browser fallback chain to settle at 23 seconds', async () => {
-    jest.useFakeTimers();
-    const cookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
-    mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
-    const { hook } = await renderStatusController({
-      readManagedCookieHeader: jest.fn(async () => cookieRead.promise)
-    });
-    let probe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
-
-    try {
-      await act(async () => {
-        probe = hook.result.current.reconcileAccountStatus('nodeseek');
-        await jest.advanceTimersByTimeAsync(23_000);
-        cookieRead.resolve({ status: 'ok', header: 'session=safe' });
-        await probe;
-        await jest.advanceTimersByTimeAsync(0);
-      });
-
-      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
-        currentUser: nodeSeekUser,
-        identityTrust: 'confirmed'
-      });
-    } finally {
-      cookieRead.resolve({ status: 'ok', header: '' });
-      jest.useRealTimers();
-    }
-  });
-
-  it('[REG-ACCOUNT-041] lets source disable win over an imminent probe deadline', async () => {
-    jest.useFakeTimers();
-    const cookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
-    const { hook } = await renderStatusController({
-      enabledSources: ['nodeseek'],
-      readManagedCookieHeader: jest.fn(async () => cookieRead.promise)
-    });
-    let probe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
-
-    try {
-      await act(async () => {
-        probe = hook.result.current.reconcileAccountStatus('nodeseek');
-        await jest.advanceTimersByTimeAsync(24_999);
-      });
-      await act(async () => {
-        hook.rerender({
-          renderedSessionEpochs: initialForumSessionEpochs,
-          renderedEnabledSources: []
-        });
-        await Promise.resolve();
-      });
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(1);
-      });
-
-      await expect(probe).resolves.toEqual({ status: 'stale' });
-      expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('unknown');
-      expect(hook.result.current.accountSessionViewModels.nodeseek.lastError).toBeUndefined();
-      expect(hook.result.current.statusBusy).toBe(false);
-    } finally {
-      cookieRead.resolve({ status: 'ok', header: '' });
-      jest.useRealTimers();
-    }
-  });
-
-  it('[REG-FEED-010] still cancels private reads when a confirmed source later becomes pending', async () => {
+  it('[REG-PERF-019] keeps private reads active while a confirmed identity is checked', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
@@ -756,8 +536,8 @@ describe('account status queries', () => {
       hook.result.current.beginAccountIdentityCheck('nodeseek');
       await Promise.resolve();
     });
-    await waitFor(() => expect(privateAbort).toHaveBeenCalledTimes(1));
-    privateResult.resolve('stale private read');
+    expect(privateAbort).not.toHaveBeenCalled();
+    privateResult.resolve('current private read');
     await privateRequest;
   });
 
@@ -802,8 +582,16 @@ describe('account status queries', () => {
         isVerifying: false
       }
     });
+    const sessionViewModels = createSiteSessionViewModels(states);
     const { hook } = await renderStatusController({
-      sessionViewModels: createSiteSessionViewModels(states)
+      sessionViewModels: {
+        ...sessionViewModels,
+        linuxdo: {
+          ...sessionViewModels.linuxdo,
+          identityTrust: 'unknown',
+          summaryLabel: '账号状态尚未核对'
+        }
+      }
     });
 
     await act(async () => {
@@ -1039,7 +827,7 @@ describe('account status queries', () => {
     await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.lastError).toBeUndefined());
   });
 
-  it('[REG-ACCOUNT-035] marks the single snapshot pending when a closing-surface check begins', async () => {
+  it('[REG-ACCOUNT-035] keeps the confirmed identity while a closing-surface check runs or fails', async () => {
     mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
@@ -1052,7 +840,12 @@ describe('account status queries', () => {
     await act(async () => {
       hook.result.current.beginAccountIdentityCheck('nodeseek', 7);
     });
-    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        identityTrust: 'confirmed',
+        isVerifying: true
+      })
+    );
 
     const closingIdentity = Promise.withResolvers<UserProfile>();
     mockGetCurrentUser.mockImplementationOnce(async () => closingIdentity.promise);
@@ -1061,7 +854,12 @@ describe('account status queries', () => {
       closingProbe = hook.result.current.reconcileAccountStatus('nodeseek', { surfaceGeneration: 7 });
       await Promise.resolve();
     });
-    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        identityTrust: 'confirmed',
+        isVerifying: true
+      })
+    );
 
     await act(async () => {
       closingIdentity.reject(new Error('offline after surface close'));
@@ -1070,7 +868,8 @@ describe('account status queries', () => {
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
         currentUser: nodeSeekUser,
-        identityTrust: 'unknown'
+        identityTrust: 'confirmed',
+        isVerifying: false
       })
     );
   });
@@ -1105,7 +904,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-031] keeps the last confirmed identity read-only while a surface is open or reconciliation is unknown', async () => {
+  it('[REG-PERF-019] keeps the last confirmed identity trusted while a manual check is running or fails', async () => {
     mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
     const onAccountStatusChanged = jest.fn();
     const { hook } = await renderStatusController({
@@ -1128,8 +927,9 @@ describe('account status queries', () => {
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
         currentUser: nodeSeekUser,
-        identityTrust: 'pending',
-        canWrite: false
+        identityTrust: 'confirmed',
+        canWrite: true,
+        isVerifying: true
       })
     );
 
@@ -1141,9 +941,8 @@ describe('account status queries', () => {
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
         currentUser: nodeSeekUser,
-        identityTrust: 'unknown',
-        canWrite: false,
-        summaryLabel: '本次核对失败，可重试',
+        identityTrust: 'confirmed',
+        canWrite: true,
         lastError: 'offline'
       })
     );
@@ -1159,8 +958,9 @@ describe('account status queries', () => {
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
         currentUser: nodeSeekUser,
-        identityTrust: 'pending',
-        canWrite: false
+        identityTrust: 'confirmed',
+        canWrite: true,
+        isVerifying: true
       })
     );
 
@@ -1197,6 +997,38 @@ describe('account status queries', () => {
 
     expect(result).toMatchObject({ status: 'anonymous' });
     expect(onAccountStatusChanged).not.toHaveBeenCalled();
+  });
+
+  it('[REG-PERF-019] does not publish an anonymous result detected inside an open login surface', async () => {
+    mockGetCurrentUser.mockRejectedValue(
+      Object.assign(new Error('未登录'), { loginRequired: true, reason: 'expired', source: 'nodeseek' })
+    );
+    const sessions = createSiteSessionViewModels(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session'],
+          isVerifying: false,
+          currentUser: nodeSeekUser
+        }
+      })
+    );
+    const { hook, onAccountStatusChanged } = await renderStatusController({
+      readManagedCookieHeader: jest.fn(async () => ({ status: 'ok' as const, header: '' })),
+      sessionViewModels: sessions
+    });
+
+    await expect(
+      hook.result.current.reconcileAccountStatus('nodeseek', { publishAnonymous: false })
+    ).resolves.toMatchObject({ status: 'anonymous' });
+
+    expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+      currentUser: nodeSeekUser,
+      identityTrust: 'confirmed'
+    });
+    expect(onAccountStatusChanged).not.toHaveBeenCalled();
+    expect(await AsyncStorage.getItem('account-session.v1.nodeseek')).toBeNull();
   });
 
   it('[REG-ACCOUNT-026] lets the linux.do current-session response decide identity when a candidate cookie has no _t', async () => {
@@ -1489,7 +1321,12 @@ describe('account status queries', () => {
 
     expect(mockGetCurrentUser).not.toHaveBeenCalled();
     expect(onAccountStatusChanged).not.toHaveBeenCalled();
-    await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('pending'));
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        identityTrust: 'unknown',
+        isVerifying: true
+      })
+    );
   });
 
   it('[REG-ACCOUNT-031] deduplicates concurrent reconciliation for the same source', async () => {

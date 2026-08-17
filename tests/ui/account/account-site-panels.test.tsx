@@ -548,16 +548,14 @@ describe('Account site panels', () => {
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-032] keeps a confirmed Yaohuo session page open while identity reconciliation is pending', async () => {
+  it('[REG-ACCOUNT-032] keeps a confirmed Yaohuo session page open while identity reconciliation runs', async () => {
     const confirmed = session('yaohuo', 'logged-in');
     const view = await render(
       <YaohuoLoginHost
         {...yaohuoProps({
           session: {
             ...confirmed,
-            canWrite: false,
-            identityTrust: 'pending',
-            summaryLabel: '登录状态待确认'
+            isVerifying: true
           }
         })}
       />

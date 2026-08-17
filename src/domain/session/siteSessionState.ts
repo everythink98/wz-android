@@ -3,7 +3,7 @@ import type { UserProfile } from '@/domain/forum/models';
 
 export type SessionSite = SessionSource;
 export { sessionSources };
-export type IdentityTrust = 'confirmed' | 'pending' | 'unknown' | 'none';
+export type IdentityTrust = 'confirmed' | 'unknown' | 'none';
 export type SiteSessionStatus =
   'anonymous' | 'verified' | 'logged-in' | 'verification-required' | 'verifying' | 'authorizing' | 'expired';
 
@@ -166,13 +166,12 @@ export function accountSessionSnapshotFromEvent(
   event: SiteSessionEvent
 ): AccountSessionSnapshot {
   if (event.type === 'authorization-started' || event.type === 'verification-started') {
-    return { ...previous, isVerifying: true, identityTrust: 'pending', lastError: undefined };
+    return { ...previous, isVerifying: true, lastError: undefined };
   }
   if (event.type === 'verification-required') {
     return {
       ...previous,
       isVerifying: false,
-      identityTrust: 'pending',
       ...(event.message ? { lastError: event.message } : {})
     };
   }
@@ -408,13 +407,11 @@ export function createAccountSessionViewModel(snapshot: AccountSessionSnapshot):
     identityTrust: access.identityTrust,
     canWrite: access.canWrite,
     summaryLabel:
-      access.identityTrust === 'pending'
-        ? '登录状态待确认'
-        : access.identityTrust === 'unknown'
-          ? snapshot.lastError
-            ? '本次核对失败，可重试'
-            : '账号状态尚未核对'
-          : base.summaryLabel
+      access.identityTrust === 'unknown'
+        ? snapshot.lastError
+          ? '本次核对失败，可重试'
+          : '账号状态尚未核对'
+        : base.summaryLabel
   };
 }
 

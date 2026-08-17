@@ -167,12 +167,13 @@ function createReadGateway(dependencies: ReadGatewayTestDependencies) {
       readSessionRuntimeSnapshot ||
       ((source) => {
         const authenticated = isSourceAuthenticated?.(source) === true;
+        const authSurfaceOpen = isSourceReadBlocked?.(source) === true;
         return {
           source,
           authenticated,
-          authSurfaceOpen: false,
+          authSurfaceOpen,
           identityKey: authenticated ? `${source}:authenticated` : `${source}:anonymous`,
-          identityTrust: isSourceReadBlocked?.(source) ? 'pending' : authenticated ? 'confirmed' : 'none',
+          identityTrust: authenticated ? 'confirmed' : 'none',
           sessionEpoch: currentSessionEpoch?.(source) ?? 0,
           sourceEnabled: dependencies.getEnabledSources?.().includes(source) ?? true
         };
@@ -212,7 +213,7 @@ describe('source gateway read contract', () => {
       authenticated: false,
       authSurfaceOpen: false,
       identityKey: `${source}:anonymous`,
-      identityTrust: 'pending',
+      identityTrust: 'unknown',
       sessionEpoch: 2,
       sourceEnabled: true,
       ...overrides
@@ -251,7 +252,13 @@ describe('source gateway read contract', () => {
       fetcher: managedFetcher,
       loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent: () => 'NodeSeek UA',
-      readSessionRuntimeSnapshot: (source: SessionRuntimeSnapshot['source']) => runtime(source)
+      readSessionRuntimeSnapshot: (source: SessionRuntimeSnapshot['source']) =>
+        runtime(source, {
+          authenticated: true,
+          authSurfaceOpen: true,
+          identityKey: `${source}:authenticated`,
+          identityTrust: 'confirmed'
+        })
     });
 
     await expect(gateway.getTopic({ source: 'xiaoyinsi', id: '42' })).resolves.toMatchObject({ id: '42' });
@@ -277,7 +284,13 @@ describe('source gateway read contract', () => {
       fetcher: managedFetcher,
       loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent: () => 'NodeSeek UA',
-      readSessionRuntimeSnapshot: (source: SessionRuntimeSnapshot['source']) => runtime(source)
+      readSessionRuntimeSnapshot: (source: SessionRuntimeSnapshot['source']) =>
+        runtime(source, {
+          authenticated: true,
+          authSurfaceOpen: true,
+          identityKey: `${source}:authenticated`,
+          identityTrust: 'confirmed'
+        })
     });
 
     await expect(gateway.getCategories({ source: 'yaohuo' })).resolves.toMatchObject({
