@@ -1,7 +1,0 @@
-{
-  "platforms": ["android"],
-  "coreFeatures": ["compose"],
-  "android": {
-    "modules": ["expo.modules.forumcontentselection.ForumContentSelectionModule"]
-  }
-}

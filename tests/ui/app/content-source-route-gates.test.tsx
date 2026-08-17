@@ -423,14 +423,12 @@ describe('disabled content source route gates', () => {
       reader: { commit: jest.fn(), data, dataRef: { current: data } },
       readerStyle: { settings: data.settings, theme: createTheme(data.settings) }
     } as unknown as TopicRouteRuntimeValue;
-    const floorLinkRegion = compileForumContent({
+    const floorLinkRow = compileForumContent({
       html: '<a class="forum-floor-link" href="https://www.nodeseek.com/post-42-1#9">#9</a>',
       role: 'opening',
       source: 'nodeseek'
-    }).regions[0];
-    if (!floorLinkRegion || floorLinkRegion.kind !== 'selectable') {
-      throw new Error('Expected a floor-link selectable region.');
-    }
+    }).rows[0];
+    if (!floorLinkRow || floorLinkRow.type !== 'richText') throw new Error('Expected a floor-link rich-text row.');
     const tree = (transportIdentity: string) => (
       <ForumSessionEpochProvider sessionEpochs={initialForumSessionEpochs} transportIdentity={transportIdentity}>
         <TopicRouteRuntimeProvider value={runtime}>
@@ -469,16 +467,15 @@ describe('disabled content source route gates', () => {
             renderers={screen.html.htmlRenderers}
             renderersProps={screen.html.htmlRenderersProps}
           >
-            <TopicContentBlock contentWidth={360} region={floorLinkRegion} onLinkPress={screen.html.openHtmlLink} />
+            <TopicContentBlock contentWidth={360} row={floorLinkRow} />
           </RenderHTMLConfigProvider>
         </TRenderEngineProvider>
       );
     });
     await view.rerender(tree('applied'));
-    const floorLink = view.getByTestId('native-forum-selection-surface');
-    const linkEvent = { nativeEvent: { href: 'https://www.nodeseek.com/post-42-1#9' } };
-    await fireEvent(floorLink, 'linkPress', linkEvent);
-    await fireEvent(floorLink, 'linkPress', linkEvent);
+    const floorLink = view.getByText('#9');
+    await fireEvent.press(floorLink);
+    await fireEvent.press(floorLink);
     expect(navigation.setParams).toHaveBeenNthCalledWith(1, {
       targetReply: { floor: 9, pageHint: 1 },
       targetReplyRequestId: 8

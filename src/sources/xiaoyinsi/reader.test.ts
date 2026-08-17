@@ -13,7 +13,6 @@ import {
 import { getXiaoyinsiCurrentUserProfile, getXiaoyinsiLevelProfile, getXiaoyinsiUserProfile } from './account';
 import { searchXiaoyinsi, searchXiaoyinsiTags, searchXiaoyinsiUsers } from './search';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
-import { forumContentSegments } from '../../../tests/helpers/forumContentSegments';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 
 function json(value: unknown, status = 200) {
@@ -149,13 +148,13 @@ describe('xiaoyinsi adapter', () => {
           role: 'opening',
           source: 'xiaoyinsi',
           topicId: detail.id
-        }).regions
+        }).rows
       ).not.toHaveLength(0);
       expect(
         requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
           role: 'reply',
           source: 'xiaoyinsi'
-        }).regions
+        }).rows
       ).not.toHaveLength(0);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(openingMarker))).toHaveLength(1);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(replyMarker))).toHaveLength(1);
@@ -415,14 +414,12 @@ describe('xiaoyinsi adapter', () => {
     expect(detail.replies[0].authorAvatar).toBeUndefined();
     expect(detail.replies[0].contentHtml).not.toContain('<aside');
     expect(
-      forumContentSegments(
-        compileForumContent({
-          html: detail.contentHtml,
-          polls: detail.polls,
-          role: 'opening',
-          source: 'xiaoyinsi'
-        })
-      ).map((row) => row.type)
+      compileForumContent({
+        html: detail.contentHtml,
+        polls: detail.polls,
+        role: 'opening',
+        source: 'xiaoyinsi'
+      }).rows.map((row) => row.type)
     ).toEqual(['richText', 'poll']);
     expect(replies).toMatchObject({ totalCount: 2 });
     expect(replies.items[0]).toMatchObject({

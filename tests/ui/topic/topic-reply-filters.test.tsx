@@ -26,7 +26,6 @@ import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { QueryTestWrapper } from '../QueryTestWrapper';
-import { forumContentRegionForSegment, singleForumContentSegment } from '../../helpers/forumContentSegments';
 
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockScrollToIndex = jest.fn();
@@ -151,7 +150,6 @@ jest.mock('react-native-render-html', () => {
       details: { extend: () => ({}) },
       summary: { extend: () => ({}) }
     },
-    useAmbientTRenderEngine: () => null,
     useTNodeChildrenProps: () => ({})
   };
 });
@@ -250,29 +248,104 @@ jest.mock('@/features/topic/components/TopicContentBlock', () => {
   return {
     MemoizedTopicContentBlock: (props: {
       contentWidth: number;
+      html?: string;
       originalImageUpgradeEnabled?: boolean;
       query?: string;
-      region: import('@/domain/forum/topicContentSplit').ForumContentMaterializationRegion;
+      row: import('@/features/topic/model/topicOpeningPresentation').TopicRenderableContentRow;
       trimTrailingBlockSpacing?: boolean;
     }) => {
-      const { originalImageUpgradeEnabled, region } = props;
-      if (
-        region.kind === 'island' &&
-        (region.segment.type === 'codeBlock' ||
-          region.segment.type === 'disclosureHeader' ||
-          region.segment.type === 'terminalReportHeader')
-      ) {
+      const { html, originalImageUpgradeEnabled, row } = props;
+      if (row.type === 'codeBlock' || row.type === 'disclosureHeader' || row.type === 'terminalReportHeader') {
         return ReactModule.createElement(actual.TopicContentBlock, props);
       }
-      const firstSegment = region.kind === 'selectable' ? region.segments[0] : region.segment;
-      const continuation = firstSegment?.ancestorFrames[0]?.semanticContinuation || firstSegment?.semanticContinuation;
+      const renderers = (
+        require('react-native-render-html') as {
+          __useMockRenderers: () => Record<string, React.ComponentType<any>>;
+        }
+      ).__useMockRenderers();
+      const continuation = row.ancestorFrames[0]?.part || row.part;
+      const resolvedHtml = html ?? ('html' in row ? row.html : '');
+      const compactShellMatch = resolvedHtml
+        .trim()
+        .match(/^<div\b[^>]*\bclass=["'][^"']*\bforum-reply-content\b[^"']*["'][^>]*>([\s\S]*)<\/div>$/i);
+      const renderableHtml = compactShellMatch?.[1] || resolvedHtml.trim();
+      const detailsMatch = renderableHtml.match(/^<details\b([^>]*)>([\s\S]*)<\/details>$/i);
+      const DetailsRenderer = renderers.details;
+      if (detailsMatch && DetailsRenderer) {
+        const { TopicContentPresentationProvider } =
+          require('@/features/topic/rendering/TopicContentPresentation') as typeof import('@/features/topic/rendering/TopicContentPresentation');
+        const attributes: Record<string, string> = {};
+        for (const match of detailsMatch[1].matchAll(/([\w:-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) {
+          attributes[match[1]] = match[2] ?? match[3] ?? match[4] ?? '';
+        }
+        const summaryMatch = detailsMatch[2].match(/<summary\b[^>]*>([\s\S]*?)<\/summary>/i);
+        const bodyHtml = summaryMatch ? detailsMatch[2].replace(summaryMatch[0], '') : detailsMatch[2];
+        const text = (value: string) => value.replace(/<[^>]+>/g, '').trim();
+        const summaryNode = summaryMatch
+          ? {
+              children: [{ data: text(summaryMatch[1]), nodeIndex: 2, type: 'text' }],
+              nodeIndex: 1,
+              tagName: 'summary'
+            }
+          : undefined;
+        const bodyNode = {
+          children: [{ data: text(bodyHtml), nodeIndex: 4, type: 'text' }],
+          nodeIndex: 3,
+          tagName: 'div'
+        };
+        const detailsContent = ReactModule.createElement(DetailsRenderer, {
+          tnode: {
+            attributes,
+            children: [...(summaryNode ? [summaryNode] : []), bodyNode],
+            nodeIndex: 0,
+            parent: null,
+            tagName: 'details'
+          }
+        });
+        return ReactModule.createElement(
+          NativeView,
+          {
+            accessibilityLabel: `content-continuation-${continuation}`,
+            testID: `topic-html-block-${originalImageUpgradeEnabled ? 'ready' : 'deferred'}`
+          },
+          ReactModule.createElement(TopicContentPresentationProvider, {
+            children: detailsContent,
+            continuation
+          })
+        );
+      }
+      const children: React.ReactNode[] = [];
+      const pattern = /<forum-nodeseek-poll\b[^>]*\bid=["']([^"']+)["'][^>]*>\s*<\/forum-nodeseek-poll\s*>/gi;
+      let offset = 0;
+      let match = pattern.exec(resolvedHtml);
+      while (match) {
+        if (match.index > offset) {
+          children.push(
+            ReactModule.createElement(NativeText, { key: `html-${offset}` }, resolvedHtml.slice(offset, match.index))
+          );
+        }
+        const Renderer = renderers['forum-nodeseek-poll'];
+        if (Renderer) {
+          children.push(
+            ReactModule.createElement(Renderer, {
+              key: `poll-${match.index}`,
+              tnode: { attributes: { id: match[1] } }
+            })
+          );
+        }
+        offset = pattern.lastIndex;
+        match = pattern.exec(resolvedHtml);
+      }
+      if (offset < resolvedHtml.length) {
+        children.push(ReactModule.createElement(NativeText, { key: `html-${offset}` }, resolvedHtml.slice(offset)));
+      }
       return ReactModule.createElement(
         NativeView,
         {
           accessibilityLabel: `content-continuation-${continuation}`,
           testID: `topic-html-block-${originalImageUpgradeEnabled ? 'ready' : 'deferred'}`
         },
-        ReactModule.createElement(NativeText, null, region.fallbackText)
+        children
       );
     }
   };
@@ -354,7 +427,7 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
       };
     }) => {
       const { isTerminal, onQuoteContentLayout, reply, section } = props;
-      if (!section && props.bodyContent?.kind === 'island' && props.bodyContent.segment.type === 'codeBlock') {
+      if (!section && props.bodyContent?.type === 'codeBlock') {
         return ReactModule.createElement(actual.ReplyItem, props as never);
       }
       if (
@@ -1055,9 +1128,7 @@ describe('Topic reply filters', () => {
       url: 'https://www.nodeseek.com/post-812712-1'
     };
     const compiledRow = (item: TopicListItem) =>
-      item.type === 'topicContent' && item.content.type === 'content'
-        ? singleForumContentSegment(item.content.region)
-        : null;
+      item.type === 'topicContent' && item.content.type !== 'accessNotice' ? item.content.row : null;
     mockBodyMediaViewportRowKeys = [];
     const view = await render(
       <TopicFilterHarness selectedTopic={terminalTopic} topicDetail={terminalTopic} topicReplies={[]} />
@@ -1118,19 +1189,19 @@ describe('Topic reply filters', () => {
         ? (StyleSheet.flatten(separator.props.style as StyleProp<ViewStyle>) as ViewStyle | undefined)?.height || 0
         : 0;
     };
-    const content = (key: string, semanticId: string, semanticContinuation: 'only' | 'first' | 'middle' | 'last') => ({
+    const content = (key: string, semanticId: string, part: 'only' | 'first' | 'middle' | 'last') => ({
       type: 'content' as const,
       key,
-      region: forumContentRegionForSegment({
+      row: {
         ancestorFrames: [],
         html: `<p>${key}</p>`,
         keySuffix: `${semanticId}:0`,
         networkMediaCount: 0,
-        semanticContinuation,
-        segmentIndex: semanticContinuation === 'last' ? 1 : 0,
+        part,
+        segmentIndex: part === 'last' ? 1 : 0,
         semanticId,
         type: 'richText' as const
-      })
+      }
     });
     const openingFirst: TopicListItem = {
       type: 'topicContent',
@@ -1166,16 +1237,16 @@ describe('Topic reply filters', () => {
         key: 'quote-summary',
         instanceKey: 'quote-a',
         quote: quoteMetadata,
-        region: forumContentRegionForSegment({
+        row: {
           ancestorFrames: [],
           keySuffix: 'quote-directive:0',
           networkMediaCount: 0,
-          semanticContinuation: 'only',
+          part: 'only',
           quote: quoteMetadata,
           segmentIndex: 0,
           semanticId: 'quote-directive',
           type: 'quote'
-        })
+        }
       }
     };
     const quoteLast: TopicListItem = {
@@ -1210,17 +1281,17 @@ describe('Topic reply filters', () => {
       content: {
         type: 'content',
         key: 'terminal-header',
-        region: forumContentRegionForSegment({
+        row: {
           ancestorFrames: [],
           defaultTabId: 'report-tab-0',
           keySuffix: 'report:0',
           networkMediaCount: 0,
-          semanticContinuation: 'only',
+          part: 'only',
           segmentIndex: 0,
           semanticId: 'report',
           tabs: [{ id: 'report-tab-0', title: 'Overview' }],
           type: 'terminalReportHeader'
-        })
+        }
       }
     };
     const terminalBody: TopicListItem = {
@@ -1229,12 +1300,12 @@ describe('Topic reply filters', () => {
       content: {
         type: 'content',
         key: 'terminal-body',
-        region: forumContentRegionForSegment({
+        row: {
           ancestorFrames: [
             {
               defaultTabId: 'report-tab-0',
               kind: 'terminalTab',
-              semanticContinuation: 'last',
+              part: 'last',
               reportSemanticId: 'report',
               semanticId: 'report-tab-0',
               tabId: 'report-tab-0'
@@ -1243,14 +1314,14 @@ describe('Topic reply filters', () => {
           copyText: 'result',
           keySuffix: 'report-body:0',
           networkMediaCount: 0,
-          semanticContinuation: 'only',
+          part: 'only',
           runs: [{ text: 'result' }],
           segmentIndex: 0,
           semanticId: 'report-body',
           text: 'result',
           type: 'codeBlock',
           variant: 'terminal'
-        })
+        }
       }
     };
 
@@ -2307,7 +2378,7 @@ describe('Topic reply filters', () => {
     expect(beforeIndex).toBeGreaterThanOrEqual(0);
     expect(pollIndex).toBeGreaterThan(beforeIndex);
     expect(afterIndex).toBeGreaterThan(pollIndex);
-    expect(view.getAllByTestId('topic-html-block-deferred')).toHaveLength(2);
+    expect(view.getAllByTestId('topic-html-block-deferred')).toHaveLength(1);
     expect(view.getAllByTestId('topic-poll-nodeseek')).toHaveLength(1);
   });
 

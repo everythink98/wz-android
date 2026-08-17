@@ -261,13 +261,13 @@ describe('NodeSeek reader', () => {
         requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
           role: 'reply',
           source: 'nodeseek'
-        }).regions
+        }).rows
       ).not.toHaveLength(0);
       expect(
         requirePreparedForumContent(reply.preparedSignature, reply.signatureHtml, {
           role: 'signature',
           source: 'nodeseek'
-        }).regions
+        }).rows
       ).not.toHaveLength(0);
       expect(
         trackedParseHtml.mock.calls.filter(

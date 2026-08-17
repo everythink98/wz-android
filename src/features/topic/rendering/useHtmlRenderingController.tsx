@@ -318,7 +318,6 @@ export function useHtmlRenderingController({
     htmlTagsStyles,
     inlineSizedImageUrls,
     nodeSeekMediaUserAgent,
-    openHtmlLink,
     topicImageDeriver
   };
 }

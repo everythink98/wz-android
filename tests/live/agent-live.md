@@ -137,13 +137,12 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 
 ### LIVE-READ-06 逻辑节点连续性与长图像素稳定
 
-- 能力：`TOPIC-01/02/03`；共享 `NAV-02/03`。仅在 targeted 包含 `REG-TOPIC-084/085/086/087/088/089/090/094/097/100/101/105` 时执行。只验证内容组件时可用目标 URL 直达；验证导航、缓存或物化性能时必须重新打开 App 后从“收藏 → 历史”点击精确历史项，deep link 结果不能代替正常入口。
+- 能力：`TOPIC-01/02/03`；共享 `NAV-02/03`。仅在 targeted 包含 `REG-TOPIC-084/085/086/087/088/089/090/094/097` 时执行；五个目标均使用 `exp+wz-android://open-topic?url=<encoded URL>` 直达，不经过搜索或相似帖子。
 - NodeSeek 直达 `https://www.nodeseek.com/post-652056-1`：两张独立小表都铺满正文，表间有明确 `12dp` 间距，边框和长文字换行正确，页面纵向滚动不被横向容器截获。
 - V2EX 直达 `https://www.v2ex.com/t/1233470`：只验收正文“时间 / 发生的事”两列表；表头出现一次，18 行按原站顺序完整显示。该样本按当前硬预算应保持一个 typed table row；滚动时列宽、hairline 和横向位置稳定，无重复边框、空带或行跳动。返回再进入、修改阅读字号和切换主题后仍正确。`https://www.v2ex.com/t/1233404` 只属于 `LIVE-READ-05` 评论分页，不得替代表格目标。
 - linux.do 直达 `https://linux.do/t/topic/2556285`：通过“更多”进入原站对照第 9 层，确认 reply target 位于正文前，52 行代码完整有序且视觉上只有一个连续代码框。对代码执行慢速纯横拖、快速 fling、反向拖动及代码区域纵拖；横向位置必须稳定变化，纵拖只滚动主题且 x 不漂，静止长按仍可原生选择。停在“对比一下5.5”及各张长图进入/离开边界分别无触摸观察 60 秒，目标文字可见性转换必须为 0，普通 scroll settle 能结束；滚过主楼前三张长图和一张回复长图，已显示像素、比例和高度稳定，不出现“显示 → 空白 → 再显示”或请求波。滚离再返回、打开图片预览再返回后位置和高度保持；按要求 `adb am force-stop com.wz.reader` 后重启并重新进入，再重复第 9 层与长图边界核对。
 - NodeSeek 直达 `https://www.nodeseek.com/post-812712-1`：逐个切换“💻基本信息 / 🎬IP质量 / 🌐网络质量 / 📍回程路由”，每个 Tab 的首末内容、ANSI 前景/背景色、图片与 report 外项目链接均存在；长图 Tab 首次显示后切到 code Tab，等待 viewability 结算但不滚动，再切回长图两轮，像素必须直接恢复且不得停在 `topic-image-idle`。在可见 terminal code 上录屏执行 `240px / 5s` 慢横拖、快速/反向/斜向/纵向拖动和途中加指；慢横拖必须移动代码且 UI hierarchy/逐帧画面均无放大镜、selection handles 或 `Copy / Share / Select all / Translate` ActionMode，纵拖只滚动主题，途中加指不继续改 x。静止长按作为正向控制必须出现原生选择，第一次 Back 只关闭选择并留在 Topic；干净横拖后第一次 Back 必须正常返回。复制得到当前完整 code owner，长行出现原生横向滚动条且切换/滚离/返回后 offset 与 active tab 不跳。组合评论查找把目标回复隐藏再恢复，并从详情内嵌套页面 Back，当前 route 的 active tab 必须保持；切到另一 Topic 后相同 semantic path 必须回到首 Tab。agent-device 的坐标 pan 只用于本监督式 Live，不保存为 tracked Replay；原站动态内容不匹配固定 fixture 时记录实际 tab/标题并记 `NOT_VERIFIED`，不得换相似帖子冒充。
-- 从“收藏 → 历史”进入 NodeSeek `post-877083-1`、linux.do `2762520` 与 `2762530`：前两者分别全选正文，必须跨标题/表格/表后文本和跨普通段落保持单一原生选区；后者的 `<pre><code>` 必须独立显示且能在代码内部选择，前后普通正文不得进入代码选区。三页都检查首屏与滚动后排版，无空白带、重叠或旧高度。
-- 重新打开 App 后从“收藏 → 历史”点击 NodeSeek `post-863650-1` 对应的“整活帖”：从点击前开始录屏，确认历史页及时进入导航转场，海量图片正文仍按每 region `<=4` 的父 FlashList regions 有界挂载，首帧不得先显示回复再跳回图片。Back 回历史后再次点击同一项验证 warm cache；两轮均可正常滚动和返回，warm `<=8`、running `<=4`、原图 `<=1`，attached View、mounted media 与 PSS 不得持续增长，不得出现 `StateWrapperImpl` race、ANR、OOM、Fatal 或 PID 意外重启。
+- NodeSeek 直达 `https://www.nodeseek.com/post-863650-1`：确认海量图片正文仍按每 row `<=4` 的父 FlashList typed rows 有界挂载，可正常滚动和返回；同一 PID 连续两轮执行相同滚动后，warm `<=8`、running `<=4`、原图 `<=1`，mounted media 与 PSS 不得持续增长，不得出现 ANR、OOM、Fatal 或 PID 意外重启。
 - 全程只读，不回复、不互动、不保存图片；每轮确认无 ANR、OOM、Fatal 或非预期 PID 重启，脱敏媒体诊断保持未完成 warm `<=8`、running `<=4`、原图 `<=1`。记录 mounted media 与 PSS，连续两轮相同滚动后不得持续增长。动态内容变化只影响数据轴；固定数量由自动测试承担，不创建依赖远端数量的 tracked Replay。
 
 ### LIVE-READ-07 三槽图片预览转场与手势所有权
@@ -155,7 +154,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 
 ### LIVE-READ-08 千图预览 ready catalog 与点击延迟
 
-- 能力：`TOPIC-02`；共享 `TOPIC-01/03`、`NAV-02/03`、`REG-PERF-010` 与 `REG-TOPIC-075/096`。仅在当前 revision、version/versionCode、APK SHA 与主 AVD 身份匹配时执行；重新打开 App 后从“收藏 → 历史”点击 `post-863650-1` 对应的“整活帖”，不得用 deep link 或相似帖子代替。
+- 能力：`TOPIC-02`；共享 `TOPIC-01/03`、`NAV-02/03`、`REG-PERF-010` 与 `REG-TOPIC-075/096`。仅在当前 revision、version/versionCode、APK SHA 与主 AVD 身份匹配时执行；用 `exp+wz-android://open-topic?url=https%3A%2F%2Fwww.nodeseek.com%2Fpost-863650-1` 直达，不搜索相似帖子。
 - 等正文首图可点击后记录 PID 与起始 PSS，只点击首图，要求页码第一次出现即为完整 `1/1381`；记录 press 到 chrome/页码、当前图 displayed 的单调时间，分别要求 `<=500ms` 与 disk-cached `<=800ms`。用 Android Back 关闭后再打开三次，每次使用同一首图和同一 PID，不滚动正文、不翻页、不保存；动态实时数量与坐标动作不进入 tracked Replay。
 - oracle：四次均无临时 `1/1`、两秒空档、ANR、OOM、Fatal、ResponseBody leak 或 PID 变化；关闭后回到同一正文位置。若动态帖子图片数不再是 1381，保留实际数量证据并记目标身份不匹配，不能把新数量冒充历史 `1/1381` 通过。
 - 本路径只验证 catalog readiness 和点击/Modal 首帧，不执行 25/100 页遍历；因此不能把结果记为 `REG-TOPIC-075` 的完整 PSS/Native Heap `LIVE_PASS`。若 ready catalog 后仍超过 500ms，转查 `bodyMediaPaused`、Native Modal 和 React commit，不恢复 HTML parser/cache/预热补丁。

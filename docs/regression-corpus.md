@@ -5682,7 +5682,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-PERF-010` 与 `REG-TOPIC-084/086/087` |
 | 用户症状 | compiler sidecar 与独立 renderer 测试均通过后，真实 APK 中 linux.do `t/topic/2556285` 第 9 层的 52 行代码仍显示成两个完整圆角框；这证明局部补丁没有贯穿 TopicContentList 和 FlashList recycling。 |
 | 触发条件 | HTML 已先按 80-node 预算拆开，后续才尝试把 TNode 绑定回 sidecar；中间模型手工复制部分字段，或 FlashList 对单 Cell reply 始终返回通用 `reply` view type。任一环节丢失语义 payload，最终 renderer 都会重新得到独立物理块。 |
-| 根因 seam | 唯一允许的链路是 `compileForumContent → topic/reply model → TopicContentList → FlashList → ReplyItem → TopicContentBlock`。完整 `CompiledForumContentSegment` 必须逐层传递；key 使用 owner scope、semantic id 与 segment，view type 包含 payload kind，attempt/viewability 不参与语义身份。 |
+| 根因 seam | 唯一允许的链路是 `compileForumContent → topic/reply model → TopicContentList → FlashList → ReplyItem → TopicContentBlock`。完整 `CompiledForumContentRow` 必须逐层传递；key 使用 owner scope、semantic id 与 segment，view type 包含 payload kind，attempt/viewability 不参与语义身份。 |
 | 必须保持的行为 | 第 9 层式 52 行装饰 `<pre>` 在 budget packing 前归一成一个 `codeBlock` owner，文本完整有序；普通空签名是中性预算，不得把单 Row 回复无故拆成 start/body/end。单 Cell code/table/richText reply 分别得到稳定 typed view type。最终真实列表只挂一个代码框，ReplyTarget 位于其前；产品代码中不得恢复 `ForumContentLogicalSlice`、`logicalSlices`、`bindingId`、`data-wz-node` 或 TopicContentPresentation 的 TNode 映射。 |
 | 精确失败 oracle | `src/domain/forum/topicContentSplit.test.ts` 固定 52 行装饰 pre 为一个 code owner；`src/features/topic/model/replyListModel.test.ts` 固定空签名不破坏单 Cell 路径；`src/features/topic/model/topicListModel.test.ts` 固定 `reply:codeBlock` view type；`tests/ui/topic/topic-reply-filters.test.tsx` 贯通真实 compiler/model/TopicContentList/FlashList/ReplyItem/TopicContentBlock，要求一个 `topic-code-frame`、完整首末行和 target 在前。独立 `topic-table-rendering` 测试只作补充，不能单独证明通过。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：必须同时有 compiler/model 和真实父列表贯通证据；源码字符串、局部 sidecar 或独立 renderer 绿灯均不足。 |
@@ -5712,7 +5712,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-PERF-010` 与 `REG-TOPIC-084/086/088/089` |
 | 用户症状 | NodeSeek 测评详情原有多个 Tab、ANSI 报告、复制按钮、文本选择、横向滚动条和图片内容；引入正文虚拟化后，小样本可能显示为单个 RNRH terminal，但 report 一旦超过 row 预算就整块变成“内容过于复杂”，Tab 与全部正文同时消失。把普通代码统一降级为 terminal 或恢复巨型 `<pre>` 又会破坏既有 table/code/媒体预算优化。 |
 | 触发条件 | sanitizer 正确把 magic tabs/ANSI 转成 `<forum-terminal-report>/<forum-terminal-tab>`，但 compiler 把整个 report 登记为 opaque island；预算只在 report 外层判断，超限时用一个 fallback 替换整棵子树。旧 RNRH renderer 在单 cell 内维护 local active index 并渲染完整 tab body，因此 recycling/filtering 会重置状态，且 plain/terminal code 走不同交互实现。旧测试还把“整块消失”写成成功 oracle。 |
-| 根因 seam | `compileForumContent()` 的 terminal 语义分类、`CompiledForumContentSegment`/`ancestorFrames`、Topic list 的 route-scoped semantic state，以及共享原生 CodeFrame。report header、tab body 和 code/table/media 等内容必须先成为 typed semantic segments，再应用既有物化预算。 |
+| 根因 seam | `compileForumContent()` 的 terminal 语义分类、`CompiledForumContentRow`/`ancestorFrames`、Topic list 的 route-scoped semantic state，以及共享原生 CodeFrame。report header、tab body 和 code/table/media 等内容必须先成为 typed semantic rows，再应用既有物理 row 预算。 |
 | 必须保持的行为 | sanitizer 仍是唯一 ANSI/magic-tabs 归一入口，compiler 仍是唯一正文编译入口。每个 report 产生稳定、必要时按自然标题子项分段但共享 identity 的 `terminalReportHeader`；超长单个标题回退为对应默认标题，异常 child 只自身 fail-close。每个 tab body 递归复用现有 richText、code、table、details、callout、blockquote、list、media、poll、quote 与 video typed rows，并携带 `reportSemanticId/tabId/defaultTabId` ancestor；xterm/pre 与同 Tab 的说明、表格或媒体并存时不得吞掉后者。每个 terminal code 始终是一个完整 owner；不可拆的 malformed/depth/media/table body 只在该 tab 内 fail-close，其他 tab 和 header 保留。accepted-answer preview 至少呈现 header 与默认 Tab 的首个 body，full 保留全部 rows。plain code 与 terminal code 共用原生选择、查询高亮、完整复制、失败提示和按 `scope + semanticId` 持有的横向 offset；terminal 保留 ANSI 前景/背景色。active tab 由 route identity、opening/reply/signature/quote/accepted scope 和 report identity 共同持有，cell 回收、筛选隐藏/恢复及重挂不重置，Topic identity 改变时清空。header 与可见 body 不插入列表 separator。key 与 item type 不使用 active tab、列表 index、内容 hash或媒体 attempt。旧 terminal RNRH renderer、巨型 PRE/WebView、嵌套纵向列表和新增依赖不得恢复。 |
 | 精确失败 oracle | `tests/integration/source-read-contracts/` 从真实 NodeSeek magic-tabs fixture 贯通 sanitizer→compiler，要求四个 tab、terminal code、`.terminal-container` 内与 xterm 同级的说明/表格、图片和 report 外链接全部保留且 ANSI 前/背景色进入 runs；`src/domain/forum/contentSanitizer.test.ts` 另固定同容器 `pre + rich text + table` 不互相吞噬。`src/domain/forum/topicContentSplit.test.ts` 固定总 report 超预算仍保留全部 tab、混合 code/table/details/media/poll typed body、240 行 terminal code 是一个完整复制 owner、13,000 字 terminal code 不因旧文本预算丢失，以及 90 个 Tab/超长标题/异常 child 只在最小单元降级。opening/quote/accepted 与 reply/signature/完整引用模型测试固定所有消费者，其中 accepted preview 必含默认 Tab body；`tests/ui/topic/topic-components.test.tsx` 贯通 reply model/filter/真实 ReplyItem/TopicContentBlock；`tests/ui/topic/topic-split-disclosure.test.tsx` 固定回收、隐藏恢复与 Topic 切换；`tests/ui/topic/topic-reply-filters.test.tsx` 固定 header/body 零 separator；`tests/ui/topic/topic-table-rendering.test.tsx` 固定 Tab 无障碍、ANSI 前/背景色、选择、高亮、复制成功/失败与共享横向位置。恢复 opaque island 或 local tab state 时编号测试必须失败。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：必须同时证明来源归一、compiler/model 完整性、真实列表状态与匹配 APK 交互；单一 2000 图片、compiler 局部测试或 App 能启动都不足。 |
@@ -5772,9 +5772,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03` 与 `REG-TOPIC-084/090/093` 的横向交互 seam |
 | 用户症状 | linux.do 代码或表格区域慢速左右拖动几乎不动，必须多次尝试才偶尔识别；若直接让内层 ScrollView 抢手势，纵向阅读又会卡住。 |
 | 触发条件 | `nestedScrollEnabled` 只允许嵌套滚动，不定义横纵意图判定；内层原生 horizontal ScrollView 与外层 FlashList 同时竞争 pointer，慢拖和斜向拖没有稳定 owner。 |
-| 根因 seam | 横向内容必须各自只有一个与其原生选择树同层的方向仲裁 owner：code 继续使用现有 RNGH manual Pan + 被动 `Animated.ScrollView`；Compose typed table 在单一选择面内使用原生 pointer owner + 被动 `horizontalScroll`。实现可以不同，方向、offset 与无障碍行为契约不能分叉。 |
-| 必须保持的行为 | 两种 owner 都使用 `4dp` 方向锁和单指；达到方向锁后仅 `|dx| > |dy|` 接管，纵向占优或相等、多指及无 overflow 立即让行。offset 按 `[0, contentWidth - viewportWidth]` clamp，松手在同范围 fling；route scope + `semanticId` 定义 table 的共享 native `ScrollState`，当前挂载 segments 实时同步，全部回收后从 JS 持久 offset 重挂。code/table 保留文本选择、完整复制、查询高亮、terminal Tab 状态与无障碍增减滚动。 |
-| 精确失败 oracle | `tests/ui/topic/topic-table-rendering.test.tsx` 的 `[REG-TOPIC-094/097]` 固定 code 的 RNGH owner；`ForumSelectionContentTest` 固定 table 的 `<4dp` 未决、横向接管、纵向/相等/多指/无 overflow 让行，typed document 固定 scoped scroll key 与恢复 offset。匹配 APK 还必须证明同表分段实时同步、重挂恢复、fling 和静止长按选择。 |
+| 根因 seam | code/table 必须复用一个 RNGH Pan 方向仲裁器；被动 `Animated.ScrollView` 只负责裁剪、内容宽度和命令式 offset，不再拥有原生拖动手势。 |
+| 必须保持的行为 | Pan 使用 `manualActivation(true)`、`4dp` 方向锁和单指；达到方向锁后仅 `|dx| > |dy|` 接管，纵向占优或相等、多指及无 overflow 立即失败并交还 FlashList。更新值按 `[0, contentWidth - viewportWidth]` clamp，松手以同范围 `withDecay`；route scope + `semanticId` 共享 offset，table segments 与重挂实例同步。code/table 保留文本选择、完整复制、查询高亮、terminal Tab 状态，并暴露无障碍增减滚动动作。 |
+| 精确失败 oracle | `tests/ui/topic/topic-table-rendering.test.tsx` 的 `[REG-TOPIC-094/097]` 固定两种 renderer 使用相同 manual owner、被动 ScrollView、单指、clamp/decay 和无障碍动作；同表两个 segment 在一次 Pan 后都收到相同 offset，重挂后恢复。纵向、相等、多指和无 overflow 失败路径不得改变横向位置。 |
 | 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：源码配置或 unit shared value 不能证明真实嵌套手势的方向竞争。 |
 | Replay 或真实验收路径 | 匹配主 AVD 只读直达 `https://linux.do/t/topic/2556285` 第 9 楼；慢速纯横拖必须稳定移动，从代码区域纵拖应滚动主题且横向位置不漂，快速 fling 继续可用。 |
 | 负向验证方式 | 只设置 `nestedScrollEnabled`、同时开启内层原生拖动、无方向阈值、纵向拖动也更新 x、offset 不 clamp、按 segment 各存一份位置或升级框架；编号 RNTL 或设备路径必须失败。 |
@@ -5787,14 +5787,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-A11Y-001` 与 `REG-TOPIC-084/090/093/094` 的 code/table 横向 owner seam |
 | 用户症状 | NodeSeek terminal Tab 内左右拖动长代码时，慢拖很容易先出现文本放大镜、选择 handles 与 `Copy / Share / Select all / Translate` 菜单；代码没有横向移动，随后 Back 也只关闭选择菜单而不返回页面。快速横拖通常正常。 |
 | 触发条件 | 共享 Pan 只有位移越过 `activeOffsetX([-10, 10])` 才激活；主 AVD 为 420dpi、Android 长按超时 400ms，`240px / 5s` 慢拖约 547ms 才越过 10dp，因此 selectable Text 的原生长按在 Pan 前取得所有权。React state 或更晚的 scroll 开关无法撤回该原生选择。 |
-| 根因 seam | 每个横向 renderer 必须在自己的 UI thread 选择树边界内拥有唯一方向仲裁者：code 是 `TopicHorizontalScroll`，Compose table 是原生 pointer owner。文本选择只能在手势仍未决且近似静止时保持资格，外层 FlashList 只在纵向意图时接管；Tab、Text、Scroll 容器与 React state 不得再建立第二套所有权。 |
+| 根因 seam | `TopicHorizontalScroll` 必须在 UI thread 内成为 code/table 唯一方向仲裁者；文本选择只能在手势仍未决且近似静止时保持资格，外层 FlashList 只在纵向意图时接管。Tab、Text、ScrollView 与 React state 不得各自建立第二套所有权。 |
 | 成熟项目证据 | [RNGH #3866](https://github.com/software-mansion/react-native-gesture-handler/issues/3866) 在 RN 0.81.4/RNGH 2.28.0 记录同类 Android selectable Text 问题但没有已验证修复；[RNGH testing guide](https://github.com/software-mansion/react-native-gesture-handler/blob/main/packages/docs-gesture-handler/docs/guides/testing.mdx) 明确 Jest 不运行平台 recognizer；[Mattermost manual gesture](https://github.com/mattermost/mattermost-mobile/blob/main/app/hooks/use_input_accessory_view_gesture/index.ts) 与 [Expensify MultiGestureCanvas](https://github.com/Expensify/App/blob/main/src/components/MultiGestureCanvas/usePanGesture.ts) 都在 `onTouchesMove` 内用 StateManager 决定所有权。Mattermost 的独立代码页只作为无法兼容内联选择时的升级方向，本轮不照搬。 |
 | 必须保持的行为 | 单指 touch down 记录 UI-thread 起点；最大位移 `<4dp` 保持未决，静止长按仍可选择。达到 `4dp` 后仅 `|dx| > |dy|` 激活一次；`|dy| >= |dx|`、多指、途中加指、仲裁前缺少 touch 或无横向 overflow 均失败让行。横向接管后不因后续轨迹重新判定；途中加指仍先由 pointer-count guard 取消。被动 ScrollView、clamp/decay、table segment offset、完整复制、查询高亮、ANSI、四个 Tab、无障碍动作与外层纵向滚动不变。 |
-| 精确失败 oracle | `tests/ui/topic/topic-table-rendering.test.tsx` 从真实 code renderer 驱动 StateManager，`ForumSelectionContentTest` 驱动 native table decision；两边共同固定 `<4dp` 未决、横向占优单次接管、纵向/相等/多指/途中加指/无 overflow 让行，并证明 selectable 与完整复制不降级。最终 APK 的 code 负向控制仍是慢拖后第一次 Back 不得只关闭意外选择；table 另以横拖零 ActionMode、静止长按可选作正向控制。 |
+| 精确失败 oracle | `tests/ui/topic/topic-table-rendering.test.tsx` 的 `[REG-TOPIC-097]` 从真实 table/code renderer 驱动 StateManager，固定 `<4dp` 未决、横向占优单次激活、后续轨迹不重新判定、纵向/相等/多指/途中加指/无 overflow 失败，并证明 240 行代码仍 selectable 且完整。最终 APK 的设备负向控制是慢拖后第一次 Back 仍停在 Topic；修复后必须直接返回首页。 |
 | 最低可靠证据层 | `UI_PASS + LIVE_PASS`：RNTL 只能证明 worklet 决策，不能证明 Android TextView、RNGH 与 FlashList 的真实竞争；当前 agent-device 的 `gesture pan` 只接受坐标，不能违反 tracked Replay 的稳定 selector 规则来制造 `DEVICE_REPLAY_PASS`。只看源码配置、代码有移动或 App 能启动均不足。 |
 | Replay 或真实验收路径 | 匹配最终 revision 的 Release APK 保留数据覆盖安装后，监督式 Agent Live 直达 `https://www.nodeseek.com/post-812712-1`，对可见 terminal code 执行 `240px / 5s` 慢横拖并用录屏/UI hierarchy 排除放大镜、handles 与 ActionMode；静止长按必须仍显示原生选择，Back 只关闭选择。随后回归快速/反向/斜向/纵向/途中加指、四 Tab、复制与返回，并在 linux.do `t/topic/2556285` 第 9 楼和 V2EX `t/1233470` 回归普通 code/table。该坐标手势只属于监督式 Live，不进入 tracked Replay。 |
 | 负向验证方式 | 恢复 `activeOffsetX/failOffsetY` 的隐式阈值、仅把 10dp 改小、用 React state 异步关闭选择、删除 `selectable`、开启内层原生 ScrollView、按 NodeSeek/Tab 特判或只运行 Jest；编号测试或真实设备正/负控制必须失败。 |
-| 明确不覆盖范围 | 不增加独立代码预览页、选择模式、语法编辑、缩放或新依赖；code 路径不迁入原生模块，table 只复用 `REG-TOPIC-100` 已要求的 Compose 选择面。任意慢且在长按超时前始终未越过 4dp 的移动与静止长按物理上不可区分；若 UI-thread 接管后真实选择仍取得所有权，停止调阈值并重新调查触摸取消链路。 |
+| 明确不覆盖范围 | 不增加独立代码预览页、选择模式、语法编辑、缩放、依赖或原生模块。任意慢且在长按超时前始终未越过 4dp 的移动与静止长按物理上不可区分；若 UI-thread 激活后真实 TextView 仍取得选择，停止调阈值并另行决定是否采用独立代码页。 |
 
 ## `REG-TOPIC-098` 横滑已接管但 Android selectable Text 未收到取消事件
 
@@ -5816,113 +5816,17 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 
 | 字段 | 内容 |
 | --- | --- |
-| 当前状态 | `IMPLEMENTED / LIVE_PASS / APK_SANITY`；匹配当前 dirty-source Release APK 已从历史正常入口确认跨普通段落、标题、表格和表后文本的单一原生选区。 |
+| 当前状态 | `CONFIRMED / NOT_FIXED`；用户已明确“未发生正文切割时，选择应能从文本继续拖入表格”，实现路线仍需确认。 |
 | 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-PERF-010` 与 `REG-TOPIC-084/093/094` 的正文 compiler、table 和选择 owner seam |
-| 用户症状 | NodeSeek `post-877083-1` 长按表格前正文后，“全选”只选中当前段落；选择手柄不能越过“配置”标题继续进入表格和表后文字。linux.do `t/topic/2762520` 的普通相邻正文也出现明显隔离。 |
-| 触发条件 | 目标正文没有触发真实物化预算切割，但旧 renderer 仍按 `richText → table → richText` segment 分别创建 Android 选择 owner；首段、标题、表格单元和表后说明因此互相隔离。旧 `part="only"` 只能描述各语义 Owner 没有续段，不能证明整篇正文未分隔。 |
+| 用户症状 | NodeSeek `post-877083-1` 长按表格前正文后，“全选”只选中当前段落；选择手柄不能越过“配置”标题继续进入表格和表后文字。 |
+| 触发条件 | 目标正文没有触发物理预算切割，三个 compiler row 都是 `part="only"`；但 `richText → table → richText` 被分别渲染，首段、标题、两个表格单元和表后说明形成至少五个顶层 selectable Android Text owner。 |
 | 根因 seam | compiler 的语义/调度 row 与 Android 原生选择 owner 被错误等同。React Native `selectable` 只作用于各自 `TextView`；table 又是独立 View 树，因此给每块都加 `selectable` 不能形成文档级连续选择。 |
-| 必须保持的行为 | 同一正文文档内，相邻且预算兼容的普通文本、标题、typed table 和图片槽组成一个 `selectable` region，并只创建一个原生选择面；复制按文档顺序，单元格之间换行，图片不入剪贴板但选择可跨过。代码、投票、视频、折叠标题、Terminal 控件和引用摘要继续是独立交互岛。表格布局、链接、字号/主题、横向查看、稳定 offset、外层纵向滚动、媒体授权/缓存/预览和安全 fallback 不降级。 |
-| 精确失败 oracle | `tests/ui/topic/topic-rich-text-selection.test.tsx` 的普通 `[REG-TOPIC-100]` 用例固定 `richText/table/richText` 只有一个 `selectable` region、一个 `NativeForumSelectionSurface` 和一个顶层 selectable owner；同文件固定图片是媒体槽、9 图预算形成 `4/4/1` 三个 region、交互岛才切开 region，并固定 `semanticContinuation="only"` 不能推导整篇未分隔。typed document/Kotlin 单测固定 row-major cell 顺序与 `rowspan/colspan` placement；设备全选必须把表前文本、每个单元格和表后文本同时高亮。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Vitest/Kotlin 固定 region、table 与 slot 数据契约，RNTL 固定 compiler 到 renderer 的唯一选择面；只有匹配 APK 的 Android ActionMode/handles 能证明跨 Text、表格和媒体槽的真实拖选。 |
-| Replay 或真实验收路径 | 匹配主 AVD 保留数据覆盖安装后，重新打开 App 并从“收藏 → 历史”分别点击 linux.do `2762520` 与 NodeSeek `877083` 的精确历史项；从首段拖选到后续普通文本，NodeSeek 还需跨“配置”、表格和表后文字，复制顺序正确。不得用 deep link 代替，不得清 Cookie/App 数据或执行论坛写操作。 |
-| 负向验证方式 | 恢复 segment 直映 FlashList item、根据数量或 `semanticContinuation` 猜边界、把 table cell 留作独立选择 owner、把表格拍平成无布局文本、增加复制全文或 WebView 伪装连续选择；编号测试或匹配 APK 必须失败。 |
-| 明确不覆盖范围 | 不跨主楼、回复、签名、展开引用或 accepted answer 这些正文文档选择；图片本身不进入剪贴板；真实性能物化分割允许成为选择边界；本次不增加 TSV 导出。 |
-
-## `REG-TOPIC-101` LinuxDo 普通 pre/code 经 sanitizer 后把 code 标签当成代码文本
-
-| 字段 | 内容 |
-| --- | --- |
-| 当前状态 | `IMPLEMENTED / LIVE_PASS / APK_SANITY`；匹配当前 dirty-source Release APK 已从历史正常入口确认代码内容、独立选择边界和内部选择。 |
-| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03` 与 `REG-TOPIC-086/088/089/093/094/097/098` 的 sanitizer、code owner、选择和横向手势 seam |
-| 用户症状 | linux.do `t/topic/2762530` 的内容仍被识别成独立代码组件，但组件内可能把 `<code class="…">` 标记当成可见代码文本，表现与原站普通 `<pre><code>` 不一致。 |
-| 触发条件 | `node-html-parser` 默认把 `<pre>` 内容作为不透明 raw text；共享 sanitizer 在该阶段已经丢失 `<code>` 子节点结构，compiler 随后只能把原始 `<code>…</code>` 字符串当作 code owner 的文本。只直接测试 compiler 会掩盖这个来源链路问题。 |
-| 根因 seam | 正文根节点的 sanitizer parse 必须开启 `parsePreContent`，让普通 `<pre><code>` 从来源解析、清洗、编译到 renderer 始终保持一个 typed `codeBlock`。 |
-| 必须保持的行为 | 普通代码块继续独立选择、完整复制、查询高亮和横向滚动，不与普通正文连成同一选区；NodeSeek ANSI、Terminal Tab、深层装饰 pre 和代码横向手势保持既有行为。 |
-| 精确失败 oracle | `src/domain/forum/topicContentSplit.test.ts` 固定真实 `prepareLinuxDoContent` 后只有一个 `codeBlock` 且 `text/copyText` 不含标签；`tests/ui/topic/topic-rich-text-selection.test.tsx` 再贯通 sanitizer → compiler → opening model → `TopicContentBlock`，要求一个代码框、正确两行文本、零普通正文选择面和零可见 `<code>` 标记。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：domain test 固定来源解析，RNTL 固定最终组件；只有匹配 APK 能确认真实 Compose/RN 组件边界和 Android 选择手势未回退。 |
-| Replay 或真实验收路径 | 匹配主 AVD 重新打开 App，从“收藏 → 历史”点击 linux.do `2762530` 的精确历史项；对照 App 内“更多”进入的原站页面，确认代码内容、换行和样式正确，内部可选择/完整复制且选区不能跨入普通正文。不得用 deep link 代替正常入口。 |
-| 负向验证方式 | 移除 `parsePreContent`、只在 compiler 剥离字符串标签、只直接喂 compiler 测试或把代码并入普通 Compose 正文；编号 domain/UI 用例必须失败。 |
-| 明确不覆盖范围 | 本条不要求代码与普通正文连续选择，也不改变代码语言识别、语法高亮或复制按钮文案。 |
-
-## `REG-TOPIC-102` 原生选择面重复解释 HTML 导致全局排版漂移
-
-| 字段 | 内容 |
-| --- | --- |
-| 当前状态 | `IMPLEMENTED / LIVE_PASS / APK_SANITY`；匹配当前 dirty-source Release APK 已从历史正常入口完整检查文本、标题、表格、代码和媒体布局。 |
-| 能力 ID | `TOPIC-01/02/03`；共享 `REG-TOPIC-084/100` 的正文样式、typed table、媒体和选择 owner seam |
-| 用户症状 | 接入 Compose 连续选择后，不同标签的字号、行距、列表、引用、表格及段前后间距整体异常；按单个标签补样式会在下一种正文结构再次复发。 |
-| 触发条件 | React Native HTML renderer 与原生模块各自解析、推断一次 HTML 和 CSS；两棵布局树对默认样式、margin collapse、自定义元素和媒体占位的理解不同。 |
-| 根因 seam | sanitizer 后的 HTML 只能由现有配置过的 RNRH/TRE 建立一次规范布局树；JS 把该树转换成无 HTML 的 typed document，Compose 只是布局/选择 renderer，不能再解释原始标签或维护第二份标签兼容表。 |
-| 必须保持的行为 | 普通段落、六级标题、强调、链接、行内代码、列表、引用、分隔线、typed table、查询高亮、主题/字号/行距和媒体槽均继承同一 TRE 样式事实；原生解析失败只显示 compiler 安全文本。 |
-| 精确失败 oracle | `src/features/topic/rendering/forumSelectionDocument.test.ts` 的 `[REG-TOPIC-102]` 用真实 compiler 与配置后的 `TRenderEngine` 固定全部通用节点、样式、typed table 和媒体都进入一个不含 `html` 字段的 document；任何第二次 HTML 解析、标签白名单或逐标签补丁都会使结构/样式断言失败。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Vitest 固定唯一 typed layout contract，RNTL 固定 renderer 只收到 typed document；匹配 APK 整页滚动确认真实字体与动态媒体布局。 |
-| Replay 或真实验收路径 | 匹配主 AVD 覆盖安装后重新打开 App，从“收藏 → 历史”完整滚过 NodeSeek `877083`、linux.do `2762520/2762530` 及包含标题、列表、引用、表格、图片的既有历史主题；对照 App 内原站确认通用排版，不按首屏判断，也不得用 deep link 代替。 |
-| 负向验证方式 | 在 Kotlin 中重新解析 HTML、按站点/标签写 margin 或高度特判、保留 WebView/RN TextView fallback，或让测试只断言 App 能打开；编号测试或整页对照必须失败。 |
-| 明确不覆盖范围 | 代码、投票、视频、折叠标题、Terminal 控件等交互岛继续使用各自 renderer；不要求它们并入普通正文选择面。 |
-
-## `REG-TOPIC-103` 选择面复用旧宿主高度且媒体子 View 旧坐标制造巨量空白
-
-| 字段 | 内容 |
-| --- | --- |
-| 当前状态 | `IMPLEMENTED / LIVE_PENDING`；根选择面和媒体槽已归一到真实宽度下的当前内容测量，等待匹配 Release APK 的回收、字号与旋转验收。 |
-| 能力 ID | `TOPIC-01/02/03`；共享 `REG-TOPIC-028/075/100/102` 的 FlashList identity、动态媒体尺寸和原生选择面高度 seam |
-| 用户症状 | NodeSeek `post-877083-1` 正文后出现数屏空白，所有排版像被拉散；图片之间也残留巨大间隔，滚离再返回时高度可能继续沿用旧值。 |
-| 触发条件 | Expo `AutoSizingComposable` 对自定义 table/tree 使用 intrinsic height，同时 FlashList 把历史宿主高度作为下一轮 exact constraint；嵌入的 RN 图片子 View 又保留旧 sibling-relative `top/left`，Compose wrapper 与原子 View 各占一次旧位置。 |
-| 根因 seam | 高度链路分成两个不重叠职责：Compose 是自然内容高度的唯一测量权威，在当前真实宽度下以 `minHeight=0/maxHeight=Infinity` 实测 typed document；JS/Yoga 是宿主调度高度的唯一布局 owner，先给有界 fallback，再只接受当前 `layoutKey` 的测量事件。原生不写 ShadowNode，旧宿主高度、intrinsic height 和 RN 子 View 的历史坐标都不是输入。媒体槽只读取原子 child 当前 `width/height`，归零坐标，并在 add/remove/layout、异步图片加载、缓存尺寸、原图升级、宽度/旋转变化时触发同一测量链路。 |
-| 必须保持的行为 | 文本、表格与媒体紧密按文档顺序布局；内容/样式/字体/宽度/方向/媒体尺寸/回收任一改变后高度收敛到当前真实值。表格横向 offset、查询高亮和选择操作不成为高度 owner；媒体监听在移除时解绑，不泄漏旧 cell。 |
-| 精确失败 oracle | `ForumSelectionContentTest` 的 `[REG-TOPIC-103]` 等价用例把旧宿主约束固定为 `975×7939`，要求子文档仍按 `975×0..Infinity` 测量；媒体槽输入只含当前 `975×381` 尺寸并固定为原点，typed table span/layout 测试同时防止以 intrinsic 简化布局。`[REG-TOPIC-105]` RNTL 固定 Yoga fallback、精确替换和 stale key 隔离。匹配 APK 的 UI hierarchy 必须显示回复紧接正文而非数屏之后。 |
-| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS + APK_SANITY`：纯函数单测固定测量约束与媒体槽几何；动态图片、FlashList 回收、字体和旋转只能由匹配 Release APK 的真实布局树证明。 |
-| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装后重新打开 App，从“收藏 → 历史”进入 NodeSeek `877083` 并完整滚到回复区，记录选择面及媒体 holder/child bounds；滚离返回触发 FlashList 回收，再切换 Reader 字号并旋转一次后重复，所有间距和高度仍正确。验收后恢复原字号和方向；不得用 deep link 代替。 |
-| 负向验证方式 | 恢复 intrinsic/`AutoSizingComposable`、沿用父 exact height、把 child `top/left` 加入槽尺寸、固定图片高度、按 `img/table/p` 打补丁、禁用虚拟化或隐藏空白；编号单测或真实整页 bounds 必须失败。 |
-| 明确不覆盖范围 | 不改变 FlashList 的合法 region 物化边界，不清理主 AVD 数据，不通过固定整页高度或 WebView 回避原生测量。 |
-
-## `REG-TOPIC-104` Fabric 媒体 child 所有权与 Compose 高度失效分裂
-
-| 字段 | 内容 |
-| --- | --- |
-| 当前状态 | `IMPLEMENTED / LIVE_PENDING`；媒体逻辑 child 已使用 Expo `GroupView` 映射到稳定 Compose host，等待最终匹配 Release APK 日志验收。 |
-| 能力 ID | `TOPIC-01/02/03`；共享 `REG-TOPIC-075/100/102/103` 的原生媒体 owner、动态尺寸与 FlashList 回收 seam |
-| 用户症状 | 媒体初次显示后，图片加载、字号切换或回收会留下旧高度/旧位置；重建 host 又可能崩溃为 “child already has parent”，稳定 host 则可能由 Fabric 报 `SurfaceMountingManager removeViewAt ... already removed`。 |
-| 触发条件 | 自定义 Expo Compose View 物理包装了 React Native child，却没有向 Fabric 声明逻辑 child 的 add/get/remove 关系；同时把原子 child 留在 Yoga 正文流或按尺寸重建 host，会让 Fabric、Yoga 与 Compose 分别持有父子关系和高度。 |
-| 根因 seam | 原生选择面只有一个 child ownership 协议：Expo `GroupView` 负责 Fabric 逻辑 child，官方 `ExpoComposeView` host 保持稳定；原子 child 绝对定位在原点且不参与 Yoga 文档流。child layout listener 只把当前宽高（包括增长、缩小和归零）送入 Compose 测量，随后由当前 `layoutKey` 的事件交给 JS/Yoga 宿主高度 owner；GroupView、Compose 和 Fabric 都不另写宿主尺寸。 |
-| 必须保持的行为 | content、font size/family、line height、系统 density、父宽度、typed table、媒体 add/remove/reorder、初始加载、缓存尺寸、原图升级、失败/折叠与 FlashList 回收均收敛到当前高度；媒体 holder 与 child bounds 一致，无重复 parent、重复 remove、旧 cell listener 或隐形 Yoga 高度。 |
-| 精确失败 oracle | `ForumSelectionContentTest` 固定历史 exact 高度不能传入正文测量，并固定媒体槽对当前 `975×381` 与收缩后的 `0×0` 都只在原点产生最小安全 bounds。匹配 Release APK 完整滚动与回收后，UI hierarchy 的 holder/child 尺寸逐一相等，日志中不得出现 `SurfaceMountingManager`、`already has a parent` 或 `FATAL EXCEPTION`。 |
-| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS + APK_SANITY`：Kotlin 纯函数固定测量和槽几何；Fabric logical ownership、异步 RN child layout 与 FlashList 回收只有匹配 Release APK 的真实 View 树和进程日志能证明。 |
-| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装后重新打开 App，从“收藏 → 历史”进入 NodeSeek `877083`，完整滚到图片与回复区、滚离再返回，核对 holder/child bounds 和新进程日志；切换字号/行距后重复并恢复设置。不得用 deep link、卸载、清数据或固定高度掩盖问题。 |
-| 负向验证方式 | 删除 `GroupView`、直接把 raw RN child 交给 Compose `AndroidView`、按尺寸 key 重建 host、手动调用 child `layout`、让 child 继续占 Yoga 流、忽略缩小/归零或只清异常日志；编号测试或匹配 APK 必须失败。 |
-| 明确不覆盖范围 | 不改变媒体缓存、Referrer、预览、网络许可或合法 region 预算；不引入 WebView、自定义选区 Overlay或新 UI 依赖。 |
-
-## `REG-TOPIC-105` 千图正文初始一像素槽导致回复先出现再跳回图片
-
-| 字段 | 内容 |
-| --- | --- |
-| 当前状态 | `IMPLEMENTED / LIVE_PASS / APK_SANITY`；匹配当前 dirty-source Release APK 已按正常历史入口完成冷、热缓存录屏与 View/PSS/gfxinfo 验收。 |
-| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-PERF-010/013/017` 与 `REG-TOPIC-004/075/085/100/103/104` 的单次编译、FlashList 物化、媒体几何和预览目录 seam |
-| 用户症状 | NodeSeek `post-863650-1` 首次进入时先看到主楼操作区和回复，随后整页跳回正文首批图片；缓存命中后从历史点击反而会先卡在历史列表，导航迟迟不提交。修复前 warm 录屏从点击到转场约 8 秒，退出后 inactive route 曾保留约 11,237 个 attached View。 |
-| 触发条件 | Compose 内部虽然有媒体 fallback，但 React Native/Yoga 在原生 props 生效前仍把每个选择面当作零高。FlashList 为填满 viewport 同步挂载约 500 个图片 region/1,381 个媒体 child；缓存让编译结果立即可用，反而把这批同步原生创建工作提前到导航 commit 之前。 |
-| 根因 seam | 选择面高度必须只有一个调度 owner：JS/Yoga 先用 compiler typed 媒体几何给出有界非零高度，Compose 在真实宽度下测得自然高度后携带 `layoutKey` 回传并替换该值；内容、宽度、字号或行距变化会生成新 key，旧事件必须丢弃，增长和缩小都必须接受。原生不得再通过 ShadowNode/`setViewSize` 同时改宿主尺寸。compiler 的 region packing 继续复用唯一 node analysis，禁止为选择边界再解析或重扫 segment HTML。 |
-| 必须保持的行为 | 2000 图片仍只 parse/compile 一次并形成 500 个、每个最多 4 媒体的真实 region；首帧只挂载可见与既有小范围预取，不能先露出回复或产生后续整页跳跃。已知自然比例、onLoad 同步缓存、warm `<=8`、running `<=4`、原图 `<=1`、三槽预览、完整目录、Referrer、失败/折叠、FlashList 回收及选择跨媒体槽能力不变。4:3 只服务首次未知尺寸，不能覆盖首个正尺寸或已缓存自然比例。 |
-| 精确失败 oracle | `src/features/topic/rendering/forumSelectionDocument.test.ts` 固定 2000 图片仍为 500 regions，首个 typed block media 在 `contentWidth=320` 时为 `320×240`；`tests/ui/topic/topic-rich-text-selection.test.tsx` 的 `[REG-TOPIC-105]` 固定 Yoga 首帧高度非零、native 精确高度可增长/缩小且 stale key 无效；`ForumSelectionContentTest` 固定原生自然测量与媒体 fallback→child→归零。既有 parse-once、媒体预算、自然尺寸和三槽测试必须同时通过。 |
-| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS + APK_SANITY`：Vitest/Kotlin 固定数据与槽状态机；只有匹配 Release APK 的进程冷/热进入录屏、UI hierarchy、gfxinfo、PSS/View 数和新进程日志能证明 FlashList 没有先批量物化全部正文。 |
-| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；严格执行“重新打开 App → 收藏 → 历史 → 整活帖”，从历史点击前开始录屏；Back 回历史后再次点击同一项形成 warm-cache 轮次。逐帧检查点击反馈、导航 commit、第一帧至首图稳定，任何时刻都不得卡在历史数秒、先出现回复再跳回图片。记录 attached View/PSS/gfxinfo，再从历史打开普通文本、表格和代码主题确认没有用全局固定高度换取通过。不得用 deep link 代替该导航验收。 |
-| 负向验证方式 | 删除 Yoga 首帧高度、恢复 native ShadowNode 双写、接受 stale native 高度、等 child layout 后才占位、禁用 FlashList、扩大 render window、预先挂载全部媒体、为该 URL/站点写特判、后台预计算第二份 HTML、deep link 绕过历史导航或只测最终静止截图；编号测试或录屏首帧 oracle 必须失败。 |
-| 明确不覆盖范围 | 不预载或解码 1300 张图片，不遍历完整预览目录，不修改图片网络/缓存/许可策略；若稳定首帧后点击预览仍慢，继续由 `REG-TOPIC-096` 单独处理。 |
-
-## `REG-TOPIC-106` 块级媒体仍渲染来源换行导致图片间出现空白行
-
-| 字段 | 内容 |
-| --- | --- |
-| 当前状态 | `IMPLEMENTED / LIVE_PASS / APK_SANITY`；匹配 v1.3.110 x86_64 Release 开发签名包已按正常历史入口完成冷、热缓存视觉与 View 树验收。 |
-| 能力 ID | `TOPIC-01/02/03`；共享 `REG-TOPIC-100/102/103/105` 与 `REG-PERF-019` 的选择文档、媒体槽、排版和单次 TTree seam |
-| 用户症状 | NodeSeek `post-863650-1` 的连续图片之间出现约一整行空白；UI hierarchy 可见每个媒体槽后多出内容为 `\n` 加复制哨兵的独立 Compose `TextView`。 |
-| 触发条件 | 来源用单个 `<br>` 把 HTML 内联图片换到下一行；选择适配器已把图片物化为全宽块级媒体槽，却仍把该 `<br>` 翻译成独立文本节点。图片本身已经结束当前行，因此同一个换行被执行两次。 |
-| 根因 seam | RNRH TTree 是唯一语义输入；TTree→typed document 在把媒体提升为块级槽时，必须同时消费与它相邻的一次行分隔。该规则属于布局语义转换，不属于站点 sanitizer、图片高度、Compose 补偿或 URL 特判。 |
-| 必须保持的行为 | 与块级媒体相邻的一组 `<br>` 只消耗一个冗余换行；两个及以上 `<br>` 仍保留其余真实空行。普通文本内部换行、inline 图片、图片真实尺寸、媒体 `4/4/1` 物化、跨媒体选择、预览、缓存、Referrer 和单次 TTree 不变。 |
-| 精确失败 oracle | `src/features/topic/rendering/forumSelectionDocument.test.ts` 的 `[REG-TOPIC-106]` 固定真实 `<img><br>\n<img><br>` 输出两个媒体节点、零空白文本节点，并固定 `<img><br><br><img>` 仍输出一个换行。修复前前者稳定输出两个 `"\n"` 文本节点。 |
-| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS + APK_SANITY`：Vitest 固定 typed document 语义；只有匹配 APK 的截图和 UI hierarchy 能证明媒体槽之间不再出现空白 `TextView`。 |
-| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；重新打开 App，从“收藏 → 历史 → 整活帖”进入，核对首两图紧邻且 UI hierarchy 在两个 `topic-image-frame` 之间没有 `\n` 文本节点。2026-08-17 实测间距由 192px 收敛到样式拥有的 58px，原 118px 空白 TextView 消失；Back 后热缓存重进约 1.23s 即出现首批媒体，未卡在历史或先显示回复。 |
-| 负向验证方式 | 按 NodeSeek/URL 删除 `<br>`、把所有 `<br>` 全删、按像素减高度、用负 margin 遮空白或在 Compose 隐藏所有空文本；编号测试、普通正文换行或真实 View 树必须失败。 |
-| 明确不覆盖范围 | 不改变作者明确给出的额外空行，不预载图片，不调整图片网络/缓存/预览策略，也不增加第二套 HTML 解释器。 |
+| 必须保持的行为 | 没有真实预算切割的同一正文文档只有一个用户可见选择 owner；选择可从表格前文本跨标题、表格单元继续到表后文字，复制顺序与文档顺序一致。表格布局、链接、字号/主题、横向查看、外层纵向滚动和动态内容安全边界不得以“可复制”为由静默降级。 |
+| 精确失败 oracle | `tests/ui/topic/topic-rich-text-selection.test.tsx` 的 `[REG-TOPIC-100]` 固定 `richText/table/richText` 全部 `part="only"`，并要求顶层 selectable owner 数为 1；当前真实 RNRH 树得到 5。用例暂为 `it.failing`，只证明已确认失败，不计 `UI_PASS`；修复时必须改为普通用例。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定 compiler 到真实 renderer 的选择 owner 数；只有匹配 APK 的 Android ActionMode/handles 能证明可跨表格拖选和复制。 |
+| Replay 或真实验收路径 | 匹配主 AVD 只读直达 `https://www.nodeseek.com/post-877083-1`；长按首段并拖动或“全选”，高亮必须覆盖“配置”、表格内容及表后文字，复制文本顺序正确。不得清 Cookie/App 数据或执行论坛写操作。 |
+| 负向验证方式 | 只把 `p/h*` 改成嵌套 Text、只增加“复制全文”按钮、把 table 每个 cell 继续留作独立选择 owner、把表格静默拍平成普通文本，或未经性能/媒体/链接/安全回归就把所有 Topic/回复改成 WebView；编号用例或既有 table/media 回归必须失败。 |
+| 明确不覆盖范围 | 本条先固定产品目标与反证；在用户确认“默认正文直接使用单一文档表面”或“保留 native 阅读、进入按需选择表面”前，不用局部补丁伪装完成。 |
 
 ## `REG-TOPIC-095` 三槽图片预览翻页闪回错误图片且 pinch 误改 index
 
@@ -6107,21 +6011,6 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 移除 `combine`、让 Search 投影依赖无关 runtime、恢复全局 inline map × raw HTML 扫描、把 prepare/project 合回每次目录构造或再次直接计算 reaction；编号测试必须出现 identity 变化、额外 transport/渲染/解析或重复调用。 |
 | 明确不覆盖范围 | 不承诺端到端提速比例，不新增全局 cache、HTML 变体缓存、Worker、依赖或第二套 renderer；未分离的 React commit 与 Native layout 只有 profile 后才能立新优化。 |
 
-## `REG-PERF-019` 原生选择媒体槽逐张重新建树
-
-| 字段 | 内容 |
-| --- | --- |
-| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-PERF-010/017`、`REG-TOPIC-102/105` |
-| 用户症状 | 含大量图片的 Topic 在响应完成后仍长时间卡在历史列表，进入后首帧和图片出现变慢；已经访问过的缓存 Topic 重入也会再次阻塞。 |
-| 触发条件 | 原生选择适配器先为一个 region 建立完整 TTree，又把其中每张媒体 `TNode` 序列化回 HTML 并交给 `RenderHTMLSource`，导致逐张再次 `buildTTree`。 |
-| 根因 seam | 同一个选择 region 的 RNRH TTree 没有成为 typed 文档和媒体槽的共同 owner。 |
-| 必须保持的行为 | 每个 richText segment 只建立一次 TTree；选择文档和媒体槽共同复用该树，媒体槽直接把既有 `TNode` 交给 `TNodeRenderer`。高度回报、query、图片加载和同身份重入不得重新建树；现有 Expo Image、Referrer、权限、预览、动态 inline 判定和媒体 `4/4/1` 预算不变。不得增加缓存、第二套图片 renderer 或 TNode→HTML 兼容层。 |
-| 精确失败 oracle | `tests/ui/topic/topic-render-materialization.test.tsx` 的 `[REG-PERF-019]` 固定 4 图 region 初次渲染总计 `buildTTree=1`、`RenderHTMLSource=0`、`TNodeRenderer=4`，native 高度变化后仍为 `1`；动态 V2EX 图片同时固定复用节点的最终 tag/attributes。既有 2000 图 compiler parse-once 和 native 高度测试必须同时通过。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：RNTL 固定准确调用次数和 renderer 边界；匹配 Release APK 的正常 History 冷/热进入固定真实交互时延与首帧顺序。 |
-| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装；重新打开 App 后从 Library/History 正常进入 NodeSeek `post-863650-1`，分别记录首次读取与同 PID 重入，从点击开始不得卡在历史，也不得先显示回复再跳回主楼媒体。 |
-| 负向验证方式 | 恢复媒体 HTML 字段或每媒体 `RenderHTMLSource`；编号测试必须得到 4 图 `buildTTree=5`。 |
-| 明确不覆盖范围 | 不新增持久详情缓存、Worker、预取、图片分页或截断；若单树路径仍慢，必须先 profile React/Native layout 再建立新的性能目标。 |
-
 ## `REG-NOTIFY-058` 新增通知来源重读稳定 sibling snapshot
 
 | 字段 | 内容 |
@@ -6167,6 +6056,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 匹配 APK 在主 AVD 只读打开 `https://linux.do/t/topic/2756057`，展开目标引用，核对 summary、正文第一行和最后一行只有一个连续外框；再收起和二次展开，不发回复或互动。 |
 | 负向验证方式 | 恢复 summary 的 opening scope、summary/body 普通 separator、让每个 body row 都使用完整 quote box，或增加 linux.do/URL 特判；编号 RNTL 或匹配 APK 必须重新出现断层。 |
 | 明确不覆盖范围 | 不改变 Android 原生文本选择 owner。跨 FlashList/RNRH 多个 `TextView` 以及图片上下文本的系统选区仍是独立架构问题，不用复制全文、selection overlay 或站点特判伪装修复。 |
+
+## `REG-TOPIC-108` 新进入屏幕的图片被旧 row 请求占满 permit
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享 `REG-PERF-010` 的千图正文媒体调度 seam |
+| 用户症状 | 千图正文继续滚动时，当前已经进入屏幕的图片保持等待；上一屏或预取 row 的图片仍占用全部四个请求位置，必须等旧请求完成或超时后当前图片才开始。 |
+| 触发条件 | 四个 behind-row 媒体已经处于 running，viewport 顺序随后把新的 visible row 放到最前，但旧 row 仍留在 warm window。 |
+| 根因 seam | Coordinator 用 warm capacity 决定是否取消旧请求，却用当前 running 数决定是否启动新请求；warm 上限大于并发 permit 上限，因此合法保温的旧请求可以永久占满全部 permit。 |
+| 必须保持的行为 | 每次 viewport 重算先按既有 priority、row 顺序、request identity 去重和原图上限确定最多四个 scheduled owners；不在该集合内的 running 请求退回 waiting，新 visible row 同轮获得 permit。已显示像素、warm window、暂停、失败重试、同 identity 去重、四并发和最多一个原图语义不变。 |
+| 精确失败 oracle | `tests/ui/topic/topic-media-coordinator.test.tsx` 的 `[REG-TOPIC-108]` 先让四个 behind-row probe 全部 admitted，再把 visible row 排到前面；要求 visible probe 立即 admitted 且总 admitted 仍为四。旧实现得到 visible=`idle`、四个旧 probe 继续 admitted。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定 permit ownership；匹配 APK 连续滚动才能确认真实请求、FlashList viewport 与媒体显示协同。 |
+| Replay 或真实验收路径 | 主 AVD 覆盖安装匹配 APK，从正常 History 入口进入 NodeSeek `post-877083-1`，连续滚动正文并回收前后 rows；当前 viewport 图片应持续取得请求位置，正文不得白屏、迟到或先出现回复。 |
+| 负向验证方式 | 恢复只按 `warmKeys` 取消 running 的逻辑；编号测试必须看到新 visible probe 保持 idle。 |
+| 明确不覆盖范围 | 不改变媒体尺寸、表情/贴图布局、图片 renderer、正文分块、请求并发上限、缓存或预览目录；远端本身慢仍可能显示加载状态。 |
 
 ## 待确认观察
 

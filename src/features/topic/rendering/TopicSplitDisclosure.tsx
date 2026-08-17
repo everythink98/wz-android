@@ -1,9 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import type {
-  CompiledForumContentSegment,
-  ForumContentAncestorFrame,
-  ForumContentMaterializationRegion
-} from '@/domain/forum/topicContentSplit';
+import type { CompiledForumContentRow, ForumContentAncestorFrame } from '@/domain/forum/topicContentSplit';
 
 export type TopicSplitDisclosureKind = 'callout' | 'details';
 
@@ -124,27 +120,17 @@ function frameExpanded(
     : frame.defaultExpanded;
 }
 
-function topicSemanticSegmentVisible(
-  segment: CompiledForumContentSegment,
+export function topicSemanticRowVisible(
+  row: CompiledForumContentRow,
   scopeKey: string,
   store: Pick<TopicSplitDisclosureStoreValue, 'activeTabByKey' | 'expandedByKey'>
 ) {
-  return segment.ancestorFrames.every((frame) => {
+  return row.ancestorFrames.every((frame) => {
     if (frame.kind === 'callout' || frame.kind === 'details') return frameExpanded(frame, scopeKey, store);
     if (frame.kind !== 'terminalTab') return true;
     const key = topicTerminalReportKey(scopeKey, frame.reportSemanticId);
     return (store.activeTabByKey[key] || frame.defaultTabId) === frame.tabId;
   });
-}
-
-export function topicMaterializationRegionVisible(
-  region: ForumContentMaterializationRegion,
-  scopeKey: string,
-  store: Pick<TopicSplitDisclosureStoreValue, 'activeTabByKey' | 'expandedByKey'>
-) {
-  return region.kind === 'island'
-    ? topicSemanticSegmentVisible(region.segment, scopeKey, store)
-    : region.segments.every((segment) => topicSemanticSegmentVisible(segment, scopeKey, store));
 }
 
 export function useTopicSplitDisclosure({

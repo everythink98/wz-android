@@ -653,6 +653,30 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getAllByText('admitted')).toHaveLength(9);
   });
 
+  it('[REG-TOPIC-108] preempts retained behind-row requests for newly visible media', async () => {
+    const tree = (viewportRowKeys: readonly string[]) => (
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={viewportRowKeys}>
+        <TopicBodyMediaRowBoundary rowKey="behind-row">
+          {Array.from({ length: 4 }, (_, index) => (
+            <MediaProbe id={`behind-${index}`} key={index} />
+          ))}
+        </TopicBodyMediaRowBoundary>
+        <TopicBodyMediaRowBoundary rowKey="visible-row">
+          <MediaProbe id="new-visible-running" />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const view = await render(tree(['behind-row']));
+
+    expect(view.getAllByText('admitted')).toHaveLength(4);
+    expect(view.getByTestId('media-new-visible-running').props.children).toBe('idle');
+
+    await view.rerender(tree(['visible-row', 'behind-row']));
+
+    expect(view.getByTestId('media-new-visible-running').props.children).toBe('admitted');
+    expect(view.getAllByText('admitted')).toHaveLength(4);
+  });
+
   it('never exposes the old admitted snapshot after a recycled renderer changes identity', async () => {
     const observed: { admitted: boolean; id: string }[] = [];
     const probe = (id: string) => (
