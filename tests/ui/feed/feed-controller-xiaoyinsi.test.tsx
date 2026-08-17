@@ -3109,6 +3109,87 @@ describe('小隐寺 Feed controller', () => {
     expect(linuxAttempts).toBe(3);
   });
 
+  it('[REG-LINUXDO-002] resumes aggregate verification without changing or recursively reopening the Feed', async () => {
+    const v2exTopic = {
+      source: 'v2ex' as const,
+      id: 'aggregate-v2ex',
+      title: '其他来源先正常显示',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/aggregate-v2ex',
+      createdAt: '2026-08-17T00:00:00.000Z',
+      replyCount: 0
+    };
+    const linuxDoTopic = {
+      ...v2exTopic,
+      source: 'linuxdo' as const,
+      id: 'aggregate-linuxdo',
+      title: '验证后恢复的主题',
+      url: 'https://linux.do/t/aggregate-linuxdo'
+    };
+    let attempts = 0;
+    const getFeed = jest.fn(
+      async ({ source }: Parameters<ReadGateway['getFeed']>[0], _context?: Parameters<ReadGateway['getFeed']>[1]) => {
+        expect(source).toBe('all');
+        attempts += 1;
+        return attempts <= 2
+          ? {
+              items: [v2exTopic],
+              errors: {
+                linuxdo: {
+                  kind: 'verification-required' as const,
+                  message: 'linux.do 需要验证',
+                  verificationRequired: true
+                }
+              },
+              hasMore: false,
+              nextPage: null
+            }
+          : { items: [v2exTopic, linuxDoTopic], errors: {}, hasMore: false, nextPage: null };
+      }
+    );
+    const showLinuxDoVerification = jest.fn<void, [message?: string, recovery?: LinuxDoReadRecovery]>();
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        active: true,
+        showLinuxDoVerification,
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway: {
+          getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+          getFeed,
+          hasYaohuoCredential: jest.fn(async () => false)
+        } as unknown as ReadGateway
+      })
+    );
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([v2exTopic]));
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    const initialReadPlanScopes = getFeed.mock.calls[0]?.[1]?.readPlanScopes;
+
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('verification-required');
+    });
+    expect(hook.result.current.activeFeedState.items).toEqual([v2exTopic]);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('completed');
+    });
+
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([v2exTopic, linuxDoTopic]));
+    expect(getFeed).toHaveBeenCalledTimes(3);
+    expect(getFeed.mock.calls.slice(1).map((call) => call[1]?.readPlanScopes)).toEqual([
+      initialReadPlanScopes,
+      initialReadPlanScopes
+    ]);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
   it('[REG-FEED-006] retries a failed multi-page refresh instead of advancing to a later page', async () => {
     const firstTopic = {
       source: 'linuxdo' as const,

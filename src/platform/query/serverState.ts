@@ -13,8 +13,7 @@ function sessionEpochKey(source: FeedSource, epochs: ForumSessionEpochs) {
 
 export const accountQueryKeys = {
   all: ['account'] as const,
-  snapshot: (source: Source) => ['account', source, 'snapshot'] as const,
-  probe: (source: Source, generation: number) => ['account', source, 'probe', generation] as const
+  snapshot: (source: Source) => ['account', source, 'snapshot'] as const
 };
 
 export const forumQueryKeys = {

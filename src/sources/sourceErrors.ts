@@ -118,7 +118,7 @@ export function linuxDoVerificationNavigationMessage(
   errors: SourceErrors,
   fallback = 'linux.do 需要完成 Cloudflare 验证'
 ) {
-  return source === 'linuxdo' && sourceErrorRequiresVerification(errors.linuxdo)
+  return (source === 'all' || source === 'linuxdo') && sourceErrorRequiresVerification(errors.linuxdo)
     ? sourceErrorMessage(errors.linuxdo) || fallback
     : '';
 }

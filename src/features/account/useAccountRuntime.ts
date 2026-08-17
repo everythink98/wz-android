@@ -137,7 +137,6 @@ export function useAccountRuntime({
   const forumSessionEpochsRef = useRef<ForumSessionEpochs>(initialForumSessionEpochs);
   const authSurfaceRegistryRef = useRef(createAuthSurfaceRegistry());
   const closingAuthSurfacesRef = useRef(new Set<AuthSurface>());
-  const linuxDoRecoveryBarrierRef = useRef(false);
   const pendingNodeSeekRecoveryRef = useRef<LinuxDoReadRecovery | null>(null);
   const beginAccountIdentityCheckRef = useRef<(source: SessionSite, surfaceGeneration?: number) => void>(
     () => undefined
@@ -156,10 +155,7 @@ export function useAccountRuntime({
       return {
         source,
         authenticated: access.authenticated,
-        authSurfaceOpen:
-          sourceEnabled &&
-          (hasOpenAuthSurfaceForSource(authSurfaceRegistryRef.current, source) ||
-            (source === 'linuxdo' && linuxDoRecoveryBarrierRef.current)),
+        authSurfaceOpen: sourceEnabled && hasOpenAuthSurfaceForSource(authSurfaceRegistryRef.current, source),
         identityKey: access.identityKey,
         identityTrust: access.identityTrust,
         sessionEpoch: forumSessionEpochsRef.current[source],
@@ -181,9 +177,6 @@ export function useAccountRuntime({
     },
     [readSessionRuntimeSnapshot]
   );
-  const updateLinuxDoRecoveryBarrier = useCallback((active: boolean) => {
-    linuxDoRecoveryBarrierRef.current = active;
-  }, []);
   const beginAuthSurfaceTicket = useCallback(
     (surface: AuthSurface, source: SessionSite, checkIdentity = true) => {
       const closingTicket = authSurfaceRegistryRef.current.active[surface];
@@ -291,9 +284,10 @@ export function useAccountRuntime({
     onAccountStatusChanged: session.commitAccountStatusChange,
     readXiaoyinsiAuthorization: xiaoyinsiAuth.readAuthorization
   });
+  const reconcileAccountStatusBase = status.reconcileAccountStatus;
   const reconcileAccountStatus = useCallback(
-    async (...args: Parameters<typeof status.reconcileAccountStatus>) => {
-      const result = await status.reconcileAccountStatus(...args);
+    async (...args: Parameters<typeof reconcileAccountStatusBase>) => {
+      const result = await reconcileAccountStatusBase(...args);
       if (result.status === 'same' || result.status === 'changed' || result.status === 'anonymous') {
         const source = args[0];
         for (const [surface, ticket] of Object.entries(authSurfaceRegistryRef.current.active)) {
@@ -304,7 +298,7 @@ export function useAccountRuntime({
       }
       return result;
     },
-    [status.reconcileAccountStatus]
+    [reconcileAccountStatusBase]
   );
   const reconcileAuthSurfaceAccountStatus = useCallback(
     (source: SessionSite, options: { surfaceGeneration?: number } = {}) =>
@@ -416,7 +410,6 @@ export function useAccountRuntime({
     notify,
     onBeforeLinuxDoSurfaceOpened: () => prepareAuthSurfaceOpenRef.current('linuxdo-login'),
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
-    onLinuxDoRecoveryBarrierChanged: updateLinuxDoRecoveryBarrier,
     onLinuxDoSurfaceClosed: ({ authoritativeResult, reason }) => {
       finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason);
     },

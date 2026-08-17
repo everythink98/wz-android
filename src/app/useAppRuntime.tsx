@@ -311,6 +311,7 @@ export function useAppRuntime() {
       forumSessionEpochs,
       onFeedInitialContentReady,
       notify,
+      readGateway,
       readerData,
       readerDataLoaded,
       requestNodeSeekVerification,

@@ -105,12 +105,10 @@ describe('session query ownership', () => {
     const client = new QueryClient();
     const sourceFeed = ['forum', 'nodeseek', 'feed'] as const;
     const account = accountQueryKeys.snapshot('nodeseek');
-    const probe = accountQueryKeys.probe('nodeseek', 1);
     const aggregate = ['forum', 'all', 'feed'] as const;
     const otherSource = ['forum', 'linuxdo', 'feed'] as const;
     client.setQueryData(sourceFeed, 'untrusted');
     client.setQueryData(account, 'canonical');
-    client.setQueryData(probe, 'probe');
     client.setQueryData(aggregate, 'safe');
     client.setQueryData(otherSource, 'other');
 
@@ -118,7 +116,6 @@ describe('session query ownership', () => {
 
     expect(client.getQueryData(sourceFeed)).toBeUndefined();
     expect(client.getQueryData(account)).toBe('canonical');
-    expect(client.getQueryData(probe)).toBe('probe');
     expect(client.getQueryData(aggregate)).toBe('safe');
     expect(client.getQueryData(otherSource)).toBe('other');
   });
