@@ -27,6 +27,27 @@ import { acceptForumReadResponse, registerForumReadResponseEvidence } from './fo
 import { readAccountStatus } from './accountRead';
 
 describe('forum Account read-attempt ownership', () => {
+  it('[REG-PERF-019] turns only a raw Account HTTP 401 into terminal anonymous evidence', async () => {
+    accountStatusMocks.nodeseek.mockRejectedValueOnce(
+      Object.assign(new Error('登录状态已失效'), { status: 401, reason: 'http-401' })
+    );
+    const options = {
+      fetcher: vi.fn<Fetcher>(),
+      linuxDoUserAgent: 'LinuxDo UA',
+      nodeSeekUserAgent: 'NodeSeek UA',
+      readManagedCookieHeader: async () => ({ status: 'ok' as const, header: '' }),
+      readXiaoyinsiAuthorization: async () => ({ authenticated: null as null }),
+      signal: new AbortController().signal
+    };
+
+    await expect(readAccountStatus('nodeseek', options)).resolves.toMatchObject({
+      session: { site: 'nodeseek', status: 'expired' }
+    });
+
+    accountStatusMocks.nodeseek.mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }));
+    await expect(readAccountStatus('nodeseek', options)).rejects.toMatchObject({ status: 403 });
+  });
+
   it.each(['linuxdo', 'nodeseek'] as const)(
     '[REG-SOURCE-009] does not commit a parsed %s fallback after its Account signal is canceled',
     async (source) => {

@@ -1,5 +1,13 @@
 export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
+export function rejectUnauthorizedResponse(fetcher: Fetcher): Fetcher {
+  return async (input, init) => {
+    const response = await fetcher(input, init);
+    if (response.status !== 401) return response;
+    throw Object.assign(new Error('登录状态已失效'), { status: 401, reason: 'http-401' });
+  };
+}
+
 export function withFetchGuard(fetcher: Fetcher, assertCurrent: () => void | Promise<void>): Fetcher {
   return async (input, init) => {
     await assertCurrent();

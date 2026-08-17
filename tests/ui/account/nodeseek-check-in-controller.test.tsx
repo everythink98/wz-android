@@ -23,27 +23,28 @@ const ticket: WritableSessionTicket = {
 async function renderController(
   options: {
     current?: () => boolean;
+    fetcher?: typeof fetch;
     notify?: (message: string) => void;
-    reconcile?: () => Promise<{ status: 'unknown' }>;
+    onSessionExpired?: (source: 'nodeseek', requestSessionEpoch: number) => void;
   } = {}
 ) {
   const notify = options.notify || jest.fn();
-  const reconcileWritableSession = jest.fn(options.reconcile || (async () => ({ status: 'unknown' as const })));
+  const onSessionExpired = options.onSessionExpired || jest.fn();
   const hook = await renderHook(
     () =>
       useNodeSeekCheckInController({
         ensureWritableSession: async () => ticket,
-        fetcher: fetch,
+        fetcher: options.fetcher || fetch,
         isWritableSessionTicketCurrent: options.current || (() => true),
         nodeSeekUserAgentRef: { current: 'WZ Test' },
         notify,
-        reconcileWritableSession
+        onSessionExpired
       }),
     {
       wrapper: ({ children }) => <QueryClientProvider client={appQueryClient}>{children}</QueryClientProvider>
     }
   );
-  return { hook, notify, reconcileWritableSession };
+  return { hook, notify, onSessionExpired };
 }
 
 describe('NodeSeek account check-in controller', () => {
@@ -117,19 +118,37 @@ describe('NodeSeek account check-in controller', () => {
     expect(finishes).toEqual([expect.objectContaining({ outcome: 'stale', reason: 'stale', serverConfirmed: true })]);
   });
 
+  it('[REG-PERF-019] expires attendance once on raw HTTP 401 without replaying it', async () => {
+    const fetcher = jest.fn(async () => new Response('<html>login</html>', { status: 401 }));
+    mockRunNodeSeekAction.mockImplementationOnce(async ({ fetcher: request }) => {
+      await request!('https://www.nodeseek.com/api/attendance');
+      return { success: true };
+    });
+    const onSessionExpired = jest.fn();
+    const { hook } = await renderController({ fetcher, onSessionExpired });
+
+    await act(async () => {
+      await hook.result.current.checkIn();
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).toHaveBeenCalledWith('nodeseek', ticket.sessionEpoch);
+  });
+
   it.each([
     ['ordinary', new Error('签到网络失败')],
     ['permission-denied', Object.assign(new Error('当前账号不能签到'), { status: 403 })]
   ])('[REG-WRITE-024] leaves identity unchanged for %s attendance failure', async (_kind, error) => {
     mockRunNodeSeekAction.mockRejectedValueOnce(error);
     const notify = jest.fn();
-    const { hook, reconcileWritableSession } = await renderController({ notify });
+    const { hook, onSessionExpired } = await renderController({ notify });
 
     await act(async () => {
       await hook.result.current.checkIn();
     });
 
-    expect(reconcileWritableSession).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(error.message);
   });

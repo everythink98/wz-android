@@ -2005,6 +2005,53 @@ describe('source gateway read contract', () => {
     });
   });
 
+  it('[REG-PERF-019] expires the captured authenticated read epoch only for a raw HTTP 401', async () => {
+    const onSessionExpired = vi.fn();
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockResolvedValueOnce(new Response('<html>login</html>', { status: 401 }))
+      .mockResolvedValueOnce(new Response('<html>forbidden</html>', { status: 403 }));
+    const gateway = createReadGateway({
+      fetcher,
+      nodeSeekUserAgent: () => 'NodeSeek UA',
+      onSessionExpired,
+      readSessionRuntimeSnapshot: (source) =>
+        runtime(source, {
+          authenticated: true,
+          identityKey: `${source}:42`,
+          identityTrust: 'confirmed',
+          sessionEpoch: 6
+        })
+    });
+    forumMocks.getTopic.mockImplementationOnce(async ({ fetcher: request }) => {
+      await request('https://www.nodeseek.com/post-1-1.html');
+      throw new Error('unreachable');
+    });
+
+    await expect(gateway.getTopic({ source: 'nodeseek', id: '1' })).rejects.toMatchObject({
+      kind: 'login-expired',
+      reason: 'http-401'
+    });
+    expect(onSessionExpired).toHaveBeenCalledWith('nodeseek', 6);
+
+    forumMocks.getTopic.mockImplementationOnce(async ({ fetcher: request, id, source }) => {
+      await request('https://www.nodeseek.com/post-1-1.html');
+      return {
+        source,
+        id,
+        title: 'topic',
+        author: 'alice',
+        url: '',
+        createdAt: '',
+        replyCount: 0,
+        contentHtml: '',
+        replies: []
+      };
+    });
+    await expect(gateway.getTopic({ source: 'nodeseek', id: '1' })).resolves.toMatchObject({ id: '1' });
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
+  });
+
   it('REG-ACCOUNT-009 cancels an expired Yaohuo read when a newer credential takes ownership', async () => {
     let generation = 7;
     const response = Promise.withResolvers<never>();
@@ -2080,14 +2127,14 @@ describe('source gateway read contract', () => {
     );
   });
 
-  it('[REG-XIAOYINSI-007] rechecks 小隐寺 authorization after an authenticated read returns 403', async () => {
-    const refreshXiaoyinsiAuthorization = vi.fn(async () => true);
+  it('[REG-XIAOYINSI-007] does not expire or probe 小隐寺 after an authenticated read returns 403', async () => {
+    const onSessionExpired = vi.fn();
     const gateway = createReadGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'xiaoyinsi',
       loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
       nodeSeekUserAgent: () => '',
-      refreshXiaoyinsiAuthorization
+      onSessionExpired
     });
     forumMocks.getTopic.mockRejectedValueOnce(
       Object.assign(new Error('没有权限读取主题'), {
@@ -2099,70 +2146,17 @@ describe('source gateway read contract', () => {
     await expect(gateway.getTopic({ source: 'xiaoyinsi', id: '42' })).rejects.toMatchObject({
       kind: 'permission-denied'
     });
-    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-009] drops an old 小隐寺 read when authorization changes during its recheck', async () => {
-    let generation = 4;
-    const refreshXiaoyinsiAuthorization = vi.fn(async () => {
-      generation += 1;
-      return true;
-    });
-    const gateway = createReadGateway({
-      currentXiaoyinsiCredentialGeneration: () => generation,
-      fetcher: vi.fn(),
-      isSourceAuthenticated: (source) => source === 'xiaoyinsi',
-      loadXiaoyinsiCredentialsForSource: vi.fn(async (_source, options) => {
-        options?.captureGeneration?.(generation);
-        return { apiKey: 'old-key', clientId: 'old-client' };
-      }),
-      nodeSeekUserAgent: () => '',
-      refreshXiaoyinsiAuthorization
-    });
-    forumMocks.getTopic.mockRejectedValueOnce(
-      Object.assign(new Error('旧授权没有权限读取主题'), {
-        source: 'xiaoyinsi',
-        status: 403
-      })
-    );
-
-    await expect(gateway.getTopic({ source: 'xiaoyinsi', id: '42' })).rejects.toThrow('请求已取消');
-    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
-  });
-
-  it('[REG-XIAOYINSI-007] routes the authenticated level read through authorization recheck', async () => {
-    const refreshXiaoyinsiAuthorization = vi.fn(async () => false);
-    const credentials = { apiKey: 'api-key', clientId: 'client-id' };
-    const gateway = createReadGateway({
-      fetcher: vi.fn(),
-      isSourceAuthenticated: (source) => source === 'xiaoyinsi',
-      loadXiaoyinsiCredentialsForSource: vi.fn(async () => credentials),
-      nodeSeekUserAgent: () => '',
-      refreshXiaoyinsiAuthorization
-    });
-    xiaoyinsiMocks.getXiaoyinsiLevelProfile.mockRejectedValueOnce(
-      Object.assign(new Error('授权已失效'), {
-        status: 403
-      })
-    );
-    const trace = beginDiagnosticTrace('session', 'refresh', { source: 'xiaoyinsi' });
-
-    await expect(gateway.getLevelProfile({ source: 'xiaoyinsi' }, { trace })).rejects.toMatchObject({
-      kind: 'permission-denied'
-    });
-    expect(xiaoyinsiMocks.getXiaoyinsiLevelProfile).toHaveBeenCalledWith(expect.objectContaining({ credentials }));
-    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledWith(trace);
-    finishDiagnosticTrace(trace, 'blocked', { source: 'xiaoyinsi', reason: 'permission_denied' });
-  });
-
-  it('[REG-XIAOYINSI-007] rechecks aggregate 小隐寺 read failures once', async () => {
-    const refreshXiaoyinsiAuthorization = vi.fn(async () => true);
+  it('[REG-XIAOYINSI-007] ignores a synthetic aggregate expiry without raw HTTP 401 evidence', async () => {
+    const onSessionExpired = vi.fn();
     const gateway = createReadGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'xiaoyinsi',
       loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
       nodeSeekUserAgent: () => '',
-      refreshXiaoyinsiAuthorization
+      onSessionExpired
     });
     forumMocks.getFeed.mockResolvedValue({
       items: [],
@@ -2173,7 +2167,7 @@ describe('source gateway read contract', () => {
 
     await gateway.getFeed({ source: 'all' });
 
-    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(forumMocks.getFeed).toHaveBeenCalledTimes(1);
   });
 });

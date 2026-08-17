@@ -12,7 +12,7 @@ import {
   type ScopedSiteSessionEvent,
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
-import type { Fetcher } from '@/platform/network/request';
+import { rejectUnauthorizedResponse, type Fetcher } from '@/platform/network/request';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { readWithinAggregateSourceBudget } from '@/sources/readAggregation';
 import { readAccountStatus } from '@/sources/accountRead';
@@ -243,7 +243,7 @@ export function useAccountStatusController({
         try {
           const observation = await readWithinAggregateSourceBudget(source, controller.signal, (signal) =>
             readAccountStatus(source, {
-              fetcher,
+              fetcher: rejectUnauthorizedResponse(fetcher),
               linuxDoUserAgent: linuxDoUserAgentRef.current,
               nodeSeekUserAgent: nodeSeekUserAgentRef.current,
               readManagedCookieHeader,

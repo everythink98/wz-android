@@ -6,6 +6,7 @@ import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   clearNotificationSourceForContentDisable,
   defaultNotificationState,
@@ -219,9 +220,11 @@ function runtimeOptions(
     fetcher: jest.fn(),
     getLinuxDoUserAgent: jest.fn(() => 'linux.do'),
     getNodeSeekUserAgent: jest.fn(() => 'NodeSeek'),
+    onSessionExpired: jest.fn(),
     openSource,
     privateAccessAllowed,
     remoteReady: true,
+    sessionEpochs: initialForumSessionEpochs,
     sessions
   };
 }

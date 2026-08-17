@@ -49,6 +49,36 @@ function adapter(result: 'ok' | 'fail'): NotificationAdapter {
 }
 
 describe('notification gateway', () => {
+  it('[REG-PERF-019] expires the captured notification epoch only for raw HTTP 401', async () => {
+    const sourceAdapter = adapter('ok');
+    sourceAdapter.listPage = vi.fn(async (options) => {
+      await options.fetcher?.('https://www.nodeseek.com/notification');
+      return { items: [], cursor: null, hasMore: false };
+    });
+    const transport = vi
+      .fn<NonNullable<NotificationAdapterAccess['fetcher']>>()
+      .mockResolvedValueOnce(new Response('<html>login</html>', { status: 401 }))
+      .mockResolvedValueOnce(new Response('<html>forbidden</html>', { status: 403 }));
+    const onSessionExpired = vi.fn();
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: sourceAdapter,
+        linuxdo: adapter('ok'),
+        yaohuo: adapter('ok'),
+        xiaoyinsi: adapter('ok')
+      },
+      onSessionExpired,
+      readAccess: async () => ({ fetcher: transport, identityKey: 'nodeseek:42', userId: '42' }),
+      requestSessionEpoch: () => 9
+    });
+
+    await expect(gateway.listPage('nodeseek')).rejects.toMatchObject({ reason: 'http-401', status: 401 });
+    expect(onSessionExpired).toHaveBeenCalledWith('nodeseek', 9);
+
+    await expect(gateway.listPage('nodeseek')).resolves.toMatchObject({ items: [] });
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects every direct source operation before access or adapter work when the source is disabled', async () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.markAllRead = vi.fn(async () => ({ confirmed: true }));

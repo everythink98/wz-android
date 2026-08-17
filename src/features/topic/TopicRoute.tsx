@@ -11,14 +11,13 @@ import { useForumMediaSessionIdentity } from '@/platform/media/mediaSessionEpoch
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
-import type { DiscourseActionRuntimeDependencies } from './actions/discourseActionRuntime';
 import { toggleFavorite, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { ReplyLocationTarget, Topic, UserReference } from '@/domain/forum/models';
 import type { DiscourseSource, SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
-import type { WritableSessionReconcileResult, WritableSessionTicket } from '@/domain/session/writableSessionGate';
+import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
@@ -50,10 +49,9 @@ export type TopicRouteRuntimeValue = {
     linuxDoVerificationVisible: boolean;
     getNodeSeekUserAgent: () => string;
     nodeSeekUserId: number | null;
+    onSessionExpired: (source: SessionSource, requestSessionEpoch: number) => void;
     readGateway: ReadGateway;
     reconcileAccountStatus: (source: SessionSource) => Promise<unknown>;
-    reconcileWritableSession: (source: SessionSource) => Promise<WritableSessionReconcileResult>;
-    refreshXiaoyinsiAuthorization: DiscourseActionRuntimeDependencies['refreshXiaoyinsiAuthorization'];
     requestNodeSeekVerification: (message: string, recovery: LinuxDoReadRecovery) => void;
     showLinuxDoVerification: (
       message?: string,
@@ -219,8 +217,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   useCommitRefValue(openImagePreviewRef, imagePreviewController.openImagePreview);
   const discourseActionRuntimeDependencies = useMemo(
     () => ({
-      linuxDoUserAgent: runtime.account.getLinuxDoUserAgent,
-      refreshXiaoyinsiAuthorization: runtime.account.refreshXiaoyinsiAuthorization
+      linuxDoUserAgent: runtime.account.getLinuxDoUserAgent
     }),
     [runtime]
   );
@@ -241,8 +238,8 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     getNodeSeekUserAgent: runtime.account.getNodeSeekUserAgent,
     ensureNodeImageApiKey: runtime.account.ensureNodeImageApiKey,
     notify: runtime.notify,
+    onSessionExpired: runtime.account.onSessionExpired,
     readGateway: runtime.account.readGateway,
-    reconcileWritableSession: runtime.account.reconcileWritableSession,
     refreshTopicReplies,
     siteSessionViewModels: runtime.account.sessionViewModels,
     topicDetail,

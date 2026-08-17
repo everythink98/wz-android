@@ -232,6 +232,22 @@ export function useAccountRuntime({
   const handleSiteSessionEvent = useCallback((event: ScopedSiteSessionEvent) => {
     applyAccountSessionEventRef.current(event);
   }, []);
+  const handleSessionExpired = useCallback(
+    (source: SessionSite, requestSessionEpoch: number) => {
+      const current = readSessionRuntimeSnapshot(source);
+      if (
+        !current.authenticated ||
+        current.authSurfaceOpen ||
+        current.identityTrust !== 'confirmed' ||
+        current.sessionEpoch !== requestSessionEpoch ||
+        current.sourceEnabled === false
+      ) {
+        return;
+      }
+      applyAccountSessionEventRef.current({ site: source, type: 'login-expired', message: '登录状态已失效' });
+    },
+    [readSessionRuntimeSnapshot]
+  );
 
   const session = useSessionController({
     defaultFetcher: fetcher,
@@ -262,8 +278,8 @@ export function useAccountRuntime({
     getEnabledSources,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
-    readSessionRuntimeSnapshot,
-    refreshXiaoyinsiAuthorization: xiaoyinsiAuth.refreshAuthorization
+    onSessionExpired: handleSessionExpired,
+    readSessionRuntimeSnapshot
   });
   const status = useAccountStatusController({
     enabledSources: enabledSessionSources,
@@ -627,7 +643,7 @@ export function useAccountRuntime({
     isWritableSessionTicketCurrent,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
-    reconcileWritableSession
+    onSessionExpired: handleSessionExpired
   });
   const hostElement = createElement(AccountHosts, {
     account,
@@ -683,7 +699,7 @@ export function useAccountRuntime({
       ensureNodeImageApiKey: nodeImage.key.ensure,
       ensureWritableSession,
       isWritableSessionTicketCurrent,
-      reconcileWritableSession
+      onSessionExpired: handleSessionExpired
     },
     center: {
       account: {

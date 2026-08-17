@@ -99,7 +99,7 @@ export function useAppRuntime() {
     sessionsReady,
     statusBusy
   } = accountRuntime.read;
-  const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, reconcileWritableSession } =
+  const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, onSessionExpired } =
     accountRuntime.write;
   const { xiaoyinsiAuth: xiaoyinsiAuthController } = accountRuntime.center;
   const {
@@ -124,9 +124,11 @@ export function useAppRuntime() {
     fetcher: networkProxyFetcher,
     getLinuxDoUserAgent,
     getNodeSeekUserAgent,
+    onSessionExpired,
     openSource: openNotificationsRoute,
     privateAccessAllowed: notificationPrivateAccessAllowed,
     remoteReady: initialForegroundReady && sessionsReady,
+    sessionEpochs: forumSessionEpochs,
     sessions: accountSessionViewModels
   });
   const notificationRouteRuntime = useMemo<NotificationRouteRuntimeValue>(
@@ -196,10 +198,9 @@ export function useAppRuntime() {
         linuxDoVerificationVisible: showLinuxDoPanel,
         getNodeSeekUserAgent,
         nodeSeekUserId: effectiveNodeSeekUserId,
+        onSessionExpired,
         readGateway,
         reconcileAccountStatus,
-        reconcileWritableSession,
-        refreshXiaoyinsiAuthorization: xiaoyinsiAuthController.refreshAuthorization,
         requestNodeSeekVerification,
         showLinuxDoVerification,
         showYaohuoLogin
@@ -237,16 +238,15 @@ export function useAppRuntime() {
       nodeSeekMediaUserAgent,
       getNodeSeekUserAgent,
       notify,
+      onSessionExpired,
       readGateway,
       readerData,
       readerDataRef,
       readerStyleContext,
       reconcileAccountStatus,
-      reconcileWritableSession,
       requestNodeSeekVerification,
       showLinuxDoVerification,
-      showYaohuoLogin,
-      xiaoyinsiAuthController.refreshAuthorization
+      showYaohuoLogin
     ]
   );
 

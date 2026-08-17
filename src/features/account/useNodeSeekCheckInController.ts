@@ -2,9 +2,8 @@ import { useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { buildNodeSeekAttendanceRequest } from '@/sources/nodeseek/actionRequest';
 import { runNodeSeekAction } from '@/sources/nodeseek/actionClient';
-import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { errorMessage } from '@/platform/network/errors';
-import type { Fetcher } from '@/platform/network/request';
+import { rejectUnauthorizedResponse, type Fetcher } from '@/platform/network/request';
 import { forumMutationKeys } from '@/platform/query/serverState';
 import {
   beginDiagnosticTrace,
@@ -13,11 +12,7 @@ import {
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-import {
-  WritableSessionBlockedError,
-  type WritableSessionReconcileResult,
-  type WritableSessionTicket
-} from '@/domain/session/writableSessionGate';
+import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
 
 type AttendanceVariables = {
   ticket: WritableSessionTicket;
@@ -40,15 +35,16 @@ export function useNodeSeekCheckInController({
   isWritableSessionTicketCurrent,
   nodeSeekUserAgentRef,
   notify,
-  reconcileWritableSession
+  onSessionExpired
 }: {
   ensureWritableSession: (source: 'nodeseek') => Promise<WritableSessionTicket>;
   fetcher: Fetcher;
   isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
-  reconcileWritableSession: (source: 'nodeseek') => Promise<WritableSessionReconcileResult>;
+  onSessionExpired: (source: 'nodeseek', requestSessionEpoch: number) => void;
 }) {
+  const authenticatedFetcher = rejectUnauthorizedResponse(fetcher);
   const mutation = useMutation<unknown, unknown, AttendanceVariables>({
     mutationKey: forumMutationKeys.topic('nodeseek', 'global'),
     scope: { id: 'forum:nodeseek:topic:global' },
@@ -64,19 +60,21 @@ export function useNodeSeekCheckInController({
       });
       try {
         await runNodeSeekAction({
-          fetcher: withDiagnosticFetcher(trace, fetcher),
+          fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
           request: buildNodeSeekAttendanceRequest({ random: false }),
           userAgent: nodeSeekUserAgentRef.current
         });
       } catch (error) {
-        if (isWritableSessionTicketCurrent(ticket)) {
-          const kind = sourceErrorFromUnknown('nodeseek', error).kind;
-          if (kind === 'login-required' || kind === 'login-expired' || kind === 'verification-required') {
-            await reconcileWritableSession('nodeseek').catch(() => ({ status: 'unknown' as const }));
-          }
-        }
         const message = errorMessage(error);
         notify(message);
+        if (
+          isWritableSessionTicketCurrent(ticket) &&
+          error &&
+          typeof error === 'object' &&
+          (error as { reason?: unknown }).reason === 'http-401'
+        ) {
+          onSessionExpired('nodeseek', ticket.sessionEpoch);
+        }
         throw new AttendanceError(message, normalizeDiagnosticReason(error));
       }
       markDiagnosticStage(trace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });

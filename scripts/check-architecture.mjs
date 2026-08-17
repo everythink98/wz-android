@@ -36,27 +36,21 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
 const FORBIDDEN_RAW_STATE_HOOKS = new Set(['useCallback', 'useEffect', 'useRef', 'useState']);
 const FORBIDDEN_DOMAIN_IO_GLOBALS = new Set(['AbortSignal', 'RequestInit', 'XMLHttpRequest', 'WebSocket', 'fetch']);
 const ACCOUNT_RUNTIME_READ_CAPABILITIES = new Set([
-  'accountIdentityChecks',
-  'accountIdentityPending',
   'accountSessionViewModels',
-  'feedReadGateway',
-  'feedSessionEpochs',
   'forumSessionEpochs',
   'getLinuxDoUserAgent',
   'getNodeSeekUserAgent',
   'notificationPrivateAccessAllowed',
-  'identityBarriers',
-  'identityReconciliationPending',
   'readGateway',
   'reconcileAccountStatus',
-  'retainableIdentityBarriers',
+  'sessionsReady',
   'statusBusy'
 ]);
 const ACCOUNT_RUNTIME_WRITE_CAPABILITIES = new Set([
   'ensureNodeImageApiKey',
   'ensureWritableSession',
   'isWritableSessionTicketCurrent',
-  'reconcileWritableSession'
+  'onSessionExpired'
 ]);
 const ACCOUNT_RUNTIME_CENTER_CAPABILITIES = new Set([
   'account',
