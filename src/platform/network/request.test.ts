@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   cancelRequestTimeoutForFallback,
   fetchWithTimeout,
+  rejectUnauthorizedResponse,
   RequestCanceledError,
   REQUEST_CANCELED_MESSAGE,
   RequestTimeoutError
@@ -10,6 +11,24 @@ import {
 const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 
 describe('Android request helpers', () => {
+  it('[REG-PERF-019] rejects a raw HTTP 401 before adapter parsing but preserves other responses', async () => {
+    const unauthorized = rejectUnauthorizedResponse(
+      vi.fn(async () => new Response('<html>login</html>', { status: 401 }))
+    );
+
+    await expect(unauthorized('https://example.com/private')).rejects.toMatchObject({
+      status: 401,
+      reason: 'http-401'
+    });
+
+    for (const status of [403, 429]) {
+      const response = new Response('<html>challenge</html>', { status });
+      await expect(
+        rejectUnauthorizedResponse(vi.fn(async () => response))('https://example.com/private')
+      ).resolves.toBe(response);
+    }
+  });
+
   it('[REG-ACCOUNT-029] always enables the native read-only cookie jar without changing the request', async () => {
     const fetcher = vi.fn(async () => new Response('{}'));
 

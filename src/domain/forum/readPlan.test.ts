@@ -16,7 +16,7 @@ function session(
     authenticated: false,
     authSurfaceOpen: false,
     identityKey: `${source}:anonymous`,
-    identityTrust: 'pending',
+    identityTrust: 'unknown',
     sessionEpoch: 3,
     sourceEnabled: true,
     ...overrides
@@ -24,7 +24,7 @@ function session(
 }
 
 describe('forum read plans', () => {
-  it('keeps public reads available while identity is pending or an auth surface is open', () => {
+  it('keeps public reads available while identity is unknown or an auth surface is open', () => {
     expect(
       ['v2ex', 'linuxdo', 'nodeseek', 'xiaoyinsi'].filter((source) =>
         forumReadOperationIsPublic(source as SessionRuntimeSnapshot['source'] | 'v2ex', 'search')
@@ -61,8 +61,8 @@ describe('forum read plans', () => {
     });
     expect(resolveForumReadPlan('yaohuo', 'feed', true, session('yaohuo'))).toEqual({
       state: 'blocked',
-      reason: 'identity-pending',
-      cacheScope: 'blocked:identity-pending'
+      reason: 'identity-unavailable',
+      cacheScope: 'blocked:identity-unavailable'
     });
     expect(resolveForumReadPlan('yaohuo', 'topic', true, session('yaohuo', { identityTrust: 'none' }))).toEqual({
       state: 'blocked',
@@ -72,13 +72,13 @@ describe('forum read plans', () => {
   });
 
   it.each<ForumReadOperation>(['user-resolution', 'semantic-search', 'search-tags', 'search-users', 'level'])(
-    'keeps %s credential-required while identity is pending',
+    'keeps %s credential-required while identity is unknown',
     (operation) => {
       const source = operation === 'user-resolution' ? 'nodeseek' : 'linuxdo';
       expect(resolveForumReadPlan(source, operation, true, session(source))).toEqual({
         state: 'blocked',
-        reason: 'identity-pending',
-        cacheScope: 'blocked:identity-pending'
+        reason: 'identity-unavailable',
+        cacheScope: 'blocked:identity-unavailable'
       });
     }
   );

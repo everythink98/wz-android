@@ -8,7 +8,6 @@ import { errorMessage } from '@/platform/network/errors';
 
 export type DiscourseActionRuntimeDependencies = {
   linuxDoUserAgent: () => string;
-  refreshXiaoyinsiAuthorization: () => Promise<boolean | null>;
 };
 
 export type DiscourseActionRuntimeContext = DiscourseActionRuntimeDependencies & {
@@ -89,20 +88,12 @@ const discourseActionRuntimes = {
           if (!isCredentialCurrent()) {
             return { loginRequired: false, phase: 'credential' as const, stale: true };
           }
-          const authorizationCheckRequired = hasFlag(error, 'authorizationCheckRequired');
-          let authorizationStillValid: boolean | null | undefined;
-          if (authorizationCheckRequired) {
-            authorizationStillValid = await context.refreshXiaoyinsiAuthorization();
-            if (authorizationStillValid === null) {
-              throw new Error('小隐寺授权状态复核未完成');
-            }
-          }
           if (!isCredentialCurrent()) {
             return { loginRequired: false, phase: 'credential' as const, stale: true };
           }
           return {
-            loginRequired: hasFlag(error, 'loginRequired') || authorizationStillValid === false,
-            phase: authorizationCheckRequired ? ('credential' as const) : ('transport' as const)
+            loginRequired: hasFlag(error, 'loginRequired'),
+            phase: hasFlag(error, 'authorizationCheckRequired') ? ('credential' as const) : ('transport' as const)
           };
         }
       };

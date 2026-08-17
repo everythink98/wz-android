@@ -5,6 +5,7 @@ import { isNotificationSource, notificationSources, type NotificationSource } fr
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { Fetcher } from '@/platform/network/request';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
+import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { createNotificationGateway, type NotificationAccessReader } from '@/sources/notificationGateway';
 import { readForegroundNotificationAccess } from '@/sources/notificationForegroundAccess';
@@ -44,8 +45,7 @@ function confirmedIdentity(source: NotificationSource, sessions: SiteSessionView
 }
 
 function identityNeedsTrustedFallback(source: NotificationSource, sessions: SiteSessionViewModels) {
-  const trust = sessions[source].identityTrust;
-  return trust === 'pending' || trust === 'unknown';
+  return sessions[source].identityTrust === 'unknown';
 }
 
 export function useNotificationsRuntime({
@@ -57,9 +57,11 @@ export function useNotificationsRuntime({
   fetcher,
   getLinuxDoUserAgent,
   getNodeSeekUserAgent,
+  onSessionExpired,
   openSource,
   privateAccessAllowed,
   remoteReady,
+  sessionEpochs,
   sessions
 }: {
   appActive: boolean;
@@ -70,9 +72,11 @@ export function useNotificationsRuntime({
   fetcher: Fetcher;
   getLinuxDoUserAgent: () => string;
   getNodeSeekUserAgent: () => string;
+  onSessionExpired: (source: NotificationSource, requestSessionEpoch: number) => void;
   openSource: (source?: NotificationSource) => boolean;
   privateAccessAllowed: (source: NotificationSource, identityKey: string) => boolean;
   remoteReady: boolean;
+  sessionEpochs: ForumSessionEpochs;
   sessions: SiteSessionViewModels;
 }) {
   const enabledSourceOrder = enabledNotificationSources.join('|');
@@ -95,6 +99,8 @@ export function useNotificationsRuntime({
   const contentDisableOperationsRef = useRef<Partial<Record<NotificationSource, Promise<void>>>>({});
   const privateAccessAllowedRef = useRef(privateAccessAllowed);
   useCommitRefValue(privateAccessAllowedRef, privateAccessAllowed);
+  const sessionEpochsRef = useRef(sessionEpochs);
+  useCommitRefValue(sessionEpochsRef, sessionEpochs);
   const readAccess = useMemo<NotificationAccessReader>(
     () => (source) =>
       readForegroundNotificationAccess({
@@ -110,11 +116,13 @@ export function useNotificationsRuntime({
   const gateway = useMemo(
     () =>
       createNotificationGateway({
+        onSessionExpired,
         privateAccessAllowed: (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
         readAccess,
+        requestSessionEpoch: (source) => sessionEpochsRef.current[source],
         sourceAllowed: (source) => operationalSourcesRef.current.includes(source)
       }),
-    [readAccess]
+    [onSessionExpired, readAccess]
   );
   const readAccessRef = useRef(readAccess);
   useCommitRefValue(readAccessRef, readAccess);

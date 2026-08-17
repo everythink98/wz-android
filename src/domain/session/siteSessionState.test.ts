@@ -99,8 +99,13 @@ describe('site session state', () => {
       }
     });
 
-    const pending = accountSessionSnapshotFromEvent(confirmed, { type: 'authorization-started' });
-    expect(pending).toMatchObject({ status: 'logged-in', identityTrust: 'pending', currentUser: { id: '7' } });
+    const checking = accountSessionSnapshotFromEvent(confirmed, { type: 'authorization-started' });
+    expect(checking).toMatchObject({
+      status: 'logged-in',
+      identityTrust: 'confirmed',
+      isVerifying: true,
+      currentUser: { id: '7' }
+    });
 
     const recoveryFailed = accountSessionSnapshotFromEvent(confirmed, {
       type: 'recovery-failed',

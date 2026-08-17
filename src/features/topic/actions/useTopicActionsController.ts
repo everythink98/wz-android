@@ -37,7 +37,7 @@ import {
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { ReplyEditTarget, ReplyRefreshCommand, ReplyRefreshTarget } from '../model/types';
 import { topicKey } from '@/domain/reader/readerData';
-import type { Fetcher } from '@/platform/network/request';
+import { rejectUnauthorizedResponse, type Fetcher } from '@/platform/network/request';
 import type { ReadGateway } from '@/sources/readGateway';
 import { errorMessage } from '@/platform/network/errors';
 import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
@@ -82,14 +82,9 @@ import {
   yaohuoFavoriteActionKey,
   YAOHUO_DEFAULT_CLASS_ID
 } from './actionHelpers';
-import {
-  WritableSessionBlockedError,
-  type WritableSessionReconcileResult,
-  type WritableSessionTicket
-} from '@/domain/session/writableSessionGate';
+import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import { YAOHUO_BASE_URL } from '@/sources/yaohuo/protocol';
-import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import {
   decideTopicAction,
   topicActionDecisionMessage,
@@ -138,9 +133,8 @@ function mutationFailure(error: unknown, outcome: HandledMutationError['outcome'
   return new HandledMutationError(errorMessage(error), outcome, normalizeDiagnosticReason(error));
 }
 
-function writeFailureRequiresIdentityProbe(source: SessionSite, error: unknown) {
-  const kind = sourceErrorFromUnknown(source, error).kind;
-  return kind === 'login-required' || kind === 'login-expired' || kind === 'verification-required';
+function isRawUnauthorized(error: unknown) {
+  return Boolean(error && typeof error === 'object' && (error as { reason?: unknown }).reason === 'http-401');
 }
 
 function topicDeleteReplyActionKey(topicKeyValue: string, target: ReplyRefreshTarget) {
@@ -227,8 +221,8 @@ export function useTopicActionsController({
   isWritableSessionTicketCurrent,
   getNodeSeekUserAgent,
   notify,
+  onSessionExpired,
   readGateway,
-  reconcileWritableSession,
   refreshTopicReplies,
   siteSessionViewModels,
   topicDetail,
@@ -245,8 +239,8 @@ export function useTopicActionsController({
   isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
   getNodeSeekUserAgent: () => string;
   notify: (message: string) => void;
+  onSessionExpired: (source: SessionSite, requestSessionEpoch: number) => void;
   readGateway: Pick<ReadGateway, 'getReadPlan'>;
-  reconcileWritableSession: (source: SessionSite) => Promise<WritableSessionReconcileResult>;
   refreshTopicReplies: (command?: ReplyRefreshCommand, trace?: DiagnosticTrace) => Promise<unknown>;
   siteSessionViewModels: SiteSessionViewModels;
   topicDetail: TopicDetail | null;
@@ -264,6 +258,7 @@ export function useTopicActionsController({
   const replyOrderRef = useCommittedRef(replyOrder);
   const refreshTopicRepliesRef = useCommittedRef(refreshTopicReplies);
   const replyComposerOpenRef = useCommittedRef(replyComposerOpen);
+  const authenticatedFetcher = useMemo(() => rejectUnauthorizedResponse(fetcher), [fetcher]);
   const detachReplyEdit = topicComposer.detachEdit;
   const openReplyEditor = topicComposer.editReply;
   const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -377,6 +372,12 @@ export function useTopicActionsController({
         if (rollbackOptimistic && !failure.serverConfirmed) {
           rollbackOptimistic();
           markDiagnosticStage(variables.trace, 'rollback', { source: variables.source, state: 'local' });
+        }
+        if (isRawUnauthorized(error) && isWritableSessionTicketCurrent(variables.ticket)) {
+          const message = errorMessage(error);
+          notify(message);
+          onSessionExpired(variables.ticket.source, variables.ticket.sessionEpoch);
+          throw new HandledMutationError(message, 'failure', 'http-401');
         }
         throw error;
       }
@@ -672,16 +673,14 @@ export function useTopicActionsController({
       try {
         assertWritableTicket(ticket);
         await runNodeSeekAction({
-          fetcher: withDiagnosticFetcher(trace, fetcher),
+          fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
           request,
           userAgent: getNodeSeekUserAgent()
         });
       } catch (error) {
+        if (isRawUnauthorized(error)) throw error;
         assertWritableTicket(ticket);
         const message = errorMessage(error);
-        if (writeFailureRequiresIdentityProbe('nodeseek', error)) {
-          await reconcileWritableSession('nodeseek').catch(() => ({ status: 'unknown' as const }));
-        }
         notify(message);
         throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
       }
@@ -689,7 +688,7 @@ export function useTopicActionsController({
       assertWritableTicket(ticket, true);
       return true;
     },
-    [assertWritableTicket, fetcher, getNodeSeekUserAgent, notify, reconcileWritableSession]
+    [assertWritableTicket, authenticatedFetcher, getNodeSeekUserAgent, notify]
   );
 
   const actionBusy = pendingVariables.some((variables) => variables?.busy !== false);
@@ -715,7 +714,7 @@ export function useTopicActionsController({
       try {
         assertWritableTicket(ticket);
         const result = await runYaohuoAction({
-          fetcher: withDiagnosticFetcher(trace, fetcher),
+          fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
           request: requestFactory(cookieRead.header)
         });
         if (result.status === 'unknown') {
@@ -728,16 +727,14 @@ export function useTopicActionsController({
         return result;
       } catch (error) {
         if (error instanceof HandledMutationError) throw error;
+        if (isRawUnauthorized(error)) throw error;
         assertWritableTicket(ticket);
         const message = errorMessage(error);
-        if (writeFailureRequiresIdentityProbe('yaohuo', error)) {
-          await reconcileWritableSession('yaohuo').catch(() => ({ status: 'unknown' as const }));
-        }
         notify(message);
         throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
       }
     },
-    [assertWritableTicket, fetcher, notify, reconcileWritableSession]
+    [assertWritableTicket, authenticatedFetcher, notify]
   );
 
   const runDiscourseRequest = useCallback(
@@ -752,7 +749,7 @@ export function useTopicActionsController({
       const loginPrompt = discourseLoginPrompts[source];
       const runtime = await prepareDiscourseActionRuntime(source, {
         ...discourseActionRuntimeDependencies,
-        fetcher: withDiagnosticFetcher(trace, fetcher)
+        fetcher: withDiagnosticFetcher(trace, authenticatedFetcher)
       });
       assertWritableTicket(ticket);
       preTransport?.();
@@ -775,33 +772,15 @@ export function useTopicActionsController({
         return result ?? true;
       } catch (error) {
         if (error instanceof HandledMutationError) throw error;
+        if (isRawUnauthorized(error)) throw error;
         if (runtime.isCredentialCurrent?.() === false) {
           throw new HandledMutationError('凭据已变化', 'stale', 'stale');
         }
-        let recovery;
-        let recoveryError: unknown;
-        try {
-          recovery = await runtime.recover(error);
-        } catch (errorDuringRecovery) {
-          recoveryError = errorDuringRecovery;
-          recovery = { loginRequired: false, phase: 'credential' as const };
-        }
+        const recovery = await runtime.recover(error);
         if (recovery.stale || runtime.isCredentialCurrent?.() === false) {
           throw new HandledMutationError('凭据已变化', 'stale', 'stale');
         }
-        const originalMessage = errorMessage(error);
-        const recoveryMessage = recoveryError ? errorMessage(recoveryError) : '';
-        const message = recoveryError
-          ? `${originalMessage}；${
-              recoveryMessage.includes('复核未完成') ? recoveryMessage : `授权状态复核未完成：${recoveryMessage}`
-            }`
-          : originalMessage;
-        if (source === 'linuxdo' && (recovery.loginRequired || writeFailureRequiresIdentityProbe(source, error))) {
-          const promptMessage = recovery.message || message;
-          await reconcileWritableSession(source).catch(() => ({ status: 'unknown' as const }));
-          notify(promptMessage);
-          throw new HandledMutationError(promptMessage, 'failure', normalizeDiagnosticReason(error));
-        }
+        const message = errorMessage(error);
         if (recovery.loginRequired) {
           const promptMessage = recovery.message || message;
           loginPrompt(promptMessage);
@@ -813,11 +792,10 @@ export function useTopicActionsController({
     },
     [
       assertWritableTicket,
+      authenticatedFetcher,
       discourseActionRuntimeDependencies,
       discourseLoginPrompts,
-      fetcher,
       notify,
-      reconcileWritableSession,
       siteSessionViewModels
     ]
   );
@@ -1245,12 +1223,15 @@ export function useTopicActionsController({
           );
           imageUrl = discourseSourceUploadUrl(actionTopic.source, result);
         } else if (isYaohuoActionTopic(actionTopic)) {
-          imageUrl = await uploadYaohuoReplyImage({ fetcher: withDiagnosticFetcher(trace, fetcher), file });
+          imageUrl = await uploadYaohuoReplyImage({
+            fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+            file
+          });
         } else if (isNodeSeekActionTopic(actionTopic)) {
           try {
             imageUrl = await uploadNodeSeekReplyImageWithApiKey({
               ensureApiKey: async () => nodeSeekApiKey,
-              fetcher: withDiagnosticFetcher(trace, fetcher),
+              fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
               file
             });
           } catch (error) {
@@ -1281,7 +1262,7 @@ export function useTopicActionsController({
     detachReplyEdit,
     ensureNodeImageApiKey,
     executeMutation,
-    fetcher,
+    authenticatedFetcher,
     notify,
     queryClient,
     replyComposerOpenRef,
@@ -1539,11 +1520,12 @@ export function useTopicActionsController({
                 assertWritableTicket(ticket);
                 const confirmedPoll = await fetchNodeSeekVoteInfo({
                   pollId: poll.id,
-                  fetcher: withDiagnosticFetcher(trace, fetcher),
+                  fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
                   userAgent: getNodeSeekUserAgent()
                 });
                 return { confirmedPoll, refreshFailed: false };
-              } catch {
+              } catch (error) {
+                if (isRawUnauthorized(error)) throw error;
                 hintDiagnosticOutcome(trace, 'partial', {
                   source: 'nodeseek',
                   reason: 'refresh_failed'
@@ -1643,7 +1625,7 @@ export function useTopicActionsController({
     [
       cacheKeys,
       executeMutation,
-      fetcher,
+      authenticatedFetcher,
       getNodeSeekUserAgent,
       notify,
       queryClient,

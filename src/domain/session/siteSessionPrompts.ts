@@ -57,32 +57,6 @@ export function authNoticeForSource(
       'warning'
     );
   }
-  if (
-    session.identityTrust === 'pending' &&
-    ((surface === 'search' && forumReadOperationIsPublic(source, 'search')) ||
-      (surface === 'read' && forumReadOperationIsPublic(source, 'topic')))
-  ) {
-    const mode =
-      surface === 'search'
-        ? source === 'linuxdo' || source === 'nodeseek'
-          ? 'Google 匿名搜索'
-          : '匿名搜索'
-        : '匿名读取';
-    return notice(
-      'anonymous',
-      `${sourceCatalog[source].label} 账号状态确认中，本次使用${mode === '匿名读取' ? '' : ' '}${mode}。`,
-      'neutral'
-    );
-  }
-  if (session.identityTrust === 'pending') {
-    const label =
-      source === 'nodeseek' ? 'NodeSeek' : source === 'linuxdo' ? 'linux.do' : source === 'yaohuo' ? '妖火' : '小隐寺';
-    return notice(
-      'verification-required',
-      `${label} 登录状态待确认，已暂停${surface === 'action' ? '写入' : '新请求和写入'}。`,
-      'warning'
-    );
-  }
   if (source === 'xiaoyinsi') {
     if (session.status === 'logged-in') {
       return notice('logged-in', '小隐寺已授权。', 'neutral');

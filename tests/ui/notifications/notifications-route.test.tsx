@@ -518,37 +518,6 @@ describe('notification routes', () => {
     expect(listAllPage).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-NOTIFY-016] keeps a pending source distinct from logged out in the single-source route', async () => {
-    appQueryClient.clear();
-    const gateway = {
-      listAllPage: jest.fn(),
-      listPage: jest.fn(),
-      loadDetail: jest.fn(),
-      markAllRead: jest.fn(),
-      markRead: jest.fn(),
-      readUnreadSnapshot: jest.fn()
-    } as unknown as NotificationRouteRuntimeValue['gateway'];
-    const runtime = routeRuntime(gateway);
-    runtime.sessions.yaohuo = { ...runtime.sessions.yaohuo, identityTrust: 'pending' };
-    runtime.identityKeys.yaohuo = 'yaohuo:known-account';
-
-    const view = await render(
-      <NotificationRouteRuntimeProvider value={runtime}>
-        <NavigationContainer>
-          <NotificationsRoute
-            navigation={{ navigate: jest.fn() } as never}
-            route={{ key: 'notifications', name: 'Notifications', params: { source: 'yaohuo' } }}
-          />
-        </NavigationContainer>
-      </NotificationRouteRuntimeProvider>,
-      { wrapper: QueryTestWrapper }
-    );
-
-    expect(view.getByText('账号确认中')).toBeTruthy();
-    expect(view.queryByText('账号尚未就绪')).toBeNull();
-    expect(gateway.listPage).not.toHaveBeenCalled();
-  });
-
   it('[REG-ACCOUNT-031] keeps terminal unknown distinct from logged out in the single-source route', async () => {
     appQueryClient.clear();
     const gateway = {
@@ -581,10 +550,7 @@ describe('notification routes', () => {
     expect(gateway.listPage).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { identityTrust: 'pending' as const, title: '账号确认中', message: /正在确认已启用站点的账号身份/ },
-    { identityTrust: 'unknown' as const, title: '账号状态暂不可确认', message: /账号中心重试核对/ }
-  ])(
+  it.each([{ identityTrust: 'unknown' as const, title: '账号状态暂不可确认', message: /账号中心重试核对/ }])(
     '[REG-ACCOUNT-041] presents an all-source $identityTrust identity state without claiming the user is logged out',
     async ({ identityTrust, title, message }) => {
       appQueryClient.clear();

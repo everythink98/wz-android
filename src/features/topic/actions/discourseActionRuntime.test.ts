@@ -18,8 +18,7 @@ import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeContext } fro
 function runtimeContext(): DiscourseActionRuntimeContext {
   return {
     fetcher: vi.fn(),
-    linuxDoUserAgent: () => 'test-agent',
-    refreshXiaoyinsiAuthorization: vi.fn(async () => true)
+    linuxDoUserAgent: () => 'test-agent'
   };
 }
 
@@ -69,7 +68,15 @@ describe('Discourse action runtime registry', () => {
       phase: 'credential',
       stale: true
     });
-    expect(context.refreshXiaoyinsiAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('does not turn a Xiaoyinsi authorization check into a login transition', async () => {
+    const runtime = await prepareDiscourseActionRuntime('xiaoyinsi', runtimeContext());
+
+    await expect(runtime.recover({ authorizationCheckRequired: true, status: 403 })).resolves.toEqual({
+      loginRequired: false,
+      phase: 'credential'
+    });
   });
 
   it('[REG-ACCOUNT-026] reports linux.do expiry without mutating identity or Cookie state', async () => {

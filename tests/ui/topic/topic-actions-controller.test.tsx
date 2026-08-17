@@ -145,10 +145,11 @@ async function renderActions({
   discourseLoginPrompts = { linuxdo: jest.fn(), xiaoyinsi: jest.fn() },
   ensureNodeImageApiKey = jest.fn(async () => null),
   ensureWritableSession,
+  fetcher = jest.fn(async () => new Response('{}')),
   isWritableSessionTicketCurrent,
   notify = jest.fn(),
+  onSessionExpired = jest.fn(),
   readPlanScope = '',
-  reconcileWritableSession = jest.fn(async () => ({ status: 'same' as const })),
   refreshTopicReplies = jest.fn(async () => 'completed'),
   siteSessionViewModels,
   siteSessionStates,
@@ -161,12 +162,11 @@ async function renderActions({
   discourseLoginPrompts?: { linuxdo: (message?: string) => void; xiaoyinsi: (message?: string) => void };
   ensureNodeImageApiKey?: () => Promise<string | null>;
   ensureWritableSession?: (source: ActionSource) => Promise<WritableSessionTicket>;
+  fetcher?: typeof fetch;
   isWritableSessionTicketCurrent?: (ticket: WritableSessionTicket) => boolean;
   notify?: (message: string) => void;
+  onSessionExpired?: (source: ActionSource, requestSessionEpoch: number) => void;
   readPlanScope?: string;
-  reconcileWritableSession?: (source: ActionSource) => Promise<{
-    status: 'anonymous' | 'changed' | 'same' | 'stale' | 'unknown';
-  }>;
   refreshTopicReplies?: () => Promise<unknown>;
   showYaohuoLogin?: (message?: string) => void;
   siteSessionViewModels?: SiteSessionViewModels;
@@ -181,8 +181,7 @@ async function renderActions({
         active: props.active ?? active,
         sessionEpochs: props.sessionEpochs,
         discourseActionRuntimeDependencies: {
-          linuxDoUserAgent: () => 'safe-agent',
-          refreshXiaoyinsiAuthorization: async () => true
+          linuxDoUserAgent: () => 'safe-agent'
         },
         discourseLoginPrompts,
         ensureNodeImageApiKey,
@@ -193,11 +192,12 @@ async function renderActions({
             identityKey: `${source}:test-user`,
             sessionEpoch: props.sessionEpochs[source]
           })),
-        fetcher: jest.fn(async () => new Response('{}')),
+        fetcher,
         isWritableSessionTicketCurrent:
           isWritableSessionTicketCurrent || ((ticket) => ticket.sessionEpoch === props.sessionEpochs[ticket.source]),
         getNodeSeekUserAgent: () => 'safe-agent',
         notify,
+        onSessionExpired,
         readGateway: {
           getReadPlan: () => ({
             state: 'ready',
@@ -207,7 +207,6 @@ async function renderActions({
             cacheScope: readPlanScope
           })
         },
-        reconcileWritableSession,
         refreshTopicReplies,
         siteSessionViewModels:
           siteSessionViewModels ||
@@ -1686,14 +1685,14 @@ describe('topic action query mutations', () => {
       replyCount: 1
     });
     const { detailKey } = seedTopicCache(linuxDetail, [reply]);
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
+    const onSessionExpired = jest.fn();
     const notify = jest.fn();
     jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
       buttons?.find((button) => button.text === '删除')?.onPress?.();
     });
     const hook = await renderActions({
       notify,
-      reconcileWritableSession,
+      onSessionExpired,
       topicDetail: linuxDetail,
       topicReplies: [reply]
     });
@@ -1704,7 +1703,7 @@ describe('topic action query mutations', () => {
     await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
 
     expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(error.message);
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.replies).toEqual([reply]);
   });
@@ -1780,7 +1779,7 @@ describe('topic action query mutations', () => {
       status: 'unknown',
       message: '请刷新原帖确认最新状态'
     });
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
+    const onSessionExpired = jest.fn();
     const notify = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', {
       bookmarked: false,
@@ -1790,7 +1789,7 @@ describe('topic action query mutations', () => {
     const { detailKey } = seedTopicCache(yaohuoDetail);
     const hook = await renderActions({
       notify,
-      reconcileWritableSession,
+      onSessionExpired,
       topicDetail: yaohuoDetail
     });
 
@@ -1798,38 +1797,10 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.favoriteOnYaohuoSite();
     });
 
-    expect(reconcileWritableSession).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith('请刷新原帖确认最新状态');
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarked).toBe(false);
-  });
-
-  it('REG-XIAOYINSI-021 preserves the action error when authorization recovery fails', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(
-      Object.assign(new Error('没有权限执行该操作'), {
-        authorizationCheckRequired: true,
-        source: 'xiaoyinsi',
-        status: 403
-      })
-    );
-    mockDiscourseRecover.mockRejectedValueOnce(new Error('authorization refresh failed'));
-    const xiaDetail = detailFor('xiaoyinsi', {
-      canLike: true,
-      commentId: 987654,
-      liked: false,
-      polls: []
-    });
-    const notify = jest.fn();
-    const { detailKey } = seedTopicCache(xiaDetail);
-    const hook = await renderActions({ notify, topicDetail: xiaDetail });
-
-    await act(async () => {
-      await hook.result.current.actions.interact('like', 987654);
-    });
-
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('没有权限执行该操作'));
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('复核未完成'));
-    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.liked).toBe(false);
   });
 
   it('[REG-XIAOYINSI-022] opens authorization only when recovery confirms expiry', async () => {
@@ -1894,40 +1865,91 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith('没有权限执行该操作');
   });
 
-  it('[REG-ACCOUNT-026][REG-WRITE-022][REG-WRITE-023] reconciles Yaohuo expiry without clearing Cookie or reopening login', async () => {
-    mockRunYaohuoAction.mockRejectedValueOnce(
+  it('[REG-PERF-019] expires a write ticket once on raw HTTP 401 without replaying the write', async () => {
+    const fetcher = jest.fn(async () => new Response('<html>login</html>', { status: 401 }));
+    mockRunNodeSeekAction.mockImplementationOnce(async ({ fetcher: request }) => {
+      await request!('https://www.nodeseek.com/api/attendance');
+      return { success: true };
+    });
+    const onSessionExpired = jest.fn();
+    seedTopicCache();
+    const hook = await renderActions({ fetcher, onSessionExpired });
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('reply body');
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).toHaveBeenCalledWith('nodeseek', initialForumSessionEpochs.nodeseek);
+  });
+
+  it('[REG-WRITE-024] does not expire a write ticket on raw HTTP 403', async () => {
+    const fetcher = jest.fn(async () => new Response('<html>forbidden</html>', { status: 403 }));
+    mockRunNodeSeekAction.mockImplementationOnce(async ({ fetcher: request }) => {
+      const response = await request!('https://www.nodeseek.com/api/attendance');
+      throw Object.assign(new Error('没有权限执行该操作'), { status: response.status });
+    });
+    const onSessionExpired = jest.fn();
+    seedTopicCache();
+    const hook = await renderActions({ fetcher, onSessionExpired });
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('reply body');
+    });
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'expiry hint',
       Object.assign(new Error('妖火登录已失效'), {
         loginRequired: true,
         reason: 'expired',
         source: 'yaohuo'
       })
-    );
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'anonymous' as const }));
-    const showYaohuoLogin = jest.fn();
+    ],
+    [
+      'verification hint',
+      Object.assign(new Error('请回到妖火原站完成登录确认'), {
+        loginRequired: true,
+        reason: 'verification',
+        source: 'yaohuo'
+      })
+    ]
+  ])('[REG-WRITE-024] keeps identity for typed Yaohuo %s', async (_kind, error) => {
+    mockRunYaohuoAction.mockRejectedValueOnce(error);
+    const onSessionExpired = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
     seedTopicCache(yaohuoDetail);
-    const hook = await renderActions({ reconcileWritableSession, showYaohuoLogin, topicDetail: yaohuoDetail });
+    const hook = await renderActions({ onSessionExpired, topicDetail: yaohuoDetail });
 
     await act(async () => {
-      await expect(hook.result.current.actions.favoriteOnYaohuoSite()).resolves.toBeUndefined();
+      await hook.result.current.actions.favoriteOnYaohuoSite();
     });
 
-    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).toHaveBeenCalledWith('yaohuo');
-    expect(showYaohuoLogin).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-026][REG-WRITE-022][REG-WRITE-023] reconciles NodeSeek expiry once without deleting original-site login', async () => {
+  it('[REG-WRITE-024] keeps identity for a typed NodeSeek login hint', async () => {
     mockRunNodeSeekAction.mockRejectedValueOnce(
       Object.assign(new Error('NodeSeek 登录已失效'), {
         loginRequired: true,
         source: 'nodeseek'
       })
     );
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'anonymous' as const }));
+    const onSessionExpired = jest.fn();
     const notify = jest.fn();
     seedTopicCache();
-    const hook = await renderActions({ notify, reconcileWritableSession });
+    const hook = await renderActions({ notify, onSessionExpired });
     await act(async () => {
       hook.result.current.topicSession.commands.composer.changeContent('reply body');
     });
@@ -1936,65 +1958,8 @@ describe('topic action query mutations', () => {
       await expect(hook.result.current.actions.submitReply()).resolves.toBeUndefined();
     });
 
-    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).toHaveBeenCalledWith('nodeseek');
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith('NodeSeek 登录已失效');
-  });
-
-  it('[REG-WRITE-022][REG-WRITE-023] keeps Yaohuo verification failures pending without reopening login', async () => {
-    mockRunYaohuoAction.mockRejectedValueOnce(
-      Object.assign(new Error('请回到妖火原站完成登录确认'), {
-        loginRequired: true,
-        reason: 'verification',
-        source: 'yaohuo'
-      })
-    );
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
-    const showYaohuoLogin = jest.fn();
-    const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
-    seedTopicCache(yaohuoDetail);
-    const hook = await renderActions({ reconcileWritableSession, showYaohuoLogin, topicDetail: yaohuoDetail });
-
-    await act(async () => {
-      await expect(hook.result.current.actions.favoriteOnYaohuoSite()).resolves.toBeUndefined();
-    });
-
-    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).toHaveBeenCalledWith('yaohuo');
-    expect(showYaohuoLogin).not.toHaveBeenCalled();
-  });
-
-  it('[REG-WRITE-023] rolls back an optimistic Yaohuo favorite when identity reconciliation becomes pending', async () => {
-    mockRunYaohuoAction.mockRejectedValueOnce(
-      Object.assign(new Error('妖火需要完成访问验证'), {
-        loginRequired: true,
-        reason: 'verification',
-        source: 'yaohuo'
-      })
-    );
-    let ticketCurrent = true;
-    const reconcileWritableSession = jest.fn(async () => {
-      ticketCurrent = false;
-      return { status: 'unknown' as const };
-    });
-    const yaohuoDetail = detailFor('yaohuo', {
-      bookmarked: false,
-      categoryId: '177',
-      polls: []
-    });
-    const { detailKey } = seedTopicCache(yaohuoDetail);
-    const hook = await renderActions({
-      isWritableSessionTicketCurrent: () => ticketCurrent,
-      reconcileWritableSession,
-      topicDetail: yaohuoDetail
-    });
-
-    await act(async () => {
-      await hook.result.current.actions.favoriteOnYaohuoSite();
-    });
-
-    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
-    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarked).toBe(false);
   });
 
   it('[REG-WRITE-023][REG-WRITE-025] rolls back an unknown Yaohuo result that arrives after ticket expiry', async () => {
@@ -2032,10 +1997,10 @@ describe('topic action query mutations', () => {
     ['permission-denied', Object.assign(new Error('没有权限执行该操作'), { status: 403 })]
   ])('[REG-WRITE-022][REG-WRITE-024] leaves identity unchanged for %s NodeSeek failure', async (_kind, error) => {
     mockRunNodeSeekAction.mockRejectedValueOnce(error);
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
+    const onSessionExpired = jest.fn();
     const notify = jest.fn();
     seedTopicCache();
-    const hook = await renderActions({ notify, reconcileWritableSession });
+    const hook = await renderActions({ notify, onSessionExpired });
     await act(async () => {
       hook.result.current.topicSession.commands.composer.changeContent('reply body');
     });
@@ -2045,7 +2010,7 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(error.message);
   });
@@ -2055,18 +2020,18 @@ describe('topic action query mutations', () => {
     ['permission-denied', Object.assign(new Error('没有权限执行该操作'), { status: 403 })]
   ])('[REG-WRITE-024] leaves identity unchanged for %s Yaohuo failure', async (_kind, error) => {
     mockRunYaohuoAction.mockRejectedValueOnce(error);
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
+    const onSessionExpired = jest.fn();
     const notify = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
     const { detailKey } = seedTopicCache(yaohuoDetail);
-    const hook = await renderActions({ notify, reconcileWritableSession, topicDetail: yaohuoDetail });
+    const hook = await renderActions({ notify, onSessionExpired, topicDetail: yaohuoDetail });
 
     await act(async () => {
       await hook.result.current.actions.favoriteOnYaohuoSite();
     });
 
     expect(mockRunYaohuoAction).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(error.message);
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarked).toBe(false);
@@ -2077,11 +2042,11 @@ describe('topic action query mutations', () => {
     ['permission-denied', Object.assign(new Error('没有权限执行该操作'), { status: 403 })]
   ])('[REG-WRITE-024] leaves identity unchanged for %s linux.do failure', async (_kind, error) => {
     mockDiscourseExecute.mockRejectedValueOnce(error);
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
+    const onSessionExpired = jest.fn();
     const notify = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(linuxDetail);
-    const hook = await renderActions({ notify, reconcileWritableSession, topicDetail: linuxDetail });
+    const hook = await renderActions({ notify, onSessionExpired, topicDetail: linuxDetail });
     await act(async () => {
       hook.result.current.topicSession.commands.composer.changeContent('reply body');
     });
@@ -2092,12 +2057,12 @@ describe('topic action query mutations', () => {
 
     expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
     expect(mockDiscourseRecover).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(error.message);
   });
 
-  it('[REG-WRITE-023][REG-WRITE-024] reconciles typed linux.do expiry once without automatic login replay', async () => {
+  it('[REG-WRITE-024] leaves identity unchanged for a typed linux.do login hint', async () => {
     mockDiscourseExecute.mockRejectedValueOnce(
       Object.assign(new Error('linux.do 登录已失效'), {
         loginRequired: true,
@@ -2109,13 +2074,13 @@ describe('topic action query mutations', () => {
       message: 'linux.do 登录已失效',
       phase: 'credential'
     });
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'anonymous' as const }));
+    const onSessionExpired = jest.fn();
     const showLinuxDoLogin = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(linuxDetail);
     const hook = await renderActions({
       discourseLoginPrompts: { linuxdo: showLinuxDoLogin, xiaoyinsi: jest.fn() },
-      reconcileWritableSession,
+      onSessionExpired,
       topicDetail: linuxDetail
     });
     await act(async () => {
@@ -2126,20 +2091,19 @@ describe('topic action query mutations', () => {
       await expect(hook.result.current.actions.submitReply()).resolves.toBeUndefined();
     });
 
-    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).toHaveBeenCalledWith('linuxdo');
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(mockDiscourseRecover).toHaveBeenCalledTimes(1);
-    expect(showLinuxDoLogin).not.toHaveBeenCalled();
+    expect(showLinuxDoLogin).toHaveBeenCalledWith('linux.do 登录已失效');
   });
 
-  it('[REG-WRITE-024] reconciles typed linux.do verification once without opening login', async () => {
+  it('[REG-WRITE-024] leaves identity unchanged for typed linux.do verification', async () => {
     mockDiscourseExecute.mockRejectedValueOnce(
       Object.assign(new Error('linux.do 需要完成 Cloudflare 验证'), {
         reason: 'cloudflare',
         source: 'linuxdo'
       })
     );
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
+    const onSessionExpired = jest.fn();
     const showLinuxDoLogin = jest.fn();
     const notify = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
@@ -2147,7 +2111,7 @@ describe('topic action query mutations', () => {
     const hook = await renderActions({
       discourseLoginPrompts: { linuxdo: showLinuxDoLogin, xiaoyinsi: jest.fn() },
       notify,
-      reconcileWritableSession,
+      onSessionExpired,
       topicDetail: linuxDetail
     });
     await act(async () => {
@@ -2160,8 +2124,7 @@ describe('topic action query mutations', () => {
 
     expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
     expect(mockDiscourseRecover).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).toHaveBeenCalledWith('linuxdo');
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(showLinuxDoLogin).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith('linux.do 需要完成 Cloudflare 验证');
@@ -2346,13 +2309,13 @@ describe('topic action query mutations', () => {
       canceled: false,
       assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
     });
-    const reconcileWritableSession = jest.fn(async () => ({ status: 'unknown' as const }));
+    const onSessionExpired = jest.fn();
     const notify = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(linuxDetail);
     const hook = await renderActions({
       notify,
-      reconcileWritableSession,
+      onSessionExpired,
       topicDetail: linuxDetail
     });
     await act(async () => {
@@ -2365,7 +2328,7 @@ describe('topic action query mutations', () => {
 
     expect(mockGetDocument).toHaveBeenCalledTimes(1);
     expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
-    expect(reconcileWritableSession).not.toHaveBeenCalled();
+    expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(error.message);
     expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');

@@ -4,7 +4,8 @@ import {
   closeOtherAuthSurfaces,
   createAuthSurfaceRegistry,
   finishAuthSurface,
-  hasOpenAuthSurfaceForSource
+  hasOpenAuthSurfaceForSource,
+  releaseAuthSurface
 } from './authSurfaceCoordinator';
 
 describe('auth surface coordinator', () => {
@@ -69,6 +70,24 @@ describe('auth surface coordinator', () => {
 
     expect(hasOpenAuthSurfaceForSource(registry, 'nodeseek')).toBe(true);
     expect(hasOpenAuthSurfaceForSource(registry, 'linuxdo')).toBe(false);
+  });
+
+  it('[REG-PERF-019] retains the source barrier while close reconciliation is unresolved', () => {
+    const registry = createAuthSurfaceRegistry();
+    const ticket = beginAuthSurface(registry, {
+      source: 'nodeseek',
+      surface: 'nodeseek-login',
+      identityKey: 'nodeseek:17',
+      sessionEpoch: 4
+    });
+
+    expect(finishAuthSurface(registry, 'nodeseek-login', 'close-button', true)).toMatchObject({
+      shouldReconcile: true
+    });
+    expect(hasOpenAuthSurfaceForSource(registry, 'nodeseek')).toBe(true);
+
+    releaseAuthSurface(registry, 'nodeseek-login', ticket.generation);
+    expect(hasOpenAuthSurfaceForSource(registry, 'nodeseek')).toBe(false);
   });
 
   it('[REG-ACCOUNT-031] reuses an authoritative recovery result instead of probing twice', () => {

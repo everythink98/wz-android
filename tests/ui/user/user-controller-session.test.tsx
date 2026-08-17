@@ -67,9 +67,8 @@ function renderUserController({
       showYaohuoLogin,
       readGateway: {
         getReadPlan: (source: Source, operation: ForumReadOperation) => {
-          const identityTrust = isSessionSource(source)
-            ? getIdentityTrust?.(source) || (getIdentityBarriers().includes(source) ? 'pending' : 'confirmed')
-            : undefined;
+          const authSurfaceOpen = isSessionSource(source) && getIdentityBarriers().includes(source);
+          const identityTrust = isSessionSource(source) ? getIdentityTrust?.(source) || 'confirmed' : undefined;
           return resolveForumReadPlan(
             source,
             operation,
@@ -78,7 +77,7 @@ function renderUserController({
               ? {
                   source,
                   authenticated: identityTrust === 'confirmed',
-                  authSurfaceOpen: false,
+                  authSurfaceOpen,
                   identityKey: `${source}:test`,
                   identityTrust: identityTrust!,
                   sessionEpoch: getSessionEpochs()[source],

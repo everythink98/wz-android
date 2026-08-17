@@ -10,7 +10,7 @@ import {
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import { rejectUnauthorizedResponse, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import type { ScopedSiteSessionEvent, SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { XiaoyinsiAuthPhase, XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
@@ -59,6 +59,10 @@ function isXiaoyinsiLoginExpiredError(error: unknown) {
   return candidate.loginRequired === true || candidate.kind === 'login-expired';
 }
 
+function isRawUnauthorized(error: unknown) {
+  return Boolean(error && typeof error === 'object' && (error as { reason?: unknown }).reason === 'http-401');
+}
+
 async function checkXiaoyinsiAuthorization({
   fetcher,
   sessionEventType = 'cookie-loaded',
@@ -93,7 +97,7 @@ async function checkXiaoyinsiAuthorization({
       };
     }
     const currentUser = await verifyXiaoyinsiCredentials({
-      fetcher: withDiagnosticFetcher(trace, fetcher),
+      fetcher: withDiagnosticFetcher(trace, rejectUnauthorizedResponse(fetcher)),
       signal
     });
     if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
@@ -110,7 +114,7 @@ async function checkXiaoyinsiAuthorization({
     if (signal?.aborted || isCancelledError(error) || isCanceledRequest(error)) {
       throw error;
     }
-    if (isXiaoyinsiLoginExpiredError(error)) {
+    if (isRawUnauthorized(error)) {
       return {
         authenticated: false,
         reason: 'login_required',

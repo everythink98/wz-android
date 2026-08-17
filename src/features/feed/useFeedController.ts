@@ -451,6 +451,26 @@ export function useFeedController({
     queryIdentity: feedRecoveryQueryIdentity,
     sourceRequestEnabled: feedSourceRequestEnabled
   });
+  const resumeLinuxDoFeed = useCallback(
+    async (loadMore: boolean): Promise<LinuxDoReadResumeOutcome> => {
+      const owner = feedRecoveryOwnerRef.current;
+      if (!owner.active || owner.queryIdentity !== feedRecoveryQueryIdentity || !owner.sourceRequestEnabled) {
+        return 'stale';
+      }
+      const result = loadMore
+        ? await feedQuery.fetchNextPage({ cancelRefetch: false })
+        : await feedQuery.refetch({ cancelRefetch: false });
+      handledFeedErrorRef.current = result.error;
+      const errors = result.data?.pages.at(-1)?.errors || {};
+      handledPartialErrorsRef.current = errors;
+      if (errors.linuxdo) return sourceReadRecoveryOutcome('linuxdo', errors.linuxdo);
+      if (!result.isError) return 'completed';
+      const error =
+        result.error instanceof FeedQueryError ? result.error.sourceErrors.linuxdo || result.error : result.error;
+      return sourceReadRecoveryOutcome('linuxdo', error);
+    },
+    [feedQuery.fetchNextPage, feedQuery.refetch, feedRecoveryOwnerRef, feedRecoveryQueryIdentity]
+  );
 
   useEffect(() => {
     if (
@@ -509,20 +529,7 @@ export function useFeedController({
     if (linuxDoMessage || (feedSource === 'linuxdo' && sourceError.kind === 'verification-required')) {
       const recovery: LinuxDoReadRecovery = {
         queryKey: feedQueryKey,
-        resume: async () => {
-          const owner = feedRecoveryOwnerRef.current;
-          if (!owner.active || owner.queryIdentity !== feedRecoveryQueryIdentity || !owner.sourceRequestEnabled) {
-            return 'stale';
-          }
-          const result = loadMoreError
-            ? await feedQuery.fetchNextPage({ cancelRefetch: false })
-            : await feedQuery.refetch({ cancelRefetch: false });
-          handledFeedErrorRef.current = result.error;
-          if (!result.isError) return 'completed';
-          const error =
-            result.error instanceof FeedQueryError ? result.error.sourceErrors.linuxdo || result.error : result.error;
-          return sourceReadRecoveryOutcome('linuxdo', error);
-        }
+        resume: () => resumeLinuxDoFeed(loadMoreError)
       };
       void showLinuxDoVerification(linuxDoMessage ? `${loadMorePrefix}${linuxDoMessage}` : message, recovery);
       return;
@@ -538,12 +545,11 @@ export function useFeedController({
     feedQuery.isError,
     feedQueryKey,
     feedActive,
-    feedRecoveryOwnerRef,
-    feedRecoveryQueryIdentity,
     feedSource,
     feedSourceRequestEnabled,
     loadMoreError,
     notify,
+    resumeLinuxDoFeed,
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin
@@ -562,8 +568,14 @@ export function useFeedController({
     }
     handledPartialErrorsRef.current = errors;
     const nodeSeekMessage = nodeSeekVerificationNavigationMessage(feedSource, errors);
+    const linuxDoMessage = linuxDoVerificationNavigationMessage(feedSource, errors);
     if (nodeSeekMessage) {
       showNodeSeekVerification(nodeSeekMessage);
+    } else if (linuxDoMessage) {
+      void showLinuxDoVerification(linuxDoMessage, {
+        queryKey: feedQueryKey,
+        resume: () => resumeLinuxDoFeed(false)
+      });
     } else {
       notify(formatSourceErrorMessages(errors, sourceLabel));
     }
@@ -572,8 +584,11 @@ export function useFeedController({
     feedQuery.dataUpdatedAt,
     feedSource,
     feedSourceRequestEnabled,
+    feedQueryKey,
     lastPage?.errors,
     notify,
+    resumeLinuxDoFeed,
+    showLinuxDoVerification,
     showNodeSeekVerification
   ]);
 

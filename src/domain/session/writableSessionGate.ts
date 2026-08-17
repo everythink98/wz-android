@@ -47,10 +47,13 @@ export async function ensureWritableSessionTicket(
   if (before.sourceEnabled === false) {
     throw new WritableSessionBlockedError('当前来源已停用', 'source-disabled');
   }
-  if (canIssueTicket(before) && !before.authSurfaceOpen) {
+  if (before.authSurfaceOpen) {
+    throw new WritableSessionBlockedError('登录页面尚未完成，请关闭后重试', 'identity_pending');
+  }
+  if (canIssueTicket(before)) {
     return ticketFromSnapshot(before);
   }
-  if (!before.authenticated && before.identityTrust === 'none' && !before.authSurfaceOpen) {
+  if (!before.authenticated && before.identityTrust === 'none') {
     throw new WritableSessionBlockedError('当前账号未登录', 'login_required');
   }
 

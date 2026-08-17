@@ -17,7 +17,7 @@ import { uploadNodeSeekReplyImage } from '@/sources/nodeimage/upload';
 import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from './discourseActions';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { runXiaoyinsiAction } from '@/sources/xiaoyinsi/actionClient';
-import { withFetchGuard } from '@/platform/network/request';
+import { rejectUnauthorizedResponse, withFetchGuard } from '@/platform/network/request';
 
 export type NotificationAccessReader = (
   source: NotificationSource
@@ -86,13 +86,17 @@ async function runWithNotificationDiagnostics<T>(
 
 export function createNotificationGateway({
   adapters = notificationAdapters,
+  onSessionExpired,
   privateAccessAllowed,
   readAccess,
+  requestSessionEpoch,
   sourceAllowed
 }: {
   adapters?: Record<NotificationSource, NotificationAdapter>;
+  onSessionExpired?: (source: NotificationSource, requestSessionEpoch: number) => void;
   privateAccessAllowed: NotificationPrivateAccessAllowed;
   readAccess: NotificationAccessReader;
+  requestSessionEpoch?: (source: NotificationSource) => number;
   sourceAllowed: NotificationSourceAllowed;
 }) {
   const assertSourceAllowed = async (source: NotificationSource) => {
@@ -135,7 +139,10 @@ export function createNotificationGateway({
     };
     return {
       ...access,
-      fetcher: withFetchGuard(withDiagnosticFetcher(trace, access.fetcher || fetch), assertCurrent),
+      fetcher: withFetchGuard(
+        withDiagnosticFetcher(trace, rejectUnauthorizedResponse(access.fetcher || fetch)),
+        assertCurrent
+      ),
       ...(signal ? { signal } : {})
     };
   };
@@ -147,7 +154,16 @@ export function createNotificationGateway({
     run: (access: NotificationAdapterAccess) => Promise<T>
   ) => {
     const access = await accessFor(source, trace, signal, expectedIdentityKey);
-    const result = await run(access);
+    const requestEpoch = requestSessionEpoch?.(source) ?? 0;
+    let result: T;
+    try {
+      result = await run(access);
+    } catch (error) {
+      if (error && typeof error === 'object' && (error as { reason?: unknown }).reason === 'http-401') {
+        onSessionExpired?.(source, requestEpoch);
+      }
+      throw error;
+    }
     await assertPrivateAccessCurrent(source, access.identityKey, signal);
     return result;
   };

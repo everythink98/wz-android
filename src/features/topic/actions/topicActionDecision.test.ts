@@ -20,7 +20,6 @@ describe('topic action decision', () => {
   it.each([
     ['unsupported', { topic: { ...topic, source: 'v2ex' } }],
     ['login-required', { account: createSiteSessionViewModel(createSiteSessionStates().linuxdo) }],
-    ['identity-pending', { account: { ...loggedIn, identityTrust: 'pending' } }],
     ['identity-unavailable', { account: { ...loggedIn, canWrite: false, identityTrust: 'unknown' } }],
     ['object-forbidden', { account: loggedIn, objectAllowed: false }],
     ['missing-target', { account: loggedIn, targetPresent: false }],

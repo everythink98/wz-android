@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import type { Fetcher } from '@/platform/network/request';
 import type { SessionSite } from '@/domain/session/siteSessionState';
 import type { Source } from '@/domain/forum/sourceCatalog';
@@ -13,19 +12,16 @@ export function useSessionReadGateway({
   getEnabledSources,
   linuxDoUserAgentRef,
   nodeSeekUserAgentRef,
-  readSessionRuntimeSnapshot,
-  refreshXiaoyinsiAuthorization
+  onSessionExpired,
+  readSessionRuntimeSnapshot
 }: {
   anonymousFetcher: Fetcher;
   fetcher: Fetcher;
   getEnabledSources: () => readonly Source[];
   linuxDoUserAgentRef: { current: string };
   nodeSeekUserAgentRef: { current: string };
+  onSessionExpired: (source: SessionSite, requestSessionEpoch: number) => void;
   readSessionRuntimeSnapshot: (source: SessionSite) => SessionRuntimeSnapshot;
-  refreshXiaoyinsiAuthorization: (
-    trace?: DiagnosticTrace,
-    options?: { signal?: AbortSignal }
-  ) => Promise<boolean | null>;
 }) {
   return useMemo(
     () =>
@@ -42,8 +38,8 @@ export function useSessionReadGateway({
           return generation === currentXiaoyinsiCredentialGeneration() ? credentials : undefined;
         },
         nodeSeekUserAgent: () => nodeSeekUserAgentRef.current,
-        readSessionRuntimeSnapshot,
-        refreshXiaoyinsiAuthorization
+        onSessionExpired,
+        readSessionRuntimeSnapshot
       }),
     [
       anonymousFetcher,
@@ -51,8 +47,8 @@ export function useSessionReadGateway({
       getEnabledSources,
       linuxDoUserAgentRef,
       nodeSeekUserAgentRef,
-      readSessionRuntimeSnapshot,
-      refreshXiaoyinsiAuthorization
+      onSessionExpired,
+      readSessionRuntimeSnapshot
     ]
   );
 }

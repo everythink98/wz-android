@@ -8,6 +8,7 @@ wait id="main-tab-more" 60000
 press id="main-tab-more"
 wait text="关于阅坛" 10000
 press label="展开账号中心"
+press label="刷新账号状态"
 wait "id=\"account-site-nodeseek\" label=\"NodeSeek，未登录，已选择\" || id=\"account-site-nodeseek\" label=\"NodeSeek，已验证，已选择\"" 60000
 press id="account-site-linuxdo"
 wait "id=\"account-site-linuxdo\" label=\"linux.do，匿名可用，已选择\"" 60000

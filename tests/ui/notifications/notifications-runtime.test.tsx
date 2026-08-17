@@ -6,6 +6,7 @@ import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   clearNotificationSourceForContentDisable,
   defaultNotificationState,
@@ -114,7 +115,7 @@ function notificationResponse(source: string, identifier: string, date: number):
   };
 }
 
-function nodeSeekSessions(identityTrust: 'confirmed' | 'pending' | 'unknown' | 'none', userId = '42') {
+function nodeSeekSessions(identityTrust: 'confirmed' | 'unknown' | 'none', userId = '42') {
   const sessions = createSiteSessionViewModels(
     createSiteSessionStates({
       nodeseek: {
@@ -219,9 +220,11 @@ function runtimeOptions(
     fetcher: jest.fn(),
     getLinuxDoUserAgent: jest.fn(() => 'linux.do'),
     getNodeSeekUserAgent: jest.fn(() => 'NodeSeek'),
+    onSessionExpired: jest.fn(),
     openSource,
     privateAccessAllowed,
     remoteReady: true,
+    sessionEpochs: initialForumSessionEpochs,
     sessions
   };
 }
@@ -997,7 +1000,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it.each(['pending', 'unknown'] as const)(
+  it.each(['unknown'] as const)(
     '[REG-NOTIFY-006] retains the trusted identity, cache, and delivery watermark while identity is %s',
     async (identityTrust) => {
       const stored = defaultNotificationState();

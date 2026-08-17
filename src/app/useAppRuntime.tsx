@@ -78,7 +78,7 @@ export function useAppRuntime() {
     notify,
     nodeSeekRecoveryThreshold: readerData.settings.nodeSeekRecoveryThreshold,
     openUser: openUserRoute,
-    ready: readerDataLoaded && (initialForegroundReady || screen === 'more'),
+    ready: readerDataLoaded,
     screen,
     webViewBlockMessage: networkProxyWebViewBlockMessage
   });
@@ -90,18 +90,16 @@ export function useAppRuntime() {
   });
   const {
     accountSessionViewModels,
-    feedReadGateway,
-    feedSessionEpochs,
     forumSessionEpochs,
     getLinuxDoUserAgent,
     getNodeSeekUserAgent,
-    identityReconciliationPending,
     notificationPrivateAccessAllowed,
     readGateway,
     reconcileAccountStatus,
+    sessionsReady,
     statusBusy
   } = accountRuntime.read;
-  const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, reconcileWritableSession } =
+  const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, onSessionExpired } =
     accountRuntime.write;
   const { xiaoyinsiAuth: xiaoyinsiAuthController } = accountRuntime.center;
   const {
@@ -126,9 +124,11 @@ export function useAppRuntime() {
     fetcher: networkProxyFetcher,
     getLinuxDoUserAgent,
     getNodeSeekUserAgent,
+    onSessionExpired,
     openSource: openNotificationsRoute,
     privateAccessAllowed: notificationPrivateAccessAllowed,
-    remoteReady: !identityReconciliationPending,
+    remoteReady: initialForegroundReady && sessionsReady,
+    sessionEpochs: forumSessionEpochs,
     sessions: accountSessionViewModels
   });
   const notificationRouteRuntime = useMemo<NotificationRouteRuntimeValue>(
@@ -162,13 +162,13 @@ export function useAppRuntime() {
   };
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
-    active: readerDataLoaded && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
+    active: readerDataLoaded && sessionsReady && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
     enabledFeedSources,
     enabledSourcesKey,
     notify,
-    onSettled: readerDataLoaded ? onCatalogSettled : undefined,
-    readGateway: feedReadGateway,
-    sessionEpochs: feedSessionEpochs
+    onSettled: readerDataLoaded && sessionsReady ? onCatalogSettled : undefined,
+    readGateway,
+    sessionEpochs: forumSessionEpochs
   });
   const { appUpdateBusy, appUpdateDownloading, appUpdateInfo } = updateRuntime;
   const { metadata: diagnosticMetadata } = useAppDiagnosticsRuntime({
@@ -198,10 +198,9 @@ export function useAppRuntime() {
         linuxDoVerificationVisible: showLinuxDoPanel,
         getNodeSeekUserAgent,
         nodeSeekUserId: effectiveNodeSeekUserId,
+        onSessionExpired,
         readGateway,
         reconcileAccountStatus,
-        reconcileWritableSession,
-        refreshXiaoyinsiAuthorization: xiaoyinsiAuthController.refreshAuthorization,
         requestNodeSeekVerification,
         showLinuxDoVerification,
         showYaohuoLogin
@@ -239,16 +238,15 @@ export function useAppRuntime() {
       nodeSeekMediaUserAgent,
       getNodeSeekUserAgent,
       notify,
+      onSessionExpired,
       readGateway,
       readerData,
       readerDataRef,
       readerStyleContext,
       reconcileAccountStatus,
-      reconcileWritableSession,
       requestNodeSeekVerification,
       showLinuxDoVerification,
-      showYaohuoLogin,
-      xiaoyinsiAuthController.refreshAuthorization
+      showYaohuoLogin
     ]
   );
 
@@ -291,9 +289,9 @@ export function useAppRuntime() {
     () => ({
       account: {
         linuxDoVerificationVisible: showLinuxDoPanel,
-        readGateway: feedReadGateway,
+        readGateway,
         requestNodeSeekVerification,
-        sessionEpochs: feedSessionEpochs,
+        sessionEpochs: forumSessionEpochs,
         showLinuxDoVerification,
         showYaohuoLogin
       },
@@ -310,10 +308,10 @@ export function useAppRuntime() {
     [
       appActive,
       catalogCategories,
-      feedReadGateway,
-      feedSessionEpochs,
+      forumSessionEpochs,
       onFeedInitialContentReady,
       notify,
+      readGateway,
       readerData,
       readerDataLoaded,
       requestNodeSeekVerification,
@@ -506,23 +504,24 @@ export function useAppRuntime() {
     appStyles,
     mediaTransportIdentity: networkRuntime.applyStatus,
     readerStyleContext,
-    routes: readerDataLoaded
-      ? {
-          feedRouteRuntime,
-          libraryRouteRuntime,
-          moreBadgeState: notificationMoreBadgeState(Boolean(appUpdateInfo), notificationsRuntime.unreadTotal > 0),
-          moreRouteRuntime,
-          navigationTheme,
-          notificationRouteRuntime,
-          onReady: onNavigationReady,
-          onScreenChange: handleNavigationScreenChange,
-          searchRouteRuntime,
-          styles: appStyles,
-          theme,
-          topicRouteRuntime,
-          userRouteRuntime
-        }
-      : null,
+    routes:
+      readerDataLoaded && sessionsReady
+        ? {
+            feedRouteRuntime,
+            libraryRouteRuntime,
+            moreBadgeState: notificationMoreBadgeState(Boolean(appUpdateInfo), notificationsRuntime.unreadTotal > 0),
+            moreRouteRuntime,
+            navigationTheme,
+            notificationRouteRuntime,
+            onReady: onNavigationReady,
+            onScreenChange: handleNavigationScreenChange,
+            searchRouteRuntime,
+            styles: appStyles,
+            theme,
+            topicRouteRuntime,
+            userRouteRuntime
+          }
+        : null,
     sessionEpochs: forumSessionEpochs,
     theme
   };

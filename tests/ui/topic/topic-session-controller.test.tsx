@@ -136,9 +136,8 @@ function renderTopicController({
       const gateway = {
         ...readGateway,
         getReadPlan: (source, operation) => {
-          const identityTrust = isSessionSource(source)
-            ? getIdentityTrust?.(source) || (getIdentityBarriers().includes(source) ? 'pending' : 'confirmed')
-            : undefined;
+          const authSurfaceOpen = isSessionSource(source) && getIdentityBarriers().includes(source);
+          const identityTrust = isSessionSource(source) ? getIdentityTrust?.(source) || 'confirmed' : undefined;
           return resolveForumReadPlan(
             source,
             operation,
@@ -147,7 +146,7 @@ function renderTopicController({
               ? {
                   source,
                   authenticated: identityTrust === 'confirmed',
-                  authSurfaceOpen: false,
+                  authSurfaceOpen,
                   identityKey: `${source}:test`,
                   identityTrust: identityTrust!,
                   sessionEpoch: getSessionEpochs()[source],

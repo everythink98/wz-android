@@ -63,18 +63,24 @@ export function beginAuthSurface(registry: AuthSurfaceRegistry, input: Omit<Auth
 export function finishAuthSurface(
   registry: AuthSurfaceRegistry,
   surface: AuthSurface,
-  closeReason: AuthSurfaceCloseReason
+  closeReason: AuthSurfaceCloseReason,
+  retainWhileReconciling = false
 ): ClosedAuthSurfaceTicket | null {
   const ticket = registry.active[surface];
   if (!ticket) {
     return null;
   }
-  delete registry.active[surface];
-  return {
+  const closed = {
     ...ticket,
     closeReason,
     shouldReconcile: closeReason !== 'authoritative-recovery' && closeReason !== 'source-disabled'
   };
+  if (!retainWhileReconciling || !closed.shouldReconcile) delete registry.active[surface];
+  return closed;
+}
+
+export function releaseAuthSurface(registry: AuthSurfaceRegistry, surface: AuthSurface, generation: number) {
+  if (registry.active[surface]?.generation === generation) delete registry.active[surface];
 }
 
 export function hasOpenAuthSurfaceForSource(registry: AuthSurfaceRegistry, source: SessionSite) {

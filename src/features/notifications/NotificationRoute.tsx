@@ -115,13 +115,9 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
     source === 'all' && !sourceAvailable
       ? runtime.enabledNotificationSources.map((candidate) => runtime.sessions[candidate])
       : [];
-  const sourcePending =
-    source === 'all'
-      ? aggregateSessions.some((session) => session.identityTrust === 'pending')
-      : runtime.enabledNotificationSources.includes(source) && runtime.sessions[source].identityTrust === 'pending';
   const sourceUnknown =
     source === 'all'
-      ? !sourcePending && aggregateSessions.some((session) => session.identityTrust === 'unknown')
+      ? aggregateSessions.some((session) => session.identityTrust === 'unknown')
       : runtime.enabledNotificationSources.includes(source) && runtime.sessions[source].identityTrust === 'unknown';
   const categoriesQuery = useQuery({
     queryKey: forumQueryKeys.notificationCategories({ source, identityKey }),
@@ -403,7 +399,7 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       markAllBusy={markAllBusy}
       refreshing={listQuery.isRefetching && !listQuery.isFetchingNextPage}
       source={source}
-      sourcePending={sourcePending}
+      sourcePending={false}
       sourceUnknown={sourceUnknown}
       unreadOnly={unreadOnly}
       xiaoyinsiNeedsUpgrade={runtime.xiaoyinsiNeedsUpgrade}

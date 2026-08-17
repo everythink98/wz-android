@@ -22,7 +22,7 @@ describe('source error navigation helpers', () => {
     expect(nodeSeekVerificationNavigationMessage('nodeseek', errors)).toBe('NodeSeek 需要验证');
   });
 
-  it('auto-opens linux.do verification only for the single-source feed', () => {
+  it('auto-opens linux.do verification for aggregate and single-source feeds', () => {
     const errors = {
       linuxdo: {
         kind: 'verification-required' as const,
@@ -32,7 +32,7 @@ describe('source error navigation helpers', () => {
       }
     };
 
-    expect(linuxDoVerificationNavigationMessage('all', errors)).toBe('');
+    expect(linuxDoVerificationNavigationMessage('all', errors)).toBe('linux.do 需要验证');
     expect(linuxDoVerificationNavigationMessage('linuxdo', errors)).toBe('linux.do 需要验证');
     expect(linuxDoVerificationNavigationMessage('nodeseek', errors)).toBe('');
   });

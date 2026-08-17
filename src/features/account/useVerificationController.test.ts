@@ -63,7 +63,6 @@ const anonymousSession: SiteSessionState = {
 function createController(
   options: {
     onBeforeLinuxDoSurfaceOpened?: () => void;
-    onLinuxDoRecoveryBarrierChanged?: (active: boolean) => void;
     reconcileAccountStatus?: (source: 'linuxdo') => Promise<AccountReconcileResult>;
   } = {}
 ) {
@@ -76,7 +75,6 @@ function createController(
   const onLoginWebViewFailure = vi.fn();
   const onLinuxDoSurfaceClosed = vi.fn();
   const onLinuxDoSurfaceOpened = vi.fn();
-  const onLinuxDoRecoveryBarrierChanged = vi.fn(options.onLinuxDoRecoveryBarrierChanged);
   const notify = vi.fn();
   const reconcileAccountStatus = vi.fn(
     options.reconcileAccountStatus || (async () => ({ status: 'same', session: loggedInSession }) as const)
@@ -97,7 +95,6 @@ function createController(
     notify,
     onBeforeLinuxDoSurfaceOpened: options.onBeforeLinuxDoSurfaceOpened,
     onLoginWebViewFailure,
-    onLinuxDoRecoveryBarrierChanged,
     onLinuxDoSurfaceClosed,
     onLinuxDoSurfaceOpened,
     reconcileAccountStatus,
@@ -133,7 +130,6 @@ function createController(
     linuxDoWebViewUserAgentRef,
     notify,
     onLoginWebViewFailure,
-    onLinuxDoRecoveryBarrierChanged,
     onLinuxDoSurfaceClosed,
     onLinuxDoSurfaceOpened,
     reconcileAccountStatus,
@@ -245,23 +241,28 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
-  it('[REG-ACCOUNT-039] reuses the authoritative identity result when an exact read recovery completes', async () => {
+  it('[REG-LINUXDO-002] keeps an exact CF read recovery outside the account identity lifecycle', async () => {
     const resume = vi.fn(async () => 'completed' as const);
-    const { controller, onLinuxDoSurfaceClosed, reconcileAccountStatus, showLinuxDoPanelRef, updateLinuxDoSession } =
-      createController();
+    const {
+      controller,
+      onLinuxDoSurfaceClosed,
+      onLinuxDoSurfaceOpened,
+      reconcileAccountStatus,
+      showLinuxDoPanelRef,
+      updateLinuxDoSession
+    } = createController();
     await controller.showLinuxDoVerification('需要验证', {
       queryKey: recoveryQueryKeyFor('level'),
       resume
     });
 
+    expect(onLinuxDoSurfaceOpened).not.toHaveBeenCalled();
     await controller.checkLinuxDoCookie();
 
-    expect(reconcileAccountStatus).toHaveBeenCalledTimes(1);
+    expect(reconcileAccountStatus).not.toHaveBeenCalled();
     expect(resume).toHaveBeenCalledTimes(1);
     expect(onLinuxDoSurfaceClosed.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]);
-    expect(updateLinuxDoSession).toHaveBeenCalledTimes(1);
-    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-started' }));
-    expect(updateLinuxDoSession.mock.invocationCallOrder.at(-1)).toBeLessThan(resume.mock.invocationCallOrder[0]);
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
     expect(onLinuxDoSurfaceClosed).toHaveBeenCalledWith({
       authoritativeResult: true,
       reason: 'authoritative-recovery'
@@ -296,8 +297,7 @@ describe('linux.do visible verification coordinator', () => {
   it('keeps a recovery open for another explicit check when verification is still required', async () => {
     vi.useFakeTimers();
     const resume = vi.fn(async () => 'verification-required' as const);
-    const { controller, onLinuxDoRecoveryBarrierChanged, showLinuxDoPanelRef, updateLinuxDoSession } =
-      createController();
+    const { controller, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
     await controller.showLinuxDoVerification('需要验证', {
       queryKey: recoveryQueryKeyFor('feed'),
       resume
@@ -306,10 +306,8 @@ describe('linux.do visible verification coordinator', () => {
     try {
       await controller.checkLinuxDoCookie();
       expect(showLinuxDoPanelRef.current).toBe(false);
-      expect(onLinuxDoRecoveryBarrierChanged).toHaveBeenLastCalledWith(true);
       await vi.advanceTimersByTimeAsync(350);
       expect(showLinuxDoPanelRef.current).toBe(true);
-      expect(onLinuxDoRecoveryBarrierChanged).toHaveBeenLastCalledWith(false);
 
       await controller.checkLinuxDoCookie();
       expect(showLinuxDoPanelRef.current).toBe(false);
@@ -319,14 +317,11 @@ describe('linux.do visible verification coordinator', () => {
     }
 
     expect(resume).toHaveBeenCalledTimes(2);
-    expect(updateLinuxDoSession).toHaveBeenCalledWith({
-      type: 'verification-required',
-      message: '验证仍未生效，请继续完成验证后点击检测状态。'
-    });
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
-  it('[REG-ACCOUNT-039] reports a recovery exception after the panel has already closed', async () => {
+  it('[REG-LINUXDO-003] reports a CF recovery exception without mutating account state', async () => {
     const resume = vi.fn(async () => {
       throw new Error('resume exploded');
     });
@@ -342,12 +337,8 @@ describe('linux.do visible verification coordinator', () => {
       authoritativeResult: true,
       reason: 'authoritative-recovery'
     });
-    expect(notify).toHaveBeenCalledWith('登录身份已确认，但原页面恢复失败：resume exploded');
-    expect(updateLinuxDoSession).toHaveBeenCalledWith({
-      type: 'recovery-failed',
-      message: '登录身份已确认，但原页面恢复失败：resume exploded'
-    });
-    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'check-failed' }));
+    expect(notify).toHaveBeenCalledWith('原页面恢复失败：resume exploded');
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
   });
 
   it('does not resume an inactive recovery query', async () => {

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { isCancelledError, useQuery, type QueryFunctionContext } from '@tanstack/react-query';
-import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isCancelledError, useQuery } from '@tanstack/react-query';
+import { isCanceledRequest } from '@/platform/network/errors';
 import {
   accountSessionIdentityKey,
   accountSessionSnapshotFromEvent,
@@ -12,7 +12,7 @@ import {
   type ScopedSiteSessionEvent,
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
-import { scheduleRequestTimeout, type Fetcher } from '@/platform/network/request';
+import { rejectUnauthorizedResponse, type Fetcher } from '@/platform/network/request';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { readWithinAggregateSourceBudget } from '@/sources/readAggregation';
 import { readAccountStatus } from '@/sources/accountRead';
@@ -26,24 +26,35 @@ import {
 import { cancelForumSourceQueries, removeUnconfirmedForumSourceQueries } from './sessionQueryOwnership';
 import { sessionSources, sourceCatalog, type SessionSource } from '@/domain/forum/sourceCatalog';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
-import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
+import {
+  loadAccountSessionMigrationCompleted,
+  loadAccountSessionSnapshot,
+  markAccountSessionMigrationCompleted,
+  saveAccountSessionSnapshot
+} from '@/platform/storage/accountSessionStore';
+import { NODESEEK_ACCOUNT_STATUS_URL } from '@/sources/nodeseek/accountStatus';
+import { LINUXDO_ACCOUNT_STATUS_URL } from '@/sources/linuxdo/accountStatus';
+import { YAOHUO_ACCOUNT_STATUS_URL } from '@/sources/yaohuo/accountStatus';
+import { loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 
 type RefreshAccountStatusOptions = { silent?: boolean };
 type StatusSource = SessionSource;
 type SnapshotUpdater = (current: AccountSessionSnapshot) => AccountSessionSnapshot;
 
-const STATUS_DESCRIPTORS = {
-  nodeseek: { source: 'nodeseek', label: 'NodeSeek' },
-  linuxdo: { source: 'linuxdo', label: 'linux.do' },
-  yaohuo: { source: 'yaohuo', label: '妖火' },
-  xiaoyinsi: { source: 'xiaoyinsi', label: '小隐寺' }
-} as const satisfies Record<StatusSource, { source: StatusSource; label: string }>;
+function eventConfirmsTerminalIdentity(event: ScopedSiteSessionEvent) {
+  return (
+    event.type === 'login-expired' ||
+    event.type === 'cleared' ||
+    ((event.type === 'cookie-loaded' || event.type === 'session-updated') && event.loggedIn !== undefined)
+  );
+}
 
-const ACCOUNT_PROBE_TIMEOUT_MS = 25_000;
-
-function isCanceledStatusQuery(error: unknown) {
-  return isCancelledError(error) || isCanceledRequest(error);
+function observationConfirmsTerminalIdentity(source: StatusSource, observation: AccountStatusObservation) {
+  const session = observation.session;
+  if (session.site !== source) return false;
+  if (session.status === 'logged-in') return accountSessionIdentityKey(session) !== `${source}:anonymous`;
+  return session.status === 'anonymous' || session.status === 'verified' || session.status === 'expired';
 }
 
 function accountBatchError(source: StatusSource, error: unknown) {
@@ -70,16 +81,17 @@ function snapshotQueryDefinition(source: StatusSource) {
 
 export function useAccountStatusController({
   enabledSources = sessionSources,
+  enabledSourcesReady = true,
   linuxDoUserAgentRef,
   fetcher,
   nodeSeekUserAgentRef,
   notify,
   onAccountStatusChanged,
   readManagedCookieHeader = readManagedCookieHeaderFromNative,
-  readXiaoyinsiAuthorization,
-  reconcileNewlyEnabledSources = true
+  readXiaoyinsiAuthorization
 }: {
   enabledSources?: readonly StatusSource[];
+  enabledSourcesReady?: boolean;
   linuxDoUserAgentRef: { current: string };
   fetcher: Fetcher;
   nodeSeekUserAgentRef: { current: string };
@@ -90,7 +102,6 @@ export function useAccountStatusController({
     trace?: DiagnosticTrace,
     options?: { signal?: AbortSignal }
   ) => Promise<XiaoyinsiAuthorizationReadResult>;
-  reconcileNewlyEnabledSources?: boolean;
 }) {
   const enabledMembershipKey = sessionSources.filter((source) => enabledSources.includes(source)).join(',');
   const enabledSourceSet = useMemo(
@@ -99,26 +110,6 @@ export function useAccountStatusController({
   );
   const enabledSourcesRef = useRef(enabledSourceSet);
   useCommitRefValue(enabledSourcesRef, enabledSourceSet);
-
-  const probeDefinitions = useMemo(() => {
-    const definition = (source: StatusSource) => ({
-      queryFn: ({ signal }: QueryFunctionContext) =>
-        readAccountStatus(source, {
-          fetcher,
-          linuxDoUserAgent: linuxDoUserAgentRef.current,
-          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-          readManagedCookieHeader,
-          readXiaoyinsiAuthorization,
-          signal
-        })
-    });
-    return {
-      linuxdo: definition('linuxdo'),
-      nodeseek: definition('nodeseek'),
-      xiaoyinsi: definition('xiaoyinsi'),
-      yaohuo: definition('yaohuo')
-    };
-  }, [fetcher, linuxDoUserAgentRef, nodeSeekUserAgentRef, readManagedCookieHeader, readXiaoyinsiAuthorization]);
 
   const nodeSeekStatus = useQuery(snapshotQueryDefinition('nodeseek'));
   const linuxDoStatus = useQuery(snapshotQueryDefinition('linuxdo'));
@@ -148,6 +139,9 @@ export function useAccountStatusController({
     return { next, previous };
   }, []);
 
+  const [hydrated, setHydrated] = useState(false);
+  const hydrationStartedRef = useRef(false);
+
   const probeGenerationRef = useRef<Record<StatusSource, number>>({
     linuxdo: 0,
     nodeseek: 0,
@@ -159,11 +153,9 @@ export function useAccountStatusController({
       Record<
         StatusSource,
         {
+          controller: AbortController;
           generation: number;
           promise: Promise<AccountReconcileResult>;
-          queryKey: readonly unknown[];
-          releaseBudgetCancellation: () => void;
-          retainedBeyondBudget: boolean;
           surfaceGeneration: number;
         }
       >
@@ -174,20 +166,28 @@ export function useAccountStatusController({
     probeGenerationRef.current[source] += 1;
     const activeProbe = activeProbeRef.current[source];
     if (!activeProbe) return;
-    activeProbe.releaseBudgetCancellation();
+    activeProbe.controller.abort();
     delete activeProbeRef.current[source];
-    void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
   }, []);
 
   const applyAccountSessionEvent = useCallback(
     (event: ScopedSiteSessionEvent) => {
       if (!enabledSourcesRef.current.has(event.site)) return false;
-      supersedeProbe(event.site);
+      const terminalEvent = eventConfirmsTerminalIdentity(event);
+      if (terminalEvent) supersedeProbe(event.site);
       const { next, previous } = commitAccountSnapshot(event.site, (current) =>
         accountSessionSnapshotFromEvent(current, event)
       );
       if (accountSessionIdentityKey(previous) !== accountSessionIdentityKey(next)) {
         onAccountStatusChanged(event.site, 'recoveryQueryKey' in event ? event.recoveryQueryKey : undefined);
+      }
+      if (terminalEvent && (next.identityTrust === 'confirmed' || next.identityTrust === 'none')) {
+        void saveAccountSessionSnapshot(next).catch(() => {
+          commitAccountSnapshot(event.site, (current) => ({
+            ...current,
+            lastError: `${sourceCatalog[event.site].label} 账号状态已更新，但本机保存失败。`
+          }));
+        });
       }
       return true;
     },
@@ -195,19 +195,14 @@ export function useAccountStatusController({
   );
 
   const beginAccountIdentityCheck = useCallback(
-    (source: StatusSource, surfaceGeneration?: number, includeAggregateCancellation = true) => {
+    (source: StatusSource, surfaceGeneration?: number) => {
       if (!enabledSourcesRef.current.has(source)) return;
-      const previous =
-        appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source)) ||
-        createAccountSessionSnapshot(source);
-      if (includeAggregateCancellation === false || previous.status === 'logged-in') {
-        void cancelForumSourceQueries(source, appQueryClient, includeAggregateCancellation);
-      }
       if (surfaceGeneration !== undefined) {
         const activeProbe = activeProbeRef.current[source];
         if (activeProbe && activeProbe.surfaceGeneration < surfaceGeneration) {
           probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source] + 1, surfaceGeneration);
-          void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
+          activeProbe.controller.abort();
+          delete activeProbeRef.current[source];
         } else {
           probeGenerationRef.current[source] = Math.max(probeGenerationRef.current[source], surfaceGeneration);
         }
@@ -215,7 +210,6 @@ export function useAccountStatusController({
       commitAccountSnapshot(source, (current) => ({
         ...current,
         isVerifying: true,
-        identityTrust: 'pending',
         lastError: undefined
       }));
     },
@@ -226,7 +220,7 @@ export function useAccountStatusController({
     (
       source: StatusSource,
       options: {
-        includeAggregateCancellation?: boolean;
+        publishAnonymous?: boolean;
         signal?: AbortSignal;
         surfaceGeneration?: number;
       } = {}
@@ -234,82 +228,62 @@ export function useAccountStatusController({
       if (!enabledSourcesRef.current.has(source)) return Promise.resolve({ status: 'stale' });
       const requestedSurfaceGeneration = options.surfaceGeneration || 0;
       const activeProbe = activeProbeRef.current[source];
-      if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
-        if (!options.signal) {
-          activeProbe.retainedBeyondBudget = true;
-          activeProbe.releaseBudgetCancellation();
-        }
-        return activeProbe.promise;
-      }
-      if (activeProbe) void appQueryClient.cancelQueries({ queryKey: activeProbe.queryKey, exact: true });
-      beginAccountIdentityCheck(source, undefined, options.includeAggregateCancellation);
+      if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) return activeProbe.promise;
+      activeProbe?.controller.abort();
+      beginAccountIdentityCheck(source);
       const generation =
         options.surfaceGeneration === undefined
           ? probeGenerationRef.current[source] + 1
           : Math.max(probeGenerationRef.current[source] + 1, options.surfaceGeneration);
       probeGenerationRef.current[source] = generation;
-      const probeQueryKey = accountQueryKeys.probe(source, generation);
-      const abortProbe = () => {
-        if (activeProbeRef.current[source]?.generation !== generation) return;
-        void appQueryClient.cancelQueries({ queryKey: probeQueryKey, exact: true });
-      };
-      const releaseBudgetCancellation = () => options.signal?.removeEventListener('abort', abortProbe);
+      const controller = new AbortController();
+      const abortProbe = () => controller.abort();
       options.signal?.addEventListener('abort', abortProbe, { once: true });
-      let cancelProbeTimeout: () => void = () => undefined;
-      const timeoutPromise = new Promise<AccountReconcileResult>((resolve) => {
-        cancelProbeTimeout = scheduleRequestTimeout(() => {
-          if (probeGenerationRef.current[source] !== generation || !enabledSourcesRef.current.has(source)) {
-            resolve({ status: 'stale' });
-            return;
-          }
-          const message = `${sourceCatalog[source].label} 账号状态核对超时，请重试。`;
-          const errorInfo: SourceErrorInfo = {
-            kind: 'ordinary',
-            message,
-            reason: 'account_probe_timeout',
-            retryable: true
-          };
-          probeGenerationRef.current[source] = generation + 1;
-          commitAccountSnapshot(source, (current) => ({
-            ...current,
-            isVerifying: false,
-            identityTrust: 'unknown',
-            lastError: message
-          }));
-          releaseBudgetCancellation();
-          if (activeProbeRef.current[source]?.generation === generation) delete activeProbeRef.current[source];
-          void appQueryClient.cancelQueries({ queryKey: probeQueryKey, exact: true });
-          appQueryClient.removeQueries({ queryKey: probeQueryKey, exact: true });
-          resolve({ status: 'unknown', error: message, errorInfo });
-        }, ACCOUNT_PROBE_TIMEOUT_MS);
-      });
-      const queryPromise = (async (): Promise<AccountReconcileResult> => {
+      const promise = (async (): Promise<AccountReconcileResult> => {
         try {
-          const observation = await appQueryClient.fetchQuery<AccountStatusObservation>({
-            queryKey: probeQueryKey,
-            queryFn: probeDefinitions[source].queryFn,
-            staleTime: 0
-          });
+          const observation = await readWithinAggregateSourceBudget(source, controller.signal, (signal) =>
+            readAccountStatus(source, {
+              fetcher: rejectUnauthorizedResponse(fetcher),
+              linuxDoUserAgent: linuxDoUserAgentRef.current,
+              nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+              readManagedCookieHeader,
+              readXiaoyinsiAuthorization,
+              signal
+            })
+          );
           if (probeGenerationRef.current[source] !== generation || !enabledSourcesRef.current.has(source)) {
             return { status: 'stale' };
           }
-          const { next, previous } = commitAccountSnapshot(source, (current) =>
-            accountSessionSnapshotFromObservation(current, observation)
-          );
-          if (next.identityTrust === 'unknown') {
-            const message = next.lastError || `${sourceCatalog[source].label} 账号状态暂时无法确认。`;
+          const previous =
+            appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot(source)) ||
+            createAccountSessionSnapshot(source);
+          const observed = accountSessionSnapshotFromObservation(previous, observation);
+          if (!observationConfirmsTerminalIdentity(source, observation) || observed.identityTrust === 'unknown') {
+            const message = observed.lastError || `${sourceCatalog[source].label} 账号状态暂时无法确认。`;
+            commitAccountSnapshot(source, (current) => ({ ...current, isVerifying: false, lastError: message }));
             return {
               status: 'unknown',
               error: message,
               errorInfo: { kind: 'ordinary', message, reason: 'invalid_account_observation', retryable: true }
             };
           }
+          if (observed.identityTrust === 'none' && options.publishAnonymous === false) {
+            return { status: 'anonymous', session: observed, partial: observation.failed };
+          }
+          const { next } = commitAccountSnapshot(source, () => observed);
           const previousIdentity = accountSessionIdentityKey(previous);
           const nextIdentity = accountSessionIdentityKey(next);
           const previousIdentityWasKnown =
             previous.identityTrust === 'none' || previousIdentity !== `${source}:anonymous`;
           if (previousIdentityWasKnown && previousIdentity !== nextIdentity) onAccountStatusChanged(source);
           if (!previousIdentityWasKnown) removeUnconfirmedForumSourceQueries(source);
+          const persisted = await saveAccountSessionSnapshot(next).catch(() => false);
+          if (!persisted) {
+            commitAccountSnapshot(source, (current) => ({
+              ...current,
+              lastError: `${sourceCatalog[source].label} 账号状态已确认，但本机保存失败。`
+            }));
+          }
           if (next.identityTrust === 'none') {
             return { status: 'anonymous', session: next, partial: observation.failed };
           }
@@ -320,38 +294,98 @@ export function useAccountStatusController({
             partial: observation.failed
           };
         } catch (error) {
-          if (probeGenerationRef.current[source] !== generation) return { status: 'stale' };
-          if (isCanceledStatusQuery(error)) return { status: 'stale' };
-          const message = errorMessage(error);
-          const errorInfo = sourceErrorFromUnknown(source, error);
+          if (
+            probeGenerationRef.current[source] !== generation ||
+            !enabledSourcesRef.current.has(source) ||
+            controller.signal.aborted
+          ) {
+            return { status: 'stale' };
+          }
+          if (isCancelledError(error) || isCanceledRequest(error)) return { status: 'stale' };
+          const errorInfo = accountBatchError(source, error);
           commitAccountSnapshot(source, (current) => ({
             ...current,
             isVerifying: false,
-            identityTrust: 'unknown',
-            lastError: message
+            lastError: errorInfo.message
           }));
-          return { status: 'unknown', error: message, errorInfo: { ...errorInfo, message } };
+          return { status: 'unknown', error: errorInfo.message, errorInfo };
         } finally {
-          cancelProbeTimeout();
-          releaseBudgetCancellation();
-          if (activeProbeRef.current[source]?.generation === generation) delete activeProbeRef.current[source];
-          appQueryClient.removeQueries({ queryKey: probeQueryKey, exact: true });
+          options.signal?.removeEventListener('abort', abortProbe);
+          if (activeProbeRef.current[source]?.generation === generation) {
+            delete activeProbeRef.current[source];
+            commitAccountSnapshot(source, (current) => ({ ...current, isVerifying: false }));
+          }
         }
       })();
-      const promise = Promise.race([queryPromise, timeoutPromise]);
       activeProbeRef.current[source] = {
+        controller,
         generation,
         promise,
-        queryKey: probeQueryKey,
-        releaseBudgetCancellation,
-        retainedBeyondBudget: options.signal === undefined,
         surfaceGeneration: requestedSurfaceGeneration
       };
-      if (options.signal?.aborted) abortProbe();
+      if (options.signal?.aborted) controller.abort();
       return promise;
     },
-    [beginAccountIdentityCheck, commitAccountSnapshot, onAccountStatusChanged, probeDefinitions]
+    [
+      beginAccountIdentityCheck,
+      commitAccountSnapshot,
+      fetcher,
+      linuxDoUserAgentRef,
+      nodeSeekUserAgentRef,
+      onAccountStatusChanged,
+      readManagedCookieHeader,
+      readXiaoyinsiAuthorization
+    ]
   );
+
+  useEffect(() => {
+    if (!enabledSourcesReady || hydrationStartedRef.current) return;
+    hydrationStartedRef.current = true;
+    let active = true;
+    void (async () => {
+      const [migrationCompleted, stored] = await Promise.all([
+        loadAccountSessionMigrationCompleted(),
+        Promise.all(sessionSources.map(async (source) => [source, await loadAccountSessionSnapshot(source)] as const))
+      ]);
+      if (!active) return;
+      for (const [source, snapshot] of stored) {
+        if (snapshot) appQueryClient.setQueryData(accountQueryKeys.snapshot(source), snapshot);
+      }
+      if (migrationCompleted) {
+        setHydrated(true);
+        return;
+      }
+      const candidates = (
+        await Promise.all(
+          [...enabledSourcesRef.current].map(async (source) => {
+            try {
+              if (source === 'xiaoyinsi') return (await loadXiaoyinsiCredentials()) ? source : null;
+              const url =
+                source === 'nodeseek'
+                  ? NODESEEK_ACCOUNT_STATUS_URL
+                  : source === 'linuxdo'
+                    ? LINUXDO_ACCOUNT_STATUS_URL
+                    : YAOHUO_ACCOUNT_STATUS_URL;
+              const result = await readManagedCookieHeader(url);
+              return result.status === 'ok' && result.header.trim() ? source : null;
+            } catch {
+              return null;
+            }
+          })
+        )
+      ).filter((source): source is StatusSource => source !== null);
+      await Promise.all(
+        candidates.map(async (source) => {
+          await reconcileAccountStatus(source);
+        })
+      );
+      await markAccountSessionMigrationCompleted().catch(() => undefined);
+      if (active) setHydrated(true);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [enabledSourcesReady, readManagedCookieHeader, reconcileAccountStatus]);
 
   const previousEnabledSourcesRef = useRef(new Set<StatusSource>(enabledSources));
   useEffect(() => {
@@ -363,72 +397,36 @@ export function useAccountStatusController({
       void cancelForumSourceQueries(source, appQueryClient, false);
       commitAccountSnapshot(source, (snapshot) => ({
         ...snapshot,
-        isVerifying: false,
-        identityTrust: 'unknown'
+        isVerifying: false
       }));
     }
-    for (const source of current) {
-      if (previous.has(source)) continue;
-      if (reconcileNewlyEnabledSources) {
-        void reconcileAccountStatus(source, { includeAggregateCancellation: false });
-      }
-    }
     previousEnabledSourcesRef.current = new Set(current);
-  }, [
-    commitAccountSnapshot,
-    enabledMembershipKey,
-    reconcileAccountStatus,
-    reconcileNewlyEnabledSources,
-    supersedeProbe
-  ]);
+  }, [commitAccountSnapshot, enabledMembershipKey, supersedeProbe]);
 
   const statusBusy = sessionSources.some(
-    (source) => enabledSourcesRef.current.has(source) && snapshots[source].identityTrust === 'pending'
+    (source) => enabledSourcesRef.current.has(source) && snapshots[source].isVerifying
   );
   const refreshAccountStatus = useCallback(
     async (options: RefreshAccountStatusOptions = {}) => {
-      const sources = Object.values(STATUS_DESCRIPTORS).filter(({ source }) => enabledSourcesRef.current.has(source));
+      const sources = sessionSources.filter((source) => enabledSourcesRef.current.has(source));
       if (sources.length === 0) return;
       const results = await Promise.all(
-        sources.map(async (descriptor) => {
-          try {
-            return {
-              descriptor,
-              result: await readWithinAggregateSourceBudget(descriptor.source, undefined, (signal) =>
-                reconcileAccountStatus(descriptor.source, { signal })
-              )
-            };
-          } catch (error) {
-            const errorInfo = accountBatchError(descriptor.source, error);
-            const activeProbe = activeProbeRef.current[descriptor.source];
-            if (!activeProbe?.retainedBeyondBudget) {
-              commitAccountSnapshot(descriptor.source, (current) => ({
-                ...current,
-                isVerifying: false,
-                identityTrust: 'unknown',
-                lastError: errorInfo.message
-              }));
-            }
-            return {
-              descriptor,
-              result: { status: 'unknown' as const, error: errorMessage(error), errorInfo }
-            };
-          }
-        })
+        sources.map(async (source) => ({ source, result: await reconcileAccountStatus(source) }))
       );
       if (options.silent) return;
-      const failedSites = results.flatMap(({ descriptor, result }) =>
-        result.status === 'unknown' || ('partial' in result && result.partial) ? [descriptor.label] : []
+      const failedSites = results.flatMap(({ source, result }) =>
+        result.status === 'unknown' || ('partial' in result && result.partial) ? [sourceCatalog[source].label] : []
       );
       notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
     },
-    [commitAccountSnapshot, notify, reconcileAccountStatus]
+    [notify, reconcileAccountStatus]
   );
 
   return {
     accountSessionViewModels,
     applyAccountSessionEvent,
     beginAccountIdentityCheck,
+    hydrated,
     reconcileAccountStatus,
     refreshAccountStatus,
     statusBusy

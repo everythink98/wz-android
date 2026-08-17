@@ -95,7 +95,7 @@ export function resolveForumReadPlan(
       cacheScope: 'public:omit'
     };
   }
-  if (session.identityTrust === 'pending' || session.authSurfaceOpen) return blocked('identity-pending');
+  if (session.authSurfaceOpen) return blocked('identity-pending');
   if (session.identityTrust === 'unknown') return blocked('identity-unavailable');
   return blocked('login-required');
 }

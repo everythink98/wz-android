@@ -329,9 +329,6 @@ function sourceSettingStatus(
   xiaoyinsiNeedsUpgrade: boolean
 ) {
   if (source === 'xiaoyinsi' && xiaoyinsiNeedsUpgrade) return '需升级授权；开关意图会保留';
-  if (sessions[source].identityTrust === 'pending') {
-    return '账号确认中；开关意图会保留';
-  }
   if (sessions[source].identityTrust === 'unknown') {
     return '账号状态暂不可确认；开关意图会保留，可重试核对';
   }

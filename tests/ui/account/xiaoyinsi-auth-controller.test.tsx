@@ -162,6 +162,7 @@ async function renderController(
       }
       return hook;
     })(),
+    fetcher,
     notify,
     readGateway
   };
@@ -602,7 +603,7 @@ describe('小隐寺授权 controller', () => {
     }).toEqual(workflowBeforeRead);
   });
 
-  it.each([401, 403, 404])('[REG-ACCOUNT-025] keeps raw Xiaoyinsi transport HTTP %i unknown', async (status) => {
+  it.each([403, 404])('[REG-ACCOUNT-025] keeps untyped Xiaoyinsi HTTP %i errors unknown', async (status) => {
     mockLoadCredentials.mockResolvedValue({ apiKey: 'candidate-key', clientId: 'client' });
     mockVerify.mockRejectedValue(Object.assign(new Error(`HTTP ${status}`), { status }));
     const { hook } = await renderController();
@@ -620,7 +621,39 @@ describe('小隐寺授权 controller', () => {
     });
   });
 
-  it('[REG-ACCOUNT-025] accepts only a typed invalid User API key result as expired', async () => {
+  it.each([
+    [401, false],
+    [403, null]
+  ])('[REG-PERF-019] maps raw Xiaoyinsi HTTP %i to authenticated=%s', async (status, authenticated) => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'candidate-key', clientId: 'client' });
+    mockVerify.mockImplementation(async (dependencies) => {
+      const response = await dependencies!.fetcher!('https://forum.xiaoyinsi.com/session/current.json');
+      if (!response.ok) {
+        throw Object.assign(new Error('invalid access'), {
+          source: 'xiaoyinsi',
+          kind: 'login-expired',
+          loginRequired: true,
+          reason: 'expired'
+        });
+      }
+      return { source: 'xiaoyinsi', id: 'alice', username: 'alice', url: '', topics: [] };
+    });
+    const { fetcher, hook } = await renderController();
+    fetcher.mockClear();
+    fetcher.mockResolvedValue(new Response('{}', { status }));
+
+    let result: XiaoyinsiAuthorizationReadResult | undefined;
+    await act(async () => {
+      result = await hook.result.current.readAuthorization(undefined, {
+        signal: new AbortController().signal
+      });
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result?.authenticated).toBe(authenticated);
+  });
+
+  it('[REG-ACCOUNT-025] keeps an adapter-only invalid-key hint unknown', async () => {
     mockLoadCredentials.mockResolvedValue({ apiKey: 'expired-key', clientId: 'client' });
     mockVerify.mockRejectedValue(
       Object.assign(new Error('invalid access'), {
@@ -640,9 +673,9 @@ describe('小隐寺授权 controller', () => {
     });
 
     expect(result).toEqual({
-      authenticated: false,
-      reason: 'login_required',
-      sessionEvent: { type: 'login-expired', message: '小隐寺授权已失效' }
+      authenticated: null,
+      reason: 'unknown',
+      sessionEvent: { type: 'check-failed', message: 'invalid access' }
     });
   });
 

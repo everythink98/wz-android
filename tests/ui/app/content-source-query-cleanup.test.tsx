@@ -44,7 +44,6 @@ describe('content source query cleanup', () => {
       source: 'all'
     });
     const accountStatus = accountQueryKeys.snapshot('nodeseek');
-    const accountProbe = accountQueryKeys.probe('nodeseek', 1);
     const disabledAbort = jest.fn();
     const enabledAbort = jest.fn();
     const oldAllAbort = jest.fn();
@@ -58,7 +57,6 @@ describe('content source query cleanup', () => {
     client.setQueryData(disabledNotifications, 'disabled notifications');
     client.setQueryData(oldAllCategories, 'old categories');
     client.setQueryData(accountStatus, 'canonical account');
-    client.setQueryData(accountProbe, 'current probe');
     await Promise.resolve();
 
     cleanupContentSourceQueries(
@@ -79,7 +77,6 @@ describe('content source query cleanup', () => {
     expect(client.getQueryState(enabledTopic)?.fetchStatus).toBe('fetching');
     expect(client.getQueryState(newAllFeed)?.fetchStatus).toBe('fetching');
     expect(client.getQueryData(accountStatus)).toBe('canonical account');
-    expect(client.getQueryData(accountProbe)).toBe('current probe');
     await client.cancelQueries();
     await Promise.all(pendingReads);
     client.clear();

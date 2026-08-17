@@ -36,6 +36,7 @@ import {
   RequestCanceledError,
   REQUEST_CANCELED_MESSAGE,
   RequestTimeoutError,
+  rejectUnauthorizedResponse,
   type Fetcher
 } from '@/platform/network/request';
 import {
@@ -214,8 +215,8 @@ type ReadGatewayDependencies = {
     options?: ReadGatewayCredentialLoadOptions
   ) => Promise<XiaoyinsiApiCredentials | undefined>;
   nodeSeekUserAgent: () => string;
+  onSessionExpired?: (source: SessionSource, requestSessionEpoch: number) => void;
   readSessionRuntimeSnapshot: (source: SessionSource) => SessionRuntimeSnapshot;
-  refreshXiaoyinsiAuthorization?: (trace?: DiagnosticTrace) => Promise<boolean | null>;
 };
 
 type GetCategoriesOptions = NonNullable<Parameters<typeof getForumCategories>[0]>;
@@ -390,6 +391,7 @@ function blockedReadError(source: Source, plan: Extract<ForumReadPlan, { state: 
 }
 
 export function createReadGateway<Dependencies extends ReadGatewayDependencies>(dependencies: Dependencies) {
+  const authenticatedFetcher = rejectUnauthorizedResponse(dependencies.fetcher);
   const currentEnabledSources = () => normalizeEnabledSources(dependencies.getEnabledSources?.());
   const readSessionSnapshot = (source: SessionSource) => dependencies.readSessionRuntimeSnapshot(source);
   const getReadPlan = (source: Source, operation: ForumReadOperation) =>
@@ -442,7 +444,22 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         ? sameEnabledSources(currentEnabledSources(), includedSources)
         : currentEnabledSources().includes(source));
     const planSources = source === 'all' ? includedSources : [source];
-    const planSnapshot = new Map(planSources.map((planSource) => [planSource, getReadPlan(planSource, readOperation)]));
+    const sessionSnapshots = new Map(
+      planSources.flatMap((planSource) =>
+        isSessionSource(planSource) ? ([[planSource, readSessionSnapshot(planSource)]] as const) : []
+      )
+    );
+    const planSnapshot = new Map(
+      planSources.map((planSource) => [
+        planSource,
+        resolveForumReadPlan(
+          planSource,
+          readOperation,
+          enabledSnapshot.includes(planSource),
+          isSessionSource(planSource) ? sessionSnapshots.get(planSource) : undefined
+        )
+      ])
+    );
     const expectedPlanScopes = new Map(context?.readPlanScopes || []);
     const directPlan = source === 'all' ? undefined : planSnapshot.get(source);
     if (
@@ -462,7 +479,6 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       throw error;
     }
     let xiaoyinsiGeneration: number | undefined;
-    let hasXiaoyinsiCredentials = false;
     const credentialGenerationsAreCurrent = () =>
       xiaoyinsiGeneration === undefined ||
       !dependencies.currentXiaoyinsiCredentialGeneration ||
@@ -537,7 +553,6 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         source === 'all'
           ? [...new Set([...(Object.keys(credentialErrors) as Source[]), ...unavailablePlanSources])]
           : [];
-      hasXiaoyinsiCredentials = Boolean(xiaoyinsiCredentials);
       if (!readIsCurrent()) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
@@ -549,7 +564,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       const sourcePlanFetcher = (planSource: Source): Fetcher => {
         const plan = planFor(planSource);
         if (!plan || plan.state === 'blocked' || plan.transport === 'none') return localFetcher;
-        return plan.transport === 'native-no-cookie' ? anonymousFetcher : dependencies.fetcher;
+        return plan.transport === 'native-no-cookie' ? anonymousFetcher : authenticatedFetcher;
       };
       const operationFetcher = source === 'all' ? localFetcher : sourcePlanFetcher(source);
       markDiagnosticStage(trace, 'credential', {
@@ -675,20 +690,24 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         resultRecord.errors && typeof resultRecord.errors === 'object'
           ? (resultRecord.errors as Record<string, unknown>)
           : {};
-      const xiaoyinsiResultError =
-        resultErrors.xiaoyinsi && typeof resultErrors.xiaoyinsi === 'object'
-          ? (resultErrors.xiaoyinsi as { kind?: unknown })
-          : null;
-      if (
-        hasXiaoyinsiCredentials &&
-        credentialGenerationsAreCurrent() &&
-        (xiaoyinsiResultError?.kind === 'login-expired' || xiaoyinsiResultError?.kind === 'permission-denied')
-      ) {
-        await dependencies.refreshXiaoyinsiAuthorization?.(trace).catch(() => false);
-        if (!readIsCurrent()) {
-          throw new Error(REQUEST_CANCELED_MESSAGE);
+      for (const planSource of planSources) {
+        if (!isSessionSource(planSource)) continue;
+        const error = resultErrors[planSource];
+        const session = sessionSnapshots.get(planSource);
+        const plan = planSnapshot.get(planSource);
+        if (
+          error &&
+          typeof error === 'object' &&
+          (error as { reason?: unknown }).reason === 'http-401' &&
+          session?.authenticated &&
+          session.identityTrust === 'confirmed' &&
+          plan?.state === 'ready' &&
+          plan.lane === 'authenticated'
+        ) {
+          dependencies.onSessionExpired?.(planSource, session.sessionEpoch);
         }
       }
+      if (!readIsCurrent()) throw new Error(REQUEST_CANCELED_MESSAGE);
       const summary = summarizeReadResult(result);
       markDiagnosticStage(trace, 'parse', { source, ...summary });
       const parseEmpty = summary.isParseEmpty === true;
@@ -726,25 +745,23 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
       const sourceError = sourceErrorFromUnknown(source, error);
+      if (source !== 'all' && isSessionSource(source) && sourceError.reason === 'http-401') {
+        const session = sessionSnapshots.get(source);
+        const plan = planSnapshot.get(source);
+        if (
+          session?.authenticated &&
+          session.identityTrust === 'confirmed' &&
+          plan?.state === 'ready' &&
+          plan.lane === 'authenticated'
+        ) {
+          dependencies.onSessionExpired?.(source, session.sessionEpoch);
+        }
+      }
       if (!readIsCurrent()) {
         if (ownsTrace) {
           finishDiagnosticTrace(trace, 'stale', { source, reason: 'superseded' });
         }
         throw new Error(REQUEST_CANCELED_MESSAGE);
-      }
-      if (
-        source === 'xiaoyinsi' &&
-        hasXiaoyinsiCredentials &&
-        credentialGenerationsAreCurrent() &&
-        (sourceError.kind === 'login-expired' || sourceError.kind === 'permission-denied')
-      ) {
-        await dependencies.refreshXiaoyinsiAuthorization?.(trace).catch(() => false);
-        if (!readIsCurrent()) {
-          if (ownsTrace) {
-            finishDiagnosticTrace(trace, 'stale', { source, reason: 'superseded' });
-          }
-          throw new Error(REQUEST_CANCELED_MESSAGE);
-        }
       }
       if (ownsTrace) {
         const reason = normalizeDiagnosticReason(error);

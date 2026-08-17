@@ -100,7 +100,7 @@ export function createSiteAccountViews(
     const statusAndCredential = supportsCredentialFill
       ? `${session.summaryLabel} · ${credentialLabel}`
       : session.summaryLabel;
-    const needsReconcile = session.identityTrust === 'pending' || session.identityTrust === 'unknown';
+    const needsReconcile = session.identityTrust === 'unknown';
     return {
       site,
       label: sourceLabel(site),
@@ -125,12 +125,8 @@ export function createSiteAccountViews(
 }
 
 export function accountCenterSummary(views: SiteAccountView[]) {
-  const needsReconcile = views.filter(
-    (view) => view.identityTrust === 'pending' || view.identityTrust === 'unknown'
-  ).length;
-  const needsAttention = views.filter(
-    (view) => view.needsAttention && view.identityTrust !== 'pending' && view.identityTrust !== 'unknown'
-  ).length;
+  const needsReconcile = views.filter((view) => view.identityTrust === 'unknown').length;
+  const needsAttention = views.filter((view) => view.needsAttention && view.identityTrust !== 'unknown').length;
   const loggedIn = views.filter((view) => view.isLoggedIn && view.identityTrust === 'confirmed').length;
   const saved = views.filter((view) => view.credential.hasCredential).length;
   const credentialSites = views.filter((view) => view.supportsCredentialFill).length;

@@ -33,13 +33,13 @@ describe('foreground notification access', () => {
     ).resolves.toMatchObject({ identityKey: 'nodeseek:42', userId: '42', username: 'alice', fetcher });
   });
 
-  it.each(['pending', 'unknown'] as const)('rejects a %s identity before transport', async (identityTrust) => {
+  it('rejects an unknown identity before transport', async () => {
     const fetcher = vi.fn<typeof fetch>();
 
     await expect(
       readForegroundNotificationAccess({
         source: 'linuxdo',
-        session: { ...session('linuxdo'), identityTrust },
+        session: { ...session('linuxdo'), identityTrust: 'unknown' },
         fetcher
       })
     ).rejects.toThrow('账号身份尚未确认');
