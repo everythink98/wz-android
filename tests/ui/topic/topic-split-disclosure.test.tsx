@@ -2,18 +2,17 @@ import { describe, expect, it } from '@jest/globals';
 import { fireEvent, render } from '../render';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { compileForumContent, type CompiledForumContentSegment } from '@/domain/forum/topicContentSplit';
-import { forumContentRegionSegments } from '../../helpers/forumContentSegments';
+import { compileForumContent, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import {
   TopicSplitDisclosureProvider,
   TopicSplitDisclosureScope,
-  topicMaterializationRegionVisible,
+  topicSemanticRowVisible,
   useTopicSplitDisclosure,
   useTopicSplitDisclosureStore,
   useTopicTerminalReport
 } from '@/features/topic/rendering/TopicSplitDisclosure';
 
-type DisclosureRow = Extract<CompiledForumContentSegment, { type: 'disclosureHeader' }>;
+type DisclosureRow = Extract<CompiledForumContentRow, { type: 'disclosureHeader' }>;
 
 function Header({ row }: { row: DisclosureRow }) {
   const disclosure = useTopicSplitDisclosure({
@@ -28,7 +27,7 @@ function Header({ row }: { row: DisclosureRow }) {
   );
 }
 
-function visibleText(row: CompiledForumContentSegment) {
+function visibleText(row: CompiledForumContentRow) {
   if (row.type === 'codeBlock') return row.text;
   return 'html' in row ? row.html.replace(/<[^>]+>/g, '').trim() : '';
 }
@@ -43,14 +42,13 @@ function DisclosureFixture({
   scopeKey: string;
 }) {
   const store = useTopicSplitDisclosureStore(routeKey);
-  const regions = compileForumContent({ html, role: 'opening', source: 'linuxdo' }).regions;
+  const rows = compileForumContent({ html, role: 'opening', source: 'linuxdo' }).rows;
   return (
     <TopicSplitDisclosureProvider value={store}>
       <TopicSplitDisclosureScope scopeKey={scopeKey}>
         <View>
-          {regions
-            .filter((region) => topicMaterializationRegionVisible(region, scopeKey, store))
-            .flatMap((region) => forumContentRegionSegments(region))
+          {rows
+            .filter((row) => topicSemanticRowVisible(row, scopeKey, store))
             .map((row) =>
               row.type === 'disclosureHeader' ? (
                 <Header key={row.keySuffix} row={row} />
@@ -64,7 +62,7 @@ function DisclosureFixture({
   );
 }
 
-type TerminalReportHeaderRow = Extract<CompiledForumContentSegment, { type: 'terminalReportHeader' }>;
+type TerminalReportHeaderRow = Extract<CompiledForumContentRow, { type: 'terminalReportHeader' }>;
 
 function TerminalHeader({ row }: { row: TerminalReportHeaderRow }) {
   const report = useTopicTerminalReport({ defaultTabId: row.defaultTabId, semanticId: row.semanticId });
@@ -85,18 +83,17 @@ function TerminalFixture({
   visible?: boolean;
 }) {
   const store = useTopicSplitDisclosureStore(routeKey);
-  const regions = compileForumContent({
+  const rows = compileForumContent({
     html: '<forum-terminal-report><forum-terminal-tab title="First"><p>first body</p></forum-terminal-tab><forum-terminal-tab title="Second"><p>second body</p></forum-terminal-tab></forum-terminal-report>',
     role: 'opening',
     source: 'nodeseek'
-  }).regions;
+  }).rows;
   return (
     <TopicSplitDisclosureProvider value={store}>
       <TopicSplitDisclosureScope scopeKey={scopeKey}>
         <View>
-          {(visible ? regions : [])
-            .filter((region) => topicMaterializationRegionVisible(region, scopeKey, store))
-            .flatMap((region) => forumContentRegionSegments(region))
+          {(visible ? rows : [])
+            .filter((row) => topicSemanticRowVisible(row, scopeKey, store))
             .map((row) =>
               row.type === 'terminalReportHeader' ? (
                 <TerminalHeader key={row.keySuffix} row={row} />

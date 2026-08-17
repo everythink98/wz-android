@@ -5,6 +5,7 @@ import React, { type ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
+import { HTML_REPLY_CONTENT_CLASS } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReplyComposerSheet } from '@/features/topic/components/ReplyComposerSheet';
 import { MemoizedReplyItem, ReplyItem } from '@/features/topic/components/ReplyItem';
@@ -19,19 +20,15 @@ import {
   type TopicReplyListItem
 } from '@/features/topic/model/replyListModel';
 import {
-  prepareReplyContent,
   compileForumContent,
-  type ForumContentMaterializationRegion,
-  type ForumContentSelectableRegion,
-  type ForumContentSemanticContinuation
+  prepareReplyContent,
+  type CompiledForumContentRow
 } from '@/domain/forum/topicContentSplit';
-import { forumContentRegionForSegment } from '../../helpers/forumContentSegments';
 import {
   TopicSplitDisclosureProvider,
-  topicMaterializationRegionVisible,
+  topicSemanticRowVisible,
   useTopicSplitDisclosureStore
 } from '@/features/topic/rendering/TopicSplitDisclosure';
-import type { ForumSelectionDocument, ForumSelectionNode } from '@/features/topic/rendering/forumSelectionDocument';
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type {
   TopicActionDecision,
@@ -138,15 +135,12 @@ jest.mock('expo-video', () => ({
 jest.mock('react-native-webview', () => ({ WebView: () => null }));
 
 jest.mock('react-native-render-html', () => {
-  const actual = jest.requireActual('react-native-render-html') as typeof import('react-native-render-html');
   const ReactModule = require('react') as typeof React;
   const {
     Pressable: NativePressable,
     Text: NativeText,
     View: NativeView
   } = require('react-native') as typeof import('react-native');
-  const { forumSelectionTestEngine } =
-    require('../../helpers/forumSelectionEngine') as typeof import('../../helpers/forumSelectionEngine');
   const RenderersPropsContext = ReactModule.createContext<
     Record<
       string,
@@ -162,7 +156,6 @@ jest.mock('react-native-render-html', () => {
         : ''
     }`;
   return {
-    ...actual,
     RenderHTMLConfigProvider: ({
       children,
       renderersProps = {}
@@ -211,13 +204,7 @@ jest.mock('react-native-render-html', () => {
         ...tchildren.map((child, index) =>
           ReactModule.createElement(NativeText, { key: child.nodeIndex ?? index }, nodeText(child))
         )
-      ),
-    TNodeRenderer: ({ tnode }: { tnode: { attributes: Readonly<Record<string, string>>; tagName?: string } }) =>
-      ReactModule.createElement(NativeView, {
-        accessibilityHint: JSON.stringify({ attributes: tnode.attributes, tagName: tnode.tagName }),
-        testID: 'tnode-renderer'
-      }),
-    useAmbientTRenderEngine: () => forumSelectionTestEngine
+      )
   };
 });
 
@@ -304,47 +291,15 @@ function buildVirtualizedReplyItems(options: Parameters<typeof buildVirtualizedR
 }
 
 function compiledRichText(html: string, role: 'opening' | 'quoted-reply' | 'reply' | 'signature' = 'reply') {
-  const region = compileForumContent({ html, role, source: 'nodeseek' }).regions.find(
-    (candidate): candidate is ForumContentSelectableRegion =>
-      candidate.kind === 'selectable' && candidate.segments.some((segment) => segment.type === 'richText')
+  const row = compileForumContent({ html, role, source: 'nodeseek' }).rows.find(
+    (candidate): candidate is Extract<CompiledForumContentRow, { type: 'richText' }> => candidate.type === 'richText'
   );
-  if (!region) throw new Error('Expected one rich-text region.');
-  return region;
+  if (!row) throw new Error('Expected one rich-text row.');
+  return row;
 }
 
-function semanticRegionContinuation(
-  region: ForumContentSelectableRegion,
-  semanticContinuation: ForumContentSemanticContinuation
-): ForumContentSelectableRegion {
-  return {
-    ...region,
-    segments: region.segments.map((segment) => ({ ...segment, semanticContinuation }))
-  };
-}
-
-function nativeSelectionDocument(surface: { props: Record<string, unknown> }) {
-  return JSON.parse(String(surface.props.content)) as ForumSelectionDocument;
-}
-
-function selectionNodes(nodes: readonly ForumSelectionNode[]): ForumSelectionNode[] {
-  return nodes.flatMap((node) => [
-    node,
-    ...(node.type === 'block' || node.type === 'listItem' ? selectionNodes(node.children) : []),
-    ...(node.type === 'table'
-      ? node.rows.flatMap((row) => row.cells.flatMap((cell) => selectionNodes(cell.children)))
-      : [])
-  ]);
-}
-
-function selectionEdgeMargin(nodes: readonly ForumSelectionNode[], edge: 'leading' | 'trailing'): number | undefined {
-  const node = nodes[edge === 'leading' ? 0 : nodes.length - 1];
-  if (!node || node.type === 'table') return undefined;
-  const key = edge === 'leading' ? 'marginTop' : 'marginBottom';
-  if (typeof node.style[key] === 'number') return node.style[key];
-  if (node.type === 'block' || node.type === 'listItem') {
-    return selectionEdgeMargin(node.children, edge);
-  }
-  return undefined;
+function semanticRowPart<T extends CompiledForumContentRow>(row: T, part: T['part']): T {
+  return { ...row, part };
 }
 
 const multiplePoll: TopicPoll = {
@@ -428,7 +383,6 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     onDeleteReply: jest.fn(),
     onEditReply: jest.fn(),
     onInteract: jest.fn(),
-    onLinkPress: jest.fn(),
     onLocateReply: jest.fn(),
     onOpenTopic: jest.fn(),
     onOpenUser: jest.fn(),
@@ -458,7 +412,7 @@ function VirtualizedReplyRows({
   contentVisible,
   props
 }: {
-  contentVisible?: (region: ForumContentMaterializationRegion) => boolean;
+  contentVisible?: (row: CompiledForumContentRow) => boolean;
   props: ComponentProps<typeof ReplyItem>;
 }) {
   const items = buildVirtualizedReplyItems({
@@ -494,10 +448,7 @@ function VirtualizedTerminalReplyRows({ props }: { props: ComponentProps<typeof 
   const scopeKey = `reply:${getReplyKey(props.reply)}:body`;
   return (
     <TopicSplitDisclosureProvider value={store}>
-      <VirtualizedReplyRows
-        contentVisible={(region) => topicMaterializationRegionVisible(region, scopeKey, store)}
-        props={props}
-      />
+      <VirtualizedReplyRows contentVisible={(row) => topicSemanticRowVisible(row, scopeKey, store)} props={props} />
     </TopicSplitDisclosureProvider>
   );
 }
@@ -507,13 +458,16 @@ describe('Topic real child components', () => {
     const firstImage = 'https://i.imgur.com/first-dynamic.png';
     const secondImage = 'https://i.imgur.com/second-dynamic.png';
     const replyRow = (url: string) => {
-      const region = compileForumContent({
+      const row = compileForumContent({
         html: `<p><img class="embedded_image" src="${url}"></p>`,
         role: 'reply',
         source: 'v2ex'
-      }).regions.find((candidate): candidate is ForumContentSelectableRegion => candidate.kind === 'selectable');
-      if (!region) throw new Error('Expected one dynamic reply region.');
-      return region;
+      }).rows.find(
+        (candidate): candidate is Extract<CompiledForumContentRow, { type: 'richText' }> =>
+          candidate.type === 'richText'
+      );
+      if (!row) throw new Error('Expected one dynamic reply row.');
+      return row;
     };
     const firstReply = { ...replyProps().reply, contentHtml: `<img src="${firstImage}">`, floor: 1 };
     const secondReply = { ...replyProps().reply, contentHtml: `<img src="${secondImage}">`, floor: 2 };
@@ -571,17 +525,9 @@ describe('Topic real child components', () => {
 
     expect(firstRender).toHaveBeenCalled();
     expect(secondRender).not.toHaveBeenCalled();
-    const renderedNodes = view
-      .getAllByTestId('tnode-renderer')
-      .map(
-        (node) =>
-          JSON.parse(node.props.accessibilityHint as string) as { attributes: Record<string, string>; tagName: string }
-      );
-    expect(renderedNodes[0]).toMatchObject({ attributes: { src: firstImage }, tagName: 'forum-inline-image' });
-    expect(renderedNodes[1]).toMatchObject({
-      attributes: { class: 'embedded_image', src: secondImage },
-      tagName: 'img'
-    });
+    const renderedHtml = view.getAllByTestId('html-source').map((source) => source.props.accessibilityHint as string);
+    expect(renderedHtml[0]).toContain('<forum-inline-image');
+    expect(renderedHtml[1]).toContain(`<img class="embedded_image" src="${secondImage}"`);
   });
 
   it('shows poll constraints and submits only the controlled valid selection', async () => {
@@ -754,10 +700,9 @@ describe('Topic real child components', () => {
     };
     const view = await render(<ReplyItem {...replyProps({ query: 'needle', reply, section })} />);
 
-    const surfaces = view.getAllByTestId('native-forum-selection-surface');
-    expect(surfaces).toHaveLength(1);
-    expect(surfaces[0].props.query).toBe('needle');
-    expect(view.getByText('needle chunk only')).toBeTruthy();
+    const htmlSources = view.getAllByTestId('html-source');
+    expect(htmlSources).toHaveLength(1);
+    expect(htmlSources[0].props.accessibilityHint).toContain('<mark>needle</mark> chunk only');
     expect(view.queryByText('whole reply must not render here')).toBeNull();
     expect(view.queryByText('signature must not render here')).toBeNull();
     expect(view.queryByLabelText('回复')).toBeNull();
@@ -860,8 +805,9 @@ describe('Topic real child components', () => {
     };
     const view = await render(<ReplyItem {...replyProps({ reply, section })} />);
 
-    expect(view.getAllByTestId('native-forum-selection-surface')).toHaveLength(1);
-    expect(view.getByText('signature chunk only')).toBeTruthy();
+    const htmlSources = view.getAllByTestId('html-source');
+    expect(htmlSources).toHaveLength(1);
+    expect(htmlSources[0].props.accessibilityHint).toContain('signature chunk only');
     expect(view.queryByText('body must stay in its own row')).toBeNull();
     expect(view.queryByText('whole signature must not render here')).toBeNull();
     expect(view.queryByLabelText('回复')).toBeNull();
@@ -880,7 +826,7 @@ describe('Topic real child components', () => {
         key: 'comment:22:body:middle',
         reply,
         replyFloor: 2,
-        content: semanticRegionContinuation(compiledRichText('<p>reply middle</p>'), 'middle'),
+        content: semanticRowPart(compiledRichText('<p>reply middle</p>'), 'middle'),
         first: false,
         last: false
       },
@@ -893,7 +839,7 @@ describe('Topic real child components', () => {
         instanceKey: 'reply:comment:22:nodeseek:topic-1:1',
         measureForMaterialization: false,
         reference: { source: 'nodeseek', topicId: 'topic-1', postNumber: 1 },
-        content: semanticRegionContinuation(compiledRichText('<p>quote middle</p>', 'quoted-reply'), 'middle'),
+        content: semanticRowPart(compiledRichText('<p>quote middle</p>', 'quoted-reply'), 'middle'),
         first: false,
         last: false
       },
@@ -902,7 +848,7 @@ describe('Topic real child components', () => {
         key: 'comment:22:signature:middle',
         reply,
         replyFloor: 2,
-        content: semanticRegionContinuation(compiledRichText('<p>signature middle</p>', 'signature'), 'middle'),
+        content: semanticRowPart(compiledRichText('<p>signature middle</p>', 'signature'), 'middle'),
         first: false,
         last: false
       }
@@ -920,9 +866,10 @@ describe('Topic real child components', () => {
           })}
         />
       );
-      const document = nativeSelectionDocument(view.getByTestId('native-forum-selection-surface'));
-      expect(selectionEdgeMargin(document.nodes, 'leading')).toBe(0);
-      expect(selectionEdgeMargin(document.nodes, 'trailing')).toBe(0);
+      expect(StyleSheet.flatten(view.getByTestId('html-source').props.style)).toMatchObject({
+        marginBottom: 0,
+        marginTop: 0
+      });
       await view.unmount();
     }
   });
@@ -934,21 +881,17 @@ describe('Topic real child components', () => {
       polls: [multiplePoll],
       quotedPosts: []
     };
-    const pollRegion = compileForumContent({
-      html: '',
-      polls: [multiplePoll],
-      role: 'reply',
-      source: 'linuxdo'
-    }).regions[0];
-    if (!pollRegion || pollRegion.kind !== 'island' || pollRegion.segment.type !== 'poll') {
-      throw new Error('Expected one poll island.');
-    }
     const section: Extract<TopicReplyListItem, { type: 'replyContent' }> = {
       type: 'replyContent',
       key: 'comment:22:body:poll-1',
       reply,
       replyFloor: 2,
-      content: forumContentRegionForSegment(pollRegion.segment),
+      content: compileForumContent({
+        html: '',
+        polls: [multiplePoll],
+        role: 'reply',
+        source: 'linuxdo'
+      }).rows[0] as Extract<CompiledForumContentRow, { type: 'poll' }>,
       first: false,
       last: true
     };
@@ -1012,28 +955,20 @@ describe('Topic real child components', () => {
       />
     );
 
-    const replySurfaces = replyView.getAllByTestId('native-forum-selection-surface');
-    expect(replySurfaces).toHaveLength(2);
+    const replySources = replyView.getAllByTestId('html-source');
+    expect(replySources).toHaveLength(2);
     expect(replyView.getByTestId('reply-content-area')).toHaveStyle({ paddingLeft: 42, paddingRight: 0 });
-    for (const surface of replySurfaces) {
-      expect(surface.props.contentWidth).toBe(318);
-      expect(
-        selectionNodes(nativeSelectionDocument(surface).nodes).some(
-          (node) => node.type !== 'table' && node.style.fontSize === 15 && node.style.lineHeight === 24
-        )
-      ).toBe(true);
+    for (const source of replySources) {
+      expect(source.props.style).toEqual({ marginBottom: 0, width: 318 });
+      expect(source.props.accessibilityHint).toContain(`class="${HTML_REPLY_CONTENT_CLASS}"`);
     }
 
     const articleView = await render(
-      <TopicContentBlock contentWidth={360} region={compiledRichText('<p>主楼正文</p>', 'opening')} />
+      <TopicContentBlock contentWidth={360} row={compiledRichText('<p>主楼正文</p>', 'opening')} />
     );
-    const articleSurface = articleView.getByTestId('native-forum-selection-surface');
-    expect(articleSurface.props.contentWidth).toBe(360);
-    expect(
-      selectionNodes(nativeSelectionDocument(articleSurface).nodes).some(
-        (node) => node.type !== 'table' && node.style.fontSize === 16 && node.style.lineHeight === 26
-      )
-    ).toBe(true);
+    const articleSource = articleView.getByTestId('html-source');
+    expect(articleSource.props.style).toEqual({ width: 360 });
+    expect(articleSource.props.accessibilityHint).not.toContain(HTML_REPLY_CONTENT_CLASS);
   });
 
   it('[REG-PERF-010] presents exact continuation margins without rewriting the compiled row HTML', async () => {
@@ -1043,39 +978,20 @@ describe('Topic real child components', () => {
       ['last', true, false],
       ['only', false, false]
     ] as const;
-    const compiledRow = compiledRichText('<h2>fragment</h2>');
+    const compiledRow = compiledRichText('<p>fragment</p>');
 
     for (const [continuation, trimsLeading, trimsTrailing] of expectations) {
-      const region = semanticRegionContinuation(compiledRow, continuation);
-      const view = await render(<TopicContentBlock contentWidth={360} region={region} />);
-      const surface = view.getByTestId('native-forum-selection-surface');
-      expect(surface.props.content).toContain('fragment');
-      expect(StyleSheet.flatten(surface.props.style)).toMatchObject({ alignSelf: 'stretch' });
-      const document = nativeSelectionDocument(surface);
-      expect(selectionEdgeMargin(document.nodes, 'leading')).toBe(trimsLeading ? 0 : 18);
-      expect(selectionEdgeMargin(document.nodes, 'trailing')).toBe(trimsTrailing ? 0 : 9);
+      const row = semanticRowPart(compiledRow, continuation);
+      const view = await render(<TopicContentBlock contentWidth={360} row={row} />);
+      const source = view.getByTestId('html-source');
+      expect(source.props.accessibilityHint).toBe(compiledRow.html);
+      expect(StyleSheet.flatten(source.props.style)).toEqual({
+        width: 360,
+        ...(trimsLeading ? { marginTop: 0 } : {}),
+        ...(trimsTrailing ? { marginBottom: 0 } : {})
+      });
       await view.unmount();
     }
-  });
-
-  it('[REG-TOPIC-100] closes one shared callout frame at the last segment in a selectable region', async () => {
-    const compilation = compileForumContent({
-      html: `<blockquote ${DISCOURSE_CALLOUT_ATTRIBUTE}="true" ${DISCOURSE_CALLOUT_TYPE_ATTRIBUTE}="note"><div class="${DISCOURSE_CALLOUT_TITLE_CLASS}">标题</div><div class="${DISCOURSE_CALLOUT_CONTENT_CLASS}"><p>正文</p><table><tbody><tr><td>表格</td></tr></tbody></table></div></blockquote>`,
-      role: 'opening',
-      source: 'linuxdo'
-    });
-    const region = compilation.regions.find(
-      (candidate): candidate is ForumContentSelectableRegion =>
-        candidate.kind === 'selectable' && candidate.segments.length === 2
-    );
-    if (!region) throw new Error('Expected one selectable callout body region.');
-
-    const view = await render(<TopicContentBlock contentWidth={360} region={region} />);
-
-    expect(view.getByTestId('forum-callout-body')).toHaveStyle({
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      marginBottom: 12
-    });
   });
 
   it('[REG-TOPIC-039] routes actual body, reply, quote, and signature links through internal user navigation', async () => {
@@ -1124,16 +1040,11 @@ describe('Topic real child components', () => {
       });
       return (
         <RenderHTMLConfigProvider renderers={rendering.htmlRenderers} renderersProps={rendering.htmlRenderersProps}>
-          <TopicContentBlock
-            contentWidth={720}
-            region={compiledRichText(topic.contentHtml, 'opening')}
-            onLinkPress={rendering.openHtmlLink}
-          />
+          <TopicContentBlock contentWidth={720} row={compiledRichText(topic.contentHtml, 'opening')} />
           <VirtualizedReplyRows
             props={replyProps({
               expandedQuotes: { 'reply:comment:22:nodeseek:832584:1': true },
               loadedQuotedReplies: { 'nodeseek:832584:1': quotedReply },
-              onLinkPress: rendering.openHtmlLink,
               onOpenUser,
               reply,
               source: 'nodeseek',
@@ -1152,16 +1063,8 @@ describe('Topic real child components', () => {
       ['引用用户', 'quote-target'],
       ['签名用户', 'signature-target']
     ] as const;
-    const hrefByLabel = {
-      正文用户: 'https://www.nodeseek.com/member?t=body-target',
-      回复用户: 'https://www.nodeseek.com/member?t=reply-target',
-      引用用户: 'https://www.nodeseek.com/member?t=quote-target',
-      签名用户: 'https://www.nodeseek.com/member?t=signature-target'
-    } as const;
     for (const [label] of entries) {
-      await fireEvent(view.getByText(label).parent!, 'linkPress', {
-        nativeEvent: { href: hrefByLabel[label] }
-      });
+      await fireEvent.press(view.getByTestId(`html-link-${label}`));
     }
 
     expect(onOpenUser.mock.calls.map(([reference]) => reference)).toEqual(
@@ -1205,19 +1108,13 @@ describe('Topic real child components', () => {
       });
       return (
         <RenderHTMLConfigProvider renderers={rendering.htmlRenderers} renderersProps={rendering.htmlRenderersProps}>
-          <TopicContentBlock
-            contentWidth={720}
-            region={compiledRichText(topic.contentHtml, 'opening')}
-            onLinkPress={rendering.openHtmlLink}
-          />
+          <TopicContentBlock contentWidth={720} row={compiledRichText(topic.contentHtml, 'opening')} />
         </RenderHTMLConfigProvider>
       );
     }
 
     const view = await render(<FloorLinkHarness />);
-    await fireEvent(view.getByTestId('native-forum-selection-surface'), 'linkPress', {
-      nativeEvent: { href: 'https://www.nodeseek.com/post-832584-16#155' }
-    });
+    await fireEvent.press(view.getByTestId('html-link-#155'));
     expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', id: '832584' }), {
       floor: 155,
       pageHint: 16

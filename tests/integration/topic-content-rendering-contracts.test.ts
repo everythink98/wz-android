@@ -4,9 +4,8 @@ import type { Reply } from '@/domain/forum/models';
 import {
   compileForumContent,
   prepareForumContentHtml,
-  resolveForumContentSegmentHtml
+  resolveForumContentRowHtml
 } from '@/domain/forum/topicContentSplit';
-import { forumContentSegments } from '../helpers/forumContentSegments';
 import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
 import { imagePreviewDescriptorsForReplies } from '@/features/topic/model/replyListModel';
 import {
@@ -47,7 +46,7 @@ describe('topic content rendering contracts', () => {
   it('[REG-PERF-010] keeps the preview catalog on raw source order while presentation variants change', () => {
     const urls = ['https://i.imgur.com/first.png', 'https://i.imgur.com/second.png'];
     const rawHtml = `<p>${urls.map((url) => `<img class="embedded_image" src="${url}">`).join('')}</p>`;
-    const row = forumContentSegments(compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' })).find(
+    const row = compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).rows.find(
       (candidate) => candidate.type === 'richText'
     );
     expect(row?.type).toBe('richText');
@@ -60,7 +59,7 @@ describe('topic content rendering contracts', () => {
         2
       ).items.map((item) => item.originalUri)
     ).toEqual(urls);
-    expect(resolveForumContentSegmentHtml(row, { [urls[0]]: true })).toContain(`<${INLINE_FORUM_IMAGE_TAG}`);
+    expect(resolveForumContentRowHtml(row, { [urls[0]]: true })).toContain(`<${INLINE_FORUM_IMAGE_TAG}`);
     expect(
       previewCatalog(
         compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).previewImages,

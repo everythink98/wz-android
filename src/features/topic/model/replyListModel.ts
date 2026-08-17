@@ -2,25 +2,17 @@ import type { QuotedPostMetadata, QuotedPostReference, Reply, Source } from '@/d
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import { replyKey } from '@/domain/forum/feed';
 import {
-  canCoalesceForumContentRegions,
+  canCoalesceForumContentRows,
   requirePreparedForumContent,
   type CompiledForumContent,
-  type ForumContentCompileRole,
-  type ForumContentIslandRegion,
-  type ForumContentIslandSegment,
-  type ForumContentSelectableRegion
+  type CompiledForumContentRow,
+  type ForumContentCompileRole
 } from '@/domain/forum/topicContentSplit';
 import { quotedPostsForSource, replyForQuotedPost, replyQuotedPostInstanceKey } from '@/domain/forum/quotedPosts';
 import { stableTextHash } from './contentIdentity';
 
-type IslandRegionWith<Segment extends ForumContentIslandSegment> = Omit<ForumContentIslandRegion, 'segment'> & {
-  segment: Segment;
-};
-
-export type ReplyQuoteContent =
-  ForumContentSelectableRegion | IslandRegionWith<Exclude<ForumContentIslandSegment, { type: 'quote' }>>;
-export type ReplyRenderableContent =
-  ForumContentSelectableRegion | IslandRegionWith<Exclude<ForumContentIslandSegment, { type: 'poll' | 'quote' }>>;
+export type ReplyQuoteContent = Exclude<CompiledForumContentRow, { type: 'quote' }>;
+export type ReplyRenderableContent = Exclude<ReplyQuoteContent, { type: 'poll' }>;
 
 export type TopicReplyListItem =
   | { type: 'replyControls'; key: string }
@@ -90,39 +82,39 @@ export type TopicReplyListItem =
 
 export const getReplyKey = replyKey;
 
-type QuotedPostContentRegion = { content: ReplyQuoteContent; key: string };
-type QuotedPostContentEntry = { regions: QuotedPostContentRegion[]; token: string };
+type QuotedPostContentRow = { content: ReplyQuoteContent; key: string };
+type QuotedPostContentEntry = { rows: QuotedPostContentRow[]; token: string };
 const quotedPostContentCache = new WeakMap<Reply, Map<Source, QuotedPostContentEntry>>();
 
 type ReplyBodyContentEntry = {
   compilation: CompiledForumContent;
-  regions: QuotedPostContentRegion[];
+  rows: QuotedPostContentRow[];
 };
 const replyBodyContentCache = new WeakMap<Reply, Map<string, ReplyBodyContentEntry>>();
 
 type PlannedReplyContentEntry = {
-  bodyRegions: QuotedPostContentRegion[];
+  bodyRows: QuotedPostContentRow[];
   canMaterializeInOneCell: boolean;
   previewImages: readonly ForumImagePreviewDescriptor[];
-  signatureRegions: { content: ReplyRenderableContent; key: string }[];
+  signatureRows: { content: ReplyRenderableContent; key: string }[];
 };
 const plannedReplyContentCache = new WeakMap<Reply, Map<Source, PlannedReplyContentEntry>>();
 
-function replyRegionsFromCompilation(compilation: CompiledForumContent): QuotedPostContentRegion[] {
-  return compilation.regions.flatMap<QuotedPostContentRegion>((region) => {
-    if (region.kind === 'island' && region.segment.type === 'poll') {
+function replyRowsFromCompilation(compilation: CompiledForumContent): QuotedPostContentRow[] {
+  return compilation.rows.flatMap<QuotedPostContentRow>((row) => {
+    if (row.type === 'poll') {
       return [
         {
-          content: region as ReplyQuoteContent,
-          key: `poll:${region.keySuffix}:${region.segment.poll.name || region.segment.poll.id || stableTextHash(JSON.stringify(region.segment.poll))}`
+          content: row,
+          key: `poll:${row.keySuffix}:${row.poll.name || row.poll.id || stableTextHash(JSON.stringify(row.poll))}`
         }
       ];
     }
-    if (region.kind === 'island' && region.segment.type === 'quote') return [];
+    if (row.type === 'quote') return [];
     return [
       {
-        content: region as ReplyQuoteContent,
-        key: region.keySuffix
+        content: row,
+        key: `${row.type}:${row.semanticId}:${row.segmentIndex}`
       }
     ];
   });
@@ -137,7 +129,7 @@ function replyBodyContent(reply: Reply, source: Source, role: ForumContentCompil
     role,
     source
   });
-  const entry = { compilation, regions: replyRegionsFromCompilation(compilation) };
+  const entry = { compilation, rows: replyRowsFromCompilation(compilation) };
   const sourceCache = replyBodyContentCache.get(reply) || new Map<string, ReplyBodyContentEntry>();
   sourceCache.set(cacheKey, entry);
   replyBodyContentCache.set(reply, sourceCache);
@@ -152,25 +144,25 @@ function plannedReplyContent(reply: Reply, source: Source): PlannedReplyContentE
     role: 'signature',
     source
   });
-  const bodyRegions = body.regions;
-  const signatureRegions = signature.regions.flatMap((region) =>
-    !(region.kind === 'island' && (region.segment.type === 'poll' || region.segment.type === 'quote'))
+  const bodyRows = body.rows;
+  const signatureRows = signature.rows.flatMap((row) =>
+    row.type !== 'poll' && row.type !== 'quote'
       ? [
           {
-            content: region as ReplyRenderableContent,
-            key: `signature:${region.keySuffix}`
+            content: row,
+            key: `signature:${row.type}:${row.semanticId}:${row.segmentIndex}`
           }
         ]
       : []
   );
   const entry = {
-    bodyRegions,
-    canMaterializeInOneCell: canCoalesceForumContentRegions([
+    bodyRows,
+    canMaterializeInOneCell: canCoalesceForumContentRows([
       body.compilation.materializationBudget,
       signature.materializationBudget
     ]),
     previewImages: [...body.compilation.previewImages, ...signature.previewImages],
-    signatureRegions
+    signatureRows
   };
   const sourceCache = plannedReplyContentCache.get(reply) || new Map<Source, PlannedReplyContentEntry>();
   sourceCache.set(source, entry);
@@ -185,9 +177,9 @@ export function imagePreviewDescriptorsForReplies(replies: readonly Reply[], sou
 function quotedPostContent(reply: Reply, source: Source): QuotedPostContentEntry {
   const cached = quotedPostContentCache.get(reply)?.get(source);
   if (cached) return cached;
-  const content = replyBodyContent(reply, source, 'quoted-reply').regions;
+  const content = replyBodyContent(reply, source, 'quoted-reply').rows;
   const entry = {
-    regions: content,
+    rows: content,
     token: `${source}:${reply.contentHtml.length}:${content.map((item) => item.key).join('|')}`
   };
   const sourceCache = quotedPostContentCache.get(reply) || new Map<Source, QuotedPostContentEntry>();
@@ -220,12 +212,12 @@ export function buildVirtualizedReplyItems({
     const replyFloor = reply.floor ?? 0;
     const quotes = reply.systemAction ? [] : quotedPostsForSource(reply, source);
     const ownContent = !reply.systemAction && source ? plannedReplyContent(reply, source) : undefined;
-    const bodyRegions = ownContent?.bodyRegions || [];
-    const signatureRegions = ownContent?.signatureRegions || [];
+    const bodyRows = ownContent?.bodyRows || [];
+    const signatureRows = ownContent?.signatureRows || [];
     const virtualizesOwnContent =
-      bodyRegions.some((item) => item.content.kind === 'island' && item.content.segment.type === 'poll') ||
-      bodyRegions.length > 1 ||
-      signatureRegions.length > 1 ||
+      bodyRows.some((item) => item.content.type === 'poll') ||
+      bodyRows.length > 1 ||
+      signatureRows.length > 1 ||
       Boolean(ownContent && !ownContent.canMaterializeInOneCell);
     if (!quotes.length && !virtualizesOwnContent) {
       return [
@@ -234,15 +226,12 @@ export function buildVirtualizedReplyItems({
           key,
           reply,
           replyFloor,
-          bodyContent:
-            bodyRegions[0]?.content.kind !== 'island' || bodyRegions[0]?.content.segment.type !== 'poll'
-              ? (bodyRegions[0]?.content as ReplyRenderableContent | undefined)
-              : undefined,
+          bodyContent: bodyRows[0]?.content.type !== 'poll' ? bodyRows[0]?.content : undefined,
           networkMediaCount:
-            bodyRegions.reduce((total, item) => total + item.content.networkMediaCount, 0) +
-            signatureRegions.reduce((total, item) => total + item.content.networkMediaCount, 0),
-          plannedRowCount: bodyRegions.length + signatureRegions.length,
-          signatureContent: signatureRegions[0]?.content
+            bodyRows.reduce((total, item) => total + item.content.networkMediaCount, 0) +
+            signatureRows.reduce((total, item) => total + item.content.networkMediaCount, 0),
+          plannedRowCount: bodyRows.length + signatureRows.length,
+          signatureContent: signatureRows[0]?.content
         }
       ];
     }
@@ -253,7 +242,7 @@ export function buildVirtualizedReplyItems({
       const expanded = Boolean(expandedQuotes[instanceKey]);
       const quotedReply = replyForQuotedPost(quote.reference, source, topicId, repliesByFloor, loadedQuotedReplies);
       const contentEntry = expanded && quotedReply ? quotedPostContent(quotedReply, quote.reference.source) : undefined;
-      const content = contentEntry?.regions || [];
+      const content = contentEntry?.rows || [];
       const fullyMaterialized =
         !contentEntry || content.length <= 2 || primedQuoteContentTokens?.get(instanceKey) === contentEntry.token;
       const visibleContent = fullyMaterialized ? content : content.slice(0, 2);
@@ -284,7 +273,7 @@ export function buildVirtualizedReplyItems({
         });
       });
     });
-    bodyRegions.forEach((item, index) => {
+    bodyRows.forEach((item, index) => {
       rows.push({
         type: 'replyContent',
         key: `${key}:body:${item.key}`,
@@ -292,10 +281,10 @@ export function buildVirtualizedReplyItems({
         replyFloor,
         content: item.content,
         first: index === 0,
-        last: index === bodyRegions.length - 1
+        last: index === bodyRows.length - 1
       });
     });
-    signatureRegions.forEach((item, index) => {
+    signatureRows.forEach((item, index) => {
       rows.push({
         type: 'replySignatureContent',
         key: `${key}:${item.key}`,
@@ -303,7 +292,7 @@ export function buildVirtualizedReplyItems({
         replyFloor,
         content: item.content,
         first: index === 0,
-        last: index === signatureRegions.length - 1
+        last: index === signatureRows.length - 1
       });
     });
     rows.push({
@@ -311,8 +300,8 @@ export function buildVirtualizedReplyItems({
       key: `${key}:body`,
       reply,
       replyFloor,
-      bodyVirtualized: bodyRegions.length > 0,
-      signatureVirtualized: signatureRegions.length > 0
+      bodyVirtualized: bodyRows.length > 0,
+      signatureVirtualized: signatureRows.length > 0
     });
     return rows;
   });

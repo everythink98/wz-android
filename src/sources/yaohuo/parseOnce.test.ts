@@ -29,13 +29,13 @@ describe('Yaohuo page parsing', () => {
           role: 'opening',
           source: 'yaohuo',
           topicId: topic.id
-        }).regions
+        }).rows
       ).not.toHaveLength(0);
       expect(
         requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
           role: 'reply',
           source: 'yaohuo'
-        }).regions
+        }).rows
       ).not.toHaveLength(0);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(openingMarker))).toHaveLength(2);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(replyMarker))).toHaveLength(1);

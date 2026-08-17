@@ -415,7 +415,7 @@ function prepareNodeSeekOpeningContent(
     markDiagnosticStage(trace, 'parse', {
       source: 'nodeseek',
       state: 'content-plan-ready',
-      plannedRowCount: preparedContent.contentPlan.regions.length,
+      plannedRowCount: preparedContent.contentPlan.rows.length,
       networkMediaCount: preparedContent.contentPlan.previewImages.length
     });
   }

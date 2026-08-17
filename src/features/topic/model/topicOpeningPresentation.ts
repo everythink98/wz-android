@@ -3,13 +3,7 @@ import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMed
 import { accessRequirementFromNoticeText } from '@/domain/forum/accessRequirements';
 import { textContentFromHtml } from '@/domain/forum/html';
 import { forumAccessRequirementText } from '@/domain/forum/presentation';
-import {
-  requirePreparedForumContent,
-  type CompiledForumContentSegment,
-  type ForumContentIslandRegion,
-  type ForumContentIslandSegment,
-  type ForumContentSelectableRegion
-} from '@/domain/forum/topicContentSplit';
+import { type CompiledForumContentRow, requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import {
   quotedPostReferenceFromReply,
   quotedPostReferenceKey,
@@ -19,28 +13,18 @@ import {
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { stableTextHash } from './contentIdentity';
 
-type IslandRegionWith<Segment extends ForumContentIslandSegment> = Omit<ForumContentIslandRegion, 'segment'> & {
-  segment: Segment;
-};
-
-export type TopicRenderableContentRegion =
-  ForumContentSelectableRegion | IslandRegionWith<Exclude<ForumContentIslandSegment, { type: 'poll' | 'quote' }>>;
+export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
 
 export type TopicContentItem =
-  | { type: 'content'; key: string; region: TopicRenderableContentRegion }
+  | { type: 'content'; key: string; row: TopicRenderableContentRow }
   | {
       type: 'quoteSummary';
       key: string;
       instanceKey: string;
       quote: QuotedPostMetadata;
-      region: IslandRegionWith<Extract<CompiledForumContentSegment, { type: 'quote' }>>;
+      row: Extract<CompiledForumContentRow, { type: 'quote' }>;
     }
-  | {
-      type: 'poll';
-      key: string;
-      poll: TopicPoll;
-      region: IslandRegionWith<Extract<CompiledForumContentSegment, { type: 'poll' }>>;
-    }
+  | { type: 'poll'; key: string; poll: TopicPoll; row: Extract<CompiledForumContentRow, { type: 'poll' }> }
   | { type: 'accessNotice'; key: string; label: string; detail: string };
 
 export type AcceptedAnswerPresentation = {
@@ -76,30 +60,30 @@ function plannedContentItemsFromCompilation(
 ): PlannedTopicContent {
   let quoteIndex = 0;
   return {
-    contentItems: compilation.regions.map((region): TopicContentItem => {
-      if (region.kind === 'island' && region.segment.type === 'poll') {
+    contentItems: compilation.rows.map((row): TopicContentItem => {
+      if (row.type === 'poll') {
         return {
           type: 'poll',
-          key: `${keyPrefix}-poll-${region.segment.poll.name || region.segment.poll.id || region.keySuffix}`,
-          poll: region.segment.poll,
-          region: region as IslandRegionWith<Extract<CompiledForumContentSegment, { type: 'poll' }>>
+          key: `${keyPrefix}-poll-${row.poll.name || row.poll.id || row.keySuffix}`,
+          poll: row.poll,
+          row
         };
       }
-      if (region.kind === 'island' && region.segment.type === 'quote') {
+      if (row.type === 'quote') {
         const index = quoteIndex++;
-        const referenceKey = quotedPostReferenceKey(region.segment.quote.reference);
+        const referenceKey = quotedPostReferenceKey(row.quote.reference);
         return {
           type: 'quoteSummary',
           key: `${keyPrefix}-quote-${index}-${referenceKey}`,
-          instanceKey: topicQuotedPostInstanceKey(topicId!, region.segment.quote.reference),
-          quote: region.segment.quote,
-          region: region as IslandRegionWith<Extract<CompiledForumContentSegment, { type: 'quote' }>>
+          instanceKey: topicQuotedPostInstanceKey(topicId!, row.quote.reference),
+          quote: row.quote,
+          row
         };
       }
       return {
         type: 'content',
-        key: `${keyPrefix}-${region.keySuffix}`,
-        region: region as TopicRenderableContentRegion
+        key: `${keyPrefix}-${row.type}-${row.semanticId}-${row.segmentIndex}`,
+        row
       };
     }),
     previewImages: compilation.previewImages
@@ -180,19 +164,14 @@ export function buildAcceptedAnswerContentItems({
   const fullItems = plannedReplyContentItems(reply, source, `accepted-answer-${floor}`, 'accepted-answer').contentItems;
   const firstItem = fullItems[0];
   const terminalDefaultTabId =
-    firstItem?.type === 'content' &&
-    firstItem.region.kind === 'island' &&
-    firstItem.region.segment.type === 'terminalReportHeader'
-      ? firstItem.region.segment.defaultTabId
-      : '';
+    firstItem?.type === 'content' && firstItem.row.type === 'terminalReportHeader' ? firstItem.row.defaultTabId : '';
   const firstTerminalBody = terminalDefaultTabId
     ? fullItems
         .slice(1)
         .find(
           (item) =>
-            'region' in item &&
-            item.region.kind === 'island' &&
-            item.region.segment.ancestorFrames.some(
+            'row' in item &&
+            item.row.ancestorFrames.some(
               (frame) => frame.kind === 'terminalTab' && frame.tabId === terminalDefaultTabId
             )
         )

@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { HTMLContentModel, HTMLElementModel, TRenderEngine, type TNode } from '@native-html/transient-render-engine';
 import { parseHtml } from './html';
 import { INLINE_FORUM_IMAGE_TAG } from './forumContentMedia';
-import { compileForumContent, resolveForumContentSegmentHtml } from './topicContentSplit';
-import { forumContentSegments } from '../../../tests/helpers/forumContentSegments';
+import { compileForumContent, resolveForumContentRowHtml } from './topicContentSplit';
 
 function renderedRow(html: string) {
-  const row = forumContentSegments(compileForumContent({ html, role: 'reply', source: 'v2ex' })).find(
+  const row = compileForumContent({ html, role: 'reply', source: 'v2ex' }).rows.find(
     (candidate) => candidate.type === 'richText'
   );
   expect(row?.type).toBe('richText');
@@ -57,8 +56,8 @@ describe('render-ready dynamic forum image variants', () => {
   it('[REG-PERF-010] fixes the RNRH content model before TTree generation for unknown and learned sizes', () => {
     const url = 'https://i.imgur.com/dynamic.png';
     const row = renderedRow(`<p>before <img class="embedded_image" src="${url}" alt="dynamic"> after</p>`);
-    const unknownHtml = resolveForumContentSegmentHtml(row, {});
-    const learnedHtml = resolveForumContentSegmentHtml(row, { [url]: true });
+    const unknownHtml = resolveForumContentRowHtml(row, {});
+    const learnedHtml = resolveForumContentRowHtml(row, { [url]: true });
     const unknownNodes = allTNodes(engine.buildTTree(unknownHtml));
     const learnedNodes = allTNodes(engine.buildTTree(learnedHtml));
     const unknownImage = unknownNodes.find((node) => node.tagName === 'img');
@@ -81,7 +80,7 @@ describe('render-ready dynamic forum image variants', () => {
         .join('')}after</p>`
     );
     const variants = Array.from({ length: 16 }, (_, mask) =>
-      resolveForumContentSegmentHtml(
+      resolveForumContentRowHtml(
         row,
         Object.fromEntries(urls.flatMap((url, index) => (mask & (1 << index) ? [[url, true]] : [])))
       )
@@ -102,7 +101,7 @@ describe('render-ready dynamic forum image variants', () => {
     const urls = ['https://i.imgur.com/first.png', 'https://i.imgur.com/second.png'];
     const rawHtml = `<p>${urls.map((url) => `<img class="embedded_image" src="${url}">`).join('')}</p>`;
     const row = renderedRow(rawHtml);
-    const resolved = resolveForumContentSegmentHtml(row, { [urls[0]]: true });
+    const resolved = resolveForumContentRowHtml(row, { [urls[0]]: true });
 
     expect(resolved).toContain(`<${INLINE_FORUM_IMAGE_TAG}`);
     expect(resolved.indexOf(urls[0])).toBeLessThan(resolved.indexOf(urls[1]));
@@ -114,7 +113,7 @@ describe('render-ready dynamic forum image variants', () => {
       `<p><img class="embedded_image" src="${url}" referrerpolicy="no-referrer"><img class="embedded_image" src="${url}" referrerpolicy="origin"></p>`
     );
     const noReferrerIdentity = `${url}\u0000referrer:none`;
-    const resolved = resolveForumContentSegmentHtml(row, { [noReferrerIdentity]: true }, (src, policy, identities) =>
+    const resolved = resolveForumContentRowHtml(row, { [noReferrerIdentity]: true }, (src, policy, identities) =>
       Boolean(identities[`${src}\u0000referrer:${policy === 'no-referrer' ? 'none' : 'origin'}`])
     );
 

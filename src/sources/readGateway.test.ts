@@ -96,14 +96,7 @@ describe('source gateway reads', () => {
     expect(detail).toMatchObject({ replies: [], replyCompleteness: 'partial', replyHasMore: true });
     expect(detail.preparedContent).toMatchObject({
       contentHtml: '<p>body</p>',
-      contentPlan: {
-        regions: [
-          expect.objectContaining({
-            kind: 'selectable',
-            segments: [expect.objectContaining({ type: 'richText' })]
-          })
-        ]
-      }
+      contentPlan: { rows: [expect.objectContaining({ type: 'richText' })] }
     });
     expect(fetcher).not.toHaveBeenCalledWith(expect.stringContaining('book_re.aspx'), expect.anything());
   });
@@ -126,14 +119,7 @@ describe('source gateway reads', () => {
 
     expect(result.items[0]).toMatchObject({ author: 'bob', floor: 61 });
     expect(result.items[0]?.preparedContent).toMatchObject({
-      contentPlan: {
-        regions: [
-          expect.objectContaining({
-            kind: 'selectable',
-            segments: [expect.objectContaining({ type: 'richText' })]
-          })
-        ]
-      }
+      contentPlan: { rows: [expect.objectContaining({ type: 'richText' })] }
     });
     expect(fetcher).toHaveBeenCalledWith(
       'https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3',

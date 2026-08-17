@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import type { Reply } from '@/domain/forum/models';
-import { forumContentRegionForSegment } from '../../../../tests/helpers/forumContentSegments';
 import { topicListItemType, topicListMediaPlanStats, type TopicListItem } from './topicListModel';
 
 const reply: Reply = {
@@ -17,7 +16,7 @@ describe('topic list model', () => {
       ancestorFrames: [],
       keySuffix: 'node-0:0',
       networkMediaCount: 0,
-      semanticContinuation: 'only' as const,
+      part: 'only' as const,
       segmentIndex: 0,
       semanticId: 'node-0',
       tabs: [{ id: 'node-0-tab-0', title: 'Overview' }],
@@ -25,17 +24,13 @@ describe('topic list model', () => {
     };
 
     expect(
-      topicListItemType({
-        type: 'topicContent',
-        key: 'topic-terminal',
-        content: { type: 'content', key: 'region', region: forumContentRegionForSegment(row) }
-      })
+      topicListItemType({ type: 'topicContent', key: 'topic-terminal', content: { type: 'content', key: 'row', row } })
     ).toBe('topicContent:terminalReportHeader');
     expect(
       topicListItemType({
         type: 'replyContent',
         key: 'reply-terminal',
-        content: forumContentRegionForSegment(row),
+        content: row,
         first: true,
         last: false,
         reply,
@@ -47,17 +42,17 @@ describe('topic list model', () => {
   it('[REG-TOPIC-088] includes a single-cell reply payload kind in its FlashList view type', () => {
     expect(
       topicListItemType({
-        bodyContent: forumContentRegionForSegment({
+        bodyContent: {
           ancestorFrames: [],
           keySuffix: 'node-0:0',
           networkMediaCount: 0,
-          semanticContinuation: 'only',
+          part: 'only',
           runs: [{ text: 'code' }],
           segmentIndex: 0,
           semanticId: 'node-0',
           text: 'code',
           type: 'codeBlock'
-        }),
+        },
         key: 'reply-floor-2',
         reply,
         replyFloor: 2,
@@ -74,16 +69,16 @@ describe('topic list model', () => {
         content: {
           type: 'content',
           key: 'content-1',
-          region: forumContentRegionForSegment({
+          row: {
             type: 'richText',
             ancestorFrames: [],
             html: '<p><img src="https://secret.example/1.jpg"></p>',
             keySuffix: 'node-0:0',
             networkMediaCount: 4,
-            semanticContinuation: 'only',
+            part: 'only',
             segmentIndex: 0,
             semanticId: 'node-0'
-          })
+          }
         }
       },
       { type: 'replyStart', key: 'reply-start', reply, replyFloor: 2 },
@@ -92,16 +87,16 @@ describe('topic list model', () => {
         key: 'reply-content',
         reply,
         replyFloor: 2,
-        content: forumContentRegionForSegment({
+        content: {
           type: 'richText',
           ancestorFrames: [],
           html: '<img src="https://secret.example/2.jpg">',
           keySuffix: 'node-0:0',
           networkMediaCount: 1,
-          semanticContinuation: 'only',
+          part: 'only',
           segmentIndex: 0,
           semanticId: 'node-0'
-        }),
+        },
         first: true,
         last: true
       },
@@ -110,16 +105,16 @@ describe('topic list model', () => {
         key: 'reply-signature',
         reply,
         replyFloor: 2,
-        content: forumContentRegionForSegment({
+        content: {
           type: 'richText',
           ancestorFrames: [],
           html: '<img src="https://secret.example/3.jpg">',
           keySuffix: 'node-0:0',
           networkMediaCount: 1,
-          semanticContinuation: 'only',
+          part: 'only',
           segmentIndex: 0,
           semanticId: 'node-0'
-        }),
+        },
         first: true,
         last: true
       },

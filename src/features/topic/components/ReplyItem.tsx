@@ -16,6 +16,7 @@ import type {
   TopicPoll,
   UserReference
 } from '@/domain/forum/models';
+import { highlightHtml } from '@/ui/text/highlight';
 import { stripHtml } from '@/domain/forum/text';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { parseForumTopicLink } from '@/domain/forum/links';
@@ -47,7 +48,7 @@ import { getReplyKey, type ReplyRenderableContent, type TopicReplyListItem } fro
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 import { TopicSplitDisclosureScope } from '../rendering/TopicSplitDisclosure';
-import type { ForumContentMaterializationRegion } from '@/domain/forum/topicContentSplit';
+import { resolveForumContentRowHtml, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 
 type NodeSeekStat = { label: string; value: number };
 type ReplyItemSection = Extract<
@@ -214,7 +215,6 @@ export function ReplyItem({
   onDeleteReply,
   onEditReply,
   onLocateReply,
-  onLinkPress,
   onOpenTopic,
   onOpenUser,
   onQuoteContentLayout,
@@ -253,7 +253,6 @@ export function ReplyItem({
   onDeleteReply: (reply: Reply) => void;
   onEditReply: (reply: Reply) => void;
   onLocateReply: (target: ReplyLocationTarget) => void;
-  onLinkPress: (href: string) => void;
   onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
   onOpenUser: (user: UserReference) => void;
   onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
@@ -278,6 +277,29 @@ export function ReplyItem({
           ? [section.quote]
           : quotedPostsForSource(reply, source),
     [isDetachedContent, reply, section, source]
+  );
+  const rendersReplyBody = !section || (section.type === 'replyEnd' && !bodyVirtualized);
+  const highlightedHtml = useMemo(
+    () =>
+      rendersReplyBody
+        ? highlightHtml(
+            bodyContent && 'html' in bodyContent
+              ? resolveForumContentRowHtml(bodyContent, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage)
+              : reply.contentHtml,
+            query
+          )
+        : '',
+    [bodyContent, inlineSizedImageUrls, query, rendersReplyBody, reply.contentHtml, topicImageDeriver]
+  );
+  const highlightedSectionHtml = useMemo(
+    () =>
+      section?.type === 'replyContent' && section.content.type !== 'poll' && 'html' in section.content
+        ? highlightHtml(
+            resolveForumContentRowHtml(section.content, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage),
+            query
+          )
+        : '',
+    [inlineSizedImageUrls, query, section, topicImageDeriver]
   );
   const replyContentWidth = Math.max(220, contentWidth - 42);
   const copyReplyTextToClipboard = useCallback(() => {
@@ -312,7 +334,7 @@ export function ReplyItem({
     return (
       <View style={[styles.replyCard, styles.replyCardMiddle]} testID={`reply-content-row-${section.key}`}>
         <View style={styles.replyContentArea}>
-          {section.content.kind === 'island' && section.content.segment.type === 'poll' ? (
+          {section.content.type === 'poll' ? (
             <View style={styles.replyBody}>
               <TopicPolls
                 actionBusy={actionBusy}
@@ -321,7 +343,7 @@ export function ReplyItem({
                 onTogglePollSelection={onTogglePollSelection}
                 onVotePoll={onVotePoll}
                 pollSelections={pollSelections}
-                polls={[section.content.segment.poll]}
+                polls={[section.content.poll]}
                 source={source}
                 styles={styles}
                 theme={theme}
@@ -332,11 +354,9 @@ export function ReplyItem({
               <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
                 <MemoizedTopicContentBlock
                   contentWidth={replyContentWidth}
-                  inlineSizedImageUrls={inlineSizedImageUrls}
-                  isInlineSizedImage={topicImageDeriver?.isInlineSizedImage}
-                  onLinkPress={onLinkPress}
+                  html={highlightedSectionHtml || undefined}
                   query={query}
-                  region={section.content}
+                  row={section.content}
                 />
               </Pressable>
             </TopicSplitDisclosureScope>
@@ -353,11 +373,17 @@ export function ReplyItem({
             <View style={section.first ? styles.replySignature : undefined}>
               <MemoizedTopicContentBlock
                 contentWidth={replyContentWidth}
-                inlineSizedImageUrls={inlineSizedImageUrls}
-                isInlineSizedImage={topicImageDeriver?.isInlineSizedImage}
-                onLinkPress={onLinkPress}
+                html={
+                  'html' in section.content
+                    ? resolveForumContentRowHtml(
+                        section.content,
+                        inlineSizedImageUrls,
+                        topicImageDeriver?.isInlineSizedImage
+                      )
+                    : undefined
+                }
                 query={query}
-                region={section.content}
+                row={section.content}
               />
             </View>
           </TopicSplitDisclosureScope>
@@ -395,7 +421,7 @@ export function ReplyItem({
             }
           >
             <View style={bodyStyle}>
-              {section.content.kind === 'island' && section.content.segment.type === 'poll' ? (
+              {section.content.type === 'poll' ? (
                 <TopicPolls
                   embeddedInArticle
                   actionBusy={actionBusy}
@@ -403,7 +429,7 @@ export function ReplyItem({
                   onTogglePollSelection={onTogglePollSelection}
                   onVotePoll={onVotePoll}
                   pollSelections={pollSelections}
-                  polls={[section.content.segment.poll]}
+                  polls={[section.content.poll]}
                   source={section.reference.source}
                   styles={styles}
                   theme={theme}
@@ -413,11 +439,20 @@ export function ReplyItem({
                   <Pressable delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
                     <MemoizedTopicContentBlock
                       contentWidth={Math.max(220, replyContentWidth - 24)}
-                      inlineSizedImageUrls={inlineSizedImageUrls}
-                      isInlineSizedImage={topicImageDeriver?.isInlineSizedImage}
-                      onLinkPress={onLinkPress}
+                      html={
+                        'html' in section.content
+                          ? highlightHtml(
+                              resolveForumContentRowHtml(
+                                section.content,
+                                inlineSizedImageUrls,
+                                topicImageDeriver?.isInlineSizedImage
+                              ),
+                              query
+                            )
+                          : undefined
+                      }
                       query={query}
-                      region={section.content}
+                      row={section.content}
                     />
                   </Pressable>
                 </TopicSplitDisclosureScope>
@@ -713,11 +748,9 @@ export function ReplyItem({
                   <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
                     <MemoizedTopicContentBlock
                       contentWidth={replyContentWidth}
-                      inlineSizedImageUrls={inlineSizedImageUrls}
-                      isInlineSizedImage={topicImageDeriver?.isInlineSizedImage}
-                      onLinkPress={onLinkPress}
+                      html={'html' in bodyContent ? highlightedHtml : undefined}
                       query={query}
-                      region={bodyContent}
+                      row={bodyContent}
                       trimTrailingBlockSpacing
                     />
                   </Pressable>
@@ -728,11 +761,17 @@ export function ReplyItem({
                   <View style={styles.replySignature}>
                     <MemoizedTopicContentBlock
                       contentWidth={replyContentWidth}
-                      inlineSizedImageUrls={inlineSizedImageUrls}
-                      isInlineSizedImage={topicImageDeriver?.isInlineSizedImage}
-                      onLinkPress={onLinkPress}
+                      html={
+                        'html' in signatureContent
+                          ? resolveForumContentRowHtml(
+                              signatureContent,
+                              inlineSizedImageUrls,
+                              topicImageDeriver?.isInlineSizedImage
+                            )
+                          : undefined
+                      }
                       query={query}
-                      region={signatureContent}
+                      row={signatureContent}
                       trimTrailingBlockSpacing
                     />
                   </View>
@@ -984,22 +1023,17 @@ function sameReplyItemSection(previous: ReplyItemSection | undefined, next: Repl
 const defaultIsInlineSizedImage: TopicImageDeriver['isInlineSizedImage'] = (url, _referrerPolicy, identities) =>
   Boolean(identities[url]);
 
-function compiledRegionInlineImageStateChanged(
-  region: ForumContentMaterializationRegion | undefined,
+function compiledRowInlineImageStateChanged(
+  row: CompiledForumContentRow | undefined,
   previousUrls: Readonly<Record<string, boolean | undefined>>,
   nextUrls: Readonly<Record<string, boolean | undefined>>,
   topicImageDeriver: TopicImageDeriver | undefined
 ) {
-  if (!region) return false;
+  if (!row || !('html' in row) || !row.rendering) return false;
   const isInlineSizedImage = topicImageDeriver?.isInlineSizedImage || defaultIsInlineSizedImage;
-  const segments = region.kind === 'selectable' ? region.segments : [region.segment];
-  return segments.some(
-    (segment) =>
-      'html' in segment &&
-      segment.rendering?.dynamicImages.some(
-        ({ url, referrerPolicy }) =>
-          isInlineSizedImage(url, referrerPolicy, previousUrls) !== isInlineSizedImage(url, referrerPolicy, nextUrls)
-      )
+  return row.rendering.dynamicImages.some(
+    ({ url, referrerPolicy }) =>
+      isInlineSizedImage(url, referrerPolicy, previousUrls) !== isInlineSizedImage(url, referrerPolicy, nextUrls)
   );
 }
 
@@ -1016,14 +1050,14 @@ function replyItemInlineImageStateChanged(
     section?.type === 'replyContent' ||
     section?.type === 'replySignatureContent'
   ) {
-    return compiledRegionInlineImageStateChanged(section.content, previousUrls, nextUrls, props.topicImageDeriver);
+    return compiledRowInlineImageStateChanged(section.content, previousUrls, nextUrls, props.topicImageDeriver);
   }
   if (section && section.type !== 'replyEnd') return false;
   return (
     (!section?.bodyVirtualized &&
-      compiledRegionInlineImageStateChanged(props.bodyContent, previousUrls, nextUrls, props.topicImageDeriver)) ||
+      compiledRowInlineImageStateChanged(props.bodyContent, previousUrls, nextUrls, props.topicImageDeriver)) ||
     (!section?.signatureVirtualized &&
-      compiledRegionInlineImageStateChanged(props.signatureContent, previousUrls, nextUrls, props.topicImageDeriver))
+      compiledRowInlineImageStateChanged(props.signatureContent, previousUrls, nextUrls, props.topicImageDeriver))
   );
 }
 
@@ -1039,7 +1073,6 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.onDeleteReply !== next.onDeleteReply ||
     previous.onEditReply !== next.onEditReply ||
     previous.onInteract !== next.onInteract ||
-    previous.onLinkPress !== next.onLinkPress ||
     previous.onLocateReply !== next.onLocateReply ||
     previous.onOpenTopic !== next.onOpenTopic ||
     previous.onOpenUser !== next.onOpenUser ||

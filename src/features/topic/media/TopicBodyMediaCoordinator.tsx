@@ -403,8 +403,25 @@ class TopicBodyMediaCoordinator {
       });
     this.warmKeys = new Set(eligible.slice(0, MAX_WARM_BLOCK_MEDIA).map((entry) => entry.key));
 
+    const scheduledKeys = new Set<string>();
+    if (this.active && !this.paused) {
+      const scheduledIdentities = new Set<string>();
+      let scheduledOriginalCount = 0;
+      for (const entry of eligible) {
+        if (scheduledKeys.size >= MAX_IN_FLIGHT_BODY_MEDIA) break;
+        if (scheduledIdentities.has(entry.requestIdentity)) continue;
+        if (entry.kind === 'original' && scheduledOriginalCount >= 1) continue;
+        scheduledKeys.add(entry.key);
+        scheduledIdentities.add(entry.requestIdentity);
+        if (entry.kind === 'original') scheduledOriginalCount += 1;
+      }
+    }
+
     for (const entry of this.entries.values()) {
-      if (entry.status === 'running' && (!this.active || !this.warmKeys.has(entry.key))) {
+      if (
+        entry.status === 'running' &&
+        (!this.active || !this.warmKeys.has(entry.key) || (!this.paused && !scheduledKeys.has(entry.key)))
+      ) {
         this.cancelCount += 1;
         entry.deadline = null;
         entry.lastProgressValue = null;
@@ -422,7 +439,7 @@ class TopicBodyMediaCoordinator {
     if (this.active && !this.paused) {
       for (const entry of eligible) {
         if (runningCount >= MAX_IN_FLIGHT_BODY_MEDIA) break;
-        if (!this.warmKeys.has(entry.key) || entry.status !== 'waiting') continue;
+        if (!scheduledKeys.has(entry.key) || entry.status !== 'waiting') continue;
         if (runningIdentities.has(entry.requestIdentity)) continue;
         if (entry.kind === 'original' && runningOriginalCount >= 1) continue;
         entry.attempt += 1;

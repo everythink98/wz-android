@@ -57,7 +57,6 @@ const CONTENT_TOO_COMPLEX_NOTICE_HTML = '<p>内容过于复杂，请在原站查
 const CONTENT_TOO_COMPLEX_SUMMARY_HTML = '<summary>内容过于复杂，请在原站查看。</summary>';
 const CONTENT_TOO_COMPLEX_CALLOUT_TITLE_HTML = `<div class="${DISCOURSE_CALLOUT_TITLE_CLASS}">内容过于复杂，请在原站查看。</div>`;
 const DISCOURSE_POLL_PLACEHOLDER_TAG = 'forum-discourse-poll';
-const NODESEEK_POLL_PLACEHOLDER_TAG = 'forum-nodeseek-poll';
 const FORUM_INLINE_IMAGE_TAG = INLINE_FORUM_IMAGE_TAG;
 export const FORUM_COMPACT_CONTENT_CLASS = 'forum-reply-content';
 
@@ -89,10 +88,10 @@ export type ForumContentRendering = {
   readonly template: string;
 };
 
-export type ForumContentSemanticContinuation = 'only' | 'first' | 'middle' | 'last';
+export type ForumContentPart = 'only' | 'first' | 'middle' | 'last';
 
 type ForumContentFrameBase = {
-  readonly semanticContinuation: ForumContentSemanticContinuation;
+  readonly part: ForumContentPart;
   readonly semanticId: string;
 };
 
@@ -133,54 +132,40 @@ export type ForumCodeTextRun = {
   readonly text: string;
 };
 
-type ForumSemanticSegmentBase = {
+type ForumSemanticRowBase = {
   readonly ancestorFrames: readonly ForumContentAncestorFrame[];
   readonly keySuffix: string;
   readonly networkMediaCount: number;
-  readonly semanticContinuation: ForumContentSemanticContinuation;
+  readonly part: ForumContentPart;
   readonly segmentIndex: number;
   readonly semanticId: string;
 };
 
-type ForumHtmlSemanticSegmentBase = ForumSemanticSegmentBase & {
+type ForumHtmlSemanticRowBase = ForumSemanticRowBase & {
   readonly html: string;
   readonly rendering?: ForumContentRendering;
 };
 
-export type ForumContentTableCell = {
-  readonly colSpan: number;
-  readonly header: boolean;
-  readonly html: string;
-  readonly rendering?: ForumContentRendering;
-  readonly rowSpan: number;
-  readonly text: string;
-};
-
-export type ForumContentTableRow = {
-  readonly cells: readonly ForumContentTableCell[];
-};
-
-export type CompiledForumContentSegment =
-  | (ForumHtmlSemanticSegmentBase & { readonly type: 'richText' })
-  | (ForumHtmlSemanticSegmentBase & {
+export type CompiledForumContentRow =
+  | (ForumHtmlSemanticRowBase & { readonly type: 'richText' })
+  | (ForumHtmlSemanticRowBase & {
       readonly columns: number;
-      readonly tableRows: readonly ForumContentTableRow[];
       readonly type: 'table';
     })
-  | (ForumHtmlSemanticSegmentBase & {
+  | (ForumHtmlSemanticRowBase & {
       poster?: string;
       referrerPolicy?: MediaReferrerPolicy;
       src: string;
       type: 'video';
     })
-  | (ForumSemanticSegmentBase & {
+  | (ForumSemanticRowBase & {
       readonly copyText?: string;
       readonly runs: readonly ForumCodeTextRun[];
       readonly text: string;
       readonly type: 'codeBlock';
       readonly variant?: 'terminal';
     })
-  | (ForumSemanticSegmentBase & {
+  | (ForumSemanticRowBase & {
       readonly calloutType?: DiscourseCalloutType;
       readonly defaultExpanded: boolean;
       readonly disclosureKind: 'callout' | 'details';
@@ -190,41 +175,18 @@ export type CompiledForumContentSegment =
       readonly titleLabel: string;
       readonly type: 'disclosureHeader';
     })
-  | (ForumSemanticSegmentBase & {
+  | (ForumSemanticRowBase & {
       readonly defaultTabId: string;
       readonly tabs: readonly { readonly id: string; readonly title: string }[];
       readonly type: 'terminalReportHeader';
     })
-  | (ForumSemanticSegmentBase & { readonly poll: TopicPoll; readonly type: 'poll' })
-  | (ForumSemanticSegmentBase & { readonly quote: QuotedPostMetadata; readonly type: 'quote' });
-
-export type ForumContentSelectableSegment = Extract<CompiledForumContentSegment, { type: 'richText' | 'table' }>;
-export type ForumContentIslandSegment = Exclude<CompiledForumContentSegment, ForumContentSelectableSegment>;
-
-type ForumContentMaterializationRegionBase = {
-  readonly fallbackText: string;
-  readonly keySuffix: string;
-  readonly materializationBudget: ForumContentMaterializationBudget;
-  readonly networkMediaCount: number;
-};
-
-export type ForumContentMaterializationRegion =
-  | (ForumContentMaterializationRegionBase & {
-      readonly kind: 'selectable';
-      readonly segments: readonly ForumContentSelectableSegment[];
-    })
-  | (ForumContentMaterializationRegionBase & {
-      readonly kind: 'island';
-      readonly segment: ForumContentIslandSegment;
-    });
-
-export type ForumContentSelectableRegion = Extract<ForumContentMaterializationRegion, { kind: 'selectable' }>;
-export type ForumContentIslandRegion = Extract<ForumContentMaterializationRegion, { kind: 'island' }>;
+  | (ForumSemanticRowBase & { readonly poll: TopicPoll; readonly type: 'poll' })
+  | (ForumSemanticRowBase & { readonly quote: QuotedPostMetadata; readonly type: 'quote' });
 
 export type CompiledForumContent = {
   materializationBudget: ForumContentMaterializationBudget;
   previewImages: readonly ForumImagePreviewDescriptor[];
-  regions: readonly ForumContentMaterializationRegion[];
+  rows: readonly CompiledForumContentRow[];
 };
 
 export type PreparedReply = Reply & {
@@ -242,7 +204,7 @@ export type PreparedRepliesResponse = RepliesResponse & { items: PreparedReply[]
 export const EMPTY_COMPILED_FORUM_CONTENT: CompiledForumContent = {
   materializationBudget: { metrics: null, regionCount: 0 },
   previewImages: [],
-  regions: []
+  rows: []
 };
 
 const PLANNED_ISLAND_TAGS = new Set(['iframe', FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG]);
@@ -351,37 +313,8 @@ type NodeMetrics = {
   textChars: number;
 };
 
-const segmentMetrics = new WeakMap<CompiledForumContentSegment, NodeMetrics | null>();
-
-function withSegmentMetrics<T extends CompiledForumContentSegment>(segment: T, metrics: NodeMetrics | null): T {
-  segmentMetrics.set(segment, metrics);
-  return segment;
-}
-
-function copySegmentMetrics<T extends CompiledForumContentSegment>(source: CompiledForumContentSegment, target: T): T {
-  segmentMetrics.set(target, segmentMetrics.get(source) || null);
-  return target;
-}
-
-function materializationMetricsFromFragment(
-  fragment: HtmlFragment,
-  serializedChars = fragment.serializedChars,
-  wrapperCount = 0
-): NodeMetrics {
-  return {
-    domNodes: fragment.domNodes + wrapperCount,
-    // Every fragment has already passed the compiler's exact depth budget. Region
-    // packing only combines siblings, so depth cannot grow and does not need a
-    // second subtree walk.
-    elementDepth: MAX_PLANNED_ELEMENT_DEPTH,
-    mediaSlots: fragment.mediaSlots,
-    serializedChars,
-    textChars: fragment.textChars
-  };
-}
-
-export function resolveForumContentSegmentHtml(
-  segment: Pick<Extract<CompiledForumContentSegment, { html: string }>, 'html' | 'rendering'>,
+export function resolveForumContentRowHtml(
+  row: Pick<Extract<CompiledForumContentRow, { html: string }>, 'html' | 'rendering'>,
   inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
   isInlineSizedImage: (
     url: string,
@@ -389,16 +322,16 @@ export function resolveForumContentSegmentHtml(
     identities: Readonly<Record<string, boolean | undefined>>
   ) => boolean = (url, _referrerPolicy, identities) => Boolean(identities[normalizeDynamicInlineImageUrl(url)])
 ) {
-  if (!segment.rendering) return segment.html;
+  if (!row.rendering) return row.html;
   const inlineIds = new Set(
-    segment.rendering.dynamicImages.flatMap((image) =>
+    row.rendering.dynamicImages.flatMap((image) =>
       isInlineSizedImage(image.url, image.referrerPolicy, inlineSizedImageUrls) ? [image.id] : []
     )
   );
-  const descriptorsById = new Map(segment.rendering.dynamicImages.map((image) => [image.id, image] as const));
+  const descriptorsById = new Map(row.rendering.dynamicImages.map((image) => [image.id, image] as const));
   DYNAMIC_INLINE_IMAGE_PATTERN.lastIndex = 0;
   return stripCompilerOwnedAttributes(
-    segment.rendering.template.replace(DYNAMIC_INLINE_IMAGE_PATTERN, (_tag, rawAttrs: string, label: string) => {
+    row.rendering.template.replace(DYNAMIC_INLINE_IMAGE_PATTERN, (_tag, rawAttrs: string, label: string) => {
       const id = fallbackAttribute(rawAttrs, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE);
       if (!descriptorsById.has(id)) return '';
       const publicAttrs = rawAttrsWithoutValue(rawAttrs, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE);
@@ -619,7 +552,7 @@ function metricsFitRow(
   );
 }
 
-export function canCoalesceForumContentRegions(budgets: readonly ForumContentMaterializationBudget[]) {
+export function canCoalesceForumContentRows(budgets: readonly ForumContentMaterializationBudget[]) {
   const materializedBudgets = budgets.filter((budget) => budget.regionCount > 0);
   if (materializedBudgets.some((budget) => !budget.metrics)) return false;
   const metrics = combinedNodeMetrics(
@@ -1288,7 +1221,7 @@ function standaloneForumVideo(html: string) {
 
 function compileRoleIncludesPolls(role: ForumContentCompileRole, source: Source) {
   if (role === 'signature') return false;
-  if (role === 'opening' || role === 'quoted-reply') return source === 'nodeseek' || isDiscourseSource(source);
+  if (role === 'opening' || role === 'quoted-reply') return isDiscourseSource(source);
   return true;
 }
 
@@ -1302,16 +1235,6 @@ function compileFallbackSegments({
   source: Source;
 }) {
   const pollsByName = new Map(pollList.flatMap((poll) => (poll.name ? [[poll.name, poll] as const] : [])));
-  const pollsById = new Map(
-    pollList.flatMap((poll) =>
-      poll.id
-        ? ([
-            [poll.id, poll],
-            [encodeURIComponent(poll.id), poll]
-          ] as const)
-        : []
-    )
-  );
   const matchedPolls = new Set<TopicPoll>();
   const segments: PlannedCompileSegment[] = [];
   const appendHtml = (value: string) => {
@@ -1329,18 +1252,18 @@ function compileFallbackSegments({
       );
     });
   };
-  if (!isDiscourseSource(source) && source !== 'nodeseek') {
+  if (!isDiscourseSource(source)) {
     appendHtml(clean);
   } else {
-    const placeholderTag = isDiscourseSource(source) ? DISCOURSE_POLL_PLACEHOLDER_TAG : NODESEEK_POLL_PLACEHOLDER_TAG;
-    const identityAttribute = isDiscourseSource(source) ? 'name' : 'id';
-    const markerPattern = new RegExp(`<${placeholderTag}\\b[^>]*>\\s*</${placeholderTag}\\s*>`, 'gi');
+    const markerPattern = new RegExp(
+      `<${DISCOURSE_POLL_PLACEHOLDER_TAG}\\b[^>]*>\\s*</${DISCOURSE_POLL_PLACEHOLDER_TAG}\\s*>`,
+      'gi'
+    );
     let consumedLength = 0;
     let match: RegExpExecArray | null;
     while ((match = markerPattern.exec(clean))) {
       appendHtml(clean.slice(consumedLength, match.index));
-      const identity = fallbackAttribute(match[0], identityAttribute);
-      const poll = isDiscourseSource(source) ? pollsByName.get(identity) : pollsById.get(identity);
+      const poll = pollsByName.get(fallbackAttribute(match[0], 'name'));
       if (poll) {
         matchedPolls.add(poll);
         segments.push({ poll, type: 'poll' });
@@ -1432,7 +1355,7 @@ type SemanticCompileEntry = {
   readonly path: string;
 };
 
-function semanticContinuation(index: number, length: number): ForumContentSemanticContinuation {
+function semanticPart(index: number, length: number): ForumContentPart {
   if (length <= 1) return 'only';
   if (index === 0) return 'first';
   return index === length - 1 ? 'last' : 'middle';
@@ -1450,12 +1373,12 @@ function semanticRowBase({
   length: number;
   networkMediaCount: number;
   semanticId: string;
-}): ForumSemanticSegmentBase {
+}): ForumSemanticRowBase {
   return {
     ancestorFrames,
     keySuffix: `${semanticId}:${index}`,
     networkMediaCount,
-    semanticContinuation: semanticContinuation(index, length),
+    part: semanticPart(index, length),
     segmentIndex: index,
     semanticId
   };
@@ -1467,28 +1390,60 @@ function frameForRow(
   length: number,
   followsHeader = false
 ): ForumContentAncestorFrame {
-  const continuation = followsHeader ? (index === length - 1 ? 'last' : 'middle') : semanticContinuation(index, length);
-  return { ...seed, semanticContinuation: continuation } as ForumContentAncestorFrame;
+  const part = followsHeader ? (index === length - 1 ? 'last' : 'middle') : semanticPart(index, length);
+  return { ...seed, part } as ForumContentAncestorFrame;
 }
 
 function prependAncestorFrame(
-  rows: readonly CompiledForumContentSegment[],
+  rows: readonly CompiledForumContentRow[],
   seed: ForumContentAncestorFrameSeed,
   followsHeader = false
 ) {
-  return rows.map((row, index): CompiledForumContentSegment =>
-    copySegmentMetrics(row, {
-      ...row,
-      ancestorFrames: [frameForRow(seed, index, rows.length, followsHeader), ...row.ancestorFrames]
-    })
-  );
+  return rows.map((row, index): CompiledForumContentRow => ({
+    ...row,
+    ancestorFrames: [frameForRow(seed, index, rows.length, followsHeader), ...row.ancestorFrames]
+  }));
+}
+
+function nodeMetricsFromRenderedHtml(html: string): NodeMetrics | null {
+  const structure = fallbackStructureMetrics(html);
+  if (structure.malformed) return null;
+  return {
+    domNodes: structure.domNodes,
+    elementDepth: structure.elementDepth,
+    mediaSlots: renderedHtmlMediaSlots(html),
+    serializedChars: html.length,
+    textChars: html.replace(/<[^>]+>/g, '').length
+  };
+}
+
+function combinedSemanticRowMetrics(rows: readonly CompiledForumContentRow[]) {
+  const metrics = rows.flatMap((row) => {
+    if (row.type === 'codeBlock') {
+      return [
+        {
+          domNodes: row.runs.length + 1,
+          elementDepth: 2,
+          mediaSlots: 0,
+          serializedChars: row.text.length + JSON.stringify(row.runs.map((run) => run.style || null)).length,
+          textChars: row.text.length
+        }
+      ];
+    }
+    if ('html' in row) {
+      const current = nodeMetricsFromRenderedHtml(row.html);
+      return current ? [current] : [];
+    }
+    return [];
+  });
+  return metrics.length === rows.length ? combinedNodeMetrics(metrics) : null;
 }
 
 function codeRowsForNode(
   node: PlanningNode,
   nodePath: string,
-  variant?: Extract<CompiledForumContentSegment, { type: 'codeBlock' }>['variant']
-): CompiledForumContentSegment[] | null {
+  variant?: Extract<CompiledForumContentRow, { type: 'codeBlock' }>['variant']
+): CompiledForumContentRow[] | null {
   const normalizedRuns = normalizedCodeRuns(node);
   const ownerRuns = variant
     ? normalizedRuns.map((run) => ({ ...run, text: run.text.replace(/\u00a0/g, ' ') }))
@@ -1496,41 +1451,24 @@ function codeRowsForNode(
   if (!ownerRuns.length) return null;
   const semanticId = `node-${nodePath}`;
   const copyText = ownerRuns.map((run) => run.text).join('');
-  const materializationMetrics: NodeMetrics = {
-    domNodes: ownerRuns.length + 1,
-    elementDepth: 2,
-    mediaSlots: 0,
-    serializedChars: copyText.length + JSON.stringify(ownerRuns.map((run) => run.style || null)).length,
-    textChars: copyText.length
-  };
   return [
-    withSegmentMetrics(
-      {
-        ...semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId }),
-        copyText,
-        runs: ownerRuns,
-        text: copyText,
-        type: 'codeBlock',
-        ...(variant ? { variant } : {})
-      },
-      materializationMetrics
-    )
+    {
+      ...semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId }),
+      copyText,
+      runs: ownerRuns,
+      text: copyText,
+      type: 'codeBlock',
+      ...(variant ? { variant } : {})
+    }
   ];
 }
 
 type SemanticTableRow = {
-  readonly cells: readonly ForumContentTableCell[];
   readonly html: string;
-  readonly node: PlanningNode;
   readonly sectionAttrs: string;
   readonly sectionTag: '' | 'tbody' | 'tfoot' | 'thead';
   readonly spanToFollowingRows: number;
 };
-
-function tableCellColumnSpan(node: PlanningNode) {
-  const raw = nodeAttribute(node, 'colspan');
-  return /^\d+$/.test(raw) ? Math.min(Math.max(Number.parseInt(raw, 10), 1), MAX_DOM_NODES_PER_PLANNED_ROW) : 1;
-}
 
 function tableCellRowSpan(node: PlanningNode, remainingSectionRows: number) {
   const raw = nodeAttribute(node, 'rowspan');
@@ -1553,15 +1491,7 @@ function semanticTableRows(table: PlanningNode) {
         return tagName === 'td' || tagName === 'th';
       });
       records.push({
-        cells: cells.map((cell) => ({
-          colSpan: tableCellColumnSpan(cell),
-          header: nodeTagName(cell) === 'th',
-          html: innerHtml(cell),
-          rowSpan: tableCellRowSpan(cell, rows.length - rowIndex - 1),
-          text: String(cell.text || '').trim()
-        })),
         html: row.toString(),
-        node: row,
         sectionAttrs,
         sectionTag,
         spanToFollowingRows: Math.max(0, ...cells.map((cell) => tableCellRowSpan(cell, rows.length - rowIndex - 1) - 1))
@@ -1576,30 +1506,6 @@ function semanticTableRows(table: PlanningNode) {
     }
   }
   return records;
-}
-
-function tableMaterializationMetrics(
-  rows: readonly SemanticTableRow[],
-  html: string,
-  metrics: WeakMap<object, NodeMetrics>
-): NodeMetrics | null {
-  const rowMetrics = rows.map((row) => metrics.get(row.node));
-  if (rowMetrics.some((value) => !value)) return null;
-  let sectionCount = 0;
-  let previousSection = '';
-  rows.forEach((row) => {
-    const section = row.sectionTag ? `${row.sectionTag}:${row.sectionAttrs}` : '';
-    if (section && section !== previousSection) sectionCount += 1;
-    previousSection = section;
-  });
-  const combined = combinedNodeMetrics(rowMetrics as NodeMetrics[]);
-  return {
-    domNodes: combined.domNodes + sectionCount + 1,
-    elementDepth: MAX_PLANNED_ELEMENT_DEPTH,
-    mediaSlots: combined.mediaSlots,
-    serializedChars: html.length,
-    textChars: combined.textChars
-  };
 }
 
 function tableHtmlForRows(table: PlanningNode, rows: readonly SemanticTableRow[], continuationIndex: number) {
@@ -1637,11 +1543,7 @@ function tableConnectedRegions(rows: readonly SemanticTableRow[]) {
   return regions;
 }
 
-function tableRowsForNode(
-  node: PlanningNode,
-  nodePath: string,
-  metrics: WeakMap<object, NodeMetrics>
-): CompiledForumContentSegment[] | null {
+function tableRowsForNode(node: PlanningNode, nodePath: string): CompiledForumContentRow[] | null {
   const rows = semanticTableRows(node);
   if (!rows.length) return null;
   const regions = tableConnectedRegions(rows);
@@ -1662,42 +1564,27 @@ function tableRowsForNode(
   const columns = tableColumnCount(node);
   return segments.map((segment, index) => {
     const html = tableHtmlForRows(node, segment, index);
-    const materializationMetrics = tableMaterializationMetrics(segment, html, metrics);
-    return withSegmentMetrics(
-      {
-        ...semanticRowBase({
-          index,
-          length: segments.length,
-          networkMediaCount: materializationMetrics?.mediaSlots || 0,
-          semanticId
-        }),
-        columns,
-        html,
-        tableRows: segment.map((row) => ({ cells: row.cells })),
-        type: 'table'
-      },
-      materializationMetrics
-    );
+    return {
+      ...semanticRowBase({
+        index,
+        length: segments.length,
+        networkMediaCount: renderedHtmlMediaSlots(html),
+        semanticId
+      }),
+      columns,
+      html,
+      type: 'table'
+    };
   });
 }
 
-function compilerNoticeRow(nodePath: string): Extract<CompiledForumContentSegment, { type: 'richText' }> {
+function compilerNoticeRow(nodePath: string): Extract<CompiledForumContentRow, { type: 'richText' }> {
   const semanticId = `node-${nodePath}-notice`;
-  const fragment: HtmlFragment = {
-    domNodes: 2,
+  return {
+    ...semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId }),
     html: CONTENT_TOO_COMPLEX_NOTICE_HTML,
-    mediaSlots: 0,
-    serializedChars: CONTENT_TOO_COMPLEX_NOTICE_HTML.length,
-    textChars: 16
+    type: 'richText'
   };
-  return withSegmentMetrics(
-    {
-      ...semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId }),
-      html: CONTENT_TOO_COMPLEX_NOTICE_HTML,
-      type: 'richText'
-    },
-    materializationMetricsFromFragment(fragment)
-  );
 }
 
 function wrapperReserve(wrappers: readonly SemanticHtmlWrapper[]): HtmlFragmentReserve {
@@ -1735,21 +1622,23 @@ function plainSemanticRows(
   );
   const groups = packFragments(fragments, reserve);
   const semanticId = `node-${entries[0].path}`;
-  return groups.map((group, index): CompiledForumContentSegment => {
+  return groups.map((group, index): CompiledForumContentRow => {
     // Keep compiler-owned dynamic-image ids until materialization has produced
     // every deterministic media variant. They are stripped below before any
     // row reaches a renderer.
     const html = wrapSemanticHtml(group.html, wrappers, index);
     const video = standaloneForumVideo(html);
-    const base = semanticRowBase({ index, length: groups.length, networkMediaCount: group.mediaSlots, semanticId });
-    return withSegmentMetrics(
-      video ? { ...base, ...video, html, type: 'video' } : { ...base, html, type: 'richText' },
-      materializationMetricsFromFragment(group, html.length, wrappers.length)
-    );
+    const base = semanticRowBase({
+      index,
+      length: groups.length,
+      networkMediaCount: renderedHtmlMediaSlots(html),
+      semanticId
+    });
+    return video ? { ...base, ...video, html, type: 'video' } : { ...base, html, type: 'richText' };
   });
 }
 
-function semanticDirectiveRow(directive: TypedForumContentDirective, nodePath: string): CompiledForumContentSegment[] {
+function semanticDirectiveRow(directive: TypedForumContentDirective, nodePath: string): CompiledForumContentRow[] {
   const semanticId = `node-${nodePath}`;
   const base = semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId });
   if (directive.type === 'quote') return [{ ...base, quote: directive.quote, type: 'quote' }];
@@ -1760,7 +1649,7 @@ function typedRowsInSubtree(
   node: PlanningNode,
   nodePath: string,
   typedDirectives: WeakMap<object, TypedForumContentDirective>
-): CompiledForumContentSegment[] {
+): CompiledForumContentRow[] {
   const directive = typedDirectives.get(node);
   if (directive) return semanticDirectiveRow(directive, nodePath);
   return (node.childNodes || []).flatMap((child, index) =>
@@ -1825,7 +1714,7 @@ function disclosureHeaderRow({
   nodePath: string;
   titleHtml: string;
   titleLabel: string;
-}): Extract<CompiledForumContentSegment, { type: 'disclosureHeader' }> {
+}): Extract<CompiledForumContentRow, { type: 'disclosureHeader' }> {
   const semanticId = `node-${nodePath}`;
   return {
     ...semanticRowBase({ index: 0, length: hasBody ? 2 : 1, networkMediaCount: 0, semanticId }),
@@ -1845,7 +1734,7 @@ function terminalReportRows(
   nodePath: string,
   wrappers: readonly SemanticHtmlWrapper[],
   context: SemanticCompileContext
-): CompiledForumContentSegment[] {
+): CompiledForumContentRow[] {
   const childEntries = (node.childNodes || []).map((child, index) => ({ node: child, path: `${nodePath}.${index}` }));
   const tabEntries = childEntries.filter((entry) => nodeTagName(entry.node) === FORUM_TERMINAL_TAB_TAG);
   if (!tabEntries.length) return [compilerNoticeRow(nodePath)];
@@ -1895,7 +1784,7 @@ function terminalReportRows(
     );
   });
   const headerRows = headerTabGroups.map(
-    (headerTabs, index): Extract<CompiledForumContentSegment, { type: 'terminalReportHeader' }> => ({
+    (headerTabs, index): Extract<CompiledForumContentRow, { type: 'terminalReportHeader' }> => ({
       ...semanticRowBase({
         index,
         length: headerTabGroups.length,
@@ -1919,8 +1808,8 @@ function compileSemanticEntries(
   entries: readonly SemanticCompileEntry[],
   wrappers: readonly SemanticHtmlWrapper[],
   context: SemanticCompileContext
-): CompiledForumContentSegment[] {
-  const rows: CompiledForumContentSegment[] = [];
+): CompiledForumContentRow[] {
+  const rows: CompiledForumContentRow[] = [];
   let pending: SemanticCompileEntry[] = [];
   const flush = () => {
     rows.push(...plainSemanticRows(pending, wrappers, context.metrics));
@@ -1985,7 +1874,7 @@ function compileSemanticEntries(
               [...wrappers, { node }],
               context
             )
-          : tableRowsForNode(node, path, context.metrics) || [compilerNoticeRow(path)])
+          : tableRowsForNode(node, path) || [compilerNoticeRow(path)])
       );
       continue;
     }
@@ -2062,7 +1951,7 @@ function compileSemanticEntries(
       const parsedStart = Number.parseInt(nodeAttribute(node, 'start'), 10);
       const start = Number.isNaN(parsedStart) ? 1 : parsedStart;
       let nextMarker = start;
-      const listRows: CompiledForumContentSegment[] = [];
+      const listRows: CompiledForumContentRow[] = [];
       (node.childNodes || []).forEach((child, index) => {
         const childPath = `${path}.${index}`;
         if (nodeTagName(child) !== 'li') {
@@ -2149,25 +2038,18 @@ function semanticRowsFromParsedContent({
 }
 
 function semanticRowsFromFallbackSegments(segments: readonly PlannedCompileSegment[]) {
-  return segments.flatMap<CompiledForumContentSegment>((segment, index) => {
+  return segments.flatMap<CompiledForumContentRow>((segment, index) => {
     const semanticId = `fallback-${index}`;
     const base = semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId });
     if (segment.type === 'poll') return [{ ...base, poll: segment.poll, type: 'poll' }];
     if (segment.type === 'quote') return [{ ...base, quote: segment.quote, type: 'quote' }];
     const html = stripCompilerOwnedAttributes(segment.fragment.html);
-    const rowBase = semanticRowBase({
-      index: 0,
-      length: 1,
-      networkMediaCount: segment.fragment.mediaSlots,
-      semanticId
-    });
+    const rowBase = {
+      ...base,
+      networkMediaCount: segment.fragment.mediaSlots
+    };
     const video = standaloneForumVideo(html);
-    return [
-      withSegmentMetrics(
-        video ? { ...rowBase, ...video, html, type: 'video' } : { ...rowBase, html, type: 'richText' },
-        materializationMetricsFromFragment(segment.fragment, html.length)
-      )
-    ];
+    return [video ? { ...rowBase, ...video, html, type: 'video' } : { ...rowBase, html, type: 'richText' }];
   });
 }
 
@@ -2195,155 +2077,35 @@ function renderingForCompiledRow(html: string, dynamicImagesById: ReadonlyMap<st
     })),
     template: html
   };
-  return { html: resolveForumContentSegmentHtml({ html: '', rendering }, {}), rendering };
+  return { html: resolveForumContentRowHtml({ html: '', rendering }, {}), rendering };
 }
 
 function materializeCompiledRows(
-  rows: readonly CompiledForumContentSegment[],
+  rows: readonly CompiledForumContentRow[],
   dynamicInlineImages: readonly DynamicInlineImageDescriptor[]
 ) {
   const dynamicImagesById = new Map(dynamicInlineImages.map((descriptor) => [descriptor.id, descriptor] as const));
-  return rows.map((row): CompiledForumContentSegment => {
+  return rows.map((row): CompiledForumContentRow => {
     if (row.type !== 'richText' && row.type !== 'table' && row.type !== 'video') return row;
-    const materialized = {
-      ...row,
-      ...renderingForCompiledRow(row.html, dynamicImagesById),
-      ...(row.type === 'table'
-        ? {
-            tableRows: row.tableRows.map((tableRow) => ({
-              cells: tableRow.cells.map((cell) => ({
-                ...cell,
-                ...renderingForCompiledRow(cell.html, dynamicImagesById)
-              }))
-            }))
-          }
-        : {})
-    } as CompiledForumContentSegment;
-    return copySegmentMetrics(row, materialized);
+    return { ...row, ...renderingForCompiledRow(row.html, dynamicImagesById) };
   });
 }
 
-function selectableSegment(segment: CompiledForumContentSegment): segment is ForumContentSelectableSegment {
-  return segment.type === 'richText' || segment.type === 'table';
-}
-
-function segmentFallbackText(segment: CompiledForumContentSegment) {
-  if (segment.type === 'table') {
-    return segment.tableRows.flatMap((row) => row.cells.map((cell) => cell.text)).join('\n');
-  }
-  if ('html' in segment) {
-    return segment.html
-      .replace(/<br\b[^>]*>/gi, '\n')
-      .replace(/<\/(?:blockquote|div|h[1-6]|li|ol|p|tr|ul)\s*>/gi, '\n')
-      .replace(/<[^>]*>/g, '')
-      .replace(/&(amp|apos|gt|lt|nbsp|quot);/gi, (_entity, name: string) => {
-        const decoded: Record<string, string> = {
-          amp: '&',
-          apos: "'",
-          gt: '>',
-          lt: '<',
-          nbsp: ' ',
-          quot: '"'
-        };
-        return decoded[name.toLowerCase()] || '';
-      })
-      .replace(/\n{2,}/g, '\n')
-      .trim();
-  }
-  if (segment.type === 'codeBlock') return segment.text;
-  if (segment.type === 'disclosureHeader') return segment.titleLabel;
-  if (segment.type === 'terminalReportHeader') return segment.tabs.map((tab) => tab.title).join('\n');
-  return '';
-}
-
-function segmentMaterializationMetrics(segment: CompiledForumContentSegment) {
-  return segmentMetrics.get(segment) || null;
-}
-
-function interactiveAncestorIdentity(segment: ForumContentSelectableSegment) {
-  return segment.ancestorFrames
-    .filter((frame) => frame.kind === 'callout' || frame.kind === 'details' || frame.kind === 'terminalTab')
-    .map((frame) => `${frame.kind}:${frame.semanticId}`)
-    .join('|');
-}
-
-function materializationRegionsForSegments(segments: readonly CompiledForumContentSegment[]) {
-  const regions: ForumContentMaterializationRegion[] = [];
-  let pending: ForumContentSelectableSegment[] = [];
-  let pendingMetrics: NodeMetrics | null = combinedNodeMetrics([]);
-  let pendingInteractiveIdentity = '';
-  const flush = () => {
-    if (!pending.length) return;
-    const first = pending[0];
-    const last = pending[pending.length - 1];
-    regions.push({
-      fallbackText: pending.map(segmentFallbackText).filter(Boolean).join('\n'),
-      keySuffix: `selectable:${first.keySuffix}:${last.keySuffix}`,
-      kind: 'selectable',
-      materializationBudget: createForumContentMaterializationBudget(pendingMetrics, 1),
-      networkMediaCount: pending.reduce((total, segment) => total + segment.networkMediaCount, 0),
-      segments: pending
-    });
-    pending = [];
-    pendingMetrics = combinedNodeMetrics([]);
-    pendingInteractiveIdentity = '';
-  };
-
-  for (const segment of segments) {
-    if (!selectableSegment(segment)) {
-      flush();
-      const metrics = segmentMaterializationMetrics(segment);
-      regions.push({
-        fallbackText: segmentFallbackText(segment),
-        keySuffix: `island:${segment.keySuffix}`,
-        kind: 'island',
-        materializationBudget: createForumContentMaterializationBudget(metrics, 1),
-        networkMediaCount: segment.networkMediaCount,
-        segment
-      });
-      continue;
-    }
-
-    const metrics = segmentMaterializationMetrics(segment);
-    const identity = interactiveAncestorIdentity(segment);
-    const candidateMetrics = pendingMetrics && metrics ? combinedNodeMetrics([pendingMetrics, metrics]) : null;
-    if (
-      pending.length &&
-      (identity !== pendingInteractiveIdentity ||
-        !candidateMetrics ||
-        !metricsFitRow(candidateMetrics) ||
-        (pendingMetrics?.textChars || 0) >= TARGET_TEXT_CHARS_PER_PLANNED_ROW)
-    ) {
-      flush();
-    }
-    pending.push(segment);
-    pendingMetrics = pendingMetrics && metrics ? combinedNodeMetrics([pendingMetrics, metrics]) : null;
-    pendingInteractiveIdentity = identity;
-  }
-  flush();
-  return regions;
-}
-
 function compiledForumContentResult(
-  segments: readonly CompiledForumContentSegment[],
+  rows: readonly CompiledForumContentRow[],
+  materializationMetrics: NodeMetrics | null,
   dynamicInlineImages: readonly DynamicInlineImageDescriptor[] = [],
   previewImages: readonly ForumImagePreviewDescriptor[] = []
 ): CompiledForumContent {
-  const materializedSegments = materializeCompiledRows(segments, dynamicInlineImages);
-  const regions = materializationRegionsForSegments(materializedSegments);
-  const regionMetrics = regions.flatMap((region) =>
-    region.materializationBudget.metrics ? [region.materializationBudget.metrics] : []
-  );
-  const metrics =
-    regionMetrics.length === regions.length
-      ? combinedNodeMetrics(regionMetrics)
-      : regions.length
-        ? null
-        : combinedNodeMetrics([]);
+  const materializedRows = materializeCompiledRows(rows, dynamicInlineImages);
+  const renderedRowCount = materializedRows.filter((row) => row.type !== 'poll' && row.type !== 'quote').length;
   return {
-    materializationBudget: createForumContentMaterializationBudget(metrics, regions.length),
+    materializationBudget: createForumContentMaterializationBudget(
+      materializationMetrics,
+      renderedRowCount > 0 ? 1 : 0
+    ),
     previewImages,
-    regions
+    rows: materializedRows
   };
 }
 
@@ -2384,6 +2146,7 @@ function fallbackCompiledForumContent(
   const segments = compileFallbackSegments({ clean: fallbackClean, pollList, source });
   return compiledForumContentResult(
     semanticRowsFromFallbackSegments(segments),
+    fallbackClean ? null : combinedNodeMetrics([]),
     [],
     forumImagePreviewDescriptorsFromHtmlFallback(raw)
   );
@@ -2402,16 +2165,6 @@ function compileParsedForumContent({
   raw: string;
 }): CompiledForumContent {
   const pollsByName = new Map(pollList.flatMap((poll) => (poll.name ? [[poll.name, poll] as const] : [])));
-  const pollsById = new Map(
-    pollList.flatMap((poll) =>
-      poll.id
-        ? ([
-            [poll.id, poll],
-            [encodeURIComponent(poll.id), poll]
-          ] as const)
-        : []
-    )
-  );
   const matchedPolls = new Set<TopicPoll>();
   const extractsOpeningQuotes = role === 'opening' && Boolean(topicId) && isDiscourseSource(source);
   let dynamicInlineImages: readonly DynamicInlineImageDescriptor[] = [];
@@ -2432,11 +2185,6 @@ function compileParsedForumContent({
         if (poll) matchedPolls.add(poll);
         return { poll, type: 'poll' };
       }
-      if (source === 'nodeseek' && tagName === NODESEEK_POLL_PLACEHOLDER_TAG) {
-        const poll = pollsById.get(nodeAttribute(node, 'id'));
-        if (poll) matchedPolls.add(poll);
-        return { poll, type: 'poll' };
-      }
       if (extractsOpeningQuotes && tagName === 'aside' && topicId) {
         const quote = discourseQuotedPostMetadataFromNode(node, source as DiscourseSource, topicId);
         return quote ? { quote, type: 'quote' } : null;
@@ -2445,7 +2193,12 @@ function compileParsedForumContent({
     });
     const unmatchedPolls = pollList.filter((poll) => !matchedPolls.has(poll));
     const rows = semanticRowsFromParsedContent({ analysis, nodes, role, source, unmatchedPolls });
-    return compiledForumContentResult(rows, dynamicInlineImages, previewImages);
+    return compiledForumContentResult(
+      rows,
+      rows.length === 1 ? combinedSemanticRowMetrics(rows) : null,
+      dynamicInlineImages,
+      previewImages
+    );
   } catch {
     return fallbackCompiledForumContent(raw, pollList, role, source);
   }
