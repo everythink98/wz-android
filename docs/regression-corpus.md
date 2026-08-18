@@ -6117,6 +6117,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把 `pre: true` 放回正文 parser、让 sanitizer 改用整页 parser，或把 source contract 恢复为序列化后重新编译；编号测试必须重新出现字面标签或漏记 production parse。给 renderer/`normalizedCodeRuns` 加剥标签规则、按 NodeSeek 分支、设置 `code: true` 或引入第二次 parse 均不满足本条。 |
 | 明确不覆盖范围 | 不迁移到 parse5/htmlparser2，不升级 `node-html-parser`，不改变完整页面解析、code row 数据结构、视觉样式、代码分块预算、终端报告或其他来源线上内容。其他四站共享 seam 由自动测试覆盖；没有对应真实线上样本时设备状态记 `NOT_VERIFIED`。 |
 
+## `REG-TOPIC-111` 收起结构化正文后标题停止绘制
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 details、Callout、主楼与回复的 continuation Frame seam |
+| 用户症状 | App 只读打开 linux.do `t/topic/2769371` 的“注册地址” details 或 `t/topic/2769388` 的“Quote” Callout，展开后再收起会留下圆角背景框，但标题、图标和箭头像素全部消失；accessibility tree 中对应标题仍存在。 |
+| 触发条件 | Android rounded `overflow: hidden` Frame 从展开的 `first` 状态切换到收起的 `only` 状态；共享 helper 返回空样式，使前一帧存在的 `borderTopWidth` / `borderBottomWidth` 从 Native props 中移除。 |
+| 根因 seam | `src/features/topic/components/TopicContentBlock.tsx` 的 `continuationFrameStyle`。`only` 状态没有输出完整边框几何，React Native Android 将被移除的 per-edge width 解析进 rounded clip path 后裁掉全部子节点。 |
+| 必须保持的行为 | `only/first/middle/last` 都输出确定的 Frame 几何；收起只改变正文可见状态，标题、图标和箭头继续绘制。details 与 Callout 的正文过滤、展开状态、圆角、间距、裁剪和 accessibility state 不变。 |
+| 精确失败 oracle | `tests/ui/topic/topic-split-disclosure.test.tsx` 的 `[REG-TOPIC-111]` 通过真实 `TopicContentBlock` 分别渲染默认展开的 details 与 Callout：展开时 top=`hairline`、bottom=`0`；点击收起后 title 与 `expanded=false` 保留，且 top/bottom 都必须显式为 `hairline`。修复前收起 Frame 只有基础 `borderWidth`。设备验收动态读取标题 bounds，并要求同一区域收起截图中的非背景标题像素不为 `0`。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定共享 helper 到两个真实 header renderer 的 Native style contract；只有匹配 Android APK 的像素 oracle 能排除 accessibility 假绿并证明 rounded clip path 正常。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；直达 `https://linux.do/t/topic/2769371` 与 `https://linux.do/t/topic/2769388`，对“注册地址”和“Quote”各执行至少两轮展开→收起，对比动态 accessibility bounds 内的非背景像素，同时确认正文按状态挂载/卸载。不新增 Replay，不执行站点写操作。 |
+| 负向验证方式 | 让 `only` 分支重新返回空样式，编号测试必须精确缺少两个 edge widths；匹配 APK 上收起后的标题区域重新变成零像素。若 edge widths 保留而像素仍为零，否定本方案并转查实际 Native props 与 clip geometry，不叠加 workaround。 |
+| 明确不覆盖范围 | 不审计全 App 动态边框，不修改 parser、compiler、disclosure store、FlashList、`selectable`、React Native、依赖或原生目录；不增加 Android/URL/站点特判、重挂载 key、延时、透明度或 `overflow: visible` 补丁。 |
+
 ## 待确认观察
 
 下表只保存本轮探索中出现过、但尚不足以认定为当前业务 bug 的线索。它们不等同于 `REG-*`，也不能据此增加猜测式 workaround。只有在身份匹配的当前 APK 上稳定复现并得到明确失败 oracle 后，才升级为回归条目和最低可靠测试。53 个失联 daemon、30 个工具录屏进程及设备录屏分片未清理已经有完整证据，归入 `REG-OPS-002`，不再作为“疑似”。

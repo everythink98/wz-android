@@ -141,6 +141,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `REG-TOPIC-110` 补充 `TOPIC-01/02/03` 与 `REG-PERF-017`：整页抓取与论坛正文使用两个命名明确的 HTML parser Interface；只有正文 parser 展开 `<pre>` 内的 `<code>`、`span` 和 `br` 语义。sanitizer 与 direct compiler 必须共用该正文策略并复用同一 DOM，production `preparedContent` 的 code `text/copyText/runs` 不得包含字面标签；测试不得通过重新编译已序列化 HTML 制造假绿。
 
+`REG-TOPIC-111` 补充 `TOPIC-01/02/03`：结构化 details 与 Callout 共用的 continuation Frame 在 `only/first/middle/last` 每个状态都必须提供确定的边框几何；展开切到收起时不得从 Native props 中移除上下 edge width。Android 上标题、图标和箭头必须继续绘制，正文仍按原状态挂载或卸载。
+
 `TOPIC-01/02/03` 的五站 Topic adapter、主楼与回复共用媒体首跳 Referrer 契约：adapter 保留最终 Topic URL，妖火额外保留 HTML 响应策略；媒体按元素策略、文档策略和真实 URL 关系解析最终 `Referer`，不从 `contentSource` 推导，也不按站点或图床分支。正文、原图升级、预览、保存、原生视频、贴纸和卡片图共用该契约，缓存与协调身份区分最终 `Referer`/`none`，见 `REG-TOPIC-078`。原生正文视频错误或超时释放 permit 后稳定等待点按重试，不自动重建 player；显式重试只创建一次，卸载释放由 Expo 独占且组件不再访问已释放 player，见 `REG-TOPIC-079`。正文视频按 track 固有比例布局、最窄限制 `1:2` 且不因比例变化重建 player，见 `REG-TOPIC-080`。opening 虚拟化 rows 共同呈现为一篇连续文章，隐藏占位不泄漏，妖火附件由 adapter 归一为共享语义卡片；quote、poll、accepted answer 等边界保持，见 `REG-TOPIC-081`。原生视频保留真实 poster，封面由独立图片 permit 管理，首次播放后才退出且暂停保留当前帧，见 `REG-TOPIC-082`。结构化内容由 typed semantic rows 保持祖先身份与文档顺序；FlashList row 只负责调度，code 和连续文本保持单一语义 owner，table 等容器只按自然子项分段；code/table 共用方向判定与横向位置 owner，回复定位的每次显式点击都产生独立命令，并由完整 sanitizer→compiler→FlashList 贯通测试守住。图片自然尺寸先于未完成 lease 回收同步保存，已显示像素不再受 viewability 撤销；Tab 替换可见 row 时继续以同一有界窗口驱动媒体 permit，当前 viewport 排序又可抢占仍 warm 的旧 row 请求，见 `REG-TOPIC-084/085/086/087/088/089/090/091/092/093/094/097/098/108/110`。图片、WebView 视频和贴纸仍保留既有自动重试。
 
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |

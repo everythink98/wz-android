@@ -1,8 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 import { fireEvent, render } from '../render';
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { compileForumContent, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
+import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import {
   TopicSplitDisclosureProvider,
   TopicSplitDisclosureScope,
@@ -62,6 +63,21 @@ function DisclosureFixture({
   );
 }
 
+function RenderedDisclosureHeaderFixture({ html, scopeKey }: { html: string; scopeKey: string }) {
+  const store = useTopicSplitDisclosureStore();
+  const row = compileForumContent({ html, role: 'opening', source: 'linuxdo' }).rows.find(
+    (candidate): candidate is DisclosureRow => candidate.type === 'disclosureHeader'
+  );
+  if (!row) throw new Error('Expected a disclosure header row');
+  return (
+    <TopicSplitDisclosureProvider value={store}>
+      <TopicSplitDisclosureScope scopeKey={scopeKey}>
+        <TopicContentBlock contentWidth={320} row={row} />
+      </TopicSplitDisclosureScope>
+    </TopicSplitDisclosureProvider>
+  );
+}
+
 type TerminalReportHeaderRow = Extract<CompiledForumContentRow, { type: 'terminalReportHeader' }>;
 
 function TerminalHeader({ row }: { row: TerminalReportHeaderRow }) {
@@ -114,6 +130,40 @@ const splitDetails = (label: string) =>
   ).join('')}</p></details>`;
 
 describe('typed topic disclosure state', () => {
+  it('[REG-TOPIC-111] keeps explicit frame edges and the title when expanded disclosures collapse', async () => {
+    const fixtures = [
+      {
+        html: '<details open><summary>Details</summary><p>details body</p></details>',
+        label: 'Details'
+      },
+      {
+        html: '<blockquote data-forum-callout="true" data-forum-callout-type="quote" data-forum-callout-fold="expanded"><div class="forum-callout-title">Quote</div><div class="forum-callout-content"><p>callout body</p></div></blockquote>',
+        label: 'Quote'
+      }
+    ];
+
+    for (const { html, label } of fixtures) {
+      const view = await render(<RenderedDisclosureHeaderFixture html={html} scopeKey={`opening-${label}`} />);
+      let header = view.getByRole('button');
+      expect(header.props.accessibilityState).toEqual({ expanded: true });
+      expect(StyleSheet.flatten(header.parent?.props.style)).toMatchObject({
+        borderBottomWidth: 0,
+        borderTopWidth: StyleSheet.hairlineWidth
+      });
+
+      await fireEvent.press(header);
+
+      header = view.getByRole('button');
+      expect(header.props.accessibilityState).toEqual({ expanded: false });
+      expect(view.getByText(label)).toBeTruthy();
+      expect(StyleSheet.flatten(header.parent?.props.style)).toMatchObject({
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderTopWidth: StyleSheet.hairlineWidth
+      });
+      await view.unmount();
+    }
+  });
+
   it('[REG-TOPIC-090] keeps terminal tab selection in route state while virtual rows rematerialize', async () => {
     const view = await render(<TerminalFixture scopeKey="opening" />);
     expect(view.getByText('first body')).toBeTruthy();

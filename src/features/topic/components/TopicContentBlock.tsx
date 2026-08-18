@@ -30,7 +30,16 @@ type TopicContentBlockProps = {
 };
 
 function continuationFrameStyle(part: ForumContentPart, radius: number): ViewStyle {
-  if (part === 'only') return {};
+  if (part === 'only') {
+    return {
+      borderBottomLeftRadius: radius,
+      borderBottomRightRadius: radius,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderTopLeftRadius: radius,
+      borderTopRightRadius: radius,
+      borderTopWidth: StyleSheet.hairlineWidth
+    };
+  }
   return {
     borderBottomLeftRadius: part === 'last' ? radius : 0,
     borderBottomRightRadius: part === 'last' ? radius : 0,
