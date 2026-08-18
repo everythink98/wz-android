@@ -3,6 +3,7 @@ import {
   PREVIEW_BITMAP_MAX_EDGE,
   PREVIEW_BITMAP_MAX_PIXELS,
   previewBitmapDecodeTarget,
+  previewMaxScale,
   withPreviewBitmapDecodeTarget
 } from './previewBitmapBudget';
 
@@ -46,5 +47,16 @@ describe('preview bitmap budget', () => {
       scale: 1,
       width: 1_080
     });
+  });
+
+  it('[REG-TOPIC-112] reaches original 1:1 pixels without the old fixed 8x ceiling', () => {
+    expect(previewMaxScale({ height: 10_000, width: 1_080 }, { height: 800, width: 400 }, 1)).toBeCloseTo(12.5);
+    expect(previewMaxScale({ height: 10_000, width: 1_080 }, { height: 800, width: 400 }, 2)).toBeCloseTo(6.25);
+  });
+
+  it('[REG-TOPIC-112] falls back safely when 1:1 scale inputs are invalid', () => {
+    expect(previewMaxScale(null, { height: 800, width: 400 }, 2)).toBe(6);
+    expect(previewMaxScale({ height: Number.NaN, width: 1_080 }, { height: 800, width: 400 }, 2)).toBe(6);
+    expect(previewMaxScale({ height: 10_000, width: 1_080 }, { height: 0, width: 400 }, 2)).toBe(6);
   });
 });

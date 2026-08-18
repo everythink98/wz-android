@@ -230,6 +230,26 @@ describe('Android release packaging guards', () => {
     }
   });
 
+  it('[REG-TOPIC-112] keeps preview region decoding in its own Android package', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+    const networkPlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const previewPlugin = readProjectFile('plugins', 'withPreviewRegionImageNative.js');
+
+    expect(app.expo.plugins).toContain('./plugins/withPreviewRegionImageNative');
+    expect(networkPlugin).not.toContain('PreviewRegionImage');
+    for (const required of [
+      'BitmapRegionDecoder',
+      'Handler(Looper.getMainLooper())',
+      'PreviewRegionImagePackage',
+      'PreviewRegionImageViewManager',
+      'add(PreviewRegionImagePackage())',
+      "path.join(outputDir, 'PreviewRegionImageView.kt')",
+      "path.join(testOutputDir, 'PreviewRegionImageMathTest.kt')"
+    ]) {
+      expect(previewPlugin).toContain(required);
+    }
+  });
+
   it('[REG-TOPIC-038] generates the isolated single-WebView SVG poster renderer', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const plugin = readProjectFile('plugins', 'withSvgRendererModule.js');

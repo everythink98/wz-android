@@ -35,6 +35,23 @@ export function withPreviewBitmapDecodeTarget<T extends object>(
   return { ...source, ...target };
 }
 
+export function previewMaxScale(
+  source: { height: number; width: number } | null | undefined,
+  viewport: { height: number; width: number },
+  pixelRatio: number
+) {
+  if (![source?.height, source?.width, viewport.height, viewport.width, pixelRatio].every(isPositiveFinite)) {
+    return 6;
+  }
+  const fittedScale = Math.min(viewport.width / source!.width, viewport.height / source!.height);
+  const physicalScale = fittedScale * pixelRatio;
+  return Math.max(3, 1 / physicalScale);
+}
+
 function positiveFinite(value: number) {
   return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+function isPositiveFinite(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }

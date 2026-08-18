@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React from 'react';
-import { NativeModules, StyleSheet } from 'react-native';
+import { NativeModules, PixelRatio, StyleSheet } from 'react-native';
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { ForumSessionEpochProvider, mediaSessionIdentityForSource } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -19,7 +19,11 @@ const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string
   uri: 'file:///cache/complex-svg-poster.png',
   width: 920
 }));
+const mockGetImageCachePath = jest.fn(
+  async (cacheKey: string): Promise<string | null> => `/cache/${encodeURIComponent(cacheKey)}`
+);
 let mockZoomScale = 1;
+let mockZoomVisibleRect = { height: 100, width: 100, x: 0, y: 0 };
 let mockGestureNextToken = 0;
 let mockDeferAnimations = false;
 const mockDeferredAnimationCallbacks: (() => void)[] = [];
@@ -65,51 +69,53 @@ jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   const ExpoImageMock = NativeView as React.ComponentType<Record<string, unknown>>;
-  return {
-    Image: ({
-      contentFit,
-      testID,
-      ...props
-    }: {
-      contentFit?: string;
-      onDisplay?: () => void;
-      onError?: () => void;
-      onLoad?: (event: { source: { height: number; width: number } }) => void;
-      onLoadStart?: () => void;
-      source?: { uri?: string };
-      testID?: string;
-    }) => {
-      const token = ReactModule.useRef(0);
-      const latestTestID = ReactModule.useRef(testID);
-      if (token.current === 0) {
-        token.current = ++mockPreviewImageNextToken;
-      }
-      latestTestID.current = testID;
-      ReactModule.useEffect(
-        () => () => {
-          if (latestTestID.current?.startsWith('preview-image-')) {
-            mockPreviewImageUnmounts(latestTestID.current);
-          }
-        },
-        []
-      );
-      ReactModule.useLayoutEffect(() => {
-        if (props.source?.uri?.includes('fast-cache')) {
-          props.onLoadStart?.();
-          props.onLoad?.({ source: { height: 480, width: 640 } });
-          props.onDisplay?.();
-        } else if (props.source?.uri?.includes('fast-error')) {
-          props.onLoadStart?.();
-          props.onError?.();
-        }
-      }, [props.source?.uri]);
-      return ReactModule.createElement(ExpoImageMock, {
-        ...props,
-        mockImageInstanceToken: token.current,
-        testID: testID || (contentFit === 'contain' ? 'active-preview-image' : 'preview-thumbnail-image')
-      });
+  const Image = ({
+    contentFit,
+    testID,
+    ...props
+  }: {
+    contentFit?: string;
+    onDisplay?: () => void;
+    onError?: () => void;
+    onLoad?: (event: {
+      source: { height: number; isAnimated?: boolean; mediaType?: string | null; width: number };
+    }) => void;
+    onLoadStart?: () => void;
+    source?: { uri?: string };
+    testID?: string;
+  }) => {
+    const token = ReactModule.useRef(0);
+    const latestTestID = ReactModule.useRef(testID);
+    if (token.current === 0) {
+      token.current = ++mockPreviewImageNextToken;
     }
+    latestTestID.current = testID;
+    ReactModule.useEffect(
+      () => () => {
+        if (latestTestID.current?.startsWith('preview-image-')) {
+          mockPreviewImageUnmounts(latestTestID.current);
+        }
+      },
+      []
+    );
+    ReactModule.useLayoutEffect(() => {
+      if (props.source?.uri?.includes('fast-cache')) {
+        props.onLoadStart?.();
+        props.onLoad?.({ source: { height: 480, width: 640 } });
+        props.onDisplay?.();
+      } else if (props.source?.uri?.includes('fast-error')) {
+        props.onLoadStart?.();
+        props.onError?.();
+      }
+    }, [props.source?.uri]);
+    return ReactModule.createElement(ExpoImageMock, {
+      ...props,
+      mockImageInstanceToken: token.current,
+      testID: testID || (contentFit === 'contain' ? 'active-preview-image' : 'preview-thumbnail-image')
+    });
   };
+  Image.getCachePathAsync = (cacheKey: string) => mockGetImageCachePath(cacheKey);
+  return { Image };
 });
 
 jest.mock('react-native-reanimated', () => {
@@ -267,7 +273,15 @@ jest.mock('react-native-zoom-toolkit', () => {
           children: React.ReactElement<{ testID?: string }>;
         },
         ref: React.ForwardedRef<{
-          getState: () => { scale: number };
+          getState: () => {
+            childSize: { height: number; width: number };
+            containerSize: { height: number; width: number };
+            maxScale: number;
+            scale: number;
+            translateX: number;
+            translateY: number;
+          };
+          getVisibleRect: () => typeof mockZoomVisibleRect;
           reset: () => void;
         }>
       ) => {
@@ -277,7 +291,15 @@ jest.mock('react-native-zoom-toolkit', () => {
         }
         const index = children.props.testID?.replace('preview-zoom-content-', '') || 'unknown';
         ReactModule.useImperativeHandle(ref, () => ({
-          getState: () => ({ scale: mockZoomScale }),
+          getState: () => ({
+            childSize: { height: 100, width: 100 },
+            containerSize: { height: 100, width: 100 },
+            maxScale: 20,
+            scale: mockZoomScale,
+            translateX: 0,
+            translateY: 0
+          }),
+          getVisibleRect: () => mockZoomVisibleRect,
           reset: () => mockZoomResets(index)
         }));
         return ReactModule.createElement(
@@ -353,6 +375,7 @@ async function flushNextPreviewAnimation() {
 describe('Image preview', () => {
   beforeEach(() => {
     mockZoomScale = 1;
+    mockZoomVisibleRect = { height: 100, width: 100, x: 0, y: 0 };
     mockGestureNextToken = 0;
     mockDeferAnimations = false;
     mockDeferredAnimationCallbacks.splice(0);
@@ -364,6 +387,7 @@ describe('Image preview', () => {
     mockWebViewUnmounts = 0;
     mockWebViewNextToken = 0;
     mockRenderSvgPoster.mockClear();
+    mockGetImageCachePath.mockClear();
     NativeModules.SvgRendererModule = {
       fetchSvgDocument: mockFetchSvgDocument,
       renderPoster: mockRenderSvgPoster
@@ -544,6 +568,91 @@ describe('Image preview', () => {
     expect(view.getByTestId('preview-image-3').props.allowDownscaling).toBe(true);
     expect(view.getByTestId('preview-image-2').props.transition).toBeUndefined();
     expect(view.getByTestId('preview-image-3').props.transition).toBeUndefined();
+  });
+
+  it('[REG-TOPIC-112] gives cached full-resolution pixels only to the settled current page', async () => {
+    const items = [
+      previewItem('https://example.com/current-long.png'),
+      previewItem('https://example.com/adjacent-long.png')
+    ];
+    const view = await render(<ImagePreviewModal preview={previewProps(items)} {...callbacks()} />);
+
+    await fireEvent(view.getByTestId('preview-image-0'), 'load', {
+      source: { height: 10_000, mediaType: 'image/png', width: 1_080 }
+    });
+    expect(view.queryByTestId('preview-region-0')).toBeNull();
+    expect(mockGetImageCachePath).not.toHaveBeenCalled();
+    await fireEvent(view.getByTestId('preview-image-0'), 'display');
+    await fireEvent(view.getByTestId('preview-image-1'), 'load', {
+      source: { height: 10_000, mediaType: 'image/png', width: 1_080 }
+    });
+    await fireEvent(view.getByTestId('preview-image-1'), 'display');
+
+    await waitFor(() => expect(view.getByTestId('preview-region-0')).toBeTruthy());
+    expect(view.queryByTestId('preview-region-1')).toBeNull();
+    expect(mockGetImageCachePath).toHaveBeenCalledTimes(1);
+
+    await fireEvent(view.getByTestId('preview-zoom-0'), 'pinchStart', {});
+    expect(view.getByTestId('preview-region-0').props.suspended).toBe(true);
+    mockZoomScale = 4;
+    mockZoomVisibleRect = { height: 40, width: 50, x: 10, y: 20 };
+    await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
+    const settledRegion = view.getByTestId('preview-region-0').props;
+    expect(settledRegion).toEqual(expect.objectContaining({ scale: 4, suspended: false }));
+    expect(settledRegion.viewport).toEqual(expect.objectContaining({ width: 0.5, x: 0.1, y: 0.2 }));
+    expect(settledRegion.viewport.height).toBeCloseTo(0.4);
+
+    mockDeferAnimations = true;
+    await swipePreviewNext(view);
+
+    expect(view.getByTestId('preview-region-0')).toBeTruthy();
+    expect(view.queryByTestId('preview-region-1')).toBeNull();
+    expect(mockGetImageCachePath).toHaveBeenCalledTimes(1);
+
+    await flushNextPreviewAnimation();
+
+    await waitFor(() => expect(view.getByTestId('preview-region-1')).toBeTruthy());
+    expect(view.queryByTestId('preview-region-0')).toBeNull();
+    expect(mockGetImageCachePath).toHaveBeenCalledTimes(2);
+    expect(view.getAllByTestId(/^preview-image-/)).toHaveLength(2);
+  });
+
+  it.each([
+    {
+      label: 'animated raster',
+      source: { height: 1_000, isAnimated: true, mediaType: 'image/webp', width: 800 },
+      uri: 'https://example.com/animated.webp'
+    },
+    {
+      label: 'SVG',
+      source: { height: 1_000, isAnimated: false, mediaType: null, width: 800 },
+      uri: 'https://example.com/static.svg'
+    }
+  ])('[REG-TOPIC-112] keeps $label on the existing base path', async ({ source, uri }) => {
+    const view = await render(<ImagePreviewModal preview={previewProps([previewItem(uri)])} {...callbacks()} />);
+
+    await fireEvent(view.getByTestId('preview-image-0'), 'load', { source });
+    await fireEvent(view.getByTestId('preview-image-0'), 'display');
+
+    expect(view.getByTestId('preview-image-0')).toBeTruthy();
+    expect(view.queryByTestId('preview-region-0')).toBeNull();
+    expect(mockGetImageCachePath).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-112] keeps the base image when the original cache file is unavailable', async () => {
+    mockGetImageCachePath.mockResolvedValueOnce(null);
+    const view = await render(
+      <ImagePreviewModal preview={previewProps([previewItem('https://example.com/cache-miss.png')])} {...callbacks()} />
+    );
+
+    await fireEvent(view.getByTestId('preview-image-0'), 'load', {
+      source: { height: 10_000, mediaType: 'image/png', width: 1_080 }
+    });
+    await fireEvent(view.getByTestId('preview-image-0'), 'display');
+
+    await waitFor(() => expect(mockGetImageCachePath).toHaveBeenCalledTimes(1));
+    expect(view.getByTestId('preview-image-0')).toBeTruthy();
+    expect(view.queryByTestId('preview-region-0')).toBeNull();
   });
 
   it('[REG-PERF-010][REG-TOPIC-075] keeps a 2000-image catalog to three disk-only downscaled pages', async () => {
@@ -1762,7 +1871,9 @@ describe('Image preview', () => {
       const pageStyle = StyleSheet.flatten(cached.getByTestId('preview-zoom-content-0').props.style);
 
       expect(pageStyle.width / pageStyle.height).toBeCloseTo(2);
-      expect(cached.getByTestId('preview-zoom-0').props.maxScale).toBe(8);
+      expect(cached.getByTestId('preview-zoom-0').props.maxScale).toBeCloseTo(
+        9_200 / (pageStyle.width * PixelRatio.get())
+      );
       expect(fetchSpy).toHaveBeenCalledTimes(1);
     } finally {
       fetchSpy.mockRestore();
