@@ -27,7 +27,6 @@ function buildVirtualizedReplyItems(options: Parameters<typeof buildVirtualizedR
   const source = options.source;
   if (!source) return buildVirtualizedReplyItemsFromPlan(options);
   options.replies.forEach((reply) => preparedReply(reply, source));
-  options.repliesByFloor.forEach((reply) => preparedReply(reply, source));
   Object.entries(options.loadedQuotedReplies).forEach(([key, reply]) =>
     preparedReply(reply, key.split(':')[0] as Source)
   );
@@ -428,7 +427,7 @@ describe('topic reply list model', () => {
     }
   );
 
-  it('reuses the already-loaded opening post when a reply quotes floor 1', () => {
+  it('[REG-TOPIC-109] uses the prepared quote cache when the local opening projection has no content plan', () => {
     const contentHtml = '<p>Complete opening post.</p>';
     const topic: TopicDetail = {
       source: 'linuxdo',
@@ -444,17 +443,40 @@ describe('topic reply list model', () => {
         source: 'linuxdo',
         topicId: '42'
       }),
-      replies: [],
-      polls: [{ id: 'poll', title: 'Poll', options: [{ id: 'yes', label: 'Yes' }] }]
+      replies: []
     };
-
-    expect(topicOpeningPostAsReply(topic)).toMatchObject({
-      author: 'alice',
-      contentHtml: '<p>Complete opening post.</p>',
-      floor: 1,
-      polls: topic.polls
+    const reference = { source: 'linuxdo' as const, topicId: topic.id, postNumber: 1 };
+    const quotingReply: Reply = {
+      ...reply,
+      commentId: 2,
+      floor: 2,
+      quotedPosts: [{ reference }]
+    };
+    const localOpening = topicOpeningPostAsReply(topic);
+    const loadedOpening = topicOpeningPostAsReply(topic);
+    const instanceKey = replyQuotedPostInstanceKey(getReplyKey(quotingReply), reference);
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: { [instanceKey]: true },
+      loadedQuotedReplies: { 'linuxdo:42:1': loadedOpening },
+      loadingQuotedFloors: {},
+      replies: [quotingReply],
+      repliesByFloor: new Map([[1, localOpening]]),
+      source: 'linuxdo',
+      topicId: topic.id
     });
-    expect(topicOpeningPostAsReply(topic).preparedContent).toBeUndefined();
+
+    expect(localOpening.preparedContent).toBeUndefined();
+    expect(items.find((item) => item.type === 'replyQuoteSummary')).toMatchObject({
+      expanded: true,
+      hasContent: true,
+      quotedReply: loadedOpening
+    });
+    expect(items.find((item) => item.type === 'replyQuoteContent')).toMatchObject({
+      content: { type: 'richText' },
+      first: true,
+      last: true,
+      reference
+    });
   });
 
   it('[REG-TOPIC-054] keeps multiple quote rows ordered and removes only collapsed content', () => {

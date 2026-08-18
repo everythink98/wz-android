@@ -238,6 +238,8 @@
 
 `REG-TOPIC-099` 补充展开主楼引用连续性验收：RNTL 必须固定 summary 与正文使用同一个引用实例 scope，summary→首个正文 row 及同一引用正文 continuation rows 的 separator 都为 0；header 只开放底部边框/圆角，首个正文 row 只施加一次正文 padding，最后 row 恢复底部边框/圆角。展开、收起、Loading/error、同主题当前楼层优先、跨主题引用缓存和父 FlashList 虚拟化保持。匹配 APK 只读打开 linux.do `t/topic/2756057`，展开目标引用后必须是一张连续卡片，不得出现上下两个独立外框。
 
+`REG-TOPIC-109` 补充同主题主楼引用展开验收：Vitest 必须使用生产形态的数据边界——`repliesByFloor` 的 floor 1 是没有 compact 计划的主楼投影，`loadedQuotedReplies` 是控制器已准备的引用对象——并要求展开生成完整 `replyQuoteContent`，不得抛出“论坛内容缺少匹配的预编译计划”。既有 RNTL 必须继续固定普通同主题回复优先当前页、跨主题只使用目标缓存，以及控制器在 expanded 状态提交前准备并写入引用缓存。匹配 Release APK 只读直达 linux.do `t/2768624`，连续展开、收起和再展开时 PID 保持、正文可见且无 JS Fatal、RedBox 或 ANR；动态第三方目标不加入 tracked Replay。
+
 ## 文档、UI、Replay 与发布候选
 
 稳定 Markdown 改动运行：
@@ -590,6 +592,7 @@ npm run typecheck
 | 内容源拖动抬手回弹、重叠、闪空白或名字补换位 | `tests/ui/more/more-screen.test.tsx` 的 `REG-PERF-012` | 匹配 APK 以 raw 高质量录屏覆盖相邻与跨多槽、到位立即抬手，按真实 presented frame 确认拖动态连续交接到持久化顺序，名字始终保持最终顺序且无旧槽回弹、行重叠、空白、重复文字或整块闪动；反向拖动并重新进入 More 核对原顺序恢复 |
 | 巨图 URL/遍历、LinuxDo cursor/分类、普通启动扇出、Topic RAM 重入、共享 Reader 索引与 lazy Tab | `src/domain/forum/forumContentMedia.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`src/sources/linuxdo/reader.test.ts`、`src/sources/linuxdo/search.test.ts` 的 `REG-PERF-010/013/016`，以及 `tests/ui/app/app-runtime-startup.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/app/app-navigator.test.tsx` 的 `REG-PERF-014/015/019` | 匹配 Release APK 做 5 次普通 process-cold，固定骨架后只出现一次多来源列表，Account=0、Feed=1、Categories=1；再从真实列表首次进入、返回并重入 Topic，核对 URL/compiler、request-start、body-ready、source-parsed/content-plan-ready、首屏、目录、缓存命中、状态保留与 PID；不改账号、来源设置或登录态制造状态 |
 | 千图滚动时当前图片被旧 row 请求阻塞 | `tests/ui/topic/topic-media-coordinator.test.tsx` 的 `REG-TOPIC-108`，并复跑 `REG-PERF-010` compiler/media tests | 匹配 APK 从 History 进入 NodeSeek `post-877083-1` 连续滚动；当前 viewport 图片持续取得 permit，旧 row 可回收，正文不白屏、不迟到且回复不先于正文出现 |
+| 同主题主楼引用展开导致 App 闪退 | `src/features/topic/model/replyListModel.test.ts` 的 `REG-TOPIC-109`，并复跑 Topic controller/components RNTL | 匹配 APK 只读直达 linux.do `t/2768624`，连续展开、收起和再展开；完整引用正文可见、PID 不退出，且无 JS Fatal、RedBox 或 ANR |
 | 通知 snapshot 新来源重读 sibling | `tests/ui/notifications/notifications-runtime.test.tsx` 的 `REG-NOTIFY-058` | 只读启动/恢复并核对当前 active 来源各一次；不切换通知开关或账号制造状态，无法自然覆盖新增来源时记 `NOT_VERIFIED` |
 | linux.do 验证后普通恢复失败不误报成功 | `src/features/account/useVerificationController.test.ts`、四类带 `QueryClientProvider` 的 read controller RNTL、`tests/ui/topic/topic-actions-controller.test.tsx` | 只在自然 challenge 出现时确认面板保持可重试；不清 Cookie、不人为断网、不执行写操作制造失败 |
 | 账号状态、启动恢复、刷新收尾、动作失效投影或凭据摘要的单站失败隔离 | `tests/ui/account/account-status-controller.test.tsx`、`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts`、`tests/ui/account/account-controller.test.tsx`、`tests/ui/topic/topic-actions-controller.test.tsx`、`src/features/account/credentialDiagnostics.test.ts`、`src/features/account/useAccountCredentialController.test.ts`、`src/domain/session/siteSessionState.test.ts` | 账号中心正常刷新四站；自然单站失败时旧可信身份或摘要保留、明确失效保持 expired，刷新期间的新 credential generation 不被旧检查覆盖，且其他站完成；任何检测/失效分支都不得删除原站 Cookie，不破坏 SecureStore、清登录或执行真实写操作制造状态 |

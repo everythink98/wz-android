@@ -161,9 +161,11 @@ export function replyForQuotedPost(
   repliesByFloor: Map<number, Reply>,
   loadedQuotedReplies: Record<string, Reply>
 ) {
-  return reference.source === source && reference.topicId === topicId
-    ? repliesByFloor.get(reference.postNumber) || loadedQuotedReplies[quotedPostReferenceKey(reference)]
-    : loadedQuotedReplies[quotedPostReferenceKey(reference)];
+  const loadedReply = loadedQuotedReplies[quotedPostReferenceKey(reference)];
+  if (reference.source !== source || reference.topicId !== topicId) return loadedReply;
+  const localReply = repliesByFloor.get(reference.postNumber);
+  if (!localReply || (!localReply.preparedContent && loadedReply?.preparedContent)) return loadedReply;
+  return localReply;
 }
 
 export function replyQuotedPostInstanceKey(replyKey: string, reference: QuotedPostReference) {

@@ -106,6 +106,45 @@ describe('NodeSeek reader', () => {
     });
   });
 
+  it('[REG-TOPIC-110] prepares nested pre code markup as code text through the production plan', async () => {
+    const expectedCode = 'LAX.AN5.Pro.TINY\n1C2G\n20GB\n1T\n$88.88';
+    const page = [
+      '<html><head><title>Nested code topic</title></head><body>',
+      '<a class="post-title" href="/post-879597-1">Nested code topic</a>',
+      '<div class="content-item" data-comment-id="879597">',
+      '<div class="author-info"><a class="author-name" href="/space/1">alice</a></div>',
+      '<time datetime="2026-08-18T00:00:00.000Z"></time>',
+      `<article class="post-content"><pre><code>${expectedCode}</code></pre></article>`,
+      '</div></body></html>'
+    ].join('');
+    const fetcher = vi.fn<Fetcher>(async (input) => {
+      const response = new Response(page, { headers: { 'content-type': 'text/html' } });
+      Object.defineProperty(response, 'url', { value: String(input) });
+      return response;
+    });
+
+    const [{ getNodeSeekTopic }, { requirePreparedForumContent }] = await Promise.all([
+      import('./reader'),
+      import('@/domain/forum/topicContentSplit')
+    ]);
+    const topic = await getNodeSeekTopic('879597', { fetcher });
+    const plan = requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
+      polls: topic.polls,
+      role: 'opening',
+      source: 'nodeseek',
+      topicId: topic.id
+    });
+
+    expect(topic.contentHtml).toContain(`<pre><code>${expectedCode}</code></pre>`);
+    expect(plan.rows).toHaveLength(1);
+    expect(plan.rows[0]).toMatchObject({
+      copyText: expectedCode,
+      runs: [{ text: expectedCode }],
+      text: expectedCode,
+      type: 'codeBlock'
+    });
+  });
+
   it('[REG-PERF-010] prepares one 1413-image rendered topic with two DOM parses', async () => {
     await withTrackedParseHtml(async (trackedParseHtml, actualParseHtml) => {
       const marker = 'data-topic-perf-marker="opening"';

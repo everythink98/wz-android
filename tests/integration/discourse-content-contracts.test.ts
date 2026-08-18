@@ -7,7 +7,7 @@ import {
   stripDiscourseCalloutMarkersFromExcerpt
 } from '@/sources/discourse/content';
 import { compileForumContent, discoursePollPlaceholder } from '@/domain/forum/topicContentSplit';
-import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
+import { prepareLinuxDoContent, sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { parseHtml } from '@/domain/forum/html';
 
 function discourseQuoteMetadata(html: string, source: 'linuxdo' | 'xiaoyinsi', topicId?: string) {
@@ -184,8 +184,13 @@ describe('portable Discourse content parts', () => {
       { length: 52 },
       (_, index) => `${String(index + 1).padStart(2, '0')}.${' '.repeat(50)}code-line-${index + 1}\n`
     ).join('');
-    const html = sanitizeLinuxDoContentHtml(`<pre><code class="lang-auto">${sourceText}</code></pre><p>after</p>`, []);
-    const rows = compileForumContent({ html, role: 'reply', source: 'linuxdo' }).rows;
+    const { preparedContent } = prepareLinuxDoContent(
+      `<pre><code class="lang-auto">${sourceText}</code></pre><p>after</p>`,
+      [],
+      { role: 'reply' }
+    );
+    const { contentHtml: html, contentPlan } = preparedContent;
+    const { rows } = contentPlan;
     const codeRows = rows.filter((row) => row.type === 'codeBlock');
 
     expect(html).toContain('<pre><code class="lang-auto">');
