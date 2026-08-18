@@ -131,15 +131,23 @@ export function textExcerpt(value: unknown, maxLength = 120) {
   return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text;
 }
 
-export function parseHtml(value: unknown, { parsePreContent = false }: { parsePreContent?: boolean } = {}) {
+const HTML_BLOCK_TEXT_ELEMENTS = {
+  script: true,
+  noscript: true,
+  style: true
+};
+
+export function parseHtml(value: unknown) {
   return parse(String(value || ''), {
     blockTextElements: {
-      script: true,
-      noscript: true,
-      style: true,
-      ...(!parsePreContent ? { pre: true } : {})
+      ...HTML_BLOCK_TEXT_ELEMENTS,
+      pre: true
     }
   });
+}
+
+export function parseForumContentHtml(value: unknown) {
+  return parse(String(value || ''), { blockTextElements: HTML_BLOCK_TEXT_ELEMENTS });
 }
 
 export function hasRenderableHtmlContent(value: unknown, parsedRoot?: ReturnType<typeof parseHtml>) {

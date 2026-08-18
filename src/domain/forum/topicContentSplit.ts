@@ -6,7 +6,7 @@ import {
   FORUM_TERMINAL_TAB_TAG,
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG,
-  parseHtml
+  parseForumContentHtml
 } from './html';
 import {
   DISCOURSE_CALLOUT_ATTRIBUTE,
@@ -2219,7 +2219,7 @@ export function compileForumContent({
         ? normalizeRenderableHtml(raw)
         : `<div class="${FORUM_COMPACT_CONTENT_CLASS}">${normalizeRenderableHtml(raw)}</div>`
       : '';
-    const body = parseHtml(`<body>${clean}</body>`, { parsePreContent: true }).querySelector('body');
+    const body = parseForumContentHtml(`<body>${clean}</body>`).querySelector('body');
     return compileParsedForumContent({ body, pollList, raw, role, source, topicId });
   } catch {
     return fallbackCompiledForumContent(raw, pollList, role, source);

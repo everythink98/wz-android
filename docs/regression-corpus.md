@@ -6087,6 +6087,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复只按 `warmKeys` 取消 running 的逻辑；编号测试必须看到新 visible probe 保持 idle。 |
 | 明确不覆盖范围 | 不改变媒体尺寸、表情/贴图布局、图片 renderer、正文分块、请求并发上限、缓存或预览目录；远端本身慢仍可能显示加载状态。 |
 
+## `REG-TOPIC-109` 展开同主题主楼引用导致 App 闪退
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-03`；共享 `TOPIC-01/02`、`NAV-03`、`REG-TOPIC-003/054/099` 与 `REG-PERF-010` 的引用缓存和严格预编译 seam |
+| 用户症状 | App 只读打开 linux.do `t/2768624` 后，点击评论中引用主楼的“展开”必定退出到系统桌面；Release 日志为 `FATAL EXCEPTION: mqt_v_native`，JS 异常是“论坛内容缺少匹配的预编译计划”。 |
+| 触发条件 | 评论引用当前主题的 floor 1。详情列表为定位和回复目标解析把 `topicOpeningPostAsReply(topic)` 放入 `repliesByFloor`；该投影没有 compact 引用计划。控制器同时已经把 `prepareReplyContent(..., 'quoted-reply')` 的对象写入引用 Query 缓存。 |
+| 根因 seam | `replyForQuotedPost` 用 `local || cached` 同时表达“当前数据优先”和“可渲染对象优先”，因此无计划的本地主楼投影覆盖了有计划的缓存对象；严格 renderer 随后按既定 fail-fast 契约抛错。 |
+| 必须保持的行为 | 跨主题引用继续只使用目标缓存；普通同主题回复有 compact 计划时继续优先当前页，避免旧缓存覆盖新内容；只有本地对象无计划而缓存已有计划时使用缓存。floor 1 投影继续负责回复目标作者和用户解析，控制器仍是引用计划的唯一准备者，渲染阶段不得现场编译或吞错。 |
+| 精确失败 oracle | `src/features/topic/model/replyListModel.test.ts` 的 `[REG-TOPIC-109]` 使用无计划 floor 1 投影、已准备缓存和 expanded 评论引用。旧 resolver 稳定在 `requirePreparedForumContent` 抛出相同异常；修复后必须生成指向缓存对象的 summary 和完整 `replyQuoteContent`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Vitest 固定 resolver 到严格内容计划的完整模型链；既有 Topic controller/components RNTL 固定缓存提交顺序、普通同主题当前回复优先和跨主题缓存；只有匹配 Release APK 能证明未捕获 JS 异常不再杀死 Android 进程。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装匹配 APK 并确认 `firstInstallTime` 不变；通过 canonical deep link 直达 `https://linux.do/t/2768624`，执行“展开 → 收起 → 再展开”，核对完整引用正文、PID、限定日志窗口和 Android Back。目标依赖动态第三方内容，不新增 tracked `.ad`。 |
+| 负向验证方式 | 恢复 `local || cached` 后编号测试必须重新抛出相同计划异常。删除 floor 1 投影会破坏回复目标解析；在组件加 `try/catch`、渲染期补编译或按站点/URL 特判均不满足本条。 |
+| 明确不覆盖范围 | 不改变引用 UI、compiler、Query key、加载重试、站点 parser、导航结构或 Replay runner；不处理与本次计划选择无关的正文内容、网络失败和第三方页面变化。 |
+
+## `REG-TOPIC-110` 普通代码块显示并复制字面 code 标签
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 `REG-PERF-017`、`REG-TOPIC-088/089/093` 的 sanitizer→compiler 与 parse-once seam |
+| 用户症状 | App 只读打开 NodeSeek `post-879597-1` 时，一个普通五行代码块在同一代码框中额外显示 `<code>` 与 `</code>`；复制结果也包含这两个标签。 |
+| 触发条件 | 原站正文使用合法 `<pre><code>…</code></pre>`。完整页面抽取后，sanitizer 以 `blockTextElements.pre=true` 重新解析正文并把 `<code>` 包装保存在单个 TextNode 中；production compiler 直接复用该 root。 |
+| 根因 seam | 通用整页 parser 的 raw-pre 性能策略泄漏进论坛正文 Module；direct compiler 另行打开 `parsePreContent`，导致同一正文存在两套 AST。重新编译序列化 HTML 的测试使用了正确 AST，因而掩盖 production prepared plan。 |
+| 必须保持的行为 | 整页 `parseHtml` 继续保留 raw-pre 行为；`parseForumContentHtml` 固定解析 pre/code/span/br 子树，sanitizer 与 direct compiler 只使用该正文 Interface。普通和高亮代码保持单一 typed owner，`text/copyText/runs` 只含可见代码；合法实体仍显示为字面文本，真实 script/style/noscript 继续被 sanitizer 移除。正文 root 只 parse 一次，不改变 ANSI、NodeSeek magic tabs、table、引用、投票或 renderer。 |
+| 精确失败 oracle | `src/sources/nodeseek/reader.test.ts` 的 `[REG-TOPIC-110]` 通过 `getNodeSeekTopic → preparedContent → requirePreparedForumContent` 输入目标五行结构。旧实现稳定得到带 `<code>` 的 `text/copyText/runs`；修复后只有一个 code row，三者精确等于五行文本，同时 `topic.contentHtml` 保留 `<pre><code>`。相关 source contract 直接读取 prepared plan，不再调用 `compileForumContent(topic.contentHtml)`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Vitest 固定真实 reader/prepared seam 与 parse 次数；既有 code owner RNTL 固定单一代码框和复制入口；只有匹配 APK 的目标页能证明最终显示与剪贴板内容。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装匹配 APK 并确认 `firstInstallTime` 不变；canonical deep link 直达 `https://www.nodeseek.com/post-879597-1`，核对一个五行代码框、零字面标签和精确复制文本后返回。目标为动态第三方内容，不新增 tracked Replay，不执行发帖、回复或其他原站写操作。 |
+| 负向验证方式 | 把 `pre: true` 放回正文 parser、让 sanitizer 改用整页 parser，或把 source contract 恢复为序列化后重新编译；编号测试必须重新出现字面标签或漏记 production parse。给 renderer/`normalizedCodeRuns` 加剥标签规则、按 NodeSeek 分支、设置 `code: true` 或引入第二次 parse 均不满足本条。 |
+| 明确不覆盖范围 | 不迁移到 parse5/htmlparser2，不升级 `node-html-parser`，不改变完整页面解析、code row 数据结构、视觉样式、代码分块预算、终端报告或其他来源线上内容。其他四站共享 seam 由自动测试覆盖；没有对应真实线上样本时设备状态记 `NOT_VERIFIED`。 |
+
 ## 待确认观察
 
 下表只保存本轮探索中出现过、但尚不足以认定为当前业务 bug 的线索。它们不等同于 `REG-*`，也不能据此增加猜测式 workaround。只有在身份匹配的当前 APK 上稳定复现并得到明确失败 oracle 后，才升级为回归条目和最低可靠测试。53 个失联 daemon、30 个工具录屏进程及设备录屏分片未清理已经有完整证据，归入 `REG-OPS-002`，不再作为“疑似”。

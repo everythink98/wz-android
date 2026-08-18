@@ -659,6 +659,19 @@ describe('Android topic content splitting', () => {
     );
   });
 
+  it('[REG-TOPIC-110] preserves nested code highlighting, line breaks, and escaped literals', () => {
+    const [row] = compileForumContent({
+      html: '<pre><code><span style="color: #34d399">&lt;tag&gt;</span><br>next</code></pre>',
+      role: 'reply',
+      source: 'linuxdo'
+    }).rows;
+
+    expect(row).toMatchObject({ copyText: '<tag>\nnext', text: '<tag>\nnext', type: 'codeBlock' });
+    if (row?.type !== 'codeBlock') throw new Error('Expected one semantic code block.');
+    expect(row.runs.map(({ text }) => text).join('')).toBe('<tag>\nnext');
+    expect(row.runs).toContainEqual({ style: { color: '#34d399' }, text: '<tag>' });
+  });
+
   it('[REG-TOPIC-086] carries every nested semantic ancestor without HTML bindings', () => {
     const sourceLines = Array.from(
       { length: 52 },

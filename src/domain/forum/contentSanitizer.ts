@@ -11,7 +11,7 @@ import {
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG,
   isAllowedDataImageUrl,
-  parseHtml,
+  parseForumContentHtml,
   textContentFromHtml
 } from './html';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './videoEmbeds';
@@ -786,7 +786,7 @@ export function sanitizeContentHtmlWithRoot(
   baseUrl: string,
   transformRoot?: (root: HTMLElement) => void
 ) {
-  const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
+  const root = parseForumContentHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
   removeHiddenContent(root);
   transformRoot?.(root);
   for (const selector of ['script', 'style', 'noscript']) {

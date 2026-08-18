@@ -4,7 +4,7 @@ import { searchTopics } from '@/sources/searchRead';
 import { getReplies, getTopic } from '@/sources/sourceRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { textContentFromHtml } from '@/domain/forum/html';
-import { compileForumContent } from '@/domain/forum/topicContentSplit';
+import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import {
   getNodeSeekCurrentUserProfile,
   getNodeSeekReplies,
@@ -2591,7 +2591,12 @@ describe('Android local sources', () => {
     );
 
     const topic = await getNodeSeekTopic('812712', { fetcher });
-    const compiled = compileForumContent({ html: topic.contentHtml, role: 'opening', source: 'nodeseek' });
+    const compiled = requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
+      polls: topic.polls,
+      role: 'opening',
+      source: 'nodeseek',
+      topicId: topic.id
+    });
     const report = compiled.rows.find((row) => row.type === 'terminalReportHeader');
     const terminalRows = compiled.rows.filter((row) =>
       row.ancestorFrames.some((frame) => frame.kind === 'terminalTab')
