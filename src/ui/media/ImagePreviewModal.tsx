@@ -11,7 +11,7 @@ import {
   type AccessibilityActionEvent,
   type ImageURISource
 } from 'react-native';
-import type { ImageLoadEventData } from 'expo-image';
+import { Image as ExpoImage, type ImageLoadEventData } from 'expo-image';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -34,12 +34,13 @@ import {
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import { forumMediaTargetClass, type ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { markOriginalImageDisplayed, originalImageDisplayRevision } from '@/platform/media/originalImageLoading';
-import { previewBitmapDecodeTarget } from '@/platform/media/previewBitmapBudget';
+import { previewBitmapDecodeTarget, previewMaxScale } from '@/platform/media/previewBitmapBudget';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, type DiagnosticFields, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { useReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
 import { CompatibleSvgDocumentView } from '@/ui/content/CompatibleSvgDocumentView';
 import { PreviewPageLoadLayer } from './PreviewPageLoadLayer';
+import { PreviewRegionImage, type PreviewRegionViewport } from './PreviewRegionImage';
 
 const EMPTY_PREVIEW_ITEMS: ImagePreviewItem[] = [];
 const IMAGE_LOAD_TIMEOUT_MS = 30_000;
@@ -49,9 +50,20 @@ const PAGE_TRANSITION_DURATION_MS = 220;
 const PULL_CLOSE_DISTANCE_RATIO = 0.25;
 const PULL_CLOSE_VELOCITY = 1_200;
 const GESTURE_DIRECTION_LOCK_DISTANCE = 12;
+const SVG_IMAGE_URI_PATTERN = /(?:^data:image\/svg\+xml(?:[;,]|$)|\.svg(?:[?#&]|$))/i;
 
 type PreviewStatus = 'failed' | 'loaded' | 'loading';
+type PreviewImageState = {
+  regionEligible: boolean;
+  sourceIdentity: string;
+  status: PreviewStatus;
+};
 type PreviewResolution = { height: number; width: number };
+type PreviewRegionState = {
+  scale: number;
+  sourceIdentity: string;
+  viewport: PreviewRegionViewport;
+};
 type PreviewImageLoadMetrics = {
   cacheType?: ImageLoadEventData['cacheType'];
   firstProgressAt?: number;
@@ -117,6 +129,32 @@ type PreviewRingState = {
   activeSlot: number;
   slots: PreviewRingSlot[];
 };
+
+const FULL_PREVIEW_VIEWPORT: PreviewRegionViewport = { height: 1, width: 1, x: 0, y: 0 };
+
+function currentPreviewRegion(reference: ResumableZoomRefType | null): Omit<PreviewRegionState, 'sourceIdentity'> {
+  const state = reference?.getState();
+  const rect = reference?.getVisibleRect?.();
+  const childWidth = state?.childSize?.width;
+  const childHeight = state?.childSize?.height;
+  const stateScale = state?.scale;
+  const scale = typeof stateScale === 'number' && Number.isFinite(stateScale) && stateScale > 0 ? stateScale : 1;
+  if (!rect || !childWidth || !childHeight) {
+    return { scale, viewport: FULL_PREVIEW_VIEWPORT };
+  }
+  const x = clampUnit(rect.x / childWidth);
+  const y = clampUnit(rect.y / childHeight);
+  const right = clampUnit((rect.x + rect.width) / childWidth);
+  const bottom = clampUnit((rect.y + rect.height) / childHeight);
+  if (right <= x || bottom <= y) {
+    return { scale, viewport: FULL_PREVIEW_VIEWPORT };
+  }
+  return { scale, viewport: { height: bottom - y, width: right - x, x, y } };
+}
+
+function clampUnit(value: number) {
+  return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+}
 
 export function ImagePreviewModal(props: ImagePreviewModalProps) {
   const sessionContext = useForumMediaRequestContext(props.preview?.contentSource);
@@ -291,15 +329,7 @@ function ImagePreviewModalContent({
   const activeRequestIdentity = activeItem ? previewResolutionIdentity(mediaContext, activeItem) : '';
   const activeResolution = resolutions[activeRequestIdentity] || activeItem?.displaySize || null;
   const imagePreviewMaxScale = useMemo(() => {
-    if (!activeResolution?.width || !activeResolution.height) {
-      return 6;
-    }
-    const fitted = fitContainer(activeResolution.width / activeResolution.height, { width, height });
-    if (!fitted.width || !fitted.height) {
-      return 6;
-    }
-    const pixelScale = Math.max(activeResolution.width / fitted.width, activeResolution.height / fitted.height);
-    return Math.max(3, Math.min(8, pixelScale));
+    return previewMaxScale(activeResolution, { width, height }, PixelRatio.get());
   }, [activeResolution, height, width]);
 
   const handleResolution = useCallback((requestIdentity: string, resolution: PreviewResolution) => {
@@ -930,7 +960,7 @@ function PreviewPage({
         mediaContext,
         nodeSeekUserAgent,
         referrerPolicy: item.referrerPolicy
-      }) as ImageURISource,
+      }) as ImageURISource & { cacheKey?: string },
     [item.originalUri, item.referrerPolicy, mediaContext, nodeSeekUserAgent]
   );
   const displaySource = useMemo(
@@ -1021,16 +1051,42 @@ function PreviewPage({
     ? `${svgViewIdentity}\u0000${activeAnimatedArtifact.posterRevision}`
     : '';
   const animatedSvgPosterReady = displayedSvgPosterIdentity === svgPosterIdentity;
-  const [imageState, setImageState] = useState<{ sourceIdentity: string; status: PreviewStatus }>({
+  const [imageState, setImageState] = useState<PreviewImageState>({
+    regionEligible: false,
     sourceIdentity,
     status: 'loading'
   });
+  const [cachedOriginalState, setCachedOriginalState] = useState<{
+    filePath: string | null;
+    sourceIdentity: string;
+  }>({ filePath: null, sourceIdentity });
+  const [regionState, setRegionState] = useState<PreviewRegionState>({
+    scale: 1,
+    sourceIdentity,
+    viewport: FULL_PREVIEW_VIEWPORT
+  });
+  const [regionSuspended, setRegionSuspended] = useState(false);
   const status = imageState.sourceIdentity === sourceIdentity ? imageState.status : 'loading';
+  const regionEligible = imageState.sourceIdentity === sourceIdentity && imageState.regionEligible;
   const suppressLoadingOverlay =
     displayedBeforeMount && !knownArtifact && !nativeFailedRef.current && retryVersion === 0;
   const setCurrentStatus = useCallback(
     (nextStatus: PreviewStatus) => {
-      setImageState({ sourceIdentity, status: nextStatus });
+      setImageState((current) => ({
+        regionEligible: current.sourceIdentity === sourceIdentity && current.regionEligible,
+        sourceIdentity,
+        status: nextStatus
+      }));
+    },
+    [sourceIdentity]
+  );
+  const setCurrentRegionEligibility = useCallback(
+    (eligible: boolean) => {
+      setImageState((current) => ({
+        regionEligible: eligible,
+        sourceIdentity,
+        status: current.sourceIdentity === sourceIdentity ? current.status : 'loading'
+      }));
     },
     [sourceIdentity]
   );
@@ -1041,9 +1097,19 @@ function PreviewPage({
     },
     [index, onRegisterZoom]
   );
+  const syncPreviewRegion = useCallback(() => {
+    setRegionState({ sourceIdentity, ...currentPreviewRegion(zoomRef.current) });
+  }, [sourceIdentity]);
+  const startZoomGesture = useCallback(() => {
+    setRegionSuspended(true);
+    onZoomGestureStart(index);
+  }, [index, onZoomGestureStart]);
   const settleZoomGesture = useCallback(() => {
-    onZoomGestureSettled(index, zoomRef.current?.getState().scale ?? 1);
-  }, [index, onZoomGestureSettled]);
+    const nextRegion = currentPreviewRegion(zoomRef.current);
+    setRegionState({ sourceIdentity, ...nextRegion });
+    setRegionSuspended(false);
+    onZoomGestureSettled(index, nextRegion.scale);
+  }, [index, onZoomGestureSettled, sourceIdentity]);
 
   const finishActiveDiagnostic = useCallback(
     (
@@ -1359,6 +1425,45 @@ function PreviewPage({
     return () => clearTimeout(timeout);
   }, [active, progressDeadlineVersion, retryVersion, settleFailure, settledRef, status]);
 
+  useEffect(() => {
+    if (!active) {
+      setRegionSuspended(false);
+      setRegionState({ scale: 1, sourceIdentity, viewport: FULL_PREVIEW_VIEWPORT });
+      return undefined;
+    }
+    if (status !== 'loaded' || knownArtifact || !regionEligible) {
+      return undefined;
+    }
+    const cacheKey = originalSource.cacheKey || originalSource.uri;
+    if (!cacheKey) {
+      return undefined;
+    }
+    let cancelled = false;
+    void ExpoImage.getCachePathAsync(cacheKey)
+      .then((filePath) => {
+        if (cancelled || !mountedRef.current || !activeRef.current || sourceIdentityRef.current !== sourceIdentity) {
+          return;
+        }
+        setCachedOriginalState({ filePath, sourceIdentity });
+        if (filePath) {
+          syncPreviewRegion();
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    active,
+    knownArtifact,
+    originalSource,
+    regionEligible,
+    sourceIdentity,
+    sourceIdentityRef,
+    status,
+    syncPreviewRegion
+  ]);
+
   const imageSize = useMemo(() => {
     const layoutResolution = knownArtifact?.dimensions || resolution || item.displaySize;
     if (!layoutResolution?.width || !layoutResolution.height) {
@@ -1366,6 +1471,12 @@ function PreviewPage({
     }
     return fitContainer(layoutResolution.width / layoutResolution.height, { width, height });
   }, [height, item.displaySize, knownArtifact?.dimensions, resolution, width]);
+  const cachedOriginalPath =
+    cachedOriginalState.sourceIdentity === sourceIdentity ? cachedOriginalState.filePath : null;
+  const currentRegion =
+    regionState.sourceIdentity === sourceIdentity
+      ? regionState
+      : { scale: 1, sourceIdentity, viewport: FULL_PREVIEW_VIEWPORT };
 
   const retry = useCallback(() => {
     if (!activeRef.current) {
@@ -1427,10 +1538,10 @@ function PreviewPage({
         pinchEnabled={active}
         style={componentStyles.page}
         tapsEnabled={active}
-        onDoubleTapStart={() => onZoomGestureStart(index)}
+        onDoubleTapStart={startZoomGesture}
         onGestureEnd={settleZoomGesture}
-        onPanStart={() => onZoomGestureStart(index)}
-        onPinchStart={() => onZoomGestureStart(index)}
+        onPanStart={startZoomGesture}
+        onPinchStart={startZoomGesture}
         onTap={onToggleChrome}
         onUpdate={(state) => {
           'worklet';
@@ -1479,11 +1590,16 @@ function PreviewPage({
               }}
               onLoad={(event) => {
                 const source = event.source;
+                if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
+                  return;
+                }
+                setCurrentRegionEligibility(
+                  source.isAnimated !== true &&
+                    source.mediaType !== 'image/svg+xml' &&
+                    !SVG_IMAGE_URI_PATTERN.test(item.originalUri.trim())
+                );
                 if (source.width > 0 && source.height > 0) {
                   const nextResolution = { width: source.width, height: source.height };
-                  if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
-                    return;
-                  }
                   loadMetricsRef.current = {
                     ...loadMetricsRef.current,
                     cacheType: event.cacheType,
@@ -1532,6 +1648,31 @@ function PreviewPage({
                 if (advanced) {
                   setProgressDeadlineVersion((version) => version + 1);
                 }
+              }}
+            />
+          ) : null}
+          {active && status === 'loaded' && !knownArtifact && regionEligible && cachedOriginalPath ? (
+            <PreviewRegionImage
+              pointerEvents="none"
+              filePath={cachedOriginalPath}
+              scale={currentRegion.scale}
+              style={StyleSheet.absoluteFill}
+              suspended={regionSuspended}
+              testID={`preview-region-${index}`}
+              viewport={currentRegion.viewport}
+              onSourceSize={(event) => {
+                const nextResolution = event.nativeEvent;
+                if (
+                  !mountedRef.current ||
+                  !activeRef.current ||
+                  sourceIdentityRef.current !== sourceIdentity ||
+                  nextResolution.width <= 0 ||
+                  nextResolution.height <= 0
+                ) {
+                  return;
+                }
+                setResolution(nextResolution);
+                onResolution(resolutionIdentity, nextResolution);
               }}
             />
           ) : null}

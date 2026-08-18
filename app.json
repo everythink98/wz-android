@@ -30,6 +30,7 @@
       "./plugins/withXiaoyinsiAuthModule",
       "./plugins/withNotificationDigestModule",
       "./plugins/withNetworkProxyModule",
+      "./plugins/withPreviewRegionImageNative",
       "./plugins/withSvgRendererModule",
       [
         "expo-media-library",
