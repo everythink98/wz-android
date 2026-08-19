@@ -1,22 +1,77 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { createReplyTextIndexForQuery, filterRepliesByQuery } from './model/replySearch';
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
 import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from './model/topicDerivedData';
 import type { Reply, ReplyOrder, Source, Topic, TopicDetail } from '@/domain/forum/models';
 
-export function replyContentAfterComposerClose(content: string, replyEditTarget: ReplyEditTarget | null) {
-  return replyEditTarget ? '' : content;
-}
+export type ReplyComposerIntent =
+  | { kind: 'closed'; target?: never }
+  | { kind: 'new'; target?: never }
+  | { kind: 'floor'; target: ReplyTarget }
+  | { kind: 'edit'; target: ReplyEditTarget };
 
-export function replyComposerAfterSuccessfulSubmission() {
-  return {
-    replyComposerOpen: false,
-    replyContent: '',
-    replyEditTarget: null,
-    replyFace: '',
-    replyTarget: null
-  };
+type ReplyComposerState = {
+  intent: ReplyComposerIntent;
+  content: string;
+  face: string;
+};
+
+type ReplyComposerTransition =
+  | { type: 'open' }
+  | { type: 'close' }
+  | { type: 'reply-to-floor'; target: ReplyTarget }
+  | { type: 'edit'; target: ReplyEditTarget }
+  | { type: 'detach-edit' }
+  | { type: 'complete-submission' }
+  | { type: 'change-content'; content: string }
+  | { type: 'change-face'; face: string }
+  | { type: 'append-markup'; markup: string };
+
+const CLOSED_REPLY_COMPOSER_INTENT: ReplyComposerIntent = { kind: 'closed' };
+const INITIAL_REPLY_COMPOSER_STATE: ReplyComposerState = {
+  intent: CLOSED_REPLY_COMPOSER_INTENT,
+  content: '',
+  face: ''
+};
+
+export function transitionReplyComposer(
+  state: ReplyComposerState,
+  transition: ReplyComposerTransition
+): ReplyComposerState {
+  switch (transition.type) {
+    case 'open':
+      if (state.intent.kind === 'new' && !state.face) return state;
+      return { ...state, intent: { kind: 'new' }, face: '' };
+    case 'close':
+      if (state.intent.kind === 'closed' && !state.face) return state;
+      return {
+        intent: CLOSED_REPLY_COMPOSER_INTENT,
+        content: state.intent.kind === 'edit' ? '' : state.content,
+        face: ''
+      };
+    case 'reply-to-floor':
+      return { ...state, intent: { kind: 'floor', target: transition.target }, face: '' };
+    case 'edit':
+      return {
+        intent: { kind: 'edit', target: transition.target },
+        content: transition.target.contentMarkdown,
+        face: ''
+      };
+    case 'detach-edit':
+      if (state.intent.kind === 'closed' && !state.face) return state;
+      return { ...state, intent: CLOSED_REPLY_COMPOSER_INTENT, face: '' };
+    case 'complete-submission':
+      return INITIAL_REPLY_COMPOSER_STATE;
+    case 'change-content':
+      return state.content === transition.content ? state : { ...state, content: transition.content };
+    case 'change-face':
+      return state.face === transition.face ? state : { ...state, face: transition.face };
+    case 'append-markup': {
+      const content = appendReplyImageMarkup(state.content, transition.markup);
+      return content === state.content ? state : { ...state, content };
+    }
+  }
 }
 
 export function filterTopicSessionReplies({
@@ -48,13 +103,9 @@ export function filterTopicSessionReplies({
 export function useTopicSessionController({ notify, topic }: { notify: (message: string) => void; topic: Topic }) {
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyOrder, setReplyOrder] = useState<ReplyOrder>('oldest');
-  const [replyContent, setReplyContent] = useState('');
-  const [replyFace, setReplyFace] = useState('');
+  const [replyComposer, dispatchReplyComposer] = useReducer(transitionReplyComposer, INITIAL_REPLY_COMPOSER_STATE);
   const [commentQuery, setCommentQuery] = useState('');
   const [debouncedCommentQuery, setDebouncedCommentQuery] = useState('');
-  const [replyComposerOpen, setReplyComposerOpen] = useState(false);
-  const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
-  const [replyEditTarget, setReplyEditTarget] = useState<ReplyEditTarget | null>(null);
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   const [quoteStateVersion, setQuoteStateVersion] = useState(0);
   const topicScrollYRef = useRef(0);
@@ -65,20 +116,8 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
   }, [commentQuery]);
 
   const toggleReplyComposer = useCallback(
-    (open: boolean) => {
-      setReplyComposerOpen(open);
-      if (open) {
-        setReplyTarget(null);
-        setReplyEditTarget(null);
-        setReplyFace('');
-        return;
-      }
-      setReplyContent((current) => replyContentAfterComposerClose(current, replyEditTarget));
-      setReplyFace('');
-      setReplyTarget(null);
-      setReplyEditTarget(null);
-    },
-    [replyEditTarget]
+    (open: boolean) => dispatchReplyComposer({ type: open ? 'open' : 'close' }),
+    []
   );
 
   const replyToFloor = useCallback(
@@ -87,45 +126,40 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
         notify('当前楼层信息不完整，刷新主题后再试。');
         return;
       }
-      setReplyTarget({
-        floor: reply.floor,
-        author: reply.author,
-        authorId: reply.authorId
+      dispatchReplyComposer({
+        type: 'reply-to-floor',
+        target: {
+          floor: reply.floor,
+          author: reply.author,
+          authorId: reply.authorId
+        }
       });
-      setReplyEditTarget(null);
-      setReplyFace('');
-      setReplyComposerOpen(true);
     },
     [notify]
   );
 
   const editReply = useCallback((target: ReplyEditTarget) => {
-    setReplyTarget(null);
-    setReplyFace('');
-    // react-doctor-disable-next-line react-doctor/no-impure-state-updater -- This is an event callback, not a React state updater.
-    setReplyEditTarget(target);
-    setReplyContent(target.contentMarkdown);
-    setReplyComposerOpen(true);
+    dispatchReplyComposer({ type: 'edit', target });
   }, []);
 
   const detachReplyEdit = useCallback(() => {
-    setReplyComposerOpen(false);
-    setReplyFace('');
-    setReplyTarget(null);
-    setReplyEditTarget(null);
+    dispatchReplyComposer({ type: 'detach-edit' });
   }, []);
 
   const completeReplySubmission = useCallback(() => {
-    const next = replyComposerAfterSuccessfulSubmission();
-    setReplyContent(next.replyContent);
-    setReplyFace(next.replyFace);
-    setReplyComposerOpen(next.replyComposerOpen);
-    setReplyTarget(next.replyTarget);
-    setReplyEditTarget(next.replyEditTarget);
+    dispatchReplyComposer({ type: 'complete-submission' });
   }, []);
 
   const appendReplyMarkup = useCallback((markup: string) => {
-    setReplyContent((current) => appendReplyImageMarkup(current, markup));
+    dispatchReplyComposer({ type: 'append-markup', markup });
+  }, []);
+
+  const changeReplyContent = useCallback((content: string) => {
+    dispatchReplyComposer({ type: 'change-content', content });
+  }, []);
+
+  const changeReplyFace = useCallback((face: string) => {
+    dispatchReplyComposer({ type: 'change-face', face });
   }, []);
 
   const changeQuoteExpanded = useCallback((key: string, expanded: boolean) => {
@@ -143,20 +177,18 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
       debouncedCommentQuery,
       expandedQuotes,
       quoteStateVersion,
-      replyComposerOpen,
-      replyContent,
-      replyEditTarget,
-      replyFace,
+      replyComposerIntent: replyComposer.intent,
+      replyContent: replyComposer.content,
+      replyFace: replyComposer.face,
       replyFilter,
       replyOrder,
-      replyTarget,
       selectedTopic: topic
     },
     commands: {
       composer: {
         appendMarkup: appendReplyMarkup,
-        changeContent: setReplyContent,
-        changeFace: setReplyFace,
+        changeContent: changeReplyContent,
+        changeFace: changeReplyFace,
         completeSubmission: completeReplySubmission,
         detachEdit: detachReplyEdit,
         editReply,

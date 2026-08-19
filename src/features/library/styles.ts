@@ -63,11 +63,52 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderSettings
       gap: 10,
       width: '100%'
     },
+    categoryFilterSlot: {
+      justifyContent: 'center',
+      minHeight: 34
+    },
+    categoryFilterButton: {
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      gap: 4,
+      minHeight: 34,
+      maxWidth: '100%',
+      paddingHorizontal: 2
+    },
+    categoryFilterButtonPressed: {
+      opacity: 0.65
+    },
+    categoryFilterButtonText: {
+      color: theme.primary,
+      flexShrink: 1,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600'
+    },
+    categoryFilterButtonTextDisabled: {
+      color: theme.muted
+    },
+    hiddenCategoryFilterSlot: {
+      opacity: 0
+    },
     libraryContentInner: {
       gap: 0,
       padding: 16,
       paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
       paddingBottom: 96
+    },
+    libraryViewportStack: {
+      flex: 1
+    },
+    libraryViewport: {
+      ...StyleSheet.absoluteFillObject
+    },
+    activeLibraryViewport: {
+      zIndex: 1
+    },
+    hiddenLibraryViewport: {
+      opacity: 0
     },
     libraryItem: {
       gap: 8,

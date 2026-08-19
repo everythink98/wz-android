@@ -1,8 +1,10 @@
-import { checkYaohuoLogin, getUserProfile } from '@/sources/readGateway';
+import { checkYaohuoLogin } from '@/sources/readGateway';
 import { summarizeYaohuoCookieHeader } from './session';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { managedCookieHeaderOrThrow, type ManagedCookieReadResult } from '@/platform/network/managedCookies';
+import type { UserProfile } from '@/domain/forum/models';
+import { parseHtml } from '@/domain/forum/html';
 import {
   siteSessionStateFromEvents,
   type AccountStatusObservation,
@@ -15,8 +17,39 @@ import {
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { fetchYaohuoHtml } from './reader';
+import { parseYaohuoUserProfileDocument } from './userParser';
+import { parseYaohuoListDocument } from './feedParser';
+import { YAOHUO_BASE_URL, yaohuoUserProfileTopicListUrlFromRoot } from './protocol';
 
 export const YAOHUO_ACCOUNT_STATUS_URL = 'https://www.yaohuo.me/wapindex.aspx?sid=-2';
+
+async function enrichYaohuoAccountName(user: UserProfile, fetcher: Fetcher, signal: AbortSignal) {
+  if ((user.displayName || user.username).trim() !== user.id) return user;
+  const profilePage = await fetchYaohuoHtml(
+    `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(user.id)}&siteid=1000`,
+    fetcher,
+    { signal, validateLogin: false }
+  );
+  const profileRoot = parseHtml(profilePage.html);
+  const parsedProfile = parseYaohuoUserProfileDocument(profileRoot, { id: user.id, username: user.username });
+  const profile = {
+    ...parsedProfile,
+    topics: []
+  };
+  if ((profile.displayName || profile.username).trim() !== user.id) return profile;
+
+  const topicUrl = yaohuoUserProfileTopicListUrlFromRoot(profileRoot, user.id, profilePage.url);
+  if (!topicUrl) return profile;
+  const topicPage = await fetchYaohuoHtml(topicUrl, fetcher, { signal, validateLogin: false });
+  const topicAuthor = parseYaohuoListDocument(parseHtml(topicPage.html), topicPage.html, {
+    classId: '0',
+    limit: 30,
+    page: 1,
+    url: topicPage.url
+  }).items.find((topic) => topic.author && topic.author !== user.id)?.author;
+  return topicAuthor ? { ...profile, username: topicAuthor, displayName: topicAuthor } : profile;
+}
 
 export async function readYaohuoAccountStatus({
   fetcher,
@@ -58,13 +91,7 @@ export async function readYaohuoAccountStatus({
     let currentUser = verifiedUser;
     let profileError: unknown;
     try {
-      currentUser = await getUserProfile({
-        source: 'yaohuo',
-        id: verifiedUser.id,
-        username: verifiedUser.username,
-        fetcher: diagnosticFetcher,
-        signal
-      });
+      currentUser = await enrichYaohuoAccountName(verifiedUser, diagnosticFetcher, signal);
     } catch (error) {
       if (signal.aborted || isCanceledRequest(error)) throw error;
       profileError = error;

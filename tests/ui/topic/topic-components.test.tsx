@@ -1786,10 +1786,9 @@ describe('Topic real child components', () => {
     const onReplyComposerOpenChange = jest.fn();
     const props: ComponentProps<typeof ReplyComposerSheet> = {
       actionBusy: false,
+      intent: { kind: 'new' },
       replyContent: '保留中的草稿',
-      replyEditTarget: null,
       replyFace: '',
-      replyTarget: null,
       source: 'nodeseek',
       styles,
       theme,
@@ -1815,6 +1814,35 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
     await view.rerender(<ReplyComposerSheet {...props} />);
     expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false);
+
+    await view.rerender(
+      <ReplyComposerSheet {...props} intent={{ kind: 'floor', target: { author: '@bob', floor: 3 } }} />
+    );
+    expect(view.getByText('回复 @bob · #3')).toBeTruthy();
+    expect(view.getByPlaceholderText('输入楼层回复内容')).toBeTruthy();
+    expect(view.getByLabelText('取消楼层回复')).toBeTruthy();
+
+    await view.rerender(
+      <ReplyComposerSheet
+        {...props}
+        intent={{
+          kind: 'edit',
+          target: {
+            commentId: 9,
+            contentMarkdown: '保留中的草稿',
+            floor: 4,
+            topicId: '1',
+            ticket: { source: 'linuxdo', identityKey: 'linuxdo:alice', sessionEpoch: 1 }
+          }
+        }}
+      />
+    );
+    expect(view.getByText('编辑 #4')).toBeTruthy();
+    expect(view.getByPlaceholderText('编辑回复内容')).toBeTruthy();
+    expect(view.getByLabelText('取消编辑')).toBeTruthy();
+    expect(view.getByLabelText('保存编辑')).toBeTruthy();
+
+    await view.rerender(<ReplyComposerSheet {...props} />);
     await fireEvent.press(view.getByLabelText('模拟关闭回复面板'));
     expect(onReplyComposerOpenChange).toHaveBeenCalledWith(false);
 

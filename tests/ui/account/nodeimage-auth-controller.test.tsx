@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { useState } from 'react';
+import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordinator';
 
 jest.mock('@/platform/android/xiaoyinsiKeystore', () => ({
   nativeSecureRandomHex: jest.fn(async () => 'a'.repeat(32))
@@ -37,7 +39,7 @@ function nodeSeekSession() {
 
 async function createControllerHarness() {
   const beginSurface = jest.fn(() => ({ generation: 7 }));
-  const finishSurface = jest.fn(async () => ({
+  const finishSurface = jest.fn(async (_reason: AuthSurfaceCloseReason) => ({
     status: 'same' as const,
     session: nodeSeekSession()
   }));
@@ -55,16 +57,25 @@ async function createControllerHarness() {
     status: 'same' as const,
     session: nodeSeekSession()
   }));
-  const hook = await renderHook(() =>
-    useNodeImageAuthController({
-      beginSurface,
-      finishSurface,
+  const hook = await renderHook(() => {
+    const [surfaceVisible, setSurfaceVisible] = useState(false);
+    return useNodeImageAuthController({
+      beginSurface: () => {
+        const ticket = beginSurface();
+        setSurfaceVisible(true);
+        return ticket;
+      },
+      finishSurface: (reason) => {
+        setSurfaceVisible(false);
+        return finishSurface(reason);
+      },
       notify,
       prepareSurfaceOpen,
       readRuntime,
-      reconcileAccountStatus
-    })
-  );
+      reconcileAccountStatus,
+      surfaceVisible
+    });
+  });
   return {
     beginSurface,
     finishSurface,

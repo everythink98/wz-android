@@ -73,8 +73,12 @@ function createController(
     stopLoading: vi.fn()
   });
   const onLoginWebViewFailure = vi.fn();
-  const onLinuxDoSurfaceClosed = vi.fn();
-  const onLinuxDoSurfaceOpened = vi.fn();
+  const onLinuxDoSurfaceClosed = vi.fn(() => {
+    showLinuxDoPanelRef.current = false;
+  });
+  const onLinuxDoSurfaceOpened = vi.fn(() => {
+    showLinuxDoPanelRef.current = true;
+  });
   const notify = vi.fn();
   const reconcileAccountStatus = vi.fn(
     options.reconcileAccountStatus || (async () => ({ status: 'same', session: loggedInSession }) as const)
@@ -92,6 +96,7 @@ function createController(
     linuxDoWebViewRef: linuxDoWebViewRef as never,
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgentRef,
+    isLinuxDoSurfaceVisible: () => showLinuxDoPanelRef.current,
     notify,
     onBeforeLinuxDoSurfaceOpened: options.onBeforeLinuxDoSurfaceOpened,
     onLoginWebViewFailure,
@@ -104,10 +109,6 @@ function createController(
     setLinuxDoWebViewUserAgent,
     setLoadingLinuxDoPage: vi.fn(),
     setMountLinuxDoWebView: vi.fn(),
-    setShowLinuxDoPanel: vi.fn((value: boolean | ((previous: boolean) => boolean)) => {
-      showLinuxDoPanelRef.current = typeof value === 'function' ? value(showLinuxDoPanelRef.current) : value;
-    }),
-    showLinuxDoPanelRef,
     updateLinuxDoSession,
     updateNodeSeekSession: vi.fn()
   });
@@ -164,6 +165,7 @@ describe('linux.do visible verification coordinator', () => {
 
     expect(showLinuxDoPanelRef.current).toBe(true);
     expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(1);
+    expect(onLinuxDoSurfaceOpened).toHaveBeenCalledWith({ accountBarrier: true });
     expect(reconcileAccountStatus).not.toHaveBeenCalled();
   });
 
@@ -256,7 +258,7 @@ describe('linux.do visible verification coordinator', () => {
       resume
     });
 
-    expect(onLinuxDoSurfaceOpened).not.toHaveBeenCalled();
+    expect(onLinuxDoSurfaceOpened).toHaveBeenCalledWith({ accountBarrier: false });
     await controller.checkLinuxDoCookie();
 
     expect(reconcileAccountStatus).not.toHaveBeenCalled();

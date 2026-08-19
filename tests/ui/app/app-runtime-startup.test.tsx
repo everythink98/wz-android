@@ -7,6 +7,8 @@ import type { ReaderData } from '@/domain/reader/readerData';
 const mockUseAccountRuntime = jest.fn();
 const mockUseAppUpdateRuntime = jest.fn();
 const mockUseForumCatalogRuntime = jest.fn();
+const mockHandleNavigationReady = jest.fn();
+const mockNotificationNavigationReady = jest.fn();
 let mockReaderData: ReaderData | undefined;
 let mockReaderDataLoaded = true;
 let mockSessionsReady = true;
@@ -29,7 +31,7 @@ jest.mock('@/app/useAppLifecycleRuntime', () => ({
     notify: jest.fn(),
     onCatalogSettled: jest.fn(),
     onFeedInitialContentReady: mockOnFeedInitialContentReady,
-    onReady: jest.fn(),
+    onReady: mockHandleNavigationReady,
     onScreenChange: jest.fn(),
     openUserRoute: jest.fn(),
     screen: mockScreen,
@@ -159,7 +161,7 @@ jest.mock('@/platform/update/useAppUpdateRuntime', () => ({
 jest.mock('@/features/notifications/useNotificationsRuntime', () => ({
   useNotificationsRuntime: () => ({
     backgroundEnabled: false,
-    onNavigationReady: jest.fn(),
+    onNavigationReady: mockNotificationNavigationReady,
     partialUnavailable: false,
     unreadTotal: 0
   })
@@ -182,6 +184,8 @@ describe('app runtime startup', () => {
     mockInitialForegroundReady = false;
     mockScreen = 'feed';
     mockOnFeedInitialContentReady.mockClear();
+    mockHandleNavigationReady.mockClear();
+    mockNotificationNavigationReady.mockClear();
     mockUseAccountRuntime.mockClear();
     mockUseAppUpdateRuntime.mockClear();
     mockUseForumCatalogRuntime.mockClear();
@@ -195,6 +199,27 @@ describe('app runtime startup', () => {
     expect(hook.result.current.routes?.moreRouteRuntime).toBeDefined();
     expect(mockUseAccountRuntime).toHaveBeenCalledWith(
       expect.objectContaining({ webViewBlockMessage: '代理状态读取中。' })
+    );
+  });
+
+  it('[REG-PERF-023] keeps the navigation ready callback stable and preserves callback order', async () => {
+    const hook = await renderHook(
+      ({ revision }: { revision: number }) => {
+        void revision;
+        return useAppRuntime();
+      },
+      { initialProps: { revision: 0 } }
+    );
+    const onReady = hook.result.current.routes!.onReady;
+
+    await act(async () => hook.rerender({ revision: 1 }));
+
+    expect(hook.result.current.routes!.onReady).toBe(onReady);
+    onReady();
+    expect(mockNotificationNavigationReady).toHaveBeenCalledTimes(1);
+    expect(mockHandleNavigationReady).toHaveBeenCalledTimes(1);
+    expect(mockNotificationNavigationReady.mock.invocationCallOrder[0]).toBeLessThan(
+      mockHandleNavigationReady.mock.invocationCallOrder[0]!
     );
   });
 

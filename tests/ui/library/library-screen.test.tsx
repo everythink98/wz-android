@@ -8,9 +8,12 @@ import { LibraryScreen } from '@/features/library/LibraryScreen';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { Category, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import type { Source } from '@/domain/forum/sourceCatalog';
+import { PillRail } from '@/ui/controls/SelectionControls';
 
 let mockFlashListMountCount = 0;
-const mockFlashListRenders: { dataLength: number; testID?: string }[] = [];
+let mockFlashListUnmountCount = 0;
+const mockFlashListRenders: { data: unknown[]; dataLength: number; testID?: string }[] = [];
+const mockFlashListOnLoadByData = new Map<unknown[], (info: { elapsedTimeInMs: number }) => void>();
 const mockFlashListScrollToOffset = jest.fn<(options: { animated: boolean; offset: number }) => void>();
 
 jest.mock('@shopify/flash-list', () => {
@@ -25,6 +28,7 @@ jest.mock('@shopify/flash-list', () => {
         ListEmptyComponent,
         ListHeaderComponent,
         maintainVisibleContentPosition,
+        onLoad,
         renderItem,
         testID
       }: {
@@ -34,6 +38,7 @@ jest.mock('@shopify/flash-list', () => {
         ListEmptyComponent?: React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
         maintainVisibleContentPosition?: { disabled?: boolean };
+        onLoad?: (info: { elapsedTimeInMs: number }) => void;
         renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
         testID?: string;
       },
@@ -43,7 +48,14 @@ jest.mock('@shopify/flash-list', () => {
         mockFlashListMountCount += 1;
         return undefined;
       });
-      mockFlashListRenders.push({ dataLength: data.length, testID });
+      ReactModule.useEffect(
+        () => () => {
+          mockFlashListUnmountCount += 1;
+        },
+        []
+      );
+      mockFlashListRenders.push({ data, dataLength: data.length, testID });
+      if (onLoad) mockFlashListOnLoadByData.set(data, onLoad);
       ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: mockFlashListScrollToOffset }));
       return ReactModule.createElement(
         NativeView,
@@ -63,6 +75,7 @@ jest.mock('@shopify/flash-list', () => {
 });
 
 jest.mock('lucide-react-native', () => ({
+  ChevronDown: () => null,
   Star: () => null,
   Trash2: () => null
 }));
@@ -150,38 +163,49 @@ const followedUsers: FollowedUserRecord[] = [
     followedAt: '2026-07-14T00:00:00.000Z'
   }
 ];
+const noop = () => undefined;
+const noopTopic = (_topic: Topic) => undefined;
+const noopLibraryTopic = (_topic: Topic, _section: 'favorites' | 'history') => undefined;
+const noopUserReference = (_user: UserReference) => undefined;
+const noopUserProfile = (_user: UserProfile) => undefined;
 
 function LibraryHarness({
+  active = true,
   enabledSources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'],
   followedUsers: libraryUsers = followedUsers,
-  onClearHistory = jest.fn(),
-  onManageContentSources = jest.fn(),
-  onOpenTopic = jest.fn(),
-  onOpenUser = jest.fn(),
-  onRemove = jest.fn(),
-  onRemoveUser = jest.fn(),
-  records: libraryRecords = records
+  favoriteRecords = records,
+  historyRecords = records,
+  onClearHistory = noop,
+  onManageContentSources = noop,
+  onOpenTopic = noopTopic,
+  onOpenUser = noopUserReference,
+  onRemove = noopLibraryTopic,
+  onRemoveUser = noopUserProfile
 }: {
+  active?: boolean;
   enabledSources?: readonly Source[];
   followedUsers?: FollowedUserRecord[];
+  favoriteRecords?: TopicRecord[];
+  historyRecords?: TopicRecord[];
   onClearHistory?: () => void;
   onManageContentSources?: () => void;
   onOpenTopic?: (topic: Topic) => void;
   onOpenUser?: (user: UserReference) => void;
-  onRemove?: (topic: Topic) => void;
+  onRemove?: (topic: Topic, section: 'favorites' | 'history') => void;
   onRemoveUser?: (user: UserProfile) => void;
-  records?: TopicRecord[];
 } = {}) {
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
   return (
     <View>
       <LibraryScreen
+        active={active}
         categories={categories}
         enabledSources={enabledSources}
+        favoriteRecords={favoriteRecords}
         followedUsers={libraryUsers}
+        historyRecords={historyRecords}
         libraryTab={libraryTab}
         loaded
-        records={libraryRecords}
         topicStateIndex={topicStateIndex}
         onClearHistory={onClearHistory}
         onManageContentSources={onManageContentSources}
@@ -239,7 +263,7 @@ describe('Library filters', () => {
 
   it('reorders the rail without changing selection, category or local data actions', async () => {
     const onClearHistory = jest.fn();
-    const onRemove = jest.fn<(topic: Topic) => void>();
+    const onRemove = jest.fn<(topic: Topic, section: 'favorites' | 'history') => void>();
     const onRemoveUser = jest.fn<(user: UserProfile) => void>();
     const view = await render(
       <LibraryHarness
@@ -250,7 +274,8 @@ describe('Library filters', () => {
       />
     );
     await fireEvent.press(view.getByTestId('library-source-v2ex'));
-    await fireEvent.press(view.getByLabelText('问与答'));
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+    await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
 
     await view.rerender(
       <LibraryHarness
@@ -261,7 +286,7 @@ describe('Library filters', () => {
       />
     );
     expect(view.getByTestId('library-source-v2ex').props.accessibilityState.selected).toBe(true);
-    expect(view.getByLabelText('问与答，已选择')).toBeTruthy();
+    expect(view.getByLabelText('分类：问与答')).toBeTruthy();
     expect(
       view
         .getAllByRole('button')
@@ -276,7 +301,8 @@ describe('Library filters', () => {
   it('returns a disabled active source to all, clears category selection and restores it only as unfiltered data', async () => {
     const view = await render(<LibraryHarness enabledSources={['v2ex', 'linuxdo']} />);
     await fireEvent.press(view.getByTestId('library-source-v2ex'));
-    await fireEvent.press(view.getByLabelText('问与答'));
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+    await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
     expect(view.getByText('1 / 3 条')).toBeTruthy();
 
     await view.rerender(<LibraryHarness enabledSources={['linuxdo']} />);
@@ -284,7 +310,7 @@ describe('Library filters', () => {
     expect(view.queryByTestId('library-source-v2ex')).toBeNull();
     expect(view.getByText('linux.do 开发主题')).toBeTruthy();
     expect(view.getByText('1 条')).toBeTruthy();
-    expect(view.getByLabelText('问与答').props.accessibilityState.selected).toBe(false);
+    expect(view.getByLabelText('分类：全部')).toBeTruthy();
 
     await view.rerender(<LibraryHarness enabledSources={['linuxdo', 'v2ex']} />);
     expect(view.getByTestId('library-source-all').props.accessibilityState.selected).toBe(true);
@@ -327,7 +353,7 @@ describe('Library filters', () => {
     expect(onRemoveUser).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-001] reuses the list while switching between all three library tabs', async () => {
+  it('[REG-PERF-001] gives each tab one stable viewport while Library stays focused', async () => {
     mockFlashListMountCount = 0;
     const view = await render(<LibraryHarness />);
 
@@ -336,19 +362,148 @@ describe('Library filters', () => {
     await fireEvent.press(view.getByTestId('library-tab-history'));
     await fireEvent.press(view.getByTestId('library-tab-favorites'));
 
+    expect(mockFlashListMountCount).toBe(3);
+  });
+
+  it('[REG-PERF-022] prewarms one viewport per loaded frame and releases inactive viewports on blur', async () => {
+    const frameCallbacks: ((time: number) => void)[] = [];
+    jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    });
+    mockFlashListMountCount = 0;
+    mockFlashListUnmountCount = 0;
+    mockFlashListRenders.length = 0;
+    mockFlashListOnLoadByData.clear();
+    const view = await render(<LibraryHarness historyRecords={records.slice(0, 2)} />);
+    const favoriteData = mockFlashListRenders.find(
+      (renderState) => renderState.testID === 'library-favorites-ready'
+    )?.data;
+
     expect(mockFlashListMountCount).toBe(1);
+    await act(async () => mockFlashListOnLoadByData.get(favoriteData || [])?.({ elapsedTimeInMs: 1 }));
+    expect(frameCallbacks).toHaveLength(1);
+    await act(async () => frameCallbacks.shift()?.(0));
+    expect(mockFlashListMountCount).toBe(2);
+    const historyData = mockFlashListRenders.find((renderState) => renderState.dataLength === 3)?.data;
+
+    await act(async () => mockFlashListOnLoadByData.get(historyData || [])?.({ elapsedTimeInMs: 1 }));
+    expect(frameCallbacks).toHaveLength(1);
+    await act(async () => frameCallbacks.shift()?.(0));
+    expect(mockFlashListMountCount).toBe(3);
+    expect(view.queryByTestId('library-history-viewport')).toBeNull();
+    expect(view.getByTestId('library-history-viewport', { includeHiddenElements: true })).toBeTruthy();
+
+    mockFlashListUnmountCount = 0;
+    await view.rerender(<LibraryHarness active={false} historyRecords={records.slice(0, 2)} />);
+    expect(mockFlashListUnmountCount).toBe(2);
+    expect(view.queryByTestId('library-history-viewport', { includeHiddenElements: true })).toBeNull();
+    expect(view.queryByTestId('library-users-viewport', { includeHiddenElements: true })).toBeNull();
+  });
+
+  it('[REG-PERF-022] retains each populated dataset item array across tab switches', async () => {
+    mockFlashListRenders.length = 0;
+    const view = await render(<LibraryHarness />);
+    const firstFavoriteData = mockFlashListRenders.find(
+      (renderState) => renderState.testID === 'library-favorites-ready'
+    )?.data;
+
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+    const firstHistoryData = mockFlashListRenders.find(
+      (renderState) => renderState.testID === 'library-history-ready'
+    )?.data;
+    await fireEvent.press(view.getByTestId('library-tab-favorites'));
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+
+    expect(
+      mockFlashListRenders.filter((renderState) => renderState.testID === 'library-favorites-ready').at(-1)?.data
+    ).toBe(firstFavoriteData);
+    expect(
+      mockFlashListRenders.filter((renderState) => renderState.testID === 'library-history-ready').at(-1)?.data
+    ).toBe(firstHistoryData);
+  });
+
+  it('[REG-PERF-022] changes viewport visibility without rendering either populated FlashList again', async () => {
+    const view = await render(<LibraryHarness />);
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+    await fireEvent.press(view.getByTestId('library-tab-favorites'));
+    mockFlashListRenders.length = 0;
+
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+    await fireEvent.press(view.getByTestId('library-tab-favorites'));
+
+    expect(mockFlashListRenders).toHaveLength(0);
+  });
+
+  it('[REG-PERF-021] reuses positional pill nodes when a source swaps the category taxonomy', async () => {
+    const onChange = jest.fn();
+    const view = await render(
+      <PillRail
+        items={[
+          { value: 'all', label: '全部' },
+          { value: 'first-a', label: '分类 A' },
+          { value: 'first-b', label: '分类 B' }
+        ]}
+        testIDPrefix="perf-category"
+        value="all"
+        onChange={onChange}
+      />
+    );
+    const secondSlot = view.getByTestId('perf-category-first-a');
+
+    await view.rerender(
+      <PillRail
+        items={[
+          { value: 'all', label: '全部' },
+          { value: 'second-a', label: '另一分类 A' },
+          { value: 'second-b', label: '另一分类 B' }
+        ]}
+        testIDPrefix="perf-category"
+        value="all"
+        onChange={onChange}
+      />
+    );
+
+    expect(view.getByTestId('perf-category-second-a')).toBe(secondSlot);
+  });
+
+  it('[REG-PERF-021] keeps one fixed category button across source taxonomies', async () => {
+    const view = await render(<LibraryHarness />);
+    const categoryButton = view.getByTestId('library-category-menu-button');
+
+    expect(view.queryByRole('menuitem')).toBeNull();
+    await fireEvent.press(view.getByTestId('library-source-v2ex'));
+    expect(view.getByTestId('library-category-menu-button')).toBe(categoryButton);
+    await fireEvent.press(view.getByTestId('library-source-linuxdo'));
+    expect(view.getByTestId('library-category-menu-button')).toBe(categoryButton);
+    expect(view.queryByRole('menuitem')).toBeNull();
+  });
+
+  it('[REG-PERF-021] keeps the category button mounted but inaccessible while followed users are selected', async () => {
+    const view = await render(<LibraryHarness />);
+    const categoryButton = view.getByTestId('library-category-menu-button');
+
+    await fireEvent.press(view.getByTestId('library-tab-users'));
+
+    expect(view.queryByTestId('library-category-menu-button')).toBeNull();
+
+    await fireEvent.press(view.getByTestId('library-tab-favorites'));
+
+    expect(view.getByTestId('library-category-menu-button')).toBe(categoryButton);
   });
 
   it('[REG-PERF-001] enters the next tab with source and category filters already reset', async () => {
     const view = await render(<LibraryHarness />);
     await fireEvent.press(view.getByTestId('library-source-v2ex'));
-    await fireEvent.press(view.getByLabelText('问与答'));
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+    await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
     mockFlashListRenders.length = 0;
 
     await fireEvent.press(view.getByTestId('library-tab-history'));
 
     const historyRenders = mockFlashListRenders.filter((renderState) => renderState.testID === 'library-history-ready');
-    expect(historyRenders).toEqual([{ dataLength: 4, testID: 'library-history-ready' }]);
+    expect(historyRenders).toHaveLength(1);
+    expect(historyRenders[0]).toMatchObject({ dataLength: 4, testID: 'library-history-ready' });
   });
 
   it('[REG-PERF-001] resets the list position before switching tabs without animation', async () => {
@@ -358,6 +513,10 @@ describe('Library filters', () => {
       return frameCallbacks.length;
     });
     const view = await render(<LibraryHarness />);
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+    await act(async () => frameCallbacks.shift()?.(0));
+    await fireEvent.press(view.getByTestId('library-tab-favorites'));
+    await act(async () => frameCallbacks.shift()?.(0));
     mockFlashListScrollToOffset.mockClear();
 
     await fireEvent.press(view.getByTestId('library-tab-history'));
@@ -372,7 +531,8 @@ describe('Library filters', () => {
   it('[REG-PERF-001] leaves filters and position unchanged when the selected tab is pressed again', async () => {
     const view = await render(<LibraryHarness />);
     await fireEvent.press(view.getByTestId('library-source-v2ex'));
-    await fireEvent.press(view.getByLabelText('问与答'));
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+    await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
     mockFlashListScrollToOffset.mockClear();
 
     await fireEvent.press(view.getByTestId('library-tab-favorites'));
@@ -392,7 +552,7 @@ describe('Library filters', () => {
   });
 
   it('settles all three tabs with an empty device library', async () => {
-    const view = await render(<LibraryHarness followedUsers={[]} records={[]} />);
+    const view = await render(<LibraryHarness favoriteRecords={[]} followedUsers={[]} historyRecords={[]} />);
 
     expect(view.getByTestId('library-favorites-ready')).toBeTruthy();
     expect(view.getByTestId('library-favorites-empty')).toBeTruthy();
@@ -417,7 +577,7 @@ describe('Library filters', () => {
     removeButtons?.find((button) => button.text === '取消')?.onPress?.();
     expect(onRemove).not.toHaveBeenCalled();
     removeButtons?.find((button) => button.text === '确定')?.onPress?.();
-    expect(onRemove).toHaveBeenCalledWith(records[0]?.topic);
+    expect(onRemove).toHaveBeenCalledWith(records[0]?.topic, 'favorites');
 
     await fireEvent.press(view.getByTestId('library-tab-history'));
     await fireEvent.press(view.getByLabelText('清空历史'));
@@ -433,7 +593,7 @@ describe('Library filters', () => {
   it('applies single-item history and follow removals without opening the row', async () => {
     const onOpenTopic = jest.fn<(topic: Topic) => void>();
     const onOpenUser = jest.fn<(user: UserReference) => void>();
-    const onRemove = jest.fn<(topic: Topic) => void>();
+    const onRemove = jest.fn<(topic: Topic, section: 'favorites' | 'history') => void>();
     const onRemoveUser = jest.fn<(user: UserProfile) => void>();
     const view = await render(
       <LibraryHarness
@@ -446,7 +606,7 @@ describe('Library filters', () => {
 
     await fireEvent.press(view.getByTestId('library-tab-history'));
     await fireEvent.press(view.getAllByLabelText('删除')[0]);
-    expect(onRemove).toHaveBeenCalledWith(records[0]?.topic);
+    expect(onRemove).toHaveBeenCalledWith(records[0]?.topic, 'history');
     expect(onOpenTopic).not.toHaveBeenCalled();
 
     await fireEvent.press(view.getByTestId('library-tab-users'));
@@ -463,14 +623,15 @@ describe('Library filters', () => {
     expect(view.getByText('2 / 3 条')).toBeTruthy();
     expect(view.queryByText('linux.do 开发主题')).toBeNull();
 
-    await fireEvent.press(view.getByLabelText('问与答'));
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+    await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
     expect(view.getByText('1 / 3 条')).toBeTruthy();
     expect(view.getByText('V2EX 问答主题')).toBeTruthy();
     expect(view.queryByText('V2EX 工作主题')).toBeNull();
 
     await fireEvent.press(view.getByTestId('library-tab-users'));
     expect(view.getByTestId('library-source-all').props.accessibilityState.selected).toBe(true);
-    expect(view.queryByLabelText('问与答')).toBeNull();
+    expect(view.queryByTestId('library-category-menu-button')).toBeNull();
     expect(view.getByText('2 / 2 人')).toBeTruthy();
     await fireEvent.press(view.getByTestId('library-source-v2ex'));
     expect(view.getByText('1 / 2 人')).toBeTruthy();
@@ -479,10 +640,12 @@ describe('Library filters', () => {
 
     await fireEvent.press(view.getByTestId('library-tab-history'));
     expect(view.getByTestId('library-source-all').props.accessibilityState.selected).toBe(true);
-    expect(view.getAllByLabelText('全部，已选择')).toHaveLength(2);
+    expect(view.getAllByLabelText('全部，已选择')).toHaveLength(1);
+    expect(view.getByLabelText('分类：全部')).toBeTruthy();
     expect(view.getByText('3 条')).toBeTruthy();
     await fireEvent.press(view.getByTestId('library-source-linuxdo'));
-    await fireEvent.press(view.getByLabelText('开发调优'));
+    await fireEvent.press(view.getByTestId('library-category-menu-button'));
+    await fireEvent.press(view.getByRole('menuitem', { name: '开发调优' }));
     expect(view.getByText('1 / 3 条')).toBeTruthy();
     expect(view.getByText('linux.do 开发主题')).toBeTruthy();
     expect(view.queryByText('V2EX 问答主题')).toBeNull();

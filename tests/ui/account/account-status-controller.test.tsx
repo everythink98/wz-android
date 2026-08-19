@@ -7,11 +7,10 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 jest.mock('@/sources/readGateway', () => ({
   checkYaohuoLogin: jest.fn(),
-  getCurrentUserProfile: jest.fn(),
-  getUserProfile: jest.fn()
+  getCurrentUserProfile: jest.fn()
 }));
 
-import { checkYaohuoLogin, getCurrentUserProfile, getUserProfile } from '@/sources/readGateway';
+import { checkYaohuoLogin, getCurrentUserProfile } from '@/sources/readGateway';
 import { useAccountStatusController } from '@/features/account/useAccountStatusController';
 import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
@@ -30,7 +29,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const mockCheckYaohuoLogin = jest.mocked(checkYaohuoLogin);
 const mockGetCurrentUser = jest.mocked(getCurrentUserProfile);
-const mockGetUserProfile = jest.mocked(getUserProfile);
 const mockReadLinuxDoCookieHeader = jest.fn<() => Promise<string | undefined>>();
 const mockReadYaohuoCookieHeader = jest.fn<() => Promise<string | undefined>>();
 
@@ -90,6 +88,9 @@ async function renderStatusController({
   enabledSources = sessionSources,
   enabledSourcesReady = false,
   sessionEpochs = initialForumSessionEpochs,
+  fetcher = jest.fn(async () => new Response('{}')),
+  linuxDoUserAgentRef = { current: 'safe-agent' },
+  nodeSeekUserAgentRef = { current: 'safe-agent' },
   readNodeSeekCookieHeader = jest.fn(async () => undefined),
   notify = jest.fn(),
   onAccountStatusChanged = jest.fn(),
@@ -152,10 +153,10 @@ async function renderStatusController({
       renderedEnabledSources?: readonly (typeof sessionSources)[number][];
     }) =>
       useAccountStatusController({
-        fetcher: jest.fn(async () => new Response('{}')),
+        fetcher,
         enabledSources: renderedEnabledSources || enabledSources,
-        linuxDoUserAgentRef: { current: 'safe-agent' },
-        nodeSeekUserAgentRef: { current: 'safe-agent' },
+        linuxDoUserAgentRef,
+        nodeSeekUserAgentRef,
         notify,
         onAccountStatusChanged: commitAccountStatusChange,
         readManagedCookieHeader,
@@ -191,7 +192,6 @@ describe('account status queries', () => {
       reason: 'expired'
     });
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? (null as never) : linuxUser));
-    mockGetUserProfile.mockResolvedValue(yaohuoUser);
   });
 
   it('[REG-PERF-019] restores the last confirmed identity without probing the account endpoint', async () => {
@@ -237,6 +237,56 @@ describe('account status queries', () => {
     expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
     expect(await AsyncStorage.getItem('account-session.migration.v1')).toBe('1');
     expect(await AsyncStorage.getItem('account-session.v1.nodeseek')).toContain('"state":"authenticated"');
+  });
+
+  it('[REG-ACCOUNT-044] bounds only one-time migration and releases its probe before sessions are ready', async () => {
+    jest.useFakeTimers();
+    const readNodeSeekCookieHeader = jest.fn(async () => 'session=candidate');
+    mockGetCurrentUser.mockImplementationOnce(
+      async ({ signal }) =>
+        new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('migration canceled')), { once: true });
+        })
+    );
+
+    try {
+      const { hook } = await renderStatusController({
+        enabledSources: ['nodeseek'],
+        enabledSourcesReady: true,
+        readNodeSeekCookieHeader
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mockGetCurrentUser).toHaveBeenCalledTimes(1);
+      expect(hook.result.current.hydrated).toBe(false);
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(hook.result.current.hydrated).toBe(true);
+      expect(hook.result.current.statusBusy).toBe(false);
+      expect(await AsyncStorage.getItem('account-session.migration.v1')).toBe('1');
+
+      mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
+      await act(async () => {
+        await hook.result.current.reconcileAccountStatus('nodeseek');
+        await jest.runOnlyPendingTimersAsync();
+      });
+      expect(mockGetCurrentUser).toHaveBeenCalledTimes(2);
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        identityTrust: 'confirmed',
+        currentUser: nodeSeekUser,
+        isVerifying: false
+      });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   afterEach(async () => {
@@ -467,19 +517,20 @@ describe('account status queries', () => {
     expect(aggregateAbort).not.toHaveBeenCalled();
   });
 
-  it('[REG-FEED-014] settles an unowned account probe as unknown after the aggregate budget', async () => {
+  it('[REG-ACCOUNT-044] keeps explicit account reconciliation active past the Feed aggregate budget', async () => {
     jest.useFakeTimers();
     const nodeSeekCookie = Promise.withResolvers<string | undefined>();
+    mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => nodeSeekCookie.promise)
     });
-    let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
+    let reconciliation!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
     let settled = false;
 
     try {
       await act(async () => {
-        refresh = hook.result.current.refreshAccountStatus({ silent: true });
-        void refresh.then(() => {
+        reconciliation = hook.result.current.reconcileAccountStatus('nodeseek');
+        void reconciliation.then(() => {
           settled = true;
         });
         await Promise.resolve();
@@ -488,23 +539,95 @@ describe('account status queries', () => {
         await jest.advanceTimersByTimeAsync(5_000);
         await Promise.resolve();
       });
-      const settledAtBudget = settled;
-      const trustAtBudget = appQueryClient.getQueryData<AccountSessionSnapshot>(
-        accountQueryKeys.snapshot('nodeseek')
-      )?.identityTrust;
-      nodeSeekCookie.resolve(undefined);
+      expect(settled).toBe(false);
+      expect(appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'))).toMatchObject({
+        identityTrust: 'unknown',
+        isVerifying: true,
+        lastError: undefined
+      });
+
+      nodeSeekCookie.resolve('session=safe');
+      let result!: Awaited<typeof reconciliation>;
       await act(async () => {
-        await refresh;
+        result = await reconciliation;
         await Promise.resolve();
         await jest.advanceTimersByTimeAsync(1);
       });
 
-      expect(settledAtBudget).toBe(true);
-      expect(trustAtBudget).toBe('unknown');
+      expect(result.status).toBe('same');
       expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
-        identityTrust: 'unknown',
-        lastError: 'NodeSeek 账号状态检查超时，请重试。'
+        identityTrust: 'confirmed',
+        isVerifying: false,
+        currentUser: nodeSeekUser
       });
+      expect(hook.result.current.accountSessionViewModels.nodeseek.lastError).toBeUndefined();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-ACCOUNT-044] lets four-site refresh publish fast sites while one protocol runs past five seconds', async () => {
+    jest.useFakeTimers();
+    const nodeSeekCookie = Promise.withResolvers<string | undefined>();
+    mockReadLinuxDoCookieHeader.mockResolvedValue('_t=safe');
+    mockReadYaohuoCookieHeader.mockResolvedValue('sidyaohuo=safe');
+    mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? nodeSeekUser : linuxUser));
+    mockCheckYaohuoLogin.mockResolvedValue({
+      source: 'yaohuo',
+      ok: true,
+      loginRequired: false,
+      loginUrl: '',
+      message: undefined,
+      reason: undefined,
+      currentUser: yaohuoUser
+    });
+    const readXiaoyinsiAuthorization = jest.fn<ReadXiaoyinsiAuthorization>(async () => ({
+      authenticated: true,
+      sessionEvent: {
+        type: 'cookie-loaded',
+        loggedIn: true,
+        currentUser: xiaoyinsiUser,
+        at: '2026-07-20T00:00:00.000Z'
+      }
+    }));
+    const { hook, notify } = await renderStatusController({
+      readNodeSeekCookieHeader: jest.fn(async () => nodeSeekCookie.promise),
+      readXiaoyinsiAuthorization
+    });
+    let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
+    let settled = false;
+
+    try {
+      await act(async () => {
+        refresh = hook.result.current.refreshAccountStatus();
+        void refresh.then(() => {
+          settled = true;
+        });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(settled).toBe(false);
+      expect(hook.result.current.accountSessionViewModels.nodeseek.isVerifying).toBe(true);
+      for (const source of ['linuxdo', 'yaohuo', 'xiaoyinsi'] as const) {
+        expect(hook.result.current.accountSessionViewModels[source].identityTrust).toBe('confirmed');
+      }
+      expect(notify).not.toHaveBeenCalled();
+
+      nodeSeekCookie.resolve('session=safe');
+      await act(async () => {
+        await refresh;
+        await jest.runOnlyPendingTimersAsync();
+      });
+
+      expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
+        identityTrust: 'confirmed',
+        currentUser: nodeSeekUser,
+        isVerifying: false
+      });
+      expect(notify).toHaveBeenCalledWith('账号状态已刷新');
     } finally {
       jest.useRealTimers();
     }
@@ -1554,13 +1677,27 @@ describe('account status queries', () => {
         topics: []
       }
     });
-    const { hook } = await renderStatusController({ readManagedCookieHeader });
+    const fetcher = jest.fn(async (input: string) => {
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31&siteid=1000') {
+        return new Response('<div class="content">昵称:dave</div>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+    const { hook } = await renderStatusController({ fetcher, readManagedCookieHeader });
 
     await act(async () => {
       await hook.result.current.refreshAccountStatus();
     });
 
-    await waitFor(() => expect(hook.result.current.accountSessionViewModels.yaohuo.currentUser).toEqual(yaohuoUser));
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.yaohuo.currentUser).toMatchObject({
+        source: 'yaohuo',
+        id: '31',
+        username: 'dave',
+        url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31',
+        topics: []
+      })
+    );
     expect(readManagedCookieHeader).toHaveBeenCalledWith('https://www.yaohuo.me/wapindex.aspx?sid=-2');
     expect(mockCheckYaohuoLogin).toHaveBeenCalledWith(
       expect.not.objectContaining({
@@ -1572,16 +1709,9 @@ describe('account status queries', () => {
         source: 'yaohuo'
       })
     );
-    expect(mockGetUserProfile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: 'yaohuo',
-        id: '31'
-      })
-    );
-    expect(mockGetUserProfile).toHaveBeenCalledWith(
-      expect.not.objectContaining({
-        yaohuoCookie: expect.anything()
-      })
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31&siteid=1000',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
   });
 
@@ -1602,8 +1732,13 @@ describe('account status queries', () => {
         topics: []
       }
     });
-    mockGetUserProfile.mockRejectedValue(new Error('profile unavailable'));
-    const { hook, notify } = await renderStatusController();
+    const fetcher = jest.fn(async (input: string) => {
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31&siteid=1000') {
+        return new Response('profile unavailable', { status: 503 });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+    const { hook, notify } = await renderStatusController({ fetcher });
 
     await act(async () => {
       await hook.result.current.refreshAccountStatus();
@@ -1617,7 +1752,7 @@ describe('account status queries', () => {
           id: '31',
           username: '31'
         },
-        lastError: 'profile unavailable'
+        lastError: 'HTTP 503'
       })
     );
     expect(notify).toHaveBeenCalledWith('账号状态部分刷新失败：妖火');

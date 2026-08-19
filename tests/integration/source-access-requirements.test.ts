@@ -317,6 +317,52 @@ describe('Android local access requirement detection', () => {
     expect(topic.accessRequirement).toBeUndefined();
   });
 
+  it('[REG-TOPIC-113] keeps readable linux.do topic details out of the permission state', async () => {
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 2777081,
+        title: '受限分类中的可读主题',
+        slug: 'readable-restricted-category-topic',
+        category_id: 12,
+        created_at: '2026-08-19T00:00:00.000Z',
+        bumped_at: '2026-08-19T00:01:00.000Z',
+        posts_count: 2,
+        views: 10,
+        categories: [
+          {
+            id: 12,
+            name: '受限分类',
+            read_restricted: true
+          }
+        ],
+        post_stream: {
+          stream: [1, 2],
+          posts: [
+            {
+              id: 1,
+              username: 'alice',
+              cooked: '<p>当前账号可读正文</p>',
+              created_at: '2026-08-19T00:00:00.000Z',
+              post_number: 1
+            },
+            {
+              id: 2,
+              username: 'bob',
+              cooked: '<p>当前账号可读回复</p>',
+              created_at: '2026-08-19T00:01:00.000Z',
+              post_number: 2
+            }
+          ]
+        }
+      })
+    );
+
+    const topic = await getLinuxDoTopic('2777081', { fetcher });
+
+    expect(topic.contentHtml).toContain('当前账号可读正文');
+    expect(topic.accessRequirement).toBeUndefined();
+  });
+
   it('turns linux.do permission errors into restricted topic details', async () => {
     const fetcher = vi.fn(
       async () =>

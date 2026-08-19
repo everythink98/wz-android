@@ -355,7 +355,7 @@ describe('disabled content source route gates', () => {
       url: 'https://www.nodeseek.com/post-42-1'
     };
     jest.mocked(useTopicSessionController).mockReturnValue({
-      state: { replyComposerOpen: false, selectedTopic: enabledTopic },
+      state: { replyComposerIntent: { kind: 'closed' }, selectedTopic: enabledTopic },
       commands: {
         composer: { toggle: jest.fn() },
         view: {

@@ -31,11 +31,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 收藏帖子、关注用户和历史之间切换时明显卡顿；Debug 基线出现 17%–32% 掉帧，最慢帧约 69–82ms。1000 条历史的 x86_64 Release 基线两批最慢帧中位数为 55.45ms / 51.9ms，History 就绪中位数为 702.5ms / 708ms。Topic 旅程中 20 次历史同步提交有 8 次超过 8ms，最慢 22ms。 |
 | 触发条件 | Library 已有数据，切换 tab 时 FlashList 的 `key` 改变；旧实例卸载、新实例挂载并集中创建可见行及头像，同时筛选在切换后的 effect 再重置。即使复用列表，继承共享列表的 900px 预绘制窗口仍会在 1000 条 History 数据切入时提前创建屏外行并触发头像解码与原生绘制。Topic 读取完成时 `history-recorded` 对已校验 ReaderData 再做一次全量 sanitize。 |
 | 根因 seam | `src/features/library/LibraryScreen.tsx` 的列表 identity、筛选提交、滚顶、Library 专属 `drawDistance` 和 `maintainVisibleContentPosition` 契约；`src/ui/avatar/Avatar.tsx` 是 Feed、Search、Library、Topic、User 共用的头像加载 seam；`src/domain/reader/readerData.ts` 与 `src/app/useReaderRuntime.ts` 共同约束历史写入和持久化。 |
-| 必须保持的行为 | 三个 tab 复用同一个 FlashList；目标 tab 首次可见状态已经是全部来源/全部分类，列表在数据替换前无动画回到顶部且下一帧补偿，重复点击当前 tab 不重置筛选或滚动，Library 不锚定旧数据位置，并把预绘制距离限制为 250px；Feed、Search 等共享列表继续使用各自配置。正常头像先只走原生加载，保留一次原生 retry，第二次失败才走带 session identity 的 SVG fallback，旧 URI/session/unmount 的迟到结果不得显示。`recordHistory` 自身只保留最新 1000 条；只有可信 `history-recorded` 跳过全量 sanitize，加载、导入、合并和其他 mutation 仍完整校验，visitCount、收藏摘要、tombstone、保存队列与失败回滚不变。筛选、删除、清空和 `REG-FEED-002` 的 Feed 独立位置保护保持不变。 |
-| 精确失败 oracle | `tests/ui/library/library-screen.test.tsx` 依次切换三个 tab，要求列表只挂载一次；History 第一次 render 即得到未筛选数据；真实切换先调用一次 `animated=false` 滚顶、下一帧再补一次，重复点击当前 tab 不滚顶；Library 显式禁用可视位置锚定并固定 `drawDistance=250`。`tests/ui/shared/avatar.test.tsx` 要求正常位图零 SVG probe、第二次原生失败才显示 SVG、迟到结果丢弃且 fallback 失败显示文字头像。`src/domain/reader/readerData.test.ts`、`src/app/useReaderRuntime.test.ts` 与 `tests/ui/library/reader-data-controller.test.tsx` 要求 1001 条只留最新 1000 条，可信提交不重建快照且仍进入原保存队列；既有 `REG-DATA-002/003/004` 继续固定排队、失败回滚与恢复写。 |
+| 必须保持的行为 | 收藏、历史和关注用户各自稳定拥有一个 FlashList viewport；Library 聚焦时当前 viewport 同步挂载，其余 viewport 只在前一个 `onLoad` 后逐帧挂载，普通 tab 切换不重算数据、不重渲染已挂载 FlashList。离开 Library 或进入 Topic 后卸载两个非活动 viewport，只保留当前 viewport。目标 tab 首次可见状态已经是全部来源/全部分类，显示前无动画回到顶部且下一帧补偿，重复点击当前 tab 不重置筛选或滚动，Library 不锚定旧数据位置，并把预绘制距离限制为 250px；Feed、Search 等共享列表继续使用各自配置。正常头像先只走原生加载，保留一次原生 retry，第二次失败才走带 session identity 的 SVG fallback，旧 URI/session/unmount 的迟到结果不得显示。`recordHistory` 自身只保留最新 1000 条；只有可信 `history-recorded` 跳过全量 sanitize，加载、导入、合并和其他 mutation 仍完整校验，visitCount、收藏摘要、tombstone、保存队列与失败回滚不变。筛选、删除、清空和 `REG-FEED-002` 的 Feed 独立位置保护保持不变。 |
+| 精确失败 oracle | `tests/ui/library/library-screen.test.tsx` 要求当前 viewport 先挂载，随后每个 `onLoad` 只在下一帧增加一个 viewport；三 tab 各自最多挂载一次，已挂载的两组 populated data 在普通 tab 切换中保持同一数组 identity 且 FlashList render 次数为 0；失焦后恰卸载两个非活动 viewport。History 第一次可见即得到未筛选数据；真实切换先调用一次 `animated=false` 滚顶、下一帧再补一次，重复点击当前 tab 不滚顶；Library 显式禁用可视位置锚定并固定 `drawDistance=250`。`tests/ui/shared/avatar.test.tsx` 要求正常位图零 SVG probe、第二次原生失败才显示 SVG、迟到结果丢弃且 fallback 失败显示文字头像。`src/domain/reader/readerData.test.ts`、`src/app/useReaderRuntime.test.ts` 与 `tests/ui/library/reader-data-controller.test.tsx` 要求 1001 条只留最新 1000 条，可信提交不重建快照且仍进入原保存队列；既有 `REG-DATA-002/003/004` 继续固定排队、失败回滚与恢复写。 |
 | 最低可靠自动测试层 | `UI_PASS`：必须跨真实 React state 更新观察列表实例、目标首帧数据和滚动调用；源码字符串或单独测试筛选 helper 都不能证明没有 remount。ReaderData 以 helper `UNIT_PASS` 和 controller `UI_PASS` 共同固定快路径及数据行为，最终同步耗时仍由设备诊断 trace 复测。 |
-| Replay 或真实验收路径 | 保留 App 数据执行 `tests/device/library-return.ad`；性能验收在身份匹配构建上执行 Favorites ↔ History 20 次并用 FrameTimeline/`gfxinfo` 对照 missed-deadline、p95 和最慢帧；在可精确恢复的 1000 条 History 数据上再执行快速向下 20 次、向上 20 次，要求全程存在完整可见行且没有空白或抖动；最后执行 20 次可落历史的 Topic 旅程，核对 `history-recorded` 同步阶段。 |
-| 负向验证方式 | 恢复 `key={libraryTab}`、把筛选重置移回 `[libraryTab]` effect、移除切换前/下一帧滚顶、让已选 tab 也重置、重新启用位置锚定或让 Library 重新继承 900px 预绘制距离，Library oracle 必须失败；恢复 mount 时 SVG probe 或接受旧身份结果，Avatar oracle 必须失败；移除 `recordHistory` 上限或让 `history-recorded` 重走全量 sanitize，数据上限或性能契约必须失败。 |
+| Replay 或真实验收路径 | 保留 App 数据执行 `tests/device/library-return.ad`；性能验收必须同时覆盖空收藏和至少 20 条真实收藏，在身份匹配构建上执行 Favorites ↔ History 20 次并用 FrameTimeline/`gfxinfo` 对照 missed-deadline、p95 和最慢帧；收藏和 History 各快速向下 20 次、向上 20 次，要求全程存在完整可见行且没有空白或抖动；最后从预热后的 Library 打开多图 Topic，确认两个非活动 viewport 已释放。 |
+| 负向验证方式 | 恢复 tab 共用一个活动 viewport、让当前 viewport 同首帧批量挂载全部 sibling、用 `display:none` 使 FlashList 失去有效 viewport、重新创建稳定 data/render props、把筛选重置移回 `[libraryTab]` effect、移除切换前/下一帧滚顶、让已选 tab 也重置、重新启用位置锚定或让 Library 重新继承 900px 预绘制距离，Library oracle 或设备 View/帧门槛必须失败；恢复 mount 时 SVG probe 或接受旧身份结果，Avatar oracle 必须失败；移除 `recordHistory` 上限或让 `history-recorded` 重走全量 sanitize，数据上限或性能契约必须失败。 |
 | 明确不覆盖范围 | 动态头像服务可用性、原生图片解码/上传成本、正文列表滚动和 Release 帧指标分别由动态来源、设备 trace、对应页面回归与设备性能验收负责。 |
 
 ## `REG-PERF-002` Topic/User 返回重复恢复同一 Topic session
@@ -3702,11 +3702,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 详情与评论只能一直显示适屏图；即使全屏原图已经清晰显示，关闭预览后外层仍模糊。若直接把原图改成首个请求，长帖又会恢复慢加载、滚动期间整页抢带宽和图片尺寸跳动。 |
 | 触发条件 | `displayUri/originalUri` 只在预览 catalog 中分层，块图 renderer 不消费安全原图；正文与全屏也没有按完整媒体请求 identity 共享“原图已显示”状态。 |
 | 根因 seam | `src/platform/media/imagePreviewCatalog.ts` 的原图来源传递、`src/features/topic/rendering/previewRenderers.tsx` 的块图双层生命周期、`src/platform/media/originalImageLoading.tsx` 的附近门禁与进程内显示信号、`src/features/topic/components/TopicContentList.tsx` 的主楼分块范围，以及 `src/ui/media/ImagePreviewModal.tsx` 的全屏 `onDisplay` 结算。 |
-| 必须保持的行为 | 适屏图仍是首个请求，并继续独占 4:3 占位、唯一 Spinner、`onLoad` 真实比例与 `onDisplay` 显示门槛。适屏图显示后，评论只依赖 FlashList 的 `720px` render window，主楼只允许同一 `720px` 范围内已测量分块以低优先级启动原图；点击图片立即使用高优先级。原图层以适屏图为 placeholder、`150ms` 过渡并绝对覆盖既有 frame，成功或分辨率差异不得改变外层几何。完整媒体 request identity（URL、cache key、headers/session）匹配的正文、评论或全屏原图只有在 `onDisplay` 后才能发布进程内 ready；全屏成功后外层复用同一 Glide 缓存或已有 SVG poster。相同 URL 不发第二次请求；后台失败保留适屏图、没有第二错误态或循环重试，只有后续全屏成功 revision 可重新触发；复杂 SVG 后台失败不得启动 Chromium，现有全屏重试和 artifact 恢复保持不变。 |
-| 精确失败 oracle | `src/platform/media/imageRequestSource.test.ts`、`src/platform/media/imagePreviewCatalog.test.ts`、`src/domain/forum/forumContentMedia.test.ts` 的 `REG-TOPIC-048` 固定安全灯箱/最大 `srcset` 原图传递；`src/platform/media/originalImageLoading.test.ts` 固定 `720px` 边界和完整 session identity 隔离；`tests/ui/topic/topic-image-loading.test.tsx` 固定原图不早启、低/高优先级、placeholder、`150ms`、同 URL 去重、稳定几何、失败保留适屏图、ready 后重试与旧 epoch 隔离；`tests/ui/topic/image-preview.test.tsx` 固定全屏 `onLoad` 不发布、匹配 `onDisplay` 才发布。 |
+| 必须保持的行为 | 适屏图仍是首个请求，并继续独占 4:3 占位、唯一 Spinner、`onLoad` 真实比例与 `onDisplay` 显示门槛。适屏图显示后，评论只依赖 FlashList 的 `720px` render window，主楼只允许同一 `720px` 范围内已测量分块以低优先级启动原图；点击图片立即使用高优先级。适屏图作为独立底层保持挂载，原图层不得接收远程 `placeholder`，只以 `150ms` 过渡绝对覆盖既有 frame；原图 `onDisplay` 后才卸载底层，失败继续保留底层，成功或分辨率差异不得改变外层几何。完整媒体 request identity（URL、cache key、headers/session）匹配的正文、评论或全屏原图只有在 `onDisplay` 后才能发布进程内 ready；全屏成功后外层复用同一 Glide 缓存或已有 SVG poster。相同 URL 不发第二次请求；后台失败没有第二错误态或循环重试，只有后续全屏成功 revision 可重新触发；复杂 SVG 后台失败不得启动 Chromium，现有全屏重试和 artifact 恢复保持不变。 |
+| 精确失败 oracle | `src/platform/media/imageRequestSource.test.ts`、`src/platform/media/imagePreviewCatalog.test.ts`、`src/domain/forum/forumContentMedia.test.ts` 的 `REG-TOPIC-048` 固定安全灯箱/最大 `srcset` 原图传递；`src/platform/media/originalImageLoading.test.ts` 固定 `720px` 边界和完整 session identity 隔离；`tests/ui/topic/topic-image-loading.test.tsx` 固定原图不早启、低/高优先级、无远程 placeholder、`150ms`、独立底图生命周期、同 URL 去重、稳定几何、失败保留适屏图、ready 后重试与旧 epoch 隔离；`tests/ui/topic/image-preview.test.tsx` 固定全屏 `onLoad` 不发布、匹配 `onDisplay` 才发布。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：parser/纯函数固定来源与范围，RNTL 必须观察真实 Expo Image props、生命周期、几何和跨全屏信号；源码字符串、只检查 catalog 或只打开 App 都不足以证明请求顺序。 |
 | Replay 或真实验收路径 | 在当前身份匹配的 App 中只读打开含主楼长图、远端评论图和 SVG 的详情：冷加载确认先适屏后附近原图；滚到长帖远段确认未到附近不启动；点开原图显示后关闭，外层应保持适屏像素且位置不跳，原图升级层可复用磁盘缓存；快速返回与原图自然失败时适屏图继续可用。不得为制造失败清 Cookie、断网或写入论坛。 |
-| 负向验证方式 | 让原图在适屏图 `onDisplay` 前、主楼 `720px` 范围外或旧 session ready 后挂载，移除绝对覆盖/placeholder，原图失败时替换成错误态，或在后台 SVG 失败时调用 Chromium 恢复，编号 unit/UI 用例必须失败。 |
+| 负向验证方式 | 让原图在适屏图 `onDisplay` 前、主楼 `720px` 范围外或旧 session ready 后挂载，把远程适屏 URL 重新传入原图层 `placeholder`、过早卸载独立底图、移除绝对覆盖，原图失败时替换成错误态，或在后台 SVG 失败时调用 Chromium 恢复，编号 unit/UI 用例必须失败。 |
 | 明确不覆盖范围 | 不改变适屏图既有加载方式，不重构主楼为列表，不增加全局下载队列、设置或依赖；inline emoji、sticker、reaction、视频封面和保存原图链路不进入渐进升级。 |
 
 ## `REG-TOPIC-049` Bilibili 移动播放器跳转被导航白名单拦截
@@ -5225,19 +5225,19 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除 typed error、移除 Gateway recovery、只重放失败的单个 HTTP call、允许第二轮再恢复、取消同来源 `triggerSource` 校验、把聚合 5 秒/普通错误/后台或写请求纳入触发，或恢复 Native 未标记同域 GET/HEAD fallback；对应编号测试必须失败。 |
 | 明确不覆盖范围 | 不新增 recovery manager、Native bridge、每站恢复实现、第三方重试库、配置或存储；不把普通第三方服务失败解释成 runtime 损坏，不自动重放任何 mutation，也不人为制造线上网络故障做验收。 |
 
-## `REG-FEED-014` 一个慢来源拖住聚合首页与手动账号刷新
+## `REG-FEED-014` 一个慢来源拖住聚合首页与分类
 
 | 字段 | 内容 |
 | --- | --- |
-| 能力 ID | `FEED-01/02/04`、`ACCOUNT-01/02` |
-| 用户症状 | 首页“全部”、分类或更多页账号刷新一直 Loading，实际只有一个站不结算，其他站已可用。 |
-| 触发条件 | Feed/Categories 的一个 child 或某来源手动 Account probe 在 active time 5 秒内不结算。 |
-| 根因 seam | `src/sources/readAggregation.ts` 的 `AGGREGATE_SOURCE_BUDGET_MS`、Feed child Abort/cursor 与 Account per-source probe 结算。 |
-| 必须保持的行为 | Feed/Categories 每来源独立计时并发，5 秒后以 partial 一次发布并保留 page/opaque cursor；父取消整体抛取消。更多页刷新也让每来源在同一 5 秒预算内独立结算；超时只结束该 probe、释放 `isVerifying`、保留原 identity/ReadPlan，不推断退出、不自动重试。普通冷启动不执行 Account probe。 |
-| 精确失败 oracle | `src/sources/feedRead.test.ts` 固定 5 秒 partial、child abort、cursor 保留与父取消；`tests/ui/account/account-status-controller.test.tsx` 固定 never-settling 手动 probe 5 秒结束、confirmed 不变、sibling 完成和快速重复 single-flight。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter 主动时钟/cursor 与 Account deferred probe 都必须覆盖。 |
-| Replay 或真实验收路径 | 匹配 APK 运行 `four-source-feed.ad`、`account-readonly.ad` 和 `logged-out-readonly.ad`，确认单站动态失败时其他来源可见、超时账号不被推断为退出。 |
-| 负向验证方式 | 改回无界 `allSettled`、把父取消降级为 partial、丢失 cursor、让账号超时变 anonymous/unknown，或恢复启动 probe，编号测试必须失败。 |
+| 能力 ID | `FEED-01/02/04` |
+| 用户症状 | 首页“全部”或分类一直 Loading，实际只有一个站不结算，其他站已可用。 |
+| 触发条件 | Feed/Categories 的一个 child 在 active time 5 秒内不结算。 |
+| 根因 seam | `src/sources/readAggregation.ts` 的 `AGGREGATE_SOURCE_BUDGET_MS` 与 Feed child Abort/cursor 结算。 |
+| 必须保持的行为 | Feed/Categories 每来源独立计时并发，严格等待所有 child 成功、失败、超时或取消后才一次发布；5 秒超时以 partial 结算并保留 page/opaque cursor，父取消整体抛取消。聚合读取复用调用方现有 diagnostic trace，为每个 child 恰记录一次 `source + state + latencyMs + sanitized reason`，不得记录 URL、Cookie 或用户数据。 |
+| 精确失败 oracle | `src/sources/feedRead.test.ts` 用 deferred Promise 固定最后一个 child 终态前聚合结果绝不发布，并固定五个 child 的 success/failure/timeout/canceled 终态各恰记录一次、latency 有界、reason 脱敏，同时覆盖 child abort、cursor 保留与父取消。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：adapter 主动时钟、诊断与 cursor 必须覆盖。 |
+| Replay 或真实验收路径 | 匹配 APK 运行 `four-source-feed.ad` 和 `logged-out-readonly.ad`，确认单站动态失败时其他来源可见。 |
+| 负向验证方式 | 改回无界 `allSettled`、把父取消降级为 partial 或丢失 cursor，编号测试必须失败。 |
 | 明确不覆盖范围 | 不对 Search 引入同样 barrier，不渐进重排列表，不把聚合超时当作通道损坏证据。 |
 
 ## `REG-FEED-015` 在途首页请求让手动刷新失效
@@ -5891,6 +5891,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复 `active === false` effect，或让 focus callback 随 `closeAll` 引用换代而重新订阅；编号测试必须观察到初挂载或重渲染时的额外关闭。 |
 | 明确不覆盖范围 | 不修改 challenge 识别、WebView、Cookie、账号 snapshot、验证 controller、Query 恢复或错误文案；不清 Cookie、不退出账号、不人为制造 Cloudflare。 |
 
+## `REG-ACCOUNT-044` 账号检测误用首页五秒预算并读取完整妖火活动
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02`；共享 `MORE-02`、`SEARCH-04`、`ACCOUNT-04`、`WRITE-01/03` |
+| 用户症状 | 已登录妖火且代理正常时，“检测登录”仍会在约 5 秒提示超时；偶尔成功时延迟和请求数也明显波动。更多页四站刷新、登录页关闭核对、Search 重试、写前核对和 NodeImage 核对共享同一风险。 |
+| 触发条件 | 账号核对经代理超过 Feed 的 active time 5 秒预算；妖火已经从 `wapindex` 证明身份后，又复用完整 User reader 读取资料、回复和最多 10 页主题。 |
+| 根因 seam | `src/features/account/useAccountStatusController.ts` 把正常 `reconcileAccountStatus` 包进 `readWithinAggregateSourceBudget`；`src/sources/yaohuo/accountStatus.ts` 又把“证明当前身份”和“读取完整用户活动”合成一次操作。Feed 公平预算、账号协议终态和 User 页面数据具有不同所有权。 |
+| 必须保持的行为 | 正常账号核对直接等待各站协议终态，不设账号总预算；每个 HTTP 请求继续使用 active time 15 秒 watchdog。四站并发且各自终态立即提交，公共通知等待全部站点结算；同站 single-flight、generation、唯一 canonical snapshot 与 `isVerifying` 保持。只有首次历史迁移使用一个 active time 5 秒 deadline 约束全部候选 probe，超时后取消并等待 probe 清理，再写 migration marker 和开放 session route；后续手动检测必须创建新 probe。妖火身份证明最多读取 `wapindex` 和必要的精确登录页；已有非数字昵称立即结束。数字 ID 只补读一次资料，仍无昵称时至多读取资料给出的主题第一页；禁止回复和主题分页。补全失败保留已证明身份并标记 partial，身份内容只在协议终态提交一次。Feed/Categories 的每来源 5 秒预算不变。 |
+| 精确失败 oracle | `tests/ui/account/account-status-controller.test.tsx` 固定单站和四站刷新超过 5 秒仍 verifying、快站独立提交、最终通知等待全部终态，以及首次迁移 5 秒取消、`statusBusy=false`、marker 后新 probe 不复用 stale Promise。`src/sources/yaohuo/accountStatus.test.ts` 固定：首页昵称 1 请求；数字占位加资料 2 请求；仍为 ID 时只加主题第一页；全路径零回复、零第二页；503/timeout 保留身份并 partial；明确登录 form、未知/验证文档、取消和单请求 15 秒 timeout 分别按协议投影。旧实现分别在 5 秒提前结算，或发出回复/第二页请求。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Vitest 固定 adapter 请求序列与协议结果，RNTL 固定 controller deadline/并发/唯一提交；匹配 APK 的主登录态 AVD 才能证明现有代理与真实妖火会话。 |
+| Replay 或真实验收路径 | 主登录态 AVD 只做保留数据覆盖安装并核对 `firstInstallTime` 不变。开启既有代理，在已登录妖火页面连续执行 5 次“检测登录”，不得在 5 秒边界出现账号 aggregate timeout；诊断确认请求仍经代理且没有回复或主题分页。只读回归更多页账号刷新与“全部”首页，确认 Account 等协议终态而 Feed 仍保持每来源 5 秒预算。 |
+| 负向验证方式 | 给正常账号核对重新套用 `readWithinAggregateSourceBudget`，让妖火账号检测调用完整 `getUserProfile`，读取 `book_re_my.aspx` 或主题 `page=2`，在补全前先提交数字 ID，或让迁移 timeout Promise 泄漏给后续手动检测；对应编号测试必须失败。 |
+| 明确不覆盖范围 | 不提高或新增可配置 timeout，不改变完整 User 页的资料、回复和主题分页，不新增 service、公开 API、状态枚举、持久化字段、第二份账号状态或自动重试；不修改代理实现，也不清 Cookie、退出账号或执行真实写入。 |
+
 ## `REG-FEED-017` 来源重排后旧 Pager 会话卡在 Loading
 
 | 字段 | 内容 |
@@ -6042,6 +6057,66 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除 session store/hydration gate、恢复启动 batch/freeze、核对开始改 trust、让 typed hint/403/429 失效、或让 aggregate CF 走 Account reconcile；对应测试必须出现额外 probe/request、V2EX-only、身份变化或循环恢复。 |
 | 明确不覆盖范围 | 不增加 authFlowDirty/TTL/后台核账/全局调度器，不手工合并单个 linux.do child cache，不自动重试写操作，不清 Cookie；若某站首页确需账号前置凭据，必须先用诊断证明并另立定向步骤。 |
 
+## `REG-PERF-020` 正文原图重复解码适屏图并扩大重图工作集
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享 `TOPIC-01/03`、`NAV-03`、`REG-PERF-010` 与 `REG-TOPIC-048` 的正文图片生命周期 |
+| 用户症状 | NodeSeek `post-863650-1` 滚动到重图片区域时 PSS 峰值比详情前增加约 `184MB`，超过 `REG-PERF-010` 的 `+150MB` 门槛；返回后约 `+48MB`，说明不是持续泄漏而是离屏图片 cell 与重复解码共同扩大峰值工作集。 |
+| 触发条件 | 适屏图已经作为独立底层挂载，原图 Expo Image 又把同一个远程适屏 URL 传入 `placeholder` decoder；同时 FlashList 回收池可继续持有离屏重图片 owner。 |
+| 根因 seam | `src/features/topic/rendering/previewRenderers.tsx` 的适屏底图/原图双层生命周期，以及 `src/features/topic/components/TopicContentList.tsx` 的详情 FlashList 回收池上限。请求并发由既有 coordinator 管理，不等于 decoded Bitmap 驻留预算。 |
+| 必须保持的行为 | 原图层不得配置远程 `placeholder`；适屏图作为独立底层持续显示，原图沿既有许可、优先级和 `150ms` transition 渐显，只有匹配原图 `onDisplay` 后才卸载底层，失败继续保留。所有图片完整保序并自动加载，正文几何、点击预览、原图保存、SVG 和 session identity 不变。回收池取 `40 → 12 → 8` 中满足设备门槛的最大值；`0` 只用于根因证伪，若关闭回收池仍不能使峰值至少下降 `20%`，停止调常量并用可 profile 构建寻找其他 Native owner。 |
+| 精确失败 oracle | `tests/ui/topic/topic-image-loading.test.tsx` 的 `[REG-TOPIC-048]` 直接观察原图 Expo Image：`placeholder` 必须为空，升级前独立适屏底图仍挂载，匹配原图 `onDisplay` 后才卸载；失败用例继续保留适屏图。既有 Topic compiler、media coordinator 与 preview tests 固定完整目录、顺序、自动加载、稳定几何和请求预算。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定解码入口和底图生命周期；只有匹配 Release APK 的同 PID PSS、Native Heap、View、FrameTimeline 与日志能证明 decoded working set。源码字符串或强制 GC 不能代替。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装，沿 `REG-PERF-010` 用固定步数滚动 `post-863650-1`，记录进入前、峰值、Back 后 60 秒的 PSS/Native Heap/View/帧和 ANR/OOM。峰值 `<= baseline+150MB`、Back 60 秒 `<= baseline+80MB`、滚动 p95 `<=50ms`；快速反向滚动相对池 40 基线不得恶化超过 `10%`，不得出现空白或新请求波。另回归普通 1/4/20 图、完整预览目录和返回普通详情。 |
+| 负向验证方式 | 把适屏 remote source 重新传给原图 `placeholder`、在原图成功前卸载底图、为过门槛截断图片或清全局 Glide cache，UI oracle 或设备完整性/内存门槛必须失败。 |
+| 明确不覆盖范围 | 不截断图片、不增加手动继续加载、全局 cache clear、强制 GC、统一 RGB 解码、第二套图片缓存或依赖升级；远距离快速回滚允许从磁盘缓存重新解码。 |
+
+## `REG-PERF-021` Library 动态筛选通过批量 Native 节点重建结算
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `LIBRARY-01/02/03`；共享 `NAV-01` 与 `REG-PERF-001` 的 Library 列表和筛选生命周期 |
+| 用户症状 | 关注用户切回收藏的隔离样本 `20/20` 帧都 miss，p95 约 `48ms`；收藏与历史切换掉帧约 `43.6%`、p95 `32ms`。相同数量筛选项切换接近一帧，说明数据筛选本身不是主因。 |
+| 触发条件 | `PillRail` 以动态 `value/label` 作 key，来源或 tab 改变时批量替换原生节点；关注用户无分类时 Library 又卸载整棵分类 rail，返回帖子 tab 时重建。首阶段改为位置 key 并只隐藏分类 rail 后，关注用户↔收藏已达标，但全部来源↔V2EX 三组仍为 p95 `34.59~35.06ms`，证明动态 taxonomy 整批更新仍超过预算。 |
+| 根因 seam | `src/ui/controls/SelectionControls.tsx` 的 Pill 位置身份，以及 `src/features/library/LibraryScreen.tsx` 在普通来源切换中是否拥有动态分类 Native children。所有筛选语义状态由外部值驱动，节点自身无业务状态。 |
+| 必须保持的行为 | 通用 Pill 以位置槽维持 React/Native identity，只更新文字、选中态和回调；Library 分类改为始终挂载的固定按钮，来源切换只更新按钮 props，动态 taxonomy 只在用户显式打开现有 `PopupMenu` 时创建。关注用户时固定槽保持几何、按钮以 `opacity:0` 隐藏并从无障碍树移除；没有可选分类时按钮保持挂载并禁用。三 tab、来源/分类筛选、首帧重置、两次无动画滚顶、`REG-PERF-001/022` 的 tab 稳定 viewport、`drawDistance=250` 和禁用位置锚定均保持。 |
+| 精确失败 oracle | `tests/ui/library/library-screen.test.tsx` 的 `[REG-PERF-021]` 在同一槽切换两套 taxonomy 后要求 Pill React instance 不变；Library 来源 taxonomy 更换前后必须命中同一固定分类按钮，关注用户时普通查询与无障碍树都不可见，但 hidden query 必须命中切换前同一按钮，返回收藏后仍复用。分类选择只能在显式打开菜单后出现。既有 `[REG-PERF-001/022]` 用例继续固定 viewport owner、稳定 data/render、重置和滚顶契约。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定稳定 topology 和无障碍结果；匹配 Release APK 的 FrameTimeline 才能证明批量 Native create/delete 已消失。 |
+| Replay 或真实验收路径 | 主 AVD 覆盖安装匹配 APK，分别执行关注用户↔收藏、全部来源↔V2EX 各三组 20 次；每组要求 p95 `<=25ms`、worst `<=35ms`、无连续两帧 miss，同时确认按钮、菜单、筛选、计数、隐藏分类和 TalkBack 结果不变。 |
+| 负向验证方式 | 恢复语义 key、在来源切换期间渲染整批分类 Pill、条件卸载固定按钮、让隐藏按钮仍出现在无障碍树，或把选中状态移入节点内部，对应 UI 或设备 topology/帧门槛必须失败。 |
+| 明确不覆盖范围 | 不处理动画、不新增通用选择框架、不改变本机数据或筛选语义；固定菜单只接受已测量触发的一次额外分类点击。 |
+
+## `REG-PERF-022` Library 空收藏假绿与富内容 tab 复用所有权错误
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `LIBRARY-01/02/03`；共享 `NAV-01`、`REG-PERF-001/021` |
+| 用户症状 | 空收藏返回 p95 `21.56ms`，看似达标；同设备进入 238 条 History 为 p95 `40.45ms`，旧实现三组真实收藏↔历史为 p95 `42.81–55.00ms`。空数组会清掉越界回收节点，下一次进入富内容数据集必须重建首屏 TopicCard，因此空收藏不是有效性能 oracle。 |
+| 触发条件 | 一个 FlashList 在收藏、历史和关注用户三个语义数据集之间替换 data；从空或小数据集切到 238 条 History 时，当前 viewport 没有可复用的 tab-local Native owner。收藏和历史还在 tab 切换时重复派生、排序，renderer 闭包依赖整个 filtered array。 |
+| 根因 seam | `LibraryRoute` 对收藏/历史数据的派生所有权，以及 `LibraryScreen` 的 tab viewport、FlashList props identity、分阶段挂载和失焦释放。每个数据集只允许在自身输入变化时派生一次；普通 tab 切换不得重算或重渲染已挂载列表。 |
+| 必须保持的行为 | 性能样本同时包含空收藏与至少 20 条真实收藏；收藏和历史分别排序、过滤并建立稳定 list-item array。Library 聚焦时每个 tab 最多一个固定 viewport：当前同步挂载，另两个在前一个 `onLoad` 后逐帧挂载；隐藏 viewport 不可点击且不进入无障碍树。普通 tab 切换只更新可见性、选中态和两次无动画滚顶，已挂载 populated FlashList render 次数为 0。失焦或进入 Topic 后卸载两个非活动 viewport，只保留当前 viewport；不改变 TopicCard、密度、顺序、筛选、操作或视觉。 |
+| 精确失败 oracle | `tests/ui/library/library-screen.test.tsx` 的 `[REG-PERF-022]` 固定当前 viewport 初始唯一挂载、每个 `onLoad` 后下一帧只增加一个 owner、三 tab 最多三个 owner；收藏/历史 array identity 跨 tab 切换不变，预热完成后的收藏↔历史导致 FlashList render 记录为 0；失焦恰卸载两个非活动 owner，隐藏 viewport 普通/无障碍查询不可见。空数据、20 收藏 fixture、1000 条 History、筛选重置、双滚顶与现有操作继续通过。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定 owner、计算和 render 边界；只有身份匹配 Release APK 的真实 populated ReaderData、FrameTimeline、View 与 meminfo 能证明富内容切换和工作集收敛。空列表、源码字符串或 Debug 体感均不足。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装，以 App 自身保留至少 20 条本机收藏，执行收藏↔历史、关注用户↔收藏、全部来源↔V2EX 各三组 20 次；记录首次进入、预热后切换与纵向滚动。目标为 p95 `<=25ms`、worst `<=35ms`；真实 guest/SF cadence 必须单独记录，模拟器连续 deadline miss 不得自动外推为真机卡顿。预热后做 5 轮 Library→离开→返回，30 秒稳定 PSS/Native Heap 首末增长 `<=10MB`，离开后 View 数回到单活动页面基线 `±10%`；再从 Library 打开普通多图 Topic。 |
+| 负向验证方式 | 只测空收藏、恢复单活动 FlashList、在 tab 切换时重建排序/过滤数组或 render props、同首帧挂全部 viewport、用 `display:none` 隐藏 FlashList、失焦仍保留全部 owner，编号 UI oracle或设备帧/View/内存门槛必须失败。真实 A/B 中 `display:none` 曾把 attached Views 从约 `705` 推到 `7,789`；同首帧挂载曾产生 `44–45ms` Library 入口帧，均不得恢复。 |
+| 明确不覆盖范围 | 不改动画、TopicCard 信息和视觉、数据截断、图片缓存、依赖或原生配置。当前 90Hz 模拟器的 populated tab p95/worst 已进入 `25/35ms`，但连续 deadline miss 仍失败；这项只报告环境化证据，不冒充物理 90/120Hz 真机通过。 |
+
+## `REG-PERF-023` 等价运行时投影重复提交新引用
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NAV-01`、`SEARCH-01`、`NOTIFY-03` |
+| 用户症状 | 通知刷新结果未变仍提交新的 errors state，App 无关重渲染仍重建 Navigator `onReady`，单来源搜索结算后无关重渲染仍重建列表 data；下游 memo 因引用变化失效。 |
+| 触发条件 | 相同通知快照刷新或清理一个没有错误的来源；任意 App runtime 重渲染；单来源搜索结果结算后的无关重渲染。 |
+| 根因 seam | 等价通知错误、导航 ready 回调和单来源 Search groups 没有在各自现有 owner 内保持引用稳定。 |
+| 必须保持的行为 | 等价 `snapshotErrors` 返回旧对象，真实错误变化仍更新；`onReady` 引用稳定且始终按通知回调 → lifecycle 回调各一次执行；single/aggregate/empty Search projection 只在真实输入变化时重建。请求、持久化、worker、Query、分页和路由语义不变。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-runtime.test.tsx` 固定相同刷新与无错误来源清理前后 `snapshotErrors` identity，并保持 fetch、持久化和 worker 次数；`tests/ui/app/app-runtime-startup.test.tsx` 固定无关重渲染前后 `routes.onReady` identity、次数和顺序；`tests/ui/search/search-controller-ai.test.tsx` 固定单来源 `searchGroups` identity 与一次请求。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须经过真实 Hook render/effect 和 Query 结算；源码字符串或纯函数相等不足。 |
+| Replay 或真实验收路径 | 不新增独立 Replay；沿既有 Navigation、Search 和 Notifications 只读旅程确认行为不变，帧收益只在后续匹配 APK 的专项性能采样中归因。 |
+| 负向验证方式 | 恢复无条件 errors state 写入、普通函数 `onReady` 或 render 内单来源数组字面量；编号测试必须出现新引用，既有次数或顺序断言仍必须保持。 |
+| 明确不覆盖范围 | 不合并通知读取链路，不增加协调器、缓存、reducer、phase、pending ref、队列或 single-flight；不改 Account、Feed、Yaohuo、Library、Topic、图片 Native patch、依赖或公开 API。 |
+
 ## `REG-NOTIFY-058` 新增通知来源重读稳定 sibling snapshot
 
 | 字段 | 内容 |
@@ -6147,6 +6222,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；直达 `https://linux.do/t/topic/2769371` 与 `https://linux.do/t/topic/2769388`，对“注册地址”和“Quote”各执行至少两轮展开→收起，对比动态 accessibility bounds 内的非背景像素，同时确认正文按状态挂载/卸载。不新增 Replay，不执行站点写操作。 |
 | 负向验证方式 | 让 `only` 分支重新返回空样式，编号测试必须精确缺少两个 edge widths；匹配 APK 上收起后的标题区域重新变成零像素。若 edge widths 保留而像素仍为零，否定本方案并转查实际 Native props 与 clip geometry，不叠加 workaround。 |
 | 明确不覆盖范围 | 不审计全 App 动态边框，不修改 parser、compiler、disclosure store、FlashList、`selectable`、React Native、依赖或原生目录；不增加 Android/URL/站点特判、重挂载 key、延时、透明度或 `overflow: visible` 补丁。 |
+
+## `REG-TOPIC-113` linux.do 可读详情被分类策略替换成权限页
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01` |
+| 用户症状 | App 原生详情打开 linux.do `t/topic/2777081` 时，标题、作者和回复数已经加载，却把真实正文替换成“需权限 / 暂无权限”；同一 App 内原站、同一账号和同一 URL 实际可读。 |
+| 触发条件 | linux.do 返回 200，`post_stream.posts[0].cooked` 可解析为有效主楼正文，同时响应内分类带 `read_restricted=true`；共享 Topic 归一化把分类访问策略复制到详情的 `accessRequirement`。 |
+| 根因 seam | `src/sources/linuxdo/reader.ts` 的 `getLinuxDoTopic` 成功详情边界。分类策略描述对象访问规则，真实拒绝只由请求错误分支表达；两者不能在已成功解析正文的 `TopicDetail` 中同时成立。 |
+| 必须保持的行为 | linux.do 详情成功解析主楼后明确清除 `accessRequirement`，正文、回复、媒体和来源元数据照常返回；HTTP 403、权限错误文本和“受限帖子”失败分支继续生成权限页。共享 `accessRequirementFromObject`、Feed、搜索、分类、历史列表和公共类型不变。详情权限卡片只给内部“需权限”标签增加 `marginBottom: 4`，标签到标题为 `12dp`、标题到说明仍为 `8dp`，其余视觉不变。 |
+| 精确失败 oracle | `tests/integration/source-access-requirements.test.ts` 的 `[REG-TOPIC-113]` 通过公开 `getLinuxDoTopic` 输入 200、`read_restricted=true` 分类、有效主楼与回复；旧实现保留正文却返回 `{ type: 'permission', label: '需权限' }`，修复后正文仍存在且 `accessRequirement` 为 `undefined`。既有“turns linux.do permission errors into restricted topic details”固定真实 403 分支。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Vitest 固定来源 adapter 成功/拒绝分流，既有 RNTL 固定权限提示仍可渲染；只有同账号的 App 内原站与原生详情对照能证明动态目标当前可读。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；canonical deep link 直达 `https://linux.do/t/2777081`，确认原生正文与 1 条回复出现且无“需权限/暂无权限”。随后严格经“更多 → 账号中心 → linux.do → 检测或重新登录”在 App 内 WebView 打开原网址 `https://linux.do/t/topic/2777081`，核对同一标题、主楼和第 2 楼。全程只读，不用 Chrome，不新增 tracked Replay。 |
+| 负向验证方式 | 删除详情成功结果对 `accessRequirement` 的覆盖，或再次把分类 `read_restricted` 投影到成功详情，编号 Vitest 必须重新收到 permission；让 403 分支也被清除则既有拒绝测试必须失败。 |
+| 明确不覆盖范围 | 不改变 Feed、搜索、分类、历史列表的权限标签，不拆分公共 `AccessPolicy` / `AccessDenial` 类型，不按帖子 ID、分类、用户名或等级特判，不隐藏权限组件，也不改变卡片 padding、外部间距、文案、颜色、字号、圆角或其他页面样式。 |
+
+## `REG-TOPIC-114` Android 正文图片首载使用下采样尺寸
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-TOPIC-048/075/085` |
+| 用户症状 | process-cold 打开含长图的主题时，图片先显示 `4:3` 占位，加载完成后错误缩到约 `342px` 高；退出再进入才按约 `898px` 的真实比例显示。多图片正文中的每张冷图都可能独立命中。 |
+| 触发条件 | Android Expo Image 以目标 View 尺寸让 Glide 下采样解码；正文把 `onLoad.source.width/height` 当作自然尺寸并按完整媒体 identity 缓存。 |
+| 根因 seam | `expo-image` `GlideRequestListener` 把下采样 Drawable 的 `intrinsicWidth/intrinsicHeight` 作为事件尺寸，忽略 `ImageViewWrapperTarget` 在同一次 Glide downsample 已记录的 EXIF-upright source width/height。自然尺寸的 owner 应是 Native 解码边界，不是 JS renderer 的比例猜测。 |
+| 必须保持的行为 | source width/height 均有效时作为现有 `onLoad.source` 尺寸；任一无效时整体回退 decoded intrinsic。事件字段形状、正文 renderer 状态、媒体 request identity、下采样和 disk cache 不变；单图与多图各 identity 只更新自己的几何，冷图最多一次必要列表布局提交，重复回调、离窗重进和重挂载不增加提交、请求或 Native owner。真实窄图、小图、表情、SVG fallback、正文原图升级和全屏预览继续使用自身语义。 |
+| 精确失败 oracle | `expo-image` Release Kotlin unit test 输入 source `1000×5000` 与 decoded `68×342`；旧实现返回 `68×342`，修复后返回 `1000×5000`，无效 source 尺寸继续返回 decoded。`tests/ui/topic/topic-image-loading.test.tsx` 的 `[REG-TOPIC-114]` 乱序结算四种比例并固定 identity 隔离和布局提交计数。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Native unit 固定事件尺寸所有权，RNTL 固定多图消费者契约；只有匹配 APK 的 process-cold 当前主题与 linux.do 多长图目标能验证真实 Glide/Expo/FlashList 链路。 |
+| Replay 或真实验收路径 | 用 `adb install -r` 或受允许的 agent-device install 在主 AVD 覆盖安装，安装前后 `firstInstallTime` 必须相同。process-cold 打开当前“今天是不是都有活动，帖子都少了”页面，加载完成后首次停留即达到与重进相同的最终宽高；再只读打开 `https://linux.do/t/topic/2556285`，核对前四张普通正文图首次加载、滚离返回和退出重进各自比例稳定，无第二轮请求波、空白或尺寸串用。 |
+| 负向验证方式 | 恢复 listener 直接使用 decoded intrinsic，Native 编号测试必须重新得到 `68×342`。若匹配 APK 的 Native 事件仍不是原始 upright 尺寸，或同 identity 出现第二次列表布局提交/额外请求，否定当前实现并回查 Native target；不得添加 JS probe、宽高启发式、站点/URL/多图特判、timer、retry、强制 key 重挂或第二套缓存。 |
+| 明确不覆盖范围 | 不升级 Expo/Glide，不关闭 downscale，不增加请求、解码、异步步骤或运行时状态；不修改图片事件字段、正文 renderer 状态结构、FlashList 调度、图片缓存模型、表情布局、SVG renderer 或全屏缩放实现。 |
 
 ## 待确认观察
 

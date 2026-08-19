@@ -21,8 +21,10 @@ import {
   closeOtherAuthSurfaces,
   createAuthSurfaceRegistry,
   finishAuthSurface,
-  hasOpenAuthSurfaceForSource,
+  hasAuthSurfaceBarrierForSource,
+  isAuthSurfaceVisible,
   releaseAuthSurface,
+  showAuthSurface,
   type AuthSurface,
   type AuthSurfaceCloseReason
 } from '@/domain/session/authSurfaceCoordinator';
@@ -116,16 +118,7 @@ export function useAccountRuntime({
   const [linuxDoWebViewKey, setLinuxDoWebViewKey] = useState(0);
   const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [showLoginPanel, setShowLoginPanel] = useState(false);
-  const showLoginPanelRef = useRef(showLoginPanel);
-  const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
-  const showYaohuoLoginPanelRef = useRef(showYaohuoLoginPanel);
   const [yaohuoLoginPrompt, setYaohuoLoginPrompt] = useState('');
-  const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
-  const showLinuxDoPanelRef = useRef(showLinuxDoPanel);
-  useCommitRefValue(showLoginPanelRef, showLoginPanel);
-  useCommitRefValue(showYaohuoLoginPanelRef, showYaohuoLoginPanel);
-  useCommitRefValue(showLinuxDoPanelRef, showLinuxDoPanel);
   const handleCredentialLoginWebViewFailure = useCallback(
     (site: CredentialSite, attempt: number, reason: LoginWebViewFailureReason) =>
       credentialFailureHandlerRef.current(site, attempt, reason),
@@ -136,7 +129,16 @@ export function useAccountRuntime({
   }, []);
   const forumSessionEpochsRef = useRef<ForumSessionEpochs>(initialForumSessionEpochs);
   const authSurfaceRegistryRef = useRef(createAuthSurfaceRegistry());
-  const closingAuthSurfacesRef = useRef(new Set<AuthSurface>());
+  const [, refreshAuthSurfaces] = useState(0);
+  const visibleAuthSurface = authSurfaceRegistryRef.current.visible;
+  const showLoginPanel = visibleAuthSurface === 'nodeseek-login';
+  const showYaohuoLoginPanel = visibleAuthSurface === 'yaohuo-login';
+  const showLinuxDoPanel = visibleAuthSurface === 'linuxdo-login';
+  const showNodeImagePanel = visibleAuthSurface === 'nodeimage-auth';
+  const authSurfaceVisible = useCallback(
+    (surface: AuthSurface) => isAuthSurfaceVisible(authSurfaceRegistryRef.current, surface),
+    []
+  );
   const pendingNodeSeekRecoveryRef = useRef<LinuxDoReadRecovery | null>(null);
   const beginAccountIdentityCheckRef = useRef<(source: SessionSite, surfaceGeneration?: number) => void>(
     () => undefined
@@ -155,7 +157,7 @@ export function useAccountRuntime({
       return {
         source,
         authenticated: access.authenticated,
-        authSurfaceOpen: sourceEnabled && hasOpenAuthSurfaceForSource(authSurfaceRegistryRef.current, source),
+        authSurfaceOpen: sourceEnabled && hasAuthSurfaceBarrierForSource(authSurfaceRegistryRef.current, source),
         identityKey: access.identityKey,
         identityTrust: access.identityTrust,
         sessionEpoch: forumSessionEpochsRef.current[source],
@@ -179,10 +181,6 @@ export function useAccountRuntime({
   );
   const beginAuthSurfaceTicket = useCallback(
     (surface: AuthSurface, source: SessionSite, checkIdentity = true) => {
-      const closingTicket = authSurfaceRegistryRef.current.active[surface];
-      if (closingTicket && closingAuthSurfacesRef.current.delete(surface)) {
-        releaseAuthSurface(authSurfaceRegistryRef.current, surface, closingTicket.generation);
-      }
       const account = readSessionRuntimeSnapshot(source);
       const ticket = beginAuthSurface(authSurfaceRegistryRef.current, {
         source,
@@ -190,6 +188,7 @@ export function useAccountRuntime({
         identityKey: account.identityKey,
         sessionEpoch: forumSessionEpochsRef.current[source]
       });
+      refreshAuthSurfaces((revision) => revision + 1);
       if (checkIdentity) beginAccountIdentityCheckRef.current(source, ticket.generation);
       return ticket;
     },
@@ -198,8 +197,8 @@ export function useAccountRuntime({
   const finishAuthSurfaceTicket = useCallback(
     (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {
       const ticket = finishAuthSurface(authSurfaceRegistryRef.current, surface, reason, true);
+      refreshAuthSurfaces((revision) => revision + 1);
       if (!ticket?.shouldReconcile) return null;
-      closingAuthSurfacesRef.current.add(surface);
       const reconciliation = reconcileAccountStatusRef
         .current(ticket.source, { surfaceGeneration: ticket.generation })
         .catch((error): AccountReconcileResult => ({
@@ -290,11 +289,13 @@ export function useAccountRuntime({
       const result = await reconcileAccountStatusBase(...args);
       if (result.status === 'same' || result.status === 'changed' || result.status === 'anonymous') {
         const source = args[0];
+        let released = false;
         for (const [surface, ticket] of Object.entries(authSurfaceRegistryRef.current.active)) {
-          if (ticket?.source !== source || !closingAuthSurfacesRef.current.has(surface as AuthSurface)) continue;
-          releaseAuthSurface(authSurfaceRegistryRef.current, surface as AuthSurface, ticket.generation);
-          closingAuthSurfacesRef.current.delete(surface as AuthSurface);
+          if (ticket?.source !== source || ticket.phase !== 'reconciling') continue;
+          released =
+            releaseAuthSurface(authSurfaceRegistryRef.current, surface as AuthSurface, ticket.generation) || released;
         }
+        if (released) refreshAuthSurfaces((revision) => revision + 1);
       }
       return result;
     },
@@ -341,47 +342,43 @@ export function useAccountRuntime({
     notify,
     prepareSurfaceOpen: prepareNodeImageSurface,
     readRuntime: readNodeImageRuntime,
-    reconcileAccountStatus: reconcileNodeImageAccount
+    reconcileAccountStatus: reconcileNodeImageAccount,
+    surfaceVisible: showNodeImagePanel
   });
   const closeYaohuoLoginPanel = useCallback(
     (reason: AuthSurfaceCloseReason = 'close-button') => {
-      if (!showYaohuoLoginPanelRef.current) return;
-      showYaohuoLoginPanelRef.current = false;
+      if (!authSurfaceVisible('yaohuo-login')) return;
       handleClearCredentialLoginIntent('yaohuo');
       yaohuoLoginPanelRequestRef.current += 1;
       yaohuoWebViewRef.current?.stopLoading();
-      setShowYaohuoLoginPanel(false);
       setYaohuoLoginPrompt('');
       setLoadingYaohuoLoginPage(false);
       finishAuthSurfaceTicket('yaohuo-login', reason);
     },
-    [finishAuthSurfaceTicket, handleClearCredentialLoginIntent]
+    [authSurfaceVisible, finishAuthSurfaceTicket, handleClearCredentialLoginIntent]
   );
   const changeYaohuoLoginPanel = useCallback(
     (visible: boolean, closeReason: AuthSurfaceCloseReason = 'close-button') => {
       if (visible) {
         if (!enabledSessionSourceSet.has('yaohuo')) return;
-        if (showYaohuoLoginPanelRef.current) return;
+        if (authSurfaceVisible('yaohuo-login')) return;
         prepareAuthSurfaceOpenRef.current('yaohuo-login');
-        showYaohuoLoginPanelRef.current = true;
         beginAuthSurfaceTicket('yaohuo-login', 'yaohuo');
         yaohuoLoginPanelRequestRef.current += 1;
         setLoadingYaohuoLoginPage(true);
-        setShowYaohuoLoginPanel(true);
         yaohuoWebViewRef.current?.reload();
         return;
       }
       closeYaohuoLoginPanel(closeReason);
     },
-    [beginAuthSurfaceTicket, closeYaohuoLoginPanel, enabledSessionSourceSet]
+    [authSurfaceVisible, beginAuthSurfaceTicket, closeYaohuoLoginPanel, enabledSessionSourceSet]
   );
   const changeNodeSeekLoginPanel = useCallback(
     (visible: boolean, closeReason: AuthSurfaceCloseReason = 'close-button') => {
-      const wasVisible = showLoginPanelRef.current;
+      const wasVisible = authSurfaceVisible('nodeseek-login');
       if (visible && !enabledSessionSourceSet.has('nodeseek')) return;
       if (visible === wasVisible) return;
       if (visible) prepareAuthSurfaceOpenRef.current('nodeseek-login');
-      showLoginPanelRef.current = visible;
       nodeSeekLoginPanelRequestRef.current += 1;
       if (visible) {
         beginAuthSurfaceTicket('nodeseek-login', 'nodeseek');
@@ -391,10 +388,27 @@ export function useAccountRuntime({
       }
       webViewRef.current?.stopLoading();
       setLoadingLoginPage(visible);
-      setShowLoginPanel(visible);
       if (!visible) finishAuthSurfaceTicket('nodeseek-login', closeReason);
     },
-    [beginAuthSurfaceTicket, enabledSessionSourceSet, finishAuthSurfaceTicket, handleClearCredentialLoginIntent]
+    [
+      authSurfaceVisible,
+      beginAuthSurfaceTicket,
+      enabledSessionSourceSet,
+      finishAuthSurfaceTicket,
+      handleClearCredentialLoginIntent
+    ]
+  );
+  const isLinuxDoPanelVisible = useCallback(() => authSurfaceVisible('linuxdo-login'), [authSurfaceVisible]);
+  const handleLinuxDoSurfaceOpened = useCallback(
+    ({ accountBarrier }: { accountBarrier: boolean }) => {
+      if (accountBarrier) {
+        beginAuthSurfaceTicket('linuxdo-login', 'linuxdo');
+        return;
+      }
+      showAuthSurface(authSurfaceRegistryRef.current, 'linuxdo-login');
+      refreshAuthSurfaces((revision) => revision + 1);
+    },
+    [beginAuthSurfaceTicket]
   );
   const verification = useVerificationController({
     canOpenLinuxDoPanel: () => enabledSessionSourceSet.has('linuxdo'),
@@ -407,13 +421,14 @@ export function useAccountRuntime({
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgentRef,
+    isLinuxDoSurfaceVisible: isLinuxDoPanelVisible,
     notify,
     onBeforeLinuxDoSurfaceOpened: () => prepareAuthSurfaceOpenRef.current('linuxdo-login'),
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     onLinuxDoSurfaceClosed: ({ authoritativeResult, reason }) => {
       finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason);
     },
-    onLinuxDoSurfaceOpened: () => beginAuthSurfaceTicket('linuxdo-login', 'linuxdo'),
+    onLinuxDoSurfaceOpened: handleLinuxDoSurfaceOpened,
     reconcileAccountStatus: reconcileAuthSurfaceAccountStatus,
     setChecking,
     setLinuxDoWebViewError,
@@ -421,8 +436,6 @@ export function useAccountRuntime({
     setLinuxDoWebViewUserAgent,
     setLoadingLinuxDoPage,
     setMountLinuxDoWebView,
-    setShowLinuxDoPanel,
-    showLinuxDoPanelRef,
     updateLinuxDoSession: session.updateLinuxDoSession,
     updateNodeSeekSession: session.updateNodeSeekSession
   });
@@ -433,16 +446,20 @@ export function useAccountRuntime({
     if (!appActive) stopLinuxDoVerificationForInactiveApp();
   }, [appActive, stopLinuxDoVerificationForInactiveApp]);
   const closeNodeImageAuthPanel = nodeImage.panel.close;
-  const prepareAuthSurfaceOpen = useCallback(
-    (openingSurface: AuthSurface) => {
-      closeOtherAuthSurfaces(openingSurface, {
-        'linuxdo-login': (reason) => closeLinuxDoPanel(true, reason),
-        'nodeimage-auth': closeNodeImageAuthPanel,
-        'nodeseek-login': (reason) => changeNodeSeekLoginPanel(false, reason),
-        'yaohuo-login': closeYaohuoLoginPanel
-      });
+  const closeAuthSurface = useCallback(
+    (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {
+      if (surface === 'linuxdo-login') closeLinuxDoPanel(true, reason);
+      else if (surface === 'nodeimage-auth') closeNodeImageAuthPanel(reason);
+      else if (surface === 'nodeseek-login') changeNodeSeekLoginPanel(false, reason);
+      else closeYaohuoLoginPanel(reason);
     },
     [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]
+  );
+  const prepareAuthSurfaceOpen = useCallback(
+    (openingSurface: AuthSurface) => {
+      closeOtherAuthSurfaces(openingSurface, closeAuthSurface);
+    },
+    [closeAuthSurface]
   );
   useCommitRefValue(prepareAuthSurfaceOpenRef, prepareAuthSurfaceOpen);
   useEffect(() => {
@@ -487,7 +504,7 @@ export function useAccountRuntime({
     screen,
     showLinuxDoVerification: verification.showLinuxDoVerification,
     readGateway,
-    showLoginPanelRef,
+    showLoginPanel,
     showYaohuoLoginPanel,
     webViewRef,
     yaohuoLoginPanelRequestRef,
@@ -585,30 +602,14 @@ export function useAccountRuntime({
     closeLinuxDoPanel(true, 'navigation-away');
   }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]);
   const closeTopmostSurface = useCallback(() => {
-    if (showLoginPanelRef.current) {
-      changeNodeSeekLoginPanel(false, 'hardware-back');
-      return 'login-panel-closed';
-    }
-    if (nodeImage.panel.visible) {
-      closeNodeImageAuthPanel('hardware-back');
-      return 'image-auth-panel-closed';
-    }
-    if (showYaohuoLoginPanelRef.current) {
-      closeYaohuoLoginPanel('hardware-back');
-      return 'yaohuo-panel-closed';
-    }
-    if (showLinuxDoPanelRef.current) {
-      closeLinuxDoPanel(true, 'hardware-back');
-      return 'linuxdo-panel-closed';
-    }
-    return null;
-  }, [
-    changeNodeSeekLoginPanel,
-    closeLinuxDoPanel,
-    closeNodeImageAuthPanel,
-    closeYaohuoLoginPanel,
-    nodeImage.panel.visible
-  ]);
+    const surface = authSurfaceRegistryRef.current.visible;
+    if (!surface) return null;
+    closeAuthSurface(surface, 'hardware-back');
+    if (surface === 'nodeseek-login') return 'login-panel-closed';
+    if (surface === 'nodeimage-auth') return 'image-auth-panel-closed';
+    if (surface === 'yaohuo-login') return 'yaohuo-panel-closed';
+    return 'linuxdo-panel-closed';
+  }, [closeAuthSurface]);
 
   const readWritableSessionSnapshot = useCallback(
     (source: SessionSite): WritableSessionSnapshot => readSessionRuntimeSnapshot(source),

@@ -803,10 +803,11 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         options.source,
         'getFeed',
         'feed',
-        (credentials) =>
+        ({ trace, ...credentials }) =>
           getFeed({
             ...options,
-            ...credentials
+            ...credentials,
+            diagnosticTrace: trace
           }),
         context,
         options.signal

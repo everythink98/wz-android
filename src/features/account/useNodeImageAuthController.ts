@@ -104,7 +104,8 @@ export function useNodeImageAuthController({
   notify,
   prepareSurfaceOpen,
   readRuntime,
-  reconcileAccountStatus
+  reconcileAccountStatus,
+  surfaceVisible
 }: {
   beginSurface: () => { generation: number };
   finishSurface: (reason: AuthSurfaceCloseReason) => Promise<AccountReconcileResult> | null;
@@ -112,6 +113,7 @@ export function useNodeImageAuthController({
   prepareSurfaceOpen: () => void;
   readRuntime: () => SessionRuntimeSnapshot;
   reconcileAccountStatus: (surfaceGeneration: number) => Promise<AccountReconcileResult>;
+  surfaceVisible: boolean;
 }) {
   const webViewRef = useRef<WebView>(null);
   const activeFlowRef = useRef<ActiveNodeImageAuthFlow | null>(null);
@@ -119,7 +121,6 @@ export function useNodeImageAuthController({
   const apiKeyBusyRef = useRef(false);
   const [apiKeySaved, setApiKeySaved] = useState(false);
   const [apiKeyBusy, setApiKeyBusy] = useState(false);
-  const [visible, setVisible] = useState(false);
   const [document, setDocument] = useState<NodeImageAuthDocument | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -241,7 +242,6 @@ export function useNodeImageAuthController({
       activeFlowRef.current = null;
       webViewRef.current?.stopLoading();
       setDocument(null);
-      setVisible(false);
       setLoading(false);
       if (apiKey) {
         setError('');
@@ -353,7 +353,6 @@ export function useNodeImageAuthController({
           trace
         };
         activeFlowRef.current = flow;
-        setVisible(true);
         void (async () => {
           try {
             const result = await reconcileAccountStatus(flow.surfaceGeneration);
@@ -482,10 +481,10 @@ export function useNodeImageAuthController({
       handleMessage,
       loading,
       setLoading,
-      visible,
+      visible: surfaceVisible,
       webViewRef
     }),
-    [close, document, error, handleMessage, loading, reportFailure, visible]
+    [close, document, error, handleMessage, loading, reportFailure, surfaceVisible]
   );
 
   return useMemo(() => ({ key, panel }), [key, panel]);

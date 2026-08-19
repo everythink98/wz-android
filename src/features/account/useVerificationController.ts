@@ -63,6 +63,7 @@ export function useVerificationController({
   linuxDoWebViewRef,
   linuxDoWebViewSessionRef,
   linuxDoWebViewUserAgentRef,
+  isLinuxDoSurfaceVisible,
   notify,
   onBeforeLinuxDoSurfaceOpened = () => undefined,
   onLoginWebViewFailure,
@@ -75,8 +76,6 @@ export function useVerificationController({
   setLinuxDoWebViewUserAgent,
   setLoadingLinuxDoPage,
   setMountLinuxDoWebView,
-  setShowLinuxDoPanel,
-  showLinuxDoPanelRef,
   updateLinuxDoSession,
   updateNodeSeekSession
 }: {
@@ -90,11 +89,12 @@ export function useVerificationController({
   linuxDoWebViewRef: Ref<WebView | null>;
   linuxDoWebViewSessionRef: Ref<number>;
   linuxDoWebViewUserAgentRef: Ref<string>;
+  isLinuxDoSurfaceVisible: () => boolean;
   notify: (message: string) => void;
   onBeforeLinuxDoSurfaceOpened?: () => void;
   onLoginWebViewFailure: (site: 'linuxdo', attempt: number, reason: LoginWebViewFailureReason) => void;
   onLinuxDoSurfaceClosed?: (options: { authoritativeResult: boolean; reason: AuthSurfaceCloseReason }) => void;
-  onLinuxDoSurfaceOpened?: () => void;
+  onLinuxDoSurfaceOpened?: (options: { accountBarrier: boolean }) => void;
   reconcileAccountStatus: (source: 'linuxdo') => Promise<AccountReconcileResult>;
   setChecking: Dispatch<SetStateAction<boolean>>;
   setLinuxDoWebViewError: Dispatch<SetStateAction<string>>;
@@ -102,8 +102,6 @@ export function useVerificationController({
   setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setLoadingLinuxDoPage: Dispatch<SetStateAction<boolean>>;
   setMountLinuxDoWebView: Dispatch<SetStateAction<boolean>>;
-  setShowLinuxDoPanel: Dispatch<SetStateAction<boolean>>;
-  showLinuxDoPanelRef: Ref<boolean>;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
   updateNodeSeekSession: (event: SiteSessionEvent) => void;
 }) {
@@ -186,7 +184,7 @@ export function useVerificationController({
       }
       const trace =
         linuxDoVerificationTraceRef.current ||
-        (value && showLinuxDoPanelRef.current ? currentLinuxDoVerificationTrace('open') : null);
+        (value && isLinuxDoSurfaceVisible() ? currentLinuxDoVerificationTrace('open') : null);
       if (value) {
         linuxDoTerminalWebViewSessionRef.current = session;
         const reason: LoginWebViewFailureReason = value.includes('已停止')
@@ -205,9 +203,9 @@ export function useVerificationController({
       currentLinuxDoVerificationTrace,
       finishLinuxDoVerificationTrace,
       linuxDoWebViewSessionRef,
+      isLinuxDoSurfaceVisible,
       onLoginWebViewFailure,
-      setLinuxDoWebViewError,
-      showLinuxDoPanelRef
+      setLinuxDoWebViewError
     ]
   );
 
@@ -217,7 +215,7 @@ export function useVerificationController({
     }
     const trace =
       linuxDoVerificationTraceRef.current ||
-      (showLinuxDoPanelRef.current ? currentLinuxDoVerificationTrace('open') : null);
+      (isLinuxDoSurfaceVisible() ? currentLinuxDoVerificationTrace('open') : null);
     if (trace) {
       markDiagnosticStage(trace, 'transport', {
         source: 'linuxdo',
@@ -239,7 +237,7 @@ export function useVerificationController({
     setLinuxDoWebViewErrorForSession('', nextSession);
     linuxDoWebViewMountTimerRef.current = setTimeout(() => {
       linuxDoWebViewMountTimerRef.current = null;
-      if (linuxDoWebViewSessionRef.current !== nextSession || !showLinuxDoPanelRef.current) {
+      if (linuxDoWebViewSessionRef.current !== nextSession || !isLinuxDoSurfaceVisible()) {
         return;
       }
       setMountLinuxDoWebView(true);
@@ -251,12 +249,12 @@ export function useVerificationController({
     linuxDoWebViewMountTimerRef,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
+    isLinuxDoSurfaceVisible,
     nextLinuxDoWebViewSession,
     setChecking,
     setLinuxDoWebViewErrorForSession,
     setLoadingLinuxDoPageForSession,
-    setMountLinuxDoWebView,
-    showLinuxDoPanelRef
+    setMountLinuxDoWebView
   ]);
 
   const invalidateLinuxDoCheck = useCallback(() => {
@@ -267,7 +265,7 @@ export function useVerificationController({
 
   const closeLinuxDoPanel = useCallback(
     (cancelCurrentRecovery = true, reason: AuthSurfaceCloseReason = 'close-button', authoritativeResult = false) => {
-      if (!showLinuxDoPanelRef.current && linuxDoPanelClosingSessionRef.current === null) {
+      if (!isLinuxDoSurfaceVisible() && linuxDoPanelClosingSessionRef.current === null) {
         return;
       }
       const activeRecovery = linuxDoReadRecoveryRef.current;
@@ -301,11 +299,9 @@ export function useVerificationController({
         setMountLinuxDoWebView(false);
         setLoadingLinuxDoPage(false);
         setLinuxDoWebViewError('');
-        showLinuxDoPanelRef.current = false;
-        setShowLinuxDoPanel(false);
         return;
       }
-      const wasVisible = showLinuxDoPanelRef.current;
+      const wasVisible = isLinuxDoSurfaceVisible();
       const nextSession = nextLinuxDoWebViewSession();
       linuxDoPanelClosingSessionRef.current = nextSession;
       if (linuxDoWebViewMountTimerRef.current) {
@@ -320,14 +316,12 @@ export function useVerificationController({
       setMountLinuxDoWebView(false);
       setLoadingLinuxDoPageForSession(false, nextSession);
       setLinuxDoWebViewErrorForSession('', nextSession);
-      showLinuxDoPanelRef.current = false;
-      setShowLinuxDoPanel(false);
       if (wasVisible) {
         onLinuxDoSurfaceClosed({ authoritativeResult, reason });
       }
 
       const settleClosingPanel = () => {
-        if (linuxDoPanelClosingSessionRef.current !== nextSession || showLinuxDoPanelRef.current) {
+        if (linuxDoPanelClosingSessionRef.current !== nextSession || isLinuxDoSurfaceVisible()) {
           return;
         }
         linuxDoPanelClosingSessionRef.current = null;
@@ -366,6 +360,7 @@ export function useVerificationController({
     [
       finishLinuxDoVerificationTrace,
       invalidateLinuxDoCheck,
+      isLinuxDoSurfaceVisible,
       linuxDoPanelCloseSettleTimerRef,
       linuxDoPanelClosingSessionRef,
       linuxDoWebViewMountTimerRef,
@@ -376,9 +371,7 @@ export function useVerificationController({
       setLinuxDoWebViewErrorForSession,
       setLoadingLinuxDoPage,
       setLoadingLinuxDoPageForSession,
-      setMountLinuxDoWebView,
-      setShowLinuxDoPanel,
-      showLinuxDoPanelRef
+      setMountLinuxDoWebView
     ]
   );
 
@@ -420,11 +413,9 @@ export function useVerificationController({
           linuxDoReadRecoveryRef.current = null;
           linuxDoVerificationPhaseRef.current = 'preparing';
         }
-        const wasVisible = showLinuxDoPanelRef.current;
-        showLinuxDoPanelRef.current = true;
-        setShowLinuxDoPanel(true);
-        if (!wasVisible && !linuxDoReadRecoveryRef.current) {
-          onLinuxDoSurfaceOpened();
+        const wasVisible = isLinuxDoSurfaceVisible();
+        if (!wasVisible) {
+          onLinuxDoSurfaceOpened({ accountBarrier: !linuxDoReadRecoveryRef.current });
         }
         linuxDoVerificationPhaseRef.current = 'awaiting-clearance';
         resetLinuxDoWebView();
@@ -439,12 +430,11 @@ export function useVerificationController({
       currentLinuxDoVerificationTrace,
       finishLinuxDoVerificationTrace,
       invalidateLinuxDoCheck,
+      isLinuxDoSurfaceVisible,
       linuxDoPanelClosingSessionRef,
       onBeforeLinuxDoSurfaceOpened,
       onLinuxDoSurfaceOpened,
-      resetLinuxDoWebView,
-      setShowLinuxDoPanel,
-      showLinuxDoPanelRef
+      resetLinuxDoWebView
     ]
   );
 
@@ -538,7 +528,7 @@ export function useVerificationController({
         }
         return;
       }
-      if (!showLinuxDoPanelRef.current) {
+      if (!isLinuxDoSurfaceVisible()) {
         return;
       }
       if (!shouldOpenLoginWebViewUrl(event.nativeEvent.url, ['linux.do'])) {
@@ -583,9 +573,9 @@ export function useVerificationController({
     [
       linuxDoWebViewSessionRef,
       linuxDoWebViewUserAgentRef,
+      isLinuxDoSurfaceVisible,
       setLinuxDoWebViewErrorForSession,
-      setLinuxDoWebViewUserAgent,
-      showLinuxDoPanelRef
+      setLinuxDoWebViewUserAgent
     ]
   );
 
@@ -613,7 +603,7 @@ export function useVerificationController({
       if (linuxDoWebViewSession !== linuxDoWebViewSessionRef.current) {
         return false;
       }
-      if (!showLinuxDoPanelRef.current) {
+      if (!isLinuxDoSurfaceVisible()) {
         return false;
       }
       if (flowGeneration !== linuxDoVerificationGenerationRef.current) {
@@ -753,17 +743,17 @@ export function useVerificationController({
     closeLinuxDoPanel,
     currentLinuxDoVerificationTrace,
     finishLinuxDoVerificationTrace,
+    isLinuxDoSurfaceVisible,
     linuxDoWebViewSessionRef,
     notify,
     reconcileAccountStatus,
     setChecking,
     setLinuxDoWebViewError,
     showLinuxDoVerification,
-    showLinuxDoPanelRef,
     updateLinuxDoSession
   ]);
   const stopLinuxDoVerificationForInactiveApp = useCallback(() => {
-    if (!showLinuxDoPanelRef.current) {
+    if (!isLinuxDoSurfaceVisible()) {
       return;
     }
     const trace = linuxDoVerificationTraceRef.current;
@@ -789,14 +779,14 @@ export function useVerificationController({
   }, [
     checkingRequestIdRef,
     finishLinuxDoVerificationTrace,
+    isLinuxDoSurfaceVisible,
     linuxDoWebViewMountTimerRef,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
     setChecking,
     setLinuxDoWebViewKey,
     setLoadingLinuxDoPage,
-    setMountLinuxDoWebView,
-    showLinuxDoPanelRef
+    setMountLinuxDoWebView
   ]);
 
   return {

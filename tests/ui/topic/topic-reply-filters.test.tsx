@@ -723,13 +723,11 @@ function TopicFilterHarness({
       debouncedCommentQuery: effectiveCommentQuery,
       expandedQuotes,
       quoteStateVersion: 0,
-      replyComposerOpen: false,
+      replyComposerIntent: { kind: 'closed' },
       replyContent: '',
-      replyEditTarget: null,
       replyFace: '',
       replyFilter,
       replyOrder,
-      replyTarget: null,
       selectedTopic
     },
     commands: {

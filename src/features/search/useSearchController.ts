@@ -514,12 +514,15 @@ export function useSearchController({
     submittedSearchSourceIncluded,
     submittedSource
   ]);
-  const baseSearchGroups =
-    submittedSearch?.source === 'all'
-      ? aggregateGroups
-      : submittedSearchSourceIncluded && singleGroup
-        ? [singleGroup]
-        : [];
+  const baseSearchGroups = useMemo(
+    () =>
+      submittedSearch?.source === 'all'
+        ? aggregateGroups
+        : submittedSearchSourceIncluded && singleGroup
+          ? [singleGroup]
+          : [],
+    [aggregateGroups, singleGroup, submittedSearch?.source, submittedSearchSourceIncluded]
+  );
 
   const linuxDoAiVisible = Boolean(
     aggregateSources.includes('linuxdo') &&

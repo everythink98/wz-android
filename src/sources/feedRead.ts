@@ -17,6 +17,8 @@ import type {
   V2exFeedFilter
 } from '@/domain/forum/models';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { mergeSourceDiagnosticSummaries } from './diagnostics';
 import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from './forumSourceReadAttempt';
 import {
@@ -121,6 +123,7 @@ export async function getFeed({
   nodeSeekAuthenticated,
   nodeSeekUserAgent,
   discourseAuth,
+  diagnosticTrace,
   includedSources,
   unavailableSources,
   signal,
@@ -137,6 +140,7 @@ export async function getFeed({
   nodeSeekAuthenticated?: boolean;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
+  diagnosticTrace?: DiagnosticTrace;
   includedSources?: readonly Source[];
   unavailableSources?: readonly Source[];
   signal?: AbortSignal;
@@ -175,8 +179,9 @@ export async function getFeed({
         ) as Record<Source, number>;
         const adapterLimit = limit < 30 ? limit * sources.length : limit;
         const results = await Promise.allSettled(
-          sources.map((item, index) =>
-            readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
+          sources.map((item, index) => {
+            const startedAt = Date.now();
+            return readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
               if (unavailableSourceSet.has(item)) {
                 return unavailableSourceRead(item);
               }
@@ -236,8 +241,35 @@ export async function getFeed({
               return item === 'linuxdo' || item === 'nodeseek'
                 ? runForumSourceReadAttempt(item, sourceFetcher, readSource, () => !sourceSignal.aborted)
                 : readSource(sourceFetcher);
-            })
-          )
+            }).then(
+              (value) => {
+                if (diagnosticTrace) {
+                  markDiagnosticStage(diagnosticTrace, 'transport', {
+                    source: item,
+                    state: 'success',
+                    latencyMs: Date.now() - startedAt
+                  });
+                }
+                return value;
+              },
+              (error) => {
+                const aggregateTimedOut =
+                  typeof error === 'object' &&
+                  error !== null &&
+                  (error as { reason?: unknown }).reason === 'aggregate_timeout';
+                const reason = aggregateTimedOut ? 'timeout' : normalizeDiagnosticReason(error);
+                if (diagnosticTrace) {
+                  markDiagnosticStage(diagnosticTrace, 'transport', {
+                    source: item,
+                    state: reason === 'timeout' || reason === 'canceled' ? reason : 'failure',
+                    reason,
+                    latencyMs: Date.now() - startedAt
+                  });
+                }
+                throw error;
+              }
+            );
+          })
         );
         if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
         const items = sortByTime([

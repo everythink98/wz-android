@@ -12,9 +12,8 @@ import {
   type ScopedSiteSessionEvent,
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
-import { rejectUnauthorizedResponse, type Fetcher } from '@/platform/network/request';
+import { rejectUnauthorizedResponse, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
-import { readWithinAggregateSourceBudget } from '@/sources/readAggregation';
 import { readAccountStatus } from '@/sources/accountRead';
 import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
@@ -42,6 +41,8 @@ type RefreshAccountStatusOptions = { silent?: boolean };
 type StatusSource = SessionSource;
 type SnapshotUpdater = (current: AccountSessionSnapshot) => AccountSessionSnapshot;
 
+const ACCOUNT_SESSION_MIGRATION_TIMEOUT_MS = 5_000;
+
 function eventConfirmsTerminalIdentity(event: ScopedSiteSessionEvent) {
   return (
     event.type === 'login-expired' ||
@@ -55,19 +56,6 @@ function observationConfirmsTerminalIdentity(source: StatusSource, observation: 
   if (session.site !== source) return false;
   if (session.status === 'logged-in') return accountSessionIdentityKey(session) !== `${source}:anonymous`;
   return session.status === 'anonymous' || session.status === 'verified' || session.status === 'expired';
-}
-
-function accountBatchError(source: StatusSource, error: unknown) {
-  const sourceError = sourceErrorFromUnknown(source, error);
-  const reason = error && typeof error === 'object' ? (error as { reason?: unknown }).reason : undefined;
-  return reason === 'aggregate_timeout'
-    ? {
-        ...sourceError,
-        message: `${sourceCatalog[source].label} 账号状态检查超时，请重试。`,
-        reason: 'aggregate_timeout',
-        retryable: true
-      }
-    : sourceError;
 }
 
 function snapshotQueryDefinition(source: StatusSource) {
@@ -241,16 +229,14 @@ export function useAccountStatusController({
       options.signal?.addEventListener('abort', abortProbe, { once: true });
       const promise = (async (): Promise<AccountReconcileResult> => {
         try {
-          const observation = await readWithinAggregateSourceBudget(source, controller.signal, (signal) =>
-            readAccountStatus(source, {
-              fetcher: rejectUnauthorizedResponse(fetcher),
-              linuxDoUserAgent: linuxDoUserAgentRef.current,
-              nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-              readManagedCookieHeader,
-              readXiaoyinsiAuthorization,
-              signal
-            })
-          );
+          const observation = await readAccountStatus(source, {
+            fetcher: rejectUnauthorizedResponse(fetcher),
+            linuxDoUserAgent: linuxDoUserAgentRef.current,
+            nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+            readManagedCookieHeader,
+            readXiaoyinsiAuthorization,
+            signal: controller.signal
+          });
           if (probeGenerationRef.current[source] !== generation || !enabledSourcesRef.current.has(source)) {
             return { status: 'stale' };
           }
@@ -302,7 +288,7 @@ export function useAccountStatusController({
             return { status: 'stale' };
           }
           if (isCancelledError(error) || isCanceledRequest(error)) return { status: 'stale' };
-          const errorInfo = accountBatchError(source, error);
+          const errorInfo = sourceErrorFromUnknown(source, error);
           commitAccountSnapshot(source, (current) => ({
             ...current,
             isVerifying: false,
@@ -374,18 +360,29 @@ export function useAccountStatusController({
           })
         )
       ).filter((source): source is StatusSource => source !== null);
-      await Promise.all(
-        candidates.map(async (source) => {
-          await reconcileAccountStatus(source);
-        })
-      );
+      let migrationProbes: Promise<AccountReconcileResult[]> = Promise.resolve([]);
+      await withAbortableTimeout(
+        (signal) => {
+          migrationProbes = Promise.all(candidates.map((source) => reconcileAccountStatus(source, { signal })));
+          return migrationProbes;
+        },
+        { timeoutMs: ACCOUNT_SESSION_MIGRATION_TIMEOUT_MS }
+      ).catch(async () => {
+        for (const source of candidates) {
+          supersedeProbe(source);
+        }
+        await migrationProbes.catch(() => undefined);
+        for (const source of candidates) {
+          commitAccountSnapshot(source, (snapshot) => ({ ...snapshot, isVerifying: false }));
+        }
+      });
       await markAccountSessionMigrationCompleted().catch(() => undefined);
       if (active) setHydrated(true);
     })();
     return () => {
       active = false;
     };
-  }, [enabledSourcesReady, readManagedCookieHeader, reconcileAccountStatus]);
+  }, [commitAccountSnapshot, enabledSourcesReady, readManagedCookieHeader, reconcileAccountStatus, supersedeProbe]);
 
   const previousEnabledSourcesRef = useRef(new Set<StatusSource>(enabledSources));
   useEffect(() => {

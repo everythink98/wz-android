@@ -59,7 +59,7 @@ async function renderAccountController(overrides: Partial<Parameters<typeof useA
     readGateway: {
       getLinuxDoLevelProfile: mockManagedLinuxDoLevelProfile
     },
-    showLoginPanelRef: ref(true),
+    showLoginPanel: true,
     showYaohuoLoginPanel: true,
     webViewRef: ref({
       reload: jest.fn(),

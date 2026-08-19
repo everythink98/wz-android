@@ -97,11 +97,11 @@ export function PillRail({
       fadingEdgeLength={0}
       contentContainerStyle={isTabs ? styles.tabRail : isSubtabs ? styles.subtabRail : styles.pillRail}
     >
-      {items.map((item) => (
+      {items.map((item, index) => (
         <Pressable
           testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}
           hitSlop={TOUCH_HIT_SLOP}
-          key={`${item.value}-${item.label}`}
+          key={index}
           accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}
           accessibilityRole="button"
           accessibilityState={

@@ -4,8 +4,10 @@ import {
   closeOtherAuthSurfaces,
   createAuthSurfaceRegistry,
   finishAuthSurface,
-  hasOpenAuthSurfaceForSource,
-  releaseAuthSurface
+  hasAuthSurfaceBarrierForSource,
+  isAuthSurfaceVisible,
+  releaseAuthSurface,
+  showAuthSurface
 } from './authSurfaceCoordinator';
 
 describe('auth surface coordinator', () => {
@@ -47,7 +49,7 @@ describe('auth surface coordinator', () => {
       sessionEpoch: 2
     });
 
-    expect(registry.active['linuxdo-login']).toEqual(ticket);
+    expect(registry.active['linuxdo-login']).toEqual({ ...ticket, phase: 'open' });
     expect(
       beginAuthSurface(registry, {
         source: 'linuxdo',
@@ -68,8 +70,8 @@ describe('auth surface coordinator', () => {
       sessionEpoch: 4
     });
 
-    expect(hasOpenAuthSurfaceForSource(registry, 'nodeseek')).toBe(true);
-    expect(hasOpenAuthSurfaceForSource(registry, 'linuxdo')).toBe(false);
+    expect(hasAuthSurfaceBarrierForSource(registry, 'nodeseek')).toBe(true);
+    expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(false);
   });
 
   it('[REG-PERF-019] retains the source barrier while close reconciliation is unresolved', () => {
@@ -84,10 +86,12 @@ describe('auth surface coordinator', () => {
     expect(finishAuthSurface(registry, 'nodeseek-login', 'close-button', true)).toMatchObject({
       shouldReconcile: true
     });
-    expect(hasOpenAuthSurfaceForSource(registry, 'nodeseek')).toBe(true);
+    expect(isAuthSurfaceVisible(registry, 'nodeseek-login')).toBe(false);
+    expect(registry.active['nodeseek-login']?.phase).toBe('reconciling');
+    expect(hasAuthSurfaceBarrierForSource(registry, 'nodeseek')).toBe(true);
 
     releaseAuthSurface(registry, 'nodeseek-login', ticket.generation);
-    expect(hasOpenAuthSurfaceForSource(registry, 'nodeseek')).toBe(false);
+    expect(hasAuthSurfaceBarrierForSource(registry, 'nodeseek')).toBe(false);
   });
 
   it('[REG-ACCOUNT-031] reuses an authoritative recovery result instead of probing twice', () => {
@@ -119,19 +123,74 @@ describe('auth surface coordinator', () => {
   });
 
   it('[REG-ACCOUNT-031] closes every other logical surface with switch-surface before opening a new one', () => {
-    const handlers = {
-      'linuxdo-login': vi.fn(),
-      'nodeimage-auth': vi.fn(),
-      'nodeseek-login': vi.fn(),
-      'yaohuo-login': vi.fn()
-    };
+    const close = vi.fn();
 
-    closeOtherAuthSurfaces('yaohuo-login', handlers);
+    closeOtherAuthSurfaces('yaohuo-login', close);
 
-    expect(handlers['linuxdo-login']).toHaveBeenCalledOnce();
-    expect(handlers['linuxdo-login']).toHaveBeenCalledWith('switch-surface');
-    expect(handlers['nodeimage-auth']).toHaveBeenCalledWith('switch-surface');
-    expect(handlers['nodeseek-login']).toHaveBeenCalledWith('switch-surface');
-    expect(handlers['yaohuo-login']).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(3);
+    expect(close).toHaveBeenCalledWith('linuxdo-login', 'switch-surface');
+    expect(close).toHaveBeenCalledWith('nodeimage-auth', 'switch-surface');
+    expect(close).toHaveBeenCalledWith('nodeseek-login', 'switch-surface');
+    expect(close).not.toHaveBeenCalledWith('yaohuo-login', 'switch-surface');
+  });
+
+  it('[REG-ACCOUNT-031] keeps read recovery visible without creating an Account barrier', () => {
+    const registry = createAuthSurfaceRegistry();
+
+    showAuthSurface(registry, 'linuxdo-login');
+
+    expect(isAuthSurfaceVisible(registry, 'linuxdo-login')).toBe(true);
+    expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(false);
+    expect(finishAuthSurface(registry, 'linuxdo-login', 'authoritative-recovery')).toBeNull();
+    expect(isAuthSurfaceVisible(registry, 'linuxdo-login')).toBe(false);
+  });
+
+  it('[REG-ACCOUNT-031] allows one visible surface while older close barriers reconcile', () => {
+    const registry = createAuthSurfaceRegistry();
+    beginAuthSurface(registry, {
+      source: 'nodeseek',
+      surface: 'nodeseek-login',
+      identityKey: 'nodeseek:17',
+      sessionEpoch: 4
+    });
+
+    closeOtherAuthSurfaces('yaohuo-login', (surface, reason) => {
+      finishAuthSurface(registry, surface, reason, true);
+    });
+    beginAuthSurface(registry, {
+      source: 'yaohuo',
+      surface: 'yaohuo-login',
+      identityKey: 'yaohuo:9',
+      sessionEpoch: 2
+    });
+
+    expect(registry.visible).toBe('yaohuo-login');
+    expect(registry.active['nodeseek-login']?.phase).toBe('reconciling');
+    expect(registry.active['yaohuo-login']?.phase).toBe('open');
+    expect(hasAuthSurfaceBarrierForSource(registry, 'nodeseek')).toBe(true);
+    expect(hasAuthSurfaceBarrierForSource(registry, 'yaohuo')).toBe(true);
+  });
+
+  it('[REG-ACCOUNT-031] reopening a reconciling surface gives the new owner a fresh generation', () => {
+    const registry = createAuthSurfaceRegistry();
+    const first = beginAuthSurface(registry, {
+      source: 'nodeseek',
+      surface: 'nodeseek-login',
+      identityKey: 'nodeseek:17',
+      sessionEpoch: 4
+    });
+    finishAuthSurface(registry, 'nodeseek-login', 'close-button', true);
+
+    const second = beginAuthSurface(registry, {
+      source: 'nodeseek',
+      surface: 'nodeseek-login',
+      identityKey: 'nodeseek:17',
+      sessionEpoch: 4
+    });
+    releaseAuthSurface(registry, 'nodeseek-login', first.generation);
+
+    expect(second.generation).toBe(first.generation + 1);
+    expect(registry.active['nodeseek-login']).toEqual({ ...second, phase: 'open' });
+    expect(isAuthSurfaceVisible(registry, 'nodeseek-login')).toBe(true);
   });
 });

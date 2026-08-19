@@ -520,7 +520,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-058] runs one source read and one persistence per ready, resume, and explicit refresh event', async () => {
+  it('[REG-NOTIFY-058][REG-PERF-023] runs one source read and one persistence per ready, resume, and explicit refresh event', async () => {
     const stored = defaultNotificationState();
     stored.globalEnabled = true;
     stored.hasOptedIn = true;
@@ -571,10 +571,12 @@ describe('notification runtime', () => {
     await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(2));
 
+    const snapshotErrors = hook.result.current.snapshotErrors;
     await act(async () => hook.result.current.refreshSnapshots());
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(recordNotificationSnapshot).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(3));
+    expect(hook.result.current.snapshotErrors).toBe(snapshotErrors);
     await settleStartedRuntimeTasks();
   });
 
@@ -704,7 +706,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('keeps a rapidly re-enabled source operationally paused until its disable cleanup finishes', async () => {
+  it('[REG-PERF-023] keeps a rapidly re-enabled source operationally paused until its disable cleanup finishes', async () => {
     jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
     const stored = defaultNotificationState();
     stored.globalEnabled = true;
@@ -750,6 +752,7 @@ describe('notification runtime', () => {
     fetcher.mockClear();
     jest.mocked(runNotificationBackgroundWorker).mockClear();
     jest.mocked(syncNotificationBackgroundRegistration).mockClear();
+    const snapshotErrors = hook.result.current.snapshotErrors;
 
     let finishDismiss!: () => void;
     const dismissPending = new Promise<void>((resolve) => {
@@ -767,6 +770,7 @@ describe('notification runtime', () => {
     );
     await expect(firstWorker.sourceAllowed('nodeseek')).resolves.toBe(false);
     expect(hook.result.current.activeSources).not.toContain('nodeseek');
+    expect(hook.result.current.snapshotErrors).toBe(snapshotErrors);
 
     enabledNotificationSources = ['nodeseek'];
     await act(async () => hook.rerender({}));

@@ -104,7 +104,6 @@ function ManagedOriginalImageLayer({
   onDisplay,
   onRequestError,
   onTerminalFailure,
-  placeholder,
   requestIdentity,
   source
 }: {
@@ -113,7 +112,6 @@ function ManagedOriginalImageLayer({
   onDisplay: () => void;
   onRequestError: () => boolean;
   onTerminalFailure: () => void;
-  placeholder: ImageURISource;
   requestIdentity: string;
   source: ImageURISource;
 }) {
@@ -137,8 +135,6 @@ function ManagedOriginalImageLayer({
       allowDownscaling
       cachePolicy="disk"
       contentFit="contain"
-      placeholder={placeholder}
-      placeholderContentFit="contain"
       priority={forced ? 'high' : 'low'}
       recyclingKey={`${attemptIdentity}:body-original`}
       source={attemptedSource}
@@ -494,7 +490,6 @@ function AdmittedPreviewImageBlock({
           <ManagedOriginalImageLayer
             attemptIdentity={originalAttemptIdentity}
             forced={originalForced}
-            placeholder={activeImageSource}
             requestIdentity={originalLeaseIdentity}
             source={progressiveSource}
             onDisplay={() => {

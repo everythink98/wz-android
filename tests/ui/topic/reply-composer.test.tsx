@@ -3,7 +3,7 @@ import { fireEvent, render } from '../render';
 import React, { type ReactNode, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import type { ReplyEditTarget, ReplyTarget } from '@/features/topic/model/types';
+import type { ReplyComposerIntent } from '@/features/topic/useTopicSessionController';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { ReplyComposer } from '@/ui/composer/ReplyComposer';
 import type { Source } from '@/domain/forum/models';
@@ -55,42 +55,43 @@ function ReplyHarness({
   actionBusy = false,
   initialContent = '',
   discourseEmojiUrls,
+  intent = { kind: 'new' },
   onUploadReplyImage,
-  replyEditTarget = null,
-  replyTarget = null,
   source = 'nodeseek'
 }: {
   actionBusy?: boolean;
   initialContent?: string;
   discourseEmojiUrls?: DiscourseEmojiUrlMap;
+  intent?: ReplyComposerIntent;
   onUploadReplyImage?: () => void;
-  replyEditTarget?: ReplyEditTarget | null;
-  replyTarget?: ReplyTarget | null;
   source?: Source;
 } = {}) {
   const [visible, setVisible] = useState(true);
   const [content, setContent] = useState(initialContent);
   const [face, setFace] = useState('');
-  const targetAuthor = replyTarget?.author?.trim().replace(/^@+/, '');
-  const title = replyTarget
-    ? `回复 ${targetAuthor ? `@${targetAuthor} · ` : ''}#${replyTarget.floor}`
-    : replyEditTarget?.floor
-      ? `编辑 #${replyEditTarget.floor}`
-      : replyEditTarget
-        ? '编辑回复'
+  const targetAuthor = intent.kind === 'floor' ? intent.target.author?.trim().replace(/^@+/, '') : '';
+  const title =
+    intent.kind === 'floor'
+      ? `回复 ${targetAuthor ? `@${targetAuthor} · ` : ''}#${intent.target.floor}`
+      : intent.kind === 'edit'
+        ? intent.target.floor
+          ? `编辑 #${intent.target.floor}`
+          : '编辑回复'
         : '回复';
   return (
     <View>
       {visible ? (
         <ReplyComposer
           actionBusy={actionBusy}
-          closeLabel={replyEditTarget ? '取消编辑' : replyTarget ? '取消楼层回复' : '收起回复'}
+          closeLabel={intent.kind === 'edit' ? '取消编辑' : intent.kind === 'floor' ? '取消楼层回复' : '收起回复'}
           content={content}
           discourseEmojiUrls={discourseEmojiUrls}
           face={face}
-          placeholder={replyEditTarget ? '编辑回复内容' : replyTarget ? '输入楼层回复内容' : '输入回复内容'}
+          placeholder={
+            intent.kind === 'edit' ? '编辑回复内容' : intent.kind === 'floor' ? '输入楼层回复内容' : '输入回复内容'
+          }
           source={source}
-          submitLabel={replyEditTarget ? '保存编辑' : '发送回复'}
+          submitLabel={intent.kind === 'edit' ? '保存编辑' : '发送回复'}
           title={title}
           onContentChange={setContent}
           onFaceChange={setFace}
@@ -157,7 +158,7 @@ describe('Reply composer local behavior', () => {
   it('labels floor replies and edits with distinct targets, placeholders and submit actions', async () => {
     submitReply.mockClear();
     const replyView = await render(
-      <ReplyHarness initialContent="楼层草稿" replyTarget={{ author: '@bob', floor: 3 }} />
+      <ReplyHarness initialContent="楼层草稿" intent={{ kind: 'floor', target: { author: '@bob', floor: 3 } }} />
     );
 
     expect(replyView.getByText('回复 @bob · #3')).toBeTruthy();
@@ -170,12 +171,15 @@ describe('Reply composer local behavior', () => {
       <ReplyHarness
         key="edit"
         initialContent="待编辑正文"
-        replyEditTarget={{
-          commentId: 9,
-          contentMarkdown: '待编辑正文',
-          floor: 4,
-          topicId: '1',
-          ticket: { source: 'linuxdo', identityKey: 'linuxdo:alice', sessionEpoch: 1 }
+        intent={{
+          kind: 'edit',
+          target: {
+            commentId: 9,
+            contentMarkdown: '待编辑正文',
+            floor: 4,
+            topicId: '1',
+            ticket: { source: 'linuxdo', identityKey: 'linuxdo:alice', sessionEpoch: 1 }
+          }
         }}
       />
     );

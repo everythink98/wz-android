@@ -477,7 +477,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData(newestKey)).toBeDefined();
     expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
     expect(appQueryClient.getQueryState(newestKey)?.isInvalidated).toBe(true);
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
   });
 
   it('[REG-LINUXDO-003][REG-WRITE-017][REG-TOPIC-067] marks write caches stale without a competing refetch', async () => {
@@ -1109,7 +1109,10 @@ describe('topic action query mutations', () => {
         await hook.result.current.actions.editReply(editableReply);
         hook.result.current.topicSession.commands.composer.changeContent(draft);
       });
-      expect(hook.result.current.topicSession.state.replyEditTarget?.ticket.identityKey).toBe(identityKey);
+      expect(hook.result.current.topicSession.state.replyComposerIntent).toMatchObject({
+        kind: 'edit',
+        target: { ticket: { identityKey } }
+      });
       const staleSubmitReply = hook.result.current.actions.submitReply;
       const staleUploadReplyImage = hook.result.current.actions.uploadReplyImage;
 
@@ -1119,8 +1122,7 @@ describe('topic action query mutations', () => {
         hook.rerender({ sessionEpochs: nextEpochs });
       });
 
-      expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-      expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+      expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
       expect(hook.result.current.topicSession.state.replyContent).toBe(draft);
 
       await act(async () => {
@@ -1177,8 +1179,7 @@ describe('topic action query mutations', () => {
       });
     });
     expect(hook.result.current.topicSession.state.selectedTopic?.id).toBe(nodeSeekDetail.id);
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('同账号返回后保留的草稿');
 
     await act(async () => {
@@ -1221,7 +1222,7 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockDiscourseExecute).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('不能以旧权限提交的正文');
 
     seedTopicCache(xiaDetail, [reply]);
@@ -1235,7 +1236,7 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockDiscourseExecute).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('缓存已不存在的正文');
   });
 
@@ -1274,8 +1275,7 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockDiscourseExecute).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('跨页权限冲突时保留的正文');
   });
 
@@ -1304,8 +1304,7 @@ describe('topic action query mutations', () => {
       });
     });
 
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('权限撤回后保留的草稿');
 
     await act(async () => {
@@ -1317,8 +1316,7 @@ describe('topic action query mutations', () => {
       hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicReplies: [] });
     });
 
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('回复消失后保留的草稿');
     expect(mockDiscourseExecute).not.toHaveBeenCalled();
     expect(mockGetDocument).not.toHaveBeenCalled();
@@ -1359,7 +1357,7 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockDiscourseExecute).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('取消查询期间失效的正文');
   });
 
@@ -1403,8 +1401,7 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockDiscourseExecute).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('凭据准备期间失效的正文');
   });
 
@@ -1453,8 +1450,7 @@ describe('topic action query mutations', () => {
 
     expect(mockGetDocument).toHaveBeenCalledTimes(1);
     expect(mockDiscourseExecute).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('上传凭据准备期间失效的正文');
   });
 
@@ -1495,8 +1491,7 @@ describe('topic action query mutations', () => {
       expect(mockGetDocument).not.toHaveBeenCalled();
       expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
       expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
-      expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-      expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+      expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
       expect(hook.result.current.topicSession.state.replyContent).toBe('old');
     }
   );
@@ -1539,8 +1534,7 @@ describe('topic action query mutations', () => {
     expect(mockGetDocument).not.toHaveBeenCalled();
     expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyEditTarget).toBeNull();
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('old');
   });
 
@@ -1615,7 +1609,7 @@ describe('topic action query mutations', () => {
         method: 'PUT'
       })
     );
-    expect(hook.result.current.topicSession.state.replyComposerOpen).toBe(false);
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('');
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.replies[0]?.contentHtml).toBe('<p>old</p>');
     expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);

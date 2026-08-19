@@ -237,6 +237,7 @@ const stateValues = closedValues(
   'cache-unavailable',
   'cached-detail-reused',
   'cached-quote',
+  'canceled',
   'cleared',
   'collapsed',
   'complete',

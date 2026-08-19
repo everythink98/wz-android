@@ -156,10 +156,14 @@ export function useAppRuntime() {
   const notificationSummary = `${notificationsRuntime.unreadTotal ? '有未读' : '暂无未读'} · ${
     notificationsRuntime.backgroundEnabled ? '后台通知已开启' : '后台通知未开启'
   }${notificationsRuntime.partialUnavailable ? ' · 部分站点暂不可用' : ''}`;
-  const onNavigationReady = () => {
-    notificationsRuntime.onNavigationReady();
-    handleNavigationReady();
-  };
+  const { onNavigationReady: handleNotificationNavigationReady } = notificationsRuntime;
+  const onNavigationReady = useMemo(
+    () => () => {
+      handleNotificationNavigationReady();
+      handleNavigationReady();
+    },
+    [handleNavigationReady, handleNotificationNavigationReady]
+  );
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
     active: readerDataLoaded && sessionsReady && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,

@@ -370,7 +370,7 @@ export const TopicContentList = memo(function TopicContentList({
   const expandedQuotes = state.expandedQuotes;
   const replyHighlightQuery = state.debouncedCommentQuery;
   const quoteStateVersion = state.quoteStateVersion;
-  const replyComposerOpen = state.replyComposerOpen;
+  const replyComposerOpen = state.replyComposerIntent.kind !== 'closed';
   const replyFilter = state.replyFilter;
   const replyOrder = state.replyOrder;
   const sourceReplies = read.topicReplies;
@@ -1394,7 +1394,9 @@ export const TopicContentList = memo(function TopicContentList({
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
             <View style={styles.topicAccessNotice}>
-              {contentItem.label ? <Text style={styles.topicAccessBadge}>{contentItem.label}</Text> : null}
+              {contentItem.label ? (
+                <Text style={[styles.topicAccessBadge, styles.topicAccessNoticeBadge]}>{contentItem.label}</Text>
+              ) : null}
               <Text style={styles.topicAccessNoticeTitle}>暂无权限</Text>
               <Text style={styles.topicAccessNoticeDetail}>{contentItem.detail}</Text>
             </View>

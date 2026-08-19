@@ -126,6 +126,7 @@ export const TopicScreen = memo(function TopicScreen({
   }
 
   const canWrite = decisionFor({ action: 'reply' }).allowed;
+  const replyComposerIntent = state.replyComposerIntent;
   const canUseDiscourseInteractions = Boolean(
     topic &&
     isDiscourseSource(topic.source) &&
@@ -135,7 +136,7 @@ export const TopicScreen = memo(function TopicScreen({
     canWrite ||
     Boolean(
       canUseDiscourseInteractions &&
-      state.replyEditTarget &&
+      replyComposerIntent.kind === 'edit' &&
       decisionFor({ action: 'edit', objectAllowed: true, targetPresent: true }).allowed
     );
   const topicReadableError = topicError ? readableTopicError(topicError.message) : '';
@@ -230,14 +231,13 @@ export const TopicScreen = memo(function TopicScreen({
       <ReplyComposerSheet
         actionBusy={actionBusy}
         discourseEmojiUrls={discourseEmojiUrls}
+        intent={replyComposerIntent}
         replyContent={state.replyContent}
         replyFace={state.replyFace}
-        replyEditTarget={state.replyEditTarget}
-        replyTarget={state.replyTarget}
         source={topic?.source}
         styles={styles}
         theme={theme}
-        visible={Boolean(canOpenReplyComposer && state.replyComposerOpen)}
+        visible={Boolean(canOpenReplyComposer && replyComposerIntent.kind !== 'closed')}
         onReplyComposerOpenChange={commands.composer.toggle}
         onReplyContentChange={commands.composer.changeContent}
         onReplyFaceChange={commands.composer.changeFace}

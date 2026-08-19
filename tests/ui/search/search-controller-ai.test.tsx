@@ -2284,6 +2284,27 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(4);
   });
 
+  it('[REG-PERF-023] keeps settled single-source groups stable across an unrelated rerender', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
+      items: [{ ...standardTopic, source: source === 'all' ? 'v2ex' : source, id: `${source}-stable` }],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const hook = await renderSearchController(createGateway({ searchTopics }));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'stable single', source: 'v2ex' });
+    });
+    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+    const searchGroups = hook.result.current.searchGroups;
+
+    await act(async () => hook.rerender({}));
+
+    expect(hook.result.current.searchGroups).toBe(searchGroups);
+    expect(searchTopics).toHaveBeenCalledTimes(1);
+  });
+
   it('[REG-SOURCE-010] aborts a removed aggregate source without interrupting an enabled source', async () => {
     const requests = new Map<
       Source,

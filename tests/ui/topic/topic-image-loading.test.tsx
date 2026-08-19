@@ -1821,7 +1821,6 @@ describe('topic block image loading', () => {
     const originalProps = latestImageProps(originalUrl);
     expect(originalProps).toEqual(
       expect.objectContaining({
-        placeholder: expect.objectContaining({ uri: displayUrl }),
         priority: 'low',
         source: expect.objectContaining({
           headers: expect.objectContaining({ Referer: 'https://www.yaohuo.me/' }),
@@ -1831,6 +1830,8 @@ describe('topic block image loading', () => {
         transition: 150
       })
     );
+    expect(originalProps.placeholder).toBeUndefined();
+    expect(screen.getByTestId('expo-image')).toBeTruthy();
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
     const dimensionsBeforeUpgrade = StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style);
 
@@ -1839,6 +1840,7 @@ describe('topic block image loading', () => {
     expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject(
       dimensionsBeforeUpgrade
     );
+    expect(screen.queryByTestId('expo-image')).toBeNull();
     expect(screen.getByTestId('topic-image-original')).toBeTruthy();
   });
 
@@ -2892,6 +2894,78 @@ describe('topic block image loading', () => {
       height: 1_600,
       width: 320
     });
+  });
+
+  it('[REG-TOPIC-114] isolates natural geometry and one layout commit per image identity', async () => {
+    const images = [
+      {
+        dimensions: { height: 5_000, width: 1_000 },
+        expected: { height: 1_600, width: 320 },
+        url: 'https://img.example.com/reg-topic-114-long.png'
+      },
+      {
+        dimensions: { height: 500, width: 109 },
+        expected: { height: 500, width: 109 },
+        url: 'https://img.example.com/reg-topic-114-narrow.png'
+      },
+      {
+        dimensions: { height: 90, width: 160 },
+        expected: { height: 90, width: 160 },
+        url: 'https://img.example.com/reg-topic-114-small.png'
+      },
+      {
+        dimensions: { height: 900, width: 1_600 },
+        expected: { height: 180, width: 320 },
+        url: 'https://img.example.com/reg-topic-114-wide.png'
+      }
+    ];
+    const renderImages = () => (
+      <>
+        {images.map((image) => (
+          <TopicImageHarness
+            key={image.url}
+            attributes={{ alt: image.url, src: image.url }}
+            originalImageUpgradeEnabled={false}
+          />
+        ))}
+      </>
+    );
+    const firstScreen = await render(renderImages());
+    const recyclingKeys = new Map(images.map(({ url }) => [url, latestImageProps(url).recyclingKey]));
+    const loadedIndexes = new Set<number>();
+
+    for (const index of [2, 0, 3, 1]) {
+      const image = images[index]!;
+      await loadAndDisplayImage(latestImageProps(image.url), image.dimensions, 'memory');
+      loadedIndexes.add(index);
+
+      expect(mockFlashListLayout).toHaveBeenCalledTimes(loadedIndexes.size);
+      firstScreen.getAllByTestId('topic-image-frame').forEach((frame, frameIndex) => {
+        expect(StyleSheet.flatten(frame.props.style)).toMatchObject(
+          loadedIndexes.has(frameIndex) ? images[frameIndex]!.expected : { height: 240, width: 320 }
+        );
+      });
+      expect(firstScreen.getAllByTestId('expo-image')).toHaveLength(images.length);
+    }
+
+    for (const image of images) {
+      await loadAndDisplayImage(latestImageProps(image.url), image.dimensions, 'memory');
+      expect(latestImageProps(image.url).recyclingKey).toBe(recyclingKeys.get(image.url));
+    }
+    expect(mockFlashListLayout).toHaveBeenCalledTimes(images.length);
+    await firstScreen.unmount();
+
+    mockFlashListLayout.mockClear();
+    const secondScreen = await render(renderImages());
+    secondScreen.getAllByTestId('topic-image-frame').forEach((frame, index) => {
+      expect(StyleSheet.flatten(frame.props.style)).toMatchObject(images[index]!.expected);
+    });
+    for (const image of images.toReversed()) {
+      await loadAndDisplayImage(latestImageProps(image.url), image.dimensions, 'memory');
+      expect(latestImageProps(image.url).recyclingKey).toBe(recyclingKeys.get(image.url));
+    }
+    expect(mockFlashListLayout).not.toHaveBeenCalled();
+    expect(secondScreen.getAllByTestId('expo-image')).toHaveLength(images.length);
   });
 
   it('stops loading and shows alt text when decoding fails', async () => {

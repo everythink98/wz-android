@@ -614,6 +614,7 @@ export async function getLinuxDoTopic(
   }).preparedContent;
   const result = {
     ...topic,
+    accessRequirement: undefined,
     mediaReferrer: { documentUrl: topic.url },
     contentHtml: preparedContent.contentHtml,
     preparedContent,

@@ -35,6 +35,13 @@ import {
 import { runNotificationBackgroundWorker } from '@/platform/notifications/notificationWorker';
 import { notificationAdapters } from '@/sources/notificationAdapters';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import {
+  createNotificationSourceLifecycleRegistry,
+  markNotificationSourcesCleaning,
+  notificationSourceIsOperational,
+  operationalNotificationSources,
+  runNotificationSourceCleanup
+} from './notificationSourceLifecycle';
 
 export type NotificationPermissionState = 'checking' | 'granted' | 'denied';
 
@@ -92,15 +99,23 @@ export function useNotificationsRuntime({
   const enabledSourcesRef = useRef<readonly NotificationSource[]>(enabledSources);
   const contentSourcesReadyRef = useRef(contentSourcesReady);
   const runtimeReadyRef = useRef(false);
-  const operationalSourcesRef = useRef<readonly NotificationSource[]>([]);
   const previousEnabledSourcesRef = useRef<readonly NotificationSource[]>(notificationSources);
   const contentPreferenceChangedRef = useRef(false);
-  const contentDisablePendingRef = useRef(new Set<NotificationSource>());
-  const contentDisableOperationsRef = useRef<Partial<Record<NotificationSource, Promise<void>>>>({});
+  const sourceLifecyclesRef = useRef(createNotificationSourceLifecycleRegistry());
   const privateAccessAllowedRef = useRef(privateAccessAllowed);
   useCommitRefValue(privateAccessAllowedRef, privateAccessAllowed);
   const sessionEpochsRef = useRef(sessionEpochs);
   useCommitRefValue(sessionEpochsRef, sessionEpochs);
+  const sourceIsOperational = useCallback(
+    (source: NotificationSource) =>
+      notificationSourceIsOperational(
+        sourceLifecyclesRef.current,
+        source,
+        runtimeReadyRef.current,
+        enabledSourcesRef.current
+      ),
+    []
+  );
   const readAccess = useMemo<NotificationAccessReader>(
     () => (source) =>
       readForegroundNotificationAccess({
@@ -120,9 +135,9 @@ export function useNotificationsRuntime({
         privateAccessAllowed: (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
         readAccess,
         requestSessionEpoch: (source) => sessionEpochsRef.current[source],
-        sourceAllowed: (source) => operationalSourcesRef.current.includes(source)
+        sourceAllowed: sourceIsOperational
       }),
-    [onSessionExpired, readAccess]
+    [onSessionExpired, readAccess, sourceIsOperational]
   );
   const readAccessRef = useRef(readAccess);
   useCommitRefValue(readAccessRef, readAccess);
@@ -142,8 +157,12 @@ export function useNotificationsRuntime({
   const [backgroundError, setBackgroundError] = useState('');
   const [snapshotErrors, setSnapshotErrors] = useState<Partial<Record<NotificationSource, string>>>({});
   const [xiaoyinsiNotificationsScope, setXiaoyinsiNotificationsScope] = useState<boolean | null>(null);
-  const [operationalSources, setOperationalSources] = useState<readonly NotificationSource[]>([]);
+  const [sourceLifecycleSnapshot, setSourceLifecycleSnapshot] = useState(() => ({ ...sourceLifecyclesRef.current }));
   const runtimeReady = ready && contentSourcesReady;
+  const operationalSources = useMemo(
+    () => operationalNotificationSources(sourceLifecycleSnapshot, enabledNetworkSources, runtimeReady),
+    [enabledNetworkSources, runtimeReady, sourceLifecycleSnapshot]
+  );
   const xiaoyinsiContentEnabled = enabledSources.includes('xiaoyinsi');
 
   useLayoutEffect(() => {
@@ -155,18 +174,15 @@ export function useNotificationsRuntime({
         contentPreferenceChangedRef.current = true;
       }
       const removedSources = previousEnabledSourcesRef.current.filter((source) => !enabledSources.includes(source));
-      removedSources.forEach((source) => contentDisablePendingRef.current.add(source));
+      if (markNotificationSourcesCleaning(sourceLifecyclesRef.current, removedSources)) {
+        setSourceLifecycleSnapshot({ ...sourceLifecyclesRef.current });
+      }
       if (pendingOpenSourceRef.current && removedSources.includes(pendingOpenSourceRef.current)) {
         pendingOpenSourceRef.current = undefined;
       }
       previousEnabledSourcesRef.current = enabledSources;
     }
-    const next = runtimeReady
-      ? enabledNetworkSources.filter((source) => !contentDisablePendingRef.current.has(source))
-      : [];
-    operationalSourcesRef.current = next;
-    setOperationalSources((current) => (current.join('|') === next.join('|') ? current : next));
-  }, [contentSourcesReady, enabledNetworkSources, enabledSources, runtimeReady]);
+  }, [contentSourcesReady, enabledSources, runtimeReady]);
 
   const commitState = useCallback((next: NotificationState) => {
     stateRef.current = next;
@@ -304,13 +320,19 @@ export function useNotificationsRuntime({
     if (!membershipChanged && !preferenceChanged) return;
     const previousSources = membershipChanged ? previousScope?.sources || notificationSources : enabledNetworkSources;
     const disabledSources = previousSources.filter((source) => !enabledSources.includes(source));
-    disabledSources.forEach((source) => contentDisablePendingRef.current.add(source));
-    const sourcesToClean = notificationSources.filter((source) => contentDisablePendingRef.current.has(source));
+    if (markNotificationSourcesCleaning(sourceLifecyclesRef.current, disabledSources)) {
+      setSourceLifecycleSnapshot({ ...sourceLifecyclesRef.current });
+    }
+    const sourcesToClean = notificationSources.filter(
+      (source) => sourceLifecyclesRef.current[source].phase !== 'clean'
+    );
     if (!sourcesToClean.length) return;
     setSnapshotErrors((current) =>
-      Object.fromEntries(
-        Object.entries(current).filter(([source]) => !sourcesToClean.includes(source as NotificationSource))
-      )
+      sourcesToClean.some((source) => current[source] !== undefined)
+        ? Object.fromEntries(
+            Object.entries(current).filter(([source]) => !sourcesToClean.includes(source as NotificationSource))
+          )
+        : current
     );
     void (async () => {
       const ownsPreviousAggregate = (query: { queryKey: readonly unknown[] }) =>
@@ -341,41 +363,30 @@ export function useNotificationsRuntime({
       if (membershipChanged && previousScope) appQueryClient.removeQueries({ predicate: ownsPreviousAggregate });
       await Promise.allSettled(
         sourcesToClean.map((source) => {
-          const existing = contentDisableOperationsRef.current[source];
-          if (existing) return existing;
           const previous = stateRef.current.sources[source];
-          const operation = (async () => {
-            try {
-              await dismissSourceNotification(source, previous.notificationIdentifier, previous.identityKey);
-            } finally {
-              await clearNotificationSourceForContentDisable(source);
+          const { operation, started } = runNotificationSourceCleanup(
+            sourceLifecyclesRef.current,
+            source,
+            async () => {
+              try {
+                await dismissSourceNotification(source, previous.notificationIdentifier, previous.identityKey);
+              } finally {
+                await clearNotificationSourceForContentDisable(source);
+              }
+            },
+            () => {
+              if (mountedRef.current) {
+                setSourceLifecycleSnapshot({ ...sourceLifecyclesRef.current });
+              }
             }
-          })();
-          contentDisableOperationsRef.current[source] = operation;
-          void operation
-            .then(() => {
-              if (contentDisableOperationsRef.current[source] !== operation) return;
-              delete contentDisableOperationsRef.current[source];
-              contentDisablePendingRef.current.delete(source);
-              const next = runtimeReadyRef.current
-                ? notificationSources.filter(
-                    (candidate) =>
-                      enabledSourcesRef.current.includes(candidate) && !contentDisablePendingRef.current.has(candidate)
-                  )
-                : [];
-              operationalSourcesRef.current = next;
-              if (mountedRef.current) {
-                setOperationalSources((current) => (current.join('|') === next.join('|') ? current : next));
-              }
-            })
-            .catch((error) => {
-              if (contentDisableOperationsRef.current[source] !== operation) return;
-              delete contentDisableOperationsRef.current[source];
-              if (mountedRef.current) {
-                const message = error instanceof Error ? error.message : '内容源停用清理失败';
-                setSnapshotErrors((current) => ({ ...current, [source]: message }));
-              }
+          );
+          if (started) {
+            void operation.catch((error) => {
+              if (!mountedRef.current) return;
+              const message = error instanceof Error ? error.message : '内容源停用清理失败';
+              setSnapshotErrors((current) => ({ ...current, [source]: message }));
             });
+          }
           return operation;
         })
       );
@@ -482,44 +493,47 @@ export function useNotificationsRuntime({
     []
   );
 
-  const runForegroundDelivery = useCallback((sources: readonly NotificationSource[]) => {
-    if (!sources.length || !stateRef.current.globalEnabled || !permissionRef.current) {
-      return;
-    }
-    pendingForegroundDeliveryBatchesRef.current.push([...sources]);
-    if (foregroundDeliveryRef.current) return;
-    const operation = (async () => {
-      while (pendingForegroundDeliveryBatchesRef.current.length) {
-        const batch = pendingForegroundDeliveryBatchesRef.current.shift()!;
-        await runNotificationBackgroundWorker({
-          sources: batch,
-          sourceAllowed: async (source) => operationalSourcesRef.current.includes(source),
-          privateAccessAllowed: async (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
-          network: {
-            restoreProxy: async () => undefined,
-            probeAccess: async (source, signal) => ({ ...(await readAccessRef.current(source)), signal }),
-            listPage: (source, access, signal, cursor) =>
-              notificationAdapters[source].listPage({ ...access, signal, cursor, limit: 60 })
-          },
-          store: {
-            clearForContentDisable: clearNotificationSourceForContentDisable,
-            load: loadNotificationState,
-            record: recordNotificationDelivery
-          },
-          system: {
-            permissionGranted: notificationPermissionGranted,
-            reconcileDigests: reconcileSourceNotificationSlots,
-            presentDigest: presentSourceNotification,
-            dismissDigest: (_source, identifier) => dismissSourceNotificationExact(identifier)
-          }
-        }).catch(() => undefined);
+  const runForegroundDelivery = useCallback(
+    (sources: readonly NotificationSource[]) => {
+      if (!sources.length || !stateRef.current.globalEnabled || !permissionRef.current) {
+        return;
       }
-    })();
-    foregroundDeliveryRef.current = operation;
-    void operation.finally(() => {
-      if (foregroundDeliveryRef.current === operation) foregroundDeliveryRef.current = undefined;
-    });
-  }, []);
+      pendingForegroundDeliveryBatchesRef.current.push([...sources]);
+      if (foregroundDeliveryRef.current) return;
+      const operation = (async () => {
+        while (pendingForegroundDeliveryBatchesRef.current.length) {
+          const batch = pendingForegroundDeliveryBatchesRef.current.shift()!;
+          await runNotificationBackgroundWorker({
+            sources: batch,
+            sourceAllowed: async (source) => sourceIsOperational(source),
+            privateAccessAllowed: async (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
+            network: {
+              restoreProxy: async () => undefined,
+              probeAccess: async (source, signal) => ({ ...(await readAccessRef.current(source)), signal }),
+              listPage: (source, access, signal, cursor) =>
+                notificationAdapters[source].listPage({ ...access, signal, cursor, limit: 60 })
+            },
+            store: {
+              clearForContentDisable: clearNotificationSourceForContentDisable,
+              load: loadNotificationState,
+              record: recordNotificationDelivery
+            },
+            system: {
+              permissionGranted: notificationPermissionGranted,
+              reconcileDigests: reconcileSourceNotificationSlots,
+              presentDigest: presentSourceNotification,
+              dismissDigest: (_source, identifier) => dismissSourceNotificationExact(identifier)
+            }
+          }).catch(() => undefined);
+        }
+      })();
+      foregroundDeliveryRef.current = operation;
+      void operation.finally(() => {
+        if (foregroundDeliveryRef.current === operation) foregroundDeliveryRef.current = undefined;
+      });
+    },
+    [sourceIsOperational]
+  );
 
   const handledSnapshotUpdateRef = useRef(new Map<string, number>());
   const snapshotRevision = snapshotQueries
@@ -543,7 +557,9 @@ export function useNotificationsRuntime({
       refreshedSources.push(source);
       return [recordNotificationSnapshot(source, identityKey, snapshot.total, snapshot.checkedAt)];
     });
-    setSnapshotErrors(errors);
+    setSnapshotErrors((current) =>
+      notificationSources.every((source) => current[source] === errors[source]) ? current : errors
+    );
     if (writes.length) void Promise.allSettled(writes).then(() => runForegroundDelivery(refreshedSources));
   }, [identityKeys, runForegroundDelivery, snapshotRevision, snapshotSources]);
 
@@ -584,7 +600,7 @@ export function useNotificationsRuntime({
         !source ||
         !isNotificationSource(source) ||
         !enabledSourcesRef.current.includes(source) ||
-        !operationalSourcesRef.current.includes(source)
+        !sourceIsOperational(source)
       ) {
         void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
         return;
@@ -595,7 +611,7 @@ export function useNotificationsRuntime({
       if (!openSource(source)) pendingOpenSourceRef.current = source;
       void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
     },
-    [openSource]
+    [openSource, sourceIsOperational]
   );
 
   useEffect(() => {
@@ -610,12 +626,12 @@ export function useNotificationsRuntime({
   const onNavigationReady = useCallback(() => {
     const source = pendingOpenSourceRef.current;
     if (!source) return;
-    if (!contentSourcesReadyRef.current || !operationalSourcesRef.current.includes(source)) {
+    if (!contentSourcesReadyRef.current || !sourceIsOperational(source)) {
       pendingOpenSourceRef.current = undefined;
       return;
     }
     if (openSource(source)) pendingOpenSourceRef.current = undefined;
-  }, [openSource]);
+  }, [openSource, sourceIsOperational]);
 
   const setGlobalEnabled = useCallback(
     async (enabled: boolean) => {

@@ -63,7 +63,7 @@ export function useAccountController({
   screen,
   showLinuxDoVerification,
   readGateway,
-  showLoginPanelRef,
+  showLoginPanel,
   showYaohuoLoginPanel,
   webViewRef,
   yaohuoLoginPanelRequestRef,
@@ -91,7 +91,7 @@ export function useAccountController({
     recovery?: LinuxDoReadRecovery
   ) => void | boolean | Promise<void | boolean>;
   readGateway: Pick<ReadGateway, 'getLinuxDoLevelProfile'>;
-  showLoginPanelRef: Ref<boolean>;
+  showLoginPanel: boolean;
   showYaohuoLoginPanel: boolean;
   webViewRef: Ref<WebView | null>;
   yaohuoLoginPanelRequestRef: Ref<number>;
@@ -298,7 +298,7 @@ export function useAccountController({
   );
 
   useEffect(() => {
-    const visible = showLoginPanelRef.current;
+    const visible = showLoginPanel;
     if (visible && !wasNodeSeekLoginPanelVisibleRef.current) {
       markDiagnosticStage(currentLoginTrace('nodeseek', 'open'), 'guard', {
         source: 'nodeseek',
@@ -311,7 +311,7 @@ export function useAccountController({
       }
     }
     wasNodeSeekLoginPanelVisibleRef.current = visible;
-  });
+  }, [currentLoginTrace, finishLoginTrace, showLoginPanel]);
 
   useEffect(() => {
     const panelRequestId = yaohuoLoginPanelRequestRef.current;

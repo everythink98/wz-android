@@ -8,7 +8,6 @@ import {
   type ReaderData,
   type ReaderDataMutationReason
 } from '@/domain/reader/readerData';
-import type { LibraryTab } from '@/domain/forum/feed';
 import type { Topic, UserProfile } from '@/domain/forum/models';
 
 type CommitReaderData = (
@@ -18,11 +17,9 @@ type CommitReaderData = (
 
 export function useReaderDataActionsController({
   commitReaderData,
-  libraryTab,
   readerDataRef
 }: {
   commitReaderData: CommitReaderData;
-  libraryTab: LibraryTab;
   readerDataRef: MutableRefObject<ReaderData>;
 }) {
   const toggleTopicFavorite = useCallback(
@@ -47,11 +44,10 @@ export function useReaderDataActionsController({
   );
 
   const removeLibraryTopic = useCallback(
-    (topic: Topic) => {
-      const section = libraryTab === 'history' ? 'history' : 'favorites';
+    (topic: Topic, section: 'favorites' | 'history') => {
       commitReaderData('library-topic-removed', (current) => removeRecords(current, section, [topic]));
     },
-    [commitReaderData, libraryTab]
+    [commitReaderData]
   );
 
   const clearHistory = useCallback(() => {

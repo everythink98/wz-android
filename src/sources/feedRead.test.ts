@@ -12,6 +12,7 @@ import { searchTopics } from './searchRead';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import type { Fetcher } from '@/platform/network/request';
 import { registerForumReadResponseEvidence } from './forumSourceReadAttempt';
+import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 const nodeSeekPayload = Buffer.from(
   JSON.stringify({
@@ -742,6 +743,11 @@ describe('feed read', () => {
 
   it('[REG-FEED-014] publishes feed and categories after the active five-second source budget', async () => {
     vi.useFakeTimers();
+    const diagnosticEvents: Record<string, unknown>[] = [];
+    setDiagnosticWriter((line) => {
+      diagnosticEvents.push(JSON.parse(line) as Record<string, unknown>);
+    });
+    const diagnosticTrace = beginDiagnosticTrace('feed', 'load', { source: 'all' });
     const hangingAborts = vi.fn();
     const fetcher = vi.fn((input: string, init?: RequestInit) => {
       if (input.includes('nodeseek.com')) {
@@ -791,6 +797,7 @@ describe('feed read', () => {
     const feedPromise = getFeed({
       source: 'all',
       limit: 2,
+      diagnosticTrace,
       fetcher,
       signal: feedController.signal,
       unavailableSources
@@ -807,7 +814,9 @@ describe('feed read', () => {
     });
 
     try {
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(feedResult).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
       await Promise.resolve();
       const feedAtBudget = feedResult;
       const categoriesAtBudget = categoryResult;
@@ -821,13 +830,33 @@ describe('feed read', () => {
       expect(categoriesAtBudget?.items).toEqual([expect.objectContaining({ source: 'v2ex', id: 'create' })]);
       expect(categoriesAtBudget?.errors.nodeseek).toBeTruthy();
       expect(hangingAborts).toHaveBeenCalledTimes(2);
+      const childTerminals = diagnosticEvents.filter(
+        (event) => event.phase === 'transport' && typeof event.latencyMs === 'number' && event.source !== 'all'
+      );
+      expect(childTerminals).toHaveLength(5);
+      expect(childTerminals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ source: 'nodeseek', state: 'timeout', latencyMs: 5_000 }),
+          expect.objectContaining({ source: 'v2ex', state: 'success' }),
+          expect.objectContaining({ source: 'linuxdo', state: 'failure' }),
+          expect.objectContaining({ source: 'yaohuo', state: 'failure' }),
+          expect.objectContaining({ source: 'xiaoyinsi', state: 'failure' })
+        ])
+      );
+      expect(new Set(childTerminals.map((event) => event.source)).size).toBe(5);
     } finally {
+      setDiagnosticWriter(null);
       vi.useRealTimers();
     }
   });
 
   it('[REG-FEED-014] propagates parent cancellation instead of publishing a partial aggregate', async () => {
     const controller = new AbortController();
+    const diagnosticEvents: Record<string, unknown>[] = [];
+    setDiagnosticWriter((line) => {
+      diagnosticEvents.push(JSON.parse(line) as Record<string, unknown>);
+    });
+    const diagnosticTrace = beginDiagnosticTrace('feed', 'load', { source: 'all' });
     const fetcher = vi.fn(
       (_input: string, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
@@ -838,6 +867,7 @@ describe('feed read', () => {
     );
     const request = getFeed({
       source: 'all',
+      diagnosticTrace,
       fetcher,
       signal: controller.signal,
       unavailableSources: ['linuxdo', 'yaohuo', 'xiaoyinsi']
@@ -846,7 +876,22 @@ describe('feed read', () => {
     await Promise.resolve();
     controller.abort();
 
-    await expect(request).rejects.toThrow('请求已取消');
+    try {
+      await expect(request).rejects.toThrow('请求已取消');
+      expect(
+        diagnosticEvents.filter(
+          (event) => event.phase === 'transport' && event.state === 'canceled' && event.source !== 'all'
+        )
+      ).toEqual([
+        expect.objectContaining({ source: 'nodeseek', reason: 'canceled' }),
+        expect.objectContaining({ source: 'linuxdo', reason: 'canceled' }),
+        expect.objectContaining({ source: 'v2ex', reason: 'canceled' }),
+        expect.objectContaining({ source: 'yaohuo', reason: 'canceled' }),
+        expect.objectContaining({ source: 'xiaoyinsi', reason: 'canceled' })
+      ]);
+    } finally {
+      setDiagnosticWriter(null);
+    }
   });
 
   it('[REG-FEED-014] keeps a timed-out source retryable when every completed source is empty', async () => {

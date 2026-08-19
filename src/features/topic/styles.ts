@@ -1199,6 +1199,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       paddingHorizontal: 12,
       paddingVertical: 12
     },
+    topicAccessNoticeBadge: {
+      marginBottom: 4
+    },
     topicAccessNoticeTitle: {
       color: theme.danger,
       fontFamily: appFontFamily,

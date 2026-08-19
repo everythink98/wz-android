@@ -252,12 +252,12 @@ export function useTopicActionsController({
   const activeRef = useCommittedRef(active);
   const sessionEpochsRef = useCommittedRef(sessionEpochs);
   const {
-    state: { replyComposerOpen, replyContent, replyEditTarget, replyFace, replyOrder, replyTarget, selectedTopic },
+    state: { replyComposerIntent, replyContent, replyFace, replyOrder, selectedTopic },
     commands: { composer: topicComposer, topic: topicCommands }
   } = topicSession;
   const replyOrderRef = useCommittedRef(replyOrder);
   const refreshTopicRepliesRef = useCommittedRef(refreshTopicReplies);
-  const replyComposerOpenRef = useCommittedRef(replyComposerOpen);
+  const replyComposerIntentRef = useCommittedRef(replyComposerIntent);
   const authenticatedFetcher = useMemo(() => rejectUnauthorizedResponse(fetcher), [fetcher]);
   const detachReplyEdit = topicComposer.detachEdit;
   const openReplyEditor = topicComposer.editReply;
@@ -524,19 +524,20 @@ export function useTopicActionsController({
   );
 
   useEffect(() => {
+    if (replyComposerIntent.kind !== 'edit') return;
+    const target = replyComposerIntent.target;
     if (
-      replyEditTarget &&
-      (!selectedTopic ||
-        replyEditTarget.topicId !== selectedTopic.id ||
-        replyEditTarget.ticket.source !== selectedTopic.source ||
-        !isWritableSessionTicketCurrent(replyEditTarget.ticket) ||
-        !topicReplies.some((reply) => reply.commentId === replyEditTarget.commentId && reply.canEdit === true))
+      !selectedTopic ||
+      target.topicId !== selectedTopic.id ||
+      target.ticket.source !== selectedTopic.source ||
+      !isWritableSessionTicketCurrent(target.ticket) ||
+      !topicReplies.some((reply) => reply.commentId === target.commentId && reply.canEdit === true)
     ) {
       detachReplyEdit();
     }
   }, [
     isWritableSessionTicketCurrent,
-    replyEditTarget,
+    replyComposerIntent,
     selectedTopic,
     sessionEpochs,
     siteSessionViewModels,
@@ -820,15 +821,17 @@ export function useTopicActionsController({
 
   const submitReply = useCallback(async () => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
-    const trace = beginDiagnosticTrace('reply', replyEditTarget ? 'edit' : 'submit', {
+    const trace = beginDiagnosticTrace('reply', replyComposerIntent.kind === 'edit' ? 'edit' : 'submit', {
       ...(actionTopic ? { source: actionTopic.source } : {}),
       contentLength: replyContent.length
     });
-    if (!replyComposerOpenRef.current) {
+    if (replyComposerIntentRef.current.kind === 'closed') {
       finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
     }
-    const canEditDiscourseReply = Boolean(actionTopic && isDiscourseSource(actionTopic.source) && replyEditTarget);
+    const canEditDiscourseReply = Boolean(
+      actionTopic && isDiscourseSource(actionTopic.source) && replyComposerIntent.kind === 'edit'
+    );
     if (!actionTopic || (!canEditDiscourseReply && !canSubmitReplyToTopic(actionTopic))) {
       finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
@@ -839,22 +842,23 @@ export function useTopicActionsController({
       return;
     }
     const actionTopicKey = topicKey(actionTopic);
-    if (replyEditTarget) {
+    if (replyComposerIntent.kind === 'edit') {
+      const editTarget = replyComposerIntent.target;
       if (!isNodeSeekActionTopic(actionTopic) && !isDiscourseSource(actionTopic.source)) {
         notify('当前来源暂不支持编辑回复');
         finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'unsupported' });
         return;
       }
-      const edit = { ...replyEditTarget, contentMarkdown: replyContent };
+      const edit = { ...editTarget, contentMarkdown: replyContent };
       await executeMutation(actionTopic as TopicDetail, {
-        actionKey: topicEditReplyActionKey(actionTopicKey, replyEditTarget.commentId),
+        actionKey: topicEditReplyActionKey(actionTopicKey, editTarget.commentId),
         busy: true,
         decision: {
           action: 'edit',
           objectAllowed: true,
-          targetPresent: Boolean(replyEditTarget.commentId && replyEditTarget.contentMarkdown)
+          targetPresent: Boolean(editTarget.commentId && editTarget.contentMarkdown)
         },
-        editTarget: replyEditTarget,
+        editTarget,
         trace,
         task: (ticket) => {
           if (isNodeSeekActionTopic(actionTopic)) {
@@ -881,7 +885,7 @@ export function useTopicActionsController({
             () => {
               if (
                 replyEditTargetIsCurrent(
-                  replyEditTarget,
+                  editTarget,
                   ticket,
                   actionTopic.source,
                   actionTopic.id,
@@ -909,21 +913,22 @@ export function useTopicActionsController({
           refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
             kind: 'edited',
             silent: true,
-            target: { kind: 'comment-id', commentId: replyEditTarget.commentId },
+            target: { kind: 'comment-id', commentId: editTarget.commentId },
             contentMarkdown: edit.contentMarkdown
           }),
         successMessage: '回复已更新'
       });
       return;
     }
-    if (isYaohuoActionTopic(actionTopic) && replyTarget && !replyTarget.authorId) {
+    const floorTarget = replyComposerIntent.kind === 'floor' ? replyComposerIntent.target : null;
+    if (isYaohuoActionTopic(actionTopic) && floorTarget && !floorTarget.authorId) {
       notify('当前楼层缺少用户 id，刷新主题后再试。');
       finishDiagnosticTrace(trace, 'blocked', { source: actionTopic.source, reason: 'not_ready' });
       return;
     }
     const content = replyContent;
     const face = replyFace;
-    const target = replyTarget;
+    const target = floorTarget;
     await executeMutation(actionTopic as TopicDetail, {
       actionKey: topicReplyActionKey(actionTopicKey),
       busy: true,
@@ -984,11 +989,10 @@ export function useTopicActionsController({
     notify,
     queryClient,
     refreshRepliesAfterWrite,
-    replyComposerOpenRef,
+    replyComposerIntent,
+    replyComposerIntentRef,
     replyContent,
-    replyEditTarget,
     replyFace,
-    replyTarget,
     runDiscourseRequest,
     runNodeSeekRequest,
     runYaohuoRequest,
@@ -1143,11 +1147,12 @@ export function useTopicActionsController({
   const uploadReplyImage = useCallback(async () => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
     const trace = beginDiagnosticTrace('reply', 'image-upload', actionTopic ? { source: actionTopic.source } : {});
-    if (!replyComposerOpenRef.current) {
+    if (replyComposerIntentRef.current.kind === 'closed') {
       finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
     }
-    const canEditXiaoyinsiReply = Boolean(actionTopic && isXiaoyinsiActionTopic(actionTopic) && replyEditTarget);
+    const editTarget = replyComposerIntent.kind === 'edit' ? replyComposerIntent.target : null;
+    const canEditXiaoyinsiReply = Boolean(actionTopic && isXiaoyinsiActionTopic(actionTopic) && editTarget);
     if (!actionTopic || (!canEditXiaoyinsiReply && !canSubmitReplyToTopic(actionTopic))) {
       finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
@@ -1163,18 +1168,18 @@ export function useTopicActionsController({
       busy: true,
       decision: {
         action: 'upload',
-        objectAllowed: Boolean(replyEditTarget) || canSubmitReplyToTopic(actionTopic)
+        objectAllowed: Boolean(editTarget) || canSubmitReplyToTopic(actionTopic)
       },
-      ...(replyEditTarget ? { editTarget: replyEditTarget } : {}),
+      ...(editTarget ? { editTarget } : {}),
       trace,
       task: async (ticket) => {
-        const editRepliesKey = replyEditTarget ? cacheKeys(actionTopic as TopicDetail, ticket).repliesKey : null;
+        const editRepliesKey = editTarget ? cacheKeys(actionTopic as TopicDetail, ticket).repliesKey : null;
         const assertCurrentEditTarget = (serverConfirmed = false) => {
           if (
-            !replyEditTarget ||
+            !editTarget ||
             !editRepliesKey ||
             replyEditTargetIsCurrent(
-              replyEditTarget,
+              editTarget,
               ticket,
               actionTopic.source,
               actionTopic.id,
@@ -1265,8 +1270,8 @@ export function useTopicActionsController({
     authenticatedFetcher,
     notify,
     queryClient,
-    replyComposerOpenRef,
-    replyEditTarget,
+    replyComposerIntent,
+    replyComposerIntentRef,
     runDiscourseRequest,
     selectedTopic,
     topicCommands,

@@ -5,7 +5,7 @@ import { groupLibraryRecordsByTime } from './model/libraryFilters';
 
 export type LibraryListItem =
   | { type: 'section'; key: string; label: string; first: boolean }
-  | { type: 'record'; key: string; record: TopicRecord };
+  | { type: 'record'; key: string; record: TopicRecord; first: boolean };
 
 export type LibraryDataItem = FollowedUserRecord | LibraryListItem;
 
@@ -20,7 +20,12 @@ export function filterFollowedUsersBySource(followedUsers: FollowedUserRecord[],
 export function createLibraryListItems(records: TopicRecord[]) {
   return groupLibraryRecordsByTime(records).flatMap((section, index) => [
     { type: 'section' as const, key: `section:${section.label}`, label: section.label, first: index === 0 },
-    ...section.records.map((record) => ({ type: 'record' as const, key: libraryRecordKey(record), record }))
+    ...section.records.map((record, recordIndex) => ({
+      type: 'record' as const,
+      key: libraryRecordKey(record),
+      record,
+      first: index === 0 && recordIndex === 0
+    }))
   ]);
 }
 

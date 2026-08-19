@@ -117,7 +117,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const targetReplyRequestIdRef = useRef(route.params.targetReplyRequestId ?? 0);
   const topicSession = useTopicSessionController({ notify: runtime.notify, topic });
   const {
-    state: { replyComposerOpen, selectedTopic },
+    state: { replyComposerIntent, selectedTopic },
     commands: { composer: topicComposer, view: topicView }
   } = topicSession;
   const openTopicRoute = useCallback(
@@ -249,7 +249,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const closeReplyComposer = useCallback(() => topicComposer.toggle(false), [topicComposer]);
   useTopicRouteBeforeRemove({
     imagePreviewOpen: Boolean(imagePreviewController.imagePreview),
-    replyComposerOpen,
+    replyComposerOpen: replyComposerIntent.kind !== 'closed',
     closeImagePreview: imagePreviewController.closeImagePreview,
     closeReplyComposer
   });
