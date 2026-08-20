@@ -4137,12 +4137,27 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 为查看最新构建而安装 APK 后，主模拟器账号中心从已有登录变成 `0/4`，本机数据看似被重置；后续普通启动载入旧 Quick Boot 状态后登录又出现，造成“数据已永久丢失”和“Cookie 自己恢复”的相互矛盾判断。 |
 | 触发条件 | 在已安装 `com.wz.reader` 的保留数据 AVD 上执行 `agent-device reinstall com.wz.reader <apk>`，随后在没有先冻结和复制 AVD 的情况下继续启停模拟器或操作快照。 |
 | 根因 seam | `agent-device 0.20.6` 的 Android `reinstall` 会先执行不带 `-k` 的 `adb uninstall`，再安装 APK；帮助文案 “Replace installed app” 没有承诺保留数据。仓库 Smoke 本来使用安全的 `install`，但临时人工命令绕过了该边界；看到 `0/4` 后又把 UI 当成永久丢失证据，在证据不足时操作 Quick Boot，扩大了诊断风险。 |
-| 必须保持的行为 | 主登录态 AVD 是日常更新代码和保留登录态验收的目标设备，必须支持反复就地覆盖安装；现有独立未登录 AVD 只服务未登录旅程，不能替代主 AVD 更新或作为安装失败后的清数据兜底。正常更新只允许仓库 `npm run smoke:android`、`agent-device install ...` 或带明确 serial 的 `adb install -r`，安全安装失败必须停止，禁止自动改用 reinstall/uninstall/pm clear。仓库 Smoke 的 boot、install、open 与 close 必须使用同一显式 session，避免安装步骤占用默认 session 后与自身 sanity session 冲突。安装前后只读比对 `firstInstallTime`，值必须不变。若账号、本机数据或安装时间异常，立即冻结现场，不再启停 AVD 或保存、加载、删除快照；先只读记录包时间、AVD/serial、进程启动参数、`quickbootChoice.ini` 与 `snapshot.trace`。UI 账号数量不能独立证明永久丢失或恢复；快照恢复需用户单独授权，并在修改前有已完成且校验过的离线 AVD 副本。只有会卸载 target App 的 instrumentation 等特殊流程才使用一次性空白 AVD。 |
-| 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-OPS-018` 固定真实 Smoke 脚本包含 replacement `install`，且不包含 `uninstall`、`reinstall` 或 `pm clear`；boot、install、open 与 close 的实际命令必须包含同一个 `wz-apk-sanity` session。项目 `AGENTS.md`、`docs/operator-runbook.md` 与 `docs/testing-standard.md` 列出完全一致的允许/禁止命令及现场冻结顺序。2026-08-08 事故的只读判据为：误操作后安装时间曾变化；下一次普通启动的 `snapshot.trace=load_succeeded`，且 `firstInstallTime` 与 `lastUpdateTime` 同时回到卸载前，因而证明是整机快照状态回滚，不是 Cookie 续签或重新登录。 |
-| 最低可靠自动测试层 | `UNIT_PASS + STATIC_PASS`：单元测试保护仓库 Smoke 的实际安装命令，文档检查保护编号与引用。任意人工 CLI 无法由仓库测试拦截，因此仍由项目级高风险命令边界约束。 |
+| 必须保持的行为 | 主登录态 AVD 是日常更新代码和保留登录态验收的目标设备，必须支持反复就地覆盖安装；现有独立未登录 AVD 只服务未登录旅程，不能替代主 AVD 更新或作为安装失败后的清数据兜底。正常更新只允许仓库 `npm run smoke:android`、`agent-device install ...` 或带明确 serial 的 `adb install -r`，安全安装失败必须停止，禁止自动改用 reinstall/uninstall/pm clear。仓库 Smoke 的 boot、install、open 与 close 必须使用同一显式 session。`runApkSanity` 必须按 pre `dumpsys package com.wz.reader` → 单次 replacement install → post `dumpsys` 执行：pre 必须解析出唯一非空 `firstInstallTime`，否则 install 为 0；install 局部捕获错误且无论成功失败都执行 post；post 读取异常、值缺失/重复或与 pre 不同，必须优先归一为 `BLOCKED_BY_ENV`，不泄露原始 dumpsys 输出，并在首次 open、Replay 及 date/marker/logcat 采集前冻结；只有 post 与 pre 相同后才报告原安装错误。成功路径只读取两次 dumpsys，再继续既有首次启动流程。若账号、本机数据或安装时间异常，立即冻结现场，不再启停 AVD 或保存、加载、删除快照；先只读记录包时间、AVD/serial、进程启动参数、`quickbootChoice.ini` 与 `snapshot.trace`。UI 账号数量不能独立证明永久丢失或恢复；快照恢复需用户单独授权，并在修改前有已完成且校验过的离线 AVD 副本。只有会卸载 target App 的 instrumentation 等特殊流程才使用一次性空白 AVD。 |
+| 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-OPS-018` 经公开 `runApkSanity` 固定真实命令顺序与失败优先级：pre 为空、重复或读取抛错时 install=0；安装成功后的 post 缺失、重复、变化或读取抛错，以及安装失败后的 post 缺失、重复、变化或读取抛错时，包读取=2、install=1、date/marker/open/logcat=0，错误不含原始输出 marker；post 相同但安装失败时保留既有归一化安装错误；成功时 install 前后恰两次 dumpsys，随后才读取时间戳并首次 open。结构 guard 继续禁止 `uninstall`、`reinstall`、`pm clear`，并固定 boot、install、open、close 使用同一个 `wz-apk-sanity` session。项目 `AGENTS.md`、`docs/operator-runbook.md` 与 `docs/testing-standard.md` 列出一致的允许/禁止命令及现场冻结顺序。2026-08-08 事故的只读判据为：误操作后安装时间曾变化；下一次普通启动的 `snapshot.trace=load_succeeded`，且 `firstInstallTime` 与 `lastUpdateTime` 同时回到卸载前，因而证明是整机快照状态回滚，不是 Cookie 续签或重新登录。 |
+| 最低可靠自动测试层 | `UNIT_PASS + STATIC_PASS`：Vitest 行为测试通过公开 seam 固定 pre/install/post 顺序、一次安装、两次读取和失败优先级；结构与文档 guard 固定破坏性命令、显式 session、编号和引用。任意人工 CLI 无法由仓库测试拦截，因此仍由项目级高风险命令边界约束。 |
 | Replay 或真实验收路径 | 未来在保留数据 AVD 上执行 APK sanity 时，安装前后记录同一个包的 `firstInstallTime` 并要求不变，再进行只读账号与本机数据检查；不得通过真实 uninstall/reinstall 复现本事故。状态异常时本轮验收立即终止并按冻结流程报告。 |
-| 负向验证方式 | 将 `scripts/smoke-android.mjs` 的 `install` 换成 `reinstall/uninstall/pm clear`，编号测试必须失败。设备侧不执行破坏性负向测试；人工流程若建议在安全安装失败后改用 reinstall、只凭 `0/4` 定性或无离线副本操作快照，视为违反本条。 |
+| 负向验证方式 | 删除或移动 pre/post、接受空值或重复值、让 `runAdbCommand` 原始异常/输出外泄、在 post 前抛安装错误、把 post 移到首次 open/Replay 之后，或增加 install/dumpsys retry，编号行为测试必须失败；改用 `reinstall/uninstall/pm clear` 则结构 guard 必须失败。设备侧不执行破坏性负向测试；人工流程若建议在安全安装失败后改用 reinstall、只凭 `0/4` 定性或无离线副本操作快照，视为违反本条。 |
 | 明确不覆盖范围 | 本条不提供任意 shell 命令的系统级拦截，不保证卸载后数据可恢复，也不把 Quick Boot 当备份系统；已存在但未完成校验的拷贝不能作为恢复依据。 |
+
+## `REG-OPS-019` booted emulator ID 被当成 AVD 名导致 Smoke 无法启动
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `RELEASE-02` |
+| 用户症状 | 主 AVD、APK SHA、版本和安装时间均已精确匹配，但设置 `WZ_ANDROID_SMOKE_DEVICE=emulator-5554` 后，Smoke 在安装前报不存在名为 `emulator-5554` 的 AVD，`APK_SANITY` 与七条 Replay 均未执行。 |
+| 触发条件 | 使用已启动 Android emulator 的 agent-device ID 作为 Smoke selector。 |
+| 根因 seam | `withSmokeSession` 把同一个原始 selector 同时用于不同契约：ADB/Replay 接受 booted device ID，`agent-device boot --device` 则需要 AVD 名。 |
+| 必须保持的行为 | 只有形如 `emulator-<port>` 的 selector 在 boot 前执行一次只读 `adb -s <id> emu avd name`，取得 AVD 名后启动既有 `wz-apk-sanity` session；原 selector 继续用于安装后的设备身份解析和 Replay。AVD 名与显示名仍直接传给 boot，不能新增模糊匹配、重试、设备切换或持久状态。AVD 名无法读取时必须在 boot/install 前 `BLOCKED_BY_ENV`。 |
+| 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 的 `REG-OPS-019` 经公开 `withSmokeSession` 输入 `emulator-5554`，ADB 返回 `WZ_Pixel_API_35`；修复前 boot 收到 raw serial，修复后事件顺序必须为一次 AVD 名读取 → 以 `WZ_Pixel_API_35` boot → sanity action → close。空输出、仅 `OK`、`KO:` 和 ADB 抛错四类反例必须得到同一不含原始 marker 的通用错误，且 boot/action/close 调用均为 0。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY + DEVICE_REPLAY_PASS`：Vitest 固定 selector 契约与 session 顺序；只有匹配 APK 的主 AVD 正向 Smoke 能证明真实 agent-device/ADB 链路继续完成。 |
+| Replay 或真实验收路径 | 在身份、版本、APK SHA 和 `firstInstallTime` 精确匹配的主 AVD 上设置 booted emulator ID，运行一次 `npm run smoke:android`；安装时间必须不变，并依次得到 `APK_SANITY` 与七条 Replay 的 `DEVICE_REPLAY_PASS`。不得为负向验证改名、创建重复 AVD 或清数据。 |
+| 负向验证方式 | 删除 emulator ID 到 AVD 名的转换，编号测试必须重新看到 boot 收到 `emulator-5554`；真实设备不执行失败重放。 |
+| 明确不覆盖范围 | 不支持把物理设备 serial 当作可启动 AVD，不启动未知设备，不修改 AVD 名，不处理 agent-device daemon 生命周期，也不改变 Replay 的 ID/显示名/下划线空白等价规则。 |
 
 ## `REG-NOTIFY-001` 前台恢复旧未读被误报为新消息
 
@@ -6132,6 +6147,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复聚合 snapshot key 或额外 mount-time `refetch` effect；编号测试必须看到 A 第二次读取或同 `dataUpdatedAt` 重复落盘。 |
 | 明确不覆盖范围 | 不改变消息列表分页 Query、后台 WorkManager、持久化 schema、刷新周期或用户通知意图。 |
 
+## `REG-NOTIFY-059` 通知详情外链打开失败没有任何反馈
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NOTIFY-02` |
+| 用户症状 | 用户点击通知详情中的普通外链时，Android 没有可用处理器或打开失败会毫无反馈；`mailto:` 等非 HTTP(S) scheme 也被直接交给平台，没有明确支持边界。 |
+| 触发条件 | 已加载的通知详情 HTML 含非论坛目标链接；HTTP(S) 的 `WebBrowser.openBrowserAsync` Promise rejection，或链接使用非 HTTP(S) scheme。 |
+| 根因 seam | `DetailHtml` 直接执行裸 `void Linking.openURL(href)`，没有观察 rejection，也没有由 Route 持有协议校验和错误反馈 callback。 |
+| 必须保持的行为 | 论坛主题链接继续解析并在 App 内导航；Screen 不持有 `Linking` fallback，`onOpenExternalUrl` 为必填并只转发语义事件。普通外链经 Route 内引用稳定的 `useCallback` 处理，复用既有 `isHttpOrHttpsUrl`、`errorMessage` 与 `runtime.notify`。仅 HTTP(S) 向 `WebBrowser.openBrowserAsync` 转发一次，rejection 必须通知；非 HTTP(S) 不调用 WebBrowser，并显示固定的不支持提示。不新增 state、retry 或抽象；两次失败操作期间 `loadDetail=1`、App navigation=0。callback 必须覆盖普通详情、会话原消息和消息气泡 HTML。 |
+| 精确失败 oracle | `tests/ui/notifications/notifications-route.test.tsx` 的 `REG-NOTIFY-059` 第一条真实 Query/detail render 点击 HTTPS 与 `mailto:`：HTTPS rejection `browser unavailable` 必须传给 `runtime.notify`；`mailto:` 必须显示既定 scheme 提示且不增加 WebBrowser 调用。最终 `loadDetail=1`、`WebBrowser.openBrowserAsync=1`、`runtime.notify=2`、`navigation.navigate=0`。第二条会话用例分别点击原消息与消息气泡的公开 HTTPS 链接，必须按顺序向同一个 `WebBrowser.openBrowserAsync` owner 转发两次且零通知。修复前 HTTPS rejection 没有反馈、非 HTTP(S) 会进入 WebBrowser，或会话任一分支漏接 callback 时该矩阵失败。 |
+| 最低可靠自动测试层 | `UI_PASS`：RNTL 必须经过真实 Query、详情渲染、链接点击与 Promise settlement；纯 URL helper 或源码字符串不能证明反馈、请求和导航次数。 |
+| Replay 或真实验收路径 | 不新增 tracked Replay；动态内容和 OS handler 不适合作为确定性 oracle。仅当身份匹配 APK 的当前已读通知含安全、公开的 HTTP(S) 外链时，才可点击一次，确认默认浏览器 Custom Tab 或错误反馈后返回；没有安全样本则记 `NOT_VERIFIED`，不得为制造失败而禁用 handler，也不得点击 `mailto:` 或自定义 scheme。 |
+| 负向验证方式 | 恢复裸 `void Linking.openURL`、删除 scheme guard/catch 或绕过 `runtime.notify`，编号 RNTL 必须在 notify、WebBrowser、`loadDetail` 或 navigation 次数上失败。 |
+| 明确不覆盖范围 | 不扩展任意 scheme allowlist，不增加 `canOpenURL` preflight、Browser Service、重试、诊断或持久化；不改变论坛目标解析、已读、回复或 `MORE-02`。 |
+
 ## `REG-NAV-001` 底部导航只在图文附近响应点击
 
 | 字段 | 内容 |
@@ -6252,6 +6282,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 用 `adb install -r` 或受允许的 agent-device install 在主 AVD 覆盖安装，安装前后 `firstInstallTime` 必须相同。process-cold 打开当前“今天是不是都有活动，帖子都少了”页面，加载完成后首次停留即达到与重进相同的最终宽高；再只读打开 `https://linux.do/t/topic/2556285`，核对前四张普通正文图首次加载、滚离返回和退出重进各自比例稳定，无第二轮请求波、空白或尺寸串用。 |
 | 负向验证方式 | 恢复 listener 直接使用 decoded intrinsic，Native 编号测试必须重新得到 `68×342`。若匹配 APK 的 Native 事件仍不是原始 upright 尺寸，或同 identity 出现第二次列表布局提交/额外请求，否定当前实现并回查 Native target；不得添加 JS probe、宽高启发式、站点/URL/多图特判、timer、retry、强制 key 重挂或第二套缓存。 |
 | 明确不覆盖范围 | 不升级 Expo/Glide，不关闭 downscale，不增加请求、解码、异步步骤或运行时状态；不修改图片事件字段、正文 renderer 状态结构、FlashList 调度、图片缓存模型、表情布局、SVG renderer 或全屏缩放实现。 |
+
+## `REG-TOPIC-115` linux.do 已删除主楼被误判为解析失败
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`；关联共享 Discourse 删除回复过滤 |
+| 用户症状 | App 原生详情打开 linux.do `t/topic/2780439` 时显示“主题正文解析失败”，而 App 内原站同一 URL 已返回并展示“（话题已被作者删除）”。 |
+| 触发条件 | linux.do 返回 200，`post_stream.posts[0]` 存在且 `user_deleted=true`、`deleted_at=null`、`cooked` 含可渲染删除占位。 |
+| 根因 seam | `src/sources/discourse/model.ts` 的共享 `discoursePostFields` 把删除回复的可见性规则同时当作主楼字段解析有效性；放行后又用 `hasRenderableHtmlContent` 预检媒体-only `cooked`，使 linux.do reader 在正式 compiler 前多做一次 DOM parse。 |
+| 必须保持的行为 | 仅 linux.do 主楼显式允许可渲染的作者删除占位并返回普通 `TopicDetail`；可渲染性由 `prepareLinuxDoContent` 已有 sanitizer root 判断，reader 复用同一 prepared result，标题、正文和 `preparedContent → TopicContentList` 单路径不变。`deleted_at` 非空或 `cooked` 不可渲染时仍失败，删除回复和小隐寺等默认调用方继续过滤；一次读取只有一次 fetch 和一次正文 DOM parse。 |
+| 精确失败 oracle | `src/sources/linuxdo/reader.test.ts` 的 `[REG-PERF-017][REG-TOPIC-115]` 输入真实文本删除主楼结构，返回原标题与删除占位；media-only fixture 在旧实现稳定得到 marker DOM parse `=2`，修复后为 `=1` 且 prepared plan 含可见 row。空 `cooked` 反例继续抛出同一解析错误。`src/sources/discourse/model.test.ts` 固定默认调用拒绝、经已验证 caller 显式允许，以及允许时非空 `deleted_at` 仍拒绝；`tests/integration/source-read-contracts/discourse.test.ts` 继续固定删除回复不出现。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：Vitest 固定来源 adapter 的接受边界、解析次数与默认回复过滤；只有匹配 APK 的 App 内真实来源能确认动态响应仍含可渲染占位并沿原详情 UI 显示。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；只恢复一次 canonical deep link `https://linux.do/t/topic/2780439`，应显示原标题和“（话题已被作者删除）”，不得出现解析失败或重试页。若自然出现普通 Cloudflare checkbox，仅按语义点击一次；动态帖子不新增 tracked Replay。验收后恢复 Feed 和账号 `4/4`。 |
+| 负向验证方式 | 移除 linux.do 主楼显式选项，正例必须重新抛出解析错误；放宽可渲染约束，空 `cooked` 反例必须错误变绿；把选项传给回复归一化，既有删除回复 contract 必须失败。真实响应若不再含可渲染 `cooked`，或 parser 已返回合法详情但 UI 仍失败，则否定当前 seam 并重新定位，不预加 UI 状态。 |
+| 明确不覆盖范围 | 不改变 `TopicDetail`、React state、Query key、controller、组件、网络或重试流程；不扩大到小隐寺、其他 Discourse 站点或删除回复，不伪造字段、不增加删除页面、状态机、第二次解析、第二个 render owner 或易失效 Replay。 |
+
+## `REG-TOPIC-116` linux.do emoji 枚举被回收后重进先显示英文 ID
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/03`；关联 `NOTIFY-02`、`WRITE-01` |
+| 用户症状 | linux.do 详情已显示贴图反应后，离开一段时间再进入会先显示 `heart 1` 等英文 ID，随后才替换成贴图，看起来像每次都重新请求。 |
+| 触发条件 | emoji Query 的全部 observer 卸载并超过默认 inactive GC 窗口，随后再次进入详情、回复编辑器或私信编辑器。 |
+| 根因 seam | Query 只有 `staleTime=Infinity`，但 inactive data 仍会被 GC；来源 adapter 的 module cache 虽能挡住第二次 HTTP，却仍通过异步 loader 返回，使 React 先消费空 map、再提交真实 map。 |
+| 必须保持的行为 | linux.do 与小隐寺按 source key 隔离；每个 App JS 进程首次成功结果由现有 TanStack Query 保留，普通页面卸载不回收，重进首帧直接复用同一 map 且 loader 总计一次。首次失败没有 data，后续挂载或详情刷新仍可重试；进程终止和既有账号/来源显式重置继续失效。不得新增 Context、store、状态机、持久化、预取或第二套缓存。 |
+| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 将默认 GC 压缩至 `1ms`，首次成功后卸载并跨过 GC；旧实现重挂首帧为 `heart 1`，修复后首帧已包含原图片 URL 且 loader=1。该文件另固定首次失败后重挂 loader=2 并恢复；`tests/ui/notifications/notifications-route.test.tsx` 固定私信编辑器同类生命周期。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY + LIVE_PASS`：RNTL 精确固定 loader 次数和首帧映射；匹配 APK 只读确认真实详情视觉生命周期。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；canonical deep link 直达 `https://linux.do/t/topic/2693802`，同一 PID 首次加载后离开详情超过旧默认 GC 窗口，再进入时不得闪英文 ID。随后只用 `force-stop` 制造新 PID，process-cold 允许重新获取一次；不新增依赖动态时序的 tracked Replay。 |
+| 负向验证方式 | 移除任一生产消费端的 `gcTime=Infinity`，对应 RNTL 在压缩 GC 后必须重新出现空 map 首帧或额外 loader；若 Query data 仍在但真实 App 仍闪英文 ID，则否定当前 seam 并定位主动 remover 或 prop identity，不叠加缓存。 |
+| 明确不覆盖范围 | 不修改 NodeSeek sticker、正文 `<img class="emoji">`、图片字节缓存、reaction 算法、全局 QueryClient 默认值或账号清理协议；不追求 React 内部绝对 render 次数，只消除本次空 map → 真实 map 导致的额外提交。 |
 
 ## 待确认观察
 

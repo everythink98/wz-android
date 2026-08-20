@@ -1,5 +1,5 @@
 import { memo, useMemo, useRef } from 'react';
-import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Switch, Text, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import RenderHTML from 'react-native-render-html';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -440,12 +440,14 @@ function DetailHtml({
   html,
   message = false,
   source,
+  onOpenExternalUrl,
   onOpenTopic
 }: {
   contentWidth: number;
   html: string;
   message?: boolean;
   source: NotificationSource;
+  onOpenExternalUrl: (url: string) => void;
   onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
 }) {
   const { settings, styles } = useReaderThemeStyles(createNotificationStyles);
@@ -468,7 +470,7 @@ function DetailHtml({
         onPress: (event: { stopPropagation?: () => void }, href: string) => {
           const destination = parseForumTopicDestination(href);
           if (!destination) {
-            void Linking.openURL(href);
+            onOpenExternalUrl(href);
             return;
           }
           event.stopPropagation?.();
@@ -477,7 +479,7 @@ function DetailHtml({
         }
       }
     }),
-    [onOpenTopic]
+    [onOpenExternalUrl, onOpenTopic]
   );
   return (
     <RenderHTML
@@ -507,6 +509,7 @@ export function NotificationDetailScreen({
   replyStatus,
   replyVisible = false,
   topicReplyAction = false,
+  onOpenExternalUrl,
   onOpenTopic,
   onOpenReply = () => undefined,
   onReplyClose = () => undefined,
@@ -529,6 +532,7 @@ export function NotificationDetailScreen({
   replyStatus?: string;
   replyVisible?: boolean;
   topicReplyAction?: boolean;
+  onOpenExternalUrl: (url: string) => void;
   onOpenTopic: (topic?: Topic, targetReply?: ReplyLocationTarget) => void;
   onOpenReply?: () => void;
   onReplyClose?: () => void;
@@ -629,6 +633,7 @@ export function NotificationDetailScreen({
                 contentWidth={contentWidth - 50}
                 html={detail.contentHtml}
                 source={item.source}
+                onOpenExternalUrl={onOpenExternalUrl}
                 onOpenTopic={onOpenTopic}
               />
             ) : null}
@@ -654,6 +659,7 @@ export function NotificationDetailScreen({
                       contentWidth={Math.round(contentWidth * 0.72)}
                       html={message.contentHtml}
                       source={item.source}
+                      onOpenExternalUrl={onOpenExternalUrl}
                       onOpenTopic={onOpenTopic}
                     />
                   ) : null}
@@ -672,6 +678,7 @@ export function NotificationDetailScreen({
                 contentWidth={contentWidth}
                 html={detail.contentHtml}
                 source={item.source}
+                onOpenExternalUrl={onOpenExternalUrl}
                 onOpenTopic={onOpenTopic}
               />
             ) : null}

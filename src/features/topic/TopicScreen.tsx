@@ -97,6 +97,7 @@ export const TopicScreen = memo(function TopicScreen({
   const discourseEmojiSource = active && isDiscourseSource(itemSource) ? itemSource : null;
   const { data: discourseEmojiData, refetch: refetchDiscourseEmojiUrls } = useQuery({
     queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource),
+    gcTime: Infinity,
     enabled: Boolean(discourseEmojiSource),
     queryFn: ({ signal }) =>
       discourseEmojiSource

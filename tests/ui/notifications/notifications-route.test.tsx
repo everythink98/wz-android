@@ -4,6 +4,7 @@ import { createNavigationContainerRef, NavigationContainer } from '@react-naviga
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import * as WebBrowser from 'expo-web-browser';
 import type { ForumNotification } from '@/domain/notifications/models';
 import { notificationSources } from '@/domain/forum/sourceCatalog';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
@@ -936,60 +937,221 @@ describe('notification routes', () => {
     });
   });
 
-  it('shows the cached source emoji catalog in a private composer without another request', async () => {
+  it('[REG-NOTIFY-059] reports an external notification link that Android cannot open', async () => {
     appQueryClient.clear();
-    const privateNotification: ForumNotification = {
+    const item: ForumNotification = {
       ...notification,
-      source: 'linuxdo',
-      id: 'message:emoji-cache',
+      id: 'information:external-link',
+      kind: 'system',
+      unread: false
+    };
+    const gateway = {
+      loadDetail: jest.fn(async () => ({
+        notification: item,
+        title: '系统消息',
+        contentHtml: '<a href="https://example.com/help">查看帮助</a> <a href="mailto:support@example.com">邮件支持</a>'
+      })),
+      markRead: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = routeRuntime(gateway);
+    const navigation = { navigate: jest.fn() };
+    const rejection = Promise.reject(new Error('browser unavailable'));
+    void rejection.catch(() => undefined);
+    const openBrowserAsync = jest.spyOn(WebBrowser, 'openBrowserAsync').mockReturnValue(rejection);
+    try {
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationDetailRoute
+              navigation={navigation as never}
+              route={{
+                key: 'notification-detail',
+                name: 'NotificationDetail',
+                params: { notification: item, identityKey: 'nodeseek:new-account' }
+              }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+
+      await waitFor(() => expect(view.getByRole('link', { name: '查看帮助' })).toBeTruthy());
+      await fireEvent.press(view.getByRole('link', { name: '查看帮助' }));
+      await waitFor(() => expect(runtime.notify).toHaveBeenCalledWith('browser unavailable'));
+
+      expect(openBrowserAsync).toHaveBeenCalledTimes(1);
+      expect(runtime.notify).toHaveBeenCalledTimes(1);
+      expect(gateway.loadDetail).toHaveBeenCalledTimes(1);
+      expect(navigation.navigate).not.toHaveBeenCalled();
+
+      await fireEvent.press(view.getByRole('link', { name: '邮件支持' }));
+
+      expect(openBrowserAsync).toHaveBeenCalledTimes(1);
+      expect(runtime.notify).toHaveBeenNthCalledWith(2, '仅支持打开 http/https 链接。');
+      expect(runtime.notify).toHaveBeenCalledTimes(2);
+      expect(gateway.loadDetail).toHaveBeenCalledTimes(1);
+      expect(navigation.navigate).not.toHaveBeenCalled();
+    } finally {
+      openBrowserAsync.mockRestore();
+    }
+  });
+
+  it('[REG-NOTIFY-059] routes private-message original and bubble links through the same external owner', async () => {
+    appQueryClient.clear();
+    const item: ForumNotification = {
+      ...notification,
+      id: 'message:external-links',
       kind: 'private-message',
       unread: false,
       target: { type: 'private-conversation', conversationId: '9' }
     };
     const gateway = {
       loadDetail: jest.fn(async () => ({
-        notification: privateNotification,
-        title: 'linux.do 私信',
-        messages: [],
+        notification: item,
+        title: '私信详情',
+        contentHtml: '<a href="https://example.com/original">原消息外链</a>',
+        messages: [
+          {
+            id: 'message-1',
+            author: 'Bob',
+            contentHtml: '<a href="https://example.com/bubble">气泡外链</a>',
+            mine: false
+          }
+        ],
         reply: { format: 'markdown' as const }
       })),
-      markRead: jest.fn(async () => ({ confirmed: true }))
+      markRead: jest.fn()
     } as unknown as NotificationRouteRuntimeValue['gateway'];
-    const getDiscourseEmojiUrls = jest.fn(async () => ({ heart: 'https://linux.do/network-heart.png' }));
-    const runtime = {
-      ...routeRuntime(gateway),
-      activeSources: ['linuxdo'],
-      composer: {
-        ...routeRuntime(gateway).composer,
-        getDiscourseEmojiUrls
-      },
-      identityKeys: { linuxdo: 'linuxdo:alice' },
-      identitySignature: 'linuxdo:alice'
-    } as NotificationRouteRuntimeValue;
-    appQueryClient.setQueryData(forumQueryKeys.emojiUrls('linuxdo'), {
-      heart: 'https://linux.do/cached-heart.png'
+    const runtime = routeRuntime(gateway);
+    const openBrowserAsync = jest
+      .spyOn(WebBrowser, 'openBrowserAsync')
+      .mockResolvedValue({ type: WebBrowser.WebBrowserResultType.OPENED });
+    try {
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationDetailRoute
+              navigation={{ navigate: jest.fn() } as never}
+              route={{
+                key: 'notification-detail',
+                name: 'NotificationDetail',
+                params: { notification: item, identityKey: 'nodeseek:new-account' }
+              }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+
+      await waitFor(() => expect(view.getByRole('link', { name: '原消息外链' })).toBeTruthy());
+      await fireEvent.press(view.getByRole('link', { name: '原消息外链' }));
+      await fireEvent.press(view.getByRole('link', { name: '气泡外链' }));
+
+      expect(openBrowserAsync).toHaveBeenNthCalledWith(1, 'https://example.com/original');
+      expect(openBrowserAsync).toHaveBeenNthCalledWith(2, 'https://example.com/bubble');
+      expect(runtime.notify).not.toHaveBeenCalled();
+    } finally {
+      openBrowserAsync.mockRestore();
+    }
+  });
+
+  it('[REG-TOPIC-116] keeps the cached source emoji catalog across private composer mounts', async () => {
+    const defaultOptions = appQueryClient.getDefaultOptions();
+    appQueryClient.setDefaultOptions({
+      ...defaultOptions,
+      queries: { ...defaultOptions.queries, gcTime: 1_000 }
     });
+    appQueryClient.clear();
+    try {
+      const privateNotification: ForumNotification = {
+        ...notification,
+        source: 'linuxdo',
+        id: 'message:emoji-cache',
+        kind: 'private-message',
+        unread: false,
+        target: { type: 'private-conversation', conversationId: '9' }
+      };
+      const gateway = {
+        loadDetail: jest.fn(async () => ({
+          notification: privateNotification,
+          title: 'linux.do 私信',
+          messages: [],
+          reply: { format: 'markdown' as const }
+        })),
+        markRead: jest.fn(async () => ({ confirmed: true }))
+      } as unknown as NotificationRouteRuntimeValue['gateway'];
+      const getDiscourseEmojiUrls = jest.fn(async () => ({ heart: 'https://linux.do/network-heart.png' }));
+      const runtime = {
+        ...routeRuntime(gateway),
+        activeSources: ['linuxdo'],
+        composer: {
+          ...routeRuntime(gateway).composer,
+          getDiscourseEmojiUrls
+        },
+        identityKeys: { linuxdo: 'linuxdo:alice' },
+        identitySignature: 'linuxdo:alice'
+      } as NotificationRouteRuntimeValue;
+      const first = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationDetailRoute
+              navigation={{ navigate: jest.fn() } as never}
+              route={{
+                key: 'notification-detail',
+                name: 'NotificationDetail',
+                params: { notification: privateNotification, identityKey: 'linuxdo:alice' }
+              }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
 
-    const view = await render(
-      <NotificationRouteRuntimeProvider value={runtime}>
-        <NavigationContainer>
-          <NotificationDetailRoute
-            navigation={{ navigate: jest.fn() } as never}
-            route={{
-              key: 'notification-detail',
-              name: 'NotificationDetail',
-              params: { notification: privateNotification, identityKey: 'linuxdo:alice' }
-            }}
-          />
-        </NavigationContainer>
-      </NotificationRouteRuntimeProvider>,
-      { wrapper: QueryTestWrapper }
-    );
+      await waitFor(() => expect(first.getByLabelText('回复私信')).toBeTruthy());
+      await fireEvent.press(first.getByLabelText('回复私信'));
+      await waitFor(() =>
+        expect(first.getByTestId('message-composer-emoji-heart').props.children).toBe(
+          'https://linux.do/network-heart.png'
+        )
+      );
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1);
+      jest.useFakeTimers();
+      try {
+        await first.unmount();
+        await act(() => {
+          jest.advanceTimersByTime(1_001);
+        });
+      } finally {
+        jest.useRealTimers();
+      }
 
-    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('回复私信'));
-    expect(view.getByTestId('message-composer-emoji-heart').props.children).toBe('https://linux.do/cached-heart.png');
-    expect(getDiscourseEmojiUrls).not.toHaveBeenCalled();
+      const second = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationDetailRoute
+              navigation={{ navigate: jest.fn() } as never}
+              route={{
+                key: 'notification-detail-remount',
+                name: 'NotificationDetail',
+                params: { notification: privateNotification, identityKey: 'linuxdo:alice' }
+              }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+
+      await waitFor(() => expect(second.getByLabelText('回复私信')).toBeTruthy());
+      await fireEvent.press(second.getByLabelText('回复私信'));
+      expect(second.getByTestId('message-composer-emoji-heart').props.children).toBe(
+        'https://linux.do/network-heart.png'
+      );
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1);
+      await second.unmount();
+    } finally {
+      appQueryClient.setDefaultOptions(defaultOptions);
+      appQueryClient.removeQueries({ queryKey: forumQueryKeys.emojiUrls('linuxdo'), exact: true });
+    }
   });
 
   it('[REG-NOTIFY-031] preserves an unconfirmed private draft and clears it only after server confirmation', async () => {

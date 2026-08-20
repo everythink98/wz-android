@@ -4,6 +4,7 @@ import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FlashListRef } from '@shopify/flash-list';
 import * as Clipboard from 'expo-clipboard';
+import * as WebBrowser from 'expo-web-browser';
 import type { Fetcher } from '@/platform/network/request';
 import { errorMessage } from '@/platform/network/errors';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
@@ -180,6 +181,16 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
         runtime.notify('仅支持打开 http/https 链接。');
         return;
       }
+      void WebBrowser.openBrowserAsync(url).catch((error) => runtime.notify(errorMessage(error)));
+    },
+    [runtime]
+  );
+  const openOriginalUrl = useCallback(
+    (url: string) => {
+      if (!isHttpOrHttpsUrl(url)) {
+        runtime.notify('仅支持打开 http/https 链接。');
+        return;
+      }
       void Linking.openURL(url).catch((error) => runtime.notify(errorMessage(error)));
     },
     [runtime]
@@ -316,7 +327,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
             favorite: topicFavorite,
             getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
             onScroll: handleTopicScroll,
-            openOriginal: openExternalUrl,
+            openOriginal: openOriginalUrl,
             openReadingSettings: () => navigation.push('ReadingSettings'),
             openTopic: stableOpenTopic,
             openUser: stableOpenUser,

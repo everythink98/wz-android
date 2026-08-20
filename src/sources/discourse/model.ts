@@ -394,8 +394,17 @@ export function discoursePolls(post: unknown, options: { includeType?: boolean }
   return polls.length ? polls : undefined;
 }
 
-export function discoursePostFields(raw: unknown): DiscoursePostFields | null {
-  if (!isRecord(raw) || raw.deleted_at || raw.user_deleted === true) {
+export function discoursePostFields(
+  raw: unknown,
+  options: { allowUserDeletedPlaceholder?: boolean } = {}
+): DiscoursePostFields | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const cookedHtml = typeof raw.cooked === 'string' ? raw.cooked : '';
+  const userDeletedPlaceholder =
+    raw.user_deleted === true && options.allowUserDeletedPlaceholder === true && !raw.deleted_at;
+  if (raw.deleted_at || (raw.user_deleted === true && !userDeletedPlaceholder)) {
     return null;
   }
   const action = likeAction(raw.actions_summary);
@@ -405,10 +414,16 @@ export function discoursePostFields(raw: unknown): DiscoursePostFields | null {
   const commentId = positiveInteger(raw.id);
   const floor = positiveInteger(raw.post_number);
   const author = String(raw.username || '').trim();
-  const cookedHtml = typeof raw.cooked === 'string' ? raw.cooked : '';
   const createdAt = toIsoString(raw.created_at);
   const actionCode = String(raw.action_code || '').trim();
-  if (!commentId && !floor && !author && !actionCode && !hasRenderableHtmlContent(cookedHtml)) {
+  if (
+    !commentId &&
+    !floor &&
+    !author &&
+    !actionCode &&
+    !userDeletedPlaceholder &&
+    !hasRenderableHtmlContent(cookedHtml)
+  ) {
     return null;
   }
   const likeCount = nonNegativeNumber(raw.like_count);

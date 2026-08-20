@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import * as WebBrowser from 'expo-web-browser';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -12,6 +13,7 @@ import { parseForumTopicLink } from '@/domain/forum/links';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { errorMessage } from '@/platform/network/errors';
+import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -457,6 +459,7 @@ function EnabledNotificationDetailRoute({
       ? '账号状态已变化，请返回消息列表重新打开。'
       : '账号状态暂时无法确认，请返回消息列表后重试。';
   const gateway = runtime.gateway;
+  const notify = runtime.notify;
   const refreshSnapshots = runtime.refreshSnapshots;
   const markStartedRef = useRef('');
   const markControllerRef = useRef<AbortController | undefined>(undefined);
@@ -484,6 +487,7 @@ function EnabledNotificationDetailRoute({
     routeFocused && canAccessSource && detailQuery.data?.reply && isDiscourseSource(item.source) ? item.source : null;
   const discourseEmojiQuery = useQuery({
     queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource),
+    gcTime: Infinity,
     enabled: Boolean(discourseEmojiSource),
     queryFn: ({ signal }) =>
       discourseEmojiSource
@@ -573,6 +577,16 @@ function EnabledNotificationDetailRoute({
           ...(item.target.postNumber ? { floor: item.target.postNumber } : {})
         }
       : undefined;
+  const openExternalUrl = useCallback(
+    (url: string) => {
+      if (!isHttpOrHttpsUrl(url)) {
+        notify('仅支持打开 http/https 链接。');
+        return;
+      }
+      void WebBrowser.openBrowserAsync(url).catch((error) => notify(errorMessage(error)));
+    },
+    [notify]
+  );
   const submitReply = useCallback(() => {
     if (!canAccessSource || replyBusyRef.current || !replyContent.trim() || detailQuery.data?.reply?.disabledReason) {
       return;
@@ -717,6 +731,7 @@ function EnabledNotificationDetailRoute({
       replyStatus={replyStatus}
       replyVisible={replyVisible}
       topicReplyAction={item.kind === 'mention' || item.kind === 'reply'}
+      onOpenExternalUrl={openExternalUrl}
       onRetry={() => {
         if (canAccessSource) void detailQuery.refetch();
       }}

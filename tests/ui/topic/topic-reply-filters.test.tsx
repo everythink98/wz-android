@@ -2202,6 +2202,103 @@ describe('Topic reply filters', () => {
     expect(getDiscourseEmojiUrls).not.toHaveBeenCalled();
   });
 
+  it('[REG-TOPIC-116] keeps a loaded linux.do emoji catalog for the App process', async () => {
+    const linuxDoTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      reactionSummary: [{ id: 'heart', count: 1 }],
+      url: 'https://linux.do/t/topic-1'
+    };
+    const getDiscourseEmojiUrls = jest.fn(async () => ({ heart: 'https://linux.do/session-heart.png' }));
+    const defaultOptions = appQueryClient.getDefaultOptions();
+    appQueryClient.setDefaultOptions({
+      ...defaultOptions,
+      queries: { ...defaultOptions.queries, gcTime: 1 }
+    });
+    appQueryClient.removeQueries({ queryKey: forumQueryKeys.emojiUrls('linuxdo'), exact: true });
+    try {
+      const first = await render(
+        <TopicFilterHarness
+          getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+          selectedTopic={linuxDoTopic}
+          topicDetail={linuxDoTopic}
+        />
+      );
+      await waitFor(() => {
+        expect(first.getByTestId('reaction-heart').props.children).toContain('https://linux.do/session-heart.png');
+      });
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1);
+      jest.useFakeTimers();
+      try {
+        await first.unmount();
+        await act(() => {
+          jest.advanceTimersByTime(2);
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+
+      const second = await render(
+        <TopicFilterHarness
+          getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+          selectedTopic={linuxDoTopic}
+          topicDetail={linuxDoTopic}
+        />
+      );
+      expect(second.getByTestId('reaction-heart').props.children).toContain('https://linux.do/session-heart.png');
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1);
+      await second.unmount();
+    } finally {
+      appQueryClient.setDefaultOptions(defaultOptions);
+      appQueryClient.removeQueries({ queryKey: forumQueryKeys.emojiUrls('linuxdo'), exact: true });
+    }
+  });
+
+  it('[REG-TOPIC-116] retries an emoji catalog that failed before producing data', async () => {
+    const linuxDoTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      reactionSummary: [{ id: 'heart', count: 1 }],
+      url: 'https://linux.do/t/topic-1'
+    };
+    let attempts = 0;
+    const getDiscourseEmojiUrls = jest.fn(
+      async (_options: { signal?: AbortSignal; source: DiscourseSource }): Promise<DiscourseEmojiUrlMap> => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('offline');
+        return { heart: 'https://linux.do/recovered-heart.png' };
+      }
+    );
+    const queryKey = forumQueryKeys.emojiUrls('linuxdo');
+    appQueryClient.removeQueries({ queryKey, exact: true });
+    try {
+      const first = await render(
+        <TopicFilterHarness
+          getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+          selectedTopic={linuxDoTopic}
+          topicDetail={linuxDoTopic}
+        />
+      );
+      await waitFor(() => expect(appQueryClient.getQueryState(queryKey)?.status).toBe('error'));
+      await first.unmount();
+
+      const second = await render(
+        <TopicFilterHarness
+          getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+          selectedTopic={linuxDoTopic}
+          topicDetail={linuxDoTopic}
+        />
+      );
+      await waitFor(() => {
+        expect(second.getByTestId('reaction-heart').props.children).toContain('https://linux.do/recovered-heart.png');
+      });
+      expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(2);
+      await second.unmount();
+    } finally {
+      appQueryClient.removeQueries({ queryKey, exact: true });
+    }
+  });
+
   it('[REG-TOPIC-027] aborts the old emoji read and ignores its late result after switching sites', async () => {
     type EmojiLoader = (options: { signal?: AbortSignal; source: DiscourseSource }) => Promise<DiscourseEmojiUrlMap>;
     type EmojiUrls = Awaited<ReturnType<EmojiLoader>>;

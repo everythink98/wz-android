@@ -107,6 +107,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 ### TOPIC：主题详情与阅读
 
+`TOPIC-02/03` 的正文、回复和引用继续先走既有图片预览、站内主题/楼层和用户导航；只有剩余 HTTP(S) 外链使用默认浏览器 Custom Tab。`TOPIC-04` 的“原站打开”继续使用完整系统浏览器。Route/Expo 边界由 `tests/ui/topic/topic-route-external-links.test.tsx` 独立固定 rejection 反馈与完整浏览器分流，App route-gate 测试不再兼任该 owner。
+
 `REG-TOPIC-084` 补充 `TOPIC-01/02/03`、`NAV-02/03`：table 在 HTML 分片前被编译成携带稳定 `semanticId`、统一列模型和完整行组的 typed row；能满足预算的 V2EX 18 行表保持一个 row，超大表只在完整 `tr`/rowspan 连通区域之间分段。renderer 按正文宽度与 `96dp × 阅读字号` 最小列宽统一分配列，窄表铺满、宽表原生横滑、`colspan` 按列单位占宽。同表分段零间距并同步横向 offset，独立表之间固定 `12dp`；不同正文 scope 和 route 不共享位置。
 
 `REG-TOPIC-085` 补充 `TOPIC-01/02/03`、`NAV-02/03`：块图有效 `onLoad` 必须先同步保存当前媒体 identity 的自然尺寸，再更新组件状态；已挂载图片和未完成占位必须共用 `min(自然宽度, 正文宽度)` 等比几何。Viewability 只调度 waiting/running 工作，已经显示的像素在 cell 真正回收或内容 identity 改变前不得被 lease 抖动撤销。媒体 URL、session/Referrer identity 和 preview/original variant 构成稳定视觉 key；`attemptId` 只拒绝迟到事件并区分网络重试，不进入 React/Expo recycling identity。同批次未完成 lease 回收、离窗、FlashList recycling 和重挂载不得让已知图片退回 4:3，也不得把窄图强行放大到正文宽度后改变行高。
@@ -146,6 +148,10 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 `REG-TOPIC-113` 补充 `TOPIC-01`：linux.do 详情 200 响应已解析出有效主楼正文时，详情以当前读取成功为准，不能把分类 `read_restricted` 或等级策略继续投影为当前账号拒绝；只有明确 HTTP/协议权限错误进入权限页。Feed、搜索、分类和历史列表的权限规则不变。详情权限卡片仅在“需权限”标签后增加 `4dp`，标题到说明仍保持 `8dp`。
 
 `REG-TOPIC-114` 补充 `TOPIC-01/02/03`、`NAV-02/03`：Android `expo-image` 的 `onLoad.source.width/height` 必须优先返回同一次 Glide 解码记录的 upright 原图尺寸，不能把目标 View 下采样后的 Drawable 尺寸误报为自然尺寸；原图尺寸不可得时才回退 intrinsic。单图与多图继续按完整媒体 request identity 独立缓存几何，冷图每个 identity 最多一次必要的 FlashList 布局提交，重复回调、离窗重进和重挂载不得增加提交、请求或 Native owner；`REG-TOPIC-048/075/085` 的下采样、内存、真实窄图和稳定 identity 契约不变。
+
+`REG-TOPIC-115` 补充 `TOPIC-01`：linux.do 主楼同时满足 `user_deleted=true`、`deleted_at` 为空且 `cooked` 可渲染时，继续返回普通 `TopicDetail` 并沿既有正文管线显示原站删除占位；只有 linux.do 主楼显式启用该策略。可渲染性由 prepared-content compiler 的同一次 sanitized root 判定并复用该 prepared result，media-only 主楼不得预解析第二次。空正文或带 `deleted_at` 的主楼仍解析失败，普通删除回复、小隐寺和其他共享调用方继续按默认规则过滤；不得新增删除状态、重试、请求、解析或 render owner。
+
+`REG-TOPIC-116` 补充 `TOPIC-01/03`、`NOTIFY-02`、`WRITE-01`：linux.do 与小隐寺的 `/emojis.json` 枚举按来源隔离，并在 App JS 进程内保留首次成功解析出的同一 map；详情、回复和私信编辑器卸载后重进必须首帧直接复用，不得重新执行枚举 loader、先显示英文 ID 或新增计算/render owner。首次失败不产生成功缓存，后续挂载或显式刷新仍可重试；进程终止以及既有账号/来源显式重置边界不变。NodeSeek sticker、正文 emoji 图片和图片字节缓存不在此契约内。
 
 `TOPIC-01/02/03` 的五站 Topic adapter、主楼与回复共用媒体首跳 Referrer 契约：adapter 保留最终 Topic URL，妖火额外保留 HTML 响应策略；媒体按元素策略、文档策略和真实 URL 关系解析最终 `Referer`，不从 `contentSource` 推导，也不按站点或图床分支。正文、原图升级、预览、保存、原生视频、贴纸和卡片图共用该契约，缓存与协调身份区分最终 `Referer`/`none`，见 `REG-TOPIC-078`。原生正文视频错误或超时释放 permit 后稳定等待点按重试，不自动重建 player；显式重试只创建一次，卸载释放由 Expo 独占且组件不再访问已释放 player，见 `REG-TOPIC-079`。正文视频按 track 固有比例布局、最窄限制 `1:2` 且不因比例变化重建 player，见 `REG-TOPIC-080`。opening 虚拟化 rows 共同呈现为一篇连续文章，隐藏占位不泄漏，妖火附件由 adapter 归一为共享语义卡片；quote、poll、accepted answer 等边界保持，见 `REG-TOPIC-081`。原生视频保留真实 poster，封面由独立图片 permit 管理，首次播放后才退出且暂停保留当前帧，见 `REG-TOPIC-082`。结构化内容由 typed semantic rows 保持祖先身份与文档顺序；FlashList row 只负责调度，code 和连续文本保持单一语义 owner，table 等容器只按自然子项分段；code/table 共用方向判定与横向位置 owner，回复定位的每次显式点击都产生独立命令，并由完整 sanitizer→compiler→FlashList 贯通测试守住。图片自然尺寸先于未完成 lease 回收同步保存，已显示像素不再受 viewability 撤销；Tab 替换可见 row 时继续以同一有界窗口驱动媒体 permit，当前 viewport 排序又可抢占仍 warm 的旧 row 请求，见 `REG-TOPIC-084/085/086/087/088/089/090/091/092/093/094/097/098/108/110`。图片、WebView 视频和贴纸仍保留既有自动重试。
 
@@ -247,6 +253,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 `ACCOUNT-06` 的小隐寺 credential 使用兼容旧字符串的版本化 bundle。旧值按 `read,write` 解释并继续服务原能力；消息页必须显示“升级授权”与可执行入口，不得误报“请先登录”，并保留已确认身份、投递水位和来源开关意图但暂停读取。非 More 入口点击升级后必须先回到 More 的既有小隐寺授权面板再启动 Device Code，不能在消息或 Topic native stack 后方静默运行。只有包含 `notifications` scope 的新授权才能恢复消息访问；重授权拒绝、取消、超时或保存失败必须恢复旧 credential，不主动撤销仍可用的旧授权，见 `REG-NOTIFY-005/017`。
 
 ### NOTIFY：统一消息与 Android 通知
+
+`NOTIFY-02` 的公告、原消息和私信正文继续把论坛主题/楼层链接交给 App 内导航；只有剩余 HTTP(S) 外链使用默认浏览器 Custom Tab，非 HTTP(S) 仍在本地拒绝。
 
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |
 | --- | --- | --- | --- | --- |
@@ -453,7 +461,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 | 关联 `RELEASE-01/02` | `REG-OPS-015` | `tests/tooling/release-environment.test.ts`、`tests/tooling/release-workflow.test.ts`、`tests/tooling/release-signing.test.ts`、`tests/tooling/release-packaging.test.ts` 与 `tests/tooling/android-smoke-guard.test.ts`：Node 22 与 clean tree 在发布起点阻断；普通子进程删除四个签名变量，只有最终正式 `assembleRelease` 注入；prebuild 使用 `--no-install`，先执行无签名 native tests/compile；manifest 记录 Git、lockfile、toolchain 与 ABI provenance。 |
 | 关联 `RELEASE-01/02` | `REG-OPS-016` | `tests/tooling/release-environment.test.ts`：Java 输出只接受唯一完整的 OpenJDK/Oracle 版本行；忽略 stdout/stderr 顺序中的 `JAVA_TOOL_OPTIONS`/`JDK_JAVA_OPTIONS` 提示，零匹配和多匹配以不含原始输出或 marker 的通用错误失败。npm 版本路径与 manifest schema 不变。 |
 | 关联 `RELEASE-02` | `REG-OPS-017` | `tests/tooling/android-smoke-guard.test.ts`：Smoke boot 保留显式设备与唯一 session，但不得传 `--headless`；由 runner 启动的本机 Android Emulator 使用默认 GUI 窗口。 |
-| 关联 `RELEASE-02`；共享 `ACCOUNT-01/02/04`、`DATA-01/02/03` | `REG-OPS-018` | `tests/tooling/android-smoke-guard.test.ts` 固定仓库 Smoke 只调用 replacement `install`，拒绝 `uninstall/reinstall/pm clear`，并让 boot、install、open 与 close 复用同一显式 session；`AGENTS.md`、运行手册与测试规范固定人工命令、`firstInstallTime` 和异常后 Quick Boot 冻结边界。 |
+| 关联 `RELEASE-02`；共享 `ACCOUNT-01/02/04`、`DATA-01/02/03` | `REG-OPS-018` | `tests/tooling/android-smoke-guard.test.ts` 经公开 `runApkSanity` 固定 pre `dumpsys` → 单次 replacement `install` → post `dumpsys`；安装成败都执行 post，前后值必须各自唯一非空且相同。成功后的 post 缺失/重复/抛错，以及安装失败后的 post 缺失/重复/变化/抛错都优先在首次 `open` / Replay 前 `BLOCKED_BY_ENV`，相同后才报告安装失败。结构门禁继续拒绝 `uninstall/reinstall/pm clear` 并固定同一显式 session。 |
+| 关联 `RELEASE-02` | `REG-OPS-019` | `tests/tooling/android-smoke-guard.test.ts` 经公开 `withSmokeSession` 固定 booted emulator ID 先通过一次只读 `adb emu avd name` 解析为 AVD 名，再启动同一 Smoke session；空输出、仅 `OK`、`KO:` 或 ADB 抛错必须在 boot/action/close 均为 0 时归一失败且不泄露原始输出。AVD 名与显示名继续直传，原 selector 仍用于设备身份和 Replay。 |
 | 关联 `FEED-01/02/03/04`、`SEARCH-02`、`USER-01`、`LIBRARY-01/02/03` | `REG-FEED-012` | `tests/ui/shared/topic-card.test.tsx`：稳定 props 继续浅比较，但 Topic 只接受同一 immutable object reference；展示文本相同而 `url/categoryId/authorId` 变化时必须重渲染，点击与 trailing action 使用新对象。 |
 | 关联 `SEARCH-03`、`ACCOUNT-04`、`WRITE-04`、`TOPIC-03`、`MORE-03` | `REG-A11Y-001` | `tests/ui/shared/accessibility-basics.test.tsx`、相关 screen UI tests 与 `tests/integration/style-ownership.test.ts`：Loading 作为单一 polite/busy status 播报；筛选、NodeImage Key 与评论搜索有明确 label；appearance、字号和回复 header 的布局至少 48dp，紧凑的回复 target 由 `hitSlop` 扩展到同等可点范围，同时保持 `REG-TOPIC-047/058` 的正文缩进与视觉几何。 |
 | 关联 `MORE-04` | `REG-UPDATE-005/006` | `src/platform/update/useAppUpdateRuntime.test.ts`：versionCode/SHA 派生唯一 cache APK 与安装器 URI；下载前只清理 legacy/旧更新 APK，失败删除 partial，成功保留当前文件，连续版本不积累历史 APK。 |
@@ -473,6 +482,7 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 | 关联 `NOTIFY-02`、`NAV-03` | `REG-NOTIFY-053` | Discourse/NodeSeek adapter 测试固定只有显式帖子定位字段才生成 `topic-post`；Notifications Route RNTL 固定主题级通知打开 Topic 时 `targetReply` 缺失。 |
 | 关联 `NOTIFY-02`、`NAV-03`、`TOPIC-03` | `REG-NOTIFY-054` | Notifications Route RNTL 固定 Discourse `postNumber=1` 仍可按 post ID 读取完整详情，但“查看相关主题”不生成 opening-post 回复定位；大于 1 的精确帖子协议保持。 |
 | 关联 `NOTIFY-02`、`WRITE-01` | `REG-NOTIFY-055` | 共享 ReplyComposer RNTL 在 100%/130% 下固定 toolbar `horizontal=true`、单行不换行、嵌套手势、隐藏系统滚动指示器及末尾“列表”可达；Topic 与已有已读私信共用同一组件。 |
+| 关联 `NOTIFY-02` | `REG-NOTIFY-059` | Notifications Route RNTL 固定 Screen 无平台 fallback、详情外链只允许 HTTP(S)：Android `WebBrowser.openBrowserAsync` rejection 通过既有 `notify` 提示，非 HTTP(S) scheme 本地拒绝；普通详情、会话原消息与消息气泡都经同一 Route callback，两条失败路径保持 `loadDetail=1`、App navigation=0。 |
 | 关联 `TOPIC-03`、`NAV-02/03`、`NOTIFY-02` | `REG-TOPIC-062` | `src/domain/forum/links.test.ts`、五站 adapter/unit、`tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/topic/topic-components.test.tsx` 与 `tests/ui/topic/topic-reply-filters.test.tsx`：五站原生 anchor 保留完整目标；极大楼层只请求目标锚点及用户触发的相邻前/后窗口；用户名/楼层独立导航，前插保持位置、失败保留、真实 write cursor 和权威尾窗刷新均固定。 |
 | 关联 `TOPIC-03` | `REG-TOPIC-063` | `tests/ui/topic/topic-reply-filters.test.tsx`：回复顺序控件与内容筛选独立，UI 不得对已加载片段执行本地反转；用户向上进入窗口起点前约一个可视屏时即预取上一 cursor，不等待重试按钮可见，同一滚动手势仍只触发一次；前插后重新计算预取带，最后一窗前插也保持原可见位置。 |
 | 关联 `TOPIC-03`、`NAV-02/03`、`NOTIFY-02`、`WRITE-01` | `REG-TOPIC-067` | 五站 adapter、Query contract、Controller 与 RNTL：正倒序 Query key 隔离；NodeSeek 首次倒序直达末页、Discourse 只取 stream 尾部 IDs、妖火以 `tofloor` 确认末页、V2EX 只在严格全集后本地切序；未确认尾窗、重复 cursor 和非 V2EX 计数竞态均不应用局部结果。 |
@@ -509,6 +519,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 | `TOPIC-02`；共享 `REG-TOPIC-075/095/096` | `REG-TOPIC-112` | RNTL 固定三槽基础 owner 不变、当前静态页最多一个 cache-only 高清 owner、切页结算后才转移，以及手势 start suspend / end 单次 viewport 更新；Vitest 固定 DPR-aware 1:1 最大缩放，fresh prebuild Kotlin JUnit 固定八种 EXIF 映射、sample 与 stale generation。匹配 APK 用普通图、`1080×10000` 长图和旋转 JPEG 核对静止当前视口清晰、1:1 细节、手势结束 `<=300ms` 恢复、零新 HTTP 和连续切图内存不增长。 |
 | `TOPIC-01`；关联 linux.do 详情成功/拒绝 seam | `REG-TOPIC-113` | `tests/integration/source-access-requirements.test.ts` 固定 linux.do 详情 200、分类 `read_restricted=true` 与有效主楼正文时保留正文且权限态为空；既有真实 403 和权限提示 RNTL 继续通过。Targeted Agent Live 用 canonical deep link 直达 `https://linux.do/t/2777081`，再经 App 内“更多 → 账号中心 → linux.do → 检测或重新登录”打开同一原网址对照；动态权限态不新增 tracked Replay。 |
 | `TOPIC-01/02/03`；关联 `NAV-02/03`、`REG-TOPIC-048/075/085` | `REG-TOPIC-114` | `expo-image` Release Kotlin unit test 固定原图 `1000×5000`、降采样 Drawable `68×342` 时事件仍返回 `1000×5000`，并固定无效 source 尺寸回退 intrinsic；图片 renderer RNTL 乱序加载长图、真实窄图、小横图和普通宽图，固定每个 identity 只更新自身 frame、首次未知尺寸恰好一次列表布局通知、重复回调与重挂载零新增通知、`source/recyclingKey` 稳定且每图仅一个 Expo Image owner。匹配 APK process-cold 核对当前主题首停留尺寸与重进一致，再只读核对 linux.do `t/topic/2556285` 前四图的首次加载、滚离返回和退出重进。 |
+| `TOPIC-01`；关联共享 Discourse 删除回复过滤 | `REG-TOPIC-115` | `src/sources/linuxdo/reader.test.ts` 固定真实文本与 media-only 删除主楼、原标题、删除占位、空 `cooked` 反例、一次 fetch 与 media marker DOM parse `=1`；`src/sources/discourse/model.test.ts` 固定默认拒绝、显式放行及非空 `deleted_at` 仍拒绝，既有 Discourse contract 固定删除回复继续过滤。Targeted Agent Live 只恢复一次 `https://linux.do/t/topic/2780439`，确认显示原标题和“（话题已被作者删除）”且无解析失败；动态目标不新增 tracked Replay。 |
+| `TOPIC-01/03`；关联 `NOTIFY-02`、`WRITE-01` | `REG-TOPIC-116` | Topic 与 Notifications Route RNTL 把默认 Query GC 压缩后固定首次成功 loader=1、卸载跨过 GC、重进首帧直接命中同一来源 map，并固定首次失败后可再次请求；既有站点切换取消和 linux.do/小隐寺隔离继续通过。匹配 APK 在同一 PID 直达 linux.do `t/topic/2693802`，退出详情超过旧 GC 窗口后重进不得闪英文 ID；process-cold 允许重新获取一次。 |
 
 ## 筛选、排序与列表状态契约
 

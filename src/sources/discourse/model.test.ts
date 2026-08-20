@@ -431,6 +431,30 @@ describe('portable Discourse fields', () => {
     expect(discoursePostFields({})).toBeNull();
   });
 
+  it('[REG-TOPIC-115] only accepts an author-deleted placeholder after its caller validates the prepared content', () => {
+    const placeholder = {
+      id: 23,
+      post_number: 1,
+      username: 'alice',
+      cooked: '<p>话题已被作者删除</p>',
+      created_at: '2026-08-15T00:00:00.000Z',
+      user_deleted: true,
+      deleted_at: null
+    };
+
+    expect(discoursePostFields(placeholder)).toBeNull();
+    expect(discoursePostFields(placeholder, { allowUserDeletedPlaceholder: true })).toMatchObject({
+      commentId: 23,
+      cookedHtml: placeholder.cooked
+    });
+    expect(
+      discoursePostFields(
+        { ...placeholder, deleted_at: '2026-08-15T00:01:00.000Z' },
+        { allowUserDeletedPlaceholder: true }
+      )
+    ).toBeNull();
+  });
+
   it('[REG-TOPIC-035] keeps a reply target display name separate from its navigable username', () => {
     const basePost = {
       id: 23,

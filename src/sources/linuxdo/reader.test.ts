@@ -1,4 +1,4 @@
-import { withTrackedParseHtml } from '../../../tests/helpers/trackedParseHtml';
+import { withTrackedDomParse, withTrackedParseHtml } from '../../../tests/helpers/trackedParseHtml';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getLinuxDoCategories, getLinuxDoFeed, resetLinuxDoCategoryCacheForTests } from './reader';
@@ -22,14 +22,14 @@ function topic(index: number) {
 describe('linux.do reader', () => {
   beforeEach(() => resetLinuxDoCategoryCacheForTests());
 
-  it('[REG-PERF-017] prepares opening and reply content from one DOM parse each', async () => {
+  it('[REG-PERF-017][REG-TOPIC-115] keeps an author-deleted opening placeholder with one DOM parse', async () => {
     await withTrackedParseHtml(async (trackedParseHtml) => {
       const openingMarker = 'data-content-marker="linuxdo-opening-once"';
       const replyMarker = 'data-content-marker="linuxdo-reply-once"';
       const fetcher = vi.fn(async () =>
         json({
-          id: 717,
-          title: 'Prepared topic',
+          id: 2780439,
+          title: '发个红包，爱你们各位佬',
           slug: 'prepared-topic',
           created_at: '2026-08-15T00:00:00.000Z',
           bumped_at: '2026-08-15T00:01:00.000Z',
@@ -41,9 +41,11 @@ describe('linux.do reader', () => {
               {
                 id: 1,
                 username: 'alice',
-                cooked: `<p ${openingMarker}>正文</p>`,
+                cooked: `<p ${openingMarker}>（话题已被作者删除）</p>`,
                 created_at: '2026-08-15T00:00:00.000Z',
-                post_number: 1
+                post_number: 1,
+                user_deleted: true,
+                deleted_at: null
               },
               {
                 id: 2,
@@ -61,9 +63,14 @@ describe('linux.do reader', () => {
         import('./reader'),
         import('@/domain/forum/topicContentSplit')
       ]);
-      const topic = await getLinuxDoTopic('717', { fetcher });
+      const topic = await getLinuxDoTopic('2780439', { fetcher });
       const reply = topic.replies[0];
 
+      expect(topic).toMatchObject({
+        id: '2780439',
+        title: '发个红包，爱你们各位佬',
+        contentHtml: expect.stringContaining('话题已被作者删除')
+      });
       expect(
         requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
           role: 'opening',
@@ -79,6 +86,81 @@ describe('linux.do reader', () => {
       ).not.toHaveLength(0);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(openingMarker))).toHaveLength(1);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(replyMarker))).toHaveLength(1);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('[REG-TOPIC-115] rejects an author-deleted opening without renderable content', async () => {
+    const fetcher = vi.fn(async () =>
+      json({
+        id: 2780439,
+        title: '发个红包，爱你们各位佬',
+        slug: 'deleted-topic',
+        created_at: '2026-08-15T00:00:00.000Z',
+        posts_count: 1,
+        post_stream: {
+          stream: [1],
+          posts: [
+            {
+              id: 1,
+              username: 'alice',
+              cooked: '',
+              created_at: '2026-08-15T00:00:00.000Z',
+              post_number: 1,
+              user_deleted: true,
+              deleted_at: null
+            }
+          ]
+        }
+      })
+    );
+    const { getLinuxDoTopic } = await import('./reader');
+
+    await expect(getLinuxDoTopic('2780439', { fetcher })).rejects.toThrow('linux.do 主题正文解析失败');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-TOPIC-115] prepares a media-only author-deleted opening with one DOM parse', async () => {
+    await withTrackedDomParse(async (trackedParseHtml) => {
+      const openingMarker = 'data-content-marker="linuxdo-deleted-media-once"';
+      const fetcher = vi.fn(async () =>
+        json({
+          id: 2780439,
+          title: '发个红包，爱你们各位佬',
+          slug: 'deleted-topic',
+          created_at: '2026-08-15T00:00:00.000Z',
+          posts_count: 1,
+          post_stream: {
+            stream: [1],
+            posts: [
+              {
+                id: 1,
+                username: 'alice',
+                cooked: `<img ${openingMarker} src="https://cdn.example/deleted.webp">`,
+                created_at: '2026-08-15T00:00:00.000Z',
+                post_number: 1,
+                user_deleted: true,
+                deleted_at: null
+              }
+            ]
+          }
+        })
+      );
+      const [{ getLinuxDoTopic }, { requirePreparedForumContent }] = await Promise.all([
+        import('./reader'),
+        import('@/domain/forum/topicContentSplit')
+      ]);
+
+      const topic = await getLinuxDoTopic('2780439', { fetcher });
+      const plan = requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
+        role: 'opening',
+        source: 'linuxdo',
+        topicId: topic.id
+      });
+
+      expect(plan.previewImages).toEqual([expect.objectContaining({ source: 'https://cdn.example/deleted.webp' })]);
+      expect(plan.rows.some((row) => row.networkMediaCount > 0)).toBe(true);
+      expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(openingMarker))).toHaveLength(1);
     });
   });
 

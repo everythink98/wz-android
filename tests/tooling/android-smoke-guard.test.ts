@@ -113,6 +113,74 @@ describe('Android release evidence guards', () => {
     ]);
   });
 
+  it('[REG-OPS-019] resolves a booted emulator serial to its AVD name before starting Smoke', () => {
+    const events: string[] = [];
+
+    withSmokeSession(
+      {
+        selectedDevice: 'emulator-5554',
+        runAdbCommand: (args: string[]) => {
+          events.push(`adb:${args.join(' ')}`);
+          return 'WZ_Pixel_API_35\nOK\n';
+        },
+        runAgentDeviceCommand: (args: string[]) => {
+          events.push(`agent:${args.join(' ')}`);
+          return '';
+        }
+      },
+      () => events.push('sanity')
+    );
+
+    expect(events).toEqual([
+      'adb:-s emulator-5554 emu avd name',
+      'agent:boot --session wz-apk-sanity --platform android --device WZ_Pixel_API_35',
+      'sanity',
+      'agent:close --session wz-apk-sanity --platform android'
+    ]);
+  });
+
+  it.each([
+    ['blank output', () => ' \n'],
+    ['OK only', () => 'OK\n'],
+    ['KO response', () => 'KO: raw-avd-payload\n'],
+    [
+      'ADB failure',
+      () => {
+        throw new Error('raw-adb-payload');
+      }
+    ]
+  ])('[REG-OPS-019] refuses %s before booting an AVD session', (_, resolveAvdName) => {
+    let actionCalls = 0;
+    let agentCalls = 0;
+    let failure: unknown;
+
+    try {
+      withSmokeSession(
+        {
+          selectedDevice: 'emulator-5554',
+          runAdbCommand: resolveAvdName,
+          runAgentDeviceCommand: () => {
+            agentCalls += 1;
+            return '';
+          }
+        },
+        () => {
+          actionCalls += 1;
+        }
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(String(failure)).toBe(
+      'Error: BLOCKED_BY_ENV：无法将 Android emulator ID emulator-5554 解析为 AVD 名，未启动 Smoke。'
+    );
+    expect(String(failure)).not.toContain('raw-avd-payload');
+    expect(String(failure)).not.toContain('raw-adb-payload');
+    expect(agentCalls).toBe(0);
+    expect(actionCalls).toBe(0);
+  });
+
   it('[REG-OPS-017] opens the Android Smoke emulator in a visible window', () => {
     const events: string[] = [];
 
@@ -214,6 +282,198 @@ describe('Android release evidence guards', () => {
     expect(smokeScript).not.toMatch(/['"]pm['"]\s*,\s*['"]clear['"]/);
   });
 
+  it('[REG-OPS-018] freezes before first launch when replacement install changes firstInstallTime', () => {
+    const events: string[] = [];
+    let packageReads = 0;
+    const runAgentDeviceCommand = (args: string[]) => {
+      events.push(`agent:${args.join(' ')}`);
+      return '';
+    };
+    const runAdbCommand = (args: string[]) => {
+      events.push(`adb:${args.join(' ')}`);
+      if (args.includes('dumpsys')) {
+        packageReads += 1;
+        return packageReads === 1 ? 'firstInstallTime=2026-07-26 16:51:37\n' : 'firstInstallTime=2026-08-20 12:00:00\n';
+      }
+      return '';
+    };
+    let failure: unknown;
+
+    try {
+      runApkSanity({
+        apkPath: 'candidate.apk',
+        device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
+        runAdbCommand,
+        runAgentDeviceCommand,
+        verifySessionLog: () => undefined
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(String(failure)).toMatch(/BLOCKED_BY_ENV.*firstInstallTime/);
+    const packageReadIndexes = events.flatMap((event, index) =>
+      event.includes('shell dumpsys package com.wz.reader') ? [index] : []
+    );
+    const installIndex = events.findIndex((event) => event.startsWith('agent:install '));
+    expect(packageReadIndexes).toHaveLength(2);
+    expect(packageReadIndexes[0]).toBeLessThan(installIndex);
+    expect(packageReadIndexes[1]).toBeGreaterThan(installIndex);
+    expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/agent:(?:open|logs)\b/)]));
+    expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/shell (?:date|log)\b|logcat\b/)]));
+  });
+
+  it('[REG-OPS-018] requires one non-empty firstInstallTime before replacement install', () => {
+    for (const readPackage of [
+      () => 'firstInstallTime=\n',
+      () => 'firstInstallTime=2026-07-26 16:51:37\nfirstInstallTime=2026-08-20 12:00:00\n',
+      () => {
+        throw new Error('raw-dumpsys-payload');
+      }
+    ]) {
+      let installCalls = 0;
+
+      expect(() =>
+        runApkSanity({
+          apkPath: 'candidate.apk',
+          device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
+          runAdbCommand: readPackage,
+          runAgentDeviceCommand: () => {
+            installCalls += 1;
+            return '';
+          },
+          verifySessionLog: () => undefined
+        })
+      ).toThrow(/^BLOCKED_BY_ENV：覆盖安装前无法读取 com\.wz\.reader 的 firstInstallTime，已停止 Smoke。$/);
+      expect(installCalls).toBe(0);
+    }
+  });
+
+  it.each([
+    ['missing', ''],
+    ['duplicate', 'firstInstallTime=2026-07-26 16:51:37\nfirstInstallTime=2026-08-20 12:00:00\n'],
+    ['changed', 'firstInstallTime=2026-08-20 12:00:00\n'],
+    ['unreadable', new Error('raw-dumpsys-payload')]
+  ])('[REG-OPS-018] prioritizes %s firstInstallTime over replacement install failure', (_, postInstallOutput) => {
+    const events: string[] = [];
+    let packageReads = 0;
+    let installCalls = 0;
+    const runAdbCommand = (args: string[]) => {
+      events.push(`adb:${args.join(' ')}`);
+      if (args.includes('dumpsys')) {
+        packageReads += 1;
+        if (packageReads === 1) return 'firstInstallTime=2026-07-26 16:51:37\n';
+        if (postInstallOutput instanceof Error) throw postInstallOutput;
+        return postInstallOutput;
+      }
+      return '';
+    };
+    let failure: unknown;
+
+    try {
+      runApkSanity({
+        apkPath: 'candidate.apk',
+        device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
+        runAdbCommand,
+        runAgentDeviceCommand: (args: string[]) => {
+          events.push(`agent:${args.join(' ')}`);
+          installCalls += 1;
+          throw new Error('replacement install failed');
+        },
+        verifySessionLog: () => undefined
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(String(failure)).toMatch(/BLOCKED_BY_ENV.*firstInstallTime/);
+    expect(String(failure)).not.toContain('replacement install failed');
+    expect(String(failure)).not.toContain('raw-dumpsys-payload');
+    expect(packageReads).toBe(2);
+    expect(installCalls).toBe(1);
+    expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/agent:(?:open|logs)\b/)]));
+    expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/shell (?:date|log)\b|logcat\b/)]));
+  });
+
+  it.each([
+    ['missing', 'raw-post-install-payload\n'],
+    [
+      'duplicate',
+      'firstInstallTime=2026-07-26 16:51:37\nfirstInstallTime=2026-07-26 16:51:37\nraw-post-install-payload\n'
+    ],
+    ['unreadable', new Error('raw-post-install-payload')]
+  ])('[REG-OPS-018] freezes after a successful replacement install when post-install identity is %s', (_, output) => {
+    const events: string[] = [];
+    let packageReads = 0;
+    let installCalls = 0;
+    const runAdbCommand = (args: string[]) => {
+      events.push(`adb:${args.join(' ')}`);
+      if (!args.includes('dumpsys')) return '';
+      packageReads += 1;
+      if (packageReads === 1) return 'firstInstallTime=2026-07-26 16:51:37\n';
+      if (output instanceof Error) throw output;
+      return output;
+    };
+    let failure: unknown;
+
+    try {
+      runApkSanity({
+        apkPath: 'candidate.apk',
+        device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
+        runAdbCommand,
+        runAgentDeviceCommand: (args: string[]) => {
+          events.push(`agent:${args.join(' ')}`);
+          installCalls += 1;
+          return '';
+        },
+        verifySessionLog: () => undefined
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(String(failure)).toBe(
+      'Error: BLOCKED_BY_ENV：覆盖安装后无法读取 com.wz.reader 的 firstInstallTime，已停止 Smoke。'
+    );
+    expect(String(failure)).not.toContain('raw-post-install-payload');
+    expect(packageReads).toBe(2);
+    expect(installCalls).toBe(1);
+    expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/agent:(?:open|logs)\b/)]));
+    expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/shell (?:date|log)\b|logcat\b/)]));
+  });
+
+  it('[REG-OPS-018] reports replacement install failure after unchanged firstInstallTime', () => {
+    let packageReads = 0;
+    let installCalls = 0;
+    let failure: unknown;
+
+    try {
+      runApkSanity({
+        apkPath: 'candidate.apk',
+        device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
+        runAdbCommand: (args: string[]) => {
+          if (args.includes('dumpsys')) {
+            packageReads += 1;
+            return 'firstInstallTime=2026-07-26 16:51:37\n';
+          }
+          return '';
+        },
+        runAgentDeviceCommand: () => {
+          installCalls += 1;
+          throw new Error('replacement install failed');
+        },
+        verifySessionLog: () => undefined
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(String(failure)).toContain('BLOCKED_BY_ENV：覆盖安装失败');
+    expect(String(failure)).toContain('replacement install failed');
+    expect(packageReads).toBe(2);
+    expect(installCalls).toBe(1);
+  });
+
   it('[REG-OPS-005] captures the first post-install launch before it can fail', () => {
     const marker = 'wz-apk-sanity-first-launch-test';
     const events: string[] = [];
@@ -223,6 +483,9 @@ describe('Android release evidence guards', () => {
     };
     const runAdbCommand = (args: string[]) => {
       events.push(`adb:${args.join(' ')}`);
+      if (args.includes('dumpsys')) {
+        return 'firstInstallTime=2026-07-26 16:51:37\n';
+      }
       if (args.includes('date')) {
         return '1784102400.000\n';
       }
@@ -253,12 +516,20 @@ describe('Android release evidence guards', () => {
 
     expect(failure).toBeInstanceOf(AggregateError);
     expect((failure as AggregateError).errors.some((error) => String(error).includes('Android 崩溃'))).toBe(true);
+    const packageReadIndexes = events.flatMap((event, index) =>
+      event.includes('shell dumpsys package com.wz.reader') ? [index] : []
+    );
     const installIndex = events.findIndex((event) => event.startsWith('agent:install '));
     const timestampIndex = events.findIndex((event) => event.includes('shell date +%s.%3N'));
     const markerIndex = events.findIndex((event) => event.includes('shell log -p i -t WZ_APK_SANITY'));
     const firstOpenIndex = events.findIndex((event) => event.startsWith('agent:open '));
     const dumpIndex = events.findIndex((event) => event.includes('logcat -d -v threadtime -T 1784102400.000'));
+    expect(packageReadIndexes).toHaveLength(2);
+    expect(packageReadIndexes[0]).toBeLessThan(installIndex);
+    expect(packageReadIndexes[1]).toBeGreaterThan(installIndex);
+    expect(packageReadIndexes[1]).toBeLessThan(timestampIndex);
     expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(events.filter((event) => event.startsWith('agent:install '))).toHaveLength(1);
     expect(events[installIndex]).toContain('--session wz-apk-sanity');
     expect(timestampIndex).toBeGreaterThan(installIndex);
     expect(markerIndex).toBeGreaterThan(timestampIndex);

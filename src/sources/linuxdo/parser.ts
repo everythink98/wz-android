@@ -1,6 +1,6 @@
 import type { QuotedPostMetadata, TopicPoll } from '@/domain/forum/models';
 import type { HTMLElement } from 'node-html-parser';
-import { FORUM_LINK_CARD_TAG } from '@/domain/forum/html';
+import { FORUM_LINK_CARD_TAG, hasRenderableHtmlContent } from '@/domain/forum/html';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { discoursePollPlaceholder, prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
 import {
@@ -63,9 +63,14 @@ export function sanitizeLinuxDoContentHtml(html: unknown, polls: TopicPoll[] | u
 export function prepareLinuxDoContent(
   html: unknown,
   polls: TopicPoll[] | undefined,
-  { role, topicId }: { role: 'opening' | 'reply'; topicId?: string }
+  {
+    checkRenderability = false,
+    role,
+    topicId
+  }: { checkRenderability?: boolean; role: 'opening' | 'reply'; topicId?: string }
 ) {
   let quotedPosts: QuotedPostMetadata[] = [];
+  let hasRenderableContent = false;
   const preparedContent = prepareSanitizedForumContent(html, {
     baseUrl: LINUXDO_BASE_URL,
     polls,
@@ -73,13 +78,10 @@ export function prepareLinuxDoContent(
     source: 'linuxdo',
     topicId,
     transformRoot: linuxDoContentTransform(html, polls),
-    ...(role === 'reply'
-      ? {
-          afterSanitizeRoot: (root) => {
-            quotedPosts = discourseQuoteMetadataFromRoot(root, 'linuxdo', topicId);
-          }
-        }
-      : {})
+    afterSanitizeRoot: (root) => {
+      if (checkRenderability) hasRenderableContent = hasRenderableHtmlContent('', root);
+      if (role === 'reply') quotedPosts = discourseQuoteMetadataFromRoot(root, 'linuxdo', topicId);
+    }
   });
-  return { preparedContent, quotedPosts };
+  return { hasRenderableContent, preparedContent, quotedPosts };
 }

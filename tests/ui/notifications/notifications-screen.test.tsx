@@ -1,18 +1,29 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { Dimensions, Linking, ScrollView, StyleSheet } from 'react-native';
+import { Dimensions, ScrollView, StyleSheet } from 'react-native';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import type { ForumNotification } from '@/domain/notifications/models';
 import type { NotificationState } from '@/platform/notifications/notificationStore';
 import {
-  NotificationDetailScreen,
+  NotificationDetailScreen as NotificationDetailScreenView,
   NotificationSettingsScreen,
   NotificationsScreen
 } from '@/features/notifications/NotificationScreens';
 import { fireEvent, render, waitFor } from '../render';
 import { createTheme } from '@/ui/theme/tokens';
+
+const ignoreExternalUrl = () => undefined;
+
+function NotificationDetailScreen({
+  onOpenExternalUrl = ignoreExternalUrl,
+  ...props
+}: Omit<React.ComponentProps<typeof NotificationDetailScreenView>, 'onOpenExternalUrl'> & {
+  onOpenExternalUrl?: (url: string) => void;
+}) {
+  return <NotificationDetailScreenView {...props} onOpenExternalUrl={onOpenExternalUrl} />;
+}
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
@@ -446,44 +457,41 @@ describe('notification screens', () => {
   });
 
   it('[REG-NOTIFY-044][REG-NOTIFY-045] keeps Yaohuo topic links in-app and preserves the full-reply page', async () => {
-    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    const onOpenExternalUrl = jest.fn();
     const onOpenTopic = jest.fn();
-    try {
-      const view = await render(
-        <NotificationDetailScreen
-          contentWidth={360}
-          detail={{
-            notification: {
-              ...notification,
-              source: 'yaohuo',
-              kind: 'private-message',
-              target: {
-                type: 'message-detail',
-                messageId: '41',
-                url: 'https://www.yaohuo.me/bbs/messagelist_view.aspx?id=41'
-              }
-            },
-            title: '妖火私信',
-            contentHtml:
-              '<a href="https://www.yaohuo.me/bbs-321.html">查看主题帖</a> | <a href="https://www.yaohuo.me/bbs/book_re.aspx?classid=177&amp;id=321&amp;tofloor=90&amp;fromuserid=1000">查看完整回复</a>'
-          }}
-          loading={false}
-          onOpenTopic={onOpenTopic}
-          onRetry={jest.fn()}
-        />
-      );
+    const view = await render(
+      <NotificationDetailScreen
+        contentWidth={360}
+        detail={{
+          notification: {
+            ...notification,
+            source: 'yaohuo',
+            kind: 'private-message',
+            target: {
+              type: 'message-detail',
+              messageId: '41',
+              url: 'https://www.yaohuo.me/bbs/messagelist_view.aspx?id=41'
+            }
+          },
+          title: '妖火私信',
+          contentHtml:
+            '<a href="https://www.yaohuo.me/bbs-321.html">查看主题帖</a> | <a href="https://www.yaohuo.me/bbs/book_re.aspx?classid=177&amp;id=321&amp;tofloor=90&amp;fromuserid=1000">查看完整回复</a>'
+        }}
+        loading={false}
+        onOpenExternalUrl={onOpenExternalUrl}
+        onOpenTopic={onOpenTopic}
+        onRetry={jest.fn()}
+      />
+    );
 
-      await fireEvent.press(view.getByRole('link', { name: '查看主题帖' }));
-      await fireEvent.press(view.getByRole('link', { name: '查看完整回复' }));
+    await fireEvent.press(view.getByRole('link', { name: '查看主题帖' }));
+    await fireEvent.press(view.getByRole('link', { name: '查看完整回复' }));
 
-      expect(openURL).not.toHaveBeenCalled();
-      expect(onOpenTopic).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: '321', source: 'yaohuo' }));
-      expect(onOpenTopic).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: '321', source: 'yaohuo' }), {
-        floor: 90
-      });
-    } finally {
-      openURL.mockRestore();
-    }
+    expect(onOpenExternalUrl).not.toHaveBeenCalled();
+    expect(onOpenTopic).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: '321', source: 'yaohuo' }));
+    expect(onOpenTopic).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: '321', source: 'yaohuo' }), {
+      floor: 90
+    });
   });
 
   it('distinguishes topic replies from notifications that are read-only at the source', async () => {

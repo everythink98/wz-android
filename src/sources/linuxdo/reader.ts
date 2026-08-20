@@ -584,7 +584,19 @@ export async function getLinuxDoTopic(
   }
   const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const [firstPost, ...replyPosts] = posts;
-  const firstPostFields = discoursePostFields(firstPost);
+  const firstPostRecord = isRecord(firstPost) ? firstPost : undefined;
+  const polls = discoursePolls(firstPost);
+  const preparedDeletedOpening =
+    firstPostRecord?.user_deleted === true && !firstPostRecord.deleted_at
+      ? prepareLinuxDoContent(firstPostRecord.cooked, polls, {
+          checkRenderability: true,
+          role: 'opening',
+          topicId: id
+        })
+      : undefined;
+  const firstPostFields = discoursePostFields(firstPost, {
+    allowUserDeletedPlaceholder: preparedDeletedOpening?.hasRenderableContent
+  });
   if (!firstPostFields) {
     throw new Error('linux.do 主题正文解析失败');
   }
@@ -602,16 +614,17 @@ export async function getLinuxDoTopic(
   );
   const totalPosts = stream.length || (topic.replyCount || 0) + 1;
   const replyHasMore = totalPosts > initialReplyPosts.length + 1;
-  const polls = discoursePolls(firstPost);
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   if (options.signal?.aborted) {
     throw new Error(REQUEST_CANCELED_MESSAGE);
   }
-  const preparedContent = prepareLinuxDoContent(firstPostFields.cookedHtml, polls, {
-    role: 'opening',
-    topicId: topic.id
-  }).preparedContent;
+  const preparedContent =
+    preparedDeletedOpening?.preparedContent ||
+    prepareLinuxDoContent(firstPostFields.cookedHtml, polls, {
+      role: 'opening',
+      topicId: topic.id
+    }).preparedContent;
   const result = {
     ...topic,
     accessRequirement: undefined,

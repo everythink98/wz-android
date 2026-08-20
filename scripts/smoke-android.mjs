@@ -87,6 +87,20 @@ function runAdb(args, { allowFailure = false } = {}) {
   return String(result.stdout || '');
 }
 
+function readFirstInstallTime(deviceId, phase, runAdbCommand = runAdb) {
+  let output;
+  try {
+    output = runAdbCommand(['-s', deviceId, 'shell', 'dumpsys', 'package', appPackage]);
+  } catch {
+    output = '';
+  }
+  const values = [...String(output).matchAll(/^[ \t]*firstInstallTime=([^\r\n]*)$/gm)].map((match) => match[1].trim());
+  if (values.length !== 1 || !values[0]) {
+    throw new Error(`BLOCKED_BY_ENV：覆盖安装${phase}无法读取 ${appPackage} 的 firstInstallTime，已停止 Smoke。`);
+  }
+  return values[0];
+}
+
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -134,8 +148,25 @@ function resolveApkPath(value) {
   return apkPath;
 }
 
-export function withSmokeSession({ selectedDevice, runAgentDeviceCommand = runAgentDevice }, action) {
-  const [, deviceName] = deviceSelectionArgs(selectedDevice);
+export function withSmokeSession(
+  { selectedDevice, runAdbCommand = runAdb, runAgentDeviceCommand = runAgentDevice },
+  action
+) {
+  const [, configuredDevice] = deviceSelectionArgs(selectedDevice);
+  let deviceName = configuredDevice;
+  if (/^emulator-\d+$/.test(configuredDevice)) {
+    let avdOutput = '';
+    try {
+      avdOutput = runAdbCommand(['-s', configuredDevice, 'emu', 'avd', 'name']);
+    } catch {
+      // The fail-closed error below intentionally omits raw ADB output.
+    }
+    const [avdName = ''] = String(avdOutput).trim().split(/\r?\n/, 1);
+    if (!avdName || avdName === 'OK' || avdName.startsWith('KO:')) {
+      throw new Error(`BLOCKED_BY_ENV：无法将 Android emulator ID ${configuredDevice} 解析为 AVD 名，未启动 Smoke。`);
+    }
+    deviceName = avdName;
+  }
   runAgentDeviceCommand(['boot', '--session', smokeSession, '--platform', 'android', '--device', deviceName], {
     cwd: rootDir
   });
@@ -165,6 +196,8 @@ export function runApkSanity({
   runAgentDeviceCommand = runAgentDevice,
   verifySessionLog
 }) {
+  const firstInstallTimeBefore = readFirstInstallTime(device.id, '前', runAdbCommand);
+  let installFailure;
   try {
     runAgentDeviceCommand(
       [
@@ -180,8 +213,16 @@ export function runApkSanity({
       { cwd: rootDir }
     );
   } catch (error) {
+    installFailure = error;
+  }
+
+  const firstInstallTimeAfter = readFirstInstallTime(device.id, '后', runAdbCommand);
+  if (firstInstallTimeAfter !== firstInstallTimeBefore) {
+    throw new Error(`BLOCKED_BY_ENV：覆盖安装改变了 ${appPackage} 的 firstInstallTime，已在首次启动前停止 Smoke。`);
+  }
+  if (installFailure) {
     throw new Error(
-      `BLOCKED_BY_ENV：覆盖安装失败；未卸载 App，也未清数据、Cookie 或登录态。${error instanceof Error ? ` ${error.message}` : ''}`
+      `BLOCKED_BY_ENV：覆盖安装失败；未卸载 App，也未清数据、Cookie 或登录态。${installFailure instanceof Error ? ` ${installFailure.message}` : ''}`
     );
   }
 
