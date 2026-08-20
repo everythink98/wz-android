@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  canSubmitReplyToTopic,
   applyEditedReplyContent,
   matchesReplyRefreshTarget,
   markCurrentNodeSeekOwnRepliesUnlikable,
@@ -14,22 +13,6 @@ import {
 import type { Reply, UserProfile } from '@/domain/forum/models';
 
 describe('topic action controller helpers', () => {
-  it('[REG-XIAOYINSI-007] requires the server topic permission before submitting a 小隐寺 reply', () => {
-    const topic = {
-      source: 'xiaoyinsi' as const,
-      id: '42',
-      title: '小隐寺主题',
-      author: 'alice',
-      url: 'https://forum.xiaoyinsi.com/t/topic/42',
-      createdAt: '2026-07-18T00:00:00.000Z',
-      replyCount: 0
-    };
-
-    expect(canSubmitReplyToTopic({ ...topic, canCreatePost: true })).toBe(true);
-    expect(canSubmitReplyToTopic({ ...topic, canCreatePost: false })).toBe(false);
-    expect(canSubmitReplyToTopic(topic)).toBe(false);
-  });
-
   it('uses different request keys for different non-optimistic actions on the same topic', () => {
     const topicKey = 'yaohuo:123';
 

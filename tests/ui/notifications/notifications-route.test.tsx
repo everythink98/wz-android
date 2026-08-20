@@ -150,7 +150,6 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
     activeSources: ['nodeseek'],
     backgroundEnabled: false,
     backgroundError: '',
-    beginXiaoyinsiAuthorization: jest.fn(),
     composer: {
       ensureNodeImageApiKey: jest.fn(async () => 'node-image-key'),
       ensureWritableSession: jest.fn(async (source) => ({
@@ -179,8 +178,7 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
     setSourceEnabled: jest.fn(async () => undefined),
     snapshotErrors: {},
     state: defaultNotificationState(),
-    unreadTotal: 0,
-    xiaoyinsiNeedsUpgrade: false
+    unreadTotal: 0
   } as NotificationRouteRuntimeValue;
 }
 
@@ -1465,8 +1463,7 @@ describe('notification routes', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: sourceAdapter,
-        yaohuo: sourceAdapter,
-        xiaoyinsi: sourceAdapter
+        yaohuo: sourceAdapter
       },
       privateAccessAllowed: () => true,
       readAccess: async () => {
@@ -1527,8 +1524,7 @@ describe('notification routes', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: sourceAdapter,
-        yaohuo: sourceAdapter,
-        xiaoyinsi: sourceAdapter
+        yaohuo: sourceAdapter
       },
       privateAccessAllowed: () => true,
       readAccess: async () => {

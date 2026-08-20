@@ -102,17 +102,17 @@ describe('user query controller', () => {
     });
   });
 
-  it('[REG-SOURCE-011] reads a public Xiaoyinsi User while account identity remains pending', async () => {
+  it('[REG-SOURCE-011] reads a public LinuxDo User while account identity remains pending', async () => {
     const requested: UserReference = {
-      source: 'xiaoyinsi',
+      source: 'linuxdo',
       id: '7',
       username: 'alice',
-      url: 'https://forum.xiaoyinsi.com/u/alice'
+      url: 'https://linux.do/u/alice'
     };
     const profile: UserProfile = { ...user, ...requested, displayName: 'Alice', topics: [] };
     const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => profile);
     const hook = await renderUserController({
-      getIdentityBarriers: () => ['xiaoyinsi'],
+      getIdentityBarriers: () => ['linuxdo'],
       getUser: () => requested,
       getUserProfile
     });
@@ -124,7 +124,7 @@ describe('user query controller', () => {
       )
     );
     expect(getUserProfile).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'xiaoyinsi' }),
+      expect.objectContaining({ source: 'linuxdo' }),
       expect.objectContaining({ readPlanScope: 'public:omit' })
     );
   });

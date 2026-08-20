@@ -6,7 +6,6 @@ const epochs = {
   ...initialForumSessionEpochs,
   linuxdo: 2,
   nodeseek: 4,
-  xiaoyinsi: 6,
   yaohuo: 8
 };
 

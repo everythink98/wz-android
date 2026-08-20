@@ -64,8 +64,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       onSessionExpired,
       readAccess: async () => ({ fetcher: transport, identityKey: 'nodeseek:42', userId: '42' }),
@@ -98,8 +97,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess,
       sourceAllowed: () => false
@@ -158,8 +156,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess,
       sourceAllowed: () => allowed
@@ -203,8 +200,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => ({ fetcher: transport, identityKey: 'nodeseek:user', userId: 'user' }),
       sourceAllowed: () => allowed
@@ -253,8 +249,7 @@ describe('notification gateway', () => {
         adapters: {
           nodeseek: sourceAdapter,
           linuxdo: adapter('ok'),
-          yaohuo: adapter('ok'),
-          xiaoyinsi: adapter('ok')
+          yaohuo: adapter('ok')
         },
         privateAccessAllowed,
         readAccess: async () => ({ fetcher: transport, identityKey: 'nodeseek:user', userId: 'user' })
@@ -295,8 +290,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess,
       sourceAllowed: () => true
@@ -313,8 +307,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => ({ identityKey: 'nodeseek:user', userId: 'user' })
     });
@@ -329,8 +322,7 @@ describe('notification gateway', () => {
     const adapters: Record<NotificationSource, NotificationAdapter> = {
       nodeseek: adapter('ok'),
       linuxdo: adapter('fail'),
-      yaohuo: adapter('ok'),
-      xiaoyinsi: adapter('ok')
+      yaohuo: adapter('ok')
     };
     const readAccess = vi.fn(async (source: NotificationSource): Promise<NotificationAdapterAccess> => ({
       identityKey: `${source}:user`,
@@ -340,7 +332,7 @@ describe('notification gateway', () => {
 
     const result = await gateway.listAllPage({ sources: notificationSources });
 
-    expect(result.items.map((item) => item.source)).toEqual(['nodeseek', 'yaohuo', 'xiaoyinsi']);
+    expect(result.items.map((item) => item.source)).toEqual(['nodeseek', 'yaohuo']);
     expect(result.errors.linuxdo).toMatchObject({ message: 'source unavailable', kind: 'ordinary' });
   });
 
@@ -350,8 +342,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => ({ identityKey: 'nodeseek:old-user', userId: 'new-user' })
     });
@@ -366,8 +357,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => ({ identityKey: 'nodeseek:new-user', userId: 'new-user' })
     });
@@ -384,8 +374,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => ({ identityKey: 'nodeseek:new-user', userId: 'new-user' })
     });
@@ -412,8 +401,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => ({ identityKey: 'nodeseek:new-user', userId: 'new-user' })
     });
@@ -439,8 +427,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => ({ identityKey: 'nodeseek:new-user', userId: 'new-user' })
     });
@@ -459,8 +446,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => access
     });
@@ -484,50 +470,6 @@ describe('notification gateway', () => {
     expect(sourceAdapter.markRead).not.toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-031] validates identity, abort, content, and Xiaoyinsi write scope before replying', async () => {
-    const sourceAdapter = adapter('ok');
-    let canWrite = false;
-    const adapters = {
-      nodeseek: sourceAdapter,
-      linuxdo: adapter('ok'),
-      yaohuo: adapter('ok'),
-      xiaoyinsi: sourceAdapter
-    };
-    const item = {
-      source: 'xiaoyinsi' as const,
-      id: 'private-topic:201',
-      kind: 'private-message' as const,
-      actor: { name: 'Bob' },
-      title: '私信',
-      createdAt: null,
-      unread: false,
-      target: { type: 'private-conversation' as const, conversationId: '201' }
-    };
-    const gateway = createNotificationGateway({
-      adapters,
-      readAccess: async () => ({
-        identityKey: 'xiaoyinsi:user',
-        userId: 'user',
-        xiaoyinsiCredentials: {
-          apiKey: 'secret',
-          clientId: 'client',
-          scopes: canWrite ? ['read', 'write', 'notifications'] : ['read', 'notifications']
-        }
-      })
-    });
-
-    await expect(gateway.replyToConversation(item, '收到', 'xiaoyinsi:old-user')).rejects.toThrow('账号状态已变化');
-    await expect(gateway.replyToConversation(item, '收到', 'xiaoyinsi:user')).rejects.toThrow('小隐寺需要升级写入授权');
-    canWrite = true;
-    await expect(gateway.replyToConversation(item, '   ', 'xiaoyinsi:user')).rejects.toThrow('请输入回复内容');
-    const controller = new AbortController();
-    controller.abort();
-    await expect(gateway.replyToConversation(item, '收到', 'xiaoyinsi:user', controller.signal)).rejects.toMatchObject({
-      name: 'AbortError'
-    });
-    expect(sourceAdapter.replyToConversation).not.toHaveBeenCalled();
-  });
-
   it('[REG-NOTIFY-031] returns an unconfirmed reply without persisting its private body in diagnostics', async () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.replyToConversation = vi.fn(async () => ({ confirmed: false, message: '未确认' }));
@@ -535,8 +477,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => ({ identityKey: 'nodeseek:user', userId: 'user' })
     });
@@ -638,33 +579,9 @@ describe('notification gateway', () => {
     ]);
   });
 
-  it('[REG-NOTIFY-032] rejects Xiaoyinsi private-message image upload before transport without write scope', async () => {
-    const fetcher = vi.fn();
-    const gateway = createNotificationGateway({
-      readAccess: async () => ({
-        fetcher,
-        identityKey: 'xiaoyinsi:user',
-        userId: 'user',
-        xiaoyinsiCredentials: {
-          apiKey: 'secret',
-          clientId: 'client',
-          scopes: ['read', 'notifications']
-        }
-      })
-    });
-
-    await expect(
-      gateway.uploadReplyImage('xiaoyinsi', {
-        expectedIdentityKey: 'xiaoyinsi:user',
-        file: { uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png' }
-      })
-    ).rejects.toThrow('小隐寺需要升级写入授权');
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
   it('continues only sources that still have another page', async () => {
     const adapters = Object.fromEntries(
-      (['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as NotificationSource[]).map((source) => [
+      (['nodeseek', 'linuxdo', 'yaohuo'] as NotificationSource[]).map((source) => [
         source,
         {
           ...adapter('ok'),
@@ -712,8 +629,7 @@ describe('notification gateway', () => {
       adapters: {
         nodeseek: sourceAdapter,
         linuxdo: adapter('ok'),
-        yaohuo: adapter('ok'),
-        xiaoyinsi: adapter('ok')
+        yaohuo: adapter('ok')
       },
       readAccess: async () => ({ identityKey: 'nodeseek:user', userId: 'user' })
     });

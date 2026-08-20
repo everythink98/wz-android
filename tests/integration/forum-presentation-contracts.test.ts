@@ -210,10 +210,10 @@ describe('Android app utils', () => {
       id: 'alice',
       url: 'https://linux.do/u/alice'
     });
-    expect(parseForumUserLink('https://forum.xiaoyinsi.com/u/temple-user/activity')).toMatchObject({
-      source: 'xiaoyinsi',
+    expect(parseForumUserLink('https://linux.do/u/temple-user/activity')).toMatchObject({
+      source: 'linuxdo',
       id: 'temple-user',
-      url: 'https://forum.xiaoyinsi.com/u/temple-user'
+      url: 'https://linux.do/u/temple-user'
     });
     expect(parseForumUserLink('https://linux.do/u/alice/preferences')).toBeNull();
   });

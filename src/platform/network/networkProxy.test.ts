@@ -329,10 +329,10 @@ describe('network proxy settings', () => {
       recoverForumReadChannel: vi.fn(async () => result)
     };
 
-    await expect(recoverReadNetworkRuntime('xiaoyinsi', before.generation, { module })).resolves.toEqual(result);
+    await expect(recoverReadNetworkRuntime('linuxdo', before.generation, { module })).resolves.toEqual(result);
     expect(getReadNetworkRuntimeSnapshot()).toEqual({
       generation: result.generation,
-      triggerSource: 'xiaoyinsi'
+      triggerSource: 'linuxdo'
     });
   });
 

@@ -147,8 +147,7 @@ const categories: Category[] = [
     readRestricted: true
   },
   { source: 'nodeseek', id: 'daily', name: '日常' },
-  { source: 'yaohuo', id: '177', name: '妖火茶馆' },
-  { source: 'xiaoyinsi', id: '7', name: '寺务', slug: 'temple' }
+  { source: 'yaohuo', id: '177', name: '妖火茶馆' }
 ];
 const publicCandidateReadPlanScopes = { tags: 'public:omit', users: 'public:omit' };
 
@@ -264,8 +263,7 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
     v2ex: { ...DEFAULT_SEARCH_FILTERS.v2ex },
     linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo },
     nodeseek: { ...DEFAULT_SEARCH_FILTERS.nodeseek },
-    yaohuo: { ...DEFAULT_SEARCH_FILTERS.yaohuo },
-    xiaoyinsi: { ...DEFAULT_SEARCH_FILTERS.xiaoyinsi }
+    yaohuo: { ...DEFAULT_SEARCH_FILTERS.yaohuo }
   }));
 
   if (route === 'topic') {
@@ -451,7 +449,7 @@ function renderSearchScreen(
 }
 
 describe('Search state', () => {
-  it('[REG-SEARCH-020] keeps the five-source rail on the home compact tab geometry', async () => {
+  it('[REG-SEARCH-020] keeps the four-source rail on the home compact tab geometry', async () => {
     const view = await renderSearchScreen();
     const tab = view.getByTestId('search-source-all');
     expect(StyleSheet.flatten(tab.props.style).minHeight).toBe(40);
@@ -480,7 +478,7 @@ describe('Search state', () => {
 
   it('[REG-SEARCH-025][REG-PERF-018] keeps settled route results stable across an unrelated runtime rerender', async () => {
     appQueryClient.clear();
-    const enabledSources = ['xiaoyinsi', 'yaohuo'] as const;
+    const enabledSources = ['v2ex', 'yaohuo'] as const;
     const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
     const loginMessage = '妖火需要登录后使用此功能。';
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
@@ -491,10 +489,10 @@ describe('Search state', () => {
         items: [
           {
             ...firstTopic,
-            source: 'xiaoyinsi',
+            source: 'v2ex',
             id: `${source}-route-result`,
-            title: '小隐寺公开搜索正常结算',
-            url: 'https://www.xiaoyinsi.com/t/route-result'
+            title: 'V2EX 公开搜索正常结算',
+            url: 'https://www.v2ex.com/t/route-result'
           }
         ],
         errors: {},
@@ -524,7 +522,7 @@ describe('Search state', () => {
     await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
     await fireEvent.press(view.getByLabelText('提交搜索'));
 
-    await waitFor(() => expect(view.getByText('小隐寺公开搜索正常结算')).toBeTruthy());
+    await waitFor(() => expect(view.getByText('V2EX 公开搜索正常结算')).toBeTruthy());
     expect(view.getAllByText(loginMessage)).toHaveLength(1);
     expect(view.getByLabelText('搜索关键词').props.value).toBe('codex');
     expect(searchTopics).toHaveBeenCalledTimes(2);
@@ -542,7 +540,7 @@ describe('Search state', () => {
 
   it('[REG-LINUXDO-006] gates candidate reads by the selected source during linux.do verification', async () => {
     appQueryClient.clear();
-    const enabledSources = ['linuxdo', 'xiaoyinsi'] as const;
+    const enabledSources = ['linuxdo'] as const;
     const sessionViewModels = createSiteSessionViewModels(
       createSiteSessionStates({
         linuxdo: {
@@ -557,23 +555,10 @@ describe('Search state', () => {
             url: 'https://linux.do/u/linux-tester',
             topics: []
           }
-        },
-        xiaoyinsi: {
-          site: 'xiaoyinsi',
-          status: 'logged-in',
-          cookieSummary: ['session-present'],
-          isVerifying: false,
-          currentUser: {
-            source: 'xiaoyinsi',
-            id: '7',
-            username: 'tester',
-            url: 'https://www.xiaoyinsi.com/u/tester',
-            topics: []
-          }
         }
       })
     );
-    const searchTagOptions = jest.fn<ReadGateway['searchTagOptions']>(async () => [{ name: '小隐寺候选' }]);
+    const searchTagOptions = jest.fn<ReadGateway['searchTagOptions']>(async () => [{ name: 'linux.do候选' }]);
     const readGateway = {
       getReadPlan: (source: Source, operation: ForumReadOperation) =>
         routeReadPlan(source, operation, enabledSources, sessionViewModels, true),
@@ -594,23 +579,10 @@ describe('Search state', () => {
       </SearchRouteRuntimeProvider>
     );
 
-    await fireEvent.press(view.getByTestId('search-source-xiaoyinsi'));
-    await waitFor(() =>
-      expect(view.getByTestId('search-source-xiaoyinsi').props.accessibilityState).toMatchObject({ selected: true })
-    );
-    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-    await fireEvent.press(view.getByLabelText('选择标签'));
-
-    await waitFor(() => expect(view.getByLabelText('标签 小隐寺候选')).toBeTruthy());
-    expect(searchTagOptions).toHaveBeenCalledWith(expect.objectContaining({ source: 'xiaoyinsi' }), expect.anything());
-
-    await fireEvent.press(view.getAllByLabelText('关闭标签选择').at(-1)!);
-    await fireEvent.press(view.getByTestId('search-filter-close'));
     await fireEvent.press(view.getByTestId('search-source-linuxdo'));
     await waitFor(() =>
       expect(view.getByTestId('search-source-linuxdo').props.accessibilityState).toMatchObject({ selected: true })
     );
-    searchTagOptions.mockClear();
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByLabelText('选择标签'));
     await act(async () => {
@@ -793,8 +765,7 @@ describe('Search state', () => {
         { source: 'v2ex', label: 'V2EX', items: [] },
         { source: 'linuxdo', label: 'linux.do', items: [] },
         { source: 'nodeseek', label: 'NodeSeek', items: [] },
-        { source: 'yaohuo', label: '妖火', items: [] },
-        { source: 'xiaoyinsi', label: '小隐寺', items: [] }
+        { source: 'yaohuo', label: '妖火', items: [] }
       ]
     });
     const header = view.getByTestId('search-all-sources-settled').children[0];
@@ -1261,7 +1232,7 @@ describe('Search state', () => {
     expect(view.queryByTestId('search-load-more-v2ex-page-2')).toBeNull();
   });
 
-  it('applies linux.do, NodeSeek, Yaohuo and 小隐寺 filters without leaking state between sites', async () => {
+  it('applies linux.do, NodeSeek and Yaohuo filters without leaking state between sites', async () => {
     const view = await render(<SearchHarness initialSource="linuxdo" />);
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
@@ -1294,13 +1265,6 @@ describe('Search state', () => {
     await fireEvent.press(view.getByText('妖火茶馆'));
     await fireEvent.press(view.getByText('确认筛选'));
     expect(view.getByLabelText('打开搜索筛选，当前妖火茶馆')).toBeTruthy();
-
-    await fireEvent.press(view.getByTestId('search-source-xiaoyinsi'));
-    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-    await fireEvent.press(view.getByLabelText('选择分类'));
-    await fireEvent.press(view.getByLabelText('分类 寺务'));
-    await fireEvent.press(view.getByText('确认筛选'));
-    expect(view.getByLabelText('打开搜索筛选，当前寺务')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('search-source-linuxdo'));
     expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · alice · 7天')).toBeTruthy();
@@ -1427,46 +1391,6 @@ describe('Search state', () => {
     await waitFor(() => expect(view.getByLabelText('标签 新分类候选')).toBeTruthy());
   });
 
-  it('REG-SEARCH-001 hides tag candidates from the previous source while the new request is pending', async () => {
-    const xiaoyinsiResponse = Promise.withResolvers<{ name: string }[]>();
-    const onSearchDiscourseTags = jest.fn(({ source: candidateSource }: { source?: Source }) =>
-      candidateSource === 'xiaoyinsi' ? xiaoyinsiResponse.promise : Promise.resolve([{ name: 'linux.do 专属候选' }])
-    );
-    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
-
-    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-    await fireEvent.press(view.getByLabelText('选择标签'));
-    await waitFor(() => expect(view.getByLabelText('标签 linux.do 专属候选')).toBeTruthy());
-    await fireEvent.press(view.getByText('完成'));
-    await fireEvent.press(view.getByTestId('search-filter-close'));
-    await act(async () => {
-      view.rerender(
-        <SearchScreen
-          {...createSearchScreenProps({
-            searchSource: 'xiaoyinsi',
-            onSearchDiscourseTags
-          })}
-        />
-      );
-    });
-    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-    await fireEvent.press(view.getByLabelText('选择标签'));
-    await waitFor(() =>
-      expect(onSearchDiscourseTags).toHaveBeenCalledWith(
-        expect.objectContaining({
-          source: 'xiaoyinsi'
-        })
-      )
-    );
-
-    expect(view.queryByLabelText('标签 linux.do 专属候选')).toBeNull();
-    await act(async () => {
-      xiaoyinsiResponse.resolve([{ name: '小隐寺专属候选' }]);
-      await xiaoyinsiResponse.promise;
-    });
-    await waitFor(() => expect(view.getByLabelText('标签 小隐寺专属候选')).toBeTruthy());
-  });
-
   it('selects a hierarchical linux.do category and author from searchable candidates', async () => {
     const view = await render(<SearchHarness initialSource="linuxdo" />);
 
@@ -1575,53 +1499,6 @@ describe('Search state', () => {
         minViews: 100,
         maxViews: 1000,
         siteExtension: { source: 'linuxdo', expertResponse: true }
-      })
-    );
-  });
-
-  it('applies the safe standard Discourse filters to 小隐寺 and routes its own candidates', async () => {
-    const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
-    const onSearchDiscourseTags = jest.fn(async () => [{ name: '公告', topicCount: 4 }]);
-    const onSearchDiscourseUsers = jest.fn(async () => [{ id: '7', username: 'alice', displayName: 'Alice' }]);
-    const view = await renderSearchScreen({
-      searchSource: 'xiaoyinsi',
-      onSearchFilterApply,
-      onSearchDiscourseTags,
-      onSearchDiscourseUsers
-    });
-
-    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-    expect(view.queryByLabelText('有专家回应')).toBeNull();
-    expect(view.queryByText('已解决')).toBeNull();
-    await fireEvent.press(view.getByText('标题'));
-    await fireEvent.press(view.getByLabelText('选择分类'));
-    await fireEvent.press(view.getByLabelText('分类 寺务'));
-    await fireEvent.press(view.getByLabelText('选择标签'));
-    await waitFor(() => expect(view.getByLabelText('标签 公告')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('标签 公告'));
-    await fireEvent.press(view.getByText('完成'));
-    await fireEvent.press(view.getByLabelText('展开更多筛选'));
-    await fireEvent.press(view.getByText('我读过'));
-    await fireEvent.press(view.getByText('已解决'));
-    await fireEvent.press(view.getByText('最新'));
-    await fireEvent.press(view.getByLabelText('选择作者'));
-    await fireEvent.changeText(view.getByLabelText('搜索作者'), 'ali');
-    await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('用户 alice'));
-    await fireEvent.press(view.getByText('确认筛选'));
-
-    expect(onSearchDiscourseTags).toHaveBeenCalledWith(expect.objectContaining({ source: 'xiaoyinsi' }));
-    expect(onSearchDiscourseUsers).toHaveBeenCalledWith(expect.objectContaining({ source: 'xiaoyinsi' }));
-    expect(onSearchFilterApply).toHaveBeenCalledWith(
-      'xiaoyinsi',
-      expect.objectContaining({
-        scope: 'title',
-        category: '7',
-        tags: ['公告'],
-        visited: ['seen'],
-        status: 'solved',
-        username: 'alice',
-        order: 'latest'
       })
     );
   });

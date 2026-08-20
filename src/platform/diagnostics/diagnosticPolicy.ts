@@ -418,12 +418,6 @@ const parserVariantValues = closedValues(
   'search-empty-query',
   'sov2ex-search',
   'static-categories',
-  'xiaoyinsi-discourse-categories',
-  'xiaoyinsi-discourse-feed',
-  'xiaoyinsi-discourse-replies',
-  'xiaoyinsi-discourse-search',
-  'xiaoyinsi-discourse-topic',
-  'xiaoyinsi-discourse-user',
   'unsupported-replies'
 );
 
@@ -882,9 +876,7 @@ export function endpointClass(value: string, method?: string) {
       host === 'v2ex.com' ||
       host.endsWith('.v2ex.com') ||
       host === 'yaohuo.me' ||
-      host.endsWith('.yaohuo.me') ||
-      host === 'forum.xiaoyinsi.com' ||
-      host.endsWith('.forum.xiaoyinsi.com')
+      host.endsWith('.yaohuo.me')
     ) {
       return endpointTypeFromPath(url.pathname, method);
     }

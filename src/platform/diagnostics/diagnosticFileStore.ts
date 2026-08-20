@@ -36,7 +36,6 @@ export type DiagnosticExportMetadata = {
   theme?: 'light' | 'dark';
   versionCode: number;
   yaohuoSession?: DiagnosticSessionStatus;
-  xiaoyinsiSession?: DiagnosticSessionStatus;
 };
 
 type GlobalErrorHandler = ((error: unknown, isFatal?: boolean) => void) & {
@@ -237,7 +236,6 @@ function metadataLine(metadata: DiagnosticExportMetadata) {
     nodeSeekSession: safeSessionStatus(metadata.nodeSeekSession),
     linuxDoSession: safeSessionStatus(metadata.linuxDoSession),
     yaohuoSession: safeSessionStatus(metadata.yaohuoSession),
-    xiaoyinsiSession: safeSessionStatus(metadata.xiaoyinsiSession),
     proxyEnabled: metadata.proxyEnabled === true
   });
 }

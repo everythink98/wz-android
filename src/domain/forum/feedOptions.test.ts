@@ -33,9 +33,9 @@ describe('Android feed category rail', () => {
       { value: 'new-replies', label: '新·回复' }
     ]);
     expect(feedFilterItems('linuxdo')).toEqual(feedDiscourseFilterItems);
-    expect(feedFilterItems('xiaoyinsi')).toEqual(feedDiscourseFilterItems);
+    expect(feedFilterItems('linuxdo')).toEqual(feedDiscourseFilterItems);
     expect(shouldUseFeedFilter('linuxdo')).toBe(true);
-    expect(shouldUseFeedFilter('xiaoyinsi')).toBe(true);
+    expect(shouldUseFeedFilter('linuxdo')).toBe(true);
   });
 
   it('shows only real list filters for sources that support them', () => {

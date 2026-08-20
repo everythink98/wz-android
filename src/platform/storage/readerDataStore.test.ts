@@ -43,8 +43,7 @@ const defaultContentSources = [
   { source: 'v2ex', enabled: true },
   { source: 'linuxdo', enabled: true },
   { source: 'nodeseek', enabled: true },
-  { source: 'yaohuo', enabled: true },
-  { source: 'xiaoyinsi', enabled: true }
+  { source: 'yaohuo', enabled: true }
 ] as const;
 
 const topic: Topic = {
@@ -129,9 +128,8 @@ describe('reader data store', () => {
       JSON.stringify({
         ...data.settings,
         contentSources: [
-          { source: 'xiaoyinsi', enabled: false },
-          { source: 'v2ex', enabled: true },
           { source: 'linuxdo', enabled: false },
+          { source: 'v2ex', enabled: true },
           { source: 'nodeseek', enabled: true },
           { source: 'yaohuo', enabled: false }
         ]
@@ -141,9 +139,8 @@ describe('reader data store', () => {
     await expect(loadReaderData()).resolves.toMatchObject({
       settings: {
         contentSources: [
-          { source: 'xiaoyinsi', enabled: false },
-          { source: 'v2ex', enabled: true },
           { source: 'linuxdo', enabled: false },
+          { source: 'v2ex', enabled: true },
           { source: 'nodeseek', enabled: true },
           { source: 'yaohuo', enabled: false }
         ]
@@ -219,8 +216,7 @@ describe('reader data store', () => {
         { source: 'v2ex', enabled: true },
         { source: 'linuxdo', enabled: true },
         { source: 'nodeseek', enabled: true },
-        { source: 'yaohuo', enabled: true },
-        { source: 'xiaoyinsi', enabled: true }
+        { source: 'yaohuo', enabled: true }
       ]
     });
 
@@ -231,8 +227,7 @@ describe('reader data store', () => {
         { source: 'v2ex', enabled: true },
         { source: 'linuxdo', enabled: true },
         { source: 'nodeseek', enabled: true },
-        { source: 'yaohuo', enabled: true },
-        { source: 'xiaoyinsi', enabled: true }
+        { source: 'yaohuo', enabled: true }
       ]
     });
   });

@@ -46,15 +46,4 @@ describe('foreground notification access', () => {
 
     expect(fetcher).not.toHaveBeenCalled();
   });
-
-  it('rejects a legacy Xiaoyinsi credential', async () => {
-    await expect(
-      readForegroundNotificationAccess({
-        source: 'xiaoyinsi',
-        session: session('xiaoyinsi'),
-        fetcher: vi.fn<typeof fetch>(),
-        loadXiaoyinsiCredentials: async () => ({ apiKey: 'key', clientId: 'client', scopes: ['read', 'write'] })
-      })
-    ).rejects.toThrow('升级授权');
-  });
 });

@@ -101,7 +101,7 @@ function readerDataWithEnabledSources(enabledSources: readonly Source[]) {
   };
 }
 
-describe('小隐寺 Feed controller', () => {
+describe('Feed controller sessions', () => {
   afterEach(async () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -208,11 +208,11 @@ describe('小隐寺 Feed controller', () => {
 
   it('[REG-SOURCE-011] does not pause public Feed or Categories while identity reconciliation is pending', async () => {
     const topic: Topic = {
-      source: 'xiaoyinsi',
+      source: 'linuxdo',
       id: 'public-topic',
       title: '公开主题',
       author: 'alice',
-      url: 'https://forum.xiaoyinsi.com/t/public-topic',
+      url: 'https://linux.do/t/public-topic',
       createdAt: '2026-08-10T00:00:00.000Z',
       replyCount: 0
     };
@@ -236,10 +236,10 @@ describe('小隐寺 Feed controller', () => {
     const hook = await renderHook(() =>
       useFeedRuntime({
         active: true,
-        identityBarriers: ['xiaoyinsi'],
+        identityBarriers: ['linuxdo'],
         linuxDoVerificationActive: false,
         notify: jest.fn(),
-        readerData: readerDataWithEnabledSources(['xiaoyinsi']),
+        readerData: readerDataWithEnabledSources(['linuxdo']),
         readerDataLoaded: true,
         readGateway: { getCategories, getFeed } as unknown as ReadGateway,
         showLinuxDoVerification: jest.fn(),
@@ -252,10 +252,10 @@ describe('小隐寺 Feed controller', () => {
     await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(hook.result.current.shownFeedItems).toEqual([topic]));
     expect(getCategories.mock.calls[0]?.[1]).toMatchObject({
-      readPlanScopes: [['xiaoyinsi', 'public:omit']]
+      readPlanScopes: [['linuxdo', 'public:omit']]
     });
     expect(getFeed.mock.calls[0]?.[1]).toMatchObject({
-      readPlanScopes: [['xiaoyinsi', 'public:omit']]
+      readPlanScopes: [['linuxdo', 'public:omit']]
     });
   });
 
@@ -789,8 +789,7 @@ describe('小隐寺 Feed controller', () => {
       ['v2ex', 'public:omit'],
       ['linuxdo', 'public:omit'],
       ['nodeseek', 'public:omit'],
-      ['yaohuo', 'blocked:identity-pending'],
-      ['xiaoyinsi', 'public:omit']
+      ['yaohuo', 'blocked:identity-pending']
     ]);
   });
 
@@ -1481,10 +1480,10 @@ describe('小隐寺 Feed controller', () => {
     };
     const finalTopic: Topic = {
       ...cachedTopic,
-      source: 'xiaoyinsi',
+      source: 'linuxdo',
       id: 'final-selected',
-      title: '最终小隐寺结果',
-      url: 'https://xiaoyinsi.com/t/final-selected'
+      title: '最终 linux.do 结果',
+      url: 'https://linux.do/t/final-selected'
     };
     const lateRead = Promise.withResolvers<{
       items: Topic[];
@@ -1512,7 +1511,7 @@ describe('小隐寺 Feed controller', () => {
       if (source === 'nodeseek') {
         return lateRead.promise;
       }
-      if (source === 'xiaoyinsi') {
+      if (source === 'linuxdo') {
         return finalRead.promise;
       }
       throw new Error(`unexpected Feed request: ${source}`);
@@ -1579,7 +1578,7 @@ describe('小隐寺 Feed controller', () => {
     expect(getFeed).toHaveBeenLastCalledWith(expect.objectContaining({ source: 'nodeseek' }), expect.any(Object));
 
     await act(async () => {
-      hook.result.current.changeFeedSource('xiaoyinsi');
+      hook.result.current.changeFeedSource('linuxdo');
     });
     await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(3));
 
@@ -1587,7 +1586,7 @@ describe('小隐寺 Feed controller', () => {
       lateRead.resolve({ items: [lateTopic], errors: {}, hasMore: false, nextPage: null });
       await lateRead.promise;
     });
-    expect(hook.result.current.feedSource).toBe('xiaoyinsi');
+    expect(hook.result.current.feedSource).toBe('linuxdo');
     expect(hook.result.current.activeFeedState.items).not.toContainEqual(lateTopic);
 
     await act(async () => {
@@ -3536,89 +3535,4 @@ describe('小隐寺 Feed controller', () => {
       await waitFor(() => expect(hook.result.current.activeFeedState.loadMoreFailureSignal).toBeGreaterThan(0));
     }
   );
-
-  it('REG-XIAOYINSI-015 keeps its list filter state independent after a non-empty response', async () => {
-    const readGateway = {
-      getCategories: jest.fn(async () => ({
-        items: [
-          { source: 'v2ex', id: 'v2ex', name: 'V2EX' },
-          { source: 'linuxdo', id: 'linuxdo', name: 'linux.do' },
-          { source: 'nodeseek', id: 'nodeseek', name: 'NodeSeek' },
-          { source: 'yaohuo', id: 'yaohuo', name: '妖火' },
-          { source: 'xiaoyinsi', id: 'xiaoyinsi', name: '小隐寺' }
-        ]
-      })),
-      getFeed: jest.fn(async () => ({
-        items: [
-          {
-            source: 'xiaoyinsi' as const,
-            id: '1',
-            title: '小隐寺主题',
-            author: 'alice',
-            url: 'https://forum.xiaoyinsi.com/t/1',
-            createdAt: '2026-07-19T00:00:00.000Z',
-            replyCount: 0
-          }
-        ],
-        errors: {},
-        hasMore: false,
-        nextPage: null
-      })),
-      hasYaohuoCredential: jest.fn(async () => false)
-    } as unknown as ReadGateway;
-    const readerData = createEmptyReaderData();
-    const notify = jest.fn();
-    const showLinuxDoVerification = jest.fn();
-    const showNodeSeekVerification = jest.fn();
-    const showYaohuoLogin = jest.fn();
-    const hook = await renderHook(() =>
-      useFeedRuntime({
-        linuxDoVerificationActive: false,
-        notify,
-        readerData,
-        readerDataLoaded: true,
-        active: true,
-        showLinuxDoVerification,
-        showNodeSeekVerification,
-        showYaohuoLogin,
-        readGateway
-      })
-    );
-
-    await waitFor(() =>
-      expect(readGateway.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source: 'all' }), expect.any(Object))
-    );
-    await act(async () => {
-      hook.result.current.changeFeedSource('xiaoyinsi');
-    });
-    await waitFor(() =>
-      expect(readGateway.getFeed).toHaveBeenCalledWith(
-        expect.objectContaining({ source: 'xiaoyinsi', feedFilter: 'latest' }),
-        expect.any(Object)
-      )
-    );
-
-    await act(async () => {
-      hook.result.current.setFeedFilter('hot');
-    });
-
-    await waitFor(() =>
-      expect(readGateway.getFeed).toHaveBeenCalledWith(
-        expect.objectContaining({ source: 'xiaoyinsi', feedFilter: 'hot' }),
-        expect.any(Object)
-      )
-    );
-    expect(hook.result.current.feedFilter).toBe('hot');
-
-    await act(async () => {
-      hook.result.current.setFeedFilter('new-replies');
-    });
-    await waitFor(() =>
-      expect(readGateway.getFeed).toHaveBeenCalledWith(
-        expect.objectContaining({ source: 'xiaoyinsi', feedFilter: 'new-replies' }),
-        expect.any(Object)
-      )
-    );
-    expect(hook.result.current.feedFilter).toBe('new-replies');
-  });
 });

@@ -204,7 +204,6 @@ export function useTopicController({
     [
       sessionEpochs.linuxdo,
       sessionEpochs.nodeseek,
-      sessionEpochs.xiaoyinsi,
       sessionEpochs.yaohuo,
       selectedSource,
       selectedTopicId,
@@ -432,30 +431,11 @@ export function useTopicController({
   const replyNextPage = nextReplyCursor?.page ?? null;
   const replyNextOffset = nextReplyCursor?.offset ?? null;
 
-  const authoritativeReplyCount = repliesQuery.data?.pages.reduce<number | undefined>(
-    (confirmed, page) => (typeof page.totalCount === 'number' ? page.totalCount : confirmed),
-    undefined
-  );
   const replyRowsPartial = Boolean(
     repliesQuery.data?.pages.some((page) => page.completeness !== 'complete') ||
     (!repliesQuery.data && topicDetail?.replies.length && topicDetail.replyCompleteness !== 'complete')
   );
   const replyCollectionComplete = true;
-  useEffect(() => {
-    if (
-      selectedTopic?.source !== 'xiaoyinsi' ||
-      typeof authoritativeReplyCount !== 'number' ||
-      authoritativeReplyCount < 0
-    ) {
-      return;
-    }
-    queryClient.setQueryData<TopicDetail>(topicQueryKey, (current) =>
-      current && current.replyCount !== authoritativeReplyCount
-        ? { ...current, replyCount: authoritativeReplyCount }
-        : current
-    );
-  }, [authoritativeReplyCount, queryClient, selectedTopic?.source, topicQueryKey]);
-
   const rebuildRepliesFromDetail = useCallback(
     async (detail: TopicDetail, generation: number, clearOtherOrder = false) => {
       const ownsWindow = () =>

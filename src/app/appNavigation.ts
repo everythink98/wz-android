@@ -11,12 +11,6 @@ export function navigateMainTab(screen: keyof MainTabParamList) {
   navigationRef.dispatch(StackActions.popTo('MainTabs', { screen }));
 }
 
-export async function openXiaoyinsiAuthorization(beginAuthorization: () => Promise<unknown>) {
-  if (!navigationRef.isReady()) return null;
-  navigateMainTab('more');
-  return beginAuthorization();
-}
-
 function appScreenForRouteName(routeName?: string): Screen {
   if (routeName === 'Topic' || routeName === 'ReadingSettings') return 'topic';
   if (routeName === 'User') return 'user';

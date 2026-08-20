@@ -13,7 +13,7 @@ export interface ContentSourcePreference {
   enabled: boolean;
 }
 
-const initialDefaultSources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'];
+const initialDefaultSources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
 const defaultSources = [
   ...initialDefaultSources,
   ...sourceValues.filter((source) => !initialDefaultSources.includes(source))

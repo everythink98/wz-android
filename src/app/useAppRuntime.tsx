@@ -18,7 +18,7 @@ import { useAppLifecycleRuntime } from './useAppLifecycleRuntime';
 import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
 import type { NotificationRouteRuntimeValue } from '@/features/notifications/NotificationRoute';
 import { moreBadgeState as notificationMoreBadgeState } from '@/ui/navigation/moreBadge';
-import { openNotificationsRoute, openXiaoyinsiAuthorization } from './appNavigation';
+import { openNotificationsRoute } from './appNavigation';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { useContentSourceQueryCleanup } from './useContentSourceQueryCleanup';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -101,7 +101,6 @@ export function useAppRuntime() {
   } = accountRuntime.read;
   const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, onSessionExpired } =
     accountRuntime.write;
-  const { xiaoyinsiAuth: xiaoyinsiAuthController } = accountRuntime.center;
   const {
     closeTopmostSurface: closeTopmostAccountSurface,
     linuxDoVerificationVisible: showLinuxDoPanel,
@@ -109,16 +108,10 @@ export function useAppRuntime() {
     showLinuxDoVerification,
     showYaohuoLogin
   } = accountRuntime.hosts;
-  const beginXiaoyinsiAuthorization = useMemo(
-    () => () => openXiaoyinsiAuthorization(xiaoyinsiAuthController.beginAuthorization),
-    [xiaoyinsiAuthController.beginAuthorization]
-  );
   const nodeSeekMediaUserAgent = getNodeSeekUserAgent();
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek);
   const notificationsRuntime = useNotificationsRuntime({
     appActive,
-    authorizationRevision: xiaoyinsiAuthController.phase,
-    beginXiaoyinsiAuthorization,
     contentSourcesReady: readerDataLoaded,
     enabledNotificationSources,
     fetcher: networkProxyFetcher,
@@ -192,7 +185,6 @@ export function useAppRuntime() {
   const topicRouteRuntime = useMemo<TopicRouteRuntimeValue>(
     () => ({
       account: {
-        beginXiaoyinsiAuthorization,
         sessionEpochs: forumSessionEpochs,
         sessionViewModels: accountSessionViewModels,
         ensureNodeImageApiKey,
@@ -226,7 +218,6 @@ export function useAppRuntime() {
     [
       accountSessionViewModels,
       appActive,
-      beginXiaoyinsiAuthorization,
       commitReaderData,
       contentWidth,
       effectiveNodeSeekUserId,
@@ -413,22 +404,6 @@ export function useAppRuntime() {
           },
           nodeSeek: {
             checkIn: accountRuntime.center.checkIn
-          },
-          xiaoyinsiAuth: {
-            begin: accountRuntime.center.xiaoyinsiAuth.beginAuthorization,
-            cancel: accountRuntime.center.xiaoyinsiAuth.cancelAuthorization,
-            message: accountRuntime.center.xiaoyinsiAuth.message,
-            openBrowser: accountRuntime.center.xiaoyinsiAuth.openAuthorizationBrowser,
-            pending: accountRuntime.center.xiaoyinsiAuth.pending,
-            phase: accountRuntime.center.xiaoyinsiAuth.phase,
-            revoke: accountRuntime.center.xiaoyinsiAuth.revokeAuthorization,
-            secondsRemaining: accountRuntime.center.xiaoyinsiAuth.secondsRemaining
-          },
-          xiaoyinsiLevel: {
-            busy: accountRuntime.center.xiaoyinsiLevel.levelBusy,
-            error: accountRuntime.center.xiaoyinsiLevel.levelError,
-            profile: accountRuntime.center.xiaoyinsiLevel.levelProfile,
-            refresh: accountRuntime.center.xiaoyinsiLevel.refreshLevel
           }
         },
         surfaces: {

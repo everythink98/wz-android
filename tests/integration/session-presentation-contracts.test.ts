@@ -122,12 +122,6 @@ describe('site session prompts', () => {
           status: 'logged-in',
           cookieSummary: ['sid'],
           isVerifying: false
-        },
-        xiaoyinsi: {
-          site: 'xiaoyinsi',
-          status: 'logged-in',
-          cookieSummary: [],
-          isVerifying: false
         }
       })
     );
@@ -143,11 +137,7 @@ describe('site session prompts', () => {
       tone: 'danger'
     });
     expect(sessions.nodeseek.canWrite).toBe(false);
-    expect([sessions.linuxdo.canWrite, sessions.yaohuo.canWrite, sessions.xiaoyinsi.canWrite]).toEqual([
-      true,
-      true,
-      true
-    ]);
+    expect([sessions.linuxdo.canWrite, sessions.yaohuo.canWrite]).toEqual([true, true]);
   });
 
   it('uses site-specific search hints instead of one generic login prompt', () => {

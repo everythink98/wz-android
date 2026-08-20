@@ -10,13 +10,11 @@ import {
 import type { NotificationAdapter, NotificationAdapterAccess } from './notificationAdapter';
 import { sourceErrorFromUnknown } from './sourceErrors';
 import { notificationAdapters } from './notificationAdapters';
-import { xiaoyinsiCredentialsHaveScope } from '@/sources/xiaoyinsi/credentials';
 import type { NormalizedReplyImageAsset } from './imageUpload';
 import { replyImageMarkupForSource } from './imageUpload';
 import { uploadNodeSeekReplyImage } from '@/sources/nodeimage/upload';
 import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from './discourseActions';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
-import { runXiaoyinsiAction } from '@/sources/xiaoyinsi/actionClient';
 import { rejectUnauthorizedResponse, withFetchGuard } from '@/platform/network/request';
 
 export type NotificationAccessReader = (
@@ -297,9 +295,6 @@ export function createNotificationGateway({
         'mutate',
         async (trace) =>
           runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) => {
-            if (item.source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(access.xiaoyinsiCredentials, 'write')) {
-              throw new Error('小隐寺需要升级写入授权');
-            }
             if (!content.trim()) throw new Error('请输入回复内容');
             assertNotAborted(signal);
             return adapters[item.source].replyToConversation(item, content, access);
@@ -320,9 +315,6 @@ export function createNotificationGateway({
       return runWithNotificationDiagnostics(source, 'mutate', async (trace) =>
         runWithAccess(source, trace, options.signal, options.expectedIdentityKey, async (access) => {
           if (source === 'yaohuo') throw new Error('妖火私信仅支持纯文本');
-          if (source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(access.xiaoyinsiCredentials, 'write')) {
-            throw new Error('小隐寺需要升级写入授权');
-          }
           assertNotAborted(options.signal);
           let imageUrl = '';
           if (source === 'nodeseek') {
@@ -335,22 +327,13 @@ export function createNotificationGateway({
             });
           } else {
             const request = buildDiscourseSourceActionRequest(source, { type: 'upload', file: options.file });
-            const data =
-              source === 'linuxdo'
-                ? await runLinuxDoAction({
-                    fetcher: access.fetcher,
-                    request,
-                    signal: options.signal,
-                    timeoutMs: access.timeoutMs,
-                    userAgent: access.userAgent
-                  })
-                : await runXiaoyinsiAction({
-                    credentials: access.xiaoyinsiCredentials!,
-                    fetcher: access.fetcher,
-                    request,
-                    signal: options.signal,
-                    timeoutMs: access.timeoutMs
-                  });
+            const data = await runLinuxDoAction({
+              fetcher: access.fetcher,
+              request,
+              signal: options.signal,
+              timeoutMs: access.timeoutMs,
+              userAgent: access.userAgent
+            });
             imageUrl = discourseSourceUploadUrl(source, data);
           }
           assertNotAborted(options.signal);

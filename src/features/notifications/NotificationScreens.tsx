@@ -118,7 +118,6 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   sourcePending,
   sourceUnknown = false,
   unreadOnly,
-  xiaoyinsiNeedsUpgrade,
   onChangeCategory,
   onChangeSource,
   onChangeUnreadOnly,
@@ -126,8 +125,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onLoadMore,
   onMarkAll,
   onRefresh,
-  onRetrySource,
-  onUpgradeXiaoyinsi
+  onRetrySource
 }: {
   activeSources: readonly NotificationSource[];
   categories?: readonly NotificationCategory[];
@@ -144,7 +142,6 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   sourcePending: boolean;
   sourceUnknown?: boolean;
   unreadOnly: boolean;
-  xiaoyinsiNeedsUpgrade: boolean;
   onChangeCategory?: (categoryId: string) => void;
   onChangeSource: (source: NotificationFilterSource) => void;
   onChangeUnreadOnly: (value: boolean) => void;
@@ -153,7 +150,6 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onMarkAll: () => void;
   onRefresh: () => void;
   onRetrySource: (source: NotificationSource) => void;
-  onUpgradeXiaoyinsi: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
   const sourceItems = [
@@ -166,34 +162,29 @@ export const NotificationsScreen = memo(function NotificationsScreen({
     (item) => enabledSources.includes(item.source) && activeSources.includes(item.source)
   );
   const noEnabledSources = enabledSources.length === 0;
-  const needsXiaoyinsiUpgrade = !noEnabledSources && source === 'xiaoyinsi' && xiaoyinsiNeedsUpgrade;
   const emptyTitle = noEnabledSources
     ? '尚未启用内容源'
-    : needsXiaoyinsiUpgrade
-      ? '需要升级消息授权'
-      : sourcePending
-        ? '账号确认中'
-        : sourceUnknown
-          ? '账号状态暂不可确认'
-          : !sourceAvailable
-            ? '账号尚未就绪'
-            : unreadOnly
-              ? '暂无未读消息'
-              : '暂无消息';
+    : sourcePending
+      ? '账号确认中'
+      : sourceUnknown
+        ? '账号状态暂不可确认'
+        : !sourceAvailable
+          ? '账号尚未就绪'
+          : unreadOnly
+            ? '暂无未读消息'
+            : '暂无消息';
   const emptyText = noEnabledSources
     ? '请前往“更多”中的“内容源”面板启用想看的站点。'
     : !sourceAvailable
-      ? needsXiaoyinsiUpgrade
-        ? '原有读写授权仍然可用；升级授权后才能读取小隐寺消息。'
-        : sourcePending
-          ? source === 'all'
-            ? '正在确认已启用站点的账号身份；完成后会自动加载可用消息。'
-            : `正在确认${sourceCatalog[source].label}账号身份；完成后会自动加载消息。`
-          : sourceUnknown
-            ? '本次账号核对失败；消息请求已暂停，可在账号中心重试核对。'
-            : source === 'all'
-              ? '登录任一支持的站点后，就能在这里统一查看消息。'
-              : `请先登录 ${sourceCatalog[source].label}，并确认账号身份。`
+      ? sourcePending
+        ? source === 'all'
+          ? '正在确认已启用站点的账号身份；完成后会自动加载可用消息。'
+          : `正在确认${sourceCatalog[source].label}账号身份；完成后会自动加载消息。`
+        : sourceUnknown
+          ? '本次账号核对失败；消息请求已暂停，可在账号中心重试核对。'
+          : source === 'all'
+            ? '登录任一支持的站点后，就能在这里统一查看消息。'
+            : `请先登录 ${sourceCatalog[source].label}，并确认账号身份。`
       : unreadOnly
         ? '切换“只看未读”可查看已读消息。'
         : '原站有新消息时会显示在这里。';
@@ -298,11 +289,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
             <Text style={styles.stateText}>正在读取消息</Text>
           </View>
         ) : (
-          <EmptyState
-            title={emptyTitle}
-            text={emptyText}
-            action={needsXiaoyinsiUpgrade ? { label: '升级消息授权', run: onUpgradeXiaoyinsi } : undefined}
-          />
+          <EmptyState title={emptyTitle} text={emptyText} />
         )
       }
       ListFooterComponent={
@@ -322,13 +309,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   );
 });
 
-function sourceSettingStatus(
-  source: NotificationSource,
-  state: NotificationState,
-  sessions: SiteSessionViewModels,
-  xiaoyinsiNeedsUpgrade: boolean
-) {
-  if (source === 'xiaoyinsi' && xiaoyinsiNeedsUpgrade) return '需升级授权；开关意图会保留';
+function sourceSettingStatus(source: NotificationSource, state: NotificationState, sessions: SiteSessionViewModels) {
   if (sessions[source].identityTrust === 'unknown') {
     return '账号状态暂不可确认；开关意图会保留，可重试核对';
   }
@@ -344,11 +325,9 @@ export function NotificationSettingsScreen({
   permission,
   sessions,
   state,
-  xiaoyinsiNeedsUpgrade,
   onOpenSystemSettings,
   onToggleGlobal,
-  onToggleSource,
-  onUpgradeXiaoyinsi
+  onToggleSource
 }: {
   backgroundEnabled: boolean;
   backgroundError: string;
@@ -357,11 +336,9 @@ export function NotificationSettingsScreen({
   permission: NotificationPermissionState;
   sessions: SiteSessionViewModels;
   state: NotificationState;
-  xiaoyinsiNeedsUpgrade: boolean;
   onOpenSystemSettings: () => void;
   onToggleGlobal: (enabled: boolean) => void;
   onToggleSource: (source: NotificationSource, enabled: boolean) => void;
-  onUpgradeXiaoyinsi: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
   return (
@@ -392,19 +369,7 @@ export function NotificationSettingsScreen({
           <View key={source} style={styles.settingRow}>
             <View style={styles.settingBody}>
               <Text style={styles.settingLabel}>{sourceCatalog[source].label}</Text>
-              <Text style={styles.settingMeta}>
-                {sourceSettingStatus(source, state, sessions, xiaoyinsiNeedsUpgrade)}
-              </Text>
-              {source === 'xiaoyinsi' && xiaoyinsiNeedsUpgrade ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="升级小隐寺消息授权"
-                  style={styles.inlineAction}
-                  onPress={() => pressWithFeedback(onUpgradeXiaoyinsi)}
-                >
-                  <Text style={styles.inlineActionText}>升级授权</Text>
-                </Pressable>
-              ) : null}
+              <Text style={styles.settingMeta}>{sourceSettingStatus(source, state, sessions)}</Text>
             </View>
             <Switch
               accessibilityLabel={`${sourceCatalog[source].label} 消息通知`}

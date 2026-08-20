@@ -36,7 +36,6 @@ describe('forum Account read-attempt ownership', () => {
       linuxDoUserAgent: 'LinuxDo UA',
       nodeSeekUserAgent: 'NodeSeek UA',
       readManagedCookieHeader: async () => ({ status: 'ok' as const, header: '' }),
-      readXiaoyinsiAuthorization: async () => ({ authenticated: null as null }),
       signal: new AbortController().signal
     };
 
@@ -86,7 +85,6 @@ describe('forum Account read-attempt ownership', () => {
         linuxDoUserAgent: 'LinuxDo UA',
         nodeSeekUserAgent: 'NodeSeek UA',
         readManagedCookieHeader: async () => ({ status: 'ok', header: '' }),
-        readXiaoyinsiAuthorization: async () => ({ authenticated: null }),
         signal: controller.signal
       });
       await parsed.promise;

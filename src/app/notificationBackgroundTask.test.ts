@@ -75,7 +75,7 @@ describe('notification background task content-source allowlist', () => {
 
     await expect(mocks.task?.()).resolves.toBe('success');
     const firstDependencies = mocks.runWorker.mock.calls[0]![0];
-    expect(firstDependencies.sources).toEqual(['nodeseek', 'yaohuo', 'xiaoyinsi']);
+    expect(firstDependencies.sources).toEqual(['nodeseek', 'yaohuo']);
     await expect(firstDependencies.sourceAllowed('nodeseek')).resolves.toBe(false);
     await firstDependencies.system.dismissDigest('nodeseek', 'wz-message-nodeseek-nodeseek%3A7-a');
     expect(mocks.dismissExact).toHaveBeenCalledWith('wz-message-nodeseek-nodeseek%3A7-a');
@@ -84,7 +84,7 @@ describe('notification background task content-source allowlist', () => {
     expect(mocks.reconcile).toHaveBeenCalledWith('nodeseek', 'nodeseek:7', 'wz-message-nodeseek-nodeseek%3A7-a');
 
     await expect(mocks.task?.()).resolves.toBe('success');
-    expect(mocks.runWorker.mock.calls[1]![0].sources).toEqual(['linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi']);
+    expect(mocks.runWorker.mock.calls[1]![0].sources).toEqual(['linuxdo', 'nodeseek', 'yaohuo']);
     expect(mocks.loadReaderSettings).toHaveBeenCalledTimes(3);
   });
 });

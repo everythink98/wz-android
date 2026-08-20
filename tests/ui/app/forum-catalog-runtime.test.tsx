@@ -4,7 +4,7 @@ import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { aggregateFeedSources, type Source } from '@/domain/forum/sourceCatalog';
 
-const allSourcesKey = 'v2ex,linuxdo,nodeseek,yaohuo,xiaoyinsi';
+const allSourcesKey = 'v2ex,linuxdo,nodeseek,yaohuo';
 
 describe('forum catalog runtime', () => {
   it('[REG-LINUXDO-006] owns shared categories on Search and cancels them after leaving both readers', async () => {

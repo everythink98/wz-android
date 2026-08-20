@@ -190,8 +190,8 @@ describe('Reply composer local behavior', () => {
     expect(submitReply).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['nodeseek', 'linuxdo', 'xiaoyinsi', 'yaohuo'] as const)(
-    '[REG-XIAOYINSI-002] keeps the %s image upload entry on the local callback boundary',
+  it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
+    ' keeps the %s image upload entry on the local callback boundary',
     async (source) => {
       submitReply.mockClear();
       const onUploadReplyImage = jest.fn();
@@ -216,9 +216,9 @@ describe('Reply composer local behavior', () => {
 
     await linuxDoView.rerender(
       <ReplyHarness
-        key="xiaoyinsi"
-        discourseEmojiUrls={{ waving_hand: 'https://forum.xiaoyinsi.com/images/emoji/twitter/waving_hand.png?v=15' }}
-        source="xiaoyinsi"
+        key="linuxdo"
+        discourseEmojiUrls={{ waving_hand: 'https://linux.do/images/emoji/twitter/waving_hand.png?v=15' }}
+        source="linuxdo"
       />
     );
     await fireEvent.press(linuxDoView.getByLabelText('表情'));

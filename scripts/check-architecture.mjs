@@ -6,7 +6,7 @@ import ts from 'typescript';
 export const ROOT_MODULES = ['app', 'domain', 'features', 'platform', 'sources', 'ui'];
 
 const ROOT_MODULE_SET = new Set(ROOT_MODULES);
-const PROVIDER_MODULES = new Set(['linuxdo', 'nodeimage', 'nodeseek', 'v2ex', 'xiaoyinsi', 'yaohuo']);
+const PROVIDER_MODULES = new Set(['linuxdo', 'nodeimage', 'nodeseek', 'v2ex', 'yaohuo']);
 const ALLOWED_DEPENDENCIES = {
   app: new Set(ROOT_MODULES),
   domain: new Set(['domain']),
@@ -58,9 +58,7 @@ const ACCOUNT_RUNTIME_CENTER_CAPABILITIES = new Set([
   'credentials',
   'handleAccountCenterCommand',
   'nodeImage',
-  'webLoginUserId',
-  'xiaoyinsiAuth',
-  'xiaoyinsiLevel'
+  'webLoginUserId'
 ]);
 const ACCOUNT_RUNTIME_HOST_CAPABILITIES = new Set([
   'closePanels',

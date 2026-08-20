@@ -17,20 +17,19 @@ press id="notification-source-linuxdo"
 wait "id=\"notification-outcome-data-linuxdo\" || id=\"notification-outcome-empty-linuxdo\" || id=\"notification-outcome-partial-linuxdo\" || id=\"notification-outcome-error-linuxdo\" || id=\"notification-outcome-auth-linuxdo\"" 60000
 press id="notification-source-yaohuo"
 wait "id=\"notification-outcome-data-yaohuo\" || id=\"notification-outcome-empty-yaohuo\" || id=\"notification-outcome-partial-yaohuo\" || id=\"notification-outcome-error-yaohuo\" || id=\"notification-outcome-auth-yaohuo\"" 60000
-press id="notification-source-xiaoyinsi"
-wait "id=\"notification-outcome-data-xiaoyinsi\" || id=\"notification-outcome-empty-xiaoyinsi\" || id=\"notification-outcome-partial-xiaoyinsi\" || id=\"notification-outcome-error-xiaoyinsi\" || id=\"notification-outcome-auth-xiaoyinsi\"" 60000
+press id="notification-source-linuxdo"
+wait "id=\"notification-outcome-data-linuxdo\" || id=\"notification-outcome-empty-linuxdo\" || id=\"notification-outcome-partial-linuxdo\" || id=\"notification-outcome-error-linuxdo\" || id=\"notification-outcome-auth-linuxdo\"" 60000
 
 press role=switch label="只看未读"
-wait "id=\"notification-outcome-data-xiaoyinsi\" || id=\"notification-outcome-empty-xiaoyinsi\" || id=\"notification-outcome-partial-xiaoyinsi\" || id=\"notification-outcome-error-xiaoyinsi\" || id=\"notification-outcome-auth-xiaoyinsi\"" 60000
+wait "id=\"notification-outcome-data-linuxdo\" || id=\"notification-outcome-empty-linuxdo\" || id=\"notification-outcome-partial-linuxdo\" || id=\"notification-outcome-error-linuxdo\" || id=\"notification-outcome-auth-linuxdo\"" 60000
 press role=switch label="只看未读"
-wait "id=\"notification-outcome-data-xiaoyinsi\" || id=\"notification-outcome-empty-xiaoyinsi\" || id=\"notification-outcome-partial-xiaoyinsi\" || id=\"notification-outcome-error-xiaoyinsi\" || id=\"notification-outcome-auth-xiaoyinsi\"" 60000
+wait "id=\"notification-outcome-data-linuxdo\" || id=\"notification-outcome-empty-linuxdo\" || id=\"notification-outcome-partial-linuxdo\" || id=\"notification-outcome-error-linuxdo\" || id=\"notification-outcome-auth-linuxdo\"" 60000
 
 press label="消息通知设置"
 wait "text=\"后台检查已启用\" || text=\"已保留意图，后台当前暂停\" || text=\"已关闭\"" 10000
 wait text="NodeSeek" 10000
 wait text="linux.do" 10000
 wait text="妖火" 10000
-wait text="小隐寺" 10000
 back --system
 wait id="notification-source-all" 10000
 back --system

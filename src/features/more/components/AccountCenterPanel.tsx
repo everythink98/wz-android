@@ -608,18 +608,16 @@ export function AccountCenterPanel({
               />
             ) : null}
           </View>
-          {selectedView.site !== 'xiaoyinsi' ? (
-            <CredentialEditor
-              key={selectedView.site}
-              active={expanded && forcedSite !== selectedView.site}
-              site={selectedView.site}
-              view={selectedView}
-              accountStyles={accountStyles}
-              styles={styles}
-              theme={theme}
-              onCommand={onCommand}
-            />
-          ) : null}
+          <CredentialEditor
+            key={selectedView.site}
+            active={expanded && forcedSite !== selectedView.site}
+            site={selectedView.site}
+            view={selectedView}
+            accountStyles={accountStyles}
+            styles={styles}
+            theme={theme}
+            onCommand={onCommand}
+          />
           {loggedIn && selectedView.supportsCredentialFill ? (
             <View style={accountStyles.secondaryActions}>
               <AccountAction

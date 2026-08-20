@@ -145,19 +145,19 @@ jest.mock('lucide-react-native', () => {
 
 const readerData = createEmptyReaderData();
 const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
-const authorizedXiaoyinsiSessions = createSiteSessionViewModels(
+const authorizedLinuxDoSessions = createSiteSessionViewModels(
   createSiteSessionStates({
-    xiaoyinsi: {
-      site: 'xiaoyinsi',
+    linuxdo: {
+      site: 'linuxdo',
       status: 'logged-in',
       cookieSummary: [],
       isVerifying: false,
       currentUser: {
-        source: 'xiaoyinsi',
+        source: 'linuxdo',
         id: 'alice',
         username: 'alice',
         displayName: 'Alice',
-        url: 'https://forum.xiaoyinsi.com/u/alice',
+        url: 'https://linux.do/u/alice',
         topics: []
       }
     }
@@ -175,8 +175,6 @@ type MoreScreenOverrides = {
       linuxDoLevel?: Partial<MoreScreenProps['account']['center']['linuxDoLevel']>;
       nodeImageKey?: Partial<MoreScreenProps['account']['center']['nodeImageKey']>;
       nodeSeek?: Partial<MoreScreenProps['account']['center']['nodeSeek']>;
-      xiaoyinsiAuth?: Partial<MoreScreenProps['account']['center']['xiaoyinsiAuth']>;
-      xiaoyinsiLevel?: Partial<MoreScreenProps['account']['center']['xiaoyinsiLevel']>;
     };
     surfaces?: Partial<MoreScreenProps['account']['surfaces']>;
   };
@@ -192,7 +190,7 @@ type MoreScreenOverrides = {
 
 function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
   const account: MoreScreenProps['account'] = {
-    enabledSessionSources: ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'],
+    enabledSessionSources: ['nodeseek', 'linuxdo', 'yaohuo'],
     read: {
       sessions: sessionViewModels,
       statusBusy: false,
@@ -223,24 +221,6 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
       nodeSeek: {
         checkIn: jest.fn(),
         ...overrides.account?.center?.nodeSeek
-      },
-      xiaoyinsiAuth: {
-        begin: jest.fn(),
-        cancel: jest.fn(),
-        message: '',
-        openBrowser: jest.fn(),
-        pending: null,
-        phase: 'idle',
-        revoke: jest.fn(),
-        secondsRemaining: 0,
-        ...overrides.account?.center?.xiaoyinsiAuth
-      },
-      xiaoyinsiLevel: {
-        busy: false,
-        error: '',
-        profile: null,
-        refresh: jest.fn(),
-        ...overrides.account?.center?.xiaoyinsiLevel
       },
       ...(overrides.account?.center?.command ? { command: overrides.account.center.command } : {})
     },
@@ -312,54 +292,41 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
   };
 }
 
-function collectRenderedText(node: unknown): string[] {
-  if (typeof node === 'string') {
-    return [node];
-  }
-  if (Array.isArray(node)) {
-    return node.flatMap(collectRenderedText);
-  }
-  if (!node || typeof node !== 'object' || !('children' in node)) {
-    return [];
-  }
-  return collectRenderedText((node as { children?: unknown }).children);
-}
-
 describe('More screen state and actions', () => {
   it('does not mount or refresh account-specific content after its source is disabled', async () => {
-    const refreshXiaoyinsiLevel = jest.fn();
+    const refreshLinuxDoLevel = jest.fn();
     const view = await render(
       <MoreScreen
         {...moreProps({
           account: {
-            enabledSessionSources: ['xiaoyinsi', 'nodeseek'],
-            read: { sessions: authorizedXiaoyinsiSessions },
-            center: { xiaoyinsiLevel: { error: '暂不可用', refresh: refreshXiaoyinsiLevel } }
+            enabledSessionSources: ['linuxdo', 'nodeseek'],
+            read: { sessions: authorizedLinuxDoSessions },
+            center: { linuxDoLevel: { error: '暂不可用', refresh: refreshLinuxDoLevel } }
           }
         })}
       />
     );
 
     await fireEvent.press(view.getByLabelText('展开账号中心'));
-    await fireEvent.press(view.getByTestId('account-site-xiaoyinsi'));
-    await fireEvent.press(view.getByText('查看等级'));
-    expect(refreshXiaoyinsiLevel).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByTestId('account-site-linuxdo'));
+    await fireEvent.press(view.getByText('linux.do 等级'));
+    expect(refreshLinuxDoLevel).not.toHaveBeenCalled();
 
     await view.rerender(
       <MoreScreen
         {...moreProps({
           account: {
             enabledSessionSources: ['nodeseek'],
-            read: { sessions: authorizedXiaoyinsiSessions },
-            center: { xiaoyinsiLevel: { error: '', refresh: refreshXiaoyinsiLevel } }
+            read: { sessions: authorizedLinuxDoSessions },
+            center: { linuxDoLevel: { error: '', refresh: refreshLinuxDoLevel } }
           }
         })}
       />
     );
-    expect(view.queryByTestId('account-site-xiaoyinsi')).toBeNull();
+    expect(view.queryByTestId('account-site-linuxdo')).toBeNull();
     expect(view.queryByText('授权管理')).toBeNull();
-    expect(view.queryByText('查看等级')).toBeNull();
-    expect(refreshXiaoyinsiLevel).not.toHaveBeenCalled();
+    expect(view.queryByText('linux.do 等级')).toBeNull();
+    expect(refreshLinuxDoLevel).not.toHaveBeenCalled();
   });
 
   it('keeps all content sources in an accessible, collapsed settings-only panel', async () => {
@@ -394,12 +361,11 @@ describe('More screen state and actions', () => {
       'V2EX 内容源开关',
       'linux.do 内容源开关',
       'NodeSeek 内容源开关',
-      '妖火 内容源开关',
-      '小隐寺 内容源开关'
+      '妖火 内容源开关'
     ]);
     expect(sourceSwitches.every((control) => control.props.accessibilityState.checked === true)).toBe(true);
-    const firstHandle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 5 项');
-    const lastHandle = view.getByLabelText('拖动排序：小隐寺，第 5 项，共 5 项');
+    const firstHandle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
+    const lastHandle = view.getByLabelText('拖动排序：妖火，第 4 项，共 4 项');
     expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toMatchObject({
       marginHorizontal: 4
     });
@@ -423,8 +389,7 @@ describe('More screen state and actions', () => {
         { source: 'linuxdo', enabled: true },
         { source: 'v2ex', enabled: true },
         { source: 'nodeseek', enabled: true },
-        { source: 'yaohuo', enabled: true },
-        { source: 'xiaoyinsi', enabled: true }
+        { source: 'yaohuo', enabled: true }
       ]
     });
     expect(command).not.toHaveBeenCalled();
@@ -437,8 +402,7 @@ describe('More screen state and actions', () => {
         { source: 'v2ex', enabled: false },
         { source: 'linuxdo', enabled: true },
         { source: 'nodeseek', enabled: true },
-        { source: 'yaohuo', enabled: true },
-        { source: 'xiaoyinsi', enabled: true }
+        { source: 'yaohuo', enabled: true }
       ]
     });
     expect(view.getByLabelText('V2EX 内容源开关').props.accessibilityState.checked).toBe(true);
@@ -456,13 +420,7 @@ describe('More screen state and actions', () => {
         .getAllByRole('switch')
         .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'))
         .map((control) => control.props.accessibilityLabel)
-    ).toEqual([
-      'V2EX 内容源开关',
-      'linux.do 内容源开关',
-      'NodeSeek 内容源开关',
-      '妖火 内容源开关',
-      '小隐寺 内容源开关'
-    ]);
+    ).toEqual(['V2EX 内容源开关', 'linux.do 内容源开关', 'NodeSeek 内容源开关', '妖火 内容源开关']);
     expect(view.getByLabelText('V2EX 内容源开关').props.accessibilityState.checked).toBe(true);
     expect(JSON.stringify(persistedPreferences)).toBe(persistedSnapshot);
 
@@ -488,7 +446,7 @@ describe('More screen state and actions', () => {
     const disabledSourceSwitches = view
       .getAllByRole('switch')
       .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'));
-    expect(disabledSourceSwitches).toHaveLength(5);
+    expect(disabledSourceSwitches).toHaveLength(4);
     expect(disabledSourceSwitches.every((control) => control.props.accessibilityState.checked === false)).toBe(true);
   });
 
@@ -497,12 +455,12 @@ describe('More screen state and actions', () => {
     const view = await render(<MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} />);
     await fireEvent.press(view.getByLabelText('展开内容源'));
 
-    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'].entries()) {
+    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'].entries()) {
       await fireEvent(view.getByTestId(`content-source-row-${source}`), 'layout', {
         nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
       });
     }
-    const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 5 项');
+    const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
     await act(async () => {
       handle.props.onGestureStart({ translationY: 0 });
       for (let translationY = 1; translationY <= 20; translationY += 1) {
@@ -533,8 +491,7 @@ describe('More screen state and actions', () => {
         { source: 'linuxdo', enabled: true },
         { source: 'nodeseek', enabled: true },
         { source: 'v2ex', enabled: true },
-        { source: 'yaohuo', enabled: true },
-        { source: 'xiaoyinsi', enabled: true }
+        { source: 'yaohuo', enabled: true }
       ]
     });
 
@@ -557,7 +514,6 @@ describe('More screen state and actions', () => {
         { source: 'linuxdo', enabled: true },
         { source: 'nodeseek', enabled: true },
         { source: 'yaohuo', enabled: true },
-        { source: 'xiaoyinsi', enabled: true },
         { source: 'v2ex', enabled: true }
       ]
     });
@@ -594,14 +550,14 @@ describe('More screen state and actions', () => {
     const view = await render(<MoreScreen {...props} />);
     await fireEvent.press(view.getByLabelText('展开内容源'));
 
-    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'].entries()) {
+    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'].entries()) {
       await fireEvent(view.getByTestId(`content-source-row-${source}`), 'layout', {
         nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
       });
     }
     const v2exHost = view.getByTestId('content-source-row-v2ex');
     const linuxDoHost = view.getByTestId('content-source-row-linuxdo');
-    const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 5 项');
+    const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
     mockWithTiming.mockClear();
     await act(async () => {
       handle.props.onGestureStart({ translationY: 0 });
@@ -628,8 +584,7 @@ describe('More screen state and actions', () => {
       { source: 'linuxdo', enabled: true },
       { source: 'v2ex', enabled: true },
       { source: 'nodeseek', enabled: true },
-      { source: 'yaohuo', enabled: true },
-      { source: 'xiaoyinsi', enabled: true }
+      { source: 'yaohuo', enabled: true }
     ] as const;
     await view.rerender(
       <MoreScreen
@@ -648,15 +603,9 @@ describe('More screen state and actions', () => {
         .getAllByRole('switch')
         .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'))
         .map((control) => control.props.accessibilityLabel)
-    ).toEqual([
-      'V2EX 内容源开关',
-      'linux.do 内容源开关',
-      'NodeSeek 内容源开关',
-      '妖火 内容源开关',
-      '小隐寺 内容源开关'
-    ]);
-    expect(view.getByLabelText('拖动排序：linux.do，第 1 项，共 5 项')).toBeTruthy();
-    expect(view.getByLabelText('拖动排序：V2EX，第 2 项，共 5 项')).toBeTruthy();
+    ).toEqual(['V2EX 内容源开关', 'linux.do 内容源开关', 'NodeSeek 内容源开关', '妖火 内容源开关']);
+    expect(view.getByLabelText('拖动排序：linux.do，第 1 项，共 4 项')).toBeTruthy();
+    expect(view.getByLabelText('拖动排序：V2EX，第 2 项，共 4 项')).toBeTruthy();
     expect(view.getByTestId('content-source-row-v2ex')).toBe(v2exHost);
     expect(view.getByTestId('content-source-row-linuxdo')).toBe(linuxDoHost);
     expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toMatchObject({
@@ -667,7 +616,7 @@ describe('More screen state and actions', () => {
     });
 
     await act(async () =>
-      view.getByLabelText('拖动排序：V2EX，第 2 项，共 5 项').props.onGestureStart({ translationY: 0 })
+      view.getByLabelText('拖动排序：V2EX，第 2 项，共 4 项').props.onGestureStart({ translationY: 0 })
     );
     expect(dragTranslation?.value).toBe(0);
   });
@@ -833,190 +782,5 @@ describe('More screen state and actions', () => {
     await fireEvent.press(view.getByLabelText('4 次'));
 
     expect(updateSettings).toHaveBeenCalledWith({ nodeSeekRecoveryThreshold: 4 });
-  });
-
-  it('shows the 小隐寺 Device Code, countdown and browser/cancel actions without credential fields', async () => {
-    const onCancel = jest.fn();
-    const onOpenBrowser = jest.fn();
-    const pending = {
-      deviceCode: 'd'.repeat(64),
-      userCode: 'ABCD-2345',
-      verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
-      verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=safe',
-      nonce: 'e'.repeat(64),
-      createdAt: 1_000,
-      expiresAt: 601_000,
-      intervalMs: 5_000
-    };
-    const view = await render(
-      <MoreScreen
-        {...moreProps({
-          account: {
-            center: {
-              xiaoyinsiAuth: {
-                pending,
-                phase: 'waiting',
-                secondsRemaining: 599,
-                cancel: onCancel,
-                openBrowser: onOpenBrowser
-              }
-            }
-          }
-        })}
-      />
-    );
-
-    expect(await view.findByLabelText('小隐寺授权验证码 ABCD-2345')).toBeTruthy();
-    expect(view.getByText('剩余 09:59 · 返回阅坛后会自动继续检测')).toBeTruthy();
-    expect(view.queryByPlaceholderText('账号')).toBeNull();
-    expect(view.queryByPlaceholderText('密码')).toBeNull();
-    expect(
-      view.getByText(
-        '系统浏览器只打开一次性小隐寺授权页；阅坛登录态只由独立 User API Key 维护，不读取浏览器 Cookie，也不打开登录 WebView。'
-      )
-    ).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('复制验证码并前往授权页'));
-    await fireEvent.press(view.getByLabelText('取消'));
-    expect(onOpenBrowser).toHaveBeenCalledTimes(1);
-    expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it('[REG-XIAOYINSI-013][REG-XIAOYINSI-014] puts the level entry after authorization management for an authorized 小隐寺 account', async () => {
-    const onRefreshXiaoyinsiLevel = jest.fn();
-    const view = await render(
-      <MoreScreen
-        {...moreProps({
-          account: {
-            read: { sessions: authorizedXiaoyinsiSessions },
-            center: { xiaoyinsiLevel: { refresh: onRefreshXiaoyinsiLevel } }
-          }
-        })}
-      />
-    );
-
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
-    await fireEvent.press(view.getByTestId('account-site-xiaoyinsi'));
-
-    expect(view.getByText('授权管理')).toBeTruthy();
-    expect(view.getByText('User API Key 仅保存在本机，不读取浏览器 Cookie。')).toBeTruthy();
-    expect(view.getByText('查看等级')).toBeTruthy();
-    expect(view.getByLabelText('撤销授权')).toBeTruthy();
-    const renderedText = collectRenderedText(view.toJSON());
-    expect(renderedText.indexOf('撤销授权')).toBeLessThan(renderedText.indexOf('查看等级'));
-    await fireEvent.press(view.getByText('查看等级'));
-    expect(onRefreshXiaoyinsiLevel).toHaveBeenCalledTimes(1);
-    expect(view.queryByTestId('xiaoyinsi-level-settled')).toBeNull();
-  });
-
-  it('[REG-TEST-005] marks only settled level outcomes and keeps an error visible until refresh', async () => {
-    const onRefreshXiaoyinsiLevel = jest.fn();
-    const levelProfile: NonNullable<
-      ComponentProps<typeof MoreScreen>['account']['center']['xiaoyinsiLevel']['profile']
-    > = {
-      username: 'alice',
-      currentLevel: 2,
-      targetLevel: 3,
-      source: 'summary',
-      estimate: false,
-      note: '小隐寺当前账号统计',
-      requirements: [],
-      activity: {
-        daysVisited: 5,
-        topicsEntered: 20,
-        postsReadCount: 120,
-        timeRead: 3660,
-        likesGiven: 8,
-        likesReceived: 9,
-        postCount: 10,
-        topicCount: 2
-      },
-      achievedCount: 0,
-      totalCount: 0,
-      fetchedAt: '2026-07-26T01:00:00.000Z'
-    };
-    const view = await render(
-      <MoreScreen
-        {...moreProps({
-          account: {
-            read: { sessions: authorizedXiaoyinsiSessions },
-            center: {
-              xiaoyinsiLevel: { error: '限制 10 秒后再试', refresh: onRefreshXiaoyinsiLevel }
-            }
-          }
-        })}
-      />
-    );
-
-    await fireEvent.press(view.getByLabelText('展开账号中心'));
-    await fireEvent.press(view.getByTestId('account-site-xiaoyinsi'));
-    await fireEvent.press(view.getByText('查看等级'));
-
-    expect(view.getByTestId('xiaoyinsi-level-settled')).toBeTruthy();
-    expect(view.getAllByText('限制 10 秒后再试')).not.toHaveLength(0);
-    expect(onRefreshXiaoyinsiLevel).not.toHaveBeenCalled();
-    await fireEvent.press(view.getByLabelText('刷新等级'));
-    expect(onRefreshXiaoyinsiLevel).toHaveBeenCalledTimes(1);
-
-    await view.rerender(
-      <MoreScreen
-        {...moreProps({
-          account: {
-            read: { sessions: authorizedXiaoyinsiSessions },
-            center: {
-              xiaoyinsiLevel: { busy: true, profile: levelProfile, refresh: onRefreshXiaoyinsiLevel }
-            }
-          }
-        })}
-      />
-    );
-    expect(view.queryByTestId('xiaoyinsi-level-settled')).toBeNull();
-
-    await view.rerender(
-      <MoreScreen
-        {...moreProps({
-          account: {
-            read: { sessions: authorizedXiaoyinsiSessions },
-            center: { xiaoyinsiLevel: { profile: levelProfile, refresh: onRefreshXiaoyinsiLevel } }
-          }
-        })}
-      />
-    );
-    expect(view.getByTestId('xiaoyinsi-level-settled')).toBeTruthy();
-    expect(view.queryAllByText('限制 10 秒后再试')).toHaveLength(0);
-    expect(view.getAllByText('LV 2 → LV 3')).not.toHaveLength(0);
-  });
-
-  it('[REG-XIAOYINSI-005] exposes persisted revocation cleanup before any stale logged-in controls', async () => {
-    const onBegin = jest.fn();
-    const view = await render(
-      <MoreScreen
-        {...moreProps({
-          account: {
-            read: {
-              sessions: {
-                ...sessionViewModels,
-                xiaoyinsi: {
-                  ...sessionViewModels.xiaoyinsi,
-                  isLoggedIn: true,
-                  canWrite: true
-                }
-              }
-            },
-            center: {
-              xiaoyinsiAuth: {
-                message: '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。',
-                phase: 'cleanup',
-                begin: onBegin
-              }
-            }
-          }
-        })}
-      />
-    );
-
-    await fireEvent.press(await view.findByLabelText('重试本机清理'));
-    expect(view.queryByLabelText('重新授权')).toBeNull();
-    expect(view.queryByLabelText('撤销授权')).toBeNull();
-    expect(onBegin).toHaveBeenCalledTimes(1);
   });
 });

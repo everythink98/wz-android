@@ -36,7 +36,7 @@ export async function ensureMessageNotificationChannel() {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNEL_ID, {
     name: '消息通知',
-    description: 'NodeSeek、linux.do、妖火与小隐寺的新消息摘要',
+    description: 'NodeSeek、linux.do 与妖火的新消息摘要',
     importance: Notifications.AndroidImportance.DEFAULT,
     lightColor: NOTIFICATION_COLOR,
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,

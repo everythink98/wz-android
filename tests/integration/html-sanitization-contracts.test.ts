@@ -97,15 +97,15 @@ describe('Android local HTML helpers', () => {
     }
   });
 
-  it('[REG-TOPIC-056] sanitizes Xiaoyinsi polls and Callouts with one DOM parse', async () => {
+  it('[REG-TOPIC-056] sanitizes LinuxDo polls and Callouts with one DOM parse', async () => {
     const nodeHtmlParser = await import('node-html-parser');
     const parse = vi.fn(nodeHtmlParser.parse);
     vi.resetModules();
     vi.doMock('node-html-parser', () => ({ ...nodeHtmlParser, parse }));
     try {
-      const { sanitizeXiaoyinsiContentHtml } = await import('@/sources/xiaoyinsi/parser');
+      const { sanitizeLinuxDoContentHtml } = await import('@/sources/linuxdo/parser');
       const before = parse.mock.calls.length;
-      const result = sanitizeXiaoyinsiContentHtml(
+      const result = sanitizeLinuxDoContentHtml(
         `
         <blockquote><p>[!warning] 注意<br>正文</p></blockquote>
         <div class="poll" data-poll-name="choice"></div>

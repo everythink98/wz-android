@@ -9,7 +9,7 @@ vi.mock('expo-secure-store', () => ({
 import { getCurrentUserProfile } from './sourceRead';
 
 describe('source account read', () => {
-  it('[REG-ACCOUNT-025] reads all four current identities only from their proven session seams', async () => {
+  it('[REG-ACCOUNT-025] reads all three current identities only from their proven session seams', async () => {
     const nodeSeekCurrentUserPayload = Buffer.from(
       JSON.stringify({
         user: {
@@ -48,18 +48,6 @@ describe('source account read', () => {
       if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
         return new Response('<div class="content">昵称:火友<br/>贴子(0).回复(0)</div>');
       }
-      if (input === 'https://forum.xiaoyinsi.com/session/current.json') {
-        return new Response(
-          JSON.stringify({
-            current_user: {
-              username: 'carol',
-              name: 'Carol',
-              avatar_template: '/user_avatar/forum.xiaoyinsi.com/carol/{size}/1_2.png',
-              trust_level: 1
-            }
-          })
-        );
-      }
       throw new Error(`unexpected ${input}`);
     });
 
@@ -70,11 +58,6 @@ describe('source account read', () => {
       discourseAuth: { linuxdo: { authenticated: true } }
     });
     const yaohuo = await getCurrentUserProfile({ source: 'yaohuo', fetcher });
-    const xiaoyinsi = await getCurrentUserProfile({
-      source: 'xiaoyinsi',
-      fetcher,
-      discourseAuth: { xiaoyinsi: { apiKey: 'user-api-key', clientId: 'install-client' } }
-    });
 
     expect(nodeseek).toMatchObject({
       source: 'nodeseek',
@@ -98,23 +81,6 @@ describe('source account read', () => {
       url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7',
       topics: []
     });
-    expect(xiaoyinsi).toMatchObject({
-      source: 'xiaoyinsi',
-      id: 'carol',
-      username: 'carol',
-      displayName: 'Carol',
-      levelLabel: 'Lv1',
-      topics: []
-    });
-    expect(fetcher).toHaveBeenCalledWith(
-      'https://forum.xiaoyinsi.com/session/current.json',
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          'User-Api-Key': 'user-api-key',
-          'User-Api-Client-Id': 'install-client'
-        })
-      })
-    );
     expect(() => getCurrentUserProfile({ source: 'v2ex', fetcher })).toThrow('V2EX 不支持当前登录身份读取');
   });
 

@@ -841,7 +841,7 @@ describe('linux.do AI search controller', () => {
         'nodeseek 需要验证'
       )
     );
-    expect(searchTopics).toHaveBeenCalledTimes(5);
+    expect(searchTopics).toHaveBeenCalledTimes(4);
     expect(showLinuxDoVerification).not.toHaveBeenCalled();
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
     expect(showYaohuoLogin).not.toHaveBeenCalled();
@@ -880,13 +880,12 @@ describe('linux.do AI search controller', () => {
       await hook.result.current.runSearch({ query: 'codex', source: 'all' });
     });
 
-    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
     const expectedFilters = {
       v2ex: { source: 'v2ex', sort: 'time' },
       linuxdo: { source: 'linuxdo', category: '', order: 'latest' },
       nodeseek: { source: 'nodeseek', category: '', sort: 'postTime' },
-      yaohuo: { source: 'yaohuo', category: '0' },
-      xiaoyinsi: { source: 'xiaoyinsi', category: '', order: 'latest' }
+      yaohuo: { source: 'yaohuo', category: '0' }
     } as const;
 
     for (const [source, expectedFilter] of Object.entries(expectedFilters)) {
@@ -999,7 +998,7 @@ describe('linux.do AI search controller', () => {
         errorKind: 'ordinary'
       })
     );
-    expect(searchTopics).toHaveBeenCalledTimes(8);
+    expect(searchTopics).toHaveBeenCalledTimes(6);
   });
 
   it('REG-SEARCH-004 judges a whole-source retry by that source instead of unrelated aggregate errors', async () => {
@@ -2190,12 +2189,7 @@ describe('linux.do AI search controller', () => {
     });
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
 
-    expect(searchTopics.mock.calls.map(([request]) => request.source)).toEqual([
-      'v2ex',
-      'linuxdo',
-      'nodeseek',
-      'xiaoyinsi'
-    ]);
+    expect(searchTopics.mock.calls.map(([request]) => request.source)).toEqual(['v2ex', 'linuxdo', 'nodeseek']);
     expect(hook.result.current.searchGroups.find(({ source }) => source === 'nodeseek')).toMatchObject({
       items: [expect.objectContaining({ source: 'nodeseek' })],
       loading: false
@@ -2301,7 +2295,7 @@ describe('linux.do AI search controller', () => {
   });
 
   it('lets unaffected aggregate search sources finish when one source session changes', async () => {
-    const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'];
+    const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
     const requestSources = sources.filter((source) => source !== 'yaohuo');
     const pendingSearches = new Map<Source, ReturnType<typeof Promise.withResolvers<SearchResponse>>>(
       requestSources.map((source) => [source, Promise.withResolvers<SearchResponse>()])
@@ -2314,7 +2308,7 @@ describe('linux.do AI search controller', () => {
     await act(async () => {
       void hook.result.current.runSearch({ query: 'aggregate request', source: 'all' });
     });
-    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(3));
     expect(hook.result.current.searchBusy).toBe(true);
 
     await act(async () => {
@@ -2356,7 +2350,7 @@ describe('linux.do AI search controller', () => {
     await act(async () => hook.rerender({}));
 
     expect(hook.result.current.searchGroups).toBe(searchGroups);
-    expect(searchTopics).toHaveBeenCalledTimes(4);
+    expect(searchTopics).toHaveBeenCalledTimes(3);
   });
 
   it('[REG-PERF-023] keeps settled single-source groups stable across an unrelated rerender', async () => {

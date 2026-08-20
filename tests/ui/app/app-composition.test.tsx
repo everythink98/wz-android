@@ -29,7 +29,7 @@ describe('App composition bootstrap', () => {
       mediaTransportIdentity: 'loading',
       readerStyleContext: { settings, theme },
       routes: null,
-      sessionEpochs: { linuxdo: 0, nodeseek: 0, xiaoyinsi: 0, yaohuo: 0 },
+      sessionEpochs: { linuxdo: 0, nodeseek: 0, yaohuo: 0 },
       theme
     });
 

@@ -37,8 +37,7 @@ export function userReferenceFromUsername(source: Source, value: string, display
   const baseUrls: Partial<Record<Source, string>> = {
     linuxdo: 'https://linux.do/u/',
     nodeseek: 'https://www.nodeseek.com/member?t=',
-    v2ex: 'https://www.v2ex.com/member/',
-    xiaoyinsi: 'https://forum.xiaoyinsi.com/u/'
+    v2ex: 'https://www.v2ex.com/member/'
   };
   return {
     source,
@@ -50,7 +49,7 @@ export function userReferenceFromUsername(source: Source, value: string, display
 }
 
 function discourseUserReference(
-  source: 'linuxdo' | 'xiaoyinsi',
+  source: 'linuxdo',
   authorId?: string,
   authorUrl?: string,
   displayName?: string,
@@ -150,7 +149,7 @@ export function topicWithAuthorFallback<T extends Topic | TopicDetail>(
 }
 
 export function userFromTopic(topic: Topic | TopicDetail): UserReference | null {
-  if (topic.source === 'linuxdo' || topic.source === 'xiaoyinsi') {
+  if (topic.source === 'linuxdo') {
     return discourseUserReference(topic.source, topic.authorId, topic.authorUrl, topic.author, topic.authorAvatar);
   }
   const nodeSeekId = topic.source === 'nodeseek' ? nodeSeekAuthorId(topic.authorId, topic.authorUrl) : '';
@@ -179,7 +178,7 @@ export function userFromReply(reply: Reply, source?: Source): UserReference | nu
   if (!source) {
     return null;
   }
-  if (source === 'linuxdo' || source === 'xiaoyinsi') {
+  if (source === 'linuxdo') {
     return discourseUserReference(source, reply.authorId, reply.authorUrl, reply.author, reply.authorAvatar);
   }
   const nodeSeekId = source === 'nodeseek' ? nodeSeekAuthorId(reply.authorId, reply.authorUrl) : '';

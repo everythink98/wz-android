@@ -588,9 +588,6 @@ describe('Android release evidence guards', () => {
       'wait "id=\\"account-site-linuxdo\\" label=\\"linux.do，匿名可用，已选择\\"" 60000'
     );
     expect(loggedOutReplay).toContain('wait "id=\\"account-site-yaohuo\\" label=\\"妖火，未登录，已选择\\"" 60000');
-    expect(loggedOutReplay).toContain(
-      'wait "id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，未登录，已选择\\"" 60000'
-    );
     expect(loggedOutReplay).not.toContain('测试工具');
     expect(loggedOutReplay).toContain('press id="search-source-all"');
     expect(loggedOutReplay).toContain('fill id="search-query" codex');
@@ -612,7 +609,7 @@ describe('Android release evidence guards', () => {
     expect(fourSourceReplay).toContain(
       'wait "id=\\"feed-outcome-data-all-default\\" || id=\\"feed-outcome-empty-all-default\\" || id=\\"feed-outcome-partial-all-default\\" || id=\\"feed-outcome-error-all-default\\" || id=\\"feed-outcome-auth-all-default\\"" 60000'
     );
-    for (const source of ['all', 'v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi']) {
+    for (const source of ['all', 'v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
       expect(fourSourceReplay).toContain(`feed-source-${source}`);
     }
     expect(fourSourceReplay).not.toMatch(/feed-topic-first|topic-detail-loaded|scroll down|列表筛选/);
@@ -632,7 +629,7 @@ describe('Android release evidence guards', () => {
     const notificationsReplay = readFileSync(path.join(deviceDir, 'notifications-readonly.ad'), 'utf8');
     const libraryReplay = readFileSync(path.join(deviceDir, 'library-return.ad'), 'utf8');
     expect(accountReplay).not.toMatch(/服务器代理|问题诊断|备份 \/ 恢复|外观/);
-    expect(moreReplay).not.toMatch(/account-site-|查看等级|刷新等级|xiaoyinsi-level-settled/);
+    expect(moreReplay).not.toMatch(/account-site-|查看等级|刷新等级|linuxdo-level-settled/);
     expect(moreReplay).toMatch(
       /内容源[\s\S]*content-source-drag-v2ex[\s\S]*服务器代理[\s\S]*问题诊断[\s\S]*备份 \/ 恢复[\s\S]*外观/
     );
@@ -641,14 +638,14 @@ describe('Android release evidence guards', () => {
       expect(moreReplay).toContain(`find "label=\\"展开${title}\\"" click`);
     }
     expect(moreReplay).not.toMatch(/^find "(?:内容源|问题诊断|备份 \/ 恢复|外观)" click$/m);
-    for (const label of ['V2EX', 'linux.do', 'NodeSeek', '妖火', '小隐寺']) {
+    for (const label of ['V2EX', 'linux.do', 'NodeSeek', '妖火']) {
       expect(moreReplay).toContain(`wait "label=\\"${label} 内容源开关\\"" 10000`);
     }
     expect(moreReplay).toMatch(
       /find "label=\\"展开外观\\"" click\s+wait label="主题" 10000\s+scroll down\s+wait label="字号" 10000/
     );
     expect(notificationsReplay).toContain('find "消息通知" click');
-    for (const source of ['all', 'nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']) {
+    for (const source of ['all', 'nodeseek', 'linuxdo', 'yaohuo']) {
       expect(notificationsReplay).toContain(`notification-source-${source}`);
       for (const outcome of ['data', 'empty', 'partial', 'error', 'auth']) {
         expect(notificationsReplay).toContain(`notification-outcome-${outcome}-${source}`);
@@ -685,8 +682,7 @@ describe('Android release evidence guards', () => {
     for (const [site, label] of [
       ['nodeseek', 'NodeSeek'],
       ['linuxdo', 'linux.do'],
-      ['yaohuo', '妖火'],
-      ['xiaoyinsi', '小隐寺']
+      ['yaohuo', '妖火']
     ]) {
       const terminalSelector = `id=\\"account-site-${site}\\" label=\\"${label}，已登录，已选择\\" || id=\\"account-site-${site}\\" label=\\"${label}，本次核对失败，可重试，已选择\\"`;
       expect(accountReplay).toContain(`wait "${terminalSelector}" 60000`);
@@ -698,18 +694,18 @@ describe('Android release evidence guards', () => {
     expect(nodeSeekReplay).not.toMatch(/nodeseek-login-webview-settled|press label="检测或重新登录"|刷新页面/);
   });
 
-  it('[REG-TEST-005] keeps dynamic Xiaoyinsi level transport out of fixed Replay', () => {
+  it('[REG-TEST-005] keeps dynamic LinuxDo level transport out of fixed Replay', () => {
     const accountReplay = readProjectFile('tests', 'device', 'account-readonly.ad');
 
     expect(accountReplay).toContain(
       [
-        'press id="account-site-xiaoyinsi"',
-        'wait "id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，已登录，已选择\\" || id=\\"account-site-xiaoyinsi\\" label=\\"小隐寺，本次核对失败，可重试，已选择\\"" 60000',
-        'wait "label=\\"查看等级, 点击读取\\" || label=\\"查看等级, 授权后查看\\"" 10000'
+        'press id="account-site-linuxdo"',
+        'wait "id=\\"account-site-linuxdo\\" label=\\"linux.do，已登录，已选择\\" || id=\\"account-site-linuxdo\\" label=\\"linux.do，本次核对失败，可重试，已选择\\"" 60000',
+        'wait "text=\\"linux.do 等级\\"" 10000'
       ].join('\n')
     );
     expect(accountReplay).not.toMatch(/^(?:press|click|find)\b[^\r\n]*(?:查看等级|刷新等级)[^\r\n]*$/m);
-    expect(accountReplay).not.toMatch(/xiaoyinsi-level-settled|刷新等级/);
+    expect(accountReplay).not.toMatch(/linuxdo-level-settled|刷新等级/);
     expect(accountReplay).not.toMatch(/^(?:wait|sleep|delay)\s+\d+\s*$/m);
     expect(accountReplay).not.toContain('wait text="等级进度"');
   });

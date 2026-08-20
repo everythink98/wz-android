@@ -189,16 +189,16 @@ describe('topic query controller', () => {
     setDiagnosticWriter(null);
   });
 
-  it('[REG-SOURCE-011] reads a public Xiaoyinsi Topic while account identity remains pending', async () => {
+  it('[REG-SOURCE-011] reads a public LinuxDo Topic while account identity remains pending', async () => {
     const topic = {
       ...firstTopic,
-      source: 'xiaoyinsi' as const,
-      url: 'https://forum.xiaoyinsi.com/t/1'
+      source: 'linuxdo' as const,
+      url: 'https://linux.do/t/1'
     };
     const detail = { ...firstDetail, ...topic };
     const getTopic = jest.fn<TestGetTopic>(async () => detail);
     const hook = await renderTopicController({
-      getIdentityBarriers: () => ['xiaoyinsi'],
+      getIdentityBarriers: () => ['linuxdo'],
       readGateway: { getTopic },
       topic
     });
@@ -206,7 +206,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
     expect(getTopic).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'xiaoyinsi' }),
+      expect.objectContaining({ source: 'linuxdo' }),
       expect.objectContaining({ readPlanScope: 'public:omit' })
     );
   });
@@ -411,13 +411,13 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['linuxdo', 'xiaoyinsi'] as const)(
+  it.each(['linuxdo'] as const)(
     '[REG-TOPIC-067] converts a %s embedded seed offset into the real stream window once',
     async (source) => {
       const topic: Topic = {
         ...firstTopic,
         source,
-        url: source === 'linuxdo' ? 'https://linux.do/t/1' : 'https://forum.xiaoyinsi.com/t/1'
+        url: 'https://linux.do/t/1'
       };
       const detail: TopicDetail = {
         ...firstDetail,
@@ -1050,18 +1050,13 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.repliesError).toBeNull();
   });
 
-  it.each(['linuxdo', 'xiaoyinsi', 'yaohuo'] as const)(
+  it.each(['linuxdo', 'yaohuo'] as const)(
     '[REG-TOPIC-068] retries an ordinary %s edge at the same cursor without refreshing the topic count',
     async (source) => {
       const topic: Topic = {
         ...firstTopic,
         source,
-        url:
-          source === 'linuxdo'
-            ? 'https://linux.do/t/1'
-            : source === 'xiaoyinsi'
-              ? 'https://forum.xiaoyinsi.com/t/1'
-              : 'https://www.yaohuo.me/bbs-1.html'
+        url: source === 'linuxdo' ? 'https://linux.do/t/1' : 'https://www.yaohuo.me/bbs-1.html'
       };
       const detail: TopicDetail = {
         ...firstDetail,
@@ -1105,18 +1100,13 @@ describe('topic query controller', () => {
     }
   );
 
-  it.each(['linuxdo', 'xiaoyinsi', 'yaohuo'] as const)(
+  it.each(['linuxdo', 'yaohuo'] as const)(
     '[REG-TOPIC-068] retries an ordinary %s previous edge at the same cursor without refreshing the topic count',
     async (source) => {
       const topic: Topic = {
         ...firstTopic,
         source,
-        url:
-          source === 'linuxdo'
-            ? 'https://linux.do/t/1'
-            : source === 'xiaoyinsi'
-              ? 'https://forum.xiaoyinsi.com/t/1'
-              : 'https://www.yaohuo.me/bbs-1.html'
+        url: source === 'linuxdo' ? 'https://linux.do/t/1' : 'https://www.yaohuo.me/bbs-1.html'
       };
       const detail: TopicDetail = { ...firstDetail, ...topic, replies: [], replyCount: 20 };
       const anchor = { ...firstReply, floor: 20, commentId: 120 };
@@ -2027,44 +2017,6 @@ describe('topic query controller', () => {
     });
   });
 
-  it('[REG-XIAOYINSI-008] applies the authoritative reply total from the replies query', async () => {
-    const xiaTopic = {
-      ...firstTopic,
-      source: 'xiaoyinsi' as const,
-      url: 'https://xiaoyinsi.com/t/first/1'
-    };
-    const xiaDetail = { ...firstDetail, ...xiaTopic, replyCount: 100, replies: [] };
-    const authoritativeReply = { ...firstReply, floor: 8 };
-    const getReplies = jest.fn<TestGetReplies>(async () => ({
-      items: [authoritativeReply],
-      currentPage: 1,
-      currentOffset: 0,
-      hasMore: false,
-      nextPage: null,
-      totalCount: 7
-    }));
-    const hook = await renderTopicController({
-      topic: xiaTopic,
-      readGateway: {
-        getTopic: jest.fn<TestGetTopic>(async () => xiaDetail),
-        getReplies
-      }
-    });
-
-    await act(async () => {
-      await hook.result.current.controller.openTopic(xiaTopic);
-    });
-    await waitFor(() => expect(hook.result.current.controller.topicDetail?.replyCount).toBe(7));
-    expect(getReplies).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await expect(hook.result.current.controller.refreshTopicReplies()).resolves.toBe('completed');
-    });
-
-    await waitFor(() => expect(hook.result.current.controller.topicDetail?.replyCount).toBe(7));
-    expect(getReplies).toHaveBeenCalledTimes(2);
-    expect(hook.result.current.controller.topicReplies).toEqual([authoritativeReply]);
-  });
-
   it('[REG-WRITE-017][REG-TOPIC-062][REG-TOPIC-067] discovers the real tail before reanchoring oldest order', async () => {
     const discourseTopic = {
       ...firstTopic,
@@ -2511,9 +2463,9 @@ describe('topic query controller', () => {
   it('[REG-TOPIC-026] prefetches an accepted answer without expanding a quote or notifying', async () => {
     const solvedTopic: Topic = {
       ...firstTopic,
-      source: 'xiaoyinsi',
+      source: 'linuxdo',
       id: '206',
-      url: 'https://forum.xiaoyinsi.com/t/topic/206'
+      url: 'https://linux.do/t/topic/206'
     };
     const solvedDetail: TopicDetail = {
       ...firstDetail,
@@ -2547,7 +2499,7 @@ describe('topic query controller', () => {
         getReply
       }
     });
-    const instanceKey = 'accepted-answer:xiaoyinsi:206:9';
+    const instanceKey = 'accepted-answer:linuxdo:206:9';
 
     await act(async () => {
       await hook.result.current.controller.openTopic(solvedTopic);
@@ -2558,12 +2510,12 @@ describe('topic query controller', () => {
       await hook.result.current.controller.toggleTopicBodyQuote({
         instanceKey,
         prefetch: true,
-        reference: { source: 'xiaoyinsi', topicId: '206', postNumber: 9 }
+        reference: { source: 'linuxdo', topicId: '206', postNumber: 9 }
       });
     });
 
     await waitFor(() =>
-      expect(hook.result.current.controller.loadedQuotedReplies['xiaoyinsi:206:9']).toEqual(acceptedReply)
+      expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:206:9']).toEqual(acceptedReply)
     );
     expect(getReply).toHaveBeenCalledTimes(1);
     expect(hook.result.current.session.state.expandedQuotes[instanceKey]).toBeUndefined();
@@ -2632,9 +2584,9 @@ describe('topic query controller', () => {
     async (_case, withLocalPost, expectedCalls) => {
       const solvedTopic: Topic = {
         ...firstTopic,
-        source: 'xiaoyinsi',
+        source: 'linuxdo',
         id: '208',
-        url: 'https://forum.xiaoyinsi.com/t/topic/208'
+        url: 'https://linux.do/t/topic/208'
       };
       const solvedDetail: TopicDetail = {
         ...firstDetail,
@@ -2660,7 +2612,7 @@ describe('topic query controller', () => {
         if (replyAttempt === 1) {
           throw new Error('prefetch failed');
         }
-        return prepareReplyContent(acceptedReply, 'xiaoyinsi', 'quoted-reply');
+        return prepareReplyContent(acceptedReply, 'linuxdo', 'quoted-reply');
       });
       const hook = await renderTopicController({
         notify,
@@ -2670,9 +2622,9 @@ describe('topic query controller', () => {
           getReply
         }
       });
-      const reference = { source: 'xiaoyinsi' as const, topicId: '208', postNumber: 9 };
-      const acceptedInstanceKey = 'accepted-answer:xiaoyinsi:208:9';
-      const quoteInstanceKey = 'topic:208:xiaoyinsi:208:9';
+      const reference = { source: 'linuxdo' as const, topicId: '208', postNumber: 9 };
+      const acceptedInstanceKey = 'accepted-answer:linuxdo:208:9';
+      const quoteInstanceKey = 'topic:208:linuxdo:208:9';
 
       await act(async () => {
         await hook.result.current.controller.openTopic(solvedTopic);
@@ -2697,7 +2649,7 @@ describe('topic query controller', () => {
       });
 
       await waitFor(() =>
-        expect(hook.result.current.controller.loadedQuotedReplies['xiaoyinsi:208:9']).toMatchObject({
+        expect(hook.result.current.controller.loadedQuotedReplies['linuxdo:208:9']).toMatchObject({
           ...acceptedReply,
           preparedContent: { contentHtml: acceptedReply.contentHtml }
         })

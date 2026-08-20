@@ -8,7 +8,6 @@ import type {
   NotificationUnreadSnapshot
 } from '@/domain/notifications/models';
 import type { Fetcher } from '@/platform/network/request';
-import type { XiaoyinsiApiCredentials } from '@/sources/xiaoyinsi/credentials';
 
 export interface NotificationAdapterAccess {
   fetcher?: Fetcher;
@@ -18,7 +17,6 @@ export interface NotificationAdapterAccess {
   signal?: AbortSignal;
   timeoutMs?: number;
   userAgent?: string;
-  xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
 }
 
 export type NotificationListOptions = NotificationAdapterAccess & {

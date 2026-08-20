@@ -151,25 +151,22 @@ describe('image request source', () => {
         }
       }
     });
-    const xiaoyinsiHeaders = imageRequestHeadersForUrl(
-      'https://forum.xiaoyinsi.com/uploads/default/optimized/topic.jpeg',
-      {
-        mediaContext: {
-          contentSource: 'xiaoyinsi',
-          sessionIdentity: 'xiaoyinsi:4',
-          referrer: {
-            documentUrl: 'https://forum.xiaoyinsi.com/t/topic/263',
-            documentPolicy: 'strict-origin-when-cross-origin'
-          }
+    const linuxdoHeaders = imageRequestHeadersForUrl('https://linux.do/uploads/default/optimized/topic.jpeg', {
+      mediaContext: {
+        contentSource: 'linuxdo',
+        sessionIdentity: 'linuxdo:4',
+        referrer: {
+          documentUrl: 'https://linux.do/t/topic/263',
+          documentPolicy: 'strict-origin-when-cross-origin'
         }
       }
-    );
+    });
 
     expect(yaohuoHeaders).not.toHaveProperty('Referer');
     expect(v2exHeaders).not.toHaveProperty('Referer');
     expect(nodeSeekHeaders).toHaveProperty('Referer', 'https://www.nodeseek.com/');
     expect(linuxDoHeaders).toHaveProperty('Referer', 'https://linux.do/');
-    expect(xiaoyinsiHeaders).toHaveProperty('Referer', 'https://forum.xiaoyinsi.com/t/topic/263');
+    expect(linuxdoHeaders).toHaveProperty('Referer', 'https://linux.do/t/topic/263');
   });
 
   it.each([

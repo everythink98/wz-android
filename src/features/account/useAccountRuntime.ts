@@ -53,8 +53,6 @@ import { useNodeSeekCheckInController } from './useNodeSeekCheckInController';
 import { useSessionController } from './useSessionController';
 import { useSessionReadGateway } from './useSessionReadGateway';
 import { useVerificationController } from './useVerificationController';
-import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
-import { useXiaoyinsiLevelController } from './useXiaoyinsiLevelController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
 import { AccountHosts, type AccountHostsProps } from './AccountHosts';
 
@@ -258,12 +256,6 @@ export function useAccountRuntime({
     completeLinuxDoBrowserFetch: session.completeLinuxDoBrowserFetch,
     completeNodeSeekBrowserFetch: session.completeNodeSeekBrowserFetch
   });
-  const xiaoyinsiAuth = useXiaoyinsiAuthController({
-    dispatchSiteSessionEvent: session.dispatchSiteSessionEvent,
-    enabled: enabledSessionSourceSet.has('xiaoyinsi'),
-    fetcher,
-    notify
-  });
   const readGateway = useSessionReadGateway({
     anonymousFetcher: fetcher,
     fetcher: session.forumFetchWithWebViewFallback,
@@ -280,8 +272,7 @@ export function useAccountRuntime({
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
-    onAccountStatusChanged: session.commitAccountStatusChange,
-    readXiaoyinsiAuthorization: xiaoyinsiAuth.readAuthorization
+    onAccountStatusChanged: session.commitAccountStatusChange
   });
   const reconcileAccountStatusBase = status.reconcileAccountStatus;
   const reconcileAccountStatus = useCallback(
@@ -309,14 +300,6 @@ export function useAccountRuntime({
   useCommitRefValue(beginAccountIdentityCheckRef, status.beginAccountIdentityCheck);
   useCommitRefValue(reconcileAccountStatusRef, reconcileAccountStatus);
   useCommitRefValue(applyAccountSessionEventRef, status.applyAccountSessionEvent);
-
-  const xiaoyinsiLevel = useXiaoyinsiLevelController({
-    authorizationPhase: xiaoyinsiAuth.phase,
-    isIdentityPending: () => readSessionRuntimeSnapshot('xiaoyinsi').identityTrust !== 'confirmed',
-    notify,
-    readGateway,
-    sessionEpochs: session.forumSessionEpochs
-  });
 
   const resetLinuxDoLevelState = useCallback(() => {
     void appQueryClient.cancelQueries({ queryKey: forumQueryKeys.level('linuxdo') });
@@ -516,7 +499,6 @@ export function useAccountRuntime({
     changeYaohuoLoginPanel,
     linuxDoWebViewRef,
     notify,
-    onOpenXiaoyinsiAuthorization: () => void xiaoyinsiAuth.beginAuthorization(),
     refreshAccountStatus: status.refreshAccountStatus,
     setYaohuoLoginPrompt,
     webViewRef,
@@ -716,23 +698,6 @@ export function useAccountRuntime({
           save: nodeImage.key.save,
           saved: nodeImage.key.saved
         }
-      },
-      xiaoyinsiAuth: {
-        beginAuthorization: xiaoyinsiAuth.beginAuthorization,
-        cancelAuthorization: xiaoyinsiAuth.cancelAuthorization,
-        message: xiaoyinsiAuth.message,
-        openAuthorizationBrowser: xiaoyinsiAuth.openAuthorizationBrowser,
-        pending: xiaoyinsiAuth.pending,
-        phase: xiaoyinsiAuth.phase,
-        refreshAuthorization: xiaoyinsiAuth.refreshAuthorization,
-        revokeAuthorization: xiaoyinsiAuth.revokeAuthorization,
-        secondsRemaining: xiaoyinsiAuth.secondsRemaining
-      },
-      xiaoyinsiLevel: {
-        levelBusy: xiaoyinsiLevel.levelBusy,
-        levelError: xiaoyinsiLevel.levelError,
-        levelProfile: xiaoyinsiLevel.levelProfile,
-        refreshLevel: xiaoyinsiLevel.refreshLevel
       }
     },
     hosts: {

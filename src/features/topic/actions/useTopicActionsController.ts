@@ -41,12 +41,7 @@ import { rejectUnauthorizedResponse, type Fetcher } from '@/platform/network/req
 import type { ReadGateway } from '@/sources/readGateway';
 import { errorMessage } from '@/platform/network/errors';
 import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
-import {
-  isDiscourseSource,
-  isSessionSource,
-  sourceUsesTopicCreatePermission,
-  type DiscourseSource
-} from '@/domain/forum/sourceCatalog';
+import { isDiscourseSource, isSessionSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import { normalizeReplyImageAsset, replyImageMarkupForSource, replyImageUploadSupported } from '@/sources/imageUpload';
 import { isNodeImageApiKeyExpiredError, uploadNodeSeekReplyImageWithApiKey } from '@/sources/nodeimage/upload';
 import { uploadYaohuoReplyImage } from '@/sources/yaohuo/imageUpload';
@@ -72,7 +67,6 @@ import {
   currentTopicActionTopic,
   applyEditedReplyContent,
   isNodeSeekActionTopic,
-  isXiaoyinsiActionTopic,
   isYaohuoActionTopic,
   matchesReplyRefreshTarget,
   removeRepliesForRefresh,
@@ -279,11 +273,7 @@ export function useTopicActionsController({
       let alreadyComplete = request.alreadyComplete;
       const interactionTarget = request.target || request.reply;
       if (request.action === 'reply' || request.action === 'upload') {
-        objectAllowed ??=
-          Boolean(request.reply?.canEdit) ||
-          Boolean(
-            actionTopic && (!sourceUsesTopicCreatePermission(actionTopic.source) || actionTopic.canCreatePost === true)
-          );
+        objectAllowed ??= Boolean(request.reply?.canEdit) || Boolean(actionTopic);
       } else if (request.action === 'edit') {
         objectAllowed ??= request.reply?.canEdit === true;
         targetPresent ??= Boolean(request.reply?.commentId && request.reply.contentMarkdown);
@@ -1152,8 +1142,7 @@ export function useTopicActionsController({
       return;
     }
     const editTarget = replyComposerIntent.kind === 'edit' ? replyComposerIntent.target : null;
-    const canEditXiaoyinsiReply = Boolean(actionTopic && isXiaoyinsiActionTopic(actionTopic) && editTarget);
-    if (!actionTopic || (!canEditXiaoyinsiReply && !canSubmitReplyToTopic(actionTopic))) {
+    if (!actionTopic || !canSubmitReplyToTopic(actionTopic)) {
       finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return;
     }

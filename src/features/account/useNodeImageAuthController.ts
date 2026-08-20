@@ -29,7 +29,7 @@ import {
   nodeImageApiKeyUseStatus,
   saveNodeImageApiKeyForGeneration
 } from '@/sources/nodeimage/credentials';
-import { nativeSecureRandomHex } from '@/platform/android/xiaoyinsiKeystore';
+import { nativeSecureRandomHex } from '@/platform/android/secureRandom';
 import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
 import { siteSessionIdentityKey } from '@/domain/session/siteSessionState';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';

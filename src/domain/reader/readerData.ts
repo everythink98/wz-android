@@ -151,9 +151,6 @@ function userProfileUrl(source: Source, id: string, username = '') {
   if (source === 'v2ex') {
     return `https://www.v2ex.com/member/${encodeURIComponent(cleanUsername || cleanId)}`;
   }
-  if (source === 'xiaoyinsi') {
-    return `https://forum.xiaoyinsi.com/u/${encodeURIComponent(cleanUsername || cleanId)}`;
-  }
   return `https://www.yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(cleanId)}`;
 }
 

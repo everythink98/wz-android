@@ -73,13 +73,6 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
     const id = parts[0]?.toLowerCase() === 't' ? (/^\d+$/.test(parts[1] || '') ? parts[1] : parts[2]) : '';
     return id && /^\d+$/.test(id) ? internalTopic('linuxdo', id, 'linux.do 主题', `https://linux.do/t/${id}`) : null;
   }
-  if (isForumHost(host, 'forum.xiaoyinsi.com')) {
-    const parts = pathname.split('/').filter(Boolean);
-    const id = parts[0]?.toLowerCase() === 't' ? (/^\d+$/.test(parts[1] || '') ? parts[1] : parts[2]) : '';
-    return id && /^\d+$/.test(id)
-      ? internalTopic('xiaoyinsi', id, '小隐寺主题', `https://forum.xiaoyinsi.com/t/${id}`)
-      : null;
-  }
   if (isForumHost(host, 'v2ex.com')) {
     const id = pathname.match(/^\/t\/(\d+)(?:\/)?$/i)?.[1];
     return id ? internalTopic('v2ex', id, 'V2EX 主题', `https://www.v2ex.com/t/${id}`) : null;
@@ -117,7 +110,7 @@ export function parseForumTopicDestination(
     const pageHint = positiveLocationPart(url.pathname.match(/^\/post-\d+-(\d+)\/?$/i)?.[1]);
     const floor = positiveLocationPart(url.hash.match(/^#(\d+)$/)?.[1]);
     if (floor) targetReply = { floor, ...(pageHint ? { pageHint } : {}) };
-  } else if (topic.source === 'linuxdo' || topic.source === 'xiaoyinsi') {
+  } else if (topic.source === 'linuxdo') {
     const parts = url.pathname.split('/').filter(Boolean);
     const topicIdIndex = /^\d+$/.test(parts[1] || '') ? 1 : 2;
     const floor = positiveLocationPart(parts[topicIdIndex + 1]);
@@ -212,26 +205,6 @@ export function parseForumUserLink(
           url: `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`
         }
       : null;
-  }
-  if (isForumHost(url.hostname, 'forum.xiaoyinsi.com')) {
-    const rawUsername = discourseProfileUsername(url.pathname);
-    if (!rawUsername) {
-      return null;
-    }
-    try {
-      const username = decodeURIComponent(rawUsername);
-      return username
-        ? {
-            source: 'xiaoyinsi',
-            id: username,
-            username,
-            displayName: username,
-            url: `https://forum.xiaoyinsi.com/u/${encodeURIComponent(username)}`
-          }
-        : null;
-    } catch {
-      return null;
-    }
   }
   if (!isForumHost(url.hostname, 'v2ex.com')) {
     return null;

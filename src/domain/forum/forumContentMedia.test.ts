@@ -148,14 +148,12 @@ describe('forum content media normalization', () => {
     expect(result).not.toContain('<img class="emoji"');
   });
 
-  it('[REG-XIAOYINSI-017] keeps 小隐寺 topic and reply emoji on the inline image path', () => {
+  it(' keeps linux.do topic and reply emoji on the inline image path', () => {
     const html =
-      '<p>哈喽，各位<img src="https://forum.xiaoyinsi.com/images/emoji/twitter/waving_hand.png?v=15" title=":waving_hand:" class="emoji" alt=":waving_hand:" width="20" height="20"></p>';
+      '<p>哈喽，各位<img src="https://linux.do/images/emoji/twitter/waving_hand.png?v=15" title=":waving_hand:" class="emoji" alt=":waving_hand:" width="20" height="20"></p>';
     const result = normalizeForumContentMediaHtml(html);
 
-    expect(result).toContain(
-      '<forum-inline-image src="https://forum.xiaoyinsi.com/images/emoji/twitter/waving_hand.png?v=15"'
-    );
+    expect(result).toContain('<forum-inline-image src="https://linux.do/images/emoji/twitter/waving_hand.png?v=15"');
     expect(result).toContain('class="emoji"');
     expect(result).not.toContain('<img');
   });

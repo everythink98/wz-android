@@ -190,7 +190,6 @@ export function useUserController({
     [
       sessionEpochs.linuxdo,
       sessionEpochs.nodeseek,
-      sessionEpochs.xiaoyinsi,
       sessionEpochs.yaohuo,
       identity,
       profileReadPlan.cacheScope,

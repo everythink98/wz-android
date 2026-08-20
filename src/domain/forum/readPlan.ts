@@ -34,8 +34,7 @@ const publicOperations: Record<Source, ReadonlySet<ForumReadOperation>> = {
   v2ex: new Set(['categories', 'feed', 'search', 'topic', 'replies', 'reply', 'user-profile']),
   linuxdo: new Set(['categories', 'feed', 'search', 'topic', 'replies', 'reply', 'emoji', 'user-profile']),
   nodeseek: new Set(['categories', 'feed', 'search', 'topic', 'replies', 'reply', 'user-profile']),
-  yaohuo: new Set(),
-  xiaoyinsi: new Set(['categories', 'feed', 'search', 'topic', 'replies', 'reply', 'emoji', 'user-profile'])
+  yaohuo: new Set()
 };
 
 const localOperations: Partial<Record<Source, ReadonlySet<ForumReadOperation>>> = {

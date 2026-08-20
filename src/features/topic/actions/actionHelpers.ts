@@ -1,6 +1,6 @@
 import type { ReplyEditTarget, ReplyRefreshTarget } from '../model/types';
 import { nodeSeekMarkdownToHtml } from '@/sources/nodeseek/markdown';
-import { sourceSupportsTopicAction, sourceUsesTopicCreatePermission } from '@/domain/forum/sourceCatalog';
+import { sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '@/domain/forum/models';
 import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
 
@@ -22,17 +22,8 @@ export function isYaohuoActionTopic(topic: TopicActionTopic | null): topic is To
   return topic?.source === 'yaohuo';
 }
 
-export function isXiaoyinsiActionTopic(
-  topic: TopicActionTopic | null
-): topic is TopicActionTopic & { source: 'xiaoyinsi' } {
-  return topic?.source === 'xiaoyinsi';
-}
-
 export function canSubmitReplyToTopic(topic: TopicActionTopic | null): topic is TopicActionTopic {
-  if (!topic || !sourceSupportsTopicAction(topic.source, 'reply')) {
-    return false;
-  }
-  return !sourceUsesTopicCreatePermission(topic.source) || topic.canCreatePost === true;
+  return Boolean(topic && sourceSupportsTopicAction(topic.source, 'reply'));
 }
 
 export function canVotePollOnTopic(topic: TopicActionTopic | null): topic is TopicActionTopic {

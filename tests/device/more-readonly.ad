@@ -13,7 +13,6 @@ wait "label=\"V2EX 内容源开关\"" 10000
 wait "label=\"linux.do 内容源开关\"" 10000
 wait "label=\"NodeSeek 内容源开关\"" 10000
 wait "label=\"妖火 内容源开关\"" 10000
-wait "label=\"小隐寺 内容源开关\"" 10000
 wait id="content-source-drag-v2ex" 10000
 press label="收起内容源"
 

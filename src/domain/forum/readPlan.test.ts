@@ -26,10 +26,10 @@ function session(
 describe('forum read plans', () => {
   it('keeps public reads available while identity is unknown or an auth surface is open', () => {
     expect(
-      ['v2ex', 'linuxdo', 'nodeseek', 'xiaoyinsi'].filter((source) =>
+      ['v2ex', 'linuxdo', 'nodeseek'].filter((source) =>
         forumReadOperationIsPublic(source as SessionRuntimeSnapshot['source'] | 'v2ex', 'search')
       )
-    ).toEqual(['v2ex', 'linuxdo', 'nodeseek', 'xiaoyinsi']);
+    ).toEqual(['v2ex', 'linuxdo', 'nodeseek']);
     expect(forumReadOperationIsPublic('yaohuo', 'search')).toBe(false);
     expect(resolveForumReadPlan('v2ex', 'topic', true)).toEqual({
       state: 'ready',
@@ -37,17 +37,17 @@ describe('forum read plans', () => {
       transport: 'native-no-cookie',
       cacheScope: 'public:omit'
     });
-    expect(resolveForumReadPlan('xiaoyinsi', 'topic', true, session('xiaoyinsi'))).toMatchObject({
+    expect(resolveForumReadPlan('linuxdo', 'topic', true, session('linuxdo'))).toMatchObject({
       state: 'ready',
       lane: 'public',
       cacheScope: 'public:omit'
     });
     expect(
       resolveForumReadPlan(
-        'xiaoyinsi',
+        'linuxdo',
         'user-profile',
         true,
-        session('xiaoyinsi', { authenticated: true, authSurfaceOpen: true, identityTrust: 'confirmed' })
+        session('linuxdo', { authenticated: true, authSurfaceOpen: true, identityTrust: 'confirmed' })
       )
     ).toMatchObject({ state: 'ready', lane: 'public', cacheScope: 'public:omit' });
   });
@@ -84,13 +84,13 @@ describe('forum read plans', () => {
   );
 
   it('keeps unknown identity terminal without blocking public reads or pretending logout', () => {
-    const unknown = session('xiaoyinsi', { identityTrust: 'unknown' });
-    expect(resolveForumReadPlan('xiaoyinsi', 'topic', true, unknown)).toMatchObject({
+    const unknown = session('linuxdo', { identityTrust: 'unknown' });
+    expect(resolveForumReadPlan('linuxdo', 'topic', true, unknown)).toMatchObject({
       state: 'ready',
       lane: 'public',
       cacheScope: 'public:omit'
     });
-    expect(resolveForumReadPlan('xiaoyinsi', 'level', true, unknown)).toEqual({
+    expect(resolveForumReadPlan('linuxdo', 'level', true, unknown)).toEqual({
       state: 'blocked',
       reason: 'identity-unavailable',
       cacheScope: 'blocked:identity-unavailable'
@@ -99,17 +99,17 @@ describe('forum read plans', () => {
 
   it('isolates authenticated cache scope and makes disabled state authoritative', () => {
     const authenticated = resolveForumReadPlan(
-      'xiaoyinsi',
+      'linuxdo',
       'topic',
       true,
-      session('xiaoyinsi', {
+      session('linuxdo', {
         authenticated: true,
-        identityKey: 'xiaoyinsi:42',
+        identityKey: 'linuxdo:42',
         identityTrust: 'confirmed',
         sessionEpoch: 8
       })
     );
-    const publicPlan = resolveForumReadPlan('xiaoyinsi', 'topic', true, session('xiaoyinsi'));
+    const publicPlan = resolveForumReadPlan('linuxdo', 'topic', true, session('linuxdo'));
 
     expect(authenticated).toMatchObject({
       state: 'ready',
@@ -117,7 +117,7 @@ describe('forum read plans', () => {
       cacheScope: 'authenticated:8'
     });
     expect(authenticated.cacheScope).not.toBe(publicPlan.cacheScope);
-    expect(resolveForumReadPlan('xiaoyinsi', 'topic', false, session('xiaoyinsi'))).toEqual({
+    expect(resolveForumReadPlan('linuxdo', 'topic', false, session('linuxdo'))).toEqual({
       state: 'blocked',
       reason: 'source-disabled',
       cacheScope: 'blocked:source-disabled'

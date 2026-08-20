@@ -15,7 +15,7 @@ let mockSessionsReady = true;
 let mockInitialForegroundReady = false;
 let mockScreen = 'feed';
 const mockReadGateway = { getEmojiUrls: jest.fn() };
-const mockForumSessionEpochs = { linuxdo: 7, nodeseek: 7, xiaoyinsi: 7, yaohuo: 7 };
+const mockForumSessionEpochs = { linuxdo: 7, nodeseek: 7, yaohuo: 7 };
 const mockOnFeedInitialContentReady = jest.fn(() => {
   mockInitialForegroundReady = true;
 });
@@ -100,23 +100,6 @@ jest.mock('@/features/account/useAccountRuntime', () => ({
             save: jest.fn(),
             saved: false
           }
-        },
-        xiaoyinsiAuth: {
-          beginAuthorization: jest.fn(),
-          cancelAuthorization: jest.fn(),
-          message: '',
-          openAuthorizationBrowser: jest.fn(),
-          pending: false,
-          phase: 'idle',
-          refreshAuthorization: jest.fn(),
-          revokeAuthorization: jest.fn(),
-          secondsRemaining: 0
-        },
-        xiaoyinsiLevel: {
-          levelBusy: false,
-          levelError: '',
-          levelProfile: null,
-          refreshLevel: jest.fn()
         }
       },
       hosts: {

@@ -1,18 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  currentXiaoyinsiCredentialGeneration: vi.fn(() => 11),
-  loadXiaoyinsiCredentials: vi.fn(),
-  runLinuxDoAction: vi.fn(async () => ({ ok: true })),
-  runXiaoyinsiAction: vi.fn(async () => ({ ok: true }))
+  runLinuxDoAction: vi.fn(async () => ({ ok: true }))
 }));
 
 vi.mock('@/sources/linuxdo/actionClient', () => ({ runLinuxDoAction: mocks.runLinuxDoAction }));
-vi.mock('@/sources/xiaoyinsi/actionClient', () => ({ runXiaoyinsiAction: mocks.runXiaoyinsiAction }));
-vi.mock('@/sources/xiaoyinsi/auth', () => ({
-  currentXiaoyinsiCredentialGeneration: mocks.currentXiaoyinsiCredentialGeneration,
-  loadXiaoyinsiCredentials: mocks.loadXiaoyinsiCredentials
-}));
 import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeContext } from './discourseActionRuntime';
 
 function runtimeContext(): DiscourseActionRuntimeContext {
@@ -24,15 +16,12 @@ function runtimeContext(): DiscourseActionRuntimeContext {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.loadXiaoyinsiCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
-  mocks.currentXiaoyinsiCredentialGeneration.mockReturnValue(11);
 });
 
 describe('Discourse action runtime registry', () => {
-  it('prepares the independent transport for each registered source', async () => {
+  it('prepares the registered linux.do transport', async () => {
     const context = runtimeContext();
     const linuxdo = await prepareDiscourseActionRuntime('linuxdo', context);
-    const xiaoyinsi = await prepareDiscourseActionRuntime('xiaoyinsi', context);
     const request = {
       method: 'POST' as const,
       path: '/posts.json',
@@ -41,7 +30,6 @@ describe('Discourse action runtime registry', () => {
     };
 
     await linuxdo.execute?.(request, new AbortController().signal);
-    await xiaoyinsi.execute?.(request, new AbortController().signal);
 
     expect(mocks.runLinuxDoAction).toHaveBeenCalledOnce();
     expect(mocks.runLinuxDoAction).toHaveBeenCalledWith(
@@ -49,34 +37,8 @@ describe('Discourse action runtime registry', () => {
         userAgent: 'test-agent'
       })
     );
-    expect(mocks.runXiaoyinsiAction).toHaveBeenCalledOnce();
     expect(linuxdo.csrfSource).toBe('session-endpoint');
-    expect(xiaoyinsi.csrfSource).toBe('none');
-  });
-
-  it('treats a Xiaoyinsi action as stale after its credential generation changes', async () => {
-    let generation = 11;
-    mocks.currentXiaoyinsiCredentialGeneration.mockImplementation(() => generation);
-    const context = runtimeContext();
-    const runtime = await prepareDiscourseActionRuntime('xiaoyinsi', context);
-
-    expect(runtime.isCredentialCurrent?.()).toBe(true);
-    generation += 1;
-
-    expect(runtime.isCredentialCurrent?.()).toBe(false);
-    await expect(runtime.recover({ authorizationCheckRequired: true })).resolves.toMatchObject({
-      phase: 'credential',
-      stale: true
-    });
-  });
-
-  it('does not turn a Xiaoyinsi authorization check into a login transition', async () => {
-    const runtime = await prepareDiscourseActionRuntime('xiaoyinsi', runtimeContext());
-
-    await expect(runtime.recover({ authorizationCheckRequired: true, status: 403 })).resolves.toEqual({
-      loginRequired: false,
-      phase: 'credential'
-    });
+    expect(linuxdo.credentialSource).toBe('managed-cookie-jar');
   });
 
   it('[REG-ACCOUNT-026] reports linux.do expiry without mutating identity or Cookie state', async () => {

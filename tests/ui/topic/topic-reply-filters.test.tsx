@@ -546,7 +546,6 @@ function HtmlRendererIdentityHarness({
 function TopicFilterHarness({
   canUseLinuxDoActions = false,
   canUseNodeSeekActions = false,
-  canUseXiaoyinsiActions = false,
   canUseYaohuoActions = false,
   filteredCommentQuery,
   expandedQuotes = {},
@@ -591,7 +590,6 @@ function TopicFilterHarness({
 }: {
   canUseLinuxDoActions?: boolean;
   canUseNodeSeekActions?: boolean;
-  canUseXiaoyinsiActions?: boolean;
   canUseYaohuoActions?: boolean;
   filteredCommentQuery?: string;
   expandedQuotes?: Record<string, boolean>;
@@ -664,13 +662,9 @@ function TopicFilterHarness({
       linuxdo: canUseLinuxDoActions,
       nodeseek: canUseNodeSeekActions,
       v2ex: false,
-      xiaoyinsi: canUseXiaoyinsiActions,
       yaohuo: canUseYaohuoActions
     }[source || 'v2ex'];
-    const allowed =
-      sourceAllowed &&
-      !(source === 'yaohuo' && action === 'like') &&
-      !(source === 'xiaoyinsi' && (action === 'reply' || action === 'upload') && topicDetail?.canCreatePost !== true);
+    const allowed = sourceAllowed && !(source === 'yaohuo' && action === 'like');
     return { allowed, reason: allowed ? 'allowed' : 'login-required' };
   }) satisfies TopicActionDecisionFor;
   const actions = {
@@ -1757,8 +1751,8 @@ describe('Topic reply filters', () => {
       id: 'accepted-image-owner',
       replies: [],
       solved: true,
-      source: 'xiaoyinsi',
-      url: 'https://forum.xiaoyinsi.com/t/topic/accepted-image-owner'
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/accepted-image-owner'
     };
     const acceptedReply: Reply = {
       author: 'accepted-author',
@@ -1770,7 +1764,7 @@ describe('Topic reply filters', () => {
       createdAt: '2026-08-09T00:00:00.000Z',
       floor: acceptedFloor
     };
-    const referenceKey = `xiaoyinsi:${acceptedTopic.id}:${acceptedFloor}`;
+    const referenceKey = `linuxdo:${acceptedTopic.id}:${acceptedFloor}`;
     lastFlashListItemTypes = [];
     const view = await render(
       <TopicFilterHarness
@@ -1957,7 +1951,7 @@ describe('Topic reply filters', () => {
     await waitFor(() => expect(view.getByTestId('topic-html-block-ready')).toBeTruthy());
   });
 
-  it.each(['linuxdo', 'xiaoyinsi'] as const)(
+  it.each(['linuxdo'] as const)(
     '[REG-TOPIC-026] renders the accepted %s answer inside the opening post before the reply list',
     async (source) => {
       const acceptedReply: Reply = {
@@ -1975,7 +1969,7 @@ describe('Topic reply filters', () => {
         replies: topicReplies,
         solved: true,
         source,
-        url: source === 'linuxdo' ? 'https://linux.do/t/topic/206' : 'https://forum.xiaoyinsi.com/t/topic/206'
+        url: 'https://linux.do/t/topic/206'
       };
       mockScrollToIndex.mockClear();
       const view = await render(
@@ -2008,7 +2002,7 @@ describe('Topic reply filters', () => {
     }
   );
 
-  it.each(['linuxdo', 'xiaoyinsi'] as const)(
+  it.each(['linuxdo'] as const)(
     '[REG-TOPIC-026] loads the accepted %s answer by floor when it is outside the current reply page',
     async (source) => {
       const acceptedFloor = 42;
@@ -2019,7 +2013,7 @@ describe('Topic reply filters', () => {
         replies: [sourceReplies[0]],
         solved: true,
         source,
-        url: source === 'linuxdo' ? 'https://linux.do/t/topic/208' : 'https://forum.xiaoyinsi.com/t/topic/208'
+        url: 'https://linux.do/t/topic/208'
       };
       const referenceKey = `${source}:${solvedTopic.id}:${acceptedFloor}`;
       const instanceKey = `accepted-answer:${solvedTopic.id}:${referenceKey}`;
@@ -2120,10 +2114,10 @@ describe('Topic reply filters', () => {
     const solvedTopic: TopicDetail = {
       ...topic,
       acceptedAnswerFloor: 2,
-      id: 'xiaoyinsi-filtered-solved-topic',
+      id: 'linuxdo-filtered-solved-topic',
       replies: topicReplies,
       solved: true,
-      source: 'xiaoyinsi'
+      source: 'linuxdo'
     };
     mockScrollToIndex.mockClear();
     const view = await render(
@@ -2149,22 +2143,22 @@ describe('Topic reply filters', () => {
     });
   });
 
-  it('[REG-XIAOYINSI-017] retries the emoji catalog after a same-topic refresh', async () => {
-    const xiaoyinsiTopic: TopicDetail = {
+  it(' retries the emoji catalog after a same-topic refresh', async () => {
+    const linuxdoTopic: TopicDetail = {
       ...topic,
-      source: 'xiaoyinsi',
-      url: 'https://forum.xiaoyinsi.com/t/topic-1'
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic-1'
     };
     mockGetDiscourseSourceEmojiUrls.mockClear();
     mockGetDiscourseSourceEmojiUrls
       .mockRejectedValueOnce(new Error('temporary emoji failure'))
-      .mockResolvedValue({ heart: 'https://forum.xiaoyinsi.com/heart.png' });
+      .mockResolvedValue({ heart: 'https://linux.do/heart.png' });
     const onRefreshWholeTopic = jest.fn();
     const view = await render(
       <TopicFilterHarness
         onRefreshWholeTopic={onRefreshWholeTopic}
-        selectedTopic={xiaoyinsiTopic}
-        topicDetail={xiaoyinsiTopic}
+        selectedTopic={linuxdoTopic}
+        topicDetail={linuxdoTopic}
         topicError={{ kind: 'ordinary', message: 'temporary topic failure', retryable: true }}
       />
     );
@@ -2297,159 +2291,6 @@ describe('Topic reply filters', () => {
     } finally {
       appQueryClient.removeQueries({ queryKey, exact: true });
     }
-  });
-
-  it('[REG-TOPIC-027] aborts the old emoji read and ignores its late result after switching sites', async () => {
-    type EmojiLoader = (options: { signal?: AbortSignal; source: DiscourseSource }) => Promise<DiscourseEmojiUrlMap>;
-    type EmojiUrls = Awaited<ReturnType<EmojiLoader>>;
-    let resolveFirst: ((urls: EmojiUrls) => void) | undefined;
-    let resolveSecond: ((urls: EmojiUrls) => void) | undefined;
-    const getDiscourseEmojiUrls = jest.fn(
-      (_request: Parameters<EmojiLoader>[0]) =>
-        new Promise<EmojiUrls>((resolve) => {
-          if (!resolveFirst) {
-            resolveFirst = resolve;
-          } else {
-            resolveSecond = resolve;
-          }
-        })
-    );
-    const xiaoyinsiTopic: TopicDetail = {
-      ...topic,
-      source: 'xiaoyinsi',
-      reactionSummary: [{ id: 'heart', count: 1 }],
-      url: 'https://forum.xiaoyinsi.com/t/topic-1'
-    };
-    const linuxDoTopic: TopicDetail = {
-      ...xiaoyinsiTopic,
-      source: 'linuxdo',
-      url: 'https://linux.do/t/topic-1'
-    };
-    const view = await render(
-      <TopicFilterHarness
-        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
-        selectedTopic={xiaoyinsiTopic}
-        topicDetail={xiaoyinsiTopic}
-      />
-    );
-    await waitFor(() => expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(1));
-    const firstSignal = getDiscourseEmojiUrls.mock.calls[0][0].signal;
-
-    await view.rerender(
-      <TopicFilterHarness
-        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
-        selectedTopic={linuxDoTopic}
-        topicDetail={linuxDoTopic}
-      />
-    );
-    await waitFor(() => expect(getDiscourseEmojiUrls).toHaveBeenCalledTimes(2));
-    expect(firstSignal?.aborted).toBe(true);
-
-    await act(async () => {
-      resolveSecond?.({ heart: 'https://linux.do/current-heart.png' });
-    });
-    await waitFor(() => {
-      expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/current-heart.png');
-    });
-
-    await act(async () => {
-      resolveFirst?.({ heart: 'https://forum.xiaoyinsi.com/stale-heart.png' });
-    });
-    expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/current-heart.png');
-    expect(view.getByTestId('reaction-heart').props.children).not.toContain('stale-heart.png');
-  });
-
-  it.each(['linuxdo', 'yaohuo', 'xiaoyinsi'] as const)(
-    'wires %s topic polls through the source-specific writable path',
-    async (source) => {
-      const onVotePoll = jest.fn<(poll: TopicPoll, optionIds: string[]) => void>();
-      const sourceTopic: TopicDetail = {
-        ...topic,
-        source,
-        id: `${source}-poll-topic`,
-        url:
-          source === 'linuxdo'
-            ? 'https://linux.do/t/topic/2'
-            : source === 'xiaoyinsi'
-              ? 'https://forum.xiaoyinsi.com/t/topic/2'
-              : 'https://yaohuo.me/bbs-2.html',
-        polls: [topicPoll]
-      };
-      const view = await render(
-        <TopicFilterHarness
-          canUseLinuxDoActions={source === 'linuxdo'}
-          canUseXiaoyinsiActions={source === 'xiaoyinsi'}
-          canUseYaohuoActions={source === 'yaohuo'}
-          onVotePoll={onVotePoll}
-          selectedTopic={sourceTopic}
-          topicDetail={sourceTopic}
-        />
-      );
-
-      expect(view.getByTestId(`topic-poll-${source}`)).toBeTruthy();
-      expect(view.getByText('可投票')).toBeTruthy();
-      await fireEvent.press(view.getByLabelText(`提交 ${source} 投票`));
-      expect(onVotePoll).toHaveBeenCalledWith(topicPoll, ['yes']);
-    }
-  );
-
-  it('shows 小隐寺 write actions only after authorization and wires them independently', async () => {
-    const xiaoyinsiTopic: TopicDetail = {
-      ...topic,
-      source: 'xiaoyinsi',
-      id: 'xiaoyinsi-actions',
-      url: 'https://forum.xiaoyinsi.com/t/topic/42',
-      commentId: 100,
-      canCreatePost: true,
-      canLike: true,
-      liked: false,
-      bookmarked: false,
-      reactionSummary: [{ id: 'heart', count: 3 }]
-    };
-    const onInteract = jest.fn<(type: InteractionType, commentId?: number) => void>();
-    const onDiscourseBookmark = jest.fn();
-
-    const anonymous = await render(<TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />);
-    expect(anonymous.getByTestId('reaction-heart')).toBeTruthy();
-    expect(anonymous.queryByLabelText('点赞')).toBeNull();
-    expect(anonymous.queryByLabelText('原站收藏')).toBeNull();
-    await anonymous.unmount();
-
-    const authorized = await render(
-      <TopicFilterHarness
-        canUseXiaoyinsiActions
-        onInteract={onInteract}
-        onDiscourseBookmark={onDiscourseBookmark}
-        selectedTopic={xiaoyinsiTopic}
-        topicDetail={xiaoyinsiTopic}
-      />
-    );
-    await fireEvent.press(authorized.getByLabelText('点赞'));
-    await fireEvent.press(authorized.getByLabelText('原站收藏'));
-    expect(onInteract).toHaveBeenCalledWith('like', 100);
-    expect(onDiscourseBookmark).toHaveBeenCalledTimes(1);
-  });
-
-  it('[REG-XIAOYINSI-007] hides reply entry without can_create_post while preserving allowed 小隐寺 interactions', async () => {
-    const readOnlyTopic: TopicDetail = {
-      ...topic,
-      source: 'xiaoyinsi',
-      id: 'xiaoyinsi-read-only',
-      url: 'https://forum.xiaoyinsi.com/t/topic/43',
-      commentId: 101,
-      canCreatePost: false,
-      canLike: true,
-      liked: false,
-      bookmarked: false
-    };
-
-    const view = await render(
-      <TopicFilterHarness canUseXiaoyinsiActions selectedTopic={readOnlyTopic} topicDetail={readOnlyTopic} />
-    );
-
-    expect(view.queryByText('写回复')).toBeNull();
-    expect(view.getByLabelText('点赞')).toBeTruthy();
-    expect(view.getByLabelText('原站收藏')).toBeTruthy();
   });
 
   it('[REG-WRITE-009] renders a NodeSeek poll at its marker between body blocks', async () => {

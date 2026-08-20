@@ -11,8 +11,8 @@ vi.mock('expo-secure-store', () => ({
 vi.mock('./sourceRead', () => ({
   getCurrentUserProfile: mocks.getCurrentUserProfile
 }));
-vi.mock('@/sources/xiaoyinsi/auth', () => ({
-  loadXiaoyinsiCredentials: vi.fn()
+vi.mock('@/sources/linuxdo/auth', () => ({
+  loadLinuxDoCredentials: vi.fn()
 }));
 
 import { probeBackgroundNotificationAccess } from './notificationBackgroundAccess';

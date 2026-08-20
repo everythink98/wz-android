@@ -265,11 +265,11 @@ describe('portable Discourse fields', () => {
             ]
           }
         },
-        'xiaoyinsi'
+        'linuxdo'
       )
     ).toEqual([
       {
-        source: 'xiaoyinsi',
+        source: 'linuxdo',
         id: '4',
         name: '开发',
         slug: 'dev',

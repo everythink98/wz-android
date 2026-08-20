@@ -130,11 +130,9 @@ function detailFor(source: ActionSource, patch: Partial<TopicDetail> = {}): Topi
     url:
       source === 'linuxdo'
         ? 'https://linux.do/t/query-mutation/42'
-        : source === 'xiaoyinsi'
-          ? 'https://xiaoyinsi.com/t/query-mutation/42'
-          : source === 'yaohuo'
-            ? 'https://www.yaohuo.me/bbs/book_view.aspx?id=42&classid=177'
-            : detail.url,
+        : source === 'yaohuo'
+          ? 'https://www.yaohuo.me/bbs/book_view.aspx?id=42&classid=177'
+          : detail.url,
     ...patch
   };
 }
@@ -142,7 +140,7 @@ function detailFor(source: ActionSource, patch: Partial<TopicDetail> = {}): Topi
 async function renderActions({
   active = true,
   sessionEpochs = initialForumSessionEpochs,
-  discourseLoginPrompts = { linuxdo: jest.fn(), xiaoyinsi: jest.fn() },
+  discourseLoginPrompts = { linuxdo: jest.fn() },
   ensureNodeImageApiKey = jest.fn(async () => null),
   ensureWritableSession,
   fetcher = jest.fn(async () => new Response('{}')),
@@ -159,7 +157,7 @@ async function renderActions({
   active?: boolean;
   sessionEpochs?: ForumSessionEpochs;
   dispatchSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
-  discourseLoginPrompts?: { linuxdo: (message?: string) => void; xiaoyinsi: (message?: string) => void };
+  discourseLoginPrompts?: { linuxdo: (message?: string) => void };
   ensureNodeImageApiKey?: () => Promise<string | null>;
   ensureWritableSession?: (source: ActionSource) => Promise<WritableSessionTicket>;
   fetcher?: typeof fetch;
@@ -258,8 +256,8 @@ describe('topic action query mutations', () => {
     });
     mockPrepareDiscourseActionRuntime.mockReset().mockImplementation(async () => ({
       credentialReady: true,
-      credentialSource: 'secure-store',
-      csrfSource: 'none',
+      credentialSource: 'managed-cookie-jar',
+      csrfSource: 'session-endpoint',
       execute: mockDiscourseExecute,
       isCredentialCurrent: () => true,
       recover: mockDiscourseRecover
@@ -281,11 +279,7 @@ describe('topic action query mutations', () => {
   it('[REG-WRITE-016] uses refreshed account status for the current Topic action decision', async () => {
     const workflowStates = loggedInStates('linuxdo');
     const accountStates = createSiteSessionStates({
-      linuxdo: { ...workflowStates.linuxdo, status: 'verifying', isVerifying: true },
-      xiaoyinsi: {
-        ...workflowStates.xiaoyinsi,
-        status: 'logged-in'
-      }
+      linuxdo: { ...workflowStates.linuxdo, status: 'verifying', isVerifying: true }
     });
     const hook = await renderActions({
       siteSessionStates: workflowStates,
@@ -944,8 +938,8 @@ describe('topic action query mutations', () => {
     expect(finishes[0]).not.toHaveProperty('serverConfirmed');
   });
 
-  it('[REG-XIAOYINSI-009] cancels an existing like even when canLike is false', async () => {
-    const xiaDetail = detailFor('xiaoyinsi', {
+  it(' cancels an existing like even when canLike is false', async () => {
+    const xiaDetail = detailFor('linuxdo', {
       canLike: false,
       commentId: 987654,
       liked: true,
@@ -974,9 +968,9 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalledWith('当前帖子不能点赞');
   });
 
-  it('[REG-XIAOYINSI-009] restores an existing like when cancellation fails', async () => {
+  it(' restores an existing like when cancellation fails', async () => {
     mockDiscourseExecute.mockRejectedValueOnce(new Error('temporary failure'));
-    const xiaDetail = detailFor('xiaoyinsi', {
+    const xiaDetail = detailFor('linuxdo', {
       canLike: false,
       commentId: 987654,
       liked: true,
@@ -996,8 +990,8 @@ describe('topic action query mutations', () => {
     });
   });
 
-  it('[REG-XIAOYINSI-012] applies a confirmed like only to the exact topic cache', async () => {
-    const xiaDetail = detailFor('xiaoyinsi', {
+  it(' applies a confirmed like only to the exact topic cache', async () => {
+    const xiaDetail = detailFor('linuxdo', {
       canLike: true,
       commentId: 987654,
       liked: false,
@@ -1023,46 +1017,6 @@ describe('topic action query mutations', () => {
     });
     expect(appQueryClient.getQueryState(detailKey)?.isInvalidated).toBe(false);
     expect(hook.result.current.actions.actionBusy).toBe(false);
-  });
-
-  it('[REG-XIAOYINSI-003] cancels a topic bookmark without a bookmark id', async () => {
-    const xiaDetail = detailFor('xiaoyinsi', {
-      bookmarked: true,
-      bookmarkId: undefined,
-      polls: []
-    });
-    const { detailKey } = seedTopicCache(xiaDetail);
-    const hook = await renderActions({ topicDetail: xiaDetail });
-
-    await act(async () => {
-      await hook.result.current.actions.bookmarkOnDiscourseSite();
-    });
-
-    expect(mockDiscourseExecute).toHaveBeenCalledWith({
-      path: '/t/42/remove_bookmarks',
-      method: 'PUT',
-      headers: {},
-      body: undefined
-    });
-    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({ bookmarked: false });
-    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarkId).toBeUndefined();
-  });
-
-  it('[REG-XIAOYINSI-003] restores a topic bookmark without an id when cancellation fails', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(new Error('temporary failure'));
-    const xiaDetail = detailFor('xiaoyinsi', {
-      bookmarked: true,
-      bookmarkId: undefined,
-      polls: []
-    });
-    const { detailKey } = seedTopicCache(xiaDetail);
-    const hook = await renderActions({ topicDetail: xiaDetail });
-
-    await act(async () => {
-      await hook.result.current.actions.bookmarkOnDiscourseSite();
-    });
-
-    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({ bookmarked: true });
   });
 
   it.each([
@@ -1207,7 +1161,7 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
     seedTopicCache(xiaDetail, [reply]);
     const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
 
@@ -1250,7 +1204,7 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
     const { repliesKey } = seedTopicCache(xiaDetail, [reply]);
     const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
     await act(async () => {
@@ -1289,7 +1243,7 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: true, polls: [], replies: [reply] });
+    const xiaDetail = detailFor('linuxdo', { canCreatePost: true, polls: [], replies: [reply] });
     seedTopicCache(xiaDetail, [reply]);
     const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
 
@@ -1332,7 +1286,7 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
     const cancellation = Promise.withResolvers<void>();
     const cancelQueries = jest
       .spyOn(appQueryClient, 'cancelQueries')
@@ -1371,7 +1325,7 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
     const runtimePreparation = Promise.withResolvers<Awaited<ReturnType<typeof prepareDiscourseActionRuntime>>>();
     mockPrepareDiscourseActionRuntime.mockImplementationOnce(() => runtimePreparation.promise);
     seedTopicCache(xiaDetail, [reply]);
@@ -1415,7 +1369,7 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
     const runtimePreparation = Promise.withResolvers<Awaited<ReturnType<typeof prepareDiscourseActionRuntime>>>();
     mockPrepareDiscourseActionRuntime.mockImplementationOnce(() => runtimePreparation.promise);
     mockGetDocument.mockResolvedValueOnce({
@@ -1548,14 +1502,14 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
-    const ticketEpochs = { ...initialForumSessionEpochs, xiaoyinsi: 7 };
+    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
+    const ticketEpochs = { ...initialForumSessionEpochs, linuxdo: 7 };
     const { repliesKey } = seedTopicCache(xiaDetail, [reply], ticketEpochs);
     const invalidateQueries = jest.spyOn(appQueryClient, 'invalidateQueries');
     const hook = await renderActions({
       ensureWritableSession: async () => ({
-        source: 'xiaoyinsi',
-        identityKey: 'xiaoyinsi:account-a',
+        source: 'linuxdo',
+        identityKey: 'linuxdo:account-a',
         sessionEpoch: 7
       }),
       isWritableSessionTicketCurrent: () => true,
@@ -1581,7 +1535,7 @@ describe('topic action query mutations', () => {
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: repliesKey, exact: true, refetchType: 'none' });
   });
 
-  it('[REG-XIAOYINSI-007] closes an edit composer, keeps unconfirmed content out of cache, and refreshes only replies', async () => {
+  it(' closes an edit composer, keeps unconfirmed content out of cache, and refreshes only replies', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1591,7 +1545,7 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: false, polls: [], replies: [reply] });
+    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
     const { detailKey, repliesKey } = seedTopicCache(xiaDetail, [reply]);
     const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
     await act(async () => {
@@ -1616,7 +1570,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryState(detailKey)?.isInvalidated).toBe(false);
   });
 
-  it('[REG-WRITE-011][REG-XIAOYINSI-012][REG-TOPIC-067] removes a reply without a competing refetch', async () => {
+  it('[REG-WRITE-011][REG-TOPIC-067] removes a reply without a competing refetch', async () => {
     const reply: Reply = {
       author: 'alice',
       canDelete: true,
@@ -1625,7 +1579,7 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('xiaoyinsi', { polls: [], replies: [reply], replyCount: 1 });
+    const xiaDetail = detailFor('linuxdo', { polls: [], replies: [reply], replyCount: 1 });
     const { detailKey, repliesKey } = seedTopicCache(xiaDetail, [reply]);
     appQueryClient.setQueryData(repliesKey, {
       pages: [{ items: [reply], currentPage: 2, currentOffset: 30, hasMore: false, nextPage: null }],
@@ -1795,68 +1749,6 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith('请刷新原帖确认最新状态');
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarked).toBe(false);
-  });
-
-  it('[REG-XIAOYINSI-022] opens authorization only when recovery confirms expiry', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(
-      Object.assign(new Error('无效的 API key'), {
-        authorizationCheckRequired: true,
-        source: 'xiaoyinsi',
-        status: 401
-      })
-    );
-    mockDiscourseRecover.mockResolvedValueOnce({ loginRequired: true, phase: 'credential' });
-    const showXiaoyinsiLogin = jest.fn();
-    const xiaDetail = detailFor('xiaoyinsi', {
-      canLike: true,
-      commentId: 987654,
-      liked: false,
-      polls: []
-    });
-    const { detailKey } = seedTopicCache(xiaDetail);
-    const hook = await renderActions({
-      discourseLoginPrompts: { linuxdo: jest.fn(), xiaoyinsi: showXiaoyinsiLogin },
-      topicDetail: xiaDetail
-    });
-
-    await act(async () => {
-      await hook.result.current.actions.interact('like', 987654);
-    });
-
-    expect(showXiaoyinsiLogin).toHaveBeenCalledWith(expect.stringContaining('无效的 API key'));
-    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.liked).toBe(false);
-  });
-
-  it('[REG-XIAOYINSI-022] keeps authorization closed when recovery says the grant is still valid', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(
-      Object.assign(new Error('没有权限执行该操作'), {
-        authorizationCheckRequired: true,
-        source: 'xiaoyinsi',
-        status: 403
-      })
-    );
-    mockDiscourseRecover.mockResolvedValueOnce({ loginRequired: false, phase: 'credential' });
-    const showXiaoyinsiLogin = jest.fn();
-    const notify = jest.fn();
-    const xiaDetail = detailFor('xiaoyinsi', {
-      canLike: true,
-      commentId: 987654,
-      liked: false,
-      polls: []
-    });
-    seedTopicCache(xiaDetail);
-    const hook = await renderActions({
-      discourseLoginPrompts: { linuxdo: jest.fn(), xiaoyinsi: showXiaoyinsiLogin },
-      notify,
-      topicDetail: xiaDetail
-    });
-
-    await act(async () => {
-      await hook.result.current.actions.interact('like', 987654);
-    });
-
-    expect(showXiaoyinsiLogin).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith('没有权限执行该操作');
   });
 
   it('[REG-PERF-019] expires a write ticket once on raw HTTP 401 without replaying the write', async () => {
@@ -2073,7 +1965,7 @@ describe('topic action query mutations', () => {
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(linuxDetail);
     const hook = await renderActions({
-      discourseLoginPrompts: { linuxdo: showLinuxDoLogin, xiaoyinsi: jest.fn() },
+      discourseLoginPrompts: { linuxdo: showLinuxDoLogin },
       onSessionExpired,
       topicDetail: linuxDetail
     });
@@ -2103,7 +1995,7 @@ describe('topic action query mutations', () => {
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(linuxDetail);
     const hook = await renderActions({
-      discourseLoginPrompts: { linuxdo: showLinuxDoLogin, xiaoyinsi: jest.fn() },
+      discourseLoginPrompts: { linuxdo: showLinuxDoLogin },
       notify,
       onSessionExpired,
       topicDetail: linuxDetail
@@ -2195,54 +2087,6 @@ describe('topic action query mutations', () => {
 
     expect(dispatchSiteSessionEvent).not.toHaveBeenCalled();
     expect(showYaohuoLogin).not.toHaveBeenCalled();
-  });
-
-  it('REG-ACCOUNT-009 suppresses a linux.do failure after newer credentials take ownership', async () => {
-    let credentialIsCurrent = true;
-    const transport = Promise.withResolvers<unknown>();
-    const execute = jest.fn(async () => transport.promise);
-    const recover = jest.fn(async () => ({ loginRequired: true, phase: 'credential' as const }));
-    mockPrepareDiscourseActionRuntime.mockResolvedValueOnce({
-      credentialReady: true,
-      credentialSource: 'secure-store',
-      csrfSource: 'session-endpoint',
-      execute,
-      isCredentialCurrent: () => credentialIsCurrent,
-      recover
-    });
-    const showLinuxDoLogin = jest.fn();
-    const notify = jest.fn();
-    const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
-    seedTopicCache(linuxDetail);
-    const hook = await renderActions({
-      discourseLoginPrompts: { linuxdo: showLinuxDoLogin, xiaoyinsi: jest.fn() },
-      notify,
-      topicDetail: linuxDetail
-    });
-    await act(async () => {
-      hook.result.current.topicSession.commands.composer.changeContent('reply body');
-    });
-    let action!: Promise<void>;
-
-    await act(async () => {
-      action = hook.result.current.actions.submitReply();
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
-    credentialIsCurrent = false;
-    await act(async () => {
-      transport.reject(
-        Object.assign(new Error('旧 linux.do 登录已失效'), {
-          loginRequired: true,
-          source: 'linuxdo'
-        })
-      );
-      await action;
-    });
-
-    expect(recover).not.toHaveBeenCalled();
-    expect(showLinuxDoLogin).not.toHaveBeenCalled();
-    expect(notify).not.toHaveBeenCalled();
   });
 
   it('REG-ACCOUNT-010 does not insert a NodeImage upload completed by a cleared API key', async () => {
@@ -2380,7 +2224,7 @@ describe('topic action query mutations', () => {
       canceled: false,
       assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
     });
-    const xiaDetail = detailFor('xiaoyinsi', { canCreatePost: true, polls: [] });
+    const xiaDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(xiaDetail);
     const hook = await renderActions({ topicDetail: xiaDetail });
     let pending!: Promise<void>;
@@ -2520,14 +2364,14 @@ describe('topic action query mutations', () => {
     expect(mockRunYaohuoAction).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-XIAOYINSI-012] applies a confirmed Xiaoyinsi vote only to the exact topic cache', async () => {
+  it(' applies a confirmed LinuxDo vote only to the exact topic cache', async () => {
     const xiaPoll: TopicPoll = {
-      id: 'xiaoyinsi-poll',
+      id: 'linuxdo-poll',
       name: 'poll_name',
       postId: '42',
       options: [{ id: '1', label: 'A' }]
     };
-    const xiaDetail = detailFor('xiaoyinsi', { polls: [xiaPoll] });
+    const xiaDetail = detailFor('linuxdo', { polls: [xiaPoll] });
     const { detailKey } = seedTopicCache(xiaDetail);
     const hook = await renderActions({ topicDetail: xiaDetail });
 
@@ -2537,7 +2381,7 @@ describe('topic action query mutations', () => {
 
     expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]).toMatchObject({
-      id: 'xiaoyinsi-poll',
+      id: 'linuxdo-poll',
       voted: true,
       options: [{ id: '1', selected: true }]
     });

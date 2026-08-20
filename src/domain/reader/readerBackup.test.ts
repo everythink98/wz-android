@@ -40,7 +40,7 @@ describe('reader JSON backup', () => {
     const local = createEmptyReaderData();
     const remote = createEmptyReaderData();
     remote.settings.contentSources = [
-      { source: 'xiaoyinsi', enabled: false },
+      { source: 'linuxdo', enabled: false },
       { source: 'v2ex', enabled: true },
       { source: 'linuxdo', enabled: true },
       { source: 'nodeseek', enabled: true },
@@ -50,7 +50,7 @@ describe('reader JSON backup', () => {
     const imported = importReaderBackupJson(local, exportReaderBackupJson(remote));
 
     expect(imported.version).toBe(2);
-    expect(imported.settings.contentSources[0]).toEqual({ source: 'xiaoyinsi', enabled: false });
+    expect(imported.settings.contentSources[0]).toEqual({ source: 'linuxdo', enabled: false });
   });
 
   it('adds default content sources when importing an old v2 backup', () => {
@@ -64,8 +64,7 @@ describe('reader JSON backup', () => {
       { source: 'v2ex', enabled: true },
       { source: 'linuxdo', enabled: true },
       { source: 'nodeseek', enabled: true },
-      { source: 'yaohuo', enabled: true },
-      { source: 'xiaoyinsi', enabled: true }
+      { source: 'yaohuo', enabled: true }
     ]);
   });
 

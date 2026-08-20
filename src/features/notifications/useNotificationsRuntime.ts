@@ -9,8 +9,6 @@ import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { createNotificationGateway, type NotificationAccessReader } from '@/sources/notificationGateway';
 import { readForegroundNotificationAccess } from '@/sources/notificationForegroundAccess';
-import { loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
-import { xiaoyinsiCredentialsHaveScope } from '@/sources/xiaoyinsi/credentials';
 import {
   clearNotificationSourceForContentDisable,
   defaultNotificationState,
@@ -57,8 +55,6 @@ function identityNeedsTrustedFallback(source: NotificationSource, sessions: Site
 
 export function useNotificationsRuntime({
   appActive,
-  authorizationRevision,
-  beginXiaoyinsiAuthorization,
   contentSourcesReady,
   enabledNotificationSources,
   fetcher,
@@ -72,8 +68,6 @@ export function useNotificationsRuntime({
   sessions
 }: {
   appActive: boolean;
-  authorizationRevision: string;
-  beginXiaoyinsiAuthorization: () => void;
   contentSourcesReady: boolean;
   enabledNotificationSources: readonly NotificationSource[];
   fetcher: Fetcher;
@@ -120,7 +114,6 @@ export function useNotificationsRuntime({
     () => (source) =>
       readForegroundNotificationAccess({
         fetcher,
-        loadXiaoyinsiCredentials,
         session: sessions[source],
         source,
         userAgent:
@@ -156,14 +149,12 @@ export function useNotificationsRuntime({
   const [permission, setPermission] = useState<NotificationPermissionState>('checking');
   const [backgroundError, setBackgroundError] = useState('');
   const [snapshotErrors, setSnapshotErrors] = useState<Partial<Record<NotificationSource, string>>>({});
-  const [xiaoyinsiNotificationsScope, setXiaoyinsiNotificationsScope] = useState<boolean | null>(null);
   const [sourceLifecycleSnapshot, setSourceLifecycleSnapshot] = useState(() => ({ ...sourceLifecyclesRef.current }));
   const runtimeReady = ready && contentSourcesReady;
   const operationalSources = useMemo(
     () => operationalNotificationSources(sourceLifecycleSnapshot, enabledNetworkSources, runtimeReady),
     [enabledNetworkSources, runtimeReady, sourceLifecycleSnapshot]
   );
-  const xiaoyinsiContentEnabled = enabledSources.includes('xiaoyinsi');
 
   useLayoutEffect(() => {
     enabledSourcesRef.current = enabledSources;
@@ -233,27 +224,6 @@ export function useNotificationsRuntime({
     };
   }, [commitState]);
 
-  useEffect(() => {
-    if (!runtimeReady || !xiaoyinsiContentEnabled) {
-      if (runtimeReady) {
-        setXiaoyinsiNotificationsScope(false);
-      }
-      return undefined;
-    }
-    let current = true;
-    setXiaoyinsiNotificationsScope(null);
-    void loadXiaoyinsiCredentials()
-      .then((credentials) => {
-        if (current) setXiaoyinsiNotificationsScope(xiaoyinsiCredentialsHaveScope(credentials, 'notifications'));
-      })
-      .catch(() => {
-        if (current) setXiaoyinsiNotificationsScope(false);
-      });
-    return () => {
-      current = false;
-    };
-  }, [appActive, authorizationRevision, runtimeReady, xiaoyinsiContentEnabled]);
-
   const nodeseekIdentity = identityNeedsTrustedFallback('nodeseek', sessions)
     ? state.sources.nodeseek.identityKey
     : confirmedIdentity('nodeseek', sessions);
@@ -263,17 +233,13 @@ export function useNotificationsRuntime({
   const yaohuoIdentity = identityNeedsTrustedFallback('yaohuo', sessions)
     ? state.sources.yaohuo.identityKey
     : confirmedIdentity('yaohuo', sessions);
-  const xiaoyinsiIdentity = identityNeedsTrustedFallback('xiaoyinsi', sessions)
-    ? state.sources.xiaoyinsi.identityKey
-    : confirmedIdentity('xiaoyinsi', sessions);
   const identityKeys = useMemo<Partial<Record<NotificationSource, string>>>(
     () => ({
       nodeseek: nodeseekIdentity,
       linuxdo: linuxdoIdentity,
-      yaohuo: yaohuoIdentity,
-      xiaoyinsi: xiaoyinsiIdentity
+      yaohuo: yaohuoIdentity
     }),
-    [linuxdoIdentity, nodeseekIdentity, xiaoyinsiIdentity, yaohuoIdentity]
+    [linuxdoIdentity, nodeseekIdentity, yaohuoIdentity]
   );
   const identitySignature = `${enabledSourcesKey}:${enabledNetworkSources
     .map((source) => identityKeys[source] || `${source}:none`)
@@ -284,8 +250,7 @@ export function useNotificationsRuntime({
         enabledSources.includes(source) &&
         operationalSources.includes(source) &&
         Boolean(identityKeys[source]) &&
-        sessions[source].identityTrust === 'confirmed' &&
-        (source !== 'xiaoyinsi' || xiaoyinsiNotificationsScope === true)
+        sessions[source].identityTrust === 'confirmed'
     )
     .join('|');
   const activeNetworkSources = useMemo(
@@ -702,8 +667,6 @@ export function useNotificationsRuntime({
     snapshotErrors,
     state,
     unreadTotal,
-    xiaoyinsiNeedsUpgrade: sessions.xiaoyinsi.isLoggedIn && xiaoyinsiNotificationsScope === false,
-    beginXiaoyinsiAuthorization,
     openSystemSettings: openNotificationSystemSettings,
     onNavigationReady,
     refreshSnapshots: refetchSnapshots,

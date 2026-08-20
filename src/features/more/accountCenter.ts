@@ -35,18 +35,6 @@ export type SiteAccountView = {
 };
 
 function primaryActionFor(view: SiteSessionViewModels[SessionSite], hasCredential: boolean) {
-  if (view.site === 'xiaoyinsi') {
-    if (view.status === 'authorizing') {
-      return { action: 'none' as const, label: '授权中', disabled: true };
-    }
-    if (!view.isLoggedIn) {
-      return {
-        action: 'open-login' as const,
-        label: view.status === 'expired' ? '重新授权' : '授权登录',
-        disabled: false
-      };
-    }
-  }
   if (view.status === 'verifying') {
     return { action: 'none' as const, label: '验证中', disabled: true };
   }
@@ -80,10 +68,8 @@ export function createSiteAccountViews(
 ): SiteAccountView[] {
   return sessionSources.map((site) => {
     const session = sessions[site];
-    const supportsCredentialFill = site !== 'xiaoyinsi';
-    const credential: SiteAccountCredentialView = supportsCredentialFill
-      ? credentials[site]
-      : { state: 'missing', hasCredential: false, protection: null };
+    const supportsCredentialFill = true;
+    const credential: SiteAccountCredentialView = credentials[site];
     const user = session.currentUser;
     const identityLabel =
       user?.displayName ||

@@ -40,7 +40,6 @@ import { useTopicRouteBeforeRemove } from './useTopicRouteBeforeRemove';
 
 export type TopicRouteRuntimeValue = {
   account: {
-    beginXiaoyinsiAuthorization: () => Promise<unknown>;
     sessionEpochs: ForumSessionEpochs;
     sessionViewModels: SiteSessionViewModels;
     ensureNodeImageApiKey: () => Promise<string | null>;
@@ -237,11 +236,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     sessionEpochs: runtime.account.sessionEpochs,
     discourseActionRuntimeDependencies,
     discourseLoginPrompts: {
-      linuxdo: runtime.account.showLinuxDoVerification,
-      xiaoyinsi: (message) => {
-        runtime.notify(message || '匿名可阅读，授权后才能互动。');
-        void runtime.account.beginXiaoyinsiAuthorization();
-      }
+      linuxdo: runtime.account.showLinuxDoVerification
     } satisfies Record<DiscourseSource, (message?: string) => void>,
     ensureWritableSession: runtime.account.ensureWritableSession,
     fetcher: runtime.fetcher,

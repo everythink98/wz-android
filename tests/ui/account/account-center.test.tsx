@@ -22,7 +22,7 @@ const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const sessions = createSiteSessionViewModels(createSiteSessionStates());
-const allSessionSources = ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const;
+const allSessionSources = ['nodeseek', 'linuxdo', 'yaohuo'] as const;
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -39,14 +39,14 @@ describe('Account center user authentication', () => {
       <AccountCenterPanel
         key="forced-disabled"
         credentials={emptyCredentialSummaries()}
-        enabledSessionSources={['xiaoyinsi', 'nodeseek']}
+        enabledSessionSources={['yaohuo', 'nodeseek']}
         expanded
         forcedSite="linuxdo"
         nodeSeekUserId={null}
         sessions={sessions}
         siteContent={{
           linuxdo: <DisabledLinuxContent />,
-          xiaoyinsi: <Text>小隐寺专属内容</Text>
+          yaohuo: <Text>妖火专属内容</Text>
         }}
         statusBusy={false}
         styles={styles}
@@ -57,11 +57,11 @@ describe('Account center user authentication', () => {
     );
 
     expect(view.getAllByRole('tab').map((tab) => tab.props.testID)).toEqual([
-      'account-site-xiaoyinsi',
+      'account-site-yaohuo',
       'account-site-nodeseek'
     ]);
-    expect(view.getByTestId('account-site-xiaoyinsi').props.accessibilityState.selected).toBe(true);
-    expect(view.getByText('小隐寺专属内容')).toBeTruthy();
+    expect(view.getByTestId('account-site-yaohuo').props.accessibilityState.selected).toBe(true);
+    expect(view.getByText('妖火专属内容')).toBeTruthy();
     expect(view.queryByText('linux.do 专属内容')).toBeNull();
     expect(disabledLinuxContentRender).not.toHaveBeenCalled();
 
@@ -69,12 +69,12 @@ describe('Account center user authentication', () => {
       <AccountCenterPanel
         key="pending-disabled"
         credentials={emptyCredentialSummaries()}
-        enabledSessionSources={['xiaoyinsi', 'nodeseek']}
+        enabledSessionSources={['yaohuo', 'nodeseek']}
         expanded
         pendingFillSite="linuxdo"
         nodeSeekUserId={null}
         sessions={sessions}
-        siteContent={{ xiaoyinsi: <Text>小隐寺专属内容</Text> }}
+        siteContent={{ yaohuo: <Text>妖火专属内容</Text> }}
         statusBusy={false}
         styles={styles}
         theme={theme}
@@ -82,7 +82,7 @@ describe('Account center user authentication', () => {
         onExpandedChange={jest.fn()}
       />
     );
-    expect(view.getByTestId('account-site-xiaoyinsi').props.accessibilityState.selected).toBe(true);
+    expect(view.getByTestId('account-site-yaohuo').props.accessibilityState.selected).toBe(true);
   });
 
   it('falls back to the first enabled site when the selected site is disabled', async () => {
@@ -102,8 +102,8 @@ describe('Account center user authentication', () => {
     await fireEvent.press(view.getByTestId('account-site-linuxdo'));
     expect(view.getByTestId('account-site-linuxdo').props.accessibilityState.selected).toBe(true);
 
-    await view.rerender(<AccountCenterPanel {...common} enabledSessionSources={['xiaoyinsi', 'nodeseek']} />);
-    expect(view.getByTestId('account-site-xiaoyinsi').props.accessibilityState.selected).toBe(true);
+    await view.rerender(<AccountCenterPanel {...common} enabledSessionSources={['yaohuo', 'nodeseek']} />);
+    expect(view.getByTestId('account-site-yaohuo').props.accessibilityState.selected).toBe(true);
     expect(view.queryByTestId('account-site-linuxdo')).toBeNull();
   });
 
@@ -189,7 +189,7 @@ describe('Account center user authentication', () => {
       />
     );
 
-    expect(view.getByText('待处理 2 · 网站登录 1/4 · 自动填入 1/3')).toBeTruthy();
+    expect(view.getByText('待处理 2 · 网站登录 1/3 · 自动填入 1/3')).toBeTruthy();
     expect(view.getByText('Alice · 已登录')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('查看主页'));
     expect(onCommand).toHaveBeenLastCalledWith({ type: 'open-user', user: currentUser });

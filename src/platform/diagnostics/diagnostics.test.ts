@@ -391,24 +391,17 @@ describe('diagnostic traces', () => {
     expect(JSON.stringify(events())).not.toContain('https://');
   });
 
-  it.each([
-    'xiaoyinsi-discourse-categories',
-    'xiaoyinsi-discourse-feed',
-    'xiaoyinsi-discourse-replies',
-    'xiaoyinsi-discourse-search',
-    'xiaoyinsi-discourse-topic',
-    'xiaoyinsi-discourse-user',
-    'html-topic',
-    'html-topic-fallback',
-    'api-topic-fallback'
-  ])('keeps the allowlisted parser variant %s', (parserVariant) => {
-    const events = captureEvents();
-    const trace = beginDiagnosticTrace('topic', 'parse-topic');
+  it.each(['html-topic', 'html-topic-fallback', 'api-topic-fallback'])(
+    'keeps the allowlisted parser variant %s',
+    (parserVariant) => {
+      const events = captureEvents();
+      const trace = beginDiagnosticTrace('topic', 'parse-topic');
 
-    markDiagnosticStage(trace, 'parse', { parserVariant });
+      markDiagnosticStage(trace, 'parse', { parserVariant });
 
-    expect(events().at(-1)).toEqual(expect.objectContaining({ parserVariant }));
-  });
+      expect(events().at(-1)).toEqual(expect.objectContaining({ parserVariant }));
+    }
+  );
 
   it('upgrades a successful terminal event to the most severe hinted outcome', () => {
     const events = captureEvents();

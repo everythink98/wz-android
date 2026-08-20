@@ -57,22 +57,6 @@ export function authNoticeForSource(
       'warning'
     );
   }
-  if (source === 'xiaoyinsi') {
-    if (session.status === 'logged-in') {
-      return notice('logged-in', '小隐寺已授权。', 'neutral');
-    }
-    if (session.status === 'authorizing') {
-      return notice('verification-required', '正在等待小隐寺授权。', 'warning');
-    }
-    if (session.status === 'expired') {
-      return notice('login-expired', '小隐寺授权已失效，请重新授权。', 'danger');
-    }
-    return notice(
-      'anonymous',
-      surface === 'action' ? '请先授权小隐寺后再互动。' : '匿名可阅读，授权后才能互动。',
-      'neutral'
-    );
-  }
   if (source === 'nodeseek') {
     if (session.status === 'logged-in') {
       return notice('logged-in', surface === 'search' ? '已登录搜索。' : 'NodeSeek 已登录。', 'neutral');

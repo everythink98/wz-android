@@ -10,7 +10,7 @@ import type { Category } from './models';
 
 const categories: Category[] = [
   { source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' },
-  { source: 'xiaoyinsi', id: '9', name: '闲聊', slug: 'chat' },
+  { source: 'linuxdo', id: '9', name: '闲聊', slug: 'chat' },
   { source: 'nodeseek', id: 'daily', name: '日常' },
   { source: 'yaohuo', id: '177', name: '妖火茶馆' }
 ];
@@ -19,7 +19,7 @@ describe('Android search site filters', () => {
   it('defaults every sortable source to newest topics', () => {
     expect(DEFAULT_SEARCH_FILTERS.v2ex.sort).toBe('time');
     expect(DEFAULT_SEARCH_FILTERS.linuxdo.order).toBe('latest');
-    expect(DEFAULT_SEARCH_FILTERS.xiaoyinsi.order).toBe('latest');
+    expect(DEFAULT_SEARCH_FILTERS.linuxdo.order).toBe('latest');
     expect(DEFAULT_SEARCH_FILTERS.nodeseek.sort).toBe('postTime');
     expect(DEFAULT_SEARCH_FILTERS.yaohuo).toEqual({ source: 'yaohuo', category: '0' });
   });
@@ -178,12 +178,12 @@ describe('Android search site filters', () => {
     ).toBe('浏览量最小值不能大于最大值');
   });
 
-  it('builds the standard Discourse advanced filters confirmed by the 小隐寺 search UI', () => {
+  it('builds the standard Discourse advanced filters confirmed by the linux.do search UI', () => {
     expect(
       buildDiscourseSearchQuery(
         '寺内',
         {
-          ...DEFAULT_SEARCH_FILTERS.xiaoyinsi,
+          ...DEFAULT_SEARCH_FILTERS.linuxdo,
           scope: 'title',
           category: '9',
           tags: ['公告', '反馈'],
@@ -206,13 +206,13 @@ describe('Android search site filters', () => {
     );
   });
 
-  it('[REG-XIAOYINSI-006] keeps child-category results returned by a 小隐寺 parent-category search', () => {
+  it(' keeps child-category results returned by a linux.do parent-category search', () => {
     const items = [
       { title: '父分类主题', categoryId: '4' },
       { title: '子分类主题', categoryId: '15' }
     ];
 
-    expect(filterSearchResponseItems(items, { ...DEFAULT_SEARCH_FILTERS.xiaoyinsi, category: '4' }, '主题')).toEqual(
+    expect(filterSearchResponseItems(items, { ...DEFAULT_SEARCH_FILTERS.linuxdo, category: '4' }, '主题')).toEqual(
       items
     );
   });

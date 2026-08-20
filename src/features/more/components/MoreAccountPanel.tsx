@@ -1,15 +1,12 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
 import { Activity } from 'lucide-react-native';
-import type { AccountCenterCommand, XiaoyinsiAuthPhase } from '@/domain/session/accountCenter';
+import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import {
   nodeSeekUserIdForSession,
   type SessionSite,
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
 import type { LinuxDoLevelProfile } from '@/sources/readGateway';
-import type { XiaoyinsiPendingAuthorization } from '@/sources/xiaoyinsi/auth';
-import type { XiaoyinsiLevelProfile } from '@/sources/xiaoyinsi/account';
 import { MenuButton } from '@/ui/controls/ExpandableControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { CredentialSummaries } from '../accountCenter';
@@ -17,15 +14,6 @@ import { createMoreScreenStyles } from '../styles';
 import { AccountCenterPanel } from './AccountCenterPanel';
 import { LinuxDoLevelPanel } from './LinuxDoLevelPanel';
 import { NodeSeekServicesPanel } from './NodeSeekServicesPanel';
-import { XiaoyinsiAuthPanel } from './XiaoyinsiAuthPanel';
-
-const styles = StyleSheet.create({
-  accountFooterAction: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: 4,
-    paddingTop: 4
-  }
-});
 
 export type MoreAccountCapabilities = {
   enabledSessionSources: readonly SessionSite[];
@@ -55,22 +43,6 @@ export type MoreAccountCapabilities = {
     nodeSeek: {
       checkIn: () => unknown;
     };
-    xiaoyinsiAuth: {
-      begin: () => unknown;
-      cancel: () => unknown;
-      message: string;
-      openBrowser: () => unknown;
-      pending: XiaoyinsiPendingAuthorization | null;
-      phase: XiaoyinsiAuthPhase;
-      revoke: () => unknown;
-      secondsRemaining: number;
-    };
-    xiaoyinsiLevel: {
-      busy: boolean;
-      error: string;
-      profile: XiaoyinsiLevelProfile | null;
-      refresh: () => unknown;
-    };
   };
   surfaces: {
     closeAll: () => void;
@@ -92,59 +64,26 @@ export function MoreAccountPanel({
   const { styles: screenStyles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const [expanded, setExpanded] = useState(false);
   const [linuxDoLevelExpanded, setLinuxDoLevelExpanded] = useState(false);
-  const [xiaoyinsiLevelExpanded, setXiaoyinsiLevelExpanded] = useState(false);
   const sessions = runtime.read.sessions;
   const nodeSeekEnabled = runtime.enabledSessionSources.includes('nodeseek');
   const linuxDoEnabled = runtime.enabledSessionSources.includes('linuxdo');
   const yaohuoEnabled = runtime.enabledSessionSources.includes('yaohuo');
-  const xiaoyinsiEnabled = runtime.enabledSessionSources.includes('xiaoyinsi');
   const linuxDoSession = sessions.linuxdo;
-  const xiaoyinsiSession = sessions.xiaoyinsi;
-  const auth = runtime.center.xiaoyinsiAuth;
   const {
     busy: linuxDoLevelBusy,
     error: linuxDoLevelError,
     profile: linuxDoLevelProfile,
     refresh: refreshLinuxDoLevel
   } = runtime.center.linuxDoLevel;
-  const {
-    busy: xiaoyinsiLevelBusy,
-    error: xiaoyinsiLevelError,
-    profile: xiaoyinsiLevelProfile,
-    refresh: refreshXiaoyinsiLevel
-  } = runtime.center.xiaoyinsiLevel;
-  const authForcedOpen =
-    xiaoyinsiEnabled && (auth.phase === 'requesting' || auth.phase === 'waiting' || auth.phase === 'cleanup');
-  const projectedSessions =
-    auth.phase === 'cleanup'
-      ? {
-          ...sessions,
-          xiaoyinsi: {
-            ...xiaoyinsiSession,
-            status: 'authorizing' as const,
-            statusLabel: '待清理',
-            summaryLabel: '本机清理未完成',
-            cookieSummary: [],
-            isVerified: false,
-            isLoggedIn: false,
-            isVerifying: true,
-            canWrite: false,
-            currentUser: undefined
-          }
-        }
-      : sessions;
-
   useEffect(() => {
     if (
       (nodeSeekEnabled && runtime.surfaces.nodeseek) ||
       (yaohuoEnabled && runtime.surfaces.yaohuo) ||
-      (linuxDoEnabled && runtime.surfaces.linuxdo) ||
-      authForcedOpen
+      (linuxDoEnabled && runtime.surfaces.linuxdo)
     ) {
       setExpanded(true);
     }
   }, [
-    authForcedOpen,
     linuxDoEnabled,
     nodeSeekEnabled,
     runtime.surfaces.linuxdo,
@@ -174,26 +113,6 @@ export function MoreAccountPanel({
     refreshLinuxDoLevel
   ]);
 
-  useEffect(() => {
-    if (
-      xiaoyinsiLevelExpanded &&
-      xiaoyinsiEnabled &&
-      xiaoyinsiSession.canWrite &&
-      !xiaoyinsiLevelProfile &&
-      !xiaoyinsiLevelBusy &&
-      !xiaoyinsiLevelError
-    ) {
-      void refreshXiaoyinsiLevel();
-    }
-  }, [
-    refreshXiaoyinsiLevel,
-    xiaoyinsiLevelExpanded,
-    xiaoyinsiLevelBusy,
-    xiaoyinsiLevelError,
-    xiaoyinsiLevelProfile,
-    xiaoyinsiSession.canWrite,
-    xiaoyinsiEnabled
-  ]);
   const linuxDoLevelMeta = !linuxDoSession.canWrite
     ? '登录后查看'
     : linuxDoLevelBusy
@@ -201,13 +120,6 @@ export function MoreAccountPanel({
       : linuxDoLevelProfile
         ? `LV ${linuxDoLevelProfile.currentLevel}${linuxDoLevelProfile.targetLevel !== null ? ` → LV ${linuxDoLevelProfile.targetLevel}` : ''}`
         : linuxDoLevelError || '点击读取';
-  const xiaoyinsiLevelMeta = !xiaoyinsiSession.canWrite
-    ? '授权后查看'
-    : xiaoyinsiLevelBusy
-      ? '读取中'
-      : xiaoyinsiLevelProfile
-        ? `LV ${xiaoyinsiLevelProfile.currentLevel}${xiaoyinsiLevelProfile.targetLevel !== null ? ` → LV ${xiaoyinsiLevelProfile.targetLevel}` : ''}`
-        : xiaoyinsiLevelError || '点击读取';
 
   return (
     <AccountCenterPanel
@@ -221,13 +133,11 @@ export function MoreAccountPanel({
             ? 'yaohuo'
             : linuxDoEnabled && runtime.surfaces.linuxdo
               ? 'linuxdo'
-              : authForcedOpen
-                ? 'xiaoyinsi'
-                : null
+              : null
       }
       pendingFillSite={runtime.center.credentials.pendingFillSite}
       nodeSeekUserId={nodeSeekEnabled ? nodeSeekUserIdForSession(sessions.nodeseek) : null}
-      sessions={projectedSessions}
+      sessions={sessions}
       siteContent={{
         nodeseek: nodeSeekEnabled ? (
           <NodeSeekServicesPanel
@@ -270,58 +180,7 @@ export function MoreAccountPanel({
             ) : null}
           </>
         ) : null,
-        yaohuo: yaohuoEnabled ? null : undefined,
-        xiaoyinsi: xiaoyinsiEnabled ? (
-          <>
-            <XiaoyinsiAuthPanel
-              message={auth.message}
-              pending={auth.pending}
-              phase={auth.phase}
-              secondsRemaining={auth.secondsRemaining}
-              session={xiaoyinsiSession}
-              styles={screenStyles}
-              theme={theme}
-              onBegin={() => void auth.begin()}
-              onCancel={() => void auth.cancel()}
-              onOpenBrowser={() => void auth.openBrowser()}
-              onRevoke={() => void auth.revoke()}
-            />
-            <View
-              testID={
-                xiaoyinsiLevelExpanded &&
-                xiaoyinsiSession.canWrite &&
-                !xiaoyinsiLevelBusy &&
-                (xiaoyinsiLevelProfile || xiaoyinsiLevelError)
-                  ? 'xiaoyinsi-level-settled'
-                  : undefined
-              }
-              style={[styles.accountFooterAction, { borderTopColor: theme.line }]}
-            >
-              <MenuButton
-                nested
-                icon={Activity}
-                label="查看等级"
-                value={xiaoyinsiLevelMeta}
-                expanded={xiaoyinsiLevelExpanded}
-                onPress={() => setXiaoyinsiLevelExpanded((value) => !value)}
-              />
-              {xiaoyinsiLevelExpanded ? (
-                <LinuxDoLevelPanel
-                  busy={xiaoyinsiLevelBusy}
-                  error={xiaoyinsiLevelError}
-                  loginButtonLabel="授权登录"
-                  loginMessage="需要先完成小隐寺授权，等级数据只使用 App 保存的 User API Key 读取。"
-                  profile={xiaoyinsiLevelProfile}
-                  siteSession={xiaoyinsiSession}
-                  styles={screenStyles}
-                  theme={theme}
-                  onOpenLogin={() => void auth.begin()}
-                  onRefresh={() => void refreshXiaoyinsiLevel()}
-                />
-              ) : null}
-            </View>
-          </>
-        ) : null
+        yaohuo: yaohuoEnabled ? null : undefined
       }}
       statusBusy={runtime.read.statusBusy}
       styles={screenStyles}

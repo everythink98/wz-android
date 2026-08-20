@@ -11,7 +11,6 @@ type ReplyComposerToolbarItem =
 const REPLY_COMPOSER_ACCESSORIES: Partial<Record<Source, ReplyComposerAccessory>> = {
   nodeseek: 'nodeseek-sticker',
   linuxdo: 'discourse-emoji',
-  xiaoyinsi: 'discourse-emoji',
   yaohuo: 'yaohuo-face'
 };
 

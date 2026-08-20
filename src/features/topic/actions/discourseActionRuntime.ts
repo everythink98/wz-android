@@ -2,8 +2,6 @@ import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import type { Fetcher } from '@/platform/network/request';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
-import { runXiaoyinsiAction } from '@/sources/xiaoyinsi/actionClient';
-import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 import { errorMessage } from '@/platform/network/errors';
 
 export type DiscourseActionRuntimeDependencies = {
@@ -35,7 +33,7 @@ type DiscourseActionRuntime = {
   prepare: (context: DiscourseActionRuntimeContext) => Promise<PreparedDiscourseActionRuntime>;
 };
 
-function hasFlag(error: unknown, key: 'authorizationCheckRequired' | 'loginRequired') {
+function hasFlag(error: unknown, key: 'loginRequired') {
   return Boolean(error && typeof error === 'object' && (error as Record<string, unknown>)[key]);
 }
 
@@ -59,42 +57,6 @@ const discourseActionRuntimes = {
           }
           const message = errorMessage(error);
           return { loginRequired: true, message, phase: 'credential' as const };
-        }
-      };
-    }
-  },
-  xiaoyinsi: {
-    prepare: async (context) => {
-      const generation = currentXiaoyinsiCredentialGeneration();
-      const isCredentialCurrent = () => currentXiaoyinsiCredentialGeneration() === generation;
-      const credentials = await loadXiaoyinsiCredentials();
-      return {
-        credentialReady: Boolean(credentials),
-        credentialSource: 'secure-store',
-        csrfSource: 'none',
-        isCredentialCurrent,
-        ...(credentials
-          ? {
-              execute: (request: DiscourseActionRequest, signal?: AbortSignal) =>
-                runXiaoyinsiAction({
-                  credentials,
-                  fetcher: context.fetcher,
-                  request,
-                  signal
-                })
-            }
-          : {}),
-        recover: async (error: unknown) => {
-          if (!isCredentialCurrent()) {
-            return { loginRequired: false, phase: 'credential' as const, stale: true };
-          }
-          if (!isCredentialCurrent()) {
-            return { loginRequired: false, phase: 'credential' as const, stale: true };
-          }
-          return {
-            loginRequired: hasFlag(error, 'loginRequired'),
-            phase: hasFlag(error, 'authorizationCheckRequired') ? ('credential' as const) : ('transport' as const)
-          };
         }
       };
     }

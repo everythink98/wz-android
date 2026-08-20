@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useState } from 'react';
 import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordinator';
 
-jest.mock('@/platform/android/xiaoyinsiKeystore', () => ({
+jest.mock('@/platform/android/secureRandom', () => ({
   nativeSecureRandomHex: jest.fn(async () => 'a'.repeat(32))
 }));
 

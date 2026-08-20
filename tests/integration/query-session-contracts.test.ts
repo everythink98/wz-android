@@ -40,26 +40,23 @@ describe('forum server state', () => {
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-XIAOYINSI-015] scopes feed caches by source, category, and filter', () => {
+  it(' scopes feed caches by source, category, and filter', () => {
     const latest = forumQueryKeys.feed({
       feedFilter: 'latest',
       scope: initialForumSessionEpochs,
-      source: 'xiaoyinsi'
+      source: 'linuxdo'
     });
 
     expect(latest).not.toEqual(
-      forumQueryKeys.feed({ feedFilter: 'hot', scope: initialForumSessionEpochs, source: 'xiaoyinsi' })
+      forumQueryKeys.feed({ feedFilter: 'hot', scope: initialForumSessionEpochs, source: 'linuxdo' })
     );
     expect(latest).not.toEqual(
       forumQueryKeys.feed({
         category: '开发',
         feedFilter: 'latest',
         scope: initialForumSessionEpochs,
-        source: 'xiaoyinsi'
+        source: 'linuxdo'
       })
-    );
-    expect(latest).not.toEqual(
-      forumQueryKeys.feed({ feedFilter: 'latest', scope: initialForumSessionEpochs, source: 'linuxdo' })
     );
   });
 
@@ -93,7 +90,7 @@ describe('forum server state', () => {
     const topic = (readPlanScope: string) =>
       forumQueryKeys.topic({
         readPlanScope,
-        source: 'xiaoyinsi',
+        source: 'linuxdo',
         topicId: '42',
         scope: initialForumSessionEpochs
       });
@@ -108,7 +105,7 @@ describe('forum server state', () => {
     const user = (readPlanScope: string) =>
       forumQueryKeys.user({
         readPlanScope,
-        source: 'xiaoyinsi',
+        source: 'linuxdo',
         userId: '7',
         scope: initialForumSessionEpochs
       });
@@ -188,7 +185,7 @@ describe('forum server state', () => {
   });
 
   it('[REG-ACCOUNT-019] never resets stable account snapshots with forum content', () => {
-    const sources = ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const;
+    const sources = ['nodeseek', 'linuxdo', 'yaohuo'] as const;
     for (const changedSource of sources) {
       const client = createAppQueryClient();
       const snapshots = sources.map((source) => {

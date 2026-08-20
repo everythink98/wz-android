@@ -171,7 +171,7 @@ const noopUserProfile = (_user: UserProfile) => undefined;
 
 function LibraryHarness({
   active = true,
-  enabledSources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'],
+  enabledSources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'],
   followedUsers: libraryUsers = followedUsers,
   favoriteRecords = records,
   historyRecords = records,
@@ -229,14 +229,14 @@ describe('Library filters', () => {
     const recordReferences = [...records];
     const followedUsersSnapshot = JSON.stringify(followedUsers);
     const followedUserReferences = [...followedUsers];
-    const view = await render(<LibraryHarness enabledSources={['xiaoyinsi', 'linuxdo']} />);
+    const view = await render(<LibraryHarness enabledSources={['linuxdo']} />);
 
     expect(
       view
         .getAllByRole('button')
         .map((button) => button.props.testID)
         .filter((testID) => String(testID).startsWith('library-source-'))
-    ).toEqual(['library-source-all', 'library-source-xiaoyinsi', 'library-source-linuxdo']);
+    ).toEqual(['library-source-all', 'library-source-linuxdo']);
     expect(view.queryByText('V2EX 问答主题')).toBeNull();
     expect(view.getByText('linux.do 开发主题')).toBeTruthy();
     expect(view.getByText('1 条')).toBeTruthy();

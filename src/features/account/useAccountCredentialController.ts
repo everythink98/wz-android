@@ -37,7 +37,6 @@ export function useAccountCredentialController({
   changeYaohuoLoginPanel,
   linuxDoWebViewRef,
   notify,
-  onOpenXiaoyinsiAuthorization,
   refreshAccountStatus,
   setYaohuoLoginPrompt,
   webViewRef,
@@ -49,7 +48,6 @@ export function useAccountCredentialController({
   changeYaohuoLoginPanel: (visible: boolean) => void;
   linuxDoWebViewRef: WebViewRef;
   notify: (message: string) => void;
-  onOpenXiaoyinsiAuthorization: () => void;
   refreshAccountStatus: () => Promise<unknown>;
   setYaohuoLoginPrompt: (message: string) => void;
   webViewRef: WebViewRef;
@@ -139,10 +137,6 @@ export function useAccountCredentialController({
 
   const openAccountLogin = useCallback(
     (site: SessionSite, fill: boolean) => {
-      if (site === 'xiaoyinsi') {
-        onOpenXiaoyinsiAuthorization();
-        return;
-      }
       const previousSite = credentialLoginSiteRef.current;
       if (previousSite && previousSite !== site) {
         clearCredentialLoginIntent(previousSite);
@@ -198,7 +192,6 @@ export function useAccountCredentialController({
       changeYaohuoLoginPanel,
       clearCredentialLoginIntent,
       finishCredentialFillTrace,
-      onOpenXiaoyinsiAuthorization,
       setYaohuoLoginPrompt,
       webViewBlockMessage
     ]

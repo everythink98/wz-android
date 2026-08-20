@@ -47,8 +47,7 @@ export function useAppDiagnosticsRuntime({
       screenWidth: dimensions.width,
       theme: themeDark ? ('dark' as const) : ('light' as const),
       versionCode: CURRENT_ANDROID_VERSION_CODE,
-      yaohuoSession: accountSessionViewModels.yaohuo.status,
-      xiaoyinsiSession: accountSessionViewModels.xiaoyinsi.status
+      yaohuoSession: accountSessionViewModels.yaohuo.status
     }),
     [accountSessionViewModels, dimensions.height, dimensions.width, fontScale, proxyEnabled, screen, themeDark]
   );

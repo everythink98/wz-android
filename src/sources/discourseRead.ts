@@ -8,17 +8,6 @@ import {
 } from '@/sources/linuxdo/reader';
 import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
 import { searchLinuxDo, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
-import {
-  getXiaoyinsiCategories,
-  getXiaoyinsiEmojiUrls,
-  getXiaoyinsiFeed,
-  getXiaoyinsiReplies,
-  getXiaoyinsiReply,
-  getXiaoyinsiTopic
-} from '@/sources/xiaoyinsi/reader';
-import { getXiaoyinsiCurrentUserProfile, getXiaoyinsiUserProfile } from '@/sources/xiaoyinsi/account';
-import { searchXiaoyinsi, searchXiaoyinsiTags, searchXiaoyinsiUsers } from '@/sources/xiaoyinsi/search';
-import type { XiaoyinsiApiCredentials } from '@/sources/xiaoyinsi/credentials';
 import type { Fetcher } from '@/platform/network/request';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
@@ -43,7 +32,6 @@ export interface DiscourseReadAuthMap {
     categoryCacheScope?: string;
     userAgent?: string;
   };
-  xiaoyinsi: XiaoyinsiApiCredentials;
 }
 
 export type DiscourseReadAuth = Partial<{
@@ -132,18 +120,6 @@ function withLinuxDoAuth<T extends DiscourseReadOptions>(
   };
 }
 
-function withXiaoyinsiAuth<T extends DiscourseReadOptions>(
-  options: T
-): Omit<T, 'auth'> & {
-  credentials?: XiaoyinsiApiCredentials;
-} {
-  const { auth, ...requestOptions } = options;
-  return {
-    ...requestOptions,
-    credentials: auth?.xiaoyinsi
-  };
-}
-
 const discourseSourceReaders = {
   linuxdo: {
     getCategories: (options) => getLinuxDoCategories(withLinuxDoAuth(options)),
@@ -167,23 +143,6 @@ const discourseSourceReaders = {
     searchTagOptions: (options) => searchLinuxDoTags(withLinuxDoAuth(options)),
     searchTopics: (query, options) => searchLinuxDo(query, withLinuxDoAuth(options)),
     searchUserOptions: (options) => searchLinuxDoUsers(withLinuxDoAuth(options))
-  },
-  xiaoyinsi: {
-    getCategories: (options) => getXiaoyinsiCategories(withXiaoyinsiAuth(options)),
-    getCurrentUserProfile: (options) => getXiaoyinsiCurrentUserProfile(withXiaoyinsiAuth(options)),
-    getEmojiUrls: (options) => getXiaoyinsiEmojiUrls(withXiaoyinsiAuth(options)),
-    getFeed: ({ filter, ...options }) =>
-      getXiaoyinsiFeed({
-        ...withXiaoyinsiAuth(options),
-        feedFilter: filter
-      }),
-    getReplies: (id, options) => getXiaoyinsiReplies(id, withXiaoyinsiAuth(options)),
-    getReply: (id, floor, options) => getXiaoyinsiReply(id, floor, withXiaoyinsiAuth(options)),
-    getTopic: (id, options) => getXiaoyinsiTopic(id, withXiaoyinsiAuth(options)),
-    getUserProfile: (id, username, options) => getXiaoyinsiUserProfile(id, username, withXiaoyinsiAuth(options)),
-    searchTagOptions: (options) => searchXiaoyinsiTags(withXiaoyinsiAuth(options)),
-    searchTopics: (query, options) => searchXiaoyinsi(query, withXiaoyinsiAuth(options)),
-    searchUserOptions: (options) => searchXiaoyinsiUsers(withXiaoyinsiAuth(options))
   }
 } satisfies Record<DiscourseSource, DiscourseSourceReader>;
 

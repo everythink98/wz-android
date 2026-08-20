@@ -10,7 +10,7 @@ import { compileForumContent, discoursePollPlaceholder } from '@/domain/forum/to
 import { prepareLinuxDoContent, sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { parseHtml } from '@/domain/forum/html';
 
-function discourseQuoteMetadata(html: string, source: 'linuxdo' | 'xiaoyinsi', topicId?: string) {
+function discourseQuoteMetadata(html: string, source: 'linuxdo', topicId?: string) {
   const root = parseHtml(html);
   const quotedPosts = discourseQuoteMetadataFromRoot(root, source, topicId);
   return {
@@ -231,7 +231,7 @@ describe('portable Discourse content parts', () => {
     expect(stripDiscourseCalloutMarkersFromExcerpt('[!warning]- 注意\n正文 [!tip]+ 建议')).toBe('注意\n正文 建议');
   });
 
-  it('[REG-XIAOYINSI-023] accepts only string HTTP(S) Discourse avatars without throwing', () => {
+  it(' accepts only string HTTP(S) Discourse avatars without throwing', () => {
     const baseUrl = 'https://forum.example.com';
     const uncoercible = Object.create(null) as unknown;
 

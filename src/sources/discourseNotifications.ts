@@ -14,17 +14,11 @@ import { fetchLinuxDoJson } from '@/sources/linuxdo/reader';
 import { LINUXDO_BASE_URL } from '@/sources/linuxdo/protocol';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
-import { fetchXiaoyinsiJson } from '@/sources/xiaoyinsi/reader';
-import { XIAOYINSI_BASE_URL } from '@/sources/xiaoyinsi/protocol';
-import { runXiaoyinsiAction } from '@/sources/xiaoyinsi/actionClient';
-import { xiaoyinsiCredentialsHaveScope } from '@/sources/xiaoyinsi/credentials';
-import { sanitizeXiaoyinsiContentHtml } from '@/sources/xiaoyinsi/parser';
 import { getDiscourseSourceReplies, getDiscourseSourceReply, getDiscourseSourceTopic } from './discourseRead';
 import { buildDiscourseActionRequest, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 
 const bases: Record<DiscourseSource, string> = {
-  linuxdo: LINUXDO_BASE_URL,
-  xiaoyinsi: XIAOYINSI_BASE_URL
+  linuxdo: LINUXDO_BASE_URL
 };
 
 const typeKinds = new Map<number, ForumNotification['kind']>([
@@ -92,21 +86,13 @@ function notificationKind(value: unknown) {
   return typeKinds.get(type) || (knownSystemTypes.has(type) ? 'system' : 'other');
 }
 
-async function fetchSite(source: DiscourseSource, options: NotificationAdapterAccess) {
-  if (source === 'linuxdo') {
-    return fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, {
-      fetcher: options.fetcher,
-      linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-      browserFetchIntent: { owner: 'account', priority: 'background' }
-    });
-  }
-  return fetchXiaoyinsiJson<Record<string, unknown>>('/site.json', undefined, {
-    credentials: options.xiaoyinsiCredentials,
+async function fetchSite(options: NotificationAdapterAccess) {
+  return fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, {
     fetcher: options.fetcher,
+    linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
     signal: options.signal,
-    timeoutMs: options.timeoutMs
+    timeoutMs: options.timeoutMs,
+    browserFetchIntent: { owner: 'account', priority: 'background' }
   });
 }
 
@@ -127,9 +113,9 @@ function notificationTypeIds(site: Record<string, unknown>, names: readonly stri
   );
 }
 
-async function categoryTypeIds(source: DiscourseSource, categoryId: string, options: NotificationListOptions) {
+async function categoryTypeIds(categoryId: string, options: NotificationListOptions) {
   if (categoryId === 'all') return undefined;
-  const site = await fetchSite(source, options);
+  const site = await fetchSite(options);
   const names =
     categoryId === 'other'
       ? notificationTypeNames(site).filter((name) => !discourseExcludedFromOtherTypeNames.has(name))
@@ -195,56 +181,35 @@ function parseNotification(source: DiscourseSource, value: unknown): ForumNotifi
   };
 }
 
-async function fetchNotifications(
-  source: DiscourseSource,
-  options: NotificationListOptions,
-  offset: number,
-  limit: number
-) {
+async function fetchNotifications(options: NotificationListOptions, offset: number, limit: number) {
   const categoryId = options.categoryId || 'all';
   if (!['all', 'replies', 'likes', 'messages', 'chat', 'other'].includes(categoryId)) {
-    throw new Error(`${source === 'linuxdo' ? 'linux.do' : '小隐寺'} 消息分类不正确`);
+    throw new Error('linux.do 消息分类不正确');
   }
   const params: Record<string, string | number | (string | number)[]> = {
     offset,
     limit,
     filter: options.unreadOnly ? 'unread' : 'all'
   };
-  if (source === 'linuxdo') {
-    return fetchLinuxDoJson<Record<string, unknown>>('/notifications', params, {
-      fetcher: options.fetcher,
-      linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-      browserFetchIntent: { owner: 'account', priority: 'background' }
-    });
-  }
-  return fetchXiaoyinsiJson<Record<string, unknown>>('/notifications', params, {
-    credentials: options.xiaoyinsiCredentials,
+  return fetchLinuxDoJson<Record<string, unknown>>('/notifications', params, {
     fetcher: options.fetcher,
+    linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
     signal: options.signal,
-    timeoutMs: options.timeoutMs
+    timeoutMs: options.timeoutMs,
+    browserFetchIntent: { owner: 'account', priority: 'background' }
   });
 }
 
-async function fetchPrivateMessageTopics(source: DiscourseSource, options: NotificationListOptions) {
+async function fetchPrivateMessageTopics(options: NotificationListOptions) {
   const username = options.username?.trim();
-  if (!username) throw new Error(`${source === 'linuxdo' ? 'linux.do' : '小隐寺'} 当前账号缺少用户名`);
+  if (!username) throw new Error('linux.do 当前账号缺少用户名');
   const path = `/u/${encodeURIComponent(username)}/user-menu-private-messages`;
-  if (source === 'linuxdo') {
-    return fetchLinuxDoJson<Record<string, unknown>>(path, undefined, {
-      fetcher: options.fetcher,
-      linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-      browserFetchIntent: { owner: 'account', priority: 'background' }
-    });
-  }
-  return fetchXiaoyinsiJson<Record<string, unknown>>(path, undefined, {
-    credentials: options.xiaoyinsiCredentials,
+  return fetchLinuxDoJson<Record<string, unknown>>(path, undefined, {
     fetcher: options.fetcher,
+    linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
     signal: options.signal,
-    timeoutMs: options.timeoutMs
+    timeoutMs: options.timeoutMs,
+    browserFetchIntent: { owner: 'account', priority: 'background' }
   });
 }
 
@@ -260,7 +225,7 @@ function privateMessageItems(
     !Array.isArray(data.unread_notifications) ||
     !Array.isArray(data.read_notifications)
   ) {
-    throw new Error(`${source === 'linuxdo' ? 'linux.do' : '小隐寺'} 私信列表格式不正确`);
+    throw new Error('linux.do 私信列表格式不正确');
   }
   const users = data.users.filter(isRecord);
   const userById = new Map(users.map((user) => [text(user, 'id'), user]));
@@ -316,9 +281,9 @@ function privateMessageItems(
   return [...notifications, ...topics];
 }
 
-function notificationRows(source: DiscourseSource, data: Record<string, unknown>) {
+function notificationRows(data: Record<string, unknown>) {
   if (!Array.isArray(data.notifications)) {
-    throw new Error(`${source === 'linuxdo' ? 'linux.do' : '小隐寺'} 消息返回内容格式不正确`);
+    throw new Error('linux.do 消息返回内容格式不正确');
   }
   return data.notifications;
 }
@@ -328,10 +293,7 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
     fetcher: options.fetcher,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
-    auth:
-      source === 'linuxdo'
-        ? { linuxdo: { authenticated: true, userAgent: options.userAgent } }
-        : { xiaoyinsi: options.xiaoyinsiCredentials || { apiKey: '', clientId: '' } }
+    auth: { linuxdo: { authenticated: true, userAgent: options.userAgent } }
   });
 
   const runMarkRead = async (id: string | undefined, options: NotificationAdapterAccess) => {
@@ -342,31 +304,20 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
       headers: id ? { 'content-type': 'application/x-www-form-urlencoded' } : ({} as Record<string, string>),
       ...(id ? { body: new URLSearchParams({ id }).toString() } : {})
     };
-    if (source === 'linuxdo') {
-      await runLinuxDoAction({
-        request,
-        fetcher: options.fetcher,
-        signal: options.signal,
-        timeoutMs: options.timeoutMs,
-        userAgent: options.userAgent
-      });
-      return;
-    }
-    if (!options.xiaoyinsiCredentials) throw new Error('请先升级小隐寺消息授权');
-    await runXiaoyinsiAction({
-      credentials: options.xiaoyinsiCredentials,
+    await runLinuxDoAction({
       request,
       fetcher: options.fetcher,
       signal: options.signal,
-      timeoutMs: options.timeoutMs
+      timeoutMs: options.timeoutMs,
+      userAgent: options.userAgent
     });
   };
 
   return {
     async getCategories(options: NotificationAdapterAccess) {
-      let hasChat = source === 'linuxdo';
+      let hasChat = true;
       try {
-        const names = notificationTypeNames(await fetchSite(source, options));
+        const names = notificationTypeNames(await fetchSite(options));
         if (names.length) hasChat = names.some((name) => discourseChatTypeNames.has(name));
       } catch {
         // Category discovery must not block the notification list; linux.do Chat was verified live.
@@ -382,14 +333,14 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
       const offset = Math.max(0, Number(options.cursor) || 0);
       const limit = Math.max(1, Math.min(60, options.limit || 30));
       if (options.categoryId === 'messages') {
-        const data = await fetchPrivateMessageTopics(source, options);
+        const data = await fetchPrivateMessageTopics(options);
         const items = privateMessageItems(source, data, options.username?.trim() || '', Boolean(options.unreadOnly));
         return { items, cursor: null, hasMore: false };
       }
-      const selectedTypeIds = await categoryTypeIds(source, options.categoryId || 'all', options);
+      const selectedTypeIds = await categoryTypeIds(options.categoryId || 'all', options);
       if (selectedTypeIds?.size === 0) return { items: [], cursor: null, hasMore: false };
-      const data = await fetchNotifications(source, options, offset, limit);
-      const rawRows = notificationRows(source, data);
+      const data = await fetchNotifications(options, offset, limit);
+      const rawRows = notificationRows(data);
       const rows = rawRows.filter(
         (row) =>
           (!options.unreadOnly || (isRecord(row) && row.read !== true)) &&
@@ -404,8 +355,8 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
     },
 
     async readUnreadSnapshot(options: NotificationAdapterAccess) {
-      const data = await fetchNotifications(source, { ...options, unreadOnly: true, limit: 60 }, 0, 60);
-      const rows = notificationRows(source, data);
+      const data = await fetchNotifications({ ...options, unreadOnly: true, limit: 60 }, 0, 60);
+      const rows = notificationRows(data);
       const rawTotal = Number(data.total_rows_notifications ?? data.total_rows ?? rows.length);
       const total = Number.isFinite(rawTotal) && rawTotal >= 0 ? rawTotal : rows.length;
       return { total, checkedAt: new Date().toISOString() };
@@ -461,12 +412,7 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
               mine: Boolean(ownUsername && reply.author.toLowerCase() === ownUsername)
             }))
           ],
-          reply: {
-            format: 'markdown',
-            ...(source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(options.xiaoyinsiCredentials, 'write')
-              ? { disabledReason: '小隐寺需要升级写入授权' }
-              : {})
-          },
+          reply: { format: 'markdown' },
           ...(historyNotice ? { historyNotice } : {}),
           topic
         };
@@ -494,27 +440,16 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
       let createdAt = item.createdAt || '';
       if (item.target.postId) {
         const path = `/posts/${encodeURIComponent(item.target.postId)}.json`;
-        const data =
-          source === 'linuxdo'
-            ? await fetchLinuxDoJson<Record<string, unknown>>(path, undefined, {
-                fetcher: options.fetcher,
-                linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
-                signal: options.signal,
-                timeoutMs: options.timeoutMs,
-                browserFetchIntent: { owner: 'topic', priority: 'foreground' }
-              })
-            : await fetchXiaoyinsiJson<Record<string, unknown>>(path, undefined, {
-                credentials: options.xiaoyinsiCredentials,
-                fetcher: options.fetcher,
-                signal: options.signal,
-                timeoutMs: options.timeoutMs
-              });
+        const data = await fetchLinuxDoJson<Record<string, unknown>>(path, undefined, {
+          fetcher: options.fetcher,
+          linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
+          signal: options.signal,
+          timeoutMs: options.timeoutMs,
+          browserFetchIntent: { owner: 'topic', priority: 'foreground' }
+        });
         const cooked = text(data, 'cooked');
         if (!cooked) throw new Error('站内消息对应的帖子内容未找到');
-        contentHtml =
-          source === 'linuxdo'
-            ? sanitizeLinuxDoContentHtml(cooked, undefined)
-            : sanitizeXiaoyinsiContentHtml(cooked, undefined);
+        contentHtml = sanitizeLinuxDoContentHtml(cooked, undefined);
         author = text(data, 'username') || author;
         createdAt = toIsoString(text(data, 'created_at')) || createdAt;
       } else if (item.target.postNumber) {
@@ -554,30 +489,18 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
       if (item.target.type !== 'private-conversation' || !/^\d+$/.test(item.target.conversationId)) {
         throw new Error('私信会话标识不正确');
       }
-      if (source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(options.xiaoyinsiCredentials, 'write')) {
-        throw new Error('小隐寺需要升级写入授权');
-      }
       const request = buildDiscourseActionRequest({
         type: 'reply',
         topicId: item.target.conversationId,
         content
       });
-      const result =
-        source === 'linuxdo'
-          ? await runLinuxDoAction({
-              request,
-              fetcher: options.fetcher,
-              signal: options.signal,
-              timeoutMs: options.timeoutMs,
-              userAgent: options.userAgent
-            })
-          : await runXiaoyinsiAction({
-              credentials: options.xiaoyinsiCredentials || { apiKey: '', clientId: '' },
-              request,
-              fetcher: options.fetcher,
-              signal: options.signal,
-              timeoutMs: options.timeoutMs
-            });
+      const result = await runLinuxDoAction({
+        request,
+        fetcher: options.fetcher,
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+        userAgent: options.userAgent
+      });
       return integer(result.id)
         ? { confirmed: true }
         : { confirmed: false, message: '原站未确认发送成功，请刷新会话后确认。' };
@@ -602,6 +525,5 @@ function createDiscourseNotificationAdapter(source: DiscourseSource) {
 }
 
 export const discourseNotificationAdapters = {
-  linuxdo: createDiscourseNotificationAdapter('linuxdo'),
-  xiaoyinsi: createDiscourseNotificationAdapter('xiaoyinsi')
+  linuxdo: createDiscourseNotificationAdapter('linuxdo')
 } satisfies Record<DiscourseSource, NotificationAdapter>;

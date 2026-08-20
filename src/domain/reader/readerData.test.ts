@@ -385,9 +385,9 @@ describe('Android reader data helpers', () => {
     );
   });
 
-  it('[REG-USER-002] restores a missing Xiaoyinsi profile url to the Xiaoyinsi user page', () => {
+  it('[REG-USER-002] restores a missing LinuxDo profile url to the LinuxDo user page', () => {
     const partialProfile: UserProfile = {
-      source: 'xiaoyinsi',
+      source: 'linuxdo',
       id: 'temple-user',
       username: 'temple-user',
       displayName: 'temple-user',
@@ -397,9 +397,9 @@ describe('Android reader data helpers', () => {
 
     const data = toggleFollowedUser(createEmptyReaderData(), partialProfile);
 
-    expect(data.followedUsers[userKey(partialProfile)]?.user.url).toBe('https://forum.xiaoyinsi.com/u/temple-user');
+    expect(data.followedUsers[userKey(partialProfile)]?.user.url).toBe('https://linux.do/u/temple-user');
     expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe(
-      'https://forum.xiaoyinsi.com/u/temple-user'
+      'https://linux.do/u/temple-user'
     );
   });
 
@@ -543,8 +543,7 @@ describe('Android reader data helpers', () => {
       { source: 'v2ex', enabled: true },
       { source: 'linuxdo', enabled: true },
       { source: 'nodeseek', enabled: true },
-      { source: 'yaohuo', enabled: true },
-      { source: 'xiaoyinsi', enabled: true }
+      { source: 'yaohuo', enabled: true }
     ]);
   });
 
@@ -949,16 +948,15 @@ describe('Android reader data helpers', () => {
       ...createEmptyReaderData(),
       settings: {
         contentSources: [
-          { source: 'xiaoyinsi', enabled: false },
+          { source: 'linuxdo', enabled: false },
           { source: 'v2ex', enabled: true }
         ]
       }
     };
 
     expect(mergeReaderData(local, remote).settings.contentSources).toEqual([
-      { source: 'xiaoyinsi', enabled: false },
+      { source: 'linuxdo', enabled: false },
       { source: 'v2ex', enabled: true },
-      { source: 'linuxdo', enabled: true },
       { source: 'nodeseek', enabled: true },
       { source: 'yaohuo', enabled: true }
     ]);

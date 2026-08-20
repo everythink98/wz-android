@@ -63,7 +63,6 @@ function readLinuxDoAccountWith(fetcher: Parameters<typeof readAccountStatus>[1]
     linuxDoUserAgent: 'LinuxDo UA',
     nodeSeekUserAgent: 'NodeSeek UA',
     readManagedCookieHeader: async () => ({ status: 'ok', header: '_t=session' }),
-    readXiaoyinsiAuthorization: async () => ({ authenticated: null }),
     signal: new AbortController().signal
   });
 }
@@ -74,7 +73,6 @@ function readNodeSeekAccountWith(fetcher: Parameters<typeof readAccountStatus>[1
     linuxDoUserAgent: 'LinuxDo UA',
     nodeSeekUserAgent: 'NodeSeek UA',
     readManagedCookieHeader: async () => ({ status: 'ok', header: 'session=present' }),
-    readXiaoyinsiAuthorization: async () => ({ authenticated: null }),
     signal: new AbortController().signal
   });
 }

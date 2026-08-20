@@ -2,8 +2,6 @@ import * as SecureStore from 'expo-secure-store';
 import type { NotificationAdapterAccess } from './notificationAdapter';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import { getCurrentUserProfile } from './sourceRead';
-import { loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
-import { xiaoyinsiCredentialsHaveScope } from '@/sources/xiaoyinsi/credentials';
 import { LINUXDO_USER_AGENT_STORAGE_KEY, sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
 import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
 import { withFetchGuard } from '@/platform/network/request';
@@ -19,8 +17,6 @@ export async function probeBackgroundNotificationAccess(
   ]);
   const nodeSeekUserAgent = sanitizeNodeSeekUserAgent(nodeSeekUserAgentValue || undefined);
   const linuxDoUserAgent = sanitizeLinuxDoUserAgent(linuxDoUserAgentValue || undefined);
-  const xiaoyinsiCredentials = source === 'xiaoyinsi' ? await loadXiaoyinsiCredentials() : undefined;
-  if (source === 'xiaoyinsi' && !xiaoyinsiCredentialsHaveScope(xiaoyinsiCredentials, 'notifications')) return null;
   await assertCurrent();
   const profile = await getCurrentUserProfile({
     source,
@@ -28,11 +24,7 @@ export async function probeBackgroundNotificationAccess(
     nodeSeekAuthenticated: source === 'nodeseek',
     nodeSeekUserAgent: nodeSeekUserAgent || undefined,
     discourseAuth:
-      source === 'linuxdo'
-        ? { linuxdo: { authenticated: true, userAgent: linuxDoUserAgent || undefined } }
-        : source === 'xiaoyinsi' && xiaoyinsiCredentials
-          ? { xiaoyinsi: xiaoyinsiCredentials }
-          : undefined,
+      source === 'linuxdo' ? { linuxdo: { authenticated: true, userAgent: linuxDoUserAgent || undefined } } : undefined,
     signal,
     timeoutMs: 0
   });
@@ -47,7 +39,6 @@ export async function probeBackgroundNotificationAccess(
     signal,
     timeoutMs: 0,
     ...(source === 'nodeseek' && nodeSeekUserAgent ? { userAgent: nodeSeekUserAgent } : {}),
-    ...(source === 'linuxdo' && linuxDoUserAgent ? { userAgent: linuxDoUserAgent } : {}),
-    ...(source === 'xiaoyinsi' && xiaoyinsiCredentials ? { xiaoyinsiCredentials } : {})
+    ...(source === 'linuxdo' && linuxDoUserAgent ? { userAgent: linuxDoUserAgent } : {})
   };
 }

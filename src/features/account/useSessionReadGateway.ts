@@ -4,7 +4,6 @@ import type { SessionSite } from '@/domain/session/siteSessionState';
 import type { Source } from '@/domain/forum/sourceCatalog';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { createReadGateway } from '@/sources/readGateway';
-import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 
 export function useSessionReadGateway({
   anonymousFetcher,
@@ -27,16 +26,9 @@ export function useSessionReadGateway({
     () =>
       createReadGateway({
         anonymousFetcher,
-        currentXiaoyinsiCredentialGeneration,
         fetcher,
         getEnabledSources,
         linuxDoUserAgent: () => linuxDoUserAgentRef.current,
-        loadXiaoyinsiCredentialsForSource: async (_source, options) => {
-          const generation = currentXiaoyinsiCredentialGeneration();
-          options?.captureGeneration?.(generation);
-          const credentials = await loadXiaoyinsiCredentials();
-          return generation === currentXiaoyinsiCredentialGeneration() ? credentials : undefined;
-        },
         nodeSeekUserAgent: () => nodeSeekUserAgentRef.current,
         onSessionExpired,
         readSessionRuntimeSnapshot

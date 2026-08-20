@@ -1,6 +1,6 @@
 import type { UserProfile } from '@/domain/forum/models';
 import type { CredentialSite } from './sessionContracts';
-import type { SessionSite, SiteSessionEvent } from './siteSessionState';
+import type { SessionSite } from './siteSessionState';
 
 export type AccountCenterCommand =
   | { type: 'refresh' }
@@ -11,11 +11,3 @@ export type AccountCenterCommand =
   | { type: 'delete-credential'; site: CredentialSite };
 
 export type AccountCredentialFillAttempt = { site: CredentialSite; attempt: number };
-
-export type XiaoyinsiAuthPhase =
-  'idle' | 'requesting' | 'waiting' | 'authorized' | 'denied' | 'expired' | 'cleanup' | 'unsupported' | 'error';
-
-export type XiaoyinsiAuthorizationReadResult = {
-  authenticated: boolean | null;
-  sessionEvent?: SiteSessionEvent;
-};

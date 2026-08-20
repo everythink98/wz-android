@@ -12,7 +12,6 @@ export const sourceCatalog = {
     notifications: false,
     searchFilter: 'v2ex',
     topicActions: [],
-    replyPermission: 'session',
     searchOrder: 1,
     sortOrder: 3
   },
@@ -27,7 +26,6 @@ export const sourceCatalog = {
     notifications: true,
     searchFilter: 'discourse',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
-    replyPermission: 'session',
     searchOrder: 2,
     sortOrder: 2
   },
@@ -42,7 +40,6 @@ export const sourceCatalog = {
     notifications: true,
     searchFilter: 'nodeseek',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'vote', 'upload'],
-    replyPermission: 'session',
     searchOrder: 3,
     sortOrder: 1
   },
@@ -57,24 +54,8 @@ export const sourceCatalog = {
     notifications: true,
     searchFilter: 'yaohuo',
     topicActions: ['reply', 'bookmark', 'delete', 'vote', 'upload'],
-    replyPermission: 'session',
     searchOrder: 4,
     sortOrder: 4
-  },
-  xiaoyinsi: {
-    aggregateFeed: true,
-    aggregateSearch: true,
-    baseUrl: 'https://forum.xiaoyinsi.com',
-    label: '小隐寺',
-    family: 'discourse',
-    feedFilter: 'discourse',
-    managedSession: true,
-    notifications: true,
-    searchFilter: 'discourse',
-    topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
-    replyPermission: 'topic',
-    searchOrder: 5,
-    sortOrder: 5
   }
 } as const;
 
@@ -128,8 +109,4 @@ export function isNotificationSource(source: Source | null | undefined): source 
 
 export function sourceSupportsTopicAction(source: Source | null | undefined, action: TopicActionCapability) {
   return Boolean(source && (sourceCatalog[source].topicActions as readonly TopicActionCapability[]).includes(action));
-}
-
-export function sourceUsesTopicCreatePermission(source: Source | null | undefined) {
-  return Boolean(source && sourceCatalog[source].replyPermission === 'topic');
 }

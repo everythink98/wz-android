@@ -5,26 +5,17 @@ import {
   normalizeContentSourcePreferences,
   projectContentSourcePreferences
 } from './contentSourcePreferences';
-import { sourceValues } from '@/domain/forum/sourceCatalog';
 
 describe('content source preferences', () => {
   it('uses the current home order with every source enabled by default', () => {
     const preferences = defaultContentSourcePreferences();
-    expect(preferences.slice(0, 5)).toEqual([
+    expect(preferences).toEqual([
       { source: 'v2ex', enabled: true },
       { source: 'linuxdo', enabled: true },
       { source: 'nodeseek', enabled: true },
-      { source: 'yaohuo', enabled: true },
-      { source: 'xiaoyinsi', enabled: true }
+      { source: 'yaohuo', enabled: true }
     ]);
-    expect(preferences.map((preference) => preference.source)).toEqual([
-      'v2ex',
-      'linuxdo',
-      'nodeseek',
-      'yaohuo',
-      'xiaoyinsi',
-      ...sourceValues.filter((source) => !['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'].includes(source))
-    ]);
+    expect(preferences.map((preference) => preference.source)).toEqual(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
     expect(preferences.every((preference) => preference.enabled)).toBe(true);
   });
 
@@ -42,27 +33,26 @@ describe('content source preferences', () => {
       { source: 'v2ex', enabled: false },
       { source: 'linuxdo', enabled: true },
       { source: 'nodeseek', enabled: true },
-      { source: 'yaohuo', enabled: true },
-      { source: 'xiaoyinsi', enabled: true }
+      { source: 'yaohuo', enabled: true }
     ]);
   });
 
   it('projects enabled sources into ordered Catalog capability subsets', () => {
     expect(
       projectContentSourcePreferences([
-        { source: 'xiaoyinsi', enabled: true },
+        { source: 'linuxdo', enabled: true },
         { source: 'v2ex', enabled: true },
         { source: 'yaohuo', enabled: true },
         { source: 'linuxdo', enabled: false },
         { source: 'nodeseek', enabled: true }
       ])
     ).toEqual({
-      orderedSources: ['xiaoyinsi', 'v2ex', 'yaohuo', 'linuxdo', 'nodeseek'],
-      enabledSources: ['xiaoyinsi', 'v2ex', 'yaohuo', 'nodeseek'],
-      feedSources: ['xiaoyinsi', 'v2ex', 'yaohuo', 'nodeseek'],
-      searchSources: ['xiaoyinsi', 'v2ex', 'yaohuo', 'nodeseek'],
-      sessionSources: ['xiaoyinsi', 'yaohuo', 'nodeseek'],
-      notificationSources: ['xiaoyinsi', 'yaohuo', 'nodeseek']
+      orderedSources: ['linuxdo', 'v2ex', 'yaohuo', 'nodeseek'],
+      enabledSources: ['linuxdo', 'v2ex', 'yaohuo', 'nodeseek'],
+      feedSources: ['linuxdo', 'v2ex', 'yaohuo', 'nodeseek'],
+      searchSources: ['linuxdo', 'v2ex', 'yaohuo', 'nodeseek'],
+      sessionSources: ['linuxdo', 'yaohuo', 'nodeseek'],
+      notificationSources: ['linuxdo', 'yaohuo', 'nodeseek']
     });
   });
 
@@ -72,7 +62,7 @@ describe('content source preferences', () => {
         defaultContentSourcePreferences().map((preference) => ({ ...preference, enabled: false }))
       )
     ).toEqual({
-      orderedSources: ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'],
+      orderedSources: ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'],
       enabledSources: [],
       feedSources: [],
       searchSources: [],
@@ -98,7 +88,7 @@ describe('content source preferences', () => {
       { source: 'linuxdo', enabled: false },
       { source: 'nodeseek', enabled: true },
       { source: 'yaohuo', enabled: true },
-      { source: 'xiaoyinsi', enabled: false }
+      { source: 'linuxdo', enabled: false }
     ];
 
     expect(canonicalEnabledSourcesKey(sourceSet)).toBe('nodeseek,v2ex,yaohuo');

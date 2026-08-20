@@ -48,7 +48,7 @@ describe('reply composer formatting', () => {
     ).toBe('[quote]引用[/quote]');
   });
 
-  it('[REG-XIAOYINSI-002] shows the Markdown toolbar for 小隐寺 without changing non-Markdown sources', () => {
+  it(' shows the Markdown toolbar for linux.do without changing non-Markdown sources', () => {
     expect(
       replyComposerToolbarItems('linuxdo').map((item) => (item.type === 'format' ? item.action : item.accessory))
     ).toContain('heading');
@@ -56,7 +56,7 @@ describe('reply composer formatting', () => {
       replyComposerToolbarItems('nodeseek').map((item) => (item.type === 'format' ? item.action : item.accessory))
     ).toContain('heading');
     expect(
-      replyComposerToolbarItems('xiaoyinsi').map((item) => (item.type === 'format' ? item.action : item.accessory))
+      replyComposerToolbarItems('linuxdo').map((item) => (item.type === 'format' ? item.action : item.accessory))
     ).toContain('heading');
     expect(
       replyComposerToolbarItems('yaohuo').map((item) => (item.type === 'format' ? item.action : item.accessory))
@@ -71,7 +71,7 @@ describe('reply composer formatting', () => {
       replyComposerToolbarItems('linuxdo').map((item) => (item.type === 'accessory' ? item.accessory : item.action))
     ).toContain('discourse-emoji');
     expect(
-      replyComposerToolbarItems('xiaoyinsi').map((item) => (item.type === 'accessory' ? item.accessory : item.action))
+      replyComposerToolbarItems('linuxdo').map((item) => (item.type === 'accessory' ? item.accessory : item.action))
     ).toContain('discourse-emoji');
     expect(
       replyComposerToolbarItems('yaohuo').map((item) => (item.type === 'accessory' ? item.accessory : item.action))
@@ -90,7 +90,7 @@ describe('reply composer formatting', () => {
       accessory: 'discourse-emoji',
       label: '表情'
     });
-    expect(replyComposerToolbarItems('xiaoyinsi')[0]).toMatchObject({
+    expect(replyComposerToolbarItems('linuxdo')[0]).toMatchObject({
       type: 'accessory',
       accessory: 'discourse-emoji',
       label: '表情'

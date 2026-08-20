@@ -383,7 +383,7 @@ describe('Discourse notifications', () => {
     expect(new URL(fetcher.mock.calls[0]?.[0] || '').searchParams.get('limit')).toBe('3');
   });
 
-  it('marks one or all rows with Discourse PUT semantics for cookie and User API auth', async () => {
+  it('marks one or all rows with linux.do cookie-authenticated PUT semantics', async () => {
     const item = {
       source: 'linuxdo' as const,
       id: '31',
@@ -416,18 +416,6 @@ describe('Discourse notifications', () => {
       ['/notifications/mark-read', 'id=31'],
       ['/notifications/mark-read', undefined]
     ]);
-
-    const xiaoFetcher = vi.fn(async (_url: string, _init?: RequestInit) => json({ success: true }));
-    await discourseNotificationAdapters.xiaoyinsi.markRead({ ...item, source: 'xiaoyinsi' }, detail, {
-      fetcher: xiaoFetcher,
-      identityKey: 'xiaoyinsi:alice',
-      userId: 'alice',
-      xiaoyinsiCredentials: { apiKey: 'secret', clientId: 'client' }
-    });
-    const headers = new Headers(xiaoFetcher.mock.calls[0]?.[1]?.headers);
-    expect(xiaoFetcher.mock.calls[0]?.[1]).toMatchObject({ method: 'PUT', body: 'id=31' });
-    expect(headers.get('User-Api-Key')).toBe('secret');
-    expect(headers.get('User-Api-Client-Id')).toBe('client');
   });
 
   it('uses the unread filter and the authoritative unread total', async () => {
@@ -648,132 +636,5 @@ describe('Discourse notifications', () => {
 
     const [, init] = fetcher.mock.calls.find(([url]) => new URL(url).pathname === '/posts.json') || [];
     expect(init).toMatchObject({ method: 'POST', body: 'topic_id=201&raw=**%E6%94%B6%E5%88%B0**' });
-  });
-
-  it('[REG-NOTIFY-031] disables Xiaoyinsi private replies without write scope before network I/O', async () => {
-    const fetcher = vi.fn();
-    const item = {
-      source: 'xiaoyinsi' as const,
-      id: 'private-topic:201',
-      kind: 'private-message' as const,
-      actor: { name: 'Bob' },
-      title: '私信主题',
-      createdAt: null,
-      unread: false,
-      target: { type: 'private-conversation' as const, conversationId: '201' }
-    };
-
-    await expect(
-      discourseNotificationAdapters.xiaoyinsi.replyToConversation(item, '收到', {
-        fetcher,
-        identityKey: 'xiaoyinsi:7',
-        userId: '7',
-        username: 'alice',
-        xiaoyinsiCredentials: {
-          apiKey: 'secret',
-          clientId: 'client',
-          scopes: ['read', 'notifications']
-        }
-      })
-    ).rejects.toThrow('小隐寺需要升级写入授权');
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
-  it('[REG-NOTIFY-031] derives Xiaoyinsi categories and exposes the missing write scope in PM detail', async () => {
-    const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
-      const path = new URL(input).pathname;
-      if (path === '/site.json') {
-        return json({ notification_types: { mentioned: 1, replied: 2, liked: 5, private_message: 6, badge: 12 } });
-      }
-      return json({
-        id: 201,
-        title: '私信主题',
-        slug: 'secret-topic',
-        created_at: '2026-08-03T10:00:00Z',
-        posts_count: 1,
-        post_stream: {
-          stream: [100],
-          posts: [
-            {
-              id: 100,
-              post_number: 1,
-              username: 'bob',
-              cooked: '<p>第一条</p>',
-              created_at: '2026-08-03T10:00:00Z'
-            }
-          ]
-        }
-      });
-    });
-    const access = {
-      fetcher,
-      identityKey: 'xiaoyinsi:7',
-      userId: '7',
-      username: 'alice',
-      xiaoyinsiCredentials: {
-        apiKey: 'secret',
-        clientId: 'client',
-        scopes: ['read', 'notifications'] as ('read' | 'notifications')[]
-      }
-    };
-    const item = {
-      source: 'xiaoyinsi' as const,
-      id: 'private-topic:201',
-      kind: 'private-message' as const,
-      actor: { name: 'Bob' },
-      title: '私信主题',
-      createdAt: null,
-      unread: false,
-      target: { type: 'private-conversation' as const, conversationId: '201' }
-    };
-
-    await expect(discourseNotificationAdapters.xiaoyinsi.getCategories(access)).resolves.toEqual([
-      { id: 'all', label: '所有通知' },
-      { id: 'replies', label: '回复' },
-      { id: 'likes', label: '赞' },
-      { id: 'messages', label: '个人信息' },
-      { id: 'other', label: '其他通知' }
-    ]);
-    await expect(discourseNotificationAdapters.xiaoyinsi.loadDetail(item, access)).resolves.toMatchObject({
-      reply: { format: 'markdown', disabledReason: '小隐寺需要升级写入授权' }
-    });
-    const headers = new Headers(fetcher.mock.calls.at(-1)?.[1]?.headers);
-    expect(headers.get('User-Api-Key')).toBe('secret');
-    expect(headers.get('User-Api-Client-Id')).toBe('client');
-  });
-
-  it('[REG-NOTIFY-031] replies to a Xiaoyinsi PM topic with User API Markdown semantics', async () => {
-    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => json({ id: 102, post_number: 2 }));
-    const item = {
-      source: 'xiaoyinsi' as const,
-      id: 'private-topic:201',
-      kind: 'private-message' as const,
-      actor: { name: 'Bob' },
-      title: '私信主题',
-      createdAt: null,
-      unread: false,
-      target: { type: 'private-conversation' as const, conversationId: '201' }
-    };
-
-    await expect(
-      discourseNotificationAdapters.xiaoyinsi.replyToConversation(item, '**收到**', {
-        fetcher,
-        identityKey: 'xiaoyinsi:7',
-        userId: '7',
-        username: 'alice',
-        xiaoyinsiCredentials: {
-          apiKey: 'secret',
-          clientId: 'client',
-          scopes: ['read', 'write', 'notifications']
-        }
-      })
-    ).resolves.toEqual({ confirmed: true });
-
-    const [url, init] = fetcher.mock.calls[0] || [];
-    const headers = new Headers(init?.headers);
-    expect(new URL(url || '').pathname).toBe('/posts.json');
-    expect(init).toMatchObject({ method: 'POST', body: 'topic_id=201&raw=**%E6%94%B6%E5%88%B0**' });
-    expect(headers.get('User-Api-Key')).toBe('secret');
-    expect(headers.get('User-Api-Client-Id')).toBe('client');
   });
 });

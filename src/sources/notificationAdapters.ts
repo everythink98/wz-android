@@ -7,6 +7,5 @@ import { yaohuoNotificationAdapter } from '@/sources/yaohuo/notifications';
 export const notificationAdapters = {
   nodeseek: nodeSeekNotificationAdapter,
   linuxdo: discourseNotificationAdapters.linuxdo,
-  yaohuo: yaohuoNotificationAdapter,
-  xiaoyinsi: discourseNotificationAdapters.xiaoyinsi
+  yaohuo: yaohuoNotificationAdapter
 } satisfies Record<NotificationSource, NotificationAdapter>;

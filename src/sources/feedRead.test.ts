@@ -210,11 +210,6 @@ describe('feed read', () => {
       if (input.includes('nodeseek.com')) {
         return new Response(`<script>${manyNodeSeekTopics}</script>`);
       }
-      if (input.includes('linux.do')) {
-        return new Response(JSON.stringify({ topic_list: { topics: [] }, categories: [] }), {
-          headers: { 'content-type': 'application/json' }
-        });
-      }
       return new Response(JSON.stringify([]), {
         headers: { 'content-type': 'application/json' }
       });
@@ -663,7 +658,7 @@ describe('feed read', () => {
           }
         );
       }
-      if (input.includes('xiaoyinsi.com')) {
+      if (input.includes('linux.do')) {
         return new Response(JSON.stringify({ topic_list: { topics: [] }, categories: [] }), {
           headers: { 'content-type': 'application/json' }
         });
@@ -702,7 +697,7 @@ describe('feed read', () => {
     expect(result.items).toEqual([]);
     expect(result.hasMore).toBe(false);
     expect(result.nextCursor).toBeUndefined();
-    expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo', 'xiaoyinsi']);
+    expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo']);
   });
 
   it('[REG-FEED-014] preserves every source cursor when buffered content settles an otherwise failed page', async () => {
@@ -722,7 +717,7 @@ describe('feed read', () => {
             }
           ]
         },
-        nextPages: { nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2, xiaoyinsi: 2 },
+        nextPages: { nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2 },
         sourceCursors: { v2ex: sourceCursor }
       })
     );
@@ -737,7 +732,7 @@ describe('feed read', () => {
     };
 
     expect(result.items.map((item) => item.id)).toEqual(['buffered']);
-    expect(retryCursor.nextPages).toEqual({ nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2, xiaoyinsi: 2 });
+    expect(retryCursor.nextPages).toEqual({ nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2 });
     expect(retryCursor.sourceCursors.v2ex).toBe(sourceCursor);
   });
 
@@ -789,7 +784,7 @@ describe('feed read', () => {
       }
       return Promise.reject(new Error(`unexpected ${input}`));
     });
-    const unavailableSources = ['linuxdo', 'yaohuo', 'xiaoyinsi'] as const;
+    const unavailableSources = ['linuxdo', 'yaohuo'] as const;
     const feedController = new AbortController();
     const categoryController = new AbortController();
     let feedResult: Awaited<ReturnType<typeof getFeed>> | undefined;
@@ -833,17 +828,16 @@ describe('feed read', () => {
       const childTerminals = diagnosticEvents.filter(
         (event) => event.phase === 'transport' && typeof event.latencyMs === 'number' && event.source !== 'all'
       );
-      expect(childTerminals).toHaveLength(5);
+      expect(childTerminals).toHaveLength(4);
       expect(childTerminals).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ source: 'nodeseek', state: 'timeout', latencyMs: 5_000 }),
           expect.objectContaining({ source: 'v2ex', state: 'success' }),
           expect.objectContaining({ source: 'linuxdo', state: 'failure' }),
-          expect.objectContaining({ source: 'yaohuo', state: 'failure' }),
-          expect.objectContaining({ source: 'xiaoyinsi', state: 'failure' })
+          expect.objectContaining({ source: 'yaohuo', state: 'failure' })
         ])
       );
-      expect(new Set(childTerminals.map((event) => event.source)).size).toBe(5);
+      expect(new Set(childTerminals.map((event) => event.source)).size).toBe(4);
     } finally {
       setDiagnosticWriter(null);
       vi.useRealTimers();
@@ -870,7 +864,7 @@ describe('feed read', () => {
       diagnosticTrace,
       fetcher,
       signal: controller.signal,
-      unavailableSources: ['linuxdo', 'yaohuo', 'xiaoyinsi']
+      unavailableSources: ['linuxdo', 'yaohuo']
     });
 
     await Promise.resolve();
@@ -886,8 +880,7 @@ describe('feed read', () => {
         expect.objectContaining({ source: 'nodeseek', reason: 'canceled' }),
         expect.objectContaining({ source: 'linuxdo', reason: 'canceled' }),
         expect.objectContaining({ source: 'v2ex', reason: 'canceled' }),
-        expect.objectContaining({ source: 'yaohuo', reason: 'canceled' }),
-        expect.objectContaining({ source: 'xiaoyinsi', reason: 'canceled' })
+        expect.objectContaining({ source: 'yaohuo', reason: 'canceled' })
       ]);
     } finally {
       setDiagnosticWriter(null);
@@ -916,7 +909,7 @@ describe('feed read', () => {
       const request = getFeed({
         source: 'all',
         fetcher,
-        unavailableSources: ['linuxdo', 'yaohuo', 'xiaoyinsi']
+        unavailableSources: ['linuxdo', 'yaohuo']
       });
 
       await vi.advanceTimersByTimeAsync(5_000);
@@ -938,7 +931,7 @@ describe('feed read', () => {
     const sourceCursor = 'opaque-v2ex-seen-ids';
     const cursor = encodeURIComponent(
       JSON.stringify({
-        nextPages: { nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2, xiaoyinsi: 2 },
+        nextPages: { nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2 },
         sourceCursors: { v2ex: sourceCursor }
       })
     );
@@ -961,7 +954,7 @@ describe('feed read', () => {
       };
 
       expect(result.hasMore).toBe(true);
-      expect(retryCursor.nextPages).toEqual({ nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2, xiaoyinsi: 2 });
+      expect(retryCursor.nextPages).toEqual({ nodeseek: 2, linuxdo: 2, v2ex: 2, yaohuo: 2 });
       expect(retryCursor.sourceCursors.v2ex).toBe(sourceCursor);
     } finally {
       vi.clearAllTimers();

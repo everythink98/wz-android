@@ -1259,7 +1259,7 @@ describe('Topic real child components', () => {
       ...replyProps().reply,
       quotedPosts: [
         {
-          reference: { source: 'xiaoyinsi', topicId: '2685882', postNumber: 1 },
+          reference: { source: 'linuxdo', topicId: '2685882', postNumber: 1 },
           preview: '不应显示的异站引用'
         }
       ]
@@ -1267,11 +1267,11 @@ describe('Topic real child components', () => {
     const view = await render(
       <ReplyItem
         {...replyProps({
-          expandedQuotes: { 'reply:comment:22:xiaoyinsi:2685882:1': true },
+          expandedQuotes: { 'reply:comment:22:linuxdo:2685882:1': true },
           repliesByFloor: new Map([[1, wrongLocalReply]]),
           reply,
-          source: 'linuxdo',
-          topicBaseUrl: 'https://linux.do/t/topic/2685882',
+          source: 'nodeseek',
+          topicBaseUrl: 'https://www.nodeseek.com/post-2685882-1',
           topicId: '2685882'
         })}
       />
@@ -1368,7 +1368,7 @@ describe('Topic real child components', () => {
     expect(onLocateReply).toHaveBeenLastCalledWith({ floor: 30 });
   });
 
-  it.each(['linuxdo', 'xiaoyinsi'] as const)(
+  it.each(['linuxdo'] as const)(
     '[REG-TOPIC-026] renders an accepted %s reply as the solved answer without replacing normal reply behavior',
     async (source) => {
       const reply: Reply = {
@@ -1412,8 +1412,8 @@ describe('Topic real child components', () => {
 
   it.each([
     ['linuxdo', 'closed.enabled', '关闭了主题'],
-    ['xiaoyinsi', 'closed.disabled', '重新打开了主题']
-  ] as ['linuxdo' | 'xiaoyinsi', string, string][])(
+    ['linuxdo', 'closed.disabled', '重新打开了主题']
+  ] as ['linuxdo', string, string][])(
     '[REG-TOPIC-026] renders a %s system post as the compact “%s” event',
     async (source, actionCode, expectedAction) => {
       const reply: Reply = {
@@ -1447,11 +1447,11 @@ describe('Topic real child components', () => {
   );
 
   it.each([
-    ['xiaoyinsi', '<p>移动了主题</p>', '移动了主题'],
+    ['linuxdo', '<p>移动了主题</p>', '移动了主题'],
     ['linuxdo', '', '更新了主题'],
-    ['xiaoyinsi', '<p>topic.mystery</p>', '更新了主题'],
+    ['linuxdo', '<p>topic.mystery</p>', '更新了主题'],
     ['linuxdo', '<p>执行 topic.mystery</p>', '更新了主题']
-  ] as ['linuxdo' | 'xiaoyinsi', string, string][])(
+  ] as ['linuxdo', string, string][])(
     '[REG-TOPIC-026] gives an unknown %s system action a readable fallback',
     async (source, contentHtml, expectedAction) => {
       const reply: Reply = {
@@ -1596,7 +1596,7 @@ describe('Topic real child components', () => {
       loadingQuotedFloors: {},
       replies: [fullReply],
       repliesByFloor: new Map(),
-      source: 'xiaoyinsi',
+      source: 'linuxdo',
       topicId: 'topic-1'
     });
     if (planned?.type !== 'reply') throw new Error('Expected a single-cell signed reply.');
@@ -1605,11 +1605,11 @@ describe('Topic real child components', () => {
         {...replyProps({
           bodyContent: planned.bodyContent,
           discourseEmojiUrls: {
-            heart: 'https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15'
+            heart: 'https://linux.do/images/emoji/twitter/heart.png?v=15'
           },
           reply: fullReply,
           signatureContent: planned.signatureContent,
-          source: 'xiaoyinsi'
+          source: 'linuxdo'
         })}
       />
     );
@@ -1640,7 +1640,7 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('取消赞')).toBeNull();
   });
 
-  it('[REG-XIAOYINSI-007] separates 小隐寺 reply permission from per-post interaction permissions', async () => {
+  it(' separates linux.do reply permission from per-post interaction permissions', async () => {
     const writableReply: Reply = {
       ...replyProps().reply,
       canDelete: true,
@@ -1654,7 +1654,7 @@ describe('Topic real child components', () => {
         props={replyProps({
           decisionFor: allowInteractionsOnly,
           reply: writableReply,
-          source: 'xiaoyinsi'
+          source: 'linuxdo'
         })}
       />
     );
@@ -1667,7 +1667,7 @@ describe('Topic real child components', () => {
     expect(view.getAllByRole('checkbox').every((option) => !option.props.accessibilityState.disabled)).toBe(true);
   });
 
-  it('[REG-XIAOYINSI-017] shows 小隐寺 reply reaction images without write authorization', async () => {
+  it(' shows linux.do reply reaction images without write authorization', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       reactionSummary: [
@@ -1680,25 +1680,21 @@ describe('Topic real child components', () => {
         {...replyProps({
           decisionFor: denyAllActions,
           discourseEmojiUrls: {
-            heart: 'https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15',
-            '+1': 'https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15'
+            heart: 'https://linux.do/images/emoji/twitter/heart.png?v=15',
+            '+1': 'https://linux.do/images/emoji/twitter/+1.png?v=15'
           },
           reply,
-          source: 'xiaoyinsi'
+          source: 'linuxdo'
         })}
       />
     );
 
     expect(view.getByLabelText('heart 2')).toBeTruthy();
     expect(view.getByLabelText('+1 1')).toBeTruthy();
-    expect(
-      view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15')
-    ).toBeTruthy();
-    expect(
-      view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15')
-    ).toBeTruthy();
-    expect(view.getAllByTestId('media-source-xiaoyinsi')).toHaveLength(2);
-    expect(view.getAllByLabelText('avatar source xiaoyinsi').length).toBeGreaterThan(0);
+    expect(view.getByLabelText('emoji image https://linux.do/images/emoji/twitter/heart.png?v=15')).toBeTruthy();
+    expect(view.getByLabelText('emoji image https://linux.do/images/emoji/twitter/+1.png?v=15')).toBeTruthy();
+    expect(view.getAllByTestId('media-source-linuxdo')).toHaveLength(2);
+    expect(view.getAllByLabelText('avatar source linuxdo').length).toBeGreaterThan(0);
   });
 
   it('[REG-TOPIC-056] leaves blockquote rendering structural after Callout classification moved to the compiler', async () => {

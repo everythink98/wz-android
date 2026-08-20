@@ -12,7 +12,6 @@ jest.mock('@/sources/readGateway', () => ({
 
 import { checkYaohuoLogin, getCurrentUserProfile } from '@/sources/readGateway';
 import { useAccountStatusController } from '@/features/account/useAccountStatusController';
-import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
@@ -64,18 +63,6 @@ const yaohuoUser: UserProfile = {
   topics: []
 };
 
-const xiaoyinsiUser: UserProfile = {
-  source: 'xiaoyinsi',
-  id: '23',
-  username: 'carol',
-  url: 'https://forum.xiaoyinsi.com/u/carol',
-  topics: []
-};
-
-type ReadXiaoyinsiAuthorization = (
-  trace?: Parameters<Parameters<typeof useAccountStatusController>[0]['readXiaoyinsiAuthorization']>[0],
-  options?: { signal?: AbortSignal }
-) => Promise<XiaoyinsiAuthorizationReadResult>;
 type ReadManagedCookieHeader = NonNullable<Parameters<typeof useAccountStatusController>[0]['readManagedCookieHeader']>;
 
 type StatusTestOptions = {
@@ -112,15 +99,6 @@ async function renderStatusController({
       header: (await mockReadYaohuoCookieHeader()) || ''
     };
   },
-  readXiaoyinsiAuthorization = jest.fn(async () => ({
-    authenticated: false,
-    sessionEvent: {
-      type: 'cookie-loaded' as const,
-      loggedIn: false,
-      currentUser: null,
-      at: '2026-07-20T00:00:00.000Z'
-    }
-  })),
   sessionViewModels
 }: Partial<Parameters<typeof useAccountStatusController>[0]> & StatusTestOptions = {}) {
   if (sessionViewModels) {
@@ -160,7 +138,6 @@ async function renderStatusController({
         notify,
         onAccountStatusChanged: commitAccountStatusChange,
         readManagedCookieHeader,
-        readXiaoyinsiAuthorization,
         enabledSourcesReady
       }),
     {
@@ -171,8 +148,7 @@ async function renderStatusController({
   return {
     hook,
     notify,
-    onAccountStatusChanged,
-    readXiaoyinsiAuthorization
+    onAccountStatusChanged
   };
 }
 
@@ -212,7 +188,7 @@ describe('account status queries', () => {
       ]
     ]);
 
-    const { hook, readXiaoyinsiAuthorization } = await renderStatusController({ enabledSourcesReady: true });
+    const { hook } = await renderStatusController({ enabledSourcesReady: true });
 
     await waitFor(() => expect(hook.result.current.hydrated).toBe(true));
     expect(hook.result.current.accountSessionViewModels.nodeseek).toMatchObject({
@@ -221,7 +197,6 @@ describe('account status queries', () => {
     });
     expect(mockGetCurrentUser).not.toHaveBeenCalled();
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
-    expect(readXiaoyinsiAuthorization).not.toHaveBeenCalled();
   });
 
   it('[REG-PERF-019] probes only migration candidates and marks the one-time migration complete', async () => {
@@ -296,7 +271,7 @@ describe('account status queries', () => {
   });
 
   it('[REG-SOURCE-010] probes only enabled sources and treats disabled reconciliation as stale', async () => {
-    const { hook, readXiaoyinsiAuthorization } = await renderStatusController({
+    const { hook } = await renderStatusController({
       enabledSources: ['nodeseek']
     });
 
@@ -307,12 +282,11 @@ describe('account status queries', () => {
     expect(mockGetCurrentUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek' }));
     expect(mockGetCurrentUser).not.toHaveBeenCalledWith(expect.objectContaining({ source: 'linuxdo' }));
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
-    expect(readXiaoyinsiAuthorization).not.toHaveBeenCalled();
     await expect(hook.result.current.reconcileAccountStatus('linuxdo')).resolves.toEqual({ status: 'stale' });
   });
 
   it('[REG-SOURCE-010] starts all-disabled without probes or an identity barrier', async () => {
-    const { hook, readXiaoyinsiAuthorization } = await renderStatusController({ enabledSources: [] });
+    const { hook } = await renderStatusController({ enabledSources: [] });
 
     await act(async () => {
       await hook.result.current.refreshAccountStatus({ silent: true });
@@ -320,7 +294,6 @@ describe('account status queries', () => {
 
     expect(mockGetCurrentUser).not.toHaveBeenCalled();
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
-    expect(readXiaoyinsiAuthorization).not.toHaveBeenCalled();
   });
 
   it('[REG-PERF-014] leaves initial hydration probes to the foreground-ready batch', async () => {
@@ -566,7 +539,7 @@ describe('account status queries', () => {
     }
   });
 
-  it('[REG-ACCOUNT-044] lets four-site refresh publish fast sites while one protocol runs past five seconds', async () => {
+  it('[REG-ACCOUNT-044] lets three-site refresh publish fast sites while one protocol runs past five seconds', async () => {
     jest.useFakeTimers();
     const nodeSeekCookie = Promise.withResolvers<string | undefined>();
     mockReadLinuxDoCookieHeader.mockResolvedValue('_t=safe');
@@ -581,18 +554,8 @@ describe('account status queries', () => {
       reason: undefined,
       currentUser: yaohuoUser
     });
-    const readXiaoyinsiAuthorization = jest.fn<ReadXiaoyinsiAuthorization>(async () => ({
-      authenticated: true,
-      sessionEvent: {
-        type: 'cookie-loaded',
-        loggedIn: true,
-        currentUser: xiaoyinsiUser,
-        at: '2026-07-20T00:00:00.000Z'
-      }
-    }));
     const { hook, notify } = await renderStatusController({
-      readNodeSeekCookieHeader: jest.fn(async () => nodeSeekCookie.promise),
-      readXiaoyinsiAuthorization
+      readNodeSeekCookieHeader: jest.fn(async () => nodeSeekCookie.promise)
     });
     let refresh!: ReturnType<typeof hook.result.current.refreshAccountStatus>;
     let settled = false;
@@ -611,7 +574,7 @@ describe('account status queries', () => {
 
       expect(settled).toBe(false);
       expect(hook.result.current.accountSessionViewModels.nodeseek.isVerifying).toBe(true);
-      for (const source of ['linuxdo', 'yaohuo', 'xiaoyinsi'] as const) {
+      for (const source of ['linuxdo', 'yaohuo'] as const) {
         expect(hook.result.current.accountSessionViewModels[source].identityTrust).toBe('confirmed');
       }
       expect(notify).not.toHaveBeenCalled();
@@ -1181,7 +1144,7 @@ describe('account status queries', () => {
   });
 
   it('REG-ACCOUNT-002 isolates an exact CookieManager read failure from the other sites', async () => {
-    const { hook, notify, readXiaoyinsiAuthorization } = await renderStatusController({
+    const { hook, notify } = await renderStatusController({
       readManagedCookieHeader: jest.fn(async (exactUrl: string) =>
         exactUrl.includes('yaohuo.me')
           ? { status: 'error' as const, message: 'CookieManager unavailable' }
@@ -1196,7 +1159,6 @@ describe('account status queries', () => {
       expect(hook.result.current.accountSessionViewModels.yaohuo.lastError).toBe('CookieManager unavailable');
       expect(hook.result.current.accountSessionViewModels.nodeseek.status).toBe('anonymous');
     });
-    expect(readXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith('账号状态部分刷新失败：妖火');
   });
 
@@ -1227,7 +1189,7 @@ describe('account status queries', () => {
   it('REG-ACCOUNT-008 never forwards an exact CookieManager header into the Account verifier', async () => {
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? nodeSeekUser : linuxUser));
     const readNodeSeekCookieHeader = jest.fn(async () => 'session=safe');
-    const { hook, notify, readXiaoyinsiAuthorization } = await renderStatusController({
+    const { hook, notify } = await renderStatusController({
       readNodeSeekCookieHeader
     });
 
@@ -1245,7 +1207,6 @@ describe('account status queries', () => {
         nodeSeekCookie: expect.anything()
       })
     );
-    expect(readXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith('账号状态已刷新');
   });
 
@@ -1476,110 +1437,6 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-ACCOUNT-016] shows Xiaoyinsi as anonymous after the current authorization check', async () => {
-    const states = createSiteSessionStates({
-      xiaoyinsi: {
-        site: 'xiaoyinsi',
-        status: 'logged-in',
-        cookieSummary: [],
-        isVerifying: false,
-        currentUser: xiaoyinsiUser
-      }
-    });
-    const readXiaoyinsiAuthorization = jest.fn(async () => ({
-      authenticated: false,
-      sessionEvent: {
-        type: 'cookie-loaded' as const,
-        loggedIn: false,
-        currentUser: null,
-        at: '2026-07-20T00:00:00.000Z'
-      }
-    }));
-    const { hook } = await renderStatusController({
-      readXiaoyinsiAuthorization,
-      sessionViewModels: createSiteSessionViewModels(states)
-    });
-
-    await act(async () => {
-      await hook.result.current.refreshAccountStatus();
-    });
-
-    await waitFor(() => expect(hook.result.current.accountSessionViewModels.xiaoyinsi.status).toBe('anonymous'));
-    expect(hook.result.current.accountSessionViewModels.xiaoyinsi.currentUser).toBeUndefined();
-    expect(readXiaoyinsiAuthorization).toHaveBeenCalledWith(expect.any(Object), {
-      signal: expect.any(Object)
-    });
-  });
-
-  it('[REG-ACCOUNT-019] does not clear an independently confirmed source during Xiaoyinsi logout', async () => {
-    mockGetCurrentUser.mockImplementation(async ({ source }) => {
-      if (source === 'linuxdo') {
-        throw Object.assign(new Error('未登录'), {
-          source: 'linuxdo',
-          kind: 'login-expired',
-          loginRequired: true,
-          reason: 'expired'
-        });
-      }
-      return null as never;
-    });
-    const xiaoyinsiFeedKey = ['forum', 'xiaoyinsi', 'feed'] as const;
-    const allFeedKey = ['forum', 'all', 'feed'] as const;
-    const linuxDoFeedKey = ['forum', 'linuxdo', 'feed'] as const;
-    appQueryClient.setQueryData(xiaoyinsiFeedKey, { private: true });
-    appQueryClient.setQueryData(allFeedKey, { mixed: true });
-    appQueryClient.setQueryData(linuxDoFeedKey, { untouched: true });
-    const states = createSiteSessionStates({
-      xiaoyinsi: {
-        site: 'xiaoyinsi',
-        status: 'logged-in',
-        cookieSummary: [],
-        isVerifying: false,
-        currentUser: xiaoyinsiUser
-      }
-    });
-    const { hook } = await renderStatusController({
-      enabledSources: ['xiaoyinsi'],
-      readXiaoyinsiAuthorization: jest.fn(async () => ({
-        authenticated: false,
-        sessionEvent: { type: 'login-expired' as const, message: '小隐寺授权已失效' }
-      })),
-      sessionViewModels: createSiteSessionViewModels(states)
-    });
-
-    await act(async () => {
-      await hook.result.current.refreshAccountStatus();
-    });
-
-    await waitFor(() =>
-      expect(hook.result.current.accountSessionViewModels.xiaoyinsi).toMatchObject({
-        status: 'anonymous',
-        isLoggedIn: false
-      })
-    );
-    expect(appQueryClient.getQueryData(xiaoyinsiFeedKey)).toBeUndefined();
-    expect(appQueryClient.getQueryData(allFeedKey)).toBeUndefined();
-    expect(appQueryClient.getQueryData(linuxDoFeedKey)).toEqual({ untouched: true });
-  });
-
-  it('[REG-ACCOUNT-016] projects an unauthenticated Xiaoyinsi Account result without workflow mutation', async () => {
-    const { hook } = await renderStatusController({
-      readXiaoyinsiAuthorization: jest.fn(async () => ({
-        authenticated: false,
-        sessionEvent: { type: 'login-expired' as const, message: '小隐寺授权已失效' }
-      }))
-    });
-
-    await act(async () => {
-      await hook.result.current.refreshAccountStatus();
-    });
-
-    expect(hook.result.current.accountSessionViewModels.xiaoyinsi).toMatchObject({
-      status: 'anonymous',
-      isLoggedIn: false
-    });
-  });
-
   it('[REG-ACCOUNT-042] keeps the Account snapshot stable when only the forum epoch changes', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const { hook } = await renderStatusController({
@@ -1609,52 +1466,6 @@ describe('account status queries', () => {
       currentUser: nodeSeekUser,
       identityTrust: 'confirmed'
     });
-  });
-
-  it('[REG-ACCOUNT-017] preserves the last confirmed Xiaoyinsi identity when refresh fails', async () => {
-    const readXiaoyinsiAuthorization = jest
-      .fn<ReadXiaoyinsiAuthorization>()
-      .mockResolvedValueOnce({
-        authenticated: true,
-        sessionEvent: {
-          type: 'cookie-loaded' as const,
-          loggedIn: true,
-          currentUser: xiaoyinsiUser,
-          at: '2026-07-20T00:00:00.000Z'
-        }
-      })
-      .mockResolvedValueOnce({
-        authenticated: null,
-        sessionEvent: {
-          type: 'check-failed' as const,
-          message: '小隐寺状态暂时无法确认',
-          at: '2026-07-20T00:01:00.000Z'
-        }
-      });
-    const { hook, notify } = await renderStatusController({ readXiaoyinsiAuthorization });
-
-    await act(async () => {
-      await hook.result.current.refreshAccountStatus();
-    });
-    await waitFor(() =>
-      expect(hook.result.current.accountSessionViewModels.xiaoyinsi).toMatchObject({
-        status: 'logged-in',
-        currentUser: xiaoyinsiUser
-      })
-    );
-
-    await act(async () => {
-      await hook.result.current.refreshAccountStatus();
-    });
-
-    await waitFor(() =>
-      expect(hook.result.current.accountSessionViewModels.xiaoyinsi).toMatchObject({
-        status: 'logged-in',
-        currentUser: xiaoyinsiUser,
-        lastError: '小隐寺状态暂时无法确认'
-      })
-    );
-    expect(notify).toHaveBeenLastCalledWith('账号状态部分刷新失败：小隐寺');
   });
 
   it('[REG-ACCOUNT-020] hydrates a verified Yaohuo self id before projecting the account', async () => {
@@ -1787,25 +1598,8 @@ describe('account status queries', () => {
         currentUser: yaohuoUser
       };
     });
-    const readXiaoyinsiAuthorization = jest.fn<ReadXiaoyinsiAuthorization>(async () =>
-      failing
-        ? {
-            authenticated: null,
-            sessionEvent: { type: 'check-failed', message: '小隐寺 offline' }
-          }
-        : {
-            authenticated: true,
-            sessionEvent: {
-              type: 'cookie-loaded',
-              loggedIn: true,
-              currentUser: xiaoyinsiUser,
-              at: '2026-07-20T00:00:00.000Z'
-            }
-          }
-    );
     const { hook, notify } = await renderStatusController({
-      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe'),
-      readXiaoyinsiAuthorization
+      readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
     });
 
     await act(async () => {
@@ -1815,7 +1609,6 @@ describe('account status queries', () => {
       expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nodeSeekUser);
       expect(hook.result.current.accountSessionViewModels.linuxdo.currentUser).toEqual(linuxUser);
       expect(hook.result.current.accountSessionViewModels.yaohuo.currentUser).toEqual(yaohuoUser);
-      expect(hook.result.current.accountSessionViewModels.xiaoyinsi.currentUser).toEqual(xiaoyinsiUser);
     });
 
     failing = true;
@@ -1839,13 +1632,8 @@ describe('account status queries', () => {
         status: 'logged-in',
         lastError: '妖火状态暂时无法确认。'
       });
-      expect(hook.result.current.accountSessionViewModels.xiaoyinsi).toMatchObject({
-        currentUser: xiaoyinsiUser,
-        status: 'logged-in',
-        lastError: '小隐寺 offline'
-      });
     });
-    expect(notify).toHaveBeenLastCalledWith('账号状态部分刷新失败：NodeSeek、linux.do、妖火、小隐寺');
+    expect(notify).toHaveBeenLastCalledWith('账号状态部分刷新失败：NodeSeek、linux.do、妖火');
   });
 
   it('[REG-ACCOUNT-024] never clears NodeSeek login cookies for an ordinary HTTP 404', async () => {

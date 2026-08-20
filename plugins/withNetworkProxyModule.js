@@ -874,7 +874,6 @@ internal fun forumReadChannelHostSuffix(source: String): String = when (source) 
   "linuxdo" -> "linux.do"
   "yaohuo" -> "yaohuo.me"
   "v2ex" -> "v2ex.com"
-  "xiaoyinsi" -> "forum.xiaoyinsi.com"
   else -> throw IllegalArgumentException("不支持的论坛读取通道")
 }
 
@@ -979,8 +978,7 @@ private fun opaqueNetworkIdentity(value: Any): String =
 private fun readNetworkDiagnosticSource(request: Request): String? {
   val tagged = request.header(FORUM_MEDIA_SOURCE_HEADER)
     ?: request.tag(ForumMediaRequestTag::class.java)?.source
-  if (tagged == "nodeseek" || tagged == "linuxdo" || tagged == "yaohuo" ||
-    tagged == "v2ex" || tagged == "xiaoyinsi") {
+  if (tagged == "nodeseek" || tagged == "linuxdo" || tagged == "yaohuo" || tagged == "v2ex") {
     return tagged
   }
   val host = request.url.host.lowercase(Locale.US)
@@ -989,7 +987,6 @@ private fun readNetworkDiagnosticSource(request: Request): String? {
     host == "linux.do" || host.endsWith(".linux.do") -> "linuxdo"
     host == "yaohuo.me" || host.endsWith(".yaohuo.me") -> "yaohuo"
     host == "v2ex.com" || host.endsWith(".v2ex.com") -> "v2ex"
-    host == "forum.xiaoyinsi.com" || host.endsWith(".forum.xiaoyinsi.com") -> "xiaoyinsi"
     else -> null
   }
 }
@@ -4377,8 +4374,7 @@ class NetworkProxyRuntimeTest {
       "nodeseek" to "https://www.nodeseek.com/read",
       "linuxdo" to "https://api.linux.do/read",
       "yaohuo" to "https://www.yaohuo.me/read",
-      "v2ex" to "https://www.v2ex.com/read",
-      "xiaoyinsi" to "https://forum.xiaoyinsi.com/read"
+      "v2ex" to "https://www.v2ex.com/read"
     ).forEach { (source, url) ->
       assertFalse(isForumReadChannelRequest(source, Request.Builder().url(url).head().build()))
       assertTrue(

@@ -6,8 +6,7 @@ const MAX_DELIVERED_IDS = 200;
 export const initialNotificationOptInSources = [
   'nodeseek',
   'linuxdo',
-  'yaohuo',
-  'xiaoyinsi'
+  'yaohuo'
 ] as const satisfies readonly NotificationSource[];
 
 export interface NotificationSourceState {

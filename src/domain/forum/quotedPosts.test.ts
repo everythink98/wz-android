@@ -22,13 +22,13 @@ describe('quoted post contract', () => {
     expect(topicBodyReference).toEqual({ source: 'linuxdo', topicId: '2427021', postNumber: 1 });
     expect(
       discourseQuotedPostReferenceFromAttributes(
-        'xiaoyinsi',
+        'linuxdo',
         {
           'data-post': '2'
         },
         '42'
       )
-    ).toEqual({ source: 'xiaoyinsi', topicId: '42', postNumber: 2 });
+    ).toEqual({ source: 'linuxdo', topicId: '42', postNumber: 2 });
     expect(replyReference).toEqual({ source: 'linuxdo', topicId: '2427605', postNumber: 1 });
   });
 

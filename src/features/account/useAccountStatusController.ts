@@ -15,9 +15,7 @@ import {
 import { rejectUnauthorizedResponse, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { readAccountStatus } from '@/sources/accountRead';
-import type { XiaoyinsiAuthorizationReadResult } from '@/domain/session/accountCenter';
 import { accountQueryKeys, appQueryClient } from '@/platform/query/serverState';
-import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   readManagedCookieHeader as readManagedCookieHeaderFromNative,
   type ManagedCookieReadResult
@@ -35,7 +33,6 @@ import {
 import { NODESEEK_ACCOUNT_STATUS_URL } from '@/sources/nodeseek/accountStatus';
 import { LINUXDO_ACCOUNT_STATUS_URL } from '@/sources/linuxdo/accountStatus';
 import { YAOHUO_ACCOUNT_STATUS_URL } from '@/sources/yaohuo/accountStatus';
-import { loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 
 type RefreshAccountStatusOptions = { silent?: boolean };
 type StatusSource = SessionSource;
@@ -75,8 +72,7 @@ export function useAccountStatusController({
   nodeSeekUserAgentRef,
   notify,
   onAccountStatusChanged,
-  readManagedCookieHeader = readManagedCookieHeaderFromNative,
-  readXiaoyinsiAuthorization
+  readManagedCookieHeader = readManagedCookieHeaderFromNative
 }: {
   enabledSources?: readonly StatusSource[];
   enabledSourcesReady?: boolean;
@@ -86,10 +82,6 @@ export function useAccountStatusController({
   notify: (message: string) => void;
   onAccountStatusChanged: (source: StatusSource, recoveryQueryKey?: readonly unknown[]) => void;
   readManagedCookieHeader?: (exactUrl: string) => Promise<ManagedCookieReadResult>;
-  readXiaoyinsiAuthorization: (
-    trace?: DiagnosticTrace,
-    options?: { signal?: AbortSignal }
-  ) => Promise<XiaoyinsiAuthorizationReadResult>;
 }) {
   const enabledMembershipKey = sessionSources.filter((source) => enabledSources.includes(source)).join(',');
   const enabledSourceSet = useMemo(
@@ -102,17 +94,14 @@ export function useAccountStatusController({
   const nodeSeekStatus = useQuery(snapshotQueryDefinition('nodeseek'));
   const linuxDoStatus = useQuery(snapshotQueryDefinition('linuxdo'));
   const yaohuoStatus = useQuery(snapshotQueryDefinition('yaohuo'));
-  const xiaoyinsiStatus = useQuery(snapshotQueryDefinition('xiaoyinsi'));
   const snapshots: Record<StatusSource, AccountSessionSnapshot> = {
     linuxdo: linuxDoStatus.data,
     nodeseek: nodeSeekStatus.data,
-    xiaoyinsi: xiaoyinsiStatus.data,
     yaohuo: yaohuoStatus.data
   };
   const accountSessionViewModels: SiteSessionViewModels = {
     linuxdo: createAccountSessionViewModel(snapshots.linuxdo),
     nodeseek: createAccountSessionViewModel(snapshots.nodeseek),
-    xiaoyinsi: createAccountSessionViewModel(snapshots.xiaoyinsi),
     yaohuo: createAccountSessionViewModel(snapshots.yaohuo)
   };
 
@@ -133,7 +122,6 @@ export function useAccountStatusController({
   const probeGenerationRef = useRef<Record<StatusSource, number>>({
     linuxdo: 0,
     nodeseek: 0,
-    xiaoyinsi: 0,
     yaohuo: 0
   });
   const activeProbeRef = useRef<
@@ -234,7 +222,6 @@ export function useAccountStatusController({
             linuxDoUserAgent: linuxDoUserAgentRef.current,
             nodeSeekUserAgent: nodeSeekUserAgentRef.current,
             readManagedCookieHeader,
-            readXiaoyinsiAuthorization,
             signal: controller.signal
           });
           if (probeGenerationRef.current[source] !== generation || !enabledSourcesRef.current.has(source)) {
@@ -319,8 +306,7 @@ export function useAccountStatusController({
       linuxDoUserAgentRef,
       nodeSeekUserAgentRef,
       onAccountStatusChanged,
-      readManagedCookieHeader,
-      readXiaoyinsiAuthorization
+      readManagedCookieHeader
     ]
   );
 
@@ -345,7 +331,6 @@ export function useAccountStatusController({
         await Promise.all(
           [...enabledSourcesRef.current].map(async (source) => {
             try {
-              if (source === 'xiaoyinsi') return (await loadXiaoyinsiCredentials()) ? source : null;
               const url =
                 source === 'nodeseek'
                   ? NODESEEK_ACCOUNT_STATUS_URL

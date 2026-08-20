@@ -40,10 +40,10 @@
 
 ## 当前不可破坏边界
 
-- App 支持 NodeSeek、linux.do、V2EX、妖火和小隐寺；五站共享阅读主干，互动能力按原站真实支持范围提供。
+- App 支持 NodeSeek、linux.do、V2EX 和妖火；四站共享阅读主干，互动能力按原站真实支持范围提供。
 - App 的读取 controller 统一经 `src/sources/readGateway.ts` 进入来源层；Topic 写入口先经 `src/features/topic/actions/topicActionDecision.ts` 统一判定，写事务只由 `src/features/topic/actions/useTopicActionsController.ts` 调用各站 action client。
 - App 组合固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`；`useAppRuntime` 只组合深 runtime 并投影 route capability，七个 route entry 自持页面生命周期，账号跨 route 状态与全局登录 host 只归 `src/features/account/useAccountRuntime.ts`。
-- NodeSeek、linux.do、妖火 Cookie 只由网站 WebView 与 Android `CookieManager` 持有；小隐寺 User API Key / Client ID、保存的账号密码和服务器代理配置使用 SecureStore；小隐寺 RSA 私钥只存在 Android Keystore。以上敏感材料都不进入备份 JSON，代理启用失败不能静默直连。
+- NodeSeek、linux.do、妖火 Cookie 只由网站 WebView 与 Android `CookieManager` 持有；NodeImage API Key、保存的账号密码和服务器代理配置使用 SecureStore。以上敏感材料都不进入备份 JSON，代理启用失败不能静默直连。
 - `App.tsx` 是真实 Expo bootstrap。
 - `android/` 是生成目录；长期原生配置只改 `app.json` 与 `plugins/`。
 - 主登录态 AVD 是日常更新代码和保留登录态验收的目标设备，必须支持反复就地覆盖安装；现有独立未登录 AVD 只服务未登录旅程，不能替代主 AVD 更新。模拟器验收不得卸载 App、清 App 数据、Cookie 或登录态；默认使用仓库 Smoke、`agent-device install` 或带明确 serial 的 `adb install -r` 并比对前后 `firstInstallTime`，禁止 `agent-device reinstall`。发现状态异常立即冻结 AVD，不再启停或操作快照，只读取证并报告。
@@ -53,9 +53,9 @@
 
 - 先在 `docs/product-map.md` 选择受影响能力 ID；如果触及共享 seam，按地图展开关联能力，不能只回归最初入口。
 - 启动与组合：`src/app/AppRoot.tsx`、`src/app/AppComposition.tsx`、`src/app/AppRoutes.tsx`、`src/app/AppNavigator.tsx` 和 `src/app/useAppRuntime.tsx`；首页与搜索分别从 `src/features/feed/FeedRoute.tsx`、`src/features/search/SearchRoute.tsx` 进入，搜索筛选生命周期在 `src/features/search/SearchFilterSheet.tsx` 与 `src/features/search/DiscourseFilterPickers.tsx`。
-- 来源读取：`src/sources/readGateway.ts` 及其后的读取实现；账号状态来源分发：`src/sources/accountRead.ts` 与四个 provider `accountStatus` adapter；互动写入：`src/features/topic/actions/topicActionDecision.ts`、`src/features/topic/actions/useTopicActionsController.ts` 及各站 action client。
+- 来源读取：`src/sources/readGateway.ts` 及其后的读取实现；账号状态来源分发：`src/sources/accountRead.ts` 与三个 provider `accountStatus` adapter；互动写入：`src/features/topic/actions/topicActionDecision.ts`、`src/features/topic/actions/useTopicActionsController.ts` 及各站 action client。
 - 详情与返回：`src/features/topic/TopicRoute.tsx`、`src/features/topic/useTopicSessionController.ts`、`src/features/topic/useTopicController.ts`、`src/features/topic/useTopicRouteBeforeRemove.ts`、`src/features/topic/TopicScreen.tsx`、`src/features/topic/components/TopicContentList.tsx` 与 `src/features/user/UserRoute.tsx`。
-- 账号与登录恢复：`src/features/account/useAccountRuntime.ts` 是唯一跨 controller owner，`src/features/account/AccountHosts.tsx` 在 feature 内组合全部可见/隐藏 WebView；App 只能消费 host 节点和语义命令。原三站使用 Cookie bridge 与 App 内 WebView，小隐寺使用独立 Device Code controller 与 Android Keystore，系统浏览器仅承载一次性授权页，不属于 App 会话。
+- 账号与登录恢复：`src/features/account/useAccountRuntime.ts` 是唯一跨 controller owner，`src/features/account/AccountHosts.tsx` 在 feature 内组合全部可见/隐藏 WebView；App 只能消费 host 节点和语义命令。三个账号来源使用 Cookie bridge 与 App 内 WebView，NodeImage 授权沿独立服务入口处理，不属于论坛会话。
 - 更多页：`src/features/more/MoreRoute.tsx` 组合账号、更新、代理、ReaderData 与诊断能力，`src/features/more/components/MoreAccountPanel.tsx`、`src/features/more/components/MoreUpdatePanel.tsx`、`src/features/more/components/MoreUtilityPanels.tsx` 持有局部 panel 生命周期，`src/features/more/MoreScreen.tsx` 只布局。
 - 本机资料与备份：reader data、backup module 与相关 controller。
 - 发布：`scripts/release-android.mjs`、`scripts/check-version.mjs` 和 `scripts/smoke-android.mjs`。

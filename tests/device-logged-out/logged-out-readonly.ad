@@ -14,8 +14,6 @@ press id="account-site-linuxdo"
 wait "id=\"account-site-linuxdo\" label=\"linux.do，匿名可用，已选择\"" 60000
 press id="account-site-yaohuo"
 wait "id=\"account-site-yaohuo\" label=\"妖火，未登录，已选择\"" 60000
-press id="account-site-xiaoyinsi"
-wait "id=\"account-site-xiaoyinsi\" label=\"小隐寺，未登录，已选择\"" 60000
 press label="收起账号中心"
 press id="main-tab-search"
 wait id="search-query" 10000

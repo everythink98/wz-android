@@ -10,7 +10,6 @@ wait id="feed-source-v2ex" 10000
 wait id="feed-source-linuxdo" 10000
 wait id="feed-source-nodeseek" 10000
 wait id="feed-source-yaohuo" 10000
-wait id="feed-source-xiaoyinsi" 10000
 wait "id=\"feed-outcome-data-all-default\" || id=\"feed-outcome-empty-all-default\" || id=\"feed-outcome-partial-all-default\" || id=\"feed-outcome-error-all-default\" || id=\"feed-outcome-auth-all-default\"" 60000
 
 press id="feed-source-v2ex"

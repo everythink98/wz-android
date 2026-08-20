@@ -195,8 +195,7 @@ const categories: Category[] = [
   { source: 'v2ex', id: 'qna', name: '问与答' },
   { source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' },
   { source: 'nodeseek', id: 'daily', name: '日常' },
-  { source: 'yaohuo', id: '177', name: '妖火茶馆' },
-  { source: 'xiaoyinsi', id: '2', name: '社区' }
+  { source: 'yaohuo', id: '177', name: '妖火茶馆' }
 ];
 
 function renderFeed(
@@ -278,7 +277,7 @@ function FeedFilterHarness() {
     setFeedSelection({ categoryFilter: '', feedSource: source });
   };
   const changeFeedFilter = (filter: SourceFeedFilter) => {
-    if (feedSource === 'v2ex' || feedSource === 'linuxdo' || feedSource === 'nodeseek' || feedSource === 'xiaoyinsi') {
+    if (feedSource === 'v2ex' || feedSource === 'linuxdo' || feedSource === 'nodeseek') {
       setFeedFilters((current) => ({ ...current, [feedSource]: filter }) as FeedFilterState);
     }
   };
@@ -289,7 +288,7 @@ function FeedFilterHarness() {
       categories={categories}
       categoryFilter={categoryFilter}
       feedFilter={
-        feedSource === 'v2ex' || feedSource === 'linuxdo' || feedSource === 'nodeseek' || feedSource === 'xiaoyinsi'
+        feedSource === 'v2ex' || feedSource === 'linuxdo' || feedSource === 'nodeseek'
           ? feedFilters[feedSource]
           : undefined
       }
@@ -686,7 +685,7 @@ describe('Feed loading', () => {
   it('[REG-PERF-003] renders the existing Loading state while a lazy scene materializes', async () => {
     await render(renderFeed(false, [topic]));
 
-    const placeholder = mockTabViewProps?.renderLazyPlaceholder?.({ route: { key: 'xiaoyinsi' } });
+    const placeholder = mockTabViewProps?.renderLazyPlaceholder?.({ route: { key: 'linuxdo' } });
     expect(placeholder).toBeDefined();
     const placeholderView = await render(<>{placeholder}</>);
 
@@ -998,18 +997,5 @@ describe('Feed loading', () => {
     await fireEvent.press(view.getByLabelText('妖火茶馆'));
     expect(view.getByLabelText('妖火茶馆，已选择')).toBeTruthy();
     expect(view.queryByLabelText('列表筛选')).toBeNull();
-
-    await fireEvent.press(view.getByTestId('feed-source-xiaoyinsi'));
-    await settlePager();
-    await fireEvent.press(view.getByLabelText('列表筛选'));
-    expect(view.getByText('新')).toBeTruthy();
-    expect(view.getByText('所有')).toBeTruthy();
-    expect(view.getByText('话题')).toBeTruthy();
-    expect(view.getByText('回复')).toBeTruthy();
-    await fireEvent.press(view.getByText('回复'));
-    expect(view.getByText('新·回复')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('社区'));
-    expect(view.getByLabelText('社区，已选择')).toBeTruthy();
-    expect(view.getByLabelText('列表筛选')).toBeTruthy();
   });
 });

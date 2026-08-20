@@ -404,7 +404,6 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       sourcePending={false}
       sourceUnknown={sourceUnknown}
       unreadOnly={unreadOnly}
-      xiaoyinsiNeedsUpgrade={runtime.xiaoyinsiNeedsUpgrade}
       onChangeCategory={setCategoryId}
       onChangeSource={changeSource}
       onChangeUnreadOnly={setUnreadOnly}
@@ -422,7 +421,6 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       onMarkAll={markAll}
       onRefresh={refresh}
       onRetrySource={retrySource}
-      onUpgradeXiaoyinsi={runtime.beginXiaoyinsiAuthorization}
     />
   );
 }
@@ -795,11 +793,9 @@ export function NotificationSettingsRoute() {
       permission={runtime.permission}
       sessions={runtime.sessions}
       state={runtime.state}
-      xiaoyinsiNeedsUpgrade={runtime.xiaoyinsiNeedsUpgrade}
       onOpenSystemSettings={() => void runtime.openSystemSettings()}
       onToggleGlobal={toggleGlobal}
       onToggleSource={(source, enabled) => run(() => runtime.setSourceEnabled(source, enabled))}
-      onUpgradeXiaoyinsi={runtime.beginXiaoyinsiAuthorization}
     />
   );
 }

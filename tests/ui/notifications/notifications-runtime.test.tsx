@@ -28,7 +28,6 @@ import {
   syncNotificationBackgroundRegistration
 } from '@/platform/notifications/notificationSystem';
 import { runNotificationBackgroundWorker } from '@/platform/notifications/notificationWorker';
-import { loadXiaoyinsiCredentials } from '@/sources/xiaoyinsi/auth';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
@@ -43,10 +42,6 @@ jest.mock('expo-notifications', () => ({
   addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
   clearLastNotificationResponseAsync: jest.fn(async () => undefined),
   getLastNotificationResponseAsync: jest.fn(async () => null)
-}));
-
-jest.mock('@/sources/xiaoyinsi/auth', () => ({
-  loadXiaoyinsiCredentials: jest.fn(async () => undefined)
 }));
 
 jest.mock('@/platform/notifications/notificationSystem', () => ({
@@ -143,26 +138,6 @@ function nodeSeekSessions(identityTrust: 'confirmed' | 'unknown' | 'none', userI
   };
 }
 
-function xiaoyinsiSessions() {
-  return createSiteSessionViewModels(
-    createSiteSessionStates({
-      xiaoyinsi: {
-        site: 'xiaoyinsi',
-        status: 'logged-in',
-        cookieSummary: [],
-        isVerifying: false,
-        currentUser: {
-          source: 'xiaoyinsi',
-          id: '7',
-          username: 'temple-user',
-          url: 'https://xiaoyinsi.net/u/temple-user',
-          topics: []
-        }
-      }
-    })
-  );
-}
-
 function nodeSeekAndLinuxDoSessions() {
   const sessions = createSiteSessionViewModels(
     createSiteSessionStates({
@@ -213,8 +188,6 @@ function runtimeOptions(
   };
   return {
     appActive: false,
-    authorizationRevision: 'idle',
-    beginXiaoyinsiAuthorization: jest.fn(),
     contentSourcesReady: true,
     enabledNotificationSources,
     fetcher: jest.fn(),
@@ -262,7 +235,6 @@ describe('notification runtime', () => {
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
     jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
     jest.mocked(Notifications.getLastNotificationResponseAsync).mockResolvedValue(null);
-    jest.mocked(loadXiaoyinsiCredentials).mockResolvedValue(undefined);
     jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
     jest.mocked(requestNotificationPermission).mockResolvedValue(false);
     jest.mocked(presentSourceNotification).mockImplementation(async (_source, _digest, identifier) => identifier);
@@ -301,7 +273,7 @@ describe('notification runtime', () => {
           ),
           appActive: true,
           contentSourcesReady,
-          enabledNotificationSources: ['nodeseek', 'xiaoyinsi'],
+          enabledNotificationSources: ['nodeseek'],
           fetcher
         }),
       { wrapper: QueryTestWrapper }
@@ -309,17 +281,12 @@ describe('notification runtime', () => {
 
     expect(hook.result.current.ready).toBe(false);
     expect(fetcher).not.toHaveBeenCalled();
-    expect(loadXiaoyinsiCredentials).not.toHaveBeenCalled();
     expect(runNotificationBackgroundWorker).not.toHaveBeenCalled();
     expect(syncNotificationBackgroundRegistration).not.toHaveBeenCalled();
     expect(Notifications.addNotificationResponseReceivedListener).not.toHaveBeenCalled();
     contentSourcesReady = true;
     await act(async () => hook.rerender({}));
     await waitFor(() => expect(hook.result.current.ready).toBe(true));
-    await waitFor(() => expect(loadXiaoyinsiCredentials).toHaveBeenCalledTimes(1));
-    await act(async () => {
-      await jest.mocked(loadXiaoyinsiCredentials).mock.results[0]?.value;
-    });
     await waitFor(() => expect(fetcher).toHaveBeenCalled());
     expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalled();
     await settleStartedRuntimeTasks();
@@ -368,7 +335,6 @@ describe('notification runtime', () => {
     expect(hook.result.current.activeSources).toEqual([]);
     expect(hook.result.current.unreadTotal).toBe(0);
     expect(dismissSourceNotification).toHaveBeenCalledWith('nodeseek', 'android-id', 'nodeseek:42');
-    expect(loadXiaoyinsiCredentials).not.toHaveBeenCalled();
     await settleStartedRuntimeTasks();
   });
 
@@ -457,7 +423,6 @@ describe('notification runtime', () => {
     const cancelQueries = jest.spyOn(appQueryClient, 'cancelQueries');
     const removeQueries = jest.spyOn(appQueryClient, 'removeQueries');
     const dismissCount = jest.mocked(dismissSourceNotification).mock.calls.length;
-    const credentialLoadCount = jest.mocked(loadXiaoyinsiCredentials).mock.calls.length;
     const workerCount = jest.mocked(runNotificationBackgroundWorker).mock.calls.length;
     const registrationCount = jest.mocked(syncNotificationBackgroundRegistration).mock.calls.length;
 
@@ -469,7 +434,6 @@ describe('notification runtime', () => {
     expect(cancelQueries).not.toHaveBeenCalled();
     expect(removeQueries).not.toHaveBeenCalled();
     expect(dismissSourceNotification).toHaveBeenCalledTimes(dismissCount);
-    expect(loadXiaoyinsiCredentials).toHaveBeenCalledTimes(credentialLoadCount);
     expect(runNotificationBackgroundWorker).toHaveBeenCalledTimes(workerCount);
     expect(syncNotificationBackgroundRegistration).toHaveBeenCalledTimes(registrationCount);
     cancelQueries.mockRestore();
@@ -1046,107 +1010,6 @@ describe('notification runtime', () => {
     }
   );
 
-  it('[REG-NOTIFY-020] reconciles other source identities while Xiaoyinsi credential loading is stalled', async () => {
-    jest.mocked(loadXiaoyinsiCredentials).mockImplementation(() => new Promise(() => undefined));
-    let persisted: string | null = null;
-    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
-    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
-      persisted = value;
-    });
-    const hook = await renderHook(
-      () =>
-        useNotificationsRuntime(
-          runtimeOptions(
-            jest.fn(() => true),
-            nodeSeekSessions('confirmed'),
-            ['nodeseek', 'xiaoyinsi']
-          )
-        ),
-      { wrapper: QueryTestWrapper }
-    );
-
-    await waitFor(() => expect(hook.result.current.ready).toBe(true));
-    await waitFor(() => expect(hook.result.current.state.sources.nodeseek.identityKey).toBe('nodeseek:42'));
-    await settleStartedRuntimeTasks();
-  });
-
-  it('pauses Xiaoyinsi notifications while a changed authorization scope is being rechecked', async () => {
-    let authorizationRevision = 'authorized';
-    let persisted: string | null = null;
-    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
-    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
-      persisted = value;
-    });
-    jest.mocked(loadXiaoyinsiCredentials).mockImplementation(() =>
-      authorizationRevision === 'authorized'
-        ? Promise.resolve({
-            apiKey: 'scoped-key',
-            clientId: 'client-id',
-            scopes: ['read', 'write', 'notifications']
-          })
-        : new Promise((resolve) => setTimeout(() => resolve(undefined), 50))
-    );
-    const sessions = xiaoyinsiSessions();
-    const openSource = jest.fn(() => true);
-    const options = runtimeOptions(openSource, sessions, ['xiaoyinsi']);
-    const hook = await renderHook(
-      () =>
-        useNotificationsRuntime({
-          ...options,
-          authorizationRevision
-        }),
-      { wrapper: QueryTestWrapper }
-    );
-
-    await waitFor(() => expect(hook.result.current.activeSources).toContain('xiaoyinsi'));
-    authorizationRevision = 'rechecking';
-    await act(async () => hook.rerender({}));
-    await waitFor(() => expect(loadXiaoyinsiCredentials).toHaveBeenCalledTimes(2));
-
-    const activeWhileRechecking = hook.result.current.activeSources.includes('xiaoyinsi');
-    const upgradeShownWhileRechecking = hook.result.current.xiaoyinsiNeedsUpgrade;
-
-    await waitFor(() => expect(hook.result.current.xiaoyinsiNeedsUpgrade).toBe(true));
-    expect(activeWhileRechecking).toBe(false);
-    expect(upgradeShownWhileRechecking).toBe(false);
-    await settleStartedRuntimeTasks();
-  });
-
-  it('[REG-NOTIFY-020] does not report background enabled for a legacy Xiaoyinsi-only credential', async () => {
-    jest.mocked(loadXiaoyinsiCredentials).mockResolvedValue({
-      apiKey: 'legacy-key',
-      clientId: 'client-id',
-      scopes: ['read', 'write']
-    });
-    jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
-    const stored = defaultNotificationState();
-    stored.globalEnabled = true;
-    stored.hasOptedIn = true;
-    stored.sources.xiaoyinsi = {
-      ...stored.sources.xiaoyinsi,
-      intentEnabled: true,
-      identityKey: 'xiaoyinsi:7'
-    };
-    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
-
-    const hook = await renderHook(
-      () =>
-        useNotificationsRuntime(
-          runtimeOptions(
-            jest.fn(() => true),
-            xiaoyinsiSessions(),
-            ['xiaoyinsi']
-          )
-        ),
-      { wrapper: QueryTestWrapper }
-    );
-
-    await waitFor(() => expect(hook.result.current.xiaoyinsiNeedsUpgrade).toBe(true));
-    expect(hook.result.current.backgroundEnabled).toBe(false);
-    expect(syncNotificationBackgroundRegistration).toHaveBeenLastCalledWith(expect.anything(), true, []);
-    await settleStartedRuntimeTasks();
-  });
-
   it('[REG-NOTIFY-018] refreshes and persists current unread before running shared delivery', async () => {
     jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
     const stored = defaultNotificationState();
@@ -1387,44 +1250,6 @@ describe('notification runtime', () => {
       )
     ).resolves.toBe('wz-message-nodeseek-nodeseek%3A42');
     expect(presentSourceNotification).toHaveBeenCalledTimes(1);
-    await settleStartedRuntimeTasks();
-  });
-
-  it('[REG-NOTIFY-005] keeps a signed-in legacy Xiaoyinsi credential paused for upgrade without discarding identity state', async () => {
-    jest.mocked(loadXiaoyinsiCredentials).mockResolvedValue({
-      apiKey: 'legacy-key',
-      clientId: 'client-id',
-      scopes: ['read', 'write']
-    });
-    const stored = defaultNotificationState();
-    stored.sources.xiaoyinsi = {
-      intentEnabled: true,
-      identityKey: 'xiaoyinsi:7',
-      baselineReady: true,
-      deliveredIds: ['reply:known']
-    };
-    let persisted = JSON.stringify(stored);
-    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
-    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
-      persisted = value;
-    });
-
-    const hook = await renderHook(
-      () =>
-        useNotificationsRuntime(
-          runtimeOptions(
-            jest.fn(() => true),
-            xiaoyinsiSessions(),
-            ['xiaoyinsi']
-          )
-        ),
-      { wrapper: QueryTestWrapper }
-    );
-
-    await waitFor(() => expect(hook.result.current.xiaoyinsiNeedsUpgrade).toBe(true));
-    expect(hook.result.current.identityKeys.xiaoyinsi).toBe('xiaoyinsi:7');
-    expect(hook.result.current.activeSources).not.toContain('xiaoyinsi');
-    expect(hook.result.current.state.sources.xiaoyinsi.deliveredIds).toEqual(['reply:known']);
     await settleStartedRuntimeTasks();
   });
 

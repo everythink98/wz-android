@@ -35,6 +35,3 @@ wait label="打开搜索筛选，当前默认" 10000
 press id="search-source-yaohuo"
 wait "id=\"search-source-yaohuo\" label=\"妖火，已选择\"" 10000
 wait label="打开搜索筛选，当前默认" 10000
-press id="search-source-xiaoyinsi"
-wait "id=\"search-source-xiaoyinsi\" label=\"小隐寺，已选择\"" 10000
-wait label="打开搜索筛选，当前默认" 10000

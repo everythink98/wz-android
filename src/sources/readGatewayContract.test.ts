@@ -73,12 +73,6 @@ const nodeSeekMocks = vi.hoisted(() => ({
 const linuxDoLevelMocks = vi.hoisted(() => ({
   getLinuxDoLevelProfile: vi.fn()
 }));
-const xiaoyinsiMocks = vi.hoisted(() => ({
-  getXiaoyinsiEmojiUrls: vi.fn(),
-  getXiaoyinsiLevelProfile: vi.fn(),
-  searchXiaoyinsiTags: vi.fn(async (): Promise<DiscourseTagOption[]> => []),
-  searchXiaoyinsiUsers: vi.fn(async (): Promise<DiscourseUserOption[]> => [])
-}));
 const readNetworkRuntimeMocks = vi.hoisted(() => ({
   generation: 0,
   triggerSource: null as Source | null,
@@ -103,16 +97,6 @@ vi.mock('@/sources/linuxdo/search', () => ({
 }));
 vi.mock('@/sources/nodeseek/reader', () => nodeSeekMocks);
 vi.mock('@/sources/linuxdo/level', () => linuxDoLevelMocks);
-vi.mock('@/sources/xiaoyinsi/reader', () => ({
-  getXiaoyinsiEmojiUrls: xiaoyinsiMocks.getXiaoyinsiEmojiUrls
-}));
-vi.mock('@/sources/xiaoyinsi/account', () => ({
-  getXiaoyinsiLevelProfile: xiaoyinsiMocks.getXiaoyinsiLevelProfile
-}));
-vi.mock('@/sources/xiaoyinsi/search', () => ({
-  searchXiaoyinsiTags: xiaoyinsiMocks.searchXiaoyinsiTags,
-  searchXiaoyinsiUsers: xiaoyinsiMocks.searchXiaoyinsiUsers
-}));
 vi.mock('@/sources/yaohuo/reader', () => ({
   checkYaohuoLoginDirect: vi.fn(),
   getYaohuoFeedDirect: vi.fn(),
@@ -232,15 +216,14 @@ describe('source gateway read contract', () => {
   it('[REG-SOURCE-011] executes pending public Topic reads only through the native no-cookie lane', async () => {
     const managedFetcher = vi.fn<Fetcher>();
     const anonymousFetcher = vi.fn<Fetcher>(async () => new Response('public'));
-    const loadXiaoyinsiCredentialsForSource = vi.fn();
     forumMocks.getTopic.mockImplementationOnce(async ({ fetcher, id, source }) => {
-      await fetcher('https://forum.xiaoyinsi.com/t/42.json', { credentials: 'include' });
+      await fetcher('https://linux.do/t/42.json', { credentials: 'include' });
       return {
         source,
         id,
         title: '公开主题',
         author: 'alice',
-        url: 'https://forum.xiaoyinsi.com/t/42',
+        url: 'https://linux.do/t/42',
         createdAt: '',
         replyCount: 0,
         contentHtml: '<p>public</p>',
@@ -250,7 +233,6 @@ describe('source gateway read contract', () => {
     const gateway = createReadGateway({
       anonymousFetcher,
       fetcher: managedFetcher,
-      loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent: () => 'NodeSeek UA',
       readSessionRuntimeSnapshot: (source: SessionRuntimeSnapshot['source']) =>
         runtime(source, {
@@ -261,14 +243,13 @@ describe('source gateway read contract', () => {
         })
     });
 
-    await expect(gateway.getTopic({ source: 'xiaoyinsi', id: '42' })).resolves.toMatchObject({ id: '42' });
+    await expect(gateway.getTopic({ source: 'linuxdo', id: '42' })).resolves.toMatchObject({ id: '42' });
 
     expect(anonymousFetcher).toHaveBeenCalledWith(
-      'https://forum.xiaoyinsi.com/t/42.json',
+      'https://linux.do/t/42.json',
       expect.objectContaining({ credentials: 'omit' })
     );
     expect(managedFetcher).not.toHaveBeenCalled();
-    expect(loadXiaoyinsiCredentialsForSource).not.toHaveBeenCalled();
   });
 
   it('[REG-SOURCE-011] settles pending Yaohuo local categories but blocks remote reads before transport', async () => {
@@ -278,11 +259,9 @@ describe('source gateway read contract', () => {
     });
     const managedFetcher = vi.fn<Fetcher>();
     const anonymousFetcher = vi.fn<Fetcher>();
-    const loadXiaoyinsiCredentialsForSource = vi.fn();
     const gateway = createReadGateway({
       anonymousFetcher,
       fetcher: managedFetcher,
-      loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent: () => 'NodeSeek UA',
       readSessionRuntimeSnapshot: (source: SessionRuntimeSnapshot['source']) =>
         runtime(source, {
@@ -305,17 +284,14 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getFeed).not.toHaveBeenCalled();
     expect(managedFetcher).not.toHaveBeenCalled();
     expect(anonymousFetcher).not.toHaveBeenCalled();
-    expect(loadXiaoyinsiCredentialsForSource).not.toHaveBeenCalled();
   });
 
   it('[REG-SOURCE-011] settles unknown strict reads as retryable identity-unavailable without transport', async () => {
     const managedFetcher = vi.fn<Fetcher>();
     const anonymousFetcher = vi.fn<Fetcher>();
-    const loadXiaoyinsiCredentialsForSource = vi.fn();
     const gateway = createReadGateway({
       anonymousFetcher,
       fetcher: managedFetcher,
-      loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent: () => 'NodeSeek UA',
       readSessionRuntimeSnapshot: (source: SessionRuntimeSnapshot['source']) =>
         runtime(source, { identityTrust: 'unknown' })
@@ -329,20 +305,19 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getFeed).not.toHaveBeenCalled();
     expect(managedFetcher).not.toHaveBeenCalled();
     expect(anonymousFetcher).not.toHaveBeenCalled();
-    expect(loadXiaoyinsiCredentialsForSource).not.toHaveBeenCalled();
   });
 
   it('[REG-SOURCE-011] rejects a late authenticated result after its read-plan scope changes', async () => {
     const response = Promise.withResolvers<Response>();
-    let snapshot = runtime('xiaoyinsi', {
+    let snapshot = runtime('linuxdo', {
       authenticated: true,
-      identityKey: 'xiaoyinsi:42',
+      identityKey: 'linuxdo:42',
       identityTrust: 'confirmed',
       sessionEpoch: 5
     });
     const managedFetcher = vi.fn<Fetcher>(async () => response.promise);
     forumMocks.getTopic.mockImplementationOnce(async ({ fetcher, id, source }) => {
-      await fetcher('https://forum.xiaoyinsi.com/t/42.json');
+      await fetcher('https://linux.do/t/42.json');
       return {
         source,
         id,
@@ -358,12 +333,11 @@ describe('source gateway read contract', () => {
     const gateway = createReadGateway({
       anonymousFetcher: vi.fn<Fetcher>(),
       fetcher: managedFetcher,
-      loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'key', clientId: 'client' })),
       nodeSeekUserAgent: () => 'NodeSeek UA',
       readSessionRuntimeSnapshot: () => snapshot
     });
 
-    const read = gateway.getTopic({ source: 'xiaoyinsi', id: '42' });
+    const read = gateway.getTopic({ source: 'linuxdo', id: '42' });
     await vi.waitFor(() => expect(managedFetcher).toHaveBeenCalledTimes(1));
     snapshot = { ...snapshot, authSurfaceOpen: true };
     response.resolve(new Response('private'));
@@ -499,22 +473,18 @@ describe('source gateway read contract', () => {
   it('[REG-SEARCH-024] uses only the explicit anonymous search lane while identity is pending', async () => {
     const fallbackFetcher = vi.fn<Fetcher>(async () => new Response('fallback must stay unused'));
     const anonymousFetcher = vi.fn<Fetcher>(async () => new Response('anonymous'));
-    const loadXiaoyinsiCredentialsForSource = vi.fn();
-    const blockedSources = new Set<Source>(['linuxdo', 'nodeseek', 'xiaoyinsi', 'yaohuo']);
+    const blockedSources = new Set<Source>(['linuxdo', 'nodeseek', 'yaohuo']);
     const simulateSearchTransport = async (options: {
       source: Source | 'all';
       fetcher: Fetcher;
       fetcherForSource?: (source: Source) => Fetcher;
     }) => {
-      const input =
-        options.source === 'xiaoyinsi'
-          ? 'https://forum.xiaoyinsi.com/search.json?q=pending'
-          : 'https://www.google.com/search?q=site%3Alinux.do+pending';
+      const input = 'https://www.google.com/search?q=site%3Alinux.do+pending';
       const scopedFetcher = options.source === 'all' ? options.fetcherForSource?.('v2ex') : options.fetcher;
       await scopedFetcher!(input, { credentials: 'include' });
       return { items: [], errors: {}, hasMore: false, nextPage: null } satisfies SearchResponse;
     };
-    for (let request = 0; request < 4; request += 1) {
+    for (let request = 0; request < 3; request += 1) {
       forumMocks.searchTopics.mockImplementationOnce(simulateSearchTransport);
     }
     const gateway = createReadGateway({
@@ -523,18 +493,17 @@ describe('source gateway read contract', () => {
       isSourceAuthenticated: () => true,
       isSourceReadBlocked: (source) => blockedSources.has(source),
       linuxDoUserAgent: () => 'linux.do UA',
-      loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent: () => 'NodeSeek UA'
     });
 
-    for (const source of ['linuxdo', 'nodeseek', 'xiaoyinsi'] as const) {
+    for (const source of ['linuxdo', 'nodeseek'] as const) {
       await expect(gateway.searchTopics({ source, query: 'pending public search' })).resolves.toMatchObject({
         items: [],
         errors: {}
       });
     }
 
-    expect(forumMocks.searchTopics).toHaveBeenCalledTimes(3);
+    expect(forumMocks.searchTopics).toHaveBeenCalledTimes(2);
     expect(forumMocks.searchTopics).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -547,13 +516,8 @@ describe('source gateway read contract', () => {
       2,
       expect.objectContaining({ source: 'nodeseek', nodeSeekAuthenticated: false })
     );
-    expect(forumMocks.searchTopics).toHaveBeenNthCalledWith(
-      3,
-      expect.not.objectContaining({ discourseAuth: expect.anything() })
-    );
-    expect(loadXiaoyinsiCredentialsForSource).not.toHaveBeenCalled();
     expect(fallbackFetcher).not.toHaveBeenCalled();
-    expect(anonymousFetcher).toHaveBeenCalledTimes(3);
+    expect(anonymousFetcher).toHaveBeenCalledTimes(2);
     for (const [, init] of anonymousFetcher.mock.calls) {
       expect(init).toMatchObject({ credentials: 'omit' });
     }
@@ -561,7 +525,7 @@ describe('source gateway read contract', () => {
     await expect(gateway.searchTopics({ source: 'yaohuo', query: 'still private' })).rejects.toThrow(
       '登录状态暂时无法确认'
     );
-    expect(forumMocks.searchTopics).toHaveBeenCalledTimes(3);
+    expect(forumMocks.searchTopics).toHaveBeenCalledTimes(2);
 
     forumMocks.searchTopics.mockClear();
     await gateway.searchTopics({ source: 'all', query: 'pending aggregate search' });
@@ -575,10 +539,9 @@ describe('source gateway read contract', () => {
         unavailableSources: ['yaohuo']
       })
     );
-    expect(loadXiaoyinsiCredentialsForSource).not.toHaveBeenCalled();
     expect(fallbackFetcher).not.toHaveBeenCalled();
-    expect(anonymousFetcher).toHaveBeenCalledTimes(4);
-    expect(anonymousFetcher.mock.calls[3]?.[1]).toMatchObject({ credentials: 'omit' });
+    expect(anonymousFetcher).toHaveBeenCalledTimes(3);
+    expect(anonymousFetcher.mock.calls[2]?.[1]).toMatchObject({ credentials: 'omit' });
   });
 
   it('[REG-SEARCH-024] rejects a late anonymous result after the identity mode becomes confirmed', async () => {
@@ -610,11 +573,9 @@ describe('source gateway read contract', () => {
   it('[REG-SOURCE-010] rejects disabled direct reads before credentials, user agent, adapter, or transport', async () => {
     const fetcher = vi.fn();
     const nodeSeekUserAgent = vi.fn(() => 'NodeSeek UA');
-    const loadXiaoyinsiCredentialsForSource = vi.fn();
     const gateway = createReadGateway({
       fetcher,
       getEnabledSources: () => ['v2ex'] as const,
-      loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent
     });
 
@@ -629,18 +590,15 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getTopic).not.toHaveBeenCalled();
     expect(fetcher).not.toHaveBeenCalled();
     expect(nodeSeekUserAgent).not.toHaveBeenCalled();
-    expect(loadXiaoyinsiCredentialsForSource).not.toHaveBeenCalled();
   });
 
   it('[REG-SOURCE-010] uses one enabled snapshot for an all-source read and returns an empty aggregate without credentials or transport', async () => {
     const fetcher = vi.fn();
     const nodeSeekUserAgent = vi.fn(() => 'NodeSeek UA');
-    const loadXiaoyinsiCredentialsForSource = vi.fn();
     const enabledSources = ['v2ex', 'nodeseek'] as const;
     const gateway = createReadGateway({
       fetcher,
       getEnabledSources: () => enabledSources,
-      loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent
     });
 
@@ -652,11 +610,9 @@ describe('source gateway read contract', () => {
 
     forumMocks.getFeed.mockClear();
     nodeSeekUserAgent.mockClear();
-    loadXiaoyinsiCredentialsForSource.mockClear();
     const emptyGateway = createReadGateway({
       fetcher,
       getEnabledSources: () => [] as const,
-      loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent
     });
 
@@ -669,7 +625,6 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ includedSources: [], source: 'all' }));
     expect(fetcher).not.toHaveBeenCalled();
     expect(nodeSeekUserAgent).not.toHaveBeenCalled();
-    expect(loadXiaoyinsiCredentialsForSource).not.toHaveBeenCalled();
   });
 
   it('[REG-SOURCE-010] cancels an all-source read after its enabled set changes and does not commit later fallback evidence', async () => {
@@ -744,20 +699,17 @@ describe('source gateway read contract', () => {
     const fetcher = vi.fn();
     const isSourceAuthenticated = vi.fn(() => true);
     const linuxDoUserAgent = vi.fn(() => 'linux.do UA');
-    const loadXiaoyinsiCredentialsForSource = vi.fn(async () => ({ apiKey: 'key', clientId: 'client' }));
     const nodeSeekUserAgent = vi.fn(() => 'NodeSeek UA');
     const gateway = createReadGateway({
       fetcher,
       getEnabledSources: () => ['v2ex'] as const,
       isSourceAuthenticated,
       linuxDoUserAgent,
-      loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent
     });
 
-    await expect(gateway.getFeed({ source: 'all' }, { includedSources: ['xiaoyinsi'] })).rejects.toThrow('请求已取消');
+    await expect(gateway.getFeed({ source: 'all' }, { includedSources: ['linuxdo'] })).rejects.toThrow('请求已取消');
 
-    expect(loadXiaoyinsiCredentialsForSource).not.toHaveBeenCalled();
     expect(isSourceAuthenticated).not.toHaveBeenCalled();
     expect(linuxDoUserAgent).not.toHaveBeenCalled();
     expect(nodeSeekUserAgent).not.toHaveBeenCalled();
@@ -1068,7 +1020,7 @@ describe('source gateway read contract', () => {
     });
   });
 
-  it('[REG-SOURCE-001][REG-SOURCE-011] skips Xiaoyinsi credentials on its public read lane', async () => {
+  it('[REG-SOURCE-001][REG-SOURCE-011] skips LinuxDo credentials on its public read lane', async () => {
     const visibleTopic: Topic = {
       source: 'v2ex',
       id: 'visible-topic',
@@ -1093,12 +1045,8 @@ describe('source gateway read contract', () => {
       hasMore: false,
       nextPage: null
     });
-    const loadXiaoyinsiCredentialsForSource = vi.fn(async () => {
-      throw new Error('Xiaoyinsi credential store failed');
-    });
     const gateway = createReadGateway({
       fetcher: vi.fn(),
-      loadXiaoyinsiCredentialsForSource,
       nodeSeekUserAgent: () => ''
     });
 
@@ -1106,10 +1054,9 @@ describe('source gateway read contract', () => {
       items: [visibleTopic, unauthoritativeTopic],
       errors: {}
     });
-    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.not.objectContaining({ unavailableSources: ['xiaoyinsi'] }));
+    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.not.objectContaining({ unavailableSources: ['linuxdo'] }));
     await expect(gateway.getFeed({ source: 'nodeseek' })).resolves.toBeDefined();
-    await expect(gateway.getFeed({ source: 'xiaoyinsi' })).resolves.toBeDefined();
-    expect(loadXiaoyinsiCredentialsForSource).not.toHaveBeenCalled();
+    await expect(gateway.getFeed({ source: 'linuxdo' })).resolves.toBeDefined();
   });
 
   it('adds gateway stages without finishing a caller-owned trace', async () => {
@@ -1243,33 +1190,6 @@ describe('source gateway read contract', () => {
 
     expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledWith(
       'yaohuo',
-      7,
-      expect.objectContaining({ trace: expect.any(Object) })
-    );
-    expect(fetcher.mock.calls.every(([, init]) => browserFetchIntentFromInit(init)?.owner === 'feed')).toBe(true);
-  });
-
-  it('[REG-PROXY-012] reuses the shared runtime recovery for one Xiaoyinsi feed timeout', async () => {
-    const fetcher = vi
-      .fn<Fetcher>()
-      .mockRejectedValueOnce(new RequestTimeoutError())
-      .mockResolvedValueOnce(new Response('{}'));
-    const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
-      await scopedFetcher('https://forum.xiaoyinsi.com/latest.json');
-      return { items: [], errors: {}, hasMore: false, nextPage: null };
-    };
-    forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
-    const gateway = createReadGateway({
-      fetcher,
-      isSourceAuthenticated: (source) => source === 'xiaoyinsi',
-      loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
-      nodeSeekUserAgent: () => ''
-    });
-
-    await expect(gateway.getFeed({ source: 'xiaoyinsi' })).resolves.toMatchObject({ items: [], errors: {} });
-
-    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledWith(
-      'xiaoyinsi',
       7,
       expect.objectContaining({ trace: expect.any(Object) })
     );
@@ -1861,7 +1781,7 @@ describe('source gateway read contract', () => {
     );
   });
 
-  it.each(['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const)(
+  it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     'REG-ACCOUNT-009 cancels a %s read when its session epoch changes before the response',
     async (source) => {
       let generation = 7;
@@ -1876,13 +1796,8 @@ describe('source gateway read contract', () => {
       forumMocks.getUserProfile.mockReturnValueOnce(response.promise);
       const gateway = createReadGateway({
         currentSessionEpoch: () => generation,
-        currentXiaoyinsiCredentialGeneration: () => generation,
         fetcher: vi.fn(),
         isSourceAuthenticated: () => true,
-        loadXiaoyinsiCredentialsForSource: vi.fn(async (_source, options) => {
-          options?.captureGeneration?.(generation);
-          return { apiKey: 'old-key', clientId: 'old-client' };
-        }),
         nodeSeekUserAgent: () => ''
       });
 
@@ -2096,78 +2011,5 @@ describe('source gateway read contract', () => {
       kind: 'verification-required',
       message: '妖火需要完成访问验证'
     });
-  });
-
-  it('routes 小隐寺 search candidates with its independent User API credentials', async () => {
-    const credentials = { apiKey: 'secret-key', clientId: 'install-client' };
-    const gateway = createReadGateway({
-      fetcher: vi.fn(),
-      isSourceAuthenticated: (source) => source === 'xiaoyinsi',
-      loadXiaoyinsiCredentialsForSource: vi.fn(async () => credentials),
-      nodeSeekUserAgent: () => ''
-    });
-    xiaoyinsiMocks.searchXiaoyinsiTags.mockResolvedValueOnce([{ name: '公告' }]);
-
-    await gateway.searchTagOptions({ source: 'xiaoyinsi', query: '公', selectedTags: [] });
-    await gateway.searchUserOptions({ source: 'xiaoyinsi', term: 'ali' });
-
-    expect(xiaoyinsiMocks.searchXiaoyinsiTags).toHaveBeenCalledWith(
-      expect.objectContaining({
-        query: '公',
-        credentials,
-        fetcher: expect.any(Function)
-      })
-    );
-    expect(xiaoyinsiMocks.searchXiaoyinsiUsers).toHaveBeenCalledWith(
-      expect.objectContaining({
-        term: 'ali',
-        credentials,
-        fetcher: expect.any(Function)
-      })
-    );
-  });
-
-  it('[REG-XIAOYINSI-007] does not expire or probe 小隐寺 after an authenticated read returns 403', async () => {
-    const onSessionExpired = vi.fn();
-    const gateway = createReadGateway({
-      fetcher: vi.fn(),
-      isSourceAuthenticated: (source) => source === 'xiaoyinsi',
-      loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
-      nodeSeekUserAgent: () => '',
-      onSessionExpired
-    });
-    forumMocks.getTopic.mockRejectedValueOnce(
-      Object.assign(new Error('没有权限读取主题'), {
-        source: 'xiaoyinsi',
-        status: 403
-      })
-    );
-
-    await expect(gateway.getTopic({ source: 'xiaoyinsi', id: '42' })).rejects.toMatchObject({
-      kind: 'permission-denied'
-    });
-    expect(onSessionExpired).not.toHaveBeenCalled();
-  });
-
-  it('[REG-XIAOYINSI-007] ignores a synthetic aggregate expiry without raw HTTP 401 evidence', async () => {
-    const onSessionExpired = vi.fn();
-    const gateway = createReadGateway({
-      fetcher: vi.fn(),
-      isSourceAuthenticated: (source) => source === 'xiaoyinsi',
-      loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
-      nodeSeekUserAgent: () => '',
-      onSessionExpired
-    });
-    forumMocks.getFeed.mockResolvedValue({
-      items: [],
-      errors: { xiaoyinsi: { kind: 'login-expired', message: '授权已失效' } },
-      hasMore: false,
-      nextPage: null
-    });
-
-    await gateway.getFeed({ source: 'all' });
-
-    expect(onSessionExpired).not.toHaveBeenCalled();
-    expect(forumMocks.getFeed).toHaveBeenCalledTimes(1);
   });
 });
