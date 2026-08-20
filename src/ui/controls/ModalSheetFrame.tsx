@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { KeyboardAvoidingView, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { ReaderTheme } from '@/ui/theme/tokens';
@@ -52,6 +52,24 @@ export function ModalSheetFrame({
   onRequestClose: () => void;
 }) {
   const { styles } = useReaderThemeStyles(createStyles);
+  // Android KAV can retain a positive internal bottom after keyboardDidHide; remount to drop its fixed-height frame.
+  const [androidKeyboardResetKey, setAndroidKeyboardResetKey] = useState(0);
+  const [androidKeyboardVisible, setAndroidKeyboardVisible] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !visible || !keyboardAvoiding) {
+      setAndroidKeyboardVisible(false);
+      return;
+    }
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => setAndroidKeyboardVisible(true));
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      setAndroidKeyboardVisible(false);
+      setAndroidKeyboardResetKey((current) => current + 1);
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [keyboardAvoiding, visible]);
   const sheet = (
     <>
       <Pressable
@@ -70,7 +88,12 @@ export function ModalSheetFrame({
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onRequestClose}>
       {keyboardAvoiding ? (
-        <KeyboardAvoidingView behavior="height" enabled={keyboardAvoidingEnabled} style={styles.root}>
+        <KeyboardAvoidingView
+          key={Platform.OS === 'android' ? `${visible}-${androidKeyboardResetKey}` : undefined}
+          behavior="height"
+          enabled={keyboardAvoidingEnabled && visible && (Platform.OS !== 'android' || androidKeyboardVisible)}
+          style={styles.root}
+        >
           {sheet}
         </KeyboardAvoidingView>
       ) : (

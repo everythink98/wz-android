@@ -157,8 +157,24 @@ function FilterNumberField({
   );
 }
 
+export function hasDiscourseAdvancedFilters(filter: SourceSearchFilter) {
+  return Boolean(
+    isDiscourseSearchFilter(filter) &&
+    (filter.username.trim() ||
+      filter.visited.length ||
+      filter.status ||
+      filter.date.trim() ||
+      filter.minPosts !== null ||
+      filter.maxPosts !== null ||
+      filter.minViews !== null ||
+      filter.maxViews !== null ||
+      (filter.siteExtension?.source === 'linuxdo' && filter.siteExtension.expertResponse))
+  );
+}
+
 export function SearchFilterForm({
   categoryNames,
+  discourseMoreInitiallyVisible = false,
   draftFilter,
   filterSheetVisible,
   nodeSeekCategoryItems,
@@ -174,6 +190,7 @@ export function SearchFilterForm({
   yaohuoCategoryItems
 }: {
   categoryNames: ReadonlyMap<string, string>;
+  discourseMoreInitiallyVisible?: boolean;
   draftFilter: SourceSearchFilter;
   filterSheetVisible: boolean;
   nodeSeekCategoryItems: { value: string; label: string }[];
@@ -189,11 +206,13 @@ export function SearchFilterForm({
   yaohuoCategoryItems: { value: string; label: string }[];
 }) {
   const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [discourseMoreVisible, setDiscourseMoreVisible] = useState(discourseMoreInitiallyVisible);
   const [v2exMoreVisible, setV2exMoreVisible] = useState(false);
   useEffect(() => {
     setDatePickerVisible(false);
+    setDiscourseMoreVisible(discourseMoreInitiallyVisible);
     setV2exMoreVisible(false);
-  }, [draftFilter.source, filterSheetVisible]);
+  }, [discourseMoreInitiallyVisible, draftFilter.source, filterSheetVisible]);
   useEffect(() => {
     if (!('date' in draftFilter) || !draftFilter.date) {
       setDatePickerVisible(false);
@@ -208,6 +227,8 @@ export function SearchFilterForm({
     },
     [updateDraft]
   );
+  const discourseAdvancedFiltersSet = hasDiscourseAdvancedFilters(draftFilter);
+  const DiscourseMoreChevron = discourseMoreVisible ? ChevronUp : ChevronDown;
   const V2exMoreChevron = v2exMoreVisible ? ChevronUp : ChevronDown;
   return (
     <>
@@ -218,7 +239,7 @@ export function SearchFilterForm({
             value={draftFilter.sort}
             items={[
               { value: 'relevance', label: '相关' },
-              { value: 'time', label: '按时间' }
+              { value: 'time', label: '最新' }
             ]}
             styles={styles}
             theme={theme}
@@ -278,6 +299,25 @@ export function SearchFilterForm({
       ) : null}
       {isDiscourseSearchFilter(draftFilter) ? (
         <>
+          <FilterChoiceGroup
+            title="排序"
+            value={draftFilter.order}
+            items={[
+              { value: 'relevance', label: '相关' },
+              { value: 'latest', label: '最新' }
+            ]}
+            styles={styles}
+            theme={theme}
+            onChange={(value) => updateDraft({ order: value as typeof draftFilter.order })}
+          />
+          <FilterChoiceGroup
+            title="时间"
+            value={draftFilter.timeRange}
+            items={searchTimeRangeItems}
+            styles={styles}
+            theme={theme}
+            onChange={(value) => updateDraft({ timeRange: value as typeof draftFilter.timeRange, date: '' })}
+          />
           <FilterChoiceGroup
             title="搜索范围"
             value={draftFilter.scope}
@@ -348,184 +388,187 @@ export function SearchFilterForm({
               />
             ) : null}
           </View>
-          <View style={styles.searchFilterField}>
-            <Text style={styles.searchFilterLabel}>回访范围</Text>
-            <View style={styles.searchFilterOptionWrap}>
-              {(
-                [
-                  ['seen', '我读过'],
-                  ['bookmarks', '我已添加为书签'],
-                  ['likes', '我赞过'],
-                  ['posted', '我发过帖'],
-                  ['created', '我创建']
-                ] as [DiscourseVisitedFilter, string][]
-              ).map(([value, label]) => (
-                <FilterCheckbox
-                  key={value}
-                  checked={draftFilter.visited.includes(value)}
-                  label={label}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${discourseMoreVisible ? '收起' : '展开'}更多筛选${
+              discourseAdvancedFiltersSet ? '，已设置' : ''
+            }`}
+            accessibilityState={{ expanded: discourseMoreVisible }}
+            android_ripple={androidRipple(theme.primarySoft)}
+            style={styles.searchFilterMoreButton}
+            onPress={() => {
+              setDatePickerVisible(false);
+              setDiscourseMoreVisible((current) => !current);
+            }}
+          >
+            <Text style={styles.searchFilterMoreText}>更多筛选{discourseAdvancedFiltersSet ? ' · 已设置' : ''}</Text>
+            <DiscourseMoreChevron size={16} color={theme.muted} strokeWidth={1.8} />
+          </Pressable>
+          {discourseMoreVisible ? (
+            <>
+              <View style={styles.searchFilterField}>
+                <Text style={styles.searchFilterLabel}>回访范围</Text>
+                <View style={styles.searchFilterOptionWrap}>
+                  {(
+                    [
+                      ['seen', '我读过'],
+                      ['bookmarks', '我已添加为书签'],
+                      ['likes', '我赞过'],
+                      ['posted', '我发过帖'],
+                      ['created', '我创建']
+                    ] as [DiscourseVisitedFilter, string][]
+                  ).map(([value, label]) => (
+                    <FilterCheckbox
+                      key={value}
+                      checked={draftFilter.visited.includes(value)}
+                      label={label}
+                      styles={styles}
+                      theme={theme}
+                      onChange={() => toggleVisited(value)}
+                    />
+                  ))}
+                </View>
+              </View>
+              <FilterChoiceGroup
+                title="话题状态"
+                value={draftFilter.status}
+                items={[
+                  { value: '', label: '不限状态' },
+                  { value: 'open', label: '开放' },
+                  { value: 'closed', label: '已关闭' },
+                  { value: 'public', label: '公开' },
+                  { value: 'archived', label: '已归档' },
+                  { value: 'noreplies', label: '无回复' },
+                  { value: 'single_user', label: '单一用户' },
+                  { value: 'solved', label: '已解决' },
+                  { value: 'unsolved', label: '未解决' }
+                ]}
+                styles={styles}
+                theme={theme}
+                onChange={(value) => updateDraft({ status: value as typeof draftFilter.status })}
+              />
+              <View style={styles.searchFilterField}>
+                <Text style={styles.searchFilterLabel}>精确日期</Text>
+                <FilterChoiceGroup
+                  title="日期关系"
+                  value={draftFilter.dateRelation}
+                  items={[
+                    { value: 'after', label: '之后' },
+                    { value: 'before', label: '之前' }
+                  ]}
                   styles={styles}
                   theme={theme}
-                  onChange={() => toggleVisited(value)}
+                  onChange={(value) => updateDraft({ dateRelation: value as typeof draftFilter.dateRelation })}
                 />
-              ))}
-            </View>
-          </View>
-          <FilterChoiceGroup
-            title="话题状态"
-            value={draftFilter.status}
-            items={[
-              { value: '', label: '不限状态' },
-              { value: 'open', label: '开放' },
-              { value: 'closed', label: '已关闭' },
-              { value: 'public', label: '公开' },
-              { value: 'archived', label: '已归档' },
-              { value: 'noreplies', label: '无回复' },
-              { value: 'single_user', label: '单一用户' },
-              { value: 'solved', label: '已解决' },
-              { value: 'unsolved', label: '未解决' }
-            ]}
-            styles={styles}
-            theme={theme}
-            onChange={(value) => updateDraft({ status: value as typeof draftFilter.status })}
-          />
-          <FilterChoiceGroup
-            title="时间"
-            value={draftFilter.timeRange}
-            items={searchTimeRangeItems}
-            styles={styles}
-            theme={theme}
-            onChange={(value) => updateDraft({ timeRange: value as typeof draftFilter.timeRange, date: '' })}
-          />
-          <View style={styles.searchFilterField}>
-            <Text style={styles.searchFilterLabel}>精确日期</Text>
-            <FilterChoiceGroup
-              title="日期关系"
-              value={draftFilter.dateRelation}
-              items={[
-                { value: 'after', label: '之后' },
-                { value: 'before', label: '之前' }
-              ]}
-              styles={styles}
-              theme={theme}
-              onChange={(value) => updateDraft({ dateRelation: value as typeof draftFilter.dateRelation })}
-            />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="选择精确日期"
-              android_ripple={androidRipple(theme.primarySoft)}
-              style={styles.input}
-              onPress={() => setDatePickerVisible(true)}
-            >
-              <Text style={[styles.searchFilterOptionText, draftFilter.date && styles.searchFilterOptionTextActive]}>
-                {draftFilter.date || '选择日期'}
-              </Text>
-            </Pressable>
-            {draftFilter.date ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="清除精确日期"
-                style={styles.searchFilterOption}
-                onPress={() => updateDraft({ date: '' })}
-              >
-                <Text style={styles.searchFilterOptionText}>清除日期</Text>
-              </Pressable>
-            ) : null}
-            {datePickerVisible ? (
-              <DateTimePicker
-                value={draftFilter.date ? new Date(`${draftFilter.date}T12:00:00`) : new Date()}
-                mode="date"
-                onChange={changeExactDate}
-              />
-            ) : null}
-          </View>
-          <View style={styles.searchFilterField}>
-            <Text style={styles.searchFilterLabel}>帖子数范围</Text>
-            <View style={styles.searchFilterOptionRow}>
-              <FilterNumberField
-                label="帖子数最小值"
-                value={draftFilter.minPosts}
-                styles={styles}
-                theme={theme}
-                onChange={(value) => updateDraft({ minPosts: value })}
-              />
-              <FilterNumberField
-                label="帖子数最大值"
-                value={draftFilter.maxPosts}
-                styles={styles}
-                theme={theme}
-                onChange={(value) => updateDraft({ maxPosts: value })}
-              />
-            </View>
-          </View>
-          <View style={styles.searchFilterField}>
-            <Text style={styles.searchFilterLabel}>浏览量范围</Text>
-            <View style={styles.searchFilterOptionRow}>
-              <FilterNumberField
-                label="浏览量最小值"
-                value={draftFilter.minViews}
-                styles={styles}
-                theme={theme}
-                onChange={(value) => updateDraft({ minViews: value })}
-              />
-              <FilterNumberField
-                label="浏览量最大值"
-                value={draftFilter.maxViews}
-                styles={styles}
-                theme={theme}
-                onChange={(value) => updateDraft({ maxViews: value })}
-              />
-            </View>
-          </View>
-          {draftFilter.siteExtension?.source === 'linuxdo' ? (
-            <View style={styles.searchFilterField}>
-              <Text style={styles.searchFilterLabel}>其他</Text>
-              <FilterCheckbox
-                checked={draftFilter.siteExtension.expertResponse}
-                label="有专家回应"
-                styles={styles}
-                theme={theme}
-                onChange={updateLinuxDoExpertResponse}
-              />
-            </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="选择精确日期"
+                  android_ripple={androidRipple(theme.primarySoft)}
+                  style={styles.input}
+                  onPress={() => setDatePickerVisible(true)}
+                >
+                  <Text
+                    style={[styles.searchFilterOptionText, draftFilter.date && styles.searchFilterOptionTextActive]}
+                  >
+                    {draftFilter.date || '选择日期'}
+                  </Text>
+                </Pressable>
+                {draftFilter.date ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="清除精确日期"
+                    style={styles.searchFilterOption}
+                    onPress={() => updateDraft({ date: '' })}
+                  >
+                    <Text style={styles.searchFilterOptionText}>清除日期</Text>
+                  </Pressable>
+                ) : null}
+                {datePickerVisible ? (
+                  <DateTimePicker
+                    value={draftFilter.date ? new Date(`${draftFilter.date}T12:00:00`) : new Date()}
+                    mode="date"
+                    onChange={changeExactDate}
+                  />
+                ) : null}
+              </View>
+              <View style={styles.searchFilterField}>
+                <Text style={styles.searchFilterLabel}>帖子数范围</Text>
+                <View style={styles.searchFilterOptionRow}>
+                  <FilterNumberField
+                    label="帖子数最小值"
+                    value={draftFilter.minPosts}
+                    styles={styles}
+                    theme={theme}
+                    onChange={(value) => updateDraft({ minPosts: value })}
+                  />
+                  <FilterNumberField
+                    label="帖子数最大值"
+                    value={draftFilter.maxPosts}
+                    styles={styles}
+                    theme={theme}
+                    onChange={(value) => updateDraft({ maxPosts: value })}
+                  />
+                </View>
+              </View>
+              <View style={styles.searchFilterField}>
+                <Text style={styles.searchFilterLabel}>浏览量范围</Text>
+                <View style={styles.searchFilterOptionRow}>
+                  <FilterNumberField
+                    label="浏览量最小值"
+                    value={draftFilter.minViews}
+                    styles={styles}
+                    theme={theme}
+                    onChange={(value) => updateDraft({ minViews: value })}
+                  />
+                  <FilterNumberField
+                    label="浏览量最大值"
+                    value={draftFilter.maxViews}
+                    styles={styles}
+                    theme={theme}
+                    onChange={(value) => updateDraft({ maxViews: value })}
+                  />
+                </View>
+              </View>
+              {draftFilter.siteExtension?.source === 'linuxdo' ? (
+                <View style={styles.searchFilterField}>
+                  <Text style={styles.searchFilterLabel}>其他</Text>
+                  <FilterCheckbox
+                    checked={draftFilter.siteExtension.expertResponse}
+                    label="有专家回应"
+                    styles={styles}
+                    theme={theme}
+                    onChange={updateLinuxDoExpertResponse}
+                  />
+                </View>
+              ) : null}
+              <View style={styles.searchFilterField}>
+                <Text style={styles.searchFilterLabel}>发帖人</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="选择作者"
+                  android_ripple={androidRipple(theme.primarySoft)}
+                  style={styles.input}
+                  onPress={openUserPicker}
+                >
+                  <Text
+                    style={[styles.searchFilterOptionText, draftFilter.username && styles.searchFilterOptionTextActive]}
+                  >
+                    {draftFilter.username || '选择站点用户'}
+                  </Text>
+                </Pressable>
+                {draftFilter.username ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`移除作者 ${draftFilter.username}`}
+                    style={styles.searchFilterOption}
+                    onPress={() => updateDraft({ username: '' })}
+                  >
+                    <Text style={styles.searchFilterOptionText}>{draftFilter.username} ×</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </>
           ) : null}
-          <FilterChoiceGroup
-            title="排序"
-            value={draftFilter.order}
-            items={[
-              { value: 'relevance', label: '相关' },
-              { value: 'latest', label: '最新' }
-            ]}
-            styles={styles}
-            theme={theme}
-            onChange={(value) => updateDraft({ order: value as typeof draftFilter.order })}
-          />
-          <View style={styles.searchFilterField}>
-            <Text style={styles.searchFilterLabel}>发帖人</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="选择作者"
-              android_ripple={androidRipple(theme.primarySoft)}
-              style={styles.input}
-              onPress={openUserPicker}
-            >
-              <Text
-                style={[styles.searchFilterOptionText, draftFilter.username && styles.searchFilterOptionTextActive]}
-              >
-                {draftFilter.username || '选择站点用户'}
-              </Text>
-            </Pressable>
-            {draftFilter.username ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`移除作者 ${draftFilter.username}`}
-                style={styles.searchFilterOption}
-                onPress={() => updateDraft({ username: '' })}
-              >
-                <Text style={styles.searchFilterOptionText}>{draftFilter.username} ×</Text>
-              </Pressable>
-            ) : null}
-          </View>
         </>
       ) : null}
       {draftFilter.source === 'nodeseek' ? (

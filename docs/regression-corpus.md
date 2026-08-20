@@ -5511,6 +5511,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复页头跨来源账号 chip、硬编码搜索账号来源列表，或在 result group 之外再投影同一状态；编号测试必须出现重复提示。 |
 | 明确不覆盖范围 | 不隐藏来源真实错误，不移除结果组的登录/验证恢复动作，也不放宽妖火远程读取。 |
 
+## `REG-SEARCH-026` 搜索筛选收起键盘后弹层持续上跳
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-03`；共享回归 `ACCOUNT-05`、`MORE-01` |
+| 用户症状 | Android 搜索筛选中点开 V2EX 节点或 Discourse 标签、分类、作者输入，收起键盘后弹层仍向上偏移；已复现关闭按钮从 y=1327 移到 y=1128，连续操作可能重复出现。 |
+| 触发条件 | 共享透明 `Modal` 内的 `KeyboardAvoidingView` 固定启用 `behavior="height"`；Android 键盘隐藏事件仍可携带非零末帧，React Native 内部 `state.bottom` 因而保留补偿。只把 `enabled` 改为 `false` 仍会因内部 `state.bottom > 0` 输出固定高度与 `flex: 0`，真实复测残留 136px。 |
+| 根因 seam | `src/ui/controls/ModalSheetFrame.tsx` 对 Android 键盘可见状态与高度避让的统一 ownership。 |
+| 必须保持的行为 | Android 只在收到 `keyboardDidShow` 后启用共享高度避让，`keyboardDidHide` 后禁用并重建该共享 KAV，弹层关闭同样使用干净实例；连续两轮打开/关闭键盘不累积偏移。键盘打开时输入和底部操作仍可见；iOS 行为、调用方 `keyboardAvoidingEnabled`、账号编辑器覆盖逻辑与代理表单的手动 inset 不变。 |
+| 精确失败 oracle | `tests/ui/shared/modal-sheet-frame.test.tsx` 在 Android 连续发送两轮 `keyboardDidShow`/`keyboardDidHide`，要求 `KeyboardAvoidingView.enabled` 每轮依次为 `false → true → false`，show 不换实例而每次 hide 必须换成干净实例；第一版仅禁用的修复会在实例断言失败。真实 App 用 `search-filter-close` 边界对照，关闭键盘后与初始位置差不得超过 2px。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定共享状态机，匹配 revision/APK 的 Android 几何对照固定原生键盘与透明 Modal 组合；只看 App 可启动或最终关闭弹层不足。 |
+| Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 只读打开 V2EX 筛选，点入节点输入并执行 `keyboard dismiss` 收起输入态，再关闭弹层；不确认筛选、不提交论坛写入。Agent Live 再对 V2EX 节点及 Discourse 标签、分类、作者输入各连续两轮记录弹层边界。 |
+| 负向验证方式 | 恢复 Android 始终启用高度避让，或 hide 后只禁用而不重建 KAV，编号 UI 测试必须失败；只在 V2EX 或某个调用方局部清偏移时，共享账号/代理回归与 Discourse Live 仍会暴露不一致。 |
+| 明确不覆盖范围 | 不修改 `windowSoftInputMode`、代理表单 inset、候选请求协议、输入法实现或 iOS 键盘策略，不新增依赖。 |
+
 ## `REG-ACCOUNT-041` 账号刷新覆盖可信身份、重复 owner 或 unknown 被计为已登录
 
 | 字段 | 内容 |

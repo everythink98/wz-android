@@ -20,6 +20,12 @@ wait "label=\"搜索最近记录 AI\"" 10000
 press id="search-source-v2ex"
 wait "id=\"search-source-v2ex\" label=\"V2EX，已选择\"" 10000
 wait label="打开搜索筛选，当前默认" 10000
+press label="打开搜索筛选，当前默认"
+find "label=\"例如 qna / jobs\"" click
+keyboard dismiss
+wait id="search-filter-close" 10000
+press id="search-filter-close"
+wait label="打开搜索筛选，当前默认" 10000
 press id="search-source-linuxdo"
 wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
 wait label="打开搜索筛选，当前默认" 10000

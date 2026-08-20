@@ -20,7 +20,7 @@ import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
 import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { DiscourseFilterPickers, useDiscourseFilterPickers } from './DiscourseFilterPickers';
-import { SearchFilterForm } from './SearchFilterForm';
+import { hasDiscourseAdvancedFilters, SearchFilterForm } from './SearchFilterForm';
 
 function sourceCategories(categories: Category[], source: Source) {
   return categories.filter((category) => category.source === source);
@@ -211,6 +211,7 @@ export function SearchFilterSheet({
         >
           <SearchFilterForm
             categoryNames={pickers.category.names}
+            discourseMoreInitiallyVisible={hasDiscourseAdvancedFilters(searchFilterForSource(searchFilters, source))}
             draftFilter={draftFilter}
             filterSheetVisible={visible}
             nodeSeekCategoryItems={nodeSeekCategoryItems}

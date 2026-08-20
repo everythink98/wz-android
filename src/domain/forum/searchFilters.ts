@@ -105,14 +105,14 @@ function defaultSearchFilter(source: Source): SourceSearchFilter {
       maxPosts: null,
       minViews: null,
       maxViews: null,
-      order: 'relevance',
+      order: 'latest',
       ...(source === 'linuxdo' ? { siteExtension: { source: 'linuxdo' as const, expertResponse: false } } : {})
     } as DiscourseSearchFilter;
   }
   if (sourceCatalog[source].searchFilter === 'v2ex') {
     return {
       source: 'v2ex',
-      sort: 'relevance',
+      sort: 'time',
       timeRange: 'all',
       node: '',
       username: '',
@@ -123,7 +123,7 @@ function defaultSearchFilter(source: Source): SourceSearchFilter {
     return {
       source: 'nodeseek',
       category: '',
-      sort: 'replyTime'
+      sort: 'postTime'
     };
   }
   return {
@@ -285,8 +285,8 @@ export function buildDiscourseSearchQuery(query: string, filter: DiscourseSearch
 export function searchFilterSummary(source: Source, filter: SourceSearchFilter, categories: Category[]) {
   const parts: string[] = [];
   if (source === 'v2ex' && filter.source === 'v2ex') {
-    if (filter.sort === 'time') {
-      parts.push('按时间');
+    if (filter.sort === 'relevance') {
+      parts.push('相关');
     }
     if (filter.node.trim()) {
       parts.push(categoryLabel(categories, 'v2ex', filter.node));
@@ -339,16 +339,16 @@ export function searchFilterSummary(source: Source, filter: SourceSearchFilter, 
     if (filter.siteExtension?.source === 'linuxdo' && filter.siteExtension.expertResponse) {
       parts.push('专家回应');
     }
-    if (filter.order === 'latest') {
-      parts.push('最新');
+    if (filter.order === 'relevance') {
+      parts.push('相关');
     }
   }
   if (source === 'nodeseek' && filter.source === 'nodeseek') {
     if (filter.category.trim()) {
       parts.push(categoryLabel(categories, 'nodeseek', filter.category));
     }
-    if (filter.sort === 'postTime') {
-      parts.push('新帖子');
+    if (filter.sort === 'replyTime') {
+      parts.push('新评论');
     }
   }
   if (source === 'yaohuo' && filter.source === 'yaohuo' && filter.category.trim() && filter.category !== '0') {

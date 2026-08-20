@@ -373,7 +373,7 @@ export function useSearchController({
   );
 
   const submittedSource = submittedSearch?.source === 'all' ? 'v2ex' : submittedSearch?.source || 'v2ex';
-  const submittedFilter = submittedSearch ? submittedSearch.filters[submittedSource] : undefined;
+  const submittedFilter = submittedSearch?.source === 'all' ? undefined : submittedSearch?.filters[submittedSource];
   const submittedSort = submittedSearch
     ? remoteSearchSort(submittedSearch.source, submittedSearch.filters)
     : 'relevance';
@@ -395,6 +395,7 @@ export function useSearchController({
       query: submittedSearch?.query || '',
       readPlanScope: plan.cacheScope,
       sort: submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
+      filter: DEFAULT_SEARCH_FILTERS[source],
       scope: sessionEpochs
     });
   });
@@ -409,7 +410,7 @@ export function useSearchController({
           1,
           signal,
           submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
-          undefined,
+          DEFAULT_SEARCH_FILTERS[source],
           aggregatePlans[index].cacheScope
         );
         if (result.kind !== 'success') {

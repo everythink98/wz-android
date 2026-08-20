@@ -46,6 +46,11 @@ const aiOnlyTopic: Topic = {
   isAiGenerated: true
 };
 
+const LINUXDO_RELEVANCE_FILTERS: SearchFilterState = {
+  ...DEFAULT_SEARCH_FILTERS,
+  linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo, order: 'relevance' }
+};
+
 const loggedInSessions = createSiteSessionViewModels(
   createSiteSessionStates({
     linuxdo: {
@@ -519,7 +524,11 @@ describe('linux.do AI search controller', () => {
     );
     await prepareLinuxDoSearch(hook, 'codex');
     await act(async () => {
-      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo' });
+      await hook.result.current.runSearch({
+        query: 'codex',
+        source: 'linuxdo',
+        filters: LINUXDO_RELEVANCE_FILTERS
+      });
     });
     await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(1));
 
@@ -844,6 +853,55 @@ describe('linux.do AI search controller', () => {
       .at(-1);
     expect(nodeSeekQuery?.state.data).toBeUndefined();
     expect(nodeSeekQuery?.state.error).toEqual(expect.any(Error));
+  });
+
+  it('uses clean newest-topic defaults for every aggregated source', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
+      items: [],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      loggedInYaohuoSessions
+    );
+    await act(async () => {
+      hook.result.current.applySearchFilter('linuxdo', {
+        ...DEFAULT_SEARCH_FILTERS.linuxdo,
+        category: '4',
+        order: 'relevance'
+      });
+    });
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'all' });
+    });
+
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(5));
+    const expectedFilters = {
+      v2ex: { source: 'v2ex', sort: 'time' },
+      linuxdo: { source: 'linuxdo', category: '', order: 'latest' },
+      nodeseek: { source: 'nodeseek', category: '', sort: 'postTime' },
+      yaohuo: { source: 'yaohuo', category: '0' },
+      xiaoyinsi: { source: 'xiaoyinsi', category: '', order: 'latest' }
+    } as const;
+
+    for (const [source, expectedFilter] of Object.entries(expectedFilters)) {
+      const request = searchTopics.mock.calls.find(([options]) => options.source === source)?.[0];
+      expect(request?.filter).toMatchObject(expectedFilter);
+      const queryKeys = appQueryClient
+        .getQueryCache()
+        .findAll({ queryKey: ['forum', source, 'search'] })
+        .map(({ queryKey }) => queryKey[3]);
+      expect(queryKeys).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ filter: expect.objectContaining(expectedFilter), query: 'codex', sort: 'time' })
+        ])
+      );
+    }
   });
 
   it('[REG-SEARCH-007] opens Yaohuo login exactly once for a single-source login failure', async () => {
@@ -1211,6 +1269,7 @@ describe('linux.do AI search controller', () => {
         category: '4',
         tags: ['人工智能', '快问快答'],
         tagMatch: 'all',
+        order: 'relevance',
         siteExtension: { source: 'linuxdo', expertResponse: true }
       }
     };
@@ -1790,13 +1849,17 @@ describe('linux.do AI search controller', () => {
     await prepareLinuxDoSearch(hook, 'first');
 
     await act(async () => {
-      await hook.result.current.runSearch();
+      await hook.result.current.runSearch({ filters: LINUXDO_RELEVANCE_FILTERS });
     });
     await act(async () => {
       hook.result.current.setSearchQuery('second');
     });
     await act(async () => {
-      await hook.result.current.runSearch({ query: 'second', source: 'linuxdo', filters: DEFAULT_SEARCH_FILTERS });
+      await hook.result.current.runSearch({
+        query: 'second',
+        source: 'linuxdo',
+        filters: LINUXDO_RELEVANCE_FILTERS
+      });
     });
     expect(hook.result.current.linuxDoAiState.status).toBe('loading');
 
@@ -1816,7 +1879,11 @@ describe('linux.do AI search controller', () => {
       hook.result.current.setSearchQuery('third');
     });
     await act(async () => {
-      await hook.result.current.runSearch({ query: 'third', source: 'linuxdo', filters: DEFAULT_SEARCH_FILTERS });
+      await hook.result.current.runSearch({
+        query: 'third',
+        source: 'linuxdo',
+        filters: LINUXDO_RELEVANCE_FILTERS
+      });
     });
     await waitFor(() => expect(hook.result.current.linuxDoAiState.status).toBe('error'));
     await act(async () => hook.result.current.retryLinuxDoAiSearch());
@@ -1854,7 +1921,11 @@ describe('linux.do AI search controller', () => {
     await prepareLinuxDoSearch(hook, 'first cancellation');
 
     await act(async () => {
-      await hook.result.current.runSearch({ query: 'first cancellation', source: 'linuxdo' });
+      await hook.result.current.runSearch({
+        query: 'first cancellation',
+        source: 'linuxdo',
+        filters: LINUXDO_RELEVANCE_FILTERS
+      });
     });
     await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(1));
     await act(async () => {
@@ -1862,7 +1933,11 @@ describe('linux.do AI search controller', () => {
       await Promise.resolve();
     });
     await act(async () => {
-      await hook.result.current.runSearch({ query: 'replacement', source: 'linuxdo' });
+      await hook.result.current.runSearch({
+        query: 'replacement',
+        source: 'linuxdo',
+        filters: LINUXDO_RELEVANCE_FILTERS
+      });
     });
     await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(2));
 
@@ -2445,7 +2520,11 @@ describe('linux.do AI search controller', () => {
       hook.result.current.setSearchQuery('direct source');
     });
     await act(async () => {
-      await hook.result.current.runSearch();
+      await hook.result.current.runSearch({
+        query: 'direct source',
+        source: 'linuxdo',
+        filters: LINUXDO_RELEVANCE_FILTERS
+      });
     });
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
     await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(1));

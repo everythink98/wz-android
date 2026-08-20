@@ -1064,7 +1064,7 @@ describe('Search state', () => {
     expect(view.getByTestId('search-page-loaded-v2ex-page-2')).toBeTruthy();
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-    await fireEvent.press(view.getByText('按时间'));
+    await fireEvent.press(view.getByText('相关'));
     await fireEvent.press(view.getByText('确认筛选'));
 
     expect(onSearchFilterApply).toHaveBeenCalledTimes(1);
@@ -1224,9 +1224,9 @@ describe('Search state', () => {
 
     expect(view.getByLabelText('打开搜索筛选，当前默认').props.accessibilityState.selected).toBe(false);
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-    await fireEvent.press(view.getByText('按时间'));
+    await fireEvent.press(view.getByText('相关'));
     await fireEvent.press(view.getByText('确认筛选'));
-    expect(view.getByLabelText('打开搜索筛选，当前按时间').props.accessibilityState.selected).toBe(true);
+    expect(view.getByLabelText('打开搜索筛选，当前相关').props.accessibilityState.selected).toBe(true);
 
     await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
     await fireEvent.press(view.getByLabelText('提交搜索'));
@@ -1256,7 +1256,7 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('返回搜索'));
 
     expect(view.getByLabelText('搜索关键词').props.value).toBe('codex');
-    expect(view.getByLabelText('打开搜索筛选，当前按时间')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前相关')).toBeTruthy();
     expect(view.getByText('第二页主题')).toBeTruthy();
     expect(view.queryByTestId('search-load-more-v2ex-page-2')).toBeNull();
   });
@@ -1272,22 +1272,22 @@ describe('Search state', () => {
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
     await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'alice');
     await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('用户 alice'));
     await fireEvent.press(view.getByText('7天'));
-    await fireEvent.press(view.getByText('最新'));
     await fireEvent.press(view.getByText('确认筛选'));
-    expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · alice · 7天 · 最新')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · alice · 7天')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('search-source-nodeseek'));
     expect(view.getByLabelText('打开搜索筛选，当前默认')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByText('日常'));
-    await fireEvent.press(view.getByText('新帖子'));
+    await fireEvent.press(view.getByText('新评论'));
     await fireEvent.press(view.getByText('确认筛选'));
-    expect(view.getByLabelText('打开搜索筛选，当前日常 · 新帖子')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前日常 · 新评论')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('search-source-yaohuo'));
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
@@ -1303,7 +1303,7 @@ describe('Search state', () => {
     expect(view.getByLabelText('打开搜索筛选，当前寺务')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('search-source-linuxdo'));
-    expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · alice · 7天 · 最新')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · alice · 7天')).toBeTruthy();
   });
 
   it('REG-SEARCH-001 accepts linux.do tags only from the candidate picker', async () => {
@@ -1371,6 +1371,7 @@ describe('Search state', () => {
     await waitFor(() => expect(view.getByLabelText('标签 新标签')).toBeTruthy());
     await fireEvent.press(view.getByText('完成'));
 
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'old');
     await waitFor(() => expect(view.getByLabelText('用户 old-user')).toBeTruthy());
@@ -1384,6 +1385,7 @@ describe('Search state', () => {
     const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseUsers });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
 
     expect(view.getByText('输入用户名后选择')).toBeTruthy();
@@ -1473,6 +1475,7 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('选择分类'));
     await fireEvent.changeText(view.getByLabelText('搜索分类'), '开发');
     await fireEvent.press(view.getByLabelText('分类 技术 / 开发调优'));
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'ali');
     await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
@@ -1490,6 +1493,7 @@ describe('Search state', () => {
     await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 人工智能'));
     await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByLabelText('选择作者'));
     await fireEvent.changeText(view.getByLabelText('搜索作者'), 'alice');
     await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
@@ -1542,6 +1546,7 @@ describe('Search state', () => {
     await fireEvent.press(view.getByLabelText('标签 快问快答'));
     await fireEvent.press(view.getByText('完成'));
     await fireEvent.press(view.getByLabelText('匹配全部标签'));
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByText('我读过'));
     await fireEvent.press(view.getByText('我赞过'));
     await fireEvent.press(view.getByText('已解决'));
@@ -1587,7 +1592,7 @@ describe('Search state', () => {
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     expect(view.queryByLabelText('有专家回应')).toBeNull();
-    expect(view.getByText('已解决')).toBeTruthy();
+    expect(view.queryByText('已解决')).toBeNull();
     await fireEvent.press(view.getByText('标题'));
     await fireEvent.press(view.getByLabelText('选择分类'));
     await fireEvent.press(view.getByLabelText('分类 寺务'));
@@ -1595,6 +1600,7 @@ describe('Search state', () => {
     await waitFor(() => expect(view.getByLabelText('标签 公告')).toBeTruthy());
     await fireEvent.press(view.getByLabelText('标签 公告'));
     await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.press(view.getByText('我读过'));
     await fireEvent.press(view.getByText('已解决'));
     await fireEvent.press(view.getByText('最新'));
@@ -1625,6 +1631,7 @@ describe('Search state', () => {
     const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchFilterApply });
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
     await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '-1');
     expect(view.getByLabelText('帖子数最小值').props.value).toBe('');
     await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '20');
@@ -1687,7 +1694,7 @@ describe('Search state', () => {
     const view = await render(<SearchHarness />);
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-    await fireEvent.press(view.getByText('按时间'));
+    await fireEvent.press(view.getByText('相关'));
     await fireEvent.press(view.getByText('30天'));
     await fireEvent.changeText(view.getByLabelText('节点'), 'qna');
     await fireEvent.press(view.getByLabelText('展开 V2EX 更多筛选'));
@@ -1695,7 +1702,32 @@ describe('Search state', () => {
     await fireEvent.press(view.getByText('全部关键词'));
     await fireEvent.press(view.getByText('确认筛选'));
 
-    expect(view.getByLabelText('打开搜索筛选，当前按时间 · qna · alice · 全部关键词 · 30天')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前相关 · qna · alice · 全部关键词 · 30天')).toBeTruthy();
+  });
+
+  it('keeps low-frequency Discourse filters behind progressive disclosure', async () => {
+    const view = await render(<SearchHarness initialSource="linuxdo" />);
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    expect(view.getByText('排序')).toBeTruthy();
+    expect(view.getByText('时间')).toBeTruthy();
+    expect(view.getByText('搜索范围')).toBeTruthy();
+    expect(view.getByText('分类')).toBeTruthy();
+    expect(view.getByText('标签')).toBeTruthy();
+    expect(view.queryByText('话题状态')).toBeNull();
+    expect(view.queryByLabelText('选择作者')).toBeNull();
+
+    await fireEvent.press(view.getByLabelText('展开更多筛选'));
+    await fireEvent.press(view.getByText('已解决'));
+    await fireEvent.press(view.getByLabelText('收起更多筛选，已设置'));
+    expect(view.queryByText('话题状态')).toBeNull();
+    expect(view.getByText('更多筛选 · 已设置')).toBeTruthy();
+    await fireEvent.press(view.getByText('确认筛选'));
+
+    await fireEvent.press(view.getByLabelText(/打开搜索筛选/));
+    expect(view.getByLabelText('收起更多筛选，已设置')).toBeTruthy();
+    expect(view.getByText('话题状态')).toBeTruthy();
+    expect(view.getByLabelText('选择作者')).toBeTruthy();
   });
 
   it('discards a closed filter draft and applies reset only after confirmation', async () => {

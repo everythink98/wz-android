@@ -16,6 +16,14 @@ const categories: Category[] = [
 ];
 
 describe('Android search site filters', () => {
+  it('defaults every sortable source to newest topics', () => {
+    expect(DEFAULT_SEARCH_FILTERS.v2ex.sort).toBe('time');
+    expect(DEFAULT_SEARCH_FILTERS.linuxdo.order).toBe('latest');
+    expect(DEFAULT_SEARCH_FILTERS.xiaoyinsi.order).toBe('latest');
+    expect(DEFAULT_SEARCH_FILTERS.nodeseek.sort).toBe('postTime');
+    expect(DEFAULT_SEARCH_FILTERS.yaohuo).toEqual({ source: 'yaohuo', category: '0' });
+  });
+
   it('summarizes default and selected site filters for the compact entry', () => {
     expect(searchFilterSummary('linuxdo', DEFAULT_SEARCH_FILTERS.linuxdo, categories)).toBe('默认');
     expect(
@@ -28,22 +36,22 @@ describe('Android search site filters', () => {
           tags: ['人工智能'],
           username: 'alice',
           timeRange: 'week',
-          order: 'latest'
+          order: 'relevance'
         },
         categories
       )
-    ).toBe('标题 · 开发调优 · 人工智能 · alice · 7天 · 最新');
+    ).toBe('标题 · 开发调优 · 人工智能 · alice · 7天 · 相关');
     expect(
       searchFilterSummary(
         'nodeseek',
         {
           source: 'nodeseek',
           category: 'daily',
-          sort: 'postTime'
+          sort: 'replyTime'
         },
         categories
       )
-    ).toBe('日常 · 新帖子');
+    ).toBe('日常 · 新评论');
     expect(searchFilterSummary('yaohuo', { source: 'yaohuo', category: '177' }, categories)).toBe('妖火茶馆');
   });
 
@@ -111,7 +119,8 @@ describe('Android search site filters', () => {
           tagMatch: 'any',
           timeRange: 'week',
           dateRelation: 'after',
-          date: '2026-07-01'
+          date: '2026-07-01',
+          order: 'relevance'
         },
         categories
       )
@@ -121,9 +130,9 @@ describe('Android search site filters', () => {
   it.each(['open', 'closed', 'public', 'archived', 'noreplies', 'single_user', 'solved', 'unsolved'] as const)(
     'builds the linux.do %s status token',
     (status) => {
-      expect(buildDiscourseSearchQuery('AI', { ...DEFAULT_SEARCH_FILTERS.linuxdo, status }, categories)).toBe(
-        `AI status:${status}`
-      );
+      expect(
+        buildDiscourseSearchQuery('AI', { ...DEFAULT_SEARCH_FILTERS.linuxdo, status, order: 'relevance' }, categories)
+      ).toBe(`AI status:${status}`);
     }
   );
 
