@@ -2,7 +2,6 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
 import React from 'react';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { BackupRestorePanel } from '@/features/more/components/BackupRestorePanel';
 import { AppearancePanel } from '@/features/more/components/AppearancePanel';
 import { TopicMenu } from '@/features/topic/components/TopicMenu';
 import { createTheme } from '@/ui/theme/tokens';
@@ -90,26 +89,6 @@ describe('Topic and More controls', () => {
     expect(onOpenReadingSettings).toHaveBeenCalledTimes(1);
     expect(onOpenOriginal).toHaveBeenCalledWith(topicUrl);
     expect(onRequestClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('disables both backup actions while a backup operation is active', async () => {
-    const onExportBackupFile = jest.fn();
-    const onImportBackupFile = jest.fn();
-    const view = await render(
-      <BackupRestorePanel
-        backupBusy
-        styles={styles}
-        onExportBackupFile={onExportBackupFile}
-        onImportBackupFile={onImportBackupFile}
-      />
-    );
-
-    expect(view.getByLabelText('处理中').props.accessibilityState.disabled).toBe(true);
-    expect(view.getByLabelText('选择备份文件恢复').props.accessibilityState.disabled).toBe(true);
-    await fireEvent.press(view.getByLabelText('处理中'));
-    await fireEvent.press(view.getByLabelText('选择备份文件恢复'));
-    expect(onExportBackupFile).not.toHaveBeenCalled();
-    expect(onImportBackupFile).not.toHaveBeenCalled();
   });
 
   it('reports visible appearance choices as setting patches', async () => {

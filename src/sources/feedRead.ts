@@ -19,6 +19,7 @@ import type {
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import { sortTopicsByTime } from '@/domain/forum/html';
 import { mergeSourceDiagnosticSummaries } from './diagnostics';
 import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from './forumSourceReadAttempt';
 import {
@@ -28,12 +29,6 @@ import {
   settledDiagnosticFacts,
   unavailableSourceRead
 } from './readAggregation';
-function sortByTime<T extends { createdAt: string; lastReplyAt?: string }>(items: T[]) {
-  return [...items].sort(
-    (left, right) =>
-      Date.parse(right.lastReplyAt || right.createdAt || '') - Date.parse(left.lastReplyAt || left.createdAt || '')
-  );
-}
 
 type AllFeedCursorState = {
   buffers?: Partial<Record<Source, Topic[]>>;
@@ -272,7 +267,7 @@ export async function getFeed({
           })
         );
         if (signal?.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
-        const items = sortByTime([
+        const items = sortTopicsByTime([
           ...bufferedItems,
           ...results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
         ]);

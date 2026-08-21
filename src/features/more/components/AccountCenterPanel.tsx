@@ -618,7 +618,7 @@ export function AccountCenterPanel({
             theme={theme}
             onCommand={onCommand}
           />
-          {loggedIn && selectedView.supportsCredentialFill ? (
+          {loggedIn ? (
             <View style={accountStyles.secondaryActions}>
               <AccountAction
                 compact

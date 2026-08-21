@@ -166,10 +166,6 @@ function nodeSeekCloudflareError() {
   });
 }
 
-function isNodeSeekCloudflareError(error: unknown) {
-  return isRecord(error) && error.reason === 'cloudflare';
-}
-
 async function fetchNodeSeekTextResult(
   path: string,
   options: NodeSeekOptions = {},
@@ -1165,40 +1161,30 @@ export async function searchNodeSeek(
   let candidateCount = 0;
   let parserVariant = 'rendered-search';
   let sourceResponse: Response | undefined;
-  try {
-    const useGoogleSearch = !hasLoggedInNodeSeekCookie(requestOptions);
-    let document;
-    if (useGoogleSearch) {
-      document = await fetchNodeSeekGoogleSearchDocument(trimmedQuery, page, requestOptions);
-    } else {
-      const result = await fetchNodeSeekTextResult(
-        searchPath(trimmedQuery, page, requestOptions.filter),
-        requestOptions
-      );
-      document = result.pageDocument ?? parseNodeSeekPageDocument(result.text);
-      sourceResponse = result.response;
-    }
-    const isGoogleSearch = useGoogleSearch || isGoogleSiteSearchResponse(document.root, 'nodeseek.com');
-    parserVariant = isGoogleSearch ? 'google-search' : 'rendered-search';
-    const parsedSearch = parseNodeSeekSearchTopics(document);
-    candidateCount = parsedSearch.candidateCount;
-    items = parsedSearch.items;
-    if (isIncompleteNodeSeekSearchPage(document, items)) {
-      throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
-    }
-    nextPage = isGoogleSearch
-      ? hasGoogleSiteSearchNextPage(document.root, 'nodeseek.com', page + 1)
-        ? page + 1
-        : null
-      : nextSearchPath(document, page + 1)
-        ? page + 1
-        : null;
-  } catch (error) {
-    if (isNodeSeekCloudflareError(error)) {
-      throw error;
-    }
-    throw error;
+  const useGoogleSearch = !hasLoggedInNodeSeekCookie(requestOptions);
+  let document;
+  if (useGoogleSearch) {
+    document = await fetchNodeSeekGoogleSearchDocument(trimmedQuery, page, requestOptions);
+  } else {
+    const result = await fetchNodeSeekTextResult(searchPath(trimmedQuery, page, requestOptions.filter), requestOptions);
+    document = result.pageDocument ?? parseNodeSeekPageDocument(result.text);
+    sourceResponse = result.response;
   }
+  const isGoogleSearch = useGoogleSearch || isGoogleSiteSearchResponse(document.root, 'nodeseek.com');
+  parserVariant = isGoogleSearch ? 'google-search' : 'rendered-search';
+  const parsedSearch = parseNodeSeekSearchTopics(document);
+  candidateCount = parsedSearch.candidateCount;
+  items = parsedSearch.items;
+  if (isIncompleteNodeSeekSearchPage(document, items)) {
+    throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
+  }
+  nextPage = isGoogleSearch
+    ? hasGoogleSiteSearchNextPage(document.root, 'nodeseek.com', page + 1)
+      ? page + 1
+      : null
+    : nextSearchPath(document, page + 1)
+      ? page + 1
+      : null;
 
   const result = {
     items: items.slice(0, limit),

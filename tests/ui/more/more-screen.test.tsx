@@ -759,6 +759,10 @@ describe('More screen state and actions', () => {
     expect(view.getByLabelText('正在生成').props.accessibilityState.disabled).toBe(true);
     expect(view.getByLabelText('处理中').props.accessibilityState.disabled).toBe(true);
     expect(view.getByLabelText('选择备份文件恢复').props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByLabelText('处理中'));
+    await fireEvent.press(view.getByLabelText('选择备份文件恢复'));
+    expect(onExportBackupFile).toHaveBeenCalledTimes(1);
+    expect(onImportBackupFile).toHaveBeenCalledTimes(1);
   });
 
   it('[REG-TEST-003] never exposes an in-app anonymous simulation', async () => {

@@ -8,7 +8,6 @@ import { ExpandablePanel, MenuButton } from '@/ui/controls/ExpandableControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createMoreScreenStyles } from '../styles';
 import { AppearancePanel } from './AppearancePanel';
-import { BackupRestorePanel } from './BackupRestorePanel';
 import { NetworkProxyModal } from './NetworkProxyModal';
 
 function appearanceSummary(settings: ReaderSettings) {
@@ -120,12 +119,21 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
         expanded={backupExpanded}
         onExpandedChange={setBackupExpanded}
       >
-        <BackupRestorePanel
-          backupBusy={runtime.backup.busy}
-          styles={styles}
-          onExportBackupFile={runtime.backup.exportFile}
-          onImportBackupFile={runtime.backup.importFile}
-        />
+        <View style={styles.stack}>
+          <View style={styles.actions}>
+            <AppButton
+              label={runtime.backup.busy ? '处理中' : '导出备份文件'}
+              disabled={runtime.backup.busy}
+              onPress={runtime.backup.exportFile}
+            />
+            <AppButton
+              label="选择备份文件恢复"
+              variant="ghost"
+              disabled={runtime.backup.busy}
+              onPress={runtime.backup.importFile}
+            />
+          </View>
+        </View>
       </ExpandablePanel>
       <ExpandablePanel
         quiet
