@@ -57,12 +57,12 @@ export function useVerificationController({
   changeNodeSeekLoginPanel,
   checkingRequestIdRef,
   closeYaohuoLoginPanel,
+  commitLinuxDoWebViewUserAgent,
   linuxDoPanelClosingSessionRef,
   linuxDoPanelCloseSettleTimerRef,
   linuxDoWebViewMountTimerRef,
   linuxDoWebViewRef,
   linuxDoWebViewSessionRef,
-  linuxDoWebViewUserAgentRef,
   isLinuxDoSurfaceVisible,
   notify,
   onBeforeLinuxDoSurfaceOpened = () => undefined,
@@ -73,7 +73,6 @@ export function useVerificationController({
   setChecking,
   setLinuxDoWebViewError,
   setLinuxDoWebViewKey,
-  setLinuxDoWebViewUserAgent,
   setLoadingLinuxDoPage,
   setMountLinuxDoWebView,
   updateLinuxDoSession,
@@ -83,12 +82,12 @@ export function useVerificationController({
   changeNodeSeekLoginPanel: (visible: boolean, closeReason?: AuthSurfaceCloseReason) => void;
   checkingRequestIdRef: Ref<number>;
   closeYaohuoLoginPanel: (reason?: AuthSurfaceCloseReason) => void;
+  commitLinuxDoWebViewUserAgent: (userAgent: string) => void;
   linuxDoPanelClosingSessionRef: Ref<number | null>;
   linuxDoPanelCloseSettleTimerRef: Ref<ReturnType<typeof setTimeout> | null>;
   linuxDoWebViewMountTimerRef: Ref<ReturnType<typeof setTimeout> | null>;
   linuxDoWebViewRef: Ref<WebView | null>;
   linuxDoWebViewSessionRef: Ref<number>;
-  linuxDoWebViewUserAgentRef: Ref<string>;
   isLinuxDoSurfaceVisible: () => boolean;
   notify: (message: string) => void;
   onBeforeLinuxDoSurfaceOpened?: () => void;
@@ -99,7 +98,6 @@ export function useVerificationController({
   setChecking: Dispatch<SetStateAction<boolean>>;
   setLinuxDoWebViewError: Dispatch<SetStateAction<string>>;
   setLinuxDoWebViewKey: Dispatch<SetStateAction<number>>;
-  setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setLoadingLinuxDoPage: Dispatch<SetStateAction<boolean>>;
   setMountLinuxDoWebView: Dispatch<SetStateAction<boolean>>;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
@@ -554,8 +552,7 @@ export function useVerificationController({
         if (data.type === 'linuxdo-webview' && typeof data.userAgent === 'string') {
           const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
           if (userAgent) {
-            linuxDoWebViewUserAgentRef.current = userAgent;
-            setLinuxDoWebViewUserAgent(userAgent);
+            commitLinuxDoWebViewUserAgent(userAgent);
           }
         }
       } catch {
@@ -570,13 +567,7 @@ export function useVerificationController({
         // Ignore unrelated messages from the page.
       }
     },
-    [
-      linuxDoWebViewSessionRef,
-      linuxDoWebViewUserAgentRef,
-      isLinuxDoSurfaceVisible,
-      setLinuxDoWebViewErrorForSession,
-      setLinuxDoWebViewUserAgent
-    ]
+    [commitLinuxDoWebViewUserAgent, linuxDoWebViewSessionRef, isLinuxDoSurfaceVisible, setLinuxDoWebViewErrorForSession]
   );
 
   const checkLinuxDoCookie = useCallback(async () => {

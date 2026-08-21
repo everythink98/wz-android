@@ -39,16 +39,14 @@ function renderSessionController(
 ) {
   return renderHook(() =>
     useSessionController({
+      commitLinuxDoWebViewUserAgent: jest.fn(),
+      commitNodeSeekWebViewUserAgent: jest.fn(),
       defaultFetcher,
       forumSessionEpochsRef: { current: initialForumSessionEpochs },
       linuxDoBrowserWebViewRef: { current: null },
-      linuxDoWebViewUserAgentRef: { current: '' },
       nodeSeekBrowserWebViewRef: { current: null },
       nodeSeekRecoveryThreshold: 1,
-      nodeSeekWebViewUserAgentRef: { current: '' },
       notify: jest.fn(),
-      setLinuxDoWebViewUserAgent: jest.fn(),
-      setNodeSeekWebViewUserAgent: jest.fn(),
       onSiteSessionEvent
     })
   );

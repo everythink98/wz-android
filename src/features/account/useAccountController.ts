@@ -48,9 +48,9 @@ export function useAccountController({
   clearLinuxDoLoginState,
   clearNodeSeekLoginState,
   clearYaohuoLoginState,
+  commitNodeSeekWebViewUserAgent,
   sessionEpochs,
   nodeSeekLoginPanelRequestRef,
-  nodeSeekWebViewUserAgentRef,
   notify,
   onLoginWebViewFailure,
   linuxDoVerificationActive,
@@ -59,7 +59,6 @@ export function useAccountController({
   resetLinuxDoWebView,
   reconcileAccountStatus,
   setChecking,
-  setNodeSeekWebViewUserAgent,
   screen,
   showLinuxDoVerification,
   readGateway,
@@ -73,9 +72,9 @@ export function useAccountController({
   clearLinuxDoLoginState: () => Promise<boolean>;
   clearNodeSeekLoginState: () => Promise<boolean>;
   clearYaohuoLoginState: () => Promise<boolean>;
+  commitNodeSeekWebViewUserAgent: (userAgent: string) => void;
   sessionEpochs: ForumSessionEpochs;
   nodeSeekLoginPanelRequestRef: Ref<number>;
-  nodeSeekWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
   onLoginWebViewFailure: (site: AccountSource, attempt: number, reason: LoginWebViewFailureReason) => void;
   linuxDoVerificationActive: boolean;
@@ -84,7 +83,6 @@ export function useAccountController({
   resetLinuxDoWebView: () => void;
   reconcileAccountStatus: (source: AccountSource) => Promise<AccountReconcileResult>;
   setChecking: Dispatch<SetStateAction<boolean>>;
-  setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
   screen: Screen;
   showLinuxDoVerification: (
     message?: string,
@@ -403,14 +401,13 @@ export function useAccountController({
         });
         const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
         if (userAgent) {
-          nodeSeekWebViewUserAgentRef.current = userAgent;
-          setNodeSeekWebViewUserAgent(userAgent);
+          commitNodeSeekWebViewUserAgent(userAgent);
         }
       } catch {
         // Ignore unrelated page messages.
       }
     },
-    [currentLoginTrace, nodeSeekWebViewUserAgentRef, setNodeSeekWebViewUserAgent]
+    [commitNodeSeekWebViewUserAgent, currentLoginTrace]
   );
 
   const checkAccount = useCallback(

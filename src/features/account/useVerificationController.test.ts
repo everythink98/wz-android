@@ -85,17 +85,21 @@ function createController(
   );
   const setLinuxDoWebViewError = vi.fn();
   const setLinuxDoWebViewUserAgent = vi.fn();
+  const commitLinuxDoWebViewUserAgent = vi.fn((userAgent: string) => {
+    linuxDoWebViewUserAgentRef.current = userAgent;
+    setLinuxDoWebViewUserAgent(userAgent);
+  });
   const updateLinuxDoSession = vi.fn<(event: SiteSessionEvent) => void>();
   const controller = useVerificationController({
     changeNodeSeekLoginPanel: vi.fn(),
     checkingRequestIdRef: ref(0),
     closeYaohuoLoginPanel: vi.fn(),
+    commitLinuxDoWebViewUserAgent,
     linuxDoPanelClosingSessionRef: ref<number | null>(null),
     linuxDoPanelCloseSettleTimerRef: ref<ReturnType<typeof setTimeout> | null>(null),
     linuxDoWebViewMountTimerRef: ref<ReturnType<typeof setTimeout> | null>(null),
     linuxDoWebViewRef: linuxDoWebViewRef as never,
     linuxDoWebViewSessionRef,
-    linuxDoWebViewUserAgentRef,
     isLinuxDoSurfaceVisible: () => showLinuxDoPanelRef.current,
     notify,
     onBeforeLinuxDoSurfaceOpened: options.onBeforeLinuxDoSurfaceOpened,
@@ -106,7 +110,6 @@ function createController(
     setChecking: vi.fn(),
     setLinuxDoWebViewError,
     setLinuxDoWebViewKey: vi.fn(),
-    setLinuxDoWebViewUserAgent,
     setLoadingLinuxDoPage: vi.fn(),
     setMountLinuxDoWebView: vi.fn(),
     updateLinuxDoSession,
@@ -126,6 +129,7 @@ function createController(
     );
   return {
     controller,
+    commitLinuxDoWebViewUserAgent,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgentRef,
@@ -149,7 +153,13 @@ afterEach(() => {
 
 describe('linux.do visible verification coordinator', () => {
   it('[REG-ACCOUNT-031] opens the surface without probing identity or accepting page cookies', async () => {
-    const { controller, onLinuxDoSurfaceOpened, reconcileAccountStatus, showLinuxDoPanelRef } = createController();
+    const {
+      controller,
+      commitLinuxDoWebViewUserAgent,
+      onLinuxDoSurfaceOpened,
+      reconcileAccountStatus,
+      showLinuxDoPanelRef
+    } = createController();
 
     await expect(controller.showLinuxDoVerification()).resolves.toBe(true);
     controller.handleLinuxDoMessage({
@@ -166,6 +176,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(true);
     expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(1);
     expect(onLinuxDoSurfaceOpened).toHaveBeenCalledWith({ accountBarrier: true });
+    expect(commitLinuxDoWebViewUserAgent).toHaveBeenCalledWith('trusted-agent');
     expect(reconcileAccountStatus).not.toHaveBeenCalled();
   });
 

@@ -109,6 +109,14 @@ export function useAccountRuntime({
   const credentialClearIntentHandlerRef = useRef<(site: CredentialSite) => void>(() => undefined);
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
+  const commitNodeSeekWebViewUserAgent = useCallback((userAgent: string) => {
+    nodeSeekWebViewUserAgentRef.current = userAgent;
+    setNodeSeekWebViewUserAgent(userAgent);
+  }, []);
+  const commitLinuxDoWebViewUserAgent = useCallback((userAgent: string) => {
+    linuxDoWebViewUserAgentRef.current = userAgent;
+    setLinuxDoWebViewUserAgent(userAgent);
+  }, []);
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
   const [loadingLinuxDoPage, setLoadingLinuxDoPage] = useState(true);
@@ -240,17 +248,15 @@ export function useAccountRuntime({
   );
 
   const session = useSessionController({
+    commitLinuxDoWebViewUserAgent,
+    commitNodeSeekWebViewUserAgent,
     defaultFetcher: fetcher,
     forumSessionEpochsRef,
     linuxDoBrowserWebViewRef,
-    linuxDoWebViewUserAgentRef,
     nodeSeekBrowserWebViewRef,
     nodeSeekRecoveryThreshold,
-    nodeSeekWebViewUserAgentRef,
     notify,
-    onSiteSessionEvent: handleSiteSessionEvent,
-    setLinuxDoWebViewUserAgent,
-    setNodeSeekWebViewUserAgent
+    onSiteSessionEvent: handleSiteSessionEvent
   });
   const { handleLinuxDoBrowserFetchMessage, handleNodeSeekBrowserFetchMessage } = useHiddenBrowserFetchController({
     completeLinuxDoBrowserFetch: session.completeLinuxDoBrowserFetch,
@@ -398,12 +404,12 @@ export function useAccountRuntime({
     changeNodeSeekLoginPanel,
     checkingRequestIdRef,
     closeYaohuoLoginPanel,
+    commitLinuxDoWebViewUserAgent,
     linuxDoPanelClosingSessionRef,
     linuxDoPanelCloseSettleTimerRef,
     linuxDoWebViewMountTimerRef,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
-    linuxDoWebViewUserAgentRef,
     isLinuxDoSurfaceVisible: isLinuxDoPanelVisible,
     notify,
     onBeforeLinuxDoSurfaceOpened: () => prepareAuthSurfaceOpenRef.current('linuxdo-login'),
@@ -416,7 +422,6 @@ export function useAccountRuntime({
     setChecking,
     setLinuxDoWebViewError,
     setLinuxDoWebViewKey,
-    setLinuxDoWebViewUserAgent,
     setLoadingLinuxDoPage,
     setMountLinuxDoWebView,
     updateLinuxDoSession: session.updateLinuxDoSession,
@@ -472,9 +477,9 @@ export function useAccountRuntime({
     clearLinuxDoLoginState: session.clearLinuxDoLoginState,
     clearNodeSeekLoginState: session.clearNodeSeekLoginState,
     clearYaohuoLoginState: session.clearYaohuoLoginState,
+    commitNodeSeekWebViewUserAgent,
     sessionEpochs: session.forumSessionEpochs,
     nodeSeekLoginPanelRequestRef,
-    nodeSeekWebViewUserAgentRef,
     notify,
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     linuxDoVerificationActive: showLinuxDoPanel,
@@ -483,7 +488,6 @@ export function useAccountRuntime({
     resetLinuxDoWebView: verification.resetLinuxDoWebView,
     reconcileAccountStatus: reconcileAuthSurfaceAccountStatus,
     setChecking,
-    setNodeSeekWebViewUserAgent,
     screen,
     showLinuxDoVerification: verification.showLinuxDoVerification,
     readGateway,

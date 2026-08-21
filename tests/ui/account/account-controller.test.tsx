@@ -40,10 +40,10 @@ async function renderAccountController(overrides: Partial<Parameters<typeof useA
     clearLinuxDoLoginState: jest.fn(async () => true),
     clearNodeSeekLoginState: jest.fn(async () => true),
     clearYaohuoLoginState: jest.fn(async () => true),
+    commitNodeSeekWebViewUserAgent: jest.fn(),
     sessionEpochs: initialForumSessionEpochs,
     linuxDoVerificationActive: false,
     nodeSeekLoginPanelRequestRef: ref(7),
-    nodeSeekWebViewUserAgentRef: ref(''),
     notify: jest.fn(),
     onLoginWebViewFailure: jest.fn(),
     reconcileAccountStatus: jest.fn<Parameters<typeof useAccountController>[0]['reconcileAccountStatus']>(async () => ({
@@ -54,7 +54,6 @@ async function renderAccountController(overrides: Partial<Parameters<typeof useA
     resetLinuxDoWebView: jest.fn(),
     screen: 'more',
     setChecking: jest.fn() as never,
-    setNodeSeekWebViewUserAgent: jest.fn() as never,
     showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
     readGateway: {
       getLinuxDoLevelProfile: mockManagedLinuxDoLevelProfile
@@ -317,9 +316,12 @@ describe('account workflows with canonical identity reconciliation', () => {
   it('[REG-ACCOUNT-031] accepts only same-origin NodeSeek messages and never consumes page cookies', async () => {
     const setNodeSeekWebViewUserAgent = jest.fn();
     const userAgentRef = ref('');
+    const commitNodeSeekWebViewUserAgent = jest.fn((userAgent: string) => {
+      userAgentRef.current = userAgent;
+      setNodeSeekWebViewUserAgent(userAgent);
+    });
     const { hook } = await renderAccountController({
-      nodeSeekWebViewUserAgentRef: userAgentRef,
-      setNodeSeekWebViewUserAgent: setNodeSeekWebViewUserAgent as never
+      commitNodeSeekWebViewUserAgent
     });
 
     await act(() => {
@@ -342,9 +344,12 @@ describe('account workflows with canonical identity reconciliation', () => {
   it('ignores a valid-looking NodeSeek message from the Cloudflare host', async () => {
     const setNodeSeekWebViewUserAgent = jest.fn();
     const userAgentRef = ref('');
+    const commitNodeSeekWebViewUserAgent = jest.fn((userAgent: string) => {
+      userAgentRef.current = userAgent;
+      setNodeSeekWebViewUserAgent(userAgent);
+    });
     const { hook } = await renderAccountController({
-      nodeSeekWebViewUserAgentRef: userAgentRef,
-      setNodeSeekWebViewUserAgent: setNodeSeekWebViewUserAgent as never
+      commitNodeSeekWebViewUserAgent
     });
 
     await act(() => {
@@ -360,6 +365,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     });
 
     expect(userAgentRef.current).toBe('');
+    expect(commitNodeSeekWebViewUserAgent).not.toHaveBeenCalled();
     expect(setNodeSeekWebViewUserAgent).not.toHaveBeenCalled();
   });
 

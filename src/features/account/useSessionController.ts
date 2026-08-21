@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { LINUXDO_USER_AGENT_STORAGE_KEY, sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
 import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
@@ -163,29 +163,25 @@ function finishBrowserFetchSuccess(
 }
 
 export function useSessionController({
+  commitLinuxDoWebViewUserAgent,
+  commitNodeSeekWebViewUserAgent,
   defaultFetcher,
   forumSessionEpochsRef,
   linuxDoBrowserWebViewRef,
-  linuxDoWebViewUserAgentRef,
   nodeSeekBrowserWebViewRef,
   nodeSeekRecoveryThreshold,
-  nodeSeekWebViewUserAgentRef,
   notify,
-  onSiteSessionEvent,
-  setLinuxDoWebViewUserAgent,
-  setNodeSeekWebViewUserAgent
+  onSiteSessionEvent
 }: {
+  commitLinuxDoWebViewUserAgent: (userAgent: string) => void;
+  commitNodeSeekWebViewUserAgent: (userAgent: string) => void;
   defaultFetcher: Fetcher;
   forumSessionEpochsRef: MutableRef<ForumSessionEpochs>;
   linuxDoBrowserWebViewRef: WebViewStopRef;
-  linuxDoWebViewUserAgentRef: MutableRef<string>;
   nodeSeekBrowserWebViewRef: WebViewStopRef;
   nodeSeekRecoveryThreshold: number;
-  nodeSeekWebViewUserAgentRef: MutableRef<string>;
   notify: (message: string) => void;
   onSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
-  setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
-  setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
 }) {
   const nodeSeekBrowserFetchIdRef = useRef(0);
   const nodeSeekBrowserFetchCurrentRef = useRef<PendingNodeSeekBrowserFetchRequest | null>(null);
@@ -272,13 +268,11 @@ export function useSessionController({
       ]);
       const cleanNodeSeekUserAgent = sanitizeNodeSeekUserAgent(nodeSeekUserAgent || '');
       if (cleanNodeSeekUserAgent) {
-        nodeSeekWebViewUserAgentRef.current = cleanNodeSeekUserAgent;
-        setNodeSeekWebViewUserAgent(cleanNodeSeekUserAgent);
+        commitNodeSeekWebViewUserAgent(cleanNodeSeekUserAgent);
       }
       const cleanLinuxDoUserAgent = sanitizeLinuxDoUserAgent(linuxDoUserAgent || '');
       if (cleanLinuxDoUserAgent) {
-        linuxDoWebViewUserAgentRef.current = cleanLinuxDoUserAgent;
-        setLinuxDoWebViewUserAgent(cleanLinuxDoUserAgent);
+        commitLinuxDoWebViewUserAgent(cleanLinuxDoUserAgent);
       }
       finishDiagnosticTrace(trace, 'success', {
         migratedCount: Object.values(migration).filter((status) => status === 'migrated').length
@@ -287,13 +281,7 @@ export function useSessionController({
       finishDiagnosticTrace(trace, 'failure', { reason: 'storage_error' });
       notify(`旧登录快照迁移失败：${errorMessage(error)}`);
     });
-  }, [
-    linuxDoWebViewUserAgentRef,
-    nodeSeekWebViewUserAgentRef,
-    notify,
-    setLinuxDoWebViewUserAgent,
-    setNodeSeekWebViewUserAgent
-  ]);
+  }, [commitLinuxDoWebViewUserAgent, commitNodeSeekWebViewUserAgent, notify]);
 
   const startNextNodeSeekBrowserFetch = useCallback(() => {
     startNextBrowserFetchRequest({
@@ -447,8 +435,7 @@ export function useSessionController({
       setNodeSeekBrowserFetchRequest(null);
       const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
       if (credentialIsCurrent && userAgent) {
-        nodeSeekWebViewUserAgentRef.current = userAgent;
-        setNodeSeekWebViewUserAgent(userAgent);
+        commitNodeSeekWebViewUserAgent(userAgent);
         void SecureStore.setItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY, userAgent).catch(() => undefined);
       }
       const settled = settleBrowserFetchRequestOnce(current, () => {
@@ -480,10 +467,9 @@ export function useSessionController({
     [
       nodeSeekBrowserFetchCurrentRef,
       nodeSeekBrowserWebViewRef,
-      nodeSeekWebViewUserAgentRef,
+      commitNodeSeekWebViewUserAgent,
       rejectNodeSeekBrowserFetch,
       setNodeSeekBrowserFetchRequest,
-      setNodeSeekWebViewUserAgent,
       startNextNodeSeekBrowserFetch
     ]
   );
@@ -686,8 +672,7 @@ export function useSessionController({
       setLinuxDoBrowserFetchRequest(null);
       const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
       if (credentialIsCurrent && isLinuxDoPage && userAgent) {
-        linuxDoWebViewUserAgentRef.current = userAgent;
-        setLinuxDoWebViewUserAgent(userAgent);
+        commitLinuxDoWebViewUserAgent(userAgent);
         void SecureStore.setItemAsync(LINUXDO_USER_AGENT_STORAGE_KEY, userAgent).catch(() => undefined);
       }
       const settled = settleBrowserFetchRequestOnce(current, () => {
@@ -716,10 +701,9 @@ export function useSessionController({
     [
       linuxDoBrowserFetchCurrentRef,
       linuxDoBrowserWebViewRef,
-      linuxDoWebViewUserAgentRef,
+      commitLinuxDoWebViewUserAgent,
       rejectLinuxDoBrowserFetch,
       setLinuxDoBrowserFetchRequest,
-      setLinuxDoWebViewUserAgent,
       startNextLinuxDoBrowserFetch
     ]
   );
