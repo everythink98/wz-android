@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
+import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 
 export type CredentialProtection = 'biometric' | 'device';
 
@@ -58,7 +59,7 @@ type StoredSummary = {
 
 const SITES = new Set<CredentialSite>(['nodeseek', 'linuxdo', 'yaohuo']);
 const MAX_CREDENTIAL_BYTES = 1900;
-const siteOperationTails = new Map<CredentialSite, Promise<void>>();
+const siteOperations = createKeyedSerialRunner<CredentialSite>();
 
 export function emptyCredentialSummaries(): CredentialSummaries {
   return Object.fromEntries(
@@ -344,18 +345,7 @@ async function remove(site: CredentialSite): Promise<void> {
 
 function runExclusive<T>(site: CredentialSite, operation: () => Promise<T>): Promise<T> {
   assertSite(site);
-  const result = (siteOperationTails.get(site) ?? Promise.resolve()).then(operation, operation);
-  const tail = result.then(
-    () => undefined,
-    () => undefined
-  );
-  siteOperationTails.set(site, tail);
-  void tail.then(() => {
-    if (siteOperationTails.get(site) === tail) {
-      siteOperationTails.delete(site);
-    }
-  });
-  return result;
+  return siteOperations.run(site, operation);
 }
 
 export const credentialVault = {

@@ -3,6 +3,7 @@ import { sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCat
 import { beginDiagnosticTrace, finishDiagnosticTrace, withDiagnosticFetcher } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { withFetchGuard, type Fetcher } from '@/platform/network/request';
+import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 import {
   advanceNotificationDelivery,
   type NotificationDeliveryCommit,
@@ -84,20 +85,7 @@ export interface NotificationWorkerDependencies<Access extends NotificationWorke
 }
 
 const deliverableKinds = new Set(['mention', 'reply', 'private-message']);
-const deliveryQueues = new Map<string, Promise<void>>();
-
-function serializeDelivery<T>(key: string, operation: () => Promise<T>) {
-  const result = (deliveryQueues.get(key) || Promise.resolve()).then(operation);
-  const tail = result.then(
-    () => undefined,
-    () => undefined
-  );
-  deliveryQueues.set(key, tail);
-  void tail.then(() => {
-    if (deliveryQueues.get(key) === tail) deliveryQueues.delete(key);
-  });
-  return result;
-}
+const deliveries = createKeyedSerialRunner<string>();
 
 export function notificationIdentifierForIdentity(source: NotificationSource, identityKey: string) {
   return `wz-message-${source}-${encodeURIComponent(identityKey)}`;
@@ -191,7 +179,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
     let delivered = 0;
     const settlement = Promise.allSettled(
       enabledSources.map((source) =>
-        serializeDelivery(`${source}\u0000${state.sources[source].identityKey}`, async () => {
+        deliveries.run(`${source}\u0000${state.sources[source].identityKey}`, async () => {
           const trace = beginDiagnosticTrace('source', 'refresh', { source });
           try {
             const sourceState = state.sources[source];
