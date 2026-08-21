@@ -15,17 +15,10 @@ export type DiscourseActionRuntimeContext = DiscourseActionRuntimeDependencies &
 export type DiscourseActionRuntimeRecovery = {
   loginRequired: boolean;
   message?: string;
-  phase: 'credential' | 'transport';
-  stale?: boolean;
 };
 
 export type PreparedDiscourseActionRuntime = {
-  credentialReady: boolean;
-  credentialSource: 'managed-cookie-jar' | 'secure-store';
-  csrfSource: 'none' | 'session-endpoint';
-  execute?: (request: DiscourseActionRequest, signal?: AbortSignal) => Promise<unknown>;
-  isCredentialCurrent?: () => boolean;
-  onMissingCredential?: () => void;
+  execute: (request: DiscourseActionRequest, signal?: AbortSignal) => Promise<unknown>;
   recover: (error: unknown) => Promise<DiscourseActionRuntimeRecovery>;
 };
 
@@ -41,9 +34,6 @@ const discourseActionRuntimes = {
   linuxdo: {
     prepare: async (context) => {
       return {
-        credentialReady: true,
-        credentialSource: 'managed-cookie-jar',
-        csrfSource: 'session-endpoint',
         execute: (request: DiscourseActionRequest, signal?: AbortSignal) =>
           runLinuxDoAction({
             fetcher: context.fetcher,
@@ -53,10 +43,10 @@ const discourseActionRuntimes = {
           }),
         recover: async (error: unknown) => {
           if (!hasFlag(error, 'loginRequired')) {
-            return { loginRequired: false, phase: 'transport' as const };
+            return { loginRequired: false };
           }
           const message = errorMessage(error);
-          return { loginRequired: true, message, phase: 'credential' as const };
+          return { loginRequired: true, message };
         }
       };
     }

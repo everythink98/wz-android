@@ -251,15 +251,10 @@ describe('topic action query mutations', () => {
     mockRunYaohuoAction.mockReset().mockResolvedValue({ status: 'confirmed', message: '操作已提交' });
     mockDiscourseExecute.mockReset().mockResolvedValue({ success: true });
     mockDiscourseRecover.mockReset().mockResolvedValue({
-      loginRequired: false,
-      phase: 'transport'
+      loginRequired: false
     });
     mockPrepareDiscourseActionRuntime.mockReset().mockImplementation(async () => ({
-      credentialReady: true,
-      credentialSource: 'managed-cookie-jar',
-      csrfSource: 'session-endpoint',
       execute: mockDiscourseExecute,
-      isCredentialCurrent: () => true,
       recover: mockDiscourseRecover
     }));
     mockGetDocument.mockReset().mockResolvedValue({ canceled: true, assets: null });
@@ -1344,11 +1339,7 @@ describe('topic action query mutations', () => {
     seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
     await act(async () => {
       runtimePreparation.resolve({
-        credentialReady: true,
-        credentialSource: 'secure-store',
-        csrfSource: 'none',
         execute: mockDiscourseExecute,
-        isCredentialCurrent: () => true,
         recover: mockDiscourseRecover
       });
       await submission;
@@ -1392,11 +1383,7 @@ describe('topic action query mutations', () => {
     seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
     await act(async () => {
       runtimePreparation.resolve({
-        credentialReady: true,
-        credentialSource: 'secure-store',
-        csrfSource: 'none',
         execute: mockDiscourseExecute,
-        isCredentialCurrent: () => true,
         recover: mockDiscourseRecover
       });
       await upload;
@@ -1957,8 +1944,7 @@ describe('topic action query mutations', () => {
     );
     mockDiscourseRecover.mockResolvedValueOnce({
       loginRequired: true,
-      message: 'linux.do 登录已失效',
-      phase: 'credential'
+      message: 'linux.do 登录已失效'
     });
     const onSessionExpired = jest.fn();
     const showLinuxDoLogin = jest.fn();

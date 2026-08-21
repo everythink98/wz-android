@@ -47,7 +47,6 @@ import { isNodeImageApiKeyExpiredError, uploadNodeSeekReplyImageWithApiKey } fro
 import { uploadYaohuoReplyImage } from '@/sources/yaohuo/imageUpload';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { authActionMessageForSource } from '@/domain/session/siteSessionPrompts';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import {
   beginDiagnosticTrace,
@@ -744,33 +743,16 @@ export function useTopicActionsController({
       });
       assertWritableTicket(ticket);
       preTransport?.();
-      if (runtime.isCredentialCurrent?.() === false) {
-        throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-      }
-      if (!runtime.credentialReady || !runtime.execute) {
-        runtime.onMissingCredential?.();
-        loginPrompt(authActionMessageForSource(source, siteSessionViewModels));
-        throw new HandledMutationError('登录信息不可用', 'blocked', 'missing_credential');
-      }
       try {
         assertWritableTicket(ticket);
         const result = await runtime.execute(buildDiscourseSourceActionRequest(source, action));
         markDiagnosticStage(trace, 'transport', { source, state: 'confirmed', serverConfirmed: true });
-        if (runtime.isCredentialCurrent?.() === false) {
-          throw new HandledMutationError('凭据已变化', 'stale', 'stale', true);
-        }
         assertWritableTicket(ticket, true);
         return result ?? true;
       } catch (error) {
         if (error instanceof HandledMutationError) throw error;
         if (isRawUnauthorized(error)) throw error;
-        if (runtime.isCredentialCurrent?.() === false) {
-          throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-        }
         const recovery = await runtime.recover(error);
-        if (recovery.stale || runtime.isCredentialCurrent?.() === false) {
-          throw new HandledMutationError('凭据已变化', 'stale', 'stale');
-        }
         const message = errorMessage(error);
         if (recovery.loginRequired) {
           const promptMessage = recovery.message || message;
@@ -786,8 +768,7 @@ export function useTopicActionsController({
       authenticatedFetcher,
       discourseActionRuntimeDependencies,
       discourseLoginPrompts,
-      notify,
-      siteSessionViewModels
+      notify
     ]
   );
 

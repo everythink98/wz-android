@@ -29,7 +29,7 @@ describe('Discourse action runtime registry', () => {
       body: JSON.stringify({ raw: 'body' })
     };
 
-    await linuxdo.execute?.(request, new AbortController().signal);
+    await linuxdo.execute(request, new AbortController().signal);
 
     expect(mocks.runLinuxDoAction).toHaveBeenCalledOnce();
     expect(mocks.runLinuxDoAction).toHaveBeenCalledWith(
@@ -37,8 +37,6 @@ describe('Discourse action runtime registry', () => {
         userAgent: 'test-agent'
       })
     );
-    expect(linuxdo.csrfSource).toBe('session-endpoint');
-    expect(linuxdo.credentialSource).toBe('managed-cookie-jar');
   });
 
   it('[REG-ACCOUNT-026] reports linux.do expiry without mutating identity or Cookie state', async () => {
@@ -54,7 +52,7 @@ describe('Discourse action runtime registry', () => {
       )
     ).resolves.toMatchObject({
       loginRequired: true,
-      phase: 'credential'
+      message: 'linux.do 登录已失效'
     });
   });
 });
