@@ -8,7 +8,6 @@ import {
   RELEASE_SIGNING_ENV_NAMES,
   assertCleanReleaseCheckout,
   assertReleaseNode22,
-  createReleaseManifest,
   parseJavaVersionOutput,
   releaseEnvironment,
   resolveReleaseKeystorePath,
@@ -222,7 +221,7 @@ function writeReleaseManifest({
   gradleVersion,
   builtAbis
 }) {
-  const manifest = createReleaseManifest({
+  const manifest = {
     apkName: releaseApkFileName,
     sha256,
     packageName: appConfig.expo.android.package,
@@ -236,7 +235,7 @@ function writeReleaseManifest({
     javaVersion,
     gradleVersion,
     builtAbis
-  });
+  };
   writeFileSync(releaseManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`release manifest: ${releaseManifestPath}`);
 }

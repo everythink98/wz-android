@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import {
   assertCleanReleaseCheckout,
   assertReleaseNode22,
-  createReleaseManifest,
   parseJavaVersionOutput,
   releaseEnvironment,
   restorePackageJsonAfterPrebuild,
@@ -190,7 +189,7 @@ describe('REG-OPS-015 release environment boundary', () => {
     expect(() => assertCleanReleaseCheckout(' M scripts/release-android.mjs')).toThrow('未提交改动');
   });
 
-  it('runs unsigned native validation before the only signed build and records provenance', () => {
+  it('runs unsigned native validation before the only signed build', () => {
     const ordinary = unsignedReleaseChildEnv({ PATH: 'tools', ...signing }, {});
     const calls: { command: string; args: string[]; options: { cwd: string; env: Record<string, string> } }[] = [];
 
@@ -211,28 +210,5 @@ describe('REG-OPS-015 release environment boundary', () => {
       expect(calls[0]?.options.env).not.toHaveProperty(name);
       expect(calls[1]?.options.env[name]).toBe(signing[name as keyof typeof signing]);
     }
-
-    expect(
-      createReleaseManifest({
-        apkName: 'app-arm64-v8a-release.apk',
-        sha256: 'a'.repeat(64),
-        packageName: 'com.wz.reader',
-        versionName: '1.3.89',
-        versionCode: 1389,
-        signerSha256: 'b'.repeat(64),
-        gitSha: 'c'.repeat(40),
-        packageLockSha256: 'd'.repeat(64),
-        nodeVersion: '22.18.0',
-        npmVersion: '10.9.3',
-        javaVersion: 'openjdk 17',
-        gradleVersion: '8.14.3',
-        builtAbis: ['arm64-v8a', 'x86_64']
-      })
-    ).toMatchObject({
-      gitSha: 'c'.repeat(40),
-      packageLockSha256: 'd'.repeat(64),
-      nodeVersion: '22.18.0',
-      builtAbis: ['arm64-v8a', 'x86_64']
-    });
   });
 });

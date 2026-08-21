@@ -151,35 +151,3 @@ export function runReleaseBuildStages({ androidDir, builtAbis, ordinaryEnv, rele
     { cwd: androidDir, env: signingReleaseChildEnv(ordinaryEnv, releaseEnv) }
   );
 }
-
-export function createReleaseManifest({
-  apkName,
-  sha256,
-  packageName,
-  versionName,
-  versionCode,
-  signerSha256,
-  gitSha,
-  packageLockSha256,
-  nodeVersion,
-  npmVersion,
-  javaVersion,
-  gradleVersion,
-  builtAbis
-}) {
-  return {
-    apkName,
-    sha256,
-    packageName,
-    versionName,
-    versionCode,
-    signerSha256,
-    gitSha,
-    packageLockSha256,
-    nodeVersion,
-    npmVersion,
-    javaVersion,
-    gradleVersion,
-    builtAbis
-  };
-}
