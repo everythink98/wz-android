@@ -1,10 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { withAppBuildGradle, withDangerousMod, withMainApplication } = require('@expo/config-plugins');
-
-function packagePath(packageName) {
-  return packageName.split('.').join(path.sep);
-}
+const { androidPackagePath, injectMainApplicationPackage } = require('./androidPackageRegistration');
 
 function svgRendererModuleSource(packageName) {
   return String.raw`package ${packageName}
@@ -1381,17 +1378,6 @@ class SvgRendererPolicyTest {
 `;
 }
 
-function injectSvgRendererPackage(contents) {
-  if (contents.includes('add(SvgRendererPackage())')) {
-    return contents;
-  }
-  const packageListPattern = /PackageList\(this\)\.packages\.apply\s*\{/;
-  if (!packageListPattern.test(contents)) {
-    throw new Error('无法注入 SvgRendererPackage：MainApplication 模板不匹配。');
-  }
-  return contents.replace(packageListPattern, (match) => `${match}\n              add(SvgRendererPackage())`);
-}
-
 function injectSvgRendererTestSupport(contents) {
   let next = contents;
   if (!next.includes('testImplementation("junit:junit:4.13.2")')) {
@@ -1454,7 +1440,7 @@ module.exports = function withSvgRendererModule(config) {
         'src',
         'main',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       const testOutputDir = path.join(
         config.modRequest.platformProjectRoot,
@@ -1462,7 +1448,7 @@ module.exports = function withSvgRendererModule(config) {
         'src',
         'test',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       const testResourceDir = path.join(
         config.modRequest.platformProjectRoot,
@@ -1478,7 +1464,7 @@ module.exports = function withSvgRendererModule(config) {
         'src',
         'androidTest',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       const instrumentedTestAssetDir = path.join(
         config.modRequest.platformProjectRoot,
@@ -1510,7 +1496,7 @@ module.exports = function withSvgRendererModule(config) {
   ]);
 
   return withMainApplication(config, (config) => {
-    config.modResults.contents = injectSvgRendererPackage(config.modResults.contents);
+    config.modResults.contents = injectMainApplicationPackage(config.modResults.contents, 'SvgRendererPackage');
     return config;
   });
 };

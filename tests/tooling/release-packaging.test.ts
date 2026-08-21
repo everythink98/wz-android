@@ -126,7 +126,6 @@ describe('Android release packaging guards', () => {
       "path.join(outputDir, 'NotificationDigestModule.kt')",
       "path.join(outputDir, 'NotificationDigestPackage.kt')",
       "path.join(testOutputDir, 'NotificationDigestExecutorTest.kt')",
-      'add(NotificationDigestPackage())',
       'ExpoNotificationBuilder(',
       'check(notificationManager.areNotificationsEnabled())',
       'getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE',
@@ -242,7 +241,6 @@ describe('Android release packaging guards', () => {
       'Handler(Looper.getMainLooper())',
       'PreviewRegionImagePackage',
       'PreviewRegionImageViewManager',
-      'add(PreviewRegionImagePackage())',
       "path.join(outputDir, 'PreviewRegionImageView.kt')",
       "path.join(testOutputDir, 'PreviewRegionImageMathTest.kt')"
     ]) {

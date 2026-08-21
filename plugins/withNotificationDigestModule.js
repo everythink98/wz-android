@@ -1,10 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { withDangerousMod, withMainApplication } = require('@expo/config-plugins');
-
-function packagePath(packageName) {
-  return packageName.split('.').join(path.sep);
-}
+const { androidPackagePath, injectMainApplicationPackage } = require('./androidPackageRegistration');
 
 function moduleSource(packageName) {
   return `package ${packageName}
@@ -197,15 +194,6 @@ class NotificationDigestPackage : ReactPackage {
 `;
 }
 
-function injectPackage(contents) {
-  if (contents.includes('add(NotificationDigestPackage())')) return contents;
-  const packageListPattern = /PackageList\(this\)\.packages\.apply\s*\{/;
-  if (!packageListPattern.test(contents)) {
-    throw new Error('无法注入 NotificationDigestPackage：MainApplication 模板不匹配。');
-  }
-  return contents.replace(packageListPattern, (match) => `${match}\n              add(NotificationDigestPackage())`);
-}
-
 module.exports = function withNotificationDigestModule(config) {
   config = withDangerousMod(config, [
     'android',
@@ -218,7 +206,7 @@ module.exports = function withNotificationDigestModule(config) {
         'src',
         'main',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       const testOutputDir = path.join(
         config.modRequest.platformProjectRoot,
@@ -226,7 +214,7 @@ module.exports = function withNotificationDigestModule(config) {
         'src',
         'test',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       fs.mkdirSync(outputDir, { recursive: true });
       fs.mkdirSync(testOutputDir, { recursive: true });
@@ -238,7 +226,7 @@ module.exports = function withNotificationDigestModule(config) {
   ]);
 
   return withMainApplication(config, (config) => {
-    config.modResults.contents = injectPackage(config.modResults.contents);
+    config.modResults.contents = injectMainApplicationPackage(config.modResults.contents, 'NotificationDigestPackage');
     return config;
   });
 };

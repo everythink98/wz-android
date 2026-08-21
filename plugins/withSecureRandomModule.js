@@ -1,10 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { withDangerousMod, withMainApplication } = require('@expo/config-plugins');
-
-function packagePath(packageName) {
-  return packageName.split('.').join(path.sep);
-}
+const { androidPackagePath, injectMainApplicationPackage } = require('./androidPackageRegistration');
 
 function moduleSource(packageName) {
   return `package ${packageName}
@@ -53,17 +50,6 @@ class SecureRandomPackage : ReactPackage {
 `;
 }
 
-function injectPackage(contents) {
-  if (contents.includes('add(SecureRandomPackage())')) {
-    return contents;
-  }
-  const packageListPattern = /PackageList\(this\)\.packages\.apply\s*\{/;
-  if (!packageListPattern.test(contents)) {
-    throw new Error('无法注入 SecureRandomPackage：MainApplication 模板不匹配。');
-  }
-  return contents.replace(packageListPattern, (match) => `${match}\n              add(SecureRandomPackage())`);
-}
-
 module.exports = function withSecureRandomModule(config) {
   config = withDangerousMod(config, [
     'android',
@@ -78,7 +64,7 @@ module.exports = function withSecureRandomModule(config) {
         'src',
         'main',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       fs.mkdirSync(outputDir, { recursive: true });
       fs.writeFileSync(path.join(outputDir, 'SecureRandomModule.kt'), moduleSource(packageName));
@@ -88,7 +74,7 @@ module.exports = function withSecureRandomModule(config) {
   ]);
 
   return withMainApplication(config, (config) => {
-    config.modResults.contents = injectPackage(config.modResults.contents);
+    config.modResults.contents = injectMainApplicationPackage(config.modResults.contents, 'SecureRandomPackage');
     return config;
   });
 };

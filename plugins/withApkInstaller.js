@@ -1,10 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { withAndroidManifest, withDangerousMod, withMainApplication } = require('@expo/config-plugins');
-
-function packagePath(packageName) {
-  return packageName.split('.').join(path.sep);
-}
+const { androidPackagePath, injectMainApplicationPackage } = require('./androidPackageRegistration');
 
 function apkInstallerModuleSource(packageName) {
   return `package ${packageName}
@@ -199,18 +196,6 @@ function fileProviderPathsSource() {
 `;
 }
 
-function injectApkInstallerPackage(contents) {
-  if (contents.includes('add(ApkInstallerPackage())')) {
-    return contents;
-  }
-  const packageListPattern = /PackageList\(this\)\.packages\.apply\s*\{/;
-  if (!packageListPattern.test(contents)) {
-    throw new Error('无法注入 ApkInstallerPackage：MainApplication 模板不匹配。');
-  }
-  const next = contents.replace(packageListPattern, (match) => `${match}\n              add(ApkInstallerPackage())`);
-  return next;
-}
-
 function ensureInstallPermission(manifest) {
   const permissions = manifest.manifest['uses-permission'] || [];
   if (
@@ -272,7 +257,7 @@ module.exports = function withApkInstaller(config) {
         'src',
         'main',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       const xmlDir = path.join(config.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res', 'xml');
       const testDir = path.join(
@@ -281,7 +266,7 @@ module.exports = function withApkInstaller(config) {
         'src',
         'test',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       fs.mkdirSync(outputDir, { recursive: true });
       fs.mkdirSync(xmlDir, { recursive: true });
@@ -295,7 +280,7 @@ module.exports = function withApkInstaller(config) {
   ]);
 
   return withMainApplication(config, (config) => {
-    config.modResults.contents = injectApkInstallerPackage(config.modResults.contents);
+    config.modResults.contents = injectMainApplicationPackage(config.modResults.contents, 'ApkInstallerPackage');
     return config;
   });
 };

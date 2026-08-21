@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { withAppBuildGradle, withDangerousMod, withMainApplication } = require('@expo/config-plugins');
+const { androidPackagePath, injectMainApplicationPackage } = require('./androidPackageRegistration');
 
 const EXPO_VIDEO_VERSION = '3.0.16';
 const EXPO_VIDEO_DATA_SOURCE_PATH = path.join(
@@ -87,10 +88,6 @@ function patchExpoVideoDataSource(projectRoot) {
     fs.writeFileSync(sourcePath, patched);
   }
   fs.writeFileSync(registryPath, EXPO_VIDEO_CLIENT_REGISTRY_SOURCE);
-}
-
-function packagePath(packageName) {
-  return packageName.split('.').join(path.sep);
 }
 
 function networkProxyRuntimeSource(packageName) {
@@ -5923,17 +5920,6 @@ class NetworkProxyRuntimeTest {
 `;
 }
 
-function injectNetworkProxyPackage(contents) {
-  if (contents.includes('add(NetworkProxyPackage())')) {
-    return contents;
-  }
-  const packageListPattern = /PackageList\(this\)\.packages\.apply\s*\{/;
-  if (!packageListPattern.test(contents)) {
-    throw new Error('无法注入 NetworkProxyPackage：MainApplication 模板不匹配。');
-  }
-  return contents.replace(packageListPattern, (match) => `${match}\n              add(NetworkProxyPackage())`);
-}
-
 function injectNetworkProxyInstall(contents) {
   if (contents.includes('NetworkProxyRuntime.install(applicationContext)')) {
     return contents;
@@ -6051,7 +6037,7 @@ function withNetworkProxyModule(config) {
         'src',
         'main',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       fs.mkdirSync(outputDir, { recursive: true });
       fs.writeFileSync(path.join(outputDir, 'NetworkProxyRuntime.kt'), networkProxyRuntimeSource(packageName));
@@ -6063,7 +6049,7 @@ function withNetworkProxyModule(config) {
         'src',
         'test',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       fs.mkdirSync(testOutputDir, { recursive: true });
       fs.writeFileSync(
@@ -6075,7 +6061,9 @@ function withNetworkProxyModule(config) {
   ]);
 
   return withMainApplication(config, (config) => {
-    config.modResults.contents = injectNetworkProxyInstall(injectNetworkProxyPackage(config.modResults.contents));
+    config.modResults.contents = injectNetworkProxyInstall(
+      injectMainApplicationPackage(config.modResults.contents, 'NetworkProxyPackage')
+    );
     return config;
   });
 }

@@ -1,6 +1,7 @@
 const { withAppBuildGradle, withDangerousMod, withMainApplication } = require('@expo/config-plugins');
 const fs = require('node:fs');
 const path = require('node:path');
+const { androidPackagePath, injectMainApplicationPackage } = require('./androidPackageRegistration');
 
 function previewRegionImageSource(packageName) {
   return `package ${packageName}
@@ -572,21 +573,6 @@ class PreviewRegionImageMathTest {
 `;
 }
 
-function packagePath(packageName) {
-  return packageName.replaceAll('.', path.sep);
-}
-
-function injectPreviewRegionImagePackage(contents) {
-  if (contents.includes('add(PreviewRegionImagePackage())')) {
-    return contents;
-  }
-  const packageListPattern = /PackageList\(this\)\.packages\.apply\s*\{/;
-  if (!packageListPattern.test(contents)) {
-    throw new Error('无法注入 PreviewRegionImagePackage：MainApplication 模板不匹配。');
-  }
-  return contents.replace(packageListPattern, (match) => `${match}\n              add(PreviewRegionImagePackage())`);
-}
-
 function injectPreviewRegionImageTestSupport(contents) {
   if (contents.includes('testImplementation("junit:junit:4.13.2")')) {
     return contents;
@@ -617,7 +603,7 @@ function withPreviewRegionImageNative(config) {
         'src',
         'main',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       const testOutputDir = path.join(
         config.modRequest.platformProjectRoot,
@@ -625,7 +611,7 @@ function withPreviewRegionImageNative(config) {
         'src',
         'test',
         'java',
-        packagePath(packageName)
+        androidPackagePath(packageName)
       );
       fs.mkdirSync(outputDir, { recursive: true });
       fs.mkdirSync(testOutputDir, { recursive: true });
@@ -639,7 +625,7 @@ function withPreviewRegionImageNative(config) {
   ]);
 
   return withMainApplication(config, (config) => {
-    config.modResults.contents = injectPreviewRegionImagePackage(config.modResults.contents);
+    config.modResults.contents = injectMainApplicationPackage(config.modResults.contents, 'PreviewRegionImagePackage');
     return config;
   });
 }
