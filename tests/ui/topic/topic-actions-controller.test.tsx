@@ -2,11 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { Alert } from 'react-native';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as SecureStore from 'expo-secure-store';
-
-jest.mock('expo-secure-store', () => ({
-  getItemAsync: jest.fn()
-}));
 
 jest.mock('@/sources/nodeseek/actionClient', () => ({
   fetchNodeSeekVoteInfo: jest.fn(),
@@ -67,7 +62,6 @@ import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/model
 import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
-const mockGetItem = jest.mocked(SecureStore.getItemAsync);
 const mockRunNodeSeekAction = jest.mocked(runNodeSeekAction);
 const mockFetchNodeSeekVoteInfo = jest.mocked(fetchNodeSeekVoteInfo);
 const mockRunYaohuoAction = jest.mocked(runYaohuoAction);
@@ -260,7 +254,6 @@ describe('topic action query mutations', () => {
     mockGetDocument.mockReset().mockResolvedValue({ canceled: true, assets: null });
     mockUploadNodeSeekReplyImage.mockReset().mockResolvedValue('https://nodeimage.com/test.png');
     mockCurrentNodeImageGeneration.mockReset().mockReturnValue(0);
-    mockGetItem.mockResolvedValue(null);
   });
 
   afterEach(async () => {
