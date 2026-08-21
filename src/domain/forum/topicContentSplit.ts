@@ -6,6 +6,7 @@ import {
   FORUM_TERMINAL_TAB_TAG,
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG,
+  escapeHtmlAttribute,
   parseForumContentHtml
 } from './html';
 import {
@@ -60,12 +61,8 @@ const DISCOURSE_POLL_PLACEHOLDER_TAG = 'forum-discourse-poll';
 const FORUM_INLINE_IMAGE_TAG = INLINE_FORUM_IMAGE_TAG;
 export const FORUM_COMPACT_CONTENT_CLASS = 'forum-reply-content';
 
-function escapeForumContentAttribute(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 export function discoursePollPlaceholder(name: string) {
-  return `<${DISCOURSE_POLL_PLACEHOLDER_TAG} name="${escapeForumContentAttribute(name)}"></${DISCOURSE_POLL_PLACEHOLDER_TAG}>`;
+  return `<${DISCOURSE_POLL_PLACEHOLDER_TAG} name="${escapeHtmlAttribute(name)}"></${DISCOURSE_POLL_PLACEHOLDER_TAG}>`;
 }
 
 type ForumContentPlanRow = {

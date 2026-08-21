@@ -206,8 +206,3 @@ function defaultAcceptLanguage() {
     return FALLBACK_ACCEPT_LANGUAGE;
   }
 }
-
-export function isNodeSeekHost(hostname: string) {
-  const normalized = hostname.toLowerCase();
-  return normalized === 'nodeseek.com' || normalized.endsWith('.nodeseek.com');
-}

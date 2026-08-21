@@ -1,11 +1,13 @@
 import {
   decodeHtml,
+  escapeHtmlFully,
   escapeQuotedHtmlTagDelimiters,
   FORUM_VIDEO_STICKER_TAG,
   isAllowedDataImageUrl,
   parseHtml,
   textContentFromHtml
 } from './html';
+import { isNodeSeekHost } from './sourceCatalog';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaReferrer';
 
 export const FORUM_STICKER_TAG = 'forum-sticker';
@@ -571,15 +573,6 @@ function lightboxHrefForForumImage(
   return '';
 }
 
-function escapeHtmlText(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 function paragraphHasTextOutsideImages(html: string) {
   const withoutImages = escapeQuotedHtmlTagDelimiters(html).replace(/<img\b[^>]*>/gi, ' ');
   return textContentFromHtml(withoutImages).length > 0;
@@ -640,7 +633,7 @@ function addQuoteTitleUsername(
   ) {
     return;
   }
-  target.innerHTML = `<strong class="quote-title__username">${escapeHtmlText(username)}</strong><span class="quote-title__separator"> · </span>${target.innerHTML || ''}`;
+  target.innerHTML = `<strong class="quote-title__username">${escapeHtmlFully(username)}</strong><span class="quote-title__separator"> · </span>${target.innerHTML || ''}`;
 }
 
 function flowQuoteTitleAvatars(
@@ -885,7 +878,7 @@ function stickerRowMediaHtml(html: string) {
         forumImageAttributeValue(attributes, 'src') ||
         'sticker';
       const rowAttributes = stickerRowAttributesText(attributesText);
-      return `<${FORUM_STICKER_TAG}${rowAttributes ? ` ${rowAttributes}` : ''}>${escapeHtmlText(label)}</${FORUM_STICKER_TAG}>`;
+      return `<${FORUM_STICKER_TAG}${rowAttributes ? ` ${rowAttributes}` : ''}>${escapeHtmlFully(label)}</${FORUM_STICKER_TAG}>`;
     });
 }
 
@@ -899,7 +892,7 @@ function stickerImageHtml(attributesText: string, attributes: Record<string, str
     .trim()
     .replace(/\/\s*$/, '')
     .trim();
-  return `<${FORUM_STICKER_TAG}${clean ? ` ${clean}` : ''}>${escapeHtmlText(label)}</${FORUM_STICKER_TAG}>`;
+  return `<${FORUM_STICKER_TAG}${clean ? ` ${clean}` : ''}>${escapeHtmlFully(label)}</${FORUM_STICKER_TAG}>`;
 }
 
 function inlineMixedStickerMediaHtml(html: string) {
@@ -912,17 +905,17 @@ function inlineMixedStickerMediaHtml(html: string) {
       forumImageAttributeValue(attributes, 'title') ||
       fallbackSrc ||
       'sticker';
-    return `<${FORUM_STICKER_TAG} ${stickerFallbackAttributesText(attributes, fallbackSrc)}>${escapeHtmlText(label)}</${FORUM_STICKER_TAG}>`;
+    return `<${FORUM_STICKER_TAG} ${stickerFallbackAttributesText(attributes, fallbackSrc)}>${escapeHtmlFully(label)}</${FORUM_STICKER_TAG}>`;
   });
 }
 
 function stickerFallbackAttributesText(attributes: Record<string, string | undefined>, src: string) {
   const names = ['class', 'alt', 'title', 'width', 'height', 'referrerpolicy'];
   return [
-    `src="${escapeHtmlText(src)}"`,
+    `src="${escapeHtmlFully(src)}"`,
     ...names.map((name) => {
       const value = forumImageAttributeValue(attributes, name);
-      return value ? `${name}="${escapeHtmlText(value)}"` : '';
+      return value ? `${name}="${escapeHtmlFully(value)}"` : '';
     })
   ]
     .filter(Boolean)
@@ -981,7 +974,7 @@ export function knownForumStickerSourceDimensions(
 function nodeSeekStaticImagePath(value: string, resolveImageUrl: ForumImageUrlResolver) {
   const analysis = resolveImageUrl(value);
   if (!analysis.normalized) return '';
-  if (analysis.hostname === 'nodeseek.com' || analysis.hostname.endsWith('.nodeseek.com')) {
+  if (isNodeSeekHost(analysis.hostname)) {
     return analysis.pathname;
   }
   return !analysis.hostname && analysis.pathname.startsWith('/static/image/') ? analysis.pathname : '';

@@ -10,11 +10,11 @@ import {
   toIsoString
 } from '@/domain/forum/html';
 import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
+import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 import {
   NODESEEK_BASE_URL,
   type NodeSeekPageDocument,
   arrayField,
-  isNodeSeekHost,
   nodeSeekAccessRequirementFromListRow,
   nodeSeekCreatedAt,
   nodeSeekEmbeddedReplyCount,

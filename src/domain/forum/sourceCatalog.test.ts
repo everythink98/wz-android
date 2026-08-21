@@ -7,6 +7,7 @@ import {
   isDiscourseSource,
   isSessionSource,
   isNotificationSource,
+  isNodeSeekHost,
   notificationSources,
   sessionSources,
   sourceCatalog,
@@ -53,5 +54,16 @@ describe('source capability catalog', () => {
     expect(notificationSources).toEqual(['nodeseek', 'linuxdo', 'yaohuo']);
     expect(sourceValues.filter(isNotificationSource)).toEqual(notificationSources);
     expect(sourceCatalog.v2ex.notifications).toBe(false);
+  });
+
+  it.each([
+    ['nodeseek.com', true],
+    ['www.nodeseek.com', true],
+    ['STATIC.NODESEEK.COM', true],
+    ['nodeseek.com.example', false],
+    ['evilnodeseek.com', false],
+    ['', false]
+  ] as const)('classifies the NodeSeek host boundary for %s', (hostname, expected) => {
+    expect(isNodeSeekHost(hostname)).toBe(expected);
   });
 });

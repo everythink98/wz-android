@@ -763,13 +763,7 @@ export function useTopicActionsController({
         throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
       }
     },
-    [
-      assertWritableTicket,
-      authenticatedFetcher,
-      discourseActionRuntimeDependencies,
-      discourseLoginPrompts,
-      notify
-    ]
+    [assertWritableTicket, authenticatedFetcher, discourseActionRuntimeDependencies, discourseLoginPrompts, notify]
   );
 
   const updateInteraction = useCallback(

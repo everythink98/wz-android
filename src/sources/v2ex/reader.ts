@@ -14,6 +14,7 @@ import type {
 import {
   absoluteUrl,
   elementText,
+  escapeHtmlFully,
   hasRenderableHtmlContent,
   isRecord,
   parsePositiveInteger,
@@ -78,15 +79,6 @@ type V2exHtmlDetail = {
 };
 
 const V2EX_REPLY_COLLECTION_ERROR = 'V2EX 回复总数已变化，无法确认完整集合';
-
-function escapeHtml(value: unknown) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 function v2exLastReplyAt(raw: Record<string, unknown>, createdAt: string) {
   const touchedAt = toIsoString(raw.last_touched);
@@ -339,7 +331,7 @@ function parseV2exSupplements(root: ReturnType<typeof parseHtml>) {
       const titleTime = element.querySelector('.fade span[title]')?.getAttribute('title') || '';
       const displayTime = titleTime ? toV2exHtmlIsoString(titleTime) || titleTime : '';
       const label = `补充 ${index + 1}${displayTime ? ` · ${displayTime}` : ''}`;
-      return `<blockquote><p><strong>${escapeHtml(label)}</strong></p>${content}</blockquote>`;
+      return `<blockquote><p><strong>${escapeHtmlFully(label)}</strong></p>${content}</blockquote>`;
     })
     .filter(Boolean)
     .join('\n');

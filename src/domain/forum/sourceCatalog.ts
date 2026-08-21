@@ -59,6 +59,8 @@ export const sourceCatalog = {
   }
 } as const;
 
+const nodeSeekRootHost = new URL(sourceCatalog.nodeseek.baseUrl).hostname.toLowerCase().replace(/^www\./, '');
+
 export type Source = keyof typeof sourceCatalog;
 export type DiscourseSource = {
   [Site in Source]: (typeof sourceCatalog)[Site]['family'] extends 'discourse' ? Site : never;
@@ -105,6 +107,11 @@ export function isSessionSource(source: Source | null | undefined): source is Se
 
 export function isNotificationSource(source: Source | null | undefined): source is NotificationSource {
   return Boolean(source && sourceCatalog[source].notifications);
+}
+
+export function isNodeSeekHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return host === nodeSeekRootHost || host.endsWith(`.${nodeSeekRootHost}`);
 }
 
 export function sourceSupportsTopicAction(source: Source | null | undefined, action: TopicActionCapability) {

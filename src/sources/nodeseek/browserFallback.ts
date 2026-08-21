@@ -21,6 +21,7 @@ import { browserFetchIntentFromInit } from '@/platform/network/browserFetchInten
 import { currentReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
 import { hasNodeSeekAccountEvidenceHtml } from './userParser';
 import { registerForumReadResponseEvidence } from '@/sources/forumSourceReadAttempt';
+import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE = 'NodeSeek direct fetch timeout';
@@ -28,13 +29,7 @@ const NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE = 'NodeSeek direct fetch timeout';
 export function isNodeSeekRequestUrl(input: string) {
   try {
     const url = new URL(input);
-    const host = url.hostname.toLowerCase();
-    return (
-      url.protocol === 'https:' &&
-      !url.username &&
-      !url.password &&
-      (host === 'nodeseek.com' || host.endsWith('.nodeseek.com'))
-    );
+    return url.protocol === 'https:' && !url.username && !url.password && isNodeSeekHost(url.hostname);
   } catch {
     return false;
   }

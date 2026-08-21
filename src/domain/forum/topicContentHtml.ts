@@ -1,18 +1,11 @@
-import { elementText, escapeQuotedHtmlTagDelimiters, parseHtml } from './html';
+import { elementText, escapeHtmlAttribute, escapeHtmlText, escapeQuotedHtmlTagDelimiters, parseHtml } from './html';
 import { TextNode, type HTMLElement } from 'node-html-parser';
+import { isNodeSeekHost } from './sourceCatalog';
 
 export const FORUM_REPLY_REFERENCE_TAG = 'forum-reply-reference';
 const FORUM_USER_MENTION_CLASS = 'forum-user-mention';
 const NODESEEK_MENTION_CLASS = 'forum-mention-link';
 const NODESEEK_FLOOR_CLASS = 'forum-floor-link';
-
-function escapeHtmlText(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function escapeHtmlAttribute(value: string) {
-  return escapeHtmlText(value).replace(/"/g, '&quot;');
-}
 
 function addHtmlClass(attributes: string, className: string) {
   if (new RegExp(`\\b${className}\\b`).test(attributes)) {
@@ -77,11 +70,6 @@ export function normalizeForumUserMentionNodes(root: HTMLElement) {
     appendClass(link, FORUM_USER_MENTION_CLASS);
     link.set_content([new TextNode(mentionLabel(label))]);
   });
-}
-
-function isNodeSeekHost(hostname: string) {
-  const host = hostname.toLowerCase();
-  return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
 }
 
 function nodeSeekUrlFromHref(href: string | undefined, baseUrl?: string) {

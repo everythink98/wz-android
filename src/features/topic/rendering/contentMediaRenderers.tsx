@@ -3,14 +3,20 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, t
 import { WebView } from 'react-native-webview';
 import { useContentWidth, type CustomBlockRenderer } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { imageRequestHeadersForUrl, isNodeSeekHost } from '@/platform/media/imageRequestSource';
+import { imageRequestHeadersForUrl } from '@/platform/media/imageRequestSource';
 import { inlineForumImageDisplaySize } from '@/platform/media/inlineMedia';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/domain/forum/videoEmbeds';
 import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import type { HtmlRenderers } from './types';
 import { createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
-import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
+import {
+  escapeHtmlAttribute,
+  FORUM_LINK_CARD_TAG,
+  FORUM_VIDEO_STICKER_TAG,
+  FORUM_VIDEO_TAG
+} from '@/domain/forum/html';
+import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { useTopicBodyMediaLease } from '../media/TopicBodyMediaCoordinator';
@@ -616,8 +622,4 @@ video { display: block; object-fit: contain; }
 function isVideoStickerBootstrapUrl(value: string, baseUrl: string) {
   const url = String(value || '').trim();
   return /^about:blank$/i.test(url) || url === baseUrl;
-}
-
-function escapeHtmlAttribute(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

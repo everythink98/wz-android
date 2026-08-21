@@ -3,6 +3,7 @@ import type { RepliesResponse, TopicDetail, TopicPoll, TopicPollOption } from '@
 import {
   absoluteUrl,
   elementText,
+  escapeHtmlFully,
   hasRenderableHtmlContent,
   parseHtml,
   parsePositiveInteger,
@@ -189,15 +190,6 @@ function appendYaohuoPostContent(
   return [contentHtml, ...extraHtml].filter((part) => hasRenderableHtmlContent(part)).join('\n');
 }
 
-function escapeHtmlText(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 function yaohuoAttachmentHref(value: unknown) {
   const href = absoluteUrl(value, BASE_URL);
   if (!href) return '';
@@ -245,22 +237,22 @@ function yaohuoAttachmentHtml(node: HTMLElement, trailingNodes: readonly unknown
       if (!title && !href && !note) return '';
       return [
         '<div class="forum-attachment-item">',
-        title ? `<div class="forum-attachment-title">${escapeHtmlText(title)}</div>` : '',
+        title ? `<div class="forum-attachment-title">${escapeHtmlFully(title)}</div>` : '',
         href || count
           ? `<div class="forum-attachment-actions">${
               href
-                ? `<a class="forum-attachment-action" href="${escapeHtmlText(href)}">${escapeHtmlText(action)}</a>`
+                ? `<a class="forum-attachment-action" href="${escapeHtmlFully(href)}">${escapeHtmlFully(action)}</a>`
                 : ''
-            }${count ? `<span class="forum-attachment-count">${escapeHtmlText(count)}</span>` : ''}</div>`
+            }${count ? `<span class="forum-attachment-count">${escapeHtmlFully(count)}</span>` : ''}</div>`
           : '',
-        note ? `<div class="forum-attachment-note">${escapeHtmlText(note)}</div>` : '',
+        note ? `<div class="forum-attachment-note">${escapeHtmlFully(note)}</div>` : '',
         '</div>'
       ].join('');
     })
     .filter(Boolean)
     .join('');
   return `<div class="forum-attachment">${
-    summary ? `<div class="forum-attachment-meta">${escapeHtmlText(summary)}</div>` : ''
+    summary ? `<div class="forum-attachment-meta">${escapeHtmlFully(summary)}</div>` : ''
   }${itemHtml}</div>`;
 }
 
@@ -325,7 +317,7 @@ function yaohuoActivitySummaryHtml(root: ReturnType<typeof parseHtml>) {
     .map((node) => readableYaohuoActivityText(node?.toString() || ''))
     .filter(Boolean);
   return parts.length
-    ? `<blockquote>${parts.map((part) => `<p>${escapeHtmlText(part)}</p>`).join('')}</blockquote>`
+    ? `<blockquote>${parts.map((part) => `<p>${escapeHtmlFully(part)}</p>`).join('')}</blockquote>`
     : '';
 }
 

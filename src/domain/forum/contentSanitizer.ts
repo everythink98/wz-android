@@ -5,6 +5,8 @@ import {
   absoluteUrl,
   decodeHtml,
   elementText,
+  escapeHtmlAttribute,
+  escapeHtmlText,
   FORUM_LINK_CARD_TAG,
   FORUM_TERMINAL_REPORT_TAG,
   FORUM_TERMINAL_TAB_TAG,
@@ -14,6 +16,7 @@ import {
   parseForumContentHtml,
   textContentFromHtml
 } from './html';
+import { isNodeSeekHost } from './sourceCatalog';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './videoEmbeds';
 import { normalizeMediaReferrerPolicy } from './mediaReferrer';
 
@@ -278,14 +281,6 @@ function removeForumImageMetadata(root: HTMLElement) {
   });
 }
 
-function escapeHtmlAttribute(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function escapeHtmlText(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 function referrerPolicyHtmlAttribute(name: string, value: unknown) {
   const policy = normalizeMediaReferrerPolicy(value);
   return policy ? ` ${name}="${policy}"` : '';
@@ -365,11 +360,6 @@ function sanitizeNsVideoImages(root: HTMLElement, baseUrl: string) {
     }
     node.replaceWith(`<iframe src="${escapeHtmlAttribute(embedUrl)}" allowfullscreen="true"></iframe>`);
   });
-}
-
-function isNodeSeekHost(hostname: string) {
-  const host = hostname.toLowerCase();
-  return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
 }
 
 function nodeSeekStickerPngUrl(value: unknown, baseUrl: string) {

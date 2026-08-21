@@ -1,6 +1,7 @@
 import { imageRequestHeadersForUrl, normalizeImagePreviewUrl } from './imageRequestSource';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
 import { fetchWithTimeout } from '@/platform/network/request';
+import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 
 type AvatarFetcher = (input: string, init?: RequestInit) => Promise<Response>;
 type AvatarLoadOptions = {
@@ -134,8 +135,7 @@ function rememberAvatarSvgTextRequest(uri: string, request: Promise<string | nul
 function isNodeSeekAvatarUrl(value: string) {
   try {
     const parsed = new URL(value);
-    const host = parsed.hostname.toLowerCase();
-    return (host === 'nodeseek.com' || host.endsWith('.nodeseek.com')) && /^\/avatar\/\d+\.png$/i.test(parsed.pathname);
+    return isNodeSeekHost(parsed.hostname) && /^\/avatar\/\d+\.png$/i.test(parsed.pathname);
   } catch {
     return false;
   }

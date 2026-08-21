@@ -7,6 +7,7 @@ import {
 import type { Topic, TopicDetail } from '@/domain/forum/models';
 import { absoluteUrl, elementText, isRecord, parseHtml, parsePositiveInteger, toIsoString } from '@/domain/forum/html';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
+import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 
 export const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 export const NODESEEK_FLOORS_PER_PAGE = 10;
@@ -156,11 +157,6 @@ export function withNodeSeekReplyPagination(
     };
   }
   return topic;
-}
-
-export function isNodeSeekHost(hostname: string) {
-  const host = hostname.toLowerCase();
-  return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
 }
 
 export function safeNodeSeekTopicUrl(id: string, rawUrl?: unknown) {

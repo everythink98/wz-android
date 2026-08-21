@@ -1,6 +1,6 @@
 import type { QuotedPostMetadata, TopicPoll } from '@/domain/forum/models';
 import type { HTMLElement } from 'node-html-parser';
-import { FORUM_LINK_CARD_TAG, hasRenderableHtmlContent } from '@/domain/forum/html';
+import { escapeHtmlAttribute, FORUM_LINK_CARD_TAG, hasRenderableHtmlContent } from '@/domain/forum/html';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { discoursePollPlaceholder, prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
 import {
@@ -9,10 +9,6 @@ import {
   normalizeDiscourseCallouts
 } from '@/sources/discourse/content';
 import { LINUXDO_BASE_URL } from './protocol';
-
-function escapeLinuxDoContentAttribute(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 function redditSourceUrl(value: unknown) {
   try {
@@ -47,7 +43,7 @@ function linuxDoContentTransform(html: unknown, polls: TopicPoll[] | undefined) 
         return;
       }
       node.replaceWith(
-        `<${FORUM_LINK_CARD_TAG} href="${escapeLinuxDoContentAttribute(href)}" site="Reddit" title="Reddit 帖子" description="在 Reddit 中查看原帖"></${FORUM_LINK_CARD_TAG}>`
+        `<${FORUM_LINK_CARD_TAG} href="${escapeHtmlAttribute(href)}" site="Reddit" title="Reddit 帖子" description="在 Reddit 中查看原帖"></${FORUM_LINK_CARD_TAG}>`
       );
     });
     if (normalizeCallouts) {

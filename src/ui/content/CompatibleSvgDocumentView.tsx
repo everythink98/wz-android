@@ -2,6 +2,7 @@ import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { CompatibleSvgArtifact } from '@/platform/media/compatibleImageSources';
+import { escapeHtmlAttribute } from '@/domain/forum/html';
 
 type CompatibleSvgDocumentViewProps = Readonly<{
   artifact: CompatibleSvgArtifact;
@@ -163,10 +164,6 @@ function isSvgDocumentDataUri(value: string) {
 function isLocalBootstrapDocumentUrl(value: string) {
   const url = String(value || '').trim();
   return /^about:blank$/i.test(url);
-}
-
-function escapeHtmlAttribute(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 const componentStyles = StyleSheet.create({

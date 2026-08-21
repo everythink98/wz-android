@@ -1,4 +1,4 @@
-import { sessionSources, sourceValues as registeredSources } from '@/domain/forum/sourceCatalog';
+import { isNodeSeekHost, sessionSources, sourceValues as registeredSources } from '@/domain/forum/sourceCatalog';
 
 export type DiagnosticArea =
   | 'app'
@@ -871,8 +871,7 @@ export function endpointClass(value: string, method?: string) {
     if (
       host === 'linux.do' ||
       host.endsWith('.linux.do') ||
-      host === 'nodeseek.com' ||
-      host.endsWith('.nodeseek.com') ||
+      isNodeSeekHost(host) ||
       host === 'v2ex.com' ||
       host.endsWith('.v2ex.com') ||
       host === 'yaohuo.me' ||

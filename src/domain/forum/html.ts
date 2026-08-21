@@ -85,6 +85,21 @@ export function decodeHtml(value: unknown) {
   });
 }
 
+export function escapeHtmlText(value: unknown) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+export function escapeHtmlAttribute(value: unknown) {
+  return escapeHtmlText(value).replace(/"/g, '&quot;');
+}
+
+export function escapeHtmlFully(value: unknown) {
+  return escapeHtmlAttribute(value).replace(/'/g, '&#39;');
+}
+
 export function escapeQuotedHtmlTagDelimiters(value: unknown) {
   let inTag = false;
   let quote = '';

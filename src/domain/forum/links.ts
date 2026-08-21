@@ -1,4 +1,5 @@
 import type { ReplyLocationTarget, Source, Topic, UserReference } from './models';
+import { isNodeSeekHost } from './sourceCatalog';
 
 const YAOHUO_CATEGORY_NAMES: Record<string, string> = {
   '177': '妖火茶馆',
@@ -64,7 +65,7 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
   }
   const host = url.hostname.toLowerCase();
   const pathname = url.pathname;
-  if (isForumHost(host, 'nodeseek.com')) {
+  if (isNodeSeekHost(host)) {
     const id = pathname.match(/^\/post-(\d+)-\d+(?:\/)?$/i)?.[1];
     return id ? internalTopic('nodeseek', id, 'NodeSeek 主题', `https://www.nodeseek.com/post-${id}-1`) : null;
   }
@@ -161,7 +162,7 @@ export function parseForumUserLink(
       return null;
     }
   }
-  if (isForumHost(url.hostname, 'nodeseek.com')) {
+  if (isNodeSeekHost(url.hostname)) {
     const id = url.pathname.match(/^\/space\/(\d+)\/?$/i)?.[1];
     if (id) {
       return { source: 'nodeseek', id, url: `https://www.nodeseek.com/space/${id}` };
