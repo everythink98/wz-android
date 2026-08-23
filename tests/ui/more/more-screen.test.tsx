@@ -13,16 +13,48 @@ let mockDragRunsOnJS = false;
 let mockDeferScheduleOnRN = false;
 let mockDeferredRNCalls: (() => unknown)[] = [];
 let mockSharedValues: { value: unknown }[] = [];
+let mockScreenReaderChangeListener: ((enabled: boolean) => void) | undefined;
+let mockScreenReaderInitialState: boolean | null | 'reject' = false;
 const mockScheduleOnRN = jest.fn((callback: (...args: unknown[]) => unknown, ...args: unknown[]) => callback(...args));
 const mockWithTiming = jest.fn((value: unknown) => value);
+const mockAccessibilitySubscriptionRemove = jest.fn();
+const mockIsScreenReaderEnabled = jest.fn(() => {
+  if (mockScreenReaderInitialState === null) return new Promise<boolean>(() => undefined);
+  if (mockScreenReaderInitialState === 'reject') return Promise.reject(new Error('AccessibilityInfo unavailable'));
+  return Promise.resolve(mockScreenReaderInitialState);
+});
+const mockAccessibilityAddEventListener = jest.fn((event: string, listener: (enabled: boolean) => void) => {
+  if (event === 'screenReaderChanged') mockScreenReaderChangeListener = listener;
+  return { remove: mockAccessibilitySubscriptionRemove };
+});
 
 beforeEach(() => {
   mockDragRunsOnJS = false;
   mockDeferScheduleOnRN = false;
   mockDeferredRNCalls = [];
   mockSharedValues = [];
+  mockScreenReaderChangeListener = undefined;
+  mockScreenReaderInitialState = false;
   mockScheduleOnRN.mockClear();
   mockWithTiming.mockClear();
+  mockAccessibilitySubscriptionRemove.mockClear();
+  mockIsScreenReaderEnabled.mockClear();
+  mockAccessibilityAddEventListener.mockClear();
+});
+
+jest.mock('react-native', () => {
+  const actual = jest.requireActual('react-native') as typeof import('react-native');
+  const accessibilityInfo = {
+    ...actual.AccessibilityInfo,
+    addEventListener: (event: string, listener: (enabled: boolean) => void) =>
+      mockAccessibilityAddEventListener(event, listener),
+    isScreenReaderEnabled: () => mockIsScreenReaderEnabled()
+  };
+  return new Proxy(actual, {
+    get(target, property, receiver) {
+      return property === 'AccessibilityInfo' ? accessibilityInfo : Reflect.get(target, property, receiver);
+    }
+  });
 });
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -62,8 +94,12 @@ jest.mock('react-native-gesture-handler', () => {
   return {
     Gesture: {
       Pan: () => ({
-        handlers: {} as Record<string, (...args: unknown[]) => void>,
+        handlers: {} as Record<string, unknown>,
         activateAfterLongPress() {
+          return this;
+        },
+        enabled(enabled = true) {
+          this.handlers.gestureEnabled = enabled;
           return this;
         },
         minDistance() {
@@ -100,7 +136,7 @@ jest.mock('react-native-gesture-handler', () => {
       gesture
     }: {
       children: React.ReactElement<Record<string, unknown>>;
-      gesture: { handlers?: Record<string, (...args: unknown[]) => void> };
+      gesture: { handlers?: Record<string, unknown> };
     }) => ReactModule.cloneElement(children, gesture.handlers || {}),
     ScrollView: require('react-native').ScrollView
   };
@@ -494,6 +530,7 @@ describe('More screen state and actions', () => {
       });
     }
     const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
+    expect(handle.props.gestureEnabled).toBe(true);
     await act(async () => {
       handle.props.onGestureStart({ translationY: 0 });
       for (let translationY = 1; translationY <= 20; translationY += 1) {
@@ -697,6 +734,235 @@ describe('More screen state and actions', () => {
       view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项').props.onGestureStart({ translationY: 0 })
     );
     expect(dragTranslation?.value).toBe(0);
+  });
+
+  it.each<[string, boolean | null | 'reject']>([
+    ['screen-reader discovery is pending', null],
+    ['screen-reader discovery fails', 'reject'],
+    ['screen reader is enabled', true]
+  ])('[REG-MORE-004] follows persisted preference order while %s', async (_case, screenReaderState) => {
+    mockScreenReaderInitialState = screenReaderState;
+    const updateSettings = jest.fn();
+    const reorderedContentSources = [
+      { source: 'linuxdo', enabled: true },
+      { source: 'nodeseek', enabled: true },
+      { source: 'yaohuo', enabled: true },
+      { source: 'v2ex', enabled: true }
+    ] as const;
+    const view = await render(
+      <MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} contentSourcesExpanded />
+    );
+    await act(async () => undefined);
+    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'].entries()) {
+      await fireEvent(view.getByTestId(`content-source-row-${source}`), 'layout', {
+        nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
+      });
+    }
+
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          utilities: {
+            settings: {
+              value: { ...readerData.settings, contentSources: [...reorderedContentSources] },
+              update: updateSettings
+            }
+          }
+        })}
+        contentSourcesExpanded
+      />
+    );
+
+    expect(
+      view
+        .getAllByRole('switch')
+        .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'))
+        .map((control) => control.props.accessibilityLabel)
+    ).toEqual(['linux.do 内容源开关', 'NodeSeek 内容源开关', '妖火 内容源开关', 'V2EX 内容源开关']);
+    expect(
+      view
+        .getAllByRole('button')
+        .filter((control) => String(control.props.accessibilityLabel).startsWith('拖动排序：'))
+        .map((control) => control.props.accessibilityLabel)
+    ).toEqual([
+      '拖动排序：linux.do，第 1 项，共 4 项',
+      '拖动排序：NodeSeek，第 2 项，共 4 项',
+      '拖动排序：妖火，第 3 项，共 4 项',
+      '拖动排序：V2EX，第 4 项，共 4 项'
+    ]);
+    expect(view.getByLabelText('拖动排序：linux.do，第 1 项，共 4 项').props.gestureEnabled).toBe(false);
+    for (const { source } of reorderedContentSources) {
+      expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).toHaveProperty(
+        'transform',
+        []
+      );
+    }
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('[REG-MORE-004] cancels an unfinished drag when screen-reader mode turns on', async () => {
+    mockScreenReaderInitialState = false;
+    const updateSettings = jest.fn();
+    const reorderedContentSources = [
+      { source: 'linuxdo', enabled: true },
+      { source: 'nodeseek', enabled: true },
+      { source: 'yaohuo', enabled: true },
+      { source: 'v2ex', enabled: true }
+    ] as const;
+    const view = await render(
+      <MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} contentSourcesExpanded />
+    );
+    await act(async () => undefined);
+    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'].entries()) {
+      await fireEvent(view.getByTestId(`content-source-row-${source}`), 'layout', {
+        nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
+      });
+    }
+    const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
+    await act(async () => {
+      handle.props.onGestureStart({ translationY: 0 });
+      handle.props.onGestureUpdate({ translationY: 112 });
+    });
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      mockScreenReaderInitialState = true;
+      mockScreenReaderChangeListener?.(true);
+    });
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          utilities: {
+            settings: {
+              value: { ...readerData.settings, contentSources: [...reorderedContentSources] },
+              update: updateSettings
+            }
+          }
+        })}
+        contentSourcesExpanded
+      />
+    );
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(
+      view
+        .getAllByRole('switch')
+        .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'))
+        .map((control) => control.props.accessibilityLabel)
+    ).toEqual(['linux.do 内容源开关', 'NodeSeek 内容源开关', '妖火 内容源开关', 'V2EX 内容源开关']);
+    expect(
+      view
+        .getAllByRole('button')
+        .filter((control) => String(control.props.accessibilityLabel).startsWith('拖动排序：'))
+        .map((control) => control.props.accessibilityLabel)
+    ).toEqual([
+      '拖动排序：linux.do，第 1 项，共 4 项',
+      '拖动排序：NodeSeek，第 2 项，共 4 项',
+      '拖动排序：妖火，第 3 项，共 4 项',
+      '拖动排序：V2EX，第 4 项，共 4 项'
+    ]);
+    for (const { source } of reorderedContentSources) {
+      expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).toHaveProperty(
+        'transform',
+        []
+      );
+    }
+
+    for (const [index, { source }] of reorderedContentSources.entries()) {
+      await fireEvent(view.getByTestId(`content-source-row-${source}`), 'layout', {
+        nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
+      });
+    }
+    const screenReaderHandle = view.getByLabelText('拖动排序：linux.do，第 1 项，共 4 项');
+    await act(async () => {
+      screenReaderHandle.props.onGestureStart({ translationY: 0 });
+      screenReaderHandle.props.onGestureUpdate({ translationY: 112 });
+      mockScreenReaderInitialState = false;
+      mockScreenReaderChangeListener?.(false);
+    });
+    await act(async () => screenReaderHandle.props.onGestureFinalize({}, true));
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(
+      view
+        .getAllByRole('switch')
+        .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'))
+        .map((control) => control.props.accessibilityLabel)
+    ).toEqual(['linux.do 内容源开关', 'NodeSeek 内容源开关', '妖火 内容源开关', 'V2EX 内容源开关']);
+    for (const { source } of reorderedContentSources) {
+      expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).toHaveProperty(
+        'transform',
+        []
+      );
+    }
+  });
+
+  it('[REG-MORE-004] ignores queued visual drag callbacks after screen-reader mode rotation', async () => {
+    mockScreenReaderInitialState = false;
+    const updateSettings = jest.fn();
+    const view = await render(
+      <MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} contentSourcesExpanded />
+    );
+    await act(async () => undefined);
+    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'].entries()) {
+      await fireEvent(view.getByTestId(`content-source-row-${source}`), 'layout', {
+        nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
+      });
+    }
+
+    const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
+    mockDeferScheduleOnRN = true;
+    await act(async () => {
+      handle.props.onGestureStart({ translationY: 0 });
+      handle.props.onGestureUpdate({ translationY: 112 });
+      handle.props.onGestureFinalize({}, true);
+    });
+    expect(mockDeferredRNCalls).toHaveLength(3);
+
+    await act(async () => {
+      mockScreenReaderChangeListener?.(true);
+      mockScreenReaderChangeListener?.(false);
+    });
+    mockDeferScheduleOnRN = false;
+    await act(async () => {
+      for (const run of mockDeferredRNCalls.splice(0)) run();
+    });
+
+    expect({
+      persistedChanges: updateSettings.mock.calls.length,
+      transforms: ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'].map(
+        (source) => StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style).transform
+      )
+    }).toEqual({ persistedChanges: 0, transforms: [[], [], [], []] });
+  });
+
+  it.each<[string, null | 'reject']>([
+    ['screen-reader discovery is pending', null],
+    ['screen-reader discovery fails', 'reject']
+  ])('[REG-MORE-004] keeps drag writes disabled while %s', async (_case, screenReaderState) => {
+    mockScreenReaderInitialState = screenReaderState;
+    const updateSettings = jest.fn();
+    const view = await render(
+      <MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} contentSourcesExpanded />
+    );
+    await act(async () => undefined);
+    for (const [index, source] of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'].entries()) {
+      await fireEvent(view.getByTestId(`content-source-row-${source}`), 'layout', {
+        nativeEvent: { layout: { height: 56, width: 300, x: 0, y: index * 56 } }
+      });
+    }
+
+    const handle = view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项');
+    await act(async () => {
+      handle.props.onGestureStart({ translationY: 0 });
+      handle.props.onGestureUpdate({ translationY: 112 });
+      handle.props.onGestureFinalize({}, true);
+    });
+
+    expect({
+      gestureEnabled: handle.props.gestureEnabled,
+      persistedChanges: updateSettings.mock.calls.length
+    }).toEqual({ gestureEnabled: false, persistedChanges: 0 });
   });
 
   it('[REG-NOTIFY-052] shows which More entry owns the unread badge', async () => {

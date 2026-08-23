@@ -22,10 +22,11 @@ index 06cd667..b6f0f68 100644
      // Both iOS and C++ sides expect to have "source" prop, whereas on Android it's "src"
      // (for historical reasons). So in the latter case we populate both "src" and "source",
      // in order to have a better alignment between platforms in the future.
-@@ -232,6 +238,14 @@ let BaseImage: AbstractImageAndroid = ({
+@@ -232,6 +238,15 @@ let BaseImage: AbstractImageAndroid = ({
                      resizeMode={resizeMode}
                      headers={nativeProps.headers}
                      src={sources}
++                    internal_analyticTag={nativeProps.internal_analyticTag}
 +                    shouldNotifyLoadEvents={
 +                      nativeProps.shouldNotifyLoadEvents
 +                    }
@@ -84,11 +85,290 @@ index 3bcdb39..3cbbbe1 100644
    validAttributes: {
      resizeMode: true,
      src: true,
-@@ -37,6 +56,7 @@ export const __INTERNAL_VIEW_CONFIG: PartialViewConfig = {
+@@ -37,6 +56,8 @@ export const __INTERNAL_VIEW_CONFIG: PartialViewConfig = {
        process: require('../StyleSheet/processColor').default,
      },
      headers: true,
++    internal_analyticTag: true,
 +    shouldNotifyLoadEvents: true,
    },
  };
  
+diff --git a/node_modules/react-native/ReactAndroid/build.gradle.kts b/node_modules/react-native/ReactAndroid/build.gradle.kts
+--- a/node_modules/react-native/ReactAndroid/build.gradle.kts
++++ b/node_modules/react-native/ReactAndroid/build.gradle.kts
+@@ -648,7 +648,7 @@ dependencies {
+ 
+   // It's up to the consumer to decide if hermes or other engines should be included or not.
+   // Therefore hermes-engine is a compileOnly dependencies.
+-  compileOnly(project(":packages:react-native:ReactAndroid:hermes-engine"))
++  compileOnly("com.facebook.react:hermes-android:${project.version}")
+ 
+   testImplementation(libs.junit)
+   testImplementation(libs.assertj)
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ImageLoadEvent.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ImageLoadEvent.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ImageLoadEvent.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ImageLoadEvent.kt
+@@ -26,5 +26,6 @@ private constructor(
+     private val total: Int = 0
+ ) : Event<ImageLoadEvent>(surfaceId, viewId) {
++  private var requestGeneration: String? = null
+   @IntDef(ON_ERROR, ON_LOAD, ON_LOAD_END, ON_LOAD_START, ON_PROGRESS)
+   @Retention(AnnotationRetention.SOURCE)
+   internal annotation class ImageEventType
+@@ -34,10 +35,13 @@ private constructor(
+   // Intentionally casting eventType because it is guaranteed to be a short
+   // enough to fit into short.
+   override fun getCoalescingKey(): Short = eventType.toShort()
+ 
++  override fun canCoalesce(): Boolean = requestGeneration == null
++
+   override fun getEventData(): WritableMap =
+       Arguments.createMap().apply {
++        requestGeneration?.let { putString("requestGeneration", it) }
+         when (eventType) {
+           ON_PROGRESS -> {
+             putInt("loaded", loaded)
+             putInt("total", total)
+@@ -51,8 +55,12 @@ private constructor(
+   private fun createEventDataSource(): WritableMap =
+       Arguments.createMap().apply {
+         putString("uri", sourceUri)
+         putDouble("width", width.toDouble())
+         putDouble("height", height.toDouble())
+       }
+ 
++  public fun withRequestGeneration(requestGeneration: String?): ImageLoadEvent = apply {
++    this.requestGeneration = requestGeneration
++  }
++
+   public companion object {
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt
+@@ -117,6 +117,7 @@ public constructor(
+   @Suppress("FunctionName")
+   @ReactProp(name = "internal_analyticTag")
+   public fun setInternal_AnalyticsTag(view: ReactImageView, analyticTag: String?) {
++    view.setRequestGeneration(analyticTag?.takeIf { it.startsWith("wz-inline-attempt-") })
+     if (callerContextFactory != null) {
+       view.updateCallerContext(
+           callerContextFactory.getOrCreateCallerContext(
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageView.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageView.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageView.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageView.kt
+@@ -76,6 +76,9 @@ import com.facebook.react.views.imagehelper.MultiSourceHelper.getBestSourceForS
+ import com.facebook.react.views.imagehelper.ResourceDrawableIdHelper
+ import kotlin.math.abs
+ 
++private abstract class RequestBoundImageDownloadListener(public val requestGeneration: String?) :
++    ReactImageDownloadListener<ImageInfo>()
++
+ /**
+  * Wrapper class around Fresco's GenericDraweeView, enabling persisting props across multiple view
+  * update and consistent processing of both static and network images.
+@@ -102,8 +105,10 @@ public class ReactImageView(
+-  private var downloadListener: ReactImageDownloadListener<ImageInfo>? = null
++  private var downloadListener: RequestBoundImageDownloadListener? = null
+   private var controllerForTesting: ControllerListener<ImageInfo>? = null
+   private var fadeDurationMs = -1
++  private var shouldNotifyLoadEvents = false
+   private var progressiveRenderingEnabled = false
+   private var headers: ReadableMap? = null
++  private var requestGeneration: String? = null
+   private var resizeMultiplier = 1.0f
+   private var resizeMethod = ImageResizeMethod.AUTO
+ 
+@@ -116,74 +121,25 @@ public class ReactImageView(
+   public fun updateCallerContext(callerContext: Any?) {
+     if (this.callerContext != callerContext) {
+       this.callerContext = callerContext
+       isDirty = true
+     }
+   }
+ 
++  public fun setRequestGeneration(requestGeneration: String?) {
++    if (this.requestGeneration != requestGeneration) {
++      this.requestGeneration = requestGeneration
++      isDirty = true
++    }
++  }
++
+   public fun setShouldNotifyLoadEvents(shouldNotify: Boolean) {
+-    // Skip update if shouldNotify is already in sync with the download listener
+-    if (shouldNotify == (downloadListener != null)) {
++    if (shouldNotify == shouldNotifyLoadEvents) {
+       return
+     }
+ 
++    shouldNotifyLoadEvents = shouldNotify
+     if (!shouldNotify) {
+       downloadListener = null
+-    } else {
+-      val eventDispatcher =
+-          UIManagerHelper.getEventDispatcherForReactTag((context as ReactContext), id)
+-
+-      downloadListener =
+-          object : ReactImageDownloadListener<ImageInfo>() {
+-            override fun onProgressChange(loaded: Int, total: Int) {
+-              // TODO: Somehow get image size and convert `loaded` and `total` to image bytes.
+-              if (eventDispatcher == null || imageSource == null) {
+-                return
+-              }
+-              // TODO: Somehow get image size and convert `loaded` and `total` to image bytes.
+-              eventDispatcher.dispatchEvent(
+-                  createProgressEvent(
+-                      UIManagerHelper.getSurfaceId(this@ReactImageView),
+-                      id,
+-                      imageSource?.source,
+-                      loaded,
+-                      total))
+-            }
+-
+-            override fun onSubmit(id: String, callerContext: Any?) {
+-              if (eventDispatcher == null) {
+-                return
+-              }
+-              eventDispatcher.dispatchEvent(
+-                  createLoadStartEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId()))
+-            }
+-
+-            override fun onFinalImageSet(
+-                id: String,
+-                imageInfo: ImageInfo?,
+-                animatable: Animatable?
+-            ) {
+-              if (imageInfo != null && imageSource != null && eventDispatcher != null) {
+-                eventDispatcher.dispatchEvent(
+-                    createLoadEvent(
+-                        UIManagerHelper.getSurfaceId(this@ReactImageView),
+-                        getId(),
+-                        imageSource?.source,
+-                        imageInfo.width,
+-                        imageInfo.height))
+-                eventDispatcher.dispatchEvent(
+-                    createLoadEndEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId()))
+-              }
+-            }
+-
+-            override fun onFailure(id: String, throwable: Throwable) {
+-              if (eventDispatcher == null) {
+-                return
+-              }
+-              eventDispatcher.dispatchEvent(
+-                  createErrorEvent(
+-                      UIManagerHelper.getSurfaceId(this@ReactImageView), getId(), throwable))
+-            }
+-          }
+     }
+     isDirty = true
+   }
+@@ -363,13 +319,16 @@ public class ReactImageView(
+   public override fun onDraw(canvas: Canvas) {
+     BackgroundStyleApplicator.clipToPaddingBox(this, canvas)
+     try {
+       super.onDraw(canvas)
+     } catch (e: RuntimeException) {
+       // Only provide updates if downloadListener is set (shouldNotify is true)
+-      if (downloadListener != null) {
++      val requestDownloadListener = downloadListener
++      if (requestDownloadListener != null) {
+         val eventDispatcher =
+             UIManagerHelper.getEventDispatcherForReactTag(context as ReactContext, id)
+-        eventDispatcher?.dispatchEvent(createErrorEvent(UIManagerHelper.getSurfaceId(this), id, e))
++        eventDispatcher?.dispatchEvent(
++            createErrorEvent(UIManagerHelper.getSurfaceId(this), id, e)
++                .withRequestGeneration(requestDownloadListener.requestGeneration))
+       }
+     }
+   }
+@@ -437,6 +396,65 @@ public class ReactImageView(
+     val uri = imageSource.uri
+     val cacheControl = imageSource.cacheControl
+     val requestLevel = computeRequestLevel(cacheControl)
++    val requestSource = imageSource.source
++    val requestGeneration = this.requestGeneration
++    val eventDispatcher =
++        UIManagerHelper.getEventDispatcherForReactTag((context as ReactContext), id)
++    val requestDownloadListener =
++        if (!shouldNotifyLoadEvents) {
++          null
++        } else {
++          object : RequestBoundImageDownloadListener(requestGeneration) {
++            override fun onProgressChange(loaded: Int, total: Int) {
++              if (eventDispatcher == null) return
++              // TODO: Somehow get image size and convert `loaded` and `total` to image bytes.
++              eventDispatcher.dispatchEvent(
++                  createProgressEvent(
++                          UIManagerHelper.getSurfaceId(this@ReactImageView),
++                          id,
++                          requestSource,
++                          loaded,
++                          total)
++                      .withRequestGeneration(requestGeneration))
++            }
++
++            override fun onSubmit(id: String, callerContext: Any?) {
++              if (eventDispatcher == null) return
++              eventDispatcher.dispatchEvent(
++                  createLoadStartEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId())
++                      .withRequestGeneration(requestGeneration))
++            }
++
++            override fun onFinalImageSet(
++                id: String,
++                imageInfo: ImageInfo?,
++                animatable: Animatable?
++            ) {
++              if (imageInfo != null && eventDispatcher != null) {
++                eventDispatcher.dispatchEvent(
++                    createLoadEvent(
++                            UIManagerHelper.getSurfaceId(this@ReactImageView),
++                            getId(),
++                            requestSource,
++                            imageInfo.width,
++                            imageInfo.height)
++                        .withRequestGeneration(requestGeneration))
++                eventDispatcher.dispatchEvent(
++                    createLoadEndEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId())
++                        .withRequestGeneration(requestGeneration))
++              }
++            }
++
++            override fun onFailure(id: String, throwable: Throwable) {
++              if (eventDispatcher == null) return
++              eventDispatcher.dispatchEvent(
++                  createErrorEvent(
++                          UIManagerHelper.getSurfaceId(this@ReactImageView), getId(), throwable)
++                      .withRequestGeneration(requestGeneration))
++            }
++          }
++        }
++    downloadListener = requestDownloadListener
+ 
+     val postprocessorList = mutableListOf<Postprocessor>()
+     iterativeBoxBlurPostProcessor?.let { postprocessorList.add(it) }
+@@ -497,17 +515,17 @@ public class ReactImageView(
+-    if (downloadListener != null && controllerForTesting != null) {
++    if (requestDownloadListener != null && controllerForTesting != null) {
+       val combinedListener: ForwardingControllerListener<ImageInfo> =
+           ForwardingControllerListener<ImageInfo>()
+-      combinedListener.addListener(downloadListener)
++      combinedListener.addListener(requestDownloadListener)
+       combinedListener.addListener(controllerForTesting)
+       builder.setControllerListener(combinedListener)
+     } else if (controllerForTesting != null) {
+       builder.setControllerListener(controllerForTesting)
+-    } else if (downloadListener != null) {
+-      builder.setControllerListener(downloadListener)
++    } else if (requestDownloadListener != null) {
++      builder.setControllerListener(requestDownloadListener)
+     }
+ 
+-    if (downloadListener != null) {
+-      hierarchy.setProgressBarImage(downloadListener)
++    if (requestDownloadListener != null) {
++      hierarchy.setProgressBarImage(requestDownloadListener)
+     }
+ 
+     controller = builder.build()

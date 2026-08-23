@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Linking } from 'react-native';
-import type { Topic } from '@/domain/forum/models';
 import { parseInternalTopicOpenLink } from '@/domain/forum/links';
+import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { pushTopicRoute } from './appNavigation';
 
 export function useAppDeepLinkNavigation(
   linking: Pick<typeof Linking, 'addEventListener' | 'getInitialURL'> = Linking,
   pushTopic: typeof pushTopicRoute = pushTopicRoute
 ) {
-  const pendingTopicRef = useRef<Topic | null>(null);
+  const pendingDestinationRef = useRef<RootStackParamList['Topic'] | null>(null);
   const openUrl = useCallback(
     (url: string | null) => {
-      const topic = url ? parseInternalTopicOpenLink(url) : null;
-      if (!topic) return;
-      if (!pushTopic(topic)) pendingTopicRef.current = topic;
+      const destination = url ? parseInternalTopicOpenLink(url) : null;
+      if (!destination) return;
+      if (!pushTopic(destination)) pendingDestinationRef.current = destination;
     },
     [pushTopic]
   );
@@ -35,9 +35,9 @@ export function useAppDeepLinkNavigation(
   }, [linking, openUrl]);
 
   return useCallback(() => {
-    const topic = pendingTopicRef.current;
-    if (!topic) return;
-    pendingTopicRef.current = null;
-    pushTopic(topic);
+    const destination = pendingDestinationRef.current;
+    if (!destination) return;
+    pendingDestinationRef.current = null;
+    pushTopic(destination);
   }, [pushTopic]);
 }

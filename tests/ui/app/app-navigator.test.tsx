@@ -249,6 +249,19 @@ describe('App navigator UI state', () => {
     expect(settingsHeader?.props.hideShadow).toBe(true);
   });
 
+  it('[REG-NAV-003] preserves the complete destination when pushing a Topic route', async () => {
+    await renderNavigator();
+    const destination: RootStackParamList['Topic'] = {
+      targetReply: { floor: 155, pageHint: 16 },
+      topic: topicA
+    };
+    await act(async () => {
+      expect(pushTopicRoute(destination)).toBe(true);
+    });
+
+    await waitFor(() => expect(navigationRef.getCurrentRoute()).toMatchObject({ name: 'Topic', params: destination }));
+  });
+
   it('[REG-PERF-015] mounts only the active tab initially and preserves a visited tab instance', async () => {
     const view = await renderNavigator();
 
@@ -282,7 +295,7 @@ describe('App navigator UI state', () => {
     expect(view.getByLabelText('更多，有可用更新')).toBeTruthy();
 
     await act(async () => {
-      expect(pushTopicRoute(topicA)).toBe(true);
+      expect(pushTopicRoute({ topic: topicA })).toBe(true);
     });
     await waitFor(() => expect(view.getByText('Topic A')).toBeTruthy());
     await fireEvent.changeText(view.getByLabelText('A草稿'), 'draft-a');
@@ -352,7 +365,7 @@ describe('App navigator UI state', () => {
     });
 
     await act(async () => {
-      expect(pushTopicRoute(topicB)).toBe(true);
+      expect(pushTopicRoute({ topic: topicB })).toBe(true);
     });
 
     await waitFor(() => {

@@ -117,6 +117,22 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain("'android.enableShrinkResourcesInReleaseBuilds': 'true'");
   });
 
+  it('[REG-TOPIC-121] packages the patched React Android implementation from source', () => {
+    const plugin = readProjectFile('plugins', 'withAndroidReleaseDefaults.js');
+    const reactNativePatch = readProjectFile('patches', 'react-native+0.81.5.patch');
+
+    expect(plugin).toContain('withSettingsGradle');
+    expect(plugin).toContain('CodeGenerator.mergeContents');
+    expect(plugin).toContain("tag: 'wz-react-native-source-build'");
+    expect(plugin).toContain("includeBuild('../node_modules/react-native')");
+    for (const coordinate of ['com.facebook.react:react-android', 'com.facebook.react:react-native']) {
+      expect(plugin).toContain(coordinate);
+    }
+    expect(plugin).toContain(':packages:react-native:ReactAndroid');
+    expect(plugin).not.toContain(':packages:react-native:ReactAndroid:hermes-engine');
+    expect(reactNativePatch).toContain('compileOnly("com.facebook.react:hermes-android:${project.version}")');
+  });
+
   it('[REG-NOTIFY-024] generates the exact Android digest presentation bridge', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const plugin = readProjectFile('plugins', 'withNotificationDigestModule.js');

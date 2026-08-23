@@ -96,6 +96,12 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - 视觉 oracle：恢复首页后对比修复前后底栏截图，底栏高度、外层留白、安全区、四个图标与文字的位置/尺寸/颜色、选中态及 More 红点保持一致；只允许按钮 accessibility bounds 扩展。
 - 结束：恢复首页，确认 `firstInstallTime` 未变化且无 crash、ANR、RedBox 或意外 PID 重启；本场景不发搜索、不打开动态内容、不执行任何本机或远端写操作。坐标步骤不得录成 `.ad`。
 
+### LIVE-NAV-02 四站内部楼层 deep link
+
+- 能力：`NAV-02/03`；共享 `TOPIC-03`、`REG-NAV-003`。只使用当前仍存在且无需写入的四站楼层 URL；每站先在 warm App 发送一次 `exp+wz-android://open-topic?url=<encoded>`，再 force-stop App 后从 process-cold 发送同一链接。force-stop 不清数据、不改登录态。
+- oracle：两种启动态都只 push 一层 Topic，进入正确来源与主题并定位目标楼层；Android Back 一次回到原页面或 Launcher。NodeSeek 的 hash、linux.do 的 path、V2EX `#replyN`、妖火 `tofloor` 分别报告；目标被删、权限不足或公网不可达时仅该站记 `NOT_VERIFIED/BLOCKED_BY_ENV`，不得搜索相似帖子替代。
+- 全程不发送回复、不打开未读消息、不清 App 数据/Cookie/登录态；普通无楼层 Topic URL另作负向控制，必须进入主题但不产生伪目标高亮。
+
 ## 动态读取与返回
 
 ### LIVE-READ-01 四站 Feed 与 Topic
@@ -142,6 +148,8 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - linux.do 直达 `https://linux.do/t/topic/2556285`：通过“更多”进入原站对照第 9 层，确认 reply target 位于正文前，52 行代码完整有序且视觉上只有一个连续代码框。对代码执行慢速纯横拖、快速 fling、反向拖动及代码区域纵拖；横向位置必须稳定变化，纵拖只滚动主题且 x 不漂，静止长按仍可原生选择。停在“对比一下5.5”及各张长图进入/离开边界分别无触摸观察 60 秒，目标文字可见性转换必须为 0，普通 scroll settle 能结束；滚过主楼前三张长图和一张回复长图，已显示像素、比例和高度稳定，不出现“显示 → 空白 → 再显示”或请求波。滚离再返回、打开图片预览再返回后位置和高度保持；按要求 `adb am force-stop com.wz.reader` 后重启并重新进入，再重复第 9 层与长图边界核对。
 - NodeSeek 直达 `https://www.nodeseek.com/post-812712-1`：逐个切换“💻基本信息 / 🎬IP质量 / 🌐网络质量 / 📍回程路由”，每个 Tab 的首末内容、ANSI 前景/背景色、图片与 report 外项目链接均存在；长图 Tab 首次显示后切到 code Tab，等待 viewability 结算但不滚动，再切回长图两轮，像素必须直接恢复且不得停在 `topic-image-idle`。在可见 terminal code 上录屏执行 `240px / 5s` 慢横拖、快速/反向/斜向/纵向拖动和途中加指；慢横拖必须移动代码且 UI hierarchy/逐帧画面均无放大镜、selection handles 或 `Copy / Share / Select all / Translate` ActionMode，纵拖只滚动主题，途中加指不继续改 x。静止长按作为正向控制必须出现原生选择，第一次 Back 只关闭选择并留在 Topic；干净横拖后第一次 Back 必须正常返回。复制得到当前完整 code owner，长行出现原生横向滚动条且切换/滚离/返回后 offset 与 active tab 不跳。组合评论查找把目标回复隐藏再恢复，并从详情内嵌套页面 Back，当前 route 的 active tab 必须保持；切到另一 Topic 后相同 semantic path 必须回到首 Tab。agent-device 的坐标 pan 只用于本监督式 Live，不保存为 tracked Replay；原站动态内容不匹配固定 fixture 时记录实际 tab/标题并记 `NOT_VERIFIED`，不得换相似帖子冒充。
 - NodeSeek 直达 `https://www.nodeseek.com/post-863650-1`：确认海量图片正文仍按每 row `<=4` 的父 FlashList typed rows 有界挂载，可正常滚动和返回；同一 PID 连续两轮执行相同滚动后，warm `<=8`、running `<=4`、原图 `<=1`，mounted media 与 PSS 不得持续增长，不得出现 ANR、OOM、Fatal 或 PID 意外重启。
+- `REG-TOPIC-120/122`：只读直达 `https://www.nodeseek.com/post-889473-1`，定位第 12 楼“哼”；在 header 可见、未滚动的冷折叠态只展开一次，图片必须自行显示。随后收起/重开，并在同页主楼、回复或展开引用中核对普通块图上下间距与相邻文字节奏没有被放大；动态内容已改变时分别记 `NOT_VERIFIED`，不换相似帖子。
+- `REG-TOPIC-121`：在 linux.do `t/topic/342888` 或同一场景的现存 inline 媒体上记录首次准入、短距离滚离/返回和跨 Tab/引用展开；普通 permit wave 不得让已见图片退回空白，旧事件不得造成错误成功/失败或 fatal。自然 error/retry 不出现时该设备分支记 `NOT_VERIFIED`，不得改 URL、清缓存或断网制造失败。
 - 全程只读，不回复、不互动、不保存图片；每轮确认无 ANR、OOM、Fatal 或非预期 PID 重启，脱敏媒体诊断保持未完成 warm `<=8`、running `<=4`、原图 `<=1`。记录 mounted media 与 PSS，连续两轮相同滚动后不得持续增长。动态内容变化只影响数据轴；固定数量由自动测试承担，不创建依赖远端数量的 tracked Replay。
 
 ### LIVE-READ-08 千图预览 ready catalog 与点击延迟
@@ -207,6 +215,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - 能力：`MORE-05`；共享 `FEED-01/02/04`、`SEARCH-01..04`、`LIBRARY-01..03`、`ACCOUNT-01/02`、`NOTIFY-01..03`、`NAV-01/02`、`DATA-01..03`。
 - 先只读记录 `firstInstallTime`、四站精确顺序与开关状态，以及 Feed、Search、Library、Account、Notifications 当前投影。选择相邻两站，用排序手柄完成一次语义化长按拖拽；按各入口支持的来源子集核对相对顺序后立即做反向拖拽，并重新进入 More 确认恢复。普通滚动和开关不得触发排序。
 - 重排前先在 Feed 选中一个非 `全部` 来源；重排后返回 Feed，必须按最新顺序从 `全部` 开始，并最终显示列表或明确错误，不能永久 Loading。反向重排后再验证一次回到 `全部`。拖动同时覆盖慢速跟随、快速跨槽、首尾边界和取消；活动行应跟手，兄弟行只在跨槽时预览。另以 raw 高质量录屏逐帧检查抬手窗口，拖动态到最终顺序之间不得回弹、重叠、闪空白或重复文字。
+- `REG-MORE-004` 只在独立验证 AVD 执行：记录原顺序并开启 TalkBack，重排后用读屏焦点逐项记录来源与“第 N 项”，遍历必须与视觉顺序一致；再执行手柄上移/下移，焦点连续且只持久化一次。关闭 TalkBack并重启 App 后，普通视觉模式再做一次正反拖动。最终恢复原顺序；主 AVD 的 TalkBack/无障碍设置不得改变。ADB Tab/UI hierarchy 可证明 traversal 与 Native order，不能冒充真实用户主观语音体验。
 - 记录妖火初始状态；若初始停用，先启用并等待一次账号结算作为前置。随后只停用一次，重启并做一次前后台往返；Feed、Search、Library、Account、Notifications 不得再显示妖火，旧 Topic/User/Notification 入口必须 fail-closed 到明确管理或错误状态。只有当前会话确实捕获到 host 级请求时才判定妖火请求为零；没有网络事件的日志不能冒充零请求，网络轴记 `NOT_VERIFIED`，由既有 Gateway、Query、Account 和 worker 确定性测试承担自动 oracle。
 - 最后恢复妖火原始开关和四站原始顺序，重启后逐项复读，并确认 `firstInstallTime` 未变化。任一恢复步骤失败立即停止后续 App/AVD 变更并报告残留；不得卸载、清数据、清 Cookie、退出账号或用默认顺序覆盖用户设置。
 - oracle：排序和开关持久化，五入口投影一致，恢复后与初始记录逐项相同。应用流程、网络轴和恢复结果分别报告，不得用 UI 隐藏推断零请求。

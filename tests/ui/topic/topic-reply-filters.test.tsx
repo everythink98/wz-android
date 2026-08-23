@@ -158,18 +158,30 @@ jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return {
     BookMarked: Icon,
+    Bug: Icon,
+    Check: Icon,
     CheckCircle: Icon,
     ChevronDown: Icon,
     ChevronLeft: Icon,
     ChevronRight: Icon,
     ChevronUp: Icon,
+    CircleCheck: Icon,
+    CircleHelp: Icon,
+    ClipboardList: Icon,
     Copy: Icon,
     Drumstick: Icon,
+    Flame: Icon,
+    Lightbulb: Icon,
+    List: Icon,
     MoreHorizontal: Icon,
+    Quote: Icon,
+    SquarePen: Icon,
     Star: Icon,
     ThumbsDown: Icon,
     ThumbsUp: Icon,
-    X: Icon
+    TriangleAlert: Icon,
+    X: Icon,
+    Zap: Icon
   };
 });
 
@@ -555,6 +567,7 @@ function TopicFilterHarness({
   loadingMoreReplies = false,
   loadingPreviousReplies = false,
   loadingQuotedFloors = {},
+  mediaSessionIdentity,
   onLocateReply = jest.fn(async () => 'completed'),
   onLoadMoreReplies = jest.fn(),
   onLoadPreviousReplies = jest.fn(),
@@ -599,6 +612,7 @@ function TopicFilterHarness({
   loadingMoreReplies?: boolean;
   loadingPreviousReplies?: boolean;
   loadingQuotedFloors?: Record<string, boolean>;
+  mediaSessionIdentity?: string;
   onLoadMoreReplies?: (options?: { silent?: boolean }) => void;
   onLoadPreviousReplies?: (options?: { silent?: boolean }) => void;
   onInteract?: (type: InteractionType, commentId?: number) => void;
@@ -643,6 +657,7 @@ function TopicFilterHarness({
     [prepareContent, topicDetail]
   );
   const contentSource = preparedTopicDetail?.source || selectedTopic?.source || 'v2ex';
+  const effectiveMediaSessionIdentity = mediaSessionIdentity || `${preparedTopicDetail?.source || 'public'}:0`;
   const preparedTopicReplies = React.useMemo(
     () => (prepareContent ? topicReplies.map((reply) => prepareReplyContent(reply, contentSource)) : topicReplies),
     [contentSource, prepareContent, topicReplies]
@@ -780,9 +795,9 @@ function TopicFilterHarness({
               inlineSizedImageUrls: {},
               mediaContext: {
                 contentSource: preparedTopicDetail?.source || null,
-                sessionIdentity: `${preparedTopicDetail?.source || 'public'}:0`
+                sessionIdentity: effectiveMediaSessionIdentity
               },
-              mediaSessionIdentity: `${preparedTopicDetail?.source || 'public'}:0`,
+              mediaSessionIdentity: effectiveMediaSessionIdentity,
               topicImageDeriver
             } as ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string }
           }
@@ -1170,6 +1185,554 @@ describe('Topic reply filters', () => {
 
     await fireEvent.press(view.getByRole('tab', { name: 'Long image' }));
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+  });
+
+  it('[REG-TOPIC-120] admits an image on the first details expansion without waiting for a scroll', async () => {
+    const detailsReply: Reply = {
+      author: '80hou',
+      commentId: 88947312,
+      contentHtml:
+        '<details><summary>哼</summary><p>' +
+        '<img src="https://img.example.com/floor-12.png" width="630" height="840"></p></details>',
+      createdAt: '2026-08-23T07:17:00.000Z',
+      floor: 12
+    };
+    const detailsTopic: TopicDetail = {
+      ...topic,
+      contentHtml: '<p>opening body</p>',
+      id: '889473',
+      replies: [detailsReply],
+      replyCount: 1,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-889473-1'
+    };
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(
+      <TopicFilterHarness selectedTopic={detailsTopic} topicDetail={detailsTopic} topicReplies={[detailsReply]} />
+    );
+    const collapsedItems = lastFlashListProps.data as TopicListItem[];
+    const headerItem = collapsedItems.find(
+      (item) => item.type === 'replyContent' && item.content.type === 'disclosureHeader'
+    );
+    if (!headerItem) throw new Error('details header missing');
+    expect(collapsedItems.some((item) => item.type === 'replyContent' && item.content.networkMediaCount === 1)).toBe(
+      false
+    );
+
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [
+          {
+            index: collapsedItems.indexOf(headerItem),
+            isViewable: true,
+            item: headerItem
+          }
+        ]
+      })
+    );
+    await fireEvent.press(view.getByRole('button', { name: '哼' }));
+
+    const expandedItems = lastFlashListProps.data as TopicListItem[];
+    const imageItem = expandedItems.find(
+      (item) => item.type === 'replyContent' && item.content.networkMediaCount === 1
+    );
+    if (!imageItem) throw new Error('expanded image row missing');
+    expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+  });
+
+  it('[REG-TOPIC-120] admits a signature image on first expansion without a viewport callback', async () => {
+    const signatureReply: Reply = {
+      author: 'signature-author',
+      commentId: 88947314,
+      contentHtml: '<p>reply body</p>',
+      createdAt: '2026-08-23T07:19:00.000Z',
+      floor: 14,
+      signatureHtml:
+        '<details><summary>Signature media</summary><p><img src="https://img.example.com/signature.png"></p></details>'
+    };
+    const signatureTopic: TopicDetail = {
+      ...topic,
+      contentHtml: '<p>opening body</p>',
+      id: 'signature-first-expansion',
+      replies: [signatureReply],
+      replyCount: 1,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/signature-first-expansion'
+    };
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(
+      <TopicFilterHarness selectedTopic={signatureTopic} topicDetail={signatureTopic} topicReplies={[signatureReply]} />
+    );
+    const collapsedItems = lastFlashListProps.data as TopicListItem[];
+    const headerItem = collapsedItems.find(
+      (item) => item.type === 'replySignatureContent' && item.content.type === 'disclosureHeader'
+    );
+    if (!headerItem) throw new Error('signature details header missing');
+
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [{ index: collapsedItems.indexOf(headerItem), isViewable: true, item: headerItem }]
+      })
+    );
+    await fireEvent.press(view.getByRole('button', { name: 'Signature media' }));
+
+    const imageItem = (lastFlashListProps.data as TopicListItem[]).find(
+      (item) => item.type === 'replySignatureContent' && item.content.networkMediaCount === 1
+    );
+    if (!imageItem) throw new Error('signature image row missing');
+    expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+  });
+
+  it('[REG-TOPIC-120] keeps exact-region media rows stable across unrelated insert and reply reorder', async () => {
+    const detailsReply: Reply = {
+      author: '80hou',
+      commentId: 88947312,
+      contentHtml: '<details><summary>哼</summary><p>collapsed body</p></details>',
+      createdAt: '2026-08-23T07:17:00.000Z',
+      floor: 12
+    };
+    const initialTopic: TopicDetail = {
+      ...topic,
+      contentHtml: '<p>opening body</p>',
+      id: '889473-stable-media-window',
+      replies: [detailsReply],
+      replyCount: 1,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-889473-1'
+    };
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(
+      <TopicFilterHarness selectedTopic={initialTopic} topicDetail={initialTopic} topicReplies={[detailsReply]} />
+    );
+    const initialItems = lastFlashListProps.data as TopicListItem[];
+    const headerItem = initialItems.find(
+      (item) => item.type === 'replyContent' && item.content.type === 'disclosureHeader'
+    );
+    if (!headerItem) throw new Error('details header missing');
+    const initialHeaderIndex = initialItems.indexOf(headerItem);
+
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [{ index: initialHeaderIndex, isViewable: true, item: headerItem }]
+      })
+    );
+    const stableRowKeys = [...mockBodyMediaViewportRowKeys];
+    expect(stableRowKeys).toContain(headerItem.key);
+
+    const insertedReply: Reply = {
+      author: 'earlier',
+      commentId: 88947311,
+      contentHtml: '<p>ordinary inserted reply</p>',
+      createdAt: '2026-08-23T07:16:00.000Z',
+      floor: 11
+    };
+    const updatedTopic = { ...initialTopic, replies: [insertedReply, detailsReply], replyCount: 2 };
+    await view.rerender(
+      <TopicFilterHarness
+        selectedTopic={updatedTopic}
+        topicDetail={updatedTopic}
+        topicReplies={[insertedReply, detailsReply]}
+      />
+    );
+
+    const updatedItems = lastFlashListProps.data as TopicListItem[];
+    const updatedHeaderIndex = updatedItems.findIndex((item) => item.key === headerItem.key);
+    expect(updatedHeaderIndex).toBeGreaterThan(initialHeaderIndex);
+    expect(mockBodyMediaViewportRowKeys).toEqual(stableRowKeys);
+
+    await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+    await fireEvent.press(view.getByLabelText('倒序'));
+    const reorderedTopic = { ...updatedTopic, replies: [detailsReply, insertedReply] };
+    await view.rerender(
+      <TopicFilterHarness
+        selectedTopic={reorderedTopic}
+        topicDetail={reorderedTopic}
+        topicReplies={[detailsReply, insertedReply]}
+      />
+    );
+
+    expect((lastFlashListProps.data as TopicListItem[]).findIndex((item) => item.key === headerItem.key)).toBeLessThan(
+      updatedHeaderIndex
+    );
+    expect(mockBodyMediaViewportRowKeys).toEqual(stableRowKeys);
+  });
+
+  it('[REG-TOPIC-120] admits an opening callout image on the first expansion', async () => {
+    const calloutTopic: TopicDetail = {
+      ...topic,
+      contentHtml:
+        '<blockquote data-forum-callout="true" data-forum-callout-type="warning" data-forum-callout-fold="collapsed">' +
+        '<div class="forum-callout-title">Warning</div>' +
+        '<div class="forum-callout-content"><p><img src="https://img.example.com/callout.png"></p></div>' +
+        '</blockquote>',
+      id: 'callout-first-expansion',
+      replies: [],
+      replyCount: 0,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/callout-first-expansion'
+    };
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(
+      <TopicFilterHarness selectedTopic={calloutTopic} topicDetail={calloutTopic} topicReplies={[]} />
+    );
+    const collapsedItems = lastFlashListProps.data as TopicListItem[];
+    const headerItem = collapsedItems.find(
+      (item) =>
+        item.type === 'topicContent' && item.content.type === 'content' && item.content.row.type === 'disclosureHeader'
+    );
+    if (!headerItem) throw new Error('callout header missing');
+
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [{ index: collapsedItems.indexOf(headerItem), isViewable: true, item: headerItem }]
+      })
+    );
+    await fireEvent.press(view.getByRole('button', { name: 'Warning' }));
+
+    const imageItem = (lastFlashListProps.data as TopicListItem[]).find(
+      (item) =>
+        item.type === 'topicContent' && item.content.type === 'content' && item.content.row.networkMediaCount === 1
+    );
+    if (!imageItem) throw new Error('callout image row missing');
+    expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+  });
+
+  it('[REG-TOPIC-120] admits a nested details image only after its visible inner header expands', async () => {
+    const nestedReply: Reply = {
+      author: 'nested-author',
+      commentId: 88947313,
+      contentHtml:
+        '<details><summary>Outer</summary><details><summary>Inner</summary>' +
+        '<p><img src="https://img.example.com/nested.png"></p></details></details>',
+      createdAt: '2026-08-23T07:18:00.000Z',
+      floor: 13
+    };
+    const nestedTopic: TopicDetail = {
+      ...topic,
+      contentHtml: '<p>opening body</p>',
+      id: 'nested-first-expansion',
+      replies: [nestedReply],
+      replyCount: 1,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-nested-first-expansion-1'
+    };
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(
+      <TopicFilterHarness selectedTopic={nestedTopic} topicDetail={nestedTopic} topicReplies={[nestedReply]} />
+    );
+    const collapsedItems = lastFlashListProps.data as TopicListItem[];
+    const outerHeader = collapsedItems.find(
+      (item) =>
+        item.type === 'replyContent' && item.content.type === 'disclosureHeader' && item.content.titleLabel === 'Outer'
+    );
+    if (!outerHeader) throw new Error('outer details header missing');
+
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [{ index: collapsedItems.indexOf(outerHeader), isViewable: true, item: outerHeader }]
+      })
+    );
+    await fireEvent.press(view.getByRole('button', { name: 'Outer' }));
+
+    const outerExpandedItems = lastFlashListProps.data as TopicListItem[];
+    const innerHeader = outerExpandedItems.find(
+      (item) =>
+        item.type === 'replyContent' && item.content.type === 'disclosureHeader' && item.content.titleLabel === 'Inner'
+    );
+    if (!innerHeader) throw new Error('inner details header missing');
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [{ index: outerExpandedItems.indexOf(innerHeader), isViewable: true, item: innerHeader }]
+      })
+    );
+    await fireEvent.press(view.getByRole('button', { name: 'Inner' }));
+
+    const imageItem = (lastFlashListProps.data as TopicListItem[]).find(
+      (item) => item.type === 'replyContent' && item.content.networkMediaCount === 1
+    );
+    if (!imageItem) throw new Error('nested image row missing');
+    expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+  });
+
+  it('[REG-TOPIC-120] projects a visible opening quote into its first expanded media row', async () => {
+    const instanceKey = 'topic:opening-quote-viewport:linuxdo:quoted-topic:8';
+    const quotedReply: Reply = {
+      author: 'quoted-author',
+      contentHtml: '<p><img src="https://img.example.com/opening-quote.png"></p>',
+      createdAt: '2026-08-09T00:00:00.000Z',
+      floor: 8
+    };
+    const quoteTopic: TopicDetail = {
+      ...topic,
+      contentHtml:
+        '<aside class="quote" data-post="8" data-topic="quoted-topic" data-username="quoted-author">' +
+        '<div class="title">quoted-author:</div><blockquote>preview</blockquote></aside>',
+      id: 'opening-quote-viewport',
+      replies: [],
+      replyCount: 0,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/opening-quote-viewport'
+    };
+    const props = {
+      loadedQuotedReplies: { 'linuxdo:quoted-topic:8': quotedReply },
+      selectedTopic: quoteTopic,
+      topicDetail: quoteTopic,
+      topicReplies: [] as Reply[]
+    };
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(<TopicFilterHarness expandedQuotes={{}} {...props} />);
+    const collapsedItems = lastFlashListProps.data as TopicListItem[];
+    const summaryItem = collapsedItems.find((item) => item.type === 'topicQuoteSummary');
+    if (!summaryItem) throw new Error('opening quote summary missing');
+
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [{ index: collapsedItems.indexOf(summaryItem), isViewable: true, item: summaryItem }]
+      })
+    );
+    await view.rerender(<TopicFilterHarness expandedQuotes={{ [instanceKey]: true }} {...props} />);
+
+    const imageItem = (lastFlashListProps.data as TopicListItem[]).find(
+      (item) =>
+        item.type === 'topicQuoteContent' && item.content.type === 'content' && item.content.row.networkMediaCount === 1
+    );
+    if (!imageItem) throw new Error('opening quote image row missing');
+    expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+  });
+
+  it('[REG-TOPIC-120] projects a visible reply quote into its first expanded media row', async () => {
+    const instanceKey = 'reply:comment:222:linuxdo:342888:1';
+    const quotedReply: Reply = {
+      author: 'quoted-author',
+      contentHtml: '<p><img src="https://img.example.com/reply-quote.png"></p>',
+      createdAt: '2026-02-17T00:00:00.000Z',
+      floor: 1
+    };
+    const quotingReply: Reply = {
+      author: 'reader',
+      commentId: 222,
+      contentHtml: '<p>after quote</p>',
+      createdAt: '2026-07-31T00:00:00.000Z',
+      floor: 2,
+      quotedPosts: [
+        {
+          author: { label: 'quoted-author' },
+          preview: 'quote preview',
+          reference: { postNumber: 1, source: 'linuxdo', topicId: '342888' }
+        }
+      ]
+    };
+    const quoteTopic: TopicDetail = {
+      ...topic,
+      contentHtml: '<p>opening body</p>',
+      id: 'reply-quote-viewport',
+      replies: [quotingReply],
+      replyCount: 1,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/reply-quote-viewport'
+    };
+    const props = {
+      loadedQuotedReplies: { 'linuxdo:342888:1': quotedReply },
+      selectedTopic: quoteTopic,
+      topicDetail: quoteTopic,
+      topicReplies: [quotingReply]
+    };
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(<TopicFilterHarness expandedQuotes={{}} {...props} />);
+    const collapsedItems = lastFlashListProps.data as TopicListItem[];
+    const summaryItem = collapsedItems.find((item) => item.type === 'replyQuoteSummary');
+    if (!summaryItem) throw new Error('reply quote summary missing');
+
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [{ index: collapsedItems.indexOf(summaryItem), isViewable: true, item: summaryItem }]
+      })
+    );
+    await view.rerender(<TopicFilterHarness expandedQuotes={{ [instanceKey]: true }} {...props} />);
+
+    const imageItem = (lastFlashListProps.data as TopicListItem[]).find(
+      (item) => item.type === 'replyQuoteContent' && item.content.networkMediaCount === 1
+    );
+    if (!imageItem) throw new Error('reply quote image row missing');
+    expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+  });
+
+  it('[REG-TOPIC-120] projects a visible accepted-answer header into its reopened media row', async () => {
+    const acceptedFloor = 42;
+    const acceptedTopic: TopicDetail = {
+      ...topic,
+      acceptedAnswerFloor: acceptedFloor,
+      id: 'accepted-answer-viewport',
+      replies: [],
+      replyCount: 0,
+      solved: true,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/accepted-answer-viewport'
+    };
+    const acceptedReply: Reply = {
+      acceptedAnswer: true,
+      author: 'accepted-author',
+      contentHtml: '<p><img src="https://img.example.com/accepted-answer.png"></p>',
+      createdAt: '2026-08-09T00:00:00.000Z',
+      floor: acceptedFloor
+    };
+    const referenceKey = `linuxdo:${acceptedTopic.id}:${acceptedFloor}`;
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(
+      <TopicFilterHarness
+        loadedQuotedReplies={{ [referenceKey]: acceptedReply }}
+        selectedTopic={acceptedTopic}
+        topicDetail={acceptedTopic}
+        topicReplies={[]}
+      />
+    );
+    await fireEvent.press(view.getByLabelText('收起已采纳答案'));
+    const collapsedItems = lastFlashListProps.data as TopicListItem[];
+    const headerItem = collapsedItems.find((item) => item.type === 'topicAcceptedAnswer');
+    if (!headerItem) throw new Error('accepted-answer header missing');
+
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [{ index: collapsedItems.indexOf(headerItem), isViewable: true, item: headerItem }]
+      })
+    );
+    await fireEvent.press(view.getByLabelText('展开已采纳答案'));
+
+    const imageItem = (lastFlashListProps.data as TopicListItem[]).find(
+      (item) =>
+        item.type === 'topicAcceptedAnswerContent' &&
+        item.content.type === 'content' &&
+        item.content.row.networkMediaCount === 1
+    );
+    if (!imageItem) throw new Error('accepted-answer image row missing');
+    expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
+  });
+
+  it('[REG-TOPIC-120] never lets ordinary list mutations claim the recorded media window', async () => {
+    const anchorReply: Reply = {
+      author: 'anchor',
+      commentId: 920,
+      contentHtml: '<p><img src="https://img.example.com/anchor.png"></p>',
+      createdAt: '2026-08-23T08:00:00.000Z',
+      floor: 20
+    };
+    const trailingReply: Reply = {
+      author: 'trailing',
+      commentId: 930,
+      contentHtml: '<p>trailing reply</p>',
+      createdAt: '2026-08-23T08:01:00.000Z',
+      floor: 30
+    };
+    const extraReply = (floor: number): Reply => ({
+      author: `extra-${floor}`,
+      commentId: 900 + floor,
+      contentHtml: `<p>ordinary ${floor}</p>`,
+      createdAt: '2026-08-23T07:59:00.000Z',
+      floor
+    });
+    const baseTopic: TopicDetail = {
+      ...topic,
+      contentHtml: '<p>opening body</p>',
+      id: 'ordinary-media-window-mutations',
+      replies: [anchorReply, trailingReply],
+      replyCount: 2,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-ordinary-media-window-mutations-1'
+    };
+    const mutations = ['insert', 'prepend', 'append', 'pagination', 'reorder', 'delete'] as const;
+
+    for (const mutation of mutations) {
+      mockBodyMediaViewportRowKeys = [];
+      const view = await render(
+        <TopicFilterHarness
+          selectedTopic={baseTopic}
+          topicDetail={baseTopic}
+          topicReplies={[anchorReply, trailingReply]}
+        />
+      );
+      const initialItems = lastFlashListProps.data as TopicListItem[];
+      const anchorItem = initialItems.find((item) => 'reply' in item && item.reply.commentId === anchorReply.commentId);
+      if (!anchorItem) throw new Error(`anchor row missing for ${mutation}`);
+      await act(() =>
+        lastFlashListProps.onViewableItemsChanged({
+          viewableItems: [{ index: initialItems.indexOf(anchorItem), isViewable: true, item: anchorItem }]
+        })
+      );
+      const stableRowKeys = [...mockBodyMediaViewportRowKeys];
+
+      if (mutation === 'reorder') {
+        await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
+        await fireEvent.press(view.getByLabelText('倒序'));
+      } else {
+        const nextReplies =
+          mutation === 'prepend'
+            ? [extraReply(10), anchorReply, trailingReply]
+            : mutation === 'insert'
+              ? [anchorReply, extraReply(25), trailingReply]
+              : mutation === 'append'
+                ? [anchorReply, trailingReply, extraReply(40)]
+                : mutation === 'delete'
+                  ? [trailingReply]
+                  : [anchorReply, trailingReply];
+        const nextTopic = { ...baseTopic, replies: nextReplies, replyCount: nextReplies.length };
+        await view.rerender(
+          <TopicFilterHarness
+            replyHasMore={mutation === 'pagination'}
+            replyHasPrevious={mutation === 'pagination'}
+            selectedTopic={nextTopic}
+            topicDetail={nextTopic}
+            topicReplies={nextReplies}
+          />
+        );
+      }
+
+      const currentKeys = new Set((lastFlashListProps.data as TopicListItem[]).map((item) => item.key));
+      const expectedKeys = mutation === 'delete' ? stableRowKeys.filter((key) => currentKeys.has(key)) : stableRowKeys;
+      expect(mockBodyMediaViewportRowKeys).toEqual(expectedKeys);
+      await view.unmount();
+    }
+  });
+
+  it('[REG-TOPIC-120] fails closed when the media session epoch changes without new viewability', async () => {
+    const epochReply: Reply = {
+      author: 'epoch-author',
+      commentId: 950,
+      contentHtml: '<p><img src="https://img.example.com/epoch.png"></p>',
+      createdAt: '2026-08-23T08:10:00.000Z',
+      floor: 50
+    };
+    const epochTopic: TopicDetail = {
+      ...topic,
+      contentHtml: '<p>opening body</p>',
+      id: 'media-session-epoch',
+      replies: [epochReply],
+      replyCount: 1,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-media-session-epoch-1'
+    };
+    const tree = (mediaSessionIdentity: string) => (
+      <TopicFilterHarness
+        mediaSessionIdentity={mediaSessionIdentity}
+        selectedTopic={epochTopic}
+        topicDetail={epochTopic}
+        topicReplies={[epochReply]}
+      />
+    );
+    mockBodyMediaViewportRowKeys = [];
+    const view = await render(tree('nodeseek:epoch-1'));
+    const initialItems = lastFlashListProps.data as TopicListItem[];
+    const epochItem = initialItems.find((item) => 'reply' in item && item.reply.commentId === epochReply.commentId);
+    if (!epochItem) throw new Error('epoch media row missing');
+    await act(() =>
+      lastFlashListProps.onViewableItemsChanged({
+        viewableItems: [{ index: initialItems.indexOf(epochItem), isViewable: true, item: epochItem }]
+      })
+    );
+    expect(mockBodyMediaViewportRowKeys).toContain(epochItem.key);
+
+    await view.rerender(tree('nodeseek:epoch-2'));
+
+    expect(mockBodyMediaViewportRowKeys).toEqual([]);
   });
 
   it('[REG-TOPIC-081][REG-TOPIC-090][REG-TOPIC-099] removes virtual-list separators across adjacent semantic rows', async () => {

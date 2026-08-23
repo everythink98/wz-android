@@ -90,7 +90,7 @@ describe('navigation commands', () => {
   it('requires canonical data for detail routes', () => {
     expect(navigateAppScreen('topic')).toBe(false);
     expect(navigateAppScreen('user')).toBe(false);
-    expect(pushTopicRoute(topic)).toBe(true);
+    expect(pushTopicRoute({ topic })).toBe(true);
     expect(pushUserRoute(user)).toBe(true);
 
     expect(navigation.dispatch.mock.calls).toEqual([

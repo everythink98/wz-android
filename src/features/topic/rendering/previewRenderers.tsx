@@ -598,21 +598,51 @@ function ManagedInlineForumImage({
 }) {
   const requestIdentity = compatibleImageRequestIdentity(source);
   const lease = useTopicBodyMediaLease({ kind: 'inline', requestIdentity });
+  const requestGeneration = `wz-inline-attempt-${stableImageRequestKey(lease.attemptId)}`;
   const nativeSource = useMemo(
     () => ({ ...source, uri: inlineFrescoSourceUri(source.uri, requestIdentity) }),
     [requestIdentity, source]
   );
   return (
     <NativeImage
-      key={lease.attemptId}
+      {...{ internal_analyticTag: requestGeneration }}
+      key={lease.attachmentKey}
       testID={lease.admitted ? 'topic-inline-image' : 'topic-inline-image-waiting'}
       resizeMode="contain"
       source={lease.admitted ? nativeSource : undefined}
       style={style}
-      onError={lease.admitted ? () => lease.settle('error') : undefined}
-      onLoad={lease.admitted ? () => lease.settle('displayed') : undefined}
-      onProgress={lease.admitted ? (event) => lease.progress(event.nativeEvent.loaded) : undefined}
+      onError={
+        lease.admitted
+          ? (event) => {
+              if (!isInlineImageRequestEvent(event, requestGeneration)) return;
+              lease.settle('error');
+            }
+          : undefined
+      }
+      onLoad={
+        lease.admitted
+          ? (event) => {
+              if (!isInlineImageRequestEvent(event, requestGeneration)) return;
+              lease.settle('displayed');
+            }
+          : undefined
+      }
+      onProgress={
+        lease.admitted
+          ? (event) => {
+              if (!isInlineImageRequestEvent(event, requestGeneration)) return;
+              lease.progress(event.nativeEvent.loaded);
+            }
+          : undefined
+      }
     />
+  );
+}
+
+function isInlineImageRequestEvent(event: unknown, requestGeneration: string) {
+  return (
+    (event as { nativeEvent?: { requestGeneration?: unknown } } | null)?.nativeEvent?.requestGeneration ===
+    requestGeneration
   );
 }
 

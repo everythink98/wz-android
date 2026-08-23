@@ -107,6 +107,7 @@ import {
   type TopicBodyMediaAggregate
 } from '../media/TopicBodyMediaCoordinator';
 import { ManagedTopicContentVideo } from '../media/ManagedTopicContentVideo';
+import { useTopicBodyMediaViewport } from '../media/useTopicBodyMediaViewport';
 import { diagnosticRef } from '@/platform/diagnostics/diagnosticPolicy';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import {
@@ -969,31 +970,10 @@ export const TopicContentList = memo(function TopicContentList({
       warmHighWater: aggregate.warmHighWater
     });
   }, []);
-  const topicListIndexByKey = useMemo(
-    () => new Map(topicListItems.map((listItem, index) => [listItem.key, index])),
-    [topicListItems]
-  );
-  const [bodyMediaViewport, setBodyMediaViewport] = useState<{
-    indexes: readonly number[];
-    rowKeys: readonly string[];
-    topicKey: string;
-  }>({
-    indexes: [],
-    rowKeys: [],
-    topicKey: ''
+  const { observeViewableItems, viewportRowKeys: bodyMediaViewportRowKeys } = useTopicBodyMediaViewport({
+    items: topicListItems,
+    sessionIdentity: `${detailTopicStateKey}:${mediaSessionIdentity}`
   });
-  const bodyMediaViewportRowKeys = useMemo(() => {
-    if (bodyMediaViewport.topicKey !== detailTopicStateKey) return [];
-    if (bodyMediaViewport.rowKeys.every((key) => topicListIndexByKey.has(key))) return bodyMediaViewport.rowKeys;
-    return bodyMediaViewport.indexes
-      .map((index) => topicListItems[index]?.key)
-      .filter((key): key is string => Boolean(key));
-  }, [bodyMediaViewport, detailTopicStateKey, topicListIndexByKey, topicListItems]);
-  const previousFirstVisibleIndexRef = useRef(-1);
-  useEffect(() => {
-    previousFirstVisibleIndexRef.current = -1;
-    setBodyMediaViewport({ indexes: [], rowKeys: [], topicKey: detailTopicStateKey });
-  }, [detailTopicStateKey]);
   useEffect(() => {
     if (!pendingReplyOrderScrollRef.current || repliesLoading || repliesError) return;
     const firstReplyIndex = topicListItems.findIndex(
@@ -1150,13 +1130,11 @@ export const TopicContentList = memo(function TopicContentList({
   }, [loadWindowStart]);
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: { index?: number | null; isViewable?: boolean; item: TopicListItem }[] }) => {
+      observeViewableItems({ viewableItems });
       const visibleReplyIndexes = new Set<number>();
-      const visibleTopicIndexes: number[] = [];
       let windowStartVisible = false;
-      viewableItems.forEach(({ index, isViewable, item: listItem }) => {
+      viewableItems.forEach(({ isViewable, item: listItem }) => {
         if (isViewable === false) return;
-        const topicIndex = typeof index === 'number' ? index : topicListIndexByKey.get(listItem.key);
-        if (topicIndex !== undefined) visibleTopicIndexes.push(topicIndex);
         if (listItem.type === 'replyWindowStart') {
           windowStartVisible = true;
           return;
@@ -1170,35 +1148,8 @@ export const TopicContentList = memo(function TopicContentList({
       windowStartWithinPrefetchRef.current =
         windowStartVisible || (visibleReplyIndexes.size > 0 && firstVisibleReplyIndex <= visibleReplyIndexes.size);
       if (windowStartWithinPrefetchRef.current) loadWindowStart();
-      visibleTopicIndexes.sort((left, right) => left - right);
-      const firstVisibleTopicIndex = visibleTopicIndexes[0];
-      const lastVisibleTopicIndex = visibleTopicIndexes.at(-1);
-      const scrollingForward =
-        firstVisibleTopicIndex === undefined ||
-        previousFirstVisibleIndexRef.current < 0 ||
-        firstVisibleTopicIndex >= previousFirstVisibleIndexRef.current;
-      previousFirstVisibleIndexRef.current = firstVisibleTopicIndex ?? -1;
-      const nearbyIndexes =
-        firstVisibleTopicIndex === undefined || lastVisibleTopicIndex === undefined
-          ? []
-          : scrollingForward
-            ? [lastVisibleTopicIndex + 1, lastVisibleTopicIndex + 2, firstVisibleTopicIndex - 1]
-            : [firstVisibleTopicIndex - 1, firstVisibleTopicIndex - 2, lastVisibleTopicIndex + 1];
-      const indexes = [...new Set([...visibleTopicIndexes, ...nearbyIndexes])].filter((index) =>
-        Boolean(topicListItems[index])
-      );
-      const rowKeys = indexes.map((index) => topicListItems[index]?.key).filter((key): key is string => Boolean(key));
-      setBodyMediaViewport((current) =>
-        current.topicKey === detailTopicStateKey &&
-        current.indexes.length === indexes.length &&
-        current.indexes.every((index, position) => index === indexes[position]) &&
-        current.rowKeys.length === rowKeys.length &&
-        current.rowKeys.every((key, index) => key === rowKeys[index])
-          ? current
-          : { indexes, rowKeys, topicKey: detailTopicStateKey }
-      );
     },
-    [detailTopicStateKey, loadWindowStart, replyWindowIndexByKey, topicListIndexByKey, topicListItems]
+    [loadWindowStart, observeViewableItems, replyWindowIndexByKey]
   );
   const handleReplyEndReached = useCallback(() => {
     if (replyEndError || !replyHasMore || loadingMoreReplies || !autoLoadRepliesArmedRef.current) return;

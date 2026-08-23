@@ -400,7 +400,7 @@ describe('[REG-SOURCE-012] content-source management navigation', () => {
     await waitFor(() => expect(navigationRef.isReady()).toBe(true));
 
     await act(async () => {
-      expect(pushTopicRoute(disabledTopic)).toBe(true);
+      expect(pushTopicRoute({ topic: disabledTopic })).toBe(true);
     });
     await waitFor(() => {
       expect(navigationRef.getCurrentRoute()?.name).toBe('Topic');

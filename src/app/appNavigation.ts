@@ -1,5 +1,5 @@
 import { StackActions, createNavigationContainerRef } from '@react-navigation/native';
-import type { Topic, UserReference } from '@/domain/forum/models';
+import type { UserReference } from '@/domain/forum/models';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import type { Screen } from '@/ui/navigation/types';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
@@ -53,9 +53,9 @@ export function isNativeStackScreen() {
   );
 }
 
-export function pushTopicRoute(topic: Topic) {
+export function pushTopicRoute(destination: RootStackParamList['Topic']) {
   if (!navigationRef.isReady()) return false;
-  navigationRef.dispatch(StackActions.push('Topic', { topic }));
+  navigationRef.dispatch(StackActions.push('Topic', destination));
   return true;
 }
 

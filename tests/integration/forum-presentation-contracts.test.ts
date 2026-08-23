@@ -144,7 +144,7 @@ describe('Android app utils', () => {
 
     for (const [source, id, target] of targets) {
       expect(parseInternalTopicOpenLink(`exp+wz-android://open-topic?url=${encodeURIComponent(target)}`)).toMatchObject(
-        { source, id }
+        { topic: { source, id } }
       );
     }
     expect(

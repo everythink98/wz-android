@@ -131,7 +131,7 @@ export function parseForumTopicDestination(
 export function parseInternalTopicOpenLink(value: string) {
   const url = forumLinkUrl(value);
   return url?.protocol === 'exp+wz-android:' && url.hostname === 'open-topic'
-    ? parseForumTopicLink(url.searchParams.get('url') || '')
+    ? parseForumTopicDestination(url.searchParams.get('url') || '')
     : null;
 }
 

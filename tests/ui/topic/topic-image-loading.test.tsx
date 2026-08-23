@@ -1447,7 +1447,7 @@ describe('topic block image loading', () => {
     expect(view.queryByTestId('topic-image-original')).toBeNull();
   });
 
-  it('[REG-PROXY-010] remounts the bounded inline, sticker, and link-card working set on runtime rotation', async () => {
+  it('[REG-PROXY-010][REG-TOPIC-121] remounts bounded media on runtime rotation', async () => {
     const inlineUrl = 'https://img.example.com/runtime-inline.png';
     const view = await render(
       <TopicBodyMediaCoordinatorProvider
@@ -3372,19 +3372,113 @@ describe('topic block image loading', () => {
 
     await waitFor(() => expect(view.getAllByTestId('topic-inline-image')).toHaveLength(4));
     expect(view.getByTestId('topic-inline-image-waiting').props.source).toBeUndefined();
-    await fireEvent(view.getAllByTestId('topic-inline-image')[0], 'progress', {
-      nativeEvent: { loaded: 12, total: 24 }
+    const firstAttachment = view.getAllByTestId('topic-inline-image')[0];
+    const requestGeneration = firstAttachment.props.internal_analyticTag as string;
+    await fireEvent(firstAttachment, 'progress', {
+      nativeEvent: { loaded: 12, requestGeneration, total: 24 }
     });
     expect(view.getAllByTestId('topic-inline-image')).toHaveLength(4);
-    await fireEvent(view.getAllByTestId('topic-inline-image')[0], 'load', {
-      nativeEvent: { source: { height: 24, uri: urls[0], width: 24 } }
+    await fireEvent(firstAttachment, 'load', {
+      nativeEvent: { requestGeneration, source: { height: 24, uri: urls[0], width: 24 } }
     });
     await waitFor(() => expect(view.getAllByTestId('topic-inline-image')).toHaveLength(5));
     expect(view.queryByTestId('topic-inline-image-waiting')).toBeNull();
     expect(mockInlineImageGetSize).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-117] remounts a failed attachment and ignores the old attempt completion', async () => {
+  it('[REG-TOPIC-121] keeps one Fabric attachment across first permit and viewport preempt-resume', async () => {
+    const attributes = {
+      alt: 'stable permit emoji',
+      class: 'emoji',
+      height: '24',
+      src: 'https://img.example.com/stable-permit-emoji.png',
+      width: '24'
+    };
+    const inlineImage = <TopicImageHarness attributes={attributes} />;
+    const tree = (paused: boolean, viewportRowKeys: readonly string[]) => (
+      <TopicBodyMediaCoordinatorProvider active paused={paused} viewportRowKeys={viewportRowKeys}>
+        <TopicBodyMediaRowBoundary rowKey="stable-inline-row">{inlineImage}</TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const view = await render(tree(true, ['stable-inline-row']));
+    const waitingAttachment = view.getByTestId('topic-inline-image-waiting');
+    expect(waitingAttachment.props.source).toBeUndefined();
+
+    await view.rerender(tree(false, ['stable-inline-row']));
+    const firstPermitAttachment = view.getByTestId('topic-inline-image');
+    const stableUri = firstPermitAttachment.props.source.uri;
+    expect(Object.is(firstPermitAttachment, waitingAttachment)).toBe(true);
+
+    await view.rerender(tree(false, []));
+    const preemptedAttachment = view.getByTestId('topic-inline-image-waiting');
+    expect(Object.is(preemptedAttachment, firstPermitAttachment)).toBe(true);
+    expect(preemptedAttachment.props.source).toBeUndefined();
+
+    await view.rerender(tree(false, ['stable-inline-row']));
+    const resumedAttachment = view.getByTestId('topic-inline-image');
+    expect(Object.is(resumedAttachment, firstPermitAttachment)).toBe(true);
+    expect(resumedAttachment.props.source.uri).toBe(stableUri);
+  });
+
+  it('[REG-TOPIC-121] rejects stale Native request events dispatched through the resumed Fabric props', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(0);
+    try {
+      const attributes = {
+        alt: 'stale callback emoji',
+        class: 'emoji',
+        height: '24',
+        src: 'https://img.example.com/stale-callback-emoji.png',
+        width: '24'
+      };
+      const inlineImage = <TopicImageHarness attributes={attributes} />;
+      const tree = (viewportRowKeys: readonly string[]) => (
+        <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={viewportRowKeys}>
+          <TopicBodyMediaRowBoundary rowKey="stale-callback-row">{inlineImage}</TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      const view = await render(tree(['stale-callback-row']));
+      const firstAttempt = view.getByTestId('topic-inline-image');
+      const staleRequestGeneration = firstAttempt.props.internal_analyticTag as string;
+      const stableUri = firstAttempt.props.source.uri;
+      const queuedStaleProgress = {
+        nativeEvent: { loaded: 12, requestGeneration: staleRequestGeneration }
+      };
+      const queuedStaleLoad = { nativeEvent: { requestGeneration: staleRequestGeneration } };
+      const queuedStaleError = { nativeEvent: { requestGeneration: staleRequestGeneration } };
+
+      await view.rerender(tree([]));
+      await view.rerender(tree(['stale-callback-row']));
+      const resumedAttempt = view.getByTestId('topic-inline-image');
+      const currentLoad = resumedAttempt.props.onLoad as (event: {
+        nativeEvent: { requestGeneration: string };
+      }) => void;
+      const currentError = resumedAttempt.props.onError as (event: {
+        nativeEvent: { requestGeneration: string };
+      }) => void;
+      const currentProgress = resumedAttempt.props.onProgress as (event: {
+        nativeEvent: { loaded: number; requestGeneration: string };
+      }) => void;
+
+      await act(() => jest.advanceTimersByTime(20_000));
+      await act(() => {
+        currentProgress(queuedStaleProgress);
+        currentLoad(queuedStaleLoad);
+        currentError(queuedStaleError);
+      });
+      expect(Object.is(view.getByTestId('topic-inline-image'), resumedAttempt)).toBe(true);
+
+      await act(() => jest.advanceTimersByTime(10_001));
+      const timeoutRetry = view.getByTestId('topic-inline-image');
+      expect(Object.is(timeoutRetry, resumedAttempt)).toBe(false);
+      expect(timeoutRetry.props.source.uri).toBe(stableUri);
+      await view.unmount();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-TOPIC-117][REG-TOPIC-121] remounts a failed attachment and ignores the old attempt completion', async () => {
     const urls = Array.from({ length: 5 }, (_, index) => `https://img.example.com/retry-emoji-${index}.png`);
     const view = await render(
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['inline-retry-row']}>
@@ -3400,22 +3494,25 @@ describe('topic block image loading', () => {
     );
     await waitFor(() => expect(view.getAllByTestId('topic-inline-image')).toHaveLength(4));
     const failedSpan = view.getAllByTestId('topic-inline-image')[0];
-    const staleLoad = failedSpan.props.onLoad as () => void;
+    const failedRequestGeneration = failedSpan.props.internal_analyticTag as string;
+    const staleLoad = failedSpan.props.onLoad as (event: { nativeEvent: { requestGeneration: string } }) => void;
     const stableUri = failedSpan.props.source.uri;
 
-    await act(() => failedSpan.props.onError());
+    await act(() => failedSpan.props.onError({ nativeEvent: { requestGeneration: failedRequestGeneration } }));
     await waitFor(() => expect(view.getAllByTestId('topic-inline-image')[0]).not.toBe(failedSpan));
     const retrySpan = view.getAllByTestId('topic-inline-image')[0];
     expect(retrySpan.props.source.uri).toBe(stableUri);
 
-    await act(() => staleLoad());
+    await act(() => staleLoad({ nativeEvent: { requestGeneration: failedRequestGeneration } }));
     expect(view.getAllByTestId('topic-inline-image')).toHaveLength(4);
 
-    await act(() => retrySpan.props.onLoad());
+    await act(() =>
+      retrySpan.props.onLoad({ nativeEvent: { requestGeneration: retrySpan.props.internal_analyticTag as string } })
+    );
     await waitFor(() => expect(view.getAllByTestId('topic-inline-image')).toHaveLength(5));
   });
 
-  it('[REG-TOPIC-117] remounts one timed-out attachment without changing its cache URI', async () => {
+  it('[REG-TOPIC-117][REG-TOPIC-121] remounts one timed-out attachment without changing its cache URI', async () => {
     jest.useFakeTimers();
     try {
       const view = await render(
@@ -3448,7 +3545,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-TOPIC-117] keeps the same attachment instance across an equal parent rerender', async () => {
+  it('[REG-TOPIC-117][REG-TOPIC-121] keeps the same attachment instance across an equal parent rerender', async () => {
     const attributes = {
       alt: 'emoji',
       class: 'emoji',

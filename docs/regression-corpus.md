@@ -68,6 +68,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除共享 guard、把 guard 放到单个页面、在异步 push 后才置位或永久禁用卡片；编号 UI 测试或任一 sibling 入口必须失败。 |
 | 明确不覆盖范围 | 不合并不同主题的明确点击，不改变 Topic 内链接、楼层重复定位、导航动画或 native stack 的 route identity。 |
 
+## `REG-NAV-003` 内部 Topic deep link 丢失目标楼层
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `NAV-02`、`NAV-03`；共享 `TOPIC-03` |
+| 用户症状 | 从内部 deep link 打开带楼层的四站 Topic URL 时进入了正确主题，但停在默认位置，没有定位到链接指定的回复；冷启动 pending 路径同样丢失目标。 |
+| 触发条件 | `parseForumTopicDestination()` 已解析出 `targetReply`，但 `parseInternalTopicOpenLink()` 又退回裸 Topic；`pushTopicRoute()` 也只接受 Topic，navigation 未 ready 时 pending ref 因此无法保存完整 destination。 |
+| 根因 seam | internal open-link parser、pending queue 与 native Topic push 之间没有共享同一个 `RootStackParamList['Topic']` destination，语义身份在进入导航前被截断。 |
+| 必须保持的行为 | NodeSeek hash、linux.do path、V2EX `#replyN` 与妖火 `tofloor` 都把 `{ topic, targetReply }` 原样送入一层 Topic route；普通主题链接只传 topic。warm URL event 和 cold initial URL pending queue 行为一致，嵌套 params、额外 route 或重复 push 都不允许。 |
+| 精确失败 oracle | `src/domain/forum/links.test.ts` 的四站 `[REG-NAV-003]` 在旧实现都只得到 Topic；`tests/ui/app/app-deep-link-navigation.test.tsx` 的 warm/cold 用例要求 push 接收完整 destination；`tests/ui/app/app-navigator.test.tsx` 要求 native action 的 params 为 flat `{ topic, targetReply }`。普通 Topic 反例保持没有 target。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：parser unit 固定 URL 语义，App RNTL 固定 pending 与 native action；只有匹配 APK 的真实 route/controller 能证明目标楼层最终定位。 |
+| Replay 或真实验收路径 | 在匹配 APK 上分别用四站现存只读楼层 URL执行一次 warm deep link，再从 force-stopped process 执行一次 cold deep link；确认进入正确 Topic、目标楼层可见且返回链只退一层。目标失效、权限不足或公网不可达时逐站记 `NOT_VERIFIED/BLOCKED_BY_ENV`，不得换相似帖子冒充。 |
+| 负向验证方式 | 让 internal parser 改回 `parseForumTopicLink()`、pending ref 保存裸 Topic、push 再包一层 `{ topic: destination }` 或丢弃 `targetReply`；编号 unit/UI 用例必须失败。 |
+| 明确不覆盖范围 | 不改变外部浏览器协议、Topic route public type、楼层加载算法、Query key、回复顺序或第三方 URL 格式；不发送回复制造目标。 |
+
 ## `REG-PERF-003` Feed 来源切换把列表工作压进 Pager 收尾帧
 
 | 字段 | 内容 |
@@ -5591,6 +5606,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把零位移分支改回 `transform: null`；编号 UI 测试稳定得到 expected `[]` / received `null`，匹配 v1.3.122 APK 按上述六次混合换位路径可触发 Reanimated 主线程异常并退出 App。 |
 | 明确不覆盖范围 | 不增加延时、拖拽锁、卸载状态机、依赖或通用排序组件；不改变来源数量、存储格式、拖动阈值、触觉、开关与 TalkBack 行为。 |
 
+## `REG-MORE-004` TalkBack 按旧来源顺序遍历已重排内容源
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-05`；共享 `REG-PERF-011/012`、`REG-MORE-001..003` |
+| 用户症状 | 视觉排序已经变为 linux.do、NodeSeek、妖火、V2EX，但 TalkBack 仍先聚焦视觉末尾的 V2EX，再按初始 source host 顺序遍历；手柄同时朗读“第 4 项”，造成遍历顺序与位置语义互相矛盾。 |
+| 触发条件 | 普通拖动模式为保持 Reanimated 性能，Native children 始终按初始 source host 顺序挂载，仅用 transform 映射视觉位置；Android accessibility traversal 服从 Native child order，不服从该视觉 transform。 |
+| 根因 seam | `ContentSourcesPanel` 把视觉拖动的稳定 host 策略同时用于 screen-reader 语义顺序。两种模式需要共享 preferences，但不能共享 Native child order。 |
+| 必须保持的行为 | screen reader 初始状态 pending、查询失败或已开启时，Native children 直接按当前 preferences 渲染且全部 transform 为 `[]`；关闭时继续使用原 stable host/Reanimated 路径。模式切换先取消未完成 drag、清 layouts/centers/shared values 并按当前 preferences 重建 baseline；陈旧 finalize 零写，不新增持久化字段。TalkBack 上移/下移仍只提交一次并保持焦点、来源名与“第 N 项”一致。 |
+| 精确失败 oracle | 修复前独立 `WZ_Verification_API_35` 上把 V2EX 从第 1 项拖到第 4 项后，UI hierarchy 的 Native node 仍按 V2EX→linux.do→NodeSeek→妖火；ADB Tab/TalkBack 焦点依次朗读 V2EX“第 4 项”、linux.do“第 1 项”。`tests/ui/more/more-screen.test.tsx` 的 `[REG-MORE-004]` 固定 pending/reject/enabled 原生顺序、identity transform，以及 true/false 模式切换取消未完成 drag、陈旧 finalize 零写。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定状态与持久化边界；只有匹配 APK 的 Android TalkBack 焦点 traversal 能证明 Native 顺序、位置朗读和焦点连续。 |
+| Replay 或真实验收路径 | 只在独立验证 AVD 记录初始顺序，开启 TalkBack，通过读屏焦点逐项记录来源与位置；执行上移/下移后再次遍历，要求与视觉顺序一致且焦点不中断。关闭 TalkBack、重启 App 后再以普通模式做一次正反拖动；最终恢复初始来源顺序并关闭 AVD。主 AVD 无障碍设置不变。 |
+| 负向验证方式 | screen-reader 模式继续渲染 stable host、只改 accessibility label、让 unknown 先走视觉 transform、切换时不取消 session，或陈旧 finalize 仍调用 `onChange`；编号 UI 用例或 TalkBack traversal 必须失败。 |
+| 明确不覆盖范围 | 不启用 `experimental_accessibilityOrder`，不改排序 schema、触觉、长按阈值、普通模式动画或来源数量；ADB Tab 是确定 traversal 的命令行证据，不冒充真实用户主观语音体验。 |
+
 ## `REG-PERF-013` 巨图编译对同一 URL 候选重复分析
 
 | 字段 | 内容 |
@@ -5945,13 +5975,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-PERF-010/020` 与 `REG-TOPIC-055/085/091` |
 | 用户症状 | linux.do `t/topic/342888` 的大量 emoji 与文本混排区域在每次短滑停止后仍会细微补走最后一段，看起来像图片销毁后修正了列表位置；同页展开引用时还容易把既有两阶段完整挂载误判成同一问题。 |
 | 触发条件 | 每个 inline emoji 都由独立 `ExpoImageViewWrapper` 加子 View 承载，父 FlashList 的 `40` 项回收池继续保留离屏富文本子树；90Hz 下 RenderThread 与 buffer queue 的迟帧会把最后一次输入位移延后呈现。Android trace 未观察到 `ACTION_UP` 后内容 offset 修正或图片高度坍缩。 |
-| 根因 seam | `ManagedInlineForumImage` 是四站正文 inline 图片的唯一共享显示边界。当前 App 开启 New Architecture，`RCTTextInlineImage` 在 Fabric 映射到标准 `Image` attachment；旧 ReactAndroid Fresco text span 不是运行时 seam。RN `0.81.5` 的 `node_modules/react-native/Libraries/Image/Image.android.js` Text 分支又漏掉标准图片事件，若用 `getSizeWithHeaders` 结算 coordinator 就形成第二个不可取消的完成事实。修复后 App 直接声明一个 Fabric attachment，最小版本锁定 patch 只转发既有 `loadStart/progress/load/error/loadEnd`；请求、解码、GIF 与卸载取消继续由标准 Native Image owner 负责。Fresco cache key 不包含 headers，故显示 URI 仍以 opaque request identity 的稳定 hash fragment 分区；fragment 不进入 HTTP 请求，真实 URL 与凭据保持原协议。 |
-| 必须保持的行为 | 所有来源、主楼、回复和已展开引用的 inline 图片统一使用同一实现，不按帖子、站点或图片数量特判。每个 inline token 始终占有同一个 Fabric attachment；未获 permit 时 source 为空、几何不变、零请求，获准后才建立唯一 Native Image owner，不得退回 Expo inline View。图片数量、顺序、比例、文本流、自动加载、animated GIF、失败重试及引用头像右侧留白不变；running `<=4`、warm window、runtime rotation、Referrer/header 与 session epoch 隔离继续生效。`attemptId` 只 remount attachment，不进入 URI；迟到事件不得结算新 attempt。FlashList `drawDistance=720`、回收池 `40` 和完整正文不变；块级图片、原图升级、预览、SVG、GIF sticker、视频与链接卡片继续走各自现有 renderer。引用同帖缓存、跨帖一次请求、收起重开复用缓存及 `REG-TOPIC-055` 的两阶段完整挂载不变。 |
-| 精确失败 oracle | `tests/ui/topic/topic-image-loading.test.tsx` 的六个 `[REG-TOPIC-117]` 用例固定：inline emoji 零 Expo owner、零 `getSizeWithHeaders`，五个 token 中仅前四个有 source；progress 不释放 permit，前四个 attachment 的真实 load/error 发生前第五个不得获准请求；error 与首次 timeout 必须以相同 URI remount，旧 attempt 的迟到 load 无效，同值父 rerender 不 remount；media session identity 改变时 fragment 改变而 HTTP URL 保持。`tests/tooling/react-native-inline-image-events-patch.test.ts` 固定 RN Text 分支转发标准事件且 patch 不包含 `ReactAndroid/`；`src/ui/list/performance.test.ts` 继续固定回收池为 `40`。 |
-| 最低可靠自动测试层 | `UI_PASS + UNIT_PASS + STATIC_PASS + APK_SANITY + LIVE_PASS`：RNTL 固定 owner、事件、预算与 identity，tooling unit 固定最小 RN JS patch；只有匹配 AAR Release APK 的真实事件到达、Android hierarchy、input timestamp、FrameTimeline 与 `gfxinfo` 能证明完整链路和停手末段不再因旧 Expo 子树迟帧。 |
+| 根因 seam | `ManagedInlineForumImage` 是四站正文 inline 图片的唯一共享显示边界。当前 App 开启 New Architecture，`RCTTextInlineImage` 在 Fabric 映射到标准 `Image` attachment；旧 Fresco text span 不是运行时 seam。RN `0.81.5` 的 `node_modules/react-native/Libraries/Image/Image.android.js` Text 分支漏掉标准图片事件；此外 Fabric direct event 最终从 attachment 的 current props 取 listener，旧 controller 已排队的事件可能因此调用新 attempt handler。修复后 App 仍只声明一个 Fabric attachment；锁定 patch 转发 `loadStart/progress/load/error/loadEnd`，并让标准 `ReactImageView` 在每次 controller build 捕获当次 request generation、随事件回传。请求、解码、GIF 与卸载取消继续由标准 Native Image owner 负责。Fresco cache key 不包含 headers，故显示 URI 仍以 opaque request identity 的稳定 hash fragment 分区；fragment 不进入 HTTP 请求，真实 URL 与凭据保持原协议。 |
+| 必须保持的行为 | 所有来源、主楼、回复和已展开引用的 inline 图片统一使用同一实现，不按帖子、站点或图片数量特判。每个 inline token 始终占有同一个 Fabric attachment；未获 permit 时 source 为空、几何不变、零请求，获准后才建立唯一 Native Image owner，不得退回 Expo inline View。图片数量、顺序、比例、文本流、自动加载、animated GIF、失败重试及引用头像右侧留白不变；running `<=4`、warm window、runtime rotation、Referrer/header 与 session epoch 隔离继续生效。`attemptId` 只生成不含原始 identity 的 request-generation hash 来拒绝迟到事件；独立 `attachmentKey` 只在 error/timeout retry 或当前 running runtime rotation 时 remount。二者都不进入 URI/nativeID/cache/recycling identity；完整状态表见 `REG-TOPIC-121`。FlashList `drawDistance=720`、回收池 `40` 和完整正文不变；块级图片、原图升级、预览、SVG、GIF sticker、视频与链接卡片继续走各自现有 renderer。引用同帖缓存、跨帖一次请求、收起重开复用缓存及 `REG-TOPIC-055` 的两阶段完整挂载不变。 |
+| 精确失败 oracle | `tests/ui/topic/topic-image-loading.test.tsx` 固定：inline emoji 零 Expo owner、零 `getSizeWithHeaders`，五个 token 中仅前四个有 source；progress 不释放 permit，前四个 attachment 的真实 load/error 发生前第五个不得获准请求；error 与首次 timeout 以相同 URI remount，同值父 rerender不 remount，media session identity 改变时 fragment 改变而 HTTP URL 保持。`REG-TOPIC-121` 另在切换前构造旧 load/error/progress payload、切换后通过 resumed attachment 的当前 props 分发；任何旧 generation 被接收都会提前结算或错误刷新 30 秒 deadline。`tests/tooling/react-native-inline-image-events-patch.test.ts` 固定 Text 事件转发、内部 generation prop、controller-build capture、builder/hierarchy 绑定与五类事件回传；`src/ui/list/performance.test.ts` 继续固定回收池为 `40`。 |
+| 最低可靠自动测试层 | `UI_PASS + UNIT_PASS + STATIC_PASS + APK_SANITY + LIVE_PASS`：RNTL 固定 owner、事件、预算与 identity，tooling unit 与 fresh patch replay 固定锁定 RN JS/Native adapter；fresh prebuild 后 `react-android` 的 dependency insight 必须为 `By composite build`，`hermes-android` 必须保持外部 `0.81.5` AAR，Release Kotlin compile 和最终 APK class 证明 patch 实际进入 Native 构建。真实事件到达、Android hierarchy、input timestamp、FrameTimeline 与 `gfxinfo` 才能证明完整链路和停手末段不再因旧 Expo 子树迟帧。 |
 | Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变，只读直达 `https://linux.do/t/topic/342888`。同一 90Hz AVD、同一内容位置和同一短滑手势采集 Android input timestamp、FrameTimeline 与 `gfxinfo`；warm 连续短滑要求 p95 `<=25ms`、worst `<=35ms`、无连续两帧 miss，且 `ACTION_UP` 后无可见内容 offset 变化。hierarchy 中 inline 图片不得恢复 `ExpoImageViewWrapper` owner；真实块级媒体与头像等既有 Expo Image 不在此限制内。再只读核对普通多图帖 `https://linux.do/t/topic/2556285`、跨帖引用 `https://linux.do/t/topic/2685882` 与妖火 animated inline GIF；海量图片帖不因本项调整回收池，按既有 `REG-PERF-010/020` 自动与专项门槛独立验收。 |
 | 负向验证方式 | 恢复 inline `ExpoImage`、恢复 `getSizeWithHeaders` 或其他完成探针、绕过四并发 coordinator、让两个 session 使用相同 Fresco URI、把 `attemptId` 写进 URI，或用缩小回收池、固定图片高度、关闭图片、缩短正文、降低 drawDistance、位置锚定、父层 hardware layer、删除引用两阶段渲染或帖子/站点特判掩盖症状；编号用例或对应设备门槛必须失败。 |
-| 明确不覆盖范围 | 不承诺模拟器系统进程造成的绝对零掉帧，不修改引用 Controller/Model、产品公共类型、依赖、ReactAndroid、原生构建方式或数据迁移。引用只有在同帖零请求、跨帖一次请求或缓存重开行为出现具体失败时才另行修复。 |
+| 明确不覆盖范围 | 不承诺模拟器系统进程造成的绝对零掉帧，不修改引用 Controller/Model、产品公共类型、运行时依赖或数据迁移。原生构建变化只限于把锁定的 ReactAndroid 坐标定向到 React Native source composite，使既有 patch 入包；未修改的 Hermes 仍使用同版本官方 AAR。ReactAndroid 只增加 request-local event correlation，不改变网络、解码、cache 或 attachment ownership。引用只有在同帖零请求、跨帖一次请求或缓存重开行为出现具体失败时才另行修复。 |
 
 ## `REG-TOPIC-118` 独占一段的用户 mention 背景和边框被拉伸成整行
 
@@ -5981,6 +6011,51 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变，只读打开 `https://linux.do/t/topic/342888` 并定位 `#110`；表情底边需与“是这样嘛”的文字行自然对齐。再只读核对普通 inline emoji、引用头像、animated inline GIF 和至少一种较大 inline sticker，确认没有向下溢出、裁剪或行高跳变。 |
 | 负向验证方式 | 删除 JS `transform` 计算、改回 Fabric 不消费的 `marginTop`，或再次把偏移下沉到 legacy span 时，编号测试或匹配 APK 中 `#110` 必须重新出现 `11.5px` 左右的明显上偏。不得增加素材偏移表、帖子特判或切回独立 Expo Image View。 |
 | 明确不覆盖范围 | 不修正图片文件自身透明画布或站点素材设计，不改变 reaction emoji、系统字体、正文行高设置或块级 sticker 排版。 |
+
+## `REG-TOPIC-120` NodeSeek 折叠正文首次展开时图片不加载
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-PERF-010` 与 `REG-TOPIC-091` |
+| 用户可见症状 | NodeSeek `post-889473-1` 第 12 楼的“哼”处于折叠态时，第一次展开正文图片没有加载；需要后续 viewability 变化才可能恢复。 |
+| 触发条件 | details/callout header 已在父 FlashList 的可见媒体窗口中；展开只在 header 后插入正文 rows，折叠前保存的全部 row key 仍然存在，而 FlashList 对当前静止视口不保证再次发 `onViewableItemsChanged`。 |
+| 根因 seam | `TopicContentList` 的旧 viewport 状态只保存 key/index，并用 presentation continuity 猜测动态内容归属；它既漏掉 opening/reply quote、accepted answer 等替换，也可能让普通 insert/reorder 因共享 ancestor 冒领 permit。根因位于 FlashList observation 到 Coordinator 的 semantic projection，不在 renderer、URL、网络、缓存或解码。 |
+| 必须保持的行为 | feature-private `useTopicBodyMediaViewport` 为最终 `TopicListItem[]` 生成私有 descriptors，以 `scope + kind + semanticId/instanceKey` 精确标识 details、callout、terminal Tab、opening/reply quote 与 accepted answer。当前有界窗口中的 controller/member 与新增或替换 row 共享同一 region 时，沿原方向窗口立即派生 permit；opening、reply body、signature 各自独立 scope。普通 insert/prepend/append/pagination/delete/正反 reorder 只保留仍存在的稳定 key；无精确 region 时 fail closed，离屏/隐藏正文不预热，session identity 改变立即清空。`warm <=8`、`running <=4`、原图 `<=1`、失败重试及 presentation separator 不变。 |
+| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 的 `[REG-TOPIC-120]` 固定 details、callout、nested disclosure、terminal Tab、opening/reply quote、accepted answer 与 signature 首次替换均无需第二次 viewability；修复前 opening quote、reply quote、accepted reopen 和 epoch reset 稳定失败。负向矩阵固定 ordinary insert/prepend/append/pagination/delete/reorder 不冒领；同一 exact region 随服务端回复正反排序整体换位仍只保留 stable keys。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 贯通 compiler、回复 model、semantic filtering、FlashList viewability 和真实 coordinator provider；只有匹配 APK 的指定楼层能确认 Native 图片在首次展开时实际出像素。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变，只读直达 `https://www.nodeseek.com/post-889473-1`，定位第 12 楼“哼”；在未滚动的冷折叠态只展开一次，图片应自行显示，不收起重开、不滚动、不手工重试。随后收起/展开一次并核对第 11/13 楼既有图片。动态第三方正文不新增 tracked Replay。 |
+| 负向验证方式 | 恢复“旧 key 全存在就直接返回”、按裸 index 或 `continuesSameLogicalContentGroup()` 投影时，编号 UI 的正向或普通 mutation 负向矩阵必须失败。扩大 viewport/warm/running、展开时 remount 列表、预热隐藏正文或增加 timer/retry，必须被预算、epoch 与现有 Tab/千图回归拒绝。 |
+| 明确不覆盖范围 | 不改变 NodeSeek HTML、图片 URL/Referrer/session identity、图片 renderer、缓存、请求并发、失败态或第三方图片可用性；不以清 App 缓存、清数据或清 Cookie 制造冷态。 |
+
+## `REG-TOPIC-121` Fabric attachment 被 permit wave 反复 remount
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 `REG-TOPIC-117`、`REG-PERF-010` |
+| 用户症状 | inline 图片首次取得 permit，或普通滚离后恢复 permit 时，虽然还是同一图片与 Native owner，却因 React key 改变被 remount；这会丢失已有 attachment 状态并扩大闪烁、重复解码与迟到事件竞态。 |
+| 触发条件 | Coordinator 每一波 admission 都递增 `attemptId`；Fabric inline renderer 直接把 `attemptId` 当 React key，因此调度身份变化被误当成 Native attachment replacement。 |
+| 根因 seam | `TopicBodyMediaLease` 只暴露一个 identity，同时承担 attempt 结算与 attachment 物理生命周期；拆分后若只保存旧 JS handler，仍漏掉 Fabric direct event 经 current props 分发的 Native queue 竞态。修复须同时分离 `attemptId` 与 `attachmentKey`，让 Native controller/request 捕获可回传的 generation，并禁止不同 generation 进入同一 coalescing bucket；`onDraw` error 也必须从 request-bound listener 取 generation，再由当前 handler fail closed 比对。不改变公共媒体 identity 或其他 renderer。 |
+| 必须保持的行为 | 首次 permit 和 viewport preempt/resume：`attemptId` 变化、`attachmentKey` 不变；error/timeout 自动或显式 retry：两者变化且 attachment 只变一次；runtime rotation 只为当前 running 同时变化一次，displayed/waiting/failed 均不变。inline Fabric Image 只用 `attachmentKey` 作 React key；带 `wz-inline-attempt-` namespace 的稳定 hash 只作为内部 request generation，经 controller-build listener 写入事件 payload。Generation-tagged event 不 coalesce，普通 analytics tag 与 generation=null 的标准 RN Image event 仍保留原行为。URI、Fresco hash、nativeID、cache/recycling identity 只服从稳定 request/session identity。Sticker、iframe、video、block image 保持现有 attempt 生命周期。 |
+| 精确失败 oracle | `tests/ui/topic/topic-media-coordinator.test.tsx` 的 `[REG-TOPIC-121]` 固定上述状态表与 4/8/1 预算；`tests/ui/topic/topic-image-loading.test.tsx` 记录 Fabric owner key，修复前首次 permit/resume 都改变，修复后保持。adapter 用例在旧 request payload 排队后切换 props，再调用 resumed attachment 的当前 load/error/progress；旧 generation 不得结算或刷新新 attempt，error/timeout/runtime running 各只 remount 一次。tooling patch test 另固定 generation-tagged event 不 coalesce、`onDraw` error 取 request-bound generation、namespace guard、ReactAndroid-only composite 与 Maven Hermes；fresh replay、dependency insight 和 Release Kotlin compile 固定 Native capture/echo 链。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY + LIVE_PASS`：RNTL 能确定 identity 和迟到事件；匹配 Fabric Release APK 才能证明 Native Image 事件链和像素连续性。 |
+| Replay 或真实验收路径 | 匹配 APK 只读打开含 inline emoji/GIF 的真实 Topic，记录首次准入、短距离滚离/返回与一次自然失败重试；图片不得在普通 permit wave 退回空白，失败重试仍能恢复且 logcat 无 stale event/fatal。无法安全制造远端失败时 retry 设备分支记 `NOT_VERIFIED`，不改 URL 或清缓存。 |
+| 负向验证方式 | inline renderer 改回 `key={attemptId}`、首次 permit/preempt/resume 递增 attachment、retry 不递增 attachment、rotation 重启 displayed/waiting/failed、不同 generation 继续 coalesce、`onDraw` error 读取 mutable current generation，或旧 attempt 能结算新 attempt；编号 UI/tooling 用例必须失败。 |
+| 明确不覆盖范围 | 不迁移 block image、sticker、iframe 或 video，不把 attempt/attachment 写入 URI/nativeID/cache key，不新增通用 registry、dependency、public API 或持久化 schema。 |
+
+## `REG-TOPIC-122` 块级图片上下间距被排版改动放大
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 `REG-TOPIC-084/118/119` |
+| 用户症状 | 普通块级正文图片与上下文字的留白由既有 `6/8` 变为 `8/12`，正文节奏明显变松；同批次其他 paragraph、heading、blockquote、table 与 mention 排版并不要求回退。 |
+| 触发条件 | HTML style 调整时把 block `<img>` 的 `marginTop/marginBottom` 一并改大，违反“块级媒体不变”的局部规格。 |
+| 根因 seam | 四站主楼、回复和展开引用共用 `forumTagStyles.img`；只需恢复该共享样式的两个数值，不应回滚同提交其他排版。 |
+| 必须保持的行为 | block `<img>` 固定 `marginTop=6`、`marginBottom=8`；paragraph、heading、blockquote、table、standalone mention、inline emoji/sticker、图片尺寸和 loader 全部保持当前合同。 |
+| 精确失败 oracle | `src/features/topic/rendering/htmlStyles.test.ts` 的 `[REG-TOPIC-122]` 修复前精确得到 `8/12`，要求 `6/8` 时失败；修复只改变两个值，既有 mention、heading、table 与 inline alignment assertions 同时通过。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：style unit 固定数值与 sibling 不回退；匹配 APK 证明 RNRH 实际消费共享样式。 |
+| Replay 或真实验收路径 | 匹配 APK 在主楼、回复和展开引用各只读核对一张普通块图，上下间距与既有 baseline 一致且图片尺寸/加载不变。动态帖子无合适上下文时记 `NOT_VERIFIED`，不使用相似截图像素冒充精确 unit。 |
+| 负向验证方式 | 把 img 改回 `8/12`、同时回滚 paragraph/heading/blockquote/table/mention，或用 wrapper/站点分支覆盖；编号 unit 或 sibling style tests 必须失败。 |
+| 明确不覆盖范围 | 不重设图片 loader、尺寸、占位、inline media、段落整体 rhythm 或站点专属 CSS；不把像素截图作为唯一 oracle。 |
 
 ## 待确认观察
 

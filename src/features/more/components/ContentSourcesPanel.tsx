@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  AccessibilityInfo,
   Switch,
   Text,
   View,
@@ -30,6 +31,7 @@ type DragPreview = {
   targetIndex: number;
 };
 type DragSession = DragPreview & {
+  generation: number;
   preferences: ContentSourcePreference[];
 };
 
@@ -86,7 +88,8 @@ function SortableRow({
   previewIndex,
   rowCenters,
   style,
-  testID
+  testID,
+  useIdentityTransform
 }: {
   active: boolean;
   activeStyle: StyleProp<ViewStyle>;
@@ -99,8 +102,10 @@ function SortableRow({
   rowCenters: SharedValue<number[]>;
   style: StyleProp<ViewStyle>;
   testID: string;
+  useIdentityTransform: boolean;
 }) {
   const animatedStyle = useAnimatedStyle(() => {
+    if (useIdentityTransform) return { transform: [] };
     const centers = rowCenters.value;
     const hostCenter = centers[hostIndex];
     const targetCenter = centers[active ? currentIndex : previewIndex];
@@ -110,7 +115,7 @@ function SortableRow({
     return {
       transform: [{ translateY: settledOffset + (active ? dragTranslationY.value : 0) }]
     };
-  }, [active, currentIndex, hostIndex, previewIndex]);
+  }, [active, currentIndex, hostIndex, previewIndex, useIdentityTransform]);
 
   return (
     <Animated.View onLayout={onLayout} style={[style, animatedStyle, active && activeStyle]} testID={testID}>
@@ -138,11 +143,14 @@ export function ContentSourcesPanel({
   const hostSources = hostSourcesRef.current;
   const rowLayoutsRef = useRef(new Map<number, RowLayout>());
   const dragSessionRef = useRef<DragSession | null>(null);
+  const dragGenerationRef = useRef(0);
   const rowCenters = useSharedValue<number[]>([]);
   const dragActiveIndex = useSharedValue(-1);
   const dragTargetIndex = useSharedValue(-1);
   const dragTranslationY = useSharedValue(0);
   const [dragPreview, setDragPreview] = useState<DragSession | null>(null);
+  const [screenReaderEnabled, setScreenReaderEnabled] = useState<boolean | null>(null);
+  const screenReaderEnabledRef = useRef<boolean | null>(null);
   const preferenceIdentity = preferences.map(({ source, enabled }) => `${source}:${enabled}`).join('|');
   const preferenceCount = preferences.length;
 
@@ -151,8 +159,8 @@ export function ContentSourcesPanel({
     setDragPreview(null);
   }, []);
 
-  useEffect(() => {
-    if (expanded) return;
+  const resetDragAndHost = useCallback(() => {
+    dragGenerationRef.current += 1;
     cancelDrag();
     hostSourcesRef.current = preferencesRef.current.map(({ source }) => source);
     rowLayoutsRef.current.clear();
@@ -160,16 +168,40 @@ export function ContentSourcesPanel({
     dragActiveIndex.value = -1;
     dragTargetIndex.value = -1;
     dragTranslationY.value = 0;
-  }, [
-    cancelDrag,
-    dragActiveIndex,
-    dragTargetIndex,
-    dragTranslationY,
-    expanded,
-    preferenceIdentity,
-    preferencesRef,
-    rowCenters
-  ]);
+  }, [cancelDrag, dragActiveIndex, dragTargetIndex, dragTranslationY, preferencesRef, rowCenters]);
+
+  const applyScreenReaderMode = useCallback(
+    (enabled: boolean) => {
+      if (screenReaderEnabledRef.current === enabled) return;
+      resetDragAndHost();
+      screenReaderEnabledRef.current = enabled;
+      setScreenReaderEnabled(enabled);
+    },
+    [resetDragAndHost]
+  );
+
+  useEffect(() => {
+    let active = true;
+    let screenReaderChangeObserved = false;
+    const subscription = AccessibilityInfo.addEventListener('screenReaderChanged', (enabled) => {
+      screenReaderChangeObserved = true;
+      if (active) applyScreenReaderMode(enabled);
+    });
+    void AccessibilityInfo.isScreenReaderEnabled()
+      .then((enabled) => {
+        if (active && !screenReaderChangeObserved) applyScreenReaderMode(enabled);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, [applyScreenReaderMode]);
+
+  useEffect(() => {
+    if (expanded) return;
+    resetDragAndHost();
+  }, [expanded, preferenceIdentity, resetDragAndHost]);
 
   useEffect(() => {
     const session = dragSessionRef.current;
@@ -180,7 +212,9 @@ export function ContentSourcesPanel({
       cancelDrag();
     }
   }, [cancelDrag, preferenceIdentity]);
+  const usePreferenceNativeOrder = screenReaderEnabled !== false;
   const renderDragPreview =
+    !usePreferenceNativeOrder &&
     dragPreview &&
     dragPreview.preferences.map(({ source, enabled }) => `${source}:${enabled}`).join('|') === preferenceIdentity
       ? dragPreview
@@ -194,7 +228,8 @@ export function ContentSourcesPanel({
     onChangeRef.current(reorderedPreferences(current, index, nextIndex));
   };
 
-  const beginDrag = (source: Source, expectedOriginIndex: number, centers: number[]) => {
+  const beginDrag = (source: Source, expectedOriginIndex: number, centers: number[], generation: number) => {
+    if (screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation) return;
     const current = preferencesRef.current;
     const originIndex = current.findIndex((preference) => preference.source === source);
     if (originIndex !== expectedOriginIndex || !hasValidRowCenters(centers, current.length)) {
@@ -203,6 +238,7 @@ export function ContentSourcesPanel({
     }
     const session: DragSession = {
       centers: [...centers],
+      generation,
       originIndex,
       preferences: [...current],
       source,
@@ -213,15 +249,24 @@ export function ContentSourcesPanel({
     triggerPressFeedback();
   };
 
-  const updateDragTarget = (source: Source, targetIndex: number) => {
+  const updateDragTarget = (source: Source, targetIndex: number, generation: number) => {
+    if (screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation) return;
     const session = dragSessionRef.current;
-    if (!session || session.source !== source || targetIndex < 0 || targetIndex >= session.preferences.length) return;
+    if (
+      !session ||
+      session.generation !== generation ||
+      session.source !== source ||
+      targetIndex < 0 ||
+      targetIndex >= session.preferences.length
+    )
+      return;
     setDragPreview((current) =>
       current?.source === source && current.targetIndex === targetIndex ? current : { ...session, targetIndex }
     );
   };
 
-  const finishDrag = (source: Source, success: boolean, targetIndex: number) => {
+  const finishDrag = (source: Source, success: boolean, targetIndex: number, generation: number) => {
+    if (screenReaderEnabledRef.current !== false || dragGenerationRef.current !== generation) return;
     const session = dragSessionRef.current;
     const currentPreferenceIdentity = preferencesRef.current
       .map(({ source: currentSource, enabled }) => `${currentSource}:${enabled}`)
@@ -229,6 +274,7 @@ export function ContentSourcesPanel({
     if (
       !success ||
       !session ||
+      session.generation !== generation ||
       session.source !== source ||
       session.preferences.map(({ source: currentSource, enabled }) => `${currentSource}:${enabled}`).join('|') !==
         currentPreferenceIdentity ||
@@ -241,7 +287,11 @@ export function ContentSourcesPanel({
     }
     onChangeRef.current(reorderedPreferences(session.preferences, session.originIndex, targetIndex));
   };
-  const visibleHostSources = expanded ? hostSources : [];
+  const visibleHostSources = expanded
+    ? usePreferenceNativeOrder
+      ? preferences.map(({ source }) => source)
+      : hostSources
+    : [];
 
   return (
     <ExpandablePanel
@@ -254,6 +304,7 @@ export function ContentSourcesPanel({
     >
       <View>
         {visibleHostSources.map((source, hostIndex) => {
+          const dragGeneration = dragGenerationRef.current;
           const index = preferences.findIndex((preference) => preference.source === source);
           const preference = preferences[index];
           if (!preference) return null;
@@ -261,6 +312,7 @@ export function ContentSourcesPanel({
           const first = index === 0;
           const last = index === preferences.length - 1;
           const dragGesture = Gesture.Pan()
+            .enabled(screenReaderEnabled === false)
             .activateAfterLongPress(DRAG_ACTIVATION_DELAY_MS)
             .onStart(() => {
               'worklet';
@@ -275,7 +327,7 @@ export function ContentSourcesPanel({
               dragActiveIndex.value = index;
               dragTargetIndex.value = index;
               dragTranslationY.value = 0;
-              scheduleOnRN(beginDrag, preference.source, index, centers);
+              scheduleOnRN(beginDrag, preference.source, index, centers, dragGeneration);
             })
             .onUpdate(({ translationY }) => {
               'worklet';
@@ -297,7 +349,7 @@ export function ContentSourcesPanel({
               dragTranslationY.value = clampedTranslation;
               if (dragTargetIndex.value !== targetIndex) {
                 dragTargetIndex.value = targetIndex;
-                scheduleOnRN(updateDragTarget, preference.source, targetIndex);
+                scheduleOnRN(updateDragTarget, preference.source, targetIndex, dragGeneration);
               }
             })
             .onFinalize((_event, success) => {
@@ -308,7 +360,7 @@ export function ContentSourcesPanel({
                 const centers = rowCenters.value;
                 dragTranslationY.value = centers[targetIndex]! - centers[index]!;
               }
-              scheduleOnRN(finishDrag, preference.source, success, targetIndex);
+              scheduleOnRN(finishDrag, preference.source, success, targetIndex, dragGeneration);
             });
           const accessibilityActions = [
             ...(first ? [] : [{ name: 'moveUp', label: '上移' }]),
@@ -341,6 +393,7 @@ export function ContentSourcesPanel({
               rowCenters={rowCenters}
               style={[styles.contentSourceRow, index > 0 && styles.appearanceSettingRowDivided]}
               testID={`content-source-row-${preference.source}`}
+              useIdentityTransform={usePreferenceNativeOrder}
             >
               <View style={styles.contentSourceCopy}>
                 <Text style={styles.menuLabel}>{label}</Text>

@@ -93,13 +93,14 @@ describe('Android HTML rendering styles', () => {
     });
   });
 
-  it('[REG-TOPIC-081] defines one shared article rhythm and semantic attachment card', () => {
+  it('[REG-TOPIC-081][REG-TOPIC-122] defines one shared article rhythm and semantic attachment card', () => {
     const theme = createTheme(settings);
     const { htmlClassesStyles, htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
 
     expect(htmlTagsStyles.p).toMatchObject({ marginBottom: 12, marginTop: 0 });
     expect(htmlTagsStyles.h1).toMatchObject({ fontSize: 24, lineHeight: 32, marginBottom: 12, marginTop: 24 });
     expect(htmlTagsStyles.h3).toMatchObject({ fontSize: 18, lineHeight: 26, marginBottom: 8, marginTop: 20 });
+    expect(htmlTagsStyles.img).toMatchObject({ marginBottom: 8, marginTop: 6 });
     expect(htmlTagsStyles.strong).toMatchObject({ fontWeight: '700' });
     expect(htmlTagsStyles.hr).toMatchObject({
       borderBottomColor: theme.line,

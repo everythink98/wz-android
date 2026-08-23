@@ -88,6 +88,9 @@ jest.mock('react-native-gesture-handler', () => {
         activateAfterLongPress() {
           return this;
         },
+        enabled() {
+          return this;
+        },
         runOnJS() {
           return this;
         },

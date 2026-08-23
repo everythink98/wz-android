@@ -51,6 +51,7 @@ type TopicBodyMediaAggregateReporter = (aggregate: TopicBodyMediaAggregate) => v
 
 type TopicBodyMediaSnapshot = {
   admitted: boolean;
+  attachmentKey: string;
   attemptId: string;
   failure: TopicBodyMediaFailure;
 };
@@ -58,6 +59,7 @@ type TopicBodyMediaSnapshot = {
 type TopicBodyMediaEntry = {
   automaticRetry: boolean;
   attempt: number;
+  attachmentRevision: number;
   deadline: number | null;
   failure: TopicBodyMediaFailure;
   key: string;
@@ -80,7 +82,12 @@ const PRIORITY_ORDER: Record<TopicBodyMediaPriority, number> = {
 };
 
 function sameSnapshot(left: TopicBodyMediaSnapshot, right: TopicBodyMediaSnapshot) {
-  return left.admitted === right.admitted && left.attemptId === right.attemptId && left.failure === right.failure;
+  return (
+    left.admitted === right.admitted &&
+    left.attachmentKey === right.attachmentKey &&
+    left.attemptId === right.attemptId &&
+    left.failure === right.failure
+  );
 }
 
 class TopicBodyMediaCoordinator {
@@ -139,6 +146,7 @@ class TopicBodyMediaCoordinator {
     const entry: TopicBodyMediaEntry = {
       automaticRetry: options.automaticRetry,
       attempt: 0,
+      attachmentRevision: 0,
       deadline: null,
       failure: null,
       key: options.key,
@@ -151,6 +159,7 @@ class TopicBodyMediaCoordinator {
       sequence: this.sequence++,
       snapshot: {
         admitted: false,
+        attachmentKey: `${options.key}:attachment:0`,
         attemptId: `${options.key}:0`,
         failure: null
       },
@@ -215,6 +224,7 @@ class TopicBodyMediaCoordinator {
       if (entry.status !== 'running') continue;
       this.cancelCount += 1;
       entry.attempt += 1;
+      entry.attachmentRevision += 1;
       entry.deadline = deadline;
       entry.lastProgressValue = null;
       restarted = true;
@@ -341,6 +351,7 @@ class TopicBodyMediaCoordinator {
         continue;
       }
       entry.deadline = null;
+      entry.attachmentRevision += 1;
       entry.failure = null;
       entry.lastProgressValue = null;
       entry.status = 'waiting';
@@ -381,6 +392,7 @@ class TopicBodyMediaCoordinator {
   private snapshotFor(entry: TopicBodyMediaEntry): TopicBodyMediaSnapshot {
     return {
       admitted: entry.status === 'displayed' || (this.warmKeys.has(entry.key) && entry.status === 'running'),
+      attachmentKey: `${entry.key}:attachment:${entry.attachmentRevision}`,
       attemptId: `${entry.key}:${entry.attempt}`,
       failure: entry.failure
     };
@@ -610,6 +622,7 @@ export function useTopicBodyMediaFirstRowMarker() {
 
 const UNMANAGED_MEDIA_LEASE = {
   admitted: true,
+  attachmentKey: 'unmanaged',
   attemptId: 'unmanaged',
   failure: null,
   progress: (_value: number) => undefined,
@@ -638,7 +651,7 @@ export function useTopicBodyMediaLease({
     [kind, registrationId, requestIdentity, rowKey]
   );
   const idleSnapshot = useMemo<TopicBodyMediaSnapshot>(
-    () => ({ admitted: false, attemptId: `${key}:0`, failure: null }),
+    () => ({ admitted: false, attachmentKey: `${key}:attachment:0`, attemptId: `${key}:0`, failure: null }),
     [key]
   );
   const [registeredSnapshot, setRegisteredSnapshot] = useState<{

@@ -161,8 +161,8 @@ export function buildHtmlRenderingStyles({
     },
     img: {
       borderRadius: 10,
-      marginBottom: 12,
-      marginTop: 8
+      marginBottom: 8,
+      marginTop: 6
     },
     li: {
       marginBottom: 4
