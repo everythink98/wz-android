@@ -473,7 +473,7 @@ describe('More screen state and actions', () => {
     for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
       expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).toHaveProperty(
         'transform',
-        undefined
+        null
       );
     }
 
@@ -673,11 +673,11 @@ describe('More screen state and actions', () => {
     expect(view.getByTestId('content-source-row-linuxdo')).toBe(linuxDoHost);
     expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toHaveProperty(
       'transform',
-      undefined
+      null
     );
     expect(StyleSheet.flatten(view.getByTestId('content-source-row-linuxdo').props.style)).toHaveProperty(
       'transform',
-      undefined
+      null
     );
 
     await fireEvent.press(view.getByLabelText('收起内容源'));
@@ -692,7 +692,7 @@ describe('More screen state and actions', () => {
     for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
       expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).toHaveProperty(
         'transform',
-        undefined
+        null
       );
     }
 

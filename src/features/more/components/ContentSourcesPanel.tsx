@@ -105,7 +105,7 @@ function SortableRow({
     const hostCenter = centers[hostIndex];
     const targetCenter = centers[active ? currentIndex : previewIndex];
     const settledOffset = hostCenter === undefined || targetCenter === undefined ? 0 : targetCenter - hostCenter;
-    if (!active && settledOffset === 0) return { transform: undefined };
+    if (!active && settledOffset === 0) return { transform: null as never };
     return {
       transform: [{ translateY: settledOffset + (active ? dragTranslationY.value : 0) }]
     };
