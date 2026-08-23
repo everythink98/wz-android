@@ -463,7 +463,7 @@ describe('More screen state and actions', () => {
     expect(disabledSourceSwitches.every((control) => control.props.accessibilityState.checked === false)).toBe(true);
   });
 
-  it('[REG-MORE-001] keeps settled rows off the Fabric transform path while other panels expand', async () => {
+  it('[REG-MORE-001] keeps settled rows on an array-shaped identity transform while other panels expand', async () => {
     const view = await render(<MoreScreen {...moreProps()} />);
 
     expect(view.queryByTestId('content-source-row-v2ex')).toBeNull();
@@ -473,7 +473,7 @@ describe('More screen state and actions', () => {
     for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
       expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).toHaveProperty(
         'transform',
-        null
+        []
       );
     }
 
@@ -577,7 +577,7 @@ describe('More screen state and actions', () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-012][REG-MORE-002] keeps each source on one native host across forward and reverse reorders', async () => {
+  it('[REG-PERF-012][REG-MORE-002][REG-MORE-003] keeps each source on one native host across forward and reverse reorders', async () => {
     const updateSettings = jest.fn();
     const props = moreProps({ utilities: { settings: { update: updateSettings } } });
     const view = await render(<MoreScreen {...props} />);
@@ -671,13 +671,10 @@ describe('More screen state and actions', () => {
     );
     expect(view.getByTestId('content-source-row-v2ex')).toBe(v2exHost);
     expect(view.getByTestId('content-source-row-linuxdo')).toBe(linuxDoHost);
-    expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toHaveProperty(
-      'transform',
-      null
-    );
+    expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toHaveProperty('transform', []);
     expect(StyleSheet.flatten(view.getByTestId('content-source-row-linuxdo').props.style)).toHaveProperty(
       'transform',
-      null
+      []
     );
 
     await fireEvent.press(view.getByLabelText('收起内容源'));
@@ -692,7 +689,7 @@ describe('More screen state and actions', () => {
     for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
       expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).toHaveProperty(
         'transform',
-        null
+        []
       );
     }
 

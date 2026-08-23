@@ -5554,8 +5554,8 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 进入 More，展开账号中心后再点问题诊断、备份/恢复等标题，按钮有时没有反应；页面只在滚动的瞬间能点开，滚动一停又失效。用户没有点击生成、导出或分享动作。 |
 | 触发条件 | 内容源面板虽然收起，其内部排序行仍挂在 More 的 `ScrollView`；每个 Reanimated host 在没有位移时仍长期提交 `transform: translateY(0)`，排序后的非零 transform 还会跨面板生命周期保留。Android Fabric 的 presentation 与 hit-test 在这个 animated-transform seam 上偶发错位，滚动提交会短暂刷新命中。 |
 | 根因 seam | `src/features/more/components/ContentSourcesPanel.tsx` 同时拥有内容源排序行的挂载生命周期、稳定 source host 和 Reanimated transform。普通 ExpandablePanel、诊断导出逻辑与备份导出逻辑不是根因。 |
-| 必须保持的行为 | 内容源收起时不挂载任何排序 row；展开后与 native 槽位对齐且没有拖动的 row 必须把 transform 显式清为 `null`，不得保留 `translateY(0)` 或会被 Fabric JSI 转换跳过的 `undefined`。真实拖动、跨槽预览和同次可见展开内的持久化提交继续使用 `REG-PERF-011/012` 的 UI-thread shared value 与稳定 source host，不回弹、不闪行、不换名字；收起后才取消残留 drag、清槽位并按最新顺序重基准。账号中心、内容源、问题诊断、外观和备份/恢复的展开按钮在滚动停止后都必须立即响应；本回归不触发具体导出动作。 |
-| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `REG-MORE-001` 先要求收起状态查不到 `content-source-row-v2ex`，再展开账号中心与内容源，要求四个静止 row 的扁平样式均为 `transform: null`，最后直接展开问题诊断和备份/恢复并读取各自正文。修复前稳定得到 `transform: [{ translateY: 0 }]`；同文件 `REG-PERF-012/REG-MORE-002` 另要求排序提交期间 host identity 和位移保持、连续反向拖回时显式撤销旧 transform、收起后卸载、重开后 native clear。 |
+| 必须保持的行为 | 内容源收起时不挂载任何排序 row；展开后与 native 槽位对齐且没有拖动的 row 必须把 transform 显式重置为合法空数组 `[]`，不得保留 `translateY(0)`、会被 Fabric JSI 转换跳过的 `undefined` 或 Reanimated Android 同步 transform 路径不接受的 `null`。真实拖动、跨槽预览和同次可见展开内的持久化提交继续使用 `REG-PERF-011/012` 的 UI-thread shared value 与稳定 source host，不回弹、不闪行、不换名字；收起后才取消残留 drag、清槽位并按最新顺序重基准。账号中心、内容源、问题诊断、外观和备份/恢复的展开按钮在滚动停止后都必须立即响应；本回归不触发具体导出动作。 |
+| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `REG-MORE-001` 先要求收起状态查不到 `content-source-row-v2ex`，再展开账号中心与内容源，要求四个静止 row 的扁平样式均为 `transform: []`，最后直接展开问题诊断和备份/恢复并读取各自正文。原始修复前稳定得到 `transform: [{ translateY: 0 }]`；同文件 `REG-PERF-012/REG-MORE-002/003` 另要求排序提交期间 host identity 和位移保持、连续反向拖回时显式撤销旧 transform、收起后卸载、重开后 native identity reset。 |
 | 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定隐藏生命周期、静止 native 样式拓扑及展开正文；只有匹配 Android APK 的真实窗口输入才能证明停止滚动后的 presented frame 与 hit region 一致。ADB 坐标注入能稳定切换并会掩盖本故障，不能替代 Live。 |
 | Replay 或真实验收路径 | 在保留数据的匹配主 AVD 上，用 Emulator 窗口鼠标进入 More，展开账号中心后不滚动直接依次展开/收起问题诊断、备份/恢复、外观和内容源；再滚动、完全停止后重复，至少 20 轮，每次都同时确认标题无障碍展开态和正文真实出现。另按 `REG-PERF-012` 记录原内容源顺序，执行一次相邻拖动、收起/重开并恢复原顺序；不得点击生成诊断日志、导出备份或导入。 |
 | 负向验证方式 | 恢复收起时继续挂载排序 row，或让对齐静止行返回 `translateY(0)`；编号 UI 测试必须失败。用修复前匹配 APK 的 Emulator 窗口输入重复账号中心 → 其他面板，停止滚动后应能重新观察点击与展开呈现脱节；仅用 ADB 点击不得作为负向证据。 |
@@ -5568,13 +5568,28 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `MORE-05` |
 | 用户症状 | 内容源保持展开时先把一项拖到相邻槽，再把同一项拖回原位，两个来源会叠在同一行；界面声明共四项，但只能命中三个独立 row。 |
 | 触发条件 | source host 曾经写入非零 Reanimated transform，连续反向拖动又让该 host 或兄弟 host 的计算位移回到零；animated style 返回空对象时，Reanimated 不会撤销此前已经写入 native view 的 transform。活动行回到自己的 native 槽位后，兄弟行仍保留旧的一个行高位移。 |
-| 根因 seam | `src/features/more/components/ContentSourcesPanel.tsx` 的 `SortableRow.useAnimatedStyle` 零位移分支必须负责撤销旧 native transform。空对象没有清除指令；`undefined` 又会被当前 React Native Fabric 的 JSI→dynamic 转换跳过，二者都会让 Reanimated registry 保留旧位移，只有 `null` 会落到 native transform reset。 |
-| 必须保持的行为 | 同一次展开内正向、反向和多轮拖动都保持每个来源的 native host；非零位移继续只在 UI thread 映射，回到 host 槽位时显式返回 `transform: null`。不得用 `translateY(0)`、`undefined`、remount、折叠重开或重排 host 掩盖；四个 row 必须唯一、互不重叠，顺序、开关、TalkBack、单次持久化和 `REG-MORE-001` 点击修复保持。 |
-| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `[REG-PERF-012][REG-MORE-002]` 在面板不收起的前提下把 V2EX 下移后再上移，要求 V2EX/linux.do host identity 全程不变，最终两行扁平样式都显式包含 `transform: null`。`return {}` 稳定因没有清除指令失败；`transform: undefined` 虽能通过 JS 对象层检查，但匹配 Android APK 会在一次正反拖动后再次只剩 3 个独立 row。 |
+| 根因 seam | `src/features/more/components/ContentSourcesPanel.tsx` 的 `SortableRow.useAnimatedStyle` 零位移分支必须负责撤销旧 native transform。空对象没有清除指令；`undefined` 会被当前 React Native Fabric 的 JSI→dynamic 转换跳过；`null` 又违反 Reanimated Android 同步 transform 操作要求的数组契约。空数组既保留明确的 transform 更新，又由 React Native 重置为 identity。 |
+| 必须保持的行为 | 同一次展开内正向、反向和多轮拖动都保持每个来源的 native host；非零位移继续只在 UI thread 映射，回到 host 槽位时显式返回 `transform: []`。不得用 `translateY(0)`、`undefined`、`null`、remount、折叠重开或重排 host 掩盖；四个 row 必须唯一、互不重叠，顺序、开关、TalkBack、单次持久化和 `REG-MORE-001` 点击修复保持。 |
+| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `[REG-PERF-012][REG-MORE-002][REG-MORE-003]` 在面板不收起的前提下把 V2EX 下移后再上移，要求 V2EX/linux.do host identity 全程不变，最终两行扁平样式都显式包含 `transform: []`。`return {}` 和 `transform: undefined` 不能清旧位移；`transform: null` 在匹配 Android APK 的 Reanimated native 同步路径会触发类型异常。 |
 | 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定连续提交与显式 unset 契约；匹配 Android APK 用 agent-device 连续正反拖动，并从 accessibility tree 核对声明四项、四个唯一 row 及相邻中心间距。 |
 | Replay 或真实验收路径 | 记录当前顺序，展开内容源后不收起，使用 400ms 长按把同一来源相邻下移再上移，稳定后读取四个 row 的 bounds；至少重复 10 轮，任何缺行、重复槽、重叠或顺序漂移都失败，结束时恢复初始顺序。 |
-| 负向验证方式 | 把零位移分支改回 `return {}` 或 `transform: undefined`；编号 UI 测试必须因缺少 `null` clear 失败，匹配旧 APK 在一次正反拖动后可得到“共 4 项但只有 3 个独立 row”的 MCP 快照。 |
+| 负向验证方式 | 把零位移分支改回 `return {}`、`transform: undefined` 或 `transform: null`；编号 UI 测试必须因缺少空数组 identity reset 失败。前两者在旧 APK 可重新得到“共 4 项但只有 3 个独立 row”的 MCP 快照，后者按 `REG-MORE-003` 在多轮换位后收起时闪退。 |
 | 明确不覆盖范围 | 不增加拖拽状态机、依赖、尾动画或通用排序组件；不改变长按阈值、触觉、行高、开关、TalkBack 或持久化格式。 |
+
+## `REG-MORE-003` 内容源多次换位后收起 App 闪退
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-05` |
+| 用户症状 | 内容源连续换位数次后收起面板，整个 App 立即退出到 Launcher；这是修复 `REG-MORE-001/002` 后引入的发布回归。 |
+| 触发条件 | 展开内容源，在同一次展开内执行多次不同方向、不同跨度的拖动并在最后一次落位后立即收起。少量或恰好回到原顺序不保证触发。 |
+| 根因 seam | `SortableRow.useAnimatedStyle` 为撤销旧位移返回 `transform: null`；锁文件实际安装的 Reanimated 4.1.7 Android 在 `NativeProxy.performNonLayoutOperations` 刷新或卸载该 host 时把 transform 按数组处理，收到 dynamic `null` 后在主线程抛出类型异常。React Native 接受 null 作为普通 View transform reset，不代表 Reanimated 的同步 transform 命令也接受 null。 |
+| 必须保持的行为 | 静止、正反拖回、持久化提交及收起重开后的 animated transform 始终为数组；零位移使用空数组重置 native identity，非零位移仍使用 `[{ translateY }]`。多次换位后立即收起不得退出 App；稳定 source host、四行唯一不重叠、排序持久化、开关、TalkBack、其他 More 面板点击和 `REG-MORE-001/002` 均保持。 |
+| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `[REG-PERF-012][REG-MORE-002][REG-MORE-003]` 要求正反拖回和收起重开后显式得到 `transform: []`；修复前稳定收到 `null`。匹配 v1.3.122 APK 的主 AVD 在六次混合换位后立即收起，前台切回 Launcher，logcat 出现 `FATAL EXCEPTION: main`、`TypeError: expected dynamic type 'array', but had type 'null'` 和 `NativeProxy.performNonLayoutOperations`，`dumpsys activity exit-info` 记录 `APP CRASH(EXCEPTION)`。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定数组形状与 identity reset；匹配 Android APK 的 agent-device MCP 固定真实 Reanimated/Fabric native 路径、进程存活和 crash log。 |
+| Replay 或真实验收路径 | 记录当前来源顺序，在保留数据的匹配主 AVD 展开内容源，连续执行至少六次不同方向和跨度的长按拖动，最后一次落位后立即收起；至少重复 10 轮，每轮确认 App 仍在前台、面板可重新展开、四行唯一且 logcat 无新 fatal。结束时恢复初始顺序。该时序依赖任意初始顺序，tracked readonly Replay 只保留基础展开/收起，专项由 MCP 动态恢复。 |
+| 负向验证方式 | 把零位移分支改回 `transform: null`；编号 UI 测试稳定得到 expected `[]` / received `null`，匹配 v1.3.122 APK 按上述六次混合换位路径可触发 Reanimated 主线程异常并退出 App。 |
+| 明确不覆盖范围 | 不增加延时、拖拽锁、卸载状态机、依赖或通用排序组件；不改变来源数量、存储格式、拖动阈值、触觉、开关与 TalkBack 行为。 |
 
 ## `REG-PERF-013` 巨图编译对同一 URL 候选重复分析
 

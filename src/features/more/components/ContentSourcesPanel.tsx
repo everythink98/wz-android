@@ -105,7 +105,8 @@ function SortableRow({
     const hostCenter = centers[hostIndex];
     const targetCenter = centers[active ? currentIndex : previewIndex];
     const settledOffset = hostCenter === undefined || targetCenter === undefined ? 0 : targetCenter - hostCenter;
-    if (!active && settledOffset === 0) return { transform: null as never };
+    // Reanimated Android requires an array here; [] resets the native transform to identity.
+    if (!active && settledOffset === 0) return { transform: [] };
     return {
       transform: [{ translateY: settledOffset + (active ? dragTranslationY.value : 0) }]
     };
