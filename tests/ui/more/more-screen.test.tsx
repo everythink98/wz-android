@@ -471,8 +471,9 @@ describe('More screen state and actions', () => {
     await fireEvent.press(view.getByLabelText('展开内容源'));
 
     for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
-      expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).not.toHaveProperty(
-        'transform'
+      expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).toHaveProperty(
+        'transform',
+        undefined
       );
     }
 
@@ -576,7 +577,7 @@ describe('More screen state and actions', () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-012] keeps each source on one native host across the persisted reorder', async () => {
+  it('[REG-PERF-012][REG-MORE-002] keeps each source on one native host across forward and reverse reorders', async () => {
     const updateSettings = jest.fn();
     const props = moreProps({ utilities: { settings: { update: updateSettings } } });
     const view = await render(<MoreScreen {...props} />);
@@ -647,6 +648,38 @@ describe('More screen state and actions', () => {
       transform: [{ translateY: -56 }]
     });
 
+    updateSettings.mockClear();
+    const reverseHandle = view.getByLabelText('拖动排序：V2EX，第 2 项，共 4 项');
+    await act(async () => {
+      reverseHandle.props.onGestureStart({ translationY: 0 });
+      reverseHandle.props.onGestureUpdate({ translationY: -56 });
+      reverseHandle.props.onGestureFinalize({}, true);
+    });
+    expect(updateSettings).toHaveBeenCalledWith({ contentSources: readerData.settings.contentSources });
+
+    await view.rerender(
+      <MoreScreen
+        {...moreProps({
+          utilities: {
+            settings: {
+              value: readerData.settings,
+              update: updateSettings
+            }
+          }
+        })}
+      />
+    );
+    expect(view.getByTestId('content-source-row-v2ex')).toBe(v2exHost);
+    expect(view.getByTestId('content-source-row-linuxdo')).toBe(linuxDoHost);
+    expect(StyleSheet.flatten(view.getByTestId('content-source-row-v2ex').props.style)).toHaveProperty(
+      'transform',
+      undefined
+    );
+    expect(StyleSheet.flatten(view.getByTestId('content-source-row-linuxdo').props.style)).toHaveProperty(
+      'transform',
+      undefined
+    );
+
     await fireEvent.press(view.getByLabelText('收起内容源'));
     expect(view.queryByTestId('content-source-row-v2ex')).toBeNull();
     await fireEvent.press(view.getByLabelText('展开内容源'));
@@ -655,15 +688,16 @@ describe('More screen state and actions', () => {
         .getAllByRole('switch')
         .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'))
         .map((control) => control.props.accessibilityLabel)
-    ).toEqual(['linux.do 内容源开关', 'V2EX 内容源开关', 'NodeSeek 内容源开关', '妖火 内容源开关']);
+    ).toEqual(['V2EX 内容源开关', 'linux.do 内容源开关', 'NodeSeek 内容源开关', '妖火 内容源开关']);
     for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
-      expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).not.toHaveProperty(
-        'transform'
+      expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).toHaveProperty(
+        'transform',
+        undefined
       );
     }
 
     await act(async () =>
-      view.getByLabelText('拖动排序：V2EX，第 2 项，共 4 项').props.onGestureStart({ translationY: 0 })
+      view.getByLabelText('拖动排序：V2EX，第 1 项，共 4 项').props.onGestureStart({ translationY: 0 })
     );
     expect(dragTranslation?.value).toBe(0);
   });
