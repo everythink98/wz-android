@@ -105,6 +105,7 @@ function SortableRow({
     const hostCenter = centers[hostIndex];
     const targetCenter = centers[active ? currentIndex : previewIndex];
     const settledOffset = hostCenter === undefined || targetCenter === undefined ? 0 : targetCenter - hostCenter;
+    if (!active && settledOffset === 0) return {};
     return {
       transform: [{ translateY: settledOffset + (active ? dragTranslationY.value : 0) }]
     };
@@ -132,7 +133,8 @@ export function ContentSourcesPanel({
   const enabledCount = preferences.filter((preference) => preference.enabled).length;
   const preferencesRef = useCommittedRef(preferences);
   const onChangeRef = useCommittedRef(onChange);
-  const hostSources = useRef(preferences.map(({ source }) => source)).current;
+  const hostSourcesRef = useRef(preferences.map(({ source }) => source));
+  const hostSources = hostSourcesRef.current;
   const rowLayoutsRef = useRef(new Map<number, RowLayout>());
   const dragSessionRef = useRef<DragSession | null>(null);
   const rowCenters = useSharedValue<number[]>([]);
@@ -147,6 +149,26 @@ export function ContentSourcesPanel({
     dragSessionRef.current = null;
     setDragPreview(null);
   }, []);
+
+  useEffect(() => {
+    if (expanded) return;
+    cancelDrag();
+    hostSourcesRef.current = preferencesRef.current.map(({ source }) => source);
+    rowLayoutsRef.current.clear();
+    rowCenters.value = [];
+    dragActiveIndex.value = -1;
+    dragTargetIndex.value = -1;
+    dragTranslationY.value = 0;
+  }, [
+    cancelDrag,
+    dragActiveIndex,
+    dragTargetIndex,
+    dragTranslationY,
+    expanded,
+    preferenceIdentity,
+    preferencesRef,
+    rowCenters
+  ]);
 
   useEffect(() => {
     const session = dragSessionRef.current;
@@ -218,6 +240,7 @@ export function ContentSourcesPanel({
     }
     onChangeRef.current(reorderedPreferences(session.preferences, session.originIndex, targetIndex));
   };
+  const visibleHostSources = expanded ? hostSources : [];
 
   return (
     <ExpandablePanel
@@ -229,7 +252,7 @@ export function ContentSourcesPanel({
       onExpandedChange={onExpandedChange}
     >
       <View>
-        {hostSources.map((source, hostIndex) => {
+        {visibleHostSources.map((source, hostIndex) => {
           const index = preferences.findIndex((preference) => preference.source === source);
           const preference = preferences[index];
           if (!preference) return null;

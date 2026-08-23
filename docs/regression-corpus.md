@@ -5539,12 +5539,27 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 来源已经拖到目标槽，抬手时却短暂弹回旧槽，出现行重叠、空白或整块闪动；即使缺行消失，相邻两个名字仍会在放下后的连续帧补换一次位置。 |
 | 触发条件 | source-keyed 行按 preferences 顺序渲染时，提交会在 Fabric native child 数组中移动 host；改成 index-keyed 槽位后，提交又必须同时重绑槽内来源内容和清除预览 transform。两种方案都会让 native presentation 在提交边沿有可见中间态；若兄弟行还保留 120ms timing，快速松手会把该中间态进一步放大。 |
 | 根因 seam | `Source` 是不会在一次拖动中改变的 native 内容身份，index 只是实测列表中的视觉槽位。host 和内容应归 `Source`，视觉位置由当前/预览顺序映射到槽位；不能让 source host 随数组重排，也不能让 index host 在提交时更换来源内容。 |
-| 必须保持的行为 | 每个来源在面板本次挂载期间始终使用同一 native host；Reanimated 根据实测槽位中心把该 host 映射到当前或预览 index。兄弟行越阈值即进入目标槽，抬手先在 UI thread 把活动行对齐目标槽，再提交已显示的顺序；新 preferences 到达后每个来源的 settled transform 与提交前 preview transform 相同，因此提交不换 host、换内容或续跑尾动画。成功仍只持久化一次，取消和外部设置变化零写；不增加状态机、依赖或列表 remount。 |
-| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `REG-PERF-012` 延迟 finalize bridge并注入新持久化顺序；V2EX 与 linux.do 各自的 host instance 必须跨提交保持相同，最终分别映射到 `+56/-56` 的新视觉槽位，位置标签为第 2/1 项，跨槽不得调用 `withTiming`。index-keyed 槽位会因来源换 host 失败，恢复尾动画会因 `withTiming` 失败。 |
+| 必须保持的行为 | 每个来源在一次可见展开期间始终使用同一 native host；Reanimated 根据实测槽位中心把该 host 映射到当前或预览 index。兄弟行越阈值即进入目标槽，抬手先在 UI thread 把活动行对齐目标槽，再提交已显示的顺序；新 preferences 到达后每个来源的 settled transform 与提交前 preview transform 相同，因此提交不换 host、换内容或续跑尾动画。成功仍只持久化一次，取消和外部设置变化零写；只有面板收起、列表不可见后才允许卸载并按最新顺序重基准，重新展开时所有对齐静止行零 transform。 |
+| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `REG-PERF-012` 延迟 finalize bridge并注入新持久化顺序；V2EX 与 linux.do 各自的 host instance 必须跨提交保持相同，最终分别映射到 `+56/-56` 的新视觉槽位，位置标签为第 2/1 项，跨槽不得调用 `withTiming`。收起时 row host 必须卸载，重新展开后按已持久化顺序挂载且静止行不再带 transform。index-keyed 槽位会因来源换 host 失败，恢复尾动画会因 `withTiming` 失败，缺少收起重基准则静止 transform 断言失败。 |
 | 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定跨 bridge 的提交契约；匹配 Android APK 必须录 raw 高质量视频，并按真实 presented frame 检查抬手窗口。 |
 | Replay 或真实验收路径 | `LIVE-LOCAL-04` 记录原顺序，以 400ms 长按执行相邻与跨多槽拖动，目标到位后立即抬手；raw 高质量录屏逐个 presented frame 要求最后拖动态到最终静态顺序之间名字保持同一最终顺序，且无旧槽回弹、行重叠、空白、重复文字或整块闪动。正反向都通过后恢复原顺序并核对持久化。 |
 | 负向验证方式 | 改回 source-keyed preferences render、index-keyed 槽内换内容或恢复跨提交的 sibling `withTiming`，编号测试必须出现 host identity 或 timing 失败；匹配旧 APK 在提交边沿会重新出现缺行、整块闪动或相邻名字补换位。只延后清理、增加 `collapsable={false}`、删除 `elevation/zIndex` 或给 index 槽做位移补偿都不能满足 raw-frame oracle。 |
-| 明确不覆盖范围 | 不引入释放弹簧、LayoutAnimation、通用拖拽框架或额外状态机；不改变 350ms 长按、触觉、开关、TalkBack 和存储格式。 |
+| 明确不覆盖范围 | 不引入释放弹簧、LayoutAnimation、通用拖拽框架或额外状态机；不改变 350ms 长按、触觉、开关、TalkBack 和存储格式。可见展开期间不为清理 transform 重排或 remount source host。 |
+
+## `REG-MORE-001` More 展开面板停住后点击无反应
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`MORE-02`、`MORE-03`、`MORE-05`、`DATA-03` |
+| 用户症状 | 进入 More，展开账号中心后再点问题诊断、备份/恢复等标题，按钮有时没有反应；页面只在滚动的瞬间能点开，滚动一停又失效。用户没有点击生成、导出或分享动作。 |
+| 触发条件 | 内容源面板虽然收起，其内部排序行仍挂在 More 的 `ScrollView`；每个 Reanimated host 在没有位移时仍长期提交 `transform: translateY(0)`，排序后的非零 transform 还会跨面板生命周期保留。Android Fabric 的 presentation 与 hit-test 在这个 animated-transform seam 上偶发错位，滚动提交会短暂刷新命中。 |
+| 根因 seam | `src/features/more/components/ContentSourcesPanel.tsx` 同时拥有内容源排序行的挂载生命周期、稳定 source host 和 Reanimated transform。普通 ExpandablePanel、诊断导出逻辑与备份导出逻辑不是根因。 |
+| 必须保持的行为 | 内容源收起时不挂载任何排序 row；展开后与 native 槽位对齐且没有拖动的 row 不写 transform。真实拖动、跨槽预览和同次可见展开内的持久化提交继续使用 `REG-PERF-011/012` 的 UI-thread shared value 与稳定 source host，不回弹、不闪行、不换名字；收起后才取消残留 drag、清槽位并按最新顺序重基准。账号中心、内容源、问题诊断、外观和备份/恢复的展开按钮在滚动停止后都必须立即响应；本回归不触发具体导出动作。 |
+| 精确失败 oracle | `tests/ui/more/more-screen.test.tsx` 的 `REG-MORE-001` 先要求收起状态查不到 `content-source-row-v2ex`，再展开账号中心与内容源，要求四个静止 row 的扁平样式都没有 `transform`，最后直接展开问题诊断和备份/恢复并读取各自正文。修复前稳定得到 `transform: [{ translateY: 0 }]`；同文件 `REG-PERF-012` 另要求排序提交期间 host identity 和位移保持、收起后卸载、重开后零 transform。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定隐藏生命周期、静止 native 样式拓扑及展开正文；只有匹配 Android APK 的真实窗口输入才能证明停止滚动后的 presented frame 与 hit region 一致。ADB 坐标注入能稳定切换并会掩盖本故障，不能替代 Live。 |
+| Replay 或真实验收路径 | 在保留数据的匹配主 AVD 上，用 Emulator 窗口鼠标进入 More，展开账号中心后不滚动直接依次展开/收起问题诊断、备份/恢复、外观和内容源；再滚动、完全停止后重复，至少 20 轮，每次都同时确认标题无障碍展开态和正文真实出现。另按 `REG-PERF-012` 记录原内容源顺序，执行一次相邻拖动、收起/重开并恢复原顺序；不得点击生成诊断日志、导出备份或导入。 |
+| 负向验证方式 | 恢复收起时继续挂载排序 row，或让对齐静止行返回 `translateY(0)`；编号 UI 测试必须失败。用修复前匹配 APK 的 Emulator 窗口输入重复账号中心 → 其他面板，停止滚动后应能重新观察点击与展开呈现脱节；仅用 ADB 点击不得作为负向证据。 |
+| 明确不覆盖范围 | 不修改 ScrollView 减速、面板受控状态、按钮水波纹、诊断/备份业务动作、系统分享或文件选择；真实手指、TalkBack 和厂商实体机差异仍需单独验收。 |
 
 ## `REG-PERF-013` 巨图编译对同一 URL 候选重复分析
 

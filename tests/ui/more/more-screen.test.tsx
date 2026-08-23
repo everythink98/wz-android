@@ -463,6 +463,25 @@ describe('More screen state and actions', () => {
     expect(disabledSourceSwitches.every((control) => control.props.accessibilityState.checked === false)).toBe(true);
   });
 
+  it('[REG-MORE-001] keeps settled rows off the Fabric transform path while other panels expand', async () => {
+    const view = await render(<MoreScreen {...moreProps()} />);
+
+    expect(view.queryByTestId('content-source-row-v2ex')).toBeNull();
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await fireEvent.press(view.getByLabelText('展开内容源'));
+
+    for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
+      expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).not.toHaveProperty(
+        'transform'
+      );
+    }
+
+    await fireEvent.press(view.getByLabelText('展开问题诊断'));
+    expect(view.getByText(/日志只保存在本机并经过脱敏/)).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('展开备份 / 恢复'));
+    expect(view.getByLabelText('导出备份文件')).toBeTruthy();
+  });
+
   it('[REG-PERF-011] keeps drag frames off JS and persists the final source order once', async () => {
     const updateSettings = jest.fn();
     const view = await render(<MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} />);
@@ -627,6 +646,21 @@ describe('More screen state and actions', () => {
     expect(StyleSheet.flatten(view.getByTestId('content-source-row-linuxdo').props.style)).toMatchObject({
       transform: [{ translateY: -56 }]
     });
+
+    await fireEvent.press(view.getByLabelText('收起内容源'));
+    expect(view.queryByTestId('content-source-row-v2ex')).toBeNull();
+    await fireEvent.press(view.getByLabelText('展开内容源'));
+    expect(
+      view
+        .getAllByRole('switch')
+        .filter((control) => String(control.props.accessibilityLabel).endsWith('内容源开关'))
+        .map((control) => control.props.accessibilityLabel)
+    ).toEqual(['linux.do 内容源开关', 'V2EX 内容源开关', 'NodeSeek 内容源开关', '妖火 内容源开关']);
+    for (const source of ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
+      expect(StyleSheet.flatten(view.getByTestId(`content-source-row-${source}`).props.style)).not.toHaveProperty(
+        'transform'
+      );
+    }
 
     await act(async () =>
       view.getByLabelText('拖动排序：V2EX，第 2 项，共 4 项').props.onGestureStart({ translationY: 0 })
