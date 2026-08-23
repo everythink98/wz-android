@@ -1,7 +1,7 @@
 import { memo, type ReactNode, useMemo } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { Pressable, ScrollView, StyleSheet, Text, ToastAndroid, View, type ViewStyle } from 'react-native';
-import { ChevronDown, ChevronRight } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, Copy } from 'lucide-react-native';
 import { RenderHTMLSource } from 'react-native-render-html';
 import type {
   CompiledForumContentRow,
@@ -119,8 +119,8 @@ function CodeBlock({
               borderRadius: radius,
               borderWidth: StyleSheet.hairlineWidth,
               minWidth: contentWidth,
-              padding: 12,
-              paddingRight: row.copyText === undefined ? 12 : 64
+              padding: 14,
+              paddingRight: row.copyText === undefined ? 14 : 68
             },
             continuationFrameStyle(row.part, radius)
           ]}
@@ -149,18 +149,18 @@ function CodeBlock({
             alignItems: 'center',
             backgroundColor: terminal ? '#1f2937' : theme.surface,
             borderColor: terminal ? 'rgba(255,255,255,0.2)' : theme.line,
-            borderRadius: 6,
+            borderRadius: 8,
             borderWidth: StyleSheet.hairlineWidth,
             justifyContent: 'center',
             minHeight: 48,
             minWidth: 48,
             position: 'absolute',
-            right: 4,
-            top: 4
+            right: 6,
+            top: 6
           }}
           onPress={copy}
         >
-          <Text style={{ color: terminal ? '#e5e7eb' : theme.primaryStrong, fontSize: 12 }}>复制</Text>
+          <Copy color={terminal ? '#e5e7eb' : theme.muted} size={18} strokeWidth={2} />
         </Pressable>
       ) : null}
     </View>
@@ -224,7 +224,6 @@ function DisclosureHeader({ row }: { row: Extract<CompiledForumContentRow, { typ
           { marginBottom: visualPart === 'first' ? 0 : 12, paddingBottom: visualPart === 'first' ? 0 : 12 }
         ]}
         expanded={disclosure.expanded}
-        fold={row.fold}
         foldable={row.hasBody}
         onExpandedChange={disclosure.toggle}
         theme={theme}
@@ -350,19 +349,17 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
   }
   return (
     <View
-      style={[
-        {
-          backgroundColor: theme.surface2,
-          borderColor: theme.line,
-          borderRadius: 10,
-          borderWidth: StyleSheet.hairlineWidth,
-          marginBottom: 12,
-          marginTop: 12,
-          paddingHorizontal: 14,
-          paddingVertical: 12
-        },
-        continuationFrameStyle(frame.part, 10)
-      ]}
+      style={{
+        borderLeftColor: theme.primary,
+        borderLeftWidth: 3,
+        marginBottom: frame.part === 'last' || frame.part === 'only' ? 12 : 0,
+        marginTop: frame.part === 'first' || frame.part === 'only' ? 12 : 0,
+        paddingBottom: frame.part === 'last' || frame.part === 'only' ? 4 : 0,
+        paddingLeft: 12,
+        paddingRight: 4,
+        paddingTop: frame.part === 'first' || frame.part === 'only' ? 4 : 0
+      }}
+      testID="topic-blockquote-frame"
     >
       {children}
     </View>

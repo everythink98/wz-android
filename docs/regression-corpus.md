@@ -3611,9 +3611,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
 | 用户症状 | linux.do cooked HTML 中的 `[!warning]`、`[!caution]` 等 Callout marker 原样可见，整块按普通灰色引用渲染；评论引用展开后同样丢失黄色警告等语义，富文本标题、嵌套和折叠内容没有统一布局。 |
 | 触发条件 | App 只把 Discourse `blockquote` 当通用 HTML，没有把站点 Callout 方言归一为内部语义；Topic 页面还局部持有 `blockquote` renderer，回复、引用和采纳答案无法共享同一解释。 |
-| 根因 seam | `src/sources/discourse/content.ts` 的 cooked-HTML 协议边界、linux.do sanitizer transform，以及 `useHtmlRenderingController` 的共享 blockquote renderer。 |
-| 必须保持的行为 | 两站在 sanitizer 的同一次 DOM parse 中识别首段开头、大小写不敏感的 `[!type][+/-]`；支持 13 个主类型及 alias、未知类型 Note 回退、富文本标题、无正文、100 层 Callout 上限、嵌套和普通引用混排。转换前清除来源伪造的 `data-forum-callout-*` 与 `forum-callout-*` class，canonical 根仍为 `blockquote`。只有当前 Discourse 来源的完整 canonical 结构进入共享 `ForumCallout`；普通引用与非 Discourse 内容继续默认渲染。tone 只取 App theme，来源颜色/style/CSS/JS 不可信。`-` 初始收起、`+` 初始展开，隐藏正文不挂载；可折叠 header 至少 48dp、暴露 expanded 状态、100ms layout transition 遵循 Reduce Motion，标题链接阻止折叠冒泡。主题、回复、同/跨主题引用、采纳答案和超长分块使用同一 renderer；Topic/Search/UserActivity/引用简介不泄漏 marker。 |
-| 精确失败 oracle | `tests/integration/discourse-content-contracts.test.ts` 首个 tracer 用例在修复前得到原样 `<blockquote><p>[!warning] ...`，要求 marker 消失并生成 canonical title/content；其矩阵固定类型、alias、大小写、未知回退、富文本、折叠、嵌套、复杂正文、深度和伪造属性。`tests/integration/html-sanitization-contracts.test.ts` 固定两站单 parse 与普通 HTML fast path；`src/sources/discourse/model.test.ts`、两站 adapter 测试固定摘要清理。`tests/ui/shared/forum-callout.test.tsx` 固定 light/dark tone、48dp、expanded、未挂载正文与动画预算；`tests/ui/topic/topic-components.test.tsx` 固定 Callout/普通引用分流、非 Discourse 负例及标题链接冒泡。`REG-TOPIC-003/053/054/055` 继续固定正文/评论引用、跨主题身份、分阶段长引用和返回链。 |
+| 根因 seam | `src/sources/discourse/content.ts` 的 cooked-HTML 协议边界、`compileForumContent()` 的一次性 fold 解释，以及 `TopicSplitDisclosureStore` 的唯一展开状态 owner。 |
+| 必须保持的行为 | 两站在 sanitizer 的同一次 DOM parse 中识别首段开头、大小写不敏感的 `[!type][+/-]`；支持 13 个主类型及 alias、未知类型 Note 回退、富文本标题、无正文、100 层 Callout 上限、嵌套和普通引用混排。转换前清除来源伪造的 `data-forum-callout-*` 与 `forum-callout-*` class，canonical 根仍为 `blockquote`。compiler 只从 source `fold` 产出一次 `defaultExpanded`；route-scoped split disclosure store 唯一持有展开状态并过滤 body rows，`ForumCallout` 是完全受控的 header renderer，不持有 body、fallback state 或第二份 fold。普通引用与非 Discourse 内容继续默认渲染。tone 只取 App theme，来源颜色/style/CSS/JS 不可信。`-` 初始收起、`+` 初始展开，隐藏正文不进入父列表；可折叠 header 至少 48dp、暴露 expanded 状态、100ms layout transition 遵循 Reduce Motion，标题链接阻止折叠冒泡。主题、回复、同/跨主题引用、采纳答案和超长分块使用同一 renderer；Topic/Search/UserActivity/引用简介不泄漏 marker。 |
+| 精确失败 oracle | `tests/integration/discourse-content-contracts.test.ts` 首个 tracer 用例在修复前得到原样 `<blockquote><p>[!warning] ...`，要求 marker 消失并生成 canonical title/content；其矩阵固定类型、alias、大小写、未知回退、富文本、折叠、嵌套、复杂正文、深度和伪造属性。`tests/integration/html-sanitization-contracts.test.ts` 固定两站单 parse 与普通 HTML fast path；`src/sources/discourse/model.test.ts`、两站 adapter 测试固定摘要清理。`tests/ui/shared/forum-callout.test.tsx` 固定完全受控的 light/dark header、48dp、expanded、Reduce Motion 与标题链接；`tests/ui/topic/topic-split-disclosure.test.tsx` 通过真实 typed header/store 固定收起时 body rows 卸载。`tests/ui/topic/topic-components.test.tsx` 固定 Callout/普通引用分流和非 Discourse 负例。`REG-TOPIC-003/053/054/055` 继续固定正文/评论引用、跨主题身份、分阶段长引用和返回链。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：DOM 协议矩阵与真实 Native component/共享 renderer 同时覆盖；只查输出字符串、单一 warning 颜色或 App 能启动不能证明完整入口与交互。 |
 | Replay 或真实验收路径 | 按当前 revision/bundle 直达 `https://linux.do/t/topic/342888/1`，核对 warning、caution、tip、check、todo、danger、链接、图片、列表、嵌套、浅/深色和大字体；再直达 `https://linux.do/t/topic/2685882` 展开目标评论引用，Loading 时 Android Back 可立即返回，重进使用现有 Query cache。普通 blockquote 作负向对照；全程只读，不发帖、编辑、上传、投票或探测网络。动态第三方主题不进入 tracked Replay。 |
 | 负向验证方式 | 删除 normalizer、恢复 Topic 局部 blockquote override、信任来源 canonical attr/style、只处理 warning、让非 Discourse 来源进入 renderer，或折叠时继续挂载正文，编号协议/UI 测试必须分别出现 marker、错误分流、伪造语义或隐藏内容。 |
@@ -4812,9 +4812,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `FEED-01/02/04` |
 | 用户症状 | 首页“全部”或分类一直 Loading，实际只有一个站不结算，其他站已可用。 |
 | 触发条件 | Feed/Categories 的一个 child 在 active time 5 秒内不结算。 |
-| 根因 seam | `src/sources/readAggregation.ts` 的 `AGGREGATE_SOURCE_BUDGET_MS` 与 Feed child Abort/cursor 结算。 |
-| 必须保持的行为 | Feed/Categories 每来源独立计时并发，严格等待所有 child 成功、失败、超时或取消后才一次发布；5 秒超时以 partial 结算并保留 page/opaque cursor，父取消整体抛取消。聚合读取复用调用方现有 diagnostic trace，为每个 child 恰记录一次 `source + state + latencyMs + sanitized reason`，不得记录 URL、Cookie 或用户数据。 |
-| 精确失败 oracle | `src/sources/feedRead.test.ts` 用 deferred Promise 固定最后一个 child 终态前聚合结果绝不发布，并固定五个 child 的 success/failure/timeout/canceled 终态各恰记录一次、latency 有界、reason 脱敏，同时覆盖 child abort、cursor 保留与父取消。 |
+| 根因 seam | `src/sources/readAggregation.ts` 复用 `withAbortableTimeout` 的 `AGGREGATE_SOURCE_BUDGET_MS`，并拥有 Feed child 的 typed timeout/cancel 与 cursor 结算。 |
+| 必须保持的行为 | Feed/Categories 每来源独立计时并发，严格等待所有 child 成功、失败、超时或取消后才一次发布；active-time 5 秒超时以 typed `aggregate_timeout` partial 结算并保留 page/opaque cursor，父取消整体使用统一取消文案，父 signal 预先取消时不得调用 child。聚合读取复用调用方现有 diagnostic trace，为每个 child 恰记录一次 `source + state + latencyMs + sanitized reason`，不得记录 URL、Cookie 或用户数据。 |
+| 精确失败 oracle | `src/sources/feedRead.test.ts` 用 deferred Promise 固定最后一个 child 终态前聚合结果绝不发布，并固定五个 child 的 success/failure/timeout/canceled 终态各恰记录一次、latency 有界、reason 脱敏，同时覆盖 child abort、cursor 保留与父取消。`src/sources/readAggregation.test.ts` 固定 pre-aborted parent 的 child 调用数为 0。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：adapter 主动时钟、诊断与 cursor 必须覆盖。 |
 | Replay 或真实验收路径 | 匹配 APK 运行 `four-source-feed.ad` 和 `logged-out-readonly.ad`，确认单站动态失败时其他来源可见。 |
 | 负向验证方式 | 改回无界 `allSettled`、把父取消降级为 partial 或丢失 cursor，编号测试必须失败。 |
@@ -4902,7 +4902,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03` |
 | 用户症状 | NodeSeek `post-863650-1` 的正文请求先成功，但 1413 张图片集中在一个顶层 `<p>` 内；App 随后长时间失去响应、图片不显示，返回也卡顿，约 30 秒后出现 1390+ 个同步取消和多条 `ResponseBody` 泄漏，严重时进程卡死或退出。同进程后续详情的响应性也会被残留工作拖累；本条不把该现象归因为 `ReadNetworkRuntimeGeneration` 污染。 |
 | 触发条件 | 旧“懒加载”只把顶层 HTML node 当作 FlashList row；一个巨型 `<p>` 仍在单个 RNRH cell 内一次性展开全部 TNode、React component、Native View、Expo Image、OkHttp Call 和 Timer。原图附近 gate 只限制升级层，适屏图片仍全部 mount；限制 Dispatcher 只会把调用移到无界 native waiting queue。全屏预览若为完整 catalog 逐项创建 Pager wrapper，会继续线性放大 Native View。 |
-| 根因 seam | `src/domain/forum/topicContentSplit.ts` 的唯一公开 `compileForumContent()` 是不可信 HTML 到有界 typed UI rows 的编译边界；poll/quote 提升、视频分类、HTML 分片和 semantic continuation 都藏在该深 module 内，model/renderer 不再拥有第二套 DOM 规则。`src/features/topic/media/TopicBodyMediaCoordinator.tsx` 是 Topic 正文媒体许可、timeout、retry 与 runtime-generation restart 的唯一 owner；`src/ui/media/ImagePreviewModal.tsx` 独立拥有预览 physical window，生成的 `CloseSafeGlideStreamFetcher` 拥有 Native body。 |
+| 根因 seam | `src/domain/forum/topicContentSplit.ts` 的唯一公开 `compileForumContent()` 是不可信 HTML 到有界 typed UI rows 的编译边界；poll/quote 提升、视频分类、HTML 分片和 semantic continuation 都藏在该深 module 内，model/renderer 不再拥有第二套 DOM 规则。compiler 只产出 disclosure 的初始值，route-scoped `TopicSplitDisclosureStore` 唯一持有展开状态并在父 FlashList 前过滤 body rows，header renderer 不持有第二份状态或正文。`src/features/topic/media/TopicBodyMediaCoordinator.tsx` 是 Topic 正文媒体许可、timeout、retry 与 runtime-generation restart 的唯一 owner；`src/ui/media/ImagePreviewModal.tsx` 独立拥有预览 physical window，生成的 `CloseSafeGlideStreamFetcher` 拥有 Native body。 |
 | 必须保持的行为 | `compileForumContent()` 固定执行 `normalize/sanitize → semantic blocks → budget packing → typed rows`，对普通/恶意正文单次 parse、单次 post-order 统计。物理预算只约束可安全切开的调度单元：每个媒体 row 最多 4 个网络媒体，普通合并 row 继续遵守 80 个 RNRH node、16,384 个序列化字符和 12,000 文本字符；64 层是安全边界。plain/terminal code 与无离散媒体的连续富文本 subtree 是单一语义 owner，不因物理预算从内部切开；table、details、callout、blockquote 与 list 只在完整行组、自然子块或 list item 边界分段。无法安全拆分的 malformed/depth/media/table 单元替换成有界提示。poll、opening quote、native video 与上述结构由同一 compiler 原位产出 typed row；每个 row 直接携带 scope-local `semanticId`、segment/part 与完整 `ancestorFrames`，不生成 HTML binding 或 sidecar。主楼、普通回复、签名、评论完整引用、主楼内嵌完整引用和已采纳答案展开正文全部进入父 FlashList data，不得在 RNRH cell 内嵌套全文 `.map()`；keys 使用 owner scope、semantic id 与 segment，view type 包含 payload kind。引用摘要、展开/折叠、定位、query highlight、poll、视频、terminal、link card、预览目录、保存和正文顺序保持。focused route 的 `TopicBodyMediaCoordinator` 固定未完成工作 warm `<=8`、running `<=4`、正文原图同时 `<=1`；未获 permit 的未完成媒体只显示稳定占位，不创建 Expo Image/player/OkHttp call，离开窗口或 route inactive 只释放 waiting/running。已显示图片在 cell 真正回收或媒体 identity 改变前保持像素实例，稳定视觉 key 不含 attempt。正文复杂 SVG 的 consumer subscription 还必须随未完成 permit attempt 更换、row unmount 和 inactive 同步释放：最后一个 consumer 释放后排队 work 永不启动、支持 `AbortSignal` 的 fetch 取消；不可取消 Native 读取只准完成当前有界阶段，返回后不再渲染 poster。同 identity 的另一个活跃 consumer 保持 single-flight 不受影响；全局 32 项 artifact cache 和有界 queue 仍由 `compatibleImageSources` 持有，不转交 coordinator。只保留一个最近 deadline Timer，首次失败只产生一次门禁内自动重试，第二次失败后零滚动/recycling/runtime 第三波且只允许一次显式重试。generation 变化只给当前 running 工作集换 attempt，displayed/waiting/failed 不动。逻辑预览 catalog 完整保序，physical ring 固定 previous/current/next 三槽；UI worklet 结算 role/offset 后只给离屏槽换 source，latest desired index 拒绝旧转场/外部事件。三槽 raster 与 SVG poster 均使用 disk-only cache 并按 View 尺寸下采样解码，升为当前只改变优先级；预览 timeout 也按真实字节无进展判断并卸载失败 load layer。内容不截断、不增加“继续加载”。route 只输出一次不含 URL、正文、IP 或 Cookie 的聚合诊断，并包含 planned/media、warm/running/timer 高水位与 `firstRowElapsedMs`。 |
 | 精确失败 oracle | `src/domain/forum/topicContentSplit.test.ts` 在一个 `<p>` 生成 2000 张图片，修复前只有一个巨型 row，修复后数量和顺序不变且每媒体 row 最多 4 张；同文件固定超旧字符预算的连续段落和 240 行代码仍各为一个 owner，并覆盖 compiler typed 顺序、普通/native-video parse-once、2000 图 attributes 线性解码、恶意深度、parser fallback、实体/grapheme、anchor、table、details/callout 与有序列表的自然边界 continuation；楼主 plan 转成被引用回复时必须按 reply 角色重编译，不能复用会抽走 nested quote 的 opening plan。`src/domain/forum/forumContentMedia.test.ts` 固定媒体归一化只做一次 selector 建索引，不再按图片段落或 V2EX 动态图片重扫子树。`src/sources/nodeseek/reader.test.ts` 固定完整页面 parse `=1`、embedded JSON decode `=1`、embedded-only 主楼只净化/parse `=1`、1413 图 rendered 候选从整页到最终 plan 总 parse `=2`，且被丢弃 embedded 候选 parse `=0`。`src/domain/forum/topicActionState.test.ts` 固定投票状态改变时同步替换过期 plan，并通过真实 TanStack Query 结构共享后仍能按值验证 plan 语义。`src/sources/readGateway.test.ts` 固定 Topic、Replies 与单条引用三个 cache 边界都公开返回 `Prepared*` 类型。`src/features/topic/model/replyListModel.test.ts`、`src/features/topic/model/topicOpeningPresentation.test.ts`、`tests/ui/topic/topic-reply-filters.test.tsx` 固定主楼、回复/签名、两类完整引用与采纳答案都是父列表 direct rows，且已准备的非空正文到达 UI 后 compile `=0`。`tests/ui/topic/topic-media-coordinator.test.tsx` 与 `tests/ui/topic/topic-image-loading.test.tsx` 用 2000 个 descriptor 和全部正文媒体种类固定 running `<=4`、warm `<=8`、Timer `=1`、单原图、释放/暂停/失败/retry/runtime attempt/Native generation acquire、迟到 callback、首 row 和单次隐私聚合；其中 SVG oracle 明确要求 unmount、inactive、media epoch 与 runtime attempt 释放后，迟到 Native document 不进入 poster。`src/platform/media/compatibleImageSources.test.ts` 固定取消最后一个 consumer 会移除 queued work/abort 可取消 fetch，取消一个共享 consumer 不影响另一个且仍只有一次 fetch/poster。`tests/ui/topic/image-preview.test.tsx` 固定 2000 项 catalog 只创建 3 个 physical ring slots、旧 logical event 不跳错新 item、inactive 异常页激活后恰重试一次、无进展失败卸载 load layer，所有 mounted raster/poster 保持 `cachePolicy=disk` 与 `allowDownscaling=true`，且仍可到首、中、末项。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：Vitest 固定内容编译硬预算，RNTL 固定父列表 shape、permit 生命周期与三槽 Pager；匹配 revision 的 x86_64 Release APK 才能证明帧、PSS、Back、ANR/OOM 和进程存活。Debug、源码字符串、只打开详情或等待工具 settle 均不足。 |
@@ -5075,6 +5075,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 只读打开 V2EX 筛选，点入节点输入并执行 `keyboard dismiss` 收起输入态，再关闭弹层；不确认筛选、不提交论坛写入。Agent Live 再对 V2EX 节点及 Discourse 标签、分类、作者输入各连续两轮记录弹层边界。 |
 | 负向验证方式 | 恢复 Android 始终启用高度避让，或 hide 后只禁用而不重建 KAV，编号 UI 测试必须失败；只在 V2EX 或某个调用方局部清偏移时，共享账号/代理回归与 Discourse Live 仍会暴露不一致。 |
 | 明确不覆盖范围 | 不修改 `windowSoftInputMode`、代理表单 inset、候选请求协议、输入法实现或 iOS 键盘策略，不新增依赖。 |
+
+## `REG-SEARCH-027` 聚合搜索结算后进入 V2EX 导致 App 退出
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01/02/04` |
+| 用户症状 | “全部”搜索完成后点击 V2EX，App 立即退出到系统桌面；Release 日志为 JS `TypeError: Cannot read property 'length' of undefined`，栈位于 TanStack Infinite Query 的 `hasNextPage/getNextPageParam`。 |
+| 触发条件 | 聚合 V2EX 预览与单站 V2EX 默认搜索具有相同来源、关键词、ReadPlan、session epoch、筛选和排序；普通 `useQueries` 先把单页 `RemoteSearchSourceResult` 写入 key，随后 `useInfiniteQuery` 以同一 key 把它当作 `{ pages, pageParams }` 读取。 |
+| 根因 seam | `src/platform/query/serverState.ts` 的 Search Query key 数据形状身份，以及 `src/features/search/useSearchController.ts` 对聚合预览和单站分页的 key 选择。响应形状不同却缺少 lane，违反同一 Query key 只对应一种数据形状的约束。 |
+| 必须保持的行为 | “全部”继续按来源渐进显示每站最多 2 条且不分页；单站继续从第一页读取完整连续列表并独立分页。两类 key 以 `preview/pages` lane 区分，同时保留 `forum → source → search` 前缀，使来源取消、账号 scope 清理和重试仍覆盖两者。切换来源保留关键词和筛选，不增加 shape guard、复制缓存或额外请求状态。 |
+| 精确失败 oracle | `tests/ui/search/search-controller-ai.test.tsx` 的 `[REG-SEARCH-027]` 使用真实 `QueryClient` 先结算四站聚合预览，再切换相同默认条件的 V2EX；修复前稳定抛出 `pages.length` TypeError，修复后组件保持挂载、发起一次单站首屏请求、显示可分页结果，并同时存在含合法普通结果与 InfiniteData 的两个 lane。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY + LIVE_PASS`：RNTL 固定真实 Query observer 的状态转换与数据形状；匹配 Release APK 的首次覆盖启动日志和 App 内同路径确认 Native 进程未退出。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变；在搜索页提交 `codex` 的“全部”搜索，等待所有启用来源结算后进入 V2EX，确认当前关键词保留、单站列表结算、可继续分页，PID 不退出且无 JS Fatal、RedBox 或 ANR。第三方无结果或验证阻碍只影响数据轴，不得靠换关键词掩盖 App-owned 切换失败。 |
+| 负向验证方式 | 删除 lane 或让 `preview/pages` 取同值，编号测试必须重新在来源切换时抛出 Infinite Query shape 异常；只在 `getNextPageParam` 加空值 guard 时，缓存形状断言与首屏请求仍必须失败。 |
+| 明确不覆盖范围 | 不修改 TanStack Query、Search presentation、站点协议、ReadPlan、筛选默认值或持久化；Query cache 只在进程内存在，不增加迁移、兼容 key 或运行时数据修复。 |
 
 ## `REG-ACCOUNT-041` 账号刷新覆盖可信身份、重复 owner 或 unknown 被计为已登录
 
@@ -5877,6 +5892,50 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；canonical deep link 直达 `https://linux.do/t/topic/2693802`，同一 PID 首次加载后离开详情超过旧默认 GC 窗口，再进入时不得闪英文 ID。随后只用 `force-stop` 制造新 PID，process-cold 允许重新获取一次；不新增依赖动态时序的 tracked Replay。 |
 | 负向验证方式 | 移除任一生产消费端的 `gcTime=Infinity`，对应 RNTL 在压缩 GC 后必须重新出现空 map 首帧或额外 loader；若 Query data 仍在但真实 App 仍闪英文 ID，则否定当前 seam 并定位主动 remover 或 prop identity，不叠加缓存。 |
 | 明确不覆盖范围 | 不修改 NodeSeek sticker、正文 `<img class="emoji">`、图片字节缓存、reaction 算法、全局 QueryClient 默认值或账号清理协议；不追求 React 内部绝对 render 次数，只消除本次空 map → 真实 map 导致的额外提交。 |
+
+## `REG-TOPIC-117` 密集 inline Expo Image 子树造成停手补帧
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03`、`REG-PERF-010/020` 与 `REG-TOPIC-055/085/091` |
+| 用户症状 | linux.do `t/topic/342888` 的大量 emoji 与文本混排区域在每次短滑停止后仍会细微补走最后一段，看起来像图片销毁后修正了列表位置；同页展开引用时还容易把既有两阶段完整挂载误判成同一问题。 |
+| 触发条件 | 每个 inline emoji 都由独立 `ExpoImageViewWrapper` 加子 View 承载，父 FlashList 的 `40` 项回收池继续保留离屏富文本子树；90Hz 下 RenderThread 与 buffer queue 的迟帧会把最后一次输入位移延后呈现。Android trace 未观察到 `ACTION_UP` 后内容 offset 修正或图片高度坍缩。 |
+| 根因 seam | `ManagedInlineForumImage` 是四站正文 inline 图片的唯一共享显示边界。当前 App 开启 New Architecture，`RCTTextInlineImage` 在 Fabric 映射到标准 `Image` attachment；旧 ReactAndroid Fresco text span 不是运行时 seam。RN `0.81.5` 的 `node_modules/react-native/Libraries/Image/Image.android.js` Text 分支又漏掉标准图片事件，若用 `getSizeWithHeaders` 结算 coordinator 就形成第二个不可取消的完成事实。修复后 App 直接声明一个 Fabric attachment，最小版本锁定 patch 只转发既有 `loadStart/progress/load/error/loadEnd`；请求、解码、GIF 与卸载取消继续由标准 Native Image owner 负责。Fresco cache key 不包含 headers，故显示 URI 仍以 opaque request identity 的稳定 hash fragment 分区；fragment 不进入 HTTP 请求，真实 URL 与凭据保持原协议。 |
+| 必须保持的行为 | 所有来源、主楼、回复和已展开引用的 inline 图片统一使用同一实现，不按帖子、站点或图片数量特判。每个 inline token 始终占有同一个 Fabric attachment；未获 permit 时 source 为空、几何不变、零请求，获准后才建立唯一 Native Image owner，不得退回 Expo inline View。图片数量、顺序、比例、文本流、自动加载、animated GIF、失败重试及引用头像右侧留白不变；running `<=4`、warm window、runtime rotation、Referrer/header 与 session epoch 隔离继续生效。`attemptId` 只 remount attachment，不进入 URI；迟到事件不得结算新 attempt。FlashList `drawDistance=720`、回收池 `40` 和完整正文不变；块级图片、原图升级、预览、SVG、GIF sticker、视频与链接卡片继续走各自现有 renderer。引用同帖缓存、跨帖一次请求、收起重开复用缓存及 `REG-TOPIC-055` 的两阶段完整挂载不变。 |
+| 精确失败 oracle | `tests/ui/topic/topic-image-loading.test.tsx` 的六个 `[REG-TOPIC-117]` 用例固定：inline emoji 零 Expo owner、零 `getSizeWithHeaders`，五个 token 中仅前四个有 source；progress 不释放 permit，前四个 attachment 的真实 load/error 发生前第五个不得获准请求；error 与首次 timeout 必须以相同 URI remount，旧 attempt 的迟到 load 无效，同值父 rerender 不 remount；media session identity 改变时 fragment 改变而 HTTP URL 保持。`tests/tooling/react-native-inline-image-events-patch.test.ts` 固定 RN Text 分支转发标准事件且 patch 不包含 `ReactAndroid/`；`src/ui/list/performance.test.ts` 继续固定回收池为 `40`。 |
+| 最低可靠自动测试层 | `UI_PASS + UNIT_PASS + STATIC_PASS + APK_SANITY + LIVE_PASS`：RNTL 固定 owner、事件、预算与 identity，tooling unit 固定最小 RN JS patch；只有匹配 AAR Release APK 的真实事件到达、Android hierarchy、input timestamp、FrameTimeline 与 `gfxinfo` 能证明完整链路和停手末段不再因旧 Expo 子树迟帧。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变，只读直达 `https://linux.do/t/topic/342888`。同一 90Hz AVD、同一内容位置和同一短滑手势采集 Android input timestamp、FrameTimeline 与 `gfxinfo`；warm 连续短滑要求 p95 `<=25ms`、worst `<=35ms`、无连续两帧 miss，且 `ACTION_UP` 后无可见内容 offset 变化。hierarchy 中 inline 图片不得恢复 `ExpoImageViewWrapper` owner；真实块级媒体与头像等既有 Expo Image 不在此限制内。再只读核对普通多图帖 `https://linux.do/t/topic/2556285`、跨帖引用 `https://linux.do/t/topic/2685882` 与妖火 animated inline GIF；海量图片帖不因本项调整回收池，按既有 `REG-PERF-010/020` 自动与专项门槛独立验收。 |
+| 负向验证方式 | 恢复 inline `ExpoImage`、恢复 `getSizeWithHeaders` 或其他完成探针、绕过四并发 coordinator、让两个 session 使用相同 Fresco URI、把 `attemptId` 写进 URI，或用缩小回收池、固定图片高度、关闭图片、缩短正文、降低 drawDistance、位置锚定、父层 hardware layer、删除引用两阶段渲染或帖子/站点特判掩盖症状；编号用例或对应设备门槛必须失败。 |
+| 明确不覆盖范围 | 不承诺模拟器系统进程造成的绝对零掉帧，不修改引用 Controller/Model、产品公共类型、依赖、ReactAndroid、原生构建方式或数据迁移。引用只有在同帖零请求、跨帖一次请求或缓存重开行为出现具体失败时才另行修复。 |
+
+## `REG-TOPIC-118` 独占一段的用户 mention 背景和边框被拉伸成整行
+
+| 字段 | 内容 |
+| --- | --- |
+| 用户可见症状 | 正文中独占一段的 `@用户名` 显示为从正文左侧延伸到右侧的浅色圆角框；同屏 mention 后仍有正文时，框只包住文字。 |
+| 触发条件 | 段落只有一个 `a.forum-user-mention` 子节点。RNRH 在匿名 TPhrasing 只有一个子节点时绕过该 wrapper，使 mention `Text` 直接成为 block renderer 的子节点。 |
+| 根因 seam | Android/Yoga 默认会拉伸 block 容器中的直接子节点；mention 自带背景、边框和内边距，因此拉伸宽度被完整绘制。混排时 mention 嵌套在外层 `Text` 中，不进入该布局路径。共享 `forum-user-mention` 样式是全部正文入口的最小根因 seam。 |
+| 必须保持的行为 | 主楼、回复和已展开引用继续共用同一 mention 样式；背景、边框、圆角、内边距、字重、颜色和链接跳转保持不变。混排 mention 继续贴合文字；RNRH 全局匿名 TPhrasing bypass 保持开启，不增加站点、帖子或内容数量分支。 |
+| 精确失败 oracle | `src/features/topic/rendering/htmlStyles.test.ts` 的 `[REG-TOPIC-118]` 用例固定 mention 必须声明 `alignSelf: flex-start`，并同时固定背景存在、`borderWidth=1`、水平内边距 `5`、垂直内边距 `1`。修复前该用例因缺少 `alignSelf` 连续稳定失败，加入共享样式的一行约束后通过。 |
+| 最低可靠自动测试层 | `UNIT_PASS + STATIC_PASS`：样式单测固定根因约束与既有视觉属性；完整 Android 布局仍需匹配 APK 的只读设备验收。 |
+| Replay 或真实验收路径 | 在匹配 APK 中只读打开含两类 mention 的同一正文位置：一类是段落唯一内容，另一类后接普通文本。前者边框必须贴合文字宽度，后者外观不得变化；链接点按可在单独无写入旅程中核对。 |
+| 负向验证方式 | 移除 `alignSelf: flex-start` 时编号单测必须失败，匹配 Android APK 中 standalone mention 必须重新出现整行框。不得以删除背景/边框、全局关闭 TPhrasing bypass、自定义 renderer 或站点特判隐藏症状。 |
+| 明确不覆盖范围 | 不重设计普通链接、回复目标、用户名颜色或 mention 文案，不处理模拟器 Watchdog/系统进程卡死，也不把该布局问题归因于 inline 图片 span。 |
+
+## `REG-TOPIC-119` Fabric inline emoji 明显高于同一行文字
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03` 与 `REG-TOPIC-117` |
+| 用户可见症状 | inline emoji 已加载且尺寸正确，但在同一行中明显偏上；linux.do `t/topic/342888` 的 `#110` 中，同一 mask 下表情彩色内容中心比“是这样嘛”文字中心高 `11.5px`，底边低差也不自然。 |
+| 触发条件 | 从 Expo inline View 迁移后删除了旧的 `transform.translateY`，并把补偿错误地下沉到 legacy Fresco text span。当前 New Architecture 实际运行 Fabric Image attachment，旧 span patch 和自定义 `verticalOffset` 不会被消费；同一 APK 前后截图因此完全不变。小于正文行高的 `20dp` emoji 最明显。 |
+| 根因 seam | 四站正文都由 `inlineForumImageAlignmentStyle` 得到同一正文 `lineHeight` 与图片显示高度，返回值直接进入 Fabric attachment style。恢复既有 `translateY=max(0, (lineHeight-imageHeight)/2)` 就能由真实运行时消费；大于行高的 sticker 返回零位移，避免裁切。不增加 Native patch，也不按素材、帖子或站点维护偏移常量。 |
+| 必须保持的行为 | 主楼、回复和已展开引用的 inline emoji、引用头像及 inline sticker 继续共用同一 Fabric attachment；尺寸、比例、水平 margin、目标尺寸解码、GIF、标准加载事件、四并发 permit、失败重试、取消和 cache identity 不变。块级图片、预览、reaction 图标与列表回收池不受影响。 |
+| 精确失败 oracle | `src/platform/media/inlineMedia.test.ts` 的 `[REG-TOPIC-119]` 要求 `26dp` 正文行内的 `20dp` emoji 产生 `transform: [{ translateY: 3 }]`，`48dp` sticker 不位移，`24dp` 引用头像继续保留 `marginRight: 6` 并下移 `1dp`。匹配 AAR Release APK 的 `#110` 同一 mask 对照中，修前 emoji/text center delta 为 `11.5px`、修后为 `4px`；较大 `#112` emoji 完整显示且未裁切。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：Vitest 固定共享对齐公式与大贴图边界；只有匹配 AAR Release APK 能证明 Fabric 实际消费 transform，以及字体、density、行高与素材共同作用后的视觉结果。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变，只读打开 `https://linux.do/t/topic/342888` 并定位 `#110`；表情底边需与“是这样嘛”的文字行自然对齐。再只读核对普通 inline emoji、引用头像、animated inline GIF 和至少一种较大 inline sticker，确认没有向下溢出、裁剪或行高跳变。 |
+| 负向验证方式 | 删除 JS `transform` 计算、改回 Fabric 不消费的 `marginTop`，或再次把偏移下沉到 legacy span 时，编号测试或匹配 APK 中 `#110` 必须重新出现 `11.5px` 左右的明显上偏。不得增加素材偏移表、帖子特判或切回独立 Expo Image View。 |
+| 明确不覆盖范围 | 不修正图片文件自身透明画布或站点素材设计，不改变 reaction emoji、系统字体、正文行高设置或块级 sticker 排版。 |
 
 ## 待确认观察
 

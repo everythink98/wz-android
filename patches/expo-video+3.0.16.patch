@@ -1,0 +1,62 @@
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
+index 7e213f7..d9825e2 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
+@@ -12,7 +12,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
+ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+ import androidx.media3.exoplayer.source.MediaSource
+ import expo.modules.video.records.VideoSource
+-import okhttp3.OkHttpClient
++import com.facebook.react.modules.network.OkHttpClientProvider
+ 
+ @OptIn(UnstableApi::class)
+ fun buildBaseDataSourceFactory(context: Context, videoSource: VideoSource): DataSource.Factory {
+@@ -25,7 +25,9 @@ fun buildBaseDataSourceFactory(context: Context, videoSource: VideoSource): Data
+ 
+ @OptIn(UnstableApi::class)
+ fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): OkHttpDataSource.Factory {
+-  val client = OkHttpClient.Builder().build()
++  val client = ReadNetworkVideoClientRegistry.clientForGeneration(
++    videoSource.headers?.get(READ_NETWORK_GENERATION_HEADER)
++  ) ?: OkHttpClientProvider.createClient()
+ 
+   // If the application name has ANY non-ASCII characters, we need to strip them out. This is because using non-ASCII characters
+   // in the User-Agent header can cause issues with getting the media to play.
+@@ -34,7 +36,7 @@ fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): Ok
+   val defaultUserAgent = Util.getUserAgent(context, applicationName)
+ 
+   return OkHttpDataSource.Factory(client).apply {
+-    val headers = videoSource.headers
++    val headers = videoSource.headers?.filterKeys { key -> key != READ_NETWORK_GENERATION_HEADER }
+     headers?.takeIf { it.isNotEmpty() }?.let {
+       setDefaultRequestProperties(it)
+     }
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/ReadNetworkVideoClientRegistry.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/ReadNetworkVideoClientRegistry.kt
+new file mode 100644
+index 0000000..6910017
+--- /dev/null
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/ReadNetworkVideoClientRegistry.kt
+@@ -0,0 +1,23 @@
++package expo.modules.video
++
++import java.util.concurrent.ConcurrentHashMap
++import okhttp3.OkHttpClient
++
++const val READ_NETWORK_GENERATION_HEADER = "X-WZ-Read-Network-Generation"
++
++object ReadNetworkVideoClientRegistry {
++  private val clients = ConcurrentHashMap<Long, OkHttpClient>()
++
++  fun register(generation: Long, client: OkHttpClient) {
++    clients[generation] = client
++  }
++
++  fun unregister(generation: Long, client: OkHttpClient) {
++    clients.remove(generation, client)
++  }
++
++  fun clientForGeneration(value: String?): OkHttpClient? {
++    val generation = value?.toLongOrNull()?.takeIf { candidate -> candidate >= 0L } ?: return null
++    return clients[generation]
++  }
++}

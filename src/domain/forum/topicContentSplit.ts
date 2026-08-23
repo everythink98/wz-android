@@ -17,7 +17,6 @@ import {
   DISCOURSE_CALLOUT_TITLE_CLASS,
   DISCOURSE_CALLOUT_TYPE_ATTRIBUTE,
   isDiscourseCalloutType,
-  type DiscourseCalloutFold,
   type DiscourseCalloutType
 } from './callouts';
 import type {
@@ -30,7 +29,7 @@ import type {
   TopicPoll
 } from './models';
 import { discourseQuotedPostMetadataFromNode } from './quotedPosts';
-import { isDiscourseSource, type DiscourseSource } from './sourceCatalog';
+import { isDiscourseSource, sourceCatalog, type DiscourseSource } from './sourceCatalog';
 import {
   markNodeSeekReplyReferenceNodes,
   normalizeForumUserMentionNodes,
@@ -166,7 +165,6 @@ export type CompiledForumContentRow =
       readonly calloutType?: DiscourseCalloutType;
       readonly defaultExpanded: boolean;
       readonly disclosureKind: 'callout' | 'details';
-      readonly fold?: DiscourseCalloutFold;
       readonly hasBody: boolean;
       readonly titleHtml: string;
       readonly titleLabel: string;
@@ -1697,7 +1695,6 @@ function disclosureHeaderRow({
   calloutType,
   defaultExpanded,
   disclosureKind,
-  fold,
   hasBody,
   nodePath,
   titleHtml,
@@ -1706,7 +1703,6 @@ function disclosureHeaderRow({
   calloutType?: DiscourseCalloutType;
   defaultExpanded: boolean;
   disclosureKind: 'callout' | 'details';
-  fold?: DiscourseCalloutFold;
   hasBody: boolean;
   nodePath: string;
   titleHtml: string;
@@ -1718,7 +1714,6 @@ function disclosureHeaderRow({
     ...(calloutType ? { calloutType } : {}),
     defaultExpanded,
     disclosureKind,
-    ...(fold ? { fold } : {}),
     hasBody,
     titleHtml,
     titleLabel,
@@ -1924,7 +1919,6 @@ function compileSemanticEntries(
           calloutType,
           defaultExpanded: fold !== 'collapsed',
           disclosureKind: 'callout',
-          ...(fold ? { fold } : {}),
           hasBody: framedBody.length > 0,
           nodePath: path,
           titleHtml: calloutTitle.html,
@@ -2168,7 +2162,7 @@ function compileParsedForumContent({
   let previewImages: readonly ForumImagePreviewDescriptor[] = [];
   try {
     if (body) {
-      if (source === 'nodeseek') markNodeSeekReplyReferenceNodes(body, 'https://www.nodeseek.com/');
+      if (source === 'nodeseek') markNodeSeekReplyReferenceNodes(body, `${sourceCatalog.nodeseek.baseUrl}/`);
       const media = normalizeForumContentMediaNodes(body, { dynamicV2exImages: source === 'v2ex' });
       dynamicInlineImages = media.dynamicInlineImages;
       previewImages = media.previewImages;

@@ -1,8 +1,9 @@
 import type { DiscourseFeedFilter, Topic } from '@/domain/forum/models';
 import { accessRequirementLevelValue, accessRequirementSpecificity } from '@/domain/forum/presentation';
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import { discourseAvatarUrl } from '@/sources/discourse/content';
 
-export const LINUXDO_BASE_URL = 'https://linux.do';
+export const LINUXDO_BASE_URL: string = sourceCatalog.linuxdo.baseUrl;
 export const LINUXDO_UNCATEGORIZED_CATEGORY_NAME = '未分类';
 
 const LINUXDO_FEED_PATHS: Record<DiscourseFeedFilter, string> = {

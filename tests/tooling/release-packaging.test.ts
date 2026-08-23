@@ -336,6 +336,52 @@ describe('Android release packaging guards', () => {
     expect(app.expo.plugins).toContain('expo-video');
   });
 
+  it('owns the locked Expo Video source changes through patch-package', () => {
+    const pkg = JSON.parse(readProjectFile('package.json'));
+    const lock = JSON.parse(readProjectFile('package-lock.json'));
+    const patch = readProjectFile('patches', 'expo-video+3.0.16.patch');
+    const dataSource = readProjectFile(
+      'node_modules',
+      'expo-video',
+      'android',
+      'src',
+      'main',
+      'java',
+      'expo',
+      'modules',
+      'video',
+      'utils',
+      'DataSourceUtils.kt'
+    );
+    const registry = readProjectFile(
+      'node_modules',
+      'expo-video',
+      'android',
+      'src',
+      'main',
+      'java',
+      'expo',
+      'modules',
+      'video',
+      'utils',
+      'ReadNetworkVideoClientRegistry.kt'
+    );
+    const networkPlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+
+    expect(pkg.dependencies['expo-video']).toBe('~3.0.16');
+    expect(lock.packages['node_modules/expo-video'].version).toBe('3.0.16');
+    expect(pkg.scripts.postinstall).toBe('patch-package');
+    expect(patch).toContain('DataSourceUtils.kt');
+    expect(patch).toContain('ReadNetworkVideoClientRegistry.kt');
+    expect(dataSource).toContain('ReadNetworkVideoClientRegistry.clientForGeneration');
+    expect(dataSource).toContain('?: OkHttpClientProvider.createClient()');
+    expect(dataSource).toContain('filterKeys { key -> key != READ_NETWORK_GENERATION_HEADER }');
+    expect(registry).toContain('object ReadNetworkVideoClientRegistry');
+    expect(registry).toContain('clients.remove(generation, client)');
+    expect(networkPlugin).not.toContain('patchExpoVideoDataSource');
+    expect(networkPlugin).not.toContain('EXPO_VIDEO_SOURCE_SHA256');
+  });
+
   it('pins react-native-render-html to the reviewed version', () => {
     const pkg = JSON.parse(readProjectFile('package.json'));
     const lock = JSON.parse(readProjectFile('package-lock.json'));

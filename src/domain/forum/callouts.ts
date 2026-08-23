@@ -20,7 +20,6 @@ export type DiscourseCalloutType =
   | 'example'
   | 'quote';
 
-export type DiscourseCalloutFold = 'collapsed' | 'expanded';
 export type DiscourseCalloutTone = 'primary' | 'success' | 'warning' | 'danger' | 'muted';
 
 export type DiscourseCalloutDefinition = {

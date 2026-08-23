@@ -1,94 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash } = require('node:crypto');
 const { withAppBuildGradle, withDangerousMod, withMainApplication } = require('@expo/config-plugins');
 const { androidPackagePath, injectMainApplicationPackage } = require('./androidPackageRegistration');
-
-const EXPO_VIDEO_VERSION = '3.0.16';
-const EXPO_VIDEO_DATA_SOURCE_PATH = path.join(
-  'node_modules',
-  'expo-video',
-  'android',
-  'src',
-  'main',
-  'java',
-  'expo',
-  'modules',
-  'video',
-  'utils',
-  'DataSourceUtils.kt'
-);
-const EXPO_VIDEO_OKHTTP_IMPORT = 'import okhttp3.OkHttpClient';
-const EXPO_VIDEO_MANAGED_IMPORT = 'import com.facebook.react.modules.network.OkHttpClientProvider';
-const EXPO_VIDEO_CLIENT = '  val client = OkHttpClient.Builder().build()';
-const EXPO_VIDEO_MANAGED_CLIENT = '  val client = OkHttpClientProvider.createClient()';
-const EXPO_VIDEO_GENERATION_CLIENT = `  val client = ReadNetworkVideoClientRegistry.clientForGeneration(
-    videoSource.headers?.get(READ_NETWORK_GENERATION_HEADER)
-  ) ?: OkHttpClientProvider.createClient()`;
-const EXPO_VIDEO_HEADERS = '    val headers = videoSource.headers';
-const EXPO_VIDEO_GENERATION_HEADERS =
-  '    val headers = videoSource.headers?.filterKeys { key -> key != READ_NETWORK_GENERATION_HEADER }';
-const EXPO_VIDEO_SOURCE_SHA256 = '18a6a000d9da4b16109978156917d98c09c728e12a186a660e7857d488db237a';
-const EXPO_VIDEO_LEGACY_PATCHED_SHA256 = '3e599f363e5be89357f7e97f9b3558a6f772ee151a2c7b43605b6f58791ac595';
-const EXPO_VIDEO_PATCHED_SHA256 = 'b250d2938cfa450de98c62d059fe4789301681da47c0a0c1ec9d1ab562a3125f';
-const EXPO_VIDEO_CLIENT_REGISTRY_SOURCE = `package expo.modules.video
-
-import java.util.concurrent.ConcurrentHashMap
-import okhttp3.OkHttpClient
-
-const val READ_NETWORK_GENERATION_HEADER = "X-WZ-Read-Network-Generation"
-
-object ReadNetworkVideoClientRegistry {
-  private val clients = ConcurrentHashMap<Long, OkHttpClient>()
-
-  fun register(generation: Long, client: OkHttpClient) {
-    clients[generation] = client
-  }
-
-  fun unregister(generation: Long, client: OkHttpClient) {
-    clients.remove(generation, client)
-  }
-
-  fun clientForGeneration(value: String?): OkHttpClient? {
-    val generation = value?.toLongOrNull()?.takeIf { candidate -> candidate >= 0L } ?: return null
-    return clients[generation]
-  }
-}
-`;
-
-function sha256(value) {
-  return createHash('sha256').update(value).digest('hex');
-}
-
-function patchExpoVideoDataSource(projectRoot) {
-  const packageRoot = path.join(projectRoot, 'node_modules', 'expo-video');
-  const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
-  const sourcePath = path.join(projectRoot, EXPO_VIDEO_DATA_SOURCE_PATH);
-  const registryPath = path.join(path.dirname(sourcePath), 'ReadNetworkVideoClientRegistry.kt');
-  const source = fs.readFileSync(sourcePath, 'utf8');
-  const sourceHash = sha256(source);
-  if (
-    packageJson.version !== EXPO_VIDEO_VERSION ||
-    ![EXPO_VIDEO_SOURCE_SHA256, EXPO_VIDEO_LEGACY_PATCHED_SHA256, EXPO_VIDEO_PATCHED_SHA256].includes(sourceHash)
-  ) {
-    throw new Error('Expo Video DataSource 源码与已审核版本不匹配，拒绝生成 Android 工程。');
-  }
-  const patched =
-    sourceHash === EXPO_VIDEO_PATCHED_SHA256
-      ? source
-      : source
-          .replace(EXPO_VIDEO_OKHTTP_IMPORT, EXPO_VIDEO_MANAGED_IMPORT)
-          .replace(EXPO_VIDEO_CLIENT, EXPO_VIDEO_GENERATION_CLIENT)
-          .replace(EXPO_VIDEO_MANAGED_CLIENT, EXPO_VIDEO_GENERATION_CLIENT)
-          .replace(EXPO_VIDEO_HEADERS, EXPO_VIDEO_GENERATION_HEADERS);
-  if (sha256(patched) !== EXPO_VIDEO_PATCHED_SHA256) {
-    throw new Error('Expo Video DataSource patch 结果不可信，拒绝生成 Android 工程。');
-  }
-  if (source !== patched) {
-    fs.writeFileSync(sourcePath, patched);
-  }
-  fs.writeFileSync(registryPath, EXPO_VIDEO_CLIENT_REGISTRY_SOURCE);
-}
 
 function networkProxyRuntimeSource(packageName) {
   return `package ${packageName}
@@ -6028,7 +5941,6 @@ function withNetworkProxyModule(config) {
       if (!packageName) {
         return config;
       }
-      patchExpoVideoDataSource(config.modRequest.projectRoot);
       const proguardPath = path.join(config.modRequest.platformProjectRoot, 'app', 'proguard-rules.pro');
       fs.writeFileSync(proguardPath, injectCronetProguardRules(fs.readFileSync(proguardPath, 'utf8')));
       const outputDir = path.join(
@@ -6070,4 +5982,3 @@ function withNetworkProxyModule(config) {
 
 module.exports = withNetworkProxyModule;
 module.exports.injectCronetProguardRules = injectCronetProguardRules;
-module.exports.patchExpoVideoDataSource = patchExpoVideoDataSource;

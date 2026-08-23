@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
@@ -98,7 +98,6 @@ export function MenuButton({
 
 export function ExpandablePanel({
   children,
-  defaultExpanded = false,
   expanded,
   icon,
   meta,
@@ -107,34 +106,26 @@ export function ExpandablePanel({
   onExpandedChange
 }: {
   children: ReactNode;
-  defaultExpanded?: boolean;
-  expanded?: boolean;
+  expanded: boolean;
   icon?: LucideIcon;
   meta?: string;
   quiet?: boolean;
   title: string;
-  onExpandedChange?: (expanded: boolean) => void;
+  onExpandedChange: (expanded: boolean) => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createExpandableStyles);
-  const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
-  const panelExpanded = expanded ?? internalExpanded;
   const Icon = icon;
-  const StateIcon = panelExpanded ? ChevronUp : ChevronDown;
-  const toggleExpanded = () => {
-    const nextExpanded = !panelExpanded;
-    setInternalExpanded(nextExpanded);
-    onExpandedChange?.(nextExpanded);
-  };
+  const StateIcon = expanded ? ChevronUp : ChevronDown;
 
   return (
     <View style={quiet ? styles.groupList : styles.group}>
       <Pressable
-        accessibilityLabel={panelExpanded ? `收起${title}` : `展开${title}`}
+        accessibilityLabel={expanded ? `收起${title}` : `展开${title}`}
         accessibilityRole="button"
-        accessibilityState={{ expanded: panelExpanded }}
+        accessibilityState={{ expanded }}
         android_ripple={androidRipple(theme.primarySoft)}
         style={styles.header}
-        onPress={toggleExpanded}
+        onPress={() => onExpandedChange(!expanded)}
       >
         {Icon ? (
           <View style={styles.menuIcon}>
@@ -153,10 +144,7 @@ export function ExpandablePanel({
           <StateIcon size={18} color={theme.primary} strokeWidth={1.9} />
         </View>
       </Pressable>
-      <View
-        pointerEvents={panelExpanded ? 'auto' : 'none'}
-        style={[styles.body, { display: panelExpanded ? 'flex' : 'none' }]}
-      >
+      <View pointerEvents={expanded ? 'auto' : 'none'} style={[styles.body, { display: expanded ? 'flex' : 'none' }]}>
         {children}
       </View>
     </View>

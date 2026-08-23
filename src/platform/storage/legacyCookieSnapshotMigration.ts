@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import { NODESEEK_USER_AGENT_STORAGE_KEY } from '@/platform/android/nodeSeekUserAgent';
 import { LINUXDO_USER_AGENT_STORAGE_KEY } from '@/platform/android/linuxDoUserAgent';
 import {
@@ -68,7 +69,7 @@ export async function migrateLegacyCookieSnapshots({
 } = {}) {
   const [nodeseek, linuxdo, yaohuo] = await Promise.all([
     migrateSource({
-      exactUrl: 'https://www.nodeseek.com/',
+      exactUrl: `${sourceCatalog.nodeseek.baseUrl}/`,
       legacyKeys: [NODESEEK_ACCESS_STORAGE_KEY, NODESEEK_COOKIE_STORAGE_KEY],
       readManagedCookieHeader,
       secureStore,
@@ -78,7 +79,7 @@ export async function migrateLegacyCookieSnapshots({
       }
     }),
     migrateSource({
-      exactUrl: 'https://linux.do/session/current.json',
+      exactUrl: `${sourceCatalog.linuxdo.baseUrl}/session/current.json`,
       legacyKeys: [LINUXDO_ACCESS_STORAGE_KEY],
       readManagedCookieHeader,
       secureStore,
@@ -88,7 +89,7 @@ export async function migrateLegacyCookieSnapshots({
       }
     }),
     migrateSource({
-      exactUrl: 'https://www.yaohuo.me/wapindex.aspx?sid=-2',
+      exactUrl: `${sourceCatalog.yaohuo.baseUrl}/wapindex.aspx?sid=-2`,
       legacyKeys: [YAOHUO_COOKIE_STORAGE_KEY],
       readManagedCookieHeader,
       secureStore

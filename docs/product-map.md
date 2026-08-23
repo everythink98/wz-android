@@ -106,6 +106,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `REG-SEARCH-026` 补充 `SEARCH-03`，共享 `ACCOUNT-05`、`MORE-01`：Android `ModalSheetFrame` 只在软键盘实际显示时启用高度避让，键盘隐藏后禁用并重建残留内部补偿的 KAV，弹层关闭同样回到干净实例；V2EX 节点、Discourse 标签/分类/作者候选连续操作不得累积位移。账号凭据编辑器的显式开关和代理表单的手动 inset 保持原行为。
 
+`REG-SEARCH-027` 补充 `SEARCH-01/02/04`：“全部”每站预览与单站连续分页使用同一来源、关键词、筛选和排序时，Query key 仍必须以 `preview/pages` lane 区分数据形状；既有 `forum → source → search` 前缀继续统一取消和失效。聚合结算后进入 V2EX 等单站必须发起合法首屏分页 Query，不得把预览对象当作 InfiniteData、退出 App 或丢失当前关键词。
+
 ### TOPIC：主题详情与阅读
 
 `TOPIC-02/03` 的正文、回复和引用继续先走既有图片预览、站内主题/楼层和用户导航；只有剩余 HTTP(S) 外链使用默认浏览器 Custom Tab。`TOPIC-04` 的“原站打开”继续使用完整系统浏览器。Route/Expo 边界由 `tests/ui/topic/topic-route-external-links.test.tsx` 独立固定 rejection 反馈与完整浏览器分流，App route-gate 测试不再兼任该 owner。
@@ -154,6 +156,12 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `REG-TOPIC-116` 补充 `TOPIC-01/03`、`NOTIFY-02`、`WRITE-01`：linux.do 的 `/emojis.json` 枚举按来源隔离，并在 App JS 进程内保留首次成功解析出的同一 map；详情、回复和私信编辑器卸载后重进必须首帧直接复用，不得重新执行枚举 loader、先显示英文 ID 或新增计算/render owner。首次失败不产生成功缓存，后续挂载或显式刷新仍可重试；进程终止以及既有账号显式重置边界不变。NodeSeek sticker、正文 emoji 图片和图片字节缓存不在此契约内。
 
+`REG-TOPIC-117` 补充 `TOPIC-01/02/03`、`NAV-02/03` 与 `REG-PERF-010/020`：四站正文的 inline 图片统一使用 Android New Architecture 的 Fabric Image attachment，不再为每张 emoji 建立独立 Expo Image View，也不再用 `getSizeWithHeaders` 建立第二个完成探针。未获 permit 的 attachment 保留文字流几何但 source 为空；获准后同一个 React Native Image owner 的真实 `load/progress/error` 结算既有四并发媒体 coordinator，替换或回收时沿 Fabric 生命周期取消旧 owner。目标尺寸解码和 animated GIF 沿用 React Native Image 的标准 Native 能力。opaque request identity 的稳定 hash fragment 只进入 Fresco cache identity、不改变 HTTP URL，`attemptId` 只作为失败或 runtime rotation 的 remount key。锁定 `react-native@0.81.5` 的最小 JS patch 只补齐 Text 分支既有标准图片事件，不 patch `ReactAndroid`、不启用 source build；FlashList 回收池 `40`、完整正文、块级媒体、预览和引用两阶段展开保持不变，不允许按帖子、站点或图片数量特判。
+
+`REG-TOPIC-118` 补充 `TOPIC-02/03` 与 `NAV-02/03`：当 `forum-user-mention` 是段落唯一子节点时，RNRH 会绕过匿名 TPhrasing wrapper，使 mention `Text` 直接成为 block 子节点；Android 必须用 `alignSelf: flex-start` 保持背景和边框只包住文字，不能拉伸成整行。现有背景、边框、圆角、内边距、字重和链接跳转保持不变；混排 mention 不受影响，也不允许为此关闭全局 TPhrasing bypass 或增加站点、帖子特判。
+
+`REG-TOPIC-119` 补充 `TOPIC-01/02/03` 与 `NAV-02/03`：Android Fabric attachment 的 inline emoji 必须保留迁移前的视觉基线规则；图片短于正文行高时，复用共享样式以 `translateY=max(0, (lineHeight-imageHeight)/2)` 向下居中，不能明显高于相邻文字。大于行高的 inline sticker 不额外位移，避免向下裁切。该约束在四站主楼、回复和已展开引用共用，不增加 Native patch、素材偏移表、帖子或站点特判，也不改变图片尺寸、水平留白、单一 Native owner、GIF、permit、重试或块级媒体链路。
+
 `TOPIC-01/02/03` 的四站 Topic adapter、主楼与回复共用媒体首跳 Referrer 契约：adapter 保留最终 Topic URL，妖火额外保留 HTML 响应策略；媒体按元素策略、文档策略和真实 URL 关系解析最终 `Referer`，不从 `contentSource` 推导，也不按站点或图床分支。正文、原图升级、预览、保存、原生视频、贴纸和卡片图共用该契约，缓存与协调身份区分最终 `Referer`/`none`，见 `REG-TOPIC-078`。原生正文视频错误或超时释放 permit 后稳定等待点按重试，不自动重建 player；显式重试只创建一次，卸载释放由 Expo 独占且组件不再访问已释放 player，见 `REG-TOPIC-079`。正文视频按 track 固有比例布局、最窄限制 `1:2` 且不因比例变化重建 player，见 `REG-TOPIC-080`。opening 虚拟化 rows 共同呈现为一篇连续文章，隐藏占位不泄漏，妖火附件由 adapter 归一为共享语义卡片；quote、poll、accepted answer 等边界保持，见 `REG-TOPIC-081`。原生视频保留真实 poster，封面由独立图片 permit 管理，首次播放后才退出且暂停保留当前帧，见 `REG-TOPIC-082`。结构化内容由 typed semantic rows 保持祖先身份与文档顺序；FlashList row 只负责调度，code 和连续文本保持单一语义 owner，table 等容器只按自然子项分段；code/table 共用方向判定与横向位置 owner，回复定位的每次显式点击都产生独立命令，并由完整 sanitizer→compiler→FlashList 贯通测试守住。图片自然尺寸先于未完成 lease 回收同步保存，已显示像素不再受 viewability 撤销；Tab 替换可见 row 时继续以同一有界窗口驱动媒体 permit，当前 viewport 排序又可抢占仍 warm 的旧 row 请求，见 `REG-TOPIC-084/085/086/087/088/089/090/091/092/093/094/097/098/108/110`。图片、WebView 视频和贴纸仍保留既有自动重试。
 
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |
@@ -187,7 +195,7 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `REG-TOPIC-073` 补充 `TOPIC-01/03`、`NAV-02/03`：linux.do 的 `post_stream.stream` 是窗口身份和 cursor 权威，`/posts.json` 是可能与删帖竞态的 hydration 投影。普通 `start/cursor` 请求中，只要 hydration 至少返回一条已请求、唯一的实体，adapter 就按 stream 顺序展示可解析子集，并保留原 stream offset 的相邻 cursor。未请求 ID、重复 ID、整窗空缺、错误 cursor 仍失败；显式 target/near-post 继续必须命中目标实体。不伪造楼层、不压实 post number，不修改 NodeSeek、V2EX 或妖火的来源协议。
 
-`TOPIC-01/02/03` 的 linux.do cooked HTML 共享完整 Callout 协议：13 个主类型、alias、大小写、未知类型 Note 回退、富文本标题、`+/-` 折叠、嵌套和普通引用混排均先在 `discourseContent` 归一化，再由唯一 Native renderer 使用 App theme 呈现。marker 不得泄漏到正文、搜索、用户活动或引用简介；来源伪造的 canonical 属性/class、非 Discourse 内容和普通 blockquote 不得取得 Callout 语义。折叠正文未展开时不挂载，标题链接不触发折叠；主题正文、普通回复、同/跨主题引用、采纳答案和超长分块行为一致，见 `REG-TOPIC-056`。
+`TOPIC-01/02/03` 的 linux.do cooked HTML 共享完整 Callout 协议：13 个主类型、alias、大小写、未知类型 Note 回退、富文本标题、`+/-` 折叠、嵌套和普通引用混排均先在 `discourseContent` 归一化；compiler 只产出一次 `defaultExpanded`，route-scoped split disclosure store 是唯一展开 owner，受控 `ForumCallout` 只渲染 header、配色与无障碍语义。marker 不得泄漏到正文、搜索、用户活动或引用简介；来源伪造的 canonical 属性/class、非 Discourse 内容和普通 blockquote 不得取得 Callout 语义。折叠正文未展开时不进入父列表，标题链接不触发折叠；主题正文、普通回复、同/跨主题引用、采纳答案和超长分块行为一致，见 `REG-TOPIC-056`。
 
 `TOPIC-01/02/03` 的任意不可信正文只通过 `compileForumContent()` 编译成有硬预算的 typed 父 FlashList direct rows；主楼、普通回复与签名、评论完整引用、主楼内嵌完整引用和已采纳答案展开正文都不得自行 parse DOM、调用旧 splitter 或在单个 RNRH cell 内 `.map()` 完整内容。compiler 统一拥有 poll/quote 原位提升、原生视频分类、语义块建立和预算分段；每 row 最多 4 个网络媒体、80 个 RNRH node、16,384 个序列化字符、64 层深度和 12,000 文本字符。每个 typed row 直接携带 `semanticId/segmentIndex/part/ancestorFrames/networkMediaCount`；普通相邻 rich text 只在祖先路径和预算兼容时合并，无法安全拆分的 semantic unit fail-closed，输出不含 compiler binding 属性。共享 sanitizer 只做安全归一并保留普通 block pre/code；明确 ANSI 与 NodeSeek magic tabs 规范化后仍由 compiler 拆为 terminal header 与带 tab ancestor 的既有 typed rows，不能恢复单个 opaque terminal cell。FlashList keys 使用 owner scope、semantic id 与 segment，view type 包含 payload kind。图片预览目录仍从未分片原文保序建立。mounted row 才可申请未完成媒体工作；inactive route 必须暂停 waiting/running，已显示图片由实际 mounted cell 持有。正文后控件与回复继续位于同一列表顺序。LinuxDo source transform 与 sanitizer 共用一次 DOM parse，非正文状态更新不得重编译；Loading 返回的已排队取消必须在重型编译前胜出。返回行为同时展开 `NAV-02/03`，见 `REG-PERF-008/010`、`REG-TOPIC-086/088/089/090`。
 
@@ -517,6 +525,9 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 | `TOPIC-01/02/03`；关联 `NAV-02/03`、`REG-TOPIC-048/075/085` | `REG-TOPIC-114` | `expo-image` Release Kotlin unit test 固定原图 `1000×5000`、降采样 Drawable `68×342` 时事件仍返回 `1000×5000`，并固定无效 source 尺寸回退 intrinsic；图片 renderer RNTL 乱序加载长图、真实窄图、小横图和普通宽图，固定每个 identity 只更新自身 frame、首次未知尺寸恰好一次列表布局通知、重复回调与重挂载零新增通知、`source/recyclingKey` 稳定且每图仅一个 Expo Image owner。匹配 APK process-cold 核对当前主题首停留尺寸与重进一致，再只读核对 linux.do `t/topic/2556285` 前四图的首次加载、滚离返回和退出重进。 |
 | `TOPIC-01`；关联共享 Discourse 删除回复过滤 | `REG-TOPIC-115` | `src/sources/linuxdo/reader.test.ts` 固定真实文本与 media-only 删除主楼、原标题、删除占位、空 `cooked` 反例、一次 fetch 与 media marker DOM parse `=1`；`src/sources/discourse/model.test.ts` 固定默认拒绝、显式放行及非空 `deleted_at` 仍拒绝，既有 Discourse contract 固定删除回复继续过滤。Targeted Agent Live 只恢复一次 `https://linux.do/t/topic/2780439`，确认显示原标题和“（话题已被作者删除）”且无解析失败；动态目标不新增 tracked Replay。 |
 | `TOPIC-01/03`；关联 `NOTIFY-02`、`WRITE-01` | `REG-TOPIC-116` | Topic 与 Notifications Route RNTL 把默认 Query GC 压缩后固定首次成功 loader=1、卸载跨过 GC、重进首帧直接命中同一来源 map，并固定首次失败后可再次请求；既有站点切换取消继续通过。匹配 APK 在同一 PID 直达 linux.do `t/topic/2693802`，退出详情超过旧 GC 窗口后重进不得闪英文 ID；process-cold 允许重新获取一次。 |
+| `TOPIC-01/02/03`；关联 `NAV-02/03`、`REG-PERF-010/020` | `REG-TOPIC-117` | 图片 renderer RNTL 固定 inline 图片零 Expo owner/零 size probe、五个 attachment 中仅前四个有 source、真实 `load/error` 才放行第五项、progress 不放行、错误与 runtime rotation remount、旧 attempt 迟到事件无效及 session hash 隔离；tooling unit 固定 RN `0.81.5` Text 分支转发标准事件且 patch 不含 `ReactAndroid`，列表性能测试固定回收池 `40`。匹配 AAR Release APK 在 linux.do `t/topic/342888` 用 input timestamp、FrameTimeline 与 `gfxinfo` 验证短滑停手，并只读回归普通多图帖 `t/topic/2556285`、跨帖引用 `t/topic/2685882` 与妖火 animated inline GIF；不以千图帖现场调参替代共享门槛。 |
+| `TOPIC-02/03`；关联 `NAV-02/03` | `REG-TOPIC-118` | `src/features/topic/rendering/htmlStyles.test.ts` 固定 standalone mention 的 `alignSelf: flex-start`，并固定既有背景、边框及内边距不被删除。匹配 APK 只读对照独占一段的 `@用户名` 与 mention 后仍有正文的混排场景：两者边框都必须贴合文字，不能铺满正文宽度。 |
+| `TOPIC-01/02/03`；关联 `NAV-02/03`、`REG-TOPIC-117` | `REG-TOPIC-119` | `inlineMedia` unit 固定 `20dp` emoji 在 `26dp` 行内产生 `translateY: 3`、`48dp` sticker 不位移，并保留引用头像水平留白；匹配 AAR Release APK 在 linux.do `t/topic/342888` 的 `#110` 对照表情与相邻正文，再只读核对引用头像和其他来源 inline sticker。 |
 
 ## 筛选、排序与列表状态契约
 

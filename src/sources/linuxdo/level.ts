@@ -13,8 +13,8 @@ import {
 import { isRecord } from '@/domain/forum/html';
 import { withLinuxDoConnectSessionRecoveryIntent } from './browserFallback';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
+import { LINUXDO_BASE_URL } from './protocol';
 
-const BASE_URL = 'https://linux.do';
 const CONNECT_URL = 'https://connect.linux.do/';
 const SNAPSHOT_KEY_PREFIX = 'linuxdo-level-snapshot:';
 
@@ -228,12 +228,12 @@ function linuxDoCloudflareError() {
 
 async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
   const response = await fetchWithTimeout(
-    `${BASE_URL}${path}`,
+    `${LINUXDO_BASE_URL}${path}`,
     {
       headers: {
         Accept: 'application/json,text/plain,*/*',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        Referer: `${BASE_URL}/latest`,
+        Referer: `${LINUXDO_BASE_URL}/latest`,
         ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
       }
     },
@@ -269,7 +269,7 @@ async function fetchLinuxDoConnectHtml(options: LinuxDoRequestOptions, recoverSe
     headers: {
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      Referer: BASE_URL,
+      Referer: LINUXDO_BASE_URL,
       ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})
     }
   };

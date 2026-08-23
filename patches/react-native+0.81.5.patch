@@ -1,0 +1,94 @@
+diff --git a/node_modules/react-native/Libraries/Image/Image.android.js b/node_modules/react-native/Libraries/Image/Image.android.js
+index 06cd667..b6f0f68 100644
+--- a/node_modules/react-native/Libraries/Image/Image.android.js
++++ b/node_modules/react-native/Libraries/Image/Image.android.js
+@@ -173,11 +173,17 @@ let BaseImage: AbstractImageAndroid = ({
+     sources = [source];
+   }
+ 
+-  const {onLoadStart, onLoad, onLoadEnd, onError} = props;
++  const {onLoadStart, onProgress, onLoad, onLoadEnd, onError} = props;
+   const nativeProps = {
+     ...props,
+     style,
+-    shouldNotifyLoadEvents: !!(onLoadStart || onLoad || onLoadEnd || onError),
++    shouldNotifyLoadEvents: !!(
++      onLoadStart ||
++      onProgress ||
++      onLoad ||
++      onLoadEnd ||
++      onError
++    ),
+     // Both iOS and C++ sides expect to have "source" prop, whereas on Android it's "src"
+     // (for historical reasons). So in the latter case we populate both "src" and "source",
+     // in order to have a better alignment between platforms in the future.
+@@ -232,6 +238,14 @@ let BaseImage: AbstractImageAndroid = ({
+                     resizeMode={resizeMode}
+                     headers={nativeProps.headers}
+                     src={sources}
++                    shouldNotifyLoadEvents={
++                      nativeProps.shouldNotifyLoadEvents
++                    }
++                    onLoadStart={onLoadStart}
++                    onProgress={onProgress}
++                    onLoad={onLoad}
++                    onError={onError}
++                    onLoadEnd={onLoadEnd}
+                     ref={actualRef}
+                   />
+                 );
+diff --git a/node_modules/react-native/Libraries/Image/TextInlineImageNativeComponent.js b/node_modules/react-native/Libraries/Image/TextInlineImageNativeComponent.js
+index 3bcdb39..3cbbbe1 100644
+--- a/node_modules/react-native/Libraries/Image/TextInlineImageNativeComponent.js
++++ b/node_modules/react-native/Libraries/Image/TextInlineImageNativeComponent.js
+@@ -14,22 +14,41 @@ import type {HostComponent} from '../../src/private/types/HostComponent';
+ import type {ViewProps} from '../Components/View/ViewPropTypes';
+ import type {PartialViewConfig} from '../Renderer/shims/ReactNativeTypes';
+ import type {ColorValue} from '../StyleSheet/StyleSheet';
++import type {ImageProps} from './ImageProps';
+ import type {ImageResizeMode} from './ImageResizeMode';
+ 
+ import * as NativeComponentRegistry from '../NativeComponent/NativeComponentRegistry';
+ 
+ type RCTTextInlineImageNativeProps = $ReadOnly<{
++  ...ImageProps,
+   ...ViewProps,
+   resizeMode?: ?ImageResizeMode,
+   src?: ?$ReadOnlyArray<?$ReadOnly<{uri?: ?string, ...}>>,
+   tintColor?: ?ColorValue,
+   headers?: ?{[string]: string},
++  shouldNotifyLoadEvents?: boolean,
+ }>;
+ 
+ export const __INTERNAL_VIEW_CONFIG: PartialViewConfig = {
+   uiViewClassName: 'RCTTextInlineImage',
+   bubblingEventTypes: {},
+-  directEventTypes: {},
++  directEventTypes: {
++    topLoadStart: {
++      registrationName: 'onLoadStart',
++    },
++    topProgress: {
++      registrationName: 'onProgress',
++    },
++    topError: {
++      registrationName: 'onError',
++    },
++    topLoad: {
++      registrationName: 'onLoad',
++    },
++    topLoadEnd: {
++      registrationName: 'onLoadEnd',
++    },
++  },
+   validAttributes: {
+     resizeMode: true,
+     src: true,
+@@ -37,6 +56,7 @@ export const __INTERNAL_VIEW_CONFIG: PartialViewConfig = {
+       process: require('../StyleSheet/processColor').default,
+     },
+     headers: true,
++    shouldNotifyLoadEvents: true,
+   },
+ };
+ 

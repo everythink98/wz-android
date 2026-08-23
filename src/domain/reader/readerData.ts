@@ -143,15 +143,15 @@ function userProfileUrl(source: Source, id: string, username = '') {
     return '';
   }
   if (source === 'nodeseek') {
-    return /^\d+$/.test(cleanId) ? `https://www.nodeseek.com/space/${encodeURIComponent(cleanId)}` : '';
+    return /^\d+$/.test(cleanId) ? `${sourceCatalog.nodeseek.baseUrl}/space/${encodeURIComponent(cleanId)}` : '';
   }
   if (source === 'linuxdo') {
-    return `https://linux.do/u/${encodeURIComponent(cleanUsername || cleanId)}`;
+    return `${sourceCatalog.linuxdo.baseUrl}/u/${encodeURIComponent(cleanUsername || cleanId)}`;
   }
   if (source === 'v2ex') {
-    return `https://www.v2ex.com/member/${encodeURIComponent(cleanUsername || cleanId)}`;
+    return `${sourceCatalog.v2ex.baseUrl}/member/${encodeURIComponent(cleanUsername || cleanId)}`;
   }
-  return `https://www.yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(cleanId)}`;
+  return `${sourceCatalog.yaohuo.baseUrl}/bbs/userinfo.aspx?touserid=${encodeURIComponent(cleanId)}`;
 }
 
 function canonicalTopicUrl(source: Source, id: string) {

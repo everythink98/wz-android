@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
+  Image as NativeImage,
   PixelRatio,
   Pressable,
   StyleSheet,
@@ -45,6 +46,7 @@ import {
   promoteCachedCompatibleSvgArtifact,
   recoverCompatibleSvgArtifact,
   refreshCompatibleSvgPoster,
+  stableImageRequestKey,
   type CompatibleSvgArtifact
 } from '@/platform/media/compatibleImageSources';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
@@ -596,21 +598,27 @@ function ManagedInlineForumImage({
 }) {
   const requestIdentity = compatibleImageRequestIdentity(source);
   const lease = useTopicBodyMediaLease({ kind: 'inline', requestIdentity });
-  const attemptedSource = useImageSourceAttempt(source, lease.attemptId);
-  if (!lease.admitted) return <View style={style} />;
+  const nativeSource = useMemo(
+    () => ({ ...source, uri: inlineFrescoSourceUri(source.uri, requestIdentity) }),
+    [requestIdentity, source]
+  );
   return (
-    <ExpoImage
-      allowDownscaling
-      cachePolicy="disk"
-      contentFit="contain"
-      recyclingKey={requestIdentity}
-      source={attemptedSource}
+    <NativeImage
+      key={lease.attemptId}
+      testID={lease.admitted ? 'topic-inline-image' : 'topic-inline-image-waiting'}
+      resizeMode="contain"
+      source={lease.admitted ? nativeSource : undefined}
       style={style}
-      onDisplay={() => lease.settle('displayed')}
-      onError={() => lease.settle('error')}
-      onProgress={(event) => lease.progress(event.loaded)}
+      onError={lease.admitted ? () => lease.settle('error') : undefined}
+      onLoad={lease.admitted ? () => lease.settle('displayed') : undefined}
+      onProgress={lease.admitted ? (event) => lease.progress(event.nativeEvent.loaded) : undefined}
     />
   );
+}
+
+function inlineFrescoSourceUri(uri: string | undefined, requestIdentity: string) {
+  if (!uri || !/^https?:\/\//i.test(uri)) return uri;
+  return `${uri.split('#', 1)[0]}#wz-inline-${stableImageRequestKey(requestIdentity)}`;
 }
 
 export function createPreviewRenderers({

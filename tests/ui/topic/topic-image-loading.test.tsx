@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { NativeModules, StyleSheet, Text } from 'react-native';
+import { Image, NativeModules, StyleSheet, Text } from 'react-native';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
@@ -85,6 +85,7 @@ const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string
 }));
 const mockWebView = jest.fn((_props: unknown) => null);
 const mockVideoView = jest.fn((_props: unknown) => null);
+const mockInlineImageGetSize = jest.spyOn(Image, 'getSizeWithHeaders').mockImplementation(() => undefined);
 
 type MockExpoImageProps = {
   accessible?: boolean;
@@ -556,6 +557,8 @@ describe('topic block image loading', () => {
     mockSourceHeaders = undefined;
     mockExpoImageProps.mockClear();
     mockFlashListLayout.mockClear();
+    mockInlineImageGetSize.mockClear();
+    mockInlineImageGetSize.mockImplementation(() => undefined);
     mockUseImage.mockClear();
     mockUseVideoPlayer.mockClear();
     mockVideoStatus = 'idle';
@@ -1446,7 +1449,7 @@ describe('topic block image loading', () => {
 
   it('[REG-PROXY-010] remounts the bounded inline, sticker, and link-card working set on runtime rotation', async () => {
     const inlineUrl = 'https://img.example.com/runtime-inline.png';
-    await render(
+    const view = await render(
       <TopicBodyMediaCoordinatorProvider
         active
         diagnosticSession={{
@@ -1469,9 +1472,11 @@ describe('topic block image loading', () => {
         </TopicBodyMediaRowBoundary>
       </TopicBodyMediaCoordinatorProvider>
     );
-    const runningUrls = [inlineUrl, trailingStickerUrl, linkCardIconUrl, linkCardThumbnailUrl];
+    const runningUrls = [trailingStickerUrl, linkCardIconUrl, linkCardThumbnailUrl];
     await waitFor(() => runningUrls.forEach((url) => expect(latestImageProps(url)).toBeTruthy()));
     const firstImages = runningUrls.map((url) => latestImageProps(url));
+    const firstInlineImage = view.getByTestId('topic-inline-image');
+    const firstInlineUri = firstInlineImage.props.source.uri;
     expect(
       mockWebView.mock.calls.some(([props]) =>
         String((props as { source?: { uri?: string } }).source?.uri || '').includes('aid=1')
@@ -1481,9 +1486,9 @@ describe('topic block image loading', () => {
 
     await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
-    await waitFor(() =>
-      runningUrls.forEach((url, index) => expect(latestImageProps(url).source).not.toBe(firstImages[index]?.source))
-    );
+    await waitFor(() => expect(view.getByTestId('topic-inline-image')).not.toBe(firstInlineImage));
+    expect(view.getByTestId('topic-inline-image').props.source.uri).toBe(firstInlineUri);
+    runningUrls.forEach((url, index) => expect(latestImageProps(url).source).not.toBe(firstImages[index]?.source));
     runningUrls.forEach((url, index) =>
       expect(latestImageProps(url).recyclingKey).toBe(firstImages[index]?.recyclingKey)
     );
@@ -3330,8 +3335,8 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('keeps inline emoji on the native inline renderer without starting the block loader', async () => {
-    await render(
+  it('[REG-TOPIC-117] keeps inline emoji inside the Fabric text attachment without starting the block loader', async () => {
+    const view = await render(
       <TopicImageHarness
         attributes={{
           alt: 'emoji',
@@ -3344,5 +3349,135 @@ describe('topic block image loading', () => {
     );
 
     expect(mockUseImage).not.toHaveBeenCalled();
+    expect(mockExpoImageProps).not.toHaveBeenCalled();
+    expect(mockInlineImageGetSize).not.toHaveBeenCalled();
+    expect(view.getByTestId('topic-inline-image')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-117] releases the fifth inline image only after a displayed Fabric attachment settles', async () => {
+    const urls = Array.from({ length: 5 }, (_, index) => `https://img.example.com/emoji-${index}.png`);
+
+    const view = await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['inline-row']}>
+        <TopicBodyMediaRowBoundary rowKey="inline-row">
+          {urls.map((src) => (
+            <TopicImageHarness
+              key={src}
+              attributes={{ alt: 'emoji', class: 'emoji', height: '24', src, width: '24' }}
+            />
+          ))}
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+
+    await waitFor(() => expect(view.getAllByTestId('topic-inline-image')).toHaveLength(4));
+    expect(view.getByTestId('topic-inline-image-waiting').props.source).toBeUndefined();
+    await fireEvent(view.getAllByTestId('topic-inline-image')[0], 'progress', {
+      nativeEvent: { loaded: 12, total: 24 }
+    });
+    expect(view.getAllByTestId('topic-inline-image')).toHaveLength(4);
+    await fireEvent(view.getAllByTestId('topic-inline-image')[0], 'load', {
+      nativeEvent: { source: { height: 24, uri: urls[0], width: 24 } }
+    });
+    await waitFor(() => expect(view.getAllByTestId('topic-inline-image')).toHaveLength(5));
+    expect(view.queryByTestId('topic-inline-image-waiting')).toBeNull();
+    expect(mockInlineImageGetSize).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-117] remounts a failed attachment and ignores the old attempt completion', async () => {
+    const urls = Array.from({ length: 5 }, (_, index) => `https://img.example.com/retry-emoji-${index}.png`);
+    const view = await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['inline-retry-row']}>
+        <TopicBodyMediaRowBoundary rowKey="inline-retry-row">
+          {urls.map((src) => (
+            <TopicImageHarness
+              key={src}
+              attributes={{ alt: 'emoji', class: 'emoji', height: '24', src, width: '24' }}
+            />
+          ))}
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    await waitFor(() => expect(view.getAllByTestId('topic-inline-image')).toHaveLength(4));
+    const failedSpan = view.getAllByTestId('topic-inline-image')[0];
+    const staleLoad = failedSpan.props.onLoad as () => void;
+    const stableUri = failedSpan.props.source.uri;
+
+    await act(() => failedSpan.props.onError());
+    await waitFor(() => expect(view.getAllByTestId('topic-inline-image')[0]).not.toBe(failedSpan));
+    const retrySpan = view.getAllByTestId('topic-inline-image')[0];
+    expect(retrySpan.props.source.uri).toBe(stableUri);
+
+    await act(() => staleLoad());
+    expect(view.getAllByTestId('topic-inline-image')).toHaveLength(4);
+
+    await act(() => retrySpan.props.onLoad());
+    await waitFor(() => expect(view.getAllByTestId('topic-inline-image')).toHaveLength(5));
+  });
+
+  it('[REG-TOPIC-117] remounts one timed-out attachment without changing its cache URI', async () => {
+    jest.useFakeTimers();
+    try {
+      const view = await render(
+        <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['inline-timeout-row']}>
+          <TopicBodyMediaRowBoundary rowKey="inline-timeout-row">
+            <TopicImageHarness
+              attributes={{
+                alt: 'emoji',
+                class: 'emoji',
+                height: '24',
+                src: 'https://img.example.com/timeout-emoji.png',
+                width: '24'
+              }}
+            />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      const firstSpan = view.getByTestId('topic-inline-image');
+      const stableUri = firstSpan.props.source.uri;
+
+      await act(async () => jest.advanceTimersByTime(30_001));
+      const retrySpan = view.getByTestId('topic-inline-image');
+      expect(retrySpan).not.toBe(firstSpan);
+      expect(retrySpan.props.source.uri).toBe(stableUri);
+
+      await act(async () => jest.advanceTimersByTime(30_001));
+      expect(view.queryByTestId('topic-inline-image')).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('[REG-TOPIC-117] keeps the same attachment instance across an equal parent rerender', async () => {
+    const attributes = {
+      alt: 'emoji',
+      class: 'emoji',
+      height: '24',
+      src: 'https://img.example.com/stable-emoji.png',
+      width: '24'
+    };
+    const view = await render(<TopicImageHarness attributes={attributes} />);
+    const firstSpan = view.getByTestId('topic-inline-image');
+
+    await view.rerender(<TopicImageHarness attributes={{ ...attributes }} />);
+
+    expect(view.getByTestId('topic-inline-image')).toBe(firstSpan);
+    expect(view.getByTestId('topic-inline-image').props.source.uri).toBe(firstSpan.props.source.uri);
+  });
+
+  it('[REG-TOPIC-117] isolates the inline Fresco cache by media session without changing the network URL', async () => {
+    const url = 'https://img.example.com/session-emoji.png';
+    const attributes = { alt: 'emoji', class: 'emoji', height: '24', src: url, width: '24' };
+    const view = await render(<TopicImageHarness attributes={attributes} mediaSessionIdentity="linuxdo:41" />);
+    const firstUri = String(view.getByTestId('topic-inline-image').props.source.uri);
+
+    await view.rerender(<TopicImageHarness attributes={attributes} mediaSessionIdentity="linuxdo:42" />);
+    const secondUri = String(view.getByTestId('topic-inline-image').props.source.uri);
+
+    expect(firstUri).toMatch(/^https:\/\/img\.example\.com\/session-emoji\.png#wz-inline-[0-9a-f]{16}$/);
+    expect(secondUri).toMatch(/^https:\/\/img\.example\.com\/session-emoji\.png#wz-inline-[0-9a-f]{16}$/);
+    expect(secondUri).not.toBe(firstUri);
+    expect(firstUri.split('#')[0]).toBe(url);
+    expect(secondUri.split('#')[0]).toBe(url);
   });
 });

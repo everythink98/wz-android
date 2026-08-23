@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated';
 import {
@@ -21,7 +21,6 @@ import {
 
 import {
   DISCOURSE_CALLOUT_REGISTRY,
-  type DiscourseCalloutFold,
   type DiscourseCalloutTone,
   type DiscourseCalloutType
 } from '@/domain/forum/callouts';
@@ -66,11 +65,8 @@ export function forumCalloutPalette(type: DiscourseCalloutType, theme: ReaderThe
 
 export function ForumCallout({
   boundarySpacing,
-  body,
-  expanded: controlledExpanded,
-  fold,
-  foldable: controlledFoldable,
-  headerVisible = true,
+  expanded,
+  foldable,
   onExpandedChange,
   theme,
   title,
@@ -78,31 +74,18 @@ export function ForumCallout({
   type
 }: {
   boundarySpacing?: StyleProp<ViewStyle>;
-  body?: ReactNode;
-  expanded?: boolean;
-  fold?: DiscourseCalloutFold;
-  foldable?: boolean;
-  headerVisible?: boolean;
-  onExpandedChange?: (expanded: boolean) => void;
+  expanded: boolean;
+  foldable: boolean;
+  onExpandedChange: (expanded: boolean) => void;
   theme: ReaderTheme;
   title: ReactNode;
   titleLabel: string;
   type: DiscourseCalloutType;
 }) {
-  const [internalExpanded, setInternalExpanded] = useState(fold !== 'collapsed');
-  const expanded = controlledExpanded ?? internalExpanded;
-  const foldable = controlledFoldable ?? (body !== undefined && body !== null && fold !== undefined);
-  const bodyVisible = Boolean(body) && (!foldable || expanded);
   const palette = forumCalloutPalette(type, theme);
   const Icon = CALLOUT_ICONS[type];
   const FoldIcon = expanded ? ChevronDown : ChevronRight;
-  const toggleExpanded = () => {
-    const next = !expanded;
-    if (controlledExpanded === undefined) {
-      setInternalExpanded(next);
-    }
-    onExpandedChange?.(next);
-  };
+  const toggleExpanded = () => onExpandedChange(!expanded);
   const header = (
     <>
       <View
@@ -124,7 +107,7 @@ export function ForumCallout({
       style={[calloutStyles.callout, palette, boundarySpacing]}
       testID="forum-callout"
     >
-      {headerVisible && foldable ? (
+      {foldable ? (
         <Pressable
           accessibilityLabel={titleLabel}
           accessibilityRole="button"
@@ -135,12 +118,11 @@ export function ForumCallout({
         >
           {header}
         </Pressable>
-      ) : headerVisible ? (
+      ) : (
         <View accessible accessibilityLabel={titleLabel} accessibilityRole="header" style={calloutStyles.header}>
           {header}
         </View>
-      ) : null}
-      {bodyVisible ? <View style={calloutStyles.body}>{body}</View> : null}
+      )}
     </Animated.View>
   );
 }
@@ -175,8 +157,5 @@ const calloutStyles = StyleSheet.create({
   title: {
     flex: 1,
     minWidth: 0
-  },
-  body: {
-    marginTop: 8
   }
 });

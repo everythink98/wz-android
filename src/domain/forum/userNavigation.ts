@@ -3,6 +3,7 @@ import { accessRequirementLevelValue, accessRequirementSpecificity } from './pre
 import { parseForumUserLink } from './links';
 import { textContentFromHtml } from './html';
 import { accessRequirementFromNoticeText } from './accessRequirements';
+import { sourceCatalog } from './sourceCatalog';
 
 export function nodeSeekUserIdFromValue(value?: string) {
   const text = String(value || '').trim();
@@ -35,9 +36,9 @@ export function userReferenceFromUsername(source: Source, value: string, display
     return null;
   }
   const baseUrls: Partial<Record<Source, string>> = {
-    linuxdo: 'https://linux.do/u/',
-    nodeseek: 'https://www.nodeseek.com/member?t=',
-    v2ex: 'https://www.v2ex.com/member/'
+    linuxdo: `${sourceCatalog.linuxdo.baseUrl}/u/`,
+    nodeseek: `${sourceCatalog.nodeseek.baseUrl}/member?t=`,
+    v2ex: `${sourceCatalog.v2ex.baseUrl}/member/`
   };
   return {
     source,
@@ -168,8 +169,8 @@ export function userFromTopic(topic: Topic | TopicDetail): UserReference | null 
       topic.authorUrl ||
       (topic.source === 'nodeseek'
         ? id
-          ? `https://www.nodeseek.com/space/${id}`
-          : `https://www.nodeseek.com/member?t=${encodeURIComponent(username || '')}`
+          ? `${sourceCatalog.nodeseek.baseUrl}/space/${id}`
+          : `${sourceCatalog.nodeseek.baseUrl}/member?t=${encodeURIComponent(username || '')}`
         : '')
   };
 }
@@ -197,8 +198,8 @@ export function userFromReply(reply: Reply, source?: Source): UserReference | nu
       reply.authorUrl ||
       (source === 'nodeseek'
         ? id
-          ? `https://www.nodeseek.com/space/${id}`
-          : `https://www.nodeseek.com/member?t=${encodeURIComponent(username || '')}`
+          ? `${sourceCatalog.nodeseek.baseUrl}/space/${id}`
+          : `${sourceCatalog.nodeseek.baseUrl}/member?t=${encodeURIComponent(username || '')}`
         : '')
   };
 }

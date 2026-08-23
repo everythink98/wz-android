@@ -380,6 +380,7 @@ export function useSearchController({
   const singleSearchPlan = readGateway.getReadPlan(submittedSource, 'search');
   const singleSearchKey = forumQueryKeys.search({
     source: submittedSource,
+    lane: 'pages',
     query: submittedSearch?.query || '',
     readPlanScope: singleSearchPlan.cacheScope,
     sort: submittedSort,
@@ -392,6 +393,7 @@ export function useSearchController({
     const plan = aggregatePlans[index];
     return forumQueryKeys.search({
       source,
+      lane: 'preview',
       query: submittedSearch?.query || '',
       readPlanScope: plan.cacheScope,
       sort: submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',

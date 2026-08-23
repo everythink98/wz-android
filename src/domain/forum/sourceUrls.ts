@@ -1,5 +1,7 @@
-export const NODESEEK_URL = 'https://www.nodeseek.com';
-export const NODEIMAGE_AUTH_URL = 'https://www.nodeseek.com/connect?target=NodeImage';
+import { sourceCatalog } from './sourceCatalog';
+
+export const NODESEEK_URL: string = sourceCatalog.nodeseek.baseUrl;
+export const NODEIMAGE_AUTH_URL = `${NODESEEK_URL}/connect?target=NodeImage`;
 export const NODEIMAGE_URL = 'https://www.nodeimage.com/';
-export const YAOHUO_URL = 'https://www.yaohuo.me';
-export const LINUXDO_URL = 'https://linux.do';
+export const YAOHUO_URL: string = sourceCatalog.yaohuo.baseUrl;
+export const LINUXDO_URL: string = sourceCatalog.linuxdo.baseUrl;

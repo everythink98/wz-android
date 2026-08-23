@@ -64,6 +64,7 @@ export const forumQueryKeys = {
     ] as const,
   search: ({
     filter,
+    lane,
     query,
     readPlanScope,
     scope,
@@ -71,6 +72,7 @@ export const forumQueryKeys = {
     source
   }: {
     filter?: SourceSearchFilter;
+    lane: 'pages' | 'preview';
     query: string;
     readPlanScope?: string;
     scope: ForumSessionEpochs;
@@ -82,6 +84,7 @@ export const forumQueryKeys = {
       source,
       'search',
       {
+        lane,
         ...(readPlanScope ? { readPlanScope } : {}),
         sessionEpoch: sessionEpochKey(source, scope),
         filter: filter || null,

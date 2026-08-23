@@ -1,9 +1,8 @@
 import type { CredentialSummaries, CredentialSummary } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
+import { sessionSources } from '@/domain/forum/sourceCatalog';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-
-const sites = ['nodeseek', 'linuxdo', 'yaohuo'] as const satisfies readonly CredentialSite[];
 
 export type LoginWebViewFailureReason = 'network_error' | 'renderer_gone' | 'timeout';
 export type CredentialFillTraceState = { site: CredentialSite; attempt: number; trace: DiagnosticTrace };
@@ -24,7 +23,7 @@ export async function loadCredentialSummariesWithTrace(
     generation
   });
   const results = await Promise.all(
-    sites.map(async (site) => {
+    sessionSources.map(async (site) => {
       try {
         const summary = await loadSummary(site);
         markDiagnosticStage(trace, 'credential', {

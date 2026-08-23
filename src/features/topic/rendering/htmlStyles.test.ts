@@ -31,6 +31,18 @@ describe('Android HTML rendering styles', () => {
     expect(htmlClassesStyles['forum-user-mention'].textDecorationLine).toBe('none');
   });
 
+  it('[REG-TOPIC-118] keeps a standalone mention from becoming a full-width Android text frame', () => {
+    const theme = createTheme(settings);
+    const { htmlClassesStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+    const mentionStyle = htmlClassesStyles['forum-user-mention'];
+
+    expect(mentionStyle.alignSelf).toBe('flex-start');
+    expect(mentionStyle.backgroundColor).toBeTruthy();
+    expect(mentionStyle.borderWidth).toBe(1);
+    expect(mentionStyle.paddingHorizontal).toBe(5);
+    expect(mentionStyle.paddingVertical).toBe(1);
+  });
+
   it('allows source text color without allowing source background colors', () => {
     const theme = createTheme(settings);
     const { htmlIgnoredStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
@@ -85,8 +97,31 @@ describe('Android HTML rendering styles', () => {
     const theme = createTheme(settings);
     const { htmlClassesStyles, htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
 
+    expect(htmlTagsStyles.p).toMatchObject({ marginBottom: 12, marginTop: 0 });
+    expect(htmlTagsStyles.h1).toMatchObject({ fontSize: 24, lineHeight: 32, marginBottom: 12, marginTop: 24 });
+    expect(htmlTagsStyles.h3).toMatchObject({ fontSize: 18, lineHeight: 26, marginBottom: 8, marginTop: 20 });
     expect(htmlTagsStyles.strong).toMatchObject({ fontWeight: '700' });
-    expect(htmlTagsStyles.hr).toMatchObject({ borderBottomColor: theme.line, borderBottomWidth: 1 });
+    expect(htmlTagsStyles.hr).toMatchObject({
+      borderBottomColor: theme.line,
+      borderBottomWidth: 1,
+      marginBottom: 20,
+      marginTop: 20
+    });
+    expect(htmlTagsStyles.code).toMatchObject({
+      backgroundColor: theme.surface2,
+      borderRadius: 4,
+      fontFamily: 'monospace',
+      fontSize: 14,
+      paddingHorizontal: 4,
+      paddingVertical: 1
+    });
+    expect(htmlTagsStyles.blockquote).toMatchObject({
+      backgroundColor: 'transparent',
+      borderLeftColor: theme.primary,
+      borderLeftWidth: 3,
+      paddingLeft: 12
+    });
+    expect(htmlTagsStyles.blockquote).not.toHaveProperty('borderRadius');
     expect(htmlClassesStyles['forum-attachment']).toMatchObject({
       backgroundColor: theme.surface2,
       borderColor: theme.line,
@@ -101,14 +136,23 @@ describe('Android HTML rendering styles', () => {
 
     expect(htmlTagsStyles.table).not.toHaveProperty('borderWidth');
     expect(htmlTagsStyles.th).toMatchObject({
+      backgroundColor: theme.surface2,
       borderBottomWidth: 1,
       borderRightWidth: 1,
-      flexShrink: 0
+      color: theme.ink,
+      flexShrink: 0,
+      fontWeight: '700',
+      paddingHorizontal: 10,
+      paddingVertical: 9
     });
     expect(htmlTagsStyles.td).toMatchObject({
+      backgroundColor: theme.surface,
       borderBottomWidth: 1,
       borderRightWidth: 1,
-      flexShrink: 0
+      color: theme.ink,
+      flexShrink: 0,
+      paddingHorizontal: 10,
+      paddingVertical: 9
     });
     expect(htmlTagsStyles.th).not.toHaveProperty('width');
     expect(htmlTagsStyles.td).not.toHaveProperty('width');

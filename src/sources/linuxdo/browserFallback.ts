@@ -16,11 +16,12 @@ import {
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { currentReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
 import { registerForumReadResponseEvidence } from '@/sources/forumSourceReadAttempt';
+import { LINUXDO_BASE_URL } from './protocol';
 
 export type LinuxDoHiddenBrowserFailureReason =
   'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
 
-const LINUXDO_CURRENT_SESSION_URL = 'https://linux.do/session/current.json';
+const LINUXDO_CURRENT_SESSION_URL = `${LINUXDO_BASE_URL}/session/current.json`;
 const LINUXDO_CONNECT_URL = 'https://connect.linux.do/';
 const LINUXDO_DIRECT_FETCH_TIMEOUT_MS = 8_000;
 const LINUXDO_CONNECT_SESSION_RECOVERY_INTENT = Symbol.for('wz.linuxDoConnectSessionRecoveryIntent');

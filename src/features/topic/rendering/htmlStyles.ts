@@ -119,7 +119,7 @@ export function buildHtmlRenderingStyles({
     lineHeight: baseLineHeight
   };
   const htmlParagraph = {
-    marginBottom: 10,
+    marginBottom: 12,
     marginTop: 0
   };
   const heading = (
@@ -141,51 +141,52 @@ export function buildHtmlRenderingStyles({
       backgroundColor: 'transparent'
     },
     p: htmlParagraph,
-    h1: heading(24, 32, '700', 20, 10),
-    h2: heading(21, 29, '700', 18, 9),
-    h3: heading(18, 26, '600', 16, 7),
-    h4: heading(16, 24, '600', 14, 6),
-    h5: heading(15, 22, '600', 12, 5),
-    h6: heading(14, 21, '600', 10, 4),
+    h1: heading(24, 32, '700', 24, 12),
+    h2: heading(21, 29, '700', 24, 12),
+    h3: heading(18, 26, '600', 20, 8),
+    h4: heading(16, 24, '600', 16, 8),
+    h5: heading(15, 22, '600', 16, 8),
+    h6: heading(14, 21, '600', 12, 8),
     strong: {
       fontWeight: '700'
     },
     hr: {
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      marginBottom: 14,
-      marginTop: 14
+      marginBottom: 20,
+      marginTop: 20
     },
     a: {
       color: linkColor
     },
     img: {
       borderRadius: 10,
-      marginBottom: 8,
-      marginTop: 6
+      marginBottom: 12,
+      marginTop: 8
     },
     li: {
       marginBottom: 4
     },
     ul: {
-      marginBottom: 10,
+      marginBottom: 12,
       marginTop: 8,
       paddingLeft: listPaddingLeft
     },
     ol: {
-      marginBottom: 10,
+      marginBottom: 12,
       marginTop: 8,
       paddingLeft: listPaddingLeft
     },
     blockquote: {
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderRadius: 10,
+      backgroundColor: 'transparent',
+      borderLeftColor: theme.primary,
+      borderLeftWidth: 3,
       marginBottom: 12,
       marginTop: 12,
-      paddingHorizontal: 14,
-      paddingVertical: 12
+      paddingBottom: 4,
+      paddingLeft: 12,
+      paddingRight: 4,
+      paddingTop: 4
     },
     pre: {
       backgroundColor: theme.surface2,
@@ -194,13 +195,14 @@ export function buildHtmlRenderingStyles({
       borderRadius: 10,
       marginBottom: 12,
       marginTop: 12,
-      padding: 12
+      padding: 14
     },
     code: {
       backgroundColor: theme.surface2,
-      borderRadius: 8,
+      borderRadius: 4,
       fontFamily: 'monospace',
-      paddingHorizontal: 3,
+      fontSize: Math.round(14 * settings.fontScale),
+      paddingHorizontal: 4,
       paddingVertical: 1
     },
     mark: {
@@ -214,21 +216,25 @@ export function buildHtmlRenderingStyles({
       flexWrap: 'nowrap'
     },
     th: {
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderRightWidth: StyleSheet.hairlineWidth,
+      color: theme.ink,
+      flexShrink: 0,
+      fontWeight: '700',
+      paddingHorizontal: 10,
+      paddingVertical: 9
+    },
+    td: {
       backgroundColor: theme.surface,
       borderColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderRightWidth: StyleSheet.hairlineWidth,
+      color: theme.ink,
       flexShrink: 0,
-      paddingHorizontal: 8,
-      paddingVertical: 7
-    },
-    td: {
-      borderColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderRightWidth: StyleSheet.hairlineWidth,
-      flexShrink: 0,
-      paddingHorizontal: 8,
-      paddingVertical: 7
+      paddingHorizontal: 10,
+      paddingVertical: 9
     }
   };
   const htmlClassesStyles: HtmlClassesStyles = {
@@ -237,6 +243,7 @@ export function buildHtmlRenderingStyles({
       lineHeight: Math.round(replyFontSize * lineHeightMultiplier(settings.lineHeight))
     },
     'forum-user-mention': {
+      alignSelf: 'flex-start',
       backgroundColor: alphaColor(linkColor, theme.dark ? 0.2 : 0.12),
       borderColor: alphaColor(linkColor, theme.dark ? 0.38 : 0.26),
       borderRadius: 8,

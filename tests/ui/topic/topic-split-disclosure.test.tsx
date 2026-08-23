@@ -8,25 +8,11 @@ import {
   TopicSplitDisclosureProvider,
   TopicSplitDisclosureScope,
   topicSemanticRowVisible,
-  useTopicSplitDisclosure,
   useTopicSplitDisclosureStore,
   useTopicTerminalReport
 } from '@/features/topic/rendering/TopicSplitDisclosure';
 
 type DisclosureRow = Extract<CompiledForumContentRow, { type: 'disclosureHeader' }>;
-
-function Header({ row }: { row: DisclosureRow }) {
-  const disclosure = useTopicSplitDisclosure({
-    defaultExpanded: row.defaultExpanded,
-    kind: row.disclosureKind,
-    semanticId: row.semanticId
-  });
-  return (
-    <Pressable accessibilityLabel={`toggle-${row.titleLabel}`} onPress={disclosure.toggle}>
-      <Text>{row.titleLabel}</Text>
-    </Pressable>
-  );
-}
 
 function visibleText(row: CompiledForumContentRow) {
   if (row.type === 'codeBlock') return row.text;
@@ -52,7 +38,7 @@ function DisclosureFixture({
             .filter((row) => topicSemanticRowVisible(row, scopeKey, store))
             .map((row) =>
               row.type === 'disclosureHeader' ? (
-                <Header key={row.keySuffix} row={row} />
+                <TopicContentBlock key={row.keySuffix} contentWidth={320} row={row} />
               ) : (
                 <Text key={row.keySuffix}>{visibleText(row)}</Text>
               )
@@ -186,7 +172,7 @@ describe('typed topic disclosure state', () => {
     expect(view.queryByText('second body')).toBeNull();
   });
 
-  it('[REG-TOPIC-086] filters every typed details and callout body row with one semantic identity', async () => {
+  it('[REG-TOPIC-056][REG-TOPIC-086] unmounts every typed details and callout body row from the real header state', async () => {
     const fixtures = [
       { html: splitDetails('Details'), label: 'Details' },
       {
@@ -197,9 +183,9 @@ describe('typed topic disclosure state', () => {
     for (const { html, label } of fixtures) {
       const view = await render(<DisclosureFixture html={html} scopeKey="opening" />);
       expect(view.queryByText(/body/)).toBeNull();
-      await fireEvent.press(view.getByLabelText(`toggle-${label}`));
+      await fireEvent.press(view.getByRole('button', { name: label }));
       expect(view.getAllByText(/body/).length).toBeGreaterThan(0);
-      await fireEvent.press(view.getByLabelText(`toggle-${label}`));
+      await fireEvent.press(view.getByRole('button', { name: label }));
       expect(view.queryByText(/body/)).toBeNull();
       await view.unmount();
     }
@@ -213,15 +199,15 @@ describe('typed topic disclosure state', () => {
       </>
     );
 
-    await fireEvent.press(view.getByLabelText('toggle-First'));
+    await fireEvent.press(view.getByRole('button', { name: 'First' }));
     expect(view.getAllByText(/body/).length).toBeGreaterThan(0);
-    expect(view.getByLabelText('toggle-Second')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Second' })).toBeTruthy();
   });
 
   it('resets route-local disclosure state when topic identity changes', async () => {
     const first = <DisclosureFixture html={splitDetails('Reset')} routeKey="topic-1" scopeKey="opening" />;
     const view = await render(first);
-    await fireEvent.press(view.getByLabelText('toggle-Reset'));
+    await fireEvent.press(view.getByRole('button', { name: 'Reset' }));
     expect(view.getAllByText(/body/).length).toBeGreaterThan(0);
 
     await view.rerender(<DisclosureFixture html={splitDetails('Reset')} routeKey="topic-2" scopeKey="opening" />);

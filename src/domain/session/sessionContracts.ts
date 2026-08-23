@@ -1,7 +1,8 @@
 import type { SourceErrorInfo } from '@/domain/forum/models';
+import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionState } from './siteSessionState';
 
-export type CredentialSite = 'nodeseek' | 'linuxdo' | 'yaohuo';
+export type CredentialSite = SessionSource;
 
 export type AccountReconcileResult =
   | { status: 'anonymous' | 'changed' | 'same'; session: SiteSessionState; partial?: boolean }

@@ -76,16 +76,8 @@ export function TopicSplitDisclosureProvider({
   value
 }: {
   children: ReactNode;
-  value?: TopicSplitDisclosureStoreValue;
+  value: TopicSplitDisclosureStoreValue;
 }) {
-  if (!value) return <OwnedTopicSplitDisclosureProvider>{children}</OwnedTopicSplitDisclosureProvider>;
-  return (
-    <TopicSplitDisclosureStoreContext.Provider value={value}>{children}</TopicSplitDisclosureStoreContext.Provider>
-  );
-}
-
-function OwnedTopicSplitDisclosureProvider({ children }: { children: ReactNode }) {
-  const value = useTopicSplitDisclosureStore();
   return (
     <TopicSplitDisclosureStoreContext.Provider value={value}>{children}</TopicSplitDisclosureStoreContext.Provider>
   );

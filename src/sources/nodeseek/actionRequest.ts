@@ -1,4 +1,5 @@
 import { NODESEEK_VOTE_API_HEADERS } from './polls';
+import { NODESEEK_BASE_URL } from './protocol';
 
 export interface NodeSeekActionRequest {
   path: string;
@@ -64,7 +65,7 @@ export function buildNodeSeekReplyRequest({
   const targetFloor = replyTarget?.floor ? cleanPositiveInteger(replyTarget.floor, '楼层') : undefined;
   const targetAuthor = String(replyTarget?.author || '').trim();
   const finalContent = targetFloor
-    ? `${targetAuthor ? `@${targetAuthor} ` : ''}[#${targetFloor}](https://www.nodeseek.com/post-${cleanPostId}-${targetFloor})\n\n${cleanContent}`
+    ? `${targetAuthor ? `@${targetAuthor} ` : ''}[#${targetFloor}](${NODESEEK_BASE_URL}/post-${cleanPostId}-${targetFloor})\n\n${cleanContent}`
     : cleanContent;
 
   return {
@@ -72,7 +73,7 @@ export function buildNodeSeekReplyRequest({
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      referer: `https://www.nodeseek.com/post-${cleanPostId}-1`,
+      referer: `${NODESEEK_BASE_URL}/post-${cleanPostId}-1`,
       'csrf-token': cleanCsrf
     },
     body: JSON.stringify({

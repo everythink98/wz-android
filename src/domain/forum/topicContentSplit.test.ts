@@ -1235,7 +1235,6 @@ describe('Android topic content splitting', () => {
     expect(plan.rows[0]).toMatchObject({
       calloutType: 'warning',
       defaultExpanded: false,
-      fold: 'collapsed',
       part: 'first',
       semanticId: 'node-0',
       titleLabel: 'Warning title'

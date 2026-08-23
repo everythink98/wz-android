@@ -733,8 +733,9 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       alignItems: 'flex-start'
     },
     htmlTableFrame: {
+      backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: 10,
       borderWidth: StyleSheet.hairlineWidth,
       overflow: 'hidden'
     },

@@ -1,6 +1,6 @@
 import { elementText, escapeHtmlAttribute, escapeHtmlText, escapeQuotedHtmlTagDelimiters, parseHtml } from './html';
 import { TextNode, type HTMLElement } from 'node-html-parser';
-import { isNodeSeekHost } from './sourceCatalog';
+import { isNodeSeekHost, sourceCatalog } from './sourceCatalog';
 
 export const FORUM_REPLY_REFERENCE_TAG = 'forum-reply-reference';
 const FORUM_USER_MENTION_CLASS = 'forum-user-mention';
@@ -89,7 +89,7 @@ function nodeSeekUrlFromHref(href: string | undefined, baseUrl?: string) {
     return undefined;
   }
   try {
-    const url = new URL(text, baseUrl || 'https://www.nodeseek.com/');
+    const url = new URL(text, baseUrl || `${sourceCatalog.nodeseek.baseUrl}/`);
     return isNodeSeekHost(url.hostname) ? url : undefined;
   } catch {
     return undefined;

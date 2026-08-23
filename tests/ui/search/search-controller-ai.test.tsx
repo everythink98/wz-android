@@ -903,6 +903,71 @@ describe('linux.do AI search controller', () => {
     }
   });
 
+  it('[REG-SEARCH-027] switches from a settled aggregate preview to a paged source without reusing its data shape', async () => {
+    const v2exTopic: Topic = {
+      ...standardTopic,
+      source: 'v2ex',
+      id: 'v2ex-1',
+      title: 'V2EX 结果',
+      url: 'https://www.v2ex.com/t/1'
+    };
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
+      items: source === 'v2ex' ? [v2exTopic] : [],
+      errors: {},
+      hasMore: source === 'v2ex',
+      nextPage: source === 'v2ex' ? 2 : null
+    }));
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      loggedInYaohuoSessions
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'all' });
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
+    await waitFor(() =>
+      expect(hook.result.current.searchGroups.find(({ source }) => source === 'v2ex')?.items).toEqual([v2exTopic])
+    );
+
+    await act(async () => {
+      hook.result.current.setSearchSource('v2ex');
+    });
+
+    await waitFor(() => expect(hook.result.current.searchSource).toBe('v2ex'));
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(5));
+    await waitFor(() =>
+      expect(hook.result.current.searchGroups).toEqual([
+        expect.objectContaining({
+          source: 'v2ex',
+          items: [v2exTopic],
+          hasMore: true,
+          nextPage: 2
+        })
+      ])
+    );
+
+    const v2exQueries = appQueryClient
+      .getQueryCache()
+      .findAll({ queryKey: ['forum', 'v2ex', 'search'] })
+      .filter(
+        ({ queryKey, state }) => (queryKey[3] as { query?: string }).query === 'codex' && state.data !== undefined
+      );
+    expect(v2exQueries).toHaveLength(2);
+    expect(v2exQueries.map(({ queryKey }) => queryKey[3])).toEqual(
+      expect.arrayContaining([expect.objectContaining({ lane: 'preview' }), expect.objectContaining({ lane: 'pages' })])
+    );
+    expect(v2exQueries.find(({ queryKey }) => (queryKey[3] as { lane?: string }).lane === 'pages')?.state.data).toEqual(
+      {
+        pageParams: [1],
+        pages: [expect.objectContaining({ kind: 'success' })]
+      }
+    );
+  });
+
   it('[REG-SEARCH-007] opens Yaohuo login exactly once for a single-source login failure', async () => {
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => {

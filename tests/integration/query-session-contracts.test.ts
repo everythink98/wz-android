@@ -113,6 +113,7 @@ describe('forum server state', () => {
       forumQueryKeys.userResolution({ readPlanScope, scope: initialForumSessionEpochs, username: 'alice' });
     const search = (readPlanScope: string) =>
       forumQueryKeys.search({
+        lane: 'pages',
         query: 'codex',
         readPlanScope,
         scope: initialForumSessionEpochs,

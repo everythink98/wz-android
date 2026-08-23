@@ -22,7 +22,7 @@ import { parseYaohuoUserProfileDocument } from './userParser';
 import { parseYaohuoListDocument } from './feedParser';
 import { YAOHUO_BASE_URL, yaohuoUserProfileTopicListUrlFromRoot } from './protocol';
 
-export const YAOHUO_ACCOUNT_STATUS_URL = 'https://www.yaohuo.me/wapindex.aspx?sid=-2';
+export const YAOHUO_ACCOUNT_STATUS_URL = `${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`;
 
 async function enrichYaohuoAccountName(user: UserProfile, fetcher: Fetcher, signal: AbortSignal) {
   if ((user.displayName || user.username).trim() !== user.id) return user;

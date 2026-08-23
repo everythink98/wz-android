@@ -12,8 +12,9 @@ import {
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { NODESEEK_BASE_URL } from './protocol';
 
-export const NODESEEK_ACCOUNT_STATUS_URL = 'https://www.nodeseek.com/';
+export const NODESEEK_ACCOUNT_STATUS_URL = `${NODESEEK_BASE_URL}/`;
 
 export async function readNodeSeekAccountStatus({
   fetcher,

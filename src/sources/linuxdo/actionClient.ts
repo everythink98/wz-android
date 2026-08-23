@@ -3,8 +3,8 @@ import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { discourseActionResponseMessage, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
+import { LINUXDO_BASE_URL } from './protocol';
 
-const LINUXDO_BASE_URL = 'https://linux.do';
 const LINUXDO_ACTION_HEADERS = {
   Accept: 'application/json,text/plain,*/*',
   'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',

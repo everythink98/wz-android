@@ -1,3 +1,5 @@
+import { sourceCatalog } from './sourceCatalog';
+
 export type NsVideoEmbed =
   | { type: 'bilibili'; sourceUrl: string; embedUrl: string }
   | { type: 'iframeLink'; sourceUrl: string; displayDomain: string };
@@ -5,7 +7,7 @@ export type NsVideoEmbed =
 const BILIBILI_PLAYER_HOST = 'player.bilibili.com';
 const BILIBILI_VIDEO_HOSTS = new Set(['www.bilibili.com', 'm.bilibili.com', 'bilibili.com']);
 
-function safeUrl(value: unknown, baseUrl = 'https://www.nodeseek.com/') {
+function safeUrl(value: unknown, baseUrl = `${sourceCatalog.nodeseek.baseUrl}/`) {
   const text = String(value || '').trim();
   if (!text) {
     return undefined;
@@ -28,7 +30,7 @@ function hasBilibiliPlayerId(url: URL) {
   return /^BV[0-9A-Za-z]+$/i.test(bvid) || /^\d+$/.test(aid);
 }
 
-export function bilibiliEmbedUrlFromUrl(value: unknown, baseUrl = 'https://www.nodeseek.com/') {
+export function bilibiliEmbedUrlFromUrl(value: unknown, baseUrl = `${sourceCatalog.nodeseek.baseUrl}/`) {
   const url = safeUrl(value, baseUrl);
   if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
     return undefined;
@@ -57,7 +59,10 @@ export function bilibiliEmbedUrlFromUrl(value: unknown, baseUrl = 'https://www.n
   return player.toString();
 }
 
-export function nsEmbedFromUrl(value: unknown, baseUrl = 'https://www.nodeseek.com/'): NsVideoEmbed | undefined {
+export function nsEmbedFromUrl(
+  value: unknown,
+  baseUrl = `${sourceCatalog.nodeseek.baseUrl}/`
+): NsVideoEmbed | undefined {
   const url = safeUrl(value, baseUrl);
   if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
     return undefined;

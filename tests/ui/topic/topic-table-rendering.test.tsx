@@ -272,10 +272,46 @@ describe('native topic structured rendering', () => {
 
     expect(screen.getAllByTestId('topic-code-frame')).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: '复制完整代码' })).toHaveLength(1);
+    expect(StyleSheet.flatten(screen.getByTestId('topic-code-frame').props.style)).toMatchObject({
+      backgroundColor: '#F0F0F0',
+      borderRadius: 10,
+      minWidth: 320,
+      padding: 14,
+      paddingRight: 68
+    });
+    expect(StyleSheet.flatten(screen.getByRole('button', { name: '复制完整代码' }).props.style)).toMatchObject({
+      backgroundColor: '#FCFCFC',
+      borderRadius: 8,
+      minHeight: 48,
+      minWidth: 48,
+      right: 6,
+      top: 6
+    });
+    expect(screen.queryByText('复制')).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: '复制完整代码' }));
     expect(copy).toHaveBeenCalledWith(sourceText);
     expect(toast).toHaveBeenCalledWith('复制失败', ToastAndroid.SHORT);
     toast.mockRestore();
+  });
+
+  it('[REG-TOPIC-093] presents blockquotes as one continuous reading rail', async () => {
+    const screen = await render(
+      <CompiledContentFixture html="<blockquote><p>quoted community content</p></blockquote>" />
+    );
+
+    expect(StyleSheet.flatten(screen.getByTestId('topic-blockquote-frame').props.style)).toMatchObject({
+      borderLeftColor: '#1677FF',
+      borderLeftWidth: 3,
+      marginBottom: 12,
+      marginTop: 12,
+      paddingBottom: 4,
+      paddingLeft: 12,
+      paddingRight: 4,
+      paddingTop: 4
+    });
+    expect(StyleSheet.flatten(screen.getByTestId('topic-blockquote-frame').props.style)).not.toHaveProperty(
+      'backgroundColor'
+    );
   });
 
   it('[REG-TOPIC-084] fills narrow NodeSeek tables and honors colspan', async () => {

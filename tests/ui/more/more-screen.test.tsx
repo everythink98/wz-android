@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
-import React, { type ComponentProps } from 'react';
+import React, { type ComponentProps, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { MoreScreen } from '@/features/more/MoreScreen';
+import { MoreScreen as MoreScreenView } from '@/features/more/MoreScreen';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
 
@@ -164,6 +164,17 @@ const authorizedLinuxDoSessions = createSiteSessionViewModels(
   })
 );
 
+function MoreScreen(props: ComponentProps<typeof MoreScreenView>) {
+  const [contentSourcesExpanded, setContentSourcesExpanded] = useState(props.contentSourcesExpanded);
+  return (
+    <MoreScreenView
+      {...props}
+      contentSourcesExpanded={contentSourcesExpanded}
+      onContentSourcesExpandedChange={setContentSourcesExpanded}
+    />
+  );
+}
+
 type MoreScreenProps = ComponentProps<typeof MoreScreen>;
 type MoreScreenOverrides = {
   account?: {
@@ -237,6 +248,8 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
   };
   return {
     account,
+    contentSourcesExpanded: false,
+    onContentSourcesExpandedChange: jest.fn(),
     update: {
       busy: false,
       downloading: false,

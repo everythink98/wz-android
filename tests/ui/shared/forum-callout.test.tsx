@@ -12,11 +12,13 @@ const lightTheme = createTheme(readerData.settings);
 const darkTheme = createTheme({ ...readerData.settings, theme: 'dark' });
 
 describe('REG-TOPIC-056 shared ForumCallout', () => {
-  it('renders an initially collapsed body only after the 48dp accessible header is pressed', async () => {
+  it('reports a controlled toggle from the 48dp accessible header', async () => {
+    const onExpandedChange = jest.fn();
     const view = await render(
       <ForumCallout
-        body={<Text>折叠正文</Text>}
-        fold="collapsed"
+        expanded={false}
+        foldable
+        onExpandedChange={onExpandedChange}
         theme={lightTheme}
         title={<Text>警告标题</Text>}
         titleLabel="警告标题"
@@ -27,20 +29,26 @@ describe('REG-TOPIC-056 shared ForumCallout', () => {
     const header = view.getByRole('button', { name: '警告标题' });
     expect(header.props.accessibilityState).toEqual({ expanded: false });
     expect(header).toHaveStyle({ minHeight: 48 });
-    expect(view.queryByText('折叠正文')).toBeNull();
     const [icon] = view.root?.queryAll((instance) => instance.props.testID === 'forum-callout-icon') || [];
     expect(icon.props.accessible).toBe(false);
 
     await fireEvent.press(header);
 
-    expect(view.getByRole('button', { name: '警告标题' }).props.accessibilityState).toEqual({ expanded: true });
-    expect(view.getByText('折叠正文')).toBeTruthy();
+    expect(onExpandedChange).toHaveBeenCalledWith(true);
     expect(FORUM_CALLOUT_TRANSITION_MS).toBe(100);
   });
 
   it('uses static header semantics when there is no foldable body', async () => {
     const view = await render(
-      <ForumCallout fold="expanded" theme={lightTheme} title={<Text>只有标题</Text>} titleLabel="只有标题" type="tip" />
+      <ForumCallout
+        expanded
+        foldable={false}
+        onExpandedChange={jest.fn()}
+        theme={lightTheme}
+        title={<Text>只有标题</Text>}
+        titleLabel="只有标题"
+        type="tip"
+      />
     );
 
     expect(view.getByRole('header', { name: '只有标题' })).toBeTruthy();
@@ -49,10 +57,12 @@ describe('REG-TOPIC-056 shared ForumCallout', () => {
 
   it('keeps a foldable Callout expanded when its title link handles the press', async () => {
     const stopPropagation = jest.fn();
+    const onExpandedChange = jest.fn();
     const view = await render(
       <ForumCallout
-        body={<Text>正文保持可见</Text>}
-        fold="expanded"
+        expanded
+        foldable
+        onExpandedChange={onExpandedChange}
         theme={lightTheme}
         title={
           <Pressable accessibilityRole="link" onPress={(event) => event.stopPropagation()}>
@@ -68,54 +78,16 @@ describe('REG-TOPIC-056 shared ForumCallout', () => {
 
     expect(stopPropagation).toHaveBeenCalledTimes(1);
     expect(view.getByRole('button', { name: '带链接的标题' }).props.accessibilityState).toEqual({ expanded: true });
-    expect(view.getByText('正文保持可见')).toBeTruthy();
-  });
-
-  it('[REG-PERF-010] renders a controlled continuation without duplicating its header', async () => {
-    const onExpandedChange = jest.fn();
-    const view = await render(
-      <ForumCallout
-        body={<Text>续段正文</Text>}
-        expanded={false}
-        fold="collapsed"
-        headerVisible={false}
-        onExpandedChange={onExpandedChange}
-        theme={lightTheme}
-        title={<Text>不得重复的标题</Text>}
-        titleLabel="不得重复的标题"
-        type="warning"
-      />
-    );
-
-    expect(view.queryByText('不得重复的标题')).toBeNull();
-    expect(view.queryByTestId('forum-callout-icon')).toBeNull();
-    expect(view.queryByText('续段正文')).toBeNull();
-
-    await view.rerender(
-      <ForumCallout
-        body={<Text>续段正文</Text>}
-        expanded
-        fold="collapsed"
-        headerVisible={false}
-        onExpandedChange={onExpandedChange}
-        theme={lightTheme}
-        title={<Text>不得重复的标题</Text>}
-        titleLabel="不得重复的标题"
-        type="warning"
-      />
-    );
-
-    expect(view.getByText('续段正文')).toBeTruthy();
-    expect(view.queryByText('不得重复的标题')).toBeNull();
-    expect(view.queryByRole('button')).toBeNull();
     expect(onExpandedChange).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-010] applies exact zero margins at continuation boundaries', async () => {
+  it('[REG-PERF-010] applies exact boundary spacing from the compiled row', async () => {
     const view = await render(
       <ForumCallout
         boundarySpacing={{ marginBottom: 0, marginTop: 0 }}
-        body={<Text>中间续段</Text>}
+        expanded
+        foldable={false}
+        onExpandedChange={jest.fn()}
         theme={lightTheme}
         title={<Text>续段标题</Text>}
         titleLabel="续段标题"
@@ -132,7 +104,15 @@ describe('REG-TOPIC-056 shared ForumCallout', () => {
   ])('uses App warning tone in $name theme', async ({ theme, backgroundAlpha, borderAlpha }) => {
     const palette = forumCalloutPalette('warning', theme);
     const view = await render(
-      <ForumCallout body={<Text>正文</Text>} theme={theme} title={<Text>标题</Text>} titleLabel="标题" type="warning" />
+      <ForumCallout
+        expanded
+        foldable={false}
+        onExpandedChange={jest.fn()}
+        theme={theme}
+        title={<Text>标题</Text>}
+        titleLabel="标题"
+        type="warning"
+      />
     );
 
     expect(palette).toEqual({

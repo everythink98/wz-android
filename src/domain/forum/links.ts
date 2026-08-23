@@ -1,5 +1,5 @@
 import type { ReplyLocationTarget, Source, Topic, UserReference } from './models';
-import { isNodeSeekHost } from './sourceCatalog';
+import { isNodeSeekHost, sourceCatalog } from './sourceCatalog';
 
 const YAOHUO_CATEGORY_NAMES: Record<string, string> = {
   '177': '妖火茶馆',
@@ -13,7 +13,7 @@ const YAOHUO_CATEGORY_NAMES: Record<string, string> = {
   '199': '站务处理',
   '288': '网站公告'
 };
-const YAOHUO_BASE_URL = 'https://www.yaohuo.me';
+const YAOHUO_BASE_URL = sourceCatalog.yaohuo.baseUrl;
 const YAOHUO_HOST = 'www.yaohuo.me';
 const YAOHUO_BARE_HOST = 'yaohuo.me';
 
@@ -67,16 +67,18 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
   const pathname = url.pathname;
   if (isNodeSeekHost(host)) {
     const id = pathname.match(/^\/post-(\d+)-\d+(?:\/)?$/i)?.[1];
-    return id ? internalTopic('nodeseek', id, 'NodeSeek 主题', `https://www.nodeseek.com/post-${id}-1`) : null;
+    return id ? internalTopic('nodeseek', id, 'NodeSeek 主题', `${sourceCatalog.nodeseek.baseUrl}/post-${id}-1`) : null;
   }
   if (isForumHost(host, 'linux.do')) {
     const parts = pathname.split('/').filter(Boolean);
     const id = parts[0]?.toLowerCase() === 't' ? (/^\d+$/.test(parts[1] || '') ? parts[1] : parts[2]) : '';
-    return id && /^\d+$/.test(id) ? internalTopic('linuxdo', id, 'linux.do 主题', `https://linux.do/t/${id}`) : null;
+    return id && /^\d+$/.test(id)
+      ? internalTopic('linuxdo', id, 'linux.do 主题', `${sourceCatalog.linuxdo.baseUrl}/t/${id}`)
+      : null;
   }
   if (isForumHost(host, 'v2ex.com')) {
     const id = pathname.match(/^\/t\/(\d+)(?:\/)?$/i)?.[1];
-    return id ? internalTopic('v2ex', id, 'V2EX 主题', `https://www.v2ex.com/t/${id}`) : null;
+    return id ? internalTopic('v2ex', id, 'V2EX 主题', `${sourceCatalog.v2ex.baseUrl}/t/${id}`) : null;
   }
   if (isYaohuoContentHost(host)) {
     const id =
@@ -155,7 +157,7 @@ export function parseForumUserLink(
             id: username,
             username,
             displayName: username,
-            url: `https://linux.do/u/${encodeURIComponent(username)}`
+            url: `${sourceCatalog.linuxdo.baseUrl}/u/${encodeURIComponent(username)}`
           }
         : null;
     } catch {
@@ -165,7 +167,7 @@ export function parseForumUserLink(
   if (isNodeSeekHost(url.hostname)) {
     const id = url.pathname.match(/^\/space\/(\d+)\/?$/i)?.[1];
     if (id) {
-      return { source: 'nodeseek', id, url: `https://www.nodeseek.com/space/${id}` };
+      return { source: 'nodeseek', id, url: `${sourceCatalog.nodeseek.baseUrl}/space/${id}` };
     }
     if (!/^\/member\/?$/i.test(url.pathname)) {
       return null;
@@ -184,13 +186,13 @@ export function parseForumUserLink(
           username,
           displayName: username,
           avatar: candidate?.authorAvatar,
-          url: `https://www.nodeseek.com/space/${candidateId}`
+          url: `${sourceCatalog.nodeseek.baseUrl}/space/${candidateId}`
         }
       : {
           source: 'nodeseek',
           username,
           displayName: username,
-          url: `https://www.nodeseek.com/member?t=${encodeURIComponent(username)}`
+          url: `${sourceCatalog.nodeseek.baseUrl}/member?t=${encodeURIComponent(username)}`
         };
   }
   if (isYaohuoContentHost(url.hostname)) {
@@ -222,7 +224,7 @@ export function parseForumUserLink(
           id: username,
           username,
           displayName: username,
-          url: `https://www.v2ex.com/member/${encodeURIComponent(username)}`
+          url: `${sourceCatalog.v2ex.baseUrl}/member/${encodeURIComponent(username)}`
         }
       : null;
   } catch {

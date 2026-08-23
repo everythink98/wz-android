@@ -16,11 +16,11 @@ export const MoreScreen = memo(function MoreScreen({
   onContentSourcesExpandedChange
 }: {
   account: MoreAccountCapabilities;
-  contentSourcesExpanded?: boolean;
+  contentSourcesExpanded: boolean;
   scrollRef?: RefObject<ScrollView | null>;
   update: MoreUpdateCapabilities;
   utilities: MoreUtilityCapabilities;
-  onContentSourcesExpandedChange?: (expanded: boolean) => void;
+  onContentSourcesExpandedChange: (expanded: boolean) => void;
 }) {
   const { styles } = useReaderThemeStyles(createMoreScreenStyles);
   return (

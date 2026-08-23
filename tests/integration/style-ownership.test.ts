@@ -171,6 +171,19 @@ describe('Android reader theme safety rails', () => {
     expect(styles.quoteRowBottom).toMatchObject({ borderTopWidth: 0, paddingTop: 0 });
   });
 
+  it('[REG-TOPIC-084] aligns native tables with the article surface geometry', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.htmlTableFrame).toMatchObject({
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      overflow: 'hidden'
+    });
+  });
+
   it('keeps appearance controls compact, equal-width, and touch accessible', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;

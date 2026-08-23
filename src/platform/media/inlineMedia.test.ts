@@ -15,7 +15,7 @@ describe('inline media layout', () => {
     ).toEqual({ width: 20, height: 20 });
   });
 
-  it('nudges small forum emoji down to the middle of the text line', () => {
+  it('[REG-TOPIC-119] centers a Fabric image attachment in the text line', () => {
     expect(
       inlineForumImageAlignmentStyle(
         {
@@ -30,6 +30,19 @@ describe('inline media layout', () => {
         26
       )
     ).toEqual({ transform: [{ translateY: 3 }] });
+
+    expect(
+      inlineForumImageAlignmentStyle(
+        {
+          class: 'sticker',
+          src: 'https://cdn.example.com/sticker.png',
+          width: '48',
+          height: '48'
+        },
+        1,
+        26
+      )
+    ).toEqual({});
   });
 
   it('[REG-TOPIC-054] leaves breathing room after an inline quote avatar', () => {
@@ -44,10 +57,7 @@ describe('inline media layout', () => {
         1,
         26
       )
-    ).toEqual({
-      marginRight: 6,
-      transform: [{ translateY: 1 }]
-    });
+    ).toEqual({ marginRight: 6, transform: [{ translateY: 1 }] });
   });
   it('uses a readable inline size for xhj sticker images without explicit dimensions', () => {
     expect(

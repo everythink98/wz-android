@@ -12,8 +12,9 @@ import {
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { LINUXDO_BASE_URL } from './protocol';
 
-export const LINUXDO_ACCOUNT_STATUS_URL = 'https://linux.do/session/current.json';
+export const LINUXDO_ACCOUNT_STATUS_URL = `${LINUXDO_BASE_URL}/session/current.json`;
 
 export async function readLinuxDoAccountStatus({
   fetcher,

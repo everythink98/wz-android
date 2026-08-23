@@ -1,4 +1,5 @@
 import type { CredentialSite } from './sessionContracts';
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 
 export type LoginCredentials = {
   account: string;
@@ -45,19 +46,19 @@ const LOGIN_FORM_FAILURE_REASONS = new Set<LoginFormFailureReason>([
 const LOGIN_FORM_CONFIGS = {
   nodeseek: {
     site: 'nodeseek',
-    loginUrl: 'https://www.nodeseek.com/signIn.html',
+    loginUrl: `${sourceCatalog.nodeseek.baseUrl}/signIn.html`,
     accountSelector: '#stacked-email',
     passwordSelector: '#stacked-password'
   },
   linuxdo: {
     site: 'linuxdo',
-    loginUrl: 'https://linux.do/login',
+    loginUrl: `${sourceCatalog.linuxdo.baseUrl}/login`,
     accountSelector: '#login-account-name',
     passwordSelector: '#login-account-password'
   },
   yaohuo: {
     site: 'yaohuo',
-    loginUrl: 'https://www.yaohuo.me/waplogin.aspx?siteid=1000',
+    loginUrl: `${sourceCatalog.yaohuo.baseUrl}/waplogin.aspx?siteid=1000`,
     accountSelector: '#logname[name="logname"]',
     passwordSelector: '#password[name="logpass"]',
     formName: 'login',

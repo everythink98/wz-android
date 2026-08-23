@@ -1,7 +1,8 @@
 import type { Category } from '@/domain/forum/models';
 import { absoluteUrl, elementText, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 
-export const YAOHUO_BASE_URL = 'https://www.yaohuo.me';
+export const YAOHUO_BASE_URL: string = sourceCatalog.yaohuo.baseUrl;
 export const YAOHUO_LOGIN_URL = `${YAOHUO_BASE_URL}/waplogin.aspx?siteid=1000`;
 export const YAOHUO_BBS_REFERER = `${YAOHUO_BASE_URL}/bbs/`;
 export const YAOHUO_CATEGORIES: Category[] = [

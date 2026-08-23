@@ -3,8 +3,8 @@ import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './polls';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
+import { NODESEEK_BASE_URL } from './protocol';
 
-const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 const NODESEEK_ACTION_HEADERS = {
   accept: 'application/json, text/plain, */*',
   'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',

@@ -123,10 +123,10 @@ export function ContentSourcesPanel({
   onChange,
   onExpandedChange
 }: {
-  expanded?: boolean;
+  expanded: boolean;
   preferences: ContentSourcePreference[];
   onChange: (preferences: ContentSourcePreference[]) => void;
-  onExpandedChange?: (expanded: boolean) => void;
+  onExpandedChange: (expanded: boolean) => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   const enabledCount = preferences.filter((preference) => preference.enabled).length;

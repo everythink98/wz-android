@@ -7,9 +7,9 @@ import {
 import type { Topic, TopicDetail } from '@/domain/forum/models';
 import { absoluteUrl, elementText, isRecord, parseHtml, parsePositiveInteger, toIsoString } from '@/domain/forum/html';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
-import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
+import { isNodeSeekHost, sourceCatalog } from '@/domain/forum/sourceCatalog';
 
-export const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
+export const NODESEEK_BASE_URL: string = sourceCatalog.nodeseek.baseUrl;
 export const NODESEEK_FLOORS_PER_PAGE = 10;
 
 export type NodeSeekPageDocument = {

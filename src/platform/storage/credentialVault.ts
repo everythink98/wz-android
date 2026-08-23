@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
+import { sessionSources } from '@/domain/forum/sourceCatalog';
 import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 
 export type CredentialProtection = 'biometric' | 'device';
@@ -57,13 +58,13 @@ type StoredSummary = {
   cleanupSlots?: CredentialValueSlot[];
 };
 
-const SITES = new Set<CredentialSite>(['nodeseek', 'linuxdo', 'yaohuo']);
+const SITES = new Set<CredentialSite>(sessionSources);
 const MAX_CREDENTIAL_BYTES = 1900;
 const siteOperations = createKeyedSerialRunner<CredentialSite>();
 
 export function emptyCredentialSummaries(): CredentialSummaries {
   return Object.fromEntries(
-    [...SITES].map((site) => [
+    sessionSources.map((site) => [
       site,
       {
         site,

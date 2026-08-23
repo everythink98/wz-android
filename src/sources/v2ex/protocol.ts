@@ -1,6 +1,7 @@
 import { absoluteUrl } from '@/domain/forum/html';
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 
-export const V2EX_BASE_URL = 'https://www.v2ex.com';
+export const V2EX_BASE_URL: string = sourceCatalog.v2ex.baseUrl;
 export const SOV2EX_URL = 'https://www.sov2ex.com';
 
 export function isV2exHost(hostname: string) {
