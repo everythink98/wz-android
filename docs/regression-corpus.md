@@ -6057,6 +6057,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把 img 改回 `8/12`、同时回滚 paragraph/heading/blockquote/table/mention，或用 wrapper/站点分支覆盖；编号 unit 或 sibling style tests 必须失败。 |
 | 明确不覆盖范围 | 不重设图片 loader、尺寸、占位、inline media、段落整体 rhythm 或站点专属 CSS；不把像素截图作为唯一 oracle。 |
 
+## `REG-TOPIC-123` 物理语义 row 泄漏文章边界且共享正文尺度粗糙
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`、`MORE-03`；共享 `REG-TOPIC-081/084/087/093/122` |
+| 用户症状 | NodeSeek 等包含 blockquote、重复 `hr`、标题和代码块的详情页出现重复文章顶部 hairline、`16dp` 内边距与 row 间 `10dp` 空带；App-owned 行高、分隔线和块级节奏叠加后显得松散、粗糙。 |
+| 触发条件 | 一篇连续主楼被 compiler 按安全语义边界分成多个 `topicContent` row，例如 `blockquote + 5×hr + h2 + 4×hr + h2 + paragraph + pre` 形成 richText、richText、code 三个连续 row。 |
+| 根因 seam | `TopicContentList` 把每个物理 opening row 都当作视觉文章起点并重复应用 `articleBody`，同时为相邻普通语义 row 插入通用 separator；共享 `forumTagStyles` 与 typed block 样式仍使用旧的宽松尺度。来源 CSS 本就不会进入 App。 |
+| 必须保持的行为 | 只有首个普通主楼正文 row 拥有一次顶部 hairline 和 `16dp` padding，相邻普通 `topicContent` row separator 为 `0`；独立表格 `12dp`、投票 `10dp`、引用、采纳答案与 postlude 边界不变。主楼/回复字号继续为 `16/15`，三档行高固定 `22/21`、`24/23`、`27/26`；段落下间距 `10dp`；H1–H6 分别为 `24/32 24/10`、`20/28 20/10`、`18/26 16/8`、`16/24 16/8`、`15/22 12/6`、`14/21 12/6`；`hr` 上下 `8dp`；blockquote 使用 `lineStrong`、上下 `10dp`、纵向 padding `2dp`、左侧 `12dp`；列表上下 `6/10dp`、item 下 `2dp` 且 marker 跟随阅读行高；普通代码块上下 `10dp`、圆角 `8dp`、padding `12dp`。块图 `6/8dp`、评论 `42dp` 缩进、附件、媒体、复制按钮、横滑与操作区几何保持。 |
+| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 的 `[REG-TOPIC-123]` 经真实 `compileForumContent → TopicContentList → FlashList` 固定目标形状的 DOM 顺序、三个 row、唯一文章顶部边界及两个零 separator；同文件固定 poll `10dp` 与独立 table `12dp`。`src/features/topic/rendering/htmlStyles.test.ts` 固定三档行高及 HTML prose 数值，`tests/ui/topic/topic-table-rendering.test.tsx` 固定 typed blockquote/list/code 数值，并继续由 `REG-TOPIC-122` 固定图片 `6/8dp`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`：style unit 固定纯尺度，RNTL 固定完整编译/列表/renderer 行为，匹配 APK 证明真实 React Native/RNRH 消费同一主题。 |
+| Replay 或真实验收路径 | `tests/live/agent-live.md` 的 `LIVE-READ-06`：匹配 APK 只读直达 NodeSeek `https://www.nodeseek.com/post-890382-1`，重点核对重复 `hr`、标题、blockquote、普通代码块及评论；同时直达 linux.do `https://linux.do/t/topic/2556285`、V2EX `https://www.v2ex.com/t/1233470`、妖火 `https://www.yaohuo.me/bbs-1570569.html` 确认共享正文链无回退。切换浅/深色、三档行距和 `130%` 字号后恢复原设置；全程只读。 |
+| 负向验证方式 | 恢复每 row 的 `articleBody`、普通 row separator `10dp`、旧三档 multiplier、`hr=20dp`，或把图片/表格/投票一并压成零间距；编号 unit/UI 用例必须失败。 |
+| 明确不覆盖范围 | 不引入或放开原站 CSS，不修改 sanitizer allowlist、来源 adapter、compiler、DOM 顺序、虚拟化预算、媒体调度、页面 chrome、评论头尾或交互；不增加依赖、公共 API、站点或帖子特判。 |
+
 ## 待确认观察
 
 下表只保存本轮探索中出现过、但尚不足以认定为当前业务 bug 的线索。它们不等同于 `REG-*`，也不能据此增加猜测式 workaround。只有在身份匹配的当前 APK 上稳定复现并得到明确失败 oracle 后，才升级为回归条目和最低可靠测试。53 个失联 daemon、30 个工具录屏进程及设备录屏分片未清理已经有完整证据，归入 `REG-OPS-002`，不再作为“疑似”。

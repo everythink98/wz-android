@@ -262,7 +262,7 @@ describe('native topic structured rendering', () => {
     toast.mockRestore();
   });
 
-  it('[REG-TOPIC-089][REG-TOPIC-090][REG-TOPIC-093] exposes one complete code frame and reports copy failure', async () => {
+  it('[REG-TOPIC-089][REG-TOPIC-090][REG-TOPIC-093][REG-TOPIC-123] exposes one complete code frame and reports copy failure', async () => {
     const copy = jest.mocked(Clipboard.setStringAsync);
     copy.mockClear();
     copy.mockRejectedValueOnce(new Error('clipboard unavailable'));
@@ -274,10 +274,14 @@ describe('native topic structured rendering', () => {
     expect(screen.getAllByRole('button', { name: '复制完整代码' })).toHaveLength(1);
     expect(StyleSheet.flatten(screen.getByTestId('topic-code-frame').props.style)).toMatchObject({
       backgroundColor: '#F0F0F0',
-      borderRadius: 10,
+      borderRadius: 8,
       minWidth: 320,
-      padding: 14,
+      padding: 12,
       paddingRight: 68
+    });
+    expect(StyleSheet.flatten(screen.getByTestId('topic-code-scroll').parent?.props.style)).toMatchObject({
+      marginBottom: 10,
+      marginTop: 10
     });
     expect(StyleSheet.flatten(screen.getByRole('button', { name: '复制完整代码' }).props.style)).toMatchObject({
       backgroundColor: '#FCFCFC',
@@ -294,24 +298,38 @@ describe('native topic structured rendering', () => {
     toast.mockRestore();
   });
 
-  it('[REG-TOPIC-093] presents blockquotes as one continuous reading rail', async () => {
+  it('[REG-TOPIC-093][REG-TOPIC-123] presents blockquotes as one continuous reading rail', async () => {
     const screen = await render(
       <CompiledContentFixture html="<blockquote><p>quoted community content</p></blockquote>" />
     );
 
     expect(StyleSheet.flatten(screen.getByTestId('topic-blockquote-frame').props.style)).toMatchObject({
-      borderLeftColor: '#1677FF',
+      borderLeftColor: '#D0D0D0',
       borderLeftWidth: 3,
-      marginBottom: 12,
-      marginTop: 12,
-      paddingBottom: 4,
+      marginBottom: 10,
+      marginTop: 10,
+      paddingBottom: 2,
       paddingLeft: 12,
       paddingRight: 4,
-      paddingTop: 4
+      paddingTop: 2
     });
     expect(StyleSheet.flatten(screen.getByTestId('topic-blockquote-frame').props.style)).not.toHaveProperty(
       'backgroundColor'
     );
+  });
+
+  it('[REG-TOPIC-123] gives typed lists the same compact prose rhythm', async () => {
+    const screen = await render(<CompiledContentFixture html="<ul><li>first</li><li>second</li></ul>" />);
+    const markers = screen.getAllByText('•');
+    const firstItemStyle = StyleSheet.flatten(markers[0].parent?.props.style);
+    const firstListStyle = StyleSheet.flatten(markers[0].parent?.parent?.props.style);
+    const lastListStyle = StyleSheet.flatten(markers[1].parent?.parent?.props.style);
+
+    expect(markers).toHaveLength(2);
+    expect(StyleSheet.flatten(markers[0].props.style)).toMatchObject({ fontSize: 16, lineHeight: 24 });
+    expect(firstItemStyle).toMatchObject({ marginBottom: 2 });
+    expect(firstListStyle).toMatchObject({ marginTop: 6 });
+    expect(lastListStyle).toMatchObject({ marginBottom: 10 });
   });
 
   it('[REG-TOPIC-084] fills narrow NodeSeek tables and honors colspan', async () => {

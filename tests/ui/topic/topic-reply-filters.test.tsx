@@ -7,7 +7,12 @@ import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMed
 import type { ReplyFilter } from '@/features/topic/model/types';
 import type { TopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
-import { discoursePollPlaceholder, prepareReplyContent, prepareTopicContent } from '@/domain/forum/topicContentSplit';
+import {
+  compileForumContent,
+  discoursePollPlaceholder,
+  prepareReplyContent,
+  prepareTopicContent
+} from '@/domain/forum/topicContentSplit';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -1880,18 +1885,50 @@ describe('Topic reply filters', () => {
         }
       }
     };
+    const openingPoll: TopicListItem = {
+      type: 'topicContent',
+      key: 'opening-poll',
+      content: {
+        type: 'poll',
+        key: 'opening-poll',
+        poll: topicPoll,
+        row: {
+          ancestorFrames: [],
+          keySuffix: 'poll:0',
+          networkMediaCount: 0,
+          part: 'only',
+          poll: topicPoll,
+          segmentIndex: 0,
+          semanticId: 'poll',
+          type: 'poll'
+        }
+      }
+    };
+    const openingTables = compileForumContent({
+      html: '<table><tr><td>A</td></tr></table><table><tr><td>B</td></tr></table>',
+      role: 'opening',
+      source: 'nodeseek'
+    })
+      .rows.filter((row) => row.type === 'table')
+      .map((row, index): TopicListItem => ({
+        type: 'topicContent',
+        key: `opening-table-${index}`,
+        content: { type: 'content', key: `opening-table-${index}`, row }
+      }));
 
     expect(separatorHeight(openingFirst, openingLast)).toBe(0);
     expect(separatorHeight(quoteSummary, quoteFirst)).toBe(0);
     expect(separatorHeight(quoteFirst, quoteLast)).toBe(0);
     expect(separatorHeight(acceptedFirst, acceptedLast)).toBe(0);
-    expect(separatorHeight(openingOnly, { ...openingOnly, key: 'opening-only-2' })).toBe(10);
-    expect(separatorHeight(openingFirst, { ...openingLast, content: content('different', 'block-2', 'last') })).toBe(
-      10
-    );
+    expect(separatorHeight(openingOnly, { ...openingOnly, key: 'opening-only-2' })).toBe(0);
+    expect(separatorHeight(openingFirst, { ...openingLast, content: content('different', 'block-2', 'last') })).toBe(0);
     expect(separatorHeight(quoteFirst, otherQuoteLast)).toBe(10);
     expect(separatorHeight(openingFirst, quoteLast)).toBe(10);
     expect(separatorHeight(terminalHeader, terminalBody)).toBe(0);
+    expect(separatorHeight(openingOnly, openingPoll)).toBe(10);
+    expect(separatorHeight(openingPoll, openingOnly)).toBe(10);
+    expect(openingTables).toHaveLength(2);
+    expect(separatorHeight(openingTables[0], openingTables[1])).toBe(12);
   });
 
   it('[REG-TOPIC-081] gives a multi-row opening article only one top boundary', async () => {
@@ -1910,6 +1947,80 @@ describe('Topic reply filters', () => {
     containers.slice(1).forEach((container) => {
       expect(container).toMatchObject({ borderTopWidth: 0, paddingTop: 0 });
     });
+  });
+
+  it('[REG-TOPIC-123] keeps mixed Markdown semantics in one continuous opening article', async () => {
+    const article: TopicDetail = {
+      ...topic,
+      contentHtml:
+        '<blockquote><p>quoted intro</p></blockquote>' +
+        '<hr>'.repeat(5) +
+        '<h2>TGBot</h2>' +
+        '<hr>'.repeat(4) +
+        '<h2>1.更新推送格式</h2>' +
+        '<p>正文说明</p>' +
+        '<pre><code>echo ready</code></pre>',
+      replies: [],
+      replyCount: 0,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-890382-1'
+    };
+    const view = await render(<TopicFilterHarness selectedTopic={article} topicDetail={article} topicReplies={[]} />);
+    const openingItems = (lastFlashListProps.data as TopicListItem[]).filter(
+      (item): item is Extract<TopicListItem, { type: 'topicContent' }> => item.type === 'topicContent'
+    );
+    const openingRows = openingItems.flatMap((item) => (item.content.type === 'content' ? [item.content.row] : []));
+    const separatorHeight = (leadingItem: TopicListItem, trailingItem: TopicListItem) => {
+      const separator = lastFlashListProps.ItemSeparatorComponent({ leadingItem, trailingItem }) as React.ReactElement<{
+        style?: unknown;
+      }> | null;
+      return separator
+        ? (StyleSheet.flatten(separator.props.style as StyleProp<ViewStyle>) as ViewStyle | undefined)?.height || 0
+        : 0;
+    };
+
+    expect(openingRows.map((row) => row.type)).toEqual(['richText', 'richText', 'codeBlock']);
+    expect(openingRows[0]?.ancestorFrames).toEqual([expect.objectContaining({ kind: 'blockquote', part: 'only' })]);
+    expect('html' in openingRows[1] ? openingRows[1].html : '').toBe(
+      '<hr><hr><hr><hr><hr><h2>TGBot</h2><hr><hr><hr><hr><h2>1.更新推送格式</h2><p>正文说明</p>'
+    );
+    expect(openingRows[2]).toMatchObject({ text: 'echo ready', type: 'codeBlock' });
+    expect(openingItems.slice(0, -1).map((item, index) => separatorHeight(item, openingItems[index + 1]))).toEqual([
+      0, 0
+    ]);
+
+    const htmlBlocks = view.getAllByLabelText('content-continuation-only');
+    const containers = htmlBlocks.map((block) => StyleSheet.flatten(block.parent?.props.style));
+    expect(containers[0]).toMatchObject({ borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 16 });
+    expect(containers[1]).not.toHaveProperty('borderTopWidth');
+    expect(containers[1]).not.toHaveProperty('paddingTop');
+    const codeFrame = view.getByTestId('topic-code-frame');
+    let codeHasArticleBoundary = false;
+    for (let ancestor = codeFrame.parent; ancestor; ancestor = ancestor.parent) {
+      const style = StyleSheet.flatten(ancestor.props.style as StyleProp<ViewStyle>) as ViewStyle | undefined;
+      codeHasArticleBoundary ||= style?.borderTopWidth === StyleSheet.hairlineWidth && style.paddingTop === 16;
+    }
+    expect(codeHasArticleBoundary).toBe(false);
+  });
+
+  it('[REG-TOPIC-123] keeps the article boundary on prose when a poll opens the topic', async () => {
+    const poll = { ...topicPoll, name: 'opening-poll' };
+    const article: TopicDetail = {
+      ...topic,
+      contentHtml: `${discoursePollPlaceholder(poll.name)}<p>首段正文</p>`,
+      polls: [poll],
+      replies: [],
+      replyCount: 0,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/poll-first'
+    };
+    const view = await render(<TopicFilterHarness selectedTopic={article} topicDetail={article} topicReplies={[]} />);
+    const pollContainer = StyleSheet.flatten(view.getByTestId('topic-poll-linuxdo').parent?.props.style);
+    const proseContainer = StyleSheet.flatten(view.getByLabelText('content-continuation-only').parent?.props.style);
+
+    expect(pollContainer).not.toHaveProperty('borderTopWidth');
+    expect(pollContainer).not.toHaveProperty('paddingTop');
+    expect(proseContainer).toMatchObject({ borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 16 });
   });
 
   it('[REG-PERF-010] keeps continuation chrome only at the outer edges of a split opening group', async () => {

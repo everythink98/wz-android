@@ -888,6 +888,9 @@ export const TopicContentList = memo(function TopicContentList({
     [expandedQuotes, item?.id, itemSource, loadedQuotedReplies, repliesByFloor, topicContentItems]
   );
   const firstOpeningRowKey = topicOpeningListItems[0]?.key;
+  const firstArticleBodyKey = topicOpeningListItems.find(
+    (item) => item.type === 'topicContent' && item.content.type === 'content'
+  )?.key;
   const firstOpeningRowStartedAt = topicResponseReadyCandidate;
   const acceptedAnswerListItems = useMemo<TopicListItem[]>(() => {
     if (!acceptedAnswer || topicShowsAccessNotice) return [];
@@ -1268,6 +1271,14 @@ export const TopicContentList = memo(function TopicContentList({
       ) {
         return <View style={{ height: 12 }} />;
       }
+      if (
+        leadingItem.type === 'topicContent' &&
+        trailingItem.type === 'topicContent' &&
+        leadingItem.content.type !== 'poll' &&
+        trailingItem.content.type !== 'poll'
+      ) {
+        return null;
+      }
       const height =
         leadingItem.type === 'topicContent' ||
         leadingItem.type === 'topicQuoteSummary' ||
@@ -1319,7 +1330,9 @@ export const TopicContentList = memo(function TopicContentList({
             ? options?.quoteBodyFirst
               ? [styles.quoteBody, styles.quotePanelBody]
               : undefined
-            : styles.articleBody;
+            : frameKey === firstArticleBodyKey
+              ? styles.articleBody
+              : undefined;
       const contentContainerStyle = [baseContentContainerStyle, trimLeadingStyle, trimTrailingStyle];
       const baseRowStyle =
         context === 'accepted'
@@ -1427,6 +1440,7 @@ export const TopicContentList = memo(function TopicContentList({
       actionBusy,
       contentWidth,
       decisionFor,
+      firstArticleBodyKey,
       htmlRenderersProps,
       inlineSizedImageUrls,
       mediaContext,

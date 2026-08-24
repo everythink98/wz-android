@@ -31,12 +31,12 @@ export function androidRipple(color: string, borderless = false) {
 
 export function lineHeightMultiplier(value: ReaderSettings['lineHeight']) {
   if (value === 'compact') {
-    return 1.45;
+    return 1.4;
   }
   if (value === 'loose') {
-    return 1.82;
+    return 1.7;
   }
-  return 1.62;
+  return 1.5;
 }
 
 export function contentWidthValue(value: ReaderSettings['contentWidth']) {

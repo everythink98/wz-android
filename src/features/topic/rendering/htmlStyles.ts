@@ -119,7 +119,7 @@ export function buildHtmlRenderingStyles({
     lineHeight: baseLineHeight
   };
   const htmlParagraph = {
-    marginBottom: 12,
+    marginBottom: 10,
     marginTop: 0
   };
   const heading = (
@@ -141,20 +141,20 @@ export function buildHtmlRenderingStyles({
       backgroundColor: 'transparent'
     },
     p: htmlParagraph,
-    h1: heading(24, 32, '700', 24, 12),
-    h2: heading(21, 29, '700', 24, 12),
-    h3: heading(18, 26, '600', 20, 8),
+    h1: heading(24, 32, '700', 24, 10),
+    h2: heading(20, 28, '700', 20, 10),
+    h3: heading(18, 26, '600', 16, 8),
     h4: heading(16, 24, '600', 16, 8),
-    h5: heading(15, 22, '600', 16, 8),
-    h6: heading(14, 21, '600', 12, 8),
+    h5: heading(15, 22, '600', 12, 6),
+    h6: heading(14, 21, '600', 12, 6),
     strong: {
       fontWeight: '700'
     },
     hr: {
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      marginBottom: 20,
-      marginTop: 20
+      marginBottom: 8,
+      marginTop: 8
     },
     a: {
       color: linkColor
@@ -165,37 +165,37 @@ export function buildHtmlRenderingStyles({
       marginTop: 6
     },
     li: {
-      marginBottom: 4
+      marginBottom: 2
     },
     ul: {
-      marginBottom: 12,
-      marginTop: 8,
+      marginBottom: 10,
+      marginTop: 6,
       paddingLeft: listPaddingLeft
     },
     ol: {
-      marginBottom: 12,
-      marginTop: 8,
+      marginBottom: 10,
+      marginTop: 6,
       paddingLeft: listPaddingLeft
     },
     blockquote: {
       backgroundColor: 'transparent',
-      borderLeftColor: theme.primary,
+      borderLeftColor: theme.lineStrong,
       borderLeftWidth: 3,
-      marginBottom: 12,
-      marginTop: 12,
-      paddingBottom: 4,
+      marginBottom: 10,
+      marginTop: 10,
+      paddingBottom: 2,
       paddingLeft: 12,
       paddingRight: 4,
-      paddingTop: 4
+      paddingTop: 2
     },
     pre: {
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
-      borderRadius: 10,
-      marginBottom: 12,
-      marginTop: 12,
-      padding: 14
+      borderRadius: 8,
+      marginBottom: 10,
+      marginTop: 10,
+      padding: 12
     },
     code: {
       backgroundColor: theme.surface2,

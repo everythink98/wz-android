@@ -11,7 +11,7 @@ import type {
 } from '@/domain/forum/topicContentSplit';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import { ForumCallout, forumCalloutPalette } from '@/ui/content/ForumCallout';
-import { androidRipple } from '@/ui/theme/tokens';
+import { androidRipple, lineHeightMultiplier } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from '../styles';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
@@ -87,8 +87,8 @@ function CodeBlock({
   row: Extract<CompiledForumContentRow, { type: 'codeBlock' }>;
 }) {
   const { settings, theme } = useReaderThemeStyles(createTopicStyles);
-  const radius = 10;
   const terminal = row.variant === 'terminal';
+  const radius = terminal ? 10 : 8;
   const copy = () => {
     if (row.copyText === undefined) return;
     void Clipboard.setStringAsync(row.copyText)
@@ -98,8 +98,8 @@ function CodeBlock({
   return (
     <View
       style={{
-        marginBottom: row.part === 'first' || row.part === 'middle' ? 0 : 12,
-        marginTop: row.part === 'middle' || row.part === 'last' ? 0 : 12
+        marginBottom: row.part === 'first' || row.part === 'middle' ? 0 : terminal ? 12 : 10,
+        marginTop: row.part === 'middle' || row.part === 'last' ? 0 : terminal ? 12 : 10
       }}
     >
       <TopicHorizontalScroll
@@ -119,8 +119,8 @@ function CodeBlock({
               borderRadius: radius,
               borderWidth: StyleSheet.hairlineWidth,
               minWidth: contentWidth,
-              padding: 14,
-              paddingRight: row.copyText === undefined ? 14 : 68
+              padding: terminal ? 14 : 12,
+              paddingRight: row.copyText === undefined ? (terminal ? 14 : 12) : 68
             },
             continuationFrameStyle(row.part, radius)
           ]}
@@ -288,7 +288,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
       <View
         style={{
           marginBottom: frame.part === 'last' || frame.part === 'only' ? 10 : 0,
-          marginTop: frame.part === 'first' || frame.part === 'only' ? 8 : 0
+          marginTop: frame.part === 'first' || frame.part === 'only' ? 6 : 0
         }}
       >
         {children}
@@ -298,13 +298,13 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
   if (frame.kind === 'listItem') {
     const marker = frame.marker === undefined ? '•' : `${frame.marker}.`;
     return (
-      <View style={{ flexDirection: 'row', marginBottom: frame.part === 'last' || frame.part === 'only' ? 4 : 0 }}>
+      <View style={{ flexDirection: 'row', marginBottom: frame.part === 'last' || frame.part === 'only' ? 2 : 0 }}>
         <Text
           selectable
           style={{
             color: theme.ink,
             fontSize: Math.round(16 * settings.fontScale),
-            lineHeight: Math.round(24 * settings.fontScale),
+            lineHeight: Math.round(16 * settings.fontScale * lineHeightMultiplier(settings.lineHeight)),
             width: Math.round(28 * settings.fontScale)
           }}
         >
@@ -350,14 +350,14 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
   return (
     <View
       style={{
-        borderLeftColor: theme.primary,
+        borderLeftColor: theme.lineStrong,
         borderLeftWidth: 3,
-        marginBottom: frame.part === 'last' || frame.part === 'only' ? 12 : 0,
-        marginTop: frame.part === 'first' || frame.part === 'only' ? 12 : 0,
-        paddingBottom: frame.part === 'last' || frame.part === 'only' ? 4 : 0,
+        marginBottom: frame.part === 'last' || frame.part === 'only' ? 10 : 0,
+        marginTop: frame.part === 'first' || frame.part === 'only' ? 10 : 0,
+        paddingBottom: frame.part === 'last' || frame.part === 'only' ? 2 : 0,
         paddingLeft: 12,
         paddingRight: 4,
-        paddingTop: frame.part === 'first' || frame.part === 'only' ? 4 : 0
+        paddingTop: frame.part === 'first' || frame.part === 'only' ? 2 : 0
       }}
       testID="topic-blockquote-frame"
     >

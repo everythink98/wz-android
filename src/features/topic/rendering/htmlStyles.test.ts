@@ -93,21 +93,52 @@ describe('Android HTML rendering styles', () => {
     });
   });
 
-  it('[REG-TOPIC-081][REG-TOPIC-122] defines one shared article rhythm and semantic attachment card', () => {
+  it('[REG-TOPIC-123][MORE-03] keeps the three reading line-height choices dense and distinct', () => {
+    const compact = htmlRenderingStyles.buildHtmlRenderingStyles({
+      settings: { ...settings, lineHeight: 'compact' },
+      theme: createTheme({ ...settings, lineHeight: 'compact' })
+    });
+    const standard = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme: createTheme(settings) });
+    const loose = htmlRenderingStyles.buildHtmlRenderingStyles({
+      settings: { ...settings, lineHeight: 'loose' },
+      theme: createTheme({ ...settings, lineHeight: 'loose' })
+    });
+
+    expect([
+      compact.htmlBaseStyle.lineHeight,
+      standard.htmlBaseStyle.lineHeight,
+      loose.htmlBaseStyle.lineHeight
+    ]).toEqual([22, 24, 27]);
+    expect([
+      compact.htmlClassesStyles['forum-reply-content'].lineHeight,
+      standard.htmlClassesStyles['forum-reply-content'].lineHeight,
+      loose.htmlClassesStyles['forum-reply-content'].lineHeight
+    ]).toEqual([21, 23, 26]);
+  });
+
+  it('[REG-TOPIC-081][REG-TOPIC-122][REG-TOPIC-123] defines one shared article rhythm and semantic attachment card', () => {
     const theme = createTheme(settings);
     const { htmlClassesStyles, htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
 
-    expect(htmlTagsStyles.p).toMatchObject({ marginBottom: 12, marginTop: 0 });
-    expect(htmlTagsStyles.h1).toMatchObject({ fontSize: 24, lineHeight: 32, marginBottom: 12, marginTop: 24 });
-    expect(htmlTagsStyles.h3).toMatchObject({ fontSize: 18, lineHeight: 26, marginBottom: 8, marginTop: 20 });
+    expect(htmlTagsStyles.p).toMatchObject({ marginBottom: 10, marginTop: 0 });
+    expect(htmlTagsStyles.h1).toMatchObject({ fontSize: 24, lineHeight: 32, marginBottom: 10, marginTop: 24 });
+    expect(htmlTagsStyles.h2).toMatchObject({ fontSize: 20, lineHeight: 28, marginBottom: 10, marginTop: 20 });
+    expect(htmlTagsStyles.h3).toMatchObject({ fontSize: 18, lineHeight: 26, marginBottom: 8, marginTop: 16 });
+    expect(htmlTagsStyles.h4).toMatchObject({ fontSize: 16, lineHeight: 24, marginBottom: 8, marginTop: 16 });
+    expect(htmlTagsStyles.h5).toMatchObject({ fontSize: 15, lineHeight: 22, marginBottom: 6, marginTop: 12 });
+    expect(htmlTagsStyles.h6).toMatchObject({ fontSize: 14, lineHeight: 21, marginBottom: 6, marginTop: 12 });
     expect(htmlTagsStyles.img).toMatchObject({ marginBottom: 8, marginTop: 6 });
+    expect(htmlTagsStyles.li).toMatchObject({ marginBottom: 2 });
+    expect(htmlTagsStyles.ul).toMatchObject({ marginBottom: 10, marginTop: 6 });
+    expect(htmlTagsStyles.ol).toMatchObject({ marginBottom: 10, marginTop: 6 });
     expect(htmlTagsStyles.strong).toMatchObject({ fontWeight: '700' });
     expect(htmlTagsStyles.hr).toMatchObject({
       borderBottomColor: theme.line,
       borderBottomWidth: 1,
-      marginBottom: 20,
-      marginTop: 20
+      marginBottom: 8,
+      marginTop: 8
     });
+    expect(htmlTagsStyles.pre).toMatchObject({ borderRadius: 8, marginBottom: 10, marginTop: 10, padding: 12 });
     expect(htmlTagsStyles.code).toMatchObject({
       backgroundColor: theme.surface2,
       borderRadius: 4,
@@ -118,9 +149,13 @@ describe('Android HTML rendering styles', () => {
     });
     expect(htmlTagsStyles.blockquote).toMatchObject({
       backgroundColor: 'transparent',
-      borderLeftColor: theme.primary,
+      borderLeftColor: theme.lineStrong,
       borderLeftWidth: 3,
-      paddingLeft: 12
+      marginBottom: 10,
+      marginTop: 10,
+      paddingBottom: 2,
+      paddingLeft: 12,
+      paddingTop: 2
     });
     expect(htmlTagsStyles.blockquote).not.toHaveProperty('borderRadius');
     expect(htmlClassesStyles['forum-attachment']).toMatchObject({
