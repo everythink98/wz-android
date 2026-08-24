@@ -131,7 +131,7 @@ test('reports regression entries that reference an unknown capability', async ()
 
 test('reports tracked Markdown references to undefined npm scripts', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: ['## 能力清单', '| `RELEASE-01` | first |', '## 五站能力矩阵'].join('\n'),
+    productMap: ['## 能力清单', '| `RELEASE-01` | first |', '## 四站能力矩阵'].join('\n'),
     markdown: ['Run npm run verify.', '运行 npm run missing。', '`npm run verify`'].join('\n'),
     packageScripts: { verify: 'echo ok' }
   });
@@ -144,7 +144,7 @@ test('reports tracked Markdown references to undefined npm scripts', async () =>
 
 test('reports unknown capability references including shorthand without parsing scenario ids', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 五站能力矩阵'].join('\n'),
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
     markdown: '`ACCOUNT-01/99` `LIVE-ACCOUNT-99` `REG-ACCOUNT-001`\n'
   });
@@ -157,7 +157,7 @@ test('reports unknown capability references including shorthand without parsing 
 
 test('reports unknown capability references in cross-family shorthand', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: ['## 能力清单', '| `FEED-01` | first |', '| `ACCOUNT-01` | second |', '## 五站能力矩阵'].join('\n'),
+    productMap: ['## 能力清单', '| `FEED-01` | first |', '| `ACCOUNT-01` | second |', '## 四站能力矩阵'].join('\n'),
     markdown: '`ACCOUNT-01/FEED-99`\n'
   });
 
@@ -169,7 +169,7 @@ test('reports unknown capability references in cross-family shorthand', async ()
 
 test('ignores technical identifiers and validates capability numbers of any length', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: ['## 能力清单', '| `ACCOUNT-100` | first |', '## 五站能力矩阵'].join('\n'),
+    productMap: ['## 能力清单', '| `ACCOUNT-100` | first |', '## 四站能力矩阵'].join('\n'),
     markdown: '`API-35` `UTF-16` `ACCOUNT-100` `ACCOUNT-999`\n'
   });
 
@@ -181,7 +181,7 @@ test('ignores technical identifiers and validates capability numbers of any leng
 
 test('reports unknown regression references including shorthand', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 五站能力矩阵'].join('\n'),
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
     markdown: '`REG-ACCOUNT-001/999`\n'
   });
@@ -192,9 +192,37 @@ test('reports unknown regression references including shorthand', async () => {
   assert.match(errors[0], /docs\/guide\.md:1.*REG-ACCOUNT-999.*不存在/);
 });
 
+test('accepts executable REG references defined in the regression corpus', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
+    regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
+    source: "export const regression = 'REG-ACCOUNT-001';\n"
+  });
+
+  assert.deepEqual(findKnowledgeContractErrors(rootDir), []);
+});
+
+test('reports executable REG references missing from the regression corpus', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
+    regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
+    source: "export const regression = 'REG-ACCOUNT-001';\n"
+  });
+  await mkdir(path.join(rootDir, 'tests'));
+  await writeFile(
+    path.join(rootDir, 'tests', 'regression.test.ts'),
+    "test('[REG-ACCOUNT-999] unknown regression', () => {});\n"
+  );
+
+  const errors = findKnowledgeContractErrors(rootDir);
+
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /tests\/regression\.test\.ts:1.*REG-ACCOUNT-999.*不存在/);
+});
+
 test('does not validate a local historical baseline as current documentation', async () => {
   const rootDir = await createKnowledgeFixture({
-    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 五站能力矩阵'].join('\n'),
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
     regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
     markdown: '`ACCOUNT-01` `REG-ACCOUNT-001` `npm run verify`\n',
     packageScripts: { verify: 'echo ok' }

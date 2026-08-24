@@ -217,6 +217,20 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
       }
     }
   }
+
+  const sourceFiles = filesBelow(path.join(root, 'src')).filter((file) => /\.[cm]?[jt]sx?$/.test(file));
+  const testFiles = filesBelow(path.join(root, 'tests')).filter((file) => /\.(?:[cm]?[jt]sx?|ad)$/.test(file));
+  for (const file of [...sourceFiles, ...testFiles]) {
+    const text = readFileSync(file, 'utf8');
+    for (const match of text.matchAll(/\bREG-[A-Z]+-\d+\b/g)) {
+      if (!knownRegressionIds.has(match[0])) {
+        errors.push(
+          `${path.relative(root, file).replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的回归 ${match[0]} 不存在`
+        );
+      }
+    }
+  }
+
   const packageJsonPath = path.join(root, 'package.json');
   if (existsSync(packageJsonPath)) {
     const packageScripts = new Set(Object.keys(JSON.parse(readFileSync(packageJsonPath, 'utf8')).scripts ?? {}));
@@ -232,9 +246,7 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
       }
     }
   }
-  const expectedFailureFiles = filesBelow(path.join(root, 'tests')).filter((file) =>
-    /\.test\.[cm]?[jt]sx?$/.test(file)
-  );
+  const expectedFailureFiles = testFiles.filter((file) => /\.test\.[cm]?[jt]sx?$/.test(file));
   for (const file of expectedFailureFiles) {
     const text = readFileSync(file, 'utf8');
     for (const match of text.matchAll(/\b(?:it|test)\.failing\b/g)) {
@@ -259,7 +271,6 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
     }
   }
 
-  const sourceFiles = filesBelow(path.join(root, 'src')).filter((file) => /\.[cm]?[jt]sx?$/.test(file));
   const stableDocs = stableMarkdownFiles.map((file) => path.join(root, file)).filter(existsSync);
   for (const file of [...sourceFiles, ...stableDocs]) {
     const text = readFileSync(file, 'utf8');

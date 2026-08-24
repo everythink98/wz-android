@@ -66,16 +66,11 @@
 ```powershell
 npm install
 npm run verify
-npm test
-npm run typecheck
 npm run android
-npm run release:android
 ```
 
 `npm run android` 需要 Expo development build，不能用 Expo Go 验证。需要 Android Studio 提供 Android SDK / 模拟器，或准备一台已开启 USB 调试的 Android 手机。
 
 开发前先在 [产品地图](docs/product-map.md) 中选择受影响的能力 ID，并沿用户入口、代码 seam、自动测试和模拟器路径展开回归；已经逃逸过的问题及精确 oracle 见 [回归语料库](docs/regression-corpus.md)，代码 ownership 与质量门禁见 [代码与项目结构规范](docs/code-standards.md)，实现与数据边界见 [架构说明](docs/architecture.md)，具体验收规则见 [测试标准](docs/testing-standard.md)。
 
-`npm run release:android` 会先读取本机 `.env.release.local`，生成并校验正式签名的 `app-arm64-v8a-release.apk`，再把同一份 x86_64 Release 代码生成开发签名的 `app-x86_64-smoke-dev.apk`，只在 `WZ_ANDROID_SMOKE_DEVICE` 指定的登录态模拟器上覆盖安装。覆盖安装后的第一次启动会从启动前 marker 起检查包级日志，但只形成 `APK_SANITY`；`tests/device/` 的只读 Replay 另行形成 `DEVICE_REPLAY_PASS`，两者都不等于全部功能通过。正式发布必须配置四个 `WZ_ANDROID_KEY*` 签名变量，以及 `WZ_ANDROID_SMOKE_DEVICE`、`WZ_ANDROID_SMOKE_ABI=x86_64`；正式 APK 禁止 debug 签名，Smoke APK 不得上传。还需要本机已有 `agent-device >= 0.19.0`。不要提交 keystore、`.env.release.local` 或明文密码。旧 debug 签名包用户切换到正式签名版本时，需要先备份数据再重装。
-
-当前本机正式签名配置放在 `.env.release.local`，keystore 放在用户目录的 `.wz-android/` 下。发布前务必备份这两个文件；丢失 keystore 或密码后，同包名新版无法继续覆盖升级旧版。
+构建、签名、覆盖安装、Smoke、Replay 和发布命令统一见 [维护手册](docs/operator-runbook.md)。不要提交 keystore、`.env.release.local` 或明文凭据。

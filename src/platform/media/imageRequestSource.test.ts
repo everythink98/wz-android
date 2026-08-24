@@ -111,7 +111,7 @@ describe('image request source', () => {
     ).toBeUndefined();
   });
 
-  it('[REG-TOPIC-078] follows the original document referrer contract for all five topic sources', () => {
+  it('[REG-TOPIC-078] follows the original document referrer contract for all four topic sources', () => {
     const yaohuoHeaders = imageRequestHeadersForUrl(
       'https://cdn.waimaimingtang.com/file/images/bwc/20260809205204-e60bd8a4a2.jpg',
       {

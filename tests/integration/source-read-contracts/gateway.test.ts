@@ -13,7 +13,6 @@ import {
 import { getLinuxDoCurrentUserProfile } from '@/sources/linuxdo/account';
 import { createNodeSeekWebViewFallbackFetcher } from '@/sources/nodeseek/browserFallback';
 import { getNodeSeekCurrentUserProfile, getNodeSeekReplies } from '@/sources/nodeseek/reader';
-import { setRequestTimeoutsActive } from '@/platform/network/request';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   beginDiagnosticTrace,
@@ -596,64 +595,6 @@ describe('Android local sources', () => {
       const webViewCalls = webViewFetcher.mock.calls as unknown as [string, RequestInit?][];
       expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743012-1');
     } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    }
-  });
-
-  it('REG-TOPIC-021 keeps a completed NodeSeek direct response alive across a short background pause', async () => {
-    vi.useFakeTimers();
-    const directHtml = `
-      <a class="post-title" href="/post-743022-1">NodeSeek background detail</a>
-      <div class="content-item">
-        <article class="post-content"><p>后台正文</p></article>
-      </div>
-    `;
-    let resolveChallengeBody: ((value: string) => void) | undefined;
-    const response = html(directHtml);
-    vi.spyOn(response, 'clone').mockReturnValue({
-      text: () =>
-        new Promise<string>((resolve) => {
-          resolveChallengeBody = resolve;
-        })
-    } as Response);
-    const normalFetcher = vi.fn(async () => response);
-    const webViewFetcher = vi.fn(async () => html('<html>offline fallback must not run</html>'));
-    const fetcher = createNodeSeekWebViewFallbackFetcher({ defaultFetcher: normalFetcher, webViewFetcher });
-
-    try {
-      const topicPromise = getTopic({
-        source: 'nodeseek',
-        id: '743022',
-        fetcher,
-        timeoutMs: 30_000
-      });
-      let outcome: { topic?: Awaited<typeof topicPromise>; error?: unknown } | undefined;
-      void topicPromise.then(
-        (topic) => {
-          outcome = { topic };
-        },
-        (error) => {
-          outcome = { error };
-        }
-      );
-      await vi.advanceTimersByTimeAsync(0);
-      expect(resolveChallengeBody).toBeTypeOf('function');
-
-      setRequestTimeoutsActive(false);
-      await vi.advanceTimersByTimeAsync(35_000);
-      expect(outcome).toBeUndefined();
-
-      setRequestTimeoutsActive(true);
-      resolveChallengeBody?.(directHtml);
-      const topic = await topicPromise;
-
-      expect(topic.title).toBe('NodeSeek background detail');
-      expect(webViewFetcher).not.toHaveBeenCalled();
-    } finally {
-      setRequestTimeoutsActive(true);
-      resolveChallengeBody?.(directHtml);
-      await vi.advanceTimersByTimeAsync(0);
       vi.clearAllTimers();
       vi.useRealTimers();
     }

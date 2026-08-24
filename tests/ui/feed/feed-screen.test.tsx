@@ -944,7 +944,7 @@ describe('Feed loading', () => {
     expect(view.getByText('当前筛选没有匹配主题')).toBeTruthy();
   });
 
-  it('[REG-FEED-003] keeps reading, category and per-site sort filters on their supported surfaces', async () => {
+  it('keeps reading, category and per-site sort filters on their supported surfaces', async () => {
     const view = await render(<FeedFilterHarness />);
 
     await fireEvent.press(view.getByText('未读'));

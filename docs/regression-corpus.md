@@ -1762,21 +1762,6 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 让相邻页 `onError` 直接调用兼容恢复时，编号测试会在切页前观察到 fetch/renderer；禁用当前页恢复时，切页后的成功断言失败。 |
 | 明确不覆盖范围 | 不预抓取图库外图片，不恢复原图缩略图栏，不为普通非 SVG 错误隐藏空态，也不执行保存。 |
 
-## `REG-TOPIC-021` NodeSeek 短后台恢复被超时抢先判失败
-
-| 字段 | 内容 |
-| --- | --- |
-| 能力 ID | `TOPIC-01` |
-| 用户症状 | NodeSeek 详情请求发出后立即按 Home，App 进程仍存活且网络已在恢复瞬间返回 200，回到 App 却先显示“请求超时”，只能手动重试。 |
-| 触发条件 | 请求进入 Android 短后台后 JavaScript timer 暂停；恢复前台时，已经超过墙钟时限的外层 timeout 与原请求完成回调一起恢复执行，timeout 先结算。 |
-| 根因 seam | `src/platform/network/request.ts` 的共享请求 timeout 预算、`src/app/useAppRuntime.tsx` 的 `AppState` 生命周期桥接，以及 `src/sources/nodeseek/browserFallback.ts` 的 NodeSeek direct timeout。 |
-| 必须保持的行为 | App 处于 `background` 或 `inactive` 时不消耗请求 timeout 预算；回到 `active` 后原请求继续使用剩余预算并可正常结算，不自动重复发起同一详情；真正卡住的请求仍在累计完剩余前台预算后超时。 |
-| 精确失败 oracle | `tests/integration/source-read-contracts/` 的 `REG-TOPIC-021` 固定 direct Response 已返回但 challenge body 尚未读取完成，模拟 35 秒后台后要求请求仍未失败，恢复时由原 direct 请求成功返回且不调用 WebView fallback。 |
-| 最低可靠自动测试层 | `UNIT_PASS`；Android `AppState` 与真实 transport 时序仍需 `LIVE_PASS`。 |
-| Replay 或真实验收路径 | NodeSeek 首页点入一个仍在请求的主题后立即按 Home，保持同一 PID 15 秒；开启飞行模式作为离线屏障后恢复 App，详情应无需重试完整显示，且恢复前台后不重新发起同一详情。 |
-| 负向验证方式 | 将共享 timeout 恢复为连续墙钟 `setTimeout`，编号测试在 35 秒后台阶段先收到“请求超时”。 |
-| 明确不覆盖范围 | 不保证进程被系统回收、锁屏、Doze 或持久后台任务；不新增 Service、WorkManager 或后台执行权限。 |
-
 ## `REG-TOPIC-022` 凭据观察事件取消正在执行的同站 Query
 
 | 字段 | 内容 |
@@ -3107,7 +3092,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 最低可靠自动测试层 | `UI_PASS + STATIC_PASS`：RNTL fake timer 固定 route 级调度/终态，生成 Kotlin JUnit 与 fresh prebuild compile 固定真实 OkHttp client 配置；任一层不能替代另一层。 |
 | Replay 或真实验收路径 | 可控 stalled 正文图在获 permit 后首个 30 秒无进展应只启动一次受门禁约束的自动重试；第二个 attempt 再连续 30 秒无进展才进入用户可见失败并让下一项获得许可。持续报告 progress 的大图不得因墙钟总时长被终止。没有安全可控端点时设备项标 `NOT_VERIFIED`，不能用断网、清数据或修改 IPv6 代替。 |
 | 负向验证方式 | 恢复 image clone 的 30 秒 `callTimeout`、为每个 renderer 创建 Timer、让任意 progress 延长所有请求、取消首次自动重试或允许第二次失败后因滚动/rotation 再发、重建健康 duplicate、允许第二次显式重试，或把正文 timeout 接入 read-runtime rotation，对应 Kotlin/RNTL oracle 必须失败。 |
-| 明确不覆盖范围 | 不改变 `REG-TOPIC-021` 的普通请求后台预算或 `REG-TOPIC-052` 的全屏预览状态机，不给长视频设置 30 秒总时限，也不以 coordinator 掩盖 HTTP、解码或 challenge 的真实错误。 |
+| 明确不覆盖范围 | 不改变 `REG-PROXY-013` 的普通请求连续墙钟 deadline 或 `REG-TOPIC-052` 的全屏预览状态机，不给长视频设置 30 秒总时限，也不以 coordinator 掩盖 HTTP、解码或 challenge 的真实错误。 |
 
 ## `REG-TOPIC-033` HTML 图片属性被重复解码
 
@@ -4751,10 +4736,10 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `FEED-01/02/04`、`SEARCH-01/02/04`、`TOPIC-01/03`、`USER-01`、`ACCOUNT-01/02`、`MORE-02`；linux.do 幂等读取 |
 | 用户症状 | linux.do 列表突然无法加载，账号状态检查也长时间超时；关闭重开 App 后恢复。 |
-| 触发条件 | `linux.do` 或受控子域的 `GET/HEAD` 直连在 active time 8 秒内不结算；父级仍未取消。 |
+| 触发条件 | `linux.do` 或受控子域的 `GET/HEAD` 直连在连续墙钟 8 秒内不结算；父级仍未取消。 |
 | 根因 seam | `src/sources/linuxdo/browserFallback.ts` 的直连 watchdog、WebView evidence gate 与 App 级读取 runtime 轮换；Cloudflare challenge 仍是独立且不触发轮换的 fallback 原因。 |
 | 必须保持的行为 | 8 秒到期只取消本次直连并把同一幂等读取移交 WebView；只有 WebView 返回成功响应后，才以 `linuxdo` 为 trigger 轮换 App 当前读取 runtime，并直接返回这份内容。轮换失败也不得丢弃已成功内容。父级取消、写请求、HTTP 403/429/登录失效、Cloudflare、其他 network/解析错误或失败 WebView 不恢复，普通慢请求不伪装成 challenge。 |
-| 精确失败 oracle | `tests/integration/source-read-contracts/` 的 `REG-LINUXDO-008` 以 fake active-time 固定 8 秒后 native transport 仍只有一次、WebView success 前零轮换、success 后一次轮换并返回同一 Response；另固定轮换失败仍返回成功内容，以及取消、写入、HTTP、Cloudflare 和失败 WebView 零恢复。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts/` 的 `REG-LINUXDO-008` 以 fake timer 固定连续墙钟 8 秒后 native transport 仍只有一次、WebView success 前零轮换、success 后一次轮换并返回同一 Response；另固定轮换失败仍返回成功内容，以及取消、写入、HTTP、Cloudflare 和失败 WebView 零恢复。 |
 | 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：adapter 行为测试固定 evidence gate 与 transport 次数，匹配 APK 才能证明 RN/OkHttp 实际接线。 |
 | Replay 或真实验收路径 | 匹配 revision/APK 运行 `four-source-feed.ad`、`account-readonly.ad` 及相关详情/搜索只读路径；自然超时时核对 generation 增加后的紧随直连，不主动破坏网络或登录态。 |
 | 负向验证方式 | 在 WebView 成功前轮换、再发一次 native transport、丢弃轮换失败前已成功的内容、让写请求恢复或把普通 HTTP/Cloudflare 归类为通道超时，编号测试必须失败。 |
@@ -4811,14 +4796,29 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `FEED-01/02/04`、`SEARCH-01/02/04`、`TOPIC-01/02/03`、`USER-01`；共享 `MORE-01/02`、`ACCOUNT-01/02` 与 `REG-PROXY-009/010` 的 App 级读取 runtime seam |
 | 用户症状 | V2EX 或妖火的当前列表、搜索、帖子、回复或用户读取偶发一直转圈或报请求失败；完全退出 App 后重新进入却立即成功，说明故障可能留在进程内的 Native 读取 runtime，而不是该页面数据永久不可用。 |
-| 触发条件 | 用户当前仍停留在该页面，属于该页面的显式 foreground `content GET/HEAD` 自身等待满生产默认 15 秒并抛出可判型 `RequestTimeoutError`；请求 signal、来源开关、ReadPlan、账号 generation 均未失效。这里“当前页面”是仍持有该 Query 的 route，不是泛指 App 曾经在前台。页面切换或 App 进后台会取消该 Query，因此不得触发恢复。 |
+| 触发条件 | 用户当前仍停留在该页面，属于该页面的显式 foreground `content GET/HEAD` 自身等待满生产默认 15 秒并抛出可判型 `RequestTimeoutError`；请求 signal、来源开关、ReadPlan、账号 generation 均未失效。这里“当前页面”是仍持有该 Query 的 route，不是泛指 App 当前可见；App 进后台不改变 request owner，只有 route/Query 真实失效或 caller abort 才取消。 |
 | 根因 seam | `fetchWithTimeout` 过去只抛同文案的普通 `Error`，`ReadGateway` 无法把“请求自身达到 deadline”与 HTTP、解析、登录、调用方取消区分；NodeSeek/linux.do 只有 parser-proof fallback 路径会调用 `recoverReadNetworkRuntime`，另外两站即使命中同一进程级故障也只把错误交回页面，App 重启才间接换掉 runtime。 |
-| 必须保持的行为 | `fetchWithTimeout` 保留既有中文文案，但分别抛 `RequestTimeoutError` 和 `RequestCanceledError`。每次逻辑读取在 transport 前捕获 `expectedGeneration`；V2EX/妖火第一次合格超时调用既有 `recoverReadNetworkRuntime(source, expectedGeneration, { trace })`，复用全局 CAS/single-flight，成功后把整个 Feed/Search/Topic/Replies/User 读取从头重放一次。旧代被同来源轮换取消的其他当前页面读取，仅在 snapshot 的 generation 已前进、`triggerSource` 相同且自身仍有效时重放一次，不再发起恢复。第二次失败直接结算错误，Loading 必须结束。NodeSeek/linux.do 仍只在 Direct 失败、WebView fallback 成功且 parser 接受内容时恢复，并直接使用 fallback 结果。`all` 的单来源 5 秒聚合预算、普通网络/HTTP/解析/登录错误、页面或后台取消、后台任务、health、retained、写 intent、上传、收藏、投票、通知和视频均不触发或自动重放。 |
-| 精确失败 oracle | `src/platform/network/request.test.ts` 固定 timeout/cancel 类型与中文文案；`src/sources/readGatewayContract.test.ts` 固定两站第一次内容超时均调用同一恢复函数、一次恢复后最多两次逻辑读取、多 HTTP Topic 从第一步整体重放、同来源旧代取消只重放一次、其他来源轮换不误重放，并固定 HTTP/解析/登录、caller abort、background/write intent、无 owned request、NodeSeek/linux.do 与 `all` 零 timeout recovery。诊断必须同时出现旧 generation 的 `reason=timeout` trigger 和新 generation 的 `state=retry/retryCount=1`。`src/platform/network/networkProxy.test.ts` 继续固定同 generation 只发布一次；fresh prebuild Kotlin JUnit 固定 `REG-PROXY-009` 的显式 ownership 与取消边界。`tests/ui/feed/feed-controller-session.test.tsx` 固定内部恢复期间仍为 Loading，成功后显示列表；重放失败后退出 Loading 并显示错误。 |
+| 必须保持的行为 | `fetchWithTimeout` 保留既有中文文案，但分别抛 `RequestTimeoutError` 和 `RequestCanceledError`。每次逻辑读取在 transport 前捕获 `expectedGeneration`；V2EX/妖火第一次合格超时调用既有 `recoverReadNetworkRuntime(source, expectedGeneration, { trace })`，复用全局 CAS/single-flight，成功后把整个 Feed/Search/Topic/Replies/User 读取从头重放一次。旧代被同来源轮换取消的其他当前页面读取，仅在 snapshot 的 generation 已前进、`triggerSource` 相同且自身仍有效时重放一次，不再发起恢复。第二次失败直接结算错误，Loading 必须结束。NodeSeek/linux.do 仍只在 Direct 失败、WebView fallback 成功且 parser 接受内容时恢复，并直接使用 fallback 结果。App 进入后台本身不改变显式 foreground content request 的 owner；若其连续墙钟 deadline 到期，恢复前台时仍按普通 timeout 结算。`all` 的单来源 5 秒聚合预算、普通网络/HTTP/解析/登录错误、caller abort、route/Query 失效、background-owned task、health、retained、写 intent、上传、收藏、投票、通知和视频均不触发或自动重放。 |
+| 精确失败 oracle | `src/platform/network/request.test.ts` 固定 timeout/cancel 类型与中文文案；`src/sources/readGatewayContract.test.ts` 固定两站第一次内容超时均调用同一恢复函数、一次恢复后最多两次逻辑读取、多 HTTP Topic 从第一步整体重放、同来源旧代取消只重放一次、其他来源轮换不误重放，并固定 HTTP/解析/登录、caller abort、account/background-owned 与 write intent、无 owned request、NodeSeek/linux.do 与 `all` 零 timeout recovery。诊断必须同时出现旧 generation 的 `reason=timeout` trigger 和新 generation 的 `state=retry/retryCount=1`。`src/platform/network/networkProxy.test.ts` 继续固定同 generation 只发布一次；fresh prebuild Kotlin JUnit 固定 `REG-PROXY-009` 的显式 ownership 与取消边界。`tests/ui/feed/feed-controller-session.test.tsx` 固定内部恢复期间仍为 Loading，成功后显示列表；重放失败后退出 Loading 并显示错误。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + STATIC_PASS + APK_SANITY`：Vitest 固定错误类型、逻辑重放、generation 与负例，RNTL 固定可见 Loading/数据/错误结算，fresh prebuild、Kotlin JUnit 与 Release Kotlin 编译固定 Native ownership。 |
-| Replay 或真实验收路径 | 匹配 revision/APK 在主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；仅在 V2EX 或妖火自然出现 15 秒内容超时时核对诊断链 `timeout → rotate-read-runtime → retryCount=1 → data/error`，并确认切页与前后台切换不会启动新恢复。不得断网、清数据、删 Cookie、重置模拟器或破坏代理来制造故障；未自然命中则真实恢复记 `NOT_VERIFIED`。 |
-| 负向验证方式 | 删除 typed error、移除 Gateway recovery、只重放失败的单个 HTTP call、允许第二轮再恢复、取消同来源 `triggerSource` 校验、把聚合 5 秒/普通错误/后台或写请求纳入触发，或恢复 Native 未标记同域 GET/HEAD fallback；对应编号测试必须失败。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 在主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；仅在 V2EX 或妖火自然出现 15 秒内容超时时核对诊断链 `timeout → rotate-read-runtime → retryCount=1 → data/error`。单纯前后台切换不得启动恢复；若现有请求跨过 deadline，恢复前台后允许它按 timeout 触发一次既有恢复。不得断网、清数据、删 Cookie、重置模拟器或破坏代理来制造故障；未自然命中则真实恢复记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 删除 typed error、移除 Gateway recovery、只重放失败的单个 HTTP call、允许第二轮再恢复、取消同来源 `triggerSource` 校验、把聚合 5 秒/普通错误/account background-owned 或写请求纳入触发，或恢复 Native 未标记同域 GET/HEAD fallback；对应编号测试必须失败。 |
 | 明确不覆盖范围 | 不新增 recovery manager、Native bridge、每站恢复实现、第三方重试库、配置或存储；不把普通第三方服务失败解释成 runtime 损坏，不自动重放任何 mutation，也不人为制造线上网络故障做验收。 |
+
+## `REG-PROXY-013` App 后台不暂停共享请求 deadline
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `MORE-01`；共享 `FEED-01/02/04`、`SEARCH-01/02/04`、`TOPIC-01/03`、`USER-01` 与所有复用 `fetchWithTimeout` / `withAbortableTimeout` 的显式 deadline |
+| 用户症状 | 页面请求进入后台一段时间后，回到 App 仍继续 Loading；它要再等待一轮剩余的 8/15 秒预算，之后既有 fallback 或读取 runtime 恢复才会生效。 |
+| 触发条件 | 普通页面请求仍由原 route/Query 持有，App 从 `active` 进入 `background` 或 `inactive`，后台墙钟已经跨过该请求原有 deadline，进程仍存活。 |
+| 根因 seam | `src/platform/network/request.ts` 用全局 active flag、listener 和剩余预算重算暂停 timeout；`src/app/useAppLifecycleRuntime.ts` 又把 AppState 接入该状态，使 React Native Android 已保留的绝对 Timer deadline 被应用层改写。 |
+| 必须保持的行为 | App 进入后台不取消普通页面请求，也不暂停、重置或延长其 timeout；后台时间计入原有连续墙钟 deadline。请求在 deadline 前先结算时复用原结果且不重复发起；Timer 在后台逾期时由 Android 在恢复前台后的首个可运行时机结算 typed timeout，并进入各来源既有 fallback/recovery，不能再等待一轮完整预算。caller abort、route/Query 失效、`timeoutMs=0`、mutation 不自动重放、后台任务 owner 及进程被系统回收继续保持各自既有语义。 |
+| 精确失败 oracle | `tests/ui/app/app-lifecycle-request-timeout.test.tsx` 通过公开 App lifecycle hook 启动 1 秒 stalled request，切到 background 并推进 1 秒后恢复 active，不再推进时钟就必须得到 `RequestTimeoutError`；500ms 内完成的原请求必须成功、Signal 不被后台切换 abort 且 fetcher 只调用一次。`src/platform/network/request.test.ts` 与 `src/sources/readGatewayContract.test.ts` 继续固定 timeout/cancel 类型及一次受限恢复边界。 |
+| 最低可靠自动测试层 | `UI_PASS + UNIT_PASS`：Jest 固定 AppState 与 request 的组合时序，Vitest 固定共享 timeout 和 ReadGateway 恢复；Android Timer 的真实暂停/恢复时序仍需 `LIVE_PASS`。 |
+| Replay 或真实验收路径 | 匹配 revision/APK 在主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；详情仍在加载时按 Home，分别在 deadline 内与超过 deadline 后返回。前者只允许原请求成功，后者只允许已有结果或立即进入现有恢复/失败，不得再等待完整 8/15 秒。不得断网、清数据、删 Cookie、重置模拟器或破坏代理制造 stall；无法自然保持请求在途时记 `NOT_VERIFIED`。 |
+| 负向验证方式 | 恢复全局 active flag、AppState timeout 桥接或剩余预算重算后，编号测试在 active 恢复时仍为 pending；增加 resume 扫描、长后台阈值、全局 Query cancel/refetch 或自动重放 mutation 也视为失败。 |
+| 明确不覆盖范围 | 不保证进程被 Android 回收后继续加载，不新增 Service、WorkManager、后台执行权限或持久任务；不改变媒体专用 progress deadline、WebView 生命周期、各来源既有恢复资格和 timeout 时长。 |
 
 ## `REG-FEED-014` 一个慢来源拖住聚合首页与分类
 
@@ -4826,9 +4826,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `FEED-01/02/04` |
 | 用户症状 | 首页“全部”或分类一直 Loading，实际只有一个站不结算，其他站已可用。 |
-| 触发条件 | Feed/Categories 的一个 child 在 active time 5 秒内不结算。 |
+| 触发条件 | Feed/Categories 的一个 child 在连续墙钟 5 秒内不结算。 |
 | 根因 seam | `src/sources/readAggregation.ts` 复用 `withAbortableTimeout` 的 `AGGREGATE_SOURCE_BUDGET_MS`，并拥有 Feed child 的 typed timeout/cancel 与 cursor 结算。 |
-| 必须保持的行为 | Feed/Categories 每来源独立计时并发，严格等待所有 child 成功、失败、超时或取消后才一次发布；active-time 5 秒超时以 typed `aggregate_timeout` partial 结算并保留 page/opaque cursor，父取消整体使用统一取消文案，父 signal 预先取消时不得调用 child。聚合读取复用调用方现有 diagnostic trace，为每个 child 恰记录一次 `source + state + latencyMs + sanitized reason`，不得记录 URL、Cookie 或用户数据。 |
+| 必须保持的行为 | Feed/Categories 每来源独立计时并发，严格等待所有 child 成功、失败、超时或取消后才一次发布；连续墙钟 5 秒超时以 typed `aggregate_timeout` partial 结算并保留 page/opaque cursor，父取消整体使用统一取消文案，父 signal 预先取消时不得调用 child。聚合读取复用调用方现有 diagnostic trace，为每个 child 恰记录一次 `source + state + latencyMs + sanitized reason`，不得记录 URL、Cookie 或用户数据。 |
 | 精确失败 oracle | `src/sources/feedRead.test.ts` 用 deferred Promise 固定最后一个 child 终态前聚合结果绝不发布，并固定五个 child 的 success/failure/timeout/canceled 终态各恰记录一次、latency 有界、reason 脱敏，同时覆盖 child abort、cursor 保留与父取消。`src/sources/readAggregation.test.ts` 固定 pre-aborted parent 的 child 调用数为 0。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：adapter 主动时钟、诊断与 cursor 必须覆盖。 |
 | Replay 或真实验收路径 | 匹配 APK 运行 `four-source-feed.ad` 和 `logged-out-readonly.ad`，确认单站动态失败时其他来源可见。 |
@@ -5507,9 +5507,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `ACCOUNT-01/02`；共享 `MORE-02`、`SEARCH-04`、`ACCOUNT-04`、`WRITE-01/03` |
 | 用户症状 | 已登录妖火且代理正常时，“检测登录”仍会在约 5 秒提示超时；偶尔成功时延迟和请求数也明显波动。更多页三站刷新、登录页关闭核对、Search 重试、写前核对和 NodeImage 核对共享同一风险。 |
-| 触发条件 | 账号核对经代理超过 Feed 的 active time 5 秒预算；妖火已经从 `wapindex` 证明身份后，又复用完整 User reader 读取资料、回复和最多 10 页主题。 |
+| 触发条件 | 账号核对经代理超过 Feed 的连续墙钟 5 秒预算；妖火已经从 `wapindex` 证明身份后，又复用完整 User reader 读取资料、回复和最多 10 页主题。 |
 | 根因 seam | `src/features/account/useAccountStatusController.ts` 把正常 `reconcileAccountStatus` 包进 `readWithinAggregateSourceBudget`；`src/sources/yaohuo/accountStatus.ts` 又把“证明当前身份”和“读取完整用户活动”合成一次操作。Feed 公平预算、账号协议终态和 User 页面数据具有不同所有权。 |
-| 必须保持的行为 | 正常账号核对直接等待各站协议终态，不设账号总预算；每个 HTTP 请求继续使用 active time 15 秒 watchdog。三站并发且各自终态立即提交，公共通知等待全部站点结算；同站 single-flight、generation、唯一 canonical snapshot 与 `isVerifying` 保持。只有首次历史迁移使用一个 active time 5 秒 deadline 约束全部候选 probe，超时后取消并等待 probe 清理，再写 migration marker 和开放 session route；后续手动检测必须创建新 probe。妖火身份证明最多读取 `wapindex` 和必要的精确登录页；已有非数字昵称立即结束。数字 ID 只补读一次资料，仍无昵称时至多读取资料给出的主题第一页；禁止回复和主题分页。补全失败保留已证明身份并标记 partial，身份内容只在协议终态提交一次。Feed/Categories 的每来源 5 秒预算不变。 |
+| 必须保持的行为 | 正常账号核对直接等待各站协议终态，不设账号总预算；每个 HTTP 请求继续使用连续墙钟 15 秒 watchdog。三站并发且各自终态立即提交，公共通知等待全部站点结算；同站 single-flight、generation、唯一 canonical snapshot 与 `isVerifying` 保持。只有首次历史迁移使用一个连续墙钟 5 秒 deadline 约束全部候选 probe，超时后取消并等待 probe 清理，再写 migration marker 和开放 session route；后续手动检测必须创建新 probe。妖火身份证明最多读取 `wapindex` 和必要的精确登录页；已有非数字昵称立即结束。数字 ID 只补读一次资料，仍无昵称时至多读取资料给出的主题第一页；禁止回复和主题分页。补全失败保留已证明身份并标记 partial，身份内容只在协议终态提交一次。Feed/Categories 的每来源 5 秒预算不变。 |
 | 精确失败 oracle | `tests/ui/account/account-status-controller.test.tsx` 固定单站和三站刷新超过 5 秒仍 verifying、快站独立提交、最终通知等待全部终态，以及首次迁移 5 秒取消、`statusBusy=false`、marker 后新 probe 不复用 stale Promise。`src/sources/yaohuo/accountStatus.test.ts` 固定：首页昵称 1 请求；数字占位加资料 2 请求；仍为 ID 时只加主题第一页；全路径零回复、零第二页；503/timeout 保留身份并 partial；明确登录 form、未知/验证文档、取消和单请求 15 秒 timeout 分别按协议投影。旧实现分别在 5 秒提前结算，或发出回复/第二页请求。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Vitest 固定 adapter 请求序列与协议结果，RNTL 固定 controller deadline/并发/唯一提交；匹配 APK 的主登录态 AVD 才能证明现有代理与真实妖火会话。 |
 | Replay 或真实验收路径 | 主登录态 AVD 只做保留数据覆盖安装并核对 `firstInstallTime` 不变。开启既有代理，在已登录妖火页面连续执行 5 次“检测登录”，不得在 5 秒边界出现账号 aggregate timeout；诊断确认请求仍经代理且没有回复或主题分页。只读回归更多页账号刷新与“全部”首页，确认 Account 等协议终态而 Feed 仍保持每来源 5 秒预算。 |

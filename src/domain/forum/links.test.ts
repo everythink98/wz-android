@@ -18,7 +18,7 @@ describe('forum links', () => {
     expect(parseForumTopicDestination('https://evil.example/bbs/book_re.aspx?id=1&tofloor=90')).toBeNull();
   });
 
-  it('[REG-TOPIC-062] preserves native topic anchors for all five sources', () => {
+  it('[REG-TOPIC-062] preserves native topic anchors for all four sources', () => {
     expect(parseForumTopicDestination('https://www.nodeseek.com/post-123-16#155')).toMatchObject({
       topic: { source: 'nodeseek', id: '123' },
       targetReply: { floor: 155, pageHint: 16 }

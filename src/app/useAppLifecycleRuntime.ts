@@ -7,7 +7,6 @@ import { normalizeUserReference } from '@/domain/forum/userNavigation';
 import { errorMessage } from '@/platform/network/errors';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { LOGIN_WEBVIEW_ALLOWED_HOSTS, shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
-import { setRequestTimeoutsActive } from '@/platform/network/request';
 import type { Screen } from '@/ui/navigation/types';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useAppDeepLinkNavigation } from './useAppDeepLinkNavigation';
@@ -81,17 +80,14 @@ export function useAppLifecycleRuntime() {
 
   useEffect(() => {
     const initialActive = AppState.currentState !== 'background' && AppState.currentState !== 'inactive';
-    setRequestTimeoutsActive(initialActive);
     focusManager.setFocused(initialActive);
     const subscription = AppState.addEventListener('change', (next) => {
       const active = next === 'active';
       setAppActive(active);
-      setRequestTimeoutsActive(active);
       focusManager.setFocused(active);
     });
     return () => {
       subscription.remove();
-      setRequestTimeoutsActive(true);
       focusManager.setFocused(undefined);
     };
   }, []);

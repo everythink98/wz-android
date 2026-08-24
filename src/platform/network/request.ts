@@ -48,60 +48,9 @@ export interface FetchWithTimeoutOptions {
   timeoutMs?: number;
 }
 
-let requestTimeoutsActive = true;
-const requestTimeoutStateListeners = new Set<(active: boolean) => void>();
-
-export function setRequestTimeoutsActive(active: boolean) {
-  if (requestTimeoutsActive === active) {
-    return;
-  }
-  requestTimeoutsActive = active;
-  [...requestTimeoutStateListeners].forEach((listener) => listener(active));
-}
-
-export function scheduleRequestTimeout(callback: () => void, timeoutMs: number) {
-  let remainingMs = timeoutMs;
-  let startedAt = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let canceled = false;
-
-  const stopTimer = (subtractElapsed: boolean) => {
-    if (timer === undefined) {
-      return;
-    }
-    clearTimeout(timer);
-    timer = undefined;
-    if (subtractElapsed) {
-      remainingMs = Math.max(0, remainingMs - (Date.now() - startedAt));
-    }
-  };
-  const schedule = () => {
-    if (canceled || !requestTimeoutsActive || timer !== undefined) {
-      return;
-    }
-    startedAt = Date.now();
-    timer = setTimeout(() => {
-      timer = undefined;
-      canceled = true;
-      requestTimeoutStateListeners.delete(handleActiveChange);
-      callback();
-    }, remainingMs);
-  };
-  const handleActiveChange = (active: boolean) => {
-    if (active) {
-      schedule();
-    } else {
-      stopTimer(true);
-    }
-  };
-
-  requestTimeoutStateListeners.add(handleActiveChange);
-  schedule();
-  return () => {
-    canceled = true;
-    stopTimer(false);
-    requestTimeoutStateListeners.delete(handleActiveChange);
-  };
+function scheduleRequestTimeout(callback: () => void, timeoutMs: number) {
+  const timer = setTimeout(callback, timeoutMs);
+  return () => clearTimeout(timer);
 }
 
 export function cancelRequestTimeoutForFallback(init: RequestInit | undefined) {

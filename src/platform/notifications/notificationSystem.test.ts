@@ -137,7 +137,7 @@ describe('Android notification system', () => {
     expect(mocks.register).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-NOTIFY-020] does not register when the only intended source is not currently eligible', async () => {
+  it('does not register when the only intended source is not currently eligible', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.linuxdo = {

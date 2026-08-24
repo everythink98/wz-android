@@ -385,7 +385,7 @@ describe('Android reader data helpers', () => {
     );
   });
 
-  it('[REG-USER-002] restores a missing LinuxDo profile url to the LinuxDo user page', () => {
+  it('restores a missing LinuxDo profile url to the LinuxDo user page', () => {
     const partialProfile: UserProfile = {
       source: 'linuxdo',
       id: 'temple-user',

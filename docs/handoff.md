@@ -1,63 +1,55 @@
 # 交接说明
 
-## 先建立共同上下文
+这是一份常青交接入口，不保存版本号、Release hash、dirty 快照或“当前做到哪一步”。实时进度由 Git、版本配置和与当前对象身份匹配的运行证据现场生成。
 
-1. 阅读 `AGENTS.md` 和 `README.md`，确认仓库规则、产品范围与开发入口。
-2. 阅读 `docs/product-charter.md`，确认目标用户、核心旅程、非目标和功能准入标准。
-3. 阅读 `docs/product-map.md`，按稳定能力 ID 了解完整功能、用户入口、代码入口和回归范围。
-4. 阅读 `docs/regression-corpus.md`，确认触及的共享 seam 是否已有逃逸事故和强制 oracle。
-5. 阅读 `docs/code-standards.md`、`docs/architecture.md` 与 `docs/operator-runbook.md`，确认 ownership、module seam、数据边界和操作命令。
-6. 阅读 `docs/testing-standard.md`，按能力 ID 选择验证；需要模拟器时只读取与当前 Git revision、版本和 APK 身份匹配的本机 `docs/emulator-baseline.md`。
-7. 本机存在 `memory/MEMORY.md` 时，按索引读取与任务相关的已确认事实；它只是补充，不能覆盖用户最新要求、当前代码或运行结果。
-8. 运行 `npm install` 和 `npm run verify`；需要真实设备时再按能力 ID 运行 Replay 与 `tests/live/agent-live.md`。
+## 接手顺序
 
-## 事实源边界
+1. 阅读仓库根目录的 `AGENTS.md` 与 `README.md`，确认执行约束、产品范围和最小开发入口。
+2. 用下方命令记录 Git revision、dirty 状态和版本配置；不要先借用历史交接结论。
+3. 阅读 `docs/product-charter.md` 与 `docs/product-map.md`，选择本次直接影响的能力 ID，并展开共享 seam。
+4. 按能力 ID 检索 `docs/regression-corpus.md`，确认历史逃逸问题、精确 oracle 和最低可靠证据层。
+5. 按任务读取 `docs/code-standards.md`、`docs/architecture.md`、`docs/testing-standard.md` 与 `docs/operator-runbook.md`；不要把它们全部复制进任务说明。
+6. 本机存在 `memory/MEMORY.md` 时，只按索引读取相关补充事实；需要模拟器证据时，只采用与当前 revision、App 版本和 APK 身份同时匹配的 `docs/emulator-baseline.md` 记录。
+7. 安装依赖并运行 `npm run verify`；只有任务确实涉及真实页面或设备行为时，才按测试标准扩大验证。
 
-| 内容 | 事实源 |
+## 事实源地图
+
+| 事实 | 权威位置 |
 | --- | --- |
-| 品牌、视觉和 accessibility 约束 | `PRODUCT.md` |
-| 产品取舍与新功能准入 | `docs/product-charter.md` |
-| 现有功能、用户入口、能力 ID 和共享回归范围 | `docs/product-map.md` |
-| 历史逃逸问题、精确 oracle 和最低可靠测试层 | `docs/regression-corpus.md` |
-| 代码 ownership、import、测试归属和质量门禁 | `docs/code-standards.md` |
-| 当前 module、interface、数据和原生配置边界 | `docs/architecture.md` |
-| 自动测试、模拟器与真实写操作规则 | `docs/testing-standard.md` |
-| 构建、签名、发布与设备 smoke 操作 | `docs/operator-runbook.md` |
-| 待处理技术债务 | `docs/code-cleanup-map.md` |
-| 当前版本与可运行事实 | 代码、配置和实际运行结果 |
-| 本机补充事实、模拟器与原站取证事实 | `memory/` 与 `docs/emulator-baseline.md`，均不进入 Git |
+| 品牌、视觉和 accessibility | 根目录 `PRODUCT.md` |
+| 产品取舍与功能准入 | `docs/product-charter.md` |
+| 现有能力、入口、能力 ID 与共享 seam | `docs/product-map.md` |
+| 历史逃逸问题与精确 oracle | `docs/regression-corpus.md` |
+| ownership、import、测试归属与质量门禁 | `docs/code-standards.md` |
+| module、interface、数据与原生配置边界 | `docs/architecture.md` |
+| 测试方法、证据层与授权边界 | `docs/testing-standard.md` |
+| 构建、覆盖安装、Replay、Smoke 与发布操作 | `docs/operator-runbook.md` |
+| 已确认待处理技术债务 | `docs/code-cleanup-map.md` |
+| 当前实现和可运行行为 | 代码、配置与实际运行结果 |
+| 本机专项取证与设备历史证据 | `memory/` 与 `docs/emulator-baseline.md` |
 
-文档或记忆与用户要求、代码或运行结果冲突时，以对应的最新事实为准，并在交付中指出差异。模拟器记录只有在 Git revision、App 版本和 APK 身份与当前对象匹配时才能作为基线；不要把版本号、Release hash 或登录状态复制到稳定文档中长期维护。
+用户最新明确要求优先于既有文档；实现与文档冲突时，以代码和匹配身份的运行结果为当前事实，并在交付中指出差异。本机记忆只作补充，不能覆盖 tracked 文档。
 
-## 周期性文档与记忆维护
+## 现场生成当前状态
 
-- 开始时记录 Git revision 与 dirty 状态，用 `git ls-files -- '*.md'` 枚举 tracked Markdown；再从 `memory/MEMORY.md` 索引读取相关本机记忆，并单独检查 ignored 的 `docs/emulator-baseline.md`。不能只审查本轮碰巧打开的文件。
-- 每项事实只在上表指定的唯一事实源写完整版本；README、交接和其他消费者只保留读者需要的摘要与链接。发现重复定义时删除副本，不建立双向同步清单。
-- 逐项用用户最新要求、当前代码、配置和匹配身份的运行结果核对。已失效内容直接删除或替换，不在旧说法后追加“更新说明”留下冲突；证据不足时记录缺口，不把推测升级为事实。
-- `memory/MEMORY.md` 只做索引；`memory/project.md` 只保留跨任务稳定的本机事实与 tracked 文档入口；专项记忆保存不可从仓库直接恢复的取证结论。版本号、timeout、完整能力清单、事故 oracle 和可由代码读出的 schema 不复制进 memory。
-- `docs/emulator-baseline.md` 的历史记录保留；顶部索引只认同时匹配 revision、App 版本和 APK 身份的结果。没有匹配记录就明确写“无当前基线”，不得按日期借用旧结论。
-- 收口时检查事实源及其摘要消费者，删除过时草稿和本轮临时产物，然后运行 `npm run test:docs`、`npm run check:docs` 与 `git diff --check`。只有运行时文件发生变化才扩大到对应代码验证；不为周期维护引入更新时间机器人或新文档 schema。
+```powershell
+git rev-parse HEAD
+git status --short
+git log -1 --oneline
+node -p "require('./package.json').version"
+node -p "require('./app.json').expo.android.versionCode"
+```
 
-## 当前不可破坏边界
+- `git status --short` 非空时，逐文件区分既有 WIP 与本任务改动；不得把 dirty tree 描述成已交付版本。
+- 发布状态以 Git、版本配置、Release 产物和实际发布结果共同判定；交接文档不维护手写进度表。
+- 模拟器记录只有在 revision、App 版本和 APK 身份全部匹配时才是当前证据；没有匹配记录就是未验证。
+- 当前技术债务以 `docs/code-cleanup-map.md` 为准；没有条目不等于可以凭猜测新增或删除能力。
 
-- App 支持 NodeSeek、linux.do、V2EX 和妖火；四站共享阅读主干，互动能力按原站真实支持范围提供。
-- App 的读取 controller 统一经 `src/sources/readGateway.ts` 进入来源层；Topic 写入口先经 `src/features/topic/actions/topicActionDecision.ts` 统一判定，写事务只由 `src/features/topic/actions/useTopicActionsController.ts` 调用各站 action client。
-- App 组合固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`；`useAppRuntime` 只组合深 runtime 并投影 route capability，七个 route entry 自持页面生命周期，账号跨 route 状态与全局登录 host 只归 `src/features/account/useAccountRuntime.ts`。
-- NodeSeek、linux.do、妖火 Cookie 只由网站 WebView 与 Android `CookieManager` 持有；NodeImage API Key、保存的账号密码和服务器代理配置使用 SecureStore。以上敏感材料都不进入备份 JSON，代理启用失败不能静默直连。
-- `App.tsx` 是真实 Expo bootstrap。
-- `android/` 是生成目录；长期原生配置只改 `app.json` 与 `plugins/`。
-- 主登录态 AVD 是日常更新代码和保留登录态验收的目标设备，必须支持反复就地覆盖安装；现有独立未登录 AVD 只服务未登录旅程，不能替代主 AVD 更新。模拟器验收不得卸载 App、清 App 数据、Cookie 或登录态；默认使用仓库 Smoke、`agent-device install` 或带明确 serial 的 `adb install -r` 并比对前后 `firstInstallTime`，禁止 `agent-device reinstall`。发现状态异常立即冻结 AVD，不再启停或操作快照，只读取证并报告。
-- 未经明确授权，不执行真实回复、编辑、删除、上传、点赞、投票或收藏切换。
+## 文档与记忆收口
 
-## 按旅程定位
-
-- 先在 `docs/product-map.md` 选择受影响能力 ID；如果触及共享 seam，按地图展开关联能力，不能只回归最初入口。
-- 启动与组合：`src/app/AppRoot.tsx`、`src/app/AppComposition.tsx`、`src/app/AppRoutes.tsx`、`src/app/AppNavigator.tsx` 和 `src/app/useAppRuntime.tsx`；首页与搜索分别从 `src/features/feed/FeedRoute.tsx`、`src/features/search/SearchRoute.tsx` 进入，搜索筛选生命周期在 `src/features/search/SearchFilterSheet.tsx` 与 `src/features/search/DiscourseFilterPickers.tsx`。
-- 来源读取：`src/sources/readGateway.ts` 及其后的读取实现；账号状态来源分发：`src/sources/accountRead.ts` 与三个 provider `accountStatus` adapter；互动写入：`src/features/topic/actions/topicActionDecision.ts`、`src/features/topic/actions/useTopicActionsController.ts` 及各站 action client。
-- 详情与返回：`src/features/topic/TopicRoute.tsx`、`src/features/topic/useTopicSessionController.ts`、`src/features/topic/useTopicController.ts`、`src/features/topic/useTopicRouteBeforeRemove.ts`、`src/features/topic/TopicScreen.tsx`、`src/features/topic/components/TopicContentList.tsx` 与 `src/features/user/UserRoute.tsx`。
-- 账号与登录恢复：`src/features/account/useAccountRuntime.ts` 是唯一跨 controller owner，`src/features/account/AccountHosts.tsx` 在 feature 内组合全部可见/隐藏 WebView；App 只能消费 host 节点和语义命令。三个账号来源使用 Cookie bridge 与 App 内 WebView，NodeImage 授权沿独立服务入口处理，不属于论坛会话。
-- 更多页：`src/features/more/MoreRoute.tsx` 组合账号、更新、代理、ReaderData 与诊断能力，`src/features/more/components/MoreAccountPanel.tsx`、`src/features/more/components/MoreUpdatePanel.tsx`、`src/features/more/components/MoreUtilityPanels.tsx` 持有局部 panel 生命周期，`src/features/more/MoreScreen.tsx` 只布局。
-- 本机资料与备份：reader data、backup module 与相关 controller。
-- 发布：`scripts/release-android.mjs`、`scripts/check-version.mjs` 和 `scripts/smoke-android.mjs`。
-
-开始清理或重构前，先在 [用户旅程技术债务清单](code-cleanup-map.md) 中确认影响旅程、必须保留的能力、验收和回滚点。
+1. 枚举 tracked Markdown，并按需检查本机 `memory/`、`docs/emulator-baseline.md` 和 workspace residue。
+2. 以用户要求、当前代码、配置及匹配身份的运行结果核对事实；每类事实只在上表的权威位置写完整版本。
+3. 删除过时的现役说法和重复索引；历史事故留在回归语料库，历史设备证据留在模拟器基线，普通演进交给 Git。
+4. `memory/MEMORY.md` 只做索引，`memory/project.md` 只保留本机独有事实和权威文档指针。
+5. 运行 `npm run test:docs`、`npm run check:docs` 与 `git diff --check`；代码或工具发生变化时，再运行相应测试、`npm run typecheck` 和 `npm run verify`。
+6. 交付时现场报告最近完整基线、眼前 dirty WIP、已确认技术债务、未验证范围和清理候选；未经确认不删除录屏、`tmp/`、dogfood 结果或额外 worktree。
