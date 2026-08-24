@@ -33,7 +33,7 @@ import {
 import { INLINE_FORUM_IMAGE_TAG, isInlineForumImage } from '@/domain/forum/forumContentMedia';
 import {
   inlineForumImageAlignmentStyle,
-  inlineForumImageDisplaySize,
+  inlineForumImageAttachmentSize,
   shouldMarkLoadedImageInline
 } from '@/platform/media/inlineMedia';
 import type { ReaderTheme } from '@/ui/theme/tokens';
@@ -101,7 +101,6 @@ type PreviewImageBlockProps = {
 };
 
 function ManagedOriginalImageLayer({
-  attemptIdentity,
   forced,
   onDisplay,
   onRequestError,
@@ -109,7 +108,6 @@ function ManagedOriginalImageLayer({
   requestIdentity,
   source
 }: {
-  attemptIdentity: string;
   forced: boolean;
   onDisplay: () => void;
   onRequestError: () => boolean;
@@ -138,7 +136,7 @@ function ManagedOriginalImageLayer({
       cachePolicy="disk"
       contentFit="contain"
       priority={forced ? 'high' : 'low'}
-      recyclingKey={`${attemptIdentity}:body-original`}
+      recyclingKey={`${compatibleImageRequestIdentity(source)}:body-original`}
       source={attemptedSource}
       style={StyleSheet.absoluteFillObject}
       transition={150}
@@ -473,7 +471,7 @@ function AdmittedPreviewImageBlock({
       }}
     >
       <View testID="topic-image-frame" style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
-        {!loadFailed && !originalDisplayed ? (
+        {!loadFailed ? (
           <ExpoImage
             allowDownscaling
             cachePolicy="disk"
@@ -490,7 +488,6 @@ function AdmittedPreviewImageBlock({
         ) : null}
         {shouldLoadOriginal && progressiveSource ? (
           <ManagedOriginalImageLayer
-            attemptIdentity={originalAttemptIdentity}
             forced={originalForced}
             requestIdentity={originalLeaseIdentity}
             source={progressiveSource}
@@ -698,8 +695,7 @@ export function createPreviewRenderers({
             }) as ImageURISource
           }
           style={[
-            htmlRendererStyles.inlineForumImage,
-            inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth),
+            inlineForumImageAttachmentSize(attributes, settings.fontScale, contentWidth),
             inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)
           ]}
         />
@@ -760,8 +756,7 @@ export function createPreviewRenderers({
             }) as ImageURISource
           }
           style={[
-            htmlRendererStyles.inlineForumImage,
-            inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth),
+            inlineForumImageAttachmentSize(attributes, settings.fontScale, contentWidth),
             inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)
           ]}
         />

@@ -1845,8 +1845,33 @@ describe('topic block image loading', () => {
     expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject(
       dimensionsBeforeUpgrade
     );
-    expect(screen.queryByTestId('expo-image')).toBeNull();
+    expect(screen.getByTestId('expo-image')).toBeTruthy();
     expect(screen.getByTestId('topic-image-original')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-126] keeps the original visual recycling key across preview and display revisions', async () => {
+    const displayUrl = 'https://img.example.com/stable-key-display.png';
+    const originalUrl = 'https://img.example.com/stable-key-original.png';
+    const screen = await render(
+      <TopicImageHarness attributes={{ alt: '稳定原图', 'data-original': originalUrl, src: displayUrl }} />
+    );
+    await loadAndDisplayImage(latestImageProps(displayUrl));
+    const firstOriginal = latestImageProps(originalUrl);
+    const recyclingKey = firstOriginal.recyclingKey;
+
+    await act(() =>
+      markOriginalImageDisplayed(
+        imageSourceFromUrl(originalUrl, {
+          mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:2' }
+        })
+      )
+    );
+    const afterPreview = latestImageProps(originalUrl);
+    expect(afterPreview.recyclingKey).toBe(recyclingKey);
+
+    await act(() => afterPreview.onDisplay?.());
+    expect(latestImageProps(originalUrl).recyclingKey).toBe(recyclingKey);
+    expect(screen.getByTestId('expo-image')).toBeTruthy();
   });
 
   it('[REG-TOPIC-048] does not duplicate a request when display and original URLs match', async () => {
@@ -3352,6 +3377,27 @@ describe('topic block image loading', () => {
     expect(mockExpoImageProps).not.toHaveBeenCalled();
     expect(mockInlineImageGetSize).not.toHaveBeenCalled();
     expect(view.getByTestId('topic-inline-image')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-125] reserves real inline attachment width without moving the emoji baseline', async () => {
+    const view = await render(
+      <TopicImageHarness
+        attributes={{
+          alt: 'emoji',
+          class: 'emoji',
+          height: '20',
+          src: 'https://img.example.com/emoji-spacing.png',
+          width: '20'
+        }}
+      />
+    );
+
+    expect(StyleSheet.flatten(view.getByTestId('topic-inline-image').props.style)).toMatchObject({
+      height: 20,
+      transform: [{ translateY: 2 }],
+      width: 24
+    });
+    expect(StyleSheet.flatten(view.getByTestId('topic-inline-image').props.style).marginHorizontal).toBeUndefined();
   });
 
   it('[REG-TOPIC-117] releases the fifth inline image only after a displayed Fabric attachment settles', async () => {

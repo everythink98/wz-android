@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { inlineForumImageAlignmentStyle, inlineForumImageDisplaySize } from './inlineMedia';
+import {
+  inlineForumImageAlignmentStyle,
+  inlineForumImageAttachmentSize,
+  inlineForumImageDisplaySize
+} from './inlineMedia';
 describe('inline media layout', () => {
   it('uses the source dimensions for small forum emoji display', () => {
     expect(
@@ -43,6 +47,20 @@ describe('inline media layout', () => {
         26
       )
     ).toEqual({});
+  });
+
+  it('[REG-TOPIC-125] gives inline text real horizontal attachment space without changing alignment', () => {
+    const attributes = {
+      alt: ':joy:',
+      class: 'emoji',
+      height: '20',
+      src: 'https://cdn.ldstatic.com/images/emoji/twemoji/joy.png?v=15',
+      title: ':joy:',
+      width: '20'
+    };
+
+    expect(inlineForumImageAttachmentSize(attributes)).toEqual({ height: 20, width: 24 });
+    expect(inlineForumImageAlignmentStyle(attributes, 1, 26)).toEqual({ transform: [{ translateY: 3 }] });
   });
 
   it('[REG-TOPIC-054] leaves breathing room after an inline quote avatar', () => {

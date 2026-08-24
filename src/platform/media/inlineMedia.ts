@@ -16,6 +16,7 @@ const STICKER_ROW_DEFAULT_SIZE = 100;
 const STICKER_ROW_MAX_SIZE = 160;
 const STICKER_ROW_CONTENT_WIDTH_RATIO = 0.55;
 const STICKER_DISPLAY_MAX_SIZE = 100;
+const INLINE_ATTACHMENT_HORIZONTAL_INSET = 2;
 
 export function shouldMarkLoadedImageInline(
   attributes: Record<string, string | undefined>,
@@ -99,6 +100,18 @@ export function inlineForumImageDisplaySize(
     }
   }
   return { width: Math.round(displayWidth), height: Math.round(displayHeight) };
+}
+
+export function inlineForumImageAttachmentSize(
+  attributes: Record<string, string | undefined>,
+  scale = 1,
+  contentWidth = 0
+) {
+  const displaySize = inlineForumImageDisplaySize(attributes, scale, contentWidth);
+  return {
+    height: displaySize.height,
+    width: displaySize.width + INLINE_ATTACHMENT_HORIZONTAL_INSET * 2
+  };
 }
 
 export function inlineForumImageAlignmentStyle(

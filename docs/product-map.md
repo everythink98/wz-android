@@ -166,6 +166,12 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `REG-TOPIC-123` 补充 `TOPIC-01/02/03`、`MORE-03`：四站主楼、回复与展开引用继续只保留来源 HTML 语义和获准的文字级 inline style，由同一 App-owned prose theme 统一排版；FlashList 物理 row 不得形成视觉文章边界。主楼只有首个普通正文 row 拥有一次顶部 hairline 和 `16dp` padding，相邻普通正文 row 间距为 `0`；独立表格 `12dp`、投票 `10dp`、引用、采纳答案与 postlude 边界保持。三档主楼/回复行高固定为 `22/21`、`24/23`、`27/26`，段落、六级标题、`hr`、blockquote、列表与普通代码块使用共享精修尺度；块图 `6/8dp`、评论 `42dp` 缩进、媒体和操作区几何不变。不引入原站 CSS、站点特判、新依赖、公共 API 或 compiler/DOM 顺序变化。
 
+`REG-TOPIC-124` 补充 `TOPIC-01`、`NAV-02/03`：Topic Header 自有固定 `20dp` 底部内边距，统一分隔标题/标签区与首个正文 row；不能依赖单子节点容器的 `gap`，也不把 Header 放进 FlashList data 或给首 row 重复加距。
+
+`REG-TOPIC-125` 补充 `TOPIC-02/03`、`NAV-02/03`：Fabric inline 图片的 attachment 宽度比可见图片宽 `4dp`，由 `contain` 在两侧各保留 `2dp`；renderer 不再依赖 Android 行内布局不可靠消费的外部 `marginHorizontal`。可见尺寸、纵向基线、引用头像 `marginRight`、块级 sticker、GIF、事件、并发与缓存身份不变。
+
+`REG-TOPIC-126` 补充 `TOPIC-02`、`NAV-03`：正文原图层的 Expo `recyclingKey` 只服从当前原图或兼容 poster 的稳定资源 identity；预览返回、原图 `onDisplay`、失败恢复和其他 display revision 仍驱动既有请求轮次，但不得清空同一 Native 视觉 owner。适屏底图在原图显示后仍持续挂载，`150ms` transition、原图 permit 与重试预算保持。
+
 `TOPIC-01/02/03` 的四站 Topic adapter、主楼与回复共用媒体首跳 Referrer 契约：adapter 保留最终 Topic URL，妖火额外保留 HTML 响应策略；媒体按元素策略、文档策略和真实 URL 关系解析最终 `Referer`，不从 `contentSource` 推导，也不按站点或图床分支。正文、原图升级、预览、保存、原生视频、贴纸和卡片图共用该契约，缓存与协调身份区分最终 `Referer`/`none`，见 `REG-TOPIC-078`。原生正文视频错误或超时释放 permit 后稳定等待点按重试，不自动重建 player；显式重试只创建一次，卸载释放由 Expo 独占且组件不再访问已释放 player，见 `REG-TOPIC-079`。正文视频按 track 固有比例布局、最窄限制 `1:2` 且不因比例变化重建 player，见 `REG-TOPIC-080`。opening 虚拟化 rows 共同呈现为一篇连续文章，隐藏占位不泄漏，妖火附件由 adapter 归一为共享语义卡片；quote、poll、accepted answer 等边界保持，见 `REG-TOPIC-081`。原生视频保留真实 poster，封面由独立图片 permit 管理，首次播放后才退出且暂停保留当前帧，见 `REG-TOPIC-082`。结构化内容由 typed semantic rows 保持祖先身份与文档顺序；FlashList row 只负责调度，code 和连续文本保持单一语义 owner，table 等容器只按自然子项分段；code/table 共用方向判定与横向位置 owner，回复定位的每次显式点击都产生独立命令，并由完整 sanitizer→compiler→FlashList 贯通测试守住。图片自然尺寸先于未完成 lease 回收同步保存，已显示像素不再受 viewability 撤销；Tab 替换可见 row 时继续以同一有界窗口驱动媒体 permit，当前 viewport 排序又可抢占仍 warm 的旧 row 请求，见 `REG-TOPIC-084/085/086/087/088/089/090/091/092/093/094/097/098/108/110`。图片、WebView 视频和贴纸仍保留既有自动重试。
 
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |

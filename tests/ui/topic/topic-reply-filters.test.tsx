@@ -77,7 +77,7 @@ jest.mock('@shopify/flash-list', () => {
       }));
       lastFlashListItemTypes = data.map((item) => String((item as { type?: unknown }).type || 'unknown'));
       lastFlashListItemKeys = data.map((item, index) => keyExtractor?.(item, index) ?? String(index));
-      lastFlashListProps = { ...props, data };
+      lastFlashListProps = { ...props, data, ListHeaderComponent };
       return ReactModule.createElement(
         NativeView,
         { accessibilityLabel, testID },
@@ -820,6 +820,19 @@ function TopicFilterHarness({
     </QueryTestWrapper>
   );
 }
+
+describe('Topic header presentation', () => {
+  it('[REG-TOPIC-124] owns the spacing between the topic header and the first content row', async () => {
+    await render(<TopicFilterHarness selectedTopic={topic} topicDetail={topic} topicReplies={[]} />);
+
+    const listHeader = lastFlashListProps.ListHeaderComponent as React.ReactElement<{ style?: StyleProp<ViewStyle> }>;
+    expect(StyleSheet.flatten(listHeader.props.style)).toMatchObject({
+      alignItems: 'center',
+      paddingBottom: 20,
+      width: '100%'
+    });
+  });
+});
 
 describe('NodeSeek reply count availability', () => {
   it('[REG-TOPIC-068] omits an unavailable NodeSeek total instead of showing the loaded window size', async () => {

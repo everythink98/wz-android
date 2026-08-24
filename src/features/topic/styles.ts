@@ -200,7 +200,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
     topicHeaderStack: {
       width: '100%',
       alignItems: 'center',
-      gap: 20
+      paddingBottom: 20
     },
     countText: {
       color: theme.muted,

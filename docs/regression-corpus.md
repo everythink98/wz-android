@@ -6072,6 +6072,51 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复每 row 的 `articleBody`、普通 row separator `10dp`、旧三档 multiplier、`hr=20dp`，或把图片/表格/投票一并压成零间距；编号 unit/UI 用例必须失败。 |
 | 明确不覆盖范围 | 不引入或放开原站 CSS，不修改 sanitizer allowlist、来源 adapter、compiler、DOM 顺序、虚拟化预算、媒体调度、页面 chrome、评论头尾或交互；不增加依赖、公共 API、站点或帖子特判。 |
 
+## `REG-TOPIC-124` Topic Header 与首个正文 row 零间距
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`；共享 `NAV-02/03` |
+| 用户可见症状 | linux.do `t/topic/2801664` 中标题区末尾标签与紧随其后的“展开”/引用正文直接相接，没有纵向留白；同类普通首段也可能贴住 Header。 |
+| 触发条件 | `topicHeaderStack` 只有一个 Header 子节点，却用 `gap: 20` 表达 Header 到 FlashList 首个 data row 的结构间距；`gap` 只作用于容器内部兄弟节点，无法跨越 `ListHeaderComponent` 边界。 |
+| 根因 seam | Header 与正文的边界归 `ListHeaderComponent` 自身所有；把既有 `20dp` 从无效 `gap` 改为 Header 容器 `paddingBottom`，由所有 Topic 共用一次。 |
+| 必须保持的行为 | 标签、无标签、普通段落、引用、details/“展开”和其他首 row 均只获得一次 `20dp` 间距；Header 不进入 FlashList data，row index、viewability、滚动恢复和正文内部 separator 不变。 |
+| 精确失败 oracle | `tests/ui/topic/topic-reply-filters.test.tsx` 的 `[REG-TOPIC-124]` 经真实 `TopicContentList → FlashList` 固定 `ListHeaderComponent` 拥有 `paddingBottom: 20`；修复前只有单子节点 `gap`，断言稳定失败。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定结构 owner，匹配 APK 确认 Android 实际布局。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变，只读直达 `https://linux.do/t/topic/2801664`；标签底边到首个正文/展开区域为 `20dp`。再核对一个无标签普通首段 Topic，不得出现双重间距。 |
+| 负向验证方式 | 恢复单子节点 `gap`、按帖子/首 row 类型加 margin、把 Header 塞进 data，或同时给首 row 加距时，编号 UI 或无标签负向验收必须失败。 |
+| 明确不覆盖范围 | 不改变 Header 内部标题、作者、标签布局，不调整正文段落/引用/details 自身边距，也不修改 FlashList 索引、虚拟化或滚动恢复。 |
+
+## `REG-TOPIC-125` Fabric inline 表情右侧贴住文字
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02/03`；共享 `NAV-02/03`、`REG-TOPIC-054/117/119/121` |
+| 用户可见症状 | linux.do `t/topic/2803759` 的哭脸表情与紧随其后的 `OpenCode` 文案在右侧相碰；表情向下靠的基线本身正确。 |
+| 触发条件 | inline renderer 把 `marginHorizontal: 2` 套在 Fabric Image attachment 外层；Android 行内文字 advance 没有可靠包含该外部 margin，且原 HTML 在图片与文字间没有空白字符。 |
+| 根因 seam | Fabric attachment 必须真实拥有绘制占位：可见 `w × h` 图片使用 `(w + 4) × h` attachment，Native Image 继续 `contain`，从而在两侧各留 `2dp`；inline renderer 不再套用含外部 margin 的共享块样式。 |
+| 必须保持的行为 | 可见图片尺寸、比例与既有 `translateY` 不变；`26dp` 行高中的 `20dp` emoji 仍下移 `3dp`。引用头像 `marginRight: 6`、独立 sticker row、块级媒体、GIF、加载事件、四并发 permit、失败重试和缓存 identity 不变。 |
+| 精确失败 oracle | `tests/ui/topic/topic-image-loading.test.tsx` 的 `[REG-TOPIC-125]` 经实际 inline renderer 固定 `20 × 20` 表情得到 `24 × 20` attachment、无 `marginHorizontal` 且测试主题现有基线位移不变；`src/platform/media/inlineMedia.test.ts` 固定同一尺寸和 `translateY: 3`。修复前 renderer 得到 `20 × 20 + marginHorizontal: 2`，UI 断言稳定失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`：Vitest 固定尺寸/基线公式，RNTL 固定 renderer 所有权，匹配 Fabric APK 证明真实 inline advance。 |
+| Replay 或真实验收路径 | 主 AVD 只读直达 `https://linux.do/t/topic/2803759`；`OpenCode` 前哭脸右缘与文字间出现真实空隙，表情可见大小和向下对齐保持，换行仍自然。另核对引用头像、animated inline GIF 与独立 sticker row。 |
+| 负向验证方式 | 恢复外部 `marginHorizontal`、插入空格字符、改变 `translateY`、按表情 URL/帖子特判，或给所有块图加宽时，编号测试或 sibling 媒体验收必须失败。若 attachment 已加宽仍碰撞，应停止补值并检查 Native attachment 是否绘制越界。 |
+| 明确不覆盖范围 | 不修正素材透明画布，不改变 reaction 图标、正文行高、块级图片/sticker 尺寸，也不新增 Native patch、素材表或站点分支。 |
+
+## `REG-TOPIC-126` 原图 display revision 改变视觉 recycling identity
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02`；共享 `NAV-03`、`REG-TOPIC-048/085` |
+| 用户可见症状 | 进入图片预览后返回正文会闪一次，适屏图升级到清晰原图时还可能再闪；逐帧可见原图层被短暂清空。 |
+| 触发条件 | `ManagedOriginalImageLayer.recyclingKey` 包含 `originalDisplayRevision` 所在的 attempt identity，且原图首次显示后适屏底图被卸载；预览或正文原图 `onDisplay` 推进 revision 或 Android Modal 返回时，原图 drawable 短暂不可用便没有连续下层可绘制。 |
+| 根因 seam | Native 视觉 owner identity 只由当前原图或兼容 poster 的 `compatibleImageRequestIdentity(source)` 定义；revision 继续驱动失败恢复、跨预览通知、lease 和迟到事件保护，但不再参与 `recyclingKey`。适屏底图由正文图片 frame 持续持有，原图只负责覆盖。 |
+| 必须保持的行为 | 适屏图持续作为下层，原图仍在 `onDisplay` 后覆盖并使用 `150ms` transition；点击高优先级、后台低优先级、单原图 permit、失败后的新 revision 重试、重试预算、SVG poster identity 和真实资源切换不变。 |
+| 精确失败 oracle | `tests/ui/topic/topic-image-loading.test.tsx` 的 `[REG-TOPIC-126]` 先显示适屏图并记录原图 `recyclingKey`，再分别触发同源预览通知与原图 `onDisplay`；两次 revision 后 key 必须相同，且原图显示后适屏底图仍挂载。修复前 key 从 `revision:0` 变为 `revision:1`，底图也会在原图 `onDisplay` 后消失。同文件既有原图失败恢复与重试预算用例继续通过。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY + LIVE_PASS`：RNTL 固定视觉 identity，只有匹配 APK 的逐帧录屏能证明返回与清晰升级没有空白帧。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变；对正文块图录屏并逐帧检查进入预览、返回正文和 fit → original 三段，同一视觉资源不得出现空白帧或重复闪烁，原图仍能升级并在失败后恢复。 |
+| 负向验证方式 | 把 revision/attempt 再写入 `recyclingKey`、卸载底图、关闭 transition、增加防抖/timer/状态枚举或用预览返回特判掩盖时，编号 UI、既有失败恢复测试或设备逐帧验收必须失败。 |
+| 明确不覆盖范围 | 不重构媒体 coordinator，不改变 preview ring、缩放、保存、缓存策略、网络 URL、并发预算、公共 API、Native patch 或持久化 schema。 |
+
 ## 待确认观察
 
 下表只保存本轮探索中出现过、但尚不足以认定为当前业务 bug 的线索。它们不等同于 `REG-*`，也不能据此增加猜测式 workaround。只有在身份匹配的当前 APK 上稳定复现并得到明确失败 oracle 后，才升级为回归条目和最低可靠测试。53 个失联 daemon、30 个工具录屏进程及设备录屏分片未清理已经有完整证据，归入 `REG-OPS-002`，不再作为“疑似”。
