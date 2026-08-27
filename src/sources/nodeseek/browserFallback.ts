@@ -1,9 +1,4 @@
 import { cancelRequestTimeoutForFallback, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
-import {
-  isGoogleSiteSearchNavigationUrl,
-  isGoogleSiteSearchUrl,
-  isSameGoogleSiteSearchUrl
-} from '@/sources/searchFallback';
 import { isNodeSeekChallengeResponse } from './protocol';
 import {
   beginDiagnosticTrace,
@@ -35,24 +30,16 @@ export function isNodeSeekRequestUrl(input: string) {
   }
 }
 
-function isNodeSeekGoogleSearchUrl(input: string) {
-  return isGoogleSiteSearchUrl(input, 'nodeseek.com');
-}
-
 export function isNodeSeekBrowserFetchUrl(input: string) {
-  return isNodeSeekRequestUrl(input) || isNodeSeekGoogleSearchUrl(input);
+  return isNodeSeekRequestUrl(input);
 }
 
 export function isNodeSeekBrowserNavigationUrl(input: string, initialRequestUrl: string) {
-  return isNodeSeekRequestUrl(initialRequestUrl)
-    ? isNodeSeekRequestUrl(input)
-    : isGoogleSiteSearchNavigationUrl(input, 'nodeseek.com', initialRequestUrl);
+  return isNodeSeekRequestUrl(initialRequestUrl) && isNodeSeekRequestUrl(input);
 }
 
 export function isNodeSeekBrowserResultUrl(input: string, initialRequestUrl: string) {
-  return isNodeSeekRequestUrl(initialRequestUrl)
-    ? isNodeSeekRequestUrl(input)
-    : isSameGoogleSiteSearchUrl(input, 'nodeseek.com', initialRequestUrl);
+  return isNodeSeekRequestUrl(initialRequestUrl) && isNodeSeekRequestUrl(input);
 }
 
 async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, init?: RequestInit) {
@@ -120,46 +107,6 @@ async function fetchNodeSeekThroughWebView(
   }
 }
 
-async function fetchNodeSeekWebViewOnly(webViewFetcher: Fetcher, url: string, init?: RequestInit) {
-  const inheritedTrace = diagnosticTraceForRequest(init);
-  const trace =
-    inheritedTrace ||
-    beginDiagnosticTrace('source', 'webview-transport', {
-      source: 'nodeseek',
-      channel: 'webview'
-    });
-  markDiagnosticStage(trace, 'transport', { source: 'nodeseek', channel: 'webview', state: 'start' });
-  try {
-    cancelRequestTimeoutForFallback(init);
-    const response = await webViewFetcher(url, init);
-    markDiagnosticStage(trace, 'transport', {
-      source: 'nodeseek',
-      channel: 'webview',
-      state: 'finish',
-      status: response.status
-    });
-    if (!inheritedTrace) {
-      finishDiagnosticTrace(trace, response.ok ? 'success' : 'failure', {
-        source: 'nodeseek',
-        channel: 'webview',
-        ...(response.ok ? {} : { reason: 'http_error' })
-      });
-    }
-    return response;
-  } catch (error) {
-    const reason = normalizeDiagnosticReason(error);
-    markDiagnosticStage(trace, 'transport', { source: 'nodeseek', channel: 'webview', state: 'failure', reason });
-    if (!inheritedTrace) {
-      finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : 'failure', {
-        source: 'nodeseek',
-        channel: 'webview',
-        reason
-      });
-    }
-    throw error;
-  }
-}
-
 export function createNodeSeekWebViewFallbackFetcher({
   allowWebViewFallback = () => true,
   defaultFetcher = fetch,
@@ -203,9 +150,6 @@ export function createNodeSeekWebViewFallbackFetcher({
     const isIdempotentRead = method === 'GET' || method === 'HEAD';
     const ordinal = ++requestOrdinal;
     const accountProbe = browserFetchIntentFromInit(init)?.owner === 'account';
-    if (isNodeSeekGoogleSearchUrl(url)) {
-      return fetchNodeSeekWebViewOnly(webViewFetcher, url, init);
-    }
     if (!isNodeSeekRequestUrl(url)) {
       return defaultFetcher(input, init);
     }

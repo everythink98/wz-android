@@ -58,12 +58,30 @@ const loggedInSessions = createSiteSessionViewModels(
       status: 'logged-in',
       cookieSummary: ['session-present'],
       isVerifying: false
+    },
+    nodeseek: {
+      site: 'nodeseek',
+      status: 'logged-in',
+      cookieSummary: ['session-present'],
+      isVerifying: false
     }
   })
 );
 
 const loggedInYaohuoSessions = createSiteSessionViewModels(
   createSiteSessionStates({
+    linuxdo: {
+      site: 'linuxdo',
+      status: 'logged-in',
+      cookieSummary: ['session-present'],
+      isVerifying: false
+    },
+    nodeseek: {
+      site: 'nodeseek',
+      status: 'logged-in',
+      cookieSummary: ['session-present'],
+      isVerifying: false
+    },
     yaohuo: {
       site: 'yaohuo',
       status: 'logged-in',
@@ -128,7 +146,8 @@ function renderSearchController(
   showNodeSeekVerification = jest.fn<(message?: string) => void>(),
   showYaohuoLogin = jest.fn<(message?: string) => void>(),
   getEnabledSearchSources: () => readonly Source[] = () => aggregateSearchSources,
-  onRetryIdentityStatus = jest.fn<(source: SessionSource) => void>()
+  onRetryIdentityStatus = jest.fn<(source: SessionSource) => void>(),
+  onOpenExternalSearch = jest.fn<(url: string) => void>()
 ) {
   appQueryClient.clear();
   const getReadPlan = (source: Source, operation: ForumReadOperation) =>
@@ -176,6 +195,7 @@ function renderSearchController(
         sessionEpochs: getSessionEpochs(),
         linuxDoVerificationActive: false,
         notify,
+        ...({ onOpenExternalSearch } as object),
         onRetryIdentityStatus,
         active: true,
         sessionViewModels,
@@ -306,51 +326,54 @@ describe('linux.do AI search controller', () => {
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-005] selects anonymous search until linux.do identity is confirmed', async () => {
+  it('[REG-SEARCH-028] exposes anonymous linux.do and NodeSeek searches without starting gateway transport', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
       hasMore: false,
       nextPage: null
     }));
-    const unconfirmedSessions = createSiteSessionViewModels(
-      createSiteSessionStates({
-        linuxdo: {
-          site: 'linuxdo',
-          status: 'verified',
-          cookieSummary: ['cf_clearance', '_t'],
-          isVerifying: false
-        }
-      })
-    );
+    const anonymousSessions = createSiteSessionViewModels(createSiteSessionStates());
+    const onOpenExternalSearch = jest.fn<(url: string) => void>();
     const hook = await renderSearchController(
       createGateway({ searchTopics }),
       jest.fn(),
       jest.fn(),
       () => initialForumSessionEpochs,
-      unconfirmedSessions
+      anonymousSessions,
+      jest.fn(),
+      jest.fn(),
+      () => ['linuxdo', 'nodeseek'],
+      jest.fn(),
+      onOpenExternalSearch
     );
-    await prepareLinuxDoSearch(hook, 'codex');
+
+    for (const [source, expectedUrl] of [
+      ['linuxdo', 'https://www.google.com/search?q=site%3Alinux.do+%22AI+agent%22+-windows'],
+      ['nodeseek', 'https://www.google.com/search?q=site%3Anodeseek.com+%22AI+agent%22+-windows']
+    ] as const) {
+      await act(async () => {
+        await hook.result.current.runSearch({ query: '  "AI agent" -windows  ', source });
+      });
+      await waitFor(() =>
+        expect(hook.result.current.searchGroups).toEqual([
+          expect.objectContaining({
+            source,
+            items: [],
+            settled: true,
+            externalSearchUrl: expectedUrl
+          })
+        ])
+      );
+      expect(onOpenExternalSearch).toHaveBeenLastCalledWith(expectedUrl);
+    }
 
     await act(async () => {
-      await hook.result.current.runSearch();
+      await hook.result.current.runSearch({ query: '"AI agent" -windows', source: 'all' });
     });
-
-    await waitFor(() =>
-      expect(searchTopics).toHaveBeenCalledWith(expect.objectContaining({ source: 'linuxdo' }), expect.any(Object))
-    );
-    expect(
-      appQueryClient
-        .getQueryCache()
-        .getAll()
-        .some(
-          ({ queryKey }) =>
-            queryKey[0] === 'forum' &&
-            queryKey[1] === 'linuxdo' &&
-            queryKey[2] === 'search' &&
-            (queryKey[3] as { readPlanScope?: string })?.readPlanScope === 'public:omit'
-        )
-    ).toBe(true);
+    await waitFor(() => expect(hook.result.current.searchGroups).toHaveLength(2));
+    expect(onOpenExternalSearch).toHaveBeenCalledTimes(2);
+    expect(searchTopics).not.toHaveBeenCalled();
     expect(hook.result.current.linuxDoAiState).toMatchObject({ status: 'idle', enabled: false });
   });
 
@@ -2092,7 +2115,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
   });
 
-  it('[REG-SEARCH-024] runs an anonymous topic search for an unknown public source while keeping AI blocked', async () => {
+  it('[REG-SEARCH-028] exposes an external search for an unknown public source while keeping AI blocked', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
@@ -2114,12 +2137,18 @@ describe('linux.do AI search controller', () => {
         summaryLabel: '账号状态尚未核对'
       }
     };
+    const onOpenExternalSearch = jest.fn<(url: string) => void>();
     const hook = await renderSearchController(
       createGateway({ searchSemanticTopics, searchTopics }),
       jest.fn(),
       jest.fn(),
       () => initialForumSessionEpochs,
-      unknownSessions
+      unknownSessions,
+      jest.fn(),
+      jest.fn(),
+      () => aggregateSearchSources,
+      jest.fn(),
+      onOpenExternalSearch
     );
 
     await prepareLinuxDoSearch(hook, 'pending identity');
@@ -2128,28 +2157,22 @@ describe('linux.do AI search controller', () => {
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
+    expect(searchTopics).not.toHaveBeenCalled();
     expect(searchSemanticTopics).not.toHaveBeenCalled();
-    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+    expect(hook.result.current.searchBusy).toBe(false);
     expect(hook.result.current.searchGroups).toEqual([
-      expect.objectContaining({ source: 'linuxdo', items: [standardTopic], loading: false })
+      expect.objectContaining({
+        source: 'linuxdo',
+        items: [],
+        settled: true,
+        externalSearchUrl: 'https://www.google.com/search?q=site%3Alinux.do+pending+identity'
+      })
     ]);
-    expect(
-      appQueryClient
-        .getQueryCache()
-        .getAll()
-        .some(
-          ({ queryKey }) =>
-            queryKey[0] === 'forum' &&
-            queryKey[1] === 'linuxdo' &&
-            queryKey[2] === 'search' &&
-            (queryKey[3] as { readPlanScope?: string })?.readPlanScope === 'public:omit'
-        )
-    ).toBe(true);
+    expect(onOpenExternalSearch).toHaveBeenCalledTimes(1);
     expect(hook.result.current.linuxDoAiState.status).toBe('idle');
   });
 
-  it('[REG-SEARCH-024] starts a new authenticated search scope after unknown identity becomes confirmed', async () => {
+  it('[REG-SEARCH-028] replaces an external entry with fresh native results after identity becomes confirmed', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
@@ -2166,6 +2189,7 @@ describe('linux.do AI search controller', () => {
       }
     };
     let sessionViewModels = unknownLinuxDo;
+    const onOpenExternalSearch = jest.fn<(url: string) => void>();
     const gateway = createGateway({ searchTopics });
     gateway.getReadPlan = (source: Source, operation: ForumReadOperation) =>
       resolveForumReadPlan(
@@ -2194,6 +2218,7 @@ describe('linux.do AI search controller', () => {
           linuxDoVerificationActive: false,
           notify: jest.fn(),
           active: true,
+          onOpenExternalSearch,
           onRetryIdentityStatus: jest.fn(),
           sessionViewModels,
           showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
@@ -2207,14 +2232,21 @@ describe('linux.do AI search controller', () => {
     await act(async () => {
       await hook.result.current.runSearch({ query: 'identity scope', source: 'linuxdo' });
     });
-    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
+    expect(searchTopics).not.toHaveBeenCalled();
+    expect(onOpenExternalSearch).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      source: 'linuxdo',
+      externalSearchUrl: 'https://www.google.com/search?q=site%3Alinux.do+identity+scope'
+    });
 
     sessionViewModels = loggedInSessions;
     await act(async () => {
       hook.rerender(undefined);
     });
 
-    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.items).toEqual([standardTopic]));
+    expect(onOpenExternalSearch).toHaveBeenCalledTimes(1);
     const readPlanScopes = appQueryClient
       .getQueryCache()
       .getAll()
@@ -2223,7 +2255,7 @@ describe('linux.do AI search controller', () => {
     expect(readPlanScopes).toEqual(expect.arrayContaining(['public:omit', 'authenticated:0']));
   });
 
-  it('[REG-SEARCH-024] lets an unknown anonymous-capable source settle inside aggregate search', async () => {
+  it('[REG-SEARCH-028] settles an unknown forum source as an external action inside aggregate search', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
       items: [{ ...standardTopic, source: source as Source, id: source }],
       errors: {},
@@ -2254,10 +2286,11 @@ describe('linux.do AI search controller', () => {
     });
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
 
-    expect(searchTopics.mock.calls.map(([request]) => request.source)).toEqual(['v2ex', 'linuxdo', 'nodeseek']);
+    expect(searchTopics.mock.calls.map(([request]) => request.source)).toEqual(['v2ex', 'linuxdo']);
     expect(hook.result.current.searchGroups.find(({ source }) => source === 'nodeseek')).toMatchObject({
-      items: [expect.objectContaining({ source: 'nodeseek' })],
-      loading: false
+      items: [],
+      settled: true,
+      externalSearchUrl: 'https://www.google.com/search?q=site%3Anodeseek.com+aggregate+pending'
     });
   });
 

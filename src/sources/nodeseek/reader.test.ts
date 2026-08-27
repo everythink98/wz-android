@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Fetcher } from '@/platform/network/request';
 
 describe('NodeSeek reader', () => {
-  it('[REG-PERF-017] parses each feed and Google search response once', async () => {
+  it('[REG-PERF-017] parses each feed and authenticated search response once', async () => {
     await withTrackedParseHtml(async (trackedParseHtml) => {
       const feedMarker = 'data-page-marker="feed-once"';
       const searchMarker = 'data-page-marker="search-once"';
@@ -14,13 +14,13 @@ describe('NodeSeek reader', () => {
         '</ul></body></html>'
       ].join('');
       const searchPage = [
-        `<html ${searchMarker}><head><title>Google site:nodeseek.com</title></head><body>`,
-        '<a href="https://www.nodeseek.com/post-202-1"><h3>Search topic</h3></a>',
-        '</body></html>'
+        `<html ${searchMarker}><body><ul>`,
+        '<li class="post-list-item"><a class="post-title" href="/post-202-1"><h3>Search topic</h3></a></li>',
+        '</ul></body></html>'
       ].join('');
       const fetcher = vi.fn<Fetcher>(async (input) => {
         const url = String(input);
-        const response = new Response(url.includes('google.com/search') ? searchPage : feedPage, {
+        const response = new Response(url.includes('/search?') ? searchPage : feedPage, {
           headers: { 'content-type': 'text/html' }
         });
         Object.defineProperty(response, 'url', { value: url });
@@ -29,13 +29,24 @@ describe('NodeSeek reader', () => {
 
       const { getNodeSeekFeed, searchNodeSeek } = await import('./reader');
       const feed = await getNodeSeekFeed({ fetcher });
-      const search = await searchNodeSeek('Search', { fetcher });
+      const search = await searchNodeSeek('Search', { authenticated: true, fetcher });
 
       expect(feed.items.map(({ id }) => id)).toEqual(['101']);
       expect(search.items.map(({ id }) => id)).toEqual(['202']);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(feedMarker))).toHaveLength(1);
       expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(searchMarker))).toHaveLength(1);
     });
+  });
+
+  it('[REG-SEARCH-028] refuses anonymous adapter search without a transport call', async () => {
+    const fetcher = vi.fn<Fetcher>();
+    const { searchNodeSeek } = await import('./reader');
+
+    await expect(searchNodeSeek('Search', { fetcher })).rejects.toMatchObject({
+      kind: 'login-required',
+      source: 'nodeseek'
+    });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('[REG-PERF-017] parses the current-user page once', async () => {

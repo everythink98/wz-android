@@ -1,4 +1,3 @@
-import { withTrackedParseHtml } from '../../../tests/helpers/trackedParseHtml';
 import { describe, expect, it, vi } from 'vitest';
 
 import { searchLinuxDo } from './search';
@@ -10,23 +9,14 @@ function searchResponse() {
 }
 
 describe('linux.do search', () => {
-  it('[REG-PERF-017] parses one Google search response once', async () => {
-    await withTrackedParseHtml(async (trackedParseHtml) => {
-      const marker = 'data-page-marker="linuxdo-google-once"';
-      const fetcher = vi.fn(
-        async () =>
-          new Response(
-            `<html ${marker}><head><title>Google site:linux.do</title></head><body><a href="https://linux.do/t/topic/303"><h3>LinuxDo topic</h3></a></body></html>`,
-            { headers: { 'content-type': 'text/html' } }
-          )
-      );
+  it('[REG-SEARCH-028] refuses anonymous adapter search without a transport call', async () => {
+    const fetcher = vi.fn();
 
-      const { searchLinuxDo: search } = await import('./search');
-      const result = await search('performance', { fetcher });
-
-      expect(result.items.map(({ id }) => id)).toEqual(['303']);
-      expect(trackedParseHtml.mock.calls.filter(([value]) => String(value).includes(marker))).toHaveLength(1);
+    await expect(searchLinuxDo('performance', { fetcher })).rejects.toMatchObject({
+      kind: 'login-required',
+      source: 'linuxdo'
     });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('does not reuse a CSRF token after the authenticated transport changes', async () => {

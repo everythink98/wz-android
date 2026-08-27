@@ -45,17 +45,6 @@ describe('source error navigation helpers', () => {
     expect(linuxDoVerificationNavigationMessage('linuxdo', errors)).toBe('');
   });
 
-  it('[REG-SEARCH-015] keeps Google search environment failures out of site verification panels', () => {
-    const message = 'Google 搜索环境验证暂时未通过，请稍后重试';
-    const nodeSeek = sourceErrorFromUnknown('nodeseek', new Error(message));
-    const linuxDo = sourceErrorFromUnknown('linuxdo', new Error(message));
-
-    expect(nodeSeek).toMatchObject({ kind: 'ordinary', message });
-    expect(linuxDo).toMatchObject({ kind: 'ordinary', message });
-    expect(nodeSeekVerificationNavigationMessage('nodeseek', { nodeseek: nodeSeek })).toBe('');
-    expect(linuxDoVerificationNavigationMessage('linuxdo', { linuxdo: linuxDo })).toBe('');
-  });
-
   it('classifies login, verification, and permission failures without flattening them', () => {
     const expired = Object.assign(new Error('妖火登录已失效，请重新登录。'), {
       loginRequired: true,

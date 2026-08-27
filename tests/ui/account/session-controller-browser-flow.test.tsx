@@ -52,60 +52,9 @@ function renderSessionController(
   );
 }
 
-describe('session controller hidden Google flow', () => {
+describe('session controller browser flow', () => {
   afterEach(() => {
     mockRecoverReadNetworkRuntime.mockReset();
-  });
-
-  it('[REG-SEARCH-014] routes a scoped NodeSeek Google search through HiddenBrowserHost', async () => {
-    const defaultFetcher = jest.fn<typeof fetch>(async () => new Response('unexpected direct fetch'));
-    const searchUrl = 'https://www.google.com/search?q=site%3Anodeseek.com+codex';
-    const hook = await renderSessionController(defaultFetcher);
-    let responsePromise!: Promise<Response>;
-
-    await act(async () => {
-      responsePromise = hook.result.current.forumFetchWithWebViewFallback(searchUrl);
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(searchUrl));
-    expect(defaultFetcher).not.toHaveBeenCalled();
-
-    const requestId = hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.id;
-    await act(async () => {
-      await hook.result.current.completeNodeSeekBrowserFetch({
-        id: requestId,
-        url: searchUrl,
-        html: '<html><title>Google Search</title></html>'
-      });
-    });
-    await expect(responsePromise).resolves.toBeInstanceOf(Response);
-  });
-
-  it('[REG-SEARCH-014] rejects a forum page as the result of a Google search task', async () => {
-    const defaultFetcher = jest.fn<typeof fetch>(async () => new Response('unexpected direct fetch'));
-    const searchUrl = 'https://www.google.com/search?q=site%3Anodeseek.com+codex';
-    const hook = await renderSessionController(defaultFetcher);
-    let responsePromise!: Promise<Response>;
-
-    await act(async () => {
-      responsePromise = hook.result.current.forumFetchWithWebViewFallback(searchUrl);
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.url).toBe(searchUrl));
-    const outcome = responsePromise.then(
-      () => 'resolved',
-      (error: Error) => error.message
-    );
-
-    await act(async () => {
-      await hook.result.current.completeNodeSeekBrowserFetch({
-        id: hook.result.current.hiddenBrowserFetchRequests.nodeSeek?.id,
-        url: 'https://www.nodeseek.com/search?q=codex',
-        html: '<html>wrong flow</html>'
-      });
-    });
-    await expect(outcome).resolves.toContain('外部地址');
-    expect(defaultFetcher).not.toHaveBeenCalled();
   });
 
   it('[REG-PROXY-010] wires a parsed fallback to the generation captured before HiddenBrowserHost starts', async () => {

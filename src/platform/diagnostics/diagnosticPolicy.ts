@@ -395,7 +395,6 @@ const parserVariantValues = closedValues(
   'embedded-reply',
   'embedded-topic',
   'fetched-reply',
-  'google-search',
   'html-all-feed',
   'html-hot-feed',
   'html-latest-feed',

@@ -10,6 +10,8 @@ import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
+import { openForumSearchCustomTab } from '@/platform/android/forumSearchCustomTab';
+import { errorMessage } from '@/platform/network/errors';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { SearchListItem } from './listItems';
 import { SearchScreen } from './SearchScreen';
@@ -69,6 +71,19 @@ export function SearchRoute() {
     },
     [runtime.account]
   );
+  const openExternalSearch = useCallback(
+    async (url: string) => {
+      try {
+        const customTabOpened = await openForumSearchCustomTab(url);
+        if (!customTabOpened) {
+          runtime.notify('当前浏览器不支持返回阅坛，可继续查看搜索结果');
+        }
+      } catch (error) {
+        runtime.notify(`无法打开 Google 搜索：${errorMessage(error)}`);
+      }
+    },
+    [runtime]
+  );
   const controller = useSearchController({
     active,
     categories: runtime.catalogCategories,
@@ -76,6 +91,7 @@ export function SearchRoute() {
     sessionEpochs: runtime.account.sessionEpochs,
     linuxDoVerificationActive: runtime.account.linuxDoVerificationVisible,
     notify: runtime.notify,
+    onOpenExternalSearch: openExternalSearch,
     onNodeSeekSearchVerificationRequired: runtime.account.requestNodeSeekVerification,
     onRetryIdentityStatus: retryIdentityStatus,
     sessionViewModels: runtime.account.sessionViewModels,
@@ -115,12 +131,14 @@ export function SearchRoute() {
       searchFilters={controller.searchFilters}
       searchGroups={controller.searchGroups}
       expectedSearchSources={enabledSearchSources}
+      externalSearchSources={controller.externalSearchSources}
       linuxDoAiState={controller.linuxDoAiState}
       linuxDoAiVisible={controller.linuxDoAiVisible}
       searchSource={controller.searchSource}
       submittedQuery={controller.submittedSearchQuery}
       scrollRef={listRef}
       onLoadMoreSearchSource={controller.loadMoreSearchSource}
+      onOpenExternalSearch={openExternalSearch}
       onOpenTopic={openTopic}
       onManageContentSources={manageContentSources}
       onRemoveRecentSearch={controller.removeRecentSearch}

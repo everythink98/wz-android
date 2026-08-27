@@ -42,6 +42,16 @@ describe('forum read plans', () => {
       lane: 'public',
       cacheScope: 'public:omit'
     });
+    expect(resolveForumReadPlan('linuxdo', 'search', true, session('linuxdo'))).toMatchObject({
+      state: 'ready',
+      lane: 'public',
+      transport: 'none'
+    });
+    expect(resolveForumReadPlan('nodeseek', 'search', true, session('nodeseek'))).toMatchObject({
+      state: 'ready',
+      lane: 'public',
+      transport: 'none'
+    });
     expect(
       resolveForumReadPlan(
         'linuxdo',

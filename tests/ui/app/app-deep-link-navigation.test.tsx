@@ -68,6 +68,80 @@ describe('app deep-link navigation', () => {
     }
   );
 
+  it.each(destinationCases.slice(0, 2))(
+    '[REG-SEARCH-028] opens the current %s Custom Tab topic URL directly',
+    async (_, url, topic, targetReply) => {
+      let onUrl: ((event: { url: string }) => void) | undefined;
+      mockGetInitialURL.mockResolvedValue(null);
+      mockAddEventListener.mockImplementation((_type, listener) => {
+        onUrl = listener;
+        return { remove: jest.fn() };
+      });
+      mockPushTopicRoute.mockReturnValue(true);
+
+      const linking = {
+        addEventListener: mockAddEventListener,
+        getInitialURL: mockGetInitialURL
+      } as unknown as Pick<typeof Linking, 'addEventListener' | 'getInitialURL'>;
+      const hook = await renderHook(() => useAppDeepLinkNavigation(linking, mockPushTopicRoute));
+      await waitFor(() => expect(onUrl).toBeDefined());
+
+      await act(async () => onUrl?.({ url }));
+
+      expect(mockPushTopicRoute).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: expect.objectContaining(topic), targetReply })
+      );
+      await act(async () => hook.unmount());
+    }
+  );
+
+  it('[REG-SEARCH-028] replays a cold-start Custom Tab topic after navigation becomes ready', async () => {
+    const remove = jest.fn();
+    const [, url, topic, targetReply] = destinationCases[1];
+    mockGetInitialURL.mockResolvedValue(url);
+    mockAddEventListener.mockReturnValue({ remove });
+    mockPushTopicRoute.mockReturnValueOnce(false).mockReturnValue(true);
+
+    const linking = {
+      addEventListener: mockAddEventListener,
+      getInitialURL: mockGetInitialURL
+    } as unknown as Pick<typeof Linking, 'addEventListener' | 'getInitialURL'>;
+    const hook = await renderHook(() => useAppDeepLinkNavigation(linking, mockPushTopicRoute));
+    await waitFor(() => expect(mockPushTopicRoute).toHaveBeenCalledTimes(1));
+
+    await act(async () => hook.result.current());
+    expect(mockPushTopicRoute).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ topic: expect.objectContaining(topic), targetReply })
+    );
+    await act(async () => hook.unmount());
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'https://www.google.com/search?q=site%3Alinux.do+codex',
+    'https://linux.do/u/alice',
+    'https://example.com/t/topic/456'
+  ])('[REG-SEARCH-028] rejects a non-topic Custom Tab URL: %s', async (url) => {
+    let onUrl: ((event: { url: string }) => void) | undefined;
+    mockGetInitialURL.mockResolvedValue(null);
+    mockAddEventListener.mockImplementation((_type, listener) => {
+      onUrl = listener;
+      return { remove: jest.fn() };
+    });
+
+    const linking = {
+      addEventListener: mockAddEventListener,
+      getInitialURL: mockGetInitialURL
+    } as unknown as Pick<typeof Linking, 'addEventListener' | 'getInitialURL'>;
+    const hook = await renderHook(() => useAppDeepLinkNavigation(linking, mockPushTopicRoute));
+    await waitFor(() => expect(onUrl).toBeDefined());
+
+    await act(async () => onUrl?.({ url }));
+    expect(mockPushTopicRoute).not.toHaveBeenCalled();
+    await act(async () => hook.unmount());
+  });
+
   it('[REG-NAV-003] replays the complete cold-start destination after navigation becomes ready', async () => {
     const remove = jest.fn();
     const [, url, topic, targetReply] = destinationCases[0];

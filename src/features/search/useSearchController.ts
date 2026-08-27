@@ -37,6 +37,11 @@ import {
 } from './listItems';
 import { linuxDoAiFailureState, mergeLinuxDoAiTopics, type LinuxDoAiSearchState } from './aiSearch';
 import { remoteSearchSort, snapshotSearchFilters, type SearchRunOptions } from './searchRun';
+import {
+  buildExternalForumSearchUrl,
+  isExternalForumSearchSource,
+  type ExternalForumSearchSource
+} from '@/domain/forum/externalSearch';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
@@ -121,6 +126,19 @@ function mergeSearchPages(pages: RemoteSearchSourceResult[], error: unknown): Se
   return merged;
 }
 
+function externalSearchUrlForPlan(source: Source, query: string, plan: ReturnType<ReadGateway['getReadPlan']>) {
+  return query.trim() && searchPlanUsesExternalBrowser(source, plan)
+    ? buildExternalForumSearchUrl(source, query)
+    : undefined;
+}
+
+function searchPlanUsesExternalBrowser(
+  source: Source,
+  plan: ReturnType<ReadGateway['getReadPlan']>
+): source is ExternalForumSearchSource {
+  return plan.state === 'ready' && plan.lane === 'public' && isExternalForumSearchSource(source);
+}
+
 export function useSearchController({
   active,
   categories,
@@ -128,6 +146,7 @@ export function useSearchController({
   sessionEpochs = initialForumSessionEpochs,
   linuxDoVerificationActive,
   notify,
+  onOpenExternalSearch,
   onNodeSeekSearchVerificationRequired,
   onRetryIdentityStatus,
   sessionViewModels,
@@ -142,6 +161,7 @@ export function useSearchController({
   sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
+  onOpenExternalSearch?: (url: string) => void | Promise<void>;
   onNodeSeekSearchVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
   onRetryIdentityStatus?: (source: SessionSource) => void;
   sessionViewModels: SiteSessionViewModels;
@@ -378,6 +398,11 @@ export function useSearchController({
     ? remoteSearchSort(submittedSearch.source, submittedSearch.filters)
     : 'relevance';
   const singleSearchPlan = readGateway.getReadPlan(submittedSource, 'search');
+  const singleExternalSearchUrl = externalSearchUrlForPlan(
+    submittedSource,
+    submittedSearch?.query || '',
+    singleSearchPlan
+  );
   const singleSearchKey = forumQueryKeys.search({
     source: submittedSource,
     lane: 'pages',
@@ -389,6 +414,13 @@ export function useSearchController({
   });
 
   const aggregatePlans = aggregateSources.map((source) => readGateway.getReadPlan(source, 'search'));
+  const externalSearchSources = aggregateSources.filter((source, index) =>
+    searchPlanUsesExternalBrowser(source, aggregatePlans[index])
+  );
+  const aggregateExternalSearchUrls = aggregateSources.map((source, index) =>
+    externalSearchUrlForPlan(source, submittedSearch?.query || '', aggregatePlans[index])
+  );
+  const aggregateExternalSearchKey = aggregateExternalSearchUrls.join('\u0000');
   const aggregateKeys = aggregateSources.map((source, index) => {
     const plan = aggregatePlans[index];
     return forumQueryKeys.search({
@@ -404,7 +436,12 @@ export function useSearchController({
   const aggregateQueries = useQueries({
     queries: aggregateSources.map((source, index) => ({
       queryKey: aggregateKeys[index],
-      enabled: Boolean(searchActive && submittedSearch?.query && submittedSearch.source === 'all'),
+      enabled: Boolean(
+        searchActive &&
+        submittedSearch?.query &&
+        submittedSearch.source === 'all' &&
+        !aggregateExternalSearchUrls[index]
+      ),
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const result = await runRemoteSearchSource(
           source,
@@ -427,7 +464,11 @@ export function useSearchController({
   const singleSearchQuery = useInfiniteQuery({
     queryKey: singleSearchKey,
     enabled: Boolean(
-      searchActive && submittedSearch?.query && submittedSearch.source !== 'all' && submittedSearchSourceIncluded
+      searchActive &&
+      submittedSearch?.query &&
+      submittedSearch.source !== 'all' &&
+      submittedSearchSourceIncluded &&
+      !singleExternalSearchUrl
     ),
     initialPageParam: 1,
     queryFn: async ({ pageParam, signal }) => {
@@ -456,6 +497,18 @@ export function useSearchController({
   const aggregateGroups = useMemo(
     () =>
       aggregateSources.map((source, index): SearchGroup => {
+        const externalSearchUrl = aggregateExternalSearchUrls[index];
+        if (externalSearchUrl) {
+          return {
+            source,
+            label: sourceLabel(source),
+            items: [],
+            externalSearchUrl,
+            settled: true,
+            hasMore: false,
+            nextPage: null
+          };
+        }
         const query = aggregateQueries[index];
         if (query.error instanceof SearchPageError) {
           const failed = groupFromRemoteSearchResult(query.error.result);
@@ -487,10 +540,28 @@ export function useSearchController({
           loading: Boolean(searchActive && submittedSearch?.query && submittedSearch.source === 'all')
         };
       }),
-    [aggregateQueries, aggregateSources, searchActive, submittedSearch?.query, submittedSearch?.source]
+    [
+      aggregateExternalSearchKey,
+      aggregateQueries,
+      aggregateSources,
+      searchActive,
+      submittedSearch?.query,
+      submittedSearch?.source
+    ]
   );
-  const singleGroup = useMemo(() => {
+  const singleGroup = useMemo<SearchGroup | null>(() => {
     if (!submittedSearchSourceIncluded) return null;
+    if (singleExternalSearchUrl) {
+      return {
+        source: submittedSource,
+        label: sourceLabel(submittedSource),
+        items: [],
+        externalSearchUrl: singleExternalSearchUrl,
+        settled: true,
+        hasMore: false,
+        nextPage: null
+      };
+    }
     const merged = mergeSearchPages(singleSearchQuery.data?.pages || [], singleSearchQuery.error);
     if (merged) {
       return {
@@ -515,7 +586,8 @@ export function useSearchController({
     singleSearchQuery.isFetching,
     singleSearchQuery.isFetchingNextPage,
     submittedSearchSourceIncluded,
-    submittedSource
+    submittedSource,
+    singleExternalSearchUrl
   ]);
   const baseSearchGroups = useMemo(
     () =>
@@ -811,13 +883,29 @@ export function useSearchController({
       if (same) {
         if (source === 'all') {
           aggregateQueries.forEach((result, index) => {
-            if (aggregateSources[index]) void result.refetch({ cancelRefetch: false });
+            const aggregateSource = aggregateSources[index];
+            if (
+              aggregateSource &&
+              !externalSearchUrlForPlan(aggregateSource, query, readGateway.getReadPlan(aggregateSource, 'search'))
+            ) {
+              void result.refetch({ cancelRefetch: false });
+            }
           });
-        } else {
+        } else if (!externalSearchUrlForPlan(source, query, readGateway.getReadPlan(source, 'search'))) {
           void singleSearchQuery.refetch({ cancelRefetch: false });
         }
       } else {
         setSubmittedSearch(next);
+      }
+      if (source !== 'all') {
+        const externalSearchUrl = externalSearchUrlForPlan(source, query, readGateway.getReadPlan(source, 'search'));
+        if (externalSearchUrl) {
+          try {
+            await onOpenExternalSearch?.(externalSearchUrl);
+          } catch {
+            notify('无法打开 Google 搜索');
+          }
+        }
       }
       return 'completed';
     },
@@ -826,6 +914,8 @@ export function useSearchController({
       aggregateQueries,
       aggregateSources,
       notify,
+      onOpenExternalSearch,
+      readGateway,
       retrySearchSource,
       searchActive,
       searchFilters,
@@ -973,6 +1063,7 @@ export function useSearchController({
   return {
     abortSearchRequests,
     applySearchFilter,
+    externalSearchSources,
     loadMoreSearchSource,
     recentSearches,
     removeRecentSearch,
@@ -983,8 +1074,8 @@ export function useSearchController({
       !searchActive || !submittedSearch
         ? false
         : submittedSearch.source === 'all'
-          ? aggregateQueries.some((query) => query.isPending)
-          : submittedSearchSourceIncluded && singleSearchQuery.isFetching,
+          ? aggregateQueries.some((query, index) => !aggregateExternalSearchUrls[index] && query.isPending)
+          : submittedSearchSourceIncluded && !singleExternalSearchUrl && singleSearchQuery.isFetching,
     searchFilters,
     searchGroups,
     searchDiscourseTags,

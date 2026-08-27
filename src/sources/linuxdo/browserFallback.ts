@@ -1,9 +1,4 @@
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
-import {
-  isGoogleSiteSearchNavigationUrl,
-  isGoogleSiteSearchUrl,
-  isSameGoogleSiteSearchUrl
-} from '@/sources/searchFallback';
 import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { cancelRequestTimeoutForFallback, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
 import {
@@ -78,24 +73,16 @@ export function isLinuxDoRequestUrl(input: string) {
   }
 }
 
-export function isLinuxDoGoogleSearchUrl(input: string) {
-  return isGoogleSiteSearchUrl(input, 'linux.do');
-}
-
 export function isLinuxDoBrowserFetchUrl(input: string) {
-  return isLinuxDoRequestUrl(input) || isLinuxDoGoogleSearchUrl(input);
+  return isLinuxDoRequestUrl(input);
 }
 
 export function isLinuxDoBrowserNavigationUrl(input: string, initialRequestUrl: string) {
-  return isLinuxDoRequestUrl(initialRequestUrl)
-    ? isLinuxDoRequestUrl(input)
-    : isGoogleSiteSearchNavigationUrl(input, 'linux.do', initialRequestUrl);
+  return isLinuxDoRequestUrl(initialRequestUrl) && isLinuxDoRequestUrl(input);
 }
 
 export function isLinuxDoBrowserResultUrl(input: string, initialRequestUrl: string) {
-  return isLinuxDoRequestUrl(initialRequestUrl)
-    ? isLinuxDoRequestUrl(input)
-    : isSameGoogleSiteSearchUrl(input, 'linux.do', initialRequestUrl);
+  return isLinuxDoRequestUrl(initialRequestUrl) && isLinuxDoRequestUrl(input);
 }
 
 async function fetchLinuxDoThroughWebView(
@@ -269,12 +256,6 @@ export function createLinuxDoWebViewFallbackFetcher({
     if (hasLinuxDoConnectSessionRecoveryIntent(init) && url === LINUXDO_CONNECT_URL && method === 'GET') {
       if (!allowWebViewFallback(url)) {
         throw new LinuxDoHiddenBrowserFailureError('renderer', 'linux.do 页面读取当前不可用');
-      }
-      return fetchLinuxDoWebViewOnly(webViewFetcher, url, init);
-    }
-    if (isLinuxDoGoogleSearchUrl(url)) {
-      if (method !== 'GET') {
-        return defaultFetcher(input, init);
       }
       return fetchLinuxDoWebViewOnly(webViewFetcher, url, init);
     }

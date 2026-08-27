@@ -35,7 +35,7 @@ export function authNoticeForSource(
     const label = sourceCatalog[source].label;
     const accountLabel = source === 'nodeseek' || source === 'linuxdo' ? `${label} ` : label;
     if (surface === 'search' && forumReadOperationIsPublic(source, 'search')) {
-      const searchMode = source === 'linuxdo' || source === 'nodeseek' ? 'Google 匿名搜索' : '匿名搜索';
+      const searchMode = source === 'linuxdo' || source === 'nodeseek' ? 'Google 搜索页面' : '匿名搜索';
       return notice(
         'identity-unavailable',
         `${accountLabel}账号状态暂不可确认，本次使用 ${searchMode}；可在账号中心重试核对。`,
@@ -64,7 +64,7 @@ export function authNoticeForSource(
     if (session.status === 'verified') {
       return notice(
         'verified',
-        surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '已通过访问验证，登录后可使用完整能力。',
+        surface === 'search' ? '未登录搜索将在 Google 页面打开。' : '已通过访问验证，登录后可使用完整能力。',
         'neutral'
       );
     }
@@ -74,15 +74,13 @@ export function authNoticeForSource(
     if (session.status === 'expired') {
       return notice(
         'login-expired',
-        surface === 'search'
-          ? 'NodeSeek 登录已失效；未登录搜索使用 Google，结果可能不完整。'
-          : 'NodeSeek 登录已失效，请重新登录。',
+        surface === 'search' ? 'NodeSeek 登录已失效；搜索将在 Google 页面打开。' : 'NodeSeek 登录已失效，请重新登录。',
         'danger'
       );
     }
     return notice(
       'login-required',
-      surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '请先在“更多”里登录并检测 NodeSeek Cookie。',
+      surface === 'search' ? '未登录搜索将在 Google 页面打开。' : '请先在“更多”里登录并检测 NodeSeek Cookie。',
       'warning'
     );
   }
@@ -104,7 +102,7 @@ export function authNoticeForSource(
   if (session.status === 'verified') {
     return notice(
       'verified',
-      surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '已通过访问验证，登录后可互动。',
+      surface === 'search' ? '未登录搜索将在 Google 页面打开。' : '已通过访问验证，登录后可互动。',
       'neutral'
     );
   }
@@ -116,7 +114,7 @@ export function authNoticeForSource(
   }
   return notice(
     'anonymous',
-    surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '匿名可阅读，登录后才能互动。',
+    surface === 'search' ? '未登录搜索将在 Google 页面打开。' : '匿名可阅读，登录后才能互动。',
     'neutral'
   );
 }

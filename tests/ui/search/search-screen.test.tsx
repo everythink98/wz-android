@@ -583,12 +583,7 @@ describe('Search state', () => {
     await waitFor(() =>
       expect(view.getByTestId('search-source-linuxdo').props.accessibilityState).toMatchObject({ selected: true })
     );
-    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
-    await fireEvent.press(view.getByLabelText('选择标签'));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 350));
-    });
-
+    expect(view.queryByLabelText('打开搜索筛选，当前默认')).toBeNull();
     expect(searchTagOptions).not.toHaveBeenCalled();
   });
 
@@ -795,6 +790,39 @@ describe('Search state', () => {
 
     expect(view.getByTestId('search-all-sources-settled')).toBeTruthy();
     expect(view.getByLabelText('搜索结果，已完成，有可打开结果').props.accessibilityState.busy).toBe(false);
+  });
+
+  it('[REG-SEARCH-028] renders external search as an action and hides anonymous source filters', async () => {
+    const onOpenExternalSearch = jest.fn<(url: string) => void>();
+    const url = 'https://www.google.com/search?q=site%3Alinux.do+codex';
+    const externalProps = {
+      externalSearchSources: ['linuxdo'],
+      onOpenExternalSearch
+    } as unknown as Partial<React.ComponentProps<typeof SearchScreen>>;
+    const view = await renderSearchScreen({
+      ...externalProps,
+      expectedSearchSources: ['linuxdo'],
+      searchSource: 'linuxdo',
+      searchGroups: [
+        {
+          source: 'linuxdo',
+          label: 'linux.do',
+          items: [],
+          externalSearchUrl: url,
+          settled: true
+        }
+      ]
+    });
+
+    expect(view.getByTestId('search-complete')).toBeTruthy();
+    expect(view.getByLabelText('搜索结果，已完成，有可打开入口')).toBeTruthy();
+    expect(view.queryByLabelText(/打开搜索筛选/)).toBeNull();
+    expect(view.queryByText('linux.do 没有匹配结果')).toBeNull();
+    expect(view.getByText('打开主题后，可从浏览器菜单选择“在阅坛中打开当前主题”')).toBeTruthy();
+    expect(view.getByText('再次去 Google 搜索')).toBeTruthy();
+
+    await fireEvent.press(view.getByTestId('search-external-linuxdo'));
+    expect(onOpenExternalSearch).toHaveBeenCalledWith(url);
   });
 
   it('shows fixed all-source previews and opens the selected source list', async () => {

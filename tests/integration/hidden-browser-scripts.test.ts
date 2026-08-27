@@ -264,49 +264,6 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
-  it('returns Google search result pages when they contain NodeSeek topic links', () => {
-    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
-      '/search?q=site%3Anodeseek.com+codex',
-      `
-      <main>
-        <a href="https://www.nodeseek.com/post-861593-1">claude code 好用 还是 codex 好用</a>
-      </main>
-    `
-    );
-
-    expect(postMessage).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
-    expect(payload).toMatchObject({
-      type: 'nodeseek-browser-fetch',
-      id: 7,
-      challenge: false
-    });
-    expect(payload.url).toContain('/search?q=site%3Anodeseek.com+codex');
-    expect(payload.html).toContain('post-861593-1');
-    expect(stop).toHaveBeenCalled();
-  });
-
-  it('returns Google search result pages when they contain linux.do topic links', () => {
-    const { postMessage } = runLinuxDoBrowserFetchScript(
-      '/search?q=site%3Alinux.do+codex',
-      `
-      <main>
-        <a href="/url?url=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1424130&amp;sa=U">Codex CLI 讨论</a>
-      </main>
-    `
-    );
-
-    expect(postMessage).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
-    expect(payload).toMatchObject({
-      type: 'linuxdo-browser-fetch',
-      id: 9,
-      challenge: false
-    });
-    expect(payload.url).toContain('/search?q=site%3Alinux.do+codex');
-    expect(payload.body).toContain('linux.do%2Ft%2Ftopic%2F1424130');
-  });
-
   it('returns raw NodeSeek JSON bodies for browser-fetched API pages', () => {
     const { postMessage, stop } = runNodeSeekBrowserFetchScript(
       '/session/csrf',

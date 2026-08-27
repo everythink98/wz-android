@@ -1,11 +1,5 @@
-import type { HTMLElement } from 'node-html-parser';
-
-import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import { fetchWithTimeout } from '@/platform/network/request';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 import type { DiscourseTagOption, DiscourseUserOption, SearchResponse, Topic } from '@/domain/forum/models';
-import { decodeHtml, elementText, isRecord, parseHtml, textExcerpt } from '@/domain/forum/html';
-import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from '@/sources/searchFallback';
+import { isRecord, textExcerpt } from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
   discourseOriginalPoster,
@@ -131,180 +125,6 @@ async function topicsFromLinuxDoSearchData(
   });
 }
 
-function linuxDoTopicIdFromUrl(value: string) {
-  try {
-    const url = new URL(value, BASE_URL);
-    const host = url.hostname.toLowerCase();
-    if (url.protocol !== 'https:' || (host !== 'linux.do' && !host.endsWith('.linux.do'))) {
-      return null;
-    }
-    return url.pathname.match(/^\/t\/(?:[^/]+\/)?(\d+)(?:\/|$)/i)?.[1] || null;
-  } catch {
-    return null;
-  }
-}
-
-function linuxDoGoogleResultTitle(value: string, target: string) {
-  const title = decodeHtml(value).replace(/\s+/g, ' ').trim();
-  if (!title || /^(?:https?:\/\/|www\.)/i.test(title) || /^linux\.do(?:\s*(?:›|>|»|\/)\s*\S+)*$/i.test(title)) {
-    return '';
-  }
-  try {
-    const targetUrl = new URL(target);
-    const pathSegments = targetUrl.pathname.split('/').filter(Boolean);
-    const topicIndex = pathSegments.findIndex((segment) => segment.toLowerCase() === 't');
-    const slug = topicIndex >= 0 ? decodeURIComponent(pathSegments[topicIndex + 1] || '') : '';
-    if (slug && title.toLowerCase() === slug.toLowerCase()) {
-      return '';
-    }
-  } catch {
-    return '';
-  }
-  return title;
-}
-
-function linuxDoGoogleTitleFromLink(link: HTMLElement, target: string) {
-  const heading = elementText(link.querySelector('h3, [role="heading"]'));
-  return (
-    linuxDoGoogleResultTitle(heading, target) ||
-    linuxDoGoogleResultTitle(String(link.getAttribute('aria-label') || ''), target)
-  );
-}
-
-function isExplicitEmptyGoogleSearchPage(root: ReturnType<typeof parseHtml>) {
-  return /(?:did not match any documents|no results found|找不到和(?:您的)?查询相符的内容|没有找到相关结果)/i.test(
-    elementText(root)
-  );
-}
-
-function parseLinuxDoGoogleSearchTopics(root: ReturnType<typeof parseHtml>) {
-  const candidates = new Map<string, { id: string; target: string; title: string; rowText: string }>();
-  const now = new Date().toISOString();
-  for (const link of root.querySelectorAll('a[href]')) {
-    const target = googleResultTargetUrl(link.getAttribute('href') || '');
-    const id = linuxDoTopicIdFromUrl(target);
-    if (!id) {
-      continue;
-    }
-    const title = linuxDoGoogleTitleFromLink(link, target);
-    const row = link.parentNode as { text?: string } | null;
-    const existing = candidates.get(id);
-    if (!existing) {
-      candidates.set(id, { id, target, title, rowText: String(row?.text || link.text || '') });
-    } else if (!existing.title && title) {
-      candidates.set(id, { ...existing, target, title, rowText: String(row?.text || link.text || '') });
-    }
-  }
-  const items: Topic[] = [...candidates.values()].flatMap(({ id, title, rowText }) =>
-    title
-      ? [
-          {
-            source: 'linuxdo',
-            id,
-            title,
-            author: '',
-            url: `${BASE_URL}/t/${id}`,
-            createdAt: now,
-            lastReplyAt: now,
-            replyCount: 0,
-            excerpt: textExcerpt(stripDiscourseCalloutMarkersFromExcerpt(rowText.replace(title, ' ')))
-          } satisfies Topic
-        ]
-      : []
-  );
-  return {
-    items,
-    candidateCount: candidates.size,
-    missingTitleCount: Math.max(0, candidates.size - items.length),
-    isExpectedEmpty: candidates.size === 0 && isExplicitEmptyGoogleSearchPage(root)
-  };
-}
-
-async function fetchLinuxDoGoogleSearchText(query: string, page: number, options: LinuxDoOptions = {}) {
-  const response = await fetchWithTimeout(
-    googleSiteSearchUrl('linux.do', query, page),
-    withBrowserFetchIntent(
-      {
-        headers: {
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
-          'User-Agent': DEFAULT_LINUXDO_ANDROID_USER_AGENT
-        }
-      },
-      options.browserFetchIntent || { owner: 'search', priority: 'foreground' }
-    ),
-    options
-  );
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return text;
-}
-
-async function searchLinuxDoGoogle(
-  query: string,
-  options: LinuxDoOptions & { limit?: number; page?: number } = {}
-): Promise<SearchResponse> {
-  const cleanQuery = query.trim();
-  const page = options.page || 1;
-  if (!cleanQuery) {
-    return annotateSourceDiagnosticSummary(
-      { items: [], errors: {}, hasMore: false, nextPage: null },
-      {
-        parserVariant: 'google-search',
-        candidateCount: 0,
-        validCount: 0,
-        droppedCount: 0,
-        isExpectedEmpty: true
-      }
-    );
-  }
-  const html = await fetchLinuxDoGoogleSearchText(cleanQuery, page, options);
-  const root = parseHtml(html);
-  const nextPage = hasGoogleSiteSearchNextPage(root, 'linux.do', page + 1) ? page + 1 : null;
-  const parsed = parseLinuxDoGoogleSearchTopics(root);
-  const items = parsed.items.slice(0, options.limit || 30);
-  const parseError =
-    parsed.candidateCount > 0 && parsed.items.length === 0
-      ? 'Google 搜索结果缺少可确认的标题'
-      : parsed.candidateCount === 0 && !parsed.isExpectedEmpty
-        ? 'Google 搜索结果结构已变化'
-        : '';
-  const result = {
-    items,
-    errors: parseError
-      ? {
-          linuxdo: {
-            kind: 'ordinary' as const,
-            message: parseError,
-            reason: 'parse_empty',
-            retryable: true
-          }
-        }
-      : {},
-    hasMore: Boolean(nextPage),
-    nextPage
-  };
-  return annotateSourceDiagnosticSummary(result, {
-    parserVariant: 'google-search',
-    candidateCount: parsed.candidateCount,
-    validCount: parsed.items.length,
-    droppedCount: parsed.missingTitleCount,
-    missingTitleCount: parsed.missingTitleCount,
-    hasDegradation: parsed.missingTitleCount > 0,
-    isExpectedEmpty: parsed.isExpectedEmpty,
-    isParseEmpty: Boolean(parseError),
-    hasRepeatedCursor: nextPage === page
-  });
-}
-
-function linuxDoSearchSessionExpired(error: unknown) {
-  if (!isRecord(error)) return false;
-  return (
-    Number(error.status) === 401 || (isRecord(error.accessRequirement) && error.accessRequirement.type === 'login')
-  );
-}
-
 export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions = {}): Promise<SearchResponse> {
   options = linuxDoOptionsWithBrowserIntent(options, 'search', 'foreground');
   const limit = options.limit || 30;
@@ -312,7 +132,12 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   const cleanQuery = query.trim();
   const access = options.linuxDoAccess;
   if (!options.authenticated || access?.authenticated !== true) {
-    return searchLinuxDoGoogle(cleanQuery, options);
+    throw Object.assign(new Error('linux.do 匿名搜索由外部浏览器提供'), {
+      kind: 'login-required' as const,
+      loginRequired: true,
+      reason: 'login-required',
+      source: 'linuxdo' as const
+    });
   }
   const searchReferer = `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}`;
   const csrfToken = await linuxDoCsrfToken(options);
@@ -325,58 +150,51 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   let searchHasMore = false;
   let candidateCount = 0;
   let droppedCount = 0;
-  try {
-    while (collected.length < needed) {
-      const data = await fetchLinuxDoJson<Record<string, unknown>>(
-        '/search',
-        {
-          q: cleanQuery,
-          page: searchPage
-        },
-        options,
-        { referer: searchReferer, csrfToken }
-      );
-      const result = await topicsFromLinuxDoSearchData(data, options);
-      const pageSummary = sourceDiagnosticSummary(result);
-      candidateCount += pageSummary?.candidateCount || result.items.length;
-      droppedCount += pageSummary?.droppedCount || 0;
-      if (!result.items.length) {
-        searchHasMore = result.hasMore;
-        if (result.hasMore && (pageSummary?.candidateCount || 0) > 0) {
-          searchPage += 1;
-          continue;
-        }
-        break;
-      }
-      collected.push(...result.items);
+  while (collected.length < needed) {
+    const data = await fetchLinuxDoJson<Record<string, unknown>>(
+      '/search',
+      {
+        q: cleanQuery,
+        page: searchPage
+      },
+      options,
+      { referer: searchReferer, csrfToken }
+    );
+    const result = await topicsFromLinuxDoSearchData(data, options);
+    const pageSummary = sourceDiagnosticSummary(result);
+    candidateCount += pageSummary?.candidateCount || result.items.length;
+    droppedCount += pageSummary?.droppedCount || 0;
+    if (!result.items.length) {
       searchHasMore = result.hasMore;
-      if (!result.hasMore) {
-        break;
+      if (result.hasMore && (pageSummary?.candidateCount || 0) > 0) {
+        searchPage += 1;
+        continue;
       }
-      searchPage += 1;
+      break;
     }
-    const items = collected.slice(firstOffset, firstOffset + limit);
-    const hasMore = collected.length > firstOffset + limit || searchHasMore;
-    const result = {
-      items,
-      errors: {},
-      hasMore,
-      nextPage: hasMore ? page + 1 : null
-    };
-    return annotateSourceDiagnosticSummary(result, {
-      parserVariant: 'discourse-search',
-      candidateCount,
-      validCount: items.length,
-      droppedCount,
-      isExpectedEmpty: candidateCount === 0,
-      hasRepeatedCursor: result.nextPage === page
-    });
-  } catch (error) {
-    if (linuxDoSearchSessionExpired(error)) {
-      return searchLinuxDoGoogle(cleanQuery, options);
+    collected.push(...result.items);
+    searchHasMore = result.hasMore;
+    if (!result.hasMore) {
+      break;
     }
-    throw error;
+    searchPage += 1;
   }
+  const items = collected.slice(firstOffset, firstOffset + limit);
+  const hasMore = collected.length > firstOffset + limit || searchHasMore;
+  const result = {
+    items,
+    errors: {},
+    hasMore,
+    nextPage: hasMore ? page + 1 : null
+  };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'discourse-search',
+    candidateCount,
+    validCount: items.length,
+    droppedCount,
+    isExpectedEmpty: candidateCount === 0,
+    hasRepeatedCursor: result.nextPage === page
+  });
 }
 
 export async function searchLinuxDoSemantic(query: string, options: LinuxDoOptions = {}): Promise<SearchResponse> {

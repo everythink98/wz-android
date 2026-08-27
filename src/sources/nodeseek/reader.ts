@@ -8,7 +8,6 @@ import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
-import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from '@/sources/searchFallback';
 import type { NodeSeekSearchFilter } from '@/domain/forum/searchFilters';
 import type {
   Category,
@@ -19,7 +18,6 @@ import type {
   ReplyOrder,
   ReplyWindowPosition,
   SearchResponse,
-  Topic,
   TopicPoll,
   UserProfile,
   UserReference
@@ -236,32 +234,6 @@ async function fetchNodeSeekTextResult(
     throw new Error(`HTTP ${response.status}`);
   }
   return { pageDocument, response, responseUrl: response.url, text };
-}
-
-function hasLoggedInNodeSeekCookie(options: NodeSeekOptions) {
-  return options.authenticated === true;
-}
-
-async function fetchNodeSeekGoogleSearchDocument(query: string, page: number, options: NodeSeekOptions = {}) {
-  const requestOptions = { ...options, timeoutMs: options.timeoutMs ?? NODESEEK_READ_TIMEOUT_MS };
-  const response = await fetchWithTimeout(
-    googleSiteSearchUrl('nodeseek.com', query, page),
-    withBrowserFetchIntent(
-      {
-        headers: {
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
-          'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
-        }
-      },
-      requestOptions.browserFetchIntent || { owner: 'search', priority: 'foreground' }
-    ),
-    requestOptions
-  );
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return parseNodeSeekPageDocument(text);
 }
 
 async function fetchNodeSeekJson(
@@ -1189,36 +1161,27 @@ export async function searchNodeSeek(
       }
     );
   }
-
-  let items: Topic[] = [];
-  let nextPage: number | null = null;
-  let candidateCount = 0;
-  let parserVariant = 'rendered-search';
-  let sourceResponse: Response | undefined;
-  const useGoogleSearch = !hasLoggedInNodeSeekCookie(requestOptions);
-  let document;
-  if (useGoogleSearch) {
-    document = await fetchNodeSeekGoogleSearchDocument(trimmedQuery, page, requestOptions);
-  } else {
-    const result = await fetchNodeSeekTextResult(searchPath(trimmedQuery, page, requestOptions.filter), requestOptions);
-    document = result.pageDocument ?? parseNodeSeekPageDocument(result.text);
-    sourceResponse = result.response;
+  if (requestOptions.authenticated !== true) {
+    throw Object.assign(new Error('NodeSeek 匿名搜索由外部浏览器提供'), {
+      kind: 'login-required' as const,
+      loginRequired: true,
+      reason: 'login-required',
+      source: 'nodeseek' as const
+    });
   }
-  const isGoogleSearch = useGoogleSearch || isGoogleSiteSearchResponse(document.root, 'nodeseek.com');
-  parserVariant = isGoogleSearch ? 'google-search' : 'rendered-search';
+
+  const sourceResult = await fetchNodeSeekTextResult(
+    searchPath(trimmedQuery, page, requestOptions.filter),
+    requestOptions
+  );
+  const document = sourceResult.pageDocument ?? parseNodeSeekPageDocument(sourceResult.text);
   const parsedSearch = parseNodeSeekSearchTopics(document);
-  candidateCount = parsedSearch.candidateCount;
-  items = parsedSearch.items;
+  const candidateCount = parsedSearch.candidateCount;
+  const items = parsedSearch.items;
   if (isIncompleteNodeSeekSearchPage(document, items)) {
     throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
   }
-  nextPage = isGoogleSearch
-    ? hasGoogleSiteSearchNextPage(document.root, 'nodeseek.com', page + 1)
-      ? page + 1
-      : null
-    : nextSearchPath(document, page + 1)
-      ? page + 1
-      : null;
+  const nextPage = nextSearchPath(document, page + 1) ? page + 1 : null;
 
   const result = {
     items: items.slice(0, limit),
@@ -1227,15 +1190,13 @@ export async function searchNodeSeek(
     nextPage
   };
   const parsed = annotateSourceDiagnosticSummary(result, {
-    parserVariant,
+    parserVariant: 'rendered-search',
     candidateCount,
     validCount: result.items.length,
     droppedCount: Math.max(0, candidateCount - result.items.length),
     isExpectedEmpty: candidateCount === 0,
     hasRepeatedCursor: nextPage === page
   });
-  if (sourceResponse) {
-    acceptForumReadResponse(sourceResponse);
-  }
+  acceptForumReadResponse(sourceResult.response);
   return parsed;
 }

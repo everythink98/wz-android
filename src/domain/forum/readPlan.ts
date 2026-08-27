@@ -56,6 +56,13 @@ function blocked(reason: Extract<ForumReadPlan, { state: 'blocked' }>['reason'])
   return { state: 'blocked', reason, cacheScope: `blocked:${reason}` };
 }
 
+function publicTransport(
+  source: Source,
+  operation: ForumReadOperation
+): Extract<ForumReadPlan, { state: 'ready' }>['transport'] {
+  return operation === 'search' && (source === 'linuxdo' || source === 'nodeseek') ? 'none' : 'native-no-cookie';
+}
+
 export function resolveForumReadPlan(
   source: Source,
   operation: ForumReadOperation,
@@ -72,7 +79,7 @@ export function resolveForumReadPlan(
       ? {
           state: 'ready',
           lane: 'public',
-          transport: 'native-no-cookie',
+          transport: publicTransport(source, operation),
           cacheScope: 'public:omit'
         }
       : blocked('capability-unavailable');
@@ -90,7 +97,7 @@ export function resolveForumReadPlan(
     return {
       state: 'ready',
       lane: 'public',
-      transport: 'native-no-cookie',
+      transport: publicTransport(source, operation),
       cacheScope: 'public:omit'
     };
   }

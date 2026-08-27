@@ -46,6 +46,7 @@ describe('Android package registration owner', () => {
 
   it.each([
     ['withApkInstaller.js', 'ApkInstallerPackage'],
+    ['withForumSearchCustomTab.js', 'ForumSearchCustomTabPackage'],
     ['withSecureRandomModule.js', 'SecureRandomPackage'],
     ['withNotificationDigestModule.js', 'NotificationDigestPackage'],
     ['withNetworkProxyModule.js', 'NetworkProxyPackage'],
@@ -54,7 +55,9 @@ describe('Android package registration owner', () => {
   ])('%s delegates registration for %s', (pluginFile, packageClass) => {
     const plugin = readFileSync(path.join(rootDir, 'plugins', pluginFile), 'utf8');
 
-    expect(plugin).toContain(`injectMainApplicationPackage(config.modResults.contents, '${packageClass}')`);
+    expect(plugin).toMatch(
+      new RegExp(`injectMainApplicationPackage\\(\\s*config\\.modResults\\.contents,\\s*'${packageClass}'\\s*\\)`)
+    );
     expect(plugin).not.toContain(`add(${packageClass}())`);
   });
 });

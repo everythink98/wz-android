@@ -367,30 +367,6 @@ describe('diagnostic traces', () => {
     );
   });
 
-  it('[REG-SEARCH-023] keeps only structural Google navigation facts', () => {
-    const events = captureEvents();
-    const trace = beginDiagnosticTrace('search', 'browser-fetch', { source: 'linuxdo' });
-
-    finishDiagnosticTrace(trace, 'blocked', {
-      source: 'linuxdo',
-      reason: 'unsupported',
-      navigationClass: 'unknown-google',
-      navigationHost: 'www.google.com',
-      navigationPath: '/httpservice/retry/enablejs',
-      navigationParamKeys: 'next,sei'
-    });
-
-    expect(events().at(-1)).toEqual(
-      expect.objectContaining({
-        navigationClass: 'unknown-google',
-        navigationHost: 'www.google.com',
-        navigationPath: '/httpservice/retry/enablejs',
-        navigationParamKeys: 'next,sei'
-      })
-    );
-    expect(JSON.stringify(events())).not.toContain('https://');
-  });
-
   it.each(['html-topic', 'html-topic-fallback', 'api-topic-fallback'])(
     'keeps the allowlisted parser variant %s',
     (parserVariant) => {
@@ -650,9 +626,6 @@ describe('diagnostic traces', () => {
     expect(normalizeDiagnosticReason(new Error('request timeout'))).toBe('timeout');
     expect(normalizeDiagnosticReason(new Error('HTTP 403 forbidden'))).toBe('permission_denied');
     expect(normalizeDiagnosticReason(new Error('HTTP status 500'))).toBe('http_error');
-    expect(normalizeDiagnosticReason(new Error('Google 搜索环境验证暂时未通过，请稍后重试'))).toBe(
-      'verification_required'
-    );
     expect(normalizeDiagnosticReason(new SyntaxError('Unexpected token in JSON'))).toBe('invalid_response');
     expect(normalizeDiagnosticReason(new TypeError('Network request failed'))).toBe('network_error');
     expect(

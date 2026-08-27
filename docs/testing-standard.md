@@ -127,7 +127,7 @@ $env:WZ_ANDROID_TEST_APK = 'C:\path\to\current.apk'
 npm run test:device:logged-out
 ```
 
-该设备必须与 `WZ_ANDROID_TEST_DEVICE` / `WZ_ANDROID_SMOKE_DEVICE` 不同，不得从主 AVD 克隆用户数据，也不得登录三个论坛；使用与当前 revision、version/versionCode 和 SHA-256 匹配的同一 APK。脚本先独立验证三站 Account Query 的未登录终态（NodeSeek 显示“未登录”或仅访客“已验证”，妖火显示“未登录”，linux.do 显示“匿名可用”），再各提交一次聚合 Search 和聚合 Feed；这个脚本顺序只验证 Account 自身，不是公开业务读取的产品门禁，没有确认身份的公开来源仍应按 ReadPlan 结算；每个来源接受公开数据、合法空态、来源错误、Google/CF 阻碍或妖火登录限制等当前请求专属 outcome，但永久 Loading、旧 marker、错误无恢复入口或错误身份仍失败。NodeSeek 的两种允许文案都必须保持 `isLoggedIn=false` 并走 Google fallback；“已登录”、unknown 或 expired 均不能通过。Google gate 的精确 origin、参数和 initial-task 仍由 Vitest 与 RNTL 固定；各站当天能否返回数据由 Agent Live 分别报告。遇到 Cloudflare 时允许在 App 内原站 WebView 完成访客验证而不登录论坛，并自然保留 clearance；不得绕过 Google CAPTCHA、`/sorry` 或 unusual-traffic，也不得自动重试。runner 不卸载、不清数据、不清 Cookie，也不触碰主设备。
+该设备必须与 `WZ_ANDROID_TEST_DEVICE` / `WZ_ANDROID_SMOKE_DEVICE` 不同，不得从主 AVD 克隆用户数据，也不得登录三个论坛；使用与当前 revision、version/versionCode 和 SHA-256 匹配的同一 APK。脚本先验证三站 Account Query 的权威未登录终态，再各提交一次聚合 Search 和聚合 Feed。未登录 Search 的稳定 oracle 是 linux.do/NodeSeek 各出现一个 `search-external-*` settled action、零自动浏览器弹窗；Replay 不读取动态 Google 结果，也不依赖 Chrome 首次启动状态。NodeSeek “未登录”与仅访客“已验证”都必须保持 `isLoggedIn=false` 并走外部 Google 页面，不能调用 ReadGateway 搜索。Agent Live 才分别打开 L/NS 单站，核对 exact `site:` 查询、Custom Tab 浏览、菜单“在阅坛中打开当前主题”回到原生主题，以及 Back 返回后关键词和入口保留；普通浏览器 fallback 必须提示只能浏览。Chrome 首启条款、账号或隐私确认阻断时不得代替用户接受，记录 `BLOCKED_BY_ENV` 并停止发布。runner 不卸载、不清数据、不清 Cookie，也不触碰主设备。
 
 发布脚本分别校验正式 APK 与开发签名 smoke APK 后运行：
 
@@ -229,22 +229,22 @@ npm run typecheck
 - 标题、来源、链接、作者、时间任一关键字段缺失。
 - 搜索结果能显示但打不开详情。
 - NodeSeek 搜索只剩少量静态首屏结果，或验证通过后没有重试。
-- NodeSeek 未登录时跳到 Google 搜索页但 App 直接判读取失败。
+- 未登录 L/NS 没有展示外部入口、提交后不是 exact `site:` Google 页面、误调用 gateway/解析 Google HTML，或 Custom Tab 菜单把非主题/非受信 URL 导入 App。
 
 固定操作：
 
 1. 点底部 `搜索`，确保回到搜索页顶部。
 2. 手动输入关键词后点击 App 内提交按钮；清空输入后点击最近搜索词必须立即发起同一关键词请求，不得要求再次提交。
-3. 在 `全部` 按用户顺序检查当前已启用来源的预览和“查看全部”，再分别检查这些来源的连续单站列表；若本轮验收覆盖内容源启停，先记录原设置并在结束时恢复。
-4. 每个来源记录结果数、首条标题、错误文案和是否可继续加载；`全部` 每站最多显示 2 条且不得出现分页入口。
-5. tracked Replay 只提交一次聚合搜索，等待由 `aggregateSearchSources` 全部结算后挂在既有列表上的 `search-all-sources-settled`，并在清空关键词后检查来源和筛选 UI；不得为自动化向布局插入空节点，也不打开动态首条。Agent Live 才逐来源记录 `data/empty/partial/error/auth` 并尝试打开有真实结果的来源，再返回搜索页确认关键词、来源和筛选仍保留；没有结果或外部阻碍只影响该来源的数据轴。
-6. 打开搜索筛选，确认筛选项存在；非必要不改变筛选。
-7. 若点到 `linux.do 老帖` 的外部搜索入口，记录为外部跳转检查，不作为登录 / 验证检查。
+3. 在 `全部` 按用户顺序检查当前已启用来源：原生来源显示预览，public L/NS 各显示一个外部入口且不自动打开；再分别检查 authenticated 来源的连续单站列表。若本轮验收覆盖内容源启停，先记录原设置并在结束时恢复。
+4. 对原生来源记录结果数、首条标题、错误文案和分页；对 public L/NS 记录 exact Google URL、入口 settled 状态和是否未出现伪空结果。“全部”的外部入口不提供分页或“查看全部”。
+5. tracked Replay 只提交一次聚合搜索，等待 `search-all-sources-settled`，并断言 `search-external-linuxdo` 与 `search-external-nodeseek`；不得打开动态 Google 页面、首条结果或向布局插入自动化空节点。Agent Live 才逐来源打开有前置条件的真实结果或外部入口，再返回 Search 确认关键词、来源和适用筛选仍保留。
+6. authenticated 原生来源打开筛选并确认既有条件；public L/NS 必须没有筛选入口，不得把站内条件带到 Google。
+7. public L/NS 单站提交后核对 Custom Tab；打开一个受支持主题，再从浏览器菜单选择“在阅坛中打开当前主题”。菜单若不能在冷、热启动任一场景回到正确原生主题，停止发布且不恢复 Google HTML parser。
 
 NodeSeek 单源搜索有两种通过状态：
 
 - 已登录：站内搜索结果正常显示，结果可打开详情；模拟器基准要标注为“已登录”。
-- 未登录 / 仅验证：允许读取 `google.com/search` 中限定 `nodeseek.com` 的结果，结果仍必须显示为 NodeSeek 来源，并可打开详情；不能为了制造该状态清除 App 数据，自动化测试必须覆盖这个路径。
+- 未登录 / 仅验证：单站提交打开限定 `nodeseek.com` 的 Google 页面，返回后保留关键词和再次打开入口；App 不读取或解析 Google 结果。用户在 Custom Tab 打开受支持主题后可通过固定菜单回到原生详情；不能为了制造该状态清除 App 数据。
 
 当前可对照的模拟器结果见 `docs/emulator-baseline.md`。
 

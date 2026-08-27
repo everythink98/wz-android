@@ -71,7 +71,7 @@ describe('site session prompts', () => {
 
     expect(authNoticeForSource('nodeseek', sessions, 'search')).toEqual({
       kind: 'identity-unavailable',
-      message: 'NodeSeek 账号状态暂不可确认，本次使用 Google 匿名搜索；可在账号中心重试核对。',
+      message: 'NodeSeek 账号状态暂不可确认，本次使用 Google 搜索页面；可在账号中心重试核对。',
       tone: 'warning'
     });
     expect(authNoticeForSource('nodeseek', sessions, 'read')).toEqual({
@@ -91,13 +91,13 @@ describe('site session prompts', () => {
     });
   });
 
-  it('[REG-ACCOUNT-019] explains the NodeSeek Google fallback without showing a logged-in notice', () => {
+  it('[REG-ACCOUNT-019][REG-SEARCH-028] explains the external NodeSeek search without showing a logged-in notice', () => {
     const sessions = createSiteSessionViewModels(createSiteSessionStates());
     const prompt = authNoticeForSource('nodeseek', sessions, 'search');
 
     expect(prompt).toEqual({
       kind: 'login-required',
-      message: '未登录搜索使用 Google，结果可能不完整。',
+      message: '未登录搜索将在 Google 页面打开。',
       tone: 'warning'
     });
   });
@@ -133,7 +133,7 @@ describe('site session prompts', () => {
     expect(nodeSeekAccount).toMatchObject({ isLoggedIn: false, statusLabel: '已失效' });
     expect(searchNotice).toEqual({
       kind: 'login-expired',
-      message: 'NodeSeek 登录已失效；未登录搜索使用 Google，结果可能不完整。',
+      message: 'NodeSeek 登录已失效；搜索将在 Google 页面打开。',
       tone: 'danger'
     });
     expect(sessions.nodeseek.canWrite).toBe(false);
@@ -166,12 +166,12 @@ describe('site session prompts', () => {
 
     expect(authNoticeForSource('nodeseek', sessions, 'search')).toEqual({
       kind: 'verified',
-      message: '未登录搜索使用 Google，结果可能不完整。',
+      message: '未登录搜索将在 Google 页面打开。',
       tone: 'neutral'
     });
     expect(authNoticeForSource('linuxdo', sessions, 'search')).toEqual({
       kind: 'anonymous',
-      message: '未登录搜索使用 Google，结果可能不完整。',
+      message: '未登录搜索将在 Google 页面打开。',
       tone: 'neutral'
     });
     expect(authNoticeForSource('yaohuo', sessions, 'search')).toEqual({

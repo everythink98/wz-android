@@ -19,7 +19,7 @@ vi.mock('expo-secure-store', () => ({
 
 vi.mock('react-native', () => ({ NativeModules: {} }));
 
-import { html, json, routeFetcher } from './fixtures';
+import { json, routeFetcher } from './fixtures';
 
 function testLinuxDoAccess() {
   return { authenticated: true, userAgent: 'LinuxDo WebView UA' };
@@ -1489,238 +1489,30 @@ describe('Android local sources', () => {
     });
   });
 
-  it('[REG-SEARCH-021] uses Google for anonymous and newly expired linux.do searches', async () => {
-    let expiredResponse = new Response('', { status: 401 });
-    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
-      const url = new URL(input);
-      if (url.hostname === 'linux.do') return expiredResponse.clone();
-      expect(url.hostname).toBe('www.google.com');
-      expect(url.pathname).toBe('/search');
-      expect(url.searchParams.get('q')).toBe('site:linux.do codex');
-      expect(JSON.stringify(init?.headers || {})).not.toContain('Cookie');
-      return html(`
-          <html>
-            <head><title>site:linux.do codex - Google Search</title></head>
-            <body>
-            <a href="https://linux.do/t/topic/1424130"><span>https://linux.do</span><h3>Codex CLI 讨论</h3></a>
-            <a href="/url?q=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1577485&amp;sa=U"><h3>Codex 镜像讨论</h3></a>
-            <a href="/url?url=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1577486&amp;sa=U"><h3>Codex 另一条讨论</h3></a>
-            <a href="https://linux.do/about">linux.do about</a>
-            <a href="https://example.com/t/topic/999">外站结果</a>
-          </body>
-        </html>
-      `);
+  it('[REG-SEARCH-028] refuses anonymous linux.do adapter search and never falls back after expiry', async () => {
+    const anonymousFetcher = vi.fn();
+
+    await expect(searchTopics({ source: 'linuxdo', query: 'codex', fetcher: anonymousFetcher })).rejects.toMatchObject({
+      kind: 'login-required',
+      source: 'linuxdo'
     });
+    expect(anonymousFetcher).not.toHaveBeenCalled();
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'codex', fetcher });
-
-    expect(search.items.map((item) => item.id)).toEqual(['1424130', '1577485', '1577486']);
-    expect(search.items[0]).toMatchObject({
-      source: 'linuxdo',
-      title: 'Codex CLI 讨论',
-      url: 'https://linux.do/t/1424130'
-    });
-    expect(fetcher.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain('https://linux.do/search');
-
-    const loggedInSearch = () =>
+    const expiredFetcher = routeFetcher([
+      ['linux.do/session/csrf.json', json({ csrf: 'csrf-token' })],
+      ['linux.do/search?', new Response('', { status: 401 })]
+    ]);
+    await expect(
       searchTopics({
         source: 'linuxdo',
         query: 'codex',
-        fetcher,
+        fetcher: expiredFetcher,
         discourseAuth: testLinuxDoDiscourseAuth(),
         linuxDoAuthenticated: true
-      });
-    expect((await loggedInSearch()).items.map((item) => item.id)).toEqual(['1424130', '1577485', '1577486']);
-    expiredResponse = html('<main>You need to log in to search.</main>');
-    expect((await loggedInSearch()).items.map((item) => item.id)).toEqual(['1424130', '1577485', '1577486']);
+      })
+    ).rejects.toThrow();
+    expect(expiredFetcher.mock.calls.every(([input]) => new URL(String(input)).hostname === 'linux.do')).toBe(true);
   });
-
-  it('[REG-SEARCH-022] rejects linux.do Google candidates whose only text is a URL or breadcrumb', async () => {
-    const fetcher = vi.fn(async () =>
-      html(`
-        <html>
-          <head><title>site:linux.do codex - Google Search</title></head>
-          <body>
-            <a href="https://linux.do/t/topic/1424130"><span>https://linux.do/t/topic/1424130</span></a>
-            <a href="https://linux.do/t/topic/1577485"><span>linux.do › t › topic › 1577485</span></a>
-          </body>
-        </html>
-      `)
-    );
-
-    const search = await searchTopics({ source: 'linuxdo', query: 'codex', fetcher });
-
-    expect(search.items).toEqual([]);
-    expect(search.errors.linuxdo).toMatchObject({
-      message: 'Google 搜索结果缺少可确认的标题',
-      reason: 'parse_empty'
-    });
-    expect(sourceDiagnosticSummary(search)).toMatchObject({
-      candidateCount: 2,
-      validCount: 0,
-      missingTitleCount: 2,
-      isExpectedEmpty: false,
-      isParseEmpty: true
-    });
-  });
-
-  it('[REG-SEARCH-022] keeps valid linux.do Google titles and counts missing titles before dropping them', async () => {
-    const fetcher = vi.fn(async () =>
-      html(`
-        <html>
-          <head><title>site:linux.do codex - Google Search</title></head>
-          <body>
-            <a href="https://linux.do/t/topic/1424130"><span>linux.do</span><h3>Codex CLI 讨论</h3></a>
-            <a href="https://linux.do/t/topic/1424130"><span>重复链接不能重复计数</span></a>
-            <a href="https://linux.do/t/topic/1577485"><span>linux.do › t › topic › 1577485</span></a>
-            <a aria-label="Codex 可访问标题" href="https://linux.do/t/topic/1577486">
-              <span>https://linux.do/t/topic/1577486</span>
-            </a>
-          </body>
-        </html>
-      `)
-    );
-
-    const search = await searchTopics({ source: 'linuxdo', query: 'codex', fetcher });
-
-    expect(search.items.map((item) => [item.id, item.title])).toEqual([
-      ['1424130', 'Codex CLI 讨论'],
-      ['1577486', 'Codex 可访问标题']
-    ]);
-    expect(sourceDiagnosticSummary(search)).toMatchObject({
-      candidateCount: 3,
-      validCount: 2,
-      droppedCount: 1,
-      missingTitleCount: 1,
-      isExpectedEmpty: false,
-      isParseEmpty: false
-    });
-  });
-
-  it('[REG-SEARCH-022] distinguishes an explicit empty Google page from unsupported markup', async () => {
-    const explicitEmpty = vi.fn(async () =>
-      html(`
-        <html>
-          <head><title>site:linux.do no-match - Google Search</title></head>
-          <body><p>找不到和您的查询相符的内容</p></body>
-        </html>
-      `)
-    );
-    const empty = await searchTopics({ source: 'linuxdo', query: 'no-match', fetcher: explicitEmpty });
-
-    expect(empty.items).toEqual([]);
-    expect(sourceDiagnosticSummary(empty)).toMatchObject({ isExpectedEmpty: true, isParseEmpty: false });
-
-    const unsupported = vi.fn(async () =>
-      html(`
-        <html>
-          <head><title>site:linux.do codex - Google Search</title></head>
-          <body><main>Google result markup changed</main></body>
-        </html>
-      `)
-    );
-    const changed = await searchTopics({ source: 'linuxdo', query: 'codex', fetcher: unsupported });
-    expect(changed.items).toEqual([]);
-    expect(changed.errors.linuxdo).toMatchObject({
-      message: 'Google 搜索结果结构已变化',
-      reason: 'parse_empty'
-    });
-    expect(sourceDiagnosticSummary(changed)).toMatchObject({ isExpectedEmpty: false, isParseEmpty: true });
-  });
-
-  it('[REG-LINUXDO-005] ignores supplied login access until the account session is confirmed', async () => {
-    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
-      const url = new URL(input);
-      expect(url.hostname).toBe('www.google.com');
-      expect(JSON.stringify(init?.headers || {})).not.toContain('Cookie');
-      return html(`
-        <html>
-          <head><title>site:linux.do codex - Google Search</title></head>
-          <body><a href="https://linux.do/t/topic/1424130"><h3>Anonymous result</h3></a></body>
-        </html>
-      `);
-    });
-
-    const search = await searchTopics({
-      source: 'linuxdo',
-      query: 'codex',
-      fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
-      linuxDoAuthenticated: false
-    });
-
-    expect(search.items.map((item) => item.id)).toEqual(['1424130']);
-    expect(fetcher.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain('https://linux.do/search');
-  });
-
-  it('loads more anonymous linux.do Google search pages by Google start offset', async () => {
-    const fetcher = routeFetcher([
-      [
-        'start=10',
-        html(`
-          <html>
-            <head><title>site:linux.do codex - Google Search</title></head>
-            <body>
-              <a href="https://linux.do/t/topic/1577485"><h3>linux.do second page codex</h3></a>
-              <a rel="next" href="/search?q=site%3Alinux.do+codex&start=20">Next</a>
-            </body>
-          </html>
-        `)
-      ],
-      [
-        'start=20',
-        html(`
-          <html>
-            <head><title>site:linux.do codex - Google Search</title></head>
-            <body>
-              <a href="https://linux.do/t/topic/1577486"><h3>linux.do third page codex</h3></a>
-            </body>
-          </html>
-        `)
-      ],
-      [
-        'www.google.com',
-        html(`
-          <html>
-            <head><title>site:linux.do codex - Google Search</title></head>
-            <body>
-              <a href="https://linux.do/t/topic/1424130"><h3>linux.do first page codex</h3></a>
-              <a rel="next" href="/search?q=site%3Alinux.do+codex&start=10">Next</a>
-            </body>
-          </html>
-        `)
-      ]
-    ]);
-
-    const first = await searchTopics({ source: 'linuxdo', query: 'codex', limit: 1, fetcher });
-    const second = await searchTopics({
-      source: 'linuxdo',
-      query: 'codex',
-      page: first.nextPage ?? 2,
-      limit: 1,
-      fetcher
-    });
-    const third = await searchTopics({
-      source: 'linuxdo',
-      query: 'codex',
-      page: second.nextPage ?? 3,
-      limit: 1,
-      fetcher
-    });
-
-    expect(first.items.map((item) => item.id)).toEqual(['1424130']);
-    expect(first.nextPage).toBe(2);
-    expect(second.items.map((item) => item.id)).toEqual(['1577485']);
-    expect(second.nextPage).toBe(3);
-    expect(third.items.map((item) => item.id)).toEqual(['1577486']);
-    expect(third.hasMore).toBe(false);
-    expect(fetcher.mock.calls.map((call) => new URL(String(call[0])).searchParams.get('start'))).toEqual([
-      null,
-      '10',
-      '20'
-    ]);
-  });
-
   it('keeps empty linux.do search responses empty instead of falling back to latest topics', async () => {
     const fetcher = routeFetcher([
       ['linux.do/session/csrf.json', json({ csrf: 'csrf-token' })],

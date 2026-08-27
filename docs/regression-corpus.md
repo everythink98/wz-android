@@ -277,7 +277,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 最低可靠自动测试层 | `UNIT_PASS` 直接覆盖真实 `searchTopics → searchLinuxDo → topicsFromLinuxDoSearchData` 链路；只测 `TopicCard` fallback、源码字符串或详情页作者都不能证明搜索字段已正确转换。 |
 | Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 只证明 linux.do 当前搜索请求能结算；Agent Live 只有在真实结果明确命中首帖时才核对作者、头像、详情和返回，否则按 `REG-SEARCH-013` 显示未知作者。 |
 | 负向验证方式 | 临时移除明确首帖的作者 fallback，`REG-SEARCH-003` 必须精确失败，随后还原。 |
-| 明确不覆盖范围 | 未登录 Google fallback 的结果本来不含可靠作者字段，本条不新增抓取或逐帖补全；不改变 Feed、Topic 或 User 页作者解析。 |
+| 明确不覆盖范围 | 未登录 public lane 已由 `REG-SEARCH-028` 改为外部 Google 页面，不产生 App 内作者字段；本条不新增抓取或逐帖补全，也不改变 Feed、Topic 或 User 页作者解析。 |
 
 ## `REG-SEARCH-013` Discourse 回复命中被丢弃或冒充楼主
 
@@ -298,6 +298,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 
 | 字段 | 内容 |
 | --- | --- |
+| 状态 | 历史契约；Google Hidden WebView connector 已由 `REG-SEARCH-028` 删除并取代，不再作为现行实现或回归 oracle。 |
 | 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04` |
 | 用户症状 | 真实未登录设备上，NodeSeek 或 linux.do 搜索很快提示“页面跳转到外部地址，已停止读取”；同一关键词在 Android Chrome 可正常显示结果。 |
 | 触发条件 | Google 对 Android WebView 搜索先返回 HTTP 200 的 JavaScript capability bootstrap，并在同一 Google origin 导航到 `/httpservice/retry/enablejs?sei=...`；响应没有 403/429、CAPTCHA 或 unusual-traffic 证据。 |
@@ -313,6 +314,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 
 | 字段 | 内容 |
 | --- | --- |
+| 状态 | 历史契约；SearchGuard 分类随 Google HTML connector 一并由 `REG-SEARCH-028` 删除，不再作为现行实现或回归 oracle。 |
 | 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04` |
 | 用户症状 | NodeSeek 未登录搜索提示跳到外部链接；原地“重试”仍显示外部链接，切换来源后再回来却成功，看起来像只有切站才真正重发。 |
 | 触发条件 | 两次失败都建立了新的 hidden WebView transport；Google 对同一 Android WebView UA 返回 HTTP 200 SearchGuard bootstrap，先给出 exact `/httpservice/retry/enablejs?sei=...`，随后给出同一 `q/start` 且仅增加 `sca_esv`、`emsg=SG_REL`、`sei` 的访问故障 URL。第三次新请求在 Google 环境状态就绪后返回普通结果。 |
@@ -403,6 +405,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 
 | 字段 | 内容 |
 | --- | --- |
+| 状态 | 历史契约；adapter 内隐式 Google 降级已由 `REG-SEARCH-028` 删除。会话切到 public scope 后只展示显式外部入口。 |
 | 能力 ID | `SEARCH-01`、`SEARCH-04` |
 | 用户症状 | 聚合搜索只有 linux.do 长时间停留在“搜索中”；重新登录后同一页面才完成。请求开始时 App 仍把旧会话投影为已登录，因此没有采用原本已有的匿名 Google 搜索。 |
 | 触发条件 | linux.do 身份在请求开始前已确认登录，但 Cookie 随后失效；`/search` 返回 HTTP 401，或响应正文明确表示需要登录（包括重定向后的 200 登录页）。 |
@@ -418,6 +421,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 
 | 字段 | 内容 |
 | --- | --- |
+| 状态 | Google DOM/标题解析契约已由 `REG-SEARCH-028` 删除；`searchRead` 拒绝空白标题与 TopicCard 不制造标题的通用边界继续有效。 |
 | 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04` |
 | 用户症状 | L站未登录 Google 搜索出现“无标题”卡片；页面结构变化时还可能被误报为合法空结果。 |
 | 触发条件 | Google 返回可映射到 linux.do Topic 的站内候选，但链接只有 URL、面包屑、slug、摘要或没有可确认标题；旧解析器在标题过滤后才计数，TopicCard 又用“无标题”掩盖空值。 |
@@ -433,16 +437,32 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 
 | 字段 | 内容 |
 | --- | --- |
+| 状态 | 历史契约；Google Hidden WebView 会话/gate allowlist 已由 `REG-SEARCH-028` 删除并取代。 |
 | 能力 ID | `SEARCH-04`；共享 `SEARCH-01`、`SEARCH-02` 的未登录 Google fallback |
 | 用户症状 | L站匿名搜索被 Google 导航到同一个 `/search?q=...&sei=...` 后，App 错误拦截并显示“linux.do 页面跳转到外部地址”或“Google 搜索流程已变化”；真正的验证、登录、consent 与未知流程也缺少准确原因。 |
 | 触发条件 | Google 在保持 site 查询和页码不变时附加单个 `sei` 会话参数；旧判断把最终 URL 必须严格落在初始 `q/start` 参数集合当作任务身份。其他受控 Google host/path 的拒绝又全部落入来源外链文案。 |
-| 根因 seam | `src/sources/searchFallback.ts` 把 Google 生成的惰性会话参数与 site/query/page 任务身份混为一谈，且 `src/features/account/HiddenBrowserHost.tsx` 没有对其余拒绝原因做局部分类。 |
+| 根因 seam | 当时的 searchFallback 模块把 Google 生成的惰性会话参数与 site/query/page 任务身份混为一谈，且 `src/features/account/HiddenBrowserHost.tsx` 没有对其余拒绝原因做局部分类；该模块现已由 `REG-SEARCH-028` 删除。 |
 | 必须保持的行为 | Google 搜索任务身份由 HTTPS `www.google.com`、`/search`、site 查询和 `start` 页码共同确定。只允许身份完全不变的初始 URL，或只额外携带一个格式受限且不可重复的 `sei`；该语义同时用于 linux.do/NodeSeek 导航与结果 URL 识别。精确 JS capability gate继续允许。查询/页码变化、额外参数、redirect、`/sorry`/CAPTCHA、consent、login、未知 Google 路径和跨站继续拒绝，并显示准确原因。诊断仅记录受限 host、path、参数键名和分类，不记录参数值、完整 URL 或 Cookie。 |
 | 精确失败 oracle | `tests/integration/security-boundaries.test.ts` 的 `REG-SEARCH-023` 固定同任务 `q/start + sei`、exact JS gate/`SG_REL`、重复或非法 `sei`、额外参数、查询/页码篡改、跨站、sorry、consent、login 和未知路径；`tests/ui/account/hidden-browser-host.test.tsx` 固定两站同任务跳转可继续及 linux.do 拒绝文案；`src/platform/diagnostics/diagnostics.test.ts` 固定只保留结构字段。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`：URL fixture 与 RNTL 固定安全和文案边界；只有同 revision/APK 的未登录实际跳转才能支持新增良性 allowlist。 |
 | Replay 或真实验收路径 | 在匹配 revision/APK 的未登录 Search → linux.do 发起 Google 查询；自然出现 `www.google.com/search` 的 `q,sei` 形态时必须继续读取，并最终显示带真实标题的结果、明确空态或准确限制错误。只核对脱敏 host/path/参数键名，不提交原始 URL 或 HTML。 |
 | 负向验证方式 | 放宽任意 Google `/search`、接受 query/site/page 变化或 redirect 参数、允许 consent/login/sorry/CAPTCHA，或把未知 Google 流程恢复成 linux.do 外链，编号测试必须失败。 |
 | 明确不覆盖范围 | 不接受尚无设备实证的其他 Google 参数或路径，不自动登录、同意 consent、重试或绕过 CAPTCHA，不记录原始导航 URL。 |
+
+## `REG-SEARCH-028` 匿名 L/NS 搜索把 Google HTML 当成 App 数据协议
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-03`、`SEARCH-04`、`NAV-02`、`NAV-03`、`RELEASE-02` |
+| 用户症状 | 未登录模拟器提交 linux.do 或 NodeSeek 搜索后出现伪空结果、结构变化错误或永久 Loading；Google WebView 卡在 JS/SearchGuard 时重开仍可能复现。用户能在浏览器看到结果，却不能可靠回到 App 原生主题。 |
+| 触发条件 | Google HTML、DOM、跳转参数或风控流程变化；旧 adapter/HiddenBrowserHost 仍把第三方页面解析成 Topic 列表，并在身份过期时暗中切换协议。 |
+| 根因 seam | App 把 Google 页面当成内部数据协议，同时试图在不拥有 `linux.do`、`nodeseek.com` 域名的情况下依赖普通结果点击自动拉起 App。搜索协议、浏览器导航与原生 Topic 接回的 owner 混在 adapter 和隐藏 WebView 中。 |
+| 必须保持的行为 | authenticated lane 继续使用两站原生搜索、筛选、分页和 linux.do AI；public lane 的 ReadPlan transport 为 `none`，Controller 不调用 `readGateway.searchTopics`，只用 trim 后原始关键词构造 exact `site:linux.do` / `site:nodeseek.com` Google URL。单站提交显式打开 Custom Tab并保留关键词；“全部”只按来源顺序展示两个 settled external action，不自动弹窗、不显示空结果，public L/NS 隐藏站内筛选。Custom Tab 菜单“在阅坛中打开当前主题”通过 explicit mutable `PendingIntent` 将当前 URL 交给 `MainActivity`；warm/cold Deep Link 只接受既有受支持主题/楼层 URL，拒绝 Google、首页、用户页和非受信域名。manifest 不声明第三方 HTTP(S) intent filter；provider 不可用时退回普通浏览器并提示只能浏览。会话 scope 变化不得泄漏旧结果或异步弹窗。 |
+| 精确失败 oracle | `tests/ui/search/search-controller-ai.test.tsx` 固定匿名 L/NS exact URL、gateway 零调用、聚合原生/外部混合、身份切换和零自动弹窗；`tests/ui/search/search-screen.test.tsx` 与 `src/features/search/listItems.test.ts` 固定筛选隐藏、settled action、关键词入口和非空态；`src/domain/forum/readPlan.test.ts`、`src/sources/readGatewayContract.test.ts` 及两站 adapter 测试固定 transport `none` 与误调零网络；`tests/integration/security-boundaries.test.ts` 固定 Search URL allowlist；`tests/ui/app/app-deep-link-navigation.test.tsx` 固定 warm/cold 主题/楼层与拒绝集；`tests/tooling/forum-search-custom-tab-plugin.test.ts` 和生成的 Kotlin unit 固定 explicit mutable handoff 与 native URL 校验。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`；clean prebuild 后还必须通过 Android native unit 与 Release Kotlin 编译。自动测试不伪造第三方当天结果，也不能替代真实 Custom Tab 菜单传回当前 URL。 |
+| Replay 或真实验收路径 | `tests/device-logged-out/logged-out-readonly.ad` 只断言两个外部入口与 catalog-complete settled，不打开 Chrome。匹配 APK 的未登录 AVD 分别提交 L/NS，核对 exact Google 页面、浏览、菜单回到原生主题及 Back 返回保留 Search；主登录 AVD确认两站仍走原生搜索。两个 AVD 只覆盖安装且 `firstInstallTime` 前后不变。Chrome 首启条款阻断时不代替用户接受，记 `BLOCKED_BY_ENV` 并停止发布。 |
+| 负向验证方式 | 恢复任一 Google DOM parser、`searchFallback`、Google Hidden WebView 分支、会话失效隐式降级、第三方 intent filter，或让 public L/NS 调 gateway/显示筛选/自动开两个 Tab，编号测试必须失败。让 Custom Tab 接回 Google、首页、用户页、其他域名，或去掉 explicit component/mutable flag，也必须由 URL、Deep Link 或 native plugin 测试失败。 |
+| 明确不覆盖范围 | 不新增搜索后端、API Key、第三方 App Links 声明或 npm 依赖；不保证普通 Google 结果点击自动拉起 App，不自动接受 Chrome 条款、Google 登录/consent/CAPTCHA，也不恢复任何 Google HTML 解析。 |
 
 ## `REG-LINUXDO-001` linux.do Cloudflare 429 被降级且大响应被截断
 
@@ -494,15 +514,15 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`SEARCH-01`、`SEARCH-02`、`SEARCH-03`、`SEARCH-04`、`WRITE-01`、`WRITE-03` |
-| 用户症状 | linux.do 原站已经显示“登录”，App 账号中心仍显示已登录；搜索继续调用登录接口并报限流，匿名 Google fallback 没有启用，写入口也可能继续按旧 Cookie 展示。 |
+| 用户症状 | linux.do 原站已经显示“登录”，App 账号中心仍显示已登录；搜索继续调用登录接口并报限流，匿名外部 Google 搜索入口没有启用，写入口也可能继续按旧 Cookie 展示。 |
 | 触发条件 | 服务端会话已失效，但本机仍保存 `_t`/`_forum_session`；账号刷新用匿名也可访问的 `/session/csrf` 判定登录，前台 WebView 只回传 Cookie、不回传明确登录标记。 |
 | 根因 seam | canonical `getCurrentUserProfile` 的服务端身份 oracle、`LINUXDO_WEBVIEW_PROBE_SCRIPT` 的页面登录探针，以及 `useVerificationController` 的 generation-safe 过期态提交。 |
-| 必须保持的行为 | 只有 `/session/current.json` 返回带用户名的当前用户才确认登录；官方 controller 的匿名 `404` 与显式匿名字段判定失效，非 CF 的 `401/403`、429、网络错误和 CF 保持 unknown。WebView 明确出现 Discourse 登录按钮时只提交 App 内 `login-expired`；模糊页面不得猜测。检测、刷新和写操作失败都不得删除原站 Cookie，只有用户明确点击“清除登录”才定向删除登录 Cookie并保留 clearance。搜索随后走既有匿名 fallback，写入口按 canonical session 关闭。 |
+| 必须保持的行为 | 只有 `/session/current.json` 返回带用户名的当前用户才确认登录；官方 controller 的匿名 `404` 与显式匿名字段判定失效，非 CF 的 `401/403`、429、网络错误和 CF 保持 unknown。WebView 明确出现 Discourse 登录按钮时只提交 App 内 `login-expired`；模糊页面不得猜测。检测、刷新和写操作失败都不得删除原站 Cookie，只有用户明确点击“清除登录”才定向删除登录 Cookie并保留 clearance。搜索随后切到 `REG-SEARCH-028` 的匿名外部入口，写入口按 canonical session 关闭。 |
 | 精确失败 oracle | `src/sources/feedRead.test.ts`、`src/sources/searchRead.test.ts`、`src/sources/sourceTopicRead.test.ts`、`src/sources/sourceUserRead.test.ts`、`src/sources/sourceAccountRead.test.ts` 固定显式匿名、官方匿名 404、登录用户、畸形成功响应与非契约 401/403/429；`tests/integration/source-read-contracts/` 固定可信 CF 与 Account-only hidden WebView fallback；`src/platform/network/loginWebViewScripts.test.ts` 固定 logged-in/logged-out/unknown 三态；`src/features/account/useVerificationController.test.ts` 固定明确退出只发布失效、不调用清理，且 unknown 不改变可信状态。修复前匿名响应得到 `ok:true`，后续版本又曾把正确或错误的退出判断升级为原站 Cookie 删除权限。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：请求契约、页面脚本和 controller 状态提交必须一起通过；仅检查 `_t`、CSRF、搜索错误文案或 App 启动都不能证明真实登录。 |
 | Replay 或真实验收路径 | 仅在当前设备自然处于失效态时验收：覆盖安装并冷启动；若服务端身份检查已有明确结论，账号中心直接显示失效，否则进入账号中心 → linux.do → 检测或重新登录，在 App 内原站明确显示登录按钮后点“检测状态”。随后账号中心应显示 linux.do 已失效，搜索不再进入登录专属路径。不得清 App 数据、Cookie 或重置模拟器制造状态；动态登录态不写入 Replay。 |
 | 负向验证方式 | 把账号探针恢复为 `/session/csrf`、删除 WebView `status` 上报/过期分支，或在 `logged-out` 分支调用原站 Cookie 清理；编号测试必须分别恢复假登录、漏掉失效或触发未经用户授权的删除。 |
-| 明确不覆盖范围 | 不自动重新登录，不输入或保存新凭据，不保证 Google 当天可达或有结果，也不以普通网络/限流/CF 错误推断退出。 |
+| 明确不覆盖范围 | 不自动重新登录，不输入或保存新凭据，不保证外部 Google 页面当天可达或有结果，也不以普通网络/限流/CF 错误推断退出。 |
 
 ## `REG-LINUXDO-005` 冷启动丢弃已确认终态并重新按 Cookie 猜登录
 
@@ -517,7 +537,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：启动状态、Account Query 合并、Search Controller、Query key 和真实来源 adapter 必须共同通过；只测 Cookie 解析、错误文案或单个搜索 fallback 不能证明整条状态链一致。 |
 | Replay 或真实验收路径 | 主设备保留数据覆盖安装，连续 process-cold launch 应直接恢复上次终态且零 Account probe；独立未登录 AVD 继续验证未登录 Search/Feed。不得清主设备 App 数据或 Cookie 制造状态。 |
 | 负向验证方式 | 删除持久终态恢复、让每次启动重 probe、把 Cookie 候选直接设 logged-in，或让 Search public/authenticated 共用 key/transport；对应测试必须失败。 |
-| 明确不覆盖范围 | 不把 429、网络、CF 或普通来源错误当成失效，不自动清理或重新登录，不保证匿名 Google 当天可达或返回结果。 |
+| 明确不覆盖范围 | 不把 429、网络、CF 或普通来源错误当成失效，不自动清理或重新登录，不保证匿名外部 Google 页面当天可达或返回结果。 |
 
 ## `REG-LINUXDO-006` 页面退出后的后台 Query 串扰验证与等级恢复
 
@@ -2028,7 +2048,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 必须保持的行为 | 三站 Credential、generation、Account Query 和验证协议继续按站隔离，但遵守同一证据边界：只有当前凭据端点返回当前用户，或站点专属可信账号容器给出明确 self-account 结构，才是 `logged-in`；只有该站协议明确约定的匿名字段、状态或准确游客结构才是 `logged-out`；其他 HTTP 状态、成功但缺字段、普通业务页、CF、超时、网络与解析不确定都是 `unknown`。Cookie、旧 ID、Topic 作者、公开资料和普通“我的/欢迎”文案不是登录证明；明确游客证据优先于同一响应残留 self 字段。NodeSeek 与 linux.do 手动 probe 使用当前文档私有 nonce/documentKey，新文档先作废旧结果；明确 `logged-out` 只更新 App 为失效，不删除原站 Cookie；三站 unknown 均不清理并保留上次可信身份。外部会话变化 reset 目标站 Account Query；查询自身确认失效则先提交 exact expired，再只 seed 该结果到新 scope，普通新 scope 不继承旧登录。其他两站 data/error/busy 不变。各站精确状态契约由 `REG-ACCOUNT-025/026` 固定。 |
 | 精确失败 oracle | `src/sources/feedRead.test.ts`、`src/sources/searchRead.test.ts`、`src/sources/sourceTopicRead.test.ts`、`src/sources/sourceUserRead.test.ts`、`src/sources/sourceAccountRead.test.ts`、`src/platform/network/loginWebViewScripts.test.ts` 与 `tests/ui/account/account-site-panels.test.tsx` 固定 NodeSeek 公开资料禁用、真实 `.html` 游客结构、明确游客优先级及两站 probe 文档所有权；`src/sources/yaohuo/reader.test.ts` 固定公开卡片/业务文案 unknown；`src/sources/feedRead.test.ts`、`src/sources/searchRead.test.ts`、`src/sources/sourceTopicRead.test.ts`、`src/sources/sourceUserRead.test.ts`、`src/sources/sourceAccountRead.test.ts` 固定 current user、显式匿名与畸形 200 分界； 固定只读检查不发布 workflow；`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts`、`tests/integration/query-session-contracts.test.ts` 固定 active disabled Query reset 与 exact expired 新 scope seed；`tests/ui/account/account-status-controller.test.tsx` 固定确认失效提交时序、普通新 scope 不继承旧登录、清理失败和三站 unknown 保留身份；`tests/integration/session-presentation-contracts.test.ts` 同时固定 More 非登录、Search 灯非绿色/Google 文案和 Topic 不可写。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Query observer reset、controller 异步结算和三个消费面的同一投影都必须被观察。 |
-| Replay 或真实验收路径 | 保留当前 App 数据，在 NodeSeek 自然掉线时于账号中心刷新；确认 More 未登录/失效、NodeSeek 搜索使用 Google 且灯非绿色、Topic 写入口关闭。另三站只读核对状态不变；不得清 App 数据、主动退出、撤销授权或用写操作制造场景。 |
+| Replay 或真实验收路径 | 保留当前 App 数据，在 NodeSeek 自然掉线时于账号中心刷新；确认 More 未登录/失效、NodeSeek 搜索显示外部 Google 入口且灯非绿色、Topic 写入口关闭。另三站只读核对状态不变；不得清 App 数据、主动退出、撤销授权或用写操作制造场景。 |
 | 负向验证方式 | 恢复公开资料/Topic/Cookie 兜底、把业务文案或畸形 200 当登录、漏掉各站精确匿名契约、让残留 self/Cookie 覆盖明确游客、跨文档接受旧 probe、用全局 previous data 保留旧身份、移除精确 reset/seed 或把 reset 扩到全部来源时，对应编号测试分别失败。 |
 | 明确不覆盖范围 | 不统一三站验证器，不增加第二套 session store，不后台自动刷新，不绕过 CF，也不人为撤销真实登录或授权。 |
 
@@ -2082,7 +2102,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `ACCOUNT-01`、`SEARCH-04`、`TOPIC-01`、`MORE-02`、`WRITE-01`、`WRITE-03` |
-| 用户症状 | NodeSeek 原站和 More 刚确认已登录，切到 Search 后却立即显示“未登录搜索使用 Google”且状态灯熄灭；Topic 写入口也可能随普通读取关闭。linux.do 隐藏读取和妖火 Cookie 恢复存在同类风险。 |
+| 用户症状 | NodeSeek 原站和 More 刚确认已登录，切到 Search 后却立即显示匿名外部 Google 搜索入口且状态灯熄灭；Topic 写入口也可能随普通读取关闭。linux.do 隐藏读取和妖火 Cookie 恢复存在同类风险。 |
 | 触发条件 | Feed、Search、Topic、categories、启动恢复或隐藏 WebView 为业务读取加载现有 Cookie/SecureStore；调用方没有执行当前账号验证，却把“没有身份结论”编码为 `cookie-loaded.loggedIn: false`。 |
 | 根因 seam | `src/features/account/useSessionController.ts` 的被动凭据生产者与 `src/domain/session/siteSessionState.ts` 的身份 reducer 共用一个布尔字段，缺失证明和明确登出没有分开；低可信 Cookie 事实因此覆盖高可信 current-user 结论。 |
 | 必须保持的行为 | 四站继续独立，但共享证据优先级：被动凭据观察省略 `loggedIn`，只更新 Cookie 摘要及匿名候选态；已确认的 `logged-in`、`expired`、`verification-required`、`verifying`、`authorizing`、current user 和最后确认时间保持不变。当前账号 API 或可信 self-account probe 明确返回 `true/false` 时仍可按站确认登录或退出；新凭据 `session-updated` 的 transition 语义不变，其他站状态不得受影响。 |
@@ -2300,7 +2320,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`SEARCH-01`、`SEARCH-02`、`SEARCH-03`、`SEARCH-04`、`WRITE-01`、`WRITE-03` |
-| 用户症状 | 全新隔离 AVD 没有论坛登录数据，NodeSeek 与妖火公开页面都能正常打开，但账号中心长期显示“登录状态待确认”；未登录 Replay 在进入搜索前即失败，NodeSeek 的 Google fallback 和妖火的登录限制均无法按权威匿名态分流。 |
+| 用户症状 | 全新隔离 AVD 没有论坛登录数据，NodeSeek 与妖火公开页面都能正常打开，但账号中心长期显示“登录状态待确认”；未登录 Replay 在进入搜索前即失败，NodeSeek 的外部 Google 入口和妖火的登录限制均无法按权威匿名态分流。 |
 | 触发条件 | NodeSeek direct SSR 先返回可读帖子列表但不含 hydration 后的登录/注册控件；即使正确进入隐藏 WebView，若只在 `onLoadEnd` 注入身份证据脚本，慢子资源会让外层 15 秒 transport 上限先到，脚本从未开始。脚本开始后若仍复用普通 ready 条件，也可能在 `.post-list-item` 出现时早于身份证据回传，而移动侧栏游客控件的挂载时机不稳定。妖火 `wapindex.aspx?sid=-2` 对游客返回普通公开内容；精确登录页虽有完整 form，却同时加载 Gocaptcha/ImageCaptcha 资源。 |
 | 根因 seam | 内容 transport 把“业务 DOM 已可读”“页面所有资源已结束”和“身份协议已结算”混成 ready 条件；NodeSeek 最初没有桥接渲染 runtime 的精确匿名值，后续虽能识别该值，Account script 仍被 `onLoadEnd` 阻塞。妖火最初没有在首页 unknown 后补读登录 form；补读后又让通用验证码特征覆盖了更强的完整登录 form 退出证据。 |
 | 必须保持的行为 | NodeSeek direct 响应已有 current user 或完整游客控件时保持单请求快路径；只有 Account direct 为 identity unknown 才 handoff 一次 WebView。queue 只向渲染层暴露非敏感 owner；仅 `account` script 在 document 建立后提前轮询，并保留 `onLoadEnd` fallback 与同 request 幂等 guard，普通 Feed/Topic/Search 不改变注入时机。身份脚本等待 current user/self-account、配置对象自有 `user === null` 或准确登录+注册控件；精确 null 立即桥接紧凑标记，`false`、缺字段、空对象、普通内容 ready、超时或半结构页仍为 unknown。妖火首页 `div.top2/touserid` 继续单请求确认登录；首页 unknown 才补读精确 `waplogin.aspx?siteid=1000`，只有准确 POST form 与两个字段齐全才确认退出，即使同页带验证码资源也不得改成 verification；缺字段、错 URL、HTTP/网络错误保持 unknown，独立验证码页仍为 verification。账号检测、普通读取和写错误分类共用这一 reason 规则。两站检测都不得清、写或复制 Cookie。 |
@@ -2426,7 +2446,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 触发条件 | 受管 `ReadGateway` 调用 `discourseRead`，后者进入 linux.do reader 后又自行加载 access。 |
 | 根因 seam | `src/sources/readGateway.ts` → `src/sources/discourseRead.ts` → `src/sources/linuxdo/reader.ts` 的认证上下文没有显式贯穿，导致 Gateway 与 adapter 同时拥有 credential read。 |
 | 必须保持的行为 | Gateway 是受管请求唯一的认证读取者；它加载的同一 `linuxDoAccess` 必须显式传到 Feed、Search、Topic、Replies、User、候选与语义搜索 adapter。adapter 不得隐式回读 SecureStore，也不得在缺失时猜测另一份身份。 |
-| 精确失败 oracle | `src/sources/discourseRead.test.ts` 的 `REG-SOURCE-004` 传入 gateway-owned access，要求 linux.do adapter 精确收到同一对象；`src/sources/readGatewayContract.test.ts` 固定受管调用边界；`src/sources/feedRead.test.ts`、`src/sources/searchRead.test.ts`、`src/sources/sourceTopicRead.test.ts`、`src/sources/sourceUserRead.test.ts`、`src/sources/sourceAccountRead.test.ts` 与 `tests/integration/source-read-contracts/` 的聚合/登录搜索、候选和语义搜索全部显式注入 access，并固定匿名请求不携带它。修复前 adapter 调用中该字段为 `undefined`，旧直调测试会因错误走 Google fallback 失败。 |
+| 精确失败 oracle | `src/sources/discourseRead.test.ts` 的 `REG-SOURCE-004` 传入 gateway-owned access，要求 linux.do adapter 精确收到同一对象；`src/sources/readGatewayContract.test.ts` 固定受管调用边界；`src/sources/feedRead.test.ts`、`src/sources/searchRead.test.ts`、`src/sources/sourceTopicRead.test.ts`、`src/sources/sourceUserRead.test.ts`、`src/sources/sourceAccountRead.test.ts` 与 `tests/integration/source-read-contracts/` 的聚合/登录搜索、候选和语义搜索全部显式注入 access，并固定匿名 adapter 零 transport。修复前 adapter 调用中该字段为 `undefined`，直调测试无法可靠证明 gateway-owned 身份。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：直接固定跨模块参数所有权；完整 Gateway/controller 回归负责消费者兼容。 |
 | Replay 或真实验收路径 | 保留自然 linux.do 登录态，只读执行 Feed、Search、Topic 和用户页；各入口身份与账号中心一致。不得输出 Cookie，也不得清登录制造对照。 |
 | 负向验证方式 | 删除 reader 的 `linuxDoAccess` 转发或恢复 linux.do adapter 内部 SecureStore 读取，编号测试必须因 adapter 缺少同一 access 失败。 |
@@ -2723,14 +2743,14 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`SEARCH-01`、`SEARCH-04`、`RELEASE-02` |
-| 用户症状 | 独立未登录 AVD 已正确识别 NodeSeek 游客并可走 Google 搜索，但保留访客 clearance 后账号中心显示“已验证”，Replay 仍等待唯一“未登录”文案并在搜索前失败。 |
+| 用户症状 | 独立未登录 AVD 已正确识别 NodeSeek 游客并应显示外部 Google 搜索入口，但保留访客 clearance 后账号中心显示“已验证”，Replay 仍等待唯一“未登录”文案并在搜索前失败。 |
 | 触发条件 | 设备没有 NodeSeek 账号会话，但曾完成访客 Cloudflare 验证；Account Query 因此产生 `status=verified`、`isLoggedIn=false`。 |
 | 根因 seam | 设备 oracle 把展示文案当成账号身份谓词，遗漏了现有状态模型中 `verified` 与 `logged-in` 的明确边界。 |
-| 必须保持的行为 | NodeSeek `anonymous` 与访客 `verified` 都是权威未登录终态，网站登录计数不增加、写入保持关闭、搜索走匿名 Google fallback；只有 `logged-in` 才能进入登录协议。Replay 只接受准确的“未登录”或“已验证”两种 NodeSeek 标签，不接受“已登录”、pending、unknown 或 expired。 |
+| 必须保持的行为 | NodeSeek `anonymous` 与访客 `verified` 都是权威未登录终态，网站登录计数不增加、写入保持关闭、搜索只显示 `REG-SEARCH-028` 的外部 Google 入口；只有 `logged-in` 才能进入登录协议。Replay 只接受准确的“未登录”或“已验证”两种 NodeSeek 标签，不接受“已登录”、pending、unknown 或 expired。 |
 | 精确失败 oracle | `tests/tooling/android-smoke-guard.test.ts` 要求 `logged-out-readonly.ad` 在首次启动与 relaunch 后都使用同一个两分支 selector；旧单文案脚本使该守卫先失败。真实 AVD 上该 selector 已对“NodeSeek，已验证，已选择”命中，同时账号中心显示“网站登录 0/3”。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定 tracked Replay 的身份语义；`DEVICE_REPLAY_PASS` 证明真实 Android Account Query、访客 Cookie 与未登录搜索流程一致，不证明 Google 当天返回数据。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 tracked Replay 的身份语义；`DEVICE_REPLAY_PASS` 证明真实 Android Account Query、访客 Cookie 与两个外部搜索入口一致；Google 动态结果只在 Agent Live 中观察。 |
 | Replay 或真实验收路径 | 保留隔离 AVD 的访客 Cookie，不登录 NodeSeek、不清数据，执行 `npm run test:device:logged-out`；NodeSeek 身份断言通过后提交一次聚合搜索并等待 catalog-complete 结算，relaunch 后重复同一身份断言。 |
-| 负向验证方式 | 把 selector 改回只接受“未登录”，有 clearance 的隔离 AVD 必须复现失败；把“已登录”加入允许分支或让搜索走登录协议，守卫或后续 Google 提示断言必须失败。 |
+| 负向验证方式 | 把 selector 改回只接受“未登录”，有 clearance 的隔离 AVD 必须复现失败；把“已登录”加入允许分支、让匿名搜索走登录协议或删除外部入口，守卫或后续入口断言必须失败。 |
 | 明确不覆盖范围 | 不把“已验证”改名为“未登录”，不删除访客 clearance，不放宽账号 parser，也不新增产品运行模式。 |
 
 ## `REG-TEST-005` 动态 linux.do 等级被误作固定 Replay oracle
@@ -5580,11 +5600,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 用户尚未输入关键词时就看到“账号状态未知/暂停搜索”；提交后一个站没有确认身份会让整页一直忙碌，公开来源结果也不出现。 |
 | 触发条件 | 未提交 Query 的 pending state、账号状态 chip 和已提交搜索共用一个页面 busy 模型；聚合搜索按全局 identity barrier 启停，而不是逐来源 ReadPlan。 |
 | 根因 seam | `src/features/search/useSearchController.ts` 的提交快照/逐来源 `useQueries`、`SearchScreen` 的 idle/blocked presentation 和 `forumQueryKeys.search` 的 ReadPlan scope。 |
-| 必须保持的行为 | 首次进入和清空关键词后不显示账号 unknown、核对中或暂停搜索提示，提交按钮仅由真实已提交请求控制。提交时只捕获当前 enabled 来源及用户顺序，每站按 ReadPlan 渐进结算；没有确认身份的公开 lane 继续运行，strict blocked 形成有界来源终态和“重试核对/登录”动作且零搜索 transport，不能阻断 sibling 或 `search-all-sources-settled`。AI、tags/users candidates 等 authenticated operation 保持关闭。身份随后 confirmed 时创建新的 authenticated scope/key，只由当前提交重新读取，旧 public 结果和迟到响应不得串用。 |
-| 精确失败 oracle | `tests/ui/search/search-screen.test.tsx` 固定 idle 首屏与来源级状态；`tests/ui/search/search-controller-ai.test.tsx` 固定 unknown public single/all、strict timeout 终态、核对重试、AI 仍 blocked 和 confirmed 后新 scope；`tests/integration/query-session-contracts.test.ts` 固定 public/authenticated search key 分离；`tests/integration/session-presentation-contracts.test.ts` 固定没有确认身份仍暴露公开 lane；`src/sources/readGatewayContract.test.ts` 固定 anonymous transport 与迟到 scope 拒绝。 |
+| 必须保持的行为 | 首次进入和清空关键词后不显示账号 unknown、核对中或暂停搜索提示，提交按钮仅由真实已提交请求控制。提交时只捕获当前 enabled 来源及用户顺序，每站按 ReadPlan 渐进结算；V2EX 等公开 transport 继续运行，public linux.do/NodeSeek 以 settled external action 结算且零 gateway transport，strict blocked 形成有界来源终态和“重试核对/登录”动作，均不能阻断 sibling 或 `search-all-sources-settled`。AI、tags/users candidates 等 authenticated operation 保持关闭。身份随后 confirmed 时创建新的 authenticated scope/key，只由当前提交重新读取；旧 public action/结果和迟到响应不得串用，也不得因身份变化自动打开浏览器。 |
+| 精确失败 oracle | `tests/ui/search/search-screen.test.tsx` 固定 idle 首屏、来源级状态和 external action；`tests/ui/search/search-controller-ai.test.tsx` 固定 unknown/public 单站与聚合入口、strict timeout 终态、核对重试、AI 仍 blocked、confirmed 后新 scope 且零异步弹窗；`tests/integration/query-session-contracts.test.ts` 固定 public/authenticated search key 分离；`tests/integration/session-presentation-contracts.test.ts` 固定没有确认身份仍暴露公开 lane；`src/sources/readGatewayContract.test.ts` 固定 public L/NS transport 为 `none` 与迟到 scope 拒绝。 |
 | 最低可靠自动测试层 | `UI_PASS + UNIT_PASS`：RNTL 必须从未提交到提交、逐站结算和身份切换完整观察；静态文案检查或单测 fallback parser 不能证明页面不会永久 busy。 |
-| Replay 或真实验收路径 | 打开 Search 首屏确认无暂停提示，提交同一关键词后观察所有已启用来源各自进入 data/empty/error/auth 等合法终态；账号自然核对期间公开来源继续，妖火单独提示登录/核对。Google/第三方受限可为来源错误，但不得永久 Loading。 |
-| 负向验证方式 | 把账号核对 activity 恢复为 idle 页提示、用任一 strict source 控制全局 `enabled/busy`、从 key 删除 plan scope、允许 AI 在 public lane 启动，或 blocked source 不计入 settled；对应 UI/contract 测试必须失败。 |
+| Replay 或真实验收路径 | 打开 Search 首屏确认无暂停提示，提交同一关键词后观察所有已启用来源分别进入 data/empty/error/auth/external 等合法终态；public L/NS 各显示一个外部入口而不自动弹窗，账号自然核对期间其他公开来源继续，妖火单独提示登录/核对。外部 Google 页面或其他第三方受限可单独记 `BLOCKED_BY_ENV`，但 App 不得永久 Loading。 |
+| 负向验证方式 | 把账号核对 activity 恢复为 idle 页提示、用任一 strict source 控制全局 `enabled/busy`、从 key 删除 plan scope、允许 AI 在 public lane 启动、让 public L/NS 调 gateway/自动弹窗，或让 blocked/external source 不计入 settled；对应 UI/contract 测试必须失败。 |
 | 明确不覆盖范围 | 不保证 Google、SoV2EX 或原站当天返回非空结果，不绕过 CAPTCHA/限流，也不把来源合法错误当成整页产品失败。 |
 
 ## `REG-SEARCH-025` 页面级账号状态重复来源级搜索结果

@@ -5,6 +5,7 @@ export type SearchGroup = {
   source: Source;
   label: string;
   items: Topic[];
+  externalSearchUrl?: string;
   error?: string;
   errorKind?: SourceErrorKind;
   authNotice?: AuthNotice;
@@ -27,6 +28,7 @@ export type RemoteSearchSourceResult =
 
 export type SearchListItem =
   | { type: 'groupHeader'; group: SearchGroup; meta: string }
+  | { type: 'externalSearch'; group: SearchGroup; url: string }
   | { type: 'groupAuthNotice'; group: SearchGroup }
   | { type: 'groupError'; group: SearchGroup }
   | { type: 'groupLoading'; group: SearchGroup }
@@ -65,6 +67,9 @@ export function searchGroupMeta(group: SearchGroup) {
       return group.errorKind === 'login-expired' ? '登录失效' : '需登录';
     }
     return '请求失败';
+  }
+  if (group.externalSearchUrl) {
+    return 'Google 搜索';
   }
   return `已载入 ${group.items.length} 条`;
 }
@@ -121,6 +126,10 @@ export function buildSearchListItems({
       continue;
     }
     if (group.settled === false) {
+      continue;
+    }
+    if (group.externalSearchUrl) {
+      items.push({ type: 'externalSearch', group, url: group.externalSearchUrl });
       continue;
     }
     const visibleTopics = mode === 'overview' ? group.items.slice(0, 2) : group.items;

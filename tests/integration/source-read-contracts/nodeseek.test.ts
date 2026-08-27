@@ -158,7 +158,7 @@ describe('Android local sources', () => {
       position: { kind: 'cursor', page: 2, offset: 0 },
       fetcher
     });
-    const search = await searchTopics({ source: 'nodeseek', query: 'NodeSeek', fetcher });
+    const search = await searchTopics({ source: 'nodeseek', query: 'NodeSeek', fetcher, nodeSeekAuthenticated: true });
 
     expect(feed.items[0]).toMatchObject({ source: 'nodeseek', id: '101', categoryId: 'tech' });
     expect(categories.items).toEqual([{ source: 'nodeseek', id: 'tech', name: '技术' }]);
@@ -3399,102 +3399,15 @@ describe('Android local sources', () => {
     expect(search.items.map((item) => item.id)).toEqual(['701', '702']);
   });
 
-  it('keeps NodeSeek search usable when anonymous search falls back to Google results', async () => {
-    const fetcher = vi.fn(async (input: string) => {
-      const url = new URL(input);
-      if (url.hostname === 'www.google.com' && url.searchParams.get('q') === 'site:nodeseek.com codex') {
-        return html(`
-          <html>
-            <head><title>site:nodeseek.com codex - Google Search</title></head>
-            <body>
-              <a href="https://www.nodeseek.com/post-861593-1"><span>https://www.nodeseek.com</span><h3>claude code 好用 还是 codex 好用 。我小白想试下水</h3></a>
-              <a href="/url?q=https%3A%2F%2Fwww.nodeseek.com%2Fpost-861594-1&amp;sa=U">Codex 镜像讨论</a>
-            </body>
-          </html>
-        `);
-      }
-      throw new Error(`unexpected ${input}`);
-    });
+  it('[REG-SEARCH-028] refuses anonymous NodeSeek adapter search without transport', async () => {
+    const fetcher = vi.fn();
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'codex', fetcher });
-
-    expect(search.items.map((item) => item.id)).toEqual(['861593', '861594']);
-    expect(search.items[0]).toMatchObject({
-      source: 'nodeseek',
-      title: 'claude code 好用 还是 codex 好用 。我小白想试下水',
-      url: 'https://www.nodeseek.com/post-861593-1'
+    await expect(searchTopics({ source: 'nodeseek', query: 'codex', fetcher })).rejects.toMatchObject({
+      kind: 'login-required',
+      source: 'nodeseek'
     });
-    expect(search.items[1]?.url).toBe('https://www.nodeseek.com/post-861594-1');
+    expect(fetcher).not.toHaveBeenCalled();
   });
-
-  it('loads more NodeSeek Google fallback search pages by Google start offset', async () => {
-    const fetcher = routeFetcher([
-      [
-        'start=10',
-        html(`
-          <html>
-            <head><title>site:nodeseek.com codex - Google Search</title></head>
-            <body>
-              <a href="https://www.nodeseek.com/post-861594-1">NodeSeek second page codex</a>
-              <a rel="next" href="/search?q=site%3Anodeseek.com+codex&start=20">Next</a>
-            </body>
-          </html>
-        `)
-      ],
-      [
-        'start=20',
-        html(`
-          <html>
-            <head><title>site:nodeseek.com codex - Google Search</title></head>
-            <body>
-              <a href="https://www.nodeseek.com/post-861595-1">NodeSeek third page codex</a>
-            </body>
-          </html>
-        `)
-      ],
-      [
-        'www.google.com',
-        html(`
-          <html>
-            <head><title>site:nodeseek.com codex - Google Search</title></head>
-            <body>
-              <a href="https://www.nodeseek.com/post-861593-1">NodeSeek first page codex</a>
-              <a rel="next" href="/search?q=site%3Anodeseek.com+codex&start=10">Next</a>
-            </body>
-          </html>
-        `)
-      ]
-    ]);
-
-    const first = await searchTopics({ source: 'nodeseek', query: 'codex', limit: 1, fetcher });
-    const second = await searchTopics({
-      source: 'nodeseek',
-      query: 'codex',
-      page: first.nextPage ?? 2,
-      limit: 1,
-      fetcher
-    });
-    const third = await searchTopics({
-      source: 'nodeseek',
-      query: 'codex',
-      page: second.nextPage ?? 3,
-      limit: 1,
-      fetcher
-    });
-
-    expect(first.items.map((item) => item.id)).toEqual(['861593']);
-    expect(first.nextPage).toBe(2);
-    expect(second.items.map((item) => item.id)).toEqual(['861594']);
-    expect(second.nextPage).toBe(3);
-    expect(third.items.map((item) => item.id)).toEqual(['861595']);
-    expect(third.hasMore).toBe(false);
-    const googleStarts = fetcher.mock.calls
-      .map((call) => new URL(String(call[0])))
-      .filter((url) => url.hostname === 'www.google.com')
-      .map((url) => url.searchParams.get('start'));
-    expect(googleStarts).toEqual([null, '10', '20']);
-  });
-
   it('keeps empty NodeSeek site search results empty instead of filtering the latest feed', async () => {
     const latestPayload = Buffer.from(
       JSON.stringify({

@@ -470,106 +470,34 @@ describe('source gateway read contract', () => {
     });
   });
 
-  it('[REG-SEARCH-024] uses only the explicit anonymous search lane while identity is pending', async () => {
-    const fallbackFetcher = vi.fn<Fetcher>(async () => new Response('fallback must stay unused'));
-    const anonymousFetcher = vi.fn<Fetcher>(async () => new Response('anonymous'));
-    const blockedSources = new Set<Source>(['linuxdo', 'nodeseek', 'yaohuo']);
-    const simulateSearchTransport = async (options: {
-      source: Source | 'all';
-      fetcher: Fetcher;
-      fetcherForSource?: (source: Source) => Fetcher;
-    }) => {
-      const input = 'https://www.google.com/search?q=site%3Alinux.do+pending';
-      const scopedFetcher = options.source === 'all' ? options.fetcherForSource?.('v2ex') : options.fetcher;
-      await scopedFetcher!(input, { credentials: 'include' });
-      return { items: [], errors: {}, hasMore: false, nextPage: null } satisfies SearchResponse;
-    };
-    for (let request = 0; request < 3; request += 1) {
-      forumMocks.searchTopics.mockImplementationOnce(simulateSearchTransport);
+  it('[REG-SEARCH-028] keeps anonymous forum search plans transportless', async () => {
+    const managedFetcher = vi.fn<Fetcher>();
+    const anonymousFetcher = vi.fn<Fetcher>();
+    for (let request = 0; request < 2; request += 1) {
+      forumMocks.searchTopics.mockImplementationOnce(async ({ fetcher, source }) => {
+        await fetcher(`https://example.test/${source}`);
+        return { items: [], errors: {}, hasMore: false, nextPage: null };
+      });
     }
     const gateway = createReadGateway({
       anonymousFetcher,
-      fetcher: fallbackFetcher,
-      isSourceAuthenticated: () => true,
-      isSourceReadBlocked: (source) => blockedSources.has(source),
-      linuxDoUserAgent: () => 'linux.do UA',
+      fetcher: managedFetcher,
+      readSessionRuntimeSnapshot: (source) => runtime(source, { identityTrust: 'none' }),
       nodeSeekUserAgent: () => 'NodeSeek UA'
     });
 
     for (const source of ['linuxdo', 'nodeseek'] as const) {
-      await expect(gateway.searchTopics({ source, query: 'pending public search' })).resolves.toMatchObject({
-        items: [],
-        errors: {}
+      expect(gateway.getReadPlan(source, 'search')).toMatchObject({
+        state: 'ready',
+        lane: 'public',
+        transport: 'none'
       });
+      await expect(gateway.searchTopics({ source, query: 'anonymous' })).rejects.toThrow('本地读取不得发起网络请求');
     }
 
-    expect(forumMocks.searchTopics).toHaveBeenCalledTimes(2);
-    expect(forumMocks.searchTopics).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        source: 'linuxdo',
-        discourseAuth: expect.objectContaining({ linuxdo: expect.objectContaining({ authenticated: false }) }),
-        linuxDoAuthenticated: false
-      })
-    );
-    expect(forumMocks.searchTopics).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ source: 'nodeseek', nodeSeekAuthenticated: false })
-    );
-    expect(fallbackFetcher).not.toHaveBeenCalled();
-    expect(anonymousFetcher).toHaveBeenCalledTimes(2);
-    for (const [, init] of anonymousFetcher.mock.calls) {
-      expect(init).toMatchObject({ credentials: 'omit' });
-    }
-
-    await expect(gateway.searchTopics({ source: 'yaohuo', query: 'still private' })).rejects.toThrow(
-      '登录状态暂时无法确认'
-    );
-    expect(forumMocks.searchTopics).toHaveBeenCalledTimes(2);
-
-    forumMocks.searchTopics.mockClear();
-    await gateway.searchTopics({ source: 'all', query: 'pending aggregate search' });
-    expect(forumMocks.searchTopics).toHaveBeenCalledTimes(1);
-    expect(forumMocks.searchTopics).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: 'all',
-        discourseAuth: expect.objectContaining({ linuxdo: expect.objectContaining({ authenticated: false }) }),
-        linuxDoAuthenticated: false,
-        nodeSeekAuthenticated: false,
-        unavailableSources: ['yaohuo']
-      })
-    );
-    expect(fallbackFetcher).not.toHaveBeenCalled();
-    expect(anonymousFetcher).toHaveBeenCalledTimes(3);
-    expect(anonymousFetcher.mock.calls[2]?.[1]).toMatchObject({ credentials: 'omit' });
+    expect(managedFetcher).not.toHaveBeenCalled();
+    expect(anonymousFetcher).not.toHaveBeenCalled();
   });
-
-  it('[REG-SEARCH-024] rejects a late anonymous result after the identity mode becomes confirmed', async () => {
-    const response = Promise.withResolvers<Response>();
-    const fallbackFetcher = vi.fn<Fetcher>(async () => new Response('fallback must stay unused'));
-    const anonymousFetcher = vi.fn<Fetcher>(async () => response.promise);
-    let blocked = true;
-    forumMocks.searchTopics.mockImplementationOnce(async (options: { fetcher: Fetcher }): Promise<SearchResponse> => {
-      await options.fetcher('https://www.google.com/search?q=site%3Alinux.do+pending');
-      return { items: [], errors: {}, hasMore: false, nextPage: null };
-    });
-    const gateway = createReadGateway({
-      anonymousFetcher,
-      fetcher: fallbackFetcher,
-      isSourceAuthenticated: () => true,
-      isSourceReadBlocked: () => blocked,
-      nodeSeekUserAgent: () => 'NodeSeek UA'
-    });
-
-    const read = gateway.searchTopics({ source: 'linuxdo', query: 'pending' });
-    await vi.waitFor(() => expect(anonymousFetcher).toHaveBeenCalledTimes(1));
-    blocked = false;
-    response.resolve(new Response('anonymous'));
-
-    await expect(read).rejects.toThrow('请求已取消');
-    expect(fallbackFetcher).not.toHaveBeenCalled();
-  });
-
   it('[REG-SOURCE-010] rejects disabled direct reads before credentials, user agent, adapter, or transport', async () => {
     const fetcher = vi.fn();
     const nodeSeekUserAgent = vi.fn(() => 'NodeSeek UA');

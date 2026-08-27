@@ -26,14 +26,12 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const restrictedNoticePattern = new RegExp(${JSON.stringify(ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE)}, "i");
   const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
-  const isNodeSeekSearchPage = () => !/(^|\\.)google\\./i.test(location.hostname || "") && /\\/search\\/?$/i.test(location.pathname || "");
+  const isNodeSeekSearchPage = () => /\\/search\\/?$/i.test(location.pathname || "");
   const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
     || /^\\s*[{[]/.test(pageText());
   const hasSearchPageContent = () => isNodeSeekSearchPage()
     && (Boolean(document.querySelector(".post-list-item"))
       || /没有找到|没有结果|暂无|未找到|no results|nothing found/i.test(pageText()));
-  const hasNodeSeekSearchResultLinks = () => /\\/search\\/?$/i.test(location.pathname || "")
-    && Array.from(document.querySelectorAll('a[href*="post-"]')).some((link) => /nodeseek\\.com|post-\\d+-\\d+/i.test(link.href || ""));
   const hasAccountEvidence = () => {
     const config = window.__config__ && typeof window.__config__ === "object"
       ? window.__config__
@@ -180,7 +178,6 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     || hasReadableContent()
     || hasRestrictedNotice()
     || hasSearchPageContent()
-    || hasNodeSeekSearchResultLinks()
   );
   const postBridgeMessage = (payload) => {
     const message = JSON.stringify(payload);
@@ -255,7 +252,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       postResult();
       return;
     }
-    if ((hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent() || hasNodeSeekSearchResultLinks()) && !hasPendingVotePanel()) {
+    if ((hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent()) && !hasPendingVotePanel()) {
       postResult();
       return;
     }
@@ -264,7 +261,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       return;
     }
     if (Date.now() >= deadline) {
-      if (!isChallengePage() && isNodeSeekSearchPage() && !hasSearchPageContent() && !hasNodeSeekSearchResultLinks()) {
+      if (!isChallengePage() && isNodeSeekSearchPage() && !hasSearchPageContent()) {
         postError('NodeSeek 搜索页结果没有加载完成，请重试');
         return;
       }
@@ -299,18 +296,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
     const text = pageText();
     return /^\\s*[{[]/.test(text) ? text : "";
   };
-  const isGoogleSearchPage = () => /\\/search\\/?$/i.test(location.pathname || "")
-    && (/(^|\\.)google\\./i.test(location.hostname || "") || /site(?::|%3A)linux\\.do/i.test(location.href || ""));
-  const hasLinuxDoSearchResultLinks = () => isGoogleSearchPage()
-    && Array.from(document.querySelectorAll('a[href]')).some((link) => {
-      const href = link.href || "";
-      try {
-        return /(^https?:\\/\\/([^/]+\\.)?linux\\.do\\/t\\/)|(^\\/t\\/)|linux\\.do\\/t\\//i.test(decodeURIComponent(href));
-      } catch {
-        return /linux\\.do\\/t\\//i.test(href);
-      }
-    });
-  const hasReadablePage = () => Boolean(jsonText() || hasLinuxDoSearchResultLinks());
+  const hasReadablePage = () => Boolean(jsonText());
   const postBridgeMessage = (payload) => {
     const message = JSON.stringify(payload);
     if (message.length <= bridgeMessageLimit) {

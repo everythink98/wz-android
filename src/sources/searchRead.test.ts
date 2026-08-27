@@ -33,7 +33,7 @@ describe('search read', () => {
       throw new Error('upstream down');
     });
 
-    const result = await searchTopics({ source: 'all', query: 'NodeSeek', fetcher });
+    const result = await searchTopics({ source: 'all', query: 'NodeSeek', fetcher, nodeSeekAuthenticated: true });
 
     expect(result.items[0]).toMatchObject({ source: 'nodeseek', id: '1' });
     expect(result.errors.linuxdo).toBeTruthy();
@@ -73,6 +73,13 @@ describe('search read', () => {
       query: 'NodeSeek',
       fetcher,
       nodeSeekAuthenticated: true,
+      discourseAuth: {
+        linuxdo: {
+          authenticated: true,
+          userAgent: 'LinuxDo WebView UA'
+        }
+      },
+      linuxDoAuthenticated: true,
       signal: controller.signal
     });
     await nodeSeekBodyRead.promise;
@@ -168,7 +175,8 @@ describe('search read', () => {
           userAgent: 'LinuxDo WebView UA'
         }
       },
-      linuxDoAuthenticated: true
+      linuxDoAuthenticated: true,
+      nodeSeekAuthenticated: true
     });
 
     expect(result.items.map((item) => item.source)).toEqual([
@@ -257,7 +265,8 @@ describe('search read', () => {
           userAgent: 'LinuxDo WebView UA'
         }
       },
-      linuxDoAuthenticated: true
+      linuxDoAuthenticated: true,
+      nodeSeekAuthenticated: true
     });
 
     expect(result.items.map((item) => item.source)).toEqual(['linuxdo', 'v2ex', 'nodeseek']);
@@ -271,7 +280,13 @@ describe('search read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const result = await searchTopics({ source: 'all', query: 'NodeSeek', fetcher, includedSources: ['nodeseek'] });
+    const result = await searchTopics({
+      source: 'all',
+      query: 'NodeSeek',
+      fetcher,
+      includedSources: ['nodeseek'],
+      nodeSeekAuthenticated: true
+    });
     expect(result.items.map((item) => item.source)).toEqual(['nodeseek']);
     expect(fetcher.mock.calls.map(([input]) => input)).toEqual(
       expect.arrayContaining([expect.stringContaining('nodeseek.com')])

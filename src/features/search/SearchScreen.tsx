@@ -170,11 +170,13 @@ export const SearchScreen = memo(function SearchScreen({
   searchFilters,
   searchGroups,
   expectedSearchSources,
+  externalSearchSources = [],
   linuxDoAiState,
   linuxDoAiVisible,
   searchSource,
   submittedQuery,
   scrollRef,
+  onOpenExternalSearch = () => undefined,
   onOpenTopic,
   onManageContentSources,
   onLoadMoreSearchSource,
@@ -200,11 +202,13 @@ export const SearchScreen = memo(function SearchScreen({
   searchFilters: SearchFilterState;
   searchGroups: SearchGroup[];
   expectedSearchSources: readonly Source[];
+  externalSearchSources?: readonly Source[];
   linuxDoAiState: LinuxDoAiSearchState;
   linuxDoAiVisible: boolean;
   searchSource: FeedSource;
   submittedQuery: string;
   scrollRef?: RefObject<FlashListRef<SearchListItem> | null>;
+  onOpenExternalSearch?: (url: string) => void;
   onOpenTopic: (topic: Topic) => void;
   onManageContentSources: () => void;
   onLoadMoreSearchSource: (source: Source, page: number) => void;
@@ -260,6 +264,8 @@ export const SearchScreen = memo(function SearchScreen({
   const allSourcesDisabled = expectedSearchSources.length === 0;
   const visibleSearchSource =
     searchSource === 'all' || expectedSearchSources.includes(searchSource) ? searchSource : 'all';
+  const externalSearchSelected =
+    visibleSearchSource !== 'all' && externalSearchSources.includes(visibleSearchSource as Source);
   const resetPaginationFeedback = useCallback(() => {
     autoLoadArmedRef.current = false;
     pendingAutoLoadRef.current = null;
@@ -411,8 +417,10 @@ export const SearchScreen = memo(function SearchScreen({
     ? '搜索结果，尚未启用内容源'
     : !searchGroupsSettled
       ? '搜索结果，等待来源结算'
-      : visibleSearchGroups.some((group) => group.items.length > 0)
-        ? '搜索结果，已完成，有可打开结果'
+      : visibleSearchGroups.some((group) => group.items.length > 0 || group.externalSearchUrl)
+        ? visibleSearchGroups.some((group) => group.externalSearchUrl)
+          ? '搜索结果，已完成，有可打开入口'
+          : '搜索结果，已完成，有可打开结果'
         : visibleSearchGroups.length > 0 && visibleSearchGroups.every((group) => !group.loading)
           ? '搜索结果，已完成，结构化回退'
           : '搜索结果，已完成，缺少结构化结果';
@@ -501,6 +509,22 @@ export const SearchScreen = memo(function SearchScreen({
           </Pressable>
         );
       }
+      if (item.type === 'externalSearch') {
+        return (
+          <View style={styles.searchFilterEntry}>
+            <View style={styles.searchFilterEntryIcon}>
+              <Search size={17} color={theme.primary} strokeWidth={1.9} />
+            </View>
+            <Text style={styles.searchFilterEntrySummary}>打开主题后，可从浏览器菜单选择“在阅坛中打开当前主题”</Text>
+            <AppButton
+              compact
+              label={visibleSearchSource === 'all' ? '去 Google 搜索' : '再次去 Google 搜索'}
+              testID={`search-external-${item.group.source}`}
+              onPress={() => onOpenExternalSearch(item.url)}
+            />
+          </View>
+        );
+      }
       if (item.type === 'groupError') {
         const paginationError = Boolean(item.group.nextPage);
         const retryPage = paginationError ? item.group.nextPage : null;
@@ -581,7 +605,17 @@ export const SearchScreen = memo(function SearchScreen({
       }
       return null;
     },
-    [busy, changeSearchSource, onLoadMoreSearchSource, onRetrySearchSource, renderTopicCard, styles, theme]
+    [
+      busy,
+      changeSearchSource,
+      onLoadMoreSearchSource,
+      onOpenExternalSearch,
+      onRetrySearchSource,
+      renderTopicCard,
+      styles,
+      theme,
+      visibleSearchSource
+    ]
   );
   const keySearchListItem = useCallback((item: SearchListItem) => {
     if (item.type === 'topic') {
@@ -621,7 +655,7 @@ export const SearchScreen = memo(function SearchScreen({
           testIDPrefix="search-source"
           onChange={changeSearchSource}
         />
-        {visibleSearchSource !== 'all' ? (
+        {visibleSearchSource !== 'all' && !externalSearchSelected ? (
           <SearchFilterSheet
             categories={categories}
             readPlanScopes={searchCandidateReadPlanScopes}
@@ -688,6 +722,7 @@ export const SearchScreen = memo(function SearchScreen({
       categories,
       changeSearchSource,
       enabledSearchSourceItems,
+      externalSearchSelected,
       expectedSearchSources,
       hasInputValue,
       hasSearchTerm,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Linking } from 'react-native';
-import { parseInternalTopicOpenLink } from '@/domain/forum/links';
+import { parseForumTopicDestination, parseInternalTopicOpenLink } from '@/domain/forum/links';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { pushTopicRoute } from './appNavigation';
 
@@ -11,7 +11,7 @@ export function useAppDeepLinkNavigation(
   const pendingDestinationRef = useRef<RootStackParamList['Topic'] | null>(null);
   const openUrl = useCallback(
     (url: string | null) => {
-      const destination = url ? parseInternalTopicOpenLink(url) : null;
+      const destination = url ? parseInternalTopicOpenLink(url) || parseForumTopicDestination(url) : null;
       if (!destination) return;
       if (!pushTopic(destination)) pendingDestinationRef.current = destination;
     },

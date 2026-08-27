@@ -27,6 +27,7 @@
     "plugins": [
       "./plugins/withAndroidReleaseDefaults",
       "./plugins/withApkInstaller",
+      "./plugins/withForumSearchCustomTab",
       "./plugins/withSecureRandomModule",
       "./plugins/withNotificationDigestModule",
       "./plugins/withNetworkProxyModule",
