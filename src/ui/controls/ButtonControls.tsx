@@ -149,6 +149,7 @@ export function IconButton({
   ghost = false,
   iconOnly = false,
   icon,
+  iconSize,
   label,
   tiny = false,
   onPress
@@ -160,13 +161,14 @@ export function IconButton({
   ghost?: boolean;
   iconOnly?: boolean;
   icon: LucideIcon;
+  iconSize?: number;
   label: string;
   tiny?: boolean;
   onPress: () => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
   const Icon = icon;
-  const iconSize = tiny ? 15 : iconOnly ? 14 : compact ? 14 : 17;
+  const resolvedIconSize = iconSize ?? (tiny ? 15 : iconOnly ? 14 : compact ? 14 : 17);
   const color = active ? activeColor || theme.primary : theme.ink;
   return (
     <Pressable
@@ -187,7 +189,7 @@ export function IconButton({
       disabled={disabled}
       onPress={() => pressWithFeedback(onPress)}
     >
-      <Icon size={iconSize} color={color} fill={active ? color : 'none'} strokeWidth={1.8} />
+      <Icon size={resolvedIconSize} color={color} fill={active ? color : 'none'} strokeWidth={1.8} />
       {iconOnly ? null : (
         <Text
           numberOfLines={1}
@@ -201,6 +203,7 @@ export function IconButton({
 }
 
 export function AppButton({
+  accessibilityLabel,
   compact = false,
   disabled = false,
   label,
@@ -209,6 +212,7 @@ export function AppButton({
   variant = 'default',
   onPress
 }: {
+  accessibilityLabel?: string;
   compact?: boolean;
   disabled?: boolean;
   label: string;
@@ -223,7 +227,7 @@ export function AppButton({
       testID={testID}
       hitSlop={TOUCH_HIT_SLOP}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel || label}
       accessibilityState={{ disabled }}
       style={[
         styles.button,

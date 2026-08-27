@@ -736,7 +736,7 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       backgroundColor: theme.surface,
       borderColor: theme.line,
       borderRadius: 10,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderWidth: 1,
       overflow: 'hidden'
     },
     replyComposerBottomSheetBackground: {

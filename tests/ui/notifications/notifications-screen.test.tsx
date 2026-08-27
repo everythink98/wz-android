@@ -27,7 +27,17 @@ function NotificationDetailScreen({
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { ChevronRight: Icon };
+  return {
+    ChevronDown: Icon,
+    ChevronRight: Icon,
+    CodeXml: Icon,
+    Maximize2: Icon,
+    Minimize2: Icon,
+    Redo2: Icon,
+    TextCursorInput: Icon,
+    Undo2: Icon,
+    X: Icon
+  };
 });
 
 jest.mock('@gorhom/bottom-sheet', () => {
@@ -37,8 +47,9 @@ jest.mock('@gorhom/bottom-sheet', () => {
     {
       children,
       index,
-      maxDynamicContentSize
-    }: { children?: React.ReactNode; index: number; maxDynamicContentSize?: number },
+      maxDynamicContentSize,
+      onClose
+    }: { children?: React.ReactNode; index: number; maxDynamicContentSize?: number; onClose?: () => void },
     ref
   ) {
     ReactModule.useImperativeHandle(ref, () => ({ close: () => undefined }));
@@ -47,7 +58,12 @@ jest.mock('@gorhom/bottom-sheet', () => {
       : ReactModule.createElement(
           NativeView,
           { maxDynamicContentSize, testID: 'composer-bottom-sheet' } as React.ComponentProps<typeof NativeView>,
-          children
+          children,
+          ReactModule.createElement(
+            require('react-native').Pressable,
+            { accessibilityRole: 'button', accessibilityLabel: '模拟关闭回复面板', onPress: onClose },
+            ReactModule.createElement(require('react-native').Text, null, '模拟关闭回复面板')
+          )
         );
   });
   return {
@@ -79,7 +95,8 @@ jest.mock('@gorhom/bottom-sheet', () => {
       return ReactModule.createElement(TextInput, props);
     }),
     BottomSheetView: ({ children }: { children?: React.ReactNode }) =>
-      ReactModule.createElement(NativeView, null, children)
+      ReactModule.createElement(NativeView, null, children),
+    useBottomSheetInternal: () => ({ animatedKeyboardState: { set: jest.fn() } })
   };
 });
 
@@ -561,7 +578,7 @@ describe('notification screens', () => {
     );
 
     expect(view.getByTestId('composer-bottom-sheet').props.maxDynamicContentSize).toBe(
-      Math.round((Dimensions.get('window').height - mockSafeAreaTop) * 0.75)
+      Math.round((Dimensions.get('window').height - mockSafeAreaTop - mockSafeAreaBottom) * 0.75)
     );
     mockSafeAreaBottom = 0;
     mockSafeAreaTop = 0;
@@ -571,6 +588,8 @@ describe('notification screens', () => {
     const scrollToEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(() => undefined);
     const onOpenReply = jest.fn();
     const onReplyContentChange = jest.fn();
+    const onReplyClose = jest.fn();
+    const onReplySnapshot = jest.fn();
     const onSubmitReply = jest.fn();
     const detail = {
       notification: { ...notification, kind: 'private-message' as const },
@@ -602,8 +621,9 @@ describe('notification screens', () => {
       onOpenTopic: jest.fn(),
       onRetry: jest.fn(),
       onOpenReply,
-      onReplyClose: jest.fn(),
+      onReplyClose,
       onReplyContentChange,
+      onReplySnapshot,
       onSubmitReply,
       onUploadReplyImage: jest.fn(),
       replyBusy: false,
@@ -632,16 +652,101 @@ describe('notification screens', () => {
     expect(view.getByText('Markdown')).toBeTruthy();
 
     await view.rerender(<NotificationDetailScreen {...props} replyVisible />);
-    expect(view.getByPlaceholderText('输入回复内容').props.value).toBe('保留草稿');
-    expect(view.getByLabelText('表情')).toBeTruthy();
-    expect(view.getByLabelText('图片')).toBeTruthy();
+    const webView = view.getByTestId('structured-composer-webview');
+    expect(view.queryByPlaceholderText('输入回复内容')).toBeNull();
+    await fireEvent(webView, 'loadEnd');
+    await waitFor(() =>
+      expect(
+        webView.props.postMessageMock.mock.calls
+          .map(([message]: [string]) => JSON.parse(message))
+          .some(
+            (message: { type: string; payload?: { markdown?: string } }) =>
+              message.type === 'INIT' && message.payload?.markdown === '保留草稿'
+          )
+      ).toBe(true)
+    );
+    await fireEvent(webView, 'message', {
+      nativeEvent: { data: JSON.stringify({ type: 'READY', payload: { revision: 0 } }) }
+    });
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'STATE_CHANGED',
+          payload: { revision: 0, mode: 'rich', isEmpty: false, canUndo: false, canRedo: false }
+        })
+      }
+    });
     await view.rerender(<NotificationDetailScreen {...props} replyBusy replyVisible />);
     expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
     await view.rerender(<NotificationDetailScreen {...props} replyVisible />);
-    await fireEvent.changeText(view.getByPlaceholderText('输入回复内容'), '新草稿');
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'SNAPSHOT',
+          payload: {
+            snapshot: {
+              revision: 1,
+              markdown: '新草稿',
+              mode: 'rich',
+              isEmpty: false,
+              validationIssues: [],
+              pendingNodeSeekPolls: []
+            }
+          }
+        })
+      }
+    });
     expect(onReplyContentChange).toHaveBeenCalledWith('新草稿');
     await fireEvent.press(view.getByLabelText('发送回复'));
-    expect(onSubmitReply).toHaveBeenCalledTimes(1);
+    const request = [...webView.props.postMessageMock.mock.calls]
+      .map(([message]: [string]) => JSON.parse(message))
+      .findLast((message) => message.type === 'REQUEST_SNAPSHOT');
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'SNAPSHOT',
+          payload: {
+            requestId: request.payload.requestId,
+            snapshot: {
+              revision: 1,
+              markdown: '新草稿',
+              mode: 'rich',
+              isEmpty: false,
+              validationIssues: [],
+              pendingNodeSeekPolls: []
+            }
+          }
+        })
+      }
+    });
+    await waitFor(() => expect(onSubmitReply).toHaveBeenCalledTimes(1));
+
+    onReplyClose.mockClear();
+    onReplySnapshot.mockClear();
+    await fireEvent.press(view.getByLabelText('模拟关闭回复面板'));
+    const closeRequest = [...webView.props.postMessageMock.mock.calls]
+      .map(([message]: [string]) => JSON.parse(message))
+      .findLast((message) => message.type === 'REQUEST_SNAPSHOT');
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'SNAPSHOT',
+          payload: {
+            requestId: closeRequest.payload.requestId,
+            snapshot: {
+              revision: 1,
+              markdown: '关闭前草稿',
+              mode: 'rich',
+              isEmpty: false,
+              validationIssues: [],
+              pendingNodeSeekPolls: []
+            }
+          }
+        })
+      }
+    });
+    await waitFor(() => expect(onReplyClose).toHaveBeenCalledTimes(1));
+    expect(onReplySnapshot).toHaveBeenCalledTimes(1);
 
     await view.unmount();
     const linuxDoView = await render(
@@ -652,9 +757,15 @@ describe('notification screens', () => {
         replyVisible
       />
     );
-    await fireEvent.press(linuxDoView.getByLabelText('表情'));
-    expect(linuxDoView.getByLabelText('party parrot')).toBeTruthy();
-    expect(linuxDoView.getByLabelText('图片')).toBeTruthy();
+    const linuxDoWebView = linuxDoView.getByTestId('structured-composer-webview');
+    await fireEvent(linuxDoWebView, 'loadEnd');
+    await waitFor(() =>
+      expect(
+        linuxDoWebView.props.postMessageMock.mock.calls
+          .map(([message]: [string]) => JSON.parse(message))
+          .find((message: { type: string }) => message.type === 'INIT')?.payload.discourseEmoji
+      ).toEqual([{ name: 'party_parrot', url: 'https://example.com/party.png' }])
+    );
 
     await linuxDoView.unmount();
     const yaohuoView = await render(
@@ -672,6 +783,78 @@ describe('notification screens', () => {
     expect(yaohuoView.queryByLabelText('表情')).toBeNull();
     expect(yaohuoView.queryByLabelText('图片')).toBeNull();
     scrollToEnd.mockRestore();
+  });
+
+  it('[REG-NOTIFY-032] snapshots exactly once before route blur closes the structured composer', async () => {
+    const onReplyClose = jest.fn();
+    const onReplySnapshot = jest.fn();
+    const detail = {
+      notification: { ...notification, kind: 'private-message' as const },
+      title: '与 Bob 的私信',
+      messages: [],
+      reply: { format: 'markdown' as const }
+    };
+    const view = await render(
+      <NotificationDetailScreen
+        contentWidth={360}
+        detail={detail}
+        loading={false}
+        replyContent="路由切换前草稿"
+        replyVisible
+        routeActive
+        onOpenTopic={jest.fn()}
+        onReplyClose={onReplyClose}
+        onReplySnapshot={onReplySnapshot}
+        onRetry={jest.fn()}
+      />
+    );
+    const webView = view.getByTestId('structured-composer-webview');
+    await fireEvent(webView, 'loadEnd');
+    await fireEvent(webView, 'message', {
+      nativeEvent: { data: JSON.stringify({ type: 'READY', payload: { revision: 0 } }) }
+    });
+
+    await view.rerender(
+      <NotificationDetailScreen
+        contentWidth={360}
+        detail={detail}
+        loading={false}
+        replyContent="路由切换前草稿"
+        replyVisible
+        routeActive={false}
+        onOpenTopic={jest.fn()}
+        onReplyClose={onReplyClose}
+        onReplySnapshot={onReplySnapshot}
+        onRetry={jest.fn()}
+      />
+    );
+    const requests = webView.props.postMessageMock.mock.calls
+      .map(([message]: [string]) => JSON.parse(message))
+      .filter((message: { type: string }) => message.type === 'REQUEST_SNAPSHOT');
+    expect(requests).toHaveLength(1);
+    expect(onReplyClose).not.toHaveBeenCalled();
+
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'SNAPSHOT',
+          payload: {
+            requestId: requests[0].payload.requestId,
+            snapshot: {
+              revision: 1,
+              markdown: '路由切换前草稿',
+              mode: 'rich',
+              isEmpty: false,
+              validationIssues: [],
+              pendingNodeSeekPolls: []
+            }
+          }
+        })
+      }
+    });
+
+    await waitFor(() => expect(onReplyClose).toHaveBeenCalledTimes(1));
+    expect(onReplySnapshot).toHaveBeenCalledTimes(1);
   });
 
   it('[REG-NOTIFY-057] renders NodeSeek private-message Markdown and stickers as forum content', async () => {

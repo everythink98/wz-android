@@ -4,7 +4,11 @@ import {
   buildNodeSeekCollectionRequest,
   buildNodeSeekEditReplyRequest,
   buildNodeSeekInteractionRequest,
+  buildNodeSeekPollLockRequest,
+  buildNodeSeekPollCreateRequest,
   buildNodeSeekReplyRequest,
+  buildNodeSeekStardustPrepareRequest,
+  buildNodeSeekStardustSendRequest,
   buildNodeSeekVoteRequest,
   nodeSeekActionErrorMessage
 } from './actionRequest';
@@ -209,6 +213,59 @@ describe('NodeSeek action request builders', () => {
         ids: [71, 72]
       })
     });
+  });
+
+  it('builds poll creation without creating it during editor insertion', () => {
+    expect(
+      buildNodeSeekPollCreateRequest({
+        poll: { title: '选择', multiple: true, isPublic: false, options: ['A', 'B'] }
+      })
+    ).toMatchObject({
+      path: '/api/vote/info',
+      method: 'POST',
+      body: JSON.stringify({ title: '选择', multiple: true, isPublic: false, items: ['A', 'B'] })
+    });
+  });
+
+  it('[REG-WRITE-070] builds the owner-only NodeSeek poll lock request', () => {
+    expect(buildNodeSeekPollLockRequest({ pollId: '3037' })).toEqual({
+      path: '/api/vote/lock/3037',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-dynamic-sign': 'a'.repeat(40)
+      },
+      body: JSON.stringify({ locked: true }),
+      fallbackErrorMessage: '投票锁定失败'
+    });
+  });
+
+  it('[REG-WRITE-071] uses the real Stardust origin, onetime field, and error fallback', () => {
+    expect(buildNodeSeekStardustPrepareRequest({ receiverId: '42' })).toEqual({
+      path: '/api/stardust/payment-prepare',
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ receiver_id: 42, origin: 'https://www.nodeseek.com' }),
+      fallbackErrorMessage: '获取支付基础信息失败'
+    });
+    expect(
+      buildNodeSeekStardustSendRequest({
+        receive: { receiverMemberId: '42', amount: 5, refId: 100, description: 'Pay', oneTime: true }
+      })
+    ).toEqual({
+      path: '/api/stardust/send',
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ member_id: 42, diff: 5, ref_id: 100, onetime: true }),
+      fallbackErrorMessage: '转账失败'
+    });
+    expect(() =>
+      buildNodeSeekStardustSendRequest({
+        receive: { receiverMemberId: '42', amount: 5, refId: 99, description: '旧卡片', oneTime: false }
+      })
+    ).toThrow('Ref ID 必须为大于等于 100 的安全整数');
+    expect(nodeSeekActionErrorMessage({ message: '余额不足' }, 400, '转账失败')).toBe('余额不足');
+    expect(nodeSeekActionErrorMessage({}, 400, '转账失败')).toBe('转账失败');
   });
 
   it('rejects empty NodeSeek vote selections', () => {

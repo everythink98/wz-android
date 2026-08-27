@@ -1,8 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react-native';
-import { fireEvent, render, within } from '../render';
+import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { type ComponentProps } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { HTML_REPLY_CONTENT_CLASS } from '@/features/topic/rendering/htmlStyles';
@@ -12,6 +12,8 @@ import { MemoizedReplyItem, ReplyItem } from '@/features/topic/components/ReplyI
 import { TopicBodyQuoteCard } from '@/features/topic/components/TopicBodyQuoteCard';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import { TopicPolls } from '@/features/topic/components/TopicPolls';
+import { NodeSeekStardustCard } from '@/features/topic/components/NodeSeekStardustCard';
+import type { TopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import {
@@ -42,6 +44,11 @@ import {
   DISCOURSE_CALLOUT_TYPE_ATTRIBUTE
 } from '@/domain/forum/callouts';
 
+const mockAnimatedKeyboardStateSet = jest.fn();
+const mockComposerBottomSheetClose = jest.fn();
+let mockComposerBottomSheetOnClose: (() => void) | undefined;
+let mockComposerBottomSheetProps: { index: number; snapPoints?: number[] } | undefined;
+
 jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({
     getMappingKey: (key: string | number) => String(key)
@@ -57,23 +64,50 @@ jest.mock('@gorhom/bottom-sheet', () => {
   } = require('react-native') as typeof import('react-native');
   const BottomSheet = ReactModule.forwardRef(function BottomSheet(
     {
+      android_keyboardInputMode,
+      backdropComponent,
+      bottomInset,
       children,
+      enableContentPanningGesture,
+      enablePanDownToClose,
       index,
-      onClose
+      keyboardBehavior,
+      onChange,
+      onClose,
+      snapPoints
     }: {
+      android_keyboardInputMode?: string;
+      backdropComponent?: (props: Record<string, unknown>) => React.ReactNode;
+      bottomInset?: number;
       children?: React.ReactNode;
+      enableContentPanningGesture?: boolean;
+      enablePanDownToClose?: boolean;
       index: number;
+      keyboardBehavior?: string;
+      onChange?: (index: number) => void;
       onClose?: () => void;
+      snapPoints?: number[];
     },
     ref
   ) {
-    ReactModule.useImperativeHandle(ref, () => ({ close: () => undefined }));
+    mockComposerBottomSheetOnClose = onClose;
+    mockComposerBottomSheetProps = { index, snapPoints };
+    ReactModule.useImperativeHandle(ref, () => ({ close: mockComposerBottomSheetClose }));
     if (index < 0) {
       return null;
     }
     return ReactModule.createElement(
       NativeView,
-      null,
+      {
+        android_keyboardInputMode,
+        bottomInset,
+        enableContentPanningGesture,
+        enablePanDownToClose,
+        keyboardBehavior,
+        onChange,
+        testID: 'composer-bottom-sheet'
+      } as React.ComponentProps<typeof NativeView>,
+      backdropComponent?.({}),
       children,
       ReactModule.createElement(
         NativePressable,
@@ -85,19 +119,21 @@ jest.mock('@gorhom/bottom-sheet', () => {
   return {
     __esModule: true,
     default: BottomSheet,
-    BottomSheetBackdrop: () => null,
+    BottomSheetBackdrop: (props: Record<string, unknown>) =>
+      ReactModule.createElement(NativeView, { ...props, testID: 'composer-bottom-sheet-backdrop' }),
     BottomSheetFlatList: (props: Record<string, unknown>) => ReactModule.createElement(NativeView, props),
     BottomSheetTextInput: ReactModule.forwardRef(function BottomSheetTextInput(props: Record<string, unknown>, ref) {
       void ref;
       return ReactModule.createElement(TextInput, props);
     }),
-    BottomSheetView: ({ children }: { children?: React.ReactNode }) =>
-      ReactModule.createElement(NativeView, null, children)
+    BottomSheetView: ({ children, ...props }: { children?: React.ReactNode; style?: StyleProp<ViewStyle> }) =>
+      ReactModule.createElement(NativeView, { ...props, testID: 'composer-bottom-sheet-content' }, children),
+    useBottomSheetInternal: () => ({ animatedKeyboardState: { set: mockAnimatedKeyboardStateSet } })
   };
 });
 
 jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
+  useSafeAreaInsets: () => ({ bottom: 24, left: 0, right: 0, top: 0 })
 }));
 
 jest.mock('react-native-gesture-handler', () => {
@@ -131,8 +167,6 @@ jest.mock('expo-video', () => ({
   VideoView: () => null,
   useVideoPlayer: () => ({ pause: jest.fn(), play: jest.fn(), playing: false })
 }));
-
-jest.mock('react-native-webview', () => ({ WebView: () => null }));
 
 jest.mock('react-native-render-html', () => {
   const ReactModule = require('react') as typeof React;
@@ -222,20 +256,26 @@ jest.mock('lucide-react-native', () => {
     CircleCheck: Icon,
     CircleHelp: Icon,
     ClipboardList: Icon,
+    CodeXml: Icon,
     Copy: Icon,
     Drumstick: Icon,
     Flame: Icon,
     Lightbulb: Icon,
     List: Icon,
     MessageCircle: Icon,
+    Maximize2: Icon,
+    Minimize2: Icon,
     Pencil: Icon,
     Quote: Icon,
+    Redo2: Icon,
     Square: Icon,
     SquarePen: Icon,
     ThumbsDown: Icon,
     ThumbsUp: Icon,
+    TextCursorInput: Icon,
     TriangleAlert: Icon,
     Trash2: Icon,
+    Undo2: Icon,
     Users: Icon,
     X: Icon,
     Zap: Icon
@@ -259,10 +299,10 @@ jest.mock('@/ui/avatar/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
-    Avatar: ({ contentSource }: { contentSource?: string }) =>
+    Avatar: ({ contentSource, uri }: { contentSource?: string; uri?: string }) =>
       ReactModule.createElement(
         NativeText,
-        { accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
+        { accessibilityHint: uri, accessibilityLabel: `avatar source ${contentSource || 'missing'}` },
         '头像'
       )
   };
@@ -454,7 +494,152 @@ function VirtualizedTerminalReplyRows({ props }: { props: ComponentProps<typeof 
   );
 }
 
+function stardustActions(
+  loadNodeSeekStardustStatus: TopicActionsController['loadNodeSeekStardustStatus'],
+  payNodeSeekStardust: TopicActionsController['payNodeSeekStardust'] = async () => 'canceled'
+) {
+  return {
+    actionBusy: false,
+    decisionFor: () => ({ allowed: true, reason: 'allowed' }),
+    loadNodeSeekStardustStatus,
+    payNodeSeekStardust
+  } as unknown as TopicActionsController;
+}
+
 describe('Topic real child components', () => {
+  it('[REG-WRITE-034][REG-WRITE-071] renders the deterministic avatar and reloads only for real inputs', async () => {
+    const receive = {
+      receiverMemberId: '42',
+      amount: 3,
+      refId: 100,
+      description: '测试收款',
+      oneTime: false
+    };
+    const firstLoader = jest.fn(async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }));
+    const secondLoader = jest.fn(async () => ({ participantCount: 1, totalAmount: 3, paid: false, closed: false }));
+    const view = await render(<NodeSeekStardustCard actions={stardustActions(firstLoader)} receive={receive} />);
+
+    await waitFor(() => expect(firstLoader).toHaveBeenCalledTimes(1));
+    expect(view.getByLabelText('avatar source nodeseek').props.accessibilityHint).toBe(
+      'https://www.nodeseek.com/avatar/42.png'
+    );
+    await view.rerender(<NodeSeekStardustCard actions={stardustActions(firstLoader)} receive={{ ...receive }} />);
+    await act(async () => Promise.resolve());
+    expect(firstLoader).toHaveBeenCalledTimes(1);
+
+    await view.rerender(<NodeSeekStardustCard actions={stardustActions(secondLoader)} receive={{ ...receive }} />);
+    await waitFor(() => expect(secondLoader).toHaveBeenCalledTimes(1));
+  });
+
+  it('[REG-WRITE-071] keeps optional status failures silent while payment stays available', async () => {
+    const receive = {
+      receiverMemberId: '42',
+      amount: 3,
+      refId: 100,
+      description: '测试收款',
+      oneTime: false
+    };
+    const load = jest.fn(async () => {
+      throw new Error('每天最多进行500次星辰记录查询');
+    });
+    const pay = jest.fn(async () => 'canceled' as const);
+    const view = await render(<NodeSeekStardustCard actions={stardustActions(load, pay)} receive={receive} />);
+
+    expect(view.queryByText('正在读取付款状态…')).toBeNull();
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+    await act(async () => Promise.resolve());
+    expect(view.queryByText('每天最多进行500次星辰记录查询')).toBeNull();
+    expect(view.queryByLabelText('重试付款状态')).toBeNull();
+    expect(view.getByLabelText('支付 3 Stardust').props.accessibilityState.disabled).toBe(false);
+    await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
+    expect(pay).toHaveBeenCalledWith(receive);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-WRITE-071] allows repeat payments but keeps one-time and legacy cards closed', async () => {
+    const repeatable = {
+      receiverMemberId: '42',
+      amount: 3,
+      refId: 100,
+      description: '可重复',
+      oneTime: false
+    };
+    const pay = jest.fn(async () => 'canceled' as const);
+    const paidStatus = jest.fn(async () => ({ participantCount: 1, totalAmount: 3, paid: true, closed: false }));
+    const view = await render(<NodeSeekStardustCard actions={stardustActions(paidStatus, pay)} receive={repeatable} />);
+
+    await waitFor(() => expect(view.getByText('当前账号已付款')).toBeTruthy());
+    expect(view.getByLabelText('支付 3 Stardust').props.accessibilityState.disabled).toBe(false);
+    await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
+    expect(pay).toHaveBeenCalledTimes(1);
+
+    const closed = { ...repeatable, oneTime: true };
+    const closedStatus = jest.fn(async () => ({ participantCount: 1, totalAmount: 3, paid: true, closed: true }));
+    await view.rerender(<NodeSeekStardustCard actions={stardustActions(closedStatus, pay)} receive={closed} />);
+    await waitFor(() => expect(view.getByLabelText('已关闭').props.accessibilityState.disabled).toBe(true));
+
+    const legacy = { ...repeatable, refId: 1 };
+    await view.rerender(<NodeSeekStardustCard actions={stardustActions(paidStatus, pay)} receive={legacy} />);
+    await waitFor(() => expect(view.getByText('此卡片的 Ref 无效，不能付款')).toBeTruthy());
+    expect(view.getByLabelText('Ref 无效').props.accessibilityState.disabled).toBe(true);
+  });
+
+  it('[REG-WRITE-034][REG-WRITE-071] blocks a second click after an ambiguous send', async () => {
+    const receive = {
+      receiverMemberId: '42',
+      amount: 3,
+      refId: 100,
+      description: '测试收款',
+      oneTime: false
+    };
+    const load = jest.fn(async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }));
+    const pay = jest.fn(async () => 'unknown' as const);
+    const view = await render(<NodeSeekStardustCard actions={stardustActions(load, pay)} receive={receive} />);
+
+    await waitFor(() => expect(view.getByText('0 人已付 · 累计 0 Stardust')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
+    await waitFor(() => expect(view.getByText('付款结果未知，请先在原站确认，切勿直接重复付款。')).toBeTruthy());
+    expect(view.getByLabelText('结果待确认').props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByLabelText('结果待确认'));
+    expect(pay).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-WRITE-033][REG-WRITE-071] does not downgrade an explicit success when status refresh fails', async () => {
+    const receive = {
+      receiverMemberId: '42',
+      amount: 3,
+      refId: 100,
+      description: '测试收款',
+      oneTime: false
+    };
+    const load = jest
+      .fn<TopicActionsController['loadNodeSeekStardustStatus']>()
+      .mockResolvedValueOnce({ participantCount: 0, totalAmount: 0, paid: false, closed: false })
+      .mockRejectedValueOnce(new Error('每天最多进行500次星辰记录查询'));
+    const pay = jest.fn(async () => 'submitted' as const);
+    const view = await render(<NodeSeekStardustCard actions={stardustActions(load, pay)} receive={receive} />);
+
+    await waitFor(() => expect(view.getByText('0 人已付 · 累计 0 Stardust')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    await act(async () => Promise.resolve());
+    expect(view.queryByText('每天最多进行500次星辰记录查询')).toBeNull();
+    expect(view.getByText('0 人已付 · 累计 0 Stardust')).toBeTruthy();
+    expect(view.queryByText(/结果未知/)).toBeNull();
+    expect(view.getByLabelText('支付 3 Stardust').props.accessibilityState.disabled).toBe(false);
+    expect(load).toHaveBeenCalledTimes(2);
+
+    const staleLoad = jest.fn(async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }));
+    await view.rerender(
+      <NodeSeekStardustCard actions={stardustActions(staleLoad, pay)} receive={{ ...receive, oneTime: true }} />
+    );
+    await waitFor(() => expect(staleLoad).toHaveBeenCalledTimes(1));
+    await fireEvent.press(view.getByLabelText('支付 3 Stardust'));
+    await waitFor(() => expect(staleLoad).toHaveBeenCalledTimes(2));
+    await act(async () => Promise.resolve());
+    expect(view.getByLabelText('已关闭').props.accessibilityState.disabled).toBe(true);
+  });
+
   it('[REG-PERF-018] rerenders only the compiled reply row whose inline image state changed', async () => {
     const firstImage = 'https://i.imgur.com/first-dynamic.png';
     const secondImage = 'https://i.imgur.com/second-dynamic.png';
@@ -577,6 +762,64 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('提交投票').props.accessibilityState.disabled).toBe(false);
     await fireEvent.press(view.getByLabelText('提交投票'));
     expect(onVotePoll).toHaveBeenCalledWith(multiplePoll, ['a', 'b']);
+  });
+
+  it('[REG-WRITE-070] shows NodeSeek poll locking only for the current owner and labels locked polls', async () => {
+    const onLockPoll = jest.fn();
+    const ownerPoll = { ...multiplePoll, ownerId: '54874' };
+    const ownerDecision: TopicActionDecisionFor = ({ action }) =>
+      action === 'manage-poll' ? { allowed: true, reason: 'allowed' } : deniedDecision('already-complete');
+    const view = await render(
+      <TopicPolls
+        {...pollProps({
+          decisionFor: ownerDecision,
+          onLockPoll,
+          polls: [ownerPoll],
+          source: 'nodeseek'
+        })}
+      />
+    );
+
+    await fireEvent.press(view.getByLabelText('锁定投票'));
+    expect(onLockPoll).toHaveBeenCalledWith(ownerPoll);
+
+    await view.rerender(
+      <TopicPolls
+        {...pollProps({
+          decisionFor: ({ action }) =>
+            action === 'manage-poll' ? deniedDecision('object-forbidden') : deniedDecision('already-complete'),
+          onLockPoll,
+          polls: [ownerPoll],
+          source: 'nodeseek'
+        })}
+      />
+    );
+    expect(view.queryByLabelText('锁定投票')).toBeNull();
+
+    await view.rerender(
+      <TopicPolls
+        {...pollProps({
+          decisionFor: undefined,
+          onLockPoll,
+          polls: [ownerPoll],
+          source: 'nodeseek'
+        })}
+      />
+    );
+    expect(view.queryByLabelText('锁定投票')).toBeNull();
+
+    await view.rerender(
+      <TopicPolls
+        {...pollProps({
+          decisionFor: ownerDecision,
+          onLockPoll,
+          polls: [{ ...ownerPoll, closed: true }],
+          source: 'nodeseek'
+        })}
+      />
+    );
+    expect(view.getByText('已锁定')).toBeTruthy();
+    expect(view.queryByLabelText('锁定投票')).toBeNull();
   });
 
   it('keeps unsupported and unauthenticated polls visibly read-only', async () => {
@@ -1780,7 +2023,9 @@ describe('Topic real child components', () => {
   });
 
   it('keeps the composer sheet visibility and close gesture connected to the parent state', async () => {
+    mockAnimatedKeyboardStateSet.mockClear();
     const onReplyComposerOpenChange = jest.fn();
+    const onReplySnapshot = jest.fn();
     const props: ComponentProps<typeof ReplyComposerSheet> = {
       actionBusy: false,
       intent: { kind: 'new' },
@@ -1793,30 +2038,78 @@ describe('Topic real child components', () => {
       onReplyComposerOpenChange,
       onReplyContentChange: jest.fn(),
       onReplyFaceChange: jest.fn(),
+      onReplySnapshot,
       onSubmitReply: jest.fn(),
       onUploadReplyImage: jest.fn()
     };
-    const view = await render(
-      <View>
-        <ReplyComposerSheet {...props} />
-        <Pressable>
-          <Text>页面其余内容</Text>
-        </Pressable>
-      </View>
-    );
+    const view = await render(<ReplyComposerSheet {...props} />);
 
-    expect(view.getByPlaceholderText('输入回复内容').props.value).toBe('保留中的草稿');
-    expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false);
+    expect(view.getByText('回复')).toBeTruthy();
+    const sheetProps = view.getByTestId('composer-bottom-sheet').props;
+    expect(sheetProps.android_keyboardInputMode).toBe('adjustPan');
+    expect(sheetProps.bottomInset).toBe(0);
+    expect(sheetProps.enableContentPanningGesture).toBe(false);
+    expect(sheetProps.keyboardBehavior).toBe('interactive');
+    const keyboardTargetSetter = mockAnimatedKeyboardStateSet.mock.calls
+      .map(([setter]) => setter)
+      .filter(
+        (setter): setter is (state: { status: number; target?: number }) => { status: number; target?: number } =>
+          typeof setter === 'function'
+      )
+      .find((setter) => setter({ status: 0 }).target !== undefined);
+    expect(keyboardTargetSetter?.({ status: 0 }).target).toBeTruthy();
+    expect(view.getByLabelText('富文本').props.accessibilityState.selected).toBe(true);
+    expect(view.getByLabelText('全屏')).toBeTruthy();
+    expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
+    const webView = view.getByTestId('structured-composer-webview');
+    await fireEvent(webView, 'loadEnd');
+    await fireEvent(webView, 'message', {
+      nativeEvent: { data: JSON.stringify({ type: 'READY', payload: { revision: 0 } }) }
+    });
+    await waitFor(() => expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false));
+    await fireEvent.press(view.getByLabelText('全屏'));
+    expect(StyleSheet.flatten(view.getByTestId('composer-bottom-sheet-content').props.style)).toEqual(
+      expect.objectContaining({ flex: 1, paddingBottom: 24 })
+    );
+    await fireEvent.press(view.getByLabelText('退出全屏'));
     await view.rerender(<ReplyComposerSheet {...props} actionBusy />);
     expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
     await view.rerender(<ReplyComposerSheet {...props} />);
     expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false);
 
+    onReplySnapshot.mockClear();
+    await view.rerender(<ReplyComposerSheet {...props} routeActive={false} />);
+    const routeSnapshotRequest = [...webView.props.postMessageMock.mock.calls]
+      .map(([message]: [string]) => JSON.parse(message))
+      .findLast((message) => message.type === 'REQUEST_SNAPSHOT');
+    expect(routeSnapshotRequest).toBeTruthy();
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'SNAPSHOT',
+          payload: {
+            requestId: routeSnapshotRequest.payload.requestId,
+            snapshot: {
+              revision: 1,
+              markdown: '路由离开前的草稿',
+              mode: 'rich',
+              isEmpty: false,
+              validationIssues: [],
+              pendingNodeSeekPolls: []
+            }
+          }
+        })
+      }
+    });
+    await waitFor(() => expect(onReplySnapshot).toHaveBeenCalledTimes(1));
+    await view.rerender(<ReplyComposerSheet {...props} />);
+
     await view.rerender(
       <ReplyComposerSheet {...props} intent={{ kind: 'floor', target: { author: '@bob', floor: 3 } }} />
     );
     expect(view.getByText('回复 @bob · #3')).toBeTruthy();
-    expect(view.getByPlaceholderText('输入楼层回复内容')).toBeTruthy();
+    expect(view.getByTestId('structured-composer-webview')).toBe(webView);
+    expect(view.queryByPlaceholderText('输入楼层回复内容')).toBeNull();
     expect(view.getByLabelText('取消楼层回复')).toBeTruthy();
 
     await view.rerender(
@@ -1835,15 +2128,133 @@ describe('Topic real child components', () => {
       />
     );
     expect(view.getByText('编辑 #4')).toBeTruthy();
-    expect(view.getByPlaceholderText('编辑回复内容')).toBeTruthy();
+    expect(view.queryByPlaceholderText('编辑回复内容')).toBeNull();
     expect(view.getByLabelText('取消编辑')).toBeTruthy();
     expect(view.getByLabelText('保存编辑')).toBeTruthy();
 
     await view.rerender(<ReplyComposerSheet {...props} />);
+    onReplySnapshot.mockClear();
     await fireEvent.press(view.getByLabelText('模拟关闭回复面板'));
-    expect(onReplyComposerOpenChange).toHaveBeenCalledWith(false);
+    const request = [...webView.props.postMessageMock.mock.calls]
+      .map(([message]: [string]) => JSON.parse(message))
+      .findLast((message) => message.type === 'REQUEST_SNAPSHOT');
+    expect(request).toBeTruthy();
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'SNAPSHOT',
+          payload: {
+            requestId: request.payload.requestId,
+            snapshot: {
+              revision: 1,
+              markdown: '保留中的草稿',
+              mode: 'rich',
+              isEmpty: false,
+              validationIssues: [],
+              pendingNodeSeekPolls: []
+            }
+          }
+        })
+      }
+    });
+    await waitFor(() => expect(onReplyComposerOpenChange).toHaveBeenCalledWith(false));
+    expect(onReplySnapshot).toHaveBeenCalledTimes(1);
 
     await view.rerender(<ReplyComposerSheet {...props} visible={false} />);
-    expect(view.queryByPlaceholderText('输入回复内容')).toBeNull();
+    expect(view.queryByTestId('structured-composer-webview')).toBeNull();
+  });
+
+  it('[REG-WRITE-037] keeps one controlled close path while fullscreen closes', async () => {
+    const { ComposerBottomSheet } =
+      require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
+    const onOpenChange = jest.fn();
+    const onPresentationChange = jest.fn();
+    mockComposerBottomSheetClose.mockClear();
+    const view = await render(
+      <ComposerBottomSheet
+        dark={false}
+        fixedContent
+        presentation="sheet"
+        visible
+        onOpenChange={onOpenChange}
+        onPresentationChange={onPresentationChange}
+      >
+        {() => <Text>编辑器</Text>}
+      </ComposerBottomSheet>
+    );
+    expect(onPresentationChange).toHaveBeenCalledWith('sheet');
+    onPresentationChange.mockClear();
+    const sheetSnapPoints = mockComposerBottomSheetProps?.snapPoints;
+    expect(mockComposerBottomSheetProps?.index).toBe(0);
+    expect(sheetSnapPoints).toHaveLength(1);
+    expect(view.getByTestId('composer-bottom-sheet')).toHaveProp('enablePanDownToClose', false);
+    expect(view.getByTestId('composer-bottom-sheet-backdrop')).toHaveProp('pressBehavior', 'none');
+
+    await view.rerender(
+      <ComposerBottomSheet
+        dark={false}
+        fixedContent
+        presentation="fullscreen"
+        visible
+        onOpenChange={onOpenChange}
+        onPresentationChange={onPresentationChange}
+      >
+        {() => <Text>编辑器</Text>}
+      </ComposerBottomSheet>
+    );
+    const openSnapPoints = mockComposerBottomSheetProps?.snapPoints;
+    expect(mockComposerBottomSheetProps?.index).toBe(0);
+    expect(openSnapPoints).toHaveLength(1);
+    expect(openSnapPoints![0]).toBeGreaterThan(sheetSnapPoints![0]!);
+
+    await view.rerender(
+      <ComposerBottomSheet
+        dark={false}
+        fixedContent
+        presentation="fullscreen"
+        visible={false}
+        onOpenChange={onOpenChange}
+        onPresentationChange={onPresentationChange}
+      >
+        {() => <Text>编辑器</Text>}
+      </ComposerBottomSheet>
+    );
+    expect(mockComposerBottomSheetProps).toEqual({ index: -1, snapPoints: openSnapPoints });
+    expect(onPresentationChange).not.toHaveBeenCalled();
+    expect(mockComposerBottomSheetClose).toHaveBeenCalledTimes(1);
+
+    mockComposerBottomSheetOnClose?.();
+    expect(onPresentationChange).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    await view.rerender(
+      <ComposerBottomSheet
+        dark={false}
+        fixedContent
+        presentation="fullscreen"
+        visible
+        onOpenChange={onOpenChange}
+        onPresentationChange={onPresentationChange}
+      >
+        {() => <Text>编辑器</Text>}
+      </ComposerBottomSheet>
+    );
+    expect(onPresentationChange).toHaveBeenCalledWith('sheet');
+  });
+
+  it('[REG-WRITE-038] requests editor focus only after the sheet reaches its open position', async () => {
+    const { ComposerBottomSheet } =
+      require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
+    const view = await render(
+      <ComposerBottomSheet dark={false} fixedContent visible onOpenChange={jest.fn()}>
+        {(focusSignal) => <Text>焦点信号 {focusSignal}</Text>}
+      </ComposerBottomSheet>
+    );
+
+    expect(view.getByText('焦点信号 0')).toBeTruthy();
+    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', 0);
+    await waitFor(() => expect(view.getByText('焦点信号 1')).toBeTruthy());
+    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', -1);
+    expect(view.getByText('焦点信号 1')).toBeTruthy();
   });
 });

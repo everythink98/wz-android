@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { useContentWidth, type CustomBlockRenderer } from 'react-native-render-html';
+import type { CustomBlockRenderer } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { imageRequestHeadersForUrl } from '@/platform/media/imageRequestSource';
 import { inlineForumImageDisplaySize } from '@/platform/media/inlineMedia';
@@ -22,6 +22,7 @@ import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { useTopicBodyMediaLease } from '../media/TopicBodyMediaCoordinator';
 import { ManagedTopicContentVideo } from '../media/ManagedTopicContentVideo';
 import { ManagedTopicMediaImage } from '../media/ManagedTopicMediaImage';
+import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import {
   normalizeMediaReferrerPolicy,
   type MediaReferrerContext,
@@ -350,7 +351,7 @@ export function createContentMediaRenderers({
     const src = attributes.src || '';
     const fallbackSrc = attributes['data-fallback-src'] || '';
     const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
-    const contentWidth = useContentWidth();
+    const contentWidth = useForumContentWidth();
     const size = inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth);
     if (!src) {
       return fallbackSrc ? (

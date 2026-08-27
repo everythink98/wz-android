@@ -136,6 +136,18 @@ export function buildHtmlRenderingStyles({
     marginTop
   });
   const listPaddingLeft = Math.round(34 * settings.fontScale);
+  const mentionStyle = {
+    alignSelf: 'flex-start' as const,
+    backgroundColor: alphaColor(linkColor, theme.dark ? 0.2 : 0.12),
+    borderColor: alphaColor(linkColor, theme.dark ? 0.38 : 0.26),
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    color: linkColor,
+    fontWeight: '700' as const,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    textDecorationLine: 'none' as const
+  };
   const htmlTagsStyles: HtmlTagsStyles = {
     body: {
       backgroundColor: 'transparent'
@@ -205,8 +217,40 @@ export function buildHtmlRenderingStyles({
       paddingHorizontal: 4,
       paddingVertical: 1
     },
+    kbd: {
+      backgroundColor: theme.surface2,
+      borderBottomWidth: 2,
+      borderColor: theme.lineStrong,
+      borderRadius: 4,
+      borderWidth: 1,
+      fontFamily: 'monospace',
+      paddingHorizontal: 5,
+      paddingVertical: 1
+    },
     mark: {
-      backgroundColor: theme.surface2
+      backgroundColor: alphaColor(theme.warning, theme.dark ? 0.24 : 0.16),
+      color: theme.ink
+    },
+    ins: {
+      backgroundColor: alphaColor(theme.success, theme.dark ? 0.2 : 0.12),
+      color: theme.ink,
+      textDecorationLine: 'underline'
+    },
+    del: {
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.2 : 0.1),
+      color: theme.ink,
+      textDecorationLine: 'line-through'
+    },
+    s: {
+      textDecorationLine: 'line-through'
+    },
+    big: {
+      fontSize: Math.round(baseFontSize * 1.5),
+      lineHeight: Math.round(baseLineHeight * 1.5)
+    },
+    small: {
+      fontSize: Math.round(baseFontSize * 0.75),
+      lineHeight: Math.round(baseLineHeight * 0.75)
     },
     table: {
       backgroundColor: 'transparent'
@@ -218,8 +262,8 @@ export function buildHtmlRenderingStyles({
     th: {
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderRightWidth: StyleSheet.hairlineWidth,
+      borderBottomWidth: 1,
+      borderRightWidth: 1,
       color: theme.ink,
       flexShrink: 0,
       fontWeight: '700',
@@ -229,8 +273,8 @@ export function buildHtmlRenderingStyles({
     td: {
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderRightWidth: StyleSheet.hairlineWidth,
+      borderBottomWidth: 1,
+      borderRightWidth: 1,
       color: theme.ink,
       flexShrink: 0,
       paddingHorizontal: 10,
@@ -242,18 +286,20 @@ export function buildHtmlRenderingStyles({
       fontSize: replyFontSize,
       lineHeight: Math.round(replyFontSize * lineHeightMultiplier(settings.lineHeight))
     },
-    'forum-user-mention': {
-      alignSelf: 'flex-start',
-      backgroundColor: alphaColor(linkColor, theme.dark ? 0.2 : 0.12),
-      borderColor: alphaColor(linkColor, theme.dark ? 0.38 : 0.26),
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      color: linkColor,
-      fontWeight: '700',
-      paddingHorizontal: 5,
-      paddingVertical: 1,
-      textDecorationLine: 'none'
+    'bbcode-b': {
+      fontWeight: '700'
     },
+    'bbcode-i': {
+      fontStyle: 'italic'
+    },
+    'bbcode-u': {
+      textDecorationLine: 'underline'
+    },
+    'bbcode-s': {
+      textDecorationLine: 'line-through'
+    },
+    'forum-user-mention': mentionStyle,
+    'mention-group': mentionStyle,
     'forum-attachment': {
       backgroundColor: theme.surface2,
       borderColor: theme.line,

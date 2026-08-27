@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { NODESEEK_STICKER_CATEGORIES, YAOHUO_FACE_ITEMS, discourseEmojiCatalogFromUrlMap } from './expressionCatalogs';
+import { NODESEEK_STICKER_CATEGORIES } from '@/domain/forum/nodeSeekStickers';
+import { YAOHUO_FACE_ITEMS } from './expressionCatalogs';
 
 describe('reply composer expression catalogs', () => {
   it('keeps NodeSeek sticker categories aligned with the original composer groups', () => {
@@ -20,19 +21,6 @@ describe('reply composer expression catalogs', () => {
       imageUrl: 'https://www.nodeseek.com/static/image/sticker/emoji/35.png'
     });
     expect(NODESEEK_STICKER_CATEGORIES.find((category) => category.label === 'App')).toBeUndefined();
-  });
-
-  it('builds Discourse emoji insert codes from site-owned url data', () => {
-    expect(
-      discourseEmojiCatalogFromUrlMap({
-        grinning_face: 'https://linux.do/images/emoji/twemoji/grinning_face.png'
-      })[0]
-    ).toEqual({
-      code: ':grinning_face:',
-      label: 'grinning face',
-      imageUrl: 'https://linux.do/images/emoji/twemoji/grinning_face.png'
-    });
-    expect(discourseEmojiCatalogFromUrlMap({})[0].code).toBe(':grinning_face:');
   });
 
   it('keeps yaohuo faces as submitted face values', () => {

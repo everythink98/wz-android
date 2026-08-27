@@ -579,6 +579,55 @@ describe('notification gateway', () => {
     ]);
   });
 
+  it('[REG-NOTIFY-032] keeps LinuxDo composer requests on the captured identity and guards CSRF before POST', async () => {
+    let identityCurrent = true;
+    const privateAccessAllowed = vi.fn((_source: NotificationSource, identityKey: string) => {
+      expect(identityKey).toBe('linuxdo:alice');
+      return identityCurrent;
+    });
+    const transport = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/session/csrf')) {
+        identityCurrent = false;
+        return new Response(JSON.stringify({ csrf: 'token' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ usage_count: 1 }), { status: 200 });
+    });
+    const gateway = createNotificationGateway({
+      privateAccessAllowed,
+      readAccess: async () => ({
+        fetcher: transport,
+        identityKey: 'linuxdo:alice',
+        userAgent: 'test-agent',
+        userId: 'alice'
+      })
+    }) as ReturnType<typeof createProductionNotificationGateway> & {
+      recordLinuxDoTemplateUse(id: string, expectedIdentityKey: string, signal?: AbortSignal): Promise<void>;
+    };
+
+    await expect(gateway.recordLinuxDoTemplateUse('7', 'linuxdo:alice')).rejects.toMatchObject({
+      reason: 'private-access-stale'
+    });
+    expect(transport.mock.calls.map(([url]) => String(url))).toEqual(['https://linux.do/session/csrf']);
+    expect(privateAccessAllowed).toHaveBeenCalled();
+  });
+
+  it('[REG-NOTIFY-032] stops an aborted LinuxDo composer request before reading access', async () => {
+    const readAccess = vi.fn(async () => ({ identityKey: 'linuxdo:alice', userId: 'alice' }));
+    const gateway = createNotificationGateway({ readAccess }) as ReturnType<
+      typeof createProductionNotificationGateway
+    > & {
+      loadLinuxDoTemplates(expectedIdentityKey: string, signal?: AbortSignal): Promise<unknown[]>;
+    };
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(gateway.loadLinuxDoTemplates('linuxdo:alice', controller.signal)).rejects.toMatchObject({
+      name: 'AbortError'
+    });
+    expect(readAccess).not.toHaveBeenCalled();
+  });
+
   it('continues only sources that still have another page', async () => {
     const adapters = Object.fromEntries(
       (['nodeseek', 'linuxdo', 'yaohuo'] as NotificationSource[]).map((source) => [

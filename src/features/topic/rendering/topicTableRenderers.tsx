@@ -11,8 +11,9 @@ import Animated, {
   withDecay,
   type SharedValue
 } from 'react-native-reanimated';
-import { useContentWidth, type CustomBlockRenderer } from 'react-native-render-html';
+import type { CustomBlockRenderer } from 'react-native-render-html';
 import type { ForumContentPart } from '@/domain/forum/topicContentSplit';
+import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import type { HtmlRenderers } from './types';
 import { useTopicSplitDisclosureScopeKey } from './TopicSplitDisclosure';
 
@@ -39,7 +40,11 @@ type TopicTableSemanticIdentity = {
   semanticId: string;
 };
 
-const TopicTableLayoutContext = createContext<{ columns: number; unitWidth: number } | null>(null);
+const TopicTableLayoutContext = createContext<{
+  columns: number;
+  terminalRow: TopicTableNode | null;
+  unitWidth: number;
+} | null>(null);
 const TopicTableSemanticContext = createContext<TopicTableSemanticIdentity | null>(null);
 const TopicTableScrollContext = createContext<TopicTableScrollStore | null>(null);
 
@@ -85,6 +90,23 @@ function tableColumnCount(table: TopicTableNode) {
   return Math.min(MAX_TABLE_COLUMNS, Math.max(1, maximum));
 }
 
+function lastTableRow(table: TopicTableNode) {
+  let lastRow: TopicTableNode | null = null;
+  const visit = (node: TopicTableNode) => {
+    for (const child of (node.children || []) as readonly TopicTableNode[]) {
+      const tagName = String(child.tagName || '').toLowerCase();
+      if (tagName === 'table') continue;
+      if (tagName === 'tr') {
+        lastRow = child;
+        continue;
+      }
+      visit(child);
+    }
+  };
+  visit(table);
+  return lastRow;
+}
+
 function tableCellSpan(node: TopicTableNode, columns: number) {
   const cells = ((node.parent?.children || []) as readonly TopicTableNode[]).filter((child) => {
     const tagName = String(child.tagName || '').toLowerCase();
@@ -101,6 +123,24 @@ function tableCellSpan(node: TopicTableNode, columns: number) {
     usedColumns += span;
   }
   return 1;
+}
+
+function firstFiniteStyleValue(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, value);
+  }
+  return 0;
+}
+
+function tableCellContentWidth(width: number, style: StyleProp<ViewStyle>) {
+  const flat = StyleSheet.flatten(style) || {};
+  const leftInset =
+    firstFiniteStyleValue(flat.paddingLeft, flat.paddingHorizontal, flat.padding) +
+    firstFiniteStyleValue(flat.borderLeftWidth, flat.borderWidth);
+  const rightInset =
+    firstFiniteStyleValue(flat.paddingRight, flat.paddingHorizontal, flat.padding) +
+    firstFiniteStyleValue(flat.borderRightWidth, flat.borderWidth);
+  return Math.max(1, width - leftInset - rightInset);
 }
 
 function frameContinuationStyle(part: ForumContentPart, style: ViewStyle): ViewStyle {
@@ -301,27 +341,27 @@ export function createTopicTableRenderers({
   const CellRenderer: CustomBlockRenderer = ({ TDefaultRenderer, ...props }) => {
     const layout = useContext(TopicTableLayoutContext);
     if (!layout) return <TDefaultRenderer {...props} />;
-    const width = layout.unitWidth * tableCellSpan(props.tnode as TopicTableNode, layout.columns);
+    const node = props.tnode as TopicTableNode;
+    const width = layout.unitWidth * tableCellSpan(node, layout.columns);
+    const cellStyle = [
+      props.style,
+      { flexBasis: width, flexGrow: 0, flexShrink: 0, width },
+      node.parent === layout.terminalRow ? { borderBottomWidth: 0 } : undefined,
+      props.renderIndex === props.renderLength - 1 ? { borderRightWidth: 0 } : undefined
+    ];
     return (
-      <TDefaultRenderer
-        {...props}
-        style={[
-          props.style,
-          { flexBasis: width, flexGrow: 0, flexShrink: 0, width },
-          props.renderIndex === props.renderLength - 1 ? { borderRightWidth: 0 } : undefined
-        ]}
-      />
+      <ForumContentWidthBoundary width={tableCellContentWidth(width, cellStyle)}>
+        <TDefaultRenderer {...props} style={cellStyle} />
+      </ForumContentWidthBoundary>
     );
   };
 
   const TableRenderer: CustomBlockRenderer = ({ TDefaultRenderer, ...props }) => {
-    const contentWidth = useContentWidth();
+    const contentWidth = useForumContentWidth();
     const semantic = useContext(TopicTableSemanticContext);
     const part = semantic?.part || 'only';
-    const columns = Math.min(
-      MAX_TABLE_COLUMNS,
-      Math.max(1, semantic?.columns || tableColumnCount(props.tnode as TopicTableNode))
-    );
+    const tableNode = props.tnode as TopicTableNode;
+    const columns = Math.min(MAX_TABLE_COLUMNS, Math.max(1, semantic?.columns || tableColumnCount(tableNode)));
     const safeContentWidth = Number.isFinite(contentWidth) && contentWidth > 0 ? contentWidth : minColumnWidth;
     const tableWidth = Math.max(safeContentWidth, columns * Math.max(1, minColumnWidth));
     const overflow = tableWidth > safeContentWidth + StyleSheet.hairlineWidth;
@@ -343,7 +383,13 @@ export function createTopicTableRenderers({
           style={[styles.htmlTableFrame, frameContinuationStyle(part, frameStyle), { width: tableWidth }]}
           testID="topic-html-table-frame"
         >
-          <TopicTableLayoutContext.Provider value={{ columns, unitWidth: tableWidth / columns }}>
+          <TopicTableLayoutContext.Provider
+            value={{
+              columns,
+              terminalRow: part === 'only' || part === 'last' ? lastTableRow(tableNode) : null,
+              unitWidth: tableWidth / columns
+            }}
+          >
             <TDefaultRenderer {...props} style={[props.style, { width: tableWidth }]} />
           </TopicTableLayoutContext.Provider>
         </View>

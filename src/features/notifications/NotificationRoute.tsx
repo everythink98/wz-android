@@ -9,6 +9,7 @@ import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification } from '@/domain/notifications/models';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
+import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 import { parseForumTopicLink } from '@/domain/forum/links';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
@@ -18,7 +19,7 @@ import { forumQueryKeys } from '@/platform/query/serverState';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
-import { appendReplyImageMarkup, normalizeReplyImageAsset } from '@/sources/imageUpload';
+import { normalizeReplyImageAsset } from '@/sources/imageUpload';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import { isNodeImageApiKeyExpiredError } from '@/sources/nodeimage/upload';
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
@@ -462,11 +463,13 @@ function EnabledNotificationDetailRoute({
   const markStartedRef = useRef('');
   const markControllerRef = useRef<AbortController | undefined>(undefined);
   const replyControllerRef = useRef<AbortController | undefined>(undefined);
+  const composerControllersRef = useRef(new Set<AbortController>());
   const replyBusyRef = useRef(false);
   const routeFocused = useIsFocused();
   const [markMessage, setMarkMessage] = useState('');
   const [replyBusy, setReplyBusy] = useState(false);
   const [replyContent, setReplyContent] = useState('');
+  const [replyPendingNodeSeekPolls, setReplyPendingNodeSeekPolls] = useState<PendingNodeSeekPoll[]>([]);
   const [replyError, setReplyError] = useState('');
   const [replyStatus, setReplyStatus] = useState('');
   const [replyVisible, setReplyVisible] = useState(false);
@@ -502,6 +505,8 @@ function EnabledNotificationDetailRoute({
       markControllerRef.current = undefined;
       replyControllerRef.current?.abort();
       replyControllerRef.current = undefined;
+      composerControllersRef.current.forEach((controller) => controller.abort());
+      composerControllersRef.current.clear();
       replyBusyRef.current = false;
     },
     [identityKey, item.id]
@@ -512,18 +517,24 @@ function EnabledNotificationDetailRoute({
     markControllerRef.current = undefined;
     replyControllerRef.current?.abort();
     replyControllerRef.current = undefined;
+    composerControllersRef.current.forEach((controller) => controller.abort());
+    composerControllersRef.current.clear();
     replyBusyRef.current = false;
     setReplyBusy(false);
-    setReplyVisible(false);
     void queryClient.cancelQueries({ queryKey: detailQueryKey });
   }, [detailQueryKey, queryClient, routeFocused]);
   useEffect(() => {
     if (canAccessSource) return;
     replyControllerRef.current?.abort();
     replyControllerRef.current = undefined;
+    composerControllersRef.current.forEach((controller) => controller.abort());
+    composerControllersRef.current.clear();
     replyBusyRef.current = false;
     setReplyBusy(false);
-    if (currentIdentityKey !== identityKey) setReplyContent('');
+    if (currentIdentityKey !== identityKey) {
+      setReplyContent('');
+      setReplyPendingNodeSeekPolls([]);
+    }
     setReplyError('');
     setReplyStatus('');
     setReplyVisible(false);
@@ -585,58 +596,91 @@ function EnabledNotificationDetailRoute({
     },
     [notify]
   );
-  const submitReply = useCallback(() => {
-    if (!canAccessSource || replyBusyRef.current || !replyContent.trim() || detailQuery.data?.reply?.disabledReason) {
-      return;
-    }
+  const runComposerRequest = useCallback(async <T,>(operation: (signal: AbortSignal) => Promise<T>) => {
     const controller = new AbortController();
-    replyBusyRef.current = true;
-    replyControllerRef.current?.abort();
-    replyControllerRef.current = controller;
-    setReplyBusy(true);
-    setReplyError('');
-    setReplyStatus('');
-    void gateway
-      .replyToConversation(item, replyContent, identityKey, controller.signal)
-      .then(async (result) => {
-        if (controller.signal.aborted) return;
-        if (!result.confirmed) {
-          setReplyError(result.message || '原站未确认发送成功，请刷新会话后确认。');
-          return;
-        }
-        setReplyContent('');
-        setReplyStatus('');
-        setReplyVisible(false);
-        runtime.notify('回复已发送');
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: detailQueryKey }),
-          queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications(item.source) }),
-          queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications('all') }),
-          refreshSnapshots()
-        ]);
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) setReplyError(errorMessage(error));
-      })
-      .finally(() => {
-        if (replyControllerRef.current !== controller) return;
-        replyControllerRef.current = undefined;
-        replyBusyRef.current = false;
-        setReplyBusy(false);
-      });
-  }, [
-    canAccessSource,
-    detailQuery.data?.reply?.disabledReason,
-    detailQueryKey,
-    gateway,
-    identityKey,
-    item,
-    queryClient,
-    refreshSnapshots,
-    replyContent,
-    runtime
-  ]);
-  const uploadReplyImage = useCallback(() => {
+    composerControllersRef.current.add(controller);
+    try {
+      return await operation(controller.signal);
+    } finally {
+      composerControllersRef.current.delete(controller);
+    }
+  }, []);
+  const loadLinuxDoPollCapabilities = useCallback(
+    () => runComposerRequest((signal) => gateway.loadLinuxDoPollCapabilities(identityKey, signal)),
+    [gateway, identityKey, runComposerRequest]
+  );
+  const loadLinuxDoTemplates = useCallback(
+    () => runComposerRequest((signal) => gateway.loadLinuxDoTemplates(identityKey, signal)),
+    [gateway, identityKey, runComposerRequest]
+  );
+  const useLinuxDoTemplate = useCallback(
+    (id: string) => runComposerRequest((signal) => gateway.recordLinuxDoTemplateUse(id, identityKey, signal)),
+    [gateway, identityKey, runComposerRequest]
+  );
+  const submitReply = useCallback(
+    (snapshot?: ComposerSnapshot) => {
+      const submittedSnapshot = snapshot && Array.isArray(snapshot.validationIssues) ? snapshot : undefined;
+      const submittedContent = submittedSnapshot?.markdown ?? replyContent;
+      if (
+        !canAccessSource ||
+        replyBusyRef.current ||
+        !submittedContent.trim() ||
+        submittedSnapshot?.validationIssues.length ||
+        detailQuery.data?.reply?.disabledReason
+      ) {
+        return;
+      }
+      const controller = new AbortController();
+      replyBusyRef.current = true;
+      replyControllerRef.current?.abort();
+      replyControllerRef.current = controller;
+      setReplyBusy(true);
+      setReplyError('');
+      setReplyStatus('');
+      void gateway
+        .replyToConversation(item, submittedContent, identityKey, controller.signal)
+        .then(async (result) => {
+          if (controller.signal.aborted) return;
+          if (!result.confirmed) {
+            setReplyError(result.message || '原站未确认发送成功，请刷新会话后确认。');
+            return;
+          }
+          setReplyContent('');
+          setReplyPendingNodeSeekPolls([]);
+          setReplyStatus('');
+          setReplyVisible(false);
+          runtime.notify('回复已发送');
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: detailQueryKey }),
+            queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications(item.source) }),
+            queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications('all') }),
+            refreshSnapshots()
+          ]);
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted) setReplyError(errorMessage(error));
+        })
+        .finally(() => {
+          if (replyControllerRef.current !== controller) return;
+          replyControllerRef.current = undefined;
+          replyBusyRef.current = false;
+          setReplyBusy(false);
+        });
+    },
+    [
+      canAccessSource,
+      detailQuery.data?.reply?.disabledReason,
+      detailQueryKey,
+      gateway,
+      identityKey,
+      item,
+      queryClient,
+      refreshSnapshots,
+      replyContent,
+      runtime
+    ]
+  );
+  const uploadReplyImage = useCallback(async () => {
     if (
       !canAccessSource ||
       replyBusyRef.current ||
@@ -644,7 +688,7 @@ function EnabledNotificationDetailRoute({
       detailQuery.data.reply.disabledReason ||
       item.source === 'yaohuo'
     ) {
-      return;
+      return undefined;
     }
     const controller = new AbortController();
     replyBusyRef.current = true;
@@ -653,7 +697,7 @@ function EnabledNotificationDetailRoute({
     setReplyBusy(true);
     setReplyError('');
     setReplyStatus('');
-    void (async () => {
+    try {
       const ticket = await runtime.composer.ensureWritableSession(item.source);
       const assertCurrent = () => {
         if (
@@ -683,7 +727,7 @@ function EnabledNotificationDetailRoute({
         multiple: false
       });
       assertCurrent();
-      if (picked.canceled || !picked.assets?.[0]) return;
+      if (picked.canceled || !picked.assets?.[0]) return undefined;
       const file = normalizeReplyImageAsset(picked.assets[0]);
       const result = await gateway.uploadReplyImage(item.source, {
         expectedIdentityKey: identityKey,
@@ -695,23 +739,23 @@ function EnabledNotificationDetailRoute({
       if (nodeImageGeneration !== undefined && nodeImageGeneration !== currentNodeImageApiKeyGeneration()) {
         throw new Error('NodeImage 凭据已变化');
       }
-      setReplyContent((current) => appendReplyImageMarkup(current, result.markup));
       setReplyStatus('图片已插入草稿');
-    })()
-      .catch((error) => {
-        if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
-        setReplyError(
-          isNodeImageApiKeyExpiredError(error)
-            ? 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴'
-            : errorMessage(error)
-        );
-      })
-      .finally(() => {
-        if (replyControllerRef.current !== controller) return;
+      return result.markup;
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return undefined;
+      setReplyError(
+        isNodeImageApiKeyExpiredError(error)
+          ? 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴'
+          : errorMessage(error)
+      );
+      return undefined;
+    } finally {
+      if (replyControllerRef.current === controller) {
         replyControllerRef.current = undefined;
         replyBusyRef.current = false;
         setReplyBusy(false);
-      });
+      }
+    }
   }, [canAccessSource, detailQuery.data?.reply, gateway, identityKey, item.source, runtime.composer]);
   return (
     <NotificationDetailScreen
@@ -722,12 +766,19 @@ function EnabledNotificationDetailRoute({
       error={canAccessSource ? (detailQuery.error ? errorMessage(detailQuery.error) : undefined) : accessError}
       loading={canAccessSource && detailQuery.isPending}
       markMessage={markMessage}
+      nodeSeekMemberId={
+        item.source === 'nodeseek' && runtime.sessions.nodeseek.currentUser?.id
+          ? String(runtime.sessions.nodeseek.currentUser.id)
+          : undefined
+      }
       replyBusy={replyBusy}
       replyContent={replyContent}
+      replyPendingNodeSeekPolls={replyPendingNodeSeekPolls}
       discourseEmojiUrls={discourseEmojiUrls}
       replyError={replyError}
       replyStatus={replyStatus}
       replyVisible={replyVisible}
+      routeActive={routeFocused}
       topicReplyAction={item.kind === 'mention' || item.kind === 'reply'}
       onOpenExternalUrl={openExternalUrl}
       onRetry={() => {
@@ -744,7 +795,14 @@ function EnabledNotificationDetailRoute({
       }}
       onReplyClose={() => setReplyVisible(false)}
       onReplyContentChange={setReplyContent}
+      onReplySnapshot={(snapshot) => {
+        setReplyContent(snapshot.markdown);
+        setReplyPendingNodeSeekPolls(snapshot.pendingNodeSeekPolls);
+      }}
       onSubmitReply={submitReply}
+      onLoadLinuxDoPollCapabilities={item.source === 'linuxdo' ? loadLinuxDoPollCapabilities : undefined}
+      onLoadLinuxDoTemplates={item.source === 'linuxdo' ? loadLinuxDoTemplates : undefined}
+      onUseLinuxDoTemplate={item.source === 'linuxdo' ? useLinuxDoTemplate : undefined}
       onUploadReplyImage={uploadReplyImage}
     />
   );

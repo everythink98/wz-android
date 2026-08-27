@@ -1,11 +1,17 @@
 import { NODESEEK_VOTE_API_HEADERS } from './polls';
 import { NODESEEK_BASE_URL } from './protocol';
+import {
+  normalizeNodeSeekStardustRefId,
+  type NodeSeekStardustReceive,
+  type PendingNodeSeekPoll
+} from '@/domain/forum/structuredComposer';
 
 export interface NodeSeekActionRequest {
   path: string;
   method: 'POST';
   headers: Record<string, string>;
   body?: string;
+  fallbackErrorMessage?: string;
 }
 
 type NodeSeekInteractionType = 'upvote' | 'like' | 'dislike';
@@ -192,7 +198,76 @@ export function buildNodeSeekVoteRequest({ optionIds }: { optionIds: (string | n
   };
 }
 
-export function nodeSeekActionErrorMessage(data: unknown, status: number) {
+export function buildNodeSeekPollLockRequest({ pollId }: { pollId: string | number }): NodeSeekActionRequest {
+  return {
+    path: `/api/vote/lock/${cleanPositiveInteger(pollId, '投票 id')}`,
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-dynamic-sign': NODESEEK_VOTE_API_HEADERS['x-dynamic-sign']
+    },
+    body: JSON.stringify({ locked: true }),
+    fallbackErrorMessage: '投票锁定失败'
+  };
+}
+
+export function buildNodeSeekPollCreateRequest({
+  poll
+}: {
+  poll: Pick<PendingNodeSeekPoll, 'title' | 'multiple' | 'isPublic' | 'options'>;
+}): NodeSeekActionRequest {
+  const title = String(poll.title || '').trim();
+  const items = poll.options.map((option) => String(option || '').trim()).filter(Boolean);
+  if (!title) throw new Error('请输入投票标题');
+  if (items.length < 2) throw new Error('投票至少需要两个选项');
+  if (new Set(items).size !== items.length) throw new Error('投票选项不能重复');
+  return {
+    path: '/api/vote/info',
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-dynamic-sign': NODESEEK_VOTE_API_HEADERS['x-dynamic-sign']
+    },
+    body: JSON.stringify({ title, multiple: Boolean(poll.multiple), isPublic: Boolean(poll.isPublic), items })
+  };
+}
+
+export function buildNodeSeekStardustPrepareRequest({
+  receiverId
+}: {
+  receiverId: string | number;
+}): NodeSeekActionRequest {
+  return {
+    path: '/api/stardust/payment-prepare',
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ receiver_id: cleanPositiveInteger(receiverId, '收款人 id'), origin: NODESEEK_BASE_URL }),
+    fallbackErrorMessage: '获取支付基础信息失败'
+  };
+}
+
+export function buildNodeSeekStardustSendRequest({
+  receive
+}: {
+  receive: NodeSeekStardustReceive;
+}): NodeSeekActionRequest {
+  const refId = normalizeNodeSeekStardustRefId(receive.refId);
+  if (!refId) throw new Error('Ref ID 必须为大于等于 100 的安全整数');
+  return {
+    path: '/api/stardust/send',
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      member_id: cleanPositiveInteger(receive.receiverMemberId, '收款人 id'),
+      diff: cleanPositiveInteger(receive.amount, 'Stardust 数额'),
+      ref_id: refId,
+      onetime: receive.oneTime
+    }),
+    fallbackErrorMessage: '转账失败'
+  };
+}
+
+export function nodeSeekActionErrorMessage(data: unknown, status: number, fallbackErrorMessage?: string) {
   if (data && typeof data === 'object') {
     const record = data as Record<string, unknown>;
     if (typeof record.message === 'string' && record.message.trim()) {
@@ -201,6 +276,10 @@ export function nodeSeekActionErrorMessage(data: unknown, status: number) {
     if (typeof record.error === 'string' && record.error.trim()) {
       return record.error.trim();
     }
+  }
+
+  if (fallbackErrorMessage) {
+    return fallbackErrorMessage;
   }
 
   if (status === 401) {

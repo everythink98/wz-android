@@ -233,17 +233,31 @@ export const TopicScreen = memo(function TopicScreen({
         actionBusy={actionBusy}
         discourseEmojiUrls={discourseEmojiUrls}
         intent={replyComposerIntent}
+        nodeSeekMemberId={nodeSeekUserId ? String(nodeSeekUserId) : undefined}
+        pendingNodeSeekPolls={state.replyPendingNodeSeekPolls}
         replyContent={state.replyContent}
         replyFace={state.replyFace}
+        routeActive={active}
         source={topic?.source}
         styles={styles}
         theme={theme}
+        topicId={item.id}
         visible={Boolean(canOpenReplyComposer && replyComposerIntent.kind !== 'closed')}
         onReplyComposerOpenChange={commands.composer.toggle}
         onReplyContentChange={commands.composer.changeContent}
         onReplyFaceChange={commands.composer.changeFace}
+        onReplySnapshot={commands.composer.changeSnapshot}
         onSubmitReply={actions.submitReply}
-        onUploadReplyImage={replyImageUploadSupported(topic?.source) ? actions.uploadReplyImage : undefined}
+        onLoadLinuxDoPollCapabilities={item.source === 'linuxdo' ? actions.loadLinuxDoPollCapabilities : undefined}
+        onLoadLinuxDoTemplates={item.source === 'linuxdo' ? actions.loadLinuxDoTemplates : undefined}
+        onUseLinuxDoTemplate={item.source === 'linuxdo' ? actions.useLinuxDoTemplate : undefined}
+        onUploadReplyImage={
+          replyImageUploadSupported(topic?.source)
+            ? topic?.source === 'linuxdo' || topic?.source === 'nodeseek'
+              ? actions.uploadReplyImageMarkup
+              : actions.uploadReplyImage
+            : undefined
+        }
       />
     </View>
   );

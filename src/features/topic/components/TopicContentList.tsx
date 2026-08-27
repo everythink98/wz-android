@@ -40,7 +40,10 @@ import type { HtmlRenderers } from '../rendering/types';
 import type { ReplyFilter } from '../model/types';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '@/domain/forum/presentation';
 import { contentBoundaryForContinuation, HTML_ALLOWED_INLINE_STYLES } from '../rendering/htmlStyles';
-import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
+import {
+  NODESEEK_STARDUST_PLACEHOLDER_TAG,
+  nodeSeekStardustReceiveFromAttributes
+} from '@/sources/nodeseek/stardustMarkup';
 import {
   androidRipple,
   replyContextBadgeStyle,
@@ -119,6 +122,7 @@ import {
 import { useContentBoundarySpacing } from '../rendering/TopicContentPresentation';
 import { resolveForumContentRowHtml, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { createTopicTableRenderers, TopicTableScrollProvider } from '../rendering/topicTableRenderers';
+import { NodeSeekStardustCard } from './NodeSeekStardustCard';
 
 const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
 const EMPTY_NEARBY_TOPIC_CONTENT_KEYS: ReadonlySet<string> = new Set();
@@ -405,6 +409,7 @@ export const TopicContentList = memo(function TopicContentList({
   const onNodeSeekCollection = actions.collectOnNodeSeekSite;
   const onYaohuoFavorite = actions.favoriteOnYaohuoSite;
   const onInteract = actions.interact;
+  const onLockPoll = actions.lockNodeSeekPoll;
   const onVotePoll = actions.votePoll;
   const pendingReplyOrderScrollRef = useRef(false);
   const changeReplyOrder = useCallback(
@@ -1187,9 +1192,14 @@ export const TopicContentList = memo(function TopicContentList({
       ),
       styles
     });
+    const NodeSeekStardustRenderer: CustomBlockRenderer = (props) => {
+      const receive = nodeSeekStardustReceiveFromAttributes(props.tnode.attributes);
+      return receive ? <NodeSeekStardustCard actions={actions} receive={receive} /> : null;
+    };
     return {
       ...htmlRenderers,
       ...tableRenderers,
+      [NODESEEK_STARDUST_PLACEHOLDER_TAG]: NodeSeekStardustRenderer,
       h1: ContentBoundarySpacingRenderer,
       h2: ContentBoundarySpacingRenderer,
       h3: ContentBoundarySpacingRenderer,
@@ -1200,49 +1210,7 @@ export const TopicContentList = memo(function TopicContentList({
       p: ContentBoundarySpacingRenderer,
       ul: ContentBoundarySpacingRenderer
     };
-  }, [htmlBaseStyle.fontSize, htmlRenderers, styles]);
-  const topicBodyHtmlRenderers = useMemo<HtmlRenderers>(() => {
-    const NodeSeekPollRenderer: CustomBlockRenderer = (props) => {
-      const encodedId = String(props.tnode.attributes.id || '');
-      const poll =
-        itemSource === 'nodeseek'
-          ? topicPolls.find((candidate) => candidate.id && encodeURIComponent(candidate.id) === encodedId)
-          : undefined;
-      if (!poll) {
-        return null;
-      }
-      return (
-        <TopicPolls
-          actionBusy={actionBusy}
-          decisionFor={decisionFor}
-          embeddedInArticle
-          keyPrefix="topic"
-          onTogglePollSelection={togglePollSelection}
-          onVotePoll={onVotePoll}
-          pollSelections={pollSelections}
-          polls={[poll]}
-          source="nodeseek"
-          styles={styles}
-          theme={theme}
-        />
-      );
-    };
-    return {
-      ...genericHtmlRenderers,
-      [NODESEEK_POLL_PLACEHOLDER_TAG]: NodeSeekPollRenderer
-    };
-  }, [
-    actionBusy,
-    decisionFor,
-    genericHtmlRenderers,
-    itemSource,
-    onVotePoll,
-    pollSelections,
-    styles,
-    theme,
-    togglePollSelection,
-    topicPolls
-  ]);
+  }, [actions, htmlBaseStyle.fontSize, htmlRenderers, styles]);
   const renderTopicListItemFrame = useCallback(
     (children: ReactNode, key?: string, onLayout?: (event: LayoutChangeEvent) => void) => {
       const frame = (
@@ -1376,6 +1344,7 @@ export const TopicContentList = memo(function TopicContentList({
             decisionFor={context === 'accepted' ? undefined : decisionFor}
             embeddedInArticle
             keyPrefix={context === 'topic' ? 'topic' : frameKey}
+            onLockPoll={onLockPoll}
             onTogglePollSelection={togglePollSelection}
             onVotePoll={onVotePoll}
             pollSelections={pollSelections}
@@ -1409,7 +1378,7 @@ export const TopicContentList = memo(function TopicContentList({
         return wrapContent(
           <TopicSplitDisclosureScope scopeKey={options?.scopeKey || 'opening'}>
             <RenderHTMLConfigProvider
-              renderers={topicBodyHtmlRenderers}
+              renderers={genericHtmlRenderers}
               renderersProps={htmlRenderersProps}
               defaultTextProps={{ selectable: true }}
               enableExperimentalBRCollapsing
@@ -1441,12 +1410,14 @@ export const TopicContentList = memo(function TopicContentList({
       contentWidth,
       decisionFor,
       firstArticleBodyKey,
+      genericHtmlRenderers,
       htmlRenderersProps,
       inlineSizedImageUrls,
       mediaContext,
       mediaSessionIdentity,
       nodeSeekMediaUserAgent,
       nearbyTopicContentKeys,
+      onLockPoll,
       onVotePoll,
       pollSelections,
       replyHighlightQuery,
@@ -1456,7 +1427,6 @@ export const TopicContentList = memo(function TopicContentList({
       theme,
       togglePollSelection,
       topic?.source,
-      topicBodyHtmlRenderers,
       topicColumnStyle,
       topicImageDeriver
     ]
@@ -1475,6 +1445,7 @@ export const TopicContentList = memo(function TopicContentList({
                     decisionFor={decisionFor}
                     embeddedInArticle
                     keyPrefix="topic"
+                    onLockPoll={onLockPoll}
                     onTogglePollSelection={togglePollSelection}
                     onVotePoll={onVotePoll}
                     pollSelections={pollSelections}
@@ -1631,6 +1602,7 @@ export const TopicContentList = memo(function TopicContentList({
     legacyTopicPollsVisible,
     onDiscourseBookmark,
     onInteract,
+    onLockPoll,
     onNodeSeekCollection,
     onYaohuoFavorite,
     onVotePoll,
@@ -1913,6 +1885,7 @@ export const TopicContentList = memo(function TopicContentList({
             onDeleteReply={onDeleteReply}
             onEditReply={onEditReply}
             onLocateReply={requestReplyLocation}
+            onLockPoll={onLockPoll}
             onOpenTopic={onOpenTopic}
             onQuoteContentLayout={markReplyQuoteContentLayout}
             onVotePoll={onVotePoll}
@@ -1960,6 +1933,7 @@ export const TopicContentList = memo(function TopicContentList({
       onDeleteReply,
       onEditReply,
       onInteract,
+      onLockPoll,
       onOpenTopic,
       onToggleTopicBodyQuote,
       openReplyOrderMenu,

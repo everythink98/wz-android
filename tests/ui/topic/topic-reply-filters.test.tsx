@@ -173,18 +173,24 @@ jest.mock('lucide-react-native', () => {
     CircleCheck: Icon,
     CircleHelp: Icon,
     ClipboardList: Icon,
+    CodeXml: Icon,
     Copy: Icon,
     Drumstick: Icon,
     Flame: Icon,
     Lightbulb: Icon,
     List: Icon,
     MoreHorizontal: Icon,
+    Maximize2: Icon,
+    Minimize2: Icon,
     Quote: Icon,
+    Redo2: Icon,
     SquarePen: Icon,
     Star: Icon,
     ThumbsDown: Icon,
     ThumbsUp: Icon,
+    TextCursorInput: Icon,
     TriangleAlert: Icon,
+    Undo2: Icon,
     X: Icon,
     Zap: Icon
   };
@@ -332,38 +338,13 @@ jest.mock('@/features/topic/components/TopicContentBlock', () => {
           })
         );
       }
-      const children: React.ReactNode[] = [];
-      const pattern = /<forum-nodeseek-poll\b[^>]*\bid=["']([^"']+)["'][^>]*>\s*<\/forum-nodeseek-poll\s*>/gi;
-      let offset = 0;
-      let match = pattern.exec(resolvedHtml);
-      while (match) {
-        if (match.index > offset) {
-          children.push(
-            ReactModule.createElement(NativeText, { key: `html-${offset}` }, resolvedHtml.slice(offset, match.index))
-          );
-        }
-        const Renderer = renderers['forum-nodeseek-poll'];
-        if (Renderer) {
-          children.push(
-            ReactModule.createElement(Renderer, {
-              key: `poll-${match.index}`,
-              tnode: { attributes: { id: match[1] } }
-            })
-          );
-        }
-        offset = pattern.lastIndex;
-        match = pattern.exec(resolvedHtml);
-      }
-      if (offset < resolvedHtml.length) {
-        children.push(ReactModule.createElement(NativeText, { key: `html-${offset}` }, resolvedHtml.slice(offset)));
-      }
       return ReactModule.createElement(
         NativeView,
         {
           accessibilityLabel: `content-continuation-${continuation}`,
           testID: `topic-html-block-${originalImageUpgradeEnabled ? 'ready' : 'deferred'}`
         },
-        children
+        ReactModule.createElement(NativeText, null, resolvedHtml)
       );
     }
   };
@@ -697,8 +678,15 @@ function TopicFilterHarness({
     editReply: async () => undefined,
     favoriteOnYaohuoSite: async () => onYaohuoFavorite(),
     interact: async (type: InteractionType, commentId?: number) => onInteract(type, commentId),
+    loadLinuxDoPollCapabilities: async () => ({ groups: [], canUseStaffResults: false }),
+    loadLinuxDoTemplates: async () => [],
+    loadNodeSeekStardustStatus: async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }),
+    lockNodeSeekPoll: async () => undefined,
+    payNodeSeekStardust: async () => 'canceled' as const,
     submitReply: async () => undefined,
     uploadReplyImage: async () => undefined,
+    uploadReplyImageMarkup: async () => undefined,
+    useLinuxDoTemplate: async () => undefined,
     votePoll: async (poll: TopicPoll, optionIds: string[]) => onVotePoll(poll, optionIds)
   } satisfies TopicActionsController;
   const read = {
@@ -2981,7 +2969,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-WRITE-009] renders a NodeSeek poll at its marker between body blocks', async () => {
+  it('[REG-WRITE-009][REG-TOPIC-128] renders a NodeSeek poll at its marker between body blocks', async () => {
     const nodeSeekTopic: TopicDetail = {
       ...topic,
       source: 'nodeseek',
@@ -3002,7 +2990,7 @@ describe('Topic reply filters', () => {
     expect(beforeIndex).toBeGreaterThanOrEqual(0);
     expect(pollIndex).toBeGreaterThan(beforeIndex);
     expect(afterIndex).toBeGreaterThan(pollIndex);
-    expect(view.getAllByTestId('topic-html-block-deferred')).toHaveLength(1);
+    expect(view.getAllByTestId('topic-html-block-deferred')).toHaveLength(2);
     expect(view.getAllByTestId('topic-poll-nodeseek')).toHaveLength(1);
   });
 

@@ -2,7 +2,7 @@ import { HTMLContentModel, HTMLElementModel, defaultHTMLElementModels } from 're
 import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
 import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
-import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/sources/nodeseek/polls';
+import { NODESEEK_STARDUST_PLACEHOLDER_TAG } from '@/sources/nodeseek/stardustMarkup';
 import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
 
 export const HTML_CUSTOM_ELEMENT_MODELS = {
@@ -23,8 +23,8 @@ export const HTML_CUSTOM_ELEMENT_MODELS = {
     contentModel: HTMLContentModel.block,
     isOpaque: true
   }),
-  [NODESEEK_POLL_PLACEHOLDER_TAG]: HTMLElementModel.fromCustomModel({
-    tagName: NODESEEK_POLL_PLACEHOLDER_TAG,
+  [NODESEEK_STARDUST_PLACEHOLDER_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: NODESEEK_STARDUST_PLACEHOLDER_TAG,
     contentModel: HTMLContentModel.block,
     isOpaque: true
   }),

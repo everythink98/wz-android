@@ -260,6 +260,18 @@ describe('Android topic content splitting', () => {
     );
   });
 
+  it('[REG-TOPIC-128] compiles NodeSeek opening and reply polls at their marker position', () => {
+    const poll = { id: '3028', options: [{ id: 'a', label: 'A' }] };
+    const html = '<p>投票前</p><forum-nodeseek-poll id="3028"></forum-nodeseek-poll><p>投票后</p>';
+
+    for (const role of ['opening', 'reply'] as const) {
+      const rows = compileForumContent({ html, polls: [poll], role, source: 'nodeseek' }).rows;
+
+      expect(rows.map((row) => row.type)).toEqual(['richText', 'poll', 'richText']);
+      expect(rows[1]).toMatchObject({ poll, type: 'poll' });
+    }
+  });
+
   it('[REG-PERF-010] preserves poll order when a typed marker appears inside a table cell', () => {
     const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
     const html =

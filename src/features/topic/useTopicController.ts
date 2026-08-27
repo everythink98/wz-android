@@ -119,6 +119,15 @@ function replyFailure(
   return { error: retryMode === 'none' ? { ...sourceError, retryable: false } : sourceError, position, retryMode };
 }
 
+function replyLocationTarget(reply: Reply | undefined, pageHint?: number): ReplyLocationTarget | undefined {
+  if (!reply?.commentId && !reply?.floor) return undefined;
+  return {
+    ...(reply.commentId ? { commentId: reply.commentId } : {}),
+    ...(reply.floor ? { floor: reply.floor } : {}),
+    ...(pageHint ? { pageHint } : {})
+  };
+}
+
 const readOutcome = sourceReadRecoveryOutcome;
 
 export function useTopicController({
@@ -129,6 +138,7 @@ export function useTopicController({
   onRetryIdentityStatus,
   onNodeSeekTopicVerificationRequired,
   onOpenTopic,
+  onReplyLocationResolved,
   readerData,
   readerDataRef,
   showLinuxDoVerification,
@@ -146,6 +156,7 @@ export function useTopicController({
   onRetryIdentityStatus?: (source: SessionSource) => Promise<unknown> | unknown;
   onNodeSeekTopicVerificationRequired: (message: string, recovery: LinuxDoReadRecovery) => void;
   onOpenTopic: (topic: Topic) => void;
+  onReplyLocationResolved?: (target: ReplyLocationTarget) => void;
   readerData: ReaderData;
   readerDataRef: MutableRef<ReaderData>;
   showLinuxDoVerification: (
@@ -811,6 +822,7 @@ export function useTopicController({
       if (!selectedTopic || !topicDetail || repliesReadBlocked) return 'stale';
 
       const generation = ++replyWindowGenerationRef.current;
+      let createdTarget: ReplyLocationTarget | undefined;
       const ownsWindow = () =>
         activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
         replyWindowGenerationRef.current === generation;
@@ -900,18 +912,14 @@ export function useTopicController({
               if (reanchor && replyOrder === 'oldest' && hasKnownReplies) {
                 const tail = await loadReplyPage(refreshedDetail, 'newest', { kind: 'start' }, signal, trace);
                 const latest = tail.items[0];
-                const latestTarget: ReplyLocationTarget = {
-                  ...(latest?.commentId ? { commentId: latest.commentId } : {}),
-                  ...(latest?.floor ? { floor: latest.floor } : {}),
-                  ...(tail.currentPage ? { pageHint: tail.currentPage } : {})
-                };
-                if (!latestTarget.commentId && !latestTarget.floor) {
+                createdTarget = replyLocationTarget(latest, tail.currentPage);
+                if (!createdTarget) {
                   throw new Error('原站未返回可定位的最新回复');
                 }
                 return loadReplyPage(
                   refreshedDetail,
                   'oldest',
-                  { kind: 'target', target: latestTarget },
+                  { kind: 'target', target: createdTarget },
                   signal,
                   trace
                 );
@@ -919,6 +927,12 @@ export function useTopicController({
               const loaded = await loadReplyPage(refreshedDetail, replyOrder, position, signal, trace);
               if (command.kind === 'created' && !loaded.items.length) {
                 throw new Error('原站未返回可确认的最新回复');
+              }
+              if (command.kind === 'created') {
+                createdTarget = replyLocationTarget(
+                  replyOrder === 'newest' ? loaded.items[0] : loaded.items.at(-1),
+                  loaded.currentPage
+                );
               }
               return loaded;
             }
@@ -977,6 +991,7 @@ export function useTopicController({
             cached && typeof replyCount === 'number' ? { ...cached, replyCount } : cached
           );
           setReplyWindowFailuresByKey({});
+          if (command.kind === 'created' && createdTarget) onReplyLocationResolved?.(createdTarget);
           if (ownsTrace) {
             finishDiagnosticTrace(trace, 'success', { itemCount: page.items.length, hasMore: Boolean(page.hasMore) });
           } else {
@@ -1038,6 +1053,7 @@ export function useTopicController({
       loadReplyPage,
       notify,
       onNodeSeekTopicVerificationRequired,
+      onReplyLocationResolved,
       otherRepliesQueryKey,
       queryClient,
       refreshWholeTopic,

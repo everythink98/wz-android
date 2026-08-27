@@ -15,6 +15,11 @@ import { replyImageMarkupForSource } from './imageUpload';
 import { uploadNodeSeekReplyImage } from '@/sources/nodeimage/upload';
 import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from './discourseActions';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
+import { fetchLinuxDoPollCapabilities } from '@/sources/linuxdo/pollCapabilities';
+import {
+  fetchLinuxDoTemplates,
+  recordLinuxDoTemplateUse as recordLinuxDoTemplateUsage
+} from '@/sources/linuxdo/templates';
 import { rejectUnauthorizedResponse, withFetchGuard } from '@/platform/network/request';
 
 export type NotificationAccessReader = (
@@ -339,6 +344,43 @@ export function createNotificationGateway({
           assertNotAborted(options.signal);
           return { markup: replyImageMarkupForSource(source, imageUrl, options.file.name) };
         })
+      );
+    },
+
+    async loadLinuxDoPollCapabilities(expectedIdentityKey: string, signal?: AbortSignal) {
+      return runWithNotificationDiagnostics('linuxdo', 'load', async (trace) =>
+        runWithAccess('linuxdo', trace, signal, expectedIdentityKey, (access) =>
+          fetchLinuxDoPollCapabilities({
+            fetcher: access.fetcher || fetch,
+            signal,
+            userAgent: access.userAgent || ''
+          })
+        )
+      );
+    },
+
+    async loadLinuxDoTemplates(expectedIdentityKey: string, signal?: AbortSignal) {
+      return runWithNotificationDiagnostics('linuxdo', 'load', async (trace) =>
+        runWithAccess('linuxdo', trace, signal, expectedIdentityKey, (access) =>
+          fetchLinuxDoTemplates({
+            fetcher: access.fetcher || fetch,
+            signal,
+            userAgent: access.userAgent || ''
+          })
+        )
+      );
+    },
+
+    async recordLinuxDoTemplateUse(id: string, expectedIdentityKey: string, signal?: AbortSignal) {
+      return runWithNotificationDiagnostics('linuxdo', 'mutate', async (trace) =>
+        runWithAccess('linuxdo', trace, signal, expectedIdentityKey, (access) =>
+          recordLinuxDoTemplateUsage({
+            fetcher: access.fetcher || fetch,
+            id,
+            signal,
+            userAgent: access.userAgent || ''
+          })
+        )
       );
     },
 

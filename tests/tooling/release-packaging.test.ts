@@ -386,7 +386,7 @@ describe('Android release packaging guards', () => {
 
     expect(pkg.dependencies['expo-video']).toBe('~3.0.16');
     expect(lock.packages['node_modules/expo-video'].version).toBe('3.0.16');
-    expect(pkg.scripts.postinstall).toBe('patch-package');
+    expect(pkg.scripts.postinstall).toBe('patch-package && npm run build:composer');
     expect(patch).toContain('DataSourceUtils.kt');
     expect(patch).toContain('ReadNetworkVideoClientRegistry.kt');
     expect(dataSource).toContain('ReadNetworkVideoClientRegistry.clientForGeneration');

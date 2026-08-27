@@ -350,7 +350,7 @@ describe('disabled content source route gates', () => {
     expect(mockMoreUtilities?.settings.visible).toBe(false);
   });
 
-  it('[REG-PROXY-011][REG-TOPIC-076][REG-TOPIC-092] remounts Topic media and sequences same-topic targets', async () => {
+  it('[REG-PROXY-011][REG-TOPIC-076][REG-TOPIC-092][REG-WRITE-072] remounts Topic media and sequences same-topic targets', async () => {
     const data = createEmptyReaderData();
     const enabledTopic: Topic = {
       ...topic,
@@ -486,6 +486,12 @@ describe('disabled content source route gates', () => {
     expect(navigation.setParams).toHaveBeenNthCalledWith(2, {
       targetReply: { floor: 9, pageHint: 1 },
       targetReplyRequestId: 9
+    });
+    const resolveCreatedReply = jest.mocked(useTopicController).mock.calls.at(-1)?.[0].onReplyLocationResolved;
+    await act(async () => resolveCreatedReply?.({ commentId: 12187538, floor: 16, pageHint: 2 }));
+    expect(navigation.setParams).toHaveBeenNthCalledWith(3, {
+      targetReply: { commentId: 12187538, floor: 16, pageHint: 2 },
+      targetReplyRequestId: 10
     });
     expect(locateReply).not.toHaveBeenCalled();
   });

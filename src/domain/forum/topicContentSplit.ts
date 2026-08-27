@@ -57,6 +57,7 @@ const CONTENT_TOO_COMPLEX_NOTICE_HTML = '<p>内容过于复杂，请在原站查
 const CONTENT_TOO_COMPLEX_SUMMARY_HTML = '<summary>内容过于复杂，请在原站查看。</summary>';
 const CONTENT_TOO_COMPLEX_CALLOUT_TITLE_HTML = `<div class="${DISCOURSE_CALLOUT_TITLE_CLASS}">内容过于复杂，请在原站查看。</div>`;
 const DISCOURSE_POLL_PLACEHOLDER_TAG = 'forum-discourse-poll';
+export const NODESEEK_POLL_PLACEHOLDER_TAG = 'forum-nodeseek-poll';
 const FORUM_INLINE_IMAGE_TAG = INLINE_FORUM_IMAGE_TAG;
 export const FORUM_COMPACT_CONTENT_CLASS = 'forum-reply-content';
 
@@ -1216,7 +1217,8 @@ function standaloneForumVideo(html: string) {
 
 function compileRoleIncludesPolls(role: ForumContentCompileRole, source: Source) {
   if (role === 'signature') return false;
-  if (role === 'opening' || role === 'quoted-reply') return isDiscourseSource(source);
+  if (role === 'opening') return isDiscourseSource(source) || source === 'nodeseek';
+  if (role === 'quoted-reply') return isDiscourseSource(source);
   return true;
 }
 
@@ -1230,6 +1232,7 @@ function compileFallbackSegments({
   source: Source;
 }) {
   const pollsByName = new Map(pollList.flatMap((poll) => (poll.name ? [[poll.name, poll] as const] : [])));
+  const pollsById = new Map(pollList.flatMap((poll) => (poll.id ? [[poll.id, poll] as const] : [])));
   const matchedPolls = new Set<TopicPoll>();
   const segments: PlannedCompileSegment[] = [];
   const appendHtml = (value: string) => {
@@ -1247,18 +1250,20 @@ function compileFallbackSegments({
       );
     });
   };
-  if (!isDiscourseSource(source)) {
+  const marker = isDiscourseSource(source)
+    ? { attribute: 'name', polls: pollsByName, tag: DISCOURSE_POLL_PLACEHOLDER_TAG }
+    : source === 'nodeseek'
+      ? { attribute: 'id', polls: pollsById, tag: NODESEEK_POLL_PLACEHOLDER_TAG }
+      : null;
+  if (!marker) {
     appendHtml(clean);
   } else {
-    const markerPattern = new RegExp(
-      `<${DISCOURSE_POLL_PLACEHOLDER_TAG}\\b[^>]*>\\s*</${DISCOURSE_POLL_PLACEHOLDER_TAG}\\s*>`,
-      'gi'
-    );
+    const markerPattern = new RegExp(`<${marker.tag}\\b[^>]*>\\s*</${marker.tag}\\s*>`, 'gi');
     let consumedLength = 0;
     let match: RegExpExecArray | null;
     while ((match = markerPattern.exec(clean))) {
       appendHtml(clean.slice(consumedLength, match.index));
-      const poll = pollsByName.get(fallbackAttribute(match[0], 'name'));
+      const poll = marker.polls.get(fallbackAttribute(match[0], marker.attribute));
       if (poll) {
         matchedPolls.add(poll);
         segments.push({ poll, type: 'poll' });
@@ -2156,6 +2161,7 @@ function compileParsedForumContent({
   raw: string;
 }): CompiledForumContent {
   const pollsByName = new Map(pollList.flatMap((poll) => (poll.name ? [[poll.name, poll] as const] : [])));
+  const pollsById = new Map(pollList.flatMap((poll) => (poll.id ? [[poll.id, poll] as const] : [])));
   const matchedPolls = new Set<TopicPoll>();
   const extractsOpeningQuotes = role === 'opening' && Boolean(topicId) && isDiscourseSource(source);
   let dynamicInlineImages: readonly DynamicInlineImageDescriptor[] = [];
@@ -2173,6 +2179,11 @@ function compileParsedForumContent({
       const tagName = nodeTagName(node);
       if (isDiscourseSource(source) && tagName === DISCOURSE_POLL_PLACEHOLDER_TAG) {
         const poll = pollsByName.get(nodeAttribute(node, 'name'));
+        if (poll) matchedPolls.add(poll);
+        return { poll, type: 'poll' };
+      }
+      if (source === 'nodeseek' && tagName === NODESEEK_POLL_PLACEHOLDER_TAG) {
+        const poll = pollsById.get(nodeAttribute(node, 'id'));
         if (poll) matchedPolls.add(poll);
         return { poll, type: 'poll' };
       }

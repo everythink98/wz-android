@@ -1,38 +1,7 @@
-import { NODESEEK_STICKER_CATEGORIES } from '@/domain/forum/nodeSeekStickers';
-
-export type ReplyComposerInsertExpression = {
-  code: string;
-  label: string;
-  imageUrl?: string;
-};
-
 type YaohuoFaceItem = {
   label: string;
   value: string;
 };
-
-export { NODESEEK_STICKER_CATEGORIES };
-
-const DISCOURSE_EMOJI_FALLBACK_ITEMS: ReplyComposerInsertExpression[] = [
-  { code: ':grinning_face:', label: 'grinning face' },
-  { code: ':heart:', label: 'heart' },
-  { code: ':laughing:', label: 'laughing' },
-  { code: ':clap:', label: 'clap' },
-  { code: ':open_mouth:', label: 'open mouth' }
-];
-
-export function discourseEmojiCatalogFromUrlMap(
-  emojiUrls: Readonly<Record<string, string>>
-): ReplyComposerInsertExpression[] {
-  const items = Object.entries(emojiUrls)
-    .map(([name, imageUrl]) => ({
-      code: `:${name}:`,
-      label: name.replace(/_/g, ' '),
-      imageUrl
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-  return items.length ? items : DISCOURSE_EMOJI_FALLBACK_ITEMS;
-}
 
 export const YAOHUO_FACE_ITEMS: YaohuoFaceItem[] = [
   { label: '无表情', value: '' },

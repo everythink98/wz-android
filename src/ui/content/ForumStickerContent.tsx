@@ -2,7 +2,7 @@ import { useState, type ComponentProps, type ReactNode } from 'react';
 import { StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import type RenderHTML from 'react-native-render-html';
-import { TChildrenRenderer, useContentWidth, type CustomBlockRenderer, type TNode } from 'react-native-render-html';
+import { TChildrenRenderer, type CustomBlockRenderer, type TNode } from 'react-native-render-html';
 import {
   FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG,
@@ -14,6 +14,7 @@ import { cachedImageDisplayDimensions, rememberImageDisplayDimensions } from '@/
 import { compatibleImageRequestIdentity } from '@/platform/media/compatibleImageSources';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
+import { useForumContentWidth } from './ForumContentWidth';
 
 export type ForumStickerImageRenderProps = {
   accessibilityLabel?: string;
@@ -49,7 +50,7 @@ export function createForumStickerRenderers({
     const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     const src = attributes.src || '';
     const label = attributes.alt || attributes.title || '';
-    const contentWidth = useContentWidth();
+    const contentWidth = useForumContentWidth();
     const normalizedSrc = normalizeImagePreviewUrl(src).trim();
     const source = imageSourceFromUrl(src, {
       mediaContext,

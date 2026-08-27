@@ -151,11 +151,11 @@ npm run smoke:android
    - `REG-NOTIFY-043` 固定同一条 Discourse 私信从“所有通知”和“个人信息”进入时生成相同 `private-conversation` target；必须继续加载完整会话与 Markdown reply，不能按普通 `topic-post` 读取单帖。
    - `REG-NOTIFY-053` 固定 Discourse 只有 `topic_id`/URL 的主题提醒及 NodeSeek 没有 comment ID/floor 的主题行生成 `topic` target；详情不得发起精确帖子读取，“查看相关主题”必须只传 Topic 且 `targetReply` 缺失。显式 `post_id`/`post_number`/comment ID/floor 继续生成 `topic-post` 并保持精确定位。
    - `REG-NOTIFY-054` 固定 Discourse opening post 的 `topic-post { postId, postNumber: 1 }` 继续用于读取完整通知详情，但进入 Topic 时 `targetReply` 必须缺失；不得按系统消息 kind 或标题关闭其他真实回复定位。匹配开发包用已有已读“LINUX DO 社区抽奖规则”只读验收正文和“查看相关主题”，不得出现楼层定位提示。
-   - `REG-NOTIFY-032` 固定私信消息靠底、元信息置于气泡外、整行 composer 入口，以及共享 ReplyComposer 的 NodeSeek 贴纸/NodeImage、linux.do emoji 与 `/uploads.json`、妖火纯文本边界；上传测试必须证明 writable gate/NodeImage Key 早于 picker、重复或取消零上传、成功只插入草稿且文件名/API Key 不进入 diagnostics。
+   - `REG-NOTIFY-032` 固定私信消息靠底、元信息置于气泡外、整行 composer 入口，以及 L/NS Topic/私信共享 `StructuredReplyComposer` 的 NodeSeek 贴纸/NodeImage、linux.do Emoji 与 `/uploads.json`、妖火独立纯文本边界；上传测试必须证明 writable gate/NodeImage Key 早于 picker、重复或取消零上传、成功只插入草稿且文件名/API Key 不进入 diagnostics。
    - `REG-NOTIFY-033` 固定 NodeSeek 通知携带精确 comment ID、远端 floor 位于后续页且主题没有总回复数的组合；详情必须先读 floor 提示页并仍以 comment ID 精确匹配，页界来自 `postPageCount` / pager。
    - `REG-NOTIFY-034` 固定私信回复 dock 与普通通知主题操作 dock 都追加 bottom safe-area inset；共享 Composer 已自行消费安全区，不得重复垫高。
    - `REG-NOTIFY-035` 固定 tabs 短标签在至少 48dp 点击区与选中线内水平居中；保留内容宽度与横向滚动，不以强制等宽破坏大字号或长标签。
-   - `REG-NOTIFY-036/038/041/050/055` 固定消息、共享 Tab/按钮与 ReplyComposer 消费 Reader 字号、工具栏单行横滑且末尾工具可达、主题光标、Discourse 五列表情及 Bottom Sheet 的 top-safe 75% 高度与 bottom inset；设备必须在 100%/130%、键盘开关和 accessory 展开三种状态复核，不得只看默认字号静态截图。
+   - `REG-NOTIFY-036/038/041/050/055` 固定消息、共享 Tab/按钮与两类 Composer 消费 Reader 字号、L/NS 常用与站点工具无“加号”聚合且在单行内横向可达、Yaohuo UBB 工具栏横滑、主题光标、Discourse Emoji 网格及 Bottom Sheet 的 top-safe 75% 高度与 bottom inset；设备必须在 100%/130%、键盘开关和表格 BubbleMenu 展开三种状态复核，不得只看默认字号静态截图。
    - `REG-NOTIFY-037/042` 的妖火 fixture 同时包含原消息重复项、倒序历史、日期作者、位于正文内或气泡外包装的斜杠“回复时间”、图片和导航链接；测试必须模拟 Android 严格日期解析，真实只读验收必须确认协议标签消失，但作者、图片、时间和导航链接仍保留。
    - `REG-PERF-017` 固定妖火详情完整页只解析一次、正文与每条最终聊天 fragment 各 sanitize parse 一次；可见性和原消息去重必须复用 sanitized root，临时 `contentKey` 返回前删除，system 消息继续不暴露聊天或回复入口。
    - `REG-NOTIFY-044` 固定妖火主题链接（`/bbs-*.html` 或 `book_view.aspx`）与 `book_re.aspx` 都保留 href；Notifications RNTL 必须证明点击后经过共享 `parseForumTopicLink` 进入 App 内 Topic，而不是调用 `Linking.openURL`。
@@ -293,6 +293,7 @@ npm run typecheck
 
 - NodeSeek `/api/vote/info/{id}` 缺少动态签名的 403 必须能被测试复现；fallback header 只进入投票读取和提交，不能扩散到其他 NodeSeek JSON 或写操作。隐藏 WebView 不等待投票 DOM。
 - 未投、已投、多选、锁定和多个标记部分失败分别有 oracle。未投时不提前展示结果票数；成功标记替换为正文内投票占位，渲染表单与相邻 `">` 原始标记并存时也只能保留一张卡，且严格位于标记前后正文之间；整篇 NodeSeek 正文保持一个 HTML 渲染树，不因投票新增正文分隔线，投票后的文本、图片和 sticker 不重叠；失败标记保留且详情诊断为 `partial`。
+- `REG-TOPIC-128` 必须同时覆盖 NodeSeek opening、首屏评论、分页评论和定位评论：纯文本及“完整 marker 作为可见文字”的原站 anchor 都能归一，anchor 的跳转 href 不得成为 marker 身份来源；`pre/code`、普通链接和非法 marker 不转换。每个 poll 只归属于引用它的正文 owner，同一窗口相同 ID 只读取一次；独立 Stardust 段与相邻投票均须保留原始顺序且不重复渲染，投票空壳清理不得把 typed placeholder 当成空段。Composer corpus 还须固定 `~~...~~` 渲染为 `<s>`、不支持的 `++...++` 保持惰性文本、只读任务列表和 GFM 三种对齐，sanitizer 只允许 `text-align: left|center|right`。
 - NodeSeek 取消确认时保留当前选择且零请求；确认后只有一次 POST，随后只有一次结果 GET。服务端快照替换精确 Topic Query cache 中的投票数据，不刷新整篇正文。
 - 结果 GET 失败仍显示已投和所选项，未知票数保持未知，诊断为 `partial` 并提示刷新失败；不得重发 POST 或把未知票数写成 `1`。
 - LinuxDo 保留 `REG-WRITE-001` 的已知计数/参与人数单次增量，妖火仍可提交投票，V2EX 仍只显示原站可读票数；公共 `TopicPolls` 的样式和交互未因 NodeSeek 专项协议改变。
@@ -307,6 +308,43 @@ npm run typecheck
 6. 真正投票属于不可逆写入：必须先报告主题、准确选项和残留风险，再取得针对该对象和本次提交的逐次授权。确认后只提交一次；结果不明时停止且不得重试。刷新/重进 App 后，再从 App 内原站同类页面核对所选项和结果，桌面浏览器或第三方客户端不能替代。
 7. fallback 未来返回 403、原站字段改变或真实结果与测试不一致时，先登记新 bug、影响面和证据缺口并汇报；不得自动引入加密依赖、改走投票 DOM、隐藏失败或猜测式修复。动态投票目标不进入 tracked Replay。
 
+## 结构化回复、投票创建与 Stardust 验收
+
+修改本地 Editor runtime、Markdown codec、Bridge、Composer Sheet、NodeSeek 投票创建 journal、Stardust marker/card/payment controller，或切换 Topic/私信回复入口时必须执行。新主题、分类、标签和 rank 不属于本验收；不得用旧 TextInput 或 HTML 发布格式作为降级通过条件。
+
+### 自动测试
+
+```powershell
+npm test -- --run src/domain/forum/structuredComposer.test.ts src/domain/forum/linuxDoPoll.test.ts src/ui/composer/editorRuntime.test.ts src/ui/composer/structuredComposerBridge.test.ts src/sources/linuxdo/templates.test.ts src/sources/nodeseek/stardust.test.ts
+npm run test:ui -- tests/ui/topic/structured-reply-composer.test.tsx tests/ui/topic/topic-actions-controller.test.tsx tests/ui/topic/topic-components.test.tsx tests/ui/notifications/notifications-screen.test.tsx tests/ui/notifications/notifications-route.test.tsx
+npm run typecheck
+```
+
+通过标准：
+
+- GFM table 的对齐、空单元格和转义 pipe 经 `parse → serialize → parse` 保持语义；HTML/Excel 表格可进入真 table，任何 `rowspan/colspan` 使整次粘贴保持文档不变。普通 HTML 只保留允许结构，脚本、事件属性、iframe 和危险 URL 不进入文档。
+- NodeSeek 工具栏显示删除线但不显示下划线，linux.do 仍显示两者；NodeSeek fallback 必须将 `~~...~~` 渲染为 `<s>`，且不得将 `++...++` 渲染为下划线。粗体、斜体、标题、引用、链接、图片、普通/有序/任务列表、行内/块代码、分隔线和表格继续作为 GFM 能力保留。
+- linux.do poll 未知属性、全部私有块、NodeSeek remote poll、pending poll token 和 Stardust 未修改 marker 精确保存；源码解析失败保留原文并停留源码。Bridge 拒绝未知字段、旧 revision 和超限内容，正文、凭据和金额不进入 diagnostics。
+- 连续插入 NS poll、Stardust、L poll、Details 与 Spoiler 时节点互不替换，最后存在可继续输入的文本选区；选中同类型节点才允许原位更新。富文本同步到源码后第一次 undo 不改变正文，用户随后真实输入的 undo 只撤销该次输入。
+- LinuxDo poll 的 group 能力只通过现有 host action 读取：同一 Runtime 成功时请求一次，失败可显式重试；搜索、多选、Chip 删除、不可见已选组保留、Staff 条件和 ranked/number 不显示 chart 均有行为 oracle。Topic 与 Markdown 私信都在网络请求前后复核同一个 writable ticket。
+- LinuxDo Emoji fixture 至少 250 项：滚动与“加载更多”可到达 121–250 项，搜索能直接命中未呈现批次；目录晚到只刷新 NodeView，不产生 ProseMirror doc transaction，关闭/重开面板复用已加载图片 DOM。
+- Sheet/全屏、富文本/源码和楼层 intent 不重挂 WebView；关闭、route inactive、后台、模式切换和提交前请求最新 snapshot。旧 snapshot 不发送；renderer gone 不回退旧输入框。
+- 表达式 Builder 成功插入后，富文本/源码均立即恢复原编辑器 focus；Tiptap 动态基础样式携带本地 CSP nonce，终端贴纸后的 caret、选择手柄和真实文字插入位置一致。取消 Builder 不得主动弹出键盘。
+- NodeSeek 插入 pending poll 为零请求；提交时每个 fingerprint 只物化一次并先落 journal，再发送正文。回复失败手动重试复用 remote ID；明确 create 失败可手动重试，响应不明禁止重试。
+- 合法 Stardust marker 只在原正文位置产生一张卡，代码块和非法 marker 保持惰性文本。取消付款只允许 prepare、零 send；确认后 send 恰好一次并只信权威刷新，响应不明不自动重发。
+- `WRITE-01..04` 原 writable-session、credential generation、编辑权限、上传、防重复、写后精确窗口刷新和现有投票读取/表决回归继续通过；妖火仍用 UBB/纯文本，V2EX 仍只读。
+
+### 设备与 Agent Live 验收
+
+1. 使用与当前 revision/App version/APK identity 匹配的主 AVD，安装前后只读比较 `firstInstallTime`；仅覆盖安装，不卸载、不清数据、Cookie 或登录态。
+2. 在 100%/130%、浅/深色和 Gboard 中文输入下检查组合输入、退格、光标、选区、原子节点、主工具栏横滑、整表锚定 BubbleMenu、行列 Dropdown、链接 Popover、表格横滑、键盘 Back、Sheet/全屏以及连续十次开关；WebView、`.ProseMirror` 与主 toolbar 实例不得因菜单或 presentation 变化。
+3. 原站事实只能从 App“更多 → 账号中心 → 检测或重新登录”进入登录态原站 WebView 核对；不得用桌面浏览器或直接 URL 代替。
+4. 获授权写入时，linux.do 只在“深海”、NodeSeek 只在“沙盒”回复合适的既有测试主题；各发送一条表格、投票和本站私有节点回复并编辑、刷新详情。NodeSeek poll 只创建一次，记录残留 ID，禁止使用研究 poll `3022` 或结果不明后重试。
+5. NodeSeek Stardust 收款 marker/卡片和状态读取可随获授权测试回复验证；实际 `payment-prepare/send` 默认 `NOT_VERIFIED`。只有用户另行指定收款对象和金额后才可单次执行，取消、结果不明或 credential 变化都不得调用或重发 send。
+6. 不实际投票、不计划外上传、不自动重试任何非幂等请求。无法取得稳定对象或协议事实不一致时按能力 ID 记 `NOT_VERIFIED`/bug，不用模拟测试冒充 `LIVE_PASS`。
+
+性能记录必须覆盖 cold/hot READY、Sheet/全屏布局、20,000 中文字符输入、50,000 字符序列化、bundle gzip 大小和十次开关后的 PSS；门槛分别为 1.5s/500ms、150ms、p95 32ms、300ms、1.5MiB 和增量 10MiB。无法可靠采样的轴单独记 `NOT_VERIFIED`，不能以 App 可启动代替。
+
 ## 回复图片上传验收
 
 改回复、楼层回复、格式工具栏、图片上传、NodeImage 授权或写操作锁时，必须执行。
@@ -314,7 +352,7 @@ npm run typecheck
 ### 自动测试
 
 ```powershell
-npm test -- src/features/topic/shareTopic.test.ts src/features/topic/actions/actionHelpers.test.ts src/features/topic/useTopicSessionController.test.ts tests/integration/image-upload.test.ts src/sources/discourse/imageUpload.test.ts src/platform/network/loginWebViewScripts.test.ts src/sources/nodeimage/authFlow.test.ts src/platform/network/loginWebViewScripts.nodeimage.test.ts src/sources/nodeimage/credentials.test.ts src/platform/diagnostics/diagnostics.test.ts src/sources/nodeseek/actionRequest.test.ts src/platform/network/managedCookies.test.ts src/sources/nodeseek/session.test.ts tests/integration/hidden-browser-scripts.test.ts src/ui/composer/replyFormatting.test.ts
+npm test -- src/features/topic/shareTopic.test.ts src/features/topic/actions/actionHelpers.test.ts src/features/topic/useTopicSessionController.test.ts tests/integration/image-upload.test.ts src/sources/discourse/imageUpload.test.ts src/platform/network/loginWebViewScripts.test.ts src/sources/nodeimage/authFlow.test.ts src/platform/network/loginWebViewScripts.nodeimage.test.ts src/sources/nodeimage/credentials.test.ts src/platform/diagnostics/diagnostics.test.ts src/sources/nodeseek/actionRequest.test.ts src/platform/network/managedCookies.test.ts src/sources/nodeseek/session.test.ts tests/integration/hidden-browser-scripts.test.ts src/ui/composer/editorRuntime.test.ts
 npx jest --config jest.config.cjs --runInBand tests/ui/account/account-host.test.tsx tests/ui/topic/topic-actions-controller.test.tsx
 npm run typecheck
 ```
@@ -404,7 +442,7 @@ npm run typecheck
 | 回复删除、删除权限、评论 id / 删除链接解析 | 回复删除验收、相关 action / 来源解析测试、`npm run typecheck`、模拟器验收 |
 | 收藏、历史、备份 / 恢复 | reader data / backup 测试、`tests/integration/security-boundaries.test.ts`、`npm run typecheck` |
 | 服务器代理 | `src/platform/network/networkProxy.test.ts`、`tests/ui/app/app-runtime-startup.test.tsx`、`tests/ui/more/network-proxy-controller.test.tsx`、`tests/ui/more/network-proxy-modal.test.tsx`、`tests/ui/account/hidden-browser-host.test.tsx`、`tests/ui/account/account-host.test.tsx`、`tests/ui/account/account-site-panels.test.tsx`、`tests/ui/topic/topic-image-loading.test.tsx`、`src/platform/media/mediaSessionEpoch.test.ts`、`tests/ui/shared/avatar.test.tsx`、`src/platform/update/useAppUpdateRuntime.test.ts`、`tests/tooling/release-packaging.test.ts`、fresh Expo prebuild、生成 Kotlin JUnit（含 `REG-PROXY-007/008` 的 stop/worker overlap 与阻塞写 deadline）、`:app:compileReleaseKotlin`、`npm run typecheck`；模拟器默认只做离线 UI 验收，不启用真实代理 |
-| 消息中心、私信回复、Android 通知、后台任务 | 三站 notification adapter/gateway/store/worker 测试、notification UI/AppNavigator/More 与共享 ReplyComposer 测试、账号测试、代理 fail-closed 测试、`tests/tooling/release-packaging.test.ts`、fresh Expo prebuild、生成 Kotlin JUnit、`:app:compileReleaseKotlin`、`npm run typecheck`、`tests/device/notifications-readonly.ad`；真实已读与每站私信回复另行授权 |
+| 消息中心、私信回复、Android 通知、后台任务 | 三站 notification adapter/gateway/store/worker 测试、notification UI/AppNavigator/More 与两类 Composer 测试、账号测试、代理 fail-closed 测试、`tests/tooling/release-packaging.test.ts`、fresh Expo prebuild、生成 Kotlin JUnit、`:app:compileReleaseKotlin`、`npm run typecheck`、`tests/device/notifications-readonly.ad`；真实已读与每站私信回复另行授权 |
 | UI 样式、主题 | 只保留事故级 UI helper 测试、`tests/integration/style-ownership.test.ts`、`npm run typecheck`、模拟器验收 |
 | App 内更新检查、安装入口 | `src/platform/update/appUpdate.test.ts`、`src/platform/update/useAppUpdateRuntime.test.ts`、`tests/tooling/release-packaging.test.ts`、`npm run typecheck`、模拟器验收 |
 | 签名、版本、原生构建配置、发布脚本、正式发布 | `npm run release:android` |

@@ -8,6 +8,7 @@ import { parseForumTopicDestination } from '@/domain/forum/links';
 import type { ReplyLocationTarget, Topic } from '@/domain/forum/models';
 import type { ForumNotification, NotificationCategory, NotificationDetail } from '@/domain/notifications/models';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 import type { NotificationPermissionState } from './useNotificationsRuntime';
 import type { NotificationState } from '@/platform/notifications/notificationStore';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -26,6 +27,8 @@ import {
 } from './notificationPresentation';
 import { createNotificationStyles } from './styles';
 import { MessageReplyComposerSheet } from './MessageReplyComposerSheet';
+import type { LinuxDoTemplate } from '@/sources/linuxdo/templates';
+import type { LinuxDoPollCapabilities } from '@/domain/forum/linuxDoPoll';
 import { normalizeForumStickerMediaHtml } from '@/domain/forum/forumContentMedia';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
@@ -468,19 +471,26 @@ export function NotificationDetailScreen({
   error,
   loading,
   markMessage,
+  nodeSeekMemberId,
   replyBusy = false,
   replyContent = '',
+  replyPendingNodeSeekPolls = [],
   replyError,
   replyStatus,
   replyVisible = false,
+  routeActive = true,
   topicReplyAction = false,
   onOpenExternalUrl,
   onOpenTopic,
   onOpenReply = () => undefined,
   onReplyClose = () => undefined,
   onReplyContentChange = () => undefined,
+  onReplySnapshot,
   onRetry,
   onSubmitReply = () => undefined,
+  onLoadLinuxDoPollCapabilities,
+  onLoadLinuxDoTemplates,
+  onUseLinuxDoTemplate,
   onUploadReplyImage
 }: {
   canOpenTopic?: boolean;
@@ -491,20 +501,27 @@ export function NotificationDetailScreen({
   error?: string;
   loading: boolean;
   markMessage?: string;
+  nodeSeekMemberId?: string;
   replyBusy?: boolean;
   replyContent?: string;
+  replyPendingNodeSeekPolls?: PendingNodeSeekPoll[];
   replyError?: string;
   replyStatus?: string;
   replyVisible?: boolean;
+  routeActive?: boolean;
   topicReplyAction?: boolean;
   onOpenExternalUrl: (url: string) => void;
   onOpenTopic: (topic?: Topic, targetReply?: ReplyLocationTarget) => void;
   onOpenReply?: () => void;
   onReplyClose?: () => void;
   onReplyContentChange?: (content: string) => void;
+  onReplySnapshot?: (snapshot: ComposerSnapshot) => void;
   onRetry: () => void;
-  onSubmitReply?: () => void;
-  onUploadReplyImage?: () => void;
+  onSubmitReply?: (snapshot?: ComposerSnapshot) => unknown;
+  onLoadLinuxDoPollCapabilities?: () => Promise<LinuxDoPollCapabilities>;
+  onLoadLinuxDoTemplates?: () => Promise<LinuxDoTemplate[]>;
+  onUseLinuxDoTemplate?: (id: string) => Promise<void>;
+  onUploadReplyImage?: () => unknown;
 }) {
   const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
   const insets = useSafeAreaInsets();
@@ -701,16 +718,24 @@ export function NotificationDetailScreen({
         <MessageReplyComposerSheet
           busy={replyBusy}
           content={replyContent}
+          conversationId={item.id}
           disabledReason={detail.reply.disabledReason}
           discourseEmojiUrls={discourseEmojiUrls}
           error={replyError}
           format={detail.reply.format}
+          nodeSeekMemberId={nodeSeekMemberId}
+          pendingNodeSeekPolls={replyPendingNodeSeekPolls}
+          routeActive={routeActive}
           source={item.source}
           status={replyStatus}
           visible={replyVisible}
           onChangeContent={onReplyContentChange}
           onClose={onReplyClose}
+          onSnapshot={onReplySnapshot}
           onSubmit={onSubmitReply}
+          onLoadLinuxDoPollCapabilities={onLoadLinuxDoPollCapabilities}
+          onLoadLinuxDoTemplates={onLoadLinuxDoTemplates}
+          onUseLinuxDoTemplate={onUseLinuxDoTemplate}
           onUploadImage={detail.reply.format === 'markdown' ? onUploadReplyImage : undefined}
         />
       ) : null}

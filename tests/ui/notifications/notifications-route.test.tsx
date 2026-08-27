@@ -82,8 +82,11 @@ jest.mock('@/features/notifications/MessageReplyComposerSheet', () => {
       status,
       visible,
       onChangeContent,
+      onLoadLinuxDoPollCapabilities,
+      onLoadLinuxDoTemplates,
       onSubmit,
-      onUploadImage
+      onUploadImage,
+      onUseLinuxDoTemplate
     }: {
       busy: boolean;
       content: string;
@@ -92,8 +95,11 @@ jest.mock('@/features/notifications/MessageReplyComposerSheet', () => {
       status?: string;
       visible: boolean;
       onChangeContent: (value: string) => void;
+      onLoadLinuxDoPollCapabilities?: () => Promise<unknown>;
+      onLoadLinuxDoTemplates?: () => Promise<unknown>;
       onSubmit: () => void;
-      onUploadImage?: () => void;
+      onUploadImage?: () => unknown;
+      onUseLinuxDoTemplate?: (id: string) => Promise<void>;
     }) =>
       visible
         ? ReactModule.createElement(
@@ -118,8 +124,41 @@ jest.mock('@/features/notifications/MessageReplyComposerSheet', () => {
             ),
             ReactModule.createElement(
               Text,
-              { accessibilityLabel: '测试上传图片', onPress: busy ? undefined : onUploadImage },
+              {
+                accessibilityLabel: '测试上传图片',
+                onPress:
+                  busy || !onUploadImage
+                    ? undefined
+                    : async () => {
+                        const markup = await onUploadImage();
+                        if (typeof markup === 'string') onChangeContent(`${content}${markup}`);
+                      }
+              },
               '上传图片'
+            ),
+            ReactModule.createElement(
+              Text,
+              {
+                accessibilityLabel: '测试加载投票能力',
+                onPress: onLoadLinuxDoPollCapabilities ? () => void onLoadLinuxDoPollCapabilities() : undefined
+              },
+              '加载投票能力'
+            ),
+            ReactModule.createElement(
+              Text,
+              {
+                accessibilityLabel: '测试加载模板',
+                onPress: onLoadLinuxDoTemplates ? () => void onLoadLinuxDoTemplates() : undefined
+              },
+              '加载模板'
+            ),
+            ReactModule.createElement(
+              Text,
+              {
+                accessibilityLabel: '测试记录模板使用',
+                onPress: onUseLinuxDoTemplate ? () => void onUseLinuxDoTemplate('7') : undefined
+              },
+              '记录模板使用'
             )
           )
         : null
@@ -1150,6 +1189,74 @@ describe('notification routes', () => {
       appQueryClient.setDefaultOptions(defaultOptions);
       appQueryClient.removeQueries({ queryKey: forumQueryKeys.emojiUrls('linuxdo'), exact: true });
     }
+  });
+
+  it('[REG-NOTIFY-032] binds LinuxDo composer requests to the route identity and aborts them on unmount', async () => {
+    appQueryClient.clear();
+    const privateNotification: ForumNotification = {
+      ...notification,
+      source: 'linuxdo',
+      id: 'message:composer-access',
+      kind: 'private-message',
+      unread: false,
+      target: { type: 'private-conversation', conversationId: '9' }
+    };
+    const pending = () => new Promise<never>(() => undefined);
+    const loadLinuxDoPollCapabilities = jest.fn((_identityKey: string, _signal: AbortSignal) => pending());
+    const loadLinuxDoTemplates = jest.fn((_identityKey: string, _signal: AbortSignal) => pending());
+    const recordLinuxDoTemplateUse = jest.fn((_id: string, _identityKey: string, _signal: AbortSignal) => pending());
+    const gateway = {
+      loadDetail: jest.fn(async () => ({
+        notification: privateNotification,
+        title: 'linux.do 私信',
+        messages: [],
+        reply: { format: 'markdown' as const }
+      })),
+      loadLinuxDoPollCapabilities,
+      loadLinuxDoTemplates,
+      markRead: jest.fn(async () => ({ confirmed: true })),
+      recordLinuxDoTemplateUse
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: ['linuxdo'],
+      identityKeys: { linuxdo: 'linuxdo:alice' },
+      identitySignature: 'linuxdo:alice'
+    } as NotificationRouteRuntimeValue;
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification: privateNotification, identityKey: 'linuxdo:alice' }
+            }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('回复私信'));
+    await fireEvent.press(view.getByLabelText('测试加载投票能力'));
+    await fireEvent.press(view.getByLabelText('测试加载模板'));
+    await fireEvent.press(view.getByLabelText('测试记录模板使用'));
+    await waitFor(() => {
+      expect(loadLinuxDoPollCapabilities).toHaveBeenCalledWith('linuxdo:alice', expect.any(AbortSignal));
+      expect(loadLinuxDoTemplates).toHaveBeenCalledWith('linuxdo:alice', expect.any(AbortSignal));
+      expect(recordLinuxDoTemplateUse).toHaveBeenCalledWith('7', 'linuxdo:alice', expect.any(AbortSignal));
+    });
+    const signals = [
+      loadLinuxDoPollCapabilities.mock.calls[0]![1],
+      loadLinuxDoTemplates.mock.calls[0]![1],
+      recordLinuxDoTemplateUse.mock.calls[0]![2]
+    ];
+
+    await view.unmount();
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
 
   it('[REG-NOTIFY-031] preserves an unconfirmed private draft and clears it only after server confirmation', async () => {

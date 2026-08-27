@@ -215,6 +215,7 @@ export function ReplyItem({
   onDeleteReply,
   onEditReply,
   onLocateReply,
+  onLockPoll,
   onOpenTopic,
   onOpenUser,
   onQuoteContentLayout,
@@ -253,6 +254,7 @@ export function ReplyItem({
   onDeleteReply: (reply: Reply) => void;
   onEditReply: (reply: Reply) => void;
   onLocateReply: (target: ReplyLocationTarget) => void;
+  onLockPoll?: (poll: TopicPoll) => void;
   onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
   onOpenUser: (user: UserReference) => void;
   onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
@@ -340,6 +342,7 @@ export function ReplyItem({
                 actionBusy={actionBusy}
                 decisionFor={decisionFor}
                 keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
+                onLockPoll={onLockPoll}
                 onTogglePollSelection={onTogglePollSelection}
                 onVotePoll={onVotePoll}
                 pollSelections={pollSelections}
@@ -1074,6 +1077,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.onEditReply !== next.onEditReply ||
     previous.onInteract !== next.onInteract ||
     previous.onLocateReply !== next.onLocateReply ||
+    previous.onLockPoll !== next.onLockPoll ||
     previous.onOpenTopic !== next.onOpenTopic ||
     previous.onOpenUser !== next.onOpenUser ||
     previous.onQuoteContentLayout !== next.onQuoteContentLayout ||

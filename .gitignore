@@ -43,6 +43,7 @@ tmp-*.jpeg
 tmp-*.png
 tmp-*.xml
 coverage/
+src/ui/composer/generated/editorDocument.json
 dogfood-output/
 recording-*.gesture-telemetry.json
 recording-*.mp4

@@ -28,9 +28,13 @@ describe('source capability catalog', () => {
     expect(sourceSupportsTopicAction('v2ex', 'like')).toBe(false);
   });
 
-  it('[REG-WRITE-013] does not advertise NodeSeek reply deletion when the original site exposes no confirmed delete action', () => {
+  it('[REG-WRITE-013][REG-WRITE-070] advertises only confirmed NodeSeek management capabilities', () => {
     expect(sourceSupportsTopicAction('nodeseek', 'edit')).toBe(true);
     expect(sourceSupportsTopicAction('nodeseek', 'delete')).toBe(false);
+    expect(sourceSupportsTopicAction('nodeseek', 'manage-poll')).toBe(true);
+    expect(sourceSupportsTopicAction('linuxdo', 'manage-poll')).toBe(false);
+    expect(sourceSupportsTopicAction('nodeseek', 'pay')).toBe(true);
+    expect(sourceSupportsTopicAction('linuxdo', 'pay')).toBe(false);
   });
 
   it('derives aggregate registration from the catalog', () => {

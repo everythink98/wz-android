@@ -10,6 +10,7 @@ import {
   TopicTableScrollProvider,
   TopicTableSemanticBoundary
 } from '@/features/topic/rendering/topicTableRenderers';
+import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import {
   TopicSplitDisclosureProvider,
   TopicSplitDisclosureScope,
@@ -378,6 +379,96 @@ describe('native topic structured rendering', () => {
     });
     expect(StyleSheet.flatten(screen.getByTestId('cell-two-a').props.style)).toMatchObject({ width: 160 });
     expect(StyleSheet.flatten(screen.getByTestId('cell-two-wide').props.style)).toMatchObject({ width: 320 });
+  });
+
+  it('[REG-TOPIC-129] keeps media inside an equally sized table cell', async () => {
+    const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
+    const Table = renderers.table as React.ComponentType<any>;
+    const Td = renderers.td as React.ComponentType<any>;
+    const source = table([[cell('td', { id: 'label' }), cell('td', { id: 'media' })]]);
+    const ContentWidthProbe = ({ testID }: { testID: string }) => (
+      <View testID={testID} style={{ width: useForumContentWidth() }} />
+    );
+    const CellDefault = ({ style, tnode }: { style?: StyleProp<ViewStyle>; tnode: TestNode }) => {
+      const availableWidth = useForumContentWidth();
+      return (
+        <View testID={`cell-${tnode.attributes.id}`} style={style}>
+          {tnode.attributes.id === 'media' ? <View testID="table-media" style={{ width: availableWidth }} /> : null}
+        </View>
+      );
+    };
+    const TableDefault = ({ style, tnode }: { style?: StyleProp<ViewStyle>; tnode: TestNode }) => (
+      <View testID="media-table" style={style}>
+        {tnode.children[0]?.children[0]?.children.map((node, index, cells) => (
+          <Td
+            key={node.attributes.id}
+            {...rendererProps(node, CellDefault, index, cells.length)}
+            style={{ borderRightWidth: 1, paddingHorizontal: 10 }}
+          />
+        ))}
+      </View>
+    );
+
+    const screen = await render(
+      <TopicTableScrollProvider>
+        <TopicSplitDisclosureScope scopeKey="opening">
+          <ContentWidthProbe testID="outside-table-media" />
+          {semanticBoundary(<Table {...rendererProps(source, TableDefault)} />, { columns: 2 })}
+        </TopicSplitDisclosureScope>
+      </TopicTableScrollProvider>
+    );
+
+    expect(StyleSheet.flatten(screen.getByTestId('media-table').props.style)).toMatchObject({ width: 320 });
+    expect(StyleSheet.flatten(screen.getByTestId('cell-label').props.style)).toMatchObject({ width: 160 });
+    expect(StyleSheet.flatten(screen.getByTestId('cell-media').props.style)).toMatchObject({ width: 160 });
+    expect(StyleSheet.flatten(screen.getByTestId('table-media').props.style)).toMatchObject({ width: 140 });
+    expect(StyleSheet.flatten(screen.getByTestId('outside-table-media').props.style)).toMatchObject({ width: 320 });
+  });
+
+  it('[REG-TOPIC-127] gives the table perimeter a single stroke owner', async () => {
+    const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
+    const Table = renderers.table as React.ComponentType<any>;
+    const Td = renderers.td as React.ComponentType<any>;
+    const source = table([
+      [cell('td', { id: 'top-left' }), cell('td', { id: 'top-right' })],
+      [cell('td', { id: 'bottom-left' }), cell('td', { id: 'bottom-right' })]
+    ]);
+    const CellDefault = ({ style, tnode }: { style?: StyleProp<ViewStyle>; tnode: TestNode }) => (
+      <View testID={`cell-${tnode.attributes.id}`} style={style} />
+    );
+    const TableDefault = ({ style, tnode }: { style?: StyleProp<ViewStyle>; tnode: TestNode }) => (
+      <View testID="single-stroke-table" style={style}>
+        {tnode.children[0]?.children.flatMap((row) =>
+          row.children.map((node, index) => (
+            <Td key={node.attributes.id} {...rendererProps(node, CellDefault, index, row.children.length)} />
+          ))
+        )}
+      </View>
+    );
+    const fixture = (part: 'only' | 'first') => (
+      <TopicTableScrollProvider>
+        <TopicSplitDisclosureScope scopeKey="opening">
+          {semanticBoundary(<Table {...rendererProps(source, TableDefault)} />, {
+            columns: 2,
+            part,
+            semanticId: 'single-stroke'
+          })}
+        </TopicSplitDisclosureScope>
+      </TopicTableScrollProvider>
+    );
+
+    const screen = await render(fixture('only'));
+    expect(StyleSheet.flatten(screen.getByTestId('cell-top-left').props.style)?.borderBottomWidth).not.toBe(0);
+    expect(StyleSheet.flatten(screen.getByTestId('cell-bottom-left').props.style)).toMatchObject({
+      borderBottomWidth: 0
+    });
+    expect(StyleSheet.flatten(screen.getByTestId('cell-bottom-right').props.style)).toMatchObject({
+      borderBottomWidth: 0,
+      borderRightWidth: 0
+    });
+
+    await screen.rerender(fixture('first'));
+    expect(StyleSheet.flatten(screen.getByTestId('cell-bottom-left').props.style)?.borderBottomWidth).not.toBe(0);
   });
 
   it('[REG-TOPIC-084] scales minimum columns and bounds hostile colspan to 80 columns', async () => {

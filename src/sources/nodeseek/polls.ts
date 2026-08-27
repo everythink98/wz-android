@@ -1,16 +1,22 @@
-import { decodeHtml, isRecord } from '@/domain/forum/html';
+import { decodeHtml, escapeHtmlText, isRecord, parseHtml } from '@/domain/forum/html';
 import type { TopicPoll, TopicPollOption } from '@/domain/forum/models';
+import { NODESEEK_POLL_PLACEHOLDER_TAG } from '@/domain/forum/topicContentSplit';
 import type { HTMLElement } from 'node-html-parser';
-import { optionalBoolean, optionalInteger } from './protocol';
+import { optionalBoolean, optionalInteger, optionalNonNegativeInteger } from './protocol';
+import { NODESEEK_STARDUST_PLACEHOLDER_TAG } from './stardustMarkup';
 
 export const NODESEEK_VOTE_API_HEADERS = {
   accept: 'application/json, text/plain, */*',
   'x-dynamic-sign': 'a'.repeat(40)
 } as const;
-export const NODESEEK_POLL_PLACEHOLDER_TAG = 'forum-nodeseek-poll';
-
+const NODESEEK_NON_POLL_CONTENT_SELECTOR = `img, video, audio, table, pre, code, svg, canvas, input, textarea, select, ${NODESEEK_STARDUST_PLACEHOLDER_TAG}`;
 export function nodeSeekPollPlaceholderHtml(id: string) {
   return `<${NODESEEK_POLL_PLACEHOLDER_TAG} id="${encodeURIComponent(id)}"></${NODESEEK_POLL_PLACEHOLDER_TAG}>`;
+}
+
+function isNodeSeekPollMarkerShellText(value: string) {
+  const text = decodeHtml(value).replace(/\s/g, '');
+  return /^(?:"?>)?(?:提交投票)?(?:[（(][^()（）]*[)）])?$/.test(text);
 }
 
 export function normalizeNodeSeekPollPlaceholderNodes(root: HTMLElement, pollIds: Iterable<string>) {
@@ -27,24 +33,20 @@ export function normalizeNodeSeekPollPlaceholderNodes(root: HTMLElement, pollIds
     const container =
       element.closest('p') ||
       (nearestDiv?.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1 ? nearestDiv : null);
-    const markerPrefix = decodeHtml(container?.textContent || '').replace(/\s/g, '');
-    const containerHasOtherContent = Boolean(
-      container?.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
-    );
+    const containerHasOtherContent = Boolean(container?.querySelector(NODESEEK_NON_POLL_CONTENT_SELECTOR));
     if (
       container &&
       container.querySelectorAll(NODESEEK_POLL_PLACEHOLDER_TAG).length === 1 &&
       !containerHasOtherContent &&
-      (!markerPrefix || /^"?>$/.test(markerPrefix))
+      isNodeSeekPollMarkerShellText(container.textContent || '')
     ) {
       container.replaceWith(nodeSeekPollPlaceholderHtml(id));
     }
   });
   root.querySelectorAll('p, div').forEach((element) => {
-    const markerPrefix = decodeHtml(element.textContent || '').replace(/\s/g, '');
     if (
-      !/^"?>$/.test(markerPrefix) ||
-      element.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
+      !isNodeSeekPollMarkerShellText(element.textContent || '') ||
+      element.querySelector(NODESEEK_NON_POLL_CONTENT_SELECTOR)
     ) {
       return;
     }
@@ -62,17 +64,21 @@ export function normalizeNodeSeekPollPlaceholderNodes(root: HTMLElement, pollIds
       return;
     }
     const adjacentPrefix = element.previousSibling;
-    const adjacentPrefixText = decodeHtml(adjacentPrefix?.textContent || '').replace(/\s/g, '');
-    if (adjacentPrefix && /^"?>$/.test(adjacentPrefixText)) {
+    if (
+      adjacentPrefix &&
+      String((adjacentPrefix as HTMLElement).rawTagName || '').toLowerCase() !== NODESEEK_POLL_PLACEHOLDER_TAG &&
+      isNodeSeekPollMarkerShellText(adjacentPrefix.textContent || '') &&
+      !(adjacentPrefix as HTMLElement).querySelector?.(NODESEEK_NON_POLL_CONTENT_SELECTOR)
+    ) {
       adjacentPrefix.remove();
     }
     const anchor = element.closest('p') || element;
     const previous = anchor.previousElementSibling;
-    const previousPrefix = decodeHtml(previous?.textContent || '').replace(/\s/g, '');
     if (
       previous &&
-      /^"?>$/.test(previousPrefix) &&
-      !previous.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select')
+      String(previous.rawTagName || '').toLowerCase() !== NODESEEK_POLL_PLACEHOLDER_TAG &&
+      isNodeSeekPollMarkerShellText(previous.textContent || '') &&
+      !previous.querySelector(NODESEEK_NON_POLL_CONTENT_SELECTOR)
     ) {
       previous.remove();
     }
@@ -82,6 +88,62 @@ export function normalizeNodeSeekPollPlaceholderNodes(root: HTMLElement, pollIds
     }
     seen.add(id);
   });
+}
+
+function normalizeVoteTextNode(
+  parent: HTMLElement,
+  childIndex: number,
+  pollIds: ReadonlySet<string>,
+  discoveredIds: Set<string>
+) {
+  const child = parent.childNodes[childIndex];
+  if (!child || child.nodeType !== 3) return 0;
+  const text = child.text;
+  const discovered = [...text.matchAll(/nsapp:\/\/vote\?id=(\d+)/gi)];
+  discovered.forEach((match) => discoveredIds.add(match[1]));
+  const matches = discovered.filter((match) => pollIds.has(match[1]));
+  if (!matches.length) return 0;
+  let cursor = 0;
+  const replacementHtml = matches
+    .map((match) => {
+      const start = match.index;
+      const prefix = escapeHtmlText(text.slice(cursor, start));
+      cursor = start + match[0].length;
+      return `${prefix}${nodeSeekPollPlaceholderHtml(match[1])}`;
+    })
+    .join('');
+  const replacement = parseHtml(`${replacementHtml}${escapeHtmlText(text.slice(cursor))}`).childNodes;
+  replacement.forEach((node) => {
+    node.parentNode = parent;
+  });
+  parent.childNodes.splice(childIndex, 1, ...replacement);
+  return replacement.length - 1;
+}
+
+export function normalizeNodeSeekVoteMarkers(root: HTMLElement, pollIds: Iterable<string>) {
+  const loadedIds = new Set([...pollIds].filter((id) => /^\d+$/.test(id)));
+  const discoveredIds = new Set<string>();
+  const visit = (element: HTMLElement) => {
+    const tag = String(element.rawTagName || '').toLowerCase();
+    if (tag === 'pre' || tag === 'code') return;
+    if (tag === 'a') {
+      const text = decodeHtml(element.textContent || '').trim();
+      const id = text.match(/^nsapp:\/\/vote\?id=(\d+)$/i)?.[1];
+      if (id) {
+        discoveredIds.add(id);
+        element.replaceWith(loadedIds.has(id) ? nodeSeekPollPlaceholderHtml(id) : escapeHtmlText(text));
+      }
+      return;
+    }
+    for (let index = 0; index < element.childNodes.length; index += 1) {
+      const child = element.childNodes[index];
+      if (child?.nodeType === 1) visit(child as HTMLElement);
+      else index += normalizeVoteTextNode(element, index, loadedIds, discoveredIds);
+    }
+  };
+  visit(root);
+  if (loadedIds.size) normalizeNodeSeekPollPlaceholderNodes(root, loadedIds);
+  return [...discoveredIds];
 }
 
 export function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): TopicPoll | null {
@@ -108,6 +170,7 @@ export function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): T
     }))
     .filter((item) => item.id && item.label);
   const voted = optionalBoolean(source.voted) === true || rawOptions.some((option) => option.selected);
+  const ownerId = optionalNonNegativeInteger(source.uid);
   const options = rawOptions.map((option): TopicPollOption => ({
     id: option.id,
     label: option.label,
@@ -119,6 +182,7 @@ export function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): T
   }
   return {
     id: pollId,
+    ...(ownerId && ownerId > 0 ? { ownerId: String(ownerId) } : {}),
     title: String(source.title || '').trim() || undefined,
     public: optionalBoolean(source.isPublic ?? source.public),
     closed: optionalBoolean(source.locked ?? source.closed),
@@ -126,21 +190,4 @@ export function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): T
     voted,
     options
   };
-}
-
-export function replaceLoadedNodeSeekVoteMarkers(html: string, pollIds: (string | undefined)[]) {
-  const ids = [...new Set(pollIds.filter((id): id is string => /^\d+$/.test(id || '')))];
-  if (!ids.length) {
-    return html;
-  }
-  const marker = 'nsapp:\\/\\/vote\\?id=(' + ids.join('|') + ')';
-  return html
-    .replace(
-      new RegExp(
-        `<(p|div)\\b[^>]*>\\s*(?:(?:&quot;|")?\\s*(?:&gt;|>)\\s*)?(?:提交投票\\s*)?${marker}(?:\\s*[（(][^<)）]*[)）])?\\s*<\\/\\1>`,
-        'gi'
-      ),
-      (_match, _tag, id: string) => nodeSeekPollPlaceholderHtml(id)
-    )
-    .replace(new RegExp(marker, 'gi'), (_match, id: string) => nodeSeekPollPlaceholderHtml(id));
 }

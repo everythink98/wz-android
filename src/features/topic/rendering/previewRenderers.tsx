@@ -16,7 +16,6 @@ import {
 import { Image as ExpoImage, type ImageLoadEventData } from 'expo-image';
 import { useRecyclingState } from '@shopify/flash-list';
 import {
-  useContentWidth,
   useIMGElementProps,
   useIMGElementStateWithCache,
   type CustomBlockRenderer,
@@ -37,6 +36,7 @@ import {
   shouldMarkLoadedImageInline
 } from '@/platform/media/inlineMedia';
 import type { ReaderTheme } from '@/ui/theme/tokens';
+import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import type { HtmlRenderers } from './types';
 import { createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
@@ -80,6 +80,7 @@ function useImageSourceAttempt(source: ImageURISource, attemptId: string) {
 type PreviewImageBlockProps = {
   attributes: Record<string, string | undefined>;
   boundarySpacing?: ViewStyle;
+  contentWidth: number;
   errorTextStyle: StyleProp<TextStyle>;
   frameBackgroundColor: string;
   frameBorderColor: string;
@@ -160,6 +161,7 @@ function AdmittedPreviewImageBlock({
   attributes,
   boundarySpacing,
   bodyMediaLease,
+  contentWidth: availableContentWidth,
   errorTextStyle,
   frameBackgroundColor,
   frameBorderColor,
@@ -213,7 +215,7 @@ function AdmittedPreviewImageBlock({
   const [forcedOriginalIdentity, setForcedOriginalIdentity] = useRecyclingState('', [requestIdentity]);
   const [displayedOriginalIdentity, setDisplayedOriginalIdentity] = useRecyclingState('', [requestIdentity]);
   const [failedOriginal, setFailedOriginal] = useRecyclingState({ identity: '', revision: -1 }, [requestIdentity]);
-  const contentWidth = Math.max(1, imageProps.contentWidth || 1);
+  const contentWidth = Math.max(1, availableContentWidth);
   const cachedArtifact = cachedCompatibleSvgArtifact(imageSource);
   useEffect(() => {
     if (cachedArtifact) {
@@ -381,6 +383,7 @@ function AdmittedPreviewImageBlock({
   const imageState = useIMGElementStateWithCache({
     ...imageProps,
     cachedNaturalDimensions: naturalDimensions,
+    contentWidth,
     height: undefined,
     source: imageSource,
     style: [naturalImageStyle, { resizeMode: 'contain' }],
@@ -543,7 +546,7 @@ function AdmittedPreviewImageBlock({
 function PreviewImageBlock(props: PreviewImageBlockProps) {
   const requestIdentity = compatibleImageRequestIdentity(props.imageSource);
   const bodyMediaLease = useTopicBodyMediaLease({ kind: 'base', requestIdentity });
-  const contentWidth = Math.max(1, props.imageProps.contentWidth || 1);
+  const contentWidth = Math.max(1, props.contentWidth);
   const cacheKey = imageDisplayCacheIdentity(props.imageSource);
   const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
   const displayWidth = cachedDimensions ? Math.min(cachedDimensions.width, contentWidth) : contentWidth;
@@ -676,7 +679,7 @@ export function createPreviewRenderers({
 }): HtmlRenderers {
   const PreviewImageRenderer: CustomBlockRenderer = (props) => {
     const boundarySpacing = useContentBoundarySpacing(props.tnode);
-    const contentWidth = useContentWidth();
+    const contentWidth = useForumContentWidth();
     const imageProps = useIMGElementProps(props);
     const attributes = props.tnode.attributes;
     const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
@@ -718,6 +721,7 @@ export function createPreviewRenderers({
         key={compatibleImageRequestIdentity(imageSource as ImageURISource)}
         attributes={attributes}
         boundarySpacing={boundarySpacing}
+        contentWidth={contentWidth}
         errorTextStyle={htmlRendererStyles.inlineForumImageText}
         frameBackgroundColor={theme.surface2}
         frameBorderColor={theme.line}
@@ -736,7 +740,7 @@ export function createPreviewRenderers({
   };
 
   const InlineForumImageRenderer: CustomMixedRenderer = (props) => {
-    const contentWidth = useContentWidth();
+    const contentWidth = useForumContentWidth();
     const attributes = (props.tnode as unknown as { attributes?: Record<string, string | undefined> }).attributes || {};
     const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     const src = attributes.src || '';

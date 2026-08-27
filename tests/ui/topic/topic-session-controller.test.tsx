@@ -106,6 +106,7 @@ function renderTopicController({
   onRetryIdentityStatus = jest.fn(),
   onNodeSeekTopicVerificationRequired = jest.fn(),
   onOpenTopic = jest.fn(),
+  onReplyLocationResolved = jest.fn(),
   readGateway,
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
   showYaohuoLogin = jest.fn<(message?: string) => void>(),
@@ -122,6 +123,7 @@ function renderTopicController({
   onRetryIdentityStatus?: (source: Source) => Promise<unknown> | unknown;
   onNodeSeekTopicVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
   onOpenTopic?: (topic: Topic) => void;
+  onReplyLocationResolved?: (target: ReplyLocationTarget) => void;
   readGateway: TestReadGateway;
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showYaohuoLogin?: (message?: string) => void;
@@ -164,6 +166,7 @@ function renderTopicController({
         onRetryIdentityStatus,
         onNodeSeekTopicVerificationRequired,
         onOpenTopic,
+        onReplyLocationResolved,
         readerData,
         readerDataRef: { current: readerData },
         showLinuxDoVerification,
@@ -1493,7 +1496,7 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicReplies).toEqual([target]);
   });
 
-  it('[REG-TOPIC-067][REG-WRITE-017] does not apply an old-order write tail after the order changes', async () => {
+  it('[REG-TOPIC-067][REG-WRITE-017][REG-WRITE-072] does not apply or locate an old-order write tail after the order changes', async () => {
     const oldest = { ...firstReply, floor: 2, commentId: 12, author: 'oldest-preserved' };
     const newest = { ...firstReply, floor: 20, commentId: 120, author: 'newest-preserved' };
     const submitted = { ...firstReply, floor: 21, commentId: 121, author: 'submitted' };
@@ -1522,7 +1525,8 @@ describe('topic query controller', () => {
             totalCount: 20
           }
     );
-    const hook = await renderTopicController({ readGateway: { getReplies, getTopic } });
+    const onReplyLocationResolved = jest.fn();
+    const hook = await renderTopicController({ onReplyLocationResolved, readGateway: { getReplies, getTopic } });
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
     const oldestKey = forumQueryKeys.replies(hook.result.current.controller.topicQueryKey, 'oldest', 'authenticated:0');
     appQueryClient.setQueryData(oldestKey, {
@@ -1560,6 +1564,7 @@ describe('topic query controller', () => {
 
     expect(await refresh).toBe('stale');
     expect(hook.result.current.controller.topicReplies).toEqual([oldest]);
+    expect(onReplyLocationResolved).not.toHaveBeenCalled();
   });
 
   it('[REG-NOTIFY-047] passes a comment-only notification target through the shared reply gateway', async () => {
@@ -2047,8 +2052,10 @@ describe('topic query controller', () => {
       createdAt: '2026-07-20T00:21:00.000Z'
     };
     const refreshedDetail = { ...detail, replyCount: 21 };
+    const onReplyLocationResolved = jest.fn();
     const getReplies = jest.fn<TestGetReplies>(async (request) => ({
       items: [submittedReply],
+      completeness: 'complete',
       currentPage: 3,
       currentOffset: 20,
       previousPage: request.order === 'newest' ? null : 2,
@@ -2063,6 +2070,7 @@ describe('topic query controller', () => {
         getTopic: jest.fn<TestGetTopic>().mockResolvedValueOnce(detail).mockResolvedValue(refreshedDetail),
         getReplies
       },
+      onReplyLocationResolved,
       topic: discourseTopic
     });
 
@@ -2083,7 +2091,10 @@ describe('topic query controller', () => {
     await waitFor(() => {
       expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([29]);
       expect(hook.result.current.controller.topicDetail?.replyCount).toBe(21);
+      expect(hook.result.current.controller.replyRowsPartial).toBe(false);
     });
+    expect(onReplyLocationResolved).toHaveBeenCalledTimes(1);
+    expect(onReplyLocationResolved).toHaveBeenCalledWith({ commentId: 129, floor: 29, pageHint: 3 });
     expect(appQueryClient.getQueryData(newestKey)).toBeDefined();
     expect(appQueryClient.getQueryState(newestKey)?.isInvalidated).toBe(true);
     const repliesQueryKey = forumQueryKeys.replies(
@@ -2097,7 +2108,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(appQueryClient.getQueryData(repliesQueryKey)).toBeUndefined());
   });
 
-  it('[REG-TOPIC-067][REG-WRITE-017] rebuilds the confirmed newest tail after a reply submit', async () => {
+  it('[REG-TOPIC-067][REG-WRITE-017][REG-WRITE-072] rebuilds and locates the confirmed newest tail after a reply submit', async () => {
     const detail = {
       ...firstDetail,
       replyCount: 20,
@@ -2119,7 +2130,8 @@ describe('topic query controller', () => {
         totalCount: latestFloor
       };
     });
-    const hook = await renderTopicController({ readGateway: { getReplies, getTopic } });
+    const onReplyLocationResolved = jest.fn();
+    const hook = await renderTopicController({ onReplyLocationResolved, readGateway: { getReplies, getTopic } });
 
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
     await act(async () => {
@@ -2136,6 +2148,8 @@ describe('topic query controller', () => {
       ['newest', { kind: 'start' }, 21]
     ]);
     await waitFor(() => expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([21]));
+    expect(onReplyLocationResolved).toHaveBeenCalledTimes(1);
+    expect(onReplyLocationResolved).toHaveBeenCalledWith({ commentId: 121, floor: 21, pageHint: 3 });
   });
 
   it('[REG-TOPIC-067][REG-WRITE-017] reanchors after deleting the only reply in the current tail window', async () => {

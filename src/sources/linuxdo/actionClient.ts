@@ -110,7 +110,7 @@ export async function runLinuxDoAction({
   timeoutMs?: number;
   userAgent?: string;
 }) {
-  const csrfToken = await getCsrfToken({ fetcher, signal, timeoutMs, userAgent });
+  const csrfToken = request.method === 'GET' ? '' : await getCsrfToken({ fetcher, signal, timeoutMs, userAgent });
   const response = await fetchWithTimeout(
     `${LINUXDO_BASE_URL}${request.path}`,
     withBrowserFetchIntent(
@@ -120,7 +120,7 @@ export async function runLinuxDoAction({
           ...LINUXDO_ACTION_HEADERS,
           ...request.headers,
           'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
-          'X-CSRF-Token': csrfToken
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
         },
         body: request.body
       },

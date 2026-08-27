@@ -4,6 +4,7 @@ import React from 'react';
 import { Image, NativeModules, StyleSheet, Text } from 'react-native';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
+import { ForumContentWidthBoundary } from '@/ui/content/ForumContentWidth';
 import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTheme } from '@/ui/theme/tokens';
@@ -248,11 +249,13 @@ jest.mock('react-native-render-html', () => ({
   }),
   useIMGElementStateWithCache: ({
     cachedNaturalDimensions,
+    contentWidth = 320,
     height: specifiedHeight,
     source,
     width: specifiedWidth
   }: {
     cachedNaturalDimensions: { height: number; width: number };
+    contentWidth?: number;
     height?: string;
     source: unknown;
     width?: string;
@@ -261,7 +264,7 @@ jest.mock('react-native-render-html', () => ({
       Number(specifiedWidth) > 0 && Number(specifiedHeight) > 0
         ? { height: Number(specifiedHeight), width: Number(specifiedWidth) }
         : cachedNaturalDimensions;
-    const width = Math.min(specified.width, 320);
+    const width = Math.min(specified.width, contentWidth);
     const height = Math.round((specified.height * width) / specified.width);
     return {
       alt: '测试图片',
@@ -292,6 +295,7 @@ const topic: TopicDetail = {
 
 function TopicImageHarness({
   attributes = { alt: '测试图片', src: imageUrl },
+  contentWidth,
   continuation = 'only',
   mediaReferrer,
   mediaSessionIdentity,
@@ -300,6 +304,7 @@ function TopicImageHarness({
   topicSource = 'yaohuo'
 }: {
   attributes?: Record<string, string>;
+  contentWidth?: number;
   continuation?: 'only' | 'first' | 'middle' | 'last';
   mediaReferrer?: MediaReferrerContext;
   mediaSessionIdentity?: string;
@@ -338,7 +343,7 @@ function TopicImageHarness({
     webViewBlockMessage: ''
   });
   const ImageRenderer = htmlRenderers.img as unknown as React.ComponentType<Record<string, unknown>> | undefined;
-  return ImageRenderer ? (
+  const rendered = ImageRenderer ? (
     <TopicContentPresentationProvider continuation={continuation}>
       <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
         {React.createElement(ImageRenderer, {
@@ -349,6 +354,11 @@ function TopicImageHarness({
       </OriginalImageUpgradeBoundary>
     </TopicContentPresentationProvider>
   ) : null;
+  return contentWidth ? (
+    <ForumContentWidthBoundary width={contentWidth}>{rendered}</ForumContentWidthBoundary>
+  ) : (
+    rendered
+  );
 }
 
 function NodeSeekVideoStickerHarness() {
@@ -391,13 +401,17 @@ function NodeSeekVideoStickerHarness() {
 }
 
 function NodeSeekImageStickerHarness({
+  contentWidth,
   mediaReferrer,
   referrerPolicy,
-  src
+  src,
+  stickerRow = false
 }: {
+  contentWidth?: number;
   mediaReferrer?: MediaReferrerContext;
   referrerPolicy?: MediaReferrerPolicy;
   src: string;
+  stickerRow?: boolean;
 }) {
   const nodeSeekTopic: TopicDetail = {
     ...topic,
@@ -421,18 +435,24 @@ function NodeSeekImageStickerHarness({
   });
   const Renderer = htmlRenderers[FORUM_STICKER_TAG] as unknown as
     React.ComponentType<Record<string, unknown>> | undefined;
-  return Renderer
+  const rendered = Renderer
     ? React.createElement(Renderer, {
         tnode: {
           attributes: {
             alt: 'sticker',
             class: 'sticker',
             src,
+            ...(stickerRow ? { 'data-forum-sticker-row': 'true' } : {}),
             ...(referrerPolicy ? { referrerpolicy: referrerPolicy } : {})
           }
         }
       } as never)
     : null;
+  return contentWidth ? (
+    <ForumContentWidthBoundary width={contentWidth}>{rendered}</ForumContentWidthBoundary>
+  ) : (
+    rendered
+  );
 }
 
 function NodeSeekCustomMediaHarness({
@@ -1982,6 +2002,26 @@ describe('topic block image loading', () => {
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
   });
 
+  it('[REG-TOPIC-129] bounds a large cooked image to its table-cell content width', async () => {
+    const tableImageUrl = 'https://img.example.com/table-cell.png';
+    const screen = await render(
+      <TopicImageHarness
+        attributes={{ alt: '表格图片', height: '1080', src: tableImageUrl, width: '1920' }}
+        contentWidth={140}
+      />
+    );
+
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 105,
+      width: 140
+    });
+    await loadAndDisplayImage(latestImageProps(tableImageUrl), { height: 1080, width: 1920 });
+    expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 79,
+      width: 140
+    });
+  });
+
   it('[REG-TOPIC-059] keeps a displayed image mounted when the preview action changes', async () => {
     const firstPreviewAction = jest.fn();
     const latestPreviewAction = jest.fn();
@@ -2332,15 +2372,15 @@ describe('topic block image loading', () => {
     expect(mockExpoImageProps).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-080] follows intrinsic video ratio without recreating the player', async () => {
+  it('[REG-TOPIC-080][REG-TOPIC-129] follows intrinsic video ratio within its parent width', async () => {
     const videoUrl = 'https://cdn.example.com/portrait-topic.mp4';
     const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:portrait' };
     const tree = () => <ForumContentVideo mediaContext={mediaContext} src={videoUrl} theme={theme} />;
     const screen = await render(tree());
     await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
-    expect(StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style)).toMatchObject({
-      aspectRatio: 16 / 9
-    });
+    const initialFrameStyle = StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style);
+    expect(initialFrameStyle).toMatchObject({ alignSelf: 'stretch', aspectRatio: 16 / 9 });
+    expect(initialFrameStyle).not.toHaveProperty('width');
 
     mockVideoTrack = { size: { height: 1024, width: 576 } };
     await screen.rerender(tree());
@@ -2715,6 +2755,19 @@ describe('topic block image loading', () => {
     await render(<NodeSeekImageStickerHarness src={squareUrl} />);
     expect(StyleSheet.flatten(latestImageProps(squareUrl).style)).toEqual(
       expect.objectContaining({ height: 82, width: 82 })
+    );
+  });
+
+  it('[REG-TOPIC-129] keeps sticker rows inside the local content width and preserves the page fallback', async () => {
+    const stickerUrl = 'https://cdn.example.com/table-sticker.png';
+    const screen = await render(<NodeSeekImageStickerHarness contentWidth={140} src={stickerUrl} stickerRow />);
+
+    expect(StyleSheet.flatten(latestImageProps(stickerUrl).style)).toEqual(
+      expect.objectContaining({ height: 77, width: 77 })
+    );
+    await screen.rerender(<NodeSeekImageStickerHarness src={stickerUrl} stickerRow />);
+    expect(StyleSheet.flatten(latestImageProps(stickerUrl).style)).toEqual(
+      expect.objectContaining({ height: 100, width: 100 })
     );
   });
 

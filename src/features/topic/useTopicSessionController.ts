@@ -4,6 +4,7 @@ import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
 import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from './model/topicDerivedData';
 import type { Reply, ReplyOrder, Source, Topic, TopicDetail } from '@/domain/forum/models';
+import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 
 export type ReplyComposerIntent =
   | { kind: 'closed'; target?: never }
@@ -104,6 +105,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyOrder, setReplyOrder] = useState<ReplyOrder>('oldest');
   const [replyComposer, dispatchReplyComposer] = useReducer(transitionReplyComposer, INITIAL_REPLY_COMPOSER_STATE);
+  const [replyPendingNodeSeekPolls, setReplyPendingNodeSeekPolls] = useState<PendingNodeSeekPoll[]>([]);
   const [commentQuery, setCommentQuery] = useState('');
   const [debouncedCommentQuery, setDebouncedCommentQuery] = useState('');
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
@@ -116,8 +118,11 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
   }, [commentQuery]);
 
   const toggleReplyComposer = useCallback(
-    (open: boolean) => dispatchReplyComposer({ type: open ? 'open' : 'close' }),
-    []
+    (open: boolean) => {
+      if (!open && replyComposer.intent.kind === 'edit') setReplyPendingNodeSeekPolls([]);
+      dispatchReplyComposer({ type: open ? 'open' : 'close' });
+    },
+    [replyComposer.intent.kind]
   );
 
   const replyToFloor = useCallback(
@@ -139,6 +144,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
   );
 
   const editReply = useCallback((target: ReplyEditTarget) => {
+    setReplyPendingNodeSeekPolls([]);
     dispatchReplyComposer({ type: 'edit', target });
   }, []);
 
@@ -147,6 +153,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
   }, []);
 
   const completeReplySubmission = useCallback(() => {
+    setReplyPendingNodeSeekPolls([]);
     dispatchReplyComposer({ type: 'complete-submission' });
   }, []);
 
@@ -156,6 +163,11 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
 
   const changeReplyContent = useCallback((content: string) => {
     dispatchReplyComposer({ type: 'change-content', content });
+  }, []);
+
+  const changeReplySnapshot = useCallback((snapshot: ComposerSnapshot) => {
+    dispatchReplyComposer({ type: 'change-content', content: snapshot.markdown });
+    setReplyPendingNodeSeekPolls(snapshot.pendingNodeSeekPolls);
   }, []);
 
   const changeReplyFace = useCallback((face: string) => {
@@ -180,6 +192,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
       replyComposerIntent: replyComposer.intent,
       replyContent: replyComposer.content,
       replyFace: replyComposer.face,
+      replyPendingNodeSeekPolls,
       replyFilter,
       replyOrder,
       selectedTopic: topic
@@ -188,6 +201,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
       composer: {
         appendMarkup: appendReplyMarkup,
         changeContent: changeReplyContent,
+        changeSnapshot: changeReplySnapshot,
         changeFace: changeReplyFace,
         completeSubmission: completeReplySubmission,
         detachEdit: detachReplyEdit,

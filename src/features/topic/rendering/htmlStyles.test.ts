@@ -166,13 +166,65 @@ describe('Android HTML rendering styles', () => {
     expect(htmlClassesStyles['forum-attachment-title']).toMatchObject({ fontWeight: '700' });
   });
 
-  it('[REG-TOPIC-084] leaves table geometry to the native logical-table renderer', () => {
+  it('[REG-TOPIC-129] supplies the missing cooked-content semantic styles', () => {
+    const lightTheme = createTheme(settings);
+    const darkSettings = { ...settings, theme: 'dark' as const };
+    const darkTheme = createTheme(darkSettings);
+    const light = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme: lightTheme });
+    const dark = htmlRenderingStyles.buildHtmlRenderingStyles({ settings: darkSettings, theme: darkTheme });
+
+    expect(light.htmlClassesStyles['bbcode-b']).toMatchObject({ fontWeight: '700' });
+    expect(light.htmlClassesStyles['bbcode-i']).toMatchObject({ fontStyle: 'italic' });
+    expect(light.htmlClassesStyles['bbcode-u']).toMatchObject({ textDecorationLine: 'underline' });
+    expect(light.htmlClassesStyles['bbcode-s']).toMatchObject({ textDecorationLine: 'line-through' });
+    expect(light.htmlClassesStyles['mention-group']).toEqual(light.htmlClassesStyles['forum-user-mention']);
+    expect(light.htmlTagsStyles.kbd).toMatchObject({
+      backgroundColor: lightTheme.surface2,
+      borderBottomWidth: 2,
+      borderColor: lightTheme.lineStrong,
+      borderRadius: 4,
+      borderWidth: 1,
+      fontFamily: 'monospace',
+      paddingHorizontal: 5,
+      paddingVertical: 1
+    });
+    expect(light.htmlTagsStyles.mark).toMatchObject({ color: lightTheme.ink });
+    expect(light.htmlTagsStyles.ins).toMatchObject({ color: lightTheme.ink, textDecorationLine: 'underline' });
+    expect(light.htmlTagsStyles.del).toMatchObject({ color: lightTheme.ink, textDecorationLine: 'line-through' });
+    expect(light.htmlTagsStyles.big).toMatchObject({ fontSize: 24, lineHeight: 36 });
+    expect(light.htmlTagsStyles.small).toMatchObject({ fontSize: 12, lineHeight: 18 });
+    expect(light.htmlTagsStyles.mark?.backgroundColor).not.toBe(lightTheme.surface2);
+    expect(light.htmlTagsStyles.ins?.backgroundColor).not.toBe(lightTheme.surface2);
+    expect(light.htmlTagsStyles.del?.backgroundColor).not.toBe(lightTheme.surface2);
+    expect(dark.htmlTagsStyles.mark).toMatchObject({ color: darkTheme.ink });
+    expect(dark.htmlTagsStyles.ins).toMatchObject({ color: darkTheme.ink });
+    expect(dark.htmlTagsStyles.del).toMatchObject({ color: darkTheme.ink });
+    expect(dark.htmlTagsStyles.mark?.backgroundColor).not.toBe(light.htmlTagsStyles.mark?.backgroundColor);
+    expect(dark.htmlTagsStyles.ins?.backgroundColor).not.toBe(light.htmlTagsStyles.ins?.backgroundColor);
+    expect(dark.htmlTagsStyles.del?.backgroundColor).not.toBe(light.htmlTagsStyles.del?.backgroundColor);
+  });
+
+  it('[REG-TOPIC-130] owns NodeSeek native s styling without treating it as semantic deletion', () => {
+    const lightTheme = createTheme(settings);
+    const darkSettings = { ...settings, theme: 'dark' as const };
+    const darkTheme = createTheme(darkSettings);
+    const light = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme: lightTheme });
+    const dark = htmlRenderingStyles.buildHtmlRenderingStyles({ settings: darkSettings, theme: darkTheme });
+
+    expect(light.htmlTagsStyles.s).toMatchObject({ textDecorationLine: 'line-through' });
+    expect(dark.htmlTagsStyles.s).toMatchObject({ textDecorationLine: 'line-through' });
+    expect(light.htmlTagsStyles.s).not.toHaveProperty('backgroundColor');
+    expect(dark.htmlTagsStyles.s).not.toHaveProperty('backgroundColor');
+  });
+
+  it('[REG-TOPIC-084][REG-TOPIC-127] leaves geometry to the native renderer and keeps inner rules visible', () => {
     const theme = createTheme(settings);
     const { htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
 
     expect(htmlTagsStyles.table).not.toHaveProperty('borderWidth');
     expect(htmlTagsStyles.th).toMatchObject({
       backgroundColor: theme.surface2,
+      borderColor: theme.line,
       borderBottomWidth: 1,
       borderRightWidth: 1,
       color: theme.ink,
@@ -183,6 +235,7 @@ describe('Android HTML rendering styles', () => {
     });
     expect(htmlTagsStyles.td).toMatchObject({
       backgroundColor: theme.surface,
+      borderColor: theme.line,
       borderBottomWidth: 1,
       borderRightWidth: 1,
       color: theme.ink,

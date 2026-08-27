@@ -26,7 +26,12 @@ import {
   type NodeSeekPageDocument
 } from './protocol';
 import { nodeSeekMarkdownCandidateHtml } from './markdown';
-import { nodeSeekPollPlaceholderHtml, normalizeNodeSeekPollPlaceholderNodes } from './polls';
+import {
+  nodeSeekPollPlaceholderHtml,
+  normalizeNodeSeekPollPlaceholderNodes,
+  normalizeNodeSeekVoteMarkers
+} from './polls';
+import { NODESEEK_STARDUST_PLACEHOLDER_TAG, normalizeNodeSeekStardustMarkers } from './stardustMarkup';
 
 const BASE_URL = NODESEEK_BASE_URL;
 
@@ -46,12 +51,35 @@ function nodeSeekContentCandidateHtml(content: unknown, markdown: unknown) {
   return nodeSeekMarkdownCandidateHtml(markdownText || renderedHtml);
 }
 
-function prepareNodeSeekContent(html: unknown, role: 'reply' | 'signature') {
-  return prepareSanitizedForumContent(html, { baseUrl: BASE_URL, role, source: 'nodeseek' });
+export function prepareNodeSeekForumContent(
+  html: unknown,
+  {
+    polls,
+    role,
+    topicId
+  }: {
+    polls?: readonly TopicPoll[];
+    role: 'opening' | 'reply' | 'signature';
+    topicId?: string;
+  }
+) {
+  const pollIds = (polls || []).flatMap((poll) => (poll.id ? [poll.id] : []));
+  return prepareSanitizedForumContent(html, {
+    baseUrl: BASE_URL,
+    polls,
+    role,
+    source: 'nodeseek',
+    topicId,
+    transformRoot: (root) => {
+      normalizeNodeSeekVoteMarkers(root, pollIds);
+      normalizeNodeSeekStardustMarkers(root);
+      if (pollIds.length) normalizeRenderedNodeSeekPollRoot(root, pollIds);
+    }
+  });
 }
 
 function nodeSeekDisplayContent(content: unknown, markdown: unknown) {
-  return prepareNodeSeekContent(nodeSeekContentCandidateHtml(content, markdown), 'reply');
+  return prepareNodeSeekForumContent(nodeSeekContentCandidateHtml(content, markdown), { role: 'reply' });
 }
 
 function nodeSeekEditableMarkdown(markdown: unknown) {
@@ -64,16 +92,18 @@ function nodeSeekSignatureContent(signature: unknown) {
   if (!raw) {
     return undefined;
   }
-  return prepareNodeSeekContent(hasHtmlTag(raw) ? raw : nodeSeekMarkdownCandidateHtml(raw), 'signature');
+  return prepareNodeSeekForumContent(hasHtmlTag(raw) ? raw : nodeSeekMarkdownCandidateHtml(raw), {
+    role: 'signature'
+  });
 }
 
 export function extractNodeSeekVoteIds(...values: unknown[]) {
   const ids = new Set<string>();
   values.forEach((value) => {
-    const text = String(value || '');
-    for (const match of text.matchAll(/nsapp:\/\/vote\?id=(\d+)/gi)) {
-      ids.add(match[1]);
-    }
+    const html = String(value || '');
+    if (!/nsapp:\/\/vote\?id=/i.test(html)) return;
+    const root = parseHtml(html);
+    normalizeNodeSeekVoteMarkers(root, []).forEach((id) => ids.add(id));
   });
   return [...ids];
 }
@@ -192,7 +222,11 @@ function nodeSeekElementHasContent(element: HTMLElement) {
   if (elementText(element).trim()) {
     return true;
   }
-  return Boolean(element.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select'));
+  return Boolean(
+    element.querySelector(
+      `img, video, audio, table, pre, code, svg, canvas, input, textarea, select, ${NODESEEK_STARDUST_PLACEHOLDER_TAG}`
+    )
+  );
 }
 
 function removeEmptyRenderedNodeSeekPollShells(root: HTMLElement) {
@@ -290,7 +324,7 @@ export function normalizeRenderedNodeSeekPollRoot(root: HTMLElement, pollIds: It
   normalizeNodeSeekPollPlaceholderNodes(root, pollIds);
 }
 
-export function mergeNodeSeekPolls(...groups: (TopicPoll[] | undefined)[]) {
+export function mergeNodeSeekPolls(...groups: (readonly TopicPoll[] | undefined)[]) {
   const seen = new Set<string>();
   const polls: TopicPoll[] = [];
   for (const group of groups) {
@@ -635,7 +669,7 @@ function renderedNodeSeekReactionClicked(element: HTMLElement | null | undefined
 
 function renderedNodeSeekSignature(element: HTMLElement | null | undefined) {
   const signature = element?.querySelector('.signature, .post-signature, .content-signature');
-  return signature?.innerHTML ? prepareNodeSeekContent(signature.innerHTML, 'signature') : undefined;
+  return signature?.innerHTML ? prepareNodeSeekForumContent(signature.innerHTML, { role: 'signature' }) : undefined;
 }
 
 function renderedNodeSeekIsOp(element: HTMLElement | null | undefined) {
@@ -805,7 +839,7 @@ export function parseRenderedNodeSeekTopicHtml(
     });
   const allReplies = replyRows.map((row) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
-    const preparedContent = prepareNodeSeekContent(replyContent?.innerHTML || '', 'reply');
+    const preparedContent = prepareNodeSeekForumContent(replyContent?.innerHTML || '', { role: 'reply' });
     const preparedSignature = renderedNodeSeekSignature(row);
     const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
     const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];

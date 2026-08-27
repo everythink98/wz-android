@@ -1102,6 +1102,50 @@ describe('Android local sources', () => {
     expect(topic.contentHtml.trim()).toBe('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
   });
 
+  it('[REG-TOPIC-128] prepares poll and Stardust markers in a targeted reply window', async () => {
+    const vote = 'nsapp://vote?id=3028';
+    const stardust = 'nsapp://stardust-receive?member_id=42&ref_id=7&description=Pay&diff=5&onetime=false';
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/vote/info/3028')) {
+        return json({
+          vote: {
+            id: 3028,
+            title: '评论投票',
+            items: [{ vote_item_id: 1, text: '选项 A', voted: false }]
+          }
+        });
+      }
+      return htmlAt(
+        `<a class="post-title" href="/post-856117-3">NodeSeek topic</a>
+        <li id="25" data-comment-id="50025" class="content-item">
+          <a class="floor-link">#25</a>
+          <a href="/space/42" class="author-name">alice</a>
+          <article class="post-content"><p>前</p><a href="/jump/vote">${vote}</a><p>中</p><a href="/jump/stardust">${stardust}</a><p>后</p></article>
+        </li>`,
+        'https://www.nodeseek.com/post-856117-3'
+      );
+    });
+
+    const result = await getNodeSeekReplies('856117', {
+      fetcher,
+      limit: 10,
+      order: 'oldest',
+      position: { kind: 'target', target: { floor: 25, pageHint: 3 } },
+      replyCount: 30
+    });
+    const reply = result.items[0];
+    const rows = requirePreparedForumContent(reply.preparedContent, reply.contentHtml, {
+      polls: reply.polls,
+      role: 'reply',
+      source: 'nodeseek'
+    }).rows;
+
+    expect(reply.polls?.map(({ id }) => id)).toEqual(['3028']);
+    expect(rows.map(({ type }) => type)).toEqual(['richText', 'poll', 'richText']);
+    expect(reply.contentHtml).toContain('forum-nodeseek-stardust');
+    expect(reply.contentHtml).not.toContain('nsapp://');
+  });
+
   it('[REG-WRITE-010] removes an adjacent NodeSeek poll marker leak without splitting the surrounding paragraph', async () => {
     const fetcher = vi.fn(async () =>
       html(`
@@ -1735,6 +1779,37 @@ describe('Android local sources', () => {
 
     expect(result.items).toEqual([expect.objectContaining({ commentId: 40031, floor: 31 })]);
     expect(result).toMatchObject({ currentPage: 1, completeness: 'partial' });
+  });
+
+  it('[REG-WRITE-072][REG-TOPIC-067][REG-TOPIC-077] keeps a complete exact NodeSeek tail window out of partial status', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        postData: {
+          postId: 852808,
+          postPage: 2,
+          postPageCount: 2,
+          title: 'NodeSeek topic',
+          comments: Array.from({ length: 6 }, (_, index) => ({
+            commentId: 40011 + index,
+            floorIndex: 11 + index,
+            poster: { name: `user-${11 + index}` },
+            markdown: `reply ${11 + index}`
+          }))
+        }
+      })
+    ).toString('base64');
+
+    const result = await getNodeSeekReplies('852808', {
+      fetcher: vi.fn(async () => htmlAt(`<script>${payload}</script>`, 'https://www.nodeseek.com/post-852808-2')),
+      order: 'oldest',
+      position: { kind: 'target', target: { commentId: 40016, floor: 16, pageHint: 2 } },
+      limit: 10
+    });
+
+    expect(result.items.map(({ commentId, floor }) => ({ commentId, floor }))).toEqual(
+      Array.from({ length: 6 }, (_, index) => ({ commentId: 40011 + index, floor: 11 + index }))
+    );
+    expect(result).toMatchObject({ currentPage: 2, completeness: 'complete' });
   });
 
   it('[REG-TOPIC-077] rejects an explicit wrong NodeSeek topic identity before projecting replies', async () => {

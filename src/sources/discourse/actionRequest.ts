@@ -2,7 +2,7 @@ import { appendFileToFormData, type NormalizedReplyImageAsset } from '@/sources/
 
 export interface DiscourseActionRequest {
   path: string;
-  method: 'POST' | 'DELETE' | 'PUT';
+  method: 'GET' | 'POST' | 'DELETE' | 'PUT';
   headers: Record<string, string>;
   body?: string | FormData;
 }

@@ -54,6 +54,7 @@ export function TopicPolls({
   decisionFor,
   embeddedInArticle,
   keyPrefix,
+  onLockPoll,
   onTogglePollSelection,
   onVotePoll,
   pollSelections,
@@ -66,6 +67,7 @@ export function TopicPolls({
   decisionFor?: TopicActionDecisionFor;
   embeddedInArticle?: boolean;
   keyPrefix: string;
+  onLockPoll?: (poll: TopicPoll) => void;
   onTogglePollSelection: (key: string, poll: TopicPoll, optionId: string) => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   pollSelections: Record<string, string[]>;
@@ -86,6 +88,9 @@ export function TopicPolls({
           reason: 'unsupported' as const
         };
         const showPollSubmit = decision.reason !== 'unsupported';
+        const manageDecision = decisionFor?.({ action: 'manage-poll', poll });
+        const showPollLock =
+          source === 'nodeseek' && !poll.closed && manageDecision?.allowed === true && Boolean(onLockPoll);
         const pollKey = `${keyPrefix}-${topicPollKey(poll, index)}`;
         const hasCounts = poll.options.some((option) => typeof option.count === 'number');
         const totalVotes = pollTotalVotes(poll);
@@ -98,7 +103,9 @@ export function TopicPolls({
           actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !decision.allowed || !discoursePollReady);
         const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);
         const pollStatus = poll.closed
-          ? '已关闭'
+          ? source === 'nodeseek'
+            ? '已锁定'
+            : '已关闭'
           : poll.voted
             ? '已投票'
             : pollReadonly
@@ -121,7 +128,9 @@ export function TopicPolls({
         ].filter((item): item is string => Boolean(item));
         const pollParticipation = pollParticipationLabel(poll);
         const submitLabel = poll.closed
-          ? '投票已关闭'
+          ? source === 'nodeseek'
+            ? '投票已锁定'
+            : '投票已关闭'
           : poll.voted
             ? '已投票'
             : pollReadonly
@@ -208,6 +217,15 @@ export function TopicPolls({
               </View>
               {showPollSubmit ? (
                 <View style={styles.pollSubmitRow}>
+                  {showPollLock ? (
+                    <AppButton
+                      compact
+                      label="锁定投票"
+                      variant="ghost"
+                      disabled={actionBusy}
+                      onPress={() => onLockPoll?.(poll)}
+                    />
+                  ) : null}
                   <AppButton
                     compact
                     label={submitLabel}

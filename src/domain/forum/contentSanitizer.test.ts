@@ -77,6 +77,18 @@ describe('forum content sanitizer media referrer policy', () => {
     expect(html).not.toContain('hidden display content');
   });
 
+  it('[REG-TOPIC-128] preserves only safe GFM table alignment values', () => {
+    const html = sanitizeContentHtml(
+      '<table><tr><th style="text-align: center; position: absolute">A</th><td style="text-align: justify; width: 999px">B</td></tr></table>',
+      'https://www.nodeseek.com/post-1-1'
+    );
+
+    expect(html).toContain('<th style="text-align: center">A</th>');
+    expect(html).not.toContain('position');
+    expect(html).not.toContain('justify');
+    expect(html).not.toContain('width');
+  });
+
   it('[REG-TOPIC-090] preserves semantic siblings around a pre inside a magic-tab terminal container', () => {
     const html = sanitizeContentHtml(
       '<div class="nsk-magic-tabs"><div class="nsk-magic-tab-title">Report</div><div class="nsk-magic-tab-body"><div class="terminal-container"><pre>terminal output</pre><p>explanation</p><table><tbody><tr><td>value</td></tr></tbody></table></div></div></div>',

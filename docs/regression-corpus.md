@@ -3439,6 +3439,532 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 移除 target ticket/topic、在 `ensureWritableSession` 前生成 Query key，或跳过取消 Query 后复核，编号 UI 用例必须出现 transport、picker/Key 调用或旧 epoch cache 命中。 |
 | 明确不覆盖范围 | 不自动把旧编辑文本提交为 B 账号的新回复，不迁移论坛账号数据，不执行真实编辑、上传或清登录。 |
 
+## `REG-WRITE-027` 结构化回复切换模式或展示状态后丢失正文与私有语法
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01`、`WRITE-05`、`TOPIC-02/03`、`NOTIFY-02`、`NAV-03` |
+| 用户症状 | linux.do/NodeSeek 回复只能看见原始 Markdown，表格是假文本；切换富文本/源码或 Sheet/全屏后可能丢正文、撤销栈、选区，私有块还会被普通 Markdown 规范化破坏。源码异步图片上传期间继续编辑时还可能插错位置或被模式切换覆盖；代码里的 `[poll` 等示例会被误判为待发布语法。 |
+| 触发条件 | 在旧 TextInput 上叠加预览/正则转换，或全屏时重挂编辑器；RN 按键同步正文并允许旧 snapshot 提交；校验与异步选区分别复制 Markdown 扫描和绝对位置。 |
+| 根因 seam | `StructuredReplyComposer`、本地 Tiptap/CodeMirror runtime、严格 Bridge、`ComposerBottomSheet` 与 Topic/私信入口。 |
+| 必须保持的行为 | linux.do/NodeSeek 四类 intent 使用同一离线 WebView 文档；富文本/源码与 Sheet/全屏不重挂实例。Markdown 是唯一发送格式，GFM table、Emoji/贴纸 marker、linux.do poll/私有块、NodeSeek marker 和未知 paired block round-trip；合并表格粘贴整次拒绝。私有语法校验复用 CodeMirror Markdown parser 排除 inline/fenced/indented code；source upload 以 CodeMirror transaction 映射开始选区，pending 时拒绝跨模式但允许当前模式继续编辑。输入不逐键过桥，600ms autosave；`StructuredReplyComposer` 独占 snapshot 发布，wrapper 只等待关闭/路由离开请求，后台与提交前同样结算一次；旧 revision/未知 Bridge 字段拒绝，renderer gone 只用最后确认草稿恢复。妖火继续独立 UBB/纯文本，V2EX 只读。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-027` 固定 GFM pipe/对齐、代码范围惰性和异步 source upload 映射；`src/ui/composer/structuredComposerBridge.test.ts` 固定 unknown field 拒绝；`tests/ui/topic/structured-reply-composer.test.tsx`、`tests/ui/topic/topic-components.test.tsx` 与 `tests/ui/notifications/notifications-screen.test.tsx` 固定同一 WebView、过期 snapshot 阻止提交、隐藏不额外请求及 Topic/Notification 每次结算只发布一次。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：codec/Bridge 和真实 RN 生命周期缺一不可；源码字符串或“能打开 WebView”不能证明行为。 |
+| Replay 或真实验收路径 | 匹配主 AVD 保留数据覆盖安装，在 100%/130%、浅/深色与 Gboard 下输入中文、编辑表格和原子节点，反复切换两种模式和 Sheet/全屏，再收起/重开；正文、选区、撤销和源码均一致。真实发送仅按 linux.do 深海/NodeSeek 沙盒授权执行。 |
+| 负向验证方式 | 恢复 L/NS TextInput、用 HTML/Tiptap JSON 发送、全屏重建 WebView、逐键 Bridge、接受旧 revision，或让 merge table 静默降级，编号测试至少一层必须失败。 |
+| 明确不覆盖范围 | 不提供新主题、分类、标签、NodeSeek rank 或 create-topic；不为编辑态执行 Mermaid/Graphviz/Build Chart 图形运行时。 |
+
+## `REG-WRITE-028` NodeSeek Stardust marker 可注入付款按钮或脱离正文位置
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-06`、`TOPIC-02/03` |
+| 用户症状 | 非法收款人/金额 marker、代码示例或恶意参数可能变成可付款卡片；合法卡片被移动到正文底部或重复显示。 |
+| 触发条件 | 把 `nsapp://stardust-receive` 当普通 URL 扫描后追加卡片，未校验正安全整数、固定 origin、文本备注和 code ancestor。 |
+| 根因 seam | `stardustMarkup` 的 DOM 原位归一、typed HTML model、`NodeSeekStardustCard` 和付款 controller 信任边界。 |
+| 必须保持的行为 | 只把合法 marker 在原 text node 位置替换为一个 typed element；代码块与非法 marker 保持惰性文本。ID、数额、Ref ID、备注均不可信，备注只按纯文本显示，origin 固定 NodeSeek，未知参数仅在未修改 marker 中保存；错误状态保留卡片和显式重试，不产生付款按钮绕过。 |
+| 精确失败 oracle | `src/sources/nodeseek/stardust.test.ts` 的 `REG-WRITE-028` 同时放置前后正文、合法 marker、code marker 和非法 member，要求仅一个原位 typed element；请求 builder/status normalization 与 `tests/ui/topic/topic-actions-controller.test.tsx` 固定付款边界。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：DOM 原位转换和 controller 副作用都要观察。 |
+| Replay 或真实验收路径 | NodeSeek 沙盒获授权回复中插入收款 marker，原生详情与 App 内原站对照前后正文、金额、备注和状态；不点击付款。 |
+| 负向验证方式 | 允许非数字/非安全整数、处理 code ancestor、接受 marker origin/callback、把卡片追加到底部或重复渲染，编号测试必须失败。 |
+| 明确不覆盖范围 | 不建设 Stardust 钱包、充值、历史或独立转账；真实付款另按逐次授权。 |
+
+## `REG-WRITE-029` NodeSeek 回复失败后手动重试重复创建投票
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01`、`WRITE-05` |
+| 用户症状 | 投票已创建但评论发送失败后，用户点重试会留下第二个远端投票和孤立资源。 |
+| 触发条件 | 投票创建与回复发送没有持久事务边界，或只把 remote ID 留在当前函数局部变量。 |
+| 根因 seam | `materializeNodeSeekPolls` 与按 identity 保存的 `nodeSeekPollJournal`。 |
+| 必须保持的行为 | 第一个网络请求前必须完整校验 token 与 sidecar 数量、唯一 localId、每个 fingerprint 的重算结果及对应 journal；任一不匹配为零远端调用。内容相同但 localId 不同的两个投票仍是独立资源。远端创建确认后立即保存 remote ID，再替换本地 token 并发送评论。同 fingerprint 的手动回复重试读取 journal、复用同一 `nsapp://vote?id=...`，不再调用 create。 |
+| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-029` 固定 missing/extra/duplicate sidecar 均零 transport，以及一次 create、第一次 comment 失败、第二次仅重发 comment且两次正文都不泄漏本地 token。 |
+| 最低可靠自动测试层 | `UI_PASS`：在 controller mutation 与 AsyncStorage journal 边界观察完整调用序列。 |
+| Replay 或真实验收路径 | NodeSeek 沙盒只允许单次真实 poll create；遇到回复失败先记录 remote ID，结果明确时再人工决定是否重试，结果不明停止。 |
+| 负向验证方式 | 删除 journal、在评论成功后才保存 remote ID，或按 localId 而不校验 fingerprint 复用，编号测试必须出现第二次 create 或错误 marker。 |
+| 明确不覆盖范围 | 不删除远端孤立 poll，不复用研究 poll `3022`，不自动重试回复。 |
+
+## `REG-WRITE-030` NodeSeek 投票创建结果不明后再次发起创建
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05`、`ACCOUNT-01` |
+| 用户症状 | create 超时或响应不可解析时，当前页面或 App 重启后的下一次提交再次创建投票。 |
+| 触发条件 | 把未确认失败当成安全失败，或只用组件内 Set 记住 uncertainty。 |
+| 根因 seam | `materializeNodeSeekPolls` 的 unknown outcome 与持久化 poll journal。 |
+| 必须保持的行为 | 非明确拒绝的 create 失败把同 identity/localId/fingerprint 保存为 `remoteId:null`；有效 remote ID 一旦保存即为单调信息，后续异常或 ticket 失效不得降回 null。当前 controller 和新 controller 都阻止未知结果的同 fingerprint 再次创建；已知 ID 的重试只复用该 ID。任何自动路径零重试。 |
+| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-030` 让第一次 create timeout，再实例化新的 controller 提交同 snapshot，总 transport 仍为一次；另固定取得 ID 后 ticket 失效仍保留 ID。journal 测试固定同 fingerprint 不可从已知 ID 降级。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须跨 controller 实例读取 AsyncStorage；只测内存 Set 不足。 |
+| Replay 或真实验收路径 | Live create 结果不明即停止、记录对象与日志，不再次点击发送；从 App 内原站核对后由用户决定修改/移除。 |
+| 负向验证方式 | 不持久化 null remoteId、重启后清 uncertainty、超时自动重试或继续发送本地 token，编号测试必须失败。 |
+| 明确不覆盖范围 | 不猜测远端是否创建成功，不自动枚举/删除孤立 poll。 |
+
+## `REG-WRITE-031` NodeSeek 投票明确拒绝后被永久锁死
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05` |
+| 用户症状 | 服务端明确拒绝无副作用后，用户修正或手动重试仍被“结果未知”门禁永久阻止。 |
+| 触发条件 | 把所有异常无差别写入 uncertainty journal。 |
+| 根因 seam | NodeSeek action error 的 `serverRejected` 语义与 poll materialization catch。 |
+| 必须保持的行为 | `serverRejected` 只表示服务端已确认未提交：明确业务拒绝或 4xx；5xx、网络中断、超时和畸形响应一律是结果不明。只有明确 `serverRejected` 或未发送的 stale failure 视为安全失败，不记录 unknown；用户手动重试可以再次 create，成功后保存 ID 并只发送一次评论。 |
+| 精确失败 oracle | `src/sources/nodeseek/actionClient.test.ts` 固定 422/业务拒绝为 true、503 为 false；`tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-031` 固定首次明确拒绝、第二次 create 成功、随后恰好一次 comment。 |
+| 最低可靠自动测试层 | `UI_PASS`：需观察错误分类、journal 与请求序列。 |
+| Replay 或真实验收路径 | 真实明确拒绝只保留草稿并显示原站错误；是否再次提交由用户手动决定，不自动改正文。 |
+| 负向验证方式 | 把明确拒绝写成 unknown、静默自动重试或拒绝后清草稿，编号测试必须失败。 |
+| 明确不覆盖范围 | 不把网络错误、timeout、无效响应猜成明确拒绝。 |
+
+## `REG-WRITE-032` Stardust 付款确认取消后仍发送
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-06`、`ACCOUNT-01` |
+| 用户症状 | 用户在“不可退回”确认框取消，仍发生 Stardust 扣款。 |
+| 触发条件 | prepare 与 send 合并成一个请求链，或确认只控制成功文案。 |
+| 根因 seam | `payNodeSeekStardust` 的 writable ticket、prepare、native confirmation 和 send 分段。 |
+| 必须保持的行为 | 先读权威状态与 prepare，再显示收款人、金额和不可退回提示；取消返回 `canceled`，send 调用为零。确认后仍须复核 credential generation。 |
+| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-032` 模拟取消按钮，要求仅一次 `/payment-prepare` 且没有 `/send`。 |
+| 最低可靠自动测试层 | `UI_PASS`：真实 controller 与 Alert 回调共同固定零副作用。 |
+| Replay 或真实验收路径 | 默认不执行真实 prepare/send；另获具体对象和金额授权时可打开确认并取消，确认 send 仍不在默认验收内。 |
+| 负向验证方式 | 取消后调用 send、确认前预写 paid、或 prepare 失败仍弹确认，编号测试必须失败。 |
+| 明确不覆盖范围 | 不验证真实扣款、退款、余额或钱包历史。 |
+
+## `REG-WRITE-033` Stardust 付款乐观标记成功或重复发送
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-06`、`ACCOUNT-01` |
+| 用户症状 | send 返回即本地标为已支付，或渲染/重复点击造成两次扣款。 |
+| 触发条件 | 乐观更新付款状态、缺少同 Topic mutation 串行和最终权威刷新。 |
+| 根因 seam | `payNodeSeekStardust`、Topic mutation scope 与 `fetchNodeSeekStardustStatus`。 |
+| 必须保持的行为 | paid/closed 在 prepare 前阻止；用户确认且 ticket 当前时 send 恰好一次，随后重新读取 `/api/stardust/list`/当前用户状态，只有权威 `paid=true` 才报告 submitted，不做乐观余额或状态。 |
+| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-033` 固定 prepare→send 一次和第二次权威 read 才出现 paid。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要 controller 请求序列与权威状态结果。 |
+| Replay 或真实验收路径 | 真实 send 仅在用户逐次指定对象和金额后执行一次；刷新/重进后从 App 内原站同类页面核对。默认 `NOT_VERIFIED`。 |
+| 负向验证方式 | send 前/返回后乐观写 paid、缺少权威刷新、重复调用 send 或 credential 变化后继续，编号测试或既有 ticket 回归必须失败。 |
+| 明确不覆盖范围 | 不预测余额，不实现退款或自动补偿。 |
+
+## `REG-WRITE-034` Stardust send 结果不明时自动重发
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-06`、`ACCOUNT-01` |
+| 用户症状 | send timeout 后客户端直接重试，可能重复扣款；或把未确认状态显示为失败诱导再次付款。 |
+| 触发条件 | 非幂等 send 使用普通 retry，未在 catch 中先刷新权威状态。 |
+| 根因 seam | `payNodeSeekStardust` 的 send error、权威 status refresh 和 outcome 分类。 |
+| 必须保持的行为 | send 异常先只读刷新：若权威已 paid 则成功结算；明确 server rejection 才允许以后人工重试；其余返回 `unknown` 并提示先核对，当前调用中 send 永远只有一次。send 成功但刷新失败或未见 paid 同样是 unknown。卡片只在收款字段或真实 status loader identity 变化时重读；父级仅新建等价 `actions` wrapper 不得产生额外 GET。 |
+| 精确失败 oracle | `tests/ui/topic/topic-actions-controller.test.tsx` 的 `REG-WRITE-034` 固定 prepare 成功、send timeout、权威仍 unpaid，总 send 一次且提示“结果未知”；`tests/ui/topic/topic-components.test.tsx` 固定等价 actions wrapper 零重读、真实 loader identity 变化才重读。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须观察 non-idempotent transport 与 refresh 顺序；只测文案不足。 |
+| Replay 或真实验收路径 | Live 结果不明立即停止，不重复点击；记录对象、金额和时间并从 App 内原站核对。默认不触发真实 send。 |
+| 负向验证方式 | 自动重试 send、把 unknown 写成 failed/submitted、刷新失败后允许同调用重发，编号测试必须失败。 |
+| 明确不覆盖范围 | 不自动撤销、退款或对账，不以模拟成功冒充 `LIVE_PASS`。 |
+
+## `REG-WRITE-035` 结构化 Composer 把旧回复工具藏到不可发现的长工具栏末尾
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/02/04/05`、`NOTIFY-02` |
+| 用户症状 | 切换到结构化 Composer 后，首屏只看到撤销、标题和少量格式；NodeSeek 贴纸、LinuxDo Emoji、图片上传、投票及站点工具看似全部消失。 |
+| 触发条件 | 新 Runtime 只迁移了部分格式按钮，或把站点表情、图片和业务能力放到不可发现的聚合入口/工具栏末端；LinuxDo Emoji 目录为空时还直接隐藏入口。 |
+| 根因 seam | Editor Runtime 的移动端工具信息架构，不是写事务、上传 API 或目录加载本身。 |
+| 必须保持的行为 | 从旧链路继承的站点表情/贴纸与图片上传必须位于首屏；B、I、标题、链接、引用、代码、列表等格式全部服从同一个 Tiptap/CodeMirror 内核和同一套 UI primitives。工具栏不设“加号”或 More，全部能力在单行内原生横滑可达；表格细项仅随真实 table selection 出现。富文本和源码模式均可插入站点资产及新增节点，LinuxDo 目录暂空仍提供本地 fallback Emoji；Emoji/贴纸 marker 必须由新 codec 原样保存，不能被 Markdown 转义。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-035/053` 在 `130%` 字号初始化真实 Runtime，固定首四项为“表情、图片、粗体、斜体”的 Lucide 图标按钮、48px 触摸目标、8px 间距和无聚合入口，并分别证明 NodeSeek 贴纸、图片 host action、投票/Stardust 和 LinuxDo fallback Emoji、投票/正文工具/模板可达且 snapshot 保留原始 marker；RNTL 继续固定同一 WebView、模式和全屏切换。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`：jsdom Runtime 固定可见工具层级，RNTL 固定 Native 容器，同 revision APK 验证真实 WebView/键盘布局。 |
+| Replay 或真实验收路径 | 主 AVD 在 NodeSeek/LinuxDo 回复和 Markdown 私信分别打开 Composer；无需横滑即可进入贴纸/表情与图片，横滑可到表格、投票、Stardust/私有工具，源码模式入口不消失。只插入本地节点，不发送普通 Topic。 |
+| 负向验证方式 | 恢复加号/More、把表情或图片移回末端、空 Emoji 目录时隐藏入口，或源码模式隐藏整个工具栏；编号 Runtime 测试或设备可达性验收必须失败。 |
+| 明确不覆盖范围 | 不改变原站上传、投票、Stardust 或模板协议，不给 Yaohuo/V2EX 增加结构化能力，也不以缩小全部按钮或取消动态字号掩盖层级问题。 |
+
+## `REG-WRITE-036` 结构化 Composer 的表达式、Sheet 和键盘只保留了源码层
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/02/04/05`、`NOTIFY-02`、`NAV-03` |
+| 用户症状 | 点击 NodeSeek 贴纸或 LinuxDo Emoji 后富文本只出现灰色 `:token:`；非空文档仍叠着“输入回复内容”；半屏正文留出大片无意义空白，全屏越过导航安全区，Gboard 打开后编辑区与发送栏仍被键盘覆盖。 |
+| 触发条件 | 表达式原子节点只保存 `raw` 并固定渲染文本 `span`；占位伪元素只要求段落内存在 trailing break；Native 层分别用屏高 `44%` 和 `height - 128` 硬算 WebView；Bottom Sheet 显式选择 `adjustResize`，但当前 edge-to-edge Android 不会替它缩小窗口。 |
+| 根因 seam | `ForumExpressionNode` 的站点目录到视图属性映射、Editor 的显式空状态，以及 `StructuredReplyComposer → ComposerBottomSheet` 的唯一剩余空间/IME 布局合同。 |
+| 必须保持的行为 | 已知 NodeSeek marker 和当前 LinuxDo Emoji 目录在富文本模式显示真实图片，未知 marker 仍显示原 token，Markdown snapshot 始终只保留原 marker；占位文案只在 `editor.isEmpty` 时出现。半屏正文高度为 230–320dp 且整张 Sheet 不超过可用高度 75%；全屏由 flex 剩余空间分配且上下安全区内收，Header、工具栏和 Footer 不参与正文滚动。Gboard 使用 Bottom Sheet 已安装的 `interactive + adjustPan` 路径抬升或压缩内容，光标和发送栏保持可见；模式与展示切换继续复用同一 WebView。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 在真实 Runtime 点击两站表达式后断言精确图片 URL、`data-empty=false` 和原始 Markdown marker；`tests/ui/topic/structured-reply-composer.test.tsx` 固定全屏 `flex:1/minHeight:0` 及同一 WebView；`tests/ui/topic/topic-components.test.tsx` 固定结构化 Sheet 背景 `bottomInset=0`、内容安全区 `paddingBottom=24` 与 `interactive + adjustPan`。修复前分别得到无 `<img>`、无显式空状态、固定超高 WebView、导航栏底部露缝和 `adjustResize`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`：Runtime/Native 合同由自动测试固定，真实 WebView 图片加载、edge-to-edge 安全区和 Gboard 几何必须在同 revision 主 AVD 观察。 |
+| Replay 或真实验收路径 | 主 AVD 保留当前登录态与草稿，在 NodeSeek 回复 Composer 依次验证半屏、全屏、Gboard、源码→富文本和已插入贴纸；LinuxDo 打开 Emoji 目录并只插入本地节点。记录 Sheet/WebView/Footer/IME 边界；不发送回复、不创建投票、不付款。 |
+| 负向验证方式 | 去掉表达式图片属性刷新、把占位条件改回 trailing-break selector、恢复任一固定全屏高度、遗漏 Bottom Sheet `bottomInset` 或改回 `adjustResize`，编号自动测试或设备几何 oracle 必须失败。 |
+| 明确不覆盖范围 | 不改变表达式 marker、上传、站点写事务或登录态，不因图片请求失败把 marker 从草稿删除，也不把 Composer 改成独立全屏页面。 |
+
+## `REG-WRITE-037` Composer 关闭冻结或正文滚动误触关闭
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/02/04/05`、`NOTIFY-02`、`NAV-03` |
+| 用户症状 | Composer 全屏时点击收起只剩幽灵 Header；或在投票/Stardust 表单内纵向滚动时整张 Composer 被意外关闭。 |
+  | 触发条件 | 半屏和全屏同时作为 snap points，关闭期间又改 presentation；同时 Bottom Sheet 的下拉关闭手势与可点击 backdrop 仍在竞争 WebView 内部滚动。 |
+  | 根因 seam | `ComposerBottomSheet` 对可见高度、公开 `close()` 生命周期，以及“谁有权关闭 Composer”的唯一所有权合同。 |
+  | 必须保持的行为 | 半屏和全屏各只提供当前一个 snap point；打开索引为 0，显式收起调用库的 `close()`，关闭期间 presentation/snap point 不变。Composer 只允许 Header 收起、Android Back 或调用方关闭；`enablePanDownToClose=false`，backdrop 只负责遮罩且 `pressBehavior=none`。WebView 与 Builder 的纵横滚动永远不得关闭 Sheet；不增加手势状态或定时补偿。 |
+  | 精确失败 oracle | `tests/ui/topic/topic-components.test.tsx` 的 `REG-WRITE-037` 固定单 snap point、显式 `close()` 生命周期、`enablePanDownToClose=false` 与 backdrop `pressBehavior=none`；修复前后二者分别稳定为 `true` 和 `close`。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定生命周期顺序，主 AVD 必须从全屏点按收起后完整消失且可立即重新打开。 |
+| Replay 或真实验收路径 | 主 AVD 打开 NodeSeek 回复 Composer，切到全屏后点左上收起并重新打开；再打开 Stardust Builder，在表单正文纵向滚动到生成按钮。前者必须完整关闭，后者必须只滚表单且 Sheet 保持可见。全程不发送回复。 |
+  | 负向验证方式 | 同时提供半屏/全屏 snap points、恢复 pan-down/backdrop close、仅靠 `index=-1` 关闭，或在 `onClose` 改 presentation；编号测试或设备路径必须重新出现幽灵 Header、Footer 丢失或滚动误关。 |
+| 明确不覆盖范围 | 不改变草稿 snapshot、发送、上传、站点事务或 Bottom Sheet 之外的导航，不引入额外关闭状态机。 |
+
+## `REG-WRITE-038` Composer 底部露缝、表达式可连点且输入热路径重复整篇计算
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/02/04/05`、`NOTIFY-02`、`NAV-03` |
+| 用户症状 | 半屏和全屏底部都露出一条非 Sheet 背景；半屏打开后键盘不出现；全屏带键盘关闭后 Gboard 仍覆盖 Topic；选择贴纸或 Emoji 后选择面板不消失，同一项可被连续插入；长正文输入和移动光标时有明显卡顿。 |
+| 触发条件 | 结构化 Sheet 把系统 bottom safe area 作为外部 inset，背景因此主动停在导航栏上方；自动聚焦只发送 Web DOM focus，`react-native-webview` New Architecture 的 `requestFocus` 又只聚焦包装 View 且不请求 IME；修正原生聚焦后，固定 220ms 延时仍会在 Sheet 打开动画结束前唤起键盘，使 `interactive` 来不及抬升内容。关闭时 RN `Keyboard.dismiss()` 不认识 WebView 内的 active element，编辑器未先 blur 就会留下 IME。表达式共享插入函数只写节点、不结束 builder；每次 100ms 状态通知先构造完整 snapshot，Selection 更新又无条件推进 React state，Native 收到相同状态仍创建新对象并重复写 mode preference。 |
+| 根因 seam | `ComposerBottomSheet` 对背景、内容安全区和打开完成事件的所有权，`react-native-webview requestFocus → InputMethodManager.showSoftInput → Editor focus` 的唯一焦点链，Editor Runtime 的 `insertExpression/postState/useEditorState`，以及 Native Bridge 的相同状态去重。 |
+| 必须保持的行为 | 结构化 Sheet 背景铺到物理底边，Header/Footer 等交互内容仍在 bottom safe area 内；只有 Sheet 的 `onChange(0)` 确认打开位置后才请求聚焦，不用固定延时猜动画完成。原生命令聚焦实际 WebView 并用 `SHOW_IMPLICIT` 请求 IME，再聚焦 Tiptap/CodeMirror；真实 Gboard 自动出现且编辑区、Footer 位于键盘上方。Composer 从可见变为关闭时先向同一 Runtime 发送 `blur`，再结算 snapshot；全屏直接关闭必须同时移除 Sheet 和 IME。贴纸/Emoji 每次点按只插入一次并立即关闭目录；瞬时状态只读取 revision、empty 与 undo/redo，600ms autosave 才序列化 Markdown。工具 active 状态只在选择语义变化时重渲染，相同 Bridge 状态不创建新 state 或重复写存储。不改变源码、草稿和发送 snapshot 权威性。 |
+| 精确失败 oracle | `tests/ui/topic/topic-components.test.tsx` 固定结构化 Sheet 的 `bottomInset=0`、内容 `paddingBottom=24`，并证明只有 `onChange(0)` 才递增 editor focus signal；`src/ui/composer/editorRuntime.test.ts` 固定两站表达式点按后 dialog 立即消失、host `blur` 确实移除 active editor，并在一次内容更新后证明 100ms `STATE_CHANGED` 不调用 `getMarkdown`、600ms autosave 只调用一次；`tests/ui/topic/structured-reply-composer.test.tsx` 固定 READY 后先调用 WebView `requestFocus` 并发送 Editor focus、关闭时发送 `blur`，且重复同 mode 状态只写一次偏好。Release APK 必须编译并实际执行 `react-native-webview` 原生命令，因为 jsdom/RNTL 不能证明 Android IME 已显示或隐藏。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`：jsdom/RNTL 固定热路径与布局合同；匹配 APK 核对真实 WebView 绘制、Gboard 和手感。 |
+| Replay 或真实验收路径 | 主 AVD 保留登录态覆盖安装，在 NodeSeek/LinuxDo 各打开回复 Composer；半屏/全屏底色必须连续铺底，贴纸/Emoji 点一次即回正文且只出现一个节点。输入中文、移动光标、开关键盘并从全屏直接关闭，确认 Sheet 与 Gboard 都消失、Topic 立即可操作且无冻结；全程不发送、不上传。 |
+| 负向验证方式 | 恢复结构化 `bottomInset`、用固定延时触发聚焦、只聚焦 WebView 包装 View、关闭时不 blur active editor、只在两个按钮各加遮罩、在 `STATE_CHANGED` 调用 `makeSnapshot`、Selection 每次无条件 setState 或相同 mode 每次写 AsyncStorage 时，编号测试或主 AVD 的 Gboard/几何 oracle 必须失败。 |
+| 明确不覆盖范围 | 不新增动画、缓存层、状态机或性能配置，不改变动态 Yaohuo Sheet、站点协议、上传、发送、投票和付款事务。 |
+
+## `REG-WRITE-039` 结构化 Composer 工具栏有真实溢出但横向手势被 Sheet 截断
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/02/04/05`、`NOTIFY-02` |
+| 用户症状 | 常用工具栏最右侧只露出半个图标，但左右拖动没有任何移动，链接、引用、代码和列表不可达。 |
+| 触发条件 | Android WebView 位于 Bottom Sheet 内容拖拽手势内，且保持 `react-native-webview` 默认的 `nestedScrollEnabled=false`。 |
+| 根因 seam | `StructuredReplyComposer` 唯一 WebView 的 Android 嵌套滚动合同；Editor Runtime 已形成真实横向 overflow，不属于 CSS 宽度或工具项布局问题。 |
+| 必须保持的行为 | 同一个 WebView 必须启用 Android 原生 nested scroll；首屏工具顺序不变，用户在工具栏内横向拖动后可看到并点击标题、链接、引用、代码、列表、表格和站点工具。不得用逐帧 Bridge、JS 手势状态、聚合入口或自动全屏代替原生滚动。 |
+| 精确失败 oracle | `tests/ui/topic/structured-reply-composer.test.tsx` 的 `REG-WRITE-039` 固定实际渲染 WebView 的 `nestedScrollEnabled=true`；`src/ui/composer/editorRuntime.test.ts` 同时固定工具栏无 overflow 聚合、触摸 `pointerdown` 不被阻止和全部工具 DOM 可达。匹配 APK 在主 AVD 上必须能从首屏横滑至末端站点工具。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定 Native 合同，真实 Android WebView/Bottom Sheet 手势竞争必须由同 revision APK 验证。 |
+| Replay 或真实验收路径 | 主 AVD 打开 LinuxDo、NodeSeek Topic 回复或 Markdown 私信 Composer，在半屏和全屏各横向拖动一次常用工具栏；确认末端工具可达、正文与 Sheet 不随横向手势移动。无需输入或发送。 |
+| 负向验证方式 | 删除 `nestedScrollEnabled`、改回 false，或用 Bottom Sheet/Bridge 状态切换模拟滚动；编号测试必须失败，设备手势会在一至两个 move 后被父层截断。 |
+| 明确不覆盖范围 | 不增加可见桌面滚动条、不重排工具、不改变 Sheet 关闭手势、正文 codec、上传或站点写事务。 |
+
+## `REG-WRITE-040` 空表格仍显示整篇占位符
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | 在空回复中插入表格后，“输入回复内容…”仍压在第一个表头单元格上并横跨单元格边界。 |
+| 触发条件 | Tiptap 的 `editor.isEmpty` 按文本内容判空；只有空单元格的 TableKit 文档仍被视为 empty，即使文档已包含真实结构节点。 |
+| 根因 seam | Editor Runtime 对“默认空文档”占位符的唯一判定；它必须判断 ProseMirror 文档形状，不能把“没有文本”当成“没有结构”。 |
+| 必须保持的行为 | 只有单个空 textblock 的默认文档显示全局占位符；表格、投票、贴纸、图片和其他结构节点一经插入立即隐藏占位符。删除全部内容回到默认空文档后重新显示，不改变 Markdown、选区或撤销栈。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-040` 实际渲染 Runtime，从空文档点击主工具栏 Table 图标，要求 `.composer-document[data-empty=false]`；修复前稳定得到 `true`，与主 AVD 的首个表头覆盖一致。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：jsdom 固定真实用户命令后的 DOM 状态；匹配 APK 核对 WebView 的实际伪元素绘制。 |
+| Replay 或真实验收路径 | 主 AVD 在 NodeSeek 或 linux.do 的空回复 Composer 中插入表格；占位符必须立即消失，首个表头可见且可输入。切换源码再返回富文本后仍不得复现。无需发送。 |
+| 负向验证方式 | 恢复 `editor.isEmpty`、按纯文本长度判空，或只给 table CSS 加遮挡规则；编号测试必须失败，设备会再次把占位符绘入空结构节点。 |
+| 明确不覆盖范围 | 不改变表格尺寸、工具栏滚动、GFM codec、Sheet 几何或站点写事务；这些按独立问题分别验收。 |
+
+## `REG-WRITE-041` 表头可被切掉并在 Markdown 中凭空增加一行
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | 点击表格工具栏的“表头”后，首行只是不再加粗，但源码会在正文最前凭空增加一行空表头；删除首行也会产生同类数据变化。 |
+| 触发条件 | TableKit 允许把首行从 `tableHeader` 切换成普通 `tableCell`，或直接删除当前表头；严格 GFM 必须存在首行表头，Markdown renderer 因此只能合成一行空表头。 |
+| 根因 seam | ProseMirror 表格文档的 GFM 不变量：每个 table 的第一行必须全部是 `tableHeader`，不能等到序列化时补救。 |
+| 必须保持的行为 | 所有表格在插入、粘贴、删行和其他文档事务后都保持首行为真实表头；不提供会进入“无表头”状态的切换按钮。删除当前首行时，下一行原位成为表头，正文行数和内容不凭空增加；源码首个非空行就是该真实首行。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-041` 用真实 Tiptap Editor 删除有内容的首行，要求剩余 `Body A` 直接成为 Markdown 第一行；修复前第一行稳定为全空单元格。Runtime 渲染测试同时要求表格上下文中不存在破坏性“表头”切换。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：真实 Editor 命令固定文档不变量，匹配 APK 核对工具和源码切换。 |
+| Replay 或真实验收路径 | 主 AVD 在 NodeSeek 或 linux.do 表格首行执行删行，再切换源码；下一行必须直接成为 GFM 表头，不出现空行。表格工具栏不再出现可取消首行表头的按钮。无需发送。 |
+| 负向验证方式 | 恢复 `toggleHeaderRow()`、只在 serializer 去除空行，或只拦截工具栏点击而不覆盖删行/粘贴；编号测试必须失败。 |
+| 明确不覆盖范围 | 不允许 GFM 无法表达的无表头表格；不改变行列增删、对齐、Tab、粘贴拒绝或站点写事务。 |
+
+## `REG-WRITE-042` 插入表格后第二排工具栏压住正文
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | 插入表格后编辑器突然增加一整排中文操作按钮，正文视口被向下挤压，新表格末行像被 Footer 截断；窄屏右侧操作只露出一半。 |
+| 触发条件 | 表格 selection 激活后把 context toolbar 作为新的 flex 子项挂到主工具栏下方，工具栏高度从一行变成两行。 |
+| 根因 seam | Editor Runtime 的主工具栏布局与 Tiptap table selection 上下文；表格动作不能作为文档流中的第二排，也不能替换主工具栏。 |
+| 必须保持的行为 | 富文本模式的主工具栏始终保持同一个 DOM 实例和同一排高度。光标进入表格时，行列、对齐和删除通过锚定整张表格的浮动 BubbleMenu 出现，不参与正文 flex 布局；离开表格自动消失。正文高度、键盘和 Footer 位置不因 table selection 跳变。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-042/053` 实际插入表格，要求 `.toolbar-stack` 始终只有一个主 `role=toolbar` 且 DOM identity 不变，同时在 document overlay 层出现唯一 `aria-label=表格操作` 的 BubbleMenu；再次点 Table 图标不得嵌套或重复插表。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：jsdom 固定可见 DOM 结构，匹配 APK 固定真实 WebView 尺寸、横向手势和表格可见范围。 |
+| Replay 或真实验收路径 | 主 AVD 在半屏且 Gboard 打开的 NodeSeek/linux.do Composer 中，在已有一行正文后插入 3×3 表格；主工具栏高度和内容保持不变，表格完整进入正文可视区，BubbleMenu 优先位于整表上方、空间不足时翻到下方。逐项操作后正文与菜单都不跳动。无需发送。 |
+| 负向验证方式 | 恢复文档流第二排、替换主工具栏、用 builder flag 控制菜单，或插入后手动修正 scrollTop；编号测试必须失败，设备会再次出现布局跳变、遮挡或隐藏状态。 |
+| 明确不覆盖范围 | 不改变表格数据模型、GFM codec、Sheet 高度、键盘策略或站点写事务。 |
+
+## `REG-WRITE-043` 表格对齐只改当前单元格且发送时丢失
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | 在表格第三列点“居中”后，富文本只可能改变当前单元格；切到源码仍显示 `---`，发送后的 Markdown 不保留对齐。 |
+| 触发条件 | 光标位于任意表格单元格，点击左对齐、居中或右对齐。 |
+| 根因 seam | GFM 只表达整列对齐，但 Runtime 直接调用 Tiptap `setCellAttribute`，该命令只更新当前单元格；编辑态文档与发布格式的语义边界不一致。 |
+| 必须保持的行为 | 三个对齐动作按当前单元格或 CellSelection 所在列更新该列全部表头和正文单元格；富文本立即一致显示，源码分别生成 `:---`、`:---:`、`---:`，反复切换不丢失。不得用 serializer 猜测或只修当前一格。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-043` 在第三列正文单元格执行真实 Runtime 命令，要求三行第三格 `align=center` 且 Markdown 分隔符为 `:---:`；修复前稳定得到 `[null, null, 'center']`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：真实 Tiptap TableMap 固定整列文档属性，匹配 APK 验证三种对齐与源码往返。 |
+| Replay 或真实验收路径 | 主 AVD 在 NodeSeek/linux.do 表格任意正文格依次设为左、中、右对齐，观察整列富文本并切源码核对冒号位置；回到富文本后整列仍一致。无需发送。 |
+| 负向验证方式 | 恢复直接 `setCellAttribute`、只在 Markdown serializer 读取任意一格，或切源码时临时补冒号；编号测试必须失败。 |
+| 明确不覆盖范围 | 不增加单元格级对齐、列宽、颜色、合并/拆分或新的表格格式；不改变站点写事务。 |
+
+## `REG-WRITE-044` 工具栏触摸焦点修复反而截断横向滚动
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | 为避免点工具后丢失选区而统一拦截 `pointerdown` 后，工具栏最右侧只露半个按钮且手指无法横向滚动；触摸手势在按钮命中阶段就被取消。 |
+| 触发条件 | Android WebView 中手指从任一工具按钮上开始横向拖动，统一按钮组件不区分 touch 与 mouse 就调用 `preventDefault()`。 |
+| 根因 seam | 共享 Tiptap `EditorButton` 与 Popover trigger 对指针类型的默认行为所有权；触摸必须交给 WebView 的原生滚动，鼠标点击才需要阻止浏览器抢走编辑选区。 |
+| 必须保持的行为 | `pointerType=touch` 不阻止默认行为，让主工具栏和表格 BubbleMenu 继续原生横滑；`pointerType=mouse` 阻止默认抢焦。Dropdown/Popover 不得采用会在 touch pointerdown 开启时强制 `preventDefault()` 的 trigger。实际 `click` 命令仍通过 Editor chain 聚焦并使用当前文档选区，Gboard 保持可用；不得保存/恢复 selection 或增加触摸状态机。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-044` 向真实粗体按钮分别派发 touch 与 mouse `pointerdown`：touch 的 `dispatchEvent=true/defaultPrevented=false`，mouse 为 `false/true`；统一阻止两者时前一组稳定失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：真实 Runtime 固定统一事件合同，主 AVD 用 Gboard 验证按钮、选区和命令结果。 |
+| Replay 或真实验收路径 | 主 AVD 半屏打开 Gboard，从按钮表面横向拖动常用/表格工具栏，末端功能必须可达；再点粗体和列对齐，命令即时生效且键盘、选区可继续使用。随后切源码核对 Markdown。无需发送。 |
+| 负向验证方式 | 对 touch 恢复 `preventDefault()`、给单个表格按钮接管手势，或在 RN 层检测键盘后重新 focus；编号测试或设备路径必须重新出现滚不动或选区丢失。 |
+| 明确不覆盖范围 | 不改变 Android Back 的显式收键盘行为、Builder 表单自身的输入焦点、Sheet 展示状态或站点写事务。 |
+
+## `REG-WRITE-045` 表格操作以遮罩或第二层菜单盖住正文
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | 点表格后出现不透明弹窗或第二排按钮，用户完全看不到正在编辑的单元格；行列动作含糊，蓝色对齐选中项还可能被横向边界裁掉。 |
+| 触发条件 | 把表格上下文能力实现为 dialog/backdrop，或把每个动作作为独立 snap item 塞入通用工具栏。 |
+| 根因 seam | Editor Runtime 的 Tiptap table selection 与 BubbleMenu；菜单可见性、命令可用性和锚点都必须直接来自当前 Editor 状态，不能由共享 builder 或返回按钮维护另一套生命周期。 |
+| 必须保持的行为 | 选中表格时，主工具栏不变，整张 `<table>` 上方出现单行 `表格操作` BubbleMenu；空间不足时由 Floating UI 翻到下方并限制在视口内。菜单不存在 dialog/backdrop/第二排或返回入口，只展示“行、列、对齐、删除表格”四个清晰组；行列二级菜单用明确文字，对齐显示当前整列语义。执行动作后通过 Editor chain 返回原单元格，离开 table selection 或新 `INIT` 自动消失。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-045/053` 插入真实表格后要求主 toolbar identity 不变、表格持续在 DOM、上下文 BubbleMenu 只含四组入口且没有合并/拆分/返回；依次执行上下行、左右列、删除行列和三种对齐，命令可用性来自 `editor.can()`，动作后焦点回到同一个 `.ProseMirror`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：jsdom 固定真实 Runtime DOM/命令，主 AVD 固定 Android 横向滚动、裁切和表格可见性。 |
+| Replay 或真实验收路径 | 主 AVD NodeSeek/linux.do 半屏插入表格，点击“行、列、对齐”三个下拉并逐项观察；表格必须始终可见，左/中/右选中项四边完整，行列动作执行后光标、Gboard、主 toolbar 和 BubbleMenu 不跳走。无需发送。 |
+| 负向验证方式 | 恢复表格 dialog/backdrop、第二排或替换主 toolbar、共享 builder flag、选区备份或定时 focus；编号测试或截图验收必须失败。 |
+| 明确不覆盖范围 | 不改变 GFM 数据模型、合并单元格限制、站点发送协议或两站专属业务工具。 |
+
+## `REG-WRITE-046` 源码模式出现黄色焦点框且编辑区缩成小块
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | CodeMirror 周围出现浏览器默认黄色/高亮焦点线，源码只占正文区域的一小块，下面留下大片无法输入的空白。 |
+| 触发条件 | CodeMirror 动态 theme 样式未满足本地 CSP，或 `.cm-editor/.cm-scroller` 没有进入 Composer 的 flex 剩余空间；contenteditable 默认 outline 继续绘制。 |
+| 根因 seam | Editor Runtime 创建 CodeMirror theme 时的 CSP nonce，以及 source pane 唯一 flex 高度和焦点样式合同。 |
+| 必须保持的行为 | CodeMirror 动态 style 使用 `wz-composer-runtime` nonce；source pane、`.cm-editor` 和 scroller 填满工具栏与 Footer 之间的全部剩余空间，`.cm-content` 不显示浏览器默认 outline。源码仍可滚动、聚焦和保留选区，不以固定高度补偿。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-046` 切换真实 Runtime 到 source，要求 `.cm-editor` 的 `flexGrow=1`、`.cm-content` 获得焦点且 `outline=none`，包含 `.cm-content` 的动态 style 必须携带正确 nonce。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：jsdom 固定样式与焦点合同，同 revision 主 AVD固定 WebView/CSP 的实际绘制。 |
+| Replay 或真实验收路径 | 主 AVD NodeSeek Composer 切到源码；编辑区从工具栏下方铺到 Footer，四周无黄色线，长 marker 可换行和滚动。再切回富文本确认内容不丢。无需发送。 |
+| 负向验证方式 | 去掉 nonce、flex grow/min-height 或恢复 contenteditable 默认 outline；编号测试或截图必须重新出现小输入区/黄色线。 |
+| 明确不覆盖范围 | 不改变 Markdown 内容、字体缩放、语法高亮主题或站点 codec。 |
+
+## `REG-WRITE-047` Footer 字符数停留在初始草稿
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/02/05`、`NOTIFY-02` |
+| 用户症状 | 编辑已有回复或恢复草稿后正文已经变化，Footer 仍显示 `0 字符` 或旧长度；收到 autosave snapshot 后也不刷新。 |
+| 触发条件 | Native Footer 只投影首次 content，或只处理轻量 `STATE_CHANGED` 而没有用外部 content/latest confirmed snapshot 更新长度。 |
+| 根因 seam | `StructuredReplyComposer` 的 `editorState.markdownLength`；外部草稿和带 revision 的确认 snapshot 是仅有两个可更新来源，逐键状态消息不携带正文长度。 |
+| 必须保持的行为 | `content` 变化立即投影其长度；新鲜 `SNAPSHOT` 用确认 Markdown 长度更新。轻量 `STATE_CHANGED` 只更新 empty/undo/redo，不把长度重置或触发逐键 Markdown 序列化；过期 snapshot 继续拒绝。 |
+| 精确失败 oracle | `tests/ui/topic/structured-reply-composer.test.tsx` 的 `REG-WRITE-047` 在 READY 后把外部 content 改为 14 字符，再发送 revision 1 的 STATE_CHANGED 与 SNAPSHOT，Footer 全程保持正确 `14 字符`；修复前稳定停在 `0 字符`。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定 Native Bridge 投影，主 AVD观察真实草稿/编辑回复 Footer。 |
+| Replay 或真实验收路径 | 主 AVD打开 NodeSeek 已有回复编辑和普通回复草稿，核对初始长度；输入、等待 autosave、切换源码后长度与最新确认 Markdown 一致。无需保存或发送。 |
+| 负向验证方式 | 删除 content effect、忽略 SNAPSHOT 长度，或在每次 STATE_CHANGED 请求完整 Markdown；编号测试或性能 oracle必须失败。 |
+| 明确不覆盖范围 | 字符数按 JavaScript string length 展示，不新增字节数、站点剩余配额或逐键 Bridge。 |
+
+## `REG-WRITE-048` Builder 校验错误在用户修正后仍不消失
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05/06` |
+| 用户症状 | NodeSeek 投票点击插入后提示“请输入投票标题”；用户随后填写标题，旧错误仍挂在表单上，视觉上像输入无效或按钮卡死。 |
+| 触发条件 | Builder 的提交失败只设置持久错误，字段 `input/change` 不清除该次校验结果。 |
+| 根因 seam | Editor Runtime Builder 内唯一 `builderError`；它只描述上一次提交的输入，不是独立状态机或服务端错误。 |
+| 必须保持的行为 | 任一 Builder 字段发生用户输入即清除旧本地校验错误；再次提交时重新以当前字段做完整校验。弹层、正文、草稿和已插入节点保持不变，不需要关闭重开。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-048` 打开真实 NodeSeek 投票 Builder，空标题提交得到精确错误，再向标题派发 `input`；错误节点必须立即消失，修复前稳定保留。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：jsdom 固定真实 React Builder 交互，主 AVD固定 Gboard 输入后的即时视觉反馈。 |
+| Replay 或真实验收路径 | 主 AVD NodeSeek 投票 Builder 空标题提交一次，再输入标题；错误应立即消失，选项和键盘不重置，随后可本地插入。关闭 Composer，不发送。 |
+| 负向验证方式 | 仅在再次提交成功、关闭弹层或切换模式时清错；编号测试和设备交互必须重新失败。 |
+| 明确不覆盖范围 | 不改变投票字段、远端创建时机、Stardust 付款错误或站点网络事务。 |
+
+## `REG-WRITE-049` NodeSeek 私有 marker 往返后退化或消失
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05/06`、`NOTIFY-02` |
+| 用户症状 | 本地生成的 Stardust 收款卡片切到 Markdown 源码后，再切回富文本只剩裸 URL；源码以 GFM 表格结尾时继续插入 poll 和 Stardust，两者会粘到表格末行并在模式往返后消失。 |
+| 触发条件 | Android WebView 的 `URL` 实现不能解析 `nsapp:` 自定义 scheme；source-mode 私有 block 又复用了行内选区插入，没有在终止表格与后续 marker 之间建立块边界。 |
+| 根因 seam | Stardust 协议解析只处理已验证前缀后的 query；source-mode poll/Stardust 统一走现有 `insertSourceBlock`。编辑器、阅读 renderer 与发送校验共享 marker 语义，不依赖浏览器自定义 scheme，也不各自补换行。 |
+| 必须保持的行为 | 严格确认 marker 前缀和字符边界后用 `URLSearchParams` 解析 query；必需字段继续校验，未修改卡片保留完整原 marker 与未知参数。终止表格后插入 poll/Stardust 必须形成独立 block，源码与富文本反复切换仍恢复两个原子卡片。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-049` 一条固定 Android `URL` 抛错时相邻 poll/Stardust 仍解析为原子节点；另一条从 source-mode 终止表格真实插入两种 marker，固定表格后至少两个换行且模式往返后两个 atom 均存在。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：真实 Tiptap Markdown codec 固定节点往返，同 revision 主 AVD 固定 Android WebView 自定义 scheme 行为。 |
+| Replay 或真实验收路径 | 主 AVD 在 NodeSeek 回复源码末尾插入 GFM 表格，再生成 poll 和 Stardust；源码确认 marker 与表格分块，切回富文本必须仍显示两个结构化卡片。本次获授权测试回复还需编辑并独立重载核对；不得支付或重复创建 poll。 |
+| 负向验证方式 | 恢复 `new URL(rawMarker)`、source-mode 改回行内插入、只在 Builder 绕过解析，或在模式切换后按字符串补卡片；编号测试或设备往返必须重新失败。 |
+| 明确不覆盖范围 | 不改变 Stardust marker 格式、receiver/金额校验、状态读取或真实付款事务，不为其他自定义 scheme 建通用解析框架。 |
+
+## `REG-WRITE-050` 表格操作栏滚到末端仍裁掉“删除表格”
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05` |
+| 用户症状 | NodeSeek 表格二级操作栏可以横向滑动，但滚到最右后“删除表格”仍只露出一部分，无法得到完整可读、可点的末端动作。 |
+| 触发条件 | 浮动操作栏总宽度超过窄屏可用视口，却没有限制宽度、横向 overflow 或 Floating UI 的边界 shift，最后的“删除表格”因此落在屏幕外。 |
+| 根因 seam | 表格 BubbleMenu 的视口边界和横向滚动合同；菜单必须以整表为锚点，同时把自身宽度限制在当前 WebView 可用区域。 |
+| 必须保持的行为 | 行、列、对齐和表格级删除是四个清晰入口；BubbleMenu 最大宽度为视口减安全边距，内部原生横滑，末端删除的图标、文字和 48dp 点击区域能够完整滚入视口。正文表格、选区、键盘和主工具栏保持不变。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-050/053` 插入真实表格后要求 BubbleMenu 同时存在“行、列、对齐、删除整个表格”四个入口，删除位于末端且没有旧 snap/back/compat DOM；CSS 固定 `max-width: calc(100vw - 16px)`、横向 overflow 与隐藏滚动条。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：jsdom 固定真实 Runtime 动作分组，主 AVD 固定触摸滚到末端后的完整视觉边界。 |
+| Replay 或真实验收路径 | 主 AVD NodeSeek 回复插入表格，横滑二级操作栏到对齐组，再继续滑到末端；“删除表格”的图标、文字和点击区域必须完整出现，表格正文与 Gboard 保持可见。关闭 Composer，不发送。 |
+| 负向验证方式 | 去掉 BubbleMenu max-width/overflow/shift、恢复 mandatory snap 或在删除按钮后留不可滚入的 padding；编号测试和设备末端截图必须重新失败。 |
+| 明确不覆盖范围 | 不改变表格命令、删除确认语义、GFM codec 或 LinuxDo 专属正文能力。 |
+
+## `REG-WRITE-051` 选择贴纸后焦点和 Gboard 没有回到正文
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-02`、`WRITE-05` |
+| 用户症状 | NodeSeek 贴纸插入成功并关闭选择器后，Gboard 同时收起；用户必须再次点击正文才能继续输入，看起来像贴纸后不能写文字。 |
+| 触发条件 | Builder 打开时主动 blur 编辑器，但 `insertExpression` 直接执行无 focus 的 `insertContent`，关闭 Builder 后没有新的 IME 输入目标。源码分支还显式跳过 focus。 |
+| 根因 seam | Editor Runtime 的表达式插入命令及共享 `insertAtSelection`：成功写入必须由 Tiptap/CodeMirror 自己恢复原选区和 focus，取消或显式关闭 Builder 仍保持不抢焦点。 |
+| 必须保持的行为 | 点击任一 NodeSeek 贴纸后选择器关闭、原选区后插入一次原子节点，富文本编辑器立即成为 active element，Gboard 可直接继续输入；源码模式插入 token 后同样回到 CodeMirror。无需再次点正文，不增加 Native 键盘监听、定时器或状态机。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-051` 先通过真实 Bridge blur 编辑器，再打开 NodeSeek 贴纸并点击 `ac01`；下一帧 `document.activeElement` 必须重新等于 `.ProseMirror`。修复前稳定落到 `body`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：jsdom 固定真实 React/Tiptap 插入和焦点归还，主 AVD 固定 Android WebView 与 Gboard 的实际 IME 行为。 |
+| Replay 或真实验收路径 | 主 AVD NodeSeek Composer 打开贴纸选择器并点击任一贴纸；不再触碰正文，直接用 Gboard 输入英文和中文，再按 Enter 输入下一段。文字必须紧随原选区，键盘不消失。关闭编辑器，不保存回复。 |
+| 负向验证方式 | 恢复 `commands.insertContent`、给源码插入传递不聚焦参数，或在 RN 层监听键盘后补 focus；编号测试或设备路径必须重新出现 active element 丢失或需要二次点按。 |
+| 明确不覆盖范围 | 不改变贴纸目录、图片加载、Markdown token、上传、发送事务或用户显式关闭 Builder 时的键盘行为。 |
+
+## `REG-WRITE-052` 贴纸后的光标显示在下一行但文字写到右侧
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05` |
+| 用户症状 | 终端贴纸后的蓝色 caret 和选择手柄显示在贴纸左下方的新行；实际按键后文字却出现在贴纸右侧，视觉反馈与真实插入位置不一致。 |
+| 触发条件 | 本地 Editor CSP 只允许带 nonce 的动态样式，但 Tiptap 基础样式以空 nonce 注入而被 WebView 拒绝；通用 `.composer-document img` 随后把 Chrome 为终端行内原子生成的 `img.ProseMirror-separator` 算成 `display:block` 和上下 `8px` margin。 |
+| 根因 seam | Tiptap `useEditor` 的 `injectNonce` 必须与本地 HTML 的 `style-src nonce-wz-composer-runtime` 保持同一值，使 ProseMirror 自有 separator、gap cursor 和 selection 基础样式成为实际渲染合同。 |
+| 必须保持的行为 | Tiptap 动态基础样式带正确 nonce；`ProseMirror-separator` 保持零尺寸、inline、零 margin，caret 与贴纸后的真实文本位置一致。普通正文图片、贴纸尺寸、行内 Markdown 语义和 `:acxx:` 序列化不变，不插入隐藏字符或额外段落。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-052` 渲染真实 Runtime 后要求 `style[data-tiptap-style]` 携带 `wz-composer-runtime` nonce，并验证 separator 的计算样式为 inline、上下 margin 为零；修复前 nonce 稳定为空。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：Unit 固定 Tiptap 动态样式与 separator 合同；匹配 APK 的主 AVD及 WebView computed style 固定最终 caret 几何。 |
+| Replay 或真实验收路径 | 主 AVD NodeSeek 编辑含终端贴纸的回复，点到贴纸之后；caret 必须显示在贴纸右侧，输入字符仍出现在同一位置，Enter 后才进入下一段。无需保存或发送。 |
+| 负向验证方式 | 删除 `injectNonce`、改为不同 nonce，或让通用图片规则重新覆盖 separator；编号测试与设备 caret 截图必须重新失败。 |
+| 明确不覆盖范围 | 不改变 NodeSeek 阅读端贴纸、贴纸最大尺寸、Tiptap 文档 schema、Markdown codec、Sheet 尺寸或系统选择手柄样式。 |
+
+## `REG-WRITE-053` 两站通用富文本 UI 分叉且表格交互由隐藏 Builder 驱动
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/02/04/05`、`NOTIFY-02` |
+| 用户症状 | 标题点击后出现整页遮罩、链接占满正文、表格操作替换主工具栏并要求“返回”；LinuxDo 与 NodeSeek 对同一格式呈现两套不同交互，修一站会留下另一站旧实现。源码光标处插入列表或表格还可能与前后正文粘成无效 Markdown。 |
+| 触发条件 | 通用按钮、菜单和表格交互由 Runtime 自制，且把 `heading/link/table` 混入站点 Builder 状态；为了暂时迁移又按 site 保留旧 UI 分支。块级源码命令直接 `replaceSelection`，没有统一建立 Markdown 块边界。 |
+| 根因 seam | L/NS 唯一 `StructuredReplyComposer` 的通用 UI ownership：Tiptap 文档/selection 是格式状态唯一来源，站点 Adapter 只拥有业务能力；CodeMirror 选择替换必须区分行内与块级 Markdown。 |
+| 必须保持的行为 | 两站共用固定来源、保留 MIT 许可的 Tiptap Button/Toolbar/Popover primitives；标题和列表使用 Dropdown，链接使用就地 Popover，均无 fullscreen dialog/backdrop。主工具栏单实例横滑且不因 table selection 重挂载；表格 BubbleMenu 直接由 `editor.isActive('table')`、`editor.can()` 和整张 `<table>` 的 DOM rect 派生，只含行、列、整列对齐和删除，不保存 selection、不进入 Builder。Radix 组件若在 touch pointerdown 强制阻止默认手势则不得用于主工具触发器。源码块级命令统一补合法空行，GFM 表头、矩形结构和对齐不变量保持。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-053` 在两站真实 Runtime 固定相同标题/列表/链接/表格控件；菜单前后 `.ProseMirror` 与主 toolbar identity、selection、undo/redo history 不丢，touch pointerdown 未阻止；表格上下左右行列命令、删除、对齐、无合并入口、BubbleMenu 生命周期和严格 GFM snapshot 全部通过。源码在已有 inline 内容中插入列表/表格后 snapshot 必须出现合法双换行并可重新 parse。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`：jsdom 固定真实 Tiptap/CodeMirror/Popover 命令与 DOM identity，RNTL 固定同一 WebView，主 AVD 固定 React 19 Android WebView 下的 Gboard、触摸横滑、菜单定位和深浅主题绘制。 |
+| Replay 或真实验收路径 | 主 AVD 在 NodeSeek/linux.do 的 Topic 回复、楼层回复、编辑回复和已有 Markdown 私信中打开 Composer；依次使用标题、列表、链接和表格，半屏/全屏与 Gboard 下菜单均不收键盘或盖住内容。NodeSeek 获授权测试主题可单次发送严格 GFM 表格并刷新详情；LinuxDo 本轮不做计划外 Live 写入。 |
+| 负向验证方式 | 恢复自制 `ToolbarButton`、`heading/link/table` Builder、按 site 的通用 UI 分支、选区备份/定时 focus、Radix Dropdown touch trigger 或源码裸块拼接；编号 Runtime/RNTL/设备任一层必须失败。 |
+| 明确不覆盖范围 | 不增加 GFM 无法表达的合并/拆分、列宽或颜色，不更换 Tiptap/codec/Bridge，不改变上传、投票、Stardust、模板和发送事务。 |
+
+## `REG-WRITE-054` LinuxDo 大 Emoji 目录使编辑器 INIT 整体失效
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | NodeSeek Composer 正常，切到已加载完整 Emoji 目录的 linux.do 后只显示“正在初始化编辑器”，随后变成启动超时；Emoji、图片和全部正文工具都无法使用。 |
+| 触发条件 | RN 把超过 Bridge `discourseEmoji` 上限的整个目录原样放入 `INIT`；WebView 的 Zod 边界拒绝整条消息，因此 Runtime 永远没有 config，也不会回 `READY`。 |
+| 根因 seam | `StructuredReplyComposer` 发出 `INIT` 前的目录结算与 `structuredComposerBridge` 的同一数量上限；站点目录不能把编辑器生命周期变成部分有效消息。 |
+| 必须保持的行为 | RN 在进入 Bridge 前按同一个导出常量限制 Emoji 项数，合法目录生成的 `INIT` 必须通过真实 schema；不放宽 Markdown、URL、消息结构或其他 Bridge 安全边界，不增加重试状态机。 |
+| 精确失败 oracle | `tests/ui/topic/structured-reply-composer.test.tsx` 的 `REG-WRITE-054` 提供 2001 项 linux.do 目录，取得实际 WebView `INIT` 后要求 schema 通过且目录恰为合同上限；修复前稳定得到 schema 失败。 |
+| 最低可靠自动测试层 | `UI_PASS + APK_SANITY`：RNTL 固定 RN→WebView 的真实 payload；主 AVD 从 NodeSeek 详情切到 linux.do 详情后必须收到 `READY` 并可打开 Emoji。 |
+| Replay 或真实验收路径 | 主 AVD 保留登录态，先开关 NodeSeek Composer，再从收藏历史进入 linux.do 主题并打开 Composer；初始化提示应消失，Emoji 网格与正文工具可操作，关闭后草稿仍为 0 字且不发送。 |
+| 负向验证方式 | 删除 RN 侧上限结算或让上限与 schema 再次分叉，编号 RNTL 必须重新得到无效 `INIT`。 |
+| 明确不覆盖范围 | 不修改 linux.do Emoji 远端读取、缓存、图片 URL、搜索语义、上传或回复事务。 |
+
+## `REG-WRITE-055` 业务表单泄漏浏览器样式且表格菜单覆盖主工具栏
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05/06`、`NOTIFY-02` |
+| 用户症状 | 链接输入框同时出现三层蓝色边线，投票和 Stardust checkbox 是突兀的浏览器方框；表格靠近正文顶部时，BubbleMenu 与 sticky 主工具栏叠在同一位置，对齐二级菜单继续堆叠，遮住操作和表格。 |
+| 触发条件 | 全局 `input:focus-visible` outline 与 `.tiptap-input` border/box-shadow 同时生效；业务 Builder 直接使用未归一的 checkbox；Floating UI 只按 viewport 顶部做 overflow 计算，不知道 WebView 内固定工具栏占用的高度。 |
+| 根因 seam | `editorRuntime.css` 的共享 Tiptap 表单 primitive，以及 `TableContextMenu` 从真实 `.toolbar-stack` rect 派生的 Floating UI collision padding；两站 Builder 和每张表必须共用同一规则。 |
+| 必须保持的行为 | Input 只显示一个连续、可见的主题色 focus perimeter；所有 Builder checkbox 保留原生 checkbox 语义和 48px label 点击区，但绘制与 Button/Input/Card 同源。BubbleMenu 仍优先位于表格上方，空间不足翻到下方，overflow 计算动态避开当前工具栏，且不增加菜单状态或选区副本。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-055` 要求运行时 focus rule 关闭额外 browser outline、真实 Builder checkbox 使用统一 appearance，并以模拟 toolbar rect 固定表格 collision padding；修复前分别得到缺失 appearance、三层 focus 来源和 viewport-only top padding。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：jsdom 固定共享 CSS 与纯 rect 派生，主 AVD 同时固定半屏/全屏、Gboard、表格上方与下方菜单的最终几何。 |
+| Replay 或真实验收路径 | 在 NodeSeek 与 linux.do Composer 依次打开链接、投票和站点 Builder；focus/checkbox 状态一致。插入 3×3 表格，打开行、列、对齐菜单，任何菜单不得覆盖主工具栏、键盘或使当前表格不可见；最后删除表格并保持 0 字。 |
+| 负向验证方式 | 恢复全局 outline 叠加、浏览器默认 checkbox，或把 BubbleMenu padding 写回固定 viewport 8px，编号测试与设备截图至少一层重新失败。 |
+| 明确不覆盖范围 | 不改变表格 GFM 模型、Button 文案、站点 Builder 字段、Sheet/全屏状态、键盘协调或发送协议。 |
+
+## `REG-WRITE-056` LinuxDo Emoji 目录晚于编辑器 READY 时仍为空
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | linux.do 回复编辑器已经可输入，但 Emoji 面板只显示少量旧数据或一直显示“正在读取表情目录”；目录稍后加载完成也不会更新。 |
+| 触发条件 | Emoji 目录来自 Topic 的异步数据，首个 `INIT` 已经结算；旧实现只能通过重新初始化整个编辑器更新目录，因而会重置正文、选区和撤销历史。 |
+| 根因 seam | RN→Editor Bridge 的 `set-discourse-emoji` 文档命令：目录是可替换的展示资源，不是文档初始化状态。 |
+| 必须保持的行为 | 目录晚到时只更新当前 Runtime 的 Emoji 数据与既有 Emoji 节点预览；不重新 `INIT`、不修改 Markdown、不产生 undo history、不改变 selection、focus 或 revision。空目录显示读取提示，不伪造 fallback。 |
+| 精确失败 oracle | `tests/ui/topic/structured-reply-composer.test.tsx` 的 `REG-WRITE-056` 固定 READY 后目录变化只发一次 `set-discourse-emoji`，INIT 数量不变；`src/ui/composer/editorRuntime.test.ts` 固定正文和 revision 不变且新 Emoji 可插入。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`。 |
+| Replay 或真实验收路径 | 主 AVD 从历史进入 linux.do Topic，编辑器先 READY 后打开 Emoji；真实完整目录可见，选一个 Emoji 后可直接继续输入，撤销回 0 字并关闭，不发送。 |
+| 负向验证方式 | 删除目录同步命令、以第二次 INIT 更新目录或恢复固定假目录，编号测试必须失败。 |
+| 明确不覆盖范围 | 不改变原站 Emoji API、目录缓存 owner、上传或发送事务。 |
+
+## `REG-WRITE-057` 表情面板重开反复请求、分类叠图且缩略图过小
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | NodeSeek 贴纸或 linux.do Emoji 面板关闭后再打开会重新空白加载；NodeSeek 切到“洋葱头”等分类时仍显示 AC 娘，多个分类实际叠在同一区域；缩略图辨识困难。 |
+| 触发条件 | 面板关闭时销毁图片 DOM；同时 `.expression-grid { display:grid }` 覆盖 WebView 对 `hidden` 的默认绘制，导致所有已挂载分类都可见。 |
+| 根因 seam | 单个 Editor Runtime 内的表达式图片节点 ownership 与 `.expression-grid[hidden]` 可见性规则。面板和 NodeSeek 各分类只挂载一份真实 `<img>`，打开/关闭和分类切换只使用原生 `hidden`；隐藏图片保留 `loading=lazy`。 |
+| 必须保持的行为 | 同一 App/编辑器会话内重开面板或返回已访问分类复用完全相同的 `<img>` 节点和已解码像素，不增加 JS 缓存、WebView 全局缓存或网络状态机；Runtime 被 App 生命周期销毁后允许重新请求。任一时刻只绘制当前分类。两站网格图片统一为 `48px`，仅比旧 `42px` 稍大；正文 NodeSeek 贴纸最大 `96×58px`，linux.do Emoji 最大 `36px`，不改变 Markdown marker。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-057` 固定关闭/重开前后面板与图片节点引用严格相同、两站缩略图计算宽度为 `48px`；NodeSeek 切分类前后当前 grid 为 `display:grid`、其他 grid 为 `display:none`。修复前 inactive grid 稳定计算为 `grid`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY`。 |
+| Replay 或真实验收路径 | 主 AVD 分别打开两站表达式面板：首次图片完成后立即关闭/重开不得出现空白；NodeSeek 依次切 AC 娘→洋葱头→AC 娘，只显示所选分类且返回时图片立即存在；插入后直接输入文字，再撤销回 0 字。 |
+| 负向验证方式 | 条件渲染面板/分类、删除 `[hidden]` 规则、恢复 42px，或用 WebView cache/Cookie 属性代替节点复用，编号测试和设备截图必须失败。 |
+| 明确不覆盖范围 | 不持久化图片字节、不预取未显示的 lazy 图片、不改原站 URL、Cookie、全局 cache 或阅读端图片管线。 |
+
+## `REG-WRITE-058` LinuxDo 硬换行显示反斜杠且行首 date 被私有块吞掉
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | 富文本点“硬换行”会在正文显示一个 `\`；行首插入 date/time 后显示成通用“站点私有块”，完整 marker 挤满一行。 |
+| 触发条件 | 富文本路径把 Markdown 硬换行源码当普通文本插入；未知 `[name ...]` block tokenizer 比专用 inline date node 更早占有行首内容。 |
+| 根因 seam | 富文本命令应调用 Tiptap `setHardBreak()`；未知块 tokenizer 必须把 `date=` 留给 `LinuxDoDateNode`，专用节点负责紧凑展示并保留原始 Markdown。 |
+| 必须保持的行为 | 富文本硬换行只产生 `<br>`，源码模式仍生成合法 Markdown；任意位置的 `[date=...]` 都由专用节点显示简短日期时间，原始属性、顺序与序列化不变。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-058` 点击硬换行后要求存在 `<br>` 且无可见反斜杠；解析行首 date 后要求专用 node、紧凑文案和 exact Markdown round-trip。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`。 |
+| Replay 或真实验收路径 | 主 AVD linux.do Composer 分别插入硬换行和 date/time，确认无反斜杠、date chip 不溢出；切源码核对 marker，撤销回 0 字，不发送。 |
+| 负向验证方式 | 恢复富文本字符串插入、让未知 block regex 接受 `date=` 或序列化紧凑展示文案，编号测试必须失败。 |
+| 明确不覆盖范围 | 不新增日期选择器、时区推断或图形语法执行 runtime。 |
+
+## `REG-WRITE-059` 半屏误判横屏导致 Emoji 网格拥挤且搜索割裂
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | 竖屏手机的半屏 Composer 把 linux.do Emoji 排成八个拥挤列，缩略图与名称难以辨认；搜索又显示为独立的“搜索”文字和原始输入框，与同一 Builder 的控件风格割裂。 |
+| 触发条件 | CSS 使用 `orientation: landscape` 判断布局；半屏 WebView 的可用区域宽大于高，即使设备仍是竖屏也会命中横屏规则。固定列数无法反映 Builder 的真实可用宽度。 |
+| 根因 seam | 表达式网格应由 CSS intrinsic sizing 直接消费当前容器宽度；搜索应复用 Editor Input 的单一 focus perimeter。设备方向、Sheet 展示状态和图片加载不应进入 JS 布局状态。 |
+| 必须保持的行为 | NodeSeek 贴纸与 linux.do Emoji 使用 `auto-fill + minmax` 按当前可用宽度自动排布，缩略图继续为 `48px`；半屏、全屏和设备旋转不增加监听、状态或分支。linux.do 搜索使用搜索图标和同一 Input 视觉，明确区分“目录仍为空”与“没有匹配的 Emoji”；目录、图片节点缓存、Markdown 插入和 Bridge 行为不变。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-059` 渲染真实 Runtime，要求搜索控件具有“搜索 Emoji”的 label/placeholder，表达式网格计算样式使用 `auto-fill`；恢复固定列数或 orientation 分支时测试失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：jsdom 固定共享 DOM/CSS，主 AVD 分别核对半屏、全屏和键盘下的真实列数、搜索 focus 与空结果。 |
+| Replay 或真实验收路径 | 仅在用户指定的 linux.do `https://linux.do/t/topic/2813565` 打开 Composer：首次目录加载后在半屏搜索一个存在和一个不存在的 Emoji，清空查询并切全屏；图片清晰、网格自然重排、输入法不遮挡，关闭时不发送。NodeSeek 在用户指定 `https://www.nodeseek.com/post-856117-1` 核对共享网格不回退。 |
+| 负向验证方式 | 恢复固定五/八列、`orientation` media query、JS 方向/列数状态，或把搜索拆回原始 label/input，编号测试或设备截图必须失败。 |
+| 明确不覆盖范围 | 不修改原站 Emoji/贴纸 API、目录缓存 owner、WebView cache、图片 URL、正文 marker 或站点发送协议。 |
+
+## `REG-WRITE-060` 投票选项退化为“每行一个”文本域
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | NodeSeek 与 linux.do 的投票 Builder 要求用户在一个文本域中手工换行输入全部选项，无法直接看出如何新增、删除或编辑单项；交互比原站倒退。 |
+| 触发条件 | 两站领域模型已经使用 `string[]`，但 Runtime 把数组 `.join('\n')` 成临时字符串，保存时再 `.split('\n')`，让纯 UI 转换成为另一份隐式选项模型。 |
+| 根因 seam | 两站 Builder 共用一个无状态的选项列表视图，直接读写领域数组；每项一个受控 Input，增删只做数组的 map/filter/append，不引入 option ID、选区备份或菜单状态机。 |
+| 必须保持的行为 | 默认显示两个编号选项；每项使用独立 Input 和至少 `48dp` 删除按钮，底部提供带加号和明确文案的“添加选项”。NodeSeek 标题、多选/公开配置、本地 token、sidecar 和延迟创建事务不变；linux.do 的 regular/multiple/number/ranked choice、高级参数、未知 poll 属性与精确 Markdown round-trip 不变。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-060` 分别打开两站真实 Builder，要求不存在 textarea、默认有两个独立选项 Input，并验证添加第三项和删除第三项；领域 poll/structured composer 测试继续固定序列化和事务边界。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：Runtime 行为测试固定共享交互，领域测试固定协议；主 AVD 用 Gboard 验证逐项输入、增删、滚动和键盘遮挡。 |
+| Replay 或真实验收路径 | 仅在用户指定的 NodeSeek `https://www.nodeseek.com/post-856117-1` 与 linux.do `https://linux.do/t/topic/2813565` 打开回复器，逐项编辑并增删选项、切换富文本/源码后关闭。NodeSeek 未明确点击发送前只保留本地投票，不创建远端 ID；不投票、不付款。 |
+| 负向验证方式 | 恢复“每行一个” textarea、在任一站保留 join/split 兼容路径、给每项再造独立状态/ID，或让 linux.do 类型和高级字段消失，编号测试必须失败。 |
+| 明确不覆盖范围 | 不新增投票排序拖拽、远端投票编辑、自动创建/重试、投票表决、付款、新主题或新的站点协议。 |
+
+## `REG-WRITE-061` 源码模式仍悬浮富文本表格菜单
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02` |
+| 用户症状 | 在富文本中选中表格后切换 Markdown 源码，表格的“行/列/对齐/删除表格”BubbleMenu 仍浮在 CodeMirror 上方，遮挡源码并暴露会操作隐藏富文本的控件。 |
+| 触发条件 | Table BubbleMenu 只从 Tiptap table selection 判断可见性；切模式隐藏富文本 DOM，但没有退出同一 selection，portal 因而继续存在。 |
+| 根因 seam | 表格菜单的渲染 owner 同时需要“当前是 rich mode”和“当前 selection 在表格内”；模式已经是 Runtime 的唯一真值，无需再创建菜单状态或清空 selection。 |
+| 必须保持的行为 | 只有富文本模式挂载 Table BubbleMenu；切源码立即卸载，CodeMirror 完整占有编辑区。切回富文本仍保留原表格、selection/undo 文档状态并重新按 selection 派生菜单；GFM Markdown、Bridge revision、Sheet/全屏和 Editor 实例不变。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-061` 在真实表格 selection 下切源码，要求 portal 中的“表格操作”不存在，再切富文本要求菜单恢复；修复前源码态稳定残留菜单。 |
+| 最低可靠自动测试层 | `UNIT_PASS + APK_SANITY`：Runtime 测试固定 portal 生命周期，主 AVD 固定源码区无遮挡和切回后的表格菜单。 |
+| Replay 或真实验收路径 | 在用户指定的 NodeSeek `https://www.nodeseek.com/post-856117-1` 插入表格并打开对齐菜单，切源码确认只显示严格 GFM，再切回富文本确认表格与上下文操作恢复；撤销/删除后关闭，不发送。linux.do `https://linux.do/t/topic/2813565` 核对共享内核同样行为。 |
+| 负向验证方式 | 只用 CSS 隐藏菜单、清空 Tiptap selection、增加 mode/menu 状态同步 effect，或让菜单继续操作隐藏文档，编号测试必须失败。 |
+| 明确不覆盖范围 | 不修改表格命令、Floating UI 定位、源码工具命令、GFM codec、全屏/键盘布局或发送事务。 |
+
+
 ## `REG-DATA-006` 备份 URL 携带未知 query 凭据
 
 | 字段 | 内容 |
@@ -4184,7 +4710,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 根因 seam | 展示类型与站点筛选语义被合并在全局 domain；会话读取、回复 transport、身份/scope/abort 门禁和草稿确认语义没有经过 `NotificationAdapter → notificationGateway → NotificationRoute` 同一链路。 |
 | 必须保持的行为 | 聚合页不显示子分类；单站分类由 adapter 声明并进入 Query key，切站回默认分类。NodeSeek、Discourse 与妖火分别使用真实 endpoint/type/form；会话按时间正序显示左右气泡并定位最新。NodeSeek/Discourse 为 Markdown，妖火为纯文本且点击正文与最近 20 条聊天分离。空白、重复提交、换号、取消 均不得发网；失败或未确认保留内存草稿，明确确认才清空并刷新，正文不进入 diagnostics。 |
 | 精确失败 oracle | 三站 adapter 的 `REG-NOTIFY-031` fixture 固定分类标签、query/body、PM topic 映射、Markdown/plain-text 与精确成功文本；`src/sources/notificationGateway.test.ts` 固定 category、identity/abort/scope、未确认和正文隐私；`tests/ui/notifications/notifications-route.test.tsx` 固定切站重置、草稿保留/清空，`tests/ui/notifications/notifications-screen.test.tsx` 固定无聚合分类、子分类无批量已读、气泡和两种 composer。修复前分别缺方法、缺分类栏或草稿在错误时丢失。 |
-| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter/gateway Vitest 与 Notifications RNTL；共享 Topic ReplyComposer 同时回归，Android 设备只读核对分类和已有已读会话。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：adapter/gateway Vitest 与 Notifications RNTL；Topic/私信共享 Composer 能力同时回归，Android 设备只读核对分类和已有已读会话。 |
 | Replay 或真实验收路径 | 匹配 APK 从 More → 消息通知依次打开三站，只读切换每个原站分类并打开允许读取的既有已读会话；检查气泡方向、作者、时间、最新定位和 composer 格式，不点击发送。真实回复必须另获“站点、收件人、测试内容”授权后才执行一次并刷新确认。 |
 | 负向验证方式 | 从 list key 删除 category、让 UI 使用全局类型枚举、把妖火任意 `.tip` 当成功、在未确认结果时清空草稿，或绕过 gateway 直接调用 adapter，任一编号测试必须失败。 |
 | 明确不覆盖范围 | 不提供新建私信、搜索私信、妖火发件箱、分类级推送设置、书签/个人资料；自动测试与只读验收不真实发送、上传、逐条已读或批量已读。 |
@@ -4196,9 +4722,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `NOTIFY-02`、`WRITE-01`、`ACCOUNT-01`；私信会话布局与共享 composer 写入门禁 |
 | 用户症状 | 私信消息挤在页面顶部、正文下方留下大块空白，作者与时间反复塞进气泡，底部只有孤立的“回复私信”按钮；打开回复后，Topic 已有的图片上传、NodeSeek 贴纸和 Discourse emoji 全部消失。 |
 | 触发条件 | 消息详情新建了只包含 Markdown 格式按钮的 `MessageReplyComposerSheet`，没有复用现有 ReplyComposer；会话列表未占满可用高度并靠底布局。 |
-| 根因 seam | Topic-local composer 同时拥有共享编辑能力与 Topic 目标文案，通知功能因此复制了残缺实现；会话布局没有把 native header、消息流和固定 composer 入口分成明确层级。 |
-| 必须保持的行为 | `src/ui/composer/ReplyComposer.tsx` 是 Topic 与私信共用的唯一格式/表情/图片 UI。NodeSeek 私信提供贴纸与 NodeImage 图片，linux.do 提供本站 emoji 与 `/uploads.json` 图片，妖火私信按已核实协议保持纯文本。图片选择前先取得 writable ticket，NodeSeek 先确认 API Key；每个 await 后复核 ticket/identity/abort，取消和重复点击零上传，上传成功只把 markup 插入内存草稿且绝不自动发送。会话消息靠底、时间与作者弱化并置于气泡外，底部整行入口至少 48dp；换号或离开立即取消。 |
-| 精确失败 oracle | `tests/ui/notifications/notifications-screen.test.tsx` 固定消息容器 `justifyContent=flex-end`、左右气泡、Markdown 图片/表情、linux.do emoji 与妖火纯文本边界；`tests/ui/notifications/notifications-route.test.tsx` 固定 writable gate 早于 picker、重复/取消零上传、成功只插入草稿；`src/sources/notificationGateway.test.ts` 固定 NodeImage、Discourse `/uploads.json` 与文件名/API Key 不进入 diagnostics；共享 `tests/ui/topic/reply-composer.test.tsx` 防止 Topic 退化。 |
+| 根因 seam | Topic-local composer 同时拥有共享编辑能力与 Topic 目标文案，通知功能因此复制了残缺实现；会话布局没有把 native header、消息流和固定 composer 入口分成明确层级。App runtime 又直接实现 LinuxDo 模板、计数和投票能力协议，绕过 notification gateway 的 route identity 生命周期。 |
+| 必须保持的行为 | LinuxDo/NodeSeek 的 Topic 与 Markdown 私信共用 `StructuredReplyComposer` 的格式、表情/贴纸和图片 host action；妖火 Topic/私信只进入独立 `YaohuoReplyComposer`，且私信保持纯文本。`StructuredReplyComposer` 独占 snapshot callback，关闭 wrapper 只等待 request 完成。图片选择前先取得 writable ticket，NodeSeek 先确认 API Key；每个 await 后复核 ticket/identity/abort，取消和重复点击零上传，上传成功只把 markup 插入内存草稿且绝不自动发送。LinuxDo 模板列表、usage accounting 和 poll capabilities 由 `notificationGateway` 绑定 route 捕获的 identity 与 AbortSignal，`withFetchGuard` 在每个 GET 及 CSRF→POST 前后复核。会话消息靠底、时间与作者弱化并置于气泡外，底部整行入口至少 48dp；换号或离开立即取消。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 固定两站站点资产和图片 host action；`tests/ui/notifications/notifications-screen.test.tsx` 固定消息布局、Markdown/纯文本边界和关闭时单次 snapshot；`tests/ui/notifications/notifications-route.test.tsx` 固定 writable gate 早于 picker、重复/取消零上传、成功只插入草稿，以及三类 LinuxDo composer 请求的 route identity/abort；`src/sources/notificationGateway.test.ts` 固定 NodeImage、Discourse `/uploads.json`、LinuxDo 每跳 guard 与文件名/API Key 不进入 diagnostics；`tests/ui/topic/yaohuo-reply-composer.test.tsx` 固定妖火独立路径。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：Gateway Vitest 与 Notification/Topic RNTL；真实图片上传和私信发送均不属于自动测试。 |
 | Replay 或真实验收路径 | 匹配 APK 只读打开三站已有已读会话，核对靠底消息、固定回复入口和各站 toolbar；不得点击“图片”或“发送”。真实上传需先获得具体站点与测试文件授权，真实回复仍需“站点、收件人、测试内容”授权。 |
 | 负向验证方式 | 改回通知专用简化 toolbar、删除 `onUploadImage`、让 picker 早于 writable gate、上传后直接调用发送、把妖火显示成 Markdown，或移除消息容器的靠底样式，任一编号测试必须失败。 |
@@ -4253,12 +4779,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 
 | 字段 | 内容 |
 | --- | --- |
-| 能力 ID | `NOTIFY-01/02`、`WRITE-01`；消息中心与共享 ReplyComposer 的 Dynamic Type |
+| 能力 ID | `NOTIFY-01/02`、`WRITE-01`；消息中心与 Composer 的 Dynamic Type |
 | 用户症状 | More 已显示“字号 130%”，消息列表、私信气泡和回复输入框却仍保持 100% 大小；页面间字号所有权不一致，大字号也无法改善可读性。 |
 | 触发条件 | Reader settings 的 `fontScale` 非 1，进入消息列表、详情或 Topic/私信共用的回复面板。 |
-| 根因 seam | `createNotificationStyles` 与迁移后的 `src/ui/composer/ReplyComposer.tsx` 仍写死 fontSize/lineHeight，没有消费 `ReaderStyleProvider` 的 `settings.fontScale`。 |
+| 根因 seam | `createNotificationStyles`、原生 Composer chrome 与 Yaohuo 输入器没有一致消费 `ReaderStyleProvider` 的 `settings.fontScale`。 |
 | 必须保持的行为 | 消息列表、空态、设置、详情、会话元信息/气泡、固定回复入口及共享 composer 的标题、工具、输入、状态与错误均按 Reader `fontScale` 成对缩放字号和行高；工具栏继续遵循 `REG-NOTIFY-055` 的单行横滑契约，不能靠截断恢复。 |
-| 精确失败 oracle | `tests/integration/style-ownership.test.ts` 的 `REG-NOTIFY-036` 用 1.3 settings 创建真实消息样式，标题必须从 14 变为 18；`tests/ui/topic/reply-composer.test.tsx` 在真实 `ReaderStyleProvider` 下要求输入字号为 `round(14 × 1.3)`。修复前两者分别仍为 14。 |
+| 精确失败 oracle | `tests/integration/style-ownership.test.ts` 的 `REG-NOTIFY-036` 用 1.3 settings 创建真实消息样式，标题必须从 14 变为 18；`tests/ui/topic/yaohuo-reply-composer.test.tsx` 固定妖火 130% 工具可达，`src/ui/composer/editorRuntime.test.ts` 固定 L/NS 130% 工具层级。 |
 | 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：样式 ownership 集成测试固定消息全局 seam，RNTL 固定共享 composer；匹配 Android 再以 100%/130% 对照字号与末尾工具可达性。 |
 | Replay 或真实验收路径 | More → 外观把字号从 100% 调到 130%，进入消息聚合、单站分类和已有已读会话，打开但不提交回复面板；确认字形、行高和点击区同步变化，结束后恢复 100%。 |
 | 负向验证方式 | 任一消息或 composer 文本恢复固定 fontSize，编号测试必须得到未缩放值并失败；只放大单个标题不能通过全页设备对照。 |
@@ -4286,11 +4812,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `NOTIFY-02`、`WRITE-01`；Topic/私信共享编辑器的工具可达性与视觉反馈 |
 | 用户症状 | 130% 下工具栏末尾的引用、代码或列表无法通过横滑到达；输入光标仍是系统默认色；Discourse 表情同时显示英文名称，网格拥挤且不像可浏览的表情面板。 |
 | 触发条件 | NodeSeek/linux.do Markdown composer 在窄屏或大字号下显示完整工具集合，或打开服务器返回的 Discourse emoji 目录。 |
-| 根因 seam | ReplyComposer 的工具容器没有同时保证单行内容宽度、嵌套横向手势和末尾工具可达；TextInput 未声明主题 cursor/selection color；Discourse emoji 使用文字型可变宽单元，而不是图像优先等宽网格。工具栏具体布局由后续 `REG-NOTIFY-055` 收敛。 |
-| 必须保持的行为 | 工具栏按 `REG-NOTIFY-055` 使用单行横向滑动，全部动作可达；输入光标和选区使用主题 primary。Discourse emoji 使用五列等宽图片网格，有图片时英文名只保留为 accessibility label，无图 fallback 才显示文字；图片上传、贴纸和所有原动作继续存在。 |
-| 精确失败 oracle | `tests/ui/topic/reply-composer.test.tsx` 的 `REG-NOTIFY-038/055` 要求 toolbar `horizontal=true`、末尾“列表”可达、cursor/selection 为主题 primary；同文件表达式测试要求 Discourse list 为五列、`party parrot` 仍可通过无障碍找到但没有可见英文文本。 |
-| 最低可靠自动测试层 | `UI_PASS`：必须渲染真实共享 ReplyComposer；匹配 Android 以 130% + 键盘/表情开关确认布局和焦点反馈。 |
-| Replay 或真实验收路径 | 在已有已读 NodeSeek 与 linux.do 私信中打开回复面板：NodeSeek 核对图片、贴纸和单行工具横滑；linux.do 核对五列表情图、无英文噪声和图片入口。只打开/取消，不选择图片、不发送。 |
+| 根因 seam | 结构化 Composer 的工具容器没有同时保证单行内容宽度、嵌套横向手势和末尾工具可达；TextInput 未声明主题 cursor/selection color；Discourse emoji 使用文字型可变宽单元，而不是图像优先等宽网格。工具栏具体布局由后续 `REG-NOTIFY-055` 收敛。 |
+| 必须保持的行为 | 结构化 Composer 的常用工具保持单行横向可达，首屏固定表情/贴纸与图片，其余工具不经“加号”或 More 聚合即可横滑到达；输入光标和选区使用主题 primary。Discourse Emoji 使用响应式图片网格和无障碍名称，无图时显示本地 fallback；图片上传、贴纸和所有原动作继续存在。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-035/053` 渲染真实 Runtime，固定首屏顺序、无聚合入口、两站表达式、图片 host action 和专属工具；`tests/ui/topic/yaohuo-reply-composer.test.tsx` 单独固定妖火 130% 横向 UBB 工具栏。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：必须渲染真实 Editor Runtime 与 Yaohuo 输入器；匹配 Android 以 130% + 键盘/表情开关确认布局和焦点反馈。 |
+| Replay 或真实验收路径 | 在已有已读 NodeSeek 与 linux.do 私信中打开回复面板：NodeSeek 核对图片、贴纸和单行工具横滑；linux.do 核对响应式 Emoji 网格、无障碍名称和图片入口。只打开/取消，不选择图片、不发送。 |
 | 负向验证方式 | 关闭横向手势、让工具换行或截断、删除末尾动作、移除 cursorColor/selectionColor，或恢复带图片表情的可见英文标签，编号测试必须失败。 |
 | 明确不覆盖范围 | 不增加新格式动作、表情搜索/分类或附件能力；只恢复并重排既有能力。 |
 
@@ -4538,13 +5064,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 
 | 字段 | 内容 |
 | --- | --- |
-| 能力 ID | `NOTIFY-02`、`WRITE-01`；Topic 与私信共享 ReplyComposer |
+| 能力 ID | `NOTIFY-02`、`WRITE-01`；Topic 与私信共享 Composer 能力 |
 | 用户症状 | 富文本输入框上方的格式工具从原有单行横向滑动变成两行，挤占正文与键盘之间的编辑空间；Topic 和私信入口同时受影响。 |
 | 触发条件 | NodeSeek、linux.do显示完整格式工具，尤其在窄屏或 Reader 字号 130% 时打开 Topic/已有私信的 Bottom Sheet。 |
-| 根因 seam | `src/ui/composer/ReplyComposer.tsx` 把 toolbar 从横向 `GestureScrollView` 改为普通 `View`，并在同一 style 加入 `flexWrap: 'wrap'`。历史 `REG-NOTIFY-038` 又把两行写成测试标准，导致回归被主动锁定。 |
-| 必须保持的行为 | Topic 与私信共用同一个横向 `GestureScrollView`；toolbar `horizontal=true`、`nestedScrollEnabled=true`、禁止换行并隐藏系统滚动指示器。100%/130% 下末尾“列表”均可横滑到达，全部既有格式、图片、贴纸、五列表情、主题光标/选区和焦点恢复保持；Bottom Sheet 操作按钮仍位于 Android bottom safe-area 上方。不增加入口级布局参数。 |
-| 精确失败 oracle | `tests/ui/topic/reply-composer.test.tsx` 在真实 `ReaderStyleProvider` 的 100%/130% 两档渲染共享组件，要求 toolbar `horizontal=true`、嵌套手势开启、系统指示器隐藏、content 为单行 `row` 且无 `flexWrap`，并能按 accessibility label 找到末尾“列表”。修复前两档都得到 `horizontal=undefined`。既有格式插入、主题光标和五列表情用例继续通过。 |
-| 最低可靠自动测试层 | `UI_PASS`：必须渲染真实共享 ReplyComposer；纯样式字符串或只检查工具存在不能证明横向容器与两档字号行为。 |
+| 根因 seam | 历史通用 ReplyComposer 把 toolbar 从横向容器改为普通换行 View，并把错误布局固化进测试。 |
+| 必须保持的行为 | L/NS Topic 与私信共用同一个 Editor Runtime：常用工具禁止换行，首屏资产保持可达，其余工具无需“加号”或 More 即可横滑到达；Yaohuo 独立 UBB 工具栏继续使用横向 `GestureScrollView`。100%/130% 下全部既有格式、图片、贴纸/Emoji、主题光标/选区和焦点恢复保持；Bottom Sheet 操作按钮仍位于 Android bottom safe-area 上方。不增加入口级布局参数。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 在 130% 渲染真实结构化 runtime 并验证首屏顺序、无聚合入口与两站资产；`tests/ui/topic/yaohuo-reply-composer.test.tsx` 验证 Yaohuo toolbar 的横向、嵌套手势和末尾“列表”可达。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS`：必须分别渲染真实 Editor Runtime 与 Yaohuo 输入器；纯样式字符串或只检查工具存在不能证明两档入口行为。 |
 | Replay 或真实验收路径 | 匹配 revision/APK 在一个可回复 Topic 和一个已有已读私信分别以 100%/130% 打开编辑器，横滑至末尾“列表”，展开表情/贴纸并关闭；不选择图片、不发送，验收后恢复原字号。 |
 | 负向验证方式 | 恢复普通 `View`、加入 `flexWrap`、只在 Topic 或私信入口单独包 ScrollView、显示两行，或隐藏末尾工具，编号 UI 测试必须失败。 |
 | 明确不覆盖范围 | 不新增格式动作、滚动指示器、入口级布局开关、键盘方案或附件能力；不改变表情网格、草稿、上传、提交与 safe-area 所有权。 |
@@ -5516,6 +6042,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 给正常账号核对重新套用 `readWithinAggregateSourceBudget`，让妖火账号检测调用完整 `getUserProfile`，读取 `book_re_my.aspx` 或主题 `page=2`，在补全前先提交数字 ID，或让迁移 timeout Promise 泄漏给后续手动检测；对应编号测试必须失败。 |
 | 明确不覆盖范围 | 不提高或新增可配置 timeout，不改变完整 User 页的资料、回复和主题分页，不新增 service、公开 API、状态枚举、持久化字段、第二份账号状态或自动重试；不修改代理实现，也不清 Cookie、退出账号或执行真实写入。 |
 
+## `REG-ACCOUNT-045` 功能 WebView 挂载清空全站登录态
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01/02/04`；共享 `WRITE-01/05`、`RELEASE-02` |
+| 用户症状 | 进入 linux.do 或 NodeSeek 详情、打开回复器，或覆盖安装/重启后，三个站点会突然全部退出；账号中心仍可能显示持久化的“网站登录 3/3”，但该快照不能证明 WebView Cookie 仍存在。 |
+| 触发条件 | 隐藏的 `StructuredReplyComposer` WebView 随详情页挂载并启用 `incognito`；锁定的 `react-native-webview@13.15.0` Android manager 在应用该属性时调用进程单例 `CookieManager.removeAllCookies(null)`，同时清理共享 WebView 状态。无需显示 Composer 或发送回复即可触发。 |
+| 根因 seam | 功能私有编辑器获得了修改 App 全局 WebView profile 的能力，资源所有权从 Account Runtime 逃逸；既有规则只约束显式账号清理事务，没有检查第三方 WebView 属性、生产 TypeScript 清理调用和 tracked Android plugin。 |
+| 必须保持的行为 | Account 用户明确发起的按站清除事务是登录 Cookie 的唯一删除 owner。编辑器继续使用本地 origin、CSP、导航拦截并关闭 cache、DOM storage 与表单保存，但始终关闭 `incognito`，不调用全局 Cookie、WebStorage 或 cache 清理；`sharedCookiesEnabled={false}` 不承担 Android Cookie 隔离语义。隐藏挂载、Sheet/全屏、renderer 恢复和覆盖安装不得改变任一站点登录态；不新增 WebView 状态机、全局 wrapper 或第二套 Cookie 系统。 |
+| 精确失败 oracle | `tests/ui/topic/structured-reply-composer.test.tsx` 的 `REG-ACCOUNT-045` 实际渲染隐藏 Composer WebView，要求 `incognito !== true`、`cacheEnabled=false`、`domStorageEnabled=false`、`saveFormDataDisabled=true`；修复前稳定得到 `incognito=true`。`tests/tooling/check-architecture.test.mjs` 同时固定 WebView 直接/别名导入、裸属性、动态值、props spread，以及生产 TypeScript/tracked plugin 的全局清理调用。 |
+| 最低可靠自动测试层 | `STATIC_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：RNTL 固定真实 WebView props，AST/plugin 门禁阻止同类能力再次进入；只有保留数据覆盖安装和 App 内登录态原站复核能证明现有三站 Cookie 未再被挂载路径清除。 |
+| Replay 或真实验收路径 | 主 AVD 安装前后只读比对 `firstInstallTime`，仅用覆盖安装。先在 App 内三站原站确认权威登录，再 process-cold 启动；分别进入 linux.do、NodeSeek 详情，连续三次打开/关闭 Composer 并切换 Sheet/全屏，最后再次进入三站原站确认身份仍在。全程不发帖、回复、上传、投票、付款或清除登录。若当前 Cookie 已被旧 APK 删除，停止验收并等待用户恢复登录。 |
+| 负向验证方式 | 重新给任一功能 WebView 传入裸/true/dynamic `incognito` 或 raw props spread，新增 `removeAllCookies`、`removeSessionCookies`、`deleteAllData`、非字面量/true `clearCache`，或在任意层级 tracked plugin 写入等价调用；编号 UI 测试或 `global-webview-state-owner` 必须失败。 |
+| 明确不覆盖范围 | 不恢复已被旧 APK 删除的 Cookie，不创建独立 WebView profile，不重建 Account Runtime，不加入兼容开关或状态机；Live 不执行任何原站写入和真实清除事务。 |
+
 ## `REG-FEED-017` 来源重排后旧 Pager 会话卡在 Loading
 
 | 字段 | 内容 |
@@ -6116,6 +6657,231 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变；对正文块图录屏并逐帧检查进入预览、返回正文和 fit → original 三段，同一视觉资源不得出现空白帧或重复闪烁，原图仍能升级并在失败后恢复。 |
 | 负向验证方式 | 把 revision/attempt 再写入 `recyclingKey`、卸载底图、关闭 transition、增加防抖/timer/状态枚举或用预览返回特判掩盖时，编号 UI、既有失败恢复测试或设备逐帧验收必须失败。 |
 | 明确不覆盖范围 | 不重构媒体 coordinator，不改变 preview ring、缩放、保存、缓存策略、网络 URL、并发预算、公共 API、Native patch 或持久化 schema。 |
+
+## `REG-TOPIC-127` 表格内线重叠且周界过薄
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02/03`；共享 `REG-TOPIC-084/093/123` |
+| 用户可见症状 | NodeSeek 回复中的 GFM 表格内部分隔线显得重叠、抢眼，四周轮廓却只有一层很薄的 hairline；底边还会因末行和外框同时绘制而比顶边更重。 |
+| 触发条件 | 详情 renderer 同时使用 `1dp + lineStrong` 的 Cell 边、`hairline + line` 的 Frame 边，并让终端行继续绘制下边。相同 Markdown 在原站正常，App 内出现不一致的线条层级。 |
+| 根因 seam | 共享 HTML 表格的描边权分散在 `htmlTagsStyles.th/td`、`htmlTableFrame` 与 Cell renderer。正确模型是 Frame 独占周界、Cell 独占内部右/下分隔，每条物理边只有一个 owner。 |
+| 必须保持的行为 | Frame 和内部网格统一为 `1dp theme.line`；末列右边为 `0`，`only/last` 的末行下边为 `0`。`first/middle` 分段末行仍保留分隔；表头 `surface2`、正文 `surface`、圆角、列宽、`colspan`、横滑、选择和四站共享 Markdown 语义不变。 |
+| 精确失败 oracle | `src/features/topic/styles.test.ts` 在修复前得到 `hairline` 外框而非 `1dp`；`src/features/topic/rendering/htmlStyles.test.ts` 得到 `lineStrong` Cell；`tests/ui/topic/topic-table-rendering.test.tsx` 的 `[REG-TOPIC-127]` 在修复前无法得到终端行 `borderBottomWidth: 0`，并固定 split `first` 不得误删段间边。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：Unit 固定共享颜色/宽度，RNTL 固定单 owner 与分段负向行为，匹配 APK 的真实回复确认最终像素。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变；App 内“收藏 → 历史 → NodeSeek 沙盒 → 测试”滚到第 9 楼，只读核对 3×3 表格。周界与内线同权重、底边不加粗、表头层级清晰；证据为 `dogfood-output/screenshots/ns-floor9-table-read-single-stroke.png`。 |
+| 负向验证方式 | 恢复 `lineStrong` Cell、hairline Frame、终端行下边，或以 NodeSeek/第 9 楼 CSS 特判覆盖时，编号 Unit/UI 或匹配 APK 视觉验收必须失败。 |
+| 明确不覆盖范围 | 不修改 GFM Markdown、NodeSeek adapter、Composer 表格命令、列模型、虚拟化、横滑手势或原站 CSS；不增加依赖、状态机或站点特判。 |
+
+## `REG-TOPIC-128` NodeSeek 评论未识别投票与 Stardust，投票归属串入主楼
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02/03`、`WRITE-03/05/06`；关联 `NOTIFY-02`、`NAV-03` |
+| 用户症状 | NodeSeek 评论中的 `nsapp://vote` 与 `nsapp://stardust-receive` 直接显示原文；测试帖 #10 明明存在收款链接，App 却不生成卡片；主楼能显示投票时，评论投票仍可能缺失或串到主楼；同一回复同时包含独立 Stardust 段和投票时，收款卡片还会被整段删除。 |
+| 触发条件 | #10 的原站 HTML 使用 `href="javascript://void(0)"`，完整编码 marker 位于 `data-href`，可见文本中的 description 空格已经解码；旧 normalizer 只读可见文本，遇到空格便截断。投票 reader 又从整页 HTML 收集 ID；投票空壳清理把无文字的 Stardust typed placeholder 当作空前缀移除。 |
+| 根因 seam | NodeSeek marker 归一、投票读取归属和正文编排各有重复 owner。当前模型固定为：`prepareNodeSeekForumContent` 独占 marker 安全归一及 typed placeholder 保留，NodeSeek reader 按每段正文 ID 集合临时绑定远端 poll，`compileForumContent` 独占原位置 row 编排。 |
+| 必须保持的行为 | opening、首屏评论、分页评论和定位评论走同一路径；anchor 优先解析 `data-href` 中的完整 canonical Stardust marker，只有该属性不存在时才兼容完整 marker 可见文本；普通 `href` 永不作为 marker 身份来源，`pre/code`、普通链接和非法/截断 marker 保持惰性。相同 poll ID 在当前窗口只读一次且只挂到引用它的 owner；部分失败保留 marker 并增加既有 `partialErrorCount`。表格、图片、贴纸、投票 action cache 和 Stardust 付款 controller 不变。 |
+| 精确失败 oracle | `src/sources/nodeseek/reader.test.ts` 固定主楼和两条评论各自 poll 归属、重复 ID 单次读取及 Stardust 原位置，并要求 `pre/code` 与仅 href 命中的普通链接产生零 `/api/vote/info`；`tests/integration/source-read-contracts/nodeseek.test.ts` 固定 opening 已渲染表单与定位评论；`src/sources/nodeseek/stardust.test.ts` 使用 #10 的 `javascript://void(0) + data-href + 含空格可见文本` 形态，断言只生成一张卡，普通 href、代码块和非法 marker 零卡片；`src/sources/nodeseek/polls.test.ts` 同时固定 poll inert 反例及“独立 Stardust 段 + 投票段”不得被清理；`src/domain/forum/topicContentSplit.test.ts` 固定 opening/reply 原位置 typed poll；`tests/ui/topic/topic-reply-filters.test.tsx` 固定两者复用既有 UI。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：parser/compiler 证明 owner 与安全边界，RNTL 证明复用既有卡片，匹配 APK 的只读详情证明原站载荷闭环。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变；直达用户指定测试帖 #10，确认真实 `data-href` marker 在原位置生成头像与静态卡片，限额时显示原文但不丢卡；分页离开返回零重复。只进入 prepare 确认页后取消，不回复、投票、send 或上传。 |
+| 负向验证方式 | 忽略 `data-href`、改读普通 href、把含空格可见文本当 canonical、将 marker 判断放回 `ReplyItem`、恢复 opening 专用 renderer、按整页 HTML 绑定 `topic.polls`、删除 Stardust typed placeholder、转换代码块或新增 hydration state 时，编号测试必须失败。 |
+| 明确不覆盖范围 | 不重构 LinuxDo、Composer、通用表格/图片 renderer、投票提交、Stardust prepare/send、Cookie、credential generation、公共类型或持久化 schema。 |
+
+## `REG-TOPIC-129` 表格媒体使用整页宽度且 cooked 语义样式缺失
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01/02/03`；共享 `REG-TOPIC-084/085/094/097/114/127` |
+| 用户症状 | linux.do `t/topic/2817831` 的两列表格中，右列大图按整页正文宽度绘制并越过单元格分隔线；`bbcode-b/i/u/s`、键帽、增删高亮、固定大小文字和群组 mention 等 cooked 语义在 App 中还会退化成普通文字或弱化样式。 |
+| 触发条件 | table renderer 已知道最终等宽列几何，但图片、贴纸与嵌套 table 仍直接读取 RNRH 顶层 `contentWidth`；图片加载自然尺寸后还会再次用该整页宽度计算 frame。共享 `tagsStyles/classesStyles` 同时缺少上述 App-owned 语义映射。 |
+| 根因 seam | `td/th` 是单元格实际内容宽度的唯一 owner，应把扣除自身 padding 与 border 后的数值向后代 renderer 传递；表外继续回退到 RNRH 正文宽度。静态 cooked 语义只由现有 HTML style builder 统一映射，不复制来源 CSS。 |
+| 必须保持的行为 | 现有等宽列、`96dp × 阅读字号` 最小列宽、`colspan`、横滑、分段 offset、边框 owner 和图片预览保持；大图初始占位与自然尺寸加载后都不超过单元格内容宽度，贴纸 row 使用同一局部宽度，视频继续无显式宽度并随父容器 stretch，表外三类媒体继续使用正文宽度。`bbcode-b/i/u/s`、`kbd`、`mark/ins/del`、`big/small` 和 `mention-group` 使用主题 token；来源背景样式仍被忽略。 |
+| 精确失败 oracle | `tests/ui/topic/topic-table-rendering.test.tsx` 固定 320dp 两列仍各为 160dp，右列扣除双侧 10dp padding 后媒体宽度为 140dp，表外仍为 320dp；`tests/ui/topic/topic-image-loading.test.tsx` 固定 1920×1080 图片加载前后均受 140dp 上限、贴纸 row 在局部/表外分别为 77/100dp、视频为父容器 stretch；`src/features/topic/rendering/htmlStyles.test.ts` 固定浅深主题下全部语义映射。修复前分别得到 320dp 媒体、自然尺寸加载后回涨 320dp，以及缺失 class/tag style。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + APK_SANITY + LIVE_PASS`：Vitest 固定主题样式，RNTL 固定真实 renderer 尺寸链和表格几何，匹配 APK 证明 React Native 最终布局，App 内原站页面证明真实 cooked 载荷闭环。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变；App 内直达 `https://linux.do/t/topic/2817831`，确认六行两列表格仍为 App 等宽布局、所有大图均留在右单元格内、横滑与图片预览正常。再用浅/深主题只读核对包含上述静态语义的真实或固定样本；不执行回复、点赞、投票或其他写操作。 |
+| 负向验证方式 | 恢复 renderer 直接读取整页宽度、加载自然尺寸后忽略局部上限、只加 `overflow:hidden/maxWidth`、硬编码该帖子或图片、改变列宽策略、引入 `columnRoles`/状态机、放开来源背景 CSS，或删除任一语义映射时，编号测试必须失败。 |
+| 明确不覆盖范围 | 不追求 Discourse 像素同构，不实现 `d-image-grid`、carousel、spoiler、footnote、math、mermaid、`only-emoji` 上下文尺寸、无效 mention、heading anchor 或 lightbox 图标；不增加依赖、公共 API、持久化 schema、列模型或运行时兼容协议。 |
+
+## `REG-TOPIC-130` NodeSeek 原生删除线在 App 中退化为普通文字
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-02/03`；关联 `WRITE-01/02/04/05`、`NOTIFY-02` |
+| 用户症状 | NodeSeek 沙盒主题 `post-856117` 第 18 楼在原站显示删除线，App 同一楼层却显示为普通文字；NodeSeek Composer 也缺少原站已有的删除线入口。 |
+| 触发条件 | NodeSeek 原站将 `~~...~~` 渲染为 `<s>`；共享 Topic 样式只显式覆盖了 `<del>` 与 `.bbcode-s`，Composer 又把删除线和下划线一起限制给 linux.do。 |
+| 根因 seam | 阅读端缺失的是现有 `tagsStyles` 中的 `<s>` 语义；编辑端缺失的是共享 Runtime 的站点能力投影。Markdown codec 已原生支持 `~~...~~ → <s>`，不需要新增转换、配置或状态。 |
+| 必须保持的行为 | NodeSeek opening、评论与编辑预填中的 `<s>` 显示删除线，且不继承 `<del>` 的危险语义底色；NodeSeek 富文本和源码模式均提供删除线，源码仍序列化为 `~~...~~`。NodeSeek 下划线继续隐藏，`++...++` 保持字面文本；linux.do 继续同时提供删除线和下划线，既有 `<del>` 主题底色不变。 |
+| 精确失败 oracle | `src/features/topic/rendering/htmlStyles.test.ts` 固定浅深主题的 `<s>` 为无背景 `line-through`；`tests/ui/topic/topic-rich-text-selection.test.tsx` 用第 18 楼同形 `<s>**<em>555555</em></s>` 固定最终文字装饰；`src/ui/composer/editorRuntime.test.ts` 固定 NodeSeek 有删除线、无下划线且 linux.do 两者都有；`src/sources/nodeseek/markdown.test.ts` 固定 `~~...~~ → <s>` 与 `++...++` 惰性。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Unit 固定能力投影与 App-owned 样式，RNTL 固定真实渲染；匹配 APK 的 App 与带登录态原站对照确认 Android 最终像素。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装且 `firstInstallTime` 不变；从“更多 → NodeSeek → 检测或重新登录”直达 `https://www.nodeseek.com/post-856117-2#18`，只读确认原站第 18 楼和工具栏均有删除线且无下划线。再回到 App 同一楼层确认删除线，并本地打开 NodeSeek 与 linux.do Composer 核对上述按钮；不输入、不发送、不上传。 |
+| 负向验证方式 | 删除 `<s>` 映射、让 `<s>` 复用 `<del>` 背景、再次隐藏 NodeSeek 删除线、开放 NodeSeek 下划线、恢复 `markdown-it-ins`、按第 18 楼或具体文本特判时，编号测试或原站对照必须失败。 |
+| 明确不覆盖范围 | 不复刻 NodeSeek 原站 CSS，不改写历史草稿或正文，不新增格式能力配置、站点样式表、状态机或依赖；不执行真实回复、编辑或私信。 |
+
+## `REG-WRITE-062` LinuxDo Emoji 源码往返卡死
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05`；关联 `WRITE-01/02/04`、`NOTIFY-02` |
+| 用户症状 | 含 `:wink:` 等 LinuxDo Emoji 的草稿从源码切回富文本时 WebView/GPU 可卡死，编辑器失去响应。 |
+| 触发条件 | Emoji 目录解析完成后，Runtime 扫描整篇文档并为表达式节点补写图片 URL、label 和 presentation 属性。 |
+| 根因 seam | 资源预览被错误写入规范文档；一次模式同步又触发第二次 ProseMirror 文档 transaction，造成无意义的整篇改写与渲染。 |
+| 必须保持的行为 | 表达式节点只保存 raw marker；extension-local NodeView 从当前目录解析预览。目录晚到只刷新已挂载 NodeView，Markdown、revision、undo 与 selection 不变；图片使用 lazy loading/async decoding。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `[REG-WRITE-062]` 断言表达式 JSON 只有 `raw`，晚到目录后同一 NodeView 获得图片且 transaction 数不增加，重复富文本/源码往返仍响应。 |
+| 最低可靠自动测试层 | `UNIT_PASS + DEVICE_REPLAY_PASS`：jsdom 固定文档所有权，匹配 APK/Gboard 固定真实 WebView/GPU 行为。 |
+| Replay 或真实验收路径 | 主 AVD 覆盖安装后，在 LinuxDo Composer 本地插入 `:wink:`，连续三次富文本/源码往返并继续输入；不点击发送。 |
+| 负向验证方式 | 恢复文档预览 attrs 或整篇 refresh transaction，编号测试必须失败；真实卡死若仍复现则转查具体图片解码链，不隐藏图片或退回裸文本。 |
+| 明确不覆盖范围 | 不更换编辑器、WebView、目录协议或 Markdown marker，不增加定时器、重挂载和图片隐藏降级。 |
+
+## `REG-WRITE-063` 连续插入私有原子节点替换前一个节点
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05/06`；关联 `WRITE-01/02/04`、`NOTIFY-02` |
+| 用户症状 | 插入 Details 后立即插入 Spoiler，后者会覆盖前者；NS poll、Stardust、L poll 等相邻节点存在同类风险，插入后也不能稳定继续输入。 |
+| 触发条件 | 上一个原子节点仍是 `NodeSelection`，各 Builder 分别调用 `insertContent` 并把当前 selection 当作替换范围。 |
+| 根因 seam | block 插入与同类型编辑分散在各站点分支，缺少一个拥有 atom selection 语义和尾随文本选区的共享入口。 |
+| 必须保持的行为 | 同类型选中节点原位更新；其他 atom 一律在 `selection.to` 后插入；普通文本按选区插入，并用 Tiptap 原生尾随段落把最终 selection 落在可输入文本中。所有站点私有 block 共用此路径。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `[REG-WRITE-063]` 连续插入 L poll、Details、Spoiler 与 NS poll、Stardust，snapshot 同时包含全部 marker，尾部输入保留。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：Runtime 固定节点拓扑，RNTL 固定共享入口，设备核对真实光标和 Gboard。 |
+| Replay 或真实验收路径 | 两站 Composer 本地连续生成对应节点，切换源码往返并在末尾输入；LinuxDo 不发送，NodeSeek 远端写入仍服从逐次授权。 |
+| 负向验证方式 | 任一 Builder 恢复直接 `insertContent` 分支，或最终 selection 仍是 atom，编号测试必须失败。 |
+| 明确不覆盖范围 | 不新增 selection 副本、Builder 状态机、定时 focus 或站点专属插入实现。 |
+
+## `REG-WRITE-064` CodeMirror 首次撤销清空同步正文
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05`；关联 `WRITE-01/02/04`、`NOTIFY-02` |
+| 用户症状 | 从富文本切到源码后第一次点击撤销，整篇同步过来的正文被清空。 |
+| 触发条件 | Runtime 用普通 CodeMirror replace transaction 同步 INIT/富文本 Markdown，程序写入被记录到用户 history。 |
+| 根因 seam | 程序同步与用户编辑共用 undo 所有权。 |
+| 必须保持的行为 | INIT、模式同步和外部草稿结算使用 `Transaction.addToHistory.of(false)`；用户真实输入继续进入现有 CodeMirror history，不保存第二份 undo 状态。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `[REG-WRITE-064]` 断言程序同步后 undo 正文不变，随后插入用户文本再 undo 只恢复到同步正文。 |
+| 最低可靠自动测试层 | `UNIT_PASS + DEVICE_REPLAY_PASS`。 |
+| Replay 或真实验收路径 | 主 AVD 中输入混合中文与私有节点，切源码后先撤销，再新增文字并撤销；正文和光标符合上述边界。 |
+| 负向验证方式 | 移除 `addToHistory(false)`，第一次 undo 必须重新清空正文。 |
+| 明确不覆盖范围 | 不建立 RN undo 栈、模式状态机或历史镜像。 |
+
+## `REG-WRITE-065` LinuxDo 投票配置与原站交互偏离
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05`；关联 `WRITE-01/02/04`、`NOTIFY-02` |
+| 用户症状 | 用户组要求手输逗号文本，无法搜索/多选；Staff、ranked/number 图表条件错误；卡片丢标题和配置，排序投票仍显示单选圆点。 |
+| 触发条件 | Builder 把原站动态 group chooser 压成自由输入，并由固定字段而非解析后的 poll 语义渲染卡片。 |
+| 根因 seam | LinuxDo 站点能力目录未进入现有 host-action seam，UI 与 codec/账号权限各自猜测配置。 |
+| 必须保持的行为 | 同一 Runtime 首次打开投票时，在同一 writable ticket 前后并行读取 `/site.json` groups 与 `/session/current.json` Staff；WebView 只接收经 Zod 校验、排除 `everyone`、上限 1000 的目录。Markdown 保存原始 `name`，Dropdown、Chip 和已选摘要展示原站 `display_name/full_name` 中文 Label，搜索同时匹配显示名与原始名；目录支持多选/取消、可删除且可换行 Chip，不可见旧组原样保留。非 Staff 不可新选 `staff_only`，旧值可保留；chart 只属于 regular/multiple。卡片显示真实标题和类型化摘要/选项符号。 |
+| 精确失败 oracle | `src/sources/linuxdo/pollCapabilities.test.ts` 固定目录、中文 Label 与权限；`src/domain/forum/linuxDoPoll.test.ts` 固定 groups 数组、未知属性、staff_only、close 和 ranked/number 无 chart；`src/ui/composer/editorRuntime.test.ts` 的 `[REG-WRITE-065]` 固定一次加载、中英文搜索、多选、Chip 删除、卡片与源码回填；RNTL 固定 Host Action 回传。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：动态组目录与原站权限最终只能由登录态 App 内页面/接口核对。 |
+| Replay 或真实验收路径 | LinuxDo 登录态 Composer 搜索并选择 `trust_level_1`，本地生成 poll，源码确认 `groups=`，再切回富文本重开 Builder；全程不发送评论。 |
+| 负向验证方式 | 恢复逗号 Input、硬编码组、无 ticket 读取或 ranked chart，编号测试必须失败；真实接口形状不同则停止并回查原站，不猜字段。 |
+| 明确不覆盖范围 | 不增加群组管理、通用账号目录、远端投票创建或新主题发布。 |
+
+## `REG-WRITE-066` LinuxDo Emoji 目录固定截断为 120 项
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-05`；关联 `WRITE-01/02/04`、`NOTIFY-02` |
+| 用户症状 | LinuxDo Emoji 明显少于原站，第 121 项之后无法浏览，也无法被搜索命中。 |
+| 触发条件 | Runtime 在目录入口直接 `.slice(0, 120)`，搜索只面对截断后的数组。 |
+| 根因 seam | 首屏渲染批量与目录数据边界混为一体。 |
+| 必须保持的行为 | Bridge 继续接收最多 2000 项完整目录；视图每批呈现 120 项，滚动末尾或可访问“加载更多”按钮扩批，搜索先过滤完整目录再分页。面板 hidden 重开保留批次与已解码图片 DOM，NodeSeek 分类缓存不变。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `[REG-WRITE-066]` 用 250 项 fixture 固定 120→240→250、搜索第 250 项及重开 DOM identity。 |
+| 最低可靠自动测试层 | `UNIT_PASS + DEVICE_REPLAY_PASS`。 |
+| Replay 或真实验收路径 | LinuxDo Composer 滚动 Emoji 目录到首批之外并搜索该项，插入后连续三次模式往返；不发送。 |
+| 负向验证方式 | 恢复入口截断或在已显示批次上搜索，编号测试必须失败。 |
+| 明确不覆盖范围 | 不新增虚拟列表依赖、持久化缓存、远程图片代理或 WebView 全局 cache。 |
+
+## `REG-WRITE-067` 终止块只能显示横向 GapCursor
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/02/04/05`；关联 `NOTIFY-02` |
+| 用户症状 | 回复或编辑正文以表格、投票、Stardust 或其他 block 结尾时，键盘已显示但表格下方只有一条横线，无法得到正常竖向文字光标；刚加载正文时撤销还可能清空整篇内容。 |
+| 触发条件 | INIT、编辑预填或源码切回富文本后，ProseMirror 文档的最后节点不可输入，并且程序 `setContent` 被记录进用户 history。 |
+| 根因 seam | 共享 Editor Runtime 显式关闭了 StarterKit 已内置的 TrailingNode，使合法的 GapCursor 被迫承担终止输入位置；两处程序化富文本替换又没有声明 `addToHistory=false`。 |
+| 必须保持的行为 | 使用 Tiptap 官方 TrailingNode 让任意终止 block 后始终存在一个可输入 paragraph；该空段落只属于编辑模型，不改变 GFM 或私有 marker 语义。INIT 与真实源码变更通过同一无 history 替换路径；源码未变化时不重建文档，原 selection、undo 和表格 BubbleMenu 保持。GapCursor 继续服务两个不可输入节点之间的合法选区，不隐藏 CSS、不禁用扩展。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `[REG-WRITE-067]` 第一条用终止 GFM 表格固定 INIT 与源码往返后的最后 DOM 节点为 `P`，snapshot 仍含原表格；修复前稳定得到 `DIV.tableWrapper`。第二条固定 INIT/源码同步后 `canUndo=false`，第一次 undo 保留正文，随后真实输入可单独撤销。`REG-WRITE-049` 同时固定相邻私有 atom 后存在尾随 paragraph。 |
+| 最低可靠自动测试层 | `UNIT_PASS + DEVICE_REPLAY_PASS`：真实 Runtime/jsdom 固定文档拓扑和 history；匹配 APK/Gboard 固定 WebView 中的最终光标几何与输入。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；在 NodeSeek 自己的终止表格回复中打开编辑，点击表格下方必须出现竖向光标，可输入并删除一个中文字符，源码往返后 GFM 不变，最后取消编辑。LinuxDo 只在本地 Composer 对终止表格和私有节点执行相同步骤；两站均不发送、不上传、不投票、不付款。 |
+| 负向验证方式 | 恢复 `trailingNode=false` 时首条测试必须重新得到终止 `DIV`；移除 Tiptap `addToHistory=false` 时第二条测试必须重新显示可撤销初始化正文。隐藏 `.ProseMirror-gapcursor`、禁用 GapCursor、逐调用方补空行或增加 selection 状态都不构成修复。 |
+| 明确不覆盖范围 | 不修改 GapCursor 样式、GFM codec、站点协议、Bridge schema、Sheet/键盘状态或公共 API；不新增依赖、焦点状态机、selection 镜像或兼容分支。 |
+
+## `REG-WRITE-068` NodeSeek 错误移除原站支持的删除线
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/02/04/05`；关联 `NOTIFY-02`、`TOPIC-02/03` |
+| 用户症状 | 旧能力审计把 NodeSeek 的删除线与下划线一起判为不支持，导致 Composer 移除了原站实际存在的删除线；第 18 楼原站已有删除线，App 工具栏却无法继续创作同类内容。 |
+| 触发条件 | 只用 `++...++` 验证下划线，随后把“下划线不支持”错误扩大成“删除线也不支持”；没有独立核对原站的 `~~...~~`、`<s>` 和编辑器按钮。 |
+| 根因 seam | 共享 Tiptap UI 与站点发布能力被错误捆绑判断。两站可共享同一个删除线命令，只有下划线需要按 site 投影；NodeSeek Markdown 仍是发布边界。 |
+| 必须保持的行为 | NodeSeek Topic 回复、楼层回复、编辑和 Markdown 私信均显示删除线按钮，富文本使用 Tiptap strike，源码使用 `~~...~~`；NodeSeek 不显示下划线，`++...++` 在 fallback 中保持惰性文本。linux.do 继续保留删除线和下划线。其余 CommonMark/GFM 控件与 NodeSeek 贴纸、投票、Stardust、图片上传不变。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 在真实两站 Runtime 中断言 NodeSeek 有删除线且无下划线、linux.do 两者都有；`src/sources/nodeseek/markdown.test.ts` 断言 `~~删除线~~` 产生 `<s>` 而 `++下划线++` 不产生 `<ins>`；`REG-TOPIC-130` 固定 `<s>` 的阅读展示。修复前 NodeSeek 删除线按钮断言稳定失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装后，从 More 的带登录态 NodeSeek 原站直达第 18 楼，确认原站工具栏有删除线、无下划线；再在 App 的 NodeSeek Topic 回复与编辑中核对相同能力，在 linux.do Composer 核对两者仍在。全程不发送、不上传、不投票、不付款。 |
+| 负向验证方式 | 再次隐藏 NodeSeek 删除线、开放 NodeSeek 下划线、恢复 `markdown-it-ins`、给各调用方增加开关、在发送时删文本或用帖子特判补显示时，编号测试必须重新失败。 |
+| 明确不覆盖范围 | 不禁止用户在源码模式手工输入任意文本，不改写旧草稿，不改 linux.do codec，不动 NodeSeek 私有 marker、写事务或阅读 Owner。 |
+
+## `REG-WRITE-069` LinuxDo 模板计数故障阻止内容进入草稿
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01/05`；关联 `NOTIFY-02` |
+| 用户症状 | 选择动态模板后正文迟迟不出现，usage POST 延迟或失败时模板内容完全丢失，用户会误以为选择无效。 |
+| 触发条件 | Editor Runtime 先等待 `/discourse_templates/{id}/use` 成功，再把已经选择的模板插入本地文档。 |
+| 根因 seam | 本地草稿编辑与原站 usage accounting 被错误合并成一个远端写事务；计数接口不拥有正文插入。 |
+| 必须保持的行为 | 模板内容先按当前选区立即进入本地 Markdown，再异步记录 usage；计数失败只发非阻塞提示，不能撤回正文、关闭编辑器或触发评论/回复。Topic 与 Notification 继续共用相同 host action，后者由 notification gateway 绑定 route identity 与 AbortSignal。 |
+| 精确失败 oracle | `src/ui/composer/editorRuntime.test.ts` 的 `REG-WRITE-069` 在 usage host action 未结算时先取 snapshot，正文必须已含模板；随后返回计数错误，第二次 snapshot 仍保留正文并出现 `template-usage-failed`。 |
+| 最低可靠自动测试层 | `UNIT_PASS + LIVE_PASS`：真实 Runtime 固定本地顺序；匹配登录态 App 的获授权 usage POST 只核对 accounting，不发送评论。 |
+| Replay 或真实验收路径 | 主 AVD 的 LinuxDo Composer 加载模板并选择一次，先确认草稿立即出现，再等待 usage 结算；最后清空草稿并关闭，禁止发送评论或回复。 |
+| 负向验证方式 | 恢复 `await use-template` 后插入、计数失败删除正文、自动重试 usage POST 或借此发送评论，编号测试必须失败。 |
+| 明确不覆盖范围 | 不照搬 Discourse 模板 UI，不新增模板编辑/管理、离线模板缓存、重试状态机或评论发布。 |
+
+## `REG-WRITE-070` NodeSeek 作者无法锁定自己的投票
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-03`；关联 `TOPIC-02/03`、`ACCOUNT-01` |
+| 用户症状 | App 中自己发布的 NodeSeek 投票没有锁定入口；锁定后的投票也沿用通用“已关闭”文案，无法与原站管理语义对齐。 |
+| 触发条件 | `/api/vote/info/{id}` 已返回 `vote.uid/locked`，读取 normalizer 丢弃 `uid`，Topic action capability 中也没有投票管理动作。 |
+| 根因 seam | 来源 adapter 没有保留原站提供的管理权，UI 被迫把“能否管理”当成未知；锁定写入也没有进入现有 writable ticket、mutation scope 与权威 poll snapshot cache owner。 |
+| 必须保持的行为 | `TopicPoll.ownerId` 只从 NodeSeek `vote.uid` 投影；只有当前可信 member 匹配且尚未锁定时显示“锁定投票”，非作者、引用/accepted 副本与已锁定投票零入口。取消零 POST；确认固定发送一次 `{locked:true}`，随后一次 GET 并同步主楼和回复缓存。POST 明确成功但 GET 失败时本地保留已锁定并提示刷新失败；POST 结果不明时只 GET 对账，绝不自动重发。普通作者不提供解锁或删除。 |
+| 精确失败 oracle | `src/sources/nodeseek/actionClient.test.ts` 固定 `uid/locked`；`src/sources/nodeseek/actionRequest.test.ts` 固定 lock endpoint、动态签名和 body；`tests/ui/topic/topic-components.test.tsx` 固定作者/非作者/副本入口和“已锁定”；`tests/ui/topic/topic-actions-controller.test.tsx` 固定取消零请求、单次 POST→GET、双缓存投影、刷新失败本地锁定及 unknown 只对账。修复前 owner 字段、入口和写动作均不存在。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：source/unit 固定 wire contract，RNTL 固定权限与生命周期；普通作者的真实管理权最终由匹配登录态原站与 App 共同核对。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；在用户指定测试帖的 poll `3037` 先取消一次确认零写入，再获授权锁定一次；刷新 App 与原站均显示已锁定。锁定不可撤销，记录 poll ID，不自动关闭模拟器。 |
+| 负向验证方式 | 丢弃 `uid`、按帖子作者猜 owner、在 quote 显示入口、允许重复确认、unknown 后重发 POST、另建投票状态机或只更新当前组件局部状态时，编号测试必须失败。 |
+| 明确不覆盖范围 | 不实现管理员解锁/删除、普通作者解锁、实际投票或跨来源通用投票管理器；不改变持久化 schema。 |
+
+## `REG-WRITE-071` Stardust Ref、状态查询与付款生命周期使用错误 owner
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-06`；关联 `TOPIC-02/03`、`ACCOUNT-01` |
+| 用户症状 | Composer 新建卡片固定写出 `ref_id=1`，原帖和回复均无法付款；真实 #10 收款链接漏识别；每日状态查询限额后 App 曾把原站静默处理的“每天最多进行500次星辰记录查询”直接显示在卡片并附加重试控件。即使 send 明确成功，刷新失败也曾被降级为 unknown；非一次性卡片付过一次后被错误关闭。 |
+| 触发条件 | Composer 把 Ref 默认值硬编码为 `1`，而原站只在 Builder 本地按 `100 + Math.floor(100000000 * Math.random())` 生成；卡片读取只看 anchor 文本；UI/controller 又把可选 status GET 同时当作入口门禁、付款 preflight、成功判据和用户可见错误。 |
+| 根因 seam | Ref 读取兼容与写入合法性没有分层，marker canonical 来源遗漏，状态展示与非幂等 send 共同拥有付款生命周期。正确模型是：Parser 可读旧卡，serializer/send builder 独占 Ref 写边界，Topic controller 独占 `prepare → confirm → send`；status 成功只补充统计，失败只进入诊断且不拥有卡片 UI。 |
+| 必须保持的行为 | 新卡每次打开 Builder 按原站公式生成可编辑 Ref；编辑已有卡保留原 Ref。Reader 继续显示旧正整数 Ref，但明确标记 `<100` 无效；发布、修改和付款统一要求安全整数且 `>=100`，非法时零写请求。status 只接受 `{success,records,exist_more}`，数据层在 `success:false` 时保留服务端 `message`；卡片加载、限额或失败时不显示 loading、错误或重试控件，也不隐藏静态卡、头像、收款信息或合法付款入口，成功时才展示统计。非一次性 `paid=true` 仍可再次付款；一次性已关闭才阻断。付款唯一流程为本地 Ref 校验 → 固定 NodeSeek origin 的 prepare → 真实收款人确认 → 单次 `{member_id,diff,ref_id,onetime}` send，零 status preflight。明确 send 成功即成功，随后状态刷新只更新展示且失败不得改为 unknown；send 结果不明不得用旧 `paid` 猜成功、不得重发，并在当前卡片生命周期阻断再次点击。 |
+| 精确失败 oracle | `src/domain/forum/structuredComposer.test.ts` 固定原站 Ref 公式、旧 Ref 可读与 `<100` serializer 拒绝；`src/ui/composer/editorRuntime.test.ts` 固定新 Ref 可编辑、已有卡保留及旧 Ref 发布校验；`src/sources/nodeseek/stardust.test.ts` 固定真实 records 和限额 message；`src/sources/nodeseek/actionRequest.test.ts` 固定纯 origin、`onetime` 与 `<100` send 拒绝；`src/sources/nodeseek/actionClient.test.ts` 固定服务端 message 优先；`tests/ui/topic/topic-actions-controller.test.tsx` 固定非法 Ref 零请求、取消零 send、零 status preflight、明确成功与 unknown 单次 send；`tests/ui/topic/topic-components.test.tsx` 固定限额/loading UI 静默且可付款、repeatable 已付仍可付、一次性/旧 Ref/unknown 阻断及刷新失败不推翻成功。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：unit 固定真实 JSON/wire，RNTL 固定确认与展示，动态余额与写入结果只由主 AVD 登录态 Live 判定。 |
+| Replay 或真实验收路径 | 主 AVD 覆盖安装并确认 `firstInstallTime` 不变；#10 必须从真实 `data-href` 显示头像和卡片，限额响应不进入 UI 且付款入口可用，进入 prepare 后取消并确认零 send；#14 的旧 Ref `1` 保持可见但禁付，再用 Composer 合法 Ref 替换。只对用户指定 `member_id=37571/ref_id=67181806/diff=2/onetime=true` 在收款人确认无误时执行一次 send；任何 unknown 立即停止且绝不重试，records 仍受限则该统计轴记 `BLOCKED_BY_ENV`。 |
+| 负向验证方式 | 恢复默认 Ref `1`、把 `7/99` 当合法付款 Ref、让 status 成为付款门禁/preflight/成功判据或把可选失败展示成卡片错误、将 repeatable `paid` 当关闭、根据旧 paid 猜本次成功、自动重发 send、引入支付状态机或缓存层时，编号测试必须失败。 |
+| 明确不覆盖范围 | 不建立支付状态机、通用支付框架、用户资料加载链、余额页或退款；不执行未获授权的付款、投票或图片上传。 |
+
+## `REG-WRITE-072` 新回复成功后丢失定位且完整目标窗被误报为部分失败
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01`；关联 `TOPIC-03`、`NAV-03` |
+| 用户症状 | 新回复已由原站确认并读回，但 Topic 停在目标页第一条而不是新楼层，顶部同时误报“部分评论未能读取，已显示 N 条”。 |
+| 触发条件 | 写后刷新已从权威 newest 窗口得到新回复实体，却在应用窗口后丢弃该定位目标；NodeSeek 的 exact target 分支又绕过既有有序页投影，把完整目标窗默认降为 `partial`。 |
+| 根因 seam | 权威回复窗口 owner 必须同时保留页面完整性和写后定位交接；Composer 只拥有草稿与提交，不能猜楼层或拥有列表滚动。 |
+| 必须保持的行为 | 原站确认新回复后读取权威尾窗并应用一次；只有当前 route、顺序和 refresh generation 仍匹配时，才用尾窗中的真实 `commentId/floor/pageHint` 发出一次 route-scoped 单调定位命令。完整 exact target 窗口保持 `complete` 且不显示部分失败，真实丢行/畸形行仍保持 `partial`。旧请求不得应用窗口或定位，不猜 `replyCount + 1`，不重发评论。 |
+| 精确失败 oracle | `tests/integration/source-read-contracts/nodeseek.test.ts` 固定完整 NodeSeek exact target 尾窗为 `complete` 且既有畸形目标窗仍为 `partial`；`tests/ui/topic/topic-session-controller.test.tsx` 固定新回复窗口应用后只交接一次真实目标，顺序切换后的旧请求零交接；`tests/ui/app/content-source-route-gates.test.tsx` 固定该目标复用既有递增 route command。修复前三条分别得到 `partial`、零回调和零新命令。 |
+| 最低可靠自动测试层 | `UNIT_PASS + UI_PASS + LIVE_PASS`：adapter 固定窗口语义，controller/route 固定生命周期与定位命令，主登录态 App 验证真实新回复的可见落点。 |
+| Replay 或真实验收路径 | 主 AVD 保留数据覆盖安装并确认 `firstInstallTime` 不变；在用户指定 NodeSeek 沙盒帖只发送一条普通中文回复，确认只创建一个新楼层、提交后自动落到该真实楼层且顶部无部分失败误报。记录不可删除的楼层并保留模拟器。 |
+| 负向验证方式 | 隐藏所有 partial 提示、按数组末尾滚动、用回复总数猜楼层、等待 Composer 关闭时机、重复刷新/重发，或另建定位状态机时，编号测试必须失败。 |
+| 明确不覆盖范围 | 不改变真实 partial 的提示与恢复入口，不重做 Composer、FlashList、分页模型或其他来源协议；不授权 LinuxDo 评论/回复。 |
 
 ## 待确认观察
 

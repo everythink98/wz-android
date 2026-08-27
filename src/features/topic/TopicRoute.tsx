@@ -125,6 +125,16 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
       navigation.push('Topic', { topic: nextTopic, targetReply }),
     [navigation]
   );
+  const requestReplyLocation = useCallback(
+    (targetReply: ReplyLocationTarget) => {
+      topicView.changeCommentQuery('');
+      topicView.changeReplyFilter('all');
+      targetReplyRequestIdRef.current =
+        Math.max(targetReplyRequestIdRef.current, route.params.targetReplyRequestId ?? 0) + 1;
+      navigation.setParams({ targetReply, targetReplyRequestId: targetReplyRequestIdRef.current });
+    },
+    [navigation, route.params.targetReplyRequestId, topicView]
+  );
   const topicController = useTopicController({
     active,
     commitReaderData: runtime.reader.commit,
@@ -133,6 +143,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     onRetryIdentityStatus: runtime.account.reconcileAccountStatus,
     onNodeSeekTopicVerificationRequired: runtime.account.requestNodeSeekVerification,
     onOpenTopic: openTopicRoute,
+    onReplyLocationResolved: requestReplyLocation,
     readerData: runtime.reader.data,
     readerDataRef: runtime.reader.dataRef,
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
@@ -161,16 +172,12 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
         return;
       }
       if (nextTopic.source === topic.source && nextTopic.id === topic.id) {
-        topicView.changeCommentQuery('');
-        topicView.changeReplyFilter('all');
-        targetReplyRequestIdRef.current =
-          Math.max(targetReplyRequestIdRef.current, route.params.targetReplyRequestId ?? 0) + 1;
-        navigation.setParams({ targetReply, targetReplyRequestId: targetReplyRequestIdRef.current });
+        requestReplyLocation(targetReply);
         return;
       }
       openTopicRoute(nextTopic, targetReply);
     },
-    [navigation, openTopic, openTopicRoute, route.params.targetReplyRequestId, topic.id, topic.source, topicView]
+    [openTopic, openTopicRoute, requestReplyLocation, topic.id, topic.source]
   );
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
   const mediaSessionIdentity = useForumMediaSessionIdentity(topic.source);

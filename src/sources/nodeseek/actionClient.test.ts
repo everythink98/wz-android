@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchNodeSeekVoteInfo, runNodeSeekAction } from './actionClient';
-import { buildNodeSeekAttendanceRequest, buildNodeSeekReplyRequest } from './actionRequest';
+import { fetchNodeSeekVoteInfo, nodeSeekCreatedPollId, runNodeSeekAction } from './actionClient';
+import {
+  buildNodeSeekAttendanceRequest,
+  buildNodeSeekReplyRequest,
+  buildNodeSeekStardustSendRequest
+} from './actionRequest';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 
 function jsonResponse(body: unknown, status = 200) {
@@ -31,6 +35,8 @@ describe('runNodeSeekAction', () => {
       jsonResponse({
         vote: {
           id: 2443,
+          uid: 54874,
+          locked: false,
           voted: true,
           items: [
             { vote_item_id: 71, text: '选项 A', count: 2, voted: false },
@@ -48,6 +54,8 @@ describe('runNodeSeekAction', () => {
 
     expect(poll).toMatchObject({
       id: '2443',
+      ownerId: '54874',
+      closed: false,
       voted: true,
       options: [
         { id: '71', count: 2, selected: false },
@@ -72,6 +80,23 @@ describe('runNodeSeekAction', () => {
       owner: 'write',
       priority: 'write'
     });
+  });
+
+  it('[REG-WRITE-070] does not derive poll management rights from a malformed uid', async () => {
+    const poll = await fetchNodeSeekVoteInfo({
+      pollId: '2443',
+      fetcher: vi.fn(async () =>
+        jsonResponse({
+          vote: {
+            id: 2443,
+            uid: 'member-54874',
+            items: [{ vote_item_id: 71, text: '选项 A' }]
+          }
+        })
+      )
+    });
+
+    expect(poll).not.toHaveProperty('ownerId');
   });
 
   it('sends NodeSeek write requests with browser-like action headers', async () => {
@@ -182,6 +207,18 @@ describe('runNodeSeekAction', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('[REG-WRITE-071] preserves a Stardust server message and otherwise uses the send fallback', async () => {
+    const request = buildNodeSeekStardustSendRequest({
+      receive: { receiverMemberId: '42', amount: 2, refId: 100, description: 'Pay', oneTime: true }
+    });
+    await expect(
+      runNodeSeekAction({ request, fetcher: vi.fn(async () => jsonResponse({ message: '余额不足' }, 400)) })
+    ).rejects.toThrow('余额不足');
+    await expect(runNodeSeekAction({ request, fetcher: vi.fn(async () => jsonResponse({}, 400)) })).rejects.toThrow(
+      '转账失败'
+    );
+  });
+
   it('marks rejected login cookies and times out stuck write requests', async () => {
     const rejectedFetcher = vi.fn(async () => jsonResponse({}, 401));
     await expect(
@@ -238,7 +275,7 @@ describe('runNodeSeekAction', () => {
         request: buildNodeSeekAttendanceRequest({ random: false }),
         fetcher: failedSuccessFetcher
       })
-    ).rejects.toThrow('今日已签到');
+    ).rejects.toMatchObject({ message: '今日已签到', serverRejected: true });
 
     const errorFetcher = vi.fn(async () => jsonResponse({ error: 'csrf invalid' }));
     await expect(
@@ -255,6 +292,29 @@ describe('runNodeSeekAction', () => {
         fetcher: messageFetcher
       })
     ).rejects.toThrow('high risk action');
+  });
+
+  it('[REG-WRITE-031] only marks confirmed client or application rejections as retry-safe', async () => {
+    const clientFailure = vi.fn(async () => jsonResponse({ message: 'invalid poll' }, 422));
+    const serverFailure = vi.fn(async () => jsonResponse({ message: 'upstream failed' }, 503));
+
+    await expect(
+      runNodeSeekAction({
+        request: buildNodeSeekAttendanceRequest({ random: false }),
+        fetcher: clientFailure
+      })
+    ).rejects.toMatchObject({ status: 422, serverRejected: true });
+    await expect(
+      runNodeSeekAction({
+        request: buildNodeSeekAttendanceRequest({ random: false }),
+        fetcher: serverFailure
+      })
+    ).rejects.toMatchObject({ status: 503, serverRejected: false });
+  });
+
+  it('extracts a created poll id from supported NodeSeek response envelopes', () => {
+    expect(nodeSeekCreatedPollId({ data: { id: 3023 } })).toBe('3023');
+    expect(() => nodeSeekCreatedPollId({ success: true })).toThrow('结果未知');
   });
 
   it('rejects HTTP 200 non-JSON action responses', async () => {

@@ -9,6 +9,30 @@ describe('NodeSeek Markdown', () => {
     expect(html).toContain('<a href="https://example.com/path">');
   });
 
+  it('[REG-TOPIC-127] turns Composer GFM into one semantic header and complete body rows', () => {
+    const html = nodeSeekMarkdownToHtml('| E | E | Q |\n| --- | --- | --- |\n| F | G | R |\n| T | G | U |');
+
+    expect(html).toBe(
+      '<table>\n<thead>\n<tr>\n<th>E</th>\n<th>E</th>\n<th>Q</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>F</td>\n<td>G</td>\n<td>R</td>\n</tr>\n<tr>\n<td>T</td>\n<td>G</td>\n<td>U</td>\n</tr>\n</tbody>\n</table>\n'
+    );
+  });
+
+  it('[REG-TOPIC-128][REG-WRITE-068] keeps unsupported underline literal while rendering GFM tasks and alignment', () => {
+    const html = nodeSeekMarkdownToHtml(
+      '~~删除线~~\n\n++下划线++\n\n- [ ] 未完成\n- [x] 已完成\n\n| 左 | 中 | 右 |\n| :-- | :-: | --: |\n| A | B | C |'
+    );
+
+    expect(html).toContain('<s>删除线</s>');
+    expect(html).toContain('++下划线++');
+    expect(html).not.toContain('<ins>');
+    expect(html).toContain('☐');
+    expect(html).toContain('☑');
+    expect(html).not.toContain('<input');
+    expect(html).toContain('style="text-align: left"');
+    expect(html).toContain('style="text-align: center"');
+    expect(html).toContain('style="text-align: right"');
+  });
+
   it('[REG-NOTIFY-057] renders known NodeSeek sticker shortcodes without rewriting code literals', () => {
     const html = nodeSeekMarkdownToHtml('**私信正文** :ac04: `:ac04:` :unknown:\n\n```text\n:ac04:\n```');
 

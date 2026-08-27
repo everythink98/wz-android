@@ -70,6 +70,46 @@ test('rejects network I/O globals in domain models', () => {
   assert.ok(analyzeArchitecture(srcDir).issues.some((issue) => issue.code === 'domain-io'));
 });
 
+test('rejects feature WebViews that can clear process-global browser state', () => {
+  const srcDir = architectureFixture({
+    'ui/safe-webview.tsx':
+      "import { WebView } from 'react-native-webview'; export const Safe = () => <><WebView /><WebView incognito={false} /></>;",
+    'ui/unsafe-webview.tsx':
+      "import { WebView as PrivateWebView } from 'react-native-webview'; const enabled = true; export const Unsafe = () => <><PrivateWebView incognito /><PrivateWebView incognito={enabled} /><PrivateWebView {...{ incognito: enabled }} /></>;"
+  });
+  const issues = analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'global-webview-state-owner');
+
+  assert.equal(issues.length, 3);
+  assert.ok(issues.every((issue) => issue.message.includes('ui/unsafe-webview.tsx')));
+});
+
+test('rejects process-global WebView cleanup calls in production TypeScript', () => {
+  const srcDir = architectureFixture({
+    'ui/safe-cleanup.ts': 'export const keepLocal = (view: any) => view.clearCache(false);',
+    'ui/unsafe-cleanup.ts':
+      'export const clearShared = (manager: any, view: any, enabled: boolean) => { manager.removeAllCookies(); manager.removeSessionCookies(); manager.deleteAllData(); view.clearCache(enabled); };'
+  });
+  const issues = analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'global-webview-state-owner');
+
+  assert.equal(issues.length, 4);
+  assert.ok(issues.every((issue) => issue.message.includes('ui/unsafe-cleanup.ts')));
+});
+
+test('rejects process-global WebView cleanup in tracked Android plugins', () => {
+  const srcDir = architectureFixture(
+    {},
+    {
+      'plugins/safe.js': 'cookieManager.setCookie(url, expired);',
+      'plugins/android/unsafe.js':
+        'cookieManager.removeAllCookies(null); cookieManager.removeSessionCookies(null); webStorage.deleteAllData(); webView.clearCache(true);'
+    }
+  );
+  const issues = analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'global-webview-state-owner');
+
+  assert.equal(issues.length, 4);
+  assert.ok(issues.every((issue) => issue.message.includes('plugins/android/unsafe.js')));
+});
+
 test('rejects invalid source roots and barrel files', () => {
   const srcDir = architectureFixture({
     'domain/index.ts': 'export const model = true;',

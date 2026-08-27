@@ -1,10 +1,36 @@
 import { describe, expect, it } from '@jest/globals';
 import React from 'react';
 import RenderHTML from 'react-native-render-html';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
+import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
+import { createTheme } from '@/ui/theme/tokens';
 import { render } from '../render';
 
 describe('topic rich-text selection', () => {
+  it('[REG-TOPIC-130] renders NodeSeek native s markup with a visible strike', async () => {
+    const settings = createEmptyReaderData().settings;
+    const styles = buildHtmlRenderingStyles({ settings, theme: createTheme(settings) });
+    const row = compileForumContent({
+      html: '<p><s>**<em>555555</em></s></p>',
+      role: 'reply',
+      source: 'nodeseek'
+    }).rows[0];
+    if (!row || !('html' in row)) throw new Error('Expected one rich-text row.');
+    const screen = await render(
+      <RenderHTML
+        baseStyle={styles.htmlBaseStyle}
+        classesStyles={styles.htmlClassesStyles}
+        contentWidth={320}
+        ignoredStyles={styles.htmlIgnoredStyles}
+        source={{ html: row.html }}
+        tagsStyles={styles.htmlTagsStyles}
+      />
+    );
+
+    expect(screen.getByText('555555')).toHaveStyle({ textDecorationLine: 'line-through' });
+  });
+
   it.failing('[REG-TOPIC-100] keeps an unsplit post selectable across text and table rows', async () => {
     const { rows } = compileForumContent({
       html:

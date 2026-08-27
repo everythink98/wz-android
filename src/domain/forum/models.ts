@@ -232,6 +232,7 @@ export interface TopicPollOption {
 
 export interface TopicPoll {
   id?: string;
+  ownerId?: string;
   name?: string;
   postId?: string;
   type?: string;

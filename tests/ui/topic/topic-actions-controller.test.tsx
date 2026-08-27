@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import * as DocumentPicker from 'expo-document-picker';
 
 jest.mock('@/sources/nodeseek/actionClient', () => ({
+  ...jest.requireActual<typeof import('@/sources/nodeseek/actionClient')>('@/sources/nodeseek/actionClient'),
   fetchNodeSeekVoteInfo: jest.fn(),
   runNodeSeekAction: jest.fn()
 }));
@@ -59,7 +61,13 @@ import {
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import {
+  nodeSeekPendingPollToken,
+  normalizePendingNodeSeekPoll,
+  type ComposerSnapshot
+} from '@/domain/forum/structuredComposer';
 import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
+import { readNodeSeekPollJournalEntry, saveNodeSeekPollJournalEntry } from '@/platform/persistence/nodeSeekPollJournal';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 
 const mockRunNodeSeekAction = jest.mocked(runNodeSeekAction);
@@ -80,6 +88,8 @@ const poll: TopicPoll = {
     { id: '2', label: 'Two', count: 3 }
   ]
 };
+
+const ownedNodeSeekPoll: TopicPoll = { ...poll, ownerId: '7' };
 
 const detail: TopicDetail = {
   source: 'nodeseek',
@@ -115,6 +125,63 @@ function loggedInStates(source: ActionSource = 'nodeseek') {
   return createSiteSessionStates({
     [source]: { ...states[source], status: 'logged-in' as const }
   } as Partial<SiteSessionStates>);
+}
+
+function nodeSeekLoggedInViewModels() {
+  const states = loggedInStates('nodeseek');
+  states.nodeseek = {
+    ...states.nodeseek,
+    currentUser: {
+      source: 'nodeseek',
+      id: '7',
+      username: 'payer',
+      url: 'https://www.nodeseek.com/space/7',
+      topics: []
+    }
+  };
+  return createSiteSessionViewModels(states);
+}
+
+function stardustStatusResponse(records: Record<string, unknown>[] = []) {
+  return new Response(JSON.stringify({ success: true, records, exist_more: false }));
+}
+
+function snapshotWithNodeSeekPoll(localId: string): ComposerSnapshot {
+  const poll = normalizePendingNodeSeekPoll({
+    localId,
+    title: '测试投票',
+    multiple: false,
+    isPublic: true,
+    options: ['A', 'B']
+  });
+  return {
+    revision: 1,
+    markdown: `正文前\n\n${nodeSeekPendingPollToken(localId)}\n\n正文后`,
+    mode: 'rich',
+    isEmpty: false,
+    validationIssues: [],
+    pendingNodeSeekPolls: [poll]
+  };
+}
+
+function snapshotWithNodeSeekPolls(markdownLocalIds: string[], sidecarLocalIds = markdownLocalIds): ComposerSnapshot {
+  const polls = sidecarLocalIds.map((localId) =>
+    normalizePendingNodeSeekPoll({
+      localId,
+      title: `测试投票 ${localId}`,
+      multiple: false,
+      isPublic: true,
+      options: ['A', 'B']
+    })
+  );
+  return {
+    revision: 1,
+    markdown: markdownLocalIds.map((localId) => nodeSeekPendingPollToken(localId)).join('\n\n'),
+    mode: 'rich',
+    isEmpty: false,
+    validationIssues: [],
+    pendingNodeSeekPolls: polls
+  };
 }
 
 function detailFor(source: ActionSource, patch: Partial<TopicDetail> = {}): TopicDetail {
@@ -237,7 +304,8 @@ function seedTopicCache(
 }
 
 describe('topic action query mutations', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
     appQueryClient.clear();
     jest.clearAllMocks();
     mockRunNodeSeekAction.mockReset();
@@ -279,6 +347,82 @@ describe('topic action query mutations', () => {
       allowed: false,
       reason: 'login-required'
     });
+  });
+
+  it('[REG-WRITE-065] loads LinuxDo poll capabilities inside one writable ticket', async () => {
+    const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(
+        JSON.stringify(
+          url.endsWith('/site.json')
+            ? {
+                groups: [
+                  { id: 10, name: 'trust_level_1', display_name: '信任级别 1' },
+                  { id: 0, name: 'everyone' }
+                ]
+              }
+            : { current_user: { staff: false } }
+        )
+      );
+    });
+    const ensureWritableSession = jest.fn(async () => ({
+      source: 'linuxdo' as const,
+      identityKey: 'linuxdo:account-a',
+      sessionEpoch: 3
+    }));
+    const isWritableSessionTicketCurrent = jest.fn(() => true);
+    const hook = await renderActions({
+      ensureWritableSession,
+      fetcher,
+      isWritableSessionTicketCurrent,
+      sessionEpochs: { ...initialForumSessionEpochs, linuxdo: 3 },
+      topicDetail: detailFor('linuxdo')
+    });
+
+    let capabilities;
+    await act(async () => {
+      capabilities = await hook.result.current.actions.loadLinuxDoPollCapabilities();
+    });
+
+    expect(capabilities).toEqual({
+      groups: [{ id: 10, name: 'trust_level_1', displayName: '信任级别 1' }],
+      canUseStaffResults: false
+    });
+    expect(ensureWritableSession).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(isWritableSessionTicketCurrent).toHaveBeenCalledTimes(6);
+  });
+
+  it('[REG-WRITE-065] stops LinuxDo template accounting when the writable ticket changes after CSRF', async () => {
+    let ticketCurrent = true;
+    const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/session/csrf')) ticketCurrent = false;
+      return new Response(JSON.stringify(url.endsWith('/session/csrf') ? { csrf: 'token' } : { usage_count: 1 }));
+    });
+    const hook = await renderActions({
+      ensureWritableSession: jest.fn(async () => ({
+        source: 'linuxdo' as const,
+        identityKey: 'linuxdo:account-a',
+        sessionEpoch: 3
+      })),
+      fetcher,
+      isWritableSessionTicketCurrent: jest.fn(() => ticketCurrent),
+      sessionEpochs: { ...initialForumSessionEpochs, linuxdo: 3 },
+      topicDetail: detailFor('linuxdo')
+    });
+    let failure: unknown;
+
+    await act(async () => {
+      try {
+        await hook.result.current.actions.useLinuxDoTemplate('7');
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual(['https://linux.do/session/csrf']);
   });
 
   it('[REG-WRITE-019] treats a completed NodeSeek target as the same decision-chain outcome', async () => {
@@ -1366,7 +1510,7 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.editReply(reply);
       hook.result.current.topicSession.commands.composer.changeContent('上传凭据准备期间失效的正文');
     });
-    let upload!: Promise<void>;
+    let upload!: Promise<unknown>;
 
     await act(async () => {
       upload = hook.result.current.actions.uploadReplyImage();
@@ -1453,7 +1597,7 @@ describe('topic action query mutations', () => {
     await act(async () => {
       await hook.result.current.actions.editReply(reply);
     });
-    let upload!: Promise<void>;
+    let upload!: Promise<unknown>;
     await act(async () => {
       upload = hook.result.current.actions.uploadReplyImage();
       await Promise.resolve();
@@ -2090,7 +2234,7 @@ describe('topic action query mutations', () => {
     await act(async () => {
       hook.result.current.topicSession.commands.composer.changeContent('existing draft');
     });
-    let pending!: Promise<void>;
+    let pending!: Promise<unknown>;
 
     await act(async () => {
       pending = hook.result.current.actions.uploadReplyImage();
@@ -2206,7 +2350,7 @@ describe('topic action query mutations', () => {
     const xiaDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(xiaDetail);
     const hook = await renderActions({ topicDetail: xiaDetail });
-    let pending!: Promise<void>;
+    let pending!: Promise<unknown>;
 
     await act(async () => {
       pending = hook.result.current.actions.uploadReplyImage();
@@ -2239,6 +2383,143 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
     expect(mockFetchNodeSeekVoteInfo).not.toHaveBeenCalled();
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.voted).not.toBe(true);
+  });
+
+  it('[REG-WRITE-070] grants NodeSeek poll management only to the matching owner before lock', async () => {
+    const hook = await renderActions({
+      siteSessionViewModels: nodeSeekLoggedInViewModels(),
+      topicDetail: detailFor('nodeseek', { polls: [ownedNodeSeekPoll] })
+    });
+
+    expect(hook.result.current.actions.decisionFor({ action: 'manage-poll', poll: ownedNodeSeekPoll })).toEqual({
+      allowed: true,
+      reason: 'allowed'
+    });
+    expect(
+      hook.result.current.actions.decisionFor({ action: 'manage-poll', poll: { ...ownedNodeSeekPoll, ownerId: '8' } })
+    ).toEqual({ allowed: false, reason: 'object-forbidden' });
+    expect(
+      hook.result.current.actions.decisionFor({ action: 'manage-poll', poll: { ...ownedNodeSeekPoll, closed: true } })
+    ).toEqual({ allowed: false, reason: 'already-complete' });
+  });
+
+  it('[REG-WRITE-070] sends no request when the poll owner cancels locking', async () => {
+    const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const { detailKey } = seedTopicCache(topic);
+    const hook = await renderActions({
+      siteSessionViewModels: nodeSeekLoggedInViewModels(),
+      topicDetail: topic
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.lockNodeSeekPoll(ownedNodeSeekPoll);
+    });
+    await act(async () => {
+      alert.mock.calls[0]?.[2]?.find((button) => button.style === 'cancel')?.onPress?.();
+    });
+
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+    expect(mockFetchNodeSeekVoteInfo).not.toHaveBeenCalled();
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).not.toBe(true);
+  });
+
+  it('[REG-WRITE-070] refuses an already locked poll before opening confirmation', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const hook = await renderActions({
+      siteSessionViewModels: nodeSeekLoggedInViewModels(),
+      topicDetail: detailFor('nodeseek', { polls: [{ ...ownedNodeSeekPoll, closed: true }] })
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.lockNodeSeekPoll({ ...ownedNodeSeekPoll, closed: true });
+    });
+
+    expect(alert).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+  });
+
+  it('[REG-WRITE-070] locks once, refreshes once, and projects the authoritative poll to topic and replies', async () => {
+    const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
+    const pollReply: Reply = { ...editableReply, polls: [ownedNodeSeekPoll] };
+    mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
+    mockFetchNodeSeekVoteInfo.mockResolvedValueOnce({ ...ownedNodeSeekPoll, closed: true });
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      const lock = buttons?.find((button) => button.text === '锁定');
+      lock?.onPress?.();
+      lock?.onPress?.();
+    });
+    const { detailKey, repliesKey } = seedTopicCache(topic, [pollReply]);
+    const hook = await renderActions({
+      siteSessionViewModels: nodeSeekLoggedInViewModels(),
+      topicDetail: topic,
+      topicReplies: [pollReply]
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.lockNodeSeekPoll(ownedNodeSeekPoll);
+    });
+    await waitFor(() => expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(1));
+
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(mockRunNodeSeekAction.mock.calls[0]?.[0].request).toMatchObject({
+      path: '/api/vote/lock/81',
+      body: JSON.stringify({ locked: true })
+    });
+    expect(mockRunNodeSeekAction.mock.invocationCallOrder[0]).toBeLessThan(
+      mockFetchNodeSeekVoteInfo.mock.invocationCallOrder[0] || 0
+    );
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).toBe(true);
+    expect(
+      appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey)?.pages[0]?.items[0]?.polls?.[0]?.closed
+    ).toBe(true);
+  });
+
+  it('[REG-WRITE-070] keeps a confirmed lock locally when only the result refresh fails', async () => {
+    const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
+    const notify = jest.fn();
+    mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
+    mockFetchNodeSeekVoteInfo.mockRejectedValueOnce(new Error('refresh failed'));
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.text === '锁定')?.onPress?.();
+    });
+    const { detailKey } = seedTopicCache(topic);
+    const hook = await renderActions({
+      notify,
+      siteSessionViewModels: nodeSeekLoggedInViewModels(),
+      topicDetail: topic
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.lockNodeSeekPoll(ownedNodeSeekPoll);
+    });
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('锁定成功但结果刷新失败，请手动刷新。'));
+
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(1);
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).toBe(true);
+  });
+
+  it('[REG-WRITE-070] reconciles an ambiguous lock with one GET and never resends the POST', async () => {
+    const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
+    mockRunNodeSeekAction.mockRejectedValueOnce(new Error('timeout'));
+    mockFetchNodeSeekVoteInfo.mockResolvedValueOnce({ ...ownedNodeSeekPoll, closed: true });
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.text === '锁定')?.onPress?.();
+    });
+    const { detailKey } = seedTopicCache(topic);
+    const hook = await renderActions({
+      siteSessionViewModels: nodeSeekLoggedInViewModels(),
+      topicDetail: topic
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.lockNodeSeekPoll(ownedNodeSeekPoll);
+    });
+    await waitFor(() => expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).toBe(true));
+
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(1);
   });
 
   it('[REG-WRITE-008] keeps NodeSeek voting at exactly one POST followed by one result GET', async () => {
@@ -2364,5 +2645,295 @@ describe('topic action query mutations', () => {
       voted: true,
       options: [{ id: '1', selected: true }]
     });
+  });
+
+  it('[REG-WRITE-032] prepares Stardust but sends nothing when the confirmation is canceled', async () => {
+    const fetcher = jest.fn(async () => stardustStatusResponse());
+    mockRunNodeSeekAction.mockResolvedValue({
+      success: true,
+      allowedOrigin: true,
+      receiver_name: '真实收款人'
+    });
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.style === 'cancel')?.onPress?.();
+    });
+    const hook = await renderActions({ fetcher, siteSessionViewModels: nodeSeekLoggedInViewModels() });
+    let result: Awaited<ReturnType<typeof hook.result.current.actions.payNodeSeekStardust>> | undefined;
+
+    await act(async () => {
+      result = await hook.result.current.actions.payNodeSeekStardust({
+        receiverMemberId: '42',
+        amount: 3,
+        refId: 100,
+        description: 'test',
+        oneTime: false
+      });
+    });
+
+    expect(result).toBe('canceled');
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction.mock.calls[0]?.[0].request.path).toBe('/api/stardust/payment-prepare');
+    expect(JSON.parse(mockRunNodeSeekAction.mock.calls[0]?.[0].request.body || '{}')).toEqual({
+      receiver_id: 42,
+      origin: 'https://www.nodeseek.com'
+    });
+    expect(alert.mock.calls[0]?.[1]).toContain('真实收款人');
+  });
+
+  it.each([
+    [
+      'unauthorized origin',
+      { success: true, allowedOrigin: false, receiver_name: '真实收款人' },
+      '调用支付的网站未被授权'
+    ],
+    ['missing receiver', { success: true, allowedOrigin: true, receiver_name: '' }, '获取支付基础信息失败'],
+    ['malformed receiver', { success: true, allowedOrigin: true, receiver_name: 42 }, '获取支付基础信息失败']
+  ])('[REG-WRITE-071] rejects %s before Stardust confirmation or send', async (_case, prepareResult, message) => {
+    const fetcher = jest.fn(async () => stardustStatusResponse());
+    const notify = jest.fn();
+    mockRunNodeSeekAction.mockResolvedValueOnce(prepareResult);
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.style === 'cancel')?.onPress?.();
+    });
+    const hook = await renderActions({ fetcher, notify, siteSessionViewModels: nodeSeekLoggedInViewModels() });
+    let result: Awaited<ReturnType<typeof hook.result.current.actions.payNodeSeekStardust>> | undefined;
+
+    await act(async () => {
+      result = await hook.result.current.actions.payNodeSeekStardust({
+        receiverMemberId: '42',
+        amount: 3,
+        refId: 100,
+        description: 'test',
+        oneTime: false
+      });
+    });
+
+    expect(result).toBe('failed');
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(message);
+  });
+
+  it('[REG-WRITE-029] reuses one materialized NodeSeek poll when the reply is manually retried', async () => {
+    const snapshot = snapshotWithNodeSeekPoll('poll_retry_0001');
+    mockRunNodeSeekAction
+      .mockResolvedValueOnce({ id: 3023 })
+      .mockRejectedValueOnce(new Error('reply failed'))
+      .mockResolvedValueOnce({ success: true });
+    const hook = await renderActions();
+
+    await act(async () => {
+      await hook.result.current.actions.submitReply(snapshot);
+      await hook.result.current.actions.submitReply(snapshot);
+    });
+
+    const requests = mockRunNodeSeekAction.mock.calls.map(([call]) => call.request);
+    expect(requests.map((request) => request.path)).toEqual([
+      '/api/vote/info',
+      '/api/content/new-comment',
+      '/api/content/new-comment'
+    ]);
+    expect(JSON.parse(requests[2]!.body || '{}').content).toContain('nsapp://vote?id=3023');
+    expect(JSON.parse(requests[2]!.body || '{}').content).not.toContain('wz:nodeseek-poll');
+  });
+
+  it('[REG-WRITE-030] blocks a second poll-create attempt after an ambiguous result', async () => {
+    const snapshot = snapshotWithNodeSeekPoll('poll_unknown_01');
+    const notify = jest.fn();
+    mockRunNodeSeekAction.mockRejectedValueOnce(new Error('timeout'));
+    const firstHook = await renderActions({ notify });
+
+    await act(async () => {
+      await firstHook.result.current.actions.submitReply(snapshot);
+    });
+    const secondHook = await renderActions({ notify });
+    await act(async () => {
+      await secondHook.result.current.actions.submitReply(snapshot);
+    });
+
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('结果未知'));
+  });
+
+  it('[REG-WRITE-030] never downgrades a known remote poll id to an unknown result', async () => {
+    const identityKey = 'nodeseek:test-user';
+    const known = { localId: 'poll_stale_0001', fingerprint: '0123456789abcdef', remoteId: '3025' };
+
+    await saveNodeSeekPollJournalEntry(identityKey, known);
+    await saveNodeSeekPollJournalEntry(identityKey, { ...known, remoteId: null });
+
+    await expect(readNodeSeekPollJournalEntry(identityKey, known.localId)).resolves.toEqual(known);
+  });
+
+  it.each([
+    ['missing sidecar', snapshotWithNodeSeekPolls(['poll_match_0001', 'poll_missing_01'], ['poll_match_0001'])],
+    ['extra sidecar', snapshotWithNodeSeekPolls(['poll_match_0001'], ['poll_match_0001', 'poll_extra_0001'])],
+    ['duplicate token', snapshotWithNodeSeekPolls(['poll_match_0001', 'poll_match_0001'])]
+  ])('[REG-WRITE-029] rejects %s before creating a remote poll', async (_name, snapshot) => {
+    const notify = jest.fn();
+    const hook = await renderActions({ notify });
+
+    await act(async () => {
+      await hook.result.current.actions.submitReply(snapshot);
+    });
+
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('投票'));
+  });
+
+  it('[REG-WRITE-029] allows distinct local polls with identical content', async () => {
+    const polls = ['poll_same_0001', 'poll_same_0002'].map((localId) =>
+      normalizePendingNodeSeekPoll({
+        localId,
+        title: '相同投票',
+        multiple: false,
+        isPublic: true,
+        options: ['A', 'B']
+      })
+    );
+    const snapshot: ComposerSnapshot = {
+      revision: 1,
+      markdown: polls.map((poll) => nodeSeekPendingPollToken(poll.localId)).join('\n\n'),
+      mode: 'rich',
+      isEmpty: false,
+      validationIssues: [],
+      pendingNodeSeekPolls: polls
+    };
+    mockRunNodeSeekAction
+      .mockResolvedValueOnce({ id: 3026 })
+      .mockResolvedValueOnce({ id: 3027 })
+      .mockResolvedValueOnce({ success: true });
+    const hook = await renderActions();
+
+    await act(async () => {
+      await hook.result.current.actions.submitReply(snapshot);
+    });
+
+    expect(mockRunNodeSeekAction.mock.calls.map(([call]) => call.request.path)).toEqual([
+      '/api/vote/info',
+      '/api/vote/info',
+      '/api/content/new-comment'
+    ]);
+  });
+
+  it('[REG-WRITE-031] allows manual poll-create retry after an explicit server rejection', async () => {
+    const snapshot = snapshotWithNodeSeekPoll('poll_reject_0001');
+    const rejected = Object.assign(new Error('invalid poll'), { serverRejected: true });
+    mockRunNodeSeekAction
+      .mockRejectedValueOnce(rejected)
+      .mockResolvedValueOnce({ id: 3024 })
+      .mockResolvedValueOnce({ success: true });
+    const hook = await renderActions();
+
+    await act(async () => {
+      await hook.result.current.actions.submitReply(snapshot);
+      await hook.result.current.actions.submitReply(snapshot);
+    });
+
+    expect(mockRunNodeSeekAction.mock.calls.map(([call]) => call.request.path)).toEqual([
+      '/api/vote/info',
+      '/api/vote/info',
+      '/api/content/new-comment'
+    ]);
+  });
+
+  it('[REG-WRITE-033][REG-WRITE-071] sends once without status preflight and trusts an explicit success', async () => {
+    const fetcher = jest.fn(async () => {
+      throw new Error('每天最多进行500次星辰记录查询');
+    });
+    mockRunNodeSeekAction
+      .mockResolvedValueOnce({
+        success: true,
+        allowedOrigin: true,
+        receiver_name: '真实收款人'
+      })
+      .mockResolvedValueOnce({ success: true });
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.text === '确认付款')?.onPress?.();
+    });
+    const hook = await renderActions({ fetcher, siteSessionViewModels: nodeSeekLoggedInViewModels() });
+    let result: Awaited<ReturnType<typeof hook.result.current.actions.payNodeSeekStardust>> | undefined;
+
+    await act(async () => {
+      result = await hook.result.current.actions.payNodeSeekStardust({
+        receiverMemberId: '42',
+        amount: 3,
+        refId: 100,
+        description: 'test',
+        oneTime: false
+      });
+    });
+
+    expect(result).toBe('submitted');
+    expect(mockRunNodeSeekAction.mock.calls.map(([call]) => call.request.path)).toEqual([
+      '/api/stardust/payment-prepare',
+      '/api/stardust/send'
+    ]);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['transport failure', new Error('timeout')],
+    ['malformed success', {}]
+  ])('[REG-WRITE-034][REG-WRITE-071] reports %s as ambiguous without retrying it', async (_case, sendResult) => {
+    const notify = jest.fn();
+    const fetcher = jest.fn(async () => stardustStatusResponse());
+    mockRunNodeSeekAction.mockResolvedValueOnce({
+      success: true,
+      allowedOrigin: true,
+      receiver_name: '真实收款人'
+    });
+    if (sendResult instanceof Error) mockRunNodeSeekAction.mockRejectedValueOnce(sendResult);
+    else mockRunNodeSeekAction.mockResolvedValueOnce(sendResult);
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.text === '确认付款')?.onPress?.();
+    });
+    const hook = await renderActions({
+      fetcher,
+      notify,
+      siteSessionViewModels: nodeSeekLoggedInViewModels()
+    });
+    let result: Awaited<ReturnType<typeof hook.result.current.actions.payNodeSeekStardust>> | undefined;
+
+    await act(async () => {
+      result = await hook.result.current.actions.payNodeSeekStardust({
+        receiverMemberId: '42',
+        amount: 3,
+        refId: 100,
+        description: 'test',
+        oneTime: false
+      });
+    });
+
+    expect(result).toBe('unknown');
+    expect(
+      mockRunNodeSeekAction.mock.calls.filter(([call]) => call.request.path === '/api/stardust/send')
+    ).toHaveLength(1);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('结果未知'));
+  });
+
+  it('[REG-WRITE-071] rejects a legacy Stardust Ref before every remote request', async () => {
+    const fetcher = jest.fn(async () => stardustStatusResponse());
+    const notify = jest.fn();
+    const hook = await renderActions({ fetcher, notify, siteSessionViewModels: nodeSeekLoggedInViewModels() });
+    let result: Awaited<ReturnType<typeof hook.result.current.actions.payNodeSeekStardust>> | undefined;
+
+    await act(async () => {
+      result = await hook.result.current.actions.payNodeSeekStardust({
+        receiverMemberId: '42',
+        amount: 3,
+        refId: 1,
+        description: 'legacy',
+        oneTime: false
+      });
+    });
+
+    expect(result).toBe('failed');
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('Ref ID 必须为大于等于 100 的安全整数');
   });
 });

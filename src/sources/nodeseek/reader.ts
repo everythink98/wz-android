@@ -61,10 +61,10 @@ import {
   mergeNodeSeekPolls,
   mergeRenderedNodeSeekReply,
   mergeRenderedNodeSeekTopic,
-  normalizeRenderedNodeSeekPollRoot,
   normalizePostData,
   normalizeReplies,
-  parseRenderedNodeSeekTopicHtml
+  parseRenderedNodeSeekTopicHtml,
+  prepareNodeSeekForumContent
 } from './topicParser';
 import {
   isNodeSeekLoggedOutRoot,
@@ -74,16 +74,12 @@ import {
   parseNodeSeekUserProfile,
   parseNodeSeekUserReference
 } from './userParser';
-import {
-  NODESEEK_POLL_PLACEHOLDER_TAG,
-  NODESEEK_VOTE_API_HEADERS,
-  normalizeNodeSeekVoteInfo,
-  replaceLoadedNodeSeekVoteMarkers
-} from './polls';
+import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './polls';
 import {
   annotateSourceDiagnosticSummary,
   copySourceDiagnosticSummary,
-  mergeSourceDiagnosticSummaries
+  mergeSourceDiagnosticSummaries,
+  sourceDiagnosticSummary
 } from '@/sources/diagnostics';
 import {
   acceptForumReadResponse,
@@ -91,8 +87,6 @@ import {
   rejectForumReadResponse
 } from '@/sources/forumSourceReadAttempt';
 import { orientReplyWindow } from '@/sources/replyWindows';
-import { sanitizeContentHtmlWithRoot } from '@/domain/forum/contentSanitizer';
-import { prepareParsedForumContent } from '@/domain/forum/topicContentSplit';
 
 const BASE_URL = NODESEEK_BASE_URL;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
@@ -124,19 +118,19 @@ function nodeSeekOptionsWithBrowserIntent<T extends NodeSeekOptions>(
 }
 
 async function readNodeSeekPollsFromVoteLinks(
-  values: unknown[],
+  ids: readonly string[],
   options: NodeSeekOptions,
-  knownPolls: TopicPoll[] = []
+  knownPolls: readonly TopicPoll[] = []
 ) {
   const knownIds = new Set(knownPolls.map((poll) => poll.id).filter(Boolean));
-  const ids = extractNodeSeekVoteIds(...values).filter((id) => !knownIds.has(id));
-  if (!ids.length) {
+  const missingIds = [...new Set(ids)].filter((id) => !knownIds.has(id));
+  if (!missingIds.length) {
     return { partialErrorCount: 0, polls: undefined };
   }
   let partialErrorCount = 0;
   const polls = (
     await Promise.all(
-      ids.map(async (id) => {
+      missingIds.map(async (id) => {
         try {
           const poll = normalizeNodeSeekVoteInfo(
             await fetchNodeSeekJson(`/api/vote/info/${encodeURIComponent(id)}`, options, NODESEEK_VOTE_API_HEADERS),
@@ -157,6 +151,40 @@ async function readNodeSeekPollsFromVoteLinks(
     partialErrorCount,
     polls: polls.length ? polls : undefined
   };
+}
+
+async function readNodeSeekPollsForOwners(
+  owners: readonly { contentHtml: string; polls?: readonly TopicPoll[] }[],
+  options: NodeSeekOptions
+) {
+  const knownPolls = mergeNodeSeekPolls(...owners.map((owner) => owner.polls));
+  const pollIdsByOwner = owners.map((owner) => extractNodeSeekVoteIds(owner.contentHtml));
+  const loaded = await readNodeSeekPollsFromVoteLinks(pollIdsByOwner.flat(), options, knownPolls);
+  const pollsById = new Map(
+    (mergeNodeSeekPolls(knownPolls, loaded.polls) || []).flatMap((poll) => (poll.id ? [[poll.id, poll] as const] : []))
+  );
+  return {
+    partialErrorCount: loaded.partialErrorCount,
+    pollsByOwner: owners.map((owner, index) => {
+      const linked = (pollIdsByOwner[index] || []).flatMap((id) => {
+        const poll = pollsById.get(id);
+        return poll ? [poll] : [];
+      });
+      return mergeNodeSeekPolls(owner.polls, linked);
+    })
+  };
+}
+
+function prepareNodeSeekRepliesWithPolls(
+  replies: readonly RepliesResponse['items'][number][],
+  pollsByOwner: readonly (TopicPoll[] | undefined)[]
+) {
+  return replies.map((reply, index) => {
+    const polls = pollsByOwner[index];
+    if (!polls?.length) return reply;
+    const preparedContent = prepareNodeSeekForumContent(reply.contentHtml, { polls, role: 'reply' });
+    return { ...reply, contentHtml: preparedContent.contentHtml, polls, preparedContent };
+  });
 }
 
 function nodeSeekCloudflareError() {
@@ -391,20 +419,9 @@ function prepareNodeSeekOpeningContent(
   trace?: DiagnosticTrace
 ) {
   if (trace) markDiagnosticStage(trace, 'parse', { source: 'nodeseek', state: 'source-parsed' });
-  const pollIds = (polls || []).map((poll) => poll.id).filter((id): id is string => Boolean(id));
-  const contentHtml = replaceLoadedNodeSeekVoteMarkers(topic.contentHtml, pollIds);
-  const sanitized = sanitizeContentHtmlWithRoot(
-    contentHtml,
-    BASE_URL,
-    contentHtml.includes(`<${NODESEEK_POLL_PLACEHOLDER_TAG}`)
-      ? (root) => normalizeRenderedNodeSeekPollRoot(root, pollIds)
-      : undefined
-  );
-  const preparedContent = prepareParsedForumContent(sanitized.root, {
-    contentHtml: sanitized.contentHtml,
+  const preparedContent = prepareNodeSeekForumContent(topic.contentHtml, {
     polls,
     role: 'opening',
-    source: 'nodeseek',
     topicId: topic.id
   });
   if (trace) {
@@ -429,7 +446,7 @@ export async function getNodeSeekTopic(
   trace?: DiagnosticTrace
 ) {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
-  const { pageDocument, response, responseUrl, text: html } = await fetchTopicHtml(id, 1, requestOptions, trace);
+  const { pageDocument, response, responseUrl } = await fetchTopicHtml(id, 1, requestOptions, trace);
   const documentUrl = responseUrl || nodeSeekTopicUrl(id);
   const embedded = pageDocument.embedded;
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
@@ -439,9 +456,10 @@ export async function getNodeSeekTopic(
       ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30, rendered)
       : undefined;
     const topic = mergeRenderedNodeSeekTopic(rendered, embeddedTopic);
-    const voteLinkPolls = await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], requestOptions, topic.polls);
-    const polls = mergeNodeSeekPolls(topic.polls, voteLinkPolls.polls);
-    const paged = withNodeSeekReplyPagination(prepareNodeSeekOpeningContent(topic, polls, trace), pageDocument, id, 1);
+    const pollOwners = await readNodeSeekPollsForOwners([topic, ...topic.replies], requestOptions);
+    const replies = prepareNodeSeekRepliesWithPolls(topic.replies, pollOwners.pollsByOwner.slice(1));
+    const preparedTopic = prepareNodeSeekOpeningContent({ ...topic, replies }, pollOwners.pollsByOwner[0], trace);
+    const paged = withNodeSeekReplyPagination(preparedTopic, pageDocument, id, 1);
     const comments = postData ? arrayField(postData.comments) : [];
     const replyCandidates = Math.max(rendered.replies.length, Math.max(0, comments.length - 1));
     const result = {
@@ -454,7 +472,7 @@ export async function getNodeSeekTopic(
       candidateCount: 1 + replyCandidates,
       validCount: 1 + result.replies.length,
       droppedCount: Math.max(0, replyCandidates - result.replies.length),
-      partialErrorCount: voteLinkPolls.partialErrorCount,
+      partialErrorCount: pollOwners.partialErrorCount,
       missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length
     });
     acceptForumReadResponse(response);
@@ -462,11 +480,11 @@ export async function getNodeSeekTopic(
   }
   if (postData) {
     const comments = arrayField(postData.comments);
-    const first = isRecord(comments[0]) ? comments[0] : {};
     const topic = normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30);
-    const voteLinkPolls = await readNodeSeekPollsFromVoteLinks([first.markdown, html], requestOptions);
-    const polls = mergeNodeSeekPolls(voteLinkPolls.polls);
-    const paged = withNodeSeekReplyPagination(prepareNodeSeekOpeningContent(topic, polls, trace), pageDocument, id, 1);
+    const pollOwners = await readNodeSeekPollsForOwners([topic, ...topic.replies], requestOptions);
+    const replies = prepareNodeSeekRepliesWithPolls(topic.replies, pollOwners.pollsByOwner.slice(1));
+    const preparedTopic = prepareNodeSeekOpeningContent({ ...topic, replies }, pollOwners.pollsByOwner[0], trace);
+    const paged = withNodeSeekReplyPagination(preparedTopic, pageDocument, id, 1);
     const replyCandidates = Math.max(0, comments.length - 1);
     const result = {
       ...paged,
@@ -483,7 +501,7 @@ export async function getNodeSeekTopic(
       candidateCount: 1 + replyCandidates,
       validCount: 1 + result.replies.length,
       droppedCount: Math.max(0, replyCandidates - result.replies.length),
-      partialErrorCount: voteLinkPolls.partialErrorCount,
+      partialErrorCount: pollOwners.partialErrorCount,
       missingFloorCount
     });
     acceptForumReadResponse(response);
@@ -795,14 +813,15 @@ async function getNodeSeekRepliesChronological(
       seedPage = firstResult.currentPage!;
       firstResult = await readPage(seedPage);
     }
-    if (hasTarget(firstResult)) {
-      return targetResult(firstResult, seedPage);
+    const firstWindow = projectNodeSeekOrderedPage(firstResult, seedPage);
+    if (hasTarget(firstWindow)) {
+      return targetResult(firstWindow, seedPage);
     }
     if (commentId) {
-      let lastPage = Math.max(seedPage, firstResult.nodeSeekLastPage || seedPage, firstResult.nextPage || seedPage);
+      let lastPage = Math.max(seedPage, firstWindow.nodeSeekLastPage || seedPage, firstWindow.nextPage || seedPage);
       for (let page = 1; page <= lastPage; page += 1) {
         if (page === seedPage) continue;
-        const result = await readPage(page);
+        const result = projectNodeSeekOrderedPage(await readPage(page), page);
         lastPage = Math.max(lastPage, result.nodeSeekLastPage || page, result.nextPage || page);
         if (hasTarget(result)) {
           return targetResult(result, page);
@@ -1020,7 +1039,7 @@ export async function getNodeSeekReplies(
     responsePageResolved: _responsePageResolved,
     ...replyWindow
   } = chronological;
-  return orientReplyWindow(
+  const oriented = orientReplyWindow(
     copySourceDiagnosticSummary(
       {
         ...replyWindow,
@@ -1030,6 +1049,21 @@ export async function getNodeSeekReplies(
     ),
     order
   );
+  const pollOwners = await readNodeSeekPollsForOwners(
+    oriented.items,
+    nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground')
+  );
+  const prepared = copySourceDiagnosticSummary(
+    { ...oriented, items: prepareNodeSeekRepliesWithPolls(oriented.items, pollOwners.pollsByOwner) },
+    oriented
+  );
+  const summary = sourceDiagnosticSummary(oriented);
+  return pollOwners.partialErrorCount && summary
+    ? annotateSourceDiagnosticSummary(prepared, {
+        ...summary,
+        partialErrorCount: summary.partialErrorCount + pollOwners.partialErrorCount
+      })
+    : prepared;
 }
 
 export async function resolveNodeSeekUser(username: string, options: NodeSeekOptions = {}): Promise<UserReference> {

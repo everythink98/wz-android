@@ -66,6 +66,7 @@
 
 - 模拟器、主题链接、App 内登录态原站对照和站点专项验收遵循 `docs/testing-standard.md` 与 `docs/operator-runbook.md`。
 - 主登录态 AVD 中的 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态是用户状态资产，同时它就是日常更新代码和保留登录态验收的目标设备；更新 APK 必须在该设备上就地覆盖安装。现有独立未登录 AVD 只服务未登录旅程，不能替代主 AVD 的更新验收，也不是安装失败后的清数据兜底。只有会卸载 target App 的原生 instrumentation 等特殊流程才使用明确的一次性空白 AVD。
+- Android WebView 的 `CookieManager`、`WebStorage` 与全局 cache 是进程共享资产。Account 用户明确发起的按站清除事务是登录 Cookie 的唯一删除 owner；功能 WebView 只能管理自己的文档与页面状态。生产 WebView 必须显式声明所需能力，不得透传 raw props、启用 truthy/dynamic `incognito`，或调用 `removeAllCookies`、`removeSessionCookies`、`deleteAllData`、`clearCache(true)`；`sharedCookiesEnabled={false}` 不是 Android Cookie 隔离机制。新增或修改 WebView、原生 plugin、清理逻辑时必须通过 `global-webview-state-owner` 架构门禁与 `REG-ACCOUNT-045`。
 - 未经用户明确同意，不得卸载 App、清除 App 数据、Cookie 或登录态，也不得重置模拟器来制造测试状态。
 - 保留数据的 Android 模拟器只允许通过仓库 `npm run smoke:android`、`agent-device install com.wz.reader <apk> --platform android --device <device>` 或 `adb -s <serial> install -r <apk>` 覆盖安装；禁止使用 `agent-device reinstall`。受信版本 `agent-device 0.20.6` 的 `reinstall` 会先执行不带 `-k` 的 `adb uninstall`，CLI 帮助中的 “Replace installed app” 不代表保留数据。安装前后必须只读比对 `firstInstallTime`，值必须不变；安全覆盖安装失败时停止，不得自动改走卸载。
 - 一旦登录态、本机数据或 `firstInstallTime` 异常，立即停止所有 App/AVD 变更；不得继续启动、退出模拟器或保存、加载、删除快照来试探恢复。先只读记录 AVD/serial、包安装时间、模拟器进程与启动参数、`quickbootChoice.ini` 和 `snapshot.trace`；UI 中的账号数量不能单独证明数据永久丢失或已经恢复。任何快照恢复都是需要用户另行授权的独立任务，且修改前必须有已完成并校验的离线 AVD 副本。

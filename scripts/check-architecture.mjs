@@ -205,6 +205,116 @@ function domainIoIssues(filePath, relativeFile) {
   }));
 }
 
+function globalWebViewStateIssues(filePath, relativeFile) {
+  const sourceText = readFileSync(filePath, 'utf8');
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  );
+  const webViewNames = new Set();
+  const webViewNamespaces = new Set();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || statement.moduleSpecifier.text !== 'react-native-webview') continue;
+    const clause = statement.importClause;
+    if (!clause) continue;
+    if (clause.name) webViewNames.add(clause.name.text);
+    if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+      webViewNamespaces.add(clause.namedBindings.name.text);
+    } else if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+      for (const element of clause.namedBindings.elements) {
+        if ((element.propertyName || element.name).text === 'WebView') webViewNames.add(element.name.text);
+      }
+    }
+  }
+  const isWebViewTag = (tagName) =>
+    (ts.isIdentifier(tagName) && webViewNames.has(tagName.text)) ||
+    (ts.isPropertyAccessExpression(tagName) &&
+      ts.isIdentifier(tagName.expression) &&
+      webViewNamespaces.has(tagName.expression.text) &&
+      tagName.name.text === 'WebView');
+  const issues = [];
+  const processGlobalCleanupMethods = new Set(['deleteAllData', 'removeAllCookies', 'removeSessionCookies']);
+  const calledMethodName = (expression) => {
+    if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+    if (
+      ts.isElementAccessExpression(expression) &&
+      expression.argumentExpression &&
+      ts.isStringLiteralLike(expression.argumentExpression)
+    ) {
+      return expression.argumentExpression.text;
+    }
+    return ts.isIdentifier(expression) ? expression.text : null;
+  };
+  const visit = (node) => {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && isWebViewTag(node.tagName)) {
+      for (const attribute of node.attributes.properties) {
+        if (ts.isJsxSpreadAttribute(attribute)) {
+          issues.push({
+            code: 'global-webview-state-owner',
+            message: `${relativeFile} 不得向功能 WebView 透传可能包含全局清理能力的 props`
+          });
+          continue;
+        }
+        if (!ts.isJsxAttribute(attribute) || attribute.name.getText(sourceFile) !== 'incognito') continue;
+        const explicitlyFalse =
+          attribute.initializer &&
+          ts.isJsxExpression(attribute.initializer) &&
+          attribute.initializer.expression?.kind === ts.SyntaxKind.FalseKeyword;
+        if (!explicitlyFalse) {
+          issues.push({
+            code: 'global-webview-state-owner',
+            message: `${relativeFile} 不得让功能 WebView 通过 incognito 清理进程级 Cookie 与缓存`
+          });
+        }
+      }
+    }
+    if (ts.isCallExpression(node)) {
+      const methodName = calledMethodName(node.expression);
+      const clearsSharedState = methodName && processGlobalCleanupMethods.has(methodName);
+      const clearsSharedCache = methodName === 'clearCache' && node.arguments[0]?.kind !== ts.SyntaxKind.FalseKeyword;
+      if (clearsSharedState || clearsSharedCache) {
+        issues.push({
+          code: 'global-webview-state-owner',
+          message: `${relativeFile} 不得调用进程级 WebView 清理能力：${methodName}`
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return issues;
+}
+
+function globalWebViewPluginIssues(projectRoot) {
+  const pluginsDir = path.join(projectRoot, 'plugins');
+  if (!existsSync(pluginsDir)) return [];
+  const forbidden = [
+    /\bremoveAllCookies\s*\(/g,
+    /\bremoveSessionCookies\s*\(/g,
+    /\bdeleteAllData\s*\(/g,
+    /\.clearCache\s*\(\s*true\s*\)/g
+  ];
+  const pluginFiles = (directory) =>
+    readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) return pluginFiles(entryPath);
+      return entry.isFile() && entry.name.endsWith('.js') ? [entryPath] : [];
+    });
+  return pluginFiles(pluginsDir).flatMap((pluginPath) => {
+    const sourceText = readFileSync(pluginPath, 'utf8');
+    const pluginFile = path.relative(projectRoot, pluginPath).replaceAll('\\', '/');
+    return forbidden.flatMap((pattern) =>
+      [...sourceText.matchAll(pattern)].map(() => ({
+        code: 'global-webview-state-owner',
+        message: `${pluginFile} 不得调用进程级 WebView 清理能力`
+      }))
+    );
+  });
+}
+
 function importedRawStateHooks(filePath) {
   const sourceText = readFileSync(filePath, 'utf8');
   const sourceFile = ts.createSourceFile(
@@ -683,6 +793,7 @@ export function analyzeArchitecture(srcDir) {
     issues.push(...rawAccountCapabilityProjectionIssues(file, fromFile));
     issues.push(...accountSnapshotOwnershipIssues(file, fromFile));
     issues.push(...domainIoIssues(file, fromFile));
+    issues.push(...globalWebViewStateIssues(file, fromFile));
     for (const specifier of importedModuleSpecifiers(file)) {
       const importedPath = internalModulePath(fromFile, specifier);
       if (importedPath && FORBIDDEN_LEGACY_MODULE_NAMES.has(moduleName(importedPath))) {
@@ -705,6 +816,7 @@ export function analyzeArchitecture(srcDir) {
   }
 
   issues.push(...behaviorTestSourceReadIssues(path.dirname(resolvedSrcDir)));
+  issues.push(...globalWebViewPluginIssues(path.dirname(resolvedSrcDir)));
 
   for (const cycle of findDependencyCycles(graph)) {
     issues.push({ code: 'cycle', message: `检测到依赖环：${cycle.join(' -> ')}` });

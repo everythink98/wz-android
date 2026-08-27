@@ -220,6 +220,17 @@ function sanitizedStyleAttribute(value: string) {
       continue;
     }
     const name = declaration.slice(0, separatorIndex).trim().toLowerCase();
+    if (name === 'text-align') {
+      const alignment = declaration
+        .slice(separatorIndex + 1)
+        .replace(/\s*!important\s*$/i, '')
+        .trim()
+        .toLowerCase();
+      if (alignment === 'left' || alignment === 'center' || alignment === 'right') {
+        declarations.push(`${name}: ${alignment}`);
+      }
+      continue;
+    }
     if (name !== 'color' && name !== 'background-color') {
       continue;
     }
