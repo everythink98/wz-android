@@ -25,6 +25,7 @@ function renderHook<Result>(callback: () => Result) {
 const defaultEnabledSourcesKey = canonicalEnabledSourcesKey(createEmptyReaderData().settings.contentSources);
 
 type FeedRuntimeOptions = Omit<Parameters<typeof useFeedController>[0], 'catalogCategories'> & {
+  anonymousSources?: readonly SessionSource[];
   catalogActive?: boolean;
   identityBarriers?: readonly SessionSource[];
 };
@@ -34,8 +35,10 @@ function testReadPlan(
   operation: ForumReadOperation,
   enabled: boolean,
   identityBarriers: readonly SessionSource[] = [],
-  sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs
+  sessionEpochs: ForumSessionEpochs = initialForumSessionEpochs,
+  anonymousSources: readonly SessionSource[] = []
 ) {
+  const anonymous = isSessionSource(source) && anonymousSources.includes(source);
   return resolveForumReadPlan(
     source,
     operation,
@@ -43,10 +46,10 @@ function testReadPlan(
     isSessionSource(source)
       ? {
           source,
-          authenticated: true,
+          authenticated: !anonymous,
           authSurfaceOpen: identityBarriers.includes(source),
-          identityKey: `${source}:test`,
-          identityTrust: 'confirmed',
+          identityKey: `${source}:${anonymous ? 'anonymous' : 'test'}`,
+          identityTrust: anonymous ? 'none' : 'confirmed',
           sessionEpoch: sessionEpochs[source],
           sourceEnabled: enabled
         }
@@ -73,7 +76,14 @@ function useFeedRuntime({ catalogActive, ...options }: FeedRuntimeOptions) {
   const readGateway = {
     ...options.readGateway,
     getReadPlan: (source: Source, operation: ForumReadOperation) =>
-      testReadPlan(source, operation, enabledSources.has(source), options.identityBarriers, options.sessionEpochs)
+      testReadPlan(
+        source,
+        operation,
+        enabledSources.has(source),
+        options.identityBarriers,
+        options.sessionEpochs,
+        options.anonymousSources
+      )
   } as ReadGateway;
   const catalog = useForumCatalogRuntime({
     active: (catalogActive ?? options.active) && !options.linuxDoVerificationActive,
@@ -1074,6 +1084,71 @@ describe('Feed controller sessions', () => {
       await Promise.resolve();
     });
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
+  });
+
+  it('[REG-FEED-018] opens Yaohuo login once per explicit Feed intent', async () => {
+    let identityBarriers: SessionSource[] = [];
+    const getFeed = jest.fn(async ({ source }: { source: string }) => {
+      if (source !== 'yaohuo') {
+        return { items: [], errors: {}, hasMore: false, nextPage: null };
+      }
+      const identityPending = identityBarriers.includes('yaohuo');
+      throw Object.assign(new Error(identityPending ? '正在核对妖火登录状态' : '请先登录该内容源'), {
+        kind: identityPending ? 'identity-pending' : 'login-required'
+      });
+    });
+    const showYaohuoLogin = jest.fn<void, [message?: string]>();
+    const hook = await renderHook(() =>
+      useFeedRuntime({
+        anonymousSources: ['yaohuo'],
+        identityBarriers,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        readerData: createEmptyReaderData(),
+        readerDataLoaded: true,
+        active: true,
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin,
+        readGateway: {
+          getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+          getFeed,
+          hasYaohuoCredential: jest.fn(async () => false)
+        } as unknown as ReadGateway
+      })
+    );
+
+    await act(async () => hook.result.current.changeFeedSource('yaohuo'));
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+
+    const readsBeforeOpen = getFeed.mock.calls.length;
+    identityBarriers = ['yaohuo'];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getFeed.mock.calls.length).toBeGreaterThan(readsBeforeOpen));
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(1);
+
+    const readsBeforeClose = getFeed.mock.calls.length;
+    identityBarriers = [];
+    await act(async () => {
+      hook.rerender({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getFeed.mock.calls.length).toBeGreaterThan(readsBeforeClose));
+    await waitFor(() =>
+      expect(
+        appQueryClient
+          .getQueryCache()
+          .findAll({ queryKey: ['forum', 'yaohuo', 'feed'] })
+          .some((query) => query.getObserversCount() > 0 && query.state.fetchStatus === 'idle')
+      ).toBe(true)
+    );
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(1);
+
+    await act(async () => hook.result.current.refreshFeed());
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(2));
   });
 
   it('keeps an unrelated source request and categories intact when another credential session changes', async () => {

@@ -1017,16 +1017,17 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SEARCH-029] keeps a dismissed anonymous Yaohuo login closed until an explicit retry', async () => {
+  it('[REG-FEED-018][REG-SEARCH-007] keeps a dismissed anonymous Yaohuo login closed until explicit retry', async () => {
     let authSurfaceOpen = false;
     const showYaohuoLogin = jest.fn<(message?: string) => void>(() => {
       authSurfaceOpen = true;
     });
-    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => {
-      throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required' as const });
-    });
     const hook = await renderSearchController(
-      createGateway({ searchTopics }),
+      createGateway({
+        searchTopics: jest.fn<ReadGateway['searchTopics']>(async () => {
+          throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required' as const });
+        })
+      }),
       jest.fn(),
       jest.fn(),
       () => initialForumSessionEpochs,

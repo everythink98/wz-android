@@ -182,7 +182,8 @@ export function useSearchController({
   const recentSearchHistoryReadFailedRef = useRef(false);
   const pendingRecentSearchRemovalKeysRef = useRef(new Set<string>());
   const handledSearchActionsRef = useRef(new WeakSet<RemoteSearchSourceResult>());
-  const handledYaohuoLoginSearchRef = useRef<SubmittedSearch | null>(null);
+  const yaohuoLoginIntentRef = useRef(0);
+  const handledYaohuoLoginIntentRef = useRef<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchSource, setSearchSourceState] = useState<FeedSource>('all');
   const [searchFilters, setSearchFilters] = useState<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
@@ -697,6 +698,7 @@ export function useSearchController({
   const retrySearchSource = useCallback(
     (source: Source) => {
       if (!searchActive || !enabledSearchSourcesRef.current.includes(source)) return;
+      if (source === 'yaohuo') yaohuoLoginIntentRef.current += 1;
       const plan = readGateway.getReadPlan(source, 'search');
       if (
         plan.state === 'blocked' &&
@@ -712,7 +714,6 @@ export function useSearchController({
         return;
       }
       if (source !== submittedSource) return;
-      if (source === 'yaohuo') handledYaohuoLoginSearchRef.current = null;
       if (singleSearchQuery.isFetchNextPageError) {
         void singleSearchQuery.fetchNextPage({ cancelRefetch: false });
       } else {
@@ -781,6 +782,10 @@ export function useSearchController({
         : singleSearchQuery.data?.pages.at(-1)
     ];
     results.forEach((result) => {
+      if (result?.kind === 'success' && submittedSearch.source === 'yaohuo') {
+        handledYaohuoLoginIntentRef.current = null;
+        return;
+      }
       if (!result || result.kind !== 'action-required') return;
       if (handledSearchActionsRef.current.has(result)) return;
       handledSearchActionsRef.current.add(result);
@@ -834,8 +839,9 @@ export function useSearchController({
             return resumedResult?.kind === 'success' ? 'completed' : 'failed';
           }
         });
-      } else if (submittedSearch?.source !== 'all' && handledYaohuoLoginSearchRef.current !== submittedSearch) {
-        handledYaohuoLoginSearchRef.current = submittedSearch;
+      } else if (submittedSearch?.source !== 'all') {
+        if (handledYaohuoLoginIntentRef.current === yaohuoLoginIntentRef.current) return;
+        handledYaohuoLoginIntentRef.current = yaohuoLoginIntentRef.current;
         showYaohuoLogin(result.action.message);
       }
     });
@@ -872,7 +878,7 @@ export function useSearchController({
       }
       const source = runOptions.source ?? searchSource;
       if (source !== 'all' && !enabledSearchSourcesRef.current.includes(source)) return 'stale';
-      if (source === 'yaohuo') handledYaohuoLoginSearchRef.current = null;
+      if (source === 'yaohuo') yaohuoLoginIntentRef.current += 1;
       const filters = snapshotSearchFilters(runOptions.filters ?? searchFilters);
       if (runOptions.query !== undefined) setSearchQuery(query);
       if (runOptions.source !== undefined) setSearchSourceState(source);

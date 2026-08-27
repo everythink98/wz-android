@@ -34,14 +34,14 @@ wait label="关闭" 60000
 press label="关闭"
 wait 8000
 wait id="search-query" 10000
-press id="search-submit"
-wait label="关闭" 60000
-press label="关闭"
-wait 8000
-wait id="search-query" 10000
 
 press id="main-tab-feed"
 wait "id=\"feed-outcome-data-all-default\" || id=\"feed-outcome-empty-all-default\" || id=\"feed-outcome-partial-all-default\" || id=\"feed-outcome-error-all-default\" || id=\"feed-outcome-auth-all-default\"" 60000
+press id="feed-source-yaohuo"
+wait label="关闭" 60000
+press label="关闭"
+wait 8000
+wait id="feed-source-yaohuo" 10000
 
 open ${APP_ID} --relaunch
 wait id="main-tab-more" 60000

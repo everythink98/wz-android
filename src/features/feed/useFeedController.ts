@@ -244,7 +244,7 @@ export function useFeedController({
   const enabledSourcesKey = canonicalEnabledSourcesKey(readerData.settings.contentSources);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
-  const [categoryFilter, setCategoryFilter] = useState('');
+  const [categoryFilter, setCategoryFilterState] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
   const feedSourceIncluded = feedSource === 'all' || enabledFeedSources.includes(feedSource);
   const feedSourceRequestEnabled =
@@ -252,11 +252,13 @@ export function useFeedController({
   useLayoutEffect(() => {
     if (feedSourceIncluded) return;
     setFeedSource('all');
-    setCategoryFilter('');
+    setCategoryFilterState('');
   }, [feedSourceIncluded]);
   const handledSourceCategoriesErrorRef = useRef<unknown>(undefined);
   const handledFeedErrorRef = useRef<unknown>(undefined);
   const handledPartialErrorsRef = useRef<unknown>(undefined);
+  const yaohuoLoginIntentRef = useRef(0);
+  const handledYaohuoLoginIntentRef = useRef<number | null>(null);
   const feedReadPlanScopes = (feedSource === 'all' ? enabledFeedSources : [feedSource]).map(
     (source) => [source, readGateway.getReadPlan(source, 'feed').cacheScope] as const
   );
@@ -409,6 +411,11 @@ export function useFeedController({
   const nextPage =
     feedSourceRequestEnabled && !feedQuery.isPlaceholderData && lastPage ? nextFeedPage(lastPage) : undefined;
   const loadMoreError = feedSourceRequestEnabled && feedQuery.isFetchNextPageError;
+  useEffect(() => {
+    if (feedSource === 'yaohuo' && feedQuery.isSuccess && !feedQuery.isPlaceholderData) {
+      handledYaohuoLoginIntentRef.current = null;
+    }
+  }, [feedQuery.isPlaceholderData, feedQuery.isSuccess, feedSource]);
   const activeFeedState = useMemo<FeedSourceState>(
     () => ({
       hasMore: Boolean(nextPage),
@@ -535,6 +542,8 @@ export function useFeedController({
       return;
     }
     if (feedSource === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+      if (handledYaohuoLoginIntentRef.current === yaohuoLoginIntentRef.current) return;
+      handledYaohuoLoginIntentRef.current = yaohuoLoginIntentRef.current;
       showYaohuoLogin(sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : message);
       return;
     }
@@ -602,6 +611,7 @@ export function useFeedController({
 
   const refreshFeed = useCallback(async () => {
     if (!feedActive || !feedSourceRequestEnabled) return;
+    if (feedSource === 'yaohuo') yaohuoLoginIntentRef.current += 1;
     const refreshGeneration = ++refreshFeedGenerationRef.current;
     notify('正在更新列表');
     await queryClient.cancelQueries({ queryKey: feedQueryKey, exact: true });
@@ -611,7 +621,7 @@ export function useFeedController({
       return;
     }
     if (!result.isError) notify('列表已更新');
-  }, [feedActive, feedQuery.refetch, feedQueryKey, feedSourceRequestEnabled, notify, queryClient]);
+  }, [feedActive, feedQuery.refetch, feedQueryKey, feedSource, feedSourceRequestEnabled, notify, queryClient]);
 
   const changeFeedSource = useCallback(
     (source: FeedSource) => {
@@ -621,8 +631,9 @@ export function useFeedController({
       queryClient.removeQueries({
         predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[1] === source && queryKey[2] === 'feed'
       });
+      if (source === 'yaohuo') yaohuoLoginIntentRef.current += 1;
       setFeedSource(source);
-      setCategoryFilter('');
+      setCategoryFilterState('');
     },
     [enabledFeedSources, feedSource, queryClient]
   );
@@ -636,6 +647,15 @@ export function useFeedController({
       );
     },
     [feedSource]
+  );
+
+  const setCategoryFilter = useCallback(
+    (category: string) => {
+      if (category === categoryFilter) return;
+      if (feedSource === 'yaohuo') yaohuoLoginIntentRef.current += 1;
+      setCategoryFilterState(category);
+    },
+    [categoryFilter, feedSource]
   );
 
   const abortFeedRequests = useCallback(() => {
