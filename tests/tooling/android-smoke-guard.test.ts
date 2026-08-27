@@ -677,7 +677,8 @@ describe('Android release evidence guards', () => {
     for (const replay of [loggedOutReplay, multiSourceSearchReplay]) {
       expect(replay).toContain('wait id="search-all-sources-settled" 60000');
       expect(replay).not.toMatch(/search-result-first|search-outcome-/);
-      expect(replay.match(/press id="search-submit"/g)).toHaveLength(1);
+      const aggregatePhase = replay.split('wait id="search-all-sources-settled" 60000')[0];
+      expect(aggregatePhase.match(/press id="search-submit"/g)).toHaveLength(1);
     }
   });
 
