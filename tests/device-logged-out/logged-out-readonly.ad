@@ -26,6 +26,20 @@ wait id="search-all-sources-settled" 60000
 wait id="search-external-linuxdo" 10000
 wait id="search-external-nodeseek" 10000
 
+press id="search-source-yaohuo"
+wait "id=\"search-source-yaohuo\" label=\"妖火，已选择\"" 10000
+press id="search-submit"
+keyboard dismiss
+wait label="关闭" 60000
+press label="关闭"
+wait 8000
+wait id="search-query" 10000
+press id="search-submit"
+wait label="关闭" 60000
+press label="关闭"
+wait 8000
+wait id="search-query" 10000
+
 press id="main-tab-feed"
 wait "id=\"feed-outcome-data-all-default\" || id=\"feed-outcome-empty-all-default\" || id=\"feed-outcome-partial-all-default\" || id=\"feed-outcome-error-all-default\" || id=\"feed-outcome-auth-all-default\"" 60000
 

@@ -591,9 +591,12 @@ describe('Android release evidence guards', () => {
     expect(loggedOutReplay).not.toContain('测试工具');
     expect(loggedOutReplay).toContain('press id="search-source-all"');
     expect(loggedOutReplay).toContain('fill id="search-query" codex');
-    expect(loggedOutReplay.match(/press id="search-submit"/g)).toHaveLength(1);
+    expect(loggedOutReplay.match(/press id="search-submit"/g)).toHaveLength(3);
     expect(loggedOutReplay).toContain('wait id="search-external-linuxdo" 10000');
     expect(loggedOutReplay).toContain('wait id="search-external-nodeseek" 10000');
+    expect(loggedOutReplay).toContain('press id="search-source-yaohuo"');
+    expect(loggedOutReplay.match(/press label="关闭"/g)).toHaveLength(2);
+    expect(loggedOutReplay.match(/wait 8000/g)).toHaveLength(2);
     expect(loggedOutReplay).not.toContain('back --system');
     expect(loggedOutReplay).toContain('press id="main-tab-feed"');
     expect(loggedOutReplay.match(/press id="main-tab-feed"/g)).toHaveLength(1);

@@ -147,7 +147,8 @@ function renderSearchController(
   showYaohuoLogin = jest.fn<(message?: string) => void>(),
   getEnabledSearchSources: () => readonly Source[] = () => aggregateSearchSources,
   onRetryIdentityStatus = jest.fn<(source: SessionSource) => void>(),
-  onOpenExternalSearch = jest.fn<(url: string) => void>()
+  onOpenExternalSearch = jest.fn<(url: string) => void>(),
+  getAuthSurfaceOpen: (source: SessionSource) => boolean = () => false
 ) {
   appQueryClient.clear();
   const getReadPlan = (source: Source, operation: ForumReadOperation) =>
@@ -159,7 +160,7 @@ function renderSearchController(
         ? {
             source,
             authenticated: sessionViewModels[source].isLoggedIn,
-            authSurfaceOpen: false,
+            authSurfaceOpen: getAuthSurfaceOpen(source),
             identityKey: `${source}:test`,
             identityTrust: sessionViewModels[source].identityTrust,
             sessionEpoch: getSessionEpochs()[source],
@@ -177,10 +178,11 @@ function renderSearchController(
       if (request.source === 'all') throw new Error('Search controller must execute aggregate reads per source');
       const plan = getReadPlan(request.source, 'search');
       if (plan.state === 'blocked') {
-        throw Object.assign(new Error('登录状态核对失败，请重试'), {
-          kind: 'ordinary' as const,
+        const loginRequired = plan.reason === 'login-required';
+        throw Object.assign(new Error(loginRequired ? '请先登录该内容源' : '登录状态核对失败，请重试'), {
+          kind: loginRequired ? ('login-required' as const) : ('ordinary' as const),
           reason: plan.reason,
-          retryable: true,
+          retryable: !loginRequired,
           source: request.source
         });
       }
@@ -1013,6 +1015,46 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
     expect(showYaohuoLogin).toHaveBeenCalledWith('妖火需要登录');
     expect(searchTopics).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-SEARCH-029] keeps a dismissed anonymous Yaohuo login closed until an explicit retry', async () => {
+    let authSurfaceOpen = false;
+    const showYaohuoLogin = jest.fn<(message?: string) => void>(() => {
+      authSurfaceOpen = true;
+    });
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => {
+      throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required' as const });
+    });
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      createSiteSessionViewModels(createSiteSessionStates()),
+      jest.fn(),
+      showYaohuoLogin,
+      () => aggregateSearchSources,
+      jest.fn(),
+      jest.fn(),
+      (source) => source === 'yaohuo' && authSurfaceOpen
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'yaohuo' });
+    });
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(1));
+
+    await act(async () => hook.rerender(undefined));
+    authSurfaceOpen = false;
+    await act(async () => hook.rerender(undefined));
+    await act(async () => {
+      await appQueryClient.refetchQueries({ queryKey: ['forum', 'yaohuo', 'search'] });
+    });
+
+    expect(showYaohuoLogin).toHaveBeenCalledTimes(1);
+
+    await act(async () => hook.result.current.retrySearchSource('yaohuo'));
+    await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(2));
   });
 
   it('[REG-SEARCH-009] keeps an initial source failure out of trusted Query data', async () => {

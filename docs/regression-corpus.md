@@ -464,6 +464,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 恢复任一 Google DOM parser、`searchFallback`、Google Hidden WebView 分支、会话失效隐式降级、第三方 intent filter，或让 public L/NS 调 gateway/显示筛选/自动开两个 Tab，编号测试必须失败。让 Custom Tab 接回 Google、首页、用户页、其他域名，或去掉 explicit component/mutable flag，也必须由 URL、Deep Link 或 native plugin 测试失败。 |
 | 明确不覆盖范围 | 不新增搜索后端、API Key、第三方 App Links 声明或 npm 依赖；不保证普通 Google 结果点击自动拉起 App，不自动接受 Chrome 条款、Google 登录/consent/CAPTCHA，也不恢复任何 Google HTML 解析。 |
 
+## `REG-SEARCH-029` 未登录妖火搜索关闭登录页后无限重开
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04`；共享 `ACCOUNT-01`、`ACCOUNT-02` |
+| 用户症状 | 未登录用户在妖火单站搜索触发登录页后，点击“关闭”只能短暂收起；同一个登录页随后自动重开，继续关闭仍会无限循环。 |
+| 触发条件 | 同一已提交妖火搜索返回 `login-required` 并打开 auth surface；用户关闭后账号核对释放 surface barrier，原 Search Query 自动重新激活或后台 refetch，再次返回等价的 `login-required`。 |
+| 根因 seam | `src/features/search/useSearchController.ts` 只用 `WeakSet` 按 `RemoteSearchSourceResult` 对象身份消费 action。Query 每次失败都会生成新结果对象，因此同一用户搜索意图在 barrier 开关后被误判为新动作。 |
+| 必须保持的行为 | 每个已提交的妖火单站搜索意图最多自动打开一次登录页；用户关闭后，账号核对、scope 恢复、Query 自动重激活和后台 refetch 都不得重开。用户显式重新提交或点击该来源“重试”时，允许再打开一次。聚合搜索继续不自动打开登录页，linux.do/NodeSeek 验证恢复和妖火账号核对流程不变。 |
+| 精确失败 oracle | `tests/ui/search/search-controller-ai.test.tsx` 的 `REG-SEARCH-029` 用匿名 Yaohuo ReadPlan 模拟 surface barrier 开/关和同 Query refetch，固定关闭后调用数仍为 1，随后显式 retry 才变为 2；旧对象身份去重会在后台 refetch 后得到 2 并失败。 |
+| 最低可靠自动测试层 | `UI_PASS + LIVE_PASS`：RNTL 固定 Search action 生命周期；匹配 APK 的独立未登录 AVD 固定真实 modal、账号核对和 Query 调度时序。 |
+| Replay 或真实验收路径 | 独立未登录 AVD 进入 Search → 妖火，提交一次查询，等待登录页并点击“关闭”；等待账号核对与搜索结算后登录页不得重开。再次明确点击“提交搜索”（错误态提供来源“重试”时也可）应只打开一次；再次关闭仍保持关闭。不得登录、清 Cookie、清 App 数据或重置 AVD。 |
+| 负向验证方式 | 删除按 `SubmittedSearch` 意图的消费记录、仅恢复 `WeakSet` 对象身份去重，或在关闭后自动清除已消费状态；编号测试必须在后台 refetch 或第二次关闭时失败。 |
+| 明确不覆盖范围 | 不改变妖火登录页内容、账号核对、Cookie、搜索协议、错误文案或聚合搜索，不新增全局 coordinator、timer、debounce 或持久化状态。 |
+
 ## `REG-LINUXDO-001` linux.do Cloudflare 429 被降级且大响应被截断
 
 | 字段 | 内容 |

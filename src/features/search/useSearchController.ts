@@ -182,6 +182,7 @@ export function useSearchController({
   const recentSearchHistoryReadFailedRef = useRef(false);
   const pendingRecentSearchRemovalKeysRef = useRef(new Set<string>());
   const handledSearchActionsRef = useRef(new WeakSet<RemoteSearchSourceResult>());
+  const handledYaohuoLoginSearchRef = useRef<SubmittedSearch | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchSource, setSearchSourceState] = useState<FeedSource>('all');
   const [searchFilters, setSearchFilters] = useState<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
@@ -711,6 +712,7 @@ export function useSearchController({
         return;
       }
       if (source !== submittedSource) return;
+      if (source === 'yaohuo') handledYaohuoLoginSearchRef.current = null;
       if (singleSearchQuery.isFetchNextPageError) {
         void singleSearchQuery.fetchNextPage({ cancelRefetch: false });
       } else {
@@ -832,7 +834,8 @@ export function useSearchController({
             return resumedResult?.kind === 'success' ? 'completed' : 'failed';
           }
         });
-      } else if (submittedSearch?.source !== 'all') {
+      } else if (submittedSearch?.source !== 'all' && handledYaohuoLoginSearchRef.current !== submittedSearch) {
+        handledYaohuoLoginSearchRef.current = submittedSearch;
         showYaohuoLogin(result.action.message);
       }
     });
@@ -869,6 +872,7 @@ export function useSearchController({
       }
       const source = runOptions.source ?? searchSource;
       if (source !== 'all' && !enabledSearchSourcesRef.current.includes(source)) return 'stale';
+      if (source === 'yaohuo') handledYaohuoLoginSearchRef.current = null;
       const filters = snapshotSearchFilters(runOptions.filters ?? searchFilters);
       if (runOptions.query !== undefined) setSearchQuery(query);
       if (runOptions.source !== undefined) setSearchSourceState(source);
