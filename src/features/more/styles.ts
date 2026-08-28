@@ -380,36 +380,7 @@ export function createMoreStyles(theme: ReaderTheme, settings: ReaderSettings) {
     appearanceSlider: {
       flex: 1,
       height: 48,
-      justifyContent: 'center',
       minWidth: 0
-    },
-    appearanceSliderTrack: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      height: 4,
-      backgroundColor: theme.lineStrong,
-      borderRadius: 2
-    },
-    appearanceSliderFill: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      height: 4,
-      backgroundColor: theme.primary,
-      borderRadius: 2,
-      transformOrigin: 'left center'
-    },
-    appearanceSliderThumb: {
-      position: 'absolute',
-      left: 0,
-      width: 20,
-      height: 20,
-      marginLeft: -10,
-      backgroundColor: theme.primaryStrong,
-      borderColor: theme.surface,
-      borderRadius: 10,
-      borderWidth: 2
     }
   });
 }

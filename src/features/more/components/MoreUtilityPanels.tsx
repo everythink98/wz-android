@@ -147,6 +147,7 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
           settings={runtime.settings.value}
           showSettingsPanel={runtime.settings.visible}
           styles={styles}
+          theme={theme}
           onUpdateSettings={runtime.settings.update}
         />
       </ExpandablePanel>

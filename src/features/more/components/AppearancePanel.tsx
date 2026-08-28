@@ -1,33 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, Text, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Slider from '@react-native-community/slider';
+import { useEffect, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 import type { MoreScreenStyles } from '../styles';
 import {
   FONT_SCALE_MAX,
   FONT_SCALE_MIN,
   FONT_SCALE_STEP,
-  fontScaleFromSliderPosition,
   normalizeFontScale,
   type ReaderSettings
 } from '@/domain/reader/readerData';
 import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
-import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
+import type { ReaderTheme } from '@/ui/theme/tokens';
 
 export function AppearancePanel({
   settings,
   showSettingsPanel,
   styles,
+  theme,
   onUpdateSettings
 }: {
   settings: ReaderSettings;
   showSettingsPanel: boolean;
   styles: MoreScreenStyles;
+  theme: ReaderTheme;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   return (
     <View style={styles.stack}>
       {showSettingsPanel ? (
-        <SettingsPanel settings={settings} styles={styles} onUpdateSettings={onUpdateSettings} />
+        <SettingsPanel settings={settings} styles={styles} theme={theme} onUpdateSettings={onUpdateSettings} />
       ) : null}
     </View>
   );
@@ -36,10 +37,12 @@ export function AppearancePanel({
 function SettingsPanel({
   settings,
   styles,
+  theme,
   onUpdateSettings
 }: {
   settings: ReaderSettings;
   styles: MoreScreenStyles;
+  theme: ReaderTheme;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   return (
@@ -63,6 +66,7 @@ function SettingsPanel({
         <FontScaleSetting
           value={settings.fontScale}
           styles={styles}
+          theme={theme}
           onChange={(fontScale) => onUpdateSettings({ fontScale })}
         />
         <SegmentedSetting
@@ -165,108 +169,30 @@ function SegmentedSetting({
 
 function FontScaleSetting({
   styles,
+  theme,
   value,
   onChange
 }: {
   styles: MoreScreenStyles;
+  theme: ReaderTheme;
   value: number;
   onChange: (value: number) => void;
 }) {
   const [draftValue, setDraftValue] = useState(value);
-  const [trackWidth, setTrackWidth] = useState(0);
-  const draftValueRef = useRef(value);
-  const progressValue = useRef(
-    new Animated.Value((value - FONT_SCALE_MIN) / (FONT_SCALE_MAX - FONT_SCALE_MIN))
-  ).current;
-  const sliderRef = useRef<View>(null);
-  const trackLeftRef = useRef(0);
-  const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onChangeRef = useCommittedRef(onChange);
   const percent = Math.round(draftValue * 100);
-  const thumbTranslateX = useMemo(() => Animated.multiply(progressValue, trackWidth), [progressValue, trackWidth]);
 
   useEffect(() => {
-    draftValueRef.current = value;
     setDraftValue(value);
-    progressValue.setValue((value - FONT_SCALE_MIN) / (FONT_SCALE_MAX - FONT_SCALE_MIN));
-  }, [progressValue, value]);
+  }, [value]);
 
-  useEffect(
-    () => () => {
-      if (commitTimerRef.current) {
-        clearTimeout(commitTimerRef.current);
-        onChangeRef.current(draftValueRef.current);
-      }
-    },
-    [onChangeRef]
-  );
-
-  const animateProgress = (nextValue: number) => {
-    Animated.timing(progressValue, {
-      duration: 120,
-      easing: Easing.out(Easing.cubic),
-      toValue: (nextValue - FONT_SCALE_MIN) / (FONT_SCALE_MAX - FONT_SCALE_MIN),
-      useNativeDriver: true
-    }).start();
+  const commit = (nextValue: number) => {
+    const normalized = normalizeFontScale(nextValue);
+    setDraftValue(normalized);
+    onChange(normalized);
   };
-  const updateDraftValue = (nextValue: number, animate = true) => {
-    if (animate) {
-      animateProgress(nextValue);
-    }
-    if (draftValueRef.current === nextValue) {
-      return;
-    }
-    draftValueRef.current = nextValue;
-    setDraftValue(nextValue);
-  };
-  const clearPendingCommit = () => {
-    if (commitTimerRef.current) {
-      clearTimeout(commitTimerRef.current);
-      commitTimerRef.current = null;
-    }
-  };
-  const scheduleCommit = (nextValue: number) => {
-    clearPendingCommit();
-    commitTimerRef.current = setTimeout(() => {
-      commitTimerRef.current = null;
-      onChange(nextValue);
-    }, 300);
-  };
-  const valueFromPageX = (pageX: number) => fontScaleFromSliderPosition(pageX - trackLeftRef.current, trackWidth);
   const setStep = (direction: -1 | 1) => {
-    const nextValue = normalizeFontScale(draftValueRef.current + direction * FONT_SCALE_STEP);
-    updateDraftValue(nextValue);
-    scheduleCommit(nextValue);
+    commit(draftValue + direction * FONT_SCALE_STEP);
   };
-  const updatePosition = (pageX: number) => {
-    const position = pageX - trackLeftRef.current;
-    progressValue.stopAnimation();
-    progressValue.setValue(trackWidth > 0 ? Math.max(0, Math.min(1, position / trackWidth)) : 0);
-    updateDraftValue(fontScaleFromSliderPosition(position, trackWidth), false);
-  };
-  const commitPosition = (pageX: number) => {
-    clearPendingCommit();
-    const nextValue = valueFromPageX(pageX);
-    updateDraftValue(nextValue);
-    scheduleCommit(nextValue);
-  };
-  const sliderGesture = Gesture.Pan()
-    .minDistance(0)
-    .runOnJS(true)
-    .onBegin(({ absoluteX }) => {
-      clearPendingCommit();
-      sliderRef.current?.measureInWindow((x) => {
-        trackLeftRef.current = x;
-        updatePosition(absoluteX);
-      });
-    })
-    .onUpdate(({ absoluteX }) => updatePosition(absoluteX))
-    .onEnd(({ absoluteX }) => commitPosition(absoluteX))
-    .onFinalize((_event, success) => {
-      if (!success) {
-        scheduleCommit(draftValueRef.current);
-      }
-    });
 
   return (
     <View style={styles.appearanceFontScaleBlock}>
@@ -288,31 +214,21 @@ function FontScaleSetting({
         >
           <Text style={styles.appearanceStepButtonText}>−</Text>
         </Pressable>
-        <GestureDetector gesture={sliderGesture}>
-          <View
-            ref={sliderRef}
-            accessible
-            accessibilityActions={[
-              { name: 'decrement', label: '减小字号' },
-              { name: 'increment', label: '增大字号' }
-            ]}
-            accessibilityLabel="字号"
-            accessibilityRole="adjustable"
-            accessibilityValue={{ min: 85, max: 140, now: percent, text: `字号 ${percent}%` }}
-            style={styles.appearanceSlider}
-            onAccessibilityAction={({ nativeEvent }) => setStep(nativeEvent.actionName === 'increment' ? 1 : -1)}
-            onLayout={({ nativeEvent }) => {
-              setTrackWidth(nativeEvent.layout.width);
-              sliderRef.current?.measureInWindow((x) => {
-                trackLeftRef.current = x;
-              });
-            }}
-          >
-            <View style={styles.appearanceSliderTrack} />
-            <Animated.View style={[styles.appearanceSliderFill, { transform: [{ scaleX: progressValue }] }]} />
-            <Animated.View style={[styles.appearanceSliderThumb, { transform: [{ translateX: thumbTranslateX }] }]} />
-          </View>
-        </GestureDetector>
+        <Slider
+          accessibilityLabel="字号"
+          accessibilityValue={{ min: 85, max: 140, now: percent, text: `字号 ${percent}%` }}
+          maximumValue={FONT_SCALE_MAX}
+          maximumTrackTintColor={theme.lineStrong}
+          minimumValue={FONT_SCALE_MIN}
+          minimumTrackTintColor={theme.primary}
+          step={FONT_SCALE_STEP}
+          style={styles.appearanceSlider}
+          testID="appearance-font-scale-slider"
+          thumbTintColor={theme.primaryStrong}
+          value={draftValue}
+          onSlidingComplete={commit}
+          onValueChange={(nextValue) => setDraftValue(normalizeFontScale(nextValue))}
+        />
         <Pressable
           accessibilityLabel="增大字号"
           accessibilityRole="button"

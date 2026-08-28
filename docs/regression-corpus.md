@@ -4483,8 +4483,28 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
-| 历史症状与根因 | linux.do `t/topic/2825663` 的有效 `<audio><source src="…mp3">` 在原站可播放约 4:18，但 App 原生 Topic 详情没有播放器；同帖空 `source` 又不能据 fallback 文字猜造媒体地址。根因：共享 sanitizer、内容 compiler 与 Topic 原生媒体 renderer 只把图片和视频视为离散媒体。修复后安全 HTTP(S) 音频归一为原子 `forum-audio`，主楼、回复、完整引用和采纳答案复用同一 Expo Video runtime；空源保留 fallback，通知只保留 fallback，离窗或 route inactive 释放播放器且不自动续播。 |
+| 历史症状与根因 | linux.do `t/topic/2825663` 的有效 `<audio><source src="…mp3">` 在原站可播放约 4:18，但 App 原生 Topic 详情没有播放器；同帖空 `source` 又不能据 fallback 文字猜造媒体地址。根因：共享 sanitizer、内容 compiler 与 Topic 原生媒体 renderer 只把图片和视频视为离散媒体。修复后安全 HTTP(S) 音频归一为原子 `forum-audio`，主楼、回复、完整引用和采纳答案复用 Topic 级唯一 Expo Video runtime；空源保留 fallback，通知只保留 fallback。 |
 | 当前 owner | `tests/integration/html-sanitization-contracts.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`tests/ui/topic/topic-image-loading.test.tsx` |
+
+
+## `REG-TOPIC-132` 音频随虚拟列表行回收而中断
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
+| 历史症状与根因 | Topic 音频开始播放后向下滚动，只要对应 FlashList 行被回收，Expo player 与 Native generation lease 就随行卸载，声音中断；重新滚回还会重新建 player 和请求。根因：播放器真相错误地放在 `ForumContentAudio` 行组件，`TopicBodyMediaCoordinator` 又把离开可见区的 settled audio 降回 waiting。修复后 `TopicAudioSession` 在 Topic provider 内唯一持有 player、lease、活动音频和各段位置；虚拟行只订阅自身快照，行回收不再改变播放生命周期，离开 Topic 才释放一次。 |
+| 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx` |
+
+
+## `REG-TOPIC-133` 妖火内联视频无法连续拖动进度
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
+| 历史症状与根因 | 妖火正文视频在非全屏状态只有整面点击播放和独立全屏按钮，没有可连续拖动的进度控件；整面 Pressable 还覆盖了播放器手势区域。根因：`ForumContentVideo` 关闭 `VideoView.nativeControls` 后自行维护播放、覆盖层和全屏状态，却没有实现成熟播放器已有的进度、手势和无障碍能力。修复后继续使用既有 Expo Video/Media3 内核，但直接启用平台 native controls，poster 只覆盖 loading 阶段。 |
+| 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx` |
 
 
 ## `REG-WRITE-062` LinuxDo Emoji 源码往返卡死

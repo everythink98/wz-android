@@ -50,6 +50,7 @@
 - Android WebView 共享状态由 Account 单一 owner 管理：功能组件只能显式传入文档级 WebView props，不得用 props spread 暴露原生组件能力；truthy/dynamic `incognito`、`removeAllCookies`、`removeSessionCookies`、`WebStorage.deleteAllData` 与 `clearCache(true)` 在生产 TypeScript 和 tracked plugin 中一律由 `global-webview-state-owner` 拒绝。显式 `incognito={false}` 与实例级 `clearCache(false)` 允许；`sharedCookiesEnabled={false}` 不承担 Android 隔离语义。
 - 可复用必须以语义、生命周期、权限和错误处理一致为前提。只相似但行为不同的 provider、feature 和写操作保持独立。
 - 样式跟随 owner：feature 样式位于对应 feature，跨旅程 token/primitive 位于 UI；`ReaderStyleContextValue` 只提供 `theme/settings`，控件和 feature 用自己的 style factory 消费，禁止恢复全局 feature-style registry。
+- 通用有状态 UI 在自研前依次核对平台控件、现有依赖和成熟受控组件；展示组件可以拥有拖动中的临时预览，但最终值、播放真相、网络身份、错误语义和领域生命周期必须留在现有 owner，禁止为了现成皮肤引入第二套播放内核或网络边界。
 - 不增加未要求的扩展点、配置层或单实现 interface。新增抽象必须减少现有重复或切断真实反向依赖。
 
 ## 测试归属

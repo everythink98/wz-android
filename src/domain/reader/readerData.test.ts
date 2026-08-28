@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   clearRecords,
   createEmptyReaderData,
-  fontScaleFromSliderPosition,
   FONT_SCALE_MAX,
   FONT_SCALE_MIN,
   isUserFollowed,
@@ -55,13 +54,6 @@ describe('Android reader data helpers', () => {
     expect(normalizeFontScale(1.13)).toBe(1.15);
     expect(normalizeFontScale(1.2)).toBe(1.2);
     expect(normalizeFontScale(Number.NaN, 1.05)).toBe(1.05);
-  });
-
-  it('maps stable slider coordinates to bounded font scale steps', () => {
-    expect(fontScaleFromSliderPosition(-20, 200)).toBe(0.85);
-    expect(fontScaleFromSliderPosition(100, 200)).toBe(1.15);
-    expect(fontScaleFromSliderPosition(240, 200)).toBe(1.4);
-    expect(fontScaleFromSliderPosition(100, 0)).toBe(0.85);
   });
 
   it('creates only the current Android reader data shape', () => {

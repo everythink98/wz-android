@@ -12,14 +12,20 @@ export const ReadingSettingsScreen = memo(function ReadingSettingsScreen({
   settings: ReaderSettings;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
-  const { styles } = useReaderThemeStyles(createMoreScreenStyles);
+  const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
   return (
     <ScrollView
       style={styles.content}
       contentContainerStyle={styles.moreContentInner}
       keyboardShouldPersistTaps="handled"
     >
-      <AppearancePanel settings={settings} showSettingsPanel styles={styles} onUpdateSettings={onUpdateSettings} />
+      <AppearancePanel
+        settings={settings}
+        showSettingsPanel
+        styles={styles}
+        theme={theme}
+        onUpdateSettings={onUpdateSettings}
+      />
     </ScrollView>
   );
 });

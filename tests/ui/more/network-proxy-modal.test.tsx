@@ -198,10 +198,12 @@ describe('Network proxy modal', () => {
     });
     expect(onSelectProfile).not.toHaveBeenCalled();
 
-    expect(view.getByRole('switch').props.accessibilityState.checked).toBe(false);
-    await fireEvent.press(view.getByRole('switch'));
+    const proxySwitch = view.getByRole('switch');
+    expect(proxySwitch.props.onChange).toEqual(expect.any(Function));
+    expect(proxySwitch.props.value).toBe(false);
+    await fireEvent(proxySwitch, 'change', { nativeEvent: { value: true } });
     expect(onSetEnabled).toHaveBeenCalledWith(true);
-    expect(view.getByRole('switch').props.accessibilityState.checked).toBe(true);
+    expect(view.getByRole('switch').props.value).toBe(true);
   });
 
   it('clears the proxy draft inset when the Android keyboard hides', async () => {

@@ -1,14 +1,13 @@
 import type { MoreStyles } from '../styles';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
-  Animated,
-  Easing,
   Keyboard,
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   useWindowDimensions,
@@ -118,14 +117,12 @@ export function NetworkProxyModal({
   const [pendingEnabled, setPendingEnabled] = useState<boolean | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draftKeyboardInset, setDraftKeyboardInset] = useState(0);
-  const switchProgress = useRef(new Animated.Value(proxyState.enabled ? 1 : 0)).current;
   const draftProfile = useMemo(() => profileFromDraft(draft), [draft]);
   const errors = useMemo(() => validateNetworkProxyProfile(draftProfile), [draftProfile]);
   const visibleErrors = submitted ? errors : {};
   const selecting = selectedIds.length > 0;
   const displayedEnabled = pendingEnabled ?? proxyState.enabled;
   const switchDisabled = busy || applyStatus === 'applying';
-  const switchTranslateX = switchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 28] });
   const accentBaseColor = '#1677FF';
   const accentColor = theme.primary;
   const accentSoftColor = theme.primarySoft;
@@ -169,15 +166,6 @@ export function NetworkProxyModal({
       setPendingEnabled(null);
     }
   }, [applyStatus, pendingEnabled, proxyState.enabled]);
-
-  useEffect(() => {
-    Animated.timing(switchProgress, {
-      duration: 160,
-      easing: Easing.out(Easing.cubic),
-      toValue: displayedEnabled ? 1 : 0,
-      useNativeDriver: true
-    }).start();
-  }, [displayedEnabled, switchProgress]);
 
   useEffect(() => {
     setSelectedIds((current) => current.filter((id) => proxyState.profiles.some((profile) => profile.id === id)));
@@ -367,27 +355,16 @@ export function NetworkProxyModal({
         <ScrollView style={[styles.flex, { backgroundColor: pageColor }]} contentContainerStyle={proxyStyles.content}>
           <View style={[proxyStyles.card, proxyStyles.switchCard, { backgroundColor: cardColor }]}>
             <Text style={[proxyStyles.switchLabel, { color: theme.ink }]}>使用代理</Text>
-            <Pressable
-              accessibilityRole="switch"
-              accessibilityState={{ checked: displayedEnabled, disabled: switchDisabled }}
+            <Switch
+              accessibilityLabel="使用代理"
               disabled={switchDisabled}
-              hitSlop={8}
-              style={[
-                proxyStyles.toggleTrack,
-                {
-                  backgroundColor: displayedEnabled ? accentBaseColor : theme.lineStrong,
-                  opacity: switchDisabled ? 0.72 : 1
-                }
-              ]}
-              onPress={() => toggleEnabled(!displayedEnabled)}
-            >
-              <Animated.View
-                style={[
-                  proxyStyles.toggleThumb,
-                  { backgroundColor: theme.surface, transform: [{ translateX: switchTranslateX }] }
-                ]}
-              />
-            </Pressable>
+              ios_backgroundColor={theme.lineStrong}
+              style={{ opacity: switchDisabled ? 0.72 : 1 }}
+              thumbColor={theme.surface}
+              trackColor={{ false: theme.lineStrong, true: accentBaseColor }}
+              value={displayedEnabled}
+              onValueChange={toggleEnabled}
+            />
           </View>
 
           <View style={[proxyStyles.card, { backgroundColor: cardColor }]}>
@@ -677,23 +654,6 @@ const proxyStyles = StyleSheet.create({
   switchLabel: {
     fontSize: 17,
     fontWeight: '600'
-  },
-  toggleTrack: {
-    borderRadius: 18,
-    height: 36,
-    justifyContent: 'center',
-    padding: 2,
-    width: 64
-  },
-  toggleThumb: {
-    borderRadius: 16,
-    elevation: 3,
-    height: 32,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.16,
-    shadowRadius: 2,
-    width: 32
   },
   cardTitle: {
     fontSize: 14,

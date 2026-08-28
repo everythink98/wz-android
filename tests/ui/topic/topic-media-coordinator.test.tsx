@@ -13,6 +13,8 @@ import {
   publishReadNetworkRuntimeRotation
 } from '@/platform/network/readNetworkRuntime';
 
+jest.mock('expo-video', () => ({ createVideoPlayer: jest.fn() }));
+
 const VIEWPORT_ROW_KEYS = ['row-1'];
 
 type MediaKind = Parameters<typeof useTopicBodyMediaLease>[0]['kind'];
@@ -754,7 +756,7 @@ describe('TopicBodyMediaCoordinator', () => {
     }
   });
 
-  it('re-enters the bounded timeout lifecycle when displayed audio returns to visible rows', async () => {
+  it('keeps displayed audio outside row scheduling without re-entering the timeout lifecycle', async () => {
     jest.useFakeTimers();
     try {
       const probe = <MediaProbe automaticRetry={false} id="recycled-audio" kind="audio" />;
@@ -773,14 +775,14 @@ describe('TopicBodyMediaCoordinator', () => {
       const displayedAttempt = view.getByTestId('attempt-recycled-audio').props.children;
 
       await view.rerender(tree([]));
-      expect(view.getByTestId('media-recycled-audio').props.children).toBe('idle');
+      expect(view.getByTestId('media-recycled-audio').props.children).toBe('admitted');
+      expect(view.getByTestId('attempt-recycled-audio').props.children).toBe(displayedAttempt);
       await view.rerender(tree(VIEWPORT_ROW_KEYS));
-      const resumedAttempt = view.getByTestId('attempt-recycled-audio').props.children;
 
-      await act(() => jest.advanceTimersByTime(30_000));
+      await act(() => jest.advanceTimersByTime(60_000));
 
-      expect(view.getByTestId('media-recycled-audio').props.children).toBe('failed:timeout');
-      expect(resumedAttempt).not.toBe(displayedAttempt);
+      expect(view.getByTestId('media-recycled-audio').props.children).toBe('admitted');
+      expect(view.getByTestId('attempt-recycled-audio').props.children).toBe(displayedAttempt);
       await view.unmount();
     } finally {
       jest.useRealTimers();

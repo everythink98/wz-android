@@ -1,12 +1,14 @@
 import { useMemo } from 'react';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { imageRequestHeadersForUrl } from '@/platform/media/imageRequestSource';
-import { ForumContentAudio, ForumContentVideo, type ForumContentMediaAdmission } from '@/ui/content/ForumContentVideo';
+import { ForumContentAudio } from '@/ui/content/ForumContentAudio';
+import { ForumContentVideo, type ForumContentMediaAdmission } from '@/ui/content/ForumContentVideo';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 import { useTopicBodyMediaLease } from './TopicBodyMediaCoordinator';
 import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { ManagedTopicMediaImage } from './ManagedTopicMediaImage';
+import { useTopicAudioControl } from './TopicAudioSession';
 
 export function ManagedTopicContentVideo({
   boundarySpacing,
@@ -25,7 +27,7 @@ export function ManagedTopicContentVideo({
   src: string;
   theme: ReaderTheme;
 }) {
-  const admission = useManagedTopicContentMediaAdmission(
+  const { admission } = useManagedTopicContentMediaAdmission(
     'video',
     src,
     mediaContext,
@@ -74,24 +76,22 @@ export function ManagedTopicContentAudio({
   src: string;
   theme: ReaderTheme;
 }) {
-  const admission = useManagedTopicContentMediaAdmission(
+  const { admission, requestIdentity } = useManagedTopicContentMediaAdmission(
     'audio',
     src,
     mediaContext,
     nodeSeekMediaUserAgent,
     referrerPolicy
   );
-  return (
-    <ForumContentAudio
-      admission={admission}
-      boundarySpacing={boundarySpacing}
-      mediaContext={mediaContext}
-      nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-      referrerPolicy={referrerPolicy}
-      src={src}
-      theme={theme}
-    />
-  );
+  const control = useTopicAudioControl({
+    admission,
+    id: requestIdentity,
+    mediaContext,
+    nodeSeekMediaUserAgent,
+    referrerPolicy,
+    src
+  });
+  return <ForumContentAudio boundarySpacing={boundarySpacing} theme={theme} {...control} />;
 }
 
 function useManagedTopicContentMediaAdmission(
@@ -106,9 +106,14 @@ function useManagedTopicContentMediaAdmission(
     [mediaContext, nodeSeekMediaUserAgent, referrerPolicy, src]
   );
   const resolvedReferer = requestHeaders?.Referer || 'none';
-  return useTopicBodyMediaLease({
+  const requestIdentity = `${kind}:${mediaContext.sessionIdentity}:${src}:referrer:${resolvedReferer}`;
+  const admission = useTopicBodyMediaLease({
     automaticRetry: false,
     kind,
-    requestIdentity: `${kind}:${mediaContext.sessionIdentity}:${src}:referrer:${resolvedReferer}`
-  }) satisfies ForumContentMediaAdmission;
+    requestIdentity
+  });
+  return { admission, requestIdentity } satisfies {
+    admission: ForumContentMediaAdmission;
+    requestIdentity: string;
+  };
 }

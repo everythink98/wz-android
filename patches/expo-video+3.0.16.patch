@@ -1,3 +1,69 @@
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
+index ffd4ab4..092f896 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
+@@ -11,7 +11,6 @@ import android.view.View
+ import android.view.accessibility.CaptioningManager
+ import android.view.WindowInsets
+ import android.view.WindowInsetsController
+-import android.widget.ImageButton
+ import androidx.media3.ui.PlayerView
+ import expo.modules.kotlin.exception.CodedException
+ import expo.modules.video.player.VideoPlayer
+@@ -159,9 +158,7 @@ class FullscreenPlayerActivity : Activity() {
+ 
+   private fun setupFullscreenButton() {
+     playerView.setFullscreenButtonClickListener { finish() }
+-
+-    val fullScreenButton: ImageButton = playerView.findViewById(androidx.media3.ui.R.id.exo_fullscreen)
+-    fullScreenButton.setImageResource(androidx.media3.ui.R.drawable.exo_icon_fullscreen_exit)
++    playerView.syncFullscreenButtonState(true)
+   }
+ 
+   override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration?) {
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
+index 9905e13..44a33d1 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
+@@ -35,3 +35,16 @@ internal fun PlayerView.setFullscreenButtonVisibility(visible: Boolean) {
+     android.view.View.GONE
+   }
+ }
++
++@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
++internal fun PlayerView.syncFullscreenButtonState(isFullscreen: Boolean) {
++  val fullscreenButton = findViewById<android.widget.ImageButton>(androidx.media3.ui.R.id.exo_fullscreen) ?: return
++  fullscreenButton.setImageResource(
++    if (isFullscreen) androidx.media3.ui.R.drawable.exo_icon_fullscreen_exit
++    else androidx.media3.ui.R.drawable.exo_icon_fullscreen_enter
++  )
++  fullscreenButton.contentDescription = context.getString(
++    if (isFullscreen) androidx.media3.ui.R.string.exo_controls_fullscreen_exit_description
++    else androidx.media3.ui.R.string.exo_controls_fullscreen_enter_description
++  )
++}
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
+index 20a603d..028ac2e 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
+@@ -13,7 +13,6 @@ import android.view.MotionEvent
+ import android.view.View
+ import android.view.ViewGroup
+ import android.widget.FrameLayout
+-import android.widget.ImageButton
+ import androidx.fragment.app.FragmentActivity
+ import androidx.media3.common.Tracks
+ import androidx.media3.common.VideoSize
+@@ -224,8 +223,7 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+ 
+   fun exitFullscreen() {
+     // Fullscreen uses a different PlayerView instance, because of that we need to manually update the non-fullscreen player icon after exiting
+-    val fullScreenButton: ImageButton = playerView.findViewById(androidx.media3.ui.R.id.exo_fullscreen)
+-    fullScreenButton.setImageResource(androidx.media3.ui.R.drawable.exo_icon_fullscreen_enter)
++    playerView.syncFullscreenButtonState(false)
+     attachPlayer()
+     onFullscreenExit(Unit)
+     isInFullscreen = false
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
 index 7e213f7..d9825e2 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt

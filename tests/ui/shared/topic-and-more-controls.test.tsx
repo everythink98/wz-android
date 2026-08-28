@@ -16,33 +16,12 @@ jest.mock('react-native-webview', () => {
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   return { WebView: ReactModule.forwardRef(() => ReactModule.createElement(NativeView)) };
 });
-jest.mock('react-native-gesture-handler', () => {
+jest.mock('@react-native-community/slider', () => {
   const ReactModule = require('react') as typeof React;
+  const { View } = require('react-native') as typeof import('react-native');
   return {
-    Gesture: {
-      Pan: () => ({
-        minDistance() {
-          return this;
-        },
-        runOnJS() {
-          return this;
-        },
-        onBegin() {
-          return this;
-        },
-        onUpdate() {
-          return this;
-        },
-        onEnd() {
-          return this;
-        },
-        onFinalize() {
-          return this;
-        }
-      })
-    },
-    GestureDetector: ({ children }: { children: React.ReactNode }) =>
-      ReactModule.createElement(ReactModule.Fragment, null, children)
+    __esModule: true,
+    default: (props: Record<string, unknown>) => ReactModule.createElement(View, props)
   };
 });
 
@@ -98,6 +77,7 @@ describe('Topic and More controls', () => {
         settings={readerData.settings}
         showSettingsPanel
         styles={styles}
+        theme={theme}
         onUpdateSettings={onUpdateSettings}
       />
     );
@@ -117,30 +97,30 @@ describe('Topic and More controls', () => {
     ]);
   });
 
-  it('updates the visible font scale through buttons and accessibility actions', async () => {
-    jest.useFakeTimers();
+  it('previews font-scale dragging and commits the setting once on completion', async () => {
     const onUpdateSettings = jest.fn();
     const view = await render(
       <AppearancePanel
         settings={readerData.settings}
         showSettingsPanel
         styles={styles}
+        theme={theme}
         onUpdateSettings={onUpdateSettings}
       />
     );
 
-    await fireEvent.press(view.getByLabelText('增大字号'));
-    expect(view.getByText('字号 105%')).toBeTruthy();
-    await act(async () => jest.advanceTimersByTime(300));
+    const slider = view.getByTestId('appearance-font-scale-slider');
+    await act(async () => slider.props.onValueChange(1.15));
+    expect(view.getByText('字号 115%')).toBeTruthy();
+    expect(onUpdateSettings).not.toHaveBeenCalled();
 
-    await fireEvent(view.getByRole('adjustable'), 'accessibilityAction', {
-      nativeEvent: { actionName: 'decrement' }
-    });
-    expect(view.getByText('字号 100%')).toBeTruthy();
-    await act(async () => jest.advanceTimersByTime(300));
+    await act(async () => slider.props.onSlidingComplete(1.15));
+    expect(onUpdateSettings).toHaveBeenCalledTimes(1);
+    expect(onUpdateSettings).toHaveBeenLastCalledWith({ fontScale: 1.15 });
 
-    expect(onUpdateSettings.mock.calls).toEqual([[{ fontScale: 1.05 }], [{ fontScale: 1 }]]);
-    view.unmount();
-    jest.useRealTimers();
+    await fireEvent.press(view.getByLabelText('减小字号'));
+    expect(view.getByText('字号 110%')).toBeTruthy();
+    expect(onUpdateSettings).toHaveBeenCalledTimes(2);
+    expect(onUpdateSettings).toHaveBeenLastCalledWith({ fontScale: 1.1 });
   });
 });

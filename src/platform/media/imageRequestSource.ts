@@ -20,6 +20,10 @@ export type ImageSourceOptions = ImageRequestOptions & {
 };
 
 const IMAGE_ACCEPT = 'image/avif,image/webp,image/*,*/*;q=0.8';
+const VIDEO_ACCEPT = 'video/webm,video/mp4,video/*,*/*;q=0.8';
+const AUDIO_ACCEPT = 'audio/mpeg,audio/*,*/*;q=0.8';
+const FORUM_MEDIA_KIND_HEADER = 'X-WZ-Forum-Media-Kind';
+const READ_NETWORK_GENERATION_HEADER = 'X-WZ-Read-Network-Generation';
 const FALLBACK_ACCEPT_LANGUAGE = 'en-US,en;q=0.9';
 const DEFAULT_ACCEPT_LANGUAGE = defaultAcceptLanguage();
 const DEFAULT_REFERRER_POLICY: MediaReferrerPolicy = 'strict-origin-when-cross-origin';
@@ -179,6 +183,23 @@ export function imageSourceFromUrl(url: string, options: ImageSourceOptions) {
       ...(base.headers && typeof base.headers === 'object' && !Array.isArray(base.headers) ? base.headers : {}),
       ...headers
     }
+  };
+}
+
+export function forumMediaPlayerSourceFromUrl(
+  url: string,
+  options: ImageRequestOptions & { kind: 'audio' | 'video'; runtimeGeneration: number }
+) {
+  const headers = {
+    ...(imageRequestHeadersForUrl(url, options) || {}),
+    Accept: options.kind === 'audio' ? AUDIO_ACCEPT : VIDEO_ACCEPT,
+    [FORUM_MEDIA_KIND_HEADER]: 'video',
+    [READ_NETWORK_GENERATION_HEADER]: String(options.runtimeGeneration)
+  };
+  return {
+    uri: url,
+    ...(Object.keys(headers).length ? { headers } : {}),
+    contentType: 'progressive' as const
   };
 }
 

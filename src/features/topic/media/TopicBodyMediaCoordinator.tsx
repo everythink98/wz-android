@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { type Source } from '@/domain/forum/sourceCatalog';
 import { useReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
+import { TopicAudioSessionProvider } from './TopicAudioSession';
 
 const MAX_WARM_BLOCK_MEDIA = 8;
 const MAX_IN_FLIGHT_BODY_MEDIA = 4;
@@ -405,17 +406,6 @@ class TopicBodyMediaCoordinator {
     if (this.disposed) return;
     const rowOrder = new Map(this.viewportRowKeys.map((rowKey, index) => [rowKey, index]));
     const visibleRows = new Set(this.visibleRowKeys);
-    for (const entry of this.entries.values()) {
-      if (
-        entry.kind === 'audio' &&
-        entry.status === 'displayed' &&
-        (!this.active || this.paused || !visibleRows.has(entry.rowKey))
-      ) {
-        entry.deadline = null;
-        entry.lastProgressValue = null;
-        entry.status = 'waiting';
-      }
-    }
     const eligible = [...this.entries.values()]
       .filter(
         (entry) =>
@@ -634,7 +624,9 @@ function TopicBodyMediaCoordinatorSessionProvider({
   useEffect(() => () => coordinator.dispose(), [coordinator]);
   return (
     <TopicBodyMediaCoordinatorContext.Provider value={coordinator}>
-      {children}
+      <TopicAudioSessionProvider active={active} paused={paused} runtimeGeneration={runtimeGeneration}>
+        {children}
+      </TopicAudioSessionProvider>
     </TopicBodyMediaCoordinatorContext.Provider>
   );
 }

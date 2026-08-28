@@ -496,12 +496,6 @@ export function normalizeFontScale(value: unknown, fallback = 1) {
     : fallback;
 }
 
-export function fontScaleFromSliderPosition(position: number, width: number) {
-  const ratio =
-    Number.isFinite(position) && Number.isFinite(width) && width > 0 ? Math.max(0, Math.min(1, position / width)) : 0;
-  return normalizeFontScale(FONT_SCALE_MIN + ratio * (FONT_SCALE_MAX - FONT_SCALE_MIN));
-}
-
 function mergeReaderSettings(local: ReaderSettings, value: unknown): ReaderSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return local;
