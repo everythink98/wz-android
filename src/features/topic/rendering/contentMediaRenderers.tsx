@@ -12,6 +12,7 @@ import { createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
 import {
   escapeHtmlAttribute,
+  FORUM_AUDIO_TAG,
   FORUM_LINK_CARD_TAG,
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG
@@ -20,7 +21,7 @@ import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { useTopicBodyMediaLease } from '../media/TopicBodyMediaCoordinator';
-import { ManagedTopicContentVideo } from '../media/ManagedTopicContentVideo';
+import { ManagedTopicContentAudio, ManagedTopicContentVideo } from '../media/ManagedTopicContentVideo';
 import { ManagedTopicMediaImage } from '../media/ManagedTopicMediaImage';
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import {
@@ -417,6 +418,27 @@ export function createContentMediaRenderers({
     );
   };
 
+  const ForumAudioRenderer: CustomBlockRenderer = (props) => {
+    const boundarySpacing = useContentBoundarySpacing(props.tnode);
+    const attributes = props.tnode.attributes || {};
+    const src = attributes.src || '';
+    const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
+    if (!src) {
+      return null;
+    }
+    return (
+      <ManagedTopicContentAudio
+        key={`${mediaSessionIdentity}:${src}`}
+        boundarySpacing={boundarySpacing}
+        mediaContext={mediaContext}
+        nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
+        referrerPolicy={referrerPolicy}
+        src={src}
+        theme={theme}
+      />
+    );
+  };
+
   const LinkCardRenderer: CustomBlockRenderer = (props) => {
     const boundarySpacing = useContentBoundarySpacing(props.tnode);
     const attributes = props.tnode.attributes || {};
@@ -517,6 +539,7 @@ export function createContentMediaRenderers({
       textStyle: htmlRendererStyles.inlineForumImageText,
       useContentBoundarySpacing
     }),
+    [FORUM_AUDIO_TAG]: ForumAudioRenderer,
     [FORUM_LINK_CARD_TAG]: LinkCardRenderer,
     [FORUM_VIDEO_TAG]: ForumVideoRenderer,
     [FORUM_VIDEO_STICKER_TAG]: ForumVideoStickerRenderer,

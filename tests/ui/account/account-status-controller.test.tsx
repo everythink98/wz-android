@@ -748,7 +748,7 @@ describe('account status queries', () => {
     expect(mockGetCurrentUser).toHaveBeenCalledWith(
       expect.objectContaining({
         source: 'linuxdo',
-        discourseAuth: { linuxdo: { userAgent: 'safe-agent' } }
+        discourseAuth: { userAgent: 'safe-agent' }
       })
     );
   });

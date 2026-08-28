@@ -1,7 +1,7 @@
 import { memo, useMemo, useRef } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Switch, Text, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
-import RenderHTML from 'react-native-render-html';
+import RenderHTML, { HTMLContentModel, HTMLElementModel } from 'react-native-render-html';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { parseForumTopicDestination } from '@/domain/forum/links';
@@ -34,6 +34,16 @@ import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch'
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
 import { createConversationAutoScrollController } from './conversationAutoScroll';
+import { FORUM_AUDIO_TAG } from '@/domain/forum/html';
+
+const NOTIFICATION_HTML_ELEMENT_MODELS = {
+  ...FORUM_STICKER_ELEMENT_MODELS,
+  [FORUM_AUDIO_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_AUDIO_TAG,
+    contentModel: HTMLContentModel.mixed,
+    isOpaque: false
+  })
+};
 
 export type NotificationFilterSource = 'all' | NotificationSource;
 
@@ -453,7 +463,7 @@ function DetailHtml({
     <RenderHTML
       baseStyle={message ? styles.messageBody : styles.detailBody}
       contentWidth={contentWidth}
-      customHTMLElementModels={FORUM_STICKER_ELEMENT_MODELS}
+      customHTMLElementModels={NOTIFICATION_HTML_ELEMENT_MODELS}
       renderers={renderers}
       renderersProps={renderersProps}
       source={{ html: renderableHtml }}

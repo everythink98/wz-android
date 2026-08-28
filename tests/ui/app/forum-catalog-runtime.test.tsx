@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import type { ReadGateway } from '@/sources/readGateway';
 import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
 import { QueryTestWrapper } from '../QueryTestWrapper';
-import { aggregateFeedSources, type Source } from '@/domain/forum/sourceCatalog';
+import { sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 
 const allSourcesKey = 'v2ex,linuxdo,nodeseek,yaohuo';
 
@@ -29,7 +29,7 @@ describe('forum catalog runtime', () => {
       () =>
         useForumCatalogRuntime({
           active,
-          enabledFeedSources: aggregateFeedSources,
+          enabledFeedSources: sourceValues,
           enabledSourcesKey: allSourcesKey,
           notify: jest.fn(),
           readGateway

@@ -168,7 +168,7 @@ export function hasDiscourseAdvancedFilters(filter: SourceSearchFilter) {
       filter.maxPosts !== null ||
       filter.minViews !== null ||
       filter.maxViews !== null ||
-      (filter.siteExtension?.source === 'linuxdo' && filter.siteExtension.expertResponse))
+      filter.expertResponse)
   );
 }
 
@@ -529,18 +529,16 @@ export function SearchFilterForm({
                   />
                 </View>
               </View>
-              {draftFilter.siteExtension?.source === 'linuxdo' ? (
-                <View style={styles.searchFilterField}>
-                  <Text style={styles.searchFilterLabel}>其他</Text>
-                  <FilterCheckbox
-                    checked={draftFilter.siteExtension.expertResponse}
-                    label="有专家回应"
-                    styles={styles}
-                    theme={theme}
-                    onChange={updateLinuxDoExpertResponse}
-                  />
-                </View>
-              ) : null}
+              <View style={styles.searchFilterField}>
+                <Text style={styles.searchFilterLabel}>其他</Text>
+                <FilterCheckbox
+                  checked={draftFilter.expertResponse}
+                  label="有专家回应"
+                  styles={styles}
+                  theme={theme}
+                  onChange={updateLinuxDoExpertResponse}
+                />
+              </View>
               <View style={styles.searchFilterField}>
                 <Text style={styles.searchFilterLabel}>发帖人</Text>
                 <Pressable

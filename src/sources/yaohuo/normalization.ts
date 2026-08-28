@@ -153,11 +153,8 @@ function profileStructuredStatValue(root: ReturnType<typeof parseHtml>, classNam
 }
 
 function profileStatValue(text: string, labels: string) {
-  const pattern = new RegExp(`(?:^|[^\\d])(?:${labels})\\s*(?:[:：]?\\s*|[（(]\\s*)([\\d,]{1,6})(?!\\d)`, 'g');
-  for (const match of text.matchAll(pattern)) {
-    return profileStatNumber(match[1]);
-  }
-  return undefined;
+  const match = text.match(new RegExp(`(?:^|[^\\d])(?:${labels})\\s*(?:[:：]?\\s*|[（(]\\s*)([\\d,]{1,6})(?!\\d)`));
+  return profileStatNumber(match?.[1]);
 }
 
 function cleanYaohuoLevelLabel(value: unknown) {

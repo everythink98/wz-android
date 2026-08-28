@@ -240,6 +240,54 @@ three &lt; four</code></pre>
     expect(result).not.toContain('onplay');
   });
 
+  it('normalizes the linux.do audio source shape without losing its fallback link', () => {
+    const result = sanitizeLinuxDoContentHtml(
+      `
+      <audio preload="metadata" controls>
+        <source src="https://media.example/song.mp3">
+        <a href="https://media.example/song.mp3">https://media.example/song.mp3</a>
+      </audio>
+    `,
+      []
+    );
+
+    expect(result).toContain('<forum-audio src="https://media.example/song.mp3">');
+    expect(result).toContain('<a href="https://media.example/song.mp3">https://media.example/song.mp3</a>');
+    expect(result).not.toContain('<audio');
+    expect(result).not.toContain('<source');
+  });
+
+  it('normalizes a safe audio src attribute into the same native detail contract', () => {
+    const result = sanitizeLinuxDoContentHtml('<audio src="/uploads/short.mp3" controls>打开音频</audio>', []);
+
+    expect(result).toContain('<forum-audio src="https://linux.do/uploads/short.mp3">打开音频</forum-audio>');
+    expect(result).not.toContain('<audio');
+  });
+
+  it('keeps the original fallback text when linux.do provides an empty audio source', () => {
+    const result = sanitizeLinuxDoContentHtml(
+      '<audio preload="metadata" controls><source src=""><a>(https://storage.to/DbsrI6Z2p)</a></audio>',
+      []
+    );
+
+    expect(result).toContain('(https://storage.to/DbsrI6Z2p)');
+    expect(result).not.toContain('<audio');
+    expect(result).not.toContain('<source');
+    expect(result).not.toContain('<forum-audio');
+    expect(result).not.toContain('href=');
+  });
+
+  it('rejects unsafe audio sources without manufacturing a playable URL', () => {
+    const result = sanitizeLinuxDoContentHtml(
+      '<audio src="javascript:alert(1)"><source src="data:text/html,hello"><a href="javascript:alert(2)">fallback</a></audio>',
+      []
+    );
+
+    expect(result).toContain('fallback');
+    expect(result).not.toContain('<forum-audio');
+    expect(result).not.toMatch(/javascript:|data:text\/html|href=/i);
+  });
+
   it('drops ordinary videos without a safe http source', () => {
     const result = sanitizeContentHtml(
       `

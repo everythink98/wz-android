@@ -1552,11 +1552,9 @@ describe('source gateway read contract', () => {
         query: 'codex',
         linuxDoAuthenticated: true,
         discourseAuth: {
-          linuxdo: {
-            authenticated: true,
-            categoryCacheScope: 'authenticated:0',
-            userAgent: 'linux.do UA'
-          }
+          authenticated: true,
+          categoryCacheScope: 'authenticated:0',
+          userAgent: 'linux.do UA'
         }
       })
     );

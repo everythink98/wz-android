@@ -1,6 +1,6 @@
 import { HTMLContentModel, HTMLElementModel, defaultHTMLElementModels } from 'react-native-render-html';
 import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
-import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
+import { FORUM_AUDIO_TAG, FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import { NODESEEK_STARDUST_PLACEHOLDER_TAG } from '@/sources/nodeseek/stardustMarkup';
 import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
@@ -30,6 +30,11 @@ export const HTML_CUSTOM_ELEMENT_MODELS = {
   }),
   [FORUM_LINK_CARD_TAG]: HTMLElementModel.fromCustomModel({
     tagName: FORUM_LINK_CARD_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: true
+  }),
+  [FORUM_AUDIO_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_AUDIO_TAG,
     contentModel: HTMLContentModel.block,
     isOpaque: true
   }),

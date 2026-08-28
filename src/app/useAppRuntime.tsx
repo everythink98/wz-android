@@ -63,10 +63,10 @@ export function useAppRuntime() {
   const contentSourceProjection = projectContentSourcePreferences(readerData.settings.contentSources, readerDataLoaded);
   const {
     enabledSources,
-    feedSources: enabledFeedSources,
     notificationSources: enabledNotificationSources,
     sessionSources: enabledSessionSources
   } = contentSourceProjection;
+  const enabledFeedSources = enabledSources;
   const enabledSourcesKey = readerDataLoaded ? canonicalEnabledSourcesKey(readerData.settings.contentSources) : '';
   useContentSourceQueryCleanup(enabledSources, enabledSourcesKey);
 

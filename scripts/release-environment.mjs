@@ -87,7 +87,7 @@ export function parseJavaVersionOutput(output) {
 
 export function resolveReleaseKeystorePath(rootDir, configuredPath) {
   const keystorePath = path.resolve(rootDir, String(configuredPath || ''));
-  let isFile = false;
+  let isFile;
   try {
     isFile = statSync(keystorePath).isFile();
   } catch {

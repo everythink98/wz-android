@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 describe('Topic Route external links', () => {
-  it('reports a Custom Tab rejection while keeping original-site opening in the full browser', async () => {
+  it('reports a Custom Tab rejection, keeps original-site opening in the full browser, and stops native content in the background', async () => {
     const data = createEmptyReaderData();
     jest.mocked(useTopicSessionController).mockReturnValue({
       state: { replyComposerIntent: { kind: 'closed' }, selectedTopic: topic },
@@ -124,7 +124,7 @@ describe('Topic Route external links', () => {
       .mockRejectedValue(new Error('custom tab unavailable'));
     const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
     try {
-      await render(
+      const view = await render(
         <ForumSessionEpochProvider sessionEpochs={initialForumSessionEpochs} transportIdentity="applied">
           <TopicRouteRuntimeProvider value={runtime}>
             <TopicRoute navigation={navigation} route={route} />
@@ -149,6 +149,15 @@ describe('Topic Route external links', () => {
       expect(openBrowserAsync).toHaveBeenCalledWith('https://example.com/help');
       expect(openURL).toHaveBeenCalledTimes(1);
       expect(openURL).toHaveBeenCalledWith(topic.url);
+
+      await view.rerender(
+        <ForumSessionEpochProvider sessionEpochs={initialForumSessionEpochs} transportIdentity="applied">
+          <TopicRouteRuntimeProvider value={{ ...runtime, appActive: false }}>
+            <TopicRoute navigation={navigation} route={route} />
+          </TopicRouteRuntimeProvider>
+        </ForumSessionEpochProvider>
+      );
+      expect((mockTopicScreen.mock.calls.at(-1)?.[0] as { active: boolean }).active).toBe(false);
     } finally {
       openBrowserAsync.mockRestore();
       openURL.mockRestore();

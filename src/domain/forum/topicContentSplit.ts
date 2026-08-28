@@ -1,6 +1,7 @@
 import { HTMLElement } from 'node-html-parser';
 import { sanitizeContentHtmlWithRoot } from './contentSanitizer';
 import {
+  FORUM_AUDIO_TAG,
   FORUM_LINK_CARD_TAG,
   FORUM_TERMINAL_REPORT_TAG,
   FORUM_TERMINAL_TAB_TAG,
@@ -203,7 +204,13 @@ export const EMPTY_COMPILED_FORUM_CONTENT: CompiledForumContent = {
   rows: []
 };
 
-const PLANNED_ISLAND_TAGS = new Set(['iframe', FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG]);
+const PLANNED_ISLAND_TAGS = new Set([
+  'iframe',
+  FORUM_AUDIO_TAG,
+  FORUM_LINK_CARD_TAG,
+  FORUM_VIDEO_STICKER_TAG,
+  FORUM_VIDEO_TAG
+]);
 
 function nodeTagName(node: unknown) {
   const record = node as { rawTagName?: unknown; tagName?: unknown };
@@ -458,6 +465,9 @@ function ownMediaSlots(node: PlanningNode) {
   }
   if (tagName === 'img' || tagName === 'audio' || tagName === 'iframe') {
     return 1;
+  }
+  if (tagName === FORUM_AUDIO_TAG) {
+    return Number(Boolean(nodeAttribute(node, 'src')));
   }
   if (tagName === FORUM_VIDEO_TAG) {
     return Number(Boolean(nodeAttribute(node, 'src'))) + Number(Boolean(nodeAttribute(node, 'poster')));
@@ -762,7 +772,7 @@ function generatedWrapperAttributeReserve(tagName: string, orderedListValue?: nu
 }
 
 const FALLBACK_MEDIA_TAG_PATTERN = new RegExp(
-  `<(?:img|audio|video|iframe|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_INLINE_IMAGE_TAG}|${FORUM_DYNAMIC_INLINE_IMAGE_TAG}|${FORUM_STICKER_TAG}|${FORUM_LINK_CARD_TAG})(?![a-z0-9-])[^>]*>`,
+  `<(?:img|audio|video|iframe|${FORUM_AUDIO_TAG}|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_INLINE_IMAGE_TAG}|${FORUM_DYNAMIC_INLINE_IMAGE_TAG}|${FORUM_STICKER_TAG}|${FORUM_LINK_CARD_TAG})(?![a-z0-9-])[^>]*>`,
   'gi'
 );
 
@@ -790,6 +800,9 @@ function fallbackMediaSlots(tag: string) {
   }
   if (tagName === FORUM_VIDEO_TAG) {
     return Number(Boolean(fallbackAttribute(tag, 'src'))) + Number(Boolean(fallbackAttribute(tag, 'poster')));
+  }
+  if (tagName === FORUM_AUDIO_TAG) {
+    return Number(Boolean(fallbackAttribute(tag, 'src')));
   }
   if (
     tagName === FORUM_INLINE_IMAGE_TAG ||
@@ -2237,36 +2250,6 @@ export function prepareForumContentHtml(
   return {
     contentHtml: normalizedContentHtml,
     contentPlan: compileForumContent({ html: normalizedContentHtml, ...options }),
-    contentPlanKey: preparedForumContentKey(options)
-  };
-}
-
-export function prepareParsedForumContent(
-  root: HTMLElement,
-  { contentHtml, polls = [], role, source, topicId }: ForumContentCompileOptions & { contentHtml: string }
-): PreparedForumContent<CompiledForumContent> {
-  const normalizedContentHtml = String(contentHtml || '');
-  const trimmedContentHtml = normalizedContentHtml.trim();
-  const raw = stripCompilerOwnedAttributes(trimmedContentHtml);
-  const compactShell = (root.childNodes || []).find(
-    (node) =>
-      nodeTagName(node) === 'div' &&
-      nodeAttribute(node as PlanningNode, 'class')
-        .split(/\s+/)
-        .includes(FORUM_COMPACT_CONTENT_CLASS)
-  ) as HTMLElement | undefined;
-  if (
-    raw !== trimmedContentHtml ||
-    (raw && normalizeRenderableHtml(raw) !== raw) ||
-    (role !== 'opening' && (!compactShell || compactShell.innerHTML !== raw))
-  ) {
-    return prepareForumContentHtml(normalizedContentHtml, { polls, role, source, topicId });
-  }
-  const pollList = compileRoleIncludesPolls(role, source) ? polls : [];
-  const options = { polls, role, source, topicId };
-  return {
-    contentHtml: normalizedContentHtml,
-    contentPlan: compileParsedForumContent({ body: root, pollList, raw, ...options }),
     contentPlanKey: preparedForumContentKey(options)
   };
 }

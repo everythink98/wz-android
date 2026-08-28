@@ -163,13 +163,6 @@ function waitForCategoryData(options: LinuxDoOptions) {
   return options.signal ? withAbortableTimeout(() => request, { signal: options.signal }) : request;
 }
 
-export function resetLinuxDoCategoryCacheForTests() {
-  categoryCacheScope = null;
-  categoryCache = new Map();
-  categoryData = null;
-  categoryRequest = null;
-}
-
 export async function categoryMapForTopics(
   data: unknown,
   topics: unknown[],
@@ -313,7 +306,6 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
     ...(rawBoostCount || needsApproval
       ? {
           siteExtension: {
-            source: 'linuxdo' as const,
             ...(rawBoostCount ? { boostCount: rawBoostCount } : {}),
             ...(needsApproval ? { needsApproval: true } : {})
           }
@@ -642,7 +634,7 @@ export async function getLinuxDoTopic(
     ...(firstPostFields?.canLike === undefined ? {} : { canLike: firstPostFields.canLike }),
     ...(polls ? { polls } : {}),
     ...(firstPostFields?.reactionSummary ? { reactionSummary: firstPostFields.reactionSummary } : {}),
-    ...(firstPostBoostCount ? { siteExtension: { source: 'linuxdo' as const, boostCount: firstPostBoostCount } } : {}),
+    ...(firstPostBoostCount ? { siteExtension: { boostCount: firstPostBoostCount } } : {}),
     ...(positiveNumber(data.bookmark_id)
       ? { bookmarkId: positiveNumber(data.bookmark_id), bookmarked: true }
       : typeof data.bookmarked === 'boolean'

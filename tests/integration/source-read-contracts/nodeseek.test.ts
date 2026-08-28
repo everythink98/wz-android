@@ -1622,14 +1622,9 @@ describe('Android local sources', () => {
     expect(new Set([...previous.items, ...center.items, ...next.items].map((reply) => reply.floor)).size).toBe(30);
   });
 
-  it.each([
-    {
-      name: 'resolved to a different page',
-      resolvedPage: 3,
-      floors: Array.from({ length: 10 }, (_, index) => index + 21),
-      message: '未确认请求的回复页'
-    }
-  ])('classifies a NodeSeek adjacent cursor $name', async ({ resolvedPage, floors, message }) => {
+  it('classifies a NodeSeek adjacent cursor resolved to a different page', async () => {
+    const resolvedPage = 3;
+    const floors = Array.from({ length: 10 }, (_, index) => index + 21);
     const fetcher = vi.fn(async (input: string) => {
       const requestedPage = Number(input.match(/post-852808-(\d+)/)?.[1] || 1);
       const responsePage = requestedPage === 4 ? resolvedPage : requestedPage;
@@ -1680,7 +1675,7 @@ describe('Android local sources', () => {
     );
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain(message);
+    expect((error as Error).message).toContain('未确认请求的回复页');
     expect((error as { reason?: unknown }).reason).toBeUndefined();
   });
 

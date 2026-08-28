@@ -49,8 +49,6 @@ describe('content source preferences', () => {
     ).toEqual({
       orderedSources: ['linuxdo', 'v2ex', 'yaohuo', 'nodeseek'],
       enabledSources: ['linuxdo', 'v2ex', 'yaohuo', 'nodeseek'],
-      feedSources: ['linuxdo', 'v2ex', 'yaohuo', 'nodeseek'],
-      searchSources: ['linuxdo', 'v2ex', 'yaohuo', 'nodeseek'],
       sessionSources: ['linuxdo', 'yaohuo', 'nodeseek'],
       notificationSources: ['linuxdo', 'yaohuo', 'nodeseek']
     });
@@ -64,8 +62,6 @@ describe('content source preferences', () => {
     ).toEqual({
       orderedSources: ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'],
       enabledSources: [],
-      feedSources: [],
-      searchSources: [],
       sessionSources: [],
       notificationSources: []
     });
@@ -75,8 +71,6 @@ describe('content source preferences', () => {
     expect(projectContentSourcePreferences(undefined, false)).toEqual({
       orderedSources: [],
       enabledSources: [],
-      feedSources: [],
-      searchSources: [],
       sessionSources: [],
       notificationSources: []
     });

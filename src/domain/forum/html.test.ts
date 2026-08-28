@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtmlAttribute, escapeHtmlFully, escapeHtmlText } from './html';
+import { escapeHtmlAttribute, escapeHtmlFully, escapeHtmlText, hasRenderableHtmlContent } from './html';
 
 describe('HTML escaping', () => {
   it.each([
@@ -14,5 +14,12 @@ describe('HTML escaping', () => {
   it('keeps the existing empty-value conversion', () => {
     expect(escapeHtmlFully(0)).toBe('');
     expect(escapeHtmlFully(null)).toBe('');
+  });
+});
+
+describe('HTML renderability', () => {
+  it('keeps an audio-only detail post renderable before and after sanitization', () => {
+    expect(hasRenderableHtmlContent('<audio src="https://media.example/song.mp3"></audio>')).toBe(true);
+    expect(hasRenderableHtmlContent('<forum-audio src="https://media.example/song.mp3"></forum-audio>')).toBe(true);
   });
 });

@@ -968,47 +968,44 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it.each(['unknown'] as const)(
-    'retains the trusted identity, cache, and delivery watermark while identity is %s',
-    async (identityTrust) => {
-      const stored = defaultNotificationState();
-      stored.sources.nodeseek = {
-        intentEnabled: true,
-        identityKey: 'nodeseek:42',
-        baselineReady: true,
-        deliveredIds: ['reply:known']
-      };
-      let persisted = JSON.stringify(stored);
-      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
-      jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
-        persisted = value;
-      });
-      const notificationCache = { items: ['cached'] };
-      appQueryClient.setQueryData(forumQueryKeys.notifications('nodeseek'), notificationCache);
-      const fetcher = jest.fn();
+  it('retains the trusted identity, cache, and delivery watermark while identity is unknown', async () => {
+    const stored = defaultNotificationState();
+    stored.sources.nodeseek = {
+      intentEnabled: true,
+      identityKey: 'nodeseek:42',
+      baselineReady: true,
+      deliveredIds: ['reply:known']
+    };
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    const notificationCache = { items: ['cached'] };
+    appQueryClient.setQueryData(forumQueryKeys.notifications('nodeseek'), notificationCache);
+    const fetcher = jest.fn();
 
-      const hook = await renderHook(
-        () =>
-          useNotificationsRuntime({
-            ...runtimeOptions(
-              jest.fn(() => true),
-              nodeSeekSessions(identityTrust),
-              ['nodeseek']
-            ),
-            fetcher
-          }),
-        { wrapper: QueryTestWrapper }
-      );
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...runtimeOptions(
+            jest.fn(() => true),
+            nodeSeekSessions('unknown'),
+            ['nodeseek']
+          ),
+          fetcher
+        }),
+      { wrapper: QueryTestWrapper }
+    );
 
-      await waitFor(() => expect(hook.result.current.identityKeys.nodeseek).toBe('nodeseek:42'));
-      expect(hook.result.current.activeSources).not.toContain('nodeseek');
-      expect(hook.result.current.state.sources.nodeseek.deliveredIds).toEqual(['reply:known']);
-      expect(appQueryClient.getQueryData(forumQueryKeys.notifications('nodeseek'))).toBe(notificationCache);
-      expect(dismissSourceNotification).not.toHaveBeenCalledWith('nodeseek', expect.anything(), expect.anything());
-      expect(fetcher).not.toHaveBeenCalled();
-      await settleStartedRuntimeTasks();
-    }
-  );
+    await waitFor(() => expect(hook.result.current.identityKeys.nodeseek).toBe('nodeseek:42'));
+    expect(hook.result.current.activeSources).not.toContain('nodeseek');
+    expect(hook.result.current.state.sources.nodeseek.deliveredIds).toEqual(['reply:known']);
+    expect(appQueryClient.getQueryData(forumQueryKeys.notifications('nodeseek'))).toBe(notificationCache);
+    expect(dismissSourceNotification).not.toHaveBeenCalledWith('nodeseek', expect.anything(), expect.anything());
+    expect(fetcher).not.toHaveBeenCalled();
+    await settleStartedRuntimeTasks();
+  });
 
   it('refreshes and persists current unread before running shared delivery', async () => {
     jest.mocked(notificationPermissionGranted).mockResolvedValue(true);

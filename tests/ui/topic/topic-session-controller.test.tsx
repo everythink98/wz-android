@@ -414,56 +414,54 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['linuxdo'] as const)(
-    'converts a %s embedded seed offset into the real stream window once',
-    async (source) => {
-      const topic: Topic = {
-        ...firstTopic,
-        source,
-        url: 'https://linux.do/t/1'
-      };
-      const detail: TopicDetail = {
-        ...firstDetail,
-        ...topic,
-        replies: [firstReply, { ...firstReply, floor: 2, commentId: 11 }],
-        replyCount: 5,
-        replyHasMore: true,
-        replyNextPage: 2,
-        replyNextOffset: 2
-      };
-      const getReplies = jest.fn<TestGetReplies>(async () => ({
-        items: [{ ...firstReply, floor: 3, commentId: 12 }],
-        currentPage: 1,
-        currentOffset: 2,
-        previousPage: null,
-        previousOffset: null,
-        hasMore: false,
-        nextPage: null,
-        nextOffset: null,
-        totalCount: 5
-      }));
-      const hook = await renderTopicController({
-        readGateway: {
-          getTopic: jest.fn<TestGetTopic>(async () => detail),
-          getReplies
-        },
-        topic
-      });
+  it('converts a linux.do embedded seed offset into the real stream window once', async () => {
+    const source = 'linuxdo' as const;
+    const topic: Topic = {
+      ...firstTopic,
+      source,
+      url: 'https://linux.do/t/1'
+    };
+    const detail: TopicDetail = {
+      ...firstDetail,
+      ...topic,
+      replies: [firstReply, { ...firstReply, floor: 2, commentId: 11 }],
+      replyCount: 5,
+      replyHasMore: true,
+      replyNextPage: 2,
+      replyNextOffset: 2
+    };
+    const getReplies = jest.fn<TestGetReplies>(async () => ({
+      items: [{ ...firstReply, floor: 3, commentId: 12 }],
+      currentPage: 1,
+      currentOffset: 2,
+      previousPage: null,
+      previousOffset: null,
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null,
+      totalCount: 5
+    }));
+    const hook = await renderTopicController({
+      readGateway: {
+        getTopic: jest.fn<TestGetTopic>(async () => detail),
+        getReplies
+      },
+      topic
+    });
 
-      await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(2));
-      await act(async () => {
-        await hook.result.current.controller.loadMoreReplies({ silent: true });
-      });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(2));
+    await act(async () => {
+      await hook.result.current.controller.loadMoreReplies({ silent: true });
+    });
 
-      expect(getReplies).toHaveBeenCalledWith(
-        expect.objectContaining({
-          order: 'oldest',
-          position: { kind: 'cursor', page: 1, offset: 2 }
-        }),
-        expect.anything()
-      );
-    }
-  );
+    expect(getReplies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        order: 'oldest',
+        position: { kind: 'cursor', page: 1, offset: 2 }
+      }),
+      expect.anything()
+    );
+  });
 
   it('keeps ordered caches separate and loads the newest tail before its adjacent older window', async () => {
     const detail: TopicDetail = {

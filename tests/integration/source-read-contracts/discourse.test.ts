@@ -25,10 +25,6 @@ function testLinuxDoAccess() {
   return { authenticated: true, userAgent: 'LinuxDo WebView UA' };
 }
 
-function testLinuxDoDiscourseAuth() {
-  return { linuxdo: testLinuxDoAccess() };
-}
-
 describe('Android local sources', () => {
   afterEach(() => {
     setDiagnosticWriter(null);
@@ -614,7 +610,7 @@ describe('Android local sources', () => {
         { id: 'heart', count: 2 },
         { id: 'laughing', count: 1 }
       ],
-      siteExtension: { source: 'linuxdo', boostCount: 1 }
+      siteExtension: { boostCount: 1 }
     });
     expect(topic.replies[0]).toMatchObject({
       acceptedAnswer: true,
@@ -624,7 +620,7 @@ describe('Android local sources', () => {
       systemAction: true,
       actionCode: 'closed.enabled',
       reactionSummary: [{ id: 'distorted_face', count: 3 }],
-      siteExtension: { source: 'linuxdo', boostCount: 2, needsApproval: true }
+      siteExtension: { boostCount: 2, needsApproval: true }
     });
   });
 
@@ -664,8 +660,8 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'linuxdo', id: '408', fetcher });
 
-    expect(topic.siteExtension).toEqual({ source: 'linuxdo', boostCount: 4 });
-    expect(topic.replies[0].siteExtension).toEqual({ source: 'linuxdo', boostCount: 5 });
+    expect(topic.siteExtension).toEqual({ boostCount: 4 });
+    expect(topic.replies[0].siteExtension).toEqual({ boostCount: 5 });
   });
 
   it('requests linux.do latest feed by creation time', async () => {
@@ -939,7 +935,7 @@ describe('Android local sources', () => {
       order: 'oldest',
       position: { kind: 'target', target: { floor: 90 } },
       limit: 30,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       fetcher
     });
 
@@ -989,7 +985,7 @@ describe('Android local sources', () => {
       order: 'newest',
       position: { kind: 'start' },
       limit: 10,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       fetcher
     });
     const older = await getReplies({
@@ -998,7 +994,7 @@ describe('Android local sources', () => {
       order: 'newest',
       position: { kind: 'cursor', page: tail.nextPage!, offset: tail.nextOffset ?? null },
       limit: 10,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       fetcher
     });
 
@@ -1507,7 +1503,7 @@ describe('Android local sources', () => {
         source: 'linuxdo',
         query: 'codex',
         fetcher: expiredFetcher,
-        discourseAuth: testLinuxDoDiscourseAuth(),
+        discourseAuth: testLinuxDoAccess(),
         linuxDoAuthenticated: true
       })
     ).rejects.toThrow();
@@ -1529,7 +1525,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'fallback keyword',
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
 
@@ -1573,7 +1569,7 @@ describe('Android local sources', () => {
       query: 'keyword',
       limit: 1,
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
     const second = await searchTopics({
@@ -1582,7 +1578,7 @@ describe('Android local sources', () => {
       page: first.nextPage ?? 2,
       limit: 1,
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
 
@@ -1637,7 +1633,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'cf-turnstile',
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
 
@@ -1709,7 +1705,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'reply-only',
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
 
@@ -1773,7 +1769,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: '安卓手机免',
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
 
@@ -1809,7 +1805,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'keyword',
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
 
@@ -1875,7 +1871,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'keyword',
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
 
@@ -1925,7 +1921,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'keyword',
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
 
@@ -1963,7 +1959,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'keyword',
       fetcher,
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true
     });
 
@@ -2024,7 +2020,7 @@ describe('Android local sources', () => {
     await searchTopics({
       source: 'linuxdo',
       query: 'AI',
-      discourseAuth: testLinuxDoDiscourseAuth(),
+      discourseAuth: testLinuxDoAccess(),
       linuxDoAuthenticated: true,
       categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
       filter: {

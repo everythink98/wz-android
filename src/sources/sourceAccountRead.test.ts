@@ -55,7 +55,7 @@ describe('source account read', () => {
     const linuxdo = await getCurrentUserProfile({
       source: 'linuxdo',
       fetcher,
-      discourseAuth: { linuxdo: { authenticated: true } }
+      discourseAuth: { authenticated: true }
     });
     const yaohuo = await getCurrentUserProfile({ source: 'yaohuo', fetcher });
 
@@ -97,7 +97,7 @@ describe('source account read', () => {
       getCurrentUserProfile({
         source: 'linuxdo',
         fetcher,
-        discourseAuth: { linuxdo: { authenticated: true } }
+        discourseAuth: { authenticated: true }
       })
     ).rejects.toMatchObject({
       source: 'linuxdo',
@@ -119,7 +119,7 @@ describe('source account read', () => {
       getCurrentUserProfile({
         source: 'linuxdo',
         fetcher,
-        discourseAuth: { linuxdo: { authenticated: true } }
+        discourseAuth: { authenticated: true }
       })
     ).rejects.toMatchObject({
       source: 'linuxdo',
@@ -139,7 +139,7 @@ describe('source account read', () => {
     const failure = await getCurrentUserProfile({
       source: 'linuxdo',
       fetcher,
-      discourseAuth: { linuxdo: { authenticated: true } }
+      discourseAuth: { authenticated: true }
     }).catch((error) => error);
 
     expect(failure).toBeInstanceOf(Error);
@@ -163,7 +163,7 @@ describe('source account read', () => {
       await getCurrentUserProfile({
         source: 'linuxdo',
         fetcher,
-        discourseAuth: { linuxdo: { authenticated: true } }
+        discourseAuth: { authenticated: true }
       });
     } catch (error) {
       failure = error;

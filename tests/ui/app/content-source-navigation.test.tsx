@@ -345,7 +345,7 @@ describe('content-source management navigation', () => {
         changeFeedSource: setFeedSource,
         feedAllowsRemotePagination: false,
         feedSource,
-        enabledFeedSources: projectContentSourcePreferences(currentReaderData.settings.contentSources).feedSources
+        enabledFeedSources: projectContentSourcePreferences(currentReaderData.settings.contentSources).enabledSources
       } as never;
     });
     const view = await render(<Navigator />);

@@ -3,8 +3,6 @@ export type TopicActionCapability =
 
 export const sourceCatalog = {
   v2ex: {
-    aggregateFeed: true,
-    aggregateSearch: true,
     baseUrl: 'https://www.v2ex.com',
     label: 'V2EX',
     family: 'v2ex',
@@ -17,8 +15,6 @@ export const sourceCatalog = {
     sortOrder: 3
   },
   linuxdo: {
-    aggregateFeed: true,
-    aggregateSearch: true,
     baseUrl: 'https://linux.do',
     label: 'linux.do',
     family: 'discourse',
@@ -31,8 +27,6 @@ export const sourceCatalog = {
     sortOrder: 2
   },
   nodeseek: {
-    aggregateFeed: true,
-    aggregateSearch: true,
     baseUrl: 'https://www.nodeseek.com',
     label: 'NodeSeek',
     family: 'nodeseek',
@@ -45,8 +39,6 @@ export const sourceCatalog = {
     sortOrder: 1
   },
   yaohuo: {
-    aggregateFeed: true,
-    aggregateSearch: true,
     baseUrl: 'https://www.yaohuo.me',
     label: '妖火',
     family: 'yaohuo',
@@ -80,11 +72,9 @@ export const sourceValues = (Object.keys(sourceCatalog) as Source[]).sort(
   (left, right) => sourceCatalog[left].sortOrder - sourceCatalog[right].sortOrder
 );
 
-export const aggregateFeedSources = sourceValues.filter((source) => sourceCatalog[source].aggregateFeed);
-
-export const aggregateSearchSources = sourceValues
-  .filter((source) => sourceCatalog[source].aggregateSearch)
-  .sort((left, right) => sourceCatalog[left].searchOrder - sourceCatalog[right].searchOrder);
+export const aggregateSearchSources = [...sourceValues].sort(
+  (left, right) => sourceCatalog[left].searchOrder - sourceCatalog[right].searchOrder
+);
 
 export const sessionSources = sourceValues.filter(
   (source): source is SessionSource => sourceCatalog[source].managedSession

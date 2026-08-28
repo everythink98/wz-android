@@ -32,16 +32,10 @@ export type SourceErrorInfo = {
 export type SourceErrors = Partial<Record<FeedSource, SourceErrorInfo>>;
 export type SourceLoadOutcomeKind = 'data' | 'empty' | 'partial' | 'error' | 'auth';
 
-export interface SiteExtensionMap {
-  linuxdo: {
-    boostCount?: number;
-    needsApproval?: boolean;
-  };
-}
-
-export type SiteExtension = {
-  [Site in keyof SiteExtensionMap]: { source: Site } & SiteExtensionMap[Site];
-}[keyof SiteExtensionMap];
+type SiteExtension = {
+  boostCount?: number;
+  needsApproval?: boolean;
+};
 
 export interface AccessRequirement {
   type: 'login' | 'level' | 'permission';

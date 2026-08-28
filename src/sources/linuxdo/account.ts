@@ -218,7 +218,7 @@ export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOp
         reason: 'expired' as const
       });
     }
-    let parsed: unknown = {};
+    let parsed: unknown;
     try {
       parsed = text ? JSON.parse(text) : {};
     } catch {

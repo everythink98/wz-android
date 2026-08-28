@@ -9,7 +9,7 @@ export function linuxDoReactionStats(
   item: Pick<Reply | TopicDetail, 'siteExtension' | 'reactionSummary' | 'likeCount'>,
   emojiUrls: DiscourseEmojiUrlMap = {}
 ) {
-  const boostCount = item.siteExtension?.source === 'linuxdo' ? item.siteExtension.boostCount : undefined;
+  const boostCount = item.siteExtension?.boostCount;
   return [
     ...discourseReactionStats(item, emojiUrls),
     typeof boostCount === 'number' && boostCount > 0 ? { id: 'boost', label: '加电', value: boostCount } : null

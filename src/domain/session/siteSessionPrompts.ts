@@ -119,10 +119,6 @@ export function authNoticeForSource(
   );
 }
 
-export function authHintForSource(source: FeedSource, sessions: SiteSessionViewModels, surface: AuthPromptSurface) {
-  return authNoticeForSource(source, sessions, surface)?.message || '';
-}
-
 export function authNoticeForSourceError(error: SourceErrorInfo): AuthNotice | null {
   if (error.kind === 'login-expired') {
     return notice('login-expired', error.message, 'danger');
@@ -134,8 +130,4 @@ export function authNoticeForSourceError(error: SourceErrorInfo): AuthNotice | n
     return notice('verification-required', error.message, 'warning');
   }
   return null;
-}
-
-export function authActionMessageForSource(source: FeedSource, sessions: SiteSessionViewModels) {
-  return authHintForSource(source, sessions, 'action');
 }

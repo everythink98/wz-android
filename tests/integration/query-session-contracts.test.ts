@@ -40,7 +40,7 @@ describe('forum server state', () => {
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
 
-  it(' scopes feed caches by source, category, and filter', () => {
+  it('scopes feed caches by source, category, and filter', () => {
     const latest = forumQueryKeys.feed({
       feedFilter: 'latest',
       scope: initialForumSessionEpochs,

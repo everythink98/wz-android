@@ -92,9 +92,6 @@ jest.mock('@gorhom/bottom-sheet', () => {
     mockComposerBottomSheetOnClose = onClose;
     mockComposerBottomSheetProps = { index, snapPoints };
     ReactModule.useImperativeHandle(ref, () => ({ close: mockComposerBottomSheetClose }));
-    if (index < 0) {
-      return null;
-    }
     return ReactModule.createElement(
       NativeView,
       {
@@ -1540,47 +1537,45 @@ describe('Topic real child components', () => {
     expect(onLocateReply).toHaveBeenLastCalledWith({ floor: 30 });
   });
 
-  it.each(['linuxdo'] as const)(
-    'renders an accepted %s reply as the solved answer without replacing normal reply behavior',
-    async (source) => {
-      const reply: Reply = {
-        ...replyProps().reply,
-        acceptedAnswer: true,
-        contentHtml: '<p>答案正文</p>',
-        quotedPosts: [],
-        replyTarget: undefined
-      };
-      const [planned] = buildVirtualizedReplyItems({
-        expandedQuotes: {},
-        loadedQuotedReplies: {},
-        loadingQuotedFloors: {},
-        replies: [reply],
-        repliesByFloor: new Map(),
-        source,
-        topicId: 'topic-1'
-      });
-      if (planned?.type !== 'reply') throw new Error('Expected a single-cell accepted reply.');
-      const view = await render(
-        <ReplyItem
-          {...replyProps({
-            bodyContent: planned.bodyContent,
-            reply,
-            signatureContent: planned.signatureContent,
-            source
-          })}
-        />
-      );
+  it('renders an accepted linux.do reply as the solved answer without replacing normal reply behavior', async () => {
+    const source = 'linuxdo' as const;
+    const reply: Reply = {
+      ...replyProps().reply,
+      acceptedAnswer: true,
+      contentHtml: '<p>答案正文</p>',
+      quotedPosts: [],
+      replyTarget: undefined
+    };
+    const [planned] = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [reply],
+      repliesByFloor: new Map(),
+      source,
+      topicId: 'topic-1'
+    });
+    if (planned?.type !== 'reply') throw new Error('Expected a single-cell accepted reply.');
+    const view = await render(
+      <ReplyItem
+        {...replyProps({
+          bodyContent: planned.bodyContent,
+          reply,
+          signatureContent: planned.signatureContent,
+          source
+        })}
+      />
+    );
 
-      expect(view.getByLabelText('已采纳的解决方案')).toBeTruthy();
-      expect(view.getByText('已解决')).toBeTruthy();
-      expect(view.getByLabelText('解决方案')).toBeTruthy();
-      expect(view.queryByText('✓ 解决方案')).toBeNull();
-      expect(view.getByText('答案正文')).toBeTruthy();
-      expect(view.getByText('#2')).toBeTruthy();
-      expect(view.getByLabelText('回复')).toBeTruthy();
-      expect(view.queryByText('已采纳')).toBeNull();
-    }
-  );
+    expect(view.getByLabelText('已采纳的解决方案')).toBeTruthy();
+    expect(view.getByText('已解决')).toBeTruthy();
+    expect(view.getByLabelText('解决方案')).toBeTruthy();
+    expect(view.queryByText('✓ 解决方案')).toBeNull();
+    expect(view.getByText('答案正文')).toBeTruthy();
+    expect(view.getByText('#2')).toBeTruthy();
+    expect(view.getByLabelText('回复')).toBeTruthy();
+    expect(view.queryByText('已采纳')).toBeNull();
+  });
 
   it.each([
     ['linuxdo', 'closed.enabled', '关闭了主题'],
@@ -1812,7 +1807,7 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('取消赞')).toBeNull();
   });
 
-  it(' separates linux.do reply permission from per-post interaction permissions', async () => {
+  it('separates linux.do reply permission from per-post interaction permissions', async () => {
     const writableReply: Reply = {
       ...replyProps().reply,
       canDelete: true,
@@ -1839,7 +1834,7 @@ describe('Topic real child components', () => {
     expect(view.getAllByRole('checkbox').every((option) => !option.props.accessibilityState.disabled)).toBe(true);
   });
 
-  it(' shows linux.do reply reaction images without write authorization', async () => {
+  it('shows linux.do reply reaction images without write authorization', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       reactionSummary: [
@@ -2040,25 +2035,42 @@ describe('Topic real child components', () => {
     expect(view.queryByPlaceholderText('输入楼层回复内容')).toBeNull();
     expect(view.getByLabelText('取消楼层回复')).toBeTruthy();
 
-    await view.rerender(
-      <ReplyComposerSheet
-        {...props}
-        intent={{
-          kind: 'edit',
-          target: {
-            commentId: 9,
-            contentMarkdown: '保留中的草稿',
-            floor: 4,
-            topicId: '1',
-            ticket: { source: 'linuxdo', identityKey: 'linuxdo:alice', sessionEpoch: 1 }
-          }
-        }}
-      />
-    );
+    const editIntent = {
+      kind: 'edit' as const,
+      target: {
+        commentId: 9,
+        contentMarkdown: '保留中的草稿',
+        floor: 4,
+        topicId: '1',
+        ticket: { source: 'linuxdo' as const, identityKey: 'linuxdo:alice', sessionEpoch: 1 }
+      }
+    };
+    await view.rerender(<ReplyComposerSheet {...props} intent={editIntent} />);
     expect(view.getByText('编辑 #4')).toBeTruthy();
     expect(view.queryByPlaceholderText('编辑回复内容')).toBeNull();
     expect(view.getByLabelText('取消编辑')).toBeTruthy();
     expect(view.getByLabelText('保存编辑')).toBeTruthy();
+
+    onReplySnapshot.mockClear();
+    await view.rerender(<ReplyComposerSheet {...props} visible={false} />);
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'SNAPSHOT',
+          payload: {
+            snapshot: {
+              revision: 1,
+              markdown: '迟到的编辑正文',
+              mode: 'rich',
+              isEmpty: false,
+              validationIssues: [],
+              pendingNodeSeekPolls: []
+            }
+          }
+        })
+      }
+    });
+    expect(onReplySnapshot).not.toHaveBeenCalled();
 
     await view.rerender(<ReplyComposerSheet {...props} />);
     onReplySnapshot.mockClear();
@@ -2087,9 +2099,6 @@ describe('Topic real child components', () => {
     });
     await waitFor(() => expect(onReplyComposerOpenChange).toHaveBeenCalledWith(false));
     expect(onReplySnapshot).toHaveBeenCalledTimes(1);
-
-    await view.rerender(<ReplyComposerSheet {...props} visible={false} />);
-    expect(view.queryByTestId('structured-composer-webview')).toBeNull();
   });
 
   it('keeps one controlled close path while fullscreen closes', async () => {

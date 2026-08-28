@@ -19,7 +19,6 @@ describe('Android search site filters', () => {
   it('defaults every sortable source to newest topics', () => {
     expect(DEFAULT_SEARCH_FILTERS.v2ex.sort).toBe('time');
     expect(DEFAULT_SEARCH_FILTERS.linuxdo.order).toBe('latest');
-    expect(DEFAULT_SEARCH_FILTERS.linuxdo.order).toBe('latest');
     expect(DEFAULT_SEARCH_FILTERS.nodeseek.sort).toBe('postTime');
     expect(DEFAULT_SEARCH_FILTERS.yaohuo).toEqual({ source: 'yaohuo', category: '0' });
   });
@@ -99,7 +98,7 @@ describe('Android search site filters', () => {
           maxPosts: 20,
           minViews: 100,
           maxViews: 1000,
-          siteExtension: { source: 'linuxdo', expertResponse: true },
+          expertResponse: true,
           order: 'latest'
         },
         categories
@@ -206,7 +205,7 @@ describe('Android search site filters', () => {
     );
   });
 
-  it(' keeps child-category results returned by a linux.do parent-category search', () => {
+  it('keeps child-category results returned by a linux.do parent-category search', () => {
     const items = [
       { title: '父分类主题', categoryId: '4' },
       { title: '子分类主题', categoryId: '15' }

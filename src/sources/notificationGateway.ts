@@ -13,8 +13,9 @@ import { notificationAdapters } from './notificationAdapters';
 import type { NormalizedReplyImageAsset } from './imageUpload';
 import { replyImageMarkupForSource } from './imageUpload';
 import { uploadNodeSeekReplyImage } from '@/sources/nodeimage/upload';
-import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from './discourseActions';
+import { buildDiscourseActionRequest, discourseImageUrlFromUploadResponse } from '@/sources/discourse/actionRequest';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
+import { LINUXDO_BASE_URL } from '@/sources/linuxdo/protocol';
 import { fetchLinuxDoPollCapabilities } from '@/sources/linuxdo/pollCapabilities';
 import {
   fetchLinuxDoTemplates,
@@ -321,7 +322,7 @@ export function createNotificationGateway({
         runWithAccess(source, trace, options.signal, options.expectedIdentityKey, async (access) => {
           if (source === 'yaohuo') throw new Error('妖火私信仅支持纯文本');
           assertNotAborted(options.signal);
-          let imageUrl = '';
+          let imageUrl: string;
           if (source === 'nodeseek') {
             imageUrl = await uploadNodeSeekReplyImage({
               apiKey: options.nodeImageApiKey || '',
@@ -331,7 +332,7 @@ export function createNotificationGateway({
               timeoutMs: access.timeoutMs
             });
           } else {
-            const request = buildDiscourseSourceActionRequest(source, { type: 'upload', file: options.file });
+            const request = buildDiscourseActionRequest({ type: 'upload', file: options.file });
             const data = await runLinuxDoAction({
               fetcher: access.fetcher,
               request,
@@ -339,7 +340,7 @@ export function createNotificationGateway({
               timeoutMs: access.timeoutMs,
               userAgent: access.userAgent
             });
-            imageUrl = discourseSourceUploadUrl(source, data);
+            imageUrl = discourseImageUrlFromUploadResponse(data, LINUXDO_BASE_URL, 'linux.do');
           }
           assertNotAborted(options.signal);
           return { markup: replyImageMarkupForSource(source, imageUrl, options.file.name) };

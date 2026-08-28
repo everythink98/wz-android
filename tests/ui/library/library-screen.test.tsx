@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
 import React, { useState } from 'react';
 import { Alert, View } from 'react-native';
@@ -221,6 +221,11 @@ function LibraryHarness({
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+beforeEach(() => {
+  jest.spyOn(global, 'requestAnimationFrame').mockImplementation(() => 1);
+  jest.spyOn(global, 'cancelAnimationFrame').mockImplementation(() => undefined);
 });
 
 describe('Library filters', () => {

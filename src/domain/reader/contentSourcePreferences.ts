@@ -62,8 +62,6 @@ export function projectContentSourcePreferences(
 ): {
   orderedSources: Source[];
   enabledSources: Source[];
-  feedSources: Source[];
-  searchSources: Source[];
   sessionSources: SessionSource[];
   notificationSources: NotificationSource[];
 } {
@@ -71,8 +69,6 @@ export function projectContentSourcePreferences(
     return {
       orderedSources: [],
       enabledSources: [],
-      feedSources: [],
-      searchSources: [],
       sessionSources: [],
       notificationSources: []
     };
@@ -84,8 +80,6 @@ export function projectContentSourcePreferences(
   return {
     orderedSources: orderedSources.map((preference) => preference.source),
     enabledSources,
-    feedSources: enabledSources.filter((source) => sourceCatalog[source].aggregateFeed),
-    searchSources: enabledSources.filter((source) => sourceCatalog[source].aggregateSearch),
     sessionSources: enabledSources.filter(isSessionSource),
     notificationSources: enabledSources.filter(isNotificationSource)
   };

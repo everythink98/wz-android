@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { HTMLContentModel } from 'react-native-render-html';
 import { FORUM_STICKER_TAG } from '@/domain/forum/forumContentMedia';
+import { FORUM_AUDIO_TAG } from '@/domain/forum/html';
 import { HTML_CUSTOM_ELEMENT_MODELS } from './htmlElementModels';
 
 vi.mock('react-native-render-html', () => {
@@ -15,5 +16,12 @@ vi.mock('react-native-render-html', () => {
 describe('topic HTML element models', () => {
   it('keeps full-size stickers out of native text-line layout', () => {
     expect(HTML_CUSTOM_ELEMENT_MODELS[FORUM_STICKER_TAG].contentModel).toBe(HTMLContentModel.block);
+  });
+
+  it('keeps native audio as one opaque block island', () => {
+    expect(HTML_CUSTOM_ELEMENT_MODELS[FORUM_AUDIO_TAG]).toMatchObject({
+      contentModel: HTMLContentModel.block,
+      isOpaque: true
+    });
   });
 });

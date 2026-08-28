@@ -19,7 +19,6 @@ import { uploadYaohuoReplyImage, yaohuoImageUrlFromUploadResponse } from '@/sour
 describe('reply image upload helpers', () => {
   it('supports image uploads only where an upload path is known', () => {
     expect(replyImageUploadSupported('linuxdo')).toBe(true);
-    expect(replyImageUploadSupported('linuxdo')).toBe(true);
     expect(replyImageUploadSupported('yaohuo')).toBe(true);
     expect(replyImageUploadSupported('nodeseek')).toBe(true);
   });

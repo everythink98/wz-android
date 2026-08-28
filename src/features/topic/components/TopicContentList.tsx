@@ -978,7 +978,11 @@ export const TopicContentList = memo(function TopicContentList({
       warmHighWater: aggregate.warmHighWater
     });
   }, []);
-  const { observeViewableItems, viewportRowKeys: bodyMediaViewportRowKeys } = useTopicBodyMediaViewport({
+  const {
+    observeViewableItems,
+    visibleRowKeys: bodyMediaVisibleRowKeys,
+    viewportRowKeys: bodyMediaViewportRowKeys
+  } = useTopicBodyMediaViewport({
     items: topicListItems,
     sessionIdentity: `${detailTopicStateKey}:${mediaSessionIdentity}`
   });
@@ -2098,6 +2102,7 @@ export const TopicContentList = memo(function TopicContentList({
               diagnosticSession={bodyMediaDiagnosticSession}
               onDiagnosticFinish={finishBodyMediaDiagnostic}
               paused={bodyMediaPaused}
+              visibleRowKeys={bodyMediaVisibleRowKeys}
               viewportRowKeys={bodyMediaViewportRowKeys}
             >
               <FlashList

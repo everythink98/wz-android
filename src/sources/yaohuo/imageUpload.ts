@@ -44,7 +44,7 @@ export async function uploadYaohuoReplyImage({
       timeoutMs
     }
   );
-  let data: unknown = null;
+  let data: unknown;
   try {
     data = await response.json();
   } catch {

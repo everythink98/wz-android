@@ -41,7 +41,7 @@ export async function readLinuxDoAccountStatus({
     const currentUser = await getCurrentUserProfile({
       source: 'linuxdo',
       fetcher: withDiagnosticFetcher(trace, fetcher),
-      discourseAuth: { linuxdo: { userAgent } },
+      discourseAuth: { userAgent },
       signal
     });
     if (signal.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);

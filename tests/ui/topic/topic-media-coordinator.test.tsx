@@ -754,6 +754,39 @@ describe('TopicBodyMediaCoordinator', () => {
     }
   });
 
+  it('re-enters the bounded timeout lifecycle when displayed audio returns to visible rows', async () => {
+    jest.useFakeTimers();
+    try {
+      const probe = <MediaProbe automaticRetry={false} id="recycled-audio" kind="audio" />;
+      const tree = (visibleRowKeys: readonly string[]) => (
+        <TopicBodyMediaCoordinatorProvider
+          active
+          paused={false}
+          visibleRowKeys={visibleRowKeys}
+          viewportRowKeys={VIEWPORT_ROW_KEYS}
+        >
+          <TopicBodyMediaRowBoundary rowKey="row-1">{probe}</TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      const view = await render(tree(VIEWPORT_ROW_KEYS));
+      await fireEvent.press(view.getByLabelText('display-recycled-audio'));
+      const displayedAttempt = view.getByTestId('attempt-recycled-audio').props.children;
+
+      await view.rerender(tree([]));
+      expect(view.getByTestId('media-recycled-audio').props.children).toBe('idle');
+      await view.rerender(tree(VIEWPORT_ROW_KEYS));
+      const resumedAttempt = view.getByTestId('attempt-recycled-audio').props.children;
+
+      await act(() => jest.advanceTimersByTime(30_000));
+
+      expect(view.getByTestId('media-recycled-audio').props.children).toBe('failed:timeout');
+      expect(resumedAttempt).not.toBe(displayedAttempt);
+      await view.unmount();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('gives a newly visible row warm capacity ahead of retained prefetch media', async () => {
     const tree = (viewportRowKeys: readonly string[]) => (
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={viewportRowKeys}>

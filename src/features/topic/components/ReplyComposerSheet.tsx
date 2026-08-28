@@ -68,14 +68,14 @@ export function ReplyComposerSheet({
   const lastVisibleIntentRef = useRef(intent);
   const snapshotAllowedAfterCloseRef = useRef(true);
   const [presentation, setPresentation] = useState<ComposerPresentation>('sheet');
-  if (visible) lastVisibleIntentRef.current = intent;
   useEffect(() => {
     if (visible) {
+      lastVisibleIntentRef.current = intent;
       snapshotAllowedAfterCloseRef.current = true;
       return;
     }
     snapshotAllowedAfterCloseRef.current = lastVisibleIntentRef.current.kind !== 'edit';
-  }, [visible]);
+  }, [intent, visible]);
   let closeLabel = '收起回复';
   let placeholder = '输入回复内容';
   let submitLabel = '发送回复';

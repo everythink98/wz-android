@@ -1,7 +1,7 @@
 import { searchNodeSeek } from '@/sources/nodeseek/reader';
 import { searchV2ex } from '@/sources/v2ex/search';
 import { searchYaohuoDirect } from '@/sources/yaohuo/reader';
-import { searchDiscourseSourceTopics, type DiscourseReadAuth } from './discourseRead';
+import { searchDiscourseTopics, type DiscourseReadAuth } from './discourseRead';
 import { aggregateSearchSources, isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import {
   parseSearchExpression,
@@ -127,7 +127,7 @@ export async function searchTopics({
             const readSource = async (sourceFetcher: Fetcher) => {
               if (isDiscourseSource(item)) {
                 return requireSearchTopicTitles(
-                  await searchDiscourseSourceTopics(item, adapterQuery, {
+                  await searchDiscourseTopics(adapterQuery, {
                     authenticated: item === 'linuxdo' && linuxDoAuthenticated === true,
                     auth: discourseAuth,
                     fetcher: sourceFetcher,
@@ -199,8 +199,7 @@ export async function searchTopics({
   }
   const activeFilter = filter?.source === source ? filter : undefined;
   const response = isDiscourseSource(source)
-    ? await searchDiscourseSourceTopics(
-        source,
+    ? await searchDiscourseTopics(
         activeFilter && isDiscourseSearchFilter(activeFilter)
           ? buildDiscourseSearchQuery(adapterQuery, activeFilter, categories)
           : adapterQuery,

@@ -34,9 +34,9 @@ vi.mock('@/sources/linuxdo/search', () => ({
   searchLinuxDoUsers: readers.searchLinuxDoUsers
 }));
 
-import { getDiscourseSourceCurrentUserProfile, getDiscourseSourceFeed } from './discourseRead';
+import { getDiscourseCurrentUserProfile, getDiscourseFeed } from './discourseRead';
 
-describe('Discourse source reader registration', () => {
+describe('Discourse read composition', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -45,8 +45,8 @@ describe('Discourse source reader registration', () => {
     readers.getLinuxDoFeed.mockResolvedValueOnce({ items: [] });
     const access = { authenticated: true, userAgent: 'android' };
 
-    await getDiscourseSourceFeed('linuxdo', {
-      auth: { linuxdo: access },
+    await getDiscourseFeed({
+      auth: access,
       filter: 'latest',
       page: 2
     });
@@ -58,11 +58,11 @@ describe('Discourse source reader registration', () => {
     });
   });
 
-  it('keeps site authentication inside the registered adapter boundary', async () => {
+  it('keeps site authentication inside the read composition seam', async () => {
     readers.getLinuxDoCurrentUserProfile.mockResolvedValueOnce({ source: 'linuxdo' });
-    const auth = { linuxdo: { authenticated: true, userAgent: 'android' } };
+    const auth = { authenticated: true, userAgent: 'android' };
 
-    await getDiscourseSourceCurrentUserProfile('linuxdo', { auth });
+    await getDiscourseCurrentUserProfile({ auth });
 
     expect(readers.getLinuxDoCurrentUserProfile).toHaveBeenCalledWith({
       linuxDoUserAgent: 'android'

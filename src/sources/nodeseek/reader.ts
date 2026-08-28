@@ -868,9 +868,7 @@ async function getNodeSeekRepliesChronological(
       nextOffset: hasMore
         ? page <= 1 && hasPageRemainder
           ? consumed
-          : page > 1
-            ? ((nextPage || page + 1) - 1) * NODESEEK_FLOORS_PER_PAGE
-            : ((nextPage || page + 1) - 1) * NODESEEK_FLOORS_PER_PAGE
+          : ((nextPage || page + 1) - 1) * NODESEEK_FLOORS_PER_PAGE
         : null
     };
     const annotated = annotateNodeSeekReplies(result, {

@@ -9,34 +9,13 @@ import {
 import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
 import { searchLinuxDo, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
 import type { Fetcher } from '@/platform/network/request';
-import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
-import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
-import type {
-  CategoriesResponse,
-  DiscourseFeedFilter,
-  DiscourseTagOption,
-  DiscourseUserOption,
-  FeedResponse,
-  Reply,
-  RepliesResponse,
-  ReplyOrder,
-  ReplyWindowPosition,
-  SearchResponse,
-  TopicDetail,
-  UserProfile
-} from '@/domain/forum/models';
+import type { DiscourseFeedFilter, ReplyOrder, ReplyWindowPosition } from '@/domain/forum/models';
 
-export interface DiscourseReadAuthMap {
-  linuxdo: {
-    authenticated?: boolean;
-    categoryCacheScope?: string;
-    userAgent?: string;
-  };
-}
-
-export type DiscourseReadAuth = Partial<{
-  [Site in DiscourseSource]: DiscourseReadAuthMap[Site];
-}>;
+export type DiscourseReadAuth = {
+  authenticated?: boolean;
+  categoryCacheScope?: string;
+  userAgent?: string;
+};
 
 type DiscourseReadOptions = {
   auth?: DiscourseReadAuth;
@@ -84,122 +63,68 @@ export type DiscourseUserOptionReadOptions = DiscourseReadOptions & {
   term: string;
 };
 
-type DiscourseSourceReader = {
-  getCategories: (options: DiscourseReadOptions) => Promise<CategoriesResponse>;
-  getCurrentUserProfile: (options: DiscourseReadOptions) => Promise<UserProfile>;
-  getEmojiUrls: (options: DiscourseReadOptions) => Promise<DiscourseEmojiUrlMap>;
-  getFeed: (options: DiscourseFeedReadOptions) => Promise<FeedResponse>;
-  getReplies: (id: string, options: DiscourseRepliesReadOptions) => Promise<RepliesResponse>;
-  getReply: (id: string, floor: number, options: DiscourseReadOptions) => Promise<Reply>;
-  getTopic: (id: string, options: DiscourseTopicReadOptions) => Promise<TopicDetail>;
-  getUserProfile: (id: string, username: string, options: DiscourseUserReadOptions) => Promise<UserProfile>;
-  searchTagOptions: (options: DiscourseTagOptionReadOptions) => Promise<DiscourseTagOption[]>;
-  searchTopics: (query: string, options: DiscourseSearchReadOptions) => Promise<SearchResponse>;
-  searchUserOptions: (options: DiscourseUserOptionReadOptions) => Promise<DiscourseUserOption[]>;
-};
-
-function withLinuxDoAuth<T extends DiscourseReadOptions>(
-  options: T
-): Omit<T, 'auth'> & {
-  categoryCacheScope?: string;
-  linuxDoAccess?: DiscourseReadAuthMap['linuxdo'];
-} {
+function withLinuxDoAuth<T extends DiscourseReadOptions>(options: T) {
   const { auth, ...requestOptions } = options;
-  const linuxDoAuth = auth?.linuxdo;
   return {
     ...requestOptions,
-    ...(linuxDoAuth?.categoryCacheScope ? { categoryCacheScope: linuxDoAuth.categoryCacheScope } : {}),
-    ...(linuxDoAuth
+    ...(auth?.categoryCacheScope ? { categoryCacheScope: auth.categoryCacheScope } : {}),
+    ...(auth
       ? {
           linuxDoAccess: {
-            authenticated: linuxDoAuth.authenticated,
-            userAgent: linuxDoAuth.userAgent
+            authenticated: auth.authenticated,
+            userAgent: auth.userAgent
           }
         }
       : {})
   };
 }
 
-const discourseSourceReaders = {
-  linuxdo: {
-    getCategories: (options) => getLinuxDoCategories(withLinuxDoAuth(options)),
-    getCurrentUserProfile: ({ auth, ...options }) => {
-      const linuxDoAuth = auth?.linuxdo;
-      return getLinuxDoCurrentUserProfile({
-        ...options,
-        linuxDoUserAgent: linuxDoAuth?.userAgent
-      });
-    },
-    getEmojiUrls: (options) => getLinuxDoEmojiUrls(withLinuxDoAuth(options)),
-    getFeed: ({ filter, ...options }) =>
-      getLinuxDoFeed({
-        ...withLinuxDoAuth(options),
-        linuxDoFilter: filter
-      }),
-    getReplies: (id, options) => getLinuxDoReplies(id, withLinuxDoAuth(options)),
-    getReply: (id, floor, options) => getLinuxDoReply(id, floor, withLinuxDoAuth(options)),
-    getTopic: (id, options) => getLinuxDoTopic(id, withLinuxDoAuth(options)),
-    getUserProfile: (id, username, options) => getLinuxDoUserProfile(id, username, withLinuxDoAuth(options)),
-    searchTagOptions: (options) => searchLinuxDoTags(withLinuxDoAuth(options)),
-    searchTopics: (query, options) => searchLinuxDo(query, withLinuxDoAuth(options)),
-    searchUserOptions: (options) => searchLinuxDoUsers(withLinuxDoAuth(options))
-  }
-} satisfies Record<DiscourseSource, DiscourseSourceReader>;
-
-export function getDiscourseSourceFeed(source: DiscourseSource, options: DiscourseFeedReadOptions) {
-  return discourseSourceReaders[source].getFeed(options);
+export function getDiscourseFeed({ filter, ...options }: DiscourseFeedReadOptions) {
+  return getLinuxDoFeed({
+    ...withLinuxDoAuth(options),
+    linuxDoFilter: filter
+  });
 }
 
-export function getDiscourseSourceCategories(source: DiscourseSource, options: DiscourseReadOptions) {
-  return discourseSourceReaders[source].getCategories(options);
+export function getDiscourseCategories(options: DiscourseReadOptions) {
+  return getLinuxDoCategories(withLinuxDoAuth(options));
 }
 
-export function getDiscourseSourceTopic(source: DiscourseSource, id: string, options: DiscourseTopicReadOptions) {
-  return discourseSourceReaders[source].getTopic(id, options);
+export function getDiscourseTopic(id: string, options: DiscourseTopicReadOptions) {
+  return getLinuxDoTopic(id, withLinuxDoAuth(options));
 }
 
-export function getDiscourseSourceReplies(source: DiscourseSource, id: string, options: DiscourseRepliesReadOptions) {
-  return discourseSourceReaders[source].getReplies(id, options);
+export function getDiscourseReplies(id: string, options: DiscourseRepliesReadOptions) {
+  return getLinuxDoReplies(id, withLinuxDoAuth(options));
 }
 
-export function getDiscourseSourceReply(
-  source: DiscourseSource,
-  id: string,
-  floor: number,
-  options: DiscourseReadOptions
-) {
-  return discourseSourceReaders[source].getReply(id, floor, options);
+export function getDiscourseReply(id: string, floor: number, options: DiscourseReadOptions) {
+  return getLinuxDoReply(id, floor, withLinuxDoAuth(options));
 }
 
-export function getDiscourseSourceUserProfile(
-  source: DiscourseSource,
-  id: string,
-  username: string,
-  options: DiscourseUserReadOptions
-) {
-  return discourseSourceReaders[source].getUserProfile(id, username, options);
+export function getDiscourseUserProfile(id: string, username: string, options: DiscourseUserReadOptions) {
+  return getLinuxDoUserProfile(id, username, withLinuxDoAuth(options));
 }
 
-export function getDiscourseSourceCurrentUserProfile(source: DiscourseSource, options: DiscourseReadOptions) {
-  return discourseSourceReaders[source].getCurrentUserProfile(options);
+export function getDiscourseCurrentUserProfile({ auth, ...options }: DiscourseReadOptions) {
+  return getLinuxDoCurrentUserProfile({
+    ...options,
+    linuxDoUserAgent: auth?.userAgent
+  });
 }
 
-export function getDiscourseSourceEmojiUrls(source: DiscourseSource, options: DiscourseReadOptions = {}) {
-  return discourseSourceReaders[source].getEmojiUrls(options);
+export function getDiscourseEmojiUrls(options: DiscourseReadOptions = {}) {
+  return getLinuxDoEmojiUrls(withLinuxDoAuth(options));
 }
 
-export function searchDiscourseSourceTopics(
-  source: DiscourseSource,
-  query: string,
-  options: DiscourseSearchReadOptions
-) {
-  return discourseSourceReaders[source].searchTopics(query, options);
+export function searchDiscourseTopics(query: string, options: DiscourseSearchReadOptions) {
+  return searchLinuxDo(query, withLinuxDoAuth(options));
 }
 
-export function searchDiscourseSourceTagOptions(source: DiscourseSource, options: DiscourseTagOptionReadOptions) {
-  return discourseSourceReaders[source].searchTagOptions(options);
+export function searchDiscourseTagOptions(options: DiscourseTagOptionReadOptions) {
+  return searchLinuxDoTags(withLinuxDoAuth(options));
 }
 
-export function searchDiscourseSourceUserOptions(source: DiscourseSource, options: DiscourseUserOptionReadOptions) {
-  return discourseSourceReaders[source].searchUserOptions(options);
+export function searchDiscourseUserOptions(options: DiscourseUserOptionReadOptions) {
+  return searchLinuxDoUsers(withLinuxDoAuth(options));
 }

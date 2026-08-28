@@ -13,7 +13,7 @@ describe('linux.do reaction presentation', () => {
           { id: 'distorted_face', count: 1 },
           { id: 'tieba_087', count: 1 }
         ],
-        siteExtension: { source: 'linuxdo', boostCount: 3 }
+        siteExtension: { boostCount: 3 }
       },
       {
         heart: 'https://linux.do/images/emoji/twemoji/heart.png',

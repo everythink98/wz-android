@@ -79,7 +79,7 @@ function nodeSeekUrlFromHref(href: string | undefined, baseUrl?: string) {
   }
   const hasProtocol = /^[a-z][a-z0-9+.-]*:/i.test(text);
   const hasHost = text.startsWith('//');
-  let baseIsNodeSeek = false;
+  let baseIsNodeSeek;
   try {
     baseIsNodeSeek = baseUrl ? isNodeSeekHost(new URL(baseUrl).hostname) : false;
   } catch {

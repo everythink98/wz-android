@@ -113,7 +113,7 @@ export function FeedRoute() {
   const sourceOrderKey = projectContentSourcePreferences(
     runtime.reader.data.settings.contentSources,
     runtime.reader.loaded
-  ).feedSources.join('|');
+  ).enabledSources.join('|');
 
   return <FeedRouteSession key={sourceOrderKey} runtime={runtime} />;
 }

@@ -1,5 +1,4 @@
 import { isRecord, recordText as text, textContentFromHtml, toIsoString } from '@/domain/forum/html';
-import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type {
   ForumNotification,
   NotificationCategory,
@@ -14,12 +13,8 @@ import { fetchLinuxDoJson } from '@/sources/linuxdo/reader';
 import { LINUXDO_BASE_URL } from '@/sources/linuxdo/protocol';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
-import { getDiscourseSourceReplies, getDiscourseSourceReply, getDiscourseSourceTopic } from './discourseRead';
+import { getDiscourseReplies, getDiscourseReply, getDiscourseTopic } from './discourseRead';
 import { buildDiscourseActionRequest, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
-
-const bases: Record<DiscourseSource, string> = {
-  linuxdo: LINUXDO_BASE_URL
-};
 
 const typeKinds = new Map<number, ForumNotification['kind']>([
   [1, 'mention'],
@@ -123,7 +118,7 @@ async function categoryTypeIds(categoryId: string, options: NotificationListOpti
   return notificationTypeIds(site, names);
 }
 
-function parseNotification(source: DiscourseSource, value: unknown): ForumNotification | null {
+function parseNotification(value: unknown): ForumNotification | null {
   if (!isRecord(value)) return null;
   const id = text(value, 'id');
   if (!id) return null;
@@ -136,7 +131,7 @@ function parseNotification(source: DiscourseSource, value: unknown): ForumNotifi
   const postNumber = integer(value.post_number ?? data.post_number);
   const postId = text(value, 'post_id') || text(data, 'original_post_id', 'post_id');
   const slug = text(value, 'slug') || text(data, 'topic_slug');
-  const baseUrl = bases[source];
+  const baseUrl = LINUXDO_BASE_URL;
   const createdValue = text(value, 'created_at');
   const title =
     text(value, 'fancy_title') || text(data, 'topic_title', 'fancy_title', 'message', 'badge_name') || '站内消息';
@@ -162,7 +157,7 @@ function parseNotification(source: DiscourseSource, value: unknown): ForumNotifi
           : ({ type: 'topic', topicId, url: topicUrl } as const)
     : ({ type: 'information' } as const);
   return {
-    source,
+    source: 'linuxdo',
     id,
     kind,
     actor: {
@@ -213,12 +208,7 @@ async function fetchPrivateMessageTopics(options: NotificationListOptions) {
   });
 }
 
-function privateMessageItems(
-  source: DiscourseSource,
-  data: Record<string, unknown>,
-  ownUsername: string,
-  unreadOnly: boolean
-) {
+function privateMessageItems(data: Record<string, unknown>, ownUsername: string, unreadOnly: boolean) {
   if (
     !Array.isArray(data.topics) ||
     !Array.isArray(data.users) ||
@@ -231,7 +221,7 @@ function privateMessageItems(
   const userById = new Map(users.map((user) => [text(user, 'id'), user]));
   const userByUsername = new Map(users.map((user) => [text(user, 'username'), user]));
   const notifications = [...data.unread_notifications, ...data.read_notifications].flatMap((value) => {
-    const item = parseNotification(source, value);
+    const item = parseNotification(value);
     if (!item || (unreadOnly && !item.unread)) return [];
     if (item.target.type !== 'private-conversation') return [item];
     return [
@@ -261,13 +251,13 @@ function privateMessageItems(
     const createdValue = text(value, 'bumped_at', 'last_posted_at', 'created_at');
     return [
       {
-        source,
+        source: 'linuxdo',
         id: `private-topic:${id}`,
         kind: 'private-message',
         actor: {
           ...(actorId ? { id: actorId } : {}),
           name: actorName,
-          ...(avatarTemplate ? { avatarUrl: discourseAvatarUrl(avatarTemplate, bases[source]) } : {})
+          ...(avatarTemplate ? { avatarUrl: discourseAvatarUrl(avatarTemplate, LINUXDO_BASE_URL) } : {})
         },
         title: text(value, 'fancy_title', 'title') || '个人信息',
         createdAt: toIsoString(createdValue) || null,
@@ -288,242 +278,236 @@ function notificationRows(data: Record<string, unknown>) {
   return data.notifications;
 }
 
-function createDiscourseNotificationAdapter(source: DiscourseSource) {
-  const readOptions = (options: NotificationAdapterAccess) => ({
+const readOptions = (options: NotificationAdapterAccess) => ({
+  fetcher: options.fetcher,
+  signal: options.signal,
+  timeoutMs: options.timeoutMs,
+  auth: { authenticated: true, userAgent: options.userAgent }
+});
+
+async function runMarkRead(id: string | undefined, options: NotificationAdapterAccess) {
+  if (id && !/^\d+$/.test(id)) throw new Error('站内消息标识不正确');
+  const request: DiscourseActionRequest = {
+    path: '/notifications/mark-read',
+    method: 'PUT' as const,
+    headers: id ? { 'content-type': 'application/x-www-form-urlencoded' } : ({} as Record<string, string>),
+    ...(id ? { body: new URLSearchParams({ id }).toString() } : {})
+  };
+  await runLinuxDoAction({
+    request,
     fetcher: options.fetcher,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
-    auth: { linuxdo: { authenticated: true, userAgent: options.userAgent } }
+    userAgent: options.userAgent
   });
+}
 
-  const runMarkRead = async (id: string | undefined, options: NotificationAdapterAccess) => {
-    if (id && !/^\d+$/.test(id)) throw new Error('站内消息标识不正确');
-    const request: DiscourseActionRequest = {
-      path: '/notifications/mark-read',
-      method: 'PUT' as const,
-      headers: id ? { 'content-type': 'application/x-www-form-urlencoded' } : ({} as Record<string, string>),
-      ...(id ? { body: new URLSearchParams({ id }).toString() } : {})
+export const linuxDoNotificationAdapter = {
+  async getCategories(options: NotificationAdapterAccess) {
+    let hasChat = true;
+    try {
+      const names = notificationTypeNames(await fetchSite(options));
+      if (names.length) hasChat = names.some((name) => discourseChatTypeNames.has(name));
+    } catch {
+      // Category discovery must not block the notification list; linux.do Chat was verified live.
+    }
+    return [
+      ...discourseCoreCategories,
+      ...(hasChat ? [discourseChatCategory] : []),
+      discourseOtherCategory
+    ] satisfies readonly NotificationCategory[];
+  },
+
+  async listPage(options: NotificationListOptions): Promise<NotificationPage> {
+    const offset = Math.max(0, Number(options.cursor) || 0);
+    const limit = Math.max(1, Math.min(60, options.limit || 30));
+    if (options.categoryId === 'messages') {
+      const data = await fetchPrivateMessageTopics(options);
+      const items = privateMessageItems(data, options.username?.trim() || '', Boolean(options.unreadOnly));
+      return { items, cursor: null, hasMore: false };
+    }
+    const selectedTypeIds = await categoryTypeIds(options.categoryId || 'all', options);
+    if (selectedTypeIds?.size === 0) return { items: [], cursor: null, hasMore: false };
+    const data = await fetchNotifications(options, offset, limit);
+    const rawRows = notificationRows(data);
+    const rows = rawRows.filter(
+      (row) =>
+        (!options.unreadOnly || (isRecord(row) && row.read !== true)) &&
+        (!selectedTypeIds || (isRecord(row) && selectedTypeIds.has(Number(row.notification_type))))
+    );
+    const items = rows.map(parseNotification).filter(Boolean) as ForumNotification[];
+    const nextOffset = offset + rawRows.length;
+    const total = Number(data.total_rows_notifications ?? data.total_rows ?? 0);
+    const hasMore =
+      rawRows.length > 0 && (data.load_more_notifications === true || (Number.isFinite(total) && total > nextOffset));
+    return { items, cursor: hasMore ? String(nextOffset) : null, hasMore };
+  },
+
+  async readUnreadSnapshot(options: NotificationAdapterAccess) {
+    const data = await fetchNotifications({ ...options, unreadOnly: true, limit: 60 }, 0, 60);
+    const rows = notificationRows(data);
+    const rawTotal = Number(data.total_rows_notifications ?? data.total_rows ?? rows.length);
+    const total = Number.isFinite(rawTotal) && rawTotal >= 0 ? rawTotal : rows.length;
+    return { total, checkedAt: new Date().toISOString() };
+  },
+
+  async loadDetail(item: ForumNotification, options: NotificationAdapterAccess): Promise<NotificationDetail> {
+    if (item.target.type === 'private-conversation') {
+      const topic = await getDiscourseTopic(item.target.conversationId, {
+        ...readOptions(options),
+        replyLimit: 30,
+        trackVisit: true
+      });
+      const replies = [...topic.replies];
+      let nextPage = topic.replyNextPage;
+      let nextOffset = topic.replyNextOffset;
+      const cursors = new Set<string>();
+      let historyNotice = '';
+      while (topic.replyHasMore && nextPage) {
+        const cursor = `${nextPage}:${nextOffset ?? ''}`;
+        if (cursors.has(cursor)) {
+          historyNotice = '原站返回了重复的会话游标，较早消息未继续加载。';
+          break;
+        }
+        cursors.add(cursor);
+        const page = await getDiscourseReplies(item.target.conversationId, {
+          ...readOptions(options),
+          limit: 30,
+          order: 'oldest',
+          position: { kind: 'cursor', page: nextPage, offset: nextOffset ?? null }
+        });
+        replies.push(...page.items);
+        if (!page.hasMore || !page.nextPage) break;
+        nextPage = page.nextPage;
+        nextOffset = page.nextOffset;
+      }
+      const ownUsername = options.username?.trim().toLowerCase() || '';
+      return {
+        notification: item,
+        title: topic.title,
+        messages: [
+          {
+            id: String(topic.commentId || `${topic.id}:1`),
+            author: topic.author,
+            contentHtml: topic.contentHtml,
+            createdAt: topic.createdAt,
+            mine: Boolean(ownUsername && topic.author.toLowerCase() === ownUsername)
+          },
+          ...replies.map((reply, index) => ({
+            id: String(reply.commentId || `${topic.id}:${reply.floor || index + 2}`),
+            author: reply.author,
+            contentHtml: reply.contentHtml,
+            createdAt: reply.createdAt,
+            mine: Boolean(ownUsername && reply.author.toLowerCase() === ownUsername)
+          }))
+        ],
+        reply: { format: 'markdown' },
+        ...(historyNotice ? { historyNotice } : {}),
+        topic
+      };
+    }
+    if (item.target.type === 'topic') {
+      return {
+        notification: item,
+        title: item.title,
+        contentText: item.preview || item.title,
+        topic: {
+          source: 'linuxdo',
+          id: item.target.topicId,
+          title: item.title,
+          author: item.actor.name,
+          url: item.target.url,
+          createdAt: item.createdAt || ''
+        }
+      };
+    }
+    if (item.target.type !== 'topic-post') {
+      return { notification: item, title: item.title, contentText: item.preview || item.title };
+    }
+    let contentHtml: string;
+    let author = item.actor.name;
+    let createdAt = item.createdAt || '';
+    if (item.target.postId) {
+      const path = `/posts/${encodeURIComponent(item.target.postId)}.json`;
+      const data = await fetchLinuxDoJson<Record<string, unknown>>(path, undefined, {
+        fetcher: options.fetcher,
+        linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+        browserFetchIntent: { owner: 'topic', priority: 'foreground' }
+      });
+      const cooked = text(data, 'cooked');
+      if (!cooked) throw new Error('站内消息对应的帖子内容未找到');
+      contentHtml = sanitizeLinuxDoContentHtml(cooked, undefined);
+      author = text(data, 'username') || author;
+      createdAt = toIsoString(text(data, 'created_at')) || createdAt;
+    } else if (item.target.postNumber) {
+      const reply = await getDiscourseReply(item.target.topicId, item.target.postNumber, {
+        fetcher: options.fetcher,
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+        auth: readOptions(options).auth
+      });
+      contentHtml = reply.contentHtml;
+      author = reply.author || author;
+      createdAt = reply.createdAt || createdAt;
+    } else {
+      throw new Error('站内消息没有可定位的帖子');
+    }
+    return {
+      notification: item,
+      title: item.title,
+      contentHtml,
+      topic: {
+        source: 'linuxdo',
+        id: item.target.topicId,
+        title: item.title,
+        author,
+        url: item.target.url,
+        createdAt,
+        replyCount: 0
+      }
     };
-    await runLinuxDoAction({
+  },
+
+  async replyToConversation(
+    item: ForumNotification,
+    content: string,
+    options: NotificationAdapterAccess
+  ): Promise<NotificationReplyResult> {
+    if (item.target.type !== 'private-conversation' || !/^\d+$/.test(item.target.conversationId)) {
+      throw new Error('私信会话标识不正确');
+    }
+    const request = buildDiscourseActionRequest({
+      type: 'reply',
+      topicId: item.target.conversationId,
+      content
+    });
+    const result = await runLinuxDoAction({
       request,
       fetcher: options.fetcher,
       signal: options.signal,
       timeoutMs: options.timeoutMs,
       userAgent: options.userAgent
     });
-  };
+    return integer(result.id)
+      ? { confirmed: true }
+      : { confirmed: false, message: '原站未确认发送成功，请刷新会话后确认。' };
+  },
 
-  return {
-    async getCategories(options: NotificationAdapterAccess) {
-      let hasChat = true;
-      try {
-        const names = notificationTypeNames(await fetchSite(options));
-        if (names.length) hasChat = names.some((name) => discourseChatTypeNames.has(name));
-      } catch {
-        // Category discovery must not block the notification list; linux.do Chat was verified live.
-      }
-      return [
-        ...discourseCoreCategories,
-        ...(hasChat ? [discourseChatCategory] : []),
-        discourseOtherCategory
-      ] satisfies readonly NotificationCategory[];
-    },
+  async markRead(
+    item: ForumNotification,
+    _detail: NotificationDetail,
+    options: NotificationAdapterAccess
+  ): Promise<NotificationMarkResult> {
+    if (item.target.type === 'private-conversation') return { confirmed: true };
+    const id = item.remoteReadId || item.id;
+    await runMarkRead(id, options);
+    return { confirmed: true };
+  },
 
-    async listPage(options: NotificationListOptions): Promise<NotificationPage> {
-      const offset = Math.max(0, Number(options.cursor) || 0);
-      const limit = Math.max(1, Math.min(60, options.limit || 30));
-      if (options.categoryId === 'messages') {
-        const data = await fetchPrivateMessageTopics(options);
-        const items = privateMessageItems(source, data, options.username?.trim() || '', Boolean(options.unreadOnly));
-        return { items, cursor: null, hasMore: false };
-      }
-      const selectedTypeIds = await categoryTypeIds(options.categoryId || 'all', options);
-      if (selectedTypeIds?.size === 0) return { items: [], cursor: null, hasMore: false };
-      const data = await fetchNotifications(options, offset, limit);
-      const rawRows = notificationRows(data);
-      const rows = rawRows.filter(
-        (row) =>
-          (!options.unreadOnly || (isRecord(row) && row.read !== true)) &&
-          (!selectedTypeIds || (isRecord(row) && selectedTypeIds.has(Number(row.notification_type))))
-      );
-      const items = rows.map((row) => parseNotification(source, row)).filter(Boolean) as ForumNotification[];
-      const nextOffset = offset + rawRows.length;
-      const total = Number(data.total_rows_notifications ?? data.total_rows ?? 0);
-      const hasMore =
-        rawRows.length > 0 && (data.load_more_notifications === true || (Number.isFinite(total) && total > nextOffset));
-      return { items, cursor: hasMore ? String(nextOffset) : null, hasMore };
-    },
-
-    async readUnreadSnapshot(options: NotificationAdapterAccess) {
-      const data = await fetchNotifications({ ...options, unreadOnly: true, limit: 60 }, 0, 60);
-      const rows = notificationRows(data);
-      const rawTotal = Number(data.total_rows_notifications ?? data.total_rows ?? rows.length);
-      const total = Number.isFinite(rawTotal) && rawTotal >= 0 ? rawTotal : rows.length;
-      return { total, checkedAt: new Date().toISOString() };
-    },
-
-    async loadDetail(item: ForumNotification, options: NotificationAdapterAccess): Promise<NotificationDetail> {
-      if (item.target.type === 'private-conversation') {
-        const topic = await getDiscourseSourceTopic(source, item.target.conversationId, {
-          ...readOptions(options),
-          replyLimit: 30,
-          trackVisit: true
-        });
-        const replies = [...topic.replies];
-        let nextPage = topic.replyNextPage;
-        let nextOffset = topic.replyNextOffset;
-        const cursors = new Set<string>();
-        let historyNotice = '';
-        while (topic.replyHasMore && nextPage) {
-          const cursor = `${nextPage}:${nextOffset ?? ''}`;
-          if (cursors.has(cursor)) {
-            historyNotice = '原站返回了重复的会话游标，较早消息未继续加载。';
-            break;
-          }
-          cursors.add(cursor);
-          const page = await getDiscourseSourceReplies(source, item.target.conversationId, {
-            ...readOptions(options),
-            limit: 30,
-            order: 'oldest',
-            position: { kind: 'cursor', page: nextPage, offset: nextOffset ?? null }
-          });
-          replies.push(...page.items);
-          if (!page.hasMore || !page.nextPage) break;
-          nextPage = page.nextPage;
-          nextOffset = page.nextOffset;
-        }
-        const ownUsername = options.username?.trim().toLowerCase() || '';
-        return {
-          notification: item,
-          title: topic.title,
-          messages: [
-            {
-              id: String(topic.commentId || `${topic.id}:1`),
-              author: topic.author,
-              contentHtml: topic.contentHtml,
-              createdAt: topic.createdAt,
-              mine: Boolean(ownUsername && topic.author.toLowerCase() === ownUsername)
-            },
-            ...replies.map((reply, index) => ({
-              id: String(reply.commentId || `${topic.id}:${reply.floor || index + 2}`),
-              author: reply.author,
-              contentHtml: reply.contentHtml,
-              createdAt: reply.createdAt,
-              mine: Boolean(ownUsername && reply.author.toLowerCase() === ownUsername)
-            }))
-          ],
-          reply: { format: 'markdown' },
-          ...(historyNotice ? { historyNotice } : {}),
-          topic
-        };
-      }
-      if (item.target.type === 'topic') {
-        return {
-          notification: item,
-          title: item.title,
-          contentText: item.preview || item.title,
-          topic: {
-            source,
-            id: item.target.topicId,
-            title: item.title,
-            author: item.actor.name,
-            url: item.target.url,
-            createdAt: item.createdAt || ''
-          }
-        };
-      }
-      if (item.target.type !== 'topic-post') {
-        return { notification: item, title: item.title, contentText: item.preview || item.title };
-      }
-      let contentHtml = '';
-      let author = item.actor.name;
-      let createdAt = item.createdAt || '';
-      if (item.target.postId) {
-        const path = `/posts/${encodeURIComponent(item.target.postId)}.json`;
-        const data = await fetchLinuxDoJson<Record<string, unknown>>(path, undefined, {
-          fetcher: options.fetcher,
-          linuxDoAccess: { authenticated: true, userAgent: options.userAgent },
-          signal: options.signal,
-          timeoutMs: options.timeoutMs,
-          browserFetchIntent: { owner: 'topic', priority: 'foreground' }
-        });
-        const cooked = text(data, 'cooked');
-        if (!cooked) throw new Error('站内消息对应的帖子内容未找到');
-        contentHtml = sanitizeLinuxDoContentHtml(cooked, undefined);
-        author = text(data, 'username') || author;
-        createdAt = toIsoString(text(data, 'created_at')) || createdAt;
-      } else if (item.target.postNumber) {
-        const reply = await getDiscourseSourceReply(source, item.target.topicId, item.target.postNumber, {
-          fetcher: options.fetcher,
-          signal: options.signal,
-          timeoutMs: options.timeoutMs,
-          auth: readOptions(options).auth
-        });
-        contentHtml = reply.contentHtml;
-        author = reply.author || author;
-        createdAt = reply.createdAt || createdAt;
-      } else {
-        throw new Error('站内消息没有可定位的帖子');
-      }
-      return {
-        notification: item,
-        title: item.title,
-        contentHtml,
-        topic: {
-          source,
-          id: item.target.topicId,
-          title: item.title,
-          author,
-          url: item.target.url,
-          createdAt,
-          replyCount: 0
-        }
-      };
-    },
-
-    async replyToConversation(
-      item: ForumNotification,
-      content: string,
-      options: NotificationAdapterAccess
-    ): Promise<NotificationReplyResult> {
-      if (item.target.type !== 'private-conversation' || !/^\d+$/.test(item.target.conversationId)) {
-        throw new Error('私信会话标识不正确');
-      }
-      const request = buildDiscourseActionRequest({
-        type: 'reply',
-        topicId: item.target.conversationId,
-        content
-      });
-      const result = await runLinuxDoAction({
-        request,
-        fetcher: options.fetcher,
-        signal: options.signal,
-        timeoutMs: options.timeoutMs,
-        userAgent: options.userAgent
-      });
-      return integer(result.id)
-        ? { confirmed: true }
-        : { confirmed: false, message: '原站未确认发送成功，请刷新会话后确认。' };
-    },
-
-    async markRead(
-      item: ForumNotification,
-      _detail: NotificationDetail,
-      options: NotificationAdapterAccess
-    ): Promise<NotificationMarkResult> {
-      if (item.target.type === 'private-conversation') return { confirmed: true };
-      const id = item.remoteReadId || item.id;
-      await runMarkRead(id, options);
-      return { confirmed: true };
-    },
-
-    async markAllRead(options: NotificationAdapterAccess): Promise<NotificationMarkResult> {
-      await runMarkRead(undefined, options);
-      return { confirmed: true };
-    }
-  };
-}
-
-export const discourseNotificationAdapters = {
-  linuxdo: createDiscourseNotificationAdapter('linuxdo')
-} satisfies Record<DiscourseSource, NotificationAdapter>;
+  async markAllRead(options: NotificationAdapterAccess): Promise<NotificationMarkResult> {
+    await runMarkRead(undefined, options);
+    return { confirmed: true };
+  }
+} satisfies NotificationAdapter;

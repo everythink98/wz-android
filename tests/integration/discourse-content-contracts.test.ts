@@ -216,7 +216,7 @@ describe('portable Discourse content parts', () => {
     expect(stripDiscourseCalloutMarkersFromExcerpt('[!warning]- 注意\n正文 [!tip]+ 建议')).toBe('注意\n正文 建议');
   });
 
-  it(' accepts only string HTTP(S) Discourse avatars without throwing', () => {
+  it('accepts only string HTTP(S) Discourse avatars without throwing', () => {
     const baseUrl = 'https://forum.example.com';
     const uncoercible = Object.create(null) as unknown;
 

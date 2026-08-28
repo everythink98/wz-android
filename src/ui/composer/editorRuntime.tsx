@@ -47,6 +47,7 @@ import {
   type LinuxDoPollDraft
 } from '@/domain/forum/linuxDoPoll';
 import { NODESEEK_STICKER_CATEGORIES, nodeSeekStickerForCode } from '@/domain/forum/nodeSeekStickers';
+import { useCommittedRef, useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import {
   composerHostMessageSchema,
   linuxDoPollCapabilitiesSchema,
@@ -267,7 +268,7 @@ const PendingNodeSeekPollNode = TiptapNode.create({
     return [{ tag: 'div[data-composer-node="pending-nodeseek-poll"]' }];
   },
   renderHTML({ node, HTMLAttributes }) {
-    let options: string[] = [];
+    let options: string[];
     try {
       options = JSON.parse(String(node.attrs.options || '[]'));
     } catch {
@@ -1685,26 +1686,28 @@ export function ComposerEditorRuntime() {
       scheduleSignalsRef.current();
     }
   });
-  const editorRef = useRef<TiptapEditor | null>(null);
-  editorRef.current = editor;
+  const editorRef = useCommittedRef(editor);
 
-  const makeSnapshot = useCallback((forcedMode?: ComposerMode): ComposerSnapshot => {
-    const snapshotMode = forcedMode || modeRef.current;
-    const markdown =
-      snapshotMode === 'source'
-        ? sourceViewRef.current?.state.doc.toString() || ''
-        : editorRef.current?.getMarkdown() || '';
-    const polls = snapshotMode === 'source' ? pollsForSource(markdown) : readPollsFromEditor(editorRef.current);
-    const issues = validateMarkdown(markdown, configRef.current, pendingPolls);
-    return {
-      revision: revisionRef.current,
-      markdown,
-      mode: snapshotMode,
-      isEmpty: !markdown.replace(/<!-- wz:nodeseek-poll:[^>]+ -->/g, '').trim(),
-      validationIssues: issues,
-      pendingNodeSeekPolls: polls
-    };
-  }, []);
+  const makeSnapshot = useCallback(
+    (forcedMode?: ComposerMode): ComposerSnapshot => {
+      const snapshotMode = forcedMode || modeRef.current;
+      const markdown =
+        snapshotMode === 'source'
+          ? sourceViewRef.current?.state.doc.toString() || ''
+          : editorRef.current?.getMarkdown() || '';
+      const polls = snapshotMode === 'source' ? pollsForSource(markdown) : readPollsFromEditor(editorRef.current);
+      const issues = validateMarkdown(markdown, configRef.current, pendingPolls);
+      return {
+        revision: revisionRef.current,
+        markdown,
+        mode: snapshotMode,
+        isEmpty: !markdown.replace(/<!-- wz:nodeseek-poll:[^>]+ -->/g, '').trim(),
+        validationIssues: issues,
+        pendingNodeSeekPolls: polls
+      };
+    },
+    [editorRef]
+  );
 
   const postSnapshot = useCallback(
     (requestId?: string, forcedMode?: ComposerMode) => {
@@ -1724,7 +1727,7 @@ export function ComposerEditorRuntime() {
       canUndo: currentMode === 'rich' ? Boolean(currentEditor?.can().undo()) : true,
       canRedo: currentMode === 'rich' ? Boolean(currentEditor?.can().redo()) : true
     });
-  }, []);
+  }, [editorRef]);
 
   const scheduleSignals = useCallback(() => {
     if (stateTimerRef.current !== null) window.clearTimeout(stateTimerRef.current);
@@ -1732,7 +1735,7 @@ export function ComposerEditorRuntime() {
     if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = window.setTimeout(() => postSnapshot(), 600);
   }, [postSnapshot, postState]);
-  scheduleSignalsRef.current = scheduleSignals;
+  useCommitRefValue(scheduleSignalsRef, scheduleSignals);
 
   const setSource = useCallback((value: string) => {
     const view = sourceViewRef.current;
@@ -1794,7 +1797,7 @@ export function ComposerEditorRuntime() {
         runtimeError('markdown-parse-failed', 'Markdown 无法解析，已保留源码', revisionRef.current);
       }
     },
-    [postSnapshot, postState, setSource]
+    [editorRef, postSnapshot, postState, setSource]
   );
 
   const applyInit = useCallback(
@@ -1823,7 +1826,7 @@ export function ComposerEditorRuntime() {
       postMessage('READY', { revision: 0 });
       postState();
     },
-    [postState, setSource]
+    [editorRef, postState, setSource]
   );
 
   const handleHostMessage = useCallback(
@@ -1886,7 +1889,7 @@ export function ComposerEditorRuntime() {
         else resolver?.resolve(command.result);
       }
     },
-    [applyInit, changeMode, postSnapshot]
+    [applyInit, changeMode, editorRef, postSnapshot]
   );
 
   useEffect(() => {

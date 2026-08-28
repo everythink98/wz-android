@@ -14,19 +14,23 @@ import {
   advanceNotificationDelivery,
   clearNotificationSourceForContentDisable,
   defaultNotificationState,
-  initialNotificationOptInSources,
   loadNotificationState,
   normalizeNotificationState,
   recordNotificationDelivery,
   saveNotificationState,
   setGlobalNotificationIntent
 } from './notificationStore';
+import { notificationSources } from '@/domain/forum/sourceCatalog';
 
 beforeEach(() => storage.clear());
 
 describe('notification delivery state', () => {
-  it('keeps first opt-in limited to the three notification sources', () => {
-    expect(initialNotificationOptInSources).toEqual(['nodeseek', 'linuxdo', 'yaohuo']);
+  it('enables every notification-capable source on first opt-in', async () => {
+    const state = await setGlobalNotificationIntent(true);
+
+    expect(notificationSources.map((source) => state.sources[source].intentEnabled)).toEqual(
+      notificationSources.map(() => true)
+    );
   });
 
   it('builds a silent baseline, delivers only new ids, and caps retained ids at 200', () => {

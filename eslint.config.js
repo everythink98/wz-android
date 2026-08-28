@@ -16,6 +16,12 @@ module.exports = defineConfig([
   ]),
   ...expo,
   {
+    rules: {
+      'no-unreachable-loop': 'error',
+      'no-useless-assignment': 'error'
+    }
+  },
+  {
     files: ['*.{js,mjs,cjs}', 'plugins/**/*.js', 'scripts/**/*.{js,mjs,cjs}'],
     languageOptions: {
       globals: globals.node
@@ -34,17 +40,10 @@ module.exports = defineConfig([
     // These state owners intentionally pin refs and query objects to preserve
     // cancellation and screen-lifetime semantics. Their behavior is covered by tests.
     files: [
-      'src/app/AppRoot.tsx',
-      'src/app/use*Controller.{ts,tsx}',
       'src/features/**/use*Controller.{ts,tsx}',
-      'src/features/library/LibraryScreen.tsx',
-      'src/features/more/MoreScreen.tsx',
-      'src/features/more/components/MorePanels.tsx',
-      'src/features/search/SearchFilterSheet.tsx',
       'src/features/search/SearchScreen.tsx',
       'src/features/topic/TopicScreen.tsx',
       'src/features/topic/components/ReplyItem.tsx',
-      'src/features/topic/composer/ReplyComposer.tsx',
       'src/features/user/UserScreen.tsx',
       'src/ui/content/ForumContentVideo.tsx'
     ],

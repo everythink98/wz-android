@@ -178,7 +178,7 @@ jest.mock('@/ui/avatar/Avatar', () => {
 });
 
 const readerData = createEmptyReaderData();
-const defaultEnabledFeedSources = projectContentSourcePreferences(readerData.settings.contentSources).feedSources;
+const defaultEnabledFeedSources = projectContentSourcePreferences(readerData.settings.contentSources).enabledSources;
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const topicStateIndex = createTopicListItemStateIndex(readerData);

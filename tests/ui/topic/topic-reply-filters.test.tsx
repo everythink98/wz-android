@@ -2325,129 +2325,125 @@ describe('Topic reply filters', () => {
     await waitFor(() => expect(view.getByTestId('topic-html-block-ready')).toBeTruthy());
   });
 
-  it.each(['linuxdo'] as const)(
-    'renders the accepted %s answer inside the opening post before the reply list',
-    async (source) => {
-      const acceptedReply: Reply = {
-        ...sourceReplies[1],
-        acceptedAnswer: true,
-        author: 'CyrilXu',
-        contentHtml: '<p>采纳答案正文</p>'
-      };
-      const topicReplies = [sourceReplies[0], acceptedReply, sourceReplies[2]];
-      const solvedTopic: TopicDetail = {
-        ...topic,
-        acceptedAnswerFloor: 2,
-        contentHtml: '<p>提问正文</p>',
-        id: `${source}-solved-topic`,
-        replies: topicReplies,
-        solved: true,
-        source,
-        url: 'https://linux.do/t/topic/206'
-      };
-      mockScrollToIndex.mockClear();
-      const view = await render(
-        <TopicFilterHarness selectedTopic={solvedTopic} topicDetail={solvedTopic} topicReplies={topicReplies} />
-      );
+  it('renders the accepted linux.do answer inside the opening post before the reply list', async () => {
+    const source = 'linuxdo' as const;
+    const acceptedReply: Reply = {
+      ...sourceReplies[1],
+      acceptedAnswer: true,
+      author: 'CyrilXu',
+      contentHtml: '<p>采纳答案正文</p>'
+    };
+    const topicReplies = [sourceReplies[0], acceptedReply, sourceReplies[2]];
+    const solvedTopic: TopicDetail = {
+      ...topic,
+      acceptedAnswerFloor: 2,
+      contentHtml: '<p>提问正文</p>',
+      id: `${source}-solved-topic`,
+      replies: topicReplies,
+      solved: true,
+      source,
+      url: 'https://linux.do/t/topic/206'
+    };
+    mockScrollToIndex.mockClear();
+    const view = await render(
+      <TopicFilterHarness selectedTopic={solvedTopic} topicDetail={solvedTopic} topicReplies={topicReplies} />
+    );
 
-      expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
-      expect(view.getByText('已采纳答案')).toBeTruthy();
-      expect(view.getByText('CyrilXu')).toBeTruthy();
-      expect(view.getByText(/采纳答案正文/)).toBeTruthy();
-      expect(view.getByText('查看完整答案 · #2')).toBeTruthy();
-      const rendered = JSON.stringify(view.toJSON());
-      expect(rendered.indexOf('提问正文')).toBeLessThan(rendered.indexOf('topic-accepted-answer'));
-      expect(rendered.indexOf('topic-accepted-answer')).toBeLessThan(rendered.indexOf('回复列表'));
+    expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
+    expect(view.getByText('已采纳答案')).toBeTruthy();
+    expect(view.getByText('CyrilXu')).toBeTruthy();
+    expect(view.getByText(/采纳答案正文/)).toBeTruthy();
+    expect(view.getByText('查看完整答案 · #2')).toBeTruthy();
+    const rendered = JSON.stringify(view.toJSON());
+    expect(rendered.indexOf('提问正文')).toBeLessThan(rendered.indexOf('topic-accepted-answer'));
+    expect(rendered.indexOf('topic-accepted-answer')).toBeLessThan(rendered.indexOf('回复列表'));
 
-      await fireEvent.press(view.getByLabelText('收起已采纳答案'));
-      expect(view.queryByText(/采纳答案正文/)).toBeNull();
-      expect(view.getByLabelText('展开已采纳答案')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('收起已采纳答案'));
+    expect(view.queryByText(/采纳答案正文/)).toBeNull();
+    expect(view.getByLabelText('展开已采纳答案')).toBeTruthy();
 
-      await fireEvent.press(view.getByLabelText('展开已采纳答案'));
-      await fireEvent.press(view.getByLabelText('查看完整解决方案，第 2 楼'));
-      const acceptedReplyIndex = lastReplyListIndex(2);
-      expect(acceptedReplyIndex).toBeGreaterThan(-1);
-      expect(mockScrollToIndex).toHaveBeenCalledWith(
-        expect.objectContaining({
-          animated: true,
-          index: acceptedReplyIndex
-        })
-      );
-    }
-  );
+    await fireEvent.press(view.getByLabelText('展开已采纳答案'));
+    await fireEvent.press(view.getByLabelText('查看完整解决方案，第 2 楼'));
+    const acceptedReplyIndex = lastReplyListIndex(2);
+    expect(acceptedReplyIndex).toBeGreaterThan(-1);
+    expect(mockScrollToIndex).toHaveBeenCalledWith(
+      expect.objectContaining({
+        animated: true,
+        index: acceptedReplyIndex
+      })
+    );
+  });
 
-  it.each(['linuxdo'] as const)(
-    'loads the accepted %s answer by floor when it is outside the current reply page',
-    async (source) => {
-      const acceptedFloor = 42;
-      const solvedTopic: TopicDetail = {
-        ...topic,
-        acceptedAnswerFloor: acceptedFloor,
-        id: `${source}-paged-solved-topic`,
-        replies: [sourceReplies[0]],
-        solved: true,
-        source,
-        url: 'https://linux.do/t/topic/208'
-      };
-      const referenceKey = `${source}:${solvedTopic.id}:${acceptedFloor}`;
-      const instanceKey = `accepted-answer:${solvedTopic.id}:${referenceKey}`;
-      const onToggleTopicBodyQuote = jest.fn<(options: ToggleTopicBodyQuoteOptions) => void>();
-      const view = await render(
-        <TopicFilterHarness
-          onToggleTopicBodyQuote={onToggleTopicBodyQuote}
-          selectedTopic={solvedTopic}
-          topicDetail={solvedTopic}
-          topicReplies={[sourceReplies[0]]}
-        />
-      );
+  it('loads the accepted linux.do answer by floor when it is outside the current reply page', async () => {
+    const source = 'linuxdo' as const;
+    const acceptedFloor = 42;
+    const solvedTopic: TopicDetail = {
+      ...topic,
+      acceptedAnswerFloor: acceptedFloor,
+      id: `${source}-paged-solved-topic`,
+      replies: [sourceReplies[0]],
+      solved: true,
+      source,
+      url: 'https://linux.do/t/topic/208'
+    };
+    const referenceKey = `${source}:${solvedTopic.id}:${acceptedFloor}`;
+    const instanceKey = `accepted-answer:${solvedTopic.id}:${referenceKey}`;
+    const onToggleTopicBodyQuote = jest.fn<(options: ToggleTopicBodyQuoteOptions) => void>();
+    const view = await render(
+      <TopicFilterHarness
+        onToggleTopicBodyQuote={onToggleTopicBodyQuote}
+        selectedTopic={solvedTopic}
+        topicDetail={solvedTopic}
+        topicReplies={[sourceReplies[0]]}
+      />
+    );
 
-      expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
-      await waitFor(() =>
-        expect(onToggleTopicBodyQuote).toHaveBeenCalledWith({
-          instanceKey,
-          prefetch: true,
-          reference: {
-            source,
-            topicId: solvedTopic.id,
-            postNumber: acceptedFloor
-          }
-        })
-      );
+    expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
+    await waitFor(() =>
+      expect(onToggleTopicBodyQuote).toHaveBeenCalledWith({
+        instanceKey,
+        prefetch: true,
+        reference: {
+          source,
+          topicId: solvedTopic.id,
+          postNumber: acceptedFloor
+        }
+      })
+    );
 
-      const loadedAnswer: Reply = {
-        ...sourceReplies[1],
-        acceptedAnswer: true,
-        contentHtml: `<p>后分页采纳答案正文</p>${discoursePollPlaceholder('accepted-answer-poll')}`,
-        floor: acceptedFloor,
-        polls: [{ ...topicPoll, name: 'accepted-answer-poll' }],
-        quotedPosts: [
-          {
-            reference: { source, topicId: solvedTopic.id, postNumber: 7 },
-            author: { label: 'quoted-user', username: 'quoted-user' },
-            preview: '采纳答案引用摘要'
-          }
-        ]
-      };
-      await view.rerender(
-        <TopicFilterHarness
-          loadedQuotedReplies={{ [referenceKey]: loadedAnswer }}
-          onToggleTopicBodyQuote={onToggleTopicBodyQuote}
-          selectedTopic={solvedTopic}
-          topicDetail={solvedTopic}
-          topicReplies={[sourceReplies[0]]}
-        />
-      );
+    const loadedAnswer: Reply = {
+      ...sourceReplies[1],
+      acceptedAnswer: true,
+      contentHtml: `<p>后分页采纳答案正文</p>${discoursePollPlaceholder('accepted-answer-poll')}`,
+      floor: acceptedFloor,
+      polls: [{ ...topicPoll, name: 'accepted-answer-poll' }],
+      quotedPosts: [
+        {
+          reference: { source, topicId: solvedTopic.id, postNumber: 7 },
+          author: { label: 'quoted-user', username: 'quoted-user' },
+          preview: '采纳答案引用摘要'
+        }
+      ]
+    };
+    await view.rerender(
+      <TopicFilterHarness
+        loadedQuotedReplies={{ [referenceKey]: loadedAnswer }}
+        onToggleTopicBodyQuote={onToggleTopicBodyQuote}
+        selectedTopic={solvedTopic}
+        topicDetail={solvedTopic}
+        topicReplies={[sourceReplies[0]]}
+      />
+    );
 
-      expect(view.getByText(/后分页采纳答案正文/)).toBeTruthy();
-      expect(view.getByText('采纳答案引用摘要')).toBeTruthy();
-      expect(view.getByText('只读投票')).toBeTruthy();
-      expect(view.getByTestId('topic-poll-undefined')).toBeTruthy();
-      expect(view.getByText(`查看完整答案 · #${acceptedFloor}`)).toBeTruthy();
-      await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
-      expect(view.queryByText(`查看完整答案 · #${acceptedFloor}`)).toBeNull();
-      expect(view.getByText(/后分页采纳答案正文/)).toBeTruthy();
-    }
-  );
+    expect(view.getByText(/后分页采纳答案正文/)).toBeTruthy();
+    expect(view.getByText('采纳答案引用摘要')).toBeTruthy();
+    expect(view.getByText('只读投票')).toBeTruthy();
+    expect(view.getByTestId('topic-poll-undefined')).toBeTruthy();
+    expect(view.getByText(`查看完整答案 · #${acceptedFloor}`)).toBeTruthy();
+    await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
+    expect(view.queryByText(`查看完整答案 · #${acceptedFloor}`)).toBeNull();
+    expect(view.getByText(/后分页采纳答案正文/)).toBeTruthy();
+  });
 
   it('does not load an accepted answer hidden behind an access notice', async () => {
     const restrictedTopic: TopicDetail = {
@@ -2517,7 +2513,7 @@ describe('Topic reply filters', () => {
     });
   });
 
-  it(' retries the emoji catalog after a same-topic refresh', async () => {
+  it('retries the emoji catalog after a same-topic refresh', async () => {
     const linuxdoTopic: TopicDetail = {
       ...topic,
       source: 'linuxdo',

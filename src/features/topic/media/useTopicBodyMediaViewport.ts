@@ -255,6 +255,7 @@ export function useTopicBodyMediaViewport({
 
   return {
     observeViewableItems,
+    visibleRowKeys: reconciledSnapshot.visibleRowKeys,
     viewportRowKeys: reconciledSnapshot.rowKeys
   };
 }

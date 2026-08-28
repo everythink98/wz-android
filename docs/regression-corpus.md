@@ -502,7 +502,7 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`MORE-02`、`WRITE-01`、`WRITE-03` |
-| 历史症状与根因 | 用户点击刷新账号状态或发起写操作后在站点登录完成，先启动的旧请求仍可能把 NodeSeek、linux.do 或妖火的新会话覆盖成未登录、检查失败或登录已失效，并为新会话弹出错误登录入口；根因：`useAccountStatusController`、`useTopicActionsController` 与 `discourseActionRuntime` 的站点 credential snapshot、异步请求、过期清理和 SiteSessionState/动作结果提交边界。 |
+| 历史症状与根因 | 用户点击刷新账号状态或发起写操作后在站点登录完成，先启动的旧请求仍可能把 NodeSeek、linux.do 或妖火的新会话覆盖成未登录、检查失败或登录已失效，并为新会话弹出错误登录入口；根因：`useAccountStatusController`、`useTopicActionsController` 与各站 action client 的 credential snapshot、异步请求、过期清理和 SiteSessionState/动作结果提交边界。 |
 | 当前 owner | `tests/ui/account/account-status-controller.test.tsx` |
 
 
@@ -4475,6 +4475,16 @@
 | 能力 ID | `TOPIC-02`、`TOPIC-03`、`WRITE-01`、`WRITE-02`、`WRITE-04`、`WRITE-05`、`NOTIFY-02` |
 | 历史症状与根因 | NodeSeek 沙盒主题 `post-856117` 第 18 楼在原站显示删除线，App 同一楼层却显示为普通文字；NodeSeek Composer 也缺少原站已有的删除线入口；根因：阅读端缺失的是现有 `tagsStyles` 中的 `<s>` 语义；编辑端缺失的是共享 Runtime 的站点能力投影。Markdown codec 已原生支持 `~~...~~ → <s>`，不需要新增转换、配置或状态。 |
 | 当前 owner | `src/features/topic/rendering/htmlStyles.test.ts` |
+
+
+## `REG-TOPIC-131` linux.do MP3 在原生详情中被当作空正文
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03` |
+| 历史症状与根因 | linux.do `t/topic/2825663` 的有效 `<audio><source src="…mp3">` 在原站可播放约 4:18，但 App 原生 Topic 详情没有播放器；同帖空 `source` 又不能据 fallback 文字猜造媒体地址。根因：共享 sanitizer、内容 compiler 与 Topic 原生媒体 renderer 只把图片和视频视为离散媒体。修复后安全 HTTP(S) 音频归一为原子 `forum-audio`，主楼、回复、完整引用和采纳答案复用同一 Expo Video runtime；空源保留 fallback，通知只保留 fallback，离窗或 route inactive 释放播放器且不自动续播。 |
+| 当前 owner | `tests/integration/html-sanitization-contracts.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`tests/ui/topic/topic-image-loading.test.tsx` |
 
 
 ## `REG-WRITE-062` LinuxDo Emoji 源码往返卡死

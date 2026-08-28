@@ -1,11 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CredentialSummaries } from '@/platform/storage/credentialVault';
 import { createSiteAccountViews } from '@/features/more/accountCenter';
-import {
-  authActionMessageForSource,
-  authNoticeForSource,
-  authNoticeForSourceError
-} from '@/domain/session/siteSessionPrompts';
+import { authNoticeForSource, authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import { createSiteSessionViewModels, createSiteSessionStates } from '@/domain/session/siteSessionState';
 
 function emptyCredentialSummaries(): CredentialSummaries {
@@ -185,10 +181,12 @@ describe('site session prompts', () => {
   it('uses action messages that match the source capability', () => {
     const sessions = createSiteSessionViewModels(createSiteSessionStates());
 
-    expect(authActionMessageForSource('nodeseek', sessions)).toBe('请先在“更多”里登录并检测 NodeSeek Cookie。');
-    expect(authActionMessageForSource('linuxdo', sessions)).toBe('匿名可阅读，登录后才能互动。');
-    expect(authActionMessageForSource('yaohuo', sessions)).toBe('妖火需要登录后使用此功能。');
-    expect(authActionMessageForSource('v2ex', sessions)).toBe('');
+    expect(authNoticeForSource('nodeseek', sessions, 'action')?.message || '').toBe(
+      '请先在“更多”里登录并检测 NodeSeek Cookie。'
+    );
+    expect(authNoticeForSource('linuxdo', sessions, 'action')?.message || '').toBe('匿名可阅读，登录后才能互动。');
+    expect(authNoticeForSource('yaohuo', sessions, 'action')?.message || '').toBe('妖火需要登录后使用此功能。');
+    expect(authNoticeForSource('v2ex', sessions, 'action')?.message || '').toBe('');
   });
 
   it('uses read messages that keep V2EX out of login-specific copy', () => {

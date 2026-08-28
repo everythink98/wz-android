@@ -14,8 +14,8 @@ jest.mock('@/sources/yaohuo/actionClient', () => ({
   runYaohuoAction: jest.fn()
 }));
 
-jest.mock('@/features/topic/actions/discourseActionRuntime', () => ({
-  prepareDiscourseActionRuntime: jest.fn()
+jest.mock('@/sources/linuxdo/actionClient', () => ({
+  runLinuxDoAction: jest.fn()
 }));
 
 jest.mock('expo-document-picker', () => ({
@@ -40,11 +40,7 @@ jest.mock('@/platform/network/managedCookies', () => ({
 
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { runYaohuoAction, type YaohuoActionResult } from '@/sources/yaohuo/actionClient';
-import {
-  prepareDiscourseActionRuntime,
-  type DiscourseActionRuntimeRecovery
-} from '@/features/topic/actions/discourseActionRuntime';
-import type { DiscourseActionRequest } from '@/sources/discourse/actionRequest';
+import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { useTopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
@@ -73,12 +69,13 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 const mockRunNodeSeekAction = jest.mocked(runNodeSeekAction);
 const mockFetchNodeSeekVoteInfo = jest.mocked(fetchNodeSeekVoteInfo);
 const mockRunYaohuoAction = jest.mocked(runYaohuoAction);
-const mockPrepareDiscourseActionRuntime = jest.mocked(prepareDiscourseActionRuntime);
+const mockRunLinuxDoAction = jest.mocked(runLinuxDoAction);
+const runLinuxDoActionActual = jest.requireActual<typeof import('@/sources/linuxdo/actionClient')>(
+  '@/sources/linuxdo/actionClient'
+).runLinuxDoAction;
 const mockGetDocument = jest.mocked(DocumentPicker.getDocumentAsync);
 const mockUploadNodeSeekReplyImage = jest.mocked(uploadNodeSeekReplyImageWithApiKey);
 const mockCurrentNodeImageGeneration = jest.mocked(currentNodeImageApiKeyGeneration);
-const mockDiscourseExecute = jest.fn<(request: DiscourseActionRequest) => Promise<unknown>>();
-const mockDiscourseRecover = jest.fn<(error: unknown) => Promise<DiscourseActionRuntimeRecovery>>();
 
 const poll: TopicPoll = {
   id: '81',
@@ -201,7 +198,7 @@ function detailFor(source: ActionSource, patch: Partial<TopicDetail> = {}): Topi
 async function renderActions({
   active = true,
   sessionEpochs = initialForumSessionEpochs,
-  discourseLoginPrompts = { linuxdo: jest.fn() },
+  showLinuxDoVerification = jest.fn(),
   ensureNodeImageApiKey = jest.fn(async () => null),
   ensureWritableSession,
   fetcher = jest.fn(async () => new Response('{}')),
@@ -218,7 +215,7 @@ async function renderActions({
   active?: boolean;
   sessionEpochs?: ForumSessionEpochs;
   dispatchSiteSessionEvent?: (event: ScopedSiteSessionEvent) => void;
-  discourseLoginPrompts?: { linuxdo: (message?: string) => void };
+  showLinuxDoVerification?: (message?: string) => void;
   ensureNodeImageApiKey?: () => Promise<string | null>;
   ensureWritableSession?: (source: ActionSource) => Promise<WritableSessionTicket>;
   fetcher?: typeof fetch;
@@ -239,10 +236,8 @@ async function renderActions({
       const actions = useTopicActionsController({
         active: props.active ?? active,
         sessionEpochs: props.sessionEpochs,
-        discourseActionRuntimeDependencies: {
-          linuxDoUserAgent: () => 'safe-agent'
-        },
-        discourseLoginPrompts,
+        linuxDoUserAgent: () => 'safe-agent',
+        showLinuxDoVerification,
         ensureNodeImageApiKey,
         ensureWritableSession:
           ensureWritableSession ||
@@ -311,14 +306,12 @@ describe('topic action query mutations', () => {
     mockRunNodeSeekAction.mockReset();
     mockFetchNodeSeekVoteInfo.mockReset();
     mockRunYaohuoAction.mockReset().mockResolvedValue({ status: 'confirmed', message: '操作已提交' });
-    mockDiscourseExecute.mockReset().mockResolvedValue({ success: true });
-    mockDiscourseRecover.mockReset().mockResolvedValue({
-      loginRequired: false
+    mockRunLinuxDoAction.mockReset().mockImplementation((options) => {
+      const path = options.request.path;
+      return path === '/site.json' || path === '/session/current.json' || path.startsWith('/discourse_templates')
+        ? runLinuxDoActionActual(options)
+        : Promise.resolve({ success: true });
     });
-    mockPrepareDiscourseActionRuntime.mockReset().mockImplementation(async () => ({
-      execute: mockDiscourseExecute,
-      recover: mockDiscourseRecover
-    }));
     mockGetDocument.mockReset().mockResolvedValue({ canceled: true, assets: null });
     mockUploadNodeSeekReplyImage.mockReset().mockResolvedValue('https://nodeimage.com/test.png');
     mockCurrentNodeImageGeneration.mockReset().mockReturnValue(0);
@@ -625,7 +618,7 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(refreshTopicReplies).toHaveBeenCalledWith({ kind: 'created', silent: true }, expect.any(Object));
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: detailKey, exact: true, refetchType: 'none' });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: repliesKey, exact: true, refetchType: 'none' });
@@ -680,7 +673,7 @@ describe('topic action query mutations', () => {
       await submission;
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(notify).not.toHaveBeenCalled();
     expect(appQueryClient.getQueryData<TopicDetail>(nextDetailKey)).toEqual(nextDetail);
     const finishes = lines
@@ -797,7 +790,7 @@ describe('topic action query mutations', () => {
       lines.push(line);
     });
     let ticketCurrent = true;
-    mockDiscourseExecute.mockImplementationOnce(async () => {
+    mockRunLinuxDoAction.mockImplementationOnce(async () => {
       ticketCurrent = false;
       return { success: true };
     });
@@ -1070,8 +1063,8 @@ describe('topic action query mutations', () => {
     expect(finishes[0]).not.toHaveProperty('serverConfirmed');
   });
 
-  it(' cancels an existing like even when canLike is false', async () => {
-    const xiaDetail = detailFor('linuxdo', {
+  it('cancels an existing like even when canLike is false', async () => {
+    const linuxDoDetail = detailFor('linuxdo', {
       canLike: false,
       commentId: 987654,
       liked: true,
@@ -1079,19 +1072,23 @@ describe('topic action query mutations', () => {
       polls: []
     });
     const notify = jest.fn();
-    const { detailKey } = seedTopicCache(xiaDetail);
-    const hook = await renderActions({ notify, topicDetail: xiaDetail });
+    const { detailKey } = seedTopicCache(linuxDoDetail);
+    const hook = await renderActions({ notify, topicDetail: linuxDoDetail });
 
     await act(async () => {
       await hook.result.current.actions.interact('like', 987654);
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledWith({
-      path: '/post_actions/987654?post_action_type_id=2',
-      method: 'DELETE',
-      headers: {},
-      body: undefined
-    });
+    expect(mockRunLinuxDoAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: {
+          path: '/post_actions/987654?post_action_type_id=2',
+          method: 'DELETE',
+          headers: {},
+          body: undefined
+        }
+      })
+    );
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({
       liked: false,
       likeCount: 3
@@ -1100,17 +1097,17 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalledWith('当前帖子不能点赞');
   });
 
-  it(' restores an existing like when cancellation fails', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(new Error('temporary failure'));
-    const xiaDetail = detailFor('linuxdo', {
+  it('restores an existing like when cancellation fails', async () => {
+    mockRunLinuxDoAction.mockRejectedValueOnce(new Error('temporary failure'));
+    const linuxDoDetail = detailFor('linuxdo', {
       canLike: false,
       commentId: 987654,
       liked: true,
       likeCount: 4,
       polls: []
     });
-    const { detailKey } = seedTopicCache(xiaDetail);
-    const hook = await renderActions({ topicDetail: xiaDetail });
+    const { detailKey } = seedTopicCache(linuxDoDetail);
+    const hook = await renderActions({ topicDetail: linuxDoDetail });
 
     await act(async () => {
       await hook.result.current.actions.interact('like', 987654);
@@ -1122,27 +1119,31 @@ describe('topic action query mutations', () => {
     });
   });
 
-  it(' applies a confirmed like only to the exact topic cache', async () => {
-    const xiaDetail = detailFor('linuxdo', {
+  it('applies a confirmed like only to the exact topic cache', async () => {
+    const linuxDoDetail = detailFor('linuxdo', {
       canLike: true,
       commentId: 987654,
       liked: false,
       likeCount: 3,
       polls: []
     });
-    const { detailKey } = seedTopicCache(xiaDetail);
-    const hook = await renderActions({ topicDetail: xiaDetail });
+    const { detailKey } = seedTopicCache(linuxDoDetail);
+    const hook = await renderActions({ topicDetail: linuxDoDetail });
 
     await act(async () => {
       await hook.result.current.actions.interact('like', 987654);
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledWith({
-      path: '/post_actions',
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: 'id=987654&post_action_type_id=2'
-    });
+    expect(mockRunLinuxDoAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: {
+          path: '/post_actions',
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: 'id=987654&post_action_type_id=2'
+        }
+      })
+    );
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({
       liked: true,
       likeCount: 4
@@ -1293,35 +1294,35 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
-    seedTopicCache(xiaDetail, [reply]);
-    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    const linuxDoDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
+    seedTopicCache(linuxDoDetail, [reply]);
+    const hook = await renderActions({ topicDetail: linuxDoDetail, topicReplies: [reply] });
 
     await act(async () => {
       await hook.result.current.actions.editReply(reply);
       hook.result.current.topicSession.commands.composer.changeContent('不能以旧权限提交的正文');
     });
-    seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
+    seedTopicCache(linuxDoDetail, [{ ...reply, canEdit: false }]);
 
     await act(async () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('不能以旧权限提交的正文');
 
-    seedTopicCache(xiaDetail, [reply]);
+    seedTopicCache(linuxDoDetail, [reply]);
     await act(async () => {
       await hook.result.current.actions.editReply(reply);
       hook.result.current.topicSession.commands.composer.changeContent('缓存已不存在的正文');
     });
-    seedTopicCache(xiaDetail, []);
+    seedTopicCache(linuxDoDetail, []);
     await act(async () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('缓存已不存在的正文');
   });
@@ -1336,9 +1337,9 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
-    const { repliesKey } = seedTopicCache(xiaDetail, [reply]);
-    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    const linuxDoDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
+    const { repliesKey } = seedTopicCache(linuxDoDetail, [reply]);
+    const hook = await renderActions({ topicDetail: linuxDoDetail, topicReplies: [reply] });
     await act(async () => {
       await hook.result.current.actions.editReply(reply);
       hook.result.current.topicSession.commands.composer.changeContent('跨页权限冲突时保留的正文');
@@ -1360,7 +1361,7 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('跨页权限冲突时保留的正文');
   });
@@ -1375,9 +1376,9 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('linuxdo', { canCreatePost: true, polls: [], replies: [reply] });
-    seedTopicCache(xiaDetail, [reply]);
-    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    const linuxDoDetail = detailFor('linuxdo', { canCreatePost: true, polls: [], replies: [reply] });
+    seedTopicCache(linuxDoDetail, [reply]);
+    const hook = await renderActions({ topicDetail: linuxDoDetail, topicReplies: [reply] });
 
     await act(async () => {
       await hook.result.current.actions.editReply(reply);
@@ -1404,7 +1405,7 @@ describe('topic action query mutations', () => {
 
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('回复消失后保留的草稿');
-    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(mockGetDocument).not.toHaveBeenCalled();
   });
 
@@ -1418,13 +1419,13 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
+    const linuxDoDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
     const cancellation = Promise.withResolvers<void>();
     const cancelQueries = jest
       .spyOn(appQueryClient, 'cancelQueries')
       .mockImplementation(async () => cancellation.promise);
-    seedTopicCache(xiaDetail, [reply]);
-    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    seedTopicCache(linuxDoDetail, [reply]);
+    const hook = await renderActions({ topicDetail: linuxDoDetail, topicReplies: [reply] });
     await act(async () => {
       await hook.result.current.actions.editReply(reply);
       hook.result.current.topicSession.commands.composer.changeContent('取消查询期间失效的正文');
@@ -1436,100 +1437,15 @@ describe('topic action query mutations', () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(cancelQueries).toHaveBeenCalledTimes(3));
-    seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
+    seedTopicCache(linuxDoDetail, [{ ...reply, canEdit: false }]);
     await act(async () => {
       cancellation.resolve();
       await submission;
     });
 
-    expect(mockDiscourseExecute).not.toHaveBeenCalled();
+    expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('取消查询期间失效的正文');
-  });
-
-  it('rechecks edit permission after Discourse runtime preparation and before transport', async () => {
-    const reply: Reply = {
-      author: 'alice',
-      canEdit: true,
-      commentId: 101,
-      contentHtml: '<p>old</p>',
-      contentMarkdown: 'old',
-      createdAt: '2026-07-20T00:01:00.000Z',
-      floor: 2
-    };
-    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
-    const runtimePreparation = Promise.withResolvers<Awaited<ReturnType<typeof prepareDiscourseActionRuntime>>>();
-    mockPrepareDiscourseActionRuntime.mockImplementationOnce(() => runtimePreparation.promise);
-    seedTopicCache(xiaDetail, [reply]);
-    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
-    await act(async () => {
-      await hook.result.current.actions.editReply(reply);
-      hook.result.current.topicSession.commands.composer.changeContent('凭据准备期间失效的正文');
-    });
-    let submission!: Promise<void>;
-
-    await act(async () => {
-      submission = hook.result.current.actions.submitReply();
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(mockPrepareDiscourseActionRuntime).toHaveBeenCalledTimes(1));
-    seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
-    await act(async () => {
-      runtimePreparation.resolve({
-        execute: mockDiscourseExecute,
-        recover: mockDiscourseRecover
-      });
-      await submission;
-    });
-
-    expect(mockDiscourseExecute).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('凭据准备期间失效的正文');
-  });
-
-  it('rechecks upload edit permission after Discourse runtime preparation and before transport', async () => {
-    const reply: Reply = {
-      author: 'alice',
-      canEdit: true,
-      commentId: 101,
-      contentHtml: '<p>old</p>',
-      contentMarkdown: 'old',
-      createdAt: '2026-07-20T00:01:00.000Z',
-      floor: 2
-    };
-    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
-    const runtimePreparation = Promise.withResolvers<Awaited<ReturnType<typeof prepareDiscourseActionRuntime>>>();
-    mockPrepareDiscourseActionRuntime.mockImplementationOnce(() => runtimePreparation.promise);
-    mockGetDocument.mockResolvedValueOnce({
-      canceled: false,
-      assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
-    });
-    seedTopicCache(xiaDetail, [reply]);
-    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
-    await act(async () => {
-      await hook.result.current.actions.editReply(reply);
-      hook.result.current.topicSession.commands.composer.changeContent('上传凭据准备期间失效的正文');
-    });
-    let upload!: Promise<unknown>;
-
-    await act(async () => {
-      upload = hook.result.current.actions.uploadReplyImage();
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(mockPrepareDiscourseActionRuntime).toHaveBeenCalledTimes(1));
-    seedTopicCache(xiaDetail, [{ ...reply, canEdit: false }]);
-    await act(async () => {
-      runtimePreparation.resolve({
-        execute: mockDiscourseExecute,
-        recover: mockDiscourseRecover
-      });
-      await upload;
-    });
-
-    expect(mockGetDocument).toHaveBeenCalledTimes(1);
-    expect(mockDiscourseExecute).not.toHaveBeenCalled();
-    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-    expect(hook.result.current.topicSession.state.replyContent).toBe('上传凭据准备期间失效的正文');
   });
 
   it.each([
@@ -1623,9 +1539,9 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
+    const linuxDoDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
     const ticketEpochs = { ...initialForumSessionEpochs, linuxdo: 7 };
-    const { repliesKey } = seedTopicCache(xiaDetail, [reply], ticketEpochs);
+    const { repliesKey } = seedTopicCache(linuxDoDetail, [reply], ticketEpochs);
     const invalidateQueries = jest.spyOn(appQueryClient, 'invalidateQueries');
     const hook = await renderActions({
       ensureWritableSession: async () => ({
@@ -1634,7 +1550,7 @@ describe('topic action query mutations', () => {
         sessionEpoch: 7
       }),
       isWritableSessionTicketCurrent: () => true,
-      topicDetail: xiaDetail,
+      topicDetail: linuxDoDetail,
       topicReplies: [reply]
     });
 
@@ -1646,17 +1562,19 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledWith(
+    expect(mockRunLinuxDoAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: '/posts/101.json',
-        method: 'PUT'
+        request: expect.objectContaining({
+          path: '/posts/101.json',
+          method: 'PUT'
+        })
       })
     );
     expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: repliesKey, exact: true, refetchType: 'none' });
   });
 
-  it(' closes an edit composer, keeps unconfirmed content out of cache, and refreshes only replies', async () => {
+  it('closes an edit composer, keeps unconfirmed content out of cache, and refreshes only replies', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1666,9 +1584,9 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
-    const { detailKey, repliesKey } = seedTopicCache(xiaDetail, [reply]);
-    const hook = await renderActions({ topicDetail: xiaDetail, topicReplies: [reply] });
+    const linuxDoDetail = detailFor('linuxdo', { canCreatePost: false, polls: [], replies: [reply] });
+    const { detailKey, repliesKey } = seedTopicCache(linuxDoDetail, [reply]);
+    const hook = await renderActions({ topicDetail: linuxDoDetail, topicReplies: [reply] });
     await act(async () => {
       await hook.result.current.actions.editReply(reply);
       hook.result.current.topicSession.commands.composer.changeContent('server must confirm this body');
@@ -1678,10 +1596,12 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledWith(
+    expect(mockRunLinuxDoAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: '/posts/101.json',
-        method: 'PUT'
+        request: expect.objectContaining({
+          path: '/posts/101.json',
+          method: 'PUT'
+        })
       })
     );
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
@@ -1700,8 +1620,8 @@ describe('topic action query mutations', () => {
       createdAt: '2026-07-20T00:01:00.000Z',
       floor: 2
     };
-    const xiaDetail = detailFor('linuxdo', { polls: [], replies: [reply], replyCount: 1 });
-    const { detailKey, repliesKey } = seedTopicCache(xiaDetail, [reply]);
+    const linuxDoDetail = detailFor('linuxdo', { polls: [], replies: [reply], replyCount: 1 });
+    const { detailKey, repliesKey } = seedTopicCache(linuxDoDetail, [reply]);
     appQueryClient.setQueryData(repliesKey, {
       pages: [{ items: [reply], currentPage: 2, currentOffset: 30, hasMore: false, nextPage: null }],
       pageParams: [{ kind: 'cursor', page: 2, offset: 30 }]
@@ -1711,12 +1631,12 @@ describe('topic action query mutations', () => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
       buttons?.find((button) => button.text === '删除')?.onPress?.();
     });
-    const hook = await renderActions({ refreshTopicReplies, topicDetail: xiaDetail, topicReplies: [reply] });
+    const hook = await renderActions({ refreshTopicReplies, topicDetail: linuxDoDetail, topicReplies: [reply] });
 
     await act(async () => {
       hook.result.current.actions.deleteReply(reply);
     });
-    await waitFor(() => expect(mockDiscourseExecute).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1));
 
     const replyCache = appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey);
     expect(replyCache?.pages[0]?.items).toEqual([]);
@@ -1739,7 +1659,7 @@ describe('topic action query mutations', () => {
     ['ordinary', new Error('删除请求失败')],
     ['permission-denied', Object.assign(new Error('没有权限删除回复'), { status: 403 })]
   ])('leaves identity unchanged for %s linux.do delete failure', async (_kind, error) => {
-    mockDiscourseExecute.mockRejectedValueOnce(error);
+    mockRunLinuxDoAction.mockRejectedValueOnce(error);
     const reply: Reply = {
       author: 'alice',
       canDelete: true,
@@ -1771,7 +1691,7 @@ describe('topic action query mutations', () => {
     });
     await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
 
-    expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(error.message);
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.replies).toEqual([reply]);
@@ -2048,7 +1968,7 @@ describe('topic action query mutations', () => {
     ['ordinary', new Error('网络请求失败')],
     ['permission-denied', Object.assign(new Error('没有权限执行该操作'), { status: 403 })]
   ])('leaves identity unchanged for %s linux.do failure', async (_kind, error) => {
-    mockDiscourseExecute.mockRejectedValueOnce(error);
+    mockRunLinuxDoAction.mockRejectedValueOnce(error);
     const onSessionExpired = jest.fn();
     const notify = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
@@ -2062,30 +1982,25 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
-    expect(mockDiscourseRecover).toHaveBeenCalledTimes(1);
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(error.message);
   });
 
   it('leaves identity unchanged for a typed linux.do login hint', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(
+    mockRunLinuxDoAction.mockRejectedValueOnce(
       Object.assign(new Error('linux.do 登录已失效'), {
         loginRequired: true,
         source: 'linuxdo'
       })
     );
-    mockDiscourseRecover.mockResolvedValueOnce({
-      loginRequired: true,
-      message: 'linux.do 登录已失效'
-    });
     const onSessionExpired = jest.fn();
     const showLinuxDoLogin = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(linuxDetail);
     const hook = await renderActions({
-      discourseLoginPrompts: { linuxdo: showLinuxDoLogin },
+      showLinuxDoVerification: showLinuxDoLogin,
       onSessionExpired,
       topicDetail: linuxDetail
     });
@@ -2098,12 +2013,11 @@ describe('topic action query mutations', () => {
     });
 
     expect(onSessionExpired).not.toHaveBeenCalled();
-    expect(mockDiscourseRecover).toHaveBeenCalledTimes(1);
     expect(showLinuxDoLogin).toHaveBeenCalledWith('linux.do 登录已失效');
   });
 
   it('leaves identity unchanged for typed linux.do verification', async () => {
-    mockDiscourseExecute.mockRejectedValueOnce(
+    mockRunLinuxDoAction.mockRejectedValueOnce(
       Object.assign(new Error('linux.do 需要完成 Cloudflare 验证'), {
         reason: 'cloudflare',
         source: 'linuxdo'
@@ -2115,7 +2029,7 @@ describe('topic action query mutations', () => {
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(linuxDetail);
     const hook = await renderActions({
-      discourseLoginPrompts: { linuxdo: showLinuxDoLogin },
+      showLinuxDoVerification: showLinuxDoLogin,
       notify,
       onSessionExpired,
       topicDetail: linuxDetail
@@ -2128,8 +2042,7 @@ describe('topic action query mutations', () => {
       await hook.result.current.actions.submitReply();
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
-    expect(mockDiscourseRecover).toHaveBeenCalledTimes(1);
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(onSessionExpired).not.toHaveBeenCalled();
     expect(showLinuxDoLogin).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
@@ -2262,7 +2175,7 @@ describe('topic action query mutations', () => {
     ['ordinary', new Error('图片上传网络失败')],
     ['permission-denied', Object.assign(new Error('当前账号不能上传图片'), { status: 403 })]
   ])('leaves identity unchanged for %s linux.do upload failure', async (_kind, error) => {
-    mockDiscourseExecute.mockRejectedValueOnce(error);
+    mockRunLinuxDoAction.mockRejectedValueOnce(error);
     mockGetDocument.mockResolvedValueOnce({
       canceled: false,
       assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
@@ -2285,7 +2198,7 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockGetDocument).toHaveBeenCalledTimes(1);
-    expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(onSessionExpired).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(error.message);
@@ -2338,22 +2251,22 @@ describe('topic action query mutations', () => {
   });
 
   it('releases image-upload busy state after inserting Markdown', async () => {
-    const upload = Promise.withResolvers<unknown>();
-    mockDiscourseExecute.mockImplementationOnce(async () => upload.promise);
+    const upload = Promise.withResolvers<Record<string, unknown>>();
+    mockRunLinuxDoAction.mockImplementationOnce(async () => upload.promise);
     mockGetDocument.mockResolvedValueOnce({
       canceled: false,
       assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
     });
-    const xiaDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
-    seedTopicCache(xiaDetail);
-    const hook = await renderActions({ topicDetail: xiaDetail });
+    const linuxDoDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
+    seedTopicCache(linuxDoDetail);
+    const hook = await renderActions({ topicDetail: linuxDoDetail });
     let pending!: Promise<unknown>;
 
     await act(async () => {
       pending = hook.result.current.actions.uploadReplyImage();
       await Promise.resolve();
     });
-    await waitFor(() => expect(mockDiscourseExecute).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(hook.result.current.actions.actionBusy).toBe(true));
     await act(async () => {
       upload.resolve({ short_url: 'upload://test.jpeg' });
@@ -2617,26 +2530,26 @@ describe('topic action query mutations', () => {
     });
 
     expect(alert).not.toHaveBeenCalled();
-    expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(mockRunYaohuoAction).toHaveBeenCalledTimes(1);
   });
 
-  it(' applies a confirmed LinuxDo vote only to the exact topic cache', async () => {
-    const xiaPoll: TopicPoll = {
+  it('applies a confirmed LinuxDo vote only to the exact topic cache', async () => {
+    const linuxDoPoll: TopicPoll = {
       id: 'linuxdo-poll',
       name: 'poll_name',
       postId: '42',
       options: [{ id: '1', label: 'A' }]
     };
-    const xiaDetail = detailFor('linuxdo', { polls: [xiaPoll] });
-    const { detailKey } = seedTopicCache(xiaDetail);
-    const hook = await renderActions({ topicDetail: xiaDetail });
+    const linuxDoDetail = detailFor('linuxdo', { polls: [linuxDoPoll] });
+    const { detailKey } = seedTopicCache(linuxDoDetail);
+    const hook = await renderActions({ topicDetail: linuxDoDetail });
 
     await act(async () => {
-      await hook.result.current.actions.votePoll(xiaPoll, ['1']);
+      await hook.result.current.actions.votePoll(linuxDoPoll, ['1']);
     });
 
-    expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]).toMatchObject({
       id: 'linuxdo-poll',
       voted: true,

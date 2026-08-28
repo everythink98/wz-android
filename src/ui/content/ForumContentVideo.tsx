@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer, type VideoPlayer, type VideoSource } from 'expo-video';
-import { Maximize2, Play } from 'lucide-react-native';
+import { Maximize2, Pause, Play } from 'lucide-react-native';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
@@ -27,6 +27,7 @@ import {
 } from '@/platform/network/readNetworkRuntime';
 
 const VIDEO_ACCEPT = 'video/webm,video/mp4,video/*,*/*;q=0.8';
+const AUDIO_ACCEPT = 'audio/mpeg,audio/*,*/*;q=0.8';
 const VIDEO_TIME_UPDATE_INTERVAL_SECONDS = 1;
 const FORUM_MEDIA_KIND_HEADER = 'X-WZ-Forum-Media-Kind';
 const READ_NETWORK_GENERATION_HEADER = 'X-WZ-Read-Network-Generation';
@@ -45,7 +46,9 @@ function videoAspectRatio(size: { height?: number; width?: number } | null | und
     : DEFAULT_VIDEO_ASPECT_RATIO;
 }
 
-export type ForumContentVideoAdmission = {
+type ForumContentMediaKind = 'audio' | 'video';
+
+export type ForumContentMediaAdmission = {
   admitted: boolean;
   attemptId: string;
   failure: 'error' | 'timeout' | null;
@@ -54,7 +57,7 @@ export type ForumContentVideoAdmission = {
   settle: (outcome: 'displayed' | 'error') => void;
 };
 
-const UNMANAGED_VIDEO_ADMISSION: ForumContentVideoAdmission = {
+const UNMANAGED_MEDIA_ADMISSION: ForumContentMediaAdmission = {
   admitted: true,
   attemptId: 'unmanaged',
   failure: null,
@@ -63,37 +66,51 @@ const UNMANAGED_VIDEO_ADMISSION: ForumContentVideoAdmission = {
   settle: () => undefined
 };
 
-type ForumContentVideoProps = {
-  admission?: ForumContentVideoAdmission;
+type ForumContentMediaProps = {
+  admission?: ForumContentMediaAdmission;
   boundarySpacing?: StyleProp<ViewStyle>;
   mediaContext: ForumMediaRequestContext;
   nodeSeekMediaUserAgent?: string;
-  poster?: ReactNode;
   referrerPolicy?: MediaReferrerPolicy;
   src: string;
   theme: ReaderTheme;
 };
 
-export function ForumContentVideo({ admission = UNMANAGED_VIDEO_ADMISSION, ...props }: ForumContentVideoProps) {
+type ForumContentVideoProps = ForumContentMediaProps & { poster?: ReactNode };
+
+export function ForumContentVideo(props: ForumContentVideoProps) {
+  return <ForumContentMedia mediaKind="video" {...props} />;
+}
+
+export function ForumContentAudio(props: ForumContentMediaProps) {
+  return <ForumContentMedia mediaKind="audio" {...props} />;
+}
+
+function ForumContentMedia({
+  admission = UNMANAGED_MEDIA_ADMISSION,
+  mediaKind,
+  ...props
+}: ForumContentVideoProps & { mediaKind: ForumContentMediaKind }) {
   return admission.attemptId === 'unmanaged' ? (
-    <UnmanagedForumContentVideo admission={admission} {...props} />
+    <UnmanagedForumContentMedia admission={admission} mediaKind={mediaKind} {...props} />
   ) : (
-    <ForumContentVideoRuntime admission={admission} runtimeSnapshot={null} {...props} />
+    <ForumContentMediaRuntime admission={admission} mediaKind={mediaKind} runtimeSnapshot={null} {...props} />
   );
 }
 
-function UnmanagedForumContentVideo({
+function UnmanagedForumContentMedia({
   admission,
   ...props
-}: ForumContentVideoProps & { admission: ForumContentVideoAdmission }) {
+}: ForumContentVideoProps & { admission: ForumContentMediaAdmission; mediaKind: ForumContentMediaKind }) {
   const runtimeSnapshot = useReadNetworkRuntimeSnapshot();
-  return <ForumContentVideoRuntime admission={admission} runtimeSnapshot={runtimeSnapshot} {...props} />;
+  return <ForumContentMediaRuntime admission={admission} runtimeSnapshot={runtimeSnapshot} {...props} />;
 }
 
-function ForumContentVideoRuntime({
+function ForumContentMediaRuntime({
   admission,
   boundarySpacing,
   mediaContext,
+  mediaKind,
   nodeSeekMediaUserAgent,
   poster,
   referrerPolicy,
@@ -102,6 +119,7 @@ function ForumContentVideoRuntime({
   theme
 }: Required<Pick<ForumContentVideoProps, 'admission' | 'mediaContext' | 'src' | 'theme'>> &
   Pick<ForumContentVideoProps, 'boundarySpacing' | 'nodeSeekMediaUserAgent' | 'poster' | 'referrerPolicy'> & {
+    mediaKind: ForumContentMediaKind;
     runtimeSnapshot: ReadNetworkRuntimeSnapshot | null;
   }) {
   const retryRuntimeGeneration =
@@ -131,6 +149,7 @@ function ForumContentVideoRuntime({
 
   useEffect(() => {
     if (!admission.admitted) {
+      setRuntimeLease(null);
       return undefined;
     }
     let disposed = false;
@@ -211,22 +230,25 @@ function ForumContentVideoRuntime({
     },
     [admission.settle]
   );
+  const frameStyle = mediaKind === 'audio' ? styles.audioFrame : styles.frame;
+  const mediaLabel = mediaKind === 'audio' ? '音频' : '视频';
+  const frameTestId = `forum-content-${mediaKind}-frame`;
 
   if (!admission.admitted) {
     return (
       <View
-        style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
-        testID="forum-content-video-frame"
+        style={[frameStyle, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
+        testID={frameTestId}
       >
         <VideoPosterLayer poster={poster} />
         {admission.failure ? (
           <Pressable
-            accessibilityLabel="视频加载失败，点按重试"
+            accessibilityLabel={`${mediaLabel}加载失败，点按重试`}
             accessibilityRole="button"
             style={styles.videoState}
             onPress={admission.retry}
           >
-            <Text style={{ color: theme.muted }}>视频加载失败，点按重试</Text>
+            <Text style={{ color: theme.muted }}>{mediaLabel}加载失败，点按重试</Text>
           </Pressable>
         ) : null}
       </View>
@@ -241,13 +263,13 @@ function ForumContentVideoRuntime({
     const failed = runtimeLease?.generation === playerGeneration && runtimeLease.status === 'failed';
     return (
       <View
-        style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
-        testID="forum-content-video-frame"
+        style={[frameStyle, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
+        testID={frameTestId}
       >
         <VideoPosterLayer poster={poster} />
         <View style={styles.videoState}>
           {failed ? (
-            <Text style={{ color: theme.muted }}>视频加载失败</Text>
+            <Text style={{ color: theme.muted }}>{mediaLabel}加载失败</Text>
           ) : (
             <ActivityIndicator color={theme.primary} />
           )}
@@ -257,10 +279,11 @@ function ForumContentVideoRuntime({
   }
 
   return (
-    <ForumContentVideoPlayer
+    <ForumContentMediaPlayer
       key={`${mediaContext.sessionIdentity}:${src}:admission:${admission.attemptId}:runtime:${playerGeneration}`}
       boundarySpacing={boundarySpacing}
       mediaContext={mediaContext}
+      mediaKind={mediaKind}
       nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
       poster={poster}
       referrerPolicy={referrerPolicy}
@@ -273,9 +296,10 @@ function ForumContentVideoRuntime({
   );
 }
 
-function ForumContentVideoPlayer({
+function ForumContentMediaPlayer({
   boundarySpacing,
   mediaContext,
+  mediaKind,
   nodeSeekMediaUserAgent,
   onProgress,
   onStatusChange,
@@ -287,6 +311,7 @@ function ForumContentVideoPlayer({
 }: {
   boundarySpacing?: StyleProp<ViewStyle>;
   mediaContext: ForumMediaRequestContext;
+  mediaKind: ForumContentMediaKind;
   nodeSeekMediaUserAgent?: string;
   onProgress: (value: number) => void;
   onStatusChange: (status: string) => void;
@@ -304,11 +329,11 @@ function ForumContentVideoPlayer({
         nodeSeekUserAgent: nodeSeekMediaUserAgent,
         referrerPolicy
       }) || {}),
-      Accept: VIDEO_ACCEPT,
+      Accept: mediaKind === 'audio' ? AUDIO_ACCEPT : VIDEO_ACCEPT,
       [FORUM_MEDIA_KIND_HEADER]: 'video',
       [READ_NETWORK_GENERATION_HEADER]: String(runtimeGeneration)
     }),
-    [mediaContext, nodeSeekMediaUserAgent, referrerPolicy, runtimeGeneration, src]
+    [mediaContext, mediaKind, nodeSeekMediaUserAgent, referrerPolicy, runtimeGeneration, src]
   );
   const source = useMemo<VideoSource>(
     () => ({
@@ -326,12 +351,13 @@ function ForumContentVideoPlayer({
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   const status = useEvent(player, 'statusChange', { status: player.status }).status;
   const videoTrack = useEvent(player, 'videoTrackChange', { videoTrack: player.videoTrack }).videoTrack;
-  const bufferedPosition = useEvent(player, 'timeUpdate', {
+  const timeUpdate = useEvent(player, 'timeUpdate', {
     bufferedPosition: player.bufferedPosition,
     currentLiveTimestamp: null,
     currentOffsetFromLive: null,
     currentTime: player.currentTime
-  }).bufferedPosition;
+  });
+  const bufferedPosition = timeUpdate.bufferedPosition;
   useEffect(() => {
     if (!Number.isFinite(bufferedPosition) || bufferedPosition <= lastBufferedPositionRef.current) {
       return;
@@ -341,11 +367,16 @@ function ForumContentVideoPlayer({
   }, [bufferedPosition, onProgress]);
   useEffect(() => onStatusChange(status || 'idle'), [onStatusChange, status]);
   useEffect(() => {
-    if (isPlaying) setHasPlayed(true);
-  }, [isPlaying]);
+    if (mediaKind === 'video' && isPlaying) setHasPlayed(true);
+  }, [isPlaying, mediaKind]);
   const loadFailed = status === 'error';
   const loading = status === 'idle' || status === 'loading';
   const interactionDisabled = loading || loadFailed;
+  const duration = Number.isFinite(player.duration) ? Math.max(0, player.duration) : 0;
+  const currentTime = Number.isFinite(timeUpdate.currentTime)
+    ? Math.min(duration || Number.POSITIVE_INFINITY, Math.max(0, timeUpdate.currentTime))
+    : 0;
+  const progressWidthRef = useRef(0);
   const togglePlayback = useCallback(() => {
     if (loadFailed) {
       return;
@@ -356,10 +387,99 @@ function ForumContentVideoPlayer({
     }
     player.play();
   }, [isPlaying, loadFailed, player]);
+  const seekTo = useCallback(
+    (seconds: number) => {
+      if (interactionDisabled || duration <= 0) return;
+      player.currentTime = Math.min(duration, Math.max(0, seconds));
+    },
+    [duration, interactionDisabled, player]
+  );
+  const seekFromPress = useCallback(
+    (event: GestureResponderEvent) => {
+      const width = progressWidthRef.current;
+      if (width > 0) seekTo((event.nativeEvent.locationX / width) * duration);
+    },
+    [duration, seekTo]
+  );
   const enterFullscreen = useCallback((event: GestureResponderEvent) => {
     event.stopPropagation();
     void videoRef.current?.enterFullscreen();
   }, []);
+  if (mediaKind === 'audio') {
+    const progress = duration > 0 ? Math.min(1, currentTime / duration) : 0;
+    return (
+      <View
+        style={[styles.audioFrame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
+        testID="forum-content-audio-frame"
+      >
+        <Pressable
+          accessibilityLabel={isPlaying ? '暂停音频' : '播放音频'}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: interactionDisabled }}
+          disabled={interactionDisabled}
+          onPress={togglePlayback}
+          style={({ pressed }) => [
+            styles.audioPlayButton,
+            pressed && !interactionDisabled && styles.audioButtonPressed
+          ]}
+        >
+          <View
+            accessibilityElementsHidden
+            accessible={false}
+            importantForAccessibility="no-hide-descendants"
+            pointerEvents="none"
+            style={[styles.audioPlayGlyph, { backgroundColor: theme.primary }]}
+            testID="forum-content-audio-play-glyph"
+          >
+            {loading ? (
+              <ActivityIndicator color={theme.onPrimary} />
+            ) : isPlaying ? (
+              <Pause color={theme.onPrimary} fill={theme.onPrimary} size={18} strokeWidth={1.8} />
+            ) : (
+              <Play color={theme.onPrimary} fill={theme.onPrimary} size={18} strokeWidth={1.8} />
+            )}
+          </View>
+        </Pressable>
+        <Pressable
+          accessibilityActions={[
+            { name: 'increment', label: '快进 10 秒' },
+            { name: 'decrement', label: '后退 10 秒' }
+          ]}
+          accessibilityLabel="音频进度"
+          accessibilityRole="adjustable"
+          accessibilityState={{ disabled: interactionDisabled }}
+          accessibilityValue={{
+            max: Math.round(duration),
+            min: 0,
+            now: Math.round(currentTime),
+            text: `${formatMediaTime(currentTime)} / ${formatMediaTime(duration)}`
+          }}
+          disabled={interactionDisabled}
+          onAccessibilityAction={({ nativeEvent }) =>
+            seekTo(currentTime + (nativeEvent.actionName === 'increment' ? 10 : -10))
+          }
+          onLayout={({ nativeEvent }) => {
+            progressWidthRef.current = nativeEvent.layout.width;
+          }}
+          onPress={seekFromPress}
+          style={styles.audioBody}
+          testID="forum-content-audio-progress"
+        >
+          <View pointerEvents="none" style={styles.audioHeader}>
+            <Text style={[styles.audioTitle, { color: loadFailed ? theme.danger : theme.ink }]}>
+              {loadFailed ? '音频加载失败' : '音频'}
+            </Text>
+            <Text style={[styles.audioTime, { color: theme.muted }]}>
+              {formatMediaTime(currentTime)} / {formatMediaTime(duration)}
+            </Text>
+          </View>
+          <View pointerEvents="none" style={[styles.audioProgressTrack, { backgroundColor: theme.line }]}>
+            <View style={[styles.audioProgressFill, { backgroundColor: theme.primary, width: `${progress * 100}%` }]} />
+          </View>
+        </Pressable>
+      </View>
+    );
+  }
   return (
     <View
       style={[
@@ -430,7 +550,74 @@ function VideoPosterLayer({ poster }: { poster?: ReactNode }) {
   ) : null;
 }
 
+function formatMediaTime(value: number) {
+  const seconds = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
 const styles = StyleSheet.create({
+  audioFrame: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    marginTop: 8,
+    minHeight: 64,
+    padding: 8,
+    overflow: 'hidden'
+  },
+  audioPlayButton: {
+    alignItems: 'center',
+    borderRadius: 24,
+    height: 48,
+    justifyContent: 'center',
+    width: 48
+  },
+  audioButtonPressed: {
+    opacity: 0.68
+  },
+  audioPlayGlyph: {
+    alignItems: 'center',
+    borderRadius: 20,
+    height: 40,
+    justifyContent: 'center',
+    width: 40
+  },
+  audioBody: {
+    flex: 1,
+    gap: 8,
+    justifyContent: 'center',
+    minHeight: 48,
+    minWidth: 0
+  },
+  audioHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'space-between'
+  },
+  audioTitle: {
+    flexShrink: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18
+  },
+  audioProgressTrack: {
+    borderRadius: 2,
+    height: 3,
+    overflow: 'hidden'
+  },
+  audioProgressFill: {
+    height: '100%'
+  },
+  audioTime: {
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+    lineHeight: 17
+  },
   frame: {
     alignSelf: 'stretch',
     aspectRatio: 16 / 9,

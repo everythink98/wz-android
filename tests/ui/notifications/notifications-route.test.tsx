@@ -588,46 +588,43 @@ describe('notification routes', () => {
     expect(gateway.listPage).not.toHaveBeenCalled();
   });
 
-  it.each([{ identityTrust: 'unknown' as const, title: '账号状态暂不可确认', message: /账号中心重试核对/ }])(
-    'presents an all-source $identityTrust identity state without claiming the user is logged out',
-    async ({ identityTrust, title, message }) => {
-      appQueryClient.clear();
-      const gateway = {
-        getCategories: jest.fn(),
-        listAllPage: jest.fn(),
-        listPage: jest.fn(),
-        loadDetail: jest.fn(),
-        markAllRead: jest.fn(),
-        markRead: jest.fn(),
-        readUnreadSnapshot: jest.fn()
-      } as unknown as NotificationRouteRuntimeValue['gateway'];
-      const runtime = routeRuntime(gateway);
-      runtime.activeSources = [];
-      for (const source of runtime.enabledNotificationSources) {
-        runtime.sessions[source] = { ...runtime.sessions[source], identityTrust };
-        runtime.identityKeys[source] = `${source}:known-account`;
-      }
-
-      const view = await render(
-        <NotificationRouteRuntimeProvider value={runtime}>
-          <NavigationContainer>
-            <NotificationsRoute
-              navigation={{ navigate: jest.fn() } as never}
-              route={{ key: 'notifications', name: 'Notifications', params: undefined }}
-            />
-          </NavigationContainer>
-        </NotificationRouteRuntimeProvider>,
-        { wrapper: QueryTestWrapper }
-      );
-
-      expect(view.getByText(title)).toBeTruthy();
-      expect(view.getByText(message)).toBeTruthy();
-      expect(view.queryByText(/登录任一|请先登录/)).toBeNull();
-      expect(gateway.getCategories).not.toHaveBeenCalled();
-      expect(gateway.listAllPage).not.toHaveBeenCalled();
-      expect(gateway.listPage).not.toHaveBeenCalled();
+  it('presents an all-source unknown identity state without claiming the user is logged out', async () => {
+    appQueryClient.clear();
+    const gateway = {
+      getCategories: jest.fn(),
+      listAllPage: jest.fn(),
+      listPage: jest.fn(),
+      loadDetail: jest.fn(),
+      markAllRead: jest.fn(),
+      markRead: jest.fn(),
+      readUnreadSnapshot: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = routeRuntime(gateway);
+    runtime.activeSources = [];
+    for (const source of runtime.enabledNotificationSources) {
+      runtime.sessions[source] = { ...runtime.sessions[source], identityTrust: 'unknown' };
+      runtime.identityKeys[source] = `${source}:known-account`;
     }
-  );
+
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'Notifications', params: undefined }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    expect(view.getByText('账号状态暂不可确认')).toBeTruthy();
+    expect(view.getByText(/账号中心重试核对/)).toBeTruthy();
+    expect(view.queryByText(/登录任一|请先登录/)).toBeNull();
+    expect(gateway.getCategories).not.toHaveBeenCalled();
+    expect(gateway.listAllPage).not.toHaveBeenCalled();
+    expect(gateway.listPage).not.toHaveBeenCalled();
+  });
 
   it('retries only the selected failed source in the aggregate list', async () => {
     appQueryClient.clear();

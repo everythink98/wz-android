@@ -3,11 +3,6 @@ import { notificationSources, type NotificationSource } from '@/domain/forum/sou
 
 export const NOTIFICATION_STORAGE_KEY = 'wz.notifications.v1';
 const MAX_DELIVERED_IDS = 200;
-export const initialNotificationOptInSources = [
-  'nodeseek',
-  'linuxdo',
-  'yaohuo'
-] as const satisfies readonly NotificationSource[];
 
 export interface NotificationSourceState {
   intentEnabled: boolean;
@@ -114,7 +109,7 @@ export function setGlobalNotificationIntent(enabled: boolean) {
     const firstOptIn = enabled && !current.hasOptedIn;
     const sources = { ...current.sources };
     if (firstOptIn) {
-      for (const source of initialNotificationOptInSources) {
+      for (const source of notificationSources) {
         sources[source] = { ...sources[source], intentEnabled: true };
       }
     } else if (!enabled) {

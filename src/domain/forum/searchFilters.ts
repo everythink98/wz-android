@@ -1,6 +1,6 @@
 import type { SearchSort } from './feed';
 import type { Category, Source } from './models';
-import { isDiscourseSource, sourceCatalog, type DiscourseSource } from './sourceCatalog';
+import { sourceCatalog } from './sourceCatalog';
 
 export type SearchTimeRange = 'all' | 'day' | 'week' | 'month' | 'year';
 export type SearchTextScope = 'all' | 'title';
@@ -22,7 +22,8 @@ export type V2exSearchFilter = {
   operator: SearchKeywordOperator;
 };
 
-type DiscourseSearchFilterFields = {
+export type DiscourseSearchFilter = {
+  source: 'linuxdo';
   scope: SearchTextScope;
   category: string;
   tags: string[];
@@ -37,27 +38,12 @@ type DiscourseSearchFilterFields = {
   minViews: number | null;
   maxViews: number | null;
   order: DiscourseSearchOrder;
+  status: DiscourseSearchStatus;
+  expertResponse: boolean;
 };
 
-interface DiscourseSearchExtensionMap {
-  linuxdo: {
-    expertResponse: boolean;
-  };
-}
-
-type DiscourseSearchExtension<Site extends DiscourseSource> = Site extends keyof DiscourseSearchExtensionMap
-  ? { siteExtension: { source: Site } & DiscourseSearchExtensionMap[Site] }
-  : { siteExtension?: never };
-
-export type DiscourseSearchFilter<Site extends DiscourseSource = DiscourseSource> = Site extends DiscourseSource
-  ? DiscourseSearchFilterFields & {
-      source: Site;
-      status: DiscourseSearchStatus;
-    } & DiscourseSearchExtension<Site>
-  : never;
-
 export function isDiscourseSearchFilter(filter: SourceSearchFilter): filter is DiscourseSearchFilter {
-  return isDiscourseSource(filter.source);
+  return filter.source === 'linuxdo';
 }
 
 export type NodeSeekSearchFilter = {
@@ -73,8 +59,8 @@ export type YaohuoSearchFilter = {
 
 export type SourceSearchFilter = V2exSearchFilter | DiscourseSearchFilter | NodeSeekSearchFilter | YaohuoSearchFilter;
 
-type SearchFilterForSource<Site extends Source> = Site extends DiscourseSource
-  ? DiscourseSearchFilter<Site>
+type SearchFilterForSource<Site extends Source> = Site extends 'linuxdo'
+  ? DiscourseSearchFilter
   : Site extends 'v2ex'
     ? V2exSearchFilter
     : Site extends 'nodeseek'
@@ -88,7 +74,7 @@ export type SearchFilterState = {
 };
 
 function defaultSearchFilter(source: Source): SourceSearchFilter {
-  if (isDiscourseSource(source)) {
+  if (source === 'linuxdo') {
     return {
       source,
       scope: 'all',
@@ -106,8 +92,8 @@ function defaultSearchFilter(source: Source): SourceSearchFilter {
       minViews: null,
       maxViews: null,
       order: 'latest',
-      ...(source === 'linuxdo' ? { siteExtension: { source: 'linuxdo' as const, expertResponse: false } } : {})
-    } as DiscourseSearchFilter;
+      expertResponse: false
+    };
   }
   if (sourceCatalog[source].searchFilter === 'v2ex') {
     return {
@@ -191,7 +177,7 @@ function categoryLabel(categories: Category[], source: Source, id: string) {
   return categoryForFilter(categories, source, id)?.name || id.trim();
 }
 
-function discourseCategoryToken(categories: Category[], source: DiscourseSource, id: string) {
+function discourseCategoryToken(categories: Category[], source: 'linuxdo', id: string) {
   const category = categoryForFilter(categories, source, id);
   return (category?.id || id).trim();
 }
@@ -273,7 +259,7 @@ export function buildDiscourseSearchQuery(query: string, filter: DiscourseSearch
       parts.push(`${name}:${value}`);
     }
   }
-  if (filter.siteExtension?.source === 'linuxdo' && filter.siteExtension.expertResponse) {
+  if (filter.expertResponse) {
     parts.push('with:category_expert_response');
   }
   if (filter.order === 'latest') {
@@ -336,7 +322,7 @@ export function searchFilterSummary(source: Source, filter: SourceSearchFilter, 
     if (minViews !== null || maxViews !== null) {
       parts.push(`浏览 ${minViews ?? 0}–${maxViews ?? '∞'}`);
     }
-    if (filter.siteExtension?.source === 'linuxdo' && filter.siteExtension.expertResponse) {
+    if (filter.expertResponse) {
       parts.push('专家回应');
     }
     if (filter.order === 'relevance') {

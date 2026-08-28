@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  aggregateFeedSources,
   aggregateSearchSources,
   isFeedFilterSource,
   isDiscourseSource,
@@ -37,9 +36,8 @@ describe('source capability catalog', () => {
     expect(sourceSupportsTopicAction('linuxdo', 'pay')).toBe(false);
   });
 
-  it('derives aggregate registration from the catalog', () => {
+  it('keeps the canonical source and aggregate search order', () => {
     expect(sourceValues).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo']);
-    expect(aggregateFeedSources).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo']);
     expect(aggregateSearchSources).toEqual(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
     expect(sessionSources).toEqual(['nodeseek', 'linuxdo', 'yaohuo']);
   });

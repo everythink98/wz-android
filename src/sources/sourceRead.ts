@@ -20,11 +20,11 @@ import { getV2exReplies, getV2exTopic } from '@/sources/v2ex/reader';
 import { getV2exUserProfile } from '@/sources/v2ex/account';
 import { checkYaohuoLoginDirect } from '@/sources/yaohuo/reader';
 import {
-  getDiscourseSourceCurrentUserProfile,
-  getDiscourseSourceReplies,
-  getDiscourseSourceReply,
-  getDiscourseSourceTopic,
-  getDiscourseSourceUserProfile,
+  getDiscourseCurrentUserProfile,
+  getDiscourseReplies,
+  getDiscourseReply,
+  getDiscourseTopic,
+  getDiscourseUserProfile,
   type DiscourseReadAuth
 } from './discourseRead';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
@@ -77,7 +77,7 @@ export function getTopic({
 }): Promise<TopicDetail> {
   const options = { authenticated: nodeSeekAuthenticated, fetcher, nodeSeekUserAgent, signal, timeoutMs };
   if (isDiscourseSource(source)) {
-    return getDiscourseSourceTopic(source, id, {
+    return getDiscourseTopic(id, {
       auth: discourseAuth,
       fetcher,
       signal,
@@ -132,7 +132,7 @@ export function getReplies({
     timeoutMs
   };
   if (isDiscourseSource(source)) {
-    return getDiscourseSourceReplies(source, id, {
+    return getDiscourseReplies(id, {
       auth: discourseAuth,
       fetcher,
       limit,
@@ -168,7 +168,7 @@ export function getReply({
   if (!isDiscourseSource(source)) {
     throw new Error('该来源不支持按楼层读取引用');
   }
-  return getDiscourseSourceReply(source, id, floor, {
+  return getDiscourseReply(id, floor, {
     auth: discourseAuth,
     fetcher,
     signal,
@@ -211,7 +211,7 @@ export function getUserProfile({
     timeoutMs
   };
   if (isDiscourseSource(source)) {
-    return getDiscourseSourceUserProfile(source, id, username || id, {
+    return getDiscourseUserProfile(id, username || id, {
       auth: discourseAuth,
       cursor,
       cursorType,
@@ -439,7 +439,7 @@ export function getCurrentUserProfile({
   timeoutMs?: number;
 }): Promise<UserProfile> {
   if (isDiscourseSource(source)) {
-    return getDiscourseSourceCurrentUserProfile(source, {
+    return getDiscourseCurrentUserProfile({
       auth: discourseAuth,
       fetcher,
       signal,

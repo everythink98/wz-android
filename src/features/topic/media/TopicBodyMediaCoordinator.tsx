@@ -16,7 +16,7 @@ const MAX_WARM_BLOCK_MEDIA = 8;
 const MAX_IN_FLIGHT_BODY_MEDIA = 4;
 const MEDIA_NO_PROGRESS_TIMEOUT_MS = 30_000;
 
-type TopicBodyMediaKind = 'base' | 'inline' | 'sticker' | 'poster' | 'video' | 'original';
+type TopicBodyMediaKind = 'audio' | 'base' | 'inline' | 'sticker' | 'poster' | 'video' | 'original';
 type TopicBodyMediaPriority = 'visible' | 'prefetch' | 'upgrade' | 'user';
 type TopicBodyMediaOutcome = 'displayed' | 'error';
 type TopicBodyMediaFailure = 'error' | 'timeout' | null;
@@ -114,12 +114,13 @@ class TopicBodyMediaCoordinator {
   private timerDeadline: number | null = null;
   private timeoutCount = 0;
   private timerHighWater = 0;
+  private visibleRowKeys: readonly string[];
   private viewportRowKeys: readonly string[];
   private warmHighWater = 0;
   private warmKeys = new Set<string>();
 
   constructor(
-    { active, paused, viewportRowKeys }: CoordinatorGate,
+    { active, paused, visibleRowKeys, viewportRowKeys }: CoordinatorGate,
     diagnosticSession?: TopicBodyMediaDiagnosticSession,
     onDiagnosticFinish?: TopicBodyMediaAggregateReporter,
     runtimeGeneration = 0
@@ -129,6 +130,7 @@ class TopicBodyMediaCoordinator {
     this.onDiagnosticFinish = onDiagnosticFinish;
     this.paused = paused;
     this.runtimeGeneration = runtimeGeneration;
+    this.visibleRowKeys = visibleRowKeys;
     this.viewportRowKeys = viewportRowKeys;
   }
 
@@ -181,9 +183,10 @@ class TopicBodyMediaCoordinator {
     };
   }
 
-  updateGate({ active, paused, viewportRowKeys }: CoordinatorGate) {
+  updateGate({ active, paused, visibleRowKeys, viewportRowKeys }: CoordinatorGate) {
     this.active = active;
     this.paused = paused;
+    this.visibleRowKeys = visibleRowKeys;
     this.viewportRowKeys = viewportRowKeys;
     this.recompute();
   }
@@ -401,8 +404,26 @@ class TopicBodyMediaCoordinator {
   private recompute() {
     if (this.disposed) return;
     const rowOrder = new Map(this.viewportRowKeys.map((rowKey, index) => [rowKey, index]));
+    const visibleRows = new Set(this.visibleRowKeys);
+    for (const entry of this.entries.values()) {
+      if (
+        entry.kind === 'audio' &&
+        entry.status === 'displayed' &&
+        (!this.active || this.paused || !visibleRows.has(entry.rowKey))
+      ) {
+        entry.deadline = null;
+        entry.lastProgressValue = null;
+        entry.status = 'waiting';
+      }
+    }
     const eligible = [...this.entries.values()]
-      .filter((entry) => rowOrder.has(entry.rowKey) && entry.status !== 'failed' && entry.status !== 'displayed')
+      .filter(
+        (entry) =>
+          rowOrder.has(entry.rowKey) &&
+          (entry.kind !== 'audio' || visibleRows.has(entry.rowKey)) &&
+          entry.status !== 'failed' &&
+          entry.status !== 'displayed'
+      )
       .sort((left, right) => {
         const leftRetained = left.status === 'running' ? 0 : 1;
         const rightRetained = right.status === 'running' ? 0 : 1;
@@ -543,6 +564,7 @@ function safeOpaqueTopicRef(value: string) {
 type CoordinatorGate = {
   active: boolean;
   paused: boolean;
+  visibleRowKeys: readonly string[];
   viewportRowKeys: readonly string[];
 };
 
@@ -551,11 +573,14 @@ const TopicBodyMediaRowContext = createContext('');
 
 export function TopicBodyMediaCoordinatorProvider({
   diagnosticSession,
+  visibleRowKeys,
+  viewportRowKeys,
   ...props
-}: CoordinatorGate & {
+}: Omit<CoordinatorGate, 'visibleRowKeys'> & {
   children: ReactNode;
   diagnosticSession?: TopicBodyMediaDiagnosticSession;
   onDiagnosticFinish?: TopicBodyMediaAggregateReporter;
+  visibleRowKeys?: readonly string[];
 }) {
   const runtimeGeneration = useReadNetworkRuntimeGeneration(diagnosticSession?.source);
   const sessionIdentity = diagnosticSession
@@ -566,6 +591,8 @@ export function TopicBodyMediaCoordinatorProvider({
       key={sessionIdentity}
       diagnosticSession={diagnosticSession}
       runtimeGeneration={runtimeGeneration}
+      visibleRowKeys={visibleRowKeys || viewportRowKeys}
+      viewportRowKeys={viewportRowKeys}
       {...props}
     />
   );
@@ -578,6 +605,7 @@ function TopicBodyMediaCoordinatorSessionProvider({
   onDiagnosticFinish,
   paused,
   runtimeGeneration,
+  visibleRowKeys,
   viewportRowKeys
 }: CoordinatorGate & {
   children: ReactNode;
@@ -588,15 +616,15 @@ function TopicBodyMediaCoordinatorSessionProvider({
   const [coordinator] = useState(
     () =>
       new TopicBodyMediaCoordinator(
-        { active, paused, viewportRowKeys },
+        { active, paused, visibleRowKeys, viewportRowKeys },
         diagnosticSession,
         onDiagnosticFinish,
         runtimeGeneration
       )
   );
   useLayoutEffect(() => {
-    coordinator.updateGate({ active, paused, viewportRowKeys });
-  }, [active, coordinator, paused, viewportRowKeys]);
+    coordinator.updateGate({ active, paused, visibleRowKeys, viewportRowKeys });
+  }, [active, coordinator, paused, visibleRowKeys, viewportRowKeys]);
   useLayoutEffect(() => {
     coordinator.updateDiagnosticReporter(diagnosticSession, onDiagnosticFinish);
   }, [coordinator, diagnosticSession, onDiagnosticFinish]);

@@ -36,7 +36,7 @@
 | `app` | 六类模块 |
 
 - feature 不得反向依赖 app，也不得跨 feature 直接调用；共享语义下沉到 domain/platform/ui，共享来源能力留在 sources。
-- source 不得依赖 UI 或 feature。具体 provider 不得横向依赖另一个 provider；`src/sources/feedRead.ts`、`src/sources/searchRead.ts`、`src/sources/sourceRead.ts`、`src/sources/discourseRead.ts`、`src/sources/discourseActions.ts`、`src/sources/readGateway.ts`、`src/sources/discourseNotifications.ts`、`src/sources/notificationAdapter.ts`、`src/sources/notificationAdapters.ts`、`src/sources/notificationForegroundAccess.ts`、`src/sources/notificationBackgroundAccess.ts` 与 `src/sources/notificationGateway.ts` 是允许组合多个 adapter 的来源根模块。
+- source 不得依赖 UI 或 feature。具体 provider 不得横向依赖另一个 provider；`src/sources/feedRead.ts`、`src/sources/searchRead.ts`、`src/sources/sourceRead.ts`、`src/sources/discourseRead.ts`、`src/sources/readGateway.ts`、`src/sources/discourseNotifications.ts`、`src/sources/notificationAdapter.ts`、`src/sources/notificationAdapters.ts`、`src/sources/notificationForegroundAccess.ts`、`src/sources/notificationBackgroundAccess.ts` 与 `src/sources/notificationGateway.ts` 是允许承担来源组合的根模块。
 - `src/sources/readGateway.ts` 是论坛读取统一入口，`src/sources/notificationGateway.ts` 是消息读取与已读协议的独立统一入口。写操作继续复用现有 action client；不为目录整洁另造 service、factory 或 provider registry。
 - 禁止新增 barrel `index.ts`、旧内部路径 re-export 和纯转发 facade。移动内部模块时一次性更新调用方、测试与文档。
 - App 组合链固定为 `AppRoot → AppComposition → AppRoutes → AppNavigator`：`AppRoot` 只能依赖 `AppComposition`；`useAppRuntime` 只能组合深 runtime、用 `useMemo` 投影 route capability，不得持有 `useState/useRef/useEffect/useCallback` 或导入 Screen/component；`AppComposition` 只依赖深 runtime、全局 provider 与 `AppRoutes`；`AppRoutes` 只映射七个 feature route entry；`AppNavigator` 不得依赖 feature。

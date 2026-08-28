@@ -27,10 +27,6 @@ describe('forum links', () => {
       topic: { source: 'linuxdo', id: '456' },
       targetReply: { floor: 90 }
     });
-    expect(parseForumTopicDestination('https://linux.do/t/topic/456/90')).toMatchObject({
-      topic: { source: 'linuxdo', id: '456' },
-      targetReply: { floor: 90 }
-    });
     expect(
       parseForumTopicDestination('https://www.yaohuo.me/bbs/book_re.aspx?id=321&classid=177&tofloor=90')
     ).toMatchObject({

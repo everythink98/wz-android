@@ -1400,7 +1400,7 @@ describe('linux.do AI search controller', () => {
         tags: ['人工智能', '快问快答'],
         tagMatch: 'all',
         order: 'relevance',
-        siteExtension: { source: 'linuxdo', expertResponse: true }
+        expertResponse: true
       }
     };
 

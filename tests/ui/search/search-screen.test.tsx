@@ -1519,7 +1519,7 @@ describe('Search state', () => {
         maxPosts: 20,
         minViews: 100,
         maxViews: 1000,
-        siteExtension: { source: 'linuxdo', expertResponse: true }
+        expertResponse: true
       })
     );
   });

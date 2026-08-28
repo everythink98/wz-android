@@ -64,7 +64,7 @@ export function nodeSeekStardustReceiveFromAttributes(attributes: Record<string,
   const amount = Number(attributes.amount);
   const refId = Number(attributes['ref-id']);
   const oneTime = attributes['data-one-time'] === 'true';
-  let description = '';
+  let description: string;
   try {
     description = decodeURIComponent(attributes.description || '');
   } catch {

@@ -74,10 +74,8 @@ describe('search read', () => {
       fetcher,
       nodeSeekAuthenticated: true,
       discourseAuth: {
-        linuxdo: {
-          authenticated: true,
-          userAgent: 'LinuxDo WebView UA'
-        }
+        authenticated: true,
+        userAgent: 'LinuxDo WebView UA'
       },
       linuxDoAuthenticated: true,
       signal: controller.signal
@@ -170,10 +168,8 @@ describe('search read', () => {
       limit: 6,
       fetcher,
       discourseAuth: {
-        linuxdo: {
-          authenticated: true,
-          userAgent: 'LinuxDo WebView UA'
-        }
+        authenticated: true,
+        userAgent: 'LinuxDo WebView UA'
       },
       linuxDoAuthenticated: true,
       nodeSeekAuthenticated: true
@@ -260,10 +256,8 @@ describe('search read', () => {
       limit: 3,
       fetcher,
       discourseAuth: {
-        linuxdo: {
-          authenticated: true,
-          userAgent: 'LinuxDo WebView UA'
-        }
+        authenticated: true,
+        userAgent: 'LinuxDo WebView UA'
       },
       linuxDoAuthenticated: true,
       nodeSeekAuthenticated: true

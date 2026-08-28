@@ -1,5 +1,7 @@
 import { parse, type HTMLElement } from 'node-html-parser';
 
+export const FORUM_AUDIO_TAG = 'forum-audio';
+
 export const FORUM_VIDEO_TAG = 'forum-video';
 
 export const FORUM_VIDEO_STICKER_TAG = 'forum-video-sticker';
@@ -172,12 +174,12 @@ export function hasRenderableHtmlContent(value: unknown, parsedRoot?: ReturnType
   try {
     return Boolean(
       (parsedRoot || parseHtml(value)).querySelector(
-        `img, iframe, video, ${FORUM_VIDEO_TAG}, ${FORUM_VIDEO_STICKER_TAG}, ${FORUM_LINK_CARD_TAG}, ${FORUM_TERMINAL_REPORT_TAG}`
+        `img, iframe, audio, video, ${FORUM_AUDIO_TAG}, ${FORUM_VIDEO_TAG}, ${FORUM_VIDEO_STICKER_TAG}, ${FORUM_LINK_CARD_TAG}, ${FORUM_TERMINAL_REPORT_TAG}`
       )
     );
   } catch {
     return new RegExp(
-      `<(?:img|iframe|video|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_LINK_CARD_TAG}|${FORUM_TERMINAL_REPORT_TAG})\\b`,
+      `<(?:img|iframe|audio|video|${FORUM_AUDIO_TAG}|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_LINK_CARD_TAG}|${FORUM_TERMINAL_REPORT_TAG})\\b`,
       'i'
     ).test(String(value || ''));
   }

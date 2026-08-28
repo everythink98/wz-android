@@ -1,6 +1,6 @@
 {
   "name": "wz-android",
-  "version": "1.3.127",
+  "version": "1.3.128",
   "private": true,
   "engines": {
     "node": "22.x"

@@ -3,9 +3,9 @@ import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/re
 import React from 'react';
 import { Image, NativeModules, StyleSheet, Text } from 'react-native';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
-import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
+import { ForumContentAudio, ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { ForumContentWidthBoundary } from '@/ui/content/ForumContentWidth';
-import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
+import { FORUM_AUDIO_TAG, FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
@@ -39,6 +39,8 @@ const mockUseImage = jest.fn();
 let mockVideoStatus = 'idle';
 let mockVideoPlaying = false;
 let mockVideoBufferedPosition = 0;
+let mockVideoCurrentTime = 0;
+let mockVideoDuration = 0;
 let mockVideoTrack: { size: { height: number; width: number } } | null = null;
 let mockReleaseVideoPlayersOnUnmount = false;
 let mockReleasedVideoPlayerAccesses = 0;
@@ -47,9 +49,12 @@ const mockUseVideoPlayer = jest.fn((source: unknown) => {
   let timeUpdateEventInterval = 0;
   const player = {
     bufferedPosition: mockVideoBufferedPosition,
+    currentTime: mockVideoCurrentTime,
+    duration: mockVideoDuration,
     pause: jest.fn(),
     play: jest.fn(),
     playing: mockVideoPlaying,
+    replay: jest.fn(),
     release: () => {
       released = true;
     },
@@ -200,7 +205,7 @@ jest.mock('expo', () => ({
         : eventName === 'videoTrackChange'
           ? { videoTrack: mockVideoTrack }
           : eventName === 'timeUpdate'
-            ? { bufferedPosition: mockVideoBufferedPosition, currentTime: 0 }
+            ? { bufferedPosition: mockVideoBufferedPosition, currentTime: mockVideoCurrentTime }
             : initialValue
   )
 }));
@@ -586,6 +591,8 @@ describe('topic block image loading', () => {
     mockVideoStatus = 'idle';
     mockVideoPlaying = false;
     mockVideoBufferedPosition = 0;
+    mockVideoCurrentTime = 0;
+    mockVideoDuration = 0;
     mockVideoTrack = null;
     mockReleaseVideoPlayersOnUnmount = false;
     mockReleasedVideoPlayerAccesses = 0;
@@ -2352,6 +2359,143 @@ describe('topic block image loading', () => {
       )
     );
     expect(mockExpoImageProps).not.toHaveBeenCalled();
+  });
+
+  it('plays, pauses, reports duration, and seeks native topic audio', async () => {
+    const audioUrl = 'https://tp.970108.xyz/file/topic.mp3';
+    const mediaContext = { contentSource: 'linuxdo' as const, sessionIdentity: 'linuxdo:audio-test' };
+    mockVideoStatus = 'readyToPlay';
+    mockVideoDuration = 258.312;
+    const tree = () => <ForumContentAudio mediaContext={mediaContext} src={audioUrl} theme={theme} />;
+    const screen = await render(tree());
+
+    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Accept: 'audio/mpeg,audio/*,*/*;q=0.8',
+          Referer: 'https://linux.do/',
+          'X-WZ-Forum-Media-Identity': 'linuxdo:audio-test',
+          'X-WZ-Forum-Media-Kind': 'video',
+          'X-WZ-Forum-Media-Source': 'linuxdo'
+        }),
+        uri: audioUrl
+      })
+    );
+    expect(screen.getByText('0:00 / 4:18')).toBeTruthy();
+    expect(StyleSheet.flatten(screen.getByTestId('forum-content-audio-frame').props.style)).toMatchObject({
+      backgroundColor: theme.surface2,
+      borderRadius: 12,
+      gap: 8,
+      minHeight: 64,
+      padding: 8
+    });
+    expect(StyleSheet.flatten(screen.getByLabelText('播放音频').props.style)).toMatchObject({
+      height: 48,
+      width: 48
+    });
+    expect(
+      StyleSheet.flatten(
+        screen.getByTestId('forum-content-audio-play-glyph', { includeHiddenElements: true }).props.style
+      )
+    ).toMatchObject({ backgroundColor: theme.primary, height: 40, width: 40 });
+
+    const player = mockUseVideoPlayer.mock.results[0]?.value as {
+      currentTime: number;
+      pause: jest.Mock;
+      play: jest.Mock;
+    };
+    await fireEvent.press(screen.getByLabelText('播放音频'));
+    expect(player.play).toHaveBeenCalledTimes(1);
+
+    mockVideoPlaying = true;
+    mockVideoCurrentTime = 65;
+    await screen.rerender(tree());
+    expect(screen.getByText('1:05 / 4:18')).toBeTruthy();
+    await fireEvent.press(screen.getByLabelText('暂停音频'));
+    expect(player.pause).toHaveBeenCalledTimes(1);
+
+    const progress = screen.getByTestId('forum-content-audio-progress');
+    expect(progress.props.accessibilityRole).toBe('adjustable');
+    await fireEvent(progress, 'layout', { nativeEvent: { layout: { height: 48, width: 200, x: 0, y: 0 } } });
+    await fireEvent.press(progress, { nativeEvent: { locationX: 100 } });
+    expect(player.currentTime).toBeCloseTo(129.156);
+  });
+
+  it('routes canonical audio through the shared native Topic media renderer', async () => {
+    const audioUrl = 'https://cdn.example.com/topic-audio.mp3';
+    mockVideoStatus = 'readyToPlay';
+    mockVideoDuration = 12;
+
+    const screen = await render(
+      <NodeSeekCustomMediaHarness rendererKey={FORUM_AUDIO_TAG} attributes={{ src: audioUrl }} />
+    );
+
+    await waitFor(() =>
+      expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === audioUrl)).toBe(true)
+    );
+    expect(screen.getByTestId('forum-content-audio-frame')).toBeTruthy();
+  });
+
+  it('recycles settled audio outside visible rows and on an inactive route without resuming playback', async () => {
+    const audioUrl = 'https://cdn.example.com/recycled-topic-audio.mp3';
+    mockVideoStatus = 'readyToPlay';
+    mockVideoDuration = 20;
+    const tree = (active: boolean, visible: boolean) => (
+      <TopicBodyMediaCoordinatorProvider
+        active={active}
+        paused={false}
+        visibleRowKeys={visible ? ['audio-row'] : []}
+        viewportRowKeys={['audio-row']}
+      >
+        <TopicBodyMediaRowBoundary rowKey="audio-row">
+          <NodeSeekCustomMediaHarness rendererKey={FORUM_AUDIO_TAG} attributes={{ src: audioUrl }} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const playerCalls = () =>
+      mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === audioUrl);
+    const screen = await render(tree(true, true));
+    await waitFor(() => expect(playerCalls()).toHaveLength(1));
+    await waitFor(() => expect(screen.getByLabelText('播放音频')).toBeTruthy());
+
+    await screen.rerender(tree(true, false));
+    await waitFor(() => expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledTimes(1));
+    expect(playerCalls()).toHaveLength(1);
+
+    await screen.rerender(tree(true, true));
+    await waitFor(() => expect(playerCalls()).toHaveLength(2));
+    expect((mockUseVideoPlayer.mock.results.at(-1)?.value as { play: jest.Mock }).play).not.toHaveBeenCalled();
+
+    await screen.rerender(tree(false, true));
+    await waitFor(() => expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledTimes(2));
+    await screen.rerender(tree(true, true));
+    await waitFor(() => expect(playerCalls()).toHaveLength(3));
+    expect((mockUseVideoPlayer.mock.results.at(-1)?.value as { play: jest.Mock }).play).not.toHaveBeenCalled();
+  });
+
+  it('retries failed native Topic audio only after the user asks', async () => {
+    const audioUrl = 'https://cdn.example.com/retry-topic-audio.mp3';
+    const tree = () => (
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['audio-row']}>
+        <TopicBodyMediaRowBoundary rowKey="audio-row">
+          <NodeSeekCustomMediaHarness rendererKey={FORUM_AUDIO_TAG} attributes={{ src: audioUrl }} />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const playerCalls = () =>
+      mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === audioUrl);
+    const screen = await render(tree());
+    await waitFor(() => expect(playerCalls()).toHaveLength(1));
+
+    mockVideoStatus = 'error';
+    await screen.rerender(tree());
+    await waitFor(() => expect(screen.getByLabelText('音频加载失败，点按重试')).toBeTruthy());
+    expect(playerCalls()).toHaveLength(1);
+
+    mockVideoStatus = 'idle';
+    await fireEvent.press(screen.getByLabelText('音频加载失败，点按重试'));
+    await waitFor(() => expect(playerCalls()).toHaveLength(2));
   });
 
   it('follows intrinsic video ratio within its parent width', async () => {

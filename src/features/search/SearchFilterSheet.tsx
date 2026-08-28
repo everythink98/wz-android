@@ -155,13 +155,10 @@ export function SearchFilterSheet({
   const updateLinuxDoExpertResponse = useCallback((expertResponse: boolean) => {
     setFilterError('');
     setDraftFilter((current) => {
-      if (!isDiscourseSearchFilter(current) || current.source !== 'linuxdo') {
+      if (!isDiscourseSearchFilter(current)) {
         return current;
       }
-      return {
-        ...current,
-        siteExtension: { ...current.siteExtension, expertResponse }
-      };
+      return { ...current, expertResponse };
     });
   }, []);
 

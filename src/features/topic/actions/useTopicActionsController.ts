@@ -23,8 +23,12 @@ import {
   extractYaohuoSid,
   type YaohuoActionRequest
 } from '@/sources/yaohuo/actionRequest';
-import type { DiscourseAction } from '@/sources/discourse/actionRequest';
-import { buildDiscourseSourceActionRequest, discourseSourceUploadUrl } from '@/sources/discourseActions';
+import {
+  buildDiscourseActionRequest,
+  discourseImageUrlFromUploadResponse,
+  type DiscourseAction
+} from '@/sources/discourse/actionRequest';
+import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { fetchNodeSeekVoteInfo, nodeSeekCreatedPollId, runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { runYaohuoAction, type YaohuoActionResult } from '@/sources/yaohuo/actionClient';
 import {
@@ -45,7 +49,7 @@ import { rejectUnauthorizedResponse, withFetchGuard, type Fetcher } from '@/plat
 import type { ReadGateway } from '@/sources/readGateway';
 import { errorMessage } from '@/platform/network/errors';
 import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
-import { isDiscourseSource, isSessionSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
+import { isDiscourseSource, isSessionSource } from '@/domain/forum/sourceCatalog';
 import { normalizeReplyImageAsset, replyImageMarkupForSource, replyImageUploadSupported } from '@/sources/imageUpload';
 import { isNodeImageApiKeyExpiredError, uploadNodeSeekReplyImageWithApiKey } from '@/sources/nodeimage/upload';
 import { uploadYaohuoReplyImage } from '@/sources/yaohuo/imageUpload';
@@ -75,7 +79,6 @@ import { fetchLinuxDoTemplates, recordLinuxDoTemplateUse } from '@/sources/linux
 import { fetchLinuxDoPollCapabilities } from '@/sources/linuxdo/pollCapabilities';
 import { forumMutationKeys, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import { prepareDiscourseActionRuntime, type DiscourseActionRuntimeDependencies } from './discourseActionRuntime';
 import {
   canSubmitReplyToTopic,
   canVotePollOnTopic,
@@ -94,6 +97,7 @@ import {
 import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import { YAOHUO_BASE_URL } from '@/sources/yaohuo/protocol';
+import { LINUXDO_BASE_URL } from '@/sources/linuxdo/protocol';
 import {
   decideTopicAction,
   topicActionDecisionMessage,
@@ -187,6 +191,10 @@ function isRawUnauthorized(error: unknown) {
   return Boolean(error && typeof error === 'object' && (error as { reason?: unknown }).reason === 'http-401');
 }
 
+function isLoginRequiredError(error: unknown) {
+  return Boolean(error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired);
+}
+
 function topicDeleteReplyActionKey(topicKeyValue: string, target: ReplyRefreshTarget) {
   return `delete-reply:${topicKeyValue}:${target.kind}:${
     target.kind === 'comment-id' ? target.commentId : target.deletePath
@@ -263,8 +271,8 @@ function replyEditTargetIsCurrent(
 export function useTopicActionsController({
   active,
   sessionEpochs,
-  discourseActionRuntimeDependencies,
-  discourseLoginPrompts,
+  linuxDoUserAgent,
+  showLinuxDoVerification,
   ensureNodeImageApiKey,
   ensureWritableSession,
   fetcher,
@@ -281,8 +289,8 @@ export function useTopicActionsController({
 }: {
   active: boolean;
   sessionEpochs: ForumSessionEpochs;
-  discourseActionRuntimeDependencies: DiscourseActionRuntimeDependencies;
-  discourseLoginPrompts: Record<DiscourseSource, (message?: string) => void>;
+  linuxDoUserAgent: () => string;
+  showLinuxDoVerification: (message?: string) => void;
   ensureNodeImageApiKey: () => Promise<string | null>;
   ensureWritableSession: (source: SessionSite) => Promise<WritableSessionTicket>;
   fetcher: Fetcher;
@@ -943,43 +951,38 @@ export function useTopicActionsController({
     [assertWritableTicket, authenticatedFetcher, notify]
   );
 
-  const runDiscourseRequest = useCallback(
+  const runLinuxDoRequest = useCallback(
     async (
-      source: DiscourseSource,
       action: DiscourseAction,
       trace: DiagnosticTrace,
       ticket: WritableSessionTicket,
       preTransport?: () => void
     ) => {
       assertWritableTicket(ticket);
-      const loginPrompt = discourseLoginPrompts[source];
-      const runtime = await prepareDiscourseActionRuntime(source, {
-        ...discourseActionRuntimeDependencies,
-        fetcher: withDiagnosticFetcher(trace, authenticatedFetcher)
-      });
-      assertWritableTicket(ticket);
       preTransport?.();
       try {
         assertWritableTicket(ticket);
-        const result = await runtime.execute(buildDiscourseSourceActionRequest(source, action));
-        markDiagnosticStage(trace, 'transport', { source, state: 'confirmed', serverConfirmed: true });
+        const result = await runLinuxDoAction({
+          fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+          request: buildDiscourseActionRequest(action),
+          userAgent: linuxDoUserAgent()
+        });
+        markDiagnosticStage(trace, 'transport', { source: 'linuxdo', state: 'confirmed', serverConfirmed: true });
         assertWritableTicket(ticket, true);
         return result ?? true;
       } catch (error) {
         if (error instanceof HandledMutationError) throw error;
         if (isRawUnauthorized(error)) throw error;
-        const recovery = await runtime.recover(error);
         const message = errorMessage(error);
-        if (recovery.loginRequired) {
-          const promptMessage = recovery.message || message;
-          loginPrompt(promptMessage);
-          throw new HandledMutationError(promptMessage, 'blocked', 'login_required');
+        if (isLoginRequiredError(error)) {
+          showLinuxDoVerification(message);
+          throw new HandledMutationError(message, 'blocked', 'login_required');
         }
         notify(message);
         throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
       }
     },
-    [assertWritableTicket, authenticatedFetcher, discourseActionRuntimeDependencies, discourseLoginPrompts, notify]
+    [assertWritableTicket, authenticatedFetcher, linuxDoUserAgent, notify, showLinuxDoVerification]
   );
 
   const updateInteraction = useCallback(
@@ -1080,8 +1083,7 @@ export function useTopicActionsController({
               );
             }
             const editRepliesKey = cacheKeys(actionTopic as TopicDetail, ticket).repliesKey;
-            return runDiscourseRequest(
-              actionTopic.source as DiscourseSource,
+            return runLinuxDoRequest(
               {
                 type: 'edit-post',
                 postId: edit.commentId,
@@ -1160,8 +1162,7 @@ export function useTopicActionsController({
             );
           }
           if (isDiscourseSource(actionTopic.source)) {
-            return runDiscourseRequest(
-              actionTopic.source,
+            return runLinuxDoRequest(
               {
                 type: 'reply',
                 topicId: actionTopic.id,
@@ -1218,7 +1219,7 @@ export function useTopicActionsController({
       replyComposerIntentRef,
       replyContent,
       replyFace,
-      runDiscourseRequest,
+      runLinuxDoRequest,
       runNodeSeekRequest,
       runYaohuoRequest,
       selectedTopic,
@@ -1291,8 +1292,7 @@ export function useTopicActionsController({
                 trace,
                 ticket
               )
-            : runDiscourseRequest(
-                actionTopic.source as DiscourseSource,
+            : runLinuxDoRequest(
                 {
                   type: 'delete-post',
                   postId: reply.commentId || 0
@@ -1323,7 +1323,7 @@ export function useTopicActionsController({
       notify,
       queryClient,
       refreshRepliesAfterWrite,
-      runDiscourseRequest,
+      runLinuxDoRequest,
       runYaohuoRequest,
       selectedTopic,
       topicDetail
@@ -1450,10 +1450,10 @@ export function useTopicActionsController({
         const file = normalizeReplyImageAsset(picked.assets[0]);
         let imageUrl = '';
         if (isDiscourseSource(actionTopic.source)) {
-          const result = await runDiscourseRequest(actionTopic.source, { type: 'upload', file }, trace, ticket, () =>
+          const result = await runLinuxDoRequest({ type: 'upload', file }, trace, ticket, () =>
             assertCurrentEditTarget()
           );
-          imageUrl = discourseSourceUploadUrl(actionTopic.source, result);
+          imageUrl = discourseImageUrlFromUploadResponse(result, LINUXDO_BASE_URL, 'linux.do');
         } else if (isYaohuoActionTopic(actionTopic)) {
           imageUrl = await uploadYaohuoReplyImage({
             fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
@@ -1499,7 +1499,7 @@ export function useTopicActionsController({
     queryClient,
     replyComposerIntent,
     replyComposerIntentRef,
-    runDiscourseRequest,
+    runLinuxDoRequest,
     selectedTopic,
     topicDetail
   ]);
@@ -1554,8 +1554,7 @@ export function useTopicActionsController({
             void updateInteraction(actionTopic as TopicDetail, patch);
           },
           task: (ticket) =>
-            runDiscourseRequest(
-              actionTopic.source as DiscourseSource,
+            runLinuxDoRequest(
               {
                 type: 'set-like',
                 postId: commentId,
@@ -1600,7 +1599,7 @@ export function useTopicActionsController({
     [
       executeMutation,
       notify,
-      runDiscourseRequest,
+      runLinuxDoRequest,
       runNodeSeekRequest,
       selectedTopic,
       topicDetail,
@@ -1713,8 +1712,7 @@ export function useTopicActionsController({
         return () => patch(bookmarked, actionDetail.bookmarkId);
       },
       task: (ticket) =>
-        runDiscourseRequest(
-          actionTopic.source as DiscourseSource,
+        runLinuxDoRequest(
           {
             type: 'set-bookmark',
             targetId: actionTopic.id,
@@ -1728,7 +1726,7 @@ export function useTopicActionsController({
       applyResult: (result) => patch(!bookmarked, bookmarked ? undefined : discourseBookmarkIdFromActionResult(result)),
       successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
     });
-  }, [cacheKeys, executeMutation, queryClient, runDiscourseRequest, selectedTopic, topicDetail]);
+  }, [cacheKeys, executeMutation, queryClient, runLinuxDoRequest, selectedTopic, topicDetail]);
 
   const readNodeSeekStardustStatus = useCallback(
     (receive: NodeSeekStardustReceive, trace: DiagnosticTrace) =>
@@ -1856,15 +1854,15 @@ export function useTopicActionsController({
       assertWritableTicket(ticket);
       const templates = await fetchLinuxDoTemplates({
         fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () => assertWritableTicket(ticket)),
-        userAgent: discourseActionRuntimeDependencies.linuxDoUserAgent()
+        userAgent: linuxDoUserAgent()
       });
       assertWritableTicket(ticket);
       finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: templates.length });
       return templates;
     } catch (error) {
       const message = errorMessage(error);
-      if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        discourseLoginPrompts.linuxdo(message);
+      if (isLoginRequiredError(error)) {
+        showLinuxDoVerification(message);
       }
       finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
       throw error;
@@ -1872,8 +1870,8 @@ export function useTopicActionsController({
   }, [
     assertWritableTicket,
     authenticatedFetcher,
-    discourseActionRuntimeDependencies,
-    discourseLoginPrompts,
+    linuxDoUserAgent,
+    showLinuxDoVerification,
     ensureWritableSession,
     selectedTopic,
     topicDetail
@@ -1893,15 +1891,15 @@ export function useTopicActionsController({
       assertWritableTicket(ticket);
       const capabilities = await fetchLinuxDoPollCapabilities({
         fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () => assertWritableTicket(ticket)),
-        userAgent: discourseActionRuntimeDependencies.linuxDoUserAgent()
+        userAgent: linuxDoUserAgent()
       });
       assertWritableTicket(ticket);
       finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: capabilities.groups.length });
       return capabilities;
     } catch (error) {
       const message = errorMessage(error);
-      if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        discourseLoginPrompts.linuxdo(message);
+      if (isLoginRequiredError(error)) {
+        showLinuxDoVerification(message);
       }
       finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
       throw error;
@@ -1909,8 +1907,8 @@ export function useTopicActionsController({
   }, [
     assertWritableTicket,
     authenticatedFetcher,
-    discourseActionRuntimeDependencies,
-    discourseLoginPrompts,
+    linuxDoUserAgent,
+    showLinuxDoVerification,
     ensureWritableSession,
     selectedTopic,
     topicDetail
@@ -1934,14 +1932,14 @@ export function useTopicActionsController({
             assertWritableTicket(ticket)
           ),
           id,
-          userAgent: discourseActionRuntimeDependencies.linuxDoUserAgent()
+          userAgent: linuxDoUserAgent()
         });
         assertWritableTicket(ticket, true);
         finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', serverConfirmed: true });
       } catch (error) {
         const message = errorMessage(error);
-        if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-          discourseLoginPrompts.linuxdo(message);
+        if (isLoginRequiredError(error)) {
+          showLinuxDoVerification(message);
         }
         finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
         throw error;
@@ -1950,8 +1948,8 @@ export function useTopicActionsController({
     [
       assertWritableTicket,
       authenticatedFetcher,
-      discourseActionRuntimeDependencies,
-      discourseLoginPrompts,
+      linuxDoUserAgent,
+      showLinuxDoVerification,
       ensureWritableSession,
       selectedTopic,
       topicDetail
@@ -2001,8 +1999,7 @@ export function useTopicActionsController({
               if (!poll.postId || !poll.name) {
                 throw new HandledMutationError('当前投票信息不完整，刷新主题后再试。', 'blocked', 'not_ready');
               }
-              await runDiscourseRequest(
-                actionTopic.source,
+              await runLinuxDoRequest(
                 {
                   type: 'vote',
                   postId: poll.postId,
@@ -2081,7 +2078,7 @@ export function useTopicActionsController({
       authenticatedFetcher,
       getNodeSeekUserAgent,
       notify,
-      runDiscourseRequest,
+      runLinuxDoRequest,
       runNodeSeekRequest,
       runYaohuoRequest,
       selectedTopic,
@@ -2115,10 +2112,8 @@ export function useTopicActionsController({
           decision: { action: 'manage-poll', poll },
           trace,
           task: async (ticket) => {
-            let postConfirmed = false;
             try {
               await runNodeSeekRequest(buildNodeSeekPollLockRequest({ pollId }), trace, ticket, false);
-              postConfirmed = true;
             } catch (error) {
               if (
                 isRawUnauthorized(error) ||
@@ -2143,13 +2138,13 @@ export function useTopicActionsController({
               throw error;
             }
             try {
-              assertWritableTicket(ticket, postConfirmed);
+              assertWritableTicket(ticket, true);
               const confirmedPoll = await fetchNodeSeekVoteInfo({
                 pollId,
                 fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
                 userAgent: getNodeSeekUserAgent()
               });
-              assertWritableTicket(ticket, postConfirmed);
+              assertWritableTicket(ticket, true);
               return { confirmedPoll, refreshFailed: false };
             } catch (error) {
               if (error instanceof HandledMutationError && error.reason === 'stale') throw error;

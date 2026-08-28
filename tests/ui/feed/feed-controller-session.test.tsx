@@ -87,7 +87,7 @@ function useFeedRuntime({ catalogActive, ...options }: FeedRuntimeOptions) {
   } as ReadGateway;
   const catalog = useForumCatalogRuntime({
     active: (catalogActive ?? options.active) && !options.linuxDoVerificationActive,
-    enabledFeedSources: sourceProjection.feedSources,
+    enabledFeedSources: sourceProjection.enabledSources,
     enabledSourcesKey: canonicalEnabledSourcesKey(options.readerData.settings.contentSources),
     notify: options.notify,
     readGateway,

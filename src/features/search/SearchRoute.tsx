@@ -62,7 +62,7 @@ export function SearchRoute() {
   const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
   useScrollToTop(listRef);
   const enabledSearchSources = useMemo(
-    () => projectContentSourcePreferences(runtime.readerData.settings.contentSources).searchSources,
+    () => projectContentSourcePreferences(runtime.readerData.settings.contentSources).enabledSources,
     [runtime.readerData.settings.contentSources]
   );
   const retryIdentityStatus = useCallback(

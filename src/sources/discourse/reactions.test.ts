@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { discourseEmojiUrlMapFromData, discourseReactionStats } from './reactions';
 
 describe('portable Discourse reaction presentation', () => {
-  it(' renders reactions with the current site emoji catalog', () => {
+  it('renders reactions with the current site emoji catalog', () => {
     const item = {
       likeCount: 5,
       reactionSummary: [{ id: '+1', count: 2 }]

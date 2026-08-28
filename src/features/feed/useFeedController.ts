@@ -240,7 +240,7 @@ export function useFeedController({
 }) {
   const queryClient = useQueryClient();
   const feedActive = active;
-  const { feedSources: enabledFeedSources } = projectContentSourcePreferences(readerData.settings.contentSources);
+  const { enabledSources: enabledFeedSources } = projectContentSourcePreferences(readerData.settings.contentSources);
   const enabledSourcesKey = canonicalEnabledSourcesKey(readerData.settings.contentSources);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');

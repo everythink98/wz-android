@@ -23,8 +23,7 @@ export async function probeBackgroundNotificationAccess(
     fetcher: withFetchGuard(fetch, assertCurrent),
     nodeSeekAuthenticated: source === 'nodeseek',
     nodeSeekUserAgent: nodeSeekUserAgent || undefined,
-    discourseAuth:
-      source === 'linuxdo' ? { linuxdo: { authenticated: true, userAgent: linuxDoUserAgent || undefined } } : undefined,
+    discourseAuth: source === 'linuxdo' ? { authenticated: true, userAgent: linuxDoUserAgent || undefined } : undefined,
     signal,
     timeoutMs: 0
   });

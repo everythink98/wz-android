@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
-import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoTopic, resetLinuxDoCategoryCacheForTests } from './reader';
+import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoTopic } from './reader';
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), {
@@ -20,8 +20,6 @@ function topic(index: number) {
 }
 
 describe('linux.do reader', () => {
-  beforeEach(() => resetLinuxDoCategoryCacheForTests());
-
   it('keeps an author-deleted opening and its reply renderable', async () => {
     const fetcher = vi.fn(async () =>
       json({

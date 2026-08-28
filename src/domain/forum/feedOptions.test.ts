@@ -33,8 +33,6 @@ describe('Android feed category rail', () => {
       { value: 'new-replies', label: '新·回复' }
     ]);
     expect(feedFilterItems('linuxdo')).toEqual(feedDiscourseFilterItems);
-    expect(feedFilterItems('linuxdo')).toEqual(feedDiscourseFilterItems);
-    expect(shouldUseFeedFilter('linuxdo')).toBe(true);
     expect(shouldUseFeedFilter('linuxdo')).toBe(true);
   });
 

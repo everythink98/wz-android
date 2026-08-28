@@ -7,6 +7,7 @@ import {
   elementText,
   escapeHtmlAttribute,
   escapeHtmlText,
+  FORUM_AUDIO_TAG,
   FORUM_LINK_CARD_TAG,
   FORUM_TERMINAL_REPORT_TAG,
   FORUM_TERMINAL_TAB_TAG,
@@ -441,7 +442,7 @@ function sanitizeNodeSeekStickerVideos(root: HTMLElement, baseUrl: string) {
   });
 }
 
-function videoSourceUrl(node: HTMLElement, baseUrl: string) {
+function mediaSourceUrl(node: HTMLElement, baseUrl: string) {
   const candidates = [
     node.getAttribute('src'),
     ...node.querySelectorAll('source').map((source) => source.getAttribute('src'))
@@ -454,9 +455,26 @@ function safeTagName(node: HTMLElement) {
   return String(record.rawTagName || record.tagName || '').toLowerCase();
 }
 
+function sanitizePlayableAudio(root: HTMLElement, baseUrl: string) {
+  root.querySelectorAll('audio').forEach((node) => {
+    const src = mediaSourceUrl(node, baseUrl);
+    node.querySelectorAll('source').forEach((source) => source.remove());
+    const fallbackHtml = node.innerHTML.trim();
+    if (!src) {
+      if (fallbackHtml) node.replaceWith(fallbackHtml);
+      else node.remove();
+      return;
+    }
+    const fallback = fallbackHtml || `<a href="${escapeHtmlAttribute(src)}">打开音频</a>`;
+    node.replaceWith(
+      `<${FORUM_AUDIO_TAG} src="${escapeHtmlAttribute(src)}"${referrerPolicyHtmlAttribute('referrerpolicy', node.getAttribute('referrerpolicy'))}>${fallback}</${FORUM_AUDIO_TAG}>`
+    );
+  });
+}
+
 function sanitizePlayableVideos(root: HTMLElement, baseUrl: string) {
   root.querySelectorAll('video').forEach((node) => {
-    const src = videoSourceUrl(node, baseUrl);
+    const src = mediaSourceUrl(node, baseUrl);
     if (!src) {
       node.remove();
       return;
@@ -795,6 +813,7 @@ export function sanitizeContentHtmlWithRoot(
   }
   sanitizeNodeSeekMagicTabs(root);
   sanitizeNodeSeekStickerVideos(root, baseUrl);
+  sanitizePlayableAudio(root, baseUrl);
   sanitizePlayableVideos(root, baseUrl);
   sanitizeIframes(root, baseUrl);
   sanitizeNsVideoImages(root, baseUrl);
@@ -837,7 +856,7 @@ export function sanitizeContentHtmlWithRoot(
         lower === 'icon-src'
       ) {
         const next =
-          tagName === FORUM_VIDEO_TAG && lower === 'src'
+          (tagName === FORUM_AUDIO_TAG || tagName === FORUM_VIDEO_TAG) && lower === 'src'
             ? sanitizedHttpMediaUrl(value, baseUrl)
             : sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, baseUrl);
         if (next) {

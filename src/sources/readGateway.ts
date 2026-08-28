@@ -19,9 +19,9 @@ import {
   type LinuxDoLevelProfile
 } from '@/sources/linuxdo/level';
 import {
-  getDiscourseSourceEmojiUrls,
-  searchDiscourseSourceTagOptions,
-  searchDiscourseSourceUserOptions,
+  getDiscourseEmojiUrls,
+  searchDiscourseTagOptions,
+  searchDiscourseUserOptions,
   type DiscourseReadAuth,
   type DiscourseTagOptionReadOptions,
   type DiscourseUserOptionReadOptions
@@ -225,10 +225,9 @@ type ManagedResolveNodeSeekUserOptions = {
   signal?: AbortSignal;
   username: string;
 };
-type ManagedGetEmojiUrlsOptions = Omit<
-  NonNullable<Parameters<typeof getDiscourseSourceEmojiUrls>[1]>,
-  'auth' | 'fetcher'
-> & { source: DiscourseSource };
+type ManagedGetEmojiUrlsOptions = Omit<NonNullable<Parameters<typeof getDiscourseEmojiUrls>[0]>, 'auth' | 'fetcher'> & {
+  source: DiscourseSource;
+};
 type ManagedTagOptionSearchOptions = Omit<DiscourseTagOptionReadOptions, 'auth' | 'fetcher'> & {
   source: DiscourseSource;
 };
@@ -473,11 +472,9 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       const discourseAuth: DiscourseReadAuth | undefined =
         linuxDoPlan?.state === 'ready'
           ? {
-              linuxdo: {
-                authenticated: linuxDoAuthenticated,
-                categoryCacheScope: linuxDoPlan.cacheScope,
-                userAgent: dependencies.linuxDoUserAgent?.()
-              }
+              authenticated: linuxDoAuthenticated,
+              categoryCacheScope: linuxDoPlan.cacheScope,
+              userAgent: dependencies.linuxDoUserAgent?.()
             }
           : undefined;
       const unavailableSources = source === 'all' ? unavailablePlanSources : [];
@@ -746,7 +743,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         'getEmojiUrls',
         'emoji',
         ({ discourseAuth, fetcher }) =>
-          getDiscourseSourceEmojiUrls(source, {
+          getDiscourseEmojiUrls({
             ...options,
             auth: discourseAuth,
             fetcher
@@ -776,7 +773,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         'searchTagOptions',
         'search-tags',
         ({ discourseAuth, fetcher }) =>
-          searchDiscourseSourceTagOptions(source, {
+          searchDiscourseTagOptions({
             ...options,
             auth: discourseAuth,
             fetcher
@@ -792,7 +789,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         'searchUserOptions',
         'search-users',
         ({ discourseAuth, fetcher }) =>
-          searchDiscourseSourceUserOptions(source, {
+          searchDiscourseUserOptions({
             ...options,
             auth: discourseAuth,
             fetcher
@@ -813,7 +810,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           searchLinuxDoSemanticDirect(query, {
             ...options,
             fetcher,
-            linuxDoAccess: discourseAuth?.linuxdo
+            linuxDoAccess: discourseAuth
           }),
         context,
         options.signal
@@ -828,7 +825,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         'getLevelProfile',
         'level',
         ({ discourseAuth, fetcher }) => {
-          if (discourseAuth?.linuxdo?.authenticated !== true) {
+          if (discourseAuth?.authenticated !== true) {
             throw Object.assign(new Error('请先完成 linux.do 登录 / 验证。'), {
               source: 'linuxdo' as const,
               loginRequired: true
@@ -836,7 +833,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           }
           return getLocalLinuxDoLevelProfile({
             ...options,
-            userAgent: discourseAuth.linuxdo.userAgent,
+            userAgent: discourseAuth.userAgent,
             fetcher
           });
         },

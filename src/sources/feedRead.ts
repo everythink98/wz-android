@@ -2,8 +2,8 @@ import { getNodeSeekCategories, getNodeSeekFeed } from '@/sources/nodeseek/reade
 import { yaohuoCategoriesResponse } from '@/sources/yaohuo/feedParser';
 import { getV2exCategories, getV2exFeed } from '@/sources/v2ex/reader';
 import { getYaohuoFeedDirect } from '@/sources/yaohuo/reader';
-import { getDiscourseSourceCategories, getDiscourseSourceFeed, type DiscourseReadAuth } from './discourseRead';
-import { aggregateFeedSources, isDiscourseSource, sourceValues } from '@/domain/forum/sourceCatalog';
+import { getDiscourseCategories, getDiscourseFeed, type DiscourseReadAuth } from './discourseRead';
+import { isDiscourseSource, sourceValues } from '@/domain/forum/sourceCatalog';
 import { balanceTopicsBySource } from '@/domain/forum/feed';
 import type {
   CategoriesResponse,
@@ -156,7 +156,7 @@ export async function getFeed({
     return runForumSourceReadAggregateAttempt(
       fetcher || fetch,
       async (aggregateFetcher, scopeFetcher) => {
-        const sources = includedAggregateSources(includedSources, aggregateFeedSources);
+        const sources = includedAggregateSources(includedSources, sourceValues);
         const unavailableSourceSet = new Set(unavailableSources);
         const cursorState = decodeAllFeedCursor(cursor, sources);
         const bufferedItems = sources.flatMap((item) => cursorState.buffers?.[item] || []);
@@ -191,7 +191,7 @@ export async function getFeed({
               }
               const readSource = (sourceFetcher: Fetcher) => {
                 if (isDiscourseSource(item)) {
-                  return getDiscourseSourceFeed(item, {
+                  return getDiscourseFeed({
                     auth: discourseAuth,
                     category,
                     fetcher: sourceFetcher,
@@ -332,7 +332,7 @@ export async function getFeed({
     );
   }
   if (isDiscourseSource(source)) {
-    return getDiscourseSourceFeed(source, {
+    return getDiscourseFeed({
       auth: discourseAuth,
       category,
       fetcher,
@@ -386,7 +386,7 @@ export async function getCategories({
               }
               const readSource = (sourceFetcher: Fetcher) => {
                 if (isDiscourseSource(item)) {
-                  return getDiscourseSourceCategories(item, {
+                  return getDiscourseCategories({
                     auth: discourseAuth,
                     fetcher: sourceFetcher,
                     signal: sourceSignal,
@@ -438,7 +438,7 @@ export async function getCategories({
     return yaohuoCategoriesResponse();
   }
   if (isDiscourseSource(source)) {
-    return getDiscourseSourceCategories(source, {
+    return getDiscourseCategories({
       auth: discourseAuth,
       fetcher,
       signal,

@@ -449,6 +449,29 @@ describe('notification screens', () => {
     );
   });
 
+  it('keeps a Topic audio fallback link in notification detail without adding player controls', async () => {
+    const onOpenExternalUrl = jest.fn();
+    const view = await render(
+      <NotificationDetailScreen
+        contentWidth={360}
+        detail={{
+          notification: { ...notification, kind: 'system' },
+          title: '消息详情',
+          contentHtml:
+            '<forum-audio src="https://media.example/topic.mp3"><a href="https://media.example/topic.mp3">打开音频</a></forum-audio>'
+        }}
+        loading={false}
+        onOpenExternalUrl={onOpenExternalUrl}
+        onOpenTopic={jest.fn()}
+        onRetry={jest.fn()}
+      />
+    );
+
+    expect(view.queryByLabelText('播放音频')).toBeNull();
+    await fireEvent.press(view.getByRole('link', { name: '打开音频' }));
+    expect(onOpenExternalUrl).toHaveBeenCalledWith('https://media.example/topic.mp3');
+  });
+
   it('keeps Yaohuo topic links in-app and preserves the full-reply page', async () => {
     const onOpenExternalUrl = jest.fn();
     const onOpenTopic = jest.fn();

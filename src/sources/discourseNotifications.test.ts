@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { discourseNotificationAdapters } from './discourseNotifications';
+import { linuxDoNotificationAdapter } from './discourseNotifications';
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), {
@@ -25,7 +25,7 @@ describe('Discourse notifications', () => {
     });
 
     await expect(
-      discourseNotificationAdapters.linuxdo.getCategories({
+      linuxDoNotificationAdapter.getCategories({
         fetcher,
         identityKey: 'linuxdo:7',
         userId: '7',
@@ -62,7 +62,7 @@ describe('Discourse notifications', () => {
       });
     });
 
-    const firstPage = await discourseNotificationAdapters.linuxdo.listPage({
+    const firstPage = await linuxDoNotificationAdapter.listPage({
       categoryId: 'replies',
       fetcher,
       identityKey: 'linuxdo:7',
@@ -70,7 +70,7 @@ describe('Discourse notifications', () => {
       userId: '7',
       username: 'alice'
     });
-    const secondPage = await discourseNotificationAdapters.linuxdo.listPage({
+    const secondPage = await linuxDoNotificationAdapter.listPage({
       categoryId: 'replies',
       cursor: firstPage.cursor,
       fetcher,
@@ -109,7 +109,7 @@ describe('Discourse notifications', () => {
       return json({ notifications: [] });
     });
 
-    await discourseNotificationAdapters.linuxdo.listPage({
+    await linuxDoNotificationAdapter.listPage({
       categoryId: 'other',
       fetcher,
       identityKey: 'linuxdo:7',
@@ -154,7 +154,7 @@ describe('Discourse notifications', () => {
       })
     );
 
-    const page = await discourseNotificationAdapters.linuxdo.listPage({
+    const page = await linuxDoNotificationAdapter.listPage({
       categoryId: 'messages',
       fetcher,
       identityKey: 'linuxdo:7',
@@ -238,14 +238,13 @@ describe('Discourse notifications', () => {
     });
     const access = { fetcher, identityKey: 'linuxdo:7', userId: '7', username: 'alice' };
 
-    const allItem = (await discourseNotificationAdapters.linuxdo.listPage({ ...access, categoryId: 'all' })).items[0]!;
-    const personalItem = (await discourseNotificationAdapters.linuxdo.listPage({ ...access, categoryId: 'messages' }))
-      .items[0]!;
+    const allItem = (await linuxDoNotificationAdapter.listPage({ ...access, categoryId: 'all' })).items[0]!;
+    const personalItem = (await linuxDoNotificationAdapter.listPage({ ...access, categoryId: 'messages' })).items[0]!;
 
     expect(allItem.kind).toBe('private-message');
     expect(personalItem.kind).toBe('private-message');
     expect(allItem.target).toEqual(personalItem.target);
-    await expect(discourseNotificationAdapters.linuxdo.loadDetail(allItem, access)).resolves.toMatchObject({
+    await expect(linuxDoNotificationAdapter.loadDetail(allItem, access)).resolves.toMatchObject({
       reply: { format: 'markdown' },
       messages: [
         expect.objectContaining({ author: 'discobot', contentHtml: '<p>欢迎私信</p>' }),
@@ -264,7 +263,7 @@ describe('Discourse notifications', () => {
     );
 
     await expect(
-      discourseNotificationAdapters.linuxdo.listPage({
+      linuxDoNotificationAdapter.listPage({
         fetcher,
         identityKey: 'linuxdo:alice',
         userId: 'alice'
@@ -278,7 +277,7 @@ describe('Discourse notifications', () => {
     );
 
     await expect(
-      discourseNotificationAdapters.linuxdo.listPage({
+      linuxDoNotificationAdapter.listPage({
         fetcher,
         identityKey: 'linuxdo:alice',
         userId: 'alice'
@@ -290,7 +289,7 @@ describe('Discourse notifications', () => {
     const fetcher = vi.fn(async () => json({ total_rows_notifications: 0 }));
 
     await expect(
-      discourseNotificationAdapters.linuxdo.listPage({
+      linuxDoNotificationAdapter.listPage({
         fetcher,
         identityKey: 'linuxdo:alice',
         userId: 'alice'
@@ -316,7 +315,7 @@ describe('Discourse notifications', () => {
       })
     );
 
-    const page = await discourseNotificationAdapters.linuxdo.listPage({
+    const page = await linuxDoNotificationAdapter.listPage({
       fetcher,
       identityKey: 'linuxdo:alice',
       userId: 'alice'
@@ -365,7 +364,7 @@ describe('Discourse notifications', () => {
       })
     );
 
-    const page = await discourseNotificationAdapters.linuxdo.listPage({
+    const page = await linuxDoNotificationAdapter.listPage({
       fetcher,
       identityKey: 'linuxdo:alice',
       userId: 'alice',
@@ -400,12 +399,12 @@ describe('Discourse notifications', () => {
       new URL(url).pathname === '/session/csrf' ? json({ csrf: 'token' }) : json({ success: true })
     );
 
-    await discourseNotificationAdapters.linuxdo.markRead(item, detail, {
+    await linuxDoNotificationAdapter.markRead(item, detail, {
       fetcher: linuxFetcher,
       identityKey: 'linuxdo:alice',
       userId: 'alice'
     });
-    await discourseNotificationAdapters.linuxdo.markAllRead({
+    await linuxDoNotificationAdapter.markAllRead({
       fetcher: linuxFetcher,
       identityKey: 'linuxdo:alice',
       userId: 'alice'
@@ -427,7 +426,7 @@ describe('Discourse notifications', () => {
     );
 
     await expect(
-      discourseNotificationAdapters.linuxdo.readUnreadSnapshot({
+      linuxDoNotificationAdapter.readUnreadSnapshot({
         fetcher,
         identityKey: 'linuxdo:alice',
         userId: 'alice'
@@ -451,7 +450,7 @@ describe('Discourse notifications', () => {
       })
     );
 
-    const page = await discourseNotificationAdapters.linuxdo.listPage({
+    const page = await linuxDoNotificationAdapter.listPage({
       fetcher,
       identityKey: 'linuxdo:alice',
       userId: 'alice'
@@ -482,11 +481,11 @@ describe('Discourse notifications', () => {
       userId: 'alice'
     };
 
-    const page = await discourseNotificationAdapters.linuxdo.listPage(access);
+    const page = await linuxDoNotificationAdapter.listPage(access);
     const item = page.items[0]!;
 
     const requestCount = fetcher.mock.calls.length;
-    await expect(discourseNotificationAdapters.linuxdo.loadDetail(item, access)).resolves.toMatchObject({
+    await expect(linuxDoNotificationAdapter.loadDetail(item, access)).resolves.toMatchObject({
       title: '主题提醒',
       contentText: '这是主题级通知，不对应某一条回复。',
       topic: {
@@ -531,7 +530,7 @@ describe('Discourse notifications', () => {
       }
     };
 
-    const detail = await discourseNotificationAdapters.linuxdo.loadDetail(item, {
+    const detail = await linuxDoNotificationAdapter.loadDetail(item, {
       fetcher,
       identityKey: 'linuxdo:alice',
       userId: 'alice'
@@ -583,7 +582,7 @@ describe('Discourse notifications', () => {
       target: { type: 'private-conversation' as const, conversationId: '201' }
     };
 
-    const detail = await discourseNotificationAdapters.linuxdo.loadDetail(item, {
+    const detail = await linuxDoNotificationAdapter.loadDetail(item, {
       fetcher,
       identityKey: 'linuxdo:7',
       userId: '7',
@@ -600,7 +599,7 @@ describe('Discourse notifications', () => {
     expect(detailUrl.searchParams.get('track_visit')).toBe('true');
     expect(detailUrl.searchParams.get('forceLoad')).toBe('true');
     await expect(
-      discourseNotificationAdapters.linuxdo.markRead(item, detail, {
+      linuxDoNotificationAdapter.markRead(item, detail, {
         fetcher,
         identityKey: 'linuxdo:7',
         userId: '7',
@@ -626,7 +625,7 @@ describe('Discourse notifications', () => {
     };
 
     await expect(
-      discourseNotificationAdapters.linuxdo.replyToConversation(item, '  **收到**  ', {
+      linuxDoNotificationAdapter.replyToConversation(item, '  **收到**  ', {
         fetcher,
         identityKey: 'linuxdo:7',
         userId: '7',

@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useRef } from 'react';
 import { Linking, Share, type NativeScrollEvent, type NativeSyntheticEvent, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -15,7 +15,7 @@ import type { ReadGateway } from '@/sources/readGateway';
 import { toggleFavorite, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { ReplyLocationTarget, Topic, UserReference } from '@/domain/forum/models';
-import type { DiscourseSource, SessionSource } from '@/domain/forum/sourceCatalog';
+import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
@@ -107,7 +107,7 @@ export function TopicRoute({ navigation, route }: TopicRouteProps) {
 }
 
 function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { runtime: TopicRouteRuntimeValue }) {
-  const active = useIsFocused();
+  const active = useIsFocused() && runtime.appActive;
   const topic = route.params.topic;
   const toggleTopicFavorite = useCallback(
     () => runtime.reader.commit('favorite-toggled', (current) => toggleFavorite(current, topic)),
@@ -232,19 +232,11 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     topicImageDeriver: html.topicImageDeriver
   });
   useCommitRefValue(openImagePreviewRef, imagePreviewController.openImagePreview);
-  const discourseActionRuntimeDependencies = useMemo(
-    () => ({
-      linuxDoUserAgent: runtime.account.getLinuxDoUserAgent
-    }),
-    [runtime]
-  );
   const actions = useTopicActionsController({
     active,
     sessionEpochs: runtime.account.sessionEpochs,
-    discourseActionRuntimeDependencies,
-    discourseLoginPrompts: {
-      linuxdo: runtime.account.showLinuxDoVerification
-    } satisfies Record<DiscourseSource, (message?: string) => void>,
+    linuxDoUserAgent: runtime.account.getLinuxDoUserAgent,
+    showLinuxDoVerification: runtime.account.showLinuxDoVerification,
     ensureWritableSession: runtime.account.ensureWritableSession,
     fetcher: runtime.fetcher,
     isWritableSessionTicketCurrent: runtime.account.isWritableSessionTicketCurrent,

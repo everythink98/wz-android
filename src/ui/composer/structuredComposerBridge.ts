@@ -139,4 +139,3 @@ export const composerEditorMessageSchema = z.discriminatedUnion('type', [
 ]);
 
 export type ComposerHostMessage = z.infer<typeof composerHostMessageSchema>;
-export type ComposerEditorMessage = z.infer<typeof composerEditorMessageSchema>;

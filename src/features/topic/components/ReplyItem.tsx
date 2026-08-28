@@ -590,7 +590,7 @@ export function ReplyItem({
                   {reply.folded ? (
                     <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text>
                   ) : null}
-                  {reply.siteExtension?.source === 'linuxdo' && reply.siteExtension.needsApproval ? (
+                  {reply.siteExtension?.needsApproval ? (
                     <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text>
                   ) : null}
                 </View>

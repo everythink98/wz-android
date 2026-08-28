@@ -385,6 +385,25 @@ describe('Android topic content splitting', () => {
     );
   });
 
+  it.each(['opening', 'reply', 'quoted-reply', 'accepted-answer'] as const)(
+    'keeps native audio atomic and ordered in %s detail content',
+    (role) => {
+      const rows = renderedContentRows(
+        compileForumContent({
+          html: '<p>before</p><forum-audio src="https://media.example/song.mp3"><a href="https://media.example/song.mp3">open</a></forum-audio><p>after</p>',
+          role,
+          source: 'linuxdo'
+        })
+      );
+
+      expect(rows).toHaveLength(3);
+      expect(rows[0]?.html).toContain('before');
+      expect(rows[1]?.html).toContain('<forum-audio src="https://media.example/song.mp3">');
+      expect(rows[1]?.networkMediaCount).toBe(1);
+      expect(rows[2]?.html).toContain('after');
+    }
+  );
+
   it('preserves 1000 alternating text and poll rows', () => {
     const poll = { name: 'choice', options: [{ id: 'yes', label: 'Yes' }] };
     const html = Array.from(
@@ -945,6 +964,7 @@ describe('Android topic content splitting', () => {
       .join('')}${'</div>'.repeat(96)}`;
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
@@ -1000,6 +1020,7 @@ describe('Android topic content splitting', () => {
     const html = `<div>${'<i>'.repeat(1_000)}${sourceUrls.map((src) => `<img src="${src}">`).join('')}</div>`;
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
@@ -1226,6 +1247,7 @@ describe('Android topic content splitting', () => {
   it('never returns an oversized parser-fallback row for hostile text', async () => {
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
@@ -1257,6 +1279,7 @@ describe('Android topic content splitting', () => {
     const html = `${'<div>'.repeat(100)}body${'</div>'.repeat(100)}`;
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
@@ -1330,6 +1353,7 @@ describe('Android topic content splitting', () => {
   it.each(['forum-video', 'video'])('counts a %s source and poster in parser fallback media budgets', async (tag) => {
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
@@ -1361,6 +1385,7 @@ describe('Android topic content splitting', () => {
       .join('')}<forum-sticker>local emoji</forum-sticker></forum-sticker-row>`;
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
@@ -1394,6 +1419,7 @@ describe('Android topic content splitting', () => {
       .join('')}<forum-inline-image class="emoji">local emoji</forum-inline-image></forum-inline-media-line>`;
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
@@ -1423,6 +1449,7 @@ describe('Android topic content splitting', () => {
   it('counts unquoted link-card artwork in parser fallback media budgets', async () => {
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
@@ -1470,6 +1497,7 @@ describe('Android topic content splitting', () => {
   it('preserves a standalone video poster in parser fallback rows', async () => {
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
@@ -1503,6 +1531,7 @@ describe('Android topic content splitting', () => {
   it('rejects whitespace-wrapped standalone video policies in parser fallback', async () => {
     vi.resetModules();
     vi.doMock('./html', () => ({
+      FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
