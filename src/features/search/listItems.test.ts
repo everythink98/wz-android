@@ -158,7 +158,7 @@ describe('Android search list items', () => {
     expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '等待账号状态' });
   });
 
-  it('[REG-SEARCH-028] treats an external search as a settled action instead of an empty result', () => {
+  it('treats an external search as a settled action instead of an empty result', () => {
     const groups: SearchGroup[] = [
       {
         source: 'linuxdo',
@@ -175,7 +175,7 @@ describe('Android search list items', () => {
     ]);
   });
 
-  it('[REG-SEARCH-017] shows an enabled unsettled request as loading', () => {
+  it('shows an enabled unsettled request as loading', () => {
     const items = buildSearchListItems({
       groups: [
         {
@@ -257,7 +257,7 @@ describe('Android search list items', () => {
     expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '请求失败' });
   });
 
-  it('REG-SEARCH-002 keeps loaded topics visible when the next page fails', () => {
+  it('keeps loaded topics visible when the next page fails', () => {
     const groups: SearchGroup[] = [
       {
         source: 'v2ex',

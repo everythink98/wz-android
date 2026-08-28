@@ -16,7 +16,7 @@ const confirmed: WritableSessionSnapshot = {
 };
 
 describe('writable session gate', () => {
-  it('[REG-WRITE-023] does not probe a clean confirmed session', async () => {
+  it('does not probe a clean confirmed session', async () => {
     const reconcile = vi.fn();
 
     await expect(ensureWritableSessionTicket(() => confirmed, reconcile)).resolves.toEqual({
@@ -27,7 +27,7 @@ describe('writable session gate', () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
-  it('[REG-WRITE-023] only issues a ticket after a dirty session reconciles to the same identity', async () => {
+  it('only issues a ticket after a dirty session reconciles to the same identity', async () => {
     let snapshot: WritableSessionSnapshot = { ...confirmed, identityTrust: 'unknown' };
     const reconcile = vi.fn(async () => {
       snapshot = confirmed;
@@ -43,7 +43,7 @@ describe('writable session gate', () => {
   });
 
   it.each(['changed', 'anonymous', 'unknown', 'stale'] as const)(
-    '[REG-WRITE-023] rejects %s without issuing a stale identity ticket',
+    'rejects %s without issuing a stale identity ticket',
     async (status) => {
       const snapshot = { ...confirmed, identityTrust: 'unknown' as const };
       await expect(
@@ -55,7 +55,7 @@ describe('writable session gate', () => {
     }
   );
 
-  it('[REG-WRITE-023] invalidates a ticket before upload or transport when identity state changes', () => {
+  it('invalidates a ticket before upload or transport when identity state changes', () => {
     const ticket = {
       source: 'nodeseek' as const,
       identityKey: 'nodeseek:42',
@@ -69,7 +69,7 @@ describe('writable session gate', () => {
     expect(validateWritableSessionTicket(ticket, { ...confirmed, authSurfaceOpen: true })).toBe(false);
   });
 
-  it('[REG-SOURCE-010] fails closed before reconciliation and invalidates old tickets when its source is disabled', async () => {
+  it('fails closed before reconciliation and invalidates old tickets when its source is disabled', async () => {
     const reconcile = vi.fn();
     const disabled = { ...confirmed, sourceEnabled: false };
 
@@ -82,7 +82,7 @@ describe('writable session gate', () => {
     ).toBe(false);
   });
 
-  it('[REG-WRITE-023] reports an unchanged anonymous reconciliation as login-required', async () => {
+  it('reports an unchanged anonymous reconciliation as login-required', async () => {
     let anonymous: WritableSessionSnapshot = {
       ...confirmed,
       authenticated: false,
@@ -100,7 +100,7 @@ describe('writable session gate', () => {
     ).rejects.toMatchObject({ reason: 'login_required' });
   });
 
-  it('[REG-PERF-019] blocks an open auth surface without probing the account endpoint', async () => {
+  it('blocks an open auth surface without probing the account endpoint', async () => {
     const reconcile = vi.fn();
 
     await expect(

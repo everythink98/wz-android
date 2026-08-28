@@ -27,11 +27,11 @@ describe('notification presentation', () => {
     expect(result.map(({ id }) => id)).toEqual(['new', 'old', 'unknown-a', 'unknown-b']);
   });
 
-  it('[REG-NOTIFY-013] announces source, read state, actor, action and title', () => {
+  it('announces source, read state, actor, action and title', () => {
     expect(notificationAccessibilityLabel(item('1', null))).toBe('NodeSeek，未读，张三，回复了你，回复了你的主题');
   });
 
-  it('[REG-NOTIFY-039] uses one explicit 24-hour timestamp for parsed and site fallback values', () => {
+  it('uses one explicit 24-hour timestamp for parsed and site fallback values', () => {
     const createdAt = new Date(2026, 7, 3, 9, 5).toISOString();
 
     expect(notificationTimeText(item('parsed', createdAt))).toBe('2026-08-03 09:05');

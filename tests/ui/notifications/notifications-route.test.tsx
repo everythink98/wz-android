@@ -342,7 +342,7 @@ describe('notification routes', () => {
     expect(gateway.markRead).not.toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-031] settles an empty aggregate list without waiting for the disabled category query', async () => {
+  it('settles an empty aggregate list without waiting for the disabled category query', async () => {
     appQueryClient.clear();
     const getCategories = jest.fn();
     const gateway = {
@@ -378,7 +378,7 @@ describe('notification routes', () => {
     expect(getCategories).not.toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-031] retries category discovery before reading a selected source list', async () => {
+  it('retries category discovery before reading a selected source list', async () => {
     appQueryClient.clear();
     const getCategories = jest
       .fn<() => Promise<{ id: string; label: string }[]>>()
@@ -415,7 +415,7 @@ describe('notification routes', () => {
     expect(getCategories).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-NOTIFY-031] scopes list queries by adapter category and resets category when the site changes', async () => {
+  it('scopes list queries by adapter category and resets category when the site changes', async () => {
     appQueryClient.clear();
     const getCategories = jest.fn(async (source: string) =>
       source === 'nodeseek'
@@ -467,7 +467,7 @@ describe('notification routes', () => {
     expect(listPage).toHaveBeenLastCalledWith('linuxdo', expect.objectContaining({ categoryId: 'recent' }));
   });
 
-  it('[REG-NOTIFY-031] continues category pagination when an earlier source page has no matching rows', async () => {
+  it('continues category pagination when an earlier source page has no matching rows', async () => {
     appQueryClient.clear();
     const listPage = jest
       .fn<
@@ -509,7 +509,7 @@ describe('notification routes', () => {
     expect(listPage).toHaveBeenLastCalledWith('nodeseek', expect.objectContaining({ cursor: '30' }));
   });
 
-  it('[REG-NOTIFY-027] stops the mounted notification list from reading after it loses focus', async () => {
+  it('stops the mounted notification list from reading after it loses focus', async () => {
     appQueryClient.clear();
     const listAllPage = jest.fn(async () => ({
       items: [],
@@ -556,7 +556,7 @@ describe('notification routes', () => {
     expect(listAllPage).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-ACCOUNT-031] keeps terminal unknown distinct from logged out in the single-source route', async () => {
+  it('keeps terminal unknown distinct from logged out in the single-source route', async () => {
     appQueryClient.clear();
     const gateway = {
       listAllPage: jest.fn(),
@@ -589,7 +589,7 @@ describe('notification routes', () => {
   });
 
   it.each([{ identityTrust: 'unknown' as const, title: '账号状态暂不可确认', message: /账号中心重试核对/ }])(
-    '[REG-ACCOUNT-041] presents an all-source $identityTrust identity state without claiming the user is logged out',
+    'presents an all-source $identityTrust identity state without claiming the user is logged out',
     async ({ identityTrust, title, message }) => {
       appQueryClient.clear();
       const gateway = {
@@ -629,7 +629,7 @@ describe('notification routes', () => {
     }
   );
 
-  it('[REG-NOTIFY-015] retries only the selected failed source in the aggregate list', async () => {
+  it('retries only the selected failed source in the aggregate list', async () => {
     appQueryClient.clear();
     const linuxdoNotification = { ...notification, source: 'linuxdo', id: 'reply:linuxdo' } as ForumNotification;
     const listAllPage = jest.fn(async () => ({
@@ -684,7 +684,7 @@ describe('notification routes', () => {
     expect(listAllPage).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-NOTIFY-021] keeps recovered source pagination reachable after other sources already paged', async () => {
+  it('keeps recovered source pagination reachable after other sources already paged', async () => {
     appQueryClient.clear();
     const listAllPage = jest.fn(async () => ({
       items: [notification],
@@ -747,7 +747,7 @@ describe('notification routes', () => {
     });
   });
 
-  it('[REG-NOTIFY-007] never loads or marks an old notification through a newly confirmed account', async () => {
+  it('never loads or marks an old notification through a newly confirmed account', async () => {
     appQueryClient.clear();
     const loadDetail = jest.fn(async () => ({ notification, title: '消息详情', contentText: '正文' }));
     const markRead = jest.fn(async () => ({ confirmed: true }));
@@ -784,7 +784,7 @@ describe('notification routes', () => {
     expect(view.queryByText('重试')).toBeNull();
   });
 
-  it('[REG-NOTIFY-053] opens a topic-only notification without inventing a reply target', async () => {
+  it('opens a topic-only notification without inventing a reply target', async () => {
     appQueryClient.clear();
     const item: ForumNotification = {
       source: 'linuxdo',
@@ -850,7 +850,7 @@ describe('notification routes', () => {
     });
   });
 
-  it('[REG-NOTIFY-054] opens a Discourse opening-post notification without inventing a reply target', async () => {
+  it('opens a Discourse opening-post notification without inventing a reply target', async () => {
     appQueryClient.clear();
     const item: ForumNotification = {
       source: 'linuxdo',
@@ -917,7 +917,7 @@ describe('notification routes', () => {
     });
   });
 
-  it('[REG-NOTIFY-045] forwards the Yaohuo full-reply floor into the Topic route', async () => {
+  it('forwards the Yaohuo full-reply floor into the Topic route', async () => {
     appQueryClient.clear();
     const item: ForumNotification = {
       source: 'yaohuo',
@@ -974,7 +974,7 @@ describe('notification routes', () => {
     });
   });
 
-  it('[REG-NOTIFY-059] reports an external notification link that Android cannot open', async () => {
+  it('reports an external notification link that Android cannot open', async () => {
     appQueryClient.clear();
     const item: ForumNotification = {
       ...notification,
@@ -1033,7 +1033,7 @@ describe('notification routes', () => {
     }
   });
 
-  it('[REG-NOTIFY-059] routes private-message original and bubble links through the same external owner', async () => {
+  it('routes private-message original and bubble links through the same external owner', async () => {
     appQueryClient.clear();
     const item: ForumNotification = {
       ...notification,
@@ -1092,7 +1092,7 @@ describe('notification routes', () => {
     }
   });
 
-  it('[REG-TOPIC-116] keeps the cached source emoji catalog across private composer mounts', async () => {
+  it('keeps the cached source emoji catalog across private composer mounts', async () => {
     const defaultOptions = appQueryClient.getDefaultOptions();
     appQueryClient.setDefaultOptions({
       ...defaultOptions,
@@ -1191,7 +1191,7 @@ describe('notification routes', () => {
     }
   });
 
-  it('[REG-NOTIFY-032] binds LinuxDo composer requests to the route identity and aborts them on unmount', async () => {
+  it('binds LinuxDo composer requests to the route identity and aborts them on unmount', async () => {
     appQueryClient.clear();
     const privateNotification: ForumNotification = {
       ...notification,
@@ -1259,7 +1259,7 @@ describe('notification routes', () => {
     expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
 
-  it('[REG-NOTIFY-031] preserves an unconfirmed private draft and clears it only after server confirmation', async () => {
+  it('preserves an unconfirmed private draft and clears it only after server confirmation', async () => {
     appQueryClient.clear();
     const privateNotification: ForumNotification = {
       ...notification,
@@ -1325,7 +1325,7 @@ describe('notification routes', () => {
     expect(runtime.refreshSnapshots).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-NOTIFY-049] preserves a private draft while identity is pending and clears it after a confirmed switch', async () => {
+  it('preserves a private draft while identity is pending and clears it after a confirmed switch', async () => {
     appQueryClient.clear();
     const privateNotification: ForumNotification = {
       ...notification,
@@ -1389,7 +1389,7 @@ describe('notification routes', () => {
     expect(view.getByLabelText('私信回复内容').props.value).toBe('');
   });
 
-  it('[REG-NOTIFY-032] aborts an in-flight private reply when the detail route loses focus', async () => {
+  it('aborts an in-flight private reply when the detail route loses focus', async () => {
     appQueryClient.clear();
     const privateNotification: ForumNotification = {
       ...notification,
@@ -1450,7 +1450,7 @@ describe('notification routes', () => {
     expect(view.queryByLabelText('私信回复内容')).toBeNull();
   });
 
-  it('[REG-NOTIFY-032] gates private-message image picking, inserts markup without sending, and ignores duplicate or canceled picks', async () => {
+  it('gates private-message image picking, inserts markup without sending, and ignores duplicate or canceled picks', async () => {
     appQueryClient.clear();
     mockGetDocumentAsync.mockReset();
     mockGetDocumentAsync.mockResolvedValueOnce({

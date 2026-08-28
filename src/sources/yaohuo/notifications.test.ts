@@ -10,7 +10,7 @@ function html(value: string) {
 }
 
 describe('Yaohuo notifications', () => {
-  it('[REG-NOTIFY-031] exposes the original message categories and category query', async () => {
+  it('exposes the original message categories and category query', async () => {
     await expect(yaohuoNotificationAdapter.getCategories({ identityKey: 'yaohuo:7', userId: '7' })).resolves.toEqual([
       { id: 'all', label: '收件箱' },
       { id: 'system', label: '系统' },
@@ -64,7 +64,7 @@ describe('Yaohuo notifications', () => {
     ).resolves.toEqual({ items: [], cursor: null, hasMore: false });
   });
 
-  it('[REG-NOTIFY-010] ignores the trailing delete action when parsing the list timestamp', async () => {
+  it('ignores the trailing delete action when parsing the list timestamp', async () => {
     const fetcher = vi.fn(async () =>
       html(`
         <div class="listmms">
@@ -88,7 +88,7 @@ describe('Yaohuo notifications', () => {
     expect(page.items[0]?.displayTime).not.toBe('删除');
   });
 
-  it('[REG-NOTIFY-010] separates an unbracketed timestamp from the actor name', async () => {
+  it('separates an unbracketed timestamp from the actor name', async () => {
     const fetcher = vi.fn(async () =>
       html(`
         <div class="listmms">
@@ -151,7 +151,7 @@ describe('Yaohuo notifications', () => {
     expect(new URL(fetcher.mock.calls[0]?.[0] || '').searchParams.get('page')).toBe('1');
   });
 
-  it('[REG-NOTIFY-010][REG-NOTIFY-031] separates the clicked body from the original recent chat bubbles', async () => {
+  it('separates the clicked body from the original recent chat bubbles', async () => {
     const calls: string[] = [];
     const listHtml = `
       <div class="listmms"><img src="/NetImages/new.gif"><a href="/bbs/messagelist_view.aspx?id=41&siteid=1000">回复内容</a>来自张三 [昨天]</div>
@@ -200,7 +200,7 @@ describe('Yaohuo notifications', () => {
     expect(result).toEqual({ confirmed: false, message: '原站仍显示为未读，请稍后重试' });
   });
 
-  it('[REG-NOTIFY-051] rechecks the exact Yaohuo category page after opening a detail', async () => {
+  it('rechecks the exact Yaohuo category page after opening a detail', async () => {
     const listUrls: URL[] = [];
     const unreadHtml = `
       <div class="listmms"><img src="/NetImages/new.gif"><a href="/bbs/messagelist_view.aspx?id=41">系统消息</a>来自系统管理员 [昨天]</div>
@@ -231,7 +231,7 @@ describe('Yaohuo notifications', () => {
     ]);
   });
 
-  it('[REG-NOTIFY-037] cleans, orders and de-duplicates chat; [REG-NOTIFY-042] keeps row-level time; [REG-NOTIFY-044] keeps topic links', async () => {
+  it('cleans, orders and de-duplicates chat; keeps row-level time; keeps topic links', async () => {
     const nativeDateParse = Date.parse.bind(Date);
     const dateParse = vi
       .spyOn(Date, 'parse')
@@ -299,7 +299,7 @@ describe('Yaohuo notifications', () => {
     }
   });
 
-  it('[REG-NOTIFY-031] keeps system-message details read-only', async () => {
+  it('keeps system-message details read-only', async () => {
     const fetcher = vi.fn(async () =>
       html(`
         <div class="content">
@@ -345,7 +345,7 @@ describe('Yaohuo notifications', () => {
     expect(replyFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-031] posts the original reply form fields and confirms only the exact success text', async () => {
+  it('posts the original reply form fields and confirms only the exact success text', async () => {
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) =>
       init?.method === 'POST'
         ? html('<div class="tip">发送信息成功！</div>')

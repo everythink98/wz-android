@@ -79,7 +79,7 @@ describe('Android search site filters', () => {
     }
   });
 
-  it('REG-SEARCH-001 builds linux.do advanced filters from selected values', () => {
+  it('builds linux.do advanced filters from selected values', () => {
     expect(
       buildDiscourseSearchQuery(
         'AI',

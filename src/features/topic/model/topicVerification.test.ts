@@ -13,7 +13,7 @@ const topic: Topic = {
 };
 
 describe('Topic verification policy', () => {
-  it('[REG-LINUXDO-007] opens identity verification instead of retrying a query that has not started', async () => {
+  it('opens identity verification instead of retrying a query that has not started', async () => {
     const refreshTopic = vi.fn(async () => undefined);
     const showVerification = vi.fn(async () => true);
 

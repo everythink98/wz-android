@@ -70,7 +70,7 @@ describe('structured composer protocol values', () => {
     ).toBeNull();
   });
 
-  it('[REG-WRITE-071] generates new Ref IDs with the original NodeSeek formula', () => {
+  it('generates new Ref IDs with the original NodeSeek formula', () => {
     const random = vi.spyOn(Math, 'random');
     random.mockReturnValueOnce(0).mockReturnValueOnce(0.5).mockReturnValueOnce(0.99999999);
 

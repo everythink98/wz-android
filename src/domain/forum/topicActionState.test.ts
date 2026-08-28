@@ -273,7 +273,7 @@ describe('topic action state patches', () => {
     ]);
   });
 
-  it('[REG-PERF-010] recompiles a prepared poll plan after a local vote', () => {
+  it('recompiles a prepared poll plan after a local vote', () => {
     const prepared = prepareTopicContent({
       ...topic,
       polls: [
@@ -311,7 +311,7 @@ describe('topic action state patches', () => {
     });
   });
 
-  it('[REG-PERF-010] keeps the poll plan verifiable after Query structural sharing', () => {
+  it('keeps the poll plan verifiable after Query structural sharing', () => {
     const client = new QueryClient();
     const queryKey = ['topic', 'linuxdo', '1'];
     const prepared = prepareTopicContent({
@@ -333,7 +333,7 @@ describe('topic action state patches', () => {
     ).toMatchObject({ type: 'poll', poll: { voted: true } });
   });
 
-  it('[REG-WRITE-007] applies the authoritative server poll snapshot after a NodeSeek vote', () => {
+  it('applies the authoritative server poll snapshot after a NodeSeek vote', () => {
     const next = applyPollVoteToTopic(
       {
         ...topic,
@@ -376,7 +376,7 @@ describe('topic action state patches', () => {
     });
   });
 
-  it('[REG-WRITE-007] does not invent a count when NodeSeek result refresh fails', () => {
+  it('does not invent a count when NodeSeek result refresh fails', () => {
     const next = applyPollVoteToTopic(
       {
         ...topic,
@@ -413,7 +413,7 @@ describe('topic action state patches', () => {
     });
   });
 
-  it('[REG-WRITE-001] increments poll participants once after the first submitted vote', () => {
+  it('increments poll participants once after the first submitted vote', () => {
     const initial = {
       ...topic,
       polls: [
@@ -446,7 +446,7 @@ describe('topic action state patches', () => {
     expect(afterRepeatedApply?.polls?.[0]?.options[0]).toMatchObject({ id: 'a', count: 3 });
   });
 
-  it('[REG-WRITE-001] increments multi-select participants once while incrementing every selected option', () => {
+  it('increments multi-select participants once while incrementing every selected option', () => {
     const initial = {
       ...topic,
       polls: [

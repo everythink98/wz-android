@@ -8,7 +8,7 @@ import { createTheme } from '@/ui/theme/tokens';
 import { render } from '../render';
 
 describe('topic rich-text selection', () => {
-  it('[REG-TOPIC-130] renders NodeSeek native s markup with a visible strike', async () => {
+  it('renders NodeSeek native s markup with a visible strike', async () => {
     const settings = createEmptyReaderData().settings;
     const styles = buildHtmlRenderingStyles({ settings, theme: createTheme(settings) });
     const row = compileForumContent({

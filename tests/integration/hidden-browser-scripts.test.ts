@@ -91,7 +91,7 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-037] waits for NodeSeek identity evidence during account probes', () => {
+  it('waits for NodeSeek identity evidence during account probes', () => {
     vi.useFakeTimers();
     try {
       const { postMessage } = runNodeSeekBrowserFetchScript(
@@ -124,7 +124,7 @@ describe('hidden browser fetch scripts', () => {
     }
   });
 
-  it('[REG-ACCOUNT-037] settles an explicit null NodeSeek runtime user without waiting for mobile guest controls', () => {
+  it('settles an explicit null NodeSeek runtime user without waiting for mobile guest controls', () => {
     Object.defineProperty(window, '__config__', {
       configurable: true,
       value: { user: null }
@@ -150,7 +150,7 @@ describe('hidden browser fetch scripts', () => {
     expect(postMessage).toHaveBeenCalledTimes(1);
   });
 
-  it.each([false, undefined, {}])('[REG-ACCOUNT-037] keeps an unproven NodeSeek runtime user unknown: %p', (user) => {
+  it.each([false, undefined, {}])('keeps an unproven NodeSeek runtime user unknown: %p', (user) => {
     vi.useFakeTimers();
     try {
       Object.defineProperty(window, '__config__', {
@@ -283,7 +283,7 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
-  it('[REG-VERIFICATION-002] keeps Cloudflare marker text inside NodeSeek browser-fetched JSON as data', () => {
+  it('keeps Cloudflare marker text inside NodeSeek browser-fetched JSON as data', () => {
     const body = JSON.stringify({ message: 'ordinary cf-turnstile challenge-platform data' });
     const { postMessage, stop } = runNodeSeekBrowserFetchScript('/api/account/status', `<pre>${body}</pre>`);
 
@@ -298,7 +298,7 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
-  it('[REG-VERIFICATION-002] prefers readable NodeSeek content over injected challenge-platform markup', () => {
+  it('prefers readable NodeSeek content over injected challenge-platform markup', () => {
     const { postMessage, stop } = runNodeSeekBrowserFetchScript(
       '/post-777280-1',
       `
@@ -469,7 +469,7 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
-  it('[REG-VERIFICATION-002] does not turn marker text on an incomplete NodeSeek page into a challenge', () => {
+  it('does not turn marker text on an incomplete NodeSeek page into a challenge', () => {
     vi.useFakeTimers();
     try {
       const { postMessage } = runNodeSeekBrowserFetchScript(
@@ -533,7 +533,7 @@ describe('hidden browser fetch scripts', () => {
     });
   });
 
-  it('[REG-VERIFICATION-002] keeps Cloudflare marker text inside linux.do browser-fetched JSON as data', () => {
+  it('keeps Cloudflare marker text inside linux.do browser-fetched JSON as data', () => {
     const body = JSON.stringify({ items: ['ordinary cf-turnstile challenge-platform data'] });
     const { postMessage } = runLinuxDoBrowserFetchJson('/search.json', body);
 
@@ -547,7 +547,7 @@ describe('hidden browser fetch scripts', () => {
     });
   });
 
-  it('[REG-VERIFICATION-002] does not turn marker text on an ordinary linux.do HTML page into a challenge', () => {
+  it('does not turn marker text on an ordinary linux.do HTML page into a challenge', () => {
     vi.useFakeTimers();
     try {
       const { postMessage } = runLinuxDoBrowserFetchScript(
@@ -573,7 +573,7 @@ describe('hidden browser fetch scripts', () => {
     }
   });
 
-  it('REG-LINUXDO-001 reports an oversized linux.do bridge payload without classifying it as Cloudflare', () => {
+  it('reports an oversized linux.do bridge payload without classifying it as Cloudflare', () => {
     const body = JSON.stringify({ items: ['x'.repeat(950000)] });
     const { postMessage } = runLinuxDoBrowserFetchJson('/latest.json', body);
 

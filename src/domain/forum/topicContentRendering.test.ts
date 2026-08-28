@@ -53,7 +53,7 @@ describe('render-ready dynamic forum image variants', () => {
     }
   });
 
-  it('[REG-PERF-010] fixes the RNRH content model before TTree generation for unknown and learned sizes', () => {
+  it('fixes the RNRH content model before TTree generation for unknown and learned sizes', () => {
     const url = 'https://i.imgur.com/dynamic.png';
     const row = renderedRow(`<p>before <img class="embedded_image" src="${url}" alt="dynamic"> after</p>`);
     const unknownHtml = resolveForumContentRowHtml(row, {});
@@ -72,7 +72,7 @@ describe('render-ready dynamic forum image variants', () => {
     expect(learnedHtml).not.toContain('data-wz-dynamic-inline-image');
   });
 
-  it('[REG-PERF-010] resolves every bounded four-image presentation state', () => {
+  it('resolves every bounded four-image presentation state', () => {
     const urls = Array.from({ length: 4 }, (_, index) => `https://i.imgur.com/bounded-${index}.png`);
     const row = renderedRow(
       `<p>${urls
@@ -97,7 +97,7 @@ describe('render-ready dynamic forum image variants', () => {
     });
   });
 
-  it('[REG-PERF-010] keeps the compiled presentation variants in raw source order', () => {
+  it('keeps the compiled presentation variants in raw source order', () => {
     const urls = ['https://i.imgur.com/first.png', 'https://i.imgur.com/second.png'];
     const rawHtml = `<p>${urls.map((url) => `<img class="embedded_image" src="${url}">`).join('')}</p>`;
     const row = renderedRow(rawHtml);
@@ -107,7 +107,7 @@ describe('render-ready dynamic forum image variants', () => {
     expect(resolved.indexOf(urls[0])).toBeLessThan(resolved.indexOf(urls[1]));
   });
 
-  it('[REG-TOPIC-078] resolves duplicate URLs independently by their final Referer identity', () => {
+  it('resolves duplicate URLs independently by their final Referer identity', () => {
     const url = 'https://i.imgur.com/shared-policy.png';
     const row = renderedRow(
       `<p><img class="embedded_image" src="${url}" referrerpolicy="no-referrer"><img class="embedded_image" src="${url}" referrerpolicy="origin"></p>`

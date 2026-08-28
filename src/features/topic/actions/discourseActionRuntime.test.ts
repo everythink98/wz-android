@@ -39,7 +39,7 @@ describe('Discourse action runtime registry', () => {
     );
   });
 
-  it('[REG-ACCOUNT-026] reports linux.do expiry without mutating identity or Cookie state', async () => {
+  it('reports linux.do expiry without mutating identity or Cookie state', async () => {
     const context = runtimeContext();
     const runtime = await prepareDiscourseActionRuntime('linuxdo', context);
 

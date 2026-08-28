@@ -3,7 +3,7 @@ import { DEFAULT_SEARCH_FILTERS } from '@/domain/forum/searchFilters';
 import { snapshotSearchFilters } from './searchRun';
 
 describe('submitted search model', () => {
-  it('REG-SEARCH-001 keeps submitted filters independent from later drafts', () => {
+  it('keeps submitted filters independent from later drafts', () => {
     const filters = snapshotSearchFilters(DEFAULT_SEARCH_FILTERS);
     filters.linuxdo.tags.push('人工智能');
     filters.linuxdo.visited.push('seen');

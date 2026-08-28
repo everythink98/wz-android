@@ -19,7 +19,7 @@ function pendingRead(onAbort: () => void) {
 }
 
 describe('content source query cleanup', () => {
-  it('[REG-SOURCE-010] removes only disabled business queries and the previous aggregate snapshot', async () => {
+  it('removes only disabled business queries and the previous aggregate snapshot', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
     const disabledTopic = forumQueryKeys.topic({
       source: 'nodeseek',
@@ -82,7 +82,7 @@ describe('content source query cleanup', () => {
     client.clear();
   });
 
-  it('[REG-SOURCE-010] leaves queries untouched when only source order changes', async () => {
+  it('leaves queries untouched when only source order changes', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
     const sourceKey = forumQueryKeys.topic({
       source: 'v2ex',
@@ -107,7 +107,7 @@ describe('content source query cleanup', () => {
     client.clear();
   });
 
-  it('[REG-SOURCE-010] enabling a source removes only the previous aggregate snapshot', async () => {
+  it('enabling a source removes only the previous aggregate snapshot', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
     const v2exTopic = forumQueryKeys.topic({
       source: 'v2ex',

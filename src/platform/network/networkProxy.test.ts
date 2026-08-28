@@ -134,13 +134,13 @@ describe('network proxy settings', () => {
     );
   });
 
-  it('[REG-PROXY-001] rejects a corrupted saved proxy value instead of silently allowing direct traffic', async () => {
+  it('rejects a corrupted saved proxy value instead of silently allowing direct traffic', async () => {
     vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce('{broken-json');
 
     await expect(loadNetworkProxyState()).rejects.toThrow('代理配置已损坏');
   });
 
-  it('[REG-PROXY-004] keeps WebViews blocked throughout enabled and disabled proxy transitions', () => {
+  it('keeps WebViews blocked throughout enabled and disabled proxy transitions', () => {
     expect(
       networkProxyWebViewBlockMessage({
         applyError: '',
@@ -185,7 +185,7 @@ describe('network proxy settings', () => {
     expect(testProxy).toHaveBeenCalledWith(socksProfile);
   });
 
-  it('[REG-PROXY-010] keeps read-channel recovery single-flight across sources for one generation', async () => {
+  it('keeps read-channel recovery single-flight across sources for one generation', async () => {
     const before = getReadNetworkRuntimeSnapshot();
     const recover = vi.fn(async (_source: string, expectedGeneration: number) => ({
       ok: true,
@@ -222,7 +222,7 @@ describe('network proxy settings', () => {
     );
   });
 
-  it('[REG-PROXY-010] rejects an invalid expected generation before crossing the Native recovery seam', async () => {
+  it('rejects an invalid expected generation before crossing the Native recovery seam', async () => {
     const before = getReadNetworkRuntimeSnapshot();
     const recoverForumReadChannel = vi.fn();
     const module = {
@@ -241,7 +241,7 @@ describe('network proxy settings', () => {
     expect(getReadNetworkRuntimeSnapshot()).toEqual(before);
   });
 
-  it('[REG-PROXY-010] reuses the initiating recovery trace across Native publication and JS state apply', async () => {
+  it('reuses the initiating recovery trace across Native publication and JS state apply', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -285,7 +285,7 @@ describe('network proxy settings', () => {
     }
   });
 
-  it('[REG-PROXY-010] keeps the generation retryable when native publication fails', async () => {
+  it('keeps the generation retryable when native publication fails', async () => {
     const before = getReadNetworkRuntimeSnapshot();
     const recover = vi
       .fn()
@@ -312,7 +312,7 @@ describe('network proxy settings', () => {
     expect(recover).toHaveBeenNthCalledWith(2, 'yaohuo', before.generation, expect.stringMatching(/^trace-/));
   });
 
-  it('[REG-PROXY-010] keeps a published recovery successful when only the diagnostic apply ack fails', async () => {
+  it('keeps a published recovery successful when only the diagnostic apply ack fails', async () => {
     const before = getReadNetworkRuntimeSnapshot();
     const result = {
       ok: true,
@@ -336,7 +336,7 @@ describe('network proxy settings', () => {
     });
   });
 
-  it('[REG-PROXY-010] retains and releases a generation for a healthy long-lived media owner', async () => {
+  it('retains and releases a generation for a healthy long-lived media owner', async () => {
     const retain = vi.fn(async (generation: number) => ({ generation, retained: true }));
     const release = vi.fn(async () => true);
     const module = {
@@ -355,7 +355,7 @@ describe('network proxy settings', () => {
     await expect(retainReadNetworkRuntimeGeneration(7, module)).resolves.toEqual({ generation: 8, retained: false });
   });
 
-  it('[REG-PROXY-010] rejects a native success claim that did not publish a newer generation', async () => {
+  it('rejects a native success claim that did not publish a newer generation', async () => {
     const before = getReadNetworkRuntimeSnapshot();
     const lines: string[] = [];
     setDiagnosticWriter((line) => {

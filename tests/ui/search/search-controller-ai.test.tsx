@@ -226,7 +226,7 @@ describe('linux.do AI search controller', () => {
     jest.clearAllMocks();
   });
 
-  it('[REG-SEARCH-006] keeps the first search submit enabled before any Query has started', async () => {
+  it('keeps the first search submit enabled before any Query has started', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
@@ -245,7 +245,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
   });
 
-  it('[REG-SEARCH-011] exposes a same-key source refetch as busy until the replacement settles', async () => {
+  it('exposes a same-key source refetch as busy until the replacement settles', async () => {
     const replacement = Promise.withResolvers<SearchResponse>();
     const searchTopics = jest
       .fn<ReadGateway['searchTopics']>()
@@ -282,7 +282,7 @@ describe('linux.do AI search controller', () => {
     });
   });
 
-  it('[REG-SEARCH-012] does not open an action panel for a result whose input was just replaced', async () => {
+  it('does not open an action panel for a result whose input was just replaced', async () => {
     const pending = Promise.withResolvers<SearchResponse>();
     const showNodeSeekVerification = jest.fn<(message?: string) => void>();
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => pending.promise);
@@ -328,7 +328,7 @@ describe('linux.do AI search controller', () => {
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
   });
 
-  it('[REG-SEARCH-028] exposes anonymous linux.do and NodeSeek searches without starting gateway transport', async () => {
+  it('exposes anonymous linux.do and NodeSeek searches without starting gateway transport', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
@@ -379,7 +379,7 @@ describe('linux.do AI search controller', () => {
     expect(hook.result.current.linuxDoAiState).toMatchObject({ status: 'idle', enabled: false });
   });
 
-  it('[REG-LINUXDO-006] keeps the active authenticated search identity while verification is in progress', async () => {
+  it('keeps the active authenticated search identity while verification is in progress', async () => {
     const restartedSearch = Promise.withResolvers<SearchResponse>();
     const searchTopics = jest
       .fn<ReadGateway['searchTopics']>()
@@ -444,7 +444,7 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-LINUXDO-006] aborts an owned search after leaving Search and does not restart it for a new credential scope', async () => {
+  it('aborts an owned search after leaving Search and does not restart it for a new credential scope', async () => {
     const pendingSearch = Promise.withResolvers<SearchResponse>();
     let requestSignal: AbortSignal | undefined;
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async (options) => {
@@ -510,7 +510,7 @@ describe('linux.do AI search controller', () => {
     expect(showYaohuoLogin).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-006] pauses an in-flight AI read while verification is open and resumes it after closing', async () => {
+  it('pauses an in-flight AI read while verification is open and resumes it after closing', async () => {
     const aiSignals: AbortSignal[] = [];
     const searchSemanticTopics = jest.fn<ReadGateway['searchSemanticTopics']>(async ({ signal }) => {
       if (signal) aiSignals.push(signal);
@@ -573,7 +573,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(2));
   });
 
-  it('[REG-LINUXDO-006] cancels candidate reads while verification is open and resumes the current request after closing', async () => {
+  it('cancels candidate reads while verification is open and resumes the current request after closing', async () => {
     const tagSignals: AbortSignal[] = [];
     const searchDiscourseTags = jest.fn(async ({ signal }: { signal?: AbortSignal }) => {
       if (signal) tagSignals.push(signal);
@@ -621,7 +621,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(searchDiscourseTags).toHaveBeenCalledTimes(2));
   });
 
-  it('REG-LINUXDO-002 resumes the exact foreground search without recursively reopening verification', async () => {
+  it('resumes the exact foreground search without recursively reopening verification', async () => {
     const showLinuxDoVerification = jest.fn();
     const searchTopics = jest
       .fn<ReadGateway['searchTopics']>()
@@ -674,7 +674,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
   });
 
-  it('REG-LINUXDO-003 reports an ordinary search recovery failure instead of completed', async () => {
+  it('reports an ordinary search recovery failure instead of completed', async () => {
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const searchTopics = jest
       .fn<ReadGateway['searchTopics']>()
@@ -733,7 +733,7 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(3);
   });
 
-  it('REG-LINUXDO-002 preserves the loaded search page across session reset before resuming pagination', async () => {
+  it('preserves the loaded search page across session reset before resuming pagination', async () => {
     const secondPageTopic: Topic = {
       ...standardTopic,
       id: '2',
@@ -816,7 +816,7 @@ describe('linux.do AI search controller', () => {
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SEARCH-007] does not auto-open login or verification panels for aggregated search', async () => {
+  it('does not auto-open login or verification panels for aggregated search', async () => {
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
     const showNodeSeekVerification = jest.fn<(message?: string) => void>();
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
@@ -928,7 +928,7 @@ describe('linux.do AI search controller', () => {
     }
   });
 
-  it('[REG-SEARCH-027] switches from a settled aggregate preview to a paged source without reusing its data shape', async () => {
+  it('switches from a settled aggregate preview to a paged source without reusing its data shape', async () => {
     const v2exTopic: Topic = {
       ...standardTopic,
       source: 'v2ex',
@@ -993,7 +993,7 @@ describe('linux.do AI search controller', () => {
     );
   });
 
-  it('[REG-SEARCH-007] opens Yaohuo login exactly once for a single-source login failure', async () => {
+  it('opens Yaohuo login exactly once for a single-source login failure', async () => {
     const showYaohuoLogin = jest.fn<(message?: string) => void>();
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => {
       throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required' as const });
@@ -1017,7 +1017,7 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-FEED-018][REG-SEARCH-007] keeps a dismissed anonymous Yaohuo login closed until explicit retry', async () => {
+  it('keeps a dismissed anonymous Yaohuo login closed until explicit retry', async () => {
     let authSurfaceOpen = false;
     const showYaohuoLogin = jest.fn<(message?: string) => void>(() => {
       authSurfaceOpen = true;
@@ -1058,7 +1058,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(showYaohuoLogin).toHaveBeenCalledTimes(2));
   });
 
-  it('[REG-SEARCH-009] keeps an initial source failure out of trusted Query data', async () => {
+  it('keeps an initial source failure out of trusted Query data', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [],
       errors: {
@@ -1084,7 +1084,7 @@ describe('linux.do AI search controller', () => {
     expect(query?.state.error).toEqual(expect.any(Error));
   });
 
-  it('[REG-SEARCH-008] keeps trusted aggregate results visible with a retryable refresh error', async () => {
+  it('keeps trusted aggregate results visible with a retryable refresh error', async () => {
     let nodeSeekAttempts = 0;
     const nodeSeekTopic = {
       ...standardTopic,
@@ -1132,7 +1132,7 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(6);
   });
 
-  it('REG-SEARCH-004 judges a whole-source retry by that source instead of unrelated aggregate errors', async () => {
+  it('judges a whole-source retry by that source instead of unrelated aggregate errors', async () => {
     const notify = jest.fn<(message: string) => void>();
     let nodeSeekAttempts = 0;
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
@@ -1463,7 +1463,7 @@ describe('linux.do AI search controller', () => {
     expect(diagnosticLines.join('')).not.toContain('快问快答');
   });
 
-  it('REG-SEARCH-002 preserves the failed page cursor and retries that page', async () => {
+  it('preserves the failed page cursor and retries that page', async () => {
     const secondPageTopic: Topic = {
       ...standardTopic,
       id: '2',
@@ -1526,7 +1526,7 @@ describe('linux.do AI search controller', () => {
     );
   });
 
-  it('[REG-SEARCH-010] retries a failed multi-page refresh instead of skipping to the next cursor', async () => {
+  it('retries a failed multi-page refresh instead of skipping to the next cursor', async () => {
     const secondPageTopic = {
       ...standardTopic,
       id: '2',
@@ -1582,7 +1582,7 @@ describe('linux.do AI search controller', () => {
     expect(hook.result.current.searchGroups[0]?.items.map(({ id }) => id)).toEqual(['1', '2']);
   });
 
-  it('REG-SEARCH-005 does not append partial items from a failed search page', async () => {
+  it('does not append partial items from a failed search page', async () => {
     const partialTopic: Topic = {
       ...standardTopic,
       id: 'partial-2',
@@ -1635,7 +1635,7 @@ describe('linux.do AI search controller', () => {
     );
   });
 
-  it('REG-SOURCE-002 treats a parse-empty search page as retryable instead of advancing the cursor', async () => {
+  it('treats a parse-empty search page as retryable instead of advancing the cursor', async () => {
     const secondPageTopic: Topic = {
       ...standardTopic,
       id: '2',
@@ -1714,7 +1714,7 @@ describe('linux.do AI search controller', () => {
     );
   });
 
-  it('REG-SOURCE-002 preserves existing results when a whole-source retry parses empty', async () => {
+  it('preserves existing results when a whole-source retry parses empty', async () => {
     const searchTopics = jest
       .fn<ReadGateway['searchTopics']>()
       .mockResolvedValueOnce({
@@ -2027,7 +2027,7 @@ describe('linux.do AI search controller', () => {
     ).toEqual(['canceled', 'success', 'failure', 'success']);
   });
 
-  it('[REG-SOURCE-003] records a transport rejection caused by Query cancellation as canceled', async () => {
+  it('records a transport rejection caused by Query cancellation as canceled', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => {
       diagnosticLines.push(line);
@@ -2158,7 +2158,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
   });
 
-  it('[REG-SEARCH-028] exposes an external search for an unknown public source while keeping AI blocked', async () => {
+  it('exposes an external search for an unknown public source while keeping AI blocked', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
@@ -2215,7 +2215,7 @@ describe('linux.do AI search controller', () => {
     expect(hook.result.current.linuxDoAiState.status).toBe('idle');
   });
 
-  it('[REG-SEARCH-028] replaces an external entry with fresh native results after identity becomes confirmed', async () => {
+  it('replaces an external entry with fresh native results after identity becomes confirmed', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [standardTopic],
       errors: {},
@@ -2298,7 +2298,7 @@ describe('linux.do AI search controller', () => {
     expect(readPlanScopes).toEqual(expect.arrayContaining(['public:omit', 'authenticated:0']));
   });
 
-  it('[REG-SEARCH-028] settles an unknown forum source as an external action inside aggregate search', async () => {
+  it('settles an unknown forum source as an external action inside aggregate search', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
       items: [{ ...standardTopic, source: source as Source, id: source }],
       errors: {},
@@ -2337,7 +2337,7 @@ describe('linux.do AI search controller', () => {
     });
   });
 
-  it('[REG-SEARCH-024] settles a timed-out private source and retries identity from all or single-source search', async () => {
+  it('settles a timed-out private source and retries identity from all or single-source search', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
       items: [],
       errors: {},
@@ -2473,7 +2473,7 @@ describe('linux.do AI search controller', () => {
     expect(hook.result.current.searchGroups.map(({ source }) => source)).toEqual(sources);
   });
 
-  it('[REG-PERF-018] keeps settled aggregate groups stable across an unrelated rerender', async () => {
+  it('keeps settled aggregate groups stable across an unrelated rerender', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
       items: [{ ...standardTopic, source: source === 'all' ? 'v2ex' : source, id: `${source}-stable` }],
       errors: {},
@@ -2494,7 +2494,7 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(3);
   });
 
-  it('[REG-PERF-023] keeps settled single-source groups stable across an unrelated rerender', async () => {
+  it('keeps settled single-source groups stable across an unrelated rerender', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
       items: [{ ...standardTopic, source: source === 'all' ? 'v2ex' : source, id: `${source}-stable` }],
       errors: {},
@@ -2515,7 +2515,7 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-010] aborts a removed aggregate source without interrupting an enabled source', async () => {
+  it('aborts a removed aggregate source without interrupting an enabled source', async () => {
     const requests = new Map<
       Source,
       {
@@ -2570,7 +2570,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(hook.result.current.searchGroups.map(({ source }) => source)).toEqual(['v2ex']));
   });
 
-  it('[REG-SOURCE-010] reorders aggregate groups without refetching and settles an empty source set', async () => {
+  it('reorders aggregate groups without refetching and settles an empty source set', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
       if (source === 'all') throw new Error('aggregate Search must dispatch one source request');
       return {
@@ -2625,7 +2625,7 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-SOURCE-010] gates a disabled direct Search across queries, retries, pagination, AI and filter candidates', async () => {
+  it('gates a disabled direct Search across queries, retries, pagination, AI and filter candidates', async () => {
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
       items: [{ ...standardTopic, source: source === 'all' ? 'v2ex' : source, id: `${source}-result` }],
       errors: {},

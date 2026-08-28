@@ -441,7 +441,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-058] reads only the newly added source without rereading a stable sibling', async () => {
+  it('reads only the newly added source without rereading a stable sibling', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek.identityKey = 'nodeseek:42';
     stored.sources.linuxdo.identityKey = 'linuxdo:84';
@@ -484,7 +484,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-058][REG-PERF-023] runs one source read and one persistence per ready, resume, and explicit refresh event', async () => {
+  it('runs one source read and one persistence per ready, resume, and explicit refresh event', async () => {
     const stored = defaultNotificationState();
     stored.globalEnabled = true;
     stored.hasOptedIn = true;
@@ -544,7 +544,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-058] does not replay a cached snapshot when an identity returns before its refetch completes', async () => {
+  it('does not replay a cached snapshot when an identity returns before its refetch completes', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek.identityKey = 'nodeseek:42';
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
@@ -603,7 +603,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-058] waits for identity reset before reading and persisting its first snapshot', async () => {
+  it('waits for identity reset before reading and persisting its first snapshot', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek.identityKey = 'nodeseek:42';
     let persisted = JSON.stringify(stored);
@@ -670,7 +670,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-PERF-023] keeps a rapidly re-enabled source operationally paused until its disable cleanup finishes', async () => {
+  it('keeps a rapidly re-enabled source operationally paused until its disable cleanup finishes', async () => {
     jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
     const stored = defaultNotificationState();
     stored.globalEnabled = true;
@@ -797,7 +797,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-001] keeps stored unread state without showing a native foreground toast', async () => {
+  it('keeps stored unread state without showing a native foreground toast', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek.unreadCount = 1;
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify(stored));
@@ -969,7 +969,7 @@ describe('notification runtime', () => {
   });
 
   it.each(['unknown'] as const)(
-    '[REG-NOTIFY-006] retains the trusted identity, cache, and delivery watermark while identity is %s',
+    'retains the trusted identity, cache, and delivery watermark while identity is %s',
     async (identityTrust) => {
       const stored = defaultNotificationState();
       stored.sources.nodeseek = {
@@ -1010,7 +1010,7 @@ describe('notification runtime', () => {
     }
   );
 
-  it('[REG-NOTIFY-018] refreshes and persists current unread before running shared delivery', async () => {
+  it('refreshes and persists current unread before running shared delivery', async () => {
     jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
     const stored = defaultNotificationState();
     stored.globalEnabled = true;
@@ -1077,7 +1077,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-ACCOUNT-041] gives the foreground worker a canonical private-access predicate', async () => {
+  it('gives the foreground worker a canonical private-access predicate', async () => {
     jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
     const stored = defaultNotificationState();
     stored.globalEnabled = true;
@@ -1149,7 +1149,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-026] does not suppress foreground delivery when snapshot persistence fails', async () => {
+  it('does not suppress foreground delivery when snapshot persistence fails', async () => {
     jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
     const stored = defaultNotificationState();
     stored.globalEnabled = true;
@@ -1196,7 +1196,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-025] still presents an Android notification while the message center is visible', async () => {
+  it('still presents an Android notification while the message center is visible', async () => {
     jest.mocked(notificationPermissionGranted).mockResolvedValue(true);
     const stored = defaultNotificationState();
     stored.globalEnabled = true;
@@ -1299,7 +1299,7 @@ describe('notification runtime', () => {
     await settleStartedRuntimeTasks();
   });
 
-  it('[REG-NOTIFY-023] lets only the latest account reconciliation persist its identity', async () => {
+  it('lets only the latest account reconciliation persist its identity', async () => {
     const stored = defaultNotificationState();
     stored.sources.nodeseek = {
       intentEnabled: true,

@@ -11,7 +11,7 @@ import {
 const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 
 describe('Android request helpers', () => {
-  it('[REG-PERF-019] rejects a raw HTTP 401 before adapter parsing but preserves other responses', async () => {
+  it('rejects a raw HTTP 401 before adapter parsing but preserves other responses', async () => {
     const unauthorized = rejectUnauthorizedResponse(
       vi.fn(async () => new Response('<html>login</html>', { status: 401 }))
     );
@@ -29,7 +29,7 @@ describe('Android request helpers', () => {
     }
   });
 
-  it('[REG-ACCOUNT-029] always enables the native read-only cookie jar without changing the request', async () => {
+  it('always enables the native read-only cookie jar without changing the request', async () => {
     const fetcher = vi.fn(async () => new Response('{}'));
 
     await fetchWithTimeout(
@@ -114,7 +114,7 @@ describe('Android request helpers', () => {
     }
   });
 
-  it('[REG-SOURCE-006] lets fallback scheduling replace the outer request timeout', async () => {
+  it('lets fallback scheduling replace the outer request timeout', async () => {
     vi.useFakeTimers();
     let resolveFallback!: (response: Response) => void;
     const fetcher = vi.fn((_input: string, init?: RequestInit) => {

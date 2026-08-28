@@ -61,7 +61,7 @@ const listCases: [string, boolean, TopicReplyListItem[], boolean, TopicReplyList
 ];
 
 describe('topic reply list model', () => {
-  it('[REG-PERF-010] rejects non-empty reply content without a gateway content plan', () => {
+  it('rejects non-empty reply content without a gateway content plan', () => {
     const unprepared = { ...reply, preparedContent: undefined };
     expect(() =>
       buildVirtualizedReplyItemsFromPlan({
@@ -76,7 +76,7 @@ describe('topic reply list model', () => {
     ).toThrow('论坛内容缺少匹配的预编译计划');
   });
 
-  it('[REG-TOPIC-090] preserves terminal rows in reply, signature, and expanded complete-quote consumers', () => {
+  it('preserves terminal rows in reply, signature, and expanded complete-quote consumers', () => {
     const report = (label: string) =>
       `<forum-terminal-report><forum-terminal-tab title="${label}"><div class="forum-terminal-code">${label} result</div></forum-terminal-tab></forum-terminal-report>`;
     const reference = { source: 'linuxdo' as const, topicId: 'quoted', postNumber: 4 };
@@ -108,7 +108,7 @@ describe('topic reply list model', () => {
     expect(types('replyQuoteContent')).toEqual(['terminalReportHeader', 'codeBlock']);
   });
 
-  it('[REG-TOPIC-088] treats absent signature content as a neutral single-cell budget', () => {
+  it('treats absent signature content as a neutral single-cell budget', () => {
     const items = buildVirtualizedReplyItems({
       expandedQuotes: {},
       loadedQuotedReplies: {},
@@ -122,7 +122,7 @@ describe('topic reply list model', () => {
     expect(items).toEqual([expect.objectContaining({ plannedRowCount: 1, reply, type: 'reply' })]);
   });
 
-  it('[REG-PERF-010] promotes a poll-only reply into a parent-list content row', () => {
+  it('promotes a poll-only reply into a parent-list content row', () => {
     const poll = { name: 'choice', options: [{ id: 'yes', label: 'Yes' }] };
     const items = buildVirtualizedReplyItems({
       expandedQuotes: {},
@@ -138,7 +138,7 @@ describe('topic reply list model', () => {
     expect(items[1]).toMatchObject({ content: { poll, type: 'poll' }, type: 'replyContent' });
   });
 
-  it('[REG-PERF-010] promotes a giant nested reply body into bounded parent-list rows', () => {
+  it('promotes a giant nested reply body into bounded parent-list rows', () => {
     const imageReply: Reply = {
       ...reply,
       commentId: 863650,
@@ -175,7 +175,7 @@ describe('topic reply list model', () => {
     ).toBe(2000);
   });
 
-  it('[REG-PERF-010] never combines independently safe body and signature media into one oversized reply cell', () => {
+  it('never combines independently safe body and signature media into one oversized reply cell', () => {
     const images = (prefix: string) =>
       Array.from({ length: 4 }, (_, index) => `<img src="https://img.example.com/${prefix}-${index}.jpg">`).join('');
     const mediaReply: Reply = {
@@ -205,7 +205,7 @@ describe('topic reply list model', () => {
     });
   });
 
-  it('[REG-PERF-010] keeps a cheap body and short signature on the ordinary single-cell path', () => {
+  it('keeps a cheap body and short signature on the ordinary single-cell path', () => {
     const cheapReply: Reply = {
       ...reply,
       commentId: 863653,
@@ -239,7 +239,7 @@ describe('topic reply list model', () => {
       label: 'serialized-size',
       signature: `<p data-note="${'s'.repeat(9_000)}">signature</p>`
     }
-  ])('[REG-PERF-010] applies the combined $label budget before using one reply cell', ({ body, signature }) => {
+  ])('applies the combined $label budget before using one reply cell', ({ body, signature }) => {
     const combinedReply: Reply = {
       ...reply,
       commentId: 863654,
@@ -260,7 +260,7 @@ describe('topic reply list model', () => {
     expect(items.map((item) => item.type)).toEqual(['replyStart', 'replyContent', 'replySignatureContent', 'replyEnd']);
   });
 
-  it('[REG-PERF-010] combines sibling-region depth by maximum instead of summing independent trees', () => {
+  it('combines sibling-region depth by maximum instead of summing independent trees', () => {
     const nested = (label: string) => `${'<span>'.repeat(38)}${label}${'</span>'.repeat(38)}`;
     const deepReply: Reply = {
       ...reply,
@@ -282,7 +282,7 @@ describe('topic reply list model', () => {
     expect(items).toEqual([expect.objectContaining({ reply: deepReply, type: 'reply' })]);
   });
 
-  it('[REG-PERF-010] propagates planner groups through split reply body, signature, and quote rows', () => {
+  it('propagates planner groups through split reply body, signature, and quote rows', () => {
     const oversizedDetails = (prefix: string) =>
       `<details><summary>${prefix}</summary><p>${Array.from(
         { length: 9 },
@@ -351,47 +351,44 @@ describe('topic reply list model', () => {
       contentHtml: '<p>safe reply body</p>',
       signatureHtml: `<p data-oversized="${'x'.repeat(20_000)}">safe signature</p>`
     }
-  ])(
-    '[REG-PERF-010] renders planner output when an oversized $label attribute is rewritten',
-    ({ contentHtml, signatureHtml }) => {
-      const unsafeReply: Reply = {
-        ...reply,
-        commentId: 863651,
-        contentHtml,
-        signatureHtml
-      };
+  ])('renders planner output when an oversized $label attribute is rewritten', ({ contentHtml, signatureHtml }) => {
+    const unsafeReply: Reply = {
+      ...reply,
+      commentId: 863651,
+      contentHtml,
+      signatureHtml
+    };
 
-      const items = buildVirtualizedReplyItems({
-        expandedQuotes: {},
-        loadedQuotedReplies: {},
-        loadingQuotedFloors: {},
-        replies: [unsafeReply],
-        repliesByFloor: new Map(),
-        source: 'nodeseek',
-        topicId: '863651'
-      });
+    const items = buildVirtualizedReplyItems({
+      expandedQuotes: {},
+      loadedQuotedReplies: {},
+      loadingQuotedFloors: {},
+      replies: [unsafeReply],
+      repliesByFloor: new Map(),
+      source: 'nodeseek',
+      topicId: '863651'
+    });
 
-      expect(items).toHaveLength(1);
-      const rendered = items[0];
-      expect(rendered).toMatchObject({ networkMediaCount: 0, plannedRowCount: 2, type: 'reply' });
-      if (rendered?.type !== 'reply') throw new Error('Expected a coalesced reply item.');
-      expect(rendered.bodyContent).toMatchObject({ type: 'richText', networkMediaCount: 0 });
-      expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
-        'safe reply body'
-      );
-      expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
-        'class="forum-reply-content"'
-      );
-      expect(
-        rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
-      ).toContain('safe signature');
-      expect(
-        rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
-      ).toContain('class="forum-reply-content"');
-    }
-  );
+    expect(items).toHaveLength(1);
+    const rendered = items[0];
+    expect(rendered).toMatchObject({ networkMediaCount: 0, plannedRowCount: 2, type: 'reply' });
+    if (rendered?.type !== 'reply') throw new Error('Expected a coalesced reply item.');
+    expect(rendered.bodyContent).toMatchObject({ type: 'richText', networkMediaCount: 0 });
+    expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
+      'safe reply body'
+    );
+    expect(rendered.bodyContent && 'html' in rendered.bodyContent ? rendered.bodyContent.html : '').toContain(
+      'class="forum-reply-content"'
+    );
+    expect(
+      rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
+    ).toContain('safe signature');
+    expect(
+      rendered.signatureContent && 'html' in rendered.signatureContent ? rendered.signatureContent.html : ''
+    ).toContain('class="forum-reply-content"');
+  });
 
-  it('REG-TOPIC-028 keeps replies with the same display floor as distinct list items', () => {
+  it('keeps replies with the same display floor as distinct list items', () => {
     const imageReply: Reply = {
       ...reply,
       commentId: 17900145,
@@ -427,7 +424,7 @@ describe('topic reply list model', () => {
     }
   );
 
-  it('[REG-TOPIC-109] uses the prepared quote cache when the local opening projection has no content plan', () => {
+  it('uses the prepared quote cache when the local opening projection has no content plan', () => {
     const contentHtml = '<p>Complete opening post.</p>';
     const topic: TopicDetail = {
       source: 'linuxdo',
@@ -479,7 +476,7 @@ describe('topic reply list model', () => {
     });
   });
 
-  it('[REG-TOPIC-054] keeps multiple quote rows ordered and removes only collapsed content', () => {
+  it('keeps multiple quote rows ordered and removes only collapsed content', () => {
     const firstReference = { source: 'linuxdo' as const, topicId: '100', postNumber: 1 };
     const secondReference = { source: 'linuxdo' as const, topicId: '200', postNumber: 2 };
     const quotingReply: Reply = {
@@ -541,7 +538,7 @@ describe('topic reply list model', () => {
     expect(expandedAgain.find((item) => item.type === 'replyQuoteContent')?.content).toBe(content?.content);
   });
 
-  it('[REG-TOPIC-028][REG-TOPIC-054] binds quote rows and expansion to the reply entity', () => {
+  it('binds quote rows and expansion to the reply entity', () => {
     const reference = { source: 'linuxdo' as const, topicId: '200', postNumber: 2 };
     const first: Reply = { ...reply, commentId: 101, floor: 68, quotedPosts: [{ reference }] };
     const second: Reply = { ...reply, commentId: 202, floor: 68, quotedPosts: [{ reference }] };
@@ -565,7 +562,7 @@ describe('topic reply list model', () => {
     expect(items.filter((item) => item.type === 'replyQuoteContent')).toHaveLength(1);
   });
 
-  it('[REG-TOPIC-055] materializes two cold quote rows before the measured instance expands fully', () => {
+  it('materializes two cold quote rows before the measured instance expands fully', () => {
     const reference = { source: 'linuxdo' as const, topicId: '342888', postNumber: 1 };
     const first: Reply = { ...reply, commentId: 301, quotedPosts: [{ reference }] };
     const second: Reply = { ...reply, commentId: 302, quotedPosts: [{ reference }] };

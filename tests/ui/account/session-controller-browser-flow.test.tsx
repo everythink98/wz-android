@@ -57,7 +57,7 @@ describe('session controller browser flow', () => {
     mockRecoverReadNetworkRuntime.mockReset();
   });
 
-  it('[REG-PROXY-010] wires a parsed fallback to the generation captured before HiddenBrowserHost starts', async () => {
+  it('wires a parsed fallback to the generation captured before HiddenBrowserHost starts', async () => {
     const requestStartGeneration = getReadNetworkRuntimeSnapshot().generation;
     mockRecoverReadNetworkRuntime.mockResolvedValue({
       ok: true,
@@ -122,7 +122,7 @@ describe('session controller browser flow', () => {
   });
 
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
-    '[REG-ACCOUNT-035] publishes an authoritative %s clear without owning the account transition',
+    'publishes an authoritative %s clear without owning the account transition',
     async (source) => {
       const clearManagedLoginCookies = jest.fn(async () => true);
       NativeModules.NetworkProxyModule = { clearManagedLoginCookies };
@@ -148,7 +148,7 @@ describe('session controller browser flow', () => {
     }
   );
 
-  it('[REG-ACCOUNT-035] keeps a failed clear non-terminal', async () => {
+  it('keeps a failed clear non-terminal', async () => {
     NativeModules.NetworkProxyModule = {
       clearManagedLoginCookies: jest.fn(async () => {
         throw new Error('native clear failed');
@@ -172,7 +172,7 @@ describe('session controller browser flow', () => {
     );
   });
 
-  it('[REG-ACCOUNT-035] publishes no terminal event for a stale clear', async () => {
+  it('publishes no terminal event for a stale clear', async () => {
     const firstNativeClear = Promise.withResolvers<boolean>();
     const clearManagedLoginCookies = jest
       .fn<() => Promise<boolean>>()

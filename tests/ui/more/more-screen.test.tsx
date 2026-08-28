@@ -499,7 +499,7 @@ describe('More screen state and actions', () => {
     expect(disabledSourceSwitches.every((control) => control.props.accessibilityState.checked === false)).toBe(true);
   });
 
-  it('[REG-MORE-001] keeps settled rows on an array-shaped identity transform while other panels expand', async () => {
+  it('keeps settled rows on an array-shaped identity transform while other panels expand', async () => {
     const view = await render(<MoreScreen {...moreProps()} />);
 
     expect(view.queryByTestId('content-source-row-v2ex')).toBeNull();
@@ -519,7 +519,7 @@ describe('More screen state and actions', () => {
     expect(view.getByLabelText('导出备份文件')).toBeTruthy();
   });
 
-  it('[REG-PERF-011] keeps drag frames off JS and persists the final source order once', async () => {
+  it('keeps drag frames off JS and persists the final source order once', async () => {
     const updateSettings = jest.fn();
     const view = await render(<MoreScreen {...moreProps({ utilities: { settings: { update: updateSettings } } })} />);
     await fireEvent.press(view.getByLabelText('展开内容源'));
@@ -614,7 +614,7 @@ describe('More screen state and actions', () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-012][REG-MORE-002][REG-MORE-003] keeps each source on one native host across forward and reverse reorders', async () => {
+  it('keeps each source on one native host across forward and reverse reorders', async () => {
     const updateSettings = jest.fn();
     const props = moreProps({ utilities: { settings: { update: updateSettings } } });
     const view = await render(<MoreScreen {...props} />);
@@ -740,7 +740,7 @@ describe('More screen state and actions', () => {
     ['screen-reader discovery is pending', null],
     ['screen-reader discovery fails', 'reject'],
     ['screen reader is enabled', true]
-  ])('[REG-MORE-004] follows persisted preference order while %s', async (_case, screenReaderState) => {
+  ])('follows persisted preference order while %s', async (_case, screenReaderState) => {
     mockScreenReaderInitialState = screenReaderState;
     const updateSettings = jest.fn();
     const reorderedContentSources = [
@@ -800,7 +800,7 @@ describe('More screen state and actions', () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
-  it('[REG-MORE-004] cancels an unfinished drag when screen-reader mode turns on', async () => {
+  it('cancels an unfinished drag when screen-reader mode turns on', async () => {
     mockScreenReaderInitialState = false;
     const updateSettings = jest.fn();
     const reorderedContentSources = [
@@ -897,7 +897,7 @@ describe('More screen state and actions', () => {
     }
   });
 
-  it('[REG-MORE-004] ignores queued visual drag callbacks after screen-reader mode rotation', async () => {
+  it('ignores queued visual drag callbacks after screen-reader mode rotation', async () => {
     mockScreenReaderInitialState = false;
     const updateSettings = jest.fn();
     const view = await render(
@@ -939,7 +939,7 @@ describe('More screen state and actions', () => {
   it.each<[string, null | 'reject']>([
     ['screen-reader discovery is pending', null],
     ['screen-reader discovery fails', 'reject']
-  ])('[REG-MORE-004] keeps drag writes disabled while %s', async (_case, screenReaderState) => {
+  ])('keeps drag writes disabled while %s', async (_case, screenReaderState) => {
     mockScreenReaderInitialState = screenReaderState;
     const updateSettings = jest.fn();
     const view = await render(
@@ -965,7 +965,7 @@ describe('More screen state and actions', () => {
     }).toEqual({ gestureEnabled: false, persistedChanges: 0 });
   });
 
-  it('[REG-NOTIFY-052] shows which More entry owns the unread badge', async () => {
+  it('shows which More entry owns the unread badge', async () => {
     const open = jest.fn();
     const view = await render(
       <MoreScreen
@@ -1109,13 +1109,13 @@ describe('More screen state and actions', () => {
     expect(onImportBackupFile).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TEST-003] never exposes an in-app anonymous simulation', async () => {
+  it('never exposes an in-app anonymous simulation', async () => {
     const view = await render(<MoreScreen {...moreProps()} />);
 
     expect(view.queryByLabelText('展开测试工具')).toBeNull();
   });
 
-  it('[REG-NODESEEK-004] updates the read-channel threshold from Account Center', async () => {
+  it('updates the read-channel threshold from Account Center', async () => {
     const updateSettings = jest.fn();
     const view = await render(
       <MoreScreen

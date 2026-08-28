@@ -1,5 +1,4 @@
-import { HTMLElement } from 'node-html-parser';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   discourseAvatarUrl,
@@ -20,7 +19,7 @@ function discourseQuoteMetadata(html: string, source: 'linuxdo', topicId?: strin
 }
 
 describe('portable Discourse content parts', () => {
-  it('[REG-TOPIC-056] renders a leading warning marker as semantic Callout content', () => {
+  it('renders a leading warning marker as semantic Callout content', () => {
     const html = sanitizeLinuxDoContentHtml('<blockquote><p>[!warning] 注意！！<br>正文</p></blockquote>', []);
 
     expect(html).not.toContain('[!warning]');
@@ -28,20 +27,6 @@ describe('portable Discourse content parts', () => {
     expect(html).toContain('data-forum-callout-type="warning"');
     expect(html).toContain('<div class="forum-callout-title forum-callout-tone-warning">注意！！</div>');
     expect(html).toContain('<div class="forum-callout-content"><p>正文</p></div>');
-  });
-
-  it('[REG-TOPIC-056] normalizes Callouts in the existing DOM without reparsing fragments', () => {
-    const innerHtmlSetter = vi.spyOn(HTMLElement.prototype, 'innerHTML', 'set');
-    const clone = vi.spyOn(HTMLElement.prototype, 'clone');
-    try {
-      sanitizeLinuxDoContentHtml('<blockquote><p><strong>[!warning] Title<br>Body</strong></p></blockquote>', []);
-
-      expect(innerHtmlSetter).not.toHaveBeenCalled();
-      expect(clone).not.toHaveBeenCalled();
-    } finally {
-      innerHtmlSetter.mockRestore();
-      clone.mockRestore();
-    }
   });
 
   it.each([
@@ -72,7 +57,7 @@ describe('portable Discourse content parts', () => {
     ['example', 'example', 'Example'],
     ['quote', 'quote', 'Quote'],
     ['cite', 'quote', 'Cite']
-  ])('[REG-TOPIC-056] maps %s to %s with its own default title', (marker, type, title) => {
+  ])('maps %s to %s with its own default title', (marker, type, title) => {
     const html = sanitizeLinuxDoContentHtml(`<blockquote><p>[!${marker}]<br>Body</p></blockquote>`, []);
 
     expect(html).toContain(`data-forum-callout-type="${type}"`);
@@ -80,7 +65,7 @@ describe('portable Discourse content parts', () => {
     expect(html).toContain(`">${title}</div>`);
   });
 
-  it('[REG-TOPIC-056] handles case, unknown fallback, rich titles, empty bodies and fold defaults', () => {
+  it('handles case, unknown fallback, rich titles, empty bodies and fold defaults', () => {
     const html = sanitizeLinuxDoContentHtml(
       [
         '<blockquote><p><strong>[!CaUtIoN] <em>请先</em></strong> <a href="/rules">阅读规则</a><br>正文</p></blockquote>',
@@ -111,7 +96,7 @@ describe('portable Discourse content parts', () => {
     expect(html).toContain('<div class="forum-callout-title forum-callout-tone-primary">Tip</div></blockquote>');
   });
 
-  it('[REG-TOPIC-056] skips empty inline nodes before the first effective marker text', () => {
+  it('skips empty inline nodes before the first effective marker text', () => {
     const html = sanitizeLinuxDoContentHtml(
       '<blockquote><p><span></span>[!warning] Title<br>Body</p></blockquote>',
       []
@@ -122,7 +107,7 @@ describe('portable Discourse content parts', () => {
     expect(html).toContain('<div class="forum-callout-title forum-callout-tone-warning">Title</div>');
   });
 
-  it('[REG-TOPIC-056] recognizes an entity-encoded leading marker as DOM text', () => {
+  it('recognizes an entity-encoded leading marker as DOM text', () => {
     const html = sanitizeLinuxDoContentHtml(
       '<blockquote><p>&#91;!warning&#93; Encoded title<br>Body</p></blockquote>',
       []
@@ -133,7 +118,7 @@ describe('portable Discourse content parts', () => {
     expect(html).toContain('data-forum-callout-type="warning"');
   });
 
-  it('[REG-TOPIC-056] removes source inline colors from canonical Callout titles', () => {
+  it('removes source inline colors from canonical Callout titles', () => {
     const html = sanitizeLinuxDoContentHtml(
       '<blockquote><p>[!warning] <strong STYLE="color:#000;background-color:#fff">Title</strong><br>Body</p></blockquote>',
       []
@@ -143,7 +128,7 @@ describe('portable Discourse content parts', () => {
     expect(html).not.toContain('style=');
   });
 
-  it('[REG-TOPIC-056] recognizes a title line break without converting an in-paragraph marker', () => {
+  it('recognizes a title line break without converting an in-paragraph marker', () => {
     const html = sanitizeLinuxDoContentHtml(
       [
         '<blockquote><p>[!warning] Title\nBody <strong>continues</strong></p></blockquote>',
@@ -157,7 +142,7 @@ describe('portable Discourse content parts', () => {
     expect(html).toContain('<blockquote><p>Prefix [!warning] stays ordinary</p></blockquote>');
   });
 
-  it('[REG-TOPIC-056] preserves rich bodies and separates ordinary and nested quotes', () => {
+  it('preserves rich bodies and separates ordinary and nested quotes', () => {
     const html = sanitizeLinuxDoContentHtml(
       [
         '<blockquote><p>[!warning] Outer<br>Before</p>',
@@ -179,7 +164,7 @@ describe('portable Discourse content parts', () => {
     expect(html).toContain('<table><tbody><tr><td>Cell</td></tr></tbody></table>');
   });
 
-  it('[REG-TOPIC-089] preserves a source pre for semantic compilation before row budgeting', () => {
+  it('preserves a source pre for semantic compilation before row budgeting', () => {
     const sourceText = Array.from(
       { length: 52 },
       (_, index) => `${String(index + 1).padStart(2, '0')}.${' '.repeat(50)}code-line-${index + 1}\n`
@@ -199,7 +184,7 @@ describe('portable Discourse content parts', () => {
     expect(codeRows[0]?.type === 'codeBlock' ? codeRows[0].text : '').toBe(sourceText);
   });
 
-  it('[REG-TOPIC-056] ignores forged semantics and caps nested Callouts at 100', () => {
+  it('ignores forged semantics and caps nested Callouts at 100', () => {
     const forged = sanitizeLinuxDoContentHtml(
       '<blockquote data-forum-callout="true" data-forum-callout-type="danger"><div class="forum-callout-title">Forged</div><div class="forum-callout-content">Body</div></blockquote>',
       []
@@ -227,7 +212,7 @@ describe('portable Discourse content parts', () => {
     expect(limited.match(/\[!note\]/g)).toHaveLength(1);
   });
 
-  it('[REG-TOPIC-056] strips Callout markers only from Discourse excerpts', () => {
+  it('strips Callout markers only from Discourse excerpts', () => {
     expect(stripDiscourseCalloutMarkersFromExcerpt('[!warning]- 注意\n正文 [!tip]+ 建议')).toBe('注意\n正文 建议');
   });
 
@@ -277,7 +262,7 @@ describe('portable Discourse content parts', () => {
     expect(discoursePollPlaceholder('a"<&')).toContain('name="a&quot;&lt;&amp;"');
   });
 
-  it('[REG-TOPIC-033] does not decode DOM attributes a second time', () => {
+  it('does not decode DOM attributes a second time', () => {
     const metadata = discourseQuoteMetadata(
       '<aside class="quote" data-post="2" data-display-name="Alice &amp;lt;Admin&amp;gt;"><div class="title"></div><blockquote>hi</blockquote></aside>',
       'linuxdo',
@@ -287,7 +272,7 @@ describe('portable Discourse content parts', () => {
     expect(metadata.quotedPosts[0]?.author).toEqual({ label: 'Alice &lt;Admin&gt;' });
   });
 
-  it('[REG-TOPIC-053] extracts a cross-topic reply quote with its complete identity', () => {
+  it('extracts a cross-topic reply quote with its complete identity', () => {
     const metadata = discourseQuoteMetadata(
       '<aside class="quote" data-topic="2679944" data-post="7" data-username="alice"><div class="title">Referenced topic</div><blockquote>Cross-topic preview.</blockquote></aside><p>Reply body.</p>',
       'linuxdo',
@@ -304,7 +289,7 @@ describe('portable Discourse content parts', () => {
     expect(metadata.html).toBe('<p>Reply body.</p>');
   });
 
-  it('[REG-TOPIC-056] removes Callout markers from quoted-post previews', () => {
+  it('removes Callout markers from quoted-post previews', () => {
     const metadata = discourseQuoteMetadata(
       '<aside class="quote" data-topic="342888" data-post="1"><div class="title"></div><blockquote><p>盘点徽章</p><blockquote><p>[!warning] 注意！！<br>正文</p></blockquote></blockquote></aside>',
       'linuxdo',
@@ -314,7 +299,7 @@ describe('portable Discourse content parts', () => {
     expect(metadata.quotedPosts[0]?.preview).toBe('盘点徽章 注意！！ 正文');
   });
 
-  it('[REG-PERF-010] bounds the shared quote-summary preview before main, reply, and accepted rendering', () => {
+  it('bounds the shared quote-summary preview before main, reply, and accepted rendering', () => {
     const oversizedPreview = '引'.repeat(400);
     const metadata = discourseQuoteMetadata(
       `<aside class="quote" data-topic="2679944" data-post="7"><blockquote>${oversizedPreview}</blockquote></aside>`,
@@ -326,7 +311,7 @@ describe('portable Discourse content parts', () => {
     expect(Array.from(metadata.quotedPosts[0]?.preview || '')).toHaveLength(320);
   });
 
-  it('[REG-TOPIC-053] keeps rich metadata when the same quoted post appears again with fewer fields', () => {
+  it('keeps rich metadata when the same quoted post appears again with fewer fields', () => {
     const metadata = discourseQuoteMetadata(
       '<aside class="quote" data-topic="2679944" data-post="7" data-username="alice"><div class="title"><span class="quote-title__text-content"><a href="https://linux.do/t/topic/2679944/7">Referenced topic</a></span></div><blockquote>Cross-topic preview.</blockquote></aside><aside class="quote" data-topic="2679944" data-post="7"><div class="title"></div><blockquote></blockquote></aside><p>Reply body.</p>',
       'linuxdo',

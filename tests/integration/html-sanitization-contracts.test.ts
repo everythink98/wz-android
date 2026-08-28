@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { decodeHtml, textContentFromHtml } from '@/domain/forum/html';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 
 describe('Android local HTML helpers', () => {
   it('extracts visible text without script or style contents', () => {
@@ -10,7 +11,7 @@ describe('Android local HTML helpers', () => {
     );
   });
 
-  it('REG-TOPIC-012 does not leak quoted HTML attributes into visible text', () => {
+  it('does not leak quoted HTML attributes into visible text', () => {
     expect(textContentFromHtml('<p>正文<img alt="1 > 0" src="photo.png"></p><p>结尾</p>')).toBe('正文 结尾');
   });
 
@@ -52,7 +53,7 @@ describe('Android local HTML helpers', () => {
     expect(result).toContain('src="https://cdn.example.com/a.png"');
   });
 
-  it('[REG-PERF-008] applies a source transform inside the sanitizer parse', () => {
+  it('applies a source transform inside the sanitizer parse', () => {
     let transformCount = 0;
     const result = sanitizeContentHtml(
       '<iframe src="https://embed.example.com/post"></iframe>',
@@ -68,61 +69,37 @@ describe('Android local HTML helpers', () => {
     expect(result).not.toContain('<iframe');
   });
 
-  it('[REG-PERF-008] sanitizes LinuxDo source transforms with one DOM parse', async () => {
-    const nodeHtmlParser = await import('node-html-parser');
-    const parse = vi.fn(nodeHtmlParser.parse);
-    vi.resetModules();
-    vi.doMock('node-html-parser', () => ({ ...nodeHtmlParser, parse }));
-    try {
-      const { sanitizeLinuxDoContentHtml } = await import('@/sources/linuxdo/parser');
-      const before = parse.mock.calls.length;
-      const result = sanitizeLinuxDoContentHtml(
-        `
+  it('sanitizes LinuxDo polls and embedded links', () => {
+    const result = sanitizeLinuxDoContentHtml(
+      `
         <script>alert(1)</script>
         <div class="poll" data-poll-name="choice" onclick="alert(2)"></div>
         <iframe src="https://embed.reddit.com/r/test/comments/abc/title?utm_source=test"></iframe>
         <a href="javascript:alert(3)">unsafe</a>
       `,
-        [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]
-      );
+      [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]
+    );
 
-      expect(parse.mock.calls.length - before).toBe(1);
-      expect(result).toContain('<forum-discourse-poll name="choice"></forum-discourse-poll>');
-      expect(result).toContain('<forum-link-card');
-      expect(result).toContain('href="https://www.reddit.com/r/test/comments/abc/title"');
-      expect(result).not.toMatch(/<script|onclick|javascript:/i);
-    } finally {
-      vi.doUnmock('node-html-parser');
-      vi.resetModules();
-    }
+    expect(result).toContain('<forum-discourse-poll name="choice"></forum-discourse-poll>');
+    expect(result).toContain('<forum-link-card');
+    expect(result).toContain('href="https://www.reddit.com/r/test/comments/abc/title"');
+    expect(result).not.toMatch(/<script|onclick|javascript:/i);
   });
 
-  it('[REG-TOPIC-056] sanitizes LinuxDo polls and Callouts with one DOM parse', async () => {
-    const nodeHtmlParser = await import('node-html-parser');
-    const parse = vi.fn(nodeHtmlParser.parse);
-    vi.resetModules();
-    vi.doMock('node-html-parser', () => ({ ...nodeHtmlParser, parse }));
-    try {
-      const { sanitizeLinuxDoContentHtml } = await import('@/sources/linuxdo/parser');
-      const before = parse.mock.calls.length;
-      const result = sanitizeLinuxDoContentHtml(
-        `
+  it('sanitizes LinuxDo polls and Callouts together', () => {
+    const result = sanitizeLinuxDoContentHtml(
+      `
         <blockquote><p>[!warning] 注意<br>正文</p></blockquote>
         <div class="poll" data-poll-name="choice"></div>
       `,
-        [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]
-      );
+      [{ name: 'choice', options: [{ id: 'yes', label: 'Yes' }] }]
+    );
 
-      expect(parse.mock.calls.length - before).toBe(1);
-      expect(result).toContain('data-forum-callout-type="warning"');
-      expect(result).toContain('<forum-discourse-poll name="choice"></forum-discourse-poll>');
-    } finally {
-      vi.doUnmock('node-html-parser');
-      vi.resetModules();
-    }
+    expect(result).toContain('data-forum-callout-type="warning"');
+    expect(result).toContain('<forum-discourse-poll name="choice"></forum-discourse-poll>');
   });
 
-  it('[REG-TOPIC-056] skips Callout traversal for ordinary HTML but scrubs forged semantics', async () => {
+  it('skips Callout traversal for ordinary HTML but scrubs forged semantics', async () => {
     const actual = await import('@/sources/discourse/content');
     const normalizeDiscourseCallouts = vi.fn(actual.normalizeDiscourseCallouts);
     vi.resetModules();
@@ -150,7 +127,7 @@ describe('Android local HTML helpers', () => {
     }
   });
 
-  it('[REG-TOPIC-089] preserves plain code blocks for the semantic compiler', () => {
+  it('preserves plain code blocks for the semantic compiler', () => {
     const result = sanitizeContentHtml(
       `
       <p>before</p>

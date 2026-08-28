@@ -13,7 +13,7 @@ vi.mock('react-native-render-html', () => {
 });
 
 describe('topic HTML element models', () => {
-  it('[REG-TOPIC-066] keeps full-size stickers out of native text-line layout', () => {
+  it('keeps full-size stickers out of native text-line layout', () => {
     expect(HTML_CUSTOM_ELEMENT_MODELS[FORUM_STICKER_TAG].contentModel).toBe(HTMLContentModel.block);
   });
 });

@@ -23,7 +23,7 @@ function renderedHtml(view: Awaited<ReturnType<typeof render>>) {
 }
 
 describe('render-ready forum content rows', () => {
-  it('[REG-PERF-010] forwards compiler-owned HTML to RenderHTMLSource without a post-compile wrapper or rewrite', async () => {
+  it('forwards compiler-owned HTML to RenderHTMLSource without a post-compile wrapper or rewrite', async () => {
     const [row] = compileForumContent({
       html: '<p>already <forum-inline-image src="https://cdn.example/smile.png">smile</forum-inline-image></p>',
       role: 'reply',
@@ -35,7 +35,7 @@ describe('render-ready forum content rows', () => {
     expect(renderedHtml(view)).toBe(row.html);
   });
 
-  it('[REG-PERF-010] budgets the compact presentation shell in the final RenderHTMLSource HTML', async () => {
+  it('budgets the compact presentation shell in the final RenderHTMLSource HTML', async () => {
     const compilation = compileForumContent({
       html: Array.from({ length: 40 }, (_, index) => `<p>node-${index}</p>`).join(''),
       role: 'reply',
@@ -53,7 +53,7 @@ describe('render-ready forum content rows', () => {
     }
   });
 
-  it('[REG-PERF-010] compiles NodeSeek reply references and sticker expansion before row budgeting', async () => {
+  it('compiles NodeSeek reply references and sticker expansion before row budgeting', async () => {
     const compilation = compileForumContent({
       html: '<p><a href="/member?t=alice">@alice</a> <a href="/post-123-1#2">#2</a> hello <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01"></p>',
       role: 'reply',
@@ -72,7 +72,7 @@ describe('render-ready forum content rows', () => {
     expect(domNodeCount(source)).toBeLessThanOrEqual(80);
   });
 
-  it('[REG-PERF-010] keeps a dynamic V2EX image in compiler-owned bounded variants without rewriting the row', async () => {
+  it('keeps a dynamic V2EX image in compiler-owned bounded variants without rewriting the row', async () => {
     const imageUrl = 'https://i.imgur.com/dynamic.png';
     const compilation = compileForumContent({
       html: `<p>before <img class="embedded_image" src="${imageUrl}"> after</p>`,

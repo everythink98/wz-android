@@ -243,7 +243,7 @@ describe('notification screens', () => {
     expect(view.queryByLabelText('NodeSeek，未读，张三，回复了你，一个主题')).toBeNull();
   });
 
-  it('[REG-NOTIFY-015] renders one compact retry action for each failed source', async () => {
+  it('renders one compact retry action for each failed source', async () => {
     const onItemPress = jest.fn();
     const onRetrySource = jest.fn();
     const view = await render(
@@ -279,7 +279,7 @@ describe('notification screens', () => {
     expect(view.getByText('逐条打开后已读')).toBeTruthy();
   });
 
-  it('[REG-NOTIFY-031] renders adapter-owned categories only for a selected source', async () => {
+  it('renders adapter-owned categories only for a selected source', async () => {
     const onChangeCategory = jest.fn();
     const categories = [
       { id: 'all', label: '全部' },
@@ -370,7 +370,7 @@ describe('notification screens', () => {
     expect(view.queryByText(/请先登录/)).toBeNull();
   });
 
-  it('[REG-ACCOUNT-031] presents a terminal unknown message source as retryable instead of logged out', async () => {
+  it('presents a terminal unknown message source as retryable instead of logged out', async () => {
     const view = await render(
       <NotificationsScreen {...listProps()} activeSources={[]} items={[]} source="yaohuo" sourceUnknown />
     );
@@ -380,7 +380,7 @@ describe('notification screens', () => {
     expect(view.queryByText('请先登录 妖火，并确认账号身份。')).toBeNull();
   });
 
-  it('[REG-NOTIFY-019] never renders cached private rows for a pending source', async () => {
+  it('never renders cached private rows for a pending source', async () => {
     const view = await render(
       <NotificationsScreen {...listProps()} activeSources={[]} source="nodeseek" sourcePending />
     );
@@ -429,7 +429,7 @@ describe('notification screens', () => {
     expect(onOpenTopic).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-NOTIFY-040] gives rich notification links the app accent affordance', async () => {
+  it('gives rich notification links the app accent affordance', async () => {
     const view = await render(
       <NotificationDetailScreen
         contentWidth={360}
@@ -449,7 +449,7 @@ describe('notification screens', () => {
     );
   });
 
-  it('[REG-NOTIFY-044][REG-NOTIFY-045] keeps Yaohuo topic links in-app and preserves the full-reply page', async () => {
+  it('keeps Yaohuo topic links in-app and preserves the full-reply page', async () => {
     const onOpenExternalUrl = jest.fn();
     const onOpenTopic = jest.fn();
     const view = await render(
@@ -520,7 +520,7 @@ describe('notification screens', () => {
     expect(view.getByText('系统通知由原站提供为只读。')).toBeTruthy();
   });
 
-  it('[REG-NOTIFY-034] keeps fixed detail actions above the bottom safe area', async () => {
+  it('keeps fixed detail actions above the bottom safe area', async () => {
     mockSafeAreaBottom = 24;
     const view = await render(
       <NotificationDetailScreen
@@ -552,7 +552,7 @@ describe('notification screens', () => {
     mockSafeAreaBottom = 0;
   });
 
-  it('[REG-NOTIFY-041] lets the shared composer grow through the safe viewport before clipping actions', async () => {
+  it('lets the shared composer grow through the safe viewport before clipping actions', async () => {
     mockSafeAreaBottom = 24;
     mockSafeAreaTop = 24;
     const view = await render(
@@ -584,7 +584,7 @@ describe('notification screens', () => {
     mockSafeAreaTop = 0;
   });
 
-  it('[REG-NOTIFY-031][REG-NOTIFY-032] renders ordered conversation bubbles and the site-format reply composer', async () => {
+  it('renders ordered conversation bubbles and the site-format reply composer', async () => {
     const scrollToEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd').mockImplementation(() => undefined);
     const onOpenReply = jest.fn();
     const onReplyContentChange = jest.fn();
@@ -785,7 +785,7 @@ describe('notification screens', () => {
     scrollToEnd.mockRestore();
   });
 
-  it('[REG-NOTIFY-032] snapshots exactly once before route blur closes the structured composer', async () => {
+  it('snapshots exactly once before route blur closes the structured composer', async () => {
     const onReplyClose = jest.fn();
     const onReplySnapshot = jest.fn();
     const detail = {
@@ -857,7 +857,7 @@ describe('notification screens', () => {
     expect(onReplySnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-NOTIFY-057] renders NodeSeek private-message Markdown and stickers as forum content', async () => {
+  it('renders NodeSeek private-message Markdown and stickers as forum content', async () => {
     const detail = {
       notification: { ...notification, kind: 'private-message' as const },
       title: '与 KongB 的私信',
@@ -940,7 +940,7 @@ describe('notification screens', () => {
     }
   });
 
-  it('[REG-PERF-019] keeps a signed-in LinuxDo notification source available while its account check runs', async () => {
+  it('keeps a signed-in LinuxDo notification source available while its account check runs', async () => {
     const sessions = createSiteSessionViewModels(
       createSiteSessionStates({
         linuxdo: {
@@ -977,7 +977,7 @@ describe('notification screens', () => {
     expect(view.getAllByText('未登录；开关意图会保留')).toHaveLength(2);
   });
 
-  it('[REG-ACCOUNT-031] shows terminal unknown as retryable instead of logged out', async () => {
+  it('shows terminal unknown as retryable instead of logged out', async () => {
     const sessions = createSiteSessionViewModels(createSiteSessionStates());
     sessions.yaohuo = { ...sessions.yaohuo, identityTrust: 'unknown' };
     const view = await render(

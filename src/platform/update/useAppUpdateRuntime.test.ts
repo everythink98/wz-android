@@ -72,7 +72,7 @@ describe('app update controller', () => {
     };
   }
 
-  it('REG-UPDATE-001 blocks an old update download while a new update check is running', async () => {
+  it('blocks an old update download while a new update check is running', async () => {
     mocks.initialUpdateInfo = updateInfo('1.4.0');
     const check = Promise.withResolvers<null>();
     mocks.checkGithubAppUpdate.mockReturnValueOnce(check.promise);
@@ -106,7 +106,7 @@ describe('app update controller', () => {
     );
   });
 
-  it('[REG-UPDATE-005] prunes only old update APKs and keeps the successful target', async () => {
+  it('prunes only old update APKs and keeps the successful target', async () => {
     const beforeRequest = vi.fn(async () => undefined);
     const oldTarget = `wz-update-139-${'c'.repeat(64)}.apk`;
     mocks.initialUpdateInfo = updateInfo('1.4.0');
@@ -130,7 +130,7 @@ describe('app update controller', () => {
     );
   });
 
-  it('[REG-UPDATE-006] gives different APK contents distinct installer file identities', async () => {
+  it('gives different APK contents distinct installer file identities', async () => {
     mocks.createDownloadResumable.mockImplementation((_url, target) => ({
       downloadAsync: vi.fn(async () => ({ status: 200, uri: target }))
     }));
@@ -148,7 +148,7 @@ describe('app update controller', () => {
     ]);
   });
 
-  it('[REG-UPDATE-005] removes the prepared partial APK after a failed download', async () => {
+  it('removes the prepared partial APK after a failed download', async () => {
     mocks.initialUpdateInfo = updateInfo('1.6.0');
     mocks.createDownloadResumable.mockReturnValue({
       downloadAsync: vi.fn(async () => {

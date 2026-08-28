@@ -49,7 +49,7 @@ function adapter(result: 'ok' | 'fail'): NotificationAdapter {
 }
 
 describe('notification gateway', () => {
-  it('[REG-PERF-019] expires the captured notification epoch only for raw HTTP 401', async () => {
+  it('expires the captured notification epoch only for raw HTTP 401', async () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.listPage = vi.fn(async (options) => {
       await options.fetcher?.('https://www.nodeseek.com/notification');
@@ -214,7 +214,7 @@ describe('notification gateway', () => {
   });
 
   it.each(['list', 'snapshot', 'detail', 'mutate'] as const)(
-    '[REG-ACCOUNT-041] stops %s before its next private transport when canonical account access closes mid-flight',
+    'stops %s before its next private transport when canonical account access closes mid-flight',
     async (operationName) => {
       let privateAccessCurrent = true;
       const firstResponse = Promise.withResolvers<Response>();
@@ -301,7 +301,7 @@ describe('notification gateway', () => {
     expect(sourceAdapter.listPage).not.toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-031] forwards adapter-owned categories into category-scoped list reads', async () => {
+  it('forwards adapter-owned categories into category-scoped list reads', async () => {
     const sourceAdapter = adapter('ok');
     const gateway = createNotificationGateway({
       adapters: {
@@ -351,7 +351,7 @@ describe('notification gateway', () => {
     expect(sourceAdapter.listPage).not.toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-021] rejects a list retry after the confirmed account changes', async () => {
+  it('rejects a list retry after the confirmed account changes', async () => {
     const sourceAdapter = adapter('ok');
     const gateway = createNotificationGateway({
       adapters: {
@@ -470,7 +470,7 @@ describe('notification gateway', () => {
     expect(sourceAdapter.markRead).not.toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-031] returns an unconfirmed reply without persisting its private body in diagnostics', async () => {
+  it('returns an unconfirmed reply without persisting its private body in diagnostics', async () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.replyToConversation = vi.fn(async () => ({ confirmed: false, message: '未确认' }));
     const gateway = createNotificationGateway({
@@ -512,7 +512,7 @@ describe('notification gateway', () => {
     );
   });
 
-  it('[REG-NOTIFY-032] uploads private-message images through the existing NodeImage and Discourse clients', async () => {
+  it('uploads private-message images through the existing NodeImage and Discourse clients', async () => {
     const file = {
       uri: 'file:///PRIVATE_IMAGE_NAME.png',
       name: 'PRIVATE_IMAGE_NAME.png',
@@ -579,7 +579,7 @@ describe('notification gateway', () => {
     ]);
   });
 
-  it('[REG-NOTIFY-032] keeps LinuxDo composer requests on the captured identity and guards CSRF before POST', async () => {
+  it('keeps LinuxDo composer requests on the captured identity and guards CSRF before POST', async () => {
     let identityCurrent = true;
     const privateAccessAllowed = vi.fn((_source: NotificationSource, identityKey: string) => {
       expect(identityKey).toBe('linuxdo:alice');
@@ -612,7 +612,7 @@ describe('notification gateway', () => {
     expect(privateAccessAllowed).toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-032] stops an aborted LinuxDo composer request before reading access', async () => {
+  it('stops an aborted LinuxDo composer request before reading access', async () => {
     const readAccess = vi.fn(async () => ({ identityKey: 'linuxdo:alice', userId: 'alice' }));
     const gateway = createNotificationGateway({ readAccess }) as ReturnType<
       typeof createProductionNotificationGateway

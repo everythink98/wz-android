@@ -20,7 +20,7 @@ const signing = {
   WZ_ANDROID_KEY_PASSWORD: 'key-secret'
 };
 
-describe('REG-OPS-016 Java version provenance', () => {
+describe('Java version provenance', () => {
   it.each([
     [
       'OpenJDK',
@@ -53,7 +53,7 @@ describe('REG-OPS-016 Java version provenance', () => {
   });
 });
 
-describe('REG-OPS-015 release environment boundary', () => {
+describe('release environment boundary', () => {
   it('loads only release allowlist values without mutating the inherited environment', () => {
     const inherited = {
       PATH: 'tools',

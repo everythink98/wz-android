@@ -174,7 +174,7 @@ describe('app runtime startup', () => {
     mockUseForumCatalogRuntime.mockClear();
   });
 
-  it('[REG-PROXY-001][REG-PROXY-011] exposes local routes while keeping WebViews blocked during proxy load', async () => {
+  it('exposes local routes while keeping WebViews blocked during proxy load', async () => {
     const hook = await renderHook(() => useAppRuntime());
 
     expect(hook.result.current.routes).not.toBeNull();
@@ -185,7 +185,7 @@ describe('app runtime startup', () => {
     );
   });
 
-  it('[REG-PERF-023] keeps the navigation ready callback stable and preserves callback order', async () => {
+  it('keeps the navigation ready callback stable and preserves callback order', async () => {
     const hook = await renderHook(
       ({ revision }: { revision: number }) => {
         void revision;
@@ -206,7 +206,7 @@ describe('app runtime startup', () => {
     );
   });
 
-  it('[REG-PERF-015] shares one Reader index and ignores unrelated ReaderData changes', async () => {
+  it('shares one Reader index and ignores unrelated ReaderData changes', async () => {
     mockReaderData = undefined;
     const hook = await renderHook(
       ({ revision }: { revision: number }) => {
@@ -236,7 +236,7 @@ describe('app runtime startup', () => {
     ).not.toBe(feedIndex);
   });
 
-  it('[REG-PERF-014] settles only after Feed and Categories reach terminal state', async () => {
+  it('settles only after Feed and Categories reach terminal state', async () => {
     const hook = await renderHook(() => useInitialForegroundRuntime());
 
     expect(hook.result.current.initialForegroundReady).toBe(false);
@@ -248,7 +248,7 @@ describe('app runtime startup', () => {
     expect(hook.result.current.initialForegroundReady).toBe(true);
   });
 
-  it('[REG-PERF-014] ignores the empty catalog projection before ReaderData is loaded', async () => {
+  it('ignores the empty catalog projection before ReaderData is loaded', async () => {
     mockReaderDataLoaded = false;
     const hook = await renderHook(
       ({ revision }: { revision: number }) => {
@@ -269,7 +269,7 @@ describe('app runtime startup', () => {
     );
   });
 
-  it('[REG-PERF-014] starts foreground transport immediately and background work after first Feed content', async () => {
+  it('starts foreground transport immediately and background work after first Feed content', async () => {
     const hook = await renderHook(
       ({ revision }: { revision: number }) => {
         void revision;
@@ -302,7 +302,7 @@ describe('app runtime startup', () => {
     expect(mockUseAppUpdateRuntime).toHaveBeenLastCalledWith(expect.objectContaining({ autoCheck: true }));
   });
 
-  it('[REG-PERF-019] withholds routes and remote queries until local account sessions are restored', async () => {
+  it('withholds routes and remote queries until local account sessions are restored', async () => {
     mockSessionsReady = false;
     const hook = await renderHook(
       ({ revision }: { revision: number }) => {

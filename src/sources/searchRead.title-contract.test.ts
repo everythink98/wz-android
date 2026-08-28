@@ -29,7 +29,7 @@ vi.mock('@/sources/v2ex/search', () => ({
 import { searchTopics } from './searchRead';
 
 describe('search title contract', () => {
-  it('[REG-SEARCH-022] rejects blank titles at the searchRead boundary', async () => {
+  it('rejects blank titles at the searchRead boundary', async () => {
     await expect(searchTopics({ source: 'v2ex', query: 'codex' })).rejects.toThrow('搜索结果缺少标题');
   });
 });

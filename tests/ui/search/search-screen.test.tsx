@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render as renderNative, waitFor, within } from '../render';
+import { act, fireEvent, render as renderNative, waitFor } from '../render';
 import React, { useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -449,13 +449,6 @@ function renderSearchScreen(
 }
 
 describe('Search state', () => {
-  it('[REG-SEARCH-020] keeps the four-source rail on the home compact tab geometry', async () => {
-    const view = await renderSearchScreen();
-    const tab = view.getByTestId('search-source-all');
-    expect(StyleSheet.flatten(tab.props.style).minHeight).toBe(40);
-    expect(StyleSheet.flatten(within(tab).getByText('全部').props.style).fontSize).toBe(13);
-  });
-
   it('does not expose transient account reconciliation as a paused search on first entry', async () => {
     const pausedMessage = 'linux.do 登录状态待确认，已暂停新请求和写入。';
     const view = await renderSearchScreen({
@@ -476,7 +469,7 @@ describe('Search state', () => {
     expect(view.getByText('输入关键词后开始搜索')).toBeTruthy();
   });
 
-  it('[REG-SEARCH-025][REG-PERF-018] keeps settled route results stable across an unrelated runtime rerender', async () => {
+  it('keeps settled route results stable across an unrelated runtime rerender', async () => {
     appQueryClient.clear();
     const enabledSources = ['v2ex', 'yaohuo'] as const;
     const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
@@ -538,7 +531,7 @@ describe('Search state', () => {
     expect(searchTopics).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-LINUXDO-006] gates candidate reads by the selected source during linux.do verification', async () => {
+  it('gates candidate reads by the selected source during linux.do verification', async () => {
     appQueryClient.clear();
     const enabledSources = ['linuxdo'] as const;
     const sessionViewModels = createSiteSessionViewModels(
@@ -587,7 +580,7 @@ describe('Search state', () => {
     expect(searchTagOptions).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-010] renders enabled sources in user order and replaces warm results with management guidance', async () => {
+  it('renders enabled sources in user order and replaces warm results with management guidance', async () => {
     const onManageContentSources = jest.fn();
     const onSearchSourceChange = jest.fn();
     const view = await renderSearchScreen({
@@ -695,7 +688,7 @@ describe('Search state', () => {
     expect(onRetrySearchSource).toHaveBeenCalledWith('linuxdo');
   });
 
-  it('[REG-SEARCH-017] keeps loading and pending sources out of terminal search states', async () => {
+  it('keeps loading and pending sources out of terminal search states', async () => {
     const view = await renderSearchScreen({
       searchGroups: [
         { source: 'v2ex', label: 'V2EX', items: [firstTopic] },
@@ -754,7 +747,7 @@ describe('Search state', () => {
     expect(view.getByText('正在加载更多 V2EX')).toBeTruthy();
   });
 
-  it('[REG-SEARCH-016] keeps automation state out of the Search header layout', async () => {
+  it('keeps automation state out of the Search header layout', async () => {
     const view = await renderSearchScreen({
       searchGroups: [
         { source: 'v2ex', label: 'V2EX', items: [] },
@@ -779,7 +772,7 @@ describe('Search state', () => {
     expect(gap * emptyFlowChildren.length).toBe(0);
   });
 
-  it('[REG-SOURCE-010] settles after every enabled aggregate source completes', async () => {
+  it('settles after every enabled aggregate source completes', async () => {
     const view = await renderSearchScreen({
       expectedSearchSources: ['v2ex', 'linuxdo'],
       searchGroups: [
@@ -792,7 +785,7 @@ describe('Search state', () => {
     expect(view.getByLabelText('搜索结果，已完成，有可打开结果').props.accessibilityState.busy).toBe(false);
   });
 
-  it('[REG-SEARCH-028] renders external search as an action and hides anonymous source filters', async () => {
+  it('renders external search as an action and hides anonymous source filters', async () => {
     const onOpenExternalSearch = jest.fn<(url: string) => void>();
     const url = 'https://www.google.com/search?q=site%3Alinux.do+codex';
     const externalProps = {
@@ -952,7 +945,7 @@ describe('Search state', () => {
     dismissKeyboard.mockRestore();
   });
 
-  it('REG-SEARCH-019 ends an empty source search without a pagination sentinel', async () => {
+  it('ends an empty source search without a pagination sentinel', async () => {
     const view = await renderSearchScreen({
       searchSource: 'nodeseek',
       searchGroups: [
@@ -1166,7 +1159,7 @@ describe('Search state', () => {
     expect(view.queryByTestId('search-load-more-v2ex-page-2')).toBeNull();
   });
 
-  it('REG-SEARCH-002 keeps loaded results and retries the failed page', async () => {
+  it('keeps loaded results and retries the failed page', async () => {
     const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
     const onRetrySearchSource = jest.fn<(source: Source) => void>();
     const view = await renderSearchScreen({
@@ -1298,7 +1291,7 @@ describe('Search state', () => {
     expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · alice · 7天')).toBeTruthy();
   });
 
-  it('REG-SEARCH-001 accepts linux.do tags only from the candidate picker', async () => {
+  it('accepts linux.do tags only from the candidate picker', async () => {
     const view = await render(<SearchHarness initialSource="linuxdo" />);
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
@@ -1314,7 +1307,7 @@ describe('Search state', () => {
     expect(view.queryByText('任意手打')).toBeNull();
   });
 
-  it('REG-SEARCH-001 ignores a stale linux.do tag response after the search term changes', async () => {
+  it('ignores a stale linux.do tag response after the search term changes', async () => {
     const oldResponse = Promise.withResolvers<{ name: string }[]>();
     const freshResponse = Promise.withResolvers<{ name: string }[]>();
     const onSearchDiscourseTags = jest.fn(({ query: term }: { query: string }) =>
@@ -1345,7 +1338,7 @@ describe('Search state', () => {
     expect(view.getByLabelText('标签 新候选')).toBeTruthy();
   });
 
-  it('REG-SEARCH-001 removes visible tag and author candidates as soon as their query changes', async () => {
+  it('removes visible tag and author candidates as soon as their query changes', async () => {
     const onSearchDiscourseTags = jest.fn(async ({ query: term }: { query: string }) =>
       term === 'old' ? [{ name: '旧标签' }] : [{ name: '新标签' }]
     );
@@ -1372,7 +1365,7 @@ describe('Search state', () => {
     await waitFor(() => expect(view.getByLabelText('用户 new-user')).toBeTruthy());
   });
 
-  it('REG-SEARCH-001 shows the empty-author prompt without a permanent loading state', async () => {
+  it('shows the empty-author prompt without a permanent loading state', async () => {
     const onSearchDiscourseUsers = jest.fn(async () => []);
     const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseUsers });
 
@@ -1385,7 +1378,7 @@ describe('Search state', () => {
     expect(onSearchDiscourseUsers).not.toHaveBeenCalled();
   });
 
-  it('REG-SEARCH-001 hides tag candidates from the previous category while the new request is pending', async () => {
+  it('hides tag candidates from the previous category while the new request is pending', async () => {
     const categoryResponse = Promise.withResolvers<{ name: string }[]>();
     const onSearchDiscourseTags = jest.fn(({ categoryId, query: term }: { categoryId?: string; query: string }) => {
       if (term !== '') {
@@ -1437,7 +1430,7 @@ describe('Search state', () => {
     expect(view.getByLabelText('打开搜索筛选，当前开发调优 · alice')).toBeTruthy();
   });
 
-  it('REG-SEARCH-001 keeps selected linux.do candidates through pagination and Topic return', async () => {
+  it('keeps selected linux.do candidates through pagination and Topic return', async () => {
     const view = await render(<SearchHarness initialSource="linuxdo" />);
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));

@@ -42,7 +42,7 @@ describe('Image preview controller', () => {
     jest.clearAllMocks();
   });
 
-  it('REG-TOPIC-006 saves only once when the save button is pressed twice quickly', async () => {
+  it('saves only once when the save button is pressed twice quickly', async () => {
     let finishSave: (() => void) | undefined;
     mockSaveImageUriToLibrary.mockImplementation(
       () =>
@@ -81,7 +81,7 @@ describe('Image preview controller', () => {
     expect(notify).toHaveBeenCalledWith('图片已保存');
   });
 
-  it('REG-TOPIC-019 forwards NodeSeek media credentials to the save request', async () => {
+  it('forwards NodeSeek media credentials to the save request', async () => {
     mockSaveImageUriToLibrary.mockResolvedValue();
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
     const displayUrl = 'https://www.nodeseek.com/uploads/private-topic-640.png';
@@ -123,7 +123,7 @@ describe('Image preview controller', () => {
     );
   });
 
-  it('[REG-TOPIC-078] keeps the Topic document and element policy through preview and saving', async () => {
+  it('keeps the Topic document and element policy through preview and saving', async () => {
     mockSaveImageUriToLibrary.mockResolvedValue();
     const imageUrl = 'https://i.imgur.com/v2ex-topic.png';
     const mediaReferrer = { documentUrl: 'https://www.v2ex.com/t/1233346' } as const;
@@ -170,7 +170,7 @@ describe('Image preview controller', () => {
     );
   });
 
-  it('[REG-TOPIC-078] suppresses preview only for the inline-classified Referer identity', async () => {
+  it('suppresses preview only for the inline-classified Referer identity', async () => {
     const imageUrl = 'https://images.example/shared-policy.png';
     const requestIdentityForImage = (url: string, policy?: string) => `${url}\u0000referrer:${policy || 'default'}`;
     const noReferrerIdentity = requestIdentityForImage(imageUrl, 'no-referrer');
@@ -197,7 +197,7 @@ describe('Image preview controller', () => {
     );
   });
 
-  it('[REG-TOPIC-078] uses the latest image identity when Topic context arrives after mount', async () => {
+  it('uses the latest image identity when Topic context arrives after mount', async () => {
     const imageUrl = 'https://images.example/late-topic-context.png';
     const baseDeriver = createTopicImageDeriver();
     const firstDeriver = { ...baseDeriver, isInlineSizedImage: () => false };
@@ -247,7 +247,7 @@ describe('Image preview controller', () => {
     });
   });
 
-  it('[REG-TOPIC-040] prepares adjacent preview placeholders with the body width and DPR', async () => {
+  it('prepares adjacent preview placeholders with the body width and DPR', async () => {
     const pixelRatioSpy = jest.spyOn(PixelRatio, 'get').mockReturnValue(2);
     const firstDisplayUrl = 'https://images.example/a-640.jpg';
     const hook = await renderHook(() =>
@@ -277,7 +277,7 @@ describe('Image preview controller', () => {
     pixelRatioSpy.mockRestore();
   });
 
-  it('[REG-TOPIC-096] opens a registered 2000-image catalog without receiving source HTML', async () => {
+  it('opens a registered 2000-image catalog without receiving source HTML', async () => {
     const urls = Array.from({ length: 2_000 }, (_, index) => `https://images.example/${index}.webp`);
     const previewImages = compileForumContent({
       html: urls.map((url) => `<img src="${url}">`).join(''),
@@ -301,7 +301,7 @@ describe('Image preview controller', () => {
     expect(hook.result.current.imagePreview?.index).toBe(1_380);
   });
 
-  it('[REG-PERF-018] reprojects inline exclusions without preparing registered descriptors again', async () => {
+  it('reprojects inline exclusions without preparing registered descriptors again', async () => {
     const firstUrl = 'https://images.example/prepared-640.webp';
     const secondUrl = 'https://images.example/second.webp';
     const stringifySourceSet = jest.fn(() => `${firstUrl} 640w, https://images.example/prepared-1280.webp 1280w`);
@@ -336,7 +336,7 @@ describe('Image preview controller', () => {
     expect(stringifySourceSet).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-096] keeps equivalent registrations and invalidates semantic catalog inputs', async () => {
+  it('keeps equivalent registrations and invalidates semantic catalog inputs', async () => {
     let pixelRatio = 2;
     const pixelRatioSpy = jest.spyOn(PixelRatio, 'get').mockImplementation(() => pixelRatio);
     const firstUrl = 'https://images.example/first-640.webp';
@@ -474,7 +474,7 @@ describe('Image preview controller', () => {
     pixelRatioSpy.mockRestore();
   });
 
-  it('[REG-TOPIC-096] rebuilds the ready catalog when the same source advances its media session', async () => {
+  it('rebuilds the ready catalog when the same source advances its media session', async () => {
     const imageUrl = 'https://www.nodeseek.com/uploads/session-scoped.webp';
     let setSessionEpoch: ((epoch: number) => void) | undefined;
     const SessionEpochHarness = ({ children }: { children: ReactNode }) => {

@@ -115,7 +115,7 @@ describe('browser fetch queue', () => {
     expect(queueRef.current.map(({ id }) => id)).toEqual([4, 2, 3, 1]);
   });
 
-  it('[REG-ACCOUNT-037] exposes the active browser request owner without leaking queue internals', () => {
+  it('exposes the active browser request owner without leaking queue internals', () => {
     vi.useFakeTimers();
     const request = createRequest(1, {
       browserFetchIntent: { owner: 'account', priority: 'background' }

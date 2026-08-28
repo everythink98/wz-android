@@ -17,7 +17,7 @@ function emptyCredentialSummaries(): CredentialSummaries {
 }
 
 describe('site session prompts', () => {
-  it('[REG-PERF-019] keeps a confirmed identity available while its account check is running', () => {
+  it('keeps a confirmed identity available while its account check is running', () => {
     const sessions = createSiteSessionViewModels(
       createSiteSessionStates({
         nodeseek: {
@@ -46,7 +46,7 @@ describe('site session prompts', () => {
     });
   });
 
-  it('[REG-ACCOUNT-031][REG-SEARCH-024] presents terminal unknown as retryable without losing public lanes', () => {
+  it('presents terminal unknown as retryable without losing public lanes', () => {
     const confirmed = createSiteSessionViewModels(
       createSiteSessionStates({
         nodeseek: {
@@ -91,7 +91,7 @@ describe('site session prompts', () => {
     });
   });
 
-  it('[REG-ACCOUNT-019][REG-SEARCH-028] explains the external NodeSeek search without showing a logged-in notice', () => {
+  it('explains the external NodeSeek search without showing a logged-in notice', () => {
     const sessions = createSiteSessionViewModels(createSiteSessionStates());
     const prompt = authNoticeForSource('nodeseek', sessions, 'search');
 
@@ -102,7 +102,7 @@ describe('site session prompts', () => {
     });
   });
 
-  it('[REG-ACCOUNT-019] projects one expired NodeSeek session consistently into More, Search, and Topic permissions', () => {
+  it('projects one expired NodeSeek session consistently into More, Search, and Topic permissions', () => {
     const sessions = createSiteSessionViewModels(
       createSiteSessionStates({
         nodeseek: {

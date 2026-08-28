@@ -126,7 +126,7 @@ describe('Android app utils', () => {
     });
   });
 
-  it('REG-TOPIC-013 keeps bare-domain Yaohuo topic links inside the app', () => {
+  it('keeps bare-domain Yaohuo topic links inside the app', () => {
     expect(parseForumTopicLink('https://yaohuo.me/bbs-654.html')).toMatchObject({
       source: 'yaohuo',
       id: '654',
@@ -186,7 +186,7 @@ describe('Android app utils', () => {
     expect(parseForumUserLink('https://www.v2ex.com/member/%E0%A4%A', 'https://www.v2ex.com/t/1222389')).toBeNull();
   });
 
-  it('[REG-TOPIC-008] recognizes linux.do user links as app users', () => {
+  it('recognizes linux.do user links as app users', () => {
     expect(parseForumUserLink('/u/alice', 'https://linux.do/t/123456')).toMatchObject({
       source: 'linuxdo',
       id: 'alice',
@@ -204,7 +204,7 @@ describe('Android app utils', () => {
     expect(parseForumUserLink('https://evil.example/u/alice', 'https://linux.do/t/123456')).toBeNull();
   });
 
-  it('REG-USER-004 opens public Discourse profile tabs as app users', () => {
+  it('opens public Discourse profile tabs as app users', () => {
     expect(parseForumUserLink('https://linux.do/u/alice/summary')).toMatchObject({
       source: 'linuxdo',
       id: 'alice',
@@ -233,7 +233,7 @@ describe('Android app utils', () => {
     expect(parseForumUserLink('https://github.com/openai/codex', 'https://www.nodeseek.com/post-1-1')).toBeNull();
   });
 
-  it('[REG-TOPIC-039] keeps NodeSeek member mentions internal when the numeric user id hint is absent', () => {
+  it('keeps NodeSeek member mentions internal when the numeric user id hint is absent', () => {
     expect(
       parseForumUserLink(
         'https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85',
@@ -311,7 +311,7 @@ describe('Android app utils', () => {
     ).toBeNull();
   });
 
-  it('REG-USER-003 keeps bare-domain Yaohuo user links inside the app', () => {
+  it('keeps bare-domain Yaohuo user links inside the app', () => {
     expect(parseForumUserLink('https://yaohuo.me/bbs/userinfo.aspx?touserid=30878')).toMatchObject({
       source: 'yaohuo',
       id: '30878',

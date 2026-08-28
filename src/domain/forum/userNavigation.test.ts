@@ -361,7 +361,7 @@ describe('Android user navigation helpers', () => {
     expect(userFromReply(reply, 'nodeseek')).not.toHaveProperty('id');
   });
 
-  it('[REG-TOPIC-035] does not guess a Discourse username from a display label', () => {
+  it('does not guess a Discourse username from a display label', () => {
     const displayOnlyReply: Reply = {
       author: 'Alice Display',
       contentHtml: '<p>reply</p>',

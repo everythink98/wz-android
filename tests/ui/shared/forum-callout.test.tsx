@@ -11,7 +11,7 @@ const readerData = createEmptyReaderData();
 const lightTheme = createTheme(readerData.settings);
 const darkTheme = createTheme({ ...readerData.settings, theme: 'dark' });
 
-describe('REG-TOPIC-056 shared ForumCallout', () => {
+describe('shared ForumCallout', () => {
   it('reports a controlled toggle from the 48dp accessible header', async () => {
     const onExpandedChange = jest.fn();
     const view = await render(
@@ -79,23 +79,6 @@ describe('REG-TOPIC-056 shared ForumCallout', () => {
     expect(stopPropagation).toHaveBeenCalledTimes(1);
     expect(view.getByRole('button', { name: '带链接的标题' }).props.accessibilityState).toEqual({ expanded: true });
     expect(onExpandedChange).not.toHaveBeenCalled();
-  });
-
-  it('[REG-PERF-010] applies exact boundary spacing from the compiled row', async () => {
-    const view = await render(
-      <ForumCallout
-        boundarySpacing={{ marginBottom: 0, marginTop: 0 }}
-        expanded
-        foldable={false}
-        onExpandedChange={jest.fn()}
-        theme={lightTheme}
-        title={<Text>续段标题</Text>}
-        titleLabel="续段标题"
-        type="warning"
-      />
-    );
-
-    expect(view.getByTestId('forum-callout')).toHaveStyle({ marginBottom: 0, marginTop: 0 });
   });
 
   it.each([

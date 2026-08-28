@@ -11,11 +11,11 @@ const plugin = require('../../plugins/withNetworkProxyModule') as {
 describe('withNetworkProxyModule local relay hardening', () => {
   const pluginSource = readFileSync(join(process.cwd(), 'plugins', 'withNetworkProxyModule.js'), 'utf8');
 
-  it('[REG-PROXY-007] binds the relay with the connection cap as its backlog', () => {
+  it('binds the relay with the connection cap as its backlog', () => {
     expect(pluginSource).toContain('ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))');
   });
 
-  it('[REG-TOPIC-064] injects only the optional Cronet platform warnings once', () => {
+  it('injects only the optional Cronet platform warnings once', () => {
     const first = plugin.injectCronetProguardRules('# project rules\n');
     const second = plugin.injectCronetProguardRules(first);
 

@@ -60,7 +60,7 @@ describe('forum server state', () => {
     );
   });
 
-  it('[REG-TOPIC-067] never shares partial reply caches between traversal orders', () => {
+  it('never shares partial reply caches between traversal orders', () => {
     const topicKey = forumQueryKeys.topic({
       source: 'nodeseek',
       topicId: '123',
@@ -71,7 +71,7 @@ describe('forum server state', () => {
     expect(forumQueryKeys.replies(topicKey, 'newest')).toEqual([...topicKey, 'replies', { order: 'newest' }]);
   });
 
-  it('[REG-TOPIC-039] separates username resolution from the canonical user profile key', () => {
+  it('separates username resolution from the canonical user profile key', () => {
     const resolution = forumQueryKeys.userResolution({
       scope: initialForumSessionEpochs,
       username: 'lcy0828'
@@ -86,7 +86,7 @@ describe('forum server state', () => {
     expect(profile).toEqual(['forum', 'nodeseek', 'user', { sessionEpoch: 0, userId: '23042' }]);
   });
 
-  it('[REG-SOURCE-011] isolates public and authenticated direct and aggregate read caches', () => {
+  it('isolates public and authenticated direct and aggregate read caches', () => {
     const topic = (readPlanScope: string) =>
       forumQueryKeys.topic({
         readPlanScope,
@@ -137,7 +137,7 @@ describe('forum server state', () => {
     );
   });
 
-  it('[REG-SOURCE-010] scopes all feed and categories keys by canonical enabled sources without changing single-source keys', () => {
+  it('scopes all feed and categories keys by canonical enabled sources without changing single-source keys', () => {
     const v2exAndNodeSeek = canonicalEnabledSourcesKey([
       { source: 'v2ex', enabled: true },
       { source: 'nodeseek', enabled: true },
@@ -185,7 +185,7 @@ describe('forum server state', () => {
     expect(client.getQueryData(linuxDoKey)).toBe('private linux.do topic');
   });
 
-  it('[REG-ACCOUNT-019] never resets stable account snapshots with forum content', () => {
+  it('never resets stable account snapshots with forum content', () => {
     const sources = ['nodeseek', 'linuxdo', 'yaohuo'] as const;
     for (const changedSource of sources) {
       const client = createAppQueryClient();
@@ -218,7 +218,7 @@ describe('forum server state', () => {
     unsubscribe();
   });
 
-  it('[REG-ACCOUNT-042] keeps the committed Account snapshot while advancing the forum scope', () => {
+  it('keeps the committed Account snapshot while advancing the forum scope', () => {
     const client = createAppQueryClient();
     const accountKey = accountQueryKeys.snapshot('nodeseek');
     const feedKey = forumQueryKeys.feed({ source: 'nodeseek', scope: initialForumSessionEpochs });
@@ -240,7 +240,7 @@ describe('forum server state', () => {
     expect(client.getQueryData(feedKey)).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-031] clears changed-identity content without changing the Account key', () => {
+  it('clears changed-identity content without changing the Account key', () => {
     const client = createAppQueryClient();
     const accountKey = accountQueryKeys.snapshot('nodeseek');
     const oldFeedKey = forumQueryKeys.feed({

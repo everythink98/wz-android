@@ -5,7 +5,7 @@ import { prepareNodeSeekForumContent } from './topicParser';
 import { parseHtml } from '@/domain/forum/html';
 
 describe('NodeSeek composer write protocols', () => {
-  it('[REG-WRITE-071] derives status only from the real Stardust records payload', () => {
+  it('derives status only from the real Stardust records payload', () => {
     expect(
       normalizeNodeSeekStardustStatus({
         listPayload: { success: true, records: [{ diff: 3 }, { diff: -2 }, { diff: '5' }], exist_more: false },
@@ -31,7 +31,7 @@ describe('NodeSeek composer write protocols', () => {
     ).toThrow('每天最多进行500次星辰记录查询');
   });
 
-  it('[REG-WRITE-028] keeps Stardust cards at their text position and leaves code or invalid markers inert', () => {
+  it('keeps Stardust cards at their text position and leaves code or invalid markers inert', () => {
     const valid = 'nsapp://stardust-receive?member_id=42&ref_id=7&description=Pay&diff=5&onetime=false';
     const invalid = 'nsapp://stardust-receive?member_id=x&ref_id=7&description=Pay&diff=5&onetime=false';
     const root = parseHtml(`<p>前 ${valid} 后</p><pre><code>${valid}</code></pre><p>${invalid}</p>`);
@@ -44,7 +44,7 @@ describe('NodeSeek composer write protocols', () => {
     expect(html).toContain(invalid);
   });
 
-  it('[REG-TOPIC-128] recognizes the canonical data-href marker from a real NodeSeek anchor', () => {
+  it('recognizes the canonical data-href marker from a real NodeSeek anchor', () => {
     const marker =
       'nsapp://stardust-receive?member_id=37571&ref_id=67181806&description=Pay+with+Stardust&diff=2&onetime=true';
     const visible =
@@ -68,7 +68,7 @@ describe('NodeSeek composer write protocols', () => {
     expect(root.toString()).toContain('data-href="nsapp://stardust-receive?member_id=x"');
   });
 
-  it('[REG-TOPIC-128] keeps a standalone Stardust card beside a poll', () => {
+  it('keeps a standalone Stardust card beside a poll', () => {
     const stardust = 'nsapp://stardust-receive?member_id=42&ref_id=7&description=Pay&diff=5&onetime=true';
     const vote = 'nsapp://vote?id=200';
     const prepared = prepareNodeSeekForumContent(

@@ -6,8 +6,8 @@
 
 1. 阅读仓库根目录的 `AGENTS.md` 与 `README.md`，确认执行约束、产品范围和最小开发入口。
 2. 用下方命令记录 Git revision、dirty 状态和版本配置；不要先借用历史交接结论。
-3. 阅读 `docs/product-charter.md` 与 `docs/product-map.md`，选择本次直接影响的能力 ID，并展开共享 seam。
-4. 按能力 ID 检索 `docs/regression-corpus.md`，确认历史逃逸问题、精确 oracle 和最低可靠证据层。
+3. 阅读 `docs/product-charter.md` 与 `docs/product-map.md`；产品/runtime 改动选择直接影响的能力 ID 并展开共享 seam，纯测试、文档或治理改动记录 evidence owner。
+4. 按能力或 owner 检索 `docs/regression-corpus.md`，确认历史逃逸问题的状态、根因与当前归属。
 5. 按任务读取 `docs/code-standards.md`、`docs/architecture.md`、`docs/testing-standard.md` 与 `docs/operator-runbook.md`；不要把它们全部复制进任务说明。
 6. 本机存在 `memory/MEMORY.md` 时，只按索引读取相关补充事实；需要模拟器证据时，只采用与当前 revision、App 版本和 APK 身份同时匹配的 `docs/emulator-baseline.md` 记录。
 7. 安装依赖并运行 `npm run verify`；只有任务确实涉及真实页面或设备行为时，才按测试标准扩大验证。
@@ -19,7 +19,7 @@
 | 品牌、视觉和 accessibility | 根目录 `PRODUCT.md` |
 | 产品取舍与功能准入 | `docs/product-charter.md` |
 | 现有能力、入口、能力 ID 与共享 seam | `docs/product-map.md` |
-| 历史逃逸问题与精确 oracle | `docs/regression-corpus.md` |
+| 历史逃逸问题的状态、根因与当前 owner | `docs/regression-corpus.md` |
 | ownership、import、测试归属与质量门禁 | `docs/code-standards.md` |
 | module、interface、数据与原生配置边界 | `docs/architecture.md` |
 | 测试方法、证据层与授权边界 | `docs/testing-standard.md` |

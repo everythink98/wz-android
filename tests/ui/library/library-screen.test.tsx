@@ -353,7 +353,7 @@ describe('Library filters', () => {
     expect(onRemoveUser).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-001] gives each tab one stable viewport while Library stays focused', async () => {
+  it('gives each tab one stable viewport while Library stays focused', async () => {
     mockFlashListMountCount = 0;
     const view = await render(<LibraryHarness />);
 
@@ -365,7 +365,7 @@ describe('Library filters', () => {
     expect(mockFlashListMountCount).toBe(3);
   });
 
-  it('[REG-PERF-022] prewarms one viewport per loaded frame and releases inactive viewports on blur', async () => {
+  it('prewarms one viewport per loaded frame and releases inactive viewports on blur', async () => {
     const frameCallbacks: ((time: number) => void)[] = [];
     jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
       frameCallbacks.push(callback);
@@ -401,7 +401,7 @@ describe('Library filters', () => {
     expect(view.queryByTestId('library-users-viewport', { includeHiddenElements: true })).toBeNull();
   });
 
-  it('[REG-PERF-022] retains each populated dataset item array across tab switches', async () => {
+  it('retains each populated dataset item array across tab switches', async () => {
     mockFlashListRenders.length = 0;
     const view = await render(<LibraryHarness />);
     const firstFavoriteData = mockFlashListRenders.find(
@@ -423,7 +423,7 @@ describe('Library filters', () => {
     ).toBe(firstHistoryData);
   });
 
-  it('[REG-PERF-022] changes viewport visibility without rendering either populated FlashList again', async () => {
+  it('changes viewport visibility without rendering either populated FlashList again', async () => {
     const view = await render(<LibraryHarness />);
     await fireEvent.press(view.getByTestId('library-tab-history'));
     await fireEvent.press(view.getByTestId('library-tab-favorites'));
@@ -435,7 +435,7 @@ describe('Library filters', () => {
     expect(mockFlashListRenders).toHaveLength(0);
   });
 
-  it('[REG-PERF-021] reuses positional pill nodes when a source swaps the category taxonomy', async () => {
+  it('reuses positional pill nodes when a source swaps the category taxonomy', async () => {
     const onChange = jest.fn();
     const view = await render(
       <PillRail
@@ -467,7 +467,7 @@ describe('Library filters', () => {
     expect(view.getByTestId('perf-category-second-a')).toBe(secondSlot);
   });
 
-  it('[REG-PERF-021] keeps one fixed category button across source taxonomies', async () => {
+  it('keeps one fixed category button across source taxonomies', async () => {
     const view = await render(<LibraryHarness />);
     const categoryButton = view.getByTestId('library-category-menu-button');
 
@@ -479,7 +479,7 @@ describe('Library filters', () => {
     expect(view.queryByRole('menuitem')).toBeNull();
   });
 
-  it('[REG-PERF-021] keeps the category button mounted but inaccessible while followed users are selected', async () => {
+  it('keeps the category button mounted but inaccessible while followed users are selected', async () => {
     const view = await render(<LibraryHarness />);
     const categoryButton = view.getByTestId('library-category-menu-button');
 
@@ -492,7 +492,7 @@ describe('Library filters', () => {
     expect(view.getByTestId('library-category-menu-button')).toBe(categoryButton);
   });
 
-  it('[REG-PERF-001] enters the next tab with source and category filters already reset', async () => {
+  it('enters the next tab with source and category filters already reset', async () => {
     const view = await render(<LibraryHarness />);
     await fireEvent.press(view.getByTestId('library-source-v2ex'));
     await fireEvent.press(view.getByTestId('library-category-menu-button'));
@@ -506,7 +506,7 @@ describe('Library filters', () => {
     expect(historyRenders[0]).toMatchObject({ dataLength: 4, testID: 'library-history-ready' });
   });
 
-  it('[REG-PERF-001] resets the list position before switching tabs without animation', async () => {
+  it('resets the list position before switching tabs without animation', async () => {
     const frameCallbacks: ((time: number) => void)[] = [];
     jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
       frameCallbacks.push(callback);
@@ -528,7 +528,7 @@ describe('Library filters', () => {
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-PERF-001] leaves filters and position unchanged when the selected tab is pressed again', async () => {
+  it('leaves filters and position unchanged when the selected tab is pressed again', async () => {
     const view = await render(<LibraryHarness />);
     await fireEvent.press(view.getByTestId('library-source-v2ex'));
     await fireEvent.press(view.getByTestId('library-category-menu-button'));
@@ -542,7 +542,7 @@ describe('Library filters', () => {
     expect(mockFlashListScrollToOffset).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-001] disables visible-position anchoring while library datasets switch', async () => {
+  it('disables visible-position anchoring while library datasets switch', async () => {
     const view = await render(<LibraryHarness />);
 
     expect(view.getByTestId('library-favorites-ready').props.maintainVisibleContentPosition).toEqual({

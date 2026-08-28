@@ -34,7 +34,7 @@ describe('session query ownership', () => {
     expect(client.getQueryData(['forum', 'nodeseek', 'feed'])).toBe('node');
   });
 
-  it('[REG-ACCOUNT-031] cancels dirty-source and aggregate reads without evicting their last trusted data', async () => {
+  it('cancels dirty-source and aggregate reads without evicting their last trusted data', async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } }
     });
@@ -76,7 +76,7 @@ describe('session query ownership', () => {
     expect(client.getQueryData(otherKey)).toBe('trusted linux.do topic');
     await client.cancelQueries();
   });
-  it('[REG-SOURCE-010] cancels only the disabled source when aggregate ownership has already changed', async () => {
+  it('cancels only the disabled source when aggregate ownership has already changed', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const sourceKey = ['forum', 'nodeseek', 'feed'] as const;
     const aggregateKey = ['forum', 'all', 'feed'] as const;
@@ -101,7 +101,7 @@ describe('session query ownership', () => {
     expect(aggregateAbort).not.toHaveBeenCalled();
     await client.cancelQueries();
   });
-  it('[REG-FEED-010] removes unconfirmed source data without touching account or safe aggregate queries', () => {
+  it('removes unconfirmed source data without touching account or safe aggregate queries', () => {
     const client = new QueryClient();
     const sourceFeed = ['forum', 'nodeseek', 'feed'] as const;
     const account = accountQueryKeys.snapshot('nodeseek');
@@ -140,7 +140,7 @@ describe('session query ownership', () => {
       unsubscribe();
     }
   });
-  it('[REG-ACCOUNT-042] keeps the canonical account snapshot outside the changing forum epoch', () => {
+  it('keeps the canonical account snapshot outside the changing forum epoch', () => {
     const before = accountQueryKeys.snapshot('linuxdo');
     const nextEpochs = forumSessionEpochsAfterSourceChange({ ...initialForumSessionEpochs, linuxdo: 4 }, 'linuxdo');
     const after = accountQueryKeys.snapshot('linuxdo');
@@ -149,7 +149,7 @@ describe('session query ownership', () => {
     expect(after).toEqual(before);
     expect(nextEpochs.linuxdo).toBe(5);
   });
-  it('[REG-ACCOUNT-042] resets changed forum content without moving the canonical account snapshot', () => {
+  it('resets changed forum content without moving the canonical account snapshot', () => {
     const client = new QueryClient();
     const accountKey = accountQueryKeys.snapshot('linuxdo');
     const account = {

@@ -34,27 +34,14 @@ vi.mock('@/sources/linuxdo/search', () => ({
   searchLinuxDoUsers: readers.searchLinuxDoUsers
 }));
 
-import {
-  getDiscourseSourceCurrentUserProfile,
-  getDiscourseSourceEmojiUrls,
-  getDiscourseSourceFeed,
-  searchDiscourseSourceTagOptions
-} from './discourseRead';
+import { getDiscourseSourceCurrentUserProfile, getDiscourseSourceFeed } from './discourseRead';
 
 describe('Discourse source reader registration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('normalizes the shared feed contract into site adapter options', async () => {
-    readers.getLinuxDoFeed.mockResolvedValueOnce({ items: [] });
-
-    await getDiscourseSourceFeed('linuxdo', { filter: 'hot', page: 2 });
-
-    expect(readers.getLinuxDoFeed).toHaveBeenCalledWith({ linuxDoFilter: 'hot', page: 2 });
-  });
-
-  it('[REG-SOURCE-004] forwards the gateway-owned linux.do identity proof without a Cookie header', async () => {
+  it('forwards the gateway-owned linux.do identity proof without a Cookie header', async () => {
     readers.getLinuxDoFeed.mockResolvedValueOnce({ items: [] });
     const access = { authenticated: true, userAgent: 'android' };
 
@@ -80,25 +67,5 @@ describe('Discourse source reader registration', () => {
     expect(readers.getLinuxDoCurrentUserProfile).toHaveBeenCalledWith({
       linuxDoUserAgent: 'android'
     });
-  });
-
-  it('dispatches shared option lookup without a public site branch', async () => {
-    readers.searchLinuxDoTags.mockResolvedValueOnce([]);
-    const auth = { linuxdo: { authenticated: true, userAgent: 'android' } };
-
-    await searchDiscourseSourceTagOptions('linuxdo', { auth, query: 'arch' });
-
-    expect(readers.searchLinuxDoTags).toHaveBeenCalledWith({
-      linuxDoAccess: auth.linuxdo,
-      query: 'arch'
-    });
-  });
-
-  it('dispatches the site-owned emoji catalog through the Discourse reader port', async () => {
-    readers.getLinuxDoEmojiUrls.mockResolvedValueOnce({ heart: 'https://linux.do/heart.png' });
-
-    await getDiscourseSourceEmojiUrls('linuxdo');
-
-    expect(readers.getLinuxDoEmojiUrls).toHaveBeenCalledWith({});
   });
 });

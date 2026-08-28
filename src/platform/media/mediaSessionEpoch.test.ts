@@ -14,7 +14,7 @@ describe('managed media session epoch', () => {
     vi.restoreAllMocks();
   });
 
-  it('[REG-TOPIC-029] derives request provenance and cache generation from the content source', () => {
+  it('derives request provenance and cache generation from the content source', () => {
     expect(mediaSessionIdentityForSource('linuxdo', epochs)).toMatch(/^linuxdo:[a-z0-9-]+:2:ready$/);
     expect(mediaSessionIdentityForSource(null, epochs)).toBe('public:0:ready');
   });
@@ -22,7 +22,7 @@ describe('managed media session epoch', () => {
     expect(mediaSessionIdentityForSource('v2ex', epochs)).toBe('public:0:ready');
   });
 
-  it('[REG-PROXY-011] changes the media namespace when proxy readiness changes', () => {
+  it('changes the media namespace when proxy readiness changes', () => {
     expect(mediaSessionIdentityForSource('nodeseek', epochs, 'blocked')).not.toBe(
       mediaSessionIdentityForSource('nodeseek', epochs, 'ready')
     );
@@ -31,7 +31,7 @@ describe('managed media session epoch', () => {
     );
   });
 
-  it('[REG-TOPIC-042] gives private disk cache keys a new namespace after a process restart', async () => {
+  it('gives private disk cache keys a new namespace after a process restart', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_000);
     vi.spyOn(Math, 'random').mockReturnValueOnce(0.1).mockReturnValueOnce(0.2);
     vi.resetModules();

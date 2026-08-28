@@ -14,7 +14,7 @@ import {
 } from './model';
 
 describe('portable Discourse fields', () => {
-  it('[REG-TOPIC-067] selects real stream tail IDs and advances toward older windows', () => {
+  it('selects real stream tail IDs and advances toward older windows', () => {
     const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
     const tail = discourseStreamReplyWindow(stream, {
       limit: 10,
@@ -60,39 +60,36 @@ describe('portable Discourse fields', () => {
   it.each([
     { order: 'oldest' as const, previousPage: 2, nextPage: 4 },
     { order: 'newest' as const, previousPage: 4, nextPage: 2 }
-  ])(
-    '[REG-TOPIC-068] derives both $order directions from the current Discourse stream',
-    ({ order, previousPage, nextPage }) => {
-      const stream = Array.from({ length: 61 }, (_, index) => 1000 + index);
-      const center = discourseStreamReplyWindow(stream, {
-        limit: 10,
-        order,
-        position: { kind: 'cursor', page: 3, offset: 20 }
-      });
-      const previous = discourseStreamReplyWindow(stream, {
-        limit: 10,
-        order,
-        position: { kind: 'cursor', page: center.previousPage!, offset: center.previousOffset ?? null }
-      });
-      const next = discourseStreamReplyWindow(stream, {
-        limit: 10,
-        order,
-        position: { kind: 'cursor', page: center.nextPage!, offset: center.nextOffset ?? null }
-      });
+  ])('derives both $order directions from the current Discourse stream', ({ order, previousPage, nextPage }) => {
+    const stream = Array.from({ length: 61 }, (_, index) => 1000 + index);
+    const center = discourseStreamReplyWindow(stream, {
+      limit: 10,
+      order,
+      position: { kind: 'cursor', page: 3, offset: 20 }
+    });
+    const previous = discourseStreamReplyWindow(stream, {
+      limit: 10,
+      order,
+      position: { kind: 'cursor', page: center.previousPage!, offset: center.previousOffset ?? null }
+    });
+    const next = discourseStreamReplyWindow(stream, {
+      limit: 10,
+      order,
+      position: { kind: 'cursor', page: center.nextPage!, offset: center.nextOffset ?? null }
+    });
 
-      expect(center).toMatchObject({
-        currentPage: 3,
-        currentOffset: 20,
-        previousPage,
-        nextPage
-      });
-      expect(previous.currentPage).toBe(previousPage);
-      expect(next.currentPage).toBe(nextPage);
-      expect(new Set([...previous.postIds, ...center.postIds, ...next.postIds]).size).toBe(30);
-    }
-  );
+    expect(center).toMatchObject({
+      currentPage: 3,
+      currentOffset: 20,
+      previousPage,
+      nextPage
+    });
+    expect(previous.currentPage).toBe(previousPage);
+    expect(next.currentPage).toBe(nextPage);
+    expect(new Set([...previous.postIds, ...center.postIds, ...next.postIds]).size).toBe(30);
+  });
 
-  it('[REG-TOPIC-067] rejects hydration that returns the right count but the wrong stream IDs', () => {
+  it('rejects hydration that returns the right count but the wrong stream IDs', () => {
     expect(() =>
       discourseRepliesInStreamOrder(
         [
@@ -106,7 +103,7 @@ describe('portable Discourse fields', () => {
     ).toThrow('回复窗口不完整');
   });
 
-  it('[REG-TOPIC-073] keeps a non-empty Discourse hydration subset without accepting unrelated data', () => {
+  it('keeps a non-empty Discourse hydration subset without accepting unrelated data', () => {
     const availableReply = {
       author: 'one',
       commentId: 101,
@@ -125,7 +122,7 @@ describe('portable Discourse fields', () => {
     expect(() => discourseVisiblePostIds([{ id: 101 }], [101, 101])).toThrow('回复窗口不完整');
   });
 
-  it('[REG-TOPIC-077] keeps an identified Discourse reply when presentation fields are empty', () => {
+  it('keeps an identified Discourse reply when presentation fields are empty', () => {
     expect(
       discoursePostFields({
         id: 101,
@@ -143,7 +140,7 @@ describe('portable Discourse fields', () => {
     });
   });
 
-  it('[REG-TOPIC-073][REG-TOPIC-077] keeps good Discourse rows around an invalid sibling', () => {
+  it('keeps good Discourse rows around an invalid sibling', () => {
     const reply = (commentId: number, author: string) => ({
       author,
       commentId,
@@ -158,7 +155,7 @@ describe('portable Discourse fields', () => {
     );
   });
 
-  it('[REG-TOPIC-067] rejects an oldest cursor whose page disagrees with its stream offset', () => {
+  it('rejects an oldest cursor whose page disagrees with its stream offset', () => {
     const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
 
     expect(() =>
@@ -170,7 +167,7 @@ describe('portable Discourse fields', () => {
     ).toThrow('游标与页码不一致');
   });
 
-  it('[REG-TOPIC-067] rejects an anchored post that is absent from the real stream', () => {
+  it('rejects an anchored post that is absent from the real stream', () => {
     expect(() =>
       discourseReplyWindow(
         {
@@ -223,7 +220,7 @@ describe('portable Discourse fields', () => {
     ).toBeNull();
   });
 
-  it('[REG-TOPIC-056] removes Callout protocol markers from shared Discourse topic excerpts', () => {
+  it('removes Callout protocol markers from shared Discourse topic excerpts', () => {
     expect(
       discourseTopicFields({
         id: 42,
@@ -431,7 +428,7 @@ describe('portable Discourse fields', () => {
     expect(discoursePostFields({})).toBeNull();
   });
 
-  it('[REG-TOPIC-115] only accepts an author-deleted placeholder after its caller validates the prepared content', () => {
+  it('only accepts an author-deleted placeholder after its caller validates the prepared content', () => {
     const placeholder = {
       id: 23,
       post_number: 1,
@@ -455,7 +452,7 @@ describe('portable Discourse fields', () => {
     ).toBeNull();
   });
 
-  it('[REG-TOPIC-035] keeps a reply target display name separate from its navigable username', () => {
+  it('keeps a reply target display name separate from its navigable username', () => {
     const basePost = {
       id: 23,
       post_number: 2,
@@ -490,7 +487,7 @@ describe('portable Discourse fields', () => {
     });
   });
 
-  it('[REG-TOPIC-026] keeps an accepted reply separate from an empty Discourse system event', () => {
+  it('keeps an accepted reply separate from an empty Discourse system event', () => {
     const acceptedReply = discoursePostFields({
       id: 23,
       post_number: 2,

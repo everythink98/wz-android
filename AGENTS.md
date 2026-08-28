@@ -1,88 +1,45 @@
 # AGENTS.md
 
-## 沟通与任务判断
+## 任务与授权
 
-- 用户使用中文时，全程使用中文；专有名词保持英文。
-- 最终回复以结论、实际改动、原因和验证结果为主；必要时补充方案权衡、阻碍和未验证范围，不写无价值的推进过程或表演化表达。
-- 只有可选方案在行为、成本或风险上有实质差异时，说明主要优缺点并明确推荐项。
-- 只有歧义会实质改变目标、行为、范围、安全或产生不可逆后果时才询问；否则说明合理假设后继续。
-- 用户指定的做法明显增加复杂度、脆弱性或偏离目标时，直接说明并给出更简单的方案；不得擅自替换用户明确目标。
-- 上下文不足以安全修改时停止，明确说明缺少的信息。
-- 测试、验收和基线对照默认只用于发现、复现和记录问题，不构成修复 bug 或实现缺失功能的授权。
-- 执行中发现计划外缺陷、能力缺失、功能未实现、真实链路与测试不一致或新的受影响范围时，先标记为 bug，并向用户报告已确认事实、影响范围和证据缺口；只有用户明确决定修复或实现后才能修改产品代码，不得用绕路、降级、隐藏症状、扩大范围或猜测式补丁擅自处理。
+- 用户使用中文时全程使用中文；最终回复以结论、实际改动、原因和验证结果为主。
+- 最新明确用户目标优先。只有歧义会实质改变范围、行为、安全或产生不可逆后果时才询问；否则说明合理假设后继续。
+- 本次改动造成的失败、以及完成本次目标所必需的测试或文档问题，属于本次修复范围；计划外既有产品 Bug 只记录已确认事实、影响与证据缺口，未经用户授权不修改产品行为。
+- 测试、诊断和只读验收不授权远端写入、产品降级、扩大功能范围或清理用户状态。发现能力缺失或真实链路与测试不一致时，先按 Bug 报告。
+- 采用满足目标的最小完整改动；用户指定方案明显增加复杂度或脆弱性时说明代价并给出更简单方案，不擅自降低明确目标。
 
-## 目标与改动边界
+## 事实源路由
 
-- 把任务转成可验证的目标；多步骤任务开始前定义具体完成标准。
-- 用满足目标的最小完整改动，不增加未要求的功能、一次性抽象、配置项或扩展点。
-- 简洁不能以削弱既定能力、改变产品方案或牺牲已有正确体验为代价；降低目标、回退能力或更换方案必须先取得用户同意。
-- 只改与任务直接相关的内容，保持现有结构、风格和命名习惯，不顺手重构、格式化、改名或修复无关问题。
-- 清理由本次改动产生的无用代码和失败方案残留；无关旧问题只有影响本次正确性或安全时才说明。
-- 每项改动都必须为实现或验证用户目标所必需。
+- 项目背景读 `README.md`，交接边界读 `docs/handoff.md`，结构与数据边界读 `docs/architecture.md`。
+- 当前产品行为、入口、共享 seam 与 canonical evidence 只以 `docs/product-map.md` 为准；历史事故只以 `docs/regression-corpus.md` 为准。
+- 测试 owner、证据层、隔离和验证强度读 `docs/testing-standard.md`；代码 ownership、测试归属、命名和结构门禁读 `docs/code-standards.md`。
+- 命令、覆盖安装、Replay、Smoke、工具版本和正式发布步骤只以 `package.json` 与 `docs/operator-runbook.md` 为准。
+- 已确认本机事实先读 `memory/MEMORY.md` 的索引，再按需读 `memory/project.md`；memory 只作短指针，不复制项目政策。
+- 冲突时按“用户最新要求 → 当前代码与运行事实 → 对应唯一权威文档”裁决，并同步修正失真的文档或记忆指针。
 
-## 项目与上下文
+## 实施工作流
 
-- 当前项目是独立 Android App；命令和发布流程见 `package.json` 与 `docs/operator-runbook.md`。
-- 项目背景读 `README.md`；接手或确认边界读 `docs/handoff.md`；结构、目录职责和数据边界读 `docs/architecture.md`。
-- 代码 ownership、import、测试归属和质量门禁读 `docs/code-standards.md`。
-- 现有产品功能、用户入口、能力 ID 和共享回归范围见 `docs/product-map.md`；开发前选择受影响能力 ID，交付时按 ID 报告验证结果。
-- 已逃逸问题、精确失败 oracle 和最低可靠测试层见 `docs/regression-corpus.md`；命中事故 seam 时必须执行对应回归。
-- 测试标准见 `docs/testing-standard.md`；需要模拟器时只读取与当前 Git revision、App 版本和 APK 身份匹配的 `docs/emulator-baseline.md` 记录，不能按日期判断当前基线。
-- 已确认项目事实先读 `memory/MEMORY.md`，再按索引读取相关记忆；主要事实在 `memory/project.md`。
-- 产品目标以用户最新明确要求为准；当前事实以代码和运行结果为准；项目级执行约束以本文件为准；产品能力以 tracked 的 `docs/product-map.md` 为共享索引，`memory/` 只作本机补充。
-- 文档或记忆与用户要求、代码或运行结果不一致时，以对应的最新事实为准，并在最终回复中说明相关差异。
-- 只读取当前任务需要的文档、记忆和代码。
+- 修改前记录 Git revision 与 dirty 状态，沿真实依赖关系枚举直接调用方、间接消费者、共享状态、配置和行为入口；保留工作区已有用户改动。
+- 产品或 runtime 改动必须从 product map 选择受影响 capability ID，并展开共享 seam；纯测试、文档或治理改动记录受影响的 evidence owner，不虚构产品 ID。
+- 修复产品 Bug 时先建立修复前会失败的最低可靠行为 oracle，再修根因并合并重复 owner；通过测试使用行为标题，不携带 REG。只有确认未修复的 expected-failure 可引用一个状态为 `OPEN` 的 canonical REG。
+- 新的逃逸事故在获准修复时保留历史条目，但历史与测试不一一绑定：多个 REG 可以指向同一个 canonical owner，过时 owner 可合并、替换或删除。
+- 查找优先使用 `rg`；第三方行为不确定时先查官方资料，官方证据不足再查 GitHub issue/discussion 或成熟项目。已知 GitHub 对象优先直达连接工具或 `gh`，不把 URL 当搜索词。
+- 只改任务直接相关内容，不顺手重构、格式化、改名或修复无关问题；`android/` 是生成目录，长期原生配置只改 `app.json`、`plugins/` 或对应 source patch。
 
-## AI 回归协议
+## 安全硬边界
 
-- 开发前记录 Git revision 和 dirty 状态，从产品地图选择直接影响的能力 ID；触及共享 seam 时展开关联 ID，并列出必须保持的用户行为。
-- 修复 bug 时先建立能在修复前失败的最小行为测试；不得用源码字符串、App 能启动或 Smoke 通过代替用户可见 oracle。
-- 依次选择最低可靠证据层：Vitest 固定确定性逻辑，Jest/RNTL 固定渲染行为，agent-device MCP 探索真实 App，tracked Replay 重复关键旅程，App 内 Live 验证动态来源与获授权写入。
-- MCP 与 Replay 不互相替代：MCP 用于探索和定位，Replay 只保存经过审查的稳定入口、断言和返回路径。
-- 交付按能力 ID 分别报告 `STATIC_PASS`、`UNIT_PASS`、`UI_PASS`、`DEVICE_REPLAY_PASS`、`LIVE_PASS`、`APK_SANITY`、`NOT_VERIFIED` 或 `BLOCKED_BY_ENV`；不得用笼统的 Smoke 绿灯宣称功能完整通过。
-- 新的逃逸 bug 在同一修复中增加一个 `REG-*` 条目和一个最低可靠测试；代码、tracked 产品地图、回归语料库、测试和 Replay 必须能一起回退。
-
-## 工作与安全
-
-- 修改前理解现有结构；查找文件和文本优先使用 `rg`。
-- 用户明确指定入口、工具、数据来源、交互路径或验证方式时，除非不可用、越权或与更高优先级约束冲突，必须按指定路径执行；不得擅自用搜索、替代入口、近似数据或更熟悉的流程代替。受阻时先确认阻碍，并说明替代路径与原路径的差异。
-- 当输入包含可直接定位对象的 URL、ID 或路径，且任务是查看、验证、排障或修改该对象时，将其视为目标而不是搜索词；先解析并直达目标，只有目标未提供或直接路径已确认不可用时才能使用发现或搜索流程。
-- 修改前沿真实依赖关系枚举完整影响面，包括直接调用方、间接消费者、共享状态、配置、样式、数据结构、上下游转换和行为入口；不得把用户举例或当前复现入口当作全部范围。
-- 复用以语义一致为前提；数据约束、生命周期、权限、错误处理或交互结果不同的场景保持独立边界，只共享稳定的底层能力。
-- 改动后按行为差异对每类受影响入口独立回归；局部单测、静态检查或单入口成功不能代表其他入口或完整链路。无法覆盖的范围必须在交付前明确列出。
-- 保留工作区已有的用户改动，不得回滚、覆盖或混入无关格式化。
-- 未经用户明确要求，不执行破坏性 Git 操作，不提交、合并或发布。
-- 不得输出 Cookie、token、明文密码等敏感值；不得提交 `.env.release.local`、keystore、截图、UI dump、log、临时 bundle、数据库、生成目录或 release 产物。
-- `android/` 是生成目录；原生配置通过 `app.json` 和 `plugins/` 持久化。
-- 启动 Metro、watcher、Gradle、agent-device、录屏或其他长驻子进程前记录 PID/设备进程基线；正常结束、失败和中断都只清理由本任务新建的进程与工具 scratch。不得把共享 MCP、模拟器或 ADB 当作残留进程关闭。
-- 涉及第三方库、框架或平台行为，且该外部行为不确定或相关的首个可证伪假设失败时，先查官方资料；官方资料不足时，再按需查 GitHub issues/discussions 和成熟项目用法。
-- GitHub 仓库、代码、文件、Commit、PR 或 Issue 的发现与读取优先使用已连接的 GitHub MCP；MCP 缺少所需能力或失败时才使用已认证的 `gh`。已知仓库与路径应直接用 MCP 文件读取或 `gh api`，不得退回搜索。
-- 不得使用通用网页、浏览器或 raw 页面读取工具搜索、打开或抓取 GitHub 代码。`gh` 单次命令最多等待 15 秒；失败后只允许缩小查询范围重试一次，随后改用 GitHub MCP、已知文件直读、本地锁定依赖源码，或如实报告证据缺口。不得对同一失败调用无限等待或循环重试。
-- 检索应围绕具体库、组件、现象和当前实现，结论应落实到方案；没有依据时说明检索范围、证据缺口和下一步所需证据。
-- 修复 bug 时先确认复现方式、受影响路径、必须保留的能力和验收标准，再定位根因并验证可证伪假设；不得继续叠加猜测式规则。
-- 添加校验时覆盖无效输入并确认校验生效；重构时确认行为保持一致。
-
-## 项目高风险边界
-
-- 模拟器、主题链接、App 内登录态原站对照和站点专项验收遵循 `docs/testing-standard.md` 与 `docs/operator-runbook.md`。
-- 主登录态 AVD 中的 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态是用户状态资产，同时它就是日常更新代码和保留登录态验收的目标设备；更新 APK 必须在该设备上就地覆盖安装。现有独立未登录 AVD 只服务未登录旅程，不能替代主 AVD 的更新验收，也不是安装失败后的清数据兜底。只有会卸载 target App 的原生 instrumentation 等特殊流程才使用明确的一次性空白 AVD。
-- Android WebView 的 `CookieManager`、`WebStorage` 与全局 cache 是进程共享资产。Account 用户明确发起的按站清除事务是登录 Cookie 的唯一删除 owner；功能 WebView 只能管理自己的文档与页面状态。生产 WebView 必须显式声明所需能力，不得透传 raw props、启用 truthy/dynamic `incognito`，或调用 `removeAllCookies`、`removeSessionCookies`、`deleteAllData`、`clearCache(true)`；`sharedCookiesEnabled={false}` 不是 Android Cookie 隔离机制。新增或修改 WebView、原生 plugin、清理逻辑时必须通过 `global-webview-state-owner` 架构门禁与 `REG-ACCOUNT-045`。
-- 未经用户明确同意，不得卸载 App、清除 App 数据、Cookie 或登录态，也不得重置模拟器来制造测试状态。
-- 保留数据的 Android 模拟器只允许通过仓库 `npm run smoke:android`、`agent-device install com.wz.reader <apk> --platform android --device <device>` 或 `adb -s <serial> install -r <apk>` 覆盖安装；禁止使用 `agent-device reinstall`。受信版本 `agent-device 0.20.6` 的 `reinstall` 会先执行不带 `-k` 的 `adb uninstall`，CLI 帮助中的 “Replace installed app” 不代表保留数据。安装前后必须只读比对 `firstInstallTime`，值必须不变；安全覆盖安装失败时停止，不得自动改走卸载。
-- 一旦登录态、本机数据或 `firstInstallTime` 异常，立即停止所有 App/AVD 变更；不得继续启动、退出模拟器或保存、加载、删除快照来试探恢复。先只读记录 AVD/serial、包安装时间、模拟器进程与启动参数、`quickbootChoice.ini` 和 `snapshot.trace`；UI 中的账号数量不能单独证明数据永久丢失或已经恢复。任何快照恢复都是需要用户另行授权的独立任务，且修改前必须有已完成并校验的离线 AVD 副本。
-- 依赖登录态的能力必须以 App 内原站同类页面为事实依据；桌面浏览器、第三方客户端、未登录页面、作者名或猜测的 API 不能代替验证。
-- 没有找到入口或已加载 JS/API 中没有对应行为，只能视为证据不足；不得据此猜测实现、增加入口或擅自隐藏、删除已有能力。
-- “全面测试”默认不授权真实发帖、回复、编辑、删除、点赞、投票、收藏切换或其他写操作；真实写操作验收必须先取得用户明确同意。
+- 未经明确要求，不执行破坏性 Git 操作，不提交、合并、push、发布，也不覆盖或删除用户工作区残留。
+- 不输出或提交 Cookie、token、密码、keystore、`.env.release.local`、数据库、截图、日志、临时 bundle、生成目录或 release 产物。
+- 保留数据的 Android 设备只能覆盖安装；不得卸载 App、清 App 数据、Cookie、登录态或重置模拟器。安装身份、`firstInstallTime` 或登录态异常时立即冻结设备变更并按 runbook 只读取证，不能自动降级为卸载或快照恢复。
+- 全面测试默认不授权发帖、回复、编辑、删除、点赞、投票、收藏切换或其他真实写操作；Live 写入必须逐项取得用户明确同意。
+- Android WebView 的 Cookie、WebStorage 与全局 cache 是进程共享资产；只有 Account 用户明确发起的按站清除事务拥有删除权，功能 WebView 不得做进程级清理。具体禁用 API 与静态门禁由 code standards/architecture checker 维护。
+- 启动长驻进程前记录本机与设备进程基线；结束时只清理由本任务创建且能确认归属的进程与 scratch，不停止共享 MCP、模拟器、ADB 或未知进程。
 
 ## 验证与交付
 
-- 验证和调研强度与改动风险相称；安全、隐私、数据和 Git 授权规则不得简化。
-- 纯文档或注释改动只做内容、引用和一致性检查，不强制运行与运行时无关的测试或 `typecheck`。
-- 影响运行逻辑、类型或构建的改动，至少运行相关测试和 `npm run typecheck`；没有自动测试时做最小真实行为验证。
-- 涉及页面流程、登录态、真实来源结果或交互时，按标准完成模拟器验收；只打开 App 不算完整验收。
-- 涉及多个受影响入口时，最终回复必须列出本次确认的影响面及各类验证结果，避免用“相关测试通过”笼统代替完整性说明。
-- 涉及签名、版本、原生构建配置、发布脚本或正式发布时，运行 `npm run release:android`。
-- 相关验证失败且仍有安全、可证伪、在当前权限内的修复路径时继续修复；没有此类路径时停止修改。
-- 无法验证或完成时，报告已确认事实、尝试方案、失败原因、证据缺口、未验证范围及剩余选择和代价；未获授权的高风险验证属于明确边界，不算代码失败。
-- 最终交付前复查本任务启动的本机与设备侧进程已回到基线；无法安全确认归属的进程不强杀，记录 PID、命令行、父进程和遗留原因。
-- 最终交付前完成相关验证；只有验证通过或遇到真实阻碍时才回报结果。
+- 验证强度按行为风险选择，并按每类受影响入口独立报告；局部单测、静态检查或 App 启动不能代表完整链路。
+- 纯文档/注释改动只做内容、引用与一致性检查；运行逻辑、类型或构建改动至少运行相关测试和 `npm run typecheck`。页面流程、登录态或真实来源按 testing standard/runbook 做对应模拟器或 Live 验收。
+- `npm test`、`npm run test:ui` 和 `npm run verify` 的当前组合以 `package.json` 为准，测试随机顺序是正常门禁；失败必须能用输出 seed 重放。
+- `npm run release:android` 只在用户明确要求正式发布时运行。版本、签名或原生配置的普通开发改动使用相关 tooling test、fresh prebuild/compile 或 targeted build，不以要求 clean tree 的正式 release 代替开发验证。
+- 交付按 capability ID 或 evidence owner 报告实际运行的 `STATIC_PASS`、`UNIT_PASS`、`UI_PASS`、`DEVICE_REPLAY_PASS`、`LIVE_PASS`、`APK_SANITY`、`NOT_VERIFIED` 或 `BLOCKED_BY_ENV`，并列出未验证范围。
+- 最终回复前运行相关门禁、`git diff --check`，确认本任务进程回到基线；无法安全验证时报告已确认事实、尝试、阻碍与剩余选择，不用笼统绿灯掩盖证据缺口。

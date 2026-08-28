@@ -40,7 +40,7 @@ describe('reply image upload helpers', () => {
     });
   });
 
-  it('[REG-WRITE-014] keeps a selected image whose system uri contains malformed percent encoding', () => {
+  it('keeps a selected image whose system uri contains malformed percent encoding', () => {
     expect(
       normalizeReplyImageAsset({
         uri: 'file:///cache/photo%broken.jpg',
@@ -224,7 +224,7 @@ describe('reply image upload helpers', () => {
     );
   });
 
-  it('[REG-WRITE-023] never replays the same NodeImage upload after an authorization failure', async () => {
+  it('never replays the same NodeImage upload after an authorization failure', async () => {
     const headers: string[] = [];
     let ensureCalls = 0;
     const fetcher = async (_input: string, init?: RequestInit) => {

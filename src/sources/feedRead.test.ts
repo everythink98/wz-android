@@ -134,45 +134,42 @@ describe('feed read', () => {
   it.each([
     ['feed', (fetcher: Fetcher, signal: AbortSignal) => getFeed({ source: 'all', limit: 5, fetcher, signal })],
     ['categories', (fetcher: Fetcher, signal: AbortSignal) => getCategories({ source: 'all', fetcher, signal })]
-  ])(
-    '[REG-SOURCE-009] discards a parsed child fallback when the outer aggregate %s read is aborted',
-    async (_entry, startRead) => {
-      const controller = new AbortController();
-      const nodeSeekBodyRead = Promise.withResolvers<void>();
-      const recoverReadChannel = vi.fn(async () => undefined);
-      const fetcher: Fetcher = async (input, init) => {
-        const url = String(input);
-        if (url.includes('nodeseek.com')) {
-          const response = new Response(`<script>${nodeSeekPayload}</script>`);
-          const readText = response.text.bind(response);
-          vi.spyOn(response, 'text').mockImplementation(async () => {
-            const text = await readText();
-            nodeSeekBodyRead.resolve();
-            return text;
-          });
-          registerForumReadResponseEvidence(init, response, {
-            commit: recoverReadChannel,
-            kind: 'fallback',
-            ordinal: 1,
-            source: 'nodeseek'
-          });
-          return response;
-        }
-        if (url.includes('linux.do')) {
-          return new Promise<Response>(() => undefined);
-        }
-        throw new Error('other source unavailable');
-      };
-      const read = startRead(fetcher, controller.signal);
-      await nodeSeekBodyRead.promise;
-      await new Promise((resolve) => setTimeout(resolve, 0));
+  ])('discards a parsed child fallback when the outer aggregate %s read is aborted', async (_entry, startRead) => {
+    const controller = new AbortController();
+    const nodeSeekBodyRead = Promise.withResolvers<void>();
+    const recoverReadChannel = vi.fn(async () => undefined);
+    const fetcher: Fetcher = async (input, init) => {
+      const url = String(input);
+      if (url.includes('nodeseek.com')) {
+        const response = new Response(`<script>${nodeSeekPayload}</script>`);
+        const readText = response.text.bind(response);
+        vi.spyOn(response, 'text').mockImplementation(async () => {
+          const text = await readText();
+          nodeSeekBodyRead.resolve();
+          return text;
+        });
+        registerForumReadResponseEvidence(init, response, {
+          commit: recoverReadChannel,
+          kind: 'fallback',
+          ordinal: 1,
+          source: 'nodeseek'
+        });
+        return response;
+      }
+      if (url.includes('linux.do')) {
+        return new Promise<Response>(() => undefined);
+      }
+      throw new Error('other source unavailable');
+    };
+    const read = startRead(fetcher, controller.signal);
+    await nodeSeekBodyRead.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-      controller.abort();
+    controller.abort();
 
-      await expect(read).rejects.toThrow('请求已取消');
-      expect(recoverReadChannel).not.toHaveBeenCalled();
-    }
-  );
+    await expect(read).rejects.toThrow('请求已取消');
+    expect(recoverReadChannel).not.toHaveBeenCalled();
+  });
 
   it('keeps only yaohuo categories and user profiles on the shared forum facade', async () => {
     const fetcher = vi.fn(async () => {
@@ -617,7 +614,7 @@ describe('feed read', () => {
     expect(nodeSeekCalls).toBe(2);
   });
 
-  it('[REG-SOURCE-001] skips an unavailable aggregate source and retries its original page after credentials recover', async () => {
+  it('skips an unavailable aggregate source and retries its original page after credentials recover', async () => {
     const nodeSeekPage = Buffer.from(
       JSON.stringify({
         rotateTopics: [
@@ -700,7 +697,7 @@ describe('feed read', () => {
     expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo']);
   });
 
-  it('[REG-FEED-014] preserves every source cursor when buffered content settles an otherwise failed page', async () => {
+  it('preserves every source cursor when buffered content settles an otherwise failed page', async () => {
     const sourceCursor = 'opaque-v2ex-cursor';
     const cursor = encodeURIComponent(
       JSON.stringify({
@@ -736,7 +733,7 @@ describe('feed read', () => {
     expect(retryCursor.sourceCursors.v2ex).toBe(sourceCursor);
   });
 
-  it('[REG-FEED-014] publishes feed and categories after the active five-second source budget', async () => {
+  it('publishes feed and categories after the active five-second source budget', async () => {
     vi.useFakeTimers();
     const diagnosticEvents: Record<string, unknown>[] = [];
     setDiagnosticWriter((line) => {
@@ -844,7 +841,7 @@ describe('feed read', () => {
     }
   });
 
-  it('[REG-FEED-014] propagates parent cancellation instead of publishing a partial aggregate', async () => {
+  it('propagates parent cancellation instead of publishing a partial aggregate', async () => {
     const controller = new AbortController();
     const diagnosticEvents: Record<string, unknown>[] = [];
     setDiagnosticWriter((line) => {
@@ -887,7 +884,7 @@ describe('feed read', () => {
     }
   });
 
-  it('[REG-FEED-014] keeps a timed-out source retryable when every completed source is empty', async () => {
+  it('keeps a timed-out source retryable when every completed source is empty', async () => {
     vi.useFakeTimers();
     try {
       const fetcher = vi.fn((input: string, init?: RequestInit) => {
@@ -926,7 +923,7 @@ describe('feed read', () => {
     }
   });
 
-  it('[REG-FEED-014] preserves the current page and opaque source cursor when every source times out', async () => {
+  it('preserves the current page and opaque source cursor when every source times out', async () => {
     vi.useFakeTimers();
     const sourceCursor = 'opaque-v2ex-seen-ids';
     const cursor = encodeURIComponent(
@@ -962,7 +959,7 @@ describe('feed read', () => {
     }
   });
 
-  it('[REG-SOURCE-010] confines aggregate feed and cursor retries to the included source snapshot', async () => {
+  it('confines aggregate feed and cursor retries to the included source snapshot', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.v2ex.com/?tab=all') {
         return new Response(
@@ -999,7 +996,7 @@ describe('feed read', () => {
     expect(retryCursor.sourceCursors).toEqual({ v2ex: 'current-v2ex-cursor' });
   });
 
-  it('[REG-SOURCE-010] returns stable empty all-source feed and categories without transport', async () => {
+  it('returns stable empty all-source feed and categories without transport', async () => {
     const fetcher = vi.fn();
 
     await expect(getFeed({ source: 'all', fetcher, includedSources: [] })).resolves.toEqual({
@@ -1016,7 +1013,7 @@ describe('feed read', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-010] confines aggregate categories to the included source snapshot', async () => {
+  it('confines aggregate categories to the included source snapshot', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.v2ex.com/api/topics/latest.json') {
         return new Response(

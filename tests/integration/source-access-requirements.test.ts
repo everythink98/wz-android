@@ -317,7 +317,7 @@ describe('Android local access requirement detection', () => {
     expect(topic.accessRequirement).toBeUndefined();
   });
 
-  it('[REG-TOPIC-113] keeps readable linux.do topic details out of the permission state', async () => {
+  it('keeps readable linux.do topic details out of the permission state', async () => {
     const fetcher = vi.fn(async () =>
       json({
         id: 2777081,

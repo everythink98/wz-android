@@ -892,7 +892,7 @@ describe('source user read', () => {
     expect(yaohuo.topics.map((topic) => topic.id)).toEqual(['67', '66']);
   });
 
-  it('[REG-WRITE-007] keeps untimed NodeSeek profile reads free of vote-only headers', async () => {
+  it('keeps untimed NodeSeek profile reads free of vote-only headers', async () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
         return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));

@@ -139,6 +139,7 @@ const notification: ForumNotification = {
 const expectedManageContentSourcesAction = manageContentSourcesAction();
 
 beforeEach(() => {
+  jest.clearAllMocks();
   mockTopicScreen.mockReset();
   mockTopicScreen.mockImplementation(() => null);
   mockMoreFocused = true;
@@ -245,7 +246,7 @@ describe('disabled content source route gates', () => {
     expect(goBack).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-012] expands only for the management intent and then preserves local panel state', async () => {
+  it('expands only for the management intent and then preserves local panel state', async () => {
     const data = createEmptyReaderData();
     const runtime = {
       account: { surfaces: { closeAll: jest.fn() } },
@@ -286,7 +287,7 @@ describe('disabled content source route gates', () => {
     expect(view.getByLabelText('展开内容源').props.accessibilityState.expanded).toBe(false);
   });
 
-  it('[REG-ACCOUNT-043] closes global account surfaces only after More really loses focus', async () => {
+  it('closes global account surfaces only after More really loses focus', async () => {
     const data = createEmptyReaderData();
     const firstCloseAll = jest.fn();
     const secondCloseAll = jest.fn();
@@ -350,7 +351,7 @@ describe('disabled content source route gates', () => {
     expect(mockMoreUtilities?.settings.visible).toBe(false);
   });
 
-  it('[REG-PROXY-011][REG-TOPIC-076][REG-TOPIC-092][REG-WRITE-072] remounts Topic media and sequences same-topic targets', async () => {
+  it('remounts Topic media and sequences same-topic targets', async () => {
     const data = createEmptyReaderData();
     const enabledTopic: Topic = {
       ...topic,

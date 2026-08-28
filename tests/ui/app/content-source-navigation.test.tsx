@@ -278,7 +278,7 @@ function Navigator({ feedRuntimeValue = feedRuntime }: { feedRuntimeValue?: Feed
   );
 }
 
-describe('[REG-SOURCE-012] content-source management navigation', () => {
+describe('content-source management navigation', () => {
   beforeEach(() => {
     mockFeedScreenMountCount = 0;
     mockFeedLoadMoreCallbacks = [];
@@ -331,7 +331,7 @@ describe('[REG-SOURCE-012] content-source management navigation', () => {
     await waitFor(() => expect(view.getByText('内容源面板已折叠')).toBeTruthy());
   });
 
-  it('[REG-FEED-017] rebuilds Feed at all after the source order changes in More', async () => {
+  it('rebuilds Feed at all after the source order changes in More', async () => {
     jest.mocked(useFeedController).mockImplementation(({ readerData: currentReaderData }) => {
       const [feedSource, setFeedSource] = React.useState<FeedSource>('all');
       return {
@@ -371,7 +371,7 @@ describe('[REG-SOURCE-012] content-source management navigation', () => {
     await waitFor(() => expect(view.getByText('首页来源 all 挂载 2')).toBeTruthy());
   });
 
-  it('[REG-PERF-015] keeps load-more callback stable across unrelated runtime renders', async () => {
+  it('keeps load-more callback stable across unrelated runtime renders', async () => {
     const loadFeed = jest.fn(async () => undefined);
     jest.mocked(useFeedController).mockImplementation(
       () =>

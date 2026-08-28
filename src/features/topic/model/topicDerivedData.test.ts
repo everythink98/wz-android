@@ -18,7 +18,7 @@ const replyWithoutImage: Reply = {
 };
 
 describe('Android topic derived data', () => {
-  it('[REG-PERF-010] filters image replies without re-extracting their HTML', () => {
+  it('filters image replies without re-extracting their HTML', () => {
     const replies = [replyWithImage, replyWithoutImage].map((reply) => prepareReplyContent(reply, 'linuxdo'));
     const deriver = createTopicImageDeriver();
 
@@ -29,13 +29,13 @@ describe('Android topic derived data', () => {
     expect(second.map(({ floor }) => floor)).toEqual([1]);
   });
 
-  it('[REG-PERF-010] rejects non-empty image-filter content without a prepared plan', () => {
+  it('rejects non-empty image-filter content without a prepared plan', () => {
     expect(() => filterRepliesWithImages([replyWithImage], {}, createTopicImageDeriver(), 'linuxdo')).toThrow(
       '论坛内容缺少匹配的预编译计划'
     );
   });
 
-  it('[REG-TOPIC-078] excludes only the prepared image whose final Referer identity was classified inline', () => {
+  it('excludes only the prepared image whose final Referer identity was classified inline', () => {
     const url = 'https://cdn.example.com/shared.png';
     const requestIdentityForImage = (src: string, referrerPolicy?: string) =>
       `${src}\u0000referrer:${referrerPolicy === 'no-referrer' ? 'none' : 'https://forum.example/'}`;

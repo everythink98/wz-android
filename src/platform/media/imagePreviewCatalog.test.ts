@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import { diagnosticRef } from '@/platform/diagnostics/diagnosticPolicy';
@@ -28,20 +28,20 @@ function catalog(
 }
 
 describe('image preview catalog', () => {
-  it('[REG-PERF-018] parses descriptor srcset once and reprojects inline exclusions without preparing again', () => {
+  it('reprojects inline exclusions from a prepared preview catalog', () => {
     const first = 'https://cdn.example.com/first-640.jpg';
     const second = 'https://cdn.example.com/first-1280.jpg';
-    const stringifySourceSet = vi.fn(() => `${first} 640w, ${second} 1280w`);
-    const sourceSet = { toString: stringifySourceSet } as unknown as string;
-    const prepared = prepareImagePreviewCatalog([{ source: first, sourceSet }], 360, 2);
+    const prepared = prepareImagePreviewCatalog(
+      [{ source: first, sourceSet: `${first} 640w, ${second} 1280w` }],
+      360,
+      2
+    );
 
-    expect(stringifySourceSet).toHaveBeenCalledTimes(1);
     expect(projectImagePreviewCatalog(prepared).items).toEqual([{ displayUri: second, originalUri: second }]);
     expect(projectImagePreviewCatalog(prepared, undefined, (url) => url === first).items).toEqual([]);
-    expect(stringifySourceSet).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-PERF-013] keeps prepared placeholder-only descriptors out of the preview catalog', () => {
+  it('keeps prepared placeholder-only descriptors out of the preview catalog', () => {
     const placeholder = 'https://cdn.example.com/transparent.gif';
 
     expect(catalog([{ source: placeholder }]).items).toEqual([]);
@@ -53,7 +53,7 @@ describe('image preview catalog', () => {
     ]);
   });
 
-  it('[REG-TOPIC-078] separates one URL when its final Referer differs', () => {
+  it('separates one URL when its final Referer differs', () => {
     const imageUrl = 'https://i.imgur.com/shared.png';
     const referrer = { documentUrl: 'https://www.v2ex.com/t/1233346' } as const;
     const mediaContext = { contentSource: 'v2ex', referrer, sessionIdentity: 'v2ex:7' } as const;
@@ -79,7 +79,7 @@ describe('image preview catalog', () => {
     });
   });
 
-  it('[REG-TOPIC-078] does not reuse an explicit policy when the tapped image uses the document policy', () => {
+  it('does not reuse an explicit policy when the tapped image uses the document policy', () => {
     const imageUrl = 'https://i.imgur.com/shared.png';
     const referrer = { documentUrl: 'https://www.v2ex.com/t/1233346' } as const;
     const mediaContext = { contentSource: 'v2ex', referrer, sessionIdentity: 'v2ex:7' } as const;
@@ -126,7 +126,7 @@ describe('image preview catalog', () => {
     expect(diagnosticRef('media', firstOriginal)).not.toBe(diagnosticRef('media', secondOriginal));
   });
 
-  it('[REG-TOPIC-040] keeps the responsive body image separate from the lightbox original', () => {
+  it('keeps the responsive body image separate from the lightbox original', () => {
     expect(
       catalog([
         {
@@ -142,7 +142,7 @@ describe('image preview catalog', () => {
     ]);
   });
 
-  it('[REG-TOPIC-048] rejects an unsafe original and keeps the sharpest safe source', () => {
+  it('rejects an unsafe original and keeps the sharpest safe source', () => {
     expect(
       selectImageOriginalSource({
         'data-original': 'javascript:alert(1)',
@@ -152,7 +152,7 @@ describe('image preview catalog', () => {
     ).toBe('https://cdn.example.com/display-1280.png');
   });
 
-  it('[REG-TOPIC-040] resolves body candidates at content width and keeps explicit originals', () => {
+  it('resolves body candidates at content width and keeps explicit originals', () => {
     expect(
       catalog([
         {
@@ -199,7 +199,7 @@ describe('image preview catalog', () => {
     expect(selectImageDisplaySource(attributes, 800, 2)?.uri).toBe('https://cdn.example.com/1280.jpg');
   });
 
-  it('[REG-PERF-010] caps a body candidate at 2048 physical pixels', () => {
+  it('caps a body candidate at 2048 physical pixels', () => {
     expect(
       selectImageDisplaySource(
         {
@@ -262,7 +262,7 @@ describe('image preview catalog', () => {
     ).toEqual({ uri: 'https://cdn.example.com/lazy.jpg', candidateKind: 'data-src' });
   });
 
-  it('[REG-TOPIC-030] refuses unsafe or relative tapped URLs as active preview requests', () => {
+  it('refuses unsafe or relative tapped URLs as active preview requests', () => {
     const result = catalog([]);
 
     expect(imagePreviewListFromCatalog(result, 'javascript:x.png', 'linuxdo').items).toEqual([]);

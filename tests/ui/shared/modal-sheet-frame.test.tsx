@@ -24,7 +24,7 @@ jest.mock('react-native', () => {
 });
 
 describe('ModalSheetFrame', () => {
-  it('REG-SEARCH-026 releases Android keyboard avoidance after every keyboard dismissal', async () => {
+  it('releases Android keyboard avoidance after every keyboard dismissal', async () => {
     const originalPlatform = Platform.OS;
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
     let showKeyboard: (() => void) | undefined;

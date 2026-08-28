@@ -3,7 +3,7 @@ import type { TopicDetail } from '@/domain/forum/models';
 import { hasSameYaohuoTopicLayout } from './topicContentIdentity';
 
 describe('topic content identity', () => {
-  it('[REG-WRITE-005] ignores Yaohuo bookmark fields but not content changes', () => {
+  it('ignores Yaohuo bookmark fields but not content changes', () => {
     const detail: TopicDetail = {
       source: 'yaohuo',
       id: '123',

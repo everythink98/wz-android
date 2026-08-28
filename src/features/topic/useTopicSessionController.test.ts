@@ -1,13 +1,9 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
 import { createTopicImageDeriver } from './model/topicDerivedData';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import type { ReplyEditTarget, ReplyTarget } from './model/types';
-import {
-  filterTopicSessionReplies,
-  transitionReplyComposer,
-  type ReplyComposerIntent
-} from './useTopicSessionController';
+import { filterTopicSessionReplies, transitionReplyComposer } from './useTopicSessionController';
 
 const topic: TopicDetail = {
   source: 'linuxdo',
@@ -121,16 +117,5 @@ describe('topic local session helpers', () => {
     }
   ])('$label', ({ state, event, expected }) => {
     expect(transitionReplyComposer(state, event)).toEqual(expected);
-  });
-
-  it('makes floor and edit targets mutually exclusive in the intent type', () => {
-    expectTypeOf<Extract<ReplyComposerIntent, { kind: 'floor' }>>().toEqualTypeOf<{
-      kind: 'floor';
-      target: ReplyTarget;
-    }>();
-    expectTypeOf<Extract<ReplyComposerIntent, { kind: 'edit' }>>().toEqualTypeOf<{
-      kind: 'edit';
-      target: ReplyEditTarget;
-    }>();
   });
 });

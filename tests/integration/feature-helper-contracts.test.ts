@@ -58,13 +58,13 @@ describe('Android feature helpers', () => {
     );
   });
 
-  it('[REG-TOPIC-009] never inserts search highlights into quoted html attributes containing greater-than signs', () => {
+  it('never inserts search highlights into quoted html attributes containing greater-than signs', () => {
     expect(highlightHtml('<p><a title="VPS > private link">visible link</a></p>', 'link')).toBe(
       '<p><a title="VPS > private link">visible <mark>link</mark></a></p>'
     );
   });
 
-  it('[REG-PERF-010] keeps dense planned-row highlights inside serialized and DOM budgets', () => {
+  it('keeps dense planned-row highlights inside serialized and DOM budgets', () => {
     const html = `<p>${'a '.repeat(6_000)}</p>`;
 
     const highlighted = highlightHtml(html, 'a');
@@ -86,7 +86,7 @@ describe('Android feature helpers', () => {
     ).toBe('Hello link\nOne\nTwo\nconst x = 1;\n\nconsole.log(x);\n图示');
   });
 
-  it('[REG-TOPIC-010] never copies quoted html attribute fragments containing greater-than signs', () => {
+  it('never copies quoted html attribute fragments containing greater-than signs', () => {
     expect(stripHtml('<p><a title="VPS > private link">visible link</a></p>')).toBe('visible link');
   });
 

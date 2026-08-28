@@ -87,11 +87,11 @@ function maxElementDepth(html: string) {
 }
 
 describe('topic opening presentation', () => {
-  it('[REG-PERF-010] rejects non-empty opening content without a gateway content plan', () => {
+  it('rejects non-empty opening content without a gateway content plan', () => {
     expect(() => buildTopicOpeningContentFromPlan(topic)).toThrow('论坛内容缺少匹配的预编译计划');
   });
 
-  it('[REG-TOPIC-090] preserves terminal rows in opening, complete quote, and accepted preview/full consumers', () => {
+  it('preserves terminal rows in opening, complete quote, and accepted preview/full consumers', () => {
     const opening = buildTopicOpeningContent({ ...topic, contentHtml: terminalReportHtml });
     const reply = { author: 'bob', contentHtml: terminalReportHtml, createdAt: '2026-08-01T00:01:00.000Z', floor: 2 };
     const quote = buildTopicQuotedPostContentItems({ instanceKey: 'quote-1', reply, source: 'linuxdo' });
@@ -109,7 +109,7 @@ describe('topic opening presentation', () => {
     });
   });
 
-  it('[REG-TOPIC-078] keeps an element referrer policy on a native opening video', () => {
+  it('keeps an element referrer policy on a native opening video', () => {
     const result = buildTopicOpeningContent({
       ...topic,
       contentHtml:
@@ -129,7 +129,7 @@ describe('topic opening presentation', () => {
     ]);
   });
 
-  it('[REG-PERF-010] lifts nested opening-post quotes into ordered typed parent rows', () => {
+  it('lifts nested opening-post quotes into ordered typed parent rows', () => {
     const result = buildTopicOpeningContent({
       ...topic,
       contentHtml:
@@ -167,7 +167,7 @@ describe('topic opening presentation', () => {
     ).toBe(false);
   });
 
-  it('[REG-PERF-010] projects compiler fail-closed rows for over-deep opening quote candidates', () => {
+  it('projects compiler fail-closed rows for over-deep opening quote candidates', () => {
     const contentHtml = `${'<aside>'.repeat(1_000)}body${'</aside>'.repeat(1_000)}`;
 
     const result = buildTopicOpeningContent({ ...topic, contentHtml });
@@ -179,7 +179,7 @@ describe('topic opening presentation', () => {
     expect(contentRows.every((item) => 'html' in item.row && maxElementDepth(item.row.html) <= 64)).toBe(true);
   });
 
-  it('[REG-PERF-010] plans a giant expanded topic quote as bounded parent-list content rows', () => {
+  it('plans a giant expanded topic quote as bounded parent-list content rows', () => {
     const quotedReply = {
       author: 'bob',
       contentHtml: `<p>${Array.from(
@@ -200,7 +200,7 @@ describe('topic opening presentation', () => {
     expect(items.every((item) => item.type === 'content')).toBe(true);
   });
 
-  it('[REG-PERF-010] exposes one bounded accepted-answer preview row before the full plan', () => {
+  it('exposes one bounded accepted-answer preview row before the full plan', () => {
     const accepted = {
       author: 'bob',
       contentHtml: `<p>${Array.from(
@@ -219,7 +219,7 @@ describe('topic opening presentation', () => {
     expect(repeated.fullItems).toBe(content.fullItems);
   });
 
-  it('[REG-PERF-010] projects a giant nested image paragraph as bounded parent-list rows', () => {
+  it('projects a giant nested image paragraph as bounded parent-list rows', () => {
     const contentHtml = `<p>${Array.from(
       { length: 2000 },
       (_, index) => `<img src="https://img.example.com/${index}.jpg">`

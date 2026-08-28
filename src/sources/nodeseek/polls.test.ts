@@ -3,7 +3,7 @@ import { parseHtml } from '@/domain/forum/html';
 import { normalizeNodeSeekVoteMarkers } from './polls';
 
 describe('NodeSeek poll markup', () => {
-  it('[REG-TOPIC-128] normalizes loaded text and NodeSeek anchor labels while preserving inert content', () => {
+  it('normalizes loaded text and NodeSeek anchor labels while preserving inert content', () => {
     const loadedText = 'nsapp://vote?id=7';
     const loadedLink = 'nsapp://vote?id=8';
     const loadedRedirect = 'nsapp://vote?id=10';
@@ -27,7 +27,7 @@ describe('NodeSeek poll markup', () => {
     expect(html).toContain(`<code>${loadedText}</code>`);
   });
 
-  it('[REG-TOPIC-128] keeps one placeholder when the same poll marker is repeated', () => {
+  it('keeps one placeholder when the same poll marker is repeated', () => {
     const root = parseHtml('<forum-nodeseek-poll id="7"></forum-nodeseek-poll><p><span>nsapp://vote?id=7</span></p>');
 
     normalizeNodeSeekVoteMarkers(root, ['7']);

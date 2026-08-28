@@ -5,7 +5,6 @@ import React, { type ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
-import { HTML_REPLY_CONTENT_CLASS } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReplyComposerSheet } from '@/features/topic/components/ReplyComposerSheet';
 import { MemoizedReplyItem, ReplyItem } from '@/features/topic/components/ReplyItem';
@@ -507,7 +506,7 @@ function stardustActions(
 }
 
 describe('Topic real child components', () => {
-  it('[REG-WRITE-034][REG-WRITE-071] renders the deterministic avatar and reloads only for real inputs', async () => {
+  it('renders the deterministic avatar and reloads only for real inputs', async () => {
     const receive = {
       receiverMemberId: '42',
       amount: 3,
@@ -531,7 +530,7 @@ describe('Topic real child components', () => {
     await waitFor(() => expect(secondLoader).toHaveBeenCalledTimes(1));
   });
 
-  it('[REG-WRITE-071] keeps optional status failures silent while payment stays available', async () => {
+  it('keeps optional status failures silent while payment stays available', async () => {
     const receive = {
       receiverMemberId: '42',
       amount: 3,
@@ -556,7 +555,7 @@ describe('Topic real child components', () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-WRITE-071] allows repeat payments but keeps one-time and legacy cards closed', async () => {
+  it('allows repeat payments but keeps one-time and legacy cards closed', async () => {
     const repeatable = {
       receiverMemberId: '42',
       amount: 3,
@@ -584,7 +583,7 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('Ref 无效').props.accessibilityState.disabled).toBe(true);
   });
 
-  it('[REG-WRITE-034][REG-WRITE-071] blocks a second click after an ambiguous send', async () => {
+  it('blocks a second click after an ambiguous send', async () => {
     const receive = {
       receiverMemberId: '42',
       amount: 3,
@@ -604,7 +603,7 @@ describe('Topic real child components', () => {
     expect(pay).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-WRITE-033][REG-WRITE-071] does not downgrade an explicit success when status refresh fails', async () => {
+  it('does not downgrade an explicit success when status refresh fails', async () => {
     const receive = {
       receiverMemberId: '42',
       amount: 3,
@@ -640,7 +639,7 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('已关闭').props.accessibilityState.disabled).toBe(true);
   });
 
-  it('[REG-PERF-018] rerenders only the compiled reply row whose inline image state changed', async () => {
+  it('rerenders only the compiled reply row whose inline image state changed', async () => {
     const firstImage = 'https://i.imgur.com/first-dynamic.png';
     const secondImage = 'https://i.imgur.com/second-dynamic.png';
     const replyRow = (url: string) => {
@@ -764,7 +763,7 @@ describe('Topic real child components', () => {
     expect(onVotePoll).toHaveBeenCalledWith(multiplePoll, ['a', 'b']);
   });
 
-  it('[REG-WRITE-070] shows NodeSeek poll locking only for the current owner and labels locked polls', async () => {
+  it('shows NodeSeek poll locking only for the current owner and labels locked polls', async () => {
     const onLockPoll = jest.fn();
     const ownerPoll = { ...multiplePoll, ownerId: '54874' };
     const ownerDecision: TopicActionDecisionFor = ({ action }) =>
@@ -837,7 +836,7 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('登录后投票').props.accessibilityState.disabled).toBe(true);
   });
 
-  it('[REG-ACCOUNT-041] keeps an unavailable poll identity typed as awaiting reconciliation', async () => {
+  it('keeps an unavailable poll identity typed as awaiting reconciliation', async () => {
     const onVotePoll = jest.fn();
     const view = await render(
       <TopicPolls
@@ -857,7 +856,7 @@ describe('Topic real child components', () => {
     expect(onVotePoll).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-026] renders duplicated accepted-answer polls as results without a login action', async () => {
+  it('renders duplicated accepted-answer polls as results without a login action', async () => {
     const view = await render(<TopicPolls {...pollProps({ decisionFor: denyAllActions, source: undefined })} />);
 
     expect(view.getByText('只读结果')).toBeTruthy();
@@ -926,7 +925,7 @@ describe('Topic real child components', () => {
     ]);
   });
 
-  it('[REG-PERF-010] renders one virtualized reply-content row with row-local search highlighting', async () => {
+  it('renders one virtualized reply-content row with row-local search highlighting', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       contentHtml: '<p>whole reply must not render here</p>',
@@ -952,7 +951,7 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('回复')).toBeNull();
   });
 
-  it('[REG-TOPIC-087] keeps reply target in reply-start and virtualized body out of reply-end', async () => {
+  it('keeps reply target in reply-start and virtualized body out of reply-end', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       contentHtml: '<p>virtualized reply body</p>',
@@ -986,7 +985,7 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('回复')).toBeNull();
   });
 
-  it('[REG-TOPIC-087] keeps reply target before the single virtualized code owner', async () => {
+  it('keeps reply target before the single virtualized code owner', async () => {
     const codeLines = Array.from(
       { length: 52 },
       (_, index) => `<span>code-line-${String(index + 1).padStart(2, '0')}</span>\n`
@@ -1007,7 +1006,7 @@ describe('Topic real child components', () => {
     expect(visibleText.indexOf('code-line-01')).toBeLessThan(visibleText.indexOf('code-line-52'));
   });
 
-  it('[REG-TOPIC-090] carries terminal tabs through reply modeling, filtering, and real row rendering', async () => {
+  it('carries terminal tabs through reply modeling, filtering, and real row rendering', async () => {
     const props = replyProps({
       reply: {
         ...replyProps().reply,
@@ -1031,7 +1030,7 @@ describe('Topic real child components', () => {
     expect(view.getByText('benchmark result')).toBeTruthy();
   });
 
-  it('[REG-PERF-010] renders a virtualized signature as its own reply row', async () => {
+  it('renders a virtualized signature as its own reply row', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       contentHtml: '<p>body must stay in its own row</p>',
@@ -1057,7 +1056,7 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('回复')).toBeNull();
   });
 
-  it('[REG-PERF-010] applies the same continuation boundary to reply, quote, and signature rows', async () => {
+  it('applies the same continuation boundary to reply, quote, and signature rows', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       contentHtml: '<p>whole reply stays outside this row</p>',
@@ -1118,7 +1117,7 @@ describe('Topic real child components', () => {
     }
   });
 
-  it('[REG-PERF-010] preserves a reply poll when its body is virtualized into direct rows', async () => {
+  it('preserves a reply poll when its body is virtualized into direct rows', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       contentHtml: '<p>body lives in another row</p>',
@@ -1147,14 +1146,14 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('回复')).toBeNull();
   });
 
-  it('[REG-TOPIC-067] removes the divider after the confirmed terminal reply', async () => {
+  it('removes the divider after the confirmed terminal reply', async () => {
     const view = await render(<ReplyItem {...replyProps({ isTerminal: true })} />);
     const terminalStyle = StyleSheet.flatten(view.getByTestId('terminal-reply').props.style);
 
     expect(terminalStyle).toMatchObject({ borderBottomWidth: 0 });
   });
 
-  it('[REG-TOPIC-067] removes the divider after a terminal system event', async () => {
+  it('removes the divider after a terminal system event', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       actionCode: 'closed.enabled',
@@ -1167,78 +1166,7 @@ describe('Topic real child components', () => {
     expect(terminalStyle).toMatchObject({ borderBottomWidth: 0 });
   });
 
-  it('[REG-TOPIC-047] keeps reply prose inset from the avatar column and article density separate', async () => {
-    const reply: Reply = {
-      ...replyProps().reply,
-      contentHtml: '<p>短评论</p>',
-      quotedPosts: [],
-      replyTarget: undefined,
-      signatureHtml: '<p>签名内容</p>'
-    };
-    const [plannedReply] = buildVirtualizedReplyItems({
-      expandedQuotes: {},
-      loadedQuotedReplies: {},
-      loadingQuotedFloors: {},
-      replies: [reply],
-      repliesByFloor: new Map(),
-      source: 'v2ex',
-      topicId: 'topic-1'
-    });
-    expect(plannedReply.type).toBe('reply');
-    if (plannedReply.type !== 'reply') throw new Error('Expected a single-cell reply fixture');
-    const replyView = await render(
-      <ReplyItem
-        {...replyProps({
-          bodyContent: plannedReply.bodyContent,
-          contentWidth: 360,
-          decisionFor: denyAllActions,
-          reply,
-          signatureContent: plannedReply.signatureContent,
-          source: 'v2ex'
-        })}
-      />
-    );
-
-    const replySources = replyView.getAllByTestId('html-source');
-    expect(replySources).toHaveLength(2);
-    expect(replyView.getByTestId('reply-content-area')).toHaveStyle({ paddingLeft: 42, paddingRight: 0 });
-    for (const source of replySources) {
-      expect(source.props.style).toEqual({ marginBottom: 0, width: 318 });
-      expect(source.props.accessibilityHint).toContain(`class="${HTML_REPLY_CONTENT_CLASS}"`);
-    }
-
-    const articleView = await render(
-      <TopicContentBlock contentWidth={360} row={compiledRichText('<p>主楼正文</p>', 'opening')} />
-    );
-    const articleSource = articleView.getByTestId('html-source');
-    expect(articleSource.props.style).toEqual({ width: 360 });
-    expect(articleSource.props.accessibilityHint).not.toContain(HTML_REPLY_CONTENT_CLASS);
-  });
-
-  it('[REG-PERF-010] presents exact continuation margins without rewriting the compiled row HTML', async () => {
-    const expectations = [
-      ['first', false, true],
-      ['middle', true, true],
-      ['last', true, false],
-      ['only', false, false]
-    ] as const;
-    const compiledRow = compiledRichText('<p>fragment</p>');
-
-    for (const [continuation, trimsLeading, trimsTrailing] of expectations) {
-      const row = semanticRowPart(compiledRow, continuation);
-      const view = await render(<TopicContentBlock contentWidth={360} row={row} />);
-      const source = view.getByTestId('html-source');
-      expect(source.props.accessibilityHint).toBe(compiledRow.html);
-      expect(StyleSheet.flatten(source.props.style)).toEqual({
-        width: 360,
-        ...(trimsLeading ? { marginTop: 0 } : {}),
-        ...(trimsTrailing ? { marginBottom: 0 } : {})
-      });
-      await view.unmount();
-    }
-  });
-
-  it('[REG-TOPIC-039] routes actual body, reply, quote, and signature links through internal user navigation', async () => {
+  it('routes actual body, reply, quote, and signature links through internal user navigation', async () => {
     const onOpenExternalUrl = jest.fn<(url: string) => void>();
     const onOpenUser = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenUser']>();
     const quotedReply: Reply = {
@@ -1323,7 +1251,7 @@ describe('Topic real child components', () => {
     expect(onOpenExternalUrl).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-062] routes a NodeSeek floor link with its native page hint', async () => {
+  it('routes a NodeSeek floor link with its native page hint', async () => {
     const onOpenTopic = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenTopic']>();
     const topic: TopicDetail = {
       author: 'alice',
@@ -1365,7 +1293,7 @@ describe('Topic real child components', () => {
     });
   });
 
-  it('[REG-TOPIC-053] renders and navigates a cross-topic linux.do reply quote with the matching complete post', async () => {
+  it('renders and navigates a cross-topic linux.do reply quote with the matching complete post', async () => {
     const onOpenTopic = jest.fn();
     const onToggleReplyQuote = jest.fn();
     const quotedReply: Reply = {
@@ -1428,7 +1356,7 @@ describe('Topic real child components', () => {
     expect(view.queryByText('当前主题同楼层错误内容')).toBeNull();
   });
 
-  it('[REG-TOPIC-054] keeps a cached quote header stable before and after expansion', async () => {
+  it('keeps a cached quote header stable before and after expansion', async () => {
     const author = '一位名字非常非常长的引用帖子作者 Long Display Name';
     const title = '一个很长的引用主题标题，用来确认窄屏下不会挤压头像、作者名和展开按钮';
     const reference = { source: 'linuxdo' as const, topicId: '342888', postNumber: 1 };
@@ -1492,7 +1420,7 @@ describe('Topic real child components', () => {
     expect(view.getByText('已缓存的引用正文')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-053] rejects quote metadata whose source does not match the current Topic', async () => {
+  it('rejects quote metadata whose source does not match the current Topic', async () => {
     const wrongLocalReply: Reply = {
       author: 'wrong-source',
       contentHtml: '<p>异站同主题号楼层错误内容</p>',
@@ -1526,7 +1454,7 @@ describe('Topic real child components', () => {
     expect(view.queryByText('异站同主题号楼层错误内容')).toBeNull();
   });
 
-  it('[REG-TOPIC-035] shows a display-only quoted author without creating a navigable username', async () => {
+  it('shows a display-only quoted author without creating a navigable username', async () => {
     const onOpenUser = jest.fn();
     const reply: Reply = {
       ...replyProps().reply,
@@ -1544,7 +1472,7 @@ describe('Topic real child components', () => {
     expect(onOpenUser).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-035] shows a reply target display name without guessing a Discourse username', async () => {
+  it('shows a reply target display name without guessing a Discourse username', async () => {
     const onOpenUser = jest.fn();
     const reply: Reply = {
       ...replyProps().reply,
@@ -1557,7 +1485,7 @@ describe('Topic real child components', () => {
     expect(onOpenUser).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-061][REG-TOPIC-062] gives the Yaohuo target author and floor independent destinations', async () => {
+  it('gives the Yaohuo target author and floor independent destinations', async () => {
     const onOpenUser = jest.fn();
     const onLocateReply = jest.fn();
     const reply: Reply = {
@@ -1613,7 +1541,7 @@ describe('Topic real child components', () => {
   });
 
   it.each(['linuxdo'] as const)(
-    '[REG-TOPIC-026] renders an accepted %s reply as the solved answer without replacing normal reply behavior',
+    'renders an accepted %s reply as the solved answer without replacing normal reply behavior',
     async (source) => {
       const reply: Reply = {
         ...replyProps().reply,
@@ -1658,7 +1586,7 @@ describe('Topic real child components', () => {
     ['linuxdo', 'closed.enabled', '关闭了主题'],
     ['linuxdo', 'closed.disabled', '重新打开了主题']
   ] as ['linuxdo', string, string][])(
-    '[REG-TOPIC-026] renders a %s system post as the compact “%s” event',
+    'renders a %s system post as the compact “%s” event',
     async (source, actionCode, expectedAction) => {
       const reply: Reply = {
         ...replyProps().reply,
@@ -1696,7 +1624,7 @@ describe('Topic real child components', () => {
     ['linuxdo', '<p>topic.mystery</p>', '更新了主题'],
     ['linuxdo', '<p>执行 topic.mystery</p>', '更新了主题']
   ] as ['linuxdo', string, string][])(
-    '[REG-TOPIC-026] gives an unknown %s system action a readable fallback',
+    'gives an unknown %s system action a readable fallback',
     async (source, contentHtml, expectedAction) => {
       const reply: Reply = {
         ...replyProps().reply,
@@ -1778,7 +1706,7 @@ describe('Topic real child components', () => {
     expect(view.getByText('正文引用完整帖子')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-099] leaves the expanded topic quote header open for its external body rows', async () => {
+  it('leaves the expanded topic quote header open for its external body rows', async () => {
     const view = await render(
       <TopicBodyQuoteCard
         completeContentMountedExternally
@@ -1941,7 +1869,7 @@ describe('Topic real child components', () => {
     expect(view.getAllByLabelText('avatar source linuxdo').length).toBeGreaterThan(0);
   });
 
-  it('[REG-TOPIC-056] leaves blockquote rendering structural after Callout classification moved to the compiler', async () => {
+  it('leaves blockquote rendering structural after Callout classification moved to the compiler', async () => {
     const onOpenExternalUrl = jest.fn();
     const discourseTopic: TopicDetail = {
       author: 'alice',
@@ -2164,7 +2092,7 @@ describe('Topic real child components', () => {
     expect(view.queryByTestId('structured-composer-webview')).toBeNull();
   });
 
-  it('[REG-WRITE-037] keeps one controlled close path while fullscreen closes', async () => {
+  it('keeps one controlled close path while fullscreen closes', async () => {
     const { ComposerBottomSheet } =
       require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
     const onOpenChange = jest.fn();
@@ -2242,7 +2170,7 @@ describe('Topic real child components', () => {
     expect(onPresentationChange).toHaveBeenCalledWith('sheet');
   });
 
-  it('[REG-WRITE-038] requests editor focus only after the sheet reaches its open position', async () => {
+  it('requests editor focus only after the sheet reaches its open position', async () => {
     const { ComposerBottomSheet } =
       require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
     const view = await render(

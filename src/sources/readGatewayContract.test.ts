@@ -204,7 +204,7 @@ describe('source gateway read contract', () => {
     };
   }
 
-  it('[REG-TOPIC-077] normalizes missing reply completeness to a conservative partial boundary', async () => {
+  it('normalizes missing reply completeness to a conservative partial boundary', async () => {
     await expect(getTopic({ source: 'v2ex', id: 'topic-1' })).resolves.toMatchObject({
       replyCompleteness: 'partial'
     });
@@ -213,7 +213,7 @@ describe('source gateway read contract', () => {
     ).resolves.toMatchObject({ completeness: 'partial' });
   });
 
-  it('[REG-SOURCE-011] executes pending public Topic reads only through the native no-cookie lane', async () => {
+  it('executes pending public Topic reads only through the native no-cookie lane', async () => {
     const managedFetcher = vi.fn<Fetcher>();
     const anonymousFetcher = vi.fn<Fetcher>(async () => new Response('public'));
     forumMocks.getTopic.mockImplementationOnce(async ({ fetcher, id, source }) => {
@@ -252,7 +252,7 @@ describe('source gateway read contract', () => {
     expect(managedFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-011] settles pending Yaohuo local categories but blocks remote reads before transport', async () => {
+  it('settles pending Yaohuo local categories but blocks remote reads before transport', async () => {
     forumMocks.getCategories.mockResolvedValueOnce({
       items: [{ source: 'yaohuo', id: 'all', name: '全部' }],
       errors: {}
@@ -286,7 +286,7 @@ describe('source gateway read contract', () => {
     expect(anonymousFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-011] settles unknown strict reads as retryable identity-unavailable without transport', async () => {
+  it('settles unknown strict reads as retryable identity-unavailable without transport', async () => {
     const managedFetcher = vi.fn<Fetcher>();
     const anonymousFetcher = vi.fn<Fetcher>();
     const gateway = createReadGateway({
@@ -307,7 +307,7 @@ describe('source gateway read contract', () => {
     expect(anonymousFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-011] rejects a late authenticated result after its read-plan scope changes', async () => {
+  it('rejects a late authenticated result after its read-plan scope changes', async () => {
     const response = Promise.withResolvers<Response>();
     let snapshot = runtime('linuxdo', {
       authenticated: true,
@@ -345,7 +345,7 @@ describe('source gateway read contract', () => {
     await expect(read).rejects.toThrow('请求已取消');
   });
 
-  it('[REG-SOURCE-011] routes aggregate V2EX search through its explicit public child plan', async () => {
+  it('routes aggregate V2EX search through its explicit public child plan', async () => {
     const anonymousFetcher = vi.fn<Fetcher>(async () => new Response('{}'));
     const managedFetcher = vi.fn<Fetcher>(async () => new Response('{}'));
     forumMocks.searchTopics.mockImplementationOnce(async ({ fetcherForSource }) => {
@@ -372,7 +372,7 @@ describe('source gateway read contract', () => {
     expect(managedFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-011] preserves a typed login action for anonymous Yaohuo remote reads', async () => {
+  it('preserves a typed login action for anonymous Yaohuo remote reads', async () => {
     const managedFetcher = vi.fn<Fetcher>();
     const anonymousFetcher = vi.fn<Fetcher>();
     const gateway = createReadGateway({
@@ -393,7 +393,7 @@ describe('source gateway read contract', () => {
     expect(anonymousFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-031][REG-SOURCE-011] keeps public reads available while identity is pending', async () => {
+  it('keeps public reads available while identity is pending', async () => {
     const blockedSources = new Set<Source>(['nodeseek']);
     const publicTopic: Topic = {
       source: 'v2ex',
@@ -470,7 +470,7 @@ describe('source gateway read contract', () => {
     });
   });
 
-  it('[REG-SEARCH-028] keeps anonymous forum search plans transportless', async () => {
+  it('keeps anonymous forum search plans transportless', async () => {
     const managedFetcher = vi.fn<Fetcher>();
     const anonymousFetcher = vi.fn<Fetcher>();
     for (let request = 0; request < 2; request += 1) {
@@ -498,7 +498,7 @@ describe('source gateway read contract', () => {
     expect(managedFetcher).not.toHaveBeenCalled();
     expect(anonymousFetcher).not.toHaveBeenCalled();
   });
-  it('[REG-SOURCE-010] rejects disabled direct reads before credentials, user agent, adapter, or transport', async () => {
+  it('rejects disabled direct reads before credentials, user agent, adapter, or transport', async () => {
     const fetcher = vi.fn();
     const nodeSeekUserAgent = vi.fn(() => 'NodeSeek UA');
     const gateway = createReadGateway({
@@ -520,7 +520,7 @@ describe('source gateway read contract', () => {
     expect(nodeSeekUserAgent).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-010] uses one enabled snapshot for an all-source read and returns an empty aggregate without credentials or transport', async () => {
+  it('uses one enabled snapshot for an all-source read and returns an empty aggregate without credentials or transport', async () => {
     const fetcher = vi.fn();
     const nodeSeekUserAgent = vi.fn(() => 'NodeSeek UA');
     const enabledSources = ['v2ex', 'nodeseek'] as const;
@@ -555,7 +555,7 @@ describe('source gateway read contract', () => {
     expect(nodeSeekUserAgent).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-010] cancels an all-source read after its enabled set changes and does not commit later fallback evidence', async () => {
+  it('cancels an all-source read after its enabled set changes and does not commit later fallback evidence', async () => {
     let enabledSources: readonly Source[] = ['nodeseek'];
     const parsed = Promise.withResolvers<void>();
     const allowFetch = Promise.withResolvers<void>();
@@ -587,43 +587,40 @@ describe('source gateway read contract', () => {
     ['continues when another source becomes enabled', ['nodeseek'], ['nodeseek', 'v2ex'], true],
     ['continues when another source becomes disabled', ['nodeseek', 'v2ex'], ['nodeseek'], true],
     ['cancels when the direct source becomes disabled', ['nodeseek', 'v2ex'], ['v2ex'], false]
-  ] as const)(
-    '[REG-SOURCE-010] %s during an in-flight direct read',
-    async (_behavior, initialSources, nextSources, remainsCurrent) => {
-      let enabledSources: readonly Source[] = initialSources;
-      const parsed = Promise.withResolvers<void>();
-      const finishRead = Promise.withResolvers<void>();
-      const recoverReadChannel = vi.fn(async () => undefined);
-      const fetcher = vi.fn(forumReadEvidenceFetcher(recoverReadChannel));
-      forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
-        const response = await scopedFetcher('https://www.nodeseek.com/');
-        acceptForumReadResponse(response);
-        parsed.resolve();
-        await finishRead.promise;
-        return { items: [], errors: {}, hasMore: false, nextPage: null };
-      });
-      const gateway = createReadGateway({
-        fetcher,
-        getEnabledSources: () => enabledSources,
-        nodeSeekUserAgent: () => 'NodeSeek UA'
-      });
+  ] as const)('%s during an in-flight direct read', async (_behavior, initialSources, nextSources, remainsCurrent) => {
+    let enabledSources: readonly Source[] = initialSources;
+    const parsed = Promise.withResolvers<void>();
+    const finishRead = Promise.withResolvers<void>();
+    const recoverReadChannel = vi.fn(async () => undefined);
+    const fetcher = vi.fn(forumReadEvidenceFetcher(recoverReadChannel));
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      const response = await scopedFetcher('https://www.nodeseek.com/');
+      acceptForumReadResponse(response);
+      parsed.resolve();
+      await finishRead.promise;
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const gateway = createReadGateway({
+      fetcher,
+      getEnabledSources: () => enabledSources,
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
 
-      const read = gateway.getFeed({ source: 'nodeseek' });
-      await parsed.promise;
-      enabledSources = nextSources;
-      finishRead.resolve();
+    const read = gateway.getFeed({ source: 'nodeseek' });
+    await parsed.promise;
+    enabledSources = nextSources;
+    finishRead.resolve();
 
-      if (remainsCurrent) {
-        await expect(read).resolves.toMatchObject({ items: [] });
-        expect(recoverReadChannel).toHaveBeenCalledTimes(1);
-      } else {
-        await expect(read).rejects.toThrow('请求已取消');
-        expect(recoverReadChannel).not.toHaveBeenCalled();
-      }
+    if (remainsCurrent) {
+      await expect(read).resolves.toMatchObject({ items: [] });
+      expect(recoverReadChannel).toHaveBeenCalledTimes(1);
+    } else {
+      await expect(read).rejects.toThrow('请求已取消');
+      expect(recoverReadChannel).not.toHaveBeenCalled();
     }
-  );
+  });
 
-  it('[REG-SOURCE-010] rejects a stale all-source context before credentials, user agents, adapter, or transport', async () => {
+  it('rejects a stale all-source context before credentials, user agents, adapter, or transport', async () => {
     const fetcher = vi.fn();
     const isSourceAuthenticated = vi.fn(() => true);
     const linuxDoUserAgent = vi.fn(() => 'linux.do UA');
@@ -645,7 +642,7 @@ describe('source gateway read contract', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-010] keeps a reordered all-source context current when its canonical set is unchanged', async () => {
+  it('keeps a reordered all-source context current when its canonical set is unchanged', async () => {
     const gateway = createReadGateway({
       fetcher: vi.fn(),
       getEnabledSources: () => ['v2ex', 'nodeseek'] as const,
@@ -658,7 +655,7 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ includedSources: ['nodeseek', 'v2ex'] }));
   });
 
-  it('[REG-SOURCE-010] terminates an owned disabled-source trace as blocked', async () => {
+  it('terminates an owned disabled-source trace as blocked', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -685,7 +682,7 @@ describe('source gateway read contract', () => {
     ]);
   });
 
-  it('[REG-TOPIC-039] resolves a NodeSeek username through managed session transport', async () => {
+  it('resolves a NodeSeek username through managed session transport', async () => {
     const signal = new AbortController().signal;
     const fetcher = vi.fn();
     nodeSeekMocks.resolveNodeSeekUser.mockResolvedValueOnce({
@@ -714,7 +711,7 @@ describe('source gateway read contract', () => {
     });
   });
 
-  it('[REG-TOPIC-039] blocks NodeSeek username resolution at the identity barrier', async () => {
+  it('blocks NodeSeek username resolution at the identity barrier', async () => {
     const gateway = createReadGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: () => true,
@@ -726,7 +723,7 @@ describe('source gateway read contract', () => {
     expect(nodeSeekMocks.resolveNodeSeekUser).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-039] records safe diagnostics for NodeSeek username resolution', async () => {
+  it('records safe diagnostics for NodeSeek username resolution', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -762,7 +759,7 @@ describe('source gateway read contract', () => {
     expect(serialized).not.toMatch(/private-resolver-user|account\/find|memberList/i);
   });
 
-  it('[REG-ACCOUNT-009][REG-TOPIC-039] drops a resolved username from an old NodeSeek session epoch', async () => {
+  it('drops a resolved username from an old NodeSeek session epoch', async () => {
     let epoch = 4;
     const pending = Promise.withResolvers<{
       source: 'nodeseek';
@@ -791,7 +788,7 @@ describe('source gateway read contract', () => {
     await expect(resolution).rejects.toThrow('请求已取消');
   });
 
-  it('[REG-TOPIC-027] routes emoji reads through managed credentials, fetcher, diagnostics, and cancellation', async () => {
+  it('routes emoji reads through managed credentials, fetcher, diagnostics, and cancellation', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -948,7 +945,7 @@ describe('source gateway read contract', () => {
     });
   });
 
-  it('[REG-SOURCE-001][REG-SOURCE-011] skips LinuxDo credentials on its public read lane', async () => {
+  it('skips LinuxDo credentials on its public read lane', async () => {
     const visibleTopic: Topic = {
       source: 'v2ex',
       id: 'visible-topic',
@@ -1005,7 +1002,7 @@ describe('source gateway read contract', () => {
     expect(lines.map((line) => JSON.parse(line).phase).filter((phase) => phase === 'finish')).toHaveLength(1);
   });
 
-  it('[REG-PROXY-012] rebuilds the shared read runtime and settles a V2EX feed after one direct timeout', async () => {
+  it('rebuilds the shared read runtime and settles a V2EX feed after one direct timeout', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -1055,32 +1052,29 @@ describe('source gateway read contract', () => {
   it.each([
     ['typed cancellation', () => new RequestCanceledError()],
     ['native network cancellation', () => new TypeError('Network request failed')]
-  ])(
-    '[REG-PROXY-012] replays a current foreground read rejected by a completed runtime rotation: %s',
-    async (_kind, cancellation) => {
-      const fetcher = vi
-        .fn<Fetcher>()
-        .mockImplementationOnce(async () => {
-          readNetworkRuntimeMocks.generation = 8;
-          readNetworkRuntimeMocks.triggerSource = 'v2ex';
-          throw cancellation();
-        })
-        .mockResolvedValueOnce(new Response('{}'));
-      const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
-        await scopedFetcher('https://www.v2ex.com/?tab=all');
-        return { items: [], errors: {}, hasMore: false, nextPage: null };
-      };
-      forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
-      const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+  ])('replays a current foreground read rejected by a completed runtime rotation: %s', async (_kind, cancellation) => {
+    const fetcher = vi
+      .fn<Fetcher>()
+      .mockImplementationOnce(async () => {
+        readNetworkRuntimeMocks.generation = 8;
+        readNetworkRuntimeMocks.triggerSource = 'v2ex';
+        throw cancellation();
+      })
+      .mockResolvedValueOnce(new Response('{}'));
+    const readFeed = async ({ fetcher: scopedFetcher }: { fetcher: Fetcher }) => {
+      await scopedFetcher('https://www.v2ex.com/?tab=all');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    };
+    forumMocks.getFeed.mockImplementationOnce(readFeed).mockImplementationOnce(readFeed);
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
 
-      await expect(gateway.getFeed({ source: 'v2ex' })).resolves.toMatchObject({ items: [], errors: {} });
+    await expect(gateway.getFeed({ source: 'v2ex' })).resolves.toMatchObject({ items: [], errors: {} });
 
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
-    }
-  );
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+  });
 
-  it('[REG-PROXY-012] does not replay a cancellation caused by another source rotation', async () => {
+  it('does not replay a cancellation caused by another source rotation', async () => {
     const fetcher = vi.fn<Fetcher>().mockImplementationOnce(async () => {
       readNetworkRuntimeMocks.generation = 8;
       readNetworkRuntimeMocks.triggerSource = 'linuxdo';
@@ -1097,7 +1091,7 @@ describe('source gateway read contract', () => {
     expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
   });
 
-  it('[REG-PROXY-012] reuses the shared runtime recovery for one Yaohuo feed timeout', async () => {
+  it('reuses the shared runtime recovery for one Yaohuo feed timeout', async () => {
     const fetcher = vi
       .fn<Fetcher>()
       .mockRejectedValueOnce(new RequestTimeoutError())
@@ -1124,7 +1118,7 @@ describe('source gateway read contract', () => {
     expect(fetcher.mock.calls.every(([, init]) => browserFetchIntentFromInit(init)?.owner === 'feed')).toBe(true);
   });
 
-  it('[REG-PROXY-012] stops after one recovery when the replay also times out', async () => {
+  it('stops after one recovery when the replay also times out', async () => {
     const fetcher = vi
       .fn<Fetcher>()
       .mockRejectedValueOnce(new RequestTimeoutError())
@@ -1142,7 +1136,7 @@ describe('source gateway read contract', () => {
     expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-PROXY-012] restarts the whole logical Topic read instead of retrying only its timed-out HTTP call', async () => {
+  it('restarts the whole logical Topic read instead of retrying only its timed-out HTTP call', async () => {
     const fetcher = vi
       .fn<Fetcher>()
       .mockResolvedValueOnce(new Response('{}'))
@@ -1183,7 +1177,7 @@ describe('source gateway read contract', () => {
     expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-PROXY-012] ignores a timeout that was not produced by an owned content request', async () => {
+  it('ignores a timeout that was not produced by an owned content request', async () => {
     forumMocks.getFeed.mockRejectedValueOnce(new RequestTimeoutError());
     const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
 
@@ -1191,7 +1185,7 @@ describe('source gateway read contract', () => {
     expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
   });
 
-  it('[REG-PROXY-012] preserves the original timeout when runtime recovery fails before publication', async () => {
+  it('preserves the original timeout when runtime recovery fails before publication', async () => {
     const timeout = new RequestTimeoutError();
     const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(timeout);
     forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
@@ -1205,22 +1199,19 @@ describe('source gateway read contract', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['HTTP 500', '解析失败', '登录已失效'])(
-    '[REG-PROXY-012] does not rebuild for an ordinary %s failure',
-    async (message) => {
-      const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(new Error(message));
-      forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
-        await scopedFetcher('https://www.v2ex.com/?tab=all');
-        return { items: [], errors: {}, hasMore: false, nextPage: null };
-      });
-      const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
+  it.each(['HTTP 500', '解析失败', '登录已失效'])('does not rebuild for an ordinary %s failure', async (message) => {
+    const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(new Error(message));
+    forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
+      await scopedFetcher('https://www.v2ex.com/?tab=all');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const gateway = createReadGateway({ fetcher, nodeSeekUserAgent: () => '' });
 
-      await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toThrow(message);
-      expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
-    }
-  );
+    await expect(gateway.getFeed({ source: 'v2ex' })).rejects.toThrow(message);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+  });
 
-  it('[REG-PROXY-012] does not rebuild after the current page aborts its timed-out read', async () => {
+  it('does not rebuild after the current page aborts its timed-out read', async () => {
     const controller = new AbortController();
     const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(new RequestTimeoutError());
     forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
@@ -1236,7 +1227,7 @@ describe('source gateway read contract', () => {
     expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
   });
 
-  it('[REG-PROXY-012] does not rebuild or replay a write-owned GET routed through the read boundary', async () => {
+  it('does not rebuild or replay a write-owned GET routed through the read boundary', async () => {
     const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(new RequestTimeoutError());
     forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
       await scopedFetcher(
@@ -1252,7 +1243,7 @@ describe('source gateway read contract', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-PROXY-012] does not rebuild or replay a background-owned GET routed through the read boundary', async () => {
+  it('does not rebuild or replay a background-owned GET routed through the read boundary', async () => {
     const fetcher = vi.fn<Fetcher>().mockRejectedValueOnce(new RequestTimeoutError());
     forumMocks.getFeed.mockImplementationOnce(async ({ fetcher: scopedFetcher }) => {
       await scopedFetcher(
@@ -1268,18 +1259,15 @@ describe('source gateway read contract', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['nodeseek', 'linuxdo'] as const)(
-    '[REG-PROXY-012] leaves %s recovery behind its parsed WebView evidence',
-    async (source) => {
-      forumMocks.getFeed.mockRejectedValueOnce(new RequestTimeoutError());
-      const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
+  it.each(['nodeseek', 'linuxdo'] as const)('leaves %s recovery behind its parsed WebView evidence', async (source) => {
+    forumMocks.getFeed.mockRejectedValueOnce(new RequestTimeoutError());
+    const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
 
-      await expect(gateway.getFeed({ source })).rejects.toBeInstanceOf(RequestTimeoutError);
-      expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
-    }
-  );
+    await expect(gateway.getFeed({ source })).rejects.toBeInstanceOf(RequestTimeoutError);
+    expect(readNetworkRuntimeMocks.recoverReadNetworkRuntime).not.toHaveBeenCalled();
+  });
 
-  it('[REG-PROXY-012] does not treat the all-source aggregate timeout as runtime damage', async () => {
+  it('does not treat the all-source aggregate timeout as runtime damage', async () => {
     forumMocks.getFeed.mockRejectedValueOnce(new RequestTimeoutError());
     const gateway = createReadGateway({ fetcher: vi.fn(), nodeSeekUserAgent: () => '' });
 
@@ -1514,7 +1502,7 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getUserProfile).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'user-1' }));
   });
 
-  it('[REG-TOPIC-067] records order, position kind, and resolved page without reply content', async () => {
+  it('records order, position kind, and resolved page without reply content', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -1545,7 +1533,7 @@ describe('source gateway read contract', () => {
     expect(lines.join('')).not.toMatch(/private-topic-id|private-author|private-body/);
   });
 
-  it('[REG-LINUXDO-005] preserves the confirmed-auth decision through the managed gateway', async () => {
+  it('preserves the confirmed-auth decision through the managed gateway', async () => {
     const gateway = createReadGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'linuxdo',
@@ -1710,7 +1698,7 @@ describe('source gateway read contract', () => {
   });
 
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
-    'REG-ACCOUNT-009 cancels a %s read when its session epoch changes before the response',
+    'cancels a %s read when its session epoch changes before the response',
     async (source) => {
       let generation = 7;
       const response = Promise.withResolvers<{
@@ -1738,7 +1726,7 @@ describe('source gateway read contract', () => {
     }
   );
 
-  it('[REG-SOURCE-009] does not commit parsed fallback evidence after the gateway read is superseded', async () => {
+  it('does not commit parsed fallback evidence after the gateway read is superseded', async () => {
     let generation = 4;
     const parsed = Promise.withResolvers<void>();
     const finishAuxiliaryWork = Promise.withResolvers<void>();
@@ -1767,7 +1755,7 @@ describe('source gateway read contract', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-009] does not commit parsed fallback evidence after its AbortSignal is canceled', async () => {
+  it('does not commit parsed fallback evidence after its AbortSignal is canceled', async () => {
     const controller = new AbortController();
     const parsed = Promise.withResolvers<void>();
     const finishAuxiliaryWork = Promise.withResolvers<void>();
@@ -1791,7 +1779,7 @@ describe('source gateway read contract', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-009] stops committing response evidence when eligibility changes between commits', async () => {
+  it('stops committing response evidence when eligibility changes between commits', async () => {
     let generation = 9;
     let requestOrdinal = 0;
     const firstCommit = vi.fn(async () => {
@@ -1828,7 +1816,7 @@ describe('source gateway read contract', () => {
     expect(secondCommit).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-026] returns typed Yaohuo expiry without invoking a logout command', async () => {
+  it('returns typed Yaohuo expiry without invoking a logout command', async () => {
     const gateway = createReadGateway({
       fetcher: vi.fn(),
       isSourceAuthenticated: (source) => source === 'yaohuo',
@@ -1848,7 +1836,7 @@ describe('source gateway read contract', () => {
     });
   });
 
-  it('[REG-PERF-019] expires the captured authenticated read epoch only for a raw HTTP 401', async () => {
+  it('expires the captured authenticated read epoch only for a raw HTTP 401', async () => {
     const onSessionExpired = vi.fn();
     const fetcher = vi
       .fn<Fetcher>()
@@ -1895,7 +1883,7 @@ describe('source gateway read contract', () => {
     expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
-  it('REG-ACCOUNT-009 cancels an expired Yaohuo read when a newer credential takes ownership', async () => {
+  it('cancels an expired Yaohuo read when a newer credential takes ownership', async () => {
     let generation = 7;
     const response = Promise.withResolvers<never>();
     const gateway = createReadGateway({

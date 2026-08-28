@@ -152,7 +152,7 @@ afterEach(() => {
 });
 
 describe('linux.do visible verification coordinator', () => {
-  it('[REG-ACCOUNT-031] opens the surface without probing identity or accepting page cookies', async () => {
+  it('opens the surface without probing identity or accepting page cookies', async () => {
     const {
       controller,
       commitLinuxDoWebViewUserAgent,
@@ -198,7 +198,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(setLinuxDoWebViewUserAgent).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-039] uses the canonical Account verifier as the only manual identity proof and authoritatively closes', async () => {
+  it('uses the canonical Account verifier as the only manual identity proof and authoritatively closes', async () => {
     const { controller, notify, reconcileAccountStatus, showLinuxDoPanelRef, updateLinuxDoSession } =
       createController();
     await controller.showLinuxDoVerification();
@@ -213,7 +213,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
 
-  it('[REG-ACCOUNT-031] reports confirmed anonymous without clearing cookies or synthesizing login expiry', async () => {
+  it('reports confirmed anonymous without clearing cookies or synthesizing login expiry', async () => {
     const { controller, setLinuxDoWebViewError, showLinuxDoPanelRef, updateLinuxDoSession } = createController({
       reconcileAccountStatus: async () => ({
         status: 'anonymous',
@@ -233,7 +233,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
-  it('[REG-ACCOUNT-031] keeps unknown identity read-only and leaves the panel open for retry', async () => {
+  it('keeps unknown identity read-only and leaves the panel open for retry', async () => {
     const { controller, setLinuxDoWebViewError, showLinuxDoPanelRef, updateLinuxDoSession } = createController({
       reconcileAccountStatus: async () => ({
         status: 'unknown',
@@ -254,7 +254,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
-  it('[REG-LINUXDO-002] keeps an exact CF read recovery outside the account identity lifecycle', async () => {
+  it('keeps an exact CF read recovery outside the account identity lifecycle', async () => {
     const resume = vi.fn(async () => 'completed' as const);
     const {
       controller,
@@ -334,7 +334,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
-  it('[REG-LINUXDO-003] reports a CF recovery exception without mutating account state', async () => {
+  it('reports a CF recovery exception without mutating account state', async () => {
     const resume = vi.fn(async () => {
       throw new Error('resume exploded');
     });
@@ -370,7 +370,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
 
-  it('[REG-ACCOUNT-031] treats App inactive as a temporary unmount, not a logical close', async () => {
+  it('treats App inactive as a temporary unmount, not a logical close', async () => {
     const { controller, onLinuxDoSurfaceClosed, showLinuxDoPanelRef } = createController();
     await controller.showLinuxDoVerification();
 
@@ -380,7 +380,7 @@ describe('linux.do visible verification coordinator', () => {
     expect(onLinuxDoSurfaceClosed).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-031] closes a visible surface once and makes hidden repeated closes no-op', async () => {
+  it('closes a visible surface once and makes hidden repeated closes no-op', async () => {
     const { controller, onLinuxDoSurfaceClosed, showLinuxDoPanelRef } = createController();
     await controller.showLinuxDoVerification();
 
@@ -454,7 +454,7 @@ describe('linux.do visible verification coordinator', () => {
     });
   });
 
-  it('[REG-ACCOUNT-031] closes other surfaces before linux.do becomes logically visible', () => {
+  it('closes other surfaces before linux.do becomes logically visible', () => {
     const events: string[] = [];
     const { controller, onLinuxDoSurfaceOpened } = createController({
       onBeforeLinuxDoSurfaceOpened: () => {

@@ -40,7 +40,7 @@ describe('search read', () => {
     expect(result.errors.v2ex).toBeTruthy();
   });
 
-  it('[REG-SOURCE-009] discards a parsed child fallback when the outer aggregate search is aborted', async () => {
+  it('discards a parsed child fallback when the outer aggregate search is aborted', async () => {
     const controller = new AbortController();
     const nodeSeekBodyRead = Promise.withResolvers<void>();
     const recoverReadChannel = vi.fn(async () => undefined);
@@ -272,7 +272,7 @@ describe('search read', () => {
     expect(result.items.map((item) => item.source)).toEqual(['linuxdo', 'v2ex', 'nodeseek']);
   });
 
-  it('[REG-SOURCE-010] confines aggregate search to the included source snapshot and keeps an empty snapshot transport-free', async () => {
+  it('confines aggregate search to the included source snapshot and keeps an empty snapshot transport-free', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com')) {
         return new Response(`<script>${nodeSeekPayload}</script>`);

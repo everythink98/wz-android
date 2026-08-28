@@ -58,7 +58,7 @@ afterEach(() => {
 });
 
 describe('Android release version gate', () => {
-  it('[REG-OPS-012] rejects a version upgrade whose versionCode did not increase', () => {
+  it('rejects a version upgrade whose versionCode did not increase', () => {
     const repository = createRepository('1.0.0', 10);
     execFileSync('git', ['tag', 'v1.0.0'], { cwd: repository });
     commitVersions(repository, '1.0.1', 10);
@@ -87,7 +87,7 @@ describe('Android release version gate', () => {
     expect(result.stderr).toContain('无法校验上一正式版本');
   });
 
-  it('[REG-OPS-012] fails closed when the formal release checkout is shallow', () => {
+  it('fails closed when the formal release checkout is shallow', () => {
     const source = createRepository('0.9.0', 9);
     commitVersions(source, '1.0.0', 10);
     execFileSync('git', ['tag', 'v1.0.0'], { cwd: source });

@@ -507,7 +507,7 @@ describe('Android local sources', () => {
     });
   });
 
-  it('[REG-TOPIC-069] trusts a complete V2EX origin reply snapshot over stale public JSON caches', async () => {
+  it('trusts a complete V2EX origin reply snapshot over stale public JSON caches', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -565,7 +565,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077] exposes V2EX body and usable first-page rows without reading linked pages in the Topic query', async () => {
+  it('exposes V2EX body and usable first-page rows without reading linked pages in the Topic query', async () => {
     const rows = (firstFloor: number, lastFloor: number) =>
       Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
         .map(
@@ -623,7 +623,7 @@ describe('Android local sources', () => {
     expect(replyApiCalls).toBe(0);
   });
 
-  it('[REG-TOPIC-083] reads a linked V2EX page only when its cursor is requested and preserves its retry', async () => {
+  it('reads a linked V2EX page only when its cursor is requested and preserves its retry', async () => {
     const fetcher = routeFetcher([
       [
         { exact: 'https://www.v2ex.com/t/1233404' },
@@ -667,7 +667,7 @@ describe('Android local sources', () => {
     ).rejects.toThrow('page two unavailable');
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077] keeps every parsed V2EX page row when a later declaration changes', async () => {
+  it('keeps every parsed V2EX page row when a later declaration changes', async () => {
     const rows = (firstFloor: number, lastFloor: number) =>
       Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
         .map(
@@ -719,54 +719,51 @@ describe('Android local sources', () => {
   it.each([
     { declaration: '<script type="application/ld+json">{"commentCount":1}</script>', name: 'stale-low' },
     { declaration: '', name: 'missing' }
-  ])(
-    '[REG-TOPIC-071][REG-TOPIC-077] follows an explicit V2EX page link when the first declaration is $name',
-    async ({ declaration }) => {
-      let pageCalls = 0;
-      const fetcher = vi.fn(async (input: string) => {
-        if (input === 'https://www.v2ex.com/t/827') {
-          return html(`
+  ])('follows an explicit V2EX page link when the first declaration is $name', async ({ declaration }) => {
+    let pageCalls = 0;
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/t/827') {
+        return html(`
             ${declaration}
             <div id="r_8271" class="cell"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
             <a href="?p=2">2</a>
           `);
-        }
-        if (input === 'https://www.v2ex.com/t/827?p=2') {
-          pageCalls += 1;
-          return html(`
+      }
+      if (input === 'https://www.v2ex.com/t/827?p=2') {
+        pageCalls += 1;
+        return html(`
             <script type="application/ld+json">{"commentCount":101}</script>
             <div id="r_8272" class="cell"><span class="no">101</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second</div></div>
           `);
-        }
-        throw new Error(`unexpected ${input}`);
-      });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
 
-      const firstPage = await getReplies({
-        source: 'v2ex',
-        id: '827',
-        order: 'oldest',
-        position: { kind: 'start' },
-        fetcher
-      });
+    const firstPage = await getReplies({
+      source: 'v2ex',
+      id: '827',
+      order: 'oldest',
+      position: { kind: 'start' },
+      fetcher
+    });
 
-      expect(pageCalls).toBe(0);
-      expect(firstPage.items.map(({ commentId }) => commentId)).toEqual([8271]);
-      expect(firstPage).toMatchObject({ hasMore: true, nextPage: 2 });
+    expect(pageCalls).toBe(0);
+    expect(firstPage.items.map(({ commentId }) => commentId)).toEqual([8271]);
+    expect(firstPage).toMatchObject({ hasMore: true, nextPage: 2 });
 
-      const secondPage = await getReplies({
-        source: 'v2ex',
-        id: '827',
-        order: 'oldest',
-        position: { kind: 'cursor', page: 2, offset: null },
-        replyCount: firstPage.totalCount,
-        fetcher
-      });
-      expect(pageCalls).toBe(1);
-      expect(secondPage.items.map(({ commentId }) => commentId)).toEqual([8272]);
-    }
-  );
+    const secondPage = await getReplies({
+      source: 'v2ex',
+      id: '827',
+      order: 'oldest',
+      position: { kind: 'cursor', page: 2, offset: null },
+      replyCount: firstPage.totalCount,
+      fetcher
+    });
+    expect(pageCalls).toBe(1);
+    expect(secondPage.items.map(({ commentId }) => commentId)).toEqual([8272]);
+  });
 
-  it('[REG-TOPIC-069][REG-TOPIC-077] keeps distinct V2EX comment IDs that claim the same floor', async () => {
+  it('keeps distinct V2EX comment IDs that claim the same floor', async () => {
     const fetcher = routeFetcher([
       [
         { exact: 'https://www.v2ex.com/t/828' },
@@ -799,7 +796,7 @@ describe('Android local sources', () => {
     expect(replies).toMatchObject({ completeness: 'partial', totalCount: 2 });
   });
 
-  it('[REG-TOPIC-071][REG-TOPIC-083] exposes each explicitly linked V2EX page as one reply window', async () => {
+  it('exposes each explicitly linked V2EX page as one reply window', async () => {
     const rows = (firstFloor: number, lastFloor: number) =>
       Array.from({ length: lastFloor - firstFloor + 1 }, (_, index) => firstFloor + index)
         .map(
@@ -943,93 +940,90 @@ describe('Android local sources', () => {
       expectedSecondFloors: Array.from({ length: 7 }, (_, index) => index + 101),
       expectedPageCalls: 0
     }
-  ])(
-    '[REG-TOPIC-071][REG-TOPIC-077] keeps every unique parsed row for $name without using the replies API',
-    async (scenario) => {
-      const rows = (floors: number[]) =>
-        floors
-          .map(
-            (floor) => `
+  ])('keeps every unique parsed row for $name without using the replies API', async (scenario) => {
+    const rows = (floors: number[]) =>
+      floors
+        .map(
+          (floor) => `
             <div id="r_${91000 + floor}" class="cell">
               <span class="no">${floor}</span>
               <strong><a href="/member/user-${floor}">user-${floor}</a></strong>
               <div class="reply_content">reply ${floor}</div>
             </div>
           `
-          )
-          .join('');
-      let replyApiCalls = 0;
-      let pageCalls = 0;
-      const declaration = (count: number) => `
+        )
+        .join('');
+    let replyApiCalls = 0;
+    let pageCalls = 0;
+    const declaration = (count: number) => `
       <script type="application/ld+json">{"commentCount":${count},"interactionStatistic":[{"interactionType":"https://schema.org/ReplyAction","userInteractionCount":${count}}]}</script>
     `;
-      const fetcher = vi.fn(async (input: string) => {
-        if (input.includes('/api/topics/show.json')) {
-          return json([
-            {
-              id: 1231875,
-              title: 'V2EX invalid paged replies',
-              url: 'https://www.v2ex.com/t/1231875',
-              created: 1780000000,
-              replies: 107,
-              member: { username: 'neo' }
-            }
-          ]);
-        }
-        if (input.includes('/api/replies/show.json')) {
-          replyApiCalls += 1;
-          return json([]);
-        }
-        if (input === 'https://www.v2ex.com/t/1231875') {
-          return html(`
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([
+          {
+            id: 1231875,
+            title: 'V2EX invalid paged replies',
+            url: 'https://www.v2ex.com/t/1231875',
+            created: 1780000000,
+            replies: 107,
+            member: { username: 'neo' }
+          }
+        ]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        replyApiCalls += 1;
+        return json([]);
+      }
+      if (input === 'https://www.v2ex.com/t/1231875') {
+        return html(`
           ${declaration(107)}
           ${rows(Array.from({ length: 100 }, (_, index) => index + 1))}
           <a href="${scenario.firstLink}">2</a>
         `);
-        }
-        if (input === 'https://www.v2ex.com/t/1231875?p=2') {
-          pageCalls += 1;
-          return html(`${declaration(scenario.secondCount)}${rows(scenario.secondFloors)}`);
-        }
-        throw new Error(`unexpected ${input}`);
-      });
+      }
+      if (input === 'https://www.v2ex.com/t/1231875?p=2') {
+        pageCalls += 1;
+        return html(`${declaration(scenario.secondCount)}${rows(scenario.secondFloors)}`);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
 
-      const topic = await getTopic({ source: 'v2ex', id: '1231875', fetcher });
-      expect(topic.replies).toHaveLength(100);
-      expect(topic.replyHasMore).toBe(scenario.expectedPageCalls === 1);
+    const topic = await getTopic({ source: 'v2ex', id: '1231875', fetcher });
+    expect(topic.replies).toHaveLength(100);
+    expect(topic.replyHasMore).toBe(scenario.expectedPageCalls === 1);
 
-      const firstPage = await getReplies({
+    const firstPage = await getReplies({
+      source: 'v2ex',
+      id: '1231875',
+      order: 'oldest',
+      position: { kind: 'start' },
+      replyCount: topic.replyCount,
+      fetcher
+    });
+    const firstPageFloors = Array.from({ length: 100 }, (_, index) => index + 1);
+    expect(firstPage.items.map(({ floor }) => floor)).toEqual(firstPageFloors);
+    expect(replyApiCalls).toBe(0);
+    expect(pageCalls).toBe(0);
+
+    if (scenario.expectedPageCalls) {
+      const secondPage = await getReplies({
         source: 'v2ex',
         id: '1231875',
         order: 'oldest',
-        position: { kind: 'start' },
+        position: { kind: 'cursor', page: 2, offset: null },
         replyCount: topic.replyCount,
         fetcher
       });
-      const firstPageFloors = Array.from({ length: 100 }, (_, index) => index + 1);
-      expect(firstPage.items.map(({ floor }) => floor)).toEqual(firstPageFloors);
-      expect(replyApiCalls).toBe(0);
-      expect(pageCalls).toBe(0);
-
-      if (scenario.expectedPageCalls) {
-        const secondPage = await getReplies({
-          source: 'v2ex',
-          id: '1231875',
-          order: 'oldest',
-          position: { kind: 'cursor', page: 2, offset: null },
-          replyCount: topic.replyCount,
-          fetcher
-        });
-        expect(secondPage.items.map(({ floor }) => floor)).toEqual(scenario.expectedSecondFloors);
-        expect(secondPage).toMatchObject({ completeness: 'partial', totalCount: 107 });
-        expect(pageCalls).toBe(1);
-      } else {
-        expect(firstPage).toMatchObject({ completeness: 'partial', hasMore: false, nextPage: null, totalCount: 107 });
-      }
+      expect(secondPage.items.map(({ floor }) => floor)).toEqual(scenario.expectedSecondFloors);
+      expect(secondPage).toMatchObject({ completeness: 'partial', totalCount: 107 });
+      expect(pageCalls).toBe(1);
+    } else {
+      expect(firstPage).toMatchObject({ completeness: 'partial', hasMore: false, nextPage: null, totalCount: 107 });
     }
-  );
+  });
 
-  it('[REG-TOPIC-067][REG-TOPIC-069][REG-TOPIC-077] keeps valid V2EX rows around a malformed node', async () => {
+  it('keeps valid V2EX rows around a malformed node', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1102,7 +1096,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-069] accepts a self-consistent V2EX commentCount-only reply snapshot', async () => {
+  it('accepts a self-consistent V2EX commentCount-only reply snapshot', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1141,7 +1135,7 @@ describe('Android local sources', () => {
     expect(sourceDiagnosticSummary(topic)).toMatchObject({ parserVariant: 'html-topic' });
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-069][REG-TOPIC-077] keeps rows with conflicting V2EX declarations', async () => {
+  it('keeps rows with conflicting V2EX declarations', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1196,7 +1190,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-077] keeps a V2EX reply collection shorter than the declared count', async () => {
+  it('keeps a V2EX reply collection shorter than the declared count', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1256,7 +1250,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('REG-TOPIC-016 keeps the V2EX thanks count when an icon attribute contains a quoted greater-than sign', async () => {
+  it('keeps the V2EX thanks count when an icon attribute contains a quoted greater-than sign', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1403,7 +1397,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-069] falls back to the V2EX replies API only after the origin HTML request fails', async () => {
+  it('falls back to the V2EX replies API only after the origin HTML request fails', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1471,7 +1465,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-069] confirms an empty V2EX API fallback after the origin HTML request fails', async () => {
+  it('confirms an empty V2EX API fallback after the origin HTML request fails', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1518,7 +1512,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-069][REG-TOPIC-077] keeps a nonempty V2EX API fallback against a stale zero count', async () => {
+  it('keeps a nonempty V2EX API fallback against a stale zero count', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1558,7 +1552,7 @@ describe('Android local sources', () => {
     expect(replies).toMatchObject({ completeness: 'partial', totalCount: undefined });
   });
 
-  it('[REG-TOPIC-069][REG-TOPIC-077] keeps usable HTML rows when a stale API count says empty', async () => {
+  it('keeps usable HTML rows when a stale API count says empty', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1616,7 +1610,7 @@ describe('Android local sources', () => {
     });
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-069][REG-TOPIC-077] keeps an incomplete V2EX replies API fallback', async () => {
+  it('keeps an incomplete V2EX replies API fallback', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1659,7 +1653,7 @@ describe('Android local sources', () => {
     expect(replies).toMatchObject({ completeness: 'partial', totalCount: 3 });
   });
 
-  it('[REG-TOPIC-069][REG-TOPIC-077] drops an empty API record without declaring the remaining row complete', async () => {
+  it('drops an empty API record without declaring the remaining row complete', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1700,7 +1694,7 @@ describe('Android local sources', () => {
     expect(replies).toMatchObject({ completeness: 'partial', totalCount: 2 });
   });
 
-  it('[REG-TOPIC-069][REG-TOPIC-077] keeps identified empty and image-only API replies', async () => {
+  it('keeps identified empty and image-only API replies', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',
@@ -1749,7 +1743,7 @@ describe('Android local sources', () => {
     expect(replies).toMatchObject({ completeness: 'complete', totalCount: 4 });
   });
 
-  it('[REG-TOPIC-069][REG-TOPIC-077] keeps usable HTML rows when the topic API fallback fails', async () => {
+  it('keeps usable HTML rows when the topic API fallback fails', async () => {
     const fetcher = routeFetcher([
       [
         '/api/topics/show.json',

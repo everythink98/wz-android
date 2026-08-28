@@ -81,7 +81,7 @@ describe('NodeSeek account check-in controller', () => {
     expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-WRITE-015] keeps the fixed NodeSeek global mutation identity outside Topic', async () => {
+  it('keeps the fixed NodeSeek global mutation identity outside Topic', async () => {
     mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
     const { hook } = await renderController();
 
@@ -94,7 +94,7 @@ describe('NodeSeek account check-in controller', () => {
     expect(attendance?.options.scope).toEqual({ id: 'forum:nodeseek:topic:global' });
   });
 
-  it('[REG-WRITE-023] records a late confirmed attendance as stale', async () => {
+  it('records a late confirmed attendance as stale', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -118,7 +118,7 @@ describe('NodeSeek account check-in controller', () => {
     expect(finishes).toEqual([expect.objectContaining({ outcome: 'stale', reason: 'stale', serverConfirmed: true })]);
   });
 
-  it('[REG-PERF-019] expires attendance once on raw HTTP 401 without replaying it', async () => {
+  it('expires attendance once on raw HTTP 401 without replaying it', async () => {
     const fetcher = jest.fn(async () => new Response('<html>login</html>', { status: 401 }));
     mockRunNodeSeekAction.mockImplementationOnce(async ({ fetcher: request }) => {
       await request!('https://www.nodeseek.com/api/attendance');
@@ -139,7 +139,7 @@ describe('NodeSeek account check-in controller', () => {
   it.each([
     ['ordinary', new Error('签到网络失败')],
     ['permission-denied', Object.assign(new Error('当前账号不能签到'), { status: 403 })]
-  ])('[REG-WRITE-024] leaves identity unchanged for %s attendance failure', async (_kind, error) => {
+  ])('leaves identity unchanged for %s attendance failure', async (_kind, error) => {
     mockRunNodeSeekAction.mockRejectedValueOnce(error);
     const notify = jest.fn();
     const { hook, onSessionExpired } = await renderController({ notify });

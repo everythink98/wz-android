@@ -43,7 +43,7 @@ describe('forum source read-attempt eligibility', () => {
     return { finishSibling, read, recoverReadChannel };
   }
 
-  it('[REG-SOURCE-009] discards a completed child proof when the outer aggregate is aborted', async () => {
+  it('discards a completed child proof when the outer aggregate is aborted', async () => {
     let aggregateIsEligible = true;
     const fixture = await startAggregateRead({ aggregateIsEligible: () => aggregateIsEligible });
 
@@ -54,7 +54,7 @@ describe('forum source read-attempt eligibility', () => {
     expect(fixture.recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-009] discards a completed child proof when the outer Gateway is superseded', async () => {
+  it('discards a completed child proof when the outer Gateway is superseded', async () => {
     let gatewayIsEligible = true;
     const fixture = await startAggregateRead({
       aggregateIsEligible: () => true,
@@ -68,7 +68,7 @@ describe('forum source read-attempt eligibility', () => {
     expect(fixture.recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-009] commits a proven child only after the outer aggregate succeeds', async () => {
+  it('commits a proven child only after the outer aggregate succeeds', async () => {
     const fixture = await startAggregateRead({ aggregateIsEligible: () => true });
 
     expect(fixture.recoverReadChannel).not.toHaveBeenCalled();
@@ -78,7 +78,7 @@ describe('forum source read-attempt eligibility', () => {
     expect(fixture.recoverReadChannel).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-009] inherits the owning gateway eligibility through an aggregate child fetcher', async () => {
+  it('inherits the owning gateway eligibility through an aggregate child fetcher', async () => {
     let gatewayIsCurrent = true;
     const parsed = Promise.withResolvers<void>();
     const finishAuxiliaryWork = Promise.withResolvers<void>();

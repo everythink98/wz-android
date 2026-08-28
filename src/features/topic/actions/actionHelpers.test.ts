@@ -39,7 +39,7 @@ describe('topic action controller helpers', () => {
     expect(topicEditReplyActionKey('nodeseek:123', 9)).not.toBe(topicReplyActionKey('nodeseek:123'));
   });
 
-  it('[REG-TOPIC-077] matches write refreshes only by their explicit identity kind', () => {
+  it('matches write refreshes only by their explicit identity kind', () => {
     const replies: Reply[] = [
       {
         author: 'first',

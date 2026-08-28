@@ -121,7 +121,7 @@ describe('account center view', () => {
     });
   });
 
-  it('[REG-ACCOUNT-041] keeps a last-known profile while counting terminal unknown as awaiting reconciliation', () => {
+  it('keeps a last-known profile while counting terminal unknown as awaiting reconciliation', () => {
     const sessions = createSiteSessionViewModels(
       createSiteSessionStates({
         nodeseek: {
@@ -158,7 +158,7 @@ describe('account center view', () => {
     expect(accountCenterSummary(views)).toBe('待核对 1 · 待处理 0 · 网站登录 0/3 · 自动填入 0/3');
   });
 
-  it('[REG-ACCOUNT-041] derives account summary denominators from the enabled account capability subset', () => {
+  it('derives account summary denominators from the enabled account capability subset', () => {
     const sessions = createSiteSessionViewModels(
       createSiteSessionStates({
         linuxdo: { site: 'linuxdo', status: 'logged-in', cookieSummary: ['_t'], isVerifying: false }

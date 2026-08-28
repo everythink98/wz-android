@@ -30,7 +30,7 @@ describe('HiddenBrowserHost linux.do transport', () => {
     mockWebViewPropsByUrl.clear();
   });
 
-  it('[REG-ACCOUNT-026][REG-PROXY-001] keeps shared site WebViews cookie-clean and unmounted while blocked', async () => {
+  it('keeps shared site WebViews cookie-clean and unmounted while blocked', async () => {
     const failLinuxDoBrowserFetchById = jest.fn();
     const failNodeSeekBrowserFetchById = jest.fn();
     const props: React.ComponentProps<typeof HiddenBrowserHost> = {
@@ -68,7 +68,7 @@ describe('HiddenBrowserHost linux.do transport', () => {
     expect(mockWebViewPropsByUrl).toHaveProperty('size', 0);
   });
 
-  it('[REG-ACCOUNT-037] passes the account owner into the NodeSeek identity probe script', async () => {
+  it('passes the account owner into the NodeSeek identity probe script', async () => {
     const url = 'https://www.nodeseek.com/';
     await render(
       <HiddenBrowserHost

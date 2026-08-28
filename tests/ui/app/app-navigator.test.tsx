@@ -230,7 +230,7 @@ describe('App navigator UI state', () => {
     expect(view.getByLabelText(label)).toBeTruthy();
   });
 
-  it('[REG-NOTIFY-003] opens an Android summary with a flat header and keeps settings in the More stack', async () => {
+  it('opens an Android summary with a flat header and keeps settings in the More stack', async () => {
     const view = await renderNavigator();
 
     await act(async () => {
@@ -249,7 +249,7 @@ describe('App navigator UI state', () => {
     expect(settingsHeader?.props.hideShadow).toBe(true);
   });
 
-  it('[REG-NAV-003] preserves the complete destination when pushing a Topic route', async () => {
+  it('preserves the complete destination when pushing a Topic route', async () => {
     await renderNavigator();
     const destination: RootStackParamList['Topic'] = {
       targetReply: { floor: 155, pageHint: 16 },
@@ -262,7 +262,7 @@ describe('App navigator UI state', () => {
     await waitFor(() => expect(navigationRef.getCurrentRoute()).toMatchObject({ name: 'Topic', params: destination }));
   });
 
-  it('[REG-PERF-015] mounts only the active tab initially and preserves a visited tab instance', async () => {
+  it('mounts only the active tab initially and preserves a visited tab instance', async () => {
     const view = await renderNavigator();
 
     expect(view.getByText('首页页面')).toBeTruthy();
@@ -279,7 +279,7 @@ describe('App navigator UI state', () => {
     await waitFor(() => expect(view.getByLabelText('搜索状态').props.value).toBe('kept'));
   });
 
-  it('[REG-PERF-002][REG-PERF-008][REG-TOPIC-002][REG-WRITE-006] keeps tab and native route state owned by their mounted route instances', async () => {
+  it('keeps tab and native route state owned by their mounted route instances', async () => {
     const view = await renderNavigator(true);
     await fireEvent.changeText(view.getByLabelText('首页状态'), 'feed-state');
     await fireEvent.press(view.getByTestId('main-tab-search'));

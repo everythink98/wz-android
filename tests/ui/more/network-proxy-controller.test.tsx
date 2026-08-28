@@ -55,7 +55,7 @@ describe('network proxy controller', () => {
     setDiagnosticWriter(null);
   });
 
-  it('[REG-PROXY-003] can reset an unreadable saved proxy to a confirmed direct connection', async () => {
+  it('can reset an unreadable saved proxy to a confirmed direct connection', async () => {
     mockLoadNetworkProxyState.mockRejectedValueOnce(new Error('corrupted proxy state'));
     const notify = jest.fn();
     const hook = await renderHook(() => useNetworkProxyRuntime({ notify }));
@@ -77,7 +77,7 @@ describe('network proxy controller', () => {
     await expect(hook.result.current.ensureNetworkProxyReady()).resolves.toBeUndefined();
   });
 
-  it('[REG-PROXY-011] releases an already-waiting request fail-closed when the saved proxy read times out', async () => {
+  it('releases an already-waiting request fail-closed when the saved proxy read times out', async () => {
     jest.useFakeTimers();
     const load = deferred<NetworkProxyState>();
     mockLoadNetworkProxyState.mockImplementationOnce(() => load.promise);
@@ -119,7 +119,7 @@ describe('network proxy controller', () => {
     }
   });
 
-  it('[REG-PROXY-011] releases a waiting request when its proxy runtime unmounts before storage settles', async () => {
+  it('releases a waiting request when its proxy runtime unmounts before storage settles', async () => {
     jest.useFakeTimers();
     const load = deferred<NetworkProxyState>();
     mockLoadNetworkProxyState.mockImplementationOnce(() => load.promise);
@@ -150,7 +150,7 @@ describe('network proxy controller', () => {
     }
   });
 
-  it('[REG-PROXY-011] rejects a waiting request when storage resolves after its proxy runtime unmounts', async () => {
+  it('rejects a waiting request when storage resolves after its proxy runtime unmounts', async () => {
     const load = deferred<NetworkProxyState>();
     mockLoadNetworkProxyState.mockImplementationOnce(() => load.promise);
     const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
@@ -170,7 +170,7 @@ describe('network proxy controller', () => {
     }
   });
 
-  it('[REG-PROXY-011] keeps a slow native startup apply authoritative and serializes a newer reset behind it', async () => {
+  it('keeps a slow native startup apply authoritative and serializes a newer reset behind it', async () => {
     jest.useFakeTimers();
     const startupApply = deferred<unknown>();
     mockLoadNetworkProxyState.mockResolvedValueOnce({
@@ -212,7 +212,7 @@ describe('network proxy controller', () => {
     }
   });
 
-  it('[REG-PROXY-011] ignores a late startup apply failure after the runtime unmounts', async () => {
+  it('ignores a late startup apply failure after the runtime unmounts', async () => {
     const startupApply = deferred<unknown>();
     mockLoadNetworkProxyState.mockResolvedValueOnce({
       enabled: true,
@@ -234,7 +234,7 @@ describe('network proxy controller', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it('[REG-PROXY-002] serializes profile persistence and builds a later edit from the committed state', async () => {
+  it('serializes profile persistence and builds a later edit from the committed state', async () => {
     const firstSave = deferred<NetworkProxyState>();
     const secondSave = deferred<NetworkProxyState>();
     mockSaveNetworkProxyState
@@ -277,7 +277,7 @@ describe('network proxy controller', () => {
     });
   });
 
-  it('[REG-PROXY-002] waits for an older native apply before applying the newly selected profile', async () => {
+  it('waits for an older native apply before applying the newly selected profile', async () => {
     const firstApply = deferred<unknown>();
     const secondApply = deferred<unknown>();
     mockLoadNetworkProxyState.mockResolvedValue({
@@ -313,7 +313,7 @@ describe('network proxy controller', () => {
     await waitFor(() => expect(hook.result.current.applyStatus).toBe('applied'));
   });
 
-  it('[REG-ACCOUNT-029] preserves the proxy readiness gate while using the read-only native cookie jar', async () => {
+  it('preserves the proxy readiness gate while using the read-only native cookie jar', async () => {
     const apply = deferred<unknown>();
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: true,
@@ -361,7 +361,7 @@ describe('network proxy controller', () => {
     fetchSpy.mockRestore();
   });
 
-  it('[REG-PROXY-010] classifies native content reads without exposing health probes to rotation cancellation', async () => {
+  it('classifies native content reads without exposing health probes to rotation cancellation', async () => {
     const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
     try {
       const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
@@ -387,7 +387,7 @@ describe('network proxy controller', () => {
     }
   });
 
-  it('[REG-PROXY-002] does not apply a selected profile before its persistence succeeds', async () => {
+  it('does not apply a selected profile before its persistence succeeds', async () => {
     const save = deferred<NetworkProxyState>();
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: true,
@@ -417,7 +417,7 @@ describe('network proxy controller', () => {
     expect(mockApplyNetworkProxy).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-PROXY-002] keeps an enabled proxy usable when an unchanged profile is saved', async () => {
+  it('keeps an enabled proxy usable when an unchanged profile is saved', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -448,7 +448,7 @@ describe('network proxy controller', () => {
     expect(lines.join('')).not.toMatch(/proxy-a|a\.proxy\.example|"A"|8080/);
   });
 
-  it('[REG-PROXY-007] does not restart an enabled proxy when only its saved name changes', async () => {
+  it('does not restart an enabled proxy when only its saved name changes', async () => {
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: true,
       activeId: profileA.id,
@@ -470,7 +470,7 @@ describe('network proxy controller', () => {
     expect(hook.result.current.applyStatus).toBe('applied');
   });
 
-  it('[REG-PROXY-002] settles rapid enable then disable commands in order', async () => {
+  it('settles rapid enable then disable commands in order', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -516,7 +516,7 @@ describe('network proxy controller', () => {
     expect(enableEvents[finishIndex]).toEqual(expect.objectContaining({ outcome: 'success', state: 'applied' }));
   });
 
-  it('[REG-PROXY-001] remains fail-closed when native proxy disable fails', async () => {
+  it('remains fail-closed when native proxy disable fails', async () => {
     mockLoadNetworkProxyState.mockResolvedValue({
       enabled: true,
       activeId: profileA.id,

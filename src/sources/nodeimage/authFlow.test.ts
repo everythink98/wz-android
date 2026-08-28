@@ -66,7 +66,7 @@ describe('NodeImage authorization flow', () => {
     await expect(createNodeImageAuthNonce(async () => '00'.repeat(16))).rejects.toThrow('Web Crypto getRandomValues');
   });
 
-  it('REG-ACCOUNT-010 single-flights async initialization and clears after settlement', async () => {
+  it('single-flights async initialization and clears after settlement', async () => {
     const slot = { current: null as Promise<string | null> | null };
     const nonce = Promise.withResolvers<void>();
     const result = Promise.withResolvers<string | null>();
@@ -90,7 +90,7 @@ describe('NodeImage authorization flow', () => {
     await expect(third).resolves.toBeNull();
   });
 
-  it('REG-ACCOUNT-010 closes a pending secure-random continuation before it opens a stale surface', async () => {
+  it('closes a pending secure-random continuation before it opens a stale surface', async () => {
     const slot = { current: null as Promise<string | null> | null };
     const nonce = Promise.withResolvers<string>();
     const open = vi.fn(async () => 'unexpected-key');
@@ -125,12 +125,9 @@ describe('NodeImage authorization flow', () => {
       'https://www.nodeseek.com:443/connect?target=NodeImage'
     ],
     ['nodeimage-verify', 'https://www.nodeimage.com', 'https://www.nodeimage.com/']
-  ] as const)(
-    'REG-ACCOUNT-040 accepts source-origin and exact document evidence for phase %s',
-    (phase, sourceUrl, documentUrl) => {
-      expect(nodeImageAuthBridgeEvidenceMatchesPhase(phase, sourceUrl, documentUrl)).toBe(true);
-    }
-  );
+  ] as const)('accepts source-origin and exact document evidence for phase %s', (phase, sourceUrl, documentUrl) => {
+    expect(nodeImageAuthBridgeEvidenceMatchesPhase(phase, sourceUrl, documentUrl)).toBe(true);
+  });
 
   it.each([
     ['missing document URL', 'https://www.nodeseek.com', ''],
@@ -145,11 +142,11 @@ describe('NodeImage authorization flow', () => {
     ['non-default source port', 'https://www.nodeseek.com:444', 'https://www.nodeseek.com/connect?target=NodeImage'],
     ['non-default document port', 'https://www.nodeseek.com', 'https://www.nodeseek.com:444/connect?target=NodeImage'],
     ['document fragment', 'https://www.nodeseek.com', 'https://www.nodeseek.com/connect?target=NodeImage#done']
-  ])('REG-ACCOUNT-040 rejects %s', (_label, sourceUrl, documentUrl) => {
+  ])('rejects %s', (_label, sourceUrl, documentUrl) => {
     expect(nodeImageAuthBridgeEvidenceMatchesPhase('nodeseek-cauth', sourceUrl, documentUrl)).toBe(false);
   });
 
-  it('REG-ACCOUNT-038 only enters Connect after an explicit expired-session result', () => {
+  it('only enters Connect after an explicit expired-session result', () => {
     expect(nextNodeImageAuthPhase('nodeimage-session', 'nodeimage-session-expired')).toBe('nodeseek-cauth');
     expect(nextNodeImageAuthPhase('nodeimage-session', 'nodeimage-session-key')).toBeNull();
     expect(nextNodeImageAuthPhase('nodeimage-session', 'nodeimage-session-error')).toBeNull();
@@ -158,7 +155,7 @@ describe('NodeImage authorization flow', () => {
     expect(nextNodeImageAuthPhase('nodeimage-verify', 'nodeimage-api-key')).toBeNull();
   });
 
-  it('REG-ACCOUNT-038 rejects late messages after owner, epoch, generation, or terminal changes', () => {
+  it('rejects late messages after owner, epoch, generation, or terminal changes', () => {
     const flow = {
       credentialGeneration: 7,
       ownerIdentityKey: 'nodeseek:42',
@@ -182,14 +179,14 @@ describe('NodeImage authorization flow', () => {
     expect(nodeImageAuthFlowCanAcceptMessage(flow, runtime, 7)).toBe(false);
   });
 
-  it('REG-ACCOUNT-038 grants one native Connect attempt across repeated document readiness', () => {
+  it('grants one native Connect attempt across repeated document readiness', () => {
     const flow = { connectStarted: false };
 
     expect(claimNodeImageConnectAttempt(flow)).toBe(true);
     expect(claimNodeImageConnectAttempt(flow)).toBe(false);
   });
 
-  it('REG-ACCOUNT-040 never starts Connect without both valid bridge proofs', async () => {
+  it('never starts Connect without both valid bridge proofs', async () => {
     const flow = {
       connectStarted: false,
       credentialGeneration: 7,
@@ -243,7 +240,7 @@ describe('NodeImage authorization flow', () => {
     expect(effects.fail).not.toHaveBeenCalled();
   });
 
-  it('REG-ACCOUNT-038 completes an existing NodeImage session without Connect and settles once', async () => {
+  it('completes an existing NodeImage session without Connect and settles once', async () => {
     const flow = {
       connectStarted: false,
       credentialGeneration: 7,
@@ -332,7 +329,7 @@ describe('NodeImage authorization flow', () => {
     expect(flow.terminal).toBe(true);
   });
 
-  it('REG-ACCOUNT-038 drives one Connect through verify, then ignores every late result', async () => {
+  it('drives one Connect through verify, then ignores every late result', async () => {
     const flow = {
       connectStarted: false,
       credentialGeneration: 7,
@@ -405,7 +402,7 @@ describe('NodeImage authorization flow', () => {
     expect(flow.terminal).toBe(true);
   });
 
-  it('REG-ACCOUNT-038 terminates an unknown session result before a late expired message', async () => {
+  it('terminates an unknown session result before a late expired message', async () => {
     const flow = {
       connectStarted: false,
       credentialGeneration: 7,

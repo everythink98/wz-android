@@ -148,7 +148,7 @@ describe('reader data store', () => {
     });
   });
 
-  it('[REG-DATA-007] loads headless settings only from the settings key and falls back safely', async () => {
+  it('loads headless settings only from the settings key and falls back safely', async () => {
     asyncStorage.__store.set('reader-settings', '{bad json');
 
     await expect(loadReaderSettings()).resolves.toEqual(createEmptyReaderData().settings);
@@ -157,28 +157,25 @@ describe('reader data store', () => {
     expect(AsyncStorage.getItem).not.toHaveBeenCalledWith('reader-data');
   });
 
-  it('[REG-DATA-007] uses default settings when the headless settings key is missing', async () => {
+  it('uses default settings when the headless settings key is missing', async () => {
     await expect(loadReaderSettings()).resolves.toEqual(createEmptyReaderData().settings);
     expect(AsyncStorage.getItem).toHaveBeenCalledTimes(1);
     expect(AsyncStorage.getItem).toHaveBeenCalledWith('reader-settings');
   });
 
-  it.each(['null', '[]', '"not settings"'])(
-    '[REG-DATA-007] uses default settings when the headless value is %s',
-    async (raw) => {
-      asyncStorage.__store.set('reader-settings', raw);
+  it.each(['null', '[]', '"not settings"'])('uses default settings when the headless value is %s', async (raw) => {
+    asyncStorage.__store.set('reader-settings', raw);
 
-      await expect(loadReaderSettings()).resolves.toMatchObject({ contentSources: defaultContentSources });
-    }
-  );
+    await expect(loadReaderSettings()).resolves.toMatchObject({ contentSources: defaultContentSources });
+  });
 
-  it('[REG-DATA-007] uses default settings when the headless settings read rejects', async () => {
+  it('uses default settings when the headless settings read rejects', async () => {
     vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('settings storage unavailable'));
 
     await expect(loadReaderSettings()).resolves.toMatchObject({ contentSources: defaultContentSources });
   });
 
-  it('[REG-DATA-007] uses default settings when the headless settings read never settles', async () => {
+  it('uses default settings when the headless settings read never settles', async () => {
     vi.useFakeTimers();
     vi.mocked(AsyncStorage.getItem).mockReturnValueOnce(new Promise(() => undefined));
     const load = loadReaderSettings();
@@ -188,7 +185,7 @@ describe('reader data store', () => {
     await expect(load).resolves.toMatchObject({ contentSources: defaultContentSources });
   });
 
-  it('[REG-DATA-007] ignores a settings value that resolves after the local-read deadline', async () => {
+  it('ignores a settings value that resolves after the local-read deadline', async () => {
     vi.useFakeTimers();
     const stored = Promise.withResolvers<string | null>();
     vi.mocked(AsyncStorage.getItem).mockReturnValueOnce(stored.promise);
@@ -237,7 +234,7 @@ describe('reader data store', () => {
     ['malformed', '{bad json'],
     ['non-object', '[]']
   ] as const)(
-    '[REG-DATA-007] defaults content sources when reader-settings is %s without discarding reader data',
+    'defaults content sources when reader-settings is %s without discarding reader data',
     async (_case, raw) => {
       const data = createEmptyReaderData();
       data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
@@ -276,7 +273,7 @@ describe('reader data store', () => {
     });
   });
 
-  it('[REG-DATA-007] keeps valid reader data and defaults content sources when the separate settings read rejects', async () => {
+  it('keeps valid reader data and defaults content sources when the separate settings read rejects', async () => {
     const data = createEmptyReaderData();
     data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
     data.settings.contentSources[1] = { source: 'linuxdo', enabled: false };
@@ -294,7 +291,7 @@ describe('reader data store', () => {
     });
   });
 
-  it('[REG-DATA-007] keeps valid reader data and defaults content sources when the separate settings read exceeds the local deadline', async () => {
+  it('keeps valid reader data and defaults content sources when the separate settings read exceeds the local deadline', async () => {
     vi.useFakeTimers();
     const data = createEmptyReaderData();
     data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
@@ -314,7 +311,7 @@ describe('reader data store', () => {
     });
   });
 
-  it('[REG-DATA-003] restores the previous full snapshot when the paired settings write fails', async () => {
+  it('restores the previous full snapshot when the paired settings write fails', async () => {
     const previous = createEmptyReaderData();
     const next = {
       ...previous,

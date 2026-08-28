@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe('Android release signing preflight', () => {
-  it('[REG-UPDATE-004] accepts exactly one current signer and rejects a second signer', () => {
+  it('accepts exactly one current signer and rejects a second signer', () => {
     const official = 'ab'.repeat(32);
     const other = 'cd'.repeat(32);
 
@@ -38,7 +38,7 @@ describe('Android release signing preflight', () => {
     ).toBe('');
   });
 
-  it('[REG-OPS-013] rejects a missing repository-relative keystore', () => {
+  it('rejects a missing repository-relative keystore', () => {
     const project = createReleaseProject();
 
     expect(() => resolveReleaseKeystorePath(project, 'signing/release.jks')).toThrow(

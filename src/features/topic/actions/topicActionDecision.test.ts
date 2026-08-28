@@ -39,7 +39,7 @@ describe('topic action decision', () => {
     });
   });
 
-  it('[REG-ACCOUNT-031] explains terminal unknown without claiming that the user logged out', () => {
+  it('explains terminal unknown without claiming that the user logged out', () => {
     const decision = decideTopicAction({
       account: { ...loggedIn, canWrite: false, identityTrust: 'unknown' },
       action: 'reply',

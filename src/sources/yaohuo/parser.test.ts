@@ -85,7 +85,7 @@ describe('yaohuo reply parsing', () => {
     expect(replies.items[1].deletePath).toBeUndefined();
   });
 
-  it('[REG-TOPIC-061][REG-TOPIC-062] sorts Yaohuo windows by floor and preserves reply targets', () => {
+  it('sorts Yaohuo windows by floor and preserves reply targets', () => {
     const replies = parseReplies(
       `
       <div class="list-reply line1" id="floor-90" data-floor="90">
@@ -214,7 +214,7 @@ describe('yaohuo reply parsing', () => {
     });
   });
 
-  it('REG-USER-005 preserves explicit zero statistics for a new Yaohuo user', () => {
+  it('preserves explicit zero statistics for a new Yaohuo user', () => {
     const profile = parseUserProfile(
       `
       <div class="content">昵称:新用户<br/>贴子(0).回复(0)</div>
@@ -225,7 +225,7 @@ describe('yaohuo reply parsing', () => {
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
 
-  it('[REG-ACCOUNT-025] replaces a current-account id placeholder with the profile nickname', () => {
+  it('replaces a current-account id placeholder with the profile nickname', () => {
     const profile = parseUserProfile(
       `
       <div class="content">昵称:火友<br/>贴子(0).回复(0)</div>

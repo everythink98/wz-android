@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 describe('diagnostic traces', () => {
-  it('[REG-PERF-010] allowlists only aggregate topic body media counters', () => {
+  it('allowlists only aggregate topic body media counters', () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('media', 'topic-body-media', {
       source: 'nodeseek',
@@ -106,7 +106,7 @@ describe('diagnostic traces', () => {
     ]);
   });
 
-  it('REG-ACCOUNT-038 records only sanitized NodeImage authorization stages', () => {
+  it('records only sanitized NodeImage authorization stages', () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('credential', 'auth', {
       credentialSource: 'nodeimage',
@@ -133,7 +133,7 @@ describe('diagnostic traces', () => {
     expect(JSON.stringify(events())).not.toMatch(/nonce-secret|api-key-secret|payload-secret|nonce|apiKey|payload/);
   });
 
-  it('REG-ACCOUNT-040 records only the classified NodeImage timeout result', () => {
+  it('records only the classified NodeImage timeout result', () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('credential', 'auth', {
       credentialSource: 'nodeimage',
@@ -592,7 +592,7 @@ describe('diagnostic traces', () => {
     expect(firstTopic).not.toContain('91827');
   });
 
-  it('[REG-PERF-007] bounds raw and issued diagnostic references without reusing IDs', () => {
+  it('bounds raw and issued diagnostic references without reusing IDs', () => {
     const rawAnchor = 'diagnostic-raw-cap-anchor';
     const firstRawRef = diagnosticRef('cursor', rawAnchor);
     for (let index = 0; index < 4_097; index += 1) {

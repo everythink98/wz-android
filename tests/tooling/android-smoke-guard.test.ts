@@ -30,7 +30,7 @@ function readProjectFile(...parts: string[]) {
 }
 
 describe('Android release evidence guards', () => {
-  it('[REG-TEST-003] keeps logged-out testing outside the App and on an explicit isolated device', () => {
+  it('keeps logged-out testing outside the App and on an explicit isolated device', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
     const moreScreen = readProjectFile('src', 'features', 'more', 'MoreScreen.tsx');
     const nativePlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
@@ -57,7 +57,7 @@ describe('Android release evidence guards', () => {
     expect(normalizedAndroidDeviceName(' WZ_Pixel_API_35 ')).toBe('wz pixel api 35');
   });
 
-  it('[REG-OPS-008] requires the first agent-device version that supports Replay recording and reporters', () => {
+  it('requires the first agent-device version that supports Replay recording and reporters', () => {
     expect(MIN_AGENT_DEVICE_VERSION).toBe('0.19.0');
     expect(isVersionSupported('0.18.9')).toBe(false);
     expect(isVersionSupported('0.19.0-beta.1')).toBe(false);
@@ -70,7 +70,7 @@ describe('Android release evidence guards', () => {
     expect(deviceSelectionArgs('  WZ Pixel API 35  ')).toEqual(['--device', 'WZ Pixel API 35']);
   });
 
-  it('[REG-OPS-010] keeps successful agent-device diagnostics out of captured JSON', () => {
+  it('keeps successful agent-device diagnostics out of captured JSON', () => {
     const output = capturedAgentDeviceOutput({
       stdout: '{"success":true,"data":{"devices":[]}}',
       stderr: 'warning: backend probe timed out\n'
@@ -79,7 +79,7 @@ describe('Android release evidence guards', () => {
     expect(parseAgentDeviceList(output)).toEqual([]);
   });
 
-  it('[REG-OPS-011] lets each Replay own its wall-clock budget', () => {
+  it('lets each Replay own its wall-clock budget', () => {
     const runner = readProjectFile('scripts', 'run-device-replay.mjs');
     const fourSourceFeed = readProjectFile('tests', 'device', 'four-source-feed.ad');
 
@@ -87,7 +87,7 @@ describe('Android release evidence guards', () => {
     expect(fourSourceFeed).toContain('context timeout=240000');
   });
 
-  it('[REG-OPS-014] keeps boot and APK sanity on one session and releases it after failure', () => {
+  it('keeps boot and APK sanity on one session and releases it after failure', () => {
     const events: string[] = [];
     const failure = new Error('sanity failed');
 
@@ -113,7 +113,7 @@ describe('Android release evidence guards', () => {
     ]);
   });
 
-  it('[REG-OPS-019] resolves a booted emulator serial to its AVD name before starting Smoke', () => {
+  it('resolves a booted emulator serial to its AVD name before starting Smoke', () => {
     const events: string[] = [];
 
     withSmokeSession(
@@ -149,7 +149,7 @@ describe('Android release evidence guards', () => {
         throw new Error('raw-adb-payload');
       }
     ]
-  ])('[REG-OPS-019] refuses %s before booting an AVD session', (_, resolveAvdName) => {
+  ])('refuses %s before booting an AVD session', (_, resolveAvdName) => {
     let actionCalls = 0;
     let agentCalls = 0;
     let failure: unknown;
@@ -181,7 +181,7 @@ describe('Android release evidence guards', () => {
     expect(actionCalls).toBe(0);
   });
 
-  it('[REG-OPS-017] opens the Android Smoke emulator in a visible window', () => {
+  it('opens the Android Smoke emulator in a visible window', () => {
     const events: string[] = [];
 
     withSmokeSession(
@@ -198,7 +198,7 @@ describe('Android release evidence guards', () => {
     expect(events[0]).not.toContain('--headless');
   });
 
-  it('[REG-OPS-004] maps the configured AVD name to the booted device display name', () => {
+  it('maps the configured AVD name to the booted device display name', () => {
     const devices = parseAgentDeviceList(
       JSON.stringify({
         success: true,
@@ -239,7 +239,7 @@ describe('Android release evidence guards', () => {
     expect(replayRecordingRecoverySession('{ malformed', 'emulator-5554', 'wz-replay-4321-search')).toBeUndefined();
   });
 
-  it('[REG-OPS-007] treats active and atomic-temp recording manifests as occupied scratch', () => {
+  it('treats active and atomic-temp recording manifests as occupied scratch', () => {
     expect(
       parseAndroidRecordingScratchPaths(
         [
@@ -258,7 +258,7 @@ describe('Android release evidence guards', () => {
     ]);
   });
 
-  it('[REG-OPS-018] keeps Smoke on replacement install and delegates journeys to Replay', () => {
+  it('keeps Smoke on replacement install and delegates journeys to Replay', () => {
     const smokeScript = readProjectFile('scripts', 'smoke-android.mjs');
 
     expect(smokeScript).toContain("['doctor', '--platform', 'android']");
@@ -282,7 +282,7 @@ describe('Android release evidence guards', () => {
     expect(smokeScript).not.toMatch(/['"]pm['"]\s*,\s*['"]clear['"]/);
   });
 
-  it('[REG-OPS-018] freezes before first launch when replacement install changes firstInstallTime', () => {
+  it('freezes before first launch when replacement install changes firstInstallTime', () => {
     const events: string[] = [];
     let packageReads = 0;
     const runAgentDeviceCommand = (args: string[]) => {
@@ -323,7 +323,7 @@ describe('Android release evidence guards', () => {
     expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/shell (?:date|log)\b|logcat\b/)]));
   });
 
-  it('[REG-OPS-018] requires one non-empty firstInstallTime before replacement install', () => {
+  it('requires one non-empty firstInstallTime before replacement install', () => {
     for (const readPackage of [
       () => 'firstInstallTime=\n',
       () => 'firstInstallTime=2026-07-26 16:51:37\nfirstInstallTime=2026-08-20 12:00:00\n',
@@ -354,7 +354,7 @@ describe('Android release evidence guards', () => {
     ['duplicate', 'firstInstallTime=2026-07-26 16:51:37\nfirstInstallTime=2026-08-20 12:00:00\n'],
     ['changed', 'firstInstallTime=2026-08-20 12:00:00\n'],
     ['unreadable', new Error('raw-dumpsys-payload')]
-  ])('[REG-OPS-018] prioritizes %s firstInstallTime over replacement install failure', (_, postInstallOutput) => {
+  ])('prioritizes %s firstInstallTime over replacement install failure', (_, postInstallOutput) => {
     const events: string[] = [];
     let packageReads = 0;
     let installCalls = 0;
@@ -402,7 +402,7 @@ describe('Android release evidence guards', () => {
       'firstInstallTime=2026-07-26 16:51:37\nfirstInstallTime=2026-07-26 16:51:37\nraw-post-install-payload\n'
     ],
     ['unreadable', new Error('raw-post-install-payload')]
-  ])('[REG-OPS-018] freezes after a successful replacement install when post-install identity is %s', (_, output) => {
+  ])('freezes after a successful replacement install when post-install identity is %s', (_, output) => {
     const events: string[] = [];
     let packageReads = 0;
     let installCalls = 0;
@@ -442,7 +442,7 @@ describe('Android release evidence guards', () => {
     expect(events).not.toEqual(expect.arrayContaining([expect.stringMatching(/shell (?:date|log)\b|logcat\b/)]));
   });
 
-  it('[REG-OPS-018] reports replacement install failure after unchanged firstInstallTime', () => {
+  it('reports replacement install failure after unchanged firstInstallTime', () => {
     let packageReads = 0;
     let installCalls = 0;
     let failure: unknown;
@@ -474,7 +474,7 @@ describe('Android release evidence guards', () => {
     expect(installCalls).toBe(1);
   });
 
-  it('[REG-OPS-005] captures the first post-install launch before it can fail', () => {
+  it('captures the first post-install launch before it can fail', () => {
     const marker = 'wz-apk-sanity-first-launch-test';
     const events: string[] = [];
     const runAgentDeviceCommand = (args: string[]) => {
@@ -538,7 +538,7 @@ describe('Android release evidence guards', () => {
     expect(dumpIndex).toBeGreaterThan(firstOpenIndex);
   });
 
-  it('[REG-OPS-006] keeps normal and logged-out Replay journeys deterministic and isolated', () => {
+  it('keeps normal and logged-out Replay journeys deterministic and isolated', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
     const loggedOutDeviceDir = path.join(rootDir, 'tests', 'device-logged-out');
     const expected = [
@@ -664,7 +664,7 @@ describe('Android release evidence guards', () => {
     );
   });
 
-  it('[REG-TEST-002] waits for the catalog-complete aggregate search outcome', () => {
+  it('waits for the catalog-complete aggregate search outcome', () => {
     const loggedOutReplay = readFileSync(
       path.join(rootDir, 'tests', 'device-logged-out', 'logged-out-readonly.ad'),
       'utf8'
@@ -682,7 +682,7 @@ describe('Android release evidence guards', () => {
     }
   });
 
-  it('[REG-TEST-009] keeps transient account probe failures out of fixed Replay success requirements', () => {
+  it('keeps transient account probe failures out of fixed Replay success requirements', () => {
     const accountReplay = readProjectFile('tests', 'device', 'account-readonly.ad');
     const nodeSeekReplay = readProjectFile('tests', 'device', 'nodeseek-session.ad');
 
@@ -701,7 +701,7 @@ describe('Android release evidence guards', () => {
     expect(nodeSeekReplay).not.toMatch(/nodeseek-login-webview-settled|press label="检测或重新登录"|刷新页面/);
   });
 
-  it('[REG-TEST-005] keeps dynamic LinuxDo level transport out of fixed Replay', () => {
+  it('keeps dynamic LinuxDo level transport out of fixed Replay', () => {
     const accountReplay = readProjectFile('tests', 'device', 'account-readonly.ad');
 
     expect(accountReplay).toContain(
@@ -717,7 +717,7 @@ describe('Android release evidence guards', () => {
     expect(accountReplay).not.toContain('wait text="等级进度"');
   });
 
-  it('[REG-TEST-006] keeps dynamic third-party success out of fixed Replay oracles', () => {
+  it('keeps dynamic third-party success out of fixed Replay oracles', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
     const replayFiles = [
       ...listReplayFiles(deviceDir),
@@ -741,7 +741,7 @@ describe('Android release evidence guards', () => {
     }
   });
 
-  it('[REG-TEST-007] starts independent journeys from their own App tab', () => {
+  it('starts independent journeys from their own App tab', () => {
     const targets = {
       'account-readonly.ad': 'more',
       'library-return.ad': 'library',
@@ -759,7 +759,7 @@ describe('Android release evidence guards', () => {
     expect(readProjectFile('scripts', 'smoke-android.mjs')).not.toContain('feed-list-ready-');
   });
 
-  it('[REG-OPS-009] keeps true logged-out Replay on its explicit isolated device suite', () => {
+  it('keeps true logged-out Replay on its explicit isolated device suite', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
     const loggedOutDeviceDir = path.join(rootDir, 'tests', 'device-logged-out');
     const releaseReplayNames = listReplayFiles(deviceDir).map((file) => path.basename(file));

@@ -7,6 +7,20 @@ import { findBrokenDocReferences, findKnowledgeContractErrors } from './check-do
 
 const temporaryDirectories = [];
 
+function regressionEntry(id, capability = 'ACCOUNT-01', status = 'RESOLVED', owner = 'tests/canonical.test.ts') {
+  return [
+    `## \`${id}\` known issue`,
+    '',
+    '| 字段 | 内容 |',
+    '| --- | --- |',
+    `| 状态 | \`${status}\` |`,
+    `| 能力 ID | \`${capability}\` |`,
+    '| 历史症状与根因 | historical symptom; root cause seam. |',
+    `| 当前 owner | \`${owner}\` |`,
+    ''
+  ].join('\n');
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { force: true, recursive: true })));
 });
@@ -145,7 +159,7 @@ test('reports tracked Markdown references to undefined npm scripts', async () =>
 test('reports unknown capability references including shorthand without parsing scenario ids', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
-    regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
+    regressionCorpus: regressionEntry('REG-ACCOUNT-001'),
     markdown: '`ACCOUNT-01/99` `LIVE-ACCOUNT-99` `REG-ACCOUNT-001`\n'
   });
 
@@ -182,7 +196,7 @@ test('ignores technical identifiers and validates capability numbers of any leng
 test('reports unknown regression references including shorthand', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
-    regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
+    regressionCorpus: regressionEntry('REG-ACCOUNT-001'),
     markdown: '`REG-ACCOUNT-001/999`\n'
   });
 
@@ -195,7 +209,7 @@ test('reports unknown regression references including shorthand', async () => {
 test('accepts executable REG references defined in the regression corpus', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
-    regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
+    regressionCorpus: regressionEntry('REG-ACCOUNT-001'),
     source: "export const regression = 'REG-ACCOUNT-001';\n"
   });
 
@@ -205,7 +219,7 @@ test('accepts executable REG references defined in the regression corpus', async
 test('reports executable REG references missing from the regression corpus', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
-    regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
+    regressionCorpus: regressionEntry('REG-ACCOUNT-001'),
     source: "export const regression = 'REG-ACCOUNT-001';\n"
   });
   await mkdir(path.join(rootDir, 'tests'));
@@ -216,14 +230,14 @@ test('reports executable REG references missing from the regression corpus', asy
 
   const errors = findKnowledgeContractErrors(rootDir);
 
-  assert.equal(errors.length, 1);
-  assert.match(errors[0], /tests\/regression\.test\.ts:1.*REG-ACCOUNT-999.*不存在/);
+  assert.match(errors.join('\n'), /tests\/regression\.test\.ts:1.*REG-ACCOUNT-999.*不存在/);
+  assert.match(errors.join('\n'), /tests\/regression\.test\.ts:1.*通过测试标题不得包含 REG/);
 });
 
 test('does not validate a local historical baseline as current documentation', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
-    regressionCorpus: '## `REG-ACCOUNT-001` known issue\n',
+    regressionCorpus: regressionEntry('REG-ACCOUNT-001'),
     markdown: '`ACCOUNT-01` `REG-ACCOUNT-001` `npm run verify`\n',
     packageScripts: { verify: 'echo ok' }
   });
@@ -238,7 +252,7 @@ test('does not validate a local historical baseline as current documentation', a
 test('does not parse a REG id as a product capability id', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `FEED-01` | first |', '## 四站能力矩阵'].join('\n'),
-    regressionCorpus: '## `REG-FEED-001` known issue\n\nProtects `FEED-01`.\n'
+    regressionCorpus: `${regressionEntry('REG-FEED-001', 'FEED-01')}Protects \`FEED-01\`.\n`
   });
 
   assert.deepEqual(findKnowledgeContractErrors(rootDir), []);
@@ -247,17 +261,20 @@ test('does not parse a REG id as a product capability id', async () => {
 test('requires every expected failing UI test to name its regression id', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
-    regressionCorpus: '## `REG-TOPIC-001` known issue\n',
+    regressionCorpus: regressionEntry('REG-TOPIC-001', 'TOPIC-03', 'OPEN'),
     expectedFailure: "it.failing('shows the correct reply count', () => {});\n"
   });
 
-  assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /known-failure\.test\.tsx:1.*缺少 REG ID/);
+  assert.match(
+    findKnowledgeContractErrors(rootDir).join('\n'),
+    /known-failure\.test\.tsx:1.*必须且只能引用一个 canonical REG ID/
+  );
 });
 
 test('rejects an expected failing UI test that names an unknown regression', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
-    regressionCorpus: '## `REG-TOPIC-001` known issue\n',
+    regressionCorpus: regressionEntry('REG-TOPIC-001', 'TOPIC-03', 'OPEN'),
     expectedFailure: "it.failing('[REG-TOPIC-999] shows the correct reply count', () => {});\n"
   });
 
@@ -267,7 +284,7 @@ test('rejects an expected failing UI test that names an unknown regression', asy
 test('rejects dynamic or parameterized expected-failure titles that bypass REG mapping', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
-    regressionCorpus: '## `REG-TOPIC-001` known issue\n',
+    regressionCorpus: regressionEntry('REG-TOPIC-001', 'TOPIC-03', 'OPEN'),
     expectedFailure: [
       "const title = '[REG-TOPIC-001] dynamic';",
       'it.failing(title, () => {});',
@@ -280,6 +297,73 @@ test('rejects dynamic or parameterized expected-failure titles that bypass REG m
   assert.match(errors, /known-failure\.test\.tsx:2.*静态字符串标题/);
   assert.match(errors, /known-failure\.test\.tsx:3.*静态字符串标题/);
   assert.match(errors, /known-failure\.test\.tsx:4.*不支持 \.failing\.each/);
+});
+
+test('rejects REG ids in passing test titles', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
+    regressionCorpus: regressionEntry('REG-TOPIC-001', 'TOPIC-03'),
+    expectedFailure: "it('[REG-A11Y-001] shows the current behavior', () => {});\n"
+  });
+
+  assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /通过测试标题不得包含 REG/);
+});
+
+test('parses TypeScript test files with their real script kind before checking titles', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
+    regressionCorpus: regressionEntry('REG-TOPIC-001', 'TOPIC-03')
+  });
+  await writeFile(
+    path.join(rootDir, 'src', 'generic.test.ts'),
+    "const identity = <T>(value: T) => value;\nit('[REG-TOPIC-001] keeps identity', () => identity(1));\n"
+  );
+
+  assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /generic\.test\.ts:2.*通过测试标题不得包含 REG/);
+});
+
+test('allows expected failures only for one open regression', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
+    regressionCorpus: regressionEntry('REG-TOPIC-001', 'TOPIC-03'),
+    expectedFailure: "it.failing('[REG-TOPIC-001] shows the correct reply count', () => {});\n"
+  });
+
+  assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /REG-TOPIC-001.*状态不是 OPEN/);
+});
+
+test('requires legal status, capability, and current owner on every regression entry', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
+    regressionCorpus:
+      [
+        '## `REG-ACCOUNT-001` malformed',
+        '',
+        '| 字段 | 内容 |',
+        '| --- | --- |',
+        '| 状态 | `FIXED` |',
+        '| 能力 ID | `ACCOUNT-01` |',
+        '| 历史事故 | symptom and seam |'
+      ].join('\n') +
+      '\n\n' +
+      regressionEntry('REG-ACCOUNT-002', 'ACCOUNT-01', 'OPEN / FIXED')
+  });
+
+  const errors = findKnowledgeContractErrors(rootDir).join('\n');
+  assert.match(errors, /REG-ACCOUNT-001.*状态/);
+  assert.match(errors, /REG-ACCOUNT-001.*历史症状与根因/);
+  assert.match(errors, /REG-ACCOUNT-001.*当前 owner/);
+  assert.match(errors, /REG-ACCOUNT-002.*状态/);
+});
+
+test('allows multiple historical regressions to share one canonical owner', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: ['## 能力清单', '| `ACCOUNT-01` | first |', '## 四站能力矩阵'].join('\n'),
+    regressionCorpus:
+      regressionEntry('REG-ACCOUNT-001', 'ACCOUNT-01') + regressionEntry('REG-ACCOUNT-002', 'ACCOUNT-01')
+  });
+
+  assert.deepEqual(findKnowledgeContractErrors(rootDir), []);
 });
 
 test('reports retired user-facing authentication terms in source files', async () => {

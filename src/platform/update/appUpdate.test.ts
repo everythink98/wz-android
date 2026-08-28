@@ -153,7 +153,7 @@ describe('app update release parsing', () => {
     ).toThrow('Release manifest 内容不可信。');
   });
 
-  it('[REG-UPDATE-003] rejects a well-formed manifest signer that differs from the built-in release signer', () => {
+  it('rejects a well-formed manifest signer that differs from the built-in release signer', () => {
     expect(() =>
       getAppUpdateFromRelease('1.3.6', release(newerTag), {
         ...manifest(),
@@ -260,7 +260,7 @@ describe('app update release parsing', () => {
     expect(installer.installApk).toHaveBeenCalledWith('file:///cache/wz.apk');
   });
 
-  it('[REG-UPDATE-002] rejects when Android does not open the install confirmation', async () => {
+  it('rejects when Android does not open the install confirmation', async () => {
     const installer = {
       inspectApk: vi.fn(async () => manifest()),
       installApk: vi.fn(async () => false)

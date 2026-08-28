@@ -227,7 +227,7 @@ describe('NodeSeek action request builders', () => {
     });
   });
 
-  it('[REG-WRITE-070] builds the owner-only NodeSeek poll lock request', () => {
+  it('builds the owner-only NodeSeek poll lock request', () => {
     expect(buildNodeSeekPollLockRequest({ pollId: '3037' })).toEqual({
       path: '/api/vote/lock/3037',
       method: 'POST',
@@ -240,7 +240,7 @@ describe('NodeSeek action request builders', () => {
     });
   });
 
-  it('[REG-WRITE-071] uses the real Stardust origin, onetime field, and error fallback', () => {
+  it('uses the real Stardust origin, onetime field, and error fallback', () => {
     expect(buildNodeSeekStardustPrepareRequest({ receiverId: '42' })).toEqual({
       path: '/api/stardust/payment-prepare',
       method: 'POST',

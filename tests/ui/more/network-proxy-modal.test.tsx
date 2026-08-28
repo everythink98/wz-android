@@ -62,7 +62,7 @@ afterEach(() => {
 });
 
 describe('Network proxy modal', () => {
-  it('[REG-PROXY-003] exposes an explicit direct-connection reset after proxy recovery fails', async () => {
+  it('exposes an explicit direct-connection reset after proxy recovery fails', async () => {
     const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
     const view = await render(
       proxyModal({
@@ -120,7 +120,7 @@ describe('Network proxy modal', () => {
     expect(view.getByLabelText('确定').props.accessibilityState.disabled).toBe(false);
   });
 
-  it('[REG-PROXY-005] gives proxy passwords secure input semantics', async () => {
+  it('gives proxy passwords secure input semantics', async () => {
     const view = await render(proxyModal());
 
     await fireEvent.press(view.getByText('添加代理'));
@@ -172,7 +172,7 @@ describe('Network proxy modal', () => {
     });
   });
 
-  it('[REG-PROXY-005] shows full connectivity results and optimistically reflects proxy enable requests', async () => {
+  it('shows full connectivity results and optimistically reflects proxy enable requests', async () => {
     const onSelectProfile = jest.fn(async (_id: string) => undefined);
     const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
     const onTestProfile = jest.fn(async (_profile: NetworkProxyProfile) => ({ ok: true, latencyMs: 42 }));

@@ -28,7 +28,7 @@ describe('source capability catalog', () => {
     expect(sourceSupportsTopicAction('v2ex', 'like')).toBe(false);
   });
 
-  it('[REG-WRITE-013][REG-WRITE-070] advertises only confirmed NodeSeek management capabilities', () => {
+  it('advertises only confirmed NodeSeek management capabilities', () => {
     expect(sourceSupportsTopicAction('nodeseek', 'edit')).toBe(true);
     expect(sourceSupportsTopicAction('nodeseek', 'delete')).toBe(false);
     expect(sourceSupportsTopicAction('nodeseek', 'manage-poll')).toBe(true);
@@ -44,7 +44,7 @@ describe('source capability catalog', () => {
     expect(sessionSources).toEqual(['nodeseek', 'linuxdo', 'yaohuo']);
   });
 
-  it('[REG-SOURCE-008] derives managed sessions from their own catalog capability', () => {
+  it('derives managed sessions from their own catalog capability', () => {
     expect(Object.fromEntries(sourceValues.map((source) => [source, sourceCatalog[source].managedSession]))).toEqual({
       nodeseek: true,
       v2ex: false,

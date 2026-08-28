@@ -256,7 +256,7 @@ describe('diagnostic file store', () => {
     expect(exported).toContain('"topicRef":"topic-');
   });
 
-  it('[REG-PROXY-010] exports allowlisted native runtime phases without network secrets', async () => {
+  it('exports allowlisted native runtime phases without network secrets', async () => {
     const secret = 'NATIVE_RUNTIME_SECRET_91827';
     boundary.nativeEvents.push({
       timeMs: 1_786_199_367_265,

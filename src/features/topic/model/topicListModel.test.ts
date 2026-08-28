@@ -10,7 +10,7 @@ const reply: Reply = {
 };
 
 describe('topic list model', () => {
-  it('[REG-TOPIC-090] gives terminal headers a stable FlashList item type', () => {
+  it('gives terminal headers a stable FlashList item type', () => {
     const row = {
       defaultTabId: 'node-0-tab-0',
       ancestorFrames: [],
@@ -39,7 +39,7 @@ describe('topic list model', () => {
     ).toBe('replyContent:terminalReportHeader');
   });
 
-  it('[REG-TOPIC-088] includes a single-cell reply payload kind in its FlashList view type', () => {
+  it('includes a single-cell reply payload kind in its FlashList view type', () => {
     expect(
       topicListItemType({
         bodyContent: {
@@ -61,7 +61,7 @@ describe('topic list model', () => {
     ).toBe('reply:codeBlock');
   });
 
-  it('[REG-PERF-010] aggregates only planned parent rows and opaque media counts', () => {
+  it('aggregates only planned parent rows and opaque media counts', () => {
     const items: TopicListItem[] = [
       {
         type: 'topicContent',

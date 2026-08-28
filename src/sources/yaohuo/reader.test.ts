@@ -24,7 +24,7 @@ function parseReplies(html: string, options?: Parameters<typeof parseYaohuoRepli
 }
 
 describe('Android direct yaohuo API', () => {
-  it('[REG-ACCOUNT-029] fetches yaohuo through the native read-only cookie jar', async () => {
+  it('fetches yaohuo through the native read-only cookie jar', async () => {
     const yaohuoFetcher = vi.fn(
       async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>')
     );
@@ -533,7 +533,7 @@ describe('Android direct yaohuo API', () => {
     expect(yaohuoFetcher).toHaveBeenCalledWith('https://www.yaohuo.me/wapindex.aspx?sid=-2', expect.any(Object));
   });
 
-  it('[REG-ACCOUNT-019] keeps an ordinary Yaohuo content page unknown without current-user proof', async () => {
+  it('keeps an ordinary Yaohuo content page unknown without current-user proof', async () => {
     const yaohuoFetcher = vi.fn(
       async () =>
         new Response(`
@@ -554,7 +554,7 @@ describe('Android direct yaohuo API', () => {
     expect(result.currentUser).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-037] confirms a Yaohuo guest from the exact login form after an ambiguous public page', async () => {
+  it('confirms a Yaohuo guest from the exact login form after an ambiguous public page', async () => {
     const yaohuoFetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response('<div class="listdata"><a href="/bbs-123.html">公开主题</a></div>');
@@ -582,7 +582,7 @@ describe('Android direct yaohuo API', () => {
     ]);
   });
 
-  it('[REG-ACCOUNT-037] keeps an incomplete Yaohuo login page unknown', async () => {
+  it('keeps an incomplete Yaohuo login page unknown', async () => {
     const yaohuoFetcher = vi.fn(async (input: string) =>
       input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2'
         ? new Response('<div class="listdata"><a href="/bbs-123.html">公开主题</a></div>')
@@ -601,7 +601,7 @@ describe('Android direct yaohuo API', () => {
     expect(yaohuoFetcher).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-ACCOUNT-020] recognizes the complete Yaohuo self-account navigation returned to a logged-in WebView', async () => {
+  it('recognizes the complete Yaohuo self-account navigation returned to a logged-in WebView', async () => {
     const yaohuoFetcher = vi.fn(
       async () =>
         new Response(`
@@ -628,7 +628,7 @@ describe('Android direct yaohuo API', () => {
     });
   });
 
-  it('[REG-ACCOUNT-020] keeps a partial top2 user link unknown', () => {
+  it('keeps a partial top2 user link unknown', () => {
     expect(
       parseYaohuoCurrentUserHtml(`
       <div class="top2">
@@ -639,7 +639,7 @@ describe('Android direct yaohuo API', () => {
     ).toBeNull();
   });
 
-  it('[REG-ACCOUNT-019] returns an explicit Yaohuo guest page as expired instead of throwing', async () => {
+  it('returns an explicit Yaohuo guest page as expired instead of throwing', async () => {
     const yaohuoFetcher = vi.fn(
       async () =>
         new Response('请先登录网站 <a href="/waplogin.aspx">登录</a>', {
@@ -658,25 +658,22 @@ describe('Android direct yaohuo API', () => {
     });
   });
 
-  it.each([401, 403, 404])(
-    '[REG-ACCOUNT-025] keeps Yaohuo HTTP %i unknown instead of clearing login state',
-    async (status) => {
-      const yaohuoFetcher = vi.fn(async () => new Response('', { status }));
-      let failure: unknown;
+  it.each([401, 403, 404])('keeps Yaohuo HTTP %i unknown instead of clearing login state', async (status) => {
+    const yaohuoFetcher = vi.fn(async () => new Response('', { status }));
+    let failure: unknown;
 
-      try {
-        await checkYaohuoLoginDirect({
-          yaohuoFetcher
-        });
-      } catch (error) {
-        failure = error;
-      }
-
-      expect(failure).toBeInstanceOf(Error);
-      expect(failure).toMatchObject({ message: `HTTP ${status}` });
-      expect(failure).not.toMatchObject({ loginRequired: true });
+    try {
+      await checkYaohuoLoginDirect({
+        yaohuoFetcher
+      });
+    } catch (error) {
+      failure = error;
     }
-  );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).toMatchObject({ message: `HTTP ${status}` });
+    expect(failure).not.toMatchObject({ loginRequired: true });
+  });
 
   it.each([
     [
@@ -704,11 +701,11 @@ describe('Android direct yaohuo API', () => {
         </div>
       `
     ]
-  ])('[REG-ACCOUNT-019] does not infer the current Yaohuo user from %s', (_label, html) => {
+  ])('does not infer the current Yaohuo user from %s', (_label, html) => {
     expect(parseYaohuoCurrentUserHtml(html)).toBeNull();
   });
 
-  it('[REG-ACCOUNT-031] does not accept legacy top welcome or logout text as identity proof', () => {
+  it('does not accept legacy top welcome or logout text as identity proof', () => {
     const currentUser = parseYaohuoCurrentUserHtml(
       '<div class="top">火友的<a href="/bbs/userinfo.aspx?touserid=7">空间</a> <a href="/bbs/logout.aspx">退出</a></div>'
     );
@@ -738,7 +735,7 @@ describe('Android direct yaohuo API', () => {
     );
   });
 
-  it('[REG-VERIFICATION-003] uses the Android WebView provider identity for yaohuo read requests', async () => {
+  it('uses the Android WebView provider identity for yaohuo read requests', async () => {
     const yaohuoFetcher = vi.fn(
       async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>')
     );
@@ -808,7 +805,7 @@ describe('Android direct yaohuo API', () => {
     });
   });
 
-  it('REG-WRITE-003 loads the original favorite record with the topic detail', async () => {
+  it('loads the original favorite record with the topic detail', async () => {
     const topic: Topic = {
       source: 'yaohuo',
       id: '123',
@@ -850,7 +847,7 @@ describe('Android direct yaohuo API', () => {
     expect(detail).toMatchObject({ bookmarked: true, bookmarkId: 987 });
   });
 
-  it('REG-WRITE-003 keeps the topic readable when the favorite state is unavailable', async () => {
+  it('keeps the topic readable when the favorite state is unavailable', async () => {
     const topic: Topic = {
       source: 'yaohuo',
       id: '123',
@@ -974,7 +971,7 @@ describe('Android direct yaohuo API', () => {
     expect(detail.authorLevelLabel).toBe('4级水面的小草');
   });
 
-  it('[REG-VERIFICATION-002] does not treat an ordinary Yaohuo discussion about access verification as a challenge page', () => {
+  it('does not treat an ordinary Yaohuo discussion about access verification as a challenge page', () => {
     const detail = parseYaohuoTopicHtml(
       `
       <div class="content">[标题] 访问验证实现讨论 (阅1) [时间] 2026-05-20 10:00</div>
@@ -1192,7 +1189,7 @@ describe('Android direct yaohuo API', () => {
     expect(detail.contentHtml).not.toContain('<svg');
   });
 
-  it('[REG-TOPIC-081] keeps the real yaohuo article and attachment shape together', () => {
+  it('keeps the real yaohuo article and attachment shape together', () => {
     const detail = parseYaohuoTopicHtml(
       `
       <div id="book-view-content" class="content">
@@ -1261,7 +1258,7 @@ describe('Android direct yaohuo API', () => {
     );
   });
 
-  it('[REG-NOTIFY-046] ignores a Yaohuo user named 下一页 when deriving the real reply cursor', () => {
+  it('ignores a Yaohuo user named 下一页 when deriving the real reply cursor', () => {
     const result = parseReplies(
       `
       <div class="list-reply line1" id="floor-288" data-floor="288">
@@ -1277,7 +1274,7 @@ describe('Android direct yaohuo API', () => {
     expect(result.hasMore).toBe(true);
   });
 
-  it('[REG-NOTIFY-046] ignores a user named 下一页 in profile topic and reply cursors', () => {
+  it('ignores a user named 下一页 in profile topic and reply cursors', () => {
     const misleadingUser = '<a href="/bbs/userinfo.aspx?touserid=39170">下一页</a>';
 
     expect(
@@ -1299,7 +1296,7 @@ describe('Android direct yaohuo API', () => {
     ).toBe('https://www.yaohuo.me/bbs/book_re_my.aspx?touserid=7&page=11');
   });
 
-  it('[REG-NOTIFY-046] resolves a target floor through one server-routed reply-page request', async () => {
+  it('resolves a target floor through one server-routed reply-page request', async () => {
     const response = new Response(`
       <form><input name="page" value="16" /></form>
       <div class="list-reply line1" id="floor-90" data-floor="90">
@@ -1336,7 +1333,7 @@ describe('Android direct yaohuo API', () => {
     expect(result.items).toEqual([expect.objectContaining({ floor: 90, author: 'alice' })]);
   });
 
-  it('[REG-TOPIC-062] rejects a target window when 妖火 does not confirm its resolved page', async () => {
+  it('rejects a target window when 妖火 does not confirm its resolved page', async () => {
     const response = new Response(`
       <div class="list-reply line1" id="floor-90" data-floor="90">
         <span class="retext">target reply</span>
@@ -1358,7 +1355,7 @@ describe('Android direct yaohuo API', () => {
     ).rejects.toThrow('妖火未确认目标楼层所在页');
   });
 
-  it('[REG-TOPIC-072] renders a server-routed 妖火 edge window when the hinted first floor was deleted', async () => {
+  it('renders a server-routed 妖火 edge window when the hinted first floor was deleted', async () => {
     const response = new Response(`
       <input name="replyPage" value="1" />
       <input name="loadedThroughPage" value="1" />
@@ -1390,7 +1387,7 @@ describe('Android direct yaohuo API', () => {
     });
   });
 
-  it('[REG-TOPIC-077] preserves empty rows selected by the 妖火 reply collection', async () => {
+  it('preserves empty rows selected by the 妖火 reply collection', async () => {
     const response = new Response(`
       <input name="replyPage" value="1" />
       <div class="list-reply line1" data-floor="1">
@@ -1420,7 +1417,7 @@ describe('Android direct yaohuo API', () => {
     expect(result).toMatchObject({ completeness: 'partial' });
   });
 
-  it('[REG-TOPIC-077] rejects a 妖火 exact target that only matches a synthesized floor', async () => {
+  it('rejects a 妖火 exact target that only matches a synthesized floor', async () => {
     const response = new Response(`
       <input name="replyPage" value="1" />
       <div class="list-reply line1"><span class="retext">reply without a floor marker</span></div>
@@ -1440,7 +1437,7 @@ describe('Android direct yaohuo API', () => {
     ).rejects.toThrow('目标楼层未找到');
   });
 
-  it('[REG-TOPIC-077] accepts a confirmed empty 妖火 oldest start when the authoritative count is zero', async () => {
+  it('accepts a confirmed empty 妖火 oldest start when the authoritative count is zero', async () => {
     const response = new Response('<input name="replyPage" value="1" />');
     Object.defineProperty(response, 'url', {
       value: 'https://www.yaohuo.me/bbs/book_re.aspx?id=1570569&classid=177&tofloor=1'
@@ -1458,7 +1455,7 @@ describe('Android direct yaohuo API', () => {
     ).resolves.toMatchObject({ items: [], completeness: 'complete', hasMore: false, nextPage: null });
   });
 
-  it('[REG-TOPIC-077] rejects an explicit wrong 妖火 topic identity before projecting replies', async () => {
+  it('rejects an explicit wrong 妖火 topic identity before projecting replies', async () => {
     const response = new Response(`
       <input name="replyPage" value="1" />
       <div class="list-reply line1" data-floor="1"><span class="retext">wrong topic reply</span></div>
@@ -1479,7 +1476,7 @@ describe('Android direct yaohuo API', () => {
     ).rejects.toThrow('主题身份不一致');
   });
 
-  it('[REG-TOPIC-072] renders the confirmed newest 妖火 page when the reply hint becomes stale', async () => {
+  it('renders the confirmed newest 妖火 page when the reply hint becomes stale', async () => {
     const response = new Response(`
       <input name="replyPage" value="1" />
       ${Array.from({ length: 7 }, (_, index) => {
@@ -1510,7 +1507,7 @@ describe('Android direct yaohuo API', () => {
     });
   });
 
-  it('[REG-TOPIC-072] reads a confirmed ordinary 妖火 window when the caller reply count is stale zero', async () => {
+  it('reads a confirmed ordinary 妖火 window when the caller reply count is stale zero', async () => {
     const response = new Response(`
       <input name="replyPage" value="1" />
       <div class="list-reply line1" data-floor="8">
@@ -1534,7 +1531,7 @@ describe('Android direct yaohuo API', () => {
     expect(result).toMatchObject({ currentPage: 1, completeness: 'partial' });
   });
 
-  it('[REG-TOPIC-072] fails closed on an empty 妖火 ordinary window without requesting a count refresh', async () => {
+  it('fails closed on an empty 妖火 ordinary window without requesting a count refresh', async () => {
     const response = new Response('<input name="replyPage" value="1" />');
     Object.defineProperty(response, 'url', {
       value: 'https://www.yaohuo.me/bbs/book_re.aspx?id=1570569&classid=177&tofloor=1'
@@ -1557,7 +1554,7 @@ describe('Android direct yaohuo API', () => {
     expect((error as { reason?: unknown }).reason).toBeUndefined();
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-068] follows 妖火 real floors across its newest-first server pages', async () => {
+  it('follows 妖火 real floors across its newest-first server pages', async () => {
     const detail = parseYaohuoTopicHtml(
       '<div class="content">[标题] topic</div>更多回帖(30)<a href="/bbs/book_re.aspx?id=1560940&amp;classid=177&amp;page=1&amp;tofloor=555">555楼</a><a href="/bbs/book_re.aspx?id=1560940&amp;classid=177&amp;reply=558">回复</a>',
       { id: '1560940' }
@@ -1622,7 +1619,7 @@ describe('Android direct yaohuo API', () => {
     expect(oldestAgain.items.map((reply) => reply.floor)).toEqual(oldest.items.map((reply) => reply.floor));
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-068][REG-TOPIC-072] rejects a wrong 妖火 tail page but renders a confirmed changing edge', async () => {
+  it('rejects a wrong 妖火 tail page but renders a confirmed changing edge', async () => {
     const row =
       '<div class="list-reply line1" data-floor="558"><span class="retext">reply 558</span><span class="renick">user-558</span></div>';
     const wrongPageFetcher = vi.fn(async (input: string) => {

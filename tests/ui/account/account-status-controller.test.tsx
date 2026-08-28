@@ -170,7 +170,7 @@ describe('account status queries', () => {
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? (null as never) : linuxUser));
   });
 
-  it('[REG-PERF-019] restores the last confirmed identity without probing the account endpoint', async () => {
+  it('restores the last confirmed identity without probing the account endpoint', async () => {
     await AsyncStorage.multiSet([
       ['account-session.migration.v1', '1'],
       [
@@ -199,7 +199,7 @@ describe('account status queries', () => {
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-019] probes only migration candidates and marks the one-time migration complete', async () => {
+  it('probes only migration candidates and marks the one-time migration complete', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const readNodeSeekCookieHeader = jest.fn(async () => 'session=candidate');
     const first = await renderStatusController({
@@ -214,7 +214,7 @@ describe('account status queries', () => {
     expect(await AsyncStorage.getItem('account-session.v1.nodeseek')).toContain('"state":"authenticated"');
   });
 
-  it('[REG-ACCOUNT-044] bounds only one-time migration and releases its probe before sessions are ready', async () => {
+  it('bounds only one-time migration and releases its probe before sessions are ready', async () => {
     jest.useFakeTimers();
     const readNodeSeekCookieHeader = jest.fn(async () => 'session=candidate');
     mockGetCurrentUser.mockImplementationOnce(
@@ -270,7 +270,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-SOURCE-010] probes only enabled sources and treats disabled reconciliation as stale', async () => {
+  it('probes only enabled sources and treats disabled reconciliation as stale', async () => {
     const { hook } = await renderStatusController({
       enabledSources: ['nodeseek']
     });
@@ -285,7 +285,7 @@ describe('account status queries', () => {
     await expect(hook.result.current.reconcileAccountStatus('linuxdo')).resolves.toEqual({ status: 'stale' });
   });
 
-  it('[REG-SOURCE-010] starts all-disabled without probes or an identity barrier', async () => {
+  it('starts all-disabled without probes or an identity barrier', async () => {
     const { hook } = await renderStatusController({ enabledSources: [] });
 
     await act(async () => {
@@ -296,7 +296,7 @@ describe('account status queries', () => {
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-014] leaves initial hydration probes to the foreground-ready batch', async () => {
+  it('leaves initial hydration probes to the foreground-ready batch', async () => {
     const { hook } = await renderStatusController({
       enabledSources: []
     });
@@ -319,7 +319,7 @@ describe('account status queries', () => {
     expect(mockGetCurrentUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek' }));
   });
 
-  it('[REG-SOURCE-010] ignores an enabled-source reorder with unchanged membership', async () => {
+  it('ignores an enabled-source reorder with unchanged membership', async () => {
     const { hook } = await renderStatusController({ enabledSources: ['linuxdo', 'nodeseek'] });
     await act(async () => {
       await hook.result.current.refreshAccountStatus({ silent: true });
@@ -337,7 +337,7 @@ describe('account status queries', () => {
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-010] aborts a disabled probe without reconciling automatically after re-enable', async () => {
+  it('aborts a disabled probe without reconciling automatically after re-enable', async () => {
     const firstCookie = Promise.withResolvers<string | undefined>();
     const readNodeSeekCookieHeader = jest
       .fn<() => Promise<string | undefined>>()
@@ -368,7 +368,7 @@ describe('account status queries', () => {
     expect(readNodeSeekCookieHeader).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-010] preserves the trusted identity without reconciling automatically after re-enable', async () => {
+  it('preserves the trusted identity without reconciling automatically after re-enable', async () => {
     const readNodeSeekCookieHeader = jest
       .fn<() => Promise<string | undefined>>()
       .mockResolvedValueOnce('session=trusted');
@@ -406,7 +406,7 @@ describe('account status queries', () => {
     expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed');
   });
 
-  it('[REG-SOURCE-010] re-enable does not reconcile or cancel active reads', async () => {
+  it('re-enable does not reconcile or cancel active reads', async () => {
     const directResult = Promise.withResolvers<string>();
     const aggregateResult = Promise.withResolvers<string>();
     const directAbort = jest.fn();
@@ -453,7 +453,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-FEED-010] does not cancel a safe aggregate read when the startup identity probes begin', async () => {
+  it('does not cancel a safe aggregate read when the startup identity probes begin', async () => {
     const aggregateResult = Promise.withResolvers<string>();
     const aggregateAbort = jest.fn();
     const aggregateRequest = appQueryClient
@@ -490,7 +490,7 @@ describe('account status queries', () => {
     expect(aggregateAbort).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-044] keeps explicit account reconciliation active past the Feed aggregate budget', async () => {
+  it('keeps explicit account reconciliation active past the Feed aggregate budget', async () => {
     jest.useFakeTimers();
     const nodeSeekCookie = Promise.withResolvers<string | undefined>();
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
@@ -539,7 +539,7 @@ describe('account status queries', () => {
     }
   });
 
-  it('[REG-ACCOUNT-044] lets three-site refresh publish fast sites while one protocol runs past five seconds', async () => {
+  it('lets three-site refresh publish fast sites while one protocol runs past five seconds', async () => {
     jest.useFakeTimers();
     const nodeSeekCookie = Promise.withResolvers<string | undefined>();
     mockReadLinuxDoCookieHeader.mockResolvedValue('_t=safe');
@@ -596,7 +596,7 @@ describe('account status queries', () => {
     }
   });
 
-  it('[REG-PERF-019] keeps private reads active while a confirmed identity is checked', async () => {
+  it('keeps private reads active while a confirmed identity is checked', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
@@ -627,7 +627,7 @@ describe('account status queries', () => {
     await privateRequest;
   });
 
-  it('REG-ACCOUNT-001 keeps successful sites when one identity query fails', async () => {
+  it('keeps successful sites when one identity query fails', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('_t=safe');
     mockGetCurrentUser.mockImplementation(async ({ source }) => {
       if (source === 'nodeseek') throw new Error('NodeSeek offline');
@@ -654,7 +654,7 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenCalledWith('账号状态部分刷新失败：NodeSeek');
   });
 
-  it('[REG-LINUXDO-005] keeps a cold-start Cookie candidate non-authenticated when identity is unknown', async () => {
+  it('keeps a cold-start Cookie candidate non-authenticated when identity is unknown', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('cf_clearance=verification; _t=stale-session');
     mockGetCurrentUser.mockImplementation(async ({ source }) => {
       if (source === 'linuxdo') throw new Error('linux.do 状态暂时无法确认');
@@ -695,7 +695,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-LINUXDO-007] exposes a typed Account challenge without settling the identity barrier', async () => {
+  it('exposes a typed Account challenge without settling the identity barrier', async () => {
     mockGetCurrentUser.mockImplementation(async ({ source }) => {
       if (source === 'linuxdo') {
         throw Object.assign(new Error('linux.do 需要完成 Cloudflare 验证'), {
@@ -723,7 +723,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-ACCOUNT-042] commits the linux.do current user to the stable snapshot in one response', async () => {
+  it('commits the linux.do current user to the stable snapshot in one response', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('cf_clearance=verification; _t=active-session');
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'linuxdo' ? linuxUser : (null as never)));
     const { hook } = await renderStatusController({ enabledSources: ['linuxdo'] });
@@ -753,7 +753,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-042] commits the changed snapshot before advancing the source scope', async () => {
+  it('commits the changed snapshot before advancing the source scope', async () => {
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? nodeSeekUser : linuxUser));
     const committedSnapshots: AccountSessionSnapshot[] = [];
     const onAccountStatusChanged = jest.fn(() => {
@@ -784,7 +784,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-042] commits the canonical snapshot before reconciliation resolves', async () => {
+  it('commits the canonical snapshot before reconciliation resolves', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const sourceFeedKey = forumQueryKeys.feed({
       feedFilter: 'postTime',
@@ -822,7 +822,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-ACCOUNT-035] rejects confirmed trust without a logged-in current user', async () => {
+  it('rejects confirmed trust without a logged-in current user', async () => {
     appQueryClient.setQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'), {
       site: 'nodeseek',
       status: 'anonymous',
@@ -840,7 +840,7 @@ describe('account status queries', () => {
     expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-035] rejects none trust paired with a logged-in current user', async () => {
+  it('rejects none trust paired with a logged-in current user', async () => {
     appQueryClient.setQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'), {
       site: 'nodeseek',
       status: 'logged-in',
@@ -859,7 +859,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-ACCOUNT-035] makes an authoritative terminal identity win over a late probe', async () => {
+  it('makes an authoritative terminal identity win over a late probe', async () => {
     const identity = Promise.withResolvers<UserProfile>();
     mockGetCurrentUser.mockImplementationOnce(async () => identity.promise);
     const { hook } = await renderStatusController({
@@ -886,14 +886,14 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-SOURCE-010] ignores authoritative terminal commits after a source is disabled', async () => {
+  it('ignores authoritative terminal commits after a source is disabled', async () => {
     const { hook } = await renderStatusController({ enabledSources: [] });
 
     expect(hook.result.current.applyAccountSessionEvent({ site: 'nodeseek', type: 'cleared' })).toBe(false);
     expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('unknown');
   });
 
-  it('[REG-ACCOUNT-035] clears the prior probe error when authoritative identity settles', async () => {
+  it('clears the prior probe error when authoritative identity settles', async () => {
     mockGetCurrentUser.mockRejectedValueOnce(new Error('offline before clear'));
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
@@ -913,7 +913,7 @@ describe('account status queries', () => {
     await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.lastError).toBeUndefined());
   });
 
-  it('[REG-ACCOUNT-035] keeps the confirmed identity while a closing-surface check runs or fails', async () => {
+  it('keeps the confirmed identity while a closing-surface check runs or fails', async () => {
     mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
@@ -960,7 +960,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-035] releases stale verification workflow state after canonical identity settles', async () => {
+  it('releases stale verification workflow state after canonical identity settles', async () => {
     appQueryClient.setQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'), {
       site: 'nodeseek',
       status: 'logged-in',
@@ -990,7 +990,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-PERF-019] keeps the last confirmed identity trusted while a manual check is running or fails', async () => {
+  it('keeps the last confirmed identity trusted while a manual check is running or fails', async () => {
     mockGetCurrentUser.mockResolvedValueOnce(nodeSeekUser);
     const onAccountStatusChanged = jest.fn();
     const { hook } = await renderStatusController({
@@ -1064,7 +1064,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-031] reports an explicitly confirmed anonymous session without changing scope', async () => {
+  it('reports an explicitly confirmed anonymous session without changing scope', async () => {
     mockGetCurrentUser.mockRejectedValue(
       Object.assign(new Error('未登录'), {
         loginRequired: true,
@@ -1085,7 +1085,7 @@ describe('account status queries', () => {
     expect(onAccountStatusChanged).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-019] does not publish an anonymous result detected inside an open login surface', async () => {
+  it('does not publish an anonymous result detected inside an open login surface', async () => {
     mockGetCurrentUser.mockRejectedValue(
       Object.assign(new Error('未登录'), { loginRequired: true, reason: 'expired', source: 'nodeseek' })
     );
@@ -1117,7 +1117,7 @@ describe('account status queries', () => {
     expect(await AsyncStorage.getItem('account-session.v1.nodeseek')).toBeNull();
   });
 
-  it('[REG-ACCOUNT-026] lets the linux.do current-session response decide identity when a candidate cookie has no _t', async () => {
+  it('lets the linux.do current-session response decide identity when a candidate cookie has no _t', async () => {
     const readManagedCookieHeader = jest.fn(async () => ({
       status: 'ok' as const,
       header: '_forum_session=current-session'
@@ -1143,7 +1143,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('REG-ACCOUNT-002 isolates an exact CookieManager read failure from the other sites', async () => {
+  it('isolates an exact CookieManager read failure from the other sites', async () => {
     const { hook, notify } = await renderStatusController({
       readManagedCookieHeader: jest.fn(async (exactUrl: string) =>
         exactUrl.includes('yaohuo.me')
@@ -1162,7 +1162,7 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenCalledWith('账号状态部分刷新失败：妖火');
   });
 
-  it('[REG-ACCOUNT-026] projects a confirmed Yaohuo logout as anonymous without invoking a clear command', async () => {
+  it('projects a confirmed Yaohuo logout as anonymous without invoking a clear command', async () => {
     mockReadYaohuoCookieHeader.mockResolvedValueOnce('sid=safe');
     mockCheckYaohuoLogin.mockResolvedValueOnce({
       source: 'yaohuo',
@@ -1186,7 +1186,7 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenCalledWith('账号状态已刷新');
   });
 
-  it('REG-ACCOUNT-008 never forwards an exact CookieManager header into the Account verifier', async () => {
+  it('never forwards an exact CookieManager header into the Account verifier', async () => {
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? nodeSeekUser : linuxUser));
     const readNodeSeekCookieHeader = jest.fn(async () => 'session=safe');
     const { hook, notify } = await renderStatusController({
@@ -1210,7 +1210,7 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenCalledWith('账号状态已刷新');
   });
 
-  it('[REG-ACCOUNT-026] lets the NodeSeek current-session response decide identity when the candidate has no known login cookie name', async () => {
+  it('lets the NodeSeek current-session response decide identity when the candidate has no known login cookie name', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const readNodeSeekCookieHeader = jest.fn(async () => 'cf_clearance=current-verification');
     const { hook } = await renderStatusController({ readNodeSeekCookieHeader });
@@ -1237,7 +1237,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-026] projects a confirmed NodeSeek logout without deleting login cookies', async () => {
+  it('projects a confirmed NodeSeek logout without deleting login cookies', async () => {
     mockGetCurrentUser.mockRejectedValueOnce(
       Object.assign(new Error('NodeSeek 登录已失效'), {
         source: 'nodeseek',
@@ -1263,7 +1263,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-026] cannot invoke a failing NodeSeek logout command during status refresh', async () => {
+  it('cannot invoke a failing NodeSeek logout command during status refresh', async () => {
     mockGetCurrentUser.mockRejectedValueOnce(
       Object.assign(new Error('NodeSeek 登录已失效'), {
         source: 'nodeseek',
@@ -1289,7 +1289,7 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenLastCalledWith('账号状态已刷新');
   });
 
-  it('[REG-ACCOUNT-026] keeps confirmed logout detection separate from Cookie deletion', async () => {
+  it('keeps confirmed logout detection separate from Cookie deletion', async () => {
     mockGetCurrentUser.mockRejectedValueOnce(
       Object.assign(new Error('NodeSeek 登录已失效'), {
         source: 'nodeseek',
@@ -1325,7 +1325,7 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenLastCalledWith('账号状态已刷新');
   });
 
-  it('REG-ACCOUNT-008 projects a linux.do anonymous response without mutating workflow state', async () => {
+  it('projects a linux.do anonymous response without mutating workflow state', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('_t=safe');
     mockGetCurrentUser.mockImplementation(async ({ source }) => {
       if (source === 'linuxdo') {
@@ -1351,7 +1351,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-031] drops a superseded surface probe before it can send or commit stale identity', async () => {
+  it('drops a superseded surface probe before it can send or commit stale identity', async () => {
     const firstCookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
     const readManagedCookieHeader = jest
       .fn<ReadManagedCookieHeader>()
@@ -1380,7 +1380,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-031] invalidates a closing probe when a newer login surface opens', async () => {
+  it('invalidates a closing probe when a newer login surface opens', async () => {
     const firstCookieRead = Promise.withResolvers<{ status: 'ok'; header: string }>();
     const readManagedCookieHeader = jest
       .fn<ReadManagedCookieHeader>()
@@ -1413,7 +1413,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-031] deduplicates concurrent reconciliation for the same source', async () => {
+  it('deduplicates concurrent reconciliation for the same source', async () => {
     const storedCookie = Promise.withResolvers<string | undefined>();
     const readNodeSeekCookieHeader = jest.fn(async () => storedCookie.promise);
     const { hook } = await renderStatusController({ readNodeSeekCookieHeader });
@@ -1437,7 +1437,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-ACCOUNT-042] keeps the Account snapshot stable when only the forum epoch changes', async () => {
+  it('keeps the Account snapshot stable when only the forum epoch changes', async () => {
     mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
@@ -1468,7 +1468,7 @@ describe('account status queries', () => {
     });
   });
 
-  it('[REG-ACCOUNT-020] hydrates a verified Yaohuo self id before projecting the account', async () => {
+  it('hydrates a verified Yaohuo self id before projecting the account', async () => {
     const readManagedCookieHeader = jest.fn(async () => ({
       status: 'ok' as const,
       header: 'sidyaohuo=safe'
@@ -1526,7 +1526,7 @@ describe('account status queries', () => {
     );
   });
 
-  it('[REG-ACCOUNT-025] keeps a verified Yaohuo identity when optional profile enrichment fails', async () => {
+  it('keeps a verified Yaohuo identity when optional profile enrichment fails', async () => {
     mockReadYaohuoCookieHeader.mockResolvedValue('sidyaohuo=safe');
     mockCheckYaohuoLogin.mockResolvedValue({
       source: 'yaohuo',
@@ -1569,7 +1569,7 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenCalledWith('账号状态部分刷新失败：妖火');
   });
 
-  it('[REG-ACCOUNT-019] preserves each site last confirmed identity on ordinary refresh failures', async () => {
+  it('preserves each site last confirmed identity on ordinary refresh failures', async () => {
     let failing = false;
     mockReadYaohuoCookieHeader.mockResolvedValue('sid=safe');
     mockReadLinuxDoCookieHeader.mockResolvedValue('_t=safe');
@@ -1636,7 +1636,7 @@ describe('account status queries', () => {
     expect(notify).toHaveBeenLastCalledWith('账号状态部分刷新失败：NodeSeek、linux.do、妖火');
   });
 
-  it('[REG-ACCOUNT-024] never clears NodeSeek login cookies for an ordinary HTTP 404', async () => {
+  it('never clears NodeSeek login cookies for an ordinary HTTP 404', async () => {
     mockGetCurrentUser.mockRejectedValueOnce(
       Object.assign(new Error('HTTP 404'), {
         status: 404

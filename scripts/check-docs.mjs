@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,6 +25,7 @@ const optionalRepositoryPaths = new Set([
   'release-manifest.json'
 ]);
 const retiredUserFacingTerms = ['生物凭证', '生物认证', '身份识别保护', '身份安全识别'];
+const regressionStatuses = new Set(['OPEN', 'RESOLVED', 'SUPERSEDED', 'EVIDENCE_GAP']);
 
 function lineNumberAt(text, index) {
   return text.slice(0, index).split(/\r?\n/).length;
@@ -149,6 +151,87 @@ function filesBelow(directory) {
   });
 }
 
+function parseRegressionEntries(text) {
+  const headings = [...text.matchAll(/^## `((?:REG)-[A-Z0-9]+-\d+)`[^\r\n]*$/gm)];
+  return headings.map((heading, index) => ({
+    id: heading[1],
+    index: heading.index ?? 0,
+    text: text.slice(heading.index ?? 0, headings[index + 1]?.index ?? text.length)
+  }));
+}
+
+function regressionField(entry, field) {
+  const escapedField = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^\\|\\s*${escapedField}\\s*\\|\\s*(.*?)\\s*\\|\\s*$`, 'm').exec(entry.text)?.[1].trim();
+}
+
+function testCallKind(expression) {
+  let current = expression;
+  let each = false;
+  let failing = false;
+  while (true) {
+    if (ts.isPropertyAccessExpression(current)) {
+      each ||= current.name.text === 'each';
+      failing ||= current.name.text === 'failing';
+      current = current.expression;
+      continue;
+    }
+    if (ts.isCallExpression(current)) {
+      current = current.expression;
+      continue;
+    }
+    break;
+  }
+  return ts.isIdentifier(current) && (current.text === 'it' || current.text === 'test') ? { each, failing } : undefined;
+}
+
+function findTestTitleErrors(root, files, knownRegressionIds, statusByRegressionId) {
+  const errors = [];
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    const sourceFile = ts.createSourceFile(
+      file,
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.getScriptKindFromFileName(file)
+    );
+    const relativeFile = path.relative(root, file).replaceAll('\\', '/');
+    const visit = (node) => {
+      if (ts.isCallExpression(node)) {
+        const kind = testCallKind(node.expression);
+        if (kind) {
+          const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+          const titleNode = node.arguments[0];
+          if (kind.each && kind.failing) {
+            errors.push(
+              `${relativeFile}:${line} 不支持 .failing.each；请拆成使用静态字符串标题的 it.failing/test.failing`
+            );
+          } else if (kind.failing && (!titleNode || !ts.isStringLiteral(titleNode))) {
+            errors.push(`${relativeFile}:${line} it.failing 必须使用含一个 canonical REG ID 的静态字符串标题`);
+          } else if (titleNode && ts.isStringLiteralLike(titleNode)) {
+            const ids = [...titleNode.text.matchAll(/\bREG-[A-Z0-9]+-\d+\b/g)].map((match) => match[0]);
+            if (!kind.failing && ids.length) {
+              errors.push(`${relativeFile}:${line} 通过测试标题不得包含 REG；请改为当前行为标题`);
+            } else if (kind.failing) {
+              if (ids.length !== 1) {
+                errors.push(`${relativeFile}:${line} it.failing 必须且只能引用一个 canonical REG ID`);
+              } else if (!knownRegressionIds.has(ids[0])) {
+                errors.push(`${relativeFile}:${line} it.failing 引用的 ${ids[0]} 不存在`);
+              } else if (statusByRegressionId.get(ids[0]) !== 'OPEN') {
+                errors.push(`${relativeFile}:${line} it.failing 引用的 ${ids[0]} 状态不是 OPEN`);
+              }
+            }
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  return errors;
+}
+
 export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdownFiles) {
   const errors = [];
   const productMapPath = path.join(root, 'docs', 'product-map.md');
@@ -166,9 +249,29 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
   }
 
   const regressionCorpus = readFileSync(regressionCorpusPath, 'utf8');
-  const knownRegressionIds = new Set(
-    [...regressionCorpus.matchAll(/^## `((?:REG)-[A-Z]+-\d+)`/gm)].map((match) => match[1])
-  );
+  const regressionEntries = parseRegressionEntries(regressionCorpus);
+  const knownRegressionIds = new Set(regressionEntries.map((entry) => entry.id));
+  const statusByRegressionId = new Map();
+  for (const entry of regressionEntries) {
+    const status = regressionField(entry, '状态')?.replaceAll('`', '').trim();
+    const capability = regressionField(entry, '能力 ID');
+    const history = regressionField(entry, '历史症状与根因');
+    const owner = regressionField(entry, '当前 owner');
+    if (!status || !regressionStatuses.has(status)) {
+      errors.push(`docs/regression-corpus.md：${entry.id} 缺少合法状态`);
+    } else {
+      statusByRegressionId.set(entry.id, status);
+    }
+    if (!capability || !/\b[A-Z]+-\d+\b/.test(capability)) {
+      errors.push(`docs/regression-corpus.md：${entry.id} 缺少 capability`);
+    }
+    if (!history || /^(?:-|TBD|无)$/i.test(history.trim())) {
+      errors.push(`docs/regression-corpus.md：${entry.id} 缺少历史症状与根因`);
+    }
+    if (!owner || /^(?:-|TBD|无)$/i.test(owner.replaceAll('`', '').trim())) {
+      errors.push(`docs/regression-corpus.md：${entry.id} 缺少当前 owner`);
+    }
+  }
   const checkedMarkdown = markdownFiles
     .filter((file) => existsSync(path.join(root, file)))
     .map((file) => ({ file, text: readFileSync(path.join(root, file), 'utf8') }));
@@ -198,13 +301,13 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
       }
     }
   }
-  const regressionPattern = /(?<![A-Z/-])REG-([A-Z]+)-(\d+)((?:\/(?:[A-Z]+-)?\d+)*)\b/g;
+  const regressionPattern = /(?<![A-Z0-9/-])REG-([A-Z0-9]+)-(\d+)((?:\/(?:[A-Z0-9]+-)?\d+)*)\b/g;
   for (const { file, text } of checkedMarkdown) {
     for (const match of text.matchAll(regressionPattern)) {
       let family = match[1];
       const references = [`REG-${family}-${match[2]}`];
       for (const suffix of match[3].split('/').filter(Boolean)) {
-        const parsedSuffix = /^(?:([A-Z]+)-)?(\d+)$/.exec(suffix);
+        const parsedSuffix = /^(?:([A-Z0-9]+)-)?(\d+)$/.exec(suffix);
         family = parsedSuffix?.[1] ?? family;
         references.push(`REG-${family}-${parsedSuffix?.[2]}`);
       }
@@ -222,7 +325,7 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
   const testFiles = filesBelow(path.join(root, 'tests')).filter((file) => /\.(?:[cm]?[jt]sx?|ad)$/.test(file));
   for (const file of [...sourceFiles, ...testFiles]) {
     const text = readFileSync(file, 'utf8');
-    for (const match of text.matchAll(/\bREG-[A-Z]+-\d+\b/g)) {
+    for (const match of text.matchAll(/\bREG-[A-Z0-9]+-\d+\b/g)) {
       if (!knownRegressionIds.has(match[0])) {
         errors.push(
           `${path.relative(root, file).replaceAll('\\', '/')}:${lineNumberAt(text, match.index ?? 0)} 引用的回归 ${match[0]} 不存在`
@@ -246,30 +349,10 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
       }
     }
   }
-  const expectedFailureFiles = testFiles.filter((file) => /\.test\.[cm]?[jt]sx?$/.test(file));
-  for (const file of expectedFailureFiles) {
-    const text = readFileSync(file, 'utf8');
-    for (const match of text.matchAll(/\b(?:it|test)\.failing\b/g)) {
-      const relativeFile = path.relative(root, file).replaceAll('\\', '/');
-      const line = lineNumberAt(text, match.index ?? 0);
-      const invocation = text.slice(match.index ?? 0);
-      if (/^(?:it|test)\.failing\s*\.each\b/.test(invocation)) {
-        errors.push(`${relativeFile}:${line} 不支持 .failing.each；请拆成使用静态字符串标题的 it.failing/test.failing`);
-        continue;
-      }
-      const staticTitle = /^(?:it|test)\.failing\s*\(\s*(['"])([^'"\r\n]+)\1/.exec(invocation);
-      if (!staticTitle) {
-        errors.push(`${relativeFile}:${line} it.failing 必须使用含 REG ID 的静态字符串标题`);
-        continue;
-      }
-      const regressionId = staticTitle[2].match(/\bREG-[A-Z]+-\d+\b/)?.[0];
-      if (!regressionId) {
-        errors.push(`${relativeFile}:${line} it.failing 缺少 REG ID`);
-      } else if (!knownRegressionIds.has(regressionId)) {
-        errors.push(`${relativeFile}:${line} it.failing 引用的 ${regressionId} 不存在`);
-      }
-    }
-  }
+  const executableTestFiles = [...new Set([...sourceFiles, ...testFiles])].filter((file) =>
+    /\.test\.[cm]?[jt]sx?$/.test(file)
+  );
+  errors.push(...findTestTitleErrors(root, executableTestFiles, knownRegressionIds, statusByRegressionId));
 
   const stableDocs = stableMarkdownFiles.map((file) => path.join(root, file)).filter(existsSync);
   for (const file of [...sourceFiles, ...stableDocs]) {

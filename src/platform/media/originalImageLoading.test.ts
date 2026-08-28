@@ -7,7 +7,7 @@ import {
 } from './originalImageLoading';
 
 describe('original image progressive loading', () => {
-  it('[REG-TOPIC-048] isolates displayed originals by the complete media request identity', () => {
+  it('isolates displayed originals by the complete media request identity', () => {
     const url = 'https://img.example.com/session-isolated-original.png';
     const epochOne = {
       cacheKey: `yaohuo:1:${url}`,
@@ -27,7 +27,7 @@ describe('original image progressive loading', () => {
     expect(originalImageDisplayRevision(epochTwo)).toBe(0);
   });
 
-  it('[REG-PERF-007] notifies only listeners for the displayed media identity', () => {
+  it('notifies only listeners for the displayed media identity', () => {
     const sourceA = { uri: 'https://img.example.com/notified-original-a.png' };
     const sourceB = { uri: 'https://img.example.com/notified-original-b.png' };
     const listenerA = vi.fn();
@@ -43,7 +43,7 @@ describe('original image progressive loading', () => {
     unsubscribeB();
   });
 
-  it('[REG-PERF-007][REG-PERF-009] keeps snapshot reads pure and promotes committed subscriptions', () => {
+  it('keeps snapshot reads pure and promotes committed subscriptions', () => {
     const sources = Array.from({ length: 514 }, (_, index) => ({
       uri: `https://img.example.com/lru-original-${index}.png`
     }));
@@ -63,7 +63,7 @@ describe('original image progressive loading', () => {
     expect(originalImageDisplayRevision(sources[2])).toBe(0);
   });
 
-  it('[REG-PERF-007] retains active revision listeners until they unsubscribe', () => {
+  it('retains active revision listeners until they unsubscribe', () => {
     const activeSource = { uri: 'https://img.example.com/active-original.png' };
     markOriginalImageDisplayed(activeSource);
     const unsubscribe = subscribeOriginalImageDisplay(activeSource, () => {});

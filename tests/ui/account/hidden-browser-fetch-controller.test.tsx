@@ -34,7 +34,7 @@ describe('hidden browser fetch controller', () => {
       selectCompletion: (linuxDo: jest.Mock, _nodeSeek: jest.Mock) => linuxDo
     }
   ])(
-    '[REG-ACCOUNT-011] rejects a $type message forged by a different document origin',
+    'rejects a $type message forged by a different document origin',
     async ({ payloadUrl, selectCompletion, selectHandler, type }) => {
       const completeLinuxDoBrowserFetch = jest.fn();
       const completeNodeSeekBrowserFetch = jest.fn();

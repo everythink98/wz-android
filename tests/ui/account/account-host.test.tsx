@@ -49,7 +49,7 @@ describe('AccountHost NodeImage authorization boundary', () => {
     nodeImageModalProps = {};
   });
 
-  it('[REG-ACCOUNT-038][REG-PROXY-001] mounts one authorization script and removes it while WebViews are blocked', async () => {
+  it('mounts one authorization script and removes it while WebViews are blocked', async () => {
     const baseProps = {
       checking: false,
       closeImagePreview: jest.fn(),

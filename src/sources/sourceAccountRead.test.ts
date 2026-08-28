@@ -9,7 +9,7 @@ vi.mock('expo-secure-store', () => ({
 import { getCurrentUserProfile } from './sourceRead';
 
 describe('source account read', () => {
-  it('[REG-ACCOUNT-025] reads all three current identities only from their proven session seams', async () => {
+  it('reads all three current identities only from their proven session seams', async () => {
     const nodeSeekCurrentUserPayload = Buffer.from(
       JSON.stringify({
         user: {
@@ -84,7 +84,7 @@ describe('source account read', () => {
     expect(() => getCurrentUserProfile({ source: 'v2ex', fetcher })).toThrow('V2EX 不支持当前登录身份读取');
   });
 
-  it('[REG-ACCOUNT-019] classifies the documented anonymous linux.do current-session 404 as an expired login', async () => {
+  it('classifies the documented anonymous linux.do current-session 404 as an expired login', async () => {
     const fetcher = vi.fn(
       async () =>
         new Response('<html>login required</html>', {
@@ -107,7 +107,7 @@ describe('source account read', () => {
     });
   });
 
-  it('[REG-LINUXDO-007] treats an explicit anonymous linux.do current-session body as logged out', async () => {
+  it('treats an explicit anonymous linux.do current-session body as logged out', async () => {
     const fetcher = vi.fn(
       async () =>
         new Response(JSON.stringify({ current_user: null }), {
@@ -129,7 +129,7 @@ describe('source account read', () => {
     });
   });
 
-  it('[REG-LINUXDO-007] keeps a malformed successful linux.do current-session body unknown', async () => {
+  it('keeps a malformed successful linux.do current-session body unknown', async () => {
     const fetcher = vi.fn(
       async () =>
         new Response(JSON.stringify({ csrf: 'present-without-user' }), {
@@ -149,37 +149,34 @@ describe('source account read', () => {
     });
   });
 
-  it.each([401, 403, 429])(
-    '[REG-ACCOUNT-025] keeps non-contract linux.do current-session HTTP %s unknown',
-    async (status) => {
-      const fetcher = vi.fn(
-        async () =>
-          new Response('<html>request rejected</html>', {
-            status,
-            headers: { 'content-type': 'text/html' }
-          })
-      );
-      let failure: unknown;
+  it.each([401, 403, 429])('keeps non-contract linux.do current-session HTTP %s unknown', async (status) => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response('<html>request rejected</html>', {
+          status,
+          headers: { 'content-type': 'text/html' }
+        })
+    );
+    let failure: unknown;
 
-      try {
-        await getCurrentUserProfile({
-          source: 'linuxdo',
-          fetcher,
-          discourseAuth: { linuxdo: { authenticated: true } }
-        });
-      } catch (error) {
-        failure = error;
-      }
-
-      expect(failure).toBeInstanceOf(Error);
-      expect(failure).not.toMatchObject({
-        loginRequired: true,
-        reason: 'expired'
+    try {
+      await getCurrentUserProfile({
+        source: 'linuxdo',
+        fetcher,
+        discourseAuth: { linuxdo: { authenticated: true } }
       });
+    } catch (error) {
+      failure = error;
     }
-  );
 
-  it('[REG-ACCOUNT-019] does not use a public NodeSeek profile as current-session proof', async () => {
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toMatchObject({
+      loginRequired: true,
+      reason: 'expired'
+    });
+  });
+
+  it('does not use a public NodeSeek profile as current-session proof', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/' || input === 'https://www.nodeseek.com/setting') {
         return new Response('<div>NodeSeek</div>');
@@ -199,7 +196,7 @@ describe('source account read', () => {
     );
   });
 
-  it('[REG-ACCOUNT-025] does not treat unrelated embedded profile data as the current NodeSeek account', async () => {
+  it('does not treat unrelated embedded profile data as the current NodeSeek account', async () => {
     const payload = Buffer.from(
       JSON.stringify({
         postData: { postId: 123 },
@@ -225,7 +222,7 @@ describe('source account read', () => {
     ).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
-  it('[REG-ACCOUNT-019] classifies an explicit NodeSeek guest page as an expired login', async () => {
+  it('classifies an explicit NodeSeek guest page as an expired login', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/' || input === 'https://www.nodeseek.com/setting') {
         return new Response(
@@ -248,7 +245,7 @@ describe('source account read', () => {
     });
   });
 
-  it('[REG-ACCOUNT-024] reads the current NodeSeek identity from the current page without probing a user-id profile route', async () => {
+  it('reads the current NodeSeek identity from the current page without probing a user-id profile route', async () => {
     const payload = Buffer.from(
       JSON.stringify({
         user: {
@@ -280,7 +277,7 @@ describe('source account read', () => {
     expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/', expect.anything());
   });
 
-  it('[REG-ACCOUNT-026] keeps the proven NodeSeek current user when guest controls coexist in the document', async () => {
+  it('keeps the proven NodeSeek current user when guest controls coexist in the document', async () => {
     const payload = Buffer.from(
       JSON.stringify({
         user: {
@@ -315,7 +312,7 @@ describe('source account read', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-ACCOUNT-019] keeps ambiguous NodeSeek page text as an ordinary identity failure', async () => {
+  it('keeps ambiguous NodeSeek page text as an ordinary identity failure', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/' || input === 'https://www.nodeseek.com/setting') {
         return new Response('<article>登录</article>');
@@ -332,7 +329,7 @@ describe('source account read', () => {
     ).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
-  it('[REG-ACCOUNT-019] keeps ordinary content with exact NodeSeek login links unknown', async () => {
+  it('keeps ordinary content with exact NodeSeek login links unknown', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/') {
         return new Response(
@@ -355,7 +352,7 @@ describe('source account read', () => {
   });
 
   it.each([403, 404])(
-    '[REG-ACCOUNT-031] keeps the NodeSeek account probe HTTP %i unknown without consulting a guest fallback page',
+    'keeps the NodeSeek account probe HTTP %i unknown without consulting a guest fallback page',
     async (status) => {
       const fetcher = vi.fn(async (input: string) => {
         if (input === 'https://www.nodeseek.com/') {
@@ -425,7 +422,7 @@ describe('source account read', () => {
     );
   });
 
-  it('[REG-ACCOUNT-019] does not use UID text beside a homepage author link as current-session proof', async () => {
+  it('does not use UID text beside a homepage author link as current-session proof', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/') {
         return new Response('<article>如何查看 UID: 4706</article><a href="/space/4706">帖子作者</a>');
@@ -490,7 +487,7 @@ describe('source account read', () => {
     });
   });
 
-  it('[REG-ACCOUNT-025] preserves a proven Yaohuo identity when optional profile enrichment fails', async () => {
+  it('preserves a proven Yaohuo identity when optional profile enrichment fails', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response(
@@ -516,7 +513,7 @@ describe('source account read', () => {
     });
   });
 
-  it('[REG-ACCOUNT-037] uses the canonical Yaohuo login-form protocol for current-user reads', async () => {
+  it('uses the canonical Yaohuo login-form protocol for current-user reads', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response('<div class="listdata"><a href="/bbs-123.html">公开主题</a></div>');

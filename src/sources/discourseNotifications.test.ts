@@ -10,7 +10,7 @@ function json(value: unknown) {
 }
 
 describe('Discourse notifications', () => {
-  it('[REG-NOTIFY-031] exposes the current Discourse menu categories and advertised Chat support', async () => {
+  it('exposes the current Discourse menu categories and advertised Chat support', async () => {
     const fetcher = vi.fn(async (input: string) => {
       expect(new URL(input).pathname).toBe('/site.json');
       return json({
@@ -41,7 +41,7 @@ describe('Discourse notifications', () => {
     ]);
   });
 
-  it('[REG-NOTIFY-031] paginates the original Discourse type grouping beyond the recent menu window', async () => {
+  it('paginates the original Discourse type grouping beyond the recent menu window', async () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       if (url.pathname === '/site.json') {
@@ -90,7 +90,7 @@ describe('Discourse notifications', () => {
     expect(secondPage.items.map((item) => item.id)).toEqual(['3']);
   });
 
-  it('[REG-NOTIFY-031] derives Other from the notification types advertised by the server', async () => {
+  it('derives Other from the notification types advertised by the server', async () => {
     const fetcher = vi.fn(async (input: string) => {
       const path = new URL(input).pathname;
       if (path === '/site.json') {
@@ -122,7 +122,7 @@ describe('Discourse notifications', () => {
     expect(notificationUrl.searchParams.get('offset')).toBe('0');
   });
 
-  it('[REG-NOTIFY-031] maps the Discourse private-message menu to conversation rows', async () => {
+  it('maps the Discourse private-message menu to conversation rows', async () => {
     const fetcher = vi.fn(async (_input: string) =>
       json({
         read_notifications: [],
@@ -185,7 +185,7 @@ describe('Discourse notifications', () => {
     ]);
   });
 
-  it('[REG-NOTIFY-043] opens a private-message notification as the same conversation from All and Personal Info', async () => {
+  it('opens a private-message notification as the same conversation from All and Personal Info', async () => {
     const notification = {
       id: 8315,
       notification_type: 6,
@@ -298,7 +298,7 @@ describe('Discourse notifications', () => {
     ).rejects.toThrow('linux.do 消息返回内容格式不正确');
   });
 
-  it('[REG-NOTIFY-011] reads the official top-level notification serializer fields', async () => {
+  it('reads the official top-level notification serializer fields', async () => {
     const fetcher = vi.fn(async (_input: string) =>
       json({
         notifications: [
@@ -460,7 +460,7 @@ describe('Discourse notifications', () => {
     expect(page.items.map((item) => item.kind)).toEqual(['system', 'reaction', 'system', 'mention', 'other']);
   });
 
-  it('[REG-NOTIFY-053] keeps a topic-only notification out of exact post lookup', async () => {
+  it('keeps a topic-only notification out of exact post lookup', async () => {
     const fetcher = vi.fn(async (_input: string) =>
       json({
         notifications: [
@@ -542,7 +542,7 @@ describe('Discourse notifications', () => {
     expect(new URL(fetcher.mock.calls[0]?.[0] || '').pathname).toBe('/posts/777.json');
   });
 
-  it('[REG-NOTIFY-031] loads a Discourse private topic as an ordered replyable conversation', async () => {
+  it('loads a Discourse private topic as an ordered replyable conversation', async () => {
     const fetcher = vi.fn(async (_input: string) =>
       json({
         id: 201,
@@ -610,7 +610,7 @@ describe('Discourse notifications', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-NOTIFY-031] replies to a linux.do private topic with the original Markdown post request', async () => {
+  it('replies to a linux.do private topic with the original Markdown post request', async () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) =>
       new URL(input).pathname === '/session/csrf' ? json({ csrf: 'token' }) : json({ id: 102, post_number: 3 })
     );

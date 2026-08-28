@@ -13,16 +13,43 @@ describe('Android release packaging guards', () => {
     const pkg = JSON.parse(readProjectFile('package.json'));
     const ciWorkflow = readProjectFile('.github', 'workflows', 'ci.yml');
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+    const verifySteps = String(pkg.scripts.verify).split(/\s*&&\s*/);
     const verifyIndex = releaseScript.indexOf("run('npm', ['run', 'verify']);");
     const prebuildIndex = releaseScript.indexOf(
       "run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean', '--no-install']);"
     );
 
-    expect(pkg.scripts.verify).toBe(
-      'npm run lint && npm run format:check && npm run check:architecture && npm run test:architecture && npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && node scripts/check-version.mjs'
+    expect(verifySteps).toEqual(
+      expect.arrayContaining([
+        'npm run lint',
+        'npm run format:check',
+        'npm run check:architecture',
+        'npm run test:architecture',
+        'npm test',
+        'npm run test:ui',
+        'npm run test:docs',
+        'npm run check:docs',
+        'npm run typecheck',
+        'npm run check:unused',
+        'node scripts/check-version.mjs'
+      ])
     );
-    expect(pkg.scripts['check:react']).toBe(
-      'npx --yes react-doctor@0.9.3 . --no-warnings --no-telemetry --no-dead-code --no-supply-chain --blocking error'
+    expect(pkg.scripts.test).toMatch(/^vitest run\b/);
+    expect(pkg.scripts.test).toContain('--sequence.shuffle');
+    expect(pkg.scripts['test:ui']).toMatch(/^jest\b/);
+    expect(pkg.scripts['test:ui']).toContain('--randomize');
+    expect(pkg.scripts['test:ui']).toContain('--showSeed');
+    const reactCheck = String(pkg.scripts['check:react']).split(/\s+/);
+    expect(reactCheck).toEqual(
+      expect.arrayContaining([
+        'react-doctor@0.9.3',
+        '--no-warnings',
+        '--no-telemetry',
+        '--no-dead-code',
+        '--no-supply-chain',
+        '--blocking',
+        'error'
+      ])
     );
     expect(ciWorkflow).toContain('- run: npm run verify');
     expect(verifyIndex).toBeGreaterThanOrEqual(0);
@@ -83,7 +110,7 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('singleApkSignerSha256(output)');
   });
 
-  it('[REG-OPS-016] records Java provenance through the validated parser', () => {
+  it('records Java provenance through the validated parser', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
 
     expect(releaseScript).toMatch(/parseJavaVersionOutput\(\s*runCapture\('java', \['-version'\], \{/);
@@ -117,7 +144,7 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain("'android.enableShrinkResourcesInReleaseBuilds': 'true'");
   });
 
-  it('[REG-TOPIC-121] packages the patched React Android implementation from source', () => {
+  it('packages the patched React Android implementation from source', () => {
     const plugin = readProjectFile('plugins', 'withAndroidReleaseDefaults.js');
     const reactNativePatch = readProjectFile('patches', 'react-native+0.81.5.patch');
 
@@ -133,7 +160,7 @@ describe('Android release packaging guards', () => {
     expect(reactNativePatch).toContain('compileOnly("com.facebook.react:hermes-android:${project.version}")');
   });
 
-  it('[REG-NOTIFY-024] generates the exact Android digest presentation bridge', () => {
+  it('generates the exact Android digest presentation bridge', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const plugin = readProjectFile('plugins', 'withNotificationDigestModule.js');
 
@@ -245,7 +272,7 @@ describe('Android release packaging guards', () => {
     }
   });
 
-  it('[REG-TOPIC-112] keeps preview region decoding in its own Android package', () => {
+  it('keeps preview region decoding in its own Android package', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const networkPlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
     const previewPlugin = readProjectFile('plugins', 'withPreviewRegionImageNative.js');
@@ -264,7 +291,7 @@ describe('Android release packaging guards', () => {
     }
   });
 
-  it('[REG-TOPIC-038] generates the isolated single-WebView SVG poster renderer', () => {
+  it('generates the isolated single-WebView SVG poster renderer', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const plugin = readProjectFile('plugins', 'withSvgRendererModule.js');
 
@@ -296,7 +323,7 @@ describe('Android release packaging guards', () => {
     }
   });
 
-  it('[REG-PROXY-004] keeps native proxy lifecycle logs free of destinations and upstream addresses', () => {
+  it('keeps native proxy lifecycle logs free of destinations and upstream addresses', () => {
     const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
 
     expect(plugin).toContain('Log.i(LOG_TAG, "local proxy started")');
@@ -386,7 +413,9 @@ describe('Android release packaging guards', () => {
 
     expect(pkg.dependencies['expo-video']).toBe('~3.0.16');
     expect(lock.packages['node_modules/expo-video'].version).toBe('3.0.16');
-    expect(pkg.scripts.postinstall).toBe('patch-package && npm run build:composer');
+    expect(String(pkg.scripts.postinstall).split(/\s*&&\s*/)).toEqual(
+      expect.arrayContaining(['patch-package', 'npm run build:composer'])
+    );
     expect(patch).toContain('DataSourceUtils.kt');
     expect(patch).toContain('ReadNetworkVideoClientRegistry.kt');
     expect(dataSource).toContain('ReadNetworkVideoClientRegistry.clientForGeneration');

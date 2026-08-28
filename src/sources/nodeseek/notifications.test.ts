@@ -17,7 +17,7 @@ function html(value: string) {
 }
 
 describe('NodeSeek notifications', () => {
-  it('[REG-NOTIFY-031] exposes the categories shown by the current NodeSeek site', async () => {
+  it('exposes the categories shown by the current NodeSeek site', async () => {
     await expect(
       nodeSeekNotificationAdapter.getCategories({ identityKey: 'nodeseek:7', userId: '7' })
     ).resolves.toEqual([
@@ -28,7 +28,7 @@ describe('NodeSeek notifications', () => {
     ]);
   });
 
-  it('[REG-NOTIFY-031] reads only the selected NodeSeek notification category', async () => {
+  it('reads only the selected NodeSeek notification category', async () => {
     const fetcher = vi.fn(async (input: string) => {
       expect(new URL(input).pathname).toBe('/api/notification/message/list');
       return json({
@@ -113,7 +113,7 @@ describe('NodeSeek notifications', () => {
     expect(page.items).toEqual([expect.objectContaining({ id: 'at-me:15', kind: 'other' })]);
   });
 
-  it('[REG-NOTIFY-028] treats a missing viewed marker as unread', async () => {
+  it('treats a missing viewed marker as unread', async () => {
     const fetcher = vi.fn(async (input: string) =>
       new URL(input).pathname.endsWith('/at-me/list')
         ? json({ atList: [{ id: 14, post_id: 101, commenter_name: '甲' }] })
@@ -129,7 +129,7 @@ describe('NodeSeek notifications', () => {
     expect(page.items).toEqual([expect.objectContaining({ id: 'at-me:14', unread: true })]);
   });
 
-  it('[REG-NOTIFY-030] does not report an outgoing private message as unread', async () => {
+  it('does not report an outgoing private message as unread', async () => {
     const fetcher = vi.fn(async (input: string) =>
       new URL(input).pathname.endsWith('/message/list')
         ? json({
@@ -156,7 +156,7 @@ describe('NodeSeek notifications', () => {
     expect(page.items).toEqual([expect.objectContaining({ id: 'message:21', kind: 'private-message', unread: false })]);
   });
 
-  it('[REG-NOTIFY-029] uses comment_id for delivery identity and the row id for mark-read', async () => {
+  it('uses comment_id for delivery identity and the row id for mark-read', async () => {
     const load = async (commentId: number) => {
       const fetcher = vi.fn(async (input: string) =>
         new URL(input).pathname.endsWith('/reply-to-me/list')
@@ -173,7 +173,7 @@ describe('NodeSeek notifications', () => {
     expect(second.items).toEqual([expect.objectContaining({ id: 'reply-to-me:99', remoteReadId: '12' })]);
   });
 
-  it('[REG-NOTIFY-048] carries the compatible message_id into the exact topic target', async () => {
+  it('carries the compatible message_id into the exact topic target', async () => {
     const fetcher = vi.fn(async (input: string) =>
       new URL(input).pathname.endsWith('/reply-to-me/list')
         ? json({ replyList: [{ id: 12, message_id: 98, post_id: 102, viewed: false }] })
@@ -196,7 +196,7 @@ describe('NodeSeek notifications', () => {
     ]);
   });
 
-  it('[REG-NOTIFY-012] does not persist the counterpart id in a missing-id message fallback', async () => {
+  it('does not persist the counterpart id in a missing-id message fallback', async () => {
     const counterpartId = '918273645';
     const fetcher = vi.fn(async (input: string) => {
       const pathname = new URL(input).pathname;
@@ -228,7 +228,7 @@ describe('NodeSeek notifications', () => {
     expect(page.items[0]?.target).toEqual({ type: 'private-conversation', conversationId: counterpartId });
   });
 
-  it('[REG-NOTIFY-012] drops ambiguous same-time conversations instead of persisting a participant-derived id', async () => {
+  it('drops ambiguous same-time conversations instead of persisting a participant-derived id', async () => {
     const fetcher = vi.fn(async (input: string) =>
       new URL(input).pathname.endsWith('/message/list')
         ? json({
@@ -249,7 +249,7 @@ describe('NodeSeek notifications', () => {
     expect(page.items).toEqual([]);
   });
 
-  it('[REG-NOTIFY-012] keeps missing-id notification fallbacks stable when list order changes', async () => {
+  it('keeps missing-id notification fallbacks stable when list order changes', async () => {
     const rows = [
       {
         post_id: 101,
@@ -287,7 +287,7 @@ describe('NodeSeek notifications', () => {
     expect(first.items.map((item) => item.id).join(' ')).not.toMatch(/private-actor-[12]/);
   });
 
-  it('[REG-NOTIFY-012] does not derive a persisted fallback id from mutable title or preview content', async () => {
+  it('does not derive a persisted fallback id from mutable title or preview content', async () => {
     const load = async (postTitle: string, content: string) => {
       const fetcher = vi.fn(async (input: string) =>
         new URL(input).pathname.endsWith('/at-me/list')
@@ -475,62 +475,59 @@ describe('NodeSeek notifications', () => {
     expect(fetcher.mock.calls.map(([input]) => new URL(input).pathname)).toContain('/post-703863-2');
   });
 
-  it.each([undefined, 1, 22])(
-    '[REG-TOPIC-060] uses comment id when the notification floor is %s',
-    async (postNumber) => {
-      const payload = (comments: unknown[], page: number) =>
-        Buffer.from(
-          JSON.stringify({
-            postData: {
-              postId: 703863,
-              postPage: page,
-              postPageCount: 2,
-              title: '目标主题',
-              replyCount: 12,
-              op: { name: '楼主' },
-              comments
-            }
-          })
-        ).toString('base64');
-      const firstPage = payload([{ commentId: 1, poster: { name: '楼主' }, markdown: '主楼正文' }], 1);
-      const secondPage = payload(
-        [{ commentId: 13, floorIndex: 12, poster: { name: '目标用户' }, markdown: '精确回复' }],
-        2
-      );
-      const fetcher = vi.fn(async (input: string) =>
-        html(
-          new URL(input).pathname.endsWith('/post-703863-2')
-            ? `<script>${secondPage}</script>`
-            : `<script>${firstPage}</script><a href="/post-703863-2">2</a>`
-        )
-      );
-
-      const detail = await nodeSeekNotificationAdapter.loadDetail(
-        {
-          source: 'nodeseek',
-          id: 'at-me:42',
-          kind: 'mention',
-          actor: { name: '目标用户' },
-          title: '目标主题',
-          createdAt: null,
-          unread: false,
-          target: {
-            type: 'topic-post',
-            topicId: '703863',
-            ...(postNumber ? { postNumber } : {}),
-            postId: '13',
-            url: 'https://www.nodeseek.com/post-703863-1'
+  it.each([undefined, 1, 22])('uses comment id when the notification floor is %s', async (postNumber) => {
+    const payload = (comments: unknown[], page: number) =>
+      Buffer.from(
+        JSON.stringify({
+          postData: {
+            postId: 703863,
+            postPage: page,
+            postPageCount: 2,
+            title: '目标主题',
+            replyCount: 12,
+            op: { name: '楼主' },
+            comments
           }
-        },
-        { fetcher, identityKey: 'nodeseek:7', userId: '7' }
-      );
+        })
+      ).toString('base64');
+    const firstPage = payload([{ commentId: 1, poster: { name: '楼主' }, markdown: '主楼正文' }], 1);
+    const secondPage = payload(
+      [{ commentId: 13, floorIndex: 12, poster: { name: '目标用户' }, markdown: '精确回复' }],
+      2
+    );
+    const fetcher = vi.fn(async (input: string) =>
+      html(
+        new URL(input).pathname.endsWith('/post-703863-2')
+          ? `<script>${secondPage}</script>`
+          : `<script>${firstPage}</script><a href="/post-703863-2">2</a>`
+      )
+    );
 
-      expect(detail.contentHtml).toContain('精确回复');
-      expect(detail.contentHtml).not.toContain('主楼正文');
-    }
-  );
+    const detail = await nodeSeekNotificationAdapter.loadDetail(
+      {
+        source: 'nodeseek',
+        id: 'at-me:42',
+        kind: 'mention',
+        actor: { name: '目标用户' },
+        title: '目标主题',
+        createdAt: null,
+        unread: false,
+        target: {
+          type: 'topic-post',
+          topicId: '703863',
+          ...(postNumber ? { postNumber } : {}),
+          postId: '13',
+          url: 'https://www.nodeseek.com/post-703863-1'
+        }
+      },
+      { fetcher, identityKey: 'nodeseek:7', userId: '7' }
+    );
 
-  it('[REG-NOTIFY-033] uses the notification floor as a page hint without depending on replyCount', async () => {
+    expect(detail.contentHtml).toContain('精确回复');
+    expect(detail.contentHtml).not.toContain('主楼正文');
+  });
+
+  it('uses the notification floor as a page hint without depending on replyCount', async () => {
     const payload = (comments: unknown[], page: number) =>
       Buffer.from(
         JSON.stringify({
@@ -629,7 +626,7 @@ describe('NodeSeek notifications', () => {
     ]);
   });
 
-  it('[REG-NOTIFY-057] loads rich private messages and marks only the exact unread incoming message ids', async () => {
+  it('loads rich private messages and marks only the exact unread incoming message ids', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
@@ -703,7 +700,7 @@ describe('NodeSeek notifications', () => {
     expect(new URL(calls.at(-1)?.url || '').pathname).toBe('/api/notification/message/markViewed');
   });
 
-  it('[REG-NOTIFY-031][REG-NOTIFY-056] serializes the exact NodeSeek receiver UID as a number', async () => {
+  it('serializes the exact NodeSeek receiver UID as a number', async () => {
     let wireBody: Record<string, unknown> | undefined;
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(init?.method).toBe('POST');
@@ -734,7 +731,7 @@ describe('NodeSeek notifications', () => {
   });
 
   it.each(['', 'not-a-uid', '0', '9007199254740992'])(
-    '[REG-NOTIFY-056] rejects invalid receiver UID %s before network access',
+    'rejects invalid receiver UID %s before network access',
     async (conversationId) => {
       const fetcher = vi.fn(async () => json({ success: true }));
       const item = {
@@ -759,7 +756,7 @@ describe('NodeSeek notifications', () => {
     }
   );
 
-  it('[REG-NOTIFY-056] does not confirm an ambiguous NodeSeek send response', async () => {
+  it('does not confirm an ambiguous NodeSeek send response', async () => {
     const fetcher = vi.fn(async () => json({}));
     const item = {
       source: 'nodeseek' as const,

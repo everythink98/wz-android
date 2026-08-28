@@ -74,7 +74,7 @@ describe('Android notification system', () => {
     expect(mocks.unregister).toHaveBeenCalledWith('wz-message-notifications');
   });
 
-  it('[REG-NOTIFY-022] leaves background registration at the latest requested intent', async () => {
+  it('leaves background registration at the latest requested intent', async () => {
     const enabled = defaultNotificationState();
     enabled.globalEnabled = true;
     enabled.sources.nodeseek = {
@@ -150,7 +150,7 @@ describe('Android notification system', () => {
     expect(mocks.register).not.toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-018] presents local message notifications while the app is foregrounded', async () => {
+  it('presents local message notifications while the app is foregrounded', async () => {
     installMessageNotificationHandler();
     const handler = mocks.handler.mock.calls[0]?.[0] as {
       handleNotification(): Promise<Record<string, boolean>>;
@@ -194,7 +194,7 @@ describe('Android notification system', () => {
     expect(mocks.dismiss).not.toHaveBeenCalledWith('wz-message-nodeseek-nodeseek%3A8');
   });
 
-  it('[REG-NOTIFY-024] resolves presentation only after native notify acknowledges the exact identifier', async () => {
+  it('resolves presentation only after native notify acknowledges the exact identifier', async () => {
     const nativeAcknowledgement = Promise.withResolvers<string>();
     mocks.nativePresent.mockReturnValueOnce(nativeAcknowledgement.promise);
     let settled = false;
@@ -215,7 +215,7 @@ describe('Android notification system', () => {
     await expect(presentation).resolves.toBe('wz-message-nodeseek-nodeseek%3A7-a');
   });
 
-  it('[REG-NOTIFY-024] dismisses only the exact transactional identifier and surfaces native failure', async () => {
+  it('dismisses only the exact transactional identifier and surfaces native failure', async () => {
     const exactIdentifier = 'wz-message-nodeseek-nodeseek%3A7-a';
 
     await dismissSourceNotificationExact(exactIdentifier);
@@ -228,7 +228,7 @@ describe('Android notification system', () => {
     await expect(dismissSourceNotificationExact(exactIdentifier)).rejects.toThrow('cancel failed');
   });
 
-  it('[REG-NOTIFY-024] reconciles known crash slots against the Store current identifier', async () => {
+  it('reconciles known crash slots against the Store current identifier', async () => {
     const currentIdentifier = 'wz-message-nodeseek-nodeseek%3A7-a';
 
     await reconcileSourceNotificationSlots('nodeseek', 'nodeseek:7', currentIdentifier);

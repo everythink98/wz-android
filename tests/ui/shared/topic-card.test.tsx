@@ -114,7 +114,7 @@ describe('Topic card visible behavior', () => {
     expect(onOpenTopic).not.toHaveBeenCalled();
   });
 
-  it('[REG-SEARCH-022] does not manufacture an untitled search card', async () => {
+  it('does not manufacture an untitled search card', async () => {
     const view = await render(
       <TopicCard
         readerState={{ favorite: false, listDensity: 'standard', read: false }}
@@ -126,7 +126,7 @@ describe('Topic card visible behavior', () => {
     expect(view.queryByText('无标题')).toBeNull();
   });
 
-  it('[REG-FEED-012] updates card actions when a new immutable payload keeps the same visible text', async () => {
+  it('updates card actions when a new immutable payload keeps the same visible text', async () => {
     const onOpenTopic = jest.fn();
     const onTrailingAction = jest.fn();
     const renderTrailingAction = (current: Topic) => (

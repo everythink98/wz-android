@@ -47,7 +47,7 @@
 - 按 owner 和独立变化原因拆分，不按行数拆分。一个复杂 hook 若仍是唯一生命周期 owner，就保留 cohesive module。
 - Screen 只拥有渲染与局部交互；远端状态、取消、草稿、返回栈、身份 epoch 等状态继续由现有 controller 或 Query owner 管理。
 - Runtime 跨 owner 只暴露按旅程分组的语义能力。Account 的公开接口固定为 `read`、`write`、`center`、`hosts`；`hosts` 只提供 Account 自己生成的 host 节点、surface 状态和语义命令，不得泄漏 raw session、setter、ref、WebView controller 或 registry。Route runtime 不得用 `ComponentProps<typeof Screen>` 反向复制 Screen props。
-- Android WebView 共享状态由 Account 单一 owner 管理：功能组件只能显式传入文档级 WebView props，不得用 props spread 暴露原生组件能力；truthy/dynamic `incognito` 与进程级 Cookie、WebStorage、cache 清理调用在生产 TypeScript 和 tracked plugin 中一律由 `global-webview-state-owner` 拒绝。显式 `incognito={false}` 与实例级 `clearCache(false)` 允许；`sharedCookiesEnabled={false}` 不承担 Android 隔离语义。见 `REG-ACCOUNT-045`。
+- Android WebView 共享状态由 Account 单一 owner 管理：功能组件只能显式传入文档级 WebView props，不得用 props spread 暴露原生组件能力；truthy/dynamic `incognito`、`removeAllCookies`、`removeSessionCookies`、`WebStorage.deleteAllData` 与 `clearCache(true)` 在生产 TypeScript 和 tracked plugin 中一律由 `global-webview-state-owner` 拒绝。显式 `incognito={false}` 与实例级 `clearCache(false)` 允许；`sharedCookiesEnabled={false}` 不承担 Android 隔离语义。
 - 可复用必须以语义、生命周期、权限和错误处理一致为前提。只相似但行为不同的 provider、feature 和写操作保持独立。
 - 样式跟随 owner：feature 样式位于对应 feature，跨旅程 token/primitive 位于 UI；`ReaderStyleContextValue` 只提供 `theme/settings`，控件和 feature 用自己的 style factory 消费，禁止恢复全局 feature-style registry。
 - 不增加未要求的扩展点、配置层或单实现 interface。新增抽象必须减少现有重复或切断真实反向依赖。
@@ -58,13 +58,13 @@
 - 跨模块安全、数据与行为契约放在 `tests/integration/`。
 - 脚本、plugin、release 和构建门禁测试放在 `tests/tooling/`。
 - React Native 用户可见行为按能力族放在 `tests/ui/<family>/`；共享 fixture 只保留在 `tests/ui/` 根目录。
-- Replay、Agent Live 和证据状态遵循 `docs/testing-standard.md`，不得用目录重组降低既有 oracle。
+- 通过测试使用当前行为标题，不包含 REG ID；同一行为只保留 `docs/testing-standard.md` 定义的最低可靠 canonical owner。Replay、Agent Live 和证据状态同样遵循该标准。
 
 ## 格式与质量门禁
 
 - TypeScript/JavaScript 使用单引号、分号、无尾逗号和 120 列；全部受管文本使用 LF，JSON/YAML 遵循 Prettier 的合法语法。Markdown、`package-lock.json`、生成目录与产物不做批量格式化。
-- 提交前至少运行与改动相关的测试、`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run check:architecture` 和 `git diff --check`。
-- `npm run verify` 是最终确定性门禁，并额外运行 architecture 自测、全量 Vitest、Jest/RNTL、文档、unused 和版本检查。
+- 具体质量命令和组合只以 `package.json` 为准；验证强度按 `docs/testing-standard.md` 选择，不在本文复制 script 字符串。
+- `npm run verify` 是最终随机顺序质量门禁；Vitest/Jest 失败必须保留并重放输出 seed。
 - `scripts/check-architecture.mjs` 使用仓库已安装的 TypeScript AST 检查六类根目录、依赖矩阵、跨 feature/provider、domain 网络 I/O 全局、组合链 allowlist、AppRoot/`useAppRuntime` 状态 hook、route 的 Screen props 投影、Account raw session/host 能力逃逸、全局 WebView 状态 owner、AppNavigator feature 隔离、行为测试读取生产源码字符串、旧路径、barrel 和依赖环；同时递归检查 tracked plugin 的进程级 WebView 清理调用。合法/非法 fixture 由 `npm run test:architecture` 固定。规则失败应修正 ownership，不得用文件级豁免绕过，也不得新增 LOC、文件数或 props 数量门禁。
 
 ## 改动边界

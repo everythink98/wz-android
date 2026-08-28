@@ -143,7 +143,7 @@ describe('notification delivery state', () => {
     expect(result.state.sources.nodeseek.deliveredIds).toEqual(['old']);
   });
 
-  it('[REG-NOTIFY-008] releases a failed delivery so the same remote id remains retryable', async () => {
+  it('releases a failed delivery so the same remote id remains retryable', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -177,7 +177,7 @@ describe('notification delivery state', () => {
     expect(retried.newIds).toEqual(['new']);
   });
 
-  it('[REG-NOTIFY-024] atomically commits delivered ids with the native-acked identifier', async () => {
+  it('atomically commits delivered ids with the native-acked identifier', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -220,7 +220,7 @@ describe('notification delivery state', () => {
     ['来源已关闭', true, false, 'nodeseek:7'],
     ['账号已变化', true, true, 'nodeseek:8']
   ])(
-    '[REG-NOTIFY-009] keeps the notification identifier cleared when %s',
+    'keeps the notification identifier cleared when %s',
     async (_scenario, globalEnabled, intentEnabled, identityKey) => {
       const state = defaultNotificationState();
       state.globalEnabled = globalEnabled;
@@ -247,7 +247,7 @@ describe('notification delivery state', () => {
     }
   );
 
-  it('[REG-NOTIFY-024] does not let a stale compound rollback overwrite a newer delivery', async () => {
+  it('does not let a stale compound rollback overwrite a newer delivery', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -284,7 +284,7 @@ describe('notification delivery state', () => {
     });
   });
 
-  it('[REG-NOTIFY-024] restores the exact pre-commit watermark when rollback follows 200-id truncation', async () => {
+  it('restores the exact pre-commit watermark when rollback follows 200-id truncation', async () => {
     const state = defaultNotificationState();
     const previousIds = Array.from({ length: 200 }, (_, index) => `old-${index}`);
     state.globalEnabled = true;

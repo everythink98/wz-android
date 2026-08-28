@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createConversationAutoScrollController } from './conversationAutoScroll';
 
 describe('conversation auto scroll', () => {
-  it('[REG-NOTIFY-057] follows initial async content growth until the user takes control', () => {
+  it('follows initial async content growth until the user takes control', () => {
     const controller = createConversationAutoScrollController();
 
     expect(controller.contentChanged('message-1')).toBe(true);

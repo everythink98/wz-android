@@ -12,7 +12,7 @@ vi.mock('react-native', () => ({
 }));
 
 describe('topic styles', () => {
-  it('[REG-TOPIC-127] gives the table perimeter the same single stroke as its cells', () => {
+  it('gives the table perimeter the same single stroke as its cells', () => {
     const settings: ReaderSettings = {
       theme: 'light',
       fontScale: 1,

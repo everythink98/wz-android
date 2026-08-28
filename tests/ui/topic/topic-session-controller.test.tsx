@@ -59,7 +59,7 @@ function replyRequestTarget(request: ReplyRequest) {
 }
 
 describe('topic route sessions', () => {
-  it('[REG-PERF-002] keeps route-local draft and filter state across rerenders', async () => {
+  it('keeps route-local draft and filter state across rerenders', async () => {
     const hook = await renderNativeHook(() => useTopicSessionController({ notify: jest.fn(), topic: firstTopic }));
     await act(async () => {
       hook.result.current.commands.composer.changeContent('current draft');
@@ -73,7 +73,7 @@ describe('topic route sessions', () => {
     expect(hook.result.current.state.selectedTopic).toEqual(firstTopic);
   });
 
-  it('[REG-PERF-008] isolates state between native Topic route instances', async () => {
+  it('isolates state between native Topic route instances', async () => {
     const secondTopic: Topic = {
       ...firstTopic,
       id: '2',
@@ -192,7 +192,7 @@ describe('topic query controller', () => {
     setDiagnosticWriter(null);
   });
 
-  it('[REG-SOURCE-011] reads a public LinuxDo Topic while account identity remains pending', async () => {
+  it('reads a public LinuxDo Topic while account identity remains pending', async () => {
     const topic = {
       ...firstTopic,
       source: 'linuxdo' as const,
@@ -214,7 +214,7 @@ describe('topic query controller', () => {
     );
   });
 
-  it('[REG-PERF-014] reuses the current Topic from the process RAM cache on re-entry', async () => {
+  it('reuses the current Topic from the process RAM cache on re-entry', async () => {
     const getTopic = jest.fn<TestGetTopic>(async () => firstDetail);
     const first = await renderTopicController({ readGateway: { getTopic } });
     await waitFor(() => expect(first.result.current.controller.topicDetail).toEqual(firstDetail));
@@ -227,7 +227,7 @@ describe('topic query controller', () => {
     await act(async () => second.unmount());
   });
 
-  it('[REG-PERF-018] keeps empty quote projections stable across unrelated rerenders', async () => {
+  it('keeps empty quote projections stable across unrelated rerenders', async () => {
     const getTopic = jest.fn<TestGetTopic>(async () => firstDetail);
     const hook = await renderTopicController({ readGateway: { getTopic } });
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(firstDetail));
@@ -241,7 +241,7 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-011] settles a pending Yaohuo Topic as a terminal read error instead of permanent loading', async () => {
+  it('settles a pending Yaohuo Topic as a terminal read error instead of permanent loading', async () => {
     const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
     const getTopic = jest.fn<TestGetTopic>(async () => {
       throw Object.assign(new Error('登录状态暂时无法确认'), {
@@ -262,7 +262,7 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicBusy).toBe(false);
   });
 
-  it('[REG-SOURCE-011] retries an unknown strict Topic by reconciling identity without replaying transport', async () => {
+  it('retries an unknown strict Topic by reconciling identity without replaying transport', async () => {
     const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
     const onRetryIdentityStatus = jest.fn(async () => undefined);
     const getTopic = jest.fn<TestGetTopic>(async () => {
@@ -290,7 +290,7 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-011] opens Yaohuo login for a typed anonymous Topic block', async () => {
+  it('opens Yaohuo login for a typed anonymous Topic block', async () => {
     const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
     const showYaohuoLogin = jest.fn();
     const getTopic = jest.fn<TestGetTopic>(async () => {
@@ -312,7 +312,7 @@ describe('topic query controller', () => {
     expect(showYaohuoLogin).toHaveBeenCalledWith('请先登录该内容源');
   });
 
-  it('[REG-SOURCE-010] never reconciles identity for a disabled Topic', async () => {
+  it('never reconciles identity for a disabled Topic', async () => {
     const topic = { ...firstTopic, source: 'yaohuo' as const, url: 'https://www.yaohuo.me/bbs-1.html' };
     const onRetryIdentityStatus = jest.fn(async () => undefined);
     const getTopic = jest.fn<TestGetTopic>(async () => {
@@ -335,7 +335,7 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-077] replaces a partial Yaohuo reply seed with an authoritative start window', async () => {
+  it('replaces a partial Yaohuo reply seed with an authoritative start window', async () => {
     const topic: Topic = {
       ...firstTopic,
       source: 'yaohuo',
@@ -372,7 +372,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
   });
 
-  it('[REG-TOPIC-077] exposes a non-V2EX partial reply window without disabling server order', async () => {
+  it('exposes a non-V2EX partial reply window without disabling server order', async () => {
     const detail: TopicDetail = {
       ...firstDetail,
       replyCount: 2,
@@ -415,7 +415,7 @@ describe('topic query controller', () => {
   });
 
   it.each(['linuxdo'] as const)(
-    '[REG-TOPIC-067] converts a %s embedded seed offset into the real stream window once',
+    'converts a %s embedded seed offset into the real stream window once',
     async (source) => {
       const topic: Topic = {
         ...firstTopic,
@@ -465,7 +465,7 @@ describe('topic query controller', () => {
     }
   );
 
-  it('[REG-TOPIC-067] keeps ordered caches separate and loads the newest tail before its adjacent older window', async () => {
+  it('keeps ordered caches separate and loads the newest tail before its adjacent older window', async () => {
     const detail: TopicDetail = {
       ...firstDetail,
       replies: [firstReply, { ...firstReply, floor: 2, commentId: 11, author: 'head-2' }],
@@ -580,7 +580,7 @@ describe('topic query controller', () => {
     expect(getReplies).toHaveBeenCalledTimes(3);
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-068][REG-TOPIC-069][REG-TOPIC-076] reorders a complete V2EX collection locally and refreshes only replies', async () => {
+  it('reorders a complete V2EX collection locally and refreshes only replies', async () => {
     const replies = [
       { ...firstReply, floor: 1, commentId: 101 },
       { ...firstReply, floor: 2, commentId: 102 },
@@ -640,7 +640,7 @@ describe('topic query controller', () => {
     expect(getReplies).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077][REG-TOPIC-083] keeps the first 100 V2EX replies without transport until loading the linked next page', async () => {
+  it('keeps the first 100 V2EX replies without transport until loading the linked next page', async () => {
     jest.useFakeTimers();
     try {
       const prefix = Array.from({ length: 100 }, (_, index) => ({
@@ -723,7 +723,7 @@ describe('topic query controller', () => {
     }
   });
 
-  it('[REG-TOPIC-077][REG-TOPIC-083] keeps all 146 valid V2EX replies when one later-page row is malformed', async () => {
+  it('keeps all 146 valid V2EX replies when one later-page row is malformed', async () => {
     const prefix = Array.from({ length: 100 }, (_, index) => ({
       ...firstReply,
       floor: index + 1,
@@ -777,7 +777,7 @@ describe('topic query controller', () => {
     expect(getReplies).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077][REG-TOPIC-083] keeps a 100-reply V2EX prefix after an explicit next-page read fails', async () => {
+  it('keeps a 100-reply V2EX prefix after an explicit next-page read fails', async () => {
     jest.useFakeTimers();
     try {
       const prefix = Array.from({ length: 100 }, (_, index) => ({
@@ -830,7 +830,7 @@ describe('topic query controller', () => {
     }
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077] reads an empty partial V2EX window once and then settles', async () => {
+  it('reads an empty partial V2EX window once and then settles', async () => {
     jest.useFakeTimers();
     try {
       const recovered = { ...firstReply, floor: 2, commentId: 102 };
@@ -878,7 +878,7 @@ describe('topic query controller', () => {
     }
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077][REG-TOPIC-083] keeps an explicit full refresh on the refreshed V2EX page window', async () => {
+  it('keeps an explicit full refresh on the refreshed V2EX page window', async () => {
     const prefix = [{ ...firstReply, floor: 1, commentId: 101 }];
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
     const detail: TopicDetail = {
@@ -908,7 +908,7 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.replyCollectionComplete).toBe(true);
   });
 
-  it('[REG-TOPIC-067] rejects an unconfirmed tail without applying it and retries the same order', async () => {
+  it('rejects an unconfirmed tail without applying it and retries the same order', async () => {
     const detail = {
       ...firstDetail,
       replyCount: 45,
@@ -952,7 +952,7 @@ describe('topic query controller', () => {
     ]);
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-077] retries a failed reply read without a hidden topic-count refresh', async () => {
+  it('retries a failed reply read without a hidden topic-count refresh', async () => {
     const detail = {
       ...firstDetail,
       replyCount: 45,
@@ -990,7 +990,7 @@ describe('topic query controller', () => {
     expect(getReplies.mock.calls.map(([request]) => request.replyCount)).toEqual([45, 45]);
   });
 
-  it('[REG-TOPIC-057] isolates cached detail when the credential scope changes', async () => {
+  it('isolates cached detail when the credential scope changes', async () => {
     let scope = initialForumSessionEpochs;
     const replacement = Promise.withResolvers<TopicDetail>();
     const getTopic = jest
@@ -1054,7 +1054,7 @@ describe('topic query controller', () => {
   });
 
   it.each(['linuxdo', 'yaohuo'] as const)(
-    '[REG-TOPIC-068] retries an ordinary %s edge at the same cursor without refreshing the topic count',
+    'retries an ordinary %s edge at the same cursor without refreshing the topic count',
     async (source) => {
       const topic: Topic = {
         ...firstTopic,
@@ -1104,7 +1104,7 @@ describe('topic query controller', () => {
   );
 
   it.each(['linuxdo', 'yaohuo'] as const)(
-    '[REG-TOPIC-068] retries an ordinary %s previous edge at the same cursor without refreshing the topic count',
+    'retries an ordinary %s previous edge at the same cursor without refreshing the topic count',
     async (source) => {
       const topic: Topic = {
         ...firstTopic,
@@ -1162,7 +1162,7 @@ describe('topic query controller', () => {
     }
   );
 
-  it('[REG-TOPIC-068] keeps the NodeSeek total unavailable after loading a terminal adjacent page', async () => {
+  it('keeps the NodeSeek total unavailable after loading a terminal adjacent page', async () => {
     const detail: TopicDetail = {
       ...firstDetail,
       replyCount: undefined,
@@ -1201,7 +1201,7 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicReplies.map((reply) => reply.floor)).toEqual([1, 11, 12, 13, 14]);
   });
 
-  it('[REG-TOPIC-067] does not let opposite pagination replace a pending edge retry', async () => {
+  it('does not let opposite pagination replace a pending edge retry', async () => {
     const anchor = { ...firstReply, floor: 20, commentId: 120 };
     const previous = { ...firstReply, floor: 10, commentId: 110 };
     const next = { ...firstReply, floor: 30, commentId: 130 };
@@ -1284,7 +1284,7 @@ describe('topic query controller', () => {
     expect(getReplies.mock.calls.flatMap(([request]) => replyRequestPage(request) ?? [])).toEqual([1, 1, 3]);
   });
 
-  it('[REG-TOPIC-062] anchors a distant reply once and loads only its adjacent windows', async () => {
+  it('anchors a distant reply once and loads only its adjacent windows', async () => {
     const target: Reply = {
       author: 'target',
       floor: 155,
@@ -1438,7 +1438,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
   });
 
-  it('[REG-TOPIC-025][REG-TOPIC-062] keeps a later target authoritative over an earlier whole-topic refresh', async () => {
+  it('keeps a later target authoritative over an earlier whole-topic refresh', async () => {
     const target = { ...firstReply, floor: 50, commentId: 150, author: 'target' };
     const refreshed = { ...firstReply, floor: 1, commentId: 11, author: 'refreshed' };
     const detail: TopicDetail = {
@@ -1496,7 +1496,7 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicReplies).toEqual([target]);
   });
 
-  it('[REG-TOPIC-067][REG-WRITE-017][REG-WRITE-072] does not apply or locate an old-order write tail after the order changes', async () => {
+  it('does not apply or locate an old-order write tail after the order changes', async () => {
     const oldest = { ...firstReply, floor: 2, commentId: 12, author: 'oldest-preserved' };
     const newest = { ...firstReply, floor: 20, commentId: 120, author: 'newest-preserved' };
     const submitted = { ...firstReply, floor: 21, commentId: 121, author: 'submitted' };
@@ -1567,7 +1567,7 @@ describe('topic query controller', () => {
     expect(onReplyLocationResolved).not.toHaveBeenCalled();
   });
 
-  it('[REG-NOTIFY-047] passes a comment-only notification target through the shared reply gateway', async () => {
+  it('passes a comment-only notification target through the shared reply gateway', async () => {
     const target = { ...firstReply, floor: 25, commentId: 31 };
     const detail = { ...firstDetail, replies: [firstReply], replyCount: 30 };
     const getReplies = jest.fn<TestGetReplies>(async () => ({
@@ -1602,7 +1602,7 @@ describe('topic query controller', () => {
     );
   });
 
-  it('[REG-TOPIC-077] displays an adapter-confirmed target window', async () => {
+  it('displays an adapter-confirmed target window', async () => {
     const topic: Topic = {
       ...firstTopic,
       source: 'yaohuo',
@@ -1652,7 +1652,7 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicReplies).toEqual([sourceOwnedTarget]);
   });
 
-  it('[REG-TOPIC-062][REG-TOPIC-069][REG-TOPIC-083] reuses a loaded V2EX target and queries an unloaded target window', async () => {
+  it('reuses a loaded V2EX target and queries an unloaded target window', async () => {
     const reply = { ...firstReply, floor: 12, commentId: 120 };
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1' };
     const detail = {
@@ -1685,7 +1685,7 @@ describe('topic query controller', () => {
     );
   });
 
-  it('[REG-TOPIC-062][REG-TOPIC-076][REG-TOPIC-083] reads a V2EX route target once without a duplicate start read', async () => {
+  it('reads a V2EX route target once without a duplicate start read', async () => {
     const prefixReply = { ...firstReply, floor: 1, commentId: 101 };
     const target = { ...firstReply, floor: 2, commentId: 102 };
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1', replyCount: 2 };
@@ -1740,7 +1740,7 @@ describe('topic query controller', () => {
     expect(getReplies).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-062] preserves the current window when a source cannot confirm the target floor', async () => {
+  it('preserves the current window when a source cannot confirm the target floor', async () => {
     const getReplies = jest.fn<TestGetReplies>(async () => {
       throw new Error('来源未确认目标楼层');
     });
@@ -1758,7 +1758,7 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicReplies).toEqual([firstReply]);
   });
 
-  it('[REG-TOPIC-092] retries an unloaded route target when a new request command arrives', async () => {
+  it('retries an unloaded route target when a new request command arrives', async () => {
     let requestId = 1;
     const getReplies = jest.fn<TestGetReplies>(async () => {
       throw new Error('来源未确认目标楼层');
@@ -1782,7 +1782,7 @@ describe('topic query controller', () => {
     ]);
   });
 
-  it('[REG-TOPIC-062] requires a matching comment id when the target supplies one', async () => {
+  it('requires a matching comment id when the target supplies one', async () => {
     const decoy = { ...firstReply, floor: 99, commentId: 998 };
     const detail = { ...firstDetail, replies: [decoy] };
     const getReplies = jest.fn<TestGetReplies>(async () => {
@@ -1801,7 +1801,7 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicReplies).toEqual([decoy]);
   });
 
-  it('[REG-TOPIC-062] retries the exact NodeSeek target after verification', async () => {
+  it('retries the exact NodeSeek target after verification', async () => {
     const target = { ...firstReply, floor: 90, commentId: 900 };
     const verificationError = Object.assign(new Error('NodeSeek 需要验证'), {
       source: 'nodeseek' as const,
@@ -1837,7 +1837,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
   });
 
-  it('[REG-TOPIC-062] retries a route target after its source session epoch advances', async () => {
+  it('retries a route target after its source session epoch advances', async () => {
     const topic = {
       ...firstTopic,
       source: 'yaohuo' as const,
@@ -1878,7 +1878,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
   });
 
-  it('[REG-TOPIC-025] resets stale reply pages and cursors after a whole-topic refresh', async () => {
+  it('resets stale reply pages and cursors after a whole-topic refresh', async () => {
     const oldSecondReply: Reply = {
       author: 'carol',
       floor: 2,
@@ -1964,7 +1964,7 @@ describe('topic query controller', () => {
     );
   });
 
-  it('[REG-TOPIC-023] retries the exact failed reply page after linux.do verification', async () => {
+  it('retries the exact failed reply page after linux.do verification', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = {
       ...firstDetail,
@@ -2022,7 +2022,7 @@ describe('topic query controller', () => {
     });
   });
 
-  it('[REG-WRITE-017][REG-TOPIC-062][REG-TOPIC-067] discovers the real tail before reanchoring oldest order', async () => {
+  it('discovers the real tail before reanchoring oldest order', async () => {
     const discourseTopic = {
       ...firstTopic,
       source: 'linuxdo' as const,
@@ -2108,7 +2108,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(appQueryClient.getQueryData(repliesQueryKey)).toBeUndefined());
   });
 
-  it('[REG-TOPIC-067][REG-WRITE-017][REG-WRITE-072] rebuilds and locates the confirmed newest tail after a reply submit', async () => {
+  it('rebuilds and locates the confirmed newest tail after a reply submit', async () => {
     const detail = {
       ...firstDetail,
       replyCount: 20,
@@ -2152,7 +2152,7 @@ describe('topic query controller', () => {
     expect(onReplyLocationResolved).toHaveBeenCalledWith({ commentId: 121, floor: 21, pageHint: 3 });
   });
 
-  it('[REG-TOPIC-067][REG-WRITE-017] reanchors after deleting the only reply in the current tail window', async () => {
+  it('reanchors after deleting the only reply in the current tail window', async () => {
     const topic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const detail: TopicDetail = {
       ...firstDetail,
@@ -2205,7 +2205,7 @@ describe('topic query controller', () => {
     await waitFor(() => expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([30]));
   });
 
-  it('[REG-TOPIC-067][REG-WRITE-017] keeps a failed write refresh visible and retries its exact tail window', async () => {
+  it('keeps a failed write refresh visible and retries its exact tail window', async () => {
     const detail = {
       ...firstDetail,
       replyCount: 20,
@@ -2252,7 +2252,7 @@ describe('topic query controller', () => {
     expect(getReplies.mock.calls.map(([request]) => request.replyCount)).toEqual([20, 21, 21]);
   });
 
-  it('[REG-TOPIC-067][REG-WRITE-017] retries the complete write refresh after the authoritative count read fails', async () => {
+  it('retries the complete write refresh after the authoritative count read fails', async () => {
     const detail = {
       ...firstDetail,
       replyCount: 20,
@@ -2301,7 +2301,7 @@ describe('topic query controller', () => {
     expect(getReplies.mock.calls.map(([request]) => request.replyCount)).toEqual([20, 21]);
   });
 
-  it('[REG-TOPIC-067] retries a failed whole-topic rebuild from a fresh authoritative start', async () => {
+  it('retries a failed whole-topic rebuild from a fresh authoritative start', async () => {
     const detail = {
       ...firstDetail,
       replyCount: 20,
@@ -2369,7 +2369,7 @@ describe('topic query controller', () => {
     ).toEqual(['start:20', 'target:50', 'start:21', 'start:22']);
   });
 
-  it('[REG-TOPIC-005] records a failed V2EX comments refresh as failure and keeps the trusted detail', async () => {
+  it('records a failed V2EX comments refresh as failure and keeps the trusted detail', async () => {
     const v2exTopic = {
       ...firstTopic,
       source: 'v2ex' as const,
@@ -2440,7 +2440,7 @@ describe('topic query controller', () => {
     expect(getTopic).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-PERF-018] keeps a loaded quoted post stable across an unrelated rerender', async () => {
+  it('keeps a loaded quoted post stable across an unrelated rerender', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const quoted: Reply = { author: 'carol', floor: 2, contentHtml: '<p>quoted</p>', createdAt: '' };
@@ -2474,7 +2474,7 @@ describe('topic query controller', () => {
     expect(getReply).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-026] prefetches an accepted answer without expanding a quote or notifying', async () => {
+  it('prefetches an accepted answer without expanding a quote or notifying', async () => {
     const solvedTopic: Topic = {
       ...firstTopic,
       source: 'linuxdo',
@@ -2536,7 +2536,7 @@ describe('topic query controller', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-026] keeps a failed accepted-answer prefetch silent', async () => {
+  it('keeps a failed accepted-answer prefetch silent', async () => {
     const solvedTopic: Topic = {
       ...firstTopic,
       source: 'linuxdo',
@@ -2594,7 +2594,7 @@ describe('topic query controller', () => {
     ['without a local post', false, 2],
     ['with a paged local post', true, 1]
   ] as [string, boolean, number][])(
-    '[REG-TOPIC-026] recovers a failed prefetch interactively %s',
+    'recovers a failed prefetch interactively %s',
     async (_case, withLocalPost, expectedCalls) => {
       const solvedTopic: Topic = {
         ...firstTopic,
@@ -2760,7 +2760,7 @@ describe('topic query controller', () => {
     await appQueryClient.cancelQueries({ queryKey: unrelatedKey, exact: true });
   });
 
-  it('[REG-TOPIC-007][REG-TOPIC-053] deduplicates cross-topic reply quotes by their complete reference', async () => {
+  it('deduplicates cross-topic reply quotes by their complete reference', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const quoted: Reply = { author: 'carol', floor: 2, contentHtml: '<p>quoted</p>', createdAt: '' };
@@ -2809,7 +2809,7 @@ describe('topic query controller', () => {
     expect(getReply).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-054] reuses a cached target opening post when expanding its quote', async () => {
+  it('reuses a cached target opening post when expanding its quote', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/topic/2685882' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const cachedTarget: TopicDetail = {
@@ -2867,7 +2867,7 @@ describe('topic query controller', () => {
     expect(getReply).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-054] keeps the parent quote state while a child Topic route opens', async () => {
+  it('keeps the parent quote state while a child Topic route opens', async () => {
     const parentTopic: Topic = {
       ...firstTopic,
       source: 'linuxdo',
@@ -2927,7 +2927,7 @@ describe('topic query controller', () => {
     expect(getReply).toHaveBeenCalledTimes(1);
   });
 
-  it('REG-LINUXDO-003 reports an ordinary exact-quote recovery failure', async () => {
+  it('reports an ordinary exact-quote recovery failure', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = { ...firstDetail, ...linuxTopic };
     const getReply = jest

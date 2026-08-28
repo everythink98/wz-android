@@ -118,7 +118,7 @@ describe('Feed controller sessions', () => {
     });
   });
 
-  it('[REG-PROXY-012] keeps the current Feed loading until the runtime recovery replay succeeds', async () => {
+  it('keeps the current Feed loading until the runtime recovery replay succeeds', async () => {
     const topic: Topic = {
       source: 'v2ex',
       id: 'runtime-recovered',
@@ -174,7 +174,7 @@ describe('Feed controller sessions', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it('[REG-PROXY-012] leaves Loading and reports the error when the runtime recovery replay also fails', async () => {
+  it('leaves Loading and reports the error when the runtime recovery replay also fails', async () => {
     const failedFeed = Promise.withResolvers<{
       items: Topic[];
       errors: Record<string, never>;
@@ -216,7 +216,7 @@ describe('Feed controller sessions', () => {
     expect(notify).toHaveBeenCalledWith('请求超时，请稍后重试');
   });
 
-  it('[REG-SOURCE-011] does not pause public Feed or Categories while identity reconciliation is pending', async () => {
+  it('does not pause public Feed or Categories while identity reconciliation is pending', async () => {
     const topic: Topic = {
       source: 'linuxdo',
       id: 'public-topic',
@@ -269,7 +269,7 @@ describe('Feed controller sessions', () => {
     });
   });
 
-  it('[REG-SOURCE-010] replaces aggregate Feed with the same enabled-source snapshot', async () => {
+  it('replaces aggregate Feed with the same enabled-source snapshot', async () => {
     type FeedResult = Awaited<ReturnType<ReadGateway['getFeed']>>;
     const requests: {
       context?: { includedSources?: readonly Source[] };
@@ -320,7 +320,7 @@ describe('Feed controller sessions', () => {
     expect(requests[1].context?.includedSources).toEqual(['v2ex']);
   });
 
-  it('[REG-SOURCE-010] keeps Feed selection on reorder and exposes no warm data when all sources are disabled', async () => {
+  it('keeps Feed selection on reorder and exposes no warm data when all sources are disabled', async () => {
     const topic: Topic = {
       source: 'v2ex',
       id: 'enabled-topic',
@@ -375,7 +375,7 @@ describe('Feed controller sessions', () => {
     expect(hook.result.current.feedOutcomeKind).toBe('empty');
   });
 
-  it('[REG-SOURCE-010] gates a disabled direct Feed before fallback, refresh, pagination or reselection can read it', async () => {
+  it('gates a disabled direct Feed before fallback, refresh, pagination or reselection can read it', async () => {
     const getFeed = jest.fn(async ({ source }: Parameters<ReadGateway['getFeed']>[0]) => ({
       items: [
         {
@@ -471,7 +471,7 @@ describe('Feed controller sessions', () => {
   it.each([
     { label: 'uncached', withCache: false },
     { label: 'cached', withCache: true }
-  ])('[REG-FEED-015] replaces an in-flight $label feed during manual refresh', async ({ withCache }) => {
+  ])('replaces an in-flight $label feed during manual refresh', async ({ withCache }) => {
     type FeedResult = Awaited<ReturnType<ReadGateway['getFeed']>>;
     const requests: {
       deferred: ReturnType<typeof Promise.withResolvers<FeedResult>>;
@@ -555,7 +555,7 @@ describe('Feed controller sessions', () => {
     expect(notify).not.toHaveBeenCalledWith('列表正在更新');
   });
 
-  it('[REG-FEED-007] does not replay a cached partial error after returning to Feed', async () => {
+  it('does not replay a cached partial error after returning to Feed', async () => {
     const partialErrors = {
       v2ex: {
         kind: 'ordinary' as const,
@@ -612,7 +612,7 @@ describe('Feed controller sessions', () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-LINUXDO-006] aborts the owned Feed request after leaving Feed and ignores later credential changes', async () => {
+  it('aborts the owned Feed request after leaving Feed and ignores later credential changes', async () => {
     const pendingFeed = Promise.withResolvers<{
       items: never[];
       errors: {
@@ -689,7 +689,7 @@ describe('Feed controller sessions', () => {
     expect(showYaohuoLogin).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-006] pauses categories during verification without canceling the primary Feed read', async () => {
+  it('pauses categories during verification without canceling the primary Feed read', async () => {
     const categorySignals: AbortSignal[] = [];
     const getCategories = jest.fn(async ({ signal }: { signal: AbortSignal }) => {
       categorySignals.push(signal);
@@ -758,7 +758,7 @@ describe('Feed controller sessions', () => {
     });
   });
 
-  it('[REG-SOURCE-011] starts aggregate public lanes without waiting for account bootstrap', async () => {
+  it('starts aggregate public lanes without waiting for account bootstrap', async () => {
     const topic: Topic = {
       source: 'v2ex',
       id: 'public-bootstrap',
@@ -803,7 +803,7 @@ describe('Feed controller sessions', () => {
     ]);
   });
 
-  it('[REG-FEED-011] keeps unrelated single-source pagination active during aggregate reconciliation', async () => {
+  it('keeps unrelated single-source pagination active during aggregate reconciliation', async () => {
     const topics = [1, 2].map((page) => ({
       source: 'v2ex' as const,
       id: `single-source-page-${page}`,
@@ -889,7 +889,7 @@ describe('Feed controller sessions', () => {
     });
   });
 
-  it('[REG-SOURCE-011] makes a saved authenticated recovery stale when the public plan takes ownership', async () => {
+  it('makes a saved authenticated recovery stale when the public plan takes ownership', async () => {
     const topic = {
       source: 'v2ex' as const,
       id: 'saved-recovery-topic',
@@ -987,7 +987,7 @@ describe('Feed controller sessions', () => {
     expect(getFeed.mock.calls.at(-1)?.[1]).toMatchObject({ readPlanScope: 'public:omit' });
   });
 
-  it('[REG-LINUXDO-006] keeps shared categories on Search without starting Feed and cancels them after leaving both owners', async () => {
+  it('keeps shared categories on Search without starting Feed and cancels them after leaving both owners', async () => {
     const categorySignals: AbortSignal[] = [];
     const getCategories = jest.fn(async ({ signal }: { signal: AbortSignal }) => {
       categorySignals.push(signal);
@@ -1035,7 +1035,7 @@ describe('Feed controller sessions', () => {
     expect(getFeed).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-006] does not replay a stale single-source category panel when shared categories settle on Search', async () => {
+  it('does not replay a stale single-source category panel when shared categories settle on Search', async () => {
     const sharedCategories = Promise.withResolvers<{ items: never[]; errors: Record<string, never> }>();
     const getCategories = jest.fn(async ({ source }: { source: string }) => {
       if (source === 'all') {
@@ -1086,7 +1086,7 @@ describe('Feed controller sessions', () => {
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
   });
 
-  it('[REG-FEED-018] opens Yaohuo login once per explicit Feed intent', async () => {
+  it('opens Yaohuo login once per explicit Feed intent', async () => {
     let identityBarriers: SessionSource[] = [];
     const getFeed = jest.fn(async ({ source }: { source: string }) => {
       if (source !== 'yaohuo') {
@@ -1282,7 +1282,7 @@ describe('Feed controller sessions', () => {
     expect(nodeSeekReads).toBe(2);
   });
 
-  it('[REG-FEED-010] never exposes a warm private feed before this runtime confirms its source identity', async () => {
+  it('never exposes a warm private feed before this runtime confirms its source identity', async () => {
     const oldPrivateTopic = {
       source: 'nodeseek' as const,
       id: 'previous-runtime-private',
@@ -1362,7 +1362,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]));
   });
 
-  it('[REG-PERF-006] discards target Feed caches and requests fresh data on every activation', async () => {
+  it('discards target Feed caches and requests fresh data on every activation', async () => {
     const cachedTopic: Topic = {
       source: 'v2ex',
       id: 'cached-v2ex',
@@ -1495,7 +1495,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([secondFreshTopic]));
   });
 
-  it('[REG-PERF-006] exposes cached target categories before that source becomes active', async () => {
+  it('exposes cached target categories before that source becomes active', async () => {
     const cachedTargetCategory: Category = {
       source: 'nodeseek',
       id: 'cached-target-category',
@@ -1536,7 +1536,7 @@ describe('Feed controller sessions', () => {
     ).toEqual([cachedTargetCategory]);
   });
 
-  it('[REG-PERF-003][REG-PERF-006] requests every selected source and keeps late results route-bound', async () => {
+  it('requests every selected source and keeps late results route-bound', async () => {
     const cachedTopic: Topic = {
       source: 'v2ex',
       id: 'cached-selected',
@@ -1677,7 +1677,7 @@ describe('Feed controller sessions', () => {
     expect(getFeed).toHaveBeenCalledTimes(4);
   });
 
-  it('[REG-SOURCE-011] isolates switched public Feed and category reads from authenticated caches', async () => {
+  it('isolates switched public Feed and category reads from authenticated caches', async () => {
     const oldPrivateTopic = {
       source: 'nodeseek' as const,
       id: 'previous-runtime-single-source',
@@ -1770,7 +1770,7 @@ describe('Feed controller sessions', () => {
     expect(hook.result.current.activeFeedState.items).toEqual([]);
   });
 
-  it('[REG-SOURCE-011] does not project an authenticated error into a pending public Feed', async () => {
+  it('does not project an authenticated error into a pending public Feed', async () => {
     const sourceFeedKey = forumQueryKeys.feed({
       feedFilter: 'postTime',
       readPlanScope: 'authenticated:0',
@@ -1835,7 +1835,7 @@ describe('Feed controller sessions', () => {
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-011] aborts an in-flight aggregate plan before a narrower plan takes ownership', async () => {
+  it('aborts an in-flight aggregate plan before a narrower plan takes ownership', async () => {
     const safeTopic = {
       source: 'v2ex' as const,
       id: 'in-flight-bootstrap-safe',
@@ -1910,7 +1910,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([safeTopic]));
   });
 
-  it('[REG-FEED-010] does not roll back to older warm aggregate lists when the last startup barrier clears', async () => {
+  it('does not roll back to older warm aggregate lists when the last startup barrier clears', async () => {
     const oldSafeTopic = {
       source: 'v2ex' as const,
       id: 'warm-safe-old',
@@ -2043,7 +2043,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.categories).toEqual([safeCategory, fullCategory]));
   });
 
-  it('[REG-FEED-010] keeps the safe list and disables old pagination when the last startup barrier clears', async () => {
+  it('keeps the safe list and disables old pagination when the last startup barrier clears', async () => {
     const safeTopic = {
       source: 'v2ex' as const,
       id: 'bootstrap-safe',
@@ -2119,7 +2119,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([fullTopic]));
   });
 
-  it('[REG-FEED-010] returns to Loading when an identity transition has no safe topic to retain', async () => {
+  it('returns to Loading when an identity transition has no safe topic to retain', async () => {
     const fullRead = Promise.withResolvers<{
       items: never[];
       errors: Record<string, never>;
@@ -2166,7 +2166,7 @@ describe('Feed controller sessions', () => {
     });
   });
 
-  it('[REG-SOURCE-011] keeps only cache-safe aggregate categories across plan and epoch changes', async () => {
+  it('keeps only cache-safe aggregate categories across plan and epoch changes', async () => {
     const safeCategory = { source: 'v2ex' as const, id: 'v2ex', name: 'V2EX' };
     const privateCategory = { source: 'nodeseek' as const, id: 'nodeseek', name: 'NodeSeek' };
     const unchangedCategory = { source: 'linuxdo' as const, id: 'linuxdo', name: 'linux.do' };
@@ -2271,7 +2271,7 @@ describe('Feed controller sessions', () => {
     expect(hook.result.current.categories).toEqual([safeCategory]);
   });
 
-  it('[REG-SOURCE-011] removes the aggregate category cache on a direct source epoch change', async () => {
+  it('removes the aggregate category cache on a direct source epoch change', async () => {
     const changedCategory = { source: 'nodeseek' as const, id: 'direct-private', name: '旧账号分类' };
     const safeCategory = { source: 'v2ex' as const, id: 'direct-safe', name: 'V2EX 分类' };
     const unchangedCategory = { source: 'linuxdo' as const, id: 'direct-unchanged', name: 'linux.do 分类' };
@@ -2330,7 +2330,7 @@ describe('Feed controller sessions', () => {
     expect(hook.result.current.categories).toEqual([safeCategory]);
   });
 
-  it('[REG-ACCOUNT-031][REG-SOURCE-011] removes old-plan aggregate data across an epoch change', async () => {
+  it('removes old-plan aggregate data across an epoch change', async () => {
     const oldTopic = {
       source: 'nodeseek' as const,
       id: 'old-account',
@@ -2453,7 +2453,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([newTopic]));
   });
 
-  it('[REG-SOURCE-011] keeps public aggregate pages while dropping a changed private source', async () => {
+  it('keeps public aggregate pages while dropping a changed private source', async () => {
     const changedTopic = {
       source: 'nodeseek' as const,
       id: 'direct-epoch-private',
@@ -2657,7 +2657,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstSafeTopic, secondSafeTopic]));
   });
 
-  it('[REG-SOURCE-011] removes authenticated aggregate pages when sources enter public plans', async () => {
+  it('removes authenticated aggregate pages when sources enter public plans', async () => {
     const changedTopic = {
       source: 'nodeseek' as const,
       id: 'changed-pending-source',
@@ -2827,7 +2827,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([safeTopic, secondSafeTopic]));
   });
 
-  it('[REG-SOURCE-011] keeps only public aggregate pages while an authenticated plan is unavailable', async () => {
+  it('keeps only public aggregate pages while an authenticated plan is unavailable', async () => {
     const firstPage = [
       {
         source: 'nodeseek' as const,
@@ -2987,7 +2987,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(hook.result.current.activeFeedState.items.map(topicKey)).toEqual(loadedKeys));
   });
 
-  it('[REG-SOURCE-011] keeps a pending public single-source Feed available', async () => {
+  it('keeps a pending public single-source Feed available', async () => {
     const getFeed = jest.fn(
       async (_options: Parameters<ReadGateway['getFeed']>[0], _context?: Parameters<ReadGateway['getFeed']>[1]) => ({
         items: [],
@@ -3034,7 +3034,7 @@ describe('Feed controller sessions', () => {
     expect(hook.result.current.feedOutcomeKind).toBe('empty');
   });
 
-  it('REG-LINUXDO-002 preserves the loaded feed page across session reset before resuming pagination', async () => {
+  it('preserves the loaded feed page across session reset before resuming pagination', async () => {
     const firstTopic = {
       source: 'linuxdo' as const,
       id: 'first',
@@ -3126,7 +3126,7 @@ describe('Feed controller sessions', () => {
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
-  it('REG-LINUXDO-003 reports an ordinary feed recovery failure instead of another verification result', async () => {
+  it('reports an ordinary feed recovery failure instead of another verification result', async () => {
     let linuxAttempts = 0;
     const readGateway = {
       getCategories: jest.fn(async () => ({ items: [], errors: {} })),
@@ -3183,7 +3183,7 @@ describe('Feed controller sessions', () => {
     expect(linuxAttempts).toBe(3);
   });
 
-  it('[REG-LINUXDO-002] resumes aggregate verification without changing or recursively reopening the Feed', async () => {
+  it('resumes aggregate verification without changing or recursively reopening the Feed', async () => {
     const v2exTopic = {
       source: 'v2ex' as const,
       id: 'aggregate-v2ex',
@@ -3264,7 +3264,7 @@ describe('Feed controller sessions', () => {
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-FEED-006] retries a failed multi-page refresh instead of advancing to a later page', async () => {
+  it('retries a failed multi-page refresh instead of advancing to a later page', async () => {
     const firstTopic = {
       source: 'linuxdo' as const,
       id: 'first',
@@ -3345,7 +3345,7 @@ describe('Feed controller sessions', () => {
   });
 
   it.each(['all', 'nodeseek'] as const)(
-    '[REG-FEED-008] keeps loaded topics as a prefix when %s loads another page',
+    'keeps loaded topics as a prefix when %s loads another page',
     async (feedSource) => {
       const firstSource = feedSource === 'all' ? ('v2ex' as const) : ('nodeseek' as const);
       const secondSource = feedSource === 'all' ? ('linuxdo' as const) : ('nodeseek' as const);
@@ -3427,7 +3427,7 @@ describe('Feed controller sessions', () => {
     }
   );
 
-  it('[REG-FEED-005] reports a single-source category error instead of treating it as an empty category list', async () => {
+  it('reports a single-source category error instead of treating it as an empty category list', async () => {
     const readGateway = {
       getCategories: jest.fn(async ({ source }: { source: string }) =>
         source === 'all'
@@ -3475,7 +3475,7 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringContaining('分类读取失败')));
   });
 
-  it('REG-FEED-004 preserves a single-source list when refresh returns a source error', async () => {
+  it('preserves a single-source list when refresh returns a source error', async () => {
     const firstTopic = {
       source: 'v2ex' as const,
       id: 'first',
@@ -3537,7 +3537,7 @@ describe('Feed controller sessions', () => {
   });
 
   it.each(['source-error', 'parse-empty'] as const)(
-    '[REG-SOURCE-002] does not append partial aggregate load-more results after %s',
+    'does not append partial aggregate load-more results after %s',
     async (failure) => {
       const firstTopic = {
         source: 'v2ex' as const,

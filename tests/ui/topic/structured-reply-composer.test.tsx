@@ -12,7 +12,7 @@ function message(type: string, payload: unknown) {
 }
 
 describe('StructuredReplyComposer', () => {
-  it('[REG-WRITE-065] forwards LinuxDo poll capabilities through the existing host-action seam', async () => {
+  it('forwards LinuxDo poll capabilities through the existing host-action seam', async () => {
     const onLoadLinuxDoPollCapabilities = jest.fn(async () => ({
       groups: [{ id: 10, name: 'trust_level_1', displayName: '信任级别 1' }],
       canUseStaffResults: false
@@ -64,7 +64,7 @@ describe('StructuredReplyComposer', () => {
     );
   });
 
-  it('[REG-WRITE-054] keeps a large LinuxDo emoji catalog inside the editor Bridge contract', async () => {
+  it('keeps a large LinuxDo emoji catalog inside the editor Bridge contract', async () => {
     const discourseEmojiUrls = Object.fromEntries(
       Array.from({ length: 2001 }, (_, index) => [`emoji_${index}`, `https://linux.do/emoji/${index}.png`])
     );
@@ -98,7 +98,7 @@ describe('StructuredReplyComposer', () => {
     expect(init.payload.discourseEmoji).toHaveLength(2000);
   });
 
-  it('[REG-WRITE-056] syncs a late LinuxDo emoji catalog without reinitializing the editor', async () => {
+  it('syncs a late LinuxDo emoji catalog without reinitializing the editor', async () => {
     const props = {
       actionBusy: false,
       closeLabel: '收起回复',
@@ -141,7 +141,7 @@ describe('StructuredReplyComposer', () => {
     expect(postMessage.mock.calls.map(([raw]: [string]) => JSON.parse(raw).type)).not.toContain('INIT');
   });
 
-  it('[REG-ACCOUNT-045] keeps the editor WebView from clearing shared login state', async () => {
+  it('keeps the editor WebView from clearing shared login state', async () => {
     const view = await render(
       <StructuredReplyComposer
         actionBusy={false}
@@ -174,7 +174,7 @@ describe('StructuredReplyComposer', () => {
     );
   });
 
-  it('[REG-WRITE-047] refreshes the confirmed character count when a snapshot arrives', async () => {
+  it('refreshes the confirmed character count when a snapshot arrives', async () => {
     const view = await render(
       <StructuredReplyComposer
         actionBusy={false}
@@ -245,7 +245,7 @@ describe('StructuredReplyComposer', () => {
     await waitFor(() => expect(view.getByText('14 字符')).toBeTruthy());
   });
 
-  it('[REG-WRITE-039] keeps one nested-scroll WebView across fullscreen and rejects a stale submit snapshot', async () => {
+  it('keeps one nested-scroll WebView across fullscreen and rejects a stale submit snapshot', async () => {
     const onSnapshot = jest.fn();
     const onSubmit = jest.fn();
     function Host({ visible = true }: { visible?: boolean }) {

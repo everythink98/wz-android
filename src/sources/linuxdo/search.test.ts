@@ -9,7 +9,7 @@ function searchResponse() {
 }
 
 describe('linux.do search', () => {
-  it('[REG-SEARCH-028] refuses anonymous adapter search without a transport call', async () => {
+  it('refuses anonymous adapter search without a transport call', async () => {
     const fetcher = vi.fn();
 
     await expect(searchLinuxDo('performance', { fetcher })).rejects.toMatchObject({
@@ -40,7 +40,7 @@ describe('linux.do search', () => {
     expect(new Headers(secondFetcher.mock.calls[1]?.[1]?.headers).get('X-CSRF-Token')).toBe('second-account-token');
   });
 
-  it('[REG-PERF-016] trusts the search cursor instead of probing one extra result', async () => {
+  it('trusts the search cursor instead of probing one extra result', async () => {
     const topics = Array.from({ length: 30 }, (_, index) => ({
       id: index + 1,
       slug: `topic-${index + 1}`,

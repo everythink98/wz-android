@@ -29,7 +29,7 @@ describe('account session store', () => {
     vi.clearAllMocks();
   });
 
-  it('[REG-PERF-019] restores only the non-sensitive identity from a confirmed session', async () => {
+  it('restores only the non-sensitive identity from a confirmed session', async () => {
     const snapshot: AccountSessionSnapshot = {
       site: 'nodeseek',
       status: 'logged-in',
@@ -71,7 +71,7 @@ describe('account session store', () => {
     expect(stored).not.toContain('remote profile data');
   });
 
-  it('[REG-PERF-019] stores confirmed anonymous but ignores unknown observations', async () => {
+  it('stores confirmed anonymous but ignores unknown observations', async () => {
     const unknown: AccountSessionSnapshot = {
       site: 'linuxdo',
       status: 'anonymous',
@@ -91,7 +91,7 @@ describe('account session store', () => {
     });
   });
 
-  it('[REG-PERF-019] isolates a damaged source record from healthy siblings', async () => {
+  it('isolates a damaged source record from healthy siblings', async () => {
     asyncStorage.__store.set('account-session.v1.nodeseek', '{bad json');
     await saveAccountSessionSnapshot({
       site: 'yaohuo',
@@ -106,7 +106,7 @@ describe('account session store', () => {
     expect(asyncStorage.__store.get('account-session.v1.nodeseek')).toBe('{bad json');
   });
 
-  it('[REG-PERF-019] exposes one global migration marker without per-source recovery state', async () => {
+  it('exposes one global migration marker without per-source recovery state', async () => {
     await expect(loadAccountSessionMigrationCompleted()).resolves.toBe(false);
 
     await markAccountSessionMigrationCompleted();

@@ -81,7 +81,7 @@ describe('Android local sources', () => {
     setDiagnosticWriter(null);
   });
 
-  it('[REG-ACCOUNT-037] uses rendered NodeSeek guest controls for account probes', async () => {
+  it('uses rendered NodeSeek guest controls for account probes', async () => {
     const normalFetcher = vi.fn(async () =>
       html(`
       <ul class="post-list">
@@ -112,7 +112,7 @@ describe('Android local sources', () => {
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-ACCOUNT-037] accepts only the bridged explicit-null NodeSeek account state as anonymous', async () => {
+  it('accepts only the bridged explicit-null NodeSeek account state as anonymous', async () => {
     const normalFetcher = vi.fn(async () =>
       html(`
       <ul class="post-list">
@@ -140,7 +140,7 @@ describe('Android local sources', () => {
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-ACCOUNT-037] keeps explicit direct NodeSeek account evidence on the fast path', async () => {
+  it('keeps explicit direct NodeSeek account evidence on the fast path', async () => {
     const normalFetcher = vi.fn(async () =>
       html(`
       <header>
@@ -187,7 +187,7 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-TEST-003] keeps WebView fallback disabled when the runtime disallows it', async () => {
+  it('keeps WebView fallback disabled when the runtime disallows it', async () => {
     const direct = new Response('<html><div class="cf-turnstile"></div></html>', {
       status: 403,
       headers: { 'cf-mitigated': 'challenge' }
@@ -307,7 +307,7 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-VERIFICATION-002] does not send NodeSeek JSON business responses to the verification WebView', async () => {
+  it('does not send NodeSeek JSON business responses to the verification WebView', async () => {
     const normalFetcher = vi.fn(async () =>
       json({
         ok: true,
@@ -339,7 +339,7 @@ describe('Android local sources', () => {
       text: '普通文档讨论“正在进行安全验证”和“安全服务防护恶意自动程序”的提示文案。',
       expected: '普通文档'
     }
-  ])('[REG-VERIFICATION-002] does not treat $label as a NodeSeek challenge page', async ({ expected, path, text }) => {
+  ])('does not treat $label as a NodeSeek challenge page', async ({ expected, path, text }) => {
     const normalFetcher = vi.fn(async () =>
       html(`
       <html><body><article>
@@ -401,7 +401,7 @@ describe('Android local sources', () => {
     expect(JSON.stringify(events)).not.toMatch(/743011|post-|https?:|cf-turnstile/);
   });
 
-  it('[REG-SOURCE-006] starts the caller timeout handoff when NodeSeek enters the WebView fallback', async () => {
+  it('starts the caller timeout handoff when NodeSeek enters the WebView fallback', async () => {
     vi.useFakeTimers();
     let resolveFallback: ((response: Response) => void) | undefined;
     try {
@@ -634,7 +634,7 @@ describe('Android local sources', () => {
     }
   });
 
-  it('[REG-NODESEEK-004] recovers after the configured qualified fallback threshold and resets on direct success', async () => {
+  it('recovers after the configured qualified fallback threshold and resets on direct success', async () => {
     vi.useFakeTimers();
     try {
       let directMode: 'hang' | 'success' = 'hang';
@@ -683,7 +683,7 @@ describe('Android local sources', () => {
     }
   });
 
-  it('[REG-NODESEEK-004] preserves a successful WebView result when native recovery fails', async () => {
+  it('preserves a successful WebView result when native recovery fails', async () => {
     const recoverReadChannel = vi.fn(async () => {
       throw new Error('native recovery unavailable');
     });
@@ -712,7 +712,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-009] does not rotate when a NodeSeek WebView response fails the source parser', async () => {
+  it('does not rotate when a NodeSeek WebView response fails the source parser', async () => {
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
     const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async () => {
@@ -732,7 +732,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-009] fails closed when a transport fallback has no source-read attempt scope', async () => {
+  it('fails closed when a transport fallback has no source-read attempt scope', async () => {
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
     const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async () => {
@@ -748,7 +748,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-009] does not revive an older NodeSeek fallback after a newer direct success', async () => {
+  it('does not revive an older NodeSeek fallback after a newer direct success', async () => {
     const topicBody = Promise.withResolvers<string>();
     const webViewStarted = Promise.withResolvers<void>();
     const fallbackResponse = html('');
@@ -795,7 +795,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-009] does not confirm a swallowed auxiliary NodeSeek poll parse failure', async () => {
+  it('does not confirm a swallowed auxiliary NodeSeek poll parse failure', async () => {
     const payload = Buffer.from(
       JSON.stringify({
         postData: {
@@ -838,7 +838,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-009] keeps a proven primary NodeSeek fallback when its auxiliary poll succeeds direct', async () => {
+  it('keeps a proven primary NodeSeek fallback when its auxiliary poll succeeds direct', async () => {
     const payload = Buffer.from(
       JSON.stringify({
         postData: {
@@ -887,7 +887,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-009] rejects an unproven NodeSeek Account fallback before accepting a direct setting page', async () => {
+  it('rejects an unproven NodeSeek Account fallback before accepting a direct setting page', async () => {
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
     const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async (input: string | URL | Request) => {
@@ -907,7 +907,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-NODESEEK-004] excludes writes, Cloudflare and unsuccessful WebView results from recovery counting', async () => {
+  it('excludes writes, Cloudflare and unsuccessful WebView results from recovery counting', async () => {
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 2 }));
     const cloudflare = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: vi.fn(
@@ -939,7 +939,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-PROXY-006] keeps repeated NodeSeek direct failures isolated from shared proxy state', async () => {
+  it('keeps repeated NodeSeek direct failures isolated from shared proxy state', async () => {
     vi.useFakeTimers();
     try {
       const linuxDoPending = Promise.withResolvers<Response>();
@@ -1208,7 +1208,7 @@ describe('Android local sources', () => {
     expect(JSON.stringify(events)).not.toMatch(/\/t\/42|https?:|cf-turnstile/);
   });
 
-  it('[REG-LINUXDO-009] routes an exact Connect recovery GET through the existing WebView only', async () => {
+  it('routes an exact Connect recovery GET through the existing WebView only', async () => {
     const defaultFetcher = vi.fn(async () => new Response('unexpected direct response'));
     const webViewFetcher = vi.fn(async () => new Response('<div class="card">official</div>'));
     const fetcher = createLinuxDoWebViewFallbackFetcher({
@@ -1239,7 +1239,7 @@ describe('Android local sources', () => {
     ['Connect write', 'https://connect.linux.do/', 'POST'],
     ['other linux.do read', 'https://linux.do/latest.json', 'GET'],
     ['external read', 'https://example.com/', 'GET']
-  ])('[REG-LINUXDO-009] does not force WebView recovery for %s', async (_case, url, method) => {
+  ])('does not force WebView recovery for %s', async (_case, url, method) => {
     const directResponse = new Response('direct');
     const defaultFetcher = vi.fn(async () => directResponse);
     const webViewFetcher = vi.fn();
@@ -1254,7 +1254,7 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-009] does not issue a second direct Connect request when WebView recovery is unavailable', async () => {
+  it('does not issue a second direct Connect request when WebView recovery is unavailable', async () => {
     const defaultFetcher = vi.fn(async () => new Response('unexpected direct response'));
     const webViewFetcher = vi.fn();
     const fetcher = createLinuxDoWebViewFallbackFetcher({
@@ -1271,7 +1271,7 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-008] rotates only after the eight-second timeout is recovered by WebView', async () => {
+  it('rotates only after the eight-second timeout is recovered by WebView', async () => {
     vi.useFakeTimers();
     try {
       const defaultFetcher = vi.fn(
@@ -1319,7 +1319,7 @@ describe('Android local sources', () => {
     }
   });
 
-  it('[REG-LINUXDO-008] returns successful WebView content even when runtime rotation fails', async () => {
+  it('returns successful WebView content even when runtime rotation fails', async () => {
     vi.useFakeTimers();
     try {
       const defaultFetcher = vi.fn(
@@ -1360,7 +1360,7 @@ describe('Android local sources', () => {
     }
   });
 
-  it('[REG-SOURCE-009] does not rotate when a timed-out linux.do WebView response fails JSON parsing', async () => {
+  it('does not rotate when a timed-out linux.do WebView response fails JSON parsing', async () => {
     vi.useFakeTimers();
     try {
       const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 5 }));
@@ -1398,7 +1398,7 @@ describe('Android local sources', () => {
     }
   });
 
-  it('[REG-SOURCE-009] commits a source-readable linux.do anonymous Account result', async () => {
+  it('commits a source-readable linux.do anonymous Account result', async () => {
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 5 }));
     const fallbackFetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async () => {
@@ -1414,7 +1414,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-009] rejects malformed linux.do Account JSON before recovery commit', async () => {
+  it('rejects malformed linux.do Account JSON before recovery commit', async () => {
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 5 }));
     const fallbackFetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async () => {
@@ -1428,7 +1428,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-009] isolates an invalid NodeSeek aggregate child from another source success', async () => {
+  it('isolates an invalid NodeSeek aggregate child from another source success', async () => {
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 6 }));
     const defaultFetcher = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
@@ -1467,7 +1467,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-008] excludes cancellation, writes, HTTP failures and Cloudflare from channel recovery', async () => {
+  it('excludes cancellation, writes, HTTP failures and Cloudflare from channel recovery', async () => {
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 6 }));
     const controller = new AbortController();
     const canceledFetcher = createLinuxDoWebViewFallbackFetcher({
@@ -1505,7 +1505,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-007] settles the canonical Account probe through one hidden read after a direct network error', async () => {
+  it('settles the canonical Account probe through one hidden read after a direct network error', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -1555,7 +1555,7 @@ describe('Android local sources', () => {
     ).not.toMatch(/session\/current|https?:|cookie|alice|42/iu);
   });
 
-  it('[REG-LINUXDO-007] preserves the recovered Account result when runtime rotation fails', async () => {
+  it('preserves the recovered Account result when runtime rotation fails', async () => {
     const fallbackResponse = json({
       current_user: {
         id: 42,
@@ -1579,7 +1579,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-LINUXDO-007] preserves trusted CF evidence returned by the hidden Account probe', async () => {
+  it('preserves trusted CF evidence returned by the hidden Account probe', async () => {
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 8 }));
     const fetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async () => {
@@ -1601,7 +1601,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-LINUXDO-007] keeps an ordinary hidden Account failure ordinary', async () => {
+  it('keeps an ordinary hidden Account failure ordinary', async () => {
     const hiddenError = new Error('hidden renderer unavailable');
     const recoverReadChannel = vi.fn(async () => ({ ok: true, generation: 9 }));
     const fetcher = createLinuxDoWebViewFallbackFetcher({
@@ -1618,7 +1618,7 @@ describe('Android local sources', () => {
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 
-  it('[REG-PROXY-010] keeps concurrent cross-source fallback evidence on its request-start generation', async () => {
+  it('keeps concurrent cross-source fallback evidence on its request-start generation', async () => {
     const requestStartGeneration = getReadNetworkRuntimeSnapshot().generation;
     let nativeGeneration = requestStartGeneration;
     const nativeRotations: boolean[] = [];
@@ -1749,7 +1749,7 @@ describe('Android local sources', () => {
       new TypeError('Network request failed'),
       'POST'
     ]
-  ])('[REG-LINUXDO-007] does not use Account fallback for %s', async (_case, url, intent, directError, method) => {
+  ])('does not use Account fallback for %s', async (_case, url, intent, directError, method) => {
     const webViewFetcher = vi.fn();
     const fetcher = createLinuxDoWebViewFallbackFetcher({
       defaultFetcher: vi.fn(async () => {
@@ -1762,7 +1762,7 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('[REG-TEST-003] keeps linux.do WebView fallback disabled when the runtime disallows it', async () => {
+  it('keeps linux.do WebView fallback disabled when the runtime disallows it', async () => {
     const direct = new Response('challenge', {
       status: 403,
       headers: { 'cf-mitigated': 'challenge' }
@@ -1778,7 +1778,7 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('REG-LINUXDO-001 preserves an ordinary linux.do 429 without opening the WebView fallback', async () => {
+  it('preserves an ordinary linux.do 429 without opening the WebView fallback', async () => {
     const normalFetcher = vi.fn(async () => new Response('rate limited', { status: 429 }));
     const webViewFetcher = vi.fn();
     const fetcher = createLinuxDoWebViewFallbackFetcher({
@@ -1792,7 +1792,7 @@ describe('Android local sources', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('REG-LINUXDO-001 keeps a confirmed direct challenge typed when the hidden renderer cannot inspect it', async () => {
+  it('keeps a confirmed direct challenge typed when the hidden renderer cannot inspect it', async () => {
     const normalFetcher = vi.fn(
       async () =>
         new Response('challenge', {
@@ -1813,7 +1813,7 @@ describe('Android local sources', () => {
     expect(isLinuxDoCloudflareError(error)).toBe(true);
   });
 
-  it('REG-LINUXDO-001 keeps a confirmed direct challenge typed after an explicit renderer failure', async () => {
+  it('keeps a confirmed direct challenge typed after an explicit renderer failure', async () => {
     const normalFetcher = vi.fn(
       async () =>
         new Response('challenge', {
@@ -1834,7 +1834,7 @@ describe('Android local sources', () => {
     expect(isLinuxDoCloudflareError(error)).toBe(true);
   });
 
-  it('REG-LINUXDO-001 preserves an explicit hidden-browser size failure', async () => {
+  it('preserves an explicit hidden-browser size failure', async () => {
     const normalFetcher = vi.fn(
       async () =>
         new Response('challenge', {
@@ -1857,7 +1857,7 @@ describe('Android local sources', () => {
     expect(isLinuxDoCloudflareError(error)).toBe(false);
   });
 
-  it('REG-LINUXDO-001 preserves a final ordinary 429 returned by the hidden WebView', async () => {
+  it('preserves a final ordinary 429 returned by the hidden WebView', async () => {
     const normalFetcher = vi.fn(
       async () =>
         new Response('challenge', {
@@ -1877,7 +1877,7 @@ describe('Android local sources', () => {
     expect(await response.text()).toBe('rate limited');
   });
 
-  it('REG-LINUXDO-002 never replays a linux.do write through the hidden WebView', async () => {
+  it('never replays a linux.do write through the hidden WebView', async () => {
     const normalFetcher = vi.fn(
       async () =>
         new Response('challenge', {

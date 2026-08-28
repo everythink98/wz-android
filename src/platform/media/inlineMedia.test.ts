@@ -19,7 +19,7 @@ describe('inline media layout', () => {
     ).toEqual({ width: 20, height: 20 });
   });
 
-  it('[REG-TOPIC-119] centers a Fabric image attachment in the text line', () => {
+  it('centers a Fabric image attachment in the text line', () => {
     expect(
       inlineForumImageAlignmentStyle(
         {
@@ -49,7 +49,7 @@ describe('inline media layout', () => {
     ).toEqual({});
   });
 
-  it('[REG-TOPIC-125] gives inline text real horizontal attachment space without changing alignment', () => {
+  it('gives inline text real horizontal attachment space without changing alignment', () => {
     const attributes = {
       alt: ':joy:',
       class: 'emoji',
@@ -63,7 +63,7 @@ describe('inline media layout', () => {
     expect(inlineForumImageAlignmentStyle(attributes, 1, 26)).toEqual({ transform: [{ translateY: 3 }] });
   });
 
-  it('[REG-TOPIC-054] leaves breathing room after an inline quote avatar', () => {
+  it('leaves breathing room after an inline quote avatar', () => {
     expect(
       inlineForumImageAlignmentStyle(
         {
@@ -187,7 +187,7 @@ describe('inline media layout', () => {
     ).toEqual({ width: 100, height: 87 });
   });
 
-  it('[REG-TOPIC-066] keeps decoded sticker dimensions within 100dp after reader font scaling', () => {
+  it('keeps decoded sticker dimensions within 100dp after reader font scaling', () => {
     expect(
       inlineForumImageDisplaySize(
         {
@@ -202,7 +202,7 @@ describe('inline media layout', () => {
     ).toEqual({ width: 100, height: 100 });
   });
 
-  it('[REG-TOPIC-066] fills one missing sticker axis from the decoded aspect ratio', () => {
+  it('fills one missing sticker axis from the decoded aspect ratio', () => {
     const attributes = {
       class: 'sticker',
       alt: 'xhj003',

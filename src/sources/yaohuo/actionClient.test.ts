@@ -23,7 +23,7 @@ function htmlResponse(body: string, status = 200, url = 'https://www.yaohuo.me/b
 }
 
 describe('runYaohuoAction', () => {
-  it('[REG-NOTIFY-031] confirms a private reply only from the exact original success text', async () => {
+  it('confirms a private reply only from the exact original success text', async () => {
     const request = buildYaohuoMessageReplyRequest({ content: '收到', fields: { action: 'add', toid: '9' } });
 
     await expect(
@@ -34,7 +34,7 @@ describe('runYaohuoAction', () => {
     ).resolves.toEqual({ status: 'confirmed', message: '发送信息成功！' });
   });
 
-  it('[REG-ACCOUNT-029] sends yaohuo writes through the native read-only cookie jar', async () => {
+  it('sends yaohuo writes through the native read-only cookie jar', async () => {
     const fetcher = vi.fn(async () => htmlResponse('<div class="tip">评论成功</div>'));
 
     const result = await runYaohuoAction({
@@ -80,7 +80,7 @@ describe('runYaohuoAction', () => {
     expect(JSON.stringify(result)).not.toContain('secret');
   });
 
-  it('REG-WRITE-002 runs the live favorite action once and accepts its favorites-page redirect', async () => {
+  it('runs the live favorite action once and accepts its favorites-page redirect', async () => {
     const fetcher = vi.fn(async () =>
       htmlResponse(
         `
@@ -123,7 +123,7 @@ describe('runYaohuoAction', () => {
     });
   });
 
-  it('REG-WRITE-003 confirms original favorite cancellation from the JSON response', async () => {
+  it('confirms original favorite cancellation from the JSON response', async () => {
     const fetcher = vi.fn(async () =>
       htmlResponse(
         JSON.stringify({ success: true, message: '删除成功' }),
@@ -199,7 +199,7 @@ describe('runYaohuoAction', () => {
     expect(result).toMatchObject({ status: 'confirmed', message: '删除成功' });
   });
 
-  it('[REG-WRITE-012][REG-WRITE-025] marks a reply deletion unknown when its confirmation link is missing', async () => {
+  it('marks a reply deletion unknown when its confirmation link is missing', async () => {
     const fetcher = vi.fn(async (url: string) =>
       htmlResponse(
         `
@@ -297,7 +297,7 @@ describe('runYaohuoAction', () => {
     ['empty', '<html></html>'],
     ['unrecognized short', '<html>请求处理中</html>'],
     ['ambiguous success wording', '<html>评论成功了吗</html>']
-  ])('[REG-WRITE-025] marks %s action text unknown without a success oracle', async (_kind, html) => {
+  ])('marks %s action text unknown without a success oracle', async (_kind, html) => {
     const fetcher = vi.fn(async () => htmlResponse(html));
 
     const result = await runYaohuoAction({

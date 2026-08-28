@@ -3,7 +3,7 @@ import { parseHtml } from './html';
 import { sanitizeContentHtml } from './contentSanitizer';
 
 describe('forum content sanitizer media referrer policy', () => {
-  it('[REG-TOPIC-078] preserves valid policies through every media tag conversion', () => {
+  it('preserves valid policies through every media tag conversion', () => {
     const html = sanitizeContentHtml(
       `
         <img id="plain" src="https://cdn.example/plain.png" referrerpolicy="no-referrer">
@@ -34,7 +34,7 @@ describe('forum content sanitizer media referrer policy', () => {
     expect(root.querySelector('forum-link-card')?.getAttribute('image-referrerpolicy')).toBe('no-referrer');
   });
 
-  it('[REG-TOPIC-082] removes an unsafe video poster without removing the playable source', () => {
+  it('removes an unsafe video poster without removing the playable source', () => {
     const html = sanitizeContentHtml(
       '<video src="https://cdn.example/video.mp4" poster="javascript:alert(1)"></video>',
       'https://www.yaohuo.me/bbs-1571173.html?lpage=11'
@@ -45,7 +45,7 @@ describe('forum content sanitizer media referrer policy', () => {
     expect(video?.getAttribute('poster')).toBeUndefined();
   });
 
-  it('[REG-TOPIC-078] normalizes mixed-case policy attributes before media conversion', () => {
+  it('normalizes mixed-case policy attributes before media conversion', () => {
     const html = sanitizeContentHtml(
       [
         '<img id="mixed-case-image" src="https://cdn.example/mixed-case.png" ReFeRrErPoLiCy="no-referrer">',
@@ -60,7 +60,7 @@ describe('forum content sanitizer media referrer policy', () => {
     expect(html).not.toContain('ReFeRrErPoLiCy');
   });
 
-  it('[REG-TOPIC-081] removes hidden placeholders before sanitizing their inline style', () => {
+  it('removes hidden placeholders before sanitizing their inline style', () => {
     const html = sanitizeContentHtml(
       [
         '<p>visible before</p>',
@@ -77,7 +77,7 @@ describe('forum content sanitizer media referrer policy', () => {
     expect(html).not.toContain('hidden display content');
   });
 
-  it('[REG-TOPIC-128] preserves only safe GFM table alignment values', () => {
+  it('preserves only safe GFM table alignment values', () => {
     const html = sanitizeContentHtml(
       '<table><tr><th style="text-align: center; position: absolute">A</th><td style="text-align: justify; width: 999px">B</td></tr></table>',
       'https://www.nodeseek.com/post-1-1'
@@ -89,7 +89,7 @@ describe('forum content sanitizer media referrer policy', () => {
     expect(html).not.toContain('width');
   });
 
-  it('[REG-TOPIC-090] preserves semantic siblings around a pre inside a magic-tab terminal container', () => {
+  it('preserves semantic siblings around a pre inside a magic-tab terminal container', () => {
     const html = sanitizeContentHtml(
       '<div class="nsk-magic-tabs"><div class="nsk-magic-tab-title">Report</div><div class="nsk-magic-tab-body"><div class="terminal-container"><pre>terminal output</pre><p>explanation</p><table><tbody><tr><td>value</td></tr></tbody></table></div></div></div>',
       'https://www.nodeseek.com/post-1-1'

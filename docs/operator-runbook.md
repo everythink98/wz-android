@@ -4,8 +4,8 @@
 
 ## 开发与交付
 
-1. 在产品地图选择直接影响的能力 ID；触及共享 seam 时展开关联 ID。
-2. 按能力 ID 检索回归语料库，把命中的精确 oracle 纳入必跑项。
+1. 产品/runtime 改动在产品地图选择直接影响的能力 ID并展开共享 seam；纯测试、文档或治理改动记录 evidence owner。
+2. 只有改动命中已知事故 seam 时才查回归语料库；当前必跑项以 product map 的 canonical evidence 与测试标准为准。
 3. 记录 Git revision 与 dirty 状态，完成最小完整改动。
 4. 按测试标准运行最低可靠证据；涉及设备、真实来源或写操作时遵守相应授权边界。
 5. 交付时按能力 ID 报告证据层、恢复状态和未验证范围。
@@ -30,7 +30,7 @@ npm run smoke:android
 npm run release:android
 ```
 
-`npm run verify` 是确定性总门禁，包含 lint、format check、架构检查与测试、Vitest、Jest/RNTL、文档检查、typecheck、unused 和版本一致性检查。局部开发可先运行受影响测试，交付前仍按改动风险补齐门禁。
+`npm run verify` 是随机顺序总门禁，具体组合始终以 `package.json` 为准。Vitest 与 Jest 会输出可重放 seed；局部开发可先运行受影响测试，交付前仍按改动风险补齐门禁。
 
 ## Android 覆盖安装、Replay 与 Smoke
 
@@ -57,7 +57,7 @@ npm run smoke:android
 node scripts/smoke-android.mjs <apkPath>
 ```
 
-禁止在保留数据的设备上执行 `agent-device reinstall`、`agent-device uninstall`、`adb uninstall`、`adb shell pm clear` 或 Gradle `connectedDebugAndroidTest`。覆盖安装失败就停止；不得自动改走卸载、清数据或重置模拟器。账号、本机数据或 `firstInstallTime` 异常时立即冻结设备变更，只读取证并报告。
+禁止在保留数据的设备上执行 `agent-device reinstall`、`agent-device uninstall`、`adb uninstall`、`adb shell pm clear` 或 Gradle `connectedDebugAndroidTest`。已验证的 `agent-device 0.20.6` 中，`reinstall` 会先执行不带 `-k` 的卸载，CLI 的 “Replace installed app” 文案不代表保留数据。覆盖安装失败就停止；不得自动改走卸载、清数据或重置模拟器。账号、本机数据或 `firstInstallTime` 异常时立即冻结设备变更，只读取证并报告。
 
 ### Replay
 
@@ -105,6 +105,8 @@ adb shell am start -W -a android.intent.action.VIEW -d "exp+wz-android://open-to
 4. 在 App 内确认来源、标题和正文。直达失败时检查当前 bundle、deep link 与详情请求并报告，不改走搜索。
 
 ## 正式发布
+
+只有用户明确要求正式发布时才执行本节；版本、签名或原生配置的普通开发验证使用 targeted tooling test、fresh prebuild/compile 或构建检查。
 
 发布前准备 Node 22、完整 Git history/tags、clean working tree、本机 `agent-device >= 0.19.0`，以及不进入 Git 的 `.env.release.local`。至少配置：
 

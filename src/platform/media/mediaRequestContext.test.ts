@@ -6,7 +6,7 @@ import {
 } from './mediaRequestContext';
 
 describe('forum media request identity', () => {
-  it('[REG-TOPIC-041] carries the opaque session epoch in a dedicated Glide model header', () => {
+  it('carries the opaque session epoch in a dedicated Glide model header', () => {
     expect(FORUM_MEDIA_IDENTITY_HEADER).toBe('X-WZ-Forum-Media-Identity');
     expect(
       forumMediaIdentityHeaderValue({

@@ -111,7 +111,7 @@ function CoordinatorHarness({
 }
 
 describe('TopicBodyMediaCoordinator', () => {
-  it('[REG-PERF-010][REG-TOPIC-121] keeps 2000 descriptors within four runs and one timer', async () => {
+  it('keeps 2000 descriptors within four runs and one timer', async () => {
     jest.useFakeTimers();
     let timeoutSpy: jest.SpiedFunction<typeof setTimeout> | undefined;
     try {
@@ -140,7 +140,7 @@ describe('TopicBodyMediaCoordinator', () => {
     }
   });
 
-  it('[REG-TOPIC-121] changes the first permit attempt without replacing the attachment identity', async () => {
+  it('changes the first permit attempt without replacing the attachment identity', async () => {
     const probe = <MediaProbe id="first-permit-attachment" />;
     const view = await render(<CoordinatorHarness paused>{probe}</CoordinatorHarness>);
     const waitingAttempt = view.getByTestId('attempt-first-permit-attachment').props.children;
@@ -152,7 +152,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getByTestId('attachment-first-permit-attachment').props.children).toBe(waitingAttachment);
   });
 
-  it('[REG-TOPIC-121] changes a resumed permit attempt without replacing the attachment identity', async () => {
+  it('changes a resumed permit attempt without replacing the attachment identity', async () => {
     const probe = <MediaProbe id="resumed-attachment" />;
     const view = await render(<CoordinatorHarness>{probe}</CoordinatorHarness>);
     const firstAttempt = view.getByTestId('attempt-resumed-attachment').props.children;
@@ -166,7 +166,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getByTestId('attachment-resumed-attachment').props.children).toBe(firstAttachment);
   });
 
-  it('[REG-TOPIC-121] rotates once after error and rejects old callbacks', async () => {
+  it('rotates once after error and rejects old callbacks', async () => {
     let latestLease: MediaLease | undefined;
     const probe = <MediaProbe id="error-attachment" onLease={(lease) => (latestLease = lease)} />;
     const view = await render(<CoordinatorHarness>{probe}</CoordinatorHarness>);
@@ -188,7 +188,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getByTestId('media-error-attachment').props.children).toBe('admitted');
   });
 
-  it('[REG-TOPIC-121] rotates the attachment once for timeout and once for the later explicit retry', async () => {
+  it('rotates the attachment once for timeout and once for the later explicit retry', async () => {
     jest.useFakeTimers();
     try {
       const view = await render(
@@ -221,7 +221,7 @@ describe('TopicBodyMediaCoordinator', () => {
     }
   });
 
-  it('[REG-TOPIC-121] rotates a running attachment once for one runtime generation', async () => {
+  it('rotates a running attachment once for one runtime generation', async () => {
     const view = await render(
       <CoordinatorHarness
         diagnosticSession={{
@@ -301,7 +301,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getByTestId('media-image-4').props.children).toBe('admitted');
   });
 
-  it('[REG-TOPIC-079] leaves opted-out media failed until one explicit retry and releases its permit', async () => {
+  it('leaves opted-out media failed until one explicit retry and releases its permit', async () => {
     const view = await render(
       <CoordinatorHarness>
         <MediaProbe automaticRetry={false} id="native-video" kind="video" />
@@ -324,7 +324,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getByTestId('attempt-native-video').props.children).not.toBe(firstAttempt);
   });
 
-  it('[REG-TOPIC-079] leaves opted-out media timed out until one explicit retry and releases its permit', async () => {
+  it('leaves opted-out media timed out until one explicit retry and releases its permit', async () => {
     jest.useFakeTimers();
     try {
       const view = await render(
@@ -353,7 +353,7 @@ describe('TopicBodyMediaCoordinator', () => {
     }
   });
 
-  it('[REG-PROXY-010] restarts a running attempt when its source publishes a newer runtime generation', async () => {
+  it('restarts a running attempt when its source publishes a newer runtime generation', async () => {
     const onDiagnosticFinish = jest.fn((_aggregate: TopicBodyMediaAggregate) => undefined);
     const view = await render(
       <CoordinatorHarness
@@ -380,7 +380,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(onDiagnosticFinish).toHaveBeenCalledWith(expect.objectContaining({ cancelCount: 1, retryCount: 0 }));
   });
 
-  it('[REG-PROXY-010][REG-TOPIC-121] preserves terminal attachments across runtime rotation', async () => {
+  it('preserves terminal attachments across runtime rotation', async () => {
     const view = await render(
       <TopicBodyMediaCoordinatorProvider
         active
@@ -434,7 +434,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getByTestId('media-still-waiting').props.children).toBe('idle');
   });
 
-  it('[REG-PROXY-010] restarts a mixed four-media working set without admitting a fifth request', async () => {
+  it('restarts a mixed four-media working set without admitting a fifth request', async () => {
     const media = [
       ['base', 'base'] as const,
       ['inline', 'inline'] as const,
@@ -551,7 +551,7 @@ describe('TopicBodyMediaCoordinator', () => {
     }
   });
 
-  it('[REG-PERF-010] does not extend a stalled attempt for duplicate progress values', async () => {
+  it('does not extend a stalled attempt for duplicate progress values', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(0);
     try {
@@ -677,7 +677,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getByTestId('media-recycled').props.children).toBe('failed:error');
   });
 
-  it('[REG-TOPIC-121] admits at most one original upgrade while retaining four total body slots', async () => {
+  it('admits at most one original upgrade while retaining four total body slots', async () => {
     const view = await render(
       <CoordinatorHarness>
         {Array.from({ length: 4 }, (_, index) => (
@@ -739,7 +739,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(latestLease!.failure).toBe('error');
   });
 
-  it('[REG-TOPIC-085] retains a displayed renderer when viewport scheduling oscillates', async () => {
+  it('retains a displayed renderer when viewport scheduling oscillates', async () => {
     const probe = <MediaProbe id="reenter" />;
     const view = await render(<CoordinatorHarness>{probe}</CoordinatorHarness>);
     await fireEvent.press(view.getByLabelText('display-reenter'));
@@ -779,7 +779,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(view.getAllByText('admitted')).toHaveLength(9);
   });
 
-  it('[REG-TOPIC-108] preempts retained behind-row requests for newly visible media', async () => {
+  it('preempts retained behind-row requests for newly visible media', async () => {
     const tree = (viewportRowKeys: readonly string[]) => (
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={viewportRowKeys}>
         <TopicBodyMediaRowBoundary rowKey="behind-row">
@@ -874,7 +874,7 @@ describe('TopicBodyMediaCoordinator', () => {
     expect(leaseEffects).toHaveBeenCalledTimes(effectsBefore);
   });
 
-  it('[REG-TOPIC-121] emits one aggregate with warm eight, running four, and one timer', async () => {
+  it('emits one aggregate with warm eight, running four, and one timer', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(0);
     const onDiagnosticFinish = jest.fn<void, [TopicBodyMediaAggregate]>();

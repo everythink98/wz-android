@@ -13,13 +13,13 @@ function bodyParams(body?: string) {
 }
 
 describe('yaohuo action request builders', () => {
-  it('[REG-ACCOUNT-036] extracts exactly one active sidyaohuo from duplicate Cookie scopes', () => {
+  it('extracts exactly one active sidyaohuo from duplicate Cookie scopes', () => {
     expect(extractYaohuoSid('ASP.NET_SessionId=session; sidyaohuo=abc123; GUID=guid')).toBe('abc123');
     expect(extractYaohuoSid('sidyaohuo=-2; SIDYAOHUO=abc123; sidyaohuo=abc123')).toBe('abc123');
     expect(extractYaohuoSid('sidyaohuo= ; sidyaohuo=-2; GUID=guid')).toBe('');
   });
 
-  it('[REG-ACCOUNT-036] refuses conflicting active sidyaohuo values before reply or delete transport', () => {
+  it('refuses conflicting active sidyaohuo values before reply or delete transport', () => {
     const cookieHeader = 'sidyaohuo=first-session; SIDYAOHUO=second-session';
     const transport = vi.fn();
     const submitReply = () =>
@@ -44,7 +44,7 @@ describe('yaohuo action request builders', () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-036] propagates the unique active sid to reply body and delete URL', () => {
+  it('propagates the unique active sid to reply body and delete URL', () => {
     const sid = extractYaohuoSid('sidyaohuo=-2; SIDYAOHUO=active-session');
     const reply = buildYaohuoReplyRequest({
       topicId: '123',
@@ -131,7 +131,7 @@ describe('yaohuo action request builders', () => {
     });
   });
 
-  it('REG-WRITE-003 builds the original favorite-record delete request', () => {
+  it('builds the original favorite-record delete request', () => {
     expect(buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' })).toEqual({
       path: '/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
       method: 'POST',

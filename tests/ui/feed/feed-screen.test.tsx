@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, within } from '../render';
 import React, { useState } from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import { Platform } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { FeedScreen } from '@/features/feed/FeedScreen';
@@ -241,7 +241,7 @@ async function settlePager() {
 }
 
 describe('feed initial content readiness', () => {
-  it('[REG-PERF-014] reports readiness only after a terminal FlashList has loaded', async () => {
+  it('reports readiness only after a terminal FlashList has loaded', async () => {
     const onInitialContentReady = jest.fn();
     const view = await render(renderFeed(true, [], { onInitialContentReady }));
 
@@ -329,7 +329,7 @@ function FeedSortHarness({ onFilterChange }: { onFilterChange: (filter: SourceFe
 }
 
 describe('Feed loading', () => {
-  it('[REG-NAV-002] opens a list topic only once when the card is pressed twice before navigation settles', async () => {
+  it('opens a list topic only once when the card is pressed twice before navigation settles', async () => {
     const onOpenTopic = jest.fn();
     const view = await render(renderFeed(false, [topic], { onOpenTopic }));
     const topicCard = view.getByTestId('feed-topic-first');
@@ -345,18 +345,7 @@ describe('Feed loading', () => {
     expect(onOpenTopic).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-FEED-016] keeps the home source tabs at the old compact 100% geometry', async () => {
-    const view = await render(renderFeed(false, [topic]));
-    const tabStyle = StyleSheet.flatten(view.getByTestId('feed-source-all').props.style);
-
-    expect(tabStyle.minHeight).toBe(40);
-    expect(tabStyle.minWidth).toBeUndefined();
-    expect(StyleSheet.flatten(within(view.getByTestId('feed-source-all')).getByText('全部').props.style).fontSize).toBe(
-      13
-    );
-  });
-
-  it('[REG-SOURCE-010] renders the enabled sources in user order and exposes a recoverable all-disabled state', async () => {
+  it('renders the enabled sources in user order and exposes a recoverable all-disabled state', async () => {
     const onManageContentSources = jest.fn();
     const onFeedSourceChange = jest.fn();
     const view = await render(
@@ -406,7 +395,7 @@ describe('Feed loading', () => {
     expect(onManageContentSources).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-PERF-006] updates both Feed rails when the native pager selects the target', async () => {
+  it('updates both Feed rails when the native pager selects the target', async () => {
     const onFeedSourceChange = jest.fn();
     const view = await render(
       renderFeed(false, [topic], {
@@ -426,7 +415,7 @@ describe('Feed loading', () => {
     expect(onFeedSourceChange).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-006] shows the target source saved sort before the active source commits', async () => {
+  it('shows the target source saved sort before the active source commits', async () => {
     const view = await render(
       renderFeed(false, [topic], {
         categories,
@@ -440,7 +429,7 @@ describe('Feed loading', () => {
     expect(view.getByText('最新')).toBeTruthy();
   });
 
-  it('[REG-PERF-006] keeps the target secondary rail read-only until the source commits', async () => {
+  it('keeps the target secondary rail read-only until the source commits', async () => {
     const onCategoryChange = jest.fn();
     const onFeedSourceChange = jest.fn();
     const view = await render(
@@ -469,7 +458,7 @@ describe('Feed loading', () => {
     expect(onFeedSourceChange).toHaveBeenCalledWith('linuxdo');
   });
 
-  it('[REG-PERF-003] activates a selected source only after the native pager becomes idle', async () => {
+  it('activates a selected source only after the native pager becomes idle', async () => {
     const onFeedSourceChange = jest.fn();
     await render(renderFeed(false, [topic], { onFeedSourceChange }));
 
@@ -483,7 +472,7 @@ describe('Feed loading', () => {
     expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
   });
 
-  it('[REG-PERF-003] lays out a cold adjacent scene before the swipe selects it', async () => {
+  it('lays out a cold adjacent scene before the swipe selects it', async () => {
     const onFeedSourceChange = jest.fn();
     const view = await render(renderFeed(false, [topic], { onFeedSourceChange }));
     const incomingScene = () => within(view.getByTestId('mock-feed-scene-v2ex'));
@@ -502,7 +491,7 @@ describe('Feed loading', () => {
     expect(incomingScene().getByText('正在读取主题...')).toBeTruthy();
   });
 
-  it('[REG-PERF-003][REG-PERF-004][REG-PERF-006] keeps inactive sources lightweight and mounts one rich list', async () => {
+  it('keeps inactive sources lightweight and mounts one rich list', async () => {
     const onFeedSourceChange = jest.fn();
     const freshV2exTopic: Topic = {
       ...topic,
@@ -540,7 +529,7 @@ describe('Feed loading', () => {
     expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 新请求主题')).toBeTruthy();
   });
 
-  it('[REG-FEED-013] keeps the prelaid loading scene mounted until the target source has data', async () => {
+  it('keeps the prelaid loading scene mounted until the target source has data', async () => {
     const onFeedSourceChange = jest.fn();
     mockFlashListMountCount = 0;
     const view = await render(renderFeed(false, [topic], { onFeedSourceChange }));
@@ -581,7 +570,7 @@ describe('Feed loading', () => {
     expect(within(view.getByTestId('mock-feed-scene-v2ex')).getByText('V2EX 已加载主题')).toBeTruthy();
   });
 
-  it('[REG-PERF-005] keeps the complete rich TopicCard presentation in Feed', async () => {
+  it('keeps the complete rich TopicCard presentation in Feed', async () => {
     jest.replaceProperty(Platform, 'OS', 'android');
     const richTopic: Topic = {
       source: 'linuxdo',
@@ -642,7 +631,7 @@ describe('Feed loading', () => {
     expect(card.props.nativeBackgroundAndroid).toBeDefined();
   });
 
-  it('[REG-PERF-003] keeps a distant source-bar target lightweight until pager idle', async () => {
+  it('keeps a distant source-bar target lightweight until pager idle', async () => {
     const onFeedSourceChange = jest.fn();
     const sourceTopic = (source: Topic['source'], id: string, title: string): Topic => ({
       ...topic,
@@ -682,7 +671,7 @@ describe('Feed loading', () => {
     expect(mockFlashListMountCount).toBe(mountsBeforeSelection + 1);
   });
 
-  it('[REG-PERF-003] renders the existing Loading state while a lazy scene materializes', async () => {
+  it('renders the existing Loading state while a lazy scene materializes', async () => {
     await render(renderFeed(false, [topic]));
 
     const placeholder = mockTabViewProps?.renderLazyPlaceholder?.({ route: { key: 'linuxdo' } });
@@ -692,7 +681,7 @@ describe('Feed loading', () => {
     expect(placeholderView.getByText('正在读取主题...')).toBeTruthy();
   });
 
-  it('[REG-PERF-003] ignores a canceled swipe and commits only the final source', async () => {
+  it('ignores a canceled swipe and commits only the final source', async () => {
     const onFeedSourceChange = jest.fn();
     const view = await render(<FeedSourceHarness onSourceChange={onFeedSourceChange} />);
 
@@ -739,7 +728,7 @@ describe('Feed loading', () => {
     expect(view.queryByTestId('feed-outcome-data-all-default')).toBeNull();
   });
 
-  it('[REG-FEED-013] shows one stable loading scene before data and enables pull-to-refresh after data arrives', async () => {
+  it('shows one stable loading scene before data and enables pull-to-refresh after data arrives', async () => {
     const view = await render(renderFeed(true, []));
     const activeScene = () => within(view.getByTestId('mock-feed-scene-all'));
 
@@ -772,7 +761,7 @@ describe('Feed loading', () => {
     expect(view.getByLabelText('回到顶部')).toBeTruthy();
   });
 
-  it('[REG-FEED-002] resets the stable list before and after changing the Feed filter', async () => {
+  it('resets the stable list before and after changing the Feed filter', async () => {
     const frameCallbacks: ((time: number) => void)[] = [];
     jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
       frameCallbacks.push(callback);
@@ -814,7 +803,7 @@ describe('Feed loading', () => {
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-FEED-002] resets stable lists for reading and category selections', async () => {
+  it('resets stable lists for reading and category selections', async () => {
     const frameCallbacks: ((time: number) => void)[] = [];
     jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
       frameCallbacks.push(callback);

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Editor } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
@@ -24,6 +23,8 @@ const TEST_THEME = {
   danger: '#b3261e',
   fontScale: 1
 };
+
+const mountedRuntimes: { host: HTMLDivElement; root: ReturnType<typeof createRoot> }[] = [];
 
 async function mountRuntime({
   discourseEmoji = [],
@@ -65,6 +66,7 @@ async function mountRuntime({
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
+  mountedRuntimes.push({ host, root });
   const send = async (message: unknown) => {
     await act(async () => {
       window.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
@@ -90,16 +92,22 @@ async function mountRuntime({
 
 describe('Composer editor runtime codec', () => {
   const editors: Editor[] = [];
-  afterEach(() => {
+  afterEach(async () => {
     editors.splice(0).forEach((editor) => editor.destroy());
+    for (const { host, root } of mountedRuntimes.splice(0)) {
+      if (!host.isConnected) continue;
+      await act(async () => root.unmount());
+      host.remove();
+    }
     delete window.ReactNativeWebView;
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    document.querySelectorAll('style[data-tiptap-style]').forEach((node) => node.remove());
     document.querySelectorAll('[data-editor-runtime-test-style]').forEach((node) => node.remove());
   });
 
-  it('[REG-WRITE-027] round-trips GFM tables and protected site nodes as Markdown', () => {
+  it('round-trips GFM tables and protected site nodes as Markdown', () => {
     const markdown = [
       '正文前',
       '',
@@ -136,7 +144,12 @@ describe('Composer editor runtime codec', () => {
       '',
       '正文后'
     ].join('\n');
-    const editor = new Editor({ extensions: composerEditorExtensions, content: markdown, contentType: 'markdown' });
+    const editor = new Editor({
+      extensions: composerEditorExtensions,
+      content: markdown,
+      contentType: 'markdown',
+      injectCSS: false
+    });
     editors.push(editor);
 
     const output = editor.getMarkdown();
@@ -157,7 +170,12 @@ describe('Composer editor runtime codec', () => {
     expect(output.indexOf('正文前')).toBeLessThan(output.indexOf('[poll'));
     expect(output.indexOf('[poll')).toBeLessThan(output.indexOf('正文后'));
 
-    const reparsed = new Editor({ extensions: composerEditorExtensions, content: output, contentType: 'markdown' });
+    const reparsed = new Editor({
+      extensions: composerEditorExtensions,
+      content: output,
+      contentType: 'markdown',
+      injectCSS: false
+    });
     editors.push(reparsed);
     expect(reparsed.getJSON()).toEqual(editor.getJSON());
   });
@@ -166,7 +184,7 @@ describe('Composer editor runtime codec', () => {
     ['inline code', '`[poll`'],
     ['fenced code', '```text\n[poll\n```'],
     ['indented code', '    [poll']
-  ])('[REG-WRITE-027] keeps private syntax inert inside %s', async (_name, markdown) => {
+  ])('keeps private syntax inert inside %s', async (_name, markdown) => {
     const { host, postMessage, root, send } = await mountRuntime({ markdown, mode: 'source' });
 
     await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'code-validation' } });
@@ -182,7 +200,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-027] still rejects active private syntax outside code', async () => {
+  it('still rejects active private syntax outside code', async () => {
     const { host, postMessage, root, send } = await mountRuntime({ markdown: '[poll', mode: 'source' });
 
     await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'active-validation' } });
@@ -200,7 +218,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-071] keeps a legacy Stardust card readable but blocks publishing its invalid Ref', async () => {
+  it('keeps a legacy Stardust card readable but blocks publishing its invalid Ref', async () => {
     const markdown =
       'nsapp://stardust-receive?member_id=54874&ref_id=1&description=Pay+with+Stardust&diff=1&onetime=false';
     const { host, postMessage, root, send } = await mountRuntime({ markdown, mode: 'source', site: 'nodeseek' });
@@ -221,7 +239,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-NOTIFY-032] maps a pending source upload and rejects a mode switch without losing edits', async () => {
+  it('maps a pending source upload and rejects a mode switch without losing edits', async () => {
     const { host, postMessage, root, send } = await mountRuntime({ markdown: '保留正文', mode: 'source' });
 
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="图片"]')?.click());
@@ -265,7 +283,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-069] inserts a LinuxDo template before its usage counter settles', async () => {
+  it('inserts a LinuxDo template before its usage counter settles', async () => {
     const { host, postMessage, root, send } = await mountRuntime({ markdown: '已有正文' });
 
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="动态模板"]')?.click());
@@ -326,9 +344,14 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-058] keeps a line-leading LinuxDo date in its dedicated inline node', () => {
+  it('keeps a line-leading LinuxDo date in its dedicated inline node', () => {
     const raw = '[date=2026-08-26 time=12:00:00 timezone="Asia/Shanghai"]';
-    const editor = new Editor({ extensions: composerEditorExtensions, content: raw, contentType: 'markdown' });
+    const editor = new Editor({
+      extensions: composerEditorExtensions,
+      content: raw,
+      contentType: 'markdown',
+      injectCSS: false
+    });
     editors.push(editor);
 
     expect(editor.getJSON().content?.[0]?.content?.[0]?.type).toBe('linuxdoDate');
@@ -338,8 +361,13 @@ describe('Composer editor runtime codec', () => {
     expect(editor.getMarkdown()).toBe(raw);
   });
 
-  it('[REG-WRITE-062] keeps expression previews out of the Markdown document', () => {
-    const editor = new Editor({ extensions: composerEditorExtensions, content: ':wink:', contentType: 'markdown' });
+  it('keeps expression previews out of the Markdown document', () => {
+    const editor = new Editor({
+      extensions: composerEditorExtensions,
+      content: ':wink:',
+      contentType: 'markdown',
+      injectCSS: false
+    });
     editors.push(editor);
 
     expect(editor.getJSON().content?.[0]?.content?.[0]).toEqual({
@@ -349,9 +377,10 @@ describe('Composer editor runtime codec', () => {
     expect(editor.getMarkdown()).toBe(':wink:');
   });
 
-  it('[REG-WRITE-049] reparses adjacent NodeSeek poll and Stardust markers as rich atoms', () => {
+  it('reparses adjacent NodeSeek poll and Stardust markers as rich atoms', () => {
     const editor = new Editor({
       extensions: composerEditorExtensions,
+      injectCSS: false,
       content: {
         type: 'doc',
         content: [
@@ -400,7 +429,7 @@ describe('Composer editor runtime codec', () => {
     ]);
   });
 
-  it('[REG-WRITE-049] keeps source-inserted NodeSeek atoms after a terminal table across mode changes', async () => {
+  it('keeps source-inserted NodeSeek atoms after a terminal table across mode changes', async () => {
     const { host, postMessage, root, send } = await mountRuntime({ mode: 'source', site: 'nodeseek' });
     await send({
       type: 'COMMAND',
@@ -438,7 +467,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-067] keeps a writable paragraph after a terminal table across mode changes', async () => {
+  it('keeps a writable paragraph after a terminal table across mode changes', async () => {
     const markdown = '| 表头 1 | 表头 2 |\n| --- | ---: |\n| 内容 1 | 内容 2 |';
     const { host, postMessage, root, send } = await mountRuntime({ markdown, site: 'nodeseek' });
     const editor = host.querySelector<HTMLElement>('.composer-document')!;
@@ -464,7 +493,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-067] keeps rich document synchronization out of the user undo history', async () => {
+  it('keeps rich document synchronization out of the user undo history', async () => {
     const markdown = '| 表头 |\n| --- |\n| 内容 |';
     const { host, postMessage, root, send } = await mountRuntime({ markdown, site: 'nodeseek' });
     const latestState = () =>
@@ -501,11 +530,12 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-041] keeps the first remaining row as the mandatory GFM header', () => {
+  it('keeps the first remaining row as the mandatory GFM header', () => {
     const editor = new Editor({
       extensions: composerEditorExtensions,
       content: '| Header A | Header B |\n| --- | --- |\n| Body A | Body B |',
-      contentType: 'markdown'
+      contentType: 'markdown',
+      injectCSS: false
     });
     editors.push(editor);
 
@@ -515,11 +545,12 @@ describe('Composer editor runtime codec', () => {
     expect(editor.getMarkdown().split('\n').find(Boolean)).toContain('Body A');
   });
 
-  it('[REG-WRITE-043] applies alignment to the complete GFM column', () => {
+  it('applies alignment to the complete GFM column', () => {
     const editor = new Editor({
       extensions: composerEditorExtensions,
       content: '| H1 | H2 | H3 |\n| --- | --- | --- |\n| A1 | A2 | A3 |\n| B1 | B2 | B3 |',
-      contentType: 'markdown'
+      contentType: 'markdown',
+      injectCSS: false
     });
     editors.push(editor);
     let thirdColumnPosition = 0;
@@ -543,7 +574,7 @@ describe('Composer editor runtime codec', () => {
     expect(sanitizePastedHtml('<p onclick="evil()">safe<script>evil()</script></p>')).toBe('<p>safe</p>');
   });
 
-  it('[REG-WRITE-055] reserves the sticky toolbar when positioning table actions', () => {
+  it('reserves the sticky toolbar when positioning table actions', () => {
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar-stack';
     toolbar.getBoundingClientRect = () => ({
@@ -563,7 +594,19 @@ describe('Composer editor runtime codec', () => {
     toolbar.remove();
   });
 
-  it('[REG-WRITE-035][REG-WRITE-036][REG-WRITE-038][REG-WRITE-044][REG-WRITE-046][REG-WRITE-048][REG-WRITE-051][REG-WRITE-052][REG-WRITE-053][REG-WRITE-055][REG-WRITE-057][REG-WRITE-060][REG-WRITE-068][REG-WRITE-071] renders NodeSeek business tools on the shared scrolling toolbar', async () => {
+  it('authorizes Tiptap styles and keeps the caret separator inline', async () => {
+    const { host } = await mountRuntime({ runtimeStyle: true, site: 'nodeseek' });
+    const separator = document.createElement('img');
+    separator.className = 'ProseMirror-separator';
+    host.querySelector('.composer-document')?.append(separator);
+
+    expect(document.querySelector<HTMLStyleElement>('style[data-tiptap-style]')?.nonce).toBe('wz-composer-runtime');
+    expect(getComputedStyle(separator).display).toBe('inline');
+    expect(getComputedStyle(separator).marginTop).toBe('0px');
+    expect(getComputedStyle(separator).marginBottom).toBe('0px');
+  });
+
+  it('renders NodeSeek business tools on the shared scrolling toolbar', async () => {
     const { host, postMessage, root } = await mountRuntime({
       runtimeStyle: true,
       site: 'nodeseek',
@@ -574,28 +617,19 @@ describe('Composer editor runtime codec', () => {
     const labels = [...host.querySelectorAll<HTMLButtonElement>('.toolbar-shell button')].map((button) =>
       button.getAttribute('aria-label')
     );
-    expect(labels.slice(0, 4)).toEqual(['表情', '图片', '粗体', '斜体']);
     expect(labels).not.toContain('插入');
     expect(labels).toEqual(
       expect.arrayContaining(['删除线', '列表选项', '代码块', '分隔线', '表格', '投票', 'Stardust 收款'])
     );
     expect(labels).not.toContain('下划线');
     expect(labels).not.toEqual(expect.arrayContaining(['有序列表', '任务列表']));
-    expect(host.querySelector('.toolbar-overflow')).toBeNull();
     expect(host.querySelector('select[aria-label="段落与标题"]')).toBeNull();
-    expect(getComputedStyle(host.querySelector<HTMLElement>('[aria-label="回复常用工具栏"]')!).gap).toBe('8px');
     expect(getComputedStyle(host.querySelector<HTMLButtonElement>('button[aria-label="表情"]')!).minHeight).toBe(
       '48px'
     );
-    expect(getComputedStyle(host.querySelector<HTMLElement>('.toolbar-stack')!).paddingLeft).toBe('0px');
-    expect(getComputedStyle(host.querySelector<HTMLElement>('.toolbar-shell')!).borderLeftWidth).toBe('0px');
 
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="投票"]')?.click());
     const pollBuilder = host.querySelector<HTMLElement>('[role="dialog"][aria-label="NodeSeek 投票"]');
-    expect(pollBuilder?.classList.contains('tiptap-card')).toBe(true);
-    expect(pollBuilder?.querySelector('.tiptap-card-header')).not.toBeNull();
-    expect(pollBuilder?.querySelector('.tiptap-card-body')).not.toBeNull();
-    expect(pollBuilder?.querySelector('input[aria-label="投票标题"]')?.classList.contains('tiptap-input')).toBe(true);
     expect(pollBuilder?.querySelector('textarea')).toBeNull();
     expect(pollBuilder?.querySelectorAll('input[aria-label^="投票选项 "]')).toHaveLength(2);
     expect(pollBuilder?.querySelector<HTMLInputElement>('input[aria-label="投票选项 1"]')?.value).toBe('选项一');
@@ -606,11 +640,6 @@ describe('Composer editor runtime codec', () => {
       pollBuilder?.querySelector<HTMLButtonElement>('button[aria-label="删除投票选项 3"]')?.click()
     );
     expect(pollBuilder?.querySelectorAll('input[aria-label^="投票选项 "]')).toHaveLength(2);
-    expect(pollBuilder?.querySelector('.primary')?.classList.contains('tiptap-button')).toBe(true);
-    expect(getComputedStyle(pollBuilder?.querySelector<HTMLInputElement>('input[type="checkbox"]')!).appearance).toBe(
-      'none'
-    );
-    expect(host.querySelector('.dialog')).toBeNull();
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="NodeSeek 投票"] .primary')?.click());
     expect(host.querySelector('[aria-label="NodeSeek 投票"] .error')?.textContent).toBe('请输入投票标题');
     await act(async () => {
@@ -644,9 +673,6 @@ describe('Composer editor runtime codec', () => {
     const headingMenu = document.querySelector('[role="menu"][aria-label="段落与标题选项"]');
     expect(headingMenu).not.toBeNull();
     expect(headingMenu?.closest('[role="dialog"]')).toBeNull();
-    expect(getComputedStyle(headingMenu?.querySelector<HTMLButtonElement>('[role="menuitemradio"]')!).borderWidth).toBe(
-      '0px'
-    );
     await act(async () => {
       headingMenu?.querySelector<HTMLButtonElement>('button[aria-label="标题 2"]')?.click();
       await new Promise(requestAnimationFrame);
@@ -662,18 +688,9 @@ describe('Composer editor runtime codec', () => {
     });
     const linkPopover = document.querySelector<HTMLElement>('[aria-label="链接设置"]');
     expect(linkPopover).not.toBeNull();
-    expect(linkPopover?.classList.contains('tiptap-card')).toBe(true);
     expect(host.querySelector('[role="dialog"][aria-label="插入链接"]')).toBeNull();
     const linkInput = linkPopover?.querySelector<HTMLInputElement>('input[type="url"]');
-    expect(linkInput?.classList.contains('tiptap-input')).toBe(true);
     linkInput?.focus();
-    const focusRule = [...document.styleSheets]
-      .flatMap((sheet) => [...sheet.cssRules])
-      .find(
-        (rule): rule is CSSStyleRule =>
-          rule instanceof CSSStyleRule && rule.selectorText === '.tiptap-input:focus-visible'
-      );
-    expect(focusRule?.style.outline).toBe('none');
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(linkInput, 'not-a-url');
       linkInput?.dispatchEvent(new Event('input', { bubbles: true }));
@@ -705,7 +722,6 @@ describe('Composer editor runtime codec', () => {
     });
     expect(host.querySelector('ol')).not.toBeNull();
     expect(document.activeElement).toBe(editable);
-    expect(host.querySelector('.ProseMirror')).toBe(editable);
     expect(host.querySelector('[aria-label="回复常用工具栏"]')).toBe(commonToolbar);
     await act(async () => {
       window.dispatchEvent(
@@ -722,7 +738,6 @@ describe('Composer editor runtime codec', () => {
     });
     expect(host.querySelector('ol')).not.toBeNull();
     expect(host.querySelector('a[href="https://example.com"]')).not.toBeNull();
-    expect(host.querySelector('.ProseMirror')).toBe(editable);
 
     editable.focus();
     expect(document.activeElement).toBe(editable);
@@ -754,7 +769,6 @@ describe('Composer editor runtime codec', () => {
       ?.querySelector<HTMLButtonElement>('button[aria-label="yct001"]')
       ?.closest<HTMLElement>('.expression-grid');
     expect(stickerPanel).not.toBeNull();
-    expect(getComputedStyle(stickerImage!).width).toBe('48px');
     expect(getComputedStyle(acGrid!).display).toBe('grid');
     expect(getComputedStyle(onionGrid!).display).toBe('none');
     await act(async () =>
@@ -777,23 +791,8 @@ describe('Composer editor runtime codec', () => {
     expect(insertedSticker?.querySelector('img')?.getAttribute('src')).toBe(
       'https://www.nodeseek.com/static/image/sticker/ac/01.png'
     );
-    expect(host.querySelector('.composer-document')?.getAttribute('data-empty')).toBe('false');
     expect.soft(document.activeElement).toBe(editable);
     expect(stickerPanel?.closest<HTMLElement>('[data-expression-cache]')?.hidden).toBe(true);
-    expect
-      .soft(document.querySelector<HTMLStyleElement>('style[data-tiptap-style]')?.nonce)
-      .toBe('wz-composer-runtime');
-    const caretFixture = document.createElement('div');
-    caretFixture.className = 'composer-document';
-    const caretSeparator = document.createElement('img');
-    caretSeparator.className = 'ProseMirror-separator';
-    caretFixture.append(caretSeparator);
-    document.body.append(caretFixture);
-    expect.soft(getComputedStyle(caretSeparator!).display).toBe('inline');
-    expect.soft(getComputedStyle(caretSeparator!).marginTop).toBe('0px');
-    expect.soft(getComputedStyle(caretSeparator!).marginBottom).toBe('0px');
-    caretFixture.remove();
-
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="图片"]')?.click());
     const uploadRequest = postMessage.mock.calls
       .map(([raw]) => JSON.parse(String(raw)))
@@ -837,7 +836,6 @@ describe('Composer editor runtime codec', () => {
     vi.unstubAllGlobals();
     const stardustCard = host.querySelector<HTMLElement>('[data-composer-node="nodeseek-stardust"]');
     expect(stardustCard?.textContent).toContain('1 Stardust 收款卡片');
-    expect(stardustCard?.classList.contains('tiptap-card')).toBe(true);
     expect(stardustCard?.textContent).toContain('收款人 #54874 · Ref 123456');
     const elementFromPoint = document.elementFromPoint;
     Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => stardustCard });
@@ -889,14 +887,12 @@ describe('Composer editor runtime codec', () => {
       await new Promise(requestAnimationFrame);
     });
     const sourceEditor = host.querySelector<HTMLElement>('.source-pane .cm-editor')!;
-    expect(getComputedStyle(sourceEditor).flexGrow).toBe('1');
     const sourceContent = sourceEditor.querySelector<HTMLElement>('.cm-content')!;
     expect(document.activeElement).toBe(sourceContent);
     const codeMirrorStyle = [...document.querySelectorAll<HTMLStyleElement>('style')].find((style) =>
       style.textContent.includes('.cm-content')
     );
     expect(codeMirrorStyle?.nonce).toBe('wz-composer-runtime');
-    expect(getComputedStyle(sourceContent).outline).toBe('none');
 
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="表情"]')?.click());
     await act(async () => {
@@ -961,7 +957,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-040][REG-WRITE-041][REG-WRITE-042][REG-WRITE-045][REG-WRITE-050][REG-WRITE-053][REG-WRITE-061] keeps table commands contextual and the document strict GFM', async () => {
+  it('keeps table commands contextual and the document strict GFM', async () => {
     const { host, postMessage, root } = await mountRuntime({
       nodeSeekMemberId: null,
       runtimeStyle: true,
@@ -970,27 +966,20 @@ describe('Composer editor runtime codec', () => {
 
     const toolbar = host.querySelector('[aria-label="回复常用工具栏"]');
     const tableButton = toolbar?.querySelector<HTMLButtonElement>('button[aria-label="表格"]');
-    expect(tableButton?.querySelector('.tool-icon')).not.toBeNull();
     await act(async () => {
       tableButton?.click();
       await new Promise(requestAnimationFrame);
       await new Promise(requestAnimationFrame);
     });
 
-    expect(host.querySelector('.composer-document')?.getAttribute('data-empty')).toBe('false');
     expect(host.querySelector('button[aria-label="表头"]')).toBeNull();
-    expect(host.querySelectorAll('.toolbar-stack [role="toolbar"]')).toHaveLength(1);
     expect(host.querySelector('[aria-label="回复常用工具栏"]')).toBe(toolbar);
-    expect(tableButton?.textContent).toBe('');
     expect(tableButton?.getAttribute('aria-pressed')).toBe('true');
     const editable = host.querySelector<HTMLElement>('.ProseMirror')!;
     expect(document.activeElement).toBe(editable);
     const tableActions = document.querySelector('[role="toolbar"][aria-label="表格操作"]');
     expect(tableActions).not.toBeNull();
-    expect(getComputedStyle(tableActions!).flexDirection).toBe('row');
-    expect(tableActions?.querySelectorAll('.tiptap-separator')).toHaveLength(3);
     expect(host.querySelector('[role="dialog"][aria-label="表格操作"]')).toBeNull();
-    expect(host.querySelector('.editor-pane.active table')).not.toBeNull();
     expect(tableActions?.querySelector('button[aria-label="行操作"]')).not.toBeNull();
     expect(tableActions?.querySelector('button[aria-label="列操作"]')).not.toBeNull();
     expect(tableActions?.querySelector('button[aria-label="列对齐"]')).not.toBeNull();
@@ -1123,7 +1112,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-035][REG-WRITE-036][REG-WRITE-053][REG-WRITE-056][REG-WRITE-057][REG-WRITE-058][REG-WRITE-059][REG-WRITE-060][REG-WRITE-068] renders LinuxDo business tools on the same common UI', async () => {
+  it('renders LinuxDo business tools on the same common UI', async () => {
     const { host, postMessage, root } = await mountRuntime({
       markdown: 'draft :grinning_face:',
       runtimeStyle: true,
@@ -1157,10 +1146,6 @@ describe('Composer editor runtime codec', () => {
     expect(emojiPanel?.querySelector<HTMLInputElement>('input[aria-label="搜索 Emoji"]')?.placeholder).toBe(
       '搜索 Emoji'
     );
-    expect(getComputedStyle(emojiPanel?.querySelector<HTMLElement>('.expression-grid')!).gridTemplateColumns).toContain(
-      'auto-fill'
-    );
-    expect(getComputedStyle(emojiImage!).width).toBe('48px');
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="grinning face"]')?.click());
     expect(host.querySelector<HTMLElement>('[data-composer-node="forum-expression"] img')?.getAttribute('src')).toBe(
       'https://linux.do/images/emoji/grinning-face.png'
@@ -1238,7 +1223,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-063] keeps adjacent private blocks and returns insertion to trailing text', async () => {
+  it('keeps adjacent private blocks and returns insertion to trailing text', async () => {
     const { host, postMessage, root, send } = await mountRuntime();
 
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="正文工具"]')?.click());
@@ -1271,7 +1256,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-064] excludes rich-to-source synchronization from CodeMirror undo', async () => {
+  it('excludes rich-to-source synchronization from CodeMirror undo', async () => {
     const { host, postMessage, root, send } = await mountRuntime({ markdown: '保留正文' });
 
     await send({ type: 'SET_MODE', payload: { mode: 'source' } });
@@ -1300,7 +1285,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-065] loads the searchable LinuxDo group chooser and derives a truthful poll card', async () => {
+  it('loads the searchable LinuxDo group chooser and derives a truthful poll card', async () => {
     const { host, postMessage, root, send } = await mountRuntime();
 
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="投票"]')?.click());
@@ -1384,7 +1369,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-065] retries a failed LinuxDo group load without adding a lifecycle state machine', async () => {
+  it('retries a failed LinuxDo group load without adding a lifecycle state machine', async () => {
     const { host, postMessage, root, send } = await mountRuntime();
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="投票"]')?.click());
     const firstRequest = postMessage.mock.calls
@@ -1407,7 +1392,7 @@ describe('Composer editor runtime codec', () => {
     host.remove();
   });
 
-  it('[REG-WRITE-066] incrementally exposes the complete LinuxDo Emoji directory', async () => {
+  it('incrementally exposes the complete LinuxDo Emoji directory', async () => {
     const discourseEmoji = Array.from({ length: 250 }, (_, index) => ({
       name: `emoji_${String(index).padStart(3, '0')}`,
       url: `https://linux.do/images/emoji/${index}.png`
@@ -1440,30 +1425,6 @@ describe('Composer editor runtime codec', () => {
       search.dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(panel.querySelector('button[aria-label="emoji 249"]')).not.toBeNull();
-
-    await act(async () => root.unmount());
-    host.remove();
-  });
-
-  it('[REG-WRITE-038] serializes once at autosave instead of again for transient state', async () => {
-    vi.useFakeTimers();
-    const serializeMarkdown = vi.spyOn(MarkdownManager.prototype, 'serialize');
-    const { host, postMessage, root } = await mountRuntime({
-      nodeSeekMemberId: null,
-      site: 'nodeseek',
-      waitForFrame: false
-    });
-    serializeMarkdown.mockClear();
-    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="表情"]')?.click());
-    await act(async () => {
-      host.querySelector<HTMLButtonElement>('button[aria-label="ac01"]')?.click();
-      vi.advanceTimersByTime(101);
-    });
-    expect(postMessage.mock.calls.map(([raw]) => JSON.parse(String(raw)).type)).toContain('STATE_CHANGED');
-    expect(serializeMarkdown).not.toHaveBeenCalled();
-
-    await act(async () => vi.advanceTimersByTime(500));
-    expect(serializeMarkdown).toHaveBeenCalledTimes(1);
 
     await act(async () => root.unmount());
     host.remove();

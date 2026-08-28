@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { composerEditorMessageSchema, composerHostMessageSchema } from './structuredComposerBridge';
 
 describe('structured composer bridge schemas', () => {
-  it('[REG-WRITE-027] rejects unknown fields at both message boundaries', () => {
+  it('rejects unknown fields at both message boundaries', () => {
     expect(
       composerHostMessageSchema.safeParse({
         type: 'REQUEST_SNAPSHOT',

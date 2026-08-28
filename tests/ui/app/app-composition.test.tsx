@@ -20,7 +20,7 @@ describe('App composition bootstrap', () => {
     jest.restoreAllMocks();
   });
 
-  it('[REG-TEST-008] exposes a static accessible status while the startup gate is pending', async () => {
+  it('exposes a static accessible status while the startup gate is pending', async () => {
     const settings = createEmptyReaderData().settings;
     const theme = createTheme(settings);
     jest.mocked(useAppRuntime).mockReturnValue({

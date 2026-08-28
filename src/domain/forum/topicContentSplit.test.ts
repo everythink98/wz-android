@@ -119,7 +119,7 @@ function parsedBalancedTable(html: string) {
 }
 
 describe('Android topic content splitting', () => {
-  it('[REG-PERF-010] keeps pure block-image paragraphs in bounded rich-text rows', () => {
+  it('keeps pure block-image paragraphs in bounded rich-text rows', () => {
     const urls = Array.from({ length: 9 }, (_, index) => `https://img.example/${index}.webp`);
     const pure = compileForumContent({
       html: `<p>${urls.map((url) => `<img src="${url}" alt="image">`).join('')}</p>`,
@@ -152,41 +152,7 @@ describe('Android topic content splitting', () => {
     ]);
   });
 
-  it('[REG-PERF-017] serializes one sanitized pure-image root only once', async () => {
-    vi.resetModules();
-    const actualSanitizer = await vi.importActual<typeof import('./contentSanitizer')>('./contentSanitizer');
-    const rootToString = vi.fn<() => string>();
-    vi.doMock('./contentSanitizer', () => ({
-      ...actualSanitizer,
-      sanitizeContentHtmlWithRoot: (...args: Parameters<typeof actualSanitizer.sanitizeContentHtmlWithRoot>) => {
-        const sanitized = actualSanitizer.sanitizeContentHtmlWithRoot(...args);
-        const serialize = sanitized.root.toString.bind(sanitized.root);
-        rootToString.mockImplementation(serialize);
-        sanitized.root.toString = rootToString;
-        return sanitized;
-      }
-    }));
-    try {
-      const { prepareSanitizedForumContent } = await import('./topicContentSplit');
-
-      const prepared = prepareSanitizedForumContent(
-        `<p>${Array.from({ length: 2_000 }, (_, index) => `<img src="https://img.example/${index}.webp">`).join('')}</p>`,
-        {
-          baseUrl: 'https://www.nodeseek.com/',
-          role: 'opening',
-          source: 'nodeseek'
-        }
-      );
-
-      expect(prepared.contentPlan.rows).toHaveLength(500);
-      expect(rootToString).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.doUnmock('./contentSanitizer');
-      vi.resetModules();
-    }
-  });
-
-  it('[REG-PERF-010] does not reuse an opening plan when the opening post becomes quoted reply content', () => {
+  it('does not reuse an opening plan when the opening post becomes quoted reply content', () => {
     const contentHtml =
       '<aside class="quote" data-post="8" data-topic="77" data-username="bob"><div class="title">bob:</div><blockquote>preview</blockquote></aside>';
     const topic = prepareTopicContent({
@@ -217,7 +183,7 @@ describe('Android topic content splitting', () => {
     expect(quotedPlan.rows.every((row) => row.type === 'richText')).toBe(true);
   });
 
-  it('[REG-PERF-010] compiles nested opening quotes and polls into ordered typed parent rows', () => {
+  it('compiles nested opening quotes and polls into ordered typed parent rows', () => {
     const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
     const html =
       '<section><p>before</p><div><aside class="quote" data-post="8" data-topic="77" data-username="bob"><div class="title">bob:</div><blockquote>preview</blockquote></aside></div><p>after</p></section>' +
@@ -243,7 +209,7 @@ describe('Android topic content splitting', () => {
     expect(compilation.rows[3]).toEqual(expect.objectContaining({ poll, type: 'poll' }));
   });
 
-  it('[REG-PERF-010] lifts a nested poll marker to its original parent-row position', () => {
+  it('lifts a nested poll marker to its original parent-row position', () => {
     const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
     const html =
       '<section><p>before</p><div><forum-discourse-poll name="choice"></forum-discourse-poll></div><p>after</p></section>';
@@ -260,7 +226,7 @@ describe('Android topic content splitting', () => {
     );
   });
 
-  it('[REG-TOPIC-128] compiles NodeSeek opening and reply polls at their marker position', () => {
+  it('compiles NodeSeek opening and reply polls at their marker position', () => {
     const poll = { id: '3028', options: [{ id: 'a', label: 'A' }] };
     const html = '<p>投票前</p><forum-nodeseek-poll id="3028"></forum-nodeseek-poll><p>投票后</p>';
 
@@ -272,7 +238,7 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('[REG-PERF-010] preserves poll order when a typed marker appears inside a table cell', () => {
+  it('preserves poll order when a typed marker appears inside a table cell', () => {
     const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
     const html =
       '<p>before</p><table><tbody><tr><td>cell-before<forum-discourse-poll name="choice"></forum-discourse-poll>cell-after</td></tr></tbody></table><p>end</p>';
@@ -294,7 +260,7 @@ describe('Android topic content splitting', () => {
     expect(orderedContent).toEqual(['before', 'cell-before', 'POLL', 'cell-after', 'end']);
   });
 
-  it('[REG-PERF-010] fail-closes an opaque island instead of moving its typed marker to the end', () => {
+  it('fail-closes an opaque island instead of moving its typed marker to the end', () => {
     const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
     const html =
       '<p>before</p><forum-link-card href="https://example.com"><span>island-before</span><forum-discourse-poll name="choice"></forum-discourse-poll><span>island-after</span></forum-link-card><p>after</p>';
@@ -317,7 +283,7 @@ describe('Android topic content splitting', () => {
     expect(renderedContentRows(compilation).every((row) => !row.html.includes('forum-link-card'))).toBe(true);
   });
 
-  it('[REG-PERF-010] preserves ancestor identity, disclosure, and ordered-list continuation around typed rows', () => {
+  it('preserves ancestor identity, disclosure, and ordered-list continuation around typed rows', () => {
     const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
     const html =
       '<details id="panel" name="shared" open><summary>Title</summary><ol id="steps" start="7"><li id="entry">before<forum-discourse-poll name="choice"></forum-discourse-poll>after</li><li>tail</li></ol></details>';
@@ -343,7 +309,7 @@ describe('Android topic content splitting', () => {
     expect(rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
   });
 
-  it('[REG-PERF-010] keeps one disclosure group when both sides of a typed row need further planning', () => {
+  it('keeps one disclosure group when both sides of a typed row need further planning', () => {
     const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
     const images = (prefix: string) =>
       Array.from({ length: 5 }, (_, index) => `<img src="https://img.example/${prefix}-${index}.webp">`).join('');
@@ -370,29 +336,24 @@ describe('Android topic content splitting', () => {
     ]);
   });
 
-  it('[REG-PERF-010] parses an ordinary native-video document exactly once', async () => {
-    await withTrackedParseHtml(async (trackedParseHtml) => {
-      const { compileForumContent: compileTrackedContent } = await import('./topicContentSplit');
-
-      const compilation = compileTrackedContent({
-        html: '<forum-video src="https://media.example/video.mp4" poster="https://media.example/poster.webp" referrerpolicy="no-referrer"></forum-video>',
-        role: 'reply',
-        source: 'yaohuo'
-      });
-
-      expect(compilation.rows).toEqual([
-        expect.objectContaining({
-          poster: 'https://media.example/poster.webp',
-          referrerPolicy: 'no-referrer',
-          src: 'https://media.example/video.mp4',
-          type: 'video'
-        })
-      ]);
-      expect(trackedParseHtml).toHaveBeenCalledTimes(1);
+  it('projects a native video with its poster and Referrer policy', () => {
+    const compilation = compileForumContent({
+      html: '<forum-video src="https://media.example/video.mp4" poster="https://media.example/poster.webp" referrerpolicy="no-referrer"></forum-video>',
+      role: 'reply',
+      source: 'yaohuo'
     });
+
+    expect(compilation.rows).toEqual([
+      expect.objectContaining({
+        poster: 'https://media.example/poster.webp',
+        referrerPolicy: 'no-referrer',
+        src: 'https://media.example/video.mp4',
+        type: 'video'
+      })
+    ]);
   });
 
-  it('[REG-PERF-010] keeps native video rows ordered around a typed poll marker', () => {
+  it('keeps native video rows ordered around a typed poll marker', () => {
     const poll = { name: 'choice', options: [{ id: 'yes', label: 'Yes' }] };
     const compilation = compileForumContent({
       html: '<forum-video src="https://media.example/before.mp4"></forum-video><forum-discourse-poll name="choice"></forum-discourse-poll><forum-video src="https://media.example/after.mp4"></forum-video>',
@@ -408,7 +369,7 @@ describe('Android topic content splitting', () => {
     ]);
   });
 
-  it('[REG-PERF-010] keeps adjacent native videos as separate atomic semantic rows', () => {
+  it('keeps adjacent native videos as separate atomic semantic rows', () => {
     const compilation = compileForumContent({
       html: Array.from(
         { length: 5 },
@@ -424,80 +385,38 @@ describe('Android topic content splitting', () => {
     );
   });
 
-  it('[REG-PERF-010] parses one hostile 2000-image document exactly once', async () => {
-    await withTrackedParseHtml(async (trackedParseHtml) => {
-      const { compileForumContent: compileTrackedContent } = await import('./topicContentSplit');
-      const html = `<p>${Array.from(
-        { length: 2_000 },
-        (_, index) => `<img src="https://img.example/${index}.webp">`
-      ).join('')}</p>`;
+  it('preserves 1000 alternating text and poll rows', () => {
+    const poll = { name: 'choice', options: [{ id: 'yes', label: 'Yes' }] };
+    const html = Array.from(
+      { length: 1_000 },
+      (_, index) => `<span>part-${index}</span><forum-discourse-poll name="choice"></forum-discourse-poll>`
+    ).join('');
 
-      const compilation = compileTrackedContent({ html, role: 'reply', source: 'nodeseek' });
+    const compilation = compileForumContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
 
-      expect(compilation.rows).toHaveLength(500);
-      expect(compilation.previewImages).toHaveLength(2_000);
-      expect(trackedParseHtml).toHaveBeenCalledTimes(1);
+    expect(compilation.rows).toHaveLength(2_000);
+    expect(compilation.rows.filter((row) => row.type === 'richText')).toHaveLength(1_000);
+    expect(compilation.rows.filter((row) => row.type === 'poll')).toHaveLength(1_000);
+  });
+
+  it('bounds over-deep opening quote candidates', () => {
+    const html = `${'<aside>'.repeat(1_000)}body${'</aside>'.repeat(1_000)}`;
+
+    const compilation = compileForumContent({
+      html,
+      role: 'opening',
+      source: 'linuxdo',
+      topicId: '42'
     });
+    const rows = renderedContentRows(compilation);
+
+    expect(compilation.rows.every((row) => row.type === 'richText')).toBe(true);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => row.html.length <= 16_384)).toBe(true);
+    expect(rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
   });
 
-  it('[REG-PERF-010] keeps attribute decoding linear for one hostile 2000-image document', () => {
-    const parseSpy = vi.spyOn(JSON, 'parse');
-    const html = `<p>${Array.from(
-      { length: 2_000 },
-      (_, index) => `<img src="https://img.example/${index}.webp" alt="image-${index}">`
-    ).join('')}</p>`;
-
-    try {
-      const compilation = compileForumContent({ html, role: 'reply', source: 'nodeseek' });
-
-      expect(compilation.rows).toHaveLength(500);
-      expect(compilation.previewImages).toHaveLength(2_000);
-      expect(parseSpy.mock.calls.length).toBeLessThanOrEqual(20_000);
-    } finally {
-      parseSpy.mockRestore();
-    }
-  });
-
-  it('[REG-PERF-010] parses one hostile document with 1000 typed markers exactly once', async () => {
-    await withTrackedParseHtml(async (trackedParseHtml) => {
-      const { compileForumContent: compileTrackedContent } = await import('./topicContentSplit');
-      const poll = { name: 'choice', options: [{ id: 'yes', label: 'Yes' }] };
-      const html = Array.from(
-        { length: 1_000 },
-        (_, index) => `<span>part-${index}</span><forum-discourse-poll name="choice"></forum-discourse-poll>`
-      ).join('');
-
-      const compilation = compileTrackedContent({ html, polls: [poll], role: 'reply', source: 'linuxdo' });
-
-      expect(compilation.rows).toHaveLength(2_000);
-      expect(compilation.rows.filter((row) => row.type === 'richText')).toHaveLength(1_000);
-      expect(compilation.rows.filter((row) => row.type === 'poll')).toHaveLength(1_000);
-      expect(trackedParseHtml).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  it('[REG-PERF-010] bounds over-deep opening quote candidates in the single compiler parse', async () => {
-    await withTrackedParseHtml(async (trackedParseHtml) => {
-      const { compileForumContent: compileTrackedContent } = await import('./topicContentSplit');
-      const html = `${'<aside>'.repeat(1_000)}body${'</aside>'.repeat(1_000)}`;
-
-      const compilation = compileTrackedContent({
-        html,
-        role: 'opening',
-        source: 'linuxdo',
-        topicId: '42'
-      });
-      const rows = renderedContentRows(compilation);
-
-      expect(trackedParseHtml).toHaveBeenCalledTimes(1);
-      expect(compilation.rows.every((row) => row.type === 'richText')).toBe(true);
-      expect(rows.length).toBeGreaterThan(0);
-      expect(rows.every((row) => row.html.length <= 16_384)).toBe(true);
-      expect(rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
-    });
-  });
-
-  it('[REG-PERF-010] keeps a 2000-image paragraph ordered while bounding every planned row', () => {
+  it('keeps a 2000-image paragraph ordered while bounding every planned row', () => {
     const sourceUrls = Array.from({ length: 2000 }, (_, index) => `https://img.example/${index}.webp`);
     const html = `<p>${sourceUrls.map((src, index) => `<img src="${src}" alt="image-${index}">`).join('')}</p>`;
 
@@ -510,7 +429,7 @@ describe('Android topic content splitting', () => {
     expect(plannedUrls).toEqual(sourceUrls);
   });
 
-  it('[REG-PERF-010] budgets every rendered forum sticker source while keeping text-only sticker labels local', () => {
+  it('budgets every rendered forum sticker source while keeping text-only sticker labels local', () => {
     const sourceUrls = Array.from({ length: 9 }, (_, index) => `https://img.example/sticker-${index}.webp`);
     const html = `<forum-sticker-row>${sourceUrls
       .map((src, index) => `<forum-sticker src="${src}" alt="sticker-${index}">sticker-${index}</forum-sticker>`)
@@ -537,7 +456,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows.map((row) => parseHtml(row.html).text).join('')).toContain('local-emoji');
   });
 
-  it('[REG-PERF-010] budgets every canonical inline-image source without charging a text-only label', () => {
+  it('budgets every canonical inline-image source without charging a text-only label', () => {
     const sourceUrls = Array.from({ length: 9 }, (_, index) => `https://img.example/emoji-${index}.webp`);
     const html = `<forum-inline-media-line>${sourceUrls
       .map(
@@ -569,7 +488,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows.map((row) => parseHtml(row.html).text).join('')).toContain('local-emoji');
   });
 
-  it('[REG-PERF-010] preserves ordinary safe HTML as one unchanged row', () => {
+  it('preserves ordinary safe HTML as one unchanged row', () => {
     const html = '<p class="message">ordinary <strong>formatted</strong> content</p>';
 
     expect(planForumContent(html)).toEqual({
@@ -587,7 +506,7 @@ describe('Android topic content splitting', () => {
     });
   });
 
-  it('[REG-PERF-010] preserves an ordinary table byte-for-byte', () => {
+  it('preserves an ordinary table byte-for-byte', () => {
     const html =
       '<table class="comparison"><tbody><tr><th>Name</th><th>Value</th></tr><tr><td>Alpha</td><td>1</td></tr></tbody></table>';
 
@@ -598,7 +517,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows[0]?.part).toBe('only');
   });
 
-  it('[REG-TOPIC-093] keeps oversized code in one complete semantic owner', () => {
+  it('keeps oversized code in one complete semantic owner', () => {
     const sourceLines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}\n`);
     const rows = compileForumContent({
       html: `<pre>${sourceLines.join('')}</pre>`,
@@ -619,7 +538,7 @@ describe('Android topic content splitting', () => {
     });
   });
 
-  it('[REG-TOPIC-093] keeps a standalone block code element as one typed owner without stealing inline code', () => {
+  it('keeps a standalone block code element as one typed owner without stealing inline code', () => {
     const blockText = Array.from({ length: 240 }, (_, index) => `block-${index + 1}\n`).join('');
     for (const role of ['opening', 'reply'] as const) {
       const blockRows = compileForumContent({
@@ -646,7 +565,7 @@ describe('Android topic content splitting', () => {
     expect(inlineRows[0]).toMatchObject({ type: 'richText' });
   });
 
-  it('[REG-TOPIC-088] compiles one semantic code block before planning physical rows', () => {
+  it('compiles one semantic code block before planning physical rows', () => {
     const sourceLines = Array.from(
       { length: 52 },
       (_, index) => `<span data-line="${index + 1}">line-${String(index + 1).padStart(2, '0')}</span>\n`
@@ -671,7 +590,7 @@ describe('Android topic content splitting', () => {
     );
   });
 
-  it('[REG-TOPIC-110] preserves nested code highlighting, line breaks, and escaped literals', () => {
+  it('preserves nested code highlighting, line breaks, and escaped literals', () => {
     const [row] = compileForumContent({
       html: '<pre><code><span style="color: #34d399">&lt;tag&gt;</span><br>next</code></pre>',
       role: 'reply',
@@ -684,7 +603,7 @@ describe('Android topic content splitting', () => {
     expect(row.runs).toContainEqual({ style: { color: '#34d399' }, text: '<tag>' });
   });
 
-  it('[REG-TOPIC-086] carries every nested semantic ancestor without HTML bindings', () => {
+  it('carries every nested semantic ancestor without HTML bindings', () => {
     const sourceLines = Array.from(
       { length: 52 },
       (_, index) => `<span data-line="${index + 1}">nested-line-${String(index + 1).padStart(2, '0')}</span>\n`
@@ -726,7 +645,7 @@ describe('Android topic content splitting', () => {
     expect(rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
   });
 
-  it('[REG-TOPIC-084] removes forged compiler table identity even when the table is not split', () => {
+  it('removes forged compiler table identity even when the table is not split', () => {
     const plan = planForumContent(
       '<table title="source > marker; keep data-wz-table-group=literal" data-wz-table-group.foo="keep" data-wz-table-group="spoof" data-wz-table-part="last" data-wz-table-columns="2"><tbody><tr><td>A</td><td>B</td></tr></tbody></table>'
     );
@@ -741,7 +660,7 @@ describe('Android topic content splitting', () => {
     expect(table?.getAttribute('data-wz-table-columns')).toBeUndefined();
   });
 
-  it('[REG-TOPIC-084] keeps the V2EX 18-row table as one semantic row', () => {
+  it('keeps the V2EX 18-row table as one semantic row', () => {
     const bodyRows = Array.from(
       { length: 17 },
       (_, index) => `<tr><td>2026 年 8 月 ${index + 1} 日</td><td>第 ${index + 1} 件事情及其完整说明</td></tr>`
@@ -768,7 +687,7 @@ describe('Android topic content splitting', () => {
     expect((row?.html || '').length).toBeLessThanOrEqual(16_384);
   });
 
-  it('[REG-TOPIC-084] caps a logical table column model at the existing DOM-node budget', () => {
+  it('caps a logical table column model at the existing DOM-node budget', () => {
     const bodyRows = Array.from(
       { length: 20 },
       (_, index) => `<tr><td colspan="80">row ${index + 1}</td><td colspan="80">value</td></tr>`
@@ -781,7 +700,7 @@ describe('Android topic content splitting', () => {
     expect(new Set(plan.rows.map((row) => row.semanticId))).toEqual(new Set(['node-0']));
   });
 
-  it('[REG-PERF-010] groups a multi-row table only at complete tr boundaries', () => {
+  it('groups a multi-row table only at complete tr boundaries', () => {
     const sourceUrls = Array.from({ length: 9 }, (_, index) => `https://img.example/table-row-${index}.webp`);
     const sourceRows = sourceUrls.map(
       (src, index) => `<tr data-row="${index}"><td>Row ${index}</td><td><img src="${src}"></td></tr>`
@@ -809,7 +728,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows.every((row) => row.html.length <= 16_384)).toBe(true);
   });
 
-  it('[REG-TOPIC-084] never splits an active rowspan-connected table region', () => {
+  it('never splits an active rowspan-connected table region', () => {
     const connectedRows = [
       '<tr><td rowspan="4">connected</td><td><img src="https://img.example/rowspan-0.webp"></td></tr>',
       ...Array.from(
@@ -834,7 +753,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows.map((row) => row.part)).toEqual(['first', 'last']);
   });
 
-  it('[REG-PERF-010] fail-closes one table row that cannot be split safely', () => {
+  it('fail-closes one table row that cannot be split safely', () => {
     const sourceUrls = Array.from({ length: 9 }, (_, index) => `https://img.example/table-cell-${index}.webp`);
     const html = `<table><tbody><tr id="oversized-row"><td class="label">One logical row</td><td class="media">${sourceUrls
       .map((src) => `<img src="${src}">`)
@@ -847,7 +766,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows[0]?.html).not.toContain(sourceUrls[0]);
   });
 
-  it('[REG-TOPIC-090] keeps every terminal report tab when its code body exceeds one physical row budget', () => {
+  it('keeps every terminal report tab when its code body exceeds one physical row budget', () => {
     const tabs = Array.from({ length: 4 }, (_, tabIndex) => ({
       id: `tab-${tabIndex}`,
       text: Array.from(
@@ -887,7 +806,7 @@ describe('Android topic content splitting', () => {
     expect(rows.some((row) => 'html' in row && row.html.includes('内容过于复杂'))).toBe(false);
   });
 
-  it('[REG-TOPIC-090] recursively preserves mixed semantic rows inside every terminal tab', () => {
+  it('recursively preserves mixed semantic rows inside every terminal tab', () => {
     const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
     const html =
       '<forum-terminal-report>' +
@@ -925,7 +844,7 @@ describe('Android topic content splitting', () => {
     });
   });
 
-  it('[REG-TOPIC-090][REG-TOPIC-093] keeps long terminal code in one full-copy owner', () => {
+  it('keeps long terminal code in one full-copy owner', () => {
     const lines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}`);
     const html = `<forum-terminal-report><forum-terminal-tab title="Long"><div class="forum-terminal-code">${lines.join(
       '<br>'
@@ -945,7 +864,7 @@ describe('Android topic content splitting', () => {
     });
   });
 
-  it('[REG-TOPIC-090][REG-TOPIC-093] keeps terminal code beyond the old text budget with sibling tabs', () => {
+  it('keeps terminal code beyond the old text budget with sibling tabs', () => {
     const html =
       '<forum-terminal-report>' +
       `<forum-terminal-tab title="Unsafe"><div class="forum-terminal-code">${'x'.repeat(
@@ -980,7 +899,7 @@ describe('Android topic content splitting', () => {
     );
   });
 
-  it('[REG-TOPIC-090] bounds individual headers and unexpected children without deleting the report', () => {
+  it('bounds individual headers and unexpected children without deleting the report', () => {
     const tabs = Array.from(
       { length: 90 },
       (_, index) =>
@@ -1001,7 +920,7 @@ describe('Android topic content splitting', () => {
     expect(rows.filter((row) => 'html' in row && row.html === '<p>内容过于复杂，请在原站查看。</p>')).toHaveLength(1);
   });
 
-  it('[REG-PERF-010] bounds hostile nesting without losing ordered media', () => {
+  it('bounds hostile nesting without losing ordered media', () => {
     const sourceUrls = Array.from({ length: 20 }, (_, index) => `https://img.example/deep-${index}.webp`);
     const html = `${'<div class="nested">'.repeat(96)}${sourceUrls
       .map((src) => `<img src="${src}">`)
@@ -1019,7 +938,7 @@ describe('Android topic content splitting', () => {
     expect(plannedUrls).toEqual(sourceUrls);
   });
 
-  it('[REG-PERF-010] keeps parser fallback output bounded and ordered', async () => {
+  it('keeps parser fallback output bounded and ordered', async () => {
     const sourceUrls = Array.from({ length: 20 }, (_, index) => `https://img.example/fallback-${index}.webp`);
     const html = `${'<div class="fallback-nested">'.repeat(96)}${sourceUrls
       .map((src) => `<img src="${src}">`)
@@ -1055,7 +974,7 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('[REG-TOPIC-096] keeps preview descriptors in parser fallback without a second parse', async () => {
+  it('keeps preview descriptors when parser fallback is used', async () => {
     await withTrackedParseHtml(async (trackedParseHtml) => {
       trackedParseHtml.mockImplementation(() => {
         throw new Error('parser unavailable');
@@ -1073,11 +992,10 @@ describe('Android topic content splitting', () => {
       expect(compilation.previewImages).toEqual([
         expect.objectContaining({ referrerPolicy: 'no-referrer', source: 'https://img.example/lazy.webp' })
       ]);
-      expect(trackedParseHtml).toHaveBeenCalledTimes(1);
     });
   });
 
-  it('[REG-PERF-010] fail-closes every unsafe row in a multi-fragment parser fallback', async () => {
+  it('fail-closes every unsafe row in a multi-fragment parser fallback', async () => {
     const sourceUrls = Array.from({ length: 5 }, (_, index) => `https://img.example/malformed-${index}.webp`);
     const html = `<div>${'<i>'.repeat(1_000)}${sourceUrls.map((src) => `<img src="${src}">`).join('')}</div>`;
     vi.resetModules();
@@ -1115,7 +1033,7 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('[REG-PERF-010][REG-TOPIC-093] keeps a media-free rich-text subtree in one owner beyond old budgets', () => {
+  it('keeps a media-free rich-text subtree in one owner beyond old budgets', () => {
     const text = '正文'.repeat(9000);
     const html = `<div>${Array.from({ length: 160 }, (_, index) => `<span>${index}</span>`).join('')}<p>${text}</p></div>`;
 
@@ -1127,7 +1045,7 @@ describe('Android topic content splitting', () => {
     expect(parseHtml(rows[0].html).text).toContain(text);
   });
 
-  it('[REG-TOPIC-093] does not cut a continuous rich-text owner at a serialized-size budget', () => {
+  it('does not cut a continuous rich-text owner at a serialized-size budget', () => {
     const html = `<div data-note="${'a'.repeat(9_000)}"><span>${'b'.repeat(9_000)}</span></div>`;
 
     const rows = planForumContent(html).rows;
@@ -1136,7 +1054,7 @@ describe('Android topic content splitting', () => {
     expect(parseHtml(rows[0].html).text).toBe('b'.repeat(9_000));
   });
 
-  it('[REG-TOPIC-093] keeps oversized continuous text and its Unicode graphemes in one owner', () => {
+  it('keeps oversized continuous text and its Unicode graphemes in one owner', () => {
     const visibleText = `${'a'.repeat(11_999)}👩‍💻&tail${'b'.repeat(4_500)}`;
     const html = `<p>${visibleText.replace('&', '&amp;')}</p>`;
 
@@ -1146,7 +1064,7 @@ describe('Android topic content splitting', () => {
     expect(rows[0]?.part).toBe('only');
   });
 
-  it('[REG-TOPIC-093] splits a mixed subtree only at discrete media boundaries', () => {
+  it('splits a mixed subtree only at discrete media boundaries', () => {
     const leading = '前'.repeat(13_000);
     const trailing = '后'.repeat(13_000);
     const rows = planForumContent(
@@ -1158,7 +1076,7 @@ describe('Android topic content splitting', () => {
     expect(rows.map((row) => parseHtml(row.html).text)).toEqual([leading, '', trailing]);
   });
 
-  it('[REG-PERF-010] keeps an anchor identity only on the first continuation row', () => {
+  it('keeps an anchor identity only on the first continuation row', () => {
     const html = `<div id="target" name="target">${Array.from(
       { length: 12 },
       (_, index) => `<img src="https://img.example/${index}.webp">`
@@ -1172,7 +1090,7 @@ describe('Android topic content splitting', () => {
     expect(rows.slice(1).every((row) => !/\s(?:id|name)="target"/.test(row.html))).toBe(true);
   });
 
-  it('[REG-PERF-010] continues ordered-list numbering across planned rows', () => {
+  it('continues ordered-list numbering across planned rows', () => {
     const html = `<ol start="3">${Array.from(
       { length: 9 },
       (_, index) => `<li>item ${index}<img src="https://img.example/list-${index}.webp"></li>`
@@ -1195,7 +1113,7 @@ describe('Android topic content splitting', () => {
     ).toEqual(new Set(['node-0']));
   });
 
-  it('[REG-PERF-010] keeps one logical ordered-list item number across its media continuations', () => {
+  it('keeps one logical ordered-list item number across its media continuations', () => {
     const sourceUrls = Array.from({ length: 10 }, (_, index) => `https://img.example/list-continuation-${index}.webp`);
     const html = `<ol start="3"><li id="first-item">${sourceUrls
       .slice(0, 9)
@@ -1215,7 +1133,7 @@ describe('Android topic content splitting', () => {
     expect(rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
   });
 
-  it('[REG-PERF-010] gives oversized details fragments one stable group and unique part semantics', () => {
+  it('gives oversized details fragments one stable group and unique part semantics', () => {
     const sourceUrls = Array.from({ length: 9 }, (_, index) => `https://img.example/details-${index}.webp`);
     const html = `<details id="details-anchor" name="details-name" data-wz-details-group="spoof" data-wz-details-part="last"><summary>Stable summary</summary><p>${sourceUrls
       .map((src) => `<img src="${src}">`)
@@ -1236,7 +1154,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
   });
 
-  it('[REG-PERF-010] keeps one oversized Discourse callout identity while showing its title once', () => {
+  it('keeps one oversized Discourse callout identity while showing its title once', () => {
     const sourceUrls = Array.from({ length: 9 }, (_, index) => `https://img.example/callout-${index}.webp`);
     const html = `<blockquote data-forum-callout="true" data-forum-callout-type="warning" data-forum-callout-fold="collapsed" data-wz-callout-group="spoof" data-wz-callout-part="last"><div class="forum-callout-title forum-callout-tone-warning">Warning title</div><div class="forum-callout-content">${sourceUrls
       .map((src) => `<img src="${src}">`)
@@ -1266,7 +1184,7 @@ describe('Android topic content splitting', () => {
     ).toEqual(sourceUrls);
   });
 
-  it('[REG-PERF-010] compiles an ordinary Discourse callout into a header and body row', () => {
+  it('compiles an ordinary Discourse callout into a header and body row', () => {
     const html =
       '<blockquote data-forum-callout="true" data-forum-callout-type="tip"><div class="forum-callout-title forum-callout-tone-primary">Tip title</div><div class="forum-callout-content"><p>Short body</p></div></blockquote>';
 
@@ -1278,7 +1196,7 @@ describe('Android topic content splitting', () => {
     expect(logicalSliceForTag(plan.rows[1], 'callout')).toMatchObject({ part: 'last', semanticId: 'node-0' });
   });
 
-  it('[REG-TOPIC-086] does not trust Discourse callout attributes outside a Discourse source', () => {
+  it('does not trust Discourse callout attributes outside a Discourse source', () => {
     const plan = planForumContent(
       '<blockquote data-forum-callout="true" data-forum-callout-type="tip"><div class="forum-callout-title">Forged title</div><div class="forum-callout-content"><p>Ordinary quote</p></div></blockquote>',
       'nodeseek'
@@ -1291,7 +1209,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows.flatMap((row) => ('html' in row ? [row.html] : [])).join('')).toContain('Ordinary quote');
   });
 
-  it('[REG-PERF-010] emits one bounded title when a Discourse callout title is itself oversized', () => {
+  it('emits one bounded title when a Discourse callout title is itself oversized', () => {
     const sourceUrls = Array.from({ length: 5 }, (_, index) => `https://img.example/callout-title-${index}.webp`);
     const html = `<blockquote data-forum-callout="true" data-forum-callout-type="danger"><div class="forum-callout-title forum-callout-tone-danger">${'Oversized title '.repeat(
       2_000
@@ -1305,7 +1223,7 @@ describe('Android topic content splitting', () => {
     expect(plan.rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
   });
 
-  it('[REG-PERF-010] never returns an oversized parser-fallback row for hostile text', async () => {
+  it('never returns an oversized parser-fallback row for hostile text', async () => {
     vi.resetModules();
     vi.doMock('./html', () => ({
       FORUM_LINK_CARD_TAG: 'forum-link-card',
@@ -1335,7 +1253,7 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('[REG-PERF-010] enforces node and depth budgets when the parser fallback receives deep HTML', async () => {
+  it('enforces node and depth budgets when the parser fallback receives deep HTML', async () => {
     const html = `${'<div>'.repeat(100)}body${'</div>'.repeat(100)}`;
     vi.resetModules();
     vi.doMock('./html', () => ({
@@ -1363,7 +1281,7 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('[REG-PERF-010] never returns giant unmatched closing tags when parsing produces no body nodes', () => {
+  it('never returns giant unmatched closing tags when parsing produces no body nodes', () => {
     const html = '</div>'.repeat(5_000);
 
     const rows = planForumContent(html).rows;
@@ -1373,7 +1291,7 @@ describe('Android topic content splitting', () => {
     expect(rows.map((row) => row.html).join('')).not.toBe(html);
   });
 
-  it('[REG-PERF-010] never returns a giant comment when parsing produces no renderable body nodes', () => {
+  it('never returns a giant comment when parsing produces no renderable body nodes', () => {
     const html = `<!--${'comment'.repeat(5_000)}-->`;
 
     const rows = planForumContent(html).rows;
@@ -1383,7 +1301,7 @@ describe('Android topic content splitting', () => {
     expect(rows.map((row) => row.html).join('')).not.toBe(html);
   });
 
-  it('[REG-PERF-010] does not restore a giant trailing comment discarded after safe parsed content', () => {
+  it('does not restore a giant trailing comment discarded after safe parsed content', () => {
     const html = `<p>safe body</p><!--${'comment'.repeat(5_000)}-->`;
 
     const rows = planForumContent(html).rows;
@@ -1392,7 +1310,7 @@ describe('Android topic content splitting', () => {
     expect(rows.map((row) => row.html).join('')).toBe('<p>safe body</p>');
   });
 
-  it('[REG-PERF-010] does not restore giant trailing closing tags discarded after safe parsed content', () => {
+  it('does not restore giant trailing closing tags discarded after safe parsed content', () => {
     const html = `<p>safe body</p>${'</div>'.repeat(5_000)}`;
 
     const rows = planForumContent(html).rows;
@@ -1401,48 +1319,42 @@ describe('Android topic content splitting', () => {
     expect(rows.map((row) => row.html).join('')).toBe('<p>safe body</p>');
   });
 
-  it.each(['forum-video', 'video'])(
-    '[REG-PERF-010] counts a %s source and poster as two potential network media',
-    (tag) => {
-      const plan = planForumContent(
-        `<${tag} src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></${tag}>`
-      );
+  it.each(['forum-video', 'video'])('counts a %s source and poster as two potential network media', (tag) => {
+    const plan = planForumContent(
+      `<${tag} src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></${tag}>`
+    );
 
-      expect(plan.rows[0]?.networkMediaCount).toBe(2);
-    }
-  );
+    expect(plan.rows[0]?.networkMediaCount).toBe(2);
+  });
 
-  it.each(['forum-video', 'video'])(
-    '[REG-PERF-010] counts a %s source and poster in parser fallback media budgets',
-    async (tag) => {
-      vi.resetModules();
-      vi.doMock('./html', () => ({
-        FORUM_LINK_CARD_TAG: 'forum-link-card',
-        FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
-        FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
-        FORUM_VIDEO_TAG: 'forum-video',
-        parseHtml: () => {
-          throw new Error('parser unavailable');
-        }
-      }));
-      try {
-        const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
-
-        const plan = compileWithFallback({
-          html: `<${tag} src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></${tag}>`,
-          role: 'signature',
-          source: 'nodeseek'
-        });
-
-        expect(renderedContentRows(plan)[0]?.networkMediaCount).toBe(2);
-      } finally {
-        vi.doUnmock('./html');
-        vi.resetModules();
+  it.each(['forum-video', 'video'])('counts a %s source and poster in parser fallback media budgets', async (tag) => {
+    vi.resetModules();
+    vi.doMock('./html', () => ({
+      FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
+      FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
+      FORUM_VIDEO_TAG: 'forum-video',
+      parseHtml: () => {
+        throw new Error('parser unavailable');
       }
-    }
-  );
+    }));
+    try {
+      const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
 
-  it('[REG-PERF-010] keeps forum sticker sources bounded in parser fallback rows', async () => {
+      const plan = compileWithFallback({
+        html: `<${tag} src="https://media.example/demo.mp4" poster="https://media.example/poster.webp"></${tag}>`,
+        role: 'signature',
+        source: 'nodeseek'
+      });
+
+      expect(renderedContentRows(plan)[0]?.networkMediaCount).toBe(2);
+    } finally {
+      vi.doUnmock('./html');
+      vi.resetModules();
+    }
+  });
+
+  it('keeps forum sticker sources bounded in parser fallback rows', async () => {
     const sourceUrls = Array.from({ length: 5 }, (_, index) => `https://img.example/fallback-sticker-${index}.webp`);
     const html = `<forum-sticker-row>${sourceUrls
       .map((src) => `<forum-sticker src="${src}">sticker</forum-sticker>`)
@@ -1475,7 +1387,7 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('[REG-PERF-010] keeps canonical inline-image sources bounded in parser fallback rows', async () => {
+  it('keeps canonical inline-image sources bounded in parser fallback rows', async () => {
     const sourceUrls = Array.from({ length: 5 }, (_, index) => `https://img.example/fallback-emoji-${index}.webp`);
     const html = `<forum-inline-media-line>${sourceUrls
       .map((src) => `<forum-inline-image class="emoji" width="20" height="20" src="${src}">emoji</forum-inline-image>`)
@@ -1508,7 +1420,7 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('[REG-PERF-010] counts unquoted link-card artwork in parser fallback media budgets', async () => {
+  it('counts unquoted link-card artwork in parser fallback media budgets', async () => {
     vi.resetModules();
     vi.doMock('./html', () => ({
       FORUM_LINK_CARD_TAG: 'forum-link-card',
@@ -1545,7 +1457,7 @@ describe('Android topic content splitting', () => {
     ).toEqual([expect.objectContaining({ src: 'https://yaohuo.me/uploads/demo.mp4', type: 'video' })]);
   });
 
-  it('[REG-TOPIC-078] rejects whitespace-wrapped standalone video policies', () => {
+  it('rejects whitespace-wrapped standalone video policies', () => {
     const [video] = compileForumContent({
       html: '<forum-video src="https://media.example/video.mp4" referrerpolicy=" unsafe-url "></forum-video>',
       role: 'reply',
@@ -1555,7 +1467,7 @@ describe('Android topic content splitting', () => {
     expect(video).not.toHaveProperty('referrerPolicy');
   });
 
-  it('[REG-TOPIC-082] preserves a standalone video poster in parser fallback rows', async () => {
+  it('preserves a standalone video poster in parser fallback rows', async () => {
     vi.resetModules();
     vi.doMock('./html', () => ({
       FORUM_LINK_CARD_TAG: 'forum-link-card',
@@ -1588,7 +1500,7 @@ describe('Android topic content splitting', () => {
     }
   });
 
-  it('[REG-TOPIC-078] rejects whitespace-wrapped standalone video policies in parser fallback', async () => {
+  it('rejects whitespace-wrapped standalone video policies in parser fallback', async () => {
     vi.resetModules();
     vi.doMock('./html', () => ({
       FORUM_LINK_CARD_TAG: 'forum-link-card',

@@ -168,7 +168,7 @@ describe('image library saving', () => {
     expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg');
   });
 
-  it('[REG-TOPIC-078] saves with the same element Referrer Policy as the displayed image', async () => {
+  it('saves with the same element Referrer Policy as the displayed image', async () => {
     const fetcher = vi.fn<Fetcher>(
       async () =>
         new Response('image-bytes', {
@@ -193,7 +193,7 @@ describe('image library saving', () => {
     expect((fetcher.mock.calls as unknown as [string, RequestInit][])[0]?.[1]?.headers).not.toHaveProperty('Referer');
   });
 
-  it('REG-TOPIC-019 keeps NodeSeek media credentials when saving a protected image', async () => {
+  it('keeps NodeSeek media credentials when saving a protected image', async () => {
     const fetcher = vi.fn<Fetcher>(
       async () =>
         new Response('image-bytes', {
@@ -227,7 +227,7 @@ describe('image library saving', () => {
     expect((fetcher.mock.calls as unknown as [string, RequestInit][])[0]?.[1]?.headers).not.toHaveProperty('Cookie');
   });
 
-  it('REG-TOPIC-015 preserves modern remote image extensions when saving', async () => {
+  it('preserves modern remote image extensions when saving', async () => {
     const fetcher = vi.fn<Fetcher>(
       async () =>
         new Response('avif-bytes', {
@@ -246,7 +246,7 @@ describe('image library saving', () => {
     expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.avif');
   });
 
-  it('REG-TOPIC-015 prefers the response image type when the URL suffix is misleading', async () => {
+  it('prefers the response image type when the URL suffix is misleading', async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
     const fetcher = vi.fn<Fetcher>(
       async () =>
@@ -266,7 +266,7 @@ describe('image library saving', () => {
     expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.svg');
   });
 
-  it('REG-TOPIC-015 recognizes the legacy SVG response type used by the compatible preview', async () => {
+  it('recognizes the legacy SVG response type used by the compatible preview', async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
     const fetcher = vi.fn<Fetcher>(
       async () =>
@@ -285,7 +285,7 @@ describe('image library saving', () => {
     );
   });
 
-  it('REG-TOPIC-014 times out a remote image download when native fetch never settles', async () => {
+  it('times out a remote image download when native fetch never settles', async () => {
     vi.useFakeTimers();
     const fetcher = vi.fn<Fetcher>(() => new Promise<Response>(() => {}));
     try {

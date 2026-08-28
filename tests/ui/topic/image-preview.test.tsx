@@ -394,7 +394,7 @@ describe('Image preview', () => {
     };
   });
 
-  it('[REG-TOPIC-096] applies the tapped-item override without replacing the logical catalog', async () => {
+  it('applies the tapped-item override without replacing the logical catalog', async () => {
     const items = [
       previewItem('https://example.com/first.png'),
       previewItem('https://example.com/original.png', 'https://example.com/catalog-display.png'),
@@ -423,7 +423,7 @@ describe('Image preview', () => {
     expect(items[1]?.displayUri).toBe('https://example.com/catalog-display.png');
   });
 
-  it('[REG-TOPIC-078] isolates raster recycling by final Referer', async () => {
+  it('isolates raster recycling by final Referer', async () => {
     const sharedUrl = 'https://cdn.example.com/shared-preview.png';
     const sharedItem = previewItem(sharedUrl);
     const items = [
@@ -449,7 +449,7 @@ describe('Image preview', () => {
     expect(noReferrerImage.props.recyclingKey).not.toBe(originImage.props.recyclingKey);
   });
 
-  it('[REG-PROXY-010] retries only the current unhealthy preview page for the triggering source', async () => {
+  it('retries only the current unhealthy preview page for the triggering source', async () => {
     const items = [
       previewItem('https://example.com/runtime-current.png'),
       previewItem('https://example.com/runtime-adjacent.png')
@@ -474,7 +474,7 @@ describe('Image preview', () => {
     expect(view.getByTestId('preview-image-0').props.recyclingKey).toBe(displayedKey);
   });
 
-  it('[REG-PROXY-010] defers an inactive loading preview retry until that page becomes active', async () => {
+  it('defers an inactive loading preview retry until that page becomes active', async () => {
     const items = [
       previewItem('https://example.com/runtime-active.png'),
       previewItem('https://example.com/runtime-deferred.png')
@@ -501,7 +501,7 @@ describe('Image preview', () => {
     expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(retriedKey);
   });
 
-  it('[REG-PROXY-010] keeps a loaded adjacent preview healthy across rotation and later activation', async () => {
+  it('keeps a loaded adjacent preview healthy across rotation and later activation', async () => {
     const items = [
       previewItem('https://example.com/runtime-active.png'),
       previewItem('https://example.com/runtime-loaded-adjacent.png')
@@ -525,7 +525,7 @@ describe('Image preview', () => {
     expect(view.getByTestId('preview-image-1').props.recyclingKey).toBe(loadedKey);
   });
 
-  it('[REG-TOPIC-050] mounts only current and adjacent originals and promotes them without cross-dissolving', async () => {
+  it('mounts only current and adjacent originals and promotes them without cross-dissolving', async () => {
     const items = Array.from({ length: 5 }, (_, index) =>
       previewItem(`https://example.com/original-${index}.png`, `https://example.com/display-${index}.png`)
     );
@@ -570,7 +570,7 @@ describe('Image preview', () => {
     expect(view.getByTestId('preview-image-3').props.transition).toBeUndefined();
   });
 
-  it('[REG-TOPIC-112] gives cached full-resolution pixels only to the settled current page', async () => {
+  it('gives cached full-resolution pixels only to the settled current page', async () => {
     const items = [
       previewItem('https://example.com/current-long.png'),
       previewItem('https://example.com/adjacent-long.png')
@@ -628,7 +628,7 @@ describe('Image preview', () => {
       source: { height: 1_000, isAnimated: false, mediaType: null, width: 800 },
       uri: 'https://example.com/static.svg'
     }
-  ])('[REG-TOPIC-112] keeps $label on the existing base path', async ({ source, uri }) => {
+  ])('keeps $label on the existing base path', async ({ source, uri }) => {
     const view = await render(<ImagePreviewModal preview={previewProps([previewItem(uri)])} {...callbacks()} />);
 
     await fireEvent(view.getByTestId('preview-image-0'), 'load', { source });
@@ -639,7 +639,7 @@ describe('Image preview', () => {
     expect(mockGetImageCachePath).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-112] keeps the base image when the original cache file is unavailable', async () => {
+  it('keeps the base image when the original cache file is unavailable', async () => {
     mockGetImageCachePath.mockResolvedValueOnce(null);
     const view = await render(
       <ImagePreviewModal preview={previewProps([previewItem('https://example.com/cache-miss.png')])} {...callbacks()} />
@@ -655,7 +655,7 @@ describe('Image preview', () => {
     expect(view.queryByTestId('preview-region-0')).toBeNull();
   });
 
-  it('[REG-PERF-010][REG-TOPIC-075] keeps a 2000-image catalog to three disk-only downscaled pages', async () => {
+  it('keeps a 2000-image catalog to three disk-only downscaled pages', async () => {
     const items = Array.from({ length: 2_000 }, (_, index) => previewItem(`https://example.com/catalog-${index}.png`));
     const onSelect = jest.fn<(index: number) => void>();
     const modal = (index: number) => (
@@ -699,7 +699,7 @@ describe('Image preview', () => {
     expect(mockPreviewImageUnmounts).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-010][REG-TOPIC-075] reuses three native raster owners while their sources advance', async () => {
+  it('reuses three native raster owners while their sources advance', async () => {
     const items = Array.from({ length: 100 }, (_, index) =>
       previewItem(`https://example.com/owner-original-${index}.png`, `https://example.com/owner-display-${index}.png`)
     );
@@ -767,7 +767,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('[REG-TOPIC-075] resets logical load ownership when a stable native slot changes source', async () => {
+  it('resets logical load ownership when a stable native slot changes source', async () => {
     const items = Array.from({ length: 6 }, (_, index) =>
       previewItem(`https://example.com/reset-original-${index}.png`, `https://example.com/reset-display-${index}.png`)
     );
@@ -794,7 +794,7 @@ describe('Image preview', () => {
     await waitFor(() => expect(view.queryByTestId('preview-display-underlay-4')).toBeNull());
   });
 
-  it('[REG-TOPIC-075] never routes a remote continuity image through the Expo placeholder decoder', async () => {
+  it('never routes a remote continuity image through the Expo placeholder decoder', async () => {
     const items = [
       previewItem('https://example.com/same-original.png'),
       previewItem('https://example.com/distinct-original.png', 'https://example.com/distinct-display.png')
@@ -813,7 +813,7 @@ describe('Image preview', () => {
     );
   });
 
-  it('[REG-TOPIC-075] gives every mounted preview bitmap an explicit native decode ceiling', async () => {
+  it('gives every mounted preview bitmap an explicit native decode ceiling', async () => {
     const items = [
       previewItem('https://example.com/huge-original-a.png', 'https://example.com/huge-display-a.png'),
       previewItem('https://example.com/huge-original-b.png', 'https://example.com/huge-display-b.png')
@@ -836,7 +836,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('[REG-TOPIC-095] keeps the selected target centered through page settlement', async () => {
+  it('keeps the selected target centered through page settlement', async () => {
     const items = Array.from({ length: 6 }, (_, index) => previewItem(`https://example.com/settle-${index}.png`));
     const onSelect = jest.fn<(index: number) => void>();
     const view = await render(<ImagePreviewModal preview={previewProps(items, 2)} {...callbacks({ onSelect })} />);
@@ -865,7 +865,7 @@ describe('Image preview', () => {
     expect(centeredImage().props.mockImageInstanceToken).toBe(currentOwner);
   });
 
-  it('[REG-TOPIC-095] gives pinch and a late second finger exclusive ownership of the index', async () => {
+  it('gives pinch and a late second finger exclusive ownership of the index', async () => {
     const items = Array.from({ length: 3 }, (_, index) => previewItem(`https://example.com/pinch-${index}.png`));
     const onSelect = jest.fn<(index: number) => void>();
     const view = await render(<ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect })} />);
@@ -887,7 +887,7 @@ describe('Image preview', () => {
     expect(view.getByText('2/3')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-095] commits a slow swipe only after the distance threshold', async () => {
+  it('commits a slow swipe only after the distance threshold', async () => {
     const items = Array.from({ length: 3 }, (_, index) => previewItem(`https://example.com/slow-${index}.png`));
     const onSelect = jest.fn<(index: number) => void>();
     const view = await render(<ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect })} />);
@@ -901,7 +901,7 @@ describe('Image preview', () => {
     expect(view.getByText('3/3')).toBeTruthy();
   });
 
-  it('[REG-PERF-010] rebuilds an idle non-adjacent external index without emitting a selection', async () => {
+  it('rebuilds an idle non-adjacent external index without emitting a selection', async () => {
     const items = Array.from({ length: 6 }, (_, index) => previewItem(`https://example.com/window-${index}.png`));
     let selectedIndex = 2;
     const savedIndices: number[] = [];
@@ -932,7 +932,7 @@ describe('Image preview', () => {
     expect(savedIndices).toEqual([4]);
   });
 
-  it('[REG-PERF-010] keeps the ring usable after a non-adjacent external rebuild', async () => {
+  it('keeps the ring usable after a non-adjacent external rebuild', async () => {
     const items = Array.from({ length: 6 }, (_, index) => previewItem(`https://example.com/fenced-${index}.png`));
     let selectedIndex = 2;
     const savedIndices: number[] = [];
@@ -966,7 +966,7 @@ describe('Image preview', () => {
     expect(savedIndices).toEqual([4, 5]);
   });
 
-  it('[REG-PERF-010] owns continuous middle transitions and both ring edges without losing logical order', async () => {
+  it('owns continuous middle transitions and both ring edges without losing logical order', async () => {
     const items = Array.from({ length: 7 }, (_, index) => previewItem(`https://example.com/ordered-${index}.png`));
     let selectedIndex = 0;
     const savedIndices: number[] = [];
@@ -1001,7 +1001,7 @@ describe('Image preview', () => {
     expect(mockZoomResets.mock.calls.map(([index]) => Number(index))).toEqual([0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1]);
   });
 
-  it('REG-TOPIC-031 settles an immediate cache hit only after the image is displayed', async () => {
+  it('settles an immediate cache hit only after the image is displayed', async () => {
     const view = await render(
       <ImagePreviewModal
         preview={previewProps([
@@ -1015,7 +1015,7 @@ describe('Image preview', () => {
     expect(view.queryByText('图片加载失败')).toBeNull();
   });
 
-  it('[REG-TOPIC-048] publishes fullscreen readiness only after the original is displayed', async () => {
+  it('publishes fullscreen readiness only after the original is displayed', async () => {
     const originalUrl = 'https://example.com/fullscreen-ready-original.png';
     const view = await render(
       <ImagePreviewModal
@@ -1080,7 +1080,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('[REG-TOPIC-046] handles a real horizontal gesture without looping and toggles the centered chrome on a single tap', async () => {
+  it('handles a real horizontal gesture without looping and toggles the centered chrome on a single tap', async () => {
     const onSelect = jest.fn<(index: number) => void>();
     const view = await render(
       <ImagePreviewModal
@@ -1127,7 +1127,7 @@ describe('Image preview', () => {
     expect(view.getByLabelText('保存图片')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-052] reopens a previously displayed original without restoring its spinner', async () => {
+  it('reopens a previously displayed original without restoring its spinner', async () => {
     jest.useFakeTimers();
     try {
       const preview = previewProps([previewItem('https://example.com/reopen-displayed.png')]);
@@ -1229,7 +1229,7 @@ describe('Image preview', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-095] applies the latest requested index after the active transition settles', async () => {
+  it('applies the latest requested index after the active transition settles', async () => {
     const items = Array.from({ length: 4 }, (_, index) => previewItem(`https://example.com/queued-${index}.png`));
     const onSelect = jest.fn<(index: number) => void>();
     const view = await render(<ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect })} />);
@@ -1248,7 +1248,7 @@ describe('Image preview', () => {
     expect(view.getByText('2/4')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-095] queues a rapid physical swipe without disturbing the active transition', async () => {
+  it('queues a rapid physical swipe without disturbing the active transition', async () => {
     const items = Array.from({ length: 5 }, (_, index) => previewItem(`https://example.com/rapid-${index}.png`));
     const onSelect = jest.fn<(index: number) => void>();
     const view = await render(<ImagePreviewModal preview={previewProps(items, 1)} {...callbacks({ onSelect })} />);
@@ -1265,7 +1265,7 @@ describe('Image preview', () => {
     expect(view.getByText('4/5')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-095] rebuilds to the latest external index only after the active transition settles', async () => {
+  it('rebuilds to the latest external index only after the active transition settles', async () => {
     const items = Array.from({ length: 4 }, (_, index) => previewItem(`https://example.com/external-${index}.png`));
     const onSelect = jest.fn<(index: number) => void>();
     const modal = (index: number) => (
@@ -1312,7 +1312,7 @@ describe('Image preview', () => {
     expect(view.getByText('保存')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-032] settles a stalled active preview within the 30 second budget', async () => {
+  it('settles a stalled active preview within the 30 second budget', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => {
       diagnosticLines.push(line);
@@ -1353,7 +1353,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('[REG-TOPIC-032] treats advancing bytes as progress and times out only after 30 seconds without progress', async () => {
+  it('treats advancing bytes as progress and times out only after 30 seconds without progress', async () => {
     jest.useFakeTimers();
     try {
       const view = await render(
@@ -1514,7 +1514,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-020 defers incompatible SVG recovery until the page is active', async () => {
+  it('defers incompatible SVG recovery until the page is active', async () => {
     const secondUrl = 'https://example.com/dynamic-preview.svg';
     let resolveFetch: ((response: Response) => void) | undefined;
     const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
@@ -1556,7 +1556,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('[REG-PERF-010][REG-TOPIC-075] releases SVG artifact work when its logical page leaves the physical window', async () => {
+  it('releases SVG artifact work when its logical page leaves the physical window', async () => {
     const imageUrl = 'https://example.com/preview-unmounted-native-late.svg';
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="460"><text>late</text></svg>';
     let resolveNativeDocument: ((value: { base64: string }) => void) | undefined;
@@ -1596,7 +1596,7 @@ describe('Image preview', () => {
     expect(view.queryByTestId('compatible-svg-document-view')).toBeNull();
   });
 
-  it('REG-TOPIC-018 renders an active incompatible SVG in the isolated document view', async () => {
+  it('renders an active incompatible SVG in the isolated document view', async () => {
     const imageUrl = 'https://example.com/active-dynamic.svg';
     const bodyPosterUrl = 'file:///cache/complex-svg-poster.png';
     const fetchSpy = jest
@@ -1635,7 +1635,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-045 keeps Chromium fixed outside zoom and hides it behind the poster', async () => {
+  it('keeps Chromium fixed outside zoom and hides it behind the poster', async () => {
     const imageUrl = 'https://example.com/zoomed-dynamic.svg';
     const fetchSpy = jest
       .spyOn(global, 'fetch')
@@ -1701,7 +1701,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-043 keeps a rebuilt animation poster when the document settles and the page deactivates', async () => {
+  it('keeps a rebuilt animation poster when the document settles and the page deactivates', async () => {
     const imageUrl = 'https://example.com/deferred-dynamic.svg';
     const items = [previewItem(imageUrl), previewItem('https://example.com/second.png')];
     const sharedCallbacks = callbacks();
@@ -1760,7 +1760,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-018 uses the recovered artifact poster when no body poster was supplied', async () => {
+  it('uses the recovered artifact poster when no body poster was supplied', async () => {
     const imageUrl = 'https://example.com/catalog-dynamic.svg';
     const fetchSpy = jest
       .spyOn(global, 'fetch')
@@ -1785,7 +1785,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-018 restores the body poster while an SVG document view remounts', async () => {
+  it('restores the body poster while an SVG document view remounts', async () => {
     const imageUrl = 'https://example.com/revisit-dynamic.svg';
     const bodyPosterUrl = 'file:///cache/revisit-body-poster.png';
     const items = [previewItem(imageUrl, bodyPosterUrl), previewItem('https://example.com/second.png')];
@@ -1827,7 +1827,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-018 sizes a cached SVG preview from the artifact before mounting its document view', async () => {
+  it('sizes a cached SVG preview from the artifact before mounting its document view', async () => {
     const imageUrl = 'https://example.com/cached-dynamic.svg';
     mockRenderSvgPoster.mockResolvedValueOnce({
       documentHeight: 4_600,
@@ -1880,7 +1880,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-043 keeps a static incompatible SVG on its poster without mounting Chromium', async () => {
+  it('keeps a static incompatible SVG on its poster without mounting Chromium', async () => {
     const imageUrl = 'https://example.com/static-report.svg';
     const fetchSpy = jest
       .spyOn(global, 'fetch')
@@ -1932,7 +1932,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-043 retries a failed static poster rebuild without refetching the SVG', async () => {
+  it('retries a failed static poster rebuild without refetching the SVG', async () => {
     const imageUrl = 'https://example.com/evicted-static-report.svg';
     mockRenderSvgPoster
       .mockResolvedValueOnce({
@@ -1990,7 +1990,7 @@ describe('Image preview', () => {
     }
   });
 
-  it('REG-TOPIC-019 keeps NodeSeek request identity private and session-scoped', async () => {
+  it('keeps NodeSeek request identity private and session-scoped', async () => {
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
     const sessionIdentity = mediaSessionIdentityForSource('nodeseek', { ...initialForumSessionEpochs, nodeseek: 4 });
     const view = await render(
@@ -2016,7 +2016,7 @@ describe('Image preview', () => {
     expect(view.getByTestId('preview-image-0').props.source.headers).not.toHaveProperty('Cookie');
   });
 
-  it('[REG-ACCOUNT-029][REG-TOPIC-041] replaces the request and resets zoom when its media epoch changes', async () => {
+  it('replaces the request and resets zoom when its media epoch changes', async () => {
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
     const secondImageUrl = 'https://www.nodeseek.com/uploads/second-private-topic.png';
     const epochFourIdentity = mediaSessionIdentityForSource('nodeseek', { ...initialForumSessionEpochs, nodeseek: 4 });

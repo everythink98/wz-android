@@ -157,7 +157,7 @@ describe('NodeImage auth controller', () => {
     expect(finishSurface).toHaveBeenCalledWith('close-button');
   });
 
-  it('REG-ACCOUNT-040 settles a stalled session check without starting Connect', async () => {
+  it('settles a stalled session check without starting Connect', async () => {
     jest.useFakeTimers();
     const { hook } = await openController();
     const stopLoading = jest.fn();
@@ -176,7 +176,7 @@ describe('NodeImage auth controller', () => {
     expect(hook.result.current.panel.error).toContain('本次未发起 NodeSeek Connect');
   });
 
-  it('REG-ACCOUNT-040 distinguishes a Connect timeout before the quota call starts', async () => {
+  it('distinguishes a Connect timeout before the quota call starts', async () => {
     jest.useFakeTimers();
     const { hook } = await openController();
 
@@ -199,7 +199,7 @@ describe('NodeImage auth controller', () => {
     expect(hook.result.current.panel.error).not.toContain('未占用');
   });
 
-  it('REG-ACCOUNT-040 reports an unknown Connect result after the one quota call starts', async () => {
+  it('reports an unknown Connect result after the one quota call starts', async () => {
     jest.useFakeTimers();
     const { hook } = await openController();
     const postMessage = jest.fn();
@@ -234,7 +234,7 @@ describe('NodeImage auth controller', () => {
     expect(postMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('REG-ACCOUNT-040 settles a stalled NodeImage verification phase', async () => {
+  it('settles a stalled NodeImage verification phase', async () => {
     jest.useFakeTimers();
     const { hook } = await openController();
     (hook.result.current.panel.webViewRef as { current: unknown }).current = {

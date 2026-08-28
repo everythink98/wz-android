@@ -760,7 +760,7 @@ describe('background notification digest', () => {
         state.sources.nodeseek = { ...state.sources.nodeseek, identityKey: 'nodeseek:8' };
       }
     ]
-  ])('[REG-ACCOUNT-041] stops before private list when %s during the health probe', async (_name, mutate) => {
+  ])('stops before private list when %s during the health probe', async (_name, mutate) => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -812,7 +812,7 @@ describe('background notification digest', () => {
     expect(state.sources.nodeseek.notificationIdentifier).toBe('existing-digest');
   });
 
-  it('[REG-ACCOUNT-041] stops pagination before page two when notification intent changes after page one', async () => {
+  it('stops pagination before page two when notification intent changes after page one', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -852,7 +852,7 @@ describe('background notification digest', () => {
   });
 
   it.each(['identity becomes unknown', 'an auth surface opens'])(
-    '[REG-ACCOUNT-041] stops foreground private transport when %s after access probing',
+    'stops foreground private transport when %s after access probing',
     async () => {
       const state = defaultNotificationState();
       state.globalEnabled = true;
@@ -895,7 +895,7 @@ describe('background notification digest', () => {
     }
   );
 
-  it('[REG-ACCOUNT-041] preserves the previous Android digest when private access changes while presenting a replacement', async () => {
+  it('preserves the previous Android digest when private access changes while presenting a replacement', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -967,7 +967,7 @@ describe('background notification digest', () => {
     expect(state.sources.nodeseek.notificationIdentifier).toBe('existing-digest');
   });
 
-  it('[REG-NOTIFY-024] restores the previous store identifier when private access changes after identifier persistence', async () => {
+  it('restores the previous store identifier when private access changes after identifier persistence', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -1040,7 +1040,7 @@ describe('background notification digest', () => {
     expect(visibleNotifications).toEqual(new Set(['existing-digest']));
   });
 
-  it('[REG-NOTIFY-024] rolls back store and delivered ids when exact previous dismissal fails', async () => {
+  it('rolls back store and delivered ids when exact previous dismissal fails', async () => {
     const state = defaultNotificationState();
     const previousIdentifier = 'wz-message-nodeseek';
     state.globalEnabled = true;
@@ -1348,7 +1348,7 @@ describe('background notification digest', () => {
     expect(recordedIds).toEqual(items.slice(0, 60).map((item) => item.id));
   });
 
-  it('[REG-NOTIFY-008] retries the same remote id after notification or identifier persistence fails', async () => {
+  it('retries the same remote id after notification or identifier persistence fails', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -1422,7 +1422,7 @@ describe('background notification digest', () => {
         state.sources.nodeseek.identityKey = 'nodeseek:8';
       }
     ]
-  ])('[REG-NOTIFY-009] retracts the native ack when %s before the compound commit', async (_scenario, changeState) => {
+  ])('retracts the native ack when %s before the compound commit', async (_scenario, changeState) => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -1477,7 +1477,7 @@ describe('background notification digest', () => {
     expect(state.sources.nodeseek.notificationIdentifier).toBeUndefined();
   });
 
-  it('[REG-NOTIFY-024] retracts a digest when notification intent changes while Android is presenting it', async () => {
+  it('retracts a digest when notification intent changes while Android is presenting it', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -1538,7 +1538,7 @@ describe('background notification digest', () => {
     expect(state.sources.nodeseek.deliveredIds).toEqual(['old']);
   });
 
-  it('[REG-NOTIFY-024] retracts a native presentation that finishes after the worker deadline', async () => {
+  it('retracts a native presentation that finishes after the worker deadline', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.yaohuo = {
@@ -1613,7 +1613,7 @@ describe('background notification digest', () => {
     expect(state.sources.yaohuo.deliveredIds).toEqual(['old']);
   });
 
-  it('[REG-NOTIFY-024] does not commit delivered ids before native presentation acknowledgement', async () => {
+  it('does not commit delivered ids before native presentation acknowledgement', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -1702,7 +1702,7 @@ describe('background notification digest', () => {
     });
   });
 
-  it('[REG-NOTIFY-024] preserves the staged digest when a compound commit succeeds after the deadline', async () => {
+  it('preserves the staged digest when a compound commit succeeds after the deadline', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -1784,7 +1784,7 @@ describe('background notification digest', () => {
   });
 
   it.each(['not-committed', 'rejected'] as const)(
-    '[REG-NOTIFY-024] dismisses the staged digest only after a late compound commit is %s',
+    'dismisses the staged digest only after a late compound commit is %s',
     async (outcome) => {
       const state = defaultNotificationState();
       state.globalEnabled = true;
@@ -1900,7 +1900,7 @@ describe('background notification digest', () => {
     }
   );
 
-  it('[REG-NOTIFY-024] preserves a committed staged digest when the deadline wins the post-commit check', async () => {
+  it('preserves a committed staged digest when the deadline wins the post-commit check', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -1978,7 +1978,7 @@ describe('background notification digest', () => {
     });
   });
 
-  it('[REG-NOTIFY-024] keeps the identity lane owned by a pending commit after the worker deadline returns', async () => {
+  it('keeps the identity lane owned by a pending commit after the worker deadline returns', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -2163,7 +2163,7 @@ describe('background notification digest', () => {
     expect(JSON.stringify(presentDigest.mock.calls[0]?.[1])).not.toContain('标题');
   });
 
-  it('[REG-NOTIFY-024] serializes concurrent delivery for the same source identity', async () => {
+  it('serializes concurrent delivery for the same source identity', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
     state.sources.nodeseek = {
@@ -2247,7 +2247,7 @@ describe('background notification digest', () => {
     expect(events).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
   });
 
-  it('[REG-NOTIFY-024] reconciles crash-orphan slots before the next eligible source read', async () => {
+  it('reconciles crash-orphan slots before the next eligible source read', async () => {
     const state = defaultNotificationState();
     const currentIdentifier = 'wz-message-nodeseek-nodeseek%3A7-a';
     state.globalEnabled = true;

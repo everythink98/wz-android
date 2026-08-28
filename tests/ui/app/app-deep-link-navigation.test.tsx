@@ -42,7 +42,7 @@ describe('app deep-link navigation', () => {
   });
 
   it.each(destinationCases)(
-    '[REG-NAV-003] sends the complete %s destination to the Topic route',
+    'sends the complete %s destination to the Topic route',
     async (_, url, topic, targetReply) => {
       let onUrl: ((event: { url: string }) => void) | undefined;
       mockGetInitialURL.mockResolvedValue(null);
@@ -69,7 +69,7 @@ describe('app deep-link navigation', () => {
   );
 
   it.each(destinationCases.slice(0, 2))(
-    '[REG-SEARCH-028] opens the current %s Custom Tab topic URL directly',
+    'opens the current %s Custom Tab topic URL directly',
     async (_, url, topic, targetReply) => {
       let onUrl: ((event: { url: string }) => void) | undefined;
       mockGetInitialURL.mockResolvedValue(null);
@@ -95,7 +95,7 @@ describe('app deep-link navigation', () => {
     }
   );
 
-  it('[REG-SEARCH-028] replays a cold-start Custom Tab topic after navigation becomes ready', async () => {
+  it('replays a cold-start Custom Tab topic after navigation becomes ready', async () => {
     const remove = jest.fn();
     const [, url, topic, targetReply] = destinationCases[1];
     mockGetInitialURL.mockResolvedValue(url);
@@ -122,7 +122,7 @@ describe('app deep-link navigation', () => {
     'https://www.google.com/search?q=site%3Alinux.do+codex',
     'https://linux.do/u/alice',
     'https://example.com/t/topic/456'
-  ])('[REG-SEARCH-028] rejects a non-topic Custom Tab URL: %s', async (url) => {
+  ])('rejects a non-topic Custom Tab URL: %s', async (url) => {
     let onUrl: ((event: { url: string }) => void) | undefined;
     mockGetInitialURL.mockResolvedValue(null);
     mockAddEventListener.mockImplementation((_type, listener) => {
@@ -142,7 +142,7 @@ describe('app deep-link navigation', () => {
     await act(async () => hook.unmount());
   });
 
-  it('[REG-NAV-003] replays the complete cold-start destination after navigation becomes ready', async () => {
+  it('replays the complete cold-start destination after navigation becomes ready', async () => {
     const remove = jest.fn();
     const [, url, topic, targetReply] = destinationCases[0];
     mockGetInitialURL.mockResolvedValue(internalTopicLink(url));

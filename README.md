@@ -71,6 +71,6 @@ npm run android
 
 `npm run android` 需要 Expo development build，不能用 Expo Go 验证。需要 Android Studio 提供 Android SDK / 模拟器，或准备一台已开启 USB 调试的 Android 手机。
 
-开发前先在 [产品地图](docs/product-map.md) 中选择受影响的能力 ID，并沿用户入口、代码 seam、自动测试和模拟器路径展开回归；已经逃逸过的问题及精确 oracle 见 [回归语料库](docs/regression-corpus.md)，代码 ownership 与质量门禁见 [代码与项目结构规范](docs/code-standards.md)，实现与数据边界见 [架构说明](docs/architecture.md)，具体验收规则见 [测试标准](docs/testing-standard.md)。
+产品/runtime 改动先在 [产品地图](docs/product-map.md) 中选择受影响的能力 ID，并沿用户入口、代码 seam、自动测试和模拟器路径展开回归；纯测试、文档或治理改动记录受影响的 evidence owner。历史逃逸问题的状态、根因与当前归属见 [回归语料库](docs/regression-corpus.md)，代码 ownership 与结构门禁见 [代码与项目结构规范](docs/code-standards.md)，实现与数据边界见 [架构说明](docs/architecture.md)，测试方法与证据层见 [测试标准](docs/testing-standard.md)。
 
 构建、签名、覆盖安装、Smoke、Replay 和发布命令统一见 [维护手册](docs/operator-runbook.md)。不要提交 keystore、`.env.release.local` 或明文凭据。

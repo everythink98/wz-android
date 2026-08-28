@@ -34,7 +34,7 @@ describe('topic query pagination', () => {
     ).toBe(false);
   });
 
-  it('[REG-TOPIC-062] accepts an advancing previous cursor and rejects a repeated one', () => {
+  it('accepts an advancing previous cursor and rejects a repeated one', () => {
     expect(
       hasPreviousReplyPage({
         requestedPage: 16,
@@ -53,7 +53,7 @@ describe('topic query pagination', () => {
     ).toBe(false);
   });
 
-  it('[REG-TOPIC-077] requires explicit completeness before enabling full-collection behavior', () => {
+  it('requires explicit completeness before enabling full-collection behavior', () => {
     const detail: TopicDetail = {
       source: 'v2ex',
       id: '1',
@@ -79,7 +79,7 @@ describe('topic query pagination', () => {
     expect(firstReplyData(complete, 'newest')?.pages[0].items).toHaveLength(1);
   });
 
-  it('[REG-TOPIC-077] preserves every adapter-approved row when pages share a generic reply key', () => {
+  it('preserves every adapter-approved row when pages share a generic reply key', () => {
     const first: Reply = {
       author: 'first-source-row',
       floor: 7,

@@ -36,7 +36,7 @@ describe('reader data controller persistence', () => {
     mockSaveReaderSettings.mockResolvedValue(undefined);
   });
 
-  it('[REG-PERF-001] persists the bounded history snapshot through the existing save queue', async () => {
+  it('persists the bounded history snapshot through the existing save queue', async () => {
     const hook = await renderHook(() => useReaderRuntime({ notify: jest.fn() }));
     await waitFor(() => expect(hook.result.current.readerDataLoaded).toBe(true));
 
@@ -51,7 +51,7 @@ describe('reader data controller persistence', () => {
     expect(mockSaveCleanReaderData.mock.calls[0]?.[0].history['nodeseek:reader-data-race']?.visitCount).toBe(1);
   });
 
-  it('[REG-DATA-002] persists a full snapshot after an older record save fails before a settings change', async () => {
+  it('persists a full snapshot after an older record save fails before a settings change', async () => {
     const firstSave = Promise.withResolvers<ReaderData>();
     mockSaveCleanReaderData.mockImplementationOnce(() => firstSave.promise);
     const notify = jest.fn();
@@ -78,7 +78,7 @@ describe('reader data controller persistence', () => {
     expect(mockSaveReaderSettings).not.toHaveBeenCalled();
   });
 
-  it('[REG-DATA-003] suspends later mutations when a failed save cannot restore its previous snapshot', async () => {
+  it('suspends later mutations when a failed save cannot restore its previous snapshot', async () => {
     mockSaveCleanReaderData.mockRejectedValueOnce(
       new AggregateError(
         [new Error('settings write failed'), new Error('snapshot rollback failed')],
@@ -107,7 +107,7 @@ describe('reader data controller persistence', () => {
     expect(notify).toHaveBeenLastCalledWith('本机资料读取失败，请先导入备份再修改本机资料。');
   });
 
-  it('[REG-DATA-003] cancels already queued saves after an earlier save cannot restore its snapshot', async () => {
+  it('cancels already queued saves after an earlier save cannot restore its snapshot', async () => {
     const firstSave = Promise.withResolvers<ReaderData>();
     mockSaveCleanReaderData.mockImplementationOnce(() => firstSave.promise);
     const notify = jest.fn();
@@ -139,7 +139,7 @@ describe('reader data controller persistence', () => {
     expect(Object.keys(hook.result.current.readerData.favorites)).toHaveLength(0);
   });
 
-  it('[REG-DATA-004] force-writes an identical backup while recovering from an unknown disk state', async () => {
+  it('force-writes an identical backup while recovering from an unknown disk state', async () => {
     let physicalWrites = 0;
     mockSaveCleanReaderData
       .mockRejectedValueOnce(

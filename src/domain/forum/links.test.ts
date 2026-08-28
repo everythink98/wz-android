@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseForumTopicDestination, parseInternalTopicOpenLink } from './links';
 
 describe('forum links', () => {
-  it('[REG-NOTIFY-045] keeps the exact Yaohuo full-reply floor from the original link', () => {
+  it('keeps the exact Yaohuo full-reply floor from the original link', () => {
     expect(
       parseForumTopicDestination(
         'https://www.yaohuo.me/bbs/book_re.aspx?classid=177&id=1560939&tofloor=90&fromuserid=1000'
@@ -18,7 +18,7 @@ describe('forum links', () => {
     expect(parseForumTopicDestination('https://evil.example/bbs/book_re.aspx?id=1&tofloor=90')).toBeNull();
   });
 
-  it('[REG-TOPIC-062] preserves native topic anchors for all four sources', () => {
+  it('preserves native topic anchors for all four sources', () => {
     expect(parseForumTopicDestination('https://www.nodeseek.com/post-123-16#155')).toMatchObject({
       topic: { source: 'nodeseek', id: '123' },
       targetReply: { floor: 155, pageHint: 16 }
@@ -58,12 +58,9 @@ describe('forum links', () => {
       { source: 'yaohuo', id: '321' },
       { floor: 90 }
     ]
-  ])(
-    '[REG-NAV-003] preserves the complete %s destination through the internal Topic link',
-    (_, url, topic, targetReply) => {
-      const deepLink = `exp+wz-android://open-topic?url=${encodeURIComponent(url)}`;
+  ])('preserves the complete %s destination through the internal Topic link', (_, url, topic, targetReply) => {
+    const deepLink = `exp+wz-android://open-topic?url=${encodeURIComponent(url)}`;
 
-      expect(parseInternalTopicOpenLink(deepLink)).toMatchObject({ topic, targetReply });
-    }
-  );
+    expect(parseInternalTopicOpenLink(deepLink)).toMatchObject({ topic, targetReply });
+  });
 });

@@ -16,7 +16,7 @@ function poster(width: number, height: number, uri: string, documentWidth = widt
 }
 
 describe('compatible remote image sources', () => {
-  it('[REG-TOPIC-038] preserves the original complex SVG document while producing a poster artifact', async () => {
+  it('preserves the original complex SVG document while producing a poster artifact', async () => {
     const source = { uri: 'https://images.example.com/report.svg' };
     const fetcher = vi.fn<Fetcher>(
       async () =>
@@ -44,7 +44,7 @@ describe('compatible remote image sources', () => {
     expect(cachedCompatibleSvgArtifact(source)).toEqual(artifact);
   });
 
-  it('[REG-TOPIC-038] does not strip link elements or otherwise rewrite accepted SVG bytes', async () => {
+  it('does not strip link elements or otherwise rewrite accepted SVG bytes', async () => {
     const svg =
       '\uFEFF<svg width="10" height="5"><a href="https://example.com/?value=1&gt;0"><text>linked</text></a></svg>\n';
     const artifact = await recoverCompatibleSvgArtifact(
@@ -60,7 +60,7 @@ describe('compatible remote image sources', () => {
     );
   });
 
-  it('[REG-TOPIC-038] single-flights poster rendering and reuses the cached artifact with managed request headers intact', async () => {
+  it('single-flights poster rendering and reuses the cached artifact with managed request headers intact', async () => {
     const source = {
       headers: {
         'X-WZ-Forum-Media-Source': 'nodeseek',
@@ -98,7 +98,7 @@ describe('compatible remote image sources', () => {
     );
   });
 
-  it('[REG-PERF-010] keeps shared SVG work alive while another body consumer still owns it', async () => {
+  it('keeps shared SVG work alive while another body consumer still owns it', async () => {
     const source = { uri: 'https://images.example.com/shared-body-consumers.svg' };
     const firstController = new AbortController();
     const secondController = new AbortController();
@@ -138,7 +138,7 @@ describe('compatible remote image sources', () => {
     expect(renderPoster).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-PERF-010] aborts an abortable SVG fetch after its final body consumer releases', async () => {
+  it('aborts an abortable SVG fetch after its final body consumer releases', async () => {
     const controller = new AbortController();
     let workSignal: AbortSignal | undefined;
     const fetcher = vi.fn<Fetcher>(
@@ -164,7 +164,7 @@ describe('compatible remote image sources', () => {
     await vi.waitFor(() => expect(renderPoster).not.toHaveBeenCalled());
   });
 
-  it('[REG-PERF-010] never starts queued SVG work after its only body consumer releases', async () => {
+  it('never starts queued SVG work after its only body consumer releases', async () => {
     const posterResolvers: ((value: ReturnType<typeof poster>) => void)[] = [];
     const blockingRenderPoster = vi.fn(
       () => new Promise<ReturnType<typeof poster>>((resolve) => posterResolvers.push(resolve))
@@ -200,7 +200,7 @@ describe('compatible remote image sources', () => {
     expect(queuedRenderPoster).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-038] rebuilds an evicted poster from the preserved SVG without another network request', async () => {
+  it('rebuilds an evicted poster from the preserved SVG without another network request', async () => {
     const source = { uri: 'https://images.example.com/evicted-poster.svg' };
     const fetcher = vi.fn<Fetcher>(
       async () =>
@@ -310,7 +310,7 @@ describe('compatible remote image sources', () => {
     expect(artifact?.dimensions).toEqual({ height: 50, width: 100 });
   });
 
-  it('[REG-TOPIC-038] ignores SVG-shaped comments before the real document root', async () => {
+  it('ignores SVG-shaped comments before the real document root', async () => {
     const svg = '<!-- <svg viewBox="0 0 1 100"> --><svg viewBox="0 0 2 1"></svg>';
     const artifact = await recoverCompatibleSvgArtifact(
       { uri: 'https://images.example.com/root-comment.svg' },
@@ -323,7 +323,7 @@ describe('compatible remote image sources', () => {
     expect(artifact?.dimensions).toEqual({ height: 1, width: 2 });
   });
 
-  it('[REG-TOPIC-038] uses the native validated document dimensions instead of decoding raw attributes twice', async () => {
+  it('uses the native validated document dimensions instead of decoding raw attributes twice', async () => {
     const svg = '<svg width="100" height="&#50;00" viewBox="0 0 1 1"></svg>';
     const artifact = await recoverCompatibleSvgArtifact(
       { uri: 'https://images.example.com/entity-dimensions.svg' },
@@ -351,7 +351,7 @@ describe('compatible remote image sources', () => {
     expect(cachedCompatibleSvgArtifact(source)).toBeNull();
   });
 
-  it('[REG-PERF-009] keeps render-safe reads pure while recovery promotes the 32-entry LRU', async () => {
+  it('keeps render-safe reads pure while recovery promotes the 32-entry LRU', async () => {
     const renderPoster = async (_svgBase64: string, cacheKey: string) => poster(1, 1, `file:///cache/${cacheKey}.png`);
     const recover = (uri: string) =>
       recoverCompatibleSvgArtifact(
@@ -388,7 +388,7 @@ describe('compatible remote image sources', () => {
     expect(cachedCompatibleSvgArtifact({ uri: 'https://images.example.com/lru-promoted-filler-0.svg' })).toBeNull();
   });
 
-  it('[REG-TOPIC-038] bounds the complete recovery pipeline before downloads or base64 poster payloads accumulate', async () => {
+  it('bounds the complete recovery pipeline before downloads or base64 poster payloads accumulate', async () => {
     let activeFetches = 0;
     let maxActiveFetches = 0;
     const gate = new Promise<void>((resolve) => setTimeout(resolve, 25));
@@ -431,7 +431,7 @@ describe('compatible remote image sources', () => {
     expect(fetcher).toHaveBeenCalledTimes(32);
   });
 
-  it('[REG-TOPIC-038] gives a late download only the recovery deadline that remains', async () => {
+  it('gives a late download only the recovery deadline that remains', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(0);
     const posterResolvers: ((value: ReturnType<typeof poster>) => void)[] = [];
     const recoveries: Promise<unknown>[] = [];
@@ -533,7 +533,7 @@ describe('compatible remote image sources', () => {
     }
   });
 
-  it('[REG-TOPIC-038] refreshes an existing poster without shrinking a full artifact LRU', async () => {
+  it('refreshes an existing poster without shrinking a full artifact LRU', async () => {
     const recover = (uri: string) =>
       recoverCompatibleSvgArtifact(
         { uri },
@@ -591,7 +591,7 @@ describe('compatible remote image sources', () => {
     expect(cachedCompatibleSvgArtifact(source)).toBeNull();
   });
 
-  it('[REG-TOPIC-034] accepts an exact 1 MiB SVG without rewriting or rescanning its body', async () => {
+  it('accepts an exact 1 MiB SVG without rewriting or rescanning its body', async () => {
     const svg = complexSvg.replace('</svg>', `${' '.repeat(1024 * 1024 - Buffer.byteLength(complexSvg))}</svg>`);
     const renderPoster = vi.fn(async () => poster(1, 1, 'file:///cache/max.svg.png'));
 
@@ -608,7 +608,7 @@ describe('compatible remote image sources', () => {
     expect(renderPoster).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-034] rejects an oversized Blob before copying it into a JS ArrayBuffer', async () => {
+  it('rejects an oversized Blob before copying it into a JS ArrayBuffer', async () => {
     const close = vi.fn();
     const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
     const response = {

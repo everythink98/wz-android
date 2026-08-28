@@ -171,7 +171,7 @@ describe('User screen behavior', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-039] keeps an unresolved NodeSeek user in the app without exposing follow', async () => {
+  it('keeps an unresolved NodeSeek user in the app without exposing follow', async () => {
     const requestedUser: UserReference = {
       source: 'nodeseek',
       username: 'xy',

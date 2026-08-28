@@ -128,7 +128,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     });
   });
 
-  it('[REG-ACCOUNT-031] does not start a linux.do Level read while identity is pending', async () => {
+  it('does not start a linux.do Level read while identity is pending', async () => {
     const getLevelProfile = jest.fn(async () => ({ username: 'alice' }) as LinuxDoLevelProfile);
     const { hook } = await renderAccountController({
       linuxDoIdentityPending: true,
@@ -140,7 +140,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     expect(hook.result.current.linuxDoLevelBusy).toBe(false);
   });
 
-  it('[REG-LINUXDO-006] resumes the exact active Level Query once after verification', async () => {
+  it('resumes the exact active Level Query once after verification', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest
       .fn<ReadGateway['getLinuxDoLevelProfile']>()
@@ -182,7 +182,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     });
   });
 
-  it('[REG-LINUXDO-006] aborts Level recovery and makes it stale after leaving More', async () => {
+  it('aborts Level recovery and makes it stale after leaving More', async () => {
     let recoverySignal: AbortSignal | undefined;
     const getLevelProfile = jest
       .fn<ReadGateway['getLinuxDoLevelProfile']>()
@@ -228,7 +228,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     });
   });
 
-  it('[REG-VERIFICATION-001] retains Level recovery across explicit repeated checks', async () => {
+  it('retains Level recovery across explicit repeated checks', async () => {
     const profile = { username: 'alice' } as LinuxDoLevelProfile;
     const getLevelProfile = jest
       .fn<ReadGateway['getLinuxDoLevelProfile']>()
@@ -313,7 +313,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     expect(getLevelProfile).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-ACCOUNT-031] accepts only same-origin NodeSeek messages and never consumes page cookies', async () => {
+  it('accepts only same-origin NodeSeek messages and never consumes page cookies', async () => {
     const setNodeSeekWebViewUserAgent = jest.fn();
     const userAgentRef = ref('');
     const commitNodeSeekWebViewUserAgent = jest.fn((userAgent: string) => {
@@ -384,7 +384,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     expect(reconcileAccountStatus).toHaveBeenNthCalledWith(2, 'nodeseek');
   });
 
-  it('[REG-ACCOUNT-035] exposes the authoritative NodeSeek result to recovery orchestration', async () => {
+  it('exposes the authoritative NodeSeek result to recovery orchestration', async () => {
     const changed = {
       status: 'changed' as const,
       session: loggedInSession
@@ -498,7 +498,7 @@ describe('account workflows with canonical identity reconciliation', () => {
     expect(notify.mock.calls.filter(([message]) => message === '已确认 NodeSeek当前账号。')).toHaveLength(1);
   });
 
-  it('[REG-ACCOUNT-031] invokes Cookie clearing only from the explicit NodeSeek clear command', async () => {
+  it('invokes Cookie clearing only from the explicit NodeSeek clear command', async () => {
     const clearNodeSeekLoginState = jest.fn(async () => true);
     const reload = jest.fn();
     const { hook } = await renderAccountController({

@@ -20,7 +20,7 @@ function navigation(url: string) {
 }
 
 describe('CompatibleSvgDocumentView', () => {
-  it('[REG-TOPIC-038] renders one isolated local document with only a nonce-bound readiness bridge', async () => {
+  it('renders one isolated local document with only a nonce-bound readiness bridge', async () => {
     const containerStyle = { bottom: 0, left: 0, position: 'absolute' as const, right: 0, top: 0 };
     const view = await render(<CompatibleSvgDocumentView artifact={artifact()} style={containerStyle} />);
     const webViews = view.getAllByTestId('compatible-svg-document-view');
@@ -71,7 +71,7 @@ describe('CompatibleSvgDocumentView', () => {
     expect(props.onMessage).toEqual(expect.any(Function));
   });
 
-  it('[REG-TOPIC-038] permits only the local bootstrap document and rejects every external navigation scheme', async () => {
+  it('permits only the local bootstrap document and rejects every external navigation scheme', async () => {
     const view = await render(<CompatibleSvgDocumentView artifact={artifact()} />);
     const guard = view.getByTestId('compatible-svg-document-view').props.onShouldStartLoadWithRequest as (request: {
       isTopFrame: boolean;
@@ -89,7 +89,7 @@ describe('CompatibleSvgDocumentView', () => {
     expect(guard({ isTopFrame: false, url: 'about:blank' })).toBe(false);
   });
 
-  it('[REG-TOPIC-038] fails closed before a forged artifact can become a remote image request', async () => {
+  it('fails closed before a forged artifact can become a remote image request', async () => {
     const onError = jest.fn();
     const view = await render(
       <React.StrictMode>
@@ -103,7 +103,7 @@ describe('CompatibleSvgDocumentView', () => {
     expect(onError).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-038] settles exactly once for one artifact and ignores stale events after replacement', async () => {
+  it('settles exactly once for one artifact and ignores stale events after replacement', async () => {
     const firstLoad = jest.fn();
     const firstError = jest.fn();
     const nextLoad = jest.fn();

@@ -332,7 +332,7 @@ describe('topic action query mutations', () => {
     jest.restoreAllMocks();
   });
 
-  it('[REG-WRITE-016] uses refreshed account status for the current Topic action decision', async () => {
+  it('uses refreshed account status for the current Topic action decision', async () => {
     const workflowStates = loggedInStates('linuxdo');
     const accountStates = createSiteSessionStates({
       linuxdo: { ...workflowStates.linuxdo, status: 'verifying', isVerifying: true }
@@ -349,7 +349,7 @@ describe('topic action query mutations', () => {
     });
   });
 
-  it('[REG-WRITE-065] loads LinuxDo poll capabilities inside one writable ticket', async () => {
+  it('loads LinuxDo poll capabilities inside one writable ticket', async () => {
     const fetcher = jest.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       return new Response(
@@ -393,7 +393,7 @@ describe('topic action query mutations', () => {
     expect(isWritableSessionTicketCurrent).toHaveBeenCalledTimes(6);
   });
 
-  it('[REG-WRITE-065] stops LinuxDo template accounting when the writable ticket changes after CSRF', async () => {
+  it('stops LinuxDo template accounting when the writable ticket changes after CSRF', async () => {
     let ticketCurrent = true;
     const fetcher = jest.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -425,7 +425,7 @@ describe('topic action query mutations', () => {
     expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual(['https://linux.do/session/csrf']);
   });
 
-  it('[REG-WRITE-019] treats a completed NodeSeek target as the same decision-chain outcome', async () => {
+  it('treats a completed NodeSeek target as the same decision-chain outcome', async () => {
     const completed = { ...detail, upvoted: true };
     const hook = await renderActions({ topicDetail: completed });
 
@@ -442,7 +442,7 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
   });
 
-  it('[REG-WRITE-023] blocks before optimistic state and transport when identity is unknown', async () => {
+  it('blocks before optimistic state and transport when identity is unknown', async () => {
     const { detailKey } = seedTopicCache();
     const ensureWritableSession = jest.fn(async () => {
       throw new WritableSessionBlockedError('登录状态暂时无法确认，请重试', 'identity_pending');
@@ -458,7 +458,7 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
   });
 
-  it('[REG-SOURCE-011] applies optimistic writes only to the current read-plan cache scope', async () => {
+  it('applies optimistic writes only to the current read-plan cache scope', async () => {
     const readPlanScope = 'authenticated:nodeseek:0';
     const { detailKey } = seedTopicCache(detail, [], initialForumSessionEpochs, readPlanScope);
     const legacyKey = forumQueryKeys.topic({
@@ -477,7 +477,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(legacyKey)?.collected).toBe(false);
   });
 
-  it('[REG-WRITE-023] blocks before optimistic state when identity changes during query cancellation', async () => {
+  it('blocks before optimistic state when identity changes during query cancellation', async () => {
     const { detailKey } = seedTopicCache();
     let ticketCurrent = true;
     const cancellation = Promise.withResolvers<void>();
@@ -505,7 +505,7 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
   });
 
-  it('[REG-WRITE-023] blocks before file selection and upload when identity is dirty', async () => {
+  it('blocks before file selection and upload when identity is dirty', async () => {
     const ensureWritableSession = jest.fn(async () => {
       throw new WritableSessionBlockedError('登录状态暂时无法确认，请重试', 'identity_pending');
     });
@@ -520,7 +520,7 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
   });
 
-  it('[REG-WRITE-019] rejects a duplicate reply submit before a second scoped transport is queued', async () => {
+  it('rejects a duplicate reply submit before a second scoped transport is queued', async () => {
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
     seedTopicCache();
@@ -546,7 +546,7 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-WRITE-020] reports an unexpected credential preparation failure to the user', async () => {
+  it('reports an unexpected credential preparation failure to the user', async () => {
     const notify = jest.fn();
     seedTopicCache();
     const hook = await renderActions({
@@ -565,7 +565,7 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalledWith('原站收藏已提交');
   });
 
-  it('[REG-WRITE-021] settles a confirmed reply without refreshing an inactive Topic route', async () => {
+  it('settles a confirmed reply without refreshing an inactive Topic route', async () => {
     let active = true;
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
@@ -606,7 +606,7 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
   });
 
-  it('[REG-LINUXDO-003][REG-WRITE-017][REG-TOPIC-067] marks write caches stale without a competing refetch', async () => {
+  it('marks write caches stale without a competing refetch', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -641,7 +641,7 @@ describe('topic action query mutations', () => {
     );
   });
 
-  it('[REG-WRITE-023] settles a server-confirmed write as stale when its ticket changes during refresh', async () => {
+  it('settles a server-confirmed write as stale when its ticket changes during refresh', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -695,7 +695,7 @@ describe('topic action query mutations', () => {
     ]);
   });
 
-  it('[REG-WRITE-023] preserves server confirmation without writing a newer epoch cache', async () => {
+  it('preserves server confirmation without writing a newer epoch cache', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -743,7 +743,7 @@ describe('topic action query mutations', () => {
     ]);
   });
 
-  it('[REG-WRITE-023] preserves a confirmed Yaohuo result when its ticket expires before apply', async () => {
+  it('preserves a confirmed Yaohuo result when its ticket expires before apply', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -791,7 +791,7 @@ describe('topic action query mutations', () => {
     ]);
   });
 
-  it('[REG-WRITE-023] preserves a confirmed Discourse result when its ticket expires before apply', async () => {
+  it('preserves a confirmed Discourse result when its ticket expires before apply', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -863,7 +863,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.upvoted).toBe(false);
   });
 
-  it('[REG-TOPIC-062] does not roll an old reply snapshot over a newer target window', async () => {
+  it('does not roll an old reply snapshot over a newer target window', async () => {
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
     const original = { ...editableReply, canLike: true, upvoted: false };
@@ -894,7 +894,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(repliesKey)?.pages[0]?.items).toEqual([target]);
   });
 
-  it('[REG-TOPIC-067] projects an interaction into both loaded reply orders', async () => {
+  it('projects an interaction into both loaded reply orders', async () => {
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
     const reply = { ...editableReply, canLike: true, upvoted: false };
@@ -938,7 +938,7 @@ describe('topic action query mutations', () => {
     expect(cancelQueries).toHaveBeenCalledWith({ queryKey: newestKey, exact: true });
   });
 
-  it('[REG-TOPIC-067][REG-WRITE-017] keeps the current order cache when a pending submit crosses an order change', async () => {
+  it('keeps the current order cache when a pending submit crosses an order change', async () => {
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
     const { detailKey, repliesKey } = seedTopicCache();
@@ -977,7 +977,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryState(repliesKey)?.isInvalidated).toBe(true);
   });
 
-  it('[REG-WRITE-018] snapshots optimistic mutations only when their scoped transport starts', async () => {
+  it('snapshots optimistic mutations only when their scoped transport starts', async () => {
     const firstTransport = Promise.withResolvers<unknown>();
     const secondTransport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction
@@ -1020,7 +1020,7 @@ describe('topic action query mutations', () => {
     });
   });
 
-  it('[REG-WRITE-023] does not repopulate a cleared old scope after an unconfirmed stale failure', async () => {
+  it('does not repopulate a cleared old scope after an unconfirmed stale failure', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -1163,7 +1163,7 @@ describe('topic action query mutations', () => {
       nextIdentityKey: 'nodeseek:account-a'
     }
   ])(
-    '[REG-WRITE-026] detaches an edit after $caseLabel and keeps its text out of every write path',
+    'detaches an edit after $caseLabel and keeps its text out of every write path',
     async ({ draft, nextIdentityKey }) => {
       const nodeSeekDetail = detailFor('nodeseek', {
         canCreatePost: true,
@@ -1227,7 +1227,7 @@ describe('topic action query mutations', () => {
     }
   );
 
-  it('[REG-WRITE-026] closes an inactive edit draft when its account epoch changes', async () => {
+  it('closes an inactive edit draft when its account epoch changes', async () => {
     let active = true;
     const nodeSeekDetail = detailFor('nodeseek', {
       canCreatePost: true,
@@ -1283,7 +1283,7 @@ describe('topic action query mutations', () => {
     expect(ensureWritableSession).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-WRITE-026] rechecks the exact cached reply permission before editing', async () => {
+  it('rechecks the exact cached reply permission before editing', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1326,7 +1326,7 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.topicSession.state.replyContent).toBe('缓存已不存在的正文');
   });
 
-  it('[REG-WRITE-026] fails closed on conflicting duplicate edit permissions across cached pages', async () => {
+  it('fails closed on conflicting duplicate edit permissions across cached pages', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1365,7 +1365,7 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.topicSession.state.replyContent).toBe('跨页权限冲突时保留的正文');
   });
 
-  it('[REG-WRITE-026] immediately detaches an edit when refreshed replies revoke or remove it', async () => {
+  it('immediately detaches an edit when refreshed replies revoke or remove it', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1408,7 +1408,7 @@ describe('topic action query mutations', () => {
     expect(mockGetDocument).not.toHaveBeenCalled();
   });
 
-  it('[REG-WRITE-026] rechecks edit permission after query cancellation and before transport', async () => {
+  it('rechecks edit permission after query cancellation and before transport', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1447,7 +1447,7 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.topicSession.state.replyContent).toBe('取消查询期间失效的正文');
   });
 
-  it('[REG-WRITE-026] rechecks edit permission after Discourse runtime preparation and before transport', async () => {
+  it('rechecks edit permission after Discourse runtime preparation and before transport', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1487,7 +1487,7 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.topicSession.state.replyContent).toBe('凭据准备期间失效的正文');
   });
 
-  it('[REG-WRITE-026] rechecks upload edit permission after Discourse runtime preparation and before transport', async () => {
+  it('rechecks upload edit permission after Discourse runtime preparation and before transport', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1535,46 +1535,43 @@ describe('topic action query mutations', () => {
   it.each([
     { caseLabel: 'permission revoked', invalidation: 'revoked' as const },
     { caseLabel: 'reply missing', invalidation: 'missing' as const }
-  ])(
-    '[REG-WRITE-026] rejects a stale edit before NodeImage credentials and file selection ($caseLabel)',
-    async ({ invalidation }) => {
-      const reply: Reply = {
-        author: 'alice',
-        canEdit: true,
-        commentId: 101,
-        contentHtml: '<p>old</p>',
-        contentMarkdown: 'old',
-        createdAt: '2026-07-20T00:01:00.000Z',
-        floor: 2
-      };
-      const nodeSeekDetail = detailFor('nodeseek', { canCreatePost: true, polls: [], replies: [reply] });
-      const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
-      seedTopicCache(nodeSeekDetail, [reply]);
-      const hook = await renderActions({
-        ensureNodeImageApiKey,
-        topicDetail: nodeSeekDetail,
-        topicReplies: [reply]
-      });
+  ])('rejects a stale edit before NodeImage credentials and file selection ($caseLabel)', async ({ invalidation }) => {
+    const reply: Reply = {
+      author: 'alice',
+      canEdit: true,
+      commentId: 101,
+      contentHtml: '<p>old</p>',
+      contentMarkdown: 'old',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 2
+    };
+    const nodeSeekDetail = detailFor('nodeseek', { canCreatePost: true, polls: [], replies: [reply] });
+    const ensureNodeImageApiKey = jest.fn(async () => 'must-not-be-read');
+    seedTopicCache(nodeSeekDetail, [reply]);
+    const hook = await renderActions({
+      ensureNodeImageApiKey,
+      topicDetail: nodeSeekDetail,
+      topicReplies: [reply]
+    });
 
-      await act(async () => {
-        await hook.result.current.actions.editReply(reply);
-      });
-      seedTopicCache(nodeSeekDetail, invalidation === 'missing' ? [] : [{ ...reply, canEdit: false }]);
-      await act(async () => {
-        await hook.result.current.actions.uploadReplyImage();
-      });
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+    });
+    seedTopicCache(nodeSeekDetail, invalidation === 'missing' ? [] : [{ ...reply, canEdit: false }]);
+    await act(async () => {
+      await hook.result.current.actions.uploadReplyImage();
+    });
 
-      expect(ensureNodeImageApiKey).not.toHaveBeenCalled();
-      expect(mockCurrentNodeImageGeneration).not.toHaveBeenCalled();
-      expect(mockGetDocument).not.toHaveBeenCalled();
-      expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
-      expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
-      expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
-      expect(hook.result.current.topicSession.state.replyContent).toBe('old');
-    }
-  );
+    expect(ensureNodeImageApiKey).not.toHaveBeenCalled();
+    expect(mockCurrentNodeImageGeneration).not.toHaveBeenCalled();
+    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockUploadNodeSeekReplyImage).not.toHaveBeenCalled();
+    expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
+    expect(hook.result.current.topicSession.state.replyContent).toBe('old');
+  });
 
-  it('[REG-WRITE-026] rechecks edit permission after NodeImage credentials and before file selection', async () => {
+  it('rechecks edit permission after NodeImage credentials and before file selection', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1616,7 +1613,7 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.topicSession.state.replyContent).toBe('old');
   });
 
-  it('[REG-WRITE-026][REG-TOPIC-067] derives edit cache keys without a competing refetch', async () => {
+  it('derives edit cache keys without a competing refetch', async () => {
     const reply: Reply = {
       author: 'alice',
       canEdit: true,
@@ -1694,7 +1691,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryState(detailKey)?.isInvalidated).toBe(false);
   });
 
-  it('[REG-WRITE-011][REG-TOPIC-067] removes a reply without a competing refetch', async () => {
+  it('removes a reply without a competing refetch', async () => {
     const reply: Reply = {
       author: 'alice',
       canDelete: true,
@@ -1741,7 +1738,7 @@ describe('topic action query mutations', () => {
   it.each([
     ['ordinary', new Error('删除请求失败')],
     ['permission-denied', Object.assign(new Error('没有权限删除回复'), { status: 403 })]
-  ])('[REG-WRITE-024] leaves identity unchanged for %s linux.do delete failure', async (_kind, error) => {
+  ])('leaves identity unchanged for %s linux.do delete failure', async (_kind, error) => {
     mockDiscourseExecute.mockRejectedValueOnce(error);
     const reply: Reply = {
       author: 'alice',
@@ -1780,7 +1777,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.replies).toEqual([reply]);
   });
 
-  it('REG-WRITE-003 REG-WRITE-004 applies a Yaohuo favorite without global busy state', async () => {
+  it('applies a Yaohuo favorite without global busy state', async () => {
     const transport = Promise.withResolvers<YaohuoActionResult>();
     mockRunYaohuoAction.mockImplementationOnce(async () => transport.promise);
     const yaohuoDetail = detailFor('yaohuo', {
@@ -1818,7 +1815,7 @@ describe('topic action query mutations', () => {
     });
   });
 
-  it('REG-WRITE-003 cancels a Yaohuo favorite and clears the visible state', async () => {
+  it('cancels a Yaohuo favorite and clears the visible state', async () => {
     mockRunYaohuoAction.mockResolvedValueOnce({ status: 'confirmed', message: '已取消原站收藏' });
     const yaohuoDetail = detailFor('yaohuo', {
       bookmarked: true,
@@ -1846,7 +1843,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarkId).toBeUndefined();
   });
 
-  it('[REG-WRITE-025] rolls back an unknown Yaohuo result without depending on its message', async () => {
+  it('rolls back an unknown Yaohuo result without depending on its message', async () => {
     mockRunYaohuoAction.mockResolvedValueOnce({
       status: 'unknown',
       message: '请刷新原帖确认最新状态'
@@ -1875,7 +1872,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarked).toBe(false);
   });
 
-  it('[REG-PERF-019] expires a write ticket once on raw HTTP 401 without replaying the write', async () => {
+  it('expires a write ticket once on raw HTTP 401 without replaying the write', async () => {
     const fetcher = jest.fn(async () => new Response('<html>login</html>', { status: 401 }));
     mockRunNodeSeekAction.mockImplementationOnce(async ({ fetcher: request }) => {
       await request!('https://www.nodeseek.com/api/attendance');
@@ -1898,7 +1895,7 @@ describe('topic action query mutations', () => {
     expect(onSessionExpired).toHaveBeenCalledWith('nodeseek', initialForumSessionEpochs.nodeseek);
   });
 
-  it('[REG-WRITE-024] does not expire a write ticket on raw HTTP 403', async () => {
+  it('does not expire a write ticket on raw HTTP 403', async () => {
     const fetcher = jest.fn(async () => new Response('<html>forbidden</html>', { status: 403 }));
     mockRunNodeSeekAction.mockImplementationOnce(async ({ fetcher: request }) => {
       const response = await request!('https://www.nodeseek.com/api/attendance');
@@ -1935,7 +1932,7 @@ describe('topic action query mutations', () => {
         source: 'yaohuo'
       })
     ]
-  ])('[REG-WRITE-024] keeps identity for typed Yaohuo %s', async (_kind, error) => {
+  ])('keeps identity for typed Yaohuo %s', async (_kind, error) => {
     mockRunYaohuoAction.mockRejectedValueOnce(error);
     const onSessionExpired = jest.fn();
     const yaohuoDetail = detailFor('yaohuo', { bookmarked: false, categoryId: '177', polls: [] });
@@ -1949,7 +1946,7 @@ describe('topic action query mutations', () => {
     expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
-  it('[REG-WRITE-024] keeps identity for a typed NodeSeek login hint', async () => {
+  it('keeps identity for a typed NodeSeek login hint', async () => {
     mockRunNodeSeekAction.mockRejectedValueOnce(
       Object.assign(new Error('NodeSeek 登录已失效'), {
         loginRequired: true,
@@ -1972,7 +1969,7 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith('NodeSeek 登录已失效');
   });
 
-  it('[REG-WRITE-023][REG-WRITE-025] rolls back an unknown Yaohuo result that arrives after ticket expiry', async () => {
+  it('rolls back an unknown Yaohuo result that arrives after ticket expiry', async () => {
     let ticketCurrent = true;
     mockRunYaohuoAction.mockImplementationOnce(async () => {
       ticketCurrent = false;
@@ -2005,7 +2002,7 @@ describe('topic action query mutations', () => {
   it.each([
     ['ordinary', new Error('网络请求失败')],
     ['permission-denied', Object.assign(new Error('没有权限执行该操作'), { status: 403 })]
-  ])('[REG-WRITE-022][REG-WRITE-024] leaves identity unchanged for %s NodeSeek failure', async (_kind, error) => {
+  ])('leaves identity unchanged for %s NodeSeek failure', async (_kind, error) => {
     mockRunNodeSeekAction.mockRejectedValueOnce(error);
     const onSessionExpired = jest.fn();
     const notify = jest.fn();
@@ -2028,7 +2025,7 @@ describe('topic action query mutations', () => {
   it.each([
     ['ordinary', new Error('网络请求失败')],
     ['permission-denied', Object.assign(new Error('没有权限执行该操作'), { status: 403 })]
-  ])('[REG-WRITE-024] leaves identity unchanged for %s Yaohuo failure', async (_kind, error) => {
+  ])('leaves identity unchanged for %s Yaohuo failure', async (_kind, error) => {
     mockRunYaohuoAction.mockRejectedValueOnce(error);
     const onSessionExpired = jest.fn();
     const notify = jest.fn();
@@ -2050,7 +2047,7 @@ describe('topic action query mutations', () => {
   it.each([
     ['ordinary', new Error('网络请求失败')],
     ['permission-denied', Object.assign(new Error('没有权限执行该操作'), { status: 403 })]
-  ])('[REG-WRITE-024] leaves identity unchanged for %s linux.do failure', async (_kind, error) => {
+  ])('leaves identity unchanged for %s linux.do failure', async (_kind, error) => {
     mockDiscourseExecute.mockRejectedValueOnce(error);
     const onSessionExpired = jest.fn();
     const notify = jest.fn();
@@ -2072,7 +2069,7 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith(error.message);
   });
 
-  it('[REG-WRITE-024] leaves identity unchanged for a typed linux.do login hint', async () => {
+  it('leaves identity unchanged for a typed linux.do login hint', async () => {
     mockDiscourseExecute.mockRejectedValueOnce(
       Object.assign(new Error('linux.do 登录已失效'), {
         loginRequired: true,
@@ -2105,7 +2102,7 @@ describe('topic action query mutations', () => {
     expect(showLinuxDoLogin).toHaveBeenCalledWith('linux.do 登录已失效');
   });
 
-  it('[REG-WRITE-024] leaves identity unchanged for typed linux.do verification', async () => {
+  it('leaves identity unchanged for typed linux.do verification', async () => {
     mockDiscourseExecute.mockRejectedValueOnce(
       Object.assign(new Error('linux.do 需要完成 Cloudflare 验证'), {
         reason: 'cloudflare',
@@ -2139,7 +2136,7 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith('linux.do 需要完成 Cloudflare 验证');
   });
 
-  it('[REG-ACCOUNT-009][REG-WRITE-022] suppresses a NodeSeek failure after a newer login takes ownership', async () => {
+  it('suppresses a NodeSeek failure after a newer login takes ownership', async () => {
     let ticketCurrent = true;
     const transport = Promise.withResolvers<unknown>();
     mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise as never);
@@ -2176,7 +2173,7 @@ describe('topic action query mutations', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-009][REG-WRITE-022] suppresses a Yaohuo failure after a newer login takes ownership', async () => {
+  it('suppresses a Yaohuo failure after a newer login takes ownership', async () => {
     let ticketCurrent = true;
     const transport = Promise.withResolvers<unknown>();
     mockRunYaohuoAction.mockImplementationOnce(async () => transport.promise as never);
@@ -2212,7 +2209,7 @@ describe('topic action query mutations', () => {
     expect(showYaohuoLogin).not.toHaveBeenCalled();
   });
 
-  it('REG-ACCOUNT-010 does not insert a NodeImage upload completed by a cleared API key', async () => {
+  it('does not insert a NodeImage upload completed by a cleared API key', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -2264,7 +2261,7 @@ describe('topic action query mutations', () => {
   it.each([
     ['ordinary', new Error('图片上传网络失败')],
     ['permission-denied', Object.assign(new Error('当前账号不能上传图片'), { status: 403 })]
-  ])('[REG-WRITE-024] leaves identity unchanged for %s linux.do upload failure', async (_kind, error) => {
+  ])('leaves identity unchanged for %s linux.do upload failure', async (_kind, error) => {
     mockDiscourseExecute.mockRejectedValueOnce(error);
     mockGetDocument.mockResolvedValueOnce({
       canceled: false,
@@ -2295,7 +2292,7 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.topicSession.state.replyContent).toBe('existing draft');
   });
 
-  it('[REG-WRITE-023] stops before file selection when the saved NodeImage key is unavailable', async () => {
+  it('stops before file selection when the saved NodeImage key is unavailable', async () => {
     const ensureNodeImageApiKey = jest.fn(async () => null);
     const notify = jest.fn();
     seedTopicCache();
@@ -2312,7 +2309,7 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith('NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴');
   });
 
-  it('[REG-WRITE-023] reports a rejected NodeImage key without authorizing or replaying the upload', async () => {
+  it('reports a rejected NodeImage key without authorizing or replaying the upload', async () => {
     mockCurrentNodeImageGeneration.mockReturnValue(5);
     mockUploadNodeSeekReplyImage.mockRejectedValueOnce(
       Object.assign(new Error('API Key 无效'), { nodeImageApiKeyExpired: true })
@@ -2367,7 +2364,7 @@ describe('topic action query mutations', () => {
     expect(hook.result.current.actions.actionBusy).toBe(false);
   });
 
-  it('[REG-WRITE-008] sends no NodeSeek request when vote confirmation is canceled', async () => {
+  it('sends no NodeSeek request when vote confirmation is canceled', async () => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     const { detailKey } = seedTopicCache();
     const hook = await renderActions();
@@ -2385,7 +2382,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.voted).not.toBe(true);
   });
 
-  it('[REG-WRITE-070] grants NodeSeek poll management only to the matching owner before lock', async () => {
+  it('grants NodeSeek poll management only to the matching owner before lock', async () => {
     const hook = await renderActions({
       siteSessionViewModels: nodeSeekLoggedInViewModels(),
       topicDetail: detailFor('nodeseek', { polls: [ownedNodeSeekPoll] })
@@ -2403,7 +2400,7 @@ describe('topic action query mutations', () => {
     ).toEqual({ allowed: false, reason: 'already-complete' });
   });
 
-  it('[REG-WRITE-070] sends no request when the poll owner cancels locking', async () => {
+  it('sends no request when the poll owner cancels locking', async () => {
     const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     const { detailKey } = seedTopicCache(topic);
@@ -2424,7 +2421,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).not.toBe(true);
   });
 
-  it('[REG-WRITE-070] refuses an already locked poll before opening confirmation', async () => {
+  it('refuses an already locked poll before opening confirmation', async () => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     const hook = await renderActions({
       siteSessionViewModels: nodeSeekLoggedInViewModels(),
@@ -2439,7 +2436,7 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
   });
 
-  it('[REG-WRITE-070] locks once, refreshes once, and projects the authoritative poll to topic and replies', async () => {
+  it('locks once, refreshes once, and projects the authoritative poll to topic and replies', async () => {
     const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
     const pollReply: Reply = { ...editableReply, polls: [ownedNodeSeekPoll] };
     mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
@@ -2475,7 +2472,7 @@ describe('topic action query mutations', () => {
     ).toBe(true);
   });
 
-  it('[REG-WRITE-070] keeps a confirmed lock locally when only the result refresh fails', async () => {
+  it('keeps a confirmed lock locally when only the result refresh fails', async () => {
     const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
     const notify = jest.fn();
     mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
@@ -2500,7 +2497,7 @@ describe('topic action query mutations', () => {
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.polls?.[0]?.closed).toBe(true);
   });
 
-  it('[REG-WRITE-070] reconciles an ambiguous lock with one GET and never resends the POST', async () => {
+  it('reconciles an ambiguous lock with one GET and never resends the POST', async () => {
     const topic = detailFor('nodeseek', { polls: [ownedNodeSeekPoll] });
     mockRunNodeSeekAction.mockRejectedValueOnce(new Error('timeout'));
     mockFetchNodeSeekVoteInfo.mockResolvedValueOnce({ ...ownedNodeSeekPoll, closed: true });
@@ -2522,7 +2519,7 @@ describe('topic action query mutations', () => {
     expect(mockFetchNodeSeekVoteInfo).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-WRITE-008] keeps NodeSeek voting at exactly one POST followed by one result GET', async () => {
+  it('keeps NodeSeek voting at exactly one POST followed by one result GET', async () => {
     mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
     mockFetchNodeSeekVoteInfo.mockResolvedValueOnce({
       ...poll,
@@ -2551,7 +2548,7 @@ describe('topic action query mutations', () => {
     alert.mockRestore();
   });
 
-  it('[REG-WRITE-007] keeps a submitted NodeSeek selection without inventing unknown counts when result GET fails', async () => {
+  it('keeps a submitted NodeSeek selection without inventing unknown counts when result GET fails', async () => {
     const unknownPoll: TopicPoll = {
       id: '2443',
       title: 'NodeSeek poll',
@@ -2595,7 +2592,7 @@ describe('topic action query mutations', () => {
     alert.mockRestore();
   });
 
-  it('[REG-WRITE-008] does not add NodeSeek confirmation to LinuxDo or Yaohuo polls', async () => {
+  it('does not add NodeSeek confirmation to LinuxDo or Yaohuo polls', async () => {
     const discoursePoll: TopicPoll = {
       id: 'linuxdo-poll',
       name: 'poll_name',
@@ -2647,7 +2644,7 @@ describe('topic action query mutations', () => {
     });
   });
 
-  it('[REG-WRITE-032] prepares Stardust but sends nothing when the confirmation is canceled', async () => {
+  it('prepares Stardust but sends nothing when the confirmation is canceled', async () => {
     const fetcher = jest.fn(async () => stardustStatusResponse());
     mockRunNodeSeekAction.mockResolvedValue({
       success: true,
@@ -2689,7 +2686,7 @@ describe('topic action query mutations', () => {
     ],
     ['missing receiver', { success: true, allowedOrigin: true, receiver_name: '' }, '获取支付基础信息失败'],
     ['malformed receiver', { success: true, allowedOrigin: true, receiver_name: 42 }, '获取支付基础信息失败']
-  ])('[REG-WRITE-071] rejects %s before Stardust confirmation or send', async (_case, prepareResult, message) => {
+  ])('rejects %s before Stardust confirmation or send', async (_case, prepareResult, message) => {
     const fetcher = jest.fn(async () => stardustStatusResponse());
     const notify = jest.fn();
     mockRunNodeSeekAction.mockResolvedValueOnce(prepareResult);
@@ -2716,7 +2713,7 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith(message);
   });
 
-  it('[REG-WRITE-029] reuses one materialized NodeSeek poll when the reply is manually retried', async () => {
+  it('reuses one materialized NodeSeek poll when the reply is manually retried', async () => {
     const snapshot = snapshotWithNodeSeekPoll('poll_retry_0001');
     mockRunNodeSeekAction
       .mockResolvedValueOnce({ id: 3023 })
@@ -2739,7 +2736,7 @@ describe('topic action query mutations', () => {
     expect(JSON.parse(requests[2]!.body || '{}').content).not.toContain('wz:nodeseek-poll');
   });
 
-  it('[REG-WRITE-030] blocks a second poll-create attempt after an ambiguous result', async () => {
+  it('blocks a second poll-create attempt after an ambiguous result', async () => {
     const snapshot = snapshotWithNodeSeekPoll('poll_unknown_01');
     const notify = jest.fn();
     mockRunNodeSeekAction.mockRejectedValueOnce(new Error('timeout'));
@@ -2757,7 +2754,7 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('结果未知'));
   });
 
-  it('[REG-WRITE-030] never downgrades a known remote poll id to an unknown result', async () => {
+  it('never downgrades a known remote poll id to an unknown result', async () => {
     const identityKey = 'nodeseek:test-user';
     const known = { localId: 'poll_stale_0001', fingerprint: '0123456789abcdef', remoteId: '3025' };
 
@@ -2771,7 +2768,7 @@ describe('topic action query mutations', () => {
     ['missing sidecar', snapshotWithNodeSeekPolls(['poll_match_0001', 'poll_missing_01'], ['poll_match_0001'])],
     ['extra sidecar', snapshotWithNodeSeekPolls(['poll_match_0001'], ['poll_match_0001', 'poll_extra_0001'])],
     ['duplicate token', snapshotWithNodeSeekPolls(['poll_match_0001', 'poll_match_0001'])]
-  ])('[REG-WRITE-029] rejects %s before creating a remote poll', async (_name, snapshot) => {
+  ])('rejects %s before creating a remote poll', async (_name, snapshot) => {
     const notify = jest.fn();
     const hook = await renderActions({ notify });
 
@@ -2783,7 +2780,7 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('投票'));
   });
 
-  it('[REG-WRITE-029] allows distinct local polls with identical content', async () => {
+  it('allows distinct local polls with identical content', async () => {
     const polls = ['poll_same_0001', 'poll_same_0002'].map((localId) =>
       normalizePendingNodeSeekPoll({
         localId,
@@ -2818,7 +2815,7 @@ describe('topic action query mutations', () => {
     ]);
   });
 
-  it('[REG-WRITE-031] allows manual poll-create retry after an explicit server rejection', async () => {
+  it('allows manual poll-create retry after an explicit server rejection', async () => {
     const snapshot = snapshotWithNodeSeekPoll('poll_reject_0001');
     const rejected = Object.assign(new Error('invalid poll'), { serverRejected: true });
     mockRunNodeSeekAction
@@ -2839,7 +2836,7 @@ describe('topic action query mutations', () => {
     ]);
   });
 
-  it('[REG-WRITE-033][REG-WRITE-071] sends once without status preflight and trusts an explicit success', async () => {
+  it('sends once without status preflight and trusts an explicit success', async () => {
     const fetcher = jest.fn(async () => {
       throw new Error('每天最多进行500次星辰记录查询');
     });
@@ -2877,7 +2874,7 @@ describe('topic action query mutations', () => {
   it.each([
     ['transport failure', new Error('timeout')],
     ['malformed success', {}]
-  ])('[REG-WRITE-034][REG-WRITE-071] reports %s as ambiguous without retrying it', async (_case, sendResult) => {
+  ])('reports %s as ambiguous without retrying it', async (_case, sendResult) => {
     const notify = jest.fn();
     const fetcher = jest.fn(async () => stardustStatusResponse());
     mockRunNodeSeekAction.mockResolvedValueOnce({
@@ -2915,7 +2912,7 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('结果未知'));
   });
 
-  it('[REG-WRITE-071] rejects a legacy Stardust Ref before every remote request', async () => {
+  it('rejects a legacy Stardust Ref before every remote request', async () => {
     const fetcher = jest.fn(async () => stardustStatusResponse());
     const notify = jest.fn();
     const hook = await renderActions({ fetcher, notify, siteSessionViewModels: nodeSeekLoggedInViewModels() });

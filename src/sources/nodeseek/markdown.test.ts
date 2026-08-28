@@ -9,7 +9,7 @@ describe('NodeSeek Markdown', () => {
     expect(html).toContain('<a href="https://example.com/path">');
   });
 
-  it('[REG-TOPIC-127] turns Composer GFM into one semantic header and complete body rows', () => {
+  it('turns Composer GFM into one semantic header and complete body rows', () => {
     const html = nodeSeekMarkdownToHtml('| E | E | Q |\n| --- | --- | --- |\n| F | G | R |\n| T | G | U |');
 
     expect(html).toBe(
@@ -17,7 +17,7 @@ describe('NodeSeek Markdown', () => {
     );
   });
 
-  it('[REG-TOPIC-128][REG-WRITE-068] keeps unsupported underline literal while rendering GFM tasks and alignment', () => {
+  it('keeps unsupported underline literal while rendering GFM tasks and alignment', () => {
     const html = nodeSeekMarkdownToHtml(
       '~~删除线~~\n\n++下划线++\n\n- [ ] 未完成\n- [x] 已完成\n\n| 左 | 中 | 右 |\n| :-- | :-: | --: |\n| A | B | C |'
     );
@@ -33,7 +33,7 @@ describe('NodeSeek Markdown', () => {
     expect(html).toContain('style="text-align: right"');
   });
 
-  it('[REG-NOTIFY-057] renders known NodeSeek sticker shortcodes without rewriting code literals', () => {
+  it('renders known NodeSeek sticker shortcodes without rewriting code literals', () => {
     const html = nodeSeekMarkdownToHtml('**私信正文** :ac04: `:ac04:` :unknown:\n\n```text\n:ac04:\n```');
 
     expect(html).toContain('<strong>私信正文</strong>');
@@ -46,7 +46,7 @@ describe('NodeSeek Markdown', () => {
     expect(html.match(/static\/image\/sticker\/ac\/04\.png/g)).toHaveLength(1);
   });
 
-  it('[REG-TOPIC-051] returns a fixed safe notice without parsing oversized Markdown', () => {
+  it('returns a fixed safe notice without parsing oversized Markdown', () => {
     const marker = 'must-not-be-rendered.example';
     const html = nodeSeekMarkdownToHtml(`${'x'.repeat(MAX_NODESEEK_MARKDOWN_BYTES)}${marker}`);
 
@@ -55,7 +55,7 @@ describe('NodeSeek Markdown', () => {
     expect(html).not.toContain('<script');
   });
 
-  it('[REG-TOPIC-051] applies the 256 KiB budget to UTF-8 bytes and caps nesting at 100', () => {
+  it('applies the 256 KiB budget to UTF-8 bytes and caps nesting at 100', () => {
     const exactBudget = `${'界'.repeat(Math.floor(MAX_NODESEEK_MARKDOWN_BYTES / 3))}a`;
     const oversized = `${exactBudget}界`;
 

@@ -56,7 +56,7 @@ describe('image request source', () => {
     expect(dataImageFileFromUrl('https://cdn.example.com/a.jpg')).toBeNull();
   });
 
-  it('[REG-TOPIC-064] gives unknown NodeSeek image hosts the forum browser request profile', () => {
+  it('gives unknown NodeSeek image hosts the forum browser request profile', () => {
     const headers = imageRequestHeadersForUrl('https://im.legend.moe/file/topic.webp', {
       mediaContext: nodeSeekMediaContext,
       nodeSeekUserAgent: 'NodeSeek WebView UA'
@@ -73,7 +73,7 @@ describe('image request source', () => {
     expect(headers).not.toHaveProperty('Cookie');
   });
 
-  it('[REG-TOPIC-064] applies the same source profile without a target-host allowlist', () => {
+  it('applies the same source profile without a target-host allowlist', () => {
     expect(
       imageRequestHeadersForUrl('https://i.111666.best/image/a.webp', { mediaContext: nodeSeekMediaContext })
     ).toEqual({
@@ -111,7 +111,7 @@ describe('image request source', () => {
     ).toBeUndefined();
   });
 
-  it('[REG-TOPIC-078] follows the original document referrer contract for all four topic sources', () => {
+  it('follows the original document referrer contract for all four topic sources', () => {
     const yaohuoHeaders = imageRequestHeadersForUrl(
       'https://cdn.waimaimingtang.com/file/images/bwc/20260809205204-e60bd8a4a2.jpg',
       {
@@ -184,7 +184,7 @@ describe('image request source', () => {
     ['strict-origin-when-cross-origin', 'https://cdn.example.com/media.png', 'https://forum.example.com/'],
     ['strict-origin-when-cross-origin', 'http://cdn.example.com/media.png', undefined],
     ['unsafe-url', 'http://cdn.example.com/media.png', 'https://forum.example.com/t/42?q=1']
-  ] as const)('[REG-TOPIC-078] applies %s to %s', (documentPolicy, mediaUrl, expectedReferer) => {
+  ] as const)('applies %s to %s', (documentPolicy, mediaUrl, expectedReferer) => {
     const headers = imageRequestHeadersForUrl(mediaUrl, {
       mediaContext: {
         contentSource: 'v2ex',
@@ -199,7 +199,7 @@ describe('image request source', () => {
     expect(headers?.Referer).toBe(expectedReferer);
   });
 
-  it('[REG-TOPIC-078] falls back from an invalid element policy to the document policy', () => {
+  it('falls back from an invalid element policy to the document policy', () => {
     expect(
       imageRequestHeadersForUrl('https://cdn.example.com/media.png', {
         mediaContext: {
@@ -215,7 +215,7 @@ describe('image request source', () => {
     ).not.toHaveProperty('Referer');
   });
 
-  it('[REG-TOPIC-078] separates image cache identity by the effective Referer header', () => {
+  it('separates image cache identity by the effective Referer header', () => {
     const url = 'https://i.imgur.com/PxlOHiu.jpeg';
     const mediaContext = {
       contentSource: 'v2ex',
@@ -231,7 +231,7 @@ describe('image request source', () => {
     });
   });
 
-  it('[REG-TOPIC-029] marks every remote media request with its owning forum source', () => {
+  it('marks every remote media request with its owning forum source', () => {
     expect(
       imageRequestHeadersForUrl('https://cdn.example.com/public.png', {
         mediaContext: {
@@ -250,7 +250,7 @@ describe('image request source', () => {
     });
   });
 
-  it('[REG-TOPIC-041] separates Expo cache and in-flight request identity by session epoch', () => {
+  it('separates Expo cache and in-flight request identity by session epoch', () => {
     const url = 'https://www.nodeseek.com/uploads/private.png';
 
     expect(
@@ -317,7 +317,7 @@ describe('image request source', () => {
     });
   });
 
-  it('[REG-ACCOUNT-029] leaves NodeSeek media Cookie attachment to the native read-only jar', () => {
+  it('leaves NodeSeek media Cookie attachment to the native read-only jar', () => {
     expect(
       imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', {
         mediaContext: nodeSeekMediaContext,
@@ -326,7 +326,7 @@ describe('image request source', () => {
     ).not.toHaveProperty('Cookie');
   });
 
-  it('[REG-TOPIC-064] uses a safe language fallback when the platform locale is unavailable', async () => {
+  it('uses a safe language fallback when the platform locale is unavailable', async () => {
     const dateTimeFormat = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(() => {
       throw new Error('locale unavailable');
     });

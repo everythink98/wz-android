@@ -17,7 +17,7 @@ import {
 import type { UserProfile } from '@/domain/forum/models';
 
 describe('site session state', () => {
-  it('[REG-ACCOUNT-042] keeps identity facts and trust in one normalized account snapshot', () => {
+  it('keeps identity facts and trust in one normalized account snapshot', () => {
     const initial = createAccountSessionSnapshot('linuxdo');
     const confirmed = accountSessionSnapshotFromObservation(initial, {
       session: {
@@ -329,7 +329,7 @@ describe('site session state', () => {
     expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates()).nodeseek)).toBeNull();
   });
 
-  it('[REG-ACCOUNT-019] returns only the confirmed NodeSeek profile id as the session identity', () => {
+  it('returns only the confirmed NodeSeek profile id as the session identity', () => {
     const view = createSiteSessionViewModels(
       createSiteSessionStates({
         nodeseek: {
@@ -444,7 +444,7 @@ describe('site session state', () => {
     });
   });
 
-  it('[REG-ACCOUNT-039] keeps a confirmed identity while a challenged read recovery is retried', () => {
+  it('keeps a confirmed identity while a challenged read recovery is retried', () => {
     const currentUser: UserProfile = {
       source: 'linuxdo',
       id: '42',
@@ -480,7 +480,7 @@ describe('site session state', () => {
   });
 
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
-    '[REG-ACCOUNT-023] keeps the confirmed %s identity when a read path only observes credentials',
+    'keeps the confirmed %s identity when a read path only observes credentials',
     (site) => {
       const currentUser: UserProfile = {
         source: site,
@@ -515,7 +515,7 @@ describe('site session state', () => {
   );
 
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
-    '[REG-ACCOUNT-019] keeps %s explicitly expired when only unverified credentials are reloaded',
+    'keeps %s explicitly expired when only unverified credentials are reloaded',
     (site) => {
       const expired = reduceSiteSessionState(createSiteSessionStates()[site], {
         type: 'login-expired',
@@ -538,7 +538,7 @@ describe('site session state', () => {
     }
   );
 
-  it('[REG-WRITE-022] removes write capability and current user after confirmed expiry', () => {
+  it('removes write capability and current user after confirmed expiry', () => {
     const currentUser: UserProfile = {
       source: 'yaohuo',
       id: '7',

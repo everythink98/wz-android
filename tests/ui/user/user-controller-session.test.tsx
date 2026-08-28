@@ -102,7 +102,7 @@ describe('user query controller', () => {
     });
   });
 
-  it('[REG-SOURCE-011] reads a public LinuxDo User while account identity remains pending', async () => {
+  it('reads a public LinuxDo User while account identity remains pending', async () => {
     const requested: UserReference = {
       source: 'linuxdo',
       id: '7',
@@ -129,7 +129,7 @@ describe('user query controller', () => {
     );
   });
 
-  it('[REG-SOURCE-011] settles pending NodeSeek username resolution as a terminal blocked result', async () => {
+  it('settles pending NodeSeek username resolution as a terminal blocked result', async () => {
     const requested: UserReference = {
       source: 'nodeseek',
       username: 'alice',
@@ -155,7 +155,7 @@ describe('user query controller', () => {
     expect(hook.result.current.userBusy).toBe(false);
   });
 
-  it('[REG-SOURCE-011] retries an unknown strict User by reconciling identity without replaying transport', async () => {
+  it('retries an unknown strict User by reconciling identity without replaying transport', async () => {
     const requested: UserReference = {
       source: 'yaohuo',
       id: '7',
@@ -188,7 +188,7 @@ describe('user query controller', () => {
     expect(getUserProfile).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-SOURCE-011] opens Yaohuo login for a typed anonymous User block', async () => {
+  it('opens Yaohuo login for a typed anonymous User block', async () => {
     const requested: UserReference = {
       source: 'yaohuo',
       id: '7',
@@ -215,7 +215,7 @@ describe('user query controller', () => {
     expect(showYaohuoLogin).toHaveBeenCalledWith('请先登录该内容源');
   });
 
-  it('[REG-PERF-008][REG-ACCOUNT-031] gates route queries and commands while inactive', async () => {
+  it('gates route queries and commands while inactive', async () => {
     let active = false;
     let signal: AbortSignal | undefined;
     const pending = Promise.withResolvers<UserProfile>();
@@ -247,7 +247,7 @@ describe('user query controller', () => {
     pending.resolve(user);
   });
 
-  it('[REG-TOPIC-039] resolves a username before loading the canonical NodeSeek profile', async () => {
+  it('resolves a username before loading the canonical NodeSeek profile', async () => {
     const reference: UserReference = {
       source: 'nodeseek',
       username: 'xy',
@@ -299,7 +299,7 @@ describe('user query controller', () => {
     expect(getUserProfile).toHaveBeenCalledTimes(3);
   });
 
-  it('[REG-TOPIC-039] retries a failed resolution only after explicit refresh', async () => {
+  it('retries a failed resolution only after explicit refresh', async () => {
     const reference: UserReference = {
       source: 'nodeseek',
       username: 'xy',
@@ -332,7 +332,7 @@ describe('user query controller', () => {
     expect(getUserProfile).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-039] preserves the exact resolution query for NodeSeek verification recovery', async () => {
+  it('preserves the exact resolution query for NodeSeek verification recovery', async () => {
     const reference: UserReference = {
       source: 'nodeseek',
       username: 'xy',
@@ -375,7 +375,7 @@ describe('user query controller', () => {
     expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-TOPIC-039] preserves the exact canonical profile query for NodeSeek verification recovery', async () => {
+  it('preserves the exact canonical profile query for NodeSeek verification recovery', async () => {
     const getUserProfile = jest
       .fn<ReadGateway['getUserProfile']>()
       .mockRejectedValueOnce(
@@ -415,7 +415,7 @@ describe('user query controller', () => {
     expect(getUserProfile).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-TOPIC-039] does not turn a NodeSeek pagination failure into a user-route recovery', async () => {
+  it('does not turn a NodeSeek pagination failure into a user-route recovery', async () => {
     const getUserProfile = jest
       .fn<ReadGateway['getUserProfile']>()
       .mockResolvedValueOnce({
@@ -450,7 +450,7 @@ describe('user query controller', () => {
     expect(showNodeSeekVerification.mock.calls[0]?.[1]).toBeUndefined();
   });
 
-  it('[REG-TOPIC-039] keeps a known logged-out resolution error out of Cloudflare recovery', async () => {
+  it('keeps a known logged-out resolution error out of Cloudflare recovery', async () => {
     const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async () => {
       throw Object.assign(new Error('请先登录 NodeSeek 后再打开用户主页'), {
         source: 'nodeseek',
@@ -472,7 +472,7 @@ describe('user query controller', () => {
     expect(showNodeSeekVerification).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-031][REG-SOURCE-011] settles blocked resolution, then re-resolves after trust and epoch changes', async () => {
+  it('settles blocked resolution, then re-resolves after trust and epoch changes', async () => {
     const reference: UserReference = {
       source: 'nodeseek',
       username: 'xy',
@@ -526,7 +526,7 @@ describe('user query controller', () => {
     await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
   });
 
-  it('[REG-TOPIC-039] cancels an old username resolution when the selected user changes', async () => {
+  it('cancels an old username resolution when the selected user changes', async () => {
     const oldResolution = Promise.withResolvers<UserReference>();
     let oldSignal: AbortSignal | undefined;
     const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async ({ signal, username }) => {
@@ -609,7 +609,7 @@ describe('user query controller', () => {
     expect(getUserProfile.mock.calls[0]?.[0]).not.toHaveProperty('cursorType');
   });
 
-  it('[REG-ACCOUNT-031][REG-SOURCE-011] isolates cached authenticated profile from a pending public read', async () => {
+  it('isolates cached authenticated profile from a pending public read', async () => {
     let identityBarriers: SessionSource[] = [];
     const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => user);
     const hook = await renderUserController({
@@ -652,7 +652,7 @@ describe('user query controller', () => {
     );
   });
 
-  it('REG-USER-001 keeps topic and reply cursors independent', async () => {
+  it('keeps topic and reply cursors independent', async () => {
     const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ cursorType }) => {
       if (!cursorType) {
         return {
@@ -709,7 +709,7 @@ describe('user query controller', () => {
     expect(getUserProfile.mock.calls.map(([request]) => request.cursorType)).toEqual([undefined, 'topics', 'replies']);
   });
 
-  it('[REG-USER-007] refreshes the profile as a fresh pagination snapshot and exposes its busy state', async () => {
+  it('refreshes the profile as a fresh pagination snapshot and exposes its busy state', async () => {
     const firstTopic = {
       source: 'nodeseek' as const,
       id: 'topic-1',
@@ -843,7 +843,7 @@ describe('user query controller', () => {
     await waitFor(() => expect(hook.result.current.userProfile?.displayName).toBe('New session'));
   });
 
-  it('REG-USER-006 REG-LINUXDO-002 seeds the visible cursor before verification retries the exact failed page', async () => {
+  it('seeds the visible cursor before verification retries the exact failed page', async () => {
     const linuxUser: UserProfile = {
       ...user,
       source: 'linuxdo',
@@ -891,7 +891,7 @@ describe('user query controller', () => {
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
-  it('REG-LINUXDO-003 reports an ordinary user recovery failure instead of another verification result', async () => {
+  it('reports an ordinary user recovery failure instead of another verification result', async () => {
     const linuxUser: UserProfile = {
       ...user,
       source: 'linuxdo',
@@ -923,7 +923,7 @@ describe('user query controller', () => {
     expect(getUserProfile).toHaveBeenCalledTimes(3);
   });
 
-  it('[REG-SOURCE-002] does not cache a parse-empty profile', async () => {
+  it('does not cache a parse-empty profile', async () => {
     const parsedEmpty = annotateSourceDiagnosticSummary(
       { ...user, displayName: '', topics: [] },
       {

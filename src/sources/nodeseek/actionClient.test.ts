@@ -17,7 +17,7 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('runNodeSeekAction', () => {
-  it('[REG-ACCOUNT-029] delegates NodeSeek write authentication to the native exact-url cookie jar', async () => {
+  it('delegates NodeSeek write authentication to the native exact-url cookie jar', async () => {
     const fetcher = vi.fn(async () => jsonResponse({ success: true }));
 
     await runNodeSeekAction({
@@ -30,7 +30,7 @@ describe('runNodeSeekAction', () => {
     expect(calls[0]?.[1]?.headers).not.toHaveProperty('cookie');
   });
 
-  it('[REG-WRITE-007] reads the authoritative NodeSeek poll snapshot with vote headers', async () => {
+  it('reads the authoritative NodeSeek poll snapshot with vote headers', async () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({
         vote: {
@@ -82,7 +82,7 @@ describe('runNodeSeekAction', () => {
     });
   });
 
-  it('[REG-WRITE-070] does not derive poll management rights from a malformed uid', async () => {
+  it('does not derive poll management rights from a malformed uid', async () => {
     const poll = await fetchNodeSeekVoteInfo({
       pollId: '2443',
       fetcher: vi.fn(async () =>
@@ -207,7 +207,7 @@ describe('runNodeSeekAction', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-WRITE-071] preserves a Stardust server message and otherwise uses the send fallback', async () => {
+  it('preserves a Stardust server message and otherwise uses the send fallback', async () => {
     const request = buildNodeSeekStardustSendRequest({
       receive: { receiverMemberId: '42', amount: 2, refId: 100, description: 'Pay', oneTime: true }
     });
@@ -294,7 +294,7 @@ describe('runNodeSeekAction', () => {
     ).rejects.toThrow('high risk action');
   });
 
-  it('[REG-WRITE-031] only marks confirmed client or application rejections as retry-safe', async () => {
+  it('only marks confirmed client or application rejections as retry-safe', async () => {
     const clientFailure = vi.fn(async () => jsonResponse({ message: 'invalid poll' }, 422));
     const serverFailure = vi.fn(async () => jsonResponse({ message: 'upstream failed' }, 503));
 

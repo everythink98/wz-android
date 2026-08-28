@@ -24,7 +24,7 @@ function secureStore(entries: Record<string, string | null> = {}) {
 }
 
 describe('legacy Cookie snapshot migration', () => {
-  it('[REG-ACCOUNT-031] deletes only App snapshots after every exact native read succeeds', async () => {
+  it('deletes only App snapshots after every exact native read succeeds', async () => {
     const store = secureStore({
       'nodeseek-access': JSON.stringify({
         cookieHeader: 'session=private',
@@ -67,7 +67,7 @@ describe('legacy Cookie snapshot migration', () => {
     expect(store.setItemAsync).toHaveBeenCalledWith(LINUXDO_USER_AGENT_STORAGE_KEY, 'Linux UA');
   });
 
-  it('[REG-ACCOUNT-031] retains the affected snapshot when exact native read is unsupported or fails', async () => {
+  it('retains the affected snapshot when exact native read is unsupported or fails', async () => {
     const store = secureStore({
       'nodeseek-access': '{"cookieHeader":"session=private"}',
       'linuxdo-clearance': '{"cookieHeader":"_t=private"}',

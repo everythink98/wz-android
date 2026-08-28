@@ -51,7 +51,7 @@ describe('reader data controller helpers', () => {
     expect(next?.favorites[topicKey(topic)]?.topic).toEqual(topic);
   });
 
-  it('[REG-PERF-001] trusts only bounded history-recorded mutations without rebuilding the snapshot', () => {
+  it('trusts only bounded history-recorded mutations without rebuilding the snapshot', () => {
     const current = toggleFavorite(createEmptyReaderData(), topic);
     const refreshedTopic = { ...topic, title: 'Updated topic' };
     const updated = updateFavoriteTopic(recordHistory(current, refreshedTopic), refreshedTopic);

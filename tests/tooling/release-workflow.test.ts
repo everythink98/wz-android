@@ -35,7 +35,7 @@ describe('release workflow trust gates', () => {
     expect(ciWorkflow).toMatch(/uses: actions\/checkout@v4\s+with:\s+fetch-depth: 0/);
   });
 
-  it('[REG-OPS-015] scopes signing secrets to the final assembly and records build provenance', () => {
+  it('scopes signing secrets to the final assembly and records build provenance', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const packageJson = JSON.parse(readProjectFile('package.json'));
     const packageSnapshotIndex = releaseScript.indexOf(

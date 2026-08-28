@@ -32,7 +32,7 @@ describe('App lifecycle request timeout', () => {
     jest.restoreAllMocks();
   });
 
-  it('[REG-PROXY-013] counts background wall time toward the existing request deadline', async () => {
+  it('counts background wall time toward the existing request deadline', async () => {
     const caller = new AbortController();
     let requestSignal: AbortSignal | undefined;
     let outcome: 'pending' | 'timeout' | 'other' = 'pending';
@@ -87,7 +87,7 @@ describe('App lifecycle request timeout', () => {
     }
   });
 
-  it('[REG-PROXY-013] keeps the original request when it completes within the wall-clock deadline', async () => {
+  it('keeps the original request when it completes within the wall-clock deadline', async () => {
     let requestSignal: AbortSignal | undefined;
     let resolveRequest: ((response: Response) => void) | undefined;
     const fetcher = jest.fn(

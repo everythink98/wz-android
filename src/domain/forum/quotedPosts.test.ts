@@ -40,7 +40,7 @@ describe('quoted post contract', () => {
     expect(second && quotedPostReferenceKey(second)).toBe('linuxdo:200:1');
   });
 
-  it('[REG-TOPIC-003] prefers the current same-topic reply over a stale quote cache entry', () => {
+  it('prefers the current same-topic reply over a stale quote cache entry', () => {
     const currentReply: Reply = {
       author: 'current',
       contentHtml: '<p>current</p>',

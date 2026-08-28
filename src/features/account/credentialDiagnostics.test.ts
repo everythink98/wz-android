@@ -76,7 +76,7 @@ describe('account credential diagnostics', () => {
     expect(lines.join('')).not.toContain('PRIVATE_STORAGE_ERROR_WITH_ACCOUNT');
   });
 
-  it('REG-ACCOUNT-006 returns successful credential summaries when one site fails', async () => {
+  it('returns successful credential summaries when one site fails', async () => {
     const privateError = new Error('one site unavailable');
 
     const result = await loadCredentialSummariesWithTrace(async (site) => {

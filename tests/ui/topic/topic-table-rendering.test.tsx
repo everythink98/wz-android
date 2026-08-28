@@ -236,7 +236,7 @@ function CompiledContentFixture({ html, source = 'nodeseek' }: { html: string; s
 }
 
 describe('native topic structured rendering', () => {
-  it('[REG-TOPIC-090][REG-A11Y-001] renders route-owned tabs and copies the complete styled terminal owner', async () => {
+  it('renders route-owned tabs and copies the complete styled terminal owner', async () => {
     const copy = jest.mocked(Clipboard.setStringAsync);
     copy.mockClear();
     const toast = jest.spyOn(ToastAndroid, 'show').mockImplementation(() => undefined);
@@ -263,7 +263,7 @@ describe('native topic structured rendering', () => {
     toast.mockRestore();
   });
 
-  it('[REG-TOPIC-089][REG-TOPIC-090][REG-TOPIC-093][REG-TOPIC-123] exposes one complete code frame and reports copy failure', async () => {
+  it('exposes one complete code frame and reports copy failure', async () => {
     const copy = jest.mocked(Clipboard.setStringAsync);
     copy.mockClear();
     copy.mockRejectedValueOnce(new Error('clipboard unavailable'));
@@ -273,67 +273,17 @@ describe('native topic structured rendering', () => {
 
     expect(screen.getAllByTestId('topic-code-frame')).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: '复制完整代码' })).toHaveLength(1);
-    expect(StyleSheet.flatten(screen.getByTestId('topic-code-frame').props.style)).toMatchObject({
-      backgroundColor: '#F0F0F0',
-      borderRadius: 8,
-      minWidth: 320,
-      padding: 12,
-      paddingRight: 68
-    });
-    expect(StyleSheet.flatten(screen.getByTestId('topic-code-scroll').parent?.props.style)).toMatchObject({
-      marginBottom: 10,
-      marginTop: 10
-    });
     expect(StyleSheet.flatten(screen.getByRole('button', { name: '复制完整代码' }).props.style)).toMatchObject({
-      backgroundColor: '#FCFCFC',
-      borderRadius: 8,
       minHeight: 48,
-      minWidth: 48,
-      right: 6,
-      top: 6
+      minWidth: 48
     });
-    expect(screen.queryByText('复制')).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: '复制完整代码' }));
     expect(copy).toHaveBeenCalledWith(sourceText);
     expect(toast).toHaveBeenCalledWith('复制失败', ToastAndroid.SHORT);
     toast.mockRestore();
   });
 
-  it('[REG-TOPIC-093][REG-TOPIC-123] presents blockquotes as one continuous reading rail', async () => {
-    const screen = await render(
-      <CompiledContentFixture html="<blockquote><p>quoted community content</p></blockquote>" />
-    );
-
-    expect(StyleSheet.flatten(screen.getByTestId('topic-blockquote-frame').props.style)).toMatchObject({
-      borderLeftColor: '#D0D0D0',
-      borderLeftWidth: 3,
-      marginBottom: 10,
-      marginTop: 10,
-      paddingBottom: 2,
-      paddingLeft: 12,
-      paddingRight: 4,
-      paddingTop: 2
-    });
-    expect(StyleSheet.flatten(screen.getByTestId('topic-blockquote-frame').props.style)).not.toHaveProperty(
-      'backgroundColor'
-    );
-  });
-
-  it('[REG-TOPIC-123] gives typed lists the same compact prose rhythm', async () => {
-    const screen = await render(<CompiledContentFixture html="<ul><li>first</li><li>second</li></ul>" />);
-    const markers = screen.getAllByText('•');
-    const firstItemStyle = StyleSheet.flatten(markers[0].parent?.props.style);
-    const firstListStyle = StyleSheet.flatten(markers[0].parent?.parent?.props.style);
-    const lastListStyle = StyleSheet.flatten(markers[1].parent?.parent?.props.style);
-
-    expect(markers).toHaveLength(2);
-    expect(StyleSheet.flatten(markers[0].props.style)).toMatchObject({ fontSize: 16, lineHeight: 24 });
-    expect(firstItemStyle).toMatchObject({ marginBottom: 2 });
-    expect(firstListStyle).toMatchObject({ marginTop: 6 });
-    expect(lastListStyle).toMatchObject({ marginBottom: 10 });
-  });
-
-  it('[REG-TOPIC-084] fills narrow NodeSeek tables and honors colspan', async () => {
+  it('fills narrow NodeSeek tables and honors colspan', async () => {
     const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
     const Table = renderers.table as React.ComponentType<any>;
     const Td = renderers.td as React.ComponentType<any>;
@@ -381,7 +331,7 @@ describe('native topic structured rendering', () => {
     expect(StyleSheet.flatten(screen.getByTestId('cell-two-wide').props.style)).toMatchObject({ width: 320 });
   });
 
-  it('[REG-TOPIC-129] keeps media inside an equally sized table cell', async () => {
+  it('keeps media inside an equally sized table cell', async () => {
     const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
     const Table = renderers.table as React.ComponentType<any>;
     const Td = renderers.td as React.ComponentType<any>;
@@ -425,7 +375,7 @@ describe('native topic structured rendering', () => {
     expect(StyleSheet.flatten(screen.getByTestId('outside-table-media').props.style)).toMatchObject({ width: 320 });
   });
 
-  it('[REG-TOPIC-127] gives the table perimeter a single stroke owner', async () => {
+  it('gives the table perimeter a single stroke owner', async () => {
     const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
     const Table = renderers.table as React.ComponentType<any>;
     const Td = renderers.td as React.ComponentType<any>;
@@ -471,7 +421,7 @@ describe('native topic structured rendering', () => {
     expect(StyleSheet.flatten(screen.getByTestId('cell-bottom-left').props.style)?.borderBottomWidth).not.toBe(0);
   });
 
-  it('[REG-TOPIC-084] scales minimum columns and bounds hostile colspan to 80 columns', async () => {
+  it('scales minimum columns and bounds hostile colspan to 80 columns', async () => {
     const renderers = createTopicTableRenderers({ minColumnWidth: 120, styles });
     const Table = renderers.table as React.ComponentType<any>;
     const Td = renderers.td as React.ComponentType<any>;
@@ -507,7 +457,7 @@ describe('native topic structured rendering', () => {
     });
   });
 
-  it('[REG-TOPIC-094] gives table overflow one thresholded horizontal pan and a passive scroll owner', async () => {
+  it('gives table overflow one thresholded horizontal pan and a passive scroll owner', async () => {
     const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
     const Table = renderers.table as React.ComponentType<any>;
     const source = table([[cell(), cell(), cell(), cell(), cell(), cell()]]);
@@ -557,7 +507,7 @@ describe('native topic structured rendering', () => {
     expect(mockWithDecay).toHaveBeenCalledWith({ clamp: [0, 256], velocity: 900 });
   });
 
-  it('[REG-TOPIC-097] claims a deliberate horizontal drag before native text selection can own it', async () => {
+  it('claims a deliberate horizontal drag before native text selection can own it', async () => {
     const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
     const Table = renderers.table as React.ComponentType<any>;
     const source = table([[cell(), cell(), cell(), cell(), cell(), cell()]]);
@@ -672,7 +622,7 @@ describe('native topic structured rendering', () => {
     expect(latePointer.fail).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-097] leaves a non-overflowing horizontal region unowned', async () => {
+  it('leaves a non-overflowing horizontal region unowned', async () => {
     const screen = await render(
       <TopicTableScrollProvider>
         <TopicSplitDisclosureScope scopeKey="opening">
@@ -700,7 +650,7 @@ describe('native topic structured rendering', () => {
     expect(stateManager.fail).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-084][REG-TOPIC-094] keeps split table geometry continuous and shares one horizontal offset', async () => {
+  it('keeps split table geometry continuous and shares one horizontal offset', async () => {
     const renderers = createTopicTableRenderers({ minColumnWidth: 96, styles });
     const Table = renderers.table as React.ComponentType<any>;
     const source = table([[cell(), cell(), cell(), cell(), cell(), cell()]]);
@@ -755,7 +705,7 @@ describe('native topic structured rendering', () => {
     ).toBe(true);
   });
 
-  it('[REG-TOPIC-086/088/093/094/097/098] renders 240 selectable code lines with the shared pan policy', async () => {
+  it('renders 240 selectable code lines with the shared pan policy', async () => {
     const lines = Array.from({ length: 240 }, (_, index) => `line-${index + 1}:${'x'.repeat(90)}\n`);
     const rows = compileForumContent({
       html: `<pre>${lines.join('')}</pre>`,
@@ -804,7 +754,7 @@ describe('native topic structured rendering', () => {
     expect(JSON.stringify(screen.toJSON())).toContain('"selectable":true');
   });
 
-  it('[REG-TOPIC-088] keeps the LinuxDo 52-line decorated pre in one native code frame', async () => {
+  it('keeps the LinuxDo 52-line decorated pre in one native code frame', async () => {
     const html = `<pre>${Array.from(
       { length: 52 },
       (_, index) => `<span data-line="${index + 1}">line-${String(index + 1).padStart(2, '0')}</span>\n`

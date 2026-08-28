@@ -5,7 +5,7 @@ vi.mock('react-native', () => ({ NativeModules: {} }));
 import { clearManagedLoginCookies, readManagedCookieHeader, type ManagedCookieNativeModule } from './managedCookies';
 
 describe('managed WebView Cookie boundary', () => {
-  it('[REG-ACCOUNT-031] preserves the difference between an empty exact-url result and an unsupported bridge', async () => {
+  it('preserves the difference between an empty exact-url result and an unsupported bridge', async () => {
     const exactUrl = 'https://linux.do/session/current.json';
     const supported: ManagedCookieNativeModule = {
       readManagedCookieHeader: vi.fn(async () => ({ status: 'ok', header: '' }))
@@ -21,7 +21,7 @@ describe('managed WebView Cookie boundary', () => {
     });
   });
 
-  it('[REG-ACCOUNT-031] reports native read failures as unknown instead of anonymous', async () => {
+  it('reports native read failures as unknown instead of anonymous', async () => {
     const module: ManagedCookieNativeModule = {
       readManagedCookieHeader: vi.fn(async () => {
         throw new Error('CookieManager unavailable');

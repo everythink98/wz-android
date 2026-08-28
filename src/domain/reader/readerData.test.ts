@@ -124,7 +124,7 @@ describe('Android reader data helpers', () => {
     expect(data.history[key]).not.toHaveProperty('note');
   });
 
-  it('[REG-PERF-001] keeps direct history writes capped at the newest 1000 records', () => {
+  it('keeps direct history writes capped at the newest 1000 records', () => {
     const history: ReaderData['history'] = {};
     for (let index = 0; index < MAX_HISTORY_RECORDS; index += 1) {
       const item = { ...topic, id: String(index), title: `Topic ${index}` };
@@ -362,7 +362,7 @@ describe('Android reader data helpers', () => {
     expect(data.deletedRecords.followedUsers[userKey(profile)]).toEqual(expect.any(String));
   });
 
-  it('[REG-TOPIC-039] never creates a NodeSeek followed-user key from a username', () => {
+  it('never creates a NodeSeek followed-user key from a username', () => {
     expect(() => userKey({ source: 'nodeseek', id: 'xy' })).toThrow('NodeSeek 用户 ID 必须是数字');
     expect(userKey({ source: 'nodeseek', id: '8052' })).toBe('nodeseek:8052');
   });
@@ -444,7 +444,7 @@ describe('Android reader data helpers', () => {
     expect(data.followedUsers['yaohuo:36925']?.user.topics[0].author).toBe('李慕婉o');
   });
 
-  it('REG-DATA-005 sanitizes followed-user statistics as non-negative integers', () => {
+  it('sanitizes followed-user statistics as non-negative integers', () => {
     const data = sanitizeReaderData({
       ...createEmptyReaderData(),
       followedUsers: {
@@ -806,7 +806,7 @@ describe('Android reader data helpers', () => {
       suppliedUrl: 'javascript:alert(1)',
       expectedUrl: 'https://www.nodeseek.com/post-unsafe-link-1'
     }
-  ])('[REG-DATA-006] rebuilds $label from source identity only', ({ expectedUrl, id, source, suppliedUrl }) => {
+  ])('rebuilds $label from source identity only', ({ expectedUrl, id, source, suppliedUrl }) => {
     const unsafeTopic: Topic = {
       ...topic,
       source,

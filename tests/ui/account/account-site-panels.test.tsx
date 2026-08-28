@@ -352,7 +352,7 @@ describe('Account site panels', () => {
     expect(view.getByPlaceholderText('NodeImage API Key').props.value).toBe('');
   });
 
-  it('[REG-VERIFICATION-001] settles the App-owned NodeSeek WebView flow and detects only after the user asks', async () => {
+  it('settles the App-owned NodeSeek WebView flow and detects only after the user asks', async () => {
     const onCheckLogin = jest.fn();
     const onSetLoadingLoginPage = jest.fn();
     const onShowLoginPanelChange = jest.fn();
@@ -404,13 +404,13 @@ describe('Account site panels', () => {
     expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
   });
 
-  it('[REG-VERIFICATION-003] lets Android choose the NodeSeek verification WebView user agent', async () => {
+  it('lets Android choose the NodeSeek verification WebView user agent', async () => {
     await render(<NodeSeekLoginHost {...nodeSeekProps({ visible: true })} />);
 
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
-  it('[REG-VERIFICATION-004] unmounts a timed-out NodeSeek WebView until the user refreshes', async () => {
+  it('unmounts a timed-out NodeSeek WebView until the user refreshes', async () => {
     jest.useFakeTimers();
     try {
       mockLoginWebViewMountCount = 0;
@@ -440,7 +440,7 @@ describe('Account site panels', () => {
     }
   });
 
-  it('[REG-ACCOUNT-022] keeps login WebViews mounted while a new credential fill attempt is injected', async () => {
+  it('keeps login WebViews mounted while a new credential fill attempt is injected', async () => {
     mockLoginWebViewMountCount = 0;
     const nodeSeek = await render(
       <NodeSeekLoginHost
@@ -496,13 +496,13 @@ describe('Account site panels', () => {
     await yaohuo.unmount();
   });
 
-  it('[REG-VERIFICATION-003] lets Android choose the linux.do verification WebView user agent', async () => {
+  it('lets Android choose the linux.do verification WebView user agent', async () => {
     await render(<LinuxDoVerifyModal {...linuxDoVerifyProps()} />);
 
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
-  it('[REG-VERIFICATION-004] unmounts a timed-out linux.do WebView until the user refreshes', async () => {
+  it('unmounts a timed-out linux.do WebView until the user refreshes', async () => {
     jest.useFakeTimers();
     try {
       const onResetLinuxDoWebView = jest.fn();
@@ -531,7 +531,7 @@ describe('Account site panels', () => {
     }
   });
 
-  it('[REG-ACCOUNT-019] invalidates the linux.do document probe on every navigation after the page was ready', async () => {
+  it('invalidates the linux.do document probe on every navigation after the page was ready', async () => {
     const onSetLoadingLinuxDoPage = jest.fn();
     const view = await render(<LinuxDoVerifyModal {...linuxDoVerifyProps({ onSetLoadingLinuxDoPage })} />);
 
@@ -542,13 +542,13 @@ describe('Account site panels', () => {
     expect(onSetLoadingLinuxDoPage).toHaveBeenCalledWith(true, 1);
   });
 
-  it('[REG-VERIFICATION-003] lets Android choose the Yaohuo login WebView user agent', async () => {
+  it('lets Android choose the Yaohuo login WebView user agent', async () => {
     await render(<YaohuoLoginHost {...yaohuoProps()} />);
 
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-032] keeps a confirmed Yaohuo session page open while identity reconciliation runs', async () => {
+  it('keeps a confirmed Yaohuo session page open while identity reconciliation runs', async () => {
     const confirmed = session('yaohuo', 'logged-in');
     const view = await render(
       <YaohuoLoginHost
@@ -566,7 +566,7 @@ describe('Account site panels', () => {
     );
   });
 
-  it('[REG-NODESEEK-002] settles on an explicit error', async () => {
+  it('settles on an explicit error', async () => {
     const view = await render(<NodeSeekLoginHost {...nodeSeekProps({ loading: true, visible: true })} />);
 
     await fireEvent.press(view.getByLabelText('模拟 WebView 加载失败'));
@@ -586,7 +586,7 @@ describe('Account site panels', () => {
     expect(view.queryByTestId('nodeseek-login-webview-ready')).toBeNull();
   });
 
-  it('[REG-VERIFICATION-001][REG-PROXY-001] keeps Yaohuo readiness passive and unmounts it while blocked', async () => {
+  it('keeps Yaohuo readiness passive and unmounts it while blocked', async () => {
     const onCheckYaohuoLogin = jest.fn();
     const onSetLoadingYaohuoLoginPage = jest.fn();
     const onWebViewState = jest.fn();
@@ -626,7 +626,7 @@ describe('Account site panels', () => {
     expect(view.queryByTestId('mock-login-webview')).toBeNull();
   });
 
-  it('[REG-VERIFICATION-004] unmounts a timed-out Yaohuo WebView until the user refreshes', async () => {
+  it('unmounts a timed-out Yaohuo WebView until the user refreshes', async () => {
     jest.useFakeTimers();
     try {
       mockLoginWebViewMountCount = 0;

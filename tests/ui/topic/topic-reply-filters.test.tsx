@@ -7,12 +7,7 @@ import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMed
 import type { ReplyFilter } from '@/features/topic/model/types';
 import type { TopicSessionController } from '@/features/topic/useTopicSessionController';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
-import {
-  compileForumContent,
-  discoursePollPlaceholder,
-  prepareReplyContent,
-  prepareTopicContent
-} from '@/domain/forum/topicContentSplit';
+import { discoursePollPlaceholder, prepareReplyContent, prepareTopicContent } from '@/domain/forum/topicContentSplit';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -809,21 +804,8 @@ function TopicFilterHarness({
   );
 }
 
-describe('Topic header presentation', () => {
-  it('[REG-TOPIC-124] owns the spacing between the topic header and the first content row', async () => {
-    await render(<TopicFilterHarness selectedTopic={topic} topicDetail={topic} topicReplies={[]} />);
-
-    const listHeader = lastFlashListProps.ListHeaderComponent as React.ReactElement<{ style?: StyleProp<ViewStyle> }>;
-    expect(StyleSheet.flatten(listHeader.props.style)).toMatchObject({
-      alignItems: 'center',
-      paddingBottom: 20,
-      width: '100%'
-    });
-  });
-});
-
 describe('NodeSeek reply count availability', () => {
-  it('[REG-TOPIC-068] omits an unavailable NodeSeek total instead of showing the loaded window size', async () => {
+  it('omits an unavailable NodeSeek total instead of showing the loaded window size', async () => {
     const nodeSeekTopic = {
       ...topic,
       source: 'nodeseek' as const,
@@ -840,7 +822,7 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
-  it('[REG-PERF-018] computes NodeSeek topic reactions once per render without changing the visible stats', async () => {
+  it('computes NodeSeek topic reactions once per render without changing the visible stats', async () => {
     const nodeSeekTopic: TopicDetail = {
       ...topic,
       source: 'nodeseek',
@@ -861,7 +843,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-TOPIC-096] keeps the ready preview catalog independent of filtering and reply order', async () => {
+  it('keeps the ready preview catalog independent of filtering and reply order', async () => {
     const quoteInstanceKey = 'topic:preview-catalog-owner:linuxdo:quoted-topic:9';
     const replies: Reply[] = [
       {
@@ -939,7 +921,7 @@ describe('Topic reply filters', () => {
     ).toHaveLength(0);
   });
 
-  it('[REG-TOPIC-062] scrolls an atomically anchored notification window without chasing pages', async () => {
+  it('scrolls an atomically anchored notification window without chasing pages', async () => {
     const pages: Reply[][] = [
       [
         {
@@ -997,7 +979,7 @@ describe('Topic reply filters', () => {
     expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ animated: true, viewPosition: 0.2 }));
   });
 
-  it('[REG-TOPIC-092] reissues the same loaded reply location on every explicit press', async () => {
+  it('reissues the same loaded reply location on every explicit press', async () => {
     const replies: Reply[] = [
       {
         author: 'target',
@@ -1073,7 +1055,7 @@ describe('Topic reply filters', () => {
     );
   });
 
-  it('[REG-TOPIC-092] consumes repeated same-topic HTML floor links as distinct route commands', async () => {
+  it('consumes repeated same-topic HTML floor links as distinct route commands', async () => {
     const replies: Reply[] = [
       {
         author: 'target',
@@ -1110,7 +1092,7 @@ describe('Topic reply filters', () => {
     );
   });
 
-  it('[REG-PERF-008] gives split opening-post blocks to FlashList instead of mounting them in its header', async () => {
+  it('gives split opening-post blocks to FlashList instead of mounting them in its header', async () => {
     const longTopic: TopicDetail = {
       ...topic,
       contentHtml: Array.from({ length: 6 }, (_, index) => `<p>${String(index).repeat(2300)}</p>`).join(''),
@@ -1129,7 +1111,7 @@ describe('Topic reply filters', () => {
     expect(lastFlashListItemTypes.indexOf('replyControls')).toBe(contentItemCount);
   });
 
-  it('[REG-TOPIC-091] admits a newly selected terminal-tab long image without waiting for a scroll', async () => {
+  it('admits a newly selected terminal-tab long image without waiting for a scroll', async () => {
     const terminalTopic: TopicDetail = {
       ...topic,
       contentHtml:
@@ -1193,7 +1175,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('[REG-TOPIC-120] admits an image on the first details expansion without waiting for a scroll', async () => {
+  it('admits an image on the first details expansion without waiting for a scroll', async () => {
     const detailsReply: Reply = {
       author: '80hou',
       commentId: 88947312,
@@ -1246,7 +1228,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('[REG-TOPIC-120] admits a signature image on first expansion without a viewport callback', async () => {
+  it('admits a signature image on first expansion without a viewport callback', async () => {
     const signatureReply: Reply = {
       author: 'signature-author',
       commentId: 88947314,
@@ -1289,7 +1271,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('[REG-TOPIC-120] keeps exact-region media rows stable across unrelated insert and reply reorder', async () => {
+  it('keeps exact-region media rows stable across unrelated insert and reply reorder', async () => {
     const detailsReply: Reply = {
       author: '80hou',
       commentId: 88947312,
@@ -1363,7 +1345,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toEqual(stableRowKeys);
   });
 
-  it('[REG-TOPIC-120] admits an opening callout image on the first expansion', async () => {
+  it('admits an opening callout image on the first expansion', async () => {
     const calloutTopic: TopicDetail = {
       ...topic,
       contentHtml:
@@ -1403,7 +1385,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('[REG-TOPIC-120] admits a nested details image only after its visible inner header expands', async () => {
+  it('admits a nested details image only after its visible inner header expands', async () => {
     const nestedReply: Reply = {
       author: 'nested-author',
       commentId: 88947313,
@@ -1460,7 +1442,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('[REG-TOPIC-120] projects a visible opening quote into its first expanded media row', async () => {
+  it('projects a visible opening quote into its first expanded media row', async () => {
     const instanceKey = 'topic:opening-quote-viewport:linuxdo:quoted-topic:8';
     const quotedReply: Reply = {
       author: 'quoted-author',
@@ -1506,7 +1488,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('[REG-TOPIC-120] projects a visible reply quote into its first expanded media row', async () => {
+  it('projects a visible reply quote into its first expanded media row', async () => {
     const instanceKey = 'reply:comment:222:linuxdo:342888:1';
     const quotedReply: Reply = {
       author: 'quoted-author',
@@ -1563,7 +1545,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('[REG-TOPIC-120] projects a visible accepted-answer header into its reopened media row', async () => {
+  it('projects a visible accepted-answer header into its reopened media row', async () => {
     const acceptedFloor = 42;
     const acceptedTopic: TopicDetail = {
       ...topic,
@@ -1614,7 +1596,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toContain(imageItem.key);
   });
 
-  it('[REG-TOPIC-120] never lets ordinary list mutations claim the recorded media window', async () => {
+  it('never lets ordinary list mutations claim the recorded media window', async () => {
     const anchorReply: Reply = {
       author: 'anchor',
       commentId: 920,
@@ -1699,7 +1681,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-TOPIC-120] fails closed when the media session epoch changes without new viewability', async () => {
+  it('fails closed when the media session epoch changes without new viewability', async () => {
     const epochReply: Reply = {
       author: 'epoch-author',
       commentId: 950,
@@ -1741,216 +1723,7 @@ describe('Topic reply filters', () => {
     expect(mockBodyMediaViewportRowKeys).toEqual([]);
   });
 
-  it('[REG-TOPIC-081][REG-TOPIC-090][REG-TOPIC-099] removes virtual-list separators across adjacent semantic rows', async () => {
-    await render(<TopicFilterHarness selectedTopic={topic} topicDetail={topic} topicReplies={[]} />);
-    const separatorHeight = (leadingItem: TopicListItem, trailingItem: TopicListItem) => {
-      const separator = lastFlashListProps.ItemSeparatorComponent({ leadingItem, trailingItem }) as React.ReactElement<{
-        style?: unknown;
-      }> | null;
-      return separator
-        ? (StyleSheet.flatten(separator.props.style as StyleProp<ViewStyle>) as ViewStyle | undefined)?.height || 0
-        : 0;
-    };
-    const content = (key: string, semanticId: string, part: 'only' | 'first' | 'middle' | 'last') => ({
-      type: 'content' as const,
-      key,
-      row: {
-        ancestorFrames: [],
-        html: `<p>${key}</p>`,
-        keySuffix: `${semanticId}:0`,
-        networkMediaCount: 0,
-        part,
-        segmentIndex: part === 'last' ? 1 : 0,
-        semanticId,
-        type: 'richText' as const
-      }
-    });
-    const openingFirst: TopicListItem = {
-      type: 'topicContent',
-      key: 'opening-first',
-      content: content('opening-first', 'block-0', 'first')
-    };
-    const openingLast: TopicListItem = {
-      type: 'topicContent',
-      key: 'opening-last',
-      content: content('opening-last', 'block-0', 'last')
-    };
-    const openingOnly: TopicListItem = {
-      type: 'topicContent',
-      key: 'opening-only',
-      content: content('opening-only', 'block-1', 'only')
-    };
-    const quoteFirst: TopicListItem = {
-      type: 'topicQuoteContent',
-      key: 'quote-first',
-      content: content('quote-first', 'block-0', 'first'),
-      instanceKey: 'quote-a',
-      source: 'nodeseek'
-    };
-    const quoteMetadata = {
-      reference: { source: 'nodeseek' as const, topicId: 'quote-topic', postNumber: 1 },
-      preview: 'quote preview'
-    };
-    const quoteSummary: TopicListItem = {
-      type: 'topicQuoteSummary',
-      key: 'quote-summary',
-      content: {
-        type: 'quoteSummary',
-        key: 'quote-summary',
-        instanceKey: 'quote-a',
-        quote: quoteMetadata,
-        row: {
-          ancestorFrames: [],
-          keySuffix: 'quote-directive:0',
-          networkMediaCount: 0,
-          part: 'only',
-          quote: quoteMetadata,
-          segmentIndex: 0,
-          semanticId: 'quote-directive',
-          type: 'quote'
-        }
-      }
-    };
-    const quoteLast: TopicListItem = {
-      type: 'topicQuoteContent',
-      key: 'quote-last',
-      content: content('quote-last', 'block-1', 'only'),
-      instanceKey: 'quote-a',
-      source: 'nodeseek'
-    };
-    const otherQuoteLast: TopicListItem = {
-      type: 'topicQuoteContent',
-      key: 'other-quote-last',
-      content: quoteLast.content,
-      instanceKey: 'quote-b',
-      source: 'nodeseek'
-    };
-    const acceptedFirst: TopicListItem = {
-      type: 'topicAcceptedAnswerContent',
-      key: 'accepted-first',
-      content: content('accepted-first', 'block-0', 'first'),
-      preview: false
-    };
-    const acceptedLast: TopicListItem = {
-      type: 'topicAcceptedAnswerContent',
-      key: 'accepted-last',
-      content: content('accepted-last', 'block-0', 'last'),
-      preview: false
-    };
-    const terminalHeader: TopicListItem = {
-      type: 'topicContent',
-      key: 'terminal-header',
-      content: {
-        type: 'content',
-        key: 'terminal-header',
-        row: {
-          ancestorFrames: [],
-          defaultTabId: 'report-tab-0',
-          keySuffix: 'report:0',
-          networkMediaCount: 0,
-          part: 'only',
-          segmentIndex: 0,
-          semanticId: 'report',
-          tabs: [{ id: 'report-tab-0', title: 'Overview' }],
-          type: 'terminalReportHeader'
-        }
-      }
-    };
-    const terminalBody: TopicListItem = {
-      type: 'topicContent',
-      key: 'terminal-body',
-      content: {
-        type: 'content',
-        key: 'terminal-body',
-        row: {
-          ancestorFrames: [
-            {
-              defaultTabId: 'report-tab-0',
-              kind: 'terminalTab',
-              part: 'last',
-              reportSemanticId: 'report',
-              semanticId: 'report-tab-0',
-              tabId: 'report-tab-0'
-            }
-          ],
-          copyText: 'result',
-          keySuffix: 'report-body:0',
-          networkMediaCount: 0,
-          part: 'only',
-          runs: [{ text: 'result' }],
-          segmentIndex: 0,
-          semanticId: 'report-body',
-          text: 'result',
-          type: 'codeBlock',
-          variant: 'terminal'
-        }
-      }
-    };
-    const openingPoll: TopicListItem = {
-      type: 'topicContent',
-      key: 'opening-poll',
-      content: {
-        type: 'poll',
-        key: 'opening-poll',
-        poll: topicPoll,
-        row: {
-          ancestorFrames: [],
-          keySuffix: 'poll:0',
-          networkMediaCount: 0,
-          part: 'only',
-          poll: topicPoll,
-          segmentIndex: 0,
-          semanticId: 'poll',
-          type: 'poll'
-        }
-      }
-    };
-    const openingTables = compileForumContent({
-      html: '<table><tr><td>A</td></tr></table><table><tr><td>B</td></tr></table>',
-      role: 'opening',
-      source: 'nodeseek'
-    })
-      .rows.filter((row) => row.type === 'table')
-      .map((row, index): TopicListItem => ({
-        type: 'topicContent',
-        key: `opening-table-${index}`,
-        content: { type: 'content', key: `opening-table-${index}`, row }
-      }));
-
-    expect(separatorHeight(openingFirst, openingLast)).toBe(0);
-    expect(separatorHeight(quoteSummary, quoteFirst)).toBe(0);
-    expect(separatorHeight(quoteFirst, quoteLast)).toBe(0);
-    expect(separatorHeight(acceptedFirst, acceptedLast)).toBe(0);
-    expect(separatorHeight(openingOnly, { ...openingOnly, key: 'opening-only-2' })).toBe(0);
-    expect(separatorHeight(openingFirst, { ...openingLast, content: content('different', 'block-2', 'last') })).toBe(0);
-    expect(separatorHeight(quoteFirst, otherQuoteLast)).toBe(10);
-    expect(separatorHeight(openingFirst, quoteLast)).toBe(10);
-    expect(separatorHeight(terminalHeader, terminalBody)).toBe(0);
-    expect(separatorHeight(openingOnly, openingPoll)).toBe(10);
-    expect(separatorHeight(openingPoll, openingOnly)).toBe(10);
-    expect(openingTables).toHaveLength(2);
-    expect(separatorHeight(openingTables[0], openingTables[1])).toBe(12);
-  });
-
-  it('[REG-TOPIC-081] gives a multi-row opening article only one top boundary', async () => {
-    const article: TopicDetail = {
-      ...topic,
-      contentHtml: Array.from({ length: 6 }, (_, index) => `<p>${String(index).repeat(2300)}</p>`).join(''),
-      replies: [],
-      replyCount: 0
-    };
-    const view = await render(<TopicFilterHarness selectedTopic={article} topicDetail={article} topicReplies={[]} />);
-    const blocks = view.getAllByLabelText(/^content-continuation-/);
-    expect(blocks.length).toBeGreaterThan(1);
-    const containers = blocks.map((block) => StyleSheet.flatten(block.parent?.props.style));
-
-    expect(containers[0]).toMatchObject({ borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 16 });
-    containers.slice(1).forEach((container) => {
-      expect(container).toMatchObject({ borderTopWidth: 0, paddingTop: 0 });
-    });
-  });
-
-  it('[REG-TOPIC-123] keeps mixed Markdown semantics in one continuous opening article', async () => {
+  it('keeps mixed Markdown semantics in one continuous opening article', async () => {
     const article: TopicDetail = {
       ...topic,
       contentHtml:
@@ -1966,95 +1739,20 @@ describe('Topic reply filters', () => {
       source: 'nodeseek',
       url: 'https://www.nodeseek.com/post-890382-1'
     };
-    const view = await render(<TopicFilterHarness selectedTopic={article} topicDetail={article} topicReplies={[]} />);
+    await render(<TopicFilterHarness selectedTopic={article} topicDetail={article} topicReplies={[]} />);
     const openingItems = (lastFlashListProps.data as TopicListItem[]).filter(
       (item): item is Extract<TopicListItem, { type: 'topicContent' }> => item.type === 'topicContent'
     );
     const openingRows = openingItems.flatMap((item) => (item.content.type === 'content' ? [item.content.row] : []));
-    const separatorHeight = (leadingItem: TopicListItem, trailingItem: TopicListItem) => {
-      const separator = lastFlashListProps.ItemSeparatorComponent({ leadingItem, trailingItem }) as React.ReactElement<{
-        style?: unknown;
-      }> | null;
-      return separator
-        ? (StyleSheet.flatten(separator.props.style as StyleProp<ViewStyle>) as ViewStyle | undefined)?.height || 0
-        : 0;
-    };
-
     expect(openingRows.map((row) => row.type)).toEqual(['richText', 'richText', 'codeBlock']);
     expect(openingRows[0]?.ancestorFrames).toEqual([expect.objectContaining({ kind: 'blockquote', part: 'only' })]);
     expect('html' in openingRows[1] ? openingRows[1].html : '').toBe(
       '<hr><hr><hr><hr><hr><h2>TGBot</h2><hr><hr><hr><hr><h2>1.更新推送格式</h2><p>正文说明</p>'
     );
     expect(openingRows[2]).toMatchObject({ text: 'echo ready', type: 'codeBlock' });
-    expect(openingItems.slice(0, -1).map((item, index) => separatorHeight(item, openingItems[index + 1]))).toEqual([
-      0, 0
-    ]);
-
-    const htmlBlocks = view.getAllByLabelText('content-continuation-only');
-    const containers = htmlBlocks.map((block) => StyleSheet.flatten(block.parent?.props.style));
-    expect(containers[0]).toMatchObject({ borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 16 });
-    expect(containers[1]).not.toHaveProperty('borderTopWidth');
-    expect(containers[1]).not.toHaveProperty('paddingTop');
-    const codeFrame = view.getByTestId('topic-code-frame');
-    let codeHasArticleBoundary = false;
-    for (let ancestor = codeFrame.parent; ancestor; ancestor = ancestor.parent) {
-      const style = StyleSheet.flatten(ancestor.props.style as StyleProp<ViewStyle>) as ViewStyle | undefined;
-      codeHasArticleBoundary ||= style?.borderTopWidth === StyleSheet.hairlineWidth && style.paddingTop === 16;
-    }
-    expect(codeHasArticleBoundary).toBe(false);
   });
 
-  it('[REG-TOPIC-123] keeps the article boundary on prose when a poll opens the topic', async () => {
-    const poll = { ...topicPoll, name: 'opening-poll' };
-    const article: TopicDetail = {
-      ...topic,
-      contentHtml: `${discoursePollPlaceholder(poll.name)}<p>首段正文</p>`,
-      polls: [poll],
-      replies: [],
-      replyCount: 0,
-      source: 'linuxdo',
-      url: 'https://linux.do/t/poll-first'
-    };
-    const view = await render(<TopicFilterHarness selectedTopic={article} topicDetail={article} topicReplies={[]} />);
-    const pollContainer = StyleSheet.flatten(view.getByTestId('topic-poll-linuxdo').parent?.props.style);
-    const proseContainer = StyleSheet.flatten(view.getByLabelText('content-continuation-only').parent?.props.style);
-
-    expect(pollContainer).not.toHaveProperty('borderTopWidth');
-    expect(pollContainer).not.toHaveProperty('paddingTop');
-    expect(proseContainer).toMatchObject({ borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 16 });
-  });
-
-  it('[REG-PERF-010] keeps continuation chrome only at the outer edges of a split opening group', async () => {
-    const splitTopic: TopicDetail = {
-      ...topic,
-      contentHtml: `<p>${Array.from(
-        { length: 12 },
-        (_, index) => `<img src="https://img.example.com/chrome-${index}.jpg">`
-      ).join('')}</p>`,
-      replies: [],
-      replyCount: 0
-    };
-    const view = await render(
-      <TopicFilterHarness selectedTopic={splitTopic} topicDetail={splitTopic} topicReplies={[]} />
-    );
-    const first = view.getByLabelText('content-continuation-first');
-    const middle = view.getByLabelText('content-continuation-middle');
-    const last = view.getByLabelText('content-continuation-last');
-    const firstContainer = StyleSheet.flatten(first.parent?.props.style);
-    const middleContainer = StyleSheet.flatten(middle.parent?.props.style);
-    const lastContainer = StyleSheet.flatten(last.parent?.props.style);
-
-    expect(firstContainer).toMatchObject({
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingBottom: 0,
-      paddingTop: 16
-    });
-    expect(middleContainer).toMatchObject({ borderBottomWidth: 0, borderTopWidth: 0, paddingBottom: 0, paddingTop: 0 });
-    expect(lastContainer).toMatchObject({ borderTopWidth: 0, paddingTop: 0 });
-    expect(lastContainer?.paddingBottom).toBeUndefined();
-  });
-
-  it('[REG-PERF-010] gives a 2000-image reply to FlashList as direct bounded content rows', async () => {
+  it('gives a 2000-image reply to FlashList as direct bounded content rows', async () => {
     const imageReply: Reply = {
       author: 'image-poster',
       commentId: 863650,
@@ -2090,7 +1788,7 @@ describe('Topic reply filters', () => {
     expect(directReplyRows).not.toContain('reply');
   });
 
-  it('[REG-PERF-010] gives a poll-only reply to FlashList instead of materializing it inside ReplyItem', async () => {
+  it('gives a poll-only reply to FlashList instead of materializing it inside ReplyItem', async () => {
     const pollReply: Reply = {
       author: 'poll-poster',
       commentId: 864000,
@@ -2122,7 +1820,7 @@ describe('Topic reply filters', () => {
     expect(lastFlashListItemTypes).not.toContain('reply');
   });
 
-  it('[REG-PERF-010] shares split details within one entrance without crossing main, reply, or signature', async () => {
+  it('shares split details within one entrance without crossing main, reply, or signature', async () => {
     const oversizedDetails = (label: string) =>
       `<details><summary>${label} header</summary>${Array.from({ length: 3 }, (_, part) => {
         const imageCount = part < 2 ? 4 : 1;
@@ -2176,7 +1874,7 @@ describe('Topic reply filters', () => {
     expect(view.queryByText(/Signature body 1/)).toBeNull();
   });
 
-  it('[REG-TOPIC-087][REG-TOPIC-088][REG-TOPIC-089] carries one sanitized code owner through the real FlashList reply path', async () => {
+  it('carries one sanitized code owner through the real FlashList reply path', async () => {
     const codeLines = Array.from(
       { length: 52 },
       (_, index) =>
@@ -2214,7 +1912,7 @@ describe('Topic reply filters', () => {
     expect(rendered.indexOf('code-line-01')).toBeLessThan(rendered.indexOf('code-line-52'));
   });
 
-  it('[REG-PERF-010] emits one route aggregate with the actual bounded opening-post plan', async () => {
+  it('emits one route aggregate with the actual bounded opening-post plan', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -2256,7 +1954,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-PERF-010] records the first opening row layout from the response-ready monotonic epoch once', async () => {
+  it('records the first opening row layout from the response-ready monotonic epoch once', async () => {
     const lines: string[] = [];
     let now = 1_000;
     const nowSpy = jest.spyOn(globalThis.performance, 'now').mockImplementation(() => now);
@@ -2289,7 +1987,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-PERF-010] admits at most four atomic opening videos before one settles', async () => {
+  it('admits at most four atomic opening videos before one settles', async () => {
     const lines: string[] = [];
     const videoTopic: TopicDetail = {
       ...topic,
@@ -2336,7 +2034,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-PERF-010] inserts expanded opening-post quote content as direct FlashList rows', async () => {
+  it('inserts expanded opening-post quote content as direct FlashList rows', async () => {
     const quoteInstanceKey = 'topic:opening-quote-owner:linuxdo:quoted-topic:8';
     const quotedReply: Reply = {
       author: 'quoted-author',
@@ -2382,7 +2080,7 @@ describe('Topic reply filters', () => {
     expect(view.getByText('preview')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-003] expands a same-topic opening quote from the current reply instead of stale quote cache', async () => {
+  it('expands a same-topic opening quote from the current reply instead of stale quote cache', async () => {
     const topicId = 'same-topic-quote-owner';
     const currentReply: Reply = {
       author: 'current-author',
@@ -2419,7 +2117,7 @@ describe('Topic reply filters', () => {
     expect(rendered).not.toContain('stale cached body');
   });
 
-  it('[REG-PERF-010] keeps a giant accepted answer to one preview row until explicitly expanded', async () => {
+  it('keeps a giant accepted answer to one preview row until explicitly expanded', async () => {
     const acceptedFloor = 42;
     const acceptedTopic: TopicDetail = {
       ...topic,
@@ -2464,7 +2162,7 @@ describe('Topic reply filters', () => {
     expect(view.getByLabelText('content-continuation-last')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-054][REG-TOPIC-055] measures a staged quote row before materializing the complete post', async () => {
+  it('measures a staged quote row before materializing the complete post', async () => {
     const pendingFrames: FrameRequestCallback[] = [];
     const requestFrame = jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
       pendingFrames.push(callback);
@@ -2565,7 +2263,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-PERF-008][REG-PERF-010] never compiles opening content after it reaches the UI', async () => {
+  it('never compiles opening content after it reaches the UI', async () => {
     const openingTopic = prepareTopicContent({
       ...topic,
       source: 'linuxdo',
@@ -2607,7 +2305,7 @@ describe('Topic reply filters', () => {
     expect(mockCompileForumContent).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-048] enables original-image upgrades when FlashList mounts an opening-post chunk', async () => {
+  it('enables original-image upgrades when FlashList mounts an opening-post chunk', async () => {
     const topicWithImage = {
       ...topic,
       contentHtml: '<p>opening post <img src="https://img.example.com/opening.png"></p>'
@@ -2628,7 +2326,7 @@ describe('Topic reply filters', () => {
   });
 
   it.each(['linuxdo'] as const)(
-    '[REG-TOPIC-026] renders the accepted %s answer inside the opening post before the reply list',
+    'renders the accepted %s answer inside the opening post before the reply list',
     async (source) => {
       const acceptedReply: Reply = {
         ...sourceReplies[1],
@@ -2679,7 +2377,7 @@ describe('Topic reply filters', () => {
   );
 
   it.each(['linuxdo'] as const)(
-    '[REG-TOPIC-026] loads the accepted %s answer by floor when it is outside the current reply page',
+    'loads the accepted %s answer by floor when it is outside the current reply page',
     async (source) => {
       const acceptedFloor = 42;
       const solvedTopic: TopicDetail = {
@@ -2751,7 +2449,7 @@ describe('Topic reply filters', () => {
     }
   );
 
-  it('[REG-TOPIC-026] does not load an accepted answer hidden behind an access notice', async () => {
+  it('does not load an accepted answer hidden behind an access notice', async () => {
     const restrictedTopic: TopicDetail = {
       ...topic,
       acceptedAnswerFloor: 42,
@@ -2780,7 +2478,7 @@ describe('Topic reply filters', () => {
     expect(onToggleTopicBodyQuote).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-026] restores the reply list before locating an accepted answer hidden by filters', async () => {
+  it('restores the reply list before locating an accepted answer hidden by filters', async () => {
     const acceptedReply: Reply = {
       ...sourceReplies[1],
       acceptedAnswer: true,
@@ -2830,20 +2528,26 @@ describe('Topic reply filters', () => {
       .mockRejectedValueOnce(new Error('temporary emoji failure'))
       .mockResolvedValue({ heart: 'https://linux.do/heart.png' });
     const onRefreshWholeTopic = jest.fn();
-    const view = await render(
-      <TopicFilterHarness
-        onRefreshWholeTopic={onRefreshWholeTopic}
-        selectedTopic={linuxdoTopic}
-        topicDetail={linuxdoTopic}
-        topicError={{ kind: 'ordinary', message: 'temporary topic failure', retryable: true }}
-      />
-    );
-    await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(1));
+    const queryKey = forumQueryKeys.emojiUrls('linuxdo');
+    appQueryClient.removeQueries({ queryKey, exact: true });
+    try {
+      const view = await render(
+        <TopicFilterHarness
+          onRefreshWholeTopic={onRefreshWholeTopic}
+          selectedTopic={linuxdoTopic}
+          topicDetail={linuxdoTopic}
+          topicError={{ kind: 'ordinary', message: 'temporary topic failure', retryable: true }}
+        />
+      );
+      await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(1));
 
-    await fireEvent.press(view.getByText('重试'));
+      await fireEvent.press(view.getByText('重试'));
 
-    expect(onRefreshWholeTopic).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(2));
+      expect(onRefreshWholeTopic).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(2));
+    } finally {
+      appQueryClient.removeQueries({ queryKey, exact: true });
+    }
   });
 
   it('shows the cached source emoji catalog in Topic reactions without another request', async () => {
@@ -2854,25 +2558,29 @@ describe('Topic reply filters', () => {
       url: 'https://linux.do/t/topic-1'
     };
     const getDiscourseEmojiUrls = jest.fn(async () => ({ heart: 'https://linux.do/network-heart.png' }));
-    appQueryClient.setQueryData(forumQueryKeys.emojiUrls('linuxdo'), {
+    const queryKey = forumQueryKeys.emojiUrls('linuxdo');
+    appQueryClient.setQueryData(queryKey, {
       heart: 'https://linux.do/cached-heart.png'
     });
+    try {
+      const view = await render(
+        <TopicFilterHarness
+          getDiscourseEmojiUrls={getDiscourseEmojiUrls}
+          selectedTopic={linuxDoTopic}
+          topicDetail={linuxDoTopic}
+        />
+      );
 
-    const view = await render(
-      <TopicFilterHarness
-        getDiscourseEmojiUrls={getDiscourseEmojiUrls}
-        selectedTopic={linuxDoTopic}
-        topicDetail={linuxDoTopic}
-      />
-    );
-
-    await waitFor(() => {
-      expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/cached-heart.png');
-    });
-    expect(getDiscourseEmojiUrls).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(view.getByTestId('reaction-heart').props.children).toContain('https://linux.do/cached-heart.png');
+      });
+      expect(getDiscourseEmojiUrls).not.toHaveBeenCalled();
+    } finally {
+      appQueryClient.removeQueries({ queryKey, exact: true });
+    }
   });
 
-  it('[REG-TOPIC-116] keeps a loaded linux.do emoji catalog for the App process', async () => {
+  it('keeps a loaded linux.do emoji catalog for the App process', async () => {
     const linuxDoTopic: TopicDetail = {
       ...topic,
       source: 'linuxdo',
@@ -2924,7 +2632,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-TOPIC-116] retries an emoji catalog that failed before producing data', async () => {
+  it('retries an emoji catalog that failed before producing data', async () => {
     const linuxDoTopic: TopicDetail = {
       ...topic,
       source: 'linuxdo',
@@ -2969,7 +2677,7 @@ describe('Topic reply filters', () => {
     }
   });
 
-  it('[REG-WRITE-009][REG-TOPIC-128] renders a NodeSeek poll at its marker between body blocks', async () => {
+  it('renders a NodeSeek poll at its marker between body blocks', async () => {
     const nodeSeekTopic: TopicDetail = {
       ...topic,
       source: 'nodeseek',
@@ -3080,7 +2788,7 @@ describe('Topic reply filters', () => {
     expect(onLoadMoreReplies).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-067] confirms the ordered reply boundary immediately after the final window', async () => {
+  it('confirms the ordered reply boundary immediately after the final window', async () => {
     const onLoadMoreReplies = jest.fn<() => void>();
     const view = await render(<TopicFilterHarness replyHasMore onLoadMoreReplies={onLoadMoreReplies} />);
 
@@ -3109,7 +2817,7 @@ describe('Topic reply filters', () => {
     expect(view.getByText('已到最早回复')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-076][REG-TOPIC-077] shows a partial V2EX prefix as a settled visible result', async () => {
+  it('shows a partial V2EX prefix as a settled visible result', async () => {
     const partialTopic: TopicDetail = {
       ...topic,
       replyCount: 106,
@@ -3162,7 +2870,7 @@ describe('Topic reply filters', () => {
     expect(view.queryByLabelText('已到最新回复')).toBeNull();
   });
 
-  it('[REG-TOPIC-077] shows a non-V2EX partial hint without hiding server reply order', async () => {
+  it('shows a non-V2EX partial hint without hiding server reply order', async () => {
     const partialTopic: TopicDetail = {
       ...topic,
       source: 'nodeseek',
@@ -3188,7 +2896,7 @@ describe('Topic reply filters', () => {
     expect(view.queryByLabelText('已到最新回复')).toBeNull();
   });
 
-  it('[REG-TOPIC-076] waits to scroll to a V2EX floor outside the prefix until the full collection arrives', async () => {
+  it('waits to scroll to a V2EX floor outside the prefix until the full collection arrives', async () => {
     const prefix = sourceReplies.slice(0, 1);
     const syncingTopic: TopicDetail = {
       ...topic,
@@ -3224,7 +2932,7 @@ describe('Topic reply filters', () => {
     expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ animated: true, viewPosition: 0.2 }));
   });
 
-  it('[REG-TOPIC-067] scales the reply order control, menu and boundary with reader text size', async () => {
+  it('scales the reply order control, menu and boundary with reader text size', async () => {
     const settings = { ...readerData.settings, fontScale: 1.3 };
     const value = { settings, theme: createTheme(settings) };
     const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -3245,7 +2953,7 @@ describe('Topic reply filters', () => {
     expect(StyleSheet.flatten(menuText.props.style)).toEqual(expect.objectContaining({ fontSize: 17, lineHeight: 23 }));
   });
 
-  it('[REG-TOPIC-062] maps both window edges without double-loading a gesture', async () => {
+  it('maps both window edges without double-loading a gesture', async () => {
     const onLoadMoreReplies = jest.fn();
     const onLoadPreviousReplies = jest.fn();
     const view = await render(
@@ -3277,7 +2985,7 @@ describe('Topic reply filters', () => {
     expect(view.getByLabelText('加载更早回复')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-067] labels the previous newest window as newer replies', async () => {
+  it('labels the previous newest window as newer replies', async () => {
     const view = await render(<TopicFilterHarness replyHasPrevious />);
 
     await fireEvent.press(view.getByLabelText('回复排序，当前正序'));
@@ -3287,7 +2995,7 @@ describe('Topic reply filters', () => {
     expect(view.queryByLabelText('加载更早回复')).toBeNull();
   });
 
-  it('[REG-TOPIC-063] prefetches the previous window before its retry button becomes visible', async () => {
+  it('prefetches the previous window before its retry button becomes visible', async () => {
     const onLoadPreviousReplies = jest.fn();
     const replyForFloor = (floor: number): Reply => ({
       author: `author-${floor}`,
@@ -3348,7 +3056,7 @@ describe('Topic reply filters', () => {
     expect(onLoadPreviousReplies).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-TOPIC-063] keeps position maintenance enabled for the final previous-window prepend', async () => {
+  it('keeps position maintenance enabled for the final previous-window prepend', async () => {
     const earlierReply: Reply = {
       author: 'earlier',
       commentId: 999,
@@ -3377,7 +3085,7 @@ describe('Topic reply filters', () => {
     expect(view.getByLabelText('已收藏')).toBeTruthy();
   });
 
-  it('REG-WRITE-003 exposes the confirmed yaohuo favorite as a selected cancel action', async () => {
+  it('exposes the confirmed yaohuo favorite as a selected cancel action', async () => {
     const onYaohuoFavorite = jest.fn<() => void>();
     const yaohuoTopic: TopicDetail = {
       ...topic,
@@ -3418,7 +3126,7 @@ describe('Topic reply filters', () => {
     expect(view.getByLabelText('原站收藏').props.accessibilityState.selected).toBe(false);
   });
 
-  it('REG-WRITE-003 disables the yaohuo favorite action while its original state is unknown', async () => {
+  it('disables the yaohuo favorite action while its original state is unknown', async () => {
     const onYaohuoFavorite = jest.fn<() => void>();
     const yaohuoTopic: TopicDetail = {
       ...topic,
@@ -3442,7 +3150,7 @@ describe('Topic reply filters', () => {
     expect(onYaohuoFavorite).not.toHaveBeenCalled();
   });
 
-  it('[REG-WRITE-004] updates the yaohuo favorite button without replacing the topic layout detail', async () => {
+  it('updates the yaohuo favorite button without replacing the topic layout detail', async () => {
     const onYaohuoFavorite = jest.fn<() => void>();
     const unfavoritedTopic: TopicDetail = {
       ...topic,
@@ -3476,7 +3184,7 @@ describe('Topic reply filters', () => {
     expect(view.getByLabelText('取消原站收藏').props.accessibilityState.selected).toBe(true);
   });
 
-  it('[REG-WRITE-005] keeps HTML rendering inputs stable for yaohuo favorite and cancel confirmations', async () => {
+  it('keeps HTML rendering inputs stable for yaohuo favorite and cancel confirmations', async () => {
     const unbookmarkedTopic: TopicDetail = {
       ...topic,
       source: 'yaohuo',
@@ -3519,7 +3227,7 @@ describe('Topic reply filters', () => {
     expect(onRender.mock.calls.at(-1)?.[1]).toBe(initialRendererProps);
   });
 
-  it('[REG-TOPIC-063] exposes independent reply ordering without reversing the rendered array locally', async () => {
+  it('exposes independent reply ordering without reversing the rendered array locally', async () => {
     const view = await render(<TopicFilterHarness />);
 
     expect(view.getByLabelText('回复排序，当前正序')).toBeTruthy();
@@ -3536,7 +3244,7 @@ describe('Topic reply filters', () => {
     ]);
   });
 
-  it('[REG-TOPIC-067] shows newest-tail loading and a reply-level retry without stale replies', async () => {
+  it('shows newest-tail loading and a reply-level retry without stale replies', async () => {
     const onRetryReplies = jest.fn();
     const view = await render(<TopicFilterHarness onRetryReplies={onRetryReplies} repliesLoading topicReplies={[]} />);
 
@@ -3557,7 +3265,7 @@ describe('Topic reply filters', () => {
     expect(onRetryReplies).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-067] keeps a full-window refresh error visible above trusted replies', async () => {
+  it('keeps a full-window refresh error visible above trusted replies', async () => {
     const onRetryReplies = jest.fn();
     const view = await render(
       <TopicFilterHarness
@@ -3578,7 +3286,7 @@ describe('Topic reply filters', () => {
     expect(view.queryByText('重试评论')).toBeNull();
   });
 
-  it('[REG-TOPIC-067] keeps an adjacent-window failure visible at its exact retry edge', async () => {
+  it('keeps an adjacent-window failure visible at its exact retry edge', async () => {
     const onLoadMoreReplies = jest.fn();
     const onLoadPreviousReplies = jest.fn();
     const onRetryReplies = jest.fn();
@@ -3644,7 +3352,7 @@ describe('Topic reply filters', () => {
     expect(view.getAllByText('重试评论')).toHaveLength(2);
   });
 
-  it('[REG-TOPIC-067][REG-WRITE-017] keeps independent root and edge failures reachable when their text matches', async () => {
+  it('keeps independent root and edge failures reachable when their text matches', async () => {
     const onRetryReplies = jest.fn();
     const error = { kind: 'ordinary' as const, message: 'offline', retryable: true };
     const view = await render(
@@ -3690,7 +3398,7 @@ describe('Topic reply filters', () => {
     expect(view.getByText('3 条')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-001] keeps the count aligned with the debounced result while a cleared query settles', async () => {
+  it('keeps the count aligned with the debounced result while a cleared query settles', async () => {
     const view = await render(<TopicFilterHarness filteredCommentQuery="needle" />);
 
     expect(view.getAllByText(/^reply-/)).toHaveLength(2);

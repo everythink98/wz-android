@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 
 describe('forum search Custom Tab plugin', () => {
-  it('[REG-SEARCH-028] generates a scoped current-URL handoff to MainActivity', () => {
+  it('generates a scoped current-URL handoff to MainActivity', () => {
     const { forumSearchCustomTabModuleSource } = require('../../plugins/withForumSearchCustomTab') as {
       forumSearchCustomTabModuleSource: (packageName: string) => string;
     };

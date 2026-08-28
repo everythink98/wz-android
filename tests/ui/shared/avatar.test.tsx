@@ -112,7 +112,7 @@ describe('Avatar image fallback', () => {
     expect(mockLoadRemoteAvatarSvgText).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-PROXY-011] retries a warm cached avatar after the proxy transport becomes ready', async () => {
+  it('retries a warm cached avatar after the proxy transport becomes ready', async () => {
     mockLoadRemoteAvatarSvgText.mockResolvedValue(null);
     const uri = 'https://www.nodeseek.com/avatar/58164.png';
     const avatar = (transportIdentity: string) => (

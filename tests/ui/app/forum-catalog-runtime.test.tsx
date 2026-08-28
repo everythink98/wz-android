@@ -7,7 +7,7 @@ import { aggregateFeedSources, type Source } from '@/domain/forum/sourceCatalog'
 const allSourcesKey = 'v2ex,linuxdo,nodeseek,yaohuo';
 
 describe('forum catalog runtime', () => {
-  it('[REG-LINUXDO-006] owns shared categories on Search and cancels them after leaving both readers', async () => {
+  it('owns shared categories on Search and cancels them after leaving both readers', async () => {
     const signals: AbortSignal[] = [];
     const readGateway = {
       getReadPlan: jest.fn(() => ({
@@ -49,7 +49,7 @@ describe('forum catalog runtime', () => {
     await waitFor(() => expect(signals[0]?.aborted).toBe(true));
   });
 
-  it('[REG-SOURCE-010] replaces aggregate categories with the same enabled-source snapshot', async () => {
+  it('replaces aggregate categories with the same enabled-source snapshot', async () => {
     const requests: { context?: { includedSources?: readonly string[] }; signal: AbortSignal }[] = [];
     const readGateway = {
       getReadPlan: jest.fn(() => ({
@@ -97,7 +97,7 @@ describe('forum catalog runtime', () => {
     expect(requests[1].context?.includedSources).toEqual(['v2ex']);
   });
 
-  it('[REG-SOURCE-010] does not read aggregate categories for an empty source set', async () => {
+  it('does not read aggregate categories for an empty source set', async () => {
     const readGateway = {
       getReadPlan: jest.fn(() => ({
         state: 'ready',
@@ -126,7 +126,7 @@ describe('forum catalog runtime', () => {
     expect(hook.result.current.categories).toEqual([]);
   });
 
-  it('[REG-SOURCE-010] keeps aggregate categories on the same query when only source order changes', async () => {
+  it('keeps aggregate categories on the same query when only source order changes', async () => {
     const readGateway = {
       getReadPlan: jest.fn(() => ({
         state: 'ready',

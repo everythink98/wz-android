@@ -27,7 +27,7 @@ describe('linux.do level profile', () => {
     vi.clearAllMocks();
   });
 
-  it('REG-ACCOUNT-009 cancels a level read before fallback or snapshot persistence when credentials change', async () => {
+  it('cancels a level read before fallback or snapshot persistence when credentials change', async () => {
     const controller = new AbortController();
     const fetcher = vi.fn(async () => {
       controller.abort();
@@ -233,7 +233,7 @@ describe('linux.do level profile', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('REG-LINUXDO-009 recovers an expired Connect session once through the existing hidden WebView', async () => {
+  it('recovers an expired Connect session once through the existing hidden WebView', async () => {
     const directFetcher = vi.fn(async (input: string) => {
       if (input === 'https://linux.do/my/summary.json') {
         return new Response(
@@ -409,7 +409,7 @@ describe('linux.do level profile', () => {
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
-  it('REG-LINUXDO-009 does not retry a timed-out direct Connect request before WebView recovery', async () => {
+  it('does not retry a timed-out direct Connect request before WebView recovery', async () => {
     vi.useFakeTimers();
     try {
       const directFetcher = vi.fn((input: string, init?: RequestInit) => {

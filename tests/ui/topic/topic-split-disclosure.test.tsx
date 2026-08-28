@@ -116,7 +116,7 @@ const splitDetails = (label: string) =>
   ).join('')}</p></details>`;
 
 describe('typed topic disclosure state', () => {
-  it('[REG-TOPIC-111] keeps explicit frame edges and the title when expanded disclosures collapse', async () => {
+  it('keeps explicit frame edges and the title when expanded disclosures collapse', async () => {
     const fixtures = [
       {
         html: '<details open><summary>Details</summary><p>details body</p></details>',
@@ -150,7 +150,7 @@ describe('typed topic disclosure state', () => {
     }
   });
 
-  it('[REG-TOPIC-090] keeps terminal tab selection in route state while virtual rows rematerialize', async () => {
+  it('keeps terminal tab selection in route state while virtual rows rematerialize', async () => {
     const view = await render(<TerminalFixture scopeKey="opening" />);
     expect(view.getByText('first body')).toBeTruthy();
     expect(view.queryByText('second body')).toBeNull();
@@ -172,7 +172,7 @@ describe('typed topic disclosure state', () => {
     expect(view.queryByText('second body')).toBeNull();
   });
 
-  it('[REG-TOPIC-056][REG-TOPIC-086] unmounts every typed details and callout body row from the real header state', async () => {
+  it('unmounts every typed details and callout body row from the real header state', async () => {
     const fixtures = [
       { html: splitDetails('Details'), label: 'Details' },
       {

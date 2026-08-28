@@ -70,7 +70,7 @@ describe('navigation commands', () => {
     });
   });
 
-  it('[REG-NOTIFY-004] leaves hardware back to every native stack route', () => {
+  it('leaves hardware back to every native stack route', () => {
     for (const name of [
       'Topic',
       'User',

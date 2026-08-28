@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { shareTopicWithClipboardFallback } from './shareTopic';
 
 describe('topic action helpers', () => {
-  it('REG-TOPIC-017 consumes a clipboard fallback failure and tells the user', async () => {
+  it('consumes a clipboard fallback failure and tells the user', async () => {
     const notify = vi.fn();
 
     await expect(

@@ -13,7 +13,7 @@ import type { MediaReferrerContext, MediaReferrerPolicy, TopicDetail } from '@/d
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { cachedImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
-import { FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG } from '@/domain/forum/forumContentMedia';
+import { FORUM_STICKER_TAG } from '@/domain/forum/forumContentMedia';
 import {
   markOriginalImageDisplayed,
   OriginalImageUpgradeBoundary,
@@ -281,6 +281,7 @@ const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const noop = () => undefined;
+let defaultMediaSessionIdentity = 'test:topic-image';
 const topic: TopicDetail = {
   author: 'alice',
   contentHtml: `<p><img src="${imageUrl}" alt="测试图片"></p>`,
@@ -328,7 +329,7 @@ function TopicImageHarness({
   const selectedTopic = mediaReferrer
     ? { ...selectedTopicWithoutReferrer, mediaReferrer }
     : selectedTopicWithoutReferrer;
-  const resolvedMediaSessionIdentity = mediaSessionIdentity || `${topicSource}:2`;
+  const resolvedMediaSessionIdentity = mediaSessionIdentity || `${topicSource}:${defaultMediaSessionIdentity}`;
   const { htmlRenderers } = useHtmlRenderingController({
     mediaSessionIdentity: resolvedMediaSessionIdentity,
     onOpenExternalUrl: noop,
@@ -574,6 +575,7 @@ function htmlRenderingControllerProps(mediaSessionIdentity: string) {
 
 describe('topic block image loading', () => {
   beforeEach(() => {
+    defaultMediaSessionIdentity = `test:${expect.getState().currentTestName ?? 'topic-image'}`;
     mockSourceHeaders = undefined;
     mockExpoImageProps.mockClear();
     mockFlashListLayout.mockClear();
@@ -602,7 +604,7 @@ describe('topic block image loading', () => {
     };
   });
 
-  it('[REG-PERF-010] does not create an Expo Image source before the route coordinator grants a permit', async () => {
+  it('does not create an Expo Image source before the route coordinator grants a permit', async () => {
     await render(
       <TopicBodyMediaCoordinatorProvider active paused viewportRowKeys={['opening-row']}>
         <TopicBodyMediaRowBoundary rowKey="opening-row">
@@ -614,13 +616,7 @@ describe('topic block image loading', () => {
     expect(mockExpoImageProps).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-010] removes both outer image margins for a middle continuation row', async () => {
-    const view = await render(<TopicImageHarness continuation="middle" />);
-
-    expect(view.getByLabelText('测试图片')).toHaveStyle({ marginBottom: 0, marginTop: 0 });
-  });
-
-  it('[REG-PERF-010] keeps stickers, link-card art, and iframe browsers unmounted while their row is paused', async () => {
+  it('keeps stickers, link-card art, and iframe browsers unmounted while their row is paused', async () => {
     await render(
       <TopicBodyMediaCoordinatorProvider active paused viewportRowKeys={['special-media-row']}>
         <TopicBodyMediaRowBoundary rowKey="special-media-row">
@@ -636,33 +632,14 @@ describe('topic block image loading', () => {
     expect(mockWebView).not.toHaveBeenCalled();
   });
 
-  it('[REG-PROXY-001] renders the proxy block message instead of mounting an iframe WebView', async () => {
+  it('renders the proxy block message instead of mounting an iframe WebView', async () => {
     const view = await render(<NodeSeekIframeHarness webViewBlockMessage="代理状态切换中" />);
 
     expect(view.getByText('代理状态切换中')).toBeTruthy();
     expect(mockWebView).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-010] removes continuation margins from every custom block-media frame', async () => {
-    const videoUrl = 'https://cdn.example.com/boundary-video.mp4';
-    const view = await render(
-      <TopicContentPresentationProvider continuation="middle">
-        <NodeSeekLinkCardHarness />
-        <NodeSeekIframeHarness />
-        <NodeSeekCustomMediaHarness rendererKey={FORUM_STICKER_ROW_TAG} attributes={{}} />
-        <NodeSeekCustomMediaHarness rendererKey={FORUM_VIDEO_TAG} attributes={{ src: videoUrl }} />
-      </TopicContentPresentationProvider>
-    );
-
-    expect(view.getByRole('link', { name: 'card title' })).toHaveStyle({ marginBottom: 0, marginTop: 0 });
-    expect(view.getByTestId('topic-video-embed-frame')).toHaveStyle({ marginBottom: 0, marginTop: 0 });
-    expect(view.getByTestId('forum-sticker-row')).toHaveStyle({ marginBottom: 0, marginTop: 0 });
-    await waitFor(() =>
-      expect(view.getByTestId('forum-content-video-frame')).toHaveStyle({ marginBottom: 0, marginTop: 0 })
-    );
-  });
-
-  it('[REG-PERF-010] does not let whitespace-only art consume the remaining media permit', async () => {
+  it('does not let whitespace-only art consume the remaining media permit', async () => {
     await render(
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
         <TopicBodyMediaRowBoundary rowKey="special-media-row">
@@ -682,7 +659,7 @@ describe('topic block image loading', () => {
     await waitFor(() => expect(latestImageProps(trailingStickerUrl)).toBeTruthy());
   });
 
-  it('[REG-PERF-010] gives link-card icon, thumbnail, and sticker independent image leases', async () => {
+  it('gives link-card icon, thumbnail, and sticker independent image leases', async () => {
     await render(
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
         <TopicBodyMediaRowBoundary rowKey="special-media-row">
@@ -734,7 +711,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-PERF-010] releases an admitted sticker lease when that renderer unmounts', async () => {
+  it('releases an admitted sticker lease when that renderer unmounts', async () => {
     const tree = (showFirst: boolean) => (
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
         <TopicBodyMediaRowBoundary rowKey="special-media-row">
@@ -765,7 +742,7 @@ describe('topic block image loading', () => {
     await waitFor(() => expect(latestImageProps(secondStickerUrl)).toBeTruthy());
   });
 
-  it('[REG-PERF-010] settles video-sticker readiness and iframe load before admitting the next resource', async () => {
+  it('settles video-sticker readiness and iframe load before admitting the next resource', async () => {
     const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
     await render(
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
@@ -817,7 +794,7 @@ describe('topic block image loading', () => {
     await waitFor(() => expect(latestImageProps(trailingStickerUrl)).toBeTruthy());
   });
 
-  it('[REG-PERF-010] keeps a progressing video-sticker bootstrap alive beyond sixty seconds', async () => {
+  it('keeps a progressing video-sticker bootstrap alive beyond sixty seconds', async () => {
     const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
     const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
     jest.useFakeTimers();
@@ -878,7 +855,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-PERF-010] remounts a failed video sticker once before releasing its slot', async () => {
+  it('remounts a failed video sticker once before releasing its slot', async () => {
     const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
     await render(
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
@@ -926,7 +903,7 @@ describe('topic block image loading', () => {
     await waitFor(() => expect(latestImageProps(trailingStickerUrl)).toBeTruthy());
   });
 
-  it('[REG-PERF-010] settles an iframe error before admitting a second iframe', async () => {
+  it('settles an iframe error before admitting a second iframe', async () => {
     await render(
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['special-media-row']}>
         <TopicBodyMediaRowBoundary rowKey="special-media-row">
@@ -975,7 +952,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-PERF-010] does not retain a native generation or create a video player while its row is paused', async () => {
+  it('does not retain a native generation or create a video player while its row is paused', async () => {
     await render(
       <TopicBodyMediaCoordinatorProvider active paused viewportRowKeys={['video-row']}>
         <TopicBodyMediaRowBoundary rowKey="video-row">
@@ -991,7 +968,7 @@ describe('topic block image loading', () => {
     expect(mockUseVideoPlayer).not.toHaveBeenCalled();
   });
 
-  it('[REG-PERF-010] retains the exact native generation and creates a player only after video admission', async () => {
+  it('retains the exact native generation and creates a player only after video admission', async () => {
     const videoUrl = 'https://cdn.example.com/admitted-video.mp4';
     const tree = (blocked: boolean) => (
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video-row']}>
@@ -1020,7 +997,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-PERF-010] reports native video progress only when the buffered position advances', async () => {
+  it('reports native video progress only when the buffered position advances', async () => {
     const progress = jest.fn();
     const admission = {
       admitted: true,
@@ -1061,7 +1038,7 @@ describe('topic block image loading', () => {
     expect(progress).toHaveBeenLastCalledWith(2);
   });
 
-  it('[REG-PERF-010] keeps a continuously buffering native video alive beyond sixty seconds', async () => {
+  it('keeps a continuously buffering native video alive beyond sixty seconds', async () => {
     const videoUrl = 'https://cdn.example.com/long-buffering-video.mp4';
     const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
     mockVideoStatus = 'loading';
@@ -1112,7 +1089,7 @@ describe('topic block image loading', () => {
   });
 
   it.each(['readyToPlay', 'error'] as const)(
-    '[REG-PERF-010] settles %s before admitting the next body video',
+    'settles %s before admitting the next body video',
     async (settledStatus) => {
       const firstVideoUrl = `https://cdn.example.com/${settledStatus}-first.mp4`;
       const secondVideoUrl = `https://cdn.example.com/${settledStatus}-second.mp4`;
@@ -1154,7 +1131,7 @@ describe('topic block image loading', () => {
     }
   );
 
-  it('[REG-PERF-010] releases a loading video admission and its exact generation when it unmounts', async () => {
+  it('releases a loading video admission and its exact generation when it unmounts', async () => {
     const firstVideoUrl = 'https://cdn.example.com/unmounted-first.mp4';
     const secondVideoUrl = 'https://cdn.example.com/unmounted-second.mp4';
     const tree = (showFirst: boolean) => (
@@ -1197,7 +1174,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-PERF-008] composes nested original-image gates with the inactive route gate', async () => {
+  it('composes nested original-image gates with the inactive route gate', async () => {
     const Probe = () => <Text>{useOriginalImageUpgradeEnabled() ? 'original active' : 'original paused'}</Text>;
     const view = await render(
       <OriginalImageUpgradeBoundary enabled={false}>
@@ -1210,7 +1187,7 @@ describe('topic block image loading', () => {
     expect(view.getByText('original paused')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-064] gives an unknown host the owning forum profile in the native image view', async () => {
+  it('gives an unknown host the owning forum profile in the native image view', async () => {
     await render(<TopicImageHarness />);
 
     expect(mockUseImage).not.toHaveBeenCalled();
@@ -1231,7 +1208,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-PROXY-010] restarts a same-source loading body image without changing visual identity', async () => {
+  it('restarts a same-source loading body image without changing visual identity', async () => {
     const view = await render(
       <TopicBodyMediaCoordinatorProvider
         active
@@ -1263,7 +1240,7 @@ describe('topic block image loading', () => {
     expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
   });
 
-  it('[REG-PROXY-010] resets the loading body-image deadline before a runtime rotation remount', async () => {
+  it('resets the loading body-image deadline before a runtime rotation remount', async () => {
     const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
     jest.useFakeTimers();
     jest.setSystemTime(10_000);
@@ -1307,7 +1284,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-PROXY-010] keeps an already displayed body image mounted across runtime rotation', async () => {
+  it('keeps an already displayed body image mounted across runtime rotation', async () => {
     const view = await render(
       <TopicBodyMediaCoordinatorProvider
         active
@@ -1335,7 +1312,7 @@ describe('topic block image loading', () => {
     expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
   });
 
-  it('[REG-PROXY-010] retries only the still-loading original upgrade layer', async () => {
+  it('retries only the still-loading original upgrade layer', async () => {
     const displayUrl = 'https://cdn.example.com/runtime-display.png';
     const originalUrl = 'https://cdn.example.com/runtime-original.png';
     await render(
@@ -1373,7 +1350,7 @@ describe('topic block image loading', () => {
     expect(latestImageProps(originalUrl).recyclingKey).toBe(retriedOriginal.recyclingKey);
   });
 
-  it('[REG-PROXY-010] resets the loading original-image deadline before a runtime rotation remount', async () => {
+  it('resets the loading original-image deadline before a runtime rotation remount', async () => {
     const displayUrl = 'https://cdn.example.com/runtime-deadline-display.png';
     const originalUrl = 'https://cdn.example.com/runtime-deadline-original.png';
     const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
@@ -1423,7 +1400,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-PERF-010] does not let runtime rotation bypass an exhausted original-image retry budget', async () => {
+  it('does not let runtime rotation bypass an exhausted original-image retry budget', async () => {
     const displayUrl = 'https://cdn.example.com/failed-runtime-display.png';
     const originalUrl = 'https://cdn.example.com/failed-runtime-original.png';
     const view = await render(
@@ -1467,7 +1444,7 @@ describe('topic block image loading', () => {
     expect(view.queryByTestId('topic-image-original')).toBeNull();
   });
 
-  it('[REG-PROXY-010][REG-TOPIC-121] remounts bounded media on runtime rotation', async () => {
+  it('remounts bounded media on runtime rotation', async () => {
     const inlineUrl = 'https://img.example.com/runtime-inline.png';
     const view = await render(
       <TopicBodyMediaCoordinatorProvider
@@ -1519,7 +1496,7 @@ describe('topic block image loading', () => {
     ).toBe(false);
   });
 
-  it('[REG-PROXY-010] remounts an admitted iframe through the coordinator runtime attempt', async () => {
+  it('remounts an admitted iframe through the coordinator runtime attempt', async () => {
     await render(
       <TopicBodyMediaCoordinatorProvider
         active
@@ -1551,7 +1528,7 @@ describe('topic block image loading', () => {
     expect(iframeCalls().at(-1)?.testID).not.toBe(firstAttemptId);
   });
 
-  it('[REG-PROXY-010] remounts only an unhealthy same-source video player', async () => {
+  it('remounts only an unhealthy same-source video player', async () => {
     const videoUrl = 'https://cdn.example.com/runtime-video.mp4';
     const tree = () => (
       <TopicBodyMediaCoordinatorProvider
@@ -1607,7 +1584,7 @@ describe('topic block image loading', () => {
     await healthyVideo.unmount();
   });
 
-  it('[REG-PROXY-010] resets the loading video deadline before a runtime rotation remount', async () => {
+  it('resets the loading video deadline before a runtime rotation remount', async () => {
     const videoUrl = 'https://cdn.example.com/runtime-deadline-video.mp4';
     const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
     mockVideoStatus = 'loading';
@@ -1657,7 +1634,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-PROXY-010] creates no video player until its native generation lease is acquired', async () => {
+  it('creates no video player until its native generation lease is acquired', async () => {
     const leasedGeneration = getReadNetworkRuntimeSnapshot().generation;
     let resolveRetain: ((lease: { generation: number; retained: boolean }) => void) | undefined;
     mockRetainReadNetworkGeneration.mockImplementationOnce(
@@ -1691,7 +1668,7 @@ describe('topic block image loading', () => {
     await video.unmount();
   });
 
-  it('[REG-PROXY-010] reacquires the native current generation when the JS snapshot is stale', async () => {
+  it('reacquires the native current generation when the JS snapshot is stale', async () => {
     const staleGeneration = getReadNetworkRuntimeSnapshot().generation;
     const nativeCurrentGeneration = staleGeneration + 1;
     mockRetainReadNetworkGeneration.mockResolvedValueOnce({
@@ -1720,7 +1697,7 @@ describe('topic block image loading', () => {
     await video.unmount();
   });
 
-  it('[REG-PROXY-010] reacquires the native current generation for managed video before JS applies publish', async () => {
+  it('reacquires the native current generation for managed video before JS applies publish', async () => {
     const videoUrl = 'https://cdn.example.com/managed-native-publish-window.mp4';
     const staleGeneration = getReadNetworkRuntimeSnapshot().generation;
     const nativeCurrentGeneration = staleGeneration + 1;
@@ -1761,7 +1738,7 @@ describe('topic block image loading', () => {
     await video.unmount();
   });
 
-  it('[REG-PROXY-010] settles a managed video lease rejected at the same native generation without looping', async () => {
+  it('settles a managed video lease rejected at the same native generation without looping', async () => {
     const generation = getReadNetworkRuntimeSnapshot().generation;
     mockRetainReadNetworkGeneration
       .mockResolvedValueOnce({ generation, retained: false })
@@ -1794,7 +1771,7 @@ describe('topic block image loading', () => {
     await video.unmount();
   });
 
-  it('[REG-TOPIC-040] requests the smallest responsive candidate that fits the body pixels', async () => {
+  it('requests the smallest responsive candidate that fits the body pixels', async () => {
     const selectedUrl = 'https://img.example.com/body-640.png';
     await render(
       <TopicImageHarness
@@ -1814,7 +1791,7 @@ describe('topic block image loading', () => {
     ).toBe(false);
   });
 
-  it('[REG-TOPIC-048] starts the low-priority original only after the display image is shown', async () => {
+  it('starts the low-priority original only after the display image is shown', async () => {
     const displayUrl = 'https://img.example.com/progressive-display.png';
     const originalUrl = 'https://img.example.com/progressive-original.png';
     mockSourceHeaders = { Referer: 'https://img.example.com/topic' };
@@ -1869,11 +1846,14 @@ describe('topic block image loading', () => {
     expect(screen.getByTestId('topic-image-original')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-126] keeps the original visual recycling key across preview and display revisions', async () => {
+  it('keeps the original visual recycling key across preview and display revisions', async () => {
     const displayUrl = 'https://img.example.com/stable-key-display.png';
     const originalUrl = 'https://img.example.com/stable-key-original.png';
     const screen = await render(
-      <TopicImageHarness attributes={{ alt: '稳定原图', 'data-original': originalUrl, src: displayUrl }} />
+      <TopicImageHarness
+        attributes={{ alt: '稳定原图', 'data-original': originalUrl, src: displayUrl }}
+        mediaSessionIdentity="yaohuo:2"
+      />
     );
     await loadAndDisplayImage(latestImageProps(displayUrl));
     const firstOriginal = latestImageProps(originalUrl);
@@ -1894,7 +1874,7 @@ describe('topic block image loading', () => {
     expect(screen.getByTestId('expo-image')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-048] does not duplicate a request when display and original URLs match', async () => {
+  it('does not duplicate a request when display and original URLs match', async () => {
     const sharedUrl = 'https://img.example.com/already-original.png';
     const screen = await render(
       <TopicImageHarness
@@ -1910,12 +1890,13 @@ describe('topic block image loading', () => {
     expect(screen.queryByTestId('topic-image-original')).toBeNull();
   });
 
-  it('[REG-TOPIC-048] honors the nearby gate and isolates fullscreen readiness by media epoch', async () => {
+  it('honors the nearby gate and isolates fullscreen readiness by media epoch', async () => {
     const displayUrl = 'https://img.example.com/gated-display.png';
     const originalUrl = 'https://img.example.com/gated-original.png';
     const screen = await render(
       <TopicImageHarness
         attributes={{ 'data-original': originalUrl, src: displayUrl }}
+        mediaSessionIdentity="yaohuo:2"
         originalImageUpgradeEnabled={false}
       />
     );
@@ -1947,13 +1928,14 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-TOPIC-048] raises a tapped original to high priority and keeps the display image on background failure', async () => {
+  it('raises a tapped original to high priority and keeps the display image on background failure', async () => {
     const displayUrl = 'https://img.example.com/failure-display.png';
     const originalUrl = 'https://img.example.com/failure-original.png';
     const onOpenImagePreview = jest.fn();
     const screen = await render(
       <TopicImageHarness
         attributes={{ alt: '渐进失败图片', 'data-original': originalUrl, src: displayUrl }}
+        mediaSessionIdentity="yaohuo:2"
         originalImageUpgradeEnabled={false}
         onOpenImagePreview={onOpenImagePreview}
       />
@@ -2002,7 +1984,7 @@ describe('topic block image loading', () => {
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
   });
 
-  it('[REG-TOPIC-129] bounds a large cooked image to its table-cell content width', async () => {
+  it('bounds a large cooked image to its table-cell content width', async () => {
     const tableImageUrl = 'https://img.example.com/table-cell.png';
     const screen = await render(
       <TopicImageHarness
@@ -2022,7 +2004,7 @@ describe('topic block image loading', () => {
     });
   });
 
-  it('[REG-TOPIC-059] keeps a displayed image mounted when the preview action changes', async () => {
+  it('keeps a displayed image mounted when the preview action changes', async () => {
     const firstPreviewAction = jest.fn();
     const latestPreviewAction = jest.fn();
     const screen = await render(<TopicImageHarness onOpenImagePreview={firstPreviewAction} />);
@@ -2038,7 +2020,7 @@ describe('topic block image loading', () => {
     expect(firstPreviewAction).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-059] keeps the shared renderer registry stable and routes through the latest actions', async () => {
+  it('keeps the shared renderer registry stable and routes through the latest actions', async () => {
     const firstActions = {
       onOpenExternalUrl: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenExternalUrl']>(),
       onOpenImagePreview: jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>(),
@@ -2078,7 +2060,7 @@ describe('topic block image loading', () => {
     expect(Object.values(firstActions).every((action) => action.mock.calls.length === 0)).toBe(true);
   });
 
-  it('[REG-TOPIC-059] resolves relative links with the latest Topic base URL and user candidates', async () => {
+  it('resolves relative links with the latest Topic base URL and user candidates', async () => {
     const firstTopic: TopicDetail = {
       ...topic,
       author: 'owner',
@@ -2145,7 +2127,7 @@ describe('topic block image loading', () => {
     ['NodeSeek User-Agent', { nodeSeekMediaUserAgent: 'latest-agent' }],
     ['WebView policy', { webViewBlockMessage: 'blocked' }]
   ] satisfies [string, Partial<Parameters<typeof useHtmlRenderingController>[0]>][])(
-    '[REG-TOPIC-059] rebuilds the renderer registry when %s changes',
+    'rebuilds the renderer registry when %s changes',
     async (_label, changedProps) => {
       const initialProps = htmlRenderingControllerProps('yaohuo:2');
       const controller = await renderHook(
@@ -2160,7 +2142,7 @@ describe('topic block image loading', () => {
     }
   );
 
-  it('[REG-TOPIC-004] waits for a matching late onLoad after onDisplay without accepting an older request', async () => {
+  it('waits for a matching late onLoad after onDisplay without accepting an older request', async () => {
     const lateImageUrl = 'https://img.example.com/android-display-before-load.png';
     mockSourceHeaders = { Cookie: 'session=one' };
     const screen = await render(<TopicImageHarness attributes={{ alt: 'Android 事件顺序图片', src: lateImageUrl }} />);
@@ -2199,7 +2181,7 @@ describe('topic block image loading', () => {
     });
   });
 
-  it('[REG-TOPIC-004] replaces block thumbnail dimensions with the same request natural dimensions', async () => {
+  it('replaces block thumbnail dimensions with the same request natural dimensions', async () => {
     const thumbnailImageUrl = 'https://img.example.com/block-thumbnail-dimensions.png';
     const screen = await render(
       <TopicImageHarness
@@ -2230,7 +2212,7 @@ describe('topic block image loading', () => {
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
   });
 
-  it('[REG-TOPIC-078] isolates block-image dimensions by final Referer', async () => {
+  it('isolates block-image dimensions by final Referer', async () => {
     const sharedUrl = 'https://cdn.example.com/referrer-dimensions.png';
     const mediaReferrer = { documentUrl: 'https://www.v2ex.com/t/1233346' } as const;
     const first = await render(
@@ -2265,7 +2247,7 @@ describe('topic block image loading', () => {
     });
   });
 
-  it('[REG-PERF-010] does not emit a diagnostic trace for each body image', async () => {
+  it('does not emit a diagnostic trace for each body image', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => {
       diagnosticLines.push(line);
@@ -2316,7 +2298,7 @@ describe('topic block image loading', () => {
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
   });
 
-  it('[REG-ACCOUNT-029] changes the same image request identity when the media epoch changes', async () => {
+  it('changes the same image request identity when the media epoch changes', async () => {
     const screen = await render(<TopicImageHarness mediaSessionIdentity="yaohuo:1" />);
     const epochOneProps = latestImageProps(imageUrl);
     expect(epochOneProps.source).toEqual(
@@ -2347,7 +2329,7 @@ describe('topic block image loading', () => {
     });
   });
 
-  it('[REG-TOPIC-064] keeps a video Accept header when the shared media profile is applied', async () => {
+  it('keeps a video Accept header when the shared media profile is applied', async () => {
     const videoUrl = 'https://cdn.example.com/topic.mp4';
 
     await render(
@@ -2372,7 +2354,7 @@ describe('topic block image loading', () => {
     expect(mockExpoImageProps).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-080][REG-TOPIC-129] follows intrinsic video ratio within its parent width', async () => {
+  it('follows intrinsic video ratio within its parent width', async () => {
     const videoUrl = 'https://cdn.example.com/portrait-topic.mp4';
     const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:portrait' };
     const tree = () => <ForumContentVideo mediaContext={mediaContext} src={videoUrl} theme={theme} />;
@@ -2404,7 +2386,7 @@ describe('topic block image loading', () => {
     expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-082] keeps the poster until first playback and then preserves the live video frame', async () => {
+  it('keeps the poster until first playback and then preserves the live video frame', async () => {
     const videoUrl = 'https://cdn.example.com/poster-first.mp4';
     const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:poster-first' };
     mockVideoStatus = 'loading';
@@ -2455,7 +2437,7 @@ describe('topic block image loading', () => {
     expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-TOPIC-082] gives poster images their own referrer-aware request identity', async () => {
+  it('gives poster images their own referrer-aware request identity', async () => {
     const posterUrl = 'https://cdn.example.com/shared-poster.webp';
     const mediaContext = {
       contentSource: 'v2ex' as const,
@@ -2507,7 +2489,7 @@ describe('topic block image loading', () => {
     expect(posters.every((props) => props.accessible === false)).toBe(true);
   });
 
-  it('[REG-TOPIC-082] passes an HTML video poster through the image contract without coupling failures', async () => {
+  it('passes an HTML video poster through the image contract without coupling failures', async () => {
     const posterUrl = 'https://cdn.example.com/html-video-poster.webp';
     const videoUrl = 'https://cdn.example.com/html-video.mp4';
     mockVideoStatus = 'readyToPlay';
@@ -2536,7 +2518,7 @@ describe('topic block image loading', () => {
     ).toHaveLength(1);
   });
 
-  it('[REG-TOPIC-078] applies the document and element policy to body images and native video', async () => {
+  it('applies the document and element policy to body images and native video', async () => {
     const onOpenImagePreview = jest.fn();
     const mediaReferrer = { documentUrl: 'https://yaohuo.me/bbs-1571096.html', documentPolicy: 'same-origin' } as const;
     const image = await render(
@@ -2572,7 +2554,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-TOPIC-078] applies independent policies to link-card media and sticker WebView media', async () => {
+  it('applies independent policies to link-card media and sticker WebView media', async () => {
     const mediaReferrer = { documentUrl: 'https://www.nodeseek.com/post-857589-1' } as const;
     await render(
       <NodeSeekCustomMediaHarness
@@ -2606,7 +2588,7 @@ describe('topic block image loading', () => {
     expect(stickerWebView.source?.html).toContain('<meta name="referrer" content="no-referrer">');
   });
 
-  it('[REG-TOPIC-078] coordinates the same video URL separately when its effective Referer differs', async () => {
+  it('coordinates the same video URL separately when its effective Referer differs', async () => {
     const videoUrl = 'https://cdn.example.com/shared-policy-video.mp4';
     const mediaContext = {
       contentSource: 'v2ex' as const,
@@ -2641,7 +2623,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-TOPIC-079] does not recreate an Expo player until the user retries a failed native video', async () => {
+  it('does not recreate an Expo player until the user retries a failed native video', async () => {
     const videoUrl = 'https://cdn.example.com/no-auto-retry.mp4';
     const posterUrl = 'https://cdn.example.com/no-auto-retry-poster.webp';
     const tree = () => (
@@ -2668,7 +2650,7 @@ describe('topic block image loading', () => {
     await waitFor(() => expect(playerCalls()).toHaveLength(2));
   });
 
-  it('[REG-TOPIC-079] lets Expo release an unmounted native player without later shared-object access', async () => {
+  it('lets Expo release an unmounted native player without later shared-object access', async () => {
     const videoUrl = 'https://cdn.example.com/unmount.mp4';
     mockReleaseVideoPlayersOnUnmount = true;
     const screen = await render(
@@ -2687,7 +2669,7 @@ describe('topic block image loading', () => {
     expect(mockReleasedVideoPlayerAccesses).toBe(0);
   });
 
-  it('[REG-TOPIC-065] renders transparent NodeSeek video stickers in Chromium without native player churn', async () => {
+  it('renders transparent NodeSeek video stickers in Chromium without native player churn', async () => {
     const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
     const screen = await render(<NodeSeekVideoStickerHarness />);
 
@@ -2725,7 +2707,7 @@ describe('topic block image loading', () => {
     expect((mockWebView.mock.calls.at(-1)?.[0] as { source?: unknown }).source).toBe(firstWebViewProps.source);
   });
 
-  it('[REG-TOPIC-066] sizes image stickers from decoded dimensions instead of folder guesses', async () => {
+  it('sizes image stickers from decoded dimensions instead of folder guesses', async () => {
     const rectangularUrl = 'https://www.nodeseek.com/static/image/sticker/xhj/003.png';
     const squareUrl = 'https://www.nodeseek.com/static/image/sticker/xhj/015.gif';
     const screen = await render(<NodeSeekImageStickerHarness src={rectangularUrl} />);
@@ -2758,7 +2740,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-TOPIC-129] keeps sticker rows inside the local content width and preserves the page fallback', async () => {
+  it('keeps sticker rows inside the local content width and preserves the page fallback', async () => {
     const stickerUrl = 'https://cdn.example.com/table-sticker.png';
     const screen = await render(<NodeSeekImageStickerHarness contentWidth={140} src={stickerUrl} stickerRow />);
 
@@ -2771,7 +2753,7 @@ describe('topic block image loading', () => {
     );
   });
 
-  it('[REG-TOPIC-078] isolates sticker dimensions and recycling by final Referer', async () => {
+  it('isolates sticker dimensions and recycling by final Referer', async () => {
     const sharedUrl = 'https://cdn.example.com/shared-sticker.png';
     const mediaReferrer = { documentUrl: 'https://www.nodeseek.com/post-859086-1' } as const;
     const first = await render(
@@ -2792,7 +2774,7 @@ describe('topic block image loading', () => {
     expect(secondProps.recyclingKey).not.toBe(firstProps.recyclingKey);
   });
 
-  it('[REG-ACCOUNT-029] rebuilds the native-managed video source when the media epoch changes', async () => {
+  it('rebuilds the native-managed video source when the media epoch changes', async () => {
     const videoUrl = 'https://yaohuo.me/media/private-topic.mp4';
     const controller = await renderHook(
       (props: { mediaSessionIdentity: string }) =>
@@ -2875,7 +2857,7 @@ describe('topic block image loading', () => {
     expect(secondScreen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
   });
 
-  it('[REG-TOPIC-085] keeps decoded long-image geometry when its media lease is revoked before passive effects', async () => {
+  it('keeps decoded long-image geometry when its media lease is revoked before passive effects', async () => {
     const longImageUrl = 'https://img.example.com/lease-race-long-image.png';
     let revokeLease: () => void = () => undefined;
     function LongImageLeaseHarness() {
@@ -2926,7 +2908,7 @@ describe('topic block image loading', () => {
       expected: { height: 180, width: 320 },
       name: 'wide landscape'
     }
-  ])('[REG-TOPIC-085] keeps $name pixels and geometry stable across viewport oscillation', async (testCase) => {
+  ])('keeps $name pixels and geometry stable across viewport oscillation', async (testCase) => {
     const imageUrl = `https://img.example.com/${testCase.name.replace(' ', '-')}.png`;
     let setLeaseActive: (active: boolean) => void = () => undefined;
     function RecycledImageLeaseHarness() {
@@ -2954,7 +2936,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-TOPIC-085] notifies FlashList once when a cold long image establishes its row height', async () => {
+  it('notifies FlashList once when a cold long image establishes its row height', async () => {
     const longImageUrl = 'https://img.example.com/layout-state-long-image.png';
     const attributes = { alt: '长图', src: longImageUrl };
     const firstScreen = await render(<TopicImageHarness attributes={attributes} />);
@@ -2979,7 +2961,7 @@ describe('topic block image loading', () => {
     });
   });
 
-  it('[REG-TOPIC-114] isolates natural geometry and one layout commit per image identity', async () => {
+  it('isolates natural geometry and one layout commit per image identity', async () => {
     const images = [
       {
         dimensions: { height: 5_000, width: 1_000 },
@@ -3075,7 +3057,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-TOPIC-032] gives each stalled body-image attempt one 30 second no-progress budget', async () => {
+  it('gives each stalled body-image attempt one 30 second no-progress budget', async () => {
     const timeoutImageUrl = 'https://img.example.com/stalled-body-image.png';
     const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
     jest.useFakeTimers();
@@ -3132,7 +3114,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('REG-TOPIC-018 renders a Chromium poster after Android rejects an SVG response', async () => {
+  it('renders a Chromium poster after Android rejects an SVG response', async () => {
     const svgImageUrl = 'https://img.example.com/dynamic-report.png';
     const svg =
       '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>';
@@ -3169,7 +3151,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-PERF-010] releases an in-flight SVG recovery when its body image unmounts', async () => {
+  it('releases an in-flight SVG recovery when its body image unmounts', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => {
       diagnosticLines.push(line);
@@ -3202,7 +3184,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-PERF-010] stops an SVG recovery before poster work when its Topic route becomes inactive', async () => {
+  it('stops an SVG recovery before poster work when its Topic route becomes inactive', async () => {
     const svgImageUrl = 'https://img.example.com/inactive-route-complex.svg';
     let resolvePendingResponse!: (response: Response) => void;
     const pendingResponse = new Promise<Response>((resolve) => {
@@ -3238,7 +3220,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-PROXY-010] releases the old SVG consumer when runtime rotation replaces its body attempt', async () => {
+  it('releases the old SVG consumer when runtime rotation replaces its body attempt', async () => {
     const svgImageUrl = 'https://img.example.com/replaced-attempt-complex.svg';
     let resolvePendingResponse!: (response: Response) => void;
     const pendingResponse = new Promise<Response>((resolve) => {
@@ -3290,7 +3272,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('REG-TOPIC-038 keeps ten complex body images out of the React WebView tree', async () => {
+  it('keeps ten complex body images out of the React WebView tree', async () => {
     const svg =
       '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><animate attributeName="opacity" /></svg>';
     const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
@@ -3328,7 +3310,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('REG-TOPIC-038 rebuilds one evicted poster and then settles if the rebuilt file also fails', async () => {
+  it('rebuilds one evicted poster and then settles if the rebuilt file also fails', async () => {
     const svgImageUrl = 'https://img.example.com/evicted-complex-report.svg';
     const svg =
       '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><animate attributeName="opacity" /></svg>';
@@ -3360,7 +3342,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('REG-TOPIC-038 releases the late SVG consumer from the previous media epoch before poster work', async () => {
+  it('releases the late SVG consumer from the previous media epoch before poster work', async () => {
     const svgImageUrl = 'https://img.example.com/epoch-complex-report.svg';
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>';
     let resolveOldResponse!: (response: Response) => void;
@@ -3413,7 +3395,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-TOPIC-117] keeps inline emoji inside the Fabric text attachment without starting the block loader', async () => {
+  it('keeps inline emoji inside the Fabric text attachment without starting the block loader', async () => {
     const view = await render(
       <TopicImageHarness
         attributes={{
@@ -3432,7 +3414,7 @@ describe('topic block image loading', () => {
     expect(view.getByTestId('topic-inline-image')).toBeTruthy();
   });
 
-  it('[REG-TOPIC-125] reserves real inline attachment width without moving the emoji baseline', async () => {
+  it('reserves real inline attachment width without moving the emoji baseline', async () => {
     const view = await render(
       <TopicImageHarness
         attributes={{
@@ -3453,7 +3435,7 @@ describe('topic block image loading', () => {
     expect(StyleSheet.flatten(view.getByTestId('topic-inline-image').props.style).marginHorizontal).toBeUndefined();
   });
 
-  it('[REG-TOPIC-117] releases the fifth inline image only after a displayed Fabric attachment settles', async () => {
+  it('releases the fifth inline image only after a displayed Fabric attachment settles', async () => {
     const urls = Array.from({ length: 5 }, (_, index) => `https://img.example.com/emoji-${index}.png`);
 
     const view = await render(
@@ -3485,7 +3467,7 @@ describe('topic block image loading', () => {
     expect(mockInlineImageGetSize).not.toHaveBeenCalled();
   });
 
-  it('[REG-TOPIC-121] keeps one Fabric attachment across first permit and viewport preempt-resume', async () => {
+  it('keeps one Fabric attachment across first permit and viewport preempt-resume', async () => {
     const attributes = {
       alt: 'stable permit emoji',
       class: 'emoji',
@@ -3519,7 +3501,7 @@ describe('topic block image loading', () => {
     expect(resumedAttachment.props.source.uri).toBe(stableUri);
   });
 
-  it('[REG-TOPIC-121] rejects stale Native request events dispatched through the resumed Fabric props', async () => {
+  it('rejects stale Native request events dispatched through the resumed Fabric props', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(0);
     try {
@@ -3577,7 +3559,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-TOPIC-117][REG-TOPIC-121] remounts a failed attachment and ignores the old attempt completion', async () => {
+  it('remounts a failed attachment and ignores the old attempt completion', async () => {
     const urls = Array.from({ length: 5 }, (_, index) => `https://img.example.com/retry-emoji-${index}.png`);
     const view = await render(
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['inline-retry-row']}>
@@ -3611,7 +3593,7 @@ describe('topic block image loading', () => {
     await waitFor(() => expect(view.getAllByTestId('topic-inline-image')).toHaveLength(5));
   });
 
-  it('[REG-TOPIC-117][REG-TOPIC-121] remounts one timed-out attachment without changing its cache URI', async () => {
+  it('remounts one timed-out attachment without changing its cache URI', async () => {
     jest.useFakeTimers();
     try {
       const view = await render(
@@ -3644,7 +3626,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('[REG-TOPIC-117][REG-TOPIC-121] keeps the same attachment instance across an equal parent rerender', async () => {
+  it('keeps the same attachment instance across an equal parent rerender', async () => {
     const attributes = {
       alt: 'emoji',
       class: 'emoji',
@@ -3661,7 +3643,7 @@ describe('topic block image loading', () => {
     expect(view.getByTestId('topic-inline-image').props.source.uri).toBe(firstSpan.props.source.uri);
   });
 
-  it('[REG-TOPIC-117] isolates the inline Fresco cache by media session without changing the network URL', async () => {
+  it('isolates the inline Fresco cache by media session without changing the network URL', async () => {
     const url = 'https://img.example.com/session-emoji.png';
     const attributes = { alt: 'emoji', class: 'emoji', height: '24', src: url, width: '24' };
     const view = await render(<TopicImageHarness attributes={attributes} mediaSessionIdentity="linuxdo:41" />);

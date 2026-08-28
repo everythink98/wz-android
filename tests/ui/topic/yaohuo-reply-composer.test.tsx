@@ -85,7 +85,7 @@ describe('Yaohuo reply composer', () => {
     expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
   });
 
-  it('[REG-NOTIFY-036][REG-NOTIFY-038][REG-NOTIFY-055] keeps the Yaohuo toolbar reachable at 130%', async () => {
+  it('keeps the Yaohuo toolbar reachable at 130%', async () => {
     const settings = { ...createEmptyReaderData().settings, fontScale: 1.3 };
     function Wrapper({ children }: { children: ReactNode }) {
       return <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>{children}</ReaderStyleProvider>;

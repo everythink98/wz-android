@@ -163,7 +163,7 @@ describe('reader JSON backup', () => {
     expect(backup.favorites[topicKey(topic)]?.topic.title).toBe('妖火帖子');
   });
 
-  it('[REG-DATA-006] canonicalizes record links and removes every portable URL credential', () => {
+  it('canonicalizes record links and removes every portable URL credential', () => {
     const topic: Topic = {
       source: 'nodeseek',
       id: '42',

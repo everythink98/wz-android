@@ -8,7 +8,7 @@ import {
 } from './notificationSourceLifecycle';
 
 describe('notification source lifecycle', () => {
-  it('[REG-NOTIFY-022] derives operational sources from intent and lifecycle', () => {
+  it('derives operational sources from intent and lifecycle', () => {
     const registry = createNotificationSourceLifecycleRegistry();
 
     expect(operationalNotificationSources(registry, ['nodeseek', 'linuxdo'], true)).toEqual(['nodeseek', 'linuxdo']);
@@ -17,7 +17,7 @@ describe('notification source lifecycle', () => {
     expect(notificationSourceIsOperational(registry, 'nodeseek', false, ['nodeseek'])).toBe(false);
   });
 
-  it('[REG-NOTIFY-023] serializes cleanup and keeps failures paused until a successful retry', async () => {
+  it('serializes cleanup and keeps failures paused until a successful retry', async () => {
     const registry = createNotificationSourceLifecycleRegistry();
     const onTransition = vi.fn();
     let rejectCleanup!: (error: Error) => void;

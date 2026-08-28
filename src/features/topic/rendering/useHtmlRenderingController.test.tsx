@@ -104,12 +104,12 @@ import { cachedImageDisplayDimensions, rememberImageDisplayDimensions } from '@/
 import { FORUM_CALLOUT_TRANSITION_MS } from '@/ui/content/ForumCallout';
 
 describe('HTML topic media loading state', () => {
-  it('[REG-TOPIC-056] configures the Callout layout transition with system Reduce Motion', () => {
+  it('configures the Callout layout transition with system Reduce Motion', () => {
     expect(reanimatedTransition.duration).toHaveBeenCalledWith(FORUM_CALLOUT_TRANSITION_MS);
     expect(reanimatedTransition.reduceMotion).toHaveBeenCalledWith('system');
   });
 
-  it('[REG-PERF-007][REG-PERF-009] bounds preview dimensions with pure reads and committed promotion', () => {
+  it('bounds preview dimensions with pure reads and committed promotion', () => {
     rememberImageDisplayDimensions('nodeseek:1:https://img.example.com/shared.png', { height: 4, width: 5 });
     expect(cachedImageDisplayDimensions('nodeseek:2:https://img.example.com/shared.png')).toBeUndefined();
 

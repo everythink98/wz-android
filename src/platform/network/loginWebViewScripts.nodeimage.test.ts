@@ -15,7 +15,7 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
     vi.restoreAllMocks();
   });
 
-  it('REG-ACCOUNT-040 retries only the ready handshake and still calls cAuth once', async () => {
+  it('retries only the ready handshake and still calls cAuth once', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(
       async () =>
@@ -69,7 +69,7 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
     });
   });
 
-  it('REG-ACCOUNT-040 rechecks the live document before ready or cAuth', async () => {
+  it('rechecks the live document before ready or cAuth', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn();
     const postMessage = vi.fn();

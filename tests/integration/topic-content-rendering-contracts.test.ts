@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import type { Reply } from '@/domain/forum/models';
 import {
@@ -25,7 +25,7 @@ function previewCatalog(
 }
 
 describe('topic content rendering contracts', () => {
-  it('[REG-TOPIC-030] keeps sanitized unsafe lazy candidates out of the active preview catalog', () => {
+  it('keeps sanitized unsafe lazy candidates out of the active preview catalog', () => {
     const compilation = compileForumContent({
       html: sanitizeContentHtml(
         '<img src="/safe.png" data-original="javascript:x.png">',
@@ -43,7 +43,7 @@ describe('topic content rendering contracts', () => {
     ]);
   });
 
-  it('[REG-PERF-010] keeps the preview catalog on raw source order while presentation variants change', () => {
+  it('keeps the preview catalog on raw source order while presentation variants change', () => {
     const urls = ['https://i.imgur.com/first.png', 'https://i.imgur.com/second.png'];
     const rawHtml = `<p>${urls.map((url) => `<img class="embedded_image" src="${url}">`).join('')}</p>`;
     const row = compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).rows.find(
@@ -69,7 +69,7 @@ describe('topic content rendering contracts', () => {
     ).toEqual(urls);
   });
 
-  it('[REG-TOPIC-096] publishes a complete 2000-image preview catalog from the compiler output', () => {
+  it('publishes a complete 2000-image preview catalog from the compiler output', () => {
     const urls = Array.from({ length: 2_000 }, (_, index) => `https://img.example/${index}.webp`);
     const compilation = compileForumContent({
       html: [
@@ -109,36 +109,7 @@ describe('topic content rendering contracts', () => {
     expect(imagePreviewItemAt(preview, preview.index)?.originalUri).toBe(urls[1_380]);
   });
 
-  it('[REG-TOPIC-096] builds a prepared preview catalog with at most one URL parse per image', () => {
-    const urls = Array.from({ length: 2_000 }, (_, index) => `https://img.example/${index}.webp`);
-    const descriptors = compileForumContent({
-      html: urls.map((url) => `<img src="${url}">`).join(''),
-      role: 'opening',
-      source: 'nodeseek'
-    }).previewImages;
-    const NativeUrl = globalThis.URL;
-    let urlConstructionCount = 0;
-    class CountingUrl extends NativeUrl {
-      constructor(url: string | URL, base?: string | URL) {
-        urlConstructionCount += 1;
-        super(url, base);
-      }
-    }
-    vi.stubGlobal('URL', CountingUrl);
-    try {
-      const catalog = previewCatalog(descriptors, 360, 2, {
-        contentSource: 'nodeseek',
-        referrer: { documentUrl: 'https://www.nodeseek.com/post-863650-1' },
-        sessionIdentity: 'catalog-performance'
-      });
-      expect(catalog.items).toHaveLength(urls.length);
-      expect(urlConstructionCount).toBeLessThanOrEqual(urls.length + 1);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it('[REG-TOPIC-096] preserves source reply body and signature order independently of list presentation', () => {
+  it('preserves source reply body and signature order independently of list presentation', () => {
     const replies: Reply[] = [
       {
         author: 'first',

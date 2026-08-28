@@ -15,7 +15,7 @@ const readManagedCookieHeader = vi.fn(async () => ({
 }));
 
 describe('Yaohuo account status', () => {
-  it('[REG-ACCOUNT-044] stops after the signed-in homepage when it already names the current user', async () => {
+  it('stops after the signed-in homepage when it already names the current user', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response(
@@ -41,7 +41,7 @@ describe('Yaohuo account status', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-ACCOUNT-044] stops after one profile read when it supplies the missing nickname', async () => {
+  it('stops after one profile read when it supplies the missing nickname', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response(
@@ -72,7 +72,7 @@ describe('Yaohuo account status', () => {
     ]);
   });
 
-  it('[REG-ACCOUNT-044] uses only the first topic page as the final nickname fallback', async () => {
+  it('uses only the first topic page as the final nickname fallback', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response(
@@ -111,7 +111,7 @@ describe('Yaohuo account status', () => {
     expect(requests.join('\n')).not.toContain('page=2');
   });
 
-  it('[REG-ACCOUNT-044] preserves the proven identity as partial when nickname enrichment fails', async () => {
+  it('preserves the proven identity as partial when nickname enrichment fails', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response(
@@ -140,7 +140,7 @@ describe('Yaohuo account status', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
-  it('[REG-ACCOUNT-044] projects only a canonical login form as an expired session', async () => {
+  it('projects only a canonical login form as an expired session', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response('<div class="listdata"><a href="/bbs-123.html">公开主题</a></div>');
@@ -167,7 +167,7 @@ describe('Yaohuo account status', () => {
   it.each([
     ['unknown document', '<main>maintenance</main>'],
     ['verification document', '<title>访问验证</title><script>CAPTCHA_CONFIG={}</script>']
-  ])('[REG-ACCOUNT-044] keeps a %s unknown instead of clearing identity', async (_label, loginHtml) => {
+  ])('keeps a %s unknown instead of clearing identity', async (_label, loginHtml) => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response('<div class="listdata"><a href="/bbs-123.html">公开主题</a></div>');
@@ -185,7 +185,7 @@ describe('Yaohuo account status', () => {
     ).rejects.toThrow(/暂时无法确认|访问验证/);
   });
 
-  it('[REG-ACCOUNT-044] propagates caller cancellation', async () => {
+  it('propagates caller cancellation', async () => {
     const controller = new AbortController();
     const fetcher = vi.fn(
       (_input: string, init?: RequestInit) =>
@@ -202,7 +202,7 @@ describe('Yaohuo account status', () => {
     await expect(request).rejects.toThrow('请求已取消');
   });
 
-  it('[REG-ACCOUNT-044] leaves the existing 15 second watchdog on each HTTP request', async () => {
+  it('leaves the existing 15 second watchdog on each HTTP request', async () => {
     vi.useFakeTimers();
     const fetcher = vi.fn(() => new Promise<Response>(() => {}));
 

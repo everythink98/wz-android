@@ -118,7 +118,7 @@ describe('NodeSeek login WebView probe script', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-019] marks the real NodeSeek .html guest controls as logged out', async () => {
+  it('marks the real NodeSeek .html guest controls as logged out', async () => {
     const payload = await runNodeSeekLoginProbe(
       '/',
       `
@@ -135,7 +135,7 @@ describe('NodeSeek login WebView probe script', () => {
     });
   });
 
-  it('[REG-ACCOUNT-019] gives explicit NodeSeek guest controls priority over stale self markers', async () => {
+  it('gives explicit NodeSeek guest controls priority over stale self markers', async () => {
     const payload = await runNodeSeekLoginProbe(
       '/',
       `
@@ -152,7 +152,7 @@ describe('NodeSeek login WebView probe script', () => {
     });
   });
 
-  it('[REG-ACCOUNT-026] gives the proven NodeSeek current-user config priority over coexisting guest controls', async () => {
+  it('gives the proven NodeSeek current-user config priority over coexisting guest controls', async () => {
     (window as typeof window & { __config__?: unknown }).__config__ = {
       user: {
         member_id: 48872,
@@ -185,7 +185,7 @@ describe('NodeSeek login WebView probe script', () => {
     expect(payload.loggedIn).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-019] does not treat login text or related content links as an explicit guest page', async () => {
+  it('does not treat login text or related content links as an explicit guest page', async () => {
     const payload = await runNodeSeekLoginProbe(
       '/',
       `
@@ -202,7 +202,7 @@ describe('NodeSeek login WebView probe script', () => {
     expect(payload.loggedIn).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-031] keeps a login-path error or half-loaded page unknown', async () => {
+  it('keeps a login-path error or half-loaded page unknown', async () => {
     const payload = await runNodeSeekLoginProbe(
       '/signIn.html',
       `
@@ -218,7 +218,7 @@ describe('NodeSeek login WebView probe script', () => {
     expect(payload.loggedIn).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-019] does not treat exact NodeSeek login links inside ordinary content as guest controls', async () => {
+  it('does not treat exact NodeSeek login links inside ordinary content as guest controls', async () => {
     const payload = await runNodeSeekLoginProbe(
       '/',
       `
@@ -233,7 +233,7 @@ describe('NodeSeek login WebView probe script', () => {
     expect(payload.loggedIn).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-019] does not treat public account-navigation links as current-user proof', async () => {
+  it('does not treat public account-navigation links as current-user proof', async () => {
     const payload = await runNodeSeekLoginProbe(
       '/',
       `
@@ -250,7 +250,7 @@ describe('NodeSeek login WebView probe script', () => {
     expect(payload.loggedIn).toBeUndefined();
   });
 
-  it('[REG-ACCOUNT-019] does not infer self identity from UID text beside an ordinary author link', async () => {
+  it('does not infer self identity from UID text beside an ordinary author link', async () => {
     const payload = await runNodeSeekLoginProbe(
       '/',
       `
@@ -299,7 +299,7 @@ describe('linux.do login WebView probe script', () => {
     });
   });
 
-  it('[REG-ACCOUNT-031] returns one manual probe id without treating its path as logout evidence', async () => {
+  it('returns one manual probe id without treating its path as logout evidence', async () => {
     const payload = await runNodeSeekLoginProbe('/login', '<a href="/login">登录</a>', undefined, 17);
 
     expect(payload).toMatchObject({
@@ -351,7 +351,7 @@ describe('NodeImage existing-session probe script', () => {
     vi.restoreAllMocks();
   });
 
-  it('[REG-ACCOUNT-038] reuses an authenticated NodeImage session without requesting NodeSeek Connect', async () => {
+  it('reuses an authenticated NodeImage session without requesting NodeSeek Connect', async () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -385,7 +385,7 @@ describe('NodeImage existing-session probe script', () => {
     });
   });
 
-  it('[REG-ACCOUNT-038] reports only the verified anonymous JSON contract as an expired session', async () => {
+  it('reports only the verified anonymous JSON contract as an expired session', async () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -411,7 +411,7 @@ describe('NodeImage existing-session probe script', () => {
     });
   });
 
-  it('[REG-ACCOUNT-038] keeps the rendered API key input as the existing-session fallback', async () => {
+  it('keeps the rendered API key input as the existing-session fallback', async () => {
     const fetchMock = vi.fn() as unknown as typeof fetch;
     const postMessage = runNodeImageSessionProbe('<input id="apiKeyInput" value="dom-session-secret">', fetchMock);
 
@@ -463,7 +463,7 @@ describe('NodeImage existing-session probe script', () => {
         }),
       401
     ]
-  ] as const)('[REG-ACCOUNT-038] does not turn %s into a Connect attempt', async (_label, responseFactory, status) => {
+  ] as const)('does not turn %s into a Connect attempt', async (_label, responseFactory, status) => {
     const fetchMock = vi.fn(async () => responseFactory()) as unknown as typeof fetch;
     const postMessage = runNodeImageSessionProbe('', fetchMock);
 
@@ -477,7 +477,7 @@ describe('NodeImage existing-session probe script', () => {
     });
   });
 
-  it('[REG-ACCOUNT-038] stops on a session-probe network error without Connect', async () => {
+  it('stops on a session-probe network error without Connect', async () => {
     const fetchMock = vi.fn(async () => {
       document.body.innerHTML = '<input id="apiKeyInput" value="late-dom-key">';
       throw new Error('network unavailable');
@@ -494,7 +494,7 @@ describe('NodeImage existing-session probe script', () => {
     });
   });
 
-  it('[REG-ACCOUNT-040] does not report a session result after same-document navigation', async () => {
+  it('does not report a session result after same-document navigation', async () => {
     const response = Promise.withResolvers<Response>();
     const json = vi.fn(async () => ({ api_key: 'late-secret' }));
     const fetchMock = vi.fn(() => response.promise) as unknown as typeof fetch;
@@ -615,7 +615,7 @@ describe('NodeImage API key WebView probe script', () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 
-  it('[REG-ACCOUNT-040] does not report a verify result after same-document navigation', async () => {
+  it('does not report a verify result after same-document navigation', async () => {
     const verifyResponse = Promise.withResolvers<Response>();
     const fetchMock = vi
       .fn()

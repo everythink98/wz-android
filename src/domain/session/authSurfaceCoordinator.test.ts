@@ -11,7 +11,7 @@ import {
 } from './authSurfaceCoordinator';
 
 describe('auth surface coordinator', () => {
-  it('[REG-ACCOUNT-031] reconciles a surface exactly once across every logical close path', () => {
+  it('reconciles a surface exactly once across every logical close path', () => {
     const reasons = [
       'close-button',
       'hardware-back',
@@ -40,7 +40,7 @@ describe('auth surface coordinator', () => {
     }
   });
 
-  it('[REG-ACCOUNT-031] keeps an inactive linux.do WebView mounted as the same logical surface', () => {
+  it('keeps an inactive linux.do WebView mounted as the same logical surface', () => {
     const registry = createAuthSurfaceRegistry();
     const ticket = beginAuthSurface(registry, {
       source: 'linuxdo',
@@ -61,7 +61,7 @@ describe('auth surface coordinator', () => {
     expect(registry.generation).toBe(1);
   });
 
-  it('[REG-WRITE-023] exposes an open surface as a source-scoped write barrier', () => {
+  it('exposes an open surface as a source-scoped write barrier', () => {
     const registry = createAuthSurfaceRegistry();
     beginAuthSurface(registry, {
       source: 'nodeseek',
@@ -74,7 +74,7 @@ describe('auth surface coordinator', () => {
     expect(hasAuthSurfaceBarrierForSource(registry, 'linuxdo')).toBe(false);
   });
 
-  it('[REG-PERF-019] retains the source barrier while close reconciliation is unresolved', () => {
+  it('retains the source barrier while close reconciliation is unresolved', () => {
     const registry = createAuthSurfaceRegistry();
     const ticket = beginAuthSurface(registry, {
       source: 'nodeseek',
@@ -94,7 +94,7 @@ describe('auth surface coordinator', () => {
     expect(hasAuthSurfaceBarrierForSource(registry, 'nodeseek')).toBe(false);
   });
 
-  it('[REG-ACCOUNT-031] reuses an authoritative recovery result instead of probing twice', () => {
+  it('reuses an authoritative recovery result instead of probing twice', () => {
     const registry = createAuthSurfaceRegistry();
     beginAuthSurface(registry, {
       source: 'linuxdo',
@@ -108,7 +108,7 @@ describe('auth surface coordinator', () => {
     });
   });
 
-  it('[REG-SOURCE-010] closes a disabled source surface without starting reconciliation', () => {
+  it('closes a disabled source surface without starting reconciliation', () => {
     const registry = createAuthSurfaceRegistry();
     beginAuthSurface(registry, {
       source: 'nodeseek',
@@ -122,7 +122,7 @@ describe('auth surface coordinator', () => {
     });
   });
 
-  it('[REG-ACCOUNT-031] closes every other logical surface with switch-surface before opening a new one', () => {
+  it('closes every other logical surface with switch-surface before opening a new one', () => {
     const close = vi.fn();
 
     closeOtherAuthSurfaces('yaohuo-login', close);
@@ -134,7 +134,7 @@ describe('auth surface coordinator', () => {
     expect(close).not.toHaveBeenCalledWith('yaohuo-login', 'switch-surface');
   });
 
-  it('[REG-ACCOUNT-031] keeps read recovery visible without creating an Account barrier', () => {
+  it('keeps read recovery visible without creating an Account barrier', () => {
     const registry = createAuthSurfaceRegistry();
 
     showAuthSurface(registry, 'linuxdo-login');
@@ -145,7 +145,7 @@ describe('auth surface coordinator', () => {
     expect(isAuthSurfaceVisible(registry, 'linuxdo-login')).toBe(false);
   });
 
-  it('[REG-ACCOUNT-031] allows one visible surface while older close barriers reconcile', () => {
+  it('allows one visible surface while older close barriers reconcile', () => {
     const registry = createAuthSurfaceRegistry();
     beginAuthSurface(registry, {
       source: 'nodeseek',
@@ -171,7 +171,7 @@ describe('auth surface coordinator', () => {
     expect(hasAuthSurfaceBarrierForSource(registry, 'yaohuo')).toBe(true);
   });
 
-  it('[REG-ACCOUNT-031] reopening a reconciling surface gives the new owner a fresh generation', () => {
+  it('reopening a reconciling surface gives the new owner a fresh generation', () => {
     const registry = createAuthSurfaceRegistry();
     const first = beginAuthSurface(registry, {
       source: 'nodeseek',

@@ -102,7 +102,7 @@ describe('Android local sources', () => {
     expect(topic.replies[0].authorLevelLabel).toBe('Lv2');
   });
 
-  it('[REG-TOPIC-067][REG-TOPIC-068][REG-TOPIC-073] renders the available linux.do subset when hydration omits one stream post', async () => {
+  it('renders the available linux.do subset when hydration omits one stream post', async () => {
     const fetcher = routeFetcher([
       [
         '/posts.json',
@@ -158,7 +158,7 @@ describe('Android local sources', () => {
     ]);
   });
 
-  it('[REG-TOPIC-073][REG-TOPIC-077] advances the linux.do topic seed by consumed source rows', async () => {
+  it('advances the linux.do topic seed by consumed source rows', async () => {
     const topic = await getTopic({
       source: 'linuxdo',
       id: '42',
@@ -185,7 +185,7 @@ describe('Android local sources', () => {
     expect(topic).toMatchObject({ replyCompleteness: 'partial', replyNextOffset: 3 });
   });
 
-  it('[REG-TOPIC-077] rejects an explicit wrong linux.do topic identity before projecting replies', async () => {
+  it('rejects an explicit wrong linux.do topic identity before projecting replies', async () => {
     await expect(
       getReplies({
         source: 'linuxdo',
@@ -197,7 +197,7 @@ describe('Android local sources', () => {
     ).rejects.toThrow('主题身份不一致');
   });
 
-  it('[REG-TOPIC-077] uses the linux.do post ID when an exact target supplies one', async () => {
+  it('uses the linux.do post ID when an exact target supplies one', async () => {
     const target = { id: 101, post_number: 2, username: '', cooked: '', created_at: null };
 
     await expect(
@@ -298,7 +298,7 @@ describe('Android local sources', () => {
     ).toEqual(['richText', 'poll', 'richText', 'richText']);
   });
 
-  it('[REG-PERF-008] lets a queued Back cancellation win before Topic DOM parsing', async () => {
+  it('lets a queued Back cancellation win before Topic DOM parsing', async () => {
     const controller = new AbortController();
     const fetcher = vi.fn(async () =>
       json({
@@ -894,7 +894,7 @@ describe('Android local sources', () => {
     });
   });
 
-  it('REG-USER-005 preserves explicit zero statistics for a new linux.do user', async () => {
+  it('preserves explicit zero statistics for a new linux.do user', async () => {
     const fetcher = vi.fn(async () =>
       json({
         user_summary: {
@@ -915,7 +915,7 @@ describe('Android local sources', () => {
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
 
-  it('[REG-TOPIC-062] opens a linux.do reply near-post as one anchored window', async () => {
+  it('opens a linux.do reply near-post as one anchored window', async () => {
     const stream = Array.from({ length: 120 }, (_, index) => 1000 + index);
     const posts = Array.from({ length: 20 }, (_, index) => {
       const floor = 81 + index;
@@ -957,7 +957,7 @@ describe('Android local sources', () => {
     expect(replies.items).toContainEqual(expect.objectContaining({ floor: 90, author: 'target' }));
   });
 
-  it('[REG-TOPIC-067] reads only the linux.do stream tail IDs and then the adjacent older IDs', async () => {
+  it('reads only the linux.do stream tail IDs and then the adjacent older IDs', async () => {
     const stream = Array.from({ length: 46 }, (_, index) => 1000 + index);
     const requestedPostIds: string[][] = [];
     const fetcher = vi.fn(async (input: string) => {
@@ -1011,7 +1011,7 @@ describe('Android local sources', () => {
     expect(older.items.map((reply) => reply.floor)).toEqual([41, 40, 39, 38, 37, 36, 35, 34, 33, 32]);
   });
 
-  it('[REG-TOPIC-024] resolves later linux.do reply pages from the current server stream', async () => {
+  it('resolves later linux.do reply pages from the current server stream', async () => {
     let topicJsonCalls = 0;
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/posts.json')) {
@@ -1181,7 +1181,7 @@ describe('Android local sources', () => {
     );
   });
 
-  it('[REG-TOPIC-053] keeps a linux.do reply quote target topic instead of treating it as a local floor', async () => {
+  it('keeps a linux.do reply quote target topic instead of treating it as a local floor', async () => {
     const fetcher = vi.fn(async () =>
       json({
         id: 2685882,
@@ -1489,7 +1489,7 @@ describe('Android local sources', () => {
     });
   });
 
-  it('[REG-SEARCH-028] refuses anonymous linux.do adapter search and never falls back after expiry', async () => {
+  it('refuses anonymous linux.do adapter search and never falls back after expiry', async () => {
     const anonymousFetcher = vi.fn();
 
     await expect(searchTopics({ source: 'linuxdo', query: 'codex', fetcher: anonymousFetcher })).rejects.toMatchObject({
@@ -1539,7 +1539,7 @@ describe('Android local sources', () => {
     expect(calls).not.toContain('https://linux.do/latest.json');
   });
 
-  it('REG-SEARCH-003 maps Discourse first-post authors and paginates results', async () => {
+  it('maps Discourse first-post authors and paginates results', async () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
       expect(url.pathname).toBe('/search');
@@ -1602,7 +1602,7 @@ describe('Android local sources', () => {
     expect(searchCalls.map((url) => url.searchParams.get('page'))).toEqual(['1', '1']);
   });
 
-  it('[REG-VERIFICATION-002] does not treat Cloudflare marker text inside Discourse JSON as a challenge', async () => {
+  it('does not treat Cloudflare marker text inside Discourse JSON as a challenge', async () => {
     const fetcher = routeFetcher([
       ['linux.do/session/csrf.json', json({ csrf: 'csrf-token' })],
       [
@@ -1649,7 +1649,7 @@ describe('Android local sources', () => {
     ]);
   });
 
-  it('[REG-SEARCH-013] keeps linux.do reply matches without claiming the reply author is the OP', async () => {
+  it('keeps linux.do reply matches without claiming the reply author is the OP', async () => {
     const fetcher = routeFetcher([
       ['linux.do/session/csrf.json', json({ csrf: 'csrf-token' })],
       [
@@ -1988,7 +1988,7 @@ describe('Android local sources', () => {
     expect(init?.headers).not.toHaveProperty('Cookie');
   });
 
-  it('[REG-SOURCE-005] marks visible linux.do reads ahead of background account refresh', async () => {
+  it('marks visible linux.do reads ahead of background account refresh', async () => {
     const visibleFetcher = vi.fn(async (input: string) =>
       new URL(input).pathname === '/site.json' ? json({ categories: [] }) : json({ topic_list: { topics: [] } })
     );
