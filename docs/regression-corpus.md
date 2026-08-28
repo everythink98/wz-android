@@ -2612,7 +2612,7 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `WRITE-01`、`WRITE-05`、`NOTIFY-02` |
-| 历史症状与根因 | 富文本点“硬换行”会在正文显示一个 `\`；行首插入 date/time 后显示成通用“站点私有块”，完整 marker 挤满一行；根因：富文本命令应调用 Tiptap `setHardBreak()`；未知块 tokenizer 必须把 `date=` 留给 `LinuxDoDateNode`，专用节点负责紧凑展示并保留原始 Markdown。 |
+| 历史症状与根因 | 富文本点“硬换行”会在正文显示反斜杠字符；行首插入 date/time 后显示成通用“站点私有块”，完整 marker 挤满一行；根因：富文本命令应调用 Tiptap `setHardBreak()`；未知块 tokenizer 必须把 `date=` 留给 `LinuxDoDateNode`，专用节点负责紧凑展示并保留原始 Markdown。 |
 | 当前 owner | `src/ui/composer/editorRuntime.test.ts` |
 
 
