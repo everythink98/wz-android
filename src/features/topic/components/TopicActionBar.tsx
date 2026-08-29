@@ -22,6 +22,13 @@ function detailActionColor(tone: DetailActionTone, theme: ReaderTheme) {
   return theme.primary;
 }
 
+function topicPrimarySelectedColor(tone: DetailActionTone, theme: ReaderTheme) {
+  if (tone === 'danger') return theme.dark ? '#FF5C5C' : '#EB3B3B';
+  if (tone === 'favorite') return theme.warning;
+  if (tone === 'warning') return theme.dark ? '#E09678' : '#B75D42';
+  return theme.primary;
+}
+
 export function DetailActionButton({
   accessibilityLabel,
   active = false,
@@ -29,6 +36,8 @@ export function DetailActionButton({
   count,
   disabled = false,
   icon,
+  activeIcon,
+  iconSize,
   label,
   pending = false,
   alignStart = false,
@@ -43,6 +52,8 @@ export function DetailActionButton({
   count?: number;
   disabled?: boolean;
   icon: LucideIcon;
+  activeIcon?: LucideIcon;
+  iconSize?: number;
   label: string;
   pending?: boolean;
   alignStart?: boolean;
@@ -51,31 +62,42 @@ export function DetailActionButton({
   theme: ReaderTheme;
   onPress: () => void;
 }) {
-  const Icon = icon;
+  const isTopicPrimaryAction = !alignStart;
+  const Icon = active ? (activeIcon ?? icon) : icon;
   const activeColor = detailActionColor(tone, theme);
-  const color = active ? activeColor : theme.ink;
+  const topicSelectedColor = topicPrimarySelectedColor(tone, theme);
+  const color = isTopicPrimaryAction
+    ? active || pending
+      ? topicSelectedColor
+      : tone === 'favorite'
+        ? theme.warning
+        : theme.muted
+    : active || pending
+      ? activeColor
+      : theme.ink;
+  const fill = active
+    ? isTopicPrimaryAction
+      ? tone === 'favorite'
+        ? theme.favorite
+        : topicSelectedColor
+      : alphaColor(activeColor, theme.dark ? 0.2 : 0.14)
+    : 'none';
   const textColor = active && tone === 'favorite' ? theme.ink : color;
-  const activeSoft = alphaColor(activeColor, theme.dark ? 0.13 : 0.07);
   const visibleCount = typeof count === 'number' ? (compact && count > 99 ? '99+' : String(count)) : '';
-  const iconSize = compact ? 16 : 18;
+  const resolvedIconSize = iconSize ?? (compact ? 16 : 18);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ busy: pending, disabled, selected: active }}
-      android_ripple={androidRipple(
-        active ? alphaColor(activeColor, theme.dark ? 0.18 : 0.12) : theme.primarySoft,
-        true
-      )}
+      android_ripple={androidRipple(active ? alphaColor(color, theme.dark ? 0.18 : 0.12) : theme.primarySoft, true)}
       disabled={disabled}
       style={[
         styles.detailActionButton,
+        !alignStart && styles.topicPrimaryActionButton,
         alignStart && styles.replyDetailActionButton,
         compact && styles.replyCompactActionButton,
-        active && styles.detailActionButtonActive,
-        active && { backgroundColor: activeSoft },
-        alignStart && active && styles.replyDetailActionButtonActive,
-        disabled && styles.buttonDisabled
+        disabled && !pending && !active && styles.buttonDisabled
       ]}
       onPress={() => {
         triggerPressFeedback();
@@ -86,12 +108,7 @@ export function DetailActionButton({
         {pending ? (
           <ActivityIndicator size="small" color={color} />
         ) : (
-          <Icon
-            size={iconSize}
-            color={color}
-            fill={active ? alphaColor(activeColor, theme.dark ? 0.2 : 0.14) : 'none'}
-            strokeWidth={active ? 2.1 : 1.8}
-          />
+          <Icon size={resolvedIconSize} color={color} fill={fill} strokeWidth={active ? 2.1 : 1.8} />
         )}
       </View>
       <View style={[styles.detailActionTextBlock, compact && styles.detailActionCompactTextBlock]}>
@@ -99,9 +116,10 @@ export function DetailActionButton({
           numberOfLines={1}
           style={[
             styles.detailActionLabel,
+            !alignStart && styles.topicPrimaryActionLabel,
             compact && styles.detailActionCompactLabel,
-            active && styles.detailActionLabelActive,
-            active && { color: textColor }
+            alignStart && active && styles.detailActionLabelActive,
+            alignStart && active && { color: textColor }
           ]}
         >
           {label}
@@ -111,9 +129,10 @@ export function DetailActionButton({
             numberOfLines={1}
             style={[
               styles.detailActionCount,
+              !alignStart && styles.topicPrimaryActionCount,
               compact && styles.detailActionCompactCount,
-              active && styles.detailActionLabelActive,
-              active && { color: textColor }
+              alignStart && active && styles.detailActionLabelActive,
+              alignStart && active && { color: textColor }
             ]}
           >
             {visibleCount}

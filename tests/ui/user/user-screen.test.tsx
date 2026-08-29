@@ -165,9 +165,11 @@ describe('User screen behavior', () => {
       })
     );
 
-    expect(view.getByText('linux.do 登录已失效，请重新登录。')).toBeTruthy();
+    const notice = view.getByText('linux.do 登录已失效，请重新登录。');
     expect(view.getByText('Alice')).toBeTruthy();
-    await fireEvent.press(view.getByLabelText('刷新'));
+    const retry = view.getByLabelText('重试');
+    expect(retry.parent).toBe(notice.parent);
+    await fireEvent.press(retry);
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
@@ -242,7 +244,9 @@ describe('User screen behavior', () => {
     expect(view.getByText('用户主题')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('加载更多主题'));
     expect(onLoadMoreTopics).toHaveBeenCalledTimes(1);
-    await fireEvent.press(view.getAllByLabelText('关注')[0]);
+    const followActions = view.getAllByLabelText('关注');
+    expect(followActions).toHaveLength(1);
+    await fireEvent.press(followActions[0]);
     expect(onToggleFollow).toHaveBeenCalledWith(profile);
     await fireEvent.press(view.getByLabelText('原站主页'));
     expect(onOpenOriginal).toHaveBeenCalledWith(profile.url);

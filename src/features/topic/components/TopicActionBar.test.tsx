@@ -36,7 +36,6 @@ describe('Android topic action buttons', () => {
   const styles = {
     buttonDisabled: {},
     detailActionButton: {},
-    detailActionButtonActive: {},
     detailActionCompactTextBlock: {},
     detailActionCount: {},
     detailActionIconSlot: {},
@@ -45,7 +44,9 @@ describe('Android topic action buttons', () => {
     detailActionTextBlock: {},
     replyCompactActionButton: {},
     replyDetailActionButton: {},
-    replyDetailActionButtonActive: {}
+    topicPrimaryActionButton: {},
+    topicPrimaryActionCount: {},
+    topicPrimaryActionLabel: {}
   };
   const theme = {
     dark: false,

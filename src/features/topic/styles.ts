@@ -225,8 +225,8 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       paddingHorizontal: 4,
       paddingVertical: 4
     },
-    detailActionButtonActive: {
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.13 : 0.07)
+    topicPrimaryActionButton: {
+      gap: 6
     },
     replyDetailActionButton: {
       justifyContent: 'flex-start',
@@ -244,9 +244,6 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       justifyContent: 'flex-start',
       gap: 2,
       paddingHorizontal: 0
-    },
-    replyDetailActionButtonActive: {
-      backgroundColor: 'transparent'
     },
     detailActionIconSlot: {
       alignItems: 'center',
@@ -286,6 +283,17 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       fontWeight: '700',
       includeFontPadding: false,
       lineHeight: 16
+    },
+    topicPrimaryActionLabel: {
+      color: theme.ink,
+      fontSize: Math.round(12 * fontScale),
+      lineHeight: Math.round(16 * fontScale)
+    },
+    topicPrimaryActionCount: {
+      color: theme.muted,
+      fontSize: Math.round(12 * fontScale),
+      fontWeight: '500',
+      lineHeight: Math.round(16 * fontScale)
     },
     detailActionCompactLabel: {
       fontSize: 11,

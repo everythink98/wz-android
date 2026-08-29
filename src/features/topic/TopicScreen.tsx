@@ -182,7 +182,7 @@ export const TopicScreen = memo(function TopicScreen({
             iconOnly
             ghost
             icon={Star}
-            label={chrome.favorite ? '已收藏' : '收藏'}
+            label={chrome.favorite ? '已收藏到本机' : '收藏到本机'}
             active={chrome.favorite}
             activeColor={theme.favorite}
             onPress={chrome.toggleFavorite}

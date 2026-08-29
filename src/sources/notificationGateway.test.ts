@@ -655,6 +655,33 @@ describe('notification gateway', () => {
     expect(second.hasMore).toBe(false);
   });
 
+  it('continues a notification list only with a nonempty advancing cursor', async () => {
+    const sourceAdapter = adapter('ok');
+    sourceAdapter.listPage = vi.fn(async ({ cursor }) => ({
+      items: [],
+      cursor: cursor === 'same' ? 'same' : cursor === 'current' ? 'next' : null,
+      hasMore: true
+    }));
+    const gateway = createNotificationGateway({
+      adapters: {
+        nodeseek: sourceAdapter,
+        linuxdo: adapter('ok'),
+        yaohuo: adapter('ok')
+      },
+      readAccess: async () => ({ identityKey: 'nodeseek:user', userId: 'user' })
+    });
+
+    await expect(gateway.listPage('nodeseek')).resolves.toMatchObject({ cursor: null, hasMore: false });
+    await expect(gateway.listPage('nodeseek', { cursor: 'same' })).resolves.toMatchObject({
+      cursor: null,
+      hasMore: false
+    });
+    await expect(gateway.listPage('nodeseek', { cursor: 'current' })).resolves.toMatchObject({
+      cursor: 'next',
+      hasMore: true
+    });
+  });
+
   it('records source diagnostics without persisting notification content', async () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.listPage = vi.fn(async () => ({

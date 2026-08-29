@@ -1649,7 +1649,7 @@ export function useTopicActionsController({
         const yaohuoResult = result as YaohuoActionResult;
         patch(!bookmarked, bookmarked || yaohuoResult.status === 'unknown' ? undefined : yaohuoResult.favoriteId);
       },
-      successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
+      successMessage: bookmarked ? '已取消收藏' : '收藏已提交'
     });
   }, [cacheKeys, executeMutation, notify, queryClient, runYaohuoRequest, selectedTopic, topicDetail]);
 
@@ -1687,7 +1687,7 @@ export function useTopicActionsController({
       },
       task: (ticket) =>
         runNodeSeekRequest(buildNodeSeekCollectionRequest({ postId: actionTopic.id, collected }), trace, ticket),
-      successMessage: collected ? '已取消原站收藏' : '原站收藏已提交'
+      successMessage: collected ? '已取消收藏' : '收藏已提交'
     });
   }, [cacheKeys, executeMutation, queryClient, runNodeSeekRequest, selectedTopic, topicDetail]);
 
@@ -1724,7 +1724,7 @@ export function useTopicActionsController({
           ticket
         ),
       applyResult: (result) => patch(!bookmarked, bookmarked ? undefined : discourseBookmarkIdFromActionResult(result)),
-      successMessage: bookmarked ? '已取消原站收藏' : '原站收藏已提交'
+      successMessage: bookmarked ? '已取消收藏' : '收藏已提交'
     });
   }, [cacheKeys, executeMutation, queryClient, runLinuxDoRequest, selectedTopic, topicDetail]);
 

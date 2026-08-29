@@ -141,7 +141,7 @@ function favoriteDeleteMessage(text: string) {
       typeof result.message === 'string' && result.message.trim() ? result.message.trim() : '取消收藏失败'
     );
   }
-  return '已取消原站收藏';
+  return '已取消收藏';
 }
 
 async function fetchYaohuoActionHtml({

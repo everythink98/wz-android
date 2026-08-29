@@ -25,12 +25,14 @@ function Harness({
   actionBusy = false,
   format = 'ubb',
   onSubmit = jest.fn(),
-  onUploadImage
+  onUploadImage,
+  status
 }: {
   actionBusy?: boolean;
   format?: 'ubb' | 'plain-text';
   onSubmit?: () => void;
   onUploadImage?: () => void;
+  status?: string;
 }) {
   const [content, setContent] = useState('');
   const [face, setFace] = useState('');
@@ -42,6 +44,7 @@ function Harness({
         face={face}
         format={format}
         placeholder="输入回复内容"
+        status={status}
         onContentChange={setContent}
         onFaceChange={setFace}
         onOpenChange={jest.fn()}
@@ -81,8 +84,10 @@ describe('Yaohuo reply composer', () => {
     await fireEvent.press(view.getByLabelText('发送回复'));
     expect(onSubmit).toHaveBeenCalledTimes(1);
 
-    await view.rerender(<Harness actionBusy format="plain-text" onSubmit={onSubmit} />);
-    expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
+    await view.rerender(<Harness actionBusy format="plain-text" status="正在提交回复…" onSubmit={onSubmit} />);
+    expect(view.getByText('发送中…')).toBeTruthy();
+    expect(view.getByLabelText('发送中…').props.accessibilityState.disabled).toBe(true);
+    expect(view.getByText('正在提交回复…').props.accessibilityLiveRegion).toBe('polite');
   });
 
   it('keeps the Yaohuo toolbar reachable at 130%', async () => {

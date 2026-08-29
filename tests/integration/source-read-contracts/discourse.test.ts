@@ -911,6 +911,224 @@ describe('Android local sources', () => {
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
 
+  it('paginates linux.do user topics by consumed source rows and the summary total', async () => {
+    const topic = (id: number) => ({
+      id,
+      title: `topic ${id}`,
+      slug: `topic-${id}`,
+      created_at: '2026-05-20T00:00:00.000Z',
+      posts_count: 1
+    });
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/u/alice/summary.json') {
+        return json({
+          user_summary: {
+            topic_count: 31,
+            user: { id: 7, username: 'alice', name: 'Alice' }
+          },
+          topics: [topic(999)]
+        });
+      }
+      expect(url.pathname).toBe('/topics/created-by/alice.json');
+      expect(url.searchParams.get('per_page')).toBe('30');
+      return json({
+        topic_list: {
+          topics:
+            url.searchParams.get('page') === '0'
+              ? Array.from({ length: 30 }, (_, index) => topic(index + 1))
+              : [topic(31)]
+        }
+      });
+    });
+
+    const firstPage = await getLinuxDoUserProfile('alice', 'alice', {
+      cursorType: 'topics',
+      fetcher
+    });
+    const lastPage = await getLinuxDoUserProfile('alice', 'alice', {
+      cursor: '1',
+      cursorType: 'topics',
+      fetcher
+    });
+
+    expect(firstPage).toMatchObject({
+      topicCount: 31,
+      topics: expect.arrayContaining([expect.objectContaining({ id: '1' }), expect.objectContaining({ id: '30' })]),
+      hasMoreTopics: true,
+      nextTopicsCursor: '1'
+    });
+    expect(firstPage.topics).toHaveLength(30);
+    expect(lastPage).toMatchObject({
+      topics: [expect.objectContaining({ id: '31' })],
+      hasMoreTopics: false,
+      nextTopicsCursor: null
+    });
+    expect(
+      fetcher.mock.calls
+        .map((call) => new URL(String(call[0])))
+        .filter((url) => url.pathname === '/topics/created-by/alice.json')
+        .map((url) => url.searchParams.get('page'))
+    ).toEqual(['0', '1']);
+  });
+
+  it.each([
+    { rowCount: 29, hasMore: false },
+    { rowCount: 30, hasMore: true }
+  ])(
+    'uses a full linux.do topic page as the fallback next-page signal: $rowCount rows',
+    async ({ rowCount, hasMore }) => {
+      const fetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname === '/u/alice/summary.json') {
+          return json({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
+        }
+        return json({
+          topic_list: {
+            topics: Array.from({ length: rowCount }, (_, index) => ({
+              id: index + 1,
+              title: `topic ${index + 1}`,
+              slug: `topic-${index + 1}`,
+              created_at: '2026-05-20T00:00:00.000Z',
+              posts_count: 1
+            }))
+          }
+        });
+      });
+
+      const profile = await getLinuxDoUserProfile('alice', 'alice', {
+        cursorType: 'topics',
+        fetcher
+      });
+
+      expect(profile).toMatchObject({
+        hasMoreTopics: hasMore,
+        nextTopicsCursor: hasMore ? '1' : null
+      });
+    }
+  );
+
+  it('uses one raw-row lookahead for linux.do user replies without skipping after parse drops', async () => {
+    const reply = (id: number) => ({
+      post_id: id,
+      topic_id: 100 + id,
+      post_number: id,
+      title: `reply topic ${id}`,
+      slug: `reply-topic-${id}`,
+      created_at: '2026-05-20T00:00:00.000Z'
+    });
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/u/alice/summary.json') {
+        return json({
+          user_summary: {
+            reply_count: 31,
+            user: { id: 7, username: 'alice', name: 'Alice' }
+          }
+        });
+      }
+      expect(url.pathname).toBe('/user_actions.json');
+      expect(url.searchParams.get('limit')).toBe('31');
+      return json({
+        user_actions:
+          url.searchParams.get('offset') === '0'
+            ? [{}, ...Array.from({ length: 30 }, (_, index) => reply(index + 1))]
+            : [reply(30)]
+      });
+    });
+
+    const firstPage = await getLinuxDoUserProfile('alice', 'alice', {
+      cursorType: 'replies',
+      fetcher
+    });
+    const lastPage = await getLinuxDoUserProfile('alice', 'alice', {
+      cursor: '30',
+      cursorType: 'replies',
+      fetcher
+    });
+
+    expect(firstPage).toMatchObject({
+      replies: expect.arrayContaining([expect.objectContaining({ id: '1' }), expect.objectContaining({ id: '29' })]),
+      hasMoreReplies: true,
+      nextRepliesCursor: '30'
+    });
+    expect(firstPage.replies).toHaveLength(29);
+    expect(sourceDiagnosticSummary(firstPage)).toMatchObject({
+      candidateCount: 31,
+      validCount: 30,
+      droppedCount: 1
+    });
+    expect(lastPage).toMatchObject({
+      replies: [expect.objectContaining({ id: '30' })],
+      hasMoreReplies: false,
+      nextRepliesCursor: null
+    });
+    expect(
+      fetcher.mock.calls
+        .map((call) => new URL(String(call[0])))
+        .filter((url) => url.pathname === '/user_actions.json')
+        .map((url) => url.searchParams.get('offset'))
+    ).toEqual(['0', '30']);
+  });
+
+  it('keeps summary topics after an initial linux.do topic-page failure but rejects an explicit lane read', async () => {
+    const fetcher = routeFetcher([
+      [
+        '/u/alice/summary.json',
+        json({
+          user_summary: { topic_count: 1, user: { id: 7, username: 'alice', name: 'Alice' } },
+          topics: [
+            {
+              id: 42,
+              title: 'summary topic',
+              slug: 'summary-topic',
+              created_at: '2026-05-20T00:00:00.000Z',
+              posts_count: 1
+            }
+          ]
+        })
+      ],
+      [
+        '/topics/created-by/alice.json',
+        () => {
+          throw new Error('topics unavailable');
+        }
+      ],
+      ['/user_actions.json', json({ user_actions: [] })]
+    ]);
+
+    const initial = await getLinuxDoUserProfile('alice', 'alice', { fetcher });
+
+    expect(initial).toMatchObject({
+      topics: [expect.objectContaining({ id: '42' })],
+      hasMoreTopics: false,
+      nextTopicsCursor: null
+    });
+    expect(sourceDiagnosticSummary(initial)).toMatchObject({ partialErrorCount: 1 });
+    await expect(getLinuxDoUserProfile('alice', 'alice', { cursorType: 'topics', fetcher })).rejects.toThrow(
+      'topics unavailable'
+    );
+  });
+
+  it('terminates full linux.do user pages when no source rows can be parsed', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/u/alice/summary.json') {
+        return json({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
+      }
+      if (url.pathname === '/topics/created-by/alice.json') {
+        return json({ topic_list: { topics: Array.from({ length: 30 }, () => ({})) } });
+      }
+      return json({ user_actions: Array.from({ length: 31 }, () => ({})) });
+    });
+
+    const topics = await getLinuxDoUserProfile('alice', 'alice', { cursorType: 'topics', fetcher });
+    const replies = await getLinuxDoUserProfile('alice', 'alice', { cursorType: 'replies', fetcher });
+
+    expect(topics).toMatchObject({ topics: [], hasMoreTopics: false, nextTopicsCursor: null });
+    expect(replies).toMatchObject({ replies: [], hasMoreReplies: false, nextRepliesCursor: null });
+  });
+
   it('opens a linux.do reply near-post as one anchored window', async () => {
     const stream = Array.from({ length: 120 }, (_, index) => 1000 + index);
     const posts = Array.from({ length: 20 }, (_, index) => {

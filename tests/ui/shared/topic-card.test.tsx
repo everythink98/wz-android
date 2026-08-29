@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '../render';
 import React from 'react';
-import { Pressable, Text } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { MemoizedTopicCard, TopicCard } from '@/ui/topic/TopicCard';
 import { createTheme } from '@/ui/theme/tokens';
@@ -72,7 +72,9 @@ describe('Topic card visible behavior', () => {
     expect(view.getByText('linux.do')).toBeTruthy();
     expect(view.getByText('开发调优')).toBeTruthy();
     expect(view.getByText('今天 08:00')).toBeTruthy();
-    expect(view.getByText('alice · LV 2 · 已收藏 · 同链：V2EX、NodeSeek')).toBeTruthy();
+    expect(view.getByText('alice · LV 2 · 已收藏')).toBeTruthy();
+    expect(view.getByText('同链：V2EX、NodeSeek')).toBeTruthy();
+    expect(view.queryByText('alice · LV 2 · 已收藏 · 同链：V2EX、NodeSeek')).toBeNull();
     expect(view.getByText('需 Lv2')).toBeTruthy();
     expect(view.getByText('Android')).toBeTruthy();
     expect(view.getByText('测试')).toBeTruthy();
@@ -112,6 +114,39 @@ describe('Topic card visible behavior', () => {
     await fireEvent.press(view.getByLabelText('本机取消收藏'));
     expect(onTrailingAction).toHaveBeenCalledTimes(1);
     expect(onOpenTopic).not.toHaveBeenCalled();
+  });
+
+  it('keeps read metadata legible while lowering only the title emphasis', async () => {
+    const view = await render(
+      <TopicCard
+        readerState={{ favorite: false, listDensity: 'standard', read: true }}
+        testID="read-topic-card"
+        topic={topic}
+        onOpenTopic={jest.fn()}
+      />
+    );
+
+    const fadedAncestors =
+      view.root?.queryAll((instance) => typeof StyleSheet.flatten(instance.props.style)?.opacity === 'number') || [];
+    expect(fadedAncestors).toHaveLength(0);
+    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ color: theme.muted });
+    expect(view.getByText(/^alice/)).toHaveStyle({ color: theme.muted });
+    expect(view.getByText('23')).toHaveStyle({ color: theme.muted });
+  });
+
+  it('emphasizes search matches without imitating a text selection', async () => {
+    const view = await render(
+      <TopicCard
+        highlightQuery="自动化"
+        readerState={{ favorite: false, listDensity: 'standard', read: false }}
+        topic={topic}
+        onOpenTopic={jest.fn()}
+      />
+    );
+
+    const highlightStyle = StyleSheet.flatten(view.getByText('自动化').props.style);
+    expect(highlightStyle).toMatchObject({ color: theme.primaryStrong, fontWeight: '700' });
+    expect(highlightStyle.backgroundColor).toBeUndefined();
   });
 
   it('does not manufacture an untitled search card', async () => {

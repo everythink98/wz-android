@@ -187,15 +187,17 @@ export function createNotificationGateway({
       source,
       'load',
       async (trace) =>
-        runWithAccess(source, trace, options.signal, options.expectedIdentityKey, async (access) =>
-          adapters[source].listPage({
+        runWithAccess(source, trace, options.signal, options.expectedIdentityKey, async (access) => {
+          const page = await adapters[source].listPage({
             ...access,
             categoryId: options.categoryId,
             cursor: options.cursor,
             limit: options.limit,
             unreadOnly: options.unreadOnly
-          })
-        ),
+          });
+          const hasMore = page.hasMore && Boolean(page.cursor) && page.cursor !== options.cursor;
+          return hasMore ? page : { ...page, cursor: null, hasMore: false };
+        }),
       (page) => ({ itemCount: page.items.length })
     );
 

@@ -22,7 +22,7 @@ import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/
 import { type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { EmptyText } from '@/ui/controls/FeedbackStates';
+import { EmptyText, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOUCH_HIT_SLOP, triggerPressFeedback } from '@/ui/controls/pressFeedback';
@@ -612,23 +612,14 @@ export const LibraryScreen = memo(function LibraryScreen({
   const renderEmpty = useCallback(
     (viewportTab: LibraryTab, recordCount: number) => (
       <View testID={loaded && viewportTab === 'favorites' && !recordCount ? 'library-favorites-empty' : undefined}>
-        <EmptyText
-          text={
-            enabledSources.length === 0
-              ? '尚未启用内容源'
-              : viewportTab === 'users'
-                ? '这里还没有关注用户'
-                : '这里还没有内容'
-          }
-        />
         {enabledSources.length === 0 ? (
-          <View style={styles.actions}>
-            <AppButton label="管理内容源" variant="primary" onPress={onManageContentSources} />
-          </View>
-        ) : null}
+          <RecoverableEmptyState message="尚未启用内容源" actionLabel="管理内容源" onAction={onManageContentSources} />
+        ) : (
+          <EmptyText text={viewportTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} />
+        )}
       </View>
     ),
-    [enabledSources.length, loaded, onManageContentSources, styles]
+    [enabledSources.length, loaded, onManageContentSources]
   );
   const favoriteEmpty = useMemo(
     () => renderEmpty('favorites', favoriteListItems.length),

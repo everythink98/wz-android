@@ -234,7 +234,7 @@ export const SearchScreen = memo(function SearchScreen({
   onToggleLinuxDoAiSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
 }) {
-  const { styles, theme } = useReaderThemeStyles(createSearchStyles);
+  const { settings, styles, theme } = useReaderThemeStyles(createSearchStyles);
   const internalListRef = useRef<FlashListRef<SearchListItem> | null>(null);
   const listRef = scrollRef || internalListRef;
   const autoLoadArmedRef = useRef(false);
@@ -767,6 +767,7 @@ export const SearchScreen = memo(function SearchScreen({
         style={styles.content}
         contentContainerStyle={styles.contentInner}
         data={listItems}
+        extraData={settings}
         keyExtractor={keySearchListItem}
         getItemType={(item) => item.type}
         keyboardShouldPersistTaps="handled"

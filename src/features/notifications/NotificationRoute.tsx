@@ -41,6 +41,7 @@ export type NotificationRouteRuntimeValue = NotificationsRuntimeValue & {
   };
   contentWidth: number;
   notify: (message: string) => void;
+  reconcileAccountStatus: (source: NotificationSource) => Promise<unknown>;
 };
 
 const NotificationRouteRuntimeContext = createContext<NotificationRouteRuntimeValue | null>(null);
@@ -388,6 +389,19 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
     },
     [runtime.enabledNotificationSources]
   );
+  const retryAccountStatus = useCallback(() => {
+    const candidates =
+      source === 'all'
+        ? runtime.enabledNotificationSources
+        : runtime.enabledNotificationSources.includes(source)
+          ? [source]
+          : [];
+    candidates.forEach((candidate) => {
+      if (runtime.sessions[candidate].identityTrust === 'unknown') {
+        void runtime.reconcileAccountStatus(candidate);
+      }
+    });
+  }, [runtime, source]);
   return (
     <NotificationsScreen
       activeSources={runtime.activeSources}
@@ -421,6 +435,7 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       onLoadMore={() => void listQuery.fetchNextPage()}
       onMarkAll={markAll}
       onRefresh={refresh}
+      onRetryAccountStatus={retryAccountStatus}
       onRetrySource={retrySource}
     />
   );

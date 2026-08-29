@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render as renderNative, waitFor } from '../render';
 import React, { useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState, type SourceSearchFilter } from '@/domain/forum/searchFilters';
 import type { SearchGroup } from '@/features/search/listItems';
 import { SearchScreen } from '@/features/search/SearchScreen';
@@ -17,10 +17,13 @@ import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/s
 import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
 import { appQueryClient } from '@/platform/query/serverState';
 import type { ReadGateway } from '@/sources/readGateway';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { createTheme } from '@/ui/theme/tokens';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
 const mockSearchNavigationDispatch = jest.fn();
 let lastSearchListData: readonly unknown[] = [];
+let mockSearchFlashListExtraData: unknown;
 
 jest.mock('@react-navigation/native', () => ({
   ...(jest.requireActual('@react-navigation/native') as Record<string, unknown>),
@@ -49,6 +52,7 @@ jest.mock('@shopify/flash-list', () => {
         accessibilityLiveRegion,
         accessibilityState,
         keyExtractor,
+        extraData,
         ListEmptyComponent,
         ListHeaderComponent,
         onScrollBeginDrag,
@@ -60,6 +64,7 @@ jest.mock('@shopify/flash-list', () => {
         accessibilityLiveRegion?: 'none' | 'polite' | 'assertive';
         accessibilityState?: { busy?: boolean };
         data?: unknown[];
+        extraData?: unknown;
         keyExtractor?: (item: unknown, index: number) => string;
         ListEmptyComponent?: React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
@@ -75,6 +80,7 @@ jest.mock('@shopify/flash-list', () => {
       }>
     ) {
       lastSearchListData = data;
+      mockSearchFlashListExtraData = extraData;
       ReactModule.useImperativeHandle(ref, () => ({
         recordInteraction: () => undefined,
         recomputeViewableItems: () => undefined,
@@ -449,6 +455,21 @@ function renderSearchScreen(
 }
 
 describe('Search state', () => {
+  it('invalidates the mounted result list when reader appearance changes', async () => {
+    const darkSettings: ReaderSettings = { ...createEmptyReaderData().settings, theme: 'dark' };
+    const lightSettings: ReaderSettings = { ...darkSettings, theme: 'light' };
+    const themedScreen = (settings: ReaderSettings) => (
+      <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+        <SearchScreen {...createSearchScreenProps()} />
+      </ReaderStyleProvider>
+    );
+    const view = await render(themedScreen(darkSettings));
+
+    expect(mockSearchFlashListExtraData).toBe(darkSettings);
+    await view.rerender(themedScreen(lightSettings));
+    expect(mockSearchFlashListExtraData).toBe(lightSettings);
+  });
+
   it('does not expose transient account reconciliation as a paused search on first entry', async () => {
     const pausedMessage = 'linux.do 登录状态待确认，已暂停新请求和写入。';
     const view = await renderSearchScreen({

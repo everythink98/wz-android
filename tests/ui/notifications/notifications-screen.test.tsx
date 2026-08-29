@@ -3,7 +3,7 @@ import React from 'react';
 import { Dimensions, ScrollView, StyleSheet } from 'react-native';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { formatDateTime } from '@/domain/forum/presentation';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
+import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import type { ForumNotification } from '@/domain/notifications/models';
 import type { NotificationState } from '@/platform/notifications/notificationStore';
 import {
@@ -13,6 +13,7 @@ import {
 } from '@/features/notifications/NotificationScreens';
 import { fireEvent, render, waitFor } from '../render';
 import { createTheme } from '@/ui/theme/tokens';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 
 const ignoreExternalUrl = () => undefined;
 
@@ -102,6 +103,7 @@ jest.mock('@gorhom/bottom-sheet', () => {
 
 let mockSafeAreaBottom = 0;
 let mockSafeAreaTop = 0;
+let mockNotificationFlashListExtraData: unknown;
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: mockSafeAreaBottom, left: 0, right: 0, top: mockSafeAreaTop })
@@ -113,6 +115,7 @@ jest.mock('@shopify/flash-list', () => {
   return {
     FlashList: ({
       data = [],
+      extraData,
       keyExtractor,
       ListEmptyComponent,
       ListFooterComponent,
@@ -123,6 +126,7 @@ jest.mock('@shopify/flash-list', () => {
       testID
     }: {
       data?: unknown[];
+      extraData?: unknown;
       keyExtractor?: (item: unknown, index: number) => string;
       ListEmptyComponent?: React.ReactNode;
       ListFooterComponent?: React.ReactNode;
@@ -132,6 +136,7 @@ jest.mock('@shopify/flash-list', () => {
       renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
       testID?: string;
     }) => {
+      mockNotificationFlashListExtraData = extraData;
       const refreshHandler = ReactModule.isValidElement<{ onRefresh?: () => void }>(refreshControl)
         ? refreshControl.props.onRefresh
         : undefined;
@@ -188,6 +193,7 @@ function listProps() {
     onLoadMore: jest.fn(),
     onMarkAll: jest.fn(),
     onRefresh: jest.fn(),
+    onRetryAccountStatus: jest.fn(),
     onRetrySource: jest.fn()
   };
 }
@@ -207,6 +213,21 @@ function notificationState(globalEnabled = true): NotificationState {
 }
 
 describe('notification screens', () => {
+  it('invalidates the mounted message list when reader appearance changes', async () => {
+    const darkSettings: ReaderSettings = { ...createEmptyReaderData().settings, theme: 'dark' };
+    const lightSettings: ReaderSettings = { ...darkSettings, theme: 'light' };
+    const themedScreen = (settings: ReaderSettings) => (
+      <ReaderStyleProvider value={{ settings, theme: createTheme(settings) }}>
+        <NotificationsScreen {...listProps()} />
+      </ReaderStyleProvider>
+    );
+    const view = await render(themedScreen(darkSettings));
+
+    expect(mockNotificationFlashListExtraData).toBe(darkSettings);
+    await view.rerender(themedScreen(lightSettings));
+    expect(mockNotificationFlashListExtraData).toBe(lightSettings);
+  });
+
   it('uses the enabled content-source order for tabs and hides disabled-source rows and errors', async () => {
     const view = await render(
       <NotificationsScreen
@@ -368,16 +389,27 @@ describe('notification screens', () => {
     expect(view.getByText('账号确认中')).toBeTruthy();
     expect(view.getByText('正在确认linux.do账号身份；完成后会自动加载消息。')).toBeTruthy();
     expect(view.queryByText(/请先登录/)).toBeNull();
+    expect(view.queryByLabelText('重试账号核对')).toBeNull();
   });
 
   it('presents a terminal unknown message source as retryable instead of logged out', async () => {
+    const onRetryAccountStatus = jest.fn();
     const view = await render(
-      <NotificationsScreen {...listProps()} activeSources={[]} items={[]} source="yaohuo" sourceUnknown />
+      <NotificationsScreen
+        {...listProps()}
+        activeSources={[]}
+        items={[]}
+        source="yaohuo"
+        sourceUnknown
+        onRetryAccountStatus={onRetryAccountStatus}
+      />
     );
 
     expect(view.getByText('账号状态暂不可确认')).toBeTruthy();
     expect(view.getByText('本次账号核对失败；消息请求已暂停，可在账号中心重试核对。')).toBeTruthy();
     expect(view.queryByText('请先登录 妖火，并确认账号身份。')).toBeNull();
+    await fireEvent.press(view.getByLabelText('重试账号核对'));
+    expect(onRetryAccountStatus).toHaveBeenCalledTimes(1);
   });
 
   it('never renders cached private rows for a pending source', async () => {

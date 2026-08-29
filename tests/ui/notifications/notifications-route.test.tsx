@@ -210,6 +210,7 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
     partialUnavailable: false,
     permission: 'denied',
     ready: true,
+    reconcileAccountStatus: jest.fn(async () => undefined),
     refreshSnapshots: jest.fn(),
     sessions: createSiteSessionViewModels(createSiteSessionStates()),
     setCenterVisible: jest.fn(),
@@ -556,7 +557,7 @@ describe('notification routes', () => {
     expect(listAllPage).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps terminal unknown distinct from logged out in the single-source route', async () => {
+  it('retries only the selected unknown account without starting a notification request', async () => {
     appQueryClient.clear();
     const gateway = {
       listAllPage: jest.fn(),
@@ -585,6 +586,9 @@ describe('notification routes', () => {
     expect(view.getByText('账号状态暂不可确认')).toBeTruthy();
     expect(view.queryByText('账号尚未就绪')).toBeNull();
     expect(view.queryByText(/请先登录/)).toBeNull();
+    await fireEvent.press(view.getByText('重试账号核对'));
+    expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
+    expect(runtime.reconcileAccountStatus).toHaveBeenCalledWith('yaohuo');
     expect(gateway.listPage).not.toHaveBeenCalled();
   });
 
@@ -619,7 +623,11 @@ describe('notification routes', () => {
     );
 
     expect(view.getByText('账号状态暂不可确认')).toBeTruthy();
-    expect(view.getByText(/账号中心重试核对/)).toBeTruthy();
+    await fireEvent.press(view.getByText('重试账号核对'));
+    expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(notificationSources.length);
+    for (const candidate of notificationSources) {
+      expect(runtime.reconcileAccountStatus).toHaveBeenCalledWith(candidate);
+    }
     expect(view.queryByText(/登录任一|请先登录/)).toBeNull();
     expect(gateway.getCategories).not.toHaveBeenCalled();
     expect(gateway.listAllPage).not.toHaveBeenCalled();

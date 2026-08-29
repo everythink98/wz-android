@@ -4615,3 +4615,13 @@
 | 能力 ID | `WRITE-01`、`TOPIC-03`、`NAV-03` |
 | 历史症状与根因 | 新回复已由原站确认并读回，但 Topic 停在目标页第一条而不是新楼层，顶部同时误报“部分评论未能读取，已显示 N 条”；根因：权威回复窗口 owner 必须同时保留页面完整性和写后定位交接；Composer 只拥有草稿与提交，不能猜楼层或拥有列表滚动。 |
 | 当前 owner | `tests/integration/source-read-contracts/nodeseek.test.ts` |
+
+
+## `REG-USER-008` 用户活动末页仍显示加载更多
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | NodeSeek 用户只有一条主题时仍显示“加载更多主题”，回复末页也会继续暴露下一页；linux.do 回复存在同类误报，主题则无条件终止而漏掉后续页。根因：来源 adapter 把“当前解析列表非空”当成“还有下一页”，或没有使用原站可分页主题入口；UI 与 controller 只是忠实投影该来源结果。 |
+| 当前 owner | `tests/integration/source-read-contracts/` |

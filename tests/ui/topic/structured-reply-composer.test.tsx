@@ -1,10 +1,13 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useState } from 'react';
+import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { StructuredReplyComposer } from '@/ui/composer/StructuredReplyComposer';
-import type { ComposerPresentation } from '@/domain/forum/structuredComposer';
+import type { ComposerPresentation, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 import { composerHostMessageSchema } from '@/ui/composer/structuredComposerBridge';
 import { StyleSheet } from 'react-native';
+import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+import { createTheme } from '@/ui/theme/tokens';
 import { fireEvent, render, waitFor } from '../render';
 
 function message(type: string, payload: unknown) {
@@ -139,6 +142,97 @@ describe('StructuredReplyComposer', () => {
       })
     );
     expect(postMessage.mock.calls.map(([raw]: [string]) => JSON.parse(raw).type)).not.toContain('INIT');
+  });
+
+  it('updates theme in the same WebView without reinitializing or resetting draft revision', async () => {
+    const intent = { kind: 'reply' as const, site: 'nodeseek' as const, topicId: '42' };
+    const pendingNodeSeekPolls: PendingNodeSeekPoll[] = [];
+    const onSubmit = jest.fn();
+    const onOpenChange = jest.fn();
+    const onPresentationChange = jest.fn();
+    const onSnapshot = jest.fn();
+    function Host({ appearance }: { appearance: 'dark' | 'light' }) {
+      const settings = { ...createEmptyReaderData().settings, theme: appearance };
+      const theme = createTheme(settings);
+      return (
+        <ReaderStyleProvider value={{ settings, theme }}>
+          <StructuredReplyComposer
+            actionBusy={false}
+            closeLabel="收起回复"
+            content="draft"
+            focusSignal={0}
+            intent={intent}
+            pendingNodeSeekPolls={pendingNodeSeekPolls}
+            presentation="sheet"
+            submitLabel="发送回复"
+            title="回复"
+            visible
+            onOpenChange={onOpenChange}
+            onPresentationChange={onPresentationChange}
+            onSnapshot={onSnapshot}
+            onSubmit={onSubmit}
+          />
+        </ReaderStyleProvider>
+      );
+    }
+    const view = await render(<Host appearance="light" />);
+    const webView = view.getByTestId('structured-composer-webview');
+    const postMessage = webView.props.postMessageMock;
+    const messages = () => postMessage.mock.calls.map(([raw]: [string]) => JSON.parse(raw));
+
+    await fireEvent(webView, 'loadEnd');
+    await waitFor(() => expect(messages().filter((entry: { type: string }) => entry.type === 'INIT')).toHaveLength(1));
+
+    await view.rerender(<Host appearance="dark" />);
+    expect(view.getByTestId('structured-composer-webview')).toBe(webView);
+    expect(view.getByTestId('structured-composer-webview').props.postMessageMock).toBe(postMessage);
+    expect(messages().filter((entry: { type: string }) => entry.type === 'INIT')).toHaveLength(1);
+
+    await fireEvent(webView, 'message', message('READY', { revision: 0 }));
+    await waitFor(() =>
+      expect(messages().filter((entry: { type: string }) => entry.type === 'SET_THEME')).toHaveLength(1)
+    );
+    const darkThemeMessage = messages().findLast((entry: { type: string }) => entry.type === 'SET_THEME');
+    expect(composerHostMessageSchema.safeParse(darkThemeMessage).success).toBe(true);
+    expect(darkThemeMessage).toEqual(
+      expect.objectContaining({
+        type: 'SET_THEME',
+        payload: expect.objectContaining({ dark: true, fontScale: 1 })
+      })
+    );
+
+    await fireEvent(
+      webView,
+      'message',
+      message('STATE_CHANGED', { revision: 7, mode: 'rich', isEmpty: false, canUndo: true, canRedo: false })
+    );
+    await view.rerender(<Host appearance="light" />);
+    await waitFor(() =>
+      expect(messages().filter((entry: { type: string }) => entry.type === 'SET_THEME')).toHaveLength(2)
+    );
+    expect(messages().filter((entry: { type: string }) => entry.type === 'INIT')).toHaveLength(1);
+    expect(view.getByTestId('structured-composer-webview')).toBe(webView);
+
+    await fireEvent.press(view.getByLabelText('发送回复'));
+    const request = messages().findLast((entry: { type: string }) => entry.type === 'REQUEST_SNAPSHOT');
+    await fireEvent(
+      webView,
+      'message',
+      message('SNAPSHOT', {
+        requestId: request.payload.requestId,
+        snapshot: {
+          revision: 6,
+          markdown: 'stale draft',
+          mode: 'rich',
+          isEmpty: false,
+          validationIssues: [],
+          pendingNodeSeekPolls: []
+        }
+      })
+    );
+
+    await waitFor(() => expect(view.getByText('编辑器返回了过期正文，请重试')).toBeTruthy());
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('keeps the editor WebView from clearing shared login state', async () => {

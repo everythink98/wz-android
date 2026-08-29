@@ -321,7 +321,7 @@ export function YaohuoReplyComposer({
       <View style={styles.actions}>
         <AppButton label={closeLabel} variant="ghost" disabled={actionBusy} onPress={() => onOpenChange(false)} />
         <AppButton
-          label={submitLabel}
+          label={actionBusy ? '发送中…' : submitLabel}
           variant={content.trim() ? 'primary' : 'default'}
           disabled={actionBusy || Boolean(disabledReason) || !content.trim()}
           onPress={onSubmit}

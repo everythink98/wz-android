@@ -71,10 +71,35 @@ describe('source user read', () => {
           })
         );
       }
+      if (input.includes('linux.do/topics/created-by/alice.json?page=0&per_page=30')) {
+        return new Response(
+          JSON.stringify({
+            topic_list: {
+              topics: [
+                {
+                  id: 42,
+                  title: 'linux topic',
+                  slug: 'linux-topic',
+                  created_at: '2026-05-20T00:00:00.000Z',
+                  posts_count: 1
+                },
+                {
+                  id: 41,
+                  title: 'linux older topic',
+                  slug: 'linux-older-topic',
+                  created_at: '2026-05-19T00:00:00.000Z',
+                  posts_count: 1
+                }
+              ]
+            }
+          })
+        );
+      }
       if (
         input.includes('linux.do/user_actions.json') &&
         input.includes('username=alice') &&
-        input.includes('filter=5')
+        input.includes('filter=5') &&
+        input.includes('limit=31')
       ) {
         return new Response(
           JSON.stringify({
@@ -282,6 +307,9 @@ describe('source user read', () => {
       if (input.includes('linux.do/u/linux/summary.json')) {
         return new Response(JSON.stringify({ user_summary: { user: { username: 'linux' } }, topics: [] }));
       }
+      if (input.includes('linux.do/topics/created-by/linux.json?page=0&per_page=30')) {
+        return new Response(JSON.stringify({ topic_list: { topics: [] } }));
+      }
       if (input.includes('linux.do/user_actions.json')) {
         throw new Error('actions unavailable');
       }
@@ -323,7 +351,9 @@ describe('source user read', () => {
   it('loads user replies from each source reply cursor', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
-        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
+        return new Response(
+          JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872, nComment: 16 } })
+        );
       }
       if (input.includes('nodeseek.com/api/content/list-comments?uid=48872&page=2')) {
         return new Response(
@@ -334,9 +364,9 @@ describe('source user read', () => {
         );
       }
       if (input.includes('linux.do/u/alice/summary.json')) {
-        return new Response(JSON.stringify({ user_summary: { user: { username: 'alice' } } }));
+        return new Response(JSON.stringify({ user_summary: { user: { username: 'alice' }, reply_count: 31 } }));
       }
-      if (input.includes('linux.do/user_actions.json') && input.includes('offset=30')) {
+      if (input.includes('linux.do/user_actions.json') && input.includes('offset=30') && input.includes('limit=31')) {
         return new Response(
           JSON.stringify({
             user_actions: [
@@ -378,7 +408,8 @@ describe('source user read', () => {
       })
     ).resolves.toMatchObject({
       replies: [{ topicId: '102', floor: 5 }],
-      nextRepliesCursor: '3'
+      hasMoreReplies: false,
+      nextRepliesCursor: null
     });
     await expect(
       getUserProfile({
@@ -391,7 +422,8 @@ describe('source user read', () => {
       })
     ).resolves.toMatchObject({
       replies: [{ topicId: '43', floor: 4 }],
-      nextRepliesCursor: '60'
+      hasMoreReplies: false,
+      nextRepliesCursor: null
     });
     await expect(
       getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', cursor: '2', cursorType: 'replies', fetcher })
@@ -470,6 +502,27 @@ describe('source user read', () => {
             ]
           })
         );
+      }
+      if (input.includes('linux.do/topics/created-by/alice.json?page=0&per_page=30')) {
+        return new Response(
+          JSON.stringify({
+            topic_list: {
+              topics: [
+                {
+                  id: 42,
+                  title: 'linux topic',
+                  slug: 'linux-topic',
+                  created_at: '2026-05-20T00:00:00.000Z',
+                  bumped_at: '2026-05-20T01:00:00.000Z',
+                  posts_count: 2
+                }
+              ]
+            }
+          })
+        );
+      }
+      if (input.includes('linux.do/user_actions.json') && input.includes('limit=31')) {
+        return new Response(JSON.stringify({ user_actions: [] }));
       }
       if (input.includes('v2ex.com/api/members/show.json')) {
         return new Response(
@@ -856,6 +909,34 @@ describe('source user read', () => {
           })
         );
       }
+      if (input.includes('linux.do/topics/created-by/alice.json?page=0&per_page=30')) {
+        return new Response(
+          JSON.stringify({
+            topic_list: {
+              topics: [
+                {
+                  id: 41,
+                  title: 'linux older',
+                  slug: 'linux-older',
+                  created_at: '2026-05-20T00:00:00.000Z',
+                  bumped_at: '2026-05-23T00:00:00.000Z',
+                  posts_count: 2
+                },
+                {
+                  id: 42,
+                  title: 'linux newer',
+                  slug: 'linux-newer',
+                  created_at: '2026-05-22T00:00:00.000Z',
+                  posts_count: 1
+                }
+              ]
+            }
+          })
+        );
+      }
+      if (input.includes('linux.do/user_actions.json') && input.includes('limit=31')) {
+        return new Response(JSON.stringify({ user_actions: [] }));
+      }
       if (input.includes('v2ex.com/api/members/show.json')) {
         return new Response(JSON.stringify({ id: 9, username: 'neo' }));
       }
@@ -1074,6 +1155,27 @@ describe('source user read', () => {
             ]
           })
         );
+      }
+      if (input.includes('linux.do/topics/created-by/alice.json?page=0&per_page=30')) {
+        return new Response(
+          JSON.stringify({
+            topic_list: {
+              topics: [
+                {
+                  id: 42,
+                  title: 'linux topic',
+                  slug: 'linux-topic',
+                  category_id: 4,
+                  created_at: '2026-05-20T00:00:00.000Z',
+                  posts_count: 1
+                }
+              ]
+            }
+          })
+        );
+      }
+      if (input.includes('linux.do/user_actions.json') && input.includes('limit=31')) {
+        return new Response(JSON.stringify({ user_actions: [] }));
       }
       throw new Error(`unexpected ${input}`);
     });

@@ -346,6 +346,7 @@ describe('Library filters', () => {
         .filter((testID) => String(testID).startsWith('library-source-'))
     ).toEqual(['library-source-all']);
     expect(view.getByText('尚未启用内容源')).toBeTruthy();
+    expect(view.getByTestId('recoverable-empty-state')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('管理内容源'));
     expect(onManageContentSources).toHaveBeenCalledTimes(1);
     expect(view.queryByText('V2EX 问答主题')).toBeNull();

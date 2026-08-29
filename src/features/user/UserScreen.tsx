@@ -2,7 +2,7 @@ import { createUserStyles, type UserStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
-import { ChevronLeft, ExternalLink, RefreshCw, Star } from 'lucide-react-native';
+import { ChevronLeft, ExternalLink, RefreshCw } from 'lucide-react-native';
 import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -272,7 +272,9 @@ export const UserScreen = memo(function UserScreen({
         ) : null}
         {error ? (
           userAuthNotice ? (
-            <AuthNoticeBox notice={userAuthNotice} />
+            <AuthNoticeBox notice={userAuthNotice}>
+              <AppButton compact label="重试" onPress={onRefresh} />
+            </AuthNoticeBox>
           ) : (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{error.message}</Text>
@@ -360,17 +362,6 @@ export const UserScreen = memo(function UserScreen({
           {sourceLabel(user.source)} · {user.displayName || user.username || user.id}
         </ScreenTopBarTitle>
         <ScreenTopBarActions>
-          {followTarget ? (
-            <IconButton
-              iconOnly
-              ghost
-              icon={Star}
-              label={followed ? '已关注' : '关注'}
-              active={followed}
-              activeColor={theme.favorite}
-              onPress={() => onToggleFollow(followTarget)}
-            />
-          ) : null}
           <IconButton iconOnly ghost icon={RefreshCw} label="刷新" onPress={onRefresh} />
           {user.url ? (
             <IconButton iconOnly ghost icon={ExternalLink} label="原站" onPress={() => onOpenOriginal(user.url)} />

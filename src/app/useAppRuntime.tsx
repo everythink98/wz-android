@@ -134,7 +134,8 @@ export function useAppRuntime() {
         isWritableSessionTicketCurrent
       },
       contentWidth,
-      notify
+      notify,
+      reconcileAccountStatus
     }),
     [
       contentWidth,
@@ -143,7 +144,8 @@ export function useAppRuntime() {
       isWritableSessionTicketCurrent,
       notificationsRuntime,
       notify,
-      readGateway.getEmojiUrls
+      readGateway.getEmojiUrls,
+      reconcileAccountStatus
     ]
   );
   const notificationSummary = `${notificationsRuntime.unreadTotal ? '有未读' : '暂无未读'} · ${

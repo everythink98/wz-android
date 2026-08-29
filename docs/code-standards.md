@@ -59,6 +59,8 @@
 - 跨模块安全、数据与行为契约放在 `tests/integration/`。
 - 脚本、plugin、release 和构建门禁测试放在 `tests/tooling/`。
 - React Native 用户可见行为按能力族放在 `tests/ui/<family>/`；共享 fixture 只保留在 `tests/ui/` 根目录。
+- 可重复视觉状态放在 `tests/ui/visual/scenarios/<family>/manifest.tsx`；每个能力族只维护自己的 manifest，`tests/ui/visual/catalog.tsx` 是唯一聚合 owner。场景复用生产组件和领域类型，不建立第二套控件、共享 style registry 或通用场景 DSL。
+- `dev/visual-gallery/` 只承载独立开发入口和浏览壳；生产 `App.tsx`、`index.ts` 与 `src/` 不得导入开发入口或视觉场景。
 - 通过测试使用当前行为标题，不包含 REG ID；同一行为只保留 `docs/testing-standard.md` 定义的最低可靠 canonical owner。Replay、Agent Live 和证据状态同样遵循该标准。
 
 ## 格式与质量门禁

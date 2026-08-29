@@ -157,6 +157,8 @@ jest.mock('react-native-render-html', () => {
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return {
+    Bookmark: Icon,
+    BookmarkCheck: Icon,
     BookMarked: Icon,
     Bug: Icon,
     Check: Icon,
@@ -172,6 +174,7 @@ jest.mock('lucide-react-native', () => {
     Copy: Icon,
     Drumstick: Icon,
     Flame: Icon,
+    Ham: Icon,
     Lightbulb: Icon,
     List: Icon,
     MoreHorizontal: Icon,
@@ -2706,6 +2709,31 @@ describe('Topic reply filters', () => {
     expect(view.queryByTestId('topic-poll-v2ex')).toBeNull();
   });
 
+  it('uses the concise favorite label for source-site bookmark actions', async () => {
+    const nodeSeekTopic: TopicDetail = {
+      ...topic,
+      source: 'nodeseek',
+      id: 'nodeseek-actions',
+      url: 'https://www.nodeseek.com/post-2-1'
+    };
+    const view = await render(
+      <TopicFilterHarness canUseNodeSeekActions selectedTopic={nodeSeekTopic} topicDetail={nodeSeekTopic} />
+    );
+
+    expect(view.getByText('收藏')).toBeTruthy();
+
+    const linuxDoTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      id: 'linuxdo-actions',
+      url: 'https://linux.do/t/topic-1'
+    };
+    await view.rerender(
+      <TopicFilterHarness canUseLinuxDoActions selectedTopic={linuxDoTopic} topicDetail={linuxDoTopic} />
+    );
+    expect(view.getByText('收藏')).toBeTruthy();
+  });
+
   it('keeps V2EX read-only and exposes reply composition only for an authorized writable source', async () => {
     const onReplyComposerOpenChange = jest.fn<(open: boolean) => void>();
     const view = await render(
@@ -3074,11 +3102,11 @@ describe('Topic reply filters', () => {
     const onToggleFavorite = jest.fn<() => void>();
     const view = await render(<TopicFilterHarness onToggleFavorite={onToggleFavorite} />);
 
-    await fireEvent.press(view.getByLabelText('收藏'));
+    await fireEvent.press(view.getByLabelText('收藏到本机'));
     expect(onToggleFavorite).toHaveBeenCalledTimes(1);
 
     await view.rerender(<TopicFilterHarness topicFavorite onToggleFavorite={onToggleFavorite} />);
-    expect(view.getByLabelText('已收藏')).toBeTruthy();
+    expect(view.getByLabelText('已收藏到本机')).toBeTruthy();
   });
 
   it('exposes the confirmed yaohuo favorite as a selected cancel action', async () => {
@@ -3100,9 +3128,10 @@ describe('Topic reply filters', () => {
       />
     );
 
-    const cancelButton = view.getByLabelText('取消原站收藏');
+    const cancelButton = view.getByLabelText('取消收藏');
     expect(cancelButton.props.accessibilityState.selected).toBe(true);
     expect(cancelButton.props.testID).toBe('detail-action-favorite');
+    expect(view.getByText('收藏')).toBeTruthy();
     await fireEvent.press(cancelButton);
     expect(onYaohuoFavorite).toHaveBeenCalledTimes(1);
 
@@ -3119,7 +3148,7 @@ describe('Topic reply filters', () => {
         topicDetail={unfavoritedYaohuoTopic}
       />
     );
-    expect(view.getByLabelText('原站收藏').props.accessibilityState.selected).toBe(false);
+    expect(view.getByLabelText('收藏').props.accessibilityState.selected).toBe(false);
   });
 
   it('disables the yaohuo favorite action while its original state is unknown', async () => {
@@ -3139,7 +3168,7 @@ describe('Topic reply filters', () => {
       />
     );
 
-    const unknownButton = view.getByLabelText('原站收藏状态未加载');
+    const unknownButton = view.getByLabelText('收藏状态未加载');
     expect(unknownButton.props.accessibilityState.disabled).toBe(true);
     expect(view.getByText('状态未知')).toBeTruthy();
     await fireEvent.press(unknownButton);
@@ -3165,7 +3194,7 @@ describe('Topic reply filters', () => {
       />
     );
 
-    await fireEvent.press(view.getByLabelText('原站收藏'));
+    await fireEvent.press(view.getByLabelText('收藏'));
     expect(onYaohuoFavorite).toHaveBeenCalledTimes(1);
     await view.rerender(
       <TopicFilterHarness
@@ -3177,7 +3206,7 @@ describe('Topic reply filters', () => {
       />
     );
 
-    expect(view.getByLabelText('取消原站收藏').props.accessibilityState.selected).toBe(true);
+    expect(view.getByLabelText('取消收藏').props.accessibilityState.selected).toBe(true);
   });
 
   it('keeps HTML rendering inputs stable for yaohuo favorite and cancel confirmations', async () => {

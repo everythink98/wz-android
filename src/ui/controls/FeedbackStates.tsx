@@ -23,6 +23,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     authNoticeNeutral: { color: theme.muted },
     authNoticeWarning: { color: theme.warning },
     empty: { color: theme.muted, fontFamily, fontSize: 13, paddingVertical: 24, textAlign: 'center' },
+    recoverableEmpty: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 24
+    },
     state: {
       width: '100%',
       alignItems: 'stretch',
@@ -68,6 +75,24 @@ export function AuthNoticeBox({ notice, children }: { notice: AuthNotice; childr
 export function EmptyText({ text }: { text: string }) {
   const { styles } = useReaderThemeStyles(createStyles);
   return <Text style={styles.empty}>{text}</Text>;
+}
+
+export function RecoverableEmptyState({
+  message,
+  actionLabel,
+  onAction
+}: {
+  message: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  const { styles } = useReaderThemeStyles(createStyles);
+  return (
+    <View testID="recoverable-empty-state" style={styles.recoverableEmpty}>
+      <Text style={[styles.text, styles.centeredText]}>{message}</Text>
+      <AppButton label={actionLabel} variant="primary" onPress={onAction} />
+    </View>
+  );
 }
 
 export function LoadingState({ text }: { text: string }) {

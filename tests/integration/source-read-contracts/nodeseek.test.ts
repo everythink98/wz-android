@@ -2986,6 +2986,175 @@ describe('Android local sources', () => {
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
 
+  it('stops NodeSeek user topics when the known total fits on the current page', async () => {
+    const fetcher = routeFetcher([
+      [
+        '/api/account/getInfo/7',
+        json({
+          success: true,
+          detail: { member_id: 7, member_name: 'newbie', nPost: 1, nComment: 0 }
+        })
+      ],
+      ['/api/content/list-discussions', json({ discussions: [{ post_id: 101, title: 'Only topic' }] })]
+    ]);
+
+    const profile = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher });
+
+    expect(profile).toMatchObject({
+      hasMoreTopics: false,
+      nextTopicsCursor: null
+    });
+  });
+
+  it('stops NodeSeek user replies when the known total fits on the current page', async () => {
+    const fetcher = routeFetcher([
+      [
+        '/api/account/getInfo/7',
+        json({
+          success: true,
+          detail: { member_id: 7, member_name: 'newbie', nPost: 0, nComment: 1 }
+        })
+      ],
+      ['/api/content/list-comments', json({ comments: [{ post_id: 101, title: 'Only reply topic', floor_id: 1 }] })]
+    ]);
+
+    const profile = await getNodeSeekUserProfile('7', { cursorType: 'replies', fetcher });
+
+    expect(profile).toMatchObject({
+      hasMoreReplies: false,
+      nextRepliesCursor: null
+    });
+  });
+
+  it('continues and then stops NodeSeek user topics from the known total', async () => {
+    const fetcher = routeFetcher([
+      [
+        '/api/account/getInfo/7',
+        json({
+          success: true,
+          detail: { member_id: 7, member_name: 'member', nPost: 16, nComment: 0 }
+        })
+      ],
+      [
+        '/api/content/list-discussions',
+        (input) => {
+          const page = Number(new URL(input).searchParams.get('page'));
+          const length = page === 1 ? 15 : 1;
+          return json({
+            discussions: Array.from({ length }, (_, index) => ({
+              post_id: (page - 1) * 15 + index + 1,
+              title: `Topic ${(page - 1) * 15 + index + 1}`
+            }))
+          });
+        }
+      ]
+    ]);
+
+    const first = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher });
+    const second = await getNodeSeekUserProfile('7', { cursor: '2', cursorType: 'topics', fetcher });
+
+    expect(first).toMatchObject({ hasMoreTopics: true, nextTopicsCursor: '2' });
+    expect(second).toMatchObject({ hasMoreTopics: false, nextTopicsCursor: null });
+  });
+
+  it('continues and then stops NodeSeek user replies from the known total', async () => {
+    const fetcher = routeFetcher([
+      [
+        '/api/account/getInfo/7',
+        json({
+          success: true,
+          detail: { member_id: 7, member_name: 'member', nPost: 0, nComment: 16 }
+        })
+      ],
+      [
+        '/api/content/list-comments',
+        (input) => {
+          const page = Number(new URL(input).searchParams.get('page'));
+          const length = page === 1 ? 15 : 1;
+          return json({
+            comments: Array.from({ length }, (_, index) => ({
+              post_id: (page - 1) * 15 + index + 1,
+              title: `Reply topic ${(page - 1) * 15 + index + 1}`,
+              floor_id: index + 1
+            }))
+          });
+        }
+      ]
+    ]);
+
+    const first = await getNodeSeekUserProfile('7', { cursorType: 'replies', fetcher });
+    const second = await getNodeSeekUserProfile('7', { cursor: '2', cursorType: 'replies', fetcher });
+
+    expect(first).toMatchObject({ hasMoreReplies: true, nextRepliesCursor: '2' });
+    expect(second).toMatchObject({ hasMoreReplies: false, nextRepliesCursor: null });
+  });
+
+  it.each([
+    [14, false, null],
+    [15, true, '2']
+  ])(
+    'falls back to the raw NodeSeek topic page size when the total is absent: %i rows',
+    async (length, hasMore, cursor) => {
+      const fetcher = routeFetcher([
+        ['/api/account/getInfo/7', json({ success: true, detail: { member_id: 7, member_name: 'member' } })],
+        [
+          '/api/content/list-discussions',
+          json({
+            discussions: Array.from({ length }, (_, index) => ({ post_id: index + 1, title: `Topic ${index + 1}` }))
+          })
+        ]
+      ]);
+
+      const profile = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher });
+
+      expect(profile).toMatchObject({ hasMoreTopics: hasMore, nextTopicsCursor: cursor });
+    }
+  );
+
+  it.each([
+    [14, false, null],
+    [15, true, '2']
+  ])(
+    'falls back to the raw NodeSeek reply page size when the total is absent: %i rows',
+    async (length, hasMore, cursor) => {
+      const fetcher = routeFetcher([
+        ['/api/account/getInfo/7', json({ success: true, detail: { member_id: 7, member_name: 'member' } })],
+        [
+          '/api/content/list-comments',
+          json({
+            comments: Array.from({ length }, (_, index) => ({
+              post_id: index + 1,
+              title: `Reply topic ${index + 1}`,
+              floor_id: index + 1
+            }))
+          })
+        ]
+      ]);
+
+      const profile = await getNodeSeekUserProfile('7', { cursorType: 'replies', fetcher });
+
+      expect(profile).toMatchObject({ hasMoreReplies: hasMore, nextRepliesCursor: cursor });
+    }
+  );
+
+  it('does not continue from full NodeSeek user pages with no parseable rows', async () => {
+    const profileData = json({ success: true, detail: { member_id: 7, member_name: 'member' } });
+    const topicsFetcher = routeFetcher([
+      ['/api/account/getInfo/7', profileData],
+      ['/api/content/list-discussions', json({ discussions: Array.from({ length: 15 }, () => ({})) })]
+    ]);
+    const repliesFetcher = routeFetcher([
+      ['/api/account/getInfo/7', profileData],
+      ['/api/content/list-comments', json({ comments: Array.from({ length: 15 }, () => ({})) })]
+    ]);
+
+    const topics = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher: topicsFetcher });
+    const replies = await getNodeSeekUserProfile('7', { cursorType: 'replies', fetcher: repliesFetcher });
+
+    expect(topics).toMatchObject({ topics: [], hasMoreTopics: false, nextTopicsCursor: null });
+    expect(replies).toMatchObject({ replies: [], hasMoreReplies: false, nextRepliesCursor: null });
+  });
+
   it('resolves the exact NodeSeek username from the complete candidate list', async () => {
     const signal = new AbortController().signal;
     const memberList = [

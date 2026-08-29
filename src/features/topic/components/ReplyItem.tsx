@@ -96,7 +96,7 @@ export function nodeSeekReactionStats(item: Pick<Reply | TopicDetail, 'upvoteCou
 export function nodeSeekTopicReactionStats(
   item: Pick<TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount' | 'collectionCount'>
 ) {
-  return [...nodeSeekReactionStats(item), visibleNodeSeekStat('原站收藏', item.collectionCount)].filter(
+  return [...nodeSeekReactionStats(item), visibleNodeSeekStat('收藏', item.collectionCount)].filter(
     (stat): stat is NodeSeekStat => Boolean(stat)
   );
 }

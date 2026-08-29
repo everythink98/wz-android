@@ -138,6 +138,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onLoadMore,
   onMarkAll,
   onRefresh,
+  onRetryAccountStatus,
   onRetrySource
 }: {
   activeSources: readonly NotificationSource[];
@@ -162,9 +163,10 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onLoadMore: () => void;
   onMarkAll: () => void;
   onRefresh: () => void;
+  onRetryAccountStatus: () => void;
   onRetrySource: (source: NotificationSource) => void;
 }) {
-  const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
+  const { settings, styles, theme } = useReaderThemeStyles(createNotificationStyles);
   const sourceItems = [
     { value: 'all', label: '全部' },
     ...enabledSources.map((candidate) => ({ value: candidate, label: sourceCatalog[candidate].label }))
@@ -289,6 +291,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
       style={styles.screen}
       contentContainerStyle={styles.listContent}
       data={visibleItems}
+      extraData={settings}
       keyExtractor={(item) => `${item.source}:${item.id}`}
       getItemType={(item) => item.source}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
@@ -302,7 +305,11 @@ export const NotificationsScreen = memo(function NotificationsScreen({
             <Text style={styles.stateText}>正在读取消息</Text>
           </View>
         ) : (
-          <EmptyState title={emptyTitle} text={emptyText} />
+          <EmptyState
+            title={emptyTitle}
+            text={emptyText}
+            action={sourceUnknown ? { label: '重试账号核对', run: onRetryAccountStatus } : undefined}
+          />
         )
       }
       ListFooterComponent={

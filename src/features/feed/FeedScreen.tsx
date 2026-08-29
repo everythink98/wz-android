@@ -39,7 +39,7 @@ import type { ReadingFilter } from '@/domain/forum/feed';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, FloatingIconButton } from '@/ui/controls/ButtonControls';
-import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
+import { EmptyText, LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { TOUCH_HIT_SLOP, triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
@@ -447,12 +447,11 @@ export const FeedScreen = memo(function FeedScreen({
             busy ? (
               <LoadingState text="正在读取主题..." />
             ) : allSourcesDisabled ? (
-              <View>
-                <EmptyText text="尚未启用内容源" />
-                <View style={styles.actions}>
-                  <AppButton label="前往更多管理" onPress={onManageContentSources} />
-                </View>
-              </View>
+              <RecoverableEmptyState
+                message="尚未启用内容源"
+                actionLabel="前往更多管理"
+                onAction={onManageContentSources}
+              />
             ) : (
               <EmptyText text={feedEmptyText} />
             )

@@ -22,6 +22,7 @@ npm run check:docs
 npm run typecheck
 npm run check:architecture
 npm run test:architecture
+npm run visual:gallery
 npm run check:react
 npm run android
 npm run test:device
@@ -31,6 +32,18 @@ npm run release:android
 ```
 
 `npm run verify` 是随机顺序总门禁，具体组合始终以 `package.json` 为准。Vitest 与 Jest 会输出可重放 seed；局部开发可先运行受影响测试，交付前仍按改动风险补齐门禁。
+
+### 可视状态语料库
+
+使用当前 debug/dev-client 构建启动独立视觉入口：
+
+```powershell
+npm run visual:gallery -- --port 8081
+```
+
+启动后用输出的 Development client URL 打开 Visual Gallery。该命令不安装 APK；需要覆盖安装时先按下文校验包名、签名、版本和 `firstInstallTime`。Gallery 只挂生产组件与确定性 mock，JS 网络默认阻断；它可用于搜索能力、切换场景、浅/深主题、字号和密度，但不授权真实写操作，也不能代替真实来源、系统 UI、原生手势或生命周期的 Replay/Live 证据。
+
+交付前运行 `npm run test:architecture` 和视觉 catalog 测试，确认全部 App capability 已分类、场景可双主题挂载，并且生产入口不含视觉工具。截图和人工走查报告只写入任务专用的 ignored evidence 目录，不提交账号、凭据、日志或真实内容。
 
 ## Android 覆盖安装、Replay 与 Smoke
 

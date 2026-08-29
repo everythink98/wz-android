@@ -88,6 +88,7 @@ export async function getLinuxDoUserProfile(
   const cursorType = options.cursorType;
   const wantsTopics = cursorType !== 'replies';
   const wantsReplies = cursorType !== 'topics';
+  const topicPage = parsePositiveInteger(options.cursor);
   const replyOffset = parsePositiveInteger(options.cursor);
   const data = await fetchLinuxDoJson<Record<string, unknown>>(
     `/u/${encodeURIComponent(name)}/summary.json`,
@@ -108,9 +109,41 @@ export async function getLinuxDoUserProfile(
   const displayName = typeof user.name === 'string' ? user.name : resolvedUsername;
   const avatar = avatarUrl(user.avatar_template);
   const levelLabel = linuxDoLevelLabel(user);
-  const rawTopics = wantsTopics && Array.isArray(data.topics) ? data.topics : [];
+  const summaryTopics = wantsTopics && Array.isArray(data.topics) ? data.topics : [];
+  let topicPageData = data;
+  let rawTopics = summaryTopics;
   let rawUserActions: unknown[] = [];
+  let readTopicPage = false;
   let partialErrorCount = 0;
+  if (wantsTopics) {
+    const readTopics = async () => {
+      const topicsData = await fetchLinuxDoJson<Record<string, unknown>>(
+        `/topics/created-by/${encodeURIComponent(resolvedUsername)}.json`,
+        { page: topicPage, per_page: LIST_PAGE_SIZE },
+        options
+      );
+      const topicList = isRecord(topicsData.topic_list) ? topicsData.topic_list : {};
+      return {
+        data: topicsData,
+        topics: Array.isArray(topicList.topics) ? topicList.topics : []
+      };
+    };
+    if (cursorType === 'topics') {
+      const topicPageResult = await readTopics();
+      topicPageData = topicPageResult.data;
+      rawTopics = topicPageResult.topics;
+      readTopicPage = true;
+    } else {
+      try {
+        const topicPageResult = await readTopics();
+        topicPageData = topicPageResult.data;
+        rawTopics = topicPageResult.topics;
+        readTopicPage = true;
+      } catch {
+        partialErrorCount += 1;
+      }
+    }
+  }
   if (wantsReplies) {
     const readUserActions = async () => {
       const actionData = await fetchLinuxDoJson<Record<string, unknown>>(
@@ -118,7 +151,8 @@ export async function getLinuxDoUserProfile(
         {
           offset: replyOffset,
           username: resolvedUsername,
-          filter: 5
+          filter: 5,
+          limit: LIST_PAGE_SIZE + 1
         },
         options
       );
@@ -134,9 +168,10 @@ export async function getLinuxDoUserProfile(
       }
     }
   }
+  const consumedUserActions = rawUserActions.slice(0, LIST_PAGE_SIZE);
   const categoryMap = await categoryMapForTopics(
-    data,
-    [...rawTopics, ...rawUserActions],
+    topicPageData,
+    [...rawTopics, ...consumedUserActions],
     categoryMapFromData(data),
     options
   );
@@ -144,9 +179,19 @@ export async function getLinuxDoUserProfile(
     .map((topic) => normalizeTopic(topic, categoryMap, resolvedUsername, user))
     .filter(Boolean) as Topic[];
   const visibleTopics = sortTopicsByCreatedAt(topics);
-  const replies = rawUserActions
+  const replies = consumedUserActions
     .map((action) => normalizeUserActionReply(action, categoryMap, resolvedUsername, user))
     .filter(Boolean) as UserReplyActivity[];
+  const topicCount = discourseAccountCount(summary.topic_count);
+  const hasMoreTopics =
+    wantsTopics &&
+    readTopicPage &&
+    rawTopics.length > 0 &&
+    visibleTopics.length > 0 &&
+    (topicCount === undefined
+      ? rawTopics.length >= LIST_PAGE_SIZE
+      : topicPage * LIST_PAGE_SIZE + rawTopics.length < topicCount);
+  const hasMoreReplies = wantsReplies && replies.length > 0 && rawUserActions.length > LIST_PAGE_SIZE;
   const result: UserProfile = {
     source: 'linuxdo',
     id: resolvedUsername,
@@ -160,18 +205,18 @@ export async function getLinuxDoUserProfile(
         : typeof user.bio_excerpt === 'string'
           ? user.bio_excerpt
           : undefined,
-    topicCount: discourseAccountCount(summary.topic_count) ?? (visibleTopics.length || undefined),
+    topicCount: topicCount ?? (visibleTopics.length || undefined),
     replyCount: discourseAccountCount(summary.reply_count),
     postCount: discourseAccountCount(summary.post_count),
     ...(levelLabel ? { levelLabel } : {}),
     topics: visibleTopics,
-    hasMoreTopics: false,
-    nextTopicsCursor: null,
+    hasMoreTopics,
+    nextTopicsCursor: hasMoreTopics ? String(topicPage + 1) : null,
     replies,
-    hasMoreReplies: wantsReplies && replies.length > 0,
-    nextRepliesCursor: wantsReplies && replies.length > 0 ? String(replyOffset + LIST_PAGE_SIZE) : null
+    hasMoreReplies,
+    nextRepliesCursor: hasMoreReplies ? String(replyOffset + LIST_PAGE_SIZE) : null
   };
-  const candidateCount = 1 + rawTopics.length + rawUserActions.length;
+  const candidateCount = 1 + rawTopics.length + consumedUserActions.length;
   const hasUserIdentity = Boolean(user.username || user.name || user.id);
   const validCount = (hasUserIdentity ? 1 : 0) + visibleTopics.length + replies.length;
   return annotateSourceDiagnosticSummary(result, {
@@ -180,8 +225,9 @@ export async function getLinuxDoUserProfile(
     validCount,
     droppedCount: Math.max(0, candidateCount - validCount),
     partialErrorCount,
-    missingFloorCount: rawUserActions.filter((action) => isRecord(action) && !parsePositiveInteger(action.post_number))
-      .length,
+    missingFloorCount: consumedUserActions.filter(
+      (action) => isRecord(action) && !parsePositiveInteger(action.post_number)
+    ).length,
     hasRepeatedCursor: result.nextTopicsCursor === options.cursor || result.nextRepliesCursor === options.cursor,
     isParseEmpty: !hasUserIdentity && visibleTopics.length === 0 && replies.length === 0
   });

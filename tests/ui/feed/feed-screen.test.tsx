@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, within } from '../render';
 import React, { useState } from 'react';
-import { Platform } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { FeedScreen } from '@/features/feed/FeedScreen';
@@ -389,6 +389,7 @@ describe('Feed loading', () => {
 
     expect(mockTabViewProps?.navigationState.routes.map((route) => route.key)).toEqual(['all']);
     expect(view.queryByText('topic')).toBeNull();
+    expect(view.getByTestId('recoverable-empty-state')).toBeTruthy();
     expect(view.getByText('尚未启用内容源')).toBeTruthy();
     expect(view.queryByLabelText('列表，支持下拉刷新')).toBeNull();
     await fireEvent.press(view.getByLabelText('前往更多管理'));
@@ -614,7 +615,8 @@ describe('Feed loading', () => {
     expect(activeScene.getByText('回归')).toBeTruthy();
     expect(activeScene.queryByText('第四个标签')).toBeNull();
     expect(activeScene.getByText('+1')).toBeTruthy();
-    expect(activeScene.getByText('Q · LV 2 · 已收藏 · 同链：V2EX、NodeSeek')).toBeTruthy();
+    expect(activeScene.getByText('Q · LV 2 · 已收藏')).toBeTruthy();
+    expect(activeScene.getByText('同链：V2EX、NodeSeek')).toBeTruthy();
     expect(activeScene.getByLabelText('avatar source linuxdo')).toBeTruthy();
     expect(activeScene.getByLabelText('回复统计图标')).toBeTruthy();
     expect(activeScene.getByLabelText('浏览统计图标')).toBeTruthy();
@@ -622,12 +624,8 @@ describe('Feed loading', () => {
     expect(activeScene.getByText('456')).toBeTruthy();
     expect(activeScene.getByText('宽松密度下显示的主题摘要')).toBeTruthy();
     const card = activeScene.getByTestId('feed-topic-first');
-    expect(card.props.style).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ gap: 10, paddingHorizontal: 16, paddingBottom: 14 }),
-        expect.objectContaining({ opacity: 0.72 })
-      ])
-    );
+    expect(StyleSheet.flatten(card.props.style)).toMatchObject({ gap: 10, paddingHorizontal: 16, paddingBottom: 14 });
+    expect(StyleSheet.flatten(card.props.style).opacity).toBeUndefined();
     expect(card.props.nativeBackgroundAndroid).toBeDefined();
   });
 

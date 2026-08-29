@@ -25,6 +25,7 @@ import { pressWithFeedback } from '@/ui/controls/pressFeedback';
 
 type TemplateSummary = { id: string; title: string; content: string };
 type EmojiUrlMap = Record<string, string>;
+const EMPTY_EMOJI_URLS: EmojiUrlMap = {};
 
 export type StructuredReplyComposerHandle = {
   requestSnapshot: () => Promise<ComposerSnapshot>;
@@ -142,7 +143,7 @@ export const StructuredReplyComposer = forwardRef<
       closeLabel,
       content,
       disabledReason,
-      discourseEmojiUrls = {},
+      discourseEmojiUrls = EMPTY_EMOJI_URLS,
       error,
       focusSignal,
       intent,
@@ -165,6 +166,32 @@ export const StructuredReplyComposer = forwardRef<
     ref
   ) => {
     const { settings, styles, theme } = useReaderThemeStyles(createStyles);
+    const editorTheme = useMemo(
+      () => ({
+        dark: theme.dark,
+        ink: theme.ink,
+        muted: theme.muted,
+        surface: theme.surface,
+        surface2: theme.surface2,
+        line: theme.line,
+        primary: theme.primary,
+        primarySoft: theme.primarySoft,
+        danger: theme.danger,
+        fontScale: settings.fontScale
+      }),
+      [
+        settings.fontScale,
+        theme.danger,
+        theme.dark,
+        theme.ink,
+        theme.line,
+        theme.muted,
+        theme.primary,
+        theme.primarySoft,
+        theme.surface,
+        theme.surface2
+      ]
+    );
     const webViewRef = useRef<WebView>(null);
     const latestSnapshotRef = useRef<ComposerSnapshot>({
       revision: 0,
@@ -201,6 +228,9 @@ export const StructuredReplyComposer = forwardRef<
     const lastRevisionRef = useRef(0);
     const modePreferenceRef = useRef<ComposerMode>('rich');
     const initKeyRef = useRef('');
+    const editorThemeRef = useRef(editorTheme);
+    const sentThemeRef = useRef(editorTheme);
+    editorThemeRef.current = editorTheme;
     const sentDiscourseEmojiRef = useRef<readonly { name: string; url: string }[] | null>(null);
     const wasVisibleRef = useRef(visible);
     const readyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -237,6 +267,7 @@ export const StructuredReplyComposer = forwardRef<
 
     const sendInit = useCallback(() => {
       if (!modeLoaded) return;
+      const initialTheme = editorThemeRef.current;
       pendingNodeSeekPolls.forEach((poll) => {
         // Zod at the bridge boundary validates the full sidecar again.
         void poll;
@@ -251,20 +282,10 @@ export const StructuredReplyComposer = forwardRef<
           mode,
           ...(nodeSeekMemberId && /^\d+$/.test(nodeSeekMemberId) ? { nodeSeekMemberId } : {}),
           discourseEmoji,
-          theme: {
-            dark: theme.dark,
-            ink: theme.ink,
-            muted: theme.muted,
-            surface: theme.surface,
-            surface2: theme.surface2,
-            line: theme.line,
-            primary: theme.primary,
-            primarySoft: theme.primarySoft,
-            danger: theme.danger,
-            fontScale: settings.fontScale
-          }
+          theme: initialTheme
         }
       });
+      sentThemeRef.current = initialTheme;
       sentDiscourseEmojiRef.current = discourseEmoji;
       initKeyRef.current = intentKey;
       lastConfirmedMarkdownRef.current = content;
@@ -282,9 +303,7 @@ export const StructuredReplyComposer = forwardRef<
       modeLoaded,
       nodeSeekMemberId,
       pendingNodeSeekPolls,
-      send,
-      settings.fontScale,
-      theme
+      send
     ]);
 
     useEffect(() => {
@@ -313,6 +332,12 @@ export const StructuredReplyComposer = forwardRef<
       if (!ready || initKeyRef.current === intentKey) return;
       sendInit();
     }, [intentKey, ready, sendInit]);
+
+    useEffect(() => {
+      if (!ready || sentThemeRef.current === editorTheme) return;
+      sentThemeRef.current = editorTheme;
+      send({ type: 'SET_THEME', payload: editorTheme });
+    }, [editorTheme, ready, send]);
 
     useEffect(() => {
       if (!ready || intent.site !== 'linuxdo' || sentDiscourseEmojiRef.current === discourseEmoji) return;

@@ -141,7 +141,7 @@ describe('runYaohuoAction', () => {
       'https://www.yaohuo.me/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
       expect.objectContaining({ method: 'POST', body: undefined })
     );
-    expect(result).toMatchObject({ status: 'confirmed', message: '已取消原站收藏' });
+    expect(result).toMatchObject({ status: 'confirmed', message: '已取消收藏' });
   });
 
   it('does not clear the favorite style when original cancellation is rejected', async () => {

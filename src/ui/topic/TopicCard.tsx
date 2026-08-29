@@ -89,14 +89,10 @@ export function TopicCard({
     lastOpenAt.current = now;
     onOpenTopic(topic);
   }, [onOpenTopic, topic]);
-  const authorMeta = [
-    topic.author || '未知作者',
-    topic.authorLevelLabel || '',
-    readerState.favorite ? '已收藏' : '',
-    topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : ''
-  ]
+  const authorMeta = [topic.author || '未知作者', topic.authorLevelLabel || '', readerState.favorite ? '已收藏' : '']
     .filter(Boolean)
     .join(' · ');
+  const duplicateSourceText = topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : '';
   const visibleTopicTags = (topic.tags || []).slice(0, TOPIC_CARD_TAG_LIMIT);
   const hiddenTopicTagCount = Math.max((topic.tags?.length || 0) - visibleTopicTags.length, 0);
   const accessRequirementText = forumAccessRequirementText(topic.accessRequirement);
@@ -106,7 +102,7 @@ export function TopicCard({
         testID={testID}
         accessibilityRole="button"
         android_ripple={androidRipple(theme.primarySoft)}
-        style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]}
+        style={styles.topicCardPressable}
         onPress={openTopicPress}
       >
         <View style={styles.topicCardHead}>
@@ -133,7 +129,7 @@ export function TopicCard({
           </View>
         </View>
         <HighlightedText
-          style={styles.cardTitle}
+          style={[styles.cardTitle, readerState.read && styles.cardTitleRead]}
           highlightStyle={styles.highlightText}
           numberOfLines={readerState.listDensity === 'loose' ? 3 : 2}
           text={topic.title}
@@ -167,12 +163,19 @@ export function TopicCard({
             query={highlightQuery}
           />
         ) : null}
-        <View style={[styles.topicFooterRow, readerState.read && styles.topicCardRead]}>
+        <View style={styles.topicFooterRow}>
           <View style={styles.topicAuthorChip}>
             <Avatar contentSource={topic.source} name={topic.author} uri={topic.authorAvatar} tiny />
-            <Text style={styles.topicAuthorName} numberOfLines={1}>
-              {authorMeta}
-            </Text>
+            <View style={styles.topicAuthorTextGroup}>
+              <Text style={styles.topicAuthorName} numberOfLines={1}>
+                {authorMeta}
+              </Text>
+              {duplicateSourceText ? (
+                <Text style={styles.topicDuplicateSources} numberOfLines={1}>
+                  {duplicateSourceText}
+                </Text>
+              ) : null}
+            </View>
           </View>
           <View style={styles.topicStatGroup}>
             {!hideReplyCount && typeof topic.replyCount === 'number' ? (
@@ -208,7 +211,6 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       paddingTop: densityPadding + 2,
       paddingBottom: 14
     },
-    topicCardRead: { opacity: 0.72 },
     topicCardHead: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
     topicCardHeadMeta: { alignItems: 'center', flexDirection: 'row', flexShrink: 0, gap: 4 },
     topicBadgeRow: { flex: 1, minWidth: 0, alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
@@ -253,8 +255,9 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       letterSpacing: 0,
       lineHeight: Math.round(24 * listFontScale)
     },
+    cardTitleRead: { color: theme.muted, fontWeight: '500' },
     excerpt: { color: theme.muted, fontFamily, fontSize: 12, lineHeight: 18 },
-    highlightText: { color: theme.ink, backgroundColor: alphaColor(theme.primary, theme.dark ? 0.28 : 0.16) },
+    highlightText: { color: theme.dark ? theme.primary : theme.primaryStrong, fontWeight: '700' },
     topicAccessBadge: {
       alignSelf: 'flex-start',
       overflow: 'hidden',
@@ -280,12 +283,19 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       marginTop: 4
     },
     topicAuthorChip: { flex: 1, minWidth: 0, alignItems: 'center', flexDirection: 'row', gap: 7 },
+    topicAuthorTextGroup: { flex: 1, minWidth: 0, gap: 2 },
     topicAuthorName: {
       flexShrink: 1,
       color: theme.muted,
       fontFamily,
       fontSize: 13,
       fontWeight: '500',
+      includeFontPadding: false
+    },
+    topicDuplicateSources: {
+      color: theme.muted,
+      fontFamily,
+      fontSize: 12,
       includeFontPadding: false
     },
     topicStatGroup: { flexShrink: 0, alignItems: 'center', flexDirection: 'row', gap: 14 },

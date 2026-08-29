@@ -21,6 +21,7 @@ import {
 } from './protocol';
 
 const BASE_URL = NODESEEK_BASE_URL;
+const USER_ACTIVITY_PAGE_SIZE = 15;
 
 function nodeSeekLevelLabel(user: Record<string, unknown>) {
   const value = user.rank;
@@ -302,6 +303,20 @@ export function parseNodeSeekUserProfile({
     .map((comment) => normalizeNodeSeekUserReply(comment, username, requestedId, avatar))
     .filter(Boolean) as UserReplyActivity[];
   const levelLabel = nodeSeekLevelLabel(user);
+  const topicCount = optionalNonNegativeInteger(user.nPost);
+  const replyCount = optionalNonNegativeInteger(user.nComment);
+  const hasMoreTopics =
+    wantsTopics &&
+    visibleTopics.length > 0 &&
+    (topicCount === undefined
+      ? discussions.length >= USER_ACTIVITY_PAGE_SIZE
+      : cursorPage * USER_ACTIVITY_PAGE_SIZE < topicCount);
+  const hasMoreReplies =
+    wantsReplies &&
+    replies.length > 0 &&
+    (replyCount === undefined
+      ? comments.length >= USER_ACTIVITY_PAGE_SIZE
+      : cursorPage * USER_ACTIVITY_PAGE_SIZE < replyCount);
   const result: UserProfile = {
     source: 'nodeseek',
     id: requestedId,
@@ -311,16 +326,16 @@ export function parseNodeSeekUserProfile({
     url: nodeSeekSpaceUrl(requestedId),
     bio: String(user.bio || user.readme || '').trim() || undefined,
     joinedAt: toIsoString(user.created_at || user.createdAt || user.createdDate) || undefined,
-    topicCount: optionalNonNegativeInteger(user.nPost) ?? (visibleTopics.length || undefined),
-    postCount: optionalNonNegativeInteger(user.nPost) ?? (visibleTopics.length || undefined),
-    replyCount: optionalNonNegativeInteger(user.nComment),
+    topicCount: topicCount ?? (visibleTopics.length || undefined),
+    postCount: topicCount ?? (visibleTopics.length || undefined),
+    replyCount,
     ...(levelLabel ? { levelLabel } : {}),
     topics: visibleTopics,
-    hasMoreTopics: wantsTopics && visibleTopics.length > 0,
-    nextTopicsCursor: wantsTopics && visibleTopics.length > 0 ? String(cursorPage + 1) : null,
+    hasMoreTopics,
+    nextTopicsCursor: hasMoreTopics ? String(cursorPage + 1) : null,
     replies,
-    hasMoreReplies: wantsReplies && replies.length > 0,
-    nextRepliesCursor: wantsReplies && replies.length > 0 ? String(cursorPage + 1) : null
+    hasMoreReplies,
+    nextRepliesCursor: hasMoreReplies ? String(cursorPage + 1) : null
   };
   const candidateCount = 1 + discussions.length + replyCandidateCount;
   const hasUserIdentity = Boolean(user.member_name || user.username || user.name || user.member_id || user.id);

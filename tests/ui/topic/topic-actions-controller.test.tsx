@@ -555,7 +555,7 @@ describe('topic action query mutations', () => {
 
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith('身份复核失败');
-    expect(notify).not.toHaveBeenCalledWith('原站收藏已提交');
+    expect(notify).not.toHaveBeenCalledWith('收藏已提交');
   });
 
   it('settles a confirmed reply without refreshing an inactive Topic route', async () => {
@@ -722,7 +722,7 @@ describe('topic action query mutations', () => {
       await collection;
     });
 
-    expect(notify).not.toHaveBeenCalledWith('原站收藏已提交');
+    expect(notify).not.toHaveBeenCalledWith('收藏已提交');
     expect(appQueryClient.getQueryData<TopicDetail>(nextDetailKey)).toEqual(nextDetail);
     const finishes = lines
       .map((line) => JSON.parse(line) as DiagnosticEvent)
@@ -1706,7 +1706,8 @@ describe('topic action query mutations', () => {
       polls: []
     });
     const { detailKey } = seedTopicCache(yaohuoDetail);
-    const hook = await renderActions({ topicDetail: yaohuoDetail });
+    const notify = jest.fn();
+    const hook = await renderActions({ notify, topicDetail: yaohuoDetail });
     let favorite!: Promise<void>;
 
     await act(async () => {
@@ -1733,10 +1734,11 @@ describe('topic action query mutations', () => {
       bookmarked: true,
       bookmarkId: 987
     });
+    expect(notify).toHaveBeenCalledWith('收藏已提交');
   });
 
   it('cancels a Yaohuo favorite and clears the visible state', async () => {
-    mockRunYaohuoAction.mockResolvedValueOnce({ status: 'confirmed', message: '已取消原站收藏' });
+    mockRunYaohuoAction.mockResolvedValueOnce({ status: 'confirmed', message: '已取消收藏' });
     const yaohuoDetail = detailFor('yaohuo', {
       bookmarked: true,
       bookmarkId: 987,
@@ -1744,7 +1746,8 @@ describe('topic action query mutations', () => {
       polls: []
     });
     const { detailKey } = seedTopicCache(yaohuoDetail);
-    const hook = await renderActions({ topicDetail: yaohuoDetail });
+    const notify = jest.fn();
+    const hook = await renderActions({ notify, topicDetail: yaohuoDetail });
 
     await act(async () => {
       await hook.result.current.actions.favoriteOnYaohuoSite();
@@ -1761,6 +1764,7 @@ describe('topic action query mutations', () => {
     );
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({ bookmarked: false });
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarkId).toBeUndefined();
+    expect(notify).toHaveBeenCalledWith('已取消收藏');
   });
 
   it('rolls back an unknown Yaohuo result without depending on its message', async () => {

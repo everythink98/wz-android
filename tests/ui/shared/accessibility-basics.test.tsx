@@ -1,10 +1,10 @@
-import { describe, expect, it } from '@jest/globals';
-import { render } from '../render';
+import { describe, expect, it, jest } from '@jest/globals';
+import { fireEvent, render } from '../render';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { LoadingState } from '@/ui/controls/FeedbackStates';
+import { LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTheme } from '@/ui/theme/tokens';
@@ -23,6 +23,20 @@ describe('shared accessibility basics', () => {
     const [indicator] = view.root?.queryAll((instance) => instance.type === 'ActivityIndicator') || [];
     expect(indicator.props.accessible).toBe(false);
     expect(view.getByText('正在读取主题').props.accessible).toBe(false);
+  });
+
+  it('keeps recoverable empty copy and its single action together', async () => {
+    const onAction = jest.fn();
+    const view = await render(<RecoverableEmptyState message="暂时没有内容" actionLabel="重试" onAction={onAction} />);
+
+    const state = view.getByTestId('recoverable-empty-state');
+    expect(StyleSheet.flatten(state.props.style)).toMatchObject({
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 16
+    });
+    await fireEvent.press(view.getByRole('button', { name: '重试' }));
+    expect(onAction).toHaveBeenCalledTimes(1);
   });
 
   it('keeps short source tabs at least 48dp in both axes', async () => {

@@ -23,7 +23,7 @@ import {
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { RenderHTMLConfigProvider, TRenderEngineProvider, type CustomBlockRenderer } from 'react-native-render-html';
-import { BookMarked, ChevronDown, Drumstick, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
+import { Bookmark, BookmarkCheck, ChevronDown, Ham, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type {
   Reply,
   ReplyLocationTarget,
@@ -266,9 +266,10 @@ function YaohuoFavoriteButton({
   return (
     <DetailActionButton
       active={bookmarked === true}
-      tone="favorite"
-      accessibilityLabel={stateKnown ? (bookmarked ? '取消原站收藏' : '原站收藏') : '原站收藏状态未加载'}
-      icon={BookMarked}
+      tone={stateKnown ? 'favorite' : 'primary'}
+      accessibilityLabel={stateKnown ? (bookmarked ? '取消收藏' : '收藏') : '收藏状态未加载'}
+      icon={Bookmark}
+      activeIcon={BookmarkCheck}
       label={stateKnown ? '收藏' : '状态未知'}
       styles={styles}
       theme={theme}
@@ -1498,7 +1499,8 @@ export const TopicContentList = memo(function TopicContentList({
                       tone="warning"
                       accessibilityLabel={topic?.liked ? '已加鸡腿' : '加鸡腿'}
                       count={topic?.likeCount}
-                      icon={Drumstick}
+                      icon={Ham}
+                      iconSize={20}
                       label="鸡腿"
                       pending={likeDecision.reason === 'pending'}
                       styles={styles}
@@ -1522,9 +1524,10 @@ export const TopicContentList = memo(function TopicContentList({
                     <DetailActionButton
                       active={Boolean(topic?.collected)}
                       tone="favorite"
-                      accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'}
+                      accessibilityLabel={topic?.collected ? '取消收藏' : '收藏'}
                       count={topic?.collectionCount}
-                      icon={BookMarked}
+                      icon={Bookmark}
+                      activeIcon={BookmarkCheck}
                       label="收藏"
                       pending={bookmarkDecision.reason === 'pending'}
                       styles={styles}
@@ -1575,8 +1578,9 @@ export const TopicContentList = memo(function TopicContentList({
                     <DetailActionButton
                       active={Boolean(topic?.bookmarked)}
                       tone="favorite"
-                      accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'}
-                      icon={BookMarked}
+                      accessibilityLabel={topic?.bookmarked ? '取消收藏' : '收藏'}
+                      icon={Bookmark}
+                      activeIcon={BookmarkCheck}
                       label="收藏"
                       pending={bookmarkDecision.reason === 'pending'}
                       styles={styles}
