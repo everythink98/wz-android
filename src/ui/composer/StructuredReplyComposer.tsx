@@ -230,7 +230,6 @@ export const StructuredReplyComposer = forwardRef<
     const initKeyRef = useRef('');
     const editorThemeRef = useRef(editorTheme);
     const sentThemeRef = useRef(editorTheme);
-    editorThemeRef.current = editorTheme;
     const sentDiscourseEmojiRef = useRef<readonly { name: string; url: string }[] | null>(null);
     const wasVisibleRef = useRef(visible);
     const readyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -247,6 +246,10 @@ export const StructuredReplyComposer = forwardRef<
           .map(([name, url]) => ({ name, url })),
       [discourseEmojiUrls]
     );
+
+    useEffect(() => {
+      editorThemeRef.current = editorTheme;
+    }, [editorTheme]);
 
     useEffect(() => {
       const isEmpty = !content.trim();

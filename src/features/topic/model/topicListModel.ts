@@ -7,7 +7,7 @@ type TopicQuoteSummaryItem = Extract<TopicContentItem, { type: 'quoteSummary' }>
 export type TopicListItem =
   | TopicReplyListItem
   | { type: 'topicContent'; key: string; content: TopicContentItem }
-  | { type: 'topicQuoteSummary'; key: string; content: TopicQuoteSummaryItem }
+  | { type: 'topicQuoteSummary'; key: string; content: TopicQuoteSummaryItem; previewVisible: boolean }
   | { type: 'topicQuoteContent'; key: string; content: TopicContentItem; instanceKey: string; source: Source }
   | { type: 'topicAcceptedAnswer'; key: string }
   | { type: 'topicAcceptedAnswerContent'; key: string; content: TopicContentItem; preview: boolean }

@@ -46,6 +46,8 @@
 
 MCP 与 Replay 不互相替代：MCP 用于探索和定位；Replay 只保存经过审查的稳定入口、断言和返回路径。动态对象、当天首条、固定列表长度和固定网络耗时不得写入 Replay。
 
+Android 主楼正文连续选择的 canonical evidence 分三层且互不替代：compiler Vitest 固定 UTF-16 logical tape、table row-major、媒体标签和 revision/recycle 逻辑；RNTL 固定 manifest 直接来自 visible opening collection，只有这些 opening row 根 View 获得 marker，全部 opening renderer 为 `selectable=false`，并让一个主楼逻辑 document 跨 `richText → heading → table → emoji/sticker → code → trailing text`，当前显示的展开引用/details、签名和 terminal Tab 进入该 document，回复、评论与已采纳答案零 marker 且原有整条长按复制可用。Native JVM 与独立 AVD instrumentation 固定 marker 是唯一 selection 身份，`isTextSelectable`、`isLaidOut` 或全 mounted window owner/fingerprint 完整匹配都不是入口门槛；Layout 只用于当前端点和 mounted `TextView` 的本地选区投影，每个可见高亮和两个端点手柄视觉分别由对应 `TextView.overlay` 持有，route surface 只保留触摸命中点，瞬态映射缺失只跳过当前帧而不取消逻辑选区。instrumentation 还必须固定无 row-wide double-tap detector/`TextView` long-click patch、普通链接 tap 不被吞、正反向手柄、静止长按唯一入口、双击零原生局部选区、活动选区上静止短按取消但越过 touch slop 的滚动保留、跨三个 viewport、至少一次 cell recycle、自动滚动和剪贴板顺序。主要 draw-time oracle 使用生产等价的 `ScrollView + absolute cells`，包含多个 `TextView`、嵌套横向 scroller 与 inline `ReplacementSpan`；纵向 offset 在 coordinator pre-draw 后的同一次 draw 内正反向改变时，本地高亮和手柄 hotspot 必须各自以 `<=2px` 误差出现在当前文字 Path/caret，旧位置至多残留 `2` 个差异像素，取消后 drawable 消失且全部文字 bounds/baseline 不变。端点 owner 仍 mounted 但离开 viewport 时还必须证明 route 命中点消失而本地 handle drawable 不解绑；不经过新 pre-draw 把该 owner 移回可见区的同一次 child draw 必须立即同时绘出文字与手柄。边界端点允许手柄圆形向 TextView 内侧收回，但 stem 必须连回未偏移的 caret hotspot。真实 RecyclerView proof 只辅助固定 cell recycle/rebind 后逻辑选区、手柄、复制顺序和本地投影恢复，不再作为同帧时序的主要证明；源码字符串、mock scroll call 或 mounted owner 计数不能替代这些 oracle。compiler 为其他 role 生成 tape 只是内容协议证据，不授权 UI marker 或回复 document。
+
 ### 可视状态语料库
 
 `tests/ui/visual/` 是以 `docs/product-map.md` 为覆盖索引的可重复视觉证据 owner。每个能力族在自己的 `scenarios/<family>/manifest.tsx` 声明稳定场景 ID、能力 ID 与 `rendered`、`device-only` 或 `non-visual` 分类；根 catalog 只负责聚合和渲染，不复制生产控件。
@@ -94,6 +96,8 @@ MCP 与 Replay 不互相替代：MCP 用于探索和定位；Replay 只保存经
 
 设备验证只使用与当前 revision、App version/versionCode、APK SHA、设备和会话匹配的证据。覆盖安装、`firstInstallTime`、主登录态 AVD、Replay scratch 与异常冻结步骤全部遵循 `docs/operator-runbook.md`；不得用桌面浏览器、未登录页面或相似对象冒充 App 内原站事实。
 
+`npm run test:instrumented:forum-selection` 只允许在独立 `WZ_ForumSelection_Test_API35` AVD 执行；runner 必须解析唯一匹配 serial 并只用该值设置 Gradle 的 `ANDROID_SERIAL`。禁止把主登录态、Smoke 或普通 Replay AVD 作为替代，也禁止在这些保留数据设备上直接执行 `connectedDebugAndroidTest`。独立 AVD 不可用时记录 `BLOCKED_BY_ENV`，不得通过卸载、清数据或重置主 AVD 绕过隔离。
+
 ## 七、按改动类型验证
 
 | 改动类型 | 最低要求 |
@@ -102,6 +106,7 @@ MCP 与 Replay 不互相替代：MCP 用于探索和定位；Replay 只保存经
 | 仅测试/harness | 受影响测试先按复现 seed，再按默认随机 seed；测试代码涉及类型时运行 `npm run typecheck`。 |
 | 确定性 runtime 逻辑 | 最小 Red/Green owner、相关 Vitest、`npm run typecheck`；共享 seam 展开相关 sibling。 |
 | React Native 渲染/交互 | 相关 Vitest/RNTL、`npm run typecheck`；用户流程或真实布局风险再做匹配 APK 的只读设备验收。 |
+| Android 主楼正文连续选择 | compiler Vitest、`topic-rich-text-selection` 与 `topic-components` RNTL、`npm run test:native:forum-selection`、独立 `WZ_ForumSelection_Test_API35` 上的 `npm run test:instrumented:forum-selection`；RNTL 必须固定 visible opening→manifest→row marker、opening `selectable=false` 及回复/评论/采纳答案零 marker、整条长按复制，instrumentation 必须固定 marker-only 身份、瞬态映射不取消、普通链接 tap 不被吞、静止长按唯一入口、双击零原生选区、静止短按取消/滚动保留、生产等价 ScrollView 同 draw 的 TextView-local 高亮与手柄像素 oracle，以及 RecyclerView 回收重绑后的手柄/复制/投影恢复；真实来源再按 runbook 核对主楼复制顺序、跨回收窗口、快速往返逐帧贴合、负向 marker 边界、预算/PSS 和 `0px` bounds/baseline。 |
 | WebView、登录态、真实来源或原生生命周期 | 静态/单元/UI owner 加 targeted build；按 runbook 做身份匹配的 APK sanity、Replay 或 Live，未授权分支明确 `NOT_VERIFIED`。 |
 | 版本、签名或原生配置的普通开发改动 | 相关 tooling test、fresh prebuild/compile 或 targeted build；不运行要求 clean tree 的正式 release。 |
 | 用户明确要求正式发布 | 按 runbook 运行 `npm run release:android` 及其完整门禁。 |

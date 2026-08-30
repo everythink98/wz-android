@@ -1,7 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, Text, ToastAndroid, View, type StyleProp, type ViewStyle } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import type { Reply, ReplyOrder, Source, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import type { ReplyFilter } from '@/features/topic/model/types';
@@ -35,6 +36,10 @@ let lastFlashListItemTypes: string[] = [];
 let lastFlashListItemKeys: string[] = [];
 let lastFlashListProps: Record<string, any> = {};
 let mockBodyMediaViewportRowKeys: readonly string[] = [];
+let mockTopicSelectionItems: readonly { documentId: string; rowKey: string; selectionToken: string }[] = [];
+let mockTopicSelectionSessionKey = '';
+let mockContentSelectability: { html: string; selectable?: boolean }[] = [];
+let mockRenderHtmlDefaultSelectability: (boolean | undefined)[] = [];
 
 function lastReplyListIndex(floor: number) {
   return ((lastFlashListProps.data || []) as { reply?: Reply }[]).findIndex((item) => item.reply?.floor === floor);
@@ -91,6 +96,30 @@ jest.mock('@shopify/flash-list', () => {
   };
 });
 
+jest.mock('@/features/topic/selection/TopicSelectionSurface', () => {
+  const ReactModule = require('react') as typeof React;
+  const RowContext = ReactModule.createContext(false);
+  return {
+    TopicSelectionSurface: ({
+      children,
+      items,
+      sessionKey
+    }: {
+      children?: React.ReactNode;
+      items: typeof mockTopicSelectionItems;
+      sessionKey: string;
+    }) => {
+      mockTopicSelectionItems = items;
+      mockTopicSelectionSessionKey = sessionKey;
+      return ReactModule.createElement(ReactModule.Fragment, null, children);
+    },
+    TopicSelectionRowProvider: ({ active, children }: { active: boolean; children?: React.ReactNode }) =>
+      ReactModule.createElement(RowContext.Provider, { value: active }, children),
+    useTopicSelectionRowActive: () => ReactModule.useContext(RowContext),
+    useTopicSelectionRowRef: () => ({ active: true, nativeID: undefined, ref: { current: null } })
+  };
+});
+
 jest.mock('@/features/topic/media/TopicBodyMediaCoordinator', () => {
   const ReactModule = require('react') as typeof React;
   const actual = jest.requireActual<typeof import('@/features/topic/media/TopicBodyMediaCoordinator')>(
@@ -108,6 +137,7 @@ jest.mock('@/features/topic/media/TopicBodyMediaCoordinator', () => {
 });
 
 jest.mock('expo-image', () => ({ Image: () => null }));
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(() => Promise.resolve()) }));
 jest.mock('expo-video', () => ({
   VideoView: () => null,
   useVideoPlayer: () => ({ pause: jest.fn(), play: jest.fn(), playing: false })
@@ -120,6 +150,7 @@ jest.mock('react-native-render-html', () => {
   const Passthrough = ({ children }: { children?: React.ReactNode }) =>
     ReactModule.createElement(ReactModule.Fragment, null, children);
   const RenderersContext = ReactModule.createContext<Record<string, React.ComponentType<any>>>({});
+  const DefaultTextPropsContext = ReactModule.createContext<{ selectable?: boolean }>({});
   const nodeText = (node: { children?: unknown[]; data?: unknown }): string =>
     `${typeof node.data === 'string' ? node.data : ''}${
       Array.isArray(node.children)
@@ -127,16 +158,26 @@ jest.mock('react-native-render-html', () => {
         : ''
     }`;
   return {
+    __useMockDefaultTextProps: () => ReactModule.useContext(DefaultTextPropsContext),
     __useMockRenderers: () => ReactModule.useContext(RenderersContext),
     HTMLContentModel: { block: 'block', mixed: 'mixed', textual: 'textual' },
     HTMLElementModel: { fromCustomModel: () => ({}) },
     RenderHTMLConfigProvider: ({
       children,
+      defaultTextProps = {},
       renderers = {}
     }: {
       children?: React.ReactNode;
+      defaultTextProps?: { selectable?: boolean };
       renderers?: Record<string, React.ComponentType<any>>;
-    }) => ReactModule.createElement(RenderersContext.Provider, { value: renderers }, children),
+    }) => {
+      mockRenderHtmlDefaultSelectability.push(defaultTextProps.selectable);
+      return ReactModule.createElement(
+        RenderersContext.Provider,
+        { value: renderers },
+        ReactModule.createElement(DefaultTextPropsContext.Provider, { value: defaultTextProps }, children)
+      );
+    },
     TChildrenRenderer: ({ tchildren }: { tchildren: { children?: unknown[]; data?: unknown; nodeIndex?: number }[] }) =>
       ReactModule.createElement(
         NativeView,
@@ -274,9 +315,24 @@ jest.mock('@/features/topic/components/TopicContentBlock', () => {
       originalImageUpgradeEnabled?: boolean;
       query?: string;
       row: import('@/features/topic/model/topicOpeningPresentation').TopicRenderableContentRow;
+      selectable?: boolean;
       trimTrailingBlockSpacing?: boolean;
     }) => {
       const { html, originalImageUpgradeEnabled, row } = props;
+      const defaultTextProps = (
+        require('react-native-render-html') as {
+          __useMockDefaultTextProps: () => { selectable?: boolean };
+        }
+      ).__useMockDefaultTextProps();
+      const selectionActive = (
+        require('@/features/topic/selection/TopicSelectionSurface') as {
+          useTopicSelectionRowActive: () => boolean;
+        }
+      ).useTopicSelectionRowActive();
+      mockContentSelectability.push({
+        html: html ?? ('html' in row ? row.html : ''),
+        selectable: props.selectable ?? (selectionActive ? false : defaultTextProps.selectable)
+      });
       if (row.type === 'codeBlock' || row.type === 'disclosureHeader' || row.type === 'terminalReportHeader') {
         return ReactModule.createElement(actual.TopicContentBlock, props);
       }
@@ -547,6 +603,7 @@ function TopicFilterHarness({
   filteredCommentQuery,
   expandedQuotes = {},
   getDiscourseEmojiUrls = mockGetDiscourseSourceEmojiUrls,
+  inlineSizedImageUrls = {},
   loadedQuotedReplies = {},
   loadingMoreReplies = false,
   loadingPreviousReplies = false,
@@ -592,6 +649,7 @@ function TopicFilterHarness({
   filteredCommentQuery?: string;
   expandedQuotes?: Record<string, boolean>;
   getDiscourseEmojiUrls?: (options: { signal?: AbortSignal; source: DiscourseSource }) => Promise<DiscourseEmojiUrlMap>;
+  inlineSizedImageUrls?: Readonly<Record<string, boolean | undefined>>;
   loadedQuotedReplies?: Record<string, Reply>;
   loadingMoreReplies?: boolean;
   loadingPreviousReplies?: boolean;
@@ -783,7 +841,7 @@ function TopicFilterHarness({
               htmlRenderers: {},
               htmlRenderersProps: {},
               htmlTagsStyles: htmlStyles.htmlTagsStyles,
-              inlineSizedImageUrls: {},
+              inlineSizedImageUrls,
               mediaContext: {
                 contentSource: preparedTopicDetail?.source || null,
                 sessionIdentity: effectiveMediaSessionIdentity
@@ -825,6 +883,181 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it('registers every visible opening content row by token while replies and accepted answers stay outside selection', async () => {
+    mockTopicSelectionItems = [];
+    mockContentSelectability = [];
+    mockRenderHtmlDefaultSelectability = [];
+    const floorReply: Reply = {
+      author: 'floor-only',
+      contentHtml: '<p>floor reply</p>',
+      createdAt: '2026-07-14T00:01:00.000Z',
+      floor: 1,
+      signatureHtml: '<p>reply signature</p>'
+    };
+    const commentReply: Reply = {
+      author: 'comment-id',
+      commentId: 222,
+      contentHtml: '<p>comment reply</p>',
+      createdAt: '2026-07-14T00:02:00.000Z',
+      floor: 2
+    };
+    const acceptedFloor = 42;
+    const acceptedReply: Reply = {
+      acceptedAnswer: true,
+      author: 'accepted-author',
+      contentHtml: '<p>accepted preview</p><pre>accepted code</pre>',
+      createdAt: '2026-07-14T00:42:00.000Z',
+      floor: acceptedFloor
+    };
+    const openingQuotedReply: Reply = {
+      author: 'quoted-author',
+      contentHtml: '<p>expanded quote body</p>',
+      createdAt: '2026-07-14T00:09:00.000Z',
+      floor: 9
+    };
+    const topicWithOpeningBody: TopicDetail = {
+      ...topic,
+      acceptedAnswerFloor: acceptedFloor,
+      contentHtml:
+        '<p>opening body</p>' +
+        '<table><tbody><tr><td>opening cell</td></tr></tbody></table>' +
+        '<pre>opening code</pre>' +
+        '<details open><summary>opening details</summary><p>details body</p></details>' +
+        '<details><summary>collapsed details</summary><p>collapsed details body</p></details>' +
+        '<aside class="quote" data-post="9" data-topic="quoted-topic" data-username="quoted-author"><div class="title">quoted-author:</div><blockquote>quote preview</blockquote></aside>' +
+        '<forum-terminal-report>' +
+        '<forum-terminal-tab title="Visible"><div class="forum-terminal-code">visible terminal body</div></forum-terminal-tab>' +
+        '<forum-terminal-tab title="Hidden"><div class="forum-terminal-code">hidden terminal body</div></forum-terminal-tab>' +
+        '</forum-terminal-report>',
+      replies: [floorReply, commentReply],
+      replyCount: 2,
+      solved: true,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/selection-boundary'
+    };
+    const referenceKey = `linuxdo:${topicWithOpeningBody.id}:${acceptedFloor}`;
+    const quoteReferenceKey = 'linuxdo:quoted-topic:9';
+    const quoteInstanceKey = `topic:${topicWithOpeningBody.id}:${quoteReferenceKey}`;
+
+    const view = await render(
+      <TopicFilterHarness
+        expandedQuotes={{ [quoteInstanceKey]: true }}
+        loadedQuotedReplies={{ [quoteReferenceKey]: openingQuotedReply, [referenceKey]: acceptedReply }}
+        selectedTopic={topicWithOpeningBody}
+        topicDetail={topicWithOpeningBody}
+        topicReplies={[floorReply, commentReply]}
+      />
+    );
+    await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
+
+    const listItems = lastFlashListProps.data as TopicListItem[];
+    expect(
+      listItems.some(
+        (item) => 'reply' in item && item.reply.floor === floorReply.floor && item.reply.commentId === undefined
+      )
+    ).toBe(true);
+    expect(listItems.some((item) => 'reply' in item && item.reply.commentId === commentReply.commentId)).toBe(true);
+    expect(listItems.filter((item) => item.type === 'topicAcceptedAnswerContent').map((item) => item.key)).toEqual([
+      'topic-accepted-answer-42:accepted-answer-42-richText-node-0-0',
+      'topic-accepted-answer-42:accepted-answer-42-codeBlock-node-1-0'
+    ]);
+
+    const visibleOpeningRows = listItems.flatMap((item) => {
+      if (item.type === 'topicQuoteSummary') {
+        return item.previewVisible && item.content.quote.preview
+          ? [{ documentId: 'opening', rowKey: item.key, selectionToken: expect.any(String) }]
+          : [];
+      }
+      return (item.type === 'topicContent' || item.type === 'topicQuoteContent') && item.content.type === 'content'
+        ? [{ documentId: 'opening', rowKey: item.key, selectionToken: expect.any(String) }]
+        : [];
+    });
+    expect(
+      listItems.flatMap((item) =>
+        (item.type === 'topicContent' || item.type === 'topicQuoteContent') && item.content.type === 'content'
+          ? [item.content.row.type]
+          : []
+      )
+    ).toEqual(expect.arrayContaining(['richText', 'table', 'codeBlock', 'disclosureHeader', 'terminalReportHeader']));
+    expect(mockTopicSelectionItems).toEqual(visibleOpeningRows);
+    const manifestText = mockTopicSelectionItems.map((item) => item.selectionToken).join('\n');
+    expect(manifestText).toContain('details body');
+    expect(manifestText).toContain('expanded quote body');
+    expect(manifestText).toContain('visible terminal body');
+    expect(manifestText).not.toContain('collapsed details body');
+    expect(manifestText).not.toContain('hidden terminal body');
+    expect(manifestText).not.toContain('reply signature');
+    expect(mockContentSelectability.some(({ html, selectable }) => html.includes('opening body') && selectable)).toBe(
+      false
+    );
+    expect(mockContentSelectability.find(({ html }) => html.includes('accepted preview'))?.selectable).toBe(false);
+    expect(mockRenderHtmlDefaultSelectability).toEqual(expect.arrayContaining([true, false]));
+  });
+
+  it('copies the complete accepted answer from any visible accepted content row', async () => {
+    const acceptedFloor = 42;
+    const acceptedReply: Reply = {
+      acceptedAnswer: true,
+      author: 'accepted-author',
+      contentHtml: '<p>accepted preview</p><pre>accepted code</pre>',
+      createdAt: '2026-07-14T00:42:00.000Z',
+      floor: acceptedFloor
+    };
+    const acceptedTopic: TopicDetail = {
+      ...topic,
+      acceptedAnswerFloor: acceptedFloor,
+      replies: [],
+      replyCount: 0,
+      solved: true,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/accepted-copy'
+    };
+    const copy = jest.mocked(Clipboard.setStringAsync);
+    const toast = jest.spyOn(ToastAndroid, 'show').mockImplementation(() => undefined);
+    copy.mockClear();
+
+    const view = await render(
+      <TopicFilterHarness
+        loadedQuotedReplies={{ [`linuxdo:${acceptedTopic.id}:${acceptedFloor}`]: acceptedReply }}
+        selectedTopic={acceptedTopic}
+        topicDetail={acceptedTopic}
+        topicReplies={[]}
+      />
+    );
+    await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
+    await fireEvent(view.getByText(/accepted preview/), 'longPress');
+
+    await waitFor(() => expect(copy).toHaveBeenCalledWith('accepted preview\naccepted code'));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith('评论已复制', ToastAndroid.SHORT));
+    expect(mockTopicSelectionItems.every((item) => !item.rowKey.includes('accepted-answer'))).toBe(true);
+    toast.mockRestore();
+  });
+
+  it('keeps the opening selection session stable when only reply media classification changes', async () => {
+    const topicWithOpeningBody = { ...topic, contentHtml: '<p>opening body</p>' };
+    const replyImageUrl = 'https://img.example.com/reply-inline.png';
+    const view = await render(
+      <TopicFilterHarness
+        inlineSizedImageUrls={{}}
+        selectedTopic={topicWithOpeningBody}
+        topicDetail={topicWithOpeningBody}
+        topicReplies={sourceReplies}
+      />
+    );
+    const openingSessionKey = mockTopicSelectionSessionKey;
+
+    await view.rerender(
+      <TopicFilterHarness
+        inlineSizedImageUrls={{ [replyImageUrl]: true }}
+        selectedTopic={topicWithOpeningBody}
+        topicDetail={topicWithOpeningBody}
+        topicReplies={sourceReplies}
+      />
+    );
+
+    expect(mockTopicSelectionSessionKey).toBe(openingSessionKey);
+  });
+
   it('computes NodeSeek topic reactions once per render without changing the visible stats', async () => {
     const nodeSeekTopic: TopicDetail = {
       ...topic,

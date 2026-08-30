@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- React Native's public nativeID prop stores its value under this resource name. -->
+  <item name="view_tag_native_id" type="id" />
+</resources>

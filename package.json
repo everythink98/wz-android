@@ -1,6 +1,6 @@
 {
   "name": "wz-android",
-  "version": "1.3.129",
+  "version": "1.3.130",
   "private": true,
   "engines": {
     "node": "22.x"
@@ -32,6 +32,8 @@
     "test:ui": "jest --config jest.config.cjs --runInBand --randomize --showSeed",
     "test:device": "node scripts/run-device-replay.mjs",
     "test:device:logged-out": "node scripts/run-logged-out-device-replay.mjs",
+    "test:native:forum-selection": "node scripts/run-forum-selection-native-tests.mjs unit",
+    "test:instrumented:forum-selection": "node scripts/run-forum-selection-native-tests.mjs instrumented",
     "test:docs": "node --test scripts/check-docs.test.mjs",
     "check:docs": "node scripts/check-docs.mjs",
     "check:architecture": "node scripts/check-architecture.mjs",

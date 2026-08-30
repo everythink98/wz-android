@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { HTMLContentModel, HTMLElementModel, TRenderEngine, type TNode } from '@native-html/transient-render-engine';
 import { parseHtml } from './html';
 import { INLINE_FORUM_IMAGE_TAG } from './forumContentMedia';
-import { compileForumContent, resolveForumContentRowHtml } from './topicContentSplit';
+import {
+  compileForumContent,
+  resolveForumContentRowHtml,
+  resolveForumContentRowSelectionToken
+} from './topicContentSplit';
 
 function renderedRow(html: string) {
   const row = compileForumContent({ html, role: 'reply', source: 'v2ex' }).rows.find(
@@ -22,6 +26,26 @@ function allTNodes(root: TNode) {
     pending.push(...current.children);
   }
   return result;
+}
+
+function renderedLogicalOwners(root: TNode) {
+  const owners: string[] = [];
+  const ownerText = (node: TNode): string => {
+    if (node.tagName === INLINE_FORUM_IMAGE_TAG) return '';
+    if (node.tagName === 'br') return '\n';
+    if (node.type === 'text') return node.data;
+    return node.children.map(ownerText).join('');
+  };
+  const visit = (node: TNode) => {
+    if (node.type === 'phrasing') {
+      const text = ownerText(node);
+      if (text) owners.push(text);
+      return;
+    }
+    node.children.forEach(visit);
+  };
+  visit(root);
+  return owners;
 }
 
 function metrics(html: string) {
@@ -70,6 +94,80 @@ describe('render-ready dynamic forum image variants', () => {
     expect(learnedHtml.indexOf(`</${INLINE_FORUM_IMAGE_TAG}>`)).toBeLessThan(learnedHtml.indexOf('after'));
     expect(unknownHtml).not.toContain('data-wz-dynamic-inline-image');
     expect(learnedHtml).not.toContain('data-wz-dynamic-inline-image');
+  });
+
+  it('resolves dynamic image selection owners with the same inline classification', () => {
+    const url = 'https://i.imgur.com/selection-owner.png';
+    const row = renderedRow(`<p>before<img class="embedded_image" src="${url}" alt="dynamic">after</p>`);
+    const block = JSON.parse(resolveForumContentRowSelectionToken(row, {})) as {
+      owners: { tape: { text: string }[]; text: string }[];
+    };
+    const inline = JSON.parse(resolveForumContentRowSelectionToken(row, { [url]: true })) as {
+      owners: { tape: { text: string }[]; text: string }[];
+    };
+
+    expect(block.owners.map((owner) => owner.text)).toEqual(['before', 'after']);
+    expect(block.owners.flatMap((owner) => owner.tape.map((run) => run.text))).toEqual([]);
+    expect(inline.owners).toEqual([
+      expect.objectContaining({ tape: [expect.objectContaining({ text: 'dynamic' })], text: 'beforeafter' })
+    ]);
+  });
+
+  it('matches RNRH normal-flow whitespace across links, media, and explicit breaks', () => {
+    const url = 'https://i.imgur.com/selection-whitespace.png';
+    const row = renderedRow(
+      `<p>before \r\n <a href="#target">linked \r\n text</a> \r\n ` +
+        `<img class="embedded_image" src="${url}" alt="dynamic"> \r\n after<br>\r\nnext&nbsp;  value</p>`
+    );
+    const block = JSON.parse(resolveForumContentRowSelectionToken(row, {})) as {
+      owners: { tape: { at: number; text: string }[]; text: string }[];
+    };
+    const inline = JSON.parse(resolveForumContentRowSelectionToken(row, { [url]: true })) as {
+      owners: { tape: { at: number; text: string }[]; text: string }[];
+    };
+
+    expect(block.owners.map((owner) => owner.text)).toEqual(
+      renderedLogicalOwners(engine.buildTTree(resolveForumContentRowHtml(row, {})))
+    );
+    expect(inline.owners.map((owner) => owner.text)).toEqual(
+      renderedLogicalOwners(engine.buildTTree(resolveForumContentRowHtml(row, { [url]: true })))
+    );
+    expect(block.owners.map((owner) => owner.text)).toEqual(['before linked text', 'after\nnext\u00a0 value']);
+    expect(inline.owners).toEqual([
+      {
+        tape: [expect.objectContaining({ at: 'before linked text '.length, text: 'dynamic' })],
+        text: 'before linked text  after\nnext\u00a0 value',
+        trailing: [{ kind: 'separator', text: '\n' }]
+      }
+    ]);
+  });
+
+  it('keeps one explicit break before text and collapses a trailing break', () => {
+    const row = renderedRow('<p>A<br>\r\n</p><p>B<br>\r\nC</p>');
+    const token = JSON.parse(row.selectionToken) as { owners: { text: string }[] };
+
+    expect(token.owners.map((owner) => owner.text)).toEqual(['A', 'B\nC']);
+  });
+
+  it('matches RNRH when a nested phrasing container ends with a collapsed break', () => {
+    const row = renderedRow('<p>A<span>B<br></span>C</p>');
+    const token = JSON.parse(row.selectionToken) as { owners: { text: string }[] };
+
+    expect(token.owners.map((owner) => owner.text)).toEqual(['ABC']);
+  });
+
+  it('preserves preformatted code whitespace', () => {
+    const html = '<pre><code>A  \r\n B</code></pre>';
+    const row = compileForumContent({ html, role: 'reply', source: 'v2ex' }).rows.find(
+      (candidate) => candidate.type === 'codeBlock'
+    );
+    expect(row?.type).toBe('codeBlock');
+    if (!row || row.type !== 'codeBlock') throw new Error('Expected a code row.');
+    const token = JSON.parse(row.selectionToken) as { owners: { text: string }[] };
+    const preformattedEngine = new TRenderEngine({ stylesConfig: { enableUserAgentStyles: true } });
+
+    expect(token.owners.map((owner) => owner.text)).toEqual(renderedLogicalOwners(preformattedEngine.buildTTree(html)));
+    expect(token.owners.map((owner) => owner.text)).toEqual(['A  \r\n B']);
   });
 
   it('resolves every bounded four-image presentation state', () => {

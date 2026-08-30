@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { Reply } from '@/domain/forum/models';
 import { topicListItemType, topicListMediaPlanStats, type TopicListItem } from './topicListModel';
 
+const selectionToken = '{"owners":[],"prefix":[],"version":1}';
+
 const reply: Reply = {
   author: 'alice',
   contentHtml: '<p>reply</p>',
@@ -18,6 +20,7 @@ describe('topic list model', () => {
       networkMediaCount: 0,
       part: 'only' as const,
       segmentIndex: 0,
+      selectionToken,
       semanticId: 'node-0',
       tabs: [{ id: 'node-0-tab-0', title: 'Overview' }],
       type: 'terminalReportHeader' as const
@@ -49,6 +52,7 @@ describe('topic list model', () => {
           part: 'only',
           runs: [{ text: 'code' }],
           segmentIndex: 0,
+          selectionToken,
           semanticId: 'node-0',
           text: 'code',
           type: 'codeBlock'
@@ -77,6 +81,7 @@ describe('topic list model', () => {
             networkMediaCount: 4,
             part: 'only',
             segmentIndex: 0,
+            selectionToken,
             semanticId: 'node-0'
           }
         }
@@ -95,6 +100,7 @@ describe('topic list model', () => {
           networkMediaCount: 1,
           part: 'only',
           segmentIndex: 0,
+          selectionToken,
           semanticId: 'node-0'
         },
         first: true,
@@ -113,6 +119,7 @@ describe('topic list model', () => {
           networkMediaCount: 1,
           part: 'only',
           segmentIndex: 0,
+          selectionToken,
           semanticId: 'node-0'
         },
         first: true,

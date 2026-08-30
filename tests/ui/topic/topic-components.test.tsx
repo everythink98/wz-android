@@ -3,11 +3,13 @@ import { renderHook } from '@testing-library/react-native';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { type ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReplyComposerSheet } from '@/features/topic/components/ReplyComposerSheet';
 import { MemoizedReplyItem, ReplyItem } from '@/features/topic/components/ReplyItem';
+import * as TopicSelection from '@/features/topic/selection/TopicSelectionSurface';
 import { TopicBodyQuoteCard } from '@/features/topic/components/TopicBodyQuoteCard';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import { TopicPolls } from '@/features/topic/components/TopicPolls';
@@ -503,6 +505,25 @@ function stardustActions(
 }
 
 describe('Topic real child components', () => {
+  it('keeps reply long-press copy available while opening-post selection is active', async () => {
+    const selection = jest.spyOn(TopicSelection, 'useTopicSelectionRowRef').mockReturnValue({
+      active: true,
+      nativeID: undefined,
+      ref: { current: null }
+    });
+    const copy = jest.mocked(Clipboard.setStringAsync);
+    copy.mockClear();
+    try {
+      const view = await render(<ReplyItem {...replyProps({ bodyContent: compiledRichText('<p>正文内容</p>') })} />);
+
+      await fireEvent(view.getByTestId('html-source'), 'longPress');
+
+      await waitFor(() => expect(copy).toHaveBeenCalledWith('正文内容'));
+    } finally {
+      selection.mockRestore();
+    }
+  });
+
   it('renders the deterministic avatar and reloads only for real inputs', async () => {
     const receive = {
       receiverMemberId: '42',

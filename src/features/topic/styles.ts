@@ -187,7 +187,6 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       flex: 1
     },
     topicContentInner: {
-      alignItems: 'center',
       gap: 0,
       padding: 16,
       paddingTop: 18,

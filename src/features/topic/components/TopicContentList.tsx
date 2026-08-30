@@ -1,6 +1,7 @@
 import { createTopicStyles, type TopicStyles } from '../styles';
 import {
   memo,
+  type ComponentProps,
   type ReactNode,
   type RefObject,
   useCallback,
@@ -18,10 +19,12 @@ import {
   Pressable,
   Text,
   TextInput,
+  ToastAndroid,
   useWindowDimensions,
   View
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
+import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider, TRenderEngineProvider, type CustomBlockRenderer } from 'react-native-render-html';
 import { Bookmark, BookmarkCheck, ChevronDown, Ham, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type {
@@ -58,7 +61,7 @@ import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
+import { TOUCH_HIT_SLOP, triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { topicWithAuthorFallback, userFromTopic } from '@/domain/forum/userNavigation';
@@ -102,6 +105,7 @@ import {
   type TopicListItem
 } from '../model/topicListModel';
 import { highlightHtml } from '@/ui/text/highlight';
+import { stripHtml } from '@/domain/forum/text';
 import { HTML_CUSTOM_ELEMENT_MODELS } from '../rendering/htmlElementModels';
 import {
   TopicBodyMediaCoordinatorProvider,
@@ -120,9 +124,20 @@ import {
   useTopicSplitDisclosureStore
 } from '../rendering/TopicSplitDisclosure';
 import { useContentBoundarySpacing } from '../rendering/TopicContentPresentation';
-import { resolveForumContentRowHtml, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
+import {
+  resolveForumContentRowHtml,
+  resolveForumContentRowSelectionToken,
+  type CompiledForumContentRow
+} from '@/domain/forum/topicContentSplit';
 import { createTopicTableRenderers, TopicTableScrollProvider } from '../rendering/topicTableRenderers';
 import { NodeSeekStardustCard } from './NodeSeekStardustCard';
+import {
+  TopicSelectionRowProvider,
+  TopicSelectionSurface,
+  type TopicSelectionItem,
+  useTopicSelectionRowActive,
+  useTopicSelectionRowRef
+} from '../selection/TopicSelectionSurface';
 
 const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
 const EMPTY_NEARBY_TOPIC_CONTENT_KEYS: ReadonlySet<string> = new Set();
@@ -151,6 +166,75 @@ function topicListCompiledRow(item: TopicListItem): CompiledForumContentRow | nu
   if (item.type === 'replyContent' || item.type === 'replyQuoteContent') return item.content;
   if (item.type === 'replySignatureContent') return item.content;
   return null;
+}
+
+type TopicSelectionImageClassifier = Exclude<Parameters<typeof resolveForumContentRowSelectionToken>[2], undefined>;
+type TopicOpeningListItem = Extract<
+  TopicListItem,
+  { type: 'topicContent' | 'topicQuoteContent' | 'topicQuoteSummary' }
+>;
+
+function topicSelectionToken(
+  row: CompiledForumContentRow,
+  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
+  isInlineSizedImage: TopicSelectionImageClassifier
+) {
+  return 'html' in row
+    ? resolveForumContentRowSelectionToken(row, inlineSizedImageUrls, isInlineSizedImage)
+    : row.selectionToken;
+}
+
+function openingSelectionItem(
+  item: TopicOpeningListItem,
+  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
+  isInlineSizedImage: TopicSelectionImageClassifier
+): TopicSelectionItem | undefined {
+  const rowKey = openingSelectionRowKey(item);
+  if (!rowKey) return undefined;
+  if (item.type === 'topicQuoteSummary') {
+    return { documentId: 'opening', rowKey, selectionToken: item.content.row.selectionToken };
+  }
+  if (item.content.type !== 'content') return undefined;
+  const row = item.content.row;
+  const selectionToken = topicSelectionToken(row, inlineSizedImageUrls, isInlineSizedImage);
+  return { documentId: 'opening', rowKey, selectionToken };
+}
+
+function openingSelectionRowKey(item: TopicOpeningListItem) {
+  if (item.type === 'topicQuoteSummary') {
+    return item.previewVisible && item.content.quote.preview ? item.key : undefined;
+  }
+  return item.content.type === 'content' ? item.key : undefined;
+}
+
+function topicListItemVisible(item: TopicListItem, disclosureStore: Parameters<typeof topicSemanticRowVisible>[2]) {
+  const row = topicListCompiledRow(item);
+  const scopeKey = topicListContentScope(item);
+  return !row || !scopeKey || topicSemanticRowVisible(row, scopeKey, disclosureStore);
+}
+
+function TopicSelectionRenderHtmlConfig({
+  children,
+  renderers,
+  renderersProps,
+  selectable
+}: Pick<ComponentProps<typeof RenderHTMLConfigProvider>, 'renderers' | 'renderersProps'> & {
+  children: ReactNode;
+  selectable?: boolean;
+}) {
+  const rowActive = useTopicSelectionRowActive();
+  return (
+    <RenderHTMLConfigProvider
+      renderers={renderers}
+      renderersProps={renderersProps}
+      defaultTextProps={{ selectable: selectable ?? !rowActive }}
+      enableExperimentalBRCollapsing
+      enableExperimentalGhostLinesPrevention
+      enableExperimentalMarginCollapsing
+    >
+      {children}
+    </RenderHTMLConfigProvider>
+  );
 }
 
 function topicListContentScope(item: TopicListItem) {
@@ -224,11 +308,13 @@ function TopicListItemFrame({
   children,
   firstRowStartedAt,
   onLayout,
+  selectionRowKey,
   style
 }: {
   children: ReactNode;
   firstRowStartedAt?: number;
   onLayout?: (event: LayoutChangeEvent) => void;
+  selectionRowKey?: string;
   style: ViewStyle;
 }) {
   const markFirstRow = useTopicBodyMediaFirstRowMarker();
@@ -242,10 +328,38 @@ function TopicListItemFrame({
     },
     [firstRowStartedAt, markFirstRow, onLayout]
   );
+  if (selectionRowKey) {
+    return (
+      <TopicSelectionMarkedFrame rowKey={selectionRowKey} style={style} onLayout={handleLayout}>
+        {children}
+      </TopicSelectionMarkedFrame>
+    );
+  }
   return (
     <View style={style} onLayout={handleLayout}>
       {children}
     </View>
+  );
+}
+
+function TopicSelectionMarkedFrame({
+  children,
+  onLayout,
+  rowKey,
+  style
+}: {
+  children: ReactNode;
+  onLayout: (event: LayoutChangeEvent) => void;
+  rowKey: string;
+  style: ViewStyle;
+}) {
+  const marker = useTopicSelectionRowRef(rowKey);
+  return (
+    <TopicSelectionRowProvider active={marker.active}>
+      <View ref={marker.ref} nativeID={marker.nativeID} style={style} onLayout={onLayout}>
+        {children}
+      </View>
+    </TopicSelectionRowProvider>
   );
 }
 
@@ -421,8 +535,8 @@ export const TopicContentList = memo(function TopicContentList({
     },
     [onReplyOrderChange, replyOrder]
   );
-  const { styles, theme } = useReaderThemeStyles(createTopicStyles);
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const { settings, styles, theme } = useReaderThemeStyles(createTopicStyles);
+  const { fontScale: systemFontScale, height: windowHeight, width: windowWidth } = useWindowDimensions();
   const replyOrderMenuTriggerRef = useRef<View>(null);
   const [replyOrderMenuOpen, setReplyOrderMenuOpen] = useState(false);
   const [replyOrderMenuPlacement, setReplyOrderMenuPlacement] = useState<ViewStyle>({
@@ -785,6 +899,14 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const replyWindowStartKey = replies[0] ? getReplyKey(replies[0]) : '';
   const acceptedAnswerReply = acceptedAnswer?.reply;
+  const copyAcceptedAnswerToClipboard = useCallback(() => {
+    const copyText = stripHtml(acceptedAnswerReply?.contentHtml || '');
+    if (!copyText) return;
+    triggerPressFeedback();
+    void Clipboard.setStringAsync(copyText)
+      .then(() => ToastAndroid.show('评论已复制', ToastAndroid.SHORT))
+      .catch(() => ToastAndroid.show('复制失败', ToastAndroid.SHORT));
+  }, [acceptedAnswerReply?.contentHtml]);
   const acceptedAnswerLoading = Boolean(acceptedAnswer && loadingQuotedFloors[acceptedAnswer.instanceKey]);
   const acceptedAnswerViewKey = acceptedAnswer ? `${detailTopicStateKey}:${acceptedAnswer.instanceKey}` : '';
   const [acceptedAnswerView, setAcceptedAnswerView] = useState({
@@ -865,9 +987,9 @@ export const TopicContentList = memo(function TopicContentList({
       }),
     [canShowReplies, replyHasPrevious, replyItems, topicShowsAccessNotice]
   );
-  const topicOpeningListItems = useMemo<TopicListItem[]>(
+  const topicOpeningListItems = useMemo<TopicOpeningListItem[]>(
     () =>
-      topicContentItems.flatMap((content): TopicListItem[] => {
+      topicContentItems.flatMap((content): TopicOpeningListItem[] => {
         if (content.type !== 'quoteSummary') {
           return [{ type: 'topicContent', key: content.key, content }];
         }
@@ -875,13 +997,18 @@ export const TopicContentList = memo(function TopicContentList({
         const quotedPost = replyForQuotedPost(reference, itemSource, item?.id, repliesByFloor, loadedQuotedReplies);
         const expanded = Boolean(expandedQuotes[content.instanceKey]);
         return [
-          { type: 'topicQuoteSummary', key: content.key, content },
+          {
+            type: 'topicQuoteSummary',
+            key: content.key,
+            content,
+            previewVisible: Boolean(content.quote.preview && !(expanded && quotedPost))
+          },
           ...(expanded && quotedPost
             ? buildTopicQuotedPostContentItems({
                 instanceKey: content.instanceKey,
                 reply: quotedPost,
                 source: reference.source
-              }).map((quoteContent): TopicListItem => ({
+              }).map((quoteContent): TopicOpeningListItem => ({
                 type: 'topicQuoteContent',
                 key: `${content.key}:${quoteContent.key}`,
                 content: quoteContent,
@@ -906,7 +1033,10 @@ export const TopicContentList = memo(function TopicContentList({
         : acceptedAnswerContent.previewItems
       : [];
     return [
-      { type: 'topicAcceptedAnswer', key: `topic-accepted-answer-${acceptedAnswer.floor}` },
+      {
+        type: 'topicAcceptedAnswer',
+        key: `topic-accepted-answer-${acceptedAnswer.floor}`
+      },
       ...visibleContent.map((content): TopicListItem => ({
         type: 'topicAcceptedAnswerContent',
         key: `topic-accepted-answer-${acceptedAnswer.floor}:${content.key}`,
@@ -924,6 +1054,10 @@ export const TopicContentList = memo(function TopicContentList({
   ]);
   const topicPostludeVisible = Boolean(legacyTopicPollsVisible || topicHasPostActions);
   const disclosureStore = useTopicSplitDisclosureStore(detailTopicStateKey);
+  const visibleTopicOpeningListItems = useMemo(
+    () => topicOpeningListItems.filter((listItem) => topicListItemVisible(listItem, disclosureStore)),
+    [disclosureStore, topicOpeningListItems]
+  );
   const unfilteredTopicListItems = useMemo<TopicListItem[]>(
     () => [
       ...topicOpeningListItems,
@@ -934,14 +1068,21 @@ export const TopicContentList = memo(function TopicContentList({
     [acceptedAnswerListItems, replyListItems, topicOpeningListItems, topicPostludeVisible]
   );
   const topicListItems = useMemo(
-    () =>
-      unfilteredTopicListItems.filter((listItem) => {
-        const row = topicListCompiledRow(listItem);
-        const scopeKey = topicListContentScope(listItem);
-        return !row || !scopeKey || topicSemanticRowVisible(row, scopeKey, disclosureStore);
-      }),
+    () => unfilteredTopicListItems.filter((listItem) => topicListItemVisible(listItem, disclosureStore)),
     [disclosureStore, unfilteredTopicListItems]
   );
+  const topicSelectionItems = useMemo(
+    () =>
+      visibleTopicOpeningListItems.flatMap(
+        (listItem) => openingSelectionItem(listItem, inlineSizedImageUrls, topicImageDeriver.isInlineSizedImage) || []
+      ),
+    [inlineSizedImageUrls, topicImageDeriver, visibleTopicOpeningListItems]
+  );
+  const topicSelectionRowKeys = useMemo(
+    () => new Set(visibleTopicOpeningListItems.flatMap((item) => openingSelectionRowKey(item) || [])),
+    [visibleTopicOpeningListItems]
+  );
+  const topicSelectionSessionKey = `${detailTopicStateKey}:${contentWidth}:${systemFontScale}:${settings.fontFamily}:${settings.fontScale}:${settings.lineHeight}`;
   const bodyMediaPlanStats = useMemo(() => topicListMediaPlanStats(topicListItems), [topicListItems]);
   const bodyMediaDiagnosticSession = useMemo(
     () =>
@@ -1222,6 +1363,7 @@ export const TopicContentList = memo(function TopicContentList({
         <TopicListItemFrame
           key={key}
           firstRowStartedAt={key && key === firstOpeningRowKey ? firstOpeningRowStartedAt : undefined}
+          selectionRowKey={key && topicSelectionRowKeys.has(key) ? key : undefined}
           style={styles.topicListItemFrame}
           onLayout={onLayout}
         >
@@ -1230,7 +1372,7 @@ export const TopicContentList = memo(function TopicContentList({
       );
       return key ? <TopicBodyMediaRowBoundary rowKey={key}>{frame}</TopicBodyMediaRowBoundary> : frame;
     },
-    [firstOpeningRowKey, firstOpeningRowStartedAt, styles]
+    [firstOpeningRowKey, firstOpeningRowStartedAt, styles, topicSelectionRowKeys]
   );
   const TopicListItemSeparator = useCallback(
     ({ leadingItem, trailingItem }: { leadingItem: TopicListItem; trailingItem: TopicListItem }) => {
@@ -1319,14 +1461,20 @@ export const TopicContentList = memo(function TopicContentList({
               ]
             : [styles.replyListItem, topicColumnStyle];
       const rowStyle = [baseRowStyle, trimLeadingStyle, trimTrailingStyle];
-      const wrapContent = (children: ReactNode, onLayout?: (event: LayoutChangeEvent) => void) =>
-        renderTopicListItemFrame(
-          <View style={rowStyle}>
-            <View style={contentContainerStyle}>{children}</View>
-          </View>,
+      const wrapContent = (children: ReactNode, onLayout?: (event: LayoutChangeEvent) => void) => {
+        const content = <View style={contentContainerStyle}>{children}</View>;
+        return renderTopicListItemFrame(
+          context === 'accepted' && contentItem.type === 'content' ? (
+            <Pressable delayLongPress={450} style={rowStyle} onLongPress={copyAcceptedAnswerToClipboard}>
+              {content}
+            </Pressable>
+          ) : (
+            <View style={rowStyle}>{content}</View>
+          ),
           frameKey,
           onLayout
         );
+      };
       if (contentItem.type === 'accessNotice') {
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
@@ -1382,13 +1530,10 @@ export const TopicContentList = memo(function TopicContentList({
             : undefined;
         return wrapContent(
           <TopicSplitDisclosureScope scopeKey={options?.scopeKey || 'opening'}>
-            <RenderHTMLConfigProvider
+            <TopicSelectionRenderHtmlConfig
               renderers={genericHtmlRenderers}
               renderersProps={htmlRenderersProps}
-              defaultTextProps={{ selectable: true }}
-              enableExperimentalBRCollapsing
-              enableExperimentalGhostLinesPrevention
-              enableExperimentalMarginCollapsing
+              selectable={context === 'accepted' ? false : undefined}
             >
               <MemoizedTopicContentBlock
                 contentWidth={context === 'topic' ? contentWidth : Math.max(220, contentWidth - 24)}
@@ -1400,8 +1545,9 @@ export const TopicContentList = memo(function TopicContentList({
                 originalImageUpgradeEnabled={nearbyTopicContentKeys.has(frameKey)}
                 query={context === 'topic' ? '' : replyHighlightQuery}
                 row={contentItem.row}
+                selectable={context === 'accepted' ? false : undefined}
               />
-            </RenderHTMLConfigProvider>
+            </TopicSelectionRenderHtmlConfig>
           </TopicSplitDisclosureScope>,
           () => addNearbyTopicContentKeys([frameKey])
         );
@@ -1413,6 +1559,7 @@ export const TopicContentList = memo(function TopicContentList({
     [
       actionBusy,
       contentWidth,
+      copyAcceptedAnswerToClipboard,
       decisionFor,
       firstArticleBodyKey,
       genericHtmlRenderers,
@@ -1867,46 +2014,52 @@ export const TopicContentList = memo(function TopicContentList({
             highlightedTargetKey && targetReplyMatches(listItem.reply) ? styles.replyLocationHighlight : undefined
           ]}
         >
-          <MemoizedReplyItem
-            actionBusy={actionBusy}
-            bodyContent={listItem.type === 'reply' ? listItem.bodyContent : undefined}
-            decisionFor={decisionFor}
-            contentWidth={contentWidth}
-            expandedQuotes={expandedQuotes}
-            inlineSizedImageUrls={inlineSizedImageUrls}
-            topicImageDeriver={topicImageDeriver}
-            discourseEmojiUrls={discourseEmojiUrls}
-            topicBaseUrl={topicBaseUrl}
-            loadedQuotedReplies={loadedQuotedReplies}
-            loadingQuotedFloors={loadingQuotedFloors}
-            onTogglePollSelection={togglePollSelection}
-            reply={listItem.reply}
-            replyFloor={listItem.replyFloor}
-            pollSelections={pollSelections}
-            repliesByFloor={repliesByFloor}
-            section={listItem.type === 'reply' ? undefined : listItem}
-            signatureContent={listItem.type === 'reply' ? listItem.signatureContent : undefined}
-            styles={styles}
-            theme={theme}
-            topicAuthor={item?.author}
-            onInteract={onInteract}
-            onDeleteReply={onDeleteReply}
-            onEditReply={onEditReply}
-            onLocateReply={requestReplyLocation}
-            onLockPoll={onLockPoll}
-            onOpenTopic={onOpenTopic}
-            onQuoteContentLayout={markReplyQuoteContentLayout}
-            onVotePoll={onVotePoll}
-            onReplyToFloor={onReplyToFloor}
-            onToggleReplyQuote={onToggleReplyQuote}
-            topicId={item?.id}
-            topicStateKey={detailTopicStateKey}
-            query={replyHighlightQuery}
-            isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
-            isTerminal={listItem.key === terminalReplyItemKey}
-            source={itemSource}
-            onOpenUser={onOpenUser}
-          />
+          <TopicSelectionRenderHtmlConfig
+            renderers={genericHtmlRenderers}
+            renderersProps={htmlRenderersProps}
+            selectable={false}
+          >
+            <MemoizedReplyItem
+              actionBusy={actionBusy}
+              bodyContent={listItem.type === 'reply' ? listItem.bodyContent : undefined}
+              decisionFor={decisionFor}
+              contentWidth={contentWidth}
+              expandedQuotes={expandedQuotes}
+              inlineSizedImageUrls={inlineSizedImageUrls}
+              topicImageDeriver={topicImageDeriver}
+              discourseEmojiUrls={discourseEmojiUrls}
+              topicBaseUrl={topicBaseUrl}
+              loadedQuotedReplies={loadedQuotedReplies}
+              loadingQuotedFloors={loadingQuotedFloors}
+              onTogglePollSelection={togglePollSelection}
+              reply={listItem.reply}
+              replyFloor={listItem.replyFloor}
+              pollSelections={pollSelections}
+              repliesByFloor={repliesByFloor}
+              section={listItem.type === 'reply' ? undefined : listItem}
+              signatureContent={listItem.type === 'reply' ? listItem.signatureContent : undefined}
+              styles={styles}
+              theme={theme}
+              topicAuthor={item?.author}
+              onInteract={onInteract}
+              onDeleteReply={onDeleteReply}
+              onEditReply={onEditReply}
+              onLocateReply={requestReplyLocation}
+              onLockPoll={onLockPoll}
+              onOpenTopic={onOpenTopic}
+              onQuoteContentLayout={markReplyQuoteContentLayout}
+              onVotePoll={onVotePoll}
+              onReplyToFloor={onReplyToFloor}
+              onToggleReplyQuote={onToggleReplyQuote}
+              topicId={item?.id}
+              topicStateKey={detailTopicStateKey}
+              query={replyHighlightQuery}
+              isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
+              isTerminal={listItem.key === terminalReplyItemKey}
+              source={itemSource}
+              onOpenUser={onOpenUser}
+            />
+          </TopicSelectionRenderHtmlConfig>
         </View>,
         listItem.key
       );
@@ -1926,7 +2079,9 @@ export const TopicContentList = memo(function TopicContentList({
       contentWidth,
       decisionFor,
       expandedQuotes,
+      genericHtmlRenderers,
       highlightedTargetKey,
+      htmlRenderersProps,
       inlineSizedImageUrls,
       item?.author,
       item?.id,
@@ -2090,81 +2245,81 @@ export const TopicContentList = memo(function TopicContentList({
       tagsStyles={htmlTagsStyles}
       ignoredDomTags={HTML_IGNORED_DOM_TAGS}
     >
-      <RenderHTMLConfigProvider
-        renderers={genericHtmlRenderers}
-        renderersProps={htmlRenderersProps}
-        defaultTextProps={{ selectable: true }}
-        enableExperimentalBRCollapsing
-        enableExperimentalGhostLinesPrevention
-        enableExperimentalMarginCollapsing
-      >
-        <TopicSplitDisclosureProvider key={detailTopicStateKey} value={disclosureStore}>
-          <TopicTableScrollProvider key={detailTopicStateKey}>
-            <TopicBodyMediaCoordinatorProvider
-              key={detailTopicStateKey}
-              active={active}
-              diagnosticSession={bodyMediaDiagnosticSession}
-              onDiagnosticFinish={finishBodyMediaDiagnostic}
-              paused={bodyMediaPaused}
-              visibleRowKeys={bodyMediaVisibleRowKeys}
-              viewportRowKeys={bodyMediaViewportRowKeys}
+      <TopicSplitDisclosureProvider key={detailTopicStateKey} value={disclosureStore}>
+        <TopicTableScrollProvider key={detailTopicStateKey}>
+          <TopicBodyMediaCoordinatorProvider
+            key={detailTopicStateKey}
+            active={active}
+            diagnosticSession={bodyMediaDiagnosticSession}
+            onDiagnosticFinish={finishBodyMediaDiagnostic}
+            paused={bodyMediaPaused}
+            visibleRowKeys={bodyMediaVisibleRowKeys}
+            viewportRowKeys={bodyMediaViewportRowKeys}
+          >
+            <TopicSelectionSurface
+              active={Boolean(active)}
+              items={topicSelectionItems}
+              listRef={topicScrollRef}
+              sessionKey={topicSelectionSessionKey}
             >
-              <FlashList
-                ref={topicScrollRef}
-                accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
-                testID={topic ? 'topic-detail-loaded' : undefined}
-                style={[styles.content, styles.topicContent]}
-                contentContainerStyle={styles.topicContentInner}
-                data={topicListItems}
-                keyExtractor={topicListItemKey}
-                getItemType={topicListItemType}
-                ItemSeparatorComponent={TopicListItemSeparator}
-                keyboardShouldPersistTaps="always"
-                onMomentumScrollEnd={onTopicScroll}
-                onScrollEndDrag={onTopicScroll}
-                onEndReachedThreshold={0.55}
-                onEndReached={handleReplyEndReached}
-                onScrollBeginDrag={armReplyAutoLoad}
-                onViewableItemsChanged={handleViewableItemsChanged}
-                extraData={listExtraData}
-                {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
-                maintainVisibleContentPosition={{ disabled: !maintainPreviousWindowPosition }}
-                ListHeaderComponent={listHeader}
-                ListFooterComponent={
-                  canShowReplies && replyEndError ? (
-                    <View style={styles.topicListItemFrame}>
-                      <View style={[styles.topicFooter, topicColumnStyle]}>
-                        {renderReplyErrorState(replyEndError, 'end')}
+              <TopicSelectionRenderHtmlConfig renderers={genericHtmlRenderers} renderersProps={htmlRenderersProps}>
+                <FlashList
+                  ref={topicScrollRef}
+                  accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
+                  testID={topic ? 'topic-detail-loaded' : undefined}
+                  style={[styles.content, styles.topicContent]}
+                  contentContainerStyle={styles.topicContentInner}
+                  data={topicListItems}
+                  keyExtractor={topicListItemKey}
+                  getItemType={topicListItemType}
+                  ItemSeparatorComponent={TopicListItemSeparator}
+                  keyboardShouldPersistTaps="always"
+                  onMomentumScrollEnd={onTopicScroll}
+                  onScrollEndDrag={onTopicScroll}
+                  onEndReachedThreshold={0.55}
+                  onEndReached={handleReplyEndReached}
+                  onScrollBeginDrag={armReplyAutoLoad}
+                  onViewableItemsChanged={handleViewableItemsChanged}
+                  extraData={listExtraData}
+                  {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
+                  maintainVisibleContentPosition={{ disabled: !maintainPreviousWindowPosition }}
+                  ListHeaderComponent={listHeader}
+                  ListFooterComponent={
+                    canShowReplies && replyEndError ? (
+                      <View style={styles.topicListItemFrame}>
+                        <View style={[styles.topicFooter, topicColumnStyle]}>
+                          {renderReplyErrorState(replyEndError, 'end')}
+                        </View>
                       </View>
-                    </View>
-                  ) : canShowReplies && replyHasMore ? (
-                    <View style={styles.topicListItemFrame}>
-                      <View style={[styles.topicFooter, topicColumnStyle]}>
-                        <AppButton
-                          label={loadingMoreReplies ? '正在加载...' : '加载更多回复'}
-                          disabled={loadingMoreReplies}
-                          onPress={requestWindowEndLoad}
-                        />
+                    ) : canShowReplies && replyHasMore ? (
+                      <View style={styles.topicListItemFrame}>
+                        <View style={[styles.topicFooter, topicColumnStyle]}>
+                          <AppButton
+                            label={loadingMoreReplies ? '正在加载...' : '加载更多回复'}
+                            disabled={loadingMoreReplies}
+                            onPress={requestWindowEndLoad}
+                          />
+                        </View>
                       </View>
-                    </View>
-                  ) : replyBoundaryConfirmed ? (
-                    <View style={styles.topicListItemFrame}>
-                      <Text
-                        accessible
-                        accessibilityLabel={replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
-                        style={[styles.replyEndMarker, topicColumnStyle]}
-                      >
-                        {replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
-                      </Text>
-                    </View>
-                  ) : null
-                }
-                renderItem={renderReplyItem}
-              />
-            </TopicBodyMediaCoordinatorProvider>
-          </TopicTableScrollProvider>
-        </TopicSplitDisclosureProvider>
-      </RenderHTMLConfigProvider>
+                    ) : replyBoundaryConfirmed ? (
+                      <View style={styles.topicListItemFrame}>
+                        <Text
+                          accessible
+                          accessibilityLabel={replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
+                          style={[styles.replyEndMarker, topicColumnStyle]}
+                        >
+                          {replyOrder === 'newest' ? '已到最早回复' : '已到最新回复'}
+                        </Text>
+                      </View>
+                    ) : null
+                  }
+                  renderItem={renderReplyItem}
+                />
+              </TopicSelectionRenderHtmlConfig>
+            </TopicSelectionSurface>
+          </TopicBodyMediaCoordinatorProvider>
+        </TopicTableScrollProvider>
+      </TopicSplitDisclosureProvider>
     </TRenderEngineProvider>
   );
 });

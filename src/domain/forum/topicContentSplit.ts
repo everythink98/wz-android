@@ -1,4 +1,4 @@
-import { HTMLElement } from 'node-html-parser';
+import { HTMLElement, TextNode } from 'node-html-parser';
 import { sanitizeContentHtmlWithRoot } from './contentSanitizer';
 import {
   FORUM_AUDIO_TAG,
@@ -40,6 +40,8 @@ import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaR
 import {
   FORUM_DYNAMIC_INLINE_IMAGE_TAG,
   FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE,
+  FORUM_INLINE_MEDIA_LINE_TAG,
+  FORUM_STICKER_ROW_TAG,
   INLINE_FORUM_IMAGE_TAG,
   FORUM_STICKER_TAG,
   forumImagePreviewDescriptorsFromHtmlFallback,
@@ -130,12 +132,116 @@ export type ForumCodeTextRun = {
   readonly text: string;
 };
 
+type ForumSelectionTrailingRun =
+  | { readonly id?: string; readonly kind: 'media'; readonly text: string }
+  | { readonly kind: 'separator'; readonly text: '\n' | '\t' };
+
+type ForumSelectionOwner = {
+  readonly tape: readonly { readonly at: number; readonly id?: string; readonly text: string }[];
+  readonly text: string;
+  readonly trailing: readonly ForumSelectionTrailingRun[];
+};
+
+type ForumSelectionTokenPayload = {
+  readonly owners: readonly ForumSelectionOwner[];
+  readonly prefix: readonly ForumSelectionTrailingRun[];
+  readonly version: 1;
+};
+
+type ForumSelectionAtom =
+  | { readonly kind: 'break' }
+  | { readonly id?: string; readonly kind: 'media'; readonly text: string }
+  | { readonly kind: 'separator'; readonly text: '\n' | '\t' }
+  | { readonly kind: 'text'; readonly normalized?: true; readonly text: string };
+
+type ForumSelectionUnit =
+  | { readonly atom: ForumSelectionAtom; readonly kind: 'atom' }
+  | { readonly kind: 'boundary' }
+  | { readonly kind: 'owner'; readonly owner: ForumSelectionOwner };
+
+const EMPTY_FORUM_SELECTION_PAYLOAD: ForumSelectionTokenPayload = { owners: [], prefix: [], version: 1 };
+const EMPTY_FORUM_SELECTION_TOKEN = JSON.stringify(EMPTY_FORUM_SELECTION_PAYLOAD);
+
+function forumSelectionPayloadFromUnits(units: readonly ForumSelectionUnit[]): ForumSelectionTokenPayload {
+  const completed = completeForumSelectionUnits(units);
+  const owners: ForumSelectionOwner[] = [];
+  const prefix: ForumSelectionTrailingRun[] = [];
+  for (const unit of completed) {
+    if (unit.kind === 'boundary') continue;
+    if (unit.kind === 'owner') {
+      owners.push({ ...unit.owner, tape: [...unit.owner.tape], trailing: [...unit.owner.trailing] });
+      continue;
+    }
+    if (unit.atom.kind === 'break' || unit.atom.kind === 'text') continue;
+    const destination = owners.at(-1)?.trailing || prefix;
+    (destination as ForumSelectionTrailingRun[]).push(unit.atom);
+  }
+  return { owners, prefix, version: 1 };
+}
+
+function forumSelectionTokenFromUnits(units: readonly ForumSelectionUnit[]) {
+  return JSON.stringify(forumSelectionPayloadFromUnits(units));
+}
+
+function forumSelectionUnitsForBlockText(text: string): readonly ForumSelectionUnit[] {
+  return text
+    ? [
+        {
+          kind: 'owner',
+          owner: { tape: [], text, trailing: [{ kind: 'separator', text: '\n' }] }
+        }
+      ]
+    : [];
+}
+
+function forumSelectionTokenForBlockText(text: string) {
+  return forumSelectionTokenFromUnits(forumSelectionUnitsForBlockText(text));
+}
+
+export function forumSelectionTokenForVisibleText(text: string) {
+  return forumSelectionTokenForBlockText(text);
+}
+
+function parsedForumSelectionToken(token: string): ForumSelectionTokenPayload | null {
+  try {
+    const payload = JSON.parse(token) as Partial<ForumSelectionTokenPayload>;
+    return payload.version === 1 && Array.isArray(payload.owners) && Array.isArray(payload.prefix)
+      ? (payload as ForumSelectionTokenPayload)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function combineForumSelectionTokens(tokens: readonly string[]) {
+  const combined: { owners: ForumSelectionOwner[]; prefix: ForumSelectionTrailingRun[]; version: 1 } = {
+    owners: [],
+    prefix: [],
+    version: 1
+  };
+  for (const token of tokens) {
+    const payload = parsedForumSelectionToken(token);
+    if (!payload) return EMPTY_FORUM_SELECTION_TOKEN;
+    if (!combined.owners.length) combined.prefix.push(...payload.prefix);
+    else {
+      const lastIndex = combined.owners.length - 1;
+      const last = combined.owners[lastIndex];
+      combined.owners[lastIndex] = { ...last, trailing: [...last.trailing, ...payload.prefix] };
+    }
+    combined.owners.push(
+      ...payload.owners.map((owner) => ({ ...owner, tape: [...owner.tape], trailing: [...owner.trailing] }))
+    );
+  }
+  return JSON.stringify(combined);
+}
+
 type ForumSemanticRowBase = {
   readonly ancestorFrames: readonly ForumContentAncestorFrame[];
   readonly keySuffix: string;
   readonly networkMediaCount: number;
   readonly part: ForumContentPart;
   readonly segmentIndex: number;
+  readonly selectionToken: string;
   readonly semanticId: string;
 };
 
@@ -203,6 +309,27 @@ export const EMPTY_COMPILED_FORUM_CONTENT: CompiledForumContent = {
   previewImages: [],
   rows: []
 };
+
+type ForumDynamicImageClassifier = (
+  url: string,
+  referrerPolicy: MediaReferrerPolicy | undefined,
+  identities: Readonly<Record<string, boolean | undefined>>
+) => boolean;
+
+const defaultForumDynamicImageClassifier: ForumDynamicImageClassifier = (url, _referrerPolicy, identities) =>
+  Boolean(identities[normalizeDynamicInlineImageUrl(url)]);
+
+function resolvedForumInlineImageIds(
+  row: Pick<Extract<CompiledForumContentRow, { html: string }>, 'rendering'>,
+  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
+  isInlineSizedImage: ForumDynamicImageClassifier
+) {
+  return new Set(
+    (row.rendering?.dynamicImages || []).flatMap((image) =>
+      isInlineSizedImage(image.url, image.referrerPolicy, inlineSizedImageUrls) ? [image.id] : []
+    )
+  );
+}
 
 const PLANNED_ISLAND_TAGS = new Set([
   'iframe',
@@ -319,18 +446,10 @@ type NodeMetrics = {
 export function resolveForumContentRowHtml(
   row: Pick<Extract<CompiledForumContentRow, { html: string }>, 'html' | 'rendering'>,
   inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
-  isInlineSizedImage: (
-    url: string,
-    referrerPolicy: MediaReferrerPolicy | undefined,
-    identities: Readonly<Record<string, boolean | undefined>>
-  ) => boolean = (url, _referrerPolicy, identities) => Boolean(identities[normalizeDynamicInlineImageUrl(url)])
+  isInlineSizedImage: ForumDynamicImageClassifier = defaultForumDynamicImageClassifier
 ) {
   if (!row.rendering) return row.html;
-  const inlineIds = new Set(
-    row.rendering.dynamicImages.flatMap((image) =>
-      isInlineSizedImage(image.url, image.referrerPolicy, inlineSizedImageUrls) ? [image.id] : []
-    )
-  );
+  const inlineIds = resolvedForumInlineImageIds(row, inlineSizedImageUrls, isInlineSizedImage);
   const descriptorsById = new Map(row.rendering.dynamicImages.map((image) => [image.id, image] as const));
   DYNAMIC_INLINE_IMAGE_PATTERN.lastIndex = 0;
   return stripCompilerOwnedAttributes(
@@ -343,6 +462,45 @@ export function resolveForumContentRowHtml(
         : `<img${publicAttrs ? ` ${publicAttrs}` : ''}>`;
     })
   );
+}
+
+export function resolveForumContentRowSelectionToken(
+  row: Pick<Extract<CompiledForumContentRow, { html: string }>, 'rendering' | 'selectionToken'>,
+  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
+  isInlineSizedImage: ForumDynamicImageClassifier = defaultForumDynamicImageClassifier
+) {
+  if (!row.rendering) return row.selectionToken;
+  const inlineIds = resolvedForumInlineImageIds(row, inlineSizedImageUrls, isInlineSizedImage);
+  const blockIds = new Set(row.rendering.dynamicImages.flatMap((image) => (inlineIds.has(image.id) ? [] : [image.id])));
+  if (!blockIds.size) return row.selectionToken;
+  const payload = parsedForumSelectionToken(row.selectionToken);
+  if (!payload) return EMPTY_FORUM_SELECTION_TOKEN;
+  const units: ForumSelectionUnit[] = payload.prefix.map((atom) => ({ atom, kind: 'atom' as const }));
+  for (const owner of payload.owners) {
+    if (typeof owner.text !== 'string' || !Array.isArray(owner.tape) || !Array.isArray(owner.trailing)) {
+      return EMPTY_FORUM_SELECTION_TOKEN;
+    }
+    units.push({ kind: 'boundary' });
+    let offset = 0;
+    for (const run of owner.tape) {
+      if (!Number.isInteger(run.at) || run.at < offset || run.at > owner.text.length || typeof run.text !== 'string') {
+        return EMPTY_FORUM_SELECTION_TOKEN;
+      }
+      if (run.at > offset)
+        units.push({ atom: { kind: 'text', normalized: true, text: owner.text.slice(offset, run.at) }, kind: 'atom' });
+      const media = {
+        atom: { ...(run.id ? { id: run.id } : {}), kind: 'media' as const, text: run.text },
+        kind: 'atom' as const
+      };
+      if (run.id && blockIds.has(run.id)) units.push({ kind: 'boundary' }, media, { kind: 'boundary' });
+      else units.push(media);
+      offset = run.at;
+    }
+    if (offset < owner.text.length)
+      units.push({ atom: { kind: 'text', normalized: true, text: owner.text.slice(offset) }, kind: 'atom' });
+    units.push({ kind: 'boundary' }, ...owner.trailing.map((atom) => ({ atom, kind: 'atom' as const })));
+  }
+  return forumSelectionTokenFromUnits(units);
 }
 
 function createForumContentMaterializationBudget(metrics: NodeMetrics | null, regionCount: number) {
@@ -366,6 +524,7 @@ type HtmlFragment = {
   domNodes: number;
   html: string;
   mediaSlots: number;
+  selectionUnits?: readonly ForumSelectionUnit[];
   serializedChars: number;
   textChars: number;
 };
@@ -383,12 +542,14 @@ function combinedFragmentReserve(left: HtmlFragmentReserve, right: HtmlFragmentR
 function fragmentFromMetrics(
   html: string,
   metrics: NodeMetrics,
-  serializedChars = metrics.serializedChars
+  serializedChars = metrics.serializedChars,
+  selectionUnits?: readonly ForumSelectionUnit[]
 ): HtmlFragment {
   return {
     domNodes: metrics.domNodes,
     html,
     mediaSlots: metrics.mediaSlots,
+    ...(selectionUnits ? { selectionUnits } : {}),
     serializedChars,
     textChars: metrics.textChars
   };
@@ -487,12 +648,176 @@ function ownMediaSlots(node: PlanningNode) {
   return 0;
 }
 
+const FORUM_SELECTION_BLOCK_TAGS = new Set([
+  'address',
+  'article',
+  'aside',
+  'blockquote',
+  'dd',
+  'details',
+  'div',
+  'dl',
+  'dt',
+  'figcaption',
+  'figure',
+  'footer',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'header',
+  'li',
+  'main',
+  'nav',
+  'p',
+  'pre',
+  'section',
+  'summary',
+  FORUM_INLINE_MEDIA_LINE_TAG,
+  FORUM_STICKER_ROW_TAG
+]);
+
+const FORUM_SELECTION_MEDIA_TAGS = new Set([
+  'img',
+  FORUM_DYNAMIC_INLINE_IMAGE_TAG,
+  FORUM_INLINE_IMAGE_TAG,
+  FORUM_STICKER_TAG,
+  FORUM_VIDEO_STICKER_TAG,
+  FORUM_VIDEO_TAG
+]);
+
+function collapseForumSelectionWhitespace(text: string) {
+  return text
+    .replace(/[ \t]*[\r\n\f]+[ \t]*/g, '\n')
+    .replace(/[\r\n\f]+/g, '\n')
+    .replace(/(\u200b\n\u200b?|\u200b?\n\u200b)/g, '\u200b')
+    .replace(/\n/g, ' ')
+    .replace(/[ \t]+/g, ' ');
+}
+
+function trailingCollapsedBreakIndex(children: readonly PlanningNode[]) {
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    const child = children[index];
+    const tagName = nodeTagName(child);
+    if (tagName) return tagName === 'br' ? index : -1;
+    const text = typeof child.text === 'string' ? child.text : child.toString();
+    if (collapseForumSelectionWhitespace(text).replace(/ /g, '')) return -1;
+  }
+  return -1;
+}
+
+function forumSelectionOwnerFromAtoms(atoms: readonly ForumSelectionAtom[]): ForumSelectionOwner | null {
+  let text = '';
+  const tape: { at: number; id?: string; text: string }[] = [];
+  let hasContent = false;
+  let lastKind: 'break' | 'media' | 'text' | null = null;
+  let previousCollapsibleRight = false;
+  for (const atom of atoms) {
+    if (atom.kind === 'break') {
+      text += '\n';
+      hasContent = true;
+      lastKind = 'break';
+      previousCollapsibleRight = true;
+    } else if (atom.kind === 'text') {
+      let next = atom.normalized ? atom.text : collapseForumSelectionWhitespace(atom.text);
+      if (next.startsWith(' ') && (!hasContent || previousCollapsibleRight)) next = next.slice(1);
+      text += next;
+      if (next) {
+        hasContent = true;
+        previousCollapsibleRight = next.endsWith(' ') || next.endsWith('\n');
+        lastKind = 'text';
+      }
+    } else if (atom.kind === 'media') {
+      tape.push({ at: text.length, ...(atom.id ? { id: atom.id } : {}), text: atom.text });
+      hasContent = true;
+      lastKind = 'media';
+      previousCollapsibleRight = false;
+    }
+  }
+  if (lastKind === 'break' && text.endsWith('\n')) text = text.slice(0, -1);
+  else if (lastKind === 'text' && text.endsWith(' ')) text = text.slice(0, -1);
+  return text ? { tape, text, trailing: [] } : null;
+}
+
+function completeForumSelectionUnits(units: readonly ForumSelectionUnit[]) {
+  const completed: ForumSelectionUnit[] = [];
+  let inlineAtoms: ForumSelectionAtom[] = [];
+  const flush = () => {
+    if (!inlineAtoms.length) return;
+    const owner = forumSelectionOwnerFromAtoms(inlineAtoms);
+    if (owner) completed.push({ kind: 'owner', owner });
+    else inlineAtoms.forEach((atom) => completed.push({ atom, kind: 'atom' }));
+    inlineAtoms = [];
+  };
+  for (const unit of units) {
+    if (unit.kind === 'owner' || unit.kind === 'boundary') {
+      flush();
+      completed.push(unit);
+    } else if (unit.atom.kind === 'separator') {
+      flush();
+      completed.push(unit);
+    } else {
+      inlineAtoms.push(unit.atom);
+    }
+  }
+  flush();
+  return completed;
+}
+
+function forumSelectionUnitsWithBlockBreak(units: readonly ForumSelectionUnit[]) {
+  if (!units.length) return [];
+  const completed = completeForumSelectionUnits(units);
+  const last = completed.at(-1);
+  return last?.kind === 'atom' && last.atom.kind === 'separator' && last.atom.text === '\n'
+    ? completed
+    : [...completed, { atom: { kind: 'separator', text: '\n' }, kind: 'atom' } as const];
+}
+
+function analyzedForumSelectionUnits(node: PlanningNode, childUnits: readonly ForumSelectionUnit[]) {
+  const tagName = nodeTagName(node);
+  if (!tagName) {
+    const text = typeof node.text === 'string' ? node.text : node.toString();
+    return text ? ([{ atom: { kind: 'text', text }, kind: 'atom' }] as const) : [];
+  }
+  if (tagName === 'br') return [{ atom: { kind: 'break' }, kind: 'atom' }] as const;
+  if (tagName === 'hr') return [{ atom: { kind: 'separator', text: '\n' }, kind: 'atom' }] as const;
+  if (tagName === 'script' || tagName === 'style') return [];
+  if (tagName === FORUM_AUDIO_TAG) {
+    return [
+      { kind: 'boundary' },
+      { atom: { kind: 'media', text: '音频' }, kind: 'atom' },
+      { kind: 'boundary' },
+      { atom: { kind: 'separator', text: '\n' }, kind: 'atom' }
+    ] as const;
+  }
+  if (FORUM_SELECTION_MEDIA_TAGS.has(tagName)) {
+    const label = nodeAttribute(node, 'alt') || nodeAttribute(node, 'title');
+    const id =
+      tagName === FORUM_DYNAMIC_INLINE_IMAGE_TAG ? nodeAttribute(node, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE) : '';
+    const media = { atom: { ...(id ? { id } : {}), kind: 'media' as const, text: label }, kind: 'atom' as const };
+    return tagName === 'img' ||
+      tagName === FORUM_STICKER_TAG ||
+      tagName === FORUM_VIDEO_STICKER_TAG ||
+      tagName === FORUM_VIDEO_TAG
+      ? ([{ kind: 'boundary' }, media, { kind: 'boundary' }] as const)
+      : ownMediaSlots(node) > 0
+        ? ([media] as const)
+        : label
+          ? ([{ atom: { kind: 'text', text: label }, kind: 'atom' }] as const)
+          : [];
+  }
+  return FORUM_SELECTION_BLOCK_TAGS.has(tagName) ? forumSelectionUnitsWithBlockBreak(childUnits) : childUnits;
+}
+
 function analyzeNodes(
   nodes: PlanningNode[],
   typedDirectiveFromNode: (node: PlanningNode) => TypedForumContentDirective | null = () => null
 ) {
   const metrics = new WeakMap<object, NodeMetrics>();
   const typedDirectives = new WeakMap<object, TypedForumContentDirective>();
+  const selectionUnits = new WeakMap<object, readonly ForumSelectionUnit[]>();
   const containsSemantic = new WeakSet<object>();
   const containsTypedDirective = new WeakSet<object>();
   const pending = nodes.map((node) => ({ node, visited: false }));
@@ -508,6 +833,10 @@ function analyzeNodes(
     }
     const children = current.node.childNodes || [];
     const childMetrics = children.map((child) => metrics.get(child)!);
+    const trailingBreakIndex = trailingCollapsedBreakIndex(children);
+    const childSelectionUnits = children
+      .slice(0, trailingBreakIndex < 0 ? children.length : trailingBreakIndex)
+      .flatMap((child) => selectionUnits.get(child) || []);
     const tagName = nodeTagName(current.node);
     const text = tagName ? '' : current.node.toString();
     const ownSerialized = tagName ? tagName.length * 2 + String(current.node.rawAttrs || '').length + 5 : text.length;
@@ -518,6 +847,7 @@ function analyzeNodes(
       serializedChars: ownSerialized + childMetrics.reduce((total, child) => total + child.serializedChars, 0),
       textChars: tagName ? childMetrics.reduce((total, child) => total + child.textChars, 0) : text.length
     });
+    selectionUnits.set(current.node, analyzedForumSelectionUnits(current.node, childSelectionUnits));
     const typedDirective = typedDirectiveFromNode(current.node);
     if (typedDirective) typedDirectives.set(current.node, typedDirective);
     if (typedDirective || children.some((child) => containsTypedDirective.has(child))) {
@@ -541,7 +871,7 @@ function analyzeNodes(
       containsSemantic.add(current.node);
     }
   }
-  return { containsSemantic, containsTypedDirective, metrics, typedDirectives };
+  return { containsSemantic, containsTypedDirective, metrics, selectionUnits, typedDirectives };
 }
 
 function metricsFitRow(
@@ -692,7 +1022,16 @@ function safeTextSplitIndex(value: string, desiredIndex: number) {
 
 function textFragments(text: string): HtmlFragment[] {
   if (text.length <= MAX_UNSPLIT_TEXT_CHARS) {
-    return [{ domNodes: 1, html: text, mediaSlots: 0, serializedChars: text.length, textChars: text.length }];
+    return [
+      {
+        domNodes: 1,
+        html: text,
+        mediaSlots: 0,
+        selectionUnits: [{ atom: { kind: 'text', text: new TextNode(text).text }, kind: 'atom' }],
+        serializedChars: text.length,
+        textChars: text.length
+      }
+    ];
   }
   const fragments: HtmlFragment[] = [];
   let remaining = text;
@@ -702,7 +1041,14 @@ function textFragments(text: string): HtmlFragment[] {
     const requestedSplitAt = whitespace > MAX_UNSPLIT_TEXT_CHARS / 2 ? whitespace + 1 : candidate.length;
     const splitAt = safeTextSplitIndex(remaining, requestedSplitAt);
     const html = remaining.slice(0, splitAt);
-    fragments.push({ domNodes: 1, html, mediaSlots: 0, serializedChars: html.length, textChars: html.length });
+    fragments.push({
+      domNodes: 1,
+      html,
+      mediaSlots: 0,
+      selectionUnits: [{ atom: { kind: 'text', text: new TextNode(html).text }, kind: 'atom' }],
+      serializedChars: html.length,
+      textChars: html.length
+    });
     remaining = remaining.slice(splitAt);
   }
   if (remaining) {
@@ -710,6 +1056,7 @@ function textFragments(text: string): HtmlFragment[] {
       domNodes: 1,
       html: remaining,
       mediaSlots: 0,
+      selectionUnits: [{ atom: { kind: 'text', text: new TextNode(remaining).text }, kind: 'atom' }],
       serializedChars: remaining.length,
       textChars: remaining.length
     });
@@ -854,12 +1201,13 @@ function fallbackMediaFragments(html: string) {
   return fragments;
 }
 
-function fallbackNoticeFragment(): HtmlFragment {
+function fallbackNoticeFragment(html = CONTENT_TOO_COMPLEX_NOTICE_HTML): HtmlFragment {
   return {
     domNodes: 2,
-    html: CONTENT_TOO_COMPLEX_NOTICE_HTML,
+    html,
     mediaSlots: 0,
-    serializedChars: CONTENT_TOO_COMPLEX_NOTICE_HTML.length,
+    selectionUnits: forumSelectionUnitsForBlockText('内容过于复杂，请在原站查看。'),
+    serializedChars: html.length,
     textChars: 16
   };
 }
@@ -940,6 +1288,7 @@ function packFragments(fragments: HtmlFragment[], reserved: HtmlFragmentReserve 
   let currentDomNodes = 0;
   let currentHtml = '';
   let currentMediaSlots = 0;
+  let currentSelectionUnits: ForumSelectionUnit[] = [];
   let currentSerializedChars = 0;
   let currentTextChars = 0;
   fragments.forEach((fragment) => {
@@ -955,18 +1304,21 @@ function packFragments(fragments: HtmlFragment[], reserved: HtmlFragmentReserve 
         domNodes: currentDomNodes,
         html: currentHtml,
         mediaSlots: currentMediaSlots,
+        ...(currentSelectionUnits.length ? { selectionUnits: currentSelectionUnits } : {}),
         serializedChars: currentSerializedChars,
         textChars: currentTextChars
       });
       currentDomNodes = 0;
       currentHtml = '';
       currentMediaSlots = 0;
+      currentSelectionUnits = [];
       currentSerializedChars = 0;
       currentTextChars = 0;
     }
     currentHtml += fragment.html;
     currentDomNodes += fragment.domNodes;
     currentMediaSlots += fragment.mediaSlots;
+    currentSelectionUnits.push(...(fragment.selectionUnits || []));
     currentSerializedChars += fragment.serializedChars;
     currentTextChars += fragment.textChars;
   });
@@ -975,6 +1327,7 @@ function packFragments(fragments: HtmlFragment[], reserved: HtmlFragmentReserve 
       domNodes: currentDomNodes,
       html: currentHtml,
       mediaSlots: currentMediaSlots,
+      ...(currentSelectionUnits.length ? { selectionUnits: currentSelectionUnits } : {}),
       serializedChars: currentSerializedChars,
       textChars: currentTextChars
     });
@@ -982,7 +1335,11 @@ function packFragments(fragments: HtmlFragment[], reserved: HtmlFragmentReserve 
   return groups;
 }
 
-function flattenDescendantsAtDepthLimit(node: PlanningNode, metrics: WeakMap<object, NodeMetrics>) {
+function flattenDescendantsAtDepthLimit(
+  node: PlanningNode,
+  metrics: WeakMap<object, NodeMetrics>,
+  selectionUnits: WeakMap<object, readonly ForumSelectionUnit[]>
+) {
   const fragments: HtmlFragment[] = [];
   const pending = [...(node.childNodes || [])].reverse();
   while (pending.length) {
@@ -995,7 +1352,14 @@ function flattenDescendantsAtDepthLimit(node: PlanningNode, metrics: WeakMap<obj
     if (ownMediaSlots(current) > 0 || !current.childNodes?.length) {
       const currentMetrics = metrics.get(current);
       if (currentMetrics && metricsFitRow(currentMetrics)) {
-        fragments.push(fragmentFromMetrics(current.toString(), currentMetrics));
+        fragments.push(
+          fragmentFromMetrics(
+            current.toString(),
+            currentMetrics,
+            currentMetrics.serializedChars,
+            selectionUnits.get(current)
+          )
+        );
       } else {
         fragments.push(fallbackNoticeFragment());
       }
@@ -1009,18 +1373,26 @@ function flattenDescendantsAtDepthLimit(node: PlanningNode, metrics: WeakMap<obj
   return packFragments(fragments);
 }
 
-function continuousRichTextFragment(node: PlanningNode, metrics: NodeMetrics, preservedParentDepth: number) {
+function continuousRichTextFragment(
+  node: PlanningNode,
+  metrics: NodeMetrics,
+  preservedParentDepth: number,
+  selectionUnits: readonly ForumSelectionUnit[] | undefined
+) {
   if (metrics.mediaSlots !== 0 || preservedParentDepth + metrics.elementDepth > MAX_PLANNED_ELEMENT_DEPTH) return null;
   const tagName = nodeTagName(node);
   const rawAttrs = String(node.rawAttrs || '').trim();
   if (tagName && tagName.length * 2 + rawAttrs.length + 5 >= MAX_SERIALIZED_CHARS_PER_PLANNED_ROW) return null;
   const html = node.toString();
-  return /^\s*(?:<(?:!--|!|\/)|&lt;!--|<p\b[^>]*>\s*&lt;!--)/i.test(html) ? null : fragmentFromMetrics(html, metrics);
+  return /^\s*(?:<(?:!--|!|\/)|&lt;!--|<p\b[^>]*>\s*&lt;!--)/i.test(html)
+    ? null
+    : fragmentFromMetrics(html, metrics, metrics.serializedChars, selectionUnits);
 }
 
 function fragmentNode(
   node: PlanningNode,
   metrics: WeakMap<object, NodeMetrics>,
+  selectionUnits: WeakMap<object, readonly ForumSelectionUnit[]>,
   preservedParentDepth: number,
   nodePath: string,
   traversalDepth = 0,
@@ -1035,26 +1407,23 @@ function fragmentNode(
     textChars: 0
   };
   const tagName = nodeTagName(node);
-  const continuousFragment = continuousRichTextFragment(node, nodeMetrics, preservedParentDepth);
+  const continuousFragment = continuousRichTextFragment(
+    node,
+    nodeMetrics,
+    preservedParentDepth,
+    selectionUnits.get(node)
+  );
   if (!tagName) {
     return continuousFragment ? [continuousFragment] : textFragments(node.toString());
   }
   if (tagName === 'summary') {
     return metricsFitRow(nodeMetrics, preservedParentDepth, preservedParentReserve)
-      ? [fragmentFromMetrics(node.toString(), nodeMetrics)]
-      : [
-          {
-            domNodes: 2,
-            html: CONTENT_TOO_COMPLEX_SUMMARY_HTML,
-            mediaSlots: 0,
-            serializedChars: CONTENT_TOO_COMPLEX_SUMMARY_HTML.length,
-            textChars: 16
-          }
-        ];
+      ? [fragmentFromMetrics(node.toString(), nodeMetrics, nodeMetrics.serializedChars, selectionUnits.get(node))]
+      : [fallbackNoticeFragment(CONTENT_TOO_COMPLEX_SUMMARY_HTML)];
   }
   if (PLANNED_ISLAND_TAGS.has(tagName)) {
     return metricsFitRow(nodeMetrics, preservedParentDepth, preservedParentReserve)
-      ? [fragmentFromMetrics(node.toString(), nodeMetrics)]
+      ? [fragmentFromMetrics(node.toString(), nodeMetrics, nodeMetrics.serializedChars, selectionUnits.get(node))]
       : [fallbackNoticeFragment()];
   }
   if (continuousFragment) return [continuousFragment];
@@ -1070,19 +1439,19 @@ function fragmentNode(
       (node.childNodes || []).map((child) => child.toString()).join(''),
       listItemRawAttrs
     );
-    return [fragmentFromMetrics(html, nodeMetrics, html.length)];
+    return [fragmentFromMetrics(html, nodeMetrics, html.length, selectionUnits.get(node))];
   }
   if (ownMediaSlots(node) > 0 || !node.childNodes?.length) {
     return metricsFitRow(nodeMetrics, preservedParentDepth, preservedParentReserve)
-      ? [fragmentFromMetrics(node.toString(), nodeMetrics)]
+      ? [fragmentFromMetrics(node.toString(), nodeMetrics, nodeMetrics.serializedChars, selectionUnits.get(node))]
       : [fallbackNoticeFragment()];
   }
   if (metricsFitRow(nodeMetrics, preservedParentDepth, preservedParentReserve) && orderedListValue === undefined) {
-    return [fragmentFromMetrics(node.toString(), nodeMetrics)];
+    return [fragmentFromMetrics(node.toString(), nodeMetrics, nodeMetrics.serializedChars, selectionUnits.get(node))];
   }
 
   if (traversalDepth >= MAX_PLANNED_ELEMENT_DEPTH) {
-    return flattenDescendantsAtDepthLimit(node, metrics);
+    return flattenDescendantsAtDepthLimit(node, metrics, selectionUnits);
   }
 
   const rawAttrs = String(node.rawAttrs || '').trim();
@@ -1109,15 +1478,7 @@ function fragmentNode(
       isDiscourseCalloutTitle(child) &&
       (!childMetrics || !metricsFitRow(childMetrics, childPreservedParentDepth, childPreservedParentReserve))
     ) {
-      return [
-        {
-          domNodes: 2,
-          html: CONTENT_TOO_COMPLEX_CALLOUT_TITLE_HTML,
-          mediaSlots: 0,
-          serializedChars: CONTENT_TOO_COMPLEX_CALLOUT_TITLE_HTML.length,
-          textChars: 16
-        }
-      ];
+      return [fallbackNoticeFragment(CONTENT_TOO_COMPLEX_CALLOUT_TITLE_HTML)];
     }
     let childOrderedListValue: number | undefined;
     if (tagName === 'ol' && nodeTagName(child) === 'li') {
@@ -1128,6 +1489,7 @@ function fragmentNode(
     return fragmentNode(
       child,
       metrics,
+      selectionUnits,
       childPreservedParentDepth,
       `${nodePath}.${childIndex}`,
       traversalDepth + 1,
@@ -1178,6 +1540,7 @@ function fragmentNode(
       domNodes: group.domNodes + 1,
       html: elementHtmlWithChildren(node, group.html, groupRawAttrs),
       mediaSlots: group.mediaSlots,
+      ...(group.selectionUnits ? { selectionUnits: group.selectionUnits } : {}),
       serializedChars: group.serializedChars + tagName.length * 2 + groupRawAttrs.length + 5,
       textChars: group.textChars
     };
@@ -1360,6 +1723,7 @@ type SemanticCompileContext = {
   readonly containsTypedDirective: WeakSet<object>;
   readonly metrics: WeakMap<object, NodeMetrics>;
   readonly recognizesDiscourseCallouts: boolean;
+  readonly selectionUnits: WeakMap<object, readonly ForumSelectionUnit[]>;
   readonly typedDirectives: WeakMap<object, TypedForumContentDirective>;
 };
 
@@ -1393,6 +1757,7 @@ function semanticRowBase({
     networkMediaCount,
     part: semanticPart(index, length),
     segmentIndex: index,
+    selectionToken: EMPTY_FORUM_SELECTION_TOKEN,
     semanticId
   };
 }
@@ -1464,11 +1829,13 @@ function codeRowsForNode(
   if (!ownerRuns.length) return null;
   const semanticId = `node-${nodePath}`;
   const copyText = ownerRuns.map((run) => run.text).join('');
+  const selectionToken = forumSelectionTokenForBlockText(copyText);
   return [
     {
       ...semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId }),
       copyText,
       runs: ownerRuns,
+      selectionToken,
       text: copyText,
       type: 'codeBlock',
       ...(variant ? { variant } : {})
@@ -1480,6 +1847,7 @@ type SemanticTableRow = {
   readonly html: string;
   readonly sectionAttrs: string;
   readonly sectionTag: '' | 'tbody' | 'tfoot' | 'thead';
+  readonly selectionUnits: readonly ForumSelectionUnit[];
   readonly spanToFollowingRows: number;
 };
 
@@ -1490,7 +1858,7 @@ function tableCellRowSpan(node: PlanningNode, remainingSectionRows: number) {
   return value === 0 ? remainingSectionRows + 1 : Math.min(Math.max(value, 1), MAX_DOM_NODES_PER_PLANNED_ROW);
 }
 
-function semanticTableRows(table: PlanningNode) {
+function semanticTableRows(table: PlanningNode, selectionUnitsByNode: WeakMap<object, readonly ForumSelectionUnit[]>) {
   const records: SemanticTableRow[] = [];
   const appendSectionRows = (
     children: readonly PlanningNode[],
@@ -1503,10 +1871,26 @@ function semanticTableRows(table: PlanningNode) {
         const tagName = nodeTagName(child);
         return tagName === 'td' || tagName === 'th';
       });
+      const selectionUnits = cells.flatMap((cell, cellIndex) => {
+        const cellUnits = [...(selectionUnitsByNode.get(cell) || [])];
+        const last = cellUnits.at(-1);
+        if (last?.kind === 'atom' && last.atom.kind === 'separator' && last.atom.text === '\n') cellUnits.pop();
+        return [
+          ...completeForumSelectionUnits(cellUnits),
+          {
+            atom: {
+              kind: 'separator' as const,
+              text: cellIndex === cells.length - 1 ? ('\n' as const) : ('\t' as const)
+            },
+            kind: 'atom' as const
+          }
+        ];
+      });
       records.push({
         html: row.toString(),
         sectionAttrs,
         sectionTag,
+        selectionUnits,
         spanToFollowingRows: Math.max(0, ...cells.map((cell) => tableCellRowSpan(cell, rows.length - rowIndex - 1) - 1))
       });
     });
@@ -1556,8 +1940,12 @@ function tableConnectedRegions(rows: readonly SemanticTableRow[]) {
   return regions;
 }
 
-function tableRowsForNode(node: PlanningNode, nodePath: string): CompiledForumContentRow[] | null {
-  const rows = semanticTableRows(node);
+function tableRowsForNode(
+  node: PlanningNode,
+  nodePath: string,
+  selectionUnits: WeakMap<object, readonly ForumSelectionUnit[]>
+): CompiledForumContentRow[] | null {
+  const rows = semanticTableRows(node, selectionUnits);
   if (!rows.length) return null;
   const regions = tableConnectedRegions(rows);
   const segments: SemanticTableRow[][] = [];
@@ -1586,6 +1974,7 @@ function tableRowsForNode(node: PlanningNode, nodePath: string): CompiledForumCo
       }),
       columns,
       html,
+      selectionToken: forumSelectionTokenFromUnits(segment.flatMap((row) => row.selectionUnits)),
       type: 'table'
     };
   });
@@ -1596,6 +1985,7 @@ function compilerNoticeRow(nodePath: string): Extract<CompiledForumContentRow, {
   return {
     ...semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId }),
     html: CONTENT_TOO_COMPLEX_NOTICE_HTML,
+    selectionToken: forumSelectionTokenForBlockText('内容过于复杂，请在原站查看。'),
     type: 'richText'
   };
 }
@@ -1626,12 +2016,13 @@ function wrapSemanticHtml(html: string, wrappers: readonly SemanticHtmlWrapper[]
 function plainSemanticRows(
   entries: readonly SemanticCompileEntry[],
   wrappers: readonly SemanticHtmlWrapper[],
-  metrics: WeakMap<object, NodeMetrics>
+  metrics: WeakMap<object, NodeMetrics>,
+  selectionUnits: WeakMap<object, readonly ForumSelectionUnit[]>
 ) {
   if (!entries.length) return [];
   const reserve = wrapperReserve(wrappers);
   const fragments = entries.flatMap((entry) =>
-    fragmentNode(entry.node, metrics, wrappers.length, entry.path, 0, undefined, reserve)
+    fragmentNode(entry.node, metrics, selectionUnits, wrappers.length, entry.path, 0, undefined, reserve)
   );
   const groups = packFragments(fragments, reserve);
   const semanticId = `node-${entries[0].path}`;
@@ -1647,14 +2038,26 @@ function plainSemanticRows(
       networkMediaCount: renderedHtmlMediaSlots(html),
       semanticId
     });
-    return video ? { ...base, ...video, html, type: 'video' } : { ...base, html, type: 'richText' };
+    const selectionToken = forumSelectionTokenFromUnits(group.selectionUnits || []);
+    return video
+      ? { ...base, ...video, html, selectionToken, type: 'video' }
+      : { ...base, html, selectionToken, type: 'richText' };
   });
 }
 
 function semanticDirectiveRow(directive: TypedForumContentDirective, nodePath: string): CompiledForumContentRow[] {
   const semanticId = `node-${nodePath}`;
   const base = semanticRowBase({ index: 0, length: 1, networkMediaCount: 0, semanticId });
-  if (directive.type === 'quote') return [{ ...base, quote: directive.quote, type: 'quote' }];
+  if (directive.type === 'quote') {
+    return [
+      {
+        ...base,
+        quote: directive.quote,
+        selectionToken: forumSelectionTokenForBlockText(directive.quote.preview || ''),
+        type: 'quote'
+      }
+    ];
+  }
   return directive.poll ? [{ ...base, poll: directive.poll, type: 'poll' }] : [];
 }
 
@@ -1733,6 +2136,7 @@ function disclosureHeaderRow({
     defaultExpanded,
     disclosureKind,
     hasBody,
+    selectionToken: forumSelectionTokenForBlockText(titleLabel),
     titleHtml,
     titleLabel,
     type: 'disclosureHeader'
@@ -1822,7 +2226,7 @@ function compileSemanticEntries(
   const rows: CompiledForumContentRow[] = [];
   let pending: SemanticCompileEntry[] = [];
   const flush = () => {
-    rows.push(...plainSemanticRows(pending, wrappers, context.metrics));
+    rows.push(...plainSemanticRows(pending, wrappers, context.metrics, context.selectionUnits));
     pending = [];
   };
   for (const entry of entries) {
@@ -1860,7 +2264,7 @@ function compileSemanticEntries(
       rows.push(
         ...(context.containsTypedDirective.has(node)
           ? [compilerNoticeRow(path), ...typedRowsInSubtree(node, path, context.typedDirectives)]
-          : plainSemanticRows([entry], wrappers, context.metrics))
+          : plainSemanticRows([entry], wrappers, context.metrics, context.selectionUnits))
       );
       continue;
     }
@@ -1884,7 +2288,7 @@ function compileSemanticEntries(
               [...wrappers, { node }],
               context
             )
-          : tableRowsForNode(node, path) || [compilerNoticeRow(path)])
+          : tableRowsForNode(node, path, context.selectionUnits) || [compilerNoticeRow(path)])
       );
       continue;
     }
@@ -1980,7 +2384,7 @@ function compileSemanticEntries(
         );
         const nonEmptyRows = itemRows.length
           ? itemRows
-          : plainSemanticRows([{ node: child, path: childPath }], wrappers, context.metrics);
+          : plainSemanticRows([{ node: child, path: childPath }], wrappers, context.metrics, context.selectionUnits);
         listRows.push(
           ...prependAncestorFrame(nonEmptyRows, {
             kind: 'listItem',
@@ -2029,6 +2433,7 @@ function semanticRowsFromParsedContent({
     containsTypedDirective: analysis.containsTypedDirective,
     metrics: analysis.metrics,
     recognizesDiscourseCallouts: isDiscourseSource(source),
+    selectionUnits: analysis.selectionUnits,
     typedDirectives: analysis.typedDirectives
   };
   const semanticNodes = sourceSemanticNodes(nodes, role);

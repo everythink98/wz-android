@@ -115,58 +115,55 @@ export async function getLinuxDoUserProfile(
   let rawUserActions: unknown[] = [];
   let readTopicPage = false;
   let partialErrorCount = 0;
-  if (wantsTopics) {
-    const readTopics = async () => {
-      const topicsData = await fetchLinuxDoJson<Record<string, unknown>>(
-        `/topics/created-by/${encodeURIComponent(resolvedUsername)}.json`,
-        { page: topicPage, per_page: LIST_PAGE_SIZE },
-        options
-      );
-      const topicList = isRecord(topicsData.topic_list) ? topicsData.topic_list : {};
-      return {
-        data: topicsData,
-        topics: Array.isArray(topicList.topics) ? topicList.topics : []
-      };
+  const readTopics = async () => {
+    const topicsData = await fetchLinuxDoJson<Record<string, unknown>>(
+      `/topics/created-by/${encodeURIComponent(resolvedUsername)}.json`,
+      { page: topicPage, per_page: LIST_PAGE_SIZE },
+      options
+    );
+    const topicList = isRecord(topicsData.topic_list) ? topicsData.topic_list : {};
+    return {
+      data: topicsData,
+      topics: Array.isArray(topicList.topics) ? topicList.topics : []
     };
-    if (cursorType === 'topics') {
-      const topicPageResult = await readTopics();
+  };
+  const readUserActions = async () => {
+    const actionData = await fetchLinuxDoJson<Record<string, unknown>>(
+      '/user_actions.json',
+      {
+        offset: replyOffset,
+        username: resolvedUsername,
+        filter: 5,
+        limit: LIST_PAGE_SIZE + 1
+      },
+      options
+    );
+    return Array.isArray(actionData.user_actions) ? actionData.user_actions : [];
+  };
+  if (wantsTopics && wantsReplies) {
+    const [topicPageResult, userActionsResult] = await Promise.all([
+      readTopics().catch(() => {
+        partialErrorCount += 1;
+        return null;
+      }),
+      readUserActions().catch(() => {
+        partialErrorCount += 1;
+        return null;
+      })
+    ]);
+    if (topicPageResult) {
       topicPageData = topicPageResult.data;
       rawTopics = topicPageResult.topics;
       readTopicPage = true;
-    } else {
-      try {
-        const topicPageResult = await readTopics();
-        topicPageData = topicPageResult.data;
-        rawTopics = topicPageResult.topics;
-        readTopicPage = true;
-      } catch {
-        partialErrorCount += 1;
-      }
     }
-  }
-  if (wantsReplies) {
-    const readUserActions = async () => {
-      const actionData = await fetchLinuxDoJson<Record<string, unknown>>(
-        '/user_actions.json',
-        {
-          offset: replyOffset,
-          username: resolvedUsername,
-          filter: 5,
-          limit: LIST_PAGE_SIZE + 1
-        },
-        options
-      );
-      return Array.isArray(actionData.user_actions) ? actionData.user_actions : [];
-    };
-    if (cursorType === 'replies') {
-      rawUserActions = await readUserActions();
-    } else {
-      try {
-        rawUserActions = await readUserActions();
-      } catch {
-        partialErrorCount += 1;
-      }
-    }
+    if (userActionsResult) rawUserActions = userActionsResult;
+  } else if (wantsTopics) {
+    const topicPageResult = await readTopics();
+    topicPageData = topicPageResult.data;
+    rawTopics = topicPageResult.topics;
+    readTopicPage = true;
+  } else if (wantsReplies) {
+    rawUserActions = await readUserActions();
   }
   const consumedUserActions = rawUserActions.slice(0, LIST_PAGE_SIZE);
   const categoryMap = await categoryMapForTopics(
@@ -182,6 +179,10 @@ export async function getLinuxDoUserProfile(
   const replies = consumedUserActions
     .map((action) => normalizeUserActionReply(action, categoryMap, resolvedUsername, user))
     .filter(Boolean) as UserReplyActivity[];
+  const hasValidReplyLookahead = Boolean(
+    rawUserActions[LIST_PAGE_SIZE] &&
+    normalizeUserActionReply(rawUserActions[LIST_PAGE_SIZE], categoryMap, resolvedUsername, user)
+  );
   const topicCount = discourseAccountCount(summary.topic_count);
   const hasMoreTopics =
     wantsTopics &&
@@ -191,7 +192,7 @@ export async function getLinuxDoUserProfile(
     (topicCount === undefined
       ? rawTopics.length >= LIST_PAGE_SIZE
       : topicPage * LIST_PAGE_SIZE + rawTopics.length < topicCount);
-  const hasMoreReplies = wantsReplies && replies.length > 0 && rawUserActions.length > LIST_PAGE_SIZE;
+  const hasMoreReplies = wantsReplies && hasValidReplyLookahead;
   const result: UserProfile = {
     source: 'linuxdo',
     id: resolvedUsername,

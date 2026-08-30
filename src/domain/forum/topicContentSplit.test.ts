@@ -3,6 +3,7 @@ import { parseHtml } from './html';
 import { domNodeCount } from '../../../tests/helpers/domNodeCount';
 import { withTrackedParseHtml } from '../../../tests/helpers/trackedParseHtml';
 import {
+  combineForumSelectionTokens,
   compileForumContent,
   prepareReplyContent,
   prepareTopicContent,
@@ -17,6 +18,18 @@ function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
   return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
 }
 
+function selectionToken(row: CompiledForumContentRow) {
+  return JSON.parse(row.selectionToken) as {
+    owners: {
+      tape: { at: number; text: string }[];
+      text: string;
+      trailing: { kind: 'media' | 'separator'; text: string }[];
+    }[];
+    prefix: { kind: 'media' | 'separator'; text: string }[];
+    version: 1;
+  };
+}
+
 function imageUrlsInPlannedRow(row: { html?: string }) {
   return parseHtml(row.html || '')
     .querySelectorAll('img')
@@ -28,7 +41,7 @@ function planForumContent(html: string | undefined, source: 'linuxdo' | 'nodesee
   return {
     rows: compilation.rows.flatMap<any>((row) => {
       if (row.type === 'poll' || row.type === 'quote') return [];
-      const { type: _type, ...plannedRow } = row;
+      const { selectionToken: _selectionToken, type: _type, ...plannedRow } = row;
       if ('src' in plannedRow) {
         const { src: _src, ...htmlRow } = plannedRow;
         return [htmlRow];
@@ -205,6 +218,11 @@ describe('Android topic content splitting', () => {
         preview: 'preview',
         reference: { postNumber: 8, source: 'linuxdo', topicId: '77' }
       }
+    });
+    expect(selectionToken(compilation.rows[1])).toEqual({
+      owners: [{ tape: [], text: 'preview', trailing: [{ kind: 'separator', text: '\n' }] }],
+      prefix: [],
+      version: 1
     });
     expect(compilation.rows[3]).toEqual(expect.objectContaining({ poll, type: 'poll' }));
   });
@@ -584,6 +602,131 @@ describe('Android topic content splitting', () => {
     expect(inlineRows[0]).toMatchObject({ type: 'richText' });
   });
 
+  it('compiles one ordered UTF-16 selection tape without reparsing row HTML', () => {
+    const rows = compileForumContent({
+      html:
+        '<p>A\ud83d\ude00e\u0301<img class="emoji" width="20" height="20" src="https://img.example/emoji.png" alt="笑">B' +
+        '<img class="emoji" width="20" height="20" src="https://img.example/unlabelled.png"></p>' +
+        '<h3>配置</h3>' +
+        '<table><tbody><tr><th>CPU</th><th>规格</th></tr><tr><td>核心</td><td>1 核<img src="https://img.example/chip.png" title="芯片"></td></tr></tbody></table>' +
+        '<forum-sticker-row><forum-sticker src="https://img.example/sticker.webp" title="贴纸">ignored</forum-sticker></forum-sticker-row>' +
+        '<pre>const face = "\ud83d\ude00";\n</pre><p>尾声</p>',
+      role: 'opening',
+      source: 'nodeseek'
+    }).rows;
+
+    expect(rows.map((row) => row.type)).toEqual(['richText', 'table', 'richText', 'codeBlock', 'richText']);
+    expect(selectionToken(rows[0])).toEqual({
+      owners: [
+        {
+          tape: [
+            { at: 5, text: '笑' },
+            { at: 6, text: '' }
+          ],
+          text: 'A\ud83d\ude00e\u0301B',
+          trailing: [{ kind: 'separator', text: '\n' }]
+        },
+        {
+          tape: [],
+          text: '配置',
+          trailing: [{ kind: 'separator', text: '\n' }]
+        }
+      ],
+      prefix: [],
+      version: 1
+    });
+    expect(selectionToken(rows[1]).owners).toEqual([
+      { tape: [], text: 'CPU', trailing: [{ kind: 'separator', text: '\t' }] },
+      { tape: [], text: '规格', trailing: [{ kind: 'separator', text: '\n' }] },
+      { tape: [], text: '核心', trailing: [{ kind: 'separator', text: '\t' }] },
+      {
+        tape: [],
+        text: '1 核',
+        trailing: [
+          { kind: 'media', text: '芯片' },
+          { kind: 'separator', text: '\n' }
+        ]
+      }
+    ]);
+    expect(selectionToken(rows[2])).toEqual({
+      owners: [],
+      prefix: [
+        { kind: 'media', text: '贴纸' },
+        { kind: 'separator', text: '\n' }
+      ],
+      version: 1
+    });
+    expect(selectionToken(rows[3]).owners).toEqual([
+      {
+        tape: [],
+        text: 'const face = "\ud83d\ude00";\n',
+        trailing: [{ kind: 'separator', text: '\n' }]
+      }
+    ]);
+    expect(selectionToken(rows[4]).owners).toEqual([
+      { tape: [], text: '尾声', trailing: [{ kind: 'separator', text: '\n' }] }
+    ]);
+  });
+
+  it('matches RNRH owner boundaries around block and opaque media', () => {
+    const blockImageRows = compileForumContent({
+      html: '<p>before \r\n <img src="https://img.example/block.webp" alt="插图"> \r\n after</p>',
+      role: 'opening',
+      source: 'nodeseek'
+    }).rows;
+    const stickerRows = compileForumContent({
+      html:
+        '<forum-sticker-row>\r\n <forum-sticker src="https://img.example/sticker.webp" title="贴纸">ignored</forum-sticker>' +
+        ' \r\n <forum-sticker alt="本地表情">ignored fallback</forum-sticker>\r\n</forum-sticker-row>',
+      role: 'opening',
+      source: 'nodeseek'
+    }).rows;
+    const audioRows = compileForumContent({
+      html: '<p>before</p><forum-audio src="https://media.example/song.mp3"><a href="https://media.example/song.mp3">fallback child</a></forum-audio><p>after</p>',
+      role: 'opening',
+      source: 'nodeseek'
+    }).rows;
+
+    const blockImage = selectionToken(blockImageRows[0]);
+    expect(blockImage).toMatchObject({
+      owners: [
+        { tape: [], text: 'before', trailing: [{ kind: 'media', text: '插图' }] },
+        { tape: [], text: 'after', trailing: [{ kind: 'separator', text: '\n' }] }
+      ],
+      prefix: [],
+      version: 1
+    });
+    expect(selectionToken(stickerRows[0])).toEqual({
+      owners: [],
+      prefix: [
+        { kind: 'media', text: '贴纸' },
+        { kind: 'media', text: '本地表情' },
+        { kind: 'separator', text: '\n' }
+      ],
+      version: 1
+    });
+    const audio = JSON.parse(combineForumSelectionTokens(audioRows.map((row) => row.selectionToken))) as ReturnType<
+      typeof selectionToken
+    >;
+    expect(audio).toMatchObject({
+      owners: [
+        {
+          tape: [],
+          text: 'before',
+          trailing: [
+            { kind: 'separator', text: '\n' },
+            { kind: 'media', text: '音频' },
+            { kind: 'separator', text: '\n' }
+          ]
+        },
+        { tape: [], text: 'after', trailing: [{ kind: 'separator', text: '\n' }] }
+      ],
+      prefix: [],
+      version: 1
+    });
+    expect(audio.owners.some((owner) => owner.text.includes('fallback child'))).toBe(false);
+  });
+
   it('compiles one semantic code block before planning physical rows', () => {
     const sourceLines = Array.from(
       { length: 52 },
@@ -783,6 +926,27 @@ describe('Android topic content splitting', () => {
     expect(plan.rows[0]?.html).toBe('<p>内容过于复杂，请在原站查看。</p>');
     expect(plan.rows[0]?.html).not.toContain('oversized-row');
     expect(plan.rows[0]?.html).not.toContain(sourceUrls[0]);
+  });
+
+  it('keeps a compiler fallback notice inside the selection tape', () => {
+    const [row] = compileForumContent({
+      html: `<img src="https://img.example/oversized.webp" alt="${'x'.repeat(17_000)}">`,
+      role: 'opening',
+      source: 'nodeseek'
+    }).rows;
+
+    expect(row && 'html' in row ? row.html : '').toBe('<p>内容过于复杂，请在原站查看。</p>');
+    expect(selectionToken(row)).toEqual({
+      owners: [
+        {
+          tape: [],
+          text: '内容过于复杂，请在原站查看。',
+          trailing: [{ kind: 'separator', text: '\n' }]
+        }
+      ],
+      prefix: [],
+      version: 1
+    });
   });
 
   it('keeps every terminal report tab when its code body exceeds one physical row budget', () => {
@@ -1083,6 +1247,19 @@ describe('Android topic content splitting', () => {
     expect(rows).toHaveLength(1);
     expect(parseHtml(rows[0].html).text).toBe(visibleText);
     expect(rows[0]?.part).toBe('only');
+  });
+
+  it('keeps decoded text in selection owners when planning reaches the depth limit', () => {
+    const html = `${'<div>'.repeat(66)}A &amp; B &copy; C${'</div>'.repeat(66)}`;
+    const rows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows;
+    const token = JSON.parse(combineForumSelectionTokens(rows.map((row) => row.selectionToken))) as ReturnType<
+      typeof selectionToken
+    >;
+
+    const ownerText = token.owners.map((owner) => owner.text).join('');
+    expect(ownerText).toContain('A & B © C');
+    expect(ownerText).not.toContain('&amp;');
+    expect(ownerText).not.toContain('&copy;');
   });
 
   it('splits a mixed subtree only at discrete media boundaries', () => {

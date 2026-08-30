@@ -360,6 +360,7 @@ export function ReplyItem({
                   html={highlightedSectionHtml || undefined}
                   query={query}
                   row={section.content}
+                  selectable={false}
                 />
               </Pressable>
             </TopicSplitDisclosureScope>
@@ -387,6 +388,7 @@ export function ReplyItem({
                 }
                 query={query}
                 row={section.content}
+                selectable={false}
               />
             </View>
           </TopicSplitDisclosureScope>
@@ -456,6 +458,7 @@ export function ReplyItem({
                       }
                       query={query}
                       row={section.content}
+                      selectable={false}
                     />
                   </Pressable>
                 </TopicSplitDisclosureScope>
@@ -754,6 +757,7 @@ export function ReplyItem({
                       html={'html' in bodyContent ? highlightedHtml : undefined}
                       query={query}
                       row={bodyContent}
+                      selectable={false}
                       trimTrailingBlockSpacing
                     />
                   </Pressable>
@@ -775,6 +779,7 @@ export function ReplyItem({
                       }
                       query={query}
                       row={signatureContent}
+                      selectable={false}
                       trimTrailingBlockSpacing
                     />
                   </View>

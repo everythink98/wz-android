@@ -6,6 +6,7 @@ const globals = require('globals');
 module.exports = defineConfig([
   globalIgnores([
     'android/**',
+    'modules/*/android/build/**',
     '.expo/**',
     'coverage/**',
     'node_modules/**',

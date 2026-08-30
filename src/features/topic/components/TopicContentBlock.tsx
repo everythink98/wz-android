@@ -17,6 +17,7 @@ import { createTopicStyles } from '../styles';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
 import { useTopicSplitDisclosure, useTopicTerminalReport } from '../rendering/TopicSplitDisclosure';
 import { TopicHorizontalScroll, TopicTableSemanticBoundary } from '../rendering/topicTableRenderers';
+import { useTopicSelectionRowActive } from '../selection/TopicSelectionSurface';
 
 export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
 
@@ -26,6 +27,7 @@ type TopicContentBlockProps = {
   originalImageUpgradeEnabled?: boolean;
   query?: string;
   row: TopicRenderableContentRow;
+  selectable?: boolean;
   trimTrailingBlockSpacing?: boolean;
 };
 
@@ -80,11 +82,13 @@ function codeRunNodes(runs: readonly ForumCodeTextRun[], query: string, highligh
 function CodeBlock({
   contentWidth,
   query,
-  row
+  row,
+  selectable
 }: {
   contentWidth: number;
   query: string;
   row: Extract<CompiledForumContentRow, { type: 'codeBlock' }>;
+  selectable: boolean;
 }) {
   const { settings, theme } = useReaderThemeStyles(createTopicStyles);
   const terminal = row.variant === 'terminal';
@@ -127,7 +131,7 @@ function CodeBlock({
           testID="topic-code-frame"
         >
           <Text
-            selectable
+            selectable={selectable}
             style={{
               color: terminal ? '#d1d5db' : theme.ink,
               fontFamily: 'monospace',
@@ -208,7 +212,13 @@ function TerminalReportHeader({ row }: { row: Extract<CompiledForumContentRow, {
   );
 }
 
-function DisclosureHeader({ row }: { row: Extract<CompiledForumContentRow, { type: 'disclosureHeader' }> }) {
+function DisclosureHeader({
+  row,
+  selectable
+}: {
+  row: Extract<CompiledForumContentRow, { type: 'disclosureHeader' }>;
+  selectable: boolean;
+}) {
   const { styles, theme } = useReaderThemeStyles(createTopicStyles);
   const disclosure = useTopicSplitDisclosure({
     defaultExpanded: row.defaultExpanded,
@@ -228,7 +238,7 @@ function DisclosureHeader({ row }: { row: Extract<CompiledForumContentRow, { typ
         onExpandedChange={disclosure.toggle}
         theme={theme}
         title={
-          <Text selectable style={styles.detailsPanelSummaryText}>
+          <Text selectable={selectable} style={styles.detailsPanelSummaryText}>
             {row.titleLabel}
           </Text>
         }
@@ -251,7 +261,7 @@ function DisclosureHeader({ row }: { row: Extract<CompiledForumContentRow, { typ
           <StateIcon size={18} color={theme.ink} strokeWidth={2.1} />
         </View>
         <View style={styles.detailsPanelSummary}>
-          <Text selectable style={styles.detailsPanelSummaryText}>
+          <Text selectable={selectable} style={styles.detailsPanelSummaryText}>
             {row.titleLabel}
           </Text>
         </View>
@@ -300,7 +310,6 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
     return (
       <View style={{ flexDirection: 'row', marginBottom: frame.part === 'last' || frame.part === 'only' ? 2 : 0 }}>
         <Text
-          selectable
           style={{
             color: theme.ink,
             fontSize: Math.round(16 * settings.fontScale),
@@ -383,14 +392,17 @@ export function TopicContentBlock({
   originalImageUpgradeEnabled = true,
   query = '',
   row,
+  selectable,
   trimTrailingBlockSpacing = false
 }: TopicContentBlockProps) {
+  const topicSelectionActive = useTopicSelectionRowActive();
+  const textSelectable = selectable ?? !topicSelectionActive;
   const source = useMemo(() => ({ html: html ?? ('html' in row ? row.html : '') }), [html, row]);
   let content: ReactNode;
   if (row.type === 'codeBlock') {
-    content = <CodeBlock contentWidth={contentWidth} query={query} row={row} />;
+    content = <CodeBlock contentWidth={contentWidth} query={query} row={row} selectable={textSelectable} />;
   } else if (row.type === 'disclosureHeader') {
-    content = <DisclosureHeader row={row} />;
+    content = <DisclosureHeader row={row} selectable={textSelectable} />;
   } else if (row.type === 'terminalReportHeader') {
     content = <TerminalReportHeader row={row} />;
   } else {

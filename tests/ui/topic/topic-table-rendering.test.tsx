@@ -216,7 +216,15 @@ function semanticBoundary(
   );
 }
 
-function CompiledContentFixture({ html, source = 'nodeseek' }: { html: string; source?: 'linuxdo' | 'nodeseek' }) {
+function CompiledContentFixture({
+  html,
+  selectable,
+  source = 'nodeseek'
+}: {
+  html: string;
+  selectable?: boolean;
+  source?: 'linuxdo' | 'nodeseek';
+}) {
   const store = useTopicSplitDisclosureStore();
   const rows = compileForumContent({ html, role: 'opening', source }).rows;
   return (
@@ -227,7 +235,7 @@ function CompiledContentFixture({ html, source = 'nodeseek' }: { html: string; s
             .filter((row) => topicSemanticRowVisible(row, 'opening', store))
             .filter((row) => row.type !== 'poll' && row.type !== 'quote')
             .map((row) => (
-              <TopicContentBlock key={row.keySuffix} contentWidth={320} row={row} />
+              <TopicContentBlock key={row.keySuffix} contentWidth={320} row={row} selectable={selectable} />
             ))}
         </TopicSplitDisclosureScope>
       </TopicTableScrollProvider>
@@ -236,6 +244,12 @@ function CompiledContentFixture({ html, source = 'nodeseek' }: { html: string; s
 }
 
 describe('native topic structured rendering', () => {
+  it('keeps generated list markers out of the selectable text-owner fingerprint', async () => {
+    const screen = await render(<CompiledContentFixture html="<ul><li>正文</li></ul>" />);
+
+    expect(screen.getByText('•').props.selectable).not.toBe(true);
+  });
+
   it('renders route-owned tabs and copies the complete styled terminal owner', async () => {
     const copy = jest.mocked(Clipboard.setStringAsync);
     copy.mockClear();
@@ -776,5 +790,19 @@ describe('native topic structured rendering', () => {
     expect(JSON.stringify(screen.toJSON())).toContain('line-52');
     expect(StyleSheet.flatten(screen.getByText('line-52').props.style)?.backgroundColor).toBeTruthy();
     expect(JSON.stringify(screen.toJSON())).toContain('"selectable":true');
+  });
+
+  it('lets reply ownership disable native selection for code and disclosure text', async () => {
+    const screen = await render(
+      <CompiledContentFixture
+        html="<details><summary>Summary</summary><p>body</p></details><pre>code</pre>"
+        selectable={false}
+        source="linuxdo"
+      />
+    );
+
+    const tree = JSON.stringify(screen.toJSON());
+    expect(tree).toContain('"selectable":false');
+    expect(tree).not.toContain('"selectable":true');
   });
 });

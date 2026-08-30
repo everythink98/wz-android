@@ -1071,6 +1071,97 @@ describe('Android local sources', () => {
     ).toEqual(['0', '30']);
   });
 
+  it('continues linux.do reply pagination when only the lookahead row parses', async () => {
+    const validReply = {
+      post_id: 31,
+      topic_id: 131,
+      post_number: 31,
+      title: 'reply topic 31',
+      slug: 'reply-topic-31',
+      created_at: '2026-05-20T00:00:00.000Z'
+    };
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/u/alice/summary.json') {
+        return json({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
+      }
+      expect(url.pathname).toBe('/user_actions.json');
+      return json({
+        user_actions:
+          url.searchParams.get('offset') === '0'
+            ? [...Array.from({ length: 30 }, () => ({})), validReply]
+            : [validReply]
+      });
+    });
+
+    const firstPage = await getLinuxDoUserProfile('alice', 'alice', {
+      cursorType: 'replies',
+      fetcher
+    });
+    const secondPage = await getLinuxDoUserProfile('alice', 'alice', {
+      cursor: '30',
+      cursorType: 'replies',
+      fetcher
+    });
+
+    expect(firstPage).toMatchObject({ replies: [], hasMoreReplies: true, nextRepliesCursor: '30' });
+    expect(secondPage).toMatchObject({
+      replies: [expect.objectContaining({ id: '31' })],
+      hasMoreReplies: false,
+      nextRepliesCursor: null
+    });
+  });
+
+  it('starts initial linux.do topic and reply lanes together after resolving the summary identity', async () => {
+    const started = new Set<string>();
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/u/alice/summary.json') {
+        return json({ user_summary: { user: { id: 7, username: 'alice', name: 'Alice' } } });
+      }
+      const lane = url.pathname === '/user_actions.json' ? 'replies' : 'topics';
+      started.add(lane);
+      await Promise.resolve();
+      if (started.size !== 2) throw new Error('profile lanes started sequentially');
+      if (lane === 'replies') {
+        return json({
+          user_actions: [
+            {
+              post_id: 31,
+              topic_id: 131,
+              post_number: 31,
+              title: 'reply topic 31',
+              slug: 'reply-topic-31',
+              created_at: '2026-05-20T00:00:00.000Z'
+            }
+          ]
+        });
+      }
+      return json({
+        topic_list: {
+          topics: [
+            {
+              id: 1,
+              title: 'topic 1',
+              slug: 'topic-1',
+              created_at: '2026-05-20T00:00:00.000Z',
+              posts_count: 1
+            }
+          ]
+        }
+      });
+    });
+
+    const profile = await getLinuxDoUserProfile('alice', 'alice', { fetcher });
+
+    expect(started).toEqual(new Set(['topics', 'replies']));
+    expect(profile).toMatchObject({
+      topics: [expect.objectContaining({ id: '1' })],
+      replies: [expect.objectContaining({ id: '31' })]
+    });
+    expect(sourceDiagnosticSummary(profile)).toMatchObject({ partialErrorCount: 0 });
+  });
+
   it('keeps summary topics after an initial linux.do topic-page failure but rejects an explicit lane read', async () => {
     const fetcher = routeFetcher([
       [
