@@ -523,6 +523,7 @@ describe('Android release evidence guards', () => {
     const timestampIndex = events.findIndex((event) => event.includes('shell date +%s.%3N'));
     const markerIndex = events.findIndex((event) => event.includes('shell log -p i -t WZ_APK_SANITY'));
     const firstOpenIndex = events.findIndex((event) => event.startsWith('agent:open '));
+    const appStateIndex = events.findIndex((event) => event.startsWith('agent:appstate '));
     const dumpIndex = events.findIndex((event) => event.includes('logcat -d -v threadtime -T 1784102400.000'));
     expect(packageReadIndexes).toHaveLength(2);
     expect(packageReadIndexes[0]).toBeLessThan(installIndex);
@@ -534,7 +535,8 @@ describe('Android release evidence guards', () => {
     expect(timestampIndex).toBeGreaterThan(installIndex);
     expect(markerIndex).toBeGreaterThan(timestampIndex);
     expect(firstOpenIndex).toBeGreaterThan(markerIndex);
-    expect(events[firstOpenIndex]).not.toContain(' --device ');
+    expect(events[firstOpenIndex]).toContain('--device WZ Pixel API 35');
+    expect(events[appStateIndex]).toContain('--serial emulator-5554');
     expect(dumpIndex).toBeGreaterThan(firstOpenIndex);
   });
 

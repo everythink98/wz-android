@@ -234,7 +234,10 @@ export function runApkSanity({
   let logging = false;
   const errors = [];
   try {
-    runAgentDeviceCommand(['open', appPackage, '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
+    runAgentDeviceCommand(
+      ['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs(device.name)],
+      { cwd: rootDir }
+    );
     runAgentDeviceCommand(['logs', 'clear', '--restart', '--session', smokeSession, '--platform', 'android'], {
       cwd: rootDir
     });
@@ -246,11 +249,14 @@ export function runApkSanity({
       cwd: rootDir
     });
     waitFor('id="main-tab-feed"', 60_000, runAgentDeviceCommand);
-    const appState = runAgentDeviceCommand(['appstate', '--session', smokeSession, '--platform', 'android', '--json'], {
-      capture: true,
-      cwd: rootDir,
-      echoCapture: false
-    });
+    const appState = runAgentDeviceCommand(
+      ['appstate', '--session', smokeSession, '--platform', 'android', '--serial', device.id, '--json'],
+      {
+        capture: true,
+        cwd: rootDir,
+        echoCapture: false
+      }
+    );
     if (JSON.parse(appState)?.data?.package !== appPackage) {
       throw new Error(`APK 启动后前台包名不是 ${appPackage}。`);
     }

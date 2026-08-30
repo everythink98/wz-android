@@ -2856,6 +2856,16 @@
 | 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
 
 
+## `REG-OPS-020` 多台已启动设备使 Smoke 首次启动与前台校验串到主 AVD
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-02` |
+| 历史症状与根因 | 主 AVD 被另一个 agent-device 会话占用时，即使 Smoke 明确选择独立验证 AVD，覆盖安装仍成功但首次 `open` 会误选主 AVD 并报 `DEVICE_IN_USE`；补上设备选择后，`appstate` 又可能读取第一台已启动设备并误判 App 不在前台。根因：`boot` 和 `install` 不保证为后续命令建立可靠的设备绑定，而首次 `open` 未携带所选设备、`appstate` 未携带已解析的 emulator serial。 |
+| 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
+
+
 ## `REG-NOTIFY-001` 前台恢复旧未读被误报为新消息
 
 | 字段 | 内容 |
