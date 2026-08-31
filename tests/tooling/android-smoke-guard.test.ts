@@ -8,7 +8,7 @@ import {
   isVersionSupported,
   MIN_AGENT_DEVICE_VERSION
 } from '../../scripts/agent-device-runtime.mjs';
-import { runApkSanity, withSmokeSession } from '../../scripts/smoke-android.mjs';
+import { parseBootedAndroidDevice, runApkSanity, withSmokeSession } from '../../scripts/smoke-android.mjs';
 import {
   listReplayFiles,
   matchingAndroidDevices,
@@ -24,6 +24,17 @@ import {
 import { loggedOutDeviceName } from '../../scripts/run-logged-out-device-replay.mjs';
 
 const rootDir = path.resolve(__dirname, '../..');
+const bootedAndroidDeviceOutput = JSON.stringify({
+  success: true,
+  data: {
+    platform: 'android',
+    target: 'mobile',
+    device: 'WZ Pixel API 35',
+    id: 'emulator-5554',
+    kind: 'emulator',
+    booted: true
+  }
+});
 
 function readProjectFile(...parts: string[]) {
   return readFileSync(path.join(rootDir, ...parts), 'utf8');
@@ -97,7 +108,7 @@ describe('Android release evidence guards', () => {
           selectedDevice: 'WZ Pixel API 35',
           runAgentDeviceCommand: (args: string[]) => {
             events.push(args.join(' '));
-            return '';
+            return args[0] === 'boot' ? bootedAndroidDeviceOutput : '';
           }
         },
         () => {
@@ -107,7 +118,7 @@ describe('Android release evidence guards', () => {
       )
     ).toThrow(failure);
     expect(events).toEqual([
-      'boot --session wz-apk-sanity --platform android --device WZ Pixel API 35',
+      'boot --session wz-apk-sanity --platform android --device WZ Pixel API 35 --json',
       'sanity',
       'close --session wz-apk-sanity --platform android'
     ]);
@@ -125,7 +136,7 @@ describe('Android release evidence guards', () => {
         },
         runAgentDeviceCommand: (args: string[]) => {
           events.push(`agent:${args.join(' ')}`);
-          return '';
+          return args[0] === 'boot' ? bootedAndroidDeviceOutput : '';
         }
       },
       () => events.push('sanity')
@@ -133,7 +144,7 @@ describe('Android release evidence guards', () => {
 
     expect(events).toEqual([
       'adb:-s emulator-5554 emu avd name',
-      'agent:boot --session wz-apk-sanity --platform android --device WZ_Pixel_API_35',
+      'agent:boot --session wz-apk-sanity --platform android --device WZ_Pixel_API_35 --json',
       'sanity',
       'agent:close --session wz-apk-sanity --platform android'
     ]);
@@ -189,7 +200,7 @@ describe('Android release evidence guards', () => {
         selectedDevice: 'WZ Pixel API 35',
         runAgentDeviceCommand: (args: string[]) => {
           events.push(args.join(' '));
-          return '';
+          return args[0] === 'boot' ? bootedAndroidDeviceOutput : '';
         }
       },
       () => undefined
@@ -213,6 +224,13 @@ describe('Android release evidence guards', () => {
       versionCode: 67,
       versionName: '1.3.63'
     });
+    expect(parseBootedAndroidDevice(bootedAndroidDeviceOutput)).toMatchObject({
+      id: 'emulator-5554',
+      name: 'WZ Pixel API 35',
+      platform: 'android',
+      booted: true
+    });
+    expect(() => parseBootedAndroidDevice('{ malformed')).toThrow('未返回可信的 Android 设备身份');
     expect(matchingAndroidDevices(devices, 'WZ_Pixel_API_35')).toEqual(devices);
   });
 
@@ -262,10 +280,12 @@ describe('Android release evidence guards', () => {
     const smokeScript = readProjectFile('scripts', 'smoke-android.mjs');
 
     expect(smokeScript).toContain("['doctor', '--platform', 'android']");
-    const bootIndex = smokeScript.indexOf('withSmokeSession({ selectedDevice }, () => {');
+    const bootIndex = smokeScript.indexOf('withSmokeSession({ selectedDevice }, (smokeDevice) => {');
     const sanityIndex = smokeScript.indexOf('runApkSanity({ apkPath, device: smokeDevice });');
     expect(bootIndex).toBeGreaterThan(0);
     expect(sanityIndex).toBeGreaterThan(bootIndex);
+    expect(smokeScript).not.toContain('resolveAndroidDevice');
+    expect(smokeScript).toContain('device: smokeDevice');
     expect(smokeScript).toMatch(
       /'install',\s*appPackage,\s*apkPath,\s*'--session',\s*smokeSession,\s*'--platform',\s*'android'/
     );

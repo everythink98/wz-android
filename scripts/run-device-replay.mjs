@@ -301,12 +301,13 @@ export async function runReplayBatch(replayFiles, executeReplay) {
 export async function runDeviceReplay({
   apkPath: apkValue,
   selectedDevice: selectedValue,
+  device: providedDevice,
   replayDirectory = path.join(rootDir, 'tests', 'device')
 } = {}) {
   const apkPath = resolveExpectedApkPath(apkValue);
   const selectedDevice = selectedDeviceName(selectedValue);
   assertAgentDeviceVersion(rootDir);
-  const device = resolveAndroidDevice(selectedDevice);
+  const device = providedDevice || resolveAndroidDevice(selectedDevice);
   const identity = verifyInstalledApk({ apkPath, deviceId: device.id });
   assertNoExistingAgentDeviceRecording(device.id);
   const artifactsDir = path.join(rootDir, 'tmp', 'agent-device');

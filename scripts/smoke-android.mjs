@@ -10,7 +10,7 @@ import {
   runAgentDevice,
   selectedDeviceName
 } from './agent-device-runtime.mjs';
-import { resolveAndroidDevice, runDeviceReplay } from './run-device-replay.mjs';
+import { runDeviceReplay } from './run-device-replay.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootDir = path.resolve(path.dirname(scriptPath), '..');
@@ -36,6 +36,24 @@ const runtimeFailurePatterns = [
     /\bRedBox\b|Unhandled JS Exception|com\.facebook\.react\.common\.JavascriptException|Log \d+ of \d+/i
   ]
 ];
+
+export function parseBootedAndroidDevice(output) {
+  let device;
+  try {
+    device = JSON.parse(output)?.data;
+  } catch {
+    // The fail-closed error below intentionally omits raw CLI output.
+  }
+  if (
+    device?.platform !== 'android' ||
+    device?.booted !== true ||
+    typeof device?.id !== 'string' ||
+    typeof device?.device !== 'string'
+  ) {
+    throw new Error('agent-device boot 未返回可信的 Android 设备身份。');
+  }
+  return { ...device, name: device.device };
+}
 
 function assertNoRuntimeFailure(output, source) {
   const failure = runtimeFailurePatterns.find(([, pattern]) => pattern.test(output));
@@ -167,12 +185,13 @@ export function withSmokeSession(
     }
     deviceName = avdName;
   }
-  runAgentDeviceCommand(['boot', '--session', smokeSession, '--platform', 'android', '--device', deviceName], {
-    cwd: rootDir
-  });
+  const bootOutput = runAgentDeviceCommand(
+    ['boot', '--session', smokeSession, '--platform', 'android', '--device', deviceName, '--json'],
+    { capture: true, cwd: rootDir }
+  );
   let failure;
   try {
-    return action();
+    return action(parseBootedAndroidDevice(bootOutput));
   } catch (error) {
     failure = error;
     throw error;
@@ -292,15 +311,15 @@ async function main() {
   const selectedDevice = selectedDeviceName();
   assertAgentDeviceVersion(rootDir);
   runAgentDevice(['doctor', '--platform', 'android'], { cwd: os.tmpdir() });
-  withSmokeSession({ selectedDevice }, () => {
-    const smokeDevice = resolveAndroidDevice(selectedDevice);
+  const smokeDevice = withSmokeSession({ selectedDevice }, (smokeDevice) => {
     runApkSanity({ apkPath, device: smokeDevice });
     return smokeDevice;
   });
   console.log('APK_SANITY');
   await runDeviceReplay({
     apkPath,
-    selectedDevice
+    selectedDevice,
+    device: smokeDevice
   });
 }
 
