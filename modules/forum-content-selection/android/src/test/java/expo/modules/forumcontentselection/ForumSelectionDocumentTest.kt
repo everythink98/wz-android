@@ -165,6 +165,80 @@ class ForumSelectionDocumentTest {
   }
 
   @Test
+  fun `identical selection is a no-op and preserves select all copy semantics`() {
+    val document = ForumSelectionDocument()
+    val leadingMedia = ForumSelectionRowDefinition(
+      documentId = "reply:42",
+      rowKey = "leading-media",
+      nativeId = "leading-media-native",
+      selectionToken = """{"version":1,"prefix":[{"kind":"media","text":"[leading sticker]"},{"kind":"separator","text":"\n"}],"owners":[]}"""
+    )
+    assertEquals(
+      ForumSelectionUpdate.Applied,
+      document.replace("r1", listOf(leadingMedia, row("text", "text-native", "body", "")))
+    )
+    assertTrue(document.selectAll("reply:42"))
+    val selection = requireNotNull(document.selection())
+
+    assertFalse(document.select(selection.start, selection.end))
+    assertEquals(selection, document.selection())
+    assertEquals("[leading sticker]\nbody", document.copySelection())
+  }
+
+  @Test
+  fun `select all upgrades an identical manual range to full document copy semantics`() {
+    val document = ForumSelectionDocument()
+    val leadingMedia = ForumSelectionRowDefinition(
+      documentId = "reply:42",
+      rowKey = "leading-media",
+      nativeId = "leading-media-native",
+      selectionToken = """{"version":1,"prefix":[{"kind":"media","text":"[leading sticker]"},{"kind":"separator","text":"\n"}],"owners":[]}"""
+    )
+    assertEquals(
+      ForumSelectionUpdate.Applied,
+      document.replace("r1", listOf(leadingMedia, row("text", "text-native", "body", "")))
+    )
+    assertTrue(
+      document.select(
+        ForumSelectionAnchor("reply:42", "r1", "text", 0, 0, ForumSelectionAffinity.Upstream),
+        ForumSelectionAnchor("reply:42", "r1", "text", 0, 4, ForumSelectionAffinity.Downstream)
+      )
+    )
+    assertEquals("body", document.copySelection())
+
+    assertTrue(document.selectAll("reply:42"))
+    assertEquals("[leading sticker]\nbody", document.copySelection())
+    assertFalse(document.selectAll("reply:42"))
+  }
+
+  @Test
+  fun `select all capability follows the current selection semantics`() {
+    val document = ForumSelectionDocument()
+    assertEquals(
+      ForumSelectionUpdate.Applied,
+      document.replace("r1", listOf(row("row", "native", "body", "")))
+    )
+    assertTrue(
+      document.select(
+        ForumSelectionAnchor("reply:42", "r1", "row", 0, 0, ForumSelectionAffinity.Downstream),
+        ForumSelectionAnchor("reply:42", "r1", "row", 0, 2, ForumSelectionAffinity.Upstream)
+      )
+    )
+    assertTrue(document.canSelectAll("reply:42"))
+
+    assertTrue(document.selectAll("reply:42"))
+
+    assertFalse(document.canSelectAll("reply:42"))
+    assertTrue(
+      document.select(
+        ForumSelectionAnchor("reply:42", "r1", "row", 0, 1, ForumSelectionAffinity.Downstream),
+        ForumSelectionAnchor("reply:42", "r1", "row", 0, 3, ForumSelectionAffinity.Upstream)
+      )
+    )
+    assertTrue(document.canSelectAll("reply:42"))
+  }
+
+  @Test
   fun `reverse handles preserve tape boundary affinity`() {
     val document = ForumSelectionDocument()
     val tape = """[{"at":0,"text":"[zero]"},{"at":1,"text":"[one]"},{"at":2,"text":"[two]"}]"""

@@ -41,7 +41,7 @@ function noteForOfficialConnect(level: number) {
   if (level >= 4) {
     return '官方 Connect 页面读取到的当前状态；4 级通常仍由人工授予。';
   }
-  return '官方 Connect 页面读取到的信任等级进度。';
+  return '官方 Connect 页面读取到的信任等级要求。';
 }
 
 function snapshotValues(profile: LinuxDoLevelProfile) {
@@ -56,6 +56,11 @@ function parseCssNumber(style: string, name: string) {
 function parseFirstNumber(value: string) {
   const match = value.replace(/[,，\s]/g, '').match(/-?\d+/);
   return match ? numberValue(match[0]) : 0;
+}
+
+function connectRequirementMet(classNames: string) {
+  const classes = classNames.split(/\s+/);
+  return classes.includes('met') && !classes.includes('unmet');
 }
 
 function parseCurrentAndRequired(text: string, fallbackCurrent: number, fallbackRequired: number) {
@@ -73,14 +78,22 @@ function parseCurrentAndRequired(text: string, fallbackCurrent: number, fallback
   };
 }
 
-function toConnectRequirement(label: string, current: number, required: number, met: boolean): LinuxDoLevelRequirement {
+function toConnectRequirement(
+  label: string,
+  current: number,
+  required: number,
+  met: boolean,
+  direction: LinuxDoLevelRequirement['direction']
+): LinuxDoLevelRequirement {
   return {
     key: `connect:${label}`,
     label,
     current,
     required,
     met,
-    ratio: required > 0 ? Math.min(current / required, 1) : met ? 1 : 0,
+    direction,
+    ratio:
+      required > 0 ? Math.min(current / required, 1) : direction === 'maximum' ? (current > 0 ? 1 : 0) : met ? 1 : 0,
     displayCurrent: String(current),
     displayRequired: required > 0 ? String(required) : met ? '已通过' : '需为 0'
   };
@@ -109,8 +122,8 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
     const style = circle.getAttribute('style') || '';
     const current = parseCssNumber(style, '--val');
     const required = parseCssNumber(style, '--max');
-    const met = circle.classNames.split(/\s+/).includes('met') || (required > 0 && current >= required);
-    requirements.push(toConnectRequirement(label, current, required, met));
+    const met = connectRequirementMet(circle.classNames);
+    requirements.push(toConnectRequirement(label, current, required, met, 'minimum'));
   }
   for (const item of card.querySelectorAll('.tl3-bar-item')) {
     const label = item.querySelector('.tl3-bar-label')?.text.trim();
@@ -126,9 +139,8 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
       fallbackCurrent,
       fallbackRequired
     );
-    const met =
-      fill.classNames.split(/\s+/).includes('met') || (parsed.required > 0 && parsed.current >= parsed.required);
-    requirements.push(toConnectRequirement(label, parsed.current, parsed.required, met));
+    const met = connectRequirementMet(fill.classNames);
+    requirements.push(toConnectRequirement(label, parsed.current, parsed.required, met, 'minimum'));
   }
   for (const item of card.querySelectorAll('.tl3-quota-card')) {
     const label = item.querySelector('.tl3-quota-label')?.text.trim();
@@ -136,19 +148,22 @@ function parseLinuxDoConnectProgress(html: string, summaryProfile: LinuxDoLevelP
       continue;
     }
     const value = item.querySelector('.tl3-quota-nums')?.text.trim() || '';
-    const current = parseFirstNumber(value);
-    const met = !item.classNames.split(/\s+/).includes('unmet');
-    requirements.push(toConnectRequirement(label, current, 5, met));
+    const parsed = parseCurrentAndRequired(value, 0, 0);
+    if (parsed.required <= 0) {
+      continue;
+    }
+    const met = connectRequirementMet(item.classNames);
+    requirements.push(toConnectRequirement(label, parsed.current, parsed.required, met, 'maximum'));
   }
   for (const item of card.querySelectorAll('.tl3-veto-item')) {
-    const met = !item.classNames.split(/\s+/).includes('unmet');
+    const met = connectRequirementMet(item.classNames);
     const face = met ? item.querySelector('.tl3-veto-front') || item : item.querySelector('.tl3-veto-back') || item;
     const label = face.querySelector('.tl3-veto-label')?.text.trim();
     if (!label) {
       continue;
     }
     const current = parseFirstNumber(face.querySelector('.tl3-veto-value')?.text.trim() || '');
-    requirements.push(toConnectRequirement(label, current, 0, met));
+    requirements.push(toConnectRequirement(label, current, 0, met, 'maximum'));
   }
   if (!requirements.length) {
     throw new Error('Connect 未返回等级进度');

@@ -137,9 +137,11 @@ const levelProfile: LinuxDoLevelProfile = {
       current: 5,
       required: 10,
       met: false,
+      direction: 'minimum',
       ratio: 0.5,
       displayCurrent: '5',
       displayRequired: '10',
+      change: 1,
       displayChange: '较上次 +1'
     }
   ],
@@ -156,6 +158,69 @@ const levelProfile: LinuxDoLevelProfile = {
   achievedCount: 0,
   totalCount: 1,
   fetchedAt: '2026-07-14T01:00:00.000Z'
+};
+
+const officialRiskProfile: LinuxDoLevelProfile = {
+  ...levelProfile,
+  currentLevel: 2,
+  targetLevel: 3,
+  source: 'connect',
+  estimate: false,
+  note: '官方 Connect 页面读取到的当前状态。',
+  requirements: [
+    {
+      key: 'connect:被举报帖子',
+      label: '被举报帖子',
+      current: 2,
+      required: 5,
+      met: true,
+      direction: 'maximum',
+      ratio: 0.4,
+      displayCurrent: '2',
+      displayRequired: '5',
+      change: 1,
+      displayChange: '较上次 +1'
+    },
+    {
+      key: 'connect:举报用户',
+      label: '举报用户',
+      current: 1,
+      required: 5,
+      met: true,
+      direction: 'maximum',
+      ratio: 0.2,
+      displayCurrent: '1',
+      displayRequired: '5',
+      change: -1,
+      displayChange: '较上次 -1'
+    },
+    {
+      key: 'connect:被禁言',
+      label: '被禁言',
+      current: 0,
+      required: 0,
+      met: true,
+      direction: 'maximum',
+      ratio: 0,
+      displayCurrent: '0',
+      displayRequired: '已通过'
+    },
+    {
+      key: 'connect:被封禁',
+      label: '被封禁',
+      current: 1,
+      required: 0,
+      met: false,
+      direction: 'maximum',
+      ratio: 1,
+      displayCurrent: '1',
+      displayRequired: '需为 0',
+      change: 2,
+      displayChange: '较上次 +2'
+    }
+  ],
+  achievedCount: 3,
+  totalCount: 4
 };
 
 function nodeSeekProps(
@@ -313,6 +378,80 @@ describe('Account site panels', () => {
     expect(view.getByText('1小时1分')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('刷新等级'));
     expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows official maximum requirements as risk usage instead of positive completion', async () => {
+    const view = await render(
+      <LinuxDoLevelPanel
+        busy={false}
+        error=""
+        siteSession={session('linuxdo', 'logged-in')}
+        profile={officialRiskProfile}
+        styles={styles}
+        theme={theme}
+        onOpenLogin={jest.fn()}
+        onRefresh={jest.fn()}
+      />
+    );
+
+    expect(view.getByText('官方要求')).toBeTruthy();
+    expect(view.getByText('通过 3 / 4 项')).toBeTruthy();
+    expect(view.getByText('2 / 5')).toBeTruthy();
+    expect(view.queryByText('40%')).toBeNull();
+    expect(view.getAllByTestId('level-risk-used-connect:被举报帖子')).toHaveLength(2);
+    expect(view.getAllByTestId('level-risk-remaining-connect:被举报帖子')).toHaveLength(3);
+    expect(view.getAllByTestId('level-risk-used-connect:被举报帖子')[0]).toHaveStyle(styles.levelRiskSegmentUsed);
+    expect(view.getAllByTestId('level-risk-remaining-connect:被举报帖子')[0]).toHaveStyle(
+      styles.levelRiskSegmentRemaining
+    );
+
+    const quota = view.getByLabelText('被举报帖子，风险已用 2 / 5，剩余 3，已通过');
+    expect(quota.props.accessibilityRole).toBe('progressbar');
+    expect(quota.props.accessibilityValue).toEqual({ min: 0, max: 5, now: 2, text: '风险已用 2 / 5' });
+    expect(view.getByTestId('level-veto-connect:被禁言').props.accessibilityLabel).toBe('被禁言，当前 0，已通过');
+    expect(view.getByTestId('level-veto-connect:被封禁').props.accessibilityLabel).toBe(
+      '被封禁，当前 1，未通过，较上次 +2 · 变差'
+    );
+    expect(view.getByText('较上次 +1 · 变差')).toHaveStyle(styles.levelChangeDanger);
+    expect(view.getByText('较上次 -1 · 改善')).toHaveStyle(styles.levelChangeSuccess);
+  });
+
+  it('bounds visual segments for a customized remote risk limit without changing its exact values', async () => {
+    const requirement = officialRiskProfile.requirements[0];
+    const profile: LinuxDoLevelProfile = {
+      ...officialRiskProfile,
+      requirements: [
+        {
+          ...requirement,
+          key: 'connect:自定义风险',
+          label: '自定义风险',
+          current: 25,
+          required: 1000,
+          ratio: 0.025,
+          displayCurrent: '25',
+          displayRequired: '1000'
+        }
+      ],
+      achievedCount: 1,
+      totalCount: 1
+    };
+    const view = await render(
+      <LinuxDoLevelPanel
+        busy={false}
+        error=""
+        siteSession={session('linuxdo', 'logged-in')}
+        profile={profile}
+        styles={styles}
+        theme={theme}
+        onOpenLogin={jest.fn()}
+        onRefresh={jest.fn()}
+      />
+    );
+
+    expect(view.getByText('25 / 1000')).toBeTruthy();
+    expect(view.getByLabelText('自定义风险，风险已用 25 / 1000，剩余 975，已通过')).toBeTruthy();
+    expect(view.getAllByTestId('level-risk-used-connect:自定义风险')).toHaveLength(1);
+    expect(view.getAllByTestId('level-risk-remaining-connect:自定义风险')).toHaveLength(19);
   });
 
   it('validates and routes the NodeImage key without opening a real login page', async () => {

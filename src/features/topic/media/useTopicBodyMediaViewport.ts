@@ -22,6 +22,11 @@ type ViewportSnapshot = {
   visibleRowKeys: readonly string[];
 };
 
+type ViewportItemMetadata = {
+  indexByKey: ReadonlyMap<string, number>;
+  regionMembership: ReadonlyMap<string, readonly string[]>;
+};
+
 function compiledRow(item: TopicListItem): CompiledForumContentRow | null {
   if (item.type === 'topicContent' || item.type === 'topicQuoteContent' || item.type === 'topicAcceptedAnswerContent') {
     return item.content.type === 'accessNotice' ? null : item.content.row;
@@ -75,16 +80,18 @@ function dynamicRegionIdentities(item: TopicListItem) {
   return [...new Set(identities)];
 }
 
-function regionMembership(items: readonly TopicListItem[]) {
+function createViewportItemMetadata(items: readonly TopicListItem[]): ViewportItemMetadata {
+  const indexByKey = new Map<string, number>();
   const membership = new Map<string, string[]>();
-  items.forEach((item) => {
+  items.forEach((item, index) => {
+    indexByKey.set(item.key, index);
     dynamicRegionIdentities(item).forEach((identity) => {
       const rowKeys = membership.get(identity) || [];
       rowKeys.push(item.key);
       membership.set(identity, rowKeys);
     });
   });
-  return membership;
+  return { indexByKey, regionMembership: membership };
 }
 
 function sameKeys(left: readonly string[], right: readonly string[]) {
@@ -129,18 +136,18 @@ function directionalWindowIndexes(visibleIndexes: readonly number[], scrollingFo
 function reconcileSnapshot(
   snapshot: ViewportSnapshot,
   items: readonly TopicListItem[],
+  metadata: ViewportItemMetadata,
   sessionIdentity: string
 ): ViewportSnapshot {
   if (snapshot.sessionIdentity !== sessionIdentity) return emptySnapshot(sessionIdentity);
 
-  const indexByKey = new Map(items.map((item, index) => [item.key, index]));
+  const { indexByKey, regionMembership: membership } = metadata;
   const stableRowKeys = snapshot.rowKeys.filter((key) => indexByKey.has(key));
   const stableVisibleRowKeys = snapshot.visibleRowKeys.filter((key) => indexByKey.has(key));
   if (!snapshot.regions.length) {
     const next = { ...snapshot, rowKeys: stableRowKeys, visibleRowKeys: stableVisibleRowKeys };
     return sameSnapshot(snapshot, next) ? snapshot : next;
   }
-  const membership = regionMembership(items);
   const changedRegions = snapshot.regions.filter(
     (region) => !sameKeys(region.rowKeys, membership.get(region.identity) || [])
   );
@@ -201,9 +208,10 @@ export function useTopicBodyMediaViewport({
 }) {
   const [snapshot, setSnapshot] = useState<ViewportSnapshot>(() => emptySnapshot(sessionIdentity));
   const previousVisibleRef = useRef({ firstIndex: -1, sessionIdentity });
+  const itemMetadata = useMemo(() => createViewportItemMetadata(items), [items]);
   const reconciledSnapshot = useMemo(
-    () => reconcileSnapshot(snapshot, items, sessionIdentity),
-    [items, sessionIdentity, snapshot]
+    () => reconcileSnapshot(snapshot, items, itemMetadata, sessionIdentity),
+    [itemMetadata, items, sessionIdentity, snapshot]
   );
 
   useLayoutEffect(() => {
@@ -212,7 +220,7 @@ export function useTopicBodyMediaViewport({
 
   const observeViewableItems = useCallback(
     ({ viewableItems }: { viewableItems: readonly ViewableTopicListItem[] }) => {
-      const indexByKey = new Map(items.map((item, index) => [item.key, index]));
+      const { indexByKey, regionMembership: membership } = itemMetadata;
       const visibleIndexes = [
         ...new Set(
           viewableItems.flatMap(({ index, isViewable, item }) => {
@@ -241,7 +249,6 @@ export function useTopicBodyMediaViewport({
       const activeRegionIdentities = [
         ...new Set(visibleIndexes.flatMap((index) => (items[index] ? dynamicRegionIdentities(items[index]) : [])))
       ];
-      const membership = activeRegionIdentities.length ? regionMembership(items) : new Map<string, string[]>();
       setSnapshot({
         regions: activeRegionIdentities.map((identity) => ({ identity, rowKeys: membership.get(identity) || [] })),
         rowKeys,
@@ -250,7 +257,7 @@ export function useTopicBodyMediaViewport({
         visibleRowKeys
       });
     },
-    [items, sessionIdentity]
+    [itemMetadata, items, sessionIdentity]
   );
 
   return {

@@ -14,6 +14,7 @@ export interface DiscourseLevelRequirement {
   current: number;
   required: number;
   met: boolean;
+  direction: 'minimum' | 'maximum';
   ratio: number;
   displayCurrent: string;
   displayRequired: string;
@@ -191,6 +192,7 @@ export function buildDiscourseLevelProfileFromSummary(summaryInput: DiscourseSum
       current,
       required: config.required,
       met,
+      direction: 'minimum' as const,
       ratio: config.required > 0 ? Math.min(current / config.required, 1) : met ? 1 : 0,
       displayCurrent: displayNumber(current, config.unit),
       displayRequired: displayNumber(config.required, config.unit),

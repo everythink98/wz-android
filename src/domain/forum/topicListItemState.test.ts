@@ -38,4 +38,25 @@ describe('Android topic list item state', () => {
       read: true
     });
   });
+
+  it('looks up topic row state without enumerating ReaderData records', () => {
+    const data = toggleFavorite(recordHistory(createEmptyReaderData(), topic), topic);
+    let ownKeysCalls = 0;
+    const countOwnKeys = <T extends object>(value: T) =>
+      new Proxy(value, {
+        ownKeys(target) {
+          ownKeysCalls += 1;
+          return Reflect.ownKeys(target);
+        }
+      });
+
+    const index = createTopicListItemStateIndex({
+      ...data,
+      favorites: countOwnKeys(data.favorites),
+      history: countOwnKeys(data.history)
+    });
+
+    expect(getTopicListItemStateFromIndex(index, topic)).toMatchObject({ favorite: true, read: true });
+    expect(ownKeysCalls).toBe(0);
+  });
 });

@@ -1,11 +1,9 @@
 package expo.modules.forumcontentselection
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.text.SpannableString
@@ -172,44 +170,6 @@ class ForumSelectionIsolationProofTest {
     assertEquals(1, invalidationCount)
     highlight.update(Path(), 10, 10)
     assertEquals(2, invalidationCount)
-  }
-
-  @Test
-  fun boundaryHandleKeepsTheExactHotspotAndAStraightCaretStem() = onMainThread {
-    val width = 60
-    val height = 40
-    val handle = ForumSelectionHandleDrawable(density = 1f, handleColor = 0xFF1668DC.toInt(), prefersBelow = true)
-    handle.update(PointF(0f, height.toFloat()), width, height)
-    assertEquals(0f, handle.anchorForTest().x, 0f)
-    assertEquals(height.toFloat(), handle.anchorForTest().y, 0f)
-
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    handle.draw(Canvas(bitmap))
-    val colored = buildSet {
-      for (y in 0 until height) {
-        for (x in 0 until width) {
-          if (bitmap.getPixel(x, y).ushr(24) != 0) add(x to y)
-        }
-      }
-    }
-    bitmap.recycle()
-    assertTrue(colored.isNotEmpty())
-    assertTrue(colored.any { (x, y) -> x == 0 && y >= height - 2 })
-    assertTrue(colored.contains(0 to height - 6))
-
-    val visited = mutableSetOf<Pair<Int, Int>>()
-    val pending = ArrayDeque<Pair<Int, Int>>().apply { add(colored.first()) }
-    while (pending.isNotEmpty()) {
-      val point = pending.removeFirst()
-      if (!visited.add(point)) continue
-      for (dy in -1..1) {
-        for (dx in -1..1) {
-          if (dx == 0 && dy == 0) continue
-          (point.first + dx to point.second + dy).takeIf(colored::contains)?.let(pending::add)
-        }
-      }
-    }
-    assertEquals(colored.size, visited.size)
   }
 
   private fun selectionGeometry(

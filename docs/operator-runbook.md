@@ -59,14 +59,14 @@ npm run visual:gallery -- --port 8081
 npm run test:native:forum-selection
 ```
 
-真实长按、手柄、自动滚动、回收恢复、剪贴板与 `0px` 布局位移只在独立 verification AVD `WZ_ForumSelection_Test_API35` 执行：
+真实长按、平台手柄几何、端点变化触感事件、自动滚动、回收恢复、剪贴板与 `0px` 布局位移只在独立 verification AVD `WZ_ForumSelection_Test_API35` 执行：
 
 ```powershell
 adb devices
 npm run test:instrumented:forum-selection
 ```
 
-runner 要求恰好一个已连接且名称精确匹配的 `WZ_ForumSelection_Test_API35`，并只用该 serial 设置 Gradle 的 `ANDROID_SERIAL`；不存在、重复或不匹配时立即失败。不得通过 `WZ_FORUM_SELECTION_TEST_AVD` 改指主登录态、Smoke、普通 Replay 或未登录 AVD，不得在这些保留数据设备上手工执行 `connectedDebugAndroidTest`。缺少独立 AVD 时报告 `BLOCKED_BY_ENV`，不卸载、不清数据、不重置主 AVD。instrumentation 结果只证明隔离 proof 场景；真实 RNRH/Fabric、FlashList、原站正文与 PSS 仍需下方匹配 APK 的只读 Live。
+runner 要求恰好一个已连接且名称精确匹配的 `WZ_ForumSelection_Test_API35`，并只用该 serial 设置 Gradle 的 `ANDROID_SERIAL`；不存在、重复或不匹配时立即失败。不得通过 `WZ_FORUM_SELECTION_TEST_AVD` 改指主登录态、Smoke、普通 Replay 或未登录 AVD，不得在这些保留数据设备上手工执行 `connectedDebugAndroidTest`。缺少独立 AVD 时报告 `BLOCKED_BY_ENV`，不卸载、不清数据、不重置主 AVD。instrumentation 与 `dumpsys vibrator_manager` 只证明隔离 proof 和系统触感请求；真实 RNRH/Fabric、FlashList、原站正文与 PSS 仍需下方匹配 APK 的只读 Live，实际触感和系统关闭触感后的静默只接受物理 Android 设备证据，缺少设备时记 `NOT_VERIFIED`。
 
 ### 覆盖安装
 
@@ -123,13 +123,15 @@ runner 会拒绝与 `WZ_ANDROID_TEST_DEVICE` 或 `WZ_ANDROID_SMOKE_DEVICE` 相�
 
 Android 主楼正文连续选择的 targeted Live 固定展开 `TOPIC-01/02/03` 与 `NAV-02/03`，全程只读：
 
-- 纵滚绘制 owner 的 targeted proof 只复测当前 NodeSeek `https://www.nodeseek.com/post-832584-1`：在正文执行一次静止长按进入自定义选择，禁止用双击代替；把范围拖过首段、贴纸、标题、链接和多段正文后保持选区不取消，连续三次快速下滚再上滚。录制原始分辨率画面并逐帧独立核对可见高亮、起点手柄和终点手柄；端点可见但手柄缺失直接失败，只有真实 viewport/祖先裁剪或 ActionMode 遮挡可列为 excluded。每个实测样本相对当前文字 Path/caret 的 `L∞` 误差必须 `<=2px`，并报告 eligible、measured、missing、excluded 和最坏帧；低帧率肉眼观察、滚动结束截图或坐标回调断言不能替代该证据。
+- 纵滚绘制 owner 的 targeted proof 只复测当前 NodeSeek `https://www.nodeseek.com/post-832584-1`：先长按同页原生标题记录平台 start/end 手柄的方向、hotspot、行底位置和拖动触感，再在正文执行一次静止长按进入自定义选择，禁止用双击代替；正文手柄必须使用同一平台主题形状，主体从行底向下展开且不压住端点文字。把端点放到 wrap-content TextView 底部和相邻 row 边界，确认平台手柄仍完整可见；这条 falsifier 必须由同一 ViewRoot 的列表 viewport/surface overlay handle wrapper 通过，TextView/marked-row overlay、关闭 `clipChildren/clipToPadding`、`PopupWindow` 或独立窗口均不合格。把范围拖过首段、贴纸、标题、链接和多段正文后保持选区不取消，连续三次快速下滚再上滚。录制原始分辨率画面并逐帧独立核对可见高亮、起点手柄和终点手柄；端点可见但手柄缺失直接失败，只有真实 viewport/祖先裁剪或 ActionMode 遮挡可列为 excluded。每个实测样本相对当前文字 Path/caret 的 `L∞` 误差必须 `<=2px`，并报告 eligible、measured、missing、excluded 和最坏帧；尤其核对 pre-draw 后仍发生滚动/translation 的同一 draw，低帧率肉眼观察、滚动结束截图或坐标回调断言不能替代该证据。
 - 直达 NodeSeek `https://www.nodeseek.com/post-877083-1`，先记录主楼正文、标题、表格、表后文字、Emoji 与贴纸的 bounds/baseline；在带 opening marker 的主楼正文双击，确认不出现原生局部高亮、手柄或系统 ActionMode，再以静止长按进入自定义选择。跨至少三个 viewport 并触发至少一次 cell recycle；每次滚动后确认高亮和手柄仍贴合当前文字、旧屏幕位置无 overlay 残影，回收/layout commit 中即使某帧暂时没有可绘制映射也不得取消逻辑选区或 ActionMode，稳定帧必须恢复可见 overlay。再拖过“正文 → 标题 → 表格 → 表后文字”后复制，核对段落换行、table tab/newline 和媒体标签的原文顺序。如主楼存在展开引用/details、签名或 terminal Tab，还要确认当前实际显示的分支进入同一 manifest，折叠内容不进入。选择中与取消后重复记录，所有上述位置相对选择前必须为 `0px` 位移。
-- 同帖慢横拖 table/code、纵向滚动、普通链接点击、Back 与取消选区保持既有行为；活动选区上普通短按正文或空白必须在原点击分发后取消，超过 touch slop 的纵滚必须保留选区且首个 draw frame 就让 overlay 贴住文字。普通链接 tap 必须直接进入既有目标并结束旧选区，不得被 coordinator 延迟或吞掉。横滑接管后不得残留放大镜、手柄或 ActionMode。
+- 同帖慢横拖 table/code、纵向滚动、普通链接点击、Back 与取消选区保持既有行为；起止手柄都从可见命中区边缘按下并细微拖动，端点不得跳到手指中心，之后逐字符往返：Android 27+ 只有逻辑端点改变时出现 `TEXT_HANDLE_MOVE`，停在同一端点、自动滚动但端点未变、取消和重绑均无选择触感。活动选区上普通短按正文或空白必须在原点击分发后取消，超过 touch slop 的纵滚必须保留选区且首个 draw frame 就让 overlay 贴住文字。普通链接 tap 必须直接进入既有目标并结束旧选区，不得被 coordinator 延迟或吞掉。横滑接管后不得残留放大镜、手柄或 ActionMode。
 - 直达 NodeSeek `https://www.nodeseek.com/post-652056-1`，保持主楼与至少一条回复同时挂载：主楼表格必须仍能静止长按进入连续选择；回复 row 必须零 opening marker、不能进入主楼 manifest 或 Native 映射，长按回复只执行独立的原有整条复制并核对剪贴板，不出现主楼 coordinator 的手柄/ActionMode。对当前实际显示的评论和已采纳答案逐项重复该负向 marker 验收；当前真实对象不具备某一类型时该分支记 `NOT_VERIFIED`，不用普通回复冒充。
 - 直达 NodeSeek `https://www.nodeseek.com/post-863650-1`，分别在选择前、选择中和取消后记录父 FlashList row、mounted media、warm/running/original 高水位、PID 与 PSS；选择不得增加 row/media 挂载，继续满足每 row `<=4`、warm `<=8`、running `<=4`、original `<=1` 及既有 `+150MB` PSS 峰值门槛，同一 PID 连续两轮相同滚动后 PSS 不得持续增长。
 
-主楼双击出现任何局部选区、静止长按未进入自定义选择、滚动后 overlay 与当前文字错位或留下旧屏残影、可见端点缺少对应手柄、瞬态映射缺失取消逻辑选区、回复/评论/采纳答案出现 opening marker 或参与主楼 manifest，以及空白/重复 row 或 marker、无效 tape、revision 复用、稳定帧仍无法映射当前端点等结构性失败，连同整条长按复制退化、主楼复制顺序错误、位置变化、额外挂载、ANR/OOM/Fatal 或 PID 意外重启都记为明确失败。只有端点文字本身未挂载或被真实 viewport/祖先裁剪时，单个瞬态帧才可跳过当帧命中或绘制并等待稳定映射；文字端点已经可见却缺少手柄仍直接失败。外部内容变化或独立 AVD/主 AVD 不可用记 `BLOCKED_BY_ENV` 或 `NOT_VERIFIED`，不能用局部单测或 App 启动替代。`REG-TOPIC-100` 在上述主楼正向、回复/评论/采纳答案负向、回收、布局和性能 Live 分支全部取得 `LIVE_PASS` 前不得记为 `RESOLVED`。
+主楼双击出现任何局部选区、静止长按未进入自定义选择、滚动后 overlay 与当前文字错位或留下旧屏残影、可见端点缺少对应手柄、手柄仍由 TextView/marked-row host 承载而在行底或相邻 row 被裁剪、viewport/surface wrapper 使用缓存的 screen 坐标而未在 draw 时重投影、生产 surface 依赖关闭 `clipChildren/clipToPadding`、创建 `PopupWindow`/独立 ViewRoot、手柄形状/方向不匹配同页原生标题、手柄主体压住端点文字、hotspot 误差 `>2px`、按下时端点跳变、端点未变仍请求触感或端点已变却无 `TEXT_HANDLE_MOVE`、瞬态映射缺失取消逻辑选区、回复/评论/采纳答案出现 opening marker 或参与主楼 manifest，以及空白/重复 row 或 marker、无效 tape、revision 复用、稳定帧仍无法映射当前端点等结构性失败，连同整条长按复制退化、主楼复制顺序错误、位置变化、额外挂载、ANR/OOM/Fatal 或 PID 意外重启都记为明确失败。只有端点文字本身未挂载或被真实 viewport/祖先裁剪时，单个瞬态帧才可跳过当帧命中或绘制并等待稳定映射；文字端点已经可见却缺少手柄仍直接失败。外部内容变化或独立 AVD/主 AVD 不可用记 `BLOCKED_BY_ENV`；缺少物理 Android 设备时仅实际触感记 `NOT_VERIFIED`，其余分支不能据此跳过，且都不能用局部单测或 App 启动替代。`REG-TOPIC-100` 在上述主楼正向、回复/评论/采纳答案负向、回收、布局、触感和性能 Live 分支全部取得 `LIVE_PASS` 前不得记为 `RESOLVED`。
+
+- ActionMode targeted proof：任一主楼选区执行 Select all 后，浮动菜单必须立即物理移除 Select all，并把可执行 Copy 直接留在一级菜单；端点缩回后 Select all 恢复，整个流程不得依赖系统是否显示浮动菜单返回箭头。记录同页原生标题和主楼在当前设备上的平台动作：标准 Share 必须用 `ACTION_SEND` `text/plain` 进入 Android Sharesheet，不自行枚举分享目标；API 23+ 只显示设备当前可解析且满足 same-package/exported/permission 边界的 `PROCESS_TEXT` 动作，名称、数量和顺序允许随系统/OEM/已安装 App 变化，不要求固定出现“翻译”。classifier 按系统版本验收：API 24–25 无 classifier 动作；API 26–27 至多一个 legacy label/icon/onClick-or-intent 动作；API 28+ 为动态 `RemoteAction` 列表。API 26+ 动作都允许异步出现，但改变/取消选区后旧 snapshot 的晚到动作不得回填或执行。classifier 可能在菜单打开时就把选区纯文本交给系统/OEM 实现，因此该只读展示也只能使用不敏感测试文本；Share、`PROCESS_TEXT` 或 classifier 动作的外部执行则必须逐项取得用户明确授权。点击 Share 后核对 `EXTRA_TEXT` 在 100,000 UTF-16 字符 parcel-safe 上限内严格等于当下 canonical 选区、超限不劈 surrogate；点击 `PROCESS_TEXT` 后核对只读 extra 与未经裁剪的当下 canonical 文本；点击 classifier action 只核对仍匹配 snapshot 的 legacy listener/intent 或 `PendingIntent` 被执行，未授权分支记 `NOT_VERIFIED`。成功启动 Sharesheet 可结束选区；取消目标选择不产生正文写回，Share launch 失败必须保留选区，无 handler、query、分类、Intent 或 `PendingIntent` 失败都不得崩溃、修改正文或损坏 Copy/Select all；不得输出 Intent payload、选区正文或外部 App 数据到日志/交付物。
 
 ## 直接打开主题链接
 

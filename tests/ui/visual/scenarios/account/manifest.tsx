@@ -170,6 +170,7 @@ function createLinuxDoLevelProfile(): LinuxDoLevelProfile {
         current: 9,
         required: 15,
         met: false,
+        direction: 'minimum',
         ratio: 0.6,
         displayCurrent: '9',
         displayRequired: '15',
@@ -181,9 +182,34 @@ function createLinuxDoLevelProfile(): LinuxDoLevelProfile {
         current: 3,
         required: 1,
         met: true,
+        direction: 'minimum',
         ratio: 1,
         displayCurrent: '3',
         displayRequired: '1'
+      },
+      {
+        key: 'connect:被举报帖子',
+        label: '被举报帖子',
+        current: 2,
+        required: 5,
+        met: true,
+        direction: 'maximum',
+        ratio: 0.4,
+        displayCurrent: '2',
+        displayRequired: '5',
+        change: 1,
+        displayChange: '较上次 +1'
+      },
+      {
+        key: 'connect:被禁言',
+        label: '被禁言',
+        current: 0,
+        required: 0,
+        met: true,
+        direction: 'maximum',
+        ratio: 0,
+        displayCurrent: '0',
+        displayRequired: '已通过'
       }
     ],
     activity: {
@@ -196,8 +222,8 @@ function createLinuxDoLevelProfile(): LinuxDoLevelProfile {
       postCount: 6,
       topicCount: 2
     },
-    achievedCount: 1,
-    totalCount: 2,
+    achievedCount: 3,
+    totalCount: 4,
     fetchedAt: FIXED_TIME
   };
 }
@@ -262,8 +288,8 @@ export const accountVisualScenarios: readonly VisualScenarioDefinition[] = [
     capabilityIds: ['ACCOUNT-04'],
     id: 'account.services.linuxdo-level',
     kind: 'rendered',
-    tags: ['account', 'linuxdo', 'level', 'official-progress'],
-    title: 'linux.do 等级·官方进度',
+    tags: ['account', 'linuxdo', 'level', 'official-requirements'],
+    title: 'linux.do 等级·官方要求',
     render: () => <LinuxDoLevelScenario />
   },
   {

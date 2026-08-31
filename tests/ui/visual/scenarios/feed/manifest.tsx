@@ -52,10 +52,16 @@ function FeedScenario({ state }: { state: FeedScenarioState }) {
     if (feedSource === 'linuxdo') return [topic('linuxdo', 1, categories), topic('linuxdo', 2, categories)];
     return sources.map((source, index) => topic(source, index + 1, categories));
   }, [categories, feedSource, state]);
-  const favoriteKeys = state === 'reading-favorite' ? new Set(items.map(topicKey)) : new Set<string>();
+  const favoriteRecords =
+    state === 'reading-favorite'
+      ? Object.fromEntries(items.map((item) => [topicKey(item), { topic: item, savedAt: '2026-07-14T00:00:00.000Z' }]))
+      : {};
   const topicStateIndex: TopicListItemStateIndex = {
-    favorites: favoriteKeys,
-    history: state === 'data' && items[0] ? new Set([topicKey(items[0])]) : new Set<string>(),
+    favorites: favoriteRecords,
+    history:
+      state === 'data' && items[0]
+        ? { [topicKey(items[0])]: { topic: items[0], savedAt: '2026-07-14T00:00:00.000Z' } }
+        : {},
     listDensity: settings.listDensity
   };
   const feedFilter: SourceFeedFilter | undefined = feedSource === 'linuxdo' ? 'hot' : undefined;

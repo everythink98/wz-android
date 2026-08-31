@@ -3,6 +3,7 @@ package expo.modules.forumcontentselection
 import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -11,15 +12,23 @@ import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.drawable.Drawable
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.text.Layout
 import android.text.Selection
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.text.method.LinkMovementMethod
 import android.text.style.ClickableSpan
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
+import android.view.ActionMode
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -55,6 +64,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.lang.ref.WeakReference
+import java.lang.reflect.Proxy
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -62,9 +72,17 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 class ForumSelectionTestActivity : Activity() {
+  val startedActivitiesForTest = mutableListOf<Intent>()
+  var startActivityFailureForTest: RuntimeException? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     SoLoader.init(this, OpenSourceMergedSoMapping)
     super.onCreate(savedInstanceState)
+  }
+
+  override fun startActivity(intent: Intent) {
+    startedActivitiesForTest += Intent(intent)
+    startActivityFailureForTest?.let { throw it }
   }
 }
 
@@ -75,6 +93,11 @@ private fun resolveTestColor(context: Context, attribute: Int, fallback: Int): I
   return value.resourceId.takeIf { it != 0 }
     ?.let { runCatching { context.getColor(it) }.getOrDefault(fallback) }
     ?: fallback
+}
+
+@android.annotation.TargetApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+private object LayoutApi34ForTest {
+  fun lineBottomWithoutSpacing(layout: Layout, line: Int): Int = layout.getLineBottom(line, false)
 }
 
 @RunWith(AndroidJUnit4::class)
@@ -111,7 +134,7 @@ class ForumContentSelectionViewTest {
   }
 
   @Test
-  fun localHandlesFollowTheirTextOwnerWithoutDrawingIntoTheRouteSurface() {
+  fun handlesUseTheViewportOverlayWithoutMutatingTheirTextOwner() {
     ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
       lateinit var fixture: SurfaceFixture
       lateinit var target: Pair<Float, Float>
@@ -130,13 +153,8 @@ class ForumContentSelectionViewTest {
       scenario.onActivity {
         fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
         val before = requireNotNull(fixture.surface.overlayHandlesForTest().first)
-        val beforePixels = requireNotNull(fixture.localHandleColorBounds())
         val geometryBefore = fixture.geometry(fixture.first.text, 0, 1)
-        assertEquals(0, fixture.routeOnlyHandleColorPixelCount())
         fixture.translateMountedWindow(40f)
-        val translatedPixels = requireNotNull(fixture.localHandleColorBounds())
-        assertTrue(abs(beforePixels.top + 40 - translatedPixels.top) <= 1)
-        assertTrue(abs(beforePixels.bottom + 40 - translatedPixels.bottom) <= 1)
         val geometryAfter = fixture.geometry(fixture.first.text, 0, 1)
         assertEquals(geometryBefore.width, geometryAfter.width)
         assertEquals(geometryBefore.height, geometryAfter.height)
@@ -153,19 +171,60 @@ class ForumContentSelectionViewTest {
         fixture.translateMountedWindow(-fixture.surface.height * 2f)
         fixture.surface.onPreDraw()
         assertEquals(null to null, fixture.surface.overlayHandlesForTest())
-        assertTrue(fixture.localHandleColorPixelCount(fixture.first.text) > 0)
+        val offscreenViewport = fixture.drawViewport()
         fixture.translateMountedWindow(0f)
-        assertTrue(fixture.localHandleColorBounds() != null)
         fixture.surface.onPreDraw()
+        val selectedTextOwner = fixture.drawView(fixture.first.text)
+        val selectedMarkedRow = fixture.drawView(fixture.first.root)
+        val selectedViewport = fixture.drawViewport()
 
         fixture.mountOnly(fixture.second)
         fixture.surface.onPreDraw()
-        assertEquals(0, fixture.localHandleColorPixelCount(fixture.first.text))
+        val recycledViewport = fixture.drawViewport()
         fixture.mountOnly(fixture.first)
         fixture.surface.onPreDraw()
-        assertTrue(fixture.localHandleColorPixelCount(fixture.first.text) > 0)
+        val reboundViewport = fixture.drawViewport()
         fixture.surface.cancelSelection()
-        assertEquals(0, fixture.localHandleColorPixelCount(fixture.first.text))
+        val cleanTextOwner = fixture.drawView(fixture.first.text)
+        val cleanMarkedRow = fixture.drawView(fixture.first.root)
+        val cleanViewport = fixture.drawViewport()
+        fixture.mountOnly(fixture.second)
+        fixture.surface.onPreDraw()
+        val cleanRecycledViewport = fixture.drawViewport()
+        try {
+          assertEquals(
+            0,
+            fixture.changedPixelsBelowTextLine(selectedTextOwner, cleanTextOwner, fixture.first.text)
+          )
+          assertEquals(
+            0,
+            fixture.changedPixelsBelowTextLine(selectedMarkedRow, cleanMarkedRow, fixture.first.text)
+          )
+          assertTrue(
+            fixture.changedPixelsBelowTextLine(selectedViewport, cleanViewport, fixture.first.text) > 0
+          )
+          assertEquals(
+            0,
+            fixture.changedPixelsBelowTextLine(offscreenViewport, cleanViewport, fixture.first.text)
+          )
+          assertEquals(0, fixture.changedPixelCount(recycledViewport, cleanRecycledViewport))
+          assertTrue(
+            fixture.changedPixelsBelowTextLine(reboundViewport, cleanViewport, fixture.first.text) > 0
+          )
+        } finally {
+          listOf(
+            offscreenViewport,
+            selectedTextOwner,
+            selectedMarkedRow,
+            selectedViewport,
+            recycledViewport,
+            reboundViewport,
+            cleanTextOwner,
+            cleanMarkedRow,
+            cleanViewport,
+            cleanRecycledViewport
+          ).forEach { it.recycle() }
+        }
         fixture.close()
       }
     }
@@ -202,6 +261,743 @@ class ForumContentSelectionViewTest {
         screenshot.recycle()
       }
       scenario.onActivity { fixture.close() }
+    }
+  }
+
+  @Test
+  @Suppress("DEPRECATION")
+  fun legacyLineBottomExcludesAddedAndMultipliedSpacing() {
+    val text = "alpha beta gamma delta"
+    val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 32f }
+    fun layout(spacingAdd: Float, spacingMultiplier: Float): Layout =
+      StaticLayout.Builder.obtain(text, 0, text.length, paint, 120)
+        .setIncludePad(false)
+        .setLineSpacing(spacingAdd, spacingMultiplier)
+        .build()
+
+    val plain = layout(spacingAdd = 0f, spacingMultiplier = 1f)
+    val spaced = layout(spacingAdd = 7.25f, spacingMultiplier = 1.2f)
+    assertEquals(plain.lineCount, spaced.lineCount)
+    repeat(spaced.lineCount) { line ->
+      val expected = spaced.getLineTop(line) + plain.getLineBottom(line) - plain.getLineTop(line)
+      assertEquals(expected, spaced.legacyLineBottomWithoutSpacing(line))
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        val cursorPath = Path()
+        val cursorBounds = RectF()
+        spaced.getCursorPath(spaced.getLineStart(line), cursorPath, "")
+        cursorPath.computeBounds(cursorBounds, true)
+        assertEquals(
+          LayoutApi34ForTest.lineBottomWithoutSpacing(spaced, line).toFloat(),
+          cursorBounds.bottom,
+          2f
+        )
+      }
+    }
+  }
+
+  @Test
+  fun softWrappedHandleHotspotUsesGlyphBottomThroughInternalTextScroll() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.first.text.apply {
+          setLineSpacing(12f * resources.displayMetrics.density, 1f)
+          layoutParams = FrameLayout.LayoutParams(
+            (44f * resources.displayMetrics.density).roundToInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+          )
+        }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        fixture.first.text.scrollTo(3, 5)
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        fixture.surface.onPreDraw()
+        val selection = requireNotNull(fixture.surface.selectionSnapshotForTest())
+        val end = requireNotNull(fixture.surface.overlayHandlesForTest().second)
+        val expected = fixture.expectedHandleHotspot(fixture.first.text, selection.end.utf16Offset)
+        assertEquals(expected.first, end.x, 2f)
+        assertEquals(expected.second, end.y, 2f)
+        assertEquals(3 to 1, fixture.surface.overlayHandleHotspotQuartersForTest())
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun mixedBidiRunUsesSecondaryHorizontalForBothHandleHotspots() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.configureFirstText("abc \u05D0\u05D1\u05D2 def", View.TEXT_DIRECTION_FIRST_STRONG_LTR, View.LAYOUT_DIRECTION_LTR)
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 5)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        fixture.surface.onPreDraw()
+        val selection = requireNotNull(fixture.surface.selectionSnapshotForTest())
+        assertEquals(4, selection.start.utf16Offset)
+        assertEquals(7, selection.end.utf16Offset)
+        val layout = requireNotNull(fixture.first.text.layout)
+        assertEquals(Layout.DIR_LEFT_TO_RIGHT, layout.getParagraphDirection(0))
+        assertTrue(layout.isRtlCharAt(selection.start.utf16Offset))
+        assertTrue(
+          abs(
+            layout.getPrimaryHorizontal(selection.start.utf16Offset) -
+              layout.getSecondaryHorizontal(selection.start.utf16Offset)
+          ) > 2f
+        )
+        val handles = fixture.surface.overlayHandlesForTest()
+        val expectedStart = fixture.expectedHandleHotspot(
+          fixture.first.text,
+          selection.start.utf16Offset,
+          useSecondaryHorizontal = true
+        )
+        val expectedEnd = fixture.expectedHandleHotspot(
+          fixture.first.text,
+          selection.end.utf16Offset,
+          useSecondaryHorizontal = true
+        )
+        assertEquals(expectedStart.first, requireNotNull(handles.first).x, 2f)
+        assertEquals(expectedEnd.first, requireNotNull(handles.second).x, 2f)
+        assertEquals(1 to 3, fixture.surface.overlayHandleHotspotQuartersForTest())
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun pureRtlRunUsesPrimaryHorizontalForBothHandleHotspots() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.configureFirstText(
+          "\u05D0\u05D1\u05D2 \u05D3\u05D4\u05D5",
+          View.TEXT_DIRECTION_RTL,
+          View.LAYOUT_DIRECTION_RTL
+        )
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        fixture.surface.onPreDraw()
+        val selection = requireNotNull(fixture.surface.selectionSnapshotForTest())
+        assertEquals(0, selection.start.utf16Offset)
+        assertEquals(3, selection.end.utf16Offset)
+        val layout = requireNotNull(fixture.first.text.layout)
+        assertEquals(Layout.DIR_RIGHT_TO_LEFT, layout.getParagraphDirection(0))
+        assertTrue(layout.isRtlCharAt(selection.start.utf16Offset))
+        assertTrue(layout.isRtlCharAt(selection.end.utf16Offset - 1))
+        val handles = fixture.surface.overlayHandlesForTest()
+        val expectedStart = fixture.expectedHandleHotspot(fixture.first.text, selection.start.utf16Offset)
+        val expectedEnd = fixture.expectedHandleHotspot(fixture.first.text, selection.end.utf16Offset)
+        assertEquals(expectedStart.first, requireNotNull(handles.first).x, 2f)
+        assertEquals(expectedEnd.first, requireNotNull(handles.second).x, 2f)
+        assertEquals(1 to 3, fixture.surface.overlayHandleHotspotQuartersForTest())
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun platformLeftAndRightHandlesUseThreeQuarterAndOneQuarterHotspots() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      scenario.onActivity { activity -> fixture = SurfaceFixture(activity) }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        val left = fixture.platformHandleGeometry(hotspotQuarter = 3)
+        val right = fixture.platformHandleGeometry(hotspotQuarter = 1)
+        assertEquals(left.hotspot.x, left.bounds.left + left.bounds.width() * 3f / 4f, 0.5f)
+        assertEquals(right.hotspot.x, right.bounds.left + right.bounds.width() / 4f, 0.5f)
+        assertEquals(left.hotspot.y, left.bounds.top.toFloat(), 0.5f)
+        assertEquals(right.hotspot.y, right.bounds.top.toFloat(), 0.5f)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun wrapContentOwnerDrawsHandleBodiesBelowTheGlyphLine() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      lateinit var probe: HandleBodyProbe
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.first.text.layoutParams = FrameLayout.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT,
+          ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        fixture.mountAdjacentRows(fixture.first, fixture.second)
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        fixture.surface.onPreDraw()
+        probe = fixture.handleBodyProbe()
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      val selected = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+      scenario.onActivity { fixture.surface.cancelSelection() }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      val clean = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+      try {
+        assertTrue(
+          "native handle bodies must remain visible below a wrap-content TextView",
+          probe.changedPixelCount(selected, clean) > 0
+        )
+      } finally {
+        selected.recycle()
+        clean.recycle()
+      }
+      scenario.onActivity { fixture.close() }
+    }
+  }
+
+  @Test
+  fun handleHitTargetPreservesItsOffsetAndHapticsOnlyFollowEndpointChanges() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      val hapticRequests = mutableListOf<Int>()
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.hapticFeedbackObserverForTest = hapticRequests::add
+        fixture.first.text.layoutParams = FrameLayout.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT,
+          ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        fixture.mountAdjacentRows(fixture.first, fixture.second)
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        fixture.surface.onPreDraw()
+        assertEquals(listOf(android.view.HapticFeedbackConstants.LONG_PRESS), hapticRequests)
+        hapticRequests.clear()
+        val before = requireNotNull(fixture.surface.selectionSnapshotForTest())
+        val end = requireNotNull(fixture.surface.overlayHandlesForTest().second)
+        val grabOffset = 48f * fixture.activity.resources.displayMetrics.density - 1f
+        val downTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, end.x, end.y + grabOffset, downTime)
+        assertTrue(fixture.surface.interactionStateForTest().ownsGesture)
+        fixture.send(MotionEvent.ACTION_MOVE, end.x, end.y + grabOffset, downTime)
+        assertEquals(before, fixture.surface.selectionSnapshotForTest())
+        fixture.send(
+          MotionEvent.ACTION_MOVE,
+          end.x + fixture.activity.resources.displayMetrics.density,
+          end.y + grabOffset,
+          downTime
+        )
+        assertEquals(before, fixture.surface.selectionSnapshotForTest())
+        assertTrue(hapticRequests.isEmpty())
+
+        val changedX = fixture.pointInText(fixture.first.text, utf16Offset = 5).first
+        fixture.send(MotionEvent.ACTION_MOVE, changedX, end.y + grabOffset, downTime)
+        assertTrue(fixture.surface.selectionSnapshotForTest() != before)
+        assertEquals(listOf(android.view.HapticFeedbackConstants.TEXT_HANDLE_MOVE), hapticRequests)
+        fixture.send(MotionEvent.ACTION_UP, changedX, end.y + grabOffset, downTime)
+
+        assertTrue(fixture.surface.selectAllForTest())
+        fixture.surface.onPreDraw()
+        val selectAllRange = requireNotNull(fixture.surface.selectionSnapshotForTest())
+        val selectAllCopy = fixture.surface.copySelectionToClipboardForTest()
+        val selectAllStart = requireNotNull(fixture.surface.overlayHandlesForTest().first)
+        hapticRequests.clear()
+        val selectAllDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, selectAllStart.x, selectAllStart.y, selectAllDownTime)
+        fixture.send(MotionEvent.ACTION_MOVE, selectAllStart.x, selectAllStart.y, selectAllDownTime)
+        assertEquals(selectAllRange, fixture.surface.selectionSnapshotForTest())
+        assertEquals(selectAllCopy, fixture.surface.copySelectionToClipboardForTest())
+        assertTrue(hapticRequests.isEmpty())
+        fixture.send(MotionEvent.ACTION_UP, selectAllStart.x, selectAllStart.y, selectAllDownTime)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun longPressDragKeepsTheWordEndpointUnderASmallMove() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      val hapticRequests = mutableListOf<Int>()
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.hapticFeedbackObserverForTest = hapticRequests::add
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity {
+        val before = requireNotNull(fixture.surface.selectionSnapshotForTest())
+        assertEquals(0, before.start.utf16Offset)
+        assertEquals(3, before.end.utf16Offset)
+        hapticRequests.clear()
+
+        fixture.send(
+          MotionEvent.ACTION_MOVE,
+          target.first + fixture.activity.resources.displayMetrics.density,
+          target.second,
+          fixture.gestureDownTime
+        )
+
+        assertEquals(before, fixture.surface.selectionSnapshotForTest())
+        assertTrue(hapticRequests.isEmpty())
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun selectingAllReplacesSelectAllWithDirectCopyAction() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      scenario.onActivity { activity -> fixture = SurfaceFixture(activity) }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity { activity ->
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        assertEquals(true to true, fixture.surface.actionModeMenuVisibilityForTest())
+
+        assertTrue(fixture.surface.selectAllFromActionModeForTest())
+
+        assertEquals(true to false, fixture.surface.actionModeMenuVisibilityForTest())
+        assertTrue(fixture.surface.copyFromActionModeForTest())
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        assertEquals(
+          "one two\n[sticker]\nbeta\ngammaA[inline]B",
+          clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+        )
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun systemTextActionsShowImmediateAndDelayedDeviceActionsForTheSelection() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      lateinit var publishDelayedActions: (List<ForumSelectionSystemAction>) -> Unit
+      var selectedText = ""
+      val invocations = mutableListOf<String>()
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.systemActionLoaderForTest = { text, publish ->
+          selectedText = text
+          publishDelayedActions = publish
+          listOf(recordingSystemAction("process", "Test Process", text, invocations))
+        }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        assertEquals("one", selectedText)
+        assertEquals(
+          listOf("Test Process"),
+          fixture.surface.actionModeMenuTitlesForTest().filter { it.startsWith("Test ") }
+        )
+
+        publishDelayedActions(
+          listOf(recordingSystemAction("remote", "Test Remote", selectedText, invocations))
+        )
+
+        assertEquals(
+          listOf("Test Process", "Test Remote"),
+          fixture.surface.actionModeMenuTitlesForTest().filter { it.startsWith("Test ") }
+        )
+        assertTrue(fixture.surface.clickActionModeItemWithTitleForTest("Test Process"))
+        assertTrue(fixture.surface.clickActionModeItemWithTitleForTest("Test Remote"))
+        assertEquals(listOf("process:one", "remote:one"), invocations)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun systemTextActionsRejectDisabledCancelledAndStaleSelectionSnapshots() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      val delayedActions = mutableListOf<Pair<String, (List<ForumSelectionSystemAction>) -> Unit>>()
+      val invocations = mutableListOf<String>()
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.systemActionLoaderForTest = { text, publish ->
+          delayedActions += text to publish
+          if (text == "one") {
+            listOf(
+              recordingSystemAction("old", "Test Old", text, invocations),
+              recordingSystemAction("disabled", "Test Disabled", text, invocations, enabled = false)
+            )
+          } else {
+            listOf(recordingSystemAction("current", "Test Current", text, invocations))
+          }
+        }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        assertEquals("one", delayedActions.single().first)
+        fixture.surface.clickActionModeItemWithTitleForTest("Test Disabled")
+        assertTrue(invocations.isEmpty())
+
+        val staleSelection = delayedActions.single()
+        assertTrue(fixture.surface.selectAllFromActionModeForTest())
+        val currentSelection = delayedActions.last()
+        assertEquals("one two\n[sticker]\nbeta\ngammaA[inline]B", currentSelection.first)
+
+        staleSelection.second(
+          listOf(recordingSystemAction("stale", "Test Stale", staleSelection.first, invocations))
+        )
+
+        assertEquals(
+          listOf("Test Current"),
+          fixture.surface.actionModeMenuTitlesForTest().filter { it.startsWith("Test ") }
+        )
+        assertFalse(fixture.surface.clickActionModeItemWithTitleForTest("Test Old"))
+        assertFalse(fixture.surface.clickActionModeItemWithTitleForTest("Test Stale"))
+        assertTrue(fixture.surface.clickActionModeItemWithTitleForTest("Test Current"))
+        assertEquals(listOf("current:${currentSelection.first}"), invocations)
+
+        fixture.surface.cancelSelection()
+        currentSelection.second(
+          listOf(recordingSystemAction("cancelled", "Test Cancelled", currentSelection.first, invocations))
+        )
+        assertFalse(fixture.surface.clickActionModeItemWithTitleForTest("Test Cancelled"))
+        assertEquals(listOf("current:${currentSelection.first}"), invocations)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun systemActionsWaitForTheLongPressReleaseBeforeLoading() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      var loaderCalls = 0
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.systemActionLoaderForTest = { _, _ ->
+          loaderCalls += 1
+          emptyList()
+        }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      val target = holdLongPressSelection(scenario, fixture)
+      scenario.onActivity {
+        assertEquals(0, loaderCalls)
+        assertTrue(fixture.surface.interactionStateForTest().hasActionMode)
+      }
+
+      releaseLongPressSelection(scenario, fixture, target)
+      scenario.onActivity {
+        assertEquals(1, loaderCalls)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun systemActionLoaderFailureKeepsCopyAndSelectAllUsable() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.systemActionLoaderForTest = { _, _ -> error("loader failed") }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      val target = holdLongPressSelection(scenario, fixture)
+      releaseLongPressSelection(scenario, fixture, target)
+
+      scenario.onActivity { activity ->
+        assertEquals(true to true, fixture.surface.actionModeMenuVisibilityForTest())
+        assertTrue(fixture.surface.selectAllFromActionModeForTest())
+        assertEquals(true to false, fixture.surface.actionModeMenuVisibilityForTest())
+        assertTrue(fixture.surface.copyFromActionModeForTest())
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        assertEquals(
+          "one two\n[sticker]\nbeta\ngammaA[inline]B",
+          clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+        )
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun failingDynamicActionKeepsTheSelectionAndCopyAction() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      var actionInvoked = false
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.systemActionLoaderForTest = { _, _ ->
+          listOf(
+            ForumSelectionSystemAction(
+              key = "throwing",
+              title = "Test Throwing",
+              contentDescription = "Test Throwing",
+              icon = null,
+              enabled = true,
+              invoke = {
+                actionInvoked = true
+                error("action failed")
+              }
+            )
+          )
+        }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      val target = holdLongPressSelection(scenario, fixture)
+      releaseLongPressSelection(scenario, fixture, target)
+
+      scenario.onActivity { activity ->
+        assertTrue(fixture.surface.clickActionModeItemWithTitleForTest("Test Throwing"))
+        assertTrue(actionInvoked)
+        assertTrue(fixture.surface.selectionSnapshotForTest() != null)
+        assertTrue(fixture.surface.interactionStateForTest().hasActionMode)
+        assertEquals(true, fixture.surface.actionModeMenuVisibilityForTest()?.first)
+        assertTrue(fixture.surface.copyFromActionModeForTest())
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        assertEquals("one", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun actionModeUsesPlatformIdsDisplayPoliciesAndCanonicalOrders() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var publishSmartActions: (List<ForumSelectionSystemAction>) -> Unit
+      val invocations = mutableListOf<String>()
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.systemActionLoaderForTest = { text, publish ->
+          publishSmartActions = publish
+          listOf(
+            recordingSystemAction(
+              "process",
+              "Test Process",
+              text,
+              invocations,
+              order = 100,
+              showAsAction = MenuItem.SHOW_AS_ACTION_IF_ROOM
+            )
+          )
+        }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      val target = holdLongPressSelection(scenario, fixture)
+      releaseLongPressSelection(scenario, fixture, target)
+
+      scenario.onActivity {
+        publishSmartActions(
+          listOf(
+            recordingSystemAction(
+              "primary",
+              "Test Primary",
+              "one",
+              invocations,
+              order = 0,
+              showAsAction = MenuItem.SHOW_AS_ACTION_ALWAYS
+            ),
+            recordingSystemAction(
+              "secondary",
+              "Test Secondary",
+              "one",
+              invocations,
+              order = 50,
+              showAsAction = MenuItem.SHOW_AS_ACTION_NEVER
+            )
+          )
+        )
+
+        val fixedItems = recordFixedMenuItems(fixture.surface).associateBy { it.itemId }
+        assertEquals(5, fixedItems.getValue(android.R.id.copy).order)
+        assertEquals(MenuItem.SHOW_AS_ACTION_ALWAYS, fixedItems.getValue(android.R.id.copy).showAsAction)
+        assertEquals(7, fixedItems.getValue(android.R.id.shareText).order)
+        assertEquals(MenuItem.SHOW_AS_ACTION_IF_ROOM, fixedItems.getValue(android.R.id.shareText).showAsAction)
+        assertEquals(8, fixedItems.getValue(android.R.id.selectAll).order)
+        assertEquals(MenuItem.SHOW_AS_ACTION_IF_ROOM, fixedItems.getValue(android.R.id.selectAll).showAsAction)
+
+        val menu = actionModeForTest(fixture.surface).menu
+        assertEquals(0, menuItemWithTitle(menu, "Test Primary").order)
+        assertEquals(50, menuItemWithTitle(menu, "Test Secondary").order)
+        assertEquals(100, menuItemWithTitle(menu, "Test Process").order)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun successfulShareEndsTheActionModeAndSelection() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      scenario.onActivity { activity -> fixture = SurfaceFixture(activity) }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      val target = holdLongPressSelection(scenario, fixture)
+      releaseLongPressSelection(scenario, fixture, target)
+
+      scenario.onActivity { activity ->
+        assertTrue(actionModeForTest(fixture.surface).menu.performIdentifierAction(android.R.id.shareText, 0))
+        assertEquals(listOf(Intent.ACTION_CHOOSER), activity.startedActivitiesForTest.map { it.action })
+        assertNull(fixture.surface.selectionSnapshotForTest())
+        assertEquals(
+          ForumSelectionInteractionState(active = false, hasActionMode = false, ownsGesture = false),
+          fixture.surface.interactionStateForTest()
+        )
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun failedShareKeepsTheActionModeSelectionAndCopy() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        activity.startActivityFailureForTest = SecurityException("share blocked")
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      val target = holdLongPressSelection(scenario, fixture)
+      releaseLongPressSelection(scenario, fixture, target)
+
+      scenario.onActivity { activity ->
+        assertFalse(actionModeForTest(fixture.surface).menu.performIdentifierAction(android.R.id.shareText, 0))
+        assertEquals(listOf(Intent.ACTION_CHOOSER), activity.startedActivitiesForTest.map { it.action })
+        assertTrue(fixture.surface.selectionSnapshotForTest() != null)
+        assertTrue(fixture.surface.interactionStateForTest().hasActionMode)
+        assertEquals(true, fixture.surface.actionModeMenuVisibilityForTest()?.first)
+        activity.startActivityFailureForTest = null
+        assertTrue(fixture.surface.copyFromActionModeForTest())
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        assertEquals("one", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun handleAtTheSurfaceEdgeKeepsAFullWidthTouchTarget() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      scenario.onActivity { activity -> fixture = SurfaceFixture(activity) }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        assertTrue(fixture.surface.selectAllForTest())
+        fixture.surface.onPreDraw()
+        val handles = fixture.surface.overlayHandlesForTest()
+        val start = requireNotNull(handles.first)
+        assertNull(handles.second)
+        val targetSize = 48f * fixture.activity.resources.displayMetrics.density
+        assertTrue(start.x < targetSize / 2f)
+
+        val downTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, start.x + targetSize - 1f, start.y + 1f, downTime)
+
+        assertTrue(fixture.surface.interactionStateForTest().ownsGesture)
+        fixture.send(MotionEvent.ACTION_UP, start.x + targetSize - 1f, start.y + 1f, downTime)
+        fixture.close()
+      }
     }
   }
 
@@ -690,7 +1486,7 @@ class ForumContentSelectionViewTest {
 
   private class DrawTimeScrollFixture(val activity: Activity) {
     private val density = activity.resources.displayMetrics.density
-    private val reactContext = FixtureReactContext(activity.applicationContext)
+    private val reactContext = FixtureReactContext(activity)
     private val handleColor = resolveTestColor(reactContext, android.R.attr.colorAccent, 0xFF1668DC.toInt())
     private val appContext = AppContext(
       object : ModulesProvider {
@@ -701,6 +1497,7 @@ class ForumContentSelectionViewTest {
     )
     val surface = ForumContentSelectionView(reactContext, appContext).apply {
       setBackgroundColor(Color.WHITE)
+      systemActionLoaderForTest = { _, _ -> emptyList() }
     }
     val scrollStepPx = (56f * density).roundToInt()
     private val initialScrollY = (160f * density).roundToInt()
@@ -818,6 +1615,7 @@ class ForumContentSelectionViewTest {
       val selection = requireNotNull(surface.selectionSnapshotForTest())
       surface.onPreDraw()
       val beforeBounds = selectedInteriorBounds(selection)
+      val beforeHandle = requireNotNull(surface.overlayHandlesForTest().second)
       val geometryBefore = layoutGeometry()
       val scrollBefore = scrollView.scrollY
 
@@ -833,6 +1631,16 @@ class ForumContentSelectionViewTest {
       val cleanBounds = selectedInteriorBounds(selection)
       val currentChangedPixels = differenceCount(selectedFrame, cleanFrame, currentBounds)
       val staleChangedPixels = differenceCount(selectedFrame, cleanFrame, beforeBounds)
+      val currentHandlePixels = differenceCount(
+        selectedFrame,
+        cleanFrame,
+        handleBodyBounds(beforeHandle.x, beforeHandle.y - scrollDelta)
+      )
+      val staleHandlePixels = differenceCount(
+        selectedFrame,
+        cleanFrame,
+        handleBodyBounds(beforeHandle.x, beforeHandle.y)
+      )
       val currentSample = pixelPair(selectedFrame, cleanFrame, currentBounds)
       val staleSample = pixelPair(selectedFrame, cleanFrame, beforeBounds)
       val requiredCurrentPixels = max(1, currentBounds.width() * currentBounds.height() / 3)
@@ -848,10 +1656,23 @@ class ForumContentSelectionViewTest {
         currentChangedPixels = currentChangedPixels,
         requiredCurrentPixels = requiredCurrentPixels,
         staleChangedPixels = staleChangedPixels,
+        currentHandlePixels = currentHandlePixels,
+        staleHandlePixels = staleHandlePixels,
         currentSample = currentSample,
         staleSample = staleSample,
         layoutUnchanged = geometryBefore == geometryAfter,
         cleanReferenceUnchanged = cleanBounds == currentBounds
+      )
+    }
+
+    private fun handleBodyBounds(x: Float, y: Float): Rect {
+      val horizontalRadius = (24f * density).roundToInt()
+      val verticalExtent = (32f * density).roundToInt()
+      return Rect(
+        x.roundToInt() - horizontalRadius,
+        y.roundToInt() + 1,
+        x.roundToInt() + horizontalRadius + 1,
+        y.roundToInt() + verticalExtent + 1
       )
     }
 
@@ -860,6 +1681,8 @@ class ForumContentSelectionViewTest {
       check(selection.start.rowKey == "code" && selection.end.rowKey == "code")
       surface.onPreDraw()
       val beforeBounds = selectedInteriorBounds(codeText, selection.start.utf16Offset, selection.end.utf16Offset)
+      val beforeHandles = surface.overlayHandlesForTest().let { listOfNotNull(it.first, it.second) }
+      check(beforeHandles.size == 2)
       val geometryBefore = layoutGeometry()
       val scrollBefore = codeScroller.scrollX
 
@@ -874,6 +1697,20 @@ class ForumContentSelectionViewTest {
       val cleanFrame = drawFrame()
       val currentChangedPixels = differenceCount(selectedFrame, cleanFrame, currentBounds)
       val staleChangedPixels = differenceCount(selectedFrame, cleanFrame, beforeBounds)
+      val currentHandleBounds = beforeHandles.map { handle ->
+        handleBodyBounds(handle.x - scrollDelta, handle.y)
+      }
+      val currentHandlePixels = currentHandleBounds.sumOf { bounds ->
+        differenceCount(selectedFrame, cleanFrame, bounds)
+      }
+      val staleHandlePixels = beforeHandles.sumOf { handle ->
+        differenceCountExcluding(
+          selectedFrame,
+          cleanFrame,
+          handleBodyBounds(handle.x, handle.y),
+          currentHandleBounds
+        )
+      }
       val requiredCurrentPixels = max(1, currentBounds.width() * currentBounds.height() / 3)
       selectedFrame.recycle()
       cleanFrame.recycle()
@@ -887,6 +1724,8 @@ class ForumContentSelectionViewTest {
         currentChangedPixels = currentChangedPixels,
         requiredCurrentPixels = requiredCurrentPixels,
         staleChangedPixels = staleChangedPixels,
+        currentHandlePixels = currentHandlePixels,
+        staleHandlePixels = staleHandlePixels,
         layoutUnchanged = geometryBefore == geometryAfter
       )
     }
@@ -1039,9 +1878,11 @@ class ForumContentSelectionViewTest {
       val offset = utf16Offset.coerceIn(0, layout.text.length)
       val line = layout.getLineForOffset(offset)
       return (
-        viewLocation[0] - surfaceLocation[0] + textView.totalPaddingLeft + layout.getPrimaryHorizontal(offset)
+        viewLocation[0] - surfaceLocation[0] + textView.totalPaddingLeft - textView.scrollX +
+          layout.getPrimaryHorizontal(offset)
         ) to (
-        viewLocation[1] - surfaceLocation[1] + textView.totalPaddingTop + layout.getLineBottom(line) / 2f
+        viewLocation[1] - surfaceLocation[1] + textView.totalPaddingTop - textView.scrollY +
+          layout.getLineBottom(line) / 2f
         )
     }
 
@@ -1166,6 +2007,27 @@ class ForumContentSelectionViewTest {
       return count
     }
 
+    private fun differenceCountExcluding(
+      firstBitmap: Bitmap,
+      secondBitmap: Bitmap,
+      bounds: Rect,
+      excludedBounds: List<Rect>
+    ): Int {
+      val clipped = Rect(bounds).apply { intersect(0, 0, firstBitmap.width, firstBitmap.height) }
+      var count = 0
+      for (y in clipped.top until clipped.bottom) {
+        for (x in clipped.left until clipped.right) {
+          if (
+            excludedBounds.none { it.contains(x, y) } &&
+            firstBitmap.getPixel(x, y) != secondBitmap.getPixel(x, y)
+          ) {
+            count += 1
+          }
+        }
+      }
+      return count
+    }
+
     private fun pixelPair(firstBitmap: Bitmap, secondBitmap: Bitmap, bounds: Rect): Pair<Int, Int> =
       firstBitmap.getPixel(bounds.centerX(), bounds.centerY()) to
         secondBitmap.getPixel(bounds.centerX(), bounds.centerY())
@@ -1221,6 +2083,8 @@ class ForumContentSelectionViewTest {
     val currentChangedPixels: Int,
     val requiredCurrentPixels: Int,
     val staleChangedPixels: Int,
+    val currentHandlePixels: Int,
+    val staleHandlePixels: Int,
     val currentSample: Pair<Int, Int>,
     val staleSample: Pair<Int, Int>,
     val layoutUnchanged: Boolean,
@@ -1232,6 +2096,8 @@ class ForumContentSelectionViewTest {
         currentChangedPixels >= requiredCurrentPixels &&
         currentSample.first != currentSample.second &&
         staleChangedPixels <= 2 &&
+        currentHandlePixels > 0 &&
+        staleHandlePixels <= 2 &&
         staleSample.first == staleSample.second &&
         layoutUnchanged &&
         cleanReferenceUnchanged
@@ -1240,7 +2106,8 @@ class ForumContentSelectionViewTest {
       "$direction: scroll=$actualScrollDelta/$expectedScrollDelta, " +
         "highlightTop=$actualHighlightTop/$expectedHighlightTop, " +
         "currentPixels=$currentChangedPixels/$requiredCurrentPixels, " +
-        "stalePixels=$staleChangedPixels, currentSample=${currentSample.hex()}, " +
+        "stalePixels=$staleChangedPixels, handlePixels=$currentHandlePixels, " +
+        "staleHandlePixels=$staleHandlePixels, currentSample=${currentSample.hex()}, " +
         "staleSample=${staleSample.hex()}, " +
         "layoutUnchanged=$layoutUnchanged, " +
         "cleanReferenceUnchanged=$cleanReferenceUnchanged"
@@ -1259,6 +2126,8 @@ class ForumContentSelectionViewTest {
     val currentChangedPixels: Int,
     val requiredCurrentPixels: Int,
     val staleChangedPixels: Int,
+    val currentHandlePixels: Int,
+    val staleHandlePixels: Int,
     val layoutUnchanged: Boolean
   ) {
     fun passed(): Boolean =
@@ -1266,13 +2135,16 @@ class ForumContentSelectionViewTest {
         abs(expectedHighlightLeft - actualHighlightLeft) <= 2 &&
         currentChangedPixels >= requiredCurrentPixels &&
         staleChangedPixels <= 2 &&
+        currentHandlePixels > 0 &&
+        staleHandlePixels <= 2 &&
         layoutUnchanged
 
     fun failureDescription(): String =
       "$direction: scroll=$actualScrollDelta/$expectedScrollDelta, " +
         "highlightLeft=$actualHighlightLeft/$expectedHighlightLeft, " +
         "currentPixels=$currentChangedPixels/$requiredCurrentPixels, " +
-        "stalePixels=$staleChangedPixels, layoutUnchanged=$layoutUnchanged"
+        "stalePixels=$staleChangedPixels, handlePixels=$currentHandlePixels, " +
+        "staleHandlePixels=$staleHandlePixels, layoutUnchanged=$layoutUnchanged"
   }
 
   private data class ReboundTextViewPixelResult(
@@ -1293,9 +2165,87 @@ class ForumContentSelectionViewTest {
         "currentPixels=$currentChangedPixels/$requiredCurrentPixels, stalePixels=$staleChangedPixels"
   }
 
+  private fun holdLongPressSelection(
+    scenario: ActivityScenario<ForumSelectionTestActivity>,
+    fixture: SurfaceFixture
+  ): Pair<Float, Float> {
+    lateinit var target: Pair<Float, Float>
+    scenario.onActivity {
+      target = fixture.pointInText(fixture.first.text, utf16Offset = 1)
+      fixture.gestureDownTime = SystemClock.uptimeMillis()
+      fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+    }
+    Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+    InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+    return target
+  }
+
+  private fun releaseLongPressSelection(
+    scenario: ActivityScenario<ForumSelectionTestActivity>,
+    fixture: SurfaceFixture,
+    target: Pair<Float, Float>
+  ) {
+    scenario.onActivity {
+      fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+    }
+    InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+  }
+
+  private fun actionModeForTest(surface: ForumContentSelectionView): ActionMode {
+    val field = ForumContentSelectionView::class.java.getDeclaredField("actionMode")
+    field.isAccessible = true
+    return requireNotNull(field.get(surface) as? ActionMode)
+  }
+
+  private fun menuItemWithTitle(menu: Menu, title: String): MenuItem =
+    (0 until menu.size()).map(menu::getItem).single { it.title.toString() == title }
+
+  private fun recordFixedMenuItems(surface: ForumContentSelectionView): List<RecordedMenuItem> {
+    val records = mutableListOf<RecordedMenuItem>()
+    val menu = Proxy.newProxyInstance(
+      Menu::class.java.classLoader,
+      arrayOf(Menu::class.java)
+    ) { _, method, arguments ->
+      if (method.name != "add" || arguments?.size != 4) return@newProxyInstance null
+      val record = RecordedMenuItem(
+        itemId = arguments[1] as Int,
+        order = arguments[2] as Int
+      )
+      records += record
+      Proxy.newProxyInstance(
+        MenuItem::class.java.classLoader,
+        arrayOf(MenuItem::class.java)
+      ) { proxy, itemMethod, itemArguments ->
+        when (itemMethod.name) {
+          "setShowAsAction" -> {
+            record.showAsAction = itemArguments?.first() as Int
+            null
+          }
+          "setShowAsActionFlags" -> {
+            record.showAsAction = itemArguments?.first() as Int
+            proxy
+          }
+          else -> null
+        }
+      }
+    } as Menu
+    val callbackClass = ForumContentSelectionView::class.java.declaredClasses
+      .single { it.simpleName == "SelectionActionModeCallback" }
+    val constructor = callbackClass.getDeclaredConstructor(ForumContentSelectionView::class.java)
+    constructor.isAccessible = true
+    val callback = constructor.newInstance(surface) as ActionMode.Callback
+    assertTrue(callback.onCreateActionMode(actionModeForTest(surface), menu))
+    return records
+  }
+
+  private data class RecordedMenuItem(
+    val itemId: Int,
+    val order: Int,
+    var showAsAction: Int = -1
+  )
+
   private class SurfaceFixture(val activity: Activity) {
-    private val reactContext = FixtureReactContext(activity.applicationContext)
-    private val handleColor = resolveTestColor(reactContext, android.R.attr.colorAccent, 0xFF1668DC.toInt())
+    private val reactContext = FixtureReactContext(activity)
     private val appContext = AppContext(
       object : ModulesProvider {
         override fun getModulesList(): List<Class<out Module>> = emptyList()
@@ -1303,9 +2253,13 @@ class ForumContentSelectionViewTest {
       ModuleRegistry(emptyList(), emptyList()),
       WeakReference(reactContext)
     )
-    val surface = ForumContentSelectionView(reactContext, appContext)
+    val surface = ForumContentSelectionView(reactContext, appContext).apply {
+      systemActionLoaderForTest = { _, _ -> emptyList() }
+    }
     private val mountedWindow = LinearLayout(reactContext).apply {
       orientation = LinearLayout.VERTICAL
+      clipChildren = false
+      clipToPadding = false
       layoutParams = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.MATCH_PARENT
@@ -1362,6 +2316,23 @@ class ForumContentSelectionViewTest {
       }
     }
 
+    fun mountAdjacentRows(firstCell: Cell, secondCell: Cell) {
+      mountedWindow.removeAllViews()
+      firstCell.root.layoutParams = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+      )
+      secondCell.root.apply {
+        setBackgroundColor(Color.WHITE)
+        layoutParams = LinearLayout.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT,
+          (96f * activity.resources.displayMetrics.density).roundToInt()
+        )
+      }
+      mountedWindow.addView(firstCell.root)
+      mountedWindow.addView(secondCell.root)
+    }
+
     fun pointInText(textView: TextView, utf16Offset: Int): Pair<Float, Float> {
       val layout = requireNotNull(textView.layout)
       val viewLocation = IntArray(2)
@@ -1380,6 +2351,32 @@ class ForumContentSelectionViewTest {
     fun pointInLayout(textView: TextView, layoutOffset: Int, xNudge: Float = 0f): Pair<Float, Float> {
       val point = pointInText(textView, layoutOffset)
       return (point.first + xNudge) to point.second
+    }
+
+    fun expectedHandleHotspot(
+      textView: TextView,
+      utf16Offset: Int,
+      useSecondaryHorizontal: Boolean = false
+    ): Pair<Float, Float> {
+      val layout = requireNotNull(textView.layout)
+      val viewLocation = IntArray(2)
+      val surfaceLocation = IntArray(2)
+      textView.getLocationOnScreen(viewLocation)
+      surface.getLocationOnScreen(surfaceLocation)
+      val offset = utf16Offset.coerceIn(0, layout.text.length)
+      val line = layout.getLineForOffset(offset)
+      val horizontal = if (useSecondaryHorizontal) {
+        layout.getSecondaryHorizontal(offset)
+      } else {
+        layout.getPrimaryHorizontal(offset)
+      }
+      return (
+        viewLocation[0] - surfaceLocation[0] + textView.totalPaddingLeft - textView.scrollX +
+          horizontal
+        ) to (
+        viewLocation[1] - surfaceLocation[1] + textView.totalPaddingTop - textView.scrollY +
+          layout.legacyLineBottomWithoutSpacing(line)
+        ).toFloat()
     }
 
     fun geometry(textView: TextView, spanStart: Int, spanEnd: Int): TextGeometry {
@@ -1427,62 +2424,104 @@ class ForumContentSelectionViewTest {
       second.text.movementMethod = LinkMovementMethod.getInstance()
     }
 
+    fun configureFirstText(value: String, textDirection: Int, layoutDirection: Int) {
+      surface.cancelSelection()
+      first.text.text = value
+      first.text.textDirection = textDirection
+      first.text.layoutDirection = layoutDirection
+      surface.pendingRevision = "revision-first-text"
+      surface.pendingRows = listOf(
+        ForumSelectionRowRecord("doc", "first", "native-first", textToken(value, "\n")),
+        ForumSelectionRowRecord("doc", "media", "native-media", mediaToken("[sticker]\n")),
+        ForumSelectionRowRecord("doc", "second", "native-second", textToken("beta", "\n")),
+        ForumSelectionRowRecord("doc", "last", "native-last", textToken("gamma", "")),
+        ForumSelectionRowRecord("doc", "inline", "native-inline", inlineToken())
+      )
+      surface.commitProps()
+    }
+
     fun translateMountedWindow(translationY: Float) {
       mountedWindow.translationY = translationY
     }
 
-    fun localHandleColorBounds(): Rect? {
-      val bitmap = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
-      surface.draw(Canvas(bitmap))
-      return try {
-        colorBounds(bitmap, handleColor)
-      } finally {
-        bitmap.recycle()
+    fun handleBodyProbe(): HandleBodyProbe {
+      val handles = surface.overlayHandlesForTest().let { listOfNotNull(it.first, it.second) }
+      check(handles.isNotEmpty())
+      val surfaceLocation = IntArray(2).also(surface::getLocationOnScreen)
+      return HandleBodyProbe(
+        handles.map { PointF(surfaceLocation[0] + it.x, surfaceLocation[1] + it.y) },
+        activity.resources.displayMetrics.density
+      )
+    }
+
+    fun platformHandleGeometry(hotspotQuarter: Int): PlatformHandleGeometry {
+      val layout = requireNotNull(first.text.layout)
+      val contentPoint = PointF(
+        first.text.totalPaddingLeft + layout.getPrimaryHorizontal(0),
+        (first.text.totalPaddingTop + layout.legacyLineBottomWithoutSpacing(0)).toFloat()
+      )
+      val platformDrawable = RecordingHandleDrawable(width = 40, height = 24)
+      ForumSelectionPlatformHandleDrawable(
+        sourceView = first.text,
+        overlayHost = mountedWindow,
+        platformDrawable = platformDrawable,
+        hotspotQuarter = hotspotQuarter
+      ).apply {
+        update(contentPoint)
+        draw(Canvas())
       }
+      val sourceLocation = IntArray(2).also(first.text::getLocationOnScreen)
+      val hostLocation = IntArray(2).also(mountedWindow::getLocationOnScreen)
+      return PlatformHandleGeometry(
+        hotspot = PointF(
+          sourceLocation[0] - hostLocation[0] + mountedWindow.scrollX + contentPoint.x - first.text.scrollX,
+          sourceLocation[1] - hostLocation[1] + mountedWindow.scrollY + contentPoint.y - first.text.scrollY
+        ),
+        bounds = requireNotNull(platformDrawable.drawnBounds)
+      )
     }
 
-    fun localHandleColorPixelCount(textView: TextView): Int {
-      val bitmap = Bitmap.createBitmap(textView.width, textView.height, Bitmap.Config.ARGB_8888)
-      textView.draw(Canvas(bitmap))
-      val pixels = IntArray(bitmap.width * bitmap.height)
-      bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-      bitmap.recycle()
-      return pixels.count { it == handleColor }
+    fun drawView(view: View): Bitmap {
+      val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+      view.draw(Canvas(bitmap))
+      return bitmap
     }
 
-    fun routeOnlyHandleColorPixelCount(): Int {
-      val previousVisibility = mountedWindow.visibility
-      mountedWindow.visibility = View.INVISIBLE
-      val bitmap = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
-      return try {
-        surface.draw(Canvas(bitmap))
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        pixels.count { it == handleColor }
-      } finally {
-        bitmap.recycle()
-        mountedWindow.visibility = previousVisibility
-      }
+    fun drawViewport(): Bitmap = drawView(mountedWindow)
+
+    fun changedPixelsBelowTextLine(first: Bitmap, second: Bitmap, textView: TextView): Int {
+      val layout = requireNotNull(textView.layout)
+      val top = (
+        textView.top + textView.totalPaddingTop - textView.scrollY +
+          layout.legacyLineBottomWithoutSpacing(0) + 1
+        ).coerceAtMost(first.height)
+      val bottom = (
+        top + (32f * activity.resources.displayMetrics.density).roundToInt()
+        ).coerceAtMost(first.height)
+      return changedPixelCount(first, second, 0, top, first.width, bottom)
     }
 
-    private fun colorBounds(bitmap: Bitmap, color: Int): Rect? {
-      var left = bitmap.width
-      var top = bitmap.height
-      var right = -1
-      var bottom = -1
-      val row = IntArray(bitmap.width)
-      for (y in 0 until bitmap.height) {
-        bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
-        row.indices.forEach { x ->
-          if (row[x] == color) {
-            left = minOf(left, x)
-            top = minOf(top, y)
-            right = maxOf(right, x)
-            bottom = maxOf(bottom, y)
+    fun changedPixelCount(first: Bitmap, second: Bitmap): Int =
+      changedPixelCount(first, second, 0, 0, first.width, first.height)
+
+    private fun changedPixelCount(
+      first: Bitmap,
+      second: Bitmap,
+      left: Int,
+      top: Int,
+      right: Int,
+      bottom: Int
+    ): Int {
+      check(first.width == second.width && first.height == second.height)
+      var changed = 0
+      for (y in top until bottom) {
+        for (x in left until right) {
+          if (first.getPixel(x, y) != second.getPixel(x, y)) {
+            changed += 1
           }
         }
       }
-      return if (right < left || bottom < top) null else Rect(left, top, right + 1, bottom + 1)
+      return changed
     }
 
     fun close() {
@@ -1502,6 +2541,8 @@ class ForumContentSelectionViewTest {
       }
       return Cell(
         FrameLayout(reactContext).apply {
+          clipChildren = false
+          clipToPadding = false
           setTag(R.id.view_tag_native_id, nativeId)
           addView(text)
         },
@@ -1522,6 +2563,8 @@ class ForumContentSelectionViewTest {
       }
       return Cell(
         FrameLayout(reactContext).apply {
+          clipChildren = false
+          clipToPadding = false
           setTag(R.id.view_tag_native_id, nativeId)
           addView(text)
         },
@@ -1542,6 +2585,8 @@ class ForumContentSelectionViewTest {
       }
       return Cell(
         FrameLayout(reactContext).apply {
+          clipChildren = false
+          clipToPadding = false
           setTag(R.id.view_tag_native_id, nativeId)
           addView(text)
         },
@@ -1568,7 +2613,74 @@ class ForumContentSelectionViewTest {
     fun failureDescription(): String = "missing handle color ${color.toUInt().toString(16)} within $radius px of ($x,$y)"
   }
 
+  private data class HandleBodyProbe(val handles: List<PointF>, val density: Float) {
+    fun changedPixelCount(selected: Bitmap, clean: Bitmap): Int {
+      check(selected.width == clean.width && selected.height == clean.height)
+      val horizontalRadius = (24f * density).roundToInt()
+      val verticalExtent = (32f * density).roundToInt()
+      var changed = 0
+      handles.forEach { handle ->
+        val left = (handle.x.roundToInt() - horizontalRadius).coerceAtLeast(0)
+        val right = (handle.x.roundToInt() + horizontalRadius).coerceAtMost(selected.width - 1)
+        val top = (handle.y.roundToInt() + 1).coerceAtLeast(0)
+        val bottom = (handle.y.roundToInt() + verticalExtent).coerceAtMost(selected.height - 1)
+        for (y in top..bottom) {
+          for (x in left..right) {
+            if (selected.getPixel(x, y) != clean.getPixel(x, y)) changed += 1
+          }
+        }
+      }
+      return changed
+    }
+  }
+
+  private data class PlatformHandleGeometry(val hotspot: PointF, val bounds: Rect)
+
+  private class RecordingHandleDrawable(
+    private val width: Int,
+    private val height: Int
+  ) : Drawable() {
+    var drawnBounds: Rect? = null
+
+    override fun getIntrinsicWidth(): Int = width
+
+    override fun getIntrinsicHeight(): Int = height
+
+    override fun draw(canvas: Canvas) {
+      drawnBounds = Rect(bounds)
+    }
+
+    override fun setAlpha(alpha: Int) = Unit
+
+    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) = Unit
+
+    @Deprecated("Deprecated in the Android Drawable API")
+    override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+  }
+
   private data class Cell(val root: FrameLayout, val text: TextView)
+
+  private fun recordingSystemAction(
+    key: String,
+    title: String,
+    selectedText: String,
+    invocations: MutableList<String>,
+    enabled: Boolean = true,
+    order: Int = 100,
+    showAsAction: Int = MenuItem.SHOW_AS_ACTION_NEVER
+  ): ForumSelectionSystemAction = ForumSelectionSystemAction(
+    key = key,
+    title = title,
+    contentDescription = title,
+    icon = null,
+    enabled = enabled,
+    order = order,
+    showAsAction = showAsAction,
+    invoke = {
+      invocations += "$key:$selectedText"
+      true
+    }
+  )
 
   private data class TextGeometry(
     val left: Int,
@@ -1580,7 +2692,11 @@ class ForumContentSelectionViewTest {
     val spanEndX: Float
   )
 
-  private class FixtureReactContext(context: Context) : ReactApplicationContext(context) {
+  private class FixtureReactContext(activity: Activity) : ReactApplicationContext(activity.applicationContext) {
+    init {
+      onHostResume(activity)
+    }
+
     override fun <T : JavaScriptModule> getJSModule(jsInterface: Class<T>): T? = null
 
     override fun <T : NativeModule> hasNativeModule(nativeModuleInterface: Class<T>): Boolean = false

@@ -7,12 +7,16 @@ import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.icu.text.BreakIterator
 import android.os.Build
+import android.os.Looper
 import android.os.SystemClock
+import android.text.Layout
 import android.util.Log
 import android.util.TypedValue
 import android.view.ActionMode
+import android.view.HapticFeedbackConstants
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
@@ -31,6 +35,22 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
+internal fun Layout.legacyLineBottomWithoutSpacing(line: Int): Int {
+  if (line == lineCount - 1) return getLineBottom(line)
+  val multiplier = spacingMultiplier
+  if (multiplier == 0f) return getLineBottom(line)
+  val spacedHeight = getLineDescent(line) - getLineAscent(line)
+  val extra = ((spacedHeight * (multiplier - 1f) + spacingAdd) / multiplier).let {
+    if (it >= 0f) (it + 0.5f).toInt() else -(-it + 0.5f).toInt()
+  }
+  return getLineBottom(line) - extra
+}
+
+@android.annotation.TargetApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+private object LayoutApi34 {
+  fun lineBottomWithoutSpacing(layout: Layout, line: Int): Int = layout.getLineBottom(line, false)
+}
+
 class ForumContentSelectionView(
   context: Context,
   appContext: AppContext
@@ -42,25 +62,39 @@ class ForumContentSelectionView(
   internal var pendingEnabled = true
   internal var pendingRevision = ""
   internal var pendingRows: List<ForumSelectionRowRecord> = emptyList()
+  internal var hapticFeedbackObserverForTest: ((Int) -> Unit)? = null
+  internal var systemActionLoaderForTest:
+    ((String, (List<ForumSelectionSystemAction>) -> Unit) -> List<ForumSelectionSystemAction>)? = null
 
   private val selectionDocument = ForumSelectionDocument()
+  private val platformSystemActions = ForumSelectionSystemActionOwner(
+    create = { ForumSelectionPlatformActions(this) { appContext.currentActivity } },
+    cancelOwner = ForumSelectionPlatformActions::cancelPendingClassification
+  )
   private val density = resources.displayMetrics.density
   private val longPressMotionTolerance = forumLongPressMotionTolerancePx(
     ViewConfiguration.get(context).scaledTouchSlop.toFloat(),
     density
   )
-  private val handleHitRadius = 24f * density
+  private val handleTouchHalfWidth = 24f * density
+  private val handleTouchHeight = 48f * density
   private val highlightColor = resolveThemeColor(context, android.R.attr.textColorHighlight, 0x523376FF)
-  private val handleColor = resolveThemeColor(context, android.R.attr.colorAccent, 0xFF1668DC.toInt())
   private val localHighlights = IdentityHashMap<TextView, LocalHighlight>()
   private val markedRowAlignments = IdentityHashMap<View, CachedMarkedRowAlignment>()
   private val hostScreenLocation = IntArray(2)
   private val childScreenLocation = IntArray(2)
-  private val globalVisibleRect = Rect()
+  private val localVisibleRect = Rect()
+  private val cursorPath = Path()
+  private val cursorPathBounds = RectF()
   private var enabled = true
   private var preDrawAttached = false
   private var selectionActive = false
   private var actionMode: ActionMode? = null
+  private var systemActionRequest: ForumSelectionSystemActionRequest? = null
+  private var systemActionGeneration = 0L
+  private var systemActions = emptyList<ForumSelectionSystemAction>()
+  private var systemActionMenuDirty = false
+  private val systemActionsByMenuId = mutableMapOf<Int, BoundForumSelectionSystemAction>()
   private var destroying = false
   private var suppressActionModeDestroy = false
   private var magnifier: Magnifier? = null
@@ -74,6 +108,8 @@ class ForumContentSelectionView(
   private var selectionGestureRoot: View? = null
   private var cancelSelectionOnTap = false
   private var draggingHandle: DraggingHandle? = null
+  private var handleDragOffsetX = 0f
+  private var handleDragOffsetY = 0f
   private var autoScrollPosted = false
   private var lastErrorCode: String? = null
   private var scrollRedrawPending = false
@@ -82,7 +118,6 @@ class ForumContentSelectionView(
   private var startHandlePoint: PointF? = null
   private var endHandlePoint: PointF? = null
   private var alignmentBuildCount = 0
-
   private val longPressRunnable = Runnable { beginLongPressSelection() }
   private val autoScrollRunnable = object : Runnable {
     override fun run() {
@@ -183,12 +218,17 @@ class ForumContentSelectionView(
         downTime = event.downTime
         downX = event.x
         downY = event.y
-        draggingHandle = handleAt(event.x, event.y)
-        if (draggingHandle != null) {
+        handleDragOffsetX = 0f
+        handleDragOffsetY = 0f
+        val touchedHandle = handleAt(event.x, event.y)
+        draggingHandle = touchedHandle?.first
+        if (touchedHandle != null) {
+          handleDragOffsetX = touchedHandle.second.x - event.x
+          handleDragOffsetY = touchedHandle.second.y - event.y
           cancelSelectionOnTap = false
           coordinatorOwnsGesture = true
           parent?.requestDisallowInterceptTouchEvent(true)
-          showMagnifier(event.x, event.y)
+          showMagnifier(event.x + handleDragOffsetX, event.y + handleDragOffsetY)
           return true
         }
         cancelSelectionOnTap = selectionActive
@@ -211,7 +251,7 @@ class ForumContentSelectionView(
         lastTouchY = y
         if (coordinatorOwnsGesture) {
           updateDraggedHandle(x, y)
-          showMagnifier(x, y)
+          updateMagnifierForDraggedHandle()
           postAutoScroll()
           return true
         }
@@ -287,7 +327,11 @@ class ForumContentSelectionView(
     setSelectionActive(true)
     startSelectionActionMode()
     refreshOverlay()
-    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+    draggingHandlePoint()?.let { point ->
+      handleDragOffsetX = point.x - downX
+      handleDragOffsetY = point.y - downY
+    }
+    requestHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
   }
 
   private fun cancelChildTouch() {
@@ -308,9 +352,13 @@ class ForumContentSelectionView(
 
   private fun updateDraggedHandle(x: Float, y: Float) {
     val endpoint = draggingHandle ?: return
-    val mounted = mountedOwners(markedSelectionRowAt(x, y) ?: return)
+    val adjustedX = (x + handleDragOffsetX).coerceIn(0f, max(0f, width - 1f))
+    val adjustedY = (y + handleDragOffsetY).coerceIn(0f, max(0f, height - 1f))
+    // A line-bottom hotspot sits on the previous row's bottom-exclusive edge.
+    val hitY = adjustedY - 0.5f
+    val mounted = mountedOwners(markedSelectionRowAt(adjustedX, hitY) ?: return)
     if (mounted.deferred) return
-    val hit = hitTest(mounted.owners, x, y) ?: return
+    val hit = hitTest(mounted.owners, adjustedX, hitY) ?: return
     val current = selectionDocument.selection() ?: return
     val currentEndpoint = if (endpoint == DraggingHandle.RawStart) current.start else current.end
     val otherEndpoint = if (endpoint == DraggingHandle.RawStart) current.end else current.start
@@ -321,6 +369,7 @@ class ForumContentSelectionView(
       hit.offset,
       currentEndpoint.affinity
     ) ?: return
+    if (provisional == currentEndpoint && hit.mediaSide == null) return
     val candidateIsNormalizedStart = (selectionDocument.compareAnchors(provisional, otherEndpoint) ?: return) <= 0
     val anchor = provisional.copy(affinity = hit.mediaSide.affinityFor(candidateIsNormalizedStart))
     val updated = if (endpoint == DraggingHandle.RawStart) {
@@ -328,7 +377,13 @@ class ForumContentSelectionView(
     } else {
       selectionDocument.select(current.start, anchor)
     }
-    if (updated) refreshOverlay()
+    if (updated) {
+      refreshOverlay()
+      actionMode?.invalidate()
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        requestHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+      }
+    }
   }
 
   private fun finishOwnedGesture(cancelled: Boolean): Boolean {
@@ -337,21 +392,32 @@ class ForumContentSelectionView(
     autoScrollPosted = false
     dismissMagnifier()
     draggingHandle = null
+    handleDragOffsetX = 0f
+    handleDragOffsetY = 0f
     coordinatorOwnsGesture = false
     activePointerId = MotionEvent.INVALID_POINTER_ID
     selectionGestureRoot = null
     cancelSelectionOnTap = false
     parent?.requestDisallowInterceptTouchEvent(false)
     if (cancelled && selectionDocument.selection() == null) setSelectionActive(false)
+    actionMode?.invalidate()
     return true
   }
 
+  private fun requestHapticFeedback(constant: Int) {
+    hapticFeedbackObserverForTest?.invoke(constant)
+    performHapticFeedback(constant)
+  }
+
   internal fun cancelSelection() {
+    clearSystemActionRequest()
     selectionDocument.cancel()
     removeCallbacks(longPressRunnable)
     removeCallbacks(autoScrollRunnable)
     autoScrollPosted = false
     draggingHandle = null
+    handleDragOffsetX = 0f
+    handleDragOffsetY = 0f
     coordinatorOwnsGesture = false
     activePointerId = MotionEvent.INVALID_POINTER_ID
     selectionGestureRoot = null
@@ -375,6 +441,7 @@ class ForumContentSelectionView(
     cancelSelection()
     detachPreDraw()
     selectionDocument.reset()
+    platformSystemActions.close()
   }
 
   override fun onPreDraw(): Boolean {
@@ -391,6 +458,8 @@ class ForumContentSelectionView(
   override fun onScrollChanged() {
     if (!selectionActive) return
     scrollRedrawPending = true
+    startLocalHandle?.drawable?.invalidateSelf()
+    endLocalHandle?.drawable?.invalidateSelf()
   }
 
   private fun refreshOverlay(invalidate: Boolean = true) {
@@ -480,31 +549,69 @@ class ForumContentSelectionView(
     endAnchor: ForumSelectionAnchor
   ) {
     getLocationOnScreen(hostScreenLocation)
-    val start = handleProjection(startOwner, startAnchor)
-    val end = handleProjection(endOwner, endAnchor)
+    val start = handleProjection(startOwner, startAnchor, isStartHandle = true)
+    val end = handleProjection(endOwner, endAnchor, isStartHandle = false)
     startHandlePoint = visibleRoutePoint(start)
     endHandlePoint = visibleRoutePoint(end)
-    startLocalHandle = syncLocalHandle(startLocalHandle, start, prefersBelow = false)
-    endLocalHandle = syncLocalHandle(endLocalHandle, end, prefersBelow = true)
+    startLocalHandle = syncLocalHandle(startLocalHandle, start, startHandlePoint != null)
+    endLocalHandle = syncLocalHandle(endLocalHandle, end, endHandlePoint != null)
   }
 
-  private fun handleProjection(owner: MountedOwner?, anchor: ForumSelectionAnchor): HandleProjection? {
+  private fun handleProjection(
+    owner: MountedOwner?,
+    anchor: ForumSelectionAnchor,
+    isStartHandle: Boolean
+  ): HandleProjection? {
     if (owner == null || !owner.matches(anchor)) return null
     val view = owner.view
     val layout = view.layout ?: return null
     val layoutOffset = owner.offsetMap.layoutOffset(anchor.utf16Offset, anchor.affinity)
     val offset = layoutOffset.coerceIn(0, layout.text.length)
     val line = layout.getLineForOffset(offset)
-    val localPoint = PointF(
-      view.totalPaddingLeft - view.scrollX + layout.getPrimaryHorizontal(offset),
-      (view.totalPaddingTop - view.scrollY + layout.getLineBottom(line)).toFloat()
+    val offsetToCheck = if (isStartHandle) offset else max(offset - 1, 0)
+    val isRtlRun = layout.isRtlCharAt(offsetToCheck)
+    val isRtlParagraph = layout.getParagraphDirection(line) == Layout.DIR_RIGHT_TO_LEFT
+    val horizontal = if (isRtlRun != isRtlParagraph) {
+      layout.getSecondaryHorizontal(offset)
+    } else {
+      layout.getPrimaryHorizontal(offset)
+    }
+    val contentPoint = PointF(
+      view.totalPaddingLeft + horizontal,
+      view.totalPaddingTop + lineBottomWithoutSpacing(layout, line, offset)
     )
     view.getLocationOnScreen(childScreenLocation)
     val routePoint = PointF(
-      childScreenLocation[0] - hostScreenLocation[0] + localPoint.x,
-      childScreenLocation[1] - hostScreenLocation[1] + localPoint.y
+      childScreenLocation[0] - hostScreenLocation[0] + contentPoint.x - view.scrollX,
+      childScreenLocation[1] - hostScreenLocation[1] + contentPoint.y - view.scrollY
     )
-    return HandleProjection(view, localPoint, routePoint)
+    val direction = if (isRtlRun == isStartHandle) HandleDrawableDirection.Right else HandleDrawableDirection.Left
+    return HandleProjection(view, handleOverlayHost(owner.overlayHost), contentPoint, routePoint, direction)
+  }
+
+  @Suppress("DEPRECATION")
+  private fun lineBottomWithoutSpacing(layout: Layout, line: Int, offset: Int): Float {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      return LayoutApi34.lineBottomWithoutSpacing(layout, line).toFloat()
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      layout.getCursorPath(offset, cursorPath, "")
+      cursorPath.computeBounds(cursorPathBounds, true)
+      return cursorPathBounds.bottom
+    }
+    return layout.legacyLineBottomWithoutSpacing(line).toFloat()
+  }
+
+  private fun handleOverlayHost(markedRow: View): View {
+    var directChild = markedRow
+    while (true) {
+      val parent = directChild.parent
+      if (parent === this) break
+      directChild = parent as? View ?: return this
+    }
+    return directChild.takeIf {
+      childCount == 1 && getChildAt(0) === it && it.width >= width && it.height >= height
+    } ?: this
   }
 
   private fun visibleRoutePoint(projection: HandleProjection?): PointF? {
@@ -516,30 +623,67 @@ class ForumContentSelectionView(
   private fun syncLocalHandle(
     current: LocalHandle?,
     projection: HandleProjection?,
-    prefersBelow: Boolean
+    visible: Boolean
   ): LocalHandle? {
     if (projection == null) {
-      current?.view?.overlay?.remove(current.drawable)
+      current?.overlayHost?.overlay?.remove(current.drawable)
       return null
     }
     val drawing = HandleDrawingProjection(
-      x = projection.localPoint.x,
-      y = projection.localPoint.y,
-      width = projection.view.width,
-      height = projection.view.height
+      x = projection.contentPoint.x,
+      y = projection.contentPoint.y,
+      routeX = projection.routePoint.x,
+      routeY = projection.routePoint.y,
+      visible = visible,
+      hostWidth = projection.overlayHost.width,
+      hostHeight = projection.overlayHost.height,
+      direction = projection.direction
     )
-    if (current?.view === projection.view) {
+    if (
+      current?.overlayHost === projection.overlayHost &&
+      current.sourceView === projection.view &&
+      current.projection.direction == drawing.direction
+    ) {
       if (current.projection != drawing) {
         current.projection = drawing
-        current.drawable.update(projection.localPoint, drawing.width, drawing.height)
+        current.drawable.update(projection.contentPoint)
       }
       return current
     }
-    current?.view?.overlay?.remove(current.drawable)
-    val drawable = ForumSelectionHandleDrawable(density, handleColor, prefersBelow)
-    drawable.update(projection.localPoint, drawing.width, drawing.height)
-    projection.view.overlay.add(drawable)
-    return LocalHandle(projection.view, drawable, drawing)
+    current?.overlayHost?.overlay?.remove(current.drawable)
+    val platformDrawable = selectionHandleDrawable(projection.view, drawing.direction) ?: return null
+    val drawable = ForumSelectionPlatformHandleDrawable(
+      sourceView = projection.view,
+      overlayHost = projection.overlayHost,
+      platformDrawable = platformDrawable,
+      hotspotQuarter = if (drawing.direction == HandleDrawableDirection.Left) 3 else 1
+    )
+    drawable.update(projection.contentPoint)
+    projection.overlayHost.overlay.add(drawable)
+    return LocalHandle(projection.overlayHost, projection.view, drawable, drawing)
+  }
+
+  private fun selectionHandleDrawable(view: TextView, direction: HandleDrawableDirection): Drawable? {
+    val attribute = when (direction) {
+      HandleDrawableDirection.Left -> android.R.attr.textSelectHandleLeft
+      HandleDrawableDirection.Right -> android.R.attr.textSelectHandleRight
+    }
+    val configured = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      when (direction) {
+        HandleDrawableDirection.Left -> view.textSelectHandleLeft
+        HandleDrawableDirection.Right -> view.textSelectHandleRight
+      }
+    } else {
+      null
+    }
+    val drawable = configured?.constantState
+      ?.newDrawable(view.resources, view.context.theme)
+      ?.mutate()
+      ?: resolveTextViewDrawable(view.context, attribute)
+      ?: return null
+    drawable.state = view.drawableState
+    drawable.layoutDirection = view.layoutDirection
+    return drawable
   }
 
   private fun mountedOwners(root: View): MountedOwnerCollection {
@@ -601,9 +745,9 @@ class ForumContentSelectionView(
       alignmentBuildCount += 1
       return MarkedRowAlignment.Ready(emptyList())
     }
-    val earliest = alignOwners(row, candidates, expectedTexts, reverse = false)
+    val earliest = alignOwners(root, row, candidates, expectedTexts, reverse = false)
       ?: return MarkedRowAlignment.Deferred
-    val latest = alignOwners(row, candidates, expectedTexts, reverse = true)
+    val latest = alignOwners(root, row, candidates, expectedTexts, reverse = true)
       ?: return MarkedRowAlignment.Deferred
     if (earliest.indices.any { earliest[it].view !== latest[it].view }) return MarkedRowAlignment.Deferred
     markedRowAlignments[root] = CachedMarkedRowAlignment(row, candidates, earliest)
@@ -623,6 +767,7 @@ class ForumContentSelectionView(
   }
 
   private fun alignOwners(
+    overlayHost: View,
     row: ForumSelectionRowDefinition,
     candidates: List<TextView>,
     expectedTexts: List<String>,
@@ -642,6 +787,7 @@ class ForumContentSelectionView(
               row,
               ownerOrdinal,
               view,
+              overlayHost,
               mapping.offsets.logicalText,
               mapping.offsets
             )
@@ -673,10 +819,13 @@ class ForumContentSelectionView(
     screenX: Int,
     screenY: Int
   ): View? {
+    view.getLocationOnScreen(childScreenLocation)
+    val localX = screenX - childScreenLocation[0] + view.scrollX
+    val localY = screenY - childScreenLocation[1] + view.scrollY
     if (
       !view.isShown ||
-      !view.getGlobalVisibleRect(globalVisibleRect) ||
-      !globalVisibleRect.contains(screenX, screenY)
+      !view.getLocalVisibleRect(localVisibleRect) ||
+      !localVisibleRect.contains(localX, localY)
     ) return null
     val nativeId = view.getTag(R.id.view_tag_native_id) as? String
     if (nativeId != null && selectionDocument.rowForNativeId(nativeId) != null) return view
@@ -695,13 +844,19 @@ class ForumContentSelectionView(
     for (owner in owners.asReversed()) {
       if (owner.text.isEmpty()) continue
       val view = owner.view
-      if (!view.getGlobalVisibleRect(globalVisibleRect) || !globalVisibleRect.contains(screenX.toInt(), screenY.toInt())) {
+      view.getLocationOnScreen(childScreenLocation)
+      val localX = screenX - childScreenLocation[0] + view.scrollX
+      val localY = screenY - childScreenLocation[1] + view.scrollY
+      if (
+        !view.getLocalVisibleRect(localVisibleRect) ||
+        localX < localVisibleRect.left || localX >= localVisibleRect.right ||
+        localY < localVisibleRect.top || localY >= localVisibleRect.bottom
+      ) {
         continue
       }
       val layout = view.layout ?: continue
-      view.getLocationOnScreen(childScreenLocation)
-      val layoutX = screenX - childScreenLocation[0] - view.totalPaddingLeft + view.scrollX
-      val layoutY = screenY - childScreenLocation[1] - view.totalPaddingTop + view.scrollY
+      val layoutX = localX - view.totalPaddingLeft
+      val layoutY = localY - view.totalPaddingTop
       val line = layout.getLineForVertical(layoutY.toInt().coerceIn(0, max(0, layout.height - 1)))
       val layoutOffset = layout.getOffsetForHorizontal(line, layoutX).coerceIn(0, layout.text.length)
       val logicalOffset = owner.offsetMap.layoutToLogical(layoutOffset).coerceIn(0, owner.text.length)
@@ -735,23 +890,46 @@ class ForumContentSelectionView(
   }
 
   private fun ownerVisibleClip(view: TextView): RectF? {
-    if (!view.getGlobalVisibleRect(globalVisibleRect)) return null
-    val left = max(0f, globalVisibleRect.left - hostScreenLocation[0].toFloat())
-    val top = max(0f, globalVisibleRect.top - hostScreenLocation[1].toFloat())
-    val right = min(width.toFloat(), globalVisibleRect.right - hostScreenLocation[0].toFloat())
-    val bottom = min(height.toFloat(), globalVisibleRect.bottom - hostScreenLocation[1].toFloat())
+    if (!view.getLocalVisibleRect(localVisibleRect)) return null
+    view.getLocationOnScreen(childScreenLocation)
+    val viewLeft = (childScreenLocation[0] - hostScreenLocation[0] - view.scrollX).toFloat()
+    val viewTop = (childScreenLocation[1] - hostScreenLocation[1] - view.scrollY).toFloat()
+    val left = max(0f, viewLeft + localVisibleRect.left)
+    val top = max(0f, viewTop + localVisibleRect.top)
+    val right = min(width.toFloat(), viewLeft + localVisibleRect.right)
+    val bottom = min(height.toFloat(), viewTop + localVisibleRect.bottom)
     return RectF(left, top, right, bottom).takeIf { it.width() > 0f && it.height() > 0f }
   }
 
-  private fun handleAt(x: Float, y: Float): DraggingHandle? {
+  private fun handleAt(x: Float, y: Float): Pair<DraggingHandle, PointF>? {
     val selection = selectionDocument.selection() ?: return null
     val rawStartIsVisibleStart = (selectionDocument.compareAnchors(selection.start, selection.end) ?: return null) <= 0
     val candidates = listOf(
       (if (rawStartIsVisibleStart) DraggingHandle.RawStart else DraggingHandle.RawEnd) to startHandlePoint,
       (if (rawStartIsVisibleStart) DraggingHandle.RawEnd else DraggingHandle.RawStart) to endHandlePoint
-    ).mapNotNull { (handle, point) -> point?.let { handle to hypot(x - it.x, y - it.y) } }
-      .filter { it.second <= handleHitRadius }
-    return candidates.minByOrNull { it.second }?.first
+    ).mapNotNull { (handle, point) -> point?.let { Triple(handle, it, hypot(x - it.x, y - it.y)) } }
+      .filter { (_, point, _) ->
+        val targetWidth = min(width.toFloat(), handleTouchHalfWidth * 2f)
+        val targetHeight = min(height.toFloat(), handleTouchHeight)
+        val left = (point.x - handleTouchHalfWidth).coerceIn(0f, max(0f, width - targetWidth))
+        val top = point.y.coerceIn(0f, max(0f, height - targetHeight))
+        x in left..(left + targetWidth) && y in top..(top + targetHeight)
+      }
+    return candidates.minByOrNull { it.third }?.let { it.first to it.second }
+  }
+
+  private fun draggingHandlePoint(): PointF? {
+    val handle = draggingHandle ?: return null
+    val selection = selectionDocument.selection() ?: return null
+    val rawStartIsVisibleStart = (selectionDocument.compareAnchors(selection.start, selection.end) ?: return null) <= 0
+    return when (handle) {
+      DraggingHandle.RawStart -> if (rawStartIsVisibleStart) startHandlePoint else endHandlePoint
+      DraggingHandle.RawEnd -> if (rawStartIsVisibleStart) endHandlePoint else startHandlePoint
+    }
+  }
+
+  private fun updateMagnifierForDraggedHandle() {
+    draggingHandlePoint()?.let { showMagnifier(it.x, it.y) } ?: dismissMagnifier()
   }
 
   private fun startSelectionActionMode() {
@@ -761,12 +939,27 @@ class ForumContentSelectionView(
 
   private inner class SelectionActionModeCallback : ActionMode.Callback2() {
     override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
-      menu.add(Menu.NONE, MENU_COPY, 0, android.R.string.copy).setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-      menu.add(Menu.NONE, MENU_SELECT_ALL, 1, android.R.string.selectAll).setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+      menu.add(Menu.NONE, MENU_COPY, 5, android.R.string.copy).setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+      menu.add(Menu.NONE, MENU_SELECT_ALL, 8, android.R.string.selectAll)
+        .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+      menu.add(Menu.NONE, MENU_SHARE, 7, R.string.forum_selection_share)
+        .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
       return true
     }
 
-    override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
+    override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+      val documentId = selectionDocument.selection()?.start?.documentId
+      val shouldShow = documentId != null && selectionDocument.canSelectAll(documentId)
+      val hasSelectAll = menu.findItem(MENU_SELECT_ALL) != null
+      val selectAllChanged = shouldShow != hasSelectAll
+      if (shouldShow && !hasSelectAll) {
+        menu.add(Menu.NONE, MENU_SELECT_ALL, 8, android.R.string.selectAll)
+          .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+      } else if (!shouldShow && hasSelectAll) {
+        menu.removeItem(MENU_SELECT_ALL)
+      }
+      return syncSystemActions(mode, menu) || selectAllChanged
+    }
 
     override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean = when (item.itemId) {
       MENU_COPY -> {
@@ -776,14 +969,23 @@ class ForumContentSelectionView(
       }
       MENU_SELECT_ALL -> {
         val documentId = selectionDocument.selection()?.start?.documentId ?: return false
-        if (selectionDocument.selectAll(documentId)) refreshOverlay()
+        if (selectionDocument.selectAll(documentId)) {
+          refreshOverlay()
+          mode.invalidate()
+        }
         true
       }
-      else -> false
+      MENU_SHARE -> {
+        val shared = selectionDocument.copySelection()?.let(platformSystemActions.get()::share) == true
+        if (shared) mode.finish()
+        shared
+      }
+      else -> invokeSystemAction(item)
     }
 
     override fun onDestroyActionMode(mode: ActionMode) {
       if (actionMode === mode) actionMode = null
+      clearSystemActionRequest()
       if (!suppressActionModeDestroy) cancelSelection()
     }
 
@@ -799,6 +1001,92 @@ class ForumContentSelectionView(
       val bottom = (points.maxOf { it.y } + 16f * density).toInt().coerceIn(top, height)
       outRect.set(left, top, right, bottom)
     }
+  }
+
+  private fun syncSystemActions(mode: ActionMode, menu: Menu): Boolean {
+    val range = selectionDocument.selection()
+    val text = range?.let {
+      forumSelectionSystemActionText(
+        isDragging = draggingHandle != null,
+        copySelection = selectionDocument::copySelection
+      )
+    }
+    if (range == null || text == null) {
+      if (systemActionRequest != null || systemActions.isNotEmpty()) clearSystemActionRequest()
+      return renderSystemActions(menu)
+    }
+    val request = ForumSelectionSystemActionRequest(range, text)
+    if (systemActionRequest != request) {
+      clearSystemActionRequest()
+      systemActionRequest = request
+      val generation = systemActionGeneration
+      var immediateActions = emptyList<ForumSelectionSystemAction>()
+      val publishSmartActions: (List<ForumSelectionSystemAction>) -> Unit = { smartActions ->
+        val applyActions = Runnable {
+          if (actionMode !== mode || systemActionGeneration != generation ||
+            systemActionRequest != request || selectionDocument.selection() != request.range ||
+            selectionDocument.copySelection() != request.text || !isAttachedToWindow) {
+            return@Runnable
+          }
+          systemActions = immediateActions + smartActions
+          systemActionMenuDirty = true
+          mode.invalidate()
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) applyActions.run() else post(applyActions)
+      }
+      immediateActions = runCatching {
+        (systemActionLoaderForTest ?: platformSystemActions.get()::load).invoke(text, publishSmartActions)
+      }.onFailure {
+        Log.w(LOG_TAG, "system text actions could not load", it)
+      }.getOrDefault(emptyList())
+      systemActions = immediateActions
+      systemActionMenuDirty = true
+    }
+    return renderSystemActions(menu)
+  }
+
+  private fun renderSystemActions(menu: Menu): Boolean {
+    if (!systemActionMenuDirty) return false
+    menu.removeGroup(MENU_GROUP_SYSTEM_ACTIONS)
+    systemActionsByMenuId.clear()
+    val request = systemActionRequest
+    if (request != null) {
+      systemActions.distinctBy { it.key }.forEachIndexed { index, action ->
+        val itemId = MENU_SYSTEM_ACTION_START + index
+        val item = menu.add(MENU_GROUP_SYSTEM_ACTIONS, itemId, action.order, action.title)
+          .setEnabled(action.enabled)
+          .setShowAsActionFlags(action.showAsAction)
+        action.icon?.let(item::setIcon)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          item.contentDescription = action.contentDescription
+        }
+        systemActionsByMenuId[itemId] = BoundForumSelectionSystemAction(request, action)
+      }
+    }
+    systemActionMenuDirty = false
+    return true
+  }
+
+  private fun invokeSystemAction(item: MenuItem): Boolean {
+    val bound = systemActionsByMenuId[item.itemId] ?: return false
+    if (!bound.action.enabled || selectionDocument.selection() != bound.request.range ||
+      selectionDocument.copySelection() != bound.request.text) {
+      return false
+    }
+    val invoked = runCatching(bound.action.invoke).onFailure {
+      Log.w(LOG_TAG, "system text action could not run", it)
+    }.getOrDefault(false)
+    if (invoked && bound.action.finishSelectionOnSuccess) actionMode?.finish()
+    return true
+  }
+
+  private fun clearSystemActionRequest() {
+    platformSystemActions.cancelPendingClassification()
+    systemActionGeneration += 1
+    systemActionRequest = null
+    systemActions = emptyList()
+    systemActionsByMenuId.clear()
+    systemActionMenuDirty = true
   }
 
   private fun copyToClipboard(): String? {
@@ -839,6 +1127,7 @@ class ForumContentSelectionView(
   private fun runAutoScrollFrame(): ForumAutoScrollPayload? {
     updateDraggedHandle(lastTouchX, lastTouchY)
     if (!selectionActive || draggingHandle == null) return null
+    updateMagnifierForDraggedHandle()
     return forumAutoScrollPayload(lastTouchY, height, density)
   }
 
@@ -853,7 +1142,40 @@ class ForumContentSelectionView(
   internal fun overlayHandlesForTest(): Pair<PointF?, PointF?> =
     startHandlePoint?.let(::PointF) to endHandlePoint?.let(::PointF)
 
+  internal fun overlayHandleHotspotQuartersForTest(): Pair<Int?, Int?> =
+    startLocalHandle?.drawable?.hotspotQuarterForTest() to
+      endLocalHandle?.drawable?.hotspotQuarterForTest()
+
   internal fun copySelectionToClipboardForTest(): String? = copyToClipboard()
+
+  internal fun actionModeMenuVisibilityForTest(): Pair<Boolean, Boolean>? = actionMode?.menu?.let { menu ->
+    (menu.findItem(MENU_COPY)?.isVisible == true) to
+      (menu.findItem(MENU_SELECT_ALL)?.isVisible == true)
+  }
+
+  internal fun selectAllFromActionModeForTest(): Boolean =
+    actionMode?.menu?.performIdentifierAction(MENU_SELECT_ALL, 0) == true
+
+  internal fun copyFromActionModeForTest(): Boolean =
+    actionMode?.menu?.performIdentifierAction(MENU_COPY, 0) == true
+
+  internal fun actionModeMenuTitlesForTest(): List<String> = actionMode?.menu?.let { menu ->
+    (0 until menu.size()).map { menu.getItem(it).title.toString() }
+  }.orEmpty()
+
+  internal fun clickActionModeItemWithTitleForTest(title: String): Boolean {
+    val menu = actionMode?.menu ?: return false
+    val item = (0 until menu.size()).map(menu::getItem).firstOrNull { it.title.toString() == title }
+      ?: return false
+    return menu.performIdentifierAction(item.itemId, 0)
+  }
+
+  internal fun selectAllForTest(): Boolean {
+    val documentId = selectionDocument.selection()?.start?.documentId ?: return false
+    return selectionDocument.selectAll(documentId).also { changed ->
+      if (changed) refreshOverlay()
+    }
+  }
 
   internal fun autoScrollFrameForTest(x: Float, y: Float): Map<String, Any>? {
     lastTouchX = x
@@ -868,8 +1190,8 @@ class ForumContentSelectionView(
   private fun clearOverlay(invalidate: Boolean = true) {
     localHighlights.forEach { (view, highlight) -> view.overlay.remove(highlight.drawable) }
     localHighlights.clear()
-    startLocalHandle?.let { it.view.overlay.remove(it.drawable) }
-    endLocalHandle?.let { it.view.overlay.remove(it.drawable) }
+    startLocalHandle?.let { it.overlayHost.overlay.remove(it.drawable) }
+    endLocalHandle?.let { it.overlayHost.overlay.remove(it.drawable) }
     startLocalHandle = null
     endLocalHandle = null
     startHandlePoint = null
@@ -937,6 +1259,7 @@ class ForumContentSelectionView(
     val row: ForumSelectionRowDefinition,
     val ownerOrdinal: Int,
     val view: TextView,
+    val overlayHost: View,
     val text: String,
     val offsetMap: ForumTextOffsetMap
   ) {
@@ -964,22 +1287,34 @@ class ForumContentSelectionView(
 
   private data class HandleProjection(
     val view: TextView,
-    val localPoint: PointF,
-    val routePoint: PointF
+    val overlayHost: View,
+    val contentPoint: PointF,
+    val routePoint: PointF,
+    val direction: HandleDrawableDirection
   )
 
   private data class HandleDrawingProjection(
     val x: Float,
     val y: Float,
-    val width: Int,
-    val height: Int
+    val routeX: Float,
+    val routeY: Float,
+    val visible: Boolean,
+    val hostWidth: Int,
+    val hostHeight: Int,
+    val direction: HandleDrawableDirection
   )
 
   private data class LocalHandle(
-    val view: TextView,
-    val drawable: ForumSelectionHandleDrawable,
+    val overlayHost: View,
+    val sourceView: TextView,
+    val drawable: ForumSelectionPlatformHandleDrawable,
     var projection: HandleDrawingProjection
   )
+
+  private enum class HandleDrawableDirection {
+    Left,
+    Right
+  }
 
   private data class MountedOwnerCollection(
     val owners: List<MountedOwner>,
@@ -1021,8 +1356,11 @@ class ForumContentSelectionView(
 
   private companion object {
     const val LOG_TAG = "ForumSelection"
-    const val MENU_COPY = 0x46534301
-    const val MENU_SELECT_ALL = 0x46534302
+    const val MENU_COPY = android.R.id.copy
+    const val MENU_SELECT_ALL = android.R.id.selectAll
+    const val MENU_SHARE = android.R.id.shareText
+    const val MENU_GROUP_SYSTEM_ACTIONS = 0x46534310
+    const val MENU_SYSTEM_ACTION_START = 0x46534400
   }
 }
 
@@ -1042,6 +1380,20 @@ private fun resolveThemeColor(context: Context, attribute: Int, fallback: Int): 
   return if (resourceId != 0) runCatching { context.getColor(resourceId) }.getOrDefault(fallback) else fallback
 }
 
+private fun resolveTextViewDrawable(context: Context, attribute: Int): Drawable? {
+  val attributes = context.obtainStyledAttributes(
+    null,
+    intArrayOf(attribute),
+    android.R.attr.textViewStyle,
+    0
+  )
+  return try {
+    attributes.getDrawable(0)?.mutate()
+  } finally {
+    attributes.recycle()
+  }
+}
+
 internal data class ForumAutoScrollPayload(
   val deltaDp: Float
 ) {
@@ -1054,6 +1406,16 @@ internal data class ForumSelectionInteractionState(
   val active: Boolean,
   val hasActionMode: Boolean,
   val ownsGesture: Boolean
+)
+
+private data class ForumSelectionSystemActionRequest(
+  val range: ForumSelectionRange,
+  val text: String
+)
+
+private data class BoundForumSelectionSystemAction(
+  val request: ForumSelectionSystemActionRequest,
+  val action: ForumSelectionSystemAction
 )
 
 internal fun forumAutoScrollPayload(

@@ -177,7 +177,7 @@ export function TopicCard({
               ) : null}
             </View>
           </View>
-          <View style={styles.topicStatGroup}>
+          <View renderToHardwareTextureAndroid style={styles.topicStatGroup}>
             {!hideReplyCount && typeof topic.replyCount === 'number' ? (
               <View style={styles.topicStatItem}>
                 <MessageCircle size={14} color={theme.muted} strokeWidth={1.9} />

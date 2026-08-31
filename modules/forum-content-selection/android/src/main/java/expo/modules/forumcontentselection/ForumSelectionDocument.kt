@@ -182,7 +182,9 @@ internal class ForumSelectionDocument {
 
   fun select(start: ForumSelectionAnchor, end: ForumSelectionAnchor): Boolean {
     if (!isEnabled || !isValid(start) || !isValid(end) || start.documentId != end.documentId) return false
-    selectedRange = ForumSelectionRange(start, end)
+    val nextRange = ForumSelectionRange(start, end)
+    if (selectedRange == nextRange) return false
+    selectedRange = nextRange
     selectAllDocumentId = null
     return true
   }
@@ -192,31 +194,36 @@ internal class ForumSelectionDocument {
     return select(current.start, anchor)
   }
 
+  fun canSelectAll(documentId: String): Boolean =
+    isEnabled && selectAllDocumentId != documentId &&
+      rows.any { it.definition.documentId == documentId && it.token.owners.isNotEmpty() }
+
   fun selectAll(documentId: String): Boolean {
     val selectableRows = rows.filter { it.definition.documentId == documentId && it.token.owners.isNotEmpty() }
     if (selectableRows.isEmpty()) return false
     val first = selectableRows.first()
     val last = selectableRows.last()
-    val selected = select(
-      ForumSelectionAnchor(
-        documentId,
-        revision,
-        first.definition.rowKey,
-        0,
-        0,
-        ForumSelectionAffinity.Upstream
-      ),
-      ForumSelectionAnchor(
-        documentId,
-        revision,
-        last.definition.rowKey,
-        last.token.owners.lastIndex,
-        last.token.owners.last().text.length,
-        ForumSelectionAffinity.Downstream
-      )
+    val start = ForumSelectionAnchor(
+      documentId,
+      revision,
+      first.definition.rowKey,
+      0,
+      0,
+      ForumSelectionAffinity.Upstream
     )
-    if (selected) selectAllDocumentId = documentId
-    return selected
+    val end = ForumSelectionAnchor(
+      documentId,
+      revision,
+      last.definition.rowKey,
+      last.token.owners.lastIndex,
+      last.token.owners.last().text.length,
+      ForumSelectionAffinity.Downstream
+    )
+    val selectionChanged = select(start, end)
+    if (!selectionChanged && selectedRange != ForumSelectionRange(start, end)) return false
+    val selectAllChanged = selectAllDocumentId != documentId
+    selectAllDocumentId = documentId
+    return selectionChanged || selectAllChanged
   }
 
   fun expectedOwnerTexts(documentId: String, rowKey: String): List<String>? = rowsByKey[rowKey]

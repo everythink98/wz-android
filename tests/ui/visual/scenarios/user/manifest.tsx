@@ -74,8 +74,8 @@ function UserScenario({ state }: { state: UserScenarioState }) {
       : null;
   const requestedUser: UserReference = state === 'loading' ? unresolvedUser : loadedProfile;
   const topicStateIndex: TopicListItemStateIndex = {
-    favorites: new Set(),
-    history: new Set(),
+    favorites: {},
+    history: {},
     listDensity: settings.listDensity
   };
   return (

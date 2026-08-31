@@ -78,6 +78,7 @@ describe('linux.do level profile', () => {
       ['posts_read_count', 99, 100, false],
       ['time_read', 3600, 3600, true]
     ]);
+    expect(profile.requirements.every((item) => item.direction === 'minimum')).toBe(true);
   });
 
   it('keeps official level 0 even when the level 0 requirements are complete', () => {
@@ -146,7 +147,17 @@ describe('linux.do level profile', () => {
     expect(profile.requirements.some((item) => item.key === 'topics_entered' && item.required === 500)).toBe(true);
   });
 
-  it('uses official connect progress for level 2 and above when available', async () => {
+  it('uses official connect requirements for level 2 and above when available', async () => {
+    asyncStorage.__store.set(
+      'linuxdo-level-snapshot:alice',
+      JSON.stringify({
+        username: 'alice',
+        values: {
+          'connect:被举报帖子': 1,
+          'connect:举报用户': 6
+        }
+      })
+    );
     const requests: string[] = [];
     const directFetcher = vi.fn(async (input: string) => {
       requests.push(input);
@@ -181,13 +192,41 @@ describe('linux.do level profile', () => {
               <div class="tl3-ring-label">访问天数</div>
             </div>
             <div class="tl3-ring">
-              <div class="tl3-ring-circle" style="--val: 400; --max: 500"></div>
+              <div class="tl3-ring-circle" style="--val: 500; --max: 500"></div>
               <div class="tl3-ring-label">浏览话题</div>
             </div>
             <div class="tl3-bar-item">
               <div class="tl3-bar-label">已读帖子</div>
-              <div class="tl3-bar-nums">1,500 / 20,000</div>
-              <div class="tl3-bar-fill" style="--val: 1500; --max: 20000"></div>
+              <div class="tl3-bar-nums">20,000 / 20,000</div>
+              <div class="tl3-bar-fill" style="--val: 20000; --max: 20000"></div>
+            </div>
+            <div class="tl3-quota-card met">
+              <div class="tl3-quota-label">被举报帖子</div>
+              <div class="tl3-quota-nums">2 / 7</div>
+            </div>
+            <div class="tl3-quota-card unmet">
+              <div class="tl3-quota-label">举报用户</div>
+              <div class="tl3-quota-nums">5 / 5</div>
+            </div>
+            <div class="tl3-quota-card unmet">
+              <div class="tl3-quota-label">缺失上限</div>
+              <div class="tl3-quota-nums">2</div>
+            </div>
+            <div class="tl3-quota-card">
+              <div class="tl3-quota-label">未知配额状态</div>
+              <div class="tl3-quota-nums">0 / 5</div>
+            </div>
+            <div class="tl3-veto-item met">
+              <div class="tl3-veto-front">
+                <div class="tl3-veto-label">被封禁</div>
+                <div class="tl3-veto-value">0</div>
+              </div>
+            </div>
+            <div class="tl3-veto-item">
+              <div class="tl3-veto-front">
+                <div class="tl3-veto-label">未知否决状态</div>
+                <div class="tl3-veto-value">0</div>
+              </div>
             </div>
             <div class="tl3-veto-item unmet">
               <div class="tl3-veto-back">
@@ -223,12 +262,34 @@ describe('linux.do level profile', () => {
       estimate: false,
       note: expect.stringContaining('官方')
     });
-    expect(profile.requirements.map((item) => [item.label, item.current, item.required, item.met])).toEqual([
-      ['访问天数', 50, 50, true],
-      ['浏览话题', 400, 500, false],
-      ['已读帖子', 1500, 20000, false],
-      ['被禁言', 1, 0, false]
+    expect(
+      profile.requirements.map((item) => [
+        item.label,
+        item.current,
+        item.required,
+        item.met,
+        item.direction,
+        item.ratio
+      ])
+    ).toEqual([
+      ['访问天数', 50, 50, true, 'minimum', 1],
+      ['浏览话题', 500, 500, false, 'minimum', 1],
+      ['已读帖子', 20000, 20000, false, 'minimum', 1],
+      ['被举报帖子', 2, 7, true, 'maximum', 2 / 7],
+      ['举报用户', 5, 5, false, 'maximum', 1],
+      ['未知配额状态', 0, 5, false, 'maximum', 0],
+      ['被封禁', 0, 0, true, 'maximum', 0],
+      ['未知否决状态', 0, 0, false, 'maximum', 0],
+      ['被禁言', 1, 0, false, 'maximum', 1]
     ]);
+    expect(profile.requirements.find((item) => item.label === '被举报帖子')).toMatchObject({
+      direction: 'maximum',
+      change: 1
+    });
+    expect(profile.requirements.find((item) => item.label === '举报用户')).toMatchObject({
+      direction: 'maximum',
+      change: -1
+    });
     expect(requests).toEqual(['https://linux.do/my/summary.json', 'https://connect.linux.do/']);
     expect(webViewFetcher).not.toHaveBeenCalled();
   });

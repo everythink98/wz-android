@@ -8,11 +8,12 @@ import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 
 const LINUXDO_LEVEL_TABS = [
-  { value: 'progress', label: '等级进度' },
+  { value: 'progress', label: '等级要求' },
   { value: 'activity', label: '活跃数据' }
 ] as const;
 
 type LinuxDoLevelTab = (typeof LINUXDO_LEVEL_TABS)[number]['value'];
+const MAX_LEVEL_RISK_SEGMENTS = 20;
 
 function formatActivitySeconds(seconds: number) {
   const minutes = Math.floor(seconds / 60);
@@ -87,11 +88,11 @@ export function LinuxDoLevelPanel({
             </View>
             <View style={styles.levelMetaRow}>
               <Text style={styles.levelBadge}>
-                {profile.estimate ? '本机估算' : profile.source === 'connect' ? '官方进度' : '本机数据'}
+                {profile.estimate ? '本机估算' : profile.source === 'connect' ? '官方要求' : '本机数据'}
               </Text>
               {profile.totalCount ? (
                 <Text style={styles.meta}>
-                  完成 {profile.achievedCount} / {profile.totalCount} 项
+                  通过 {profile.achievedCount} / {profile.totalCount} 项
                 </Text>
               ) : null}
             </View>
@@ -117,34 +118,135 @@ export function LinuxDoLevelPanel({
           {tab === 'progress' ? (
             <View style={styles.levelRequirementList}>
               {profile.requirements.length ? (
-                profile.requirements.map((item) => (
-                  <View key={item.key} style={styles.levelRequirementRow}>
-                    <View style={styles.levelRequirementHeader}>
-                      <Text style={styles.levelRequirementLabel}>{item.label}</Text>
-                      <Text style={[styles.levelRequirementValue, item.met ? styles.statusOk : undefined]}>
-                        {item.displayCurrent} / {item.displayRequired}
-                      </Text>
-                    </View>
-                    <View style={styles.levelProgressTrack}>
+                profile.requirements.map((item) => {
+                  const status = item.met ? '已通过' : '未通过';
+                  const changeText =
+                    item.direction === 'maximum' && item.change
+                      ? `${item.displayChange} · ${item.change > 0 ? '变差' : '改善'}`
+                      : item.displayChange;
+                  const changeStyle =
+                    item.direction === 'maximum' && item.change
+                      ? item.change > 0
+                        ? styles.levelChangeDanger
+                        : styles.levelChangeSuccess
+                      : undefined;
+
+                  if (item.direction === 'maximum' && item.required <= 0) {
+                    return (
                       <View
+                        key={item.key}
+                        accessible
+                        accessibilityLabel={
+                          `${item.label}，当前 ${item.displayCurrent}，${status}` +
+                          (changeText ? `，${changeText}` : '')
+                        }
+                        accessibilityRole="text"
+                        testID={`level-veto-${item.key}`}
                         style={[
-                          styles.levelProgressFill,
-                          item.met && styles.levelProgressFillDone,
-                          {
-                            minWidth: item.ratio > 0 ? 2 : 0,
-                            width: item.ratio > 0 ? `${Math.max(2, Math.round(item.ratio * 100))}%` : 0
-                          }
+                          styles.levelVetoCard,
+                          item.met ? styles.levelVetoCardPassed : styles.levelVetoCardFailed
                         ]}
-                      />
+                      >
+                        <Text style={styles.levelRequirementLabel}>{item.label}</Text>
+                        <View style={styles.levelVetoValueBlock}>
+                          <Text
+                            style={[
+                              styles.levelRequirementValue,
+                              item.met ? styles.levelStatusSafe : styles.statusDanger
+                            ]}
+                          >
+                            {item.displayCurrent} · {status}
+                          </Text>
+                          {changeText ? <Text style={[styles.levelChangeText, changeStyle]}>{changeText}</Text> : null}
+                        </View>
+                      </View>
+                    );
+                  }
+
+                  if (item.direction === 'maximum') {
+                    const segmentCount = Math.max(1, Math.min(Math.floor(item.required), MAX_LEVEL_RISK_SEGMENTS));
+                    const used =
+                      item.current > 0
+                        ? Math.max(1, Math.ceil(Math.min(item.current / item.required, 1) * segmentCount))
+                        : 0;
+                    const remaining = Math.max(item.required - item.current, 0);
+                    return (
+                      <View key={item.key} style={styles.levelRequirementRow}>
+                        <View style={styles.levelRequirementHeader}>
+                          <Text style={styles.levelRequirementLabel}>{item.label}</Text>
+                          <Text style={styles.levelRequirementValue}>
+                            {item.displayCurrent} / {item.displayRequired}
+                          </Text>
+                        </View>
+                        <View
+                          accessible
+                          accessibilityLabel={
+                            `${item.label}，风险已用 ${item.displayCurrent} / ${item.displayRequired}` +
+                            `，剩余 ${remaining}，${status}`
+                          }
+                          accessibilityRole="progressbar"
+                          accessibilityValue={{
+                            min: 0,
+                            max: item.required,
+                            now: Math.min(Math.max(item.current, 0), item.required),
+                            text: `风险已用 ${item.displayCurrent} / ${item.displayRequired}`
+                          }}
+                          style={styles.levelRiskTrack}
+                        >
+                          {Array.from({ length: segmentCount }, (_, index) => {
+                            const isUsed = index < used;
+                            return (
+                              <View
+                                key={index}
+                                accessible={false}
+                                testID={`level-risk-${isUsed ? 'used' : 'remaining'}-${item.key}`}
+                                style={[
+                                  styles.levelRiskSegment,
+                                  isUsed ? styles.levelRiskSegmentUsed : styles.levelRiskSegmentRemaining
+                                ]}
+                              />
+                            );
+                          })}
+                        </View>
+                        <View style={styles.levelRequirementFooter}>
+                          <Text style={[styles.meta, item.met ? styles.levelStatusSafe : styles.statusDanger]}>
+                            {status}
+                          </Text>
+                          {changeText ? <Text style={[styles.levelChangeText, changeStyle]}>{changeText}</Text> : null}
+                        </View>
+                      </View>
+                    );
+                  }
+
+                  return (
+                    <View key={item.key} style={styles.levelRequirementRow}>
+                      <View style={styles.levelRequirementHeader}>
+                        <Text style={styles.levelRequirementLabel}>{item.label}</Text>
+                        <Text style={[styles.levelRequirementValue, item.met ? styles.statusOk : undefined]}>
+                          {item.displayCurrent} / {item.displayRequired}
+                        </Text>
+                      </View>
+                      <View style={styles.levelProgressTrack}>
+                        <View
+                          style={[
+                            styles.levelProgressFill,
+                            item.met && styles.levelProgressFillDone,
+                            {
+                              minWidth: item.ratio > 0 ? 2 : 0,
+                              width: item.ratio > 0 ? `${Math.max(2, Math.round(item.ratio * 100))}%` : 0
+                            }
+                          ]}
+                        />
+                      </View>
+                      <View style={styles.levelRequirementFooter}>
+                        <Text style={styles.meta}>{Math.round(item.ratio * 100)}%</Text>
+                        {changeText ? <Text style={[styles.levelChangeText, changeStyle]}>{changeText}</Text> : null}
+                      </View>
                     </View>
-                    <View style={styles.levelRequirementFooter}>
-                      <Text style={styles.meta}>{Math.round(item.ratio * 100)}%</Text>
-                      {item.displayChange ? <Text style={styles.levelChangeText}>{item.displayChange}</Text> : null}
-                    </View>
-                  </View>
-                ))
+                  );
+                })
               ) : (
-                <Text style={styles.meta}>当前等级不提供自动进度，只显示活跃数据。</Text>
+                <Text style={styles.meta}>当前等级不提供自动要求明细，只显示活跃数据。</Text>
               )}
             </View>
           ) : (

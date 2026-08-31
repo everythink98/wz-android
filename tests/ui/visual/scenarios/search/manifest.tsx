@@ -125,8 +125,8 @@ function SearchScenario({ state }: { state: SearchScenarioState }) {
             ? (['linuxdo', 'nodeseek'] as const)
             : sources;
   const topicStateIndex: TopicListItemStateIndex = {
-    favorites: new Set(),
-    history: new Set(),
+    favorites: {},
+    history: {},
     listDensity: settings.listDensity
   };
   return (

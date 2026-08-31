@@ -597,8 +597,12 @@ describe('Feed loading', () => {
     const view = await render(
       renderFeed(false, [richTopic], {
         topicStateIndex: {
-          favorites: new Set(['linuxdo:rich-feed-topic']),
-          history: new Set(['linuxdo:rich-feed-topic']),
+          favorites: {
+            'linuxdo:rich-feed-topic': { topic: richTopic, savedAt: '2026-07-14T00:00:00.000Z' }
+          },
+          history: {
+            'linuxdo:rich-feed-topic': { topic: richTopic, savedAt: '2026-07-14T00:00:00.000Z' }
+          },
           listDensity: 'loose'
         }
       })

@@ -5,83 +5,11 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.drawable.Drawable
-import kotlin.math.max
-import kotlin.math.min
-
-internal class ForumSelectionHandleDrawable(
-  density: Float,
-  handleColor: Int,
-  private val prefersBelow: Boolean
-) : Drawable() {
-  private val radius = 6f * density
-  private val stem = 10f * density
-  private val stemWidth = 3f * density
-  private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-    color = handleColor
-    style = Paint.Style.FILL
-    strokeWidth = stemWidth
-    strokeCap = Paint.Cap.ROUND
-  }
-  private var anchor = PointF()
-  private var circle = PointF()
-  private var drawableVisible = false
-
-  fun update(point: PointF, width: Int, height: Int) {
-    setBounds(0, 0, width, height)
-    drawableVisible = width >= radius * 2f && height >= radius * 2f
-    if (!drawableVisible) {
-      invalidateSelf()
-      return
-    }
-
-    val anchorY = point.y.coerceIn(0f, height.toFloat())
-    val above = anchorY
-    val below = height - anchorY
-    val fullExtent = stem + radius
-    val pointsBelow = when {
-      prefersBelow && below >= fullExtent -> true
-      !prefersBelow && above >= fullExtent -> false
-      below >= fullExtent -> true
-      above >= fullExtent -> false
-      else -> below >= above
-    }
-    val available = if (pointsBelow) below else above
-    if (available < radius) {
-      drawableVisible = false
-      invalidateSelf()
-      return
-    }
-
-    val circleX = point.x.coerceIn(radius, width - radius)
-    val stemLength = min(stem, max(0f, available - radius))
-    val direction = if (pointsBelow) 1f else -1f
-    anchor = PointF(point.x.coerceIn(0f, width.toFloat()), anchorY)
-    circle = PointF(circleX, anchorY + direction * stemLength)
-    invalidateSelf()
-  }
-
-  override fun draw(canvas: Canvas) {
-    if (!drawableVisible) return
-    canvas.drawLine(anchor.x, anchor.y, anchor.x, circle.y, paint)
-    canvas.drawCircle(circle.x, circle.y, radius, paint)
-  }
-
-  internal fun anchorForTest(): PointF = PointF(anchor.x, anchor.y)
-
-  override fun setAlpha(alpha: Int) {
-    paint.alpha = alpha
-    invalidateSelf()
-  }
-
-  override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
-    paint.colorFilter = colorFilter
-    invalidateSelf()
-  }
-
-  @Deprecated("Deprecated in the Android Drawable API")
-  override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
-}
+import android.view.View
+import android.widget.TextView
+import kotlin.math.roundToInt
 
 internal class ForumSelectionHighlightDrawable(highlightColor: Int) : Drawable() {
   private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -107,6 +35,62 @@ internal class ForumSelectionHighlightDrawable(highlightColor: Int) : Drawable()
 
   override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
     highlightPaint.colorFilter = colorFilter
+    invalidateSelf()
+  }
+
+  @Deprecated("Deprecated in the Android Drawable API")
+  override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
+internal class ForumSelectionPlatformHandleDrawable(
+  private val sourceView: TextView,
+  private val overlayHost: View,
+  private val platformDrawable: Drawable,
+  private val hotspotQuarter: Int
+) : Drawable() {
+  private val sourceScreenLocation = IntArray(2)
+  private val hostScreenLocation = IntArray(2)
+  private val sourceVisibleRect = Rect()
+  private val contentPoint = PointF()
+
+  fun update(point: PointF) {
+    contentPoint.set(point)
+    setBounds(0, 0, overlayHost.width, overlayHost.height)
+    invalidateSelf()
+  }
+
+  internal fun hotspotQuarterForTest(): Int = hotspotQuarter
+
+  override fun draw(canvas: Canvas) {
+    if (!sourceView.isAttachedToWindow || !sourceView.isShown || !overlayHost.isAttachedToWindow) return
+    val width = platformDrawable.intrinsicWidth
+    val height = platformDrawable.intrinsicHeight
+    if (width <= 0 || height <= 0) return
+
+    sourceView.getLocationOnScreen(sourceScreenLocation)
+    val hotspotScreenX = sourceScreenLocation[0] + contentPoint.x - sourceView.scrollX
+    val hotspotScreenY = sourceScreenLocation[1] + contentPoint.y - sourceView.scrollY
+    if (
+      !sourceView.getLocalVisibleRect(sourceVisibleRect) ||
+      contentPoint.x < sourceVisibleRect.left || contentPoint.x > sourceVisibleRect.right ||
+      contentPoint.y < sourceVisibleRect.top || contentPoint.y > sourceVisibleRect.bottom
+    ) return
+    overlayHost.getLocationOnScreen(hostScreenLocation)
+    val hotspotX = hotspotScreenX - hostScreenLocation[0] + overlayHost.scrollX
+    val hotspotY = hotspotScreenY - hostScreenLocation[1] + overlayHost.scrollY
+    val left = (hotspotX - width * hotspotQuarter / 4f).roundToInt()
+    val top = hotspotY.roundToInt()
+    platformDrawable.setBounds(left, top, left + width, top + height)
+    platformDrawable.draw(canvas)
+  }
+
+  override fun setAlpha(alpha: Int) {
+    platformDrawable.alpha = alpha
+    invalidateSelf()
+  }
+
+  override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
+    platformDrawable.colorFilter = colorFilter
     invalidateSelf()
   }
 

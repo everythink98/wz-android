@@ -7,8 +7,8 @@ export interface TopicListItemState {
   read: boolean;
 }
 export interface TopicListItemStateIndex {
-  favorites: ReadonlySet<string>;
-  history: ReadonlySet<string>;
+  favorites: Readonly<ReaderData['favorites']>;
+  history: Readonly<ReaderData['history']>;
   listDensity: ReaderSettings['listDensity'];
 }
 
@@ -18,8 +18,8 @@ type TopicListItemStateData = Pick<ReaderData, 'favorites' | 'history'> & {
 
 export function createTopicListItemStateIndex(data: TopicListItemStateData): TopicListItemStateIndex {
   return {
-    favorites: new Set(Object.keys(data.favorites)),
-    history: new Set(Object.keys(data.history)),
+    favorites: data.favorites,
+    history: data.history,
     listDensity: data.settings.listDensity
   };
 }
@@ -27,8 +27,8 @@ export function createTopicListItemStateIndex(data: TopicListItemStateData): Top
 export function getTopicListItemStateFromIndex(index: TopicListItemStateIndex, topic: Topic): TopicListItemState {
   const key = topicKey(topic);
   return {
-    favorite: index.favorites.has(key),
+    favorite: Object.hasOwn(index.favorites, key),
     listDensity: index.listDensity,
-    read: index.history.has(key)
+    read: Object.hasOwn(index.history, key)
   };
 }

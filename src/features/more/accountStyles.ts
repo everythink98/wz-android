@@ -4,6 +4,7 @@ import { type ReaderTheme, alphaColor, fontFamilyValue } from '@/ui/theme/tokens
 
 export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const appFontFamily = fontFamilyValue(settings.fontFamily);
+  const levelRiskSafe = theme.dark ? '#78D69C' : '#2F7D4C';
   const radiusMd = 14;
   return StyleSheet.create({
     levelSummary: {
@@ -108,12 +109,13 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderSett
       lineHeight: 18
     },
     levelRequirementValue: {
-      flexShrink: 0,
+      flexShrink: 1,
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '600',
-      lineHeight: 17
+      lineHeight: 17,
+      textAlign: 'right'
     },
     levelProgressTrack: {
       width: '100%',
@@ -131,18 +133,69 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderSett
     levelProgressFillDone: {
       backgroundColor: theme.success
     },
+    levelRiskTrack: {
+      width: '100%',
+      height: 8,
+      flexDirection: 'row',
+      gap: 4
+    },
+    levelRiskSegment: {
+      height: '100%',
+      flex: 1,
+      borderRadius: 2
+    },
+    levelRiskSegmentUsed: {
+      backgroundColor: theme.danger
+    },
+    levelRiskSegmentRemaining: {
+      backgroundColor: alphaColor(levelRiskSafe, theme.dark ? 0.32 : 0.16)
+    },
     levelRequirementFooter: {
       alignItems: 'center',
       flexDirection: 'row',
+      flexWrap: 'wrap',
       justifyContent: 'space-between',
       gap: 10
     },
     levelChangeText: {
+      flexShrink: 1,
       color: theme.primary,
       fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '600',
-      lineHeight: 17
+      lineHeight: 17,
+      textAlign: 'right'
+    },
+    levelChangeDanger: {
+      color: theme.danger
+    },
+    levelChangeSuccess: {
+      color: levelRiskSafe
+    },
+    levelVetoCard: {
+      minHeight: 52,
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'space-between',
+      gap: 10,
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 10,
+      paddingVertical: 8
+    },
+    levelVetoCardPassed: {
+      backgroundColor: alphaColor(levelRiskSafe, theme.dark ? 0.12 : 0.06),
+      borderColor: alphaColor(levelRiskSafe, theme.dark ? 0.32 : 0.2)
+    },
+    levelVetoCardFailed: {
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.12 : 0.06),
+      borderColor: alphaColor(theme.danger, theme.dark ? 0.32 : 0.2)
+    },
+    levelVetoValueBlock: {
+      alignItems: 'flex-end',
+      flexShrink: 1,
+      gap: 2
     },
     levelStatGrid: {
       flexDirection: 'row',
@@ -187,6 +240,12 @@ export function createMoreAccountStyles(theme: ReaderTheme, settings: ReaderSett
     },
     statusOk: {
       color: theme.success
+    },
+    statusDanger: {
+      color: theme.danger
+    },
+    levelStatusSafe: {
+      color: levelRiskSafe
     }
   });
 }
