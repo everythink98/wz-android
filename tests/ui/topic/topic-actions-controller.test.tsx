@@ -634,6 +634,38 @@ describe('topic action query mutations', () => {
     );
   });
 
+  it('reports a confirmed NodeSeek reply as submitted but unlocated without resending it', async () => {
+    const refreshTopicReplies = jest.fn(async () => 'failed');
+    const notify = jest.fn();
+    mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
+    seedTopicCache();
+    const hook = await renderActions({
+      notify,
+      refreshTopicReplies,
+      siteSessionViewModels: nodeSeekLoggedInViewModels()
+    });
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('same reply');
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(refreshTopicReplies).toHaveBeenCalledWith(
+      {
+        kind: 'created',
+        silent: true,
+        nodeSeekAuthorId: '7',
+        nodeSeekContentMarkdown: 'same reply'
+      },
+      expect.any(Object)
+    );
+    expect(notify).toHaveBeenCalledWith('回复已提交，但暂未能显示；请手动刷新，勿重复发送');
+    expect(notify).not.toHaveBeenCalledWith('回复已提交');
+  });
+
   it('settles a server-confirmed write as stale when its ticket changes during refresh', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {

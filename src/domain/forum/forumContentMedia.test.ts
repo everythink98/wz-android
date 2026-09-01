@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseHtml } from './html';
-import { normalizeForumContentMediaNodes, normalizeForumStickerMediaHtml } from './forumContentMedia';
+import {
+  FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE,
+  isBoundedInlineForumImage,
+  normalizeForumContentMediaNodes,
+  normalizeForumStickerMediaHtml
+} from './forumContentMedia';
 
 function normalizeForumContentMediaHtml(html: string) {
   const root = parseHtml(html);
@@ -22,19 +27,57 @@ describe('forum content media normalization', () => {
     expect(result).not.toContain('<forum-inline-image');
   });
 
-  it('keeps real images block-like even when mixed with paragraph text', () => {
+  it('keeps ordinary images at their authored inline anchors', () => {
     const mixed = '<p>hello 😟<img alt="image" src="https://cdn.example.com/sticker.png"></p>';
+    const afterBreak = '<p>hello 😟<br><img alt="image" src="https://cdn.example.com/broken.png"></p>';
     const standalone = '<p><img alt="image" src="https://cdn.example.com/photo.jpg"></p>';
+    const adjacent =
+      '<p><img alt="first" src="https://cdn.example.com/first.jpg"><img alt="second" src="https://cdn.example.com/second.jpg"></p>';
 
     expect(normalizeForumContentMediaHtml(mixed)).toContain(
-      '<img alt="image" src="https://cdn.example.com/sticker.png">'
+      '<forum-inline-image alt="image" src="https://cdn.example.com/sticker.png">image</forum-inline-image>'
     );
-    expect(normalizeForumContentMediaHtml(mixed)).not.toContain(
-      '<forum-inline-image alt="image" src="https://cdn.example.com/sticker.png">'
+    expect(normalizeForumContentMediaHtml(afterBreak)).toContain(
+      '<br><forum-inline-image alt="image" src="https://cdn.example.com/broken.png">image</forum-inline-image>'
     );
     expect(normalizeForumContentMediaHtml(standalone)).toContain(
-      '<img alt="image" src="https://cdn.example.com/photo.jpg">'
+      '<p><forum-inline-image alt="image" src="https://cdn.example.com/photo.jpg">image</forum-inline-image></p>'
     );
+    expect(normalizeForumContentMediaHtml(adjacent).match(/<forum-inline-image/g)).toHaveLength(2);
+  });
+
+  it.each(['alt', 'title'] as const)(
+    'keeps decoded image %s fallback labels as text instead of reparsing them as nodes',
+    (attribute) => {
+      const result = normalizeForumContentMediaHtml(
+        `<p><img src="https://cdn.example.com/photo.jpg" ${attribute}="&lt;img src=x onerror=boom&gt;"></p>`
+      );
+
+      expect(result.match(/<forum-inline-image/g)).toHaveLength(1);
+      expect(result).toContain('&lt;img src=x onerror=boom&gt;');
+      expect(result).not.toContain('<img src=x');
+    }
+  );
+
+  it('requires a trusted marker for bounded inline images', () => {
+    expect(isBoundedInlineForumImage({ src: 'https://cdn.example.com/face/photo.jpg' })).toBe(false);
+    expect(
+      isBoundedInlineForumImage({
+        [FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE]: 'true',
+        src: 'https://yaohuo.me/bbs/face/face.gif'
+      })
+    ).toBe(true);
+  });
+
+  it('keeps explicit image containers block-like', () => {
+    const html =
+      '<figure><img src="https://cdn.example.com/figure.jpg"><figcaption>caption</figcaption></figure>' +
+      '<p>text <a class="lightbox" href="https://cdn.example.com/original.jpg"><img src="https://cdn.example.com/thumb.jpg"></a></p>';
+    const result = normalizeForumContentMediaHtml(html);
+
+    expect(result).toContain('<figure><img src="https://cdn.example.com/figure.jpg">');
+    expect(result).toContain('<a class="lightbox" href="https://cdn.example.com/original.jpg"><img');
+    expect(result).not.toContain('<forum-inline-image');
   });
 
   it('renders forum emoji in mixed paragraphs through the inline image path', () => {
@@ -76,18 +119,22 @@ describe('forum content media normalization', () => {
   });
 
   it('renders Yaohuo face images through the inline image path', () => {
-    const html = '<p>红包可能不一样 <img src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg" alt="淡定"></p>';
+    const html =
+      '<p>红包可能不一样 <img data-forum-bounded-inline-image="true" src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg" alt="淡定"></p>';
     const result = normalizeForumContentMediaHtml(html);
 
-    expect(result).toContain('<forum-inline-image src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg"');
+    expect(result).toContain('<forum-inline-image data-forum-bounded-inline-image="true"');
+    expect(result).toContain('src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg"');
     expect(result).not.toContain('<img src="https://yaohuo.me/bbs/face/淡定.gif"');
   });
 
   it('does not treat standalone Yaohuo face images as sticker rows', () => {
-    const html = '<p><img src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg" alt="淡定"></p>';
+    const html =
+      '<p><img data-forum-bounded-inline-image="true" src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg" alt="淡定"></p>';
     const result = normalizeForumContentMediaHtml(html);
 
-    expect(result).toContain('<forum-inline-image src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg"');
+    expect(result).toContain('<forum-inline-image data-forum-bounded-inline-image="true"');
+    expect(result).toContain('src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg"');
     expect(result).not.toContain('<forum-sticker-row>');
   });
 
@@ -285,7 +332,7 @@ describe('forum content media normalization', () => {
     expect(result).toContain('data-forum-display-candidate-kind="data-src"');
   });
 
-  it('keeps only tiny V2EX embedded images on the inline path', () => {
+  it('keeps V2EX images at their authored anchors regardless of dimensions', () => {
     const result = normalizeForumContentMediaHtml(
       '<p>去年是机房火灾 <img src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20"></p><p><img alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912"></p>'
     );
@@ -294,7 +341,7 @@ describe('forum content media normalization', () => {
       '<forum-inline-image src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20">'
     );
     expect(result).toContain(
-      '<img alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912">'
+      '<forum-inline-image alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912">'
     );
   });
 

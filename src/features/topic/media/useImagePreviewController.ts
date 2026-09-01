@@ -12,7 +12,6 @@ import {
   type ImagePreviewList,
   type PreparedImagePreviewCatalog
 } from '@/platform/media/imagePreviewCatalog';
-import type { TopicImageDeriver } from '../model/topicDerivedData';
 import { errorMessage } from '@/platform/network/errors';
 import { saveImageUriToLibrary } from '@/platform/media/imageSave';
 import type { Fetcher } from '@/platform/network/request';
@@ -42,21 +41,17 @@ export function useImagePreviewController({
   contentSource,
   contentWidth,
   fetcher,
-  inlineSizedImageUrls,
   mediaReferrer,
   nodeSeekMediaUserAgent,
-  notify,
-  topicImageDeriver
+  notify
 }: {
   beforeSave?: () => Promise<void>;
   contentSource: Source | null;
   contentWidth: number;
   fetcher?: Fetcher;
-  inlineSizedImageUrls: Record<string, true>;
   mediaReferrer?: MediaReferrerContext;
   nodeSeekMediaUserAgent?: string;
   notify: (message: string) => void;
-  topicImageDeriver: TopicImageDeriver;
 }) {
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
   const catalogSessionContext = useForumMediaRequestContext(contentSource);
@@ -74,25 +69,13 @@ export function useImagePreviewController({
   const catalogRef = useRef<ImagePreviewCatalog | null>(null);
   const catalogRegistrationRef = useRef<{
     descriptors: readonly ForumImagePreviewDescriptor[];
-    inlineSizedImageSignature: string;
     mediaRevision: string;
     pixelRatio: number;
     prepared: PreparedImagePreviewCatalog;
-    topicImageDeriver: TopicImageDeriver;
     width: number;
   } | null>(null);
   const contentSourceRef = useCommittedRef(contentSource);
   const catalogMediaContextRef = useCommittedRef(catalogMediaContext);
-  const inlineSizedImageUrlsRef = useCommittedRef(inlineSizedImageUrls);
-  const topicImageDeriverRef = useCommittedRef(topicImageDeriver);
-  const inlineSizedImageSignature = useMemo(
-    () =>
-      Object.keys(inlineSizedImageUrls)
-        .filter((identity) => inlineSizedImageUrls[identity])
-        .sort()
-        .join('\n'),
-    [inlineSizedImageUrls]
-  );
   const mediaRevision = [
     catalogMediaContext.contentSource || '',
     catalogMediaContext.sessionIdentity,
@@ -108,54 +91,28 @@ export function useImagePreviewController({
         sameDescriptorSequence(current.descriptors, descriptors) &&
         current.pixelRatio === pixelRatio &&
         current.width === contentWidth;
-      if (
-        canReusePrepared &&
-        current.inlineSizedImageSignature === inlineSizedImageSignature &&
-        current.mediaRevision === mediaRevision &&
-        current.topicImageDeriver === topicImageDeriver
-      ) {
+      if (canReusePrepared && current.mediaRevision === mediaRevision) {
         return;
       }
       const prepared = canReusePrepared
         ? current.prepared
         : prepareImagePreviewCatalog(descriptors, contentWidth, pixelRatio);
-      catalogRef.current = projectImagePreviewCatalog(
-        prepared,
-        catalogMediaContext,
-        inlineSizedImageSignature
-          ? (url, referrerPolicy) => topicImageDeriver.isInlineSizedImage(url, referrerPolicy, inlineSizedImageUrls)
-          : undefined
-      );
+      catalogRef.current = projectImagePreviewCatalog(prepared, catalogMediaContext);
       catalogRegistrationRef.current = {
         descriptors,
-        inlineSizedImageSignature,
         mediaRevision,
         pixelRatio,
         prepared,
-        topicImageDeriver,
         width: contentWidth
       };
     },
-    [
-      catalogMediaContext,
-      contentWidth,
-      inlineSizedImageUrls,
-      inlineSizedImageSignature,
-      mediaRevision,
-      pixelRatio,
-      topicImageDeriver
-    ]
+    [catalogMediaContext, contentWidth, mediaRevision, pixelRatio]
   );
 
   const openImagePreview = useCallback(
     (url: string, displaySize?: ImageDisplaySize, renderedPosterUri?: string, referrerPolicy?: MediaReferrerPolicy) => {
       const clean = normalizeImageCacheKey(url);
-      if (
-        clean &&
-        topicImageDeriverRef.current.isInlineSizedImage(clean, referrerPolicy, inlineSizedImageUrlsRef.current)
-      ) {
-        return;
-      }
+      if (!clean) return;
       const catalog = catalogRef.current || {
         items: [],
         itemIndexBySourceUrl: {},

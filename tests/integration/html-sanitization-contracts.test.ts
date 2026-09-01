@@ -86,6 +86,21 @@ describe('Android local HTML helpers', () => {
     expect(result).not.toMatch(/<script|onclick|javascript:/i);
   });
 
+  it('turns explicit LinuxDo math containers into canonical formula elements', () => {
+    const result = sanitizeLinuxDoContentHtml(
+      `
+        <div class="math math-applied-mathjax math-hidden">(3362 - 2) \\times 24 = 80{,}640</div>
+        <p>行内 <span class="math">x^2 + y^2</span>，普通 $z$ 不转换。</p>
+      `,
+      []
+    );
+
+    expect(result).toContain('<forum-math-block>(3362 - 2) \\times 24 = 80{,}640</forum-math-block>');
+    expect(result).toContain('<forum-math-inline>x^2 + y^2</forum-math-inline>');
+    expect(result).toContain('普通 $z$ 不转换');
+    expect(result).not.toMatch(/class="[^"]*\bmath\b/);
+  });
+
   it('sanitizes LinuxDo polls and Callouts together', () => {
     const result = sanitizeLinuxDoContentHtml(
       `

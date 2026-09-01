@@ -8,7 +8,7 @@ import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { ReplyComposerSheet } from '@/features/topic/components/ReplyComposerSheet';
-import { MemoizedReplyItem, ReplyItem } from '@/features/topic/components/ReplyItem';
+import { ReplyItem } from '@/features/topic/components/ReplyItem';
 import * as TopicSelection from '@/features/topic/selection/TopicSelectionSurface';
 import { TopicBodyQuoteCard } from '@/features/topic/components/TopicBodyQuoteCard';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
@@ -416,7 +416,6 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     decisionFor: allowReplyTargetActions,
     contentWidth: 720,
     expandedQuotes: {},
-    inlineSizedImageUrls: {},
     loadedQuotedReplies: {},
     loadingQuotedFloors: {},
     onDeleteReply: jest.fn(),
@@ -655,82 +654,6 @@ describe('Topic real child components', () => {
     await waitFor(() => expect(staleLoad).toHaveBeenCalledTimes(2));
     await act(async () => Promise.resolve());
     expect(view.getByLabelText('已关闭').props.accessibilityState.disabled).toBe(true);
-  });
-
-  it('rerenders only the compiled reply row whose inline image state changed', async () => {
-    const firstImage = 'https://i.imgur.com/first-dynamic.png';
-    const secondImage = 'https://i.imgur.com/second-dynamic.png';
-    const replyRow = (url: string) => {
-      const row = compileForumContent({
-        html: `<p><img class="embedded_image" src="${url}"></p>`,
-        role: 'reply',
-        source: 'v2ex'
-      }).rows.find(
-        (candidate): candidate is Extract<CompiledForumContentRow, { type: 'richText' }> =>
-          candidate.type === 'richText'
-      );
-      if (!row) throw new Error('Expected one dynamic reply row.');
-      return row;
-    };
-    const firstReply = { ...replyProps().reply, contentHtml: `<img src="${firstImage}">`, floor: 1 };
-    const secondReply = { ...replyProps().reply, contentHtml: `<img src="${secondImage}">`, floor: 2 };
-    const firstRow = replyRow(firstImage);
-    const secondRow = replyRow(secondImage);
-    const firstRender = jest.fn();
-    const secondRender = jest.fn();
-    const countedStyles = (onReplyRender: () => void) =>
-      new Proxy(styles, {
-        get(target, property, receiver) {
-          if (property === 'replyCard') onReplyRender();
-          return Reflect.get(target, property, receiver);
-        }
-      });
-    const firstProps = replyProps({
-      reply: firstReply,
-      replyFloor: 1,
-      section: {
-        type: 'replyContent',
-        key: 'comment:1:body:dynamic',
-        reply: firstReply,
-        replyFloor: 1,
-        content: firstRow,
-        first: true,
-        last: true
-      },
-      source: 'v2ex',
-      styles: countedStyles(firstRender)
-    });
-    const secondProps = replyProps({
-      reply: secondReply,
-      section: {
-        type: 'replyContent',
-        key: 'comment:2:body:dynamic',
-        reply: secondReply,
-        replyFloor: 2,
-        content: secondRow,
-        first: true,
-        last: true
-      },
-      source: 'v2ex',
-      styles: countedStyles(secondRender)
-    });
-    const rows = (inlineSizedImageUrls: Record<string, true>) => (
-      <>
-        <MemoizedReplyItem key="first" {...firstProps} inlineSizedImageUrls={inlineSizedImageUrls} />
-        <MemoizedReplyItem key="second" {...secondProps} inlineSizedImageUrls={inlineSizedImageUrls} />
-      </>
-    );
-    const view = await render(rows({}));
-    firstRender.mockClear();
-    secondRender.mockClear();
-
-    await view.rerender(rows({ [firstImage]: true }));
-
-    expect(firstRender).toHaveBeenCalled();
-    expect(secondRender).not.toHaveBeenCalled();
-    const renderedHtml = view.getAllByTestId('html-source').map((source) => source.props.accessibilityHint as string);
-    expect(renderedHtml[0]).toContain('<forum-inline-image');
-    expect(renderedHtml[1]).toContain(`<img class="embedded_image" src="${secondImage}"`);
   });
 
   it('shows poll constraints and submits only the controlled valid selection', async () => {
@@ -1225,7 +1148,6 @@ describe('Topic real child components', () => {
         settings: readerData.settings,
         theme,
         topicDetail: topic,
-        topicKey: 'nodeseek:832584',
         webViewBlockMessage: ''
       });
       return (
@@ -1293,7 +1215,6 @@ describe('Topic real child components', () => {
         settings: readerData.settings,
         theme,
         topicDetail: topic,
-        topicKey: 'nodeseek:832584',
         webViewBlockMessage: ''
       });
       return (
@@ -1909,7 +1830,6 @@ describe('Topic real child components', () => {
         settings: readerData.settings,
         theme,
         topicDetail: discourseTopic,
-        topicKey: 'linuxdo:callout-topic',
         webViewBlockMessage: ''
       })
     );

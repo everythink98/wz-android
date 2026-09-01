@@ -125,7 +125,7 @@ type MutationVariables = {
   applyOptimistic?: () => void | (() => void);
   applyResult?: (result: unknown, variables: MutationVariables) => void;
   afterSuccess?: (result: unknown, variables: MutationVariables) => Promise<boolean>;
-  successMessage?: string | ((result: unknown) => string);
+  successMessage?: string | ((result: unknown, refreshed: boolean | undefined) => string);
 };
 
 const NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE = 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴';
@@ -462,7 +462,9 @@ export function useTopicActionsController({
         return;
       }
       const message =
-        typeof variables.successMessage === 'function' ? variables.successMessage(result) : variables.successMessage;
+        typeof variables.successMessage === 'function'
+          ? variables.successMessage(result, refreshed)
+          : variables.successMessage;
       if (message) notify(message);
       finishDiagnosticTrace(variables.trace, refreshed === false ? 'partial' : 'success', {
         source: variables.source,
@@ -1200,11 +1202,22 @@ export function useTopicActionsController({
           );
         },
         afterSuccess: () =>
-          refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
-            kind: 'created',
-            silent: true
-          }),
-        successMessage: '回复已提交'
+          refreshRepliesAfterWrite(
+            actionTopic as TopicDetail,
+            trace,
+            isNodeSeekActionTopic(actionTopic)
+              ? {
+                  kind: 'created',
+                  nodeSeekAuthorId: nodeSeekUserId ? String(nodeSeekUserId) : undefined,
+                  nodeSeekContentMarkdown: sentContent,
+                  silent: true
+                }
+              : { kind: 'created', silent: true }
+          ),
+        successMessage: (_result, refreshed) =>
+          isNodeSeekActionTopic(actionTopic) && refreshed === false
+            ? '回复已提交，但暂未能显示；请手动刷新，勿重复发送'
+            : '回复已提交'
       });
     },
     [

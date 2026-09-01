@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Text,
   View,
-  type ImageStyle,
   type ImageURISource,
   type StyleProp,
   type TextStyle,
@@ -19,7 +18,7 @@ import {
   useIMGElementProps,
   useIMGElementStateWithCache,
   type CustomBlockRenderer,
-  type CustomMixedRenderer,
+  type CustomTextualRenderer,
   type IMGElementProps
 } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
@@ -29,12 +28,12 @@ import {
   selectImageOriginalSource,
   type ImageDisplaySize
 } from '@/platform/media/imagePreviewCatalog';
-import { INLINE_FORUM_IMAGE_TAG, isInlineForumImage } from '@/domain/forum/forumContentMedia';
 import {
-  inlineForumImageAlignmentStyle,
-  inlineForumImageAttachmentSize,
-  shouldMarkLoadedImageInline
-} from '@/platform/media/inlineMedia';
+  INLINE_FORUM_IMAGE_TAG,
+  isBoundedInlineForumImage,
+  isInlineForumImage
+} from '@/domain/forum/forumContentMedia';
+import { inlineForumImageAlignmentStyle, inlineForumImageAttachmentSize } from '@/platform/media/inlineMedia';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import type { HtmlRenderers } from './types';
@@ -78,6 +77,7 @@ function useImageSourceAttempt(source: ImageURISource, attemptId: string) {
 }
 
 type PreviewImageBlockProps = {
+  alignment: 'center' | 'flex-end' | 'flex-start';
   attributes: Record<string, string | undefined>;
   boundarySpacing?: ViewStyle;
   contentWidth: number;
@@ -87,7 +87,6 @@ type PreviewImageBlockProps = {
   imageProps: IMGElementProps;
   imageSource: ImageURISource;
   loadingColor: string;
-  markInlineSizedImageUrl: (url: string, referrerPolicy?: MediaReferrerPolicy) => void;
   mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
   nodeSeekMediaUserAgent?: string;
@@ -158,6 +157,7 @@ function ManagedOriginalImageLayer({
 }
 
 function AdmittedPreviewImageBlock({
+  alignment,
   attributes,
   boundarySpacing,
   bodyMediaLease,
@@ -168,7 +168,6 @@ function AdmittedPreviewImageBlock({
   imageProps,
   imageSource,
   loadingColor,
-  markInlineSizedImageUrl,
   mediaContext,
   nodeSeekMediaUserAgent,
   onOpenImagePreview,
@@ -389,18 +388,9 @@ function AdmittedPreviewImageBlock({
     style: [naturalImageStyle, { resizeMode: 'contain' }],
     width: undefined
   });
-  useEffect(() => {
-    if (!activeLoadedImage) {
-      return;
-    }
-    const dimensions = activeLoadedImage.dimensions;
-    if (shouldMarkLoadedImageInline(attributes, dimensions.width, dimensions.height)) {
-      markInlineSizedImageUrl(src, referrerPolicy);
-    }
-  }, [activeLoadedImage, attributes, markInlineSizedImageUrl, referrerPolicy, src]);
   const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
   const sharedContainerStyle = [
-    { flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const },
+    { flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: alignment },
     containerStyle,
     boundarySpacing
   ];
@@ -562,7 +552,7 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
   const frameStyle = [
     {
       alignItems: 'center' as const,
-      alignSelf: 'center' as const,
+      alignSelf: props.alignment,
       backgroundColor: props.frameBackgroundColor,
       borderColor: props.frameBorderColor,
       borderWidth: StyleSheet.hairlineWidth,
@@ -590,27 +580,65 @@ function PreviewImageBlock(props: PreviewImageBlockProps) {
 }
 
 function ManagedInlineForumImage({
-  source,
-  style
+  accessibilityLabel,
+  attributes,
+  contentWidth,
+  fallbackTextStyle,
+  lineHeight,
+  onPress,
+  scale,
+  source
 }: {
+  accessibilityLabel?: string;
+  attributes: Record<string, string | undefined>;
+  contentWidth: number;
+  fallbackTextStyle: StyleProp<TextStyle>;
+  lineHeight?: number;
+  onPress?: () => void;
+  scale: number;
   source: ImageURISource;
-  style: StyleProp<ImageStyle & ViewStyle>;
 }) {
   const requestIdentity = compatibleImageRequestIdentity(source);
+  const cacheKey = imageDisplayCacheIdentity(source);
   const lease = useTopicBodyMediaLease({ kind: 'inline', requestIdentity });
+  const [naturalDimensions, setNaturalDimensions] = useRecyclingState<CachedImageDimensions | null>(
+    cachedImageDisplayDimensions(cacheKey) || null,
+    [requestIdentity]
+  );
   const requestGeneration = `wz-inline-attempt-${stableImageRequestKey(lease.attemptId)}`;
   const nativeSource = useMemo(
     () => ({ ...source, uri: inlineFrescoSourceUri(source.uri, requestIdentity) }),
     [requestIdentity, source]
   );
-  return (
+  if (lease.failure) {
+    return (
+      <Text
+        accessibilityLabel="图片加载失败，点按重试"
+        accessibilityRole="button"
+        style={fallbackTextStyle}
+        onPress={(event) => {
+          event.stopPropagation?.();
+          lease.retry();
+        }}
+      >
+        图片加载失败，点按重试
+      </Text>
+    );
+  }
+  const attachmentSize = inlineForumImageAttachmentSize(
+    attributes,
+    scale,
+    contentWidth,
+    naturalDimensions || undefined
+  );
+  const image = (
     <NativeImage
       {...{ internal_analyticTag: requestGeneration }}
       key={lease.attachmentKey}
       testID={lease.admitted ? 'topic-inline-image' : 'topic-inline-image-waiting'}
       resizeMode="contain"
       source={lease.admitted ? nativeSource : undefined}
-      style={style}
+      style={attachmentSize}
       onError={
         lease.admitted
           ? (event) => {
@@ -623,6 +651,16 @@ function ManagedInlineForumImage({
         lease.admitted
           ? (event) => {
               if (!isInlineImageRequestEvent(event, requestGeneration)) return;
+              if (!isInlineForumImage(attributes) || isBoundedInlineForumImage(attributes)) {
+                const loadedSource = (event as { nativeEvent?: { source?: { height?: unknown; width?: unknown } } })
+                  .nativeEvent?.source;
+                const width = Number(loadedSource?.width);
+                const height = Number(loadedSource?.height);
+                if (width > 0 && height > 0) {
+                  rememberImageDisplayDimensions(cacheKey, { height, width });
+                  setNaturalDimensions({ height, width });
+                }
+              }
               lease.settle('displayed');
             }
           : undefined
@@ -636,6 +674,25 @@ function ManagedInlineForumImage({
           : undefined
       }
     />
+  );
+  const attachmentStyle = [attachmentSize, inlineForumImageAlignmentStyle(attributes, scale, lineHeight)];
+  return onPress ? (
+    <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      style={attachmentStyle}
+      testID="topic-inline-image-attachment"
+      onPress={(event) => {
+        event.stopPropagation?.();
+        onPress();
+      }}
+    >
+      {image}
+    </Pressable>
+  ) : (
+    <View style={attachmentStyle} testID="topic-inline-image-attachment">
+      {image}
+    </View>
   );
 }
 
@@ -654,7 +711,6 @@ function inlineFrescoSourceUri(uri: string | undefined, requestIdentity: string)
 export function createPreviewRenderers({
   htmlBaseStyle,
   htmlRendererStyles,
-  markInlineSizedImageUrl,
   mediaContext,
   mediaSessionIdentity,
   nodeSeekMediaUserAgent,
@@ -664,7 +720,6 @@ export function createPreviewRenderers({
 }: {
   htmlBaseStyle: { lineHeight?: number };
   htmlRendererStyles: ReturnType<typeof createHtmlRendererStyles>;
-  markInlineSizedImageUrl: (url: string, referrerPolicy?: MediaReferrerPolicy) => void;
   mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
   nodeSeekMediaUserAgent?: string;
@@ -686,10 +741,17 @@ export function createPreviewRenderers({
     const inlineSrc = attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
     if (isInlineForumImage(attributes)) {
       if (!inlineSrc) {
-        return <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
+        return (
+          <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || '图片'}</Text>
+        );
       }
       return (
         <ManagedInlineForumImage
+          attributes={attributes}
+          contentWidth={contentWidth}
+          fallbackTextStyle={htmlRendererStyles.inlineForumImageText}
+          lineHeight={htmlBaseStyle.lineHeight}
+          scale={settings.fontScale}
           source={
             imageSourceFromUrl(inlineSrc, {
               mediaContext,
@@ -697,16 +759,14 @@ export function createPreviewRenderers({
               referrerPolicy
             }) as ImageURISource
           }
-          style={[
-            inlineForumImageAttachmentSize(attributes, settings.fontScale, contentWidth),
-            inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)
-          ]}
         />
       );
     }
     const displaySource = selectImageDisplaySource(attributes, contentWidth, PixelRatio.get());
     if (!displaySource) {
-      return <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
+      return (
+        <Text style={htmlRendererStyles.inlineForumImageText}>{attributes.alt || attributes.title || '图片'}</Text>
+      );
     }
     const src = displaySource.uri;
     const originalUri = selectImageOriginalSource(attributes) || src;
@@ -719,6 +779,7 @@ export function createPreviewRenderers({
     return (
       <PreviewImageBlock
         key={compatibleImageRequestIdentity(imageSource as ImageURISource)}
+        alignment={forumImageRowAlignment(props.tnode)}
         attributes={attributes}
         boundarySpacing={boundarySpacing}
         contentWidth={contentWidth}
@@ -728,7 +789,6 @@ export function createPreviewRenderers({
         imageProps={imageProps}
         imageSource={imageSource as ImageURISource}
         loadingColor={theme.primary}
-        markInlineSizedImageUrl={markInlineSizedImageUrl}
         mediaContext={mediaContext}
         mediaSessionIdentity={mediaSessionIdentity}
         nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
@@ -739,37 +799,62 @@ export function createPreviewRenderers({
     );
   };
 
-  const InlineForumImageRenderer: CustomMixedRenderer = (props) => {
+  const InlineForumImageRenderer: CustomTextualRenderer = (props) => {
     const contentWidth = useForumContentWidth();
     const attributes = (props.tnode as unknown as { attributes?: Record<string, string | undefined> }).attributes || {};
     const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     const src = attributes.src || '';
     const label = attributes.alt || attributes.title || '';
     if (!src) {
-      return <Text style={htmlRendererStyles.inlineForumImageText}>{label}</Text>;
+      return <Text style={htmlRendererStyles.inlineForumImageText}>{label || '图片'}</Text>;
     }
-    const isInlineImage = isInlineForumImage(attributes);
-    if (isInlineImage) {
-      return (
-        <ManagedInlineForumImage
-          source={
-            imageSourceFromUrl(src, {
-              mediaContext,
-              nodeSeekUserAgent: nodeSeekMediaUserAgent,
-              referrerPolicy
-            }) as ImageURISource
-          }
-          style={[
-            inlineForumImageAttachmentSize(attributes, settings.fontScale, contentWidth),
-            inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)
-          ]}
-        />
-      );
+    const semanticInlineImage = isInlineForumImage(attributes);
+    const displaySource = semanticInlineImage
+      ? { uri: src }
+      : selectImageDisplaySource(attributes, contentWidth, PixelRatio.get());
+    if (!displaySource) {
+      return <Text style={htmlRendererStyles.inlineForumImageText}>{label || '图片'}</Text>;
     }
-    return <Text style={htmlRendererStyles.inlineForumImageText}>{label || src}</Text>;
+    const displayUri = displaySource.uri;
+    const imageSource = imageSourceFromUrl(displayUri, {
+      mediaContext,
+      nodeSeekUserAgent: nodeSeekMediaUserAgent,
+      referrerPolicy
+    }) as ImageURISource;
+    const cacheKey = imageDisplayCacheIdentity(imageSource);
+    return (
+      <ManagedInlineForumImage
+        accessibilityLabel={semanticInlineImage ? undefined : label || '查看图片'}
+        attributes={attributes}
+        contentWidth={contentWidth}
+        fallbackTextStyle={htmlRendererStyles.inlineForumImageText}
+        lineHeight={htmlBaseStyle.lineHeight}
+        scale={settings.fontScale}
+        source={imageSource}
+        onPress={
+          semanticInlineImage
+            ? undefined
+            : () => {
+                if (referrerPolicy) {
+                  onOpenImagePreview(displayUri, cachedImageDisplayDimensions(cacheKey), undefined, referrerPolicy);
+                } else {
+                  onOpenImagePreview(displayUri, cachedImageDisplayDimensions(cacheKey), undefined);
+                }
+              }
+        }
+      />
+    );
   };
   return {
     img: PreviewImageRenderer,
     [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer
   };
+}
+
+function forumImageRowAlignment(tnode: unknown): 'center' | 'flex-end' | 'flex-start' {
+  const textAlign = (tnode as { styles?: { nativeBlockFlow?: { textAlign?: unknown } } } | null)?.styles
+    ?.nativeBlockFlow?.textAlign;
+  if (textAlign === 'center') return 'center';
+  if (textAlign === 'right' || textAlign === 'end') return 'flex-end';
+  return 'flex-start';
 }

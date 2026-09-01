@@ -3,6 +3,10 @@ import { copySourceDiagnosticSummary } from './diagnostics';
 
 export function orientReplyWindow(result: RepliesResponse, order: ReplyOrder): RepliesResponse {
   if (order === 'oldest') return result;
+  return reverseReplyWindow(result);
+}
+
+export function reverseReplyWindow<T extends RepliesResponse>(result: T): T {
   return copySourceDiagnosticSummary(
     {
       ...result,
@@ -14,5 +18,5 @@ export function orientReplyWindow(result: RepliesResponse, order: ReplyOrder): R
       nextOffset: result.previousOffset ?? null
     },
     result
-  );
+  ) as T;
 }

@@ -77,6 +77,8 @@ import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/q
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
+import { reverseReplyWindow } from '@/sources/replyWindows';
+import { NODESEEK_FLOORS_PER_PAGE } from '@/sources/nodeseek/protocol';
 
 type MutableRef<T> = { current: T };
 
@@ -126,6 +128,21 @@ function replyLocationTarget(reply: Reply | undefined, pageHint?: number): Reply
     ...(reply.floor ? { floor: reply.floor } : {}),
     ...(pageHint ? { pageHint } : {})
   };
+}
+
+function matchesCreatedNodeSeekReply(reply: Reply, authorId: string | undefined, contentMarkdown: string | undefined) {
+  const expectedAuthorId = String(authorId || '').trim();
+  const expectedContent = String(contentMarkdown || '')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+  const actualContent = String(reply.contentMarkdown || '')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+  return (
+    Boolean(expectedAuthorId && expectedContent) &&
+    String(reply.authorId || '').trim() === expectedAuthorId &&
+    (actualContent === expectedContent || actualContent.endsWith(`\n\n${expectedContent}`))
+  );
 }
 
 const readOutcome = sourceReadRecoveryOutcome;
@@ -823,6 +840,7 @@ export function useTopicController({
 
       const generation = ++replyWindowGenerationRef.current;
       let createdTarget: ReplyLocationTarget | undefined;
+      const nodeSeekCreatedCommand = command.kind === 'created' && selectedTopic.source === 'nodeseek' ? command : null;
       const ownsWindow = () =>
         activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
         replyWindowGenerationRef.current === generation;
@@ -858,7 +876,7 @@ export function useTopicController({
       const pageOffset = capturedPosition?.offset ?? targetPage?.currentOffset ?? targetPage?.requestedOffset ?? null;
       let refreshedDetail = topicDetail;
       try {
-        if (command.kind !== 'edited') {
+        if (command.kind !== 'edited' && !nodeSeekCreatedCommand) {
           const result = await detailQuery.refetch();
           if (!ownsWindow()) return 'stale';
           if (result.error) {
@@ -892,8 +910,27 @@ export function useTopicController({
         const position: ReplyPageParam = reanchor
           ? { kind: 'start' }
           : { kind: 'cursor', page: pageNumber, offset: pageOffset };
+        const knownNodeSeekFloor = nodeSeekCreatedCommand
+          ? Math.max(
+              typeof refreshedDetail.replyCount === 'number' ? refreshedDetail.replyCount : 0,
+              ...(current?.pages.flatMap((page) => page.items.map((reply) => reply.floor || 0)) || [])
+            )
+          : 0;
+        const nodeSeekCreatedPage = Math.floor(knownNodeSeekFloor / NODESEEK_FLOORS_PER_PAGE) + 1;
+        const refreshPosition: ReplyPageParam = nodeSeekCreatedCommand
+          ? {
+              kind: 'cursor',
+              page: nodeSeekCreatedPage,
+              offset: (nodeSeekCreatedPage - 1) * NODESEEK_FLOORS_PER_PAGE
+            }
+          : position;
         const refreshKey = [
-          ...forumQueryKeys.replyRefresh(repliesQueryKey, pageNumber, pageOffset, REPLY_PAGE_SIZE),
+          ...forumQueryKeys.replyRefresh(
+            repliesQueryKey,
+            refreshPosition.kind === 'cursor' ? refreshPosition.page : pageNumber,
+            refreshPosition.kind === 'cursor' ? refreshPosition.offset : pageOffset,
+            REPLY_PAGE_SIZE
+          ),
           command.kind
         ] as const;
         const trace =
@@ -901,7 +938,8 @@ export function useTopicController({
           beginDiagnosticTrace('reply', 'refresh', {
             source: selectedTopic.source,
             replyOrder,
-            positionKind: reanchor && replyOrder === 'oldest' ? 'target' : position.kind
+            positionKind:
+              reanchor && replyOrder === 'oldest' && !nodeSeekCreatedCommand ? 'target' : refreshPosition.kind
           });
         const ownsTrace = !diagnosticTrace;
         try {
@@ -909,6 +947,20 @@ export function useTopicController({
             queryKey: refreshKey,
             staleTime: 0,
             queryFn: async ({ signal }) => {
+              if (nodeSeekCreatedCommand) {
+                const tail = await loadReplyPage(refreshedDetail, 'newest', refreshPosition, signal, trace);
+                const matches = tail.items.filter((reply) =>
+                  matchesCreatedNodeSeekReply(
+                    reply,
+                    nodeSeekCreatedCommand.nodeSeekAuthorId,
+                    nodeSeekCreatedCommand.nodeSeekContentMarkdown
+                  )
+                );
+                if (matches.length === 1) {
+                  createdTarget = replyLocationTarget(matches[0], tail.currentPage);
+                }
+                return replyOrder === 'oldest' ? reverseReplyWindow(tail) : tail;
+              }
               if (reanchor && replyOrder === 'oldest' && hasKnownReplies) {
                 const tail = await loadReplyPage(refreshedDetail, 'newest', { kind: 'start' }, signal, trace);
                 const latest = tail.items[0];
@@ -986,19 +1038,27 @@ export function useTopicController({
             targetWindowCacheOwnedRef.current.set(replyOrder, repliesQueryKey);
           }
           void queryClient.invalidateQueries({ queryKey: otherRepliesQueryKey, exact: true, refetchType: 'none' });
-          const replyCount = page.totalCount ?? refreshedDetail.replyCount;
+          const replyCount = nodeSeekCreatedCommand ? page.totalCount : (page.totalCount ?? refreshedDetail.replyCount);
           queryClient.setQueryData<TopicDetail>(topicQueryKey, (cached) =>
             cached && typeof replyCount === 'number' ? { ...cached, replyCount } : cached
           );
           setReplyWindowFailuresByKey({});
           if (command.kind === 'created' && createdTarget) onReplyLocationResolved?.(createdTarget);
+          const refreshCompleted = !nodeSeekCreatedCommand || Boolean(createdTarget);
           if (ownsTrace) {
-            finishDiagnosticTrace(trace, 'success', { itemCount: page.items.length, hasMore: Boolean(page.hasMore) });
+            finishDiagnosticTrace(trace, refreshCompleted ? 'success' : 'partial', {
+              itemCount: page.items.length,
+              hasMore: Boolean(page.hasMore),
+              ...(!refreshCompleted ? { reason: 'refresh_failed' } : {})
+            });
           } else {
-            markDiagnosticStage(trace, 'apply', { state: 'refresh-success', itemCount: page.items.length });
+            markDiagnosticStage(trace, 'apply', {
+              state: refreshCompleted ? 'refresh-success' : 'refresh-unconfirmed',
+              itemCount: page.items.length
+            });
           }
-          if (!command.silent) notify('评论已更新');
-          return 'completed';
+          if (!command.silent && refreshCompleted) notify('评论已更新');
+          return refreshCompleted ? 'completed' : 'failed';
         } catch (error) {
           if (!ownsWindow()) {
             if (ownsTrace) finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
@@ -1006,7 +1066,7 @@ export function useTopicController({
           }
           if (ownsTrace) finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
-          setReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, position, command));
+          setReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, refreshPosition, command));
           handleReadError(
             selectedTopic.source,
             error,

@@ -32,7 +32,8 @@ function selectionToken(row: CompiledForumContentRow) {
 
 function imageUrlsInPlannedRow(row: { html?: string }) {
   return parseHtml(row.html || '')
-    .querySelectorAll('img')
+    .querySelectorAll('*')
+    .filter((image) => ['img', 'forum-inline-image'].includes(image.rawTagName?.toLowerCase() || ''))
     .map((image) => image.getAttribute('src'));
 }
 
@@ -64,14 +65,17 @@ function withoutCompilerBindings(html: string) {
 
 function maxElementDepth(html: string) {
   const body = parseHtml(`<body>${html}</body>`).querySelector('body');
-  type TestNode = { childNodes?: TestNode[] };
-  const pending = (body?.childNodes || []).map((node) => ({ depth: 1, node: node as TestNode }));
+  type TestNode = { childNodes?: TestNode[]; rawTagName?: string };
+  const pending = (body?.childNodes || []).map((node) => ({
+    depth: (node as TestNode).rawTagName ? 1 : 0,
+    node: node as TestNode
+  }));
   let maxDepth = 0;
   while (pending.length) {
     const current = pending.pop()!;
     maxDepth = Math.max(maxDepth, current.depth);
     const children = current.node.childNodes || [];
-    children.forEach((node) => pending.push({ depth: current.depth + 1, node }));
+    children.forEach((node) => pending.push({ depth: current.depth + (node.rawTagName ? 1 : 0), node }));
   }
   return maxDepth;
 }
@@ -132,7 +136,7 @@ function parsedBalancedTable(html: string) {
 }
 
 describe('Android topic content splitting', () => {
-  it('keeps pure block-image paragraphs in bounded rich-text rows', () => {
+  it('keeps same-line image runs in bounded rich-text rows', () => {
     const urls = Array.from({ length: 9 }, (_, index) => `https://img.example/${index}.webp`);
     const pure = compileForumContent({
       html: `<p>${urls.map((url) => `<img src="${url}" alt="image">`).join('')}</p>`,
@@ -154,7 +158,9 @@ describe('Android topic content splitting', () => {
     expect(pure.rows.flatMap((row) => ('html' in row ? urls.filter((url) => row.html.includes(url)) : []))).toEqual(
       urls
     );
-    expect(pure.rows.map((row) => ('html' in row ? row.html.match(/<img\b/g)?.length || 0 : 0))).toEqual([4, 4, 1]);
+    expect(pure.rows.map((row) => ('html' in row ? row.html.match(/<forum-inline-image\b/g)?.length || 0 : 0))).toEqual(
+      [4, 4, 1]
+    );
     expect(pure.previewImages.map((image) => image.source)).toEqual(urls);
     expect(mixed.rows.map((row) => row.type)).toEqual(['richText']);
     expect(lightbox.rows).toEqual([
@@ -163,6 +169,86 @@ describe('Android topic content splitting', () => {
         html: expect.stringContaining('https://img.example/original.webp')
       })
     ]);
+  });
+
+  it('keeps an unclassified Yaohuo reply image at its authored text position', () => {
+    const text = '妈的，埃塞这边黑小子被中国人带坏了，天天加班，上帝也不见了，就是干，';
+    const src = 'https://pic2.ziyuan.wang/user/v2jun/2024/12/FpZEifxiFGs1BWtHjFsk5tJJNKSE_8b6f63437539d.gif';
+    const compilation = compileForumContent({
+      html: `${text}<img src="${src}" class="ubbimg" referrerpolicy="no-referrer">`,
+      role: 'reply',
+      source: 'yaohuo'
+    });
+    const [row] = renderedContentRows(compilation);
+
+    expect(row).toBeTruthy();
+    const imageOffset = row!.html.indexOf('<forum-inline-image');
+    expect(imageOffset).toBe(row!.html.indexOf(text) + text.length);
+    expect(parseHtml(row!.html).querySelector('forum-inline-image')?.getAttribute('src')).toBe(src);
+    expect(selectionToken(row!).owners.find((owner) => owner.text === text)?.tape).toEqual([
+      { at: text.length, text: '' }
+    ]);
+  });
+
+  it('uses the same authored-line image placement across topic roles and sources', () => {
+    const roles = ['opening', 'quoted-reply', 'reply'] as const;
+    const sources = ['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const;
+
+    for (const role of roles) {
+      for (const source of sources) {
+        const [row] = renderedContentRows(
+          compileForumContent({
+            html: 'before<img src="https://img.example.com/flow.png">after',
+            role,
+            source
+          })
+        );
+        expect(row?.html, `${source}/${role}`).toContain(
+          'before<forum-inline-image src="https://img.example.com/flow.png">https://img.example.com/flow.png</forum-inline-image>after'
+        );
+        expect(row?.html).not.toContain('<forum-inline-media-line>');
+      }
+    }
+  });
+
+  it('conserves safe authored content across topic roles and sources while changing presentation', () => {
+    const roles = ['opening', 'quoted-reply', 'reply'] as const;
+    const sources = ['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const;
+    const imageUrl = 'https://img.example.com/authored-flow.gif';
+    const html =
+      `<p>前文<a href="https://example.com/path">链接</a><img src="${imageUrl}"><mark>后文</mark></p>` +
+      '<table><tbody><tr><td>表格内容</td></tr></tbody></table>' +
+      '<pre><code>代码内容</code></pre>';
+
+    for (const role of roles) {
+      for (const source of sources) {
+        const compilation = compileForumContent({ html, role, source });
+        const renderedRows = renderedContentRows(compilation);
+        const renderedHtml = renderedRows.map((row) => row.html).join('');
+        const flowImage = parseHtml(renderedHtml).querySelector('forum-inline-image');
+        const token = JSON.parse(
+          combineForumSelectionTokens(compilation.rows.map((row) => row.selectionToken))
+        ) as ReturnType<typeof selectionToken>;
+        const selectionText = token.owners.map((owner) => owner.text).join('\n');
+
+        expect(renderedRows.flatMap(imageUrlsInPlannedRow), `${source}/${role} image`).toEqual([imageUrl]);
+        expect(flowImage?.text.trim(), `${source}/${role} fallback`).not.toBe('');
+        expect(renderedHtml, `${source}/${role} link`).toContain('href="https://example.com/path"');
+        expect(renderedHtml, `${source}/${role} mark`).toContain('<mark>后文</mark>');
+        expect(compilation.rows.find((row) => row.type === 'table')?.html, `${source}/${role} table`).toContain(
+          '表格内容'
+        );
+        expect(
+          compilation.rows.find((row) => row.type === 'codeBlock'),
+          `${source}/${role} code`
+        ).toMatchObject({
+          text: '代码内容'
+        });
+        for (const text of ['前文', '链接', '后文', '表格内容', '代码内容']) {
+          expect(selectionText, `${source}/${role} selection`).toContain(text);
+        }
+      }
+    }
   });
 
   it('does not reuse an opening plan when the opening post becomes quoted reply content', () => {
@@ -640,12 +726,9 @@ describe('Android topic content splitting', () => {
       { tape: [], text: '规格', trailing: [{ kind: 'separator', text: '\n' }] },
       { tape: [], text: '核心', trailing: [{ kind: 'separator', text: '\t' }] },
       {
-        tape: [],
+        tape: [{ at: 3, text: '芯片' }],
         text: '1 核',
-        trailing: [
-          { kind: 'media', text: '芯片' },
-          { kind: 'separator', text: '\n' }
-        ]
+        trailing: [{ kind: 'separator', text: '\n' }]
       }
     ]);
     expect(selectionToken(rows[2])).toEqual({
@@ -668,9 +751,117 @@ describe('Android topic content splitting', () => {
     ]);
   });
 
+  it('keeps the two visible newlines from three trailing breaks in one text owner', () => {
+    const [row] = compileForumContent({
+      html: '<p><font size="6">论坛总规则</font><br><br><br></p>',
+      role: 'opening',
+      source: 'yaohuo'
+    }).rows;
+
+    expect(selectionToken(row).owners[0]?.text).toBe('论坛总规则\n\n');
+  });
+
+  it('keeps a visible trailing newline inside nested legacy inline tags', () => {
+    const [row] = compileForumContent({
+      html: '<p><font size="6"><span>论坛总规则<br><br></span></font></p>',
+      role: 'opening',
+      source: 'yaohuo'
+    }).rows;
+
+    expect(selectionToken(row).owners[0]?.text).toBe('论坛总规则\n');
+  });
+
+  it('collapses only the final break at the root text owner boundary', () => {
+    const [row] = compileForumContent({
+      html: '普通规则正文<br><br>',
+      role: 'opening',
+      source: 'yaohuo'
+    }).rows;
+
+    expect(selectionToken(row).owners[0]?.text).toBe('普通规则正文\n');
+  });
+
+  it('collapses a break that becomes terminal only after physical row splitting', () => {
+    const images = Array.from(
+      { length: 5 },
+      (_, index) => `<img src="https://img.example/${index}.webp" alt="图${index}">`
+    );
+    const rows = compileForumContent({
+      html: `<div>正文${images.slice(0, 4).join('')}<br>${images[4]}尾声</div>`,
+      role: 'opening',
+      source: 'yaohuo'
+    }).rows;
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0] && 'html' in rows[0] ? rows[0].html : '').toMatch(/<br><\/div>$/);
+    expect(selectionToken(rows[0]).owners[0]?.text).toBe('正文');
+    expect(selectionToken(rows[1]).owners[0]?.text).toBe('尾声');
+  });
+
+  it('records inline and block formula source in the version 1 media tape', () => {
+    const rows = compileForumContent({
+      html:
+        '<p>before <forum-math-inline>\\mathsf{A}</forum-math-inline> after</p>' +
+        '<forum-math-block>x=1\\tag{1}</forum-math-block><p>end</p>',
+      role: 'opening',
+      source: 'linuxdo'
+    }).rows;
+
+    expect(selectionToken(rows[0])).toEqual({
+      owners: [
+        {
+          tape: [{ at: 'before '.length, text: '\\mathsf{A}' }],
+          text: 'before  after',
+          trailing: [{ kind: 'separator', text: '\n' }]
+        }
+      ],
+      prefix: [],
+      version: 1
+    });
+    expect(selectionToken(rows[1])).toEqual({
+      owners: [],
+      prefix: [
+        { kind: 'media', text: 'x=1\\tag{1}' },
+        { kind: 'separator', text: '\n' }
+      ],
+      version: 1
+    });
+    expect(JSON.parse(combineForumSelectionTokens(rows.map((row) => row.selectionToken)))).toMatchObject({
+      owners: [
+        {
+          tape: [{ at: 'before '.length, text: '\\mathsf{A}' }],
+          text: 'before  after',
+          trailing: [
+            { kind: 'separator', text: '\n' },
+            { kind: 'media', text: 'x=1\\tag{1}' },
+            { kind: 'separator', text: '\n' }
+          ]
+        },
+        { text: 'end' }
+      ],
+      version: 1
+    });
+  });
+
+  it('keeps inline sticker paragraphs as selection block boundaries', () => {
+    const rows = compileForumContent({
+      html:
+        '<forum-inline-media-line>first <forum-sticker src="https://img.example/a.webp" alt="A">A</forum-sticker></forum-inline-media-line>' +
+        '<forum-inline-media-line>second <forum-sticker src="https://img.example/b.webp" alt="B">B</forum-sticker></forum-inline-media-line>',
+      role: 'opening',
+      source: 'nodeseek'
+    }).rows;
+    const token = JSON.parse(combineForumSelectionTokens(rows.map((row) => row.selectionToken))) as ReturnType<
+      typeof selectionToken
+    >;
+
+    expect(token.owners.map((owner) => owner.text)).toEqual(['first', 'second']);
+    expect(token.owners[0]?.trailing).toContainEqual({ kind: 'separator', text: '\n' });
+  });
+
   it('matches RNRH owner boundaries around block and opaque media', () => {
     const blockImageRows = compileForumContent({
-      html: '<p>before \r\n <img src="https://img.example/block.webp" alt="插图"> \r\n after</p>',
+      html: '<p>before<br><img src="https://img.example/block.webp" alt="插图"><br>after</p>',
       role: 'opening',
       source: 'nodeseek'
     }).rows;
@@ -690,8 +881,11 @@ describe('Android topic content splitting', () => {
     const blockImage = selectionToken(blockImageRows[0]);
     expect(blockImage).toMatchObject({
       owners: [
-        { tape: [], text: 'before', trailing: [{ kind: 'media', text: '插图' }] },
-        { tape: [], text: 'after', trailing: [{ kind: 'separator', text: '\n' }] }
+        {
+          tape: [{ at: 'before\n'.length, text: '插图' }],
+          text: 'before\n\nafter',
+          trailing: [{ kind: 'separator', text: '\n' }]
+        }
       ],
       prefix: [],
       version: 1
@@ -874,17 +1068,11 @@ describe('Android topic content splitting', () => {
 
     expect(plan.rows).toHaveLength(3);
     expect(tables.map((table) => table.querySelectorAll('tr').length)).toEqual([4, 4, 1]);
-    expect(tables.flatMap((table) => table.querySelectorAll('tr').map((row) => row.toString()))).toEqual(sourceRows);
-    expect(
-      plan.rows.flatMap((row) =>
-        'html' in row
-          ? parseHtml(row.html)
-              .querySelectorAll('img')
-              .map((image) => image.getAttribute('src'))
-          : []
-      )
-    ).toEqual(sourceUrls);
-    expect(plan.rows.every((row) => parseHtml(row.html).querySelectorAll('img').length <= 4)).toBe(true);
+    expect(tables.flatMap((table) => table.querySelectorAll('tr').map((row) => row.getAttribute('data-row')))).toEqual(
+      sourceUrls.map((_, index) => String(index))
+    );
+    expect(plan.rows.flatMap(imageUrlsInPlannedRow)).toEqual(sourceUrls);
+    expect(plan.rows.every((row) => imageUrlsInPlannedRow(row).length <= 4)).toBe(true);
     expect(plan.rows.every((row) => domNodeCount(row.html) <= 80)).toBe(true);
     expect(plan.rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
     expect(plan.rows.every((row) => row.html.length <= 16_384)).toBe(true);
@@ -907,10 +1095,21 @@ describe('Android topic content splitting', () => {
     const renderedRowGroups = plan.rows.map((row) =>
       parseHtml(row.html)
         .querySelectorAll('tr')
-        .map((tableRow) => tableRow.toString())
+        .map((tableRow) => tableRow)
     );
 
-    expect(renderedRowGroups).toEqual([connectedRows, independentRows]);
+    expect(renderedRowGroups.map((group) => group.map((row) => row.text))).toEqual([
+      Array.from(
+        { length: 4 },
+        (_, index) => `${index === 0 ? 'connected' : ''}https://img.example/rowspan-${index}.webp`
+      ),
+      Array.from({ length: 4 }, (_, index) => `independent-${index}https://img.example/after-${index}.webp`)
+    ]);
+    expect(plan.rows.map((row) => imageUrlsInPlannedRow(row))).toEqual([
+      Array.from({ length: 4 }, (_, index) => `https://img.example/rowspan-${index}.webp`),
+      Array.from({ length: 4 }, (_, index) => `https://img.example/after-${index}.webp`)
+    ]);
+    expect(renderedRowGroups[0]?.[0]?.querySelector('td')?.getAttribute('rowspan')).toBe('4');
     expect(new Set(plan.rows.map((row) => row.semanticId))).toEqual(new Set(['node-0']));
     expect(plan.rows.map((row) => row.part)).toEqual(['first', 'last']);
   });
@@ -1110,13 +1309,9 @@ describe('Android topic content splitting', () => {
       .join('')}${'</div>'.repeat(96)}`;
 
     const rows = planForumContent(html).rows;
-    const plannedUrls = rows.flatMap((row) =>
-      parseHtml(row.html)
-        .querySelectorAll('img')
-        .map((image) => image.getAttribute('src'))
-    );
+    const plannedUrls = rows.flatMap(imageUrlsInPlannedRow);
 
-    expect(rows.every((row) => parseHtml(row.html).querySelectorAll('img').length <= 4)).toBe(true);
+    expect(rows.every((row) => imageUrlsInPlannedRow(row).length <= 4)).toBe(true);
     expect(rows.every((row) => maxElementDepth(row.html) <= 64)).toBe(true);
     expect(plannedUrls).toEqual(sourceUrls);
   });
@@ -1130,6 +1325,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',
@@ -1186,6 +1382,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',
@@ -1271,7 +1468,11 @@ describe('Android topic content splitting', () => {
 
     expect(rows).toHaveLength(3);
     expect(rows.map((row) => row.networkMediaCount)).toEqual([0, 1, 0]);
-    expect(rows.map((row) => parseHtml(row.html).text)).toEqual([leading, '', trailing]);
+    expect(rows.map((row) => parseHtml(row.html).text)).toEqual([
+      leading,
+      'https://img.example/discrete.webp',
+      trailing
+    ]);
   });
 
   it('keeps an anchor identity only on the first continuation row', () => {
@@ -1371,15 +1572,7 @@ describe('Android topic content splitting', () => {
     expect(slices.map((slice) => slice?.semanticId)).toEqual(['node-0', 'node-0', 'node-0']);
     expect(slices.map((slice) => slice?.part)).toEqual(['middle', 'middle', 'last']);
     expect(plan.rows.every((row) => !('html' in row) || !row.html.includes('data-wz-'))).toBe(true);
-    expect(
-      plan.rows.flatMap((row) =>
-        'html' in row
-          ? parseHtml(row.html)
-              .querySelectorAll('img')
-              .map((image) => image.getAttribute('src'))
-          : []
-      )
-    ).toEqual(sourceUrls);
+    expect(plan.rows.flatMap((row) => ('html' in row ? imageUrlsInPlannedRow(row) : []))).toEqual(sourceUrls);
   });
 
   it('compiles an ordinary Discourse callout into a header and body row', () => {
@@ -1426,6 +1619,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',
@@ -1458,6 +1652,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',
@@ -1532,6 +1727,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',
@@ -1564,6 +1760,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',
@@ -1598,6 +1795,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',
@@ -1628,6 +1826,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',
@@ -1676,6 +1875,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',
@@ -1710,6 +1910,7 @@ describe('Android topic content splitting', () => {
     vi.doMock('./html', () => ({
       FORUM_AUDIO_TAG: 'forum-audio',
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_MATH_BLOCK_TAG: 'forum-math-block',
       FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_STICKER_TAG: 'forum-video-sticker',
       FORUM_VIDEO_TAG: 'forum-video',

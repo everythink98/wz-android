@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTopicImageDeriver, filterRepliesWithImages } from './topicDerivedData';
+import { filterRepliesWithImages } from './topicDerivedData';
 import type { Reply } from '@/domain/forum/models';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 
@@ -20,43 +20,15 @@ const replyWithoutImage: Reply = {
 describe('Android topic derived data', () => {
   it('filters image replies without re-extracting their HTML', () => {
     const replies = [replyWithImage, replyWithoutImage].map((reply) => prepareReplyContent(reply, 'linuxdo'));
-    const deriver = createTopicImageDeriver();
-
-    const first = filterRepliesWithImages(replies, {}, deriver, 'linuxdo');
-    const second = filterRepliesWithImages(replies, {}, deriver, 'linuxdo');
+    const first = filterRepliesWithImages(replies, 'linuxdo');
+    const second = filterRepliesWithImages(replies, 'linuxdo');
 
     expect(first.map(({ floor }) => floor)).toEqual([1]);
     expect(second.map(({ floor }) => floor)).toEqual([1]);
   });
 
   it('rejects non-empty image-filter content without a prepared plan', () => {
-    expect(() => filterRepliesWithImages([replyWithImage], {}, createTopicImageDeriver(), 'linuxdo')).toThrow(
-      '论坛内容缺少匹配的预编译计划'
-    );
-  });
-
-  it('excludes only the prepared image whose final Referer identity was classified inline', () => {
-    const url = 'https://cdn.example.com/shared.png';
-    const requestIdentityForImage = (src: string, referrerPolicy?: string) =>
-      `${src}\u0000referrer:${referrerPolicy === 'no-referrer' ? 'none' : 'https://forum.example/'}`;
-    const noReferrerIdentity = requestIdentityForImage(url, 'no-referrer');
-    const deriver = createTopicImageDeriver({ requestIdentityForImage });
-    const noReferrerReply = prepareReplyContent(
-      { ...replyWithImage, contentHtml: `<img src="${url}" referrerpolicy="no-referrer">` },
-      'linuxdo'
-    );
-    const originReply = prepareReplyContent(
-      { ...replyWithImage, floor: 2, contentHtml: `<img src="${url}" referrerpolicy="origin">` },
-      'linuxdo'
-    );
-
-    expect(
-      filterRepliesWithImages([noReferrerReply, originReply], { [noReferrerIdentity]: true }, deriver, 'linuxdo').map(
-        ({ floor }) => floor
-      )
-    ).toEqual([2]);
-    expect(deriver.isInlineSizedImage(url, 'no-referrer', { [noReferrerIdentity]: true })).toBe(true);
-    expect(deriver.isInlineSizedImage(url, 'origin', { [noReferrerIdentity]: true })).toBe(false);
+    expect(() => filterRepliesWithImages([replyWithImage], 'linuxdo')).toThrow('论坛内容缺少匹配的预编译计划');
   });
 
   it('treats reply signature images as reply images', () => {
@@ -66,7 +38,7 @@ describe('Android topic derived data', () => {
     };
     const prepared = prepareReplyContent(replyWithSignatureImage, 'linuxdo');
 
-    expect(filterRepliesWithImages([prepared], {}, createTopicImageDeriver(), 'linuxdo')).toEqual([prepared]);
+    expect(filterRepliesWithImages([prepared], 'linuxdo')).toEqual([prepared]);
   });
 
   it('treats dimension-only small images as reply images without counting emoji', () => {
@@ -81,8 +53,6 @@ describe('Android topic derived data', () => {
     };
     const replies = [smallRealImage, emojiOnly].map((reply) => prepareReplyContent(reply, 'linuxdo'));
 
-    expect(
-      filterRepliesWithImages(replies, {}, createTopicImageDeriver(), 'linuxdo').map(({ floor }) => floor)
-    ).toEqual([1]);
+    expect(filterRepliesWithImages(replies, 'linuxdo').map(({ floor }) => floor)).toEqual([1]);
   });
 });

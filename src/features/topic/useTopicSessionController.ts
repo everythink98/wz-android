@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { createReplyTextIndexForQuery, filterRepliesByQuery } from './model/replySearch';
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
-import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from './model/topicDerivedData';
+import { filterRepliesWithImages } from './model/topicDerivedData';
 import type { Reply, ReplyOrder, Source, Topic, TopicDetail } from '@/domain/forum/models';
 import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 
@@ -77,26 +77,22 @@ export function transitionReplyComposer(
 
 export function filterTopicSessionReplies({
   commentQuery,
-  inlineSizedImageUrls,
   replyFilter,
   source,
   topicDetail,
-  topicImageDeriver,
   topicReplies
 }: {
   commentQuery: string;
-  inlineSizedImageUrls: InlineSizedImageUrlMap;
   replyFilter: ReplyFilter;
   source: Source;
   topicDetail: TopicDetail | null;
-  topicImageDeriver: TopicImageDeriver;
   topicReplies: Reply[];
 }) {
   let replies = topicReplies;
   if (replyFilter === 'author') {
     replies = topicDetail ? replies.filter((reply) => reply.author === topicDetail.author) : replies;
   } else if (replyFilter === 'images') {
-    replies = filterRepliesWithImages(replies, inlineSizedImageUrls, topicImageDeriver, source);
+    replies = filterRepliesWithImages(replies, source);
   }
   return filterRepliesByQuery(replies, commentQuery, createReplyTextIndexForQuery(topicReplies, commentQuery));
 }

@@ -24,7 +24,6 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
-import android.widget.Magnifier
 import android.widget.TextView
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
@@ -97,7 +96,6 @@ class ForumContentSelectionView(
   private val systemActionsByMenuId = mutableMapOf<Int, BoundForumSelectionSystemAction>()
   private var destroying = false
   private var suppressActionModeDestroy = false
-  private var magnifier: Magnifier? = null
   private var downTime = 0L
   private var downX = 0f
   private var downY = 0f
@@ -195,7 +193,6 @@ class ForumContentSelectionView(
     cancelSelectionOnTap = false
     removeCallbacks(autoScrollRunnable)
     autoScrollPosted = false
-    dismissMagnifier()
     detachPreDraw()
     if (!destroying) cancelSelection()
     super.onDetachedFromWindow()
@@ -228,7 +225,6 @@ class ForumContentSelectionView(
           cancelSelectionOnTap = false
           coordinatorOwnsGesture = true
           parent?.requestDisallowInterceptTouchEvent(true)
-          showMagnifier(event.x + handleDragOffsetX, event.y + handleDragOffsetY)
           return true
         }
         cancelSelectionOnTap = selectionActive
@@ -251,7 +247,6 @@ class ForumContentSelectionView(
         lastTouchY = y
         if (coordinatorOwnsGesture) {
           updateDraggedHandle(x, y)
-          updateMagnifierForDraggedHandle()
           postAutoScroll()
           return true
         }
@@ -390,7 +385,6 @@ class ForumContentSelectionView(
     removeCallbacks(longPressRunnable)
     removeCallbacks(autoScrollRunnable)
     autoScrollPosted = false
-    dismissMagnifier()
     draggingHandle = null
     handleDragOffsetX = 0f
     handleDragOffsetY = 0f
@@ -423,7 +417,6 @@ class ForumContentSelectionView(
     selectionGestureRoot = null
     cancelSelectionOnTap = false
     parent?.requestDisallowInterceptTouchEvent(false)
-    dismissMagnifier()
     markedRowAlignments.clear()
     clearOverlay()
     setSelectionActive(false)
@@ -928,10 +921,6 @@ class ForumContentSelectionView(
     }
   }
 
-  private fun updateMagnifierForDraggedHandle() {
-    draggingHandlePoint()?.let { showMagnifier(it.x, it.y) } ?: dismissMagnifier()
-  }
-
   private fun startSelectionActionMode() {
     if (actionMode != null) return
     actionMode = startActionMode(SelectionActionModeCallback(), ActionMode.TYPE_FLOATING)
@@ -1100,24 +1089,6 @@ class ForumContentSelectionView(
     return copied
   }
 
-  private fun showMagnifier(x: Float, y: Float) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
-    val instance = magnifier ?: createMagnifier().also { magnifier = it }
-    instance.show(x.coerceIn(0f, width.toFloat()), y.coerceIn(0f, height.toFloat()))
-  }
-
-  private fun createMagnifier(): Magnifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-    Magnifier.Builder(this).build()
-  } else {
-    @Suppress("DEPRECATION")
-    Magnifier(this)
-  }
-
-  private fun dismissMagnifier() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) magnifier?.dismiss()
-    magnifier = null
-  }
-
   private fun postAutoScroll() {
     if (autoScrollPosted || forumEdgeScrollDeltaPx(lastTouchY, height, density) == 0f) return
     autoScrollPosted = true
@@ -1127,7 +1098,6 @@ class ForumContentSelectionView(
   private fun runAutoScrollFrame(): ForumAutoScrollPayload? {
     updateDraggedHandle(lastTouchX, lastTouchY)
     if (!selectionActive || draggingHandle == null) return null
-    updateMagnifierForDraggedHandle()
     return forumAutoScrollPayload(lastTouchY, height, density)
   }
 

@@ -164,12 +164,15 @@ describe('topic reply list model', () => {
     expect(bodyRows.map((item) => item.content.networkMediaCount)).toEqual(Array.from({ length: 500 }, () => 4));
     expect(
       bodyRows.every(
-        (item) => item.content.type === 'richText' && (item.content.html.match(/<img\b/g)?.length || 0) <= 4
+        (item) =>
+          item.content.type === 'richText' &&
+          (item.content.html.match(/<(?:img|forum-inline-image)\b/g)?.length || 0) <= 4
       )
     ).toBe(true);
     expect(
       bodyRows.reduce(
-        (count, item) => count + ('html' in item.content ? item.content.html.match(/<img\b/g)?.length || 0 : 0),
+        (count, item) =>
+          count + ('html' in item.content ? item.content.html.match(/<(?:img|forum-inline-image)\b/g)?.length || 0 : 0),
         0
       )
     ).toBe(2000);

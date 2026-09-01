@@ -631,35 +631,27 @@ async function resolveNodeSeekTailChronological(
 ) {
   let page = initialPage;
   let result = projectNodeSeekOrderedPage(initialResult, initialPage);
-  const visitedPages = new Set<number>();
-  while (true) {
-    if (visitedPages.has(page)) {
-      throw new Error('NodeSeek 原站返回了重复的末页游标');
-    }
-    visitedPages.add(page);
-    assertNodeSeekAdjacentPageEvidence(result, page, {
-      allowEmpty: page === 1 && options.replyCount === 0 && !result.hasMore && !result.nextPage
-    });
-    const candidate = Math.max(page, result.nodeSeekLastPage || page, result.nextPage || page);
-    if (candidate > page) {
-      page = candidate;
-      result = projectNodeSeekOrderedPage(
-        await getNodeSeekRepliesChronological(id, {
-          ...options,
-          page,
-          offset: (page - 1) * NODESEEK_FLOORS_PER_PAGE,
-          limit: NODESEEK_FLOORS_PER_PAGE,
-          fillPages: false,
-          orderedWindow: true,
-          targetReply: undefined
-        }),
-        page
-      );
-      continue;
-    }
-    assertNodeSeekTerminalWindow(result, page);
-    return { page, result };
+  assertNodeSeekAdjacentPageEvidence(result, page, {
+    allowEmpty: page === 1 && options.replyCount === 0 && !result.hasMore && !result.nextPage
+  });
+  const candidate = Math.max(page, result.nodeSeekLastPage || page, result.nextPage || page);
+  if (candidate > page) {
+    page = candidate;
+    result = projectNodeSeekOrderedPage(
+      await getNodeSeekRepliesChronological(id, {
+        ...options,
+        page,
+        offset: (page - 1) * NODESEEK_FLOORS_PER_PAGE,
+        limit: NODESEEK_FLOORS_PER_PAGE,
+        fillPages: false,
+        orderedWindow: true,
+        targetReply: undefined
+      }),
+      page
+    );
   }
+  assertNodeSeekTerminalWindow(result, page);
+  return { page, result };
 }
 
 async function fillNodeSeekRepliesLimit(

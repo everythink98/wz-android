@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
-import { createTopicImageDeriver } from './model/topicDerivedData';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import type { ReplyEditTarget, ReplyTarget } from './model/types';
 import { filterTopicSessionReplies, transitionReplyComposer } from './useTopicSessionController';
@@ -27,11 +26,9 @@ describe('topic local session helpers', () => {
     const filter = (replyFilter: 'all' | 'author' | 'images', commentQuery = '') =>
       filterTopicSessionReplies({
         commentQuery,
-        inlineSizedImageUrls: {},
         replyFilter,
         source: 'linuxdo',
         topicDetail: { ...topic, replies },
-        topicImageDeriver: createTopicImageDeriver(),
         topicReplies: replies
       }).map(({ floor }) => floor);
 

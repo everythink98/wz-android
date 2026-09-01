@@ -11,9 +11,11 @@ import Animated, {
   withDecay,
   type SharedValue
 } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import type { CustomBlockRenderer } from 'react-native-render-html';
 import type { ForumContentPart } from '@/domain/forum/topicContentSplit';
 import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
+import { useTopicSelectionCancel } from '../selection/TopicSelectionSurface';
 import type { HtmlRenderers } from './types';
 import { useTopicSplitDisclosureScopeKey } from './TopicSplitDisclosure';
 
@@ -208,6 +210,7 @@ export function TopicHorizontalScroll({
   const gestureStartOffset = useSharedValue(0);
   const scrollViewRef = useAnimatedRef<ComponentRef<typeof Animated.ScrollView>>();
   const nativeContentGesture = useMemo(() => Gesture.Native(), []);
+  const cancelNativeSelection = useTopicSelectionCancel();
 
   useAnimatedReaction(
     () => offset.value,
@@ -253,6 +256,7 @@ export function TopicHorizontalScroll({
           if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < HORIZONTAL_INTENT_LOCK_DISTANCE) return;
           if (Math.abs(deltaX) > Math.abs(deltaY)) {
             horizontalPanClaimed.value = true;
+            if (cancelNativeSelection) scheduleOnRN(cancelNativeSelection);
             state.activate();
             return;
           }
@@ -272,6 +276,7 @@ export function TopicHorizontalScroll({
           offset.value = withDecay({ clamp: [0, maximumOffset.value], velocity: -event.velocityX });
         }),
     [
+      cancelNativeSelection,
       enabled,
       gestureStartOffset,
       horizontalPanClaimed,

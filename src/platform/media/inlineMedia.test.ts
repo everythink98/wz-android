@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE } from '@/domain/forum/forumContentMedia';
 
 import {
   inlineForumImageAlignmentStyle,
@@ -61,6 +62,53 @@ describe('inline media layout', () => {
 
     expect(inlineForumImageAttachmentSize(attributes)).toEqual({ height: 20, width: 24 });
     expect(inlineForumImageAlignmentStyle(attributes, 1, 26)).toEqual({ transform: [{ translateY: 3 }] });
+  });
+
+  it('keeps ordinary flow images at natural size independent of reader font scale', () => {
+    const attributes = { src: 'https://pic.example.com/reply.gif' };
+
+    expect(inlineForumImageDisplaySize(attributes, 1.6, 320, { width: 30, height: 30 })).toEqual({
+      width: 30,
+      height: 30
+    });
+    expect(inlineForumImageAttachmentSize(attributes, 1.6, 320, { width: 30, height: 30 })).toEqual({
+      width: 34,
+      height: 30
+    });
+    expect(inlineForumImageDisplaySize(attributes, 1.6, 320, { width: 800, height: 400 })).toEqual({
+      width: 316,
+      height: 158
+    });
+  });
+
+  it('caps trusted bounded assets without font scaling or dimension guesses', () => {
+    const attributes = {
+      [FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE]: 'true',
+      src: 'https://forum.example/face/wave.gif'
+    };
+
+    expect(inlineForumImageDisplaySize(attributes, 1.6, 320, { width: 100, height: 100 })).toEqual({
+      width: 100,
+      height: 100
+    });
+    expect(inlineForumImageDisplaySize(attributes, 1.6, 320, { width: 60, height: 30 })).toEqual({
+      width: 60,
+      height: 30
+    });
+    expect(inlineForumImageDisplaySize(attributes, 1.6, 320, { width: 800, height: 400 })).toEqual({
+      width: 100,
+      height: 50
+    });
+    expect(inlineForumImageDisplaySize(attributes, 1.6, 320, { width: 200, height: 800 })).toEqual({
+      width: 25,
+      height: 100
+    });
+    expect(
+      inlineForumImageDisplaySize({ ...attributes, height: '40', width: '80' }, 1.6, 320, {
+        width: 800,
+        height: 400
+      })
+    ).toEqual({ width: 80, height: 40 });
   });
 
   it('leaves breathing room after an inline quote avatar', () => {

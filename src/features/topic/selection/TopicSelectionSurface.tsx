@@ -45,11 +45,16 @@ if (Platform.OS === 'android') {
 }
 
 type TopicSelectionContextValue = {
+  cancelSelection: (() => void) | null;
   enabled: boolean;
   sessionKey: string;
 };
 
-const TopicSelectionContext = createContext<TopicSelectionContextValue>({ enabled: false, sessionKey: '' });
+const TopicSelectionContext = createContext<TopicSelectionContextValue>({
+  cancelSelection: null,
+  enabled: false,
+  sessionKey: ''
+});
 const TopicSelectionRowContext = createContext(false);
 
 function hashRevision(parts: readonly string[]) {
@@ -104,10 +109,11 @@ export function TopicSelectionSurface({
   const nativeEnabled = Boolean(
     Platform.OS === 'android' && NativeForumSelection && routeActive && snapshot.valid && snapshot.rows.length > 0
   );
+  const cancelSelection = useCallback(() => nativeRef.current?.cancelSelection?.(), []);
 
   useEffect(() => {
-    nativeRef.current?.cancelSelection?.();
-  }, [revision, routeActive]);
+    cancelSelection();
+  }, [cancelSelection, revision, routeActive]);
 
   const onAutoScroll = useCallback(
     ({ nativeEvent }: NativeSyntheticEvent<{ delta: number }>) => {
@@ -127,7 +133,10 @@ export function TopicSelectionSurface({
     },
     [listRef]
   );
-  const context = useMemo(() => ({ enabled: nativeEnabled, sessionKey }), [nativeEnabled, sessionKey]);
+  const context = useMemo(
+    () => ({ cancelSelection: nativeEnabled ? cancelSelection : null, enabled: nativeEnabled, sessionKey }),
+    [cancelSelection, nativeEnabled, sessionKey]
+  );
 
   if (Platform.OS !== 'android' || !NativeForumSelection) {
     return <TopicSelectionContext.Provider value={context}>{children}</TopicSelectionContext.Provider>;
@@ -151,6 +160,10 @@ export function TopicSelectionSurface({
       </NativeForumSelection>
     </TopicSelectionContext.Provider>
   );
+}
+
+export function useTopicSelectionCancel() {
+  return useContext(TopicSelectionContext).cancelSelection;
 }
 
 export function useTopicSelectionRowRef(rowKey?: string) {

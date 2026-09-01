@@ -217,7 +217,6 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     styleSettings: runtime.readerStyle.settings,
     theme: runtime.readerStyle.theme,
     topicDetail: topicLayoutDetail,
-    topicKey: `${topic.source}:${topic.id}`,
     webViewBlockMessage: runtime.networkProxyWebViewBlockMessage
   });
   const imagePreviewController = useImagePreviewController({
@@ -225,11 +224,9 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     contentSource: topic.source,
     contentWidth: runtime.contentWidth,
     fetcher: runtime.fetcher,
-    inlineSizedImageUrls: html.inlineSizedImageUrls,
     mediaReferrer: html.mediaContext?.referrer,
     nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
-    notify: runtime.notify,
-    topicImageDeriver: html.topicImageDeriver
+    notify: runtime.notify
   });
   useCommitRefValue(openImagePreviewRef, imagePreviewController.openImagePreview);
   const actions = useTopicActionsController({

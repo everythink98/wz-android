@@ -1,6 +1,13 @@
 import type { QuotedPostMetadata, TopicPoll } from '@/domain/forum/models';
 import type { HTMLElement } from 'node-html-parser';
-import { escapeHtmlAttribute, FORUM_LINK_CARD_TAG, hasRenderableHtmlContent } from '@/domain/forum/html';
+import {
+  escapeHtmlAttribute,
+  escapeHtmlText,
+  FORUM_LINK_CARD_TAG,
+  FORUM_MATH_BLOCK_TAG,
+  FORUM_MATH_INLINE_TAG,
+  hasRenderableHtmlContent
+} from '@/domain/forum/html';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { discoursePollPlaceholder, prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
 import {
@@ -31,6 +38,16 @@ function linuxDoContentTransform(html: unknown, polls: TopicPoll[] | undefined) 
   const pollNames = new Set((polls || []).map((poll) => poll.name).filter((name): name is string => Boolean(name)));
   const normalizeCallouts = discourseContentNeedsCalloutNormalization(html);
   return (root: HTMLElement) => {
+    for (const [selector, tagName] of [
+      ['div.math', FORUM_MATH_BLOCK_TAG],
+      ['span.math', FORUM_MATH_INLINE_TAG]
+    ] as const) {
+      root.querySelectorAll(selector).forEach((node) => {
+        const source = node.text.trim();
+        if (source) node.replaceWith(`<${tagName}>${escapeHtmlText(source)}</${tagName}>`);
+        else node.remove();
+      });
+    }
     root.querySelectorAll('.poll').forEach((node) => {
       const name = String(node.getAttribute('data-poll-name') || '').trim();
       if (name && pollNames.has(name)) {

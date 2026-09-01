@@ -372,3 +372,34 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
      }
  
      controller = builder.build()
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt
+@@ -8,6 +8,7 @@
+ package com.facebook.react.views.text.internal.span
+ 
+ import android.graphics.Paint.FontMetricsInt
++import android.text.Spanned
+ import android.text.style.LineHeightSpan
+ import kotlin.math.ceil
+ import kotlin.math.floor
+@@ -38,6 +39,18 @@ internal class CustomLineHeightSpan(height: Float) : LineHeightSpan, ReactSpan {
+     // positive, treat it as zero. The layout bounds exactly encloses this effective A′ and D′.
+ 
+-    val leading = lineHeight - ((-fm.ascent) + fm.descent)
++    val currentHeight = (-fm.ascent) + fm.descent
++    val containsInlineView =
++        text is Spanned &&
++            text
++                .getSpans(start, end, TextInlineViewPlaceholderSpan::class.java)
++                .any { text.getSpanStart(it) in start until end }
++    if (containsInlineView && currentHeight >= lineHeight) {
++      if (start == 0) fm.top = fm.ascent
++      if (end == text.length) fm.bottom = fm.descent
++      return
++    }
++
++    val leading = lineHeight - currentHeight
+     fm.ascent -= ceil(leading / 2.0f).toInt()
+     fm.descent += floor(leading / 2.0f).toInt()
+ 

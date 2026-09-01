@@ -14,7 +14,6 @@ import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles'
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen } from '@/features/topic/TopicScreen';
 import { createTheme } from '@/ui/theme/tokens';
-import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import type { InteractionType } from '@/domain/forum/topicActionState';
 import type { TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
 import type { TopicActionsController } from '@/features/topic/actions/useTopicActionsController';
@@ -37,7 +36,6 @@ let lastFlashListItemKeys: string[] = [];
 let lastFlashListProps: Record<string, any> = {};
 let mockBodyMediaViewportRowKeys: readonly string[] = [];
 let mockTopicSelectionItems: readonly { documentId: string; rowKey: string; selectionToken: string }[] = [];
-let mockTopicSelectionSessionKey = '';
 let mockContentSelectability: { html: string; selectable?: boolean }[] = [];
 let mockRenderHtmlDefaultSelectability: (boolean | undefined)[] = [];
 
@@ -102,19 +100,18 @@ jest.mock('@/features/topic/selection/TopicSelectionSurface', () => {
   return {
     TopicSelectionSurface: ({
       children,
-      items,
-      sessionKey
+      items
     }: {
       children?: React.ReactNode;
       items: typeof mockTopicSelectionItems;
       sessionKey: string;
     }) => {
       mockTopicSelectionItems = items;
-      mockTopicSelectionSessionKey = sessionKey;
       return ReactModule.createElement(ReactModule.Fragment, null, children);
     },
     TopicSelectionRowProvider: ({ active, children }: { active: boolean; children?: React.ReactNode }) =>
       ReactModule.createElement(RowContext.Provider, { value: active }, children),
+    useTopicSelectionCancel: () => null,
     useTopicSelectionRowActive: () => ReactModule.useContext(RowContext),
     useTopicSelectionRowRef: () => ({ active: true, nativeID: undefined, ref: { current: null } })
   };
@@ -535,7 +532,6 @@ jest.mock('@/features/topic/components/ReplyItem', () => {
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const htmlStyles = buildHtmlRenderingStyles({ settings: readerData.settings, theme });
-const topicImageDeriver = createTopicImageDeriver();
 const noop = () => undefined;
 const sourceReplies: Reply[] = [
   { author: 'alice', contentHtml: '<p>first answer</p>', createdAt: '2026-07-14T00:01:00.000Z', floor: 1 },
@@ -587,7 +583,6 @@ function HtmlRendererIdentityHarness({
     settings: readerData.settings,
     theme,
     topicDetail,
-    topicKey: `${topicDetail.source}:${topicDetail.id}`,
     webViewBlockMessage: ''
   });
   useEffect(() => {
@@ -603,7 +598,6 @@ function TopicFilterHarness({
   filteredCommentQuery,
   expandedQuotes = {},
   getDiscourseEmojiUrls = mockGetDiscourseSourceEmojiUrls,
-  inlineSizedImageUrls = {},
   loadedQuotedReplies = {},
   loadingMoreReplies = false,
   loadingPreviousReplies = false,
@@ -649,7 +643,6 @@ function TopicFilterHarness({
   filteredCommentQuery?: string;
   expandedQuotes?: Record<string, boolean>;
   getDiscourseEmojiUrls?: (options: { signal?: AbortSignal; source: DiscourseSource }) => Promise<DiscourseEmojiUrlMap>;
-  inlineSizedImageUrls?: Readonly<Record<string, boolean | undefined>>;
   loadedQuotedReplies?: Record<string, Reply>;
   loadingMoreReplies?: boolean;
   loadingPreviousReplies?: boolean;
@@ -841,13 +834,12 @@ function TopicFilterHarness({
               htmlRenderers: {},
               htmlRenderersProps: {},
               htmlTagsStyles: htmlStyles.htmlTagsStyles,
-              inlineSizedImageUrls,
               mediaContext: {
                 contentSource: preparedTopicDetail?.source || null,
                 sessionIdentity: effectiveMediaSessionIdentity
               },
               mediaSessionIdentity: effectiveMediaSessionIdentity,
-              topicImageDeriver
+              nodeSeekMediaUserAgent: undefined
             } as ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string }
           }
           nodeSeekUserId={null}
@@ -1031,31 +1023,6 @@ describe('Topic reply filters', () => {
     await waitFor(() => expect(toast).toHaveBeenCalledWith('评论已复制', ToastAndroid.SHORT));
     expect(mockTopicSelectionItems.every((item) => !item.rowKey.includes('accepted-answer'))).toBe(true);
     toast.mockRestore();
-  });
-
-  it('keeps the opening selection session stable when only reply media classification changes', async () => {
-    const topicWithOpeningBody = { ...topic, contentHtml: '<p>opening body</p>' };
-    const replyImageUrl = 'https://img.example.com/reply-inline.png';
-    const view = await render(
-      <TopicFilterHarness
-        inlineSizedImageUrls={{}}
-        selectedTopic={topicWithOpeningBody}
-        topicDetail={topicWithOpeningBody}
-        topicReplies={sourceReplies}
-      />
-    );
-    const openingSessionKey = mockTopicSelectionSessionKey;
-
-    await view.rerender(
-      <TopicFilterHarness
-        inlineSizedImageUrls={{ [replyImageUrl]: true }}
-        selectedTopic={topicWithOpeningBody}
-        topicDetail={topicWithOpeningBody}
-        topicReplies={sourceReplies}
-      />
-    );
-
-    expect(mockTopicSelectionSessionKey).toBe(openingSessionKey);
   });
 
   it('computes NodeSeek topic reactions once per render without changing the visible stats', async () => {

@@ -3,6 +3,8 @@ import { sanitizeContentHtmlWithRoot } from './contentSanitizer';
 import {
   FORUM_AUDIO_TAG,
   FORUM_LINK_CARD_TAG,
+  FORUM_MATH_BLOCK_TAG,
+  FORUM_MATH_INLINE_TAG,
   FORUM_TERMINAL_REPORT_TAG,
   FORUM_TERMINAL_TAB_TAG,
   FORUM_VIDEO_STICKER_TAG,
@@ -38,15 +40,13 @@ import {
 } from './topicContentHtml';
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaReferrer';
 import {
-  FORUM_DYNAMIC_INLINE_IMAGE_TAG,
-  FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE,
+  FORUM_CONTENT_BLOCK_TAGS,
   FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG,
   INLINE_FORUM_IMAGE_TAG,
   FORUM_STICKER_TAG,
   forumImagePreviewDescriptorsFromHtmlFallback,
   normalizeForumContentMediaNodes,
-  type DynamicInlineImageDescriptor,
   type ForumImagePreviewDescriptor
 } from './forumContentMedia';
 
@@ -81,11 +81,6 @@ export type ForumContentCompileRole = 'accepted-answer' | 'opening' | 'quoted-re
 export type ForumContentMaterializationBudget = {
   readonly metrics: NodeMetrics | null;
   readonly regionCount: number;
-};
-
-export type ForumContentRendering = {
-  readonly dynamicImages: readonly DynamicInlineImageDescriptor[];
-  readonly template: string;
 };
 
 export type ForumContentPart = 'only' | 'first' | 'middle' | 'last';
@@ -149,7 +144,7 @@ type ForumSelectionTokenPayload = {
 };
 
 type ForumSelectionAtom =
-  | { readonly kind: 'break' }
+  | { readonly collapsed?: true; readonly kind: 'break' }
   | { readonly id?: string; readonly kind: 'media'; readonly text: string }
   | { readonly kind: 'separator'; readonly text: '\n' | '\t' }
   | { readonly kind: 'text'; readonly normalized?: true; readonly text: string };
@@ -247,7 +242,6 @@ type ForumSemanticRowBase = {
 
 type ForumHtmlSemanticRowBase = ForumSemanticRowBase & {
   readonly html: string;
-  readonly rendering?: ForumContentRendering;
 };
 
 export type CompiledForumContentRow =
@@ -310,31 +304,11 @@ export const EMPTY_COMPILED_FORUM_CONTENT: CompiledForumContent = {
   rows: []
 };
 
-type ForumDynamicImageClassifier = (
-  url: string,
-  referrerPolicy: MediaReferrerPolicy | undefined,
-  identities: Readonly<Record<string, boolean | undefined>>
-) => boolean;
-
-const defaultForumDynamicImageClassifier: ForumDynamicImageClassifier = (url, _referrerPolicy, identities) =>
-  Boolean(identities[normalizeDynamicInlineImageUrl(url)]);
-
-function resolvedForumInlineImageIds(
-  row: Pick<Extract<CompiledForumContentRow, { html: string }>, 'rendering'>,
-  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
-  isInlineSizedImage: ForumDynamicImageClassifier
-) {
-  return new Set(
-    (row.rendering?.dynamicImages || []).flatMap((image) =>
-      isInlineSizedImage(image.url, image.referrerPolicy, inlineSizedImageUrls) ? [image.id] : []
-    )
-  );
-}
-
 const PLANNED_ISLAND_TAGS = new Set([
   'iframe',
   FORUM_AUDIO_TAG,
   FORUM_LINK_CARD_TAG,
+  FORUM_MATH_BLOCK_TAG,
   FORUM_VIDEO_STICKER_TAG,
   FORUM_VIDEO_TAG
 ]);
@@ -442,66 +416,6 @@ type NodeMetrics = {
   serializedChars: number;
   textChars: number;
 };
-
-export function resolveForumContentRowHtml(
-  row: Pick<Extract<CompiledForumContentRow, { html: string }>, 'html' | 'rendering'>,
-  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
-  isInlineSizedImage: ForumDynamicImageClassifier = defaultForumDynamicImageClassifier
-) {
-  if (!row.rendering) return row.html;
-  const inlineIds = resolvedForumInlineImageIds(row, inlineSizedImageUrls, isInlineSizedImage);
-  const descriptorsById = new Map(row.rendering.dynamicImages.map((image) => [image.id, image] as const));
-  DYNAMIC_INLINE_IMAGE_PATTERN.lastIndex = 0;
-  return stripCompilerOwnedAttributes(
-    row.rendering.template.replace(DYNAMIC_INLINE_IMAGE_PATTERN, (_tag, rawAttrs: string, label: string) => {
-      const id = fallbackAttribute(rawAttrs, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE);
-      if (!descriptorsById.has(id)) return '';
-      const publicAttrs = rawAttrsWithoutValue(rawAttrs, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE);
-      return inlineIds.has(id)
-        ? `<${FORUM_INLINE_IMAGE_TAG}${publicAttrs ? ` ${publicAttrs}` : ''}>${label}</${FORUM_INLINE_IMAGE_TAG}>`
-        : `<img${publicAttrs ? ` ${publicAttrs}` : ''}>`;
-    })
-  );
-}
-
-export function resolveForumContentRowSelectionToken(
-  row: Pick<Extract<CompiledForumContentRow, { html: string }>, 'rendering' | 'selectionToken'>,
-  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
-  isInlineSizedImage: ForumDynamicImageClassifier = defaultForumDynamicImageClassifier
-) {
-  if (!row.rendering) return row.selectionToken;
-  const inlineIds = resolvedForumInlineImageIds(row, inlineSizedImageUrls, isInlineSizedImage);
-  const blockIds = new Set(row.rendering.dynamicImages.flatMap((image) => (inlineIds.has(image.id) ? [] : [image.id])));
-  if (!blockIds.size) return row.selectionToken;
-  const payload = parsedForumSelectionToken(row.selectionToken);
-  if (!payload) return EMPTY_FORUM_SELECTION_TOKEN;
-  const units: ForumSelectionUnit[] = payload.prefix.map((atom) => ({ atom, kind: 'atom' as const }));
-  for (const owner of payload.owners) {
-    if (typeof owner.text !== 'string' || !Array.isArray(owner.tape) || !Array.isArray(owner.trailing)) {
-      return EMPTY_FORUM_SELECTION_TOKEN;
-    }
-    units.push({ kind: 'boundary' });
-    let offset = 0;
-    for (const run of owner.tape) {
-      if (!Number.isInteger(run.at) || run.at < offset || run.at > owner.text.length || typeof run.text !== 'string') {
-        return EMPTY_FORUM_SELECTION_TOKEN;
-      }
-      if (run.at > offset)
-        units.push({ atom: { kind: 'text', normalized: true, text: owner.text.slice(offset, run.at) }, kind: 'atom' });
-      const media = {
-        atom: { ...(run.id ? { id: run.id } : {}), kind: 'media' as const, text: run.text },
-        kind: 'atom' as const
-      };
-      if (run.id && blockIds.has(run.id)) units.push({ kind: 'boundary' }, media, { kind: 'boundary' });
-      else units.push(media);
-      offset = run.at;
-    }
-    if (offset < owner.text.length)
-      units.push({ atom: { kind: 'text', normalized: true, text: owner.text.slice(offset) }, kind: 'atom' });
-    units.push({ kind: 'boundary' }, ...owner.trailing.map((atom) => ({ atom, kind: 'atom' as const })));
-  }
-  return forumSelectionTokenFromUnits(units);
-}
 
 function createForumContentMaterializationBudget(metrics: NodeMetrics | null, regionCount: number) {
   return { metrics, regionCount };
@@ -639,9 +553,6 @@ function ownMediaSlots(node: PlanningNode) {
   if (tagName === FORUM_INLINE_IMAGE_TAG || tagName === FORUM_STICKER_TAG) {
     return Number(Boolean(nodeAttribute(node, 'src')));
   }
-  if (tagName === FORUM_DYNAMIC_INLINE_IMAGE_TAG) {
-    return Number(Boolean(nodeAttribute(node, 'src')));
-  }
   if (tagName === FORUM_LINK_CARD_TAG) {
     return Number(Boolean(nodeAttribute(node, 'icon-src'))) + Number(Boolean(nodeAttribute(node, 'image-src')));
   }
@@ -649,39 +560,13 @@ function ownMediaSlots(node: PlanningNode) {
 }
 
 const FORUM_SELECTION_BLOCK_TAGS = new Set([
-  'address',
-  'article',
-  'aside',
-  'blockquote',
-  'dd',
-  'details',
-  'div',
-  'dl',
-  'dt',
-  'figcaption',
-  'figure',
-  'footer',
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'h5',
-  'h6',
-  'header',
-  'li',
-  'main',
-  'nav',
-  'p',
-  'pre',
-  'section',
-  'summary',
+  ...FORUM_CONTENT_BLOCK_TAGS,
   FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG
 ]);
 
 const FORUM_SELECTION_MEDIA_TAGS = new Set([
   'img',
-  FORUM_DYNAMIC_INLINE_IMAGE_TAG,
   FORUM_INLINE_IMAGE_TAG,
   FORUM_STICKER_TAG,
   FORUM_VIDEO_STICKER_TAG,
@@ -712,14 +597,18 @@ function forumSelectionOwnerFromAtoms(atoms: readonly ForumSelectionAtom[]): For
   let text = '';
   const tape: { at: number; id?: string; text: string }[] = [];
   let hasContent = false;
-  let lastKind: 'break' | 'media' | 'text' | null = null;
+  let lastKind: 'break' | 'collapsedBreak' | 'media' | 'text' | null = null;
   let previousCollapsibleRight = false;
   for (const atom of atoms) {
     if (atom.kind === 'break') {
-      text += '\n';
-      hasContent = true;
-      lastKind = 'break';
       previousCollapsibleRight = true;
+      if (atom.collapsed) {
+        lastKind = 'collapsedBreak';
+      } else {
+        text += '\n';
+        hasContent = true;
+        lastKind = 'break';
+      }
     } else if (atom.kind === 'text') {
       let next = atom.normalized ? atom.text : collapseForumSelectionWhitespace(atom.text);
       if (next.startsWith(' ') && (!hasContent || previousCollapsibleRight)) next = next.slice(1);
@@ -792,11 +681,22 @@ function analyzedForumSelectionUnits(node: PlanningNode, childUnits: readonly Fo
       { atom: { kind: 'separator', text: '\n' }, kind: 'atom' }
     ] as const;
   }
+  if (tagName === FORUM_MATH_BLOCK_TAG || tagName === FORUM_MATH_INLINE_TAG) {
+    const source = typeof node.text === 'string' ? node.text : '';
+    if (!source) return [];
+    const media = { atom: { kind: 'media' as const, text: source }, kind: 'atom' as const };
+    return tagName === FORUM_MATH_BLOCK_TAG
+      ? ([
+          { kind: 'boundary' },
+          media,
+          { kind: 'boundary' },
+          { atom: { kind: 'separator', text: '\n' }, kind: 'atom' }
+        ] as const)
+      : ([media] as const);
+  }
   if (FORUM_SELECTION_MEDIA_TAGS.has(tagName)) {
     const label = nodeAttribute(node, 'alt') || nodeAttribute(node, 'title');
-    const id =
-      tagName === FORUM_DYNAMIC_INLINE_IMAGE_TAG ? nodeAttribute(node, FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE) : '';
-    const media = { atom: { ...(id ? { id } : {}), kind: 'media' as const, text: label }, kind: 'atom' as const };
+    const media = { atom: { kind: 'media' as const, text: label }, kind: 'atom' as const };
     return tagName === 'img' ||
       tagName === FORUM_STICKER_TAG ||
       tagName === FORUM_VIDEO_STICKER_TAG ||
@@ -834,9 +734,12 @@ function analyzeNodes(
     const children = current.node.childNodes || [];
     const childMetrics = children.map((child) => metrics.get(child)!);
     const trailingBreakIndex = trailingCollapsedBreakIndex(children);
-    const childSelectionUnits = children
+    const childSelectionUnits: ForumSelectionUnit[] = children
       .slice(0, trailingBreakIndex < 0 ? children.length : trailingBreakIndex)
       .flatMap((child) => selectionUnits.get(child) || []);
+    if (trailingBreakIndex >= 0) {
+      childSelectionUnits.push({ atom: { collapsed: true, kind: 'break' }, kind: 'atom' });
+    }
     const tagName = nodeTagName(current.node);
     const text = tagName ? '' : current.node.toString();
     const ownSerialized = tagName ? tagName.length * 2 + String(current.node.rawAttrs || '').length + 5 : text.length;
@@ -1119,7 +1022,7 @@ function generatedWrapperAttributeReserve(tagName: string, orderedListValue?: nu
 }
 
 const FALLBACK_MEDIA_TAG_PATTERN = new RegExp(
-  `<(?:img|audio|video|iframe|${FORUM_AUDIO_TAG}|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_INLINE_IMAGE_TAG}|${FORUM_DYNAMIC_INLINE_IMAGE_TAG}|${FORUM_STICKER_TAG}|${FORUM_LINK_CARD_TAG})(?![a-z0-9-])[^>]*>`,
+  `<(?:img|audio|video|iframe|${FORUM_AUDIO_TAG}|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_INLINE_IMAGE_TAG}|${FORUM_STICKER_TAG}|${FORUM_LINK_CARD_TAG})(?![a-z0-9-])[^>]*>`,
   'gi'
 );
 
@@ -1151,11 +1054,7 @@ function fallbackMediaSlots(tag: string) {
   if (tagName === FORUM_AUDIO_TAG) {
     return Number(Boolean(fallbackAttribute(tag, 'src')));
   }
-  if (
-    tagName === FORUM_INLINE_IMAGE_TAG ||
-    tagName === FORUM_DYNAMIC_INLINE_IMAGE_TAG ||
-    tagName === FORUM_STICKER_TAG
-  ) {
+  if (tagName === FORUM_INLINE_IMAGE_TAG || tagName === FORUM_STICKER_TAG) {
     return Number(Boolean(fallbackAttribute(tag, 'src')));
   }
   return 1;
@@ -1650,16 +1549,6 @@ function compileFallbackSegments({
   }
   pollList.filter((poll) => !matchedPolls.has(poll)).forEach((poll) => segments.push({ poll, type: 'poll' }));
   return packAdjacentCompileHtml(segments);
-}
-
-const DYNAMIC_INLINE_IMAGE_PATTERN = new RegExp(
-  `<${FORUM_DYNAMIC_INLINE_IMAGE_TAG}\\b([^>]*)>([\\s\\S]*?)<\\/${FORUM_DYNAMIC_INLINE_IMAGE_TAG}\\s*>`,
-  'gi'
-);
-
-function normalizeDynamicInlineImageUrl(value: string) {
-  const clean = String(value || '').trim();
-  return clean.startsWith('//') ? `https:${clean}` : clean;
 }
 
 function renderedHtmlMediaSlots(html: string) {
@@ -2467,59 +2356,24 @@ function semanticRowsFromFallbackSegments(segments: readonly PlannedCompileSegme
   });
 }
 
-function renderingForCompiledRow(html: string, dynamicImagesById: ReadonlyMap<string, DynamicInlineImageDescriptor>) {
-  const descriptors: DynamicInlineImageDescriptor[] = [];
-  const seenIds = new Set<string>();
-  DYNAMIC_INLINE_IMAGE_PATTERN.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = DYNAMIC_INLINE_IMAGE_PATTERN.exec(html))) {
-    const id = fallbackAttribute(match[1] || '', FORUM_DYNAMIC_INLINE_IMAGE_ID_ATTRIBUTE);
-    const descriptor = dynamicImagesById.get(id);
-    if (descriptor && !seenIds.has(id)) {
-      seenIds.add(id);
-      descriptors.push(descriptor);
-    }
-  }
-  if (!descriptors.length) return { html: stripCompilerOwnedAttributes(html) };
-  if (descriptors.length > MAX_MEDIA_PER_PLANNED_ROW) {
-    throw new Error('Dynamic inline image row exceeded the compiler media budget.');
-  }
-  const rendering: ForumContentRendering = {
-    dynamicImages: descriptors.map((descriptor) => ({
-      ...descriptor,
-      url: normalizeDynamicInlineImageUrl(descriptor.url)
-    })),
-    template: html
-  };
-  return { html: resolveForumContentRowHtml({ html: '', rendering }, {}), rendering };
-}
-
-function materializeCompiledRows(
-  rows: readonly CompiledForumContentRow[],
-  dynamicInlineImages: readonly DynamicInlineImageDescriptor[]
-) {
-  const dynamicImagesById = new Map(dynamicInlineImages.map((descriptor) => [descriptor.id, descriptor] as const));
-  return rows.map((row): CompiledForumContentRow => {
-    if (row.type !== 'richText' && row.type !== 'table' && row.type !== 'video') return row;
-    return { ...row, ...renderingForCompiledRow(row.html, dynamicImagesById) };
-  });
-}
-
 function compiledForumContentResult(
   rows: readonly CompiledForumContentRow[],
   materializationMetrics: NodeMetrics | null,
-  dynamicInlineImages: readonly DynamicInlineImageDescriptor[] = [],
   previewImages: readonly ForumImagePreviewDescriptor[] = []
 ): CompiledForumContent {
-  const materializedRows = materializeCompiledRows(rows, dynamicInlineImages);
-  const renderedRowCount = materializedRows.filter((row) => row.type !== 'poll' && row.type !== 'quote').length;
+  const renderedRows = rows.map((row): CompiledForumContentRow =>
+    row.type === 'richText' || row.type === 'table' || row.type === 'video'
+      ? { ...row, html: stripCompilerOwnedAttributes(row.html) }
+      : row
+  );
+  const renderedRowCount = renderedRows.filter((row) => row.type !== 'poll' && row.type !== 'quote').length;
   return {
     materializationBudget: createForumContentMaterializationBudget(
       materializationMetrics,
       renderedRowCount > 0 ? 1 : 0
     ),
     previewImages,
-    rows: materializedRows
+    rows: renderedRows
   };
 }
 
@@ -2561,7 +2415,6 @@ function fallbackCompiledForumContent(
   return compiledForumContentResult(
     semanticRowsFromFallbackSegments(segments),
     fallbackClean ? null : combinedNodeMetrics([]),
-    [],
     forumImagePreviewDescriptorsFromHtmlFallback(raw)
   );
 }
@@ -2582,14 +2435,11 @@ function compileParsedForumContent({
   const pollsById = new Map(pollList.flatMap((poll) => (poll.id ? [[poll.id, poll] as const] : [])));
   const matchedPolls = new Set<TopicPoll>();
   const extractsOpeningQuotes = role === 'opening' && Boolean(topicId) && isDiscourseSource(source);
-  let dynamicInlineImages: readonly DynamicInlineImageDescriptor[] = [];
   let previewImages: readonly ForumImagePreviewDescriptor[] = [];
   try {
     if (body) {
       if (source === 'nodeseek') markNodeSeekReplyReferenceNodes(body, `${sourceCatalog.nodeseek.baseUrl}/`);
-      const media = normalizeForumContentMediaNodes(body, { dynamicV2exImages: source === 'v2ex' });
-      dynamicInlineImages = media.dynamicInlineImages;
-      previewImages = media.previewImages;
+      previewImages = normalizeForumContentMediaNodes(body).previewImages;
     }
     const nodes = (body?.childNodes || []).filter(planningNodeHasContent) as PlanningNode[];
     if (raw.trim() && !nodes.length) throw new Error('Parser returned no renderable content.');
@@ -2613,12 +2463,7 @@ function compileParsedForumContent({
     });
     const unmatchedPolls = pollList.filter((poll) => !matchedPolls.has(poll));
     const rows = semanticRowsFromParsedContent({ analysis, nodes, role, source, unmatchedPolls });
-    return compiledForumContentResult(
-      rows,
-      rows.length === 1 ? combinedSemanticRowMetrics(rows) : null,
-      dynamicInlineImages,
-      previewImages
-    );
+    return compiledForumContentResult(rows, rows.length === 1 ? combinedSemanticRowMetrics(rows) : null, previewImages);
   } catch {
     return fallbackCompiledForumContent(raw, pollList, role, source);
   }

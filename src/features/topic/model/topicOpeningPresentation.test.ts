@@ -233,7 +233,7 @@ describe('topic opening presentation', () => {
     );
     expect(
       result.contentItems.flatMap((item) =>
-        item.type === 'content' && 'html' in item.row ? item.row.html.match(/<img\b/g) || [] : []
+        item.type === 'content' && 'html' in item.row ? item.row.html.match(/<(?:img|forum-inline-image)\b/g) || [] : []
       ).length
     ).toBe(2000);
   });

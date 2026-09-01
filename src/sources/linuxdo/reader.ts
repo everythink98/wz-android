@@ -285,13 +285,20 @@ function boostCountFromPost(value: Record<string, unknown>) {
 }
 
 function normalizePost(raw: unknown, topicId?: string): Reply | null {
-  const fields = discoursePostFields(raw);
-  if (!isRecord(raw) || !fields) {
+  if (!isRecord(raw)) {
     return null;
   }
-  const { cookedHtml, ...replyFields } = fields;
   const polls = discoursePolls(raw);
-  const prepared = prepareLinuxDoContent(cookedHtml, polls, { role: 'reply', topicId });
+  const preparedDeletedReply =
+    raw.user_deleted === true && !raw.deleted_at
+      ? prepareLinuxDoContent(raw.cooked, polls, { checkRenderability: true, role: 'reply', topicId })
+      : undefined;
+  const fields = discoursePostFields(raw, {
+    allowUserDeletedPlaceholder: preparedDeletedReply?.hasRenderableContent
+  });
+  if (!fields) return null;
+  const { cookedHtml, ...replyFields } = fields;
+  const prepared = preparedDeletedReply || prepareLinuxDoContent(cookedHtml, polls, { role: 'reply', topicId });
   const rawBoostCount = boostCountFromPost(raw);
   const needsApproval = raw.needs_category_expert_approval === true;
   const authorLevelLabel = linuxDoLevelLabel(raw);

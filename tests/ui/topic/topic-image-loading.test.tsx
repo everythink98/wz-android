@@ -14,7 +14,7 @@ import type { MediaReferrerContext, MediaReferrerPolicy, TopicDetail } from '@/d
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { cachedImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
-import { FORUM_STICKER_TAG } from '@/domain/forum/forumContentMedia';
+import { FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
 import {
   markOriginalImageDisplayed,
   OriginalImageUpgradeBoundary,
@@ -378,6 +378,8 @@ function TopicImageHarness({
   mediaSessionIdentity,
   onOpenImagePreview = noop,
   originalImageUpgradeEnabled = true,
+  rendererKey = 'img',
+  textAlign,
   topicSource = 'yaohuo'
 }: {
   attributes?: Record<string, string>;
@@ -392,6 +394,8 @@ function TopicImageHarness({
     referrerPolicy?: MediaReferrerPolicy
   ) => void;
   originalImageUpgradeEnabled?: boolean;
+  rendererKey?: string;
+  textAlign?: 'center' | 'right';
   topicSource?: TopicDetail['source'];
 }) {
   const selectedTopicWithoutReferrer =
@@ -416,16 +420,17 @@ function TopicImageHarness({
     settings: readerData.settings,
     theme,
     topicDetail: selectedTopic,
-    topicKey: `${topicSource}:image-topic`,
     webViewBlockMessage: ''
   });
-  const ImageRenderer = htmlRenderers.img as unknown as React.ComponentType<Record<string, unknown>> | undefined;
+  const ImageRenderer = htmlRenderers[rendererKey] as unknown as
+    React.ComponentType<Record<string, unknown>> | undefined;
   const rendered = ImageRenderer ? (
     <TopicContentPresentationProvider continuation={continuation}>
       <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
         {React.createElement(ImageRenderer, {
           tnode: {
-            attributes
+            attributes,
+            ...(textAlign ? { styles: { nativeBlockFlow: { textAlign } } } : {})
           }
         } as never)}
       </OriginalImageUpgradeBoundary>
@@ -457,7 +462,6 @@ function NodeSeekVideoStickerHarness() {
     settings: readerData.settings,
     theme,
     topicDetail: nodeSeekTopic,
-    topicKey: 'nodeseek:859086',
     webViewBlockMessage: ''
   });
   const Renderer = htmlRenderers[FORUM_VIDEO_STICKER_TAG] as unknown as
@@ -507,7 +511,6 @@ function NodeSeekImageStickerHarness({
     settings: readerData.settings,
     theme,
     topicDetail: nodeSeekTopic,
-    topicKey: 'nodeseek:859086',
     webViewBlockMessage: ''
   });
   const Renderer = htmlRenderers[FORUM_STICKER_TAG] as unknown as
@@ -560,7 +563,6 @@ function NodeSeekCustomMediaHarness({
     settings: readerData.settings,
     theme,
     topicDetail: nodeSeekTopic,
-    topicKey: 'nodeseek:859086',
     webViewBlockMessage
   });
   const Renderer = htmlRenderers[rendererKey] as unknown as React.ComponentType<Record<string, unknown>> | undefined;
@@ -644,7 +646,6 @@ function htmlRenderingControllerProps(mediaSessionIdentity: string) {
     styles,
     theme,
     topicDetail: topic,
-    topicKey: 'yaohuo:image-topic',
     webViewBlockMessage: ''
   };
 }
@@ -2167,8 +2168,7 @@ describe('topic block image loading', () => {
           ...htmlRenderingControllerProps('nodeseek:2'),
           onOpenUser,
           selectedTopic,
-          topicDetail,
-          topicKey: 'nodeseek:context-topic'
+          topicDetail
         }),
       { initialProps: { selectedTopic: firstTopic, topicDetail: firstTopic } }
     );
@@ -2191,7 +2191,6 @@ describe('topic block image loading', () => {
   });
 
   it.each([
-    ['Topic identity', { topicKey: 'yaohuo:next-topic' }],
     [
       'source',
       {
@@ -3238,6 +3237,7 @@ describe('topic block image loading', () => {
     });
 
     expect(StyleSheet.flatten(screen.getByTestId('topic-image-idle').props.style)).toMatchObject({
+      alignSelf: 'flex-start',
       height: 1_600,
       width: 320
     });
@@ -3451,6 +3451,7 @@ describe('topic block image loading', () => {
         })
       );
       expect(StyleSheet.flatten(screen.getByLabelText('图片加载失败，点按重试').props.style)).toMatchObject({
+        alignSelf: 'flex-start',
         height: 240,
         width: 320
       });
@@ -3746,7 +3747,7 @@ describe('topic block image loading', () => {
     }
   });
 
-  it('keeps inline emoji inside the Fabric text attachment without starting the block loader', async () => {
+  it('keeps inline emoji inside the native inline-view attachment without starting the block loader', async () => {
     const view = await render(
       <TopicImageHarness
         attributes={{
@@ -3762,7 +3763,57 @@ describe('topic block image loading', () => {
     expect(mockUseImage).not.toHaveBeenCalled();
     expect(mockExpoImageProps).not.toHaveBeenCalled();
     expect(mockInlineImageGetSize).not.toHaveBeenCalled();
+    expect(view.getByTestId('topic-inline-image-attachment')).toBeTruthy();
     expect(view.getByTestId('topic-inline-image')).toBeTruthy();
+  });
+
+  it('renders an ordinary flow GIF at its decoded size and keeps preview behavior', async () => {
+    const src = 'https://pic2.ziyuan.wang/user/v2jun/2024/12/FpZEifxiFGs1BWtHjFsk5tJJNKSE_8b6f63437539d.gif';
+    const onOpenImagePreview = jest.fn();
+    const view = await render(
+      <TopicImageHarness
+        attributes={{ class: 'ubbimg', referrerpolicy: 'no-referrer', src }}
+        contentWidth={320}
+        onOpenImagePreview={onOpenImagePreview}
+        rendererKey={INLINE_FORUM_IMAGE_TAG}
+      />
+    );
+
+    expect(view.queryByText(src)).toBeNull();
+    expect(StyleSheet.flatten(view.getByTestId('topic-inline-image').props.style)).toMatchObject({
+      height: 20,
+      width: 24
+    });
+    const requestGeneration = view.getByTestId('topic-inline-image').props.internal_analyticTag as string;
+    await fireEvent(view.getByTestId('topic-inline-image'), 'load', {
+      nativeEvent: { requestGeneration, source: { height: 30, uri: src, width: 30 } }
+    });
+
+    expect(StyleSheet.flatten(view.getByTestId('topic-inline-image').props.style)).toMatchObject({
+      height: 30,
+      width: 34
+    });
+    await fireEvent.press(view.getByLabelText('查看图片'));
+    expect(onOpenImagePreview).toHaveBeenCalledWith(src, { height: 30, width: 30 }, undefined, 'no-referrer');
+  });
+
+  it('aligns block images from authored text alignment and otherwise starts the row', async () => {
+    const defaultView = await render(<TopicImageHarness />);
+    expect(StyleSheet.flatten(defaultView.getByLabelText('测试图片').props.style)).toMatchObject({
+      justifyContent: 'flex-start'
+    });
+    await defaultView.unmount();
+
+    const centeredView = await render(<TopicImageHarness textAlign="center" />);
+    expect(StyleSheet.flatten(centeredView.getByLabelText('测试图片').props.style)).toMatchObject({
+      justifyContent: 'center'
+    });
+    await centeredView.unmount();
+
+    const rightView = await render(<TopicImageHarness textAlign="right" />);
+    expect(StyleSheet.flatten(rightView.getByLabelText('测试图片').props.style)).toMatchObject({
+      justifyContent: 'flex-end'
+    });
   });
 
   it('reserves real inline attachment width without moving the emoji baseline', async () => {
@@ -3780,10 +3831,42 @@ describe('topic block image loading', () => {
 
     expect(StyleSheet.flatten(view.getByTestId('topic-inline-image').props.style)).toMatchObject({
       height: 20,
+      width: 24
+    });
+    expect(StyleSheet.flatten(view.getByTestId('topic-inline-image-attachment').props.style)).toMatchObject({
+      height: 20,
       transform: [{ translateY: 2 }],
       width: 24
     });
     expect(StyleSheet.flatten(view.getByTestId('topic-inline-image').props.style).marginHorizontal).toBeUndefined();
+  });
+
+  it('commits decoded geometry to every queued inline instance sharing one URL', async () => {
+    const src = 'https://img.example.com/shared-inline-geometry.png';
+    const view = await render(
+      <>
+        <TopicImageHarness attributes={{ alt: 'first', src }} contentWidth={320} rendererKey={INLINE_FORUM_IMAGE_TAG} />
+        <TopicImageHarness
+          attributes={{ alt: 'second', src }}
+          contentWidth={320}
+          rendererKey={INLINE_FORUM_IMAGE_TAG}
+        />
+      </>
+    );
+    const images = view.getAllByTestId('topic-inline-image');
+
+    for (const image of images) {
+      await fireEvent(image, 'load', {
+        nativeEvent: {
+          requestGeneration: image.props.internal_analyticTag,
+          source: { height: 60, uri: src, width: 30 }
+        }
+      });
+    }
+
+    view.getAllByTestId('topic-inline-image').forEach((image) => {
+      expect(StyleSheet.flatten(image.props.style)).toMatchObject({ height: 60, width: 34 });
+    });
   });
 
   it('releases the fifth inline image only after a displayed Fabric attachment settles', async () => {

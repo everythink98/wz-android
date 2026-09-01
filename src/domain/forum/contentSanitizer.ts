@@ -20,6 +20,7 @@ import {
 import { isNodeSeekHost } from './sourceCatalog';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './videoEmbeds';
 import { normalizeMediaReferrerPolicy } from './mediaReferrer';
+import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE } from './forumContentMedia';
 
 function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: string) {
   const next = absoluteUrl(value, baseUrl);
@@ -825,6 +826,10 @@ export function sanitizeContentHtmlWithRoot(
     for (const [name, rawValue] of Object.entries(attrs)) {
       const lower = name.toLowerCase();
       const value = String(rawValue || '');
+      if (lower === FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE) {
+        node.removeAttribute(name);
+        continue;
+      }
       if (lower.startsWith('on')) {
         node.removeAttribute(name);
         continue;

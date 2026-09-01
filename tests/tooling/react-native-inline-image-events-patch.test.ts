@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-describe('react-native inline image events patch', () => {
+describe('react-native inline media patch', () => {
   it('forwards standard events with the Native request generation that produced them', () => {
     const patch = readFileSync(join(process.cwd(), 'patches', 'react-native+0.81.5.patch'), 'utf8');
 
@@ -35,5 +35,13 @@ describe('react-native inline image events patch', () => {
 
     expect(patch).toContain('object : RequestBoundImageDownloadListener(requestGeneration)');
     expect(patch).toContain('.withRequestGeneration(requestDownloadListener.requestGeneration)');
+  });
+
+  it('does not let fixed line height shrink a line that contains an inline view', () => {
+    const patch = readFileSync(join(process.cwd(), 'patches', 'react-native+0.81.5.patch'), 'utf8');
+
+    expect(patch).toContain('TextInlineViewPlaceholderSpan::class.java');
+    expect(patch).toContain('containsInlineView && currentHeight >= lineHeight');
+    expect(patch).toContain('val leading = lineHeight - currentHeight');
   });
 });

@@ -118,7 +118,7 @@ export function discourseStreamReplyWindow(
   };
 }
 
-function availableDiscourseWindow<T>(items: T[], postIds: unknown[], idFor: (item: T) => unknown) {
+function discourseWindowDisplaySubset<T>(items: T[], postIds: unknown[], idFor: (item: T) => unknown) {
   const ids = postIds.map(String);
   const requested = new Set(ids);
   const byId = new Map<string, T>();
@@ -131,18 +131,23 @@ function availableDiscourseWindow<T>(items: T[], postIds: unknown[], idFor: (ite
     if (byId.has(id)) throw new Error('Discourse 回复窗口不完整');
     byId.set(id, item);
   }
-  if (ids.length > 0 && byId.size === 0) throw new Error('Discourse 回复窗口不完整');
   return ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
 }
 
+function validatedDiscourseFetchedWindow<T>(items: T[], postIds: unknown[], idFor: (item: T) => unknown) {
+  const ordered = discourseWindowDisplaySubset(items, postIds, idFor);
+  if (postIds.length > 0 && ordered.length === 0) throw new Error('Discourse 回复窗口不完整');
+  return ordered;
+}
+
 export function discourseRepliesInStreamOrder(items: Reply[], postIds: unknown[], order: ReplyOrder) {
-  const ordered = availableDiscourseWindow(items, postIds, (item) => item.commentId);
+  const ordered = discourseWindowDisplaySubset(items, postIds, (item) => item.commentId);
   return order === 'newest' ? ordered.reverse() : ordered;
 }
 
 export function discourseVisiblePostIds(posts: unknown[], postIds: unknown[]) {
-  return availableDiscourseWindow(posts, postIds, (post) => (isRecord(post) ? post.id : null))
-    .filter((post) => isRecord(post) && !post.deleted_at && post.user_deleted !== true)
+  return validatedDiscourseFetchedWindow(posts, postIds, (post) => (isRecord(post) ? post.id : null))
+    .filter((post) => isRecord(post) && !post.deleted_at)
     .map((post) => String((post as Record<string, unknown>).id));
 }
 

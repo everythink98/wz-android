@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
-import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoTopic } from './reader';
+import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic } from './reader';
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), {
@@ -19,7 +19,113 @@ function topic(index: number) {
   };
 }
 
+const deletedReply = {
+  id: 2,
+  username: 'wmuj',
+  cooked: '<p>（帖子已被作者删除）</p>',
+  created_at: '2026-08-31T00:01:00.000Z',
+  post_number: 2,
+  user_deleted: true,
+  deleted_at: null
+};
+
+function deletedReplyTopic() {
+  return {
+    id: 2835903,
+    title: '作者删除回复占位',
+    slug: 'deleted-reply-placeholder',
+    created_at: '2026-08-31T00:00:00.000Z',
+    bumped_at: '2026-08-31T00:02:00.000Z',
+    posts_count: 3,
+    categories: [],
+    post_stream: {
+      stream: [1, 2, 3],
+      posts: [
+        {
+          id: 1,
+          username: 'alice',
+          cooked: '<p>主楼</p>',
+          created_at: '2026-08-31T00:00:00.000Z',
+          post_number: 1
+        },
+        deletedReply,
+        {
+          id: 3,
+          username: 'bob',
+          cooked: '<p>后续回复</p>',
+          created_at: '2026-08-31T00:02:00.000Z',
+          post_number: 3
+        }
+      ]
+    }
+  };
+}
+
+function deletedReplyFetcher() {
+  return vi.fn(async (input: string) =>
+    json(
+      new URL(input).pathname.endsWith('/posts.json')
+        ? { post_stream: { posts: [deletedReply, deletedReplyTopic().post_stream.posts[2]] } }
+        : deletedReplyTopic()
+    )
+  );
+}
+
 describe('linux.do reader', () => {
+  it('keeps an author-deleted reply in initial, stream, target, and direct reads', async () => {
+    const fetcher = deletedReplyFetcher();
+
+    const topic = await getLinuxDoTopic('2835903', { fetcher, replyLimit: 2 });
+    const stream = await getLinuxDoReplies('2835903', {
+      fetcher,
+      limit: 2,
+      order: 'oldest',
+      position: { kind: 'start' }
+    });
+    const target = await getLinuxDoReplies('2835903', {
+      fetcher,
+      limit: 2,
+      order: 'oldest',
+      position: { kind: 'target', target: { floor: 2 } }
+    });
+    const direct = await getLinuxDoReply('2835903', 2, { fetcher });
+
+    for (const reply of [topic.replies[0], stream.items[0], target.items[0], direct]) {
+      expect(reply).toMatchObject({
+        author: 'wmuj',
+        commentId: 2,
+        floor: 2,
+        contentHtml: expect.stringContaining('帖子已被作者删除')
+      });
+    }
+    expect(topic.replyCompleteness).toBe('complete');
+    expect(stream).toMatchObject({ completeness: 'complete', currentOffset: 0, totalCount: 2 });
+  });
+
+  it('returns an empty partial window when every author-deleted reply normalizes away', async () => {
+    const emptyDeletedReply = { ...deletedReply, cooked: '' };
+    const fetcher = vi.fn(async (input: string) =>
+      json(
+        new URL(input).pathname.endsWith('/posts.json')
+          ? { post_stream: { posts: [emptyDeletedReply] } }
+          : {
+              id: 2835903,
+              post_stream: { stream: [1, 2], posts: [] },
+              posts_count: 2
+            }
+      )
+    );
+
+    await expect(
+      getLinuxDoReplies('2835903', {
+        fetcher,
+        limit: 10,
+        order: 'oldest',
+        position: { kind: 'start' }
+      })
+    ).resolves.toMatchObject({ completeness: 'partial', items: [], totalCount: 1 });
+  });
+
   it('keeps an author-deleted opening and its reply renderable', async () => {
     const fetcher = vi.fn(async () =>
       json({

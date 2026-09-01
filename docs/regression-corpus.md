@@ -4519,6 +4519,76 @@
 | 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx` |
 
 
+## `REG-TOPIC-134` 代码横拖误触发主楼连续选择
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
+| 历史症状与根因 | NodeSeek `post-899272-1` 的代码区无需长按，只要直接向左拖动就可能建立主楼连续选区，出现手柄、ActionMode、长按触感和无用途的放大镜。受控的 `120ms` 左滑证明父级 `ForumContentSelectionView` 只收到 `ACTION_DOWN`，子级 Pan 已开始横移，但约 `407ms` 后父级待决长按仍被提交；因此 `4dp` 等值边界、动态 `scaledTouchSlop` 和“任一 MOVE 取消”都不是根因，相关试改全部撤回。真正缺口是 `REG-TOPIC-098` 只取消后代内容 Native owner，没有在横向 Pan 确认接管时取消后来新增的 route 级正文选择 owner。曾尝试给整页再挂一个 `Gesture.Native()`，真实设备上会让 FlashList 收不到纵向 MOVE、页面完全无法上下滚动，因此撤回该 owner。最终由现有 `TopicHorizontalScroll` 继续阻塞后代内容 Native gesture，并仅在横向接管分支调用 `TopicSelectionSurface` 已有的原生 `cancelSelection` 命令；纵向让行不调用取消。既有 JS `4dp` 产品锁与 Native `min(scaledTouchSlop, 4dp)` 容差保持不变；选择手柄保留，但 `Magnifier` owner 完全删除。未新增状态机、Native wrapper、站点特判或公开产品状态。 |
+| 当前 owner | `tests/ui/topic/topic-table-rendering.test.tsx`、`npm run test:native:forum-selection`、独立 AVD 的 `npm run test:instrumented:forum-selection` 与 `tests/live/agent-live.md` 的 `post-899272-1` 直达 App 验收 |
+
+
+## `REG-TOPIC-135` 作者删除的首条回复被过滤并破坏窗口
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
+| 历史症状与根因 | linux.do `t/topic/2835903` 的第一条回复已被作者删除，原站仍提供“帖子已被作者删除”的可渲染占位；App 却在窗口候选阶段把所有 `user_deleted` 提前剔除，使首屏顺序、目标窗口和 `/2` 直达失去同一实体。根因不是 `post_stream` 的游标数学，而是 `discourseVisiblePostIds` 与回复归一化之间重复决定可见性。最终把 raw fetched-window 的身份/重复/完整性验证与归一化后展示子集排序拆开：窗口层只剔除真实 `deleted_at`，共享 linux.do 回复归一化只放行内容可渲染的作者删除占位，全空子集返回 empty partial，混合子集保持原 `post_stream` 顺序/newest 反转；不增加 `allowEmpty`、补抓、重试或状态机。 |
+| 当前 owner | `src/sources/discourse/model.test.ts`、`src/sources/linuxdo/reader.test.ts` 与 `tests/live/agent-live.md` 的 `t/topic/2835903`、`/2` 直达 App 验收 |
+
+
+## `REG-TOPIC-136` LinuxDo 明确公式退化为原始 TeX
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
+| 历史症状与根因 | linux.do `t/topic/2833212/4` 的 `div.math` 与 `span.math` 已明确携带公式语义，App 仍把它们当普通 HTML 文字，两个算式显示为原始 TeX。修复在来源归一化层建立 block/inline canonical 节点，并由所有 Topic 内容入口共享的 renderer 使用固定 MathJax 4.1.3、NewCM 4.1.3、全部 40 个静态 SVG dynamic ranges 与 `viewBox`/`data-mjx-viewBox` 几何生成独立 SVG；普通 `$...$` 不推断，原始 TeX 进入既有 version 1 media tape，inline 对应 `ReplacementSpan` 插入点、block 保留 boundary，失败 fallback 固定 `selectable=false`。不引入 WebView、远程服务、重试、第二个选择 owner 或第二套内容 AST。 |
+| 当前 owner | `tests/integration/html-sanitization-contracts.test.ts`、`tests/integration/topic-content-rendering-contracts.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`src/features/topic/rendering/mathJaxSvg.test.ts`、`tests/ui/topic/topic-math-rendering.test.tsx`、`npm run test:native:forum-selection` 与 `tests/live/agent-live.md` 的 `t/topic/2833212/4` 直达 App 验收 |
+
+
+## `REG-TOPIC-137` 回复中的未知图片被 App 擅自居中
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
+| 历史症状与根因 | 幺火 `bbs-1577052.html` 第 2 页 13 楼把一个未标记 GIF 放在句尾，原站按文字流显示；App 因无法把它识别成 Emoji，保留为 RNRH block `img`，随后共享块图 wrapper 又无条件居中，最终制造了作者 HTML 中不存在的换行和居中。根因是“图片类型决定位置”的错误耦合。最终修复删除自然行分类器：共享 compiler 把普通安全图片一律编译为原 DOM 锚点上的 textual 图片，同行、`br` 与块级父容器由既有文字流自然决定，只有明确的 figure/lightbox 保持 block；选择 tape 继续使用同一 DOM 顺序。语义与自然尺寸只决定大小；块图无对齐信号时统一靠起始边，显式 center/right 仍保留。位置判定不增加幺火、`.ubbimg`、GIF、域名或尺寸特判。 |
+| 当前 owner | `src/domain/forum/forumContentMedia.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`src/sources/yaohuo/reader.test.ts`、`src/platform/media/inlineMedia.test.ts` 与 `tests/ui/topic/topic-image-loading.test.tsx` |
+
+
+## `REG-TOPIC-138` 自然行改写把安全图片变成空节点
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
+| 历史症状与根因 | `REG-TOPIC-137` 首轮实现把未识别图片改写成内容为空的 `forum-inline-image`；浅层 TTree 仍能看到标签，但 Android 不物化图片 owner，真实外链 GIF 因而完全消失。补上内容后，直接 Text 图片 attachment 又把约 `104×100` 的图片画得过小；改成可测量 inline View 后，React Native 的固定 `lineHeight` 仍会把已由该 View 撑高的行盒压回文字高度，使 3249/3247 的后续按钮和分隔线穿过图片。最终修复让 compiler 始终保留完全转义的非空降级内容，textual renderer 在原 DOM 锚点挂一个可测量 inline View，并由其中的标准 Native Image 继续复用 Referrer、媒体 lease、generation、缓存与预览 owner；锁定的 Android `CustomLineHeightSpan` 只扩展较矮行，不压缩含 inline View 的较高行。加载后的自然尺寸只更新宽高，不重新分类位置；全局缓存只保存事实，同 URL 的每个排队实例仍无条件提交本地尺寸。幺火 adapter 只在 sanitizer 清除伪造标记后，把同源 `/face/` 或 `/bbs/face/` 写成可信“有界自然尺寸” marker；共享层删除 URL fallback，外部 `/face/` 仍为普通预览。HTML、selection tape 与 preview catalog 由 compiler 一次产出并保持不可变，旧动态 descriptor/materialization 管道完整删除，未新增页面状态机。无法选源或最终加载失败时仍显示可重试文字，不得空白消失或重新注入节点。 |
+| 当前 owner | `src/domain/forum/forumContentMedia.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`tests/integration/topic-content-rendering-contracts.test.ts`、`src/sources/yaohuo/reader.test.ts`、`src/platform/media/inlineMedia.test.ts` 与 `tests/ui/topic/topic-image-loading.test.tsx` |
+
+
+## `REG-TOPIC-139` 妖火旧式字体标签正文被渲染器丢弃
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
+| 历史症状与根因 | 妖火 `bbs-5248.html` 的“前言”“将严格控制灌水！”和各节规则标题在来源 HTML、清洗与内容规划中均完整，App 正文却直接跳过；根因是共享 RNRH 元素模型没有注册原站使用的旧式 `<font>`，引擎将未知标签编译为空节点并连同安全子文本一起丢弃。首轮修复只恢复 textual 内容，导致原站显式 `size`、`color` 仍退化成普通主题正文；补齐模型样式后，真实详情仍因共享 Provider 未显式启用 UA 样式而忽略模型样式；启用后 `size=5/6` 虽放大，却仍继承正文固定行高，Android 字形上下边界被裁切。最终共享入口启用该既有语义，并由按阅读行距生成的模型把合法 `size="1"` 至 `size="7"` 同步映射为相对 `fontSize/lineHeight`，Provider 的 `emSize` 跟随 App 正文基准，非空 `color` 仍交给既有 CSS 颜色校验；来源 `line-height` 和背景样式不开放，不增加妖火、帖子或文本特判。 |
+| 当前 owner | `src/features/topic/rendering/htmlElementModels.test.ts`、`tests/ui/topic/topic-rich-text-selection.test.tsx` 与 `tests/live/agent-live.md` 的 `bbs-5248.html` 原站登录态对照及 App deep link 直达验收 |
+
+
+## `REG-TOPIC-140` 尾随 BR 重复折叠使主楼长按无响应
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
+| 历史症状与根因 | 妖火 `bbs-5248.html` 的旧式标题后带三个尾随 `<br>`；RNRH 在当前元素上下文折叠最后一个后实际 `TextView` 保留两个换行，共享 selection compiler 却在元素分析和最终 row owner 各折叠一次，使逻辑 owner 比真实文字少一个换行。Native 严格对齐因此保持 `Deferred`，静止长按无法建立选区。最终修复为内部 `break` atom 增加仅编译期的 `collapsed` 事实：元素上下文已折叠的末尾 BR 不再输出字符但保留状态，最终 owner 只折叠因物理 row 边界新成为末尾且尚未折叠的 BR；marker 在公开 version 1 token 序列化前消费，嵌套 `span/font`、根节点连续 BR 和物理分段继续共享同一规则。未放宽 Native fail-closed 对齐，未改手势、公开 token schema 或按站分支。 |
+| 当前 owner | `src/domain/forum/topicContentSplit.test.ts`、`tests/ui/topic/topic-rich-text-selection.test.tsx`、`npm run test:native:forum-selection`、独立 AVD 的 `npm run test:instrumented:forum-selection` 与 `tests/live/agent-live.md` 的 `bbs-5248.html` 只读长按复制验收 |
+
+
 ## `REG-WRITE-062` LinuxDo Emoji 源码往返卡死
 
 | 字段 | 内容 |
@@ -4627,6 +4697,26 @@
 | 能力 ID | `WRITE-01`、`TOPIC-03`、`NAV-03` |
 | 历史症状与根因 | 新回复已由原站确认并读回，但 Topic 停在目标页第一条而不是新楼层，顶部同时误报“部分评论未能读取，已显示 N 条”；根因：权威回复窗口 owner 必须同时保留页面完整性和写后定位交接；Composer 只拥有草稿与提交，不能猜楼层或拥有列表滚动。 |
 | 当前 owner | `tests/integration/source-read-contracts/nodeseek.test.ts` |
+
+
+## `REG-WRITE-073` NodeSeek 楼层回复生成错误定位链接
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01`、`TOPIC-03`、`NAV-03` |
+| 历史症状与根因 | NodeSeek 楼层回复把楼层号直接当作页码，且没有生成 `#floor` 锚点；#1 虽碰巧落在第 1 页却缺少 `#1`，#18 则会误写为第 18 页。正确地址由固定每页 10 楼计算 `page = ceil(floor / 10)`，并写成 `/post-{id}-{page}#{floor}`。 |
+| 当前 owner | `src/sources/nodeseek/actionRequest.test.ts`、`tests/integration/image-upload.test.ts` |
+
+
+## `REG-WRITE-074` NodeSeek 写后请求瀑布与无界末页发现
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01`、`TOPIC-03`、`NAV-03` |
+| 历史症状与根因 | 回复 POST 后先刷新主题详情，再读尾页、目标页；末页发现又沿 `next` 循环，评论数越多耗时和请求数越不可控，最终还用尾窗首项猜新回复。当前 NodeSeek 写后专属路径以当前详情计数和已加载最高楼层计算下一楼页，只执行一次 POST 与一次直达列表 GET；不用 `start` 发现末页，也不补读。普通浏览的 `start` 尾窗发现仍以入口页加一次直达末页为硬上限。回读只以当前账号和实际提交内容唯一确认实体，无法确认时提示手动刷新且绝不重发。linux.do 与妖火流程不变。 |
+| 当前 owner | `tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/topic/topic-actions-controller.test.tsx`、`tests/integration/source-read-contracts/nodeseek.test.ts` |
 
 
 ## `REG-USER-008` 用户活动末页仍显示加载更多

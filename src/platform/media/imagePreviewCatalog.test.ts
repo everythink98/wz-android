@@ -11,7 +11,6 @@ import {
   selectImageDisplaySource,
   selectImageOriginalSource
 } from './imagePreviewCatalog';
-import { shouldMarkLoadedImageInline } from './inlineMedia';
 
 function catalog(
   descriptors: readonly ForumImagePreviewDescriptor[],
@@ -324,23 +323,25 @@ describe('image preview catalog', () => {
     });
   });
 
-  it('keeps generic tiny images previewable and excludes only dynamically confirmed inline images', () => {
+  it('keeps generic tiny images previewable regardless of decoded size', () => {
     const descriptors = [
       { source: 'https://i.imgur.com/agAJ0Rd.png', width: '20', height: '20' },
       { source: 'https://i.imgur.com/2ejt2Q6.png', width: '2198', height: '912' }
     ];
-    const result = catalog(descriptors, 300, 2, undefined, (url) => url === descriptors[0]?.source);
+    const result = catalog(descriptors);
 
     expect(result.items).toEqual([
+      {
+        displayUri: 'https://i.imgur.com/agAJ0Rd.png',
+        originalUri: 'https://i.imgur.com/agAJ0Rd.png',
+        displaySize: { width: 20, height: 20 }
+      },
       {
         displayUri: 'https://i.imgur.com/2ejt2Q6.png',
         originalUri: 'https://i.imgur.com/2ejt2Q6.png',
         displaySize: { width: 2198, height: 912 }
       }
     ]);
-    expect(shouldMarkLoadedImageInline({ class: 'embedded_image' }, 20, 20)).toBe(true);
-    expect(shouldMarkLoadedImageInline({ class: 'thumbnail' }, 20, 20)).toBe(false);
-    expect(shouldMarkLoadedImageInline({ class: 'embedded_image' }, 358, 76)).toBe(false);
   });
 
   it('keeps descriptor images previewable when their URLs have no file extension', () => {

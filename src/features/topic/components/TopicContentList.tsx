@@ -106,7 +106,7 @@ import {
 } from '../model/topicListModel';
 import { highlightHtml } from '@/ui/text/highlight';
 import { stripHtml } from '@/domain/forum/text';
-import { HTML_CUSTOM_ELEMENT_MODELS } from '../rendering/htmlElementModels';
+import { createHtmlCustomElementModels } from '../rendering/htmlElementModels';
 import {
   TopicBodyMediaCoordinatorProvider,
   useTopicBodyMediaFirstRowMarker,
@@ -124,11 +124,7 @@ import {
   useTopicSplitDisclosureStore
 } from '../rendering/TopicSplitDisclosure';
 import { useContentBoundarySpacing } from '../rendering/TopicContentPresentation';
-import {
-  resolveForumContentRowHtml,
-  resolveForumContentRowSelectionToken,
-  type CompiledForumContentRow
-} from '@/domain/forum/topicContentSplit';
+import type { CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { createTopicTableRenderers, TopicTableScrollProvider } from '../rendering/topicTableRenderers';
 import { NodeSeekStardustCard } from './NodeSeekStardustCard';
 import {
@@ -168,27 +164,12 @@ function topicListCompiledRow(item: TopicListItem): CompiledForumContentRow | nu
   return null;
 }
 
-type TopicSelectionImageClassifier = Exclude<Parameters<typeof resolveForumContentRowSelectionToken>[2], undefined>;
 type TopicOpeningListItem = Extract<
   TopicListItem,
   { type: 'topicContent' | 'topicQuoteContent' | 'topicQuoteSummary' }
 >;
 
-function topicSelectionToken(
-  row: CompiledForumContentRow,
-  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
-  isInlineSizedImage: TopicSelectionImageClassifier
-) {
-  return 'html' in row
-    ? resolveForumContentRowSelectionToken(row, inlineSizedImageUrls, isInlineSizedImage)
-    : row.selectionToken;
-}
-
-function openingSelectionItem(
-  item: TopicOpeningListItem,
-  inlineSizedImageUrls: Readonly<Record<string, boolean | undefined>>,
-  isInlineSizedImage: TopicSelectionImageClassifier
-): TopicSelectionItem | undefined {
+function openingSelectionItem(item: TopicOpeningListItem): TopicSelectionItem | undefined {
   const rowKey = openingSelectionRowKey(item);
   if (!rowKey) return undefined;
   if (item.type === 'topicQuoteSummary') {
@@ -196,8 +177,7 @@ function openingSelectionItem(
   }
   if (item.content.type !== 'content') return undefined;
   const row = item.content.row;
-  const selectionToken = topicSelectionToken(row, inlineSizedImageUrls, isInlineSizedImage);
-  return { documentId: 'opening', rowKey, selectionToken };
+  return { documentId: 'opening', rowKey, selectionToken: row.selectionToken };
 }
 
 function openingSelectionRowKey(item: TopicOpeningListItem) {
@@ -454,32 +434,20 @@ export const TopicContentList = memo(function TopicContentList({
     htmlRenderers,
     htmlRenderersProps,
     htmlTagsStyles,
-    inlineSizedImageUrls,
     mediaContext,
     mediaSessionIdentity,
-    nodeSeekMediaUserAgent,
-    topicImageDeriver
+    nodeSeekMediaUserAgent
   } = html;
   const filteredReplies = useMemo(
     () =>
       filterTopicSessionReplies({
         commentQuery: state.debouncedCommentQuery,
-        inlineSizedImageUrls,
         replyFilter: state.replyFilter,
         source: state.selectedTopic.source,
         topicDetail: topic,
-        topicImageDeriver,
         topicReplies: read.topicReplies
       }),
-    [
-      inlineSizedImageUrls,
-      read.topicReplies,
-      state.debouncedCommentQuery,
-      state.replyFilter,
-      state.selectedTopic.source,
-      topic,
-      topicImageDeriver
-    ]
+    [read.topicReplies, state.debouncedCommentQuery, state.replyFilter, state.selectedTopic.source, topic]
   );
   const replies = useMemo(
     () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, currentNodeSeekUser, nodeSeekUserId),
@@ -536,6 +504,10 @@ export const TopicContentList = memo(function TopicContentList({
     [onReplyOrderChange, replyOrder]
   );
   const { settings, styles, theme } = useReaderThemeStyles(createTopicStyles);
+  const htmlCustomElementModels = useMemo(
+    () => createHtmlCustomElementModels(settings.lineHeight),
+    [settings.lineHeight]
+  );
   const { fontScale: systemFontScale, height: windowHeight, width: windowWidth } = useWindowDimensions();
   const replyOrderMenuTriggerRef = useRef<View>(null);
   const [replyOrderMenuOpen, setReplyOrderMenuOpen] = useState(false);
@@ -1072,11 +1044,8 @@ export const TopicContentList = memo(function TopicContentList({
     [disclosureStore, unfilteredTopicListItems]
   );
   const topicSelectionItems = useMemo(
-    () =>
-      visibleTopicOpeningListItems.flatMap(
-        (listItem) => openingSelectionItem(listItem, inlineSizedImageUrls, topicImageDeriver.isInlineSizedImage) || []
-      ),
-    [inlineSizedImageUrls, topicImageDeriver, visibleTopicOpeningListItems]
+    () => visibleTopicOpeningListItems.flatMap((listItem) => openingSelectionItem(listItem) || []),
+    [visibleTopicOpeningListItems]
   );
   const topicSelectionRowKeys = useMemo(
     () => new Set(visibleTopicOpeningListItems.flatMap((item) => openingSelectionRowKey(item) || [])),
@@ -1524,10 +1493,7 @@ export const TopicContentList = memo(function TopicContentList({
             />
           );
         }
-        const resolvedHtml =
-          'html' in contentItem.row
-            ? resolveForumContentRowHtml(contentItem.row, inlineSizedImageUrls, topicImageDeriver.isInlineSizedImage)
-            : undefined;
+        const resolvedHtml = 'html' in contentItem.row ? contentItem.row.html : undefined;
         return wrapContent(
           <TopicSplitDisclosureScope scopeKey={options?.scopeKey || 'opening'}>
             <TopicSelectionRenderHtmlConfig
@@ -1564,7 +1530,6 @@ export const TopicContentList = memo(function TopicContentList({
       firstArticleBodyKey,
       genericHtmlRenderers,
       htmlRenderersProps,
-      inlineSizedImageUrls,
       mediaContext,
       mediaSessionIdentity,
       nodeSeekMediaUserAgent,
@@ -1579,8 +1544,7 @@ export const TopicContentList = memo(function TopicContentList({
       theme,
       togglePollSelection,
       topic?.source,
-      topicColumnStyle,
-      topicImageDeriver
+      topicColumnStyle
     ]
   );
 
@@ -2025,8 +1989,6 @@ export const TopicContentList = memo(function TopicContentList({
               decisionFor={decisionFor}
               contentWidth={contentWidth}
               expandedQuotes={expandedQuotes}
-              inlineSizedImageUrls={inlineSizedImageUrls}
-              topicImageDeriver={topicImageDeriver}
               discourseEmojiUrls={discourseEmojiUrls}
               topicBaseUrl={topicBaseUrl}
               loadedQuotedReplies={loadedQuotedReplies}
@@ -2082,10 +2044,8 @@ export const TopicContentList = memo(function TopicContentList({
       genericHtmlRenderers,
       highlightedTargetKey,
       htmlRenderersProps,
-      inlineSizedImageUrls,
       item?.author,
       item?.id,
-      topicImageDeriver,
       loadedQuotedReplies,
       loadingPreviousReplies,
       loadingQuotedFloors,
@@ -2240,7 +2200,9 @@ export const TopicContentList = memo(function TopicContentList({
       baseStyle={htmlBaseStyle}
       allowedStyles={HTML_ALLOWED_INLINE_STYLES}
       classesStyles={htmlClassesStyles}
-      customHTMLElementModels={HTML_CUSTOM_ELEMENT_MODELS}
+      customHTMLElementModels={htmlCustomElementModels}
+      emSize={typeof htmlBaseStyle.fontSize === 'number' ? htmlBaseStyle.fontSize : 16}
+      enableUserAgentStyles
       ignoredStyles={htmlIgnoredStyles}
       tagsStyles={htmlTagsStyles}
       ignoredDomTags={HTML_IGNORED_DOM_TAGS}

@@ -1393,33 +1393,36 @@ describe('Android local sources', () => {
     expect(sourceDiagnosticSummary(replies)?.missingFloorCount).toBe(2);
   });
 
-  it('keeps the identified first reply on rendered NodeSeek later pages', async () => {
-    const fetcher = vi.fn(async () =>
-      html(`
-      <a class="post-title" href="/post-852804-3">NodeSeek topic</a>
-      <li id="21" data-comment-id="11640077" class="content-item">
-        <a class="floor-link">#21</a>
+  it('reads a hinted NodeSeek post-write window with one list request', async () => {
+    const requestedPages: number[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      requestedPages.push(Number(input.match(/post-852804-(\d+)/)?.[1] || 1));
+      return html(`
+      <a class="post-title" href="/post-852804-440">NodeSeek topic</a>
+      <li id="4391" data-comment-id="11640077" class="content-item">
+        <a class="floor-link">#4391</a>
         <a href="/space/1" class="author-name">first reply</a>
-        <article class="post-content"><p>第 21 楼</p></article>
+        <article class="post-content"><p>第 4391 楼</p></article>
       </li>
-      <li id="22" data-comment-id="11640171" class="content-item">
-        <a class="floor-link">#22</a>
+      <li id="4392" data-comment-id="11640171" class="content-item">
+        <a class="floor-link">#4392</a>
         <a href="/space/2" class="author-name">second reply</a>
-        <article class="post-content"><p>第 22 楼</p></article>
+        <article class="post-content"><p>第 4392 楼</p></article>
       </li>
-    `)
-    );
+    `);
+    });
 
     const replies = await getNodeSeekReplies('852804', {
       fetcher,
-      order: 'oldest',
-      position: { kind: 'cursor', page: 3, offset: null },
+      order: 'newest',
+      position: { kind: 'cursor', page: 440, offset: 4390 },
       limit: 10
     });
 
+    expect(requestedPages).toEqual([440]);
     expect(replies.items.map((item) => [item.floor, item.commentId])).toEqual([
-      [21, 11640077],
-      [22, 11640171]
+      [4392, 11640171],
+      [4391, 11640077]
     ]);
   });
 
@@ -2279,7 +2282,7 @@ describe('Android local sources', () => {
       fetcher: vi.fn(async (input: string) => {
         const page = Number(input.match(/post-852806-(\d+)/)?.[1] || 1);
         requestedPages.push(page);
-        const floors = page === 1 ? Array.from({ length: 10 }, (_, index) => index + 1) : [41, 42, 43, 44];
+        const floors = page === 1 ? Array.from({ length: 10 }, (_, index) => index + 1) : [4391, 4392, 4393, 4394];
         return html(`
           <a class="post-title" href="/post-852806-${page}">NodeSeek topic</a>
           ${floors
@@ -2293,7 +2296,7 @@ describe('Android local sources', () => {
               `
             )
             .join('')}
-          ${page === 1 ? '<div class="nsk-pager"><a href="/post-852806-5" rel="next">5</a></div>' : ''}
+          ${page === 1 ? '<div class="nsk-pager"><a href="/post-852806-440" rel="next">440</a></div>' : ''}
         `);
       }),
       order: 'newest',
@@ -2302,9 +2305,9 @@ describe('Android local sources', () => {
       limit: 10
     });
 
-    expect(requestedPages).toEqual([1, 5]);
-    expect(tail.items.map((reply) => reply.floor)).toEqual([44, 43, 42, 41]);
-    expect(tail).toMatchObject({ currentPage: 5, hasMore: true, nextPage: 4 });
+    expect(requestedPages).toEqual([1, 440]);
+    expect(tail.items.map((reply) => reply.floor)).toEqual([4394, 4393, 4392, 4391]);
+    expect(tail).toMatchObject({ currentPage: 440, hasMore: true, nextPage: 439 });
     expect(tail).not.toHaveProperty('totalCount');
   });
 
@@ -2378,6 +2381,41 @@ describe('Android local sources', () => {
     expect(tail.items.map((reply) => reply.floor)).toEqual([52, 51]);
     expect(tail).toMatchObject({ currentPage: 6, hasMore: true, nextPage: 5 });
     expect(tail).not.toHaveProperty('totalCount');
+  });
+
+  it('stops after one NodeSeek tail jump instead of crawling a next-only pager', async () => {
+    const requestedPages: number[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      const page = Number(input.match(/post-852806-(\d+)/)?.[1] || 1);
+      requestedPages.push(page);
+      const firstFloor = (page - 1) * 10 + 1;
+      return html(`
+        <a class="post-title" href="/post-852806-${page}">NodeSeek topic</a>
+        ${Array.from(
+          { length: 10 },
+          (_, index) => `
+            <li id="${firstFloor + index}" data-comment-id="${20000 + firstFloor + index}" class="content-item">
+              <a class="floor-link">#${firstFloor + index}</a>
+              <a href="/space/${firstFloor + index}" class="author-name">user-${firstFloor + index}</a>
+              <article class="post-content"><p>reply ${firstFloor + index}</p></article>
+            </li>
+          `
+        ).join('')}
+        ${page < 3 ? `<div class="nsk-pager"><a href="/post-852806-${page + 1}" rel="next">${page + 1}</a></div>` : ''}
+      `);
+    });
+
+    await expect(
+      getNodeSeekReplies('852806', {
+        fetcher,
+        order: 'newest',
+        position: { kind: 'start' },
+        replyCount: 10,
+        limit: 10
+      })
+    ).rejects.toThrow('NodeSeek 原站无法确认最新窗口');
+
+    expect(requestedPages).toEqual([1, 2]);
   });
 
   it('rejects a NodeSeek tail with a different resolved page', async () => {

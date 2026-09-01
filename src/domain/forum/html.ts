@@ -8,6 +8,10 @@ export const FORUM_VIDEO_STICKER_TAG = 'forum-video-sticker';
 
 export const FORUM_LINK_CARD_TAG = 'forum-link-card';
 
+export const FORUM_MATH_BLOCK_TAG = 'forum-math-block';
+
+export const FORUM_MATH_INLINE_TAG = 'forum-math-inline';
+
 export const FORUM_TERMINAL_REPORT_TAG = 'forum-terminal-report';
 
 export const FORUM_TERMINAL_TAB_TAG = 'forum-terminal-tab';

@@ -25,7 +25,12 @@ export type ReplyCursor = Extract<ReplyWindowPosition, { kind: 'cursor' }>;
 
 export type ReplyRefreshCommand =
   | { kind: 'manual'; silent?: boolean }
-  | { kind: 'created'; silent?: boolean }
+  | {
+      kind: 'created';
+      nodeSeekAuthorId?: string;
+      nodeSeekContentMarkdown?: string;
+      silent?: boolean;
+    }
   | {
       kind: 'edited';
       target: ReplyCommentIdRefreshTarget;

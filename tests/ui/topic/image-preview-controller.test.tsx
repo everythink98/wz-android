@@ -3,7 +3,6 @@ import { act, renderHook } from '@testing-library/react-native';
 import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { PixelRatio } from 'react-native';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
-import { createTopicImageDeriver } from '@/features/topic/model/topicDerivedData';
 import { useImagePreviewController as useRawImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 import { imagePreviewItemAt } from '@/platform/media/imagePreviewCatalog';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
@@ -51,15 +50,12 @@ describe('Image preview controller', () => {
         })
     );
     const notify = jest.fn<(message: string) => void>();
-    const topicImageDeriver = createTopicImageDeriver();
     const hook = await renderHook(() =>
       useImagePreviewController({
         contentSource: null,
         contentWidth: 360,
         htmlParts: ['<p><img src="https://images.example/photo.jpg"></p>'],
-        inlineSizedImageUrls: {},
-        notify,
-        topicImageDeriver
+        notify
       })
     );
 
@@ -90,10 +86,8 @@ describe('Image preview controller', () => {
         contentSource: 'nodeseek',
         contentWidth: 360,
         htmlParts: [`<p><a class="lightbox" href="${imageUrl}"><img src="${displayUrl}"></a></p>`],
-        inlineSizedImageUrls: {},
         nodeSeekMediaUserAgent: 'WZ-Controller-Test',
-        notify: jest.fn(),
-        topicImageDeriver: createTopicImageDeriver()
+        notify: jest.fn()
       })
     );
 
@@ -132,10 +126,8 @@ describe('Image preview controller', () => {
         contentSource: 'v2ex',
         contentWidth: 360,
         htmlParts: [`<img src="${imageUrl}" referrerpolicy="no-referrer">`],
-        inlineSizedImageUrls: {},
         mediaReferrer,
-        notify: jest.fn(),
-        topicImageDeriver: createTopicImageDeriver()
+        notify: jest.fn()
       })
     );
 
@@ -170,57 +162,6 @@ describe('Image preview controller', () => {
     );
   });
 
-  it('suppresses preview only for the inline-classified Referer identity', async () => {
-    const imageUrl = 'https://images.example/shared-policy.png';
-    const requestIdentityForImage = (url: string, policy?: string) => `${url}\u0000referrer:${policy || 'default'}`;
-    const noReferrerIdentity = requestIdentityForImage(imageUrl, 'no-referrer');
-    const hook = await renderHook(() =>
-      useImagePreviewController({
-        contentSource: 'v2ex',
-        contentWidth: 360,
-        htmlParts: [
-          `<img src="${imageUrl}" referrerpolicy="no-referrer"><img src="${imageUrl}" referrerpolicy="origin">`
-        ],
-        inlineSizedImageUrls: { [noReferrerIdentity]: true },
-        mediaReferrer: { documentUrl: 'https://www.v2ex.com/t/1233346' },
-        notify: jest.fn(),
-        topicImageDeriver: createTopicImageDeriver({ requestIdentityForImage })
-      })
-    );
-
-    await act(() => hook.result.current.openImagePreview(imageUrl, undefined, undefined, 'no-referrer'));
-    expect(hook.result.current.imagePreview).toBeNull();
-
-    await act(() => hook.result.current.openImagePreview(imageUrl, undefined, undefined, 'origin'));
-    expect(imagePreviewItemAt(hook.result.current.imagePreview!, hook.result.current.imagePreview!.index)).toEqual(
-      expect.objectContaining({ originalUri: imageUrl, referrerPolicy: 'origin' })
-    );
-  });
-
-  it('uses the latest image identity when Topic context arrives after mount', async () => {
-    const imageUrl = 'https://images.example/late-topic-context.png';
-    const baseDeriver = createTopicImageDeriver();
-    const firstDeriver = { ...baseDeriver, isInlineSizedImage: () => false };
-    const latestDeriver = { ...baseDeriver, isInlineSizedImage: () => true };
-    const hook = await renderHook(
-      ({ topicImageDeriver }: { topicImageDeriver: typeof baseDeriver }) =>
-        useImagePreviewController({
-          contentSource: 'v2ex',
-          contentWidth: 360,
-          htmlParts: [`<img src="${imageUrl}">`],
-          inlineSizedImageUrls: {},
-          notify: jest.fn(),
-          topicImageDeriver
-        }),
-      { initialProps: { topicImageDeriver: firstDeriver } }
-    );
-
-    await hook.rerender({ topicImageDeriver: latestDeriver });
-    await act(() => hook.result.current.openImagePreview(imageUrl));
-
-    expect(hook.result.current.imagePreview).toBeNull();
-  });
-
   it('keeps the exact body-rendered image as the preview continuity frame', async () => {
     const originalUrl = 'https://images.example/original.svg';
     const displayUrl = 'https://images.example/display.svg';
@@ -230,9 +171,7 @@ describe('Image preview controller', () => {
         contentSource: null,
         contentWidth: 360,
         htmlParts: [`<a class="lightbox" href="${originalUrl}"><img src="${displayUrl}"></a>`],
-        inlineSizedImageUrls: {},
-        notify: jest.fn(),
-        topicImageDeriver: createTopicImageDeriver()
+        notify: jest.fn()
       })
     );
 
@@ -260,9 +199,7 @@ describe('Image preview controller', () => {
             '<img src="https://images.example/b-fallback.jpg" data-original="https://images.example/b-original.jpg" srcset="https://images.example/b-360.jpg 360w, https://images.example/b-720.jpg 720w, https://images.example/b-1440.jpg 1440w">'
           ].join('')
         ],
-        inlineSizedImageUrls: {},
-        notify: jest.fn(),
-        topicImageDeriver: createTopicImageDeriver()
+        notify: jest.fn()
       })
     );
 
@@ -288,9 +225,7 @@ describe('Image preview controller', () => {
       useImagePreviewController({
         contentSource: 'nodeseek',
         contentWidth: 360,
-        inlineSizedImageUrls: {},
-        notify: jest.fn(),
-        topicImageDeriver: createTopicImageDeriver()
+        notify: jest.fn()
       })
     );
 
@@ -299,41 +234,6 @@ describe('Image preview controller', () => {
 
     expect(hook.result.current.imagePreview?.items).toHaveLength(2_000);
     expect(hook.result.current.imagePreview?.index).toBe(1_380);
-  });
-
-  it('reprojects inline exclusions without preparing registered descriptors again', async () => {
-    const firstUrl = 'https://images.example/prepared-640.webp';
-    const secondUrl = 'https://images.example/second.webp';
-    const stringifySourceSet = jest.fn(() => `${firstUrl} 640w, https://images.example/prepared-1280.webp 1280w`);
-    const descriptors = [
-      { source: firstUrl, sourceSet: { toString: stringifySourceSet } as unknown as string },
-      { source: secondUrl }
-    ];
-    const topicImageDeriver = createTopicImageDeriver();
-    const hook = await renderHook(
-      ({ inlineSizedImageUrls }: { inlineSizedImageUrls: Record<string, true> }) =>
-        useRawImagePreviewController({
-          contentSource: 'v2ex',
-          contentWidth: 360,
-          inlineSizedImageUrls,
-          notify: jest.fn(),
-          topicImageDeriver
-        }),
-      { initialProps: { inlineSizedImageUrls: {} } }
-    );
-
-    await act(() => hook.result.current.registerImagePreviewDescriptors(descriptors));
-    await act(() => hook.result.current.openImagePreview(secondUrl));
-    expect(hook.result.current.imagePreview?.items).toHaveLength(2);
-    expect(stringifySourceSet).toHaveBeenCalledTimes(1);
-
-    await act(() => hook.result.current.closeImagePreview());
-    await hook.rerender({ inlineSizedImageUrls: { [firstUrl]: true } });
-    await act(() => hook.result.current.registerImagePreviewDescriptors(descriptors));
-    await act(() => hook.result.current.openImagePreview(secondUrl));
-
-    expect(hook.result.current.imagePreview?.items).toHaveLength(1);
-    expect(stringifySourceSet).toHaveBeenCalledTimes(1);
   });
 
   it('keeps equivalent registrations and invalidates semantic catalog inputs', async () => {
@@ -346,31 +246,25 @@ describe('Image preview controller', () => {
       role: 'opening',
       source: 'nodeseek'
     }).previewImages;
-    const topicImageDeriver = createTopicImageDeriver();
     const hook = await renderHook(
       ({
         contentSource,
-        inlineSizedImageUrls,
         mediaReferrer,
         width
       }: {
         contentSource: 'nodeseek' | 'v2ex';
-        inlineSizedImageUrls: Record<string, true>;
         mediaReferrer?: { documentUrl: string };
         width: number;
       }) =>
         useRawImagePreviewController({
           contentSource,
           contentWidth: width,
-          inlineSizedImageUrls,
           mediaReferrer,
-          notify: jest.fn(),
-          topicImageDeriver
+          notify: jest.fn()
         }),
       {
         initialProps: {
           contentSource: 'nodeseek' as const,
-          inlineSizedImageUrls: {},
           mediaReferrer: undefined,
           width: 300
         }
@@ -385,7 +279,6 @@ describe('Image preview controller', () => {
     await act(() => hook.result.current.closeImagePreview());
     await hook.rerender({
       contentSource: 'nodeseek',
-      inlineSizedImageUrls: {},
       mediaReferrer: undefined,
       width: 300
     });
@@ -396,7 +289,6 @@ describe('Image preview controller', () => {
     await act(() => hook.result.current.closeImagePreview());
     await hook.rerender({
       contentSource: 'nodeseek',
-      inlineSizedImageUrls: {},
       mediaReferrer: undefined,
       width: 700
     });
@@ -409,7 +301,6 @@ describe('Image preview controller', () => {
     await act(() => hook.result.current.closeImagePreview());
     await hook.rerender({
       contentSource: 'nodeseek',
-      inlineSizedImageUrls: {},
       mediaReferrer: undefined,
       width: 700
     });
@@ -421,7 +312,6 @@ describe('Image preview controller', () => {
     await act(() => hook.result.current.closeImagePreview());
     await hook.rerender({
       contentSource: 'nodeseek',
-      inlineSizedImageUrls: {},
       mediaReferrer: { documentUrl: 'https://www.nodeseek.com/post-1-1' },
       width: 700
     });
@@ -434,7 +324,6 @@ describe('Image preview controller', () => {
     await act(() => hook.result.current.closeImagePreview());
     await hook.rerender({
       contentSource: 'v2ex',
-      inlineSizedImageUrls: {},
       mediaReferrer: { documentUrl: 'https://www.nodeseek.com/post-1-1' },
       width: 700
     });
@@ -461,16 +350,6 @@ describe('Image preview controller', () => {
     await act(() => hook.result.current.openImagePreview(secondUrl));
     expect(hook.result.current.imagePreview!.items[0]).toBe(changedCatalogItem);
 
-    await act(() => hook.result.current.closeImagePreview());
-    await hook.rerender({
-      contentSource: 'v2ex',
-      inlineSizedImageUrls: { [firstUrl]: true },
-      mediaReferrer: { documentUrl: 'https://www.nodeseek.com/post-1-1' },
-      width: 700
-    });
-    await act(() => hook.result.current.registerImagePreviewDescriptors(changedPreviewImages));
-    await act(() => hook.result.current.openImagePreview(secondUrl));
-    expect(hook.result.current.imagePreview?.items).toHaveLength(2);
     pixelRatioSpy.mockRestore();
   });
 
@@ -492,9 +371,7 @@ describe('Image preview controller', () => {
           contentSource: 'nodeseek',
           contentWidth: 360,
           htmlParts: [`<img src="${imageUrl}">`],
-          inlineSizedImageUrls: {},
-          notify: jest.fn(),
-          topicImageDeriver: createTopicImageDeriver()
+          notify: jest.fn()
         }),
       { wrapper: SessionEpochHarness }
     );

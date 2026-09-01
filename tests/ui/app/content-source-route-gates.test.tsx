@@ -21,7 +21,7 @@ import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRe
 import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import { HTML_ALLOWED_INLINE_STYLES } from '@/features/topic/rendering/htmlStyles';
-import { HTML_CUSTOM_ELEMENT_MODELS } from '@/features/topic/rendering/htmlElementModels';
+import { createHtmlCustomElementModels } from '@/features/topic/rendering/htmlElementModels';
 import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
 import { useUserController } from '@/features/user/useUserController';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
@@ -462,7 +462,7 @@ describe('disabled content source route gates', () => {
           allowedStyles={HTML_ALLOWED_INLINE_STYLES}
           baseStyle={screen.html.htmlBaseStyle}
           classesStyles={screen.html.htmlClassesStyles}
-          customHTMLElementModels={HTML_CUSTOM_ELEMENT_MODELS}
+          customHTMLElementModels={createHtmlCustomElementModels('standard')}
           ignoredDomTags={['script', 'style', 'noscript']}
           ignoredStyles={screen.html.htmlIgnoredStyles}
           tagsStyles={screen.html.htmlTagsStyles}

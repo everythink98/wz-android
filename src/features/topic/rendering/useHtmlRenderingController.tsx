@@ -1,10 +1,8 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Pressable, Text, View, type ImageURISource } from 'react-native';
+import { useMemo } from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { getNativePropsForTNode, type CustomBlockRenderer, type CustomMixedRenderer } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { createTopicImageDeriver } from '../model/topicDerivedData';
-import { imageSourceFromUrl, isHttpOrHttpsUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
-import { compatibleImageRequestIdentity } from '@/platform/media/compatibleImageSources';
+import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { isPreviewableImageUrl, type ImageDisplaySize } from '@/platform/media/imagePreviewCatalog';
 import { parseForumTopicDestination, parseForumUserLink } from '@/domain/forum/links';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
@@ -24,6 +22,10 @@ import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { createContentMediaRenderers } from './contentMediaRenderers';
 import { createPreviewRenderers } from './previewRenderers';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
+import { FORUM_MATH_BLOCK_TAG, FORUM_MATH_INLINE_TAG } from '@/domain/forum/html';
+import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
+import { ForumMath } from './ForumMath';
+import { forumMathSource } from './forumMathSource';
 
 export function useHtmlRenderingController({
   mediaSessionIdentity,
@@ -37,7 +39,6 @@ export function useHtmlRenderingController({
   styleSettings,
   theme,
   topicDetail,
-  topicKey,
   webViewBlockMessage
 }: {
   onOpenExternalUrl: (url: string) => void;
@@ -56,7 +57,6 @@ export function useHtmlRenderingController({
   styleSettings?: ReaderSettings;
   theme: ReaderTheme;
   topicDetail: TopicDetail | null;
-  topicKey: string;
   webViewBlockMessage: string;
 }) {
   const mediaContext = useMemo<ForumMediaRequestContext>(
@@ -67,51 +67,6 @@ export function useHtmlRenderingController({
     }),
     [mediaSessionIdentity, selectedTopic?.source, topicDetail?.mediaReferrer]
   );
-  const [inlineSizedImageState, setInlineSizedImageState] = useState<{ topicKey: string; urls: Record<string, true> }>({
-    topicKey: '',
-    urls: {}
-  });
-  const emptyInlineSizedImageUrls = useMemo<Record<string, true>>(() => ({}), [topicKey]);
-  const inlineSizedImageUrls =
-    inlineSizedImageState.topicKey === topicKey ? inlineSizedImageState.urls : emptyInlineSizedImageUrls;
-  const requestIdentityForImage = useCallback(
-    (url: string, referrerPolicy?: MediaReferrerPolicy) =>
-      compatibleImageRequestIdentity(
-        imageSourceFromUrl(url, {
-          mediaContext,
-          nodeSeekUserAgent: nodeSeekMediaUserAgent,
-          referrerPolicy
-        }) as ImageURISource
-      ),
-    [mediaContext, nodeSeekMediaUserAgent]
-  );
-  const markInlineSizedImageUrl = useCallback(
-    (url: string, referrerPolicy?: MediaReferrerPolicy) => {
-      const clean = normalizeImagePreviewUrl(url).trim();
-      if (!clean) {
-        return;
-      }
-      const identity = requestIdentityForImage(clean, referrerPolicy);
-      setInlineSizedImageState((current) =>
-        current.topicKey === topicKey && current.urls[identity]
-          ? current
-          : {
-              topicKey,
-              urls: {
-                ...(current.topicKey === topicKey ? current.urls : {}),
-                [identity]: true
-              }
-            }
-      );
-    },
-    [requestIdentityForImage, topicKey]
-  );
-
-  const topicImageDeriver = useMemo(
-    () => createTopicImageDeriver({ requestIdentityForImage }),
-    [requestIdentityForImage, topicKey]
-  );
-
   const { htmlBaseStyle, htmlClassesStyles, htmlIgnoredStyles, htmlTagsStyles } = useMemo(
     () =>
       buildHtmlRenderingStyles({
@@ -225,6 +180,32 @@ export function useHtmlRenderingController({
         />
       );
     };
+    const MathBlockRenderer: CustomBlockRenderer = (props) => {
+      const contentWidth = useForumContentWidth();
+      const source = forumMathSource(props.tnode);
+      return source ? (
+        <ForumMath
+          color={theme.ink}
+          contentWidth={contentWidth}
+          display="block"
+          fontScale={settings.fontScale}
+          source={source}
+        />
+      ) : null;
+    };
+    const MathInlineRenderer: CustomMixedRenderer = (props) => {
+      const contentWidth = useForumContentWidth();
+      const source = forumMathSource(props.tnode);
+      return source ? (
+        <ForumMath
+          color={theme.ink}
+          contentWidth={contentWidth}
+          display="inline"
+          fontScale={settings.fontScale}
+          source={source}
+        />
+      ) : null;
+    };
 
     return {
       ...createContentMediaRenderers({
@@ -240,7 +221,6 @@ export function useHtmlRenderingController({
       ...createPreviewRenderers({
         htmlBaseStyle,
         htmlRendererStyles,
-        markInlineSizedImageUrl,
         mediaContext,
         mediaSessionIdentity,
         nodeSeekMediaUserAgent,
@@ -250,6 +230,8 @@ export function useHtmlRenderingController({
       }),
       a: ReplyReferenceLinkRenderer,
       blockquote: BlockquoteRenderer,
+      [FORUM_MATH_BLOCK_TAG]: MathBlockRenderer,
+      [FORUM_MATH_INLINE_TAG]: MathInlineRenderer,
       [FORUM_REPLY_REFERENCE_TAG]: ReplyReferenceRenderer
     };
   }, [
@@ -259,7 +241,6 @@ export function useHtmlRenderingController({
     nodeSeekMediaUserAgent,
     openImagePreview,
     openHtmlLink,
-    markInlineSizedImageUrl,
     settings.fontScale,
     htmlRendererStyles.htmlFloorLink,
     htmlRendererStyles.htmlMentionLink,
@@ -316,8 +297,6 @@ export function useHtmlRenderingController({
     htmlRenderers,
     htmlRenderersProps,
     htmlTagsStyles,
-    inlineSizedImageUrls,
-    nodeSeekMediaUserAgent,
-    topicImageDeriver
+    nodeSeekMediaUserAgent
   };
 }

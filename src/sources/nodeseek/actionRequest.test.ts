@@ -64,19 +64,24 @@ describe('NodeSeek action request builders', () => {
     expect(editRequest.headers['csrf-token']).toMatch(/^[A-Za-z0-9]{16}$/);
   });
 
-  it('prefixes NodeSeek floor replies with the original floor reference', () => {
+  it.each([
+    [1, 1],
+    [10, 1],
+    [11, 2],
+    [18, 2]
+  ])('prefixes NodeSeek floor #%i with its page and exact anchor', (floor, page) => {
     const request = buildNodeSeekReplyRequest({
-      postId: '723704',
+      postId: '856117',
       content: '  谢谢分享  ',
       csrfToken: 'fixed-csrf-token',
       replyTarget: {
-        floor: 15,
+        floor,
         author: 'bob'
       }
     });
 
     expect(JSON.parse(request.body || '{}')).toMatchObject({
-      content: '@bob [#15](https://www.nodeseek.com/post-723704-15)\n\n谢谢分享'
+      content: `@bob [#${floor}](https://www.nodeseek.com/post-856117-${page}#${floor})\n\n谢谢分享`
     });
   });
 

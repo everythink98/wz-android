@@ -1,5 +1,5 @@
 import { NODESEEK_VOTE_API_HEADERS } from './polls';
-import { NODESEEK_BASE_URL } from './protocol';
+import { NODESEEK_BASE_URL, NODESEEK_FLOORS_PER_PAGE, nodeSeekTopicPagePath } from './protocol';
 import {
   normalizeNodeSeekStardustRefId,
   type NodeSeekStardustReceive,
@@ -70,8 +70,14 @@ export function buildNodeSeekReplyRequest({
   const cleanCsrf = cleanCsrfToken(csrfToken);
   const targetFloor = replyTarget?.floor ? cleanPositiveInteger(replyTarget.floor, '楼层') : undefined;
   const targetAuthor = String(replyTarget?.author || '').trim();
+  const targetUrl = targetFloor
+    ? `${NODESEEK_BASE_URL}${nodeSeekTopicPagePath(
+        String(cleanPostId),
+        Math.ceil(targetFloor / NODESEEK_FLOORS_PER_PAGE)
+      )}#${targetFloor}`
+    : '';
   const finalContent = targetFloor
-    ? `${targetAuthor ? `@${targetAuthor} ` : ''}[#${targetFloor}](${NODESEEK_BASE_URL}/post-${cleanPostId}-${targetFloor})\n\n${cleanContent}`
+    ? `${targetAuthor ? `@${targetAuthor} ` : ''}[#${targetFloor}](${targetUrl})\n\n${cleanContent}`
     : cleanContent;
 
   return {

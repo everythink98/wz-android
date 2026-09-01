@@ -296,7 +296,7 @@ describe('reply image upload helpers', () => {
     });
     expect(JSON.parse(request.body || '{}')).toEqual({
       content:
-        '@Butachi [#18](https://www.nodeseek.com/post-723704-18)\n\n![photo.png](https://cdn.nodeimage.com/i/fake.png)',
+        '@Butachi [#18](https://www.nodeseek.com/post-723704-2#18)\n\n![photo.png](https://cdn.nodeimage.com/i/fake.png)',
       mode: 'new-comment',
       postId: 723704
     });

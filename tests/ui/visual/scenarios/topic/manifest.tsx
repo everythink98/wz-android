@@ -238,7 +238,6 @@ function TopicScenarioScreen({
     settings,
     theme,
     topicDetail: topic,
-    topicKey: `${topic.source}:${topic.id}`,
     webViewBlockMessage: ''
   });
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);

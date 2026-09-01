@@ -122,6 +122,18 @@ describe('portable Discourse fields', () => {
     expect(() => discourseVisiblePostIds([{ id: 101 }], [101, 101])).toThrow('回复窗口不完整');
   });
 
+  it('keeps author-deleted placeholder candidates for source normalization', () => {
+    expect(
+      discourseVisiblePostIds(
+        [
+          { id: 101, user_deleted: true, deleted_at: null },
+          { id: 102, deleted_at: '2026-08-31T00:00:00.000Z' }
+        ],
+        [101, 102]
+      )
+    ).toEqual(['101']);
+  });
+
   it('keeps an identified Discourse reply when presentation fields are empty', () => {
     expect(
       discoursePostFields({
@@ -153,6 +165,12 @@ describe('portable Discourse fields', () => {
     expect(discourseRepliesInStreamOrder([reply(101, 'first'), reply(103, 'last')], [101, 102, 103], 'oldest')).toEqual(
       [reply(101, 'first'), reply(103, 'last')]
     );
+  });
+
+  it('orders an empty normalized display subset without weakening raw-window validation', () => {
+    expect(discourseRepliesInStreamOrder([], [101, 102], 'oldest')).toEqual([]);
+    expect(discourseRepliesInStreamOrder([], [101, 102], 'newest')).toEqual([]);
+    expect(() => discourseVisiblePostIds([], [101, 102])).toThrow('回复窗口不完整');
   });
 
   it('rejects an oldest cursor whose page disagrees with its stream offset', () => {

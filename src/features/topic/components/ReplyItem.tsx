@@ -40,7 +40,6 @@ import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { normalizeUserReference, userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicActionState';
-import type { TopicImageDeriver } from '../model/topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
@@ -48,7 +47,6 @@ import { getReplyKey, type ReplyRenderableContent, type TopicReplyListItem } fro
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 import { TopicSplitDisclosureScope } from '../rendering/TopicSplitDisclosure';
-import { resolveForumContentRowHtml, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 
 type NodeSeekStat = { label: string; value: number };
 type ReplyItemSection = Extract<
@@ -193,7 +191,6 @@ export function ReplyItem({
   isTerminal,
   loadedQuotedReplies,
   loadingQuotedFloors,
-  inlineSizedImageUrls,
   discourseEmojiUrls,
   onTogglePollSelection,
   pollSelections,
@@ -209,7 +206,6 @@ export function ReplyItem({
   topicAuthor,
   topicBaseUrl,
   topicId,
-  topicImageDeriver,
   topicStateKey,
   onInteract,
   onDeleteReply,
@@ -228,7 +224,6 @@ export function ReplyItem({
   decisionFor: TopicActionDecisionFor;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
-  inlineSizedImageUrls: Record<string, true>;
   discourseEmojiUrls?: DiscourseEmojiUrlMap;
   isNew?: boolean;
   isTerminal?: boolean;
@@ -248,7 +243,6 @@ export function ReplyItem({
   topicAuthor?: string;
   topicBaseUrl?: string;
   topicId?: string;
-  topicImageDeriver?: TopicImageDeriver;
   topicStateKey: string;
   onInteract: (type: InteractionType, commentId?: number) => void;
   onDeleteReply: (reply: Reply) => void;
@@ -284,24 +278,16 @@ export function ReplyItem({
   const highlightedHtml = useMemo(
     () =>
       rendersReplyBody
-        ? highlightHtml(
-            bodyContent && 'html' in bodyContent
-              ? resolveForumContentRowHtml(bodyContent, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage)
-              : reply.contentHtml,
-            query
-          )
+        ? highlightHtml(bodyContent && 'html' in bodyContent ? bodyContent.html : reply.contentHtml, query)
         : '',
-    [bodyContent, inlineSizedImageUrls, query, rendersReplyBody, reply.contentHtml, topicImageDeriver]
+    [bodyContent, query, rendersReplyBody, reply.contentHtml]
   );
   const highlightedSectionHtml = useMemo(
     () =>
       section?.type === 'replyContent' && section.content.type !== 'poll' && 'html' in section.content
-        ? highlightHtml(
-            resolveForumContentRowHtml(section.content, inlineSizedImageUrls, topicImageDeriver?.isInlineSizedImage),
-            query
-          )
+        ? highlightHtml(section.content.html, query)
         : '',
-    [inlineSizedImageUrls, query, section, topicImageDeriver]
+    [query, section]
   );
   const replyContentWidth = Math.max(220, contentWidth - 42);
   const copyReplyTextToClipboard = useCallback(() => {
@@ -377,15 +363,7 @@ export function ReplyItem({
             <View style={section.first ? styles.replySignature : undefined}>
               <MemoizedTopicContentBlock
                 contentWidth={replyContentWidth}
-                html={
-                  'html' in section.content
-                    ? resolveForumContentRowHtml(
-                        section.content,
-                        inlineSizedImageUrls,
-                        topicImageDeriver?.isInlineSizedImage
-                      )
-                    : undefined
-                }
+                html={'html' in section.content ? section.content.html : undefined}
                 query={query}
                 row={section.content}
                 selectable={false}
@@ -444,18 +422,7 @@ export function ReplyItem({
                   <Pressable delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
                     <MemoizedTopicContentBlock
                       contentWidth={Math.max(220, replyContentWidth - 24)}
-                      html={
-                        'html' in section.content
-                          ? highlightHtml(
-                              resolveForumContentRowHtml(
-                                section.content,
-                                inlineSizedImageUrls,
-                                topicImageDeriver?.isInlineSizedImage
-                              ),
-                              query
-                            )
-                          : undefined
-                      }
+                      html={'html' in section.content ? highlightHtml(section.content.html, query) : undefined}
                       query={query}
                       row={section.content}
                       selectable={false}
@@ -768,15 +735,7 @@ export function ReplyItem({
                   <View style={styles.replySignature}>
                     <MemoizedTopicContentBlock
                       contentWidth={replyContentWidth}
-                      html={
-                        'html' in signatureContent
-                          ? resolveForumContentRowHtml(
-                              signatureContent,
-                              inlineSizedImageUrls,
-                              topicImageDeriver?.isInlineSizedImage
-                            )
-                          : undefined
-                      }
+                      html={'html' in signatureContent ? signatureContent.html : undefined}
                       query={query}
                       row={signatureContent}
                       selectable={false}
@@ -1028,47 +987,6 @@ function sameReplyItemSection(previous: ReplyItemSection | undefined, next: Repl
   return true;
 }
 
-const defaultIsInlineSizedImage: TopicImageDeriver['isInlineSizedImage'] = (url, _referrerPolicy, identities) =>
-  Boolean(identities[url]);
-
-function compiledRowInlineImageStateChanged(
-  row: CompiledForumContentRow | undefined,
-  previousUrls: Readonly<Record<string, boolean | undefined>>,
-  nextUrls: Readonly<Record<string, boolean | undefined>>,
-  topicImageDeriver: TopicImageDeriver | undefined
-) {
-  if (!row || !('html' in row) || !row.rendering) return false;
-  const isInlineSizedImage = topicImageDeriver?.isInlineSizedImage || defaultIsInlineSizedImage;
-  return row.rendering.dynamicImages.some(
-    ({ url, referrerPolicy }) =>
-      isInlineSizedImage(url, referrerPolicy, previousUrls) !== isInlineSizedImage(url, referrerPolicy, nextUrls)
-  );
-}
-
-type ReplyItemProps = Parameters<typeof ReplyItem>[0];
-
-function replyItemInlineImageStateChanged(
-  props: ReplyItemProps,
-  previousUrls: Readonly<Record<string, boolean | undefined>>,
-  nextUrls: Readonly<Record<string, boolean | undefined>>
-) {
-  const section = props.section;
-  if (
-    section?.type === 'replyQuoteContent' ||
-    section?.type === 'replyContent' ||
-    section?.type === 'replySignatureContent'
-  ) {
-    return compiledRowInlineImageStateChanged(section.content, previousUrls, nextUrls, props.topicImageDeriver);
-  }
-  if (section && section.type !== 'replyEnd') return false;
-  return (
-    (!section?.bodyVirtualized &&
-      compiledRowInlineImageStateChanged(props.bodyContent, previousUrls, nextUrls, props.topicImageDeriver)) ||
-    (!section?.signatureVirtualized &&
-      compiledRowInlineImageStateChanged(props.signatureContent, previousUrls, nextUrls, props.topicImageDeriver))
-  );
-}
-
 export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
   if (
     previous.actionBusy !== next.actionBusy ||
@@ -1102,10 +1020,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     previous.theme !== next.theme ||
     previous.topicAuthor !== next.topicAuthor ||
     previous.topicBaseUrl !== next.topicBaseUrl ||
-    previous.topicId !== next.topicId ||
-    previous.topicImageDeriver !== next.topicImageDeriver ||
-    (previous.inlineSizedImageUrls !== next.inlineSizedImageUrls &&
-      replyItemInlineImageStateChanged(next, previous.inlineSizedImageUrls, next.inlineSizedImageUrls))
+    previous.topicId !== next.topicId
   ) {
     return false;
   }

@@ -11,6 +11,7 @@ import {
   textExcerpt
 } from '@/domain/forum/html';
 import { prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
+import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE } from '@/domain/forum/forumContentMedia';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import {
@@ -299,6 +300,24 @@ function normalizeYaohuoTopicContent(root: HTMLElement) {
   trimYaohuoArticleBoundaries(root);
 }
 
+function markYaohuoFaceImages(root: HTMLElement) {
+  root.querySelectorAll('img').forEach((image) => {
+    const src = image.getAttribute('src');
+    if (!src) return;
+    try {
+      const url = new URL(src);
+      if (
+        (url.hostname === 'yaohuo.me' || url.hostname === 'www.yaohuo.me') &&
+        /^\/(?:bbs\/)?face\//i.test(url.pathname)
+      ) {
+        image.setAttribute(FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE, 'true');
+      }
+    } catch {
+      // The shared sanitizer already rejects malformed image URLs.
+    }
+  });
+}
+
 function readableYaohuoActivityText(value: unknown) {
   return textContentFromHtml(value)
     .replace(/(派币|礼金|每人|余|获赏)\s*(\d+)/g, '$1 $2')
@@ -453,7 +472,8 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     role: 'opening',
     source: 'yaohuo',
     topicId: String(id || ''),
-    transformRoot: normalizeYaohuoTopicContent
+    transformRoot: normalizeYaohuoTopicContent,
+    afterSanitizeRoot: markYaohuoFaceImages
   });
   const result: TopicDetail = {
     source: 'yaohuo',
@@ -595,7 +615,8 @@ export function parseYaohuoRepliesDocument(
     const preparedContent = prepareSanitizedForumContent(contentOnly, {
       baseUrl: url || `${BASE_URL}/bbs/book_re.aspx`,
       role: 'reply',
-      source: 'yaohuo'
+      source: 'yaohuo',
+      afterSanitizeRoot: markYaohuoFaceImages
     });
     return {
       reply: {

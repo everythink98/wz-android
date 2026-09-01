@@ -4,10 +4,11 @@ import type { Reply } from '@/domain/forum/models';
 import {
   compileForumContent,
   prepareForumContentHtml,
-  resolveForumContentRowHtml
+  requirePreparedForumContent
 } from '@/domain/forum/topicContentSplit';
 import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
 import { imagePreviewDescriptorsForReplies } from '@/features/topic/model/replyListModel';
+import { prepareLinuxDoContent } from '@/sources/linuxdo/parser';
 import {
   imagePreviewItemAt,
   imagePreviewListFromCatalog,
@@ -25,6 +26,40 @@ function previewCatalog(
 }
 
 describe('topic content rendering contracts', () => {
+  it('isolates block formulas while keeping inline formulas in text flow and copy text', () => {
+    const prepared = prepareLinuxDoContent(
+      '<p>before</p><div class="math">x^2 + y^2</div><p>after <span class="math">z^2</span></p>',
+      [],
+      { role: 'reply' }
+    ).preparedContent;
+    const rows = requirePreparedForumContent(prepared, prepared.contentHtml, {
+      role: 'reply',
+      source: 'linuxdo'
+    }).rows;
+
+    expect(rows).toHaveLength(3);
+    expect(rows[1]).toMatchObject({
+      html: expect.stringContaining('<forum-math-block>x^2 + y^2</forum-math-block>'),
+      type: 'richText'
+    });
+    expect(rows[2]).toMatchObject({
+      html: expect.stringContaining('<p>after <forum-math-inline>z^2</forum-math-inline></p>'),
+      type: 'richText'
+    });
+    expect(JSON.parse(rows[1]!.selectionToken)).toEqual({
+      owners: [],
+      prefix: [
+        { kind: 'media', text: 'x^2 + y^2' },
+        { kind: 'separator', text: '\n' }
+      ],
+      version: 1
+    });
+    expect(JSON.parse(rows[2]!.selectionToken).owners[0]).toMatchObject({
+      tape: [{ at: 'after '.length, text: 'z^2' }],
+      text: 'after '
+    });
+  });
+
   it('keeps sanitized unsafe lazy candidates out of the active preview catalog', () => {
     const compilation = compileForumContent({
       html: sanitizeContentHtml(
@@ -43,7 +78,32 @@ describe('topic content rendering contracts', () => {
     ]);
   });
 
-  it('keeps the preview catalog on raw source order while presentation variants change', () => {
+  it('does not reparse decoded image labels or expand their media budget', () => {
+    const compilation = compileForumContent({
+      html: '<p><img src="https://cdn.example.com/photo.jpg" alt="&lt;img src=x onerror=boom&gt;"></p>',
+      role: 'reply',
+      source: 'linuxdo'
+    });
+    const html = compilation.rows.flatMap((row) => ('html' in row ? [row.html] : [])).join('');
+
+    expect(compilation.previewImages).toHaveLength(1);
+    expect(compilation.rows.reduce((count, row) => count + row.networkMediaCount, 0)).toBe(1);
+    expect(html).toContain('&lt;img src=x onerror=boom&gt;');
+    expect(html).not.toContain('<img src=x');
+  });
+
+  it('keeps an untrusted external face-path image in the ordinary preview catalog', () => {
+    const source = 'https://cdn.example.com/face/photo.jpg';
+    const compilation = compileForumContent({
+      html: `<p><img src="${source}" alt="photo"></p>`,
+      role: 'reply',
+      source: 'yaohuo'
+    });
+
+    expect(compilation.previewImages).toEqual([expect.objectContaining({ source })]);
+  });
+
+  it('keeps the preview catalog and authored image placement stable when dimensions load', () => {
     const urls = ['https://i.imgur.com/first.png', 'https://i.imgur.com/second.png'];
     const rawHtml = `<p>${urls.map((url) => `<img class="embedded_image" src="${url}">`).join('')}</p>`;
     const row = compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).rows.find(
@@ -59,7 +119,7 @@ describe('topic content rendering contracts', () => {
         2
       ).items.map((item) => item.originalUri)
     ).toEqual(urls);
-    expect(resolveForumContentRowHtml(row, { [urls[0]]: true })).toContain(`<${INLINE_FORUM_IMAGE_TAG}`);
+    expect(row.html).toContain(`<${INLINE_FORUM_IMAGE_TAG}`);
     expect(
       previewCatalog(
         compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).previewImages,

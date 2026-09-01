@@ -4,6 +4,7 @@ import { Platform, View } from 'react-native';
 import RenderHTML from 'react-native-render-html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
+import { createHtmlCustomElementModels } from '@/features/topic/rendering/htmlElementModels';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createTheme } from '@/ui/theme/tokens';
 import { render } from '../render';
@@ -82,6 +83,51 @@ describe('topic rich-text selection', () => {
     );
 
     expect(screen.getByText('555555')).toHaveStyle({ textDecorationLine: 'line-through' });
+  });
+
+  it('renders legacy font hierarchy and submits the matching trailing-break token in one row', async () => {
+    const settings = createEmptyReaderData().settings;
+    const styles = buildHtmlRenderingStyles({ settings, theme: createTheme(settings) });
+    const row = compileForumContent({
+      html: '<p><font size="6">论坛总规则</font><br><br><br></p>',
+      role: 'opening',
+      source: 'yaohuo'
+    }).rows[0];
+    if (!row || !('html' in row)) throw new Error('Expected one rich-text row.');
+    const item: TopicSelectionItem = {
+      documentId: 'opening',
+      rowKey: 'opening:legacy-font',
+      selectionToken: row.selectionToken
+    };
+    const screen = await render(
+      <TopicSelectionSurface
+        active
+        items={[item]}
+        listRef={{ current: { getAbsoluteLastScrollOffset: () => 0, scrollToOffset: jest.fn() } }}
+        sessionKey="yaohuo:5248:320:1:standard"
+      >
+        <SelectionRow item={item}>
+          <RenderHTML
+            baseStyle={styles.htmlBaseStyle}
+            classesStyles={styles.htmlClassesStyles}
+            contentWidth={320}
+            customHTMLElementModels={createHtmlCustomElementModels(settings.lineHeight)}
+            emSize={16}
+            enableUserAgentStyles
+            ignoredStyles={styles.htmlIgnoredStyles}
+            source={{ html: row.html }}
+            tagsStyles={styles.htmlTagsStyles}
+          />
+        </SelectionRow>
+      </TopicSelectionSurface>
+    );
+
+    expect(screen.getByText('论坛总规则')).toHaveStyle({ fontSize: 32, lineHeight: 48 });
+    expect(JSON.parse(row.selectionToken).owners[0]?.text).toBe('论坛总规则\n\n');
+    expect(screen.getByTestId('topic-selection-surface').props.rows[0]).toMatchObject({
+      rowKey: item.rowKey,
+      selectionToken: row.selectionToken
+    });
   });
 
   it('coordinates one opening-post selection across rich text, media, table, and code rows', async () => {

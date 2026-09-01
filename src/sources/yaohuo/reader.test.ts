@@ -17,6 +17,7 @@ import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesDocument, parseYaohuoTop
 import { yaohuoReplyListNextPageUrlFromRoot, yaohuoTopicListNextPageUrlFromRoot } from './protocol';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { parseHtml } from '@/domain/forum/html';
+import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE } from '@/domain/forum/forumContentMedia';
 import type { ReplyOrder, ReplyWindowPosition, Topic } from '@/domain/forum/models';
 
 function parseReplies(html: string, options?: Parameters<typeof parseYaohuoRepliesDocument>[1]) {
@@ -1712,6 +1713,51 @@ describe('Android direct yaohuo API', () => {
     expect(result.items[0].contentHtml).toContain('.gif');
     expect(result.items[0].contentHtml).not.toContain('顶楼');
     expect(result.items[0].contentHtml).not.toContain('replyicon');
+  });
+
+  it('preserves the authored text-image order from a Yaohuo retext reply', () => {
+    const text = '妈的，埃塞这边黑小子被中国人带坏了，天天加班，上帝也不见了，就是干，';
+    const src = 'https://pic2.ziyuan.wang/user/v2jun/2024/12/FpZEifxiFGs1BWtHjFsk5tJJNKSE_8b6f63437539d.gif';
+    const result = parseReplies(
+      `<div class="recontent"><div class="list-reply line1" data-floor="13"><span class="retext">${text}<img src="${src}" class="ubbimg" referrerpolicy="no-referrer"></span><span class="renick">妖友</span></div></div>`,
+      { page: 2, limit: 10, url: 'https://www.yaohuo.me/bbs-1577052.html' }
+    );
+
+    expect(result.items[0].contentHtml).toContain(
+      `${text}<img src="${src}" class="ubbimg" referrerpolicy="no-referrer">`
+    );
+    const plan = result.items[0].preparedContent?.contentPlan as { rows?: { html?: string }[] } | undefined;
+    const row = plan?.rows?.find((candidate) => candidate.html);
+    expect(row?.html || '').toContain(
+      `${text}<forum-inline-image src="${src}" class="ubbimg" referrerpolicy="no-referrer">${src}</forum-inline-image>`
+    );
+  });
+
+  it('marks only sanitized Yaohuo face assets for bounded inline sizing in posts and replies', () => {
+    const forged = `${FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE}="true"`;
+    const opening = parseYaohuoTopicHtml(
+      `<div class="content">[标题] 图片</div><div class="subtitle">alice</div><div class="bbscontent"><!--listS--><p><img src="/face/淡定.gif"><img src="https://cdn.example.com/photo.gif" ${forged}></p><!--listE--></div>`,
+      { id: '1' }
+    );
+    const reply = parseReplies(
+      `<div class="list-reply" data-floor="1"><span class="retext"><img src="face/狂踩.gif"><img src="https://cdn.example.com/reply.gif" ${forged}></span><span class="renick">alice</span></div>`
+    ).items[0];
+
+    for (const html of [opening.contentHtml, reply.contentHtml]) {
+      const images = parseHtml(html).querySelectorAll('img');
+      const face = images.find((image) => /\/(?:bbs\/)?face\//i.test(image.getAttribute('src') || ''));
+      const external = images.find((image) => /cdn\.example\.com/i.test(image.getAttribute('src') || ''));
+      expect(face?.getAttribute(FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE)).toBe('true');
+      expect(external).toBeTruthy();
+      expect(external?.getAttribute(FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE)).toBeUndefined();
+    }
+    for (const prepared of [opening.preparedContent, reply.preparedContent]) {
+      const plan = prepared?.contentPlan as { rows?: { html?: string }[] } | undefined;
+      const compiled = parseHtml(plan?.rows?.map((row) => row.html || '').join('') || '');
+      expect(compiled.querySelector('forum-inline-image')?.getAttribute(FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE)).toBe(
+        'true'
+      );
+    }
   });
 
   it('keeps period-only yaohuo reply times parsed outside list cards', () => {

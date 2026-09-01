@@ -1,9 +1,9 @@
 import {
   INLINE_EMOJI_MAX_SIZE,
   forumImageAttributeValue as attributeValue,
+  isBoundedInlineForumImage,
   isForumStickerImage as isForumStickerImageAttributes,
   isInlineForumImage as isInlineForumImageAttributes,
-  isV2exEmbeddedForumImage as isV2exEmbeddedImageAttributes,
   knownForumStickerSourceDimensions,
   parseForumImageDimension as parseImageDimension
 } from '@/domain/forum/forumContentMedia';
@@ -17,15 +17,7 @@ const STICKER_ROW_MAX_SIZE = 160;
 const STICKER_ROW_CONTENT_WIDTH_RATIO = 0.55;
 const STICKER_DISPLAY_MAX_SIZE = 100;
 const INLINE_ATTACHMENT_HORIZONTAL_INSET = 2;
-
-export function shouldMarkLoadedImageInline(
-  attributes: Record<string, string | undefined>,
-  width: number,
-  height: number
-) {
-  const maxDimension = Math.max(safeImageDimension(width), safeImageDimension(height));
-  return maxDimension > 0 && maxDimension <= INLINE_EMOJI_MAX_SIZE && isV2exEmbeddedImageAttributes(attributes);
-}
+const BOUNDED_INLINE_IMAGE_MAX_SIZE = 100;
 
 export function inlineForumImageDisplaySize(
   attributes: Record<string, string | undefined>,
@@ -36,10 +28,40 @@ export function inlineForumImageDisplaySize(
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
   const isSticker = isForumStickerImageAttributes(attributes);
+  const isSemanticInlineImage = isInlineForumImageAttributes(attributes);
+  const isBoundedInlineImage = isBoundedInlineForumImage(attributes);
   const isStickerRow = /^true$/i.test(attributeValue(attributes, STICKER_ROW_ATTR));
   const naturalWidth = safeImageDimension(naturalDimensions?.width || 0);
   const naturalHeight = safeImageDimension(naturalDimensions?.height || 0);
   const hasNaturalDimensions = naturalWidth > 0 && naturalHeight > 0;
+  if (!isSticker && (!isSemanticInlineImage || isBoundedInlineImage)) {
+    let displayWidth =
+      width ||
+      (height && hasNaturalDimensions ? (height * naturalWidth) / naturalHeight : 0) ||
+      naturalWidth ||
+      height ||
+      (isBoundedInlineImage ? BOUNDED_INLINE_IMAGE_MAX_SIZE : 20);
+    let displayHeight =
+      height ||
+      (width && hasNaturalDimensions ? (width * naturalHeight) / naturalWidth : 0) ||
+      naturalHeight ||
+      width ||
+      (isBoundedInlineImage ? BOUNDED_INLINE_IMAGE_MAX_SIZE : 20);
+    const contentMaxWidth = Number.isFinite(contentWidth) && contentWidth > 4 ? contentWidth - 4 : displayWidth;
+    const maxWidth = isBoundedInlineImage ? Math.min(BOUNDED_INLINE_IMAGE_MAX_SIZE, contentMaxWidth) : contentMaxWidth;
+    if (displayWidth > maxWidth) {
+      const ratio = maxWidth / displayWidth;
+      displayWidth *= ratio;
+      displayHeight *= ratio;
+    }
+    const maxDimension = Math.max(displayWidth, displayHeight);
+    if (isBoundedInlineImage && maxDimension > BOUNDED_INLINE_IMAGE_MAX_SIZE) {
+      const ratio = BOUNDED_INLINE_IMAGE_MAX_SIZE / maxDimension;
+      displayWidth *= ratio;
+      displayHeight *= ratio;
+    }
+    return { width: Math.max(1, Math.round(displayWidth)), height: Math.max(1, Math.round(displayHeight)) };
+  }
   const usesNaturalDimensions = !width && !height && hasNaturalDimensions;
   const knownDimensions =
     hasNaturalDimensions && (!width || !height)
@@ -64,7 +86,7 @@ export function inlineForumImageDisplaySize(
       : usesNaturalDimensions
         ? STICKER_DISPLAY_MAX_SIZE
         : INLINE_STICKER_MAX_SIZE
-    : isInlineForumImageAttributes(attributes)
+    : isSemanticInlineImage
       ? INLINE_EMOJI_MAX_SIZE
       : INLINE_STICKER_MAX_SIZE;
   const minSize = 12;
@@ -105,9 +127,10 @@ export function inlineForumImageDisplaySize(
 export function inlineForumImageAttachmentSize(
   attributes: Record<string, string | undefined>,
   scale = 1,
-  contentWidth = 0
+  contentWidth = 0,
+  naturalDimensions?: ImageDisplaySize
 ) {
-  const displaySize = inlineForumImageDisplaySize(attributes, scale, contentWidth);
+  const displaySize = inlineForumImageDisplaySize(attributes, scale, contentWidth, naturalDimensions);
   return {
     height: displaySize.height,
     width: displaySize.width + INLINE_ATTACHMENT_HORIZONTAL_INSET * 2

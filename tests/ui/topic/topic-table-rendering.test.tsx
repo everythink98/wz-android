@@ -4,6 +4,7 @@ import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, ToastAndroid, View, type StyleProp, type ViewStyle } from 'react-native';
 import { compileForumContent, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
+import { TopicSelectionSurface } from '@/features/topic/selection/TopicSelectionSurface';
 import {
   createTopicTableRenderers,
   TopicHorizontalScroll,
@@ -33,6 +34,7 @@ let mockPanGestures: MockPanGesture[] = [];
 let mockNativeGestures: MockPanGesture[] = [];
 let mockGestureDetectorBindings: MockGestureDetectorBinding[] = [];
 let mockAnimatedReactionRunners: (() => void)[] = [];
+const mockCancelNativeSelection = jest.fn();
 const mockAnimatedScrollTo = jest.fn();
 const mockWithDecay = jest.fn(({ clamp }: { clamp: [number, number] }) => clamp[0]);
 
@@ -41,16 +43,44 @@ beforeEach(() => {
   mockNativeGestures = [];
   mockGestureDetectorBindings = [];
   mockAnimatedReactionRunners = [];
+  mockCancelNativeSelection.mockClear();
   mockAnimatedScrollTo.mockClear();
   mockWithDecay.mockClear();
 });
 
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(() => Promise.resolve()) }));
 
+jest.mock('react-native', () => {
+  const actual = jest.requireActual<typeof import('react-native')>('react-native');
+  Object.defineProperty(actual.Platform, 'OS', { configurable: true, value: 'android' });
+  return actual;
+});
+
+jest.mock('expo-modules-core', () => {
+  const ReactModule = require('react') as typeof React;
+  const NativeView = require('react-native').View;
+  const actual = jest.requireActual<typeof import('expo-modules-core')>('expo-modules-core');
+  const NativeSelectionView = ReactModule.forwardRef(function NativeSelectionView(
+    props: Record<string, unknown> & { children?: React.ReactNode },
+    ref: React.ForwardedRef<{ cancelSelection: () => void }>
+  ) {
+    ReactModule.useImperativeHandle(ref, () => ({ cancelSelection: mockCancelNativeSelection }));
+    return ReactModule.createElement(NativeView, props, props.children);
+  });
+  return {
+    ...actual,
+    requireNativeViewManager: jest.fn(() => NativeSelectionView)
+  };
+});
+
 jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
   const native = () => {
-    const gesture: MockPanGesture = { config: {}, handlers: {} };
+    const gesture: MockPanGesture & Record<string, any> = { config: {}, handlers: {} };
+    gesture.enabled = (value: unknown) => {
+      gesture.config.enabled = value;
+      return gesture;
+    };
     mockNativeGestures.push(gesture);
     return gesture;
   };
@@ -69,7 +99,10 @@ jest.mock('react-native-gesture-handler', () => {
       };
     }
     gesture.blocksExternalGesture = (...gestures: MockPanGesture[]) => {
-      gesture.config.blocksExternalGesture = gestures;
+      gesture.config.blocksExternalGesture = [
+        ...((gesture.config.blocksExternalGesture as MockPanGesture[] | undefined) || []),
+        ...gestures
+      ];
       return gesture;
     };
     mockPanGestures.push(gesture);
@@ -142,6 +175,11 @@ jest.mock('react-native-reanimated', () => {
     withDecay: (options: { clamp: [number, number]; velocity: number }) => mockWithDecay(options)
   };
 });
+
+jest.mock('react-native-worklets', () => ({
+  ...(jest.requireActual('react-native-worklets') as Record<string, unknown>),
+  scheduleOnRN: (callback: (...args: unknown[]) => unknown, ...args: unknown[]) => callback(...args)
+}));
 
 jest.mock('react-native-render-html', () => ({
   RenderHTMLSource: () => null,
@@ -519,6 +557,59 @@ describe('native topic structured rendering', () => {
 
     await fireEvent(scroll, 'end', { velocityX: -900 });
     expect(mockWithDecay).toHaveBeenCalledWith({ clamp: [0, 256], velocity: 900 });
+  });
+
+  it('cancels native selection only after the horizontal pan claims the drag', async () => {
+    const row = compileForumContent({ html: '<pre>const value = 1;</pre>', role: 'opening', source: 'nodeseek' })
+      .rows[0]!;
+    const screen = await render(
+      <TopicSelectionSurface
+        active
+        items={[{ documentId: 'opening', rowKey: 'opening:code', selectionToken: row.selectionToken }]}
+        listRef={{ current: { getAbsoluteLastScrollOffset: () => 0, scrollToOffset: jest.fn() } }}
+        sessionKey="nodeseek:topic-1:320:1:standard"
+      >
+        <TopicHorizontalScroll
+          accessibilityLabel="代码块"
+          contentWidth={640}
+          semanticId="opening:code"
+          testID="selection-owner-code-scroll"
+          viewportWidth={320}
+        >
+          <View />
+        </TopicHorizontalScroll>
+      </TopicSelectionSurface>
+    );
+
+    const scroll = screen.getByTestId('selection-owner-code-scroll');
+    const horizontalState = { activate: jest.fn(), fail: jest.fn() };
+    mockCancelNativeSelection.mockClear();
+
+    scroll.props.onTouchesDown?.(
+      { allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 },
+      horizontalState
+    );
+    scroll.props.onTouchesMove?.(
+      { allTouches: [{ absoluteX: 105, absoluteY: 201 }], numberOfTouches: 1 },
+      horizontalState
+    );
+
+    expect(horizontalState.activate).toHaveBeenCalledTimes(1);
+    expect(mockCancelNativeSelection).toHaveBeenCalledTimes(1);
+    expect(mockPanGestures[0]?.config.blocksExternalGesture).toEqual([mockNativeGestures[0]]);
+
+    const verticalState = { activate: jest.fn(), fail: jest.fn() };
+    scroll.props.onTouchesDown?.(
+      { allTouches: [{ absoluteX: 100, absoluteY: 200 }], numberOfTouches: 1 },
+      verticalState
+    );
+    scroll.props.onTouchesMove?.(
+      { allTouches: [{ absoluteX: 101, absoluteY: 220 }], numberOfTouches: 1 },
+      verticalState
+    );
+
+    expect(verticalState.fail).toHaveBeenCalledTimes(1);
+    expect(mockCancelNativeSelection).toHaveBeenCalledTimes(1);
   });
 
   it('claims a deliberate horizontal drag before native text selection can own it', async () => {
