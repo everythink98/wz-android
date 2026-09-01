@@ -44,4 +44,16 @@ describe('react-native inline media patch', () => {
     expect(patch).toContain('containsInlineView && currentHeight >= lineHeight');
     expect(patch).toContain('val leading = lineHeight - currentHeight');
   });
+
+  it('keeps inline view attachment geometry independent of system font scale', () => {
+    const patch = readFileSync(join(process.cwd(), 'patches', 'react-native+0.81.5.patch'), 'utf8');
+
+    expect(patch).toContain('inlineViewSizeToPixels(fragment.getDouble(FR_KEY_WIDTH))');
+    expect(patch).toContain('inlineViewSizeToPixels(fragment.width)');
+    expect(patch).toContain('ceil(PixelUtil.toPixelFromDIP(size).toDouble()).toInt()');
+    expect(patch).not.toContain('+        val width = PixelUtil.toPixelFromSP');
+    expect(patch).not.toContain('+                PixelUtil.toPixelFromSP(fragment.width)');
+    expect(patch).toContain('TextLayoutManager.inlineViewSizeToPixels(155.0)).isEqualTo(155)');
+    expect(patch).toContain('TextLayoutManager.inlineViewSizeToPixels(132.1)).isEqualTo(133)');
+  });
 });

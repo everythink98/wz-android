@@ -403,3 +403,109 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
      fm.ascent -= ceil(leading / 2.0f).toInt()
      fm.descent += floor(leading / 2.0f).toInt()
  
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
+@@ -24,4 +24,5 @@ import android.text.TextUtils
+ import android.util.LayoutDirection
+ import android.view.Gravity
+ import android.view.View
++import androidx.annotation.VisibleForTesting
+ import com.facebook.common.logging.FLog
+@@ -236,10 +237,11 @@ internal object TextLayoutManager {
+       if (fragment.contains(FR_KEY_IS_ATTACHMENT) && fragment.getBoolean(FR_KEY_IS_ATTACHMENT)) {
+-        val width = PixelUtil.toPixelFromSP(fragment.getDouble(FR_KEY_WIDTH))
+-        val height = PixelUtil.toPixelFromSP(fragment.getDouble(FR_KEY_HEIGHT))
+         ops.add(
+             SetSpanOperation(
+                 sb.length - 1,
+                 sb.length,
+-                TextInlineViewPlaceholderSpan(reactTag, width.toInt(), height.toInt())))
++                TextInlineViewPlaceholderSpan(
++                    reactTag,
++                    inlineViewSizeToPixels(fragment.getDouble(FR_KEY_WIDTH)),
++                    inlineViewSizeToPixels(fragment.getDouble(FR_KEY_HEIGHT)))))
+       } else if (end >= start) {
+         val roleIsLink =
+@@ -371,9 +373,9 @@ internal object TextLayoutManager {
+       if (fragment.isAttachment) {
+         spannable.setSpan(
+             TextInlineViewPlaceholderSpan(
+                 fragment.reactTag,
+-                PixelUtil.toPixelFromSP(fragment.width).toInt(),
+-                PixelUtil.toPixelFromSP(fragment.height).toInt()),
++                inlineViewSizeToPixels(fragment.width),
++                inlineViewSizeToPixels(fragment.height)),
+             start,
+             end,
+             spanFlags)
+@@ -462,4 +464,8 @@ internal object TextLayoutManager {
+     return spannable
+   }
+ 
++  @VisibleForTesting
++  internal fun inlineViewSizeToPixels(size: Double): Int =
++      ceil(PixelUtil.toPixelFromDIP(size).toDouble()).toInt()
++
+   fun getOrCreateSpannableForText(
+diff --git a/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerInlineViewSizeTest.kt b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerInlineViewSizeTest.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerInlineViewSizeTest.kt
+@@ -0,0 +1,56 @@
++/*
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ *
++ * This source code is licensed under the MIT license found in the
++ * LICENSE file in the root directory of this source tree.
++ */
++
++@file:Suppress("DEPRECATION")
++
++package com.facebook.react.views.text
++
++import android.util.DisplayMetrics
++import com.facebook.react.uimanager.DisplayMetricsHolder
++import org.assertj.core.api.Assertions.assertThat
++import org.junit.After
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [33])
++class TextLayoutManagerInlineViewSizeTest {
++
++  @After
++  fun tearDown() {
++    DisplayMetricsHolder.setWindowDisplayMetrics(null)
++    DisplayMetricsHolder.setScreenDisplayMetrics(null)
++  }
++
++  @Test
++  fun `inline view attachment width does not shrink with small font scale`() {
++    val displayMetrics =
++        DisplayMetrics().apply {
++          density = 1f
++          scaledDensity = 0.85f
++        }
++    DisplayMetricsHolder.setWindowDisplayMetrics(displayMetrics)
++    DisplayMetricsHolder.setScreenDisplayMetrics(displayMetrics)
++
++    assertThat(TextLayoutManager.inlineViewSizeToPixels(155.0)).isEqualTo(155)
++  }
++
++  @Test
++  fun `inline view attachment width is rounded up to the pixel grid`() {
++    val displayMetrics =
++        DisplayMetrics().apply {
++          density = 1f
++          scaledDensity = 1f
++        }
++    DisplayMetricsHolder.setWindowDisplayMetrics(displayMetrics)
++    DisplayMetricsHolder.setScreenDisplayMetrics(displayMetrics)
++
++    assertThat(TextLayoutManager.inlineViewSizeToPixels(132.1)).isEqualTo(133)
++  }
++}
