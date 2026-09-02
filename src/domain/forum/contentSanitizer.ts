@@ -2,7 +2,6 @@ import Anser from 'anser';
 import type { HTMLElement } from 'node-html-parser';
 
 import {
-  absoluteUrl,
   decodeHtml,
   elementText,
   escapeHtmlAttribute,
@@ -20,38 +19,35 @@ import {
 import { isNodeSeekHost } from './sourceCatalog';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './videoEmbeds';
 import { normalizeMediaReferrerPolicy } from './mediaReferrer';
-import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE } from './forumContentMedia';
+import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE, FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE } from './forumContentMedia';
+
+function parsedAbsoluteUrl(value: unknown, baseUrl: string) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  try {
+    return new URL(text, baseUrl);
+  } catch {
+    return null;
+  }
+}
 
 function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: string) {
-  const next = absoluteUrl(value, baseUrl);
-  if (!next) {
-    return undefined;
+  const url = parsedAbsoluteUrl(value, baseUrl);
+  if (!url) return undefined;
+  const next = url.toString();
+  const protocol = url.protocol.toLowerCase();
+  if (name === 'href' && (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:')) {
+    return next;
   }
-  try {
-    const protocol = new URL(next).protocol.toLowerCase();
-    if (name === 'href' && (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:')) {
-      return next;
-    }
-    if (name === 'src' && (protocol === 'http:' || protocol === 'https:' || isAllowedDataImageUrl(next))) {
-      return next;
-    }
-  } catch {
-    return undefined;
-  }
+  if (name === 'src' && (protocol === 'http:' || protocol === 'https:' || isAllowedDataImageUrl(next))) return next;
   return undefined;
 }
 
 function sanitizedHttpMediaUrl(value: unknown, baseUrl: string) {
-  const next = absoluteUrl(value, baseUrl);
-  if (!next) {
-    return '';
-  }
-  try {
-    const protocol = new URL(next).protocol.toLowerCase();
-    return protocol === 'http:' || protocol === 'https:' ? next : '';
-  } catch {
-    return '';
-  }
+  const url = parsedAbsoluteUrl(value, baseUrl);
+  if (!url) return '';
+  const protocol = url.protocol.toLowerCase();
+  return protocol === 'http:' || protocol === 'https:' ? url.toString() : '';
 }
 
 const safeCssColorPattern =
@@ -367,7 +363,9 @@ function sanitizeIframes(root: HTMLElement, baseUrl: string) {
 
 function sanitizeNsVideoImages(root: HTMLElement, baseUrl: string) {
   root.querySelectorAll('img').forEach((node) => {
-    const embedUrl = bilibiliEmbedUrlFromUrl(node.getAttribute('src'), baseUrl);
+    const src = node.getAttribute('src');
+    if (!/bilibili\.com/i.test(src || '')) return;
+    const embedUrl = bilibiliEmbedUrlFromUrl(src, baseUrl);
     if (!embedUrl) {
       return;
     }
@@ -376,41 +374,23 @@ function sanitizeNsVideoImages(root: HTMLElement, baseUrl: string) {
 }
 
 function nodeSeekStickerPngUrl(value: unknown, baseUrl: string) {
-  const source = absoluteUrl(value, baseUrl);
-  if (!source) {
+  const url = parsedAbsoluteUrl(value, baseUrl);
+  if (!url || !isNodeSeekHost(url.hostname) || !/^\/static\/image\/sticker\//i.test(url.pathname)) {
     return '';
   }
-  try {
-    const url = new URL(source);
-    if (!isNodeSeekHost(url.hostname) || !/^\/static\/image\/sticker\//i.test(url.pathname)) {
-      return '';
-    }
-    if (!/\.(?:webm|mov|mp4)$/i.test(url.pathname)) {
-      return '';
-    }
-    url.pathname = url.pathname.replace(/\.(?:webm|mov|mp4)$/i, '.png');
-    url.search = '';
-    url.hash = '';
-    return url.toString();
-  } catch {
-    return '';
-  }
+  if (!/\.(?:webm|mov|mp4)$/i.test(url.pathname)) return '';
+  url.pathname = url.pathname.replace(/\.(?:webm|mov|mp4)$/i, '.png');
+  url.search = '';
+  url.hash = '';
+  return url.toString();
 }
 
 function nodeSeekStickerVideoUrl(value: unknown, baseUrl: string) {
-  const source = absoluteUrl(value, baseUrl);
-  if (!source) {
+  const url = parsedAbsoluteUrl(value, baseUrl);
+  if (!url || !isNodeSeekHost(url.hostname) || !/^\/static\/image\/sticker\//i.test(url.pathname)) {
     return '';
   }
-  try {
-    const url = new URL(source);
-    if (!isNodeSeekHost(url.hostname) || !/^\/static\/image\/sticker\//i.test(url.pathname)) {
-      return '';
-    }
-    return /\.(?:webm|mov|mp4)$/i.test(url.pathname) ? url.toString() : '';
-  } catch {
-    return '';
-  }
+  return /\.(?:webm|mov|mp4)$/i.test(url.pathname) ? url.toString() : '';
 }
 
 function safeStickerDimension(value: unknown, fallback = '100') {
@@ -806,27 +786,34 @@ export function sanitizeContentHtmlWithRoot(
   baseUrl: string,
   transformRoot?: (root: HTMLElement) => void
 ) {
-  const root = parseForumContentHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
+  const normalizedHtml = sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html));
+  const root = parseForumContentHtml(normalizedHtml);
   removeHiddenContent(root);
   transformRoot?.(root);
+  const markup = root.toString().toLowerCase();
   for (const selector of ['script', 'style', 'noscript']) {
-    root.querySelectorAll(selector).forEach((node) => node.remove());
+    if (markup.includes(`<${selector}`)) root.querySelectorAll(selector).forEach((node) => node.remove());
   }
-  sanitizeNodeSeekMagicTabs(root);
-  sanitizeNodeSeekStickerVideos(root, baseUrl);
-  sanitizePlayableAudio(root, baseUrl);
-  sanitizePlayableVideos(root, baseUrl);
-  sanitizeIframes(root, baseUrl);
-  sanitizeNsVideoImages(root, baseUrl);
-  sanitizeDiscourseOneboxes(root, baseUrl);
-  removeForumImageMetadata(root);
+  if (markup.includes('nsk-magic-tabs')) sanitizeNodeSeekMagicTabs(root);
+  if (markup.includes('<video')) {
+    sanitizeNodeSeekStickerVideos(root, baseUrl);
+    sanitizePlayableVideos(root, baseUrl);
+  }
+  if (markup.includes('<audio')) sanitizePlayableAudio(root, baseUrl);
+  if (markup.includes('<iframe')) sanitizeIframes(root, baseUrl);
+  if (markup.includes('bilibili.com')) sanitizeNsVideoImages(root, baseUrl);
+  if (markup.includes('<aside')) sanitizeDiscourseOneboxes(root, baseUrl);
+  if (markup.includes('<div')) removeForumImageMetadata(root);
   root.querySelectorAll('*').forEach((node) => {
     const tagName = safeTagName(node);
-    const attrs = { ...node.attributes };
-    for (const [name, rawValue] of Object.entries(attrs)) {
+    for (const [name, rawValue] of Object.entries(node.attributes)) {
       const lower = name.toLowerCase();
       const value = String(rawValue || '');
-      if (lower === FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE) {
+      if (
+        lower === FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE ||
+        lower === FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE ||
+        lower === 'data-forum-inline-sized'
+      ) {
         node.removeAttribute(name);
         continue;
       }
@@ -881,7 +868,8 @@ export function sanitizeContentHtmlWithRoot(
       }
     }
   });
-  return { contentHtml: root.toString(), root };
+  const contentHtml = root.toString();
+  return { contentHtml, root };
 }
 
 export function sanitizeContentHtml(html: unknown, baseUrl: string, transformRoot?: (root: HTMLElement) => void) {

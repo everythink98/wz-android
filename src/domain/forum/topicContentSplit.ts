@@ -41,6 +41,7 @@ import {
 import { normalizeMediaReferrerPolicy, type MediaReferrerPolicy } from './mediaReferrer';
 import {
   FORUM_CONTENT_BLOCK_TAGS,
+  FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE,
   FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG,
   INLINE_FORUM_IMAGE_TAG,
@@ -697,6 +698,9 @@ function analyzedForumSelectionUnits(node: PlanningNode, childUnits: readonly Fo
   if (FORUM_SELECTION_MEDIA_TAGS.has(tagName)) {
     const label = nodeAttribute(node, 'alt') || nodeAttribute(node, 'title');
     const media = { atom: { kind: 'media' as const, text: label }, kind: 'atom' as const };
+    if (tagName === 'img' && nodeAttribute(node, FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE) === 'standalone') {
+      return [media, { kind: 'boundary' }] as const;
+    }
     return tagName === 'img' ||
       tagName === FORUM_STICKER_TAG ||
       tagName === FORUM_VIDEO_STICKER_TAG ||

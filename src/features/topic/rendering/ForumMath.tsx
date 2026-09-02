@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Text, View, type ViewStyle } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { renderMathJaxSvg, type MathJaxSvgResult } from './mathJaxSvg';
 
 export type ForumMathProps = {
+  boundarySpacing?: Pick<ViewStyle, 'marginBottom' | 'marginTop'>;
   color: string;
   contentWidth: number;
   display: 'block' | 'inline';
@@ -11,7 +12,7 @@ export type ForumMathProps = {
   source: string;
 };
 
-export function ForumMath({ color, contentWidth, display, fontScale, source }: ForumMathProps) {
+export function ForumMath({ boundarySpacing, color, contentWidth, display, fontScale, source }: ForumMathProps) {
   const key = `${display}\0${source}`;
   const [rendered, setRendered] = useState<{ key: string; svg: MathJaxSvgResult } | null>(null);
   useEffect(() => {
@@ -33,11 +34,14 @@ export function ForumMath({ color, contentWidth, display, fontScale, source }: F
       <Text
         accessibilityLabel={`公式：${source}`}
         selectable={false}
-        style={{
-          color,
-          fontSize,
-          ...(display === 'block' ? { marginVertical: 8, textAlign: 'center' as const } : {})
-        }}
+        style={[
+          {
+            color,
+            fontSize,
+            ...(display === 'block' ? { marginVertical: 8, textAlign: 'center' as const } : {})
+          },
+          display === 'block' ? boundarySpacing : undefined
+        ]}
       >
         {source}
       </Text>
@@ -69,7 +73,7 @@ export function ForumMath({ color, contentWidth, display, fontScale, source }: F
     />
   );
   return display === 'block' ? (
-    <View style={{ alignItems: 'center', alignSelf: 'stretch', marginVertical: 8 }}>{formula}</View>
+    <View style={[{ alignItems: 'center', alignSelf: 'stretch', marginVertical: 8 }, boundarySpacing]}>{formula}</View>
   ) : (
     formula
   );

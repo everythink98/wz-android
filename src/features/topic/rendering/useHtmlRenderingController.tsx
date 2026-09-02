@@ -181,10 +181,12 @@ export function useHtmlRenderingController({
       );
     };
     const MathBlockRenderer: CustomBlockRenderer = (props) => {
+      const boundarySpacing = useContentBoundarySpacing(props.tnode);
       const contentWidth = useForumContentWidth();
       const source = forumMathSource(props.tnode);
       return source ? (
         <ForumMath
+          boundarySpacing={boundarySpacing}
           color={theme.ink}
           contentWidth={contentWidth}
           display="block"
@@ -222,7 +224,6 @@ export function useHtmlRenderingController({
         htmlBaseStyle,
         htmlRendererStyles,
         mediaContext,
-        mediaSessionIdentity,
         nodeSeekMediaUserAgent,
         onOpenImagePreview: openImagePreview,
         settings,

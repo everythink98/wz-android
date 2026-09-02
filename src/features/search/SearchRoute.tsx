@@ -6,7 +6,7 @@ import { isDiscourseSource, type SessionSource } from '@/domain/forum/sourceCata
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { ReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -21,7 +21,7 @@ export type SearchRouteRuntimeValue = {
   account: {
     linuxDoVerificationVisible: boolean;
     readGateway: ReadGateway;
-    reconcileAccountStatus: (source: SessionSource) => Promise<unknown>;
+    reconcileAccountStatus: (source: SessionSource) => Promise<AccountReconcileResult>;
     requestNodeSeekVerification: (message: string, recovery?: LinuxDoReadRecovery) => void;
     sessionEpochs: ForumSessionEpochs;
     sessionViewModels: SiteSessionViewModels;
@@ -65,12 +65,6 @@ export function SearchRoute() {
     () => projectContentSourcePreferences(runtime.readerData.settings.contentSources).enabledSources,
     [runtime.readerData.settings.contentSources]
   );
-  const retryIdentityStatus = useCallback(
-    (source: SessionSource) => {
-      void runtime.account.reconcileAccountStatus(source);
-    },
-    [runtime.account]
-  );
   const openExternalSearch = useCallback(
     async (url: string) => {
       try {
@@ -93,7 +87,7 @@ export function SearchRoute() {
     notify: runtime.notify,
     onOpenExternalSearch: openExternalSearch,
     onNodeSeekSearchVerificationRequired: runtime.account.requestNodeSeekVerification,
-    onRetryIdentityStatus: retryIdentityStatus,
+    reconcileIdentityStatus: runtime.account.reconcileAccountStatus,
     sessionViewModels: runtime.account.sessionViewModels,
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
     showNodeSeekVerification: (message) =>

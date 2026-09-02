@@ -18,6 +18,7 @@ export const INLINE_FORUM_IMAGE_TAG = 'forum-inline-image';
 export const DISPLAY_CANDIDATE_KIND_ATTR = 'data-forum-display-candidate-kind';
 export const ORIGINAL_IMAGE_SOURCE_ATTR = 'data-forum-original-src';
 export const FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE = 'data-forum-bounded-inline-image';
+export const FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE = 'data-forum-flow-image-context';
 export const INLINE_EMOJI_MAX_SIZE = 24;
 export const FORUM_CONTENT_BLOCK_TAGS = new Set([
   'address',
@@ -84,6 +85,7 @@ export type ParsedForumImageNode = {
 type ForumContentMediaRoot = ReturnType<typeof parseHtml>;
 
 const STICKER_ROW_ATTR = 'data-forum-sticker-row';
+const LEGACY_INLINE_SIZED_IMAGE_ATTRIBUTE = 'data-forum-inline-sized';
 const INLINE_STICKER_MAX_SIZE = 64;
 const FORUM_STICKER_MEDIA_PATTERN = new RegExp(`<${FORUM_STICKER_TAG}\\b|<${FORUM_VIDEO_STICKER_TAG}\\b`, 'i');
 const FORUM_VIDEO_STICKER_ELEMENT_PATTERN = new RegExp(
@@ -188,55 +190,210 @@ function createForumImageNodeAttributeResolver(): ForumImageNodeAttributeResolve
   };
 }
 
-function nearestForumImageAncestor(node: ParsedForumImageNode, tagName: string) {
-  let current = node.parentNode || node.parent;
-  while (current && typeof current === 'object') {
-    const element = current as ParsedForumImageNode;
-    if (forumImageTagName(element) === tagName) return element;
-    current = element.parentNode || element.parent;
-  }
-  return null;
+type ForumContentMediaIndex = {
+  readonly divsByAside: Map<ParsedForumImageNode, ParsedForumImageNode[]>;
+  readonly explicitImages: Set<ParsedForumImageNode>;
+  readonly flowContainerByImage: Map<ParsedForumImageNode, ParsedForumImageNode>;
+  readonly images: ParsedForumImageNode[];
+  readonly inlineImages: Set<ParsedForumImageNode>;
+  readonly lightboxHrefByImage: Map<ParsedForumImageNode, string>;
+  readonly quoteAsides: ParsedForumImageNode[];
+  readonly stickerParagraphs: Set<ParsedForumImageNode>;
+};
+
+function collectForumContentMediaIndex(
+  root: ParsedForumImageNode,
+  resolveImageUrl: ForumImageUrlResolver,
+  resolveNodeAttributes: ForumImageNodeAttributeResolver
+): ForumContentMediaIndex {
+  const index: ForumContentMediaIndex = {
+    divsByAside: new Map(),
+    explicitImages: new Set(),
+    flowContainerByImage: new Map(),
+    images: [],
+    inlineImages: new Set(),
+    lightboxHrefByImage: new Map(),
+    quoteAsides: [],
+    stickerParagraphs: new Set()
+  };
+  const visit = (
+    node: unknown,
+    context: {
+      aside: ParsedForumImageNode | null;
+      explicit: boolean;
+      flowContainer: ParsedForumImageNode;
+      lightboxHref: string;
+      paragraph: ParsedForumImageNode | null;
+    }
+  ) => {
+    if (!node || typeof node !== 'object') return;
+    const element = node as ParsedForumImageNode;
+    const tagName = forumImageTagName(element);
+    const className = tagName
+      ? String(element.classNames === undefined ? resolveNodeAttributes(element).class || '' : element.classNames || '')
+      : '';
+    const lightbox = tagName === 'a' && /(^|\s)lightbox(\s|$)/i.test(className);
+    const lightboxWrapper = /(^|\s)lightbox-wrapper(\s|$)/i.test(className);
+    const nextAside = tagName === 'aside' ? element : context.aside;
+    const nextFlowContainer =
+      FORUM_CONTENT_BLOCK_TAGS.has(tagName) || ['body', 'td', 'th'].includes(tagName) ? element : context.flowContainer;
+    const nextParagraph = tagName === 'p' ? element : context.paragraph;
+    const nextLightboxHref = lightbox
+      ? forumImageAttributeValue(resolveNodeAttributes(element), 'href')
+      : lightboxWrapper
+        ? ''
+        : context.lightboxHref;
+
+    if (tagName === 'aside') index.quoteAsides.push(element);
+    if (tagName === 'div' && context.aside) {
+      const entries = index.divsByAside.get(context.aside);
+      if (entries) entries.push(element);
+      else index.divsByAside.set(context.aside, [element]);
+    }
+    if (tagName === 'img') {
+      const attributes = resolveNodeAttributes(element);
+      if (LEGACY_INLINE_SIZED_IMAGE_ATTRIBUTE in attributes) {
+        element.removeAttribute?.(LEGACY_INLINE_SIZED_IMAGE_ATTRIBUTE);
+        delete attributes[LEGACY_INLINE_SIZED_IMAGE_ATTRIBUTE];
+      }
+      if (FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE in attributes) {
+        element.removeAttribute?.(FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE);
+        delete attributes[FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE];
+      }
+      index.images.push(element);
+      if (isInlineForumImage(attributes, resolveImageUrl)) index.inlineImages.add(element);
+      index.flowContainerByImage.set(element, context.flowContainer);
+      index.lightboxHrefByImage.set(element, context.lightboxHref);
+      if (context.explicit) index.explicitImages.add(element);
+      if (context.paragraph && isForumStickerImage(attributes)) index.stickerParagraphs.add(context.paragraph);
+    }
+    if (context.paragraph && (tagName === FORUM_STICKER_TAG || tagName === FORUM_VIDEO_STICKER_TAG)) {
+      index.stickerParagraphs.add(context.paragraph);
+    }
+    const nextContext = {
+      aside: nextAside,
+      explicit: context.explicit || tagName === 'figure' || lightbox || lightboxWrapper,
+      flowContainer: nextFlowContainer,
+      lightboxHref: nextLightboxHref,
+      paragraph: nextParagraph
+    };
+    (element.childNodes || []).forEach((child) => visit(child, nextContext));
+  };
+  visit(root, {
+    aside: null,
+    explicit: false,
+    flowContainer: root,
+    lightboxHref: '',
+    paragraph: null
+  });
+  return index;
 }
 
-function appendIndexedNode(
-  index: Map<ParsedForumImageNode, ParsedForumImageNode[]>,
-  owner: ParsedForumImageNode | null,
-  node: ParsedForumImageNode
+function authoredImageLines(container: ParsedForumImageNode) {
+  const lines: { hasOtherContent: boolean; images: ParsedForumImageNode[] }[] = [
+    { hasOtherContent: false, images: [] }
+  ];
+  const current = () => lines[lines.length - 1]!;
+  const breakLine = () => {
+    if (current().hasOtherContent || current().images.length) lines.push({ hasOtherContent: false, images: [] });
+  };
+  const visit = (node: unknown, root = false) => {
+    if (!node || typeof node !== 'object') return;
+    const element = node as ParsedForumImageNode & { rawText?: unknown; text?: unknown };
+    const tagName = forumImageTagName(element);
+    if (tagName === 'br') {
+      breakLine();
+      return;
+    }
+    if (tagName === 'img') {
+      current().images.push(element);
+      return;
+    }
+    if (tagName.startsWith('forum-') || ['audio', 'canvas', 'iframe', 'svg', 'video'].includes(tagName)) {
+      current().hasOtherContent = true;
+      return;
+    }
+    if (!root && tagName && (FORUM_CONTENT_BLOCK_TAGS.has(tagName) || ['td', 'th'].includes(tagName))) {
+      breakLine();
+      (element.childNodes || []).forEach((child) => visit(child));
+      breakLine();
+      return;
+    }
+    if (!tagName) {
+      if (element.childNodes?.length) {
+        element.childNodes.forEach((child) => visit(child));
+        return;
+      }
+      const text = String(element.rawText ?? element.text ?? '')
+        .replace(/\u00a0/g, ' ')
+        .trim();
+      if (text) current().hasOtherContent = true;
+      return;
+    }
+    (element.childNodes || []).forEach((child) => visit(child));
+  };
+  visit(container, true);
+  return lines;
+}
+
+function markStandaloneForumFlowImages(
+  images: readonly ParsedForumImageNode[],
+  flowContainerByImage: ReadonlyMap<ParsedForumImageNode, ParsedForumImageNode>,
+  explicitImages: ReadonlySet<ParsedForumImageNode>,
+  inlineImages: ReadonlySet<ParsedForumImageNode>,
+  resolveNodeAttributes: ForumImageNodeAttributeResolver
 ) {
-  if (!owner) return;
-  const entries = index.get(owner);
-  if (entries) entries.push(node);
-  else index.set(owner, [node]);
+  const imagesByContainer = new Map<ParsedForumImageNode, Set<ParsedForumImageNode>>();
+  images.forEach((image) => {
+    if (explicitImages.has(image) || inlineImages.has(image)) return;
+    const container = flowContainerByImage.get(image);
+    if (!container) return;
+    const entries = imagesByContainer.get(container);
+    if (entries) entries.add(image);
+    else imagesByContainer.set(container, new Set([image]));
+  });
+  imagesByContainer.forEach((candidateImages, container) => {
+    authoredImageLines(container).forEach((line) => {
+      if (line.hasOtherContent || line.images.length !== 1) return;
+      const image = line.images[0]!;
+      if (!candidateImages.has(image)) return;
+      const attributes = resolveNodeAttributes(image);
+      image.setAttribute?.(FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE, 'standalone');
+      attributes[FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE] = 'standalone';
+    });
+  });
 }
 
 export function normalizeForumContentMediaNodes(root: ForumContentMediaRoot) {
   const resolveImageUrl = createForumImageUrlResolver();
   const resolveNodeAttributes = createForumImageNodeAttributeResolver();
-  const images: ParsedForumImageNode[] = [];
-  const stickerParagraphs = new Set<ParsedForumImageNode>();
-  const quoteAsides: ParsedForumImageNode[] = [];
-  const divsByAside = new Map<ParsedForumImageNode, ParsedForumImageNode[]>();
-  root.querySelectorAll('*').forEach((node) => {
-    const parsedNode = node as ParsedForumImageNode;
-    const tagName = forumImageTagName(parsedNode);
-    if (tagName === 'img') {
-      images.push(parsedNode);
-      const paragraph = nearestForumImageAncestor(parsedNode, 'p');
-      if (paragraph && isForumStickerImage(resolveNodeAttributes(parsedNode))) stickerParagraphs.add(paragraph);
-    }
-    if (tagName === FORUM_STICKER_TAG || tagName === FORUM_VIDEO_STICKER_TAG) {
-      const paragraph = nearestForumImageAncestor(parsedNode, 'p');
-      if (paragraph) stickerParagraphs.add(paragraph);
-    }
-    if (tagName === 'aside') quoteAsides.push(parsedNode);
-    if (tagName === 'div') {
-      appendIndexedNode(divsByAside, nearestForumImageAncestor(parsedNode, 'aside'), parsedNode);
-    }
-  });
-  const previewImages = upgradeBlockImageSources(images, resolveImageUrl, resolveNodeAttributes);
-  upgradeForumStickerParagraphs([...stickerParagraphs], resolveImageUrl);
-  flowQuoteTitleAvatars(quoteAsides, divsByAside, resolveNodeAttributes);
-  flowForumImages(root, resolveNodeAttributes);
+  const mediaIndex = collectForumContentMediaIndex(
+    root as ParsedForumImageNode,
+    resolveImageUrl,
+    resolveNodeAttributes
+  );
+  markStandaloneForumFlowImages(
+    mediaIndex.images,
+    mediaIndex.flowContainerByImage,
+    mediaIndex.explicitImages,
+    mediaIndex.inlineImages,
+    resolveNodeAttributes
+  );
+  const previewImages = upgradeBlockImageSources(
+    mediaIndex.images,
+    mediaIndex.inlineImages,
+    mediaIndex.lightboxHrefByImage,
+    resolveImageUrl,
+    resolveNodeAttributes
+  );
+  upgradeForumStickerParagraphs([...mediaIndex.stickerParagraphs], resolveImageUrl);
+  flowQuoteTitleAvatars(
+    mediaIndex.quoteAsides,
+    mediaIndex.divsByAside,
+    mediaIndex.explicitImages,
+    resolveNodeAttributes
+  );
+  flowForumImages(mediaIndex.images, mediaIndex.explicitImages, resolveNodeAttributes);
   return { previewImages };
 }
 
@@ -325,7 +482,6 @@ export function isInlineForumImage(
   const classMarksEmoji = /(^|\s)(emoji|emoticon|smiley|twemoji)(\s|$)/i.test(className);
   const classMarksSticker = /(^|\s)sticker(\s|$)/i.test(className);
   const classMarksAvatar = /(^|\s)(avatar|user-avatar)(\s|$)/i.test(className);
-  const runtimeMarksInlineSized = /^true$/i.test(forumImageAttributeValue(attributes, 'data-forum-inline-sized'));
   const urlMarksEmoji = resolveImageUrl(src).inline;
   const urlMarksAvatar = /(^|\/)user_avatar\//i.test(src);
   const titleMarksEmoji = isForumEmojiLabel(title);
@@ -336,7 +492,6 @@ export function isInlineForumImage(
     classMarksEmoji || classMarksSticker || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
   return (
     isBoundedInlineImage ||
-    runtimeMarksInlineSized ||
     labelMarksSticker ||
     (isV2exEmbeddedForumImage(attributes) && hasTinyExplicitSize) ||
     (hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji)) ||
@@ -359,15 +514,18 @@ export function isForumAvatarImage(attributes: Record<string, string | undefined
 
 function upgradeBlockImageSources(
   images: readonly ParsedForumImageNode[],
+  inlineImages: ReadonlySet<ParsedForumImageNode>,
+  lightboxHrefByImage: ReadonlyMap<ParsedForumImageNode, string>,
   resolveImageUrl: ForumImageUrlResolver,
   resolveNodeAttributes: ForumImageNodeAttributeResolver = forumImageNodeAttributes
 ) {
   const descriptors: ForumImagePreviewDescriptor[] = [];
   images.forEach((image) => {
     const attributes = resolveNodeAttributes(image);
-    if (isInlineForumImage(attributes, resolveImageUrl)) return;
+    if (inlineImages.has(image)) return;
     const displaySource = fallbackForumBodyImageSource(attributes, resolveImageUrl);
-    const originalUri = originalForumImageSource(image, attributes, resolveImageUrl, resolveNodeAttributes);
+    const lightboxHref = lightboxHrefByImage.get(image) || '';
+    const originalUri = originalForumImageSource(attributes, lightboxHref, resolveImageUrl);
     if (originalUri && originalUri !== displaySource?.uri) {
       image.setAttribute?.(ORIGINAL_IMAGE_SOURCE_ATTR, originalUri);
       attributes[ORIGINAL_IMAGE_SOURCE_ATTR] = originalUri;
@@ -380,7 +538,7 @@ function upgradeBlockImageSources(
     }
     const descriptor = forumImagePreviewDescriptorFromAttributes(
       attributes,
-      lightboxHrefForForumImage(image, resolveNodeAttributes),
+      lightboxHref,
       resolveImageUrl,
       displaySource
     );
@@ -450,12 +608,10 @@ function fallbackForumBodyImageSource(
 }
 
 function originalForumImageSource(
-  image: ParsedForumImageNode,
-  attributes: Record<string, string | undefined> = forumImageNodeAttributes(image),
-  resolveImageUrl: ForumImageUrlResolver = analyzeForumImageUrl,
-  resolveNodeAttributes: ForumImageNodeAttributeResolver = forumImageNodeAttributes
+  attributes: Record<string, string | undefined>,
+  linkedUrl: string,
+  resolveImageUrl: ForumImageUrlResolver = analyzeForumImageUrl
 ) {
-  const linkedUrl = lightboxHrefForForumImage(image, resolveNodeAttributes);
   return firstAllowedForumImageSource(
     [
       linkedUrl,
@@ -522,30 +678,6 @@ function normalizeForumImageUrl(value: string) {
   return clean.startsWith('//') ? `https:${clean}` : clean;
 }
 
-function lightboxHrefForForumImage(
-  image: ParsedForumImageNode,
-  resolveNodeAttributes: ForumImageNodeAttributeResolver = forumImageNodeAttributes
-) {
-  let current = image.parentNode || image.parent;
-  while (current && typeof current === 'object') {
-    const element = current as ParsedForumImageNode;
-    const tagName = forumImageTagName(element);
-    const attributes = resolveNodeAttributes(element);
-    const className = String(element.classNames || attributes.class || '');
-    if (tagName === 'a' && /(^|\s)lightbox(\s|$)/i.test(className)) {
-      return forumImageAttributeValue(attributes, 'href');
-    }
-    if (/(^|\s)lightbox-wrapper(\s|$)/i.test(className)) return '';
-    current = element.parentNode || element.parent;
-  }
-  return '';
-}
-
-function paragraphHasTextOutsideImages(html: string) {
-  const withoutImages = escapeQuotedHtmlTagDelimiters(html).replace(/<img\b[^>]*>/gi, ' ');
-  return textContentFromHtml(withoutImages).length > 0;
-}
-
 function quoteTitleTextNode(
   title: ParsedForumImageNode,
   resolveNodeAttributes: ForumImageNodeAttributeResolver = forumImageNodeAttributes
@@ -607,6 +739,7 @@ function addQuoteTitleUsername(
 function flowQuoteTitleAvatars(
   asides: readonly ParsedForumImageNode[],
   divsByAside: ReadonlyMap<ParsedForumImageNode, readonly ParsedForumImageNode[]>,
+  explicitImages: ReadonlySet<ParsedForumImageNode>,
   resolveNodeAttributes: ForumImageNodeAttributeResolver = forumImageNodeAttributes
 ) {
   asides.forEach((aside) => {
@@ -617,50 +750,27 @@ function flowQuoteTitleAvatars(
       if (/(^|\s)quote-title__text-content(\s|$)/i.test(containerClass)) container.tagName = 'span';
       if (/(^|\s)title(\s|$)/i.test(containerClass)) {
         addQuoteTitleUsername(aside, container, resolveNodeAttributes);
-        flowImagesInMixedContainer(
-          container,
-          true,
-          isForumAvatarImage,
-          undefined,
-          isInlineForumImage,
-          resolveNodeAttributes
-        );
+        (container.childNodes || []).forEach((child) => {
+          if (forumImageTagName(child) !== 'img') return;
+          const image = child as ParsedForumImageNode;
+          const attributes = resolveNodeAttributes(image);
+          if (!explicitImages.has(image) && isForumAvatarImage(attributes)) flowForumImageNode(image, attributes);
+        });
       }
     });
   });
 }
 
-function flowImagesInMixedContainer(
-  container: ParsedForumImageNode,
-  directOnly = false,
-  shouldFlowImage: (attributes: Record<string, string | undefined>) => boolean = isInlineForumImage,
-  indexedImages?: readonly ParsedForumImageNode[],
-  isInlineImage: (attributes: Record<string, string | undefined>) => boolean = isInlineForumImage,
-  resolveNodeAttributes: ForumImageNodeAttributeResolver = forumImageNodeAttributes
+function flowForumImages(
+  images: readonly ParsedForumImageNode[],
+  explicitImages: ReadonlySet<ParsedForumImageNode>,
+  resolveNodeAttributes: ForumImageNodeAttributeResolver
 ) {
-  const images =
-    indexedImages || (directOnly ? directChildImages(container) : container.querySelectorAll?.('img') || []);
-  const flowableImages = images
-    .map((image) => ({ attributes: resolveNodeAttributes(image), image }))
-    .filter(({ attributes }) => shouldFlowImage(attributes));
-  if (!flowableImages.length) return;
-  if (
-    !paragraphHasTextOutsideImages(container.innerHTML || '') &&
-    !flowableImages.every(({ attributes }) => isInlineImage(attributes))
-  ) {
-    return;
-  }
-  flowableImages.forEach(({ attributes, image }) => {
-    if (isInsideExplicitImageContainer(image, resolveNodeAttributes)) return;
+  images.forEach((image) => {
+    if (explicitImages.has(image)) return;
+    const attributes = resolveNodeAttributes(image);
+    if (forumImageAttributeValue(attributes, FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE) === 'standalone') return;
     flowForumImageNode(image, attributes);
-  });
-}
-
-function flowForumImages(root: ForumContentMediaRoot, resolveNodeAttributes: ForumImageNodeAttributeResolver) {
-  (root.querySelectorAll?.('img') || []).forEach((image) => {
-    const parsedImage = image as ParsedForumImageNode;
-    if (isInsideExplicitImageContainer(parsedImage, resolveNodeAttributes)) return;
-    flowForumImageNode(parsedImage, resolveNodeAttributes(parsedImage));
   });
 }
 
@@ -910,33 +1020,6 @@ function stickerRowAttributesText(value: string) {
     .trim();
   if (new RegExp(`(^|\\s)${STICKER_ROW_ATTR}\\s*=`, 'i').test(clean)) return clean;
   return [clean, `${STICKER_ROW_ATTR}="true"`].filter(Boolean).join(' ');
-}
-
-function directChildImages(container: { childNodes?: unknown[] }) {
-  return (container.childNodes || []).filter(
-    (child): child is ParsedForumImageNode => forumImageTagName(child) === 'img'
-  );
-}
-
-function isInsideExplicitImageContainer(
-  image: { parentNode?: unknown; parent?: unknown },
-  resolveNodeAttributes: ForumImageNodeAttributeResolver = forumImageNodeAttributes
-) {
-  let current = image.parentNode || image.parent;
-  while (current && typeof current === 'object') {
-    const element = current as ParsedForumImageNode;
-    const tagName = forumImageTagName(element);
-    const className = String(element.classNames || resolveNodeAttributes(element).class || '');
-    if (
-      tagName === 'figure' ||
-      (tagName === 'a' && /(^|\s)lightbox(\s|$)/i.test(className)) ||
-      /(^|\s)lightbox-wrapper(\s|$)/i.test(className)
-    ) {
-      return true;
-    }
-    current = element.parentNode || element.parent;
-  }
-  return false;
 }
 
 export function knownForumStickerSourceDimensions(

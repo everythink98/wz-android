@@ -6,7 +6,13 @@ import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRe
 import { ForumContentAudio } from '@/ui/content/ForumContentAudio';
 import { ForumContentVideo } from '@/ui/content/ForumContentVideo';
 import { ForumContentWidthBoundary } from '@/ui/content/ForumContentWidth';
-import { FORUM_AUDIO_TAG, FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '@/domain/forum/html';
+import {
+  FORUM_AUDIO_TAG,
+  FORUM_LINK_CARD_TAG,
+  FORUM_VIDEO_STICKER_TAG,
+  FORUM_VIDEO_TAG,
+  parseForumContentHtml
+} from '@/domain/forum/html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
@@ -14,7 +20,13 @@ import type { MediaReferrerContext, MediaReferrerPolicy, TopicDetail } from '@/d
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { cachedImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
-import { FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
+import {
+  FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE,
+  FORUM_STICKER_TAG,
+  INLINE_FORUM_IMAGE_TAG
+} from '@/domain/forum/forumContentMedia';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
+import { compileForumContent } from '@/domain/forum/topicContentSplit';
 import {
   markOriginalImageDisplayed,
   OriginalImageUpgradeBoundary,
@@ -2074,7 +2086,7 @@ describe('topic block image loading', () => {
     );
 
     expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
-      height: 105,
+      height: 79,
       width: 140
     });
     await loadAndDisplayImage(latestImageProps(tableImageUrl), { height: 1080, width: 1920 });
@@ -2272,8 +2284,8 @@ describe('topic block image loading', () => {
       />
     );
     expect(StyleSheet.flatten(screen.getByTestId('topic-image-frame').props.style)).toMatchObject({
-      height: 240,
-      width: 320
+      height: 100,
+      width: 200
     });
 
     await act(() =>
@@ -3767,6 +3779,34 @@ describe('topic block image loading', () => {
     expect(view.getByTestId('topic-inline-image')).toBeTruthy();
   });
 
+  it('keeps standalone spacing across a physical continuation while the loader is waiting', async () => {
+    const attributes = {
+      [FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE]: 'standalone',
+      alt: '等待普通图',
+      src: 'https://img.example.com/waiting-flow.png'
+    };
+    const image = <TopicImageHarness attributes={attributes} continuation="middle" />;
+    const tree = (paused: boolean) => (
+      <TopicBodyMediaCoordinatorProvider active paused={paused} viewportRowKeys={['waiting-flow-row']}>
+        <TopicBodyMediaRowBoundary rowKey="waiting-flow-row">{image}</TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const view = await render(tree(true));
+
+    expect(mockExpoImageProps).not.toHaveBeenCalled();
+    expect(view.queryByTestId('topic-inline-image')).toBeNull();
+    expect(StyleSheet.flatten(view.getByTestId('topic-image-idle').props.style)).toMatchObject({
+      borderRadius: 10,
+      height: 240,
+      marginBottom: 8,
+      marginTop: 6,
+      width: 320
+    });
+
+    await view.rerender(tree(false));
+    expect(latestImageProps(attributes.src)).toMatchObject({ allowDownscaling: true, cachePolicy: 'disk' });
+  });
+
   it('renders an ordinary flow GIF at its decoded size and keeps preview behavior', async () => {
     const src = 'https://pic2.ziyuan.wang/user/v2jun/2024/12/FpZEifxiFGs1BWtHjFsk5tJJNKSE_8b6f63437539d.gif';
     const onOpenImagePreview = jest.fn();
@@ -3793,8 +3833,163 @@ describe('topic block image loading', () => {
       height: 30,
       width: 34
     });
+    expect(StyleSheet.flatten(view.getByTestId('topic-inline-image-attachment').props.style)).not.toMatchObject({
+      marginBottom: 8,
+      marginTop: 6
+    });
     await fireEvent.press(view.getByLabelText('查看图片'));
     expect(onOpenImagePreview).toHaveBeenCalledWith(src, { height: 30, width: 30 }, undefined, 'no-referrer');
+  });
+
+  it('routes compiler-trusted standalone geometry through the block owner and recovers a rejected SVG', async () => {
+    const svgImageUrl = 'https://img.example.com/authored-flow.svg';
+    const sanitized = sanitizeContentHtml(
+      `<p><img alt="普通 SVG" src="${svgImageUrl}" data-forum-inline-sized="true" data-forum-flow-image-context="mixed"></p>`,
+      'https://www.nodeseek.com/'
+    );
+    const compilation = compileForumContent({ html: sanitized, role: 'opening', source: 'nodeseek' });
+    const imageNode = compilation.rows
+      .map((row) => ('html' in row ? parseForumContentHtml(row.html).querySelector('img') : null))
+      .find(Boolean);
+    const attributes = { ...(imageNode?.attributes || {}) };
+    const onOpenImagePreview = jest.fn();
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text>report</text></svg>';
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(new Response(svg, { headers: { 'content-type': 'image/svg+xml; charset=utf-8' } }));
+    try {
+      expect(sanitized).not.toContain('data-forum-inline-sized');
+      expect(attributes[FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE]).toBe('standalone');
+      expect(compilation.previewImages).toEqual([expect.objectContaining({ source: svgImageUrl })]);
+      const view = await render(
+        <TopicImageHarness
+          attributes={attributes}
+          contentWidth={320}
+          onOpenImagePreview={onOpenImagePreview}
+          topicSource="nodeseek"
+        />
+      );
+      expect(StyleSheet.flatten(view.getByLabelText('测试图片').props.style)).toMatchObject({
+        marginBottom: 8,
+        marginTop: 6
+      });
+      expect(StyleSheet.flatten(view.getByTestId('topic-image-frame').props.style)).toMatchObject({
+        borderRadius: 10,
+        height: 240,
+        width: 320
+      });
+      expect(latestImageProps(svgImageUrl)).toMatchObject({
+        allowDownscaling: true,
+        cachePolicy: 'disk',
+        contentFit: 'contain'
+      });
+      await act(() => latestImageProps(svgImageUrl).onError?.({ error: 'native rejected SVG' }));
+      await waitFor(() => expect(latestImageProps().source?.uri).toBe('file:///cache/complex-svg-poster.png'));
+      await loadAndDisplayImage(latestImageProps('file:///cache/complex-svg-poster.png'), {
+        height: 1025,
+        width: 920
+      });
+      await fireEvent.press(view.getByLabelText('测试图片'));
+      expect(onOpenImagePreview).toHaveBeenCalledWith(
+        svgImageUrl,
+        { height: 1025, width: 920 },
+        'file:///cache/complex-svg-poster.png'
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('progressively upgrades a standalone image without dropping its display layer on failure', async () => {
+    const displayUrl = 'https://img.example.com/textual-display.png';
+    const originalUrl = 'https://img.example.com/textual-original.png';
+    const view = await render(
+      <TopicImageHarness
+        attributes={{
+          [FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE]: 'standalone',
+          'data-original': originalUrl,
+          alt: '普通渐进图',
+          src: displayUrl
+        }}
+        contentWidth={320}
+      />
+    );
+    await loadAndDisplayImage(latestImageProps(displayUrl));
+
+    await waitFor(() => expect(view.getByTestId('topic-image-original')).toBeTruthy());
+    expect(latestImageProps(originalUrl).priority).toBe('low');
+    await act(() => latestImageProps(originalUrl).onError?.({ error: 'original failed' }));
+    await act(() => latestImageProps(originalUrl).onError?.({ error: 'original failed again' }));
+    expect(view.getByTestId('topic-image-frame')).toBeTruthy();
+  });
+
+  it('keeps one standalone frame through failure, automatic retry, and explicit retry', async () => {
+    const failedUrl = 'https://img.example.com/textual-failure.png';
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(new Response('not svg', { headers: { 'content-type': 'image/png' } }));
+    try {
+      const view = await render(
+        <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['textual-failure-row']}>
+          <TopicBodyMediaRowBoundary rowKey="textual-failure-row">
+            <TopicImageHarness
+              attributes={{
+                [FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE]: 'standalone',
+                alt: '失败普通图',
+                src: failedUrl
+              }}
+              contentWidth={320}
+            />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      const firstAttempt = latestImageProps(failedUrl);
+      await act(() => firstAttempt.onError?.({ error: 'first attempt failed' }));
+      await waitFor(() => expect(latestImageProps(failedUrl)).not.toBe(firstAttempt));
+      const automaticRetry = latestImageProps(failedUrl);
+      await act(() => automaticRetry.onError?.({ error: 'automatic retry failed' }));
+      const errorFrame = await waitFor(() => view.getByLabelText('图片加载失败，点按重试'));
+      expect(StyleSheet.flatten(errorFrame.props.style)).toMatchObject({
+        borderRadius: 10,
+        height: 240,
+        marginBottom: 8,
+        marginTop: 6,
+        width: 320
+      });
+      await fireEvent.press(errorFrame);
+      await waitFor(() => expect(view.getByTestId('topic-image-frame')).toBeTruthy());
+      expect(StyleSheet.flatten(view.getByTestId('topic-image-frame').props.style)).toMatchObject({
+        borderRadius: 10,
+        height: 240,
+        width: 320
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('uses the table-cell width and authored alignment for a narrow standalone image', async () => {
+    const view = await render(
+      <TopicImageHarness
+        attributes={{
+          [FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE]: 'standalone',
+          alt: '表格窄图',
+          height: '40',
+          src: 'https://img.example.com/table-textual.png',
+          width: '80'
+        }}
+        contentWidth={140}
+        textAlign="center"
+      />
+    );
+
+    expect(StyleSheet.flatten(view.getByLabelText('测试图片').props.style)).toMatchObject({
+      justifyContent: 'center'
+    });
+    expect(StyleSheet.flatten(view.getByTestId('topic-image-frame').props.style)).toMatchObject({
+      height: 40,
+      width: 80
+    });
   });
 
   it('aligns block images from authored text alignment and otherwise starts the row', async () => {

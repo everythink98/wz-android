@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { act, render, waitFor } from '../render';
+import { StyleSheet } from 'react-native';
 import { ForumMath } from '@/features/topic/rendering/ForumMath';
 import type { MathJaxSvgResult } from '@/features/topic/rendering/mathJaxSvg';
 
@@ -32,10 +33,17 @@ describe('Topic formula rendering', () => {
     let resolve!: (result: MathJaxSvgResult) => void;
     mockRenderMathJaxSvg.mockReturnValueOnce(new Promise((next) => (resolve = next)));
     const view = await render(
-      <ForumMath color="#102030" contentWidth={300} display="block" fontScale={1} source="x^2" />
+      <ForumMath
+        boundarySpacing={{ marginTop: 0 }}
+        color="#102030"
+        contentWidth={300}
+        display="block"
+        fontScale={1}
+        source="x^2"
+      />
     );
 
-    expect(view.getByText('x^2')).toBeTruthy();
+    expect(StyleSheet.flatten(view.getByText('x^2').props.style)).toMatchObject({ marginTop: 0, marginVertical: 8 });
     expect(view.getByLabelText('公式：x^2')).toBeTruthy();
     await act(async () => resolve(svgResult));
 
@@ -47,6 +55,7 @@ describe('Topic formula rendering', () => {
       width: 300,
       xml: svgResult.xml
     });
+    expect(StyleSheet.flatten(svg.parent?.props.style)).toMatchObject({ marginTop: 0, marginVertical: 8 });
   });
 
   it('keeps raw TeX when conversion fails', async () => {

@@ -3526,6 +3526,16 @@
 | 当前 owner | `src/sources/linuxdo/level.test.ts` |
 
 
+## `REG-LINUXDO-010` 过期登录下的搜索 429 被误报为单纯频控
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04`、`ACCOUNT-01`、`ACCOUNT-02` |
+| 历史症状与根因 | 模拟器里 linux.do 的真实登录已经失效，但本地仍处于已确认 authenticated scope；普通搜索返回结构化 HTTP 429 后，Search 直接把“次数过多”当成最终结论，没有调用 canonical `/session/current.json` 复核，因此无法区分真实频控与过期会话。修复只在 linux.do 普通 authenticated 搜索的 `status === 429` 且 `kind === ordinary` 分支等待一次现有 Account 复核：身份或 read-plan scope 变化时丢弃旧 Query，由既有 public plan 显示 Google 入口且不自动打开浏览器；身份相同时保留原频控；复核未知时保留会话并显示组合状态。ReadGateway 的 raw-401-only 即时失效门禁与 Cookie 所有权不变。 |
+| 当前 owner | `tests/ui/search/search-controller-ai.test.tsx` |
+
+
 ## `REG-PROXY-009` 单站通道恢复误伤其他请求或写操作
 
 | 字段 | 内容 |
@@ -4555,7 +4565,7 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
-| 历史症状与根因 | 幺火 `bbs-1577052.html` 第 2 页 13 楼把一个未标记 GIF 放在句尾，原站按文字流显示；App 因无法把它识别成 Emoji，保留为 RNRH block `img`，随后共享块图 wrapper 又无条件居中，最终制造了作者 HTML 中不存在的换行和居中。根因是“图片类型决定位置”的错误耦合。最终修复删除自然行分类器：共享 compiler 把普通安全图片一律编译为原 DOM 锚点上的 textual 图片，同行、`br` 与块级父容器由既有文字流自然决定，只有明确的 figure/lightbox 保持 block；选择 tape 继续使用同一 DOM 顺序。语义与自然尺寸只决定大小；块图无对齐信号时统一靠起始边，显式 center/right 仍保留。位置判定不增加幺火、`.ubbimg`、GIF、域名或尺寸特判。 |
+| 历史症状与根因 | 幺火 `bbs-1577052.html` 第 2 页 13 楼把一个未标记 GIF 放在句尾，原站按文字流显示；App 因无法把它识别成 Emoji，保留为 RNRH block `img`，随后共享块图 wrapper 又无条件居中，最终制造了作者 HTML 中不存在的换行和居中。根因是“图片类型决定位置”的错误耦合。修复删除自然尺寸、URL 和站点分类器，改由作者行决定 projection：mixed 普通图仍在原 DOM 锚点走 textual owner；`REG-TOPIC-142` 收口后，作者独立行的 standalone 普通图在同一锚点复用完整 block image owner，figure/lightbox 继续保持显式 block。选择 tape 与预览目录仍使用原 DOM 顺序，加载后的尺寸只调整 frame，不重新分类位置；块图无对齐信号时靠起始边，显式 center/right 仍保留。位置判定不增加幺火、`.ubbimg`、GIF、域名或尺寸特判。 |
 | 当前 owner | `src/domain/forum/forumContentMedia.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`src/sources/yaohuo/reader.test.ts`、`src/platform/media/inlineMedia.test.ts` 与 `tests/ui/topic/topic-image-loading.test.tsx` |
 
 
@@ -4565,7 +4575,7 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
-| 历史症状与根因 | `REG-TOPIC-137` 首轮实现把未识别图片改写成内容为空的 `forum-inline-image`；浅层 TTree 仍能看到标签，但 Android 不物化图片 owner，真实外链 GIF 因而完全消失。补上内容后，直接 Text 图片 attachment 又把约 `104×100` 的图片画得过小；改成可测量 inline View 后，React Native 的固定 `lineHeight` 仍会把已由该 View 撑高的行盒压回文字高度，使 3249/3247 的后续按钮和分隔线穿过图片。最终修复让 compiler 始终保留完全转义的非空降级内容，textual renderer 在原 DOM 锚点挂一个可测量 inline View，并由其中的标准 Native Image 继续复用 Referrer、媒体 lease、generation、缓存与预览 owner；锁定的 Android `CustomLineHeightSpan` 只扩展较矮行，不压缩含 inline View 的较高行。加载后的自然尺寸只更新宽高，不重新分类位置；全局缓存只保存事实，同 URL 的每个排队实例仍无条件提交本地尺寸。幺火 adapter 只在 sanitizer 清除伪造标记后，把同源 `/face/` 或 `/bbs/face/` 写成可信“有界自然尺寸” marker；共享层删除 URL fallback，外部 `/face/` 仍为普通预览。HTML、selection tape 与 preview catalog 由 compiler 一次产出并保持不可变，旧动态 descriptor/materialization 管道完整删除，未新增页面状态机。无法选源或最终加载失败时仍显示可重试文字，不得空白消失或重新注入节点。 |
+| 历史症状与根因 | `REG-TOPIC-137` 首轮实现把未识别图片改写成内容为空的 `forum-inline-image`；浅层 TTree 仍能看到标签，但 Android 不物化图片 owner，真实外链 GIF 因而完全消失。补上内容后，直接 Text 图片 attachment 又把约 `104×100` 的图片画得过小；改成可测量 inline View 后，React Native 的固定 `lineHeight` 仍会把已由该 View 撑高的行盒压回文字高度，使 3249/3247 的后续按钮和分隔线穿过图片。最终修复让 mixed 图片始终保留完全转义的非空降级内容，textual renderer 在原 DOM 锚点挂一个可测量 inline View，并由其中的标准 Native Image 继续复用 Referrer、媒体 lease、generation、缓存与预览 owner；standalone 图片由 `REG-TOPIC-142` 的 block owner 收口。锁定的 Android `CustomLineHeightSpan` 只扩展较矮行，不压缩含 inline View 的较高行。加载后的自然尺寸只更新宽高，不重新分类位置；全局缓存只保存事实，同 URL 的每个排队实例仍无条件提交本地尺寸。幺火 adapter 只在 sanitizer 清除伪造标记后，把同源 `/face/` 或 `/bbs/face/` 写成可信“有界自然尺寸” marker；共享层删除 URL fallback，外部 `/face/` 仍为普通预览。HTML、selection tape 与 preview catalog 由 compiler 一次产出并保持不可变，旧动态 descriptor/materialization 管道完整删除，未新增页面状态机。无法选源或最终加载失败时仍显示可重试文字，不得空白消失或重新注入节点。 |
 | 当前 owner | `src/domain/forum/forumContentMedia.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`tests/integration/topic-content-rendering-contracts.test.ts`、`src/sources/yaohuo/reader.test.ts`、`src/platform/media/inlineMedia.test.ts` 与 `tests/ui/topic/topic-image-loading.test.tsx` |
 
 
@@ -4597,6 +4607,26 @@
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
 | 历史症状与根因 | 真机系统 `font_scale=0.9` 时，妖火 `bbs-1577052.html` 的可测量行内 GIF 保持原 DIP 尺寸，文字布局为它保留的宽度却缩小，导致 #3249 的“你也一天一帖吗”和 #3247 的“我不服……”被图片覆盖；恢复默认字体或其他默认字体设备正常。根因是 React Native 0.81.5 Fabric 的两条 Spannable 构造路径把 inline View 的 DIP 宽高经 `PixelUtil.toPixelFromSP` 转换，系统小字体只缩小占位而不缩小真实子 View。当前 patch 精确回移 React Native `551d12a`：两条路径统一使用 DIP 转换并向上取整；既有 `CustomLineHeightSpan` 修复继续独立负责固定行高不得压缩含 inline View 的高行。未增加妖火、GIF、设备、楼层或字体禁用特判。 |
 | 当前 owner | `patches/react-native+0.81.5.patch` 内的 `TextLayoutManagerInlineViewSizeTest`、`tests/tooling/react-native-inline-image-events-patch.test.ts`、`tests/ui/topic/topic-image-loading.test.tsx` 与 `tests/live/agent-live.md` 的 `bbs-1577052.html` 小字体/默认字体真机验收 |
+
+
+## `REG-TOPIC-142` textual 普通图片迁移丢失块图能力与稳定几何
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03`、`ACCOUNT-01`；身份 seam 展开 `USER-01`、`ACCOUNT-02`、`MORE-02` |
+| 历史症状与根因 | 1.3.132 将普通图片迁到 authored-flow textual renderer 后，作者位置虽正确，却绕过块图既有的动态 SVG poster、原图渐进、稳定 `4:3` 占位、`6dp/8dp` 间距、`10dp` 圆角和 frame 内失败重试；已删除生产者的 `data-forum-inline-sized` 仍被信任，来源 HTML还能伪造该标记并移出 preview catalog。根因是“作者位置、媒体能力、文档生命周期”被错误绑定到 renderer 分类，发布门禁只各自证明 compiler 或块图 loader，没有证明组合 wiring。修复先让两种 projection 共用 compatible SVG artifact、原图 layer、coordinator、请求 identity、尺寸缓存、预览与 generation 结算；Android 模拟器随后证伪 standalone textual attachment——图片解码后内部像素已变为真实比例，但父 attachment 仍停在 `4:3`。最终 sanitizer 删除旧/内部标记，compiler 只按作者行重算 context，standalone 在原锚点复用既有 block image owner，mixed 保持 textual，Emoji/贴纸不改变位置和基线。 |
+| 当前 owner | `src/domain/forum/forumContentMedia.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`tests/integration/html-sanitization-contracts.test.ts`、`src/platform/media/inlineMedia.test.ts`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-rich-text-selection.test.tsx` 与 `tests/live/agent-live.md` 的四站 Topic 图片只读验收 |
+
+
+## `REG-TOPIC-143` 块公式遗漏物理分片边界
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
+| 历史症状与根因 | 块公式 renderer 固定写入 `marginVertical: 8`，没有接入其他块内容共用的 physical continuation boundary；公式位于分片首尾时会重复制造文章留白，TeX fallback 与 SVG 成功态也没有统一边界参数。最终由 production `MathBlockRenderer` 调用既有 `useContentBoundarySpacing()`，并把同一内部 boundary style 传给 `ForumMath` 的等待/失败 Text 与成功 View；inline 公式保持原基线和间距。 |
+| 当前 owner | `tests/ui/topic/topic-math-rendering.test.tsx`、`src/domain/forum/topicContentSplit.test.ts` 与 linux.do 公式只读模拟器验收 |
 
 
 ## `REG-WRITE-062` LinuxDo Emoji 源码往返卡死

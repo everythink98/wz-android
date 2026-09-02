@@ -33,24 +33,47 @@ describe('forum content media normalization', () => {
     const standalone = '<p><img alt="image" src="https://cdn.example.com/photo.jpg"></p>';
     const adjacent =
       '<p><img alt="first" src="https://cdn.example.com/first.jpg"><img alt="second" src="https://cdn.example.com/second.jpg"></p>';
+    const withCustomMedia =
+      '<p><img alt="photo" src="https://cdn.example.com/photo-with-sticker.jpg"><forum-sticker src="https://cdn.example.com/sticker.webp"></forum-sticker></p>';
+    const besideExplicitFigure =
+      '<img alt="root" src="https://cdn.example.com/root.jpg"><figure><img alt="figure" src="https://cdn.example.com/figure.jpg"></figure>';
 
-    expect(normalizeForumContentMediaHtml(mixed)).toContain(
-      '<forum-inline-image alt="image" src="https://cdn.example.com/sticker.png">image</forum-inline-image>'
+    const mixedImage = parseHtml(normalizeForumContentMediaHtml(mixed)).querySelector('forum-inline-image');
+    const afterBreakImage = parseHtml(normalizeForumContentMediaHtml(afterBreak)).querySelector('img');
+    const standaloneImage = parseHtml(normalizeForumContentMediaHtml(standalone)).querySelector('img');
+    const adjacentImages = parseHtml(normalizeForumContentMediaHtml(adjacent)).querySelectorAll('forum-inline-image');
+    const customMediaImage = parseHtml(normalizeForumContentMediaHtml(withCustomMedia)).querySelector(
+      'forum-inline-image'
     );
-    expect(normalizeForumContentMediaHtml(afterBreak)).toContain(
-      '<br><forum-inline-image alt="image" src="https://cdn.example.com/broken.png">image</forum-inline-image>'
+    const explicitRoot = parseHtml(normalizeForumContentMediaHtml(besideExplicitFigure));
+
+    expect(mixedImage?.getAttribute('data-forum-flow-image-context')).toBeUndefined();
+    expect(afterBreakImage?.getAttribute('data-forum-flow-image-context')).toBe('standalone');
+    expect(standaloneImage?.getAttribute('data-forum-flow-image-context')).toBe('standalone');
+    expect(adjacentImages).toHaveLength(2);
+    expect(adjacentImages.every((image) => !image.getAttribute('data-forum-flow-image-context'))).toBe(true);
+    expect(customMediaImage?.getAttribute('data-forum-flow-image-context')).toBeUndefined();
+    expect(explicitRoot.querySelectorAll('img')[0]?.getAttribute('data-forum-flow-image-context')).toBe('standalone');
+    expect(explicitRoot.querySelectorAll('img')[1]?.getAttribute('data-forum-flow-image-context')).toBeUndefined();
+  });
+
+  it('recomputes flow context instead of trusting the deleted runtime size marker', () => {
+    const root = parseHtml(
+      '<p><img data-forum-inline-sized="true" src="https://cdn.example.com/ordinary.svg" alt="ordinary"></p>'
     );
-    expect(normalizeForumContentMediaHtml(standalone)).toContain(
-      '<p><forum-inline-image alt="image" src="https://cdn.example.com/photo.jpg">image</forum-inline-image></p>'
-    );
-    expect(normalizeForumContentMediaHtml(adjacent).match(/<forum-inline-image/g)).toHaveLength(2);
+    const result = normalizeForumContentMediaNodes(root);
+    const image = root.querySelector('img');
+
+    expect(result.previewImages).toEqual([expect.objectContaining({ source: 'https://cdn.example.com/ordinary.svg' })]);
+    expect(image?.getAttribute('data-forum-inline-sized')).toBeUndefined();
+    expect(image?.getAttribute('data-forum-flow-image-context')).toBe('standalone');
   });
 
   it.each(['alt', 'title'] as const)(
     'keeps decoded image %s fallback labels as text instead of reparsing them as nodes',
     (attribute) => {
       const result = normalizeForumContentMediaHtml(
-        `<p><img src="https://cdn.example.com/photo.jpg" ${attribute}="&lt;img src=x onerror=boom&gt;"></p>`
+        `<p>prefix <img src="https://cdn.example.com/photo.jpg" ${attribute}="&lt;img src=x onerror=boom&gt;"></p>`
       );
 
       expect(result.match(/<forum-inline-image/g)).toHaveLength(1);
@@ -336,13 +359,14 @@ describe('forum content media normalization', () => {
     const result = normalizeForumContentMediaHtml(
       '<p>去年是机房火灾 <img src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20"></p><p><img alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912"></p>'
     );
+    const images = parseHtml(result).querySelectorAll('forum-inline-image, img');
 
-    expect(result).toContain(
-      '<forum-inline-image src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20">'
-    );
-    expect(result).toContain(
-      '<forum-inline-image alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912">'
-    );
+    expect(images.map((image) => image.getAttribute('src'))).toEqual([
+      'https://i.imgur.com/agAJ0Rd.png',
+      'https://i.imgur.com/2ejt2Q6.png'
+    ]);
+    expect(images[0]?.getAttribute('data-forum-flow-image-context')).toBeUndefined();
+    expect(images[1]?.getAttribute('data-forum-flow-image-context')).toBe('standalone');
   });
 
   it('routes xhj sticker images in mixed paragraphs through the inline media line', () => {

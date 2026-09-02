@@ -42,9 +42,14 @@ import {
   isExternalForumSearchSource,
   type ExternalForumSearchSource
 } from '@/domain/forum/externalSearch';
-import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
+import type {
+  AccountReconcileResult,
+  LinuxDoReadRecovery,
+  LinuxDoReadResumeOutcome
+} from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
+import { RequestCanceledError } from '@/platform/network/request';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
@@ -148,7 +153,7 @@ export function useSearchController({
   notify,
   onOpenExternalSearch,
   onNodeSeekSearchVerificationRequired,
-  onRetryIdentityStatus,
+  reconcileIdentityStatus,
   sessionViewModels,
   showLinuxDoVerification,
   showNodeSeekVerification,
@@ -163,7 +168,7 @@ export function useSearchController({
   notify: (message: string) => void;
   onOpenExternalSearch?: (url: string) => void | Promise<void>;
   onNodeSeekSearchVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
-  onRetryIdentityStatus?: (source: SessionSource) => void;
+  reconcileIdentityStatus: (source: SessionSource) => Promise<AccountReconcileResult>;
   sessionViewModels: SiteSessionViewModels;
   showLinuxDoVerification: (
     message?: string,
@@ -351,7 +356,38 @@ export function useSearchController({
           finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
           throw error;
         }
-        const sourceError = sourceErrorFromUnknown(source, error);
+        let sourceError = sourceErrorFromUnknown(source, error);
+        if (
+          source === 'linuxdo' &&
+          plan.state === 'ready' &&
+          plan.lane === 'authenticated' &&
+          sourceError.kind === 'ordinary' &&
+          typeof error === 'object' &&
+          error !== null &&
+          'status' in error &&
+          error.status === 429
+        ) {
+          const reconciliation = await reconcileIdentityStatus(source);
+          if (signal.aborted) {
+            finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
+            throw new RequestCanceledError();
+          }
+          const currentPlan = readGateway.getReadPlan(source, 'search');
+          if (
+            currentPlan.cacheScope !== readPlanScope ||
+            reconciliation.status === 'anonymous' ||
+            reconciliation.status === 'changed'
+          ) {
+            finishDiagnosticTrace(trace, 'stale', { source, reason: 'superseded' });
+            throw new RequestCanceledError();
+          }
+          if (reconciliation.status === 'unknown') {
+            sourceError = {
+              ...sourceError,
+              message: 'linux.do 登录状态暂时无法确认；原站搜索同时返回频控，请稍后重试。'
+            };
+          }
+        }
         const group: SearchGroup = {
           source,
           label: sourceLabel(source),
@@ -391,7 +427,7 @@ export function useSearchController({
         return { kind: 'failed', group };
       }
     },
-    [categories, sessionViewModels, readGateway]
+    [categories, reconcileIdentityStatus, sessionViewModels, readGateway]
   );
 
   const submittedSource = submittedSearch?.source === 'all' ? 'v2ex' : submittedSearch?.source || 'v2ex';
@@ -705,7 +741,7 @@ export function useSearchController({
         (plan.reason === 'identity-pending' || plan.reason === 'identity-unavailable') &&
         isSessionSource(source)
       ) {
-        onRetryIdentityStatus?.(source);
+        void reconcileIdentityStatus(source);
         return;
       }
       if (submittedSearch?.source === 'all') {
@@ -723,7 +759,7 @@ export function useSearchController({
     [
       aggregateQueries,
       aggregateSources,
-      onRetryIdentityStatus,
+      reconcileIdentityStatus,
       readGateway,
       searchActive,
       singleSearchQuery.fetchNextPage,

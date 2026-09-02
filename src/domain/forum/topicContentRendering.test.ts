@@ -83,7 +83,7 @@ describe('render-ready forum image placement', () => {
     }
   });
 
-  it('keeps ordinary images inline unless the author marks a media container', () => {
+  it('keeps mixed images textual and projects standalone author lines through the block image owner', () => {
     const url = 'https://i.imgur.com/dynamic.png';
     const flowRow = renderedRow(`<p>before <img class="embedded_image" src="${url}" alt="dynamic"> after</p>`);
     const standaloneRow = renderedRow(`<p><img class="embedded_image" src="${url}" alt="dynamic"></p>`);
@@ -94,13 +94,11 @@ describe('render-ready forum image placement', () => {
     const standaloneHtml = standaloneRow.html;
     const attachmentHtml = attachmentRow.html;
     const flowImage = allTNodes(engine.buildTTree(flowHtml)).find((node) => node.tagName === INLINE_FORUM_IMAGE_TAG);
-    const standaloneImage = allTNodes(engine.buildTTree(standaloneHtml)).find(
-      (node) => node.tagName === INLINE_FORUM_IMAGE_TAG
-    );
+    const standaloneImage = allTNodes(engine.buildTTree(standaloneHtml)).find((node) => node.tagName === 'img');
     const attachmentImage = allTNodes(engine.buildTTree(attachmentHtml)).find((node) => node.tagName === 'img');
 
     expect(flowImage?.type).toBe('text');
-    expect(standaloneImage?.type).toBe('text');
+    expect(standaloneImage?.type).toBe('block');
     expect(attachmentImage?.type).toBe('block');
     expect(flowHtml).not.toContain(FORUM_INLINE_MEDIA_LINE_TAG);
     expect(standaloneHtml).not.toContain(FORUM_INLINE_MEDIA_LINE_TAG);

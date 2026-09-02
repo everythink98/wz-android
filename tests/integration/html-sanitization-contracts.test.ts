@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { decodeHtml, textContentFromHtml } from '@/domain/forum/html';
+import { decodeHtml, parseHtml, textContentFromHtml } from '@/domain/forum/html';
 import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 
@@ -53,6 +53,16 @@ describe('Android local HTML helpers', () => {
     expect(result).toContain('src="https://cdn.example.com/a.png"');
   });
 
+  it('scrubs source-controlled forum image layout markers', () => {
+    const result = sanitizeContentHtml(
+      '<img src="photo.jpg" data-forum-inline-sized="true" data-forum-flow-image-context="standalone">',
+      'https://example.com/base/'
+    );
+
+    expect(result).not.toContain('data-forum-inline-sized');
+    expect(result).not.toContain('data-forum-flow-image-context');
+  });
+
   it('applies a source transform inside the sanitizer parse', () => {
     let transformCount = 0;
     const result = sanitizeContentHtml(
@@ -67,6 +77,17 @@ describe('Android local HTML helpers', () => {
     expect(transformCount).toBe(1);
     expect(result).toContain('<p>source transformed</p>');
     expect(result).not.toContain('<iframe');
+  });
+
+  it('sanitizes media introduced by a source transform', () => {
+    const result = sanitizeContentHtml('<p>before</p>', 'https://example.com/', (root) => {
+      const injected = parseHtml(
+        '<video src="javascript:alert(1)"></video><iframe src="javascript:alert(2)"></iframe><script>alert(3)</script>'
+      );
+      [...injected.childNodes].forEach((node) => root.appendChild(node));
+    });
+
+    expect(result).not.toMatch(/javascript:|<iframe|<script/i);
   });
 
   it('sanitizes LinuxDo polls and embedded links', () => {

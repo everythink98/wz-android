@@ -10,8 +10,7 @@ import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState
 import type { Category, FeedSource, Source, Topic } from '@/domain/forum/models';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { QueryTestWrapper } from '../QueryTestWrapper';
-import { aggregateSearchSources } from '@/domain/forum/sourceCatalog';
-import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+import { aggregateSearchSources, isSessionSource } from '@/domain/forum/sourceCatalog';
 import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
@@ -186,7 +185,7 @@ function createSearchRouteRuntime({
     account: {
       linuxDoVerificationVisible,
       readGateway,
-      reconcileAccountStatus: jest.fn<(source: SessionSource) => Promise<void>>(async () => undefined),
+      reconcileAccountStatus: jest.fn(async () => ({ status: 'stale' as const })),
       requestNodeSeekVerification: jest.fn(),
       sessionEpochs: initialForumSessionEpochs,
       sessionViewModels,

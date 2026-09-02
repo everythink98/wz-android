@@ -7,6 +7,8 @@ import { compileForumContent } from '@/domain/forum/topicContentSplit';
 import { createHtmlCustomElementModels } from '@/features/topic/rendering/htmlElementModels';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createTheme } from '@/ui/theme/tokens';
+import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
+import type { TopicDetail } from '@/domain/forum/models';
 import { render } from '../render';
 import {
   TopicSelectionSurface,
@@ -20,6 +22,31 @@ jest.mock('react-native', () => {
   const actual = jest.requireActual<typeof import('react-native')>('react-native');
   Object.defineProperty(actual.Platform, 'OS', { configurable: true, value: 'android' });
   return actual;
+});
+
+jest.mock('expo-video', () => ({
+  VideoView: require('react-native').View,
+  createVideoPlayer: jest.fn(() => ({})),
+  useVideoPlayer: jest.fn(() => ({}))
+}));
+
+jest.mock('@shopify/flash-list', () => {
+  const ReactModule = require('react') as typeof React;
+  return {
+    useRecyclingState: <T,>(initialState: T | (() => T), dependencies: React.DependencyList) => {
+      const value = ReactModule.useRef<T | undefined>(undefined);
+      ReactModule.useMemo(() => {
+        value.current = typeof initialState === 'function' ? (initialState as () => T)() : initialState;
+      }, dependencies);
+      const [, forceRender] = ReactModule.useState(0);
+      const setState = ReactModule.useCallback((nextState: T | ((mockCurrent: T) => T)) => {
+        value.current =
+          typeof nextState === 'function' ? (nextState as (mockCurrent: T) => T)(value.current!) : nextState;
+        forceRender((mockRevision) => mockRevision + 1);
+      }, []);
+      return [value.current!, setState] as const;
+    }
+  };
 });
 
 jest.mock('expo-modules-core', () => {
@@ -59,6 +86,49 @@ const SelectionTextProbe = React.memo(function SelectionTextProbe({
 function SelectionCoordinatorProbe() {
   const { active: enabled } = useTopicSelectionRowRef(undefined);
   return <View accessibilityState={{ selected: enabled }} testID="selection-coordinator-probe" />;
+}
+
+const selectionReaderData = createEmptyReaderData();
+const selectionTheme = createTheme(selectionReaderData.settings);
+const selectionTopic: TopicDetail = {
+  author: 'alice',
+  contentHtml: '',
+  createdAt: '2026-09-02T00:00:00.000Z',
+  id: 'selection-topic',
+  replies: [],
+  replyCount: 0,
+  source: 'nodeseek',
+  title: '选择测试',
+  url: 'https://www.nodeseek.com/post-1-1'
+};
+
+function ProductionRichTextRow({ html }: { html: string }) {
+  const controller = useHtmlRenderingController({
+    mediaSessionIdentity: 'nodeseek:selection-test',
+    onOpenExternalUrl: () => undefined,
+    onOpenImagePreview: () => undefined,
+    onOpenTopic: () => undefined,
+    onOpenUser: () => undefined,
+    selectedTopic: selectionTopic,
+    settings: selectionReaderData.settings,
+    theme: selectionTheme,
+    topicDetail: selectionTopic,
+    webViewBlockMessage: ''
+  });
+  return (
+    <RenderHTML
+      baseStyle={controller.htmlBaseStyle}
+      classesStyles={controller.htmlClassesStyles}
+      contentWidth={320}
+      customHTMLElementModels={createHtmlCustomElementModels(selectionReaderData.settings.lineHeight)}
+      defaultTextProps={{ selectable: true }}
+      ignoredStyles={controller.htmlIgnoredStyles}
+      renderers={controller.htmlRenderers}
+      renderersProps={controller.htmlRenderersProps}
+      source={{ html }}
+      tagsStyles={controller.htmlTagsStyles}
+    />
+  );
 }
 
 describe('topic rich-text selection', () => {
@@ -134,6 +204,7 @@ describe('topic rich-text selection', () => {
     const { rows } = compileForumContent({
       html:
         '<p>开头😀<img class="emoji" width="20" height="20" src="https://img.example/emoji.png" alt="笑"></p>' +
+        '<p><img width="640" height="360" src="https://img.example/standalone.png" alt="独立图"></p>' +
         '<h3>配置</h3>' +
         '<table><tbody><tr><th>CPU</th><th>规格</th></tr><tr><td>核心</td><td>1 核</td></tr></tbody></table>' +
         '<forum-sticker-row><forum-sticker src="https://img.example/sticker.webp" title="贴纸">ignored</forum-sticker></forum-sticker-row>' +
@@ -165,13 +236,7 @@ describe('topic rich-text selection', () => {
           <SelectionCoordinatorProbe />
           {rows.map((row, index) => (
             <SelectionRow key={`${row.semanticId}:${row.segmentIndex}`} item={items[index]!}>
-              {'html' in row &&
-              !row.html.includes('<forum-inline-image') &&
-              !row.html.includes('<forum-sticker-row>') ? (
-                <RenderHTML contentWidth={320} defaultTextProps={{ selectable: true }} source={{ html: row.html }} />
-              ) : (
-                <View />
-              )}
+              {'html' in row ? <ProductionRichTextRow html={row.html} /> : <View />}
             </SelectionRow>
           ))}
         </View>
@@ -198,6 +263,8 @@ describe('topic rich-text selection', () => {
     expect(screen.getByTestId('selection-coordinator-probe').props.accessibilityState.selected).toBe(true);
     expect(screen.getByTestId('topic-selection-content')).toHaveStyle({ flex: 1 });
     expect(screen.getByTestId('topic-selection-content').props.accessible).toBe(false);
+    expect(screen.getByTestId('topic-inline-image')).toBeTruthy();
+    expect(screen.getByTestId('topic-image-frame')).toBeTruthy();
     surface.props.onAutoScroll({ nativeEvent: { delta: -24 } });
     expect(scrollToOffset).toHaveBeenCalledWith({ animated: false, offset: 96 });
   });

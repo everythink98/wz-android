@@ -166,7 +166,7 @@ const FeedTestRuntimeContext = React.createContext(feedRuntime);
 const searchRuntime = {
   account: {
     ...feedRuntime.account,
-    reconcileAccountStatus: jest.fn(async () => undefined),
+    reconcileAccountStatus: jest.fn(async () => ({ status: 'stale' as const })),
     sessionViewModels
   },
   catalogCategories: [],

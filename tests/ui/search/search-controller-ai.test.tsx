@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useSearchCandidateQueries } from '@/features/search/DiscourseFilterPickers';
 import { useSearchController } from '@/features/search/useSearchController';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/domain/forum/searchFilters';
 import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
@@ -137,6 +137,18 @@ function createGateway({
   } as unknown as ReadGateway;
 }
 
+async function reconcileSameIdentity(source: SessionSource): Promise<AccountReconcileResult> {
+  return {
+    status: 'same',
+    session: {
+      site: source,
+      status: 'logged-in',
+      cookieSummary: ['session-present'],
+      isVerifying: false
+    }
+  };
+}
+
 function renderSearchController(
   readGateway: ReadGateway,
   notify = jest.fn<(message: string) => void>(),
@@ -146,7 +158,7 @@ function renderSearchController(
   showNodeSeekVerification = jest.fn<(message?: string) => void>(),
   showYaohuoLogin = jest.fn<(message?: string) => void>(),
   getEnabledSearchSources: () => readonly Source[] = () => aggregateSearchSources,
-  onRetryIdentityStatus = jest.fn<(source: SessionSource) => void>(),
+  reconcileIdentityStatus = jest.fn<(source: SessionSource) => Promise<AccountReconcileResult>>(reconcileSameIdentity),
   onOpenExternalSearch = jest.fn<(url: string) => void>(),
   getAuthSurfaceOpen: (source: SessionSource) => boolean = () => false
 ) {
@@ -198,7 +210,7 @@ function renderSearchController(
         linuxDoVerificationActive: false,
         notify,
         ...({ onOpenExternalSearch } as object),
-        onRetryIdentityStatus,
+        reconcileIdentityStatus,
         active: true,
         sessionViewModels,
         showLinuxDoVerification,
@@ -408,6 +420,7 @@ describe('linux.do AI search controller', () => {
           sessionEpochs: initialForumSessionEpochs,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
+          reconcileIdentityStatus: reconcileSameIdentity,
           active: true,
           sessionViewModels,
           showLinuxDoVerification,
@@ -466,6 +479,7 @@ describe('linux.do AI search controller', () => {
           sessionEpochs,
           linuxDoVerificationActive: false,
           notify: jest.fn(),
+          reconcileIdentityStatus: reconcileSameIdentity,
           active,
           sessionViewModels: loggedInSessions,
           showLinuxDoVerification,
@@ -538,6 +552,7 @@ describe('linux.do AI search controller', () => {
           sessionEpochs: initialForumSessionEpochs,
           linuxDoVerificationActive,
           notify: jest.fn(),
+          reconcileIdentityStatus: reconcileSameIdentity,
           active: true,
           sessionViewModels: loggedInSessions,
           showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
@@ -1865,6 +1880,7 @@ describe('linux.do AI search controller', () => {
           linuxDoVerificationActive: false,
           notify: jest.fn(),
           onNodeSeekSearchVerificationRequired: onVerificationRequired,
+          reconcileIdentityStatus: reconcileSameIdentity,
           sessionViewModels: createSiteSessionViewModels(
             createSiteSessionStates({
               nodeseek: {
@@ -2103,6 +2119,146 @@ describe('linux.do AI search controller', () => {
     expect(hook.result.current.linuxDoAiState.status).toBe('idle');
   });
 
+  it('switches an authenticated linux.do 429 to the Google lane after account reconciliation confirms anonymous', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => {
+      throw Object.assign(new Error('您执行此操作的次数过多，请稍后再试。'), { status: 429 });
+    });
+    const anonymousSession = createSiteSessionStates().linuxdo;
+    const sessionViewModels: SiteSessionViewModels = {
+      ...loggedInSessions,
+      linuxdo: { ...loggedInSessions.linuxdo }
+    };
+    let sessionEpochs = initialForumSessionEpochs;
+    const reconcileIdentityStatus = jest.fn<(source: SessionSource) => Promise<AccountReconcileResult>>(async () => {
+      sessionViewModels.linuxdo = createSiteSessionViewModels(createSiteSessionStates()).linuxdo;
+      resetForumSourceQueries('linuxdo', appQueryClient);
+      sessionEpochs = { ...sessionEpochs, linuxdo: sessionEpochs.linuxdo + 1 };
+      return { status: 'anonymous', session: anonymousSession };
+    });
+    const onOpenExternalSearch = jest.fn<(url: string) => void>();
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => sessionEpochs,
+      sessionViewModels,
+      jest.fn(),
+      jest.fn(),
+      () => aggregateSearchSources,
+      reconcileIdentityStatus,
+      onOpenExternalSearch
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(reconcileIdentityStatus).toHaveBeenCalledTimes(1));
+    await act(async () => hook.rerender(undefined));
+    await waitFor(() =>
+      expect(hook.result.current.searchGroups).toEqual([
+        expect.objectContaining({
+          source: 'linuxdo',
+          externalSearchUrl: 'https://www.google.com/search?q=site%3Alinux.do+codex'
+        })
+      ])
+    );
+
+    expect(reconcileIdentityStatus).toHaveBeenCalledWith('linuxdo');
+    expect(searchTopics).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.searchGroups[0]?.error).toBeUndefined();
+    expect(onOpenExternalSearch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the original linux.do 429 when account reconciliation confirms the same identity', async () => {
+    const rateLimitMessage = '您执行此操作的次数过多，请稍后再试。';
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => {
+      throw Object.assign(new Error(rateLimitMessage), { status: 429 });
+    });
+    const reconcileIdentityStatus = jest.fn<(source: SessionSource) => Promise<AccountReconcileResult>>(async () => ({
+      status: 'same',
+      session: {
+        site: 'linuxdo',
+        status: 'logged-in',
+        cookieSummary: ['session-present'],
+        isVerifying: false
+      }
+    }));
+    const onOpenExternalSearch = jest.fn<(url: string) => void>();
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      loggedInSessions,
+      jest.fn(),
+      jest.fn(),
+      () => aggregateSearchSources,
+      reconcileIdentityStatus,
+      onOpenExternalSearch
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.error).toBe(rateLimitMessage));
+
+    expect(reconcileIdentityStatus).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.searchGroups[0]?.externalSearchUrl).toBeUndefined();
+    expect(onOpenExternalSearch).not.toHaveBeenCalled();
+  });
+
+  it('shows a combined linux.do status when 429 reconciliation is unknown without blocking aggregate siblings', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
+      if (source === 'linuxdo') {
+        throw Object.assign(new Error('您执行此操作的次数过多，请稍后再试。'), { status: 429 });
+      }
+      return {
+        items: [{ ...standardTopic, source: source as Source, id: `${source}-result` }],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      };
+    });
+    const reconcileIdentityStatus = jest.fn<(source: SessionSource) => Promise<AccountReconcileResult>>(async () => ({
+      status: 'unknown',
+      error: '账号接口暂时不可用',
+      errorInfo: {
+        kind: 'ordinary',
+        message: '账号接口暂时不可用',
+        reason: 'account_probe_failed',
+        retryable: true
+      }
+    }));
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      loggedInSessions,
+      jest.fn(),
+      jest.fn(),
+      () => aggregateSearchSources,
+      reconcileIdentityStatus
+    );
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'all' });
+    });
+    await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+
+    expect(reconcileIdentityStatus).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.searchGroups.find(({ source }) => source === 'linuxdo')).toMatchObject({
+      error: 'linux.do 登录状态暂时无法确认；原站搜索同时返回频控，请稍后重试。'
+    });
+    expect(hook.result.current.searchGroups.find(({ source }) => source === 'v2ex')?.items).toEqual([
+      expect.objectContaining({ id: 'v2ex-result' })
+    ]);
+    expect(hook.result.current.searchGroups.find(({ source }) => source === 'nodeseek')?.items).toEqual([
+      expect.objectContaining({ id: 'nodeseek-result' })
+    ]);
+    expect(loggedInSessions.linuxdo.isLoggedIn).toBe(true);
+  });
+
   it('does not expose data from the previous credential scope while the replacement query loads', async () => {
     const replacement = Promise.withResolvers<SearchResponse>();
     const searchTopics = jest
@@ -2262,7 +2418,7 @@ describe('linux.do AI search controller', () => {
           notify: jest.fn(),
           active: true,
           onOpenExternalSearch,
-          onRetryIdentityStatus: jest.fn(),
+          reconcileIdentityStatus: reconcileSameIdentity,
           sessionViewModels,
           showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
           showNodeSeekVerification: jest.fn(),
@@ -2344,7 +2500,8 @@ describe('linux.do AI search controller', () => {
       hasMore: false,
       nextPage: null
     }));
-    const retryIdentityStatus = jest.fn<(source: SessionSource) => void>();
+    const reconcileIdentityStatus =
+      jest.fn<(source: SessionSource) => Promise<AccountReconcileResult>>(reconcileSameIdentity);
     const pendingSessions: SiteSessionViewModels = {
       ...loggedInSessions,
       yaohuo: {
@@ -2363,7 +2520,7 @@ describe('linux.do AI search controller', () => {
       jest.fn(),
       jest.fn(),
       () => ['yaohuo'],
-      retryIdentityStatus
+      reconcileIdentityStatus
     );
 
     await act(async () => {
@@ -2378,24 +2535,24 @@ describe('linux.do AI search controller', () => {
       loading: false
     });
     expect(hook.result.current.searchGroups[0]?.settled).not.toBe(false);
-    expect(retryIdentityStatus).not.toHaveBeenCalled();
+    expect(reconcileIdentityStatus).not.toHaveBeenCalled();
     await act(async () => {
       hook.result.current.retrySearchSource('yaohuo');
     });
-    expect(retryIdentityStatus).toHaveBeenCalledTimes(1);
-    expect(retryIdentityStatus).toHaveBeenLastCalledWith('yaohuo');
+    expect(reconcileIdentityStatus).toHaveBeenCalledTimes(1);
+    expect(reconcileIdentityStatus).toHaveBeenLastCalledWith('yaohuo');
 
     await act(async () => {
       await hook.result.current.runSearch({ query: 'single terminal', source: 'yaohuo' });
     });
     await waitFor(() => expect(hook.result.current.searchGroups[0]?.error).toBe('登录状态核对失败，请重试'));
     expect(searchTopics).not.toHaveBeenCalled();
-    expect(retryIdentityStatus).toHaveBeenCalledTimes(1);
+    expect(reconcileIdentityStatus).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       hook.result.current.retrySearchSource('yaohuo');
     });
-    expect(retryIdentityStatus).toHaveBeenCalledTimes(2);
+    expect(reconcileIdentityStatus).toHaveBeenCalledTimes(2);
   });
 
   it('keeps an unrelated source search in flight when another credential session changes', async () => {

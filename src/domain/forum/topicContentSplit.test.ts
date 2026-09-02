@@ -171,6 +171,34 @@ describe('Android topic content splitting', () => {
     ]);
   });
 
+  it('keeps authored standalone image lines ordered across physical rows', () => {
+    const urls = Array.from({ length: 5 }, (_, index) => `https://img.example/line-${index}.webp`);
+    const compilation = compileForumContent({
+      html: `<p>${urls.map((url, index) => `<img src="${url}" alt="图${index}">`).join('<br>')}</p>`,
+      role: 'opening',
+      source: 'nodeseek'
+    });
+    const imagesByRow = renderedContentRows(compilation).map((row) => parseHtml(row.html).querySelectorAll('img'));
+    const token = JSON.parse(
+      combineForumSelectionTokens(compilation.rows.map((row) => row.selectionToken))
+    ) as ReturnType<typeof selectionToken>;
+    const mediaLabels = [
+      ...token.prefix.filter((atom) => atom.kind === 'media').map((atom) => atom.text),
+      ...token.owners.flatMap((owner) => [
+        ...owner.tape.map((atom) => atom.text),
+        ...owner.trailing.filter((atom) => atom.kind === 'media').map((atom) => atom.text)
+      ])
+    ];
+
+    expect(imagesByRow.map((images) => images.length)).toEqual([4, 1]);
+    expect(imagesByRow.flat().map((image) => image.getAttribute('src'))).toEqual(urls);
+    expect(imagesByRow.flat().map((image) => image.getAttribute('data-forum-flow-image-context'))).toEqual(
+      Array(5).fill('standalone')
+    );
+    expect(mediaLabels).toEqual(['图0', '图1', '图2', '图3', '图4']);
+    expect(compilation.previewImages.map((image) => image.source)).toEqual(urls);
+  });
+
   it('keeps an unclassified Yaohuo reply image at its authored text position', () => {
     const text = '妈的，埃塞这边黑小子被中国人带坏了，天天加班，上帝也不见了，就是干，';
     const src = 'https://pic2.ziyuan.wang/user/v2jun/2024/12/FpZEifxiFGs1BWtHjFsk5tJJNKSE_8b6f63437539d.gif';
@@ -191,28 +219,52 @@ describe('Android topic content splitting', () => {
   });
 
   it('uses the same authored-line image placement across topic roles and sources', () => {
-    const roles = ['opening', 'quoted-reply', 'reply'] as const;
+    const roles = ['opening', 'reply', 'quoted-reply', 'accepted-answer', 'signature'] as const;
     const sources = ['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const;
 
     for (const role of roles) {
       for (const source of sources) {
-        const [row] = renderedContentRows(
-          compileForumContent({
-            html: 'before<img src="https://img.example.com/flow.png">after',
-            role,
-            source
-          })
+        const compilation = compileForumContent({
+          html:
+            '<p>before<img src="https://img.example.com/mixed.png">after</p>' +
+            '<p><span> \n <img data-forum-inline-sized="true" src="https://img.example.com/standalone.png"></span></p>' +
+            '<p><img src="https://img.example.com/adjacent-a.png"><img src="https://img.example.com/adjacent-b.png"></p>',
+          role,
+          source
+        });
+        const html = renderedContentRows(compilation)
+          .map((row) => row.html)
+          .join('');
+        const images = parseHtml(html).querySelectorAll('forum-inline-image, img');
+        expect(html, `${source}/${role}`).toContain(
+          'before<forum-inline-image src="https://img.example.com/mixed.png">https://img.example.com/mixed.png</forum-inline-image>after'
         );
-        expect(row?.html, `${source}/${role}`).toContain(
-          'before<forum-inline-image src="https://img.example.com/flow.png">https://img.example.com/flow.png</forum-inline-image>after'
+        expect(
+          images.map((image) => image.getAttribute('src')),
+          `${source}/${role} order`
+        ).toEqual([
+          'https://img.example.com/mixed.png',
+          'https://img.example.com/standalone.png',
+          'https://img.example.com/adjacent-a.png',
+          'https://img.example.com/adjacent-b.png'
+        ]);
+        expect(images.map((image) => image.getAttribute('data-forum-flow-image-context'))).toEqual([
+          undefined,
+          'standalone',
+          undefined,
+          undefined
+        ]);
+        expect(html).not.toContain('data-forum-inline-sized');
+        expect(html).not.toContain('<forum-inline-media-line>');
+        expect(compilation.previewImages.map((image) => image.source)).toEqual(
+          images.map((image) => image.getAttribute('src'))
         );
-        expect(row?.html).not.toContain('<forum-inline-media-line>');
       }
     }
   });
 
   it('conserves safe authored content across topic roles and sources while changing presentation', () => {
-    const roles = ['opening', 'quoted-reply', 'reply'] as const;
+    const roles = ['opening', 'reply', 'quoted-reply', 'accepted-answer', 'signature'] as const;
     const sources = ['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const;
     const imageUrl = 'https://img.example.com/authored-flow.gif';
     const html =
@@ -883,7 +935,12 @@ describe('Android topic content splitting', () => {
       owners: [
         {
           tape: [{ at: 'before\n'.length, text: '插图' }],
-          text: 'before\n\nafter',
+          text: 'before\n',
+          trailing: []
+        },
+        {
+          tape: [],
+          text: '\nafter',
           trailing: [{ kind: 'separator', text: '\n' }]
         }
       ],
@@ -1099,11 +1156,8 @@ describe('Android topic content splitting', () => {
     );
 
     expect(renderedRowGroups.map((group) => group.map((row) => row.text))).toEqual([
-      Array.from(
-        { length: 4 },
-        (_, index) => `${index === 0 ? 'connected' : ''}https://img.example/rowspan-${index}.webp`
-      ),
-      Array.from({ length: 4 }, (_, index) => `independent-${index}https://img.example/after-${index}.webp`)
+      ['connected', '', '', ''],
+      Array.from({ length: 4 }, (_, index) => `independent-${index}`)
     ]);
     expect(plan.rows.map((row) => imageUrlsInPlannedRow(row))).toEqual([
       Array.from({ length: 4 }, (_, index) => `https://img.example/rowspan-${index}.webp`),
@@ -1468,11 +1522,8 @@ describe('Android topic content splitting', () => {
 
     expect(rows).toHaveLength(3);
     expect(rows.map((row) => row.networkMediaCount)).toEqual([0, 1, 0]);
-    expect(rows.map((row) => parseHtml(row.html).text)).toEqual([
-      leading,
-      'https://img.example/discrete.webp',
-      trailing
-    ]);
+    expect(rows.map((row) => parseHtml(row.html).text)).toEqual([leading, '', trailing]);
+    expect(imageUrlsInPlannedRow(rows[1])).toEqual(['https://img.example/discrete.webp']);
   });
 
   it('keeps an anchor identity only on the first continuation row', () => {
