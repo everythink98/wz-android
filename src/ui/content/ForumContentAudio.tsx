@@ -54,7 +54,7 @@ export function ForumContentAudio({
         accessibilityState={{ disabled: loading }}
         disabled={loading}
         onPress={failed ? onRetry : playing ? onPause : onPlay}
-        style={({ pressed }) => [styles.playButton, pressed && styles.buttonPressed]}
+        style={styles.playButton}
       >
         <View
           accessibilityElementsHidden
@@ -142,9 +142,6 @@ const styles = StyleSheet.create({
     height: 48,
     justifyContent: 'center',
     width: 48
-  },
-  buttonPressed: {
-    opacity: 0.68
   },
   playGlyph: {
     alignItems: 'center',

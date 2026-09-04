@@ -1,4 +1,3 @@
-import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import type { LucideIcon, LucideProps } from 'lucide-react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';

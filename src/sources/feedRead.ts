@@ -278,7 +278,7 @@ export async function getFeed({
           if (selectedKeys.has(topicIdentity(item))) {
             continue;
           }
-          nextBuffers[item.source] = [...(nextBuffers[item.source] || []), item];
+          (nextBuffers[item.source] ??= []).push(item);
         }
         const nextPages: Partial<Record<Source, number | null>> = {};
         const sourceCursors: Partial<Record<Source, string | null>> = {};

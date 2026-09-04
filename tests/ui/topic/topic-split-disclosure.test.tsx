@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
+import { Profiler } from 'react';
 import { fireEvent, render } from '../render';
-import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { compileForumContent, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
@@ -116,6 +116,27 @@ const splitDetails = (label: string) =>
   ).join('')}</p></details>`;
 
 describe('typed topic disclosure state', () => {
+  it('does not commit when the already-visible default tab is selected', async () => {
+    let commits = 0;
+    const view = await render(
+      <Profiler
+        id="terminal"
+        onRender={() => {
+          commits += 1;
+        }}
+      >
+        <TerminalFixture scopeKey="opening" />
+      </Profiler>
+    );
+    const before = commits;
+    await fireEvent.press(view.getByLabelText('select-First'));
+    expect(view.getByText('first body')).toBeTruthy();
+    expect(commits).toBe(before);
+    await fireEvent.press(view.getByLabelText('select-Second'));
+    await fireEvent.press(view.getByLabelText('select-First'));
+    expect(view.getByText('first body')).toBeTruthy();
+  });
+
   it('keeps explicit frame edges and the title when expanded disclosures collapse', async () => {
     const fixtures = [
       {

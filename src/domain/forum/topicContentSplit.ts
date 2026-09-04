@@ -35,6 +35,7 @@ import { discourseQuotedPostMetadataFromNode } from './quotedPosts';
 import { isDiscourseSource, sourceCatalog, type DiscourseSource } from './sourceCatalog';
 import {
   markNodeSeekReplyReferenceNodes,
+  markV2exReplyReferenceNodes,
   normalizeForumUserMentionNodes,
   normalizeRenderableHtml
 } from './topicContentHtml';
@@ -192,43 +193,6 @@ function forumSelectionUnitsForBlockText(text: string): readonly ForumSelectionU
 
 function forumSelectionTokenForBlockText(text: string) {
   return forumSelectionTokenFromUnits(forumSelectionUnitsForBlockText(text));
-}
-
-export function forumSelectionTokenForVisibleText(text: string) {
-  return forumSelectionTokenForBlockText(text);
-}
-
-function parsedForumSelectionToken(token: string): ForumSelectionTokenPayload | null {
-  try {
-    const payload = JSON.parse(token) as Partial<ForumSelectionTokenPayload>;
-    return payload.version === 1 && Array.isArray(payload.owners) && Array.isArray(payload.prefix)
-      ? (payload as ForumSelectionTokenPayload)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-export function combineForumSelectionTokens(tokens: readonly string[]) {
-  const combined: { owners: ForumSelectionOwner[]; prefix: ForumSelectionTrailingRun[]; version: 1 } = {
-    owners: [],
-    prefix: [],
-    version: 1
-  };
-  for (const token of tokens) {
-    const payload = parsedForumSelectionToken(token);
-    if (!payload) return EMPTY_FORUM_SELECTION_TOKEN;
-    if (!combined.owners.length) combined.prefix.push(...payload.prefix);
-    else {
-      const lastIndex = combined.owners.length - 1;
-      const last = combined.owners[lastIndex];
-      combined.owners[lastIndex] = { ...last, trailing: [...last.trailing, ...payload.prefix] };
-    }
-    combined.owners.push(
-      ...payload.owners.map((owner) => ({ ...owner, tape: [...owner.tape], trailing: [...owner.trailing] }))
-    );
-  }
-  return JSON.stringify(combined);
 }
 
 type ForumSemanticRowBase = {
@@ -991,11 +955,12 @@ function rawAttrsWithStyle(rawAttrs: string, declaration: string) {
   return rawAttrsWithValue(rawAttrs, 'style', `${current}${separator}${declaration}`);
 }
 
-function stripCompilerOwnedAttributes(html: string) {
+function stripCompilerOwnedAttributes(html: string, preserveNavigation = false) {
   return html.replace(/<[a-z][a-z0-9-]*\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) =>
     tag.replace(
-      /"[^"]*"|'[^']*'|\s+(data-wz-[^\s=/>]+)(?=[\s=/>])(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi,
-      (match, compilerOwnedName: string | undefined) => (compilerOwnedName ? '' : match)
+      /"[^"]*"|'[^']*'|\s+(data-(?:wz|forum-reply)-[^\s=/>]+)(?=[\s=/>])(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi,
+      (match, compilerOwnedName: string | undefined) =>
+        compilerOwnedName && (!preserveNavigation || /^data-wz-/i.test(compilerOwnedName)) ? '' : match
     )
   );
 }
@@ -1003,7 +968,7 @@ function stripCompilerOwnedAttributes(html: string) {
 function stripCompilerOwnedNodeAttributes(root: HTMLElement) {
   root.querySelectorAll('*').forEach((node) => {
     Object.keys(node.attributes).forEach((name) => {
-      if (name.toLowerCase().startsWith('data-wz-')) node.removeAttribute(name);
+      if (/^data-(?:wz|forum-reply)-/i.test(name)) node.removeAttribute(name);
     });
   });
 }
@@ -2367,7 +2332,7 @@ function compiledForumContentResult(
 ): CompiledForumContent {
   const renderedRows = rows.map((row): CompiledForumContentRow =>
     row.type === 'richText' || row.type === 'table' || row.type === 'video'
-      ? { ...row, html: stripCompilerOwnedAttributes(row.html) }
+      ? { ...row, html: stripCompilerOwnedAttributes(row.html, true) }
       : row
   );
   const renderedRowCount = renderedRows.filter((row) => row.type !== 'poll' && row.type !== 'quote').length;
@@ -2390,7 +2355,10 @@ type ForumContentCompileOptions = {
 
 function preparedForumContentKey(options: ForumContentCompileOptions) {
   const polls = compileRoleIncludesPolls(options.role, options.source) ? options.polls || [] : [];
-  const topicId = options.role === 'opening' && isDiscourseSource(options.source) ? options.topicId || '' : '';
+  const topicId =
+    options.source === 'v2ex' || (options.role === 'opening' && isDiscourseSource(options.source))
+      ? options.topicId || ''
+      : '';
   return JSON.stringify([options.source, options.role === 'opening' ? 'opening' : 'compact', topicId, polls]);
 }
 
@@ -2400,7 +2368,13 @@ function preparedForumContentMatches(
   options: ForumContentCompileOptions
 ): prepared is PreparedForumContent<CompiledForumContent> {
   return Boolean(
-    prepared && prepared.contentHtml === contentHtml && prepared.contentPlanKey === preparedForumContentKey(options)
+    prepared &&
+    prepared.contentHtml === contentHtml &&
+    prepared.contentPlanKey ===
+      preparedForumContentKey({
+        ...options,
+        topicId: options.topicId ?? (options.source === 'v2ex' ? prepared.topicId : undefined)
+      })
   );
 }
 
@@ -2443,6 +2417,7 @@ function compileParsedForumContent({
   try {
     if (body) {
       if (source === 'nodeseek') markNodeSeekReplyReferenceNodes(body, `${sourceCatalog.nodeseek.baseUrl}/`);
+      if (source === 'v2ex') markV2exReplyReferenceNodes(body, topicId);
       previewImages = normalizeForumContentMediaNodes(body).previewImages;
     }
     const nodes = (body?.childNodes || []).filter(planningNodeHasContent) as PlanningNode[];
@@ -2504,6 +2479,7 @@ export function prepareForumContentHtml(
   return {
     contentHtml: normalizedContentHtml,
     contentPlan: compileForumContent({ html: normalizedContentHtml, ...options }),
+    ...(source === 'v2ex' && topicId ? { topicId } : {}),
     contentPlanKey: preparedForumContentKey(options)
   };
 }
@@ -2556,6 +2532,7 @@ export function prepareSanitizedForumContent(
       raw,
       ...options
     }),
+    ...(source === 'v2ex' && topicId ? { topicId } : {}),
     contentPlanKey: preparedForumContentKey(options)
   };
 }
@@ -2563,14 +2540,20 @@ export function prepareSanitizedForumContent(
 export function prepareReplyContent(
   reply: Reply,
   source: Source,
-  role: Extract<ForumContentCompileRole, 'accepted-answer' | 'quoted-reply' | 'reply'> = 'reply'
+  role: Extract<ForumContentCompileRole, 'accepted-answer' | 'quoted-reply' | 'reply'> = 'reply',
+  topicId?: string
 ): PreparedReply {
-  const contentOptions = { polls: reply.polls, role, source } as const;
+  const contentOptions = {
+    polls: reply.polls,
+    role,
+    source,
+    topicId: topicId ?? reply.preparedContent?.topicId
+  } as const;
   const preparedContent = preparedForumContentMatches(reply.preparedContent, reply.contentHtml, contentOptions)
     ? reply.preparedContent
     : prepareForumContentHtml(reply.contentHtml, contentOptions);
   const signatureHtml = String(reply.signatureHtml || '');
-  const signatureOptions = { role: 'signature', source } as const;
+  const signatureOptions = { role: 'signature', source, topicId: contentOptions.topicId } as const;
   const preparedSignature = signatureHtml.trim()
     ? preparedForumContentMatches(reply.preparedSignature, signatureHtml, signatureOptions)
       ? reply.preparedSignature
@@ -2592,15 +2575,19 @@ export function prepareTopicContent(detail: TopicDetail): PreparedTopicDetail {
   const preparedContent = preparedForumContentMatches(detail.preparedContent, detail.contentHtml, contentOptions)
     ? detail.preparedContent
     : prepareForumContentHtml(detail.contentHtml, contentOptions);
-  const replies = detail.replies.map((reply) => prepareReplyContent(reply, detail.source));
+  const replies = detail.replies.map((reply) => prepareReplyContent(reply, detail.source, 'reply', detail.id));
   if (detail.preparedContent === preparedContent && replies.every((reply, index) => reply === detail.replies[index])) {
     return detail as PreparedTopicDetail;
   }
   return { ...detail, preparedContent, replies };
 }
 
-export function prepareRepliesContent(response: RepliesResponse, source: Source): PreparedRepliesResponse {
-  const items = response.items.map((reply) => prepareReplyContent(reply, source));
+export function prepareRepliesContent(
+  response: RepliesResponse,
+  source: Source,
+  topicId?: string
+): PreparedRepliesResponse {
+  const items = response.items.map((reply) => prepareReplyContent(reply, source, 'reply', topicId));
   return items.every((reply, index) => reply === response.items[index])
     ? (response as PreparedRepliesResponse)
     : { ...response, items };

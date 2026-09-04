@@ -3,6 +3,13 @@ import {
   LINUXDO_BROWSER_FETCH_SCRIPT,
   NODESEEK_BROWSER_FETCH_SCRIPT
 } from '@/features/account/useHiddenBrowserFetchController';
+import {
+  normalizePostData,
+  parseRenderedNodeSeekTopicHtml,
+  prepareNodeSeekForumContent
+} from '@/sources/nodeseek/topicParser';
+import { parseNodeSeekPageDocument } from '@/sources/nodeseek/protocol';
+import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 
 function runNodeSeekBrowserFetchScript(url: string, html: string, owner?: 'account') {
   window.history.pushState(null, '', url);
@@ -468,6 +475,173 @@ describe('hidden browser fetch scripts', () => {
     expect(payload.html).toContain('id="temp-script"');
     expect(stop).toHaveBeenCalled();
   });
+
+  it.each(
+    ['empty', 'partial', 'complete'].flatMap((state) =>
+      ['bridge', 'rendered'].map((transport) => ({ state, transport }))
+    )
+  )('preserves full terminal source through $state $transport content', ({ state, transport }) => {
+    const markdown = [
+      ':::: tabs',
+      '::: tab-item Report',
+      '```ansi',
+      '\u001b[32mfirst line',
+      'last line\u001b[0m',
+      '```',
+      '```text',
+      'ordinary code',
+      '```',
+      '```ansi',
+      'second report',
+      '```',
+      ':::',
+      '::: tab-item Image',
+      '![report](https://example.com/report.png)',
+      ':::',
+      '::::'
+    ].join('\n');
+    const content = `<div class="nsk-magic-tabs">
+      <div class="nsk-magic-tab-title">Report</div>
+      <div class="nsk-magic-tab-body">
+        <div class="terminal-container"><div class="xterm">
+          <div class="xterm-helpers"><textarea></textarea><style>.xterm { color: red; }</style></div>
+          <div class="xterm-rows"><div>${state === 'empty' ? '' : 'first line'}</div><div>${state === 'complete' ? 'last line' : ''}</div></div>
+        </div></div>
+        <pre><code class="language-text">ordinary code</code></pre>
+        <a href="/member?t=alice">@alice</a> <a href="/post-777286-1#6">#6</a>
+        <pre><code class="language-ansi">second report</code></pre>
+      </div>
+      <div class="nsk-magic-tab-title">Image</div>
+      <div class="nsk-magic-tab-body"><img src="https://example.com/report.png" alt="report"></div>
+    </div>`;
+    Object.defineProperty(window, '__config__', {
+      configurable: true,
+      value: {
+        postData: {
+          postId: 777286,
+          title: 'Report',
+          comments: [
+            { commentId: 1, floorIndex: 0, markdown, poster: { name: 'alice' } },
+            {
+              commentId: 2,
+              floorIndex: 1,
+              markdown: markdown.replace('first line', 'reply first line').replace('last line', 'reply last line'),
+              poster: { name: 'bob' }
+            }
+          ]
+        }
+      }
+    });
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript(
+      '/post-777286-1',
+      [1, 2]
+        .map(
+          (id, floor) =>
+            `<div id="${floor}" data-comment-id="${id}" class="content-item"><article class="post-content">${content}</article></div>`
+        )
+        .join('')
+    );
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0][0]);
+    const encoded = payload.html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+    const data = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    const topic =
+      transport === 'bridge'
+        ? normalizePostData(data.postData, '777286', 'https://www.nodeseek.com/post-777286-1')
+        : parseRenderedNodeSeekTopicHtml(
+            parseNodeSeekPageDocument(`<h1>Report</h1>${payload.html}${document.body.innerHTML}`),
+            '777286'
+          )!;
+    const opening = prepareNodeSeekForumContent(topic.contentHtml, { role: 'opening', topicId: topic.id });
+    for (const [role, prepared] of [
+      ['opening', opening],
+      ['reply', topic.replies[0].preparedContent!]
+    ] as const) {
+      const rows = requirePreparedForumContent(prepared, prepared.contentHtml, {
+        role,
+        source: 'nodeseek',
+        topicId: role === 'opening' ? topic.id : undefined
+      }).rows;
+      const code = rows.filter((row) => row.type === 'codeBlock');
+      expect(code.map((row) => row.text)).toEqual([
+        role === 'opening' ? 'first line\nlast line' : 'reply first line\nreply last line',
+        'ordinary code',
+        'second report'
+      ]);
+      expect(code.map((row) => row.variant)).toEqual(['terminal', 'terminal', 'terminal']);
+      expect(code[0].runs.map((run) => run.style?.color)).toContain('rgb(0, 187, 0)');
+      expect(rows.find((row) => row.type === 'terminalReportHeader')?.tabs.map((tab) => tab.title)).toEqual([
+        'Report',
+        'Image'
+      ]);
+      expect(prepared.contentHtml).toContain('https://example.com/report.png');
+      expect(prepared.contentHtml).toContain('/member?t=alice');
+      expect(prepared.contentHtml).toContain('/post-777286-1#6');
+      expect(prepared.contentHtml).not.toContain('xterm-helpers');
+    }
+  });
+
+  it.each([0, 2])('keeps rendered terminal text when %i source blocks cannot pair uniquely', (count) => {
+    const topic = normalizePostData(
+      {
+        postId: 777286,
+        title: 'Report',
+        comments: [
+          {
+            commentId: 1,
+            floorIndex: 0,
+            poster: { name: 'alice' },
+            content: '<div class="terminal-container"><pre>rendered text</pre></div>',
+            markdown: Array.from({ length: count }, (_, index) => `\`\`\`ansi\nSOURCE ${index}\n\`\`\``).join('\n')
+          }
+        ]
+      },
+      '777286',
+      'https://www.nodeseek.com/post-777286-1'
+    );
+    expect(topic.contentHtml).toContain('rendered');
+    expect(topic.contentHtml).not.toContain('SOURCE');
+  });
+
+  it.each(['comment-id', 'floor'].flatMap((identity) => ['source', 'rendered'].map((side) => ({ identity, side }))))(
+    'does not restore terminal source for an ambiguous $side $identity',
+    ({ identity, side }) => {
+      const data = {
+        postId: 777286,
+        title: 'Report',
+        comments: [
+          { commentId: 1, floorIndex: 0, markdown: 'opening', poster: { name: 'op' } },
+          { commentId: 2, floorIndex: 1, markdown: '```ansi\nALICE FULL\n```', poster: { name: 'alice' } },
+          {
+            commentId: side === 'source' && identity === 'comment-id' ? 2 : 3,
+            floorIndex: side === 'source' && identity === 'floor' ? 1 : 2,
+            markdown: '```ansi\nBOB FULL\n```',
+            poster: { name: 'bob' }
+          }
+        ]
+      };
+      const html = `<script>${Buffer.from(JSON.stringify({ postData: data })).toString('base64')}</script>
+      <h1>Report</h1><div id="0" data-comment-id="1" class="content-item"><article class="post-content">opening</article></div>
+      ${['alice', 'bob']
+        .map(
+          (
+            author,
+            index
+          ) => `<li id="${side === 'rendered' && identity === 'floor' ? 1 : index + 1}" ${identity === 'comment-id' ? `data-comment-id="${side === 'rendered' ? 2 : index + 2}"` : ''} class="content-item">
+          <a href="/space/${index + 2}" class="author-name">${author}</a>
+          <article class="post-content"><div class="terminal-container"><pre>${author} rendered</pre></div></article></li>`
+        )
+        .join('')}`;
+      const parsed = parseNodeSeekPageDocument(html);
+      expect(parsed.embedded?.postData).toEqual(data);
+      const topic = parseRenderedNodeSeekTopicHtml(parsed, '777286')!;
+      expect(topic.replies).toHaveLength(2);
+      expect(topic.replies[0].contentHtml).toContain('alice');
+      expect(topic.replies[1].contentHtml).toContain('bob');
+      expect(topic.replies.map((reply) => reply.contentHtml).join('')).not.toContain('FULL');
+    }
+  );
 
   it('does not turn marker text on an incomplete NodeSeek page into a challenge', () => {
     vi.useFakeTimers();

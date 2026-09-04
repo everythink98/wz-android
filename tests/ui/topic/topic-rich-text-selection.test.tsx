@@ -1,15 +1,33 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React, { type ReactNode } from 'react';
-import { Platform, View } from 'react-native';
-import RenderHTML from 'react-native-render-html';
+import { Platform, StyleSheet, Text, View } from 'react-native';
+import RenderHTML, { RenderHTMLConfigProvider, TRenderEngineProvider, useContentWidth } from 'react-native-render-html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { compileForumContent } from '@/domain/forum/topicContentSplit';
+import { compileForumContent, prepareTopicContent, prepareReplyContent } from '@/domain/forum/topicContentSplit';
+import { TopicContentList } from '@/features/topic/components/TopicContentList';
+import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
+import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
+import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { createHtmlCustomElementModels } from '@/features/topic/rendering/htmlElementModels';
 import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
 import { createTheme } from '@/ui/theme/tokens';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
-import type { TopicDetail } from '@/domain/forum/models';
-import { render } from '../render';
+import type { Reply, TopicDetail } from '@/domain/forum/models';
+import { act, fireEvent, render, within } from '../render';
+import { TopicRouteBackBoundary } from '@/features/topic/useTopicRouteBeforeRemove';
+
+let mockPreventRemove = false;
+let mockHandleBack = () => {};
+jest.mock('@react-navigation/native', () => ({
+  ...jest.requireActual<typeof import('@react-navigation/native')>('@react-navigation/native'),
+  usePreventRemove: (prevent: boolean, callback: () => void) => {
+    mockPreventRemove = prevent;
+    mockHandleBack = callback;
+  }
+}));
+import { QueryTestWrapper } from '../QueryTestWrapper';
+import { forumQueryKeys } from '@/platform/query/serverState';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import {
   TopicSelectionSurface,
   TopicSelectionRowProvider,
@@ -30,9 +48,24 @@ jest.mock('expo-video', () => ({
   useVideoPlayer: jest.fn(() => ({}))
 }));
 
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => undefined) }));
+
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
   return {
+    FlashList: ({ data, renderItem }: { data: { key: string }[]; renderItem: (info: unknown) => ReactNode }) =>
+      ReactModule.createElement(
+        require('react-native').View,
+        null,
+        data.map((item, index) =>
+          ReactModule.createElement(
+            ReactModule.Fragment,
+            { key: item.key },
+            renderItem({ item, index, target: 'Cell' })
+          )
+        )
+      ),
+    useMappingHelper: () => ({ getMappingKey: (key: string) => key }),
     useRecyclingState: <T,>(initialState: T | (() => T), dependencies: React.DependencyList) => {
       const value = ReactModule.useRef<T | undefined>(undefined);
       ReactModule.useMemo(() => {
@@ -102,17 +135,27 @@ const selectionTopic: TopicDetail = {
   url: 'https://www.nodeseek.com/post-1-1'
 };
 
-function ProductionRichTextRow({ html }: { html: string }) {
+function ProductionRichTextRow({
+  html,
+  topic = selectionTopic,
+  onOpenTopic = () => undefined,
+  onOpenUser = () => undefined
+}: {
+  html: string;
+  topic?: TopicDetail;
+  onOpenTopic?: Parameters<typeof useHtmlRenderingController>[0]['onOpenTopic'];
+  onOpenUser?: Parameters<typeof useHtmlRenderingController>[0]['onOpenUser'];
+}) {
   const controller = useHtmlRenderingController({
     mediaSessionIdentity: 'nodeseek:selection-test',
     onOpenExternalUrl: () => undefined,
     onOpenImagePreview: () => undefined,
-    onOpenTopic: () => undefined,
-    onOpenUser: () => undefined,
-    selectedTopic: selectionTopic,
+    onOpenTopic,
+    onOpenUser,
+    selectedTopic: topic,
     settings: selectionReaderData.settings,
     theme: selectionTheme,
-    topicDetail: selectionTopic,
+    topicDetail: topic,
     webViewBlockMessage: ''
   });
   return (
@@ -131,7 +174,221 @@ function ProductionRichTextRow({ html }: { html: string }) {
   );
 }
 
+it('opens the V2EX user from a mention and the exact reply from its compiled inline floor', async () => {
+  const onOpenTopic = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenTopic']>();
+  const onOpenUser = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenUser']>();
+  const topic: TopicDetail = { ...selectionTopic, id: '945124', source: 'v2ex', url: 'https://www.v2ex.com/t/945124' };
+  const prepared = prepareTopicContent({ ...topic, contentHtml: '<p>@Pipecraft #6</p>' });
+  let replyReads = 0;
+  topic.replies = new Proxy(
+    Array.from({ length: 2_000 }, () => ({
+      author: 'reader',
+      contentHtml: '',
+      createdAt: ''
+    })),
+    {
+      get(replies, key, receiver) {
+        if (typeof key === 'string' && /^\d+$/.test(key)) replyReads++;
+        return Reflect.get(replies, key, receiver);
+      }
+    }
+  );
+  const row = prepared.preparedContent.contentPlan.rows.find((item) => item.type === 'richText');
+  if (!row || !('html' in row)) throw new Error('Expected a compiled text row');
+  const view = await render(
+    <ProductionRichTextRow html={row.html} topic={topic} onOpenTopic={onOpenTopic} onOpenUser={onOpenUser} />
+  );
+  await fireEvent.press(view.getByText('#6'));
+  expect(replyReads).toBeLessThanOrEqual(32);
+  expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ source: 'v2ex', id: '945124' }), {
+    floor: 6,
+    expectedAuthorUsername: 'Pipecraft'
+  });
+  await fireEvent.press(view.getByText('@Pipecraft'));
+  expect(onOpenUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'v2ex', username: 'Pipecraft' }));
+  expect(onOpenTopic).toHaveBeenCalledTimes(1);
+});
+
+function ProductionContentList({
+  topic,
+  quotedReplies
+}: {
+  topic: ReturnType<typeof prepareTopicContent>;
+  quotedReplies: Record<string, Reply>;
+}) {
+  const session = useTopicSessionController({ topic, notify: () => undefined });
+  const topicScrollRef = React.useRef(null);
+  const controller = useHtmlRenderingController({
+    mediaSessionIdentity: 'selection-test',
+    onOpenExternalUrl: () => undefined,
+    onOpenImagePreview: () => undefined,
+    onOpenTopic: () => undefined,
+    onOpenUser: () => undefined,
+    selectedTopic: topic,
+    settings: selectionReaderData.settings,
+    theme: selectionTheme,
+    topicDetail: topic,
+    webViewBlockMessage: ''
+  });
+  const unexpected = React.useCallback(() => {
+    throw new Error('Selection fixture must not perform a read or write transaction.');
+  }, []);
+  return (
+    <TopicContentList
+      actions={React.useMemo(
+        () => ({
+          actionBusy: false,
+          decisionFor: () => ({ allowed: false, reason: 'login-required' }),
+          bookmarkOnDiscourseSite: unexpected,
+          collectOnNodeSeekSite: unexpected,
+          deleteReply: unexpected,
+          editReply: unexpected,
+          favoriteOnYaohuoSite: unexpected,
+          interact: unexpected,
+          loadLinuxDoPollCapabilities: unexpected,
+          loadLinuxDoTemplates: unexpected,
+          loadNodeSeekStardustStatus: unexpected,
+          lockNodeSeekPoll: unexpected,
+          payNodeSeekStardust: unexpected,
+          submitReply: unexpected,
+          uploadReplyImage: unexpected,
+          uploadReplyImageMarkup: unexpected,
+          useLinuxDoTemplate: unexpected,
+          votePoll: unexpected
+        }),
+        [unexpected]
+      )}
+      article={{ busy: false, error: null, topic }}
+      currentNodeSeekUser={undefined}
+      discourseEmojiUrls={{}}
+      headerState={null}
+      html={{ ...controller, contentWidth: 320, mediaSessionIdentity: 'selection-test' }}
+      nodeSeekUserId={null}
+      onImagePreviewDescriptors={() => undefined}
+      onOpenTopic={unexpected}
+      onOpenUser={unexpected}
+      onScroll={() => undefined}
+      session={session}
+      topicScrollRef={topicScrollRef}
+      read={{
+        cancelTopicQueries: unexpected,
+        currentTopic: topic,
+        currentTopicKey: `${topic.source}:${topic.id}`,
+        loadPreviousReplies: unexpected,
+        loadMoreReplies: unexpected,
+        locateReply: unexpected,
+        loadedQuotedReplies: quotedReplies,
+        loadingMoreReplies: false,
+        loadingPreviousReplies: false,
+        loadingQuotedFloors: {},
+        openTopic: unexpected,
+        refreshTopicReplies: unexpected,
+        refreshWholeTopic: unexpected,
+        repliesError: null,
+        replyStartError: null,
+        replyEndError: null,
+        repliesLoading: false,
+        retryReplies: unexpected,
+        replyRowsPartial: false,
+        replyCollectionComplete: true,
+        replyHasPrevious: false,
+        replyHasMore: false,
+        replyNextOffset: null,
+        replyNextPage: null,
+        toggleReplyQuote: unexpected,
+        toggleTopicBodyQuote: ({ instanceKey }) => {
+          session.commands.quotes.changeExpanded(instanceKey, !session.commands.quotes.isExpanded(instanceKey));
+          return Promise.resolve('completed');
+        },
+        topicBusy: false,
+        topicDetail: topic,
+        topicError: null,
+        topicFavorite: false,
+        topicQueryKey: forumQueryKeys.topic({
+          source: topic.source,
+          topicId: topic.id,
+          scope: initialForumSessionEpochs
+        }),
+        topicReplies: topic.replies,
+        unreadReplyCount: 0
+      }}
+    />
+  );
+}
+
 describe('topic rich-text selection', () => {
+  it('reports only current native selection to the route without rerendering body consumers', async () => {
+    const row = compileForumContent({ html: '<p>正文</p>', role: 'opening', source: 'nodeseek' }).rows[0]!;
+    const item: TopicSelectionItem = {
+      documentId: 'opening',
+      rowKey: 'opening:body',
+      selectionToken: row.selectionToken
+    };
+    const renders = jest.fn();
+    const children = <SelectionTextProbe onRender={renders} />;
+    const tree = (active: boolean, token = item.selectionToken) => (
+      <TopicRouteBackBoundary
+        imagePreviewOpen={false}
+        replyComposerOpen={false}
+        closeImagePreview={jest.fn()}
+        closeReplyComposer={jest.fn()}
+      >
+        <TopicSelectionSurface
+          active={active}
+          items={[{ ...item, selectionToken: token }]}
+          sessionKey="selection-events"
+          listRef={{ current: null }}
+        >
+          {children}
+        </TopicSelectionSurface>
+      </TopicRouteBackBoundary>
+    );
+    const view = await render(tree(true));
+    const old = view.getByTestId('topic-selection-surface').props;
+    await act(async () => old.onSelectionChange({ nativeEvent: { active: true, revision: old.revision } }));
+    expect(mockPreventRemove).toBe(true);
+    expect(renders).toHaveBeenCalledTimes(1);
+    await act(async () => mockHandleBack());
+    expect(mockPreventRemove).toBe(false);
+    await view.rerender(tree(false));
+    await act(async () => old.onSelectionChange({ nativeEvent: { active: true, revision: old.revision } }));
+    expect(mockPreventRemove).toBe(false);
+    await view.rerender(tree(true));
+    const current = view.getByTestId('topic-selection-surface').props;
+    expect(current.revision).not.toBe(old.revision);
+    await act(async () => old.onSelectionChange({ nativeEvent: { active: true, revision: old.revision } }));
+    expect(mockPreventRemove).toBe(false);
+    await act(async () => current.onSelectionChange({ nativeEvent: { active: true, revision: current.revision } }));
+    expect(mockPreventRemove).toBe(true);
+    await view.rerender(tree(true, `${item.selectionToken} `));
+    expect(mockPreventRemove).toBe(false);
+  });
+  it('passes the actual nested tab width to HTML, media and continuous code', async () => {
+    const rows = compileForumContent({
+      source: 'nodeseek',
+      role: 'opening',
+      html: '<forum-terminal-report><forum-terminal-tab title="Images"><blockquote><ul><li><p><img src="https://img.example/width.png"></p><pre>full code</pre></li></ul></blockquote></forum-terminal-tab></forum-terminal-report>'
+    }).rows;
+    const mediaRow = rows.find((row) => row.type === 'richText');
+    const codeRow = rows.find((row) => row.type === 'codeBlock');
+    if (!mediaRow || mediaRow.type !== 'richText' || !codeRow || codeRow.type !== 'codeBlock')
+      throw new Error('Expected tab media and code');
+    function ImageWidth() {
+      return <Text testID="width-probe">{`${useContentWidth()}:${useForumContentWidth()}`}</Text>;
+    }
+    const view = await render(
+      <TRenderEngineProvider>
+        <RenderHTMLConfigProvider renderers={{ img: ImageWidth }}>
+          <TopicContentBlock contentWidth={320} row={mediaRow} />
+          <TopicContentBlock contentWidth={320} row={codeRow} />
+        </RenderHTMLConfigProvider>
+      </TRenderEngineProvider>
+    );
+    const expected = 320 - 16 - StyleSheet.hairlineWidth * 2 - 19 - 28;
+    expect(view.getByTestId('width-probe').props.children).toBe(`${expected}:${expected}`);
+    expect(StyleSheet.flatten(view.getByTestId('topic-code-frame').props.style).minWidth).toBe(expected);
+    expect(view.getByText('full code')).toBeTruthy();
+  });
   it('renders NodeSeek native s markup with a visible strike', async () => {
     const settings = createEmptyReaderData().settings;
     const styles = buildHtmlRenderingStyles({ settings, theme: createTheme(settings) });
@@ -236,7 +493,11 @@ describe('topic rich-text selection', () => {
           <SelectionCoordinatorProbe />
           {rows.map((row, index) => (
             <SelectionRow key={`${row.semanticId}:${row.segmentIndex}`} item={items[index]!}>
-              {'html' in row ? <ProductionRichTextRow html={row.html} /> : <View />}
+              {'html' in row ? (
+                <ProductionRichTextRow html={row.html} />
+              ) : row.type === 'codeBlock' ? (
+                <TopicContentBlock contentWidth={320} row={row} />
+              ) : null}
             </SelectionRow>
           ))}
         </View>
@@ -265,8 +526,109 @@ describe('topic rich-text selection', () => {
     expect(screen.getByTestId('topic-selection-content').props.accessible).toBe(false);
     expect(screen.getByTestId('topic-inline-image')).toBeTruthy();
     expect(screen.getByTestId('topic-image-frame')).toBeTruthy();
+    expect(screen.getByText('const face = "😀";').parent?.props.selectable).toBe(false);
     surface.props.onAutoScroll({ nativeEvent: { delta: -24 } });
     expect(scrollToOffset).toHaveBeenCalledWith({ animated: false, offset: 96 });
+  });
+
+  it('connects visible opening markers and real code selection while excluding replies, signatures, and accepted answers', async () => {
+    const reply = prepareReplyContent(
+      {
+        author: 'reply-author',
+        floor: 1,
+        commentId: 222,
+        createdAt: selectionTopic.createdAt,
+        contentHtml: '<p>reply body</p><pre>reply code</pre>',
+        signatureHtml: '<p>reply signature</p>'
+      },
+      'linuxdo'
+    );
+    const accepted = prepareReplyContent(
+      {
+        author: 'accepted-author',
+        floor: 42,
+        createdAt: selectionTopic.createdAt,
+        contentHtml: '<p>accepted body</p><pre>accepted code</pre>'
+      },
+      'linuxdo',
+      'quoted-reply'
+    );
+    const quoted = prepareReplyContent(
+      {
+        author: 'quoted-author',
+        floor: 9,
+        createdAt: selectionTopic.createdAt,
+        contentHtml: '<p>expanded quote body</p>'
+      },
+      'linuxdo',
+      'quoted-reply'
+    );
+    const topic = prepareTopicContent({
+      ...selectionTopic,
+      source: 'linuxdo',
+      url: 'https://linux.do/t/topic/selection-topic',
+      acceptedAnswerFloor: 42,
+      solved: true,
+      replies: [reply],
+      replyCount: 1,
+      contentHtml:
+        '<p>opening body</p><table><tr><td>opening cell</td></tr></table><pre>opening code</pre>' +
+        '<details open><summary>opening details</summary><p>details body</p></details>' +
+        '<details><summary>collapsed details</summary><p>collapsed details body</p></details>' +
+        '<aside class="quote" data-post="9" data-topic="quoted-topic" data-username="quoted-author"><div class="title">quoted-author:</div><blockquote>quote preview</blockquote></aside>' +
+        '<forum-terminal-report><forum-terminal-tab title="Visible"><div class="forum-terminal-code">visible terminal body</div></forum-terminal-tab>' +
+        '<forum-terminal-tab title="Hidden"><div class="forum-terminal-code">hidden terminal body</div></forum-terminal-tab></forum-terminal-report>'
+    });
+    const screen = await render(
+      <QueryTestWrapper>
+        <ProductionContentList
+          topic={topic}
+          quotedReplies={{ 'linuxdo:selection-topic:42': accepted, 'linuxdo:quoted-topic:9': quoted }}
+        />
+      </QueryTestWrapper>
+    );
+    await fireEvent.press(screen.getByLabelText('查看完整解决方案，第 42 楼'));
+    await fireEvent.press(within(screen.getByTestId('topic-quote-quoted-topic-9')).getByLabelText('展开'));
+    const surface = screen.getByTestId('topic-selection-surface');
+    const nativeRows = surface.props.rows as { nativeId: string; selectionToken: string }[];
+    const manifest = nativeRows.map((row) => row.selectionToken).join('\n');
+    for (const visible of [
+      'opening body',
+      'opening cell',
+      'opening code',
+      'details body',
+      'visible terminal body',
+      'expanded quote body'
+    ]) {
+      expect(manifest).toContain(visible);
+    }
+    for (const excluded of [
+      'collapsed details body',
+      'hidden terminal body',
+      'reply body',
+      'reply code',
+      'reply signature',
+      'accepted body',
+      'accepted code'
+    ]) {
+      expect(manifest).not.toContain(excluded);
+    }
+    const renderedTree = JSON.stringify(screen.toJSON());
+    const markers = [...renderedTree.matchAll(/"nativeID":"(topic-selection-[^"]+)"/g)].map((match) => match[1]);
+    expect(markers.sort()).toEqual(nativeRows.map((row) => row.nativeId).sort());
+    expect(screen.getByText('opening code').parent?.props.selectable).toBe(false);
+    expect(screen.getByText('accepted code').parent?.props.selectable).toBe(false);
+    expect(screen.getByText('reply code').parent?.props.selectable).toBe(false);
+    expect(screen.getByText('reply signature')).toBeTruthy();
+    await fireEvent.press(screen.getByText('Hidden'));
+    const changed = screen
+      .getByTestId('topic-selection-surface')
+      .props.rows.map((row: { selectionToken: string }) => row.selectionToken)
+      .join('\n');
+    expect(changed).toContain('hidden terminal body');
+    expect(changed).not.toContain('visible terminal body');
+    await fireEvent.press(screen.getByText('Visible'));
+    expect(screen.getByTestId('topic-selection-surface').props.rows).toEqual(nativeRows);
   });
 
   it('fails closed before mounting repeated rows into the native coordinator', async () => {

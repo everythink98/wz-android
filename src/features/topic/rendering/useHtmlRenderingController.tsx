@@ -82,33 +82,37 @@ export function useHtmlRenderingController({
     [resolvedStyleSettings.fontFamily, resolvedStyleSettings.fontScale, theme]
   );
   const openImagePreview = useLatestCallback(onOpenImagePreview);
-  const openHtmlLink = useLatestCallback((href: string, event?: { stopPropagation?: () => void }) => {
-    event?.stopPropagation?.();
-    if (isPreviewableImageUrl(href)) {
-      openImagePreview(href);
-      return;
+  const openHtmlLink = useLatestCallback(
+    (href: string, event?: { stopPropagation?: () => void }, explicitTarget?: ReplyLocationTarget) => {
+      event?.stopPropagation?.();
+      if (isPreviewableImageUrl(href)) {
+        openImagePreview(href);
+        return;
+      }
+      const baseUrl = selectedTopic?.url || topicDetail?.url;
+      const candidates = [
+        ...(selectedTopic ? [selectedTopic] : []),
+        ...(topicDetail ? [topicDetail, ...topicDetail.replies.slice(0, 32)] : [])
+      ];
+      const appUser = parseForumUserLink(href, baseUrl, candidates);
+      if (appUser) {
+        void onOpenUser(appUser);
+        return;
+      }
+      const destination = parseForumTopicDestination(href, baseUrl);
+      if (destination) {
+        const target =
+          destination.topic.source === 'v2ex' && destination.topic.id === selectedTopic?.id
+            ? explicitTarget || destination.targetReply
+            : destination.targetReply;
+        void (target ? onOpenTopic(destination.topic, target) : onOpenTopic(destination.topic));
+        return;
+      }
+      if (isHttpOrHttpsUrl(href)) {
+        onOpenExternalUrl(href);
+      }
     }
-    const baseUrl = selectedTopic?.url || topicDetail?.url;
-    const candidates = [
-      ...(selectedTopic ? [selectedTopic] : []),
-      ...(topicDetail ? [topicDetail, ...(topicDetail.replies || [])] : [])
-    ];
-    const appUser = parseForumUserLink(href, baseUrl, candidates);
-    if (appUser) {
-      void onOpenUser(appUser);
-      return;
-    }
-    const destination = parseForumTopicDestination(href, baseUrl);
-    if (destination) {
-      void (destination.targetReply
-        ? onOpenTopic(destination.topic, destination.targetReply)
-        : onOpenTopic(destination.topic));
-      return;
-    }
-    if (isHttpOrHttpsUrl(href)) {
-      onOpenExternalUrl(href);
-    }
-  });
+  );
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
     const BlockquoteRenderer: CustomBlockRenderer = (props) => {
       const boundarySpacing = useContentBoundarySpacing(props.tnode);
@@ -161,11 +165,18 @@ export function useHtmlRenderingController({
       const nativeProps = getNativePropsForTNode(props);
       if (isFloorLink) {
         const href = props.tnode.attributes?.href || '';
+        const floor = Number(props.tnode.attributes?.['data-forum-reply-floor']);
+        const author = props.tnode.attributes?.['data-forum-reply-author'];
+        const target =
+          mediaContext.contentSource === 'v2ex' && Number.isSafeInteger(floor) && floor > 0 && author?.trim()
+            ? { floor, expectedAuthorUsername: author }
+            : undefined;
         return (
           <Text
             {...nativeProps}
             accessibilityRole="link"
-            onPress={(event) => openHtmlLink(href, event)}
+            accessibilityLabel={target ? `定位回复目标，第 ${floor} 楼` : undefined}
+            onPress={(event) => openHtmlLink(href, event, target)}
             style={[nativeProps.style, htmlRendererStyles.htmlFloorLink]}
           />
         );

@@ -1,35 +1,19 @@
-import type { QueryClient, QueryKey } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import type { FeedSource, Source } from '@/domain/forum/models';
 import type { SessionSite } from '@/domain/session/siteSessionState';
 import { appQueryClient } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 
-export function resetForumSourceQueries(
-  source: Source,
-  client: QueryClient = appQueryClient,
-  preserveRecoveryQueryKey?: QueryKey
-) {
-  const preservedQuery = preserveRecoveryQueryKey
-    ? client.getQueryCache().find({ queryKey: preserveRecoveryQueryKey, exact: true })
-    : undefined;
-  const canPreserve = Boolean(
-    preservedQuery &&
-    preservedQuery.isActive() &&
-    preservedQuery.queryKey[0] === 'forum' &&
-    (preservedQuery.queryKey[1] === source || preservedQuery.queryKey[1] === 'all')
-  );
+export function resetForumSourceQueries(source: Source, client: QueryClient = appQueryClient) {
   const affectedSources: FeedSource[] = [source, 'all'];
   for (const affectedSource of affectedSources) {
     const filters = {
       predicate: (query: { queryKey: readonly unknown[] }) =>
-        query.queryKey[0] === 'forum' &&
-        query.queryKey[1] === affectedSource &&
-        (!canPreserve || query !== preservedQuery)
+        query.queryKey[0] === 'forum' && query.queryKey[1] === affectedSource
     };
     void client.cancelQueries(filters);
     client.removeQueries(filters);
   }
-  return canPreserve;
 }
 
 export function cancelForumSourceQueries(

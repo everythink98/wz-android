@@ -3,8 +3,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  RELEASE_REQUIRED_TRACKED_INPUTS,
   assertCleanReleaseCheckout,
   assertReleaseNode22,
+  assertTrackedReleaseInputs,
   parseJavaVersionOutput,
   releaseEnvironment,
   restorePackageJsonAfterPrebuild,
@@ -189,6 +191,13 @@ describe('release environment boundary', () => {
     expect(() => assertCleanReleaseCheckout(' M scripts/release-android.mjs')).toThrow('未提交改动');
   });
 
+  it('fails when a required build or verification input is not tracked', () => {
+    expect(() => assertTrackedReleaseInputs(RELEASE_REQUIRED_TRACKED_INPUTS.join('\n'))).not.toThrow();
+    expect(() =>
+      assertTrackedReleaseInputs(RELEASE_REQUIRED_TRACKED_INPUTS.filter((file) => file !== '.env').join('\n'))
+    ).toThrow('.env');
+  });
+
   it('runs unsigned native validation before the only signed build', () => {
     const ordinary = unsignedReleaseChildEnv({ PATH: 'tools', ...signing }, {});
     const calls: { command: string; args: string[]; options: { cwd: string; env: Record<string, string> } }[] = [];
@@ -206,6 +215,11 @@ describe('release environment boundary', () => {
     expect(calls[0]?.args).toEqual(expect.arrayContaining([':app:testReleaseUnitTest', ':app:compileReleaseKotlin']));
     expect(calls[0]?.args).not.toContain(':app:assembleRelease');
     expect(calls[1]?.args).toContain(':app:assembleRelease');
+    for (const call of calls) {
+      expect(call.args).toContain('-PEX_DEV_CLIENT_NETWORK_INSPECTOR=false');
+      expect(call.args).not.toContain('-PnewArchEnabled=true');
+      expect(call.options.env.NODE_ENV).toBe('production');
+    }
     for (const name of Object.keys(signing)) {
       expect(calls[0]?.options.env).not.toHaveProperty(name);
       expect(calls[1]?.options.env[name]).toBe(signing[name as keyof typeof signing]);

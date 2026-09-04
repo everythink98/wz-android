@@ -22,10 +22,18 @@ vi.mock('expo-file-system/legacy', () => ({
   writeAsStringAsync: vi.fn()
 }));
 
-vi.mock('expo-media-library', () => ({
-  requestPermissionsAsync: vi.fn(),
-  saveToLibraryAsync: vi.fn()
-}));
+vi.mock('expo-media-library', () => {
+  class Asset {
+    static create = vi.fn();
+    id: string;
+
+    constructor(id: string) {
+      this.id = id;
+    }
+  }
+
+  return { Asset, requestPermissionsAsync: vi.fn() };
+});
 
 describe('image library saving', () => {
   afterEach(() => {
@@ -40,10 +48,10 @@ describe('image library saving', () => {
     vi.mocked(FileSystem.getInfoAsync).mockReset();
     vi.mocked(FileSystem.writeAsStringAsync).mockReset();
     vi.mocked(MediaLibrary.requestPermissionsAsync).mockReset();
-    vi.mocked(MediaLibrary.saveToLibraryAsync).mockReset();
+    vi.mocked(MediaLibrary.Asset.create).mockReset();
     vi.mocked(FileSystem.deleteAsync).mockResolvedValue(undefined);
     vi.mocked(FileSystem.writeAsStringAsync).mockResolvedValue(undefined);
-    vi.mocked(MediaLibrary.saveToLibraryAsync).mockResolvedValue(undefined);
+    vi.mocked(MediaLibrary.Asset.create).mockResolvedValue(new MediaLibrary.Asset('content://media/external/images/1'));
     vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({
       granted: true
     } as MediaLibrary.PermissionResponse);
@@ -76,7 +84,7 @@ describe('image library saving', () => {
       })
     );
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
-    expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
+    expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg', { idempotent: true });
   });
 
@@ -94,7 +102,7 @@ describe('image library saving', () => {
     ).rejects.toThrow('下载内容不是图片');
 
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
-    expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
+    expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg', { idempotent: true });
   });
 
@@ -106,7 +114,7 @@ describe('image library saving', () => {
     expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
     expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
-    expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
+    expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
   });
 
   it('records permission failure without exporting the image URL', async () => {
@@ -138,7 +146,7 @@ describe('image library saving', () => {
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', 'abc123', {
       encoding: FileSystem.EncodingType.Base64
     });
-    expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png');
+    expect(MediaLibrary.Asset.create).toHaveBeenCalledWith('file:///cache/forum-image-1234.png');
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', { idempotent: true });
   });
 
@@ -165,7 +173,7 @@ describe('image library saving', () => {
       Buffer.from('image-bytes').toString('base64'),
       { encoding: FileSystem.EncodingType.Base64 }
     );
-    expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg');
+    expect(MediaLibrary.Asset.create).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg');
   });
 
   it('saves with the same element Referrer Policy as the displayed image', async () => {
@@ -243,7 +251,7 @@ describe('image library saving', () => {
       Buffer.from('avif-bytes').toString('base64'),
       { encoding: FileSystem.EncodingType.Base64 }
     );
-    expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.avif');
+    expect(MediaLibrary.Asset.create).toHaveBeenCalledWith('file:///cache/forum-image-1234.avif');
   });
 
   it('prefers the response image type when the URL suffix is misleading', async () => {
@@ -263,7 +271,7 @@ describe('image library saving', () => {
       Buffer.from(svg).toString('base64'),
       { encoding: FileSystem.EncodingType.Base64 }
     );
-    expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.svg');
+    expect(MediaLibrary.Asset.create).toHaveBeenCalledWith('file:///cache/forum-image-1234.svg');
   });
 
   it('recognizes the legacy SVG response type used by the compatible preview', async () => {

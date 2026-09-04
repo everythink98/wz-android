@@ -49,6 +49,28 @@ describe('reader data controller helpers', () => {
     const next = prepareReaderDataCommit(current, (value) => toggleFavorite(value, topic));
 
     expect(next?.favorites[topicKey(topic)]?.topic).toEqual(topic);
+    expect(next?.history).toBe(current.history);
+    expect(next?.followedUsers).toBe(current.followedUsers);
+    expect(next?.settings).toBe(current.settings);
+    expect(next?.deletedRecords).toBe(current.deletedRecords);
+  });
+
+  it('validates changed partitions without rebuilding unchanged deletion maps', () => {
+    const current = toggleFavorite(createEmptyReaderData(), topic);
+    const next = prepareReaderDataCommit(
+      current,
+      (value) => ({
+        ...value,
+        deletedRecords: { ...value.deletedRecords, favorites: { bad: 'invalid', good: topic.createdAt } },
+        settings: { ...value.settings, fontScale: 100 }
+      }),
+      'favorite-toggled'
+    );
+    expect(next?.deletedRecords.favorites).toEqual({ good: topic.createdAt });
+    expect(next?.deletedRecords.history).toBe(current.deletedRecords.history);
+    expect(next?.deletedRecords.followedUsers).toBe(current.deletedRecords.followedUsers);
+    expect(next?.favorites).toBe(current.favorites);
+    expect(next?.settings.fontScale).toBe(1.4);
   });
 
   it('trusts only bounded history-recorded mutations without rebuilding the snapshot', () => {

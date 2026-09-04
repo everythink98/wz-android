@@ -4,7 +4,7 @@ import type { LucideIcon } from 'lucide-react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
-import { TOUCH_HIT_SLOP } from './pressFeedback';
+import { TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   return StyleSheet.create({
@@ -12,7 +12,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       flex: 1
     },
     dismiss: {
-      ...StyleSheet.absoluteFillObject
+      ...StyleSheet.absoluteFill
     },
     menu: {
       overflow: 'hidden',
@@ -111,7 +111,6 @@ export function PopupMenuItem({
       accessibilityRole="menuitem"
       accessibilityLabel={label}
       accessibilityState={selected ? { selected: true } : undefined}
-      android_ripple={{ color: theme.primarySoft }}
       style={[styles.item, compact && styles.itemCompact, selected && styles.itemSelected, last && styles.itemLast]}
       onPress={onPress}
     >

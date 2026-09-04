@@ -1,3 +1,4 @@
+import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
 import React, { type ComponentProps, useState } from 'react';
@@ -6,7 +7,7 @@ import { emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyNetworkProxyState } from '@/platform/network/networkProxy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { MoreScreen as MoreScreenView } from '@/features/more/MoreScreen';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
 
 let mockDragRunsOnJS = false;
@@ -92,45 +93,16 @@ jest.mock('react-native-webview', () => {
 jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
   return {
-    Gesture: {
-      Pan: () => ({
-        handlers: {} as Record<string, unknown>,
-        activateAfterLongPress() {
-          return this;
-        },
-        enabled(enabled = true) {
-          this.handlers.gestureEnabled = enabled;
-          return this;
-        },
-        minDistance() {
-          return this;
-        },
-        runOnJS(enabled = true) {
-          mockDragRunsOnJS = enabled;
-          return this;
-        },
-        onBegin(handler: (...args: unknown[]) => void) {
-          this.handlers.onGestureBegin = handler;
-          return this;
-        },
-        onStart(handler: (...args: unknown[]) => void) {
-          this.handlers.onGestureStart = handler;
-          return this;
-        },
-        onUpdate(handler: (...args: unknown[]) => void) {
-          this.handlers.onGestureUpdate = handler;
-          return this;
-        },
-        onEnd(handler: (...args: unknown[]) => void) {
-          this.handlers.onGestureEnd = handler;
-          return this;
-        },
-        onFinalize(handler: (...args: unknown[]) => void) {
-          this.handlers.onGestureFinalize = handler;
-          return this;
-        }
-      })
-    },
+    usePanGesture: (config: Record<string, unknown>) => ({
+      handlers: {
+        gestureEnabled: config.enabled,
+        onGestureBegin: config.onBegin,
+        onGestureEnd: config.onDeactivate,
+        onGestureFinalize: config.onFinalize,
+        onGestureStart: config.onActivate,
+        onGestureUpdate: config.onUpdate
+      }
+    }),
     GestureDetector: ({
       children,
       gesture
@@ -180,8 +152,8 @@ jest.mock('lucide-react-native', () => {
 });
 
 const readerData = createEmptyReaderData();
-const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
-const authorizedLinuxDoSessions = createSiteSessionViewModels(
+const sessionViewModels = projectTestAccountSessions(createSiteSessionStates());
+const authorizedLinuxDoSessions = projectTestAccountSessions(
   createSiteSessionStates({
     linuxdo: {
       site: 'linuxdo',
@@ -551,7 +523,7 @@ describe('More screen state and actions', () => {
     expect(updateSettings).not.toHaveBeenCalled();
 
     await act(async () => {
-      handle.props.onGestureFinalize({}, true);
+      handle.props.onGestureFinalize({ canceled: false });
     });
 
     expect(mockScheduleOnRN).toHaveBeenCalledTimes(3);
@@ -569,14 +541,14 @@ describe('More screen state and actions', () => {
     await act(async () => {
       handle.props.onGestureStart({ translationY: 0 });
       handle.props.onGestureUpdate({ translationY: 56 });
-      handle.props.onGestureFinalize({}, false);
+      handle.props.onGestureFinalize({ canceled: true });
     });
     expect(updateSettings).not.toHaveBeenCalled();
 
     await act(async () => {
       handle.props.onGestureStart({ translationY: 0 });
       handle.props.onGestureUpdate({ translationY: 10_000 });
-      handle.props.onGestureFinalize({}, true);
+      handle.props.onGestureFinalize({ canceled: false });
     });
     expect(updateSettings).toHaveBeenCalledTimes(1);
     expect(updateSettings).toHaveBeenLastCalledWith({
@@ -610,7 +582,7 @@ describe('More screen state and actions', () => {
         })}
       />
     );
-    await act(async () => handle.props.onGestureFinalize({}, true));
+    await act(async () => handle.props.onGestureFinalize({ canceled: false }));
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
@@ -638,7 +610,7 @@ describe('More screen state and actions', () => {
     expect(dragTranslation?.value).toBe(56);
 
     mockDeferScheduleOnRN = true;
-    await act(async () => handle.props.onGestureFinalize({}, true));
+    await act(async () => handle.props.onGestureFinalize({ canceled: false }));
 
     expect(updateSettings).not.toHaveBeenCalled();
     expect(dragTranslation?.value).toBe(56);
@@ -690,7 +662,7 @@ describe('More screen state and actions', () => {
     await act(async () => {
       reverseHandle.props.onGestureStart({ translationY: 0 });
       reverseHandle.props.onGestureUpdate({ translationY: -56 });
-      reverseHandle.props.onGestureFinalize({}, true);
+      reverseHandle.props.onGestureFinalize({ canceled: false });
     });
     expect(updateSettings).toHaveBeenCalledWith({ contentSources: readerData.settings.contentSources });
 
@@ -880,7 +852,7 @@ describe('More screen state and actions', () => {
       mockScreenReaderInitialState = false;
       mockScreenReaderChangeListener?.(false);
     });
-    await act(async () => screenReaderHandle.props.onGestureFinalize({}, true));
+    await act(async () => screenReaderHandle.props.onGestureFinalize({ canceled: false }));
 
     expect(updateSettings).not.toHaveBeenCalled();
     expect(
@@ -915,7 +887,7 @@ describe('More screen state and actions', () => {
     await act(async () => {
       handle.props.onGestureStart({ translationY: 0 });
       handle.props.onGestureUpdate({ translationY: 112 });
-      handle.props.onGestureFinalize({}, true);
+      handle.props.onGestureFinalize({ canceled: false });
     });
     expect(mockDeferredRNCalls).toHaveLength(3);
 
@@ -956,7 +928,7 @@ describe('More screen state and actions', () => {
     await act(async () => {
       handle.props.onGestureStart({ translationY: 0 });
       handle.props.onGestureUpdate({ translationY: 112 });
-      handle.props.onGestureFinalize({}, true);
+      handle.props.onGestureFinalize({ canceled: false });
     });
 
     expect({

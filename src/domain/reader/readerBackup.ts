@@ -1,4 +1,5 @@
 import { mergeReaderData, readerDataVersion, sanitizeReaderData, type ReaderData } from './readerData';
+import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 
 const SENSITIVE_KEY_PATTERN = /(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf|proxy)/i;
 export const MAX_BACKUP_JSON_BYTES = 5 * 1024 * 1024;
@@ -9,22 +10,26 @@ function utf8ByteLength(value: string) {
   return new TextEncoder().encode(value).length;
 }
 
-function stripSensitive(value: unknown, depth = 0): unknown {
+function stripSensitive(value: unknown, depth = 0, path = ''): unknown {
   if (depth > MAX_BACKUP_OBJECT_DEPTH) {
     return undefined;
   }
   if (Array.isArray(value)) {
-    return value.map((item) => stripSensitive(item, depth + 1)).filter((item) => item !== undefined);
+    return value.map((item) => stripSensitive(item, depth + 1, `${path}[]`)).filter((item) => item !== undefined);
   }
   if (!value || typeof value !== 'object') {
     return value;
   }
   const next: Record<string, unknown> = {};
+  const recordMap = /^(?:deletedRecords\.)?(?:favorites|history|followedUsers)$/.test(path);
   for (const [key, item] of Object.entries(value)) {
-    if (SENSITIVE_KEY_PATTERN.test(key)) {
+    const separator = key.indexOf(':');
+    const recordKey =
+      recordMap && separator > 0 && separator < key.length - 1 && Object.hasOwn(sourceCatalog, key.slice(0, separator));
+    if (!recordKey && SENSITIVE_KEY_PATTERN.test(key)) {
       continue;
     }
-    const clean = stripSensitive(item, depth + 1);
+    const clean = stripSensitive(item, depth + 1, path ? `${path}.${key}` : key);
     if (clean !== undefined) {
       next[key] = clean;
     }

@@ -10,8 +10,6 @@
   --tt-radius-md: 8px;
   --tt-radius-lg: 12px;
   --tt-shadow-elevated-md: 0 8px 24px rgb(0 0 0 / 16%);
-  --tt-transition-duration-default: 150ms;
-  --tt-transition-easing-default: cubic-bezier(0.16, 1, 0.3, 1);
   --font-scale: 1;
   background: var(--surface);
   color: var(--ink);
@@ -143,18 +141,10 @@ select:focus-visible {
   font-weight: 600;
   line-height: 1;
   touch-action: manipulation;
-  transition:
-    background-color var(--tt-transition-duration-default) var(--tt-transition-easing-default),
-    color var(--tt-transition-duration-default) var(--tt-transition-easing-default),
-    opacity var(--tt-transition-duration-default) var(--tt-transition-easing-default);
 }
 .tiptap-button.icon-only {
   width: 48px;
   padding: 0;
-}
-.tiptap-button:hover:not(:disabled),
-.tiptap-button:active:not(:disabled) {
-  background: var(--surface-2);
 }
 .tiptap-button[data-active-state='on'],
 .tiptap-button[data-state='open'] {
@@ -172,11 +162,6 @@ select:focus-visible {
   background: var(--primary);
   color: #ffffff;
 }
-.tiptap-button.primary:hover:not(:disabled),
-.tiptap-button.primary:active:not(:disabled) {
-  background: color-mix(in srgb, var(--primary) 88%, black);
-}
-
 .tiptap-card {
   position: relative;
   display: flex;
@@ -221,9 +206,6 @@ select:focus-visible {
   font-size: 14px;
   font-weight: 400;
   line-height: 1.5;
-  transition:
-    border-color var(--tt-transition-duration-default) var(--tt-transition-easing-default),
-    box-shadow var(--tt-transition-duration-default) var(--tt-transition-easing-default);
 }
 .tiptap-input::placeholder {
   color: var(--muted);
@@ -288,7 +270,6 @@ select:focus-visible {
   text-align: left;
   user-select: none;
 }
-.tiptap-dropdown-item:hover,
 .tiptap-dropdown-item:focus-visible {
   background: var(--surface-2);
 }
@@ -324,10 +305,6 @@ select:focus-visible {
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
-}
-.tiptap-dropdown-menu[data-state='open'],
-.tiptap-link-popover[data-state='open'] {
-  animation: tiptap-popover-in 150ms var(--tt-transition-easing-default);
 }
 .tiptap-link-actions {
   display: flex;
@@ -712,9 +689,6 @@ select:focus-visible {
   background: var(--surface);
   color: var(--ink);
 }
-.poll-advanced-toggle.tiptap-button .tool-icon {
-  transition: transform var(--tt-transition-duration-default) var(--tt-transition-easing-default);
-}
 .poll-advanced-toggle.tiptap-button[data-active-state='on'] .tool-icon {
   transform: rotate(180deg);
 }
@@ -848,12 +822,6 @@ select:focus-visible {
   line-height: 1.35;
   text-align: left;
 }
-.tool-grid .tiptap-button:active:not(:disabled),
-.template-list .tiptap-button:active:not(:disabled) {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-  color: var(--primary);
-}
 .template-list {
   display: flex;
   flex-direction: column;
@@ -868,9 +836,6 @@ select:focus-visible {
   border: 1px solid var(--line);
   border-radius: var(--tt-radius-md);
   background: var(--surface);
-  transition:
-    border-color var(--tt-transition-duration-default) var(--tt-transition-easing-default),
-    box-shadow var(--tt-transition-duration-default) var(--tt-transition-easing-default);
 }
 .expression-search:focus-within {
   border-color: var(--primary);
@@ -957,26 +922,4 @@ select:focus-visible {
   border-color: var(--line);
   background: var(--surface-2);
   color: var(--primary);
-}
-
-@keyframes tiptap-popover-in {
-  from {
-    opacity: 0;
-    transform: scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tiptap-button,
-  .tiptap-input {
-    transition: none;
-  }
-  .tiptap-dropdown-menu[data-state='open'],
-  .tiptap-link-popover[data-state='open'] {
-    animation: none;
-  }
 }

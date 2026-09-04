@@ -9,7 +9,6 @@ import {
   normalizeFontScale,
   type ReaderSettings
 } from '@/domain/reader/readerData';
-import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 
 export function AppearancePanel({
@@ -152,7 +151,6 @@ function SegmentedSetting({
               key={item.value}
               style={[styles.appearanceSegment, selected && styles.appearanceSegmentActive]}
               onPress={() => {
-                triggerPressFeedback();
                 onChange(item.value);
               }}
             >
@@ -208,7 +206,6 @@ function FontScaleSetting({
           disabled={draftValue <= FONT_SCALE_MIN}
           style={[styles.appearanceStepButton, draftValue <= FONT_SCALE_MIN && styles.appearanceControlDisabled]}
           onPress={() => {
-            triggerPressFeedback();
             setStep(-1);
           }}
         >
@@ -236,7 +233,6 @@ function FontScaleSetting({
           disabled={draftValue >= FONT_SCALE_MAX}
           style={[styles.appearanceStepButton, draftValue >= FONT_SCALE_MAX && styles.appearanceControlDisabled]}
           onPress={() => {
-            triggerPressFeedback();
             setStep(1);
           }}
         >

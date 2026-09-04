@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import DateTimePicker, { type DateTimePickerChangeEvent } from '@react-native-community/datetimepicker';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import type { SearchStyles } from './styles';
 import {
@@ -9,7 +9,7 @@ import {
   type DiscourseVisitedFilter,
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 
 function FilterChoiceGroup({
   horizontal = false,
@@ -17,7 +17,6 @@ function FilterChoiceGroup({
   title,
   value,
   styles,
-  theme,
   onChange
 }: {
   horizontal?: boolean;
@@ -25,7 +24,6 @@ function FilterChoiceGroup({
   title: string;
   value: string;
   styles: SearchStyles;
-  theme: ReaderTheme;
   onChange: (value: string) => void;
 }) {
   const options = items.map((item) => {
@@ -35,7 +33,6 @@ function FilterChoiceGroup({
         key={`${title}-${item.value}-${item.label}`}
         accessibilityRole="button"
         accessibilityState={{ selected }}
-        android_ripple={androidRipple(theme.primarySoft)}
         style={[styles.searchFilterOption, selected && styles.searchFilterOptionActive]}
         onPress={() => onChange(item.value)}
       >
@@ -103,13 +100,11 @@ function FilterCheckbox({
   checked,
   label,
   styles,
-  theme,
   onChange
 }: {
   checked: boolean;
   label: string;
   styles: SearchStyles;
-  theme: ReaderTheme;
   onChange: (checked: boolean) => void;
 }) {
   return (
@@ -117,7 +112,6 @@ function FilterCheckbox({
       accessibilityRole="checkbox"
       accessibilityLabel={label}
       accessibilityState={{ checked }}
-      android_ripple={androidRipple(theme.primarySoft)}
       style={[styles.searchFilterOption, checked && styles.searchFilterOptionActive]}
       onPress={() => onChange(!checked)}
     >
@@ -219,11 +213,9 @@ export function SearchFilterForm({
     }
   }, [draftFilter]);
   const changeExactDate = useCallback(
-    (event: DateTimePickerEvent, value?: Date) => {
+    (_event: DateTimePickerChangeEvent, value: Date) => {
       setDatePickerVisible(false);
-      if (event.type === 'set' && value) {
-        updateDraft({ date: localSearchDate(value), timeRange: 'all' });
-      }
+      updateDraft({ date: localSearchDate(value), timeRange: 'all' });
     },
     [updateDraft]
   );
@@ -242,7 +234,6 @@ export function SearchFilterForm({
               { value: 'time', label: '最新' }
             ]}
             styles={styles}
-            theme={theme}
             onChange={(value) => updateDraft({ sort: value as typeof draftFilter.sort })}
           />
           <FilterChoiceGroup
@@ -250,7 +241,6 @@ export function SearchFilterForm({
             value={draftFilter.timeRange}
             items={searchTimeRangeItems}
             styles={styles}
-            theme={theme}
             onChange={(value) => updateDraft({ timeRange: value as typeof draftFilter.timeRange })}
           />
           <FilterTextField
@@ -265,7 +255,6 @@ export function SearchFilterForm({
             accessibilityRole="button"
             accessibilityLabel={v2exMoreVisible ? '收起 V2EX 更多筛选' : '展开 V2EX 更多筛选'}
             accessibilityState={{ expanded: v2exMoreVisible }}
-            android_ripple={androidRipple(theme.primarySoft)}
             style={styles.searchFilterMoreButton}
             onPress={() => setV2exMoreVisible((current) => !current)}
           >
@@ -290,7 +279,6 @@ export function SearchFilterForm({
                   { value: 'and', label: '全部关键词' }
                 ]}
                 styles={styles}
-                theme={theme}
                 onChange={(value) => updateDraft({ operator: value as typeof draftFilter.operator })}
               />
             </>
@@ -307,7 +295,6 @@ export function SearchFilterForm({
               { value: 'latest', label: '最新' }
             ]}
             styles={styles}
-            theme={theme}
             onChange={(value) => updateDraft({ order: value as typeof draftFilter.order })}
           />
           <FilterChoiceGroup
@@ -315,7 +302,6 @@ export function SearchFilterForm({
             value={draftFilter.timeRange}
             items={searchTimeRangeItems}
             styles={styles}
-            theme={theme}
             onChange={(value) => updateDraft({ timeRange: value as typeof draftFilter.timeRange, date: '' })}
           />
           <FilterChoiceGroup
@@ -326,7 +312,6 @@ export function SearchFilterForm({
               { value: 'title', label: '标题' }
             ]}
             styles={styles}
-            theme={theme}
             onChange={(value) => updateDraft({ scope: value as typeof draftFilter.scope })}
           />
           <View style={styles.searchFilterField}>
@@ -334,7 +319,6 @@ export function SearchFilterForm({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="选择分类"
-              android_ripple={androidRipple(theme.primarySoft)}
               style={styles.input}
               onPress={openCategoryPicker}
             >
@@ -350,7 +334,6 @@ export function SearchFilterForm({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="选择标签"
-              android_ripple={androidRipple(theme.primarySoft)}
               style={styles.input}
               onPress={openTagPicker}
             >
@@ -383,7 +366,6 @@ export function SearchFilterForm({
                 checked={draftFilter.tagMatch === 'all'}
                 label="匹配全部标签"
                 styles={styles}
-                theme={theme}
                 onChange={(checked) => updateDraft({ tagMatch: checked ? 'all' : 'any' })}
               />
             ) : null}
@@ -394,7 +376,6 @@ export function SearchFilterForm({
               discourseAdvancedFiltersSet ? '，已设置' : ''
             }`}
             accessibilityState={{ expanded: discourseMoreVisible }}
-            android_ripple={androidRipple(theme.primarySoft)}
             style={styles.searchFilterMoreButton}
             onPress={() => {
               setDatePickerVisible(false);
@@ -423,7 +404,6 @@ export function SearchFilterForm({
                       checked={draftFilter.visited.includes(value)}
                       label={label}
                       styles={styles}
-                      theme={theme}
                       onChange={() => toggleVisited(value)}
                     />
                   ))}
@@ -444,7 +424,6 @@ export function SearchFilterForm({
                   { value: 'unsolved', label: '未解决' }
                 ]}
                 styles={styles}
-                theme={theme}
                 onChange={(value) => updateDraft({ status: value as typeof draftFilter.status })}
               />
               <View style={styles.searchFilterField}>
@@ -457,13 +436,11 @@ export function SearchFilterForm({
                     { value: 'before', label: '之前' }
                   ]}
                   styles={styles}
-                  theme={theme}
                   onChange={(value) => updateDraft({ dateRelation: value as typeof draftFilter.dateRelation })}
                 />
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="选择精确日期"
-                  android_ripple={androidRipple(theme.primarySoft)}
                   style={styles.input}
                   onPress={() => setDatePickerVisible(true)}
                 >
@@ -487,7 +464,8 @@ export function SearchFilterForm({
                   <DateTimePicker
                     value={draftFilter.date ? new Date(`${draftFilter.date}T12:00:00`) : new Date()}
                     mode="date"
-                    onChange={changeExactDate}
+                    onDismiss={() => setDatePickerVisible(false)}
+                    onValueChange={changeExactDate}
                   />
                 ) : null}
               </View>
@@ -535,7 +513,6 @@ export function SearchFilterForm({
                   checked={draftFilter.expertResponse}
                   label="有专家回应"
                   styles={styles}
-                  theme={theme}
                   onChange={updateLinuxDoExpertResponse}
                 />
               </View>
@@ -544,7 +521,6 @@ export function SearchFilterForm({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="选择作者"
-                  android_ripple={androidRipple(theme.primarySoft)}
                   style={styles.input}
                   onPress={openUserPicker}
                 >
@@ -577,7 +553,6 @@ export function SearchFilterForm({
             value={draftFilter.category}
             items={nodeSeekCategoryItems}
             styles={styles}
-            theme={theme}
             onChange={(value) => updateDraft({ category: value })}
           />
           <FilterChoiceGroup
@@ -588,7 +563,6 @@ export function SearchFilterForm({
               { value: 'postTime', label: '新帖子' }
             ]}
             styles={styles}
-            theme={theme}
             onChange={(value) => updateDraft({ sort: value as typeof draftFilter.sort })}
           />
         </>
@@ -600,7 +574,6 @@ export function SearchFilterForm({
           value={draftFilter.category}
           items={yaohuoCategoryItems}
           styles={styles}
-          theme={theme}
           onChange={(value) => updateDraft({ category: value })}
         />
       ) : null}

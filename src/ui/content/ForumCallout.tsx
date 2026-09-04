@@ -24,7 +24,7 @@ import {
   type DiscourseCalloutTone,
   type DiscourseCalloutType
 } from '@/domain/forum/callouts';
-import { alphaColor, androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { alphaColor, type ReaderTheme } from '@/ui/theme/tokens';
 
 export const FORUM_CALLOUT_TRANSITION_MS = 100;
 
@@ -112,7 +112,6 @@ export function ForumCallout({
           accessibilityLabel={titleLabel}
           accessibilityRole="button"
           accessibilityState={{ expanded }}
-          android_ripple={androidRipple(palette.borderColor)}
           style={[calloutStyles.header, calloutStyles.foldableHeader]}
           onPress={toggleExpanded}
         >

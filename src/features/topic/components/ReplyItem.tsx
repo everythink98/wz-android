@@ -36,7 +36,6 @@ import {
 } from '@/domain/forum/quotedPosts';
 import { replyContextBadgeStyle, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { normalizeUserReference, userFromReply, userReferenceFromUsername } from '@/domain/forum/userNavigation';
 import { topicActionStateKey, type InteractionType } from '@/domain/forum/topicActionState';
@@ -304,7 +303,6 @@ export function ReplyItem({
     if (!replyCopyText) {
       return;
     }
-    triggerPressFeedback();
     void Clipboard.setStringAsync(replyCopyText)
       .then(() => ToastAndroid.show('评论已复制', ToastAndroid.SHORT))
       .catch(() => ToastAndroid.show('复制失败', ToastAndroid.SHORT));

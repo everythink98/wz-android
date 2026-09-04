@@ -1,12 +1,12 @@
+import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
-import React from 'react';
 import { Alert, Text } from 'react-native';
 import { CredentialVaultError, emptyCredentialSummaries } from '@/platform/storage/credentialVault';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AccountCenterPanel } from '@/features/more/components/AccountCenterPanel';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 
@@ -21,7 +21,7 @@ jest.mock('lucide-react-native', () => ({
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
-const sessions = createSiteSessionViewModels(createSiteSessionStates());
+const sessions = projectTestAccountSessions(createSiteSessionStates());
 const allSessionSources = ['nodeseek', 'linuxdo', 'yaohuo'] as const;
 
 afterEach(() => {
@@ -141,7 +141,7 @@ describe('Account center user authentication', () => {
       url: 'https://www.nodeseek.com/space/42',
       topics: []
     };
-    const mixedSessions = createSiteSessionViewModels(
+    const mixedSessions = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
@@ -189,13 +189,13 @@ describe('Account center user authentication', () => {
       />
     );
 
-    expect(view.getByText('待处理 2 · 网站登录 1/3 · 自动填入 1/3')).toBeTruthy();
+    expect(view.getByText('待核对 1 · 待处理 1 · 网站登录 1/3 · 自动填入 1/3')).toBeTruthy();
     expect(view.getByText('Alice · 已登录')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('查看主页'));
     expect(onCommand).toHaveBeenLastCalledWith({ type: 'open-user', user: currentUser });
 
     await fireEvent.press(view.getByTestId('account-site-linuxdo'));
-    expect(view.getByText('需要完成验证')).toBeTruthy();
+    expect(view.getByText('本次核对失败，可重试')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('去验证'));
     expect(onCommand).toHaveBeenLastCalledWith({ type: 'open-login', site: 'linuxdo' });
 

@@ -1,3 +1,4 @@
+import { projectTestAccountSessions, testAccountUser } from '../../../tests/helpers/accountSessions';
 import { describe, expect, it } from 'vitest';
 import {
   accountSessionAccess,
@@ -5,7 +6,6 @@ import {
   accountSessionSnapshotFromObservation,
   createAccountSessionSnapshot,
   createAccountSessionViewModel,
-  createSiteSessionViewModels,
   nodeSeekUserIdForSession,
   reduceSiteSessionState,
   createSiteSessionStates,
@@ -230,7 +230,7 @@ describe('site session state', () => {
       loggedIn: false,
       at: '2026-06-06T02:00:00.000Z'
     });
-    const viewModel = createSiteSessionViewModels(createSiteSessionStates({ yaohuo: state })).yaohuo;
+    const viewModel = projectTestAccountSessions(createSiteSessionStates({ yaohuo: state })).yaohuo;
 
     expect(state).toMatchObject({
       site: 'yaohuo',
@@ -247,7 +247,7 @@ describe('site session state', () => {
   });
 
   it('builds verified, logged-in, and expired UI labels from session status', () => {
-    const viewModels = createSiteSessionViewModels(
+    const viewModels = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
@@ -256,6 +256,7 @@ describe('site session state', () => {
           isVerifying: false
         },
         linuxdo: {
+          currentUser: testAccountUser('linuxdo'),
           site: 'linuxdo',
           status: 'logged-in',
           cookieSummary: ['cf_clearance', '_t'],
@@ -298,7 +299,7 @@ describe('site session state', () => {
   });
 
   it('does not describe expired or verification-required NodeSeek sessions as saved', () => {
-    const viewModels = createSiteSessionViewModels(
+    const viewModels = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
@@ -313,7 +314,7 @@ describe('site session state', () => {
     expect(nodeSeekUserIdForSession(viewModels.nodeseek)).toBeNull();
     expect(
       nodeSeekUserIdForSession(
-        createSiteSessionViewModels(
+        projectTestAccountSessions(
           createSiteSessionStates({
             nodeseek: {
               site: 'nodeseek',
@@ -326,11 +327,11 @@ describe('site session state', () => {
         ).nodeseek
       )
     ).toBeNull();
-    expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates()).nodeseek)).toBeNull();
+    expect(nodeSeekUserIdForSession(projectTestAccountSessions(createSiteSessionStates()).nodeseek)).toBeNull();
   });
 
   it('returns only the confirmed NodeSeek profile id as the session identity', () => {
-    const view = createSiteSessionViewModels(
+    const view = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
@@ -351,7 +352,7 @@ describe('site session state', () => {
     expect(nodeSeekUserIdForSession(view)).toBe(48872);
     expect(
       nodeSeekUserIdForSession(
-        createSiteSessionViewModels(
+        projectTestAccountSessions(
           createSiteSessionStates({
             nodeseek: {
               site: 'nodeseek',
@@ -571,13 +572,11 @@ describe('site session state', () => {
       currentUser: null
     });
 
-    expect(createSiteSessionViewModels(createSiteSessionStates({ yaohuo: loggedIn })).yaohuo.currentUser).toMatchObject(
-      {
-        source: 'yaohuo',
-        id: '7',
-        username: '火友'
-      }
-    );
+    expect(projectTestAccountSessions(createSiteSessionStates({ yaohuo: loggedIn })).yaohuo.currentUser).toMatchObject({
+      source: 'yaohuo',
+      id: '7',
+      username: '火友'
+    });
     expect(refreshed.currentUser).toMatchObject({
       source: 'yaohuo',
       id: '7',
@@ -585,7 +584,7 @@ describe('site session state', () => {
     });
     expect(cleared.currentUser).toBeUndefined();
     expect(expired.currentUser).toBeUndefined();
-    expect(createSiteSessionViewModels(createSiteSessionStates({ yaohuo: expired })).yaohuo).toMatchObject({
+    expect(projectTestAccountSessions(createSiteSessionStates({ yaohuo: expired })).yaohuo).toMatchObject({
       status: 'expired',
       canWrite: false
     });

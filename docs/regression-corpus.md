@@ -15,6 +15,108 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
+## `REG-TOPIC-150` NS 页签抓取终端骨架导致正文空白
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `EVIDENCE_GAP` |
+| 能力 ID | `TOPIC-01/02/03` |
+| 历史症状与根因 | 2026-09-04 `post-812712-1` 的前两个 Tab 在 App 中空白，原站与同条评论 Markdown 保有完整 ANSI。隐藏 WebView 抓取时 xterm 已创建行但文字仍为空/部分，后续 `window.stop()` 不保证终端绘制完成；另有原站行没有 `xterm-row` class 的形状。共享来源入口现按唯一身份与块顺序恢复同条完整 ANSI，只替换终端子树；通用转换兼容无 class 行。空/部分/完整、主楼/回复及两种传输已有失败转通过的行为 oracle；批量提交父节点避免新增平方复制。四份真实输入在旧/新 Terminal 空白规范化下完整编译结果一致，因此未将此次空白归因于该算法优化，也未追溯其首次引入版本。 |
+| 当前 owner | `tests/integration/hidden-browser-scripts.test.ts`、`tests/integration/source-read-contracts/nodeseek.test.ts`、`tests/live/agent-live.md` |
+| 证据边界 | C17 APK `d8a0d71e…` 无快照冷启后，两个 Native 文本分别为 2,229/3,919 字符，按既有不可打印控制字符规则与已采集原文逐字一致；四 Tab、ANSI、慢横滑与横向位置保持、两张图片各两轮切回、预览翻页及返回选择取消已有设备证据。Android 工具不支持剪贴板全文读回，该项仍为 `BLOCKED_BY_ENV`，不能以复制提示代替；收尾返回时整个主模拟器进程退出，已无快照恢复且安装身份不变，不据此断言 App 或算法根因。正式性能与系统取消等未测分支仍独立报告，单次重开恢复不证明全部算法等价。 |
+
+## `REG-TOPIC-149` 超高回复对齐与晚测高隐藏目标楼层
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `EVIDENCE_GAP` |
+| 能力 ID | `TOPIC-03` |
+| 历史症状与根因 | 2026-09-04 妖火真实回复暖图后重复定位只看到正文中部，目标楼层头部已在屏外。既有楼层定位与排序后定位都传 `viewPosition: 0.2`；FlashList 按整行高度对齐该比例，800 高 viewport 对 1800 高回复会得到 headerY=-200，与 MVCP 是否补位无关。文字加图片可编译为一个合法 reply owner，不拆正文掩盖。两处共享调用改按行起点定位后，匹配 C4 APK 的暖态新 route 仍复现偏移：初次 onLoad 前的估算位置，以及最终命令后、确认前后的晚测高没有完整交接给锚点。共享入口现在等待当前列表就绪，controller 在投影、Native 确认和阅读锚点之间保留同一目标 key，拒绝旧代次回调。真实 Topic 点击/排序命令、晚测高及确认/布局两种顺序均有失败转通过的行为 oracle；匹配最终 APK 的暖图与重复定位另行验收。 |
+| 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx`、`tests/live/agent-live.md` |
+| 后续定位 | 同源码图片接入修复配官方 FlashList 2.3.2 的隔离对照，冷启动妖火 556 楼仍会被前方长图推出屏外。设备数值诊断确认：6695 的动画命令曾先被旧 Native 上界 1094 截短；尺寸回调无动画重投又提前结束 command，旧动画继续移动并覆盖目标锚点。修复保留当前命令及动画方式，普通测高仍交给 Native MVCP。早期把 idle 校正与对应内容高度拆开的探针，经原生调度核对不作生产根因，已替换为真实布局后校正及迟到 ACK owner。最终设备验收仍须与对应 APK 分开记录。 |
+
+## `REG-TOPIC-148` 补页与晚测高重新选择锚点导致续读偏移
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `EVIDENCE_GAP` |
+| 能力 ID | `TOPIC-03`、`NAV-02/03` |
+| 历史症状与根因 | 2026-09-04 匹配 APK 对照：V2EX 第 101 楼补页后上移 37px，NodeSeek 第 11 楼下移 71px；不是筛选栏损坏，也未证明首次引入版本。共享 FlashList 在补页后重新选中新插入可见行，后续测高不再维护原阅读内容；旧的限时忽略原生事件不能隔离迟到确认。现由同一 key/index/几何基线持续锚定，真实交互与显式命令接管，原生像素取整和含 footer/padding 的边界独立校验。设备另确认 linux.do 定位已到窗口下端时，一次触边通知先被无手势门禁消费，之后正常下滑仍不加载；共享拖动入口现在用现有 Native 尺寸复核边界。失败 oracle 已覆盖该通知/手势顺序、新插入行晚测高、迟到事件、主动导航和拖动打断惯性；匹配最终 APK 的四站续读与关联交互另行验收。 |
+| 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx`、`tests/integration/source-read-contracts/`、`tests/live/agent-live.md` |
+| 后续定位 | 拖动开始清空旧锚点后，缓存前页可早于首个 `onScroll` 返回；共享入口现先用 BeginDrag 的实际 offset 建立基线，再通知页面续页。负向控制删除该交接后，同一回复的屏幕坐标变化，恢复交接后保持。2026-09-04 候选 APK `39cf60e0…` 的 V2EX 101 楼已用自然滑动读到 99/100 楼并保持停稳坐标；NS 11 楼以无惯性的慢拖读到 10 楼，后续位移与手势一致；linux.do 110 楼向下自然加载 112 楼时，110/111 楼停稳坐标不变。早期两次较快手势的位移不同不构成锚点错误证据。工具恢复后这些分支已取证，但正倒序全部组合、失败重试及尾窗底部收缩仍须独立验收，不用局部结果关闭整体缺口。 |
+
+## `REG-TOPIC-146` 主楼选择活动没有接入 route 返回拦截
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `EVIDENCE_GAP` |
+| 能力 ID | `TOPIC-02`、`NAV-03` |
+| 历史症状与根因 | 2026-09-04 修复：选择中的系统返回可能直接退出 Topic，JS route 只知道预览和 composer。Native 现在报告活动及所属 document revision，route-local 边界按预览、composer、选择、页面顺序处理；旧 revision 和重复取消不提交，正文不随活动重渲染。UI 与独立 AVD Native 反例先失败后通过；匹配 APK 的系统/边缘返回仍独立验收。 |
+| 当前 owner | `tests/ui/app/app-navigator.test.tsx`、`tests/ui/topic/topic-rich-text-selection.test.tsx`、`modules/forum-content-selection/android/src/androidTest/java/expo/modules/forumcontentselection/ForumContentSelectionViewTest.kt` |
+
+## `REG-TOPIC-147` 嵌套 Tab 媒体使用外层正文宽度
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `EVIDENCE_GAP` |
+| 能力 ID | `TOPIC-02`、`TOPIC-03` |
+| 历史症状与根因 | 用户报告 NS Tab 图片溢出；内部 renderer 沿用外层宽度，未扣除 Tab、引用、列表的实际装饰宽度。现在复用共享宽度 context 逐层扣减，图片、代码、表格、公式获得同一内宽，不裁剪掩盖；真实 ancestor→consumer 的失败反例已通过，实际四 Tab、横滑与复制继续按匹配 APK 验收。 |
+| 当前 owner | `tests/ui/topic/topic-rich-text-selection.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/live/agent-live.md` |
+
+## `REG-WRITE-077` 表情图片失败后无法恢复
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `EVIDENCE_GAP` |
+| 能力 ID | `WRITE-01` |
+| 历史症状与根因 | 用户报告 NS 编辑器下滚后部分表情失败并永久保持失败；共享按钮没有失败恢复入口。现在 NS/linux.do 共用带 attempt 的点击重试，重进可见面板/分类只重试失败项一次；失败点击和未完成重试不插入，成功节点及滚动位置保留，旧回调无效，不清缓存或随机化 URL。真实 Runtime DOM 反例已通过，自然失败的设备分支未出现时不得记 Live 通过。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts` |
+
+## `REG-DATA-008` 备份敏感字段过滤误删合法业务身份
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-03`、`LIBRARY-02` |
+| 历史症状与根因 | 2026-09-04 隔离复现：`v2ex:sidney` 等合法关注键被敏感字段正则过滤，导入空库丢关注；同名 tombstone 丢失使旧关注无法被删除。根因是 schema 字段与业务身份键混为一谈；现只豁免指定 records/tombstones 的合法来源键，记录内部敏感字段、大小和深度限制不变。 |
+| 当前 owner | `src/domain/reader/readerBackup.test.ts` |
+
+## `REG-WRITE-075` 损坏投票 journal 被误判为空记录
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-05` |
+| 历史症状与根因 | 2026-09-04 隔离复现：远端 poll 已物化、回复失败后，journal 读取异常被吞为 []，手动重试可能再次创建。现在仅存储 key 不存在时默认返回空，合法空数组仍有效；读取、JSON、结构、任一条目或重复 localId 错误均阻断，原记录不覆盖、不自动重发。未执行真实投票或回复。 |
+| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx` |
+
+## `REG-MORE-006` 损坏代理持久化状态放行直连
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-01` |
+| 历史症状与根因 | 2026-09-04 隔离复现：合法 JSON 的错误结构或 enabled 缺失有效 active profile 被规范化为关闭。持久化入口现先验证结构与启用状态完整性，失败保持联网阻断；首次缺省及用户明确关闭、删除保持原行为。 |
+| 当前 owner | `src/platform/network/networkProxy.test.ts`、`tests/ui/more/network-proxy-controller.test.tsx` |
+
+## `REG-TOPIC-145` 重复 identity 挤占 warm 导致未准入媒体计时
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02` |
+| 历史症状与根因 | 2026-09-04 隔离复现：三个合法可见 row 中，前八实例同 identity，第九个不同；warm 按实例、running 按不同 identity 独立选择，使第九个没有渲染许可却建立 deadline。现先选择合规不同 identity，再保证 running 全部属于 warm；暂停保留仍合规运行实例，未准入不计时。容量及 Release 性能仍由 `REG-TOPIC-144` 与 `REG-PERF-025` 的独立证据约束。 |
+| 当前 owner | `tests/ui/topic/topic-media-coordinator.test.tsx` |
+
+## `REG-WRITE-076` Unicode 小写扩长破坏编辑器偏移和私有块边界
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-05`、`WRITE-06` |
+| 历史症状与根因 | 2026-09-04 隔离复现：`İ [details]broken` 标记真实位置 2 却报告 3；真实 Tiptap 中 `[spoiler]İİ[/spoiler]TAIL` 的 TA 被吞入不可编辑私有块，details 卡片混入关闭标签。根因是对 Unicode 全文小写后用扩长索引切原文；校验、tokenizer 与卡片切片现统一只折叠 ASCII，保留 UTF-16 位置和后续可编辑文字。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts` |
+
 
 ## `REG-PERF-001` Library 切换重建列表、集中加载头像及历史写入全量清洗
 
@@ -86,13 +188,13 @@
 | 当前 owner | `tests/ui/feed/feed-screen.test.tsx` |
 
 
-## `REG-PERF-006` Feed 目标列表先出现但二级导航慢一步，温缓存阻止重读
+## `REG-PERF-006` Feed 页面、一级选中态与二级导航使用不同切换时钟
 
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-03`、`FEED-04` |
-| 历史症状与根因 | 左右横滑时目标列表已经可见，顶部来源和二级导航却仍停在旧来源，稍后才一起变化；离开再返回已访问来源时还直接复用旧列表，没有重新请求；根因：`src/features/feed/FeedScreen.tsx` 把视觉来源与 Query 来源混为同一生命周期，并允许 inactive scene 展示缓存列表；`src/features/feed/useFeedController.ts` 在来源切换时没有清除目标来源全部 Feed Query 变体。 |
+| 历史症状与根因 | 左右横滑时目标页面已经出现，顶部来源和二级导航却仍停在旧来源；按 fractional position 提前切换、把二级导航塞入各 scene、增加视觉来源或等待 idle 的修复又造成蓝线错位、导航错拍、重复状态和漏请求。新版 `react-native-pager-view@9.0.4` 的 Android Compose 实现只观察 `settledPage` 派发 `onPageSelected`，因此业务即使只消费一个 `feedSource`，也只能在 snap 动画结束时更新。当前根修复把选择时钟放到 Compose `TargetedFlingBehavior` 已解析目标之后：拖动期间保持原来源，松手定向时两级导航、目标 Loading 与 Query 来源同次提交；settled 只作程序化路径和最终校正，重复页由 native 去重。 |
 | 当前 owner | `tests/ui/feed/feed-screen.test.tsx` |
 
 
@@ -184,6 +286,46 @@
 | 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-03` |
 | 历史症状与根因 | 已登录 linux.do 搜索明确命中首帖时仍显示“未知作者”，头像也不展示；标题、摘要和详情可用；根因：`src/sources/linuxdo/search.ts` 的 `topicsFromLinuxDoSearchData` 已按 `topic_id` 找到首帖，却只读取其 `blurb`；作者仍调用列表页的 `originalPoster(topic, users)`，因此被归一化为空。普通搜索和 AI 语义搜索共用该转换层。 |
 | 当前 owner | `tests/integration/source-read-contracts/` |
+
+
+## `REG-FEED-019` Pager 先 idle 后 selected 时手势切站不请求
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-02` |
+| 历史症状与根因 | 点击来源可正常切换，但横滑在新版 PagerView 的 `idle` 与 `selected` 顺序变化后不会提交目标请求；根因：Feed 把两个原生通知拼成了自定义完成协议。PagerView 的 `onPageSelected` 已表达 settled page，当前点击直接提交，手势只在 TabView `onIndexChange` 提交一次；idle 不再参与业务状态，未产生 settled selection 的取消手势零请求。 |
+| 当前 owner | `tests/ui/feed/feed-screen.test.tsx` |
+
+
+## `REG-MORE-005` SDK57 异步 File.move 造成诊断日志轮转竞态
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-02` |
+| 历史症状与根因 | 日志达到轮转阈值后，旧文件移动尚未完成便继续创建新文件，可能丢失上一份日志；根因：升级后仍把 SDK57 的异步 `File.move()` 当同步 API 使用，测试 mock 也错误地同步移动。当前轮转使用 `moveSync()`，mock 分别固定真实异步与同步语义。 |
+| 当前 owner | `src/platform/diagnostics/diagnosticFileStore.test.ts` |
+
+
+## `REG-NODESEEK-005` markdown-it 15 默认值使裸域名和 userinfo URL 退化
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`、`TOPIC-03`、`NOTIFY-02`、`WRITE-01` |
+| 历史症状与根因 | NodeSeek 正文中的 `www.nodeseek.com/...` 与裸域名不再生成链接，完整 userinfo URL 只识别后半段；根因：升级后继承了 linkify-it 的新默认值。当前 parser 显式固定 `fuzzyLink=true` 与 `urlAuth=true`，不再把第三方默认值当产品协议。 |
+| 当前 owner | `src/sources/nodeseek/markdown.test.ts` |
+
+
+## `REG-NAV-004` 框架升级把通用点击反馈带入全项目
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-01` |
+| 历史症状与根因 | 返回、底栏、卡片和普通按钮出现产品未拥有的 ripple、蓝色或压暗 pressed 状态、触感、WebView hover/active 与入场动画；根因：升级时把框架和组件库新增的交互默认值直接当成产品行为，又用逐组件 helper 扩散。当前删除通用反馈体系，并由静态 RN Pressable 接管 Navigation 的底栏和 native header，功能选中、焦点、禁用、展开等状态继续保留。 |
+| 当前 owner | `tests/tooling/interaction-policy.test.ts`、`tests/ui/app/app-navigator.test.tsx` |
 
 
 ## `REG-SEARCH-013` Discourse 回复命中被丢弃或冒充楼主
@@ -572,7 +714,7 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `RELEASE-02` |
-| 历史症状与根因 | 开发构建验收通过后又恢复旧 Smoke APK，用户实际看到的仍是旧 bug；根因：安装/验收操作协议，而不是业务代码。 |
+| 历史症状与根因 | 开发构建验收通过后又恢复旧 Smoke APK，用户实际看到的仍是旧 bug；新增原生模块后若继续让旧 APK 加载新 JS，还会在访问对应页面时报 `Can't find ViewManager`。根因是跳过安装包 SHA 核对的安装/验收操作，而不是 Feed 业务代码。 |
 | 当前 owner | `tests/tooling/android-smoke-guard.test.ts` |
 
 
@@ -1193,7 +1335,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `TOPIC-01`、`USER-01`、`FEED-01`、`FEED-02`、`SEARCH-01`、`SEARCH-02`、`ACCOUNT-01` |
 | 历史症状与根因 | NodeSeek 主题详情或关注用户页进入后长期停在“正在读取”；网络请求本可成功，但页面既不显示结果也不进入可重试失败态。真实登录切换、过期或清除时还可能继续显示旧会话的首页、搜索、详情或用户数据。妖火及其他复用同一会话事件边界的读取存在同类风险；根因：`src/features/account/useSessionController.ts` 的 workflow 事件分类与 session epoch、`src/platform/query/serverState.ts` 的 source/`all` Query cache 边界，以及 TanStack Query observer 的取消结算语义。 |
-| 当前 owner | `src/features/account/sessionQueryOwnership.test.ts` |
+| 当前 owner | `tests/integration/query-session-contracts.test.ts` |
 
 
 ## `REG-TOPIC-023` 回复分页验证恢复重取旧页
@@ -2743,7 +2885,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `TOPIC-02`、`TOPIC-03` |
 | 历史症状与根因 | 被 React 丢弃或重复执行的图片 render 也会改变进程级 cache 淘汰顺序；长帖、返回和预览切页期间，真正已提交的热尺寸、原图 revision 或 SVG artifact 可能被 speculative render 挤出；根因：`src/features/topic/rendering/previewRenderers.tsx`、`src/platform/media/originalImageLoading.tsx` 与 `src/platform/media/compatibleImageSources.ts` 的 cache read/promotion ownership。 |
-| 当前 owner | `src/features/topic/rendering/useHtmlRenderingController.test.tsx` |
+| 当前 owner | `src/platform/media/imageDisplayDimensions.test.ts`、`src/platform/media/originalImageLoading.test.ts`、`src/platform/media/compatibleImageSources.test.ts` |
 
 
 ## `REG-TOPIC-056` Discourse Callout marker 被当作普通灰色引用
@@ -4606,7 +4748,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
 | 历史症状与根因 | 真机系统 `font_scale=0.9` 时，妖火 `bbs-1577052.html` 的可测量行内 GIF 保持原 DIP 尺寸，文字布局为它保留的宽度却缩小，导致 #3249 的“你也一天一帖吗”和 #3247 的“我不服……”被图片覆盖；恢复默认字体或其他默认字体设备正常。根因是 React Native 0.81.5 Fabric 的两条 Spannable 构造路径把 inline View 的 DIP 宽高经 `PixelUtil.toPixelFromSP` 转换，系统小字体只缩小占位而不缩小真实子 View。当前 patch 精确回移 React Native `551d12a`：两条路径统一使用 DIP 转换并向上取整；既有 `CustomLineHeightSpan` 修复继续独立负责固定行高不得压缩含 inline View 的高行。未增加妖火、GIF、设备、楼层或字体禁用特判。 |
-| 当前 owner | `patches/react-native+0.81.5.patch` 内的 `TextLayoutManagerInlineViewSizeTest`、`tests/tooling/react-native-inline-image-events-patch.test.ts`、`tests/ui/topic/topic-image-loading.test.tsx` 与 `tests/live/agent-live.md` 的 `bbs-1577052.html` 小字体/默认字体真机验收 |
+| 当前 owner | `patches/react-native+0.86.3.patch` 内的 `TextLayoutManagerInlineViewSizeTest`、`tests/tooling/react-native-inline-image-events-patch.test.ts`、`tests/ui/topic/topic-image-loading.test.tsx` 与 `tests/live/agent-live.md` 的 `bbs-1577052.html` 小字体/默认字体真机验收 |
 
 
 ## `REG-TOPIC-142` textual 普通图片迁移丢失块图能力与稳定几何
@@ -4627,6 +4769,17 @@
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
 | 历史症状与根因 | 块公式 renderer 固定写入 `marginVertical: 8`，没有接入其他块内容共用的 physical continuation boundary；公式位于分片首尾时会重复制造文章留白，TeX fallback 与 SVG 成功态也没有统一边界参数。最终由 production `MathBlockRenderer` 调用既有 `useContentBoundarySpacing()`，并把同一内部 boundary style 传给 `ForumMath` 的等待/失败 Text 与成功 View；inline 公式保持原基线和间距。 |
 | 当前 owner | `tests/ui/topic/topic-math-rendering.test.tsx`、`src/domain/forum/topicContentSplit.test.ts` 与 linux.do 公式只读模拟器验收 |
+
+
+## `REG-TOPIC-144` 千图 Topic 的自动原图生命周期存在双 owner
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `OPEN` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-03` |
+| 历史症状与根因 | `TopicContentList` 曾在既有 viewport owner 之外维护只增不减的 `nearbyTopicContentKeys`，使“附近”最终退化为整个浏览历史；renderer 又允许成功 display revision 永久绕过关闭的 viewport gate，并把每次 revision 放入正常 original lease identity。1413 张图片反向滚动时，512 项自然尺寸 LRU 还会确定性淘汰前段布局事实。修复删除第二套集合及 row `onLayout` 写入，并把自动原图 gate 上移到所有 keyed Topic row 的公共 frame，使主楼、回复正文、签名、引用和采纳答案只受当前 viewport/prefetch row set 控制；base、自然比例、frame、150ms 过渡和 forced 预览保持不变。正常 original lease 改用稳定 progressive identity，只有真实失败记录可派生一次 `recovery-after` identity；尺寸 LRU 扩到 2,048，仍只缓存元数据、不缓存 Bitmap。 |
+| 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-body-media-viewport.test.tsx`、`tests/ui/topic/topic-media-coordinator.test.tsx`、`src/platform/media/imageDisplayDimensions.test.ts` 与 `docs/operator-runbook.md` 的重图 Topic Release 验收 |
+| 失败 oracle | 自动测试必须证明主楼、回复正文、签名、回复引用和采纳答案离开 viewport 后不再自动升级原图，相同 viewability observation 不提交新 state，批量注册不产生 idle 空更新，强制点按预览仍可加载原图；匹配本次源码的 Release APK 还必须按 runbook 对重图 Topic 做正反向只读 Replay，确认无空白、几何回退、重复 identity 请求、OOM、ANR、Fatal 或 PID 退出。取得该设备证据前保持 `OPEN`。 |
 
 
 ## `REG-WRITE-062` LinuxDo Emoji 源码往返卡死
@@ -4767,3 +4920,25 @@
 | 能力 ID | `USER-01` |
 | 历史症状与根因 | NodeSeek 用户只有一条主题时仍显示“加载更多主题”，回复末页也会继续暴露下一页；linux.do 回复存在同类误报，主题则无条件终止而漏掉后续页。根因：来源 adapter 把“当前解析列表非空”当成“还有下一页”，或没有使用原站可分页主题入口；UI 与 controller 只是忠实投影该来源结果。 |
 | 当前 owner | `tests/integration/source-read-contracts/` |
+
+
+## `REG-PERF-024` Search 空态最近记录曾常驻 Header，转场仍有连续 deadline miss
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `OPEN` |
+| 能力 ID | `SEARCH-02`、`NAV-01` |
+| 历史症状与根因 | Feed → 空态 Search 多次出现约 42–53ms 帧；“最近搜索”标题和全部记录原先作为 `FlashList.ListHeaderComponent` 的普通子树一次性挂载，最多 20 条记录绕过 item virtualization。记录迁入 typed list data、恢复原单张圆角分组外观并消除相邻点击区重叠后，最终匹配 SHA 的 Release 三批各 10 次往返 p95 为 `23.484/23.377/23.265ms`，worst 为 `33.642/26.996/27.162ms`，两项数值门槛均通过；但按 `FrameCompleted > FrameDeadline` 统计，两个方向仍分别出现最长 `2–3` 帧与 `9` 帧连续 miss。因此 Header 的结构性 owner 已收口，完整 `NAV-01` 性能门槛尚未关闭，不能再把剩余 deadline miss 归因给最近记录或叠加 memo/延时。 |
+| 当前 owner | `tests/ui/search/search-screen.test.tsx` 与 `docs/operator-runbook.md` 的 Search Release 性能回归 |
+| 失败 oracle | 匹配 APK 在主登录态 AVD 上执行三批、每批 10 次 Feed → Search → Feed，任一批 p95 `>25ms`、worst `>35ms` 或出现连续两帧 missed deadline 即保持 `OPEN`；同时要求最近记录是稳定 typed items、UI 与原分组一致、相邻 `48dp` 点击区不重叠。 |
+
+
+## `REG-PERF-025` 千图 Topic 的 Glide 巨大解码工作集并可拖死模拟器
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `OPEN` |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-03` |
+| 历史症状与根因 | NodeSeek `post-863650-1` 的历史 Release 样本曾出现 Feed `+172,595KB`、`Cannot add callbacks to a cancelled EngineJob`、App PID 退出和模拟器失去响应；有效 heapprofd 样本在 5 次滚动中记录约 1.14GB 总 malloc、仅约 12MB 净留存，Release mapping 将主链还原为 Glide `DecodeJob`、`BitmapFactory.decodeStream` 与 `SkJpegCodec`，说明主要风险是巨大解码工作集和分配抖动，而非持续 JS 泄漏。Glide 5.0.9 与当前 compileSdk 36 不兼容，Glide 5.0.5/回收池 40 保持固定。恢复版 APK 的本轮同条件冷启基线为 Feed `254,970KB`，同 PID 两轮 40 下/40 上的采样峰值 `487,861KB`，返回 Feed 60 秒 `358,337KB`，gfxinfo p95/p99 `18/21ms`，无 Fatal、ANR、OOM 或 EngineJob。随后已独立修复 `REG-TOPIC-144`，并在现有 expo-image patch owner 中把 resize rerender 投递到下一主线程任务，以 generation、attach 与最终宽高丢弃 stale task；Release Kotlin、expo-image Release unit test 和 x86_64 APK 均已构建通过。候选 APK `c63fdc4d…` 经授权覆盖安装后，等待 Package Manager handler 与磁盘同步，再关闭同一 `WZ_Pixel_API_35` 并以 `-no-snapshot-load -no-snapshot-save` 冷启；后续各次冷启均保持相同 APK SHA、`1.3.134/138`、`firstInstallTime=2026-07-26 16:51:37` 与登录数据。两次完整独立候选流程均在同一 App PID 内完成两轮 40 下/40 上：其 Feed/采样峰值/返回 Feed 60 秒分别为 `254,352/428,885/352,410KB` 与 `254,142/464,721/362,399KB`，gfxinfo p95/p99 分别为 `18/21ms`、`16/19ms`，jank 为 `0.51%`、`0.38%`，均无 Fatal、ANR、OOM、EngineJob 或网络异常；原生树保持约 `61–62` 节点，顶部、5 步、中段和反向截图未见空白、4:3 回退、比例/行高/圆角/间距变化。第三次独立冷启先出现可关闭的既有 linux.do 登录 WebView，按关闭后的 Feed `296,147KB` 归一；第一轮及第二轮下行完成，第二轮反向约第 26–30 步时整个 emulator/qemu 进程退出，宿主 Android Emulator 36.5.11 同分钟生成 `48,356,112` 字节 crash dump，故该轮记 `BLOCKED_BY_ENV`，不能当成 App Fatal，也不能关闭总体容量问题。再次冷启后 APK/数据仍完整，候选 7/7 只读 Replay 全部通过。 |
+| 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/tooling/expo-image-resize-patch.test.ts` 与 `docs/operator-runbook.md` 的唯一重图 Release 非回退流程 |
+| 失败 oracle | 只在主登录态 `WZ_Pixel_API_35` 对 `post-863650-1` 执行同条件流程；以基线三轮中位数及最大自然偏差判断 PSS/帧/重复请求非回退，首次同方向超出后补一轮复测。新增或更早出现的空白、比例/行高变化、重复 identity 请求、OOM、ANR、Fatal、PID 退出或模拟器失去响应直接保持 `OPEN`；新旧均触发独立 `system_server`/AVD 故障时记 `BLOCKED_BY_ENV`。历史绝对 MB 数值只作观察，不撤销已通过行为 oracle 且性能中性的正确性修复，也不用其他图片帖稀释或替代该对象。 |

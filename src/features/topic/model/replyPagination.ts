@@ -1,12 +1,5 @@
 import type { InfiniteData } from '@tanstack/react-query';
-import type {
-  RepliesResponse,
-  Reply,
-  ReplyLocationTarget,
-  ReplyOrder,
-  ReplyWindowPosition,
-  TopicDetail
-} from '@/domain/forum/models';
+import type { RepliesResponse, ReplyOrder, ReplyWindowPosition, TopicDetail } from '@/domain/forum/models';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 
 export const REPLY_PAGE_SIZE = 30;
@@ -90,11 +83,6 @@ export function replyEdgePosition(
   if (!pages.length) return { kind: 'start' };
   const cursor = edge === 'start' ? previousReplyPage(pages[0], pages) : nextReplyPage(pages.at(-1)!, pages);
   return cursor || { kind: 'start' };
-}
-
-export function matchesLoadedReplyLocation(reply: Reply, target: ReplyLocationTarget) {
-  if (target.commentId !== undefined) return reply.commentId === target.commentId;
-  return target.floor !== undefined && reply.floor === target.floor;
 }
 
 export function hasNextReplyPage(page: Partial<ReplyPage>) {

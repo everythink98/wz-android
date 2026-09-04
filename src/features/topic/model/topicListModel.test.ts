@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Reply } from '@/domain/forum/models';
-import { topicListItemType, topicListMediaPlanStats, type TopicListItem } from './topicListModel';
+import { topicListItemType, projectTopicListItems, type TopicListItem } from './topicListModel';
 
 const selectionToken = '{"owners":[],"prefix":[],"version":1}';
 
@@ -128,7 +128,22 @@ describe('topic list model', () => {
       { type: 'topicPostlude', key: 'postlude' }
     ];
 
-    expect(topicListMediaPlanStats(items)).toEqual({ networkMediaCount: 6, plannedRowCount: 3 });
-    expect(JSON.stringify(topicListMediaPlanStats(items))).not.toContain('secret.example');
+    const visible = vi.fn(() => true);
+    const projection = projectTopicListItems(items, visible);
+    expect(projection.mediaPlanStats).toEqual({ networkMediaCount: 6, plannedRowCount: 3 });
+    expect(JSON.stringify(projection.mediaPlanStats)).not.toContain('secret.example');
+    expect(projection.items).toEqual(items);
+    expect(projection.selectionItems).toEqual([{ documentId: 'opening', rowKey: 'opening-1', selectionToken }]);
+    expect([...projection.selectionRowKeys]).toEqual(['opening-1']);
+    expect(visible).toHaveBeenCalledTimes(items.length);
+    const hiddenOpening = projectTopicListItems(items, (item) => item.key !== 'opening-1');
+    expect(hiddenOpening.mediaPlanStats).toEqual({ networkMediaCount: 2, plannedRowCount: 2 });
+    expect(hiddenOpening.selectionItems).toEqual([]);
+    expect(hiddenOpening.items.map((item) => item.key)).toEqual([
+      'reply-start',
+      'reply-content',
+      'reply-signature',
+      'postlude'
+    ]);
   });
 });

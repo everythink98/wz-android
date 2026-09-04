@@ -1,5 +1,36 @@
-import { describe, expect, it } from 'vitest';
-import { escapeHtmlAttribute, escapeHtmlFully, escapeHtmlText, hasRenderableHtmlContent } from './html';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  escapeHtmlAttribute,
+  escapeHtmlFully,
+  escapeHtmlText,
+  hasRenderableHtmlContent,
+  sortTopicsByTime,
+  sortTopicsByCreatedAt
+} from './html';
+
+describe('topic timestamp ordering', () => {
+  it.each([sortTopicsByTime, sortTopicsByCreatedAt])('parses each timestamp once and preserves stable ties', (sort) => {
+    const items = Array.from({ length: 100 }, (_, index) => ({
+      id: index,
+      createdAt: `2026-08-${String(((index * 7) % 28) + 1).padStart(2, '0')}T00:00:00Z`
+    }));
+    const parse = vi.spyOn(Date, 'parse');
+    try {
+      const sorted = sort(items);
+      expect(parse).toHaveBeenCalledTimes(items.length);
+      expect(sorted.slice(0, 3).map((item) => item.id)).toEqual([3, 7, 11]);
+      expect(items[0].id).toBe(0);
+      expect(
+        sort([
+          { id: 1, createdAt: '' },
+          { id: 2, createdAt: 'invalid' }
+        ]).map((item) => item.id)
+      ).toEqual([1, 2]);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+});
 
 describe('HTML escaping', () => {
   it.each([

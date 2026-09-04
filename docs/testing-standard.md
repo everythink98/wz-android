@@ -29,6 +29,8 @@
 
 删除或合并高风险 owner 前做一次临时负向控制：破坏其 production seam 后，canonical test 必须转红；若仍为绿，先补强 owner。负向控制只用于证明测试灵敏度，不进入长期产品代码。
 
+账号 fixture 经真实 observation → Account snapshot → view model 投影，合法登录显式提供用户身份，不用测试工厂放行未知身份。选择 wiring 由 `tests/ui/topic/topic-rich-text-selection.test.tsx` 挂载真实 `TopicContentList → TopicSelectionSurface → TopicContentBlock`，保留该业务链，仅隔离平台与昂贵第三方边界；全树 marker 必须与 manifest 一一相等，并检查实际代码文字的 selectable。查询清理归 integration owner，Callout 初始化归真实 `forum-callout` UI owner；bootstrap 检查执行调用顺序，缺失或颠倒初始化都必须失败。
+
 ## 二、证据层
 
 | 证据 | 只证明 |
@@ -49,6 +51,22 @@ MCP 与 Replay 不互相替代：MCP 用于探索和定位；Replay 只保存经
 Topic 内容守恒由共享 compiler 的 Vitest 契约拥有：同一 fixture 跨主楼、回复、引用、采纳答案、签名和四个来源核对安全文字、链接、图片、表格、代码、DOM 顺序、selection tape 与 preview catalog；compiler 直接生成不可变的 `row.html`、`selectionToken` 与 `previewImages`，opaque 媒体必须有非空且完全转义的降级内容。实体解码后的恶意 `alt/title` 不得重新生成节点或扩大媒体预算；有界内联语义只接受 sanitizer 后由来源 adapter 写入的可信 marker，外部 `/face/` 仍是普通预览。Topic Presentation Contract 的 canonical wiring owner 还必须从 sanitizer → compiler 真实挂载 production renderer，覆盖 standalone/mixed/figure/table、waiting/displayed/SVG poster/original/error/retry/cache/recycle/inactive/epoch；含 `forum-inline-image` 的 row 不得以空 `View` 跳过。临时破坏共享 compatible artifact seam 必须使该用例转红。单次图片事故不新增一条同义 UI 用例；RNTL 只在 Native inline renderer、自然尺寸、预览、失败重试或媒体生命周期 wiring 可独立损坏时承担额外证据。
 
 依赖补丁的 canonical 安装证据不是源码字符串：已执行 postinstall 的依赖树由 `tests/tooling/patch-artifacts.test.ts` 对全部 `patches/*.patch` 运行 `git apply --reverse --check --unsafe-paths`。补丁发生变化时，还必须先在 `npm ci --ignore-scripts` 的干净依赖上逐个执行 forward `git apply --check --unsafe-paths`，再运行真实 postinstall 与 reverse gate。
+
+`package.json` 的 `expo.install.exclude` 只固定项目自行选择的版本，不构成兼容通过。每次升级下列包时必须按真实 consumer 取证；没有对应设备证据就记 `NOT_VERIFIED`，不能用 `expo-doctor` 通过代替。
+
+| 排除包 | 产品 owner | 最低升级证据 |
+| --- | --- | --- |
+| `@react-native-async-storage/async-storage` | `DATA-01/02`、`ACCOUNT-01`、`NOTIFY-*` | Store 单测；保留数据覆盖安装后冷启，核对 ReaderData、设置、会话和通知水位。 |
+| `@react-native-community/datetimepicker` | `SEARCH-03` | V2EX/Discourse 日期筛选 UI；匹配 APK 打开、取消和确认，核对筛选值与键盘/弹层几何。 |
+| `@react-native-community/slider` | `MORE-03`、`TOPIC-02` | 字号与音频进度 UI；匹配 APK 连续拖动、无障碍值和返回恢复。 |
+| `@shopify/flash-list` | `FEED-*`、`SEARCH-*`、`TOPIC-*`、`USER-*`、`LIBRARY-*`、`NOTIFY-*` | 各列表 canonical UI；匹配 APK 核对多列表回收、分页、滚动/返回和 rich cell 身份。 |
+| `react-native-gesture-handler` | `TOPIC-02`、`MORE-05`、`WRITE-01` | 图片缩放/翻页、代码与表格横滑、内容源拖排和 composer 滚动；匹配 APK 核对手势仲裁。 |
+| `react-native-pager-view` | `FEED-02` | patched `TargetedFlingBehavior` JVM oracle 固定 delegate 持续更新目标，成功完成后只提交最终非起点 selection 一次，协程取消或最终回到起点零提交；Feed UI 固定一个 `feedSource` 同时驱动两级导航、Loading 与读取，不消费 fractional position 或 idle。最终 APK 核对拖动期间保持原来源、delegate 完成后的最终目标提交同步切换、取消零读取、反向只取最终目标，点击和左右滑动各只提交一次。 |
+| `react-native-safe-area-context` | `NAV-01`、`TOPIC-02`、`WRITE-01` | 导航、预览、Modal/Sheet UI；匹配 APK 核对状态栏、底部手势区和键盘边界。 |
+| `react-native-screens` | `NAV-*`、`TOPIC-03`、`USER-02` | Native stack UI；匹配 APK 核对返回、嵌套路由、freeze 和原 route 状态恢复。 |
+| `react-native-svg` | `TOPIC-02`、`USER-01` | SVG fallback、公式与头像 UI；匹配 APK 核对真实 SVG/Math 渲染和返回稳定性。 |
+| `react-native-webview` | `ACCOUNT-*`、`WRITE-01`、`TOPIC-02` | Bridge/session/UI 测试；匹配 APK 核对登录页、结构化编辑器和 fallback，IME 无法自动区分时转物理设备并记 `BLOCKED_BY_ENV`。 |
+| `react-native-worklets` | `TOPIC-02`、`MORE-05` | 图片/代码/表格与拖排的 worklet→RN 边界测试；匹配 APK 核对快速反向、取消和重挂。 |
 
 Android 主楼正文连续选择的 canonical evidence 分三层且互不替代：compiler Vitest 固定 UTF-16 logical tape、table row-major、媒体标签和 revision/recycle 逻辑，其中 block/inline 公式以原始 TeX 进入 version 1 media tape，block 保留 boundary，inline 对应 `ReplacementSpan` 插入点，`forum-inline-media-line` 保持段落边界；RNTL 固定横向 Pan 只阻塞后代内容 Native gesture，且仅在确认横向接管后调用 route 级原生选择 owner 既有的 `cancelSelection`，纵向让行不得调用取消；同时固定 manifest 直接来自 visible opening collection，只有这些 opening row 根 View 获得 marker，全部 opening renderer 为 `selectable=false`，并让一个主楼逻辑 document 跨 `richText → heading → table → emoji/sticker → code → trailing text`，当前显示的展开引用/details、签名和 terminal Tab 进入该 document，回复、评论与已采纳答案零 marker 且原有整条长按复制可用。Native JVM 与独立 AVD instrumentation 固定 marker 是唯一 selection 身份，`isTextSelectable`、`isLaidOut` 或全 mounted window owner/fingerprint 完整匹配都不是入口门槛；Layout 只用于当前端点和 mounted `TextView` 的视觉投影，每个可见高亮由对应 `TextView.overlay` 持有，两个端点由同一 ViewRoot 内的列表 viewport overlay 或 fallback `TopicSelectionSurface.overlay` 持有平台 handle wrapper，瞬态映射缺失只跳过当前帧而不取消逻辑选区。TextView/marked-row host 的遮挡 falsifier 必须固定：零底部余量与相邻 row 仍能完整显示行底以下的手柄主体，且 production surface 不依赖关闭 `clipChildren/clipToPadding`。instrumentation 还必须固定无 row-wide double-tap detector/`TextView` long-click patch、普通链接 tap 不被吞、正反向手柄、静止长按唯一入口、双击零原生局部选区、活动选区上静止短按取消但越过选择意图阈值的滚动保留、跨三个 viewport、至少一次 cell recycle、自动滚动和剪贴板顺序；公式 `ReplacementSpan` 的复制顺序必须与 tape 一致，公式 fallback 保持 `selectable=false`，不得形成第二个选择 owner；多行、软换行、LTR/RTL 和 `TextView` 内部 scroll 场景必须证明 start/end 方向、`getLineBottom(line, false)`、primary/secondary horizontal 及平台 1/4、3/4 hotspot 规则，手柄主体不得进入端点字形行，触控目标至少 `48dp`，按下后的细微移动不得让端点跳到手指中心，且手柄拖动始终无放大镜。主要 draw-time oracle 使用生产等价的 `ScrollView + absolute cells`，包含多个 `TextView`、嵌套横向 scroller 与 inline `ReplacementSpan`；纵向或横向 offset 在 coordinator pre-draw 后的同一次 draw 内正反向改变时，TextView-local 高亮与 viewport/surface handle wrapper 必须各自以 `<=2px` 误差出现在当前文字 Path/caret，wrapper 必须在 draw 时读取 source/host 屏幕位置、host scroll 与 source scroll，不能消费缓存的最终 screen 坐标；旧位置至多残留 `2` 个差异像素，取消后实际 host 的 drawable 消失且全部文字 bounds/baseline 不变。端点 owner 仍 mounted 但离开 viewport 时还必须证明 route 命中点消失而 wrapper 不解绑；不经过新 pre-draw 把该 source 移回可见区的同一次 draw 必须立即同时绘出文字与手柄。JVM 必须固定重复选择为 no-op；Android 27+ instrumentation 必须证明只有逻辑端点实际变化才请求 `TEXT_HANDLE_MOVE`，重复 motion、自动滚动但端点未变和程序重绑均不请求。真实 RecyclerView proof 只辅助固定 cell recycle/rebind 后逻辑选区、手柄、复制顺序和视觉投影恢复，不再作为同帧时序的主要证明；源码字符串、mock scroll call 或 mounted owner 计数不能替代这些 oracle。模拟器事件日志只证明触感请求，实际手感与系统关闭触感后的静默必须在物理设备验证，缺少物理设备时记 `NOT_VERIFIED`。compiler 为其他 role 生成 tape 只是内容协议证据，不授权 UI marker 或回复 document。
 
@@ -74,6 +92,20 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 - 测试 fixture 使用最小语义数据，但必须保留被测边界需要的合法身份、权限、生命周期和错误形状；不要用类型断言掩盖无效 fixture。
 
 ## 四、随机顺序与可重放性
+
+楼层导航的 canonical oracle 必须经过真实编译与 renderer 点击：普通 mention 进入 User，V2EX 明确楼层携带作者约束，代码/数学/已有链接和解析 fallback 不信任伪造内部属性。adapter 测同 ID 冲突不被去重掩盖，包括初始/cursor 的已加载捷径：正文可读但带冲突标记的回复不能精确定位，完全一致重复仍去重；作者与楼层反例分别只改变一个字段。controller 测未加载目标的错误作者、重复楼层、缺失与迟到结果不替换窗口，已加载可信目标零请求；列表测 NodeSeek 本人权限投影克隆后仍能定位。其他 adapter 已确认 partial target 的原契约保留，不能为统一谓词改写既有测试预期。
+
+双向续读不能只检查 `maintainVisibleContentPosition` 配置值：`topic-reply-filters` 使用实际安装的 FlashList recycler controller，按线性非重叠布局、offset 与 viewport 派生实际可见范围，证明控制行与回复同屏时的最后一次前插、新插入行自身晚测高及多轮异步高度变化均保持内容的屏幕坐标。覆盖原生像素取整、超过旧 100ms 窗口的迟到确认、拖动打断惯性、过期结束事件、显式/动画/零距离命令、底部 padding 与数据行上界不同；真实滚动接管后不能继续维护旧内容。正文优先、仅控制行可见时清旧锚点、默认选择策略与有界候选读取仍保留，不能直接让 mock 返回预设锚点。匹配 APK 的设备另测四站正/倒序、主动定位、上下续读及失败重试，记录同一回复坐标；JS hook 与桌面工作量证明不冒充设备像素或帧率证据。返回边界由 `app-navigator` 与真实 `TopicSelectionSurface` 分别证明优先级、旧 revision、停用/重建与正文零额外提交；Native instrumentation 证明活动事件只报告所属 document 且重复取消不重复发事件。宽度由实际 ancestor→HTML/code consumer 证明，不在 mock 中复算期待布局。共享 NS/linux.do 表情用真实 Runtime DOM 触发失败、重试、旧回调和重新进入，核对零误插入、成功节点与滚动位置保留。
+
+自动续读独立于按钮测试：四站分别覆盖正/倒序的拖动、上一窗口预取、下端触边、重复 viewability 与同手势不重复请求，静置不凭空发起加载；还要先让主动定位消费一次下端通知，再仅发送真实拖动事件，证明无需新的触边回调仍能续读。设备必须实际执行不点按钮的上下滑动。楼层定位与排序后定位使用真实 Topic 产生的命令进入实际 FlashList controller，断言短行→暖态超高回复的 header 在 viewport 内，并覆盖首次布局未就绪、最终命令后晚测高、布局提交与 Native 确认的两种先后次序，不能仅检查 `viewPosition` 常量。异步投影必须真正排队到下一次 layout commit，验证新命令/拖动取消旧回调、惯性不能抢占，以及目标 key 移位/删除；同步 no-op manager 不替代这组 oracle。
+
+`topic-image-loading` 使用实际安装的 FlashList `useRecyclingState/useLayoutState`，只 mock Native 列表布局通知边界，覆盖同 URL 双实例先后加载时各自需要的布局通知以及暖态零通知。`topic-reply-filters` 另覆盖拖动开始后、首个 `onScroll` 前的缓存前插；命令被旧 Native 上界截短与新内容尺寸两种事件顺序；动画命令重试不能提前交出目标。普通校正的几何 oracle 必须先提交对应内容尺寸，按 Android content `onLayoutChange` 夹紧已有 offset，再应用 Native MVCP 并再次处理边界，之后交付可迟到的 offset 确认；不能把两次夹紧简化成一次，也不得拆开同批 height/anchor 制造 idle 旧尺寸截断或直接写 manager offset 冒充 ACK。多轮测高、旧确认、零位移收缩后再次增高、像素取整与用户接管分别保留；零 offset 收缩不等于尾窗底部收缩，两者不能互作证据。尺寸回调不得额外投递 idle 滚动。自动贴底消费者在未确认校正期间不得启动动画。负向控制分别删除基线建立、旧确认保护、零位移判断或动画保护后必须转红；仅断言 props 接线不替代坐标与调用次数。
+
+规模测量包含编辑器完整解析/重复快照、NS 页签派生、妖火空边界、候选评论查找和日期排序；算法工作量与运行时间分开报告。V2EX 引用按父节点线性重建，点击用户候选最多读取 32 条，不随回复总量增长；唯一目标单次扫描，不建立额外全局索引。NS 的 JS 派生、Native 选择文档更新和文本布局不是同一指标，桌面耗时不能证明手机帧率。缓存命中仍须覆盖身份和投票 sidecar 变化；连续代码单一 owner 与完整复制不得为通用行预算让步。
+
+性能合同以语义输入、工作量和提交次数为 oracle：相同 viewability 不提交 state，离窗注册不提交无变化 idle，同一 pages 在 loading/error 变化时不重新合并，User 单 lane 更新不重算另一 lane，空 ReaderData 事务不持久化；媒体 callback 必须覆盖同 key 重注册、回收 A→B→A 与旧 attempt，通知覆盖慢 worker 下来源合并、一次补跑和身份/权限/停用/卸载失效。对比性能必须保留修改前源码基线，在同一 runtime、同一 workload 预热后多轮取中位数，分别记录计算与渲染提交；不加入墙钟阈值。Native、模拟器和 Release 性能证据各自独立，不能用耗时改善或局部绿灯代替缺失证据。
+
+纯算法优化必须以固定输入对照原输出，包括顺序、重复项、权限、错误和删除保护；已授权的 Bug 修正单列，不能伪称等价。随机差分需保存 seed 与输入范围，不宣称穷尽证明。Search 覆盖较新/较旧预览都不截断已有分页，以及首屏重复项的权限合并；User 两 lane 必须并发并分别先完成，不能用顺序请求代替。通知调度组合 owner 运行真实 worker/store，只 mock 外部读取与 Native acknowledgement，证明两来源慢投递期间的重复触发有界合并，未读总数相同但消息 ID 替换仍会投递。NS 内容 owner 使用不同主楼/回复全文，覆盖空/部分/完整终端的 bridge/rendered 链路、两侧身份歧义与块数量不符；无源码的无 class xterm 行也须保持完整文本、ANSI 和邻接内容。
 
 `npm test` 使用 Vitest shuffled sequence；`npm run test:ui` 使用 Jest randomize 并输出 seed；`npm run verify` 自然继承两者。随机顺序是常规隔离门禁，不再称为“确定性门禁”。
 

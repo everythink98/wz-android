@@ -27,6 +27,8 @@ export type RemoteSearchSourceResult =
   | { kind: 'action-required'; group: SearchGroup; action: RemoteSearchAction };
 
 export type SearchListItem =
+  | { type: 'recentHeader' }
+  | { type: 'recentSearch'; query: string }
   | { type: 'groupHeader'; group: SearchGroup; meta: string }
   | { type: 'externalSearch'; group: SearchGroup; url: string }
   | { type: 'groupAuthNotice'; group: SearchGroup }

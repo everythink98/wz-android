@@ -1978,6 +1978,79 @@ describe('background notification digest', () => {
     });
   });
 
+  it('keeps foreground drain pending while native failure cleanup outlives the deadline', async () => {
+    vi.useFakeTimers();
+    const cleanupStarted = Promise.withResolvers<void>();
+    const releaseCleanup = Promise.withResolvers<void>();
+    let drain: Promise<void> | undefined;
+    let drained = false;
+    try {
+      const state = defaultNotificationState();
+      state.globalEnabled = true;
+      state.sources.nodeseek = {
+        ...state.sources.nodeseek,
+        intentEnabled: true,
+        identityKey: 'nodeseek:cleanup',
+        baselineReady: true
+      };
+      const worker = runNotificationBackgroundWorker({
+        sources: ['nodeseek'],
+        sourceAllowed,
+        deadlineMs: 10,
+        captureDeliverySettlement: (settlement) => {
+          drain = settlement;
+          void settlement.then(() => {
+            drained = true;
+          });
+        },
+        network: {
+          restoreProxy: async () => undefined,
+          probeAccess: async () => ({ identityKey: 'nodeseek:cleanup', userId: 'cleanup' }),
+          listPage: async () => ({
+            items: [
+              {
+                source: 'nodeseek',
+                id: 'new',
+                kind: 'reply',
+                actor: { name: 'A' },
+                title: '',
+                createdAt: null,
+                unread: true,
+                target: { type: 'information' }
+              }
+            ],
+            cursor: null,
+            hasMore: false
+          })
+        },
+        store: { load: async () => state, record: testRecord(state), clearForContentDisable },
+        system: {
+          permissionGranted,
+          reconcileDigests,
+          presentDigest: async () => {
+            throw new Error('native presentation failed');
+          },
+          dismissDigest: () => {
+            cleanupStarted.resolve();
+            return releaseCleanup.promise;
+          }
+        }
+      });
+      await cleanupStarted.promise;
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await worker).toMatchObject({ status: 'failed', reason: 'deadline' });
+      expect(drain).toBeDefined();
+      expect(drained).toBe(false);
+      releaseCleanup.resolve();
+      await drain;
+      expect(drained).toBe(true);
+    } finally {
+      releaseCleanup.resolve();
+      await drain;
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the identity lane owned by a pending commit after the worker deadline returns', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;
@@ -1994,6 +2067,8 @@ describe('background notification digest', () => {
     const secondReconciled = Promise.withResolvers<string | undefined>();
     const allowSecondProbe = Promise.withResolvers<void>();
     const atomicRecord = testRecord(state);
+    let deliveryDrain: Promise<void> | undefined;
+    let deliverySettled = false;
     const item = {
       source: 'nodeseek' as const,
       id: 'new',
@@ -2009,6 +2084,12 @@ describe('background notification digest', () => {
       sources: ['nodeseek'],
       sourceAllowed,
       deadlineMs: 5,
+      captureDeliverySettlement: (settlement) => {
+        deliveryDrain = settlement;
+        void settlement.then(() => {
+          deliverySettled = true;
+        });
+      },
       network: {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
@@ -2033,6 +2114,7 @@ describe('background notification digest', () => {
 
     await commitStarted.promise;
     expect(await first).toMatchObject({ status: 'failed', reason: 'deadline' });
+    const settledAtDeadline = deliverySettled;
 
     const second = runNotificationBackgroundWorker({
       sources: ['nodeseek'],
@@ -2068,6 +2150,10 @@ describe('background notification digest', () => {
     releaseCommit.resolve();
     allowSecondProbe.resolve();
     await second;
+    await deliveryDrain;
+    expect(deliveryDrain).toBeDefined();
+    expect(settledAtDeadline).toBe(false);
+    expect(deliverySettled).toBe(true);
 
     expect(secondEnteredLaneBeforeCommit).toBe(false);
     expect(await secondReconciled.promise).toBe('wz-message-nodeseek-nodeseek%3A7-a');

@@ -7,14 +7,7 @@ import { isUserFollowed, type ReaderData } from '@/domain/reader/readerData';
 import { nodeSeekUserIdFromValue, normalizeUserReference } from '@/domain/forum/userNavigation';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 import { sourceErrorFromUnknown, sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
-import type {
-  Source,
-  SourceErrorInfo,
-  Topic,
-  UserProfile,
-  UserReference,
-  UserReplyActivity
-} from '@/domain/forum/models';
+import type { Source, SourceErrorInfo, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -24,17 +17,14 @@ import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalo
 
 type UserLane = 'topics' | 'replies';
 
-function mergeUserReplies(existing: UserReplyActivity[] = [], incoming: UserReplyActivity[] = []) {
-  const seen = new Set(existing.map((reply) => `${reply.source}:${reply.id}`));
-  return [
-    ...existing,
-    ...incoming.filter((reply) => {
-      const key = `${reply.source}:${reply.id}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-  ];
+function mergeUserReplies(incoming: UserReplyActivity[]) {
+  const seen = new Set<string>();
+  return incoming.filter((reply) => {
+    const key = `${reply.source}:${reply.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function userSourceRecoveryTarget(source: Source, error: SourceErrorInfo) {
@@ -66,25 +56,6 @@ function nextUserCursor(profile: UserProfile, lane: UserLane) {
 
 function hasMoreUserLane(profile: UserProfile, lane: UserLane) {
   return lane === 'topics' ? profile.hasMoreTopics : profile.hasMoreReplies;
-}
-
-function mergeUserProfile(profile: UserProfile, topicPages: UserProfile[], replyPages: UserProfile[]): UserProfile {
-  const topics = topicPages.reduce<Topic[]>((items, page) => mergeTopics(items, page.topics || []), []);
-  const replies = replyPages.reduce<UserReplyActivity[]>(
-    (items, page) => mergeUserReplies(items, page.replies || []),
-    []
-  );
-  const lastTopicPage = topicPages.at(-1) || profile;
-  const lastReplyPage = replyPages.at(-1) || profile;
-  return {
-    ...profile,
-    topics,
-    replies,
-    hasMoreTopics: Boolean(lastTopicPage.hasMoreTopics && lastTopicPage.nextTopicsCursor),
-    nextTopicsCursor: lastTopicPage.nextTopicsCursor ?? null,
-    hasMoreReplies: Boolean(lastReplyPage.hasMoreReplies && lastReplyPage.nextRepliesCursor),
-    nextRepliesCursor: lastReplyPage.nextRepliesCursor ?? null
-  };
 }
 
 function firstLaneData(profile: UserProfile): InfiniteData<UserProfile, string | null> {
@@ -320,12 +291,36 @@ export function useUserController({
     seedUserLane(replyKey);
   }, [replyKey, seedUserLane, topicKey]);
 
-  const userProfile = useMemo(() => {
-    const profile = profileQuery.data || topicsQuery.data?.pages[0] || repliesQuery.data?.pages[0];
-    return profile
-      ? mergeUserProfile(profile, topicsQuery.data?.pages || [profile], repliesQuery.data?.pages || [profile])
-      : null;
-  }, [profileQuery.data, repliesQuery.data?.pages, topicsQuery.data?.pages]);
+  const topicPages = topicsQuery.data?.pages;
+  const replyPages = repliesQuery.data?.pages;
+  const profile = profileQuery.data || topicPages?.[0] || replyPages?.[0];
+  const fallbackTopics = topicPages ? undefined : profile?.topics;
+  const fallbackReplies = replyPages ? undefined : profile?.replies;
+  const topics = useMemo(
+    () => mergeTopics([], topicPages ? topicPages.flatMap((page) => page.topics || []) : fallbackTopics || []),
+    [fallbackTopics, topicPages]
+  );
+  const replies = useMemo(
+    () => mergeUserReplies(replyPages ? replyPages.flatMap((page) => page.replies || []) : fallbackReplies || []),
+    [fallbackReplies, replyPages]
+  );
+  const lastTopicPage = topicPages?.at(-1) || profile;
+  const lastReplyPage = replyPages?.at(-1) || profile;
+  const userProfile = useMemo(
+    () =>
+      profile
+        ? {
+            ...profile,
+            topics,
+            replies,
+            hasMoreTopics: Boolean(lastTopicPage?.hasMoreTopics && lastTopicPage.nextTopicsCursor),
+            nextTopicsCursor: lastTopicPage?.nextTopicsCursor ?? null,
+            hasMoreReplies: Boolean(lastReplyPage?.hasMoreReplies && lastReplyPage.nextRepliesCursor),
+            nextRepliesCursor: lastReplyPage?.nextRepliesCursor ?? null
+          }
+        : null,
+    [lastReplyPage, lastTopicPage, profile, replies, topics]
+  );
   const queryError = resolutionQuery.error || profileQuery.error || topicsQuery.error || repliesQuery.error;
   const userError = queryError && selectedUser ? sourceErrorFromUnknown(selectedUser.source, queryError) : null;
   const currentUserFollowed = Boolean(userProfile && isUserFollowed(readerData, userProfile));

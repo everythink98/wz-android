@@ -42,7 +42,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.facebook.react.bridge.Callback
-import com.facebook.react.bridge.CatalystInstance
 import com.facebook.react.bridge.JavaScriptContextHolder
 import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.NativeModule
@@ -102,6 +101,39 @@ private object LayoutApi34ForTest {
 
 @RunWith(AndroidJUnit4::class)
 class ForumContentSelectionViewTest {
+  @Test
+  fun selectionActivityReportsItsOwnRevisionOncePerTransition() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      val events = mutableListOf<Map<String, Any>>()
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.selectionChangeObserverForTest = { events.add(it) }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, utf16Offset = 5)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        assertEquals(listOf(mapOf("active" to true, "revision" to "revision-1")), events)
+        fixture.surface.pendingRevision = "revision-2"
+        fixture.surface.commitProps()
+        fixture.surface.cancelSelection()
+        assertEquals(listOf(
+          mapOf("active" to true, "revision" to "revision-1"),
+          mapOf("active" to false, "revision" to "revision-1")
+        ), events)
+        fixture.close()
+      }
+    }
+  }
+
   @Test
   fun nonSelectableOpeningTextDoesNotStartSelectionOnDoubleTap() {
     ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
@@ -1490,7 +1522,7 @@ class ForumContentSelectionViewTest {
     private val handleColor = resolveTestColor(reactContext, android.R.attr.colorAccent, 0xFF1668DC.toInt())
     private val appContext = AppContext(
       object : ModulesProvider {
-        override fun getModulesList(): List<Class<out Module>> = emptyList()
+        override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
       },
       ModuleRegistry(emptyList(), emptyList()),
       WeakReference(reactContext)
@@ -2248,7 +2280,7 @@ class ForumContentSelectionViewTest {
     private val reactContext = FixtureReactContext(activity)
     private val appContext = AppContext(
       object : ModulesProvider {
-        override fun getModulesList(): List<Class<out Module>> = emptyList()
+        override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
       },
       ModuleRegistry(emptyList(), emptyList()),
       WeakReference(reactContext)
@@ -2708,14 +2740,14 @@ class ForumContentSelectionViewTest {
     override fun getNativeModule(moduleName: String): NativeModule? = null
 
     @Suppress("DEPRECATION")
-    override fun getCatalystInstance(): CatalystInstance? = null
+    override fun getCatalystInstance(): com.facebook.react.bridge.CatalystInstance? = null
 
-    @Suppress("DEPRECATION")
+    @Deprecated("Required by ReactContext; use hasActiveReactInstance in production code.")
     override fun hasActiveCatalystInstance(): Boolean = false
 
     override fun hasActiveReactInstance(): Boolean = false
 
-    @Suppress("DEPRECATION")
+    @Deprecated("Required by ReactContext; use hasReactInstance in production code.")
     override fun hasCatalystInstance(): Boolean = false
 
     override fun hasReactInstance(): Boolean = false
@@ -2726,14 +2758,14 @@ class ForumContentSelectionViewTest {
       throw exception
     }
 
-    @Suppress("DEPRECATION")
+    @Deprecated("Required by the ReactContext compatibility contract.")
     override fun isBridgeless(): Boolean = false
 
     override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
 
     override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
 
-    @Suppress("DEPRECATION")
+    @Deprecated("Required by the ReactContext compatibility contract.")
     override fun getFabricUIManager(): UIManager? = null
 
     override fun getSourceURL(): String? = null

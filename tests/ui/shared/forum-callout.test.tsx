@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
-import React from 'react';
 import { Pressable, Text } from 'react-native';
+import { ReduceMotion } from 'react-native-reanimated';
 
 import { FORUM_CALLOUT_TRANSITION_MS, ForumCallout, forumCalloutPalette } from '@/ui/content/ForumCallout';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -29,6 +29,9 @@ describe('shared ForumCallout', () => {
     const header = view.getByRole('button', { name: '警告标题' });
     expect(header.props.accessibilityState).toEqual({ expanded: false });
     expect(header).toHaveStyle({ minHeight: 48 });
+    const layout = view.getByTestId('forum-callout').props.layout;
+    expect(layout.getDuration()).toBe(FORUM_CALLOUT_TRANSITION_MS);
+    expect(layout.getReduceMotion()).toBe(ReduceMotion.System);
     const [icon] = view.root?.queryAll((instance) => instance.props.testID === 'forum-callout-icon') || [];
     expect(icon.props.accessible).toBe(false);
 

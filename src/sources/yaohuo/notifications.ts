@@ -190,11 +190,10 @@ function chatMessages(root: ReturnType<typeof parseHtml>, detailUrl: string, oth
       } satisfies ParsedNotificationMessage
     ];
   });
-  return messages.sort((left, right) => {
-    if (!left.createdAt) return right.createdAt ? 1 : 0;
-    if (!right.createdAt) return -1;
-    return Date.parse(left.createdAt) - Date.parse(right.createdAt);
-  });
+  return messages
+    .map((message) => ({ message, time: message.createdAt ? Date.parse(message.createdAt) : Number.POSITIVE_INFINITY }))
+    .sort((left, right) => left.time - right.time)
+    .map(({ message }) => message);
 }
 
 function messageReplyForm(html: string, baseUrl: string) {

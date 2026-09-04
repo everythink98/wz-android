@@ -108,6 +108,7 @@ class TopicBodyMediaCoordinator {
   private onDiagnosticFinish: TopicBodyMediaAggregateReporter | undefined;
   private paused: boolean;
   private retryCount = 0;
+  private recomputeScheduled = false;
   private runtimeGeneration: number;
   private runningHighWater = 0;
   private sequence = 0;
@@ -174,13 +175,13 @@ class TopicBodyMediaCoordinator {
       entry.status = 'failed';
     }
     this.entries.set(entry.key, entry);
-    this.recompute();
+    this.scheduleRecompute();
     return () => {
       if (this.entries.get(entry.key) !== entry) return;
       if (entry.status === 'running') this.cancelCount += 1;
       this.entries.delete(entry.key);
       this.warmKeys.delete(entry.key);
-      this.recompute();
+      this.scheduleRecompute();
     };
   }
 
@@ -241,7 +242,7 @@ class TopicBodyMediaCoordinator {
     if (
       !entry ||
       (entry.status !== 'running' && !(outcome === 'error' && entry.status === 'displayed')) ||
-      attemptId !== `${entry.key}:${entry.attempt}`
+      attemptId !== this.attemptIdFor(entry)
     ) {
       return;
     }
@@ -271,7 +272,7 @@ class TopicBodyMediaCoordinator {
     if (
       !entry ||
       entry.status !== 'running' ||
-      attemptId !== `${entry.key}:${entry.attempt}` ||
+      attemptId !== this.attemptIdFor(entry) ||
       !Number.isFinite(value) ||
       (entry.lastProgressValue !== null && value <= entry.lastProgressValue)
     ) {
@@ -287,9 +288,15 @@ class TopicBodyMediaCoordinator {
     this.firstRowElapsedMs = Math.max(0, Math.floor(elapsedMs));
   }
 
-  retry(key: string) {
+  retry(key: string, attemptId: string) {
     const entry = this.entries.get(key);
-    if (!entry || entry.status !== 'failed' || this.explicitlyRetriedIdentities.has(entry.requestIdentity)) return;
+    if (
+      !entry ||
+      attemptId !== this.attemptIdFor(entry) ||
+      entry.status !== 'failed' ||
+      this.explicitlyRetriedIdentities.has(entry.requestIdentity)
+    )
+      return;
     this.explicitlyRetriedIdentities.add(entry.requestIdentity);
     this.retryCount += 1;
     this.resetIdentityForRetry(entry.requestIdentity, entry.key);
@@ -304,6 +311,7 @@ class TopicBodyMediaCoordinator {
     this.captureHighWater();
     this.finishDiagnosticAggregate();
     this.disposed = true;
+    this.recomputeScheduled = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.timerDeadline = null;
@@ -314,12 +322,15 @@ class TopicBodyMediaCoordinator {
     this.warmKeys.clear();
   }
 
-  private captureHighWater() {
+  private captureHighWater(runningCount?: number) {
+    if (runningCount === undefined) {
+      runningCount = 0;
+      for (const entry of this.entries.values()) {
+        if (entry.status === 'running') runningCount += 1;
+      }
+    }
     this.warmHighWater = Math.max(this.warmHighWater, this.warmKeys.size);
-    this.runningHighWater = Math.max(
-      this.runningHighWater,
-      [...this.entries.values()].filter((entry) => entry.status === 'running').length
-    );
+    this.runningHighWater = Math.max(this.runningHighWater, runningCount);
     this.timerHighWater = Math.max(this.timerHighWater, this.timer ? 1 : 0);
   }
 
@@ -393,17 +404,34 @@ class TopicBodyMediaCoordinator {
     }
   }
 
+  private attemptIdFor(entry: TopicBodyMediaEntry) {
+    // An unstarted lease has no callbacks to accept and needs no idle-state commit.
+    return entry.attempt === 0 && entry.status === 'waiting'
+      ? `${entry.key}:0`
+      : `${entry.key}:${entry.sequence}:${entry.attempt}`;
+  }
+
   private snapshotFor(entry: TopicBodyMediaEntry): TopicBodyMediaSnapshot {
     return {
       admitted: entry.status === 'displayed' || (this.warmKeys.has(entry.key) && entry.status === 'running'),
       attachmentKey: `${entry.key}:attachment:${entry.attachmentRevision}`,
-      attemptId: `${entry.key}:${entry.attempt}`,
+      attemptId: this.attemptIdFor(entry),
       failure: entry.failure
     };
   }
 
+  private scheduleRecompute() {
+    if (this.disposed || this.recomputeScheduled) return;
+    this.recomputeScheduled = true;
+    void Promise.resolve().then(() => {
+      if (!this.recomputeScheduled || this.disposed) return;
+      this.recompute();
+    });
+  }
+
   private recompute() {
     if (this.disposed) return;
+    this.recomputeScheduled = false;
     const rowOrder = new Map(this.viewportRowKeys.map((rowKey, index) => [rowKey, index]));
     const visibleRows = new Set(this.visibleRowKeys);
     const eligible = [...this.entries.values()]
@@ -424,14 +452,13 @@ class TopicBodyMediaCoordinator {
           left.sequence - right.sequence
         );
       });
-    this.warmKeys = new Set(eligible.slice(0, MAX_WARM_BLOCK_MEDIA).map((entry) => entry.key));
-
     const scheduledKeys = new Set<string>();
-    if (this.active && !this.paused) {
+    if (this.active) {
       const scheduledIdentities = new Set<string>();
       let scheduledOriginalCount = 0;
       for (const entry of eligible) {
         if (scheduledKeys.size >= MAX_IN_FLIGHT_BODY_MEDIA) break;
+        if (this.paused && entry.status !== 'running') continue;
         if (scheduledIdentities.has(entry.requestIdentity)) continue;
         if (entry.kind === 'original' && scheduledOriginalCount >= 1) continue;
         scheduledKeys.add(entry.key);
@@ -439,26 +466,30 @@ class TopicBodyMediaCoordinator {
         if (entry.kind === 'original') scheduledOriginalCount += 1;
       }
     }
+    // Every running request must also have a renderable warm instance, even after duplicates.
+    this.warmKeys = new Set(scheduledKeys);
+    for (const entry of eligible) {
+      if (this.warmKeys.size >= MAX_WARM_BLOCK_MEDIA) break;
+      this.warmKeys.add(entry.key);
+    }
 
+    let runningCount = 0;
+    let runningOriginalCount = 0;
+    const runningIdentities = new Set<string>();
     for (const entry of this.entries.values()) {
-      if (
-        entry.status === 'running' &&
-        (!this.active || !this.warmKeys.has(entry.key) || (!this.paused && !scheduledKeys.has(entry.key)))
-      ) {
+      if (entry.status === 'running' && !scheduledKeys.has(entry.key)) {
         this.cancelCount += 1;
         entry.deadline = null;
         entry.lastProgressValue = null;
         entry.status = 'waiting';
       }
+      if (entry.status === 'running') {
+        runningCount += 1;
+        runningIdentities.add(entry.requestIdentity);
+        if (entry.kind === 'original') runningOriginalCount += 1;
+      }
     }
 
-    let runningCount = [...this.entries.values()].filter((entry) => entry.status === 'running').length;
-    const runningIdentities = new Set(
-      [...this.entries.values()].filter((entry) => entry.status === 'running').map((entry) => entry.requestIdentity)
-    );
-    let runningOriginalCount = [...this.entries.values()].filter(
-      (entry) => entry.status === 'running' && entry.kind === 'original'
-    ).length;
     if (this.active && !this.paused) {
       for (const entry of eligible) {
         if (runningCount >= MAX_IN_FLIGHT_BODY_MEDIA) break;
@@ -485,7 +516,7 @@ class TopicBodyMediaCoordinator {
     }
 
     this.scheduleTimer();
-    this.captureHighWater();
+    this.captureHighWater(runningCount);
     for (const entry of this.entries.values()) {
       const next = this.snapshotFor(entry);
       if (!sameSnapshot(entry.snapshot, next)) {
@@ -497,16 +528,18 @@ class TopicBodyMediaCoordinator {
 
   private scheduleTimer() {
     if (this.disposed) return;
-    const deadlines = [...this.entries.values()]
-      .filter((entry) => entry.status === 'running' && entry.deadline !== null)
-      .map((entry) => entry.deadline as number);
-    if (!deadlines.length) {
+    let nextDeadline: number | null = null;
+    for (const entry of this.entries.values()) {
+      if (entry.status === 'running' && entry.deadline !== null) {
+        nextDeadline = nextDeadline === null ? entry.deadline : Math.min(nextDeadline, entry.deadline);
+      }
+    }
+    if (nextDeadline === null) {
       if (this.timer) clearTimeout(this.timer);
       this.timer = null;
       this.timerDeadline = null;
       return;
     }
-    const nextDeadline = Math.min(...deadlines);
     if (this.timer && this.timerDeadline === nextDeadline) return;
     if (this.timer) clearTimeout(this.timer);
     this.timerDeadline = nextDeadline;
@@ -674,23 +707,32 @@ export function useTopicBodyMediaLease({
     () => ({ admitted: false, attachmentKey: `${key}:attachment:0`, attemptId: `${key}:0`, failure: null }),
     [key]
   );
+  const descriptor = useMemo(
+    () => ({ automaticRetry, coordinator, enabled, key, kind, priority, requestIdentity, rowKey }),
+    [automaticRetry, coordinator, enabled, key, kind, priority, requestIdentity, rowKey]
+  );
   const [registeredSnapshot, setRegisteredSnapshot] = useState<{
-    key: string;
+    descriptor: typeof descriptor;
+    registration: { active: boolean } | null;
     snapshot: TopicBodyMediaSnapshot;
-  }>(() => ({ key, snapshot: coordinator || !enabled ? idleSnapshot : UNMANAGED_MEDIA_LEASE }));
+  }>(() => ({ descriptor, registration: null, snapshot: idleSnapshot }));
   const snapshot =
     !enabled || (coordinator && !rowKey)
       ? idleSnapshot
-      : registeredSnapshot.key === key
+      : registeredSnapshot.descriptor === descriptor && registeredSnapshot.registration?.active
         ? registeredSnapshot.snapshot
         : idleSnapshot;
   useEffect(() => {
     if (!coordinator || !rowKey || !enabled) return undefined;
-    setRegisteredSnapshot({ key, snapshot: idleSnapshot });
-    return coordinator.register({ automaticRetry, key, kind, priority, requestIdentity, rowKey }, (nextSnapshot) => {
-      setRegisteredSnapshot({ key, snapshot: nextSnapshot });
+    const registration = { active: true };
+    const unregister = coordinator.register(descriptor, (nextSnapshot) => {
+      if (registration.active) setRegisteredSnapshot({ descriptor, registration, snapshot: nextSnapshot });
     });
-  }, [automaticRetry, coordinator, enabled, idleSnapshot, key, kind, priority, requestIdentity, rowKey]);
+    return () => {
+      registration.active = false;
+      unregister();
+    };
+  }, [coordinator, descriptor, enabled, rowKey]);
   const settle = useCallback(
     (outcome: TopicBodyMediaOutcome) => {
       coordinator?.settle(key, snapshot.attemptId, outcome);
@@ -701,7 +743,7 @@ export function useTopicBodyMediaLease({
     (value: number) => coordinator?.progress(key, snapshot.attemptId, value),
     [coordinator, key, snapshot.attemptId]
   );
-  const retry = useCallback(() => coordinator?.retry(key), [coordinator, key]);
+  const retry = useCallback(() => coordinator?.retry(key, snapshot.attemptId), [coordinator, key, snapshot.attemptId]);
   return useMemo(
     () => (coordinator || !enabled ? { ...snapshot, progress, retry, settle } : UNMANAGED_MEDIA_LEASE),
     [coordinator, enabled, progress, retry, settle, snapshot]

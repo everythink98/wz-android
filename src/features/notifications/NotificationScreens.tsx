@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Switch, Text,
 import { FlashList } from '@shopify/flash-list';
 import RenderHTML, { HTMLContentModel, HTMLElementModel } from 'react-native-render-html';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
+import { notificationSources, sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { parseForumTopicDestination } from '@/domain/forum/links';
 import type { ReplyLocationTarget, Topic } from '@/domain/forum/models';
 import type { ForumNotification, NotificationCategory, NotificationDetail } from '@/domain/notifications/models';
@@ -15,10 +15,8 @@ import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { pressWithFeedback } from '@/ui/controls/pressFeedback';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { androidRipple } from '@/ui/theme/tokens';
 import {
   formatNotificationTime,
   notificationAccessibilityLabel,
@@ -84,14 +82,13 @@ function NotificationRow({
   showSource: boolean;
   onPress: () => void;
 }) {
-  const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
+  const { styles } = useReaderThemeStyles(createNotificationStyles);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={notificationAccessibilityLabel(item)}
-      android_ripple={androidRipple(theme.primarySoft)}
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-      onPress={() => pressWithFeedback(onPress)}
+      style={styles.row}
+      onPress={onPress}
     >
       <Avatar contentSource={item.source} small name={item.actor.name} uri={item.actor.avatarUrl} />
       <View style={styles.rowBody}>
@@ -173,9 +170,13 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   ];
   const errorSources = enabledSources.filter((candidate) => errors[candidate]);
   const sourceAvailable = source === 'all' ? activeSources.length > 0 : activeSources.includes(source);
-  const visibleItems = items.filter(
-    (item) => enabledSources.includes(item.source) && activeSources.includes(item.source)
-  );
+  const visibleSourceKey = notificationSources
+    .filter((candidate) => enabledSources.includes(candidate) && activeSources.includes(candidate))
+    .join('|');
+  const visibleItems = useMemo(() => {
+    const visibleSources = new Set(visibleSourceKey.split('|'));
+    return items.filter((item) => visibleSources.has(item.source));
+  }, [items, visibleSourceKey]);
   const noEnabledSources = enabledSources.length === 0;
   const emptyTitle = noEnabledSources
     ? '尚未启用内容源'
@@ -257,7 +258,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
               accessibilityState={{ busy: markAllBusy, disabled: markAllBusy }}
               disabled={markAllBusy}
               style={[styles.inlineAction, markAllBusy && styles.disabled]}
-              onPress={() => pressWithFeedback(onMarkAll)}
+              onPress={onMarkAll}
             >
               <Text style={styles.inlineActionText}>{markAllBusy ? '处理中' : '全部已读'}</Text>
             </Pressable>
@@ -692,12 +693,7 @@ export function NotificationDetailScreen({
       </ScrollView>
       {!conversation && canOpenTopic ? (
         <View testID="notification-topic-action-dock" style={[styles.topicActionDock, dockSafeAreaStyle]}>
-          <Pressable
-            accessibilityRole="button"
-            android_ripple={androidRipple(theme.primarySoft)}
-            style={({ pressed }) => [styles.topicActionButton, pressed && styles.topicActionButtonPressed]}
-            onPress={() => pressWithFeedback(() => onOpenTopic())}
-          >
+          <Pressable accessibilityRole="button" style={styles.topicActionButton} onPress={() => onOpenTopic()}>
             <Text style={styles.topicActionText}>{replyToTopic ? '前往主题回复' : '查看相关主题'}</Text>
           </Pressable>
         </View>
@@ -708,14 +704,9 @@ export function NotificationDetailScreen({
             accessibilityRole="button"
             accessibilityLabel="回复私信"
             accessibilityState={{ disabled: replyBusy || Boolean(detail.reply.disabledReason) }}
-            android_ripple={androidRipple(theme.primarySoft)}
             disabled={replyBusy || Boolean(detail.reply.disabledReason)}
-            style={({ pressed }) => [
-              styles.replyLauncher,
-              pressed && styles.replyLauncherPressed,
-              (replyBusy || Boolean(detail.reply?.disabledReason)) && styles.disabled
-            ]}
-            onPress={() => pressWithFeedback(onOpenReply)}
+            style={[styles.replyLauncher, (replyBusy || Boolean(detail.reply?.disabledReason)) && styles.disabled]}
+            onPress={onOpenReply}
           >
             <View style={styles.replyLauncherBody}>
               <Text numberOfLines={1} style={styles.replyLauncherTitle}>

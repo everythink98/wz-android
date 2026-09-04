@@ -21,7 +21,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.facebook.react.bridge.Callback
-import com.facebook.react.bridge.CatalystInstance
 import com.facebook.react.bridge.JavaScriptContextHolder
 import com.facebook.react.bridge.JavaScriptModule
 import com.facebook.react.bridge.NativeModule
@@ -160,7 +159,7 @@ class ForumSelectionRecyclerViewProofTest {
     private val reactContext = RecyclerProofReactContext(activity.applicationContext)
     private val appContext = AppContext(
       object : ModulesProvider {
-        override fun getModulesList(): List<Class<out Module>> = emptyList()
+        override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
       },
       ModuleRegistry(emptyList(), emptyList()),
       WeakReference(reactContext)
@@ -383,14 +382,14 @@ class ForumSelectionRecyclerViewProofTest {
     override fun getNativeModule(moduleName: String): NativeModule? = null
 
     @Suppress("DEPRECATION")
-    override fun getCatalystInstance(): CatalystInstance? = null
+    override fun getCatalystInstance(): com.facebook.react.bridge.CatalystInstance? = null
 
-    @Suppress("DEPRECATION")
+    @Deprecated("Required by ReactContext; use hasActiveReactInstance in production code.")
     override fun hasActiveCatalystInstance(): Boolean = false
 
     override fun hasActiveReactInstance(): Boolean = false
 
-    @Suppress("DEPRECATION")
+    @Deprecated("Required by ReactContext; use hasReactInstance in production code.")
     override fun hasCatalystInstance(): Boolean = false
 
     override fun hasReactInstance(): Boolean = false
@@ -401,14 +400,14 @@ class ForumSelectionRecyclerViewProofTest {
       throw exception
     }
 
-    @Suppress("DEPRECATION")
+    @Deprecated("Required by the ReactContext compatibility contract.")
     override fun isBridgeless(): Boolean = false
 
     override fun getJavaScriptContextHolder(): JavaScriptContextHolder? = null
 
     override fun getJSCallInvokerHolder(): CallInvokerHolder? = null
 
-    @Suppress("DEPRECATION")
+    @Deprecated("Required by the ReactContext compatibility contract.")
     override fun getFabricUIManager(): UIManager? = null
 
     override fun getSourceURL(): String? = null

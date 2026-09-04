@@ -4,11 +4,7 @@ import {
   groupLibraryRecordsByTime,
   libraryCategoryFilterItems
 } from '@/features/library/model/libraryFilters';
-import {
-  filterRepliesByQuery,
-  createReplyTextIndex,
-  createReplyTextIndexForQuery
-} from '@/features/topic/model/replySearch';
+import { filterRepliesByQuery } from '@/features/topic/model/replySearch';
 import { highlightHtml, highlightTextParts } from '@/ui/text/highlight';
 import { domNodeCount as htmlDomNodeCount } from '../helpers/domNodeCount';
 import { stripHtml } from '@/domain/forum/text';
@@ -150,27 +146,13 @@ describe('Android feature helpers', () => {
     ]);
   });
 
-  it('filters replies by query with or without a cached text index', () => {
+  it('filters replies with case-insensitive positive terms and preserves empty-query input', () => {
     const replies: Reply[] = [
       { floor: 1, author: 'alice', createdAt: '2026-05-23T01:00:00.000Z', contentHtml: '<p>Hello VPS</p>' },
       { floor: 2, author: 'bob', createdAt: '2026-05-23T02:00:00.000Z', contentHtml: '<p>Other</p>' }
     ];
-    const index = createReplyTextIndex(replies);
-
-    expect(filterRepliesByQuery(replies, 'vps')).toEqual([replies[0]]);
-    expect(filterRepliesByQuery(replies, 'vps', index)).toEqual([replies[0]]);
-  });
-
-  it('builds a reply text index only when a query needs one', () => {
-    const replies: Reply[] = [
-      { floor: 1, author: 'alice', createdAt: '2026-05-23T01:00:00.000Z', contentHtml: '<p>Hello VPS</p>' },
-      { floor: 2, author: 'bob', createdAt: '2026-05-23T02:00:00.000Z', contentHtml: '<p>Other</p>' }
-    ];
-
-    expect(createReplyTextIndexForQuery(replies, '   -ignored ')).toBeUndefined();
-
-    const index = createReplyTextIndexForQuery(replies, 'vps');
-    expect(index).toBeInstanceOf(Map);
-    expect(filterRepliesByQuery(replies, 'vps', index)).toEqual([replies[0]]);
+    expect(filterRepliesByQuery(replies, 'Hello VPS')).toEqual([replies[0]]);
+    expect(filterRepliesByQuery(replies, 'vps missing')).toEqual([]);
+    expect(filterRepliesByQuery(replies, '   -ignored ')).toBe(replies);
   });
 });

@@ -1,123 +1,40 @@
 diff --git a/node_modules/react-native/Libraries/Image/Image.android.js b/node_modules/react-native/Libraries/Image/Image.android.js
-index 06cd667..b6f0f68 100644
+index f5e3f8a..8095a5f 100644
 --- a/node_modules/react-native/Libraries/Image/Image.android.js
 +++ b/node_modules/react-native/Libraries/Image/Image.android.js
-@@ -173,11 +173,17 @@ let BaseImage: AbstractImageAndroid = ({
-     sources = [source];
+@@ -158,6 +158,7 @@ let BaseImage: AbstractImageAndroid = ({
+   referrerPolicy,
+   srcSet,
+   onLoadStart,
++  onProgress,
+   onLoad,
+   onLoadEnd,
+   onError,
+@@ -232,6 +233,11 @@ let BaseImage: AbstractImageAndroid = ({
+     nativeProps.onLoadStart = onLoadStart;
    }
  
--  const {onLoadStart, onLoad, onLoadEnd, onError} = props;
-+  const {onLoadStart, onProgress, onLoad, onLoadEnd, onError} = props;
-   const nativeProps = {
-     ...props,
-     style,
--    shouldNotifyLoadEvents: !!(onLoadStart || onLoad || onLoadEnd || onError),
-+    shouldNotifyLoadEvents: !!(
-+      onLoadStart ||
-+      onProgress ||
-+      onLoad ||
-+      onLoadEnd ||
-+      onError
-+    ),
-     // Both iOS and C++ sides expect to have "source" prop, whereas on Android it's "src"
-     // (for historical reasons). So in the latter case we populate both "src" and "source",
-     // in order to have a better alignment between platforms in the future.
-@@ -232,6 +238,15 @@ let BaseImage: AbstractImageAndroid = ({
-                     resizeMode={resizeMode}
-                     headers={nativeProps.headers}
-                     src={sources}
-+                    internal_analyticTag={nativeProps.internal_analyticTag}
-+                    shouldNotifyLoadEvents={
-+                      nativeProps.shouldNotifyLoadEvents
-+                    }
-+                    onLoadStart={onLoadStart}
-+                    onProgress={onProgress}
-+                    onLoad={onLoad}
-+                    onError={onError}
-+                    onLoadEnd={onLoadEnd}
-                     ref={actualRef}
-                   />
-                 );
-diff --git a/node_modules/react-native/Libraries/Image/TextInlineImageNativeComponent.js b/node_modules/react-native/Libraries/Image/TextInlineImageNativeComponent.js
-index 3bcdb39..3cbbbe1 100644
---- a/node_modules/react-native/Libraries/Image/TextInlineImageNativeComponent.js
-+++ b/node_modules/react-native/Libraries/Image/TextInlineImageNativeComponent.js
-@@ -14,22 +14,41 @@ import type {HostComponent} from '../../src/private/types/HostComponent';
- import type {ViewProps} from '../Components/View/ViewPropTypes';
- import type {PartialViewConfig} from '../Renderer/shims/ReactNativeTypes';
- import type {ColorValue} from '../StyleSheet/StyleSheet';
-+import type {ImageProps} from './ImageProps';
- import type {ImageResizeMode} from './ImageResizeMode';
- 
- import * as NativeComponentRegistry from '../NativeComponent/NativeComponentRegistry';
- 
- type RCTTextInlineImageNativeProps = $ReadOnly<{
-+  ...ImageProps,
-   ...ViewProps,
-   resizeMode?: ?ImageResizeMode,
-   src?: ?$ReadOnlyArray<?$ReadOnly<{uri?: ?string, ...}>>,
-   tintColor?: ?ColorValue,
-   headers?: ?{[string]: string},
-+  shouldNotifyLoadEvents?: boolean,
- }>;
- 
- export const __INTERNAL_VIEW_CONFIG: PartialViewConfig = {
-   uiViewClassName: 'RCTTextInlineImage',
-   bubblingEventTypes: {},
--  directEventTypes: {},
-+  directEventTypes: {
-+    topLoadStart: {
-+      registrationName: 'onLoadStart',
-+    },
-+    topProgress: {
-+      registrationName: 'onProgress',
-+    },
-+    topError: {
-+      registrationName: 'onError',
-+    },
-+    topLoad: {
-+      registrationName: 'onLoad',
-+    },
-+    topLoadEnd: {
-+      registrationName: 'onLoadEnd',
-+    },
-+  },
-   validAttributes: {
-     resizeMode: true,
-     src: true,
-@@ -37,6 +56,8 @@ export const __INTERNAL_VIEW_CONFIG: PartialViewConfig = {
-       process: require('../StyleSheet/processColor').default,
-     },
-     headers: true,
-+    internal_analyticTag: true,
-+    shouldNotifyLoadEvents: true,
-   },
- };
- 
-diff --git a/node_modules/react-native/ReactAndroid/build.gradle.kts b/node_modules/react-native/ReactAndroid/build.gradle.kts
---- a/node_modules/react-native/ReactAndroid/build.gradle.kts
-+++ b/node_modules/react-native/ReactAndroid/build.gradle.kts
-@@ -648,7 +648,7 @@ dependencies {
- 
-   // It's up to the consumer to decide if hermes or other engines should be included or not.
-   // Therefore hermes-engine is a compileOnly dependencies.
--  compileOnly(project(":packages:react-native:ReactAndroid:hermes-engine"))
-+  compileOnly("com.facebook.react:hermes-android:${project.version}")
- 
-   testImplementation(libs.junit)
-   testImplementation(libs.assertj)
++  if (onProgress != null) {
++    nativeProps.shouldNotifyLoadEvents = true;
++    nativeProps.onProgress = onProgress;
++  }
++
+   if (onLoad != null) {
+     nativeProps.shouldNotifyLoadEvents = true;
+     nativeProps.onLoad = onLoad;
 diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ImageLoadEvent.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ImageLoadEvent.kt
+index bf4e438..8f705d6 100644
 --- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ImageLoadEvent.kt
 +++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ImageLoadEvent.kt
-@@ -26,5 +26,6 @@ private constructor(
-     private val total: Int = 0
+@@ -25,6 +25,7 @@ private constructor(
+     private val loaded: Int = 0,
+     private val total: Int = 0,
  ) : Event<ImageLoadEvent>(surfaceId, viewId) {
 +  private var requestGeneration: String? = null
    @IntDef(ON_ERROR, ON_LOAD, ON_LOAD_END, ON_LOAD_START, ON_PROGRESS)
    @Retention(AnnotationRetention.SOURCE)
    internal annotation class ImageEventType
-@@ -34,10 +35,13 @@ private constructor(
-   // Intentionally casting eventType because it is guaranteed to be a short
+@@ -35,8 +36,11 @@ private constructor(
    // enough to fit into short.
    override fun getCoalescingKey(): Short = eventType.toShort()
  
@@ -129,12 +46,7 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
          when (eventType) {
            ON_PROGRESS -> {
              putInt("loaded", loaded)
-             putInt("total", total)
-@@ -51,8 +55,12 @@ private constructor(
-   private fun createEventDataSource(): WritableMap =
-       Arguments.createMap().apply {
-         putString("uri", sourceUri)
-         putDouble("width", width.toDouble())
+@@ -55,6 +59,10 @@ private constructor(
          putDouble("height", height.toDouble())
        }
  
@@ -143,10 +55,13 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
 +  }
 +
    public companion object {
+     public const val ON_ERROR: Int = 1
+     public const val ON_LOAD: Int = 2
 diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt
+index ec04d15..325142d 100644
 --- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt
 +++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageManager.kt
-@@ -117,6 +117,7 @@ public constructor(
+@@ -122,6 +122,7 @@ public constructor(
    @Suppress("FunctionName")
    @ReactProp(name = "internal_analyticTag")
    public fun setInternal_AnalyticsTag(view: ReactImageView, analyticTag: String?) {
@@ -155,9 +70,10 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
        view.updateCallerContext(
            callerContextFactory.getOrCreateCallerContext(
 diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageView.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageView.kt
+index 1e91267..c70a9a2 100644
 --- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageView.kt
 +++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/image/ReactImageView.kt
-@@ -76,6 +76,9 @@ import com.facebook.react.views.imagehelper.MultiSourceHelper.getBestSourceForS
+@@ -76,6 +76,9 @@ import com.facebook.react.views.imagehelper.MultiSourceHelper.getBestSourceForSi
  import com.facebook.react.views.imagehelper.ResourceDrawableIdHelper
  import kotlin.math.abs
  
@@ -167,7 +83,10 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
  /**
   * Wrapper class around Fresco's GenericDraweeView, enabling persisting props across multiple view
   * update and consistent processing of both static and network images.
-@@ -102,8 +105,10 @@ public class ReactImageView(
+@@ -99,11 +102,13 @@ public class ReactImageView(
+   private var isDirty = false
+   private var tilePostprocessor: TilePostprocessor? = null
+   private var iterativeBoxBlurPostProcessor: IterativeBoxBlurPostProcessor? = null
 -  private var downloadListener: ReactImageDownloadListener<ImageInfo>? = null
 +  private var downloadListener: RequestBoundImageDownloadListener? = null
    private var controllerForTesting: ControllerListener<ImageInfo>? = null
@@ -179,11 +98,7 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
    private var resizeMultiplier = 1.0f
    private var resizeMethod = ImageResizeMethod.AUTO
  
-@@ -116,74 +121,25 @@ public class ReactImageView(
-   public fun updateCallerContext(callerContext: Any?) {
-     if (this.callerContext != callerContext) {
-       this.callerContext = callerContext
-       isDirty = true
+@@ -120,78 +125,21 @@ public class ReactImageView(
      }
    }
  
@@ -205,9 +120,7 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
      if (!shouldNotify) {
        downloadListener = null
 -    } else {
--      val eventDispatcher =
--          UIManagerHelper.getEventDispatcherForReactTag((context as ReactContext), id)
--
+-      val eventDispatcher = UIManagerHelper.getEventDispatcher((context as ReactContext))
 -      downloadListener =
 -          object : ReactImageDownloadListener<ImageInfo>() {
 -            override fun onProgressChange(loaded: Int, total: Int) {
@@ -222,7 +135,9 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
 -                      id,
 -                      imageSource?.source,
 -                      loaded,
--                      total))
+-                      total,
+-                  )
+-              )
 -            }
 -
 -            override fun onSubmit(id: String, callerContext: Any?) {
@@ -230,13 +145,14 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
 -                return
 -              }
 -              eventDispatcher.dispatchEvent(
--                  createLoadStartEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId()))
+-                  createLoadStartEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId())
+-              )
 -            }
 -
 -            override fun onFinalImageSet(
 -                id: String,
 -                imageInfo: ImageInfo?,
--                animatable: Animatable?
+-                animatable: Animatable?,
 -            ) {
 -              if (imageInfo != null && imageSource != null && eventDispatcher != null) {
 -                eventDispatcher.dispatchEvent(
@@ -245,9 +161,12 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
 -                        getId(),
 -                        imageSource?.source,
 -                        imageInfo.width,
--                        imageInfo.height))
+-                        imageInfo.height,
+-                    )
+-                )
 -                eventDispatcher.dispatchEvent(
--                    createLoadEndEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId()))
+-                    createLoadEndEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId())
+-                )
 -              }
 -            }
 -
@@ -257,39 +176,37 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
 -              }
 -              eventDispatcher.dispatchEvent(
 -                  createErrorEvent(
--                      UIManagerHelper.getSurfaceId(this@ReactImageView), getId(), throwable))
+-                      UIManagerHelper.getSurfaceId(this@ReactImageView),
+-                      getId(),
+-                      throwable,
+-                  )
+-              )
 -            }
 -          }
      }
      isDirty = true
    }
-@@ -363,13 +319,16 @@ public class ReactImageView(
-   public override fun onDraw(canvas: Canvas) {
-     BackgroundStyleApplicator.clipToPaddingBox(this, canvas)
-     try {
-       super.onDraw(canvas)
-     } catch (e: RuntimeException) {
-       // Only provide updates if downloadListener is set (shouldNotify is true)
--      if (downloadListener != null) {
-+      val requestDownloadListener = downloadListener
-+      if (requestDownloadListener != null) {
-         val eventDispatcher =
-             UIManagerHelper.getEventDispatcherForReactTag(context as ReactContext, id)
--        eventDispatcher?.dispatchEvent(createErrorEvent(UIManagerHelper.getSurfaceId(this), id, e))
-+        eventDispatcher?.dispatchEvent(
-+            createErrorEvent(UIManagerHelper.getSurfaceId(this), id, e)
-+                .withRequestGeneration(requestDownloadListener.requestGeneration))
+@@ -375,10 +323,12 @@ public class ReactImageView(
+         super.onDraw(canvas)
+       } catch (e: RuntimeException) {
+         // Only provide updates if downloadListener is set (shouldNotify is true)
+-        if (downloadListener != null) {
++        val requestDownloadListener = downloadListener
++        if (requestDownloadListener != null) {
+           val eventDispatcher = UIManagerHelper.getEventDispatcher(context as ReactContext)
+           eventDispatcher?.dispatchEvent(
+               createErrorEvent(UIManagerHelper.getSurfaceId(this), id, e)
++                  .withRequestGeneration(requestDownloadListener.requestGeneration)
+           )
+         }
        }
-     }
-   }
-@@ -437,6 +396,65 @@ public class ReactImageView(
+@@ -450,6 +400,72 @@ public class ReactImageView(
      val uri = imageSource.uri
      val cacheControl = imageSource.cacheControl
      val requestLevel = computeRequestLevel(cacheControl)
 +    val requestSource = imageSource.source
 +    val requestGeneration = this.requestGeneration
-+    val eventDispatcher =
-+        UIManagerHelper.getEventDispatcherForReactTag((context as ReactContext), id)
++    val eventDispatcher = UIManagerHelper.getEventDispatcher(context as ReactContext)
 +    val requestDownloadListener =
 +        if (!shouldNotifyLoadEvents) {
 +          null
@@ -304,21 +221,24 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
 +                          id,
 +                          requestSource,
 +                          loaded,
-+                          total)
-+                      .withRequestGeneration(requestGeneration))
++                          total,
++                      )
++                      .withRequestGeneration(requestGeneration)
++              )
 +            }
 +
 +            override fun onSubmit(id: String, callerContext: Any?) {
 +              if (eventDispatcher == null) return
 +              eventDispatcher.dispatchEvent(
 +                  createLoadStartEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId())
-+                      .withRequestGeneration(requestGeneration))
++                      .withRequestGeneration(requestGeneration)
++              )
 +            }
 +
 +            override fun onFinalImageSet(
 +                id: String,
 +                imageInfo: ImageInfo?,
-+                animatable: Animatable?
++                animatable: Animatable?,
 +            ) {
 +              if (imageInfo != null && eventDispatcher != null) {
 +                eventDispatcher.dispatchEvent(
@@ -327,11 +247,14 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
 +                            getId(),
 +                            requestSource,
 +                            imageInfo.width,
-+                            imageInfo.height)
-+                        .withRequestGeneration(requestGeneration))
++                            imageInfo.height,
++                        )
++                        .withRequestGeneration(requestGeneration)
++                )
 +                eventDispatcher.dispatchEvent(
 +                    createLoadEndEvent(UIManagerHelper.getSurfaceId(this@ReactImageView), getId())
-+                        .withRequestGeneration(requestGeneration))
++                        .withRequestGeneration(requestGeneration)
++                )
 +              }
 +            }
 +
@@ -339,8 +262,10 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
 +              if (eventDispatcher == null) return
 +              eventDispatcher.dispatchEvent(
 +                  createErrorEvent(
-+                          UIManagerHelper.getSurfaceId(this@ReactImageView), getId(), throwable)
-+                      .withRequestGeneration(requestGeneration))
++                          UIManagerHelper.getSurfaceId(this@ReactImageView), getId(), throwable
++                      )
++                      .withRequestGeneration(requestGeneration)
++              )
 +            }
 +          }
 +        }
@@ -348,7 +273,10 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
  
      val postprocessorList = mutableListOf<Postprocessor>()
      iterativeBoxBlurPostProcessor?.let { postprocessorList.add(it) }
-@@ -497,17 +515,17 @@ public class ReactImageView(
+@@ -511,20 +527,20 @@ public class ReactImageView(
+       builder.setLowResImageRequest(cachedImageRequestBuilder.build())
+     }
+ 
 -    if (downloadListener != null && controllerForTesting != null) {
 +    if (requestDownloadListener != null && controllerForTesting != null) {
        val combinedListener: ForwardingControllerListener<ImageInfo> =
@@ -372,7 +300,52 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
      }
  
      controller = builder.build()
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
+index eacec69..8b0b891 100644
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
+@@ -251,13 +251,15 @@ internal object TextLayoutManager {
+       val reactTag =
+           if (fragment.contains(FR_KEY_REACT_TAG)) fragment.getInt(FR_KEY_REACT_TAG) else View.NO_ID
+       if (fragment.contains(FR_KEY_IS_ATTACHMENT) && fragment.getBoolean(FR_KEY_IS_ATTACHMENT)) {
+-        val width = PixelUtil.toPixelFromSP(fragment.getDouble(FR_KEY_WIDTH))
+-        val height = PixelUtil.toPixelFromSP(fragment.getDouble(FR_KEY_HEIGHT))
+         ops.add(
+             SetSpanOperation(
+                 sb.length - 1,
+                 sb.length,
+-                TextInlineViewPlaceholderSpan(reactTag, width.toInt(), height.toInt()),
++                TextInlineViewPlaceholderSpan(
++                    reactTag,
++                    inlineViewSizeToPixels(fragment.getDouble(FR_KEY_WIDTH)),
++                    inlineViewSizeToPixels(fragment.getDouble(FR_KEY_HEIGHT)),
++                ),
+             )
+         )
+       } else if (end >= start) {
+@@ -418,8 +420,8 @@ internal object TextLayoutManager {
+         spannable.setSpan(
+             TextInlineViewPlaceholderSpan(
+                 fragment.reactTag,
+-                PixelUtil.toPixelFromSP(fragment.width).toInt(),
+-                PixelUtil.toPixelFromSP(fragment.height).toInt(),
++                inlineViewSizeToPixels(fragment.width),
++                inlineViewSizeToPixels(fragment.height),
+             ),
+             start,
+             end,
+@@ -540,6 +542,9 @@ internal object TextLayoutManager {
+     return spannable
+   }
+ 
++  internal fun inlineViewSizeToPixels(size: Double): Int =
++      ceil(PixelUtil.toPixelFromDIP(size).toDouble()).toInt()
++
+   fun getOrCreateSpannableForText(
+       assets: AssetManager,
+       attributedString: MapBuffer,
 diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt
+index 5d30f85..37e3888 100644
 --- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt
 +++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt
 @@ -8,6 +8,7 @@
@@ -383,7 +356,8 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
  import android.text.style.LineHeightSpan
  import kotlin.math.ceil
  import kotlin.math.floor
-@@ -38,6 +39,18 @@ internal class CustomLineHeightSpan(height: Float) : LineHeightSpan, ReactSpan {
+@@ -38,7 +39,19 @@ internal class CustomLineHeightSpan(height: Float) : LineHeightSpan, ReactSpan {
+     // if line-fit-edge is not leading and this is not the root inline box, if the half-leading is
      // positive, treat it as zero. The layout bounds exactly encloses this effective A′ and D′.
  
 -    val leading = lineHeight - ((-fm.ascent) + fm.descent)
@@ -403,53 +377,9 @@ diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/r
      fm.ascent -= ceil(leading / 2.0f).toInt()
      fm.descent += floor(leading / 2.0f).toInt()
  
-diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
---- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
-+++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
-@@ -24,4 +24,5 @@ import android.text.TextUtils
- import android.util.LayoutDirection
- import android.view.Gravity
- import android.view.View
-+import androidx.annotation.VisibleForTesting
- import com.facebook.common.logging.FLog
-@@ -236,10 +237,11 @@ internal object TextLayoutManager {
-       if (fragment.contains(FR_KEY_IS_ATTACHMENT) && fragment.getBoolean(FR_KEY_IS_ATTACHMENT)) {
--        val width = PixelUtil.toPixelFromSP(fragment.getDouble(FR_KEY_WIDTH))
--        val height = PixelUtil.toPixelFromSP(fragment.getDouble(FR_KEY_HEIGHT))
-         ops.add(
-             SetSpanOperation(
-                 sb.length - 1,
-                 sb.length,
--                TextInlineViewPlaceholderSpan(reactTag, width.toInt(), height.toInt())))
-+                TextInlineViewPlaceholderSpan(
-+                    reactTag,
-+                    inlineViewSizeToPixels(fragment.getDouble(FR_KEY_WIDTH)),
-+                    inlineViewSizeToPixels(fragment.getDouble(FR_KEY_HEIGHT)))))
-       } else if (end >= start) {
-         val roleIsLink =
-@@ -371,9 +373,9 @@ internal object TextLayoutManager {
-       if (fragment.isAttachment) {
-         spannable.setSpan(
-             TextInlineViewPlaceholderSpan(
-                 fragment.reactTag,
--                PixelUtil.toPixelFromSP(fragment.width).toInt(),
--                PixelUtil.toPixelFromSP(fragment.height).toInt()),
-+                inlineViewSizeToPixels(fragment.width),
-+                inlineViewSizeToPixels(fragment.height)),
-             start,
-             end,
-             spanFlags)
-@@ -462,4 +464,8 @@ internal object TextLayoutManager {
-     return spannable
-   }
- 
-+  @VisibleForTesting
-+  internal fun inlineViewSizeToPixels(size: Double): Int =
-+      ceil(PixelUtil.toPixelFromDIP(size).toDouble()).toInt()
-+
-   fun getOrCreateSpannableForText(
 diff --git a/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerInlineViewSizeTest.kt b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerInlineViewSizeTest.kt
 new file mode 100644
+index 0000000..4455ee6
 --- /dev/null
 +++ b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerInlineViewSizeTest.kt
 @@ -0,0 +1,56 @@
@@ -509,3 +439,34 @@ new file mode 100644
 +    assertThat(TextLayoutManager.inlineViewSizeToPixels(132.1)).isEqualTo(133)
 +  }
 +}
+diff --git a/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts b/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts
+--- a/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts
++++ b/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts
+@@ -163,5 +163,5 @@ fun configureBuildForHermesCommandLineArgs(
+           ".",
+           "-B",
+           hermesBuildDir.toString(),
+-          "-DJSI_DIR=" + jsiDir.absolutePath,
++          "-DJSI_DIR=" + jsiDir.invariantSeparatorsPath,
+           "-DCMAKE_BUILD_TYPE=Release",
+@@ -349,5 +349,5 @@ android {
+             "-DANDROID_PIE=True",
+             "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+             "-DIMPORT_HOST_COMPILERS=${File(hermesBuildDir, "ImportHostCompilers.cmake").toString()}",
+-            "-DJSI_DIR=${jsiDir}",
++            "-DJSI_DIR=${jsiDir.invariantSeparatorsPath}",
+             "-DHERMES_BUILD_SHARED_JSI=True",
+diff --git a/node_modules/react-native/settings.gradle.kts b/node_modules/react-native/settings.gradle.kts
+--- a/node_modules/react-native/settings.gradle.kts
++++ b/node_modules/react-native/settings.gradle.kts
+@@ -35,8 +35,8 @@ project(":packages:react-native:ReactAndroid:hermes-engine").projectDir =
+ // for :packages and :packages:react-native as well as otherwise the build from
+ // source will fail with a missing folder exception.
+ 
+-project(":packages").projectDir = file("/tmp")
++project(":packages").projectDir = file(System.getProperty("java.io.tmpdir"))
+ 
+-project(":packages:react-native").projectDir = file("/tmp")
++project(":packages:react-native").projectDir = file(System.getProperty("java.io.tmpdir"))
+ 
+ // Gradle properties defined in `gradle.properties` are not inherited by

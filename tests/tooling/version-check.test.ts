@@ -31,6 +31,7 @@ function createRepository(version: string, versionCode: number) {
   );
   writeVersions(repository, version, versionCode);
   execFileSync('git', ['init', '--quiet'], { cwd: repository });
+  execFileSync('git', ['config', 'core.autocrlf', 'false'], { cwd: repository });
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repository });
   execFileSync('git', ['config', 'user.name', 'Version Check Test'], { cwd: repository });
   execFileSync('git', ['add', '.'], { cwd: repository });

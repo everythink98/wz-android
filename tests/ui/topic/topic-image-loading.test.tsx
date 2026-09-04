@@ -240,37 +240,18 @@ jest.mock('expo-image', () => {
   };
 });
 
-jest.mock('@shopify/flash-list', () => {
-  const ReactModule = require('react') as typeof React;
-  return {
-    useLayoutState: <T,>(initialState: T | (() => T)) => {
-      const [state, setState] = ReactModule.useState(initialState);
-      const setLayoutState = ReactModule.useCallback(
-        (nextState: T | ((current: T) => T), skipParentLayout?: boolean) => {
-          setState(nextState);
-          if (!skipParentLayout) mockFlashListLayout();
-        },
-        []
-      );
-      return [state, setLayoutState] as const;
-    },
-    useRecyclingState: <T,>(initialState: T | (() => T), dependencies: React.DependencyList) => {
-      const value = ReactModule.useRef<T | undefined>(undefined);
-      ReactModule.useMemo(() => {
-        value.current = typeof initialState === 'function' ? (initialState as () => T)() : initialState;
-      }, dependencies);
-      const [, forceRender] = ReactModule.useState(0);
-      const setState = ReactModule.useCallback((nextState: T | ((mockCurrent: T) => T), skipParentLayout?: boolean) => {
-        const next = typeof nextState === 'function' ? (nextState as (mockCurrent: T) => T)(value.current!) : nextState;
-        if (next === value.current) return;
-        value.current = next;
-        forceRender((mockRevision) => mockRevision + 1);
-        if (!skipParentLayout) mockFlashListLayout();
-      }, []);
-      return [value.current!, setState] as const;
-    }
-  };
-});
+jest.mock('@shopify/flash-list', () => ({
+  ...jest.requireActual<typeof import('@shopify/flash-list/dist/recyclerview/hooks/useLayoutState')>(
+    '@shopify/flash-list/dist/recyclerview/hooks/useLayoutState'
+  ),
+  ...jest.requireActual<typeof import('@shopify/flash-list/dist/recyclerview/hooks/useRecyclingState')>(
+    '@shopify/flash-list/dist/recyclerview/hooks/useRecyclingState'
+  )
+}));
+
+jest.mock('@shopify/flash-list/dist/recyclerview/RecyclerViewContextProvider', () => ({
+  useRecyclerViewContext: () => ({ layout: mockFlashListLayout })
+}));
 
 jest.mock('expo', () => ({
   useEvent: jest.fn((_player, eventName, initialValue) =>
@@ -1938,31 +1919,28 @@ describe('topic block image loading', () => {
     expect(screen.getByTestId('topic-image-original')).toBeTruthy();
   });
 
-  it('keeps the original visual recycling key across preview and display revisions', async () => {
+  it('keeps one original request source across a successful display revision', async () => {
     const displayUrl = 'https://img.example.com/stable-key-display.png';
     const originalUrl = 'https://img.example.com/stable-key-original.png';
     const screen = await render(
-      <TopicImageHarness
-        attributes={{ alt: '稳定原图', 'data-original': originalUrl, src: displayUrl }}
-        mediaSessionIdentity="yaohuo:2"
-      />
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['stable-original-row']}>
+        <TopicBodyMediaRowBoundary rowKey="stable-original-row">
+          <TopicImageHarness
+            attributes={{ alt: '稳定原图', 'data-original': originalUrl, src: displayUrl }}
+            mediaSessionIdentity="yaohuo:2"
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
     );
     await loadAndDisplayImage(latestImageProps(displayUrl));
     const firstOriginal = latestImageProps(originalUrl);
     const recyclingKey = firstOriginal.recyclingKey;
+    const requestSource = firstOriginal.source;
 
-    await act(() =>
-      markOriginalImageDisplayed(
-        imageSourceFromUrl(originalUrl, {
-          mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:2' }
-        })
-      )
-    );
-    const afterPreview = latestImageProps(originalUrl);
-    expect(afterPreview.recyclingKey).toBe(recyclingKey);
-
-    await act(() => afterPreview.onDisplay?.());
-    expect(latestImageProps(originalUrl).recyclingKey).toBe(recyclingKey);
+    await act(() => firstOriginal.onDisplay?.());
+    await waitFor(() => expect(screen.getByTestId('topic-image-original')).toBeTruthy());
+    expect(latestImageProps(originalUrl)).toEqual(expect.objectContaining({ recyclingKey, source: requestSource }));
+    expect(latestImageProps(originalUrl).source).toBe(requestSource);
     expect(screen.getByTestId('expo-image')).toBeTruthy();
   });
 
@@ -1982,7 +1960,7 @@ describe('topic block image loading', () => {
     expect(screen.queryByTestId('topic-image-original')).toBeNull();
   });
 
-  it('honors the nearby gate and isolates fullscreen readiness by media epoch', async () => {
+  it('keeps fullscreen readiness scoped by media epoch without bypassing a closed viewport gate', async () => {
     const displayUrl = 'https://img.example.com/gated-display.png';
     const originalUrl = 'https://img.example.com/gated-original.png';
     const screen = await render(
@@ -2011,6 +1989,15 @@ describe('topic block image loading', () => {
           mediaContext: { contentSource: 'yaohuo', sessionIdentity: 'yaohuo:2' }
         })
       )
+    );
+    expect(screen.queryByTestId('topic-image-original')).toBeNull();
+
+    await screen.rerender(
+      <TopicImageHarness
+        attributes={{ 'data-original': originalUrl, src: displayUrl }}
+        mediaSessionIdentity="yaohuo:2"
+        originalImageUpgradeEnabled
+      />
     );
     await waitFor(() => expect(screen.getByTestId('topic-image-original')).toBeTruthy());
     expect(latestImageProps(originalUrl).source).toEqual(
@@ -3224,7 +3211,12 @@ describe('topic block image loading', () => {
     let revokeLease: () => void = () => undefined;
     function LongImageLeaseHarness() {
       const [active, setActive] = React.useState(true);
-      revokeLease = () => setActive(false);
+      React.useLayoutEffect(() => {
+        revokeLease = () => setActive(false);
+        return () => {
+          revokeLease = () => undefined;
+        };
+      }, []);
       return (
         <TopicBodyMediaCoordinatorProvider active={active} paused={false} viewportRowKeys={['long-image-row']}>
           <TopicBodyMediaRowBoundary rowKey="long-image-row">
@@ -3276,7 +3268,12 @@ describe('topic block image loading', () => {
     let setLeaseActive: (active: boolean) => void = () => undefined;
     function RecycledImageLeaseHarness() {
       const [active, setActive] = React.useState(true);
-      setLeaseActive = setActive;
+      React.useLayoutEffect(() => {
+        setLeaseActive = setActive;
+        return () => {
+          setLeaseActive = () => undefined;
+        };
+      }, []);
       return (
         <TopicBodyMediaCoordinatorProvider active={active} paused={false} viewportRowKeys={['recycled-image-row']}>
           <TopicBodyMediaRowBoundary rowKey="recycled-image-row">
@@ -3322,6 +3319,24 @@ describe('topic block image loading', () => {
       height: 1_600,
       width: 320
     });
+  });
+
+  it('updates both mounted rows when the same image establishes its natural height', async () => {
+    const url = 'https://img.example.com/mounted-duplicate-natural-height.png';
+    const attributes = { alt: '长图', src: url };
+    const first = await render(<TopicImageHarness attributes={attributes} />);
+    const firstLoad = latestImageProps(url);
+    const second = await render(<TopicImageHarness attributes={attributes} />);
+    const secondLoad = latestImageProps(url);
+
+    await loadAndDisplayImage(firstLoad, { height: 5_000, width: 1_000 });
+    expect(StyleSheet.flatten(second.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 240 });
+    mockFlashListLayout.mockClear();
+
+    await loadAndDisplayImage(secondLoad, { height: 5_000, width: 1_000 });
+    expect(StyleSheet.flatten(second.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 1_600 });
+    expect(mockFlashListLayout).toHaveBeenCalledTimes(1);
+    expect(StyleSheet.flatten(first.getByTestId('topic-image-frame').props.style)).toMatchObject({ height: 1_600 });
   });
 
   it('isolates natural geometry and one layout commit per image identity', async () => {

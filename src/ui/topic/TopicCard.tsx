@@ -6,7 +6,6 @@ import type { Topic } from '@/domain/forum/models';
 import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
 import { highlightTextParts } from '@/ui/text/highlight';
 import {
-  androidRipple,
   sourceBadgeColorStyle,
   topicTagColorStyle,
   topicTagTextColorStyle,
@@ -98,13 +97,7 @@ export function TopicCard({
   const accessRequirementText = forumAccessRequirementText(topic.accessRequirement);
   return (
     <View style={styles.topicRowShell}>
-      <Pressable
-        testID={testID}
-        accessibilityRole="button"
-        android_ripple={androidRipple(theme.primarySoft)}
-        style={styles.topicCardPressable}
-        onPress={openTopicPress}
-      >
+      <Pressable testID={testID} accessibilityRole="button" style={styles.topicCardPressable} onPress={openTopicPress}>
         <View style={styles.topicCardHead}>
           <View style={styles.topicBadgeRow}>
             <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(topic.source, theme)]} numberOfLines={1}>

@@ -14,19 +14,20 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import android.media.ExifInterface
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.View
 import com.facebook.react.bridge.Arguments
-import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.ReactPackage
 import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
+import com.facebook.react.uimanager.UIManagerHelper
 import com.facebook.react.uimanager.ViewManager
 import com.facebook.react.uimanager.annotations.ReactProp
-import com.facebook.react.uimanager.events.RCTEventEmitter
+import com.facebook.react.uimanager.events.Event
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.ceil
@@ -49,6 +50,23 @@ internal data class PixelRect(val left: Int, val top: Int, val right: Int, val b
 }
 
 internal data class PixelSize(val width: Int, val height: Int)
+
+private const val EVENT_SOURCE_SIZE = "topSourceSize"
+
+private class SourceSizeEvent(
+  surfaceId: Int,
+  viewTag: Int,
+  private val size: PixelSize,
+) : Event<SourceSizeEvent>(surfaceId, viewTag) {
+  override fun getEventName(): String = EVENT_SOURCE_SIZE
+
+  override fun canCoalesce(): Boolean = false
+
+  override fun getEventData() = Arguments.createMap().apply {
+    putInt("width", size.width)
+    putInt("height", size.height)
+  }
+}
 
 internal object PreviewRegionMath {
   fun normalize(viewport: NormalizedViewport): NormalizedViewport {
@@ -372,17 +390,13 @@ class PreviewRegionImageView(private val reactContext: ThemedReactContext) : Vie
     invalidate()
   }
 
-  @Suppress("DEPRECATION")
   private fun emitSourceSize(size: PixelSize) {
-    val event = Arguments.createMap().apply {
-      putInt("width", size.width)
-      putInt("height", size.height)
-    }
-    reactContext.getJSModule(RCTEventEmitter::class.java).receiveEvent(id, EVENT_SOURCE_SIZE, event)
+    UIManagerHelper.getEventDispatcher(reactContext)?.dispatchEvent(
+      SourceSizeEvent(UIManagerHelper.getSurfaceId(this), id, size)
+    )
   }
 
   companion object {
-    private const val EVENT_SOURCE_SIZE = "topSourceSize"
     private val mainHandler = Handler(Looper.getMainLooper())
     private val decoderExecutor =
       Executors.newSingleThreadExecutor { runnable ->
@@ -393,7 +407,7 @@ class PreviewRegionImageView(private val reactContext: ThemedReactContext) : Vie
       var decoder: BitmapRegionDecoder? = null
       return try {
         val orientation = readOrientation(request.filePath)
-        decoder = BitmapRegionDecoder.newInstance(request.filePath, false) ?: return null
+        decoder = createDecoder(request.filePath) ?: return null
         val sourceWidth = decoder.width
         val sourceHeight = decoder.height
         if (sourceWidth <= 0 || sourceHeight <= 0) return null
@@ -436,6 +450,17 @@ class PreviewRegionImageView(private val reactContext: ThemedReactContext) : Vie
         decoder?.recycle()
       }
     }
+
+    private fun createDecoder(filePath: String): BitmapRegionDecoder? =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        BitmapRegionDecoder.newInstance(filePath)
+      } else {
+        createLegacyDecoder(filePath)
+      }
+
+    @Suppress("DEPRECATION")
+    private fun createLegacyDecoder(filePath: String): BitmapRegionDecoder? =
+      BitmapRegionDecoder.newInstance(filePath, false)
 
     private fun readOrientation(filePath: String): Int =
       try {
@@ -490,9 +515,6 @@ class PreviewRegionImageViewManager : SimpleViewManager<PreviewRegionImageView>(
 }
 
 class PreviewRegionImagePackage : ReactPackage {
-  override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
-    emptyList()
-
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
     listOf(PreviewRegionImageViewManager())
 }

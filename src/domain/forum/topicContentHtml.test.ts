@@ -1,12 +1,37 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   FORUM_REPLY_REFERENCE_TAG,
   markNodeSeekReplyReferenceNodes,
+  markV2exReplyReferenceNodes,
+  normalizeForumUserMentionNodes,
   normalizeRenderableHtml
 } from './topicContentHtml';
 import { parseHtml } from './html';
 
 describe('Android topic content HTML', () => {
+  it('rebuilds a large explicit-reference parent once and preserves text order', () => {
+    const text = Array.from({ length: 2_000 }, (_, index) => `@alice # ${index + 1} `).join('');
+    const root = parseHtml(`<p>${text}</p>`);
+    const paragraph = root.querySelector('p')!;
+    const replaceChildren = vi.spyOn(paragraph, 'set_content');
+    markV2exReplyReferenceNodes(root, '945124');
+    expect(replaceChildren).toHaveBeenCalledTimes(1);
+    expect(paragraph.textContent).toBe(text);
+    expect(paragraph.querySelectorAll('[data-forum-reply-floor]')).toHaveLength(2_000);
+    replaceChildren.mockRestore();
+  });
+
+  it('preserves adjacent and nested mention order in a large sibling list', () => {
+    const root = parseHtml(
+      '<p>' +
+        '@<a href="/u/alice">alice</a> '.repeat(2_000) +
+        '<span>@<a href="/u/bob">bob</a></span><a href="/u/carol"><b>@carol</b></a></p>'
+    );
+    normalizeForumUserMentionNodes(root);
+    expect(root.querySelectorAll('.forum-user-mention')).toHaveLength(2_001);
+    expect(root.querySelector('p')?.textContent).toBe('@alice '.repeat(2_000) + '@bob@carol');
+    expect(root.querySelector('b')?.textContent).toBe('@carol');
+  });
   it('normalizes text and existing HTML into renderable content', () => {
     expect(normalizeRenderableHtml('plain < unsafe & text')).toBe('<p>plain &lt; unsafe &amp; text</p>');
     expect(normalizeRenderableHtml('<h2>Title</h2><p>Body</p>')).toBe('<h2>Title</h2><p>Body</p>');

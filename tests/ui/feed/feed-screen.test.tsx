@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, within } from '../render';
 import React, { useState } from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import { Animated, Platform, StyleSheet } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { FeedScreen } from '@/features/feed/FeedScreen';
@@ -16,17 +16,24 @@ let mockTabViewProps: {
   initialLayout?: { width: number };
   lazy?: boolean;
   lazyPreloadDistance?: number;
+  animationEnabled?: boolean;
   navigationState: { index: number; routes: { key: string }[] };
   onIndexChange: (index: number) => void;
-  onSwipeEnd?: () => void;
+  renderTabBar?: (input: {
+    navigationState: { index: number; routes: { key: string }[] };
+    position: Animated.Value;
+    jumpTo: (key: string) => void;
+  }) => React.ReactNode;
   renderLazyPlaceholder?: (input: { route: { key: string } }) => React.ReactNode;
   renderScene: (input: { route: { key: string } }) => React.ReactNode;
 } | null = null;
+let mockPagerPosition: Animated.Value;
 let mockFlashListMountCount = 0;
 const mockFlashListRenderItemByTopicId = new Map<string, unknown>();
 const mockFlashListScrollToOffset = jest.fn<(options: { animated: boolean; offset: number }) => void>();
 
 beforeEach(() => {
+  mockPagerPosition = new Animated.Value(0);
   jest.spyOn(global, 'requestAnimationFrame').mockImplementation(() => 0);
   jest.spyOn(global, 'cancelAnimationFrame').mockImplementation(() => undefined);
 });
@@ -131,16 +138,26 @@ jest.mock('react-native-tab-view', () => {
       initialLayout?: { width: number };
       lazy?: boolean;
       lazyPreloadDistance?: number;
+      animationEnabled?: boolean;
       navigationState: { index: number; routes: { key: string }[] };
       onIndexChange: (index: number) => void;
-      onSwipeEnd?: () => void;
+      renderTabBar?: (input: {
+        navigationState: { index: number; routes: { key: string }[] };
+        position: Animated.Value;
+        jumpTo: (key: string) => void;
+      }) => React.ReactNode;
       renderLazyPlaceholder?: (input: { route: { key: string } }) => React.ReactNode;
       renderScene: (input: { route: { key: string } }) => React.ReactNode;
     }) => {
       mockTabViewProps = props;
+      const jumpTo = (key: string) => {
+        const index = props.navigationState.routes.findIndex((route) => route.key === key);
+        if (index >= 0) props.onIndexChange(index);
+      };
       return ReactModule.createElement(
         ReactModule.Fragment,
         null,
+        props.renderTabBar?.({ navigationState: props.navigationState, position: mockPagerPosition, jumpTo }),
         ...props.navigationState.routes.map((route) =>
           ReactModule.createElement(
             NativeView,
@@ -215,7 +232,6 @@ function renderFeed(
       feedHasMore={false}
       feedItems={feedItems}
       feedPage={1}
-      feedFilters={defaultFeedFilters}
       feedSource="all"
       enabledFeedSources={defaultEnabledFeedSources}
       loadMoreFailureSignal={0}
@@ -236,10 +252,6 @@ function renderFeed(
   );
 }
 
-async function settlePager() {
-  await act(async () => mockTabViewProps?.onSwipeEnd?.());
-}
-
 describe('feed initial content readiness', () => {
   it('reports readiness only after a terminal FlashList has loaded', async () => {
     const onInitialContentReady = jest.fn();
@@ -254,7 +266,8 @@ describe('feed initial content readiness', () => {
 
 function FeedSourceHarness({ onSourceChange }: { onSourceChange?: (source: FeedSource) => void }) {
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
-  return renderFeed(false, [topic], {
+  return renderFeed(feedSource !== 'all', feedSource === 'all' ? [topic] : [], {
+    categories,
     feedSource,
     onFeedSourceChange: (source) => {
       onSourceChange?.(source);
@@ -296,7 +309,6 @@ function FeedFilterHarness() {
       feedHasMore={false}
       feedItems={[topic]}
       feedPage={1}
-      feedFilters={feedFilters}
       feedSource={feedSource}
       enabledFeedSources={defaultEnabledFeedSources}
       loadMoreFailureSignal={0}
@@ -358,7 +370,7 @@ describe('Feed loading', () => {
     );
 
     expect(mockTabViewProps?.navigationState.routes.map((route) => route.key)).toEqual(['all', 'nodeseek', 'v2ex']);
-    expect(view.getAllByTestId(/^feed-source-/).map((tab) => tab.props.testID)).toEqual([
+    expect(view.getAllByTestId(/^feed-source-(all|nodeseek|v2ex)$/).map((tab) => tab.props.testID)).toEqual([
       'feed-source-all',
       'feed-source-nodeseek',
       'feed-source-v2ex'
@@ -396,81 +408,50 @@ describe('Feed loading', () => {
     expect(onManageContentSources).toHaveBeenCalledTimes(1);
   });
 
-  it('updates both Feed rails when the native pager selects the target', async () => {
+  it('commits both navigation levels and Loading from one native target selection', async () => {
     const onFeedSourceChange = jest.fn();
-    const view = await render(
-      renderFeed(false, [topic], {
-        categories,
-        onFeedSourceChange
-      })
-    );
+    const view = await render(<FeedSourceHarness onSourceChange={onFeedSourceChange} />);
+    const incomingScene = within(view.getByTestId('mock-feed-scene-v2ex'));
 
     expect(view.getByTestId('feed-source-all').props.accessibilityState).toMatchObject({ selected: true });
-    expect(view.getByText('未读')).toBeTruthy();
+    expect(view.getByLabelText('未读')).toBeTruthy();
+    expect(incomingScene.getByText('正在读取主题...')).toBeTruthy();
+    expect(incomingScene.queryByText('问与答')).toBeNull();
+
+    await act(async () => mockPagerPosition.setValue(0.9));
+
+    expect(view.getByTestId('feed-source-all').props.accessibilityState).toMatchObject({ selected: true });
+    expect(view.getByLabelText('未读')).toBeTruthy();
+    expect(onFeedSourceChange).not.toHaveBeenCalled();
 
     await act(async () => mockTabViewProps?.onIndexChange(1));
 
     expect(view.getByTestId('feed-source-v2ex').props.accessibilityState).toMatchObject({ selected: true });
-    expect(view.queryByText('未读')).toBeNull();
-    expect(view.getByText('问与答')).toBeTruthy();
-    expect(onFeedSourceChange).not.toHaveBeenCalled();
-  });
-
-  it('shows the target source saved sort before the active source commits', async () => {
-    const view = await render(
-      renderFeed(false, [topic], {
-        categories,
-        feedFilters: { ...defaultFeedFilters, v2ex: 'latest' }
-      })
-    );
-
-    await act(async () => mockTabViewProps?.onIndexChange(1));
-
-    expect(view.getByLabelText('列表筛选')).toBeTruthy();
-    expect(view.getByText('最新')).toBeTruthy();
-  });
-
-  it('keeps the target secondary rail read-only until the source commits', async () => {
-    const onCategoryChange = jest.fn();
-    const onFeedSourceChange = jest.fn();
-    const view = await render(
-      renderFeed(false, [topic], {
-        categories,
-        onCategoryChange,
-        onFeedSourceChange
-      })
-    );
-
-    await act(async () => mockTabViewProps?.onIndexChange(1));
-    expect(view.getByText('问与答').parent?.props.accessibilityState).toMatchObject({
-      selected: false,
-      disabled: true
-    });
-    expect(view.getByLabelText('列表筛选').props.accessibilityState).toMatchObject({ expanded: false, disabled: true });
-    await fireEvent.press(view.getByText('问与答'));
-
-    expect(onCategoryChange).not.toHaveBeenCalled();
-    await fireEvent.press(view.getByTestId('feed-source-linuxdo'));
-    expect(view.getByTestId('feed-source-linuxdo').props.accessibilityState).toMatchObject({ selected: true });
-    expect(onFeedSourceChange).not.toHaveBeenCalled();
-
-    await settlePager();
-
-    expect(onFeedSourceChange).toHaveBeenCalledWith('linuxdo');
-  });
-
-  it('activates a selected source only after the native pager becomes idle', async () => {
-    const onFeedSourceChange = jest.fn();
-    await render(renderFeed(false, [topic], { onFeedSourceChange }));
-
-    await act(async () => mockTabViewProps?.onIndexChange(1));
-
-    expect(onFeedSourceChange).not.toHaveBeenCalled();
-
-    await act(async () => mockTabViewProps?.onSwipeEnd?.());
-
+    expect(view.getByLabelText('问与答')).toBeTruthy();
+    expect(view.queryByLabelText('未读')).toBeNull();
+    expect(incomingScene.getByText('正在读取主题...')).toBeTruthy();
     expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
     expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
+    await act(async () => mockTabViewProps?.onIndexChange(1));
+
+    expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps selected source and secondary navigation on their original bottom borders', async () => {
+    const view = await render(renderFeed(false, [topic]));
+    const primaryStyle = StyleSheet.flatten(view.getByTestId('feed-source-all').props.style);
+    const selectedAll = view.getAllByLabelText('全部，已选择');
+    const secondary = selectedAll.find((item) => item.props.testID === undefined);
+
+    expect(primaryStyle).toMatchObject({ borderBottomColor: theme.primary, borderBottomWidth: 2, paddingBottom: 4 });
+    expect(primaryStyle.backgroundColor).toBeUndefined();
+    expect(StyleSheet.flatten(secondary?.props.style)).toMatchObject({
+      backgroundColor: 'transparent',
+      borderBottomColor: theme.primary,
+      borderBottomWidth: 2,
+      paddingBottom: 5
+    });
+    expect(view.queryByTestId(/active-indicator|secondary-layer/)).toBeNull();
   });
 
   it('lays out a cold adjacent scene before the swipe selects it', async () => {
@@ -481,6 +462,7 @@ describe('Feed loading', () => {
     expect(incomingScene().getByText('正在读取主题...')).toBeTruthy();
     expect(view.queryByText('正在切换来源...')).toBeNull();
     expect(mockTabViewProps).toMatchObject({
+      animationEnabled: false,
       initialLayout: { width: expect.any(Number) },
       lazy: true,
       lazyPreloadDistance: 1
@@ -488,7 +470,8 @@ describe('Feed loading', () => {
 
     await act(async () => mockTabViewProps?.onIndexChange(1));
 
-    expect(onFeedSourceChange).not.toHaveBeenCalled();
+    expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
+    expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
     expect(incomingScene().getByText('正在读取主题...')).toBeTruthy();
   });
 
@@ -515,10 +498,11 @@ describe('Feed loading', () => {
 
     await act(async () => mockTabViewProps?.onIndexChange(1));
 
+    expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
+    expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
     expect(mockFlashListMountCount).toBe(1);
     expect(incomingScene.getByText('正在读取主题...')).toBeTruthy();
 
-    await settlePager();
     await view.rerender(
       renderFeed(false, [freshV2exTopic], {
         feedSource: 'v2ex',
@@ -537,7 +521,6 @@ describe('Feed loading', () => {
 
     expect(mockFlashListMountCount).toBe(1);
     await act(async () => mockTabViewProps?.onIndexChange(1));
-    await settlePager();
     await view.rerender(
       renderFeed(true, [], {
         feedSource: 'v2ex',
@@ -630,10 +613,10 @@ describe('Feed loading', () => {
     const card = activeScene.getByTestId('feed-topic-first');
     expect(StyleSheet.flatten(card.props.style)).toMatchObject({ gap: 10, paddingHorizontal: 16, paddingBottom: 14 });
     expect(StyleSheet.flatten(card.props.style).opacity).toBeUndefined();
-    expect(card.props.nativeBackgroundAndroid).toBeDefined();
+    expect(card.props.nativeBackgroundAndroid).toBeUndefined();
   });
 
-  it('keeps a distant source-bar target lightweight until pager idle', async () => {
+  it('keeps a distant source-bar target lightweight until its data arrives', async () => {
     const onFeedSourceChange = jest.fn();
     const sourceTopic = (source: Topic['source'], id: string, title: string): Topic => ({
       ...topic,
@@ -655,14 +638,10 @@ describe('Feed loading', () => {
 
     await fireEvent.press(view.getByTestId('feed-source-all'));
 
-    expect(onFeedSourceChange).not.toHaveBeenCalled();
-    expect(within(view.getByTestId('mock-feed-scene-all')).getByText('正在读取主题...')).toBeTruthy();
-    expect(mockFlashListMountCount).toBe(mountsBeforeSelection);
-
-    await settlePager();
-
     expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
     expect(onFeedSourceChange).toHaveBeenCalledWith('all');
+    expect(within(view.getByTestId('mock-feed-scene-all')).getByText('正在读取主题...')).toBeTruthy();
+    expect(mockFlashListMountCount).toBe(mountsBeforeSelection);
     await view.rerender(
       renderFeed(false, [sourceTopic('v2ex', 'all-fresh', '全部新请求主题')], {
         feedSource: 'all',
@@ -681,32 +660,6 @@ describe('Feed loading', () => {
     const placeholderView = await render(<>{placeholder}</>);
 
     expect(placeholderView.getByText('正在读取主题...')).toBeTruthy();
-  });
-
-  it('ignores a canceled swipe and commits only the final source', async () => {
-    const onFeedSourceChange = jest.fn();
-    const view = await render(<FeedSourceHarness onSourceChange={onFeedSourceChange} />);
-
-    await settlePager();
-
-    expect(onFeedSourceChange).not.toHaveBeenCalled();
-
-    await act(async () => mockTabViewProps?.onIndexChange(1));
-    await act(async () => mockTabViewProps?.onIndexChange(0));
-    await settlePager();
-
-    expect(onFeedSourceChange).not.toHaveBeenCalled();
-
-    await act(async () => mockTabViewProps?.onIndexChange(3));
-    await act(async () => mockTabViewProps?.onIndexChange(1));
-
-    expect(onFeedSourceChange).not.toHaveBeenCalled();
-
-    await settlePager();
-
-    expect(onFeedSourceChange).toHaveBeenCalledTimes(1);
-    expect(onFeedSourceChange).toHaveBeenCalledWith('v2ex');
-    expect(view.getAllByTestId(/^feed-outcome-/, { includeHiddenElements: true })).toHaveLength(1);
   });
 
   it.each(['data', 'empty', 'partial', 'error', 'auth'] as const)(
@@ -840,7 +793,6 @@ describe('Feed loading', () => {
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(2);
 
     await fireEvent.press(view.getByTestId('feed-source-v2ex'));
-    await settlePager();
     while (frameCallbacks.length > 0) {
       await act(async () => frameCallbacks.shift()?.(16));
     }
@@ -945,46 +897,43 @@ describe('Feed loading', () => {
     expect(view.getByLabelText('已读，已选择')).toBeTruthy();
     await fireEvent.press(view.getByText('收藏'));
     expect(view.getByLabelText('收藏，已选择')).toBeTruthy();
-    await fireEvent.press(view.getAllByLabelText('全部').at(-1)!);
+    await fireEvent.press(view.getAllByText('全部')[1]);
+    expect(view.getByTestId('feed-source-all').props.accessibilityState).toMatchObject({ selected: true });
     expect(view.getAllByLabelText('全部，已选择')).toHaveLength(2);
 
     await fireEvent.press(view.getByTestId('feed-source-v2ex'));
-    await settlePager();
     await fireEvent.press(view.getByLabelText('列表筛选'));
-    expect(view.getByText('最热')).toBeTruthy();
-    await fireEvent.press(view.getByText('最新'));
+    expect(view.getByLabelText('最热')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('最新'));
     expect(view.getByText('最新')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('问与答'));
     expect(view.queryByLabelText('列表筛选')).toBeNull();
-    await fireEvent.press(view.getAllByLabelText('全部').at(-1)!);
+    await fireEvent.press(view.getAllByLabelText('全部')[1]);
     expect(view.getByLabelText('列表筛选')).toBeTruthy();
     expect(view.getByText('最新')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('feed-source-linuxdo'));
-    await settlePager();
     await fireEvent.press(view.getByLabelText('列表筛选'));
     expect(view.getByText('新')).toBeTruthy();
-    expect(view.getByText('所有')).toBeTruthy();
-    expect(view.getByText('话题')).toBeTruthy();
-    expect(view.getByText('回复')).toBeTruthy();
-    await fireEvent.press(view.getByText('所有'));
+    expect(view.getByLabelText('所有')).toBeTruthy();
+    expect(view.getByLabelText('话题')).toBeTruthy();
+    expect(view.getByLabelText('回复')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('所有'));
     expect(view.getByText('新·所有')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('列表筛选'));
-    await fireEvent.press(view.getByText('热门'));
+    await fireEvent.press(view.getByLabelText('热门'));
     await fireEvent.press(view.getByLabelText('开发调优'));
     expect(view.getByLabelText('列表筛选')).toBeTruthy();
     expect(view.getByText('热门')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('feed-source-nodeseek'));
-    await settlePager();
     await fireEvent.press(view.getByLabelText('列表筛选'));
-    await fireEvent.press(view.getByText('新评论'));
+    await fireEvent.press(view.getByLabelText('新评论'));
     expect(view.getByText('新评论')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('日常'));
     expect(view.queryByLabelText('列表筛选')).toBeNull();
 
     await fireEvent.press(view.getByTestId('feed-source-yaohuo'));
-    await settlePager();
     await fireEvent.press(view.getByLabelText('妖火茶馆'));
     expect(view.getByLabelText('妖火茶馆，已选择')).toBeTruthy();
     expect(view.queryByLabelText('列表筛选')).toBeNull();

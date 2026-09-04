@@ -163,18 +163,23 @@ export function discourseReplyWindow(data: unknown, limit: number) {
   const posts = (Array.isArray(postStream.posts) ? postStream.posts : []).filter(
     (post) => isRecord(post) && (positiveInteger(post.post_number) || 0) > 1
   );
-  const positions = posts
-    .map((post) => {
-      if (!isRecord(post)) return -1;
-      const id = post.id;
-      const streamIndex = stream.findIndex((streamId) => String(streamId) === String(id));
-      if (streamIndex < 0) throw new Error('Discourse 锚点回复流已变化');
-      return streamIndex;
-    })
-    .filter((index) => index > 0)
-    .sort((left, right) => left - right);
-  const firstIndex = positions[0] ?? 1;
-  const lastIndex = positions.at(-1) ?? firstIndex;
+  const streamPositionById = new Map<string, number>();
+  stream.forEach((id, index) => {
+    const key = String(id);
+    if (!streamPositionById.has(key)) streamPositionById.set(key, index);
+  });
+  let firstIndex = Number.POSITIVE_INFINITY;
+  let lastIndex = -1;
+  for (const post of posts) {
+    const streamIndex = streamPositionById.get(String((post as Record<string, unknown>).id));
+    if (streamIndex === undefined) throw new Error('Discourse 锚点回复流已变化');
+    if (streamIndex > 0) {
+      firstIndex = Math.min(firstIndex, streamIndex);
+      lastIndex = Math.max(lastIndex, streamIndex);
+    }
+  }
+  if (!Number.isFinite(firstIndex)) firstIndex = 1;
+  if (lastIndex < 0) lastIndex = firstIndex;
   const pageSize = Math.max(1, limit);
   const currentOffset = Math.max(0, firstIndex - 1);
   const nextOffset = Math.max(currentOffset, lastIndex);

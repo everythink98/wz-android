@@ -3,10 +3,13 @@ import { formatDateTime } from '@/domain/forum/presentation';
 import type { ForumNotification } from '@/domain/notifications/models';
 
 export function sortNotifications(items: ForumNotification[]) {
-  const known = items
-    .filter((item) => item.createdAt !== null)
-    .sort((left, right) => Date.parse(right.createdAt!) - Date.parse(left.createdAt!));
-  return [...known, ...items.filter((item) => item.createdAt === null)];
+  const known: { item: ForumNotification; time: number }[] = [];
+  const unknown: ForumNotification[] = [];
+  for (const item of items) {
+    if (item.createdAt === null) unknown.push(item);
+    else known.push({ item, time: Date.parse(item.createdAt) });
+  }
+  return [...known.sort((left, right) => right.time - left.time).map(({ item }) => item), ...unknown];
 }
 
 export function notificationAccessibilityLabel(item: ForumNotification) {

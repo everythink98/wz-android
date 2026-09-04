@@ -12,6 +12,7 @@ const md = new MarkdownIt({
   linkify: true,
   breaks: true
 }).use(markdownItTaskLists, { enabled: false });
+md.linkify.set({ fuzzyLink: true, urlAuth: true });
 Object.assign(md.options, { maxNesting: 100 });
 const defaultHtmlInlineRenderer = md.renderer.rules.html_inline;
 md.renderer.rules.html_inline = (tokens, index, options, env, renderer) => {

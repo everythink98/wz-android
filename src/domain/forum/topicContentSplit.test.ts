@@ -3,7 +3,6 @@ import { parseHtml } from './html';
 import { domNodeCount } from '../../../tests/helpers/domNodeCount';
 import { withTrackedParseHtml } from '../../../tests/helpers/trackedParseHtml';
 import {
-  combineForumSelectionTokens,
   compileForumContent,
   prepareReplyContent,
   prepareTopicContent,
@@ -17,6 +16,100 @@ import { topicOpeningPostAsReply } from './quotedPosts';
 function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
   return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
 }
+
+it('makes explicit V2EX floors navigable without changing mention text or copy order', () => {
+  const compilation = compileForumContent({
+    html: '<p>@<a href="https://www.v2ex.com/member/Pipecraft">Pipecraft</a> #6 and @bob # 105.</p>',
+    source: 'v2ex',
+    role: 'reply',
+    topicId: '945124'
+  });
+  const root = parseHtml(
+    renderedContentRows(compilation)
+      .map((row) => row.html)
+      .join('')
+  );
+  expect(root.textContent).toBe('@Pipecraft #6 and @bob # 105.');
+  expect(root.querySelectorAll('a').map((link) => link.getAttribute('href'))).toEqual([
+    'https://www.v2ex.com/member/Pipecraft',
+    'https://www.v2ex.com/t/945124',
+    'https://www.v2ex.com/member/bob',
+    'https://www.v2ex.com/t/945124'
+  ]);
+  expect(
+    root
+      .querySelectorAll('a')
+      .map((link) => [
+        link.textContent,
+        link.getAttribute('data-forum-reply-floor'),
+        link.getAttribute('data-forum-reply-author')
+      ])
+  ).toEqual([
+    ['@Pipecraft', undefined, undefined],
+    ['#6', '6', 'Pipecraft'],
+    ['@bob', undefined, undefined],
+    ['# 105', '105', 'bob']
+  ]);
+});
+
+it('does not trust source navigation attributes when parsing falls back', async () => {
+  await withTrackedParseHtml(async (trackedParseHtml) => {
+    trackedParseHtml.mockImplementation(() => {
+      throw new Error('parser unavailable');
+    });
+    const { compileForumContent: compileWithFallback } = await import('./topicContentSplit');
+    const rows = renderedContentRows(
+      compileWithFallback({
+        html: '<a class="forum-floor-link" href="https://www.v2ex.com/t/945124" data-forum-reply-floor="6" DATA-FORUM-REPLY-AUTHOR=alice>untrusted</a>',
+        role: 'reply',
+        source: 'v2ex',
+        topicId: '945124'
+      })
+    );
+    expect(rows.map((row) => row.html).join('')).not.toMatch(/data-forum-reply-/i);
+    expect(rows.map((row) => row.html).join('')).toContain('untrusted');
+  });
+});
+
+it('does not infer V2EX targets from code, quoted examples, invalid floors or forged attributes', () => {
+  const compilation = compileForumContent({
+    html:
+      '<p>@alice #0 @bob #1.5 @carol #9007199254740992 #6 @plain</p>' +
+      '<pre>@alice #6</pre><blockquote>@alice #6</blockquote>' +
+      '<p><code>@alice #6</code><a href="https://example.com" data-forum-reply-floor="6" data-forum-reply-author="alice">#6</a></p>',
+    source: 'v2ex',
+    role: 'reply',
+    topicId: '945124'
+  });
+  const html = renderedContentRows(compilation)
+    .map((row) => row.html)
+    .join('');
+  expect(html).not.toContain('data-forum-reply-');
+  expect(parseHtml(html).textContent).toContain('@alice #0 @bob #1.5 @carol #9007199254740992 #6 @plain');
+  const withoutTopic = compileForumContent({ html: '<p>@alice #6</p>', source: 'v2ex', role: 'reply' });
+  expect(renderedContentRows(withoutTopic)[0].html).not.toContain('data-forum-reply-');
+});
+
+it('binds reused V2EX reply plans to their owning topic', () => {
+  const topic = {
+    id: '101',
+    source: 'v2ex' as const,
+    author: 'alice',
+    title: 'References',
+    createdAt: '',
+    url: 'https://www.v2ex.com/t/101',
+    contentHtml: '<p>opening</p>',
+    replies: [{ author: 'bob', contentHtml: '<p>@alice #6</p>', createdAt: '' }]
+  };
+  const first = prepareTopicContent(topic);
+  const repeated = prepareTopicContent(first);
+  expect(repeated).toBe(first);
+  const second = prepareTopicContent({ ...first, id: '202', url: 'https://www.v2ex.com/t/202' });
+  const firstRows = requirePreparedForumContent(first.replies[0].preparedContent, first.replies[0].contentHtml);
+  const secondRows = requirePreparedForumContent(second.replies[0].preparedContent, second.replies[0].contentHtml);
+  expect(renderedContentRows(firstRows)[0].html).toContain('https://www.v2ex.com/t/101');
+  expect(renderedContentRows(secondRows)[0].html).toContain('https://www.v2ex.com/t/202');
+});
 
 function selectionToken(row: CompiledForumContentRow) {
   return JSON.parse(row.selectionToken) as {
@@ -179,16 +272,15 @@ describe('Android topic content splitting', () => {
       source: 'nodeseek'
     });
     const imagesByRow = renderedContentRows(compilation).map((row) => parseHtml(row.html).querySelectorAll('img'));
-    const token = JSON.parse(
-      combineForumSelectionTokens(compilation.rows.map((row) => row.selectionToken))
-    ) as ReturnType<typeof selectionToken>;
-    const mediaLabels = [
-      ...token.prefix.filter((atom) => atom.kind === 'media').map((atom) => atom.text),
-      ...token.owners.flatMap((owner) => [
-        ...owner.tape.map((atom) => atom.text),
-        ...owner.trailing.filter((atom) => atom.kind === 'media').map((atom) => atom.text)
-      ])
-    ];
+    const mediaLabels = compilation.rows
+      .map(selectionToken)
+      .flatMap((token) => [
+        ...token.prefix.filter((atom) => atom.kind === 'media').map((atom) => atom.text),
+        ...token.owners.flatMap((owner) => [
+          ...owner.tape.map((atom) => atom.text),
+          ...owner.trailing.filter((atom) => atom.kind === 'media').map((atom) => atom.text)
+        ])
+      ]);
 
     expect(imagesByRow.map((images) => images.length)).toEqual([4, 1]);
     expect(imagesByRow.flat().map((image) => image.getAttribute('src'))).toEqual(urls);
@@ -278,10 +370,10 @@ describe('Android topic content splitting', () => {
         const renderedRows = renderedContentRows(compilation);
         const renderedHtml = renderedRows.map((row) => row.html).join('');
         const flowImage = parseHtml(renderedHtml).querySelector('forum-inline-image');
-        const token = JSON.parse(
-          combineForumSelectionTokens(compilation.rows.map((row) => row.selectionToken))
-        ) as ReturnType<typeof selectionToken>;
-        const selectionText = token.owners.map((owner) => owner.text).join('\n');
+        const selectionText = compilation.rows
+          .flatMap((row) => selectionToken(row).owners)
+          .map((owner) => owner.text)
+          .join('\n');
 
         expect(renderedRows.flatMap(imageUrlsInPlannedRow), `${source}/${role} image`).toEqual([imageUrl]);
         expect(flowImage?.text.trim(), `${source}/${role} fallback`).not.toBe('');
@@ -878,21 +970,8 @@ describe('Android topic content splitting', () => {
       ],
       version: 1
     });
-    expect(JSON.parse(combineForumSelectionTokens(rows.map((row) => row.selectionToken)))).toMatchObject({
-      owners: [
-        {
-          tape: [{ at: 'before '.length, text: '\\mathsf{A}' }],
-          text: 'before  after',
-          trailing: [
-            { kind: 'separator', text: '\n' },
-            { kind: 'media', text: 'x=1\\tag{1}' },
-            { kind: 'separator', text: '\n' }
-          ]
-        },
-        { text: 'end' }
-      ],
-      version: 1
-    });
+    expect(rows).toHaveLength(3);
+    expect(selectionToken(rows[2])).toMatchObject({ owners: [{ text: 'end' }], version: 1 });
   });
 
   it('keeps inline sticker paragraphs as selection block boundaries', () => {
@@ -903,12 +982,9 @@ describe('Android topic content splitting', () => {
       role: 'opening',
       source: 'nodeseek'
     }).rows;
-    const token = JSON.parse(combineForumSelectionTokens(rows.map((row) => row.selectionToken))) as ReturnType<
-      typeof selectionToken
-    >;
-
-    expect(token.owners.map((owner) => owner.text)).toEqual(['first', 'second']);
-    expect(token.owners[0]?.trailing).toContainEqual({ kind: 'separator', text: '\n' });
+    const owners = rows.flatMap((row) => selectionToken(row).owners);
+    expect(owners.map((owner) => owner.text)).toEqual(['first', 'second']);
+    expect(owners[0]?.trailing).toContainEqual({ kind: 'separator', text: '\n' });
   });
 
   it('matches RNRH owner boundaries around block and opaque media', () => {
@@ -956,26 +1032,18 @@ describe('Android topic content splitting', () => {
       ],
       version: 1
     });
-    const audio = JSON.parse(combineForumSelectionTokens(audioRows.map((row) => row.selectionToken))) as ReturnType<
-      typeof selectionToken
-    >;
-    expect(audio).toMatchObject({
-      owners: [
-        {
-          tape: [],
-          text: 'before',
-          trailing: [
-            { kind: 'separator', text: '\n' },
-            { kind: 'media', text: '音频' },
-            { kind: 'separator', text: '\n' }
-          ]
-        },
-        { tape: [], text: 'after', trailing: [{ kind: 'separator', text: '\n' }] }
-      ],
-      prefix: [],
-      version: 1
-    });
-    expect(audio.owners.some((owner) => owner.text.includes('fallback child'))).toBe(false);
+    expect(audioRows.map(selectionToken)).toEqual([
+      { owners: [{ tape: [], text: 'before', trailing: [{ kind: 'separator', text: '\n' }] }], prefix: [], version: 1 },
+      {
+        owners: [],
+        prefix: [
+          { kind: 'media', text: '音频' },
+          { kind: 'separator', text: '\n' }
+        ],
+        version: 1
+      },
+      { owners: [{ tape: [], text: 'after', trailing: [{ kind: 'separator', text: '\n' }] }], prefix: [], version: 1 }
+    ]);
   });
 
   it('compiles one semantic code block before planning physical rows', () => {
@@ -1503,11 +1571,10 @@ describe('Android topic content splitting', () => {
   it('keeps decoded text in selection owners when planning reaches the depth limit', () => {
     const html = `${'<div>'.repeat(66)}A &amp; B &copy; C${'</div>'.repeat(66)}`;
     const rows = compileForumContent({ html, role: 'opening', source: 'nodeseek' }).rows;
-    const token = JSON.parse(combineForumSelectionTokens(rows.map((row) => row.selectionToken))) as ReturnType<
-      typeof selectionToken
-    >;
-
-    const ownerText = token.owners.map((owner) => owner.text).join('');
+    const ownerText = rows
+      .flatMap((row) => selectionToken(row).owners)
+      .map((owner) => owner.text)
+      .join('');
     expect(ownerText).toContain('A & B © C');
     expect(ownerText).not.toContain('&amp;');
     expect(ownerText).not.toContain('&copy;');

@@ -242,11 +242,36 @@ function networkProxyNativeModule() {
 
 export async function loadNetworkProxyState() {
   const raw = await SecureStore.getItemAsync(NETWORK_PROXY_STORAGE_KEY);
-  if (!raw) {
+  if (raw === null) {
     return createEmptyNetworkProxyState();
   }
   try {
-    return normalizeNetworkProxyState(JSON.parse(raw));
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+    const input = value as Partial<NetworkProxyState>;
+    if (
+      typeof input.enabled !== 'boolean' ||
+      (input.activeId !== null && typeof input.activeId !== 'string') ||
+      !Array.isArray(input.profiles) ||
+      input.profiles.length > MAX_NETWORK_PROXY_PROFILES ||
+      input.profiles.some(
+        (profile) =>
+          !profile ||
+          typeof profile !== 'object' ||
+          Array.isArray(profile) ||
+          typeof profile.id !== 'string' ||
+          !profile.id.trim() ||
+          typeof profile.port !== 'number' ||
+          (profile.username !== undefined && typeof profile.username !== 'string') ||
+          (profile.password !== undefined && typeof profile.password !== 'string') ||
+          hasNetworkProxyProfileErrors(profile)
+      ) ||
+      new Set(input.profiles.map((profile) => profile.id.trim())).size !== input.profiles.length
+    )
+      throw new Error();
+    const state = normalizeNetworkProxyState(input);
+    if (input.enabled && !state.enabled) throw new Error();
+    return state;
   } catch {
     throw new Error('代理配置已损坏，请重新保存或删除该配置。');
   }

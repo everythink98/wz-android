@@ -164,7 +164,7 @@ export async function getReplies(
           timeoutMs: options.timeoutMs
         });
   if (trace) markDiagnosticStage(trace, 'parse', { source: options.source, state: 'source-parsed' });
-  const preparedResponse = prepareRepliesContent(response, options.source);
+  const preparedResponse = prepareRepliesContent(response, options.source, options.id);
   if (trace) markDiagnosticStage(trace, 'parse', { source: options.source, state: 'content-plan-ready' });
   const prepared =
     preparedResponse === response ? preparedResponse : copySourceDiagnosticSummary(preparedResponse, response);

@@ -1,6 +1,6 @@
 export type CachedImageDimensions = { height: number; width: number };
 
-const IMAGE_DIMENSIONS_CACHE_LIMIT = 512;
+const IMAGE_DIMENSIONS_CACHE_LIMIT = 2_048;
 const imageDimensionsByIdentity = new Map<string, CachedImageDimensions>();
 
 export function cachedImageDisplayDimensions(cacheKey: string) {

@@ -1784,7 +1784,7 @@ describe('Feed controller sessions', () => {
     });
     appQueryClient.clear();
     await appQueryClient
-      .fetchInfiniteQuery({
+      .infiniteQuery({
         queryKey: sourceFeedKey,
         initialPageParam: { page: 1 },
         queryFn: async () => {
@@ -1793,7 +1793,7 @@ describe('Feed controller sessions', () => {
       })
       .catch(() => undefined);
     await appQueryClient
-      .fetchQuery({
+      .query({
         queryKey: forumQueryKeys.categories('nodeseek', initialForumSessionEpochs, undefined, 'authenticated:0'),
         queryFn: async () => {
           throw staleError;
@@ -3034,7 +3034,7 @@ describe('Feed controller sessions', () => {
     expect(hook.result.current.feedOutcomeKind).toBe('empty');
   });
 
-  it('preserves the loaded feed page across session reset before resuming pagination', async () => {
+  it('preserves the loaded feed page while verification resumes pagination', async () => {
     const firstTopic = {
       source: 'linuxdo' as const,
       id: 'first',
@@ -3106,9 +3106,6 @@ describe('Feed controller sessions', () => {
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
     expect(recovery).toBeDefined();
-    await act(async () => {
-      resetForumSourceQueries('linuxdo', appQueryClient, recovery.queryKey);
-    });
 
     expect(hook.result.current.activeFeedState).toMatchObject({
       items: [firstTopic],

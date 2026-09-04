@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   clearRecords,
   createEmptyReaderData,
@@ -47,6 +47,44 @@ const profile: UserProfile = {
 };
 
 describe('Android reader data helpers', () => {
+  it('preserves the snapshot when deletion has no target', () => {
+    const data = createEmptyReaderData();
+    expect(removeRecords(data, 'favorites', [topic])).toBe(data);
+    expect(removeRecords(data, 'history', [])).toBe(data);
+    expect(removeFollowedUsers(data, [profile])).toBe(data);
+    expect(clearRecords(data, 'history')).toBe(data);
+  });
+
+  it('batches deletion timestamps once while retaining stable ties and the tombstone limit', () => {
+    const data = createEmptyReaderData();
+    const topics = Array.from({ length: 1_001 }, (_, index) => ({ ...topic, id: String(index) }));
+    data.favorites = Object.fromEntries(
+      topics.map((item) => [topicKey(item), { topic: item, savedAt: topic.createdAt }])
+    );
+    const parse = vi.spyOn(Date, 'parse');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-04T00:00:00.000Z'));
+    try {
+      const next = removeRecords(data, 'favorites', [...topics, topics[0]!]);
+      expect(next.favorites).toEqual({});
+      expect(Object.keys(next.deletedRecords.favorites)).toHaveLength(MAX_DELETED_RECORDS);
+      expect(Object.keys(next.deletedRecords.favorites).slice(0, 3)).toEqual([
+        'nodeseek:0',
+        'nodeseek:1',
+        'nodeseek:2'
+      ]);
+      expect(next.deletedRecords.favorites['nodeseek:1000']).toBeUndefined();
+      expect(next.deletedRecords.favorites['nodeseek:0']).toBe('2026-09-04T00:00:00.000Z');
+      expect(next.history).toBe(data.history);
+      expect(next.deletedRecords.history).toBe(data.deletedRecords.history);
+      expect(parse.mock.calls.length).toBeLessThanOrEqual(topics.length);
+      expect(Object.keys(data.favorites)).toHaveLength(1_001);
+    } finally {
+      parse.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('normalizes font scale to 5% steps between 85% and 140%', () => {
     expect(normalizeFontScale(0.2)).toBe(FONT_SCALE_MIN);
     expect(normalizeFontScale(2)).toBe(FONT_SCALE_MAX);

@@ -47,7 +47,10 @@ export function applyFeedFilter(items: Topic[], data: ReaderData, filter: Readin
 }
 
 export function sortTopicsByCreatedAt(items: Topic[]) {
-  return [...items].sort((left, right) => dateTime(right.createdAt) - dateTime(left.createdAt));
+  return items
+    .map((item) => ({ item, time: dateTime(item.createdAt) }))
+    .sort((left, right) => right.time - left.time)
+    .map(({ item }) => item);
 }
 
 function shouldUseIncomingAccessRequirement(current: Topic['accessRequirement'], incoming: Topic['accessRequirement']) {
@@ -82,41 +85,42 @@ function shouldUseIncomingAccessRequirement(current: Topic['accessRequirement'],
 }
 
 export function mergeTopics(current: Topic[], incoming: Topic[]) {
-  const seen = new Set(current.map((topic) => topicKey(topic)));
-  const seenExternalUrls = new Map<string, Topic>();
-  for (const topic of current) {
-    const urlKey = duplicateExternalUrlKey(topic);
-    if (urlKey) {
-      seenExternalUrls.set(urlKey, topic);
-    }
-  }
+  const seen = new Set<string>();
+  const indexByKey = new Map<string, number>();
+  const indexByExternalUrl = new Map<string, number>();
   const next = [...current];
+  current.forEach((topic, index) => {
+    const key = topicKey(topic);
+    seen.add(key);
+    if (!indexByKey.has(key)) indexByKey.set(key, index);
+    const urlKey = duplicateExternalUrlKey(topic);
+    if (urlKey) indexByExternalUrl.set(urlKey, index);
+  });
   for (const topic of incoming) {
     const key = topicKey(topic);
     if (!seen.has(key)) {
       const urlKey = duplicateExternalUrlKey(topic);
-      const existing = urlKey ? seenExternalUrls.get(urlKey) : undefined;
+      const existingIndex = urlKey ? indexByExternalUrl.get(urlKey) : undefined;
+      const existing = existingIndex === undefined ? undefined : next[existingIndex];
       if (existing && existing.source !== topic.source) {
         const updated = {
           ...existing,
           duplicateSources: Array.from(new Set([...(existing.duplicateSources || []), sourceLabel(topic.source)]))
         };
-        seenExternalUrls.set(urlKey, updated);
-        const index = next.indexOf(existing);
-        if (index >= 0) {
-          next[index] = updated;
-        }
+        next[existingIndex!] = updated;
         seen.add(key);
         continue;
       }
       seen.add(key);
-      if (urlKey) {
-        seenExternalUrls.set(urlKey, topic);
-      }
+      indexByKey.set(key, next.length);
+      if (urlKey) indexByExternalUrl.set(urlKey, next.length);
       next.push(topic);
     } else if (topic.accessRequirement) {
-      const index = next.findIndex((item) => topicKey(item) === key);
-      if (index >= 0 && shouldUseIncomingAccessRequirement(next[index].accessRequirement, topic.accessRequirement)) {
+      const index = indexByKey.get(key);
+      if (
+        index !== undefined &&
+        shouldUseIncomingAccessRequirement(next[index].accessRequirement, topic.accessRequirement)
+      ) {
         next[index] = {
           ...next[index],
           accessRequirement: topic.accessRequirement
@@ -135,7 +139,6 @@ function duplicateExternalUrlKey(topic: Topic) {
 }
 
 export function balanceTopicsBySource(items: Topic[]) {
-  const order: Topic['source'][] = [];
   const buckets = new Map<Topic['source'], Topic[]>();
   for (const item of items) {
     const bucket = buckets.get(item.source);
@@ -143,18 +146,14 @@ export function balanceTopicsBySource(items: Topic[]) {
       bucket.push(item);
     } else {
       buckets.set(item.source, [item]);
-      order.push(item.source);
     }
   }
   const balanced: Topic[] = [];
-  let hasMore = true;
-  while (hasMore) {
-    hasMore = false;
-    for (const source of order) {
-      const next = buckets.get(source)?.shift();
+  for (let index = 0; balanced.length < items.length; index += 1) {
+    for (const bucket of buckets.values()) {
+      const next = bucket[index];
       if (next) {
         balanced.push(next);
-        hasMore = true;
       }
     }
   }

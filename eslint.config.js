@@ -7,6 +7,7 @@ module.exports = defineConfig([
   globalIgnores([
     'android/**',
     'modules/*/android/build/**',
+    '.codex-tmp/**',
     '.expo/**',
     'coverage/**',
     'node_modules/**',
@@ -19,7 +20,23 @@ module.exports = defineConfig([
   {
     rules: {
       'no-unreachable-loop': 'error',
-      'no-useless-assignment': 'error'
+      'no-useless-assignment': 'error',
+      // React Compiler is not enabled. These three compiler-readiness rules conflict with
+      // existing tested lifecycle/ref owners, while the ordinary Hooks rules remain enabled.
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off'
+    }
+  },
+  {
+    // Reanimated SharedValue mutation is the library's public worklet API.
+    files: [
+      'src/features/more/components/ContentSourcesPanel.tsx',
+      'src/features/topic/rendering/topicTableRenderers.tsx',
+      'src/ui/media/ImagePreviewModal.tsx'
+    ],
+    rules: {
+      'react-hooks/immutability': 'off'
     }
   },
   {

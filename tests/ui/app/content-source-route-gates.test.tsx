@@ -83,28 +83,7 @@ jest.mock('@/features/more/components/MoreUtilityPanels', () => ({
 }));
 jest.mock('react-native-gesture-handler', () => {
   return {
-    Gesture: {
-      Pan: () => ({
-        activateAfterLongPress() {
-          return this;
-        },
-        enabled() {
-          return this;
-        },
-        runOnJS() {
-          return this;
-        },
-        onStart() {
-          return this;
-        },
-        onUpdate() {
-          return this;
-        },
-        onFinalize() {
-          return this;
-        }
-      })
-    },
+    usePanGesture: (config: Record<string, unknown>) => ({ config }),
     GestureDetector: ({ children }: { children: ReactNode }) => children
   };
 });

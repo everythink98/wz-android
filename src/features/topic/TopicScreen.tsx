@@ -16,7 +16,6 @@ import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
-import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from './styles';
@@ -113,7 +112,6 @@ export const TopicScreen = memo(function TopicScreen({
   }, [item?.id, item?.source]);
 
   const runTopicMenuAction = useCallback((action: () => void) => {
-    triggerPressFeedback();
     setTopicMenuOpen(false);
     action();
   }, []);

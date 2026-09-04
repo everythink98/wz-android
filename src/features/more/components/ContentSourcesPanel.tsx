@@ -9,14 +9,13 @@ import {
   type StyleProp,
   type ViewStyle
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { GestureDetector, usePanGesture, type PanGestureConfig } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { GripVertical, ListTree } from 'lucide-react-native';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import type { ContentSourcePreference } from '@/domain/reader/contentSourcePreferences';
 import { ExpandablePanel } from '@/ui/controls/ExpandableControls';
-import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createMoreScreenStyles } from '../styles';
@@ -124,6 +123,11 @@ function SortableRow({
   );
 }
 
+function PanGestureBoundary({ children, config }: { children: ReactNode; config: PanGestureConfig }) {
+  const gesture = usePanGesture(config);
+  return <GestureDetector gesture={gesture}>{children}</GestureDetector>;
+}
+
 export function ContentSourcesPanel({
   expanded,
   preferences,
@@ -224,7 +228,6 @@ export function ContentSourcesPanel({
     const current = preferencesRef.current;
     const nextIndex = index + offset;
     if (nextIndex < 0 || nextIndex >= current.length) return;
-    triggerPressFeedback();
     onChangeRef.current(reorderedPreferences(current, index, nextIndex));
   };
 
@@ -246,7 +249,6 @@ export function ContentSourcesPanel({
     };
     dragSessionRef.current = session;
     setDragPreview(session);
-    triggerPressFeedback();
   };
 
   const updateDragTarget = (source: Source, targetIndex: number, generation: number) => {
@@ -311,10 +313,10 @@ export function ContentSourcesPanel({
           const label = sourceCatalog[preference.source].label;
           const first = index === 0;
           const last = index === preferences.length - 1;
-          const dragGesture = Gesture.Pan()
-            .enabled(screenReaderEnabled === false)
-            .activateAfterLongPress(DRAG_ACTIVATION_DELAY_MS)
-            .onStart(() => {
+          const dragGestureConfig: PanGestureConfig = {
+            enabled: screenReaderEnabled === false,
+            activateAfterLongPress: DRAG_ACTIVATION_DELAY_MS,
+            onActivate: () => {
               'worklet';
               const centers = rowCenters.value;
               if (!hasValidRowCenters(centers, preferenceCount)) {
@@ -328,8 +330,8 @@ export function ContentSourcesPanel({
               dragTargetIndex.value = index;
               dragTranslationY.value = 0;
               scheduleOnRN(beginDrag, preference.source, index, centers, dragGeneration);
-            })
-            .onUpdate(({ translationY }) => {
+            },
+            onUpdate: ({ translationY }) => {
               'worklet';
               const originIndex = dragActiveIndex.value;
               const centers = rowCenters.value;
@@ -351,17 +353,19 @@ export function ContentSourcesPanel({
                 dragTargetIndex.value = targetIndex;
                 scheduleOnRN(updateDragTarget, preference.source, targetIndex, dragGeneration);
               }
-            })
-            .onFinalize((_event, success) => {
+            },
+            onFinalize: (event) => {
               'worklet';
               if (dragActiveIndex.value !== index) return;
+              const success = !event.canceled;
               const targetIndex = dragTargetIndex.value;
               if (success) {
                 const centers = rowCenters.value;
                 dragTranslationY.value = centers[targetIndex]! - centers[index]!;
               }
               scheduleOnRN(finishDrag, preference.source, success, targetIndex, dragGeneration);
-            });
+            }
+          };
           const accessibilityActions = [
             ...(first ? [] : [{ name: 'moveUp', label: '上移' }]),
             ...(last ? [] : [{ name: 'moveDown', label: '下移' }])
@@ -415,7 +419,7 @@ export function ContentSourcesPanel({
                     )
                   }
                 />
-                <GestureDetector gesture={dragGesture}>
+                <PanGestureBoundary config={dragGestureConfig}>
                   <View
                     accessible
                     accessibilityActions={accessibilityActions}
@@ -428,7 +432,7 @@ export function ContentSourcesPanel({
                   >
                     <GripVertical color={theme.muted} size={22} strokeWidth={1.8} />
                   </View>
-                </GestureDetector>
+                </PanGestureBoundary>
               </View>
             </SortableRow>
           );

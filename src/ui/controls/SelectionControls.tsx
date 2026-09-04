@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
-import { pressWithFeedback, TOUCH_HIT_SLOP } from './pressFeedback';
+import { TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
@@ -115,7 +115,7 @@ export function PillRail({
                 ? [styles.subtab, value === item.value && styles.subtabActive]
                 : [styles.pill, value === item.value && styles.pillActive]
           }
-          onPress={() => pressWithFeedback(() => onChange(item.value))}
+          onPress={() => onChange(item.value)}
         >
           <Text
             style={

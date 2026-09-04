@@ -12,7 +12,7 @@ const destinationCases: [
   label: string,
   url: string,
   topic: { source: string; id: string },
-  targetReply: { floor: number; pageHint?: number }
+  targetReply: { floor?: number; commentId?: number; pageHint?: number }
 ][] = [
   [
     'NodeSeek',
@@ -21,7 +21,7 @@ const destinationCases: [
     { floor: 155, pageHint: 16 }
   ],
   ['linux.do', 'https://linux.do/t/topic/456/90', { source: 'linuxdo', id: '456' }, { floor: 90 }],
-  ['V2EX', 'https://www.v2ex.com/t/789#reply12', { source: 'v2ex', id: '789' }, { floor: 12 }],
+  ['V2EX', 'https://www.v2ex.com/t/789?p=2#r_1200', { source: 'v2ex', id: '789' }, { commentId: 1200, pageHint: 2 }],
   [
     '妖火',
     'https://www.yaohuo.me/bbs/book_re.aspx?id=321&classid=177&tofloor=90',

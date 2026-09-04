@@ -427,15 +427,12 @@ const NodeSeekStardustNode = TiptapNode.create({
 
 type PrivateBlock = { kind: string; raw: string };
 
-function pairedPrivateBlock(source: string, opening: string, closing: string, kind: string): PrivateBlock | null {
-  if (!source.toLowerCase().startsWith(opening)) return null;
-  const closeAt = source.toLowerCase().indexOf(closing, opening.length);
-  if (closeAt < 0) return null;
-  const end = closeAt + closing.length;
-  return { kind, raw: source.slice(0, end) };
+function asciiLowerCase(text: string) {
+  return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
 
 function privateBlockFromStart(source: string): PrivateBlock | null {
+  const lowerSource = asciiLowerCase(source);
   for (const [opening, closing, kind] of [
     ['[poll', '[/poll]', 'linuxdo-poll'],
     ['[details', '[/details]', 'details'],
@@ -443,8 +440,9 @@ function privateBlockFromStart(source: string): PrivateBlock | null {
     ['[math', '[/math]', 'formula'],
     ['[wrap=', '[/wrap]', 'scrolling']
   ] as const) {
-    const block = pairedPrivateBlock(source, opening, closing, kind);
-    if (block) return block;
+    if (!lowerSource.startsWith(opening)) continue;
+    const closeAt = lowerSource.indexOf(closing, opening.length);
+    if (closeAt >= 0) return { kind, raw: source.slice(0, closeAt + closing.length) };
   }
   if (source.startsWith('$$')) {
     const closeAt = source.indexOf('$$', 2);
@@ -458,7 +456,7 @@ function privateBlockFromStart(source: string): PrivateBlock | null {
   const fenced = source.match(/^```(mermaid|chart|graphviz)\b[^\n]*\n[\s\S]*?\n```(?=\n|$)/i);
   if (fenced) return { kind: fenced[1]!.toLowerCase(), raw: fenced[0] };
   for (const marker of ['[toc]', '<!-- toc -->']) {
-    if (source.toLowerCase().startsWith(marker)) return { kind: 'toc', raw: source.slice(0, marker.length) };
+    if (lowerSource.startsWith(marker)) return { kind: 'toc', raw: source.slice(0, marker.length) };
   }
   const unknownPair = source.match(/^\[([a-z][\w-]*)(?:[^\]\n]*)\][\s\S]*?\[\/\1\](?=\n|$)/i);
   if (unknownPair) return { kind: 'private-block', raw: unknownPair[0] };
@@ -468,6 +466,7 @@ function privateBlockFromStart(source: string): PrivateBlock | null {
 }
 
 function privateBlockStart(source: string) {
+  const lowerSource = asciiLowerCase(source);
   const candidates = [
     '[poll',
     '[details',
@@ -482,7 +481,7 @@ function privateBlockStart(source: string) {
     '[toc]',
     '<!-- toc -->'
   ]
-    .map((prefix) => source.toLowerCase().indexOf(prefix))
+    .map((prefix) => lowerSource.indexOf(prefix))
     .filter((index) => index >= 0);
   const unknown = source.search(/^\[(?!date=)[a-z][^\]\n]*\](?:\n|$)/im);
   if (unknown >= 0) candidates.push(unknown);
@@ -533,7 +532,7 @@ function privateBlockPresentation(kind: string, raw: string) {
     const summary = raw.slice(0, raw.indexOf(']') + 1).match(/=["']?([^\]"']+)/)?.[1] || '详情';
     return {
       title: `详情 · ${summary}`,
-      body: raw.slice(raw.indexOf(']') + 1, raw.toLowerCase().lastIndexOf('[/details]')).trim()
+      body: raw.slice(raw.indexOf(']') + 1, asciiLowerCase(raw).lastIndexOf('[/details]')).trim()
     };
   }
   if (kind === 'spoiler') return { title: '剧透内容', body: '点击源码模式查看或编辑隐藏内容' };
@@ -942,6 +941,7 @@ const markdownCodeParser = markdownLanguage().language.parser;
 const markdownCodeNodes = new Set(['InlineCode', 'FencedCode', 'CodeBlock']);
 
 function maskMarkdownCode(markdown: string) {
+  if (!/[`~\t]| {4}/.test(markdown)) return markdown;
   const ranges: { from: number; to: number }[] = [];
   markdownCodeParser.parse(markdown).iterate({
     enter(node) {
@@ -961,9 +961,14 @@ function maskMarkdownCode(markdown: string) {
   return masked + markdown.slice(cursor);
 }
 
-function validateMarkdown(markdown: string, config: RuntimeConfig | null, pollsById: Map<string, PendingNodeSeekPoll>) {
+function validateMarkdown(
+  markdown: string,
+  config: RuntimeConfig | null,
+  pollsById: Map<string, PendingNodeSeekPoll>,
+  activeMarkdown: string
+) {
   const issues: ComposerValidationIssue[] = [];
-  const activeMarkdown = maskMarkdownCode(markdown);
+  const lowerMarkdown = asciiLowerCase(activeMarkdown);
   if (markdown.length > MAX_COMPOSER_MARKDOWN_LENGTH) {
     issues.push({ code: 'too-long', message: '正文超过允许长度' });
   }
@@ -973,8 +978,8 @@ function validateMarkdown(markdown: string, config: RuntimeConfig | null, pollsB
     ['[spoiler', '[/spoiler]', 'linuxdo-spoiler']
   ] as const) {
     let cursor = 0;
-    while ((cursor = activeMarkdown.toLowerCase().indexOf(opening, cursor)) >= 0) {
-      const closeAt = activeMarkdown.toLowerCase().indexOf(closing, cursor + opening.length);
+    while ((cursor = lowerMarkdown.indexOf(opening, cursor)) >= 0) {
+      const closeAt = lowerMarkdown.indexOf(closing, cursor + opening.length);
       if (closeAt < 0) {
         issues.push({ code, message: `${opening} 缺少 ${closing}`, from: cursor, to: cursor + opening.length });
         break;
@@ -1418,6 +1423,59 @@ function TableContextMenu({ editor }: { editor: TiptapEditor }) {
   );
 }
 
+function ExpressionButton({
+  label,
+  src,
+  visible,
+  onInsert,
+  children
+}: {
+  label: string;
+  src: string;
+  visible: boolean;
+  onInsert: () => void;
+  children?: React.ReactNode;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  const [status, setStatus] = useState<'loading' | 'loaded' | 'failed'>('loading');
+  const current = useRef({ attempt: 0, failed: false });
+  const retry = useCallback(() => {
+    current.current = { attempt: current.current.attempt + 1, failed: false };
+    setAttempt(current.current.attempt);
+    setStatus('loading');
+  }, []);
+  useEffect(() => {
+    if (visible && current.current.failed) retry();
+  }, [retry, visible]);
+  const settle = (next: 'loaded' | 'failed') => {
+    if (current.current.attempt !== attempt) return;
+    current.current.failed = next === 'failed';
+    setStatus(next);
+  };
+  return (
+    <EditorButton
+      aria-label={status === 'failed' ? `${label}，加载失败，点击重试` : label}
+      aria-busy={attempt > 0 && status === 'loading'}
+      type="button"
+      onClick={() => {
+        if (status === 'failed') retry();
+        else if (attempt === 0 || status === 'loaded') onInsert();
+      }}
+    >
+      <img
+        key={attempt}
+        alt=""
+        decoding="async"
+        loading="lazy"
+        src={src}
+        onLoad={() => settle('loaded')}
+        onError={() => settle('failed')}
+      />
+      {status === 'failed' ? <span>重试</span> : children}
+    </EditorButton>
+  );
+}
+
 function BuilderPanel({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
   return (
     <div className="builder-backdrop" role="presentation" onMouseDown={onClose}>
@@ -1607,6 +1665,7 @@ function linuxDoPollCloseIso(date: string, time: string) {
 export function ComposerEditorRuntime() {
   const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const configRef = useRef<RuntimeConfig | null>(null);
+  const maskedMarkdownRef = useRef<{ markdown: string; masked: string } | null>(null);
   const [mode, setMode] = useState<ComposerMode>('rich');
   const modeRef = useRef<ComposerMode>('rich');
   const revisionRef = useRef(0);
@@ -1688,6 +1747,13 @@ export function ComposerEditorRuntime() {
   });
   const editorRef = useCommittedRef(editor);
 
+  const validate = useCallback((markdown: string) => {
+    if (maskedMarkdownRef.current?.markdown !== markdown) {
+      maskedMarkdownRef.current = { markdown, masked: maskMarkdownCode(markdown) };
+    }
+    return validateMarkdown(markdown, configRef.current, pendingPolls, maskedMarkdownRef.current.masked);
+  }, []);
+
   const makeSnapshot = useCallback(
     (forcedMode?: ComposerMode): ComposerSnapshot => {
       const snapshotMode = forcedMode || modeRef.current;
@@ -1696,7 +1762,7 @@ export function ComposerEditorRuntime() {
           ? sourceViewRef.current?.state.doc.toString() || ''
           : editorRef.current?.getMarkdown() || '';
       const polls = snapshotMode === 'source' ? pollsForSource(markdown) : readPollsFromEditor(editorRef.current);
-      const issues = validateMarkdown(markdown, configRef.current, pendingPolls);
+      const issues = validate(markdown);
       return {
         revision: revisionRef.current,
         markdown,
@@ -1706,7 +1772,7 @@ export function ComposerEditorRuntime() {
         pendingNodeSeekPolls: polls
       };
     },
-    [editorRef]
+    [editorRef, validate]
   );
 
   const postSnapshot = useCallback(
@@ -1768,7 +1834,7 @@ export function ComposerEditorRuntime() {
         return;
       }
       const markdown = sourceViewRef.current?.state.doc.toString() || '';
-      const issues = validateMarkdown(markdown, configRef.current, pendingPolls);
+      const issues = validate(markdown);
       if (issues.length) {
         const issue = issues[0]!;
         const view = sourceViewRef.current;
@@ -1797,11 +1863,12 @@ export function ComposerEditorRuntime() {
         runtimeError('markdown-parse-failed', 'Markdown 无法解析，已保留源码', revisionRef.current);
       }
     },
-    [editorRef, postSnapshot, postState, setSource]
+    [editorRef, postSnapshot, postState, setSource, validate]
   );
 
   const applyInit = useCallback(
     (next: RuntimeConfig) => {
+      maskedMarkdownRef.current = null;
       configRef.current = next;
       setConfig(next);
       setBuilder(null);
@@ -1849,6 +1916,7 @@ export function ComposerEditorRuntime() {
         return;
       }
       if (message.type === 'DESTROY') {
+        maskedMarkdownRef.current = null;
         editorRef.current?.destroy();
         sourceViewRef.current?.destroy();
         sourceViewRef.current = null;
@@ -2985,14 +3053,13 @@ export function ComposerEditorRuntime() {
             {NODESEEK_STICKER_CATEGORIES.map((category) => (
               <div className="expression-grid" hidden={category.label !== stickerCategory} key={category.label}>
                 {category.items.map((item) => (
-                  <EditorButton
-                    aria-label={item.label}
-                    type="button"
+                  <ExpressionButton
+                    label={item.label}
+                    src={item.imageUrl}
+                    visible={builder === 'stickers' && category.label === stickerCategory}
                     key={item.code}
-                    onClick={() => insertExpression(item.code)}
-                  >
-                    <img alt="" decoding="async" loading="lazy" src={item.imageUrl} />
-                  </EditorButton>
+                    onInsert={() => insertExpression(item.code)}
+                  />
                 ))}
               </div>
             ))}
@@ -3029,15 +3096,15 @@ export function ComposerEditorRuntime() {
             </div>
             <div className="expression-grid">
               {visibleEmoji.map((item) => (
-                <EditorButton
-                  aria-label={item.name.replace(/_/g, ' ')}
-                  type="button"
-                  key={item.name}
-                  onClick={() => insertExpression(`:${item.name}:`)}
+                <ExpressionButton
+                  label={item.name.replace(/_/g, ' ')}
+                  src={item.url}
+                  visible={builder === 'emoji'}
+                  key={`${item.name}:${item.url}`}
+                  onInsert={() => insertExpression(`:${item.name}:`)}
                 >
-                  <img alt="" decoding="async" loading="lazy" src={item.url} />
                   <span>{item.name.replace(/_/g, ' ')}</span>
-                </EditorButton>
+                </ExpressionButton>
               ))}
             </div>
             {!visibleEmoji.length ? (

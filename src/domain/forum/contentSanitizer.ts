@@ -493,15 +493,19 @@ function normalizeTerminalText(value: string) {
     .replace(/\u00a0/g, ' ')
     .replace(/\r\n?/g, '\n')
     .split('\n');
-  while (lines.length && !lines[0].trim()) {
-    lines.shift();
+  let start = 0;
+  let end = lines.length;
+  while (start < end && !lines[start].trim()) start += 1;
+  while (end > start && !lines[end - 1].trim()) end -= 1;
+  let indent = Infinity;
+  for (let index = start; index < end; index += 1) {
+    const line = lines[index];
+    if (line.trim()) indent = Math.min(indent, line.match(/^ */)?.[0].length || 0);
   }
-  while (lines.length && !lines[lines.length - 1].trim()) {
-    lines.pop();
-  }
-  const nonEmptyIndents = lines.filter((line) => line.trim()).map((line) => line.match(/^ */)?.[0].length || 0);
-  const indent = nonEmptyIndents.length ? Math.min(...nonEmptyIndents) : 0;
-  return indent ? lines.map((line) => line.slice(Math.min(indent, line.length))).join('\n') : lines.join('\n');
+  return lines
+    .slice(start, end)
+    .map((line) => line.slice(Math.min(indent, line.length)))
+    .join('\n');
 }
 
 function terminalTextHtml(value: string) {
@@ -547,6 +551,11 @@ function terminalReportHtml(sections: string[]) {
   return `<${FORUM_TERMINAL_REPORT_TAG}>${sections.join('')}</${FORUM_TERMINAL_REPORT_TAG}>`;
 }
 
+function xtermRowsInOrder(node: HTMLElement) {
+  const markedRows = node.querySelectorAll('.xterm-row');
+  return markedRows.length ? markedRows : node.children;
+}
+
 function nodeSeekTerminalText(node: HTMLElement) {
   const xtermRows = node.querySelector('.xterm-rows');
   const source =
@@ -557,8 +566,7 @@ function nodeSeekTerminalText(node: HTMLElement) {
     node.querySelector('textarea') ||
     node;
   const text = xtermRows
-    ? xtermRows
-        .querySelectorAll('.xterm-row')
+    ? xtermRowsInOrder(xtermRows)
         .map((row) => row.text)
         .join('\n')
     : source.text;
@@ -672,7 +680,7 @@ function xtermNodeHtml(node: unknown): string {
 }
 
 function xtermRowsTerminalHtml(xtermRows: HTMLElement) {
-  const rows = xtermRows.querySelectorAll('.xterm-row');
+  const rows = xtermRowsInOrder(xtermRows);
   if (!rows.length) {
     return '';
   }

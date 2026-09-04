@@ -57,9 +57,10 @@ export function LibraryRoute() {
   });
   const followedUsers = useMemo(
     () =>
-      Object.values(runtime.reader.data.followedUsers).sort(
-        (left, right) => Date.parse(right.followedAt) - Date.parse(left.followedAt)
-      ),
+      Object.values(runtime.reader.data.followedUsers)
+        .map((record) => ({ record, time: Date.parse(record.followedAt) }))
+        .sort((left, right) => right.time - left.time)
+        .map(({ record }) => record),
     [runtime.reader.data.followedUsers]
   );
   const favoriteRecords = useMemo(

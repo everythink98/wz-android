@@ -22,6 +22,7 @@ import { fireEvent, render } from '../render';
 
 type MockPanGesture = {
   config: Record<string, unknown>;
+  handlerTag: number;
   handlers: Record<string, (...args: any[]) => void>;
 };
 
@@ -34,6 +35,8 @@ let mockPanGestures: MockPanGesture[] = [];
 let mockNativeGestures: MockPanGesture[] = [];
 let mockGestureDetectorBindings: MockGestureDetectorBinding[] = [];
 let mockAnimatedReactionRunners: (() => void)[] = [];
+let mockNextGestureHandlerTag = 0;
+const mockGestureStateManagers = new Map<number, { activate: () => void; fail: () => void }>();
 const mockCancelNativeSelection = jest.fn();
 const mockAnimatedScrollTo = jest.fn();
 const mockWithDecay = jest.fn(({ clamp }: { clamp: [number, number] }) => clamp[0]);
@@ -43,6 +46,8 @@ beforeEach(() => {
   mockNativeGestures = [];
   mockGestureDetectorBindings = [];
   mockAnimatedReactionRunners = [];
+  mockNextGestureHandlerTag = 0;
+  mockGestureStateManagers.clear();
   mockCancelNativeSelection.mockClear();
   mockAnimatedScrollTo.mockClear();
   mockWithDecay.mockClear();
@@ -75,41 +80,36 @@ jest.mock('expo-modules-core', () => {
 
 jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
-  const native = () => {
-    const gesture: MockPanGesture & Record<string, any> = { config: {}, handlers: {} };
-    gesture.enabled = (value: unknown) => {
-      gesture.config.enabled = value;
-      return gesture;
+  const native = (config: Record<string, unknown> = {}) => {
+    const gesture: MockPanGesture = {
+      config,
+      handlerTag: ++mockNextGestureHandlerTag,
+      handlers: {}
     };
     mockNativeGestures.push(gesture);
     return gesture;
   };
-  const pan = () => {
-    const gesture: MockPanGesture & Record<string, any> = { config: {}, handlers: {} };
-    for (const name of ['activeOffsetX', 'enabled', 'failOffsetY', 'manualActivation', 'maxPointers']) {
-      gesture[name] = (value: unknown) => {
-        gesture.config[name] = value;
-        return gesture;
-      };
-    }
-    for (const name of ['onBegin', 'onEnd', 'onTouchesDown', 'onTouchesMove', 'onUpdate']) {
-      gesture[name] = (handler: (...args: any[]) => void) => {
-        gesture.handlers[name] = handler;
-        return gesture;
-      };
-    }
-    gesture.blocksExternalGesture = (...gestures: MockPanGesture[]) => {
-      gesture.config.blocksExternalGesture = [
-        ...((gesture.config.blocksExternalGesture as MockPanGesture[] | undefined) || []),
-        ...gestures
-      ];
-      return gesture;
+  const pan = (config: Record<string, unknown> = {}) => {
+    const handlers = Object.fromEntries(
+      ['onBegin', 'onDeactivate', 'onTouchesDown', 'onTouchesMove', 'onUpdate']
+        .filter((name) => typeof config[name] === 'function')
+        .map((name) => [name, config[name]])
+    ) as MockPanGesture['handlers'];
+    const gesture: MockPanGesture = {
+      config,
+      handlerTag: ++mockNextGestureHandlerTag,
+      handlers
     };
     mockPanGestures.push(gesture);
     return gesture;
   };
   return {
-    Gesture: { Native: native, Pan: pan },
+    GestureStateManager: {
+      activate: (handlerTag: number) => mockGestureStateManagers.get(handlerTag)?.activate(),
+      fail: (handlerTag: number) => mockGestureStateManagers.get(handlerTag)?.fail()
+    },
+    useNativeGesture: native,
+    usePanGesture: pan,
     GestureDetector: ({
       children,
       gesture
@@ -118,7 +118,21 @@ jest.mock('react-native-gesture-handler', () => {
       gesture: MockPanGesture;
     }) => {
       mockGestureDetectorBindings.push({ child: children, gesture });
-      return ReactModule.cloneElement(children, { ...gesture.handlers, gestureConfig: gesture.config });
+      const touchHandler = (name: 'onTouchesDown' | 'onTouchesMove') => {
+        const handler = gesture.handlers[name];
+        return handler
+          ? (event: Record<string, unknown>, stateManager: { activate: () => void; fail: () => void }) => {
+              mockGestureStateManagers.set(gesture.handlerTag, stateManager);
+              handler({ ...event, handlerTag: gesture.handlerTag });
+            }
+          : undefined;
+      };
+      return ReactModule.cloneElement(children, {
+        ...gesture.handlers,
+        gestureConfig: gesture.config,
+        onTouchesDown: touchHandler('onTouchesDown'),
+        onTouchesMove: touchHandler('onTouchesMove')
+      });
     }
   };
 });
@@ -555,8 +569,12 @@ describe('native topic structured rendering', () => {
     await fireEvent(scroll, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
     expect(mockAnimatedScrollTo).toHaveBeenLastCalledWith(expect.anything(), 256, 0, false);
 
-    await fireEvent(scroll, 'end', { velocityX: -900 });
+    await fireEvent(scroll, 'deactivate', { velocityX: -900 });
     expect(mockWithDecay).toHaveBeenCalledWith({ clamp: [0, 256], velocity: 900 });
+
+    mockWithDecay.mockClear();
+    await fireEvent(scroll, 'deactivate', { canceled: true, velocityX: -900 });
+    expect(mockWithDecay).not.toHaveBeenCalled();
   });
 
   it('cancels native selection only after the horizontal pan claims the drag', async () => {
@@ -596,7 +614,7 @@ describe('native topic structured rendering', () => {
 
     expect(horizontalState.activate).toHaveBeenCalledTimes(1);
     expect(mockCancelNativeSelection).toHaveBeenCalledTimes(1);
-    expect(mockPanGestures[0]?.config.blocksExternalGesture).toEqual([mockNativeGestures[0]]);
+    expect(mockPanGestures[0]?.config.block).toBe(mockNativeGestures[0]);
 
     const verticalState = { activate: jest.fn(), fail: jest.fn() };
     scroll.props.onTouchesDown?.(
@@ -835,7 +853,7 @@ describe('native topic structured rendering', () => {
       maxPointers: 1
     });
     expect(mockNativeGestures).toHaveLength(1);
-    expect(mockPanGestures[0]?.config.blocksExternalGesture).toEqual([mockNativeGestures[0]]);
+    expect(mockPanGestures[0]?.config.block).toBe(mockNativeGestures[0]);
     const nativeBinding = mockGestureDetectorBindings.find(({ gesture }) => gesture === mockNativeGestures[0]);
     expect(nativeBinding?.child.type).toBe(View);
     expect(nativeBinding?.child.props.collapsable).toBe(false);

@@ -27,6 +27,9 @@ wait id="search-external-linuxdo" 10000
 wait id="search-external-nodeseek" 10000
 
 press id="search-source-yaohuo"
+wait label="关闭" 60000
+press label="关闭"
+wait 8000
 wait "id=\"search-source-yaohuo\" label=\"妖火，已选择\"" 10000
 press id="search-submit"
 keyboard dismiss

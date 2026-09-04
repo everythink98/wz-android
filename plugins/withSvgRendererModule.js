@@ -28,6 +28,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.Promise
@@ -35,8 +36,8 @@ import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
-import com.facebook.react.ReactPackage
-import com.facebook.react.uimanager.ViewManager
+import com.facebook.react.module.model.ReactModuleInfo
+import com.facebook.react.module.model.ReactModuleInfoProvider
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -701,15 +702,10 @@ private object SvgPosterRendererRuntime {
       javaScriptCanOpenWindowsAutomatically = false
       allowFileAccess = false
       allowContentAccess = false
-      @Suppress("DEPRECATION")
-      allowFileAccessFromFileURLs = false
-      @Suppress("DEPRECATION")
-      allowUniversalAccessFromFileURLs = false
       blockNetworkLoads = true
       blockNetworkImage = true
       loadsImagesAutomatically = true
       domStorageEnabled = false
-      databaseEnabled = false
       setGeolocationEnabled(false)
       setSupportMultipleWindows(false)
       builtInZoomControls = false
@@ -723,9 +719,6 @@ private object SvgPosterRendererRuntime {
     CookieManager.getInstance().setAcceptThirdPartyCookies(created, false)
     created.webViewClient = object : WebViewClient() {
       override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
-
-      @Suppress("DEPRECATION")
-      override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = true
 
       override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
         if (request.url.scheme.equals("data", ignoreCase = true)) {
@@ -993,12 +986,22 @@ class SvgRendererModule(
   }
 }
 
-class SvgRendererPackage : ReactPackage {
-  override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
-    listOf(SvgRendererModule(reactContext))
+class SvgRendererPackage : BaseReactPackage() {
+  override fun getModule(name: String, reactContext: ReactApplicationContext): NativeModule? =
+    if (name == "SvgRendererModule") SvgRendererModule(reactContext) else null
 
-  override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
-    emptyList()
+  override fun getReactModuleInfoProvider(): ReactModuleInfoProvider = ReactModuleInfoProvider {
+    mapOf(
+      "SvgRendererModule" to ReactModuleInfo(
+        "SvgRendererModule",
+        SvgRendererModule::class.java.name,
+        false,
+        false,
+        false,
+        false,
+      )
+    )
+  }
 }
 `;
 }
@@ -1387,7 +1390,7 @@ function injectSvgRendererTestSupport(contents) {
     }
     next = next.replace(dependenciesPattern, (match) => `${match}\n    testImplementation("junit:junit:4.13.2")`);
   }
-  if (!next.includes('androidTestImplementation("androidx.test:runner:1.6.2")')) {
+  if (!next.includes('androidTestImplementation("androidx.test:runner:1.7.0")')) {
     const dependenciesPattern = /dependencies\s*\{/;
     if (!dependenciesPattern.test(next)) {
       throw new Error('无法注入 SVG renderer instrumentation 依赖：app build.gradle 模板不匹配。');
@@ -1395,7 +1398,7 @@ function injectSvgRendererTestSupport(contents) {
     next = next.replace(
       dependenciesPattern,
       (match) =>
-        `${match}\n    androidTestImplementation("androidx.test:runner:1.6.2")\n    androidTestImplementation("androidx.test.ext:junit:1.2.1")`
+        `${match}\n    androidTestImplementation("androidx.test:runner:1.7.0")\n    androidTestImplementation("androidx.test.ext:junit:1.3.0")`
     );
   }
   if (!next.includes('unitTests.returnDefaultValues = true')) {
@@ -1408,14 +1411,14 @@ function injectSvgRendererTestSupport(contents) {
       (match) => `${match}\n    testOptions { unitTests.returnDefaultValues = true }`
     );
   }
-  if (!next.includes('testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"')) {
+  if (!next.includes('testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"')) {
     const defaultConfigPattern = /defaultConfig\s*\{/;
     if (!defaultConfigPattern.test(next)) {
       throw new Error('无法配置 SVG renderer instrumentation runner：app build.gradle 模板不匹配。');
     }
     next = next.replace(
       defaultConfigPattern,
-      (match) => `${match}\n        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"`
+      (match) => `${match}\n        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"`
     );
   }
   return next;

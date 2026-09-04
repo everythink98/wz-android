@@ -10,7 +10,7 @@ const patches = readdirSync(patchDir)
   .sort();
 
 describe('installed dependency patches', () => {
-  it.each(patches)('%s exactly matches the installed dependency', (patch) => {
+  it.each(patches)('%s matches the installed dependency', (patch) => {
     expect(() =>
       execFileSync('git', ['apply', '--reverse', '--check', '--unsafe-paths', '--', path.join(patchDir, patch)], {
         cwd: rootDir,

@@ -16,10 +16,9 @@ import { CredentialVaultError } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { ExpandablePanel } from '@/ui/controls/ExpandableControls';
-import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
 import {
   accountCenterSummary,
@@ -59,9 +58,6 @@ function createAccountCenterStyles(theme: ReaderTheme) {
     },
     siteTabSelected: {
       borderBottomColor: actionColor
-    },
-    siteTabPressed: {
-      opacity: 0.68
     },
     siteTabText: {
       color: theme.muted,
@@ -150,9 +146,6 @@ function createAccountCenterStyles(theme: ReaderTheme) {
       paddingHorizontal: 10,
       paddingVertical: 7
     },
-    actionPressed: {
-      opacity: 0.72
-    },
     actionDisabled: {
       opacity: 0.42
     },
@@ -186,18 +179,9 @@ function AccountAction({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
-      android_ripple={androidRipple(theme.primarySoft)}
       disabled={disabled}
-      style={({ pressed }) => [
-        accountStyles.action,
-        compact && accountStyles.actionCompact,
-        pressed && accountStyles.actionPressed,
-        disabled && accountStyles.actionDisabled
-      ]}
-      onPress={() => {
-        triggerPressFeedback();
-        onPress();
-      }}
+      style={[accountStyles.action, compact && accountStyles.actionCompact, disabled && accountStyles.actionDisabled]}
+      onPress={onPress}
     >
       <Text style={[styles.buttonText, accountStyles.actionTextQuiet]}>{label}</Text>
       {disclosure ? <ChevronRight size={15} color={theme.primary} strokeWidth={1.8} /> : null}
@@ -555,14 +539,8 @@ export function AccountCenterPanel({
               accessibilityRole="tab"
               accessibilityLabel={`${view.label}，${view.statusLabel}${selected ? '，已选择' : ''}`}
               accessibilityState={{ selected }}
-              android_ripple={androidRipple(theme.primarySoft)}
-              style={({ pressed }) => [
-                accountStyles.siteTab,
-                selected && accountStyles.siteTabSelected,
-                pressed && accountStyles.siteTabPressed
-              ]}
+              style={[accountStyles.siteTab, selected && accountStyles.siteTabSelected]}
               onPress={() => {
-                triggerPressFeedback();
                 setExpandedSite(view.site);
               }}
             >

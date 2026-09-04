@@ -60,7 +60,6 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       paddingHorizontal: 16,
       paddingVertical: 11
     },
-    rowPressed: { backgroundColor: theme.surface2 },
     rowBody: { flex: 1, minWidth: 0, gap: 3 },
     actorRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
     actorText: { flex: 1, color: theme.ink, fontFamily, fontSize: scaled(13), lineHeight: scaled(18) },
@@ -215,7 +214,6 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       paddingHorizontal: 15,
       paddingVertical: 7
     },
-    replyLauncherPressed: { backgroundColor: theme.primarySoft },
     replyLauncherBody: { flex: 1, minWidth: 0, alignItems: 'center', flexDirection: 'row', gap: 8 },
     replyLauncherTitle: {
       flex: 1,
@@ -266,7 +264,6 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       borderRadius: 14,
       paddingHorizontal: 16
     },
-    topicActionButtonPressed: { opacity: 0.88 },
     topicActionText: {
       color: theme.onPrimary,
       fontFamily,

@@ -54,7 +54,11 @@ vi.mock('expo-file-system', () => {
       }
     }
 
-    move(destination: File) {
+    async move(_destination: File) {
+      // SDK 57 exposes move as an asynchronous API; callers must await it.
+    }
+
+    moveSync(destination: File) {
       const bytes = boundary.files.get(this.uri);
       if (!bytes) {
         throw new Error('missing file');

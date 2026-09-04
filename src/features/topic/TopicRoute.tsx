@@ -36,7 +36,7 @@ import type { TopicListItem } from './model/topicListModel';
 import { useStableTopicLayoutDetail } from './useStableTopicLayoutDetail';
 import { useTopicController } from './useTopicController';
 import { useTopicSessionController } from './useTopicSessionController';
-import { useTopicRouteBeforeRemove } from './useTopicRouteBeforeRemove';
+import { TopicRouteBackBoundary } from './useTopicRouteBeforeRemove';
 
 export type TopicRouteRuntimeValue = {
   account: {
@@ -249,12 +249,6 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     topicSession
   });
   const closeReplyComposer = useCallback(() => topicComposer.toggle(false), [topicComposer]);
-  useTopicRouteBeforeRemove({
-    imagePreviewOpen: Boolean(imagePreviewController.imagePreview),
-    replyComposerOpen: replyComposerIntent.kind !== 'closed',
-    closeImagePreview: imagePreviewController.closeImagePreview,
-    closeReplyComposer
-  });
   const refreshCurrentTopic = useCallback(() => {
     void refreshWholeTopic();
   }, [refreshWholeTopic]);
@@ -297,57 +291,64 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const stableRefreshReplies = useLatestCallback(refreshTopicReplies);
   const stableRefreshWholeTopic = useLatestCallback(refreshCurrentTopic);
   return (
-    <OriginalImageUpgradeBoundary enabled={active}>
-      <View
-        accessibilityElementsHidden={!active}
-        importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
-        pointerEvents={active ? 'auto' : 'none'}
-        style={{ flex: 1 }}
-      >
-        <TopicScreen
-          active={active}
-          actions={actions}
-          article={{
-            busy: topicBusy,
-            error: topicError || null,
-            topic: topicLayoutDetail,
-            ...(topicDetail?.source === 'yaohuo' ? { yaohuoBookmarked: topicDetail.bookmarked } : {})
-          }}
-          chrome={{
-            back: navigation.goBack,
-            favorite: topicFavorite,
-            getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
-            onScroll: handleTopicScroll,
-            openOriginal: openOriginalUrl,
-            openReadingSettings: () => navigation.push('ReadingSettings'),
-            openTopic: stableOpenTopic,
-            openUser: stableOpenUser,
-            refreshReplies: stableRefreshReplies,
-            refreshTopic: stableRefreshWholeTopic,
-            share: shareTopic,
-            toggleFavorite: toggleTopicFavorite,
-            verifyLinuxDo,
-            verifyNodeSeek
-          }}
-          currentNodeSeekUser={runtime.account.sessionViewModels.nodeseek.currentUser}
-          bodyMediaPaused={Boolean(imagePreviewController.imagePreview)}
-          html={{ ...html, contentWidth: runtime.contentWidth, mediaSessionIdentity }}
-          nodeSeekUserId={runtime.account.nodeSeekUserId}
-          onImagePreviewDescriptors={imagePreviewController.registerImagePreviewDescriptors}
-          read={topicController}
-          session={topicSession}
-          targetReply={route.params.targetReply}
-          targetReplyRequestId={route.params.targetReplyRequestId}
-          topicScrollRef={topicScrollRef}
-        />
-        <ImagePreviewModal
-          preview={imagePreviewController.imagePreview}
-          nodeSeekMediaUserAgent={runtime.nodeSeekMediaUserAgent}
-          onClose={imagePreviewController.closeImagePreview}
-          onSave={imagePreviewController.savePreviewImage}
-          onSelect={imagePreviewController.selectPreviewImage}
-        />
-      </View>
-    </OriginalImageUpgradeBoundary>
+    <TopicRouteBackBoundary
+      imagePreviewOpen={Boolean(imagePreviewController.imagePreview)}
+      replyComposerOpen={replyComposerIntent.kind !== 'closed'}
+      closeImagePreview={imagePreviewController.closeImagePreview}
+      closeReplyComposer={closeReplyComposer}
+    >
+      <OriginalImageUpgradeBoundary enabled={active}>
+        <View
+          accessibilityElementsHidden={!active}
+          importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
+          pointerEvents={active ? 'auto' : 'none'}
+          style={{ flex: 1 }}
+        >
+          <TopicScreen
+            active={active}
+            actions={actions}
+            article={{
+              busy: topicBusy,
+              error: topicError || null,
+              topic: topicLayoutDetail,
+              ...(topicDetail?.source === 'yaohuo' ? { yaohuoBookmarked: topicDetail.bookmarked } : {})
+            }}
+            chrome={{
+              back: navigation.goBack,
+              favorite: topicFavorite,
+              getDiscourseEmojiUrls: runtime.account.readGateway.getEmojiUrls,
+              onScroll: handleTopicScroll,
+              openOriginal: openOriginalUrl,
+              openReadingSettings: () => navigation.push('ReadingSettings'),
+              openTopic: stableOpenTopic,
+              openUser: stableOpenUser,
+              refreshReplies: stableRefreshReplies,
+              refreshTopic: stableRefreshWholeTopic,
+              share: shareTopic,
+              toggleFavorite: toggleTopicFavorite,
+              verifyLinuxDo,
+              verifyNodeSeek
+            }}
+            currentNodeSeekUser={runtime.account.sessionViewModels.nodeseek.currentUser}
+            bodyMediaPaused={Boolean(imagePreviewController.imagePreview)}
+            html={{ ...html, contentWidth: runtime.contentWidth, mediaSessionIdentity }}
+            nodeSeekUserId={runtime.account.nodeSeekUserId}
+            onImagePreviewDescriptors={imagePreviewController.registerImagePreviewDescriptors}
+            read={topicController}
+            session={topicSession}
+            targetReply={route.params.targetReply}
+            targetReplyRequestId={route.params.targetReplyRequestId}
+            topicScrollRef={topicScrollRef}
+          />
+          <ImagePreviewModal
+            preview={imagePreviewController.imagePreview}
+            nodeSeekMediaUserAgent={runtime.nodeSeekMediaUserAgent}
+            onClose={imagePreviewController.closeImagePreview}
+            onSave={imagePreviewController.savePreviewImage}
+            onSelect={imagePreviewController.selectPreviewImage}
+          />
+        </View>
+      </OriginalImageUpgradeBoundary>
+    </TopicRouteBackBoundary>
   );
 }

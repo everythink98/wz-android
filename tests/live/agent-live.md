@@ -99,7 +99,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 ### LIVE-NAV-02 四站内部楼层 deep link
 
 - 能力：`NAV-02/03`；共享 `TOPIC-03`、`REG-NAV-003`。只使用当前仍存在且无需写入的四站楼层 URL；每站先在 warm App 发送一次 `exp+wz-android://open-topic?url=<encoded>`，再 force-stop App 后从 process-cold 发送同一链接。force-stop 不清数据、不改登录态。
-- oracle：两种启动态都只 push 一层 Topic，进入正确来源与主题并定位目标楼层；Android Back 一次回到原页面或 Launcher。NodeSeek 的 hash、linux.do 的 path、V2EX `#replyN`、妖火 `tofloor` 分别报告；目标被删、权限不足或公网不可达时仅该站记 `NOT_VERIFIED/BLOCKED_BY_ENV`，不得搜索相似帖子替代。
+- oracle：两种启动态都只 push 一层 Topic，进入正确来源与主题并定位目标楼层；Android Back 一次回到原页面或 Launcher。NodeSeek 的 hash、linux.do 的 path、V2EX `#r_回复ID`、妖火 `tofloor` 分别报告；V2EX `?p=` 仅作页码提示，`#replyN` 只打开普通主题、不制造楼层目标。目标被删、权限不足或公网不可达时仅该站记 `NOT_VERIFIED/BLOCKED_BY_ENV`，不得搜索相似帖子替代。
 - 全程不发送回复、不打开未读消息、不清 App 数据/Cookie/登录态；普通无楼层 Topic URL另作负向控制，必须进入主题但不产生伪目标高亮。
 
 ## 动态读取与返回
@@ -123,7 +123,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - 筛选目标固定从 V2EX 当前 Feed 自上而下检查前 5 个 Topic，选择第一个同时包含楼主与其他作者回复、至少一条带图回复，并能从可见回复中选出一个长度至少 3、只命中部分回复的 ASCII 查找词的 Topic；每个候选只读取一次，不满足即返回继续，5 个均不满足则本段记 `NOT_VERIFIED`。
 - 用户返回目标独立从同一 Feed 自上而下检查前 5 个 Topic，选择第一个作者 User 页至少有一个可打开主题的 Topic；执行 Topic → 作者 → User → 首个主题 → 逐层返回。5 个均不满足则本段记 `NOT_VERIFIED`，不得借用前一场景残留页面。
 - 在筛选目标依次检查全部、只看楼主、只看带图和既定 ASCII 评论查找词；每次同时核对可见列表与数量。再切换倒序，确认同一组内容筛选和查找仍可用且不会把当前片段本地反转；清空查找、恢复全部并切回正序。
-- 若已有已读消息或可见回复关系能进入远端楼层锚点，则缓慢向上滚动，确认上一窗口在“加载更早回复”按钮出现前开始加载且前插不跳位；没有只读目标时记 `NOT_VERIFIED`，不得发送回复制造状态。
+- V2EX 明确引用的实际入口使用 `https://www.v2ex.com/t/945124` 中已核实的 `@Pipecraft #6`：点击用户名进入用户页，返回后点 `#6` 精确定位；动态文本已改变则记 `NOT_VERIFIED`。中间窗口通过原站真实 `#r_回复ID` 补充 Live，正/倒序各向上、向下续读，前插、分页提示消失和后续图片行高变化不得顶走同一可见回复；失败保留位置并从原方向重试。确定性多页时序由 Replay/UI owner 独立证明，不能把人工构造的 floor deep link 冒充普通用户入口。
 - oracle：每层返回到正确页面，筛选后的列表和数量一致；另从筛选目标打开“阅读设置”并返回，必须仍是同一个 Topic、同一筛选和阅读位置，固定回归见 `REG-TOPIC-002/063`。
 
 ### LIVE-READ-04 NodeSeek 用户名内导航与 UID 归一
@@ -150,9 +150,11 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - linux.do 直达 `https://linux.do/t/topic/2833212/4`：目标回复的两个明确公式必须显示为排版后的 SVG，不停留在原始 TeX，块级宽度不溢出，行内基线随正文；主题正文仍可上下滚动。失败样本必须保留可读原始 TeX且不能触发网络、WebView 或循环重试；普通 `$...$` 正文不转换。
 - NodeSeek 直达 `https://www.nodeseek.com/post-812712-1`：逐个切换“💻基本信息 / 🎬IP质量 / 🌐网络质量 / 📍回程路由”，每个 Tab 的首末内容、ANSI 前景/背景色、图片与 report 外项目链接均存在；长图 Tab 首次显示后切到 code Tab，等待 viewability 结算但不滚动，再切回长图两轮，像素必须直接恢复且不得停在 `topic-image-idle`。在可见 terminal code 上录屏执行 `240px / 5s` 慢横拖、快速/反向/斜向/纵向拖动和途中加指；慢横拖必须移动代码且 UI hierarchy/逐帧画面均无放大镜、selection handles 或 `Copy / Share / Select all / Translate` ActionMode，纵拖只滚动主题，途中加指不继续改 x。静止长按作为正向控制必须出现原生选择，第一次 Back 只关闭选择并留在 Topic；干净横拖后第一次 Back 必须正常返回。复制得到当前完整 code owner，长行出现原生横向滚动条且切换/滚离/返回后 offset 与 active tab 不跳。组合评论查找把目标回复隐藏再恢复，并从详情内嵌套页面 Back，当前 route 的 active tab 必须保持；切到另一 Topic 后相同 semantic path 必须回到首 Tab。agent-device 的坐标 pan 只用于本监督式 Live，不保存为 tracked Replay；原站动态内容不匹配固定 fixture 时记录实际 tab/标题并记 `NOT_VERIFIED`，不得换相似帖子冒充。
 - NodeSeek `post-899272-1` 必须通过 App deep link `exp+wz-android://open-topic?url=https%3A%2F%2Fwww.nodeseek.com%2Fpost-899272-1` 直接进入，不从浏览器或“更多”中转。在可见代码区录屏执行 `240px / 5s` 慢横拖以及快速、反向、斜向和纵向拖动；代码应正常横移，且全过程不得出现放大镜、选择手柄、ActionMode 或 `LONG_PRESS` 触感，纵拖只滚动主题。静止长按仍须建立选区；拖动合法选择手柄时始终不得出现放大镜。
-- NodeSeek 直达 `https://www.nodeseek.com/post-863650-1`：确认海量图片正文仍按每 row `<=4` 的父 FlashList typed rows 有界挂载，可正常滚动和返回；同一 PID 连续两轮执行相同滚动后，warm `<=8`、running `<=4`、原图 `<=1`，mounted media 与 PSS 不得持续增长，不得出现 ANR、OOM、Fatal 或 PID 意外重启。
+- NodeSeek 直达 `https://www.nodeseek.com/post-863650-1`：确认海量图片正文仍按每 row `<=4` 的父 FlashList typed rows 有界挂载，可正常滚动和返回；自动原图只随当前 viewport/prefetch row window 挂载，离窗保留 base、真实比例和行高，回窗沿原 150ms 过渡恢复；一次成功显示不得旋转同一 original lease；同一 PID 连续两轮执行相同滚动后，warm `<=8`、running `<=4`、原图 `<=1`，mounted media 与 PSS 不得持续增长，不得出现 ANR、OOM、Fatal 或 PID 意外重启。
 - `REG-TOPIC-120/122`：只读直达 `https://www.nodeseek.com/post-889473-1`，定位第 12 楼“哼”；在 header 可见、未滚动的冷折叠态只展开一次，图片必须自行显示。随后收起/重开，并在同页主楼、回复或展开引用中核对普通块图上下间距与相邻文字节奏没有被放大；动态内容已改变时分别记 `NOT_VERIFIED`，不换相似帖子。
 - `REG-TOPIC-123`：只读直达 `https://www.nodeseek.com/post-890382-1`，按 blockquote → 重复分隔线 → 两个标题 → paragraph → 普通代码块的原始顺序核对主楼与评论；整篇只出现一次顶部文章边界，连续语义 row 间不得出现重复 hairline、`16dp` 内缩或虚拟列表空带。再只读直达 linux.do `https://linux.do/t/topic/2556285`、V2EX `https://www.v2ex.com/t/1233470`、妖火 `https://www.yaohuo.me/bbs-1570569.html`，确认四站主楼、评论与展开引用沿同一 prose theme 且原有表格、媒体和评论结构不变。NodeSeek 样本依次核对浅/深色、紧凑/标准/宽松行距及 `130%` 字号，记录初始设置并在结束前恢复；固定尺度由自动测试承担，不按截图反推 dp。
+- NS 终端抓取回归另核对 `post-812712-1` 前两个 Tab 的完整代码，而不只确认容器存在：冷读/刷新后与同次可获得的评论 Markdown 比较首末行、全文和 ANSI；复制按钮的成功提示不能代替剪贴板全文对照。记录当前传输及匹配 APK，未自然出现空/部分 xterm 的设备输入时，仅将共享入口行为矩阵记为确定性证据。不要等待其他图片全部完成再验收正文，也不要把 App 重开恢复当作全部算法等价的证明。
+
 - `REG-TOPIC-121`：在 linux.do `t/topic/342888` 或同一场景的现存 inline 媒体上记录首次准入、短距离滚离/返回和跨 Tab/引用展开；普通 permit wave 不得让已见图片退回空白，旧事件不得造成错误成功/失败或 fatal。自然 error/retry 不出现时该设备分支记 `NOT_VERIFIED`，不得改 URL、清缓存或断网制造失败。
 - `REG-TOPIC-137/138/141`：只读直达 `https://www.yaohuo.me/bbs-1577052.html`，不用评论搜索，按原帖顺序滚到第 2 楼和第 2 页 13 楼；第 2 楼同源 `/face/狂踩.gif` 保持自然比例且最长边不超过 100，第 13 楼外链 GIF 必须紧跟句尾、成功显示为自然 30×30，不得换行、居中、缩成 Emoji 或空白消失。保留 App 数据，由用户把系统字体切到小字体 `font_scale=0.9`，确认 #3249 的“你也一天一帖吗”和 #3247 的“我不服……”均完整显示且不被图片覆盖；恢复默认 `1.0` 后再验一次，尺寸、基线和文字流不得回归。再从 App“更多”进入妖火原站并打开同一链接，只读核对两处 HTML 锚点和原站显示；不以 `.ubbimg`、GIF 后缀、评论角色、设备或系统字体特判语义，不发帖、不回复、不互动。
 - `REG-TOPIC-139/140`：先从 App“更多 → 账号中心 → 妖火 → 检测或重新登录”进入保留登录态的原站 WebView，并在同一 WebView 直达 `https://www.yaohuo.me/bbs-5248.html` 作只读对照；不得用外部浏览器或匿名页面替代。关闭原站页后，不使用搜索，以 `exp+wz-android://open-topic?url=https%3A%2F%2Fwww.yaohuo.me%2Fbbs-5248.html` 进入 App 原生详情，按原站顺序核对“前言”“将严格控制灌水！”“论坛总规则”“一、免责条款”“二、注册ID昵称管理规则”“三、社区发帖规则”及末段最后一句均完整可见且无空白正文或复杂内容降级；“前言”和三个分节标题保持 `size=5` 的同级放大，“论坛总规则”保持更大的 `size=6`，“将严格控制灌水！”及其后两段分别保持 magenta、darkgreen、darkred。依次切换紧凑/标准/宽松行距并在 `130%` 字号下核对放大文字无上下裁字，字号继续相对 App 阅读字号缩放，来源背景与 `line-height` 不进入 App。分别静止长按“论坛总规则”和普通规则正文，均须出现 ActionMode 与选择手柄并可复制对应文字；结束前取消选区并恢复初始阅读设置。

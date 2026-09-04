@@ -78,9 +78,6 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderSettings) {
       paddingHorizontal: 6,
       paddingVertical: 3
     },
-    linuxDoFilterButtonPressed: {
-      backgroundColor: theme.mist
-    },
     linuxDoFilterButtonText: {
       flexShrink: 1,
       color: theme.primary,

@@ -150,7 +150,7 @@ export async function saveImageUriToLibrary(
       await assertReadableImageFile(savedUri);
       markDiagnosticStage(trace, 'parse', { state: 'file-readable' });
       markDiagnosticStage(trace, 'persist', { state: 'media-library-start' });
-      await MediaLibrary.saveToLibraryAsync(savedUri);
+      await MediaLibrary.Asset.create(savedUri);
       markDiagnosticStage(trace, 'persist', { state: 'media-library' });
     } finally {
       if (shouldDeleteFile && savedUri) {

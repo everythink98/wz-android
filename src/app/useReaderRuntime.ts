@@ -2,32 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorMessage } from '@/platform/network/errors';
 import {
   createEmptyReaderData,
-  sanitizeReaderSettings,
   sanitizeReaderData,
+  sanitizeReaderDataMutation,
   type ReaderData,
   type ReaderDataMutationReason
 } from '@/domain/reader/readerData';
 import { loadReaderData, saveCleanReaderData, saveReaderSettings } from '@/platform/storage/readerDataStore';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-
-function prepareSettingsOnlyCommit(current: ReaderData, updated: ReaderData) {
-  if (
-    updated.version !== current.version ||
-    updated.favorites !== current.favorites ||
-    updated.history !== current.history ||
-    updated.followedUsers !== current.followedUsers ||
-    updated.deletedRecords !== current.deletedRecords ||
-    !updated.settings ||
-    typeof updated.settings !== 'object'
-  ) {
-    return null;
-  }
-  return {
-    ...current,
-    settings: sanitizeReaderSettings(updated.settings)
-  };
-}
 
 function waitForNextSaveTurn() {
   return new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -63,11 +45,7 @@ export function prepareReaderDataCommit(
   if (mutationReason === 'history-recorded') {
     return updated;
   }
-  const settingsOnly = prepareSettingsOnlyCommit(current, updated);
-  if (settingsOnly) {
-    return settingsOnly;
-  }
-  return sanitizeReaderData(updated);
+  return sanitizeReaderDataMutation(current, updated);
 }
 
 export function rollbackFailedReaderDataSave(

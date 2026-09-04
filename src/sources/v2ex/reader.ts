@@ -3,8 +3,8 @@ import type {
   CategoriesResponse,
   FeedResponse,
   Reply,
-  ReplyLocationTarget,
   RepliesResponse,
+  ReplyLocationTarget,
   ReplyOrder,
   ReplyWindowPosition,
   Topic,
@@ -39,6 +39,7 @@ import {
 } from './protocol';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import { orientReplyWindow } from '@/sources/replyWindows';
+import { findReplyLocation, matchesReplyLocation } from '@/domain/forum/replyLocation';
 
 const HTML_LIST_PAGE_SIZE = 20;
 const V2EX_FEED_CURSOR_LIMIT = 200;
@@ -341,7 +342,7 @@ function shouldKeepV2exReply(commentId: number | undefined, author: string, cont
   return Boolean(commentId || author || hasRenderableHtmlContent(contentHtml));
 }
 
-function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
+function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>, id: string) {
   const repliesByCommentId = new Map<number, V2exHtmlReplyMeta>();
   const repliesByFloor = new Map<number, V2exHtmlReplyMeta>();
   const replies: Reply[] = [];
@@ -383,7 +384,8 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
     const preparedContent = prepareSanitizedForumContent(replyContent, {
       baseUrl: BASE_URL,
       role: 'reply',
-      source: 'v2ex'
+      source: 'v2ex',
+      topicId: id
     });
     const contentHtml = preparedContent.contentHtml;
     const reply: Reply | null = shouldKeepV2exReply(commentId, author, contentHtml)
@@ -435,7 +437,7 @@ function parseV2exLinkedTopicPages(root: ReturnType<typeof parseHtml>, id: strin
 
 function parseV2exHtmlDetail(html: string, id: string): V2exHtmlDetail {
   const root = parseHtml(html);
-  const replyMeta = parseV2exReplyMeta(root);
+  const replyMeta = parseV2exReplyMeta(root, id);
   const replyActionCount = parseV2exInteractionCount(root, /ReplyAction/i);
   const commentCount = parseV2exCommentCount(root);
   return {
@@ -455,29 +457,59 @@ function parseV2exHtmlDetail(html: string, id: string): V2exHtmlDetail {
   };
 }
 
-function uniqueV2exReplies(replies: readonly Reply[]) {
-  const seenCommentIds = new Set<number>();
-  const seenFallbackFloors = new Set<number>();
-  return replies.filter((reply) => {
-    if (reply.commentId && seenCommentIds.has(reply.commentId)) return false;
-    if (!reply.commentId && reply.floor && seenFallbackFloors.has(reply.floor)) return false;
-    if (reply.commentId) {
-      seenCommentIds.add(reply.commentId);
-    } else if (reply.floor) {
-      seenFallbackFloors.add(reply.floor);
+function uniqueV2exReplies(replies: readonly Reply[], target?: ReplyLocationTarget) {
+  const seenCommentIds = new Map<number, number>();
+  const seenFallbackFloors = new Map<number, number>();
+  const identity = target && { ...target, expectedAuthorUsername: undefined };
+  const ambiguousFloors = new Set<number>();
+  const unique: Reply[] = [];
+  for (const reply of replies) {
+    const previousIndex = reply.commentId
+      ? seenCommentIds.get(reply.commentId)
+      : seenFallbackFloors.get(reply.floor || 0);
+    if (previousIndex !== undefined) {
+      const previous = unique[previousIndex];
+      if (
+        previous.replyLocationConflict === 'identity' ||
+        reply.replyLocationConflict === 'identity' ||
+        previous.floor !== reply.floor ||
+        (previous.authorId || previous.author).toLowerCase() !== (reply.authorId || reply.author).toLowerCase()
+      ) {
+        if (identity && (matchesReplyLocation(previous, identity) || matchesReplyLocation(reply, identity))) {
+          throw new Error('V2EX 目标楼层身份冲突');
+        }
+        if (previous.floor !== undefined) ambiguousFloors.add(previous.floor);
+        if (reply.floor !== undefined) ambiguousFloors.add(reply.floor);
+        if (previous.replyLocationConflict !== 'identity')
+          unique[previousIndex] = { ...previous, replyLocationConflict: 'identity' };
+      } else if (reply.replyLocationConflict === 'floor' && !previous.replyLocationConflict) {
+        unique[previousIndex] = { ...previous, replyLocationConflict: 'floor' };
+      }
+      continue;
     }
-    return true;
-  });
+    if (reply.commentId) {
+      seenCommentIds.set(reply.commentId, unique.length);
+    } else if (reply.floor) {
+      seenFallbackFloors.set(reply.floor, unique.length);
+    }
+    unique.push(reply);
+  }
+  if (!ambiguousFloors.size) return unique;
+  return unique.map((reply) =>
+    reply.floor !== undefined && ambiguousFloors.has(reply.floor) && !reply.replyLocationConflict
+      ? { ...reply, replyLocationConflict: 'floor' as const }
+      : reply
+  );
 }
 
-function visibleV2exHtmlReplies(detail: V2exHtmlDetail | null) {
-  return uniqueV2exReplies(detail?.replies || []);
+function visibleV2exHtmlReplies(detail: V2exHtmlDetail | null, target?: ReplyLocationTarget) {
+  return uniqueV2exReplies(detail?.replies || [], target);
 }
 
-function visibleV2exHtmlReplyPage(detail: V2exHtmlDetail | null, page: number) {
+function visibleV2exHtmlReplyPage(detail: V2exHtmlDetail | null, page: number, target?: ReplyLocationTarget) {
   const firstFloor = (page - 1) * V2EX_REPLY_PAGE_SIZE + 1;
   const lastFloor = page * V2EX_REPLY_PAGE_SIZE;
-  return visibleV2exHtmlReplies(detail).filter(
+  return visibleV2exHtmlReplies(detail, target).filter(
     (reply) => !reply.floor || (reply.floor >= firstFloor && reply.floor <= lastFloor)
   );
 }
@@ -540,10 +572,6 @@ function v2exReplyPageNeighbors(detail: V2exHtmlDetail, currentPage: number) {
     previousPage: linkedPages.filter((page) => page < currentPage).at(-1) ?? null,
     nextPage: linkedPages.find((page) => page > currentPage) ?? null
   };
-}
-
-function v2exReplyMatchesTarget(reply: Reply, target: ReplyLocationTarget) {
-  return target.commentId !== undefined ? reply.commentId === target.commentId : reply.floor === target.floor;
 }
 
 function v2exHtmlAccessRequirement(root: ReturnType<typeof parseHtml>) {
@@ -870,7 +898,7 @@ export async function getV2exCategories(options: V2exOptions = {}): Promise<Cate
   );
 }
 
-function normalizeReply(raw: unknown, index: number): Reply | null {
+function normalizeReply(raw: unknown, index: number, topicId: string): Reply | null {
   if (!isRecord(raw)) {
     return null;
   }
@@ -879,7 +907,8 @@ function normalizeReply(raw: unknown, index: number): Reply | null {
   const preparedContent = prepareSanitizedForumContent(raw.content_rendered || raw.content || '', {
     baseUrl: BASE_URL,
     role: 'reply',
-    source: 'v2ex'
+    source: 'v2ex',
+    topicId
   });
   const contentHtml = preparedContent.contentHtml;
   const commentId = typeof raw.id === 'number' ? raw.id : parsePositiveInteger(raw.id);
@@ -1017,7 +1046,11 @@ export async function getV2exReplies(
     knownReplyCount = options.replyCount,
     knownPages: readonly number[] = []
   ) => {
-    const replies = visibleV2exHtmlReplyPage(detail, currentPage);
+    const replies = visibleV2exHtmlReplyPage(
+      detail,
+      currentPage,
+      position.kind === 'target' ? position.target : undefined
+    );
     const declaredTotalCount =
       detail.replyCountConflict ||
       (typeof detail.replyCount === 'number' &&
@@ -1076,7 +1109,8 @@ export async function getV2exReplies(
     if (options.signal?.aborted) throw error;
     detailHtmlFailed = true;
   }
-  const firstReplies = visibleV2exHtmlReplyPage(detail, 1);
+  const target = position.kind === 'target' ? position.target : undefined;
+  const firstReplies = visibleV2exHtmlReplyPage(detail, 1, target);
   const firstReplyCount = detail?.replyCountConflict ? options.replyCount : (detail?.replyCount ?? options.replyCount);
 
   if (detail && (firstReplies.length > 0 || firstReplyCount === 0)) {
@@ -1084,10 +1118,21 @@ export async function getV2exReplies(
     const knownPages = new Set([1, ...detail.linkedPages]);
     if (position.kind === 'target') {
       const visitedPages = new Set([1]);
-      while (!firstReplies.some((reply) => v2exReplyMatchesTarget(reply, position.target))) {
+      let candidates = firstReplies;
+      const floorPage = position.target.floor ? Math.ceil(position.target.floor / V2EX_REPLY_PAGE_SIZE) : undefined;
+      while (!findReplyLocation(candidates, position.target)) {
+        if (
+          candidates.some((reply) =>
+            matchesReplyLocation(reply, { ...position.target, expectedAuthorUsername: undefined })
+          )
+        ) {
+          throw new Error('V2EX 目标楼层未找到或引用不匹配');
+        }
         const pendingPages = [...knownPages].filter((page) => !visitedPages.has(page));
         const nextPage =
-          pendingPages.find((page) => page === position.target.pageHint) ?? pendingPages.sort((a, b) => a - b)[0];
+          pendingPages.find((page) => page === position.target.pageHint) ??
+          pendingPages.find((page) => page === floorPage) ??
+          pendingPages.sort((a, b) => a - b)[0];
         if (!nextPage || visitedPages.size >= V2EX_LINKED_REPLY_PAGE_LIMIT) {
           throw new Error('V2EX 目标楼层未找到');
         }
@@ -1095,10 +1140,7 @@ export async function getV2exReplies(
         visitedPages.add(currentPage);
         detail = await readHtmlPage(currentPage);
         detail.linkedPages.forEach((page) => knownPages.add(page));
-        if (
-          visibleV2exHtmlReplyPage(detail, currentPage).some((reply) => v2exReplyMatchesTarget(reply, position.target))
-        )
-          break;
+        candidates = visibleV2exHtmlReplyPage(detail, currentPage, position.target);
       }
     } else if (order === 'newest') {
       const visitedPages = new Set<number>();
@@ -1126,9 +1168,10 @@ export async function getV2exReplies(
   );
   const apiRows = Array.isArray(replyData) ? replyData : [];
   const apiReplies = uniqueV2exReplies(
-    mergeV2exReplyMeta(apiRows.map(normalizeReply).filter(Boolean) as Reply[], detail)
+    mergeV2exReplyMeta(apiRows.map((raw, index) => normalizeReply(raw, index, id)).filter(Boolean) as Reply[], detail),
+    target
   );
-  const combinedReplies = uniqueV2exReplies([...apiReplies, ...firstReplies]).sort(
+  const combinedReplies = uniqueV2exReplies([...apiReplies, ...firstReplies], target).sort(
     (left, right) => (left.floor ?? Number.MAX_SAFE_INTEGER) - (right.floor ?? Number.MAX_SAFE_INTEGER)
   );
   const replyCount = topic.replyCount || 0;
@@ -1136,7 +1179,7 @@ export async function getV2exReplies(
     combinedReplies.length === apiReplies.length &&
     isCompleteV2exReplyCollection(apiReplies, apiRows.length, replyCount);
   if (!complete && combinedReplies.length === 0) throw new Error(V2EX_REPLY_COLLECTION_ERROR);
-  if (position.kind === 'target' && !combinedReplies.some((reply) => v2exReplyMatchesTarget(reply, position.target))) {
+  if (position.kind === 'target' && !findReplyLocation(combinedReplies, position.target)) {
     throw new Error('V2EX 目标楼层未找到');
   }
   const result = annotateSourceDiagnosticSummary(

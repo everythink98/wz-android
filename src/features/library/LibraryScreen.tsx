@@ -25,7 +25,7 @@ import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { TOUCH_HIT_SLOP, triggerPressFeedback } from '@/ui/controls/pressFeedback';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { avatarInitial } from '@/ui/avatar/Avatar';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
@@ -47,7 +47,6 @@ const LIBRARY_TAB_ITEMS = [
 ];
 function pressLibraryAction(event: GestureResponderEvent, onPress: () => void) {
   event.stopPropagation?.();
-  triggerPressFeedback();
   onPress();
 }
 
@@ -330,7 +329,6 @@ export const LibraryScreen = memo(function LibraryScreen({
   const openCategoryMenu = useCallback(
     (tab: 'favorites' | 'history') => {
       if (categoryItems.length <= 1) return;
-      triggerPressFeedback();
       setCategoryMenuTab(tab);
       const triggerRef = tab === 'favorites' ? favoriteCategoryMenuTriggerRef : historyCategoryMenuTriggerRef;
       triggerRef.current?.measureInWindow((x, y, _width, height) => {
@@ -349,7 +347,6 @@ export const LibraryScreen = memo(function LibraryScreen({
   );
   const closeCategoryMenu = useCallback(() => setCategoryMenuTab(null), []);
   const selectCategory = useCallback((value: string) => {
-    triggerPressFeedback();
     setCategoryMenuTab(null);
     setCategoryFilter(value);
   }, []);
@@ -530,7 +527,7 @@ export const LibraryScreen = memo(function LibraryScreen({
                 expanded: categoryMenuTab === viewportTab
               }}
               disabled={!viewportCategorySelectionAvailable}
-              style={({ pressed }) => [styles.categoryFilterButton, pressed && styles.categoryFilterButtonPressed]}
+              style={styles.categoryFilterButton}
               onPress={() => {
                 if (viewportTab !== 'users') openCategoryMenu(viewportTab);
               }}

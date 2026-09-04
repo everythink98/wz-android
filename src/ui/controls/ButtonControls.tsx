@@ -2,8 +2,8 @@ import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { alphaColor, androidRipple, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
-import { pressWithFeedback, TOUCH_HIT_SLOP } from './pressFeedback';
+import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { TOUCH_HIT_SLOP } from './touchTarget';
 
 function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const fontSize = (size: number) => Math.round(size * settings.fontScale);
@@ -127,10 +127,9 @@ export function FloatingIconButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
-      android_ripple={androidRipple(theme.primarySoft, true)}
       disabled={disabled}
       style={[styles.floating, disabled && styles.disabled]}
-      onPress={() => pressWithFeedback(onPress)}
+      onPress={onPress}
     >
       {loading ? (
         <ActivityIndicator color={theme.primary} size="small" />
@@ -176,7 +175,6 @@ export function IconButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled, selected: active }}
-      android_ripple={androidRipple(theme.primarySoft, iconOnly || tiny)}
       style={[
         styles.button,
         ghost && styles.ghost,
@@ -187,7 +185,7 @@ export function IconButton({
         disabled && styles.disabled
       ]}
       disabled={disabled}
-      onPress={() => pressWithFeedback(onPress)}
+      onPress={onPress}
     >
       <Icon size={resolvedIconSize} color={color} fill={active ? color : 'none'} strokeWidth={1.8} />
       {iconOnly ? null : (
@@ -239,7 +237,7 @@ export function AppButton({
         disabled && styles.disabled
       ]}
       disabled={disabled}
-      onPress={() => pressWithFeedback(onPress)}
+      onPress={onPress}
     >
       <Text
         style={[

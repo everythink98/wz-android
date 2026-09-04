@@ -187,7 +187,8 @@ describe('topic query controller', () => {
   beforeEach(() => appQueryClient.clear());
   afterEach(async () => {
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await appQueryClient.cancelQueries();
+      await Promise.resolve();
     });
     setDiagnosticWriter(null);
   });
@@ -1602,7 +1603,7 @@ describe('topic query controller', () => {
     );
   });
 
-  it('displays an adapter-confirmed target window', async () => {
+  it('displays a non-V2EX adapter-confirmed target window', async () => {
     const topic: Topic = {
       ...firstTopic,
       source: 'yaohuo',
@@ -1652,6 +1653,33 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.topicReplies).toEqual([sourceOwnedTarget]);
   });
 
+  it.each(['wrong-author', 'duplicate-floor', 'missing'] as const)(
+    'does not commit a V2EX %s window for an explicit reference',
+    async (failure) => {
+      const topic: Topic = { ...firstTopic, source: 'v2ex', url: 'https://www.v2ex.com/t/1' };
+      const detail: TopicDetail = { ...firstDetail, ...topic, replyHasMore: true, replyNextPage: 2 };
+      const target = { ...firstReply, floor: 101, author: 'alice', commentId: 1101 };
+      const wrong = { ...target, author: 'bob', commentId: 1102 };
+      const getReplies = jest.fn<TestGetReplies>(async () => ({
+        items: failure === 'missing' ? [] : failure === 'duplicate-floor' ? [target, wrong] : [wrong],
+        currentPage: 2,
+        previousPage: 1,
+        hasMore: false,
+        nextPage: null,
+        nextOffset: null
+      }));
+      const hook = await renderTopicController({ topic, readGateway: { getTopic: async () => detail, getReplies } });
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
+      await act(async () => {
+        await expect(
+          hook.result.current.controller.locateReply({ floor: 101, expectedAuthorUsername: 'alice' }, { silent: true })
+        ).resolves.toBe('failed');
+      });
+      expect(hook.result.current.controller.topicReplies).toEqual([firstReply]);
+      expect(getReplies).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('reuses a loaded V2EX target and queries an unloaded target window', async () => {
     const reply = { ...firstReply, floor: 12, commentId: 120 };
     const topic = { ...firstTopic, source: 'v2ex' as const, url: 'https://www.v2ex.com/t/1' };
@@ -1677,6 +1705,10 @@ describe('topic query controller', () => {
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([reply]));
     await expect(hook.result.current.controller.locateReply({ floor: 12 })).resolves.toBe('completed');
+    await expect(
+      hook.result.current.controller.locateReply({ floor: 12, expectedAuthorUsername: 'BOB' })
+    ).resolves.toBe('completed');
+    expect(getReplies).not.toHaveBeenCalled();
     await expect(hook.result.current.controller.locateReply({ floor: 99 }, { silent: true })).resolves.toBe('failed');
     expect(getReplies).toHaveBeenCalledTimes(1);
     expect(getReplies).toHaveBeenCalledWith(
@@ -2856,7 +2888,7 @@ describe('topic query controller', () => {
       scope: initialForumSessionEpochs
     });
     void appQueryClient
-      .fetchQuery({
+      .query({
         queryKey: unrelatedKey,
         queryFn: ({ signal }) =>
           new Promise((_resolve, reject) => {

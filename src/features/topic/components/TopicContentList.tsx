@@ -27,6 +27,7 @@ import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flas
 import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider, TRenderEngineProvider, type CustomBlockRenderer } from 'react-native-render-html';
 import { Bookmark, BookmarkCheck, ChevronDown, Ham, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
+import { findReplyLocation } from '@/domain/forum/replyLocation';
 import type {
   Reply,
   ReplyLocationTarget,
@@ -48,7 +49,6 @@ import {
   nodeSeekStardustReceiveFromAttributes
 } from '@/sources/nodeseek/stardustMarkup';
 import {
-  androidRipple,
   replyContextBadgeStyle,
   sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,
@@ -61,7 +61,7 @@ import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { TOUCH_HIT_SLOP, triggerPressFeedback } from '@/ui/controls/pressFeedback';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { topicWithAuthorFallback, userFromTopic } from '@/domain/forum/userNavigation';
@@ -101,7 +101,7 @@ import {
 import {
   topicListItemKey,
   topicListItemType,
-  topicListMediaPlanStats,
+  projectTopicListItems,
   type TopicListItem
 } from '../model/topicListModel';
 import { highlightHtml } from '@/ui/text/highlight';
@@ -117,6 +117,7 @@ import { ManagedTopicContentVideo } from '../media/ManagedTopicContentVideo';
 import { useTopicBodyMediaViewport } from '../media/useTopicBodyMediaViewport';
 import { diagnosticRef } from '@/platform/diagnostics/diagnosticPolicy';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import {
   TopicSplitDisclosureProvider,
   TopicSplitDisclosureScope,
@@ -130,13 +131,15 @@ import { NodeSeekStardustCard } from './NodeSeekStardustCard';
 import {
   TopicSelectionRowProvider,
   TopicSelectionSurface,
-  type TopicSelectionItem,
   useTopicSelectionRowActive,
   useTopicSelectionRowRef
 } from '../selection/TopicSelectionSurface';
 
 const EMPTY_QUOTE_CONTENT_TOKENS = new Map<string, string>();
-const EMPTY_NEARBY_TOPIC_CONTENT_KEYS: ReadonlySet<string> = new Set();
+const REPLY_END_REACHED_THRESHOLD = 0.55;
+const TOPIC_VISIBLE_CONTENT_POSITION = {
+  shouldAnchorItem: (item: TopicListItem) => item.type !== 'replyControls' && item.type !== 'replyWindowStart'
+};
 
 const CONTENT_ROW_TRIM_LEADING: ViewStyle = {
   borderTopLeftRadius: 0,
@@ -168,24 +171,6 @@ type TopicOpeningListItem = Extract<
   TopicListItem,
   { type: 'topicContent' | 'topicQuoteContent' | 'topicQuoteSummary' }
 >;
-
-function openingSelectionItem(item: TopicOpeningListItem): TopicSelectionItem | undefined {
-  const rowKey = openingSelectionRowKey(item);
-  if (!rowKey) return undefined;
-  if (item.type === 'topicQuoteSummary') {
-    return { documentId: 'opening', rowKey, selectionToken: item.content.row.selectionToken };
-  }
-  if (item.content.type !== 'content') return undefined;
-  const row = item.content.row;
-  return { documentId: 'opening', rowKey, selectionToken: row.selectionToken };
-}
-
-function openingSelectionRowKey(item: TopicOpeningListItem) {
-  if (item.type === 'topicQuoteSummary') {
-    return item.previewVisible && item.content.quote.preview ? item.key : undefined;
-  }
-  return item.content.type === 'content' ? item.key : undefined;
-}
 
 function topicListItemVisible(item: TopicListItem, disclosureStore: Parameters<typeof topicSemanticRowVisible>[2]) {
   const row = topicListCompiledRow(item);
@@ -464,8 +449,6 @@ export const TopicContentList = memo(function TopicContentList({
   const sourceReplies = read.topicReplies;
   const replyHasPrevious = read.replyHasPrevious;
   const replyHasMore = read.replyHasMore;
-  const previousWindowWasAvailableRef = useRef(replyHasPrevious);
-  const maintainPreviousWindowPosition = replyHasPrevious || previousWindowWasAvailableRef.current;
   const loadedQuotedReplies = read.loadedQuotedReplies;
   const loadingMoreReplies = read.loadingMoreReplies;
   const loadingPreviousReplies = read.loadingPreviousReplies;
@@ -636,31 +619,6 @@ export const TopicContentList = memo(function TopicContentList({
   );
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
-  const [nearbyTopicContent, setNearbyTopicContent] = useState<{
-    keys: ReadonlySet<string>;
-    topicKey: string;
-  }>({ keys: new Set(), topicKey: '' });
-  const nearbyTopicContentKeys =
-    nearbyTopicContent.topicKey === detailTopicStateKey ? nearbyTopicContent.keys : EMPTY_NEARBY_TOPIC_CONTENT_KEYS;
-  const addNearbyTopicContentKeys = useCallback(
-    (keys: string[]) => {
-      if (!detailTopicStateKey || !keys.length) {
-        return;
-      }
-      setNearbyTopicContent((current) => {
-        const currentKeys = current.topicKey === detailTopicStateKey ? current.keys : new Set<string>();
-        const additions = keys.filter((key) => !currentKeys.has(key));
-        if (!additions.length) {
-          return current;
-        }
-        return {
-          keys: new Set([...currentKeys, ...additions]),
-          topicKey: detailTopicStateKey
-        };
-      });
-    },
-    [detailTopicStateKey]
-  );
   const [primedReplyQuoteContent, setPrimedReplyQuoteContent] = useState<{
     tokens: ReadonlyMap<string, string>;
     topicKey: string;
@@ -874,7 +832,6 @@ export const TopicContentList = memo(function TopicContentList({
   const copyAcceptedAnswerToClipboard = useCallback(() => {
     const copyText = stripHtml(acceptedAnswerReply?.contentHtml || '');
     if (!copyText) return;
-    triggerPressFeedback();
     void Clipboard.setStringAsync(copyText)
       .then(() => ToastAndroid.show('评论已复制', ToastAndroid.SHORT))
       .catch(() => ToastAndroid.show('复制失败', ToastAndroid.SHORT));
@@ -1026,10 +983,6 @@ export const TopicContentList = memo(function TopicContentList({
   ]);
   const topicPostludeVisible = Boolean(legacyTopicPollsVisible || topicHasPostActions);
   const disclosureStore = useTopicSplitDisclosureStore(detailTopicStateKey);
-  const visibleTopicOpeningListItems = useMemo(
-    () => topicOpeningListItems.filter((listItem) => topicListItemVisible(listItem, disclosureStore)),
-    [disclosureStore, topicOpeningListItems]
-  );
   const unfilteredTopicListItems = useMemo<TopicListItem[]>(
     () => [
       ...topicOpeningListItems,
@@ -1039,20 +992,17 @@ export const TopicContentList = memo(function TopicContentList({
     ],
     [acceptedAnswerListItems, replyListItems, topicOpeningListItems, topicPostludeVisible]
   );
-  const topicListItems = useMemo(
-    () => unfilteredTopicListItems.filter((listItem) => topicListItemVisible(listItem, disclosureStore)),
+  const {
+    items: topicListItems,
+    selectionItems: topicSelectionItems,
+    selectionRowKeys: topicSelectionRowKeys,
+    mediaPlanStats: bodyMediaPlanStats
+  } = useMemo(
+    () =>
+      projectTopicListItems(unfilteredTopicListItems, (listItem) => topicListItemVisible(listItem, disclosureStore)),
     [disclosureStore, unfilteredTopicListItems]
   );
-  const topicSelectionItems = useMemo(
-    () => visibleTopicOpeningListItems.flatMap((listItem) => openingSelectionItem(listItem) || []),
-    [visibleTopicOpeningListItems]
-  );
-  const topicSelectionRowKeys = useMemo(
-    () => new Set(visibleTopicOpeningListItems.flatMap((item) => openingSelectionRowKey(item) || [])),
-    [visibleTopicOpeningListItems]
-  );
   const topicSelectionSessionKey = `${detailTopicStateKey}:${contentWidth}:${systemFontScale}:${settings.fontFamily}:${settings.fontScale}:${settings.lineHeight}`;
-  const bodyMediaPlanStats = useMemo(() => topicListMediaPlanStats(topicListItems), [topicListItems]);
   const bodyMediaDiagnosticSession = useMemo(
     () =>
       item
@@ -1097,15 +1047,24 @@ export const TopicContentList = memo(function TopicContentList({
     items: topicListItems,
     sessionIdentity: `${detailTopicStateKey}:${mediaSessionIdentity}`
   });
+  const bodyMediaViewportRowKeySet = useMemo(() => new Set(bodyMediaViewportRowKeys), [bodyMediaViewportRowKeys]);
+  const [loadedDetailKey, setLoadedDetailKey] = useState('');
+  const onListLoad = useCallback(() => setLoadedDetailKey(detailTopicStateKey), [detailTopicStateKey]);
   useEffect(() => {
-    if (!pendingReplyOrderScrollRef.current || repliesLoading || repliesError) return;
+    if (
+      loadedDetailKey !== detailTopicStateKey ||
+      !pendingReplyOrderScrollRef.current ||
+      repliesLoading ||
+      repliesError
+    )
+      return;
     const firstReplyIndex = topicListItems.findIndex(
       (listItem) => listItem.type === 'reply' || listItem.type === 'replyStart'
     );
     if (firstReplyIndex < 0) return;
     pendingReplyOrderScrollRef.current = false;
-    topicScrollRef.current?.scrollToIndex({ animated: true, index: firstReplyIndex, viewPosition: 0.2 });
-  }, [repliesError, repliesLoading, topicListItems, topicScrollRef]);
+    topicScrollRef.current?.scrollToIndex({ animated: true, index: firstReplyIndex, viewPosition: 0 });
+  }, [detailTopicStateKey, loadedDetailKey, repliesError, repliesLoading, topicListItems, topicScrollRef]);
   const replyLocationRequestIdRef = useRef(0);
   const [replyLocationCommand, setReplyLocationCommand] = useState<{
     requestId: number;
@@ -1114,9 +1073,9 @@ export const TopicContentList = memo(function TopicContentList({
   const activeTargetReply = replyLocationCommand?.target || targetReply;
   const targetReplyIdentity =
     typeof activeTargetReply?.commentId === 'number'
-      ? `comment:${activeTargetReply.commentId}`
+      ? `comment:${activeTargetReply.commentId}:${activeTargetReply.expectedAuthorUsername ?? ''}`
       : typeof activeTargetReply?.floor === 'number'
-        ? `floor:${activeTargetReply.floor}`
+        ? `floor:${activeTargetReply.floor}:${activeTargetReply.expectedAuthorUsername ?? ''}`
         : '';
   const targetReplyCommandKey = replyLocationCommand
     ? `request:${replyLocationCommand.requestId}`
@@ -1125,23 +1084,19 @@ export const TopicContentList = memo(function TopicContentList({
         ? `route-request:${targetReplyRequestId}`
         : `route:${targetReplyIdentity}`
       : '';
-  const targetReplyMatches = useCallback(
-    (reply: Reply) =>
-      typeof activeTargetReply?.commentId === 'number'
-        ? reply.commentId === activeTargetReply.commentId
-        : typeof activeTargetReply?.floor === 'number' && reply.floor === activeTargetReply.floor,
-    [activeTargetReply?.commentId, activeTargetReply?.floor]
-  );
-  const targetReplyListIndex = useMemo(
-    () =>
-      targetReplyCommandKey
-        ? topicListItems.findIndex(
-            (listItem) =>
-              (listItem.type === 'reply' || listItem.type === 'replyStart') && targetReplyMatches(listItem.reply)
-          )
-        : -1,
-    [targetReplyCommandKey, targetReplyMatches, topicListItems]
-  );
+  const resolvedTargetReplyKey = useMemo(() => {
+    const reply = activeTargetReply && findReplyLocation(sourceReplies, activeTargetReply);
+    return reply ? getReplyKey(reply) : null;
+  }, [activeTargetReply, sourceReplies]);
+  const targetReplyListIndex = useMemo(() => {
+    const target = resolvedTargetReplyKey;
+    return targetReplyCommandKey && target
+      ? topicListItems.findIndex(
+          (listItem) =>
+            (listItem.type === 'reply' || listItem.type === 'replyStart') && getReplyKey(listItem.reply) === target
+        )
+      : -1;
+  }, [resolvedTargetReplyKey, targetReplyCommandKey, topicListItems]);
   const targetIsOpeningPost = Boolean(
     targetReplyCommandKey &&
     ((typeof activeTargetReply?.commentId === 'number' && topic?.commentId === activeTargetReply.commentId) ||
@@ -1159,7 +1114,14 @@ export const TopicContentList = memo(function TopicContentList({
   }, [detailTopicStateKey, targetReplyCommandKey]);
   useEffect(() => {
     setReplyLocationCommand(null);
-  }, [detailTopicStateKey, targetReply?.commentId, targetReply?.floor, targetReply?.pageHint, targetReplyRequestId]);
+  }, [
+    detailTopicStateKey,
+    targetReply?.commentId,
+    targetReply?.floor,
+    targetReply?.pageHint,
+    targetReply?.expectedAuthorUsername,
+    targetReplyRequestId
+  ]);
   useEffect(
     () => () => {
       if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
@@ -1178,7 +1140,13 @@ export const TopicContentList = memo(function TopicContentList({
     [onCommentQueryChange, onLocateReply, onReplyFilterChange]
   );
   useEffect(() => {
-    if (!targetReplyCommandKey || !canShowReplies || handledTargetReplyRef.current === targetReplyCommandKey) return;
+    if (
+      loadedDetailKey !== detailTopicStateKey ||
+      !targetReplyCommandKey ||
+      !canShowReplies ||
+      handledTargetReplyRef.current === targetReplyCommandKey
+    )
+      return;
     if (commentQuery || replyFilter !== 'all') {
       onCommentQueryChange('');
       onReplyFilterChange('all');
@@ -1197,12 +1165,14 @@ export const TopicContentList = memo(function TopicContentList({
       topicScrollRef.current?.scrollToIndex({
         animated: true,
         index: targetReplyListIndex,
-        viewPosition: 0.2
+        viewPosition: 0
       });
     }
   }, [
     canShowReplies,
     commentQuery,
+    detailTopicStateKey,
+    loadedDetailKey,
     onCommentQueryChange,
     onReplyFilterChange,
     replyFilter,
@@ -1247,10 +1217,6 @@ export const TopicContentList = memo(function TopicContentList({
     autoLoadRepliesArmedRef.current = false;
     void onLoadPreviousReplies();
   }, [loadingPreviousReplies, onLoadPreviousReplies, replyHasPrevious, replyStartError]);
-  const armReplyAutoLoad = useCallback(() => {
-    autoLoadRepliesArmedRef.current = true;
-    if (windowStartWithinPrefetchRef.current) loadWindowStart();
-  }, [loadWindowStart]);
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: { index?: number | null; isViewable?: boolean; item: TopicListItem }[] }) => {
       observeViewableItems({ viewableItems });
@@ -1279,6 +1245,21 @@ export const TopicContentList = memo(function TopicContentList({
     autoLoadRepliesArmedRef.current = false;
     void onLoadMoreReplies();
   }, [loadingMoreReplies, onLoadMoreReplies, replyEndError, replyHasMore]);
+  const armReplyAutoLoad = useCallback(
+    ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
+      autoLoadRepliesArmedRef.current = true;
+      if (windowStartWithinPrefetchRef.current) loadWindowStart();
+      // A location can consume FlashList's one-shot end event before any drag.
+      const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
+      if (
+        layoutMeasurement.height > 0 &&
+        Math.ceil(contentOffset.y + layoutMeasurement.height) >=
+          contentSize.height - REPLY_END_REACHED_THRESHOLD * layoutMeasurement.height
+      )
+        handleReplyEndReached();
+    },
+    [handleReplyEndReached, loadWindowStart]
+  );
   const requestWindowStartLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = false;
     void onLoadPreviousReplies();
@@ -1287,9 +1268,6 @@ export const TopicContentList = memo(function TopicContentList({
     autoLoadRepliesArmedRef.current = false;
     void onLoadMoreReplies();
   }, [onLoadMoreReplies]);
-  useEffect(() => {
-    previousWindowWasAvailableRef.current = replyHasPrevious;
-  }, [replyHasPrevious]);
   useEffect(() => {
     autoLoadRepliesArmedRef.current = false;
     windowStartWithinPrefetchRef.current = false;
@@ -1339,9 +1317,17 @@ export const TopicContentList = memo(function TopicContentList({
           {children}
         </TopicListItemFrame>
       );
-      return key ? <TopicBodyMediaRowBoundary rowKey={key}>{frame}</TopicBodyMediaRowBoundary> : frame;
+      return key ? (
+        <TopicBodyMediaRowBoundary rowKey={key}>
+          <OriginalImageUpgradeBoundary enabled={bodyMediaViewportRowKeySet.has(key)}>
+            {frame}
+          </OriginalImageUpgradeBoundary>
+        </TopicBodyMediaRowBoundary>
+      ) : (
+        frame
+      );
     },
-    [firstOpeningRowKey, firstOpeningRowStartedAt, styles, topicSelectionRowKeys]
+    [bodyMediaViewportRowKeySet, firstOpeningRowKey, firstOpeningRowStartedAt, styles, topicSelectionRowKeys]
   );
   const TopicListItemSeparator = useCallback(
     ({ leadingItem, trailingItem }: { leadingItem: TopicListItem; trailingItem: TopicListItem }) => {
@@ -1430,7 +1416,7 @@ export const TopicContentList = memo(function TopicContentList({
               ]
             : [styles.replyListItem, topicColumnStyle];
       const rowStyle = [baseRowStyle, trimLeadingStyle, trimTrailingStyle];
-      const wrapContent = (children: ReactNode, onLayout?: (event: LayoutChangeEvent) => void) => {
+      const wrapContent = (children: ReactNode) => {
         const content = <View style={contentContainerStyle}>{children}</View>;
         return renderTopicListItemFrame(
           context === 'accepted' && contentItem.type === 'content' ? (
@@ -1440,8 +1426,7 @@ export const TopicContentList = memo(function TopicContentList({
           ) : (
             <View style={rowStyle}>{content}</View>
           ),
-          frameKey,
-          onLayout
+          frameKey
         );
       };
       if (contentItem.type === 'accessNotice') {
@@ -1508,14 +1493,12 @@ export const TopicContentList = memo(function TopicContentList({
                     ? resolvedHtml
                     : highlightHtml(resolvedHtml, replyHighlightQuery)
                 }
-                originalImageUpgradeEnabled={nearbyTopicContentKeys.has(frameKey)}
                 query={context === 'topic' ? '' : replyHighlightQuery}
                 row={contentItem.row}
                 selectable={context === 'accepted' ? false : undefined}
               />
             </TopicSelectionRenderHtmlConfig>
-          </TopicSplitDisclosureScope>,
-          () => addNearbyTopicContentKeys([frameKey])
+          </TopicSplitDisclosureScope>
         );
       }
 
@@ -1533,12 +1516,10 @@ export const TopicContentList = memo(function TopicContentList({
       mediaContext,
       mediaSessionIdentity,
       nodeSeekMediaUserAgent,
-      nearbyTopicContentKeys,
       onLockPoll,
       onVotePoll,
       pollSelections,
       replyHighlightQuery,
-      addNearbyTopicContentKeys,
       renderTopicListItemFrame,
       styles,
       theme,
@@ -1891,8 +1872,7 @@ export const TopicContentList = memo(function TopicContentList({
                     accessibilityLabel={`回复排序，当前${replyOrderLabel}`}
                     accessibilityState={{ expanded: replyOrderMenuOpen }}
                     hitSlop={TOUCH_HIT_SLOP}
-                    android_ripple={androidRipple(theme.primarySoft)}
-                    style={({ pressed }) => [styles.replyOrderButton, pressed && styles.replyOrderButtonPressed]}
+                    style={styles.replyOrderButton}
                     onPress={openReplyOrderMenu}
                   >
                     <Text style={styles.replyOrderButtonText}>{replyOrderLabel}</Text>
@@ -1975,7 +1955,9 @@ export const TopicContentList = memo(function TopicContentList({
           style={[
             styles.replyListItem,
             topicColumnStyle,
-            highlightedTargetKey && targetReplyMatches(listItem.reply) ? styles.replyLocationHighlight : undefined
+            highlightedTargetKey && getReplyKey(listItem.reply) === resolvedTargetReplyKey
+              ? styles.replyLocationHighlight
+              : undefined
           ]}
         >
           <TopicSelectionRenderHtmlConfig
@@ -2100,7 +2082,7 @@ export const TopicContentList = memo(function TopicContentList({
       topicColumnStyle,
       topicPostlude,
       topic,
-      targetReplyMatches,
+      resolvedTargetReplyKey,
       unreadReplyCount,
       detailTopicStateKey
     ]
@@ -2227,6 +2209,7 @@ export const TopicContentList = memo(function TopicContentList({
               <TopicSelectionRenderHtmlConfig renderers={genericHtmlRenderers} renderersProps={htmlRenderersProps}>
                 <FlashList
                   ref={topicScrollRef}
+                  onLoad={onListLoad}
                   accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
                   testID={topic ? 'topic-detail-loaded' : undefined}
                   style={[styles.content, styles.topicContent]}
@@ -2238,13 +2221,13 @@ export const TopicContentList = memo(function TopicContentList({
                   keyboardShouldPersistTaps="always"
                   onMomentumScrollEnd={onTopicScroll}
                   onScrollEndDrag={onTopicScroll}
-                  onEndReachedThreshold={0.55}
+                  onEndReachedThreshold={REPLY_END_REACHED_THRESHOLD}
                   onEndReached={handleReplyEndReached}
                   onScrollBeginDrag={armReplyAutoLoad}
                   onViewableItemsChanged={handleViewableItemsChanged}
                   extraData={listExtraData}
                   {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
-                  maintainVisibleContentPosition={{ disabled: !maintainPreviousWindowPosition }}
+                  maintainVisibleContentPosition={TOPIC_VISIBLE_CONTENT_POSITION}
                   ListHeaderComponent={listHeader}
                   ListFooterComponent={
                     canShowReplies && replyEndError ? (

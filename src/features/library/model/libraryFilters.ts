@@ -12,7 +12,10 @@ export interface LibrarySection {
 }
 
 export function sortLibraryRecords(records: Record<string, TopicRecord>) {
-  return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
+  return Object.values(records)
+    .map((record) => ({ record, time: Date.parse(record.savedAt) }))
+    .sort((left, right) => right.time - left.time)
+    .map(({ record }) => record);
 }
 
 export function libraryCategoryKey(source: FeedSource, categoryId: string) {

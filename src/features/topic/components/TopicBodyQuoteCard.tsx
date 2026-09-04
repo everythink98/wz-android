@@ -2,7 +2,7 @@ import type { TopicStyles } from '../styles';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 
 export function TopicBodyQuoteCard({
   completeContent,
@@ -41,7 +41,6 @@ export function TopicBodyQuoteCard({
             accessibilityLabel={loading ? '读取' : expanded ? '收起' : '展开'}
             accessibilityRole="button"
             accessibilityState={{ disabled: loading, expanded }}
-            android_ripple={androidRipple(theme.primarySoft)}
             disabled={loading}
             style={styles.quotePanelState}
             onPress={onToggle}

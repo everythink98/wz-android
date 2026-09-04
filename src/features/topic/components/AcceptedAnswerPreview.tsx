@@ -4,8 +4,7 @@ import { CheckCircle, ChevronDown, ChevronRight, ChevronUp } from 'lucide-react-
 import type { Reply, Source } from '@/domain/forum/models';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { quotedPostReferenceKey } from '@/domain/forum/quotedPosts';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
-import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import { Avatar } from '@/ui/avatar/Avatar';
 
 export function AcceptedAnswerPreview({
@@ -44,10 +43,8 @@ export function AcceptedAnswerPreview({
         accessibilityLabel={expanded ? '收起已采纳答案' : '展开已采纳答案'}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        android_ripple={androidRipple(theme.primarySoft)}
         style={styles.topicAcceptedAnswerHeader}
         onPress={() => {
-          triggerPressFeedback();
           onExpandedChange(!expanded);
         }}
       >
@@ -116,10 +113,8 @@ export function AcceptedAnswerPreview({
             <Pressable
               accessibilityLabel={`查看完整解决方案，第 ${floor} 楼`}
               accessibilityRole="button"
-              android_ripple={androidRipple(theme.primarySoft)}
               style={styles.topicAcceptedAnswerReadMore}
               onPress={() => {
-                triggerPressFeedback();
                 if (onReadMore) {
                   onReadMore();
                 } else {
@@ -134,10 +129,8 @@ export function AcceptedAnswerPreview({
             <Pressable
               accessibilityLabel={`读取已采纳答案，第 ${floor} 楼`}
               accessibilityRole="button"
-              android_ripple={androidRipple(theme.primarySoft)}
               style={styles.topicAcceptedAnswerReadMore}
               onPress={() => {
-                triggerPressFeedback();
                 onLoad();
               }}
             >

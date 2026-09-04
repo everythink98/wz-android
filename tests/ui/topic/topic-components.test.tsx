@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react-native';
 import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { type ComponentProps } from 'react';
-import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, ToastAndroid, type StyleProp, type ViewStyle } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider } from 'react-native-render-html';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
@@ -135,29 +135,12 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 jest.mock('react-native-gesture-handler', () => {
-  const chain = () => {
-    const gesture: Record<string, any> = {};
-    for (const name of [
-      'activeOffsetX',
-      'blocksExternalGesture',
-      'enabled',
-      'failOffsetY',
-      'manualActivation',
-      'maxPointers',
-      'onBegin',
-      'onEnd',
-      'onTouchesDown',
-      'onTouchesMove',
-      'onUpdate'
-    ]) {
-      gesture[name] = () => gesture;
-    }
-    return gesture;
-  };
   return {
-    Gesture: { Native: chain, Pan: chain },
+    GestureStateManager: { activate: jest.fn(), fail: jest.fn() },
     GestureDetector: ({ children }: { children: React.ReactNode }) => children,
-    ScrollView: require('react-native').ScrollView
+    ScrollView: require('react-native').ScrollView,
+    useNativeGesture: (config: Record<string, unknown> = {}) => ({ config }),
+    usePanGesture: (config: Record<string, unknown> = {}) => ({ config })
   };
 });
 
@@ -188,6 +171,7 @@ jest.mock('react-native-render-html', () => {
         : ''
     }`;
   return {
+    useContentWidth: () => 320,
     RenderHTMLConfigProvider: ({
       children,
       renderersProps = {}
@@ -511,6 +495,7 @@ describe('Topic real child components', () => {
       ref: { current: null }
     });
     const copy = jest.mocked(Clipboard.setStringAsync);
+    const toast = jest.spyOn(ToastAndroid, 'show').mockImplementation(() => undefined);
     copy.mockClear();
     try {
       const view = await render(<ReplyItem {...replyProps({ bodyContent: compiledRichText('<p>正文内容</p>') })} />);
@@ -518,7 +503,9 @@ describe('Topic real child components', () => {
       await fireEvent(view.getByTestId('html-source'), 'longPress');
 
       await waitFor(() => expect(copy).toHaveBeenCalledWith('正文内容'));
+      await waitFor(() => expect(toast).toHaveBeenCalledWith('评论已复制', ToastAndroid.SHORT));
     } finally {
+      toast.mockRestore();
       selection.mockRestore();
     }
   });

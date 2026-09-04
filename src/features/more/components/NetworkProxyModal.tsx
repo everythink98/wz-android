@@ -19,7 +19,7 @@ import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText } from '@/ui/controls/FeedbackStates';
 import { SettingRail } from '@/ui/controls/SelectionControls';
 import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import {
   createNetworkProxyProfile,
   validateNetworkProxyProfile,
@@ -308,7 +308,6 @@ export function NetworkProxyModal({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={selecting ? '取消选择' : '返回'}
-            android_ripple={androidRipple(theme.primarySoft, true)}
             style={proxyStyles.headerIcon}
             onPress={selecting ? () => setSelectedIds([]) : onClose}
           >
@@ -325,7 +324,6 @@ export function NetworkProxyModal({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="删除选中的代理"
-              android_ripple={androidRipple(theme.primarySoft, true)}
               disabled={busy}
               style={proxyStyles.headerIcon}
               onPress={deleteSelectedProfiles}
@@ -401,7 +399,6 @@ export function NetworkProxyModal({
                   key={profile.id}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active || selected }}
-                  android_ripple={androidRipple(theme.primarySoft)}
                   style={[proxyStyles.proxyRow, active && !selecting && { backgroundColor: accentSoftColor }]}
                   onLongPress={() => setSelectedIds([profile.id])}
                   onPress={() => chooseProfile(profile)}
@@ -461,7 +458,6 @@ export function NetworkProxyModal({
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel="编辑代理"
-                      android_ripple={androidRipple(theme.primarySoft, true)}
                       style={proxyStyles.infoButton}
                       onPress={() => openEdit(profile)}
                     >
@@ -473,7 +469,6 @@ export function NetworkProxyModal({
             })}
             <Pressable
               accessibilityRole="button"
-              android_ripple={androidRipple(theme.primarySoft)}
               disabled={busy}
               style={[proxyStyles.addRow, { borderTopColor: theme.line }]}
               onPress={openCreate}

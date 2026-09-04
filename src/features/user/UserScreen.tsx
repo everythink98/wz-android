@@ -6,7 +6,6 @@ import { ChevronLeft, ExternalLink, RefreshCw } from 'lucide-react-native';
 import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
@@ -50,12 +49,10 @@ function topicFromUserReply(reply: UserReplyActivity): Topic {
 function UserReplyCard({
   reply,
   styles,
-  theme,
   onOpenTopic
 }: {
   reply: UserReplyActivity;
   styles: UserStyles;
-  theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
 }) {
   const openTopicPress = useCallback(() => {
@@ -65,12 +62,7 @@ function UserReplyCard({
   const meta = [reply.author || '', reply.floor ? `#${reply.floor}` : '', timeText].filter(Boolean).join(' · ');
   return (
     <View style={styles.topicRowShell}>
-      <Pressable
-        accessibilityRole="button"
-        android_ripple={androidRipple(theme.primarySoft)}
-        style={styles.topicCardPressable}
-        onPress={openTopicPress}
-      >
+      <Pressable accessibilityRole="button" style={styles.topicCardPressable} onPress={openTopicPress}>
         <View style={styles.topicCardHead}>
           <View style={styles.topicBadgeRow}>
             <Text style={styles.topicSourceBadge} numberOfLines={1}>
@@ -335,7 +327,7 @@ export const UserScreen = memo(function UserScreen({
   const renderItem = useCallback<ListRenderItem<UserListItem>>(
     ({ item, index }) => {
       if (item.type === 'reply') {
-        return <UserReplyCard reply={item.reply} styles={styles} theme={theme} onOpenTopic={onOpenTopic} />;
+        return <UserReplyCard reply={item.reply} styles={styles} onOpenTopic={onOpenTopic} />;
       }
       return (
         <MemoizedTopicCard
@@ -347,7 +339,7 @@ export const UserScreen = memo(function UserScreen({
         />
       );
     },
-    [onOpenTopic, styles, theme, topicStateIndex]
+    [onOpenTopic, styles, topicStateIndex]
   );
 
   if (!user) {

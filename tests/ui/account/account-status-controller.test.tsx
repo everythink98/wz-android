@@ -1,9 +1,8 @@
+import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
-);
+jest.mock('@react-native-async-storage/async-storage', () => require('@react-native-async-storage/async-storage/jest'));
 
 jest.mock('@/sources/readGateway', () => ({
   checkYaohuoLogin: jest.fn(),
@@ -17,7 +16,6 @@ import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/q
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import {
   createSiteSessionStates,
-  createSiteSessionViewModels,
   type AccountSessionSnapshot,
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
@@ -117,11 +115,10 @@ async function renderStatusController({
     }
   }
   const commitAccountStatusChange: Parameters<typeof useAccountStatusController>[0]['onAccountStatusChanged'] = (
-    source,
-    recoveryQueryKey
+    source
   ) => {
-    onAccountStatusChanged(source, recoveryQueryKey);
-    resetForumSourceQueries(source, appQueryClient, recoveryQueryKey);
+    onAccountStatusChanged(source);
+    resetForumSourceQueries(source, appQueryClient);
   };
   const hook = await renderNativeHook(
     ({
@@ -171,22 +168,19 @@ describe('account status queries', () => {
   });
 
   it('restores the last confirmed identity without probing the account endpoint', async () => {
-    await AsyncStorage.multiSet([
-      ['account-session.migration.v1', '1'],
-      [
-        'account-session.v1.nodeseek',
-        JSON.stringify({
-          version: 1,
-          state: 'authenticated',
-          identity: {
-            source: 'nodeseek',
-            id: '17',
-            username: 'bob',
-            url: 'https://www.nodeseek.com/space/17'
-          }
-        })
-      ]
-    ]);
+    await AsyncStorage.setMany({
+      'account-session.migration.v1': '1',
+      'account-session.v1.nodeseek': JSON.stringify({
+        version: 1,
+        state: 'authenticated',
+        identity: {
+          source: 'nodeseek',
+          id: '17',
+          username: 'bob',
+          url: 'https://www.nodeseek.com/space/17'
+        }
+      })
+    });
 
     const { hook } = await renderStatusController({ enabledSourcesReady: true });
 
@@ -416,7 +410,7 @@ describe('account status queries', () => {
       readNodeSeekCookieHeader: jest.fn(async () => undefined)
     });
     const directRequest = appQueryClient
-      .fetchQuery({
+      .query({
         queryKey: ['forum', 'nodeseek', 'feed', { reenabled: true }],
         queryFn: async ({ signal }) => {
           signal.addEventListener('abort', directAbort, { once: true });
@@ -425,7 +419,7 @@ describe('account status queries', () => {
       })
       .catch(() => undefined);
     const aggregateRequest = appQueryClient
-      .fetchQuery({
+      .query({
         queryKey: ['forum', 'all', 'feed', { reenabled: true }],
         queryFn: async ({ signal }) => {
           signal.addEventListener('abort', aggregateAbort, { once: true });
@@ -457,7 +451,7 @@ describe('account status queries', () => {
     const aggregateResult = Promise.withResolvers<string>();
     const aggregateAbort = jest.fn();
     const aggregateRequest = appQueryClient
-      .fetchQuery({
+      .query({
         queryKey: ['forum', 'all', 'feed', { bootstrap: true }],
         queryFn: async ({ signal }) => {
           signal.addEventListener('abort', aggregateAbort, { once: true });
@@ -609,7 +603,7 @@ describe('account status queries', () => {
     const privateResult = Promise.withResolvers<string>();
     const privateAbort = jest.fn();
     const privateRequest = appQueryClient
-      .fetchQuery({
+      .query({
         queryKey: ['forum', 'nodeseek', 'feed', { settled: true }],
         queryFn: async ({ signal }) => {
           signal.addEventListener('abort', privateAbort, { once: true });
@@ -668,7 +662,7 @@ describe('account status queries', () => {
         isVerifying: false
       }
     });
-    const sessionViewModels = createSiteSessionViewModels(states);
+    const sessionViewModels = projectTestAccountSessions(states);
     const { hook } = await renderStatusController({
       sessionViewModels: {
         ...sessionViewModels,
@@ -777,7 +771,7 @@ describe('account status queries', () => {
       await hook.result.current.reconcileAccountStatus('nodeseek');
     });
 
-    expect(onAccountStatusChanged).toHaveBeenCalledWith('nodeseek', undefined);
+    expect(onAccountStatusChanged).toHaveBeenCalledWith('nodeseek');
     expect(committedSnapshots.at(-1)).toMatchObject({ currentUser: nextNodeSeekUser, identityTrust: 'confirmed' });
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser)
@@ -1089,7 +1083,7 @@ describe('account status queries', () => {
     mockGetCurrentUser.mockRejectedValue(
       Object.assign(new Error('未登录'), { loginRequired: true, reason: 'expired', source: 'nodeseek' })
     );
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
@@ -1309,7 +1303,7 @@ describe('account status queries', () => {
     });
     const { hook, notify } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=expired'),
-      sessionViewModels: createSiteSessionViewModels(states)
+      sessionViewModels: projectTestAccountSessions(states)
     });
 
     await act(async () => {
@@ -1653,7 +1647,7 @@ describe('account status queries', () => {
     });
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=current'),
-      sessionViewModels: createSiteSessionViewModels(states)
+      sessionViewModels: projectTestAccountSessions(states)
     });
 
     await act(async () => {

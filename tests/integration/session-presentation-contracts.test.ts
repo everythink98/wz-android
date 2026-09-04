@@ -1,8 +1,9 @@
+import { projectTestAccountSessions, testAccountUser } from '../helpers/accountSessions';
 import { describe, expect, it } from 'vitest';
 import type { CredentialSummaries } from '@/platform/storage/credentialVault';
 import { createSiteAccountViews } from '@/features/more/accountCenter';
 import { authNoticeForSource, authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
-import { createSiteSessionViewModels, createSiteSessionStates } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 
 function emptyCredentialSummaries(): CredentialSummaries {
   return {
@@ -14,9 +15,10 @@ function emptyCredentialSummaries(): CredentialSummaries {
 
 describe('site session prompts', () => {
   it('keeps a confirmed identity available while its account check is running', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
+          currentUser: testAccountUser('nodeseek'),
           site: 'nodeseek',
           status: 'logged-in',
           cookieSummary: ['session'],
@@ -43,15 +45,17 @@ describe('site session prompts', () => {
   });
 
   it('presents terminal unknown as retryable without losing public lanes', () => {
-    const confirmed = createSiteSessionViewModels(
+    const confirmed = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
+          currentUser: testAccountUser('nodeseek'),
           site: 'nodeseek',
           status: 'logged-in',
           cookieSummary: ['session'],
           isVerifying: false
         },
         yaohuo: {
+          currentUser: testAccountUser('yaohuo'),
           site: 'yaohuo',
           status: 'logged-in',
           cookieSummary: ['sid'],
@@ -88,7 +92,7 @@ describe('site session prompts', () => {
   });
 
   it('explains the external NodeSeek search without showing a logged-in notice', () => {
-    const sessions = createSiteSessionViewModels(createSiteSessionStates());
+    const sessions = projectTestAccountSessions(createSiteSessionStates());
     const prompt = authNoticeForSource('nodeseek', sessions, 'search');
 
     expect(prompt).toEqual({
@@ -99,7 +103,7 @@ describe('site session prompts', () => {
   });
 
   it('projects one expired NodeSeek session consistently into More, Search, and Topic permissions', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
@@ -108,12 +112,14 @@ describe('site session prompts', () => {
           isVerifying: false
         },
         linuxdo: {
+          currentUser: testAccountUser('linuxdo'),
           site: 'linuxdo',
           status: 'logged-in',
           cookieSummary: ['_t'],
           isVerifying: false
         },
         yaohuo: {
+          currentUser: testAccountUser('yaohuo'),
           site: 'yaohuo',
           status: 'logged-in',
           cookieSummary: ['sid'],
@@ -137,7 +143,7 @@ describe('site session prompts', () => {
   });
 
   it('uses site-specific search hints instead of one generic login prompt', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
@@ -179,7 +185,7 @@ describe('site session prompts', () => {
   });
 
   it('uses action messages that match the source capability', () => {
-    const sessions = createSiteSessionViewModels(createSiteSessionStates());
+    const sessions = projectTestAccountSessions(createSiteSessionStates());
 
     expect(authNoticeForSource('nodeseek', sessions, 'action')?.message || '').toBe(
       '请先在“更多”里登录并检测 NodeSeek Cookie。'
@@ -190,7 +196,7 @@ describe('site session prompts', () => {
   });
 
   it('uses read messages that keep V2EX out of login-specific copy', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         yaohuo: {
           site: 'yaohuo',

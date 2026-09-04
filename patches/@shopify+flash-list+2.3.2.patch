@@ -1,0 +1,1886 @@
+diff --git a/node_modules/@shopify/flash-list/dist/FlashListProps.d.ts b/node_modules/@shopify/flash-list/dist/FlashListProps.d.ts
+index 5e90a5c..182d54d 100644
+--- a/node_modules/@shopify/flash-list/dist/FlashListProps.d.ts
++++ b/node_modules/@shopify/flash-list/dist/FlashListProps.d.ts
+@@ -294,6 +294,8 @@ export interface FlashListProps<TItem> extends Omit<ScrollViewProps, "maintainVi
+          * maintainVisibleContentPosition is enabled by default.
+          */
+         disabled?: boolean;
++        /** Excludes non-content rows from the visible anchor. Only visible items are inspected. */
++        shouldAnchorItem?: (item: TItem, index: number) => boolean;
+         /**
+          * When content is added at the top, automatically scroll to maintain position if the user is within this threshold of the top
+          */
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerView.js b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerView.js
+index 6799c8a..b710834 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerView.js
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerView.js
+@@ -59,13 +59,13 @@ const RecyclerViewComponent = (props, ref) => {
+     const refHolder = useMemo(() => new Map(), []);
+     // Initialize core RecyclerView manager and content offset management
+     const { recyclerViewManager, velocityTracker } = useRecyclerViewManager(props);
+-    const { applyOffsetCorrection, computeFirstVisibleIndexForOffsetCorrection, applyInitialScrollIndex, handlerMethods, } = useRecyclerViewController(recyclerViewManager, ref, scrollViewRef, scrollAnchorRef);
++    const { acceptScrollOffset, onContentSizeChange, getPendingScroll, beginScrollInteraction, endScrollInteraction, applyOffsetCorrection, computeFirstVisibleIndexForOffsetCorrection, applyInitialScrollIndex, handlerMethods, } = useRecyclerViewController(recyclerViewManager, ref, scrollViewRef, scrollAnchorRef);
+     // Initialize view holder collection ref
+     const viewHolderCollectionRef = useRef(null);
+     // Hook to handle list loading
+     useOnListLoad(recyclerViewManager, onLoad);
+     // Hook to detect when scrolling reaches list bounds
+-    const { checkBounds } = useBoundDetection(recyclerViewManager, scrollViewRef);
++    const { checkBounds } = useBoundDetection(recyclerViewManager, scrollViewRef, getPendingScroll);
+     const isHorizontalRTL = I18nManager.isRTL && horizontal;
+     /**
+      * Initialize the RecyclerView by measuring and setting up the window size
+@@ -146,36 +146,46 @@ const RecyclerViewComponent = (props, ref) => {
+     /**
+      * Scroll event handler that manages scroll position, velocity, and RTL support
+      */
+-    const onScrollHandler = useCallback((event) => {
+-        var _a, _b, _c;
+-        if (recyclerViewManager.ignoreScrollEvents) {
+-            return;
+-        }
+-        let scrollOffset = horizontal
++    const getScrollOffset = useCallback((event) => {
++        const scrollOffset = horizontal
+             ? event.nativeEvent.contentOffset.x
+             : event.nativeEvent.contentOffset.y;
+-        // Handle RTL (Right-to-Left) layout adjustments
+-        if (isHorizontalRTL) {
+-            scrollOffset = adjustOffsetForRTL(scrollOffset, event.nativeEvent.contentSize.width, event.nativeEvent.layoutMeasurement.width);
+-        }
++        return isHorizontalRTL
++            ? adjustOffsetForRTL(scrollOffset, event.nativeEvent.contentSize.width, event.nativeEvent.layoutMeasurement.width)
++            : scrollOffset;
++    }, [horizontal, isHorizontalRTL]);
++    const onScrollHandler = useCallback((event) => {
++        var _a, _b, _c, _d;
++        const scrollOffset = getScrollOffset(event);
++        const timestamp = (_a = event.nativeEvent
++            .timestamp) !== null && _a !== void 0 ? _a : event.timeStamp;
++        const nativeMaxOffset = Math.max(0, horizontal
++            ? event.nativeEvent.contentSize.width -
++                event.nativeEvent.layoutMeasurement.width
++            : event.nativeEvent.contentSize.height -
++                event.nativeEvent.layoutMeasurement.height);
++        if (!acceptScrollOffset(scrollOffset, timestamp, nativeMaxOffset))
++            return;
+         velocityTracker.computeVelocity(scrollOffset, recyclerViewManager.getAbsoluteLastScrollOffset(), Boolean(horizontal), (velocity, isMomentumEnd) => {
+-            if (recyclerViewManager.ignoreScrollEvents) {
+-                return;
+-            }
+             if (isMomentumEnd) {
+-                computeFirstVisibleIndexForOffsetCorrection();
+                 if (!recyclerViewManager.isOffsetProjectionEnabled) {
+                     return;
+                 }
+                 recyclerViewManager.resetVelocityCompute();
+             }
+             // Update scroll position and trigger re-render if needed
+-            if (recyclerViewManager.updateScrollOffset(scrollOffset, velocity)) {
++            // VelocityTracker's idle callback is not a new native scroll event.
++            // Never replay an old offset over a more recent layout correction.
++            const changed = recyclerViewManager.updateScrollOffset(isMomentumEnd
++                ? recyclerViewManager.getAbsoluteLastScrollOffset()
++                : scrollOffset, velocity);
++            computeFirstVisibleIndexForOffsetCorrection();
++            if (changed) {
+                 setRenderId((prev) => prev + 1);
+             }
+         });
+         // Update sticky headers and check bounds
+-        (_a = stickyHeaderRef.current) === null || _a === void 0 ? void 0 : _a.reportScrollEvent(event.nativeEvent);
++        (_b = stickyHeaderRef.current) === null || _b === void 0 ? void 0 : _b.reportScrollEvent(event.nativeEvent);
+         checkBounds();
+         // Record interaction and compute item visibility
+         // Skip recording interaction during programmatic initial scroll
+@@ -185,12 +195,13 @@ const RecyclerViewComponent = (props, ref) => {
+         }
+         recyclerViewManager.computeItemViewability();
+         // Call user-provided onScroll handler
+-        (_c = (_b = recyclerViewManager.props).onScroll) === null || _c === void 0 ? void 0 : _c.call(_b, event);
++        (_d = (_c = recyclerViewManager.props).onScroll) === null || _d === void 0 ? void 0 : _d.call(_c, event);
+     }, [
++        acceptScrollOffset,
+         checkBounds,
+         computeFirstVisibleIndexForOffsetCorrection,
++        getScrollOffset,
+         horizontal,
+-        isHorizontalRTL,
+         recyclerViewManager,
+         velocityTracker,
+     ]);
+@@ -309,8 +320,9 @@ const RecyclerViewComponent = (props, ref) => {
+     const shouldMaintainVisibleContentPosition = recyclerViewManager.shouldMaintainVisibleContentPosition();
+     const maintainVisibleContentPositionInternal = useMemo(() => {
+         if (shouldMaintainVisibleContentPosition) {
++            const { shouldAnchorItem: _shouldAnchorItem, ...scrollOptions } = maintainVisibleContentPosition !== null && maintainVisibleContentPosition !== void 0 ? maintainVisibleContentPosition : {};
+             return {
+-                ...maintainVisibleContentPosition,
++                ...scrollOptions,
+                 minIndexForVisible: 0,
+             };
+         }
+@@ -354,7 +366,33 @@ const RecyclerViewComponent = (props, ref) => {
+                     recyclerViewContext.layout();
+                 }
+             } },
+-            React.createElement(CompatScrollView, { ...rest, horizontal: horizontal, ref: scrollViewRef, onScroll: animatedEvent, maintainVisibleContentPosition: maintainVisibleContentPositionInternal, removeClippedSubviews: false, refreshControl: refreshControl, ...overrideProps },
++            React.createElement(CompatScrollView, { ...rest, horizontal: horizontal, ref: scrollViewRef, onScroll: animatedEvent, onContentSizeChange: (width, height) => {
++                    var _a;
++                    onContentSizeChange(width, height);
++                    (_a = props.onContentSizeChange) === null || _a === void 0 ? void 0 : _a.call(props, width, height);
++                }, onScrollBeginDrag: (event) => {
++                    var _a, _b;
++                    beginScrollInteraction("drag", (_a = event.nativeEvent
++                        .timestamp) !== null && _a !== void 0 ? _a : event.timeStamp, getScrollOffset(event));
++                    (_b = props.onScrollBeginDrag) === null || _b === void 0 ? void 0 : _b.call(props, event);
++                }, onMomentumScrollBegin: (event) => {
++                    var _a, _b;
++                    beginScrollInteraction("momentum", (_a = event.nativeEvent
++                        .timestamp) !== null && _a !== void 0 ? _a : event.timeStamp, getScrollOffset(event));
++                    (_b = props.onMomentumScrollBegin) === null || _b === void 0 ? void 0 : _b.call(props, event);
++                }, onScrollEndDrag: (event) => {
++                    var _a, _b;
++                    if (endScrollInteraction("drag", (_a = event.nativeEvent.timestamp) !== null && _a !== void 0 ? _a : event.timeStamp)) {
++                        onScrollHandler(event);
++                    }
++                    (_b = props.onScrollEndDrag) === null || _b === void 0 ? void 0 : _b.call(props, event);
++                }, onMomentumScrollEnd: (event) => {
++                    var _a, _b;
++                    if (endScrollInteraction("momentum", (_a = event.nativeEvent.timestamp) !== null && _a !== void 0 ? _a : event.timeStamp)) {
++                        onScrollHandler(event);
++                    }
++                    (_b = props.onMomentumScrollEnd) === null || _b === void 0 ? void 0 : _b.call(props, event);
++                }, maintainVisibleContentPosition: maintainVisibleContentPositionInternal, removeClippedSubviews: false, refreshControl: refreshControl, ...overrideProps },
+                 scrollAnchor,
+                 isHorizontalRTL && viewToMeasureBoundedSize,
+                 renderHeader,
+@@ -398,4 +436,3 @@ RecyclerViewComponent.displayName = "FlashList";
+ // Create and export the memoized, forwarded ref component
+ const RecyclerView = React.memo(forwardRef(RecyclerViewComponent));
+ export { RecyclerView };
+-//# sourceMappingURL=RecyclerView.js.map
+\ No newline at end of file
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.d.ts b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.d.ts
+index b5c9fae..90e90c0 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.d.ts
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.d.ts
+@@ -16,7 +16,6 @@ export declare class RecyclerViewManager<T> {
+     private _isLayoutManagerDirty;
+     private _animationOptimizationsEnabled;
+     firstItemOffset: number;
+-    ignoreScrollEvents: boolean;
+     isFirstPaintOnUiComplete: boolean;
+     isInitialScrollComplete: boolean;
+     get animationOptimizationsEnabled(): boolean;
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js
+index 1aa651d..285d15a 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/RecyclerViewManager.js
+@@ -35,7 +35,6 @@ export class RecyclerViewManager {
+         this._isLayoutManagerDirty = false;
+         this._animationOptimizationsEnabled = false;
+         this.firstItemOffset = 0;
+-        this.ignoreScrollEvents = false;
+         this.isFirstPaintOnUiComplete = false;
+         this.isInitialScrollComplete = false;
+         // updates render stack based on the engaged indices which are sorted. Recycles unused keys.
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.d.ts b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.d.ts
+index 7717e3b..e488b41 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.d.ts
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.d.ts
+@@ -11,7 +11,7 @@ import { CompatScroller } from "../components/CompatScroller";
+  * @param props - The RecyclerViewProps containing configuration and callbacks
+  * @param scrollViewRef - Reference to the scrollable container component
+  */
+-export declare function useBoundDetection<T>(recyclerViewManager: RecyclerViewManager<T>, scrollViewRef: React.RefObject<CompatScroller>): {
++export declare function useBoundDetection<T>(recyclerViewManager: RecyclerViewManager<T>, scrollViewRef: React.RefObject<CompatScroller>, getPendingScroll: () => "command" | "correction" | undefined): {
+     checkBounds: () => void;
+ };
+ //# sourceMappingURL=useBoundDetection.d.ts.map
+\ No newline at end of file
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js
+index 034920b..302edcd 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection.js
+@@ -11,7 +11,7 @@ import { useUnmountAwareAnimationFrame } from "./useUnmountAwareCallbacks";
+  * @param props - The RecyclerViewProps containing configuration and callbacks
+  * @param scrollViewRef - Reference to the scrollable container component
+  */
+-export function useBoundDetection(recyclerViewManager, scrollViewRef) {
++export function useBoundDetection(recyclerViewManager, scrollViewRef, getPendingScroll) {
+     // Track whether we've already triggered the end reached callback to prevent duplicate calls
+     const pendingEndReached = useRef(false);
+     // Track whether we've already triggered the start reached callback to prevent duplicate calls
+@@ -101,11 +101,12 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+     }, [recyclerViewManager]);
+     const runAutoScrollToBottomCheck = useCallback(() => {
+         // Suppress MVCP autoscroll while a programmatic scrollToIndex is in
+-        // flight. FlashList disables offset projection at the start of
+-        // scrollToIndex and reenables it ~200-300ms after settling. Without
++        // flight. FlashList disables offset projection during its layout projection.
++        // Without
+         // this guard, the sticky pendingAutoscrollToBottom ref races against
+         // scrollToIndex and fires scrollToEnd mid flight.
+-        if (!recyclerViewManager.isOffsetProjectionEnabled) {
++        if (!recyclerViewManager.isOffsetProjectionEnabled ||
++            getPendingScroll() === "command") {
+             return;
+         }
+         if (pendingAutoscrollToBottom.current) {
+@@ -114,11 +115,16 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+                 var _a, _b, _c;
+                 const shouldAnimate = (_b = (_a = recyclerViewManager.props.maintainVisibleContentPosition) === null || _a === void 0 ? void 0 : _a.animateAutoScrollToBottom) !== null && _b !== void 0 ? _b : true;
+                 (_c = scrollViewRef.current) === null || _c === void 0 ? void 0 : _c.scrollToEnd({
+-                    animated: shouldAnimate && !recyclerViewManager.ignoreScrollEvents,
++                    animated: shouldAnimate && getPendingScroll() !== "correction",
+                 });
+             });
+         }
+-    }, [requestAnimationFrame, scrollViewRef, recyclerViewManager]);
++    }, [
++        requestAnimationFrame,
++        scrollViewRef,
++        recyclerViewManager,
++        getPendingScroll,
++    ]);
+     // Reset end reached state when data changes
+     useMemo(() => {
+         pendingEndReached.current = false;
+@@ -144,4 +150,3 @@ export function useBoundDetection(recyclerViewManager, scrollViewRef) {
+         checkBounds,
+     };
+ }
+-//# sourceMappingURL=useBoundDetection.js.map
+\ No newline at end of file
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.d.ts b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.d.ts
+index 62d55cd..ccb2d02 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.d.ts
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.d.ts
+@@ -20,6 +20,11 @@ import { ScrollAnchorRef } from "../components/ScrollAnchor";
+  * @param props - The RecyclerViewProps containing configuration
+  */
+ export declare function useRecyclerViewController<T>(recyclerViewManager: RecyclerViewManager<T>, ref: React.Ref<FlashListRef<T>>, scrollViewRef: RefObject<CompatScroller>, scrollAnchorRef: React.RefObject<ScrollAnchorRef>): {
++    acceptScrollOffset: (offset: number, timestamp: number, nativeMaxOffset?: number) => boolean;
++    onContentSizeChange: (width: number, height: number) => void;
++    getPendingScroll: () => "command" | "correction" | undefined;
++    beginScrollInteraction: (phase: "drag" | "momentum", timestamp: number, offset?: number) => boolean;
++    endScrollInteraction: (phase: "drag" | "momentum", timestamp: number) => boolean;
+     applyOffsetCorrection: () => void;
+     computeFirstVisibleIndexForOffsetCorrection: () => void;
+     applyInitialScrollIndex: () => void;
+diff --git a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js
+index 08724d1..a176b1e 100644
+--- a/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js
++++ b/node_modules/@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController.js
+@@ -1,10 +1,11 @@
+ import { useCallback, useImperativeHandle, useMemo, useRef, useState, } from "react";
+-import { I18nManager } from "react-native";
++import { I18nManager, PixelRatio } from "react-native";
+ import { adjustOffsetForRTL } from "../utils/adjustOffsetForRTL";
+ import { PlatformConfig } from "../../native/config/PlatformHelper";
+ import { WarningMessages } from "../../errors/WarningMessages";
+ import { useUnmountFlag } from "./useUnmountFlag";
+ import { useUnmountAwareTimeout } from "./useUnmountAwareCallbacks";
++const sameScrollOffset = (left, right) => Math.abs(left - right) <= 1 / PixelRatio.get();
+ /**
+  * Comprehensive hook that manages RecyclerView scrolling behavior and provides
+  * imperative methods for controlling the RecyclerView.
+@@ -25,11 +26,159 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+     const isUnmounted = useUnmountFlag();
+     const [_, setRenderId] = useState(0);
+     const pauseOffsetCorrection = useRef(false);
+-    const lastDataLengthRef = useRef(recyclerViewManager.getDataLength());
++    const scrollCommandId = useRef(0);
+     const { setTimeout } = useUnmountAwareTimeout();
+     // Track the first visible item for maintaining scroll position
+-    const firstVisibleItemKey = useRef(undefined);
+-    const firstVisibleItemLayout = useRef(undefined);
++    const firstVisibleItem = useRef(undefined);
++    const scrollInteraction = useRef({ phase: "idle", startedAt: 0 });
++    // Native bounds include footer and content padding; data-only bounds do not.
++    const nativeScrollBounds = useRef(undefined);
++    const retryClampedScroll = useCallback((maxOffset) => {
++        var _a;
++        const interaction = scrollInteraction.current;
++        if (interaction.phase !== "command" ||
++            interaction.targetOffset === undefined)
++            return;
++        const { horizontal } = recyclerViewManager.props;
++        const windowSize = recyclerViewManager.getWindowSize();
++        const offset = Math.max(0, Math.min(maxOffset, interaction.targetOffset));
++        (_a = scrollViewRef.current) === null || _a === void 0 ? void 0 : _a.scrollTo({
++            x: horizontal
++                ? I18nManager.isRTL
++                    ? adjustOffsetForRTL(offset, maxOffset + windowSize.width, windowSize.width)
++                    : offset
++                : 0,
++            y: horizontal ? 0 : offset,
++            animated: interaction.animated,
++        });
++    }, [recyclerViewManager, scrollViewRef]);
++    const endScrollInteraction = useCallback((phase, timestamp) => {
++        const current = scrollInteraction.current;
++        if (timestamp < current.startedAt)
++            return false;
++        // A terminal event can supply the final offset when onScroll was throttled.
++        // It never completes a command by itself; acceptScrollOffset checks its value.
++        if (current.phase === "command")
++            return true;
++        if (current.phase !== phase)
++            return false;
++        scrollInteraction.current = { phase: "idle", startedAt: timestamp };
++        return true;
++    }, []);
++    const acceptScrollOffset = useCallback((offset, timestamp, nativeMaxOffset = Infinity) => {
++        var _a, _b, _c;
++        if (timestamp < scrollInteraction.current.startedAt)
++            return false;
++        if (!recyclerViewManager.shouldMaintainVisibleContentPosition() ||
++            recyclerViewManager.getDataLength() === 0) {
++            firstVisibleItem.current = undefined;
++            scrollInteraction.current = { phase: "idle", startedAt: timestamp };
++            return true;
++        }
++        const interaction = scrollInteraction.current;
++        // Measurements may already have moved or removed a pending command's key.
++        (_a = interaction.retarget) === null || _a === void 0 ? void 0 : _a.call(interaction);
++        if (scrollInteraction.current !== interaction)
++            return false;
++        const pendingOffset = interaction.phase === "command"
++            ? interaction.targetOffset
++            : (_b = firstVisibleItem.current) === null || _b === void 0 ? void 0 : _b.pendingOffset;
++        const dataMaxOffset = recyclerViewManager.getIsFirstLayoutComplete()
++            ? recyclerViewManager.getMaxScrollOffset()
++            : Infinity;
++        const boundsAreCurrent = nativeMaxOffset >= dataMaxOffset ||
++            sameScrollOffset(nativeMaxOffset, dataMaxOffset);
++        if (pendingOffset !== undefined &&
++            !boundsAreCurrent &&
++            !sameScrollOffset(offset, pendingOffset) &&
++            sameScrollOffset(offset, Math.max(0, Math.min(nativeMaxOffset, pendingOffset)))) {
++            // Native commands run before mounting; ScrollAnchor corrections run
++            // after the matching layout. A late correction ACK never retries a delta.
++            if (interaction.phase !== "command")
++                return false;
++            const bounds = nativeScrollBounds.current;
++            if ((bounds === null || bounds === void 0 ? void 0 : bounds.dataMaxOffset) === dataMaxOffset &&
++                (bounds.maxOffset >= dataMaxOffset ||
++                    sameScrollOffset(bounds.maxOffset, dataMaxOffset))) {
++                retryClampedScroll(bounds.maxOffset);
++            }
++            else {
++                nativeScrollBounds.current = {
++                    maxOffset: nativeMaxOffset,
++                    dataMaxOffset,
++                };
++            }
++            return false;
++        }
++        if (Number.isFinite(nativeMaxOffset) &&
++            boundsAreCurrent &&
++            (pendingOffset === undefined ||
++                sameScrollOffset(offset, Math.max(0, Math.min(nativeMaxOffset, pendingOffset))))) {
++            nativeScrollBounds.current = {
++                maxOffset: nativeMaxOffset,
++                dataMaxOffset,
++            };
++        }
++        if (interaction.phase === "command") {
++            const target = Math.max(0, Math.min(nativeMaxOffset, interaction.targetOffset));
++            if (sameScrollOffset(offset, target)) {
++                scrollInteraction.current = { phase: "idle", startedAt: timestamp };
++                (_c = interaction.onReached) === null || _c === void 0 ? void 0 : _c.call(interaction, offset);
++                return true;
++            }
++            return Boolean(interaction.animated);
++        }
++        const anchor = firstVisibleItem.current;
++        if (interaction.phase === "idle" && (anchor === null || anchor === void 0 ? void 0 : anchor.pendingOffset) !== undefined) {
++            // Native acknowledges integer-pixel corrections asynchronously. Old or
++            // intermediate offsets must not overwrite the projected logical offset.
++            if (sameScrollOffset(offset, Math.max(0, Math.min(nativeMaxOffset, anchor.pendingOffset)))) {
++                anchor.pendingOffset = undefined;
++                scrollInteraction.current.startedAt = timestamp;
++                if (!sameScrollOffset(offset, anchor.scrollOffset)) {
++                    firstVisibleItem.current = undefined;
++                    return true;
++                }
++            }
++            return false;
++        }
++        return true;
++    }, [recyclerViewManager, retryClampedScroll]);
++    const onContentSizeChange = useCallback((width, height) => {
++        var _a;
++        if (!recyclerViewManager.getIsFirstLayoutComplete() ||
++            !recyclerViewManager.shouldMaintainVisibleContentPosition())
++            return;
++        const { horizontal } = recyclerViewManager.props;
++        const windowSize = recyclerViewManager.getWindowSize();
++        const maxOffset = Math.max(0, horizontal ? width - windowSize.width : height - windowSize.height);
++        const dataMaxOffset = recyclerViewManager.getMaxScrollOffset();
++        if (maxOffset < dataMaxOffset &&
++            !sameScrollOffset(maxOffset, dataMaxOffset))
++            return;
++        const previous = nativeScrollBounds.current;
++        nativeScrollBounds.current = { maxOffset, dataMaxOffset };
++        if ((previous === null || previous === void 0 ? void 0 : previous.maxOffset) === maxOffset &&
++            previous.dataMaxOffset === dataMaxOffset)
++            return;
++        const interaction = scrollInteraction.current;
++        (_a = interaction.retarget) === null || _a === void 0 ? void 0 : _a.call(interaction);
++        if (scrollInteraction.current !== interaction)
++            return;
++        if (previous &&
++            previous.maxOffset < previous.dataMaxOffset &&
++            !sameScrollOffset(previous.maxOffset, previous.dataMaxOffset)) {
++            retryClampedScroll(maxOffset);
++        }
++    }, [recyclerViewManager, retryClampedScroll]);
++    const getPendingScroll = useCallback(() => {
++        var _a;
++        return scrollInteraction.current.phase === "command"
++            ? "command"
++            : ((_a = firstVisibleItem.current) === null || _a === void 0 ? void 0 : _a.pendingOffset) !== undefined
++                ? "correction"
++                : undefined;
++    }, []);
+     // Queue to store callbacks that should be executed after scroll offset updates
+     const pendingScrollCallbacks = useRef([]);
+     // Handle initial scroll position when the list first loads
+@@ -57,108 +206,161 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+         }
+     }, [recyclerViewManager]);
+     const computeFirstVisibleIndexForOffsetCorrection = useCallback(() => {
++        var _a, _b;
++        if (pauseOffsetCorrection.current ||
++            scrollInteraction.current.phase === "command") {
++            firstVisibleItem.current = undefined;
++            return;
++        }
+         if (recyclerViewManager.getIsFirstLayoutComplete() &&
+             recyclerViewManager.hasStableDataKeys() &&
+             recyclerViewManager.getDataLength() > 0 &&
+             recyclerViewManager.shouldMaintainVisibleContentPosition()) {
+-            // Update the tracked first visible item
+-            const firstVisibleIndex = Math.max(0, recyclerViewManager.computeVisibleIndices().startIndex);
++            const anchor = firstVisibleItem.current;
++            const scrollOffset = recyclerViewManager.getAbsoluteLastScrollOffset();
++            const { data, maintainVisibleContentPosition } = recyclerViewManager.props;
++            const shouldAnchorItem = maintainVisibleContentPosition === null || maintainVisibleContentPosition === void 0 ? void 0 : maintainVisibleContentPosition.shouldAnchorItem;
++            // Layout corrections are not reader navigation. Keep the same content
++            // while newly inserted rows finish measuring, even if they become visible.
++            if (anchor &&
++                sameScrollOffset(anchor.scrollOffset, scrollOffset) &&
++                anchor.index < ((_a = data === null || data === void 0 ? void 0 : data.length) !== null && _a !== void 0 ? _a : 0) &&
++                recyclerViewManager.getDataKey(anchor.index) === anchor.key &&
++                (!shouldAnchorItem ||
++                    shouldAnchorItem(data[anchor.index], anchor.index))) {
++                return;
++            }
++            // Update the tracked first visible item after a real offset change.
++            const visibleIndices = recyclerViewManager.computeVisibleIndices();
++            let firstVisibleIndex = Math.max(0, visibleIndices.startIndex);
++            if (shouldAnchorItem) {
++                const lastVisibleIndex = Math.min(visibleIndices.endIndex, ((_b = data === null || data === void 0 ? void 0 : data.length) !== null && _b !== void 0 ? _b : 0) - 1);
++                while (firstVisibleIndex <= lastVisibleIndex &&
++                    !shouldAnchorItem(data[firstVisibleIndex], firstVisibleIndex)) {
++                    firstVisibleIndex++;
++                }
++                if (firstVisibleIndex > lastVisibleIndex) {
++                    firstVisibleItem.current = undefined;
++                    return;
++                }
++            }
+             if (firstVisibleIndex !== undefined && firstVisibleIndex >= 0) {
+-                firstVisibleItemKey.current =
+-                    recyclerViewManager.getDataKey(firstVisibleIndex);
+-                firstVisibleItemLayout.current = {
+-                    ...recyclerViewManager.getLayout(firstVisibleIndex),
++                firstVisibleItem.current = {
++                    key: recyclerViewManager.getDataKey(firstVisibleIndex),
++                    index: firstVisibleIndex,
++                    layout: { ...recyclerViewManager.getLayout(firstVisibleIndex) },
++                    scrollOffset,
+                 };
+             }
+         }
++        else {
++            firstVisibleItem.current = undefined;
++        }
+     }, [recyclerViewManager]);
++    const beginScrollInteraction = useCallback((phase, timestamp, offset = recyclerViewManager.getAbsoluteLastScrollOffset()) => {
++        const current = scrollInteraction.current;
++        if (timestamp < current.startedAt ||
++            (phase === "momentum" &&
++                (pauseOffsetCorrection.current ||
++                    current.phase === "drag" ||
++                    current.phase === "command")))
++            return false;
++        scrollInteraction.current = { phase, startedAt: timestamp };
++        scrollCommandId.current++;
++        pauseOffsetCorrection.current = false;
++        recyclerViewManager.setOffsetProjectionEnabled(true);
++        firstVisibleItem.current = undefined;
++        // Cached pages can arrive before the first onScroll event of this gesture.
++        updateScrollOffsetWithCallback(offset, () => { });
++        computeFirstVisibleIndexForOffsetCorrection();
++        return true;
++    }, [
++        recyclerViewManager,
++        updateScrollOffsetWithCallback,
++        computeFirstVisibleIndexForOffsetCorrection,
++    ]);
+     /**
+      * Maintains the visible content position when the list updates.
+      * This is particularly useful for chat applications where we want to keep
+      * the user's current view position when new messages are added.
+      */
+     const applyOffsetCorrection = useCallback(() => {
+-        var _a, _b, _c;
++        var _a, _b, _c, _d;
+         const { horizontal, data } = recyclerViewManager.props;
+         // Execute all pending callbacks from previous scroll offset updates
+         // This ensures any scroll operations that were waiting for render are completed
+         const callbacks = pendingScrollCallbacks.current;
+         pendingScrollCallbacks.current = [];
+         callbacks.forEach((callback) => callback());
++        (_b = (_a = scrollInteraction.current).retarget) === null || _b === void 0 ? void 0 : _b.call(_a);
+         const currentDataLength = recyclerViewManager.getDataLength();
+         if (recyclerViewManager.getIsFirstLayoutComplete() &&
+             recyclerViewManager.hasStableDataKeys() &&
+             currentDataLength > 0 &&
+             recyclerViewManager.shouldMaintainVisibleContentPosition()) {
+-            const hasDataChanged = currentDataLength !== lastDataLengthRef.current;
++            if (firstVisibleItem.current &&
++                !sameScrollOffset(firstVisibleItem.current.scrollOffset, recyclerViewManager.getAbsoluteLastScrollOffset())) {
++                computeFirstVisibleIndexForOffsetCorrection();
++            }
+             // If we have a tracked first visible item, maintain its position
+-            if (firstVisibleItemKey.current) {
+-                // Try engaged indices first (fast O(n) over rendered items), then
+-                // fall back to a full data search. The fallback is needed when:
+-                // 1. Data just changed (hasDataChanged) — prepended items shift
+-                //    the anchor to a new index not yet in the engaged window.
+-                // 2. A previous correction is still settling (ignoreScrollEvents
+-                //    is true) — after the first correction pass, unmeasured item
+-                //    heights may converge and push the anchor item outside the
+-                //    engaged window. ignoreScrollEvents stays true for 100ms
+-                //    after each correction, giving subsequent layout passes a
+-                //    chance to refine the scroll position.
+-                const currentIndexOfFirstVisibleItem = (_a = recyclerViewManager
+-                    .getEngagedIndices()
+-                    .findValue((index) => recyclerViewManager.getDataKey(index) ===
+-                    firstVisibleItemKey.current)) !== null && _a !== void 0 ? _a : (hasDataChanged || recyclerViewManager.ignoreScrollEvents
+-                    ? data === null || data === void 0 ? void 0 : data.findIndex((item, index) => recyclerViewManager.getDataKey(index) ===
+-                        firstVisibleItemKey.current)
+-                    : undefined);
++            const anchor = firstVisibleItem.current;
++            if (anchor) {
++                // Reuse the resolved index through repeated layout passes. Only a key
++                // moving/removal needs a data search; late sizing may be off-screen.
++                const currentIndexOfFirstVisibleItem = anchor.index < currentDataLength &&
++                    recyclerViewManager.getDataKey(anchor.index) === anchor.key
++                    ? anchor.index
++                    : data === null || data === void 0 ? void 0 : data.findIndex((_, index) => recyclerViewManager.getDataKey(index) === anchor.key);
+                 if (currentIndexOfFirstVisibleItem !== undefined &&
+                     currentIndexOfFirstVisibleItem >= 0) {
+                     // Calculate the difference in position and apply the offset
+                     const diff = horizontal
+                         ? recyclerViewManager.getLayout(currentIndexOfFirstVisibleItem).x -
+-                            firstVisibleItemLayout.current.x
++                            anchor.layout.x
+                         : recyclerViewManager.getLayout(currentIndexOfFirstVisibleItem).y -
+-                            firstVisibleItemLayout.current.y;
+-                    firstVisibleItemLayout.current = {
++                            anchor.layout.y;
++                    anchor.index = currentIndexOfFirstVisibleItem;
++                    anchor.layout = {
+                         ...recyclerViewManager.getLayout(currentIndexOfFirstVisibleItem),
+                     };
+                     if (diff !== 0 &&
+                         !pauseOffsetCorrection.current &&
+                         !recyclerViewManager.animationOptimizationsEnabled) {
+-                        // console.log("diff", diff, firstVisibleItemKey.current);
++                        const previousOffset = recyclerViewManager.getAbsoluteLastScrollOffset();
++                        const correctedOffset = Math.max(0, previousOffset + diff);
++                        // A clamped/no-pixel-motion correction emits no native scroll ACK.
++                        anchor.pendingOffset =
++                            scrollInteraction.current.phase === "idle" &&
++                                PixelRatio.roundToNearestPixel(previousOffset) !==
++                                    PixelRatio.roundToNearestPixel(correctedOffset)
++                                ? correctedOffset
++                                : undefined;
++                        updateScrollOffsetWithCallback(correctedOffset, () => { });
++                        anchor.scrollOffset =
++                            recyclerViewManager.getAbsoluteLastScrollOffset();
+                         if (PlatformConfig.supportsOffsetCorrection) {
+-                            // console.log("scrollBy", diff);
+-                            (_b = scrollAnchorRef.current) === null || _b === void 0 ? void 0 : _b.scrollBy(diff);
++                            (_c = scrollAnchorRef.current) === null || _c === void 0 ? void 0 : _c.scrollBy(diff);
+                         }
+                         else {
+-                            const scrollToParams = horizontal
+-                                ? {
+-                                    x: recyclerViewManager.getAbsoluteLastScrollOffset() + diff,
+-                                    animated: false,
+-                                }
+-                                : {
+-                                    y: recyclerViewManager.getAbsoluteLastScrollOffset() + diff,
+-                                    animated: false,
+-                                };
+-                            (_c = scrollViewRef.current) === null || _c === void 0 ? void 0 : _c.scrollTo(scrollToParams);
+-                        }
+-                        if (hasDataChanged) {
+-                            updateScrollOffsetWithCallback(recyclerViewManager.getAbsoluteLastScrollOffset() + diff, () => { });
+-                            recyclerViewManager.ignoreScrollEvents = true;
+-                            setTimeout(() => {
+-                                recyclerViewManager.ignoreScrollEvents = false;
+-                            }, 100);
++                            (_d = scrollViewRef.current) === null || _d === void 0 ? void 0 : _d.scrollTo(horizontal
++                                ? { x: correctedOffset, animated: false }
++                                : { y: correctedOffset, animated: false });
+                         }
+                     }
+                 }
++                else {
++                    firstVisibleItem.current = undefined;
++                }
+             }
+             computeFirstVisibleIndexForOffsetCorrection();
+         }
+-        lastDataLengthRef.current = recyclerViewManager.getDataLength();
++        else {
++            firstVisibleItem.current = undefined;
++        }
+     }, [
+         recyclerViewManager,
+         scrollAnchorRef,
+         scrollViewRef,
+-        setTimeout,
+         updateScrollOffsetWithCallback,
+         computeFirstVisibleIndexForOffsetCorrection,
+     ]);
+@@ -172,8 +374,36 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+              * Handles RTL layouts and first item offset adjustments.
+              */
+             scrollToOffset: ({ offset, animated, skipFirstItemOffset = true, }) => {
++                var _a;
++                scrollCommandId.current++;
++                pauseOffsetCorrection.current = false;
++                recyclerViewManager.setOffsetProjectionEnabled(true);
+                 const { horizontal } = recyclerViewManager.props;
+                 if (scrollViewRef.current) {
++                    if (recyclerViewManager.getIsFirstLayoutComplete() &&
++                        recyclerViewManager.shouldMaintainVisibleContentPosition()) {
++                        const targetOffset = Math.max(0, offset +
++                            (skipFirstItemOffset ? 0 : recyclerViewManager.firstItemOffset));
++                        const bounds = nativeScrollBounds.current;
++                        const knownTarget = bounds &&
++                            bounds.dataMaxOffset === recyclerViewManager.getMaxScrollOffset()
++                            ? Math.min(targetOffset, bounds.maxOffset)
++                            : targetOffset;
++                        // A no-op native command emits no acknowledgement. Other commands
++                        // own the viewport until their final offset or a new reader gesture.
++                        const alreadyThere = sameScrollOffset(knownTarget, recyclerViewManager.getAbsoluteLastScrollOffset()) &&
++                            scrollInteraction.current.phase !== "command" &&
++                            ((_a = firstVisibleItem.current) === null || _a === void 0 ? void 0 : _a.pendingOffset) === undefined;
++                        scrollInteraction.current = {
++                            phase: alreadyThere ? "idle" : "command",
++                            startedAt: scrollInteraction.current.startedAt,
++                            targetOffset,
++                            animated: Boolean(animated),
++                        };
++                        if (!animated)
++                            updateScrollOffsetWithCallback(knownTarget, () => { });
++                    }
++                    firstVisibleItem.current = undefined;
+                     // Adjust offset for RTL layouts in horizontal mode
+                     if (I18nManager.isRTL && horizontal) {
+                         // eslint-disable-next-line no-param-reassign
+@@ -250,6 +480,23 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+                     if (scrollViewRef.current &&
+                         index >= 0 &&
+                         index < recyclerViewManager.getDataLength()) {
++                        const commandId = ++scrollCommandId.current;
++                        const targetKey = recyclerViewManager.getDataKey(index);
++                        const resolveTargetIndex = () => {
++                            var _a, _b;
++                            if (index >= 0 &&
++                                index < recyclerViewManager.getDataLength() &&
++                                recyclerViewManager.getDataKey(index) === targetKey)
++                                return true;
++                            index =
++                                (_b = (_a = recyclerViewManager.props.data) === null || _a === void 0 ? void 0 : _a.findIndex((_, candidate) => recyclerViewManager.getDataKey(candidate) === targetKey)) !== null && _b !== void 0 ? _b : -1;
++                            return index >= 0;
++                        };
++                        scrollInteraction.current = {
++                            phase: "idle",
++                            startedAt: scrollInteraction.current.startedAt,
++                        };
++                        firstVisibleItem.current = undefined;
+                         // Pause the scroll offset adjustments
+                         pauseOffsetCorrection.current = true;
+                         recyclerViewManager.setOffsetProjectionEnabled(false);
+@@ -305,7 +552,8 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+                          */
+                         const performScrollStep = (currentStep) => {
+                             // Check if component is unmounted or we've completed all steps
+-                            if (isUnmounted.current) {
++                            if (isUnmounted.current ||
++                                commandId !== scrollCommandId.current) {
+                                 resolve();
+                                 return;
+                             }
+@@ -326,11 +574,18 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+                                         (currentStep / (steps - 1));
+                             // Update scroll offset with a callback to continue to the next step
+                             updateScrollOffsetWithCallback(nextOffset, () => {
+-                                // Check if the index is still valid after the update
+-                                if (index >= recyclerViewManager.getDataLength()) {
+-                                    // Index out of bounds, scroll to end instead
+-                                    handlerMethods.scrollToEnd({ animated });
+-                                    resolve(); // Resolve the promise as we're done
++                                if (isUnmounted.current ||
++                                    commandId !== scrollCommandId.current) {
++                                    resolve();
++                                    return;
++                                }
++                                if (!resolveTargetIndex()) {
++                                    // The requested content disappeared; do not locate a different row.
++                                    handlerMethods.scrollToOffset({
++                                        offset: lastAbsoluteScrollOffset,
++                                        animated: false,
++                                    });
++                                    resolve();
+                                     return;
+                                 }
+                                 // Check if the target position has changed significantly
+@@ -353,8 +608,8 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+                             });
+                         };
+                         /**
+-                         * Completes the scroll to index operation by performing the final scroll
+-                         * and re-enabling offset correction after a delay.
++                         * Hands the final target to native acknowledgement, then keeps its key
++                         * as the reading anchor while subsequent measurements settle.
+                          */
+                         const finishScrollToIndex = () => {
+                             finalOffset = getFinalOffset();
+@@ -371,19 +626,49 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+                                     skipFirstItemOffset: true,
+                                 });
+                             }
+-                            // Perform the final scroll to the target position
+-                            handlerMethods.scrollToOffset({
+-                                offset: finalOffset,
+-                                animated,
+-                                skipFirstItemOffset: true,
+-                            });
+-                            // Re-enable offset correction after a delay
+-                            // Longer delay for animated scrolls to allow animation to complete
+-                            setTimeout(() => {
+-                                pauseOffsetCorrection.current = false;
+-                                recyclerViewManager.setOffsetProjectionEnabled(true);
+-                                resolve(); // Resolve the promise after re-enabling corrections
+-                            }, animated ? 300 : 200);
++                            const retainTarget = (scrollOffset) => {
++                                if (!resolveTargetIndex())
++                                    return;
++                                firstVisibleItem.current = {
++                                    key: targetKey,
++                                    index,
++                                    layout: { ...recyclerViewManager.getLayout(index) },
++                                    scrollOffset,
++                                };
++                            };
++                            const followTarget = () => {
++                                // Reuse the resolved index; only a moved key needs a search.
++                                if (!resolveTargetIndex()) {
++                                    handlerMethods.scrollToOffset({
++                                        offset: recyclerViewManager.getAbsoluteLastScrollOffset(),
++                                        animated: false,
++                                    });
++                                    return;
++                                }
++                                const nextOffset = Math.max(0, Math.min(getFinalOffset(), recyclerViewManager.getMaxScrollOffset()));
++                                if (!sameScrollOffset(nextOffset, scrollInteraction.current.targetOffset)) {
++                                    finalOffset = nextOffset;
++                                    sendTarget();
++                                }
++                            };
++                            const sendTarget = () => {
++                                handlerMethods.scrollToOffset({
++                                    offset: finalOffset,
++                                    animated,
++                                    skipFirstItemOffset: true,
++                                });
++                                if (scrollInteraction.current.phase === "command") {
++                                    scrollInteraction.current.retarget = followTarget;
++                                    scrollInteraction.current.onReached = retainTarget;
++                                }
++                                else {
++                                    retainTarget(recyclerViewManager.getAbsoluteLastScrollOffset());
++                                }
++                            };
++                            // Layout projection is finished. Native acknowledgement owns the
++                            // remaining command, including late measurements before it lands.
++                            sendTarget();
++                            setTimeout(resolve, animated ? 300 : 200);
+                         };
+                         // Start the scroll animation process
+                         performScrollStep(0);
+@@ -457,6 +742,7 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+         setTimeout,
+         isUnmounted,
+         updateScrollOffsetWithCallback,
++        computeFirstVisibleIndexForOffsetCorrection,
+     ]);
+     const applyInitialScrollIndex = useCallback(() => {
+         var _a, _b, _c;
+@@ -507,10 +793,14 @@ export function useRecyclerViewController(recyclerViewManager, ref, scrollViewRe
+         return imperativeApi;
+     }, [handlerMethods, scrollViewRef, recyclerViewManager]);
+     return {
++        acceptScrollOffset,
++        onContentSizeChange,
++        getPendingScroll,
++        beginScrollInteraction,
++        endScrollInteraction,
+         applyOffsetCorrection,
+         computeFirstVisibleIndexForOffsetCorrection,
+         applyInitialScrollIndex,
+         handlerMethods,
+     };
+ }
+-//# sourceMappingURL=useRecyclerViewController.js.map
+\ No newline at end of file
+diff --git a/node_modules/@shopify/flash-list/src/FlashListProps.ts b/node_modules/@shopify/flash-list/src/FlashListProps.ts
+index 1dba06c..881dfcb 100644
+--- a/node_modules/@shopify/flash-list/src/FlashListProps.ts
++++ b/node_modules/@shopify/flash-list/src/FlashListProps.ts
+@@ -389,6 +389,8 @@ export interface FlashListProps<TItem>
+      * maintainVisibleContentPosition is enabled by default.
+      */
+     disabled?: boolean;
++    /** Excludes non-content rows from the visible anchor. Only visible items are inspected. */
++    shouldAnchorItem?: (item: TItem, index: number) => boolean;
+     /**
+      * When content is added at the top, automatically scroll to maintain position if the user is within this threshold of the top
+      */
+diff --git a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerView.tsx b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerView.tsx
+index 3c25e7e..449ae1c 100644
+--- a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerView.tsx
++++ b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerView.tsx
+@@ -137,6 +137,11 @@ const RecyclerViewComponent = <T,>(
+   const { recyclerViewManager, velocityTracker } =
+     useRecyclerViewManager(props);
+   const {
++    acceptScrollOffset,
++    onContentSizeChange,
++    getPendingScroll,
++    beginScrollInteraction,
++    endScrollInteraction,
+     applyOffsetCorrection,
+     computeFirstVisibleIndexForOffsetCorrection,
+     applyInitialScrollIndex,
+@@ -155,7 +160,11 @@ const RecyclerViewComponent = <T,>(
+   useOnListLoad(recyclerViewManager, onLoad);
+ 
+   // Hook to detect when scrolling reaches list bounds
+-  const { checkBounds } = useBoundDetection(recyclerViewManager, scrollViewRef);
++  const { checkBounds } = useBoundDetection(
++    recyclerViewManager,
++    scrollViewRef,
++    getPendingScroll
++  );
+ 
+   const isHorizontalRTL = I18nManager.isRTL && horizontal;
+ 
+@@ -260,43 +269,59 @@ const RecyclerViewComponent = <T,>(
+   /**
+    * Scroll event handler that manages scroll position, velocity, and RTL support
+    */
+-  const onScrollHandler = useCallback(
++  const getScrollOffset = useCallback(
+     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+-      if (recyclerViewManager.ignoreScrollEvents) {
+-        return;
+-      }
+-
+-      let scrollOffset = horizontal
++      const scrollOffset = horizontal
+         ? event.nativeEvent.contentOffset.x
+         : event.nativeEvent.contentOffset.y;
+-
+-      // Handle RTL (Right-to-Left) layout adjustments
+-      if (isHorizontalRTL) {
+-        scrollOffset = adjustOffsetForRTL(
+-          scrollOffset,
+-          event.nativeEvent.contentSize.width,
+-          event.nativeEvent.layoutMeasurement.width
+-        );
+-      }
++      return isHorizontalRTL
++        ? adjustOffsetForRTL(
++            scrollOffset,
++            event.nativeEvent.contentSize.width,
++            event.nativeEvent.layoutMeasurement.width
++          )
++        : scrollOffset;
++    },
++    [horizontal, isHorizontalRTL]
++  );
++  const onScrollHandler = useCallback(
++    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
++      const scrollOffset = getScrollOffset(event);
++      const timestamp =
++        (event.nativeEvent as NativeScrollEvent & { timestamp?: number })
++          .timestamp ?? event.timeStamp;
++      const nativeMaxOffset = Math.max(
++        0,
++        horizontal
++          ? event.nativeEvent.contentSize.width -
++              event.nativeEvent.layoutMeasurement.width
++          : event.nativeEvent.contentSize.height -
++              event.nativeEvent.layoutMeasurement.height
++      );
++      if (!acceptScrollOffset(scrollOffset, timestamp, nativeMaxOffset)) return;
+ 
+       velocityTracker.computeVelocity(
+         scrollOffset,
+         recyclerViewManager.getAbsoluteLastScrollOffset(),
+         Boolean(horizontal),
+         (velocity, isMomentumEnd) => {
+-          if (recyclerViewManager.ignoreScrollEvents) {
+-            return;
+-          }
+-
+           if (isMomentumEnd) {
+-            computeFirstVisibleIndexForOffsetCorrection();
+             if (!recyclerViewManager.isOffsetProjectionEnabled) {
+               return;
+             }
+             recyclerViewManager.resetVelocityCompute();
+           }
+           // Update scroll position and trigger re-render if needed
+-          if (recyclerViewManager.updateScrollOffset(scrollOffset, velocity)) {
++          // VelocityTracker's idle callback is not a new native scroll event.
++          // Never replay an old offset over a more recent layout correction.
++          const changed = recyclerViewManager.updateScrollOffset(
++            isMomentumEnd
++              ? recyclerViewManager.getAbsoluteLastScrollOffset()
++              : scrollOffset,
++            velocity
++          );
++          computeFirstVisibleIndexForOffsetCorrection();
++          if (changed) {
+             setRenderId((prev) => prev + 1);
+           }
+         }
+@@ -318,10 +343,11 @@ const RecyclerViewComponent = <T,>(
+       recyclerViewManager.props.onScroll?.(event);
+     },
+     [
++      acceptScrollOffset,
+       checkBounds,
+       computeFirstVisibleIndexForOffsetCorrection,
++      getScrollOffset,
+       horizontal,
+-      isHorizontalRTL,
+       recyclerViewManager,
+       velocityTracker,
+     ]
+@@ -488,8 +514,10 @@ const RecyclerViewComponent = <T,>(
+ 
+   const maintainVisibleContentPositionInternal = useMemo(() => {
+     if (shouldMaintainVisibleContentPosition) {
++      const { shouldAnchorItem: _shouldAnchorItem, ...scrollOptions } =
++        maintainVisibleContentPosition ?? {};
+       return {
+-        ...maintainVisibleContentPosition,
++        ...scrollOptions,
+         minIndexForVisible: 0,
+       };
+     }
+@@ -568,6 +596,58 @@ const RecyclerViewComponent = <T,>(
+           horizontal={horizontal}
+           ref={scrollViewRef}
+           onScroll={animatedEvent}
++          onContentSizeChange={(width, height) => {
++            onContentSizeChange(width, height);
++            props.onContentSizeChange?.(width, height);
++          }}
++          onScrollBeginDrag={(event) => {
++            beginScrollInteraction(
++              "drag",
++              (event.nativeEvent as NativeScrollEvent & { timestamp?: number })
++                .timestamp ?? event.timeStamp,
++              getScrollOffset(event)
++            );
++            props.onScrollBeginDrag?.(event);
++          }}
++          onMomentumScrollBegin={(event) => {
++            beginScrollInteraction(
++              "momentum",
++              (event.nativeEvent as NativeScrollEvent & { timestamp?: number })
++                .timestamp ?? event.timeStamp,
++              getScrollOffset(event)
++            );
++            props.onMomentumScrollBegin?.(event);
++          }}
++          onScrollEndDrag={(event) => {
++            if (
++              endScrollInteraction(
++                "drag",
++                (
++                  event.nativeEvent as NativeScrollEvent & {
++                    timestamp?: number;
++                  }
++                ).timestamp ?? event.timeStamp
++              )
++            ) {
++              onScrollHandler(event);
++            }
++            props.onScrollEndDrag?.(event);
++          }}
++          onMomentumScrollEnd={(event) => {
++            if (
++              endScrollInteraction(
++                "momentum",
++                (
++                  event.nativeEvent as NativeScrollEvent & {
++                    timestamp?: number;
++                  }
++                ).timestamp ?? event.timeStamp
++              )
++            ) {
++              onScrollHandler(event);
++            }
++            props.onMomentumScrollEnd?.(event);
++          }}
+           maintainVisibleContentPosition={
+             maintainVisibleContentPositionInternal
+           }
+diff --git a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts
+index 41704d0..c54b703 100644
+--- a/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts
++++ b/node_modules/@shopify/flash-list/src/recyclerview/RecyclerViewManager.ts
+@@ -37,7 +37,6 @@ export class RecyclerViewManager<T> {
+   private _animationOptimizationsEnabled = false;
+ 
+   public firstItemOffset = 0;
+-  public ignoreScrollEvents = false;
+   public isFirstPaintOnUiComplete = false;
+   public isInitialScrollComplete = false;
+ 
+diff --git a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
+index dd0f21f..9ad9232 100644
+--- a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
++++ b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useBoundDetection.ts
+@@ -18,7 +18,8 @@ import { useUnmountAwareAnimationFrame } from "./useUnmountAwareCallbacks";
+  */
+ export function useBoundDetection<T>(
+   recyclerViewManager: RecyclerViewManager<T>,
+-  scrollViewRef: React.RefObject<CompatScroller>
++  scrollViewRef: React.RefObject<CompatScroller>,
++  getPendingScroll: () => "command" | "correction" | undefined
+ ) {
+   // Track whether we've already triggered the end reached callback to prevent duplicate calls
+   const pendingEndReached = useRef(false);
+@@ -142,11 +143,14 @@ export function useBoundDetection<T>(
+ 
+   const runAutoScrollToBottomCheck = useCallback(() => {
+     // Suppress MVCP autoscroll while a programmatic scrollToIndex is in
+-    // flight. FlashList disables offset projection at the start of
+-    // scrollToIndex and reenables it ~200-300ms after settling. Without
++    // flight. FlashList disables offset projection during its layout projection.
++    // Without
+     // this guard, the sticky pendingAutoscrollToBottom ref races against
+     // scrollToIndex and fires scrollToEnd mid flight.
+-    if (!recyclerViewManager.isOffsetProjectionEnabled) {
++    if (
++      !recyclerViewManager.isOffsetProjectionEnabled ||
++      getPendingScroll() === "command"
++    ) {
+       return;
+     }
+     if (pendingAutoscrollToBottom.current) {
+@@ -156,11 +160,16 @@ export function useBoundDetection<T>(
+           recyclerViewManager.props.maintainVisibleContentPosition
+             ?.animateAutoScrollToBottom ?? true;
+         scrollViewRef.current?.scrollToEnd({
+-          animated: shouldAnimate && !recyclerViewManager.ignoreScrollEvents,
++          animated: shouldAnimate && getPendingScroll() !== "correction",
+         });
+       });
+     }
+-  }, [requestAnimationFrame, scrollViewRef, recyclerViewManager]);
++  }, [
++    requestAnimationFrame,
++    scrollViewRef,
++    recyclerViewManager,
++    getPendingScroll,
++  ]);
+ 
+   // Reset end reached state when data changes
+   useMemo(() => {
+diff --git a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx
+index 3689830..f948605 100644
+--- a/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx
++++ b/node_modules/@shopify/flash-list/src/recyclerview/hooks/useRecyclerViewController.tsx
+@@ -6,7 +6,7 @@ import {
+   useRef,
+   useState,
+ } from "react";
+-import { I18nManager } from "react-native";
++import { I18nManager, PixelRatio } from "react-native";
+ 
+ import {
+   ScrollToOffsetParams,
+@@ -26,6 +26,9 @@ import { WarningMessages } from "../../errors/WarningMessages";
+ import { useUnmountFlag } from "./useUnmountFlag";
+ import { useUnmountAwareTimeout } from "./useUnmountAwareCallbacks";
+ 
++const sameScrollOffset = (left: number, right: number) =>
++  Math.abs(left - right) <= 1 / PixelRatio.get();
++
+ /**
+  * Comprehensive hook that manages RecyclerView scrolling behavior and provides
+  * imperative methods for controlling the RecyclerView.
+@@ -51,12 +54,223 @@ export function useRecyclerViewController<T>(
+   const isUnmounted = useUnmountFlag();
+   const [_, setRenderId] = useState(0);
+   const pauseOffsetCorrection = useRef(false);
+-  const lastDataLengthRef = useRef(recyclerViewManager.getDataLength());
++  const scrollCommandId = useRef(0);
+   const { setTimeout } = useUnmountAwareTimeout();
+ 
+   // Track the first visible item for maintaining scroll position
+-  const firstVisibleItemKey = useRef<string | undefined>(undefined);
+-  const firstVisibleItemLayout = useRef<RVLayout | undefined>(undefined);
++  const firstVisibleItem = useRef<
++    | {
++        key: string;
++        index: number;
++        layout: RVLayout;
++        scrollOffset: number;
++        pendingOffset?: number;
++      }
++    | undefined
++  >(undefined);
++  const scrollInteraction = useRef<{
++    phase: "idle" | "drag" | "momentum" | "command";
++    startedAt: number;
++    targetOffset?: number;
++    animated?: boolean;
++    retarget?: () => void;
++    onReached?: (offset: number) => void;
++  }>({ phase: "idle", startedAt: 0 });
++  // Native bounds include footer and content padding; data-only bounds do not.
++  const nativeScrollBounds = useRef<
++    { maxOffset: number; dataMaxOffset: number } | undefined
++  >(undefined);
++  const retryClampedScroll = useCallback(
++    (maxOffset: number) => {
++      const interaction = scrollInteraction.current;
++      if (
++        interaction.phase !== "command" ||
++        interaction.targetOffset === undefined
++      )
++        return;
++      const { horizontal } = recyclerViewManager.props;
++      const windowSize = recyclerViewManager.getWindowSize();
++      const offset = Math.max(0, Math.min(maxOffset, interaction.targetOffset));
++      scrollViewRef.current?.scrollTo({
++        x: horizontal
++          ? I18nManager.isRTL
++            ? adjustOffsetForRTL(
++                offset,
++                maxOffset + windowSize.width,
++                windowSize.width
++              )
++            : offset
++          : 0,
++        y: horizontal ? 0 : offset,
++        animated: interaction.animated,
++      });
++    },
++    [recyclerViewManager, scrollViewRef]
++  );
++  const endScrollInteraction = useCallback(
++    (phase: "drag" | "momentum", timestamp: number) => {
++      const current = scrollInteraction.current;
++      if (timestamp < current.startedAt) return false;
++      // A terminal event can supply the final offset when onScroll was throttled.
++      // It never completes a command by itself; acceptScrollOffset checks its value.
++      if (current.phase === "command") return true;
++      if (current.phase !== phase) return false;
++      scrollInteraction.current = { phase: "idle", startedAt: timestamp };
++      return true;
++    },
++    []
++  );
++  const acceptScrollOffset = useCallback(
++    (offset: number, timestamp: number, nativeMaxOffset = Infinity) => {
++      if (timestamp < scrollInteraction.current.startedAt) return false;
++      if (
++        !recyclerViewManager.shouldMaintainVisibleContentPosition() ||
++        recyclerViewManager.getDataLength() === 0
++      ) {
++        firstVisibleItem.current = undefined;
++        scrollInteraction.current = { phase: "idle", startedAt: timestamp };
++        return true;
++      }
++      const interaction = scrollInteraction.current;
++      // Measurements may already have moved or removed a pending command's key.
++      interaction.retarget?.();
++      if (scrollInteraction.current !== interaction) return false;
++      const pendingOffset =
++        interaction.phase === "command"
++          ? interaction.targetOffset
++          : firstVisibleItem.current?.pendingOffset;
++      const dataMaxOffset = recyclerViewManager.getIsFirstLayoutComplete()
++        ? recyclerViewManager.getMaxScrollOffset()
++        : Infinity;
++      const boundsAreCurrent =
++        nativeMaxOffset >= dataMaxOffset ||
++        sameScrollOffset(nativeMaxOffset, dataMaxOffset);
++      if (
++        pendingOffset !== undefined &&
++        !boundsAreCurrent &&
++        !sameScrollOffset(offset, pendingOffset) &&
++        sameScrollOffset(
++          offset,
++          Math.max(0, Math.min(nativeMaxOffset, pendingOffset))
++        )
++      ) {
++        // Native commands run before mounting; ScrollAnchor corrections run
++        // after the matching layout. A late correction ACK never retries a delta.
++        if (interaction.phase !== "command") return false;
++        const bounds = nativeScrollBounds.current;
++        if (
++          bounds?.dataMaxOffset === dataMaxOffset &&
++          (bounds.maxOffset >= dataMaxOffset ||
++            sameScrollOffset(bounds.maxOffset, dataMaxOffset))
++        ) {
++          retryClampedScroll(bounds.maxOffset);
++        } else {
++          nativeScrollBounds.current = {
++            maxOffset: nativeMaxOffset,
++            dataMaxOffset,
++          };
++        }
++        return false;
++      }
++      if (
++        Number.isFinite(nativeMaxOffset) &&
++        boundsAreCurrent &&
++        (pendingOffset === undefined ||
++          sameScrollOffset(
++            offset,
++            Math.max(0, Math.min(nativeMaxOffset, pendingOffset))
++          ))
++      ) {
++        nativeScrollBounds.current = {
++          maxOffset: nativeMaxOffset,
++          dataMaxOffset,
++        };
++      }
++      if (interaction.phase === "command") {
++        const target = Math.max(
++          0,
++          Math.min(nativeMaxOffset, interaction.targetOffset!)
++        );
++        if (sameScrollOffset(offset, target)) {
++          scrollInteraction.current = { phase: "idle", startedAt: timestamp };
++          interaction.onReached?.(offset);
++          return true;
++        }
++        return Boolean(interaction.animated);
++      }
++      const anchor = firstVisibleItem.current;
++      if (interaction.phase === "idle" && anchor?.pendingOffset !== undefined) {
++        // Native acknowledges integer-pixel corrections asynchronously. Old or
++        // intermediate offsets must not overwrite the projected logical offset.
++        if (
++          sameScrollOffset(
++            offset,
++            Math.max(0, Math.min(nativeMaxOffset, anchor.pendingOffset))
++          )
++        ) {
++          anchor.pendingOffset = undefined;
++          scrollInteraction.current.startedAt = timestamp;
++          if (!sameScrollOffset(offset, anchor.scrollOffset)) {
++            firstVisibleItem.current = undefined;
++            return true;
++          }
++        }
++        return false;
++      }
++      return true;
++    },
++    [recyclerViewManager, retryClampedScroll]
++  );
++
++  const onContentSizeChange = useCallback(
++    (width: number, height: number) => {
++      if (
++        !recyclerViewManager.getIsFirstLayoutComplete() ||
++        !recyclerViewManager.shouldMaintainVisibleContentPosition()
++      )
++        return;
++      const { horizontal } = recyclerViewManager.props;
++      const windowSize = recyclerViewManager.getWindowSize();
++      const maxOffset = Math.max(
++        0,
++        horizontal ? width - windowSize.width : height - windowSize.height
++      );
++      const dataMaxOffset = recyclerViewManager.getMaxScrollOffset();
++      if (
++        maxOffset < dataMaxOffset &&
++        !sameScrollOffset(maxOffset, dataMaxOffset)
++      )
++        return;
++      const previous = nativeScrollBounds.current;
++      nativeScrollBounds.current = { maxOffset, dataMaxOffset };
++      if (
++        previous?.maxOffset === maxOffset &&
++        previous.dataMaxOffset === dataMaxOffset
++      )
++        return;
++      const interaction = scrollInteraction.current;
++      interaction.retarget?.();
++      if (scrollInteraction.current !== interaction) return;
++      if (
++        previous &&
++        previous.maxOffset < previous.dataMaxOffset &&
++        !sameScrollOffset(previous.maxOffset, previous.dataMaxOffset)
++      ) {
++        retryClampedScroll(maxOffset);
++      }
++    },
++    [recyclerViewManager, retryClampedScroll]
++  );
++
++  const getPendingScroll = useCallback(
++    (): "command" | "correction" | undefined =>
++      scrollInteraction.current.phase === "command"
++        ? "command"
++        : firstVisibleItem.current?.pendingOffset !== undefined
++          ? "correction"
++          : undefined,
++    []
++  );
+ 
+   // Queue to store callbacks that should be executed after scroll offset updates
+   const pendingScrollCallbacks = useRef<(() => void)[]>([]);
+@@ -90,27 +304,100 @@ export function useRecyclerViewController<T>(
+   );
+ 
+   const computeFirstVisibleIndexForOffsetCorrection = useCallback(() => {
++    if (
++      pauseOffsetCorrection.current ||
++      scrollInteraction.current.phase === "command"
++    ) {
++      firstVisibleItem.current = undefined;
++      return;
++    }
+     if (
+       recyclerViewManager.getIsFirstLayoutComplete() &&
+       recyclerViewManager.hasStableDataKeys() &&
+       recyclerViewManager.getDataLength() > 0 &&
+       recyclerViewManager.shouldMaintainVisibleContentPosition()
+     ) {
+-      // Update the tracked first visible item
+-      const firstVisibleIndex = Math.max(
+-        0,
+-        recyclerViewManager.computeVisibleIndices().startIndex
+-      );
++      const anchor = firstVisibleItem.current;
++      const scrollOffset = recyclerViewManager.getAbsoluteLastScrollOffset();
++      const { data, maintainVisibleContentPosition } =
++        recyclerViewManager.props;
++      const shouldAnchorItem = maintainVisibleContentPosition?.shouldAnchorItem;
++      // Layout corrections are not reader navigation. Keep the same content
++      // while newly inserted rows finish measuring, even if they become visible.
++      if (
++        anchor &&
++        sameScrollOffset(anchor.scrollOffset, scrollOffset) &&
++        anchor.index < (data?.length ?? 0) &&
++        recyclerViewManager.getDataKey(anchor.index) === anchor.key &&
++        (!shouldAnchorItem ||
++          shouldAnchorItem(data![anchor.index], anchor.index))
++      ) {
++        return;
++      }
++      // Update the tracked first visible item after a real offset change.
++      const visibleIndices = recyclerViewManager.computeVisibleIndices();
++      let firstVisibleIndex = Math.max(0, visibleIndices.startIndex);
++      if (shouldAnchorItem) {
++        const lastVisibleIndex = Math.min(
++          visibleIndices.endIndex,
++          (data?.length ?? 0) - 1
++        );
++        while (
++          firstVisibleIndex <= lastVisibleIndex &&
++          !shouldAnchorItem(data![firstVisibleIndex], firstVisibleIndex)
++        ) {
++          firstVisibleIndex++;
++        }
++        if (firstVisibleIndex > lastVisibleIndex) {
++          firstVisibleItem.current = undefined;
++          return;
++        }
++      }
+       if (firstVisibleIndex !== undefined && firstVisibleIndex >= 0) {
+-        firstVisibleItemKey.current =
+-          recyclerViewManager.getDataKey(firstVisibleIndex);
+-        firstVisibleItemLayout.current = {
+-          ...recyclerViewManager.getLayout(firstVisibleIndex),
++        firstVisibleItem.current = {
++          key: recyclerViewManager.getDataKey(firstVisibleIndex),
++          index: firstVisibleIndex,
++          layout: { ...recyclerViewManager.getLayout(firstVisibleIndex) },
++          scrollOffset,
+         };
+       }
++    } else {
++      firstVisibleItem.current = undefined;
+     }
+   }, [recyclerViewManager]);
+ 
++  const beginScrollInteraction = useCallback(
++    (
++      phase: "drag" | "momentum",
++      timestamp: number,
++      offset = recyclerViewManager.getAbsoluteLastScrollOffset()
++    ) => {
++      const current = scrollInteraction.current;
++      if (
++        timestamp < current.startedAt ||
++        (phase === "momentum" &&
++          (pauseOffsetCorrection.current ||
++            current.phase === "drag" ||
++            current.phase === "command"))
++      )
++        return false;
++      scrollInteraction.current = { phase, startedAt: timestamp };
++      scrollCommandId.current++;
++      pauseOffsetCorrection.current = false;
++      recyclerViewManager.setOffsetProjectionEnabled(true);
++      firstVisibleItem.current = undefined;
++      // Cached pages can arrive before the first onScroll event of this gesture.
++      updateScrollOffsetWithCallback(offset, () => {});
++      computeFirstVisibleIndexForOffsetCorrection();
++      return true;
++    },
++    [
++      recyclerViewManager,
++      updateScrollOffsetWithCallback,
++      computeFirstVisibleIndexForOffsetCorrection,
++    ]
++  );
++
+   /**
+    * Maintains the visible content position when the list updates.
+    * This is particularly useful for chat applications where we want to keep
+@@ -124,6 +411,7 @@ export function useRecyclerViewController<T>(
+     const callbacks = pendingScrollCallbacks.current;
+     pendingScrollCallbacks.current = [];
+     callbacks.forEach((callback) => callback());
++    scrollInteraction.current.retarget?.();
+ 
+     const currentDataLength = recyclerViewManager.getDataLength();
+ 
+@@ -133,34 +421,28 @@ export function useRecyclerViewController<T>(
+       currentDataLength > 0 &&
+       recyclerViewManager.shouldMaintainVisibleContentPosition()
+     ) {
+-      const hasDataChanged = currentDataLength !== lastDataLengthRef.current;
++      if (
++        firstVisibleItem.current &&
++        !sameScrollOffset(
++          firstVisibleItem.current.scrollOffset,
++          recyclerViewManager.getAbsoluteLastScrollOffset()
++        )
++      ) {
++        computeFirstVisibleIndexForOffsetCorrection();
++      }
+       // If we have a tracked first visible item, maintain its position
+-      if (firstVisibleItemKey.current) {
+-        // Try engaged indices first (fast O(n) over rendered items), then
+-        // fall back to a full data search. The fallback is needed when:
+-        // 1. Data just changed (hasDataChanged) — prepended items shift
+-        //    the anchor to a new index not yet in the engaged window.
+-        // 2. A previous correction is still settling (ignoreScrollEvents
+-        //    is true) — after the first correction pass, unmeasured item
+-        //    heights may converge and push the anchor item outside the
+-        //    engaged window. ignoreScrollEvents stays true for 100ms
+-        //    after each correction, giving subsequent layout passes a
+-        //    chance to refine the scroll position.
++      const anchor = firstVisibleItem.current;
++      if (anchor) {
++        // Reuse the resolved index through repeated layout passes. Only a key
++        // moving/removal needs a data search; late sizing may be off-screen.
+         const currentIndexOfFirstVisibleItem =
+-          recyclerViewManager
+-            .getEngagedIndices()
+-            .findValue(
+-              (index) =>
+-                recyclerViewManager.getDataKey(index) ===
+-                firstVisibleItemKey.current
+-            ) ??
+-          (hasDataChanged || recyclerViewManager.ignoreScrollEvents
+-            ? data?.findIndex(
+-                (item, index) =>
+-                  recyclerViewManager.getDataKey(index) ===
+-                  firstVisibleItemKey.current
+-              )
+-            : undefined);
++          anchor.index < currentDataLength &&
++          recyclerViewManager.getDataKey(anchor.index) === anchor.key
++            ? anchor.index
++            : data?.findIndex(
++                (_, index) =>
++                  recyclerViewManager.getDataKey(index) === anchor.key
++              );
+ 
+         if (
+           currentIndexOfFirstVisibleItem !== undefined &&
+@@ -169,10 +451,11 @@ export function useRecyclerViewController<T>(
+           // Calculate the difference in position and apply the offset
+           const diff = horizontal
+             ? recyclerViewManager.getLayout(currentIndexOfFirstVisibleItem).x -
+-              firstVisibleItemLayout.current!.x
++              anchor.layout.x
+             : recyclerViewManager.getLayout(currentIndexOfFirstVisibleItem).y -
+-              firstVisibleItemLayout.current!.y;
+-          firstVisibleItemLayout.current = {
++              anchor.layout.y;
++          anchor.index = currentIndexOfFirstVisibleItem;
++          anchor.layout = {
+             ...recyclerViewManager.getLayout(currentIndexOfFirstVisibleItem),
+           };
+           if (
+@@ -180,44 +463,42 @@ export function useRecyclerViewController<T>(
+             !pauseOffsetCorrection.current &&
+             !recyclerViewManager.animationOptimizationsEnabled
+           ) {
+-            // console.log("diff", diff, firstVisibleItemKey.current);
++            const previousOffset =
++              recyclerViewManager.getAbsoluteLastScrollOffset();
++            const correctedOffset = Math.max(0, previousOffset + diff);
++            // A clamped/no-pixel-motion correction emits no native scroll ACK.
++            anchor.pendingOffset =
++              scrollInteraction.current.phase === "idle" &&
++              PixelRatio.roundToNearestPixel(previousOffset) !==
++                PixelRatio.roundToNearestPixel(correctedOffset)
++                ? correctedOffset
++                : undefined;
++            updateScrollOffsetWithCallback(correctedOffset, () => {});
++            anchor.scrollOffset =
++              recyclerViewManager.getAbsoluteLastScrollOffset();
+             if (PlatformConfig.supportsOffsetCorrection) {
+-              // console.log("scrollBy", diff);
+               scrollAnchorRef.current?.scrollBy(diff);
+             } else {
+-              const scrollToParams = horizontal
+-                ? {
+-                    x: recyclerViewManager.getAbsoluteLastScrollOffset() + diff,
+-                    animated: false,
+-                  }
+-                : {
+-                    y: recyclerViewManager.getAbsoluteLastScrollOffset() + diff,
+-                    animated: false,
+-                  };
+-              scrollViewRef.current?.scrollTo(scrollToParams);
+-            }
+-            if (hasDataChanged) {
+-              updateScrollOffsetWithCallback(
+-                recyclerViewManager.getAbsoluteLastScrollOffset() + diff,
+-                () => {}
++              scrollViewRef.current?.scrollTo(
++                horizontal
++                  ? { x: correctedOffset, animated: false }
++                  : { y: correctedOffset, animated: false }
+               );
+-              recyclerViewManager.ignoreScrollEvents = true;
+-              setTimeout(() => {
+-                recyclerViewManager.ignoreScrollEvents = false;
+-              }, 100);
+             }
+           }
++        } else {
++          firstVisibleItem.current = undefined;
+         }
+       }
+ 
+       computeFirstVisibleIndexForOffsetCorrection();
++    } else {
++      firstVisibleItem.current = undefined;
+     }
+-    lastDataLengthRef.current = recyclerViewManager.getDataLength();
+   }, [
+     recyclerViewManager,
+     scrollAnchorRef,
+     scrollViewRef,
+-    setTimeout,
+     updateScrollOffsetWithCallback,
+     computeFirstVisibleIndexForOffsetCorrection,
+   ]);
+@@ -236,8 +517,45 @@ export function useRecyclerViewController<T>(
+         animated,
+         skipFirstItemOffset = true,
+       }: ScrollToOffsetParams) => {
++        scrollCommandId.current++;
++        pauseOffsetCorrection.current = false;
++        recyclerViewManager.setOffsetProjectionEnabled(true);
+         const { horizontal } = recyclerViewManager.props;
+         if (scrollViewRef.current) {
++          if (
++            recyclerViewManager.getIsFirstLayoutComplete() &&
++            recyclerViewManager.shouldMaintainVisibleContentPosition()
++          ) {
++            const targetOffset = Math.max(
++              0,
++              offset +
++                (skipFirstItemOffset ? 0 : recyclerViewManager.firstItemOffset)
++            );
++            const bounds = nativeScrollBounds.current;
++            const knownTarget =
++              bounds &&
++              bounds.dataMaxOffset === recyclerViewManager.getMaxScrollOffset()
++                ? Math.min(targetOffset, bounds.maxOffset)
++                : targetOffset;
++            // A no-op native command emits no acknowledgement. Other commands
++            // own the viewport until their final offset or a new reader gesture.
++            const alreadyThere =
++              sameScrollOffset(
++                knownTarget,
++                recyclerViewManager.getAbsoluteLastScrollOffset()
++              ) &&
++              scrollInteraction.current.phase !== "command" &&
++              firstVisibleItem.current?.pendingOffset === undefined;
++            scrollInteraction.current = {
++              phase: alreadyThere ? "idle" : "command",
++              startedAt: scrollInteraction.current.startedAt,
++              targetOffset,
++              animated: Boolean(animated),
++            };
++            if (!animated)
++              updateScrollOffsetWithCallback(knownTarget, () => {});
++          }
++          firstVisibleItem.current = undefined;
+           // Adjust offset for RTL layouts in horizontal mode
+           if (I18nManager.isRTL && horizontal) {
+             // eslint-disable-next-line no-param-reassign
+@@ -330,6 +648,27 @@ export function useRecyclerViewController<T>(
+             index >= 0 &&
+             index < recyclerViewManager.getDataLength()
+           ) {
++            const commandId = ++scrollCommandId.current;
++            const targetKey = recyclerViewManager.getDataKey(index);
++            const resolveTargetIndex = () => {
++              if (
++                index >= 0 &&
++                index < recyclerViewManager.getDataLength() &&
++                recyclerViewManager.getDataKey(index) === targetKey
++              )
++                return true;
++              index =
++                recyclerViewManager.props.data?.findIndex(
++                  (_, candidate) =>
++                    recyclerViewManager.getDataKey(candidate) === targetKey
++                ) ?? -1;
++              return index >= 0;
++            };
++            scrollInteraction.current = {
++              phase: "idle",
++              startedAt: scrollInteraction.current.startedAt,
++            };
++            firstVisibleItem.current = undefined;
+             // Pause the scroll offset adjustments
+             pauseOffsetCorrection.current = true;
+             recyclerViewManager.setOffsetProjectionEnabled(false);
+@@ -400,7 +739,10 @@ export function useRecyclerViewController<T>(
+              */
+             const performScrollStep = (currentStep: number) => {
+               // Check if component is unmounted or we've completed all steps
+-              if (isUnmounted.current) {
++              if (
++                isUnmounted.current ||
++                commandId !== scrollCommandId.current
++              ) {
+                 resolve();
+                 return;
+               } else if (currentStep >= steps) {
+@@ -422,11 +764,20 @@ export function useRecyclerViewController<T>(
+ 
+               // Update scroll offset with a callback to continue to the next step
+               updateScrollOffsetWithCallback(nextOffset, () => {
+-                // Check if the index is still valid after the update
+-                if (index >= recyclerViewManager.getDataLength()) {
+-                  // Index out of bounds, scroll to end instead
+-                  handlerMethods.scrollToEnd({ animated });
+-                  resolve(); // Resolve the promise as we're done
++                if (
++                  isUnmounted.current ||
++                  commandId !== scrollCommandId.current
++                ) {
++                  resolve();
++                  return;
++                }
++                if (!resolveTargetIndex()) {
++                  // The requested content disappeared; do not locate a different row.
++                  handlerMethods.scrollToOffset({
++                    offset: lastAbsoluteScrollOffset,
++                    animated: false,
++                  });
++                  resolve();
+                   return;
+                 }
+ 
+@@ -452,8 +803,8 @@ export function useRecyclerViewController<T>(
+             };
+ 
+             /**
+-             * Completes the scroll to index operation by performing the final scroll
+-             * and re-enabling offset correction after a delay.
++             * Hands the final target to native acknowledgement, then keeps its key
++             * as the reading anchor while subsequent measurements settle.
+              */
+             const finishScrollToIndex = () => {
+               finalOffset = getFinalOffset();
+@@ -473,23 +824,60 @@ export function useRecyclerViewController<T>(
+                 });
+               }
+ 
+-              // Perform the final scroll to the target position
+-              handlerMethods.scrollToOffset({
+-                offset: finalOffset,
+-                animated,
+-                skipFirstItemOffset: true,
+-              });
+-
+-              // Re-enable offset correction after a delay
+-              // Longer delay for animated scrolls to allow animation to complete
+-              setTimeout(
+-                () => {
+-                  pauseOffsetCorrection.current = false;
+-                  recyclerViewManager.setOffsetProjectionEnabled(true);
+-                  resolve(); // Resolve the promise after re-enabling corrections
+-                },
+-                animated ? 300 : 200
+-              );
++              const retainTarget = (scrollOffset: number) => {
++                if (!resolveTargetIndex()) return;
++                firstVisibleItem.current = {
++                  key: targetKey,
++                  index,
++                  layout: { ...recyclerViewManager.getLayout(index) },
++                  scrollOffset,
++                };
++              };
++              const followTarget = () => {
++                // Reuse the resolved index; only a moved key needs a search.
++                if (!resolveTargetIndex()) {
++                  handlerMethods.scrollToOffset({
++                    offset: recyclerViewManager.getAbsoluteLastScrollOffset(),
++                    animated: false,
++                  });
++                  return;
++                }
++                const nextOffset = Math.max(
++                  0,
++                  Math.min(
++                    getFinalOffset(),
++                    recyclerViewManager.getMaxScrollOffset()
++                  )
++                );
++                if (
++                  !sameScrollOffset(
++                    nextOffset,
++                    scrollInteraction.current.targetOffset!
++                  )
++                ) {
++                  finalOffset = nextOffset;
++                  sendTarget();
++                }
++              };
++              const sendTarget = () => {
++                handlerMethods.scrollToOffset({
++                  offset: finalOffset,
++                  animated,
++                  skipFirstItemOffset: true,
++                });
++                if (scrollInteraction.current.phase === "command") {
++                  scrollInteraction.current.retarget = followTarget;
++                  scrollInteraction.current.onReached = retainTarget;
++                } else {
++                  retainTarget(
++                    recyclerViewManager.getAbsoluteLastScrollOffset()
++                  );
++                }
++              };
++              // Layout projection is finished. Native acknowledgement owns the
++              // remaining command, including late measurements before it lands.
++              sendTarget();
++              setTimeout(resolve, animated ? 300 : 200);
+             };
+ 
+             // Start the scroll animation process
+@@ -570,6 +958,7 @@ export function useRecyclerViewController<T>(
+     setTimeout,
+     isUnmounted,
+     updateScrollOffsetWithCallback,
++    computeFirstVisibleIndexForOffsetCorrection,
+   ]);
+ 
+   const applyInitialScrollIndex = useCallback(() => {
+@@ -615,25 +1004,26 @@ export function useRecyclerViewController<T>(
+   }, [handlerMethods, recyclerViewManager, setTimeout]);
+ 
+   // Expose imperative methods through the ref
+-  useImperativeHandle(
+-    ref,
+-    () => {
+-      const imperativeApi = { ...scrollViewRef.current, ...handlerMethods };
+-      // Without this the props getter from handlerMethods is evaluated during spread and
+-      // future updates to props are not reflected in the ref
+-      Object.defineProperty(imperativeApi, "props", {
+-        get() {
+-          return recyclerViewManager.props;
+-        },
+-        enumerable: true,
+-        configurable: true,
+-      });
+-      return imperativeApi;
+-    },
+-    [handlerMethods, scrollViewRef, recyclerViewManager]
+-  );
++  useImperativeHandle(ref, () => {
++    const imperativeApi = { ...scrollViewRef.current, ...handlerMethods };
++    // Without this the props getter from handlerMethods is evaluated during spread and
++    // future updates to props are not reflected in the ref
++    Object.defineProperty(imperativeApi, "props", {
++      get() {
++        return recyclerViewManager.props;
++      },
++      enumerable: true,
++      configurable: true,
++    });
++    return imperativeApi;
++  }, [handlerMethods, scrollViewRef, recyclerViewManager]);
+ 
+   return {
++    acceptScrollOffset,
++    onContentSizeChange,
++    getPendingScroll,
++    beginScrollInteraction,
++    endScrollInteraction,
+     applyOffsetCorrection,
+     computeFirstVisibleIndexForOffsetCorrection,
+     applyInitialScrollIndex,

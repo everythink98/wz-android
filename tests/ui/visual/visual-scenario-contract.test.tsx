@@ -1,5 +1,6 @@
 import type { ForwardedRef } from 'react';
 import { render } from '@testing-library/react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 jest.mock('@shopify/flash-list', () => {
   const React = require('react') as typeof import('react');
@@ -55,7 +56,11 @@ describe('visual scenario catalog', () => {
   it('renders every rendered scenario in both themes', async () => {
     for (const scenario of visualScenarioCatalog.filter(({ kind }) => kind === 'rendered')) {
       for (const theme of ['light', 'dark'] as const) {
-        const view = await render(<VisualScenarioView appearance={{ theme }} id={scenario.id} />);
+        const view = await render(
+          <GestureHandlerRootView>
+            <VisualScenarioView appearance={{ theme }} id={scenario.id} />
+          </GestureHandlerRootView>
+        );
         await view.unmount();
       }
     }

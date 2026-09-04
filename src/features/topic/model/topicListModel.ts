@@ -1,6 +1,7 @@
 import type { Source } from '@/domain/forum/models';
 import type { TopicContentItem } from './topicOpeningPresentation';
 import type { TopicReplyListItem } from './replyListModel';
+import type { TopicSelectionItem } from '../selection/TopicSelectionSurface';
 
 type TopicQuoteSummaryItem = Extract<TopicContentItem, { type: 'quoteSummary' }>;
 
@@ -33,10 +34,27 @@ export function topicListItemType(item: TopicListItem) {
   return item.type;
 }
 
-export function topicListMediaPlanStats(items: readonly TopicListItem[]) {
+export function projectTopicListItems(items: readonly TopicListItem[], isVisible: (item: TopicListItem) => boolean) {
+  const visibleItems: TopicListItem[] = [];
+  const selectionItems: TopicSelectionItem[] = [];
+  const selectionRowKeys = new Set<string>();
   let networkMediaCount = 0;
   let plannedRowCount = 0;
   for (const item of items) {
+    if (!isVisible(item)) continue;
+    visibleItems.push(item);
+    const selectionRow =
+      item.type === 'topicQuoteSummary'
+        ? item.previewVisible && item.content.quote.preview
+          ? item.content.row
+          : undefined
+        : (item.type === 'topicContent' || item.type === 'topicQuoteContent') && item.content.type === 'content'
+          ? item.content.row
+          : undefined;
+    if (selectionRow) {
+      selectionItems.push({ documentId: 'opening', rowKey: item.key, selectionToken: selectionRow.selectionToken });
+      selectionRowKeys.add(item.key);
+    }
     if (item.type === 'reply') {
       networkMediaCount += item.networkMediaCount || 0;
       plannedRowCount += item.plannedRowCount || 0;
@@ -63,5 +81,10 @@ export function topicListMediaPlanStats(items: readonly TopicListItem[]) {
       }
     }
   }
-  return { networkMediaCount, plannedRowCount };
+  return {
+    items: visibleItems,
+    selectionItems,
+    selectionRowKeys,
+    mediaPlanStats: { networkMediaCount, plannedRowCount }
+  };
 }

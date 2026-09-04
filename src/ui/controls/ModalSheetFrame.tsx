@@ -11,7 +11,7 @@ function createStyles(theme: ReaderTheme, _settings: ReaderSettings) {
       justifyContent: 'flex-end'
     },
     backdrop: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0, 0, 0, 0.32)'
     },
     sheet: {

@@ -25,10 +25,6 @@ export interface ReaderTheme {
 
 export const LINK_COLOR = '#1677FF';
 
-export function androidRipple(color: string, borderless = false) {
-  return { color, borderless };
-}
-
 export function lineHeightMultiplier(value: ReaderSettings['lineHeight']) {
   if (value === 'compact') {
     return 1.4;

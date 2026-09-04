@@ -1,3 +1,4 @@
+import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '../render';
 import React, { type ComponentProps } from 'react';
@@ -10,12 +11,7 @@ import { LinuxDoLevelPanel } from '@/features/more/components/LinuxDoLevelPanel'
 import { NodeSeekLoginHost } from '@/features/account/components/NodeSeekLoginHost';
 import { YaohuoLoginHost } from '@/features/account/components/YaohuoLoginHost';
 import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
-import {
-  createSiteSessionStates,
-  createSiteSessionViewModels,
-  type SessionSite,
-  type SiteSessionStatus
-} from '@/domain/session/siteSessionState';
+import { createSiteSessionStates, type SessionSite, type SiteSessionStatus } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 
@@ -41,28 +37,7 @@ jest.mock('lucide-react-native', () => {
 jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
   return {
-    Gesture: {
-      Pan: () => ({
-        minDistance() {
-          return this;
-        },
-        runOnJS() {
-          return this;
-        },
-        onBegin() {
-          return this;
-        },
-        onUpdate() {
-          return this;
-        },
-        onEnd() {
-          return this;
-        },
-        onFinalize() {
-          return this;
-        }
-      })
-    },
+    usePanGesture: (config: Record<string, unknown>) => ({ config }),
     GestureDetector: ({ children }: { children: React.ReactNode }) =>
       ReactModule.createElement(ReactModule.Fragment, null, children)
   };
@@ -118,9 +93,10 @@ function session(site: SessionSite, status: SiteSessionStatus) {
     site,
     status,
     cookieSummary: status === 'anonymous' ? [] : ['session'],
-    isVerifying: status === 'verifying'
+    isVerifying: status === 'verifying',
+    ...(status === 'logged-in' ? { currentUser: testAccountUser(site) } : {})
   };
-  return createSiteSessionViewModels(states)[site];
+  return projectTestAccountSessions(states)[site];
 }
 
 const levelProfile: LinuxDoLevelProfile = {

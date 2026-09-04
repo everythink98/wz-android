@@ -1,3 +1,4 @@
+import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
@@ -7,7 +8,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
 import type { ForumNotification } from '@/domain/notifications/models';
 import { notificationSources } from '@/domain/forum/sourceCatalog';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import {
   NotificationDetailRoute,
   NotificationRouteRuntimeProvider,
@@ -212,7 +213,7 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
     ready: true,
     reconcileAccountStatus: jest.fn(async () => undefined),
     refreshSnapshots: jest.fn(),
-    sessions: createSiteSessionViewModels(createSiteSessionStates()),
+    sessions: projectTestAccountSessions(createSiteSessionStates()),
     setCenterVisible: jest.fn(),
     setGlobalEnabled: jest.fn(async () => false),
     setSourceEnabled: jest.fn(async () => undefined),

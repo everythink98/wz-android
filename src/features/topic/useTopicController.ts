@@ -17,10 +17,10 @@ import {
   type ReaderDataMutationReason
 } from '@/domain/reader/readerData';
 import { replyKey as replyRenderKey } from '@/domain/forum/feed';
+import { findReplyLocation } from '@/domain/forum/replyLocation';
 import { isCanceledRequest } from '@/platform/network/errors';
 import {
   firstReplyData,
-  matchesLoadedReplyLocation,
   mergedReplyPages,
   nextReplyPage,
   previousReplyPage,
@@ -486,7 +486,7 @@ export function useTopicController({
           positionKind: 'start'
         });
         try {
-          const page = await queryClient.fetchQuery({
+          const page = await queryClient.query({
             queryKey,
             staleTime: 0,
             queryFn: ({ signal }) => loadReplyPage(detail, replyOrder, { kind: 'start' }, signal, trace),
@@ -943,7 +943,7 @@ export function useTopicController({
           });
         const ownsTrace = !diagnosticTrace;
         try {
-          const page = await queryClient.fetchQuery({
+          const page = await queryClient.query({
             queryKey: refreshKey,
             staleTime: 0,
             queryFn: async ({ signal }) => {
@@ -1227,16 +1227,28 @@ export function useTopicController({
       }
       const pageHint =
         target.pageHint && Number.isSafeInteger(target.pageHint) && target.pageHint > 0 ? target.pageHint : undefined;
+      const expectedAuthorUsername = target.expectedAuthorUsername?.trim().toLowerCase();
+      if (target.expectedAuthorUsername !== undefined && !expectedAuthorUsername) {
+        if (!silent) notify('目标楼层未找到');
+        return 'failed';
+      }
       const normalizedTarget: ReplyLocationTarget = {
         ...(commentId ? { commentId } : {}),
         ...(floor ? { floor } : {}),
-        ...(pageHint ? { pageHint } : {})
+        ...(pageHint ? { pageHint } : {}),
+        ...(expectedAuthorUsername ? { expectedAuthorUsername } : {})
       };
-      if (topicReplies.some((reply) => matchesLoadedReplyLocation(reply, normalizedTarget))) {
+      if (findReplyLocation(topicReplies, normalizedTarget)) {
         replyWindowGenerationRef.current += 1;
         return 'completed';
       }
-      const targetQueryKey = [...targetReplyQueryRoot, floor ?? null, commentId ?? null, pageHint ?? null] as const;
+      const targetQueryKey = [
+        ...targetReplyQueryRoot,
+        floor ?? null,
+        commentId ?? null,
+        pageHint ?? null,
+        expectedAuthorUsername ?? null
+      ] as const;
       const generation = ++replyWindowGenerationRef.current;
       const loadTargetWindow = async () => {
         if (
@@ -1255,8 +1267,7 @@ export function useTopicController({
         const cachedReplies = mergedReplyPages(
           queryClient.getQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey)
         );
-        if (cachedReplies.some((reply) => matchesLoadedReplyLocation(reply, normalizedTarget)))
-          return 'completed' as const;
+        if (findReplyLocation(cachedReplies, normalizedTarget)) return 'completed' as const;
         const currentDetail = queryClient.getQueryData<TopicDetail>(topicQueryKey) || topicDetail;
         const trace = beginDiagnosticTrace('reply', 'load-more', {
           source: selectedTopic.source,
@@ -1266,7 +1277,7 @@ export function useTopicController({
         });
         try {
           const position = { kind: 'target', target: normalizedTarget } satisfies ReplyPageParam;
-          const page = await queryClient.fetchQuery({
+          const page = await queryClient.query({
             queryKey: targetQueryKey,
             queryFn: ({ signal }) => loadReplyPage(currentDetail, replyOrder, position, signal, trace)
           });
@@ -1284,6 +1295,8 @@ export function useTopicController({
             return 'stale' as const;
           }
           const resolvedPage = page.currentPage!;
+          const resolvedReply = findReplyLocation(page.items, normalizedTarget);
+          if (selectedTopic.source === 'v2ex' && !resolvedReply) throw new Error('目标楼层未找到或引用不匹配');
           const resolvedOffset = page.currentOffset ?? null;
           queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, {
             pages: [page],
@@ -1299,7 +1312,10 @@ export function useTopicController({
             positionKind: 'target',
             resolvedPage
           });
-          if (!silent) notify(`已定位到第 ${floor} 楼`);
+          if (!silent) {
+            const resolvedFloor = resolvedReply?.floor ?? normalizedTarget.floor;
+            notify(resolvedFloor ? `已定位到第 ${resolvedFloor} 楼` : '已定位到目标回复');
+          }
           return 'completed' as const;
         } catch (error) {
           if (
@@ -1365,7 +1381,7 @@ export function useTopicController({
   useEffect(() => {
     if (!targetReply || !topicDetail || !selectedTopic || repliesReadBlocked) return;
     const sessionEpoch = selectedTopic.source === 'v2ex' ? 0 : sessionEpochs[selectedTopic.source];
-    const targetKey = `${topicKey(selectedTopic)}:${sessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}:request:${targetReplyRequestId ?? ''}`;
+    const targetKey = `${topicKey(selectedTopic)}:${sessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}:${targetReply.expectedAuthorUsername ?? ''}:request:${targetReplyRequestId ?? ''}`;
     if (handledRouteTargetRef.current === targetKey) return;
     handledRouteTargetRef.current = targetKey;
     void locateReply(targetReply, { silent: true });

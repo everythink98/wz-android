@@ -1,6 +1,6 @@
 import { createContext, type ComponentRef, type ReactNode, useCallback, useContext, useMemo } from 'react';
 import { StyleSheet, View, type AccessibilityActionEvent, type StyleProp, type ViewStyle } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { GestureDetector, GestureStateManager, useNativeGesture, usePanGesture } from 'react-native-gesture-handler';
 import Animated, {
   cancelAnimation,
   makeMutable,
@@ -209,7 +209,7 @@ export function TopicHorizontalScroll({
   const pointerStartY = useSharedValue(0);
   const gestureStartOffset = useSharedValue(0);
   const scrollViewRef = useAnimatedRef<ComponentRef<typeof Animated.ScrollView>>();
-  const nativeContentGesture = useMemo(() => Gesture.Native(), []);
+  const nativeContentGesture = useNativeGesture();
   const cancelNativeSelection = useTopicSelectionCancel();
 
   useAnimatedReaction(
@@ -220,73 +220,61 @@ export function TopicHorizontalScroll({
     [offset, scrollViewRef]
   );
 
-  const horizontalPan = useMemo(
-    () =>
-      Gesture.Pan()
-        .enabled(enabled)
-        .manualActivation(true)
-        .maxPointers(1)
-        .blocksExternalGesture(nativeContentGesture)
-        .onTouchesDown((event, state) => {
-          'worklet';
-          horizontalPanClaimed.value = false;
-          const touch = event.allTouches[0];
-          if (event.numberOfTouches !== 1 || maximumOffset.value <= 0 || !touch) {
-            state.fail();
-            return;
-          }
-          pointerStartX.value = touch.absoluteX;
-          pointerStartY.value = touch.absoluteY;
-        })
-        .onTouchesMove((event, state) => {
-          'worklet';
-          if (event.numberOfTouches !== 1 || maximumOffset.value <= 0) {
-            horizontalPanClaimed.value = false;
-            state.fail();
-            return;
-          }
-          if (horizontalPanClaimed.value) return;
-          const touch = event.allTouches[0];
-          if (!touch) {
-            state.fail();
-            return;
-          }
-          const deltaX = touch.absoluteX - pointerStartX.value;
-          const deltaY = touch.absoluteY - pointerStartY.value;
-          if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < HORIZONTAL_INTENT_LOCK_DISTANCE) return;
-          if (Math.abs(deltaX) > Math.abs(deltaY)) {
-            horizontalPanClaimed.value = true;
-            if (cancelNativeSelection) scheduleOnRN(cancelNativeSelection);
-            state.activate();
-            return;
-          }
-          state.fail();
-        })
-        .onBegin(() => {
-          'worklet';
-          cancelAnimation(offset);
-          gestureStartOffset.value = offset.value;
-        })
-        .onUpdate((event) => {
-          'worklet';
-          offset.value = Math.max(0, Math.min(maximumOffset.value, gestureStartOffset.value - event.translationX));
-        })
-        .onEnd((event) => {
-          'worklet';
-          offset.value = withDecay({ clamp: [0, maximumOffset.value], velocity: -event.velocityX });
-        }),
-    [
-      cancelNativeSelection,
-      enabled,
-      gestureStartOffset,
-      horizontalPanClaimed,
-      maximumOffset,
-      nativeContentGesture,
-      offset,
-      pointerStartX,
-      pointerStartY
-    ]
-  );
+  const horizontalPan = usePanGesture({
+    enabled,
+    manualActivation: true,
+    maxPointers: 1,
+    block: nativeContentGesture,
+    onTouchesDown: (event) => {
+      'worklet';
+      horizontalPanClaimed.value = false;
+      const touch = event.allTouches[0];
+      if (event.numberOfTouches !== 1 || maximumOffset.value <= 0 || !touch) {
+        GestureStateManager.fail(event.handlerTag);
+        return;
+      }
+      pointerStartX.value = touch.absoluteX;
+      pointerStartY.value = touch.absoluteY;
+    },
+    onTouchesMove: (event) => {
+      'worklet';
+      if (event.numberOfTouches !== 1 || maximumOffset.value <= 0) {
+        horizontalPanClaimed.value = false;
+        GestureStateManager.fail(event.handlerTag);
+        return;
+      }
+      if (horizontalPanClaimed.value) return;
+      const touch = event.allTouches[0];
+      if (!touch) {
+        GestureStateManager.fail(event.handlerTag);
+        return;
+      }
+      const deltaX = touch.absoluteX - pointerStartX.value;
+      const deltaY = touch.absoluteY - pointerStartY.value;
+      if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < HORIZONTAL_INTENT_LOCK_DISTANCE) return;
+      if (Math.abs(deltaX) > Math.abs(deltaY)) {
+        horizontalPanClaimed.value = true;
+        if (cancelNativeSelection) scheduleOnRN(cancelNativeSelection);
+        GestureStateManager.activate(event.handlerTag);
+        return;
+      }
+      GestureStateManager.fail(event.handlerTag);
+    },
+    onBegin: () => {
+      'worklet';
+      cancelAnimation(offset);
+      gestureStartOffset.value = offset.value;
+    },
+    onUpdate: (event) => {
+      'worklet';
+      offset.value = Math.max(0, Math.min(maximumOffset.value, gestureStartOffset.value - event.translationX));
+    },
+    onDeactivate: (event) => {
+      'worklet';
+      if (event.canceled) return;
+      offset.value = withDecay({ clamp: [0, maximumOffset.value], velocity: -event.velocityX });
+    }
+  });
   const handleContentSizeChange = useCallback(
     (width: number) => {
       const maximum = Number.isFinite(width) ? Math.max(0, width - viewportWidth) : 0;

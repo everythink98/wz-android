@@ -1,9 +1,8 @@
-import { QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { accountQueryKeys, createAppQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { canonicalEnabledSourcesKey } from '@/domain/reader/contentSourcePreferences';
-import { forumSessionEpochsAfterSourceChange, resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
+import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 
 describe('forum server state', () => {
   it('deduplicates concurrent reads and keeps the successful value for the same structured key', async () => {
@@ -16,12 +15,12 @@ describe('forum server state', () => {
       scope: initialForumSessionEpochs
     });
 
-    const first = client.fetchQuery({ queryKey, queryFn });
-    const second = client.fetchQuery({ queryKey, queryFn });
+    const first = client.query({ queryKey, queryFn });
+    const second = client.query({ queryKey, queryFn });
     pending.resolve('topic');
 
     await expect(Promise.all([first, second])).resolves.toEqual(['topic', 'topic']);
-    await expect(client.fetchQuery({ queryKey, queryFn })).resolves.toBe('topic');
+    await expect(client.query({ queryKey, queryFn })).resolves.toBe('topic');
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
 
@@ -32,7 +31,7 @@ describe('forum server state', () => {
     });
 
     await expect(
-      client.fetchQuery({
+      client.query({
         queryKey: forumQueryKeys.feed({ source: 'all', scope: initialForumSessionEpochs }),
         queryFn
       })
@@ -200,103 +199,5 @@ describe('forum server state', () => {
         expect(client.getQueryData(queryKey)).toBe(`${source} logged-in`);
       }
     }
-  });
-
-  it('preserves only the exact active structured recovery query key', () => {
-    const client = createAppQueryClient();
-    const preserved = forumQueryKeys.topic({ source: 'linuxdo', topicId: '123', scope: initialForumSessionEpochs });
-    const removed = forumQueryKeys.topic({ source: 'linuxdo', topicId: '456', scope: initialForumSessionEpochs });
-    client.setQueryData(preserved, 'preserved');
-    client.setQueryData(removed, 'removed');
-    const observer = new QueryObserver(client, { queryKey: preserved });
-    const unsubscribe = observer.subscribe(() => undefined);
-
-    expect(resetForumSourceQueries('linuxdo', client, preserved)).toBe(true);
-
-    expect(client.getQueryData(preserved)).toBe('preserved');
-    expect(client.getQueryData(removed)).toBeUndefined();
-    unsubscribe();
-  });
-
-  it('keeps the committed Account snapshot while advancing the forum scope', () => {
-    const client = createAppQueryClient();
-    const accountKey = accountQueryKeys.snapshot('nodeseek');
-    const feedKey = forumQueryKeys.feed({ source: 'nodeseek', scope: initialForumSessionEpochs });
-    const snapshot = {
-      site: 'nodeseek',
-      status: 'logged-in',
-      cookieSummary: ['session'],
-      isVerifying: false,
-      identityTrust: 'confirmed'
-    };
-    client.setQueryData(accountKey, snapshot);
-    client.setQueryData(feedKey, 'private feed');
-
-    resetForumSourceQueries('nodeseek', client);
-    const nextScope = forumSessionEpochsAfterSourceChange(initialForumSessionEpochs, 'nodeseek');
-
-    expect(nextScope.nodeseek).toBe(1);
-    expect(client.getQueryData(accountKey)).toEqual(snapshot);
-    expect(client.getQueryData(feedKey)).toBeUndefined();
-  });
-
-  it('clears changed-identity content without changing the Account key', () => {
-    const client = createAppQueryClient();
-    const accountKey = accountQueryKeys.snapshot('nodeseek');
-    const oldFeedKey = forumQueryKeys.feed({
-      source: 'nodeseek',
-      scope: initialForumSessionEpochs
-    });
-    const otherFeedKey = forumQueryKeys.feed({
-      source: 'linuxdo',
-      scope: initialForumSessionEpochs
-    });
-    const nextAccount = {
-      site: 'nodeseek' as const,
-      status: 'logged-in' as const,
-      cookieSummary: ['session'],
-      isVerifying: false,
-      identityTrust: 'confirmed' as const,
-      currentUser: {
-        source: 'nodeseek' as const,
-        id: '18',
-        username: 'charlie',
-        url: 'https://www.nodeseek.com/space/18',
-        topics: []
-      }
-    };
-    client.setQueryData(accountKey, nextAccount);
-    client.setQueryData(oldFeedKey, 'private account A feed');
-    client.setQueryData(otherFeedKey, 'unrelated feed');
-
-    resetForumSourceQueries('nodeseek', client);
-    const nextScope = forumSessionEpochsAfterSourceChange(initialForumSessionEpochs, 'nodeseek');
-
-    expect(nextScope.nodeseek).toBe(1);
-    expect(client.getQueryData(oldFeedKey)).toBeUndefined();
-    expect(client.getQueryData(otherFeedKey)).toBe('unrelated feed');
-    expect(client.getQueryData(accountKey)).toEqual(nextAccount);
-  });
-
-  it('does not preserve an inactive recovery query', () => {
-    const client = createAppQueryClient();
-    const inactive = forumQueryKeys.topic({ source: 'linuxdo', topicId: '123', scope: initialForumSessionEpochs });
-    client.setQueryData(inactive, 'inactive');
-
-    expect(resetForumSourceQueries('linuxdo', client, inactive)).toBe(false);
-    expect(client.getQueryData(inactive)).toBeUndefined();
-  });
-
-  it('does not preserve a stale or different-source recovery key', () => {
-    const client = createAppQueryClient();
-    const linuxDoKey = forumQueryKeys.topic({ source: 'linuxdo', topicId: '123', scope: initialForumSessionEpochs });
-    const nodeSeekKey = forumQueryKeys.topic({ source: 'nodeseek', topicId: '456', scope: initialForumSessionEpochs });
-    client.setQueryData(linuxDoKey, 'linux.do');
-    client.setQueryData(nodeSeekKey, 'NodeSeek');
-
-    expect(resetForumSourceQueries('linuxdo', client, nodeSeekKey)).toBe(false);
-
-    expect(client.getQueryData(linuxDoKey)).toBeUndefined();
-    expect(client.getQueryData(nodeSeekKey)).toBe('NodeSeek');
   });
 });

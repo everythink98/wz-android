@@ -1,10 +1,9 @@
+import 'react-native-gesture-handler/jestSetup';
 import { notifyManager } from '@tanstack/react-query';
 import { act } from 'react';
 import { appQueryClient } from '@/platform/query/serverState';
 
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
-);
+jest.mock('@react-native-async-storage/async-storage', () => require('@react-native-async-storage/async-storage/jest'));
 
 jest.mock('react-native-webview', () => {
   const React = require('react');

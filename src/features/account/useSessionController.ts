@@ -51,13 +51,6 @@ import { forumSessionEpochsAfterSourceChange, resetForumSourceQueries } from './
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
 
-type CredentialClearOptions = {
-  generation?: number;
-  force?: boolean;
-  expiredMessage?: string;
-  recoveryQueryKey?: readonly unknown[];
-};
-
 export type NodeSeekBrowserFetchRequest = {
   id: number;
   url: string;
@@ -204,21 +197,12 @@ export function useSessionController({
   const yaohuoCredentialGateRef = useRef(createCredentialWriteGate());
   const [forumSessionEpochs, setForumSessionEpochs] = useState(forumSessionEpochsRef.current);
 
-  const invalidateForumSourceQueryScope = useCallback((site: SessionSite, recoveryQueryKey?: readonly unknown[]) => {
-    const preservedRecovery = resetForumSourceQueries(site, appQueryClient, recoveryQueryKey);
-    if (!preservedRecovery) {
-      const nextScope = forumSessionEpochsAfterSourceChange(forumSessionEpochsRef.current, site);
-      forumSessionEpochsRef.current = nextScope;
-      setForumSessionEpochs(nextScope);
-    }
+  const commitAccountStatusChange = useCallback((site: SessionSite) => {
+    resetForumSourceQueries(site, appQueryClient);
+    const nextScope = forumSessionEpochsAfterSourceChange(forumSessionEpochsRef.current, site);
+    forumSessionEpochsRef.current = nextScope;
+    setForumSessionEpochs(nextScope);
   }, []);
-
-  const commitAccountStatusChange = useCallback(
-    (site: SessionSite, recoveryQueryKey?: readonly unknown[]) => {
-      invalidateForumSourceQueryScope(site, recoveryQueryKey);
-    },
-    [invalidateForumSourceQueryScope]
-  );
 
   const dispatchSiteSessionEvent = useCallback(
     (event: ScopedSiteSessionEvent) => {
@@ -729,7 +713,7 @@ export function useSessionController({
   }, []);
 
   const clearManagedLoginState = useCallback(
-    async (source: 'linuxdo' | 'nodeseek' | 'yaohuo', options: CredentialClearOptions = {}) => {
+    async (source: 'linuxdo' | 'nodeseek' | 'yaohuo') => {
       const trace = beginDiagnosticTrace('credential', 'clear', { source });
       const gate =
         source === 'nodeseek'
@@ -754,13 +738,7 @@ export function useSessionController({
               : LEGACY_COOKIE_SNAPSHOT_KEYS.slice(3);
         const cleanup = await Promise.allSettled(legacyKeys.map((key) => SecureStore.deleteItemAsync(key)));
         const legacyCleanupFailed = cleanup.some((result) => result.status === 'rejected');
-        const event: SiteSessionEvent = options.expiredMessage?.trim()
-          ? {
-              type: 'login-expired',
-              message: options.expiredMessage.trim(),
-              ...(options.recoveryQueryKey ? { recoveryQueryKey: options.recoveryQueryKey } : {})
-            }
-          : { type: 'cleared' };
+        const event: SiteSessionEvent = { type: 'cleared' };
         if (source === 'nodeseek') {
           updateNodeSeekSession(event);
         } else if (source === 'linuxdo') {
@@ -795,18 +773,9 @@ export function useSessionController({
     [notify, updateLinuxDoSession, updateNodeSeekSession, updateYaohuoSession]
   );
 
-  const clearNodeSeekLoginState = useCallback(
-    (options?: CredentialClearOptions) => clearManagedLoginState('nodeseek', options),
-    [clearManagedLoginState]
-  );
-  const clearLinuxDoLoginState = useCallback(
-    (options?: CredentialClearOptions) => clearManagedLoginState('linuxdo', options),
-    [clearManagedLoginState]
-  );
-  const clearYaohuoLoginState = useCallback(
-    (options?: CredentialClearOptions) => clearManagedLoginState('yaohuo', options),
-    [clearManagedLoginState]
-  );
+  const clearNodeSeekLoginState = useCallback(() => clearManagedLoginState('nodeseek'), [clearManagedLoginState]);
+  const clearLinuxDoLoginState = useCallback(() => clearManagedLoginState('linuxdo'), [clearManagedLoginState]);
+  const clearYaohuoLoginState = useCallback(() => clearManagedLoginState('yaohuo'), [clearManagedLoginState]);
 
   return {
     clearNodeSeekLoginState,
@@ -826,7 +795,6 @@ export function useSessionController({
     },
     markLinuxDoBrowserFetchHttpError,
     markNodeSeekBrowserFetchHttpError,
-    invalidateForumSourceQueryScope,
     updateLinuxDoSession,
     updateNodeSeekSession,
     updateYaohuoSession

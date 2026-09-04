@@ -14,9 +14,9 @@ import {
   type SearchFilterState,
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { DiscourseFilterPickers, useDiscourseFilterPickers } from './DiscourseFilterPickers';
@@ -168,7 +168,6 @@ export function SearchFilterSheet({
         accessibilityRole="button"
         accessibilityLabel={`打开搜索筛选，当前${summary}`}
         accessibilityState={{ selected: summary !== '默认' }}
-        android_ripple={androidRipple(theme.primarySoft)}
         style={[styles.searchFilterEntry, summary !== '默认' && styles.searchFilterEntryActive]}
         onPress={() => setVisible(true)}
       >

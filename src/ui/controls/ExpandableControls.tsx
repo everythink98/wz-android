@@ -3,8 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import { androidRipple, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
-import { pressWithFeedback } from './pressFeedback';
+import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 
 export function createExpandableStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
@@ -70,10 +69,9 @@ export function MenuButton({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled }}
-      android_ripple={nested ? androidRipple(theme.primarySoft) : undefined}
       disabled={disabled}
       style={[styles.menuButton, disabled && styles.disabled]}
-      onPress={() => pressWithFeedback(onPress)}
+      onPress={onPress}
     >
       {nested ? null : (
         <View style={styles.menuIcon}>
@@ -123,7 +121,6 @@ export function ExpandablePanel({
         accessibilityLabel={expanded ? `收起${title}` : `展开${title}`}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        android_ripple={androidRipple(theme.primarySoft)}
         style={styles.header}
         onPress={() => onExpandedChange(!expanded)}
       >

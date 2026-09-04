@@ -57,11 +57,13 @@ class ForumContentSelectionView(
   ViewTreeObserver.OnPreDrawListener,
   ViewTreeObserver.OnScrollChangedListener {
   val onAutoScroll by EventDispatcher<Map<String, Any>>()
+  val onSelectionChange by EventDispatcher<Map<String, Any>>()
 
   internal var pendingEnabled = true
   internal var pendingRevision = ""
   internal var pendingRows: List<ForumSelectionRowRecord> = emptyList()
   internal var hapticFeedbackObserverForTest: ((Int) -> Unit)? = null
+  internal var selectionChangeObserverForTest: ((Map<String, Any>) -> Unit)? = null
   internal var systemActionLoaderForTest:
     ((String, (List<ForumSelectionSystemAction>) -> Unit) -> List<ForumSelectionSystemAction>)? = null
 
@@ -88,6 +90,7 @@ class ForumContentSelectionView(
   private var enabled = true
   private var preDrawAttached = false
   private var selectionActive = false
+  private var activeSelectionRevision = ""
   private var actionMode: ActionMode? = null
   private var systemActionRequest: ForumSelectionSystemActionRequest? = null
   private var systemActionGeneration = 0L
@@ -1171,8 +1174,13 @@ class ForumContentSelectionView(
 
   private fun setSelectionActive(active: Boolean) {
     if (selectionActive == active) return
+    if (active) activeSelectionRevision = selectionDocument.selection()?.start?.revision ?: return
     selectionActive = active
     if (active) attachPreDraw() else detachPreDraw()
+    val event = mapOf("active" to active, "revision" to activeSelectionRevision)
+    onSelectionChange(event)
+    selectionChangeObserverForTest?.invoke(event)
+    if (!active) activeSelectionRevision = ""
   }
 
   private fun attachPreDraw() {

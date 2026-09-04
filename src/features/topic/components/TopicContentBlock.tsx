@@ -1,6 +1,15 @@
 import { memo, type ReactNode, useMemo } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { Pressable, ScrollView, StyleSheet, Text, ToastAndroid, View, type ViewStyle } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  ToastAndroid,
+  View,
+  type ViewStyle,
+  type ViewProps
+} from 'react-native';
 import { ChevronDown, ChevronRight, Copy } from 'lucide-react-native';
 import { RenderHTMLSource } from 'react-native-render-html';
 import type {
@@ -9,22 +18,21 @@ import type {
   ForumContentAncestorFrame,
   ForumContentPart
 } from '@/domain/forum/topicContentSplit';
-import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 import { ForumCallout, forumCalloutPalette } from '@/ui/content/ForumCallout';
-import { androidRipple, lineHeightMultiplier } from '@/ui/theme/tokens';
+import { lineHeightMultiplier } from '@/ui/theme/tokens';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createTopicStyles } from '../styles';
 import { TopicContentPresentationProvider } from '../rendering/TopicContentPresentation';
 import { useTopicSplitDisclosure, useTopicTerminalReport } from '../rendering/TopicSplitDisclosure';
 import { TopicHorizontalScroll, TopicTableSemanticBoundary } from '../rendering/topicTableRenderers';
 import { useTopicSelectionRowActive } from '../selection/TopicSelectionSurface';
+import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
 
 export type TopicRenderableContentRow = Exclude<CompiledForumContentRow, { type: 'poll' | 'quote' }>;
 
 type TopicContentBlockProps = {
   contentWidth: number;
   html?: string;
-  originalImageUpgradeEnabled?: boolean;
   query?: string;
   row: TopicRenderableContentRow;
   selectable?: boolean;
@@ -147,7 +155,6 @@ function CodeBlock({
         <Pressable
           accessibilityLabel="复制完整代码"
           accessibilityRole="button"
-          android_ripple={androidRipple(theme.primarySoft)}
           hitSlop={12}
           style={{
             alignItems: 'center',
@@ -185,7 +192,6 @@ function TerminalReportHeader({ row }: { row: Extract<CompiledForumContentRow, {
               accessibilityLabel={tab.title}
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}
-              android_ripple={androidRipple(theme.primarySoft)}
               style={{
                 alignItems: 'center',
                 backgroundColor: active ? theme.surface : theme.surface2,
@@ -253,7 +259,6 @@ function DisclosureHeader({
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: disclosure.expanded }}
-        android_ripple={androidRipple(theme.primarySoft)}
         style={styles.detailsPanelHeader}
         onPress={disclosure.toggle}
       >
@@ -270,11 +275,28 @@ function DisclosureHeader({
   );
 }
 
+function ContentFrame({ children, style, ...props }: ViewProps) {
+  const width = useForumContentWidth();
+  const box = StyleSheet.flatten(style) || {};
+  const left =
+    Number(box.paddingLeft ?? box.paddingHorizontal ?? box.padding ?? 0) +
+    Number(box.borderLeftWidth ?? box.borderWidth ?? 0);
+  const right =
+    Number(box.paddingRight ?? box.paddingHorizontal ?? box.padding ?? 0) +
+    Number(box.borderRightWidth ?? box.borderWidth ?? 0);
+  return (
+    <View {...props} style={style}>
+      <ForumContentWidthBoundary width={Math.max(1, width - left - right)}>{children}</ForumContentWidthBoundary>
+    </View>
+  );
+}
+
 function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumContentAncestorFrame }) {
   const { settings, styles, theme } = useReaderThemeStyles(createTopicStyles);
+  const contentWidth = useForumContentWidth();
   if (frame.kind === 'terminalTab') {
     return (
-      <View
+      <ContentFrame
         style={[
           {
             alignSelf: 'stretch',
@@ -290,7 +312,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
         testID="topic-terminal-tab-panel"
       >
         {children}
-      </View>
+      </ContentFrame>
     );
   }
   if (frame.kind === 'list') {
@@ -319,14 +341,18 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
         >
           {frame.part === 'first' || frame.part === 'only' ? marker : ''}
         </Text>
-        <View style={{ flex: 1, minWidth: 0 }}>{children}</View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <ForumContentWidthBoundary width={Math.max(1, contentWidth - Math.round(28 * settings.fontScale))}>
+            {children}
+          </ForumContentWidthBoundary>
+        </View>
       </View>
     );
   }
   if (frame.kind === 'callout') {
     const palette = forumCalloutPalette(frame.calloutType, theme);
     return (
-      <View
+      <ContentFrame
         style={[
           {
             backgroundColor: palette.backgroundColor,
@@ -346,18 +372,18 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
         testID="forum-callout-body"
       >
         {children}
-      </View>
+      </ContentFrame>
     );
   }
   if (frame.kind === 'details') {
     return (
-      <View style={[styles.detailsPanel, continuationFrameStyle(frame.part, 8)]}>
-        <View style={styles.detailsPanelBody}>{children}</View>
-      </View>
+      <ContentFrame style={[styles.detailsPanel, continuationFrameStyle(frame.part, 8)]}>
+        <ContentFrame style={styles.detailsPanelBody}>{children}</ContentFrame>
+      </ContentFrame>
     );
   }
   return (
-    <View
+    <ContentFrame
       style={{
         borderLeftColor: theme.lineStrong,
         borderLeftWidth: 3,
@@ -371,7 +397,7 @@ function AncestorFrame({ children, frame }: { children: ReactNode; frame: ForumC
       testID="topic-blockquote-frame"
     >
       {children}
-    </View>
+    </ContentFrame>
   );
 }
 
@@ -386,15 +412,8 @@ function wrapAncestorFrames(children: ReactNode, frames: readonly ForumContentAn
   );
 }
 
-export function TopicContentBlock({
-  contentWidth,
-  html,
-  originalImageUpgradeEnabled = true,
-  query = '',
-  row,
-  selectable,
-  trimTrailingBlockSpacing = false
-}: TopicContentBlockProps) {
+function ContentLeaf({ html, query = '', row, selectable, trimTrailingBlockSpacing = false }: TopicContentBlockProps) {
+  const contentWidth = useForumContentWidth();
   const topicSelectionActive = useTopicSelectionRowActive();
   const textSelectable = selectable ?? !topicSelectionActive;
   const source = useMemo(() => ({ html: html ?? ('html' in row ? row.html : '') }), [html, row]);
@@ -408,9 +427,7 @@ export function TopicContentBlock({
   } else {
     const rendered = (
       <TopicContentPresentationProvider continuation={row.part} trimTrailing={trimTrailingBlockSpacing}>
-        <OriginalImageUpgradeBoundary enabled={originalImageUpgradeEnabled}>
-          <RenderHTMLSource contentWidth={contentWidth} source={source} />
-        </OriginalImageUpgradeBoundary>
+        <RenderHTMLSource contentWidth={contentWidth} source={source} />
       </TopicContentPresentationProvider>
     );
     content =
@@ -422,7 +439,15 @@ export function TopicContentBlock({
         rendered
       );
   }
-  return <>{wrapAncestorFrames(content, row.ancestorFrames)}</>;
+  return <>{content}</>;
+}
+
+export function TopicContentBlock(props: TopicContentBlockProps) {
+  return (
+    <ForumContentWidthBoundary width={props.contentWidth}>
+      {wrapAncestorFrames(<ContentLeaf {...props} />, props.row.ancestorFrames)}
+    </ForumContentWidthBoundary>
+  );
 }
 
 export const MemoizedTopicContentBlock = memo(TopicContentBlock);

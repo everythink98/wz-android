@@ -19,7 +19,7 @@ class ForumContentSelectionModule : Module() {
     Name("ForumContentSelection")
 
     View(ForumContentSelectionView::class) {
-      Events("onAutoScroll")
+      Events("onAutoScroll", "onSelectionChange")
 
       Prop("enabled") { view: ForumContentSelectionView, enabled: Boolean? ->
         view.pendingEnabled = enabled != false

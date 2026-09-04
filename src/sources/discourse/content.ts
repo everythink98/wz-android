@@ -146,7 +146,7 @@ function removeEmptyMarkerWrapper(textNode: TextNode, paragraph: HTMLElement) {
   }
   const parent = textNode.parentNode;
   textNode.remove();
-  if (parent !== paragraph && !parent.rawText.trim() && !parent.querySelector('img,svg,video')) {
+  if (parent && parent !== paragraph && !parent.rawText.trim() && !parent.querySelector('img,svg,video')) {
     parent.remove();
   }
 }

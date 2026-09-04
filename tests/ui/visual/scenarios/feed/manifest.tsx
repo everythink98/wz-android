@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 
 import type { ReadingFilter } from '@/domain/forum/feed';
-import { defaultFeedFilters } from '@/domain/forum/feedOptions';
 import type { Category, FeedSource, Source, SourceFeedFilter, Topic } from '@/domain/forum/models';
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { topicKey } from '@/domain/reader/readerData';
@@ -43,7 +42,7 @@ function topic(source: Source, index: number, categories: Category[]): Topic {
 
 function FeedScenario({ state }: { state: FeedScenarioState }) {
   const { settings } = useReaderThemeStyles(() => null);
-  const categories = useMemo(createCategories, []);
+  const categories = useMemo(() => createCategories(), []);
   const feedSource: FeedSource = state === 'filtered' || state === 'pagination' ? 'linuxdo' : 'all';
   const readingFilter: ReadingFilter = state === 'reading-favorite' ? 'favorite' : 'all';
   const items = useMemo(() => {
@@ -72,7 +71,6 @@ function FeedScenario({ state }: { state: FeedScenarioState }) {
       categories={categories}
       categoryFilter={state === 'filtered' ? 'dev' : ''}
       feedFilter={feedFilter}
-      feedFilters={defaultFeedFilters}
       feedHasMore={state === 'pagination'}
       feedItems={items}
       feedOutcomeKind={busy ? undefined : items.length ? 'data' : 'empty'}

@@ -1,5 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -616,10 +618,10 @@ describe('Android release evidence guards', () => {
     expect(loggedOutReplay.match(/press id="search-submit"/g)).toHaveLength(2);
     expect(loggedOutReplay).toContain('wait id="search-external-linuxdo" 10000');
     expect(loggedOutReplay).toContain('wait id="search-external-nodeseek" 10000');
-    expect(loggedOutReplay).toContain('press id="search-source-yaohuo"');
+    expect(loggedOutReplay).toContain('press id="search-source-yaohuo"\nwait label="关闭" 60000');
     expect(loggedOutReplay).toContain('press id="feed-source-yaohuo"');
-    expect(loggedOutReplay.match(/press label="关闭"/g)).toHaveLength(2);
-    expect(loggedOutReplay.match(/wait 8000/g)).toHaveLength(2);
+    expect(loggedOutReplay.match(/press label="关闭"/g)).toHaveLength(3);
+    expect(loggedOutReplay.match(/wait 8000/g)).toHaveLength(3);
     expect(loggedOutReplay).not.toContain('back --system');
     expect(loggedOutReplay).toContain('press id="main-tab-feed"');
     expect(loggedOutReplay.match(/press id="main-tab-feed"/g)).toHaveLength(1);
@@ -928,9 +930,32 @@ describe('Android release evidence guards', () => {
     expect(entry).toContain(
       "import { initializeDiagnosticFileLogging } from '@/platform/diagnostics/diagnosticFileStore';"
     );
-    expect(entry.indexOf('initializeDiagnosticFileLogging();')).toBeLessThan(
-      entry.indexOf('registerRootComponent(App);')
-    );
+    const bootstrapCalls = (source: string) => {
+      const calls: string[] = [];
+      const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+      runInNewContext(code, {
+        exports: {},
+        require: (name: string) =>
+          name === 'expo'
+            ? { registerRootComponent: () => calls.push('register') }
+            : name.endsWith('/diagnosticFileStore')
+              ? { initializeDiagnosticFileLogging: () => calls.push('diagnostics') }
+              : name.endsWith('/notificationSystem')
+                ? { installMessageNotificationHandler: () => calls.push('notifications') }
+                : {}
+      });
+      return calls;
+    };
+    const expected = ['diagnostics', 'notifications', 'register'];
+    expect(bootstrapCalls(entry)).toEqual(expected);
+    expect(bootstrapCalls(entry.replace('initializeDiagnosticFileLogging();', ''))).not.toEqual(expected);
+    expect(
+      bootstrapCalls(
+        entry
+          .replace('initializeDiagnosticFileLogging();', '')
+          .replace('registerRootComponent(App);', 'registerRootComponent(App); initializeDiagnosticFileLogging();')
+      )
+    ).not.toEqual(expected);
     expect(moreRoute).toMatch(
       /useDiagnosticLogController\(\{\s*getCurrentScreen: runtime\.diagnostics\.getCurrentScreen,\s*metadata: runtime\.diagnostics\.metadata,\s*notify: runtime\.notify\s*\}\)/
     );

@@ -6,7 +6,7 @@ import type { ReaderSettings } from '@/domain/reader/readerData';
 import { imageRequestHeadersForUrl } from '@/platform/media/imageRequestSource';
 import { inlineForumImageDisplaySize } from '@/platform/media/inlineMedia';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '@/domain/forum/videoEmbeds';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import type { HtmlRenderers } from './types';
 import { createHtmlRendererStyles } from './htmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
@@ -201,13 +201,13 @@ const embedStyles = StyleSheet.create({
     marginHorizontal: 2
   },
   stickerVideoFill: {
-    ...StyleSheet.absoluteFillObject
+    ...StyleSheet.absoluteFill
   },
   stickerVideoFallback: {
-    ...StyleSheet.absoluteFillObject
+    ...StyleSheet.absoluteFill
   },
   stickerVideoLoading: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center'
   },
@@ -457,7 +457,6 @@ export function createContentMediaRenderers({
       <Pressable
         accessibilityLabel={title}
         accessibilityRole="link"
-        android_ripple={androidRipple(theme.mist)}
         style={[embedStyles.linkCard, { backgroundColor: theme.surface, borderColor: theme.line }, boundarySpacing]}
         onPress={(event) => {
           event.stopPropagation?.();

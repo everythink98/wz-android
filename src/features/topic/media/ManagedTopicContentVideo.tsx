@@ -50,7 +50,7 @@ export function ManagedTopicContentVideo({
             nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
             referrerPolicy={referrerPolicy}
             src={poster}
-            style={StyleSheet.absoluteFillObject}
+            style={StyleSheet.absoluteFill}
           />
         ) : undefined
       }

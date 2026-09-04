@@ -113,19 +113,16 @@ function validateFeedPage(source: FeedSource, pageParam: FeedPageParam, response
 }
 
 function mergeFeedPages(pages: FeedPage[]) {
-  return pages.reduce<FeedResponse>(
-    (current, page) => ({
-      ...page,
-      errors: { ...current.errors, ...page.errors },
-      items: mergeTopics(current.items, page.items)
-    }),
-    {
-      errors: {},
-      hasMore: false,
-      items: [],
-      nextPage: null
-    }
-  );
+  const lastPage = pages.at(-1);
+  if (!lastPage) return { errors: {}, hasMore: false, items: [], nextPage: null };
+  return {
+    ...lastPage,
+    errors: pages.reduce((errors, page) => ({ ...errors, ...page.errors }), {}),
+    items: mergeTopics(
+      [],
+      pages.flatMap((page) => page.items)
+    )
+  };
 }
 
 function queryReadPlanScopes(queryKey: readonly unknown[]) {
@@ -685,7 +682,6 @@ export function useFeedController({
     feedCategories,
     enabledFeedSources,
     feedFilter,
-    feedFilters,
     feedOutcomeKind: settledFeedOutcomeKind,
     feedSource,
     loadFeed,

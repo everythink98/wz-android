@@ -1,4 +1,5 @@
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
+index f83033b..c60eb23 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 @@ -1,6 +1,7 @@
@@ -9,7 +10,7 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
  import android.content.pm.ActivityInfo
  import android.graphics.Bitmap
  import android.graphics.Color
-@@ -10,6 +11,7 @@ import android.util.Log
+@@ -11,6 +12,7 @@ import android.util.Log
  import android.view.View
  import android.view.ViewGroup
  import android.view.WindowManager
@@ -17,7 +18,7 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
  import android.webkit.CookieManager
  import android.webkit.DownloadListener
  import android.webkit.WebSettings
-@@ -345,7 +347,14 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+@@ -344,7 +346,14 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
            webView.progressChangedFilter.setWaitingForCommandLoadUrl(false)
            webView.loadUrl(url)
          }
@@ -34,6 +35,7 @@ diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactna
          "clearCache" -> {
            val includeDiskFiles = args != null && args.getBoolean(0)
 diff --git a/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java b/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+index fa8efb8..986466b 100644
 --- a/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
 +++ b/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
 @@ -1,5 +1,7 @@
@@ -44,7 +46,7 @@ diff --git a/node_modules/react-native-webview/android/src/newarch/com/reactnati
  import androidx.annotation.NonNull;
  import androidx.annotation.Nullable;
  
-@@ -462,7 +464,13 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+@@ -466,7 +468,13 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
  
    @Override
    public void requestFocus(RNCWebViewWrapper view) {
@@ -59,3 +61,16 @@ diff --git a/node_modules/react-native-webview/android/src/newarch/com/reactnati
    }
  
    @Override
+diff --git a/node_modules/react-native-webview/index.d.ts b/node_modules/react-native-webview/index.d.ts
+index 10b9c14..8487b10 100644
+--- a/node_modules/react-native-webview/index.d.ts
++++ b/node_modules/react-native-webview/index.d.ts
+@@ -5,7 +5,7 @@ export { FileDownload, WebViewMessageEvent, WebViewNavigation } from './lib/WebV
+ 
+ export type WebViewProps = IOSWebViewProps & AndroidWebViewProps & WindowsWebViewProps;
+ 
+-declare class WebView<P = undefined> extends Component<WebViewProps & P> {
++declare class WebView<P = unknown> extends Component<WebViewProps & P> {
+   /**
+    * Go back one page in the webview's history.
+    */

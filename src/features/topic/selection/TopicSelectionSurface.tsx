@@ -7,10 +7,15 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
-  useRef
+  useRef,
+  useState
 } from 'react';
 import { type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewProps } from 'react-native';
+import { useTopicSelectionBackReport } from '../useTopicRouteBeforeRemove';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 
 export type TopicSelectionItem = Readonly<{
   documentId: 'opening';
@@ -29,6 +34,7 @@ type NativeForumSelectionProps = {
   style: ViewProps['style'];
   testID?: string;
   onAutoScroll?: (event: NativeSyntheticEvent<{ delta: number }>) => void;
+  onSelectionChange?: (event: NativeSyntheticEvent<{ active: boolean; revision: string }>) => void;
 };
 
 type NativeForumSelectionRef = View & { cancelSelection?: () => void };
@@ -100,7 +106,7 @@ export function TopicSelectionSurface({
   sessionKey: string;
 }) {
   const snapshot = useMemo(() => nativeRowsFor(sessionKey, items), [items, sessionKey]);
-  const revision = useMemo(
+  const documentKey = useMemo(
     () =>
       `${sessionKey}:${hashRevision(snapshot.rows.flatMap((row) => [row.documentId, row.rowKey, row.selectionToken]))}`,
     [sessionKey, snapshot.rows]
@@ -109,7 +115,36 @@ export function TopicSelectionSurface({
   const nativeEnabled = Boolean(
     Platform.OS === 'android' && NativeForumSelection && routeActive && snapshot.valid && snapshot.rows.length > 0
   );
-  const cancelSelection = useCallback(() => nativeRef.current?.cancelSelection?.(), []);
+  const surfaceId = useId();
+  const lifecycleKey = `${documentKey}:${nativeEnabled}`;
+  const [document, setDocument] = useState({ key: lifecycleKey, generation: 0 });
+  if (document.key !== lifecycleKey) setDocument({ key: lifecycleKey, generation: document.generation + 1 });
+  const revision = `${documentKey}:${surfaceId}:${document.generation}`;
+  const reportSelection = useTopicSelectionBackReport();
+  const mounted = useRef(false);
+  const cancelSelection = useCallback(() => {
+    reportSelection(null);
+    nativeRef.current?.cancelSelection?.();
+  }, [reportSelection]);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      reportSelection(null);
+    };
+  }, [reportSelection]);
+  const onSelectionChange = useLatestCallback(
+    ({ nativeEvent }: NativeSyntheticEvent<{ active: boolean; revision: string }>) => {
+      if (
+        !mounted.current ||
+        !nativeEnabled ||
+        nativeEvent.revision !== revision ||
+        typeof nativeEvent.active !== 'boolean'
+      )
+        return;
+      reportSelection(nativeEvent.active ? cancelSelection : null);
+    }
+  );
 
   useEffect(() => {
     cancelSelection();
@@ -153,6 +188,7 @@ export function TopicSelectionSurface({
         style={styles.fill}
         testID="topic-selection-surface"
         onAutoScroll={onAutoScroll}
+        onSelectionChange={onSelectionChange}
       >
         <View accessible={false} style={styles.fill} testID="topic-selection-content">
           {children}

@@ -2654,9 +2654,11 @@ describe('Android local sources', () => {
     });
   });
 
-  it('turns NodeSeek magic tabs into readable mixed report tabs', async () => {
-    const fetcher = vi.fn(async () =>
-      html(`
+  it.each(['xterm-row', ''])(
+    'turns NodeSeek magic tabs with row class "%s" into readable mixed reports',
+    async (rowClass) => {
+      const fetcher = vi.fn(async () =>
+        html(`
       <a class="post-title" href="/post-812712-1">[NQ] ZOUTER HK BGP Global - Lite新款 留档</a>
       <div id="0" data-comment-id="812712" class="content-item">
         <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
@@ -2667,9 +2669,9 @@ describe('Android local sources', () => {
             <div class="nsk-magic-tab-body">
                <div class="terminal-container embedMode">
                  <div class="xterm-rows">
-                   <div class="xterm-row"><span style="color: rgb(34, 211, 238)">硬件质量体检报告</span></div>
-                   <div class="xterm-row"><span class="xterm-fg-46 xterm-bg-18">KVM 虚拟机</span></div>
-                   <div class="xterm-row"><span>https://github.com/xykt/HardwareQuality</span></div>
+                   <div class="${rowClass}"><span style="color: rgb(34, 211, 238)">硬件质量体检报告</span></div>
+                   <div class="${rowClass}"><span class="xterm-fg-46 xterm-bg-18">KVM 虚拟机</span></div>
+                   <div class="${rowClass}"><span>https://github.com/xykt/HardwareQuality</span></div>
                  </div>
                  <p>终端之外的说明</p>
                  <table><tbody><tr><td>套餐</td><td>Lite</td></tr></tbody></table>
@@ -2679,8 +2681,8 @@ describe('Android local sources', () => {
             <div class="nsk-magic-tab-body">
               <div class="terminal-container embedMode">
                 <div class="xterm-rows">
-                  <div class="xterm-row"><span style="color: #34d399">IP质量检测完成</span></div>
-                  <div class="xterm-row"><span>报告链接：https://Report.Check.Place/ip/A19T91XBU.svg</span></div>
+                  <div class="${rowClass}"><span style="color: #34d399">IP质量检测完成</span></div>
+                  <div class="${rowClass}"><span>报告链接：https://Report.Check.Place/ip/A19T91XBU.svg</span></div>
                 </div>
               </div>
             </div>
@@ -2693,84 +2695,85 @@ describe('Android local sources', () => {
         </article>
       </div>
     `)
-    );
+      );
 
-    const topic = await getNodeSeekTopic('812712', { fetcher });
-    const compiled = requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
-      polls: topic.polls,
-      role: 'opening',
-      source: 'nodeseek',
-      topicId: topic.id
-    });
-    const report = compiled.rows.find((row) => row.type === 'terminalReportHeader');
-    const terminalRows = compiled.rows.filter((row) =>
-      row.ancestorFrames.some((frame) => frame.kind === 'terminalTab')
-    );
-    const terminalCodeRows = terminalRows.filter((row) => row.type === 'codeBlock');
+      const topic = await getNodeSeekTopic('812712', { fetcher });
+      const compiled = requirePreparedForumContent(topic.preparedContent, topic.contentHtml, {
+        polls: topic.polls,
+        role: 'opening',
+        source: 'nodeseek',
+        topicId: topic.id
+      });
+      const report = compiled.rows.find((row) => row.type === 'terminalReportHeader');
+      const terminalRows = compiled.rows.filter((row) =>
+        row.ancestorFrames.some((frame) => frame.kind === 'terminalTab')
+      );
+      const terminalCodeRows = terminalRows.filter((row) => row.type === 'codeBlock');
 
-    expect(topic.contentHtml).toContain('<forum-terminal-report>');
-    expect(topic.contentHtml).toContain('<forum-terminal-tab title="💻基本信息">');
-    expect(topic.contentHtml).toContain('<forum-terminal-tab title="🎬IP质量">');
-    expect(topic.contentHtml).toContain('<forum-terminal-tab title="🌐网络质量">');
-    expect(topic.contentHtml).toContain('<forum-terminal-tab title="📍回程路由">');
-    expect(topic.contentHtml).not.toContain('forum-terminal-section');
-    expect(topic.contentHtml).toContain('💻基本信息');
-    expect(topic.contentHtml).toContain('🎬IP质量');
-    expect(topic.contentHtml).toContain('🌐网络质量');
-    expect(topic.contentHtml).toContain('📍回程路由');
-    expect(topic.contentHtml).toMatch(/💻基本信息[\s\S]*🎬IP质量[\s\S]*🌐网络质量[\s\S]*📍回程路由/);
-    expect(topic.contentHtml).toContain('KVM');
-    expect(topic.contentHtml).toContain('IP质量检测完成');
-    expect(topic.contentHtml).toContain('color: rgb(34, 211, 238)');
-    expect(topic.contentHtml).toContain('color: #00ff00; background-color: #000087');
-    expect(topic.contentHtml).toContain('color: #34d399');
-    expect(topic.contentHtml).toMatch(
-      /硬件质量体检报告<\/span><br\s*\/?><span style="color: #00ff00; background-color: #000087">KVM&nbsp;虚拟机/
-    );
-    expect(topic.contentHtml).toContain('https://i.111666.best/image/network.webp');
-    expect(topic.contentHtml).toContain('https://i.111666.best/image/route.webp');
-    expect(topic.contentHtml).toContain('alt="网络质量报告"');
-    expect(topic.contentHtml).toContain('alt="回程路由报告"');
-    expect(topic.contentHtml).toContain('https://github.com/xykt/HardwareQuality');
-    expect(topic.contentHtml).toContain('href="https://github.com/xykt/HardwareQuality"');
-    expect(topic.contentHtml).not.toContain('terminal-container');
-    expect(topic.contentHtml).not.toContain('\u001b[36m');
-    expect(topic.contentHtml).not.toContain('\u001b[32m');
-    expect(topic.contentHtml).not.toContain('\u001b[0m');
-    expect(topic.contentHtml).not.toContain('[36m');
-    expect(topic.contentHtml).not.toContain('[32m');
-    expect(topic.contentHtml).not.toContain('[0m');
-    expect(report?.tabs.map((tab) => tab.title)).toEqual(['💻基本信息', '🎬IP质量', '🌐网络质量', '📍回程路由']);
-    expect(
-      new Set(
-        terminalRows.flatMap((row) =>
-          row.ancestorFrames.flatMap((frame) => (frame.kind === 'terminalTab' ? [frame.tabId] : []))
+      expect(topic.contentHtml).toContain('<forum-terminal-report>');
+      expect(topic.contentHtml).toContain('<forum-terminal-tab title="💻基本信息">');
+      expect(topic.contentHtml).toContain('<forum-terminal-tab title="🎬IP质量">');
+      expect(topic.contentHtml).toContain('<forum-terminal-tab title="🌐网络质量">');
+      expect(topic.contentHtml).toContain('<forum-terminal-tab title="📍回程路由">');
+      expect(topic.contentHtml).not.toContain('forum-terminal-section');
+      expect(topic.contentHtml).toContain('💻基本信息');
+      expect(topic.contentHtml).toContain('🎬IP质量');
+      expect(topic.contentHtml).toContain('🌐网络质量');
+      expect(topic.contentHtml).toContain('📍回程路由');
+      expect(topic.contentHtml).toMatch(/💻基本信息[\s\S]*🎬IP质量[\s\S]*🌐网络质量[\s\S]*📍回程路由/);
+      expect(topic.contentHtml).toContain('KVM');
+      expect(topic.contentHtml).toContain('IP质量检测完成');
+      expect(topic.contentHtml).toContain('color: rgb(34, 211, 238)');
+      expect(topic.contentHtml).toContain('color: #00ff00; background-color: #000087');
+      expect(topic.contentHtml).toContain('color: #34d399');
+      expect(topic.contentHtml).toMatch(
+        /硬件质量体检报告<\/span><br\s*\/?><span style="color: #00ff00; background-color: #000087">KVM&nbsp;虚拟机/
+      );
+      expect(topic.contentHtml).toContain('https://i.111666.best/image/network.webp');
+      expect(topic.contentHtml).toContain('https://i.111666.best/image/route.webp');
+      expect(topic.contentHtml).toContain('alt="网络质量报告"');
+      expect(topic.contentHtml).toContain('alt="回程路由报告"');
+      expect(topic.contentHtml).toContain('https://github.com/xykt/HardwareQuality');
+      expect(topic.contentHtml).toContain('href="https://github.com/xykt/HardwareQuality"');
+      expect(topic.contentHtml).not.toContain('terminal-container');
+      expect(topic.contentHtml).not.toContain('\u001b[36m');
+      expect(topic.contentHtml).not.toContain('\u001b[32m');
+      expect(topic.contentHtml).not.toContain('\u001b[0m');
+      expect(topic.contentHtml).not.toContain('[36m');
+      expect(topic.contentHtml).not.toContain('[32m');
+      expect(topic.contentHtml).not.toContain('[0m');
+      expect(report?.tabs.map((tab) => tab.title)).toEqual(['💻基本信息', '🎬IP质量', '🌐网络质量', '📍回程路由']);
+      expect(
+        new Set(
+          terminalRows.flatMap((row) =>
+            row.ancestorFrames.flatMap((frame) => (frame.kind === 'terminalTab' ? [frame.tabId] : []))
+          )
         )
-      )
-    ).toEqual(new Set(report?.tabs.map((tab) => tab.id)));
-    expect(terminalCodeRows.map((row) => row.text).join('\n')).toContain('KVM 虚拟机');
-    expect(terminalCodeRows.map((row) => row.text).join('\n')).toContain('IP质量检测完成');
-    expect(terminalCodeRows.every((row) => row.variant === 'terminal')).toBe(true);
-    expect(terminalRows.find((row) => row.type === 'richText' && row.html.includes('终端之外的说明'))).toBeTruthy();
-    expect(terminalRows.find((row) => row.type === 'table' && row.html.includes('Lite'))).toBeTruthy();
-    expect(
-      terminalCodeRows.some((row) =>
-        row.runs.some((run) => run.style?.color === '#00ff00' && run.style.backgroundColor === '#000087')
-      )
-    ).toBe(true);
-    expect(
-      terminalRows.some((row) => 'html' in row && row.html.includes('https://i.111666.best/image/network.webp'))
-    ).toBe(true);
-    expect(compiled.rows.every((row) => !('html' in row) || !row.html.includes('<forum-terminal-report'))).toBe(true);
-    expect(
-      compiled.rows.some(
-        (row) =>
-          'html' in row &&
-          row.html.includes('HardwareQuality') &&
-          row.ancestorFrames.every((frame) => frame.kind !== 'terminalTab')
-      )
-    ).toBe(true);
-  });
+      ).toEqual(new Set(report?.tabs.map((tab) => tab.id)));
+      expect(terminalCodeRows.map((row) => row.text).join('\n')).toContain('KVM 虚拟机');
+      expect(terminalCodeRows.map((row) => row.text).join('\n')).toContain('IP质量检测完成');
+      expect(terminalCodeRows.every((row) => row.variant === 'terminal')).toBe(true);
+      expect(terminalRows.find((row) => row.type === 'richText' && row.html.includes('终端之外的说明'))).toBeTruthy();
+      expect(terminalRows.find((row) => row.type === 'table' && row.html.includes('Lite'))).toBeTruthy();
+      expect(
+        terminalCodeRows.some((row) =>
+          row.runs.some((run) => run.style?.color === '#00ff00' && run.style.backgroundColor === '#000087')
+        )
+      ).toBe(true);
+      expect(
+        terminalRows.some((row) => 'html' in row && row.html.includes('https://i.111666.best/image/network.webp'))
+      ).toBe(true);
+      expect(compiled.rows.every((row) => !('html' in row) || !row.html.includes('<forum-terminal-report'))).toBe(true);
+      expect(
+        compiled.rows.some(
+          (row) =>
+            'html' in row &&
+            row.html.includes('HardwareQuality') &&
+            row.ancestorFrames.every((frame) => frame.kind !== 'terminalTab')
+        )
+      ).toBe(true);
+    }
+  );
 
   it('cleans NodeSeek ansi code reports without showing source markup', async () => {
     const fetcher = vi.fn(async () =>

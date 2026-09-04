@@ -14,6 +14,5 @@ export const TOPIC_LIST_PERFORMANCE_PROPS = {
 export const TOPIC_DETAIL_LIST_PERFORMANCE_PROPS = {
   disableScrollViewPanResponder: true,
   drawDistance: 720,
-  maintainVisibleContentPosition: { disabled: true },
   maxItemsInRecyclePool: 40
 };

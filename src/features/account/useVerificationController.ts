@@ -1,4 +1,4 @@
-import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
 import { errorMessage } from '@/platform/network/errors';
@@ -23,7 +23,7 @@ import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordin
 
 const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
 
-type Ref<T> = MutableRefObject<T>;
+type Ref<T> = RefObject<T>;
 
 type LinuxDoVerificationPhase =
   'idle' | 'preparing' | 'awaiting-clearance' | 'checking-clearance' | 'resuming-read' | 'closing';

@@ -140,6 +140,32 @@ describe('network proxy settings', () => {
     await expect(loadNetworkProxyState()).rejects.toThrow('代理配置已损坏');
   });
 
+  it.each([
+    '',
+    'null',
+    '[]',
+    '{}',
+    JSON.stringify({ enabled: 'true', activeId: null, profiles: [] }),
+    JSON.stringify({ enabled: true, activeId: 'missing', profiles: [] }),
+    JSON.stringify({ enabled: true, activeId: 'tg', profiles: [{ ...socksProfile, protocol: 'broken' }] }),
+    JSON.stringify({ enabled: true, activeId: 'tg', profiles: [{ ...socksProfile, port: '1080' }] }),
+    JSON.stringify({ enabled: true, activeId: 'tg', profiles: [socksProfile, socksProfile] })
+  ])('rejects malformed persisted configuration %s without overwriting it', async (raw) => {
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(raw);
+    await expect(loadNetworkProxyState()).rejects.toThrow('代理配置已损坏');
+    expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes a first launch and explicit disable from corrupt configuration', async () => {
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(null);
+    await expect(loadNetworkProxyState()).resolves.toEqual({ enabled: false, activeId: null, profiles: [] });
+    for (const enabled of [true, false]) {
+      const saved = { enabled, activeId: socksProfile.id, profiles: [socksProfile] };
+      vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify(saved));
+      await expect(loadNetworkProxyState()).resolves.toEqual(saved);
+    }
+  });
+
   it('keeps WebViews blocked throughout enabled and disabled proxy transitions', () => {
     expect(
       networkProxyWebViewBlockMessage({

@@ -136,28 +136,85 @@ describe('Android release packaging guards', () => {
 
   it('keeps release minify and resource shrinking enabled by default', () => {
     const app = JSON.parse(readProjectFile('app.json'));
-    const plugin = readProjectFile('plugins', 'withAndroidReleaseDefaults.js');
+    const buildProperties = app.expo.plugins.find(
+      (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-build-properties'
+    );
 
-    expect(app.expo.plugins).toContain('./plugins/withAndroidReleaseDefaults');
+    expect(buildProperties?.[1]?.android).toMatchObject({
+      buildReactNativeFromSource: true,
+      enableMinifyInReleaseBuilds: true,
+      enableShrinkResourcesInReleaseBuilds: true
+    });
+  });
+
+  it('persists the Gradle JVM limits through Expo prebuild', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+    const plugin = readProjectFile('plugins', 'withAndroidGradleJvmMemory.js');
+
+    expect(app.expo.plugins).toContain('./plugins/withAndroidGradleJvmMemory');
+    expect(plugin).toContain("const GRADLE_JVM_ARGS = '-Xmx4096m -XX:MaxMetaspaceSize=1024m'");
     expect(plugin).toContain('withGradleProperties');
-    expect(plugin).toContain("'android.enableMinifyInReleaseBuilds': 'true'");
-    expect(plugin).toContain("'android.enableShrinkResourcesInReleaseBuilds': 'true'");
+  });
+
+  it('keeps the RN fetch implementation and reviewed Expo version exceptions explicit', () => {
+    const pkg = JSON.parse(readProjectFile('package.json'));
+
+    expect(readProjectFile('.env').trim()).toBe('EXPO_PUBLIC_USE_RN_FETCH=1');
+    expect(pkg.expo.install.exclude).toEqual([
+      '@react-native-async-storage/async-storage',
+      '@react-native-community/datetimepicker',
+      '@react-native-community/slider',
+      '@shopify/flash-list',
+      'react-native-gesture-handler',
+      'react-native-pager-view',
+      'react-native-safe-area-context',
+      'react-native-screens',
+      'react-native-svg',
+      'react-native-webview',
+      'react-native-worklets'
+    ]);
   });
 
   it('packages the patched React Android implementation from source', () => {
-    const plugin = readProjectFile('plugins', 'withAndroidReleaseDefaults.js');
-    const reactNativePatch = readProjectFile('patches', 'react-native+0.81.5.patch');
+    const app = JSON.parse(readProjectFile('app.json'));
+    const pkg = JSON.parse(readProjectFile('package.json'));
+    const reactNativePatch = readProjectFile('patches', 'react-native+0.86.3.patch');
+    const buildProperties = app.expo.plugins.find(
+      (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-build-properties'
+    );
 
-    expect(plugin).toContain('withSettingsGradle');
-    expect(plugin).toContain('CodeGenerator.mergeContents');
-    expect(plugin).toContain("tag: 'wz-react-native-source-build'");
-    expect(plugin).toContain("includeBuild('../node_modules/react-native')");
-    for (const coordinate of ['com.facebook.react:react-android', 'com.facebook.react:react-native']) {
-      expect(plugin).toContain(coordinate);
-    }
-    expect(plugin).toContain(':packages:react-native:ReactAndroid');
-    expect(plugin).not.toContain(':packages:react-native:ReactAndroid:hermes-engine');
-    expect(reactNativePatch).toContain('compileOnly("com.facebook.react:hermes-android:${project.version}")');
+    expect(buildProperties?.[1]?.android?.buildReactNativeFromSource).toBe(true);
+    expect(pkg.expo.autolinking.android.buildFromSource).toEqual(expect.arrayContaining(['expo-image', 'expo-video']));
+    expect(reactNativePatch).toContain('ReactAndroid/src/main/java');
+    expect(reactNativePatch).toContain('jsiDir.invariantSeparatorsPath');
+    expect(reactNativePatch).toContain('node_modules/react-native/settings.gradle.kts');
+    expect(reactNativePatch).toContain('+project(":packages").projectDir = file(System.getProperty("java.io.tmpdir"))');
+    expect(reactNativePatch).not.toContain('ReactAndroid/build.gradle.kts');
+    expect(reactNativePatch).not.toContain('compileOnly(');
+  });
+
+  it.each([
+    ['withApkInstaller.js', 'ApkInstaller'],
+    ['withForumSearchCustomTab.js', 'ForumSearchCustomTab'],
+    ['withSecureRandomModule.js', 'SecureRandom'],
+    ['withNotificationDigestModule.js', 'NotificationDigest'],
+    ['withNetworkProxyModule.js', 'NetworkProxy'],
+    ['withSvgRendererModule.js', 'SvgRenderer']
+  ])('generates %s with the RN 0.86 lazy package API', (pluginFile, owner) => {
+    const plugin = readProjectFile('plugins', pluginFile);
+
+    expect(plugin).toContain(`class ${owner}Package : BaseReactPackage()`);
+    expect(plugin).toContain(
+      'override fun getModule(name: String, reactContext: ReactApplicationContext): NativeModule?'
+    );
+    expect(plugin).toContain('override fun getReactModuleInfoProvider(): ReactModuleInfoProvider');
+    expect(plugin).not.toContain('override fun createNativeModules(');
+  });
+
+  it('packages the Custom Tabs API with its direct AndroidX dependency', () => {
+    const plugin = readProjectFile('plugins', 'withForumSearchCustomTab.js');
+
+    expect(plugin).toContain('androidx.browser:browser:1.10.0');
   });
 
   it('generates the exact Android digest presentation bridge', () => {
@@ -255,14 +312,14 @@ describe('Android release packaging guards', () => {
       'NetworkingModule.setCustomClientBuilder { builder ->',
       'imageClientPublisher = { client -> installExpoImageClientOnMainThread(appContext, client) }',
       'GlideUrlWrapperLoader.Factory(client)',
-      'org.chromium.net:cronet-bundled:500.0.1',
+      'org.chromium.net:cronet-bundled:500.0.2',
       'com.google.net.cronet:cronet-okhttp:0.1.1',
       'exclude group: "com.squareup.okhttp3", module: "okhttp"',
       'exclude group: "com.squareup.okio", module: "okio"',
       'exclude group: "org.chromium.net", module: "cronet-api"',
       'RedirectStrategy.withoutRedirects()',
       'CronetProxyOptions.ALL_PROXIES_FAILED_BEHAVIOR_DISALLOW_DIRECT',
-      'androidx.webkit:webkit:1.14.0',
+      'androidx.webkit:webkit:1.17.0',
       'testImplementation("junit:junit:4.13.2")'
     ]) {
       expect(plugin).toContain(required);
@@ -281,6 +338,9 @@ describe('Android release packaging guards', () => {
     expect(networkPlugin).not.toContain('PreviewRegionImage');
     for (const required of [
       'BitmapRegionDecoder',
+      'Build.VERSION.SDK_INT >= Build.VERSION_CODES.S',
+      'UIManagerHelper.getEventDispatcher(reactContext)',
+      'SourceSizeEvent(UIManagerHelper.getSurfaceId(this), id, size)',
       'Handler(Looper.getMainLooper())',
       'PreviewRegionImagePackage',
       'PreviewRegionImageViewManager',
@@ -289,6 +349,8 @@ describe('Android release packaging guards', () => {
     ]) {
       expect(previewPlugin).toContain(required);
     }
+    expect(previewPlugin).not.toContain('RCTEventEmitter');
+    expect(previewPlugin).not.toContain('override fun createNativeModules(');
   });
 
   it('generates the isolated single-WebView SVG poster renderer', () => {
@@ -310,14 +372,18 @@ describe('Android release packaging guards', () => {
       'fs.copyFileSync(',
       "'SvgRendererPolicyTest.kt'",
       "'SvgRendererInstrumentedTest.kt'",
-      'testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"',
-      'androidTestImplementation("androidx.test:runner:1.6.2")'
+      'testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"',
+      'androidTestImplementation("androidx.test:runner:1.7.0")'
     ]) {
       expect(plugin).toContain(required);
     }
     for (const forbidden of [
       'private val client by lazy { NetworkProxyRuntime.forumImageClient() }',
-      'addJavascriptInterface'
+      'addJavascriptInterface',
+      'allowFileAccessFromFileURLs',
+      'allowUniversalAccessFromFileURLs',
+      'databaseEnabled',
+      'shouldOverrideUrlLoading(view: WebView, url: String)'
     ]) {
       expect(plugin).not.toContain(forbidden);
     }
@@ -368,21 +434,26 @@ describe('Android release packaging guards', () => {
     );
 
     expect(mediaPlugin?.[1]?.granularPermissions).toEqual(['photo']);
-    expect(app.expo.android.blockedPermissions).toContain('android.permission.READ_MEDIA_AUDIO');
-    expect(app.expo.android.blockedPermissions).toContain('android.permission.READ_MEDIA_VIDEO');
+    expect(app.expo.android.blockedPermissions).toEqual(['android.permission.SYSTEM_ALERT_WINDOW']);
   });
 
-  it('keeps SecureStore and expo-video native config plugins enabled', () => {
+  it('keeps SecureStore backup config without adding an unowned Expo Video capability', () => {
     const app = JSON.parse(readProjectFile('app.json'));
 
     expect(app.expo.plugins).toContainEqual(['expo-secure-store', { configureAndroidBackup: true }]);
-    expect(app.expo.plugins).toContain('expo-video');
+    expect(app.expo.plugins.some((plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-video')).toBe(false);
+  });
+
+  it('keeps the development tools button out of product hit testing', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+
+    expect(app.expo.plugins).toContainEqual(['expo-dev-client', { toolsButton: false }]);
   });
 
   it('owns the locked Expo Video source changes through patch-package', () => {
     const pkg = JSON.parse(readProjectFile('package.json'));
     const lock = JSON.parse(readProjectFile('package-lock.json'));
-    const patch = readProjectFile('patches', 'expo-video+3.0.16.patch');
+    const patch = readProjectFile('patches', 'expo-video+57.0.3.patch');
     const dataSource = readProjectFile(
       'node_modules',
       'expo-video',
@@ -411,8 +482,8 @@ describe('Android release packaging guards', () => {
     );
     const networkPlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
 
-    expect(pkg.dependencies['expo-video']).toBe('~3.0.16');
-    expect(lock.packages['node_modules/expo-video'].version).toBe('3.0.16');
+    expect(pkg.dependencies['expo-video']).toBe('~57.0.3');
+    expect(lock.packages['node_modules/expo-video'].version).toBe('57.0.3');
     expect(String(pkg.scripts.postinstall).split(/\s*&&\s*/)).toEqual(
       expect.arrayContaining(['patch-package', 'npm run build:composer'])
     );
@@ -436,7 +507,7 @@ describe('Android release packaging guards', () => {
   });
 
   it('keeps TSX tests discoverable when UI tests are added', () => {
-    const vitestConfig = readProjectFile('vitest.config.ts');
+    const vitestConfig = readProjectFile('vitest.config.mts');
 
     expect(vitestConfig).toContain('src/**/*.test.tsx');
   });

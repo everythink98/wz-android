@@ -322,11 +322,12 @@ export const nodeSeekNotificationAdapter = {
             }
           ];
         })
-        .sort((left, right) => {
-          const leftTime = left.createdAt ? Date.parse(left.createdAt) : Number.NEGATIVE_INFINITY;
-          const rightTime = right.createdAt ? Date.parse(right.createdAt) : Number.NEGATIVE_INFINITY;
-          return leftTime - rightTime || left.index - right.index;
-        });
+        .map((message) => ({
+          message,
+          time: message.createdAt ? Date.parse(message.createdAt) : Number.NEGATIVE_INFINITY
+        }))
+        .sort((left, right) => left.time - right.time || left.message.index - right.message.index)
+        .map(({ message }) => message);
       return {
         notification: item,
         title: item.actor.name,

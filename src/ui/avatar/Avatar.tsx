@@ -92,14 +92,14 @@ export function Avatar({
     <View style={[styles.avatar, tiny ? styles.tiny : small ? styles.small : styles.topic]}>
       <Text style={[styles.text, (small || tiny) && styles.smallText]}>{avatarInitial(name)}</Text>
       {svgXml ? (
-        <View style={StyleSheet.absoluteFillObject}>
+        <View style={StyleSheet.absoluteFill}>
           <SvgXml xml={svgXml} width="100%" height="100%" />
         </View>
       ) : uri && !imageFailed ? (
         <ExpoImage
           key={`${mediaSessionIdentity}:${uri}:${imageRetryCount}`}
           source={imageSourceFromUrl(uri, { mediaContext })}
-          style={[styles.image, StyleSheet.absoluteFillObject]}
+          style={[styles.image, StyleSheet.absoluteFill]}
           contentFit="cover"
           recyclingKey={`${mediaSessionIdentity}:${uri}:${imageRetryCount}`}
           cachePolicy={imageRetryCount > 0 ? 'none' : undefined}

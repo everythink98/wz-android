@@ -200,6 +200,23 @@ type PreviewImageBlockProps = {
 
 const STANDALONE_IMAGE_SPACING = { marginBottom: 8, marginTop: 6 } as const;
 
+type FailedOriginalImage = { identity: string; revision: number };
+
+function originalImageAttempt(
+  progressiveIdentity: string,
+  displayRevision: number,
+  failedOriginal: FailedOriginalImage
+) {
+  const matchesFailure = Boolean(progressiveIdentity) && failedOriginal.identity === progressiveIdentity;
+  return {
+    failed: matchesFailure && displayRevision <= failedOriginal.revision,
+    identity:
+      matchesFailure && displayRevision > failedOriginal.revision
+        ? `${progressiveIdentity}\u0000recovery-after:${failedOriginal.revision}`
+        : progressiveIdentity
+  };
+}
+
 function ManagedOriginalImageLayer({
   forced,
   onDisplay,
@@ -238,7 +255,7 @@ function ManagedOriginalImageLayer({
       priority={forced ? 'high' : 'low'}
       recyclingKey={`${compatibleImageRequestIdentity(source)}:body-original`}
       source={attemptedSource}
-      style={StyleSheet.absoluteFillObject}
+      style={StyleSheet.absoluteFill}
       transition={150}
       onDisplay={() => {
         if (activeAttemptIdRef.current !== lease.attemptId) return;
@@ -325,6 +342,14 @@ function AdmittedPreviewImageBlock({
   const imageLoadIdentity = `${bodyRequestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
   const imageVisualIdentity = `${requestIdentity}:${activeArtifact ? `compatible:${activeArtifact.posterRevision}` : 'native'}`;
   const attemptedImageSource = useImageSourceAttempt(activeImageSource, bodyMediaLease.attemptId);
+  const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
+  const activeLoadedImage =
+    loadedImage?.requestIdentity === bodyRequestIdentity && loadedImage.imageLoadIdentity === imageLoadIdentity
+      ? loadedImage
+      : null;
+  const naturalDimensions = activeLoadedImage
+    ? activeLoadedImage.dimensions
+    : cachedDimensions || displaySize || { height: Math.round(contentWidth * 0.75), width: contentWidth };
   useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -339,7 +364,6 @@ function AdmittedPreviewImageBlock({
       if (!(width > 0 && height > 0)) {
         return;
       }
-      const knownDimensions = cachedImageDisplayDimensions(cacheKey);
       rememberImageDisplayDimensions(cacheKey, { height, width });
       setLoadedImage(
         {
@@ -348,10 +372,20 @@ function AdmittedPreviewImageBlock({
           imageLoadIdentity,
           requestIdentity: bodyRequestIdentity
         },
-        knownDimensions?.height === height && knownDimensions.width === width
+        // Another mounted image may have populated the shared cache without resizing this row.
+        naturalDimensions.height === height && naturalDimensions.width === width
       );
     },
-    [bodyRequestIdentity, cacheKey, imageLoadIdentity, isCurrentImageAttempt, isImageAttemptSettled, setLoadedImage]
+    [
+      bodyRequestIdentity,
+      cacheKey,
+      imageLoadIdentity,
+      isCurrentImageAttempt,
+      isImageAttemptSettled,
+      naturalDimensions.height,
+      naturalDimensions.width,
+      setLoadedImage
+    ]
   );
   const handleImageDisplay = useCallback(() => {
     if (!isCurrentImageAttempt() || isImageAttemptSettled()) return;
@@ -365,14 +399,6 @@ function AdmittedPreviewImageBlock({
     [bodyMediaLease, isCurrentImageAttempt, isImageAttemptSettled]
   );
   const loadFailed = failedRequestIdentity === bodyRequestIdentity;
-  const cachedDimensions = cachedImageDisplayDimensions(cacheKey);
-  const activeLoadedImage =
-    loadedImage?.requestIdentity === bodyRequestIdentity && loadedImage.imageLoadIdentity === imageLoadIdentity
-      ? loadedImage
-      : null;
-  const naturalDimensions = activeLoadedImage
-    ? activeLoadedImage.dimensions
-    : cachedDimensions || displaySize || { height: Math.round(contentWidth * 0.75), width: contentWidth };
   const {
     height: _specifiedStyleHeight,
     width: _specifiedStyleWidth,
@@ -405,7 +431,7 @@ function AdmittedPreviewImageBlock({
     },
     imageState.dimensions
   ];
-  const imageLoadingOverlayStyle = [StyleSheet.absoluteFillObject, imageStateFrameStyle];
+  const imageLoadingOverlayStyle = [StyleSheet.absoluteFill, imageStateFrameStyle];
   const imageDisplayed = Boolean(activeLoadedImage) && displayedImageLoadIdentity === imageLoadIdentity;
   const cachedOriginalArtifact =
     originalSource && originalDisplayRevision > 0 ? cachedCompatibleSvgArtifact(originalSource) : null;
@@ -416,17 +442,18 @@ function AdmittedPreviewImageBlock({
   }, [cachedOriginalArtifact, originalRequestIdentity]);
   const progressiveSource = cachedOriginalArtifact?.posterSource || originalSource;
   const progressiveIdentity = progressiveSource ? compatibleImageRequestIdentity(progressiveSource) : '';
-  const originalAttemptIdentity = `${progressiveIdentity}\u0000revision:${originalDisplayRevision}`;
-  const originalLeaseIdentity = `${progressiveIdentity}\u0000revision:${originalDisplayRevision}`;
+  const { failed: originalFailed, identity: originalAttemptIdentity } = originalImageAttempt(
+    progressiveIdentity,
+    originalDisplayRevision,
+    failedOriginal
+  );
   const progressiveIdentityRef = useRef(originalAttemptIdentity);
   const originalForced = Boolean(originalRequestIdentity) && forcedOriginalIdentity === originalRequestIdentity;
-  const originalFailed =
-    failedOriginal.identity === originalAttemptIdentity && failedOriginal.revision === originalDisplayRevision;
   const originalDisplayed = Boolean(progressiveIdentity) && displayedOriginalIdentity === progressiveIdentity;
   const shouldLoadOriginal = Boolean(
     progressiveSource &&
     !originalFailed &&
-    (originalDisplayRevision > 0 || originalForced || (originalUpgradeEnabled && imageDisplayed))
+    (originalForced || (originalUpgradeEnabled && (originalDisplayRevision > 0 || imageDisplayed)))
   );
   useLayoutEffect(() => {
     progressiveIdentityRef.current = originalAttemptIdentity;
@@ -482,7 +509,7 @@ function AdmittedPreviewImageBlock({
         {shouldLoadOriginal && progressiveSource ? (
           <ManagedOriginalImageLayer
             forced={originalForced}
-            requestIdentity={originalLeaseIdentity}
+            requestIdentity={originalAttemptIdentity}
             source={progressiveSource}
             onDisplay={() => {
               if (
@@ -513,7 +540,7 @@ function AdmittedPreviewImageBlock({
               ) {
                 return;
               }
-              setFailedOriginal({ identity: originalAttemptIdentity, revision: originalDisplayRevision }, true);
+              setFailedOriginal({ identity: progressiveIdentity, revision: originalDisplayRevision }, true);
             }}
           />
         ) : null}
@@ -784,16 +811,18 @@ function ManagedMixedForumImage({
   }, [cachedOriginalArtifact, originalRequestIdentity]);
   const progressiveSource = cachedOriginalArtifact?.posterSource || originalSource;
   const progressiveIdentity = progressiveSource ? compatibleImageRequestIdentity(progressiveSource) : '';
-  const originalAttemptIdentity = `${progressiveIdentity}\u0000revision:${originalDisplayRevision}`;
+  const { failed: originalFailed, identity: originalAttemptIdentity } = originalImageAttempt(
+    progressiveIdentity,
+    originalDisplayRevision,
+    failedOriginal
+  );
   const progressiveIdentityRef = useRef(originalAttemptIdentity);
   const originalForced = Boolean(originalRequestIdentity) && forcedOriginalIdentity === originalRequestIdentity;
-  const originalFailed =
-    failedOriginal.identity === originalAttemptIdentity && failedOriginal.revision === originalDisplayRevision;
   const originalDisplayed = Boolean(progressiveIdentity) && displayedOriginalIdentity === progressiveIdentity;
   const shouldLoadOriginal = Boolean(
     progressiveSource &&
     !originalFailed &&
-    (originalDisplayRevision > 0 || originalForced || (originalUpgradeEnabled && imageDisplayed))
+    (originalForced || (originalUpgradeEnabled && (originalDisplayRevision > 0 || imageDisplayed)))
   );
   useLayoutEffect(() => {
     progressiveIdentityRef.current = originalAttemptIdentity;
@@ -821,7 +850,7 @@ function ManagedMixedForumImage({
           lease.retry();
         }}
       >
-        <View style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center' }]}>
+        <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
           <Text numberOfLines={2} style={errorTextStyle}>
             图片加载失败，点按重试
           </Text>
@@ -916,14 +945,14 @@ function ManagedMixedForumImage({
             ) {
               return;
             }
-            setFailedOriginal({ identity: originalAttemptIdentity, revision: originalDisplayRevision }, true);
+            setFailedOriginal({ identity: progressiveIdentity, revision: originalDisplayRevision }, true);
           }}
         />
       ) : null}
       {lease.admitted && !imageDisplayed && !originalDisplayed ? (
         <View
           style={[
-            StyleSheet.absoluteFillObject,
+            StyleSheet.absoluteFill,
             { alignItems: 'center', backgroundColor: frameBackgroundColor, justifyContent: 'center' }
           ]}
         >

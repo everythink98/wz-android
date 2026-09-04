@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { isCancelledError, useQuery } from '@tanstack/react-query';
+import { CancelledError, useQuery } from '@tanstack/react-query';
 import { isCanceledRequest } from '@/platform/network/errors';
 import {
   accountSessionIdentityKey,
@@ -80,7 +80,7 @@ export function useAccountStatusController({
   fetcher: Fetcher;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
-  onAccountStatusChanged: (source: StatusSource, recoveryQueryKey?: readonly unknown[]) => void;
+  onAccountStatusChanged: (source: StatusSource) => void;
   readManagedCookieHeader?: (exactUrl: string) => Promise<ManagedCookieReadResult>;
 }) {
   const enabledMembershipKey = sessionSources.filter((source) => enabledSources.includes(source)).join(',');
@@ -155,7 +155,7 @@ export function useAccountStatusController({
         accountSessionSnapshotFromEvent(current, event)
       );
       if (accountSessionIdentityKey(previous) !== accountSessionIdentityKey(next)) {
-        onAccountStatusChanged(event.site, 'recoveryQueryKey' in event ? event.recoveryQueryKey : undefined);
+        onAccountStatusChanged(event.site);
       }
       if (terminalEvent && (next.identityTrust === 'confirmed' || next.identityTrust === 'none')) {
         void saveAccountSessionSnapshot(next).catch(() => {
@@ -274,7 +274,7 @@ export function useAccountStatusController({
           ) {
             return { status: 'stale' };
           }
-          if (isCancelledError(error) || isCanceledRequest(error)) return { status: 'stale' };
+          if (error instanceof CancelledError || isCanceledRequest(error)) return { status: 'stale' };
           const errorInfo = sourceErrorFromUnknown(source, error);
           commitAccountSnapshot(source, (current) => ({
             ...current,

@@ -1,21 +1,49 @@
-diff --git a/node_modules/expo-image/android/build.gradle b/node_modules/expo-image/android/build.gradle
-index 96ec610..5adba6c 100644
---- a/node_modules/expo-image/android/build.gradle
-+++ b/node_modules/expo-image/android/build.gradle
-@@ -28,6 +28,8 @@ android {
- dependencies {
-   def GLIDE_VERSION = "4.16.0"
- 
-+  testImplementation 'junit:junit:4.13.2'
-+
-   implementation 'com.facebook.react:react-android'
- 
-   api "com.github.bumptech.glide:glide:${GLIDE_VERSION}"
 diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt
-index 5de34df..a0e407d 100644
+index 7abe582..69ec84a 100644
 --- a/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt
 +++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/ExpoImageViewWrapper.kt
-@@ -549,6 +549,8 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+@@ -54,6 +54,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+   private val secondView = ExpoImageView(activity)
+ 
+   private val mainHandler = Handler(context.mainLooper)
++  private var resizeRerenderGeneration = 0
+ 
+   /**
+    * @returns the view which is currently active or will be used when both views are empty
+@@ -425,13 +426,27 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+     return bestSource
+   }
+ 
+   override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+     super.onSizeChanged(w, h, oldw, oldh)
+-    rerenderIfNeeded(
+-      shouldRerenderBecauseOfResize = allowDownscaling &&
+-        contentFit != ContentFit.Fill &&
+-        contentFit != ContentFit.None
+-    )
++    val shouldRerenderBecauseOfResize = allowDownscaling &&
++      contentFit != ContentFit.Fill &&
++      contentFit != ContentFit.None
++    if (!shouldRerenderBecauseOfResize) {
++      rerenderIfNeeded()
++      return
++    }
++    val generation = ++resizeRerenderGeneration
++    post {
++      if (
++        generation != resizeRerenderGeneration ||
++        !isAttachedToWindow ||
++        width != w ||
++        height != h
++      ) {
++        return@post
++      }
++      rerenderIfNeeded(shouldRerenderBecauseOfResize = true)
++    }
+   }
+ 
+   private fun createPropOptions(): RequestOptions {
+@@ -562,6 +562,8 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
        } else {
          secondTarget
        }
@@ -25,18 +53,18 @@ index 5de34df..a0e407d 100644
  
        val downsampleStrategy = createDownsampleStrategy(newTarget)
 diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/events/GlideRequestListener.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/events/GlideRequestListener.kt
-index b8cccb5..b927acb 100644
+index f453e4a..efa9cfc 100644
 --- a/node_modules/expo-image/android/src/main/java/expo/modules/image/events/GlideRequestListener.kt
 +++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/events/GlideRequestListener.kt
-@@ -8,6 +8,7 @@ import com.bumptech.glide.load.engine.GlideException
- import com.bumptech.glide.request.RequestListener
+@@ -9,6 +9,7 @@ import com.bumptech.glide.request.RequestListener
  import com.bumptech.glide.request.target.Target
+ import expo.modules.image.ExpoImageModule
  import expo.modules.image.ExpoImageViewWrapper
 +import expo.modules.image.ImageViewWrapperTarget
+ import expo.modules.image.decodedsource.DecodedModel
  import expo.modules.image.enums.ImageCacheType
  import expo.modules.image.records.ImageErrorEvent
- import expo.modules.image.records.ImageLoadEvent
-@@ -17,6 +18,17 @@ import kotlinx.coroutines.launch
+@@ -19,6 +20,17 @@ import kotlinx.coroutines.launch
  import java.lang.ref.WeakReference
  import java.util.Locale
  
@@ -54,7 +82,7 @@ index b8cccb5..b927acb 100644
  class GlideRequestListener(
    private val expoImageViewWrapper: WeakReference<ExpoImageViewWrapper>
  ) : RequestListener<Drawable> {
-@@ -54,6 +66,13 @@ class GlideRequestListener(
+@@ -56,6 +68,13 @@ class GlideRequestListener(
        ?: resource.intrinsicWidth
      val intrinsicHeight = (resource as? SVGPictureDrawable)?.svgIntrinsicHeight
        ?: resource.intrinsicHeight
@@ -68,7 +96,7 @@ index b8cccb5..b927acb 100644
  
      val imageWrapper = expoImageViewWrapper.get() ?: return false
      val appContext = imageWrapper.appContext
-@@ -63,8 +82,8 @@ class GlideRequestListener(
+@@ -65,8 +84,8 @@ class GlideRequestListener(
            cacheType = ImageCacheType.fromNativeValue(dataSource).name.lowercase(Locale.getDefault()),
            source = ImageSource(
              url = model.toString(),

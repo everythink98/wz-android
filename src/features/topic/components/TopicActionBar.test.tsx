@@ -13,10 +13,6 @@ vi.mock('react-native', () => ({
   View: 'View'
 }));
 
-vi.mock('@/ui/controls/pressFeedback', () => ({
-  triggerPressFeedback: vi.fn()
-}));
-
 function collectText(node: unknown): string[] {
   if (typeof node === 'string' || typeof node === 'number') {
     return [String(node)];

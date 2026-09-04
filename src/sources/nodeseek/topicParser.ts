@@ -1,10 +1,11 @@
-import type { HTMLElement } from 'node-html-parser';
+import type { HTMLElement, Node } from 'node-html-parser';
 import type { Reply, TopicDetail, TopicPoll, TopicPollOption } from '@/domain/forum/models';
 import {
   absoluteUrl,
   elementText,
   hasRenderableHtmlContent,
   isRecord,
+  parseForumContentHtml,
   parseHtml,
   parsePositiveInteger,
   textExcerpt,
@@ -39,10 +40,48 @@ function hasHtmlTag(value: string) {
   return /<\/?[a-z][\s\S]*>/i.test(value);
 }
 
+function nodeSeekTerminalSourceHtml(renderedHtml: string, markdown: unknown) {
+  if (!renderedHtml.includes('terminal-container') || typeof markdown !== 'string' || !markdown.trim()) {
+    return renderedHtml;
+  }
+  const root = parseForumContentHtml(renderedHtml);
+  const terminals = root
+    .querySelectorAll('.terminal-container, pre')
+    .filter(
+      (node) =>
+        (node.matches('.terminal-container') || node.querySelector('code.language-ansi')) &&
+        !node.parentNode?.closest('.terminal-container')
+    );
+  const source = parseForumContentHtml(nodeSeekMarkdownCandidateHtml(markdown));
+  const code = source.querySelectorAll('pre').filter((node) => node.querySelector('code.language-ansi'));
+  // The same comment's source order owns the full text; an xterm DOM can be empty or windowed.
+  // Do not guess a positional pairing when the source and rendered structures disagree.
+  if (!terminals.length || terminals.length !== code.length) return renderedHtml;
+  const replacements = new Map<Node, Node[]>();
+  const parents = new Set<HTMLElement>();
+  terminals.forEach((terminal, index) => {
+    const display =
+      terminal.querySelector('.xterm') ||
+      terminal.querySelector('.xterm-rows') ||
+      terminal.querySelector('pre, textarea') ||
+      terminal;
+    if (display !== terminal) {
+      const parent = display.parentNode!;
+      parent.set_content(parent.childNodes.map((child) => (child === display ? code[index] : child)));
+      replacements.set(terminal, terminal.childNodes);
+    } else replacements.set(terminal, [code[index]]);
+    parents.add(terminal.parentNode!);
+  });
+  for (const parent of parents) {
+    parent.set_content(parent.childNodes.flatMap((child) => replacements.get(child) || [child]));
+  }
+  return root.toString();
+}
+
 function nodeSeekContentCandidateHtml(content: unknown, markdown: unknown) {
   const renderedHtml = typeof content === 'string' ? content.trim() : '';
   if (renderedHtml && hasHtmlTag(renderedHtml)) {
-    return renderedHtml;
+    return nodeSeekTerminalSourceHtml(renderedHtml, markdown);
   }
   const markdownText = typeof markdown === 'string' ? markdown.trim() : '';
   if (markdownText && hasHtmlTag(markdownText)) {
@@ -773,6 +812,48 @@ export function parseRenderedNodeSeekTopicHtml(
             firstContentItem.querySelector('.post-content, .comment-content, .reply-content, .content')?.innerHTML
           ))))
   );
+  const markdownByCommentId = new Map<number, unknown>();
+  const markdownByFloor = new Map<number, unknown>();
+  const contentRows = root.querySelectorAll(
+    '.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]'
+  );
+  const sourceFloor = (row: HTMLElement) =>
+    row === firstContentItem && !identifiedFirstReply ? 0 : renderedNodeSeekFloor(row);
+  const postData = document.embedded?.postData;
+  if (html.includes('terminal-container') && isRecord(postData)) {
+    for (const comment of arrayField(postData.comments)) {
+      if (!isRecord(comment)) continue;
+      const commentId = optionalInteger(comment.commentId);
+      const floor = optionalInteger(comment.floorIndex ?? comment.floor);
+      if (commentId !== undefined) {
+        markdownByCommentId.set(commentId, markdownByCommentId.has(commentId) ? undefined : comment.markdown);
+      }
+      if (floor !== undefined) {
+        markdownByFloor.set(floor, markdownByFloor.has(floor) ? undefined : comment.markdown);
+      }
+    }
+    const seenCommentIds = new Set<number>();
+    const seenFloors = new Set<number>();
+    for (const row of contentRows) {
+      const commentId = renderedNodeSeekCommentId(row);
+      const floor = sourceFloor(row);
+      if (commentId !== undefined) {
+        if (seenCommentIds.has(commentId)) markdownByCommentId.set(commentId, undefined);
+        seenCommentIds.add(commentId);
+      }
+      if (floor !== undefined) {
+        if (seenFloors.has(floor)) markdownByFloor.set(floor, undefined);
+        seenFloors.add(floor);
+      }
+    }
+  }
+  const sourceMarkdownFor = (row: HTMLElement | null) => {
+    if (!row) return undefined;
+    const commentId = renderedNodeSeekCommentId(row);
+    if (commentId) return markdownByCommentId.get(commentId);
+    const floor = sourceFloor(row);
+    return floor === undefined ? undefined : markdownByFloor.get(floor);
+  };
   const restrictedNotice = nodeSeekRestrictedNotice(root);
   const contentElement =
     firstContentItem?.querySelector('.post-content') ||
@@ -824,22 +905,26 @@ export function parseRenderedNodeSeekTopicHtml(
         root.querySelector('.post-detail time') ||
         root.querySelector('time')
     ) || new Date().toISOString();
-  const cleanedContentHtml = renderedContentHtml ? renderedPolls.html : contentHtml;
-  const replyRows = root
-    .querySelectorAll('.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]')
-    .filter((row) => {
-      if (row === firstContentItem && !identifiedFirstReply) return false;
-      const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
-      return Boolean(
-        renderedNodeSeekCommentId(row) ||
-        renderedNodeSeekFloor(row) ||
-        renderedNodeSeekAuthor(row) ||
-        hasRenderableHtmlContent(replyContent?.innerHTML)
-      );
-    });
+  const cleanedContentHtml = nodeSeekTerminalSourceHtml(
+    renderedContentHtml ? renderedPolls.html : contentHtml,
+    sourceMarkdownFor(firstContentItem)
+  );
+  const replyRows = contentRows.filter((row) => {
+    if (row === firstContentItem && !identifiedFirstReply) return false;
+    const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
+    return Boolean(
+      renderedNodeSeekCommentId(row) ||
+      renderedNodeSeekFloor(row) ||
+      renderedNodeSeekAuthor(row) ||
+      hasRenderableHtmlContent(replyContent?.innerHTML)
+    );
+  });
   const allReplies = replyRows.map((row) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
-    const preparedContent = prepareNodeSeekForumContent(replyContent?.innerHTML || '', { role: 'reply' });
+    const preparedContent = prepareNodeSeekForumContent(
+      nodeSeekTerminalSourceHtml(replyContent?.innerHTML || '', sourceMarkdownFor(row)),
+      { role: 'reply' }
+    );
     const preparedSignature = renderedNodeSeekSignature(row);
     const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
     const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { createReplyTextIndexForQuery, filterRepliesByQuery } from './model/replySearch';
+import { filterRepliesByQuery } from './model/replySearch';
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
 import { filterRepliesWithImages } from './model/topicDerivedData';
@@ -94,7 +94,7 @@ export function filterTopicSessionReplies({
   } else if (replyFilter === 'images') {
     replies = filterRepliesWithImages(replies, source);
   }
-  return filterRepliesByQuery(replies, commentQuery, createReplyTextIndexForQuery(topicReplies, commentQuery));
+  return filterRepliesByQuery(replies, commentQuery);
 }
 
 export function useTopicSessionController({ notify, topic }: { notify: (message: string) => void; topic: Topic }) {

@@ -3311,17 +3311,28 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
 function networkProxyPackageSource(packageName) {
   return `package ${packageName}
 
-import com.facebook.react.ReactPackage
+import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.uimanager.ViewManager
+import com.facebook.react.module.model.ReactModuleInfo
+import com.facebook.react.module.model.ReactModuleInfoProvider
 
-class NetworkProxyPackage : ReactPackage {
-  override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
-    listOf(NetworkProxyModule(reactContext))
+class NetworkProxyPackage : BaseReactPackage() {
+  override fun getModule(name: String, reactContext: ReactApplicationContext): NativeModule? =
+    if (name == "NetworkProxyModule") NetworkProxyModule(reactContext) else null
 
-  override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
-    emptyList()
+  override fun getReactModuleInfoProvider(): ReactModuleInfoProvider = ReactModuleInfoProvider {
+    mapOf(
+      "NetworkProxyModule" to ReactModuleInfo(
+        "NetworkProxyModule",
+        NetworkProxyModule::class.java.name,
+        false,
+        false,
+        false,
+        false,
+      )
+    )
+  }
 }
 `;
 }
@@ -5857,12 +5868,12 @@ function injectWebkitDependency(contents) {
   }
   return contents.replace(
     dependenciesPattern,
-    (match) => `${match}\n    implementation("androidx.webkit:webkit:1.14.0")`
+    (match) => `${match}\n    implementation("androidx.webkit:webkit:1.17.0")`
   );
 }
 
 function injectCronetDependencies(contents) {
-  const bundled = 'org.chromium.net:cronet-bundled:500.0.1';
+  const bundled = 'org.chromium.net:cronet-bundled:500.0.2';
   const okhttp = 'com.google.net.cronet:cronet-okhttp:0.1.1';
   if (contents.includes(bundled) && contents.includes(okhttp)) {
     return contents;
@@ -5877,7 +5888,7 @@ function injectCronetDependencies(contents) {
   return contents.replace(
     dependenciesPattern,
     (match) => `${match}
-    implementation("org.chromium.net:cronet-bundled:500.0.1")
+    implementation("org.chromium.net:cronet-bundled:500.0.2")
     implementation("com.google.net.cronet:cronet-okhttp:0.1.1") {
         exclude group: "com.squareup.okhttp3", module: "okhttp"
         exclude group: "com.squareup.okio", module: "okio"

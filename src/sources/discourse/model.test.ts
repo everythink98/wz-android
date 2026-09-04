@@ -199,6 +199,24 @@ describe('portable Discourse fields', () => {
     ).toThrow('锚点回复流已变化');
   });
 
+  it('derives an unordered hydrated reply window from each stream ID first position', () => {
+    const window = discourseReplyWindow(
+      {
+        post_stream: {
+          stream: [1000, 1002, 1003, 1002, 1004, 1005, 1006],
+          posts: [
+            { id: 1005, post_number: 6 },
+            { id: 1002, post_number: 2 }
+          ]
+        }
+      },
+      2
+    );
+
+    expect(window.posts.map((post) => (post as { id: number }).id)).toEqual([1005, 1002]);
+    expect(window).toMatchObject({ currentOffset: 0, hasMore: true, nextOffset: 5, nextPage: 3, totalCount: 6 });
+  });
+
   it('maps shared topic semantics and rejects a missing identity', () => {
     expect(
       discourseTopicFields({

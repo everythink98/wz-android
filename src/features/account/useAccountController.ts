@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction
-} from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
@@ -30,7 +22,7 @@ import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 
 const NODESEEK_MESSAGE_HOSTS = ['nodeseek.com'];
 
-type Ref<T> = MutableRefObject<T>;
+type Ref<T> = RefObject<T>;
 export type LoginWebViewDiagnosticState = 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout';
 type AccountSource = 'nodeseek' | 'yaohuo';
 

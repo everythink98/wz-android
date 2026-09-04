@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, jest } from '@jes
 import { cleanup } from '@testing-library/react-native';
 import { DefaultTheme, useIsFocused, useScrollToTop } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
 import {
@@ -12,7 +12,7 @@ import {
   pushTopicRoute,
   pushUserRoute
 } from '@/app/appNavigation';
-import { useTopicRouteBeforeRemove } from '@/features/topic/useTopicRouteBeforeRemove';
+import { TopicRouteBackBoundary, useTopicSelectionBackReport } from '@/features/topic/useTopicRouteBeforeRemove';
 import type { Topic, UserReference } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { OriginalImageUpgradeBoundary, useOriginalImageUpgradeEnabled } from '@/platform/media/originalImageLoading';
@@ -24,7 +24,7 @@ import { createTestStyles as createStyles } from '../styleFixture';
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { Home: Icon, MoreHorizontal: Icon, Search: Icon, Settings: Icon, Star: Icon };
+  return { ChevronLeft: Icon, Home: Icon, MoreHorizontal: Icon, Search: Icon, Settings: Icon, Star: Icon };
 });
 
 const readerData = createEmptyReaderData();
@@ -107,43 +107,64 @@ function StatefulTopicRoute({ navigation, route }: NativeStackScreenProps<RootSt
   const [submitted, setSubmitted] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
-  useTopicRouteBeforeRemove({
-    imagePreviewOpen,
-    replyComposerOpen: composerOpen,
-    closeImagePreview: () => setImagePreviewOpen(false),
-    closeReplyComposer: () => setComposerOpen(false)
-  });
   return (
-    <OriginalImageUpgradeBoundary enabled={active}>
-      <View>
-        <Text>{routeTopic.title}</Text>
-        <TextInput accessibilityLabel={`${routeTopic.id}草稿`} value={draft} onChangeText={setDraft} />
-        <TextInput accessibilityLabel={`${routeTopic.id}筛选`} value={filter} onChangeText={setFilter} />
-        <TextInput accessibilityLabel={`${routeTopic.id}滚动`} value={scrollY} onChangeText={setScrollY} />
-        <OriginalUpgradeProbe id={routeTopic.id} />
-        <Text>{`${routeTopic.id} submitted ${submitted ? 'visible' : 'empty'}`}</Text>
-        <Text>{`${routeTopic.id} composer ${composerOpen ? 'open' : 'closed'}`}</Text>
-        <Text>{`${routeTopic.id} image ${imagePreviewOpen ? 'open' : 'closed'}`}</Text>
-        <Pressable accessibilityLabel="打开回复框" onPress={() => setComposerOpen(true)}>
-          <Text>打开回复框</Text>
-        </Pressable>
-        <Pressable accessibilityLabel="打开图片预览" onPress={() => setImagePreviewOpen(true)}>
-          <Text>打开图片预览</Text>
-        </Pressable>
-        <Pressable accessibilityLabel="提交本地内容" onPress={() => setSubmitted(true)}>
-          <Text>提交本地内容</Text>
-        </Pressable>
-        <Pressable accessibilityLabel="打开 Topic B" onPress={() => navigation.push('Topic', { topic: topicB })}>
-          <Text>打开 Topic B</Text>
-        </Pressable>
-        <Pressable accessibilityLabel="打开用户" onPress={() => navigation.push('User', { user })}>
-          <Text>打开用户</Text>
-        </Pressable>
-        <Pressable accessibilityLabel="打开阅读设置" onPress={() => navigation.push('ReadingSettings')}>
-          <Text>打开阅读设置</Text>
-        </Pressable>
-      </View>
-    </OriginalImageUpgradeBoundary>
+    <TopicRouteBackBoundary
+      imagePreviewOpen={imagePreviewOpen}
+      replyComposerOpen={composerOpen}
+      closeImagePreview={() => setImagePreviewOpen(false)}
+      closeReplyComposer={() => setComposerOpen(false)}
+    >
+      <OriginalImageUpgradeBoundary enabled={active}>
+        <View>
+          <SelectionBackProbe />
+          <Text>{routeTopic.title}</Text>
+          <TextInput accessibilityLabel={`${routeTopic.id}草稿`} value={draft} onChangeText={setDraft} />
+          <TextInput accessibilityLabel={`${routeTopic.id}筛选`} value={filter} onChangeText={setFilter} />
+          <TextInput accessibilityLabel={`${routeTopic.id}滚动`} value={scrollY} onChangeText={setScrollY} />
+          <OriginalUpgradeProbe id={routeTopic.id} />
+          <Text>{`${routeTopic.id} submitted ${submitted ? 'visible' : 'empty'}`}</Text>
+          <Text>{`${routeTopic.id} composer ${composerOpen ? 'open' : 'closed'}`}</Text>
+          <Text>{`${routeTopic.id} image ${imagePreviewOpen ? 'open' : 'closed'}`}</Text>
+          <Pressable accessibilityLabel="打开回复框" onPress={() => setComposerOpen(true)}>
+            <Text>打开回复框</Text>
+          </Pressable>
+          <Pressable accessibilityLabel="打开图片预览" onPress={() => setImagePreviewOpen(true)}>
+            <Text>打开图片预览</Text>
+          </Pressable>
+          <Pressable accessibilityLabel="提交本地内容" onPress={() => setSubmitted(true)}>
+            <Text>提交本地内容</Text>
+          </Pressable>
+          <Pressable accessibilityLabel="打开 Topic B" onPress={() => navigation.push('Topic', { topic: topicB })}>
+            <Text>打开 Topic B</Text>
+          </Pressable>
+          <Pressable accessibilityLabel="打开用户" onPress={() => navigation.push('User', { user })}>
+            <Text>打开用户</Text>
+          </Pressable>
+          <Pressable accessibilityLabel="打开阅读设置" onPress={() => navigation.push('ReadingSettings')}>
+            <Text>打开阅读设置</Text>
+          </Pressable>
+        </View>
+      </OriginalImageUpgradeBoundary>
+    </TopicRouteBackBoundary>
+  );
+}
+
+function SelectionBackProbe() {
+  const report = useTopicSelectionBackReport();
+  const [selected, setSelected] = useState(false);
+  return (
+    <Pressable
+      accessibilityLabel="选择正文"
+      onPress={() => {
+        setSelected(true);
+        report(() => {
+          setSelected(false);
+          report(null);
+        });
+      }}
+    >
+      <Text>{selected ? '正文已选择' : '正文未选择'}</Text>
+    </Pressable>
   );
 }
 
@@ -233,6 +254,10 @@ describe('App navigator UI state', () => {
   it('opens an Android summary with a flat header and keeps settings in the More stack', async () => {
     const view = await renderNavigator();
 
+    const searchTab = view.getByTestId('main-tab-search');
+    expect(searchTab.props.android_ripple).toBeUndefined();
+    expect(searchTab.props.hoverEffect).toBeUndefined();
+
     await act(async () => {
       expect(openNotificationsRoute('linuxdo')).toBe(true);
     });
@@ -241,7 +266,14 @@ describe('App navigator UI state', () => {
     const header = view.container.queryAll((node) => node.props.title === '消息' && 'hideShadow' in node.props)[0];
     expect(header?.props.hideShadow).toBe(true);
 
-    await fireEvent.press(view.getByLabelText('消息通知设置'));
+    const backButton = view.getByLabelText('返回');
+    expect(backButton.props.android_ripple).toBeUndefined();
+    expect(backButton.props.style).not.toEqual(expect.any(Function));
+
+    const settingsButton = view.getByLabelText('消息通知设置');
+    expect(settingsButton.props.android_ripple).toBeUndefined();
+    expect(settingsButton.props.style).not.toEqual(expect.any(Function));
+    await fireEvent.press(settingsButton);
     await waitFor(() => expect(view.getByText('消息设置页面')).toBeTruthy());
     const settingsHeader = view.container.queryAll(
       (node) => node.props.title === '消息通知设置' && 'hideShadow' in node.props
@@ -342,6 +374,7 @@ describe('App navigator UI state', () => {
     });
     await waitFor(() => expect(view.getByLabelText('A筛选').props.value).toBe('author'));
 
+    await fireEvent.press(view.getByLabelText('选择正文'));
     await fireEvent.press(view.getByLabelText('打开回复框'));
     await fireEvent.press(view.getByLabelText('打开图片预览'));
     await waitFor(() => {
@@ -362,6 +395,12 @@ describe('App navigator UI state', () => {
     await waitFor(() => {
       expect(view.getByText('A composer closed')).toBeTruthy();
       expect(view.getByText('Topic A')).toBeTruthy();
+      expect(view.getByText('正文已选择')).toBeTruthy();
+    });
+    await act(async () => navigationRef.goBack());
+    await waitFor(() => {
+      expect(view.getByText('Topic A')).toBeTruthy();
+      expect(view.getByText('正文未选择')).toBeTruthy();
     });
 
     await act(async () => {

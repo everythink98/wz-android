@@ -76,9 +76,6 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderSettings
       maxWidth: '100%',
       paddingHorizontal: 2
     },
-    categoryFilterButtonPressed: {
-      opacity: 0.65
-    },
     categoryFilterButtonText: {
       color: theme.primary,
       flexShrink: 1,
@@ -102,7 +99,7 @@ export function createLibraryStyles(theme: ReaderTheme, settings: ReaderSettings
       flex: 1
     },
     libraryViewport: {
-      ...StyleSheet.absoluteFillObject
+      ...StyleSheet.absoluteFill
     },
     activeLibraryViewport: {
       zIndex: 1

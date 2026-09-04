@@ -19,9 +19,9 @@ import {
 } from './structuredComposerBridge';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { androidRipple, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { pressWithFeedback } from '@/ui/controls/pressFeedback';
+import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 
 type TemplateSummary = { id: string; title: string; content: string };
 type EmojiUrlMap = Record<string, string>;
@@ -263,6 +263,18 @@ export const StructuredReplyComposer = forwardRef<
     const send = useCallback((message: ComposerHostMessage) => {
       webViewRef.current?.postMessage(JSON.stringify(message));
     }, []);
+    const recordInvalidBridgeMessage = useCallback(
+      (channel: 'native' | 'webview') => {
+        const trace = beginDiagnosticTrace('webview', 'webview-transport', {
+          site: intent.site,
+          channel,
+          isReady: ready,
+          isVisible: visible
+        });
+        finishDiagnosticTrace(trace, 'failure', { reason: 'invalid_response' });
+      },
+      [intent.site, ready, visible]
+    );
     const focusEditor = useCallback(() => {
       webViewRef.current?.requestFocus();
       send({ type: 'COMMAND', payload: { name: 'focus' } });
@@ -270,6 +282,7 @@ export const StructuredReplyComposer = forwardRef<
 
     const sendInit = useCallback(() => {
       if (!modeLoaded) return;
+      setLocalError('');
       const initialTheme = editorThemeRef.current;
       pendingNodeSeekPolls.forEach((poll) => {
         // Zod at the bridge boundary validates the full sidecar again.
@@ -350,11 +363,15 @@ export const StructuredReplyComposer = forwardRef<
 
     useEffect(() => {
       if (!ready || content === lastConfirmedMarkdownRef.current || content === lastExternalSentRef.current) return;
+      if (intent.kind === 'private-message' && !content) {
+        sendInit();
+        return;
+      }
       lastExternalSentRef.current = content;
       const confirmed = lastConfirmedMarkdownRef.current;
       const markdown = content.startsWith(confirmed) ? content.slice(confirmed.length) : content;
       send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown } });
-    }, [content, ready, send]);
+    }, [content, intent.kind, ready, send, sendInit]);
 
     const requestSnapshot = useCallback(() => {
       if (!ready) return Promise.reject(new Error('编辑器尚未就绪'));
@@ -415,15 +432,19 @@ export const StructuredReplyComposer = forwardRef<
         try {
           raw = JSON.parse(event.nativeEvent.data);
         } catch {
-          setLocalError('编辑器返回了无效消息');
+          recordInvalidBridgeMessage('native');
           return;
         }
         const parsed = composerEditorMessageSchema.safeParse(raw);
         if (!parsed.success) {
-          setLocalError('编辑器返回了无效消息');
+          recordInvalidBridgeMessage('native');
           return;
         }
         const message = parsed.data;
+        if (message.type === 'ERROR' && message.payload.code.startsWith('bridge-invalid')) {
+          recordInvalidBridgeMessage('webview');
+          return;
+        }
         if (message.type === 'READY') {
           if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
           readyTimerRef.current = null;
@@ -534,6 +555,7 @@ export const StructuredReplyComposer = forwardRef<
         onSnapshot,
         onUploadImage,
         onUseLinuxDoTemplate,
+        recordInvalidBridgeMessage,
         rendererGone,
         send
       ]
@@ -598,9 +620,8 @@ export const StructuredReplyComposer = forwardRef<
                   accessibilityRole="tab"
                   accessibilityLabel={label}
                   accessibilityState={{ selected: active }}
-                  android_ripple={androidRipple(theme.primarySoft, true)}
                   style={[styles.modeButton, active && styles.modeButtonActive]}
-                  onPress={() => pressWithFeedback(() => changeMode(value))}
+                  onPress={() => changeMode(value)}
                 >
                   <ModeIcon color={active ? theme.primary : theme.muted} size={19} strokeWidth={1.9} />
                 </Pressable>

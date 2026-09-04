@@ -1,3 +1,4 @@
+import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { cleanup } from '@testing-library/react-native';
 import { DefaultTheme } from '@react-navigation/native';
@@ -9,7 +10,7 @@ import type { FeedSource, Topic } from '@/domain/forum/models';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { FeedRoute, FeedRouteRuntimeProvider, type FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
 import { useFeedController } from '@/features/feed/useFeedController';
 import {
@@ -30,7 +31,7 @@ import { createTestStyles as createStyles } from '../styleFixture';
 
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
-  return { Home: Icon, MoreHorizontal: Icon, Search: Icon, Settings: Icon, Star: Icon };
+  return { ChevronLeft: Icon, Home: Icon, MoreHorizontal: Icon, Search: Icon, Settings: Icon, Star: Icon };
 });
 jest.mock('react-native-webview', () => ({ WebView: () => null }));
 jest.mock('@/features/feed/useFeedController', () => ({ useFeedController: jest.fn() }));
@@ -144,7 +145,7 @@ const topicStateIndex = createTopicListItemStateIndex(readerData);
 const readGateway = {
   getReadPlan: () => ({ state: 'ready', cacheScope: 'public:test' })
 } as unknown as ReadGateway;
-const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
+const sessionViewModels = projectTestAccountSessions(createSiteSessionStates());
 
 const feedRuntime = {
   account: {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dateTime } from './presentation';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { applyFeedFilter, mergeTopics } from './feed';
+import { applyFeedFilter, balanceTopicsBySource, mergeTopics } from './feed';
 import type { Topic } from './models';
 
 describe('Android feed logic helpers', () => {
@@ -25,6 +25,13 @@ describe('Android feed logic helpers', () => {
     expect(applyFeedFilter([topic, readTopic, favoriteTopic], data, 'unread')).toEqual([topic, favoriteTopic]);
     expect(applyFeedFilter([topic, readTopic, favoriteTopic], data, 'read')).toEqual([readTopic]);
     expect(applyFeedFilter([topic, readTopic, favoriteTopic], data, 'favorite')).toEqual([favoriteTopic]);
+  });
+
+  it('round-robins uneven buckets in first-source order without changing input', () => {
+    const items: Topic[] = [topic, { ...topic, id: '2' }, { ...topic, source: 'v2ex', id: '3' }, { ...topic, id: '4' }];
+    expect(balanceTopicsBySource(items).map(({ id }) => id)).toEqual(['1', '3', '2', '4']);
+    expect(items.map(({ id }) => id)).toEqual(['1', '2', '3', '4']);
+    expect(balanceTopicsBySource([])).toEqual([]);
   });
 
   it('deduplicates topics and normalizes invalid dates', () => {
@@ -139,5 +146,32 @@ describe('Android feed logic helpers', () => {
     expect(externalA.duplicateSources).toBeUndefined();
     expect(merged[0]).not.toBe(externalA);
     expect(merged[0].duplicateSources).toEqual(['NodeSeek']);
+  });
+
+  it('keeps first-seen order while consolidating cross-page identity, access, and external-link duplicates', () => {
+    const externalA: Topic = { ...topic, source: 'v2ex', id: 'external-a', url: 'https://example.com/shared' };
+    const restricted: Topic = { ...topic, id: 'restricted', url: 'https://example.com/restricted' };
+    const trailing: Topic = { ...topic, id: 'trailing', url: 'https://example.com/trailing' };
+
+    const merged = mergeTopics(
+      [],
+      [
+        externalA,
+        { ...externalA, accessRequirement: { type: 'level', label: '需等级', detail: 'Lv2' } },
+        restricted,
+        { ...topic, source: 'nodeseek', id: 'external-b', url: 'https://example.com/shared' },
+        {
+          ...restricted,
+          accessRequirement: { type: 'level', label: '需等级', detail: 'Lv4' }
+        },
+        { ...topic, source: 'linuxdo', id: 'external-c', url: 'https://example.com/shared' },
+        trailing
+      ]
+    );
+
+    expect(merged.map(({ id }) => id)).toEqual(['external-a', 'restricted', 'trailing']);
+    expect(merged[0].duplicateSources).toEqual(['NodeSeek', 'linux.do']);
+    expect(merged[0].accessRequirement).toEqual({ type: 'level', label: '需等级', detail: 'Lv2' });
+    expect(merged[1].accessRequirement).toEqual({ type: 'level', label: '需等级', detail: 'Lv4' });
   });
 });

@@ -1,3 +1,4 @@
+import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useSearchCandidateQueries } from '@/features/search/DiscourseFilterPickers';
@@ -5,14 +6,14 @@ import { useSearchController } from '@/features/search/useSearchController';
 import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/domain/forum/searchFilters';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { SearchResponse, Source, Topic } from '@/domain/forum/models';
 import { aggregateSearchSources, isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
-import { appQueryClient } from '@/platform/query/serverState';
+import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
 import { QueryTestWrapper } from '../QueryTestWrapper';
@@ -51,15 +52,17 @@ const LINUXDO_RELEVANCE_FILTERS: SearchFilterState = {
   linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo, order: 'relevance' }
 };
 
-const loggedInSessions = createSiteSessionViewModels(
+const loggedInSessions = projectTestAccountSessions(
   createSiteSessionStates({
     linuxdo: {
+      currentUser: testAccountUser('linuxdo'),
       site: 'linuxdo',
       status: 'logged-in',
       cookieSummary: ['session-present'],
       isVerifying: false
     },
     nodeseek: {
+      currentUser: testAccountUser('nodeseek'),
       site: 'nodeseek',
       status: 'logged-in',
       cookieSummary: ['session-present'],
@@ -68,15 +71,17 @@ const loggedInSessions = createSiteSessionViewModels(
   })
 );
 
-const loggedInYaohuoSessions = createSiteSessionViewModels(
+const loggedInYaohuoSessions = projectTestAccountSessions(
   createSiteSessionStates({
     linuxdo: {
+      currentUser: testAccountUser('linuxdo'),
       site: 'linuxdo',
       status: 'logged-in',
       cookieSummary: ['session-present'],
       isVerifying: false
     },
     nodeseek: {
+      currentUser: testAccountUser('nodeseek'),
       site: 'nodeseek',
       status: 'logged-in',
       cookieSummary: ['session-present'],
@@ -141,6 +146,7 @@ async function reconcileSameIdentity(source: SessionSource): Promise<AccountReco
   return {
     status: 'same',
     session: {
+      currentUser: testAccountUser(source),
       site: source,
       status: 'logged-in',
       cookieSummary: ['session-present'],
@@ -275,6 +281,7 @@ describe('linux.do AI search controller', () => {
       await hook.result.current.runSearch({ query: 'same key', source: 'linuxdo' });
     });
     await waitFor(() => expect(hook.result.current.searchGroups[0]?.items).toEqual([standardTopic]));
+    const settledItems = hook.result.current.searchGroups[0]!.items;
 
     await act(async () => {
       void hook.result.current.runSearch({ query: 'same key', source: 'linuxdo' });
@@ -283,6 +290,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(2));
     expect(hook.result.current.searchBusy).toBe(true);
     expect(hook.result.current.searchGroups[0]?.loading).toBe(true);
+    expect(hook.result.current.searchGroups[0]?.items).toBe(settledItems);
 
     await act(async () => {
       replacement.resolve({ items: [standardTopic], errors: {}, hasMore: false, nextPage: null });
@@ -347,7 +355,7 @@ describe('linux.do AI search controller', () => {
       hasMore: false,
       nextPage: null
     }));
-    const anonymousSessions = createSiteSessionViewModels(createSiteSessionStates());
+    const anonymousSessions = projectTestAccountSessions(createSiteSessionStates());
     const onOpenExternalSearch = jest.fn<(url: string) => void>();
     const hook = await renderSearchController(
       createGateway({ searchTopics }),
@@ -438,7 +446,7 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
 
-    sessionViewModels = createSiteSessionViewModels(
+    sessionViewModels = projectTestAccountSessions(
       createSiteSessionStates({
         linuxdo: {
           site: 'linuxdo',
@@ -748,7 +756,7 @@ describe('linux.do AI search controller', () => {
     expect(searchTopics).toHaveBeenCalledTimes(3);
   });
 
-  it('preserves the loaded search page across session reset before resuming pagination', async () => {
+  it('preserves the loaded search page while verification resumes pagination', async () => {
     const secondPageTopic: Topic = {
       ...standardTopic,
       id: '2',
@@ -810,9 +818,6 @@ describe('linux.do AI search controller', () => {
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
     expect(recovery).toBeDefined();
-    await act(async () => {
-      resetForumSourceQueries('linuxdo', appQueryClient, recovery.queryKey);
-    });
 
     expect(hook.result.current.searchGroups[0]).toMatchObject({
       source: 'linuxdo',
@@ -931,31 +936,43 @@ describe('linux.do AI search controller', () => {
     for (const [source, expectedFilter] of Object.entries(expectedFilters)) {
       const request = searchTopics.mock.calls.find(([options]) => options.source === source)?.[0];
       expect(request?.filter).toMatchObject(expectedFilter);
+      const expectedSort = source === 'v2ex' ? 'time' : 'relevance';
       const queryKeys = appQueryClient
         .getQueryCache()
         .findAll({ queryKey: ['forum', source, 'search'] })
         .map(({ queryKey }) => queryKey[3]);
       expect(queryKeys).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ filter: expect.objectContaining(expectedFilter), query: 'codex', sort: 'time' })
+          expect.objectContaining({
+            filter: expect.objectContaining(expectedFilter),
+            query: 'codex',
+            sort: expectedSort
+          })
         ])
       );
     }
   });
 
-  it('switches from a settled aggregate preview to a paged source without reusing its data shape', async () => {
-    const v2exTopic: Topic = {
+  it('reuses a settled aggregate first page when opening the matching paged source', async () => {
+    const v2exTopics: Topic[] = [1, 2, 3].map((id) => ({
       ...standardTopic,
       source: 'v2ex',
-      id: 'v2ex-1',
-      title: 'V2EX 结果',
-      url: 'https://www.v2ex.com/t/1'
+      id: `v2ex-${id}`,
+      title: `V2EX 结果 ${id}`,
+      url: `https://www.v2ex.com/t/${id}`
+    }));
+    const nextV2exTopic: Topic = {
+      ...standardTopic,
+      source: 'v2ex',
+      id: 'v2ex-4',
+      title: 'V2EX 结果 4',
+      url: 'https://www.v2ex.com/t/4'
     };
-    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
-      items: source === 'v2ex' ? [v2exTopic] : [],
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ page, source }) => ({
+      items: source === 'v2ex' ? (page === 1 ? v2exTopics : [nextV2exTopic]) : [],
       errors: {},
-      hasMore: source === 'v2ex',
-      nextPage: source === 'v2ex' ? 2 : null
+      hasMore: source === 'v2ex' && page === 1,
+      nextPage: source === 'v2ex' && page === 1 ? 2 : null
     }));
     const hook = await renderSearchController(
       createGateway({ searchTopics }),
@@ -970,7 +987,7 @@ describe('linux.do AI search controller', () => {
     });
     await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
     await waitFor(() =>
-      expect(hook.result.current.searchGroups.find(({ source }) => source === 'v2ex')?.items).toEqual([v2exTopic])
+      expect(hook.result.current.searchGroups.find(({ source }) => source === 'v2ex')?.items).toEqual(v2exTopics)
     );
 
     await act(async () => {
@@ -978,17 +995,17 @@ describe('linux.do AI search controller', () => {
     });
 
     await waitFor(() => expect(hook.result.current.searchSource).toBe('v2ex'));
-    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(5));
     await waitFor(() =>
       expect(hook.result.current.searchGroups).toEqual([
         expect.objectContaining({
           source: 'v2ex',
-          items: [v2exTopic],
+          items: v2exTopics,
           hasMore: true,
           nextPage: 2
         })
       ])
     );
+    expect(searchTopics).toHaveBeenCalledTimes(4);
 
     const v2exQueries = appQueryClient
       .getQueryCache()
@@ -1006,6 +1023,125 @@ describe('linux.do AI search controller', () => {
         pages: [expect.objectContaining({ kind: 'success' })]
       }
     );
+
+    await act(async () => {
+      await hook.result.current.loadMoreSearchSource('v2ex', 2);
+    });
+
+    expect(searchTopics).toHaveBeenCalledTimes(5);
+    expect(searchTopics.mock.calls[4]?.[0]).toMatchObject({ source: 'v2ex', page: 2 });
+    await waitFor(() =>
+      expect(hook.result.current.searchGroups).toEqual([
+        expect.objectContaining({
+          source: 'v2ex',
+          items: [...v2exTopics, nextV2exTopic],
+          hasMore: false,
+          nextPage: null
+        })
+      ])
+    );
+  });
+
+  it.each([-1000, 1000])(
+    'keeps existing search pages and first-page order when preview age differs by %i ms',
+    async (age) => {
+      const first: Topic = { ...standardTopic, source: 'v2ex', id: 'cached-first', url: 'https://www.v2ex.com/t/1' };
+      const restrictedFirst: Topic = {
+        ...first,
+        accessRequirement: { type: 'level', label: '需等级', detail: 'Lv5' }
+      };
+      const second: Topic = { ...first, id: 'cached-second', url: 'https://www.v2ex.com/t/2' };
+      const preview: Topic = { ...first, id: 'preview-first', url: 'https://www.v2ex.com/t/3' };
+      const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => ({
+        items: source === 'v2ex' ? [preview] : [],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      }));
+      const gateway = createGateway({ searchTopics });
+      const hook = await renderSearchController(
+        gateway,
+        jest.fn(),
+        jest.fn(),
+        () => initialForumSessionEpochs,
+        loggedInYaohuoSessions
+      );
+      await act(async () => {
+        await hook.result.current.runSearch({ query: 'cached pages', source: 'all' });
+      });
+      await waitFor(() =>
+        expect(hook.result.current.searchGroups.find(({ source }) => source === 'v2ex')?.items).toEqual([preview])
+      );
+      const pageKey = forumQueryKeys.search({
+        source: 'v2ex',
+        lane: 'pages',
+        query: 'cached pages',
+        readPlanScope: gateway.getReadPlan('v2ex', 'search').cacheScope,
+        sort: 'time',
+        filter: DEFAULT_SEARCH_FILTERS.v2ex,
+        scope: initialForumSessionEpochs
+      });
+      const firstPage = {
+        kind: 'success',
+        group: { source: 'v2ex', label: 'V2EX', items: [first, restrictedFirst], hasMore: true, nextPage: 2 }
+      };
+      const cached = {
+        pages: [
+          firstPage,
+          { kind: 'success', group: { ...firstPage.group, items: [second, first], hasMore: false, nextPage: null } }
+        ],
+        pageParams: [1, 2]
+      };
+      appQueryClient.setQueryData(pageKey, cached, { updatedAt: Date.now() + age });
+      const stored = appQueryClient.getQueryData(pageKey);
+      await act(async () => {
+        hook.result.current.setSearchSource('v2ex');
+      });
+      expect(appQueryClient.getQueryData(pageKey)).toBe(stored);
+      await waitFor(() =>
+        expect(hook.result.current.searchGroups[0]?.items).toEqual([restrictedFirst, restrictedFirst, second])
+      );
+      expect(searchTopics).toHaveBeenCalledTimes(4);
+    }
+  );
+
+  it('requests a fresh first page when source filters do not match the aggregate preview', async () => {
+    const searchTopics = jest.fn<ReadGateway['searchTopics']>(async () => ({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => initialForumSessionEpochs,
+      loggedInYaohuoSessions
+    );
+
+    await act(async () => {
+      hook.result.current.applySearchFilter('v2ex', {
+        ...DEFAULT_SEARCH_FILTERS.v2ex,
+        sort: 'relevance'
+      });
+    });
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'all' });
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(4));
+
+    await act(async () => {
+      hook.result.current.setSearchSource('v2ex');
+    });
+
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(5));
+    expect(searchTopics.mock.calls[4]?.[0]).toMatchObject({
+      source: 'v2ex',
+      page: 1,
+      sort: 'relevance',
+      filter: expect.objectContaining({ source: 'v2ex', sort: 'relevance' })
+    });
   });
 
   it('opens Yaohuo login exactly once for a single-source login failure', async () => {
@@ -1046,7 +1182,7 @@ describe('linux.do AI search controller', () => {
       jest.fn(),
       jest.fn(),
       () => initialForumSessionEpochs,
-      createSiteSessionViewModels(createSiteSessionStates()),
+      projectTestAccountSessions(createSiteSessionStates()),
       jest.fn(),
       showYaohuoLogin,
       () => aggregateSearchSources,
@@ -1099,7 +1235,7 @@ describe('linux.do AI search controller', () => {
     expect(query?.state.error).toEqual(expect.any(Error));
   });
 
-  it('keeps trusted aggregate results visible with a retryable refresh error', async () => {
+  it('keeps trusted aggregate results visible but refetches after preview refresh fails', async () => {
     let nodeSeekAttempts = 0;
     const nodeSeekTopic = {
       ...standardTopic,
@@ -1145,6 +1281,12 @@ describe('linux.do AI search controller', () => {
       })
     );
     expect(searchTopics).toHaveBeenCalledTimes(6);
+
+    await act(async () => {
+      hook.result.current.setSearchSource('nodeseek');
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(7));
+    expect(searchTopics.mock.calls[6]?.[0]).toMatchObject({ source: 'nodeseek', page: 1 });
   });
 
   it('judges a whole-source retry by that source instead of unrelated aggregate errors', async () => {
@@ -1512,6 +1654,7 @@ describe('linux.do AI search controller', () => {
       void hook.result.current.runSearch({ query: 'codex', source: 'linuxdo', filters: DEFAULT_SEARCH_FILTERS });
     });
     await waitFor(() => expect(hook.result.current.searchGroups[0]?.nextPage).toBe(2));
+    const settledItems = hook.result.current.searchGroups[0]!.items;
     await act(async () => {
       await hook.result.current.loadMoreSearchSource('linuxdo', 2);
     });
@@ -1525,6 +1668,7 @@ describe('linux.do AI search controller', () => {
         nextPage: 2
       })
     );
+    expect(hook.result.current.searchGroups[0]?.items).toBe(settledItems);
 
     await act(async () => {
       await hook.result.current.loadMoreSearchSource('linuxdo', 2);
@@ -1881,9 +2025,10 @@ describe('linux.do AI search controller', () => {
           notify: jest.fn(),
           onNodeSeekSearchVerificationRequired: onVerificationRequired,
           reconcileIdentityStatus: reconcileSameIdentity,
-          sessionViewModels: createSiteSessionViewModels(
+          sessionViewModels: projectTestAccountSessions(
             createSiteSessionStates({
               nodeseek: {
+                currentUser: testAccountUser('nodeseek'),
                 site: 'nodeseek',
                 status: 'logged-in',
                 cookieSummary: ['session-present'],
@@ -2130,7 +2275,7 @@ describe('linux.do AI search controller', () => {
     };
     let sessionEpochs = initialForumSessionEpochs;
     const reconcileIdentityStatus = jest.fn<(source: SessionSource) => Promise<AccountReconcileResult>>(async () => {
-      sessionViewModels.linuxdo = createSiteSessionViewModels(createSiteSessionStates()).linuxdo;
+      sessionViewModels.linuxdo = projectTestAccountSessions(createSiteSessionStates()).linuxdo;
       resetForumSourceQueries('linuxdo', appQueryClient);
       sessionEpochs = { ...sessionEpochs, linuxdo: sessionEpochs.linuxdo + 1 };
       return { status: 'anonymous', session: anonymousSession };
@@ -2177,6 +2322,7 @@ describe('linux.do AI search controller', () => {
     const reconcileIdentityStatus = jest.fn<(source: SessionSource) => Promise<AccountReconcileResult>>(async () => ({
       status: 'same',
       session: {
+        currentUser: testAccountUser('linuxdo'),
         site: 'linuxdo',
         status: 'logged-in',
         cookieSummary: ['session-present'],

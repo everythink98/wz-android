@@ -1,8 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseHtml } from './html';
 import { sanitizeContentHtml } from './contentSanitizer';
 
 describe('forum content sanitizer media referrer policy', () => {
+  it('normalizes large terminal reports without an argument-count ceiling', () => {
+    const text = '\n'.repeat(20_000) + '  A\r\n    B\r\n\r\n  C' + '\n'.repeat(20_000);
+    const wrap = (body: string) =>
+      `<div class="nsk-magic-tabs"><div class="nsk-magic-tab-title">Report</div><div class="nsk-magic-tab-body"><pre>${body}</pre></div></div>`;
+    expect(sanitizeContentHtml(wrap(text), 'https://www.nodeseek.com/post-1-1')).toContain(
+      '<div class="forum-terminal-code">A<br>&nbsp;&nbsp;B<br><br>C</div>'
+    );
+    const min = vi.spyOn(Math, 'min');
+    try {
+      const large = sanitizeContentHtml(wrap('  x\n'.repeat(2_000)), 'https://www.nodeseek.com/post-1-1');
+      expect(large.match(/<br>/g)).toHaveLength(1_999);
+      expect(min.mock.calls.every((args) => args.length <= 2)).toBe(true);
+    } finally {
+      min.mockRestore();
+    }
+  });
+
   it('preserves valid policies through every media tag conversion', () => {
     const html = sanitizeContentHtml(
       `

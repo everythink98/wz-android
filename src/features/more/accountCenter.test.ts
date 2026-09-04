@@ -1,6 +1,7 @@
+import { projectTestAccountSessions, testAccountUser } from '../../../tests/helpers/accountSessions';
 import { describe, expect, it } from 'vitest';
 import type { CredentialSummaries } from '@/platform/storage/credentialVault';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { accountCenterSummary, createSiteAccountViews } from './accountCenter';
 
 function emptyCredentialSummaries(): CredentialSummaries {
@@ -15,10 +16,16 @@ describe('account center view', () => {
   it('orders all sites and maps the primary action from session and credential state', () => {
     const credentials = emptyCredentialSummaries();
     credentials.nodeseek = { site: 'nodeseek', state: 'saved', hasCredential: true, protection: 'biometric' };
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: { site: 'nodeseek', status: 'expired', cookieSummary: [], isVerifying: false },
-        linuxdo: { site: 'linuxdo', status: 'logged-in', cookieSummary: ['_t'], isVerifying: false },
+        linuxdo: {
+          currentUser: testAccountUser('linuxdo'),
+          site: 'linuxdo',
+          status: 'logged-in',
+          cookieSummary: ['_t'],
+          isVerifying: false
+        },
         yaohuo: { site: 'yaohuo', status: 'verification-required', cookieSummary: [], isVerifying: false }
       })
     );
@@ -27,17 +34,35 @@ describe('account center view', () => {
 
     expect(views.map((view) => view.site)).toEqual(['nodeseek', 'linuxdo', 'yaohuo']);
     expect(views[0]).toMatchObject({ primaryAction: 'open-login-with-fill', primaryLabel: '重新登录并填入' });
-    expect(views[1]).toMatchObject({ isLoggedIn: true, primaryAction: 'none', primaryLabel: '已登录' });
+    expect(views[1]).toMatchObject({ isLoggedIn: true, primaryAction: 'open-user', primaryLabel: '查看我的主页' });
     expect(views[2]).toMatchObject({ primaryAction: 'open-login', primaryLabel: '去验证' });
-    expect(accountCenterSummary(views)).toBe('待处理 2 · 网站登录 1/3 · 自动填入 1/3');
+    expect(accountCenterSummary(views)).toBe('待核对 1 · 待处理 1 · 网站登录 1/3 · 自动填入 1/3');
   });
 
   it('keeps the zero-attention count visible', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
-        nodeseek: { site: 'nodeseek', status: 'logged-in', cookieSummary: ['session'], isVerifying: false },
-        linuxdo: { site: 'linuxdo', status: 'logged-in', cookieSummary: ['_t'], isVerifying: false },
-        yaohuo: { site: 'yaohuo', status: 'logged-in', cookieSummary: ['ASP.NET_SessionId'], isVerifying: false }
+        nodeseek: {
+          currentUser: testAccountUser('nodeseek'),
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session'],
+          isVerifying: false
+        },
+        linuxdo: {
+          currentUser: testAccountUser('linuxdo'),
+          site: 'linuxdo',
+          status: 'logged-in',
+          cookieSummary: ['_t'],
+          isVerifying: false
+        },
+        yaohuo: {
+          currentUser: testAccountUser('yaohuo'),
+          site: 'yaohuo',
+          status: 'logged-in',
+          cookieSummary: ['ASP.NET_SessionId'],
+          isVerifying: false
+        }
       })
     );
 
@@ -47,7 +72,7 @@ describe('account center view', () => {
   });
 
   it('opens the identified linux.do account profile after login', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         linuxdo: {
           site: 'linuxdo',
@@ -82,11 +107,29 @@ describe('account center view', () => {
       hasCredential: false,
       protection: null
     };
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
-        nodeseek: { site: 'nodeseek', status: 'logged-in', cookieSummary: ['session'], isVerifying: false },
-        linuxdo: { site: 'linuxdo', status: 'logged-in', cookieSummary: ['_t'], isVerifying: false },
-        yaohuo: { site: 'yaohuo', status: 'logged-in', cookieSummary: ['ASP.NET_SessionId'], isVerifying: false }
+        nodeseek: {
+          currentUser: testAccountUser('nodeseek'),
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session'],
+          isVerifying: false
+        },
+        linuxdo: {
+          currentUser: testAccountUser('linuxdo'),
+          site: 'linuxdo',
+          status: 'logged-in',
+          cookieSummary: ['_t'],
+          isVerifying: false
+        },
+        yaohuo: {
+          currentUser: testAccountUser('yaohuo'),
+          site: 'yaohuo',
+          status: 'logged-in',
+          cookieSummary: ['ASP.NET_SessionId'],
+          isVerifying: false
+        }
       })
     );
     const views = createSiteAccountViews(sessions, credentials);
@@ -96,7 +139,7 @@ describe('account center view', () => {
   });
 
   it('opens an identified logged-in account profile', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
@@ -122,7 +165,7 @@ describe('account center view', () => {
   });
 
   it('keeps a last-known profile while counting terminal unknown as awaiting reconciliation', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
           site: 'nodeseek',
@@ -159,9 +202,15 @@ describe('account center view', () => {
   });
 
   it('derives account summary denominators from the enabled account capability subset', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
-        linuxdo: { site: 'linuxdo', status: 'logged-in', cookieSummary: ['_t'], isVerifying: false }
+        linuxdo: {
+          currentUser: testAccountUser('linuxdo'),
+          site: 'linuxdo',
+          status: 'logged-in',
+          cookieSummary: ['_t'],
+          isVerifying: false
+        }
       })
     );
     const enabledViews = createSiteAccountViews(sessions, emptyCredentialSummaries()).filter((view) =>
@@ -172,12 +221,18 @@ describe('account center view', () => {
   });
 
   it('uses the NodeSeek web user id only while the canonical session is logged in', () => {
-    const loggedIn = createSiteSessionViewModels(
+    const loggedIn = projectTestAccountSessions(
       createSiteSessionStates({
-        nodeseek: { site: 'nodeseek', status: 'logged-in', cookieSummary: ['session'], isVerifying: false }
+        nodeseek: {
+          currentUser: { ...testAccountUser('nodeseek'), id: '48872', username: '' },
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session'],
+          isVerifying: false
+        }
       })
     );
-    const expired = createSiteSessionViewModels(
+    const expired = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: { site: 'nodeseek', status: 'expired', cookieSummary: ['session'], isVerifying: false }
       })

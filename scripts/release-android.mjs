@@ -6,8 +6,10 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import apkSigning from './apk-signing.cjs';
 import {
   RELEASE_SIGNING_ENV_NAMES,
+  RELEASE_REQUIRED_TRACKED_INPUTS,
   assertCleanReleaseCheckout,
   assertReleaseNode22,
+  assertTrackedReleaseInputs,
   parseJavaVersionOutput,
   releaseEnvironment,
   resolveReleaseKeystorePath,
@@ -295,6 +297,7 @@ function cleanGitSha() {
   const status = runCapture('git', ['status', '--porcelain=v1', '--untracked-files=normal']);
   try {
     assertCleanReleaseCheckout(status);
+    assertTrackedReleaseInputs(runCapture('git', ['ls-files', '--', ...RELEASE_REQUIRED_TRACKED_INPUTS]));
   } catch (error) {
     failReleasePreflight(error);
   }

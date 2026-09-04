@@ -81,6 +81,8 @@ export interface NotificationWorkerDependencies<Access extends NotificationWorke
     dismissDigest(source: NotificationSource, identifier: string): Promise<void>;
   };
   deadlineMs?: number;
+  // Foreground scheduling stays occupied until native cleanup and commits release their identity lanes.
+  captureDeliverySettlement?(settlement: Promise<void>): void;
   now?: () => Date;
 }
 
@@ -322,6 +324,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
         })
       )
     );
+    dependencies.captureDeliverySettlement?.(settlement.then(() => undefined));
     let settled: Awaited<typeof settlement>;
     try {
       settled = await beforeDeadline(settlement);

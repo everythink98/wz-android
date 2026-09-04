@@ -116,10 +116,15 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderSettings)
       width: '100%'
     },
     contentInner: {
-      gap: 10,
       padding: 16,
       paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
       paddingBottom: 96
+    },
+    listHeader: {
+      marginBottom: 10
+    },
+    listSeparator: {
+      height: 10
     },
     searchInputShell: {
       minHeight: 48,
@@ -334,12 +339,25 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderSettings)
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth
     },
-    recentSearchList: {
+    recentSearchItem: {
       overflow: 'hidden',
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 10,
-      borderWidth: StyleSheet.hairlineWidth
+      borderLeftWidth: StyleSheet.hairlineWidth,
+      borderRightWidth: StyleSheet.hairlineWidth
+    },
+    recentSearchItemFirst: {
+      borderTopLeftRadius: 10,
+      borderTopRightRadius: 10,
+      borderTopWidth: StyleSheet.hairlineWidth
+    },
+    recentSearchItemJoined: {
+      borderTopWidth: StyleSheet.hairlineWidth
+    },
+    recentSearchItemLast: {
+      borderBottomLeftRadius: 10,
+      borderBottomRightRadius: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
     removableChip: {
       alignItems: 'center',
@@ -366,10 +384,6 @@ export function createSearchStyles(theme: ReaderTheme, settings: ReaderSettings)
       alignItems: 'stretch',
       flexDirection: 'row',
       minHeight: 48
-    },
-    removableChipShellDivided: {
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth
     },
     removableChipClose: {
       alignSelf: 'stretch',

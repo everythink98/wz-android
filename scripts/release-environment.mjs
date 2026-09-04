@@ -9,6 +9,20 @@ export const RELEASE_SIGNING_ENV_NAMES = Object.freeze([
   'WZ_ANDROID_KEY_PASSWORD'
 ]);
 
+export const RELEASE_REQUIRED_TRACKED_INPUTS = Object.freeze([
+  '.env',
+  'patches/@shopify+flash-list+2.3.2.patch',
+  'patches/expo-image+57.0.4.patch',
+  'patches/expo-video+57.0.3.patch',
+  'patches/react-native-pager-view+9.0.4.patch',
+  'patches/react-native+0.86.3.patch',
+  'patches/react-native-webview+14.0.1.patch',
+  'plugins/withAndroidGradleJvmMemory.js',
+  'src/ui/composer/css.d.ts',
+  'tests/tooling/android-gradle-jvm-memory-plugin.test.ts',
+  'vitest.config.mts'
+]);
+
 const RELEASE_SIGNING_ENV_NAME_SET = new Set(RELEASE_SIGNING_ENV_NAMES);
 const RELEASE_ENV_NAMES = new Set([...RELEASE_SIGNING_ENV_NAMES, 'WZ_ANDROID_SMOKE_DEVICE', 'WZ_ANDROID_SMOKE_ABI']);
 
@@ -74,6 +88,19 @@ export function assertCleanReleaseCheckout(status) {
   }
 }
 
+export function assertTrackedReleaseInputs(output) {
+  const tracked = new Set(
+    String(output)
+      .split(/\r?\n/)
+      .map((file) => file.trim().replace(/\\/g, '/'))
+      .filter(Boolean)
+  );
+  const missing = RELEASE_REQUIRED_TRACKED_INPUTS.filter((file) => !tracked.has(file));
+  if (missing.length) {
+    throw new Error(`正式发布缺少已跟踪输入：${missing.join(', ')}`);
+  }
+}
+
 export function parseJavaVersionOutput(output) {
   const matches = String(output)
     .split(/\r?\n/)
@@ -116,8 +143,8 @@ export function restorePackageJsonAfterPrebuild(packageJsonPath, originalContent
 }
 
 export function runReleaseBuildStages({ androidDir, builtAbis, ordinaryEnv, releaseEnv, run }) {
+  const releaseBuildEnv = { ...ordinaryEnv, NODE_ENV: 'production' };
   const commonArgs = [
-    '-PnewArchEnabled=true',
     `-PreactNativeArchitectures=${builtAbis.join(',')}`,
     '-Pandroid.enableShrinkResourcesInReleaseBuilds=true',
     '-Pandroid.enableMinifyInReleaseBuilds=true',
@@ -134,7 +161,7 @@ export function runReleaseBuildStages({ androidDir, builtAbis, ordinaryEnv, rele
       ':app:compileReleaseKotlin',
       ...commonArgs
     ],
-    { cwd: androidDir, env: ordinaryEnv }
+    { cwd: androidDir, env: releaseBuildEnv }
   );
   run(
     'java',
@@ -148,6 +175,6 @@ export function runReleaseBuildStages({ androidDir, builtAbis, ordinaryEnv, rele
       ...commonArgs,
       `-PreleaseApkAbis=${builtAbis.join(',')}`
     ],
-    { cwd: androidDir, env: signingReleaseChildEnv(ordinaryEnv, releaseEnv) }
+    { cwd: androidDir, env: signingReleaseChildEnv(releaseBuildEnv, releaseEnv) }
   );
 }

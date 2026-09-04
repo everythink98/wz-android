@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { Activity, useEffect } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { act, fireEvent, render } from '../render';
 import {
@@ -113,6 +113,145 @@ function CoordinatorHarness({
 }
 
 describe('TopicBodyMediaCoordinator', () => {
+  it('admits distinct requests beyond duplicate instances and retains them while paused', async () => {
+    jest.useFakeTimers();
+    const leases: MediaLease[] = [];
+    const tree = (paused: boolean, rows = ['row-0', 'row-1', 'row-2']) => (
+      <CoordinatorHarness paused={paused} viewportRowKeys={rows}>
+        {Array.from({ length: 12 }, (_, index) => (
+          <TopicBodyMediaRowBoundary key={index} rowKey={`row-${Math.floor(index / 4)}`}>
+            <MediaProbe
+              automaticRetry={false}
+              id={index < 8 ? 'duplicate' : `unique-${index}`}
+              probeKey={String(index)}
+              onLease={(lease) => {
+                leases[index] = lease;
+              }}
+            />
+          </TopicBodyMediaRowBoundary>
+        ))}
+      </CoordinatorHarness>
+    );
+    try {
+      const view = await render(tree(false));
+      expect(leases.flatMap((lease, index) => (lease.admitted ? [index] : []))).toEqual([0, 8, 9, 10]);
+      const attempts = leases.map((lease) => lease.attemptId);
+      await view.rerender(tree(false));
+      expect(leases.map((lease) => lease.attemptId)).toEqual(attempts);
+      await view.rerender(tree(true, ['row-1', 'row-0', 'row-2']));
+      expect(leases.flatMap((lease, index) => (lease.admitted ? [index] : []))).toEqual([0, 8, 9, 10]);
+      await act(() => jest.advanceTimersByTime(20_000));
+      await act(() => {
+        for (const lease of leases) if (lease.admitted) lease.progress(1);
+      });
+      await act(() => jest.advanceTimersByTime(20_000));
+      expect(leases.every((lease) => lease.failure === null)).toBe(true);
+      expect(leases[11].admitted).toBe(false);
+      expect(leases.map((lease) => lease.attemptId)).toEqual(attempts);
+      await view.unmount();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('drops a displayed permit when effects reconnect without changing the registration descriptor', async () => {
+    const tree = (phase: number) => (
+      <CoordinatorHarness viewportRowKeys={phase ? [] : VIEWPORT_ROW_KEYS}>
+        <Activity mode={phase === 1 ? 'hidden' : 'visible'}>
+          <MediaProbe id="reconnected" />
+        </Activity>
+      </CoordinatorHarness>
+    );
+    const view = await render(tree(0));
+    await fireEvent.press(view.getByLabelText('display-reconnected'));
+    await view.rerender(tree(1));
+    await view.rerender(tree(2));
+    expect(view.getByTestId('media-reconnected').props.children).toBe('idle');
+    await view.rerender(tree(0));
+    expect(view.getByTestId('media-reconnected').props.children).toBe('admitted');
+  });
+
+  it.each(['recycle', 'enable', 'policy'] as const)(
+    'does not revive a displayed permit after %s registration changes offscreen',
+    async (change) => {
+      const tree = (phase: number) => (
+        <CoordinatorHarness paused={phase > 0} viewportRowKeys={phase > 0 ? [] : VIEWPORT_ROW_KEYS}>
+          <MediaProbe
+            automaticRetry={change !== 'policy' || phase !== 1}
+            enabled={change !== 'enable' || phase !== 1}
+            id={change === 'recycle' && phase === 1 ? 'replacement' : 'original'}
+            probeKey="recycled"
+          />
+        </CoordinatorHarness>
+      );
+      const view = await render(tree(0));
+      await fireEvent.press(view.getByLabelText('display-recycled'));
+      await view.rerender(tree(1));
+      await view.rerender(tree(2));
+      expect(view.getByTestId('media-recycled').props.children).toBe('idle');
+    }
+  );
+
+  it.each(['progress', 'displayed', 'error', 'retry'] as const)(
+    'rejects old %s callbacks after the same media registers again',
+    async (event) => {
+      jest.useFakeTimers();
+      try {
+        let latestLease: MediaLease | undefined;
+        const tree = (enabled: boolean) => (
+          <CoordinatorHarness>
+            <MediaProbe
+              automaticRetry={false}
+              enabled={enabled}
+              id="generation"
+              onLease={(lease) => (latestLease = lease)}
+            />
+          </CoordinatorHarness>
+        );
+        const view = await render(tree(true));
+        const oldLease = latestLease!;
+        await view.rerender(tree(false));
+        await view.rerender(tree(true));
+        const currentLease = latestLease!;
+        expect(attachmentKeyFor(currentLease)).toBe(attachmentKeyFor(oldLease));
+        await act(() => jest.advanceTimersByTime(15_000));
+        await act(() => {
+          if (event === 'progress') oldLease.progress(1);
+          else if (event !== 'retry') oldLease.settle(event);
+        });
+        expect(latestLease!.failure).toBeNull();
+        await act(() => jest.advanceTimersByTime(15_000));
+        expect(latestLease!.failure).toBe('timeout');
+        await act(() => oldLease.retry());
+        expect(latestLease!.failure).toBe('timeout');
+        await act(() => latestLease!.retry());
+        expect(latestLease!.admitted).toBe(true);
+        await view.unmount();
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  );
+
+  it('does not submit an unchanged idle lease after registration', async () => {
+    let renderCount = 0;
+    function IdleProbe() {
+      const lease = useTopicBodyMediaLease({ kind: 'base', requestIdentity: 'offscreen-idle' });
+      useEffect(() => {
+        renderCount += 1;
+      });
+      return <Text>{lease.admitted ? 'admitted' : 'idle'}</Text>;
+    }
+
+    await render(
+      <CoordinatorHarness paused viewportRowKeys={[]}>
+        <IdleProbe />
+      </CoordinatorHarness>
+    );
+
+    expect(renderCount).toBe(1);
+  });
+
   it('keeps 2000 descriptors within four runs and one timer', async () => {
     jest.useFakeTimers();
     let timeoutSpy: jest.SpiedFunction<typeof setTimeout> | undefined;

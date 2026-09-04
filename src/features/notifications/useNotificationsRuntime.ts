@@ -43,6 +43,14 @@ import {
 
 export type NotificationPermissionState = 'checking' | 'granted' | 'denied';
 
+type ForegroundDelivery = {
+  source: NotificationSource;
+  identityKey: string;
+  epoch: number;
+  generation: number;
+  lifecycle: ReturnType<typeof createNotificationSourceLifecycleRegistry>[NotificationSource];
+};
+
 function confirmedIdentity(source: NotificationSource, sessions: SiteSessionViewModels) {
   const session = sessions[source];
   const userId = String(session.currentUser?.id || '').trim();
@@ -51,6 +59,12 @@ function confirmedIdentity(source: NotificationSource, sessions: SiteSessionView
 
 function identityNeedsTrustedFallback(source: NotificationSource, sessions: SiteSessionViewModels) {
   return sessions[source].identityTrust === 'unknown';
+}
+
+function clearLastNotificationResponse() {
+  try {
+    Notifications.clearLastNotificationResponse();
+  } catch {}
 }
 
 export function useNotificationsRuntime({
@@ -139,7 +153,8 @@ export function useNotificationsRuntime({
   const backgroundErrorRef = useRef('');
   const mountedRef = useRef(true);
   const foregroundDeliveryRef = useRef<Promise<void> | undefined>(undefined);
-  const pendingForegroundDeliveryBatchesRef = useRef<NotificationSource[][]>([]);
+  const pendingForegroundDeliveriesRef = useRef(new Map<NotificationSource, ForegroundDelivery>());
+  const foregroundGenerationRef = useRef(0);
   const snapshotResultRevisionRef = useRef(0);
   const pendingOpenSourceRef = useRef<NotificationSource | undefined>(undefined);
   const lastResponseRef = useRef('');
@@ -204,9 +219,12 @@ export function useNotificationsRuntime({
   );
 
   useEffect(() => {
+    const pendingDeliveries = pendingForegroundDeliveriesRef.current;
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      foregroundGenerationRef.current += 1;
+      pendingDeliveries.clear();
     };
   }, []);
 
@@ -241,6 +259,8 @@ export function useNotificationsRuntime({
     }),
     [linuxdoIdentity, nodeseekIdentity, yaohuoIdentity]
   );
+  const identityKeysRef = useRef(identityKeys);
+  useCommitRefValue(identityKeysRef, identityKeys);
   const identitySignature = `${enabledSourcesKey}:${enabledNetworkSources
     .map((source) => identityKeys[source] || `${source}:none`)
     .join('|')}`;
@@ -459,19 +479,40 @@ export function useNotificationsRuntime({
   );
 
   const runForegroundDelivery = useCallback(
-    (sources: readonly NotificationSource[]) => {
-      if (!sources.length || !stateRef.current.globalEnabled || !permissionRef.current) {
-        return;
+    function deliver(jobs: readonly ForegroundDelivery[]): void {
+      const currentJob = (job: ForegroundDelivery) =>
+        mountedRef.current &&
+        foregroundGenerationRef.current === job.generation &&
+        permissionRef.current &&
+        stateRef.current.globalEnabled &&
+        stateRef.current.sources[job.source].intentEnabled &&
+        stateRef.current.sources[job.source].identityKey === job.identityKey &&
+        identityKeysRef.current[job.source] === job.identityKey &&
+        sessionEpochsRef.current[job.source] === job.epoch &&
+        sourceLifecyclesRef.current[job.source] === job.lifecycle &&
+        sourceIsOperational(job.source) &&
+        privateAccessAllowedRef.current(job.source, job.identityKey);
+      for (const job of jobs) {
+        if (currentJob(job)) pendingForegroundDeliveriesRef.current.set(job.source, job);
       }
-      pendingForegroundDeliveryBatchesRef.current.push([...sources]);
       if (foregroundDeliveryRef.current) return;
       const operation = (async () => {
-        while (pendingForegroundDeliveryBatchesRef.current.length) {
-          const batch = pendingForegroundDeliveryBatchesRef.current.shift()!;
+        while (pendingForegroundDeliveriesRef.current.size) {
+          const batch = new Map(pendingForegroundDeliveriesRef.current);
+          pendingForegroundDeliveriesRef.current.clear();
+          const sources = [...batch.values()].filter(currentJob).map((job) => job.source);
+          if (!sources.length) continue;
+          let deliverySettlement: Promise<void> | undefined;
           await runNotificationBackgroundWorker({
-            sources: batch,
+            sources,
+            captureDeliverySettlement: (settlement) => {
+              deliverySettlement = settlement;
+            },
             sourceAllowed: async (source) => sourceIsOperational(source),
-            privateAccessAllowed: async (source, identityKey) => privateAccessAllowedRef.current(source, identityKey),
+            privateAccessAllowed: async (source, identityKey) => {
+              const job = batch.get(source);
+              return Boolean(job && job.identityKey === identityKey && currentJob(job));
+            },
             network: {
               restoreProxy: async () => undefined,
               probeAccess: async (source, signal) => ({ ...(await readAccessRef.current(source)), signal }),
@@ -490,11 +531,14 @@ export function useNotificationsRuntime({
               dismissDigest: (_source, identifier) => dismissSourceNotificationExact(identifier)
             }
           }).catch(() => undefined);
+          await deliverySettlement;
         }
       })();
       foregroundDeliveryRef.current = operation;
       void operation.finally(() => {
-        if (foregroundDeliveryRef.current === operation) foregroundDeliveryRef.current = undefined;
+        if (foregroundDeliveryRef.current !== operation) return;
+        foregroundDeliveryRef.current = undefined;
+        if (pendingForegroundDeliveriesRef.current.size) deliver([]);
       });
     },
     [sourceIsOperational]
@@ -506,7 +550,7 @@ export function useNotificationsRuntime({
     .join('|');
   useEffect(() => {
     const errors: Partial<Record<NotificationSource, string>> = {};
-    const refreshedSources: NotificationSource[] = [];
+    const deliveries: ForegroundDelivery[] = [];
     const writes = snapshotSources.flatMap((source, index) => {
       const query = snapshotQueriesRef.current[index];
       if (!query) return [];
@@ -519,13 +563,19 @@ export function useNotificationsRuntime({
       const handledKey = `${source}\u0000${identityKey}`;
       if (handledSnapshotUpdateRef.current.get(handledKey) === revision) return [];
       handledSnapshotUpdateRef.current.set(handledKey, revision);
-      refreshedSources.push(source);
+      deliveries.push({
+        source,
+        identityKey,
+        epoch: sessionEpochsRef.current[source],
+        generation: foregroundGenerationRef.current,
+        lifecycle: sourceLifecyclesRef.current[source]
+      });
       return [recordNotificationSnapshot(source, identityKey, snapshot.total, snapshot.checkedAt)];
     });
     setSnapshotErrors((current) =>
       notificationSources.every((source) => current[source] === errors[source]) ? current : errors
     );
-    if (writes.length) void Promise.allSettled(writes).then(() => runForegroundDelivery(refreshedSources));
+    if (writes.length) void Promise.allSettled(writes).then(() => runForegroundDelivery(deliveries));
   }, [identityKeys, runForegroundDelivery, snapshotRevision, snapshotSources]);
 
   const currentSnapshots: Partial<Record<NotificationSource, { checkedAt: string; total: number }>> = {};
@@ -567,14 +617,14 @@ export function useNotificationsRuntime({
         !enabledSourcesRef.current.includes(source) ||
         !sourceIsOperational(source)
       ) {
-        void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+        clearLastNotificationResponse();
         return;
       }
       const key = `${response.notification.request.identifier}:${response.notification.date}`;
       if (lastResponseRef.current === key) return;
       lastResponseRef.current = key;
       if (!openSource(source)) pendingOpenSourceRef.current = source;
-      void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+      clearLastNotificationResponse();
     },
     [openSource, sourceIsOperational]
   );
@@ -582,9 +632,10 @@ export function useNotificationsRuntime({
   useEffect(() => {
     if (!runtimeReady) return undefined;
     const subscription = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
-    void Notifications.getLastNotificationResponseAsync().then((response) => {
+    try {
+      const response = Notifications.getLastNotificationResponse();
       if (response) handleNotificationResponse(response);
-    });
+    } catch {}
     return () => subscription.remove();
   }, [handleNotificationResponse, runtimeReady]);
 

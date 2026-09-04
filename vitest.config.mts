@@ -11,6 +11,11 @@ export default defineConfig({
     environment: 'jsdom',
     pool: 'forks',
     maxWorkers: 2,
+    server: {
+      deps: {
+        inline: ['@react-native-async-storage/async-storage']
+      }
+    },
     include: [
       'src/**/*.test.ts',
       'src/**/*.test.tsx',

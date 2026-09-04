@@ -1,5 +1,5 @@
 import { elementText, escapeHtmlAttribute, escapeHtmlText, escapeQuotedHtmlTagDelimiters, parseHtml } from './html';
-import { TextNode, type HTMLElement } from 'node-html-parser';
+import { HTMLElement, TextNode, type Node } from 'node-html-parser';
 import { isNodeSeekHost, sourceCatalog } from './sourceCatalog';
 
 export const FORUM_REPLY_REFERENCE_TAG = 'forum-reply-reference';
@@ -55,13 +55,18 @@ function markForumUserMentions(html: string) {
 }
 
 export function normalizeForumUserMentionNodes(root: HTMLElement) {
+  const previousByParent = new Map<HTMLElement, Map<Node, Node | undefined>>();
   root.querySelectorAll('a[href]').forEach((link) => {
     const href = link.getAttribute('href') || '';
     const label = elementText(link);
     if (!isForumUserMentionHref(href) || /<[a-z][^>]*>/i.test(link.innerHTML)) return;
-    const children = link.parentNode?.childNodes || [];
-    const index = children.indexOf(link);
-    const previous = index > 0 ? children[index - 1] : undefined;
+    const parent = link.parentNode;
+    let siblings = parent ? previousByParent.get(parent) : undefined;
+    if (parent && !siblings) {
+      siblings = new Map(parent.childNodes.map((child, index, children) => [child, children[index - 1]]));
+      previousByParent.set(parent, siblings);
+    }
+    const previous = siblings?.get(link);
     const previousText = previous && !previous.rawTagName ? String(previous.rawText || '') : '';
     if (!label.startsWith('@') && !previousText.endsWith('@')) return;
     if (!label.startsWith('@') && previous) {
@@ -70,6 +75,86 @@ export function normalizeForumUserMentionNodes(root: HTMLElement) {
     appendClass(link, FORUM_USER_MENTION_CLASS);
     link.set_content([new TextNode(mentionLabel(label))]);
   });
+}
+
+export function markV2exReplyReferenceNodes(root: HTMLElement, topicId?: string) {
+  root.querySelectorAll('*').forEach((node) => {
+    Object.keys(node.attributes).forEach((name) => {
+      if (name.toLowerCase().startsWith('data-forum-reply-')) node.removeAttribute(name);
+    });
+  });
+  if (!topicId || !/^\d+$/.test(topicId)) return;
+  const topicUrl = `${sourceCatalog.v2ex.baseUrl}/t/${topicId}`;
+  const pending = [root];
+  while (pending.length) {
+    const parent = pending.pop()!;
+    if (
+      /^(?:a|pre|code|blockquote|math|script|style)$/i.test(parent.rawTagName || '') ||
+      /(?:forum-math|forum-terminal)/i.test(parent.getAttribute('class') || '') ||
+      /math|terminal/i.test(parent.rawTagName || '')
+    )
+      continue;
+    const children: Node[] = [];
+    let changed = false;
+    let previousMention: string | undefined;
+    for (const child of parent.childNodes) {
+      if (child instanceof HTMLElement) {
+        children.push(child);
+        pending.push(child);
+        previousMention = undefined;
+        if (child.rawTagName === 'a' && /^@/.test(child.textContent)) {
+          try {
+            const url = new URL(child.getAttribute('href') || '', sourceCatalog.v2ex.baseUrl);
+            const username = url.pathname.match(/^\/member\/([^/]+)\/?$/)?.[1];
+            if (/^https?:$/.test(url.protocol) && /^(?:www\.)?v2ex\.com$/i.test(url.hostname) && username) {
+              previousMention = decodeURIComponent(username);
+            }
+          } catch {
+            /* Invalid member links remain ordinary content. */
+          }
+        }
+        continue;
+      }
+      const text = child.textContent;
+      const firstContentIndex = previousMention ? text.search(/\S/) : -1;
+      const pattern = /(?:@([A-Za-z0-9_-]{1,32})(\s+))?(#\s*(\d+))(?![\w]|\.\d)/g;
+      let offset = 0;
+      for (const match of text.matchAll(pattern)) {
+        const index = match.index!;
+        const username = match[1] || (index === firstContentIndex ? previousMention : undefined);
+        const floor = Number(match[4]);
+        if (
+          !username ||
+          !Number.isSafeInteger(floor) ||
+          floor <= 0 ||
+          (match[1] && index > 0 && /[\w@]/.test(text[index - 1]))
+        )
+          continue;
+        if (index > offset) children.push(new TextNode(escapeHtmlText(text.slice(offset, index))));
+        if (match[1]) {
+          const mention = new HTMLElement('a', {});
+          mention.setAttribute('href', `${sourceCatalog.v2ex.baseUrl}/member/${encodeURIComponent(username)}`);
+          mention.setAttribute('class', FORUM_USER_MENTION_CLASS);
+          mention.set_content(escapeHtmlText(`@${username}`));
+          children.push(mention, new TextNode(escapeHtmlText(match[2])));
+        }
+        const link = new HTMLElement('a', {});
+        link.setAttribute('href', topicUrl);
+        link.setAttribute('class', NODESEEK_FLOOR_CLASS);
+        link.setAttribute('data-forum-reply-floor', String(floor));
+        link.setAttribute('data-forum-reply-author', username);
+        link.set_content(escapeHtmlText(match[3]));
+        children.push(link);
+        offset = index + match[0].length;
+        changed = true;
+      }
+      if (offset) {
+        if (offset < text.length) children.push(new TextNode(escapeHtmlText(text.slice(offset))));
+      } else children.push(child);
+      previousMention = undefined;
+    }
+    if (changed) parent.set_content(children);
+  }
 }
 
 function nodeSeekUrlFromHref(href: string | undefined, baseUrl?: string) {

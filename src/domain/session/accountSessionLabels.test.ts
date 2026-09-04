@@ -1,11 +1,13 @@
+import { projectTestAccountSessions, testAccountUser } from '../../../tests/helpers/accountSessions';
 import { describe, expect, it } from 'vitest';
-import { createSiteSessionStates, createSiteSessionViewModels } from './siteSessionState';
+import { createSiteSessionStates } from './siteSessionState';
 
 describe('account session labels', () => {
   it('uses readable account summaries instead of cookie names', () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         nodeseek: {
+          currentUser: testAccountUser('nodeseek'),
           site: 'nodeseek',
           status: 'logged-in',
           cookieSummary: ['session'],

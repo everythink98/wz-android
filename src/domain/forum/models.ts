@@ -115,6 +115,7 @@ export interface ReplyLocationTarget {
   commentId?: number;
   floor?: number;
   pageHint?: number;
+  expectedAuthorUsername?: string;
 }
 
 export type ReplyOrder = 'oldest' | 'newest';
@@ -125,6 +126,7 @@ export type PreparedForumContent<ContentPlan = unknown> = {
   contentHtml: string;
   contentPlan: ContentPlan;
   contentPlanKey: string;
+  topicId?: string;
 };
 
 export type ReplyWindowPosition =
@@ -144,6 +146,8 @@ export interface Reply {
   floor?: number;
   quotedPosts?: QuotedPostMetadata[];
   commentId?: number;
+  /** Source conflict remains readable; a floor conflict does not invalidate a unique comment ID. */
+  replyLocationConflict?: 'identity' | 'floor';
   upvoteCount?: number;
   likeCount?: number;
   dislikeCount?: number;

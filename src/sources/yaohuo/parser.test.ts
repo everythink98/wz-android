@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { HTMLElement } from 'node-html-parser';
 
 import { parseHtml } from '@/domain/forum/html';
 import { parseYaohuoListHtml } from './feedParser';
-import { parseYaohuoRepliesDocument } from './topicParser';
+import { parseYaohuoRepliesDocument, parseYaohuoTopicHtml } from './topicParser';
 import { parseYaohuoUserProfileDocument, parseYaohuoUserRepliesDocument } from './userParser';
 import { sourceDiagnosticSummary } from '@/sources/diagnostics';
 
@@ -19,6 +20,28 @@ function parseUserReplies(html: string, options: Parameters<typeof parseYaohuoUs
 }
 
 describe('yaohuo reply parsing', () => {
+  it('trims large empty article edges and attachment gaps with one bulk update per parent', () => {
+    const setContent = vi.spyOn(HTMLElement.prototype, 'set_content');
+    try {
+      const detail = parseYaohuoTopicHtml(
+        `<div class="content"><div class="bbscontent">${'<br>'.repeat(200)}<p>first</p><br><p>second</p><section><br><p>nested</p>${'<br>'.repeat(200)}<div class="attachment"><a href="/bbs/download.aspx?id=1">download</a></div><br><p>after</p><br></section>${'<br>'.repeat(200)}</div></div>`,
+        { id: '1' }
+      );
+      expect(detail.contentHtml).toMatch(/^<p>first<\/p><br><p>second<\/p>/);
+      expect(detail.contentHtml).toContain('<p>nested</p><div class="forum-attachment">');
+      expect(detail.contentHtml).toContain('<p>after</p>');
+      expect(detail.contentHtml).not.toMatch(/<br>$/);
+      const updates = setContent.mock.calls.filter(([nodes]) => Array.isArray(nodes));
+      expect(updates).toHaveLength(2);
+      for (const [nodes] of updates) {
+        if (!Array.isArray(nodes)) throw new Error('Expected bulk child update');
+        expect(nodes.every((node) => node.parentNode?.childNodes.includes(node))).toBe(true);
+      }
+    } finally {
+      setContent.mockRestore();
+    }
+  });
+
   it('summarizes invalid list candidates and source replies with synthesized floors', () => {
     const list = parseYaohuoListHtml('<div class="listdata">broken row</div>');
     const replies = parseReplies('<div class="line1">reply <a href="/userinfo.aspx?touserid=1">bob</a></div>');

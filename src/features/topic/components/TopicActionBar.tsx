@@ -1,8 +1,7 @@
 import type { TopicStyles } from '../styles';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { alphaColor, androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
-import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
+import { alphaColor, type ReaderTheme } from '@/ui/theme/tokens';
 
 export type DetailActionTone = 'danger' | 'favorite' | 'primary' | 'success' | 'warning';
 
@@ -90,7 +89,6 @@ export function DetailActionButton({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ busy: pending, disabled, selected: active }}
-      android_ripple={androidRipple(active ? alphaColor(color, theme.dark ? 0.18 : 0.12) : theme.primarySoft, true)}
       disabled={disabled}
       style={[
         styles.detailActionButton,
@@ -100,7 +98,6 @@ export function DetailActionButton({
         disabled && !pending && !active && styles.buttonDisabled
       ]}
       onPress={() => {
-        triggerPressFeedback();
         onPress();
       }}
     >

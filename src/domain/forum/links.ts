@@ -122,8 +122,9 @@ export function parseForumTopicDestination(
     const floor = positiveLocationPart(url.searchParams.get('tofloor'));
     if (floor) targetReply = { floor };
   } else if (topic.source === 'v2ex') {
-    const floor = positiveLocationPart(url.hash.match(/^#reply(\d+)$/i)?.[1]);
-    if (floor) targetReply = { floor };
+    const commentId = positiveLocationPart(url.hash.match(/^#r_(\d+)$/i)?.[1]);
+    const pageHint = positiveLocationPart(url.searchParams.get('p'));
+    if (commentId) targetReply = { commentId, ...(pageHint ? { pageHint } : {}) };
   }
   return { topic, ...(targetReply ? { targetReply } : {}) };
 }

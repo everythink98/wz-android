@@ -15,23 +15,30 @@ function storageKey(identityKey: string) {
 }
 
 function validEntry(value: unknown): value is NodeSeekPollJournalEntry {
-  if (!value || typeof value !== 'object') return false;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const entry = value as Partial<NodeSeekPollJournalEntry>;
   return (
-    /^[A-Za-z0-9_-]{8,80}$/.test(entry.localId || '') &&
-    /^[a-f0-9]{16}$/.test(entry.fingerprint || '') &&
-    (entry.remoteId === null || /^\d+$/.test(entry.remoteId || ''))
+    typeof entry.localId === 'string' &&
+    /^[A-Za-z0-9_-]{8,80}$/.test(entry.localId) &&
+    typeof entry.fingerprint === 'string' &&
+    /^[a-f0-9]{16}$/.test(entry.fingerprint) &&
+    (entry.remoteId === null || (typeof entry.remoteId === 'string' && /^\d+$/.test(entry.remoteId)))
   );
 }
 
 async function readEntries(identityKey: string) {
-  try {
-    const raw = await AsyncStorage.getItem(storageKey(identityKey));
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter(validEntry) : [];
-  } catch {
-    return [];
+  const raw = await AsyncStorage.getItem(storageKey(identityKey));
+  if (raw === null) return [];
+  const parsed: unknown = JSON.parse(raw);
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length > 32 ||
+    !parsed.every(validEntry) ||
+    new Set(parsed.map((entry) => entry.localId)).size !== parsed.length
+  ) {
+    throw new Error('NodeSeek 投票事务记录已损坏，已阻止重复创建投票');
   }
+  return parsed;
 }
 
 export async function readNodeSeekPollJournalEntry(identityKey: string, localId: string) {

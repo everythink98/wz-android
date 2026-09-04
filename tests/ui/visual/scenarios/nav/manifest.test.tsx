@@ -43,9 +43,21 @@ jest.mock('@shopify/flash-list', () => {
 
 jest.mock('react-native-tab-view', () => {
   const React = require('react') as typeof import('react');
+  const { Animated } = require('react-native') as typeof import('react-native');
   return {
-    TabView: ({ navigationState, renderScene }: Record<string, any>) =>
-      React.createElement(React.Fragment, null, renderScene({ route: navigationState.routes[navigationState.index] }))
+    TabView: ({ navigationState, onIndexChange, renderScene, renderTabBar }: Record<string, any>) => {
+      const position = React.useRef(new Animated.Value(navigationState.index)).current;
+      const jumpTo = (key: string) => {
+        const index = navigationState.routes.findIndex((route: { key: string }) => route.key === key);
+        if (index >= 0) onIndexChange(index);
+      };
+      return React.createElement(
+        React.Fragment,
+        null,
+        renderTabBar?.({ navigationState, position, jumpTo }),
+        renderScene({ route: navigationState.routes[navigationState.index] })
+      );
+    }
   };
 });
 

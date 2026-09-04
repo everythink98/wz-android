@@ -652,62 +652,91 @@ describe('user query controller', () => {
     );
   });
 
-  it('keeps topic and reply cursors independent', async () => {
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ cursorType }) => {
-      if (!cursorType) {
-        return {
-          ...user,
-          hasMoreTopics: true,
-          nextTopicsCursor: 'topics-2',
-          hasMoreReplies: true,
-          nextRepliesCursor: 'replies-2'
-        };
-      }
-      return cursorType === 'topics'
-        ? {
+  it.each([false, true])(
+    'keeps concurrent topic and reply cursors independent when replies finish first: %s',
+    async (repliesFirst) => {
+      const topicsReady = Promise.withResolvers<void>();
+      const repliesReady = Promise.withResolvers<void>();
+      const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ cursorType }) => {
+        if (!cursorType) {
+          return {
             ...user,
-            topics: [
-              {
-                source: 'nodeseek',
-                id: 'topic-2',
-                title: '第二页主题',
-                author: 'alice',
-                url: 'https://www.nodeseek.com/post-2-1',
-                createdAt: '2026-07-20T00:00:00.000Z',
-                replyCount: 0
-              }
-            ],
-            hasMoreTopics: false,
-            nextTopicsCursor: null
-          }
-        : {
-            ...user,
-            replies: [
-              {
-                source: 'nodeseek',
-                id: 'reply-2',
-                topicId: 'topic-2',
-                topicTitle: '第二页主题',
-                topicUrl: 'https://www.nodeseek.com/post-2-1',
-                url: 'https://www.nodeseek.com/post-2-2'
-              }
-            ],
-            hasMoreReplies: false,
-            nextRepliesCursor: null
+            hasMoreTopics: true,
+            nextTopicsCursor: 'topics-2',
+            hasMoreReplies: true,
+            nextRepliesCursor: 'replies-2'
           };
-    });
-    const hook = await renderUserController({ getUserProfile });
-    await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
-    await act(async () => {
-      await Promise.all([hook.result.current.loadMoreUserTopics(), hook.result.current.loadMoreUserReplies()]);
-    });
+        }
+        await (cursorType === 'topics' ? topicsReady.promise : repliesReady.promise);
+        return cursorType === 'topics'
+          ? {
+              ...user,
+              topics: [
+                {
+                  source: 'nodeseek',
+                  id: 'topic-2',
+                  title: '第二页主题',
+                  author: 'alice',
+                  url: 'https://www.nodeseek.com/post-2-1',
+                  createdAt: '2026-07-20T00:00:00.000Z',
+                  replyCount: 0
+                }
+              ],
+              hasMoreTopics: false,
+              nextTopicsCursor: null
+            }
+          : {
+              ...user,
+              replies: [
+                {
+                  source: 'nodeseek',
+                  id: 'reply-2',
+                  topicId: 'topic-2',
+                  topicTitle: '第二页主题',
+                  topicUrl: 'https://www.nodeseek.com/post-2-1',
+                  url: 'https://www.nodeseek.com/post-2-2'
+                }
+              ],
+              hasMoreReplies: false,
+              nextRepliesCursor: null
+            };
+      });
+      const hook = await renderUserController({ getUserProfile });
+      await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
+      const initialTopics = hook.result.current.userProfile?.topics;
+      const initialReplies = hook.result.current.userProfile?.replies;
+      let requests: Promise<unknown>[] = [];
+      await act(async () => {
+        requests = [hook.result.current.loadMoreUserTopics(), hook.result.current.loadMoreUserReplies()];
+      });
+      await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(3));
+      await act(async () => {
+        (repliesFirst ? repliesReady : topicsReady).resolve();
+        await requests[repliesFirst ? 1 : 0];
+      });
+      const firstLane = repliesFirst ? 'replies' : 'topics';
+      const secondLane = repliesFirst ? 'topics' : 'replies';
+      await waitFor(() => expect(hook.result.current.userProfile?.[firstLane]).toHaveLength(1));
+      expect(hook.result.current.userProfile?.[secondLane]).toBe(repliesFirst ? initialTopics : initialReplies);
+      const loadedFirstLane = hook.result.current.userProfile?.[firstLane];
+      await act(async () => {
+        (repliesFirst ? topicsReady : repliesReady).resolve();
+        await Promise.all(requests);
+      });
+      await waitFor(() => expect(hook.result.current.userProfile?.[secondLane]).toHaveLength(1));
+      expect(hook.result.current.userProfile?.[firstLane]).toBe(loadedFirstLane);
 
-    await waitFor(() => {
-      expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-2']);
-      expect(hook.result.current.userProfile?.replies?.map(({ id }) => id)).toEqual(['reply-2']);
-    });
-    expect(getUserProfile.mock.calls.map(([request]) => request.cursorType)).toEqual([undefined, 'topics', 'replies']);
-  });
+      await waitFor(() => {
+        expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-2']);
+        expect(hook.result.current.userProfile?.replies?.map(({ id }) => id)).toEqual(['reply-2']);
+      });
+      expect(getUserProfile.mock.calls.map(([request]) => request.cursorType)).toEqual([
+        undefined,
+        'topics',
+        'replies'
+      ]);
+    }
+  );
 
   it('refreshes the profile as a fresh pagination snapshot and exposes its busy state', async () => {
     const firstTopic = {
@@ -882,7 +911,6 @@ describe('user query controller', () => {
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
 
     await act(async () => {
-      resetForumSourceQueries('linuxdo', appQueryClient, recovery.queryKey);
       await expect(recovery.resume()).resolves.toBe('completed');
     });
 

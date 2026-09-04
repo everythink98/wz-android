@@ -42,7 +42,7 @@ const editorThemeSchema = strictObject({
   danger: z.string().max(40),
   fontScale: z.number().min(0.8).max(2)
 });
-const discourseEmojiSchema = strictObject({ name: z.string().min(1).max(100), url: z.string().url().max(2048) });
+const discourseEmojiSchema = strictObject({ name: z.string().min(1).max(100), url: z.url().max(2048) });
 export const linuxDoPollCapabilitiesSchema = strictObject({
   groups: z
     .array(

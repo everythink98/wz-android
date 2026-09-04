@@ -151,6 +151,11 @@ export function useTopicTerminalReport({ defaultTabId, semanticId }: { defaultTa
   if (!store || !scopeKey) throw new Error('TopicSplitDisclosureProvider and scope are required');
   const key = topicTerminalReportKey(scopeKey, semanticId);
   const activeTabId = store.activeTabByKey[key] || defaultTabId;
-  const select = useCallback((tabId: string) => store.selectTab(key, tabId), [key, store]);
+  const select = useCallback(
+    (tabId: string) => {
+      if (tabId !== activeTabId) store.selectTab(key, tabId);
+    },
+    [activeTabId, key, store]
+  );
   return { activeTabId, select };
 }

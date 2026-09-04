@@ -86,7 +86,7 @@ function rotateIfNeeded(incomingBytes: number) {
   if (previous.exists) {
     previous.delete();
   }
-  current.move(previous);
+  current.moveSync(previous);
   return logFile(CURRENT_LOG_NAME);
 }
 

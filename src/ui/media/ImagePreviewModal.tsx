@@ -12,7 +12,12 @@ import {
   type ImageURISource
 } from 'react-native';
 import { Image as ExpoImage, type ImageLoadEventData } from 'expo-image';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import {
+  GestureDetector,
+  GestureHandlerRootView,
+  GestureStateManager,
+  usePanGesture
+} from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -596,142 +601,122 @@ function ImagePreviewModalContent({
   const nextSlot = ring.slots.find(({ page, role }) => role === 1 && page?.index === activeIndex + 1)?.slot ?? -1;
   const recycleForPrevious = ring.slots.length === 3 ? (ring.slots.find(({ role }) => role === 1)?.slot ?? -1) : -1;
   const recycleForNext = ring.slots.length === 3 ? (ring.slots.find(({ role }) => role === -1)?.slot ?? -1) : -1;
-  const previewGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .manualActivation(true)
-        .maxPointers(1)
-        .onTouchesDown((event, state) => {
-          'worklet';
-          if (event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001) {
-            state.fail();
-            return;
-          }
-          const touch = event.allTouches[0];
-          if (!touch) {
-            state.fail();
-            return;
-          }
-          gestureAxis.value = 0;
-          gestureQueuesTransition.value = transitioning.value;
-          gestureStartX.value = touch.absoluteX;
-          gestureStartY.value = touch.absoluteY;
-        })
-        .onTouchesMove((event, state) => {
-          'worklet';
-          if (event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001) {
-            state.fail();
-            return;
-          }
-          const touch = event.allTouches[0];
-          if (!touch) {
-            state.fail();
-            return;
-          }
-          if (transitioning.value) {
-            gestureQueuesTransition.value = true;
-          }
-          const deltaX = touch.absoluteX - gestureStartX.value;
-          const deltaY = touch.absoluteY - gestureStartY.value;
-          if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < GESTURE_DIRECTION_LOCK_DISTANCE) {
-            return;
-          }
-          gestureAxis.value = Math.abs(deltaX) > Math.abs(deltaY) ? 1 : 2;
-          state.activate();
-        })
-        .onUpdate((event) => {
-          'worklet';
-          if (gestureQueuesTransition.value) {
-            return;
-          }
-          if (gestureAxis.value === 1) {
-            const atBoundary = (event.translationX > 0 && previousSlot < 0) || (event.translationX < 0 && nextSlot < 0);
-            ringTranslateX.value = event.translationX * (atBoundary ? 0.25 : 1);
-          } else if (gestureAxis.value === 2) {
-            handleVerticalPull({
-              released: false,
-              translateY: Math.max(0, event.translationY),
-              velocityY: event.velocityY
-            });
-          }
-        })
-        .onEnd((event) => {
-          'worklet';
-          if (gestureAxis.value === 2) {
-            if (!gestureQueuesTransition.value) {
-              handleVerticalPull({
-                released: true,
-                translateY: Math.max(0, event.translationY),
-                velocityY: event.velocityY
-              });
-            }
-            return;
-          }
-          if (gestureAxis.value !== 1) {
-            return;
-          }
-          const horizontalDistance = Math.abs(event.translationX);
-          const verticalDistance = Math.abs(event.translationY);
-          const horizontalVelocity = Math.abs(event.velocityX);
-          const verticalVelocity = Math.abs(event.velocityY);
-          const shouldMove =
-            horizontalDistance > verticalDistance &&
-            (horizontalDistance >= width * PAGE_SWIPE_DISTANCE_RATIO ||
-              (horizontalVelocity >= PAGE_SWIPE_VELOCITY && horizontalVelocity > verticalVelocity));
-          const signedMovement = horizontalDistance > 1 ? event.translationX : event.velocityX;
-          const direction = signedMovement < 0 ? 1 : -1;
-          if (gestureQueuesTransition.value) {
-            if (shouldMove && signedMovement !== 0) {
-              scheduleOnRN(queueGestureStep, direction);
-            }
-            return;
-          }
-          const targetSlot = direction === 1 ? nextSlot : previousSlot;
-          if (!shouldMove || signedMovement === 0 || targetSlot < 0) {
-            ringTranslateX.value = withTiming(0, { duration: PAGE_TRANSITION_DURATION_MS });
-            return;
-          }
-          animateRingStep(
-            direction,
-            activeIndex + direction,
-            ring.activeSlot,
-            targetSlot,
-            direction === 1 ? recycleForNext : recycleForPrevious
-          );
-        })
-        .onFinalize((_event, success) => {
-          'worklet';
-          const queuedTransition = gestureQueuesTransition.value;
-          gestureAxis.value = 0;
-          gestureQueuesTransition.value = false;
-          if (!success && !queuedTransition) {
-            ringTranslateX.value = withTiming(0, { duration: PAGE_TRANSITION_DURATION_MS });
-            pullTranslateY.value = withTiming(0);
-            overlayOpacity.value = withTiming(1);
-          }
-        }),
-    [
-      activeIndex,
-      activeZoomScale,
-      animateRingStep,
-      gestureAxis,
-      gestureQueuesTransition,
-      gestureStartX,
-      gestureStartY,
-      handleVerticalPull,
-      nextSlot,
-      overlayOpacity,
-      previousSlot,
-      pullTranslateY,
-      queueGestureStep,
-      recycleForNext,
-      recycleForPrevious,
-      ring.activeSlot,
-      ringTranslateX,
-      transitioning,
-      width
-    ]
-  );
+  const previewGesture = usePanGesture({
+    manualActivation: true,
+    maxPointers: 1,
+    onTouchesDown: (event) => {
+      'worklet';
+      if (event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001) {
+        GestureStateManager.fail(event.handlerTag);
+        return;
+      }
+      const touch = event.allTouches[0];
+      if (!touch) {
+        GestureStateManager.fail(event.handlerTag);
+        return;
+      }
+      gestureAxis.value = 0;
+      gestureQueuesTransition.value = transitioning.value;
+      gestureStartX.value = touch.absoluteX;
+      gestureStartY.value = touch.absoluteY;
+    },
+    onTouchesMove: (event) => {
+      'worklet';
+      if (event.numberOfTouches !== 1 || Math.abs(activeZoomScale.value - 1) > 0.001) {
+        GestureStateManager.fail(event.handlerTag);
+        return;
+      }
+      const touch = event.allTouches[0];
+      if (!touch) {
+        GestureStateManager.fail(event.handlerTag);
+        return;
+      }
+      if (transitioning.value) {
+        gestureQueuesTransition.value = true;
+      }
+      const deltaX = touch.absoluteX - gestureStartX.value;
+      const deltaY = touch.absoluteY - gestureStartY.value;
+      if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < GESTURE_DIRECTION_LOCK_DISTANCE) {
+        return;
+      }
+      gestureAxis.value = Math.abs(deltaX) > Math.abs(deltaY) ? 1 : 2;
+      GestureStateManager.activate(event.handlerTag);
+    },
+    onUpdate: (event) => {
+      'worklet';
+      if (gestureQueuesTransition.value) {
+        return;
+      }
+      if (gestureAxis.value === 1) {
+        const atBoundary = (event.translationX > 0 && previousSlot < 0) || (event.translationX < 0 && nextSlot < 0);
+        ringTranslateX.value = event.translationX * (atBoundary ? 0.25 : 1);
+      } else if (gestureAxis.value === 2) {
+        handleVerticalPull({
+          released: false,
+          translateY: Math.max(0, event.translationY),
+          velocityY: event.velocityY
+        });
+      }
+    },
+    onDeactivate: (event) => {
+      'worklet';
+      if (event.canceled) {
+        return;
+      }
+      if (gestureAxis.value === 2) {
+        if (!gestureQueuesTransition.value) {
+          handleVerticalPull({
+            released: true,
+            translateY: Math.max(0, event.translationY),
+            velocityY: event.velocityY
+          });
+        }
+        return;
+      }
+      if (gestureAxis.value !== 1) {
+        return;
+      }
+      const horizontalDistance = Math.abs(event.translationX);
+      const verticalDistance = Math.abs(event.translationY);
+      const horizontalVelocity = Math.abs(event.velocityX);
+      const verticalVelocity = Math.abs(event.velocityY);
+      const shouldMove =
+        horizontalDistance > verticalDistance &&
+        (horizontalDistance >= width * PAGE_SWIPE_DISTANCE_RATIO ||
+          (horizontalVelocity >= PAGE_SWIPE_VELOCITY && horizontalVelocity > verticalVelocity));
+      const signedMovement = horizontalDistance > 1 ? event.translationX : event.velocityX;
+      const direction = signedMovement < 0 ? 1 : -1;
+      if (gestureQueuesTransition.value) {
+        if (shouldMove && signedMovement !== 0) {
+          scheduleOnRN(queueGestureStep, direction);
+        }
+        return;
+      }
+      const targetSlot = direction === 1 ? nextSlot : previousSlot;
+      if (!shouldMove || signedMovement === 0 || targetSlot < 0) {
+        ringTranslateX.value = withTiming(0, { duration: PAGE_TRANSITION_DURATION_MS });
+        return;
+      }
+      animateRingStep(
+        direction,
+        activeIndex + direction,
+        ring.activeSlot,
+        targetSlot,
+        direction === 1 ? recycleForNext : recycleForPrevious
+      );
+    },
+    onFinalize: (event) => {
+      'worklet';
+      const queuedTransition = gestureQueuesTransition.value;
+      gestureAxis.value = 0;
+      gestureQueuesTransition.value = false;
+      if (event.canceled && !queuedTransition) {
+        ringTranslateX.value = withTiming(0, { duration: PAGE_TRANSITION_DURATION_MS });
+        pullTranslateY.value = withTiming(0);
+        overlayOpacity.value = withTiming(1);
+      }
+    }
+  });
 
   const backgroundStyle = useAnimatedStyle(() => ({ opacity: overlayOpacity.value }), [overlayOpacity]);
   const previewPullStyle = useAnimatedStyle(
@@ -1002,10 +987,11 @@ function PreviewPage({
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
   const baseSourceIdentity = `${requestIdentity}\u0000${0}`;
+  const [initialLoadStartedAt] = useState(Date.now);
   const logicalLoadOwner = useMemo(
     () => ({
       loadMetricsRef: {
-        current: { sourceIdentity: baseSourceIdentity, startedAt: Date.now() } as PreviewImageLoadMetrics
+        current: { sourceIdentity: baseSourceIdentity, startedAt: initialLoadStartedAt } as PreviewImageLoadMetrics
       },
       nativeFailedRef: { current: false },
       posterRefreshRef: { current: { attempted: false, inFlight: false, sourceIdentity: '' } },
@@ -1018,7 +1004,7 @@ function PreviewPage({
       sourceIdentityRef: { current: baseSourceIdentity },
       svgArtifactConsumerRef: { current: null as AbortController | null }
     }),
-    [baseSourceIdentity]
+    [baseSourceIdentity, initialLoadStartedAt]
   );
   const {
     loadMetricsRef,
@@ -1809,7 +1795,7 @@ function previewImageMetricFields(
 
 const componentStyles = StyleSheet.create({
   accessibilityPager: {
-    ...StyleSheet.absoluteFillObject
+    ...StyleSheet.absoluteFill
   },
   bottomBar: {
     alignItems: 'center',
@@ -1826,7 +1812,7 @@ const componentStyles = StyleSheet.create({
     opacity: 0.55
   },
   documentOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center'
   },
@@ -1834,7 +1820,7 @@ const componentStyles = StyleSheet.create({
     opacity: 0
   },
   overlayBackground: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#000000'
   },
   page: {
@@ -1845,7 +1831,7 @@ const componentStyles = StyleSheet.create({
     justifyContent: 'center'
   },
   ringSlot: {
-    ...StyleSheet.absoluteFillObject
+    ...StyleSheet.absoluteFill
   },
   ringViewport: {
     flex: 1,

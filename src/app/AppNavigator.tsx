@@ -2,20 +2,39 @@ import type { AppStyles } from './styles';
 import { memo, type ComponentType } from 'react';
 import { Pressable } from 'react-native';
 import { NavigationContainer, type Theme } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createBottomTabNavigator, type BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { TabBarIcon, tabNavItems } from '@/ui/navigation/NavBar';
-import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { Screen } from '@/ui/navigation/types';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { currentAppRoute, navigationRef } from './appNavigation';
-import { Settings } from 'lucide-react-native';
-import { androidRipple } from '@/ui/theme/tokens';
+import { ChevronLeft, Settings } from 'lucide-react-native';
 import { moreBadgeAccessibilityLabel, type MoreBadgeState } from '@/ui/navigation/moreBadge';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
+const headerButtonStyle = { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' } as const;
+
+function QuietTabBarButton(props: BottomTabBarButtonProps) {
+  return (
+    <Pressable
+      role={props.role}
+      aria-label={props['aria-label']}
+      aria-selected={props['aria-selected']}
+      accessibilityLargeContentTitle={props.accessibilityLargeContentTitle}
+      accessibilityShowsLargeContentViewer={props.accessibilityShowsLargeContentViewer}
+      disabled={props.disabled}
+      style={props.style}
+      testID={props.testID}
+      onLongPress={props.onLongPress}
+      onPress={props.onPress}
+    >
+      {props.children}
+    </Pressable>
+  );
+}
+
 function MainTabsHost({
   moreBadgeState,
   FeedRouteComponent,
@@ -42,6 +61,7 @@ function MainTabsHost({
           tabBarShowLabel: false,
           tabBarStyle: styles.nav,
           tabBarItemStyle: styles.navItem,
+          tabBarButton: QuietTabBarButton,
           tabBarButtonTestID: `main-tab-${item.value}`,
           tabBarAccessibilityLabel: item.value === 'more' ? moreBadgeAccessibilityLabel(moreBadgeState) : item.label,
           tabBarIcon: ({ focused }: { focused: boolean }) => (
@@ -53,11 +73,6 @@ function MainTabsHost({
             />
           )
         };
-      }}
-      screenListeners={{
-        tabPress: () => {
-          triggerPressFeedback();
-        }
       }}
     >
       <Tab.Screen name="feed" component={FeedRouteComponent} options={{ title: '首页' }} />
@@ -118,13 +133,24 @@ export const AppNavigator = memo(function AppNavigator({
       onStateChange={publishCurrentScreen}
     >
       <Stack.Navigator
-        screenOptions={{
+        screenOptions={({ navigation }) => ({
           headerShown: false,
           headerShadowVisible: false,
+          headerLeft: ({ canGoBack, tintColor }) =>
+            canGoBack ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="返回"
+                style={headerButtonStyle}
+                onPress={() => navigation.goBack()}
+              >
+                <ChevronLeft color={tintColor || theme.ink} size={24} strokeWidth={1.8} />
+              </Pressable>
+            ) : null,
           animation: 'slide_from_right',
           freezeOnBlur: true,
           contentStyle: { backgroundColor: theme.background }
-        }}
+        })}
       >
         <Stack.Screen name="MainTabs">
           {() => (
@@ -149,8 +175,7 @@ export const AppNavigator = memo(function AppNavigator({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="消息通知设置"
-                android_ripple={androidRipple(theme.primarySoft, true)}
-                style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}
+                style={headerButtonStyle}
                 onPress={() => navigation.navigate('NotificationSettings')}
               >
                 <Settings color={theme.ink} size={20} strokeWidth={1.8} />

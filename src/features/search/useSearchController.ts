@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery, useQueries, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import {
+  hashKey,
+  useInfiniteQuery,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+  type UseQueryResult
+} from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isSessionSource, type DiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import { mergeTopics, type SearchSort } from '@/domain/forum/feed';
@@ -61,18 +69,23 @@ type SubmittedSearch = {
 };
 type AggregateSearchQueryProjection = Pick<
   UseQueryResult<RemoteSearchSourceResult>,
-  'data' | 'error' | 'errorUpdatedAt' | 'isFetching' | 'isPending' | 'refetch'
+  'data' | 'dataUpdatedAt' | 'error' | 'errorUpdatedAt' | 'isFetching' | 'isPending' | 'refetch'
 >;
 
 function combineAggregateSearchQueries(results: AggregateSearchQueryProjection[]): AggregateSearchQueryProjection[] {
-  return results.map(({ data, error, errorUpdatedAt, isFetching, isPending, refetch }) => ({
+  return results.map(({ data, dataUpdatedAt, error, errorUpdatedAt, isFetching, isPending, refetch }) => ({
     data,
+    dataUpdatedAt,
     error,
     errorUpdatedAt,
     isFetching,
     isPending,
     refetch
   }));
+}
+
+function firstSearchPageData(result: RemoteSearchSourceResult): InfiniteData<RemoteSearchSourceResult, number> {
+  return { pages: [result], pageParams: [1] };
 }
 
 class SearchPageError extends Error {
@@ -102,33 +115,19 @@ function searchGroupForUnexpectedError(source: Source, error: unknown): SearchGr
   };
 }
 
-function mergeSearchPages(pages: RemoteSearchSourceResult[], error: unknown): SearchGroup | null {
+function mergeSearchPages(pages: RemoteSearchSourceResult[]): SearchGroup | null {
   if (!pages.length) {
     return null;
   }
-  const first = groupFromRemoteSearchResult(pages[0]);
-  const merged = pages.reduce((current, page) => {
-    const group = groupFromRemoteSearchResult(page);
-    return {
-      ...group,
-      items: mergeTopics(current.items, group.items),
-      authNotice: group.authNotice || current.authNotice
-    };
-  }, first);
-  if (error instanceof SearchPageError) {
-    const failed = groupFromRemoteSearchResult(error.result);
-    return {
-      ...merged,
-      error: failed.error,
-      errorKind: failed.errorKind,
-      authNotice: failed.authNotice || merged.authNotice,
-      hasMore: error.page > 1 ? true : merged.hasMore,
-      nextPage: error.page > 1 ? error.page : merged.nextPage,
-      loading: false,
-      loadingMore: false
-    };
-  }
-  return merged;
+  const groups = pages.map(groupFromRemoteSearchResult);
+  return {
+    ...groups.at(-1)!,
+    items: mergeTopics(
+      groups[0].items,
+      groups.flatMap((group) => group.items)
+    ),
+    authNotice: groups.reduce((notice, group) => group.authNotice || notice, groups[0].authNotice)
+  };
 }
 
 function externalSearchUrlForPlan(source: Source, query: string, plan: ReturnType<ReadGateway['getReadPlan']>) {
@@ -459,6 +458,7 @@ export function useSearchController({
     externalSearchUrlForPlan(source, submittedSearch?.query || '', aggregatePlans[index])
   );
   const aggregateExternalSearchKey = aggregateExternalSearchUrls.join('\u0000');
+  const aggregateSorts = aggregateSources.map((source) => remoteSearchSort(source, DEFAULT_SEARCH_FILTERS));
   const aggregateKeys = aggregateSources.map((source, index) => {
     const plan = aggregatePlans[index];
     return forumQueryKeys.search({
@@ -466,7 +466,19 @@ export function useSearchController({
       lane: 'preview',
       query: submittedSearch?.query || '',
       readPlanScope: plan.cacheScope,
-      sort: submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
+      sort: aggregateSorts[index],
+      filter: DEFAULT_SEARCH_FILTERS[source],
+      scope: sessionEpochs
+    });
+  });
+  const aggregatePageKeys = aggregateSources.map((source, index) => {
+    const plan = aggregatePlans[index];
+    return forumQueryKeys.search({
+      source,
+      lane: 'pages',
+      query: submittedSearch?.query || '',
+      readPlanScope: plan.cacheScope,
+      sort: aggregateSorts[index],
       filter: DEFAULT_SEARCH_FILTERS[source],
       scope: sessionEpochs
     });
@@ -486,7 +498,7 @@ export function useSearchController({
           submittedSearch?.query || '',
           1,
           signal,
-          submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance',
+          aggregateSorts[index],
           DEFAULT_SEARCH_FILTERS[source],
           aggregatePlans[index].cacheScope
         );
@@ -498,6 +510,46 @@ export function useSearchController({
     })),
     combine: combineAggregateSearchQueries
   });
+
+  const promoteAggregateSearchPage = useCallback(
+    (source: Source) => {
+      if (submittedSearch?.source !== 'all' || submittedSearch.query !== searchQuery.trim()) return;
+      const index = aggregateSources.indexOf(source);
+      if (index < 0 || aggregateExternalSearchUrls[index]) return;
+      const preview = aggregateQueries[index];
+      const pageKey = aggregatePageKeys[index];
+      if (!preview?.data || preview.data.kind !== 'success' || preview.error || preview.isFetching || !pageKey) return;
+      const targetKey = forumQueryKeys.search({
+        source,
+        lane: 'pages',
+        query: submittedSearch.query,
+        readPlanScope: readGateway.getReadPlan(source, 'search').cacheScope,
+        sort: remoteSearchSort(source, searchFilters),
+        filter: searchFilters[source],
+        scope: sessionEpochs
+      });
+      if (hashKey(pageKey) !== hashKey(targetKey)) return;
+      const targetState = queryClient.getQueryState(targetKey);
+      if (targetState?.data !== undefined) return;
+      queryClient.setQueryData<InfiniteData<RemoteSearchSourceResult, number>>(
+        targetKey,
+        firstSearchPageData(preview.data),
+        { updatedAt: preview.dataUpdatedAt }
+      );
+    },
+    [
+      aggregatePageKeys,
+      aggregateQueries,
+      aggregateExternalSearchUrls,
+      aggregateSources,
+      queryClient,
+      readGateway,
+      searchFilters,
+      searchQuery,
+      sessionEpochs,
+      submittedSearch
+    ]
+  );
 
   const singleSearchQuery = useInfiniteQuery({
     queryKey: singleSearchKey,
@@ -587,6 +639,10 @@ export function useSearchController({
       submittedSearch?.source
     ]
   );
+  const mergedSinglePages = useMemo(
+    () => mergeSearchPages(singleSearchQuery.data?.pages || []),
+    [singleSearchQuery.data?.pages]
+  );
   const singleGroup = useMemo<SearchGroup | null>(() => {
     if (!submittedSearchSourceIncluded) return null;
     if (singleExternalSearchUrl) {
@@ -600,7 +656,19 @@ export function useSearchController({
         nextPage: null
       };
     }
-    const merged = mergeSearchPages(singleSearchQuery.data?.pages || [], singleSearchQuery.error);
+    let merged = mergedSinglePages;
+    const error = singleSearchQuery.error;
+    if (merged && error instanceof SearchPageError) {
+      const failed = groupFromRemoteSearchResult(error.result);
+      merged = {
+        ...merged,
+        error: failed.error,
+        errorKind: failed.errorKind,
+        authNotice: failed.authNotice || merged.authNotice,
+        hasMore: error.page > 1 ? true : merged.hasMore,
+        nextPage: error.page > 1 ? error.page : merged.nextPage
+      };
+    }
     if (merged) {
       return {
         ...merged,
@@ -619,7 +687,7 @@ export function useSearchController({
     }
     return null;
   }, [
-    singleSearchQuery.data?.pages,
+    mergedSinglePages,
     singleSearchQuery.error,
     singleSearchQuery.isFetching,
     singleSearchQuery.isFetchingNextPage,
@@ -986,6 +1054,7 @@ export function useSearchController({
   const setSearchSource = useCallback(
     (source: FeedSource) => {
       if (source !== 'all' && !enabledSearchSourcesRef.current.includes(source)) return;
+      if (source !== 'all') promoteAggregateSearchPage(source);
       setSearchSourceState(() => source);
       setLinuxDoAiEnabled(false);
       setSubmittedSearch((current) =>
@@ -994,7 +1063,7 @@ export function useSearchController({
           : current
       );
     },
-    [searchFilters, searchQuery]
+    [promoteAggregateSearchPage, searchFilters, searchQuery]
   );
 
   const applySearchFilter = useCallback(

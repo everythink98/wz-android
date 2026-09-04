@@ -358,7 +358,12 @@ describe('Image preview controller', () => {
     let setSessionEpoch: ((epoch: number) => void) | undefined;
     const SessionEpochHarness = ({ children }: { children: ReactNode }) => {
       const [sessionEpoch, updateSessionEpoch] = useState(0);
-      setSessionEpoch = updateSessionEpoch;
+      useLayoutEffect(() => {
+        setSessionEpoch = updateSessionEpoch;
+        return () => {
+          setSessionEpoch = undefined;
+        };
+      }, []);
       return (
         <ForumSessionEpochProvider sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: sessionEpoch }}>
           {children}

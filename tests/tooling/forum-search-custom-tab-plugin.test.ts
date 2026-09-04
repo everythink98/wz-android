@@ -42,4 +42,13 @@ describe('forum search Custom Tab plugin', () => {
       ]
     });
   });
+
+  it('owns the AndroidX Browser dependency exactly once', () => {
+    const { injectCustomTabsDependency } = require('../../plugins/withForumSearchCustomTab') as {
+      injectCustomTabsDependency: (contents: string) => string;
+    };
+    const generated = injectCustomTabsDependency(injectCustomTabsDependency('dependencies {\n}'));
+
+    expect(generated.match(/androidx\.browser:browser:1\.10\.0/g)).toHaveLength(1);
+  });
 });

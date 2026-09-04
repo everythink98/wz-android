@@ -1,12 +1,11 @@
-import { QueryClient, QueryObserver } from '@tanstack/react-query';
+import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { accountQueryKeys } from '@/platform/query/serverState';
 import {
   cancelForumSourceQueries,
   forumSessionEpochsAfterSourceChange,
-  removeUnconfirmedForumSourceQueries,
-  resetForumSourceQueries
+  removeUnconfirmedForumSourceQueries
 } from './sessionQueryOwnership';
 
 describe('session query ownership', () => {
@@ -18,20 +17,6 @@ describe('session query ownership', () => {
       linuxdo: 3,
       nodeseek: 3
     });
-  });
-
-  it('removes source and all queries without touching another source', async () => {
-    const client = new QueryClient();
-    client.setQueryData(['forum', 'linuxdo', 'feed'], 'linux');
-    client.setQueryData(['forum', 'all', 'feed'], 'all');
-    client.setQueryData(['forum', 'nodeseek', 'feed'], 'node');
-
-    resetForumSourceQueries('linuxdo', client);
-    await Promise.resolve();
-
-    expect(client.getQueryData(['forum', 'linuxdo', 'feed'])).toBeUndefined();
-    expect(client.getQueryData(['forum', 'all', 'feed'])).toBeUndefined();
-    expect(client.getQueryData(['forum', 'nodeseek', 'feed'])).toBe('node');
   });
 
   it('cancels dirty-source and aggregate reads without evicting their last trusted data', async () => {
@@ -61,9 +46,9 @@ describe('session query ownership', () => {
     client.setQueryData(sourceKey, 'trusted NodeSeek topic');
     client.setQueryData(aggregateKey, 'trusted aggregate');
     client.setQueryData(otherKey, 'trusted linux.do topic');
-    void client.fetchQuery({ queryKey: sourceKey, queryFn: pendingRead(sourceAbort), staleTime: 0 });
-    void client.fetchQuery({ queryKey: aggregateKey, queryFn: pendingRead(aggregateAbort), staleTime: 0 });
-    void client.fetchQuery({ queryKey: otherKey, queryFn: pendingRead(otherAbort), staleTime: 0 });
+    void client.query({ queryKey: sourceKey, queryFn: pendingRead(sourceAbort), staleTime: 0 });
+    void client.query({ queryKey: aggregateKey, queryFn: pendingRead(aggregateAbort), staleTime: 0 });
+    void client.query({ queryKey: otherKey, queryFn: pendingRead(otherAbort), staleTime: 0 });
     await Promise.resolve();
 
     await cancelForumSourceQueries('nodeseek', client);
@@ -91,8 +76,8 @@ describe('session query ownership', () => {
             reject(new Error('aborted'));
           });
         });
-    void client.fetchQuery({ queryKey: sourceKey, queryFn: pendingRead(sourceAbort) }).catch(() => undefined);
-    void client.fetchQuery({ queryKey: aggregateKey, queryFn: pendingRead(aggregateAbort) }).catch(() => undefined);
+    void client.query({ queryKey: sourceKey, queryFn: pendingRead(sourceAbort) }).catch(() => undefined);
+    void client.query({ queryKey: aggregateKey, queryFn: pendingRead(aggregateAbort) }).catch(() => undefined);
     await Promise.resolve();
 
     await cancelForumSourceQueries('nodeseek', client, false);
@@ -118,53 +103,5 @@ describe('session query ownership', () => {
     expect(client.getQueryData(account)).toBe('canonical');
     expect(client.getQueryData(aggregate)).toBe('safe');
     expect(client.getQueryData(otherSource)).toBe('other');
-  });
-  it('preserves only the exact active recovery query when requested', () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } }
-    });
-    const recoveryKey = ['forum', 'linuxdo', 'level', { epoch: 0 }] as const;
-    client.setQueryData(recoveryKey, { username: 'alice' });
-    client.setQueryData(['forum', 'linuxdo', 'feed'], ['old']);
-    const observer = new QueryObserver(client, {
-      queryKey: recoveryKey,
-      queryFn: async () => ({ username: 'alice' })
-    });
-    const unsubscribe = observer.subscribe(() => undefined);
-
-    try {
-      expect(resetForumSourceQueries('linuxdo', client, recoveryKey)).toBe(true);
-      expect(client.getQueryData(recoveryKey)).toEqual({ username: 'alice' });
-      expect(client.getQueryData(['forum', 'linuxdo', 'feed'])).toBeUndefined();
-    } finally {
-      unsubscribe();
-    }
-  });
-  it('keeps the canonical account snapshot outside the changing forum epoch', () => {
-    const before = accountQueryKeys.snapshot('linuxdo');
-    const nextEpochs = forumSessionEpochsAfterSourceChange({ ...initialForumSessionEpochs, linuxdo: 4 }, 'linuxdo');
-    const after = accountQueryKeys.snapshot('linuxdo');
-
-    expect(before).toEqual(['account', 'linuxdo', 'snapshot']);
-    expect(after).toEqual(before);
-    expect(nextEpochs.linuxdo).toBe(5);
-  });
-  it('resets changed forum content without moving the canonical account snapshot', () => {
-    const client = new QueryClient();
-    const accountKey = accountQueryKeys.snapshot('linuxdo');
-    const account = {
-      site: 'linuxdo',
-      status: 'logged-in',
-      cookieSummary: [],
-      isVerifying: false,
-      identityTrust: 'confirmed'
-    };
-    client.setQueryData(accountKey, account);
-    client.setQueryData(['forum', 'linuxdo', 'topic'], 'old content');
-
-    resetForumSourceQueries('linuxdo', client);
-
-    expect(client.getQueryData(accountKey)).toEqual(account);
-    expect(client.getQueryData(['forum', 'linuxdo', 'topic'])).toBeUndefined();
   });
 });

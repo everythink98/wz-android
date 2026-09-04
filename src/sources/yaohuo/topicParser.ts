@@ -278,17 +278,21 @@ function removeNode(node: unknown) {
 }
 
 function trimYaohuoArticleBoundaries(root: HTMLElement) {
-  while (root.childNodes.length && isEmptyYaohuoBoundaryNode(root.childNodes[0])) removeNode(root.childNodes[0]);
-  while (root.childNodes.length && isEmptyYaohuoBoundaryNode(root.childNodes.at(-1)))
-    removeNode(root.childNodes.at(-1));
-  root.querySelectorAll('.forum-attachment').forEach((attachment) => {
-    const siblings = attachment.parentNode?.childNodes || [];
-    let index = siblings.indexOf(attachment);
-    while (index > 0 && isEmptyYaohuoBoundaryNode(siblings[index - 1])) {
-      removeNode(siblings[index - 1]);
-      index -= 1;
+  const attachments = new Set(root.querySelectorAll('.forum-attachment'));
+  const parents = new Set([root]);
+  for (const attachment of attachments) if (attachment.parentNode) parents.add(attachment.parentNode);
+  for (const parent of parents) {
+    const kept: typeof parent.childNodes = [];
+    let nonemptyEnd = 0;
+    for (const node of parent.childNodes) {
+      if (isHtmlElementNode(node) && attachments.has(node)) kept.length = nonemptyEnd;
+      const empty = isEmptyYaohuoBoundaryNode(node);
+      if (!empty || parent !== root || nonemptyEnd > 0) kept.push(node);
+      if (!empty) nonemptyEnd = kept.length;
     }
-  });
+    if (parent === root) kept.length = nonemptyEnd;
+    if (kept.length !== parent.childNodes.length) parent.set_content(kept);
+  }
 }
 
 function normalizeYaohuoTopicContent(root: HTMLElement) {

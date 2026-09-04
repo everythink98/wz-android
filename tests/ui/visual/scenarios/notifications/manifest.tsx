@@ -1,7 +1,8 @@
+import { projectTestAccountSessions } from '../../../../helpers/accountSessions';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import type { ForumNotification, NotificationDetail } from '@/domain/notifications/models';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import {
   NotificationDetailScreen,
   NotificationSettingsScreen,
@@ -159,7 +160,7 @@ function NotificationSettingsScenario({ state }: { state: NotificationSettingsSt
       busy={false}
       enabledSources={['linuxdo', 'nodeseek', 'yaohuo']}
       permission={enabled ? 'denied' : 'granted'}
-      sessions={createSiteSessionViewModels(createSiteSessionStates())}
+      sessions={projectTestAccountSessions(createSiteSessionStates())}
       state={notificationState(enabled)}
       onOpenSystemSettings={noop}
       onToggleGlobal={noop}

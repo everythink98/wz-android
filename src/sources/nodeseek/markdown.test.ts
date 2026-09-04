@@ -9,6 +9,18 @@ describe('NodeSeek Markdown', () => {
     expect(html).toContain('<a href="https://example.com/path">');
   });
 
+  it('linkifies bare domains and complete authenticated URLs', () => {
+    const html = nodeSeekMarkdownToHtml(
+      'www.nodeseek.com/post-1-1 example.com https://reader:secret@example.com/private'
+    );
+
+    expect(html).toContain('<a href="http://www.nodeseek.com/post-1-1">www.nodeseek.com/post-1-1</a>');
+    expect(html).toContain('<a href="http://example.com/">example.com</a>');
+    expect(html).toContain(
+      '<a href="https://reader:secret@example.com/private">https://reader:secret@example.com/private</a>'
+    );
+  });
+
   it('turns Composer GFM into one semantic header and complete body rows', () => {
     const html = nodeSeekMarkdownToHtml('| E | E | Q |\n| --- | --- | --- |\n| F | G | R |\n| T | G | U |');
 

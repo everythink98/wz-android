@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from 'react';
+import { useCallback, type RefObject } from 'react';
 import {
   clearRecords,
   removeFollowedUsers,
@@ -20,7 +20,7 @@ export function useReaderDataActionsController({
   readerDataRef
 }: {
   commitReaderData: CommitReaderData;
-  readerDataRef: MutableRefObject<ReaderData>;
+  readerDataRef: RefObject<ReaderData>;
 }) {
   const toggleTopicFavorite = useCallback(
     (topic: Topic) => {

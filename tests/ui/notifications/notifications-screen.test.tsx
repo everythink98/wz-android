@@ -1,7 +1,8 @@
+import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { Dimensions, ScrollView, StyleSheet } from 'react-native';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import type { ForumNotification } from '@/domain/notifications/models';
@@ -104,6 +105,7 @@ jest.mock('@gorhom/bottom-sheet', () => {
 let mockSafeAreaBottom = 0;
 let mockSafeAreaTop = 0;
 let mockNotificationFlashListExtraData: unknown;
+let mockNotificationFlashListData: unknown;
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: mockSafeAreaBottom, left: 0, right: 0, top: mockSafeAreaTop })
@@ -137,6 +139,7 @@ jest.mock('@shopify/flash-list', () => {
       testID?: string;
     }) => {
       mockNotificationFlashListExtraData = extraData;
+      mockNotificationFlashListData = data;
       const refreshHandler = ReactModule.isValidElement<{ onRefresh?: () => void }>(refreshControl)
         ? refreshControl.props.onRefresh
         : undefined;
@@ -213,6 +216,17 @@ function notificationState(globalEnabled = true): NotificationState {
 }
 
 describe('notification screens', () => {
+  it('reuses visible items across loading changes and equivalent source membership', async () => {
+    const props = listProps();
+    const view = await render(<NotificationsScreen {...props} />);
+    const visible = mockNotificationFlashListData;
+    await view.rerender(
+      <NotificationsScreen {...props} refreshing activeSources={['yaohuo', 'linuxdo', 'nodeseek']} />
+    );
+    expect(mockNotificationFlashListData).toBe(visible);
+    await view.rerender(<NotificationsScreen {...props} activeSources={['linuxdo']} />);
+    expect(mockNotificationFlashListData).toEqual([]);
+  });
   it('invalidates the mounted message list when reader appearance changes', async () => {
     const darkSettings: ReaderSettings = { ...createEmptyReaderData().settings, theme: 'dark' };
     const lightSettings: ReaderSettings = { ...darkSettings, theme: 'light' };
@@ -952,7 +966,7 @@ describe('notification screens', () => {
         busy={false}
         enabledSources={['linuxdo', 'nodeseek']}
         permission="granted"
-        sessions={createSiteSessionViewModels(createSiteSessionStates())}
+        sessions={projectTestAccountSessions(createSiteSessionStates())}
         state={notificationState()}
         onOpenSystemSettings={jest.fn()}
         onToggleGlobal={jest.fn()}
@@ -977,7 +991,7 @@ describe('notification screens', () => {
         busy={false}
         enabledSources={['nodeseek', 'linuxdo', 'yaohuo']}
         permission="granted"
-        sessions={createSiteSessionViewModels(createSiteSessionStates())}
+        sessions={projectTestAccountSessions(createSiteSessionStates())}
         state={notificationState()}
         onOpenSystemSettings={jest.fn()}
         onToggleGlobal={jest.fn()}
@@ -996,7 +1010,7 @@ describe('notification screens', () => {
   });
 
   it('keeps a signed-in LinuxDo notification source available while its account check runs', async () => {
-    const sessions = createSiteSessionViewModels(
+    const sessions = projectTestAccountSessions(
       createSiteSessionStates({
         linuxdo: {
           site: 'linuxdo',
@@ -1033,7 +1047,7 @@ describe('notification screens', () => {
   });
 
   it('shows terminal unknown as retryable instead of logged out', async () => {
-    const sessions = createSiteSessionViewModels(createSiteSessionStates());
+    const sessions = projectTestAccountSessions(createSiteSessionStates());
     sessions.yaohuo = { ...sessions.yaohuo, identityTrust: 'unknown' };
     const view = await render(
       <NotificationSettingsScreen
@@ -1063,7 +1077,7 @@ describe('notification screens', () => {
         busy={false}
         enabledSources={['nodeseek', 'linuxdo', 'yaohuo']}
         permission="denied"
-        sessions={createSiteSessionViewModels(createSiteSessionStates())}
+        sessions={projectTestAccountSessions(createSiteSessionStates())}
         state={notificationState()}
         onOpenSystemSettings={onOpenSystemSettings}
         onToggleGlobal={jest.fn()}

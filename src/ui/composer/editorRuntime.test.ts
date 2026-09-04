@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Editor } from '@tiptap/core';
+import { markdown as markdownLanguage } from '@codemirror/lang-markdown';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
@@ -91,6 +92,62 @@ async function mountRuntime({
 }
 
 describe('Composer editor runtime codec', () => {
+  it.each(['nodeseek', 'linuxdo'] as const)(
+    'recovers failed %s expressions without inserting or replacing successful images',
+    async (site) => {
+      const { host, send, postMessage } = await mountRuntime({
+        site,
+        markdown: 'draft',
+        discourseEmoji: [
+          { name: 'first', url: 'https://linux.do/first.png' },
+          { name: 'second', url: 'https://linux.do/second.png' }
+        ]
+      });
+      const open = () => host.querySelector<HTMLButtonElement>('button[aria-label="表情"]')!.click();
+      await act(async () => open());
+      const panel = host.querySelector<HTMLElement>('[data-expression-cache]')!;
+      const buttons = panel.querySelectorAll<HTMLButtonElement>('.expression-grid:not([hidden]) button');
+      const failedButton = buttons[0]!;
+      const successButton = buttons[1]!;
+      const failed = failedButton.querySelector('img')!;
+      const success = successButton.querySelector('img')!;
+      const label = failedButton.getAttribute('aria-label')!;
+      const body = panel.querySelector<HTMLElement>('.builder-body')!;
+      body.scrollTop = 180;
+      await act(async () => {
+        success.dispatchEvent(new Event('load'));
+        failed.dispatchEvent(new Event('error'));
+      });
+      expect(failedButton.getAttribute('aria-label')).toBe(`${label}，加载失败，点击重试`);
+      await act(async () => failedButton.click());
+      const retried = failedButton.querySelector('img')!;
+      expect(retried).not.toBe(failed);
+      expect(retried.getAttribute('src')).toBe(failed.getAttribute('src'));
+      expect(panel.hidden).toBe(false);
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'retry-does-not-insert' } });
+      expect(
+        postMessage.mock.calls
+          .map(([raw]) => JSON.parse(String(raw)))
+          .findLast((event) => event.payload?.requestId === 'retry-does-not-insert').payload.snapshot.markdown
+      ).toBe('draft');
+      await act(async () => {
+        failed.dispatchEvent(new Event('error'));
+        retried.dispatchEvent(new Event('error'));
+      });
+      await act(async () => panel.querySelector<HTMLButtonElement>('button[aria-label="关闭"]')!.click());
+      await act(async () => open());
+      const reopened = failedButton.querySelector('img')!;
+      expect(reopened).not.toBe(retried);
+      expect(successButton.querySelector('img')).toBe(success);
+      expect(body.scrollTop).toBe(180);
+      await act(async () => reopened.dispatchEvent(new Event('error')));
+      expect(failedButton.querySelector('img')).toBe(reopened);
+      await act(async () => failedButton.click());
+      await act(async () => failedButton.querySelector('img')!.dispatchEvent(new Event('load')));
+      await act(async () => failedButton.click());
+      expect(panel.hidden).toBe(true);
+    }
+  );
   const editors: Editor[] = [];
   afterEach(async () => {
     editors.splice(0).forEach((editor) => editor.destroy());
@@ -105,6 +162,108 @@ describe('Composer editor runtime codec', () => {
     vi.unstubAllGlobals();
     document.querySelectorAll('style[data-tiptap-style]').forEach((node) => node.remove());
     document.querySelectorAll('[data-editor-runtime-test-style]').forEach((node) => node.remove());
+  });
+
+  it('revalidates identical Markdown after account and pending-poll state changes', async () => {
+    const markdown =
+      '`literal`\n\n<!-- wz:nodeseek-poll:local1234 -->\n\nnsapp://stardust-receive?member_id=123&ref_id=100&diff=5&description=test&onetime=true';
+    const { send, postMessage } = await mountRuntime({
+      markdown,
+      mode: 'source',
+      site: 'nodeseek',
+      nodeSeekMemberId: '123'
+    });
+    const snapshot = async (requestId: string) => {
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId } });
+      return postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((entry) => entry.payload?.requestId === requestId).payload.snapshot.validationIssues;
+    };
+    expect(await snapshot('missing-sidecar')).toEqual([expect.objectContaining({ code: 'missing-poll-sidecar' })]);
+    await send({
+      type: 'INIT',
+      payload: {
+        site: 'nodeseek',
+        intentKind: 'reply',
+        markdown,
+        mode: 'source',
+        theme: TEST_THEME,
+        nodeSeekMemberId: '456',
+        pendingNodeSeekPolls: [
+          {
+            localId: 'local1234',
+            fingerprint: '0123456789abcdef',
+            title: '投票',
+            multiple: false,
+            isPublic: false,
+            options: ['A', 'B']
+          }
+        ]
+      }
+    });
+    expect(await snapshot('changed-account')).toEqual([
+      expect.objectContaining({ code: 'stardust-receiver-mismatch' })
+    ]);
+    expect(await snapshot('repeated-account')).toEqual([
+      expect.objectContaining({ code: 'stardust-receiver-mismatch' })
+    ]);
+  });
+
+  it.each([
+    ['İ [DeTaIlS]broken', 2, 'linuxdo-details'],
+    ['İİ [PoLl]broken', 3, 'linuxdo-poll']
+  ])('keeps UTF-16 error positions in %s', async (markdown, from, code) => {
+    const { send, postMessage } = await mountRuntime({ markdown: String(markdown), mode: 'source' });
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'unicode-offset' } });
+    const snapshot = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((entry) => entry.payload?.requestId === 'unicode-offset');
+    expect(snapshot.payload.snapshot.validationIssues).toContainEqual(expect.objectContaining({ code, from }));
+  });
+
+  it.each(['[details]broken', '`[details]code`\n\n[details]broken'])(
+    'reuses a complete code-range result for repeated snapshots of %s',
+    async (markdown) => {
+      const { send, postMessage } = await mountRuntime({ markdown, mode: 'source' });
+      const parser = vi.spyOn(Object.getPrototypeOf(markdownLanguage().language.parser), 'parse');
+      for (const requestId of ['first-check', 'second-check'])
+        await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId } });
+      const snapshots = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .filter((entry) => /^(first|second)-check$/.test(entry.payload?.requestId || ''));
+      expect(snapshots).toHaveLength(2);
+      expect(snapshots[1].payload.snapshot.validationIssues).toEqual(snapshots[0].payload.snapshot.validationIssues);
+      expect(parser.mock.calls.filter(([input]) => input === markdown)).toHaveLength(markdown.includes('`') ? 1 : 0);
+    }
+  );
+
+  it.each([
+    ['[spoiler]İİ[/spoiler]TAIL', '[spoiler]İİ[/spoiler]', 'TAIL'],
+    ['[details]İ[/details]\nNEXT', '[details]İ[/details]', 'NEXT'],
+    ['İ\n\n[details]x[/details]', '[details]x[/details]', 'İ']
+  ])('keeps Unicode private blocks and adjacent editable text intact in %s', (markdown, raw, adjacent) => {
+    const editor = new Editor({
+      extensions: composerEditorExtensions,
+      content: markdown,
+      contentType: 'markdown',
+      injectCSS: false
+    });
+    editors.push(editor);
+    const nodes = editor.getJSON().content || [];
+    expect(nodes.find((node) => node.type === 'forumPrivateBlock')?.attrs?.raw.trimEnd()).toBe(raw);
+    expect(
+      nodes
+        .filter((node) => node.type === 'paragraph')
+        .flatMap((node) => node.content || [])
+        .map((node) => ('text' in node ? node.text || '' : ''))
+        .join('')
+    ).toContain(adjacent);
+    expect(editor.getMarkdown()).toContain(raw);
+    if (raw === '[details]İ[/details]') {
+      const html = document.createElement('div');
+      html.innerHTML = editor.getHTML();
+      expect(html.querySelector('.card-body')?.textContent).toBe('İ');
+    }
   });
 
   it('round-trips GFM tables and protected site nodes as Markdown', () => {
@@ -216,6 +375,18 @@ describe('Composer editor runtime codec', () => {
     );
     await act(async () => root.unmount());
     host.remove();
+  });
+
+  it('preserves mixed-case validation offsets after repeated closed blocks', async () => {
+    const prefix = '[DeTaIlS=x]body[/DETAILS]\n'.repeat(500) + '`[POLL`\n\n';
+    const { postMessage, send } = await mountRuntime({ markdown: prefix + '[SpOiLeR', mode: 'source' });
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'large-validation' } });
+    const snapshot = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((entry) => entry.type === 'SNAPSHOT');
+    expect(snapshot.payload.snapshot.validationIssues).toEqual([
+      { code: 'linuxdo-spoiler', message: '[spoiler 缺少 [/spoiler]', from: prefix.length, to: prefix.length + 8 }
+    ]);
   });
 
   it('keeps a legacy Stardust card readable but blocks publishing its invalid Ref', async () => {

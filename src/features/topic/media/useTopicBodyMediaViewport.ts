@@ -95,7 +95,7 @@ function createViewportItemMetadata(items: readonly TopicListItem[]): ViewportIt
 }
 
 function sameKeys(left: readonly string[], right: readonly string[]) {
-  return left.length === right.length && left.every((key, index) => key === right[index]);
+  return left === right || (left.length === right.length && left.every((key, index) => key === right[index]));
 }
 
 function sameSnapshot(left: ViewportSnapshot, right: ViewportSnapshot) {
@@ -207,7 +207,8 @@ export function useTopicBodyMediaViewport({
   sessionIdentity: string;
 }) {
   const [snapshot, setSnapshot] = useState<ViewportSnapshot>(() => emptySnapshot(sessionIdentity));
-  const previousVisibleRef = useRef({ firstIndex: -1, sessionIdentity });
+  const snapshotRef = useRef(snapshot);
+  const previousVisibleRef = useRef({ firstIndex: -1, scrollingForward: true, sessionIdentity });
   const itemMetadata = useMemo(() => createViewportItemMetadata(items), [items]);
   const reconciledSnapshot = useMemo(
     () => reconcileSnapshot(snapshot, items, itemMetadata, sessionIdentity),
@@ -215,6 +216,7 @@ export function useTopicBodyMediaViewport({
   );
 
   useLayoutEffect(() => {
+    snapshotRef.current = reconciledSnapshot;
     if (!sameSnapshot(snapshot, reconciledSnapshot)) setSnapshot(reconciledSnapshot);
   }, [reconciledSnapshot, snapshot]);
 
@@ -234,11 +236,12 @@ export function useTopicBodyMediaViewport({
       const firstVisibleIndex = visibleIndexes[0];
       const previous = previousVisibleRef.current;
       const scrollingForward =
-        previous.sessionIdentity !== sessionIdentity ||
-        firstVisibleIndex === undefined ||
-        previous.firstIndex < 0 ||
-        firstVisibleIndex >= previous.firstIndex;
-      previousVisibleRef.current = { firstIndex: firstVisibleIndex ?? -1, sessionIdentity };
+        previous.sessionIdentity !== sessionIdentity || previous.firstIndex < 0
+          ? true
+          : firstVisibleIndex === undefined || firstVisibleIndex === previous.firstIndex
+            ? previous.scrollingForward
+            : firstVisibleIndex > previous.firstIndex;
+      previousVisibleRef.current = { firstIndex: firstVisibleIndex ?? -1, scrollingForward, sessionIdentity };
 
       const visibleRowKeys = visibleIndexes
         .map((index) => items[index]?.key)
@@ -249,13 +252,16 @@ export function useTopicBodyMediaViewport({
       const activeRegionIdentities = [
         ...new Set(visibleIndexes.flatMap((index) => (items[index] ? dynamicRegionIdentities(items[index]) : [])))
       ];
-      setSnapshot({
+      const nextSnapshot = {
         regions: activeRegionIdentities.map((identity) => ({ identity, rowKeys: membership.get(identity) || [] })),
         rowKeys,
         scrollingForward,
         sessionIdentity,
         visibleRowKeys
-      });
+      };
+      if (sameSnapshot(snapshotRef.current, nextSnapshot)) return;
+      snapshotRef.current = nextSnapshot;
+      setSnapshot((current) => (sameSnapshot(current, nextSnapshot) ? current : nextSnapshot));
     },
     [itemMetadata, items, sessionIdentity]
   );

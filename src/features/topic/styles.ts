@@ -788,9 +788,6 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
       paddingHorizontal: 6,
       paddingVertical: 3
     },
-    replyOrderButtonPressed: {
-      backgroundColor: theme.mist
-    },
     replyOrderButtonText: {
       color: theme.primary,
       fontFamily: appFontFamily,

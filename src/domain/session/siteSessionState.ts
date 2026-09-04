@@ -59,16 +59,15 @@ export type SiteSessionEvent =
       hasVerification?: boolean;
       loggedIn?: boolean;
       currentUser?: UserProfile | null;
-      recoveryQueryKey?: readonly unknown[];
       at?: string;
     }
   | { type: 'verification-required'; message?: string; at?: string }
   | { type: 'verification-started'; at?: string }
   | { type: 'authorization-started'; at?: string }
-  | { type: 'login-expired'; message?: string; recoveryQueryKey?: readonly unknown[]; at?: string }
+  | { type: 'login-expired'; message?: string; at?: string }
   | { type: 'check-failed'; message: string; at?: string }
   | { type: 'recovery-failed'; message: string; at?: string }
-  | { type: 'cleared'; recoveryQueryKey?: readonly unknown[]; at?: string };
+  | { type: 'cleared'; at?: string };
 export type ScopedSiteSessionEvent = SiteSessionEvent & { site: SessionSite };
 
 export function siteSessionIdentityKey(session: Pick<SiteSessionState, 'currentUser' | 'site' | 'status'>) {
@@ -421,10 +420,4 @@ export function nodeSeekUserIdForSession(state: SiteSessionViewModel) {
   }
   const currentUserId = Number(state.currentUser?.id);
   return Number.isInteger(currentUserId) && currentUserId > 0 ? currentUserId : null;
-}
-
-export function createSiteSessionViewModels(states: SiteSessionStates): SiteSessionViewModels {
-  return Object.fromEntries(
-    sessionSources.map((site) => [site, createSiteSessionViewModel(states[site])])
-  ) as SiteSessionViewModels;
 }

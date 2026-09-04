@@ -5,6 +5,7 @@ import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntim
 import type { NetworkProxyProfile, NetworkProxyState } from '@/platform/network/networkProxy';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
+import * as SecureStore from 'expo-secure-store';
 
 const mockLoadNetworkProxyState = jest.fn<() => Promise<NetworkProxyState>>();
 const mockSaveNetworkProxyState = jest.fn<(state: NetworkProxyState) => Promise<NetworkProxyState>>();
@@ -75,6 +76,29 @@ describe('network proxy controller', () => {
     expect(mockApplyNetworkProxy).toHaveBeenCalledWith(null);
     expect(hook.result.current.applyStatus).toBe('disabled');
     await expect(hook.result.current.ensureNetworkProxyReady()).resolves.toBeUndefined();
+  });
+
+  it('blocks transport and native direct apply when the persisted active proxy is missing', async () => {
+    const actual = jest.requireActual<typeof import('@/platform/network/networkProxy')>(
+      '@/platform/network/networkProxy'
+    );
+    const stored = jest
+      .spyOn(SecureStore, 'getItemAsync')
+      .mockResolvedValueOnce(JSON.stringify({ enabled: true, activeId: 'lost', profiles: [] }));
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+    mockLoadNetworkProxyState.mockImplementationOnce(actual.loadNetworkProxyState);
+    try {
+      const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn() }));
+      await waitFor(() => expect(hook.result.current.applyStatus).toBe('failed'));
+      await expect(hook.result.current.networkProxyFetcher('https://example.invalid/private')).rejects.toThrow(
+        '代理配置读取失败'
+      );
+      expect(mockApplyNetworkProxy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      stored.mockRestore();
+      fetchSpy.mockRestore();
+    }
   });
 
   it('releases an already-waiting request fail-closed when the saved proxy read times out', async () => {

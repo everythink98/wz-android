@@ -1,4 +1,9 @@
-const { withAndroidManifest, withDangerousMod, withMainApplication } = require('@expo/config-plugins');
+const {
+  withAndroidManifest,
+  withAppBuildGradle,
+  withDangerousMod,
+  withMainApplication
+} = require('@expo/config-plugins');
 const fs = require('node:fs');
 const path = require('node:path');
 const { androidPackagePath, injectMainApplicationPackage } = require('./androidPackageRegistration');
@@ -90,17 +95,28 @@ class ForumSearchCustomTabModule(private val reactContext: ReactApplicationConte
 function forumSearchCustomTabPackageSource(packageName) {
   return `package ${packageName}
 
-import com.facebook.react.ReactPackage
+import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.uimanager.ViewManager
+import com.facebook.react.module.model.ReactModuleInfo
+import com.facebook.react.module.model.ReactModuleInfoProvider
 
-class ForumSearchCustomTabPackage : ReactPackage {
-  override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
-    listOf(ForumSearchCustomTabModule(reactContext))
+class ForumSearchCustomTabPackage : BaseReactPackage() {
+  override fun getModule(name: String, reactContext: ReactApplicationContext): NativeModule? =
+    if (name == "ForumSearchCustomTabModule") ForumSearchCustomTabModule(reactContext) else null
 
-  override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
-    emptyList()
+  override fun getReactModuleInfoProvider(): ReactModuleInfoProvider = ReactModuleInfoProvider {
+    mapOf(
+      "ForumSearchCustomTabModule" to ReactModuleInfo(
+        "ForumSearchCustomTabModule",
+        ForumSearchCustomTabModule::class.java.name,
+        false,
+        false,
+        false,
+        false,
+      )
+    )
+  }
 }
 `;
 }
@@ -141,7 +157,22 @@ function ensureCustomTabsQuery(manifest) {
   manifest.manifest.queries = queries;
 }
 
+function injectCustomTabsDependency(contents) {
+  const dependency = 'androidx.browser:browser:1.10.0';
+  if (contents.includes(dependency)) return contents;
+  const dependenciesPattern = /dependencies\s*\{/;
+  if (!dependenciesPattern.test(contents)) {
+    throw new Error('无法注入 AndroidX Browser 依赖：app build.gradle 模板不匹配。');
+  }
+  return contents.replace(dependenciesPattern, (match) => `${match}\n    implementation("${dependency}")`);
+}
+
 function withForumSearchCustomTab(config) {
+  config = withAppBuildGradle(config, (config) => {
+    config.modResults.contents = injectCustomTabsDependency(config.modResults.contents);
+    return config;
+  });
+
   config = withAndroidManifest(config, (config) => {
     ensureCustomTabsQuery(config.modResults);
     return config;
@@ -185,3 +216,4 @@ function withForumSearchCustomTab(config) {
 module.exports = withForumSearchCustomTab;
 module.exports.forumSearchCustomTabModuleSource = forumSearchCustomTabModuleSource;
 module.exports.ensureCustomTabsQuery = ensureCustomTabsQuery;
+module.exports.injectCustomTabsDependency = injectCustomTabsDependency;

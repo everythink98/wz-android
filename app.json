@@ -6,7 +6,6 @@
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "platforms": ["android"],
-    "newArchEnabled": true,
     "userInterfaceStyle": "light",
     "extra": {
       "releaseSignerSha256": "6cb2f2a6034e18b7b82315e46e515b909817b9a211ee0f02c3c39224ef5bdd66"
@@ -14,18 +13,30 @@
     "android": {
       "package": "com.wz.reader",
       "versionCode": 138,
-      "blockedPermissions": [
-        "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.READ_MEDIA_AUDIO",
-        "android.permission.READ_MEDIA_VIDEO"
-      ],
+      "blockedPermissions": ["android.permission.SYSTEM_ALERT_WINDOW"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       }
     },
     "plugins": [
-      "./plugins/withAndroidReleaseDefaults",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "buildReactNativeFromSource": true,
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ],
+      [
+        "expo-dev-client",
+        {
+          "toolsButton": false
+        }
+      ],
+      "./plugins/withAndroidGradleJvmMemory",
       "./plugins/withApkInstaller",
       "./plugins/withForumSearchCustomTab",
       "./plugins/withSecureRandomModule",
@@ -53,7 +64,6 @@
           "defaultChannel": "message-notifications"
         }
       ],
-      "expo-video",
       "@react-native-community/datetimepicker"
     ]
   }

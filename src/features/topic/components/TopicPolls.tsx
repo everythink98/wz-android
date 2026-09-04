@@ -5,9 +5,8 @@ import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-na
 import type { Source, TopicPoll } from '@/domain/forum/models';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { pollParticipationLabel, pollTotalVotes } from '@/domain/forum/topicPollDisplay';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
-import { triggerPressFeedback } from '@/ui/controls/pressFeedback';
 import type { TopicActionDecisionFor } from '../actions/topicActionDecision';
 
 function topicPollKey(poll: TopicPoll, index: number) {
@@ -172,7 +171,6 @@ export function TopicPolls({
                     key={getMappingKey(option.id, optionIndex)}
                     accessibilityRole={poll.multiple ? 'checkbox' : 'radio'}
                     accessibilityState={{ checked: selected, disabled: pollOptionDisabled }}
-                    android_ripple={androidRipple(theme.primarySoft)}
                     disabled={pollOptionDisabled}
                     style={[
                       styles.pollOptionRow,
@@ -180,7 +178,6 @@ export function TopicPolls({
                       selected && styles.pollOptionRowSelected
                     ]}
                     onPress={() => {
-                      triggerPressFeedback();
                       onTogglePollSelection(pollKey, poll, option.id);
                     }}
                   >

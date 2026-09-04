@@ -1,3 +1,4 @@
+import { projectTestAccountSessions, testAccountUser } from '../../helpers/accountSessions';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -51,7 +52,6 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   createSiteSessionStates,
-  createSiteSessionViewModels,
   type ScopedSiteSessionEvent,
   type SiteSessionStates,
   type SiteSessionViewModels
@@ -120,7 +120,7 @@ type ActionSource = Exclude<Source, 'v2ex'>;
 function loggedInStates(source: ActionSource = 'nodeseek') {
   const states = createSiteSessionStates();
   return createSiteSessionStates({
-    [source]: { ...states[source], status: 'logged-in' as const }
+    [source]: { ...states[source], status: 'logged-in' as const, currentUser: testAccountUser(source) }
   } as Partial<SiteSessionStates>);
 }
 
@@ -136,7 +136,7 @@ function nodeSeekLoggedInViewModels() {
       topics: []
     }
   };
-  return createSiteSessionViewModels(states);
+  return projectTestAccountSessions(states);
 }
 
 function stardustStatusResponse(records: Record<string, unknown>[] = []) {
@@ -233,6 +233,9 @@ async function renderActions({
   const hook = await renderNativeHook(
     (props: { active?: boolean; sessionEpochs: ForumSessionEpochs; topicReplies?: Reply[] }) => {
       const topicSession = useTopicSessionController({ notify, topic: topicDetail });
+      const sessionViews =
+        siteSessionViewModels ||
+        projectTestAccountSessions(siteSessionStates || loggedInStates(topicDetail.source as ActionSource));
       const actions = useTopicActionsController({
         active: props.active ?? active,
         sessionEpochs: props.sessionEpochs,
@@ -243,7 +246,7 @@ async function renderActions({
           ensureWritableSession ||
           (async (source) => ({
             source,
-            identityKey: `${source}:test-user`,
+            identityKey: `${source}:${sessionViews[source].currentUser?.id}`,
             sessionEpoch: props.sessionEpochs[source]
           })),
         fetcher,
@@ -262,9 +265,7 @@ async function renderActions({
           })
         },
         refreshTopicReplies,
-        siteSessionViewModels:
-          siteSessionViewModels ||
-          createSiteSessionViewModels(siteSessionStates || loggedInStates(topicDetail.source as ActionSource)),
+        siteSessionViewModels: sessionViews,
         topicDetail,
         topicReplies: props.topicReplies ?? topicReplies,
         topicSession
@@ -332,13 +333,13 @@ describe('topic action query mutations', () => {
     });
     const hook = await renderActions({
       siteSessionStates: workflowStates,
-      siteSessionViewModels: createSiteSessionViewModels(accountStates),
+      siteSessionViewModels: projectTestAccountSessions(accountStates),
       topicDetail: detailFor('linuxdo')
     });
 
     expect(hook.result.current.actions.decisionFor({ action: 'reply' })).toEqual({
       allowed: false,
-      reason: 'login-required'
+      reason: 'identity-unavailable'
     });
   });
 
@@ -2702,6 +2703,45 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('结果未知'));
   });
+
+  it.each(['storage failure', 'invalid JSON', 'invalid structure', 'invalid entry'])(
+    'blocks poll retry after %s without losing the journal',
+    async (failure) => {
+      const snapshot = snapshotWithNodeSeekPoll('poll_storage_01');
+      const notify = jest.fn();
+      mockRunNodeSeekAction.mockResolvedValueOnce({ id: 3023 }).mockRejectedValueOnce(new Error('reply failed'));
+      const hook = await renderActions({ notify });
+      await act(async () => {
+        await hook.result.current.actions.submitReply(snapshot);
+      });
+      const getItem = AsyncStorage.getItem.bind(AsyncStorage);
+      const journalKey = (await AsyncStorage.getAllKeys()).find((key) =>
+        key.startsWith('wz:composer:nodeseek-polls:')
+      )!;
+      const saved = await getItem(journalKey);
+      const read = jest.spyOn(AsyncStorage, 'getItem').mockImplementation(async (key) => {
+        if (key !== journalKey) return getItem(key);
+        if (failure === 'storage failure') throw new Error('storage unavailable');
+        return failure === 'invalid JSON'
+          ? '{broken'
+          : failure === 'invalid structure'
+            ? '{}'
+            : '[{"localId":"poll_storage_01"}]';
+      });
+      mockRunNodeSeekAction.mockClear();
+      notify.mockClear();
+      try {
+        await act(async () => {
+          await hook.result.current.actions.submitReply(snapshot);
+        });
+        expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
+        expect(notify).toHaveBeenCalled();
+      } finally {
+        read.mockRestore();
+      }
+      expect(await getItem(journalKey)).toBe(saved);
+    }
+  );
 
   it('never downgrades a known remote poll id to an unknown result', async () => {
     const identityKey = 'nodeseek:test-user';

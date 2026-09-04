@@ -1,5 +1,6 @@
+import { projectTestAccountSessions } from '../../../../helpers/accountSessions';
 import type { SessionSite, SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { AccountCenterPanel } from '@/features/more/components/AccountCenterPanel';
 import { LinuxDoLevelPanel } from '@/features/more/components/LinuxDoLevelPanel';
 import { NodeSeekServicesPanel } from '@/features/more/components/NodeSeekServicesPanel';
@@ -14,11 +15,11 @@ const noop = () => undefined;
 const noopAsync = async () => undefined;
 
 function createAnonymousSessions() {
-  return createSiteSessionViewModels(createSiteSessionStates());
+  return projectTestAccountSessions(createSiteSessionStates());
 }
 
 function createLoggedInSessions() {
-  return createSiteSessionViewModels(
+  return projectTestAccountSessions(
     createSiteSessionStates({
       nodeseek: {
         site: 'nodeseek',
@@ -59,7 +60,7 @@ function createLoggedInSessions() {
 }
 
 function createMixedSessions() {
-  return createSiteSessionViewModels(
+  return projectTestAccountSessions(
     createSiteSessionStates({
       nodeseek: {
         site: 'nodeseek',

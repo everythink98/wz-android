@@ -1,3 +1,4 @@
+import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render as renderNative, waitFor } from '../render';
 import React, { useState } from 'react';
@@ -12,7 +13,7 @@ import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { aggregateSearchSources, isSessionSource } from '@/domain/forum/sourceCatalog';
 import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
-import { createSiteSessionStates, createSiteSessionViewModels } from '@/domain/session/siteSessionState';
+import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
 import { appQueryClient } from '@/platform/query/serverState';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -23,6 +24,8 @@ const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: b
 const mockSearchNavigationDispatch = jest.fn();
 let lastSearchListData: readonly unknown[] = [];
 let mockSearchFlashListExtraData: unknown;
+let lastSearchListSeparatorComponent:
+  ((props: { leadingItem: unknown; trailingItem: unknown }) => React.ReactNode) | null = null;
 
 jest.mock('@react-navigation/native', () => ({
   ...(jest.requireActual('@react-navigation/native') as Record<string, unknown>),
@@ -31,9 +34,7 @@ jest.mock('@react-navigation/native', () => ({
   useScrollToTop: () => undefined
 }));
 
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
-);
+jest.mock('@react-native-async-storage/async-storage', () => require('@react-native-async-storage/async-storage/jest'));
 
 function render(element: React.ReactElement) {
   return renderNative(element, { wrapper: QueryTestWrapper });
@@ -54,6 +55,7 @@ jest.mock('@shopify/flash-list', () => {
         extraData,
         ListEmptyComponent,
         ListHeaderComponent,
+        ItemSeparatorComponent,
         onScrollBeginDrag,
         onViewableItemsChanged,
         renderItem,
@@ -67,6 +69,7 @@ jest.mock('@shopify/flash-list', () => {
         keyExtractor?: (item: unknown, index: number) => string;
         ListEmptyComponent?: React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
+        ItemSeparatorComponent?: (props: { leadingItem: unknown; trailingItem: unknown }) => React.ReactNode;
         onScrollBeginDrag?: () => void;
         onViewableItemsChanged?: (info: { viewableItems: unknown[]; changed: unknown[] }) => void;
         renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
@@ -80,6 +83,7 @@ jest.mock('@shopify/flash-list', () => {
     ) {
       lastSearchListData = data;
       mockSearchFlashListExtraData = extraData;
+      lastSearchListSeparatorComponent = ItemSeparatorComponent || null;
       ReactModule.useImperativeHandle(ref, () => ({
         recordInteraction: () => undefined,
         recomputeViewableItems: () => undefined,
@@ -124,13 +128,18 @@ jest.mock('lucide-react-native', () => ({
 jest.mock('@react-native-community/datetimepicker', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
-  return function MockDateTimePicker({ onChange }: { onChange: (event: { type: string }, date?: Date) => void }) {
+  return function MockDateTimePicker({
+    onValueChange
+  }: {
+    onValueChange: (event: { nativeEvent: { timestamp: number; utcOffset: number } }, date: Date) => void;
+  }) {
+    const selectedDate = new Date(2026, 6, 1);
     return ReactModule.createElement(
       NativePressable,
       {
         accessibilityRole: 'button',
         accessibilityLabel: '确认日期 2026-07-01',
-        onPress: () => onChange({ type: 'set' }, new Date(2026, 6, 1))
+        onPress: () => onValueChange({ nativeEvent: { timestamp: selectedDate.getTime(), utcOffset: 0 } }, selectedDate)
       },
       ReactModule.createElement(NativeText, null, '确认日期')
     );
@@ -492,7 +501,7 @@ describe('Search state', () => {
   it('keeps settled route results stable across an unrelated runtime rerender', async () => {
     appQueryClient.clear();
     const enabledSources = ['v2ex', 'yaohuo'] as const;
-    const sessionViewModels = createSiteSessionViewModels(createSiteSessionStates());
+    const sessionViewModels = projectTestAccountSessions(createSiteSessionStates());
     const loginMessage = '妖火需要登录后使用此功能。';
     const searchTopics = jest.fn<ReadGateway['searchTopics']>(async ({ source }) => {
       if (source === 'yaohuo') {
@@ -554,7 +563,7 @@ describe('Search state', () => {
   it('gates candidate reads by the selected source during linux.do verification', async () => {
     appQueryClient.clear();
     const enabledSources = ['linuxdo'] as const;
-    const sessionViewModels = createSiteSessionViewModels(
+    const sessionViewModels = projectTestAccountSessions(
       createSiteSessionStates({
         linuxdo: {
           site: 'linuxdo',
@@ -668,8 +677,18 @@ describe('Search state', () => {
     const onSearch = jest.fn<(queryOverride?: string) => void>();
     const view = await render(<RecentSearchHarness onRemoveRecentSearch={onRemoveRecentSearch} onSearch={onSearch} />);
 
+    expect(lastSearchListData).toEqual([
+      { type: 'recentHeader' },
+      { type: 'recentSearch', query: 'codex' },
+      { type: 'recentSearch', query: 'react native' }
+    ]);
     const recentSearchButton = view.getByLabelText('搜索最近记录 codex');
     expect(StyleSheet.flatten(recentSearchButton.props.style).minHeight).toBe(48);
+    expect(StyleSheet.flatten(recentSearchButton.parent?.props.style)).toMatchObject({
+      borderTopLeftRadius: 10,
+      borderTopRightRadius: 10,
+      borderTopWidth: StyleSheet.hairlineWidth
+    });
     expect(view.getByText('codex').props.numberOfLines).toBe(2);
     await fireEvent.press(recentSearchButton);
     expect(onSearch).toHaveBeenCalledTimes(1);
@@ -677,6 +696,25 @@ describe('Search state', () => {
 
     const deleteButton = view.getByLabelText('删除最近搜索 react native');
     expect(StyleSheet.flatten(deleteButton.props.style).minHeight).toBe(48);
+    expect(StyleSheet.flatten(deleteButton.parent?.props.style)).toMatchObject({
+      borderBottomLeftRadius: 10,
+      borderBottomRightRadius: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderTopWidth: StyleSheet.hairlineWidth
+    });
+    expect(StyleSheet.flatten(deleteButton.parent?.props.style)).not.toHaveProperty('marginTop');
+    expect(
+      lastSearchListSeparatorComponent?.({
+        leadingItem: lastSearchListData[1],
+        trailingItem: lastSearchListData[2]
+      })
+    ).toBeNull();
+    expect(
+      lastSearchListSeparatorComponent?.({
+        leadingItem: lastSearchListData[0],
+        trailingItem: lastSearchListData[1]
+      })
+    ).not.toBeNull();
     await fireEvent.press(deleteButton);
     expect(onRemoveRecentSearch).toHaveBeenCalledTimes(1);
     expect(onRemoveRecentSearch).toHaveBeenCalledWith('react native');

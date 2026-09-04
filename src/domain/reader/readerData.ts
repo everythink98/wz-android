@@ -91,7 +91,7 @@ const topicShapeSchema = z
     createdAt: dateStringSchema,
     lastReplyAt: dateStringSchema.optional()
   })
-  .passthrough();
+  .loose();
 const userProfileShapeSchema = z
   .object({
     source: sourceSchema,
@@ -100,19 +100,19 @@ const userProfileShapeSchema = z
     url: requiredStoredStringSchema,
     topics: z.array(z.unknown()).optional()
   })
-  .passthrough();
+  .loose();
 const topicRecordSchema = z
   .object({
     topic: topicShapeSchema,
     savedAt: dateStringSchema
   })
-  .passthrough();
+  .loose();
 const followedUserRecordSchema = z
   .object({
     user: userProfileShapeSchema,
     followedAt: dateStringSchema
   })
-  .passthrough();
+  .loose();
 const readerSettingsSchema = z
   .object({
     listDensity: z.unknown().optional(),
@@ -124,7 +124,7 @@ const readerSettingsSchema = z
     fontFamily: z.unknown().optional(),
     contentSources: z.unknown().optional()
   })
-  .passthrough();
+  .loose();
 const readerDataSchema = z
   .object({
     version: z.literal(readerDataVersion),
@@ -134,7 +134,7 @@ const readerDataSchema = z
     deletedRecords: z.unknown().optional(),
     settings: z.unknown().optional()
   })
-  .passthrough();
+  .loose();
 
 function userProfileUrl(source: Source, id: string, username = '') {
   const cleanId = String(id || '').trim();
@@ -416,8 +416,10 @@ function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
 function limitRecordMap<T>(records: Record<string, T>, limit: number, getTime: (record: T) => string | undefined) {
   return Object.fromEntries(
     Object.entries(records)
-      .sort(([, left], [, right]) => dateValue(getTime(right)) - dateValue(getTime(left)))
+      .map(([key, record]) => ({ key, record, time: dateValue(getTime(record)) }))
+      .sort((left, right) => right.time - left.time)
       .slice(0, limit)
+      .map(({ key, record }) => [key, record])
   );
 }
 
@@ -465,19 +467,19 @@ function normalizeDeletedRecordMap(value: unknown, normalizeKey?: (key: string) 
 }
 
 function limitDeletedRecordMap(records: Record<string, string>) {
-  return Object.fromEntries(
-    Object.entries(records)
-      .sort(([, left], [, right]) => dateValue(right) - dateValue(left))
-      .slice(0, MAX_DELETED_RECORDS)
-  );
+  return limitRecordMap(records, MAX_DELETED_RECORDS, (time) => time);
 }
 
-function normalizeDeletedRecords(value: unknown): DeletedRecords {
+function normalizeDeletedRecords(value: unknown, current?: DeletedRecords): DeletedRecords {
   const base = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<DeletedRecords>) : {};
   return {
-    favorites: normalizeDeletedRecordMap(base.favorites),
-    history: normalizeDeletedRecordMap(base.history),
-    followedUsers: normalizeDeletedRecordMap(base.followedUsers)
+    favorites:
+      current && base.favorites === current.favorites ? current.favorites : normalizeDeletedRecordMap(base.favorites),
+    history: current && base.history === current.history ? current.history : normalizeDeletedRecordMap(base.history),
+    followedUsers:
+      current && base.followedUsers === current.followedUsers
+        ? current.followedUsers
+        : normalizeDeletedRecordMap(base.followedUsers)
   };
 }
 
@@ -528,6 +530,15 @@ function mergeReaderSettings(local: ReaderSettings, value: unknown): ReaderSetti
 }
 
 export function sanitizeReaderData(value: unknown): ReaderData {
+  return normalizeReaderData(value);
+}
+
+// Only immutable in-memory mutations may reuse previously validated partitions.
+export function sanitizeReaderDataMutation(current: ReaderData, updated: ReaderData): ReaderData {
+  return normalizeReaderData(updated, current);
+}
+
+function normalizeReaderData(value: unknown, current?: ReaderData): ReaderData {
   const parsed = readerDataSchema.safeParse(value);
   if (!parsed.success) {
     return createEmptyReaderData();
@@ -535,11 +546,20 @@ export function sanitizeReaderData(value: unknown): ReaderData {
   const data = parsed.data as Partial<ReaderData>;
   return {
     version: readerDataVersion,
-    favorites: normalizeRecordMap(data.favorites),
-    history: limitRecordMap(normalizeRecordMap(data.history), MAX_HISTORY_RECORDS, (record) => record.savedAt),
-    followedUsers: normalizeFollowedUsers(data.followedUsers),
-    deletedRecords: normalizeDeletedRecords(data.deletedRecords),
-    settings: sanitizeReaderSettings(data.settings)
+    favorites: current && data.favorites === current.favorites ? current.favorites : normalizeRecordMap(data.favorites),
+    history:
+      current && data.history === current.history
+        ? current.history
+        : limitRecordMap(normalizeRecordMap(data.history), MAX_HISTORY_RECORDS, (record) => record.savedAt),
+    followedUsers:
+      current && data.followedUsers === current.followedUsers
+        ? current.followedUsers
+        : normalizeFollowedUsers(data.followedUsers),
+    deletedRecords:
+      current && data.deletedRecords === current.deletedRecords
+        ? current.deletedRecords
+        : normalizeDeletedRecords(data.deletedRecords, current?.deletedRecords),
+    settings: current && data.settings === current.settings ? current.settings : sanitizeReaderSettings(data.settings)
   };
 }
 
@@ -621,6 +641,7 @@ function markDeleted(
 }
 
 function clearDeleted(deletedRecords: DeletedRecords, section: keyof DeletedRecords, key: string): DeletedRecords {
+  if (!Object.hasOwn(deletedRecords[section], key)) return deletedRecords;
   const next = { ...deletedRecords[section] };
   delete next[key];
   return {
@@ -746,36 +767,28 @@ export function removeRecords(
   section: 'favorites' | 'history',
   topics: Pick<Topic, 'source' | 'id'>[]
 ) {
-  const next = { ...data[section] };
-  let deletedRecords = data.deletedRecords;
-  for (const topic of topics) {
-    const key = topicKey(topic);
-    if (next[key]) {
-      delete next[key];
-      deletedRecords = markDeleted(deletedRecords, section, key);
-    }
-  }
-  return {
-    ...data,
-    [section]: next,
-    deletedRecords
-  };
+  return removeRecordKeys(data, section, topics.map(topicKey));
 }
 
 export function removeFollowedUsers(data: ReaderData, users: Pick<UserProfile, 'source' | 'id'>[]) {
-  const next = { ...data.followedUsers };
-  let deletedRecords = data.deletedRecords;
-  for (const user of users) {
-    const key = userKey(user);
-    if (next[key]) {
-      delete next[key];
-      deletedRecords = markDeleted(deletedRecords, 'followedUsers', key);
-    }
+  return removeRecordKeys(data, 'followedUsers', users.map(userKey));
+}
+
+function removeRecordKeys(data: ReaderData, section: keyof DeletedRecords, keys: string[]): ReaderData {
+  let next: (typeof data)[typeof section] | undefined;
+  let deleted: Record<string, string> | undefined;
+  for (const key of keys) {
+    if (!(next ?? data[section])[key]) continue;
+    next ??= { ...data[section] };
+    deleted ??= { ...data.deletedRecords[section] };
+    delete next[key];
+    deleted[key] = nowIso();
   }
+  if (!next || !deleted) return data;
   return {
     ...data,
-    followedUsers: next,
-    deletedRecords
+    [section]: next,
+    deletedRecords: { ...data.deletedRecords, [section]: limitDeletedRecordMap(deleted) }
   };
 }
 

@@ -24,11 +24,11 @@ import {
   type SourceSearchFilter
 } from '@/domain/forum/searchFilters';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
-import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -81,7 +81,6 @@ function SearchInputField({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="清空搜索关键词"
-          android_ripple={androidRipple(theme.primarySoft, true)}
           hitSlop={TOUCH_HIT_SLOP}
           style={styles.searchInlineButton}
           onPress={() => onQueryChange('')}
@@ -94,7 +93,6 @@ function SearchInputField({
         accessibilityRole="button"
         accessibilityLabel="提交搜索"
         accessibilityState={{ disabled: submitDisabled }}
-        android_ripple={androidRipple(theme.primarySoft, true)}
         disabled={submitDisabled}
         hitSlop={TOUCH_HIT_SLOP}
         style={[styles.searchInlineButton, styles.searchSubmitInlineButton, submitDisabled && styles.buttonDisabled]}
@@ -142,7 +140,6 @@ function LinuxDoAiControl({
         accessibilityLabel="AI 搜索"
         accessibilityState={{ checked: state.enabled, disabled }}
         disabled={disabled}
-        android_ripple={androidRipple(theme.primarySoft)}
         style={[
           styles.searchFilterOption,
           state.enabled && styles.searchFilterOptionActive,
@@ -380,6 +377,12 @@ export const SearchScreen = memo(function SearchScreen({
         )
       : '';
   const listItems = useMemo(() => {
+    if (showIdleRecentSearches) {
+      return [
+        { type: 'recentHeader' as const },
+        ...recentSearches.map((recentQuery) => ({ type: 'recentSearch' as const, query: recentQuery }))
+      ];
+    }
     if (!showSearchGroups) {
       return [];
     }
@@ -395,17 +398,27 @@ export const SearchScreen = memo(function SearchScreen({
       return items;
     }
     let completedTopicCount = 0;
-    const insertionIndex = items.findIndex((item) => {
-      if (item.type !== 'topic' || item.groupSource !== completedPagination.source) {
-        return false;
-      }
+    let insertionIndex = -1;
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item?.type !== 'topic' || item.groupSource !== completedPagination.source) continue;
       completedTopicCount += 1;
-      return completedTopicCount === completedPagination.previousItemCount;
-    });
+      if (completedTopicCount !== completedPagination.previousItemCount) continue;
+      insertionIndex = index;
+      break;
+    }
     const pageStatus = { type: 'groupPageStatus' as const, group: completedGroup, page: completedPagination.page };
     const pageStatusIndex = insertionIndex >= 0 ? insertionIndex + 1 : items.length;
     return [...items.slice(0, pageStatusIndex), pageStatus, ...items.slice(pageStatusIndex)];
-  }, [completedPagination, paginationContext, showSearchGroups, visibleSearchGroups, visibleSearchSource]);
+  }, [
+    completedPagination,
+    paginationContext,
+    recentSearches,
+    showIdleRecentSearches,
+    showSearchGroups,
+    visibleSearchGroups,
+    visibleSearchSource
+  ]);
   const settledSearchSources = visibleSearchSource === 'all' ? expectedSearchSources : [visibleSearchSource];
   const searchGroupsSettled = settledSearchSources.every((source) => {
     const group = visibleSearchGroups.find((candidate) => candidate.source === source);
@@ -479,7 +492,47 @@ export const SearchScreen = memo(function SearchScreen({
     autoLoadArmedRef.current = false;
   }, [query, submittedQuery, visibleSearchSource]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(
-    ({ item }) => {
+    ({ index, item }) => {
+      if (item.type === 'recentHeader') {
+        return <Text style={styles.meta}>最近搜索</Text>;
+      }
+      if (item.type === 'recentSearch') {
+        const first = index === 1;
+        const last = index === recentSearches.length;
+        return (
+          <View
+            style={[
+              styles.recentSearchItem,
+              first && styles.recentSearchItemFirst,
+              !first && styles.recentSearchItemJoined,
+              last && styles.recentSearchItemLast,
+              styles.removableChipShell
+            ]}
+          >
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`搜索最近记录 ${item.query}`}
+              accessibilityState={{ disabled: busy }}
+              disabled={busy}
+              style={[styles.removableChip, busy && styles.buttonDisabled]}
+              onPress={() => submitSearch(item.query)}
+            >
+              <History size={17} color={theme.muted} strokeWidth={1.9} style={styles.removableChipIcon} />
+              <Text numberOfLines={2} ellipsizeMode="tail" style={styles.removableChipText}>
+                {item.query}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`删除最近搜索 ${item.query}`}
+              style={styles.removableChipClose}
+              onPress={() => onRemoveRecentSearch(item.query)}
+            >
+              <X size={16} color={theme.muted} strokeWidth={2.2} />
+            </Pressable>
+          </View>
+        );
+      }
       if (item.type === 'topic') {
         return renderTopicCard(item.topic);
       }
@@ -491,7 +544,6 @@ export const SearchScreen = memo(function SearchScreen({
             accessibilityLabel={`查看 ${item.group.label} 全部搜索结果`}
             accessibilityRole="button"
             accessibilityState={{ disabled: !canOpenSource }}
-            android_ripple={androidRipple(theme.primarySoft)}
             disabled={!canOpenSource}
             style={styles.searchGroupHeader}
             onPress={() => changeSearchSource(item.group.source)}
@@ -610,14 +662,23 @@ export const SearchScreen = memo(function SearchScreen({
       changeSearchSource,
       onLoadMoreSearchSource,
       onOpenExternalSearch,
+      onRemoveRecentSearch,
       onRetrySearchSource,
+      recentSearches.length,
       renderTopicCard,
       styles,
+      submitSearch,
       theme,
       visibleSearchSource
     ]
   );
   const keySearchListItem = useCallback((item: SearchListItem) => {
+    if (item.type === 'recentHeader') {
+      return 'recent:header';
+    }
+    if (item.type === 'recentSearch') {
+      return `recent:${item.query}`;
+    }
     if (item.type === 'topic') {
       return `topic:${item.groupSource || item.topic.source}:${topicKey(item.topic)}`;
     }
@@ -632,9 +693,16 @@ export const SearchScreen = memo(function SearchScreen({
     }
     return `${item.group.source}:${item.type}`;
   }, []);
+  const renderSearchListSeparator = useCallback(
+    ({ leadingItem, trailingItem }: { leadingItem: SearchListItem; trailingItem: SearchListItem }) =>
+      leadingItem.type === 'recentSearch' && trailingItem.type === 'recentSearch' ? null : (
+        <View style={styles.listSeparator} />
+      ),
+    [styles]
+  );
   const header = useMemo(
     () => (
-      <View style={styles.stack}>
+      <View style={[styles.stack, styles.listHeader]}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>搜索</Text>
           {busy ? <ActivityIndicator color={theme.primary} /> : null}
@@ -680,40 +748,6 @@ export const SearchScreen = memo(function SearchScreen({
             onToggle={onToggleLinuxDoAiSearch}
           />
         ) : null}
-        {showIdleRecentSearches ? (
-          <View style={styles.stack}>
-            <Text style={styles.meta}>最近搜索</Text>
-            <View style={styles.recentSearchList}>
-              {recentSearches.map((item, index) => (
-                <View key={item} style={[styles.removableChipShell, index > 0 && styles.removableChipShellDivided]}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`搜索最近记录 ${item}`}
-                    accessibilityState={{ disabled: busy }}
-                    android_ripple={androidRipple(theme.primarySoft)}
-                    disabled={busy}
-                    style={[styles.removableChip, busy && styles.buttonDisabled]}
-                    onPress={() => submitSearch(item)}
-                  >
-                    <History size={17} color={theme.muted} strokeWidth={1.9} style={styles.removableChipIcon} />
-                    <Text numberOfLines={2} ellipsizeMode="tail" style={styles.removableChipText}>
-                      {item}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`删除最近搜索 ${item}`}
-                    android_ripple={androidRipple(theme.primarySoft, true)}
-                    style={styles.removableChipClose}
-                    onPress={() => onRemoveRecentSearch(item)}
-                  >
-                    <X size={16} color={theme.muted} strokeWidth={2.2} />
-                  </Pressable>
-                </View>
-              ))}
-            </View>
-          </View>
-        ) : null}
       </View>
     ),
     [
@@ -730,19 +764,16 @@ export const SearchScreen = memo(function SearchScreen({
       linuxDoAiState,
       linuxDoAiVisible,
       onQueryChange,
-      onRemoveRecentSearch,
       onRetryLinuxDoAiSearch,
       onToggleLinuxDoAiSearch,
       onSearchDiscourseTags,
       onSearchDiscourseUsers,
       query,
-      recentSearches,
       requestsEnabled,
       searchCandidateReadPlanScopes,
       searchFilters,
       searchFilterEntrySummary,
       sessionEpochs,
-      showIdleRecentSearches,
       styles,
       submitSearch,
       theme,
@@ -770,6 +801,7 @@ export const SearchScreen = memo(function SearchScreen({
         extraData={settings}
         keyExtractor={keySearchListItem}
         getItemType={(item) => item.type}
+        ItemSeparatorComponent={renderSearchListSeparator}
         keyboardShouldPersistTaps="handled"
         {...TOPIC_LIST_PERFORMANCE_PROPS}
         onScrollBeginDrag={handleSearchScrollBeginDrag}

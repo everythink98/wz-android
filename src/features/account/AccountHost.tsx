@@ -153,7 +153,7 @@ export function AccountHost({
               accessibilityElementsHidden
               importantForAccessibility="no-hide-descendants"
               pointerEvents="auto"
-              style={StyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFill}
               onStartShouldSetResponder={() => true}
             />
           </>

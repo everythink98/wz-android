@@ -201,14 +201,17 @@ export function parsePositiveInteger(value: unknown) {
 }
 
 export function sortTopicsByTime<T extends { lastReplyAt?: string; createdAt: string }>(items: T[]) {
-  return [...items].sort(
-    (left, right) =>
-      Date.parse(right.lastReplyAt || right.createdAt || '') - Date.parse(left.lastReplyAt || left.createdAt || '')
-  );
+  return items
+    .map((item) => ({ item, time: Date.parse(item.lastReplyAt || item.createdAt || '') }))
+    .sort((left, right) => right.time - left.time)
+    .map(({ item }) => item);
 }
 
 export function sortTopicsByCreatedAt<T extends { createdAt: string }>(items: T[]) {
-  return [...items].sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || ''));
+  return items
+    .map((item) => ({ item, time: Date.parse(item.createdAt || '') }))
+    .sort((left, right) => right.time - left.time)
+    .map(({ item }) => item);
 }
 
 export function elementText(element: HTMLElement | null | undefined) {

@@ -25,7 +25,6 @@ vi.mock('@react-navigation/native-stack', () => ({
 vi.mock('lucide-react-native', () => ({ Settings: () => null }));
 vi.mock('react-native', () => ({ View: () => null }));
 vi.mock('@/ui/navigation/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
-vi.mock('@/ui/controls/pressFeedback', () => ({ triggerPressFeedback: vi.fn() }));
 
 import {
   isNativeStackScreen,

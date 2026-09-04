@@ -49,10 +49,10 @@ describe('content source query cleanup', () => {
     const oldAllAbort = jest.fn();
     const newAllAbort = jest.fn();
     const pendingReads = [
-      client.fetchQuery({ queryKey: disabledTopic, queryFn: pendingRead(disabledAbort) }).catch(() => undefined),
-      client.fetchQuery({ queryKey: enabledTopic, queryFn: pendingRead(enabledAbort) }).catch(() => undefined),
-      client.fetchQuery({ queryKey: oldAllFeed, queryFn: pendingRead(oldAllAbort) }).catch(() => undefined),
-      client.fetchQuery({ queryKey: newAllFeed, queryFn: pendingRead(newAllAbort) }).catch(() => undefined)
+      client.query({ queryKey: disabledTopic, queryFn: pendingRead(disabledAbort) }).catch(() => undefined),
+      client.query({ queryKey: enabledTopic, queryFn: pendingRead(enabledAbort) }).catch(() => undefined),
+      client.query({ queryKey: oldAllFeed, queryFn: pendingRead(oldAllAbort) }).catch(() => undefined),
+      client.query({ queryKey: newAllFeed, queryFn: pendingRead(newAllAbort) }).catch(() => undefined)
     ];
     client.setQueryData(disabledNotifications, 'disabled notifications');
     client.setQueryData(oldAllCategories, 'old categories');
@@ -90,7 +90,7 @@ describe('content source query cleanup', () => {
       scope: initialForumSessionEpochs
     });
     const abort = jest.fn();
-    const read = client.fetchQuery({ queryKey: sourceKey, queryFn: pendingRead(abort) }).catch(() => undefined);
+    const read = client.query({ queryKey: sourceKey, queryFn: pendingRead(abort) }).catch(() => undefined);
     await Promise.resolve();
 
     cleanupContentSourceQueries(
@@ -140,16 +140,12 @@ describe('content source query cleanup', () => {
     client.setQueryData(newAllFeed, 'new all');
     client.setQueryData(accountStatus, 'canonical account');
     const pendingReads = [
-      client.fetchQuery({ queryKey: v2exTopic, queryFn: pendingRead(v2exAbort), staleTime: 0 }).catch(() => undefined),
+      client.query({ queryKey: v2exTopic, queryFn: pendingRead(v2exAbort), staleTime: 0 }).catch(() => undefined),
       client
-        .fetchQuery({ queryKey: nodeSeekTopic, queryFn: pendingRead(nodeSeekAbort), staleTime: 0 })
+        .query({ queryKey: nodeSeekTopic, queryFn: pendingRead(nodeSeekAbort), staleTime: 0 })
         .catch(() => undefined),
-      client
-        .fetchQuery({ queryKey: oldAllFeed, queryFn: pendingRead(oldAllAbort), staleTime: 0 })
-        .catch(() => undefined),
-      client
-        .fetchQuery({ queryKey: newAllFeed, queryFn: pendingRead(newAllAbort), staleTime: 0 })
-        .catch(() => undefined)
+      client.query({ queryKey: oldAllFeed, queryFn: pendingRead(oldAllAbort), staleTime: 0 }).catch(() => undefined),
+      client.query({ queryKey: newAllFeed, queryFn: pendingRead(newAllAbort), staleTime: 0 }).catch(() => undefined)
     ];
     await Promise.resolve();
 

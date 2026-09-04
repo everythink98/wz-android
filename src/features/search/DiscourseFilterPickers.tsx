@@ -7,10 +7,10 @@ import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { DiscourseSearchFilter, SourceSearchFilter } from '@/domain/forum/searchFilters';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
-import { androidRipple, type ReaderTheme } from '@/ui/theme/tokens';
+import { type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
-import { TOUCH_HIT_SLOP } from '@/ui/controls/pressFeedback';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
 import type { SearchStyles } from './styles';
 
@@ -311,7 +311,6 @@ export function DiscourseFilterPickers({
                 accessibilityRole="checkbox"
                 accessibilityLabel={`标签 ${option.name}`}
                 accessibilityState={{ checked: selected }}
-                android_ripple={androidRipple(theme.primarySoft)}
                 style={[styles.searchFilterOption, selected && styles.searchFilterOptionActive]}
                 onPress={() => toggleTag(option.name)}
               >

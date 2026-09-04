@@ -25,6 +25,8 @@ const mockGetImageCachePath = jest.fn(
 let mockZoomScale = 1;
 let mockZoomVisibleRect = { height: 100, width: 100, x: 0, y: 0 };
 let mockGestureNextToken = 0;
+let mockGestureHandlerTag = 0;
+const mockGestureStateManagers = new Map<number, { activate: () => void; fail: () => void }>();
 let mockDeferAnimations = false;
 const mockDeferredAnimationCallbacks: (() => void)[] = [];
 let mockZoomNextToken = 0;
@@ -150,30 +152,21 @@ jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
   const GestureView = NativeView as React.ComponentType<Record<string, unknown>>;
-  const gesture = () => {
-    const handlers: Record<string, (...args: unknown[]) => void> = {};
-    const value: Record<string, unknown> = { handlers };
-    for (const name of ['manualActivation', 'maxPointers']) {
-      value[name] = () => value;
-    }
-    for (const name of ['onEnd', 'onFinalize', 'onStart', 'onTouchesDown', 'onTouchesMove', 'onUpdate']) {
-      value[name] = (handler: (...args: unknown[]) => void) => {
-        handlers[name] = handler;
-        return value;
-      };
-    }
-    return value;
-  };
   return {
-    Gesture: {
-      Pan: gesture
+    GestureStateManager: {
+      activate: (handlerTag: number) => mockGestureStateManagers.get(handlerTag)?.activate(),
+      fail: (handlerTag: number) => mockGestureStateManagers.get(handlerTag)?.fail()
     },
+    usePanGesture: (config: Record<string, (...args: any[]) => void>) => ({
+      config,
+      handlerTag: ++mockGestureHandlerTag
+    }),
     GestureDetector: ({
       children,
       gesture: value
     }: {
       children?: React.ReactNode;
-      gesture?: { handlers?: Record<string, (...args: unknown[]) => void> };
+      gesture?: { config: Record<string, (...args: any[]) => void>; handlerTag: number };
     }) => {
       const token = ReactModule.useRef(0);
       if (token.current === 0) {
@@ -185,7 +178,8 @@ jest.mock('react-native-gesture-handler', () => {
         translationX = 0,
         translationY = 0,
         velocityX = 0,
-        velocityY = 0
+        velocityY = 0,
+        canceled = false
       }: {
         pointers?: number;
         pointersOnMove?: number;
@@ -193,6 +187,7 @@ jest.mock('react-native-gesture-handler', () => {
         translationY?: number;
         velocityX?: number;
         velocityY?: number;
+        canceled?: boolean;
       }) => {
         let active = false;
         let failed = false;
@@ -218,20 +213,22 @@ jest.mock('react-native-gesture-handler', () => {
         const touchEvent = (count: number, moved: boolean) => ({
           allTouches: touches(count, moved),
           changedTouches: touches(count, moved),
+          handlerTag: value?.handlerTag,
           numberOfTouches: count
         });
-        value?.handlers?.onTouchesDown?.(touchEvent(pointers, false), state);
+        if (value) mockGestureStateManagers.set(value.handlerTag, state);
+        value?.config.onTouchesDown?.(touchEvent(pointers, false));
         if (pointersOnMove !== pointers) {
-          value?.handlers?.onTouchesDown?.(touchEvent(pointersOnMove, false), state);
+          value?.config.onTouchesDown?.(touchEvent(pointersOnMove, false));
         }
-        value?.handlers?.onTouchesMove?.(touchEvent(pointersOnMove, true), state);
+        value?.config.onTouchesMove?.(touchEvent(pointersOnMove, true));
         const panEvent = { translationX, translationY, velocityX, velocityY };
         if (active && !failed) {
-          value?.handlers?.onStart?.(panEvent);
-          value?.handlers?.onUpdate?.(panEvent);
-          value?.handlers?.onEnd?.(panEvent, true);
+          value?.config.onActivate?.(panEvent);
+          value?.config.onUpdate?.(panEvent);
+          value?.config.onDeactivate?.({ ...panEvent, canceled });
         }
-        value?.handlers?.onFinalize?.(panEvent, active && !failed);
+        value?.config.onFinalize?.({ ...panEvent, canceled: canceled || !(active && !failed) });
         return { active, failed };
       };
       return ReactModule.createElement(
@@ -342,6 +339,7 @@ function callbacks(
 }
 
 type PreviewGestureInput = {
+  canceled?: boolean;
   pointers?: number;
   pointersOnMove?: number;
   translationX?: number;
@@ -377,6 +375,8 @@ describe('Image preview', () => {
     mockZoomScale = 1;
     mockZoomVisibleRect = { height: 100, width: 100, x: 0, y: 0 };
     mockGestureNextToken = 0;
+    mockGestureHandlerTag = 0;
+    mockGestureStateManagers.clear();
     mockDeferAnimations = false;
     mockDeferredAnimationCallbacks.splice(0);
     mockZoomNextToken = 0;
@@ -1225,7 +1225,8 @@ describe('Image preview', () => {
     await fireEvent(galleryAccessibility, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
     expect(onSelect).toHaveBeenLastCalledWith(1);
     expect(view.getByLabelText('图片预览，第 2 张，共 2 张').props.accessibilityValue.text).toBe('第 2 张，共 2 张');
-    await fireEvent(view.root!, 'requestClose');
+    const [modal] = view.container.queryAll(({ props }) => typeof props.onRequestClose === 'function');
+    await fireEvent(modal, 'requestClose');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -2075,5 +2076,30 @@ describe('Image preview', () => {
     expect(onClose).not.toHaveBeenCalled();
     await performPreviewGesture(view, { translationY: 100, velocityY: 1_200 });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the current image open when an active swipe or pull is canceled', async () => {
+    const onClose = jest.fn<() => void>();
+    const onSelect = jest.fn<(index: number) => void>();
+    const view = await render(
+      <ImagePreviewModal
+        preview={previewProps(
+          [
+            previewItem('https://example.com/previous.png'),
+            previewItem('https://example.com/current.png'),
+            previewItem('https://example.com/next.png')
+          ],
+          1
+        )}
+        {...callbacks({ onClose, onSelect })}
+      />
+    );
+
+    await performPreviewGesture(view, { canceled: true, translationX: -500, translationY: 10, velocityX: -1_000 });
+    await performPreviewGesture(view, { canceled: true, translationY: 300, velocityY: 1_200 });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(view.getByText('2/3')).toBeTruthy();
   });
 });

@@ -358,13 +358,13 @@ const styles = StyleSheet.create({
     overflow: 'hidden'
   },
   poster: {
-    ...StyleSheet.absoluteFillObject
+    ...StyleSheet.absoluteFill
   },
   video: {
     flex: 1
   },
   videoState: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center'
   }
