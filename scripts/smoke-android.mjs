@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 
 import {
   assertAgentDeviceVersion,
@@ -307,7 +308,11 @@ export function runApkSanity({
 }
 
 async function main() {
-  const apkPath = resolveApkPath(process.argv[2]);
+  const { values, positionals } = parseArgs({
+    allowPositionals: true,
+    options: { 'replay-directory': { type: 'string' } }
+  });
+  const apkPath = resolveApkPath(positionals[0]);
   const selectedDevice = selectedDeviceName();
   assertAgentDeviceVersion(rootDir);
   runAgentDevice(['doctor', '--platform', 'android'], { cwd: os.tmpdir() });
@@ -319,7 +324,8 @@ async function main() {
   await runDeviceReplay({
     apkPath,
     selectedDevice,
-    device: smokeDevice
+    device: smokeDevice,
+    ...(values['replay-directory'] ? { replayDirectory: path.resolve(rootDir, values['replay-directory']) } : {})
   });
 }
 

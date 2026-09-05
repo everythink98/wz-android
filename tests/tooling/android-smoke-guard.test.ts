@@ -100,6 +100,18 @@ describe('Android release evidence guards', () => {
     expect(fourSourceFeed).toContain('context timeout=240000');
   });
 
+  it('selects the explicit targeted Replay directory while retaining APK sanity', () => {
+    const smokeScript = readProjectFile('scripts', 'smoke-android.mjs');
+    expect(smokeScript).toContain("options: { 'replay-directory': { type: 'string' } }");
+    expect(smokeScript).toContain("replayDirectory: path.resolve(rootDir, values['replay-directory'])");
+    expect(smokeScript.indexOf('runApkSanity({ apkPath, device: smokeDevice })')).toBeLessThan(
+      smokeScript.indexOf('await runDeviceReplay({')
+    );
+    expect(listReplayFiles(path.join(rootDir, 'tests', 'live')).map((file) => path.basename(file))).toEqual([
+      'feed-source-reorder.ad'
+    ]);
+  });
+
   it('keeps boot and APK sanity on one session and releases it after failure', () => {
     const events: string[] = [];
     const failure = new Error('sanity failed');
@@ -885,7 +897,7 @@ describe('Android release evidence guards', () => {
     expect(feedScreen).toContain("testID={index === 0 ? 'feed-topic-first' : undefined}");
     expect(feedScreen).toContain("`feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`");
     expect(feedScreen).not.toContain('feed-list-ready-');
-    expect(feedScreen).toContain('testIDPrefix="feed-source"');
+    expect(feedScreen).toContain('testID: `feed-source-${item.value}`');
     const searchScreen = readProjectFile('src', 'features', 'search', 'SearchScreen.tsx');
     expect(searchScreen).toContain('testID="search-query"');
     expect(searchScreen).toContain('testID="search-submit"');
@@ -965,7 +977,7 @@ describe('Android release evidence guards', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const signerIndex = releaseScript.indexOf('verifyExpectedReleaseSigner(signerSha256);');
-    const smokeIndex = releaseScript.indexOf("run('npm', ['run', 'smoke:android', '--', smokeApkPath]);");
+    const smokeIndex = releaseScript.search(/run\('npm',\s*\[\s*'run',\s*'smoke:android'/);
     const manifestIndex = releaseScript.lastIndexOf('writeReleaseManifest({');
 
     expect(packageJson.scripts['smoke:android']).toBe('node scripts/smoke-android.mjs');
@@ -985,6 +997,6 @@ describe('Android release evidence guards', () => {
     expect(releaseScript).toContain("['arm64-v8a', smokeApkAbi]");
     expect(releaseScript).toContain("path.join(androidDir, 'app', 'debug.keystore')");
     expect(releaseScript).toContain("'sign',");
-    expect(releaseScript).toContain("run('npm', ['run', 'smoke:android', '--', smokeApkPath]);");
+    expect(releaseScript).toMatch(/run\('npm',\s*\[\s*'run',\s*'smoke:android',\s*'--',\s*smokeApkPath/);
   });
 });

@@ -64,11 +64,14 @@ describe('release workflow trust gates', () => {
     expect(releaseScript).toContain('javaVersion');
     expect(releaseScript).toContain('gradleVersion');
     expect(releaseScript).toContain('builtAbis');
-    expect(releaseScript).toContain("options: { 'skip-verify': { type: 'boolean', default: false } }");
+    expect(releaseScript).toContain("'skip-verify': { type: 'boolean', default: false }");
     expect(releaseScript).toMatch(
       /if \(releaseOptions\['skip-verify'\]\) \{\s+console\.log\('[^\n]+'\);\s+\} else \{\s+run\('npm', \['run', 'verify'\]\);\s+\}/
     );
     expect(releaseScript).toContain("verificationScope: releaseOptions['skip-verify'] ? 'targeted' : 'full'");
+    expect(releaseScript).toContain(
+      "...(releaseOptions['replay-directory'] ? ['--replay-directory', releaseOptions['replay-directory']] : [])"
+    );
   });
 
   it('pins React Doctor while retaining the permissions used by its configured review features', () => {

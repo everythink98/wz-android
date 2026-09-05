@@ -21,7 +21,10 @@ import {
 
 const { singleApkSignerSha256 } = apkSigning;
 const { values: releaseOptions } = parseArgs({
-  options: { 'skip-verify': { type: 'boolean', default: false } }
+  options: {
+    'skip-verify': { type: 'boolean', default: false },
+    'replay-directory': { type: 'string' }
+  }
 });
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -418,7 +421,13 @@ if (smokeSignerSha256 === expectedReleaseSignerSha256) {
   console.error('smoke APK 仍是正式签名，拒绝安装到开发模拟器。');
   process.exit(1);
 }
-run('npm', ['run', 'smoke:android', '--', smokeApkPath]);
+run('npm', [
+  'run',
+  'smoke:android',
+  '--',
+  smokeApkPath,
+  ...(releaseOptions['replay-directory'] ? ['--replay-directory', releaseOptions['replay-directory']] : [])
+]);
 const sha256 = releaseApkSha256();
 writeReleaseManifest({
   sha256,
