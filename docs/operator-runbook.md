@@ -64,6 +64,19 @@ npm run visual:gallery -- --port 8081
 
 主登录态 AVD 保存 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态。设备安全边界以仓库根目录 `AGENTS.md` 为准；下面只列操作入口。
 
+### 行内附件 Native 验证
+
+行内附件的 Android 尺寸换算可独立验证，不连接设备：
+
+```powershell
+cd android
+.\gradlew.bat :react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests com.facebook.react.views.text.TextLayoutManagerInlineViewSizeTest --no-daemon
+```
+
+真实 Fabric 换行另用独立开发入口 `dev/inline-layout-proof/index.tsx`。在已有 Metro 的端口上，用 development-client URL 打开 `http://127.0.0.1:<port>/dev/inline-layout-proof/index.bundle?platform=android&dev=true&minify=false`。页面直接测量 Text 和嵌入 View；五个结果都必须为 PASS，大图相对行首偏移及右侧越界均不得超过 `1px`，小图继续留在文字后面。它不依赖 HTML、网络图片或生产账号，不以 RNTL mock 代替原生排版。
+
+尺寸矩阵使用同一保留数据 AVD：`1264×2780 / 560dpi`、`1265×2780 / 560dpi` 和设备原参数，并覆盖 `font_scale=0.9/1.0`。修改前读取 `wm size`、`wm density`、`settings get system font_scale`，结束恢复；用户明确要求保留可见验收画面时，保留对应窗口、参数和必要调试服务并在交付中列明。原帖最终验收仍需匹配 APK、自然尺寸加载、滚离回收后返回和预览返回证据。
+
 ### Forum selection Native 验证
 
 纯 Native JVM 测试不连接设备；生成的 Android project 存在后执行：
@@ -221,6 +234,8 @@ npm run release:android
 ```
 
 脚本会执行 preflight、`npm run verify`、clean Expo prebuild、Release native 测试与编译、正式 arm64 签名构建、签名/版本校验、同代码开发签名 x86_64 Smoke 构建及 manifest 生成。签名变量只注入正式 `assembleRelease` 子进程；正式 APK 禁止 debug 签名。
+
+用户当次明确授权特殊发布、并且受影响能力及共享 seam 的定向回归已完成时，可执行 `npm run release:android -- --skip-verify`。该选项只跳过脚本内的全量 `npm run verify`，版本、clean-tree、prebuild、原生测试/编译、签名及 Smoke 校验仍执行；manifest 的 `verificationScope` 记为 `targeted`，默认发布记为 `full`。发布说明必须列出实际通过的范围与未验证范围，不能沿用历史全量通过结论。GitHub push 仍按现有 CI 独立运行，不因本机特殊发布关闭 CI。
 
 预期产物：
 

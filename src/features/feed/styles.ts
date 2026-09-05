@@ -42,13 +42,34 @@ export function createFeedStyles(theme: ReaderTheme, settings: ReaderSettings) {
       elevation: 2
     },
     feedFixedHeader: {
-      gap: 6,
       backgroundColor: theme.surface,
+      paddingHorizontal: 16,
+      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 8
+    },
+    feedSourceBar: {
+      backgroundColor: 'transparent',
+      elevation: 0,
+      shadowOpacity: 0,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    },
+    feedSourceRail: { paddingRight: 18 },
+    feedSourceTab: { width: 'auto', minHeight: 40, padding: 0, paddingBottom: 4, justifyContent: 'center' },
+    feedSourceLabel: {
+      margin: 0,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(13 * settings.fontScale),
+      fontWeight: '500',
+      textAlign: 'center'
+    },
+    feedSourceIndicator: { backgroundColor: theme.primary, height: 2 },
+    feedSecondaryHeader: {
+      backgroundColor: theme.surface,
+      paddingHorizontal: 16,
+      paddingTop: 6,
+      paddingBottom: 6,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 16,
-      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 8,
-      paddingBottom: 6,
       zIndex: 3,
       elevation: 0
     },

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import apkSigning from './apk-signing.cjs';
 import {
@@ -19,6 +20,9 @@ import {
 } from './release-environment.mjs';
 
 const { singleApkSignerSha256 } = apkSigning;
+const { values: releaseOptions } = parseArgs({
+  options: { 'skip-verify': { type: 'boolean', default: false } }
+});
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const androidDir = path.join(rootDir, 'android');
@@ -236,7 +240,8 @@ function writeReleaseManifest({
     npmVersion,
     javaVersion,
     gradleVersion,
-    builtAbis
+    builtAbis,
+    verificationScope: releaseOptions['skip-verify'] ? 'targeted' : 'full'
   };
   writeFileSync(releaseManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`release manifest: ${releaseManifestPath}`);
@@ -372,7 +377,11 @@ const smokeApkPath = path.join(
   `app-${smokeApkAbi}-smoke-dev.apk`
 );
 
-run('npm', ['run', 'verify']);
+if (releaseOptions['skip-verify']) {
+  console.log('Explicit --skip-verify: using separately completed targeted regression; full verify is not run.');
+} else {
+  run('npm', ['run', 'verify']);
+}
 
 const packageJsonBeforePrebuild = readFileSync(packageJsonPath, 'utf8');
 const restorePackageJsonOnPrebuildFailure = () => {

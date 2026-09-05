@@ -104,10 +104,8 @@ export function PillRail({
           key={index}
           accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}
           accessibilityRole="button"
-          accessibilityState={
-            disabled ? { disabled: true, selected: value === item.value } : { selected: value === item.value }
-          }
-          disabled={disabled || undefined}
+          accessibilityState={{ disabled, selected: value === item.value }}
+          disabled={disabled}
           style={
             isTabs
               ? [styles.tab, compactTabs && styles.compactTab, value === item.value && styles.tabActive]

@@ -682,6 +682,7 @@ export function useFeedController({
     feedCategories,
     enabledFeedSources,
     feedFilter,
+    feedFilters,
     feedOutcomeKind: settledFeedOutcomeKind,
     feedSource,
     loadFeed,

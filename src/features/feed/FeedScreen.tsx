@@ -10,10 +10,11 @@ import {
   type NativeSyntheticEvent
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
-import { TabView } from 'react-native-tab-view';
+import { TabBar, TabView, type TabBarProps } from 'react-native-tab-view';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import type {
   Category,
+  FeedFilterState,
   FeedSource,
   Source,
   SourceFeedFilter,
@@ -45,11 +46,9 @@ import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { sourceLabel } from '@/domain/forum/presentation';
+import { isFeedFilterSource } from '@/domain/forum/sourceCatalog';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
-function renderEmptyTabBar() {
-  return null;
-}
 
 export const FeedScreen = memo(function FeedScreen({
   busy,
@@ -60,6 +59,7 @@ export const FeedScreen = memo(function FeedScreen({
   feedOutcomeKind,
   feedPage,
   feedFilter,
+  feedFilters,
   feedSource,
   enabledFeedSources,
   loadMoreFailureSignal,
@@ -86,6 +86,7 @@ export const FeedScreen = memo(function FeedScreen({
   feedOutcomeKind?: SourceLoadOutcomeKind;
   feedPage: number;
   feedFilter?: SourceFeedFilter;
+  feedFilters: Readonly<FeedFilterState>;
   feedSource: FeedSource;
   enabledFeedSources: readonly Source[];
   loadMoreFailureSignal: number;
@@ -144,14 +145,39 @@ export const FeedScreen = memo(function FeedScreen({
   const feedNavigationState = useMemo(
     () => ({
       index: activeFeedSourceIndex,
-      routes: enabledFeedSourceItems.map((item) => ({ key: item.value, title: item.label }))
+      routes: enabledFeedSourceItems.map((item, index) => ({
+        key: item.value,
+        title: item.label,
+        accessibilityLabel: `${item.label}${index === activeFeedSourceIndex ? '，已选择' : ''}`,
+        testID: `feed-source-${item.value}`
+      }))
     }),
     [activeFeedSourceIndex, enabledFeedSourceItems]
   );
   const feedInitialLayout = useMemo(() => ({ width: pagerWidth }), [pagerWidth]);
   const showFeedFilter = shouldUseFeedFilter(feedSource, categoryFilter);
-  const activeFeedFilterLabel = feedFilterLabel(feedSource, feedFilter);
   const activeFeedFilterMenuGroups = showFeedFilter ? feedFilterMenuGroupsFor(feedSource) : [];
+  const feedTabOptions = useMemo(() => ({ labelStyle: styles.feedSourceLabel }), [styles.feedSourceLabel]);
+  const renderFeedTabBar = useCallback(
+    (props: TabBarProps<{ key: string }>) => (
+      <View style={styles.feedFixedHeader}>
+        <TabBar
+          {...props}
+          scrollEnabled
+          gap={22}
+          activeColor={theme.primary}
+          inactiveColor={theme.muted}
+          pressColor="transparent"
+          pressOpacity={1}
+          style={styles.feedSourceBar}
+          tabStyle={styles.feedSourceTab}
+          indicatorStyle={styles.feedSourceIndicator}
+          contentContainerStyle={styles.feedSourceRail}
+        />
+      </View>
+    ),
+    [styles, theme]
+  );
 
   const requestFeedLoadMore = useCallback(
     (source: 'button' | 'scroll' = 'button', offsetY = 0) => {
@@ -312,7 +338,6 @@ export const FeedScreen = memo(function FeedScreen({
     [onOpenTopic, topicStateIndex]
   );
   const renderTopicSeparator = useCallback(() => <View style={styles.topicListSeparator} />, [styles]);
-  const categoryItems = useMemo(() => feedCategoryItems(categories, feedSource), [categories, feedSource]);
   const renderFeedFilterItem = useCallback(
     (item: { value: SourceFeedFilter; label: string }, last: boolean) => {
       const active = item.value === feedFilter;
@@ -359,7 +384,7 @@ export const FeedScreen = memo(function FeedScreen({
     ),
     [styles]
   );
-  const renderFeedScene = useCallback(
+  const renderFeedContent = useCallback(
     ({ route }: { route: { key: string } }) => {
       const routeSource = enabledFeedSourceItems.find((item) => item.value === route.key)?.value;
       if (!routeSource || routeSource !== feedSource) {
@@ -455,60 +480,106 @@ export const FeedScreen = memo(function FeedScreen({
     ]
   );
 
-  return (
-    <View style={styles.content}>
-      <View style={styles.feedFixedHeader}>
-        <PillRail
-          compactTabs
-          variant="tabs"
-          items={enabledFeedSourceItems}
-          value={feedSource}
-          testIDPrefix="feed-source"
-          onChange={changeFeedSourceValue}
-        />
-        {shouldUseReadingFilter(feedSource) ? (
-          <PillRail
-            variant="subtabs"
-            items={feedReadingFilterItems}
-            value={readingFilter}
-            resetScrollKey={feedSource}
-            onChange={changeReadingFilter}
-          />
-        ) : showFeedFilter ? (
-          <View style={styles.feedSecondaryRow}>
-            <View style={styles.feedCategoryRailSlot}>
+  const renderFeedScene = useCallback(
+    ({ route }: { route: { key: string } }) => {
+      const routeSource = enabledFeedSourceItems.find((item) => item.value === route.key)?.value;
+      if (!routeSource) return null;
+      const active = routeSource === feedSource;
+      const routeCategory = active ? categoryFilter : '';
+      const routeFilter = active
+        ? feedFilter
+        : routeSource !== 'all' && isFeedFilterSource(routeSource)
+          ? feedFilters[routeSource]
+          : undefined;
+      const routeShowsFilter = shouldUseFeedFilter(routeSource, routeCategory);
+      const categoryItems = feedCategoryItems(categories, routeSource);
+      return (
+        <View style={styles.content}>
+          <View
+            testID={`feed-secondary-${routeSource}`}
+            style={styles.feedSecondaryHeader}
+            pointerEvents={active ? 'auto' : 'none'}
+            accessibilityElementsHidden={!active}
+            importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
+          >
+            {shouldUseReadingFilter(routeSource) ? (
               <PillRail
                 variant="subtabs"
-                items={categoryItems}
-                value={categoryFilter}
-                resetScrollKey={feedSource}
-                onChange={changeCategoryFilter}
+                disabled={!active}
+                items={feedReadingFilterItems}
+                value={readingFilter}
+                onChange={(value) => {
+                  if (active) changeReadingFilter(value);
+                }}
               />
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="列表筛选"
-              accessibilityState={{ expanded: filterMenuOpen }}
-              hitSlop={TOUCH_HIT_SLOP}
-              style={styles.linuxDoFilterButton}
-              onPress={toggleFeedFilterMenu}
-            >
-              <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>
-                {activeFeedFilterLabel}
-              </Text>
-              <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
-            </Pressable>
+            ) : routeShowsFilter ? (
+              <View style={styles.feedSecondaryRow}>
+                <View style={styles.feedCategoryRailSlot}>
+                  <PillRail
+                    variant="subtabs"
+                    disabled={!active}
+                    items={categoryItems}
+                    value={routeCategory}
+                    resetScrollKey={Number(active)}
+                    onChange={(value) => {
+                      if (active) changeCategoryFilter(value);
+                    }}
+                  />
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="列表筛选"
+                  accessibilityState={{ expanded: active && filterMenuOpen }}
+                  disabled={!active}
+                  hitSlop={TOUCH_HIT_SLOP}
+                  style={styles.linuxDoFilterButton}
+                  onPress={() => {
+                    if (active) toggleFeedFilterMenu();
+                  }}
+                >
+                  <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>
+                    {feedFilterLabel(routeSource, routeFilter)}
+                  </Text>
+                  <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
+                </Pressable>
+              </View>
+            ) : (
+              <PillRail
+                variant="subtabs"
+                disabled={!active}
+                items={categoryItems}
+                value={routeCategory}
+                resetScrollKey={Number(active)}
+                onChange={(value) => {
+                  if (active) changeCategoryFilter(value);
+                }}
+              />
+            )}
           </View>
-        ) : (
-          <PillRail
-            variant="subtabs"
-            items={categoryItems}
-            value={categoryFilter}
-            resetScrollKey={feedSource}
-            onChange={changeCategoryFilter}
-          />
-        )}
-      </View>
+          {renderFeedContent({ route })}
+        </View>
+      );
+    },
+    [
+      enabledFeedSourceItems,
+      feedSource,
+      categoryFilter,
+      feedFilter,
+      feedFilters,
+      categories,
+      styles,
+      readingFilter,
+      changeReadingFilter,
+      changeCategoryFilter,
+      filterMenuOpen,
+      toggleFeedFilterMenu,
+      theme,
+      renderFeedContent
+    ]
+  );
+
+  return (
+    <View style={styles.content}>
       {feedFilterMenu}
       <TabView
         animationEnabled={false}
@@ -517,9 +588,11 @@ export const FeedScreen = memo(function FeedScreen({
         lazy
         lazyPreloadDistance={1}
         navigationState={feedNavigationState}
-        renderLazyPlaceholder={renderFeedLoadingScene}
+        commonOptions={feedTabOptions}
+        renderLazyPlaceholder={renderFeedScene}
         renderScene={renderFeedScene}
-        renderTabBar={renderEmptyTabBar}
+        renderTabBar={renderFeedTabBar}
+        onSwipeStart={closeFeedFilterMenu}
         onIndexChange={changeFeedSourceFromPager}
       />
       {showFloatingActions ? (

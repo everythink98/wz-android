@@ -15,6 +15,18 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
+## `REG-TOPIC-152` 小数密度下行内大图超过段落宽度而错位
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03`；共享 `NAV-02/03` |
+| 历史症状与根因 | 2026-09-05，V2EX `t/1229472` 主楼两张混排图片在手机截图中跟在文字后向右越界，默认模拟器正常。同一 API 35 模拟器设为 `1264×2780 / 560dpi` 后复现，宽度改为 `1265px` 则通过；去掉 HTML、图片加载和固定 lineHeight 后，Text 内嵌 View 仍可复现。Fabric 已将子 View 测为段落上限 `1124px`，随后加 `0.01dp` 并向上对齐，生成 `1125px` 占位，首次违反最大约束。另有 DIP/Float 往返误差可将 `3px / density 2.625` 转换为 `4px`。 |
+| 处置 | 共享 `ParagraphShadowNode` 在像素对齐后复用现有 `LayoutConstraints.clamp`；Android 的两条 spannable 构造路径继续共用 DIP helper，在 ceil 前只退一个 Float ULP，保留已对齐整数像素并继续向上取整真实分数。未改变作者图文位置、媒体分类或引入按设备留白。 |
+| 当前 owner | `patches/react-native+0.86.3.patch` 内的 `TextLayoutManagerInlineViewSizeTest`；`dev/inline-layout-proof/index.tsx` 对真实 Fabric 的换行及最终 bounds 自检；生产 wiring 仍由 `tests/ui/topic/topic-image-loading.test.tsx` 承接，执行方法见 operator runbook。 |
+| 历史修复证据与边界 | 原生 JVM 新用例修复前失败、修复后 3 项通过。最小 Fabric 页面在 `1264/560dpi/fontScale 0.9、1.0`、`1265/560dpi/0.9`、默认 `1080/420dpi/1.0` 均为 5/5 PASS。匹配最终 Debug APK 的原帖在 `1264/560dpi/0.9` 加载真实图片后，两图相对正文左边缘均为 `1px`，宽度 `1123px`、高度 `718/739px`，右侧不越界；预览返回 bounds 完全相同，连续四次下滚后返回仍保持宽度与比例。此前记录全新依赖 forward apply → 真实 postinstall → reverse check 及完整 verify 通过；这些历史结果不代替后续版本验收。 |
+| 本轮专项验收 | 2026-09-06：重新执行原生负控、5 组真实 Fabric 矩阵（每组 5/5）、V2EX 原帖 `0.9/1.0` 字体、预览返回与列表回收；NodeSeek `post-889473-1` 第 12 楼引用图首次展开及重开、linux.do `t/topic/2556285` 主楼与第 2 楼长图均实际显示。妖火 `bbs-1577052.html` 未取得有效正文，随后来源读取出现 `network_error`，该站原帖 GIF 记 `NOT_VERIFIED`；物理手机及 iOS 未验。本轮按用户要求只做受影响能力及共享路径回归，不声明全量 verify 通过。 |
+
 ## `REG-TOPIC-151` 评论中的邮箱保护占位未还原
 
 | 字段 | 内容 |
@@ -216,8 +228,9 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-03`、`FEED-04` |
-| 历史症状与根因 | 左右横滑时目标页面已经出现，顶部来源和二级导航却仍停在旧来源；按 fractional position 提前切换、把二级导航塞入各 scene、增加视觉来源或等待 idle 的修复又造成蓝线错位、导航错拍、重复状态和漏请求。新版 `react-native-pager-view@9.0.4` 的 Android Compose 实现只观察 `settledPage` 派发 `onPageSelected`，因此业务即使只消费一个 `feedSource`，也只能在 snap 动画结束时更新。当前根修复把选择时钟放到 Compose `TargetedFlingBehavior` 已解析目标之后：拖动期间保持原来源，松手定向时两级导航、目标 Loading 与 Query 来源同次提交；settled 只作程序化路径和最终校正，重复页由 native 去重。 |
-| 当前 owner | `tests/ui/feed/feed-screen.test.tsx` |
+| 历史症状与根因 | 左右横滑时页面已经移动，一级蓝标、文字和二级导航却仍停在旧来源。过去按 fractional position 提前提交业务、让 scene 继续读取全局分类、增加视觉来源或拼接 idle 的尝试造成错拍与漏请求。9.0.4 Compose Pager 的 `settledPage` 在动画结束时派发选择；专用 `TargetPageFlingBehavior` 补丁也等待 delegate 成功完成，历史记录的“松手定向时提交”与现役实现及测试不符。2026-09-05 修复前设备慢拖中途蓝标中心仍为 96.5px，结束后才跳至 264.5px。根修复将视觉进度和业务选择分开：标准 TabBar 消费连续 position；二级导航归所属 scene，按 route 投影分类、排序和 Loading；业务仅处理最终选择。删除 Feed 专用原生选择补丁及其专属测试，恢复上游选择事件，保留一次提交、取消零提交和单个完整列表。 |
+| 当前 owner | `tests/ui/feed/feed-navigation-motion.test.tsx`、`tests/ui/feed/feed-screen.test.tsx` |
+| 关联验收修复 | 2026-09-06 模拟器发现预铺二级导航切为 active 后，Android 无障碍树仍保留 `enabled=false`；共享 `PillRail` 现明确写回两个 disabled 属性的 `false`。行为测试先以 seed `771547259` 证明缺失状态，再验证恢复；共享控件及 Feed、Search、Library、Notifications 的定向 UI 回归通过。 |
 
 
 ## `REG-PERF-008` 嵌套 Topic 共用 presentation 且大正文同步挂载阻塞返回
@@ -4219,8 +4232,8 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`MORE-05` |
-| 历史症状与根因 | 在 More 重排来源后返回首页，顶部仍像是原来源，但内容区一直显示“正在读取主题”；再切一次来源才恢复；根因：PagerView 的页面适配是位置语义，而来源顺序是可变的；在同一 Feed 会话内热更新 children 后，旧数字位置不能稳定表示来源身份。inactive scene 又只允许 controller 当前来源渲染真实列表，因此错位物理页会永久显示 Loading。 |
-| 当前 owner | `tests/ui/app/content-source-navigation.test.tsx` |
+| 历史症状与根因 | 在 More 重排来源后返回首页，顶部仍像是原来源，但内容区一直显示“正在读取主题”；再切一次来源才恢复；根因：PagerView 的页面适配是位置语义，而来源顺序是可变的；在同一 Feed 会话内热更新 children 后，旧数字位置不能稳定表示来源身份。inactive scene 又只允许 controller 当前来源渲染真实列表，因此错位物理页会永久显示 Loading。2026-09-06 设备复测进一步发现，新建原生 Pager 的 initialPage 为 0，Compose 却从共享 View.NO_ID 保存槽恢复旧页 1，导致一级蓝标为“全部”而分类、列表属于 linux.do。React 会话重建已存在，重复加 key 无效；现以独立 ComposeView ID 隔离新实例的保存状态，保留上游 settledPage 选择事件，重排后导航与内容统一回到“全部”。 |
+| 当前 owner | `tests/ui/app/content-source-navigation.test.tsx`、`tests/live/feed-source-reorder.ad` |
 
 
 ## `REG-FEED-018` 未登录妖火关闭登录页后无限重开

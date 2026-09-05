@@ -61,7 +61,7 @@ Topic 内容守恒由共享 compiler 的 Vitest 契约拥有：同一 fixture �
 | `@react-native-community/slider` | `MORE-03`、`TOPIC-02` | 字号与音频进度 UI；匹配 APK 连续拖动、无障碍值和返回恢复。 |
 | `@shopify/flash-list` | `FEED-*`、`SEARCH-*`、`TOPIC-*`、`USER-*`、`LIBRARY-*`、`NOTIFY-*` | 各列表 canonical UI；匹配 APK 核对多列表回收、分页、滚动/返回和 rich cell 身份。 |
 | `react-native-gesture-handler` | `TOPIC-02`、`MORE-05`、`WRITE-01` | 图片缩放/翻页、代码与表格横滑、内容源拖排和 composer 滚动；匹配 APK 核对手势仲裁。 |
-| `react-native-pager-view` | `FEED-02` | patched `TargetedFlingBehavior` JVM oracle 固定 delegate 持续更新目标，成功完成后只提交最终非起点 selection 一次，协程取消或最终回到起点零提交；Feed UI 固定一个 `feedSource` 同时驱动两级导航、Loading 与读取，不消费 fractional position 或 idle。最终 APK 核对拖动期间保持原来源、delegate 完成后的最终目标提交同步切换、取消零读取、反向只取最终目标，点击和左右滑动各只提交一次。 |
+| `react-native-pager-view` | `FEED-02` | `feed-navigation-motion` 挂载真实 TabView/TabBar，仅隔离 Native Pager，连续及反向进度必须改变蓝标与文字但不提交来源；`feed-screen` 固定按 route 投影的二级导航、非当前控件隔离、单列表和最终选择一次提交。恢复或升级上游 Pager 后，以匹配 APK 核对慢拖、快甩、回拖、取消、连续反向及跨页点击，二级栏随所属页面移动，结束无额外跳换；取消零读取、最终选择只读取一次，不拼接 idle 与 selected 协议。 |
 | `react-native-safe-area-context` | `NAV-01`、`TOPIC-02`、`WRITE-01` | 导航、预览、Modal/Sheet UI；匹配 APK 核对状态栏、底部手势区和键盘边界。 |
 | `react-native-screens` | `NAV-*`、`TOPIC-03`、`USER-02` | Native stack UI；匹配 APK 核对返回、嵌套路由、freeze 和原 route 状态恢复。 |
 | `react-native-svg` | `TOPIC-02`、`USER-01` | SVG fallback、公式与头像 UI；匹配 APK 核对真实 SVG/Math 渲染和返回稳定性。 |
@@ -147,7 +147,7 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 | Android 主楼正文连续选择 | compiler Vitest、`topic-rich-text-selection` 与 `topic-components` RNTL、`npm run test:native:forum-selection`、独立 `WZ_ForumSelection_Test_API35` 上的 `npm run test:instrumented:forum-selection`；RNTL 必须固定 visible opening→manifest→row marker、opening `selectable=false` 及回复/评论/采纳答案零 marker、整条长按复制，instrumentation 必须固定 marker-only 身份、瞬态映射不取消、普通链接 tap 不被吞、静止长按唯一入口、双击零原生选区、静止短按取消/滚动保留、生产等价 ScrollView 同 draw 的 TextView-local 高亮与同 ViewRoot viewport/surface handle wrapper 像素/AOSP 几何 oracle、TextView/marked-row 遮挡 falsifier、至少 `48dp` 命中与无跳变抓取、真实端点变化才请求 `TEXT_HANDLE_MOVE`、RecyclerView 回收重绑后的手柄/复制/投影恢复，以及 Copy/Select all 与 Share/`PROCESS_TEXT`/TextClassifier 三类平台动作的 API、排序、隐私和 snapshot/generation 异步 oracle；真实来源再按 runbook 核对同页原生标题对照、主楼复制顺序、跨回收窗口、快速往返逐帧贴合、负向 marker 边界、预算/PSS 和 `0px` bounds/baseline，物理设备缺失时实际触感标 `NOT_VERIFIED`，外部动作执行未经逐项授权时标 `NOT_VERIFIED`。 |
 | WebView、登录态、真实来源或原生生命周期 | 静态/单元/UI owner 加 targeted build；按 runbook 做身份匹配的 APK sanity、Replay 或 Live，未授权分支明确 `NOT_VERIFIED`。 |
 | 版本、签名或原生配置的普通开发改动 | 相关 tooling test、fresh prebuild/compile 或 targeted build；不运行要求 clean tree 的正式 release。 |
-| 用户明确要求正式发布 | 按 runbook 运行 `npm run release:android` 及其完整门禁。 |
+| 用户明确要求正式发布 | 默认按 runbook 运行 `npm run release:android` 及其完整门禁；当次明确授权特殊发布时，先完成受影响能力及共享 seam 的定向回归，再按 runbook 的显式选项发布并记录证据范围。 |
 
 多个入口受影响时逐类报告，不能用一个局部绿灯代表全部。相关验证失败且仍有安全、可证伪、在授权范围内的修复路径时继续修复；计划外既有产品 Bug 则停在证据和授权边界。
 

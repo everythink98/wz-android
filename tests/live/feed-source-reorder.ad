@@ -1,0 +1,35 @@
+# Targeted only: V2EX and linux.do must be enabled and occupy the first two source slots.
+# Restores their original order on success; inspect and restore settings if interrupted.
+context platform=android
+context timeout=180000
+context retries=0
+env APP_ID=com.wz.reader
+
+open ${APP_ID} --relaunch
+wait id="feed-source-v2ex" 15000
+press id="feed-source-v2ex"
+wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 10000
+press id="main-tab-more"
+wait label="展开内容源" 10000
+press label="展开内容源"
+wait "label=\"拖动排序：V2EX，第 1 项，共 4 项\"" 10000
+wait "label=\"拖动排序：linux.do，第 2 项，共 4 项\"" 10000
+gesture drag id="content-source-drag-linuxdo" id="content-source-drag-v2ex" 500 500
+wait "label=\"拖动排序：linux.do，第 1 项，共 4 项\"" 10000
+press id="main-tab-feed"
+wait "id=\"feed-source-all\" label=\"全部，已选择\"" 10000
+wait label="未读" 10000
+wait label="已读" 10000
+wait "id=\"feed-outcome-data-all-default\" || id=\"feed-outcome-empty-all-default\" || id=\"feed-outcome-partial-all-default\" || id=\"feed-outcome-error-all-default\" || id=\"feed-outcome-auth-all-default\"" 60000
+
+press id="feed-source-v2ex"
+wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 10000
+press id="main-tab-more"
+wait id="content-source-drag-v2ex" 10000
+gesture drag id="content-source-drag-v2ex" id="content-source-drag-linuxdo" 500 500
+wait "label=\"拖动排序：V2EX，第 1 项，共 4 项\"" 10000
+press id="main-tab-feed"
+wait "id=\"feed-source-all\" label=\"全部，已选择\"" 10000
+wait label="未读" 10000
+wait label="已读" 10000
+wait "id=\"feed-outcome-data-all-default\" || id=\"feed-outcome-empty-all-default\" || id=\"feed-outcome-partial-all-default\" || id=\"feed-outcome-error-all-default\" || id=\"feed-outcome-auth-all-default\"" 60000

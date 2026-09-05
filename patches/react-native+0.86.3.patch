@@ -301,7 +301,7 @@ index 1e91267..c70a9a2 100644
  
      controller = builder.build()
 diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
-index eacec69..8b0b891 100644
+index eacec69..75eaedd 100644
 --- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
 +++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/TextLayoutManager.kt
 @@ -251,13 +251,15 @@ internal object TextLayoutManager {
@@ -334,12 +334,13 @@ index eacec69..8b0b891 100644
              ),
              start,
              end,
-@@ -540,6 +542,9 @@ internal object TextLayoutManager {
+@@ -540,6 +542,10 @@ internal object TextLayoutManager {
      return spannable
    }
  
++  // The DIP round trip can put a pixel-aligned size one Float ULP above its integer.
 +  internal fun inlineViewSizeToPixels(size: Double): Int =
-+      ceil(PixelUtil.toPixelFromDIP(size).toDouble()).toInt()
++      ceil(Math.nextDown(PixelUtil.toPixelFromDIP(size)).toDouble()).toInt()
 +
    fun getOrCreateSpannableForText(
        assets: AssetManager,
@@ -379,10 +380,10 @@ index 5d30f85..37e3888 100644
  
 diff --git a/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerInlineViewSizeTest.kt b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerInlineViewSizeTest.kt
 new file mode 100644
-index 0000000..4455ee6
+index 0000000..06a8d42
 --- /dev/null
 +++ b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/TextLayoutManagerInlineViewSizeTest.kt
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,77 @@
 +/*
 + * Copyright (c) Meta Platforms, Inc. and affiliates.
 + *
@@ -438,6 +439,27 @@ index 0000000..4455ee6
 +
 +    assertThat(TextLayoutManager.inlineViewSizeToPixels(132.1)).isEqualTo(133)
 +  }
++
++  @Test
++  fun `pixel aligned attachments retain their width at fractional display densities`() {
++    for (pixelDensity in listOf(2.625f, 3.5f)) {
++      val displayMetrics =
++          DisplayMetrics().apply {
++            density = pixelDensity
++            scaledDensity = pixelDensity * 0.9f
++          }
++      DisplayMetricsHolder.setWindowDisplayMetrics(displayMetrics)
++      DisplayMetricsHolder.setScreenDisplayMetrics(displayMetrics)
++      for (pixelWidth in 1..2000) {
++        val measuredDip = (pixelWidth / pixelDensity).toDouble()
++        assertThat(TextLayoutManager.inlineViewSizeToPixels(measuredDip))
++            .describedAs("%s px at density %s", pixelWidth, pixelDensity)
++            .isEqualTo(pixelWidth)
++      }
++      assertThat(TextLayoutManager.inlineViewSizeToPixels((132.25f / pixelDensity).toDouble()))
++          .isEqualTo(133)
++    }
++  }
 +}
 diff --git a/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts b/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts
 --- a/node_modules/react-native/ReactAndroid/hermes-engine/build.gradle.kts
@@ -470,3 +492,15 @@ diff --git a/node_modules/react-native/settings.gradle.kts b/node_modules/react-
 +project(":packages:react-native").projectDir = file(System.getProperty("java.io.tmpdir"))
  
  // Gradle properties defined in `gradle.properties` are not inherited by
+diff --git a/node_modules/react-native/ReactCommon/react/renderer/components/text/ParagraphShadowNode.cpp b/node_modules/react-native/ReactCommon/react/renderer/components/text/ParagraphShadowNode.cpp
+--- a/node_modules/react-native/ReactCommon/react/renderer/components/text/ParagraphShadowNode.cpp
++++ b/node_modules/react-native/ReactCommon/react/renderer/components/text/ParagraphShadowNode.cpp
+@@ -124,6 +124,8 @@ Content ParagraphShadowNode::getContentWithMeasuredAttachments(
+     size.width += 0.01f;
+     size.height += 0.01f;
+     size = roundToPixel<&ceil>(size, layoutContext.pointScaleFactor);
++    // Pixel rounding must not make an attachment wider than its paragraph.
++    size = localLayoutConstraints.clamp(size);
+ 
+     auto fragmentLayoutMetrics = LayoutMetrics{};
+     fragmentLayoutMetrics.pointScaleFactor = layoutContext.pointScaleFactor;

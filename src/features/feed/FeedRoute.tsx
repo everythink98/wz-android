@@ -87,6 +87,7 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
       feedPage={controller.activeFeedState.page}
       feedSource={controller.feedSource}
       feedFilter={controller.feedFilter}
+      feedFilters={controller.feedFilters}
       enabledFeedSources={controller.enabledFeedSources}
       loadMoreFailureSignal={controller.activeFeedState.loadMoreFailureSignal}
       loadingMore={controller.activeFeedState.loadingMore}
