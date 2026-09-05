@@ -387,6 +387,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `DATA-02/03` 的 `reader-settings` 与 JSON 备份现包含 `nodeSeekRecoveryThreshold`；旧数据使用默认 1，导入时取整并 clamp 到 1–5，不增加数据迁移。
 
+`MORE-01/04` 的原生 HTTP relay 在完整转发首个 `Content-Length` 请求体后停止读取下一请求，但保持上游连接直到 `Connection: close` 响应收完，不用 TCP 半关闭表示 HTTP 请求结束。只有 CONNECT 透明隧道传播双向 EOF。生成的 `NetworkProxyRuntimeTest.kt` 以真实 socket 和延迟二进制响应证明无请求体 GET、有请求体 POST 均不截断；更新设备证据使用标准 HTTP fixture server，不依赖服务器内部半关闭开关。
+
 ### RELEASE：构建、打包与发布
 
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 验收路径 |

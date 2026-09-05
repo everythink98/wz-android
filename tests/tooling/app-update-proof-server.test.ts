@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createUpdateProofServer } from '../../scripts/app-update-proof-server.mjs';
 
 describe('local Android update fixture service', () => {
-  it('finishes the response after the Android proxy half-closes its request', async () => {
+  it('drains a delayed binary response before closing the HTTP connection', async () => {
     const apk = Buffer.alloc(131072, 7);
     const server = createUpdateProofServer(apk, {}, 1);
     server.listen(0, '127.0.0.1');
@@ -16,7 +16,7 @@ describe('local Android update fixture service', () => {
     const received: Buffer[] = [];
     socket.on('data', (data) => received.push(data));
     try {
-      socket.end(
+      socket.write(
         'GET http://update-proof.invalid/apk HTTP/1.1\r\nHost: update-proof.invalid\r\nConnection: close\r\n\r\n'
       );
       await once(socket, 'close');

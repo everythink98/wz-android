@@ -4998,3 +4998,24 @@
 | 失败 oracle | 修复前两条测试分别观察到重试产生 2 次下载、安装入口失败删除完整 APK（seed 1788579088230）。当前 owner 必须证明同一完整包安装重试不再下载，安装失败仍可离线安装；新增恢复 oracle 固定磁盘偏移、单次范围回退、代理阻断、旧写入结算与迟到回调。设备上的真实流量、进程重启和系统安装确认独立按 `LOCAL-UPDATE-01` 取证，mock green 不替代该证据。 |
 | 实际设备证据 | 2026-09-05 在独立 `WZ_LoggedOut_API_35` 覆盖安装同签名开发构建 `1.3.134/138`，fixture 为 `115,828,989` 字节、SHA `1ee558514b6aa6318a0d05495e97a9492713c6a67765716f9245d80ef6446a36`。真实 Expo 链路暂停后磁盘长度稳定；进程结束重开从 `72,881,056` 续传，206 body 恰为剩余 `42,947,933` 字节；断流在 `57,914,494`，续传 body 为 `57,914,495`；带 `39,845,888` 断点收到 200 时覆盖全量，三条完成路径最终 SHA 均相同。错误范围和 416 均返回结构化错误且不改变既有磁盘长度。未知来源权限跳转后重试、系统取消/返回后再次打开安装确认，完整包不变且 APK 新增请求/传输为 0。阻断测试代理后下载失败，服务端没有新增 APK 请求。测试 AVD 卡顿后按授权正常关闭并冷启同一 AVD；结束已覆盖恢复原 APK（SHA `d8a0d71e…`）、未知来源权限 default 并删除测试文件，首次安装时间始终保持 `2026-08-03 16:37:36`。 |
 | 证据边界 | `STATIC_PASS`、`UNIT_PASS`、`UI_PASS` 与开发 APK 的 `APK_SANITY` 分别取证；设备 fixture 只证明下载/校验/安装确认链，不挂生产 More runtime，不计作 `DEVICE_REPLAY_PASS`。生产 More 的合格新版 APK 全流程、系统最终安装结果及真实公网断网场景仍为 `NOT_VERIFIED`；受控断流与 UI mock 不替代这些证据。 |
+
+## `REG-PROXY-014` HTTP 请求结束时提前半关闭导致更新响应截断
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-01`、`MORE-04` |
+| 历史症状与根因 | 普通 HTTP 请求体已经按 Content-Length 发完，relay 仍立即 shutdownOutput；标准 Node HTTP server 收到请求侧 EOF 后结束尚未发送完的响应。设备更新下载因此在首块 65,536 字节后报 ERR_UNABLE_TO_DOWNLOAD / unexpected end of stream，区间请求应有 32,680,613 字节；既有 fixture 用内部 httpAllowHalfOpen 开关掩盖了这个组合缺陷。 |
+| 当前 owner | `plugins/withNetworkProxyModule.js` 生成的 `NetworkProxyRuntimeTest.kt`：真实 socket、GET/POST 与延迟二进制响应；`tests/tooling/app-update-proof-server.test.ts` 固定标准 HTTP fixture，真实更新下载由 `tests/live/agent-live.md` 的 `LOCAL-UPDATE-01` 验证。 |
+| 失败 oracle | 修复前 native owner 期待 65,537 字节但只有 65,536；设备 App 与独立 relay 客户端同样在标准 fixture 下截断。HTTP 请求方向按已验证长度停止 copy，不再提前半关闭；响应完成、错误或共享 deadline 仍由连接 owner 关闭，CONNECT 保留半关闭语义与既有隧道测试。 |
+| 实际设备证据 | 修复后在用户指定的主 `WZ_Pixel_API_35` 验证标准 fixture：暂停、错误区间与 416 均保留 14,017,856 字节；App 重启后 206 恰传剩余 54,322,277。断流保留 34,170,066，续传 34,170,067；带 12,206,976 断点收到 200 时覆盖全量 68,340,133。三条完成路径 SHA 均为 `94b0199ce7a0ddc47b0f62a4fb93481df8c80cca64c82d8396de1b35e414126d`。代理阻断无新增 APK 请求，权限跳转、返回/取消及离线安装重试不重新下载；权限恢复 default，firstInstallTime 保持 `2026-07-26 16:51:37`。这些是受控入口证据，生产 More 的正式新版下载到最终安装仍单列 `NOT_VERIFIED`。 |
+
+## `REG-UPDATE-008` 更新下载设备验收中偶发单字节丢失待复现
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `OPEN` |
+| 能力 ID | `MORE-04`、`MORE-01` |
+| 历史症状与根因 | 2026-09-05 的 1.3.135 设备验收中，fixture 应为 68,340,133 字节，App 经本地代理续传后为 68,340,122；损坏样本末段多处各缺一字节，脱离 Expo 的 nc 代理对照也少 10 字节。具体根因未确定；不能把另一项已确认的 HTTP 提前半关闭直接当作这 11 字节丢失的根因。 |
+| 当前 owner | `dev/app-update-proof/index.tsx`、`scripts/app-update-proof-server.mjs` 与 `tests/live/agent-live.md` 的 `LOCAL-UPDATE-01`；尚无可靠的自动失败 oracle。 |
+| 证据边界 | 同一旧 APK 冷启后，完整下载、暂停/重启/206 续传及多轮直接 relay 字节对照均通过；普通/无窗口、慢接收及 Wi-Fi/蜂窝对照未复现单字节丢失。保留历史记录，按用户要求等待后续复现日志，不继续猜测修改、放宽 SHA 校验或增加自动重试。官方 Android Emulator issue 150758736 具有相似症状，只作后续调查线索，不证明本事故归因。 |

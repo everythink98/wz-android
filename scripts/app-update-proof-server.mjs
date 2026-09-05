@@ -60,9 +60,6 @@ export function createUpdateProofServer(apk, manifest, delayMs = 12) {
       response.destroy();
     }
   });
-  // Node's HTTP parser otherwise closes a throttled response when the proxy finishes its request half.
-  // ponytail: this Node 22 server flag is internal; the half-close test guards it on runtime upgrades.
-  server.httpAllowHalfOpen = true;
   return server;
 }
 

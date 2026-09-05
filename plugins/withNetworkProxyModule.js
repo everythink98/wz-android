@@ -2740,9 +2740,12 @@ private fun copySocket(
       }
     }
   } finally {
-    try {
-      outputSocket.shutdownOutput()
-    } catch (_: IOException) {
+    // Content-Length completes an HTTP request; keep its socket open for the response.
+    if (byteLimit == null) {
+      try {
+        outputSocket.shutdownOutput()
+      } catch (_: IOException) {
+      }
     }
   }
 }
@@ -3385,6 +3388,7 @@ import okio.ForwardingSource
 import okio.Timeout
 import okio.buffer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotEquals
@@ -5623,6 +5627,59 @@ class NetworkProxyRuntimeTest {
       server.stop()
       upstreamListener.close()
       upstreamExecutor.shutdownNow()
+    }
+  }
+
+  @Test
+  fun completedHttpRequestsKeepTheConnectionOpenUntilTheBinaryResponseDrains() {
+    for (requestBody in listOf("", "body")) {
+      val body = ByteArray(65537) { index -> (index % 251).toByte() }
+      val upstreamListener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+      val upstreamExecutor = Executors.newSingleThreadExecutor()
+      val upstreamResponse = upstreamExecutor.submit {
+        upstreamListener.accept().use { accepted ->
+          accepted.soTimeout = 2_000
+          val input = accepted.getInputStream()
+          readHeaderBlock(input)
+          for (character in requestBody) assertEquals(character.code, input.read())
+          val output = accepted.getOutputStream()
+          output.write((
+            "HTTP/1.1 200 OK\\r\\nContent-Length: " + body.size + "\\r\\nConnection: close\\r\\n\\r\\n"
+          ).toByteArray(Charsets.US_ASCII))
+          output.write(body, 0, body.size - 1)
+          output.flush()
+          // An ordinary HTTP server can abort a pending response when the request socket ends.
+          accepted.soTimeout = 100
+          try {
+            if (input.read() == -1) return@submit
+            throw AssertionError("Unexpected bytes after Content-Length")
+          } catch (_: SocketTimeoutException) {
+            output.write(body.last().toInt())
+          }
+        }
+      }
+      val server = LocalNetworkProxyServer(
+        NetworkProxyProfile("http", "127.0.0.1", upstreamListener.localPort, null, null)
+      )
+      server.start()
+      try {
+        Socket("127.0.0.1", server.port).use { client ->
+          client.soTimeout = 2_000
+          val method = if (requestBody.isEmpty()) "GET" else "POST"
+          client.getOutputStream().write((
+            method + " http://example.invalid/apk HTTP/1.1\\r\\nHost: example.invalid\\r\\n" +
+              "Content-Length: " + requestBody.length + "\\r\\nConnection: close\\r\\n\\r\\n" + requestBody
+          ).toByteArray(Charsets.US_ASCII))
+          val input = client.getInputStream()
+          assertTrue(readHeaderBlock(input).startsWith("HTTP/1.1 200 "))
+          assertArrayEquals("The entire response must survive request completion", body, input.readBytes())
+        }
+        upstreamResponse.get(2, TimeUnit.SECONDS)
+      } finally {
+        server.stop()
+        upstreamListener.close()
+        upstreamExecutor.shutdownNow()
+      }
     }
   }
 
