@@ -40,7 +40,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 - 编辑或删除已有历史内容、他人内容，以及任何不能安全清理的临时内容。
 - NodeSeek“反对”。
 - 把备份上传到云端、真实发送含图片草稿、清除登录、卸载、清数据或重置设备。
-- 新版本更新 UI；该能力只保留确定性代码检查。
+- 未经当次明确授权的正式更新确认安装；只读/取消安装验证与本机 fixture 流程见 `LOCAL-UPDATE-01`。
 
 ### 逐次授权门禁
 
@@ -130,7 +130,7 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 
 - 能力：`TOPIC-02`、`TOPIC-03`、`USER-01`、`NAV-02`；共享 `USER-02`、`LIBRARY-02`、`NAV-03`。仅当当前 revision、version/versionCode、APK SHA 匹配，NodeSeek Account Query 已确认登录，且目标链接仍存在对应可信 href 时执行；否则按证据轴记 `BLOCKED_BY_ENV` 或 `NOT_VERIFIED`，不改用搜索、相似主题或纯文本 `@name`。
 - 用 App 内主题链接直达 `https://www.nodeseek.com/post-832584-1`，依次检查正文 `@lcy0828`、正文 `@xy`、回复 `@Tokin`，以及 `/space/1414` 的 `@男朋友`。每个 username 最多触发一次真实 resolver probe；`/space/1414` 必须零 resolver。不得连点、预取全文用户或用重复请求制造 429。
-- 每次点击后 `com.wz.reader` 必须保持前台并进入 `user-screen-loaded`；不得启动 Chrome/Google。`@xy` 必须归一到 exact canonical 用户（UID `8052`），不能选择排在前面的模糊结果；Profile、主题/回复分页和可见关注目标只使用 canonical 数字 UID。解析中不显示关注；无匹配、非法响应、网络或 429 必须留在 App 并显示可刷新错误与显式“原站主页”，零自动重试、零自动外开。
+- 每次点击后 `com.wz.reader` 必须保持前台并进入 `user-screen-loaded`；不得启动 Chrome/Google。`@xy` 必须归一到 exact canonical 用户（UID `8052`），不能选择排在前面的模糊结果；Profile、主题/回复分页和可见关注目标只使用 canonical 数字 UID。解析中不显示关注；无匹配、非法响应、网络或 429 必须留在 App 并显示可刷新错误与显式“原站”，零自动重试、零自动外开。
 - 每个 User 检查完成后使用 Android 物理返回，必须回到同一 Topic 并保持原回复位置，再检查下一个目标。全程只读，不切换关注、不执行任何真实写操作；Cloudflare checkbox 按全局自动恢复协议处理，成功后只恢复原 User Query。
 
 ### LIVE-READ-05 四站真实回复顺序
@@ -263,3 +263,14 @@ Agent Live 使用当前任务已经连接的 agent-device MCP，在保留真实�
 报告按能力 ID 和来源列出 Profile、场景、App flow status、external data status、基础设施状态、用户可见 oracle、证据位置、恢复结果和残留。确认的功能失败始终阻断；受影响能力为 `BLOCKED_BY_ENV` 或 `NOT_VERIFIED` 时阻断，未受影响能力只报告风险。
 
 只有场景不再需要动态目标、模型判断或人工动作，并且能够可靠恢复时，才把它迁入 `tests/device/`；否则继续保留在本文件，不增加自定义 runner 或 DSL。
+
+
+## `LOCAL-UPDATE-01` 更新包复用与断点续传
+
+- 能力：`MORE-04`；先记录 revision、APK SHA、设备与包名/版本/signer/firstInstallTime。测试入口、服务和命令只见 `docs/operator-runbook.md` 的“更新下载证据”。测试 fixture 不得更改生产下载地址或内置 signer。
+- 先按受控服务证明正确 206 只传剩余字节、200 覆盖、错误区间写入前拒绝、416 与断流保留文件。暂停完成后再次量取文件长度必须不变；结束进程、重开后 Range 起点必须等于实际文件长度，完整文件 SHA 必须与 fixture 一致。只记录字节数、Range 和 hash，不输出代理或账号凭据。
+- 生产面板场景：下载一部分 → 离开 More → 返回仍在下载 → 暂停 → 断网/代理未就绪时继续失败且保留断点 → 恢复网络后继续 → 结束进程 → 重开手动续传 → 完成校验。前台完成仅打开安装确认；后台完成不能自动打开，回到前台仍需手动安装。
+- UI 状态逐项检查：恢复与检查期间说明等待原因；下载显示暂停入口，暂停尚未结算时禁用继续；总大小未知时只显示已下载字节；校验和打开安装确认期间不得残留“正在下载”。TalkBack 可读取进度及按钮禁用状态；错误后保留可操作的继续/安装入口。不同新版与本地目标同时展示，替换说明与“下载新版”动作一致。浅色/深色画廊覆盖上述状态，真实交互由 `tests/ui/more/app-update-runtime.test.tsx` 固定。
+- 安装确认分别按返回和取消，再阻断网络点击安装；服务端 APK 新增传输必须为 0 字节。验证安装权限不足跳转后，允许权限并重试仍复用原包；没有获准执行实际更新时不点击最终安装确认。系统取消或安装失败都不得显示“安装成功”。检查失败或发现另一新版时，本地安装按钮仍存在，只有明确点击下载新版才替换目标。
+- 受控入口只能证明真实 Expo、文件、原生校验与系统确认边界；它不能替代生产 More runtime 的设备 wiring。当前没有签名/版本合格的新正式 APK 时，该生产入口的设备链路单列 `NOT_VERIFIED`，不得通过降级或修改 manifest/内置 signer 制造成功。
+- 完成后只清理本任务测试文件，关闭本任务服务，恢复被本任务临时改变的设置；设备只覆盖安装，firstInstallTime 不变。分开报告 native/JVM、UI、APK_SANITY、设备测试入口与生产 More 的实际证据。

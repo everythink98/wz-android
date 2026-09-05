@@ -101,11 +101,13 @@ export async function reconcileSourceNotificationSlots(
   identityKey: string,
   currentIdentifier?: string
 ) {
-  await Promise.all(
+  const settled = await Promise.allSettled(
     [...notificationIdentifiersForIdentity(source, identityKey), `wz-message-${source}`]
       .filter((identifier) => identifier !== currentIdentifier)
       .map(dismissSourceNotificationExact)
   );
+  const failed = settled.find((result) => result.status === 'rejected');
+  if (failed) throw failed.reason;
 }
 
 export async function dismissSourceNotification(source: NotificationSource, identifier?: string, identityKey?: string) {

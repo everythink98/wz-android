@@ -9,7 +9,9 @@ import {
   getAppUpdateFromRelease,
   getReleaseManifestUrlFromRelease,
   formatAppUpdateDownloadProgress,
-  installVerifiedApk
+  verifyDownloadedApk,
+  openApkInstaller,
+  parseSavedAppUpdate
 } from './appUpdate';
 import appConfig from '../../../app.json';
 
@@ -58,6 +60,19 @@ function manifest(versionName = newerVersion) {
 }
 
 describe('app update release parsing', () => {
+  it('restores only trusted update metadata newer than this installation', () => {
+    const info = getAppUpdateFromRelease('1.3.6', release(newerTag), manifest())!;
+    expect(parseSavedAppUpdate(info)).toEqual(info);
+    for (const fields of [
+      { apkUrl: 'https://untrusted.invalid/app.apk' },
+      { signerSha256: 'f'.repeat(64) },
+      { versionCode: appConfig.expo.android.versionCode },
+      { sha256: '../escape' },
+      { version: 'bad' }
+    ]) {
+      expect(() => parseSavedAppUpdate({ ...info, ...fields })).toThrow();
+    }
+  });
   it('finds a newer APK asset from GitHub release manifest', () => {
     expect(getAppUpdateFromRelease('1.3.6', release(newerTag), manifest())).toEqual({
       version: newerVersion,
@@ -243,7 +258,7 @@ describe('app update release parsing', () => {
     };
     const update = getAppUpdateFromRelease('1.3.6', release(newerTag), manifest());
 
-    await expect(installVerifiedApk(installer, 'file:///cache/wz.apk', update!)).rejects.toThrow('APK 文件校验失败');
+    await expect(verifyDownloadedApk(installer, 'file:///cache/wz.apk', update!)).rejects.toThrow('APK 文件校验失败');
 
     expect(installer.installApk).not.toHaveBeenCalled();
   });
@@ -255,7 +270,8 @@ describe('app update release parsing', () => {
     };
     const update = getAppUpdateFromRelease('1.3.6', release(newerTag), manifest());
 
-    await expect(installVerifiedApk(installer, 'file:///cache/wz.apk', update!)).resolves.toBe(true);
+    await verifyDownloadedApk(installer, 'file:///cache/wz.apk', update!);
+    await expect(openApkInstaller(installer, 'file:///cache/wz.apk')).resolves.toBe(true);
 
     expect(installer.installApk).toHaveBeenCalledWith('file:///cache/wz.apk');
   });
@@ -265,8 +281,6 @@ describe('app update release parsing', () => {
       inspectApk: vi.fn(async () => manifest()),
       installApk: vi.fn(async () => false)
     };
-    const update = getAppUpdateFromRelease('1.3.6', release(newerTag), manifest());
-
-    await expect(installVerifiedApk(installer, 'file:///cache/wz.apk', update!)).rejects.toThrow('无法打开安装确认');
+    await expect(openApkInstaller(installer, 'file:///cache/wz.apk')).rejects.toThrow('无法打开安装确认');
   });
 });

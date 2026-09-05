@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type QueryKey } from '@tanstack/react-query';
+import {
+  hashKey,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+  type QueryKey
+} from '@tanstack/react-query';
 import { mergeTopics } from '@/domain/forum/feed';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
@@ -169,6 +176,8 @@ export function useUserController({
   );
   const topicKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'topics'), [profileKey]);
   const replyKey = useMemo(() => forumQueryKeys.userLane(profileKey, 'replies'), [profileKey]);
+  const profileKeyHash = hashKey(profileKey);
+  const profileKeyHashRef = useCommittedRef(profileKeyHash);
   const enabled = Boolean(canonicalUser && identity && active);
 
   const profileQuery = useQuery({
@@ -457,18 +466,29 @@ export function useUserController({
       return result.isError ? 'failed' : 'completed';
     }
     if (!identity) return 'completed';
+    const before = queryClient.getQueryState(profileKey);
     await queryClient.invalidateQueries({ queryKey: profileKey, exact: true, refetchType: 'active' });
-    const profile = queryClient.getQueryData<UserProfile>(profileKey);
-    if (profile) {
-      queryClient.setQueryData(topicKey, firstLaneData(profile));
-      queryClient.setQueryData(replyKey, firstLaneData(profile));
-    }
+    if (!activeRef.current || profileKeyHashRef.current !== profileKeyHash) return 'stale';
+    const state = queryClient.getQueryState<UserProfile>(profileKey);
+    if (state?.status === 'error') return state.errorUpdateCount > (before?.errorUpdateCount ?? 0) ? 'failed' : 'stale';
+    if (
+      !state?.data ||
+      state.status !== 'success' ||
+      state.fetchStatus !== 'idle' ||
+      state.dataUpdateCount <= (before?.dataUpdateCount ?? 0)
+    )
+      return 'stale';
+    queryClient.setQueryData(topicKey, firstLaneData(state.data));
+    queryClient.setQueryData(replyKey, firstLaneData(state.data));
     return 'completed';
   }, [
     active,
+    activeRef,
     identity,
     onRetryIdentityStatus,
     profileKey,
+    profileKeyHash,
+    profileKeyHashRef,
     profileReadPlan,
     queryClient,
     replyKey,

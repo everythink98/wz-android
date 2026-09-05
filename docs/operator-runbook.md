@@ -81,6 +81,32 @@ npm run test:instrumented:forum-selection
 
 runner 要求恰好一个已连接且名称精确匹配的 `WZ_ForumSelection_Test_API35`，并只用该 serial 设置 Gradle 的 `ANDROID_SERIAL`；不存在、重复或不匹配时立即失败。不得通过 `WZ_FORUM_SELECTION_TEST_AVD` 改指主登录态、Smoke、普通 Replay 或未登录 AVD，不得在这些保留数据设备上手工执行 `connectedDebugAndroidTest`。缺少独立 AVD 时报告 `BLOCKED_BY_ENV`，不卸载、不清数据、不重置主 AVD。instrumentation 与 `dumpsys vibrator_manager` 只证明隔离 proof 和系统触感请求；真实 RNRH/Fabric、FlashList、原站正文与 PSS 仍需下方匹配 APK 的只读 Live，实际触感和系统关闭触感后的静默只接受物理 Android 设备证据，缺少设备时记 `NOT_VERIFIED`。
 
+### 更新下载证据
+
+`MORE-04` 的原生测试使用真实 OkHttp、本机受控 HTTP 服务与 source patch 中的 `DownloadResponseTest`，不操作设备：
+
+API 以已安装的 57.0.6 源码为准，升级时对照 [Expo DownloadTask 文档](https://docs.expo.dev/versions/latest/sdk/filesystem/#downloadtask) 与 [上游 NetworkTasks 实现](https://github.com/expo/expo/blob/main/packages/expo-file-system/src/NetworkTasks.ts)，重新验证 Android resumeData、暂停结算和响应写入契约。
+
+```powershell
+cd android
+.\gradlew.bat :expo-file-system:testDebugUnitTest --tests expo.modules.filesystem.DownloadResponseTest --no-daemon
+```
+
+报告位于 `node_modules/expo-file-system/android/build/test-results/testDebugUnitTest/`，必须有非零测试。它覆盖 206/200/416、错误范围写入前拒绝、断流、暂停结算及当前受管 client，仍不替代真实 JS/Android 生命周期。该包必须保留在 `package.json` 的 `expo.autolinking.android.buildFromSource`；补丁升级按 testing standard 在独立干净依赖目录执行 forward check → postinstall → reverse check。临时目录若位于现有仓库下，先建立自己的空 Git 仓库，避免 `git apply` 因子目录 prefix 跳过全部 patch。
+
+设备 proof 使用独立未登录 AVD，先按下节核对安装身份，仅覆盖安装匹配本次源码的开发 APK。普通开发构建在 android 目录执行 `gradlew.bat :app:assembleDebug -PreactNativeArchitectures=x86_64 --no-daemon`，不运行正式 release。保留原 APK 以便同签名同版本覆盖恢复。
+
+```powershell
+node scripts/app-update-proof-server.mjs <fixture.apk> <Android-SDK/build-tools/36.0.0>
+  node --dns-result-order=ipv4first node_modules/expo/bin/cli start --dev-client --localhost --port 39082
+adb -s <serial> reverse tcp:39081 tcp:39081
+adb -s <serial> reverse tcp:39082 tcp:39082
+```
+
+开发客户端打开 `http://127.0.0.1:39082/dev/app-update-proof/index.bundle?platform=android&dev=true&minify=false` 对应的 development-client URL。该入口只写 document/wz-update-proof，读取本机服务的 fixture 元信息，调用真实 Expo DownloadTask 与 production APK 校验/打开安装器函数；不挂生产更新 runtime，不修改 AsyncStorage 更新任务。测试代理只在内存应用，下次正常 App bootstrap 恢复安全存储配置。服务只监听本机，不转发互联网请求；`/apk`、`/200`、`/416`、`/wrong-range`、`/disconnect` 提供可控响应，`/stats` 返回 Range、状态与服务端成功写出的 body 字节。中断时服务端缓冲可能略领先磁盘，只能用恢复请求本身的 `bodyBytes == fixture.size - diskOffset` 证明续传；安装重试前后 `/stats` 不增加 APK 请求才计 0 字节。
+
+按 `tests/live/agent-live.md` 的 `LOCAL-UPDATE-01` 分开验证下载链与生产 More；fixture 的 package/version/signer 只用于 test entry 校验，不代表正式 manifest 合格。权限页、返回/取消、断网、进程重启、代理阻断分别记证据；生产完整链缺少合格新版 APK 时记 `NOT_VERIFIED`。结束仅清理本任务 fixture、reverse 映射和服务，必要时用原 APK 覆盖恢复并复核 firstInstallTime。不得卸载、清 App 数据、重置 AVD，或在保留数据设备上执行 connectedDebugAndroidTest。
+
 ### 覆盖安装
 
 安装前后都记录 `firstInstallTime`，并要求值不变：

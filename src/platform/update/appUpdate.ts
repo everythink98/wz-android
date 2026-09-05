@@ -26,6 +26,10 @@ export type AppUpdateInfo = {
   signerSha256: string;
 };
 
+export function sameAppUpdate(left: AppUpdateInfo | null | undefined, right: AppUpdateInfo | null | undefined) {
+  return Boolean(left && right && left.versionCode === right.versionCode && left.sha256 === right.sha256);
+}
+
 export type ReleaseManifest = {
   apkName: string;
   sha256: string;
@@ -241,39 +245,70 @@ export function getAppUpdateFromRelease(
   };
 }
 
-function normalizedInspectionSha(value: unknown) {
-  return cleanSha256(value);
-}
-
 function assertDownloadedApkMatchesUpdate(update: AppUpdateInfo, inspection: ApkInspection) {
-  const sha256 = normalizedInspectionSha(inspection.sha256);
-  const signerSha256 = normalizedInspectionSha(inspection.signerSha256);
+  const sha256 = cleanSha256(inspection.sha256);
+  const signerSha256 = cleanSha256(inspection.signerSha256);
   const versionCode =
     typeof inspection.versionCode === 'number' ? inspection.versionCode : Number(inspection.versionCode);
   if (inspection.packageName !== update.packageName) {
-    throw new Error('APK 包名不匹配。');
+    throw new ApkVerificationError('APK 包名不匹配。');
   }
   if (
     inspection.versionName !== update.versionName ||
     !Number.isSafeInteger(versionCode) ||
     versionCode !== update.versionCode
   ) {
-    throw new Error('APK 版本不匹配。');
+    throw new ApkVerificationError('APK 版本不匹配。');
   }
   if (sha256 !== update.sha256) {
-    throw new Error('APK 文件校验失败。');
+    throw new ApkVerificationError('APK 文件校验失败。');
   }
   if (signerSha256 !== update.signerSha256) {
-    throw new Error('APK 签名校验失败。');
+    throw new ApkVerificationError('APK 签名校验失败。');
   }
 }
 
-export async function installVerifiedApk(installer: ApkInstaller | undefined, uri: string, update: AppUpdateInfo) {
-  if (!installer?.inspectApk || !installer.installApk) {
-    throw new Error('当前安装包不支持打开安装确认。');
+export class ApkVerificationError extends Error {}
+
+export function isInvalidApk(error: unknown) {
+  return (
+    error instanceof ApkVerificationError ||
+    (error !== null &&
+      typeof error === 'object' &&
+      'code' in error &&
+      ['apk_missing', 'apk_invalid', 'apk_signature_missing'].includes(String(error.code)))
+  );
+}
+
+export function parseSavedAppUpdate(value: unknown): AppUpdateInfo {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('更新记录格式不正确。');
+  const info = value as Partial<AppUpdateInfo>;
+  const version = typeof info.version === 'string' ? cleanReleaseVersion(`v${info.version}`) : null;
+  if (!version || compareAppVersions(version, CURRENT_APP_VERSION) <= 0) throw new Error('更新记录已过期。');
+  const manifest = parseReleaseManifest({ ...info, apkName: UPDATE_APK_NAME }, version);
+  if (typeof info.apkUrl !== 'string' || !isExpectedReleaseAssetUrl(info.apkUrl, `v${version}`, UPDATE_APK_NAME)) {
+    throw new Error('更新记录下载地址不可信。');
   }
+  return {
+    version,
+    apkUrl: info.apkUrl,
+    notes: typeof info.notes === 'string' ? info.notes : '',
+    sha256: manifest.sha256,
+    packageName: manifest.packageName,
+    versionName: manifest.versionName,
+    versionCode: manifest.versionCode,
+    signerSha256: manifest.signerSha256
+  };
+}
+
+export async function verifyDownloadedApk(installer: ApkInstaller | undefined, uri: string, update: AppUpdateInfo) {
+  if (!installer?.inspectApk) throw new Error('当前安装包不支持校验更新，请更新应用后重试。');
   const inspection = await installer.inspectApk(uri);
   assertDownloadedApkMatchesUpdate(update, inspection);
+}
+
+export async function openApkInstaller(installer: ApkInstaller | undefined, uri: string) {
+  if (!installer?.installApk) throw new Error('当前安装包不支持打开安装确认。');
   const opened = await installer.installApk(uri);
   if (!opened) {
     throw new Error('无法打开安装确认，请稍后重试。');

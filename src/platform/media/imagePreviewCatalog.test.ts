@@ -212,6 +212,30 @@ describe('image preview catalog', () => {
     ).toBe('https://cdn.example.com/2048.jpg');
   });
 
+  it('preserves tied responsive sources and rejects an invalid trailing candidate', () => {
+    const attributes = {
+      src: 'https://cdn.example.com/fallback.jpg',
+      srcset: [
+        'https://cdn.example.com/large-first.jpg 1280w',
+        'https://cdn.example.com/small-first.jpg 640w',
+        'https://cdn.example.com/small-last.jpg 640w',
+        'https://cdn.example.com/large-last.jpg 1280w'
+      ].join(', ')
+    };
+
+    expect(selectImageDisplaySource(attributes, 300, 2)?.uri).toBe('https://cdn.example.com/small-first.jpg');
+    expect(selectImageDisplaySource(attributes, 1500, 1)?.uri).toBe('https://cdn.example.com/large-last.jpg');
+    expect(
+      selectImageDisplaySource({ ...attributes, srcset: attributes.srcset.replaceAll('w', 'x') }, NaN, 700)?.uri
+    ).toBe('https://cdn.example.com/large-first.jpg');
+    for (const tail of ['https://cdn.example.com/mixed.jpg 2x', 'javascript:alert(1) 1600w', 'broken']) {
+      expect(selectImageDisplaySource({ ...attributes, srcset: `${attributes.srcset}, ${tail}` }, 300, 2)).toEqual({
+        uri: attributes.src,
+        candidateKind: 'src'
+      });
+    }
+  });
+
   it('selects density candidates and falls back from unreliable candidate sets', () => {
     expect(
       selectImageDisplaySource(

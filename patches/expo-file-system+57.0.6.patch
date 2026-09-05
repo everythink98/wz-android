@@ -1,0 +1,449 @@
+diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
+--- a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
++++ b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/FileSystemDownloadTask.kt
+@@ -6,6 +6,7 @@
+ import expo.modules.filesystem.unifiedfile.JavaFile
+ import expo.modules.filesystem.unifiedfile.SAFDocumentFile
+ import expo.modules.filesystem.unifiedfile.UnifiedFileInterface
++import expo.modules.kotlin.exception.CodedException
+ import expo.modules.kotlin.records.Field
+ import expo.modules.kotlin.records.Record
+ import expo.modules.kotlin.sharedobjects.SharedObject
+@@ -17,10 +18,7 @@
+ import okhttp3.Callback
+ import okhttp3.Request
+ import okhttp3.Response
+-import java.io.BufferedInputStream
+-import java.io.FileOutputStream
+ import java.io.IOException
+-import java.io.RandomAccessFile
+ import java.net.URI
+ import java.net.URLConnection
+ import java.util.concurrent.TimeUnit
+@@ -42,7 +40,8 @@
+  */
+ class FileSystemDownloadTask : SharedObject() {
+   companion object {
+-    private val client = OkHttpClientProvider.createClientBuilder()
++    private val client
++      get() = OkHttpClientProvider.createClient().newBuilder()
+       .connectTimeout(60, TimeUnit.SECONDS)
+       .readTimeout(60, TimeUnit.SECONDS)
+       .writeTimeout(60, TimeUnit.SECONDS)
+@@ -98,7 +97,7 @@
+     isCancelling = false
+ 
+     val offset = try {
+-      resumeData.toLong()
++      resumeData.toLong().also { if (it < 0) throw NumberFormatException() }
+     } catch (e: NumberFormatException) {
+       throw InvalidResumeDataException()
+     }
+@@ -151,6 +150,11 @@
+       }
+ 
+       call = client.newCall(request)
++
++      if (isPausing || isCancelling) {
++        safeResume(null)
++        return@suspendCancellableCoroutine
++      }
+ 
+       call?.enqueue(object : Callback {
+         override fun onFailure(call: Call, e: IOException) {
+@@ -164,19 +168,24 @@
+         }
+ 
+         override fun onResponse(call: Call, response: Response) {
+-          response.use { resp ->
+-            try {
+-              processDownloadResponse(resp, destination, isResume, offset, ::safeResume)
+-            } catch (e: IOException) {
+-              if (isPausing) {
+-                safeResume(null)
+-              } else if (isCancelling) {
+-                safeResumeWithException(DownloadCancelledException())
+-              } else {
+-                safeResumeWithException(UnableToDownloadException(e.message ?: "Download failed"))
+-              }
+-            } catch (e: Exception) {
+-              safeResumeWithException(UnableToDownloadException(e.message ?: "Download failed"))
++          try {
++            val written = writeDownloadResponse(response, destination, isResume, offset,
++              stopped = { isPausing || isCancelling },
++              progress = { count, total -> bytesWritten = count; emitProgress(count, total) }
++            )
++            if (written != null) {
++              lastProgressTime = 0
++              bytesWritten = written
++              emitProgress(written, written)
++            }
++            safeResume(if (written == null) null else destination.uri.toString())
++          } catch (e: Exception) {
++            if (isPausing) {
++              safeResume(null)
++            } else if (isCancelling) {
++              safeResumeWithException(DownloadCancelledException())
++            } else {
++              safeResumeWithException(if (e is CodedException) e else UnableToDownloadException(e.message ?: "Download failed"))
+             }
+           }
+         }
+@@ -185,95 +194,6 @@
+       continuation.invokeOnCancellation {
+         if (!isPausing) {
+           cancel()
+-        }
+-      }
+-    }
+-  }
+-
+-  private inline fun processDownloadResponse(
+-    resp: Response,
+-    destination: UnifiedFileInterface,
+-    isResume: Boolean,
+-    offset: Long,
+-    onComplete: (String?) -> Unit
+-  ) {
+-    if (!resp.isSuccessful) {
+-      throw UnableToDownloadException("HTTP ${resp.code}")
+-    }
+-
+-    val responseBody = resp.body
+-      ?: throw UnableToDownloadException("Empty response body")
+-
+-    // 206 = server supports Range, 200 = server ignored it (sends full content)
+-    val isPartial = resp.code == 206
+-    val effectiveOffset = if (isResume && isPartial) offset else 0L
+-
+-    val contentLength = responseBody.contentLength()
+-    val totalBytes = calculateDownloadTotalBytes(resp.code, contentLength, effectiveOffset)
+-
+-    prepareDestinationForWrite(destination, isResume && isPartial, effectiveOffset)
+-
+-    BufferedInputStream(responseBody.byteStream()).use { input ->
+-      destination.outputStream(isResume && isPartial).use { output ->
+-        val buffer = ByteArray(8192)
+-        var bytesRead: Int
+-        var totalBytesWritten = effectiveOffset
+-        bytesWritten = totalBytesWritten
+-
+-        while (input.read(buffer).also { bytesRead = it } != -1) {
+-          if (isCancelling) {
+-            return
+-          }
+-          if (isPausing) {
+-            onComplete(null)
+-            return
+-          }
+-
+-          output.write(buffer, 0, bytesRead)
+-          totalBytesWritten += bytesRead
+-          bytesWritten = totalBytesWritten
+-
+-          emitProgress(totalBytesWritten, totalBytes)
+-        }
+-      }
+-    }
+-
+-    // Reset throttle to guarantee final progress fires
+-    lastProgressTime = 0
+-    bytesWritten = destination.length()
+-    emitProgress(bytesWritten, bytesWritten)
+-
+-    onComplete(destination.uri.toString())
+-  }
+-
+-  private fun prepareDestinationForWrite(
+-    destination: UnifiedFileInterface,
+-    append: Boolean,
+-    offset: Long
+-  ) {
+-    when (destination) {
+-      is JavaFile -> {
+-        destination.parentFile?.let { parent ->
+-          if (parent is JavaFile) {
+-            parent.mkdirs()
+-          }
+-        }
+-        if (append) {
+-          RandomAccessFile(destination, "rw").use { raf ->
+-            raf.setLength(offset)
+-          }
+-        } else {
+-          FileOutputStream(destination, false).use { }
+-        }
+-      }
+-      else -> {
+-        if (append && destination.length() != offset) {
+-          throw UnableToDownloadException(
+-            "Cannot resume download: destination length does not match resume data"
+-          )
+-        }
+-        if (!append) {
+-          destination.outputStream(false).use { }
+         }
+       }
+     }
+@@ -304,18 +224,6 @@
+     }
+     return filename.ifBlank { "download" }
+   }
+-
+-fun calculateDownloadTotalBytes(
+-  responseCode: Int,
+-  contentLength: Long,
+-  effectiveOffset: Long
+-): Long {
+-  return when {
+-    responseCode == 206 && contentLength >= 0 -> effectiveOffset + contentLength
+-    responseCode == 206 -> -1L
+-    else -> contentLength
+-  }
+-}
+ 
+ fun resolveDownloadDestination(to: FileSystemPath, url: URI): UnifiedFileInterface {
+   return when (to) {
+diff --git a/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/DownloadResponse.kt b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/DownloadResponse.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/expo-file-system/android/src/main/java/expo/modules/filesystem/DownloadResponse.kt
+@@ -0,0 +1,74 @@
++package expo.modules.filesystem
++
++import expo.modules.filesystem.unifiedfile.JavaFile
++import expo.modules.filesystem.unifiedfile.UnifiedFileInterface
++import expo.modules.kotlin.exception.CodedException
++import okhttp3.Response
++import java.io.FileOutputStream
++import java.io.IOException
++import java.io.RandomAccessFile
++
++internal class DownloadRangeException : CodedException("Invalid download byte range")
++internal class DownloadRangeNotSatisfiableException : CodedException("Download byte range is no longer available")
++
++/** Validates the response before touching the destination; settles only after both streams close. */
++internal fun writeDownloadResponse(
++  response: Response,
++  destination: UnifiedFileInterface,
++  isResume: Boolean,
++  offset: Long,
++  stopped: () -> Boolean,
++  progress: (Long, Long) -> Unit
++): Long? = response.use { resp ->
++  if (resp.code == 416) throw DownloadRangeNotSatisfiableException()
++  if (!resp.isSuccessful) throw UnableToDownloadException("HTTP ${resp.code}")
++  if (resp.code != 200 && resp.code != 206) throw DownloadRangeException()
++  val body = resp.body ?: throw UnableToDownloadException("Empty response body")
++  val length = body.contentLength()
++  val append = isResume && resp.code == 206
++  val start = if (append) offset else 0L
++  var total = length
++  if (resp.code == 206) {
++    if (resp.headers.values("Content-Range").size != 1) throw DownloadRangeException()
++    val match = Regex("bytes (\\d+)-(\\d+)/(\\d+)").matchEntire(resp.header("Content-Range") ?: "")
++      ?: throw DownloadRangeException()
++    val first = match.groupValues[1].toLongOrNull() ?: throw DownloadRangeException()
++    val last = match.groupValues[2].toLongOrNull() ?: throw DownloadRangeException()
++    total = match.groupValues[3].toLongOrNull() ?: throw DownloadRangeException()
++    if (first != start || first < 0 || last < first || total <= last || last != total - 1 ||
++      (length >= 0 && length != total - first) ||
++      resp.header("Content-Type")?.startsWith("multipart/", ignoreCase = true) == true ||
++      resp.header("Content-Encoding")?.let { !it.equals("identity", ignoreCase = true) } == true
++    ) throw DownloadRangeException()
++  }
++  if (stopped()) return null
++  if (destination is JavaFile) {
++    (destination.parentFile as? JavaFile)?.mkdirs()
++    if (append) {
++      if (offset < 0 || offset > destination.length()) throw DownloadRangeException()
++      RandomAccessFile(destination, "rw").use { it.setLength(offset) }
++    } else {
++      FileOutputStream(destination, false).use { }
++    }
++  } else if (append && destination.length() != offset) {
++    throw DownloadRangeException()
++  }
++  var written = start
++  body.byteStream().buffered().use { input ->
++    destination.outputStream(append).use { output ->
++      val buffer = ByteArray(8192)
++      while (true) {
++        if (stopped()) return null
++        val count = input.read(buffer)
++        if (count == -1) break
++        if (stopped()) return null
++        if (total >= 0 && count.toLong() > total - written) throw DownloadRangeException()
++        output.write(buffer, 0, count)
++        written += count
++        progress(written, total)
++      }
++    }
++  }
++  if (total >= 0 && written != total) throw IOException("Download ended before the expected length")
++  written
++}
+diff --git a/node_modules/expo-file-system/android/src/test/java/expo/modules/filesystem/DownloadResponseTest.kt b/node_modules/expo-file-system/android/src/test/java/expo/modules/filesystem/DownloadResponseTest.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/expo-file-system/android/src/test/java/expo/modules/filesystem/DownloadResponseTest.kt
+@@ -0,0 +1,159 @@
++package expo.modules.filesystem
++
++import android.net.Uri
++import com.facebook.react.modules.network.OkHttpClientProvider
++import kotlinx.coroutines.runBlocking
++import okhttp3.Protocol
++import okhttp3.Response
++import okhttp3.ResponseBody.Companion.toResponseBody
++import java.net.URI
++import expo.modules.filesystem.unifiedfile.JavaFile
++import okhttp3.OkHttpClient
++import okhttp3.Request
++import org.junit.Assert.*
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++import java.io.File
++import java.net.ServerSocket
++import kotlin.concurrent.thread
++
++@RunWith(RobolectricTestRunner::class)
++@Config(manifest = Config.NONE, sdk = [35])
++class DownloadResponseTest {
++  private val payload = ByteArray(32768) { (it % 251).toByte() }
++
++  private fun transfer(
++    file: File,
++    offset: Long,
++    code: Int = 206,
++    contentRange: String? = "bytes $offset-${payload.size - 1}/${payload.size}",
++    disconnect: Boolean = false,
++    extraHeaders: String = "",
++    stopped: () -> Boolean = { false },
++    progress: (Long, Long) -> Unit = { _, _ -> }
++  ): Long? {
++    val bytes = if (code == 200) payload else payload.copyOfRange(offset.toInt(), payload.size)
++    ServerSocket(0).use { server ->
++      var requestRange: String? = null
++      val worker = thread {
++        server.accept().use { socket ->
++          val input = socket.getInputStream().bufferedReader()
++          while (true) {
++            val line = input.readLine() ?: break
++            if (line.isEmpty()) break
++            if (line.startsWith("Range:")) requestRange = line.substringAfter(':').trim()
++          }
++          val headers = "HTTP/1.1 $code Test\r\nContent-Length: ${bytes.size}\r\n" +
++            (contentRange?.let { "Content-Range: $it\r\n" } ?: "") + extraHeaders + "Connection: close\r\n\r\n"
++          socket.getOutputStream().apply {
++            write(headers.toByteArray())
++            write(if (disconnect) bytes.copyOf(bytes.size / 2) else bytes)
++            flush()
++          }
++        }
++      }
++      val client = OkHttpClient()
++      try {
++        val request = Request.Builder().url("http://127.0.0.1:${server.localPort}/app.apk")
++          .header("Range", "bytes=$offset-").header("Accept-Encoding", "identity").build()
++        return writeDownloadResponse(client.newCall(request).execute(), JavaFile(Uri.fromFile(file)),
++          true, offset, stopped, progress)
++      } finally {
++        worker.join(5000)
++        assertFalse(worker.isAlive)
++        assertEquals("bytes=$offset-", requestRange)
++        client.connectionPool.evictAll()
++        client.dispatcher.executorService.shutdown()
++      }
++    }
++  }
++
++  private fun withPartial(block: (File) -> Unit) {
++    val file = File.createTempFile("update-", ".part")
++    try { file.writeBytes(payload.copyOf(4096)); block(file) } finally { file.delete() }
++  }
++
++  @Test fun usesTheCurrentManagedClientAndHonorsItsBlock() = withPartial { file ->
++    val destination = FileSystemFile(Uri.fromFile(file))
++    // Supply the disk adapter without bootstrapping a JS runtime; exercise the real native task.
++    FileSystemPath::class.java.getDeclaredField("fileAdapter").apply { isAccessible = true }
++      .set(destination, JavaFile(Uri.fromFile(file)))
++    val options = DownloadTaskOptions().apply { headers = mapOf("Accept-Encoding" to "identity") }
++    val url = URI("http://127.0.0.1:9/app.apk")
++    var allowed = 0
++    val managed = OkHttpClient.Builder().addInterceptor { chain ->
++      allowed++
++      assertEquals("bytes=4096-", chain.request().header("Range"))
++      assertEquals("identity", chain.request().header("Accept-Encoding"))
++      Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(206).message("Partial")
++        .header("Content-Range", "bytes 4096-32767/32768")
++        .body(payload.copyOfRange(4096, payload.size).toResponseBody()).build()
++    }.build()
++    val blocked = OkHttpClient.Builder().addInterceptor { throw java.io.IOException("managed requests blocked") }.build()
++    try {
++      OkHttpClientProvider.setOkHttpClientFactory { managed }
++      val task = FileSystemDownloadTask()
++      runBlocking { task.resume(url, destination, "4096", options) }
++      assertEquals(1, allowed)
++      assertArrayEquals(payload, file.readBytes())
++      OkHttpClientProvider.setOkHttpClientFactory { blocked }
++      assertThrows(UnableToDownloadException::class.java) { runBlocking { task.start(url, destination, options) } }
++      assertArrayEquals(payload, file.readBytes())
++      assertEquals(1, allowed)
++      task.sharedObjectDidRelease()
++    } finally {
++      OkHttpClientProvider.setOkHttpClientFactory(null)
++      for (client in listOf(managed, blocked)) {
++        client.connectionPool.evictAll()
++        client.dispatcher.executorService.shutdown()
++      }
++    }
++  }
++
++  @Test fun resumesOnlyTheRemainingBytes() = withPartial { file ->
++    assertEquals(payload.size.toLong(), transfer(file, file.length()))
++    assertArrayEquals(payload, file.readBytes())
++  }
++
++  @Test fun replacesThePrefixWhenServerIgnoresRange() = withPartial { file ->
++    transfer(file, file.length(), code = 200, contentRange = null)
++    assertArrayEquals(payload, file.readBytes())
++  }
++
++  @Test fun rejectsInvalidRangesBeforeWriting() = withPartial { file ->
++    for (range in listOf(null, "bytes 0-32767/32768", "bytes 4096-20000/32768", "bytes 4096-32767/*", "bytes 4096-32767/999999999999999999999")) {
++      assertThrows(DownloadRangeException::class.java) { transfer(file, file.length(), contentRange = range) }
++      assertArrayEquals(payload.copyOf(4096), file.readBytes())
++    }
++    for (header in listOf("Content-Type: multipart/byteranges\r\n", "Content-Encoding: gzip\r\n",
++      "Content-Range: bytes 4096-32767/32768\r\n", "Content-Length: 12\r\n")) {
++      val error = assertThrows(DownloadRangeException::class.java) { transfer(file, file.length(), extraHeaders = header) }
++      assertEquals("ERR_DOWNLOAD_RANGE", error.code)
++      assertArrayEquals(payload.copyOf(4096), file.readBytes())
++    }
++  }
++
++  @Test fun preservesTheFileOnUnsatisfiableRange() = withPartial { file ->
++    val error = assertThrows(DownloadRangeNotSatisfiableException::class.java) { transfer(file, file.length(), code = 416) }
++    assertEquals("ERR_DOWNLOAD_RANGE_NOT_SATISFIABLE", error.code)
++    assertArrayEquals(payload.copyOf(4096), file.readBytes())
++  }
++
++  @Test fun resumesAfterAnInterruptedResponse() = withPartial { file ->
++    assertThrows(java.io.IOException::class.java) { transfer(file, file.length(), disconnect = true) }
++    assertTrue(file.length() > 4096)
++    transfer(file, file.length())
++    assertArrayEquals(payload, file.readBytes())
++  }
++
++  @Test fun pauseClosesTheWriterBeforeTheNextTransfer() = withPartial { file ->
++    var pause = false
++    assertNull(transfer(file, file.length(), stopped = { pause }, progress = { _, _ -> pause = true }))
++    val savedSize = file.length()
++    assertTrue(savedSize in 4097 until payload.size.toLong())
++    transfer(file, savedSize)
++    assertArrayEquals(payload, file.readBytes())
++  }
++}

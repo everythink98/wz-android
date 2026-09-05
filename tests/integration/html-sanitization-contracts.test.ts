@@ -53,6 +53,63 @@ describe('Android local HTML helpers', () => {
     expect(result).toContain('src="https://cdn.example.com/a.png"');
   });
 
+  it('restores protected email text and mail links while preserving their labels', () => {
+    const encoded = '4230272326273002273a232f322e276c212d2f';
+    const result = sanitizeContentHtml(
+      `<p>写给 <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="${encoded}">[email&nbsp;protected]</a></p>
+       <p><span class="__cf_email__" data-cfemail="42aaedf9aac2c702273a232f322e276c212d2f">[email&nbsp;protected]</span></p>
+       <a href="/cdn-cgi/l/email-protection#${encoded}"><strong>写信</strong></a>
+       <a href="https://example.com/cdn-cgi/l/email-protection#${encoded}"><span class="__cf_email__" data-cfemail="${encoded}">[email&nbsp;protected]</span></a>`,
+      'https://example.com/'
+    );
+    const root = parseHtml(result);
+
+    expect(root.querySelectorAll('p').map((node) => node.text)).toEqual([
+      '写给 reader@example.com',
+      '读者@example.com'
+    ]);
+    expect(root.querySelectorAll('a').map((node) => ({ href: node.getAttribute('href'), text: node.text }))).toEqual([
+      { href: 'mailto:reader@example.com', text: '写信' },
+      { href: 'mailto:reader@example.com', text: 'reader@example.com' }
+    ]);
+    expect(result).not.toMatch(/data-cfemail|email-protection|__cf_email__/);
+    expect(sanitizeContentHtml(result, 'https://example.com/')).toBe(result);
+  });
+
+  it('keeps malformed email protection readable and ignores unrelated markers and links', () => {
+    const malformed = ['invalid', '42', '423', '42ff'];
+    const result = sanitizeContentHtml(
+      malformed
+        .map((encoded) => `<span class="__cf_email__" data-cfemail="${encoded}">[email protected]</span>`)
+        .join('') +
+        '<span data-cfemail="4230272326273002273a232f322e276c212d2f">ordinary</span>' +
+        '<a href="https://example.com/guide?next=/cdn-cgi/l/email-protection#4230272326273002273a232f322e276c212d2f">guide</a>' +
+        '<a href="javascript:/cdn-cgi/l/email-protection#4230272326273002273a232f322e276c212d2f">unsafe</a>',
+      'https://example.com/'
+    );
+    const root = parseHtml(result);
+
+    expect(root.querySelectorAll('.__cf_email__').map((node) => node.text)).toEqual(
+      malformed.map(() => '[email protected]')
+    );
+    expect(root.querySelector('span:not(.__cf_email__)')?.text).toBe('ordinary');
+    expect(root.querySelectorAll('a').map((node) => node.getAttribute('href'))).toEqual([
+      'https://example.com/guide?next=/cdn-cgi/l/email-protection#4230272326273002273a232f322e276c212d2f',
+      undefined
+    ]);
+  });
+
+  it('renders decoded email markup as inert text', () => {
+    const result = sanitizeContentHtml(
+      '<span class="__cf_email__" data-cfemail="427e2b2f25623130217f3a622d2c2730302d307f232e2730366a736b7c02273a232f322e276c212d2f">[email protected]</span>',
+      'https://example.com/'
+    );
+
+    expect(parseHtml(result).querySelector('img')).toBeNull();
+    expect(textContentFromHtml(result)).toBe('<img src=x onerror=alert(1)>@example.com');
+    expect(result).toContain('&lt;img');
+  });
+
   it('scrubs source-controlled forum image layout markers', () => {
     const result = sanitizeContentHtml(
       '<img src="photo.jpg" data-forum-inline-sized="true" data-forum-flow-image-context="standalone">',

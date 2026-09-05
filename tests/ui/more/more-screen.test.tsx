@@ -259,13 +259,16 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
     contentSourcesExpanded: false,
     onContentSourcesExpandedChange: jest.fn(),
     update: {
-      busy: false,
-      downloading: false,
+      phase: 'idle',
+      artifact: null,
       progress: null,
       info: null,
       message: '当前版本 1.3.63',
       check: jest.fn(),
-      download: jest.fn(),
+      start: jest.fn(),
+      pause: jest.fn(),
+      resume: jest.fn(),
+      install: jest.fn(),
       ...overrides.update
     },
     utilities: {
@@ -969,7 +972,7 @@ describe('More screen state and actions', () => {
     const onCheckAppUpdate = jest.fn();
     const onDownloadAppUpdate = jest.fn();
     const view = await render(
-      <MoreScreen {...moreProps({ update: { check: onCheckAppUpdate, download: onDownloadAppUpdate } })} />
+      <MoreScreen {...moreProps({ update: { check: onCheckAppUpdate, start: onDownloadAppUpdate } })} />
     );
 
     expect(view.queryByText('有新版本')).toBeNull();
@@ -977,7 +980,9 @@ describe('More screen state and actions', () => {
     expect(onCheckAppUpdate).toHaveBeenCalledTimes(1);
 
     await view.rerender(
-      <MoreScreen {...moreProps({ update: { busy: true, check: onCheckAppUpdate, download: onDownloadAppUpdate } })} />
+      <MoreScreen
+        {...moreProps({ update: { phase: 'checking', check: onCheckAppUpdate, start: onDownloadAppUpdate } })}
+      />
     );
     expect(view.getByLabelText('检查中').props.accessibilityState.disabled).toBe(true);
 
@@ -998,7 +1003,7 @@ describe('More screen state and actions', () => {
             info: appUpdateInfo,
             message: '发现新版 1.4.0',
             check: onCheckAppUpdate,
-            download: onDownloadAppUpdate
+            start: onDownloadAppUpdate
           }
         })}
       />
@@ -1012,8 +1017,7 @@ describe('More screen state and actions', () => {
       <MoreScreen
         {...moreProps({
           update: {
-            busy: true,
-            downloading: true,
+            phase: 'downloading',
             progress: {
               title: '正在下载 1.4.0',
               downloadedBytes: 1024,
@@ -1024,7 +1028,7 @@ describe('More screen state and actions', () => {
             },
             info: appUpdateInfo,
             check: onCheckAppUpdate,
-            download: onDownloadAppUpdate
+            start: onDownloadAppUpdate
           }
         })}
       />

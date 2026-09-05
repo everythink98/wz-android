@@ -17,11 +17,9 @@ const actionText = {
 } as const;
 
 export function buildSourceNotificationDigest(source: NotificationSource, items: ForumNotification[]) {
-  const latest = [...items].sort((left, right) => {
-    const leftTime = left.createdAt ? Date.parse(left.createdAt) : Number.NEGATIVE_INFINITY;
-    const rightTime = right.createdAt ? Date.parse(right.createdAt) : Number.NEGATIVE_INFINITY;
-    return rightTime - leftTime;
-  })[0];
+  const latest = items
+    .map((item) => ({ item, time: item.createdAt ? Date.parse(item.createdAt) : Number.NEGATIVE_INFINITY }))
+    .sort((left, right) => right.time - left.time)[0]?.item;
   if (!latest || !(latest.kind in actionText)) throw new Error('没有可投递的新消息');
   const action = actionText[latest.kind as keyof typeof actionText];
   const extra = items.length > 1 ? `，另有 ${items.length - 1} 条新互动` : '';
@@ -187,12 +185,11 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
             const sourceState = state.sources[source];
             const capturedIdentityKey = sourceState.identityKey!;
             const currentState = await assertPrivateAccessCurrent(source, capturedIdentityKey);
-            await beforeDeadline(
-              dependencies.system.reconcileDigests(
-                source,
-                capturedIdentityKey,
-                currentState.sources[source].notificationIdentifier
-              )
+            // The caller deadline is bounded; started mutations keep the lane until they settle.
+            await dependencies.system.reconcileDigests(
+              source,
+              capturedIdentityKey,
+              currentState.sources[source].notificationIdentifier
             );
             await assertPrivateAccessCurrent(source, capturedIdentityKey);
             const access = await beforeDeadline(
@@ -244,9 +241,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
             const newIds = new Set(preview.newIds);
             const newItems = scanned.filter((item) => newIds.has(item.id));
             if (!newItems.length) {
-              const recorded = await beforeDeadline(
-                dependencies.store.record(source, access.identityKey, scannedIds, fields)
-              );
+              const recorded = await dependencies.store.record(source, access.identityKey, scannedIds, fields);
               if (!recorded.committed) {
                 throw Object.assign(new Error('消息投递状态已变化'), { reason: 'private-access-stale', source });
               }
@@ -259,8 +254,10 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
             let deliveryCommitted = false;
             let commitStarted = false;
             try {
-              identifier = await beforeDeadline(
-                dependencies.system.presentDigest(source, buildSourceNotificationDigest(source, newItems), identifier)
+              identifier = await dependencies.system.presentDigest(
+                source,
+                buildSourceNotificationDigest(source, newItems),
+                identifier
               );
               await assertPrivateAccessCurrent(source, capturedIdentityKey);
               commitStarted = true;
@@ -277,14 +274,14 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               deliveryCommitted = true;
               await assertPrivateAccessCurrent(source, capturedIdentityKey);
               if (previousIdentifier && previousIdentifier !== identifier) {
-                await beforeDeadline(dependencies.system.dismissDigest(source, previousIdentifier));
+                await dependencies.system.dismissDigest(source, previousIdentifier);
               }
               delivered += newItems.length;
               finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length, count: newItems.length });
             } catch (error) {
               if (error === deadlineError) {
                 if (!commitStarted) {
-                  void dependencies.system.dismissDigest(source, identifier).catch(() => undefined);
+                  await dependencies.system.dismissDigest(source, identifier).catch(() => undefined);
                 }
                 throw error;
               }
@@ -296,7 +293,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
                 typeof error === 'object' &&
                 (error as { reason?: unknown }).reason === 'source-disabled'
               ) {
-                await beforeDeadline(dependencies.store.clearForContentDisable(source)).catch(() => undefined);
+                await dependencies.store.clearForContentDisable(source).catch(() => undefined);
               }
               throw error;
             }

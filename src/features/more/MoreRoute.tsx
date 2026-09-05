@@ -124,13 +124,16 @@ export function MoreRoute() {
       contentSourcesExpanded={contentSourcesExpanded}
       scrollRef={scrollRef}
       update={{
-        busy: update.appUpdateBusy,
-        downloading: update.appUpdateDownloading,
+        phase: update.phase,
+        artifact: update.artifact,
         progress: update.appUpdateDownloadProgress,
         info: update.appUpdateInfo,
         message: update.appUpdateMessage,
         check: update.checkAppUpdate,
-        download: update.downloadAppUpdate
+        start: update.startAppUpdateDownload,
+        pause: update.pauseAppUpdateDownload,
+        resume: update.resumeAppUpdateDownload,
+        install: update.installAppUpdate
       }}
       utilities={{
         notifications: runtime.notifications,

@@ -4,7 +4,7 @@ import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { DetailActionButton, type DetailActionTone } from '@/features/topic/components/TopicActionBar';
 import { createTopicStyles } from '@/features/topic/styles';
 import { createTheme } from '@/ui/theme/tokens';
-import { render } from '../render';
+import { fireEvent, render } from '../render';
 
 const TestIcon = (({ color, fill, size, strokeWidth }: LucideProps) => (
   <View
@@ -22,6 +22,8 @@ async function renderAction({
   active = false,
   activeIcon,
   appearance = 'light',
+  compact = false,
+  count = 12,
   disabled = false,
   fontScale = 1,
   iconSize,
@@ -31,6 +33,8 @@ async function renderAction({
   active?: boolean;
   activeIcon?: LucideIcon;
   appearance?: 'dark' | 'light';
+  compact?: boolean;
+  count?: number;
   disabled?: boolean;
   fontScale?: number;
   iconSize?: number;
@@ -40,12 +44,14 @@ async function renderAction({
   const settings = { ...createEmptyReaderData().settings, fontScale, theme: appearance };
   const theme = createTheme(settings);
   const styles = createTopicStyles(theme, settings);
+  const onPress = jest.fn();
   const view = await render(
     <DetailActionButton
       accessibilityLabel="点赞"
       active={active}
       activeIcon={activeIcon}
-      count={12}
+      compact={compact}
+      count={count}
       disabled={disabled}
       icon={TestIcon}
       iconSize={iconSize}
@@ -54,13 +60,23 @@ async function renderAction({
       styles={styles}
       theme={theme}
       tone={tone}
-      onPress={jest.fn()}
+      onPress={onPress}
     />
   );
-  return { theme, view };
+  return { onPress, theme, view };
 }
 
 describe('topic post action rail', () => {
+  it('keeps compact actions labeled, caps their count, and invokes the action once', async () => {
+    const { onPress, view } = await renderAction({ compact: true, count: 100 });
+
+    expect(view.getByText('赞')).toBeTruthy();
+    expect(view.getByText('99+')).toBeTruthy();
+    expect(view.queryByText('100')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '点赞' }));
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps a selected non-repeatable action transparent and fully legible', async () => {
     const { theme, view } = await renderAction({ active: true, disabled: true });
     const button = view.getByLabelText('点赞');

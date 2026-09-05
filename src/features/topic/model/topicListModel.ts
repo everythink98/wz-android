@@ -1,4 +1,5 @@
 import type { Source } from '@/domain/forum/models';
+import type { CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import type { TopicContentItem } from './topicOpeningPresentation';
 import type { TopicReplyListItem } from './replyListModel';
 import type { TopicSelectionItem } from '../selection/TopicSelectionSurface';
@@ -16,6 +17,16 @@ export type TopicListItem =
 
 export function topicListItemKey(item: TopicListItem) {
   return item.key;
+}
+
+export function topicListCompiledRow(item: TopicListItem): CompiledForumContentRow | null {
+  if (item.type === 'topicContent' || item.type === 'topicQuoteContent' || item.type === 'topicAcceptedAnswerContent') {
+    return item.content.type === 'accessNotice' ? null : item.content.row;
+  }
+  if (item.type === 'topicQuoteSummary') return item.content.row;
+  if (item.type === 'replyContent' || item.type === 'replyQuoteContent') return item.content;
+  if (item.type === 'replySignatureContent') return item.content;
+  return null;
 }
 
 export function topicListItemType(item: TopicListItem) {

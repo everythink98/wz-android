@@ -1,22 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
-import {
-  createTheme,
-  sourceBadgeColorStyle,
-  topicStatusBadgeColorStyle,
-  topicTagColorStyle,
-  type ReaderTheme
-} from '@/ui/theme/tokens';
+import { createTheme, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicTagColorStyle } from '@/ui/theme/tokens';
 import { createAppStyles } from '@/app/styles';
-import { createFeedStyles } from '@/features/feed/styles';
 import { createSearchStyles } from '@/features/search/styles';
 import { createTopicStyles } from '@/features/topic/styles';
-import { createHtmlRendererStyles } from '@/features/topic/rendering/htmlStyles';
 import { createUserStyles } from '@/features/user/styles';
-import { createLibraryStyles } from '@/features/library/styles';
-import { createMoreAccountStyles } from '@/features/more/accountStyles';
 import { createAccountHostStyles } from '@/features/account/accountHostStyles';
-import { createLoginWebViewStyles } from '@/ui/navigation/loginWebViewStyles';
 import { createMoreStyles } from '@/features/more/styles';
 import { createNotificationStyles } from '@/features/notifications/styles';
 import { createScreenTopBarStyles } from '@/ui/controls/ScreenTopBar';
@@ -45,41 +34,15 @@ vi.mock('lucide-react-native', () => ({
   Star: () => null
 }));
 
-vi.mock('@/ui/controls/pressFeedback', () => ({
-  pressWithFeedback: (onPress: () => void) => onPress()
-}));
-
-function createStyles(theme: ReaderTheme, settings: ReaderSettings, _windowHeight: number) {
-  return Object.assign(
-    {},
-    createAppStyles(theme),
-    createFeedStyles(theme, settings),
-    createSearchStyles(theme, settings),
-    createTopicStyles(theme, settings),
-    createHtmlRendererStyles(settings, theme),
-    createUserStyles(theme, settings),
-    createLibraryStyles(theme, settings),
-    createMoreAccountStyles(theme, settings),
-    createLoginWebViewStyles(theme, settings),
-    createMoreStyles(theme, settings)
-  );
-}
-
 describe('Android reader theme safety rails', () => {
   const settings: ReaderSettings = {
-    theme: 'light',
-    fontScale: 1,
-    nodeSeekRecoveryThreshold: 1,
-    lineHeight: 'standard',
-    contentWidth: 'standard',
-    fontFamily: 'sans',
-    listDensity: 'standard',
-    contentSources: createEmptyReaderData().settings.contentSources
+    ...createEmptyReaderData().settings,
+    theme: 'light'
   };
 
   it('keeps scrollable content and user profiles clear of the Android status bar', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800);
+    const styles = createAppStyles(theme);
     const topBarStyles = createScreenTopBarStyles(theme, settings);
 
     expect(styles.statusBarScrim).toMatchObject({
@@ -90,7 +53,9 @@ describe('Android reader theme safety rails', () => {
     });
     expect(styles.statusBarScrim.zIndex).toBeGreaterThan(10);
     expect(topBarStyles.bar.paddingTop).toBeGreaterThan(24);
-    expect(styles.userContentInner.paddingBottom).toBe(styles.contentInner.paddingBottom);
+    expect(createUserStyles(theme, settings).userContentInner.paddingBottom).toBe(
+      createSearchStyles(theme, settings).contentInner.paddingBottom
+    );
   });
 
   it('uses stable hashed colors for functional tags and stable source identities', () => {
@@ -108,9 +73,9 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps reply action buttons tappable without forcing a wrapped row', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+    const styles = createTopicStyles(theme, settings);
 
-    expect(styles.replyActionRow.flexWrap).toBeUndefined();
+    expect(Reflect.get(styles.replyActionRow, 'flexWrap')).toBeUndefined();
     expect(styles.replyCompactActionButton.flexBasis).toBe(0);
     expect(styles.replyCompactActionButton.flexGrow).toBe(1);
     expect(styles.replyCompactActionButton.flexShrink).toBe(1);
@@ -120,7 +85,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps expandable quote controls touch accessible', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+    const styles = createTopicStyles(theme, settings);
 
     expect(styles.quoteAuthorSummary.minHeight).toBeGreaterThanOrEqual(48);
     expect(styles.quotePanelHeader.minHeight).toBeGreaterThanOrEqual(48);
@@ -129,7 +94,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps appearance controls compact, equal-width, and touch accessible', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+    const styles = createMoreStyles(theme, settings);
     expect(styles.appearanceSegmentedControl.flex).toBe(1);
     expect(styles.appearanceSegment.flex).toBe(1);
     expect(styles.appearanceSegment.minHeight).toBeGreaterThanOrEqual(48);
@@ -171,7 +136,7 @@ describe('Android reader theme safety rails', () => {
 
   it('lets the bottom tab navigator own bottom safe-area spacing', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800);
+    const styles = createAppStyles(theme);
 
     expect('height' in styles.nav).toBe(false);
     expect('paddingBottom' in styles.nav).toBe(false);
@@ -179,7 +144,7 @@ describe('Android reader theme safety rails', () => {
 
   it('lets each bottom tab button fill its existing slot without changing bar geometry', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800);
+    const styles = createAppStyles(theme);
 
     expect(styles.navItem).toMatchObject({ alignItems: 'stretch', flex: 1, minHeight: 48 });
   });

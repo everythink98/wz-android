@@ -136,17 +136,19 @@ function imagePreviewEntryFromDescriptor(
     descriptor.originalSource
   ]);
   if (!originalUri) return null;
-  const sourceUrls = uniqueStrings(
-    [
-      descriptor.lightboxOriginal,
-      ...srcsetImageUrlsFromCandidates(sourceSetCandidates),
-      descriptor.dataOriginal,
-      descriptor.dataSource,
-      descriptor.source
-    ]
-      .map((url) => normalizeImagePreviewUrl(url || ''))
-      .filter(isPreparedPreviewImageSource)
-  );
+  const sourceUrls = [
+    ...new Set(
+      [
+        descriptor.lightboxOriginal,
+        ...srcsetImageUrlsFromCandidates(sourceSetCandidates),
+        descriptor.dataOriginal,
+        descriptor.dataSource,
+        descriptor.source
+      ]
+        .map((url) => normalizeImagePreviewUrl(url || ''))
+        .filter(isPreparedPreviewImageSource)
+    )
+  ];
   return {
     item: {
       displayUri: displayUri || originalUri,
@@ -177,9 +179,11 @@ function createImagePreviewCatalogFromEntries(
   };
   entries.forEach((entry) => {
     const originalUri = normalizeImagePreviewUrl(entry.item.originalUri);
-    const aliases = uniqueStrings(
-      [entry.item.displayUri, originalUri, ...entry.sourceUrls].map(normalizeImagePreviewUrl).filter(Boolean)
-    );
+    const aliases = [
+      ...new Set(
+        [entry.item.displayUri, originalUri, ...entry.sourceUrls].map(normalizeImagePreviewUrl).filter(Boolean)
+      )
+    ];
     linkDiagnosticRefs('media', aliases);
     const originalIdentity = requestIdentity(originalUri, entry.item.referrerPolicy);
     let itemIndex = itemIndexByOriginalUri.get(originalIdentity);
@@ -423,7 +427,7 @@ function selectResponsiveSrcsetImageUrlFromCandidates(
   if (!rawCandidates.length || !Number.isFinite(pixelRatio) || pixelRatio <= 0) {
     return '';
   }
-  const candidates: ResponsiveSrcsetCandidate[] = [];
+  let best: ResponsiveSrcsetCandidate | undefined;
   for (const candidate of rawCandidates) {
     const parts = candidate.trim().split(/\s+/);
     if (parts.length !== 2) {
@@ -435,21 +439,25 @@ function selectResponsiveSrcsetImageUrlFromCandidates(
     const density = descriptor.match(/^(\d+(?:\.\d+)?)x$/i);
     const kind = width ? 'w' : density ? 'x' : '';
     const value = Number(width?.[1] || density?.[1] || 0);
-    if (!kind || !Number.isFinite(value) || value <= 0 || !isAllowedActiveImageSource(uri)) {
+    if (
+      !kind ||
+      !Number.isFinite(value) ||
+      value <= 0 ||
+      !isAllowedActiveImageSource(uri) ||
+      (best && best.kind !== kind)
+    ) {
       return '';
     }
-    candidates.push({ uri, kind, value });
+    if (kind === 'w' && (!Number.isFinite(contentWidth) || contentWidth <= 0)) {
+      return '';
+    }
+    const target = kind === 'w' ? Math.min(contentWidth * pixelRatio, MAX_BODY_IMAGE_PIXEL_WIDTH) : pixelRatio;
+    // Keep the first smallest covering candidate, or the last largest undersized candidate.
+    if (!best || (best.value < target ? value >= best.value : value >= target && value < best.value)) {
+      best = { uri, kind, value };
+    }
   }
-  const kind = candidates[0]?.kind;
-  if (!kind || candidates.some((candidate) => candidate.kind !== kind)) {
-    return '';
-  }
-  if (kind === 'w' && (!Number.isFinite(contentWidth) || contentWidth <= 0)) {
-    return '';
-  }
-  const target = kind === 'w' ? Math.min(contentWidth * pixelRatio, MAX_BODY_IMAGE_PIXEL_WIDTH) : pixelRatio;
-  const sorted = [...candidates].sort((left, right) => left.value - right.value);
-  return (sorted.find((candidate) => candidate.value >= target) || sorted[sorted.length - 1])?.uri || '';
+  return best?.uri || '';
 }
 
 function bestSrcsetImageUrl(srcset: string) {
@@ -475,16 +483,4 @@ function bestSrcsetImageUrlFromCandidates(candidates: readonly string[]) {
     }
   });
   return bestUrl;
-}
-
-function uniqueStrings(items: string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const item of items) {
-    if (item && !seen.has(item)) {
-      seen.add(item);
-      result.push(item);
-    }
-  }
-  return result;
 }

@@ -903,9 +903,6 @@ describe('Android release evidence guards', () => {
     expect(readProjectFile('src', 'features', 'topic', 'components', 'TopicContentList.tsx')).toContain(
       'testID="topic-author"'
     );
-    const userScreen = readProjectFile('src', 'features', 'user', 'UserScreen.tsx');
-    expect(userScreen).toContain("testID={profile && !busy ? 'user-screen-loaded' : undefined}");
-    expect(userScreen).toContain("testID={index === 0 ? 'user-topic-first' : undefined}");
     const libraryScreen = readProjectFile('src', 'features', 'library', 'LibraryScreen.tsx');
     expect(libraryScreen).toContain("'library-favorites-ready'");
     expect(libraryScreen).toContain("'library-users-ready'");

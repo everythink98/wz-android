@@ -87,17 +87,6 @@ function extractRawYaohuoPostContent(html: string) {
   return [marked.content, followingContent].filter((part) => hasRenderableHtmlContent(part)).join('\n');
 }
 
-function hasAncestor(node: HTMLElement, ancestor: HTMLElement | null | undefined) {
-  let current = node.parentNode;
-  while (current) {
-    if (current === ancestor) {
-      return true;
-    }
-    current = current.parentNode;
-  }
-  return false;
-}
-
 function hasExcludedYaohuoClass(node: HTMLElement) {
   return String(node.getAttribute('class') || '')
     .toLowerCase()
@@ -160,25 +149,24 @@ function collectFollowingYaohuoPostContent(mainContent: HTMLElement | null | und
 }
 
 function collectYaohuoDownloadContent(root: ReturnType<typeof parseHtml>, mainContent: HTMLElement | null | undefined) {
-  const selected: HTMLElement[] = [];
+  const selected = new Set<HTMLElement>();
+  const mainAncestors = new Set<HTMLElement>();
+  for (let node = mainContent; node; node = node.parentNode) mainAncestors.add(node);
   for (const node of root.querySelectorAll('div, p, table, ul, ol, a')) {
-    if (node === mainContent || hasAncestor(node, mainContent) || (mainContent && hasAncestor(mainContent, node))) {
+    if (mainAncestors.has(node) || hasExcludedYaohuoClass(node)) {
       continue;
     }
-    if (hasExcludedYaohuoClass(node)) {
-      continue;
-    }
+    let parent = node.parentNode;
+    while (parent && parent !== mainContent && !selected.has(parent)) parent = parent.parentNode;
+    if (parent) continue;
     const html = node.toString();
     const text = elementText(node);
     if (!yaohuoDownloadContentPattern.test(`${text} ${html}`)) {
       continue;
     }
-    if (selected.some((parent) => hasAncestor(node, parent))) {
-      continue;
-    }
-    selected.push(node);
+    selected.add(node);
   }
-  return selected.map((node) => node.toString());
+  return [...selected].map((node) => node.toString());
 }
 
 function appendYaohuoPostContent(

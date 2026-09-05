@@ -1,14 +1,34 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '../render';
 import { StyleSheet } from 'react-native';
+import { RefreshCw } from 'lucide-react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { AppButton } from '@/ui/controls/ButtonControls';
+import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';
 import { PillRail } from '@/ui/controls/SelectionControls';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTheme } from '@/ui/theme/tokens';
 
 describe('shared accessibility basics', () => {
+  it('announces an icon button as busy without moving or dimming its touch target', async () => {
+    const onPress = jest.fn();
+    const view = await render(<IconButton iconOnly icon={RefreshCw} label="刷新" onPress={onPress} />);
+    const before = StyleSheet.flatten(view.getByLabelText('刷新').props.style);
+    await fireEvent.press(view.getByLabelText('刷新'));
+    expect(onPress).toHaveBeenCalledTimes(1);
+
+    await view.rerender(<IconButton iconOnly icon={RefreshCw} label="刷新" loading onPress={onPress} />);
+    const button = view.getByLabelText('刷新');
+    expect(button.props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+    expect(StyleSheet.flatten(button.props.style)).toEqual(before);
+    await fireEvent.press(button);
+    expect(onPress).toHaveBeenCalledTimes(1);
+
+    await view.rerender(<IconButton iconOnly icon={RefreshCw} label="刷新" onPress={onPress} />);
+    await fireEvent.press(view.getByLabelText('刷新'));
+    expect(onPress).toHaveBeenCalledTimes(2);
+  });
+
   it('announces loading once as a polite busy status', async () => {
     const view = await render(<LoadingState text="正在读取主题" />);
     const status = view.getByRole('status');

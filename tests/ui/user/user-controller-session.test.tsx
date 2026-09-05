@@ -738,6 +738,253 @@ describe('user query controller', () => {
     }
   );
 
+  describe('profile refresh', () => {
+    const firstTopic = {
+      source: 'nodeseek' as const,
+      id: 'topic-1',
+      title: '已加载的主题',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-1-1',
+      createdAt: '2026-09-05T00:00:00Z',
+      replyCount: 0
+    };
+    const firstReply = {
+      source: 'nodeseek' as const,
+      id: 'reply-1',
+      topicId: firstTopic.id,
+      topicTitle: firstTopic.title,
+      topicUrl: firstTopic.url,
+      url: `${firstTopic.url}#1`
+    };
+    const firstPage: UserProfile = {
+      ...user,
+      topics: [firstTopic],
+      replies: [firstReply],
+      hasMoreTopics: true,
+      nextTopicsCursor: 'topics-2',
+      hasMoreReplies: true,
+      nextRepliesCursor: 'replies-2'
+    };
+
+    it.each([false, true])('preserves both loaded lanes after refresh failure with more pages: %s', async (hasMore) => {
+      const getUserProfile = jest
+        .fn<ReadGateway['getUserProfile']>()
+        .mockResolvedValueOnce(firstPage)
+        .mockResolvedValueOnce({
+          ...firstPage,
+          topics: [{ ...firstTopic, id: 'topic-2' }],
+          hasMoreTopics: hasMore,
+          nextTopicsCursor: hasMore ? 'topics-3' : null
+        })
+        .mockResolvedValueOnce({
+          ...firstPage,
+          replies: [{ ...firstReply, id: 'reply-2' }],
+          hasMoreReplies: hasMore,
+          nextRepliesCursor: hasMore ? 'replies-3' : null
+        })
+        .mockRejectedValueOnce(new Error('刷新网络失败'));
+      const hook = await renderUserController({ getUserProfile });
+      await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(1));
+      await act(async () => {
+        await hook.result.current.loadMoreUserTopics();
+        await hook.result.current.loadMoreUserReplies();
+      });
+      await waitFor(() => {
+        expect(hook.result.current.userProfile?.topics).toHaveLength(2);
+        expect(hook.result.current.userProfile?.replies).toHaveLength(2);
+      });
+      const loaded = hook.result.current.userProfile;
+      const lanes = appQueryClient
+        .getQueryCache()
+        .getAll()
+        .filter(({ queryKey }) => queryKey[2] === 'user' && queryKey.length === 5)
+        .map(({ queryKey, state }) => ({ queryKey, data: state.data }));
+      expect(lanes).toHaveLength(2);
+      await act(async () => {
+        await expect(hook.result.current.refreshUser()).resolves.toBe('failed');
+      });
+      await waitFor(() => expect(hook.result.current.userError?.message).toBe('刷新网络失败'));
+      expect(hook.result.current.userProfile).toBe(loaded);
+      for (const lane of lanes) expect(appQueryClient.getQueryData(lane.queryKey)).toBe(lane.data);
+      expect(hook.result.current.userBusy).toBe(false);
+
+      if (hasMore)
+        getUserProfile
+          .mockResolvedValueOnce({
+            ...firstPage,
+            topics: [{ ...firstTopic, id: 'topic-3' }],
+            hasMoreTopics: false,
+            nextTopicsCursor: null
+          })
+          .mockResolvedValueOnce({
+            ...firstPage,
+            replies: [{ ...firstReply, id: 'reply-3' }],
+            hasMoreReplies: false,
+            nextRepliesCursor: null
+          });
+      await act(async () => {
+        await hook.result.current.loadMoreUserTopics();
+        await hook.result.current.loadMoreUserReplies();
+      });
+      if (hasMore) {
+        expect(getUserProfile.mock.calls.slice(4).map(([request]) => [request.cursorType, request.cursor])).toEqual([
+          ['topics', 'topics-3'],
+          ['replies', 'replies-3']
+        ]);
+        await waitFor(() => {
+          expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual([
+            'topic-1',
+            'topic-2',
+            'topic-3'
+          ]);
+          expect(hook.result.current.userProfile?.replies?.map(({ id }) => id)).toEqual([
+            'reply-1',
+            'reply-2',
+            'reply-3'
+          ]);
+        });
+      } else {
+        expect(getUserProfile).toHaveBeenCalledTimes(4);
+      }
+      getUserProfile.mockResolvedValueOnce(firstPage);
+      await act(async () => {
+        await expect(hook.result.current.refreshUser()).resolves.toBe('completed');
+      });
+      await waitFor(() => {
+        expect(hook.result.current.userProfile).toEqual(firstPage);
+        expect(hook.result.current.userError).toBeNull();
+      });
+    });
+
+    it.each(['cancel', 'cancel-after-error', 'inactive', 'user', 'epoch', 'other-source-epoch'] as const)(
+      'ignores a pending refresh after %s without rebuilding cached pages',
+      async (change) => {
+        const pending = Promise.withResolvers<UserProfile>();
+        let active = true;
+        let selectedUser = user;
+        let epochs = initialForumSessionEpochs;
+        let signal: AbortSignal | undefined;
+        const getUserProfile = jest
+          .fn<ReadGateway['getUserProfile']>()
+          .mockResolvedValueOnce(firstPage)
+          .mockResolvedValueOnce({ ...firstPage, topics: [{ ...firstTopic, id: 'topic-2' }] });
+        if (change === 'cancel-after-error') getUserProfile.mockRejectedValueOnce(new Error('上次刷新失败'));
+        getUserProfile
+          .mockImplementationOnce(async (request) => {
+            signal = request.signal;
+            return pending.promise;
+          })
+          .mockResolvedValue({ ...firstPage, displayName: '新的页面身份' });
+        const hook = await renderUserController({
+          getUserProfile,
+          getActive: () => active,
+          getUser: () => selectedUser,
+          getSessionEpochs: () => epochs
+        });
+        await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(1));
+        await act(async () => {
+          await hook.result.current.loadMoreUserTopics();
+        });
+        await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(2));
+        if (change === 'cancel-after-error') {
+          await act(async () => {
+            await expect(hook.result.current.refreshUser()).resolves.toBe('failed');
+          });
+          await waitFor(() => expect(hook.result.current.userError?.message).toBe('上次刷新失败'));
+        }
+        const profileKey = appQueryClient
+          .getQueryCache()
+          .getAll()
+          .find(({ queryKey }) => queryKey[2] === 'user' && queryKey.length === 4)!.queryKey;
+        const laneKey = [...profileKey, 'topics'];
+        const loaded = appQueryClient.getQueryData(laneKey);
+        let refreshing!: Promise<unknown>;
+        await act(async () => {
+          refreshing = hook.result.current.refreshUser();
+        });
+        await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(change === 'cancel-after-error' ? 4 : 3));
+        await act(async () => {
+          if (change === 'cancel' || change === 'cancel-after-error')
+            await appQueryClient.cancelQueries({ queryKey: profileKey, exact: true });
+          if (change === 'inactive') active = false;
+          if (change === 'user') selectedUser = { ...user, id: '2', username: 'bob' };
+          if (change === 'epoch') {
+            resetForumSourceQueries('nodeseek', appQueryClient);
+            epochs = { ...epochs, nodeseek: epochs.nodeseek + 1 };
+          }
+          if (change === 'other-source-epoch') epochs = { ...epochs, linuxdo: epochs.linuxdo + 1 };
+          hook.rerender(undefined);
+        });
+        await waitFor(() => expect(signal?.aborted).toBe(true));
+        await act(async () => {
+          pending.resolve({ ...firstPage, displayName: '过期的刷新结果', topics: [] });
+          await expect(refreshing).resolves.toBe('stale');
+        });
+        if (change === 'epoch') expect(appQueryClient.getQueryData(laneKey)).toBeUndefined();
+        else expect(appQueryClient.getQueryData(laneKey)).toBe(loaded);
+        if (change === 'user' || change === 'epoch') {
+          await waitFor(() => expect(hook.result.current.userProfile?.displayName).toBe('新的页面身份'));
+        } else {
+          expect(hook.result.current.userProfile?.topics).toHaveLength(2);
+        }
+        expect(hook.result.current.userBusy).toBe(false);
+      }
+    );
+
+    it.each(['unchanged', 'empty'] as const)(
+      'applies a successful %s refresh even within the previous update millisecond',
+      async (scenario) => {
+        const pending = Promise.withResolvers<UserProfile>();
+        const getUserProfile = jest
+          .fn<ReadGateway['getUserProfile']>()
+          .mockResolvedValueOnce(firstPage)
+          .mockResolvedValueOnce({ ...firstPage, topics: [{ ...firstTopic, id: 'topic-2' }] })
+          .mockImplementationOnce(async () => pending.promise);
+        const hook = await renderUserController({ getUserProfile });
+        await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(1));
+        await act(async () => {
+          await hook.result.current.loadMoreUserTopics();
+        });
+        await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(2));
+        const before = appQueryClient
+          .getQueryCache()
+          .getAll()
+          .find(({ queryKey }) => queryKey[2] === 'user' && queryKey.length === 4)!.state;
+        let refreshing!: Promise<unknown>;
+        await act(async () => {
+          refreshing = hook.result.current.refreshUser();
+        });
+        await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(3));
+        const fresh =
+          scenario === 'empty'
+            ? {
+                ...firstPage,
+                topics: [],
+                replies: [],
+                hasMoreTopics: false,
+                nextTopicsCursor: null,
+                hasMoreReplies: false,
+                nextRepliesCursor: null
+              }
+            : firstPage;
+        const clock = jest.spyOn(Date, 'now').mockReturnValue(before.dataUpdatedAt);
+        try {
+          await act(async () => {
+            pending.resolve(fresh);
+            await expect(refreshing).resolves.toBe('completed');
+          });
+        } finally {
+          clock.mockRestore();
+        }
+        await waitFor(() => {
+          expect(hook.result.current.userProfile).toEqual(fresh);
+          expect(hook.result.current.userError).toBeNull();
+          expect(hook.result.current.userBusy).toBe(false);
+        });
+      }
+    );
+  });
+
   it('refreshes the profile as a fresh pagination snapshot and exposes its busy state', async () => {
     const firstTopic = {
       source: 'nodeseek' as const,

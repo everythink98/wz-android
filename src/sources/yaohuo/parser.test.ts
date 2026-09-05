@@ -20,6 +20,25 @@ function parseUserReplies(html: string, options: Parameters<typeof parseYaohuoUs
 }
 
 describe('yaohuo reply parsing', () => {
+  it('keeps external download blocks in document order without duplicating nested or main content', () => {
+    const downloads = Array.from(
+      { length: 64 },
+      (_, index) => `<div><p>下载 ${index}<a href="https://pan.example.com/${index}">资源 ${index}</a></p></div>`
+    ).join('');
+    const detail = parseYaohuoTopicHtml(
+      `<div><p>ancestor-only text</p><section><div class="bbscontent"><p>主楼下载</p></div></section></div>
+       <section>${downloads}</section><div class="footer">下载 footer-only text</div>`,
+      { id: '1' }
+    );
+    const content = parseHtml(detail.contentHtml);
+    expect(content.querySelectorAll('a').map((link) => link.getAttribute('href'))).toEqual(
+      Array.from({ length: 64 }, (_, index) => `https://pan.example.com/${index}`)
+    );
+    expect(detail.contentHtml.match(/主楼下载/g)).toHaveLength(1);
+    expect(detail.contentHtml).not.toContain('ancestor-only text');
+    expect(detail.contentHtml).not.toContain('footer-only text');
+  });
+
   it('trims large empty article edges and attachment gaps with one bulk update per parent', () => {
     const setContent = vi.spyOn(HTMLElement.prototype, 'set_content');
     try {

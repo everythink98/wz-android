@@ -99,6 +99,7 @@ import {
   type TopicReplyListItem
 } from '../model/replyListModel';
 import {
+  topicListCompiledRow,
   topicListItemKey,
   topicListItemType,
   projectTopicListItems,
@@ -156,16 +157,6 @@ const CONTENT_ROW_TRIM_TRAILING: ViewStyle = {
   marginBottom: 0,
   paddingBottom: 0
 };
-
-function topicListCompiledRow(item: TopicListItem): CompiledForumContentRow | null {
-  if (item.type === 'topicContent' || item.type === 'topicQuoteContent' || item.type === 'topicAcceptedAnswerContent') {
-    return item.content.type === 'accessNotice' ? null : item.content.row;
-  }
-  if (item.type === 'topicQuoteSummary') return item.content.row;
-  if (item.type === 'replyContent' || item.type === 'replyQuoteContent') return item.content;
-  if (item.type === 'replySignatureContent') return item.content;
-  return null;
-}
 
 type TopicOpeningListItem = Extract<
   TopicListItem,

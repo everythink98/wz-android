@@ -1132,7 +1132,7 @@ export async function getV2exReplies(
         const nextPage =
           pendingPages.find((page) => page === position.target.pageHint) ??
           pendingPages.find((page) => page === floorPage) ??
-          pendingPages.sort((a, b) => a - b)[0];
+          pendingPages.reduce((smallest, page) => Math.min(smallest, page), pendingPages[0]);
         if (!nextPage || visitedPages.size >= V2EX_LINKED_REPLY_PAGE_LIMIT) {
           throw new Error('V2EX 目标楼层未找到');
         }
@@ -1146,8 +1146,9 @@ export async function getV2exReplies(
       const visitedPages = new Set<number>();
       while (visitedPages.size < V2EX_LINKED_REPLY_PAGE_LIMIT) {
         visitedPages.add(currentPage);
-        const nextPage = [...knownPages].filter((page) => page > currentPage).sort((left, right) => right - left)[0];
-        if (!nextPage) break;
+        let nextPage = currentPage;
+        for (const page of knownPages) nextPage = Math.max(nextPage, page);
+        if (nextPage === currentPage) break;
         currentPage = nextPage;
         detail = await readHtmlPage(currentPage);
         detail.linkedPages.forEach((page) => knownPages.add(page));

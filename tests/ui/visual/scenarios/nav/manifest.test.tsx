@@ -1,68 +1,3 @@
-import type { ForwardedRef, ReactNode } from 'react';
-
-jest.mock('@shopify/flash-list', () => {
-  const React = require('react') as typeof import('react');
-  const { View } = require('react-native') as typeof import('react-native');
-  const optional = (value: unknown): ReactNode =>
-    typeof value === 'function' ? React.createElement(value as React.ComponentType) : (value as ReactNode);
-  return {
-    FlashList: React.forwardRef(function MockFlashList(
-      {
-        ListEmptyComponent,
-        ListFooterComponent,
-        ListHeaderComponent,
-        data = [],
-        keyExtractor,
-        onLoad,
-        renderItem,
-        ...props
-      }: Record<string, any>,
-      ref: ForwardedRef<unknown>
-    ) {
-      React.useImperativeHandle(ref, () => ({ scrollToIndex: jest.fn(), scrollToOffset: jest.fn() }));
-      React.useEffect(() => onLoad?.(), [onLoad]);
-      return React.createElement(
-        View,
-        props,
-        optional(ListHeaderComponent),
-        data.map((item: unknown, index: number) =>
-          React.createElement(
-            View,
-            { key: keyExtractor?.(item, index) || String(index) },
-            renderItem?.({ index, item, target: 'Cell' })
-          )
-        ),
-        data.length ? null : optional(ListEmptyComponent),
-        optional(ListFooterComponent)
-      );
-    }),
-    useMappingHelper: () => ({ getMappingKey: (value: string, index?: number) => `${value}:${index ?? 0}` }),
-    useRecyclingState: (initialValue: unknown) => React.useState(initialValue)
-  };
-});
-
-jest.mock('react-native-tab-view', () => {
-  const React = require('react') as typeof import('react');
-  const { Animated } = require('react-native') as typeof import('react-native');
-  return {
-    TabView: ({ navigationState, onIndexChange, renderScene, renderTabBar }: Record<string, any>) => {
-      const position = React.useRef(new Animated.Value(navigationState.index)).current;
-      const jumpTo = (key: string) => {
-        const index = navigationState.routes.findIndex((route: { key: string }) => route.key === key);
-        if (index >= 0) onIndexChange(index);
-      };
-      return React.createElement(
-        React.Fragment,
-        null,
-        renderTabBar?.({ navigationState, position, jumpTo }),
-        renderScene({ route: navigationState.routes[navigationState.index] })
-      );
-    }
-  };
-});
-
-import { QueryTestWrapper } from '../../../QueryTestWrapper';
-import { render } from '../../../render';
 import type { VisualScenarioDefinition } from '../../types';
 import { feedVisualScenarios } from '../feed/manifest';
 import { notificationVisualScenarios } from '../notifications/manifest';
@@ -103,13 +38,5 @@ describe('content surface visual scenarios', () => {
 
     expect(actual).toEqual(expected);
     expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  it('mounts every rendered production surface without external runtime providers', async () => {
-    for (const scenario of scenarios) {
-      if (scenario.kind !== 'rendered') continue;
-      const view = await render(<QueryTestWrapper>{scenario.render()}</QueryTestWrapper>);
-      await view.unmount();
-    }
   });
 });

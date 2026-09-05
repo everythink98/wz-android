@@ -490,7 +490,10 @@ export function useAppRuntime() {
         ? {
             feedRouteRuntime,
             libraryRouteRuntime,
-            moreBadgeState: notificationMoreBadgeState(Boolean(appUpdateInfo), notificationsRuntime.unreadTotal > 0),
+            moreBadgeState: notificationMoreBadgeState(
+              Boolean(appUpdateInfo || updateRuntime.artifact),
+              notificationsRuntime.unreadTotal > 0
+            ),
             moreRouteRuntime,
             navigationTheme,
             notificationRouteRuntime,

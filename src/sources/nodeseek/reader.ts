@@ -604,7 +604,7 @@ function assertNodeSeekAdjacentPageEvidence(
 ) {
   assertNodeSeekResolvedPage(result, page);
   const firstFloor = (page - 1) * NODESEEK_FLOORS_PER_PAGE + 1;
-  const confirmedFloors = [...new Set(result.confirmedFloors || [])].sort((left, right) => left - right);
+  const confirmedFloors = result.confirmedFloors || [];
   if (confirmedFloors.some((floor) => floor < firstFloor || floor > page * NODESEEK_FLOORS_PER_PAGE)) {
     throw new Error('NodeSeek 原站未确认请求的回复页');
   }

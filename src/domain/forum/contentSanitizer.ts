@@ -1,5 +1,5 @@
 import Anser from 'anser';
-import type { HTMLElement } from 'node-html-parser';
+import { TextNode, type HTMLElement } from 'node-html-parser';
 
 import {
   decodeHtml,
@@ -48,6 +48,34 @@ function sanitizedHttpMediaUrl(value: unknown, baseUrl: string) {
   if (!url) return '';
   const protocol = url.protocol.toLowerCase();
   return protocol === 'http:' || protocol === 'https:' ? url.toString() : '';
+}
+
+function decodedCloudflareEmail(value: string) {
+  if (!/^(?:[0-9a-f]{2}){2,}$/i.test(value)) return undefined;
+  const mask = Number.parseInt(value.slice(0, 2), 16);
+  let encoded = '';
+  for (let index = 2; index < value.length; index += 2) {
+    const byte = Number.parseInt(value.slice(index, index + 2), 16) ^ mask;
+    encoded += `%${byte.toString(16).padStart(2, '0')}`;
+  }
+  try {
+    return decodeHtml(decodeURIComponent(encoded));
+  } catch {
+    return undefined;
+  }
+}
+
+function restoreCloudflareEmails(root: HTMLElement, baseUrl: string) {
+  for (const node of root.querySelectorAll('a[href*="/cdn-cgi/l/email-protection#"]')) {
+    const url = parsedAbsoluteUrl(node.getAttribute('href'), baseUrl);
+    if (!url || !['http:', 'https:'].includes(url.protocol) || url.pathname !== '/cdn-cgi/l/email-protection') continue;
+    const email = decodedCloudflareEmail(url.hash.slice(1));
+    if (email !== undefined) node.setAttribute('href', `mailto:${email}`);
+  }
+  for (const node of root.querySelectorAll('.__cf_email__[data-cfemail]')) {
+    const email = decodedCloudflareEmail(node.getAttribute('data-cfemail') || '');
+    if (email !== undefined) node.replaceWith(new TextNode(escapeHtmlText(email)));
+  }
 }
 
 const safeCssColorPattern =
@@ -801,6 +829,9 @@ export function sanitizeContentHtmlWithRoot(
   const markup = root.toString().toLowerCase();
   for (const selector of ['script', 'style', 'noscript']) {
     if (markup.includes(`<${selector}`)) root.querySelectorAll(selector).forEach((node) => node.remove());
+  }
+  if (markup.includes('data-cfemail') || markup.includes('/cdn-cgi/l/email-protection#')) {
+    restoreCloudflareEmails(root, baseUrl);
   }
   if (markup.includes('nsk-magic-tabs')) sanitizeNodeSeekMagicTabs(root);
   if (markup.includes('<video')) {

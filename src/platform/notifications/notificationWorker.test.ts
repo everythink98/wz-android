@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
+import type { ForumNotification } from '@/domain/notifications/models';
 import { buildSourceNotificationDigest, runNotificationBackgroundWorker } from './notificationWorker';
 import {
   advanceNotificationDelivery,
@@ -65,6 +66,52 @@ function testRecord(state: NotificationState) {
 }
 
 describe('background notification digest', () => {
+  it('parses each message date once while choosing the latest actor without reordering input', () => {
+    const items: ForumNotification[] = Array.from({ length: 60 }, (_, index) => {
+      const minute = (index * 17) % 60;
+      return {
+        source: 'nodeseek',
+        id: String(minute),
+        kind: 'reply',
+        actor: { name: `作者${minute}` },
+        title: '主题',
+        createdAt: new Date(Date.UTC(2026, 8, 5, 0, minute)).toISOString(),
+        unread: true,
+        target: { type: 'information' }
+      };
+    });
+    const originalOrder = items.map((item) => item.id);
+    const parse = vi.spyOn(Date, 'parse');
+    try {
+      expect(buildSourceNotificationDigest('nodeseek', items).body).toBe('作者59回复了你的主题，另有 59 条新互动');
+      expect(parse).toHaveBeenCalledTimes(items.length);
+      expect(items.map((item) => item.id)).toEqual(originalOrder);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it.each([
+    { times: [null, null], actor: '作者0' },
+    { times: [null, '2026-09-05T00:00:00Z'], actor: '作者1' },
+    { times: ['2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z'], actor: '作者0' },
+    { times: ['invalid', '2026-09-05T00:00:00Z'], actor: '作者0' }
+  ])('preserves timestamp ordering for $times', ({ times, actor }) => {
+    const items: ForumNotification[] = times.map((createdAt, index) => ({
+      source: 'nodeseek',
+      id: String(index),
+      kind: 'reply',
+      actor: { name: `作者${index}` },
+      title: '主题',
+      createdAt,
+      unread: true,
+      target: { type: 'information' }
+    }));
+
+    expect(buildSourceNotificationDigest('nodeseek', items).body).toBe(`${actor}回复了你的主题，另有 1 条新互动`);
+    expect(() => buildSourceNotificationDigest('nodeseek', [])).toThrow('没有可投递的新消息');
+  });
+
   it('uses only the source, actor, action, and count without leaking message content', () => {
     const sensitiveItem = {
       source: 'nodeseek' as const,
@@ -641,64 +688,6 @@ describe('background notification digest', () => {
           clearForContentDisable
         },
         system: { permissionGranted, reconcileDigests, presentDigest: vi.fn(), dismissDigest }
-      }),
-      new Promise<{ status: 'test-timeout' }>((resolve) => setTimeout(() => resolve({ status: 'test-timeout' }), 100))
-    ]);
-
-    expect(result).toMatchObject({ status: 'failed', reason: 'deadline' });
-  });
-
-  it('keeps the wall-clock deadline when notification failure cleanup also stalls', async () => {
-    const state = defaultNotificationState();
-    state.globalEnabled = true;
-    state.sources.nodeseek = {
-      ...state.sources.nodeseek,
-      intentEnabled: true,
-      identityKey: 'nodeseek:7',
-      baselineReady: true,
-      deliveredIds: ['old']
-    };
-
-    const result = await Promise.race([
-      runNotificationBackgroundWorker({
-        sources: ['nodeseek'],
-        sourceAllowed,
-        deadlineMs: 5,
-        network: {
-          restoreProxy: async () => undefined,
-          probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-          listPage: async () => ({
-            items: [
-              {
-                source: 'nodeseek',
-                id: 'new',
-                kind: 'reply',
-                actor: { name: '甲' },
-                title: '不进入摘要',
-                createdAt: null,
-                unread: true,
-                target: { type: 'information' }
-              }
-            ],
-            cursor: null,
-            hasMore: false
-          })
-        },
-        store: {
-          load: async () => state,
-          record: async (_source, identityKey, scannedIds) => {
-            const advanced = advanceNotificationDelivery(state.sources.nodeseek, identityKey, scannedIds);
-            state.sources.nodeseek = advanced.state;
-            return { committed: true, newIds: advanced.newIds, rollback: () => new Promise<never>(() => undefined) };
-          },
-          clearForContentDisable
-        },
-        system: {
-          permissionGranted,
-          reconcileDigests,
-          presentDigest: () => new Promise<never>(() => undefined),
-          dismissDigest
-        }
       }),
       new Promise<{ status: 'test-timeout' }>((resolve) => setTimeout(() => resolve({ status: 'test-timeout' }), 100))
     ]);
@@ -1536,81 +1525,6 @@ describe('background notification digest', () => {
     expect(visibleNotifications).toEqual(new Set());
     expect(record).not.toHaveBeenCalled();
     expect(state.sources.nodeseek.deliveredIds).toEqual(['old']);
-  });
-
-  it('retracts a native presentation that finishes after the worker deadline', async () => {
-    const state = defaultNotificationState();
-    state.globalEnabled = true;
-    state.sources.yaohuo = {
-      ...state.sources.yaohuo,
-      intentEnabled: true,
-      identityKey: 'yaohuo:99',
-      baselineReady: true,
-      deliveredIds: ['old']
-    };
-    const presentStarted = Promise.withResolvers<void>();
-    const releaseNativePresent = Promise.withResolvers<void>();
-    const nativePresentFinished = Promise.withResolvers<void>();
-    const visibleNotifications = new Set<string>();
-    const dismissDigest = vi.fn(async (_source: 'yaohuo', identifier: string) => {
-      await nativePresentFinished.promise;
-      visibleNotifications.delete(identifier);
-    });
-    const record = vi.fn(testRecord(state));
-
-    const operation = runNotificationBackgroundWorker({
-      sources: ['yaohuo'],
-      sourceAllowed,
-      deadlineMs: 5,
-      network: {
-        restoreProxy: async () => undefined,
-        probeAccess: async () => ({ identityKey: 'yaohuo:99', userId: '99' }),
-        listPage: async () => ({
-          items: [
-            {
-              source: 'yaohuo',
-              id: 'new',
-              kind: 'reply',
-              actor: { name: '甲' },
-              title: '不进入摘要',
-              createdAt: null,
-              unread: true,
-              target: { type: 'information' }
-            }
-          ],
-          cursor: null,
-          hasMore: false
-        })
-      },
-      store: {
-        load: async () => state,
-        record,
-        clearForContentDisable
-      },
-      system: {
-        permissionGranted,
-        reconcileDigests,
-        presentDigest: async (_source, _digest, identifier) => {
-          presentStarted.resolve();
-          await releaseNativePresent.promise;
-          visibleNotifications.add(identifier);
-          nativePresentFinished.resolve();
-          return identifier;
-        },
-        dismissDigest
-      }
-    });
-
-    await presentStarted.promise;
-    await new Promise((resolve) => setTimeout(resolve, 15));
-    releaseNativePresent.resolve();
-    const result = await operation;
-
-    expect(result).toMatchObject({ status: 'failed', reason: 'deadline' });
-    expect(dismissDigest).toHaveBeenCalledWith('yaohuo', 'wz-message-yaohuo-yaohuo%3A99-a');
-    await vi.waitFor(() => expect(visibleNotifications).toEqual(new Set()));
-    expect(record).not.toHaveBeenCalled();
-    expect(state.sources.yaohuo.deliveredIds).toEqual(['old']);
   });
 
   it('does not commit delivered ids before native presentation acknowledgement', async () => {

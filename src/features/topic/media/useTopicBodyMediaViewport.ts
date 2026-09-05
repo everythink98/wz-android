@@ -1,7 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { getReplyKey } from '../model/replyListModel';
-import type { TopicListItem } from '../model/topicListModel';
+import { topicListCompiledRow, type TopicListItem } from '../model/topicListModel';
 
 type ViewableTopicListItem = {
   index?: number | null;
@@ -27,16 +26,6 @@ type ViewportItemMetadata = {
   regionMembership: ReadonlyMap<string, readonly string[]>;
 };
 
-function compiledRow(item: TopicListItem): CompiledForumContentRow | null {
-  if (item.type === 'topicContent' || item.type === 'topicQuoteContent' || item.type === 'topicAcceptedAnswerContent') {
-    return item.content.type === 'accessNotice' ? null : item.content.row;
-  }
-  if (item.type === 'topicQuoteSummary') return item.content.row;
-  if (item.type === 'replyContent' || item.type === 'replyQuoteContent') return item.content;
-  if (item.type === 'replySignatureContent') return item.content;
-  return null;
-}
-
 function contentScope(item: TopicListItem) {
   if (item.type === 'topicQuoteSummary') return `topic-quote:${item.content.instanceKey}`;
   if (item.type === 'topicQuoteContent') return `topic-quote:${item.instanceKey}`;
@@ -61,7 +50,7 @@ function dynamicRegionIdentities(item: TopicListItem) {
     identities.push(`accepted:${item.key.split(':', 1)[0]}`);
   }
 
-  const row = compiledRow(item);
+  const row = topicListCompiledRow(item);
   const scope = contentScope(item);
   if (!row || !scope) return identities;
   if (row.type === 'disclosureHeader') {

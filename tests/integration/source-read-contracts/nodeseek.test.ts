@@ -137,6 +137,31 @@ function nodeSeekStaleCountPage(page: 1 | 2) {
 }
 
 describe('Android local sources', () => {
+  it('restores protected email text in NodeSeek initial and cursor replies', async () => {
+    const fetcher = vi.fn(async () =>
+      htmlAt(
+        `<a class="post-title" href="/post-912680-1">Email example</a>
+         <div id="0" data-comment-id="51000" class="content-item"><a class="author-name" href="/space/1">op</a><article class="post-content"><p>Opening</p></article></div>
+         <li id="1" data-comment-id="51001" class="content-item"><a class="floor-link">#1</a><a class="author-name" href="/space/2">reader</a><article class="post-content"><p><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="4230272326273002273a232f322e276c212d2f">[email&nbsp;protected]</a><br>谢谢</p></article></li>`,
+        'https://www.nodeseek.com/post-912680-1'
+      )
+    );
+    const topic = await getTopic({ source: 'nodeseek', id: '912680', fetcher });
+    const replies = await getReplies({
+      source: 'nodeseek',
+      id: '912680',
+      order: 'oldest',
+      position: { kind: 'cursor', page: 1, offset: 0 },
+      fetcher
+    });
+
+    for (const reply of [topic.replies[0], replies.items[0]]) {
+      expect(textContentFromHtml(reply.contentHtml)).toBe('reader@example.com 谢谢');
+      expect(reply.contentHtml).not.toMatch(/data-cfemail|email-protection|__cf_email__/);
+      expect(reply.preparedContent?.contentHtml).toBe(reply.contentHtml);
+    }
+  });
+
   afterEach(() => {
     setDiagnosticWriter(null);
   });

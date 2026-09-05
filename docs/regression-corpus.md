@@ -15,6 +15,28 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
+## `REG-TOPIC-151` 评论中的邮箱保护占位未还原
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-03`；共享 `TOPIC-01`、`NAV-02` |
+| 历史症状与根因 | 2026-09-05 NodeSeek `post-912680-1` 的评论在 App 显示 `[email protected]`，经“更多操作 → 原站打开”后浏览器显示正常邮箱。原始 HTTP 200 页面在第 1、3、4、5、6 楼使用 `.__cf_email__[data-cfemail]`，原站脚本还原这五处内容；App 的共享 HTML 清洗未执行等价还原，来源 reader 的 `preparedContent` 已含占位，渲染器只是展示该结果。 |
+| 影响与复现证据 | 邮箱不可读，部分占位还错误指向邮箱保护地址。修复前公开 `getTopic/getReplies` 契约与安全清洗用例以 seed `20260905` 失败；修复后可见 Android 模拟器加载当前源码，第 1、3、4、5、6 楼邮箱逐一与原站渲染文字相同。内容守恒 owner 对四来源、五角色比较受保护输入与明文输入的完整编译结果，涵盖普通占位、内联图片、分段、selection tape 与 preview catalog。其他站点真实邮箱、Release APK、物理设备和系统邮件操作未作本项验收。 |
+| 处置 | 在共享 sanitizer 内复用现有 DOM、实体解码和安全转义，只还原明确邮箱标记及保护链接；生成文本节点而非再次解析 HTML，原邮件链接保留标签，畸形编码保留可读原文。正文 renderer、媒体占位和选择机制不变，不引入依赖或执行原站脚本。 |
+| 当前 owner | `tests/integration/source-read-contracts/nodeseek.test.ts`、`tests/integration/html-sanitization-contracts.test.ts`、`src/domain/forum/topicContentSplit.test.ts` |
+
+## `REG-USER-010` 用户页刷新失败仍重置已加载分页并返回完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 2026-09-05 全仓审核以真实 `useUserController` 与 QueryClient 复现：用户页成功加载两页主题，随后首屏刷新请求拒绝；页面仍显示网络错误，但第二页消失，末页的 null cursor 恢复为旧首屏的 `topics-2`，`refreshUser()` 返回 `completed`。根因是该命令等待 `invalidateQueries` 后未检查 Query 错误终态，仍用保留的旧 Profile 调用 `firstLaneData` 覆盖两条活动 lane。现有成功刷新用例只证明新 Profile 成功时应替换旧分页，不能覆盖失败分支。 |
+| 影响与复现证据 | P2：刷新失败会丢失已加载的内存分页并允许重复加载，不涉及持久化资料删除。修复前 RNTL 普通用例以 seed `20260905` 确认失败；无快照冷启的 Android App 在 NodeSeek 回复列表追加两页后刷新超时，同样退回第一页，App 与系统进程未重启。修复后真实 QueryClient 测试覆盖两组分页及原 cursor 保留、失败后继续分页、取消/离页/用户及会话变化、空与未变化的成功响应；匹配最终源码的 Debug App 对主题与回复分别完成追加两页→断网刷新超时→后续内容保留→联网继续追加一页→成功刷新重建首屏。验收期间 App/系统进程、APK 与 firstInstallTime 稳定。错误提示出现仍可使可见条目随头部高度移动，不据此声称像素位置不变；其他站点和 Release/物理设备未作本项 Live 验收。 |
+| 处置 | 2026-09-05 获用户授权修复。共享刷新命令沿用精确 Query 刷新，检查本次错误/成功更新计数及当前页面、Query 身份和完成状态；失败返回 `failed`，取消或过期返回 `stale`，仅当前身份的新成功结果重建两组分页。复用现有 Query 状态及 `useCommittedRef`，未改变 Query key、协议、存储或公开接口。原 expected-failure 已转为普通行为测试。 |
+| 当前 owner | `tests/ui/user/user-controller-session.test.tsx` |
+
 ## `REG-TOPIC-150` NS 页签抓取终端骨架导致正文空白
 
 | 字段 | 内容 |
@@ -665,7 +687,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `MORE-04` |
 | 历史症状与根因 | 已显示旧更新信息时，用户快速连续点击“检查更新”和“下载并安装”，旧 APK 下载可在新 manifest 检查尚未结束时启动；根因：`useAppUpdateRuntime` 的 check/download 并发所有权与同步 busy ref 门禁。 |
-| 当前 owner | `src/platform/update/useAppUpdateRuntime.test.ts` |
+| 当前 owner | `tests/ui/more/app-update-runtime.test.tsx` |
 
 
 ## `REG-NODESEEK-001` NodeSeek WebView/会话状态被错误证明
@@ -2855,7 +2877,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `MORE-04` |
 | 历史症状与根因 | 每个更新版本使用不同 cache 文件名，连续下载会留下多个历史 APK；下载失败还可能保留 partial；根因：`useAppUpdateRuntime.downloadAppUpdate` 的 cache target 与失败清理。 |
-| 当前 owner | `src/platform/update/useAppUpdateRuntime.test.ts` |
+| 当前 owner | `tests/ui/more/app-update-runtime.test.tsx` |
 
 
 ## `REG-UPDATE-006` App 内新版仍打开上一版安装包
@@ -2865,7 +2887,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `MORE-04` |
 | 历史症状与根因 | App 已检测并显示新版本，下载后 Android 安装确认仍提示上一版；同一 Release 由浏览器直接下载时正常；根因：`useAppUpdateRuntime.downloadAppUpdate` 的文件身份与 `ApkInstallerModule.installApk` 的 FileProvider URI。 |
-| 当前 owner | `src/platform/update/useAppUpdateRuntime.test.ts` |
+| 当前 owner | `tests/ui/more/app-update-runtime.test.tsx` |
 
 
 ## `REG-PERF-007` 进程级缓存与通知无容量或 identity 边界
@@ -4922,6 +4944,16 @@
 | 当前 owner | `tests/integration/source-read-contracts/` |
 
 
+## `REG-USER-009` 用户活动切换重建列表和资料头
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01`、`USER-02` |
+| 历史症状与根因 | 主题/回复切换时列表整体重新挂载，资料头进入列表后简介测量状态也随之丢失，头像和布局重复建立。根因：FlashList 的 key 包含活动标签，列表数据和资料头也随标签重新生成。列表身份改为仅属于用户，主题/回复活动项分别按各自数据引用缓存，资料头在无关切换时复用；数据更新仍单次线性构造稳定行 key，不改变分页或切换回顶规则。 |
+| 当前 owner | `tests/ui/user/user-screen.test.tsx`、`src/features/user/userScreenItems.test.ts`；匹配构建上的标签切换、吸顶和返回走查。 |
+
+
 ## `REG-PERF-024` Search 空态最近记录曾常驻 Header，转场仍有连续 deadline miss
 
 | 字段 | 内容 |
@@ -4942,3 +4974,27 @@
 | 历史症状与根因 | NodeSeek `post-863650-1` 的历史 Release 样本曾出现 Feed `+172,595KB`、`Cannot add callbacks to a cancelled EngineJob`、App PID 退出和模拟器失去响应；有效 heapprofd 样本在 5 次滚动中记录约 1.14GB 总 malloc、仅约 12MB 净留存，Release mapping 将主链还原为 Glide `DecodeJob`、`BitmapFactory.decodeStream` 与 `SkJpegCodec`，说明主要风险是巨大解码工作集和分配抖动，而非持续 JS 泄漏。Glide 5.0.9 与当前 compileSdk 36 不兼容，Glide 5.0.5/回收池 40 保持固定。恢复版 APK 的本轮同条件冷启基线为 Feed `254,970KB`，同 PID 两轮 40 下/40 上的采样峰值 `487,861KB`，返回 Feed 60 秒 `358,337KB`，gfxinfo p95/p99 `18/21ms`，无 Fatal、ANR、OOM 或 EngineJob。随后已独立修复 `REG-TOPIC-144`，并在现有 expo-image patch owner 中把 resize rerender 投递到下一主线程任务，以 generation、attach 与最终宽高丢弃 stale task；Release Kotlin、expo-image Release unit test 和 x86_64 APK 均已构建通过。候选 APK `c63fdc4d…` 经授权覆盖安装后，等待 Package Manager handler 与磁盘同步，再关闭同一 `WZ_Pixel_API_35` 并以 `-no-snapshot-load -no-snapshot-save` 冷启；后续各次冷启均保持相同 APK SHA、`1.3.134/138`、`firstInstallTime=2026-07-26 16:51:37` 与登录数据。两次完整独立候选流程均在同一 App PID 内完成两轮 40 下/40 上：其 Feed/采样峰值/返回 Feed 60 秒分别为 `254,352/428,885/352,410KB` 与 `254,142/464,721/362,399KB`，gfxinfo p95/p99 分别为 `18/21ms`、`16/19ms`，jank 为 `0.51%`、`0.38%`，均无 Fatal、ANR、OOM、EngineJob 或网络异常；原生树保持约 `61–62` 节点，顶部、5 步、中段和反向截图未见空白、4:3 回退、比例/行高/圆角/间距变化。第三次独立冷启先出现可关闭的既有 linux.do 登录 WebView，按关闭后的 Feed `296,147KB` 归一；第一轮及第二轮下行完成，第二轮反向约第 26–30 步时整个 emulator/qemu 进程退出，宿主 Android Emulator 36.5.11 同分钟生成 `48,356,112` 字节 crash dump，故该轮记 `BLOCKED_BY_ENV`，不能当成 App Fatal，也不能关闭总体容量问题。再次冷启后 APK/数据仍完整，候选 7/7 只读 Replay 全部通过。 |
 | 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/tooling/expo-image-resize-patch.test.ts` 与 `docs/operator-runbook.md` 的唯一重图 Release 非回退流程 |
 | 失败 oracle | 只在主登录态 `WZ_Pixel_API_35` 对 `post-863650-1` 执行同条件流程；以基线三轮中位数及最大自然偏差判断 PSS/帧/重复请求非回退，首次同方向超出后补一轮复测。新增或更早出现的空白、比例/行高变化、重复 identity 请求、OOM、ANR、Fatal、PID 退出或模拟器失去响应直接保持 `OPEN`；新旧均触发独立 `system_server`/AVD 故障时记 `BLOCKED_BY_ENV`。历史绝对 MB 数值只作观察，不撤销已通过行为 oracle 且性能中性的正确性修复，也不用其他图片帖稀释或替代该对象。 |
+
+
+## `REG-NOTIFY-060` 超时提前释放通知投递队列，迟到摘要可在清理后出现
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 审核在当前代码及 `v1.3.134` 重现：顶层 deadline 与 native 操作共用 Promise race，channel 初始化、present、对账或撤销尚未结束，同身份 lane 与前台 drain 已释放；后续 worker 可继续堆积原生任务。channel 初始化迟到时，补偿 dismiss 先执行，之后 native present 才入队并留下 Store 未记录的摘要。对账使用 fail-fast Promise.all，也会在部分撤销仍 pending 时提前交出 lane。 |
+| 当前 owner | `tests/integration/notification-delivery-contracts.test.ts` 连接真实 worker、Store、系统 adapter，仅隔离 Native、存储介质、网络与时间；替换原 worker 的迟到 present mock 用例。前后台装配分别由 `tests/ui/notifications/notifications-runtime.test.tsx` 与 `src/app/notificationBackgroundTask.test.ts` 拥有。 |
+| 失败 oracle | seed `1788600000000` 下，修复前六例均因未完成操作提前释放 lane 或提前返回而失败；同 seed 修复后六例通过。顶层 deadline 必须准时返回，同身份下一轮不得启动原生操作；释放迟到 channel/present 后必须依次 present、exact-dismiss，cleanup pending 期间 drain 仍未完成，旧水位和旧摘要保留。已提交的新摘要与静默 baseline 写入仍等待真实结算，不因 deadline 回滚。 |
+
+
+## `REG-UPDATE-007` 返回或安装失败后完整包被删除并重复下载
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `MORE-04` |
+| 历史症状与根因 | 下载完成后返回、取消安装或安装入口失败，再次操作仍从头下载。旧 runtime 每次重试先删除目标 APK，且把 APK 校验和打开安装器包进同一个失败清理。文件生命周期与一次操作的结果混在一起，页面离开和进程结束后也没有独立恢复记录。 |
+| 当前 owner | `tests/ui/more/app-update-runtime.test.tsx`；APK 可信字段由 `src/platform/update/appUpdate.test.ts` 拥有，原生区间与写入结算由 Expo source patch 内 `DownloadResponseTest` 拥有。 |
+| 失败 oracle | 修复前两条测试分别观察到重试产生 2 次下载、安装入口失败删除完整 APK（seed 1788579088230）。当前 owner 必须证明同一完整包安装重试不再下载，安装失败仍可离线安装；新增恢复 oracle 固定磁盘偏移、单次范围回退、代理阻断、旧写入结算与迟到回调。设备上的真实流量、进程重启和系统安装确认独立按 `LOCAL-UPDATE-01` 取证，mock green 不替代该证据。 |
+| 实际设备证据 | 2026-09-05 在独立 `WZ_LoggedOut_API_35` 覆盖安装同签名开发构建 `1.3.134/138`，fixture 为 `115,828,989` 字节、SHA `1ee558514b6aa6318a0d05495e97a9492713c6a67765716f9245d80ef6446a36`。真实 Expo 链路暂停后磁盘长度稳定；进程结束重开从 `72,881,056` 续传，206 body 恰为剩余 `42,947,933` 字节；断流在 `57,914,494`，续传 body 为 `57,914,495`；带 `39,845,888` 断点收到 200 时覆盖全量，三条完成路径最终 SHA 均相同。错误范围和 416 均返回结构化错误且不改变既有磁盘长度。未知来源权限跳转后重试、系统取消/返回后再次打开安装确认，完整包不变且 APK 新增请求/传输为 0。阻断测试代理后下载失败，服务端没有新增 APK 请求。测试 AVD 卡顿后按授权正常关闭并冷启同一 AVD；结束已覆盖恢复原 APK（SHA `d8a0d71e…`）、未知来源权限 default 并删除测试文件，首次安装时间始终保持 `2026-08-03 16:37:36`。 |
+| 证据边界 | `STATIC_PASS`、`UNIT_PASS`、`UI_PASS` 与开发 APK 的 `APK_SANITY` 分别取证；设备 fixture 只证明下载/校验/安装确认链，不挂生产 More runtime，不计作 `DEVICE_REPLAY_PASS`。生产 More 的合格新版 APK 全流程、系统最终安装结果及真实公网断网场景仍为 `NOT_VERIFIED`；受控断流与 UI mock 不替代这些证据。 |

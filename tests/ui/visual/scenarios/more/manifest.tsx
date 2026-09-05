@@ -13,7 +13,7 @@ import {
   type NetworkProxyProfile,
   type NetworkProxyState
 } from '@/platform/network/networkProxy';
-import type { AppUpdateInfo } from '@/platform/update/appUpdate';
+import { formatAppUpdateDownloadProgress, type AppUpdateInfo } from '@/platform/update/appUpdate';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import type { VisualScenarioDefinition } from '../../types';
 
@@ -137,53 +137,106 @@ function AppearanceScenario() {
   );
 }
 
-function UpdateAvailableScenario() {
-  const info: AppUpdateInfo = {
-    version: '1.4.0',
-    apkUrl: 'https://updates.visual.invalid/app.apk',
-    notes: '新版本包含阅读体验改进和稳定性修复。',
-    sha256: '0'.repeat(64),
-    packageName: 'visual.invalid',
-    versionName: '1.4.0',
-    versionCode: 140,
-    signerSha256: '1'.repeat(64)
-  };
+const updateInfo: AppUpdateInfo = {
+  version: '1.4.0',
+  apkUrl: 'https://updates.visual.invalid/app.apk',
+  notes: '新版本包含阅读体验改进和稳定性修复。',
+  sha256: '0'.repeat(64),
+  packageName: 'visual.invalid',
+  versionName: '1.4.0',
+  versionCode: 140,
+  signerSha256: '1'.repeat(64)
+};
+
+function UpdateAvailableScenario({ phase = 'idle' }: { phase?: 'idle' | 'restoring' | 'checking' }) {
   return (
     <MoreScreenFrame>
       <MoreUpdatePanel
         runtime={{
-          busy: false,
-          downloading: false,
+          phase,
+          artifact: null,
           progress: null,
-          info,
+          info: phase === 'idle' ? updateInfo : null,
           message: '发现新版 1.4.0',
           check: noop,
-          download: noop
+          start: noop,
+          pause: noop,
+          resume: noop,
+          install: noop
         }}
       />
     </MoreScreenFrame>
   );
 }
 
-function UpdateProgressScenario() {
+function UpdateProgressScenario({
+  phase = 'downloading',
+  unknownTotal = false
+}: {
+  phase?: 'downloading' | 'pausing' | 'verifying' | 'installing';
+  unknownTotal?: boolean;
+}) {
+  const downloadedBytes = phase === 'verifying' || phase === 'installing' ? 80_000_000 : 34_000_000;
   return (
     <MoreScreenFrame>
       <MoreUpdatePanel
         runtime={{
-          busy: false,
-          downloading: true,
-          info: null,
-          message: '正在下载安装包',
-          progress: {
-            title: '正在下载更新',
-            downloadedBytes: 34_000_000,
-            totalBytes: 80_000_000,
-            percent: 42,
-            percentLabel: '42%',
-            sizeLabel: '32.4 MB / 76.3 MB'
+          phase,
+          artifact: {
+            update: updateInfo,
+            ready: phase === 'installing',
+            totalBytes: unknownTotal ? null : 80_000_000,
+            downloadedBytes
           },
+          info: updateInfo,
+          message: '正在下载安装包',
+          progress: formatAppUpdateDownloadProgress(
+            updateInfo.version,
+            downloadedBytes,
+            unknownTotal ? -1 : 80_000_000
+          ),
           check: noop,
-          download: noop
+          start: noop,
+          pause: noop,
+          resume: noop,
+          install: noop
+        }}
+      />
+    </MoreScreenFrame>
+  );
+}
+
+function UpdateRetainedScenario({
+  ready,
+  newer = false,
+  message
+}: {
+  ready: boolean;
+  newer?: boolean;
+  message?: string;
+}) {
+  return (
+    <MoreScreenFrame>
+      <MoreUpdatePanel
+        runtime={{
+          phase: 'idle',
+          info: newer
+            ? { ...updateInfo, version: '1.4.1', versionName: '1.4.1', versionCode: 141, sha256: '2'.repeat(64) }
+            : null,
+          progress: null,
+          artifact: {
+            update: updateInfo,
+            ready,
+            totalBytes: 80_000_000,
+            downloadedBytes: ready ? 80_000_000 : 34_000_000
+          },
+          message:
+            message ?? (ready ? '无法打开安装确认，安装包已保留，可再次安装' : '网络已断开，进度已保留，可继续下载'),
+          check: noop,
+          start: noop,
+          pause: noop,
+          resume: noop,
+          install: noop
         }}
       />
     </MoreScreenFrame>
@@ -235,6 +288,14 @@ export const moreVisualScenarios: readonly VisualScenarioDefinition[] = [
     title: '关于阅坛·发现新版',
     render: () => <UpdateAvailableScenario />
   },
+  ...(['restoring', 'checking'] as const).map((phase): VisualScenarioDefinition => ({
+    capabilityIds: ['MORE-04'],
+    id: `more.update.${phase}`,
+    kind: 'rendered',
+    tags: ['more', 'update', phase],
+    title: phase === 'restoring' ? '关于阅坛·恢复本地任务' : '关于阅坛·检查中',
+    render: () => <UpdateAvailableScenario phase={phase} />
+  })),
   {
     capabilityIds: ['MORE-04'],
     id: 'more.update.downloading',
@@ -242,6 +303,54 @@ export const moreVisualScenarios: readonly VisualScenarioDefinition[] = [
     tags: ['more', 'update', 'downloading', 'progress'],
     title: '关于阅坛·下载进度',
     render: () => <UpdateProgressScenario />
+  },
+  ...(['pausing', 'verifying', 'installing'] as const).map((phase): VisualScenarioDefinition => ({
+    capabilityIds: ['MORE-04'],
+    id: `more.update.${phase}`,
+    kind: 'rendered',
+    tags: ['more', 'update', phase],
+    title: { pausing: '关于阅坛·暂停中', verifying: '关于阅坛·校验中', installing: '关于阅坛·打开安装确认中' }[phase],
+    render: () => <UpdateProgressScenario phase={phase} />
+  })),
+  {
+    capabilityIds: ['MORE-04'],
+    id: 'more.update.unknown-total',
+    kind: 'rendered',
+    tags: ['more', 'update', 'progress'],
+    title: '关于阅坛·未知总大小',
+    render: () => <UpdateProgressScenario unknownTotal />
+  },
+  {
+    capabilityIds: ['MORE-04'],
+    id: 'more.update.ready',
+    kind: 'rendered',
+    tags: ['more', 'update', 'ready'],
+    title: '关于阅坛·后台完成待安装',
+    render: () => <UpdateRetainedScenario ready message="安装包已就绪，可安装" />
+  },
+  {
+    capabilityIds: ['MORE-04'],
+    id: 'more.update.newer',
+    kind: 'rendered',
+    tags: ['more', 'update', 'newer'],
+    title: '关于阅坛·本地包与不同新版',
+    render: () => <UpdateRetainedScenario ready newer message="发现新版 1.4.1" />
+  },
+  {
+    capabilityIds: ['MORE-04'],
+    id: 'more.update.paused',
+    kind: 'rendered',
+    tags: ['more', 'update', 'paused', 'progress'],
+    title: '关于阅坛·断网保留进度',
+    render: () => <UpdateRetainedScenario ready={false} />
+  },
+  {
+    capabilityIds: ['MORE-04'],
+    id: 'more.update.install-retry',
+    kind: 'rendered',
+    tags: ['more', 'update', 'installer', 'error'],
+    title: '关于阅坛·安装失败重试',
+    render: () => <UpdateRetainedScenario ready />
   },
   {
     capabilityIds: ['MORE-05'],

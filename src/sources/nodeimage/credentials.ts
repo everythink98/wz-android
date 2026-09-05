@@ -61,12 +61,8 @@ function parseNodeImageCredential(rawValue: string | null): NodeImageApiKeyCrede
   return unverifiedNodeImageCredential(raw);
 }
 
-function serializeNodeImageCredential(credential: NodeImageApiKeyCredential) {
-  return JSON.stringify(credential);
-}
-
 async function writeNodeImageCredential(credential: NodeImageApiKeyCredential) {
-  await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, serializeNodeImageCredential(credential));
+  await SecureStore.setItemAsync(NODEIMAGE_API_KEY_STORAGE_KEY, JSON.stringify(credential));
 }
 
 export function nodeImageApiKeyUseStatus(

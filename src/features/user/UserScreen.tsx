@@ -1,6 +1,6 @@
 import { createUserStyles, type UserStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronLeft, ExternalLink, RefreshCw } from 'lucide-react-native';
 import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
@@ -8,8 +8,8 @@ import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
-import { AuthNoticeBox, EmptyText, LoadingState } from '@/ui/controls/FeedbackStates';
-import { PillRail } from '@/ui/controls/SelectionControls';
+import { AuthNoticeBox, EmptyText } from '@/ui/controls/FeedbackStates';
+import { TOUCH_HIT_SLOP } from '@/ui/controls/touchTarget';
 import { ScreenTopBar, ScreenTopBarActions, ScreenTopBarTitle } from '@/ui/controls/ScreenTopBar';
 import { Avatar } from '@/ui/avatar/Avatar';
 import { MemoizedTopicCard } from '@/ui/topic/TopicCard';
@@ -17,7 +17,6 @@ import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
 import {
   createUserListItems,
-  userListInstanceKey,
   userListItemKey,
   userListItemType,
   type UserActivityTab,
@@ -25,6 +24,60 @@ import {
 } from './userScreenItems';
 
 const USER_LIST_POSITION_PROPS = { disabled: true };
+const USER_STICKY_HEADER_INDICES = [0];
+const USER_STICKY_HEADER_CONFIG = { hideRelatedCell: true };
+const EMPTY_TOPICS: Topic[] = [];
+const EMPTY_REPLIES: UserReplyActivity[] = [];
+const EMPTY_LIST_ITEMS: UserListItem[] = [];
+const USER_TABS: { value: UserActivityTab; label: string }[] = [
+  { value: 'topics', label: '主题' },
+  { value: 'replies', label: '回复' }
+];
+
+function UserBio({
+  bio,
+  expanded,
+  styles,
+  onToggle
+}: {
+  bio: string;
+  expanded: boolean;
+  styles: UserStyles;
+  onToggle: () => void;
+}) {
+  const [hasOverflow, setHasOverflow] = useState(false);
+  return (
+    <View style={styles.bioSection}>
+      <View style={styles.bioTextContainer}>
+        <Text
+          testID="user-bio-measure"
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          pointerEvents="none"
+          style={[styles.bio, styles.bioMeasure]}
+          onTextLayout={({ nativeEvent }) => setHasOverflow(nativeEvent.lines.length > 2)}
+        >
+          {bio}
+        </Text>
+        <Text testID="user-bio-text" style={styles.bio} numberOfLines={expanded ? undefined : 2}>
+          {bio}
+        </Text>
+      </View>
+      {hasOverflow ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? '收起简介' : '展开简介'}
+          accessibilityState={{ expanded }}
+          style={styles.bioToggle}
+          onPress={onToggle}
+        >
+          <Text style={styles.bioToggleText}>{expanded ? '收起' : '展开'}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
 
 function topicFromUserReply(reply: UserReplyActivity): Topic {
   return {
@@ -126,41 +179,49 @@ export const UserScreen = memo(function UserScreen({
   onRefresh: () => void;
   onToggleFollow: (user: UserProfile) => void;
 }) {
-  const { styles, theme } = useReaderThemeStyles(createUserStyles);
+  const { styles, theme, settings } = useReaderThemeStyles(createUserStyles);
+  const { fontScale } = useWindowDimensions();
   const user = profile || requestedUser;
-  const topics = profile?.topics || [];
-  const replies = profile?.replies || [];
+  const topics = profile?.topics || EMPTY_TOPICS;
+  const replies = profile?.replies || EMPTY_REPLIES;
   const [userTab, setUserTab] = useState<UserActivityTab>('topics');
-  const levelLabel = profile?.levelLabel;
+  const [bioExpanded, setBioExpanded] = useState(false);
+  const userIdentity = user ? `${user.source}:${user.id || user.username}` : '';
+  const displayName = user?.displayName || user?.username || user?.id || '用户';
+  const userSubtitle = user
+    ? [sourceLabel(user.source), user.username && user.username !== displayName ? user.username : '']
+        .filter(Boolean)
+        .join(' · ')
+    : '';
+  const profileDetails = [
+    profile?.levelLabel,
+    profile?.joinedAt ? `${formatDateTime(profile.joinedAt).replace(/ \d{2}:\d{2}$/, '')} 加入` : ''
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const profileStats = useMemo(() => {
     const stats: { label: string; value: string }[] = [];
-    if (levelLabel) {
-      stats.push({ label: '等级', value: levelLabel });
-    }
     if (typeof profile?.topicCount === 'number') {
       stats.push({ label: '主题', value: String(profile.topicCount) });
     }
     if (typeof profile?.replyCount === 'number') {
       stats.push({ label: '回复', value: String(profile.replyCount) });
     }
-    if (typeof profile?.postCount === 'number') {
+    if (typeof profile?.postCount === 'number' && profile.source !== 'nodeseek' && profile.source !== 'v2ex') {
       stats.push({ label: '发言', value: String(profile.postCount) });
     }
-    if (profile?.joinedAt) {
-      stats.push({ label: '加入', value: formatDateTime(profile.joinedAt) || profile.joinedAt });
-    }
     return stats;
-  }, [levelLabel, profile?.joinedAt, profile?.postCount, profile?.replyCount, profile?.topicCount]);
-  const listItems = useMemo<UserListItem[]>(
-    () => createUserListItems(userTab, topics, replies),
-    [replies, topics, userTab]
-  );
-  const listInstanceKey = user ? userListInstanceKey(user, userTab) : userTab;
+  }, [profile?.source, profile?.postCount, profile?.replyCount, profile?.topicCount]);
+  const topicItems = useMemo(() => createUserListItems('topics', topics, EMPTY_REPLIES), [topics]);
+  const replyItems = useMemo(() => createUserListItems('replies', EMPTY_TOPICS, replies), [replies]);
+  const listItems = profile ? (userTab === 'topics' ? topicItems : replyItems) : EMPTY_LIST_ITEMS;
   const listRef = useRef<FlashListRef<UserListItem> | null>(null);
   const autoLoadArmedRef = useRef(false);
   const pendingScrollTopRef = useRef(false);
-  const followTarget = profile;
-  const userAuthNotice = error ? authNoticeForSourceError(error) : null;
+  const userAuthNotice = useMemo(() => (error ? authNoticeForSourceError(error) : null), [error]);
+  useEffect(() => {
+    setBioExpanded(false);
+  }, [userIdentity]);
   useEffect(() => {
     autoLoadArmedRef.current = false;
     setUserTab('topics');
@@ -233,31 +294,58 @@ export const UserScreen = memo(function UserScreen({
       onLoadMoreTopics();
     }
   }, [onLoadMoreReplies, onLoadMoreTopics, userTab]);
-  const renderProfileHeader = useCallback(
+  const profileHeader = useMemo(
     () => (
-      <View style={styles.userProfileHeader}>
-        <View style={styles.topicAuthorRow}>
-          <Avatar
-            contentSource={user?.source || null}
-            name={user?.displayName || user?.username || user?.id}
-            uri={user?.avatar}
-          />
-          <View style={styles.topicAuthorMeta}>
-            <Text style={styles.articleTitle}>{user?.displayName || user?.username || user?.id || '用户'}</Text>
-            <Text style={styles.meta}>
-              {user ? `${sourceLabel(user.source)} · ${user.username || user.id || ''}` : '用户信息读取中'}
-            </Text>
+      <View testID="user-profile-header" style={styles.userProfileHeader}>
+        <View style={styles.profileIdentityRow}>
+          <View style={styles.topicAuthorRow}>
+            <Avatar contentSource={user?.source || null} name={displayName} uri={user?.avatar} />
+            <View style={styles.topicAuthorMeta}>
+              <Text style={styles.articleTitle}>{displayName}</Text>
+              <Text style={styles.meta}>{userSubtitle}</Text>
+            </View>
           </View>
+          {profile ? (
+            <Pressable
+              hitSlop={TOUCH_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel={followed ? '已关注' : '关注'}
+              accessibilityHint={followed ? '再次点击取消本机关注' : '在本机关注这个用户'}
+              accessibilityState={{ selected: followed }}
+              style={[
+                styles.followButton,
+                { minWidth: Math.round(88 * settings.fontScale * fontScale) },
+                followed && styles.followButtonSelected
+              ]}
+              onPress={() => onToggleFollow(profile)}
+            >
+              <Text style={[styles.followButtonText, followed && styles.followButtonTextSelected]}>
+                {followed ? '已关注' : '关注'}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
-        {profile?.bio ? <Text style={styles.excerpt}>{profile.bio}</Text> : null}
+        {profile?.bio ? (
+          <UserBio
+            key={userIdentity}
+            bio={profile.bio}
+            expanded={bioExpanded}
+            styles={styles}
+            onToggle={() => setBioExpanded((value) => !value)}
+          />
+        ) : null}
+        {profileDetails ? <Text style={styles.meta}>{profileDetails}</Text> : null}
         {profileStats.length ? (
           <View style={styles.profileStatRail}>
             {profileStats.map((stat) => (
-              <View key={stat.label} style={styles.profileStatPill}>
+              <View
+                key={stat.label}
+                accessible
+                accessibilityLabel={`${stat.label} ${stat.value}`}
+                style={styles.profileStat}
+              >
+                <Text style={styles.profileStatValue}>{stat.value}</Text>
                 <Text style={styles.profileStatLabel}>{stat.label}</Text>
-                <Text style={styles.profileStatValue} numberOfLines={1}>
-                  {stat.value}
-                </Text>
               </View>
             ))}
           </View>
@@ -265,7 +353,7 @@ export const UserScreen = memo(function UserScreen({
         {error ? (
           userAuthNotice ? (
             <AuthNoticeBox notice={userAuthNotice}>
-              <AppButton compact label="重试" onPress={onRefresh} />
+              <AppButton compact label="重试" disabled={busy} onPress={onRefresh} />
             </AuthNoticeBox>
           ) : (
             <View style={styles.errorBox}>
@@ -273,65 +361,77 @@ export const UserScreen = memo(function UserScreen({
             </View>
           )
         ) : null}
-        {busy ? <LoadingState text="正在读取用户主页..." /> : null}
-        <View style={styles.actions}>
-          {followTarget ? (
-            <AppButton
-              label={followed ? '取消关注' : '关注'}
-              variant={followed ? 'danger' : undefined}
-              onPress={() => onToggleFollow(followTarget)}
+        {busy && !profile ? (
+          <View
+            accessible
+            role="status"
+            accessibilityLabel="正在读取用户主页"
+            accessibilityLiveRegion="polite"
+            accessibilityState={{ busy: true }}
+            style={styles.initialLoading}
+          >
+            <ActivityIndicator
+              accessible={false}
+              size="small"
+              color={theme.dark ? theme.primary : theme.primaryStrong}
             />
-          ) : null}
-          {user?.url ? <AppButton label="原站主页" variant="ghost" onPress={() => onOpenOriginal(user.url)} /> : null}
-        </View>
-        {profile ? (
-          <PillRail
-            items={[
-              { value: 'topics', label: '主题' },
-              { value: 'replies', label: '回复' }
-            ]}
-            value={userTab}
-            variant="tabs"
-            onChange={changeUserTab}
-          />
-        ) : null}
-        {profile && userTab === 'topics' && !topics.length && !busy ? (
-          <EmptyText text="这个用户暂时没有可显示的主题" />
-        ) : null}
-        {profile && userTab === 'replies' && !replies.length && !busy ? (
-          <EmptyText text="这个用户暂时没有可显示的回复" />
+            <Text accessible={false} style={styles.meta}>
+              正在读取用户主页
+            </Text>
+          </View>
         ) : null}
       </View>
     ),
     [
+      bioExpanded,
       busy,
-      changeUserTab,
+      displayName,
       error,
-      followTarget,
       followed,
-      onOpenOriginal,
+      fontScale,
       onRefresh,
       onToggleFollow,
       profile,
+      profileDetails,
       profileStats,
-      replies.length,
+      settings.fontScale,
       styles,
       theme,
-      topics.length,
       user,
       userAuthNotice,
-      userTab
+      userIdentity,
+      userSubtitle
     ]
   );
 
   const renderItem = useCallback<ListRenderItem<UserListItem>>(
     ({ item, index }) => {
+      if (item.type === 'tabs') {
+        return (
+          <View style={styles.activityTabs}>
+            {USER_TABS.map((tab) => (
+              <Pressable
+                key={tab.value}
+                accessibilityRole="tab"
+                accessibilityLabel={`${tab.label}${userTab === tab.value ? '，已选择' : ''}`}
+                accessibilityState={{ selected: userTab === tab.value }}
+                style={[styles.activityTab, userTab === tab.value && styles.activityTabSelected]}
+                onPress={() => changeUserTab(tab.value)}
+              >
+                <Text style={[styles.activityTabText, userTab === tab.value && styles.activityTabTextSelected]}>
+                  {tab.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        );
+      }
       if (item.type === 'reply') {
         return <UserReplyCard reply={item.reply} styles={styles} onOpenTopic={onOpenTopic} />;
       }
       return (
         <MemoizedTopicCard
-          testID={index === 0 ? 'user-topic-first' : undefined}
+          testID={index === 1 ? 'user-topic-first' : undefined}
           readerState={getTopicListItemStateFromIndex(topicStateIndex, item.topic)}
           topic={item.topic}
           hideReplyCount={item.topic.source === 'nodeseek'}
@@ -339,7 +439,7 @@ export const UserScreen = memo(function UserScreen({
         />
       );
     },
-    [onOpenTopic, styles, topicStateIndex]
+    [changeUserTab, onOpenTopic, styles, topicStateIndex, userTab]
   );
 
   if (!user) {
@@ -354,41 +454,63 @@ export const UserScreen = memo(function UserScreen({
           {sourceLabel(user.source)} · {user.displayName || user.username || user.id}
         </ScreenTopBarTitle>
         <ScreenTopBarActions>
-          <IconButton iconOnly ghost icon={RefreshCw} label="刷新" onPress={onRefresh} />
+          <View style={styles.toolbarAction}>
+            <IconButton iconOnly ghost icon={RefreshCw} iconSize={20} label="刷新" loading={busy} onPress={onRefresh} />
+          </View>
           {user.url ? (
-            <IconButton iconOnly ghost icon={ExternalLink} label="原站" onPress={() => onOpenOriginal(user.url)} />
+            <View style={styles.toolbarAction}>
+              <IconButton
+                iconOnly
+                ghost
+                icon={ExternalLink}
+                iconSize={20}
+                label="原站"
+                onPress={() => onOpenOriginal(user.url)}
+              />
+            </View>
           ) : null}
         </ScreenTopBarActions>
       </ScreenTopBar>
-      {renderProfileHeader()}
       <FlashList
-        testID={profile && !busy ? 'user-screen-loaded' : undefined}
-        key={listInstanceKey}
+        testID={profile ? 'user-screen-loaded' : undefined}
+        key={userIdentity}
         ref={listRef}
         style={styles.content}
         contentContainerStyle={styles.userContentInner}
         data={listItems}
         keyExtractor={userListItemKey}
         getItemType={userListItemType}
+        ListHeaderComponent={profileHeader}
+        stickyHeaderIndices={profile ? USER_STICKY_HEADER_INDICES : undefined}
+        stickyHeaderConfig={USER_STICKY_HEADER_CONFIG}
         keyboardShouldPersistTaps="handled"
         maintainVisibleContentPosition={USER_LIST_POSITION_PROPS}
         {...TOPIC_LIST_PERFORMANCE_PROPS}
         ListFooterComponent={
-          (userTab === 'replies' ? profile?.hasMoreReplies : profile?.hasMoreTopics) ? (
-            <View style={styles.actions}>
-              <AppButton
-                label={
-                  (userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics)
-                    ? '正在加载...'
-                    : userTab === 'replies'
-                      ? '加载更多回复'
-                      : '加载更多主题'
-                }
-                disabled={busy || (userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics)}
-                onPress={requestUserTopicLoadMore}
-              />
-            </View>
-          ) : null
+          <>
+            {profile && !(userTab === 'replies' ? replies.length : topics.length) ? (
+              <View style={styles.emptyActivity}>
+                <EmptyText
+                  text={userTab === 'replies' ? '这个用户暂时没有可显示的回复' : '这个用户暂时没有可显示的主题'}
+                />
+              </View>
+            ) : null}
+            {(userTab === 'replies' ? profile?.hasMoreReplies : profile?.hasMoreTopics) ? (
+              <View style={styles.actions}>
+                <AppButton
+                  label={
+                    (userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics)
+                      ? '正在加载...'
+                      : userTab === 'replies'
+                        ? '加载更多回复'
+                        : '加载更多主题'
+                  }
+                  disabled={busy || (userTab === 'replies' ? loadingMoreReplies : loadingMoreTopics)}
+                  onPress={requestUserTopicLoadMore}
+                />
+              </View>
+            ) : null}
+          </>
         }
         onContentSizeChange={completePendingScrollReset}
         onEndReached={handleEndReached}

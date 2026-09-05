@@ -150,6 +150,7 @@ export function IconButton({
   icon,
   iconSize,
   label,
+  loading = false,
   tiny = false,
   onPress
 }: {
@@ -162,6 +163,7 @@ export function IconButton({
   icon: LucideIcon;
   iconSize?: number;
   label: string;
+  loading?: boolean;
   tiny?: boolean;
   onPress: () => void;
 }) {
@@ -174,7 +176,7 @@ export function IconButton({
       hitSlop={TOUCH_HIT_SLOP}
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled, selected: active }}
+      accessibilityState={{ disabled: disabled || loading, selected: active, busy: loading }}
       style={[
         styles.button,
         ghost && styles.ghost,
@@ -184,10 +186,19 @@ export function IconButton({
         active && !iconOnly && styles.active,
         disabled && styles.disabled
       ]}
-      disabled={disabled}
+      disabled={disabled || loading}
       onPress={onPress}
     >
-      <Icon size={resolvedIconSize} color={color} fill={active ? color : 'none'} strokeWidth={1.8} />
+      {loading ? (
+        <ActivityIndicator
+          accessible={false}
+          color={color}
+          size="small"
+          style={{ width: resolvedIconSize, height: resolvedIconSize }}
+        />
+      ) : (
+        <Icon size={resolvedIconSize} color={color} fill={active ? color : 'none'} strokeWidth={1.8} />
+      )}
       {iconOnly ? null : (
         <Text
           numberOfLines={1}

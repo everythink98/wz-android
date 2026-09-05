@@ -5,6 +5,7 @@ import { withTrackedParseHtml } from '../../../tests/helpers/trackedParseHtml';
 import {
   compileForumContent,
   prepareReplyContent,
+  prepareSanitizedForumContent,
   prepareTopicContent,
   requirePreparedForumContent,
   type CompiledForumContent,
@@ -391,6 +392,34 @@ describe('Android topic content splitting', () => {
         for (const text of ['前文', '链接', '后文', '表格内容', '代码内容']) {
           expect(selectionText, `${source}/${role} selection`).toContain(text);
         }
+      }
+    }
+  });
+
+  it('restores protected emails without changing surrounding text flow, media placeholders or selection', () => {
+    const protectedEmail =
+      '<span class="__cf_email__" data-cfemail="4230272326273002273a232f322e276c212d2f">[email&nbsp;protected]</span>';
+    const html = `<p>前文 [email protected] <a href="https://example.com/path">链接</a><img src="https://img.example.com/flow.png" alt="图片占位"><strong>${protectedEmail}</strong><br>后文</p>`;
+
+    for (const source of ['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const) {
+      for (const role of ['opening', 'reply', 'quoted-reply', 'accepted-answer', 'signature'] as const) {
+        const options = { baseUrl: 'https://example.com/', source, role };
+        const restored = prepareSanitizedForumContent(html, options);
+        const plain = prepareSanitizedForumContent(html.replace(protectedEmail, 'reader@example.com'), options);
+
+        expect(restored, `${source}/${role}`).toEqual(plain);
+        expect(
+          renderedContentRows(restored.contentPlan)
+            .map((row) => row.html)
+            .join('')
+        ).toContain('<forum-inline-image');
+        expect(restored.contentPlan.previewImages).toHaveLength(1);
+        const text = restored.contentPlan.rows
+          .flatMap((row) => selectionToken(row).owners)
+          .map((owner) => owner.text)
+          .join('');
+        expect(text).toContain('[email protected]');
+        expect(text).toContain('reader@example.com');
       }
     }
   });
