@@ -259,6 +259,10 @@ export function useAppRuntime() {
         showYaohuoLogin
       },
       appActive,
+      nodeSeekMessaging: {
+        identityKey: notificationsRuntime.identityKeys.nodeseek,
+        available: notificationsRuntime.activeSources.includes('nodeseek')
+      },
       notify,
       reader: {
         commit: commitReaderData,
@@ -270,6 +274,8 @@ export function useAppRuntime() {
       appActive,
       commitReaderData,
       forumSessionEpochs,
+      notificationsRuntime.identityKeys.nodeseek,
+      notificationsRuntime.activeSources,
       notify,
       readGateway,
       readerData,

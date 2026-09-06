@@ -1,0 +1,30 @@
+context platform=android
+context timeout=240000
+context retries=0
+env APP_ID=com.wz.reader
+# Pixel API 35, 1264 x 2780 px. Override coordinates for another viewport.
+env RIGHT_X=1030
+env LEFT_X=220
+env LOW_Y=2000
+env HIGH_Y=700
+env DX=650
+env DY=1100
+
+open ${APP_ID} --relaunch
+wait id="main-tab-feed" 60000
+press id="feed-source-v2ex"
+wait id="feed-outcome-data-v2ex-all" 60000
+
+# Vertical intent must keep the source, even when horizontal travel exceeds a page's swipe threshold.
+gesture pan ${RIGHT_X} ${LOW_Y} -${DX} -${DY} 250
+wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 2000
+gesture pan ${RIGHT_X} ${LOW_Y} -${DX} -${DY} 800
+wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 2000
+gesture pan ${LEFT_X} ${HIGH_Y} ${DX} ${DY} 250
+wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 2000
+gesture pan ${LEFT_X} ${HIGH_Y} ${DX} ${DY} 800
+wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 2000
+
+# Direct tab taps still work regardless of the configured source order.
+press id="feed-source-all"
+wait "id=\"feed-source-all\" label=\"全部，已选择\"" 10000

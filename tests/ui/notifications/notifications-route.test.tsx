@@ -1260,17 +1260,18 @@ describe('notification routes', () => {
     expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
 
-  it('preserves an unconfirmed private draft and clears it only after server confirmation', async () => {
+  it('opens a first conversation without writing and preserves failed or unconfirmed drafts until confirmation', async () => {
     appQueryClient.clear();
     const privateNotification: ForumNotification = {
       ...notification,
-      id: 'message:9',
+      id: 'conversation:9',
       kind: 'private-message',
       unread: false,
       target: { type: 'private-conversation', conversationId: '9' }
     };
     const replyToConversation = jest
       .fn<() => Promise<{ confirmed: boolean; message?: string }>>()
+      .mockRejectedValueOnce(new Error('发送失败'))
       .mockResolvedValueOnce({ confirmed: false, message: '原站未确认' })
       .mockResolvedValueOnce({ confirmed: true });
     const gateway = {
@@ -1305,8 +1306,12 @@ describe('notification routes', () => {
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('回复私信'));
+    await waitFor(() => expect(view.getByLabelText('发私信')).toBeTruthy());
+    expect(view.getByText('还没有私信，点击下方输入区开始聊天。')).toBeTruthy();
+    expect(view.queryByLabelText('私信回复内容')).toBeNull();
+    expect(gateway.markRead).not.toHaveBeenCalled();
+    expect(gateway.listPage).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByLabelText('发私信'));
     await fireEvent.changeText(view.getByLabelText('私信回复内容'), 'PRIVATE_DRAFT');
     await act(async () => {
       const onPress = view.getByLabelText('测试发送私信').props.onPress as () => void;
@@ -1314,14 +1319,24 @@ describe('notification routes', () => {
       onPress();
       await Promise.resolve();
     });
-    await waitFor(() => expect(view.getByText('原站未确认')).toBeTruthy());
+    await waitFor(() => expect(view.getByText('发送失败')).toBeTruthy());
     expect(view.getByLabelText('私信回复内容').props.value).toBe('PRIVATE_DRAFT');
     expect(replyToConversation).toHaveBeenCalledTimes(1);
 
     await fireEvent.press(view.getByLabelText('测试发送私信'));
+    await waitFor(() => expect(view.getByText('原站未确认')).toBeTruthy());
+    expect(view.getByLabelText('私信回复内容').props.value).toBe('PRIVATE_DRAFT');
+    expect(replyToConversation).toHaveBeenCalledTimes(2);
+    expect(replyToConversation.mock.calls[0]).toEqual([
+      privateNotification,
+      'PRIVATE_DRAFT',
+      'nodeseek:new-account',
+      expect.any(AbortSignal)
+    ]);
+    await fireEvent.press(view.getByLabelText('测试发送私信'));
     await waitFor(() => expect(runtime.notify).toHaveBeenCalledWith('回复已发送'));
     expect(view.queryByLabelText('私信回复内容')).toBeNull();
-    await fireEvent.press(view.getByLabelText('回复私信'));
+    await fireEvent.press(view.getByLabelText('发私信'));
     expect(view.getByLabelText('私信回复内容').props.value).toBe('');
     expect(runtime.refreshSnapshots).toHaveBeenCalledTimes(1);
   });
@@ -1367,8 +1382,8 @@ describe('notification routes', () => {
     );
     const view = await render(renderRoute(activeRuntime), { wrapper: QueryTestWrapper });
 
-    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('回复私信'));
+    await waitFor(() => expect(view.getByLabelText('发私信')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('发私信'));
     await fireEvent.changeText(view.getByLabelText('私信回复内容'), 'PENDING_DRAFT');
 
     const pendingRuntime = { ...activeRuntime, activeSources: [] } as NotificationRouteRuntimeValue;
@@ -1376,7 +1391,7 @@ describe('notification routes', () => {
     expect(view.queryByLabelText('私信回复内容')).toBeNull();
 
     await act(async () => view.rerender(renderRoute(activeRuntime)));
-    await fireEvent.press(view.getByLabelText('回复私信'));
+    await fireEvent.press(view.getByLabelText('发私信'));
     expect(view.getByLabelText('私信回复内容').props.value).toBe('PENDING_DRAFT');
 
     const switchedRuntime = {
@@ -1386,7 +1401,7 @@ describe('notification routes', () => {
     } as NotificationRouteRuntimeValue;
     await act(async () => view.rerender(renderRoute(switchedRuntime)));
     await act(async () => view.rerender(renderRoute(activeRuntime)));
-    await fireEvent.press(view.getByLabelText('回复私信'));
+    await fireEvent.press(view.getByLabelText('发私信'));
     expect(view.getByLabelText('私信回复内容').props.value).toBe('');
   });
 
@@ -1438,8 +1453,8 @@ describe('notification routes', () => {
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('回复私信'));
+    await waitFor(() => expect(view.getByLabelText('发私信')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('发私信'));
     await fireEvent.changeText(view.getByLabelText('私信回复内容'), '仍在发送的草稿');
     await fireEvent.press(view.getByLabelText('测试发送私信'));
     await waitFor(() => expect(replyToConversation).toHaveBeenCalledTimes(1));
@@ -1511,8 +1526,8 @@ describe('notification routes', () => {
       { wrapper: QueryTestWrapper }
     );
 
-    await waitFor(() => expect(view.getByLabelText('回复私信')).toBeTruthy());
-    await fireEvent.press(view.getByLabelText('回复私信'));
+    await waitFor(() => expect(view.getByLabelText('发私信')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('发私信'));
     await act(async () => {
       const onPress = view.getByLabelText('测试上传图片').props.onPress as () => void;
       onPress();

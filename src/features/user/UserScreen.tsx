@@ -162,6 +162,7 @@ export const UserScreen = memo(function UserScreen({
   onLoadMoreTopics,
   onOpenOriginal,
   onOpenTopic,
+  onPrivateMessage,
   onRefresh,
   onToggleFollow
 }: {
@@ -178,6 +179,7 @@ export const UserScreen = memo(function UserScreen({
   onLoadMoreTopics: () => void;
   onOpenOriginal: (url: string) => void;
   onOpenTopic: (topic: Topic) => void;
+  onPrivateMessage?: () => void;
   onRefresh: () => void;
   onToggleFollow: (user: UserProfile) => void;
 }) {
@@ -296,8 +298,52 @@ export const UserScreen = memo(function UserScreen({
       onLoadMoreTopics();
     }
   }, [onLoadMoreReplies, onLoadMoreTopics, userTab]);
-  const profileHeader = useMemo(
-    () => (
+  const profileHeader = useMemo(() => {
+    const isNodeSeek = user?.source === 'nodeseek';
+    const actionMinWidth = Math.round((isNodeSeek ? 72 : 88) * settings.fontScale * fontScale);
+    const actions = profile ? (
+      <View style={styles.profileActions}>
+        {onPrivateMessage ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="私信"
+            style={[styles.followButton, styles.followButtonSelected, isNodeSeek && { minWidth: actionMinWidth }]}
+            onPress={onPrivateMessage}
+          >
+            <Text style={[styles.followButtonText, styles.followButtonTextSelected]}>私信</Text>
+          </Pressable>
+        ) : null}
+        <Pressable
+          hitSlop={TOUCH_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel={followed ? '已关注' : '关注'}
+          accessibilityHint={followed ? '再次点击取消本机关注' : '在本机关注这个用户'}
+          accessibilityState={{ selected: followed }}
+          style={[styles.followButton, { minWidth: actionMinWidth }, followed && styles.followButtonSelected]}
+          onPress={() => onToggleFollow(profile)}
+        >
+          <Text style={[styles.followButtonText, followed && styles.followButtonTextSelected]}>
+            {followed ? '已关注' : '关注'}
+          </Text>
+        </Pressable>
+      </View>
+    ) : null;
+    const stats = profileStats.length ? (
+      <View style={styles.profileStatRail}>
+        {profileStats.map((stat) => (
+          <View
+            key={stat.label}
+            accessible
+            accessibilityLabel={`${stat.label} ${stat.value}`}
+            style={[styles.profileStat, isNodeSeek && styles.profileStatStacked]}
+          >
+            <Text style={styles.profileStatValue}>{stat.value}</Text>
+            <Text style={styles.profileStatLabel}>{stat.label}</Text>
+          </View>
+        ))}
+      </View>
+    ) : null;
+    return (
       <View testID="user-profile-header" style={styles.userProfileHeader}>
         <View style={styles.profileIdentityRow}>
           <View style={styles.topicAuthorRow}>
@@ -307,25 +353,7 @@ export const UserScreen = memo(function UserScreen({
               <Text style={styles.meta}>{userSubtitle}</Text>
             </View>
           </View>
-          {profile ? (
-            <Pressable
-              hitSlop={TOUCH_HIT_SLOP}
-              accessibilityRole="button"
-              accessibilityLabel={followed ? '已关注' : '关注'}
-              accessibilityHint={followed ? '再次点击取消本机关注' : '在本机关注这个用户'}
-              accessibilityState={{ selected: followed }}
-              style={[
-                styles.followButton,
-                { minWidth: Math.round(88 * settings.fontScale * fontScale) },
-                followed && styles.followButtonSelected
-              ]}
-              onPress={() => onToggleFollow(profile)}
-            >
-              <Text style={[styles.followButtonText, followed && styles.followButtonTextSelected]}>
-                {followed ? '已关注' : '关注'}
-              </Text>
-            </Pressable>
-          ) : null}
+          {!isNodeSeek ? actions : null}
         </View>
         {profile?.bio ? (
           <UserBio
@@ -337,21 +365,14 @@ export const UserScreen = memo(function UserScreen({
           />
         ) : null}
         {profileDetails ? <Text style={styles.meta}>{profileDetails}</Text> : null}
-        {profileStats.length ? (
-          <View style={styles.profileStatRail}>
-            {profileStats.map((stat) => (
-              <View
-                key={stat.label}
-                accessible
-                accessibilityLabel={`${stat.label} ${stat.value}`}
-                style={styles.profileStat}
-              >
-                <Text style={styles.profileStatValue}>{stat.value}</Text>
-                <Text style={styles.profileStatLabel}>{stat.label}</Text>
-              </View>
-            ))}
+        {isNodeSeek ? (
+          <View style={styles.profileFooter}>
+            {stats}
+            {actions}
           </View>
-        ) : null}
+        ) : (
+          stats
+        )}
         {error ? (
           userAuthNotice ? (
             <AuthNoticeBox notice={userAuthNotice}>
@@ -383,28 +404,28 @@ export const UserScreen = memo(function UserScreen({
           </View>
         ) : null}
       </View>
-    ),
-    [
-      bioExpanded,
-      busy,
-      displayName,
-      error,
-      followed,
-      fontScale,
-      onRefresh,
-      onToggleFollow,
-      profile,
-      profileDetails,
-      profileStats,
-      settings.fontScale,
-      styles,
-      theme,
-      user,
-      userAuthNotice,
-      userIdentity,
-      userSubtitle
-    ]
-  );
+    );
+  }, [
+    bioExpanded,
+    busy,
+    displayName,
+    error,
+    followed,
+    fontScale,
+    onRefresh,
+    onPrivateMessage,
+    onToggleFollow,
+    profile,
+    profileDetails,
+    profileStats,
+    settings.fontScale,
+    styles,
+    theme,
+    user,
+    userAuthNotice,
+    userIdentity,
+    userSubtitle
+  ]);
 
   const renderItem = useCallback<ListRenderItem<UserListItem>>(
     ({ item, index }) => {

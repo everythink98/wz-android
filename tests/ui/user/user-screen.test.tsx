@@ -144,6 +144,21 @@ function userScreen(overrides: Partial<React.ComponentProps<typeof UserScreen>> 
 }
 
 describe('User screen behavior', () => {
+  it('shows the optional private message action beside follow with a 48dp target', async () => {
+    const onPrivateMessage = jest.fn<() => void>();
+    const view = await render(userScreen({ profile: { ...profile, source: 'nodeseek' }, onPrivateMessage }));
+    const button = view.getByRole('button', { name: '私信' });
+    const buttonStyle = StyleSheet.flatten(button.props.style);
+    expect(buttonStyle.minHeight).toBeGreaterThanOrEqual(48);
+    expect(buttonStyle.minWidth).toBeGreaterThanOrEqual(48);
+    expect(StyleSheet.flatten(view.getByRole('button', { name: '关注' }).props.style).minWidth).toBe(
+      buttonStyle.minWidth
+    );
+    await fireEvent.press(button);
+    expect(onPrivateMessage).toHaveBeenCalledTimes(1);
+    await view.rerender(userScreen());
+    expect(view.queryByRole('button', { name: '私信' })).toBeNull();
+  });
   it('reuses activity rows and the profile header until their data changes', async () => {
     const view = await render(userScreen());
     const topicInputs = mockListRender.mock.calls.at(-1)![0];

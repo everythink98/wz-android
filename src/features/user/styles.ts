@@ -98,11 +98,25 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderSettings) {
       fontSize: fontSize(12),
       fontWeight: '600'
     },
+    profileActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+      marginLeft: 'auto'
+    },
+    profileFooter: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12
+    },
     followButton: {
       alignItems: 'center',
       justifyContent: 'center',
       minHeight: 48,
-      marginLeft: 'auto',
+      minWidth: 48,
       paddingHorizontal: 12,
       paddingVertical: 8,
       borderRadius: 10,
@@ -281,6 +295,11 @@ export function createUserStyles(theme: ReaderTheme, settings: ReaderSettings) {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 4
+    },
+    profileStatStacked: {
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+      gap: 2
     },
     profileStatLabel: {
       color: theme.muted,

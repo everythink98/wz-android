@@ -32,6 +32,7 @@ export type UserRouteRuntimeValue = {
     showYaohuoLogin: (message?: string) => void;
   };
   appActive: boolean;
+  nodeSeekMessaging: { identityKey: string | undefined; available: boolean };
   notify: (message: string) => void;
   topicStateIndex: TopicListItemStateIndex;
   reader: {
@@ -107,6 +108,37 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     [runtime.reader]
   );
   const openTopic = useCallback((topic: Topic) => navigation.push('Topic', { topic }), [navigation]);
+  const profile = controller.userProfile;
+  const recipientId = profile?.id || '';
+  const canMessage =
+    profile?.source === 'nodeseek' &&
+    /^\d+$/.test(recipientId) &&
+    Number.isSafeInteger(Number(recipientId)) &&
+    Number(recipientId) > 0 &&
+    runtime.nodeSeekMessaging.identityKey !== `nodeseek:${Number(recipientId)}`;
+  const openPrivateMessage = useCallback(() => {
+    if (!canMessage || !profile) return;
+    const { identityKey, available } = runtime.nodeSeekMessaging;
+    if (!available || !identityKey) {
+      runtime.account.requestNodeSeekVerification('登录 NodeSeek 后可发送私信');
+      return;
+    }
+    const uid = String(Number(recipientId));
+    const name = profile.displayName || profile.username || uid;
+    navigation.push('NotificationDetail', {
+      identityKey,
+      notification: {
+        source: 'nodeseek',
+        id: `conversation:${uid}`,
+        kind: 'private-message',
+        actor: { id: uid, name, avatarUrl: profile.avatar },
+        title: name,
+        createdAt: null,
+        unread: false,
+        target: { type: 'private-conversation', conversationId: uid }
+      }
+    });
+  }, [canMessage, navigation, profile, recipientId, runtime.account, runtime.nodeSeekMessaging]);
 
   return (
     <UserScreen
@@ -123,6 +155,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
       onLoadMoreTopics={controller.loadMoreUserTopics}
       onOpenOriginal={openExternalUrl}
       onOpenTopic={openTopic}
+      onPrivateMessage={canMessage ? openPrivateMessage : undefined}
       onRefresh={refreshUser}
       onToggleFollow={toggleUserFollow}
     />

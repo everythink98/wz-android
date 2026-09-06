@@ -143,6 +143,8 @@ jest.mock('@/platform/update/useAppUpdateRuntime', () => ({
 
 jest.mock('@/features/notifications/useNotificationsRuntime', () => ({
   useNotificationsRuntime: () => ({
+    identityKeys: {},
+    activeSources: [],
     backgroundEnabled: false,
     onNavigationReady: mockNotificationNavigationReady,
     partialUnavailable: false,
@@ -180,6 +182,10 @@ describe('app runtime startup', () => {
     expect(hook.result.current.routes).not.toBeNull();
     expect(hook.result.current.routes?.libraryRouteRuntime).toBeDefined();
     expect(hook.result.current.routes?.moreRouteRuntime).toBeDefined();
+    expect(hook.result.current.routes?.userRouteRuntime.nodeSeekMessaging).toEqual({
+      identityKey: undefined,
+      available: false
+    });
     expect(mockUseAccountRuntime).toHaveBeenCalledWith(
       expect.objectContaining({ webViewBlockMessage: '代理状态读取中。' })
     );

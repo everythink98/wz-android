@@ -730,6 +730,34 @@ describe('NodeSeek notifications', () => {
     expect(new URL(String(fetcher.mock.calls[0]?.[0])).pathname).toBe('/api/notification/message/send');
   });
 
+  it('reads a first conversation without creating or marking a message and surfaces a rejected read', async () => {
+    const fetcher = vi.fn(async () => json({ success: true, msgArray: [], talkTo: { uid: 23042 } }));
+    const item = {
+      source: 'nodeseek' as const,
+      id: 'conversation:23042',
+      kind: 'private-message' as const,
+      actor: { id: '23042', name: '收件人' },
+      title: '收件人',
+      createdAt: null,
+      unread: false,
+      target: { type: 'private-conversation' as const, conversationId: '23042' }
+    };
+    const access = { fetcher, identityKey: 'nodeseek:7', userId: '7' };
+    await expect(nodeSeekNotificationAdapter.loadDetail(item, access)).resolves.toMatchObject({
+      notification: item,
+      messages: [],
+      reply: { format: 'markdown' },
+      unreadMessageIds: []
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/api/notification/message/with/23042',
+      expect.not.objectContaining({ method: 'POST' })
+    );
+    fetcher.mockImplementation(async () => json({ success: false, message: '用户不存在', msgArray: [] }));
+    await expect(nodeSeekNotificationAdapter.loadDetail(item, access)).rejects.toThrow('用户不存在');
+  });
+
   it.each(['', 'not-a-uid', '0', '9007199254740992'])(
     'rejects invalid receiver UID %s before network access',
     async (conversationId) => {
@@ -751,6 +779,9 @@ describe('NodeSeek notifications', () => {
           identityKey: 'nodeseek:7',
           userId: '7'
         })
+      ).rejects.toThrow('NodeSeek 私信会话标识不正确');
+      await expect(
+        nodeSeekNotificationAdapter.loadDetail(item, { fetcher, identityKey: 'nodeseek:7', userId: '7' })
       ).rejects.toThrow('NodeSeek 私信会话标识不正确');
       expect(fetcher).not.toHaveBeenCalled();
     }

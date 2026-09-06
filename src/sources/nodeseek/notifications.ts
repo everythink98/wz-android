@@ -147,6 +147,15 @@ function integer(value: string) {
   return Number.isInteger(number) && number > 0 ? number : undefined;
 }
 
+function privateReceiverUid(item: ForumNotification) {
+  const id = item.target.type === 'private-conversation' ? item.target.conversationId : '';
+  const uid = Number(id);
+  if (!/^\d+$/.test(id) || !Number.isSafeInteger(uid) || uid <= 0) {
+    throw new Error('NodeSeek 私信会话标识不正确');
+  }
+  return uid;
+}
+
 function stableFallbackId(...parts: string[]) {
   if (!parts.some(Boolean)) return '';
   const value = parts.join('\u001f');
@@ -297,8 +306,11 @@ export const nodeSeekNotificationAdapter = {
 
   async loadDetail(item: ForumNotification, options: NotificationAdapterAccess): Promise<NotificationDetail> {
     if (item.target.type === 'private-conversation') {
-      const conversationId = item.target.conversationId;
+      const conversationId = String(privateReceiverUid(item));
       const data = await fetchJson(`/api/notification/message/with/${encodeURIComponent(conversationId)}`, options);
+      if (isRecord(data) && data.success === false) {
+        throw new Error(text(data, 'message', 'error') || 'NodeSeek 私信会话读取失败');
+      }
       const rows = findRows(data, ['msgArray', 'messageList', 'list', 'data']);
       if (!rows) throw new Error('NodeSeek 消息返回内容格式不正确');
       const messages = rows
@@ -410,13 +422,7 @@ export const nodeSeekNotificationAdapter = {
     content: string,
     options: NotificationAdapterAccess
   ): Promise<NotificationReplyResult> {
-    if (item.target.type !== 'private-conversation' || !/^\d+$/.test(item.target.conversationId)) {
-      throw new Error('NodeSeek 私信会话标识不正确');
-    }
-    const receiverUid = Number(item.target.conversationId);
-    if (!Number.isSafeInteger(receiverUid) || receiverUid <= 0) {
-      throw new Error('NodeSeek 私信会话标识不正确');
-    }
+    const receiverUid = privateReceiverUid(item);
     const raw = content.trim();
     if (!raw) throw new Error('请输入回复内容');
     const data = await runNodeSeekAction({

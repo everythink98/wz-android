@@ -7,5 +7,6 @@
     "types": ["jest", "node"],
     "strict": true
   },
-  "include": ["**/*.ts", "**/*.tsx", "**/*.mts"]
+  "include": ["**/*.ts", "**/*.tsx", "**/*.mts"],
+  "exclude": ["node_modules", "android", "ios", "babel.config.js", "metro.config.js", "jest.config.js", "tmp"]
 }

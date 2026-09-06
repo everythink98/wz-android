@@ -576,6 +576,7 @@ export function NotificationDetailScreen({
   }
   const item = detail.notification;
   const conversation = Boolean(detail.messages);
+  const emptyConversation = item.source === 'nodeseek' && detail.messages?.length === 0;
   const readOnlyText =
     item.kind === 'system' ? '系统通知由原站提供为只读。' : '原站没有为这条通知提供可回复的会话或主题。';
   const conversationKey = detail.messages?.map((message) => message.id).join(':') || '';
@@ -598,7 +599,8 @@ export function NotificationDetailScreen({
         {conversation ? (
           <View style={styles.conversationContext}>
             <Text style={styles.conversationContextText}>
-              {sourceCatalog[item.source].label} · 私信会话 · {notificationTimeText(item)}
+              {sourceCatalog[item.source].label} · 私信会话
+              {item.createdAt || item.displayTime ? ` · ${notificationTimeText(item)}` : ''}
             </Text>
             {canOpenTopic ? (
               <AppButton tiny variant="ghost" label="查看完整主题" onPress={() => onOpenTopic()} />
@@ -642,6 +644,9 @@ export function NotificationDetailScreen({
         ) : null}
         {conversation ? (
           <View testID="notification-conversation-messages" style={styles.conversationMessageList}>
+            {emptyConversation ? (
+              <Text style={styles.conversationNotice}>还没有私信，点击下方输入区开始聊天。</Text>
+            ) : null}
             {detail.historyNotice ? <Text style={styles.conversationNotice}>{detail.historyNotice}</Text> : null}
             {detail.messages?.map((message) => (
               <View
@@ -702,7 +707,7 @@ export function NotificationDetailScreen({
         <View testID="notification-reply-dock" style={[styles.replyDock, dockSafeAreaStyle]}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="回复私信"
+            accessibilityLabel={emptyConversation ? '发私信' : '回复私信'}
             accessibilityState={{ disabled: replyBusy || Boolean(detail.reply.disabledReason) }}
             disabled={replyBusy || Boolean(detail.reply.disabledReason)}
             style={[styles.replyLauncher, (replyBusy || Boolean(detail.reply?.disabledReason)) && styles.disabled]}
@@ -710,7 +715,11 @@ export function NotificationDetailScreen({
           >
             <View style={styles.replyLauncherBody}>
               <Text numberOfLines={1} style={styles.replyLauncherTitle}>
-                {replyBusy ? '正在发送…' : `回复 ${item.actor.name}…`}
+                {replyBusy
+                  ? '正在发送…'
+                  : emptyConversation
+                    ? `发私信给 ${item.actor.name}…`
+                    : `回复 ${item.actor.name}…`}
               </Text>
               <Text numberOfLines={1} style={styles.replyLauncherHint}>
                 {detail.reply.format === 'markdown' ? 'Markdown' : '纯文本'}

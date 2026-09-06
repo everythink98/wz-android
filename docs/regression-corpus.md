@@ -333,6 +333,16 @@
 | 当前 owner | `tests/ui/feed/feed-screen.test.tsx` |
 
 
+## `REG-FEED-020` 首页纵向斜滑误触来源切换
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-02` |
+| 历史症状与根因 | PagerView 9.0.4 的 Compose Pager 与首页 FlashList 默认 ScrollView 抢手势，横向位移小于纵向位移时仍可能切换来源。首页通过 `renderScrollComponent` 接入已安装 RNGH ScrollView，让列表参与手势协作；未叠加 JS 或原生方向锁，最终来源仍只由 TabView `onIndexChange` 提交。 |
+| 当前 owner | `tests/device/feed-gesture-priority.ad`；最终提交/取消读取仍由 `tests/ui/feed/feed-navigation-motion.test.tsx`、`tests/ui/feed/feed-screen.test.tsx` 拥有。 |
+| 失败 oracle | 2026-09-06，revision `146d87b` 的 `1.3.136/140` 在 `WZ_Pixel_API_35`（1264×2780）从列表执行横移 -650px、纵移 -1100px、250ms，全部误切 linux.do；800ms 和反向下滑亦复现。仅替换 ScrollView 后原样回放通过；列表首段、中段和已加载尾部共 12 组快慢/上下斜滑保持来源，正常横滑、点选、回到顶部与下拉刷新通过。此证据来自 Android 模拟器；物理设备手感未验证。 |
+
 ## `REG-MORE-005` SDK57 异步 File.move 造成诊断日志轮转竞态
 
 | 字段 | 内容 |

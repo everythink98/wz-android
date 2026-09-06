@@ -579,6 +579,7 @@ describe('Android release evidence guards', () => {
     const loggedOutDeviceDir = path.join(rootDir, 'tests', 'device-logged-out');
     const expected = [
       'account-readonly.ad',
+      'feed-gesture-priority.ad',
       'four-source-feed.ad',
       'library-return.ad',
       'more-readonly.ad',
@@ -612,7 +613,7 @@ describe('Android release evidence guards', () => {
           (readFileSync(path.join(deviceDir, file), 'utf8').match(/open \$\{APP_ID\} --relaunch/g)?.length || 0),
         0
       )
-    ).toBe(7);
+    ).toBe(8);
     const loggedOutReplay = readFileSync(path.join(loggedOutDeviceDir, 'logged-out-readonly.ad'), 'utf8');
     expect(loggedOutReplay.match(/open \$\{APP_ID\} --relaunch/g)).toHaveLength(2);
     expect(
@@ -802,6 +803,7 @@ describe('Android release evidence guards', () => {
 
     expect(releaseReplayNames).toEqual([
       'account-readonly.ad',
+      'feed-gesture-priority.ad',
       'four-source-feed.ad',
       'library-return.ad',
       'more-readonly.ad',

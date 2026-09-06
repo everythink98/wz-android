@@ -10,6 +10,7 @@ import {
   type NativeSyntheticEvent
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
+import { ScrollView } from 'react-native-gesture-handler';
 import { TabBar, TabView, type TabBarProps } from 'react-native-tab-view';
 import ChevronDown from 'lucide-react-native/icons/chevron-down';
 import ChevronUp from 'lucide-react-native/icons/chevron-up';
@@ -397,6 +398,7 @@ export const FeedScreen = memo(function FeedScreen({
       return (
         <View style={styles.content}>
           <FlashList
+            renderScrollComponent={ScrollView}
             testID={
               !busy && feedOutcomeKind
                 ? `feed-outcome-${feedOutcomeKind}-${feedSource}-${feedFilter ?? 'default'}`
