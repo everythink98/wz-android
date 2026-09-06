@@ -397,8 +397,10 @@ export function useFeedController({
   const pages = feedQuery.data?.pages || [];
   const refreshFeedScope = JSON.stringify([feedActive, feedQueryKey]);
   const refreshFeedGenerationRef = useRef(0);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
   useLayoutEffect(() => {
     refreshFeedGenerationRef.current += 1;
+    setManualRefreshing(false);
     return () => {
       refreshFeedGenerationRef.current += 1;
     };
@@ -421,7 +423,7 @@ export function useFeedController({
       loadingMore: feedQuery.isFetchingNextPage,
       nextCursor: nextPage?.cursor,
       page: lastPage?.page || 1,
-      refreshing: feedQuery.isRefetching && !feedQuery.isFetchingNextPage
+      refreshing: manualRefreshing || (feedQuery.isRefetching && !feedQuery.isFetchingNextPage)
     }),
     [
       feedQuery.errorUpdatedAt,
@@ -430,6 +432,7 @@ export function useFeedController({
       feedSourceRequestEnabled,
       lastPage?.page,
       loadMoreError,
+      manualRefreshing,
       mergedFeed.items,
       nextPage
     ]
@@ -610,14 +613,17 @@ export function useFeedController({
     if (!feedActive || !feedSourceRequestEnabled) return;
     if (feedSource === 'yaohuo') yaohuoLoginIntentRef.current += 1;
     const refreshGeneration = ++refreshFeedGenerationRef.current;
+    setManualRefreshing(true);
     notify('正在更新列表');
-    await queryClient.cancelQueries({ queryKey: feedQueryKey, exact: true });
-    if (refreshFeedGenerationRef.current !== refreshGeneration) return;
-    const result = await feedQuery.refetch({ cancelRefetch: true });
-    if (refreshFeedGenerationRef.current !== refreshGeneration) {
-      return;
+    try {
+      await queryClient.cancelQueries({ queryKey: feedQueryKey, exact: true });
+      if (refreshFeedGenerationRef.current !== refreshGeneration) return;
+      const result = await feedQuery.refetch({ cancelRefetch: true });
+      if (refreshFeedGenerationRef.current !== refreshGeneration) return;
+      if (!result.isError) notify('列表已更新');
+    } finally {
+      if (refreshFeedGenerationRef.current === refreshGeneration) setManualRefreshing(false);
     }
-    if (!result.isError) notify('列表已更新');
   }, [feedActive, feedQuery.refetch, feedQueryKey, feedSource, feedSourceRequestEnabled, notify, queryClient]);
 
   const changeFeedSource = useCallback(

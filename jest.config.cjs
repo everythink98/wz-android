@@ -5,7 +5,7 @@ module.exports = {
   ),
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
-    '^lucide-react-native/icons/(.*)$': '<rootDir>/node_modules/lucide-react-native/dist/cjs/icons/$1.js',
+    '^lucide-react-native$': '<rootDir>/node_modules/lucide-react-native/dist/cjs/lucide-react-native.js',
     '^react-native-worklets$': '<rootDir>/node_modules/react-native-worklets/src/mock.ts'
   },
   modulePathIgnorePatterns: ['<rootDir>/.codex-tmp/'],

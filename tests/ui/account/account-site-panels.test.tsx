@@ -22,6 +22,18 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 })
 }));
 
+jest.mock('lucide-react-native', () => {
+  const Icon = () => null;
+  return {
+    CheckCircle: Icon,
+    ChevronDown: Icon,
+    ChevronRight: Icon,
+    ChevronUp: Icon,
+    Image: Icon,
+    RefreshCw: Icon
+  };
+});
+
 jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
   return {

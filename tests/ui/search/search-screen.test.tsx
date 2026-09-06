@@ -113,6 +113,18 @@ jest.mock('@shopify/flash-list', () => {
   };
 });
 
+jest.mock('lucide-react-native', () => ({
+  ChevronDown: () => null,
+  ChevronRight: () => null,
+  ChevronUp: () => null,
+  Eye: () => null,
+  History: () => null,
+  MessageCircle: () => null,
+  Search: () => null,
+  SlidersHorizontal: () => null,
+  X: () => null
+}));
+
 jest.mock('@react-native-community/datetimepicker', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');

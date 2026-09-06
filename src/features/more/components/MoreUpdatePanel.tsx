@@ -5,7 +5,7 @@ import type { AppUpdatePhase } from '@/platform/update/useAppUpdateRuntime';
 import { CURRENT_APP_VERSION, formatAppUpdateDownloadProgress, sameAppUpdate } from '@/platform/update/appUpdate';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
-import Activity from 'lucide-react-native/icons/activity';
+import { Activity } from 'lucide-react-native';
 import { createMoreScreenStyles } from '../styles';
 
 export type MoreUpdateCapabilities = {

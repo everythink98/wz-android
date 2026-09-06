@@ -57,11 +57,13 @@ jest.mock('@shopify/flash-list', () => {
         ListEmptyComponent,
         ListFooterComponent,
         ListHeaderComponent,
+        nestedScrollEnabled,
         onLoad,
         onScroll,
         onScrollBeginDrag,
         pointerEvents,
         refreshControl,
+        renderScrollComponent: ScrollComponent = NativeScrollView,
         renderItem,
         testID
       }: {
@@ -72,11 +74,13 @@ jest.mock('@shopify/flash-list', () => {
         ListEmptyComponent?: React.ReactNode;
         ListFooterComponent?: React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
+        nestedScrollEnabled?: boolean;
         onLoad?: () => void;
         onScroll?: React.ComponentProps<typeof NativeScrollView>['onScroll'];
         onScrollBeginDrag?: () => void;
         pointerEvents?: React.ComponentProps<typeof NativeScrollView>['pointerEvents'];
-        refreshControl?: React.ReactNode;
+        refreshControl?: React.ReactElement<React.ComponentProps<typeof import('react-native').RefreshControl>>;
+        renderScrollComponent?: React.ComponentType<React.ComponentProps<typeof NativeScrollView>>;
         renderItem?: (info: { item: Topic; index: number }) => React.ReactNode;
         testID?: string;
       },
@@ -102,17 +106,18 @@ jest.mock('@shopify/flash-list', () => {
         onScroll?.(event);
       };
       return ReactModule.createElement(
-        NativeScrollView,
+        ScrollComponent,
         {
           accessibilityLabel: refreshControl ? '列表，支持下拉刷新' : '列表，无下拉刷新',
           accessibilityElementsHidden,
           importantForAccessibility,
+          nestedScrollEnabled,
           onScroll: handleScroll,
           onScrollBeginDrag,
           pointerEvents,
+          refreshControl,
           testID
         },
-        refreshControl,
         ListHeaderComponent,
         data.length > 0 && offsetY === 0
           ? ReactModule.createElement(NativeView, { testID: 'mock-feed-first-visible' })
@@ -172,16 +177,15 @@ jest.mock('react-native-tab-view', () => {
   };
 });
 
-jest.mock('lucide-react-native/icons/eye', () => {
+jest.mock('lucide-react-native', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
-  return () => ReactModule.createElement(NativeView, { accessibilityLabel: '浏览统计图标' });
-});
-
-jest.mock('lucide-react-native/icons/message-circle', () => {
-  const ReactModule = require('react') as typeof React;
-  const { View: NativeView } = require('react-native') as typeof import('react-native');
-  return () => ReactModule.createElement(NativeView, { accessibilityLabel: '回复统计图标' });
+  return {
+    ChevronDown: () => null,
+    ChevronUp: () => null,
+    Eye: () => ReactModule.createElement(NativeView, { accessibilityLabel: '浏览统计图标' }),
+    MessageCircle: () => ReactModule.createElement(NativeView, { accessibilityLabel: '回复统计图标' })
+  };
 });
 
 jest.mock('@/ui/avatar/Avatar', () => {
@@ -728,6 +732,35 @@ describe('Feed loading', () => {
     expect(activeScene().getByLabelText('列表，支持下拉刷新')).toBeTruthy();
   });
 
+  it('lets pull-to-refresh block the list scroll gesture', async () => {
+    const { NativeProxy } = jest.requireActual<
+      typeof import('react-native-gesture-handler/lib/typescript/v3/NativeProxy')
+    >('react-native-gesture-handler/lib/module/v3/NativeProxy');
+    const createHandler = jest.spyOn(NativeProxy, 'createGestureHandler');
+    const configureHandler = jest.spyOn(NativeProxy, 'setGestureHandlerConfig');
+    const configureRelations = jest.spyOn(NativeProxy, 'configureRelations');
+    const frames: FrameRequestCallback[] = [];
+    jest.mocked(requestAnimationFrame).mockImplementation((callback) => frames.push(callback));
+
+    const view = await render(renderFeed(false, [topic]));
+    await act(async () => frames.splice(0).forEach((callback) => callback(0)));
+
+    expect(view.getByTestId('feed-outcome-data-all-default').props.nestedScrollEnabled).toBe(false);
+
+    const nativeTags = createHandler.mock.calls
+      .filter(([name]) => name === 'NativeViewGestureHandler')
+      .map(([, tag]) => tag);
+    expect(nativeTags).toHaveLength(2);
+    const scrollTag = configureHandler.mock.calls.find(
+      ([, config]) => config.testID === 'feed-outcome-data-all-default'
+    )?.[0];
+    expect(nativeTags).toContain(scrollTag);
+    const refreshTag = nativeTags.find((tag) => tag !== scrollTag);
+    const relations = new Map(configureRelations.mock.calls);
+    expect(relations.get(refreshTag!)).toMatchObject({ blocksHandlers: [scrollTag] });
+    expect(relations.get(scrollTag!)).toMatchObject({ blocksHandlers: [] });
+  });
+
   it('keeps the scrolled-list state when the same Feed screen is revisited', async () => {
     const view = await render(renderFeed(false, [topic]));
 
@@ -781,11 +814,10 @@ describe('Feed loading', () => {
     expect(mockFlashListScrollToOffset.mock.invocationCallOrder[0]).toBeLessThan(
       onFilterChange.mock.invocationCallOrder[0]
     );
-    expect(frameCallbacks).toHaveLength(1);
     expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
     expect(mockFlashListMountCount).toBe(mountsBeforeFilterChange);
 
-    await act(async () => frameCallbacks[0]?.(0));
+    await act(async () => frameCallbacks.splice(0).forEach((callback) => callback(0)));
 
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(2);
   });
@@ -820,8 +852,7 @@ describe('Feed loading', () => {
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(1);
     expect(mockFlashListMountCount).toBe(mountsBeforeSelection);
     expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
-    expect(frameCallbacks).toHaveLength(1);
-    await act(async () => frameCallbacks.shift()?.(0));
+    await act(async () => frameCallbacks.splice(0).forEach((callback) => callback(0)));
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(2);
 
     await fireEvent.press(view.getByTestId('feed-source-v2ex'));
@@ -837,8 +868,7 @@ describe('Feed loading', () => {
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(1);
     expect(mockFlashListMountCount).toBe(mountsBeforeSelection);
     expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
-    expect(frameCallbacks).toHaveLength(1);
-    await act(async () => frameCallbacks.shift()?.(0));
+    await act(async () => frameCallbacks.splice(0).forEach((callback) => callback(0)));
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(2);
   });
 

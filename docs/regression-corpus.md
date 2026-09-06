@@ -15,6 +15,52 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
+## `REG-NOTIFY-061` 通知列表取消下拉后指示器残留
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `EVIDENCE_GAP` |
+| 能力 ID | `NOTIFY-01`；共享 `FEED-01/02/04` |
+| 历史症状与根因 | 2026-09-06 手势专项审核中，通知列表长拉后注入系统 CANCEL，蓝色圆圈持续停留；下一次正常下拉才能恢复。此前仅直接调用刷新控件 onTouchEvent 的测试没有覆盖内部列表持有触摸的分发路径。 |
+| 处置 | 共享 RN source patch 在 CANCEL 分发到子节点之前结束未提交手势；新增真实 root dispatch → nested ScrollView 用例。通知 FlashList 同时显式关闭单纵向列表不需要的 nestedScrollEnabled，移除 RN 默认的额外累积路径。 |
+| 当前 owner | `patches/react-native+0.86.3.patch` 内 ReactSwipeRefreshLayoutTest；`tests/ui/notifications/notifications-screen.test.tsx` 的刷新装配；匹配 APK 的通知列表 CANCEL → 等待 → 再次正常刷新只读验收。 |
+| 失败 oracle 与证据边界 | 新 dispatch JVM 用例在旧实现的 CANCEL 后仍得到 isRefreshing=true；共享修复后 5 项 JVM 用例通过。仅共享 patch 的 APK 在真实通知列表仍残留，因此不能用 JVM 绿灯代替设备验收；通知列表关闭 nestedScrollEnabled 的装配断言先以 undefined 转红。最终处置须通过匹配发布 APK 的取消与再次刷新验收后才能关闭证据缺口。 |
+
+## `REG-FEED-021` 嵌套滚动竞争及取消收尾缺失导致下拉卡住
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-01/02/04`；共享 `NOTIFY-01` |
+| 历史症状与根因 | 2026-09-06，用户发现很长的下拉仍会卡住、轻拉也出现圆圈。RN 0.85 起，为带 RefreshControl 的 ScrollView 默认开启 nestedScrollEnabled；当前 RN 0.86.3 保留该默认值。首页已经通过 RNGH ScrollView/RefreshControl 管理刷新，Android nested-scroll 路径却又累计拉动距离并独立结算。设备事件记录证明取消时 native gesture 未激活，随后 nested-scroll stop 仍把 refreshing 设为 true；只清理 ACTION_CANCEL 的圆圈会留下白底和延迟提交。 |
+| 处置 | 首页唯一纵向 FlashList 显式关闭 nestedScrollEnabled，保留同库手势装配与受控请求连续性。独立的系统 CANCEL 仍会滞留，故共享 RN source patch 复用原生 stop/reset 完整结束取消：先结算 nested-scroll bookkeeping，再复位指示器与 active pointer，避免迟到的 UP/stop 触发刷新；已经开始的刷新保留。不增加计时器、手势 owner 或自定义阈值。 |
+| 当前 owner | `tests/ui/feed/feed-screen.test.tsx` 验证列表关闭嵌套滚动且刷新/滚动仍有 block 关系；`tests/ui/feed/feed-controller-session.test.tsx` 验证请求连续性；`patches/react-native+0.86.3.patch` 内 ReactSwipeRefreshLayoutTest 验证 direct/nested 取消终态；`tests/device/feed-gesture-priority.ad` 和匹配 APK 的长拉、轻拉只读验收承接真实手势证据。 |
+| 失败 oracle | 未显式配置时装配测试得到 undefined（运行时默认 true），修复后必须为 false；该 UI oracle 仅证明配置传递，卡住是否消失仍须匹配 APK 验证。原生测试必须同时固定取消后 GONE、迟到 UP/stop 不刷新、下一次拖动的可见圆弧及刷新可用、进行中刷新保留。仅关闭 nestedScrollEnabled 的 APK 已证明自然长拉和短拉正常，但系统注入 CANCEL 仍滞留；仅复位圆圈的早期 Native 试验也被 nested-scroll 用例否定。 |
+| 上游证据 | [RN 默认值变更 PR 55189](https://github.com/react/react-native/pull/55189)；[RNGH 同组合卡住案例及关闭 nestedScrollEnabled 的处理](https://github.com/software-mansion/react-native-gesture-handler/issues/4231#issuecomment-4615780766)。 |
+| 修复验收 | 4 项真实 AndroidX JVM 用例与 76 项 Feed UI 测试通过。匹配最终 APK 的 API 35 模拟器验证 50/100px 轻拉松手收回、2200px 长拉、拉到 2400px 后回拉松手、CANCEL 后再次下拉，以及 14 步快慢斜滑/来源切换；NodeSeek 与聚合录屏均只有一个连续刷新圆弧区间。物理设备、通知页真实取消与全部系统中断路径未验。 |
+
+## `REG-FEED-020` 下拉刷新圆圈松手后消失再出现
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-01/02/04` |
+| 历史症状与根因 | 2026-09-06，刷新手势恢复后，用户继续发现 loading 出现、消失、再出现。匹配 APK 录屏中，圆圈在松手后中断约 150ms；onRefresh 先异步取消旧 Query，再等待 Query 的 isRefetching 更新，回调触发时 refreshing 仍为 false。RN 的受控 RefreshControl 因此先收起原生指示器，后续 Query 更新又重新打开。 |
+| 处置 | 现有 Feed controller 在手动回调中立即设置刷新状态，并持续到取消旧请求和当前请求结算完成；沿用现有 scope/generation 清理，旧请求 finally 不关闭新请求的指示器，切换来源或离开页面时复位。 |
+| 当前 owner | `tests/ui/feed/feed-controller-session.test.tsx` 的成功/失败刷新连续性与请求替换用例；共享装配仍由 `tests/ui/feed/feed-screen.test.tsx` 拥有，设备证据使用匹配 APK 的逐帧下拉录屏。 |
+| 失败 oracle | 将取消与读取分开结算，原实现的取消阶段 refreshing=false，新实现从回调到成功/失败结算前均为 true，终态为 false。同一模拟器、同一顶部下拉，修复前可见区间为 0.983–2.067s 与 2.217–2.983s；修复后为连续 0.950–2.850s，未出现中间断档。像素探针限定本次固定 viewport 的顶部圆圈区域，不代替其他设备和网络故障验收。 |
+
+## `REG-FEED-019` 首页下拉刷新指示器停留且未触发读取
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-01/02/04` |
+| 历史症状与根因 | 2026-09-06，撤回打包优化后首页仍能复现下拉圆圈滞留。FlashList 改用 RNGH ScrollView 承接纵向手势时，RefreshControl 仍从 React Native 导入；它忽略 ScrollView 传入的 block 关系，刷新手势未注册，拉动被滚动手势取消。旧 UI fixture 忽略 renderScrollComponent，并把刷新控件当普通子节点，未覆盖真实装配。 |
+| 处置 | Feed 统一使用已安装 RNGH 的 ScrollView 与 RefreshControl，由上游原生手势关系协调下拉和滚动；读取 controller 与请求结算不变。 |
+| 当前 owner | `tests/ui/feed/feed-screen.test.tsx` 保留真实滚动/刷新组件并验证原生 block 关系；`tests/device/feed-gesture-priority.ad` 与匹配 APK 的只读下拉刷新验收承接设备证据。 |
+| 失败 oracle | 修复前 UI 测试只观察到一个 NativeViewGestureHandler，缺少刷新手势；配套控件必须注册两个 handler 并配置 blocksHandlers。设备同一顶部下拉修复前圆圈持续停留，修复后聚合与 V2EX 列表真实更新且指示器收起，NodeSeek 显示刷新提示；快慢纵向斜滑不得误切来源。 |
+
 ## `REG-TOPIC-152` 小数密度下行内大图超过段落宽度而错位
 
 | 字段 | 内容 |

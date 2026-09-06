@@ -1,9 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import type { LucideIcon } from 'lucide-react-native';
-import Home from 'lucide-react-native/icons/house';
-import MoreHorizontal from 'lucide-react-native/icons/ellipsis';
-import Search from 'lucide-react-native/icons/search';
-import Star from 'lucide-react-native/icons/star';
+import { Home, MoreHorizontal, Search, Star, type LucideIcon } from 'lucide-react-native';
 import type { Screen } from './types';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';

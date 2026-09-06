@@ -11,10 +11,7 @@ import {
   type ViewStyle
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
-import type { LucideIcon } from 'lucide-react-native';
-import ChevronDown from 'lucide-react-native/icons/chevron-down';
-import Star from 'lucide-react-native/icons/star';
-import Trash2 from 'lucide-react-native/icons/trash-2';
+import { ChevronDown, Star, Trash2, type LucideIcon } from 'lucide-react-native';
 import type { FeedSource, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import { type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
 import { type LibraryTab } from '@/domain/forum/feed';

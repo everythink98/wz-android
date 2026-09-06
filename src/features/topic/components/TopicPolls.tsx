@@ -1,11 +1,7 @@
 import type { TopicStyles } from '../styles';
 import { Pressable, Text, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
-import CheckCircle from 'lucide-react-native/icons/circle-check-big';
-import CheckSquare from 'lucide-react-native/icons/square-check-big';
-import Circle from 'lucide-react-native/icons/circle';
-import Square from 'lucide-react-native/icons/square';
-import Users from 'lucide-react-native/icons/users';
+import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
 import type { Source, TopicPoll } from '@/domain/forum/models';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { pollParticipationLabel, pollTotalVotes } from '@/domain/forum/topicPollDisplay';

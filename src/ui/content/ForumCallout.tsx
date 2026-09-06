@@ -1,21 +1,23 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { LinearTransition, ReduceMotion } from 'react-native-reanimated';
-import Bug from 'lucide-react-native/icons/bug';
-import Check from 'lucide-react-native/icons/check';
-import ChevronDown from 'lucide-react-native/icons/chevron-down';
-import ChevronRight from 'lucide-react-native/icons/chevron-right';
-import CircleCheck from 'lucide-react-native/icons/circle-check';
-import CircleHelp from 'lucide-react-native/icons/circle-question-mark';
-import ClipboardList from 'lucide-react-native/icons/clipboard-list';
-import Flame from 'lucide-react-native/icons/flame';
-import Lightbulb from 'lucide-react-native/icons/lightbulb';
-import List from 'lucide-react-native/icons/list';
-import Quote from 'lucide-react-native/icons/quote';
-import SquarePen from 'lucide-react-native/icons/square-pen';
-import TriangleAlert from 'lucide-react-native/icons/triangle-alert';
-import X from 'lucide-react-native/icons/x';
-import Zap from 'lucide-react-native/icons/zap';
+import {
+  Bug,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleCheck,
+  CircleHelp,
+  ClipboardList,
+  Flame,
+  Lightbulb,
+  List,
+  Quote,
+  SquarePen,
+  TriangleAlert,
+  X,
+  Zap
+} from 'lucide-react-native';
 
 import {
   DISCOURSE_CALLOUT_REGISTRY,

@@ -26,13 +26,7 @@ import {
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider, TRenderEngineProvider, type CustomBlockRenderer } from 'react-native-render-html';
-import Bookmark from 'lucide-react-native/icons/bookmark';
-import BookmarkCheck from 'lucide-react-native/icons/bookmark-check';
-import ChevronDown from 'lucide-react-native/icons/chevron-down';
-import Ham from 'lucide-react-native/icons/ham';
-import ThumbsDown from 'lucide-react-native/icons/thumbs-down';
-import ThumbsUp from 'lucide-react-native/icons/thumbs-up';
-import X from 'lucide-react-native/icons/x';
+import { Bookmark, BookmarkCheck, ChevronDown, Ham, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import { findReplyLocation } from '@/domain/forum/replyLocation';
 import type {
   Reply,

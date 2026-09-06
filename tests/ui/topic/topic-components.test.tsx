@@ -224,6 +224,46 @@ jest.mock('react-native-render-html', () => {
   };
 });
 
+jest.mock('lucide-react-native', () => {
+  const Icon = () => null;
+  return {
+    CheckCircle: Icon,
+    Check: Icon,
+    CheckSquare: Icon,
+    Bug: Icon,
+    ChevronDown: Icon,
+    ChevronRight: Icon,
+    ChevronUp: Icon,
+    Circle: Icon,
+    CircleCheck: Icon,
+    CircleHelp: Icon,
+    ClipboardList: Icon,
+    CodeXml: Icon,
+    Copy: Icon,
+    Drumstick: Icon,
+    Flame: Icon,
+    Lightbulb: Icon,
+    List: Icon,
+    MessageCircle: Icon,
+    Maximize2: Icon,
+    Minimize2: Icon,
+    Pencil: Icon,
+    Quote: Icon,
+    Redo2: Icon,
+    Square: Icon,
+    SquarePen: Icon,
+    ThumbsDown: Icon,
+    ThumbsUp: Icon,
+    TextCursorInput: Icon,
+    TriangleAlert: Icon,
+    Trash2: Icon,
+    Undo2: Icon,
+    Users: Icon,
+    X: Icon,
+    Zap: Icon
+  };
+});
+
 jest.mock('expo-image', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');

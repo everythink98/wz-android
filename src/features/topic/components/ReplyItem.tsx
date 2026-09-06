@@ -4,13 +4,7 @@ import { Pressable, Text, ToastAndroid, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
-import CheckCircle from 'lucide-react-native/icons/circle-check-big';
-import Drumstick from 'lucide-react-native/icons/drumstick';
-import MessageCircle from 'lucide-react-native/icons/message-circle';
-import Pencil from 'lucide-react-native/icons/pencil';
-import ThumbsDown from 'lucide-react-native/icons/thumbs-down';
-import ThumbsUp from 'lucide-react-native/icons/thumbs-up';
-import Trash2 from 'lucide-react-native/icons/trash-2';
+import { CheckCircle, Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react-native';
 import type {
   QuotedPostMetadata,
   Reply,

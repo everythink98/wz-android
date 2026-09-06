@@ -10,9 +10,7 @@ import {
   type ViewStyle,
   type ViewProps
 } from 'react-native';
-import ChevronDown from 'lucide-react-native/icons/chevron-down';
-import ChevronRight from 'lucide-react-native/icons/chevron-right';
-import Copy from 'lucide-react-native/icons/copy';
+import { ChevronDown, ChevronRight, Copy } from 'lucide-react-native';
 import { RenderHTMLSource } from 'react-native-render-html';
 import type {
   CompiledForumContentRow,

@@ -12,8 +12,7 @@ import {
 import { GestureDetector, usePanGesture, type PanGestureConfig } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import GripVertical from 'lucide-react-native/icons/grip-vertical';
-import ListTree from 'lucide-react-native/icons/list-tree';
+import { GripVertical, ListTree } from 'lucide-react-native';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
 import type { ContentSourcePreference } from '@/domain/reader/contentSourcePreferences';
 import { ExpandablePanel } from '@/ui/controls/ExpandableControls';

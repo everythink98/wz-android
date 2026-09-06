@@ -64,6 +64,17 @@ npm run visual:gallery -- --port 8081
 
 主登录态 AVD 保存 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态。设备安全边界以仓库根目录 `AGENTS.md` 为准；下面只列操作入口。
 
+### 下拉刷新 Native 验证
+
+取消、迟到 UP/nested-scroll stop、取消后的再次刷新与进行中刷新保留，使用真实 AndroidX 控件的 JVM 测试，不连接设备。测试同时覆盖控件直接持有触摸，以及内部 ScrollView 持有触摸时的完整 dispatch 路径；推进动画后确认取消不产生迟到刷新回调：
+
+```powershell
+cd android
+.\gradlew.bat :react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests com.facebook.react.views.swiperefresh.ReactSwipeRefreshLayoutTest --no-daemon
+```
+
+报告位于 `node_modules/react-native/ReactAndroid/build/test-results/testDebugUnitTest/`，必须有非零测试。匹配 APK 另验轻拉松手、长拉到底、回拉后松手、系统 CANCEL 后再次拉动与来源横滑；共享通知列表单独验证取消及下一次正常刷新，不打开未读项或执行已读操作。不得用 JS 装配测试替代 Native 手势证据。
+
 ### 行内附件 Native 验证
 
 行内附件的 Android 尺寸换算可独立验证，不连接设备：
@@ -216,6 +227,16 @@ adb shell am start -W -a android.intent.action.VIEW -d "exp+wz-android://open-to
 
 只有用户明确要求正式发布时才执行本节；版本、签名或原生配置的普通开发验证使用 targeted tooling test、fresh prebuild/compile 或构建检查。
 
+### 打包基线
+
+本轮额外打包优化已废弃，后续发布沿用撤回后的配置：保留原有 RN source build、release minify 与 resource shrink；不启用 `useLegacyPackaging=true`、`enableBundleCompression=true`，不恢复 `withAndroidReleaseOptimization`、`proguard-android-optimize.txt` 或额外的 `android.r8.optimizedResourceShrinking` 开关。图标恢复包根入口导入，`react-native-render-html` 使用锁定原版，不恢复为缩包添加的 Ramda 导入补丁，也不启用实验性全局 tree shaking。版本递增、签名、覆盖安装和验证门禁沿用下述流程。
+
+fresh prebuild 后核对生成的 `android/gradle.properties` 与 `android/app/build.gradle`：原生库采用默认非 legacy packaging，bundle compression 默认关闭，默认 ProGuard 文件为 `proguard-android.txt`。生成目录中的旧开关不得继续沿用；长期配置只从 `app.json`、plugin 和 source patch 生成。`tests/tooling/release-packaging.test.ts` 固定打包配置边界。
+
+涉及 Feed/Pager/RefreshControl 的候选，发布前执行本节前面的下拉刷新 Native 测试，并按 `tests/live/agent-live.md` 的 `LIVE-FEED-01` 验收 Tab 点击、双向滑动、回拖取消与刷新交叉操作。`npm run verify` 的 UI mock 和 app native tests 不代替这项 RN source test 或设备证据。正文长按复制按 `TOPIC-01/02/03` 的现有 owner 验收，不能以包体积下降或 App 启动成功替代。
+
+### 执行发布
+
 发布前准备 Node 22、完整 Git history/tags、clean working tree、本机 `agent-device >= 0.19.0`，以及不进入 Git 的 `.env.release.local`。至少配置：
 
 ```text
@@ -235,7 +256,7 @@ npm run release:android
 
 脚本会执行 preflight、`npm run verify`、clean Expo prebuild、Release native 测试与编译、正式 arm64 签名构建、签名/版本校验、同代码开发签名 x86_64 Smoke 构建及 manifest 生成。签名变量只注入正式 `assembleRelease` 子进程；正式 APK 禁止 debug 签名。
 
-用户当次明确授权特殊发布、并且受影响能力及共享 seam 的定向回归已完成时，可执行 `npm run release:android -- --skip-verify --replay-directory <专项目录>`。`--skip-verify` 跳过脚本内的全量 `npm run verify`；`--replay-directory` 将 Smoke 后的默认设备 Replay 批次替换为指定目录中的 `.ad` 文件，仍先执行覆盖安装、首次安装时间与 APK_SANITY 检查。版本、clean-tree、prebuild、原生测试/编译和签名校验仍执行；manifest 的 `verificationScope` 记为 `targeted`，默认发布记为 `full`。未指定 Replay 目录时仍使用 `tests/device`，不能假定 `--skip-verify` 同时跳过默认 Replay。本次 Feed 专项可用 `tests/live`，其中来源重排要求 V2EX、linux.do 已启用且排在前两项，并按脚本说明恢复偏好。发布说明必须列出实际通过的范围与未验证范围，不能沿用历史全量通过结论。GitHub push 仍按现有 CI 独立运行，不因本机特殊发布关闭 CI。
+用户当次明确授权特殊发布、并且受影响能力及共享 seam 的定向回归已完成时，可执行 `npm run release:android -- --skip-verify --replay-directory <专项目录>`。`--skip-verify` 跳过脚本内的全量 `npm run verify`；`--replay-directory` 将 Smoke 后的默认设备 Replay 批次替换为指定目录中的 `.ad` 文件，仍先执行覆盖安装、首次安装时间与 APK_SANITY 检查。版本、clean-tree、prebuild、原生测试/编译和签名校验仍执行；manifest 的 `verificationScope` 记为 `targeted`，默认发布记为 `full`。未指定 Replay 目录时仍使用 `tests/device`，不能假定 `--skip-verify` 同时跳过默认 Replay。专项目录只放本次实际需要的回放文件，并遵守各脚本的设备与偏好前置条件；例如 Feed 手势发布可单独选择 `tests/device/feed-gesture-priority.ad`，不能把含其他专项的整个目录当成最小回归。发布说明必须列出实际通过的范围与未验证范围，不能沿用历史全量通过结论。GitHub push 仍按现有 CI 独立运行，不因本机特殊发布关闭 CI。
 
 预期产物：
 

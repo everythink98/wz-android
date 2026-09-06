@@ -287,6 +287,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   );
   return (
     <FlashList
+      nestedScrollEnabled={false}
       accessibilityLabel="消息列表"
       testID={outcome ? `notification-outcome-${outcome}-${source}` : undefined}
       style={styles.screen}

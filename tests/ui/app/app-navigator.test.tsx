@@ -22,6 +22,11 @@ import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
 import { createTestStyles as createStyles } from '../styleFixture';
 
+jest.mock('lucide-react-native', () => {
+  const Icon = () => null;
+  return { ChevronLeft: Icon, Home: Icon, MoreHorizontal: Icon, Search: Icon, Settings: Icon, Star: Icon };
+});
+
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);

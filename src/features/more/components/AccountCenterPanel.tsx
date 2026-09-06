@@ -11,9 +11,7 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
-import ChevronRight from 'lucide-react-native/icons/chevron-right';
-import RefreshCw from 'lucide-react-native/icons/refresh-cw';
-import User from 'lucide-react-native/icons/user';
+import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '@/platform/storage/credentialVault';
 import type { CredentialSite } from '@/domain/session/sessionContracts';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';

@@ -27,6 +27,21 @@ function NotificationDetailScreen({
   return <NotificationDetailScreenView {...props} onOpenExternalUrl={onOpenExternalUrl} />;
 }
 
+jest.mock('lucide-react-native', () => {
+  const Icon = () => null;
+  return {
+    ChevronDown: Icon,
+    ChevronRight: Icon,
+    CodeXml: Icon,
+    Maximize2: Icon,
+    Minimize2: Icon,
+    Redo2: Icon,
+    TextCursorInput: Icon,
+    Undo2: Icon,
+    X: Icon
+  };
+});
+
 jest.mock('@gorhom/bottom-sheet', () => {
   const ReactModule = require('react') as typeof React;
   const { TextInput, View: NativeView } = require('react-native') as typeof import('react-native');
@@ -91,6 +106,7 @@ let mockSafeAreaBottom = 0;
 let mockSafeAreaTop = 0;
 let mockNotificationFlashListExtraData: unknown;
 let mockNotificationFlashListData: unknown;
+let mockNotificationNestedScrollEnabled: boolean | undefined;
 
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ bottom: mockSafeAreaBottom, left: 0, right: 0, top: mockSafeAreaTop })
@@ -107,6 +123,7 @@ jest.mock('@shopify/flash-list', () => {
       ListEmptyComponent,
       ListFooterComponent,
       ListHeaderComponent,
+      nestedScrollEnabled,
       onEndReached,
       refreshControl,
       renderItem,
@@ -118,6 +135,7 @@ jest.mock('@shopify/flash-list', () => {
       ListEmptyComponent?: React.ReactNode;
       ListFooterComponent?: React.ReactNode;
       ListHeaderComponent?: React.ReactNode;
+      nestedScrollEnabled?: boolean;
       onEndReached?: () => void;
       refreshControl?: React.ReactNode;
       renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
@@ -125,6 +143,7 @@ jest.mock('@shopify/flash-list', () => {
     }) => {
       mockNotificationFlashListExtraData = extraData;
       mockNotificationFlashListData = data;
+      mockNotificationNestedScrollEnabled = nestedScrollEnabled;
       const refreshHandler = ReactModule.isValidElement<{ onRefresh?: () => void }>(refreshControl)
         ? refreshControl.props.onRefresh
         : undefined;
@@ -361,6 +380,7 @@ describe('notification screens', () => {
       />
     );
 
+    expect(mockNotificationNestedScrollEnabled).toBe(false);
     await fireEvent.press(view.getByTestId('notification-source-linuxdo'));
     expect(onChangeSource).toHaveBeenCalledWith('linuxdo');
     await fireEvent(view.getByLabelText('只看未读'), 'valueChange', true);

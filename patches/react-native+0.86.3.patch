@@ -504,3 +504,277 @@ diff --git a/node_modules/react-native/ReactCommon/react/renderer/components/tex
  
      auto fragmentLayoutMetrics = LayoutMetrics{};
      fragmentLayoutMetrics.pointScaleFactor = layoutContext.pointScaleFactor;
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/swiperefresh/ReactSwipeRefreshLayout.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/swiperefresh/ReactSwipeRefreshLayout.kt
+index 01431e9b..be2d414c 100644
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/swiperefresh/ReactSwipeRefreshLayout.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/swiperefresh/ReactSwipeRefreshLayout.kt
+@@ -10,6 +10,7 @@ package com.facebook.react.views.swiperefresh
+ import android.view.MotionEvent
+ import android.view.ViewConfiguration
+ import android.view.ViewGroup
++import androidx.core.view.ViewCompat
+ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+ import com.facebook.react.bridge.ReactContext
+ import com.facebook.react.uimanager.PixelUtil
+@@ -94,12 +95,32 @@ public open class ReactSwipeRefreshLayout(reactContext: ReactContext) :
+     return false
+   }
+ 
++  public override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
++    // A nested child can own the touch stream, bypassing this view's onTouchEvent.
++    // Cancel before dispatch: the child's nested-scroll stop would otherwise commit the pull.
++    if (ev.actionMasked == MotionEvent.ACTION_CANCEL) finishGesture(ev)
++    return super.dispatchTouchEvent(ev)
++  }
++
+   public override fun onTouchEvent(ev: MotionEvent): Boolean {
+-    if (ev.actionMasked == MotionEvent.ACTION_UP && nativeGestureStarted) {
++    if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) {
++      finishGesture(ev)
++    }
++    return super.onTouchEvent(ev)
++  }
++
++  private fun finishGesture(ev: MotionEvent) {
++    if (nativeGestureStarted) {
+       NativeGestureUtil.notifyNativeGestureEnded(this, ev)
+       nativeGestureStarted = false
+     }
+-    return super.onTouchEvent(ev)
++    if (ev.actionMasked == MotionEvent.ACTION_CANCEL && !isRefreshing) {
++      // Finish nested-scroll bookkeeping first: a later stop must not commit the cancelled pull.
++      getChildAt(0)?.let { super.onStopNestedScroll(it, ViewCompat.TYPE_TOUCH) }
++      // AndroidX's touch CANCEL leaves the indicator and active pointer behind.
++      setProgressViewOffset(progressViewOffset)
++      super.onInterceptTouchEvent(ev)
++    }
+   }
+ 
+   /**
+diff --git a/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/swiperefresh/ReactSwipeRefreshLayoutTest.kt b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/swiperefresh/ReactSwipeRefreshLayoutTest.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/swiperefresh/ReactSwipeRefreshLayoutTest.kt
+@@ -0,0 +1,222 @@
++/*
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ *
++ * This source code is licensed under the MIT license found in the
++ * LICENSE file in the root directory of this source tree.
++ */
++
++@file:Suppress("DEPRECATION")
++
++package com.facebook.react.views.swiperefresh
++
++import android.os.Looper
++import android.view.MotionEvent
++import android.view.View
++import android.view.ViewGroup
++import android.widget.FrameLayout
++import android.widget.ImageView
++import android.widget.ScrollView
++import androidx.core.view.ViewCompat
++import androidx.swiperefreshlayout.widget.CircularProgressDrawable
++import com.facebook.react.bridge.BridgeReactContext
++import com.facebook.react.uimanager.DisplayMetricsHolder
++import com.facebook.react.uimanager.RootView
++import java.time.Duration
++import org.assertj.core.api.Assertions.assertThat
++import org.junit.After
++import org.junit.Before
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.Shadows.shadowOf
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [33])
++class ReactSwipeRefreshLayoutTest {
++  private lateinit var layout: ReactSwipeRefreshLayout
++  private lateinit var root: GestureRoot
++  private lateinit var indicator: ImageView
++
++  @Before
++  fun setUp() {
++    val context = BridgeReactContext(RuntimeEnvironment.getApplication())
++    DisplayMetricsHolder.setWindowDisplayMetrics(context.resources.displayMetrics)
++    DisplayMetricsHolder.setScreenDisplayMetrics(context.resources.displayMetrics)
++    root = GestureRoot(context)
++    layout = ReactSwipeRefreshLayout(context)
++    layout.addView(
++        ScrollView(context).apply {
++          isNestedScrollingEnabled = true
++          addView(View(context), ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 5600))
++        },
++        0,
++    )
++    layout.setProgressViewOffset(20f)
++    root.addView(layout)
++    root.measure(
++        View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
++        View.MeasureSpec.makeMeasureSpec(2800, View.MeasureSpec.EXACTLY),
++    )
++    root.layout(0, 0, 400, 2800)
++    indicator =
++        (0 until layout.childCount)
++            .map { layout.getChildAt(it) }
++            .filterIsInstance<ImageView>()
++            .single()
++  }
++
++  @After
++  fun tearDown() {
++    DisplayMetricsHolder.setWindowDisplayMetrics(null)
++    DisplayMetricsHolder.setScreenDisplayMetrics(null)
++  }
++
++  @Test
++  fun `cancelled long pull hides the indicator and allows the next refresh`() {
++    val start = layout.progressViewStartOffset
++    val end = layout.progressViewEndOffset
++    pull()
++    touch(MotionEvent.ACTION_CANCEL, 2400f)
++
++    assertThat(layout.isRefreshing).isFalse()
++    assertThat(indicator.visibility).isEqualTo(View.GONE)
++    assertThat(indicator.top).isEqualTo(start)
++    assertThat(layout.progressViewEndOffset).isEqualTo(end)
++    assertThat(root.ends).isEqualTo(1)
++    touch(MotionEvent.ACTION_CANCEL, 2400f)
++    assertThat(root.ends).isEqualTo(1)
++    touch(MotionEvent.ACTION_UP, 2400f)
++    assertThat(layout.isRefreshing).isFalse()
++
++    pull()
++    touch(MotionEvent.ACTION_UP, 2400f)
++    assertThat(layout.isRefreshing).isTrue()
++    assertThat(indicator.visibility).isEqualTo(View.VISIBLE)
++    assertThat(root.ends).isEqualTo(2)
++  }
++
++  @Test
++  fun `normal long pull starts refreshing and ends the native gesture`() {
++    pull()
++    touch(MotionEvent.ACTION_UP, 2400f)
++    assertThat(layout.isRefreshing).isTrue()
++    assertThat(indicator.visibility).isEqualTo(View.VISIBLE)
++    assertThat(root.ends).isEqualTo(1)
++  }
++
++  @Test
++  fun `cancelled nested pull cannot commit on a later scroll stop`() {
++    val child = layout.getChildAt(0)
++    fun nestedPull() {
++      layout.onNestedScrollAccepted(child, child, ViewCompat.SCROLL_AXIS_VERTICAL, ViewCompat.TYPE_TOUCH)
++      layout.onNestedScroll(child, 0, 0, 0, -1500, ViewCompat.TYPE_TOUCH, IntArray(2))
++      assertThat(indicator.visibility).isEqualTo(View.VISIBLE)
++      assertThat((indicator.drawable as CircularProgressDrawable).endTrim).isGreaterThan(0f)
++    }
++
++    nestedPull()
++    touch(MotionEvent.ACTION_CANCEL, 2400f)
++    layout.onStopNestedScroll(child, ViewCompat.TYPE_TOUCH)
++    assertThat(layout.isRefreshing).isFalse()
++    assertThat(indicator.visibility).isEqualTo(View.GONE)
++
++    nestedPull()
++    layout.onStopNestedScroll(child, ViewCompat.TYPE_TOUCH)
++    assertThat(layout.isRefreshing).isTrue()
++    assertThat((indicator.drawable as CircularProgressDrawable).endTrim).isGreaterThan(0f)
++  }
++
++  @Test
++  fun `cancellation preserves a refresh already in progress`() {
++    layout.isRefreshing = true
++    touch(MotionEvent.ACTION_CANCEL, 2400f)
++    assertThat(layout.isRefreshing).isTrue()
++    assertThat(indicator.visibility).isEqualTo(View.VISIBLE)
++    assertThat(root.ends).isZero()
++  }
++
++  @Test
++  fun `dispatching cancellation to a nested child resets the pull before the next refresh`() {
++    var refreshes = 0
++    layout.setOnRefreshListener { refreshes += 1 }
++    fun dispatchedPull() {
++      dispatch(MotionEvent.ACTION_DOWN, 100f)
++      dispatch(MotionEvent.ACTION_MOVE, 300f)
++      dispatch(MotionEvent.ACTION_MOVE, 2400f)
++      assertThat(indicator.visibility).isEqualTo(View.VISIBLE)
++      assertThat((indicator.drawable as CircularProgressDrawable).endTrim).isGreaterThan(0f)
++      assertThat(layout.isRefreshing).isFalse()
++    }
++
++    dispatchedPull()
++    dispatch(MotionEvent.ACTION_CANCEL, 2400f)
++    settleAnimations()
++    assertThat(layout.isRefreshing).isFalse()
++    assertThat(indicator.visibility).isEqualTo(View.GONE)
++    assertThat(indicator.animation).isNull()
++    assertThat(root.ends).isZero()
++    assertThat(refreshes).isZero()
++
++    dispatchedPull()
++    dispatch(MotionEvent.ACTION_UP, 2400f)
++    settleAnimations()
++    assertThat(layout.isRefreshing).isTrue()
++    assertThat(indicator.visibility).isEqualTo(View.VISIBLE)
++    dispatch(MotionEvent.ACTION_CANCEL, 2400f)
++    settleAnimations()
++    assertThat(layout.isRefreshing).isTrue()
++  }
++
++  private fun settleAnimations() {
++    shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
++  }
++
++  private fun pull() {
++    event(MotionEvent.ACTION_DOWN, 100f).let {
++      layout.onInterceptTouchEvent(it)
++      it.recycle()
++    }
++    event(MotionEvent.ACTION_MOVE, 300f).let {
++      assertThat(layout.onInterceptTouchEvent(it)).isTrue()
++      layout.onTouchEvent(it)
++      it.recycle()
++    }
++    touch(MotionEvent.ACTION_MOVE, 2400f)
++    assertThat(indicator.visibility).isEqualTo(View.VISIBLE)
++    assertThat(layout.isRefreshing).isFalse()
++    assertThat((indicator.drawable as CircularProgressDrawable).endTrim).isGreaterThan(0f)
++  }
++
++  private fun touch(action: Int, y: Float) {
++    event(action, y).let {
++      layout.onTouchEvent(it)
++      it.recycle()
++    }
++  }
++
++  private fun dispatch(action: Int, y: Float) {
++    event(action, y).let {
++      root.dispatchTouchEvent(it)
++      it.recycle()
++    }
++  }
++
++  private fun event(action: Int, y: Float): MotionEvent =
++      MotionEvent.obtain(0, 100, action, 200f, y, 0)
++
++  private class GestureRoot(context: BridgeReactContext) : FrameLayout(context), RootView {
++    var ends = 0
++
++    override fun onChildStartedNativeGesture(childView: View?, ev: MotionEvent) = Unit
++
++    override fun onChildEndedNativeGesture(childView: View, ev: MotionEvent) {
++      ends += 1
++    }
++
++    override fun handleException(t: Throwable) {
++      throw t
++    }
++  }
++}

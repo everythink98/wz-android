@@ -12,6 +12,11 @@ jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({ getMappingKey: (key: string | number) => String(key) })
 }));
 
+jest.mock('lucide-react-native', () => {
+  const Icon = () => null;
+  return { Eye: Icon, MessageCircle: Icon };
+});
+
 jest.mock('expo-image', () => ({ Image: () => null }));
 jest.mock('@/ui/avatar/Avatar', () => {
   const ReactModule = require('react') as typeof React;

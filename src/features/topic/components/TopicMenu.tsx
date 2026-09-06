@@ -1,8 +1,5 @@
 import type { TopicStyles } from '../styles';
-import ExternalLink from 'lucide-react-native/icons/external-link';
-import RefreshCw from 'lucide-react-native/icons/refresh-cw';
-import Settings from 'lucide-react-native/icons/settings';
-import Share2 from 'lucide-react-native/icons/share-2';
+import { ExternalLink, RefreshCw, Settings, Share2 } from 'lucide-react-native';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 
 export function TopicMenu({

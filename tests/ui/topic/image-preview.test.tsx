@@ -309,6 +309,8 @@ jest.mock('react-native-zoom-toolkit', () => {
   };
 });
 
+jest.mock('lucide-react-native', () => ({ X: () => null }));
+
 function previewItem(originalUri: string, displayUri = originalUri) {
   return { displayUri, originalUri };
 }

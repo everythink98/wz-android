@@ -1,8 +1,7 @@
 import type { TopicStyles } from '../styles';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import ChevronDown from 'lucide-react-native/icons/chevron-down';
-import ChevronUp from 'lucide-react-native/icons/chevron-up';
+import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import { type ReaderTheme } from '@/ui/theme/tokens';
 
 export function TopicBodyQuoteCard({

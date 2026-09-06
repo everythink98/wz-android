@@ -3,10 +3,7 @@ import { SearchFilterSheet } from './SearchFilterSheet';
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ActivityIndicator, Keyboard, Pressable, Text, TextInput, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
-import ChevronRight from 'lucide-react-native/icons/chevron-right';
-import History from 'lucide-react-native/icons/rotate-ccw-clock';
-import Search from 'lucide-react-native/icons/search';
-import X from 'lucide-react-native/icons/x';
+import { ChevronRight, History, Search, X } from 'lucide-react-native';
 import type {
   Category,
   DiscourseTagOption,

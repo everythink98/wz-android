@@ -1,9 +1,7 @@
 import type { SearchStyles } from './styles';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
-import ChevronDown from 'lucide-react-native/icons/chevron-down';
-import SlidersHorizontal from 'lucide-react-native/icons/sliders-horizontal';
-import X from 'lucide-react-native/icons/x';
+import { ChevronDown, SlidersHorizontal, X } from 'lucide-react-native';
 import type { Category, DiscourseTagOption, DiscourseUserOption, Source } from '@/domain/forum/models';
 import { type DiscourseSource } from '@/domain/forum/sourceCatalog';
 import { sourceLabel } from '@/domain/forum/presentation';

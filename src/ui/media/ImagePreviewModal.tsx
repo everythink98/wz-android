@@ -22,7 +22,7 @@ import Animated, { useAnimatedStyle, useSharedValue, withTiming, type SharedValu
 import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ResumableZoom, fitContainer, type ResumableZoomRefType } from 'react-native-zoom-toolkit';
-import X from 'lucide-react-native/icons/x';
+import { X } from 'lucide-react-native';
 import { imageRequestHeadersForUrl, imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { type ImagePreviewItem, type ImagePreviewList } from '@/platform/media/imagePreviewCatalog';
 import type { ReaderSettings } from '@/domain/reader/readerData';

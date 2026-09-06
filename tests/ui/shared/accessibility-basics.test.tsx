@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '../render';
 import { StyleSheet } from 'react-native';
-import RefreshCw from 'lucide-react-native/icons/refresh-cw';
+import { RefreshCw } from 'lucide-react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { LoadingState, RecoverableEmptyState } from '@/ui/controls/FeedbackStates';

@@ -1,9 +1,7 @@
 import Slider from '@react-native-community/slider';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import Pause from 'lucide-react-native/icons/pause';
-import Play from 'lucide-react-native/icons/play';
-import RotateCcw from 'lucide-react-native/icons/rotate-ccw';
+import { Pause, Play, RotateCcw } from 'lucide-react-native';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 
 export type ForumContentAudioStatus = 'error' | 'idle' | 'loading' | 'ready';

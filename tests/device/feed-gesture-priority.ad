@@ -9,6 +9,8 @@ env LOW_Y=2000
 env HIGH_Y=700
 env DX=650
 env DY=1100
+env PAGE_DX=900
+env PAGE_Y=1300
 
 open ${APP_ID} --relaunch
 wait id="main-tab-feed" 60000
@@ -28,3 +30,19 @@ wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 2000
 # Direct tab taps still work regardless of the configured source order.
 press id="feed-source-all"
 wait "id=\"feed-source-all\" label=\"全部，已选择\"" 10000
+
+# Horizontal gestures must leave All and return, regardless of the configured first source.
+gesture pan ${RIGHT_X} ${PAGE_Y} -${PAGE_DX} 0 1200
+wait "label=\"V2EX，已选择\" || label=\"linux.do，已选择\" || label=\"NodeSeek，已选择\" || label=\"妖火，已选择\"" 5000
+gesture pan ${LEFT_X} ${PAGE_Y} ${PAGE_DX} 0 1200
+wait "id=\"feed-source-all\" label=\"全部，已选择\"" 5000
+gesture pan ${RIGHT_X} ${PAGE_Y} -${PAGE_DX} 0 220
+wait "label=\"V2EX，已选择\" || label=\"linux.do，已选择\" || label=\"NodeSeek，已选择\" || label=\"妖火，已选择\"" 5000
+gesture pan ${LEFT_X} ${PAGE_Y} ${PAGE_DX} 0 220
+wait "id=\"feed-source-all\" label=\"全部，已选择\"" 5000
+
+# An outward swipe at the first page stays on All; a short inward pull also cancels.
+gesture pan ${LEFT_X} ${PAGE_Y} ${PAGE_DX} 0 800
+wait "id=\"feed-source-all\" label=\"全部，已选择\"" 5000
+gesture pan ${RIGHT_X} ${PAGE_Y} -100 0 800
+wait "id=\"feed-source-all\" label=\"全部，已选择\"" 5000

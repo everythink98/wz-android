@@ -2,7 +2,6 @@ import { createFeedStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   Pressable,
-  RefreshControl,
   Text,
   View,
   useWindowDimensions,
@@ -10,10 +9,9 @@ import {
   type NativeSyntheticEvent
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
-import { ScrollView } from 'react-native-gesture-handler';
+import { RefreshControl, ScrollView } from 'react-native-gesture-handler';
 import { TabBar, TabView, type TabBarProps } from 'react-native-tab-view';
-import ChevronDown from 'lucide-react-native/icons/chevron-down';
-import ChevronUp from 'lucide-react-native/icons/chevron-up';
+import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import type {
   Category,
   FeedFilterState,
@@ -410,6 +408,7 @@ export const FeedScreen = memo(function FeedScreen({
             data={visibleFeedItems}
             keyExtractor={topicKey}
             keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled={false}
             refreshControl={
               allSourcesDisabled || (busy && visibleFeedItems.length === 0) ? undefined : (
                 <RefreshControl

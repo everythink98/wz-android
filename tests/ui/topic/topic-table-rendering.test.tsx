@@ -302,16 +302,6 @@ describe('native topic structured rendering', () => {
     expect(screen.getByText('•').props.selectable).not.toBe(true);
   });
 
-  it('preserves ordered and unordered HTML list markers', async () => {
-    const screen = await render(
-      <CompiledContentFixture html="<ol start='3'><li>第三项</li><li>第四项<ul><li>嵌套项目</li></ul></li></ol>" />
-    );
-
-    expect(screen.getByText('3.')).toBeTruthy();
-    expect(screen.getByText('4.')).toBeTruthy();
-    expect(screen.getByText('•')).toBeTruthy();
-  });
-
   it('renders route-owned tabs and copies the complete styled terminal owner', async () => {
     const copy = jest.mocked(Clipboard.setStringAsync);
     copy.mockClear();

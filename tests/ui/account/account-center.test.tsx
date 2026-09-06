@@ -10,6 +10,14 @@ import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 
+jest.mock('lucide-react-native', () => ({
+  ChevronDown: () => null,
+  ChevronRight: () => null,
+  ChevronUp: () => null,
+  RefreshCw: () => null,
+  User: () => null
+}));
+
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);

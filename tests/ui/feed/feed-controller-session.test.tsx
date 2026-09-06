@@ -118,6 +118,60 @@ describe('Feed controller sessions', () => {
     });
   });
 
+  it.each(['success', 'failure'] as const)(
+    'keeps the refresh indicator active from the pull callback until %s settles',
+    async (outcome) => {
+      type FeedResult = Awaited<ReturnType<ReadGateway['getFeed']>>;
+      const response: FeedResult = { items: [], errors: {}, hasMore: false, nextPage: null };
+      const pending = Promise.withResolvers<FeedResult>();
+      const getFeed = jest.fn(async () => response);
+      const hook = await renderHook(() =>
+        useFeedRuntime({
+          linuxDoVerificationActive: false,
+          notify: jest.fn(),
+          readerData: createEmptyReaderData(),
+          readerDataLoaded: true,
+          active: true,
+          showLinuxDoVerification: jest.fn(),
+          showNodeSeekVerification: jest.fn(),
+          showYaohuoLogin: jest.fn(),
+          readGateway: {
+            getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+            getFeed,
+            hasYaohuoCredential: jest.fn(async () => false)
+          } as unknown as ReadGateway
+        })
+      );
+      await waitFor(() => expect(hook.result.current.feedBusy).toBe(false));
+      getFeed.mockImplementation(() => pending.promise);
+      const canceled = Promise.withResolvers<void>();
+      const cancelQueries = appQueryClient.cancelQueries.bind(appQueryClient);
+      const cancel = jest.spyOn(appQueryClient, 'cancelQueries').mockImplementationOnce(async (...args) => {
+        await cancelQueries(...args);
+        await canceled.promise;
+      });
+
+      let refresh: Promise<void> | undefined;
+      await act(() => {
+        refresh = hook.result.current.refreshFeed();
+      });
+      const refreshingDuringCancel = hook.result.current.activeFeedState.refreshing;
+      cancel.mockRestore();
+      await act(() => canceled.resolve());
+
+      await waitFor(() => expect(getFeed).toHaveBeenCalledTimes(2));
+      const refreshingDuringRead = hook.result.current.activeFeedState.refreshing;
+      await act(async () => {
+        if (outcome === 'success') pending.resolve(response);
+        else pending.reject(new Error('refresh failed'));
+        await refresh;
+      });
+      await waitFor(() => expect(hook.result.current.activeFeedState.refreshing).toBe(false));
+      expect(refreshingDuringCancel).toBe(true);
+      expect(refreshingDuringRead).toBe(true);
+    }
+  );
+
   it('keeps the current Feed loading until the runtime recovery replay succeeds', async () => {
     const topic: Topic = {
       source: 'v2ex',

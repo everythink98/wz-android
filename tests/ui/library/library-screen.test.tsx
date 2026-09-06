@@ -74,6 +74,12 @@ jest.mock('@shopify/flash-list', () => {
   };
 });
 
+jest.mock('lucide-react-native', () => ({
+  ChevronDown: () => null,
+  Star: () => null,
+  Trash2: () => null
+}));
+
 jest.mock('@/ui/topic/TopicCard', () => {
   const ReactModule = require('react') as typeof React;
   const {
