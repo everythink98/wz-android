@@ -232,6 +232,7 @@ describe('topic query controller', () => {
     const getTopic = jest.fn<TestGetTopic>(async () => firstDetail);
     const hook = await renderTopicController({ readGateway: { getTopic } });
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(firstDetail));
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply]));
     const loadedQuotedReplies = hook.result.current.controller.loadedQuotedReplies;
     const loadingQuotedFloors = hook.result.current.controller.loadingQuotedFloors;
 
