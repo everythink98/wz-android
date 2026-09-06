@@ -22,6 +22,7 @@ const optionalRepositoryPaths = new Set([
   'android/app/build/outputs/apk/release',
   'android/app/build/outputs/apk/release/app-arm64-v8a-release.apk',
   'android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk',
+  'node_modules/expo-file-system/android/build/test-results/testDebugUnitTest',
   'release-manifest.json'
 ]);
 const retiredUserFacingTerms = ['生物凭证', '生物认证', '身份识别保护', '身份安全识别'];
