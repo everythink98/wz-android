@@ -684,7 +684,7 @@ describe('Android release evidence guards', () => {
       expect(moreReplay).toContain(`wait "label=\\"${label} 内容源开关\\"" 10000`);
     }
     expect(moreReplay).toMatch(
-      /find "label=\\"展开外观\\"" click\s+wait label="主题" 10000\s+scroll down\s+wait label="字号" 10000/
+      /find "label=\\"展开外观\\"" click\s+scroll down\s+wait label="主题" 10000\s+wait label="字号" 10000/
     );
     expect(notificationsReplay).toContain('find "消息通知" click');
     for (const source of ['all', 'nodeseek', 'linuxdo', 'yaohuo']) {
