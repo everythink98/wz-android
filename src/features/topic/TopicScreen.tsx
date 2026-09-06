@@ -1,7 +1,9 @@
 import { memo, type RefObject, useCallback, useEffect, useState } from 'react';
 import { type NativeScrollEvent, type NativeSyntheticEvent, Text, View } from 'react-native';
 import type { FlashListRef } from '@shopify/flash-list';
-import { ChevronLeft, MoreHorizontal, Star } from 'lucide-react-native';
+import ChevronLeft from 'lucide-react-native/icons/chevron-left';
+import MoreHorizontal from 'lucide-react-native/icons/ellipsis';
+import Star from 'lucide-react-native/icons/star';
 import { useQuery } from '@tanstack/react-query';
 
 import { sourceLabel } from '@/domain/forum/presentation';

@@ -9,7 +9,8 @@ import type { ReaderTheme } from '@/ui/theme/tokens';
 import type { Screen } from '@/ui/navigation/types';
 import type { MainTabParamList, RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { currentAppRoute, navigationRef } from './appNavigation';
-import { ChevronLeft, Settings } from 'lucide-react-native';
+import ChevronLeft from 'lucide-react-native/icons/chevron-left';
+import Settings from 'lucide-react-native/icons/settings';
 import { moreBadgeAccessibilityLabel, type MoreBadgeState } from '@/ui/navigation/moreBadge';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();

@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { Text, View } from 'react-native';
-import { Bell, Bug, DatabaseBackup, Server, Settings } from 'lucide-react-native';
+import Bell from 'lucide-react-native/icons/bell';
+import Bug from 'lucide-react-native/icons/bug';
+import DatabaseBackup from 'lucide-react-native/icons/database-backup';
+import Server from 'lucide-react-native/icons/server';
+import Settings from 'lucide-react-native/icons/settings';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '@/platform/network/networkProxy';
 import { AppButton } from '@/ui/controls/ButtonControls';

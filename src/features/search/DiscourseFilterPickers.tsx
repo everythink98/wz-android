@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pressable, ScrollView, Text, TextInput, type ViewStyle, View } from 'react-native';
-import { X } from 'lucide-react-native';
+import X from 'lucide-react-native/icons/x';
 import type { Category, DiscourseTagOption, DiscourseUserOption } from '@/domain/forum/models';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { DiscourseSearchFilter, SourceSearchFilter } from '@/domain/forum/searchFilters';

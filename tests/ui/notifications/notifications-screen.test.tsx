@@ -27,21 +27,6 @@ function NotificationDetailScreen({
   return <NotificationDetailScreenView {...props} onOpenExternalUrl={onOpenExternalUrl} />;
 }
 
-jest.mock('lucide-react-native', () => {
-  const Icon = () => null;
-  return {
-    ChevronDown: Icon,
-    ChevronRight: Icon,
-    CodeXml: Icon,
-    Maximize2: Icon,
-    Minimize2: Icon,
-    Redo2: Icon,
-    TextCursorInput: Icon,
-    Undo2: Icon,
-    X: Icon
-  };
-});
-
 jest.mock('@gorhom/bottom-sheet', () => {
   const ReactModule = require('react') as typeof React;
   const { TextInput, View: NativeView } = require('react-native') as typeof import('react-native');

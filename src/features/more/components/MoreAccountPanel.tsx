@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity } from 'lucide-react-native';
+import Activity from 'lucide-react-native/icons/activity';
 import type { AccountCenterCommand } from '@/domain/session/accountCenter';
 import {
   nodeSeekUserIdForSession,

@@ -13,7 +13,11 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
-import { ArrowLeft, Check, Info, Trash2, X } from 'lucide-react-native';
+import ArrowLeft from 'lucide-react-native/icons/arrow-left';
+import Check from 'lucide-react-native/icons/check';
+import Info from 'lucide-react-native/icons/info';
+import Trash2 from 'lucide-react-native/icons/trash-2';
+import X from 'lucide-react-native/icons/x';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { EmptyText } from '@/ui/controls/FeedbackStates';

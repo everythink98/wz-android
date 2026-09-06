@@ -126,31 +126,6 @@ jest.mock('react-native-worklets', () => ({
     })
 }));
 
-jest.mock('lucide-react-native', () => {
-  const Icon = () => null;
-  return {
-    Activity: Icon,
-    ArrowLeft: Icon,
-    Bell: Icon,
-    Bug: Icon,
-    Check: Icon,
-    CheckCircle: Icon,
-    ChevronDown: Icon,
-    ChevronRight: Icon,
-    ChevronUp: Icon,
-    DatabaseBackup: Icon,
-    Image: Icon,
-    Info: Icon,
-    GripVertical: Icon,
-    RefreshCw: Icon,
-    Server: Icon,
-    Settings: Icon,
-    Trash2: Icon,
-    User: Icon,
-    X: Icon
-  };
-});
-
 const readerData = createEmptyReaderData();
 const sessionViewModels = projectTestAccountSessions(createSiteSessionStates());
 const authorizedLinuxDoSessions = projectTestAccountSessions(

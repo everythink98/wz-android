@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
-import { CheckCircle, Image as ImageIcon } from 'lucide-react-native';
+import CheckCircle from 'lucide-react-native/icons/circle-check-big';
+import ImageIcon from 'lucide-react-native/icons/image';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { AppButton } from '@/ui/controls/ButtonControls';
 import { MenuButton } from '@/ui/controls/ExpandableControls';

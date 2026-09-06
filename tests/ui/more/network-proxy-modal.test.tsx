@@ -12,11 +12,6 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 })
 }));
 
-jest.mock('lucide-react-native', () => {
-  const Icon = () => null;
-  return { ArrowLeft: Icon, Check: Icon, Info: Icon, Trash2: Icon, X: Icon };
-});
-
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);

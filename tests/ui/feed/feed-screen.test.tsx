@@ -172,15 +172,16 @@ jest.mock('react-native-tab-view', () => {
   };
 });
 
-jest.mock('lucide-react-native', () => {
+jest.mock('lucide-react-native/icons/eye', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
-  return {
-    ChevronDown: () => null,
-    ChevronUp: () => null,
-    Eye: () => ReactModule.createElement(NativeView, { accessibilityLabel: '浏览统计图标' }),
-    MessageCircle: () => ReactModule.createElement(NativeView, { accessibilityLabel: '回复统计图标' })
-  };
+  return () => ReactModule.createElement(NativeView, { accessibilityLabel: '浏览统计图标' });
+});
+
+jest.mock('lucide-react-native/icons/message-circle', () => {
+  const ReactModule = require('react') as typeof React;
+  const { View: NativeView } = require('react-native') as typeof import('react-native');
+  return () => ReactModule.createElement(NativeView, { accessibilityLabel: '回复统计图标' });
 });
 
 jest.mock('@/ui/avatar/Avatar', () => {

@@ -24,15 +24,13 @@ vi.mock('react-native', () => ({
   }
 }));
 
-vi.mock('lucide-react-native', () => ({
-  ChevronDown: () => null,
-  ChevronRight: () => null,
-  ChevronUp: () => null,
-  Home: () => null,
-  MoreHorizontal: () => null,
-  Search: () => null,
-  Star: () => null
-}));
+vi.mock('lucide-react-native/icons/chevron-down', () => ({ default: () => null }));
+vi.mock('lucide-react-native/icons/chevron-right', () => ({ default: () => null }));
+vi.mock('lucide-react-native/icons/chevron-up', () => ({ default: () => null }));
+vi.mock('lucide-react-native/icons/house', () => ({ default: () => null }));
+vi.mock('lucide-react-native/icons/ellipsis', () => ({ default: () => null }));
+vi.mock('lucide-react-native/icons/search', () => ({ default: () => null }));
+vi.mock('lucide-react-native/icons/star', () => ({ default: () => null }));
 
 describe('Android reader theme safety rails', () => {
   const settings: ReaderSettings = {

@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
+import ChevronDown from 'lucide-react-native/icons/chevron-down';
+import ChevronRight from 'lucide-react-native/icons/chevron-right';
+import ChevronUp from 'lucide-react-native/icons/chevron-up';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';

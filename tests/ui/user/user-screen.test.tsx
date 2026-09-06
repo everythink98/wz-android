@@ -50,10 +50,6 @@ jest.mock('@shopify/flash-list', () => {
   };
 });
 
-jest.mock('lucide-react-native', () => {
-  const Icon = () => null;
-  return { ChevronLeft: Icon, ExternalLink: Icon, RefreshCw: Icon, Star: Icon };
-});
 jest.mock('@/ui/avatar/Avatar', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');

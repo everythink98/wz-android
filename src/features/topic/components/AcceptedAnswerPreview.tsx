@@ -1,6 +1,9 @@
 import type { TopicStyles } from '../styles';
 import { Pressable, Text, View } from 'react-native';
-import { CheckCircle, ChevronDown, ChevronRight, ChevronUp } from 'lucide-react-native';
+import CheckCircle from 'lucide-react-native/icons/circle-check-big';
+import ChevronDown from 'lucide-react-native/icons/chevron-down';
+import ChevronRight from 'lucide-react-native/icons/chevron-right';
+import ChevronUp from 'lucide-react-native/icons/chevron-up';
 import type { Reply, Source } from '@/domain/forum/models';
 import { formatDateTime } from '@/domain/forum/presentation';
 import { quotedPostReferenceKey } from '@/domain/forum/quotedPosts';

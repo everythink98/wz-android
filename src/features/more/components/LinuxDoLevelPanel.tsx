@@ -1,7 +1,7 @@
 import type { MoreScreenStyles } from '../styles';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
-import { RefreshCw } from 'lucide-react-native';
+import RefreshCw from 'lucide-react-native/icons/refresh-cw';
 import type { LinuxDoLevelProfile } from '@/sources/readGateway';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { type ReaderTheme } from '@/ui/theme/tokens';

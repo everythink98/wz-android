@@ -1,7 +1,8 @@
 import { memo, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
-import { Eye, MessageCircle } from 'lucide-react-native';
+import Eye from 'lucide-react-native/icons/eye';
+import MessageCircle from 'lucide-react-native/icons/message-circle';
 import type { Topic } from '@/domain/forum/models';
 import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '@/domain/forum/presentation';
 import { highlightTextParts } from '@/ui/text/highlight';

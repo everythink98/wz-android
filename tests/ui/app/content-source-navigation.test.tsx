@@ -29,10 +29,6 @@ import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
 import { createTestStyles as createStyles } from '../styleFixture';
 
-jest.mock('lucide-react-native', () => {
-  const Icon = () => null;
-  return { ChevronLeft: Icon, Home: Icon, MoreHorizontal: Icon, Search: Icon, Settings: Icon, Star: Icon };
-});
 jest.mock('react-native-webview', () => ({ WebView: () => null }));
 jest.mock('@/features/feed/useFeedController', () => ({ useFeedController: jest.fn() }));
 jest.mock('@/features/search/useSearchController', () => ({ useSearchController: jest.fn() }));

@@ -22,7 +22,6 @@ vi.mock('@react-navigation/bottom-tabs', () => ({
 vi.mock('@react-navigation/native-stack', () => ({
   createNativeStackNavigator: () => ({ Navigator: () => null, Screen: () => null })
 }));
-vi.mock('lucide-react-native', () => ({ Settings: () => null }));
 vi.mock('react-native', () => ({ View: () => null }));
 vi.mock('@/ui/navigation/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
 

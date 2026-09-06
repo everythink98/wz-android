@@ -2,7 +2,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
-import { ChevronDown, CodeXml, Maximize2, Minimize2, Redo2, TextCursorInput, Undo2, X } from 'lucide-react-native';
+import ChevronDown from 'lucide-react-native/icons/chevron-down';
+import CodeXml from 'lucide-react-native/icons/code-xml';
+import Maximize2 from 'lucide-react-native/icons/maximize-2';
+import Minimize2 from 'lucide-react-native/icons/minimize-2';
+import Redo2 from 'lucide-react-native/icons/redo-2';
+import TextCursorInput from 'lucide-react-native/icons/text-cursor-input';
+import Undo2 from 'lucide-react-native/icons/undo-2';
+import X from 'lucide-react-native/icons/x';
 import editorDocument from './generated/editorDocument.json';
 import type { LinuxDoPollCapabilities } from '@/domain/forum/linuxDoPoll';
 import type {

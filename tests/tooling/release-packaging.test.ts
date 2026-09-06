@@ -134,7 +134,7 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toMatch(/if \(result\.status !== 0\) \{\s+if \(result\.stdout\) \{/);
   });
 
-  it('keeps release minify and resource shrinking enabled by default', () => {
+  it('compresses native libraries and Hermes while keeping release shrinking enabled', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const buildProperties = app.expo.plugins.find(
       (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-build-properties'
@@ -143,8 +143,11 @@ describe('Android release packaging guards', () => {
     expect(buildProperties?.[1]?.android).toMatchObject({
       buildReactNativeFromSource: true,
       enableMinifyInReleaseBuilds: true,
-      enableShrinkResourcesInReleaseBuilds: true
+      enableShrinkResourcesInReleaseBuilds: true,
+      useLegacyPackaging: true,
+      enableBundleCompression: true
     });
+    expect(app.expo.plugins).toContain('./plugins/withAndroidReleaseOptimization');
   });
 
   it('persists the Gradle JVM limits through Expo prebuild', () => {

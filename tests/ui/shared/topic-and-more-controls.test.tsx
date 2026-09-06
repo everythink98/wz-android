@@ -7,10 +7,6 @@ import { TopicMenu } from '@/features/topic/components/TopicMenu';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 
-jest.mock('lucide-react-native', () => {
-  const Icon = () => null;
-  return { CheckCircle: Icon, ExternalLink: Icon, Image: Icon, RefreshCw: Icon, Settings: Icon, Share2: Icon };
-});
 jest.mock('react-native-webview', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');

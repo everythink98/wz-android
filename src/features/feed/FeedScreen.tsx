@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { TabBar, TabView, type TabBarProps } from 'react-native-tab-view';
-import { ChevronDown, ChevronUp } from 'lucide-react-native';
+import ChevronDown from 'lucide-react-native/icons/chevron-down';
+import ChevronUp from 'lucide-react-native/icons/chevron-up';
 import type {
   Category,
   FeedFilterState,

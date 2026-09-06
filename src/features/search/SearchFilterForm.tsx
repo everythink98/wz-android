@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerChangeEvent } from '@react-native-community/datetimepicker';
-import { ChevronDown, ChevronUp } from 'lucide-react-native';
+import ChevronDown from 'lucide-react-native/icons/chevron-down';
+import ChevronUp from 'lucide-react-native/icons/chevron-up';
 import type { SearchStyles } from './styles';
 import {
   isDiscourseSearchFilter,

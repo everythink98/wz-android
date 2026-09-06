@@ -199,46 +199,6 @@ jest.mock('react-native-render-html', () => {
   };
 });
 
-jest.mock('lucide-react-native', () => {
-  const Icon = () => null;
-  return {
-    Bookmark: Icon,
-    BookmarkCheck: Icon,
-    BookMarked: Icon,
-    Bug: Icon,
-    Check: Icon,
-    CheckCircle: Icon,
-    ChevronDown: Icon,
-    ChevronLeft: Icon,
-    ChevronRight: Icon,
-    ChevronUp: Icon,
-    CircleCheck: Icon,
-    CircleHelp: Icon,
-    ClipboardList: Icon,
-    CodeXml: Icon,
-    Copy: Icon,
-    Drumstick: Icon,
-    Flame: Icon,
-    Ham: Icon,
-    Lightbulb: Icon,
-    List: Icon,
-    MoreHorizontal: Icon,
-    Maximize2: Icon,
-    Minimize2: Icon,
-    Quote: Icon,
-    Redo2: Icon,
-    SquarePen: Icon,
-    Star: Icon,
-    ThumbsDown: Icon,
-    ThumbsUp: Icon,
-    TextCursorInput: Icon,
-    TriangleAlert: Icon,
-    Undo2: Icon,
-    X: Icon,
-    Zap: Icon
-  };
-});
-
 jest.mock('@/ui/avatar/Avatar', () => ({ Avatar: () => null }));
 jest.mock('@/ui/content/ForumContentVideo', () => {
   const ReactModule = require('react') as typeof React;
