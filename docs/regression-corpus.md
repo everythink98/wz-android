@@ -25,6 +25,7 @@
 | 处置 | 共享 RN source patch 在 CANCEL 分发到子节点之前结束未提交手势；新增真实 root dispatch → nested ScrollView 用例。通知 FlashList 同时显式关闭单纵向列表不需要的 nestedScrollEnabled，移除 RN 默认的额外累积路径。 |
 | 当前 owner | `patches/react-native+0.86.3.patch` 内 ReactSwipeRefreshLayoutTest；`tests/ui/notifications/notifications-screen.test.tsx` 的刷新装配；匹配 APK 的通知列表 CANCEL → 等待 → 再次正常刷新只读验收。 |
 | 失败 oracle 与证据边界 | 新 dispatch JVM 用例在旧实现的 CANCEL 后仍得到 isRefreshing=true；共享修复后 5 项 JVM 用例通过。仅共享 patch 的 APK 在真实通知列表仍残留，因此不能用 JVM 绿灯代替设备验收；通知列表关闭 nestedScrollEnabled 的装配断言先以 undefined 转红。最终处置须通过匹配发布 APK 的取消与再次刷新验收后才能关闭证据缺口。 |
+| 本次发布验收 | 匹配 1.3.138 APK 的正常通知下拉能够完成，系统注入 CANCEL 后仍残留静态圆圈，下一次正常下拉可恢复；关闭通知列表 nestedScrollEnabled 未消除这个边界。该问题尚未修复，真实 RN 列表与 JVM ScrollView 之间的证据缺口仍待诊断。已明确告知用户，并按其随后要求优先发布正文复制与首页刷新修复，不将此条记为通过。 |
 
 ## `REG-FEED-021` 嵌套滚动竞争及取消收尾缺失导致下拉卡住
 
