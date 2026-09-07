@@ -17,7 +17,7 @@ index 06c01bb..9792f83 100644
      } else {
        super.dispatchTouchEvent(event)
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/NativeViewGestureHandler.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/NativeViewGestureHandler.kt
-index d53ab521..b9a5cc97 100644
+index d53ab521..5ffe1f0b 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/NativeViewGestureHandler.kt
 +++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/NativeViewGestureHandler.kt
 @@ -139,8 +139,8 @@ class NativeViewGestureHandler : GestureHandler() {
@@ -64,7 +64,7 @@ index d53ab521..b9a5cc97 100644
      /**
       * Called when gesture is in the UNDETERMINED state, shouldActivateOnStart is set to false,
       * and both tryIntercept and wantsToHandleEventBeforeActivation returned false.
-@@ -513,7 +513,39 @@ class NativeViewGestureHandler : GestureHandler() {
+@@ -513,7 +513,49 @@ class NativeViewGestureHandler : GestureHandler() {
      }
    }
  
@@ -77,14 +77,24 @@ index d53ab521..b9a5cc97 100644
 +
 +    override fun tryIntercept(view: View, event: MotionEvent): Boolean {
 +      if (event.actionMasked == MotionEvent.ACTION_MOVE &&
-+        ((event.x - downX) * (event.x - downX) + (event.y - downY) * (event.y - downY)) > touchSlop * touchSlop
++        ((event.rawX - downX) * (event.rawX - downX) + (event.rawY - downY) * (event.rawY - downY)) > touchSlop * touchSlop
 +      ) {
 +        stoppedFlingOnDown = false
++        // Use screen coordinates: a moving pager cancels out horizontal travel
++        // in child-local coordinates, letting vertical slop steal its drag.
++        if (view is ReactScrollView && kotlin.math.abs(event.rawX - downX) > kotlin.math.abs(event.rawY - downY)) {
++          val direction = if (event.rawX > downX) -1 else 1
++          var ancestor = view.parent
++          while (ancestor is View) {
++            if (ancestor.canScrollHorizontally(direction)) return false
++            ancestor = ancestor.parent
++          }
++        }
 +      }
 +      val intercepted = super.tryIntercept(view, event)
 +      if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-+        downX = event.x
-+        downY = event.y
++        downX = event.rawX
++        downY = event.rawY
 +        stoppedFlingOnDown = intercepted
 +        if (intercepted) {
 +          // Catching momentum is not a new drag. Stop it, then let the native

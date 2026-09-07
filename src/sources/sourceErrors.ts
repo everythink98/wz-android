@@ -2,7 +2,9 @@ import type { FeedSource, SourceErrorInfo, SourceErrorKind, SourceErrors } from 
 import { isCanceledRequest } from '@/platform/network/errors';
 
 function unknownErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error || '读取失败');
+  return error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+    ? error.message
+    : String(error || '读取失败');
 }
 
 function errorProperty(error: unknown, key: 'reason' | 'source' | 'status' | 'statusCode') {

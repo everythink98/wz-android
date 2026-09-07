@@ -3,6 +3,7 @@ import { useQueries } from '@tanstack/react-query';
 import * as Notifications from 'expo-notifications';
 import { isNotificationSource, notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
+import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { Fetcher } from '@/platform/network/request';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -33,6 +34,7 @@ import {
 import { runNotificationBackgroundWorker } from '@/platform/notifications/notificationWorker';
 import { notificationAdapters } from '@/sources/notificationAdapters';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import { notificationErrorAction } from './notificationPresentation';
 import {
   createNotificationSourceLifecycleRegistry,
   markNotificationSourcesCleaning,
@@ -114,6 +116,51 @@ export function useNotificationsRuntime({
   useCommitRefValue(privateAccessAllowedRef, privateAccessAllowed);
   const sessionEpochsRef = useRef(sessionEpochs);
   useCommitRefValue(sessionEpochsRef, sessionEpochs);
+  const readBlocksRef = useRef(
+    new Map<NotificationSource, { epoch: number; error: SourceErrorInfo; verifiedAt?: string }>()
+  );
+  const [, setReadBlockRevision] = useState(0);
+  const sessionsRef = useRef(sessions);
+  useCommitRefValue(sessionsRef, sessions);
+  const getReadBlock = useCallback((source: NotificationSource) => {
+    const block = readBlocksRef.current.get(source);
+    return enabledSourcesRef.current.includes(source) && block?.epoch === sessionEpochsRef.current[source]
+      ? block.error
+      : undefined;
+  }, []);
+  const clearReadBlock = useCallback((source: NotificationSource, epoch: number) => {
+    if (readBlocksRef.current.get(source)?.epoch !== epoch) return;
+    readBlocksRef.current.delete(source);
+    setReadBlockRevision((revision) => revision + 1);
+  }, []);
+  const reportReadError = useCallback((source: NotificationSource, error: SourceErrorInfo, epoch: number) => {
+    if (
+      epoch !== sessionEpochsRef.current[source] ||
+      !enabledSourcesRef.current.includes(source) ||
+      notificationErrorAction(error) === '重试' ||
+      error.reason === 'private-access-stale'
+    )
+      return;
+    const previous = readBlocksRef.current.get(source);
+    if (previous?.epoch === epoch && previous.error.kind === error.kind && previous.error.message === error.message)
+      return;
+    readBlocksRef.current.set(source, { epoch, error, verifiedAt: sessionsRef.current[source].lastVerifiedAt });
+    setReadBlockRevision((revision) => revision + 1);
+  }, []);
+  useEffect(() => {
+    for (const [source, block] of readBlocksRef.current) {
+      const session = sessions[source];
+      const reconciledLogin =
+        notificationErrorAction(block.error) === '去登录' &&
+        session.isLoggedIn &&
+        !session.isVerifying &&
+        !session.lastError &&
+        session.lastVerifiedAt !== block.verifiedAt;
+      if (!enabledSources.includes(source) || sessionEpochs[source] !== block.epoch || reconciledLogin) {
+        clearReadBlock(source, block.epoch);
+      }
+    }
+  }, [clearReadBlock, enabledSources, sessionEpochs, sessions]);
   const sourceIsOperational = useCallback(
     (source: NotificationSource) =>
       notificationSourceIsOperational(
@@ -270,7 +317,9 @@ export function useNotificationsRuntime({
         enabledSources.includes(source) &&
         operationalSources.includes(source) &&
         Boolean(identityKeys[source]) &&
-        sessions[source].identityTrust === 'confirmed'
+        sessions[source].identityTrust === 'confirmed' &&
+        // A paused Query must stay observed for the existing verification recovery.
+        (privateAccessAllowed(source, identityKeys[source]!) || Boolean(getReadBlock(source)))
     )
     .join('|');
   const activeNetworkSources = useMemo(
@@ -457,13 +506,23 @@ export function useNotificationsRuntime({
       queryKey: forumQueryKeys.notificationSnapshot({ source, identityKey: identityKeys[source]! }),
       enabled: remoteQueryEnabled,
       staleTime: 0,
-      refetchOnMount: 'always' as const,
-      refetchInterval: centerVisible ? 60_000 : 300_000,
+      refetchOnMount: getReadBlock(source) ? false : ('always' as const),
+      refetchInterval: getReadBlock(source) ? false : centerVisible ? 60_000 : 300_000,
       refetchIntervalInBackground: false,
-      queryFn: async ({ signal }: { signal: AbortSignal }) => ({
-        revision: ++snapshotResultRevisionRef.current,
-        snapshot: await gateway.readUnreadSnapshot(source, signal)
-      })
+      queryFn: async ({ signal }: { signal: AbortSignal }) => {
+        const blocked = getReadBlock(source);
+        if (blocked) throw blocked;
+        const epoch = sessionEpochs[source];
+        try {
+          return {
+            revision: ++snapshotResultRevisionRef.current,
+            snapshot: await gateway.readUnreadSnapshot(source, signal)
+          };
+        } catch (error) {
+          reportReadError(source, sourceErrorFromUnknown(source, error), epoch);
+          throw error;
+        }
+      }
     }))
   });
   const snapshotQueriesRef = useRef(snapshotQueries);
@@ -490,6 +549,7 @@ export function useNotificationsRuntime({
         identityKeysRef.current[job.source] === job.identityKey &&
         sessionEpochsRef.current[job.source] === job.epoch &&
         sourceLifecyclesRef.current[job.source] === job.lifecycle &&
+        !getReadBlock(job.source) &&
         sourceIsOperational(job.source) &&
         privateAccessAllowedRef.current(job.source, job.identityKey);
       for (const job of jobs) {
@@ -541,7 +601,7 @@ export function useNotificationsRuntime({
         if (pendingForegroundDeliveriesRef.current.size) deliver([]);
       });
     },
-    [sourceIsOperational]
+    [getReadBlock, sourceIsOperational]
   );
 
   const handledSnapshotUpdateRef = useRef(new Map<string, number>());
@@ -704,6 +764,10 @@ export function useNotificationsRuntime({
   const backgroundEnabled = state.globalEnabled && permission === 'granted' && eligibleSources.length > 0;
 
   return {
+    clearReadBlock,
+    getReadBlock,
+    reportReadError,
+    sessionEpochs,
     activeSources,
     backgroundEnabled,
     backgroundError,

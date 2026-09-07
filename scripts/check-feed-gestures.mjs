@@ -86,6 +86,7 @@ try {
     'fling-horizontal',
     'fling-short-horizontal',
     'handoff-short-horizontal',
+    'handoff-diagonal-short-horizontal',
     'fling-tap',
     'reverse',
     'cancel'
@@ -174,9 +175,15 @@ try {
             duration
           );
         } else if (
-          ['fling-horizontal', 'fling-short-horizontal', 'fling-tap', 'handoff-short-horizontal'].includes(kind)
+          [
+            'fling-horizontal',
+            'fling-short-horizontal',
+            'fling-tap',
+            'handoff-short-horizontal',
+            'handoff-diagonal-short-horizontal'
+          ].includes(kind)
         ) {
-          const handedOff = kind === 'handoff-short-horizontal';
+          const handedOff = kind.startsWith('handoff-');
           if (handedOff)
             drag(
               0,
@@ -198,7 +205,10 @@ try {
             handedOff ? 370 : 155,
             [
               [x, y],
-              [x + direction * px(kind === 'fling-tap' ? 0 : kind === 'fling-horizontal' ? 0.68 : 0.2), y]
+              [
+                x + direction * px(kind === 'fling-tap' ? 0 : kind === 'fling-horizontal' ? 0.68 : 0.2),
+                y + (kind === 'handoff-diagonal-short-horizontal' ? direction * px(0.08) : 0)
+              ]
             ],
             duration
           );
@@ -294,7 +304,8 @@ try {
             'short-horizontal',
             'fling-horizontal',
             'fling-short-horizontal',
-            'handoff-short-horizontal'
+            'handoff-short-horizontal',
+            'handoff-diagonal-short-horizontal'
           ].includes(kind)
         )
           assert.notEqual(tab, `feed-source-${source}`, 'A horizontal swipe or short fast flick must switch source.');

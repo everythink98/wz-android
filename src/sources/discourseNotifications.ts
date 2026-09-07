@@ -15,6 +15,8 @@ import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
 import { getDiscourseReplies, getDiscourseReply, getDiscourseTopic } from './discourseRead';
 import { buildDiscourseActionRequest, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
+import { sourceErrorFromUnknown } from './sourceErrors';
+import { isCanceledRequest } from '@/platform/network/errors';
 
 const typeKinds = new Map<number, ForumNotification['kind']>([
   [1, 'mention'],
@@ -308,8 +310,16 @@ export const linuxDoNotificationAdapter = {
     try {
       const names = notificationTypeNames(await fetchSite(options));
       if (names.length) hasChat = names.some((name) => discourseChatTypeNames.has(name));
-    } catch {
-      // Category discovery must not block the notification list; linux.do Chat was verified live.
+    } catch (error) {
+      const kind = sourceErrorFromUnknown('linuxdo', error).kind;
+      if (
+        isCanceledRequest(error) ||
+        kind === 'login-required' ||
+        kind === 'login-expired' ||
+        kind === 'verification-required'
+      )
+        throw error;
+      // Optional Chat discovery may fail, but an authentication barrier must reach the caller.
     }
     return [
       ...discourseCoreCategories,

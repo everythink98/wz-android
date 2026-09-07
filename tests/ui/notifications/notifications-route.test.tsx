@@ -7,6 +7,7 @@ import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
 import type { ForumNotification } from '@/domain/notifications/models';
+import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { notificationSources } from '@/domain/forum/sourceCatalog';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import {
@@ -187,6 +188,11 @@ const FocusTestStack = createNativeStackNavigator<FocusTestStackParamList>();
 
 function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): NotificationRouteRuntimeValue {
   return {
+    clearReadBlock: jest.fn(),
+    getReadBlock: jest.fn(() => undefined),
+    reportReadError: jest.fn(),
+    sessionEpochs: { nodeseek: 0, linuxdo: 0, yaohuo: 0, v2ex: 0 },
+    openAccountSurface: jest.fn(async () => undefined),
     activeSources: ['nodeseek'],
     backgroundEnabled: false,
     backgroundError: '',
@@ -211,7 +217,10 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
     partialUnavailable: false,
     permission: 'denied',
     ready: true,
-    reconcileAccountStatus: jest.fn(async () => undefined),
+    reconcileAccountStatus: jest.fn(async () => ({
+      status: 'same' as const,
+      session: createSiteSessionStates().nodeseek
+    })),
     refreshSnapshots: jest.fn(),
     sessions: projectTestAccountSessions(createSiteSessionStates()),
     setCenterVisible: jest.fn(),
@@ -224,6 +233,277 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
 }
 
 describe('notification routes', () => {
+  it.each(notificationSources)('opens %s login directly from its account-not-ready state', async (source) => {
+    appQueryClient.clear();
+    const gateway = {
+      getCategories: jest.fn(),
+      listPage: jest.fn(),
+      listAllPage: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = {
+      ...routeRuntime(gateway),
+      activeSources: [],
+      identityKeys: {},
+      identitySignature: 'none'
+    } satisfies NotificationRouteRuntimeValue;
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={runtime}>
+        <NavigationContainer>
+          <NotificationsRoute
+            navigation={{ navigate: jest.fn() } as never}
+            route={{ key: 'notifications', name: 'Notifications', params: { source } }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+    expect(view.getByText('账号尚未就绪')).toBeTruthy();
+    await fireEvent.press(view.getByText(/^去登录 /));
+    expect(runtime.openAccountSurface).toHaveBeenCalledWith(source, '请登录并确认账号身份。');
+    expect(runtime.reconcileAccountStatus).not.toHaveBeenCalled();
+    expect(gateway.getCategories).not.toHaveBeenCalled();
+    expect(gateway.listPage).not.toHaveBeenCalled();
+  });
+
+  it.each(notificationSources)(
+    'reconciles %s on an ordinary notification retry before opening its login surface',
+    async (source) => {
+      appQueryClient.clear();
+      const fetcher = jest.fn(async () => {
+        throw new Error('连接中断');
+      });
+      const gateway = createNotificationGateway({
+        readAccess: () => ({ identityKey: `${source}:42`, userId: '42', username: 'alice', fetcher }),
+        sourceAllowed: () => true,
+        privateAccessAllowed: () => true
+      });
+      const runtime = {
+        ...routeRuntime(gateway),
+        activeSources: [source],
+        identityKeys: { [source]: `${source}:42` },
+        identitySignature: `${source}:42`,
+        reconcileAccountStatus: jest.fn(async () => ({
+          status: 'anonymous' as const,
+          session: createSiteSessionStates()[source]
+        }))
+      } satisfies NotificationRouteRuntimeValue;
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'Notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      await waitFor(() => expect(view.getByText(/^重试 /)).toBeTruthy());
+      const before = fetcher.mock.calls.length;
+      await fireEvent.press(view.getByText(/^重试 /));
+      expect(runtime.reconcileAccountStatus).toHaveBeenCalledWith(source);
+      expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
+      expect(runtime.openAccountSurface).toHaveBeenCalledWith(source, '登录已失效，请重新登录。');
+      expect(fetcher).toHaveBeenCalledTimes(before);
+    }
+  );
+
+  it.each(['categories', 'list'] as const)(
+    'recovers the exact LinuxDo %s read through the existing verification surface',
+    async (failedRead) => {
+      appQueryClient.clear();
+      let challenged = true;
+      const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+        const categories = String(input).includes('/site.json');
+        if (challenged && categories === (failedRead === 'categories')) {
+          return new Response('<title>Just a moment...</title>', {
+            status: 403,
+            headers: { 'content-type': 'text/html' }
+          });
+        }
+        return new Response(JSON.stringify(categories ? { notification_types: {} } : { notifications: [] }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      });
+      const gateway = createNotificationGateway({
+        readAccess: () => ({ identityKey: 'linuxdo:user', userId: 'user', username: 'alice', fetcher }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      let recovery: LinuxDoReadRecovery | undefined;
+      const runtime = {
+        ...routeRuntime(gateway),
+        activeSources: ['linuxdo'],
+        identityKeys: { linuxdo: 'linuxdo:user' },
+        identitySignature: 'linuxdo:user',
+        openAccountSurface: jest.fn<NotificationRouteRuntimeValue['openAccountSurface']>(
+          async (_source, _message, next) => {
+            recovery = next;
+          }
+        )
+      } satisfies NotificationRouteRuntimeValue;
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'Notifications', params: { source: 'linuxdo' } }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      await waitFor(() => expect(view.getByText('去验证 linux.do')).toBeTruthy());
+      const beforeOpen = fetcher.mock.calls.length;
+      await fireEvent.press(view.getByText('去验证 linux.do'));
+      expect(fetcher).toHaveBeenCalledTimes(beforeOpen);
+      expect(recovery).toBeDefined();
+      challenged = false;
+      await act(async () => {
+        expect(await recovery!.resume()).toBe('completed');
+      });
+      await waitFor(() => expect(view.queryByText('去验证 linux.do')).toBeNull());
+      expect(
+        fetcher.mock.calls.filter(([url]) =>
+          String(url).includes(failedRead === 'categories' ? '/site.json' : '/notifications')
+        )
+      ).toHaveLength(2);
+      await view.unmount();
+      const settledCalls = fetcher.mock.calls.length;
+      expect(await recovery!.resume()).toBe('stale');
+      expect(fetcher).toHaveBeenCalledTimes(settledCalls);
+    }
+  );
+
+  it.each([
+    [403, 'same'],
+    [429, 'same'],
+    [403, 'anonymous'],
+    [429, 'anonymous'],
+    [403, 'verification'],
+    [429, 'unknown']
+  ] satisfies [number, 'same' | 'anonymous' | 'verification' | 'unknown'][])(
+    'checks ambiguous HTTP %s once and handles %s without guessing expired login',
+    async (status, outcome) => {
+      appQueryClient.clear();
+      let failed = true;
+      const fetcher = jest.fn(async () =>
+        failed
+          ? new Response(JSON.stringify({ errors: ['请求受限'] }), { status })
+          : new Response(JSON.stringify({ notifications: [] }))
+      );
+      const gateway = createNotificationGateway({
+        readAccess: () => ({ identityKey: 'linuxdo:user', userId: 'user', username: 'alice', fetcher }),
+        privateAccessAllowed: () => true,
+        sourceAllowed: () => true
+      });
+      let finishCheck!: (result: AccountReconcileResult) => void;
+      const runtime = {
+        ...routeRuntime(gateway),
+        activeSources: ['linuxdo'],
+        identityKeys: { linuxdo: 'linuxdo:user' },
+        identitySignature: 'linuxdo:user',
+        reconcileAccountStatus: jest.fn(
+          () =>
+            new Promise<AccountReconcileResult>((resolve) => {
+              finishCheck = resolve;
+            })
+        )
+      } satisfies NotificationRouteRuntimeValue;
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'Notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      await waitFor(() => expect(view.getByText('重试 linux.do')).toBeTruthy());
+      await fireEvent.press(view.getByText('重试 linux.do'));
+      await fireEvent.press(view.getByText('重试 linux.do'));
+      expect(runtime.reconcileAccountStatus).toHaveBeenCalledTimes(1);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      failed = false;
+      await act(async () =>
+        finishCheck(
+          outcome === 'same' || outcome === 'anonymous'
+            ? { status: outcome, session: createSiteSessionStates().linuxdo }
+            : {
+                status: 'unknown',
+                error: '核对未完成',
+                errorInfo: {
+                  kind: outcome === 'verification' ? 'verification-required' : 'ordinary',
+                  message: '核对未完成'
+                }
+              }
+        )
+      );
+      if (outcome === 'same') {
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        expect(runtime.openAccountSurface).not.toHaveBeenCalled();
+      } else {
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        if (outcome === 'unknown') {
+          expect(runtime.openAccountSurface).not.toHaveBeenCalled();
+          expect(runtime.notify).toHaveBeenCalledWith(expect.stringContaining('账号状态暂不可确认'));
+        } else
+          expect(runtime.openAccountSurface).toHaveBeenCalledWith(
+            'linuxdo',
+            expect.any(String),
+            ...(outcome === 'verification' ? [expect.objectContaining({ resume: expect.any(Function) })] : [])
+          );
+      }
+    }
+  );
+
+  it.each(['login-expired', 'verification-required'] as const)(
+    'opens the requested account surface for %s instead of repeating the notification read',
+    async (kind) => {
+      appQueryClient.clear();
+      const listAllPage = jest.fn(async () => ({
+        items: [notification],
+        errors: { linuxdo: { kind, message: '需要恢复账号' } },
+        nextCursors: { nodeseek: null, linuxdo: null },
+        hasMore: false
+      }));
+      const gateway = { listAllPage, listPage: jest.fn() } as unknown as NotificationRouteRuntimeValue['gateway'];
+      const openAccountSurface = jest.fn(async () => undefined);
+      const runtime = {
+        ...routeRuntime(gateway),
+        activeSources: ['nodeseek', 'linuxdo'],
+        identityKeys: { nodeseek: 'nodeseek:new-account', linuxdo: 'linuxdo:user' },
+        identitySignature: 'linuxdo:user|nodeseek:new-account',
+        openAccountSurface
+      } as NotificationRouteRuntimeValue;
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'Notifications', params: undefined }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
+      const label = `${kind === 'verification-required' ? '去验证' : '去登录'} linux.do`;
+      await waitFor(() => expect(view.getByText(label)).toBeTruthy());
+      expect(openAccountSurface).not.toHaveBeenCalled();
+      await fireEvent.press(view.getByText(label));
+      expect(openAccountSurface).toHaveBeenCalledWith(
+        'linuxdo',
+        '需要恢复账号',
+        kind === 'verification-required' ? expect.objectContaining({ resume: expect.any(Function) }) : undefined
+      );
+      expect(gateway.listPage).not.toHaveBeenCalled();
+      expect(listAllPage).toHaveBeenCalledTimes(1);
+      expect(view.getByText('旧账号消息')).toBeTruthy();
+    }
+  );
+
   it('falls back to All without mounting a source reader when a route parameter is disabled', async () => {
     appQueryClient.clear();
     const gateway = {
@@ -410,6 +690,7 @@ describe('notification routes', () => {
     );
 
     await waitFor(() => expect(view.getByText('重试 NodeSeek')).toBeTruthy());
+    expect(view.queryByText('正在读取消息')).toBeNull();
     expect(listPage).not.toHaveBeenCalled();
     await fireEvent.press(view.getByText('重试 NodeSeek'));
     await waitFor(() => expect(view.getByTestId('notification-category-all')).toBeTruthy());

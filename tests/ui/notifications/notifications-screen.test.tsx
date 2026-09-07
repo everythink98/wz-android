@@ -201,6 +201,7 @@ function listProps() {
     onMarkAll: jest.fn(),
     onRefresh: jest.fn(),
     onRetryAccountStatus: jest.fn(),
+    onLoginSource: jest.fn(),
     onRetrySource: jest.fn()
   };
 }
@@ -252,7 +253,10 @@ describe('notification screens', () => {
         {...listProps()}
         activeSources={['linuxdo', 'nodeseek']}
         enabledSources={['linuxdo', 'nodeseek']}
-        errors={{ linuxdo: '暂不可用', yaohuo: '不应展示' }}
+        errors={{
+          linuxdo: { kind: 'ordinary', message: '暂不可用' },
+          yaohuo: { kind: 'ordinary', message: '不应展示' }
+        }}
       />
     );
 
@@ -288,7 +292,10 @@ describe('notification screens', () => {
     const view = await render(
       <NotificationsScreen
         {...listProps()}
-        errors={{ linuxdo: '暂不可用', yaohuo: '读取失败' }}
+        errors={{
+          linuxdo: { kind: 'ordinary', message: '暂不可用' },
+          yaohuo: { kind: 'ordinary', message: '读取失败' }
+        }}
         onItemPress={onItemPress}
         onRetrySource={onRetrySource}
       />

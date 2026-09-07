@@ -135,7 +135,12 @@ export function useAppRuntime() {
       },
       contentWidth,
       notify,
-      reconcileAccountStatus
+      reconcileAccountStatus,
+      openAccountSurface: async (source, message, recovery) => {
+        if (source === 'linuxdo') await showLinuxDoVerification(message, recovery);
+        else if (source === 'nodeseek') requestNodeSeekVerification(message, recovery);
+        else showYaohuoLogin(message);
+      }
     }),
     [
       contentWidth,
@@ -145,7 +150,10 @@ export function useAppRuntime() {
       notificationsRuntime,
       notify,
       readGateway.getEmojiUrls,
-      reconcileAccountStatus
+      reconcileAccountStatus,
+      requestNodeSeekVerification,
+      showLinuxDoVerification,
+      showYaohuoLogin
     ]
   );
   const notificationSummary = `${notificationsRuntime.unreadTotal ? '有未读' : '暂无未读'} · ${

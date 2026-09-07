@@ -587,7 +587,11 @@ describe('Android release evidence guards', () => {
       'notifications-readonly.ad',
       'search-multi-source.ad'
     ];
-    expect(readdirSync(deviceDir).sort()).toEqual(expected);
+    expect(
+      readdirSync(deviceDir)
+        .filter((file) => file.endsWith('.ad'))
+        .sort()
+    ).toEqual(expected);
     expect(listReplayFiles(deviceDir).map((file) => path.basename(file))).toEqual(expected);
     expect(readdirSync(loggedOutDeviceDir).sort()).toEqual(['logged-out-readonly.ad']);
     expect(listReplayFiles(loggedOutDeviceDir).map((file) => path.basename(file))).toEqual(['logged-out-readonly.ad']);
@@ -760,11 +764,14 @@ describe('Android release evidence guards', () => {
       ...listReplayFiles(deviceDir),
       ...listReplayFiles(path.join(rootDir, 'tests', 'device-logged-out'))
     ];
-    const forbidden =
-      /feed-topic-first|search-result-first|topic-detail-loaded|user-screen-loaded|role=\\"image\\" label=\\"logo\\"|label="新帖子"/;
+    const forbidden = /search-result-first|user-screen-loaded|role=\\"image\\" label=\\"logo\\"|label="新帖子"/;
 
     for (const replayFile of replayFiles) {
       expect(readFileSync(replayFile, 'utf8')).not.toMatch(forbidden);
+      // Native scrolling/navigation needs loaded Feed/Topic content; outcome replays also accept errors/empty data.
+      if (path.basename(replayFile) !== 'feed-gesture-priority.ad') {
+        expect(readFileSync(replayFile, 'utf8')).not.toMatch(/feed-topic-first|topic-detail-loaded/);
+      }
     }
 
     const feedReplay = readProjectFile('tests', 'device', 'four-source-feed.ad');

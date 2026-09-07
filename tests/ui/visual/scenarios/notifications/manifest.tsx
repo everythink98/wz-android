@@ -60,7 +60,7 @@ function NotificationListScenario({ state }: { state: NotificationListState }) {
   return (
     <NotificationsScreen
       activeSources={unknown ? [] : ['nodeseek', 'linuxdo', 'yaohuo']}
-      errors={state === 'partial' ? { linuxdo: '本次读取失败，可单独重试。' } : {}}
+      errors={state === 'partial' ? { linuxdo: { kind: 'ordinary', message: '本次读取失败，可单独重试。' } } : {}}
       enabledSources={['nodeseek', 'linuxdo', 'yaohuo']}
       fetchingMore={false}
       hasMore={false}
@@ -79,6 +79,7 @@ function NotificationListScenario({ state }: { state: NotificationListState }) {
       onMarkAll={noop}
       onRefresh={noop}
       onRetryAccountStatus={noop}
+      onLoginSource={noop}
       onRetrySource={noop}
     />
   );

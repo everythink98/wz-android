@@ -6,6 +6,12 @@ import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
+import type { SourceErrorInfo } from '@/domain/forum/models';
+import type {
+  AccountReconcileResult,
+  LinuxDoReadRecovery,
+  LinuxDoReadResumeOutcome
+} from '@/domain/session/sessionContracts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification } from '@/domain/notifications/models';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
@@ -23,8 +29,9 @@ import { normalizeReplyImageAsset } from '@/sources/imageUpload';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import { isNodeImageApiKeyExpiredError } from '@/sources/nodeimage/upload';
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import type { NotificationsRuntimeValue } from './useNotificationsRuntime';
-import { sortNotifications } from './notificationPresentation';
+import { notificationErrorAction, sortNotifications } from './notificationPresentation';
 import {
   NotificationDetailScreen,
   NotificationSettingsScreen,
@@ -41,7 +48,8 @@ export type NotificationRouteRuntimeValue = NotificationsRuntimeValue & {
   };
   contentWidth: number;
   notify: (message: string) => void;
-  reconcileAccountStatus: (source: NotificationSource) => Promise<unknown>;
+  reconcileAccountStatus: (source: NotificationSource) => Promise<AccountReconcileResult>;
+  openAccountSurface: (source: NotificationSource, message: string, recovery?: LinuxDoReadRecovery) => Promise<void>;
 };
 
 const NotificationRouteRuntimeContext = createContext<NotificationRouteRuntimeValue | null>(null);
@@ -69,7 +77,7 @@ type NotificationPageParam = {
 
 type NotificationListPage = {
   items: ForumNotification[];
-  errors: Partial<Record<NotificationSource, string>>;
+  errors: Partial<Record<NotificationSource, SourceErrorInfo>>;
   hasMore: boolean;
   nextPage: NotificationPageParam;
 };
@@ -90,6 +98,8 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
   const [markAllBusy, setMarkAllBusy] = useState(false);
   const markAllControllerRef = useRef<AbortController | undefined>(undefined);
   const retryControllerRef = useRef<AbortController | undefined>(undefined);
+  const recoveryIntentRef = useRef<AbortController | undefined>(undefined);
+  const latestRuntimeRef = useCommittedRef(runtime);
   useEffect(() => {
     const requested = route.params?.source;
     if (routeSourceRef.current === requested) return;
@@ -123,12 +133,22 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
     source === 'all'
       ? aggregateSessions.some((session) => session.identityTrust === 'unknown')
       : runtime.enabledNotificationSources.includes(source) && runtime.sessions[source].identityTrust === 'unknown';
+  const categoriesQueryKey = forumQueryKeys.notificationCategories({ source, identityKey });
   const categoriesQuery = useQuery({
-    queryKey: forumQueryKeys.notificationCategories({ source, identityKey }),
+    queryKey: categoriesQueryKey,
     enabled: runtime.ready && source !== 'all' && sourceAvailable && isFocused,
     staleTime: 5 * 60_000,
-    queryFn: ({ signal }) =>
-      source === 'all' ? Promise.resolve([]) : runtime.gateway.getCategories(source, identityKey, signal)
+    queryFn: async ({ signal }) => {
+      if (source === 'all') return [];
+      const blocked = runtime.getReadBlock(source);
+      if (blocked) throw blocked;
+      try {
+        return await runtime.gateway.getCategories(source, identityKey, signal);
+      } catch (error) {
+        runtime.reportReadError(source, sourceErrorFromUnknown(source, error), runtime.sessionEpochs[source]);
+        throw error;
+      }
+    }
   });
   const categories = useMemo(
     () => (source === 'all' ? [] : categoriesQuery.data || []),
@@ -150,7 +170,14 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       retryControllerRef.current?.abort();
       retryControllerRef.current = undefined;
     },
-    [identityKey, source]
+    [identityKey, source, categoryId, unreadOnly, isFocused]
+  );
+  useEffect(
+    () => () => {
+      recoveryIntentRef.current?.abort();
+      recoveryIntentRef.current = undefined;
+    },
+    [source, categoryId, unreadOnly, isFocused]
   );
   const listQueryKey = forumQueryKeys.notificationList({
     source,
@@ -162,28 +189,48 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
     queryKey: listQueryKey,
     enabled: runtime.ready && sourceAvailable && isFocused && (source === 'all' || Boolean(categoryId)),
     staleTime: 0,
-    refetchInterval: isFocused ? 60_000 : false,
+    refetchInterval:
+      isFocused &&
+      (source === 'all'
+        ? runtime.activeSources.some((candidate) => !runtime.getReadBlock(candidate))
+        : !runtime.getReadBlock(source))
+        ? 60_000
+        : false,
     refetchIntervalInBackground: false,
     initialPageParam: {} as NotificationPageParam,
     queryFn: async ({ pageParam, signal }) => {
       if (source === 'all') {
+        const blockedSources = runtime.activeSources.filter((candidate) => runtime.getReadBlock(candidate));
         const page = await runtime.gateway.listAllPage({
           cursors: pageParam.allCursors,
           limit: 30,
           signal,
-          sources: runtime.activeSources,
+          sources: runtime.activeSources.filter((candidate) => !blockedSources.includes(candidate)),
           unreadOnly
         });
+        for (const candidate of runtime.activeSources) {
+          const error = page.errors[candidate];
+          if (error) runtime.reportReadError(candidate, error, runtime.sessionEpochs[candidate]);
+        }
+        const previous =
+          queryClient.getQueryData<InfiniteData<NotificationListPage, NotificationPageParam>>(listQueryKey);
+        const previousPage =
+          previous?.pages[
+            previous.pageParams.findIndex((param) => JSON.stringify(param) === JSON.stringify(pageParam))
+          ];
         return {
-          items: page.items,
-          errors: Object.fromEntries(
-            Object.entries(page.errors).map(([candidate, error]) => [candidate, error?.message || '读取失败'])
-          ) as Partial<Record<NotificationSource, string>>,
+          items: [...page.items, ...(previousPage?.items.filter((item) => blockedSources.includes(item.source)) || [])],
+          errors: {
+            ...page.errors,
+            ...Object.fromEntries(blockedSources.map((candidate) => [candidate, runtime.getReadBlock(candidate)!]))
+          },
           hasMore: page.hasMore,
           nextPage: { allCursors: page.nextCursors } satisfies NotificationPageParam
         };
       }
       try {
+        const blocked = runtime.getReadBlock(source);
+        if (blocked) throw blocked;
         const page = await runtime.gateway.listPage(source, {
           categoryId,
           cursor: pageParam.sourceCursor,
@@ -194,14 +241,20 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
         });
         return {
           items: page.items,
-          errors: {} as Partial<Record<NotificationSource, string>>,
+          errors: {} as Partial<Record<NotificationSource, SourceErrorInfo>>,
           hasMore: page.hasMore,
           nextPage: { sourceCursor: page.cursor } satisfies NotificationPageParam
         };
       } catch (error) {
+        const info = sourceErrorFromUnknown(source, error);
+        runtime.reportReadError(source, info, runtime.sessionEpochs[source]);
+        const previous =
+          queryClient.getQueryData<InfiniteData<NotificationListPage, NotificationPageParam>>(listQueryKey);
+        const previousPage =
+          previous?.pages[previous.pageParams.findIndex((param) => param.sourceCursor === pageParam.sourceCursor)];
         return {
-          items: [],
-          errors: { [source]: sourceErrorFromUnknown(source, error).message },
+          items: previousPage?.items || [],
+          errors: { [source]: info },
           hasMore: false,
           nextPage: {} satisfies NotificationPageParam
         };
@@ -226,12 +279,17 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
     void fetchNextPage();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, isFocused, items.length, source]);
   const errors = useMemo(() => {
-    const result: Partial<Record<NotificationSource, string>> = Object.assign(
+    const result: Partial<Record<NotificationSource, SourceErrorInfo>> = Object.assign(
       {},
       ...(listQuery.data?.pages.map((page) => page.errors) || [])
     );
     if (source !== 'all' && categoriesQuery.error) {
-      result[source] = sourceErrorFromUnknown(source, categoriesQuery.error).message;
+      result[source] = sourceErrorFromUnknown(source, categoriesQuery.error);
+    }
+    for (const candidate of runtime.enabledNotificationSources) {
+      if (source !== 'all' && source !== candidate) continue;
+      const block = runtime.getReadBlock(candidate);
+      if (block) result[candidate] = block;
     }
     Object.keys(result).forEach((candidate) => {
       if (!runtime.enabledNotificationSources.includes(candidate as NotificationSource)) {
@@ -239,101 +297,177 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       }
     });
     return result;
-  }, [categoriesQuery.error, listQuery.data, runtime.enabledNotificationSources, source]);
+  }, [categoriesQuery.error, listQuery.data, runtime, source]);
   const refetch = listQuery.refetch;
-  const refetchCategories = categoriesQuery.refetch;
   const refresh = useCallback(() => void refetch(), [refetch]);
-  const retrySource = useCallback(
-    (candidate: NotificationSource) => {
-      if (!runtime.enabledNotificationSources.includes(candidate) || !runtime.activeSources.includes(candidate)) {
-        return;
-      }
-      if (source !== 'all') {
-        void (categoriesQuery.error ? refetchCategories() : refetch());
-        return;
-      }
-      const cached = queryClient.getQueryData<InfiniteData<NotificationListPage, NotificationPageParam>>(listQueryKey);
-      const failedPageIndex = cached?.pages.findIndex((page) => page.errors[candidate]) ?? -1;
-      const pageIndex = failedPageIndex < 0 ? 0 : failedPageIndex;
-      const cursor = cached?.pageParams[pageIndex]?.allCursors?.[candidate];
+  const retryReadSource = useCallback(
+    async (candidate: NotificationSource): Promise<LinuxDoReadResumeOutcome> => {
       const expectedIdentityKey = runtime.identityKeys[candidate];
-      if (!expectedIdentityKey) return;
+      const epoch = runtime.sessionEpochs[candidate];
+      if (!expectedIdentityKey || !runtime.activeSources.includes(candidate)) return 'stale';
       const controller = new AbortController();
       retryControllerRef.current?.abort();
       retryControllerRef.current = controller;
-      void runtime.gateway
-        .listPage(candidate, {
-          cursor,
-          expectedIdentityKey,
-          limit: 30,
-          signal: controller.signal,
-          unreadOnly
-        })
-        .then((page) => {
-          if (controller.signal.aborted) return;
-          queryClient.setQueryData<InfiniteData<NotificationListPage, NotificationPageParam>>(
-            listQueryKey,
-            (current) => {
-              if (!current?.pages[pageIndex]) return current;
-              const nextCursor = page.hasMore ? page.cursor : null;
-              const withCursor = (currentPage: NotificationListPage) => {
-                const allCursors = { ...currentPage.nextPage.allCursors, [candidate]: nextCursor };
-                return {
-                  ...currentPage,
-                  hasMore: Object.values(allCursors).some((value) => value != null),
-                  nextPage: { allCursors }
-                };
+      const current = () =>
+        !controller.signal.aborted &&
+        latestRuntimeRef.current.identityKeys[candidate] === expectedIdentityKey &&
+        latestRuntimeRef.current.sessionEpochs[candidate] === epoch &&
+        latestRuntimeRef.current.enabledNotificationSources.includes(candidate);
+      const cached = queryClient.getQueryData<InfiniteData<NotificationListPage, NotificationPageParam>>(listQueryKey);
+      const failedPageIndex = cached?.pages.findIndex((page) => page.errors[candidate]) ?? -1;
+      const pageIndex = failedPageIndex < 0 ? 0 : failedPageIndex;
+      const retryCategories = source !== 'all' && Boolean(categoriesQuery.error);
+      try {
+        if (retryCategories) {
+          await queryClient.fetchQuery({
+            queryKey: categoriesQueryKey,
+            staleTime: 0,
+            queryFn: async () => {
+              const categories = await runtime.gateway.getCategories(candidate, expectedIdentityKey, controller.signal);
+              if (!current()) throw new Error('操作已取消');
+              return categories;
+            }
+          });
+        } else {
+          const page = await runtime.gateway.listPage(candidate, {
+            ...(source === 'all'
+              ? { cursor: cached?.pageParams[pageIndex]?.allCursors?.[candidate] }
+              : { categoryId, cursor: cached?.pageParams[pageIndex]?.sourceCursor }),
+            expectedIdentityKey,
+            limit: 30,
+            signal: controller.signal,
+            unreadOnly
+          });
+          if (!current()) return 'stale';
+          queryClient.setQueryData<InfiniteData<NotificationListPage, NotificationPageParam>>(listQueryKey, (data) => {
+            if (!data?.pages[pageIndex]) return data;
+            const nextCursor = page.hasMore ? page.cursor : null;
+            const withCursor = (oldPage: NotificationListPage) => {
+              if (source !== 'all')
+                return { ...oldPage, hasMore: page.hasMore, nextPage: { sourceCursor: nextCursor } };
+              const allCursors = { ...oldPage.nextPage.allCursors, [candidate]: nextCursor };
+              return {
+                ...oldPage,
+                hasMore: Object.values(allCursors).some((value) => value != null),
+                nextPage: { allCursors }
               };
-              const pages = current.pages.map((currentPage, index) => {
-                if (index !== pageIndex) return currentPage;
-                const errors = { ...currentPage.errors };
-                delete errors[candidate];
-                return withCursor({
-                  ...currentPage,
-                  items: [...currentPage.items.filter((item) => item.source !== candidate), ...page.items],
-                  errors
-                });
+            };
+            const pages = data.pages.map((oldPage, index) => {
+              if (index !== pageIndex) return oldPage;
+              const errors = { ...oldPage.errors };
+              delete errors[candidate];
+              return withCursor({
+                ...oldPage,
+                errors,
+                items: [...oldPage.items.filter((item) => item.source !== candidate), ...page.items]
               });
-              const lastPageIndex = pages.length - 1;
-              if (lastPageIndex !== pageIndex) pages[lastPageIndex] = withCursor(pages[lastPageIndex]!);
-              return { ...current, pages };
-            }
-          );
-        })
-        .catch((error) => {
-          if (controller.signal.aborted) return;
+            });
+            if (source === 'all' && pageIndex !== pages.length - 1)
+              pages[pages.length - 1] = withCursor(pages[pages.length - 1]!);
+            return { ...data, pages };
+          });
+        }
+        if (!current()) return 'stale';
+        runtime.clearReadBlock(candidate, epoch);
+        return 'completed';
+      } catch (error) {
+        if (!current()) return 'stale';
+        const info = sourceErrorFromUnknown(candidate, error);
+        runtime.clearReadBlock(candidate, epoch);
+        runtime.reportReadError(candidate, info, epoch);
+        if (!retryCategories)
           queryClient.setQueryData<InfiniteData<NotificationListPage, NotificationPageParam>>(
             listQueryKey,
-            (current) => {
-              if (!current?.pages[pageIndex]) return current;
-              const pages = current.pages.map((currentPage, index) =>
-                index === pageIndex
-                  ? {
-                      ...currentPage,
-                      errors: { ...currentPage.errors, [candidate]: sourceErrorFromUnknown(candidate, error).message }
-                    }
-                  : currentPage
-              );
-              return { ...current, pages };
-            }
+            (data) =>
+              data && {
+                ...data,
+                pages: data.pages.map((page, index) =>
+                  index === pageIndex ? { ...page, errors: { ...page.errors, [candidate]: info } } : page
+                )
+              }
           );
+        return info.kind === 'verification-required' ? 'verification-required' : 'failed';
+      } finally {
+        if (retryControllerRef.current === controller) retryControllerRef.current = undefined;
+      }
+    },
+    [
+      categoriesQuery.error,
+      categoriesQueryKey,
+      categoryId,
+      latestRuntimeRef,
+      listQueryKey,
+      queryClient,
+      runtime,
+      source,
+      unreadOnly
+    ]
+  );
+  const recoveryBusyRef = useRef(false);
+  const retrySource = useCallback(
+    (candidate: NotificationSource) => {
+      if (!isFocused || !runtime.enabledNotificationSources.includes(candidate) || recoveryBusyRef.current) return;
+      recoveryIntentRef.current?.abort();
+      const intent = new AbortController();
+      recoveryIntentRef.current = intent;
+      recoveryBusyRef.current = true;
+      const epoch = runtime.sessionEpochs[candidate];
+      const current = () =>
+        !intent.signal.aborted &&
+        latestRuntimeRef.current.enabledNotificationSources.includes(candidate) &&
+        latestRuntimeRef.current.sessionEpochs[candidate] === epoch;
+      const recovery: LinuxDoReadRecovery = {
+        queryKey: source !== 'all' && categoriesQuery.error ? categoriesQueryKey : listQueryKey,
+        resume: () => (current() ? retryReadSource(candidate) : Promise.resolve('stale'))
+      };
+      return (async () => {
+        let info = errors[candidate];
+        if (notificationErrorAction(info) === '重试') {
+          const result = await runtime.reconcileAccountStatus(candidate);
+          if (
+            result.status === 'anonymous' &&
+            !intent.signal.aborted &&
+            latestRuntimeRef.current.enabledNotificationSources.includes(candidate)
+          ) {
+            await runtime.openAccountSurface(candidate, '登录已失效，请重新登录。');
+            return;
+          }
+          if (!current()) return;
+          if (result.status === 'unknown') {
+            if (result.errorInfo.kind !== 'verification-required') {
+              runtime.notify(`${info?.message || '消息读取失败'}；账号状态暂不可确认：${result.error}`);
+              return;
+            }
+            info = result.errorInfo;
+            runtime.reportReadError(candidate, info, epoch);
+          } else if (result.status !== 'same') return;
+        }
+        if (!current()) return;
+        if (info && notificationErrorAction(info) !== '重试') {
+          await runtime.openAccountSurface(
+            candidate,
+            info.message,
+            info.kind === 'verification-required' ? recovery : undefined
+          );
+        } else await retryReadSource(candidate);
+      })()
+        .catch((error) => {
+          if (current()) runtime.notify(errorMessage(error));
         })
         .finally(() => {
-          if (retryControllerRef.current === controller) retryControllerRef.current = undefined;
+          recoveryBusyRef.current = false;
         });
     },
     [
       categoriesQuery.error,
+      categoriesQueryKey,
+      errors,
+      isFocused,
+      latestRuntimeRef,
       listQueryKey,
-      queryClient,
-      refetch,
-      refetchCategories,
-      runtime.gateway,
-      runtime.identityKeys,
-      runtime.activeSources,
-      runtime.enabledNotificationSources,
-      source,
-      unreadOnly
+      retryReadSource,
+      runtime,
+      source
     ]
   );
   const markAll = useCallback(() => {
@@ -389,19 +523,19 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
     },
     [runtime.enabledNotificationSources]
   );
-  const retryAccountStatus = useCallback(() => {
+  const retryAccountStatus = useCallback(async () => {
     const candidates =
       source === 'all'
         ? runtime.enabledNotificationSources
         : runtime.enabledNotificationSources.includes(source)
           ? [source]
           : [];
-    candidates.forEach((candidate) => {
+    for (const candidate of candidates) {
       if (runtime.sessions[candidate].identityTrust === 'unknown') {
-        void runtime.reconcileAccountStatus(candidate);
+        await retrySource(candidate);
       }
-    });
-  }, [runtime, source]);
+    }
+  }, [retrySource, runtime, source]);
   return (
     <NotificationsScreen
       activeSources={runtime.activeSources}
@@ -412,7 +546,7 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
       fetchingMore={listQuery.isFetchingNextPage}
       hasMore={Boolean(listQuery.hasNextPage)}
       items={items}
-      loading={(listQuery.isPending || (source !== 'all' && categoriesQuery.isPending)) && sourceAvailable}
+      loading={(listQuery.isLoading || (source !== 'all' && categoriesQuery.isLoading)) && sourceAvailable}
       markAllBusy={markAllBusy}
       refreshing={listQuery.isRefetching && !listQuery.isFetchingNextPage}
       source={source}
@@ -433,10 +567,19 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
         if (identityKey) navigation.navigate('NotificationDetail', { identityKey, notification });
       }}
       onLoadMore={() => void listQuery.fetchNextPage()}
+      onLoginSource={(candidate) => {
+        if (isFocused && runtime.enabledNotificationSources.includes(candidate)) {
+          void runtime
+            .openAccountSurface(candidate, '请登录并确认账号身份。')
+            .catch((error) => runtime.notify(errorMessage(error)));
+        }
+      }}
       onMarkAll={markAll}
       onRefresh={refresh}
       onRetryAccountStatus={retryAccountStatus}
-      onRetrySource={retrySource}
+      onRetrySource={(candidate) => {
+        void retrySource(candidate);
+      }}
     />
   );
 }

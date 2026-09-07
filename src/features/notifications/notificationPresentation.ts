@@ -1,6 +1,13 @@
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import { formatDateTime } from '@/domain/forum/presentation';
 import type { ForumNotification } from '@/domain/notifications/models';
+import type { SourceErrorInfo } from '@/domain/forum/models';
+
+export function notificationErrorAction(error?: SourceErrorInfo) {
+  if (error?.kind === 'verification-required') return '去验证';
+  if (error?.kind === 'login-required' || error?.kind === 'login-expired') return '去登录';
+  return '重试';
+}
 
 export function sortNotifications(items: ForumNotification[]) {
   const known: { item: ForumNotification; time: number }[] = [];

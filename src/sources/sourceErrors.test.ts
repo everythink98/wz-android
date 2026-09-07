@@ -8,6 +8,12 @@ import {
 } from './sourceErrors';
 
 describe('source error navigation helpers', () => {
+  it('preserves structured messages through repeated error projection', () => {
+    const error = Object.assign(new Error('请求受限'), { status: 429 });
+    const projected = sourceErrorFromUnknown('linuxdo', error);
+    expect(projected).toEqual({ kind: 'ordinary', message: '请求受限' });
+    expect(sourceErrorFromUnknown('linuxdo', projected)).toEqual(projected);
+  });
   it('does not auto-open verification for aggregated feed errors', () => {
     const errors = {
       nodeseek: {

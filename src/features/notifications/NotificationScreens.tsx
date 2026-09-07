@@ -5,7 +5,7 @@ import RenderHTML, { HTMLContentModel, HTMLElementModel } from 'react-native-ren
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { notificationSources, sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { parseForumTopicDestination } from '@/domain/forum/links';
-import type { ReplyLocationTarget, Topic } from '@/domain/forum/models';
+import type { ReplyLocationTarget, SourceErrorInfo, Topic } from '@/domain/forum/models';
 import type { ForumNotification, NotificationCategory, NotificationDetail } from '@/domain/notifications/models';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
@@ -21,7 +21,8 @@ import {
   formatNotificationTime,
   notificationAccessibilityLabel,
   notificationActionText,
-  notificationTimeText
+  notificationTimeText,
+  notificationErrorAction
 } from './notificationPresentation';
 import { createNotificationStyles } from './styles';
 import { MessageReplyComposerSheet } from './MessageReplyComposerSheet';
@@ -133,6 +134,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onChangeUnreadOnly,
   onItemPress,
   onLoadMore,
+  onLoginSource,
   onMarkAll,
   onRefresh,
   onRetryAccountStatus,
@@ -141,7 +143,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   activeSources: readonly NotificationSource[];
   categories?: readonly NotificationCategory[];
   categoryId?: string;
-  errors: Partial<Record<NotificationSource, string>>;
+  errors: Partial<Record<NotificationSource, SourceErrorInfo>>;
   enabledSources: readonly NotificationSource[];
   fetchingMore: boolean;
   hasMore: boolean;
@@ -158,6 +160,7 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onChangeUnreadOnly: (value: boolean) => void;
   onItemPress: (item: ForumNotification) => void;
   onLoadMore: () => void;
+  onLoginSource: (source: NotificationSource) => void;
   onMarkAll: () => void;
   onRefresh: () => void;
   onRetryAccountStatus: () => void;
@@ -169,6 +172,10 @@ export const NotificationsScreen = memo(function NotificationsScreen({
     ...enabledSources.map((candidate) => ({ value: candidate, label: sourceCatalog[candidate].label }))
   ];
   const errorSources = enabledSources.filter((candidate) => errors[candidate]);
+  const loginSources = enabledSources.filter(
+    (candidate) =>
+      (source === 'all' || source === candidate) && !activeSources.includes(candidate) && !errors[candidate]
+  );
   const sourceAvailable = source === 'all' ? activeSources.length > 0 : activeSources.includes(source);
   const visibleSourceKey = notificationSources
     .filter((candidate) => enabledSources.includes(candidate) && activeSources.includes(candidate))
@@ -267,16 +274,28 @@ export const NotificationsScreen = memo(function NotificationsScreen({
           ) : null}
         </View>
       </View>
+      {source === 'all' && loginSources.length ? (
+        <View style={styles.sourceNotice}>
+          {loginSources.map((candidate) => (
+            <AppButton
+              key={candidate}
+              compact
+              label={`去登录 ${sourceCatalog[candidate].label}`}
+              onPress={() => onLoginSource(candidate)}
+            />
+          ))}
+        </View>
+      ) : null}
       {errorSources.length ? (
         <View style={styles.sourceNotice}>
           {errorSources.map((candidate) => (
             <View key={candidate} style={styles.sourceErrorRow}>
               <Text style={[styles.errorText, styles.sourceErrorText]}>
-                {sourceCatalog[candidate].label}：{errors[candidate]}
+                {sourceCatalog[candidate].label}：{errors[candidate]?.message}
               </Text>
               <AppButton
                 compact
-                label={`重试 ${sourceCatalog[candidate].label}`}
+                label={`${notificationErrorAction(errors[candidate])} ${sourceCatalog[candidate].label}`}
                 onPress={() => onRetrySource(candidate)}
               />
             </View>
@@ -310,7 +329,16 @@ export const NotificationsScreen = memo(function NotificationsScreen({
           <EmptyState
             title={emptyTitle}
             text={emptyText}
-            action={sourceUnknown ? { label: '重试账号核对', run: onRetryAccountStatus } : undefined}
+            action={
+              source !== 'all' && loginSources.includes(source)
+                ? { label: `去登录 ${sourceCatalog[source].label}`, run: () => onLoginSource(source) }
+                : sourceUnknown
+                  ? { label: '重试账号核对', run: onRetryAccountStatus }
+                  : undefined
+            }
+            secondaryAction={
+              source !== 'all' && sourceUnknown ? { label: '重试账号核对', run: onRetryAccountStatus } : undefined
+            }
           />
         )
       }

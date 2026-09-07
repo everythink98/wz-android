@@ -230,6 +230,149 @@ async function settleStartedRuntimeTasks(unmount = true) {
 }
 
 describe('notification runtime', () => {
+  it('waits for the account surface barrier to close before exposing notification reads', async () => {
+    let persisted: string | null = null;
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    let barrierOpen = true;
+    const options = runtimeOptions(
+      jest.fn(() => true),
+      nodeSeekAndLinuxDoSessions(),
+      ['nodeseek', 'linuxdo']
+    );
+    const hook = await renderHook(
+      () =>
+        useNotificationsRuntime({
+          ...options,
+          privateAccessAllowed: (source, identityKey) =>
+            !(source === 'linuxdo' && barrierOpen) && options.privateAccessAllowed(source, identityKey)
+        }),
+      { wrapper: QueryTestWrapper }
+    );
+    await waitFor(() => expect(hook.result.current.ready).toBe(true));
+    expect(hook.result.current.identityKeys.linuxdo).toBe('linuxdo:84');
+    expect(hook.result.current.activeSources).toEqual(['nodeseek']);
+    barrierOpen = false;
+    await act(async () => hook.rerender({}));
+    expect(hook.result.current.activeSources).toEqual(['nodeseek', 'linuxdo']);
+    await act(async () => {
+      hook.result.current.reportReadError('linuxdo', { kind: 'verification-required', message: '请验证' }, 0);
+    });
+    barrierOpen = true;
+    await act(async () => hook.rerender({}));
+    expect(hook.result.current.activeSources).toEqual(['nodeseek', 'linuxdo']);
+    expect(hook.result.current.getReadBlock('linuxdo')?.kind).toBe('verification-required');
+    await settleStartedRuntimeTasks();
+  });
+
+  it.each(['epoch', 'confirmed-login'] as const)(
+    'releases only the current source read block after %s changes',
+    async (change) => {
+      let persisted: string | null = null;
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+        persisted = value;
+      });
+      const sessions = nodeSeekAndLinuxDoSessions();
+      let currentSessions = sessions;
+      let epochs = { ...initialForumSessionEpochs };
+      const options = runtimeOptions(
+        jest.fn(() => true),
+        sessions,
+        ['nodeseek', 'linuxdo']
+      );
+      const hook = await renderHook(
+        () => useNotificationsRuntime({ ...options, sessions: currentSessions, sessionEpochs: epochs }),
+        { wrapper: QueryTestWrapper }
+      );
+      await waitFor(() => expect(hook.result.current.ready).toBe(true));
+      await act(async () => {
+        hook.result.current.reportReadError('linuxdo', { kind: 'login-required', message: '请登录' }, epochs.linuxdo);
+        hook.result.current.reportReadError(
+          'nodeseek',
+          { kind: 'verification-required', message: '请验证' },
+          epochs.nodeseek
+        );
+      });
+      expect(hook.result.current.getReadBlock('linuxdo')?.kind).toBe('login-required');
+      if (change === 'epoch') epochs = { ...epochs, linuxdo: epochs.linuxdo + 1 };
+      else
+        currentSessions = { ...sessions, linuxdo: { ...sessions.linuxdo, lastVerifiedAt: '2026-09-07T00:00:00.000Z' } };
+      await act(async () => hook.rerender({}));
+      expect(hook.result.current.getReadBlock('linuxdo')).toBeUndefined();
+      expect(hook.result.current.getReadBlock('nodeseek')?.kind).toBe('verification-required');
+      if (change === 'epoch') {
+        await act(async () =>
+          hook.result.current.reportReadError(
+            'linuxdo',
+            { kind: 'login-required', message: '过期请求' },
+            initialForumSessionEpochs.linuxdo
+          )
+        );
+        expect(hook.result.current.getReadBlock('linuxdo')).toBeUndefined();
+      }
+      await settleStartedRuntimeTasks();
+    }
+  );
+
+  it('pauses a challenged source while other foreground notification polling continues', async () => {
+    let persisted: string | null = null;
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    try {
+      let challenged = true;
+      const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes('linux.do'))
+          return challenged
+            ? new Response('<title>Just a moment...</title>', { status: 403, headers: { 'content-type': 'text/html' } })
+            : new Response(JSON.stringify({ notifications: [] }));
+        return new Response(JSON.stringify({ atMe: 0, reply: 0, message: 0 }));
+      });
+      const options = runtimeOptions(
+        jest.fn(() => true),
+        nodeSeekAndLinuxDoSessions(),
+        ['nodeseek', 'linuxdo']
+      );
+      const hook = await renderHook(
+        () =>
+          useNotificationsRuntime({
+            ...options,
+            appActive: true,
+            fetcher
+          }),
+        { wrapper: QueryTestWrapper }
+      );
+      await waitFor(() => expect(hook.result.current.getReadBlock('linuxdo')?.kind).toBe('verification-required'));
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      await act(async () => hook.result.current.setCenterVisible(true));
+      const linuxCalls = () => fetcher.mock.calls.filter(([url]) => String(url).includes('linux.do')).length;
+      const nodeSeekCalls = () => fetcher.mock.calls.filter(([url]) => String(url).includes('nodeseek.com')).length;
+      const beforeLinux = linuxCalls();
+      const beforeNodeSeek = nodeSeekCalls();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(120_001);
+      });
+      expect(linuxCalls()).toBe(beforeLinux);
+      expect(nodeSeekCalls()).toBeGreaterThan(beforeNodeSeek);
+      challenged = false;
+      await act(async () => {
+        hook.result.current.clearReadBlock('linuxdo', initialForumSessionEpochs.linuxdo);
+        await hook.result.current.refreshSnapshots();
+      });
+      expect(linuxCalls()).toBe(beforeLinux + 1);
+      expect(hook.result.current.getReadBlock('linuxdo')).toBeUndefined();
+      jest.useRealTimers();
+      await settleStartedRuntimeTasks();
+    } finally {
+      await cleanup();
+      jest.useRealTimers();
+    }
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     appQueryClient.clear();
