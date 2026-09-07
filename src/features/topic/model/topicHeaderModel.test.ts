@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { topicStatusBadges } from './topicHeaderModel';
 
 describe('topic header model', () => {
+  it('labels ended Yaohuo topics as a neutral state', () => {
+    expect(topicStatusBadges({ source: 'yaohuo', closed: true })).toEqual([{ label: '已结束', tone: 'neutral' }]);
+  });
   it('projects canonical topic states in display order', () => {
     expect(
       topicStatusBadges({

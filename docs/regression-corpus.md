@@ -15,17 +15,88 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
-## `REG-NOTIFY-061` 通知列表取消下拉后指示器残留
+## `REG-TOPIC-153` 妖火已结束零评论帖子报楼层页码错误且仍可打开回复
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01`、`TOPIC-03`、`WRITE-01` |
+| 历史症状与根因 | 主题 `1578926` 原站有正文外结束记录和“暂无回复”提示，不再提供回复表单。原站 `tofloor=1` 返回“您查看的楼层不存在”，且缺少普通零评论帖随表单提供的 `replyPage` 字段。Adapter 先校验楼层页码再处理空窗口，详情未投影结束状态，UI 因而同时显示页码错误和“写回复”。 |
+| 处置 | 解析可信结束及零评论标记，复用 `Topic.closed`、状态标签和统一写权限；明确零评论的原站首屏可返回完整空窗口，target/cursor 仍严格校验。刷新结束状态时收起编辑器保留草稿，异步 Cookie/选图准备后复核权限，阻止迟到提交；请求顺序保持不变。 |
+| 当前 owner | `src/sources/yaohuo/reader.test.ts`、`src/features/topic/actions/topicActionDecision.test.ts`、`src/features/topic/model/topicHeaderModel.test.ts`、`tests/ui/topic/topic-actions-controller.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`。 |
+| 失败 oracle | 原站结构的结束空帖应得到 `closed=true`、可信零计数和无游标空窗口；正文伪标记不生效，错误主题与显式不存在楼层仍失败。UI 展示“已结束 / 暂无回复”且无回复工具；结束后旧回调和异步准备中的回复/上传均不得产生写请求，草稿保留。 |
+| 验证边界 | `npm run verify` 通过；匹配源码的覆盖安装包已只读验收普通零回复帖 `1578947` 的首次进入、两种刷新和重进，以及结束且有 37 条评论的 `1563351` 的状态、入口、筛选、排序、跨页、合法楼层定位、刷新与重进；后者核对浅色及深色 130% 字号，结束后恢复浅色 100%。目标 `1578926` 在验收期间已被删除（用户确认），原始结束结构有删除前只读取证与解析 oracle，结束零评论的修复包实机场景未验证；编辑中结束及零网络写入由 UI oracle 承接，不进行真实写入。 |
+
+## `REG-FEED-026` 受控慢网切来源时图片加载崩溃
 
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `EVIDENCE_GAP` |
+| 能力 ID | `FEED-02` |
+| 历史症状与根因 | 2026-09-07，API 35 主 AVD 在关闭 Wi-Fi、蜂窝延迟 5000ms 的只读验收中，从全部切至妖火时 App 退出。发生于刷新交叉脚本的来源准备阶段，尚未开始下拉或横滑；系统退出记录为 `APP CRASH(EXCEPTION)`，不是模拟器挂起。根因尚未确认。 |
+| 证据与边界 | 匹配候选 `1.3.138/142`、APK SHA-256 `520b36080bb5b6896ce74180d93972a3c31f3ce70a825c7902b157f3d5ba3747` 的崩溃栈经同包 mapping 还原，异常为 `IllegalStateException: Already released`，路径为 Glide `EngineJob.addCallback` → `SingleRequest` → expo-image `ExpoImageViewWrapper.rerenderIfNeeded/onSizeChanged`。尚无旧包对照或稳定重复 oracle，不能判定与手势补丁的因果关系。 |
+| 当前 owner | expo-image 图片请求生命周期与来源切换设备证据；本轮仅保存隔离日志并记录，未修改图片行为。网络已恢复。刷新进行中切来源/底栏两项保持 `NOT_VERIFIED`；后续先建立可重复的最小失败 oracle，再决定修复范围。 |
+
+## `REG-FEED-025` 惯性中再次短横滑被列表提前抢占
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-02`；共享 RNGH Native ScrollView 与 `NOTIFY-01`、`TOPIC-01/02/03`、`NAV-03` |
+| 历史症状与根因 | 2026-09-07 用户指出半页问题修复后，松手再短滑切来源很难触发，大幅拖动较容易。Android ScrollView 在惯性中的 DOWN 直接返回拦截，RNGH 因而立即激活列表并取消 Pager，未等待新移动方向。原矩阵只断言惯性后页面完整，没有要求实际换来源，漏掉了被完整拦住的横滑。 |
+| 失败 oracle | `880ca07e…` 候选纵甩松手后约 19ms 继续横滑，68% 屏宽和 20% 屏宽短滑都未切来源；相同完整横滑只把间隔改为 2 秒则六组通过，静止短滑四组通过。`scripts/check-feed-gestures.mjs` 现在要求完整横滑与短快滑切页，覆盖静止、惯性中、横纵交接后，并保留短慢拖及轻点停止惯性行为。 |
+| 处置 | `patches/react-native-gesture-handler+3.2.1.patch` 在既有 ScrollViewHook 内将停止旧惯性与认定新拖动分开：先终止动画，再让原生 ScrollView 根据新移动决定拦截；只停止惯性的轻点仍由列表消费。沿用 Pager 取消桥接与正常 UP 的惯性路径。 |
+| 当前 owner | canonical owner 为 `scripts/check-feed-gestures.mjs`、`tests/device/TouchTrace.java`，独立惯性/取消/刷新及共享入口按完整回归执行。同步注入曾把 80ms 动作延长到约 190–200ms；已改为至少 16ms 采样间隔并保存实际事件时间，漂移超过 50ms 视为无效输入。 |
+| 验证边界 | 候选 `1.3.138/142`、APK SHA-256 `520b36080bb5b6896ce74180d93972a3c31f3ce70a825c7902b157f3d5ba3747` 在主 API 35 AVD 分批通过全部 68 组有效连续手势；独立惯性、双向 CANCEL/UP、首页六项刷新、通知取消后再次刷新及导航 Replay 通过。用户告知同时操作后，分类栏、双指恢复、惯性后点远端来源及底栏返回四项独立重试通过。相关 UI 59 项、安装补丁测试 9 项与 typecheck 通过。完整验收仍有缺口：当前有限已读列表为空，首尾斜滑未取得独立重试结果；刷新进行中两项前置条件未满足，较慢网络重试又遇到 `REG-FEED-026`。物理手机、鼠标输入和其余共享原生入口未验证；未发布。 |
+
+## `REG-FEED-024` 切换来源后回到顶部按钮残留
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-02`、`FEED-04` |
+| 历史症状与根因 | 2026-09-07 用户发现切换来源后“回到顶部”按钮没有重置。来源列表已重建并回到首项，但按钮的 `showFloatingActions` 保存在仍挂载的 FeedScreen 中；选择变更的 effect 只重置分页请求状态，缺少按钮状态清理。 |
+| 处置 | 在来源、分类、排序和阅读筛选的既有重置位置清除按钮状态；同一列表返回和取消横滑仍保留原状态，不额外重建列表。 |
+| 当前 owner | `tests/ui/feed/feed-screen.test.tsx` 验证切换来源的 Loading/首项阶段无旧按钮，同时保留同列表返回用例；`scripts/check-feed-gestures.mjs` 与 `scripts/check-feed-boundaries.mjs` 分别核对横滑换站和惯性后点站的真实按钮收起。 |
+| 失败 oracle | 旧列表滚到 640px 后按钮出现，切至新来源 Loading 后必须消失；修复前该断言失败，修复后通过。 |
+
+## `REG-FEED-023` 快速甩动松手后列表惯性消失
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-02`；共享 RNGH root、`NOTIFY-01` 与原生滚动入口 |
+| 历史症状与根因 | 2026-09-06 用户发现首页快速甩动后立即停止。此前为 `REG-FEED-022` 补齐 root 终止事件时，在正常 UP 已由 NativeViewGestureHandler 处理后又向原生子树派发 CANCEL，破坏刚启动的 fling。此前“甩动后能切页”的通过结果未测松手后位移，漏掉了这一回归。 |
+| 处置 | root 仅在真实系统 CANCEL 时补齐子树取消；正常 UP 沿既有 native handler 路径处理，不重复派发终止事件。保留 Pager 系统取消归位和通知取消收尾。 |
+| 当前 owner | `patches/react-native-gesture-handler+3.2.1.patch`；`scripts/check-feed-fling.mjs` 独立核对松手后位移；`scripts/check-feed-pager-cancel.mjs` 同时检查双向 CANCEL 和正常 UP；共享通知使用 `scripts/check-notification-refresh-cancel.mjs`。 |
+| 失败 oracle | 同一隔离 API 35 AVD，补丁前旧包松手后列表内容变化约 11%；上一轮问题包 `e68da10b7d84dcfcf25a29b18f7e3d453df71af609007b46e504f4f5bbc3817b` 能拖动但松手后变化为 0，canonical 脚本失败。收窄补丁后该脚本在隔离与主 AVD 均通过，松手后变化约 11%。该比例只用于识别静态列表是否继续移动，不代表滚动距离或性能指标。 |
+| 验证边界 | 候选 `1.3.138/142`、SHA-256 `607ac56d48e2c067aefacd85ae77f8295edef5aa6c31e0f64a8d4e87884ebbdd`；隔离 AVD 的双向 CANCEL/UP 和通知取消后再次刷新通过。主 AVD 保留原首次安装时间并验证惯性恢复；物理手机、所有速度及所有共享手势入口未验证。未发布。 |
+
+## `REG-FEED-022` 列表滚动后横滑停在两页之间
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-02`；共享 `NOTIFY-01`、`TOPIC-01/02/03`、`NAV-03` |
+| 历史症状与根因 | 用户录屏中首页滚动后横向切来源，松手仍停在两页之间。RNGH 3.2.1 root 拦截触摸后直接返回，原生 Compose Pager 收不到终止事件；上游只在下一次 DOWN 前取消遗留子树，当前拖动因而不能自行结算。原生记录确认 Pager 收到 DOWN 与拖动开始，却没有收到本轮 CANCEL。 |
+| 处置 | RNGH root 补齐真实系统 CANCEL；初版也对正常 UP 补发取消，引入 `REG-FEED-023`，收窄后惯性恢复但自然交接仍复现。进一步确认：短横滑的归位动画被下一次纵滚打断时，RNGH 接管并逐 View 调用 `onTouchEvent(CANCEL)`，Compose 却在 `dispatchTouchEvent` 处理触摸，因此仍等不到收尾。Pager source patch 将直接 CANCEL 桥接到 Compose，桥接期间 PageHost 不重复取消已由 RNGH 仲裁的原生子列表；真实系统 CANCEL 仍正常分发。不增加 Feed 滚动开关、方向锁、计时器或强制选页。 |
+| 当前 owner | `patches/react-native-pager-view+9.0.4.patch` 的 Compose 取消桥接；`patches/react-native-gesture-handler+3.2.1.patch` 的系统取消分发；`scripts/check-feed-gestures.mjs` 与 `tests/device/TouchTrace.java` 覆盖连续交接、快慢/双向/回拖及列表实际位移；`scripts/check-feed-pager-cancel.mjs`、`scripts/check-feed-fling.mjs` 和 `tests/device/feed-gesture-priority.ad` 保留各自终止事件、惯性与导航 owner。 |
+| 失败 oracle | 同一 API 35、1080px 宽设备上，列表滚动后短横拖并注入 CANCEL，旧 APK 的页面持续 x=87、width=993；修复 APK 双向均恢复 x=0、width=1080。脚本先断言页面确实开始移动，再验证取消后完整归位且来源不变。正常松手可能按原生速度判断切至邻页，不以固定返回原页作为其 oracle。 |
+| 后续逃逸与新 oracle | 恢复惯性的 `607ac56d…` 候选仍被用户在手机与模拟器复现，原先只等纵滚结束再横滑的通过结果不足以关闭事故。主 AVD 保留 x=184 的妖火现场；同一时间线执行 180ms 向右短横滑、松手后约 19ms 开始纵滚，连续两次停在 x=155/153、可见宽度=1109/1111（viewport=1264），且记录中只有 Pager DOWN 和 RNGH MOVE 接管，缺少 Pager 终止事件。桥接候选原样回放恢复 x=0/width=1264，独立惯性 oracle 仍通过；最终覆盖范围以本轮匹配 APK 验收记录为准。 |
+| 验证边界 | 候选 `1.3.138/142`、APK SHA-256 `21837abbbd06485e8b1f1c92244a901fa56bc6eaac4099d3a3086d7d8a0b8791` 在 1080px 与主 AVD 1264px 均通过双向取消 oracle；主 AVD 的 APK_SANITY、首页手势 Replay、轻拉/长拉/取消后刷新、正文滚动/文字选择/图片预览返回通过。通知列表已确认拉出圆圈后 CANCEL 收起、下一次正常刷新结算；linux.do 通知返回既有需登录状态，不将该站数据读取记为通过。物理设备与其他原生手势组合未验。 |
+
+## `REG-NOTIFY-061` 通知列表取消下拉后指示器残留
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
 | 能力 ID | `NOTIFY-01`；共享 `FEED-01/02/04` |
 | 历史症状与根因 | 2026-09-06 手势专项审核中，通知列表长拉后注入系统 CANCEL，蓝色圆圈持续停留；下一次正常下拉才能恢复。此前仅直接调用刷新控件 onTouchEvent 的测试没有覆盖内部列表持有触摸的分发路径。 |
-| 处置 | 共享 RN source patch 在 CANCEL 分发到子节点之前结束未提交手势；新增真实 root dispatch → nested ScrollView 用例。通知 FlashList 同时显式关闭单纵向列表不需要的 nestedScrollEnabled，移除 RN 默认的额外累积路径。 |
-| 当前 owner | `patches/react-native+0.86.3.patch` 内 ReactSwipeRefreshLayoutTest；`tests/ui/notifications/notifications-screen.test.tsx` 的刷新装配；匹配 APK 的通知列表 CANCEL → 等待 → 再次正常刷新只读验收。 |
+| 处置 | 共享 RN source patch 在 CANCEL 分发到子节点之前结束未提交手势；通知 FlashList 关闭不需要的 nestedScrollEnabled。此前这两项仍缺少来自 RNGH root 的本轮终止事件；最终复用 `REG-FEED-022` 的 root 补丁补齐分发，通知沿用 RN RefreshControl，不增加专用计时器或手势 owner。 |
+| 当前 owner | `patches/react-native-gesture-handler+3.2.1.patch` 的共享 root 分发；`patches/react-native+0.86.3.patch` 内 ReactSwipeRefreshLayoutTest；`tests/ui/notifications/notifications-screen.test.tsx` 的刷新装配；`scripts/check-notification-refresh-cancel.mjs` 的实际指示器取消与下一次刷新 oracle。 |
 | 失败 oracle 与证据边界 | 新 dispatch JVM 用例在旧实现的 CANCEL 后仍得到 isRefreshing=true；共享修复后 5 项 JVM 用例通过。仅共享 patch 的 APK 在真实通知列表仍残留，因此不能用 JVM 绿灯代替设备验收；通知列表关闭 nestedScrollEnabled 的装配断言先以 undefined 转红。最终处置须通过匹配发布 APK 的取消与再次刷新验收后才能关闭证据缺口。 |
 | 本次发布验收 | 匹配 1.3.138 APK 的正常通知下拉能够完成，系统注入 CANCEL 后仍残留静态圆圈，下一次正常下拉可恢复；关闭通知列表 nestedScrollEnabled 未消除这个边界。该问题尚未修复，真实 RN 列表与 JVM ScrollView 之间的证据缺口仍待诊断。已明确告知用户，并按其随后要求优先发布正文复制与首页刷新修复，不将此条记为通过。 |
+| 修复对照与边界 | 2026-09-06 补齐同一隔离 API 35 AVD 的旧包负控：先确认已拉出指示器，CANCEL 后无需再触摸，中央探针从基线 0 留下 982 个蓝色像素，脚本按原症状失败。当前候选 `1.3.138/142`、SHA-256 `e68da10b7d84dcfcf25a29b18f7e3d453df71af609007b46e504f4f5bbc3817b` 在相同设备及主登录态 AVD 均从 0 恢复为 0，下一次正常下拉在 60 秒上限内结算。检查限定浅色、聚合列表顶部，保留 pulling/cancelled 截图；主 AVD 的 NodeSeek 消息仍可见，linux.do 仍为需登录终态，不将其数据读取或物理手机记为通过。本条修复状态不代表已发布。 |
 
 ## `REG-FEED-021` 嵌套滚动竞争及取消收尾缺失导致下拉卡住
 

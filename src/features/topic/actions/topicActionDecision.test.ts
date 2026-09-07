@@ -17,6 +17,15 @@ const loggedIn = createSiteSessionViewModel({
 });
 
 describe('topic action decision', () => {
+  it('forbids replies and uploads on ended Yaohuo topics while preserving bookmarks', () => {
+    const ended: TopicDetail = { ...topic, source: 'yaohuo', closed: true };
+    for (const action of ['reply', 'upload'] as const) {
+      const decision = decideTopicAction({ account: loggedIn, action, topic: ended, objectAllowed: true });
+      expect(decision.allowed).toBe(false);
+      expect(topicActionDecisionMessage(decision)).toBe('本帖已结束，无法回复');
+    }
+    expect(decideTopicAction({ account: loggedIn, action: 'bookmark', topic: ended }).allowed).toBe(true);
+  });
   it.each([
     ['unsupported', { topic: { ...topic, source: 'v2ex' } }],
     ['login-required', { account: createSiteSessionViewModel(createSiteSessionStates().linuxdo) }],

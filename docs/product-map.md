@@ -87,6 +87,18 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `FEED-02` 的预铺二级导航通过共享 `PillRail` 禁用 inactive scene；进入当前来源时必须明确把 `disabled` 与 `accessibilityState.disabled` 设为 `false`，同时恢复触摸和 Android 无障碍可操作状态。不能仅省略属性而留下原生禁用态。
 
+`FEED-02` 的二级分类通过点击选择，不通过横滑切换分类。在二级分类区域横滑可以切换一级来源，这是正常的来源翻页行为。
+
+`FEED-02`、`FEED-04` 切换来源、分类、排序或阅读筛选并回到首项时，必须清除上一列表的“回到顶部”按钮状态。返回同一列表或取消横滑不重置该按钮；只有新列表再次实际滚离顶部才重新出现。
+
+`FEED-02` 的横向归位动画被下一次纵向拖动打断时，Pager 必须结束旧的触摸等待并归位，内部列表继续滚动并保留惯性。RNGH 逐 View 调用 `onTouchEvent(CANCEL)`，Compose Pager 的 source patch 将该取消接到 Compose 的 `dispatchTouchEvent`；这次桥接只取消 Pager，PageHost 不重复取消由 RNGH 管理的原生子列表。真实系统 CANCEL 仍沿正常 dispatch 路径取消子树。不新增页面级滚动开关、方向锁或归位计时器。连续触摸由 `scripts/check-feed-gestures.mjs` 与 `tests/device/TouchTrace.java` 承接，普通终止事件与惯性继续由现有独立 oracle 承接。
+
+`FEED-02` 的原生 Pager 即使在列表滚动后被 RNGH 拦截，也必须在本轮系统 CANCEL 时收到取消并自行结算，不能等待下一次触摸才归位。正常 UP 已由 native handler 交给原生控件，不得再向子树补发终止事件，否则会打断刚启动的列表惯性。共享 owner 为 `patches/react-native-gesture-handler+3.2.1.patch`；`scripts/check-feed-pager-cancel.mjs` 分别验证系统取消保持来源、正常松手按原生速度结算到完整页面；`scripts/check-feed-fling.mjs` 独立验证快速甩动后无需再次触摸，列表仍继续滚动。
+
+`NOTIFY-01` 同样依赖 RNGH root 及时向 RN RefreshControl 分发本轮终止事件；其真实圆圈取消与下一次刷新由 `scripts/check-notification-refresh-cancel.mjs` 承接，不能仅用 Feed 的分页归位或 RefreshControl JVM 结果代替。
+
+`FEED-02` 的下拉取消与再次刷新由 `scripts/check-feed-refresh.mjs` 验证可见指示器收尾；首尾页、真实加载尾部、分类栏横滑及底栏返回由 `scripts/check-feed-boundaries.mjs` 承接。整套执行顺序以 `docs/operator-runbook.md` 为准，相关手势改动必须按 `docs/testing-standard.md` 全部回归。
+
 `FEED-02/04`、`SEARCH-02/04` 与共享 `ACCOUNT-01/02`：未登录妖火对每次显式首页来源/分类/刷新或单站搜索/重试意图最多自动打开一次登录页；用户关闭后，auth surface barrier、账号核对、ReadPlan scope 恢复及 Query 自动 refetch 都不得重开。已有已提交关键词时切换搜索来源会立即读取，登录页可能在再次点击“搜索”前打开。新的显式意图或一次真实成功读取后，后续登录失败仍可再打开一次。
 
 ### SEARCH：搜索
@@ -115,6 +127,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 `SEARCH-01/02/04`：“全部”每站预览与单站连续分页的 Query key 必须以 `preview/pages` lane 区分数据形状，且记录逐站实际生效的排序；既有 `forum → source → search` 前缀继续统一取消和失效。某站原生预览成功结算后，进入该单站时若来源、关键词、筛选、实际排序、ReadPlan scope 与 session epoch 完全一致，且目标分页缓存为空，则把已返回的完整第一页显式转换为合法 InfiniteData 并提升到 `pages` lane，不重复请求第一页。已有分页缓存保留全部页，不因预览较新截断后续结果；显式重搜或重试仍读取第一页。任一身份不匹配、外部/失败/未结算结果不能晋升，加载更多只读取下一页。正文合并保持首屏原顺序及重复条目、权限优先级，全部页只做一次线性合并。
 
 ### TOPIC：主题详情与阅读
+
+`TOPIC-01/03`、`WRITE-01`：妖火只从正文区域外的原站 `div.tipmini` 结束记录识别 `closed`，详情以中性“已结束”标签展示，隐藏主回复和楼层回复入口；已打开的编辑器在状态更新后关闭并保留草稿，提交与上传在异步准备后仍须复核结束状态。结束不删除已有评论或禁止阅读定位、收藏和分享。原站 `view-no-reply-tip` 的明确空态确认零评论，优先于旧列表计数；零评论首屏仅在同主题原站回复页或有效页码字段确认后允许无楼层页码的完整空窗口，显式 target/cursor 和异常响应不放宽。已结束且零评论显示“回复列表 0 条 / 暂无回复”，不展示筛选、排序或评论查找；请求顺序不变。Canonical evidence 为 `src/sources/yaohuo/reader.test.ts`、`src/features/topic/actions/topicActionDecision.test.ts`、`tests/ui/topic/topic-actions-controller.test.tsx` 与 `tests/ui/topic/topic-reply-filters.test.tsx`。
 
 `TOPIC-01/02/03`：共享 cooked HTML 样式补齐 `bbcode-b/i/u/s`、`kbd`、`mark/ins/del`、固定正文基准的 `big/small` 与 `mention-group`；默认颜色继续由 App 主题拥有，但来源显式旧式 `<font color>` 保留有效文字颜色，`size="1"` 至 `size="7"` 按 App 当前正文字号恢复相对层级。旧式字号的 `fontSize` 与 `lineHeight` 使用同一个相对 factor，RNRH `emSize` 跟随 App 正文基准，行高再乘当前紧凑/标准/宽松阅读倍率；来源 `line-height` 与背景样式不进入白名单。table 保持现有等宽列、最小列宽和横滑，`td/th` 只把扣除 padding/边框后的实际内容宽度提供给内部图片、贴纸和嵌套 table；视频继续随父容器 stretch，表外媒体继续使用正文宽度。不得以帖子特判、裁剪、列角色或状态机代替该宽度 owner。
 
@@ -500,6 +514,7 @@ More → useNetworkProxyRuntime → networkProxy + Android generated module
 
 | 共享 seam | 可能影响 | 必选能力 ID | 最小回归 |
 | --- | --- | --- | --- |
+| `patches/react-native-gesture-handler+3.2.1.patch` 的 root 终止事件分发与 ScrollView 惯性接触仲裁 | Compose 分页、滚动/刷新与正文原生触摸子树 | `FEED-02`、`NOTIFY-01`、`TOPIC-01/02/03`、`NAV-03` | 列表中段双向短横拖 CANCEL 后完整归位；静止、惯性中及横纵交接后短快滑必须切页，轻点停止惯性且不误开帖子；正常横滑、斜滑、刷新取消与再次刷新；正文滚动、长按选择/取消、预览返回。 |
 | `src/app/AppNavigator.tsx`、`src/features/topic/TopicRoute.tsx`、`src/features/topic/useTopicSessionController.ts` | 四 tab、Topic/User 嵌套、route-local list ref、返回和 epoch 状态隔离 | `NAV-*`、`TOPIC-03`、`USER-02` | 导航自动测试；A → B → A 保留草稿、筛选、滚动和已提交 UI；Feed/Search/Library 各进 Topic；Topic → User/ReadingSettings → Topic。 |
 | `src/sources/readAggregation.ts`、`src/sources/feedRead.ts`、`src/features/account/useAccountStatusController.ts` | “全部” Feed/Categories 的单来源时限、partial/cursor/cancel，以及本机账号恢复后唯一 ReadPlan | `FEED-01/02/04`、`ACCOUNT-01/02` | 5 秒 child budget、父/child abort、冷启动零 Account probe、Feed/Categories 各一次、刷新 single-flight。 |
 | `src/sources/readGateway.ts` | 四站首页、搜索、详情、回复、用户页，NodeSeek username→UID 解析，Cookie/WebView fallback 与诊断 | `FEED-*`、`SEARCH-*`、`TOPIC-01`、`TOPIC-03`、`USER-01`、`ACCOUNT-02` | gateway/controller 测试；四站 Feed、Search、Topic；至少一个用户页；NodeSeek candidate hit/miss、session epoch、取消与登录态提示。 |

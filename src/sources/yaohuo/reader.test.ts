@@ -25,6 +25,56 @@ function parseReplies(html: string, options?: Parameters<typeof parseYaohuoRepli
 }
 
 describe('Android direct yaohuo API', () => {
+  it('reads ended status and explicit empty replies from site chrome instead of authored content', async () => {
+    const opening = '<div class="content">[标题] topic</div><div class="bbscontent">正文</div>';
+    const ended = '<div class="tipmini">{alice(ID7)结束原因: 已结束 09-06 19:55}</div>';
+    const empty = '<div class="view-no-reply-tip"><span class="view-no-reply-text">暂无回复，快抢沙发哦</span></div>';
+    const parsed = parseYaohuoTopicHtml(opening + ended + empty, { id: '1578926' });
+    expect(parsed).toMatchObject({ closed: true, replyCount: 0 });
+    const authored = parseYaohuoTopicHtml(
+      '<div class="content">[标题] topic</div><div class="bbscontent">' + ended + empty + '</div>',
+      { id: '1578926' }
+    );
+    expect(authored.closed).toBe(false);
+    expect(authored.replyCount).toBeUndefined();
+    expect(parseYaohuoTopicHtml(opening + empty, { id: '1578926' })).toMatchObject({ closed: false, replyCount: 0 });
+    expect(
+      parseYaohuoTopicHtml(opening + '<div class="viewContent"><div class="recontent">' + empty + '</div></div>', {
+        id: '1578947'
+      })
+    ).toMatchObject({ closed: false, replyCount: 0 });
+    const detail = await getYaohuoTopicDirect({
+      topic: { ...parsed, replyCount: 5 },
+      yaohuoFetcher: async (input) => new Response(String(input).includes('favlist') ? '' : opening + ended + empty)
+    });
+    expect(detail).toMatchObject({ closed: true, replyCount: 0 });
+  });
+
+  it.each(['oldest', 'newest'] as const)('accepts an identified empty %s start without a page field', async (order) => {
+    const html = '<title>查看回复</title><div>您查看的楼层不存在。</div><a href="/bbs-1578926.html">返回主题</a>';
+    const read = (position: ReplyWindowPosition, body = html) =>
+      getYaohuoRepliesDirect({
+        id: '1578926',
+        categoryId: '177',
+        order,
+        position,
+        replyCount: 0,
+        yaohuoFetcher: async () => new Response(body)
+      });
+    await expect(read({ kind: 'start' })).resolves.toMatchObject({
+      items: [],
+      completeness: 'complete',
+      currentPage: 1,
+      hasMore: false,
+      nextPage: null,
+      previousPage: null
+    });
+    await expect(read({ kind: 'target', target: { floor: 1 } })).rejects.toThrow();
+    await expect(read({ kind: 'cursor', page: 2, offset: null })).rejects.toThrow();
+    await expect(read({ kind: 'start' }, '<div>栏目ID不正确！</div>')).rejects.toThrow();
+    await expect(read({ kind: 'start' }, html.replace('1578926', '9999999'))).rejects.toThrow();
+  });
+
   it('fetches yaohuo through the native read-only cookie jar', async () => {
     const yaohuoFetcher = vi.fn(
       async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>')

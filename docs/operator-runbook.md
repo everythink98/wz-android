@@ -178,6 +178,75 @@ runner 会拒绝与 `WZ_ANDROID_TEST_DEVICE` 或 `WZ_ANDROID_SMOKE_DEVICE` 相�
 
 ### 证据含义
 
+#### 首页手势完整回归顺序
+
+相关改动按 `docs/testing-standard.md` 执行以下整套流程；各项共用已核对的 APK 和独占设备输入，不能把一项通过当成整套通过。
+
+1. 核对安装身份、版本与 APK SHA-256；覆盖安装后执行 `APK_SANITY` 和 `tests/device/feed-gesture-priority.ad`。
+2. 打开首页，顺序执行下方连续手势矩阵、双向 CANCEL/UP、独立惯性、首页刷新和边界交叉脚本。
+3. 打开“更多 → 消息通知”，执行通知刷新取消脚本，然后返回首页。
+4. 按 `tests/live/agent-live.md` 的 `LIVE-FEED-01` 补验首尾边界、点选、分类栏、刷新中切来源/底栏和返回。只读手势验收不改变来源启停/顺序或账号状态。
+5. 保存每项通过或未验证范围及设备输入方式；实体手机与鼠标手动操作分别记录，不借用自动注入结论。回收本轮会话和专用临时文件。
+
+首页中段横滑取消的 Native oracle 使用已打开首页、已核对版本与 SHA 的候选 APK；显式选择同一设备和当前 agent-device session：
+
+```powershell
+$env:ANDROID_SERIAL = '<serial>'
+$env:AGENT_DEVICE_SESSION = '<active-session>'
+node scripts/check-feed-pager-cancel.mjs
+```
+
+脚本只读取 V2EX 并滚动，在两个方向先证明短横拖确实移动页面，再分别注入系统 CANCEL 和正常 UP。CANCEL 必须完整归位且来源不变；正常 UP 可以按原生速度切至邻页，但最终必须显示一个完整页面。它不安装、不重置数据，也不代替快慢斜滑、刷新及共享正文触摸验收。运行期间不得对同一设备并发发送其他输入或 snapshot。
+
+常见连续手势使用同一设备/session、JDK 和 Android SDK（API 35 platform、build-tools 36.0.0）：
+
+```powershell
+$env:ANDROID_HOME = '<Android-SDK>'
+node scripts/check-feed-gestures.mjs '<ignored-evidence-directory>' yaohuo
+```
+
+来源参数默认 `v2ex`，也可选当前已能稳定读取的 `yaohuo`、`nodeseek` 或 `linuxdo`。脚本从真实列表中段执行 68 组手势：原有 8 类 × 3 种速度 × 2 个方向（横滑归位途中接纵滚、完整横滑、纵向斜滑、纵转横、横转纵、惯性中接横滑、同次回拖和系统取消），另加静止/惯性中/横纵交接后 20% 屏宽的短快滑（80/120ms、双向）、12% 屏宽短慢拖（800ms、双向）和惯性中轻点。每项检查完整页面几何，纵向意图/取消保持来源，短慢拖按原生规则自然结算，完整横滑和短快滑必须换来源；归位期间接纵滚还检查卡片实际位移，轻点必须停止惯性且不打开帖子。末尾可加已有动作名（如 `fling-short-horizontal`，多个用逗号分隔）作紧凑诊断，但最终验收仍运行默认全矩阵。每项先切至“全部”再切回目标来源，避免依赖可关闭的回顶按钮或上次滚动位置。`tests/device/TouchTrace.java` 在 adb shell 内按同一时间线注入连续触摸，不安装测试 App；jar 只写任务专用 `/data/local/tmp` 路径，结束移除。结果只保存动作、来源、bounds 与实际事件时间，不保存列表正文；实际时间漂移超过 50ms 时停止并报告输入无效，不能把延长后的慢拖当作短快滑。来源进入验证页、列表未加载或用户同时触摸设备均不能作为手势 verdict；测试期间独占设备输入。该矩阵仍须配合下面的惯性、刷新 oracle 和 `LIVE-FEED-01` 的首尾边界、点选、刷新交叉与页面返回。
+
+首页惯性另从已打开的首页运行，沿用以上显式设备与 session：
+
+```powershell
+node scripts/check-feed-fling.mjs '<ignored-evidence-directory>'
+```
+
+脚本重新选择 V2EX 首屏，执行 120ms 快甩并比较松手后两个时刻的列表内容，独立断言拖动确实发生、松手后仍继续移动。需使用有足够静态条目且无加载遮罩的页面；截图采样排除导航栏、滚动条和悬浮操作，不能用于有大面积动态图片的列表或证明所有速度、设备性能均正常。仅验证“甩动后还能横滑”不能代替该惯性 oracle。
+
+首页刷新在浅色主题、已登录且可读取的妖火列表执行：
+
+```powershell
+node scripts/check-feed-refresh.mjs '<ignored-evidence-directory>'
+```
+
+检查 50/100px 短拉、长拉后系统 CANCEL、回拉、下拉中横移及下一次正常刷新。先确认指示器实际出现，再核对收起与完整页面；像素探针适用浅色静态列表，若中央正文有同色内容，需人工核对截图，不能放宽阈值冒充通过。
+
+刷新尚未结算时的切站和底栏返回使用同一脚本的 `interruptions` 模式：
+
+```powershell
+node scripts/check-feed-refresh.mjs '<ignored-evidence-directory>' interruptions
+```
+
+该模式要求松手 1 秒后仍能确认刷新圆圈，快网络导致前置条件不成立不能计入通过。模拟器可临时使用受控的蜂窝延迟，操作前记录 Wi-Fi、移动数据与 latency，结束在 `finally` 恢复原值；不改账号或服务器代理。[Android Emulator 官方控制台说明](https://developer.android.com/studio/run/emulator-console) 指出 `network delay` 仅作用于 Ethernet/Cellular，36.5 起默认 Wi-Fi 走 netsim，不能只设置该参数就声称已模拟慢 Wi-Fi。
+
+首页边界交叉从已加载的完整列表执行；要求所有一级来源标签可见，“全部 → 已读”中有既有阅读记录：
+
+```powershell
+node scripts/check-feed-boundaries.mjs '<ignored-evidence-directory>'
+```
+
+按当前来源顺序验证首尾页快慢向外滑；每次碰边界后，反向短滑 20% 屏宽、120ms 必须切至邻页，再向原方向短滑必须返回边界页。首屏向右、末屏向左本来就没有相邻页，向外不切页不能单独作为拦截 Bug。其余用例覆盖列表顶部和实际尾部双向斜滑、双指后恢复单指、快甩后点远端 Tab、二级栏横滑及切底栏返回。尾部固定选择“全部 → 已读”的有限列表，并确认“已经到底了”；不要在未筛选的来源中追逐自动追加的帖子，也不为准备数据打开未读帖子。已读为空时脚本明确停止，首尾斜滑记为 `NOT_VERIFIED`；末尾添加 `interactions` 可独立运行后四项交互，不代替完整边界验收。连续手势矩阵仍使用长列表验证中段。刷新尚未结算时切来源/底栏仍按 `LIVE-FEED-01` 单独取证，不能用正常切页结果代替。
+
+通知刷新取消另在浅色主题、“消息通知 → 全部”、列表顶部运行，沿用以上显式设备与 session：
+
+```powershell
+node scripts/check-notification-refresh-cancel.mjs '<ignored-evidence-directory>'
+```
+
+脚本先等待聚合通知进入 data、empty 或 partial 终态，排除首次加载圆圈，再使用已安装的 `pngjs` 读取原生截图，证明下拉指示器出现，验证 CANCEL 后 1 秒内收起、下一次正常下拉在 60 秒内结算。证据目录必须 ignored；不打开消息、不标已读。当前像素探针适用于已验的 1080×2400 与 1264×2780 浅色 viewport；其他布局需先核对截图与探针范围，不能把“未拉出指示器”算作通过。
+
 `npm run smoke:android` 在覆盖安装后的第一次启动前写入日志 marker，只检查有界启动窗口、前台包名、崩溃、ANR 与 RedBox，形成 `APK_SANITY`；随后 Replay 独立形成 `DEVICE_REPLAY_PASS`。二者都不等于真实来源当天数据或全部功能通过，也不授权任何远端写操作。
 
 ### Release 性能回归

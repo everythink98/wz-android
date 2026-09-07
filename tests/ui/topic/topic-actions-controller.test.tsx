@@ -65,6 +65,7 @@ import {
 import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import { readNodeSeekPollJournalEntry, saveNodeSeekPollJournalEntry } from '@/platform/persistence/nodeSeekPollJournal';
 import { QueryTestWrapper } from '../QueryTestWrapper';
+import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 
 const mockRunNodeSeekAction = jest.mocked(runNodeSeekAction);
 const mockFetchNodeSeekVoteInfo = jest.mocked(fetchNodeSeekVoteInfo);
@@ -231,7 +232,12 @@ async function renderActions({
   topicReplies?: Reply[];
 } = {}) {
   const hook = await renderNativeHook(
-    (props: { active?: boolean; sessionEpochs: ForumSessionEpochs; topicReplies?: Reply[] }) => {
+    (props: {
+      active?: boolean;
+      sessionEpochs: ForumSessionEpochs;
+      topicReplies?: Reply[];
+      topicDetail?: TopicDetail;
+    }) => {
       const topicSession = useTopicSessionController({ notify, topic: topicDetail });
       const sessionViews =
         siteSessionViewModels ||
@@ -266,11 +272,11 @@ async function renderActions({
         },
         refreshTopicReplies,
         siteSessionViewModels: sessionViews,
-        topicDetail,
+        topicDetail: props.topicDetail ?? topicDetail,
         topicReplies: props.topicReplies ?? topicReplies,
         topicSession
       });
-      return { actions, topicSession };
+      return { actions, topicSession, canReplyAtRender: actions.decisionFor({ action: 'reply' }).allowed };
     },
     {
       initialProps: { sessionEpochs },
@@ -300,6 +306,85 @@ function seedTopicCache(
 }
 
 describe('topic action query mutations', () => {
+  it('updates reply permission in the same render that receives an ended topic', async () => {
+    const opening = detailFor('yaohuo', { closed: false, polls: [] });
+    const hook = await renderActions({ topicDetail: opening });
+    await act(async () => hook.result.current.topicSession.commands.composer.toggle(false));
+    expect(hook.result.current.canReplyAtRender).toBe(true);
+    await act(async () =>
+      hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: { ...opening, closed: true } })
+    );
+    expect(hook.result.current.canReplyAtRender).toBe(false);
+  });
+  it.each(['cookie', 'picker'] as const)(
+    'blocks Yaohuo transport when the topic ends during %s preparation',
+    async (stage) => {
+      const gate = Promise.withResolvers<void>();
+      const entered = jest.fn();
+      if (stage === 'cookie') {
+        jest.mocked(readManagedCookieHeader).mockImplementationOnce(async () => {
+          entered();
+          await gate.promise;
+          return { status: 'ok', header: 'sidyaohuo=test' };
+        });
+      } else {
+        mockGetDocument.mockImplementationOnce(async () => {
+          entered();
+          await gate.promise;
+          return {
+            canceled: false,
+            assets: [{ uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png', lastModified: 0 }]
+          };
+        });
+      }
+      const opening = detailFor('yaohuo', { closed: false, polls: [], categoryId: '177' });
+      const fetcher = jest.fn(async () => new Response(''));
+      const hook = await renderActions({ topicDetail: opening, fetcher });
+      await act(async () => hook.result.current.topicSession.commands.composer.changeContent('仍在等待的草稿'));
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending =
+          stage === 'cookie'
+            ? hook.result.current.actions.submitReply()
+            : hook.result.current.actions.uploadReplyImage();
+      });
+      await waitFor(() => expect(entered).toHaveBeenCalled());
+      await act(async () =>
+        hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: { ...opening, closed: true } })
+      );
+      await act(async () => {
+        gate.resolve();
+        await pending;
+      });
+      expect(mockRunYaohuoAction).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(hook.result.current.topicSession.state.replyContent).toBe('仍在等待的草稿');
+    }
+  );
+  it('closes an ended Yaohuo composer without losing its draft and blocks stale submission and upload', async () => {
+    const opening = detailFor('yaohuo', { closed: false, polls: [] });
+    const notify = jest.fn();
+    const fetcher = jest.fn(async () => new Response(''));
+    const hook = await renderActions({ topicDetail: opening, notify, fetcher });
+    await act(async () => hook.result.current.topicSession.commands.composer.changeContent('结束后保留的草稿'));
+    const staleSubmit = hook.result.current.actions.submitReply;
+    const staleUpload = hook.result.current.actions.uploadReplyImage;
+    await act(async () =>
+      hook.rerender({ sessionEpochs: initialForumSessionEpochs, topicDetail: { ...opening, closed: true } })
+    );
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
+    expect(hook.result.current.topicSession.state.replyContent).toBe('结束后保留的草稿');
+    expect(notify).toHaveBeenCalledWith('本帖已结束，无法回复');
+    await act(async () => {
+      await staleSubmit();
+      await staleUpload();
+      hook.result.current.topicSession.commands.composer.toggle(true);
+    });
+    expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
+    expect(mockRunYaohuoAction).not.toHaveBeenCalled();
+    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   beforeEach(async () => {
     await AsyncStorage.clear();
     appQueryClient.clear();

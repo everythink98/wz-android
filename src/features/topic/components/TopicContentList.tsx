@@ -438,6 +438,7 @@ export const TopicContentList = memo(function TopicContentList({
   const replyFilter = state.replyFilter;
   const replyOrder = state.replyOrder;
   const sourceReplies = read.topicReplies;
+  const endedEmpty = topic?.source === 'yaohuo' && topic.closed && topic.replyCount === 0 && sourceReplies.length === 0;
   const replyHasPrevious = read.replyHasPrevious;
   const replyHasMore = read.replyHasMore;
   const loadedQuotedReplies = read.loadedQuotedReplies;
@@ -1841,69 +1842,75 @@ export const TopicContentList = memo(function TopicContentList({
               ) : null}
             </View>
             {repliesPartialStatus ? <Text style={styles.noticeText}>{repliesPartialStatus}</Text> : null}
-            <View style={styles.replySelectionRow}>
-              <View style={styles.replyFilterRailSlot}>
-                <PillRail
-                  variant="subtabs"
-                  items={[
-                    { value: 'all', label: '全部' },
-                    { value: 'author', label: '只看楼主' },
-                    { value: 'images', label: '只看带图' }
-                  ]}
-                  value={replyFilter}
-                  onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
-                />
-              </View>
-              {replyCollectionComplete ? (
-                <>
-                  <Pressable
-                    ref={replyOrderMenuTriggerRef}
-                    collapsable={false}
-                    accessibilityRole="button"
-                    accessibilityLabel={`回复排序，当前${replyOrderLabel}`}
-                    accessibilityState={{ expanded: replyOrderMenuOpen }}
-                    hitSlop={TOUCH_HIT_SLOP}
-                    style={styles.replyOrderButton}
-                    onPress={openReplyOrderMenu}
-                  >
-                    <Text style={styles.replyOrderButtonText}>{replyOrderLabel}</Text>
-                    <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
-                  </Pressable>
-                  <PopupMenu
-                    accessibilityLabel="关闭回复排序菜单"
-                    placementStyle={replyOrderMenuPlacement}
-                    visible={replyOrderMenuOpen}
-                    onRequestClose={closeReplyOrderMenu}
-                  >
-                    <PopupMenuItem
-                      compact
-                      label="正序"
-                      selected={replyOrder === 'oldest'}
-                      onPress={() => selectReplyOrder('oldest')}
+            {!endedEmpty ? (
+              <>
+                <View style={styles.replySelectionRow}>
+                  <View style={styles.replyFilterRailSlot}>
+                    <PillRail
+                      variant="subtabs"
+                      items={[
+                        { value: 'all', label: '全部' },
+                        { value: 'author', label: '只看楼主' },
+                        { value: 'images', label: '只看带图' }
+                      ]}
+                      value={replyFilter}
+                      onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
                     />
-                    <PopupMenuItem
-                      compact
-                      label="倒序"
-                      last
-                      selected={replyOrder === 'newest'}
-                      onPress={() => selectReplyOrder('newest')}
-                    />
-                  </PopupMenu>
-                </>
-              ) : null}
-            </View>
-            {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
-            <View style={styles.searchRow}>
-              <TextInput
-                accessibilityLabel="评论内查找"
-                style={[styles.input, styles.flex]}
-                value={commentQuery}
-                onChangeText={onCommentQueryChange}
-                placeholder="评论内查找"
-                placeholderTextColor={theme.muted}
-              />
-              {commentQuery ? <IconButton icon={X} label="清空查找" onPress={() => onCommentQueryChange('')} /> : null}
-            </View>
+                  </View>
+                  {replyCollectionComplete ? (
+                    <>
+                      <Pressable
+                        ref={replyOrderMenuTriggerRef}
+                        collapsable={false}
+                        accessibilityRole="button"
+                        accessibilityLabel={`回复排序，当前${replyOrderLabel}`}
+                        accessibilityState={{ expanded: replyOrderMenuOpen }}
+                        hitSlop={TOUCH_HIT_SLOP}
+                        style={styles.replyOrderButton}
+                        onPress={openReplyOrderMenu}
+                      >
+                        <Text style={styles.replyOrderButtonText}>{replyOrderLabel}</Text>
+                        <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
+                      </Pressable>
+                      <PopupMenu
+                        accessibilityLabel="关闭回复排序菜单"
+                        placementStyle={replyOrderMenuPlacement}
+                        visible={replyOrderMenuOpen}
+                        onRequestClose={closeReplyOrderMenu}
+                      >
+                        <PopupMenuItem
+                          compact
+                          label="正序"
+                          selected={replyOrder === 'oldest'}
+                          onPress={() => selectReplyOrder('oldest')}
+                        />
+                        <PopupMenuItem
+                          compact
+                          label="倒序"
+                          last
+                          selected={replyOrder === 'newest'}
+                          onPress={() => selectReplyOrder('newest')}
+                        />
+                      </PopupMenu>
+                    </>
+                  ) : null}
+                </View>
+                {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
+                <View style={styles.searchRow}>
+                  <TextInput
+                    accessibilityLabel="评论内查找"
+                    style={[styles.input, styles.flex]}
+                    value={commentQuery}
+                    onChangeText={onCommentQueryChange}
+                    placeholder="评论内查找"
+                    placeholderTextColor={theme.muted}
+                  />
+                  {commentQuery ? (
+                    <IconButton icon={X} label="清空查找" onPress={() => onCommentQueryChange('')} />
+                  ) : null}
+                </View>
+              </>
+            ) : null}
             {sourceReplies.length > 0 ? renderReplyErrorState(repliesError) : null}
           </View>
         );
@@ -2009,6 +2016,7 @@ export const TopicContentList = memo(function TopicContentList({
       acceptedAnswerViewKey,
       actionBusy,
       canWrite,
+      endedEmpty,
       closeReplyOrderMenu,
       commentQuery,
       contentWidth,

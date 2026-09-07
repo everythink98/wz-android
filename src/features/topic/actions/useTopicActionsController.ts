@@ -322,6 +322,12 @@ export function useTopicActionsController({
   const detachReplyEdit = topicComposer.detachEdit;
   const openReplyEditor = topicComposer.editReply;
   const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+  useEffect(() => {
+    if (active && detail?.source === 'yaohuo' && detail.closed && replyComposerIntent.kind !== 'closed') {
+      detachReplyEdit();
+      notify('本帖已结束，无法回复');
+    }
+  }, [active, detail?.source, detail?.closed, detachReplyEdit, notify, replyComposerIntent.kind]);
   const mutationSource = detail?.source || 'nodeseek';
   const mutationTopicId = detail?.id || 'global';
   const mutationKey = useMemo(
@@ -520,6 +526,13 @@ export function useTopicActionsController({
     },
     [baseDecisionFor, pendingVariables, selectedTopic, topicDetail]
   );
+  const decisionForRef = useCommittedRef(decisionFor);
+  const assertReplyNotEnded = useCallback(() => {
+    const decision = decisionForRef.current({ action: 'reply' });
+    if (decision.reason === 'topic-ended') {
+      throw new HandledMutationError(topicActionDecisionMessage(decision), 'blocked', 'permission_denied');
+    }
+  }, [decisionForRef]);
 
   const cacheKeys = useCallback(
     (actionTopic: TopicDetail, ticket?: WritableSessionTicket) => {
@@ -680,7 +693,7 @@ export function useTopicActionsController({
             pending.topicId === actionTopic.id
           );
         });
-      const decision = decisionFor({
+      const decision = decisionForRef.current({
         ...variables.decision,
         pending: duplicate || pendingActionReservationsRef.current.has(reservationKey)
       });
@@ -748,7 +761,7 @@ export function useTopicActionsController({
         pendingActionReservationsRef.current.delete(reservationKey);
       }
     },
-    [cacheKeys, decisionFor, detachReplyEdit, ensureWritableSession, mutation.mutateAsync, notify, queryClient]
+    [cacheKeys, decisionForRef, detachReplyEdit, ensureWritableSession, mutation.mutateAsync, notify, queryClient]
   );
 
   const assertWritableTicket = useCallback(
@@ -929,6 +942,7 @@ export function useTopicActionsController({
       }
       try {
         assertWritableTicket(ticket);
+        if (draftRequest.path === '/bbs/book_re.aspx') assertReplyNotEnded();
         const result = await runYaohuoAction({
           fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
           request: requestFactory(cookieRead.header)
@@ -950,7 +964,7 @@ export function useTopicActionsController({
         throw new HandledMutationError(message, 'failure', normalizeDiagnosticReason(error));
       }
     },
-    [assertWritableTicket, authenticatedFetcher, notify]
+    [assertReplyNotEnded, assertWritableTicket, authenticatedFetcher, notify]
   );
 
   const runLinuxDoRequest = useCallback(
@@ -1456,6 +1470,7 @@ export function useTopicActionsController({
           multiple: false
         });
         assertWritableTicket(ticket);
+        if (actionTopic.source === 'yaohuo') assertReplyNotEnded();
         assertCurrentEditTarget();
         if (picked.canceled || !picked.assets?.[0]) {
           throw new HandledMutationError('已取消选择', 'canceled', 'canceled');
@@ -1503,6 +1518,7 @@ export function useTopicActionsController({
     });
     return uploadedMarkup || undefined;
   }, [
+    assertReplyNotEnded,
     cacheKeys,
     detachReplyEdit,
     ensureNodeImageApiKey,

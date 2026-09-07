@@ -42,7 +42,21 @@ gesture pan ${LEFT_X} ${PAGE_Y} ${PAGE_DX} 0 220
 wait "id=\"feed-source-all\" label=\"全部，已选择\"" 5000
 
 # An outward swipe at the first page stays on All; a short inward pull also cancels.
+wait id="feed-topic-first" 60000
 gesture pan ${LEFT_X} ${PAGE_Y} ${PAGE_DX} 0 800
+wait 1000
+wait id="main-tab-feed" 2000
 wait "id=\"feed-source-all\" label=\"全部，已选择\"" 5000
 gesture pan ${RIGHT_X} ${PAGE_Y} -100 0 800
+wait 1000
+wait id="main-tab-feed" 2000
 wait "id=\"feed-source-all\" label=\"全部，已选择\"" 5000
+
+# Stack navigation must leave the Compose page mounted and visible when returning.
+press id="feed-source-v2ex"
+wait id="feed-outcome-data-v2ex-all" 60000
+press id="feed-topic-first"
+wait id="topic-detail-loaded" 60000
+back
+wait id="feed-topic-first" 10000
+wait "id=\"feed-source-v2ex\" label=\"V2EX，已选择\"" 5000

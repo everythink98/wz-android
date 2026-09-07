@@ -458,6 +458,17 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
         parsePositiveInteger(link.getAttribute('href')?.match(/[?&](?:amp;)?(?:tofloor|reply)=(\d+)/i)?.[1])
       )
   );
+  const siteElements = (selector: string) =>
+    root.querySelectorAll(selector).filter((node) => node.parentNode === root || node.parentNode?.tagName === 'BODY');
+  const closed = siteElements('div.tipmini').some((node) => /\(ID\d+\)结束原因[:：]/.test(elementText(node)));
+  const emptyReplies = root
+    .querySelectorAll('div.view-no-reply-tip')
+    .some(
+      (node) =>
+        !node.closest('.bbscontent, blockquote') &&
+        /^暂无回复/.test(elementText(node.querySelector('.view-no-reply-text')))
+    );
+  const replyCountMatch = html.match(/更多回帖\((\d+)\)/);
   const preparedContent = prepareSanitizedForumContent(contentHtml, {
     baseUrl: BASE_URL,
     polls,
@@ -479,7 +490,8 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     url: url || `${BASE_URL}/bbs-${id}.html`,
     createdAt,
     lastReplyAt: createdAt,
-    replyCount: latestReplyFloor || parsePositiveInteger(html.match(/更多回帖\((\d+)\)/)?.[1]),
+    closed,
+    replyCount: emptyReplies ? 0 : latestReplyFloor || (replyCountMatch ? Number(replyCountMatch[1]) : undefined),
     viewCount: parsePositiveInteger(contentText.match(/\(阅\s*(\d+)\)/)?.[1]) || undefined,
     excerpt: textExcerpt(contentHtml),
     contentHtml: preparedContent.contentHtml,

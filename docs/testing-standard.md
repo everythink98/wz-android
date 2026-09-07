@@ -60,7 +60,7 @@ Topic 内容守恒由共享 compiler 的 Vitest 契约拥有：同一 fixture �
 | `@react-native-community/datetimepicker` | `SEARCH-03` | V2EX/Discourse 日期筛选 UI；匹配 APK 打开、取消和确认，核对筛选值与键盘/弹层几何。 |
 | `@react-native-community/slider` | `MORE-03`、`TOPIC-02` | 字号与音频进度 UI；匹配 APK 连续拖动、无障碍值和返回恢复。 |
 | `@shopify/flash-list` | `FEED-*`、`SEARCH-*`、`TOPIC-*`、`USER-*`、`LIBRARY-*`、`NOTIFY-*` | 各列表 canonical UI；匹配 APK 核对多列表回收、分页、滚动/返回和 rich cell 身份。 |
-| `react-native-gesture-handler` | `TOPIC-02`、`MORE-05`、`WRITE-01` | 图片缩放/翻页、代码与表格横滑、内容源拖排和 composer 滚动；匹配 APK 核对手势仲裁。 |
+| `react-native-gesture-handler` | `FEED-02`、`NOTIFY-01`、`TOPIC-02`、`MORE-05`、`WRITE-01` | 首页完整手势回归和通知刷新取消；图片缩放/翻页、代码与表格横滑、内容源拖排和 composer 滚动；匹配 APK 核对手势仲裁。 |
 | `react-native-pager-view` | `FEED-02` | `feed-navigation-motion` 挂载真实 TabView/TabBar，仅隔离 Native Pager，连续及反向进度必须改变蓝标与文字但不提交来源；`feed-screen` 固定按 route 投影的二级导航、非当前控件隔离、单列表和最终选择一次提交。恢复或升级上游 Pager 后，以匹配 APK 核对慢拖、快甩、回拖、取消、连续反向及跨页点击，二级栏随所属页面移动，结束无额外跳换；取消零读取、最终选择只读取一次，不拼接 idle 与 selected 协议。 |
 | `react-native-safe-area-context` | `NAV-01`、`TOPIC-02`、`WRITE-01` | 导航、预览、Modal/Sheet UI；匹配 APK 核对状态栏、底部手势区和键盘边界。 |
 | `react-native-screens` | `NAV-*`、`TOPIC-03`、`USER-02` | Native stack UI；匹配 APK 核对返回、嵌套路由、freeze 和原 route 状态恢复。 |
@@ -79,6 +79,12 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 `rendered` 场景必须直接挂载生产 Screen/组件，每次渲染新建确定性虚构对象，远端地址只用 `.invalid`，外部 I/O 与写操作回调保持无副作用；`device-only` 记录原生系统面、手势、键盘或真实生命周期边界；`non-visual` 记录没有独立 App 视觉面的能力及其用户可见承载面。双主题 RNTL 挂载只形成 `UI_PASS`，证明场景可渲染；样式问题必须在匹配 Android 构建上获得运行证据，mock 场景不能形成 `LIVE_PASS`。
 
 视觉入口只存在于 `dev/visual-gallery/`，生产入口和 `src/` 不得导入它或 `tests/ui/visual/`。场景不得用真实点赞、收藏、投票、上传、登录或故障注入制造状态，设备走查仍遵守本文件的只读授权边界。
+
+### 首页手势完整回归
+
+修改首页分页、列表滚动、刷新接线，或升级/修改 Pager、RNGH、FlashList、React Native 相关原生补丁时，必须在匹配 APK 上执行完整手势回归，不以单个复现动作或 UI 单测代替。沿用 `docs/operator-runbook.md` 的固定命令和 `LIVE-FEED-01`，不每次另写临时脚本：运行 tracked 首页 Replay、`scripts/check-feed-gestures.mjs` 的 68 组连续手势、独立惯性与双向 CANCEL/UP oracle，以及 Feed/通知刷新取消与再次刷新；补齐首尾边界、点选、分类栏、刷新交叉和页面返回。
+
+每项同时核对页面完整归位、来源与二级栏一致，以及应滚动时内容实际移动。完整横滑与短快滑必须断言来源实际切换，不能只查页面没有卡在半屏；短快滑分别在静止、惯性中和连续交接后执行，另测短慢拖自然结算与轻点停止惯性且不打开帖子。按用例保存结果、APK SHA-256、设备和输入方式；来源验证页、前置数据不足或并发触摸视为无效测试，不能计入通过。未执行的项目明确记 `NOT_VERIFIED`；模拟器自动注入不替代手机触感或实体鼠标操作。新的有效复现先补入现有 owner，再验证修复前失败、修复后通过。
 
 ## 三、测试设计
 

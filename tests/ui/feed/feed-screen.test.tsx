@@ -781,6 +781,24 @@ describe('Feed loading', () => {
     expect(view.getByLabelText('回到顶部')).toBeTruthy();
   });
 
+  it('clears the previous source top button when a new source starts at the first item', async () => {
+    const view = await render(renderFeed(false, [topic]));
+    await fireEvent.scroll(view.getByTestId('feed-outcome-data-all-default'), {
+      nativeEvent: {
+        contentOffset: { y: 640 },
+        contentSize: { height: 3000 },
+        layoutMeasurement: { height: 1000 }
+      }
+    });
+    expect(view.getByLabelText('回到顶部')).toBeTruthy();
+
+    await view.rerender(renderFeed(true, [], { feedSource: 'v2ex' }));
+    expect(view.queryByLabelText('回到顶部')).toBeNull();
+    await view.rerender(renderFeed(false, [topic], { feedSource: 'v2ex' }));
+    expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
+    expect(view.queryByLabelText('回到顶部')).toBeNull();
+  });
+
   it('resets the stable list before and after changing the Feed filter', async () => {
     const frameCallbacks: ((time: number) => void)[] = [];
     jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {

@@ -881,6 +881,29 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it('shows an ended empty Yaohuo topic without reply tools or an error state', async () => {
+    const ended: TopicDetail = { ...topic, source: 'yaohuo', closed: true, replyCount: 0, replies: [] };
+    const view = await render(<TopicFilterHarness topicDetail={ended} selectedTopic={ended} topicReplies={[]} />);
+    expect(view.getByText('已结束')).toBeTruthy();
+    expect(view.getByText('暂无回复')).toBeTruthy();
+    expect(view.queryByText('写回复')).toBeNull();
+    expect(view.queryByText('只看楼主')).toBeNull();
+    expect(view.queryByLabelText('评论内查找')).toBeNull();
+    expect(view.queryByLabelText('回复排序，当前正序')).toBeNull();
+    expect(view.queryByText('重试评论')).toBeNull();
+  });
+
+  it('keeps existing replies and reading tools visible after a Yaohuo topic ends', async () => {
+    const ended: TopicDetail = { ...topic, source: 'yaohuo', closed: true, replyCount: sourceReplies.length };
+    const view = await render(
+      <TopicFilterHarness topicDetail={ended} selectedTopic={ended} topicReplies={sourceReplies} />
+    );
+    expect(view.getByText('已结束')).toBeTruthy();
+    expect(view.getByLabelText('评论内查找')).toBeTruthy();
+    expect(view.getByLabelText('回复排序，当前正序')).toBeTruthy();
+    expect(view.queryByText('写回复')).toBeNull();
+    expect(view.queryByText('暂无回复')).toBeNull();
+  });
   it('copies the complete accepted answer from any visible accepted content row', async () => {
     const acceptedFloor = 42;
     const acceptedReply: Reply = {

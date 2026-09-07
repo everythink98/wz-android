@@ -1,0 +1,107 @@
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootView.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootView.kt
+index 06c01bb..9792f83 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootView.kt
++++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootView.kt
+@@ -60,6 +60,13 @@ class RNGestureHandlerRootView(context: Context?) : ReactViewGroup(context) {
+     }
+ 
+     return if (rootViewEnabled && rootHelper!!.dispatchTouchEvent(event)) {
++      // System cancellation must also reach native descendants (e.g. Compose pagers).
++      // Normal UP is already delivered by native handlers; a second terminal event kills fling.
++      if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
++        val cancelEvent = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
++        super.dispatchTouchEvent(cancelEvent)
++        cancelEvent.recycle()
++      }
+       true
+     } else {
+       super.dispatchTouchEvent(event)
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/NativeViewGestureHandler.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/NativeViewGestureHandler.kt
+index d53ab521..b9a5cc97 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/NativeViewGestureHandler.kt
++++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/NativeViewGestureHandler.kt
+@@ -139,8 +139,8 @@ class NativeViewGestureHandler : GestureHandler() {
+       is NativeViewGestureHandlerHook -> this.hook = view
+       is ReactEditText -> this.hook = EditTextHook(this, view)
+       is ReactSwipeRefreshLayout -> this.hook = SwipeRefreshLayoutHook(this, view)
+-      is ReactScrollView -> this.hook = ScrollViewHook()
+-      is ReactHorizontalScrollView -> this.hook = ScrollViewHook()
++      is ReactScrollView -> this.hook = ScrollViewHook(view)
++      is ReactHorizontalScrollView -> this.hook = ScrollViewHook(view)
+       is ReactTextView -> this.hook = TextViewHook()
+       is ReactViewGroup -> this.hook = ReactViewGroupHook()
+     }
+@@ -181,12 +181,12 @@ class NativeViewGestureHandler : GestureHandler() {
+ 
+       when {
+         shouldActivateOnStart -> {
+-          tryIntercept(view, event)
++          hook.tryIntercept(view, event)
+           hook.sendTouchEvent(view, event)
+           activate()
+         }
+ 
+-        tryIntercept(view, event) -> {
++        hook.tryIntercept(view, event) -> {
+           hook.sendTouchEvent(view, event)
+           activate()
+         }
+@@ -324,8 +324,6 @@ class NativeViewGestureHandler : GestureHandler() {
+       }
+     }
+ 
+-    private fun tryIntercept(view: View, event: MotionEvent) = view is ViewGroup && view.onInterceptTouchEvent(event)
+-
+     private val defaultHook = object : NativeViewGestureHandlerHook {}
+ 
+     enum class ScrollDirection(val value: Int) {
+@@ -336,6 +334,8 @@ class NativeViewGestureHandler : GestureHandler() {
+   }
+ 
+   interface NativeViewGestureHandlerHook {
++    fun tryIntercept(view: View, event: MotionEvent) = view is ViewGroup && view.onInterceptTouchEvent(event)
++
+     /**
+      * Called when gesture is in the UNDETERMINED state, shouldActivateOnStart is set to false,
+      * and both tryIntercept and wantsToHandleEventBeforeActivation returned false.
+@@ -513,7 +513,39 @@ class NativeViewGestureHandler : GestureHandler() {
+     }
+   }
+ 
+-  private class ScrollViewHook : NativeViewGestureHandlerHook {
++  private class ScrollViewHook(view: View) : NativeViewGestureHandlerHook {
++    private val touchSlop = ViewConfiguration.get(view.context).scaledTouchSlop
++    private var downX = 0f
++    private var downY = 0f
++    private var stoppedFlingOnDown = false
++
++    override fun tryIntercept(view: View, event: MotionEvent): Boolean {
++      if (event.actionMasked == MotionEvent.ACTION_MOVE &&
++        ((event.x - downX) * (event.x - downX) + (event.y - downY) * (event.y - downY)) > touchSlop * touchSlop
++      ) {
++        stoppedFlingOnDown = false
++      }
++      val intercepted = super.tryIntercept(view, event)
++      if (event.actionMasked == MotionEvent.ACTION_DOWN) {
++        downX = event.x
++        downY = event.y
++        stoppedFlingOnDown = intercepted
++        if (intercepted) {
++          // Catching momentum is not a new drag. Stop it, then let the native
++          // ScrollView determine the new direction before cancelling the pager.
++          when (view) {
++            is ReactScrollView -> view.abortAnimation()
++            is ReactHorizontalScrollView -> view.abortAnimation()
++          }
++          return super.tryIntercept(view, event)
++        }
++      }
++      return intercepted
++    }
++
++    // A tap that only stops momentum must not open the row underneath it.
++    override fun canActivate(view: View) = stoppedFlingOnDown || super.canActivate(view)
++
+     override fun shouldCancelRootViewGestureHandlerIfNecessary() = true
+   }
+ 

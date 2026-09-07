@@ -10,6 +10,7 @@ export type TopicActionDecisionReason =
   | 'identity-pending'
   | 'identity-unavailable'
   | 'object-forbidden'
+  | 'topic-ended'
   | 'missing-target'
   | 'already-complete'
   | 'pending';
@@ -46,6 +47,8 @@ export function topicActionDecisionMessage(decision: TopicActionDecision) {
       return '账号状态暂不可确认，请重试账号核对';
     case 'object-forbidden':
       return '当前内容不允许此操作';
+    case 'topic-ended':
+      return '本帖已结束，无法回复';
     case 'missing-target':
       return '当前操作目标不完整，请刷新后重试';
     case 'already-complete':
@@ -76,6 +79,9 @@ export function decideTopicAction({
 }): TopicActionDecision {
   if (!topic?.id) return { allowed: false, reason: 'missing-target' };
   if (!sourceSupportsTopicAction(topic.source, action)) return { allowed: false, reason: 'unsupported' };
+  if (topic.source === 'yaohuo' && topic.closed && (action === 'reply' || action === 'upload')) {
+    return { allowed: false, reason: 'topic-ended' };
+  }
   if (account?.identityTrust === 'unknown') return { allowed: false, reason: 'identity-unavailable' };
   if (!account?.canWrite) return { allowed: false, reason: 'login-required' };
   if (!objectAllowed) return { allowed: false, reason: 'object-forbidden' };

@@ -1,7 +1,16 @@
 diff --git a/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt b/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt
+index 5eaa6069..c27e8649 100644
 --- a/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt
 +++ b/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt
-@@ -86,6 +86,8 @@
+@@ -56,6 +56,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+   // untouched. It only reaches DESTROYED for real in dispose() below.
+   private val composeLifecycleOwner = ComposeViewLifecycleOwner()
+   private var composeView: ComposeView? = null
++  private var cancellingPagerTouch = false
+   private val pages = mutableStateListOf<View>()
+   private val scrollEnabledState = mutableStateOf(true)
+   private val orientationState = mutableStateOf(Orientation.Horizontal)
+@@ -86,6 +87,8 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
  
    private fun createComposeView(): ComposeView {
      return ComposeView(context).apply {
@@ -10,3 +19,42 @@ diff --git a/node_modules/react-native-pager-view/android/src/main/java/com/reac
        layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
        isSaveEnabled = false
        layoutDirection = androidLayoutDirection()
+@@ -155,6 +158,22 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+     return super.dispatchTouchEvent(event)
+   }
+ 
++  override fun onTouchEvent(event: MotionEvent): Boolean {
++    if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
++      // Native gesture coordinators cancel each View directly. Compose consumes
++      // input in dispatchTouchEvent, so bridge cancellation to the pager only.
++      cancellingPagerTouch = true
++      try {
++        composeView?.dispatchTouchEvent(event)
++      } finally {
++        cancellingPagerTouch = false
++      }
++      didDelegateGestureToAncestor = false
++      updateSameOrientationAncestorsGestureState(false)
++    }
++    return super.onTouchEvent(event)
++  }
++
+   override fun canScrollHorizontally(direction: Int): Boolean {
+     if (orientationState.value != Orientation.Horizontal) {
+       return false
+@@ -586,7 +605,14 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+     AndroidView(
+       modifier = Modifier.fillMaxSize(),
+       factory = { context ->
+-        FrameLayout(context).apply {
++        object : FrameLayout(context) {
++          override fun dispatchTouchEvent(event: MotionEvent): Boolean {
++            // The coordinator owns native child cancellation and preserves the
++            // active ScrollView. Do not cancel that child a second time.
++            if (cancellingPagerTouch && event.actionMasked == MotionEvent.ACTION_CANCEL) return true
++            return super.dispatchTouchEvent(event)
++          }
++        }.apply {
+           layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+           isSaveEnabled = false
+           attachChild(this, child)

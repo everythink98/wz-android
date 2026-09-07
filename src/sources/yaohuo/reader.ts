@@ -14,7 +14,13 @@ import type {
 import { checkYaohuoLoginHtml, ensureYaohuoHtmlLoggedIn } from './sessionParser';
 import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
 import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesDocument, parseYaohuoTopicHtml } from './topicParser';
-import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL, requireYaohuoRequestUrl } from './protocol';
+import {
+  YAOHUO_BASE_URL,
+  YAOHUO_BBS_REFERER,
+  YAOHUO_LOGIN_URL,
+  requireYaohuoRequestUrl,
+  extractYaohuoTopicParts
+} from './protocol';
 import {
   annotateSourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries,
@@ -226,7 +232,12 @@ export async function getYaohuoTopicDirect({
           bookmarkId: favoriteId
         }
       : {}),
-    replyCount: Math.max(detail.replyCount || 0, topic.replyCount || 0),
+    replyCount:
+      detail.replyCount === 0
+        ? 0
+        : detail.replyCount === undefined
+          ? topic.replyCount
+          : Math.max(detail.replyCount, topic.replyCount || 0),
     replies: [],
     replyCompleteness: 'partial' as const,
     replyHasMore: true,
@@ -302,23 +313,28 @@ export async function getYaohuoRepliesDirect({
         ?.getAttribute('value')
     );
   })();
-  if (targetFloor !== undefined && !confirmedPage) {
-    throw new Error('妖火未确认目标楼层所在页');
-  }
   const resolvedPage = confirmedPage || page;
-  if (position.kind === 'cursor' && resolvedPage !== page) {
-    throw new Error('妖火未确认请求的回复页');
-  }
-  if (position.kind === 'start' && order === 'newest' && confirmedPage !== 1) {
-    throw new Error('妖火未确认最新回复窗口');
-  }
   const result = parseYaohuoRepliesDocument(pageRoot, {
     url: pageResult.url,
     page: resolvedPage,
     limit
   });
   const items = result.items;
-  if (position.kind === 'start' && replyCount === 0 && !items.length) {
+  const identifiedReplyPage =
+    pageRoot.querySelector('title')?.text.trim() === '查看回复' &&
+    pageRoot
+      .querySelectorAll('a[href]')
+      .some(
+        (link) =>
+          link.text.trim() === '返回主题' && extractYaohuoTopicParts(link.getAttribute('href'))?.id === topicIdValue(id)
+      );
+  const hasPageField =
+    parsePositiveInteger(
+      pageRoot
+        .querySelector('input[name="page"], input#Action_page, input[name="replyPage"], input#Action_replyPage')
+        ?.getAttribute('value')
+    ) > 0;
+  if (position.kind === 'start' && replyCount === 0 && !items.length && (identifiedReplyPage || hasPageField)) {
     return Object.assign(result, {
       items: [],
       completeness: 'complete' as const,
@@ -330,6 +346,18 @@ export async function getYaohuoRepliesDirect({
       nextPage: null,
       nextOffset: null
     });
+  }
+  if (targetFloor !== undefined && !confirmedPage) {
+    throw new Error('妖火未确认目标楼层所在页');
+  }
+  if (position.kind === 'cursor' && resolvedPage !== page) {
+    throw new Error('妖火未确认请求的回复页');
+  }
+  if (position.kind === 'start' && order === 'newest' && confirmedPage !== 1) {
+    throw new Error('妖火未确认最新回复窗口');
+  }
+  if (position.kind === 'start' && !items.length && !identifiedReplyPage && !hasPageField) {
+    throw new Error('妖火普通回复窗口为空');
   }
   if (position.kind === 'cursor' && !items.length) {
     throw new Error('妖火普通回复窗口为空');

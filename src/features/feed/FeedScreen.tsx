@@ -262,6 +262,7 @@ export const FeedScreen = memo(function FeedScreen({
     requestedFeedPageRef.current = null;
     lastAutoLoadMoreOffsetRef.current = null;
     autoLoadPausedAfterFailureRef.current = false;
+    setShowFloatingActions(false);
   }, [categoryFilter, feedFilter, feedSource, readingFilter]);
 
   useEffect(() => {
