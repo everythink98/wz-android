@@ -8,7 +8,7 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/domain/forum/searchFilters';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { SearchResponse, Source, Topic } from '@/domain/forum/models';
 import { aggregateSearchSources, isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';

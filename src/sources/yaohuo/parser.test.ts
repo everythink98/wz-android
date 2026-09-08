@@ -5,7 +5,7 @@ import { parseHtml } from '@/domain/forum/html';
 import { parseYaohuoListHtml } from './feedParser';
 import { parseYaohuoRepliesDocument, parseYaohuoTopicHtml } from './topicParser';
 import { parseYaohuoUserProfileDocument, parseYaohuoUserRepliesDocument } from './userParser';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 function parseReplies(html: string, options?: Parameters<typeof parseYaohuoRepliesDocument>[1]) {
   return parseYaohuoRepliesDocument(parseHtml(html), options);

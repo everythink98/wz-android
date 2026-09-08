@@ -3,6 +3,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { View, type ImageURISource } from 'react-native';
 import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { compatibleImageRequestIdentity } from '@/platform/media/compatibleImageSources';
+import { useImageLoadDiagnostics } from '@/platform/media/imageLoadDiagnostics';
 import { imageSourceFromUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import type { ForumStickerImageRenderProps } from '@/ui/content/ForumStickerContent';
@@ -43,6 +44,7 @@ export function ManagedTopicMediaImage({
     void lease.attemptId;
     return { ...source };
   }, [lease.attemptId, source]);
+  const diagnostic = useImageLoadDiagnostics(attemptedSource, lease.attemptId, 'glide', lease.admitted);
   if (!normalizedSrc || !lease.admitted) {
     return <View pointerEvents="none" style={style} />;
   }
@@ -54,12 +56,18 @@ export function ManagedTopicMediaImage({
       allowDownscaling
       cachePolicy="disk"
       contentFit={contentFit}
-      onDisplay={() => lease.settle('displayed')}
-      onError={() => lease.settle('error')}
+      onDisplay={() => {
+        diagnostic.displayed();
+        lease.settle('displayed');
+      }}
+      onError={(error) => {
+        diagnostic.failed(error);
+        lease.settle('error');
+      }}
       onLoad={onLoad}
       onProgress={(event) => lease.progress(event.loaded)}
       recyclingKey={requestIdentity}
-      source={attemptedSource}
+      source={diagnostic.source}
       style={style}
     />
   );

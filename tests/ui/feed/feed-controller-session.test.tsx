@@ -5,7 +5,7 @@ import { useFeedController } from '@/features/feed/useFeedController';
 import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type { ReadGateway } from '@/sources/readGateway';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';

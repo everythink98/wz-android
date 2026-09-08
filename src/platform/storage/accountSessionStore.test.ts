@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AccountSessionSnapshot } from '@/domain/session/siteSessionState';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import {
   loadAccountSessionMigrationCompleted,
   loadAccountSessionSnapshot,
@@ -24,6 +25,49 @@ vi.mock('@react-native-async-storage/async-storage', () => {
 const asyncStorage = AsyncStorage as typeof AsyncStorage & { __store: Map<string, string> };
 
 describe('account session store', () => {
+  it('records snapshot restore and persistence failures without identity contents', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('private identity content'));
+      await expect(loadAccountSessionSnapshot('nodeseek')).resolves.toBeNull();
+      vi.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('private identity content'));
+      await expect(
+        saveAccountSessionSnapshot({
+          site: 'linuxdo',
+          status: 'anonymous',
+          cookieSummary: [],
+          isVerifying: false,
+          identityTrust: 'none'
+        })
+      ).rejects.toThrow();
+      expect(lines.map((line) => JSON.parse(line))).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            area: 'session',
+            operation: 'load',
+            phase: 'finish',
+            outcome: 'failure',
+            source: 'nodeseek',
+            reason: 'storage_error'
+          }),
+          expect.objectContaining({
+            area: 'session',
+            operation: 'save',
+            phase: 'finish',
+            outcome: 'failure',
+            source: 'linuxdo',
+            reason: 'storage_error'
+          })
+        ])
+      );
+      expect(lines.join('')).not.toContain('private identity content');
+    } finally {
+      setDiagnosticWriter(null);
+    }
+  });
   beforeEach(() => {
     asyncStorage.__store.clear();
     vi.clearAllMocks();

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { yaohuoNotificationAdapter } from './notifications';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 function html(value: string) {
   return new Response(value, {
@@ -10,6 +11,26 @@ function html(value: string) {
 }
 
 describe('Yaohuo notifications', () => {
+  it('retains malformed-row evidence when valid rows are filtered as read', async () => {
+    const page = await yaohuoNotificationAdapter.listPage({
+      identityKey: 'yaohuo:7',
+      userId: '7',
+      unreadOnly: true,
+      fetcher: async () =>
+        html(
+          '<div class="listmms"><a href="/bbs/messagelist_view.aspx?id=41">消息</a></div><div class="listmms">损坏行</div>'
+        )
+    });
+    expect(page.items).toEqual([]);
+    expect(sourceDiagnosticSummary(page)).toMatchObject({
+      candidateCount: 2,
+      validCount: 1,
+      filteredCount: 1,
+      droppedCount: 1,
+      hasDegradation: true,
+      isParseEmpty: false
+    });
+  });
   it('exposes the original message categories and category query', async () => {
     await expect(yaohuoNotificationAdapter.getCategories({ identityKey: 'yaohuo:7', userId: '7' })).resolves.toEqual([
       { id: 'all', label: '收件箱' },

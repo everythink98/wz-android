@@ -532,7 +532,9 @@ private object SvgDocumentFetcherRuntime {
       promise.reject("svg_invalid_request", "SVG 请求无效。", error)
       return
     }
-    val call = NetworkProxyRuntime.forumImageClient().newCall(request)
+    val call = NetworkProxyRuntime.imageCallFactory.newCall(
+      request.newBuilder().tag(ImageRequestPurpose::class.java, ImageRequestPurpose.SVG_PROBE).build()
+    )
     call.timeout().timeout(boundedSvgFetchTimeoutMs(timeoutMs), TimeUnit.MILLISECONDS)
     call.enqueue(object : Callback {
       override fun onFailure(call: Call, error: IOException) {

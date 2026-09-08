@@ -6,12 +6,14 @@
 
 历史条目不会因为测试合并或产品演进而删除。多个 REG 可以指向同一个 canonical owner；当前 owner 被更强证据取代时更新本文件，不复制完整测试清单。
 
+编号按事故唯一分配。2026-09-07 整理时发现两组重号：刷新指示器停留改为 `REG-FEED-028`（原误用 `REG-FEED-019`），刷新圆圈闪回改为 `REG-FEED-029`（原误用 `REG-FEED-020`）；原 `REG-FEED-019/020` 分别保留给 Pager 事件顺序和纵向斜滑事故，历史症状、owner 与状态不变。
+
 ## 状态模型
 
 | 状态 | 含义 |
 | --- | --- |
-| `OPEN` | 已确认且尚未修复；必须由一个携带 canonical REG 的 expected-failure 保存最小失败 oracle。 |
-| `RESOLVED` | 当前契约已有 canonical owner，历史事故不再决定测试结构。 |
+| `OPEN` | 已确认问题尚未闭合。可自动稳定复现且未修复时，用携带 canonical REG 的 expected-failure 保存失败 oracle；设备专属问题或明确要求完整 Live 才能关闭的条目，记录操作、失败判据和待验收分支。无法稳定复现时明确证据缺口，不伪造 expected-failure。 |
+| `RESOLVED` | 当前契约已有 canonical owner，并达到该条目的关闭条件；历史事故不再决定测试结构，也不代表所有设备和真实来源分支都已验证。 |
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
@@ -136,7 +138,7 @@
 | 上游证据 | [RN 默认值变更 PR 55189](https://github.com/react/react-native/pull/55189)；[RNGH 同组合卡住案例及关闭 nestedScrollEnabled 的处理](https://github.com/software-mansion/react-native-gesture-handler/issues/4231#issuecomment-4615780766)。 |
 | 修复验收 | 4 项真实 AndroidX JVM 用例与 76 项 Feed UI 测试通过。匹配最终 APK 的 API 35 模拟器验证 50/100px 轻拉松手收回、2200px 长拉、拉到 2400px 后回拉松手、CANCEL 后再次下拉，以及 14 步快慢斜滑/来源切换；NodeSeek 与聚合录屏均只有一个连续刷新圆弧区间。物理设备、通知页真实取消与全部系统中断路径未验。 |
 
-## `REG-FEED-020` 下拉刷新圆圈松手后消失再出现
+## `REG-FEED-029` 下拉刷新圆圈松手后消失再出现
 
 | 字段 | 内容 |
 | --- | --- |
@@ -147,7 +149,7 @@
 | 当前 owner | `tests/ui/feed/feed-controller-session.test.tsx` 的成功/失败刷新连续性与请求替换用例；共享装配仍由 `tests/ui/feed/feed-screen.test.tsx` 拥有，设备证据使用匹配 APK 的逐帧下拉录屏。 |
 | 失败 oracle | 将取消与读取分开结算，原实现的取消阶段 refreshing=false，新实现从回调到成功/失败结算前均为 true，终态为 false。同一模拟器、同一顶部下拉，修复前可见区间为 0.983–2.067s 与 2.217–2.983s；修复后为连续 0.950–2.850s，未出现中间断档。像素探针限定本次固定 viewport 的顶部圆圈区域，不代替其他设备和网络故障验收。 |
 
-## `REG-FEED-019` 首页下拉刷新指示器停留且未触发读取
+## `REG-FEED-028` 首页下拉刷新指示器停留且未触发读取
 
 | 字段 | 内容 |
 | --- | --- |
@@ -5137,10 +5139,23 @@
 | --- | --- |
 | 状态 | `OPEN` |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-03` |
-| 历史症状与根因 | NodeSeek `post-863650-1` 的历史 Release 样本曾出现 Feed `+172,595KB`、`Cannot add callbacks to a cancelled EngineJob`、App PID 退出和模拟器失去响应；有效 heapprofd 样本在 5 次滚动中记录约 1.14GB 总 malloc、仅约 12MB 净留存，Release mapping 将主链还原为 Glide `DecodeJob`、`BitmapFactory.decodeStream` 与 `SkJpegCodec`，说明主要风险是巨大解码工作集和分配抖动，而非持续 JS 泄漏。Glide 5.0.9 与当前 compileSdk 36 不兼容，Glide 5.0.5/回收池 40 保持固定。恢复版 APK 的本轮同条件冷启基线为 Feed `254,970KB`，同 PID 两轮 40 下/40 上的采样峰值 `487,861KB`，返回 Feed 60 秒 `358,337KB`，gfxinfo p95/p99 `18/21ms`，无 Fatal、ANR、OOM 或 EngineJob。随后已独立修复 `REG-TOPIC-144`，并在现有 expo-image patch owner 中把 resize rerender 投递到下一主线程任务，以 generation、attach 与最终宽高丢弃 stale task；Release Kotlin、expo-image Release unit test 和 x86_64 APK 均已构建通过。候选 APK `c63fdc4d…` 经授权覆盖安装后，等待 Package Manager handler 与磁盘同步，再关闭同一 `WZ_Pixel_API_35` 并以 `-no-snapshot-load -no-snapshot-save` 冷启；后续各次冷启均保持相同 APK SHA、`1.3.134/138`、`firstInstallTime=2026-07-26 16:51:37` 与登录数据。两次完整独立候选流程均在同一 App PID 内完成两轮 40 下/40 上：其 Feed/采样峰值/返回 Feed 60 秒分别为 `254,352/428,885/352,410KB` 与 `254,142/464,721/362,399KB`，gfxinfo p95/p99 分别为 `18/21ms`、`16/19ms`，jank 为 `0.51%`、`0.38%`，均无 Fatal、ANR、OOM、EngineJob 或网络异常；原生树保持约 `61–62` 节点，顶部、5 步、中段和反向截图未见空白、4:3 回退、比例/行高/圆角/间距变化。第三次独立冷启先出现可关闭的既有 linux.do 登录 WebView，按关闭后的 Feed `296,147KB` 归一；第一轮及第二轮下行完成，第二轮反向约第 26–30 步时整个 emulator/qemu 进程退出，宿主 Android Emulator 36.5.11 同分钟生成 `48,356,112` 字节 crash dump，故该轮记 `BLOCKED_BY_ENV`，不能当成 App Fatal，也不能关闭总体容量问题。再次冷启后 APK/数据仍完整，候选 7/7 只读 Replay 全部通过。 |
+| 历史症状与根因 | NodeSeek `post-863650-1` 的历史 Release 样本曾出现 Feed `+172,595KB`、`Cannot add callbacks to a cancelled EngineJob`、App PID 退出和模拟器失去响应；有效 heapprofd 样本在 5 次滚动中记录约 1.14GB 总 malloc、仅约 12MB 净留存，Release mapping 将主链还原为 Glide `DecodeJob`、`BitmapFactory.decodeStream` 与 `SkJpegCodec`，说明主要风险是巨大解码工作集和分配抖动，而非持续 JS 泄漏。Glide 5.0.9 与当前 compileSdk 36 不兼容，Glide 5.0.5/回收池 40 保持固定。恢复版 APK 的本轮同条件冷启基线为 Feed `254,970KB`，同 PID 两轮 40 下/40 上的采样峰值 `487,861KB`，返回 Feed 60 秒 `358,337KB`，gfxinfo p95/p99 `18/21ms`，无 Fatal、ANR、OOM 或 EngineJob。随后已完成 `REG-TOPIC-144` 的代码修复（该条目仍等待完整设备证据关闭），并在现有 expo-image patch owner 中把 resize rerender 投递到下一主线程任务，以 generation、attach 与最终宽高丢弃 stale task；Release Kotlin、expo-image Release unit test 和 x86_64 APK 均已构建通过。候选 APK `c63fdc4d…` 经授权覆盖安装后，等待 Package Manager handler 与磁盘同步，再关闭同一 `WZ_Pixel_API_35` 并以 `-no-snapshot-load -no-snapshot-save` 冷启；后续各次冷启均保持相同 APK SHA、`1.3.134/138`、`firstInstallTime=2026-07-26 16:51:37` 与登录数据。两次完整独立候选流程均在同一 App PID 内完成两轮 40 下/40 上：其 Feed/采样峰值/返回 Feed 60 秒分别为 `254,352/428,885/352,410KB` 与 `254,142/464,721/362,399KB`，gfxinfo p95/p99 分别为 `18/21ms`、`16/19ms`，jank 为 `0.51%`、`0.38%`，均无 Fatal、ANR、OOM、EngineJob 或网络异常；原生树保持约 `61–62` 节点，顶部、5 步、中段和反向截图未见空白、4:3 回退、比例/行高/圆角/间距变化。第三次独立冷启先出现可关闭的既有 linux.do 登录 WebView，按关闭后的 Feed `296,147KB` 归一；第一轮及第二轮下行完成，第二轮反向约第 26–30 步时整个 emulator/qemu 进程退出，宿主 Android Emulator 36.5.11 同分钟生成 `48,356,112` 字节 crash dump，故该轮记 `BLOCKED_BY_ENV`，不能当成 App Fatal，也不能关闭总体容量问题。再次冷启后 APK/数据仍完整，候选 7/7 只读 Replay 全部通过。 |
 | 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/tooling/expo-image-resize-patch.test.ts` 与 `docs/operator-runbook.md` 的唯一重图 Release 非回退流程 |
 | 失败 oracle | 只在主登录态 `WZ_Pixel_API_35` 对 `post-863650-1` 执行同条件流程；以基线三轮中位数及最大自然偏差判断 PSS/帧/重复请求非回退，首次同方向超出后补一轮复测。新增或更早出现的空白、比例/行高变化、重复 identity 请求、OOM、ANR、Fatal、PID 退出或模拟器失去响应直接保持 `OPEN`；新旧均触发独立 `system_server`/AVD 故障时记 `BLOCKED_BY_ENV`。历史绝对 MB 数值只作观察，不撤销已通过行为 oracle 且性能中性的正确性修复，也不用其他图片帖稀释或替代该对象。 |
 
+
+## `REG-NOTIFY-061` 通知详情失败态前往主题时把点击事件当成主题
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02`、`TOPIC-01/03` |
+| 历史症状与根因 | 2026-09-08 用户报告消息通知中点击“前往主题回复”闪退。详情失败态直接把接受可选 Topic 的 `onOpenTopic` 绑定给按钮，Native press event 被解释为 linkedTopic，覆盖解析出的主题并丢失目标回复；Topic route 随后拿不到合法 source。主 API 35 模拟器上第一条已读 NodeSeek 通知详情报“目标评论未找到”，点击该按钮稳定产生 `TypeError: Cannot read property 'label' of undefined`；Native fatal 堆栈从 `ContentSourceDisabledState` 指向 `TopicRoute`，进程退出，确认本次现场与参数缺陷一致。 |
+| 修复范围 | 失败态动作显式零参数调用 `onOpenTopic()`，复用现有通知主题与回复定位；富文本主题链接仍传递其自身目标。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx` 固定详情失败后带 Native press event 的 Topic 参数与 commentId/floor；`tests/ui/notifications/notifications-screen.test.tsx` 覆盖“查看完整主题”的零参数动作。 |
+| 失败 oracle | seed `20260908` 修复前两项失败：事件进入 topic 且 targetReply 丢失；单处回调修复后同 seed 两项通过。 |
+| 设备证据 | 2026-09-08 在 `WZ_Pixel_API_35` / `emulator-5554` 上先以旧包 `1.3.140/144`、SHA-256 `0058508a939bd5f7435afc6ece477a3657d2822c4208c3c67c9fba225d0bd95f` 复现 Native fatal；当前 dirty 源码以 `:app:assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon` 构建本地验收包，同版本、SHA-256 `fc3c4706ba9c1467de6e46dcf90684c642b4f3b7cbaad6f5a3dcc2aa99edc7bd`，相同开发签名覆盖安装，`firstInstallTime=2026-07-26 16:51:37` 未变，三站登录态保持。相同已读通知失败态按钮进入目标主题；返回后再次进入成功，进程 PID 保持 7164，目标进程无 JS/Native fatal。`NOTIFY-02` 为 `LIVE_PASS`，安装身份为 `APK_SANITY`。 |
+| 验证边界 | 目标主题已由作者设为私有，实际进入既有“暂无权限”终态，不能据此宣称设备已定位原回复；commentId/floor 保留由 UI owner 证明。实体手机、其他来源完整链路与私有帖回复定位为 `NOT_VERIFIED`。本地验收包未走正式发布，未递增版本或提交。 |
 
 ## `REG-NOTIFY-060` 超时提前释放通知投递队列，迟到摘要可在清理后出现
 
@@ -5185,3 +5200,41 @@
 | 历史症状与根因 | 2026-09-05 的 1.3.135 设备验收中，fixture 应为 68,340,133 字节，App 经本地代理续传后为 68,340,122；损坏样本末段多处各缺一字节，脱离 Expo 的 nc 代理对照也少 10 字节。具体根因未确定；不能把另一项已确认的 HTTP 提前半关闭直接当作这 11 字节丢失的根因。 |
 | 当前 owner | `dev/app-update-proof/index.tsx`、`scripts/app-update-proof-server.mjs` 与 `tests/live/agent-live.md` 的 `LOCAL-UPDATE-01`；尚无可靠的自动失败 oracle。 |
 | 证据边界 | 同一旧 APK 冷启后，完整下载、暂停/重启/206 续传及多轮直接 relay 字节对照均通过；普通/无窗口、慢接收及 Wi-Fi/蜂窝对照未复现单字节丢失。保留历史记录，按用户要求等待后续复现日志，不继续猜测修改、放宽 SHA 校验或增加自动重试。官方 Android Emulator issue 150758736 具有相似症状，只作后续调查线索，不证明本事故归因。 |
+
+
+## `REG-PROXY-015` 图片消费者持有已退休的网络客户端
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`、`TOPIC-03`、`MORE-01`、`ACCOUNT-01` |
+| 历史症状与根因 | 关联 `REG-PROXY-010` 的运行时轮换遗漏：Fresco 初始化后同时持有旧 OkHttp client 与其取消执行器；Glide 已创建的 loader/fetcher 仍可持有旧 client，轮换时重新注册不能更新这些对象。旧 executor drain 后，新图片请求报 `executor rejected`，普通重试继续使用同一个失效入口；SVG 创建 Call 与发送之间也存在退休竞态。真实生产 Glide loader 的修复前测试失败，稳定 factory 接入后同一行为通过。手机日志只证明轮换后图片反复失败且重启恢复，缺少旧会话原生异常栈，未证明该事故根因。 |
+| 当前 owner | `plugins/withNetworkProxyModule.js` 生成的 `NetworkProxyRuntimeTest`；RN 注入 wiring 由 `patches/react-native+0.86.3.patch` 中的 `ReactOkHttpNetworkFetcherTest` 负责，设备链路由同 plugin 生成的 `NetworkImageRuntimeInstrumentedTest` 负责。 |
+| 现场证据边界 | 2026-09-08 的 V2EX 后续现场：实体手机保留原进程时，混排图片仍失败且点按重试未恢复；同期 generation 1 的媒体请求返回 200。该入口走 Fresco，失败后另经 SVG 兼容探测请求；现有记录未关联图片显示失败与具体网络 Call，且安装包未输出该图片的原始异常，故成功请求不能排除旧客户端缺陷，也不能据此认定解码故障。实体手机事故归因仍为 `NOT_VERIFIED`。 |
+
+补充诊断时通过实际 RN Android Image 组件确认：0.86.3 的单对象 source 分支遗漏 header 转发，导致 Fresco 收不到来源及图片关联标记。现有 RN patch 已补齐该分支，`tests/ui/shared/android-image-headers.test.tsx` 保留修复前失败、修复后通过的行为证据；Native owner 同时验证标记在传输前移除、响应读取与 lease 终态。该遗漏是已确认代码缺陷，仍不等同于原手机事故归因。
+
+
+## `REG-TOPIC-155` 行内大图后的文字基线落到段落之外
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`；共享 Android Text 行高与 `TOPIC-01/03` |
+| 历史症状与根因 | 2026-09-08，V2EX `t/1240431` 第二张图后“倒是没报什么错……改回去就正常”可复制却不显示，原帖没有白色字体。已安装 `1.3.140/144` 的原生代码在隔离 StaticLayout 中复现：大图的 ascent 被带到后续文字行，既有 CustomLineHeightSpan 只保护含图片的行，随后按固定行高压缩继承的 metrics，产生负 descent；77px 行框的 baseline 落在行底下方 702px。扩大诊断画布后可见完整黑字，排除数据丢失、白字与图片覆盖。 |
+| 修复范围 | 仅在同段落已有 inline View、当前行不含 ReplacementSpan 时，用当前 TextPaint 和字体样式恢复该行 metrics，再执行原有行高算法。保留图片尺寸、含图行高度、普通紧凑行高和裁切策略。 |
+| 当前 owner | `patches/react-native+0.86.3.patch` 中的 `CustomLineHeightSpanTest`，真实 StaticLayout 行框、baseline 和 Bitmap 像素；原有 `TextLayoutManagerInlineViewSizeTest` 继续独立拥有附件宽度。 |
+| 失败 oracle | 修复前原生测试失败在后续文字 baseline 不在行框内；修复后大小 attachment、20/28px 字号以及普通紧凑行高通过。测试不以 REG 命名。 |
+| 参考与取舍 | React Native [#48727](https://github.com/react/react-native/issues/48727) 仍记录固定行高与行内图片冲突；[enriched-markdown PR #2](https://github.com/justmakeapp/enriched-markdown/pull/2) 通过限制图片行高回调作用范围解决相近问题。两者不构成本项目直接可回移的修复；本次不采用全局放大行高或关闭 TextView 裁切。 |
+| 验证边界 | 原生红绿测试及两类 owner 共 5 项、typecheck、9 个安装补丁检查、干净依赖 forward apply、真实 postinstall 和 reverse apply 已通过。可见主 API 35 AVD 在 `1264×2780 / 560dpi / font_scale=0.9` 覆盖安装本机验收包 `1.3.140/144`（APK SHA-256 `0058508a939bd5f7435afc6ece477a3657d2822c4208c3c67c9fba225d0bd95f`），`firstInstallTime=2026-07-26 16:51:37` 未变。原帖缺失整段已完整绘出，图片预览返回及滚到评论区再返回仍正常，目标 PID 无 AndroidRuntime/libc fatal。实体手机、其他 Android 版本与其他站点完整链路未验证。 |
+
+## `REG-TOPIC-154` 图片诊断随普通重渲染更换请求头导致闪烁
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`、`TOPIC-03`、`MORE-02` |
+| 历史症状与根因 | linux.do `t/topic/2750849` 的已显示图片在小幅滚动及预览返回时同时闪空。`useImageLoadDiagnostics` 把 source 对象引用作为 trace 生命周期依赖，等值重建也生成新的 `X-WZ-Image-Trace`；Glide 的 model equality 比较请求头，因此即使 React 图片实例与 URL 不变，也会重新加载、解码。旧的 renderer/attachment 防重挂载修复未被撤销。 |
+| 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx` 的预览回调变化与已显示图片原生请求连续性；`tests/ui/shared/android-image-headers.test.tsx` 的 Fresco/Glide 等值 source、重试及真实参数变化；原帖录屏与 Native trace 独立验证实际重载。 |
+| 失败 oracle | 2026-09-08 修复前 seed `-238043428` 的 3 项检查均失败：仅普通重渲染即可让 trace 改变。设备 `1.3.140/144` 上预览返回及 `120px` 滚动各出现同批 6 次 `ExpoImage load new image`，对应 `UPDATE_PROPS`，resize/force 均为 false。修复应按原生参数值及真实 attempt 保持诊断生命周期，不能删除诊断、禁用动图或放宽会话隔离。 |
+| 验证边界 | 同 seed 的 3 项失败 oracle 已转绿，相关 UI 222 项、媒体单测 43 项通过。2026-09-08 无窗口 Android API 35 模拟器覆盖安装修复包（`1.3.140/144`，SHA-256 `055341b1d8d26ddb422ec929ed42f2aec0f7da5e53b0ba0bd765766c26bc026c`）并冷启，安装身份与 firstInstallTime 保持不变。原帖静止、小幅 `120px` 滚动、首图及第 4、5 张预览返回的 Native trace 均为 0 次重复加载；第 3–5 张预览切换正常，返回录屏采样中图片连续显示、动图继续播放。实体手机及其他站点完整链路为 `NOT_VERIFIED`。 |

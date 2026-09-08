@@ -259,7 +259,7 @@ export function useSessionController({
         commitLinuxDoWebViewUserAgent(cleanLinuxDoUserAgent);
       }
       finishDiagnosticTrace(trace, 'success', {
-        migratedCount: Object.values(migration).filter((status) => status === 'migrated').length
+        count: Object.values(migration).filter((status) => status === 'migrated').length
       });
     })().catch((error) => {
       finishDiagnosticTrace(trace, 'failure', { reason: 'storage_error' });

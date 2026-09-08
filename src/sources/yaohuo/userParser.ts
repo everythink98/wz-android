@@ -1,6 +1,6 @@
 import type { UserProfile, UserReplyActivity } from '@/domain/forum/models';
 import { elementText, parseHtml, parsePositiveInteger, sortTopicsByCreatedAt, textExcerpt } from '@/domain/forum/html';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   YAOHUO_BASE_URL as BASE_URL,
   extractYaohuoTopicParts as extractTopicParts,

@@ -21,10 +21,28 @@ import {
   setGlobalNotificationIntent
 } from './notificationStore';
 import { notificationSources } from '@/domain/forum/sourceCatalog';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 beforeEach(() => storage.clear());
 
 describe('notification delivery state', () => {
+  it('records invalid stored JSON while preserving the existing in-memory default fallback', async () => {
+    storage.set('wz.notifications.v1', 'PRIVATE_CORRUPT_JSON');
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      expect(await loadNotificationState()).toEqual(defaultNotificationState());
+    } finally {
+      setDiagnosticWriter(null);
+    }
+    expect(storage.get('wz.notifications.v1')).toBe('PRIVATE_CORRUPT_JSON');
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({ operation: 'notification-state-load', outcome: 'failure', reason: 'invalid_response' })
+    );
+    expect(lines.join('')).not.toContain('PRIVATE_CORRUPT_JSON');
+  });
   it('enables every notification-capable source on first opt-in', async () => {
     const state = await setGlobalNotificationIntent(true);
 

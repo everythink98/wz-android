@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 interface CapturedWorkerDependencies {
   sources: readonly string[];
@@ -62,6 +63,28 @@ beforeEach(() => {
 });
 
 describe('notification background task content-source allowlist', () => {
+  it('records task-entry failure before the worker starts', async () => {
+    mocks.loadReaderSettings.mockRejectedValueOnce(new Error('storage PRIVATE_SETTINGS'));
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      await expect(mocks.task?.()).rejects.toThrow('PRIVATE_SETTINGS');
+    } finally {
+      setDiagnosticWriter(null);
+    }
+    expect(mocks.runWorker).not.toHaveBeenCalled();
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        operation: 'notification-background-task',
+        phase: 'finish',
+        outcome: 'failure',
+        reason: 'storage_error'
+      })
+    );
+    expect(lines.join('')).not.toContain('PRIVATE_SETTINGS');
+  });
   it('loads preferences for each invocation and rechecks them through the worker current-source gate', async () => {
     mocks.loadReaderSettings
       .mockResolvedValueOnce({

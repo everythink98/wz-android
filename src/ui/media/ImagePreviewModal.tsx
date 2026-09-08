@@ -1101,7 +1101,7 @@ function PreviewPage({
     (
       outcome: 'failure' | 'stale' | 'success',
       fallback: boolean,
-      terminalReason: string,
+      terminalReason: NonNullable<DiagnosticFields['terminalReason']>,
       fields: DiagnosticFields = {},
       finishedAt = Date.now()
     ) => {
@@ -1209,69 +1209,72 @@ function PreviewPage({
     ]
   );
 
-  const recoverSvgArtifact = useCallback(async () => {
-    if (
-      !mountedRef.current ||
-      !activeRef.current ||
-      sourceIdentityRef.current !== sourceIdentity ||
-      settledRef.current ||
-      recoveringRef.current
-    ) {
-      return;
-    }
-    recoveringRef.current = true;
-    currentDiagnostic(true);
-    setCurrentStatus('loading');
-    const generation = requestGenerationRef.current;
-    try {
-      const artifact = await recoverCompatibleSvgArtifact(originalSource, {
-        signal: svgArtifactConsumerRef.current?.signal
-      });
+  const recoverSvgArtifact = useCallback(
+    async (diagnosticSource = originalSource) => {
       if (
         !mountedRef.current ||
         !activeRef.current ||
         sourceIdentityRef.current !== sourceIdentity ||
         settledRef.current ||
-        generation !== requestGenerationRef.current
+        recoveringRef.current
       ) {
         return;
       }
-      recoveringRef.current = false;
-      if (!artifact) {
-        settleFailure(true, 'native-error');
-        return;
+      recoveringRef.current = true;
+      currentDiagnostic(true);
+      setCurrentStatus('loading');
+      const generation = requestGenerationRef.current;
+      try {
+        const artifact = await recoverCompatibleSvgArtifact(diagnosticSource, {
+          signal: svgArtifactConsumerRef.current?.signal
+        });
+        if (
+          !mountedRef.current ||
+          !activeRef.current ||
+          sourceIdentityRef.current !== sourceIdentity ||
+          settledRef.current ||
+          generation !== requestGenerationRef.current
+        ) {
+          return;
+        }
+        recoveringRef.current = false;
+        if (!artifact) {
+          settleFailure(true, 'native-error');
+          return;
+        }
+        setCompatibleSvgArtifact(artifact);
+        setResolution(artifact.dimensions);
+        loadMetricsRef.current = {
+          ...loadMetricsRef.current,
+          loadedAt: Date.now(),
+          sourceHeight: artifact.dimensions.height,
+          sourceWidth: artifact.dimensions.width
+        };
+        onResolution(resolutionIdentity, artifact.dimensions);
+      } catch {
+        if (generation === requestGenerationRef.current) {
+          settleFailure(true, 'fallback-error');
+        }
       }
-      setCompatibleSvgArtifact(artifact);
-      setResolution(artifact.dimensions);
-      loadMetricsRef.current = {
-        ...loadMetricsRef.current,
-        loadedAt: Date.now(),
-        sourceHeight: artifact.dimensions.height,
-        sourceWidth: artifact.dimensions.width
-      };
-      onResolution(resolutionIdentity, artifact.dimensions);
-    } catch {
-      if (generation === requestGenerationRef.current) {
-        settleFailure(true, 'fallback-error');
-      }
-    }
-  }, [
-    currentDiagnostic,
-    loadMetricsRef,
-    onResolution,
-    originalSource,
-    recoveringRef,
-    requestGenerationRef,
-    resolutionIdentity,
-    setCompatibleSvgArtifact,
-    setCurrentStatus,
-    setResolution,
-    settledRef,
-    settleFailure,
-    sourceIdentity,
-    sourceIdentityRef,
-    svgArtifactConsumerRef
-  ]);
+    },
+    [
+      currentDiagnostic,
+      loadMetricsRef,
+      onResolution,
+      originalSource,
+      recoveringRef,
+      requestGenerationRef,
+      resolutionIdentity,
+      setCompatibleSvgArtifact,
+      setCurrentStatus,
+      setResolution,
+      settledRef,
+      settleFailure,
+      sourceIdentity,
+      sourceIdentityRef,
+      svgArtifactConsumerRef
+    ]
+  );
 
   const refreshSvgPoster = useCallback(
     async (artifact: CompatibleSvgArtifact, terminalOnFailure: boolean) => {
@@ -1565,13 +1568,13 @@ function PreviewPage({
                 void refreshSvgPoster(activeAnimatedArtifact!, false);
               }}
               onDisplay={() => settleLoaded(false)}
-              onError={() => {
+              onError={(diagnosticSource) => {
                 if (!mountedRef.current || sourceIdentityRef.current !== sourceIdentity) {
                   return;
                 }
                 nativeFailedRef.current = true;
                 if (activeRef.current) {
-                  void recoverSvgArtifact();
+                  void recoverSvgArtifact(diagnosticSource);
                 }
               }}
               onLoad={(event) => {

@@ -1,5 +1,7 @@
 import type { Source } from '@/domain/forum/models';
 import type { Fetcher } from '@/platform/network/request';
+import { createTrace, diagnosticRequestContext, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 
 type ForumRecoverySource = Extract<Source, 'linuxdo' | 'nodeseek'>;
 
@@ -9,6 +11,7 @@ type ForumReadResponseEvidence = {
   ordinal: number;
   source: ForumRecoverySource;
   state: 'pending' | 'accepted' | 'rejected';
+  diagnosticFields: DiagnosticFields;
 };
 
 type ForumSourceReadAttempt = {
@@ -42,13 +45,50 @@ type ForumSourceReadRequestInit = RequestInit & {
 
 const responseEvidence = new WeakMap<Response, ForumReadResponseEvidence[]>();
 
+export function forumRecoveryDiagnosticFields(init?: RequestInit): DiagnosticFields {
+  const context = diagnosticRequestContext(init);
+  return context ? { parentTraceId: context.trace.traceId, requestId: context.requestId } : {};
+}
+
+export function recordForumRecoveryDecision(
+  source: ForumRecoverySource,
+  recoveryDecision: NonNullable<DiagnosticFields['recoveryDecision']>,
+  fields: DiagnosticFields = {}
+) {
+  const failed = recoveryDecision === 'failed';
+  finishDiagnosticTrace(createTrace('network', 'recovery-decision'), failed ? 'failure' : 'success', {
+    ...fields,
+    source,
+    recoveryDecision
+  });
+}
+
+function recordEvidenceDecision(
+  evidence: ForumReadResponseEvidence,
+  decision: NonNullable<DiagnosticFields['recoveryDecision']>,
+  fields: DiagnosticFields = {}
+) {
+  recordForumRecoveryDecision(evidence.source, decision, {
+    ...evidence.diagnosticFields,
+    evidenceKind: evidence.kind,
+    ordinal: evidence.ordinal,
+    ...fields
+  });
+}
+
 export function registerForumReadResponseEvidence(
   init: RequestInit | undefined,
   response: Response,
-  evidence: Omit<ForumReadResponseEvidence, 'state'>
+  evidence: Omit<ForumReadResponseEvidence, 'state' | 'diagnosticFields'>
 ) {
   const attempt = (init as ForumSourceReadRequestInit | undefined)?.[FORUM_SOURCE_READ_ATTEMPT];
   if (!attempt?.open || attempt.source !== evidence.source) {
+    if (evidence.kind === 'fallback')
+      recordForumRecoveryDecision(evidence.source, 'ineligible', {
+        ...forumRecoveryDiagnosticFields(init),
+        evidenceKind: evidence.kind,
+        ordinal: evidence.ordinal
+      });
     return false;
   }
   const aggregate = (init as ForumSourceReadRequestInit | undefined)?.[FORUM_SOURCE_READ_AGGREGATE_ATTEMPT];
@@ -62,7 +102,11 @@ export function registerForumReadResponseEvidence(
   if (inheritedEligibility) {
     attempt.eligibility.add(inheritedEligibility);
   }
-  const registered: ForumReadResponseEvidence = { ...evidence, state: 'pending' };
+  const registered: ForumReadResponseEvidence = {
+    ...evidence,
+    state: 'pending',
+    diagnosticFields: forumRecoveryDiagnosticFields(init)
+  };
   attempt.evidence.push(registered);
   responseEvidence.set(response, [...(responseEvidence.get(response) || []), registered]);
   return true;
@@ -72,6 +116,7 @@ function updateResponseEvidence(response: Response, state: 'accepted' | 'rejecte
   for (const evidence of responseEvidence.get(response) || []) {
     if (evidence.state === 'pending') {
       evidence.state = state;
+      if (evidence.kind === 'fallback') recordEvidenceDecision(evidence, state);
     }
   }
 }
@@ -114,11 +159,14 @@ async function commitForumReadEvidence(
 ) {
   for (const evidence of evidenceToCommit) {
     if ((aggregateIsEligible && !safelyCheckEligibility(aggregateIsEligible)) || !isAttemptEligible(attempt)) {
+      if (evidence.kind === 'fallback') recordEvidenceDecision(evidence, 'ineligible');
       break;
     }
     try {
+      if (evidence.kind === 'fallback') recordEvidenceDecision(evidence, 'evidence-commit');
       await evidence.commit();
-    } catch {
+    } catch (error) {
+      recordEvidenceDecision(evidence, 'failed', { reason: normalizeDiagnosticReason(error) });
       // A parsed WebView result remains usable even when runtime recovery fails.
     }
   }
@@ -158,11 +206,18 @@ export async function runForumSourceReadAggregateAttempt<T>(
     result = await read(scopedFetcher, scopeFetcher);
   } catch (error) {
     aggregate.open = false;
+    for (const settlement of aggregate.settlements) {
+      for (const evidence of settlement.evidence)
+        if (evidence.kind === 'fallback')
+          recordEvidenceDecision(evidence, 'aggregate-failed', { reason: normalizeDiagnosticReason(error) });
+    }
     throw error;
   }
   aggregate.open = false;
   for (const settlement of aggregate.settlements) {
     if (!safelyCheckEligibility(aggregate.isEligible)) {
+      for (const evidence of settlement.evidence)
+        if (evidence.kind === 'fallback') recordEvidenceDecision(evidence, 'ineligible');
       break;
     }
     await commitForumReadEvidence(settlement.attempt, settlement.evidence, aggregate.isEligible);
@@ -192,9 +247,15 @@ export async function runForumSourceReadAttempt<T>(
     result = await read(scopedFetcher);
   } catch (error) {
     attempt.open = false;
+    for (const evidence of attempt.evidence)
+      if (evidence.kind === 'fallback')
+        recordEvidenceDecision(evidence, 'source-failed', { reason: normalizeDiagnosticReason(error) });
     throw error;
   }
   attempt.open = false;
+  for (const evidence of attempt.evidence) {
+    if (evidence.kind === 'fallback' && evidence.state === 'pending') recordEvidenceDecision(evidence, 'pending');
+  }
   const accepted = attempt.evidence.filter((evidence) => evidence.state === 'accepted');
   const acceptedFallbacks = accepted.filter((evidence) => evidence.kind === 'fallback');
   const evidenceToCommit = acceptedFallbacks.length
@@ -204,6 +265,8 @@ export async function runForumSourceReadAttempt<T>(
   if (attempt.aggregate) {
     if (attempt.aggregate.open) {
       attempt.aggregate.settlements.push({ attempt, evidence: sortedEvidence });
+      for (const evidence of sortedEvidence)
+        if (evidence.kind === 'fallback') recordEvidenceDecision(evidence, 'aggregate-pending');
     }
     return result;
   }

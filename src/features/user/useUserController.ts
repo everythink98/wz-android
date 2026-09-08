@@ -12,7 +12,7 @@ import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from
 import { diagnosticRef, normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { isUserFollowed, type ReaderData } from '@/domain/reader/readerData';
 import { nodeSeekUserIdFromValue, normalizeUserReference } from '@/domain/forum/userNavigation';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { sourceErrorFromUnknown, sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
 import type { Source, SourceErrorInfo, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import type { ReadGateway } from '@/sources/readGateway';

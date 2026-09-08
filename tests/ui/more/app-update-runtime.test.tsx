@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { renderHook } from '@testing-library/react-native';
 import { AppState, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -8,6 +8,8 @@ import { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
 import { MoreUpdatePanel } from '@/features/more/components/MoreUpdatePanel';
 import { type AppUpdateInfo, UPDATE_APK_NAME } from '@/platform/update/appUpdate';
 import type { DownloadProgress, DownloadTaskOptions } from 'expo-file-system';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+afterEach(() => setDiagnosticWriter(null));
 
 const mockFiles = new Map<string, number>();
 const mockStore = new Map<string, string>();
@@ -185,6 +187,19 @@ function RuntimePanel({ visible = true }: { visible?: boolean }) {
 }
 
 describe('recoverable app updates', () => {
+  it('records discarded invalid update metadata during startup recovery', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    mockStore.set('app-update-download', '{private broken metadata');
+    const hook = await readyHook();
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({ operation: 'restore', phase: 'finish', outcome: 'partial', reason: 'invalid_response' })
+    );
+    expect(lines.join('')).not.toContain('private broken metadata');
+    await act(async () => hook.unmount());
+  });
   it('reuses the complete APK for repeated offline installation', async () => {
     const hook = await readyHook();
     await act(() => hook.result.current.checkAppUpdate());
@@ -248,6 +263,10 @@ describe('recoverable app updates', () => {
   });
 
   it('pauses and ignores late progress before resuming from the saved file', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const pending = Promise.withResolvers<object | null>();
     mockPlans.push(async (uri, progress) => {
       mockFiles.set(uri, 30);
@@ -274,6 +293,14 @@ describe('recoverable app updates', () => {
     expect(hook.result.current.appUpdateDownloadProgress).toBeNull();
     await act(() => hook.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([0, 30]);
+    expect(lines.map((line) => JSON.parse(line))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ operation: 'pause', phase: 'finish', outcome: 'success', state: 'paused' }),
+        expect.objectContaining({ operation: 'download', phase: 'finish', state: 'paused', downloadedBytes: 30 }),
+        expect.objectContaining({ operation: 'download', phase: 'transport', state: 'resuming', downloadedBytes: 30 }),
+        expect.objectContaining({ operation: 'download', phase: 'parse', state: 'verified' })
+      ])
+    );
   });
 
   it('preserves the local target when a check fails or finds a different version', async () => {
@@ -320,6 +347,10 @@ describe('recoverable app updates', () => {
   });
 
   it('restarts once on a rejected range while preserving the same trusted identity', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     save();
     mockFiles.set(target(), 40);
     mockPlans.push(async () => {
@@ -329,6 +360,14 @@ describe('recoverable app updates', () => {
     await act(() => hook.result.current.resumeAppUpdateDownload());
     expect(mockReceivedOffsets).toEqual([40, 0]);
     expect(hook.result.current.artifact?.ready).toBe(true);
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        operation: 'download',
+        phase: 'transport',
+        state: 'full-download-retry',
+        retryCount: 1
+      })
+    );
   });
 
   it('ignores callbacks from a replaced native task during the full retry', async () => {

@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
 import { withNativeForumReadIntent } from './browserFetchIntent';
 import type { Fetcher } from './request';
 import { errorMessage } from './errors';
-import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  withNativeDiagnosticRequest
+} from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   activeNetworkProxyProfile,
@@ -444,7 +450,8 @@ export function useNetworkProxyRuntime({ notify }: { notify: (message: string) =
   const networkProxyFetcher: Fetcher = useCallback(
     async (input, init) => {
       await ensureNetworkProxyReady();
-      return fetch(input, withNativeForumReadIntent(input, init));
+      const requestInit = Platform.OS === 'android' ? withNativeDiagnosticRequest(init) : init;
+      return fetch(input, withNativeForumReadIntent(input, requestInit));
     },
     [ensureNetworkProxyReady]
   );

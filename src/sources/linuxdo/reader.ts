@@ -35,7 +35,7 @@ import {
   preferredLinuxDoAccessRequirement
 } from './protocol';
 import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import {
   assertDiscourseTopicIdentity,

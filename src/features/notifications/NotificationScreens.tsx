@@ -593,7 +593,7 @@ export function NotificationDetailScreen({
           text={error || '请稍后重试。'}
           action={
             canOpenTopic
-              ? { label: replyToTopic ? '前往主题回复' : '查看完整主题', run: onOpenTopic }
+              ? { label: replyToTopic ? '前往主题回复' : '查看完整主题', run: () => onOpenTopic() }
               : canRetry
                 ? { label: '重试', run: onRetry }
                 : undefined

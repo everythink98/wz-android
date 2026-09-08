@@ -28,7 +28,7 @@ import type { ReadGateway } from '@/sources/readGateway';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceLabel } from '@/domain/forum/presentation';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   sourceErrorFromUnknown,
   sourceReadRecoveryOutcome,

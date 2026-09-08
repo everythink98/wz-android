@@ -51,9 +51,10 @@ import {
 import {
   normalizeDiagnosticReason,
   type DiagnosticFields,
+  type DiagnosticOperation,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
-import { copySourceDiagnosticSummary, sourceDiagnosticSummary } from './diagnostics';
+import { copySourceDiagnosticSummary, sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { runForumSourceReadAttempt, withForumSourceReadEligibility } from './forumSourceReadAttempt';
 import type { FeedSource, Source, SourceErrors, Topic } from '@/domain/forum/models';
 import {
@@ -307,8 +308,8 @@ function summarizeReadResult(result: unknown) {
   const value = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
   const errors =
     value.errors && typeof value.errors === 'object' ? Object.values(value.errors).filter(Boolean).length : 0;
-  const summary: Record<string, string | number | boolean | null> = {
-    resultPresent: result !== null && result !== undefined,
+  const summary: { -readonly [Key in keyof DiagnosticFields]: DiagnosticFields[Key] } = {
+    hasResult: result !== null && result !== undefined,
     partialErrorCount: errors
   };
   if (Array.isArray(result)) {
@@ -380,7 +381,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     );
   const read = async <T>(
     source: FeedSource,
-    operationName: string,
+    operationName: DiagnosticOperation,
     readOperation: ForumReadOperation,
     operation: (credentials: {
       discourseAuth?: DiscourseReadAuth;
@@ -537,32 +538,53 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         result = await runReadAttempt(firstAttempt);
       } catch (error) {
         const runtimeAfterFailure = getReadNetworkRuntimeSnapshot();
+        const recoveryEligible = recoveryCommitIsEligible();
         const retryAfterRotation =
           source !== 'all' &&
           runtimeAfterFailure.generation > expectedGeneration &&
           runtimeAfterFailure.triggerSource === source &&
           firstAttempt.contentRequestStarted &&
           firstAttempt.replayable &&
-          recoveryCommitIsEligible();
+          recoveryEligible;
         const recoverAfterTimeout =
           !retryAfterRotation &&
           error instanceof RequestTimeoutError &&
           sourceUsesDirectTimeoutRecovery(source) &&
           firstAttempt.contentRequestStarted &&
           firstAttempt.replayable &&
-          recoveryCommitIsEligible();
+          recoveryEligible;
+        markDiagnosticStage(trace, 'guard', {
+          source,
+          state: retryAfterRotation || recoverAfterTimeout ? 'recovery-qualified' : 'recovery-skipped',
+          recoveryDecision:
+            retryAfterRotation || recoverAfterTimeout ? 'commit' : recoveryEligible ? 'rejected' : 'ineligible',
+          reason: normalizeDiagnosticReason(error),
+          previousGeneration: expectedGeneration,
+          generation: runtimeAfterFailure.generation,
+          hasContentRequest: firstAttempt.contentRequestStarted,
+          isReplayable: firstAttempt.replayable,
+          isEligible: recoveryEligible
+        });
         if (!retryAfterRotation && !recoverAfterTimeout) {
           throw error;
         }
         if (recoverAfterTimeout) {
           const recoveryTrace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
             source,
+            parentTraceId: trace.traceId,
             generation: expectedGeneration,
             reason: 'timeout'
           });
           try {
             await recoverReadNetworkRuntime(source, expectedGeneration, { trace: recoveryTrace });
-          } catch {
+          } catch (recoveryError) {
+            markDiagnosticStage(trace, 'guard', {
+              source,
+              state: 'recovery-failed',
+              recoveryDecision: 'failed',
+              reason: normalizeDiagnosticReason(recoveryError),
+              generation: getReadNetworkRuntimeSnapshot().generation
+            });
             if (getReadNetworkRuntimeSnapshot().generation <= expectedGeneration) {
               throw error;
             }

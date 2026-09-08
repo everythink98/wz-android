@@ -1,4 +1,8 @@
 import { elementText, hasRenderableHtmlContent, parseHtml, toIsoString } from '@/domain/forum/html';
+import {
+  annotateSourceDiagnosticSummary,
+  mergeSourceDiagnosticSummaries
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type {
   ForumNotification,
   NotificationCategory,
@@ -54,6 +58,7 @@ function parsePage(html: string, unreadOnly = false, categoryId = 'all'): Notifi
   ) {
     throw new Error('妖火消息列表格式不正确');
   }
+  let filteredCount = 0;
   const items = rows.flatMap((row) => {
     const link = row.querySelectorAll('a[href]').find((candidate) => messageId(candidate.getAttribute('href') || ''));
     const id = messageId(link?.getAttribute('href') || '');
@@ -82,7 +87,10 @@ function parsePage(html: string, unreadOnly = false, categoryId = 'all'): Notifi
     const unread = row
       .querySelectorAll('img[src]')
       .some((image) => /(?:^|\/)new\.gif(?:$|[?#])/i.test(image.getAttribute('src') || ''));
-    if (unreadOnly && !unread) return [];
+    if (unreadOnly && !unread) {
+      filteredCount += 1;
+      return [];
+    }
     const title = elementText(link) || '站内消息';
     const createdAt = toIsoString(displayTime, '+08:00') || null;
     return [
@@ -111,7 +119,17 @@ function parsePage(html: string, unreadOnly = false, categoryId = 'all'): Notifi
   const current = Number(match?.[1]) || 1;
   const total = Number(match?.[2]) || current;
   const hasMore = current < total;
-  return { items, cursor: hasMore ? String(current + 1) : null, hasMore };
+  return annotateSourceDiagnosticSummary(
+    { items, cursor: hasMore ? String(current + 1) : null, hasMore },
+    {
+      parserVariant: 'yaohuo-notifications',
+      candidateCount: rows.length,
+      validCount: items.length + filteredCount,
+      filteredCount,
+      isExpectedEmpty: explicitEmpty || rows.length === 0,
+      hasDegradation: rows.length > items.length + filteredCount
+    }
+  );
 }
 
 function currentPage(root: ReturnType<typeof parseHtml>) {
@@ -258,16 +276,22 @@ export const yaohuoNotificationAdapter = {
     let cursor = 1;
     let hasMore = true;
     const items: ForumNotification[] = [];
+    const pages: NotificationPage[] = [];
     while (hasMore && items.length < 60) {
       const page = await readListPage(options, cursor, true);
+      pages.push(page);
       items.push(...page.items.slice(0, 60 - items.length));
       hasMore = page.hasMore;
       cursor = Number(page.cursor) || cursor + 1;
     }
-    return {
-      total: items.length,
-      checkedAt: new Date().toISOString()
-    };
+    return mergeSourceDiagnosticSummaries(
+      {
+        total: items.length,
+        checkedAt: new Date().toISOString()
+      },
+      'yaohuo-notifications',
+      pages
+    );
   },
 
   async loadDetail(item: ForumNotification, options: NotificationAdapterAccess): Promise<NotificationDetail> {

@@ -3,6 +3,7 @@ import type { ImageURISource } from 'react-native';
 import { normalizeImagePreviewUrl } from './imageRequestSource';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { fetchBoundedSvgDocument, renderSvgPoster, type SvgPosterRenderResult } from './svgPosterRenderer';
+import { isImageDiagnosticHeader } from './imageLoadDiagnostics';
 
 const COMPATIBLE_SVG_ARTIFACT_CACHE_LIMIT = 32;
 const COMPATIBLE_SVG_MAX_WORK_ITEMS = 32;
@@ -71,6 +72,7 @@ export function compatibleImageRequestIdentity(source: ImageURISource) {
       ? String((source as ImageURISource & { cacheKey?: string }).cacheKey)
       : '';
   const headers = Object.entries(source.headers || {})
+    .filter(([name]) => !isImageDiagnosticHeader(name))
     .map(([name, value]) => [name.toLowerCase(), String(value)] as const)
     .sort(([left], [right]) => left.localeCompare(right));
   return [uri, cacheKey, ...headers.map(([name, value]) => `${name}:${value}`)].join('\u0000');
@@ -275,7 +277,7 @@ async function fetchCompatibleSvgBytes(
 ) {
   const response = await fetchWithTimeout(
     uri,
-    { headers },
+    { headers: Object.fromEntries(Object.entries(headers).filter(([name]) => !isImageDiagnosticHeader(name))) },
     {
       fetcher,
       signal,

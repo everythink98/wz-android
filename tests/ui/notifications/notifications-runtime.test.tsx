@@ -30,6 +30,7 @@ import {
 } from '@/platform/notifications/notificationSystem';
 import { runNotificationBackgroundWorker } from '@/platform/notifications/notificationWorker';
 import { QueryTestWrapper } from '../QueryTestWrapper';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
@@ -230,6 +231,32 @@ async function settleStartedRuntimeTasks(unmount = true) {
 }
 
 describe('notification runtime', () => {
+  it('records restoration failure without starting notification reads', async () => {
+    jest.mocked(loadNotificationState).mockRejectedValueOnce(new Error('storage PRIVATE_RESTORE'));
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      const hook = await renderHook(() => useNotificationsRuntime(runtimeOptions()), { wrapper: QueryTestWrapper });
+      await waitFor(() =>
+        expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+          expect.objectContaining({
+            operation: 'notification-runtime',
+            phase: 'finish',
+            outcome: 'failure',
+            reason: 'storage_error'
+          })
+        )
+      );
+      expect(hook.result.current.ready).toBe(false);
+      expect(runNotificationBackgroundWorker).not.toHaveBeenCalled();
+      expect(lines.join('')).not.toContain('PRIVATE_RESTORE');
+      await hook.unmount();
+    } finally {
+      setDiagnosticWriter(null);
+    }
+  });
   it('waits for the account surface barrier to close before exposing notification reads', async () => {
     let persisted: string | null = null;
     jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
@@ -1091,6 +1118,79 @@ describe('notification runtime', () => {
     expect(openSource).toHaveBeenCalledTimes(1);
     await settleStartedRuntimeTasks();
   });
+
+  it.each(['opened', 'disabled', 'superseded', 'unmount', 'error'] as const)(
+    'settles a queued notification response once when navigation is %s',
+    async (completion) => {
+      const openSource = jest.fn(() => false);
+      let enabledNotificationSources: readonly NotificationSource[] = ['nodeseek'];
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => {
+        lines.push(line);
+      });
+      try {
+        const hook = await renderHook(
+          () =>
+            useNotificationsRuntime({
+              ...runtimeOptions(openSource),
+              enabledNotificationSources
+            }),
+          { wrapper: QueryTestWrapper }
+        );
+        await waitFor(() => expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalledTimes(1));
+        const listener = jest.mocked(Notifications.addNotificationResponseReceivedListener).mock.calls[0]![0];
+        await act(async () => listener(notificationResponse('nodeseek', 'PRIVATE_RESPONSE', 5)));
+        const intent = lines
+          .map((line) => JSON.parse(line))
+          .find((event) => event.operation === 'notification-response' && event.phase === 'intent');
+        const finishes = () =>
+          lines
+            .map((line) => JSON.parse(line))
+            .filter((event) => event.traceId === intent.traceId && event.phase === 'finish');
+        expect(finishes()).toEqual([]);
+        if (completion === 'opened') {
+          openSource.mockReturnValue(true);
+          await act(async () => hook.result.current.onNavigationReady());
+          await act(async () => hook.result.current.onNavigationReady());
+          expect(openSource).toHaveBeenCalledTimes(2);
+        } else if (completion === 'disabled') {
+          enabledNotificationSources = [];
+          await act(async () => hook.rerender({}));
+          await act(async () => hook.result.current.onNavigationReady());
+          expect(openSource).toHaveBeenCalledTimes(1);
+        } else if (completion === 'superseded') {
+          await act(async () => listener(notificationResponse('nodeseek', 'PRIVATE_NEW_RESPONSE', 6)));
+        } else if (completion === 'error') {
+          openSource.mockImplementation(() => {
+            throw new Error('PRIVATE_NAVIGATION');
+          });
+          expect(() => hook.result.current.onNavigationReady()).toThrow('PRIVATE_NAVIGATION');
+        }
+        await settleStartedRuntimeTasks();
+        expect(finishes()).toEqual([
+          expect.objectContaining({
+            outcome: completion === 'opened' ? 'success' : completion === 'error' ? 'failure' : 'canceled',
+            ...(completion === 'opened'
+              ? { state: 'open' }
+              : {
+                  reason:
+                    completion === 'disabled'
+                      ? 'source_disabled'
+                      : completion === 'superseded'
+                        ? 'superseded'
+                        : completion === 'error'
+                          ? 'unknown'
+                          : 'canceled'
+                })
+          })
+        ]);
+        expect(lines.join('')).not.toContain('PRIVATE_');
+      } finally {
+        await settleStartedRuntimeTasks();
+        setDiagnosticWriter(null);
+      }
+    }
+  );
 
   it('keeps first opt-in intent but leaves background disabled when Android permission is denied', async () => {
     const hook = await renderHook(() => useNotificationsRuntime(runtimeOptions()), { wrapper: QueryTestWrapper });

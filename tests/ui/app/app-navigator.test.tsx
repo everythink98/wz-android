@@ -5,6 +5,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { AppNavigator } from '@/app/AppNavigator';
+import { useAppLifecycleRuntime } from '@/app/useAppLifecycleRuntime';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import {
   navigateMainTab,
   navigationRef,
@@ -17,6 +19,7 @@ import type { Topic, UserReference } from '@/domain/forum/models';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { OriginalImageUpgradeBoundary, useOriginalImageUpgradeEnabled } from '@/platform/media/originalImageLoading';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
+import type { Screen } from '@/ui/navigation/types';
 import type { MoreBadgeState } from '@/ui/navigation/moreBadge';
 import { createTheme } from '@/ui/theme/tokens';
 import { act, fireEvent, render, waitFor } from '../render';
@@ -188,10 +191,12 @@ function StatefulUserRoute({ navigation, route }: NativeStackScreenProps<RootSta
 
 function Navigator({
   moreBadgeState,
-  moreHasBadge = false
+  moreHasBadge = false,
+  onScreenChange = jest.fn()
 }: {
   moreBadgeState?: MoreBadgeState;
   moreHasBadge?: boolean;
+  onScreenChange?: (screen: Screen, routeKey: string) => void;
 }) {
   return (
     <AppNavigator
@@ -210,9 +215,14 @@ function Navigator({
       styles={styles}
       theme={theme}
       onReady={jest.fn()}
-      onScreenChange={jest.fn()}
+      onScreenChange={onScreenChange}
     />
   );
+}
+
+function DiagnosticNavigator() {
+  const lifecycle = useAppLifecycleRuntime();
+  return <Navigator onScreenChange={lifecycle.onScreenChange} />;
 }
 
 async function renderNavigator(moreHasBadge = false) {
@@ -234,10 +244,87 @@ describe('App navigator UI state', () => {
 
   afterEach(async () => {
     await cleanup();
+    setDiagnosticWriter(null);
   });
 
   afterAll(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  });
+
+  it('distinguishes same-screen topic and user navigation with stable anonymous targets', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const view = await render(<DiagnosticNavigator />);
+    await waitFor(() => expect(navigationRef.isReady()).toBe(true));
+    const privateTopicA = {
+      ...topicA,
+      id: 'PRIVATE_TOPIC_A',
+      title: 'PRIVATE_TITLE_A',
+      url: 'https://private.invalid/topic/a'
+    };
+    const privateTopicB = {
+      ...topicB,
+      id: 'PRIVATE_TOPIC_B',
+      title: 'PRIVATE_TITLE_B',
+      url: 'https://private.invalid/topic/b'
+    };
+    const privateUserA = { ...user, id: 'PRIVATE_USER_ID_A', username: 'PRIVATE_USER_A' };
+    const privateUserB = { ...userB, id: 'PRIVATE_USER_ID_B', username: 'PRIVATE_USER_B' };
+    const routeKeys: string[] = [];
+    const captureRouteKey = () => routeKeys.push(navigationRef.getCurrentRoute()!.key);
+    await act(async () => {
+      pushTopicRoute({ topic: privateTopicA, targetReply: { floor: 7 } });
+    });
+    await waitFor(() => expect(view.getByText('PRIVATE_TITLE_A')).toBeTruthy());
+    captureRouteKey();
+    await act(async () => {
+      pushTopicRoute({ topic: privateTopicB });
+    });
+    await waitFor(() => expect(view.getByText('PRIVATE_TITLE_B')).toBeTruthy());
+    captureRouteKey();
+    await act(async () => navigationRef.goBack());
+    await waitFor(() => expect(view.getByText('PRIVATE_TITLE_A')).toBeTruthy());
+    await act(async () => {
+      pushUserRoute(privateUserA);
+    });
+    await waitFor(() => expect(view.getByText('用户详情页面 PRIVATE_USER_A')).toBeTruthy());
+    captureRouteKey();
+    await act(async () => {
+      pushUserRoute(privateUserB);
+    });
+    await waitFor(() => expect(view.getByText('用户详情页面 PRIVATE_USER_B')).toBeTruthy());
+    captureRouteKey();
+    await act(async () => navigationRef.goBack());
+    await waitFor(() => expect(view.getByText('用户详情页面 PRIVATE_USER_A')).toBeTruthy());
+    const events = lines
+      .map((line) => JSON.parse(line))
+      .filter((event) => event.operation === 'screen-change' && event.phase === 'finish');
+    const topics = events.filter((event) => event.topicRef);
+    expect(topics).toEqual([
+      expect.objectContaining({ outcome: 'success', source: 'linuxdo', hasTargetReply: true }),
+      expect.objectContaining({ outcome: 'success', source: 'linuxdo', hasTargetReply: false }),
+      expect.objectContaining({ outcome: 'success', source: 'linuxdo', hasTargetReply: true })
+    ]);
+    expect(topics[0].topicRef).not.toBe(topics[1].topicRef);
+    expect(topics[0].topicRef).toBe(topics[2].topicRef);
+    const users = events.filter((event) => event.userRef);
+    expect(users).toHaveLength(3);
+    expect(users.every((event) => event.outcome === 'success' && event.source === 'linuxdo')).toBe(true);
+    expect(users[0].userRef).not.toBe(users[1].userRef);
+    expect(users[0].userRef).toBe(users[2].userRef);
+    await act(async () => navigationRef.setParams({ user: privateUserA }));
+    await waitFor(() =>
+      expect(lines.map((line) => JSON.parse(line)).at(-1)).toMatchObject({
+        operation: 'screen-change',
+        phase: 'finish',
+        outcome: 'noop',
+        userRef: users[0].userRef
+      })
+    );
+    expect(lines.join('')).not.toMatch(/PRIVATE_|https:\/\//);
+    routeKeys.forEach((routeKey) => expect(lines.join('')).not.toContain(routeKey));
   });
 
   it.each<[MoreBadgeState, string]>([

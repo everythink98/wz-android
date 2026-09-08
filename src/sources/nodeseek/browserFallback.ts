@@ -3,19 +3,24 @@ import { isNodeSeekChallengeResponse } from './protocol';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
+  diagnosticRequestFields,
   finishDiagnosticTrace,
-  markDiagnosticStage,
-  registerDiagnosticContextFetcher
+  markDiagnosticStage
 } from '@/platform/diagnostics/diagnostics';
 import {
   normalizeDiagnosticReason,
   type DiagnosticReason,
+  type DiagnosticFields,
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import { currentReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
 import { hasNodeSeekAccountEvidenceHtml } from './userParser';
-import { registerForumReadResponseEvidence } from '@/sources/forumSourceReadAttempt';
+import {
+  forumRecoveryDiagnosticFields,
+  recordForumRecoveryDecision,
+  registerForumReadResponseEvidence
+} from '@/sources/forumSourceReadAttempt';
 import { isNodeSeekHost } from '@/domain/forum/sourceCatalog';
 
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
@@ -66,6 +71,7 @@ async function fetchNodeSeekThroughWebView(
     });
   markDiagnosticStage(trace, 'transport', {
     source: 'nodeseek',
+    ...diagnosticRequestFields(init),
     channel: 'direct',
     state: 'fallback',
     reason,
@@ -76,6 +82,7 @@ async function fetchNodeSeekThroughWebView(
     const response = await webViewFetcher(url, init);
     markDiagnosticStage(trace, 'transport', {
       source: 'nodeseek',
+      ...diagnosticRequestFields(init),
       channel: 'webview',
       state: 'finish',
       status: response.status
@@ -92,6 +99,7 @@ async function fetchNodeSeekThroughWebView(
     const fallbackReason = normalizeDiagnosticReason(error);
     markDiagnosticStage(trace, 'transport', {
       source: 'nodeseek',
+      ...diagnosticRequestFields(init),
       channel: 'webview',
       state: 'failure',
       reason: fallbackReason
@@ -131,20 +139,46 @@ export function createNodeSeekWebViewFallbackFetcher({
     reason: 'timeout' | 'network_error',
     ordinal: number,
     expectedEvidenceEpoch: number,
-    expectedGeneration: number
+    expectedGeneration: number,
+    diagnosticFields: DiagnosticFields
   ) => {
-    if (expectedEvidenceEpoch !== evidenceEpoch || ordinal <= latestConfirmedDirectOrdinal) return;
-    if (!recoverReadChannel || ++qualifiedFallbacks < threshold) return;
+    const fields = {
+      ...diagnosticFields,
+      evidenceKind: 'fallback',
+      ordinal,
+      generation: expectedGeneration,
+      evidenceEpoch,
+      threshold
+    } as const;
+    if (expectedEvidenceEpoch !== evidenceEpoch || ordinal <= latestConfirmedDirectOrdinal) {
+      recordForumRecoveryDecision('nodeseek', 'superseded', fields);
+      return;
+    }
+    if (!recoverReadChannel) {
+      recordForumRecoveryDecision('nodeseek', 'unavailable', fields);
+      return;
+    }
+    if (++qualifiedFallbacks < threshold) {
+      recordForumRecoveryDecision('nodeseek', 'threshold', { ...fields, qualifiedCount: qualifiedFallbacks });
+      return;
+    }
+    recordForumRecoveryDecision('nodeseek', 'commit', { ...fields, qualifiedCount: qualifiedFallbacks });
     evidenceEpoch += 1;
-    const trace = beginDiagnosticTrace('network', 'rotate-read-runtime', { source: 'nodeseek', reason });
+    const trace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
+      ...diagnosticFields,
+      source: 'nodeseek',
+      reason
+    });
     try {
       await recoverReadChannel(expectedGeneration, trace);
       qualifiedFallbacks = 0;
-    } catch {
+    } catch (error) {
+      recordForumRecoveryDecision('nodeseek', 'failed', { ...fields, reason: normalizeDiagnosticReason(error) });
       // Native owns the terminal event once the trace crosses the bridge.
     }
   };
-  return registerDiagnosticContextFetcher(async (input, init) => {
+  return async (input, init) => {
+    const recoveryFields = forumRecoveryDiagnosticFields(init);
     const url = String(input);
     const method = String(init?.method || 'GET').toUpperCase();
     const isIdempotentRead = method === 'GET' || method === 'HEAD';
@@ -167,7 +201,8 @@ export function createNodeSeekWebViewFallbackFetcher({
         if (fallbackResponse.ok && (reason === 'timeout' || reason === 'network_error')) {
           const expectedEvidenceEpoch = evidenceEpoch;
           registerForumReadResponseEvidence(init, fallbackResponse, {
-            commit: () => recordQualifiedFallback(reason, ordinal, expectedEvidenceEpoch, requestStartGeneration),
+            commit: () =>
+              recordQualifiedFallback(reason, ordinal, expectedEvidenceEpoch, requestStartGeneration, recoveryFields),
             kind: 'fallback',
             ordinal,
             source: 'nodeseek'
@@ -194,6 +229,13 @@ export function createNodeSeekWebViewFallbackFetcher({
             latestConfirmedDirectOrdinal = ordinal;
             evidenceEpoch += 1;
             qualifiedFallbacks = 0;
+            recordForumRecoveryDecision('nodeseek', 'direct-reset', {
+              ...recoveryFields,
+              evidenceKind: 'direct',
+              ordinal,
+              evidenceEpoch,
+              generation: requestStartGeneration
+            });
           }
         },
         kind: 'direct',
@@ -202,5 +244,5 @@ export function createNodeSeekWebViewFallbackFetcher({
       });
     }
     return response;
-  });
+  };
 }

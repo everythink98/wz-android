@@ -34,6 +34,13 @@ import {
 import { runNotificationBackgroundWorker } from '@/platform/notifications/notificationWorker';
 import { notificationAdapters } from '@/sources/notificationAdapters';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  recordDiagnosticError
+} from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { notificationErrorAction } from './notificationPresentation';
 import {
   createNotificationSourceLifecycleRegistry,
@@ -66,7 +73,9 @@ function identityNeedsTrustedFallback(source: NotificationSource, sessions: Site
 function clearLastNotificationResponse() {
   try {
     Notifications.clearLastNotificationResponse();
-  } catch {}
+  } catch (error) {
+    recordDiagnosticError('app', 'notification-response', error);
+  }
 }
 
 export function useNotificationsRuntime({
@@ -131,6 +140,8 @@ export function useNotificationsRuntime({
   const clearReadBlock = useCallback((source: NotificationSource, epoch: number) => {
     if (readBlocksRef.current.get(source)?.epoch !== epoch) return;
     readBlocksRef.current.delete(source);
+    const trace = beginDiagnosticTrace('source', 'notification-runtime', { source });
+    finishDiagnosticTrace(trace, 'success', { source, state: 'read-resumed' });
     setReadBlockRevision((revision) => revision + 1);
   }, []);
   const reportReadError = useCallback((source: NotificationSource, error: SourceErrorInfo, epoch: number) => {
@@ -145,6 +156,13 @@ export function useNotificationsRuntime({
     if (previous?.epoch === epoch && previous.error.kind === error.kind && previous.error.message === error.message)
       return;
     readBlocksRef.current.set(source, { epoch, error, verifiedAt: sessionsRef.current[source].lastVerifiedAt });
+    const trace = beginDiagnosticTrace('source', 'notification-runtime', { source });
+    finishDiagnosticTrace(trace, 'blocked', {
+      source,
+      state: 'read-blocked',
+      kind: error.kind,
+      reason: normalizeDiagnosticReason(error.reason ?? error.message)
+    });
     setReadBlockRevision((revision) => revision + 1);
   }, []);
   useEffect(() => {
@@ -203,7 +221,7 @@ export function useNotificationsRuntime({
   const pendingForegroundDeliveriesRef = useRef(new Map<NotificationSource, ForegroundDelivery>());
   const foregroundGenerationRef = useRef(0);
   const snapshotResultRevisionRef = useRef(0);
-  const pendingOpenSourceRef = useRef<NotificationSource | undefined>(undefined);
+  const pendingOpenSourceRef = useRef<{ source: NotificationSource; trace: DiagnosticTrace } | undefined>(undefined);
   const lastResponseRef = useRef('');
   const [state, setState] = useState(stateRef.current);
   const [ready, setReady] = useState(false);
@@ -230,7 +248,8 @@ export function useNotificationsRuntime({
       if (markNotificationSourcesCleaning(sourceLifecyclesRef.current, removedSources)) {
         setSourceLifecycleSnapshot({ ...sourceLifecyclesRef.current });
       }
-      if (pendingOpenSourceRef.current && removedSources.includes(pendingOpenSourceRef.current)) {
+      if (pendingOpenSourceRef.current && removedSources.includes(pendingOpenSourceRef.current.source)) {
+        finishDiagnosticTrace(pendingOpenSourceRef.current.trace, 'canceled', { reason: 'source_disabled' });
         pendingOpenSourceRef.current = undefined;
       }
       previousEnabledSourcesRef.current = enabledSources;
@@ -251,6 +270,8 @@ export function useNotificationsRuntime({
       try {
         await syncNotificationBackgroundRegistration(next, granted, eligibleSources);
         if (mountedRef.current && backgroundErrorRef.current) {
+          const trace = beginDiagnosticTrace('app', 'notification-runtime');
+          finishDiagnosticTrace(trace, 'success', { state: 'recovered' });
           backgroundErrorRef.current = '';
           setBackgroundError('');
         }
@@ -272,20 +293,33 @@ export function useNotificationsRuntime({
       mountedRef.current = false;
       foregroundGenerationRef.current += 1;
       pendingDeliveries.clear();
+      if (pendingOpenSourceRef.current) {
+        finishDiagnosticTrace(pendingOpenSourceRef.current.trace, 'canceled', { reason: 'canceled' });
+      }
     };
   }, []);
 
   useEffect(() => {
     let current = true;
-    void Promise.all([loadNotificationState(), notificationPermissionGranted()]).then(([stored, granted]) => {
-      if (!current) return;
-      permissionRef.current = granted;
-      commitState(stored);
-      setPermission(granted ? 'granted' : 'denied');
-      setReady(true);
-    });
+    const trace = beginDiagnosticTrace('app', 'notification-runtime', { state: 'state-load' });
+    void Promise.all([loadNotificationState(), notificationPermissionGranted()])
+      .then(([stored, granted]) => {
+        if (!current) {
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+          return;
+        }
+        permissionRef.current = granted;
+        commitState(stored);
+        setPermission(granted ? 'granted' : 'denied');
+        setReady(true);
+        finishDiagnosticTrace(trace, 'success', { isGranted: granted, isEnabled: stored.globalEnabled });
+      })
+      .catch((error) =>
+        finishDiagnosticTrace(trace, 'failure', { state: 'state-load', reason: normalizeDiagnosticReason(error) })
+      );
     return () => {
       current = false;
+      finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
     };
   }, [commitState]);
 
@@ -416,6 +450,7 @@ export function useNotificationsRuntime({
           );
           if (started) {
             void operation.catch((error) => {
+              recordDiagnosticError('source', 'notification-cleanup', error, { source });
               if (!mountedRef.current) return;
               const message = error instanceof Error ? error.message : '内容源停用清理失败';
               setSnapshotErrors((current) => ({ ...current, [source]: message }));
@@ -432,7 +467,7 @@ export function useNotificationsRuntime({
         permissionRef.current,
         activeNetworkSources.filter((source) => next.sources[source].intentEnabled)
       );
-    })().catch(() => undefined);
+    })().catch((error) => recordDiagnosticError('app', 'notification-cleanup', error));
   }, [
     activeNetworkSources,
     commitState,
@@ -476,7 +511,7 @@ export function useNotificationsRuntime({
       if (!current || !nextState) return;
       commitState(nextState);
       await syncBackground(nextState, permissionRef.current, eligibleSources);
-    })();
+    })().catch((error) => recordDiagnosticError('app', 'notification-identity', error));
     return () => {
       current = false;
     };
@@ -565,6 +600,7 @@ export function useNotificationsRuntime({
           let deliverySettlement: Promise<void> | undefined;
           await runNotificationBackgroundWorker({
             sources,
+            flow: 'foreground',
             captureDeliverySettlement: (settlement) => {
               deliverySettlement = settlement;
             },
@@ -590,16 +626,18 @@ export function useNotificationsRuntime({
               presentDigest: presentSourceNotification,
               dismissDigest: (_source, identifier) => dismissSourceNotificationExact(identifier)
             }
-          }).catch(() => undefined);
+          }).catch((error) => recordDiagnosticError('app', 'notification-worker', error));
           await deliverySettlement;
         }
       })();
       foregroundDeliveryRef.current = operation;
-      void operation.finally(() => {
-        if (foregroundDeliveryRef.current !== operation) return;
-        foregroundDeliveryRef.current = undefined;
-        if (pendingForegroundDeliveriesRef.current.size) deliver([]);
-      });
+      void operation
+        .finally(() => {
+          if (foregroundDeliveryRef.current !== operation) return;
+          foregroundDeliveryRef.current = undefined;
+          if (pendingForegroundDeliveriesRef.current.size) deliver([]);
+        })
+        .catch((error) => recordDiagnosticError('app', 'notification-worker', error));
     },
     [getReadBlock, sourceIsOperational]
   );
@@ -630,7 +668,12 @@ export function useNotificationsRuntime({
         generation: foregroundGenerationRef.current,
         lifecycle: sourceLifecyclesRef.current[source]
       });
-      return [recordNotificationSnapshot(source, identityKey, snapshot.total, snapshot.checkedAt)];
+      return [
+        recordNotificationSnapshot(source, identityKey, snapshot.total, snapshot.checkedAt).catch((error) => {
+          recordDiagnosticError('source', 'notification-snapshot', error, { source });
+          throw error;
+        })
+      ];
     });
     setSnapshotErrors((current) =>
       notificationSources.every((source) => current[source] === errors[source]) ? current : errors
@@ -654,13 +697,15 @@ export function useNotificationsRuntime({
   useEffect(() => {
     if (!appActive || !runtimeReady) return;
     let current = true;
-    void notificationPermissionGranted().then((granted) => {
-      if (!current) return;
-      const changed = permissionRef.current !== granted;
-      permissionRef.current = granted;
-      if (changed) setPermission(granted ? 'granted' : 'denied');
-      void syncBackground(stateRef.current, granted, eligibleSources);
-    });
+    void notificationPermissionGranted()
+      .then((granted) => {
+        if (!current) return;
+        const changed = permissionRef.current !== granted;
+        permissionRef.current = granted;
+        if (changed) setPermission(granted ? 'granted' : 'denied');
+        void syncBackground(stateRef.current, granted, eligibleSources);
+      })
+      .catch((error) => recordDiagnosticError('app', 'notification-permission', error));
     return () => {
       current = false;
     };
@@ -670,6 +715,7 @@ export function useNotificationsRuntime({
     (response: Notifications.NotificationResponse) => {
       const rawSource = response.notification.request.content.data?.source;
       const source = notificationSources.find((candidate) => candidate === rawSource);
+      const trace = beginDiagnosticTrace('app', 'notification-response', { ...(source ? { source } : {}) });
       if (
         !contentSourcesReadyRef.current ||
         !source ||
@@ -677,13 +723,30 @@ export function useNotificationsRuntime({
         !enabledSourcesRef.current.includes(source) ||
         !sourceIsOperational(source)
       ) {
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
         clearLastNotificationResponse();
         return;
       }
       const key = `${response.notification.request.identifier}:${response.notification.date}`;
-      if (lastResponseRef.current === key) return;
+      if (lastResponseRef.current === key) {
+        finishDiagnosticTrace(trace, 'noop', { reason: 'duplicate' });
+        return;
+      }
       lastResponseRef.current = key;
-      if (!openSource(source)) pendingOpenSourceRef.current = source;
+      try {
+        if (!openSource(source)) {
+          if (pendingOpenSourceRef.current) {
+            finishDiagnosticTrace(pendingOpenSourceRef.current.trace, 'canceled', { reason: 'superseded' });
+          }
+          pendingOpenSourceRef.current = { source, trace };
+          markDiagnosticStage(trace, 'apply', { source, state: 'queued' });
+        } else {
+          finishDiagnosticTrace(trace, 'success', { source, state: 'open' });
+        }
+      } catch (error) {
+        finishDiagnosticTrace(trace, 'failure', { source, reason: normalizeDiagnosticReason(error) });
+        throw error;
+      }
       clearLastNotificationResponse();
     },
     [openSource, sourceIsOperational]
@@ -695,18 +758,30 @@ export function useNotificationsRuntime({
     try {
       const response = Notifications.getLastNotificationResponse();
       if (response) handleNotificationResponse(response);
-    } catch {}
+    } catch (error) {
+      recordDiagnosticError('app', 'notification-response', error);
+    }
     return () => subscription.remove();
   }, [handleNotificationResponse, runtimeReady]);
 
   const onNavigationReady = useCallback(() => {
-    const source = pendingOpenSourceRef.current;
-    if (!source) return;
+    const pending = pendingOpenSourceRef.current;
+    if (!pending) return;
+    const { source, trace } = pending;
     if (!contentSourcesReadyRef.current || !sourceIsOperational(source)) {
+      finishDiagnosticTrace(trace, 'canceled', { source, reason: 'not_ready' });
       pendingOpenSourceRef.current = undefined;
       return;
     }
-    if (openSource(source)) pendingOpenSourceRef.current = undefined;
+    try {
+      if (openSource(source)) {
+        pendingOpenSourceRef.current = undefined;
+        finishDiagnosticTrace(trace, 'success', { source, state: 'open' });
+      }
+    } catch (error) {
+      finishDiagnosticTrace(trace, 'failure', { source, reason: normalizeDiagnosticReason(error) });
+      throw error;
+    }
   }, [openSource, sourceIsOperational]);
 
   const setGlobalEnabled = useCallback(

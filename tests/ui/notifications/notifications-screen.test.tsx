@@ -462,7 +462,8 @@ describe('notification screens', () => {
     );
 
     expect(view.getByText('帖子内容未找到')).toBeTruthy();
-    await fireEvent.press(view.getByText('查看完整主题'));
+    await fireEvent.press(view.getByText('查看完整主题'), { nativeEvent: { pageX: 120, pageY: 300 } });
+    expect(onOpenTopic).toHaveBeenCalledWith();
     expect(onOpenTopic).toHaveBeenCalledTimes(1);
     expect(view.getByText('重试')).toBeTruthy();
   });

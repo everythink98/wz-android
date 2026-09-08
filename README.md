@@ -26,7 +26,8 @@
   <a href="#核心能力">核心能力</a> ·
   <a href="#支持来源">支持来源</a> ·
   <a href="#下载">下载</a> ·
-  <a href="#开发">开发</a>
+  <a href="#开发">开发</a> ·
+  <a href="#项目文档">项目文档</a>
 </p>
 
 ---
@@ -82,23 +83,32 @@
 
 ## 开发
 
+使用 Node 22 和仓库 lockfile 安装依赖：
+
 ```powershell
-npm install
+npm ci
 npm run verify
 npm run android
 ```
 
-`npm run android` 需要 Expo development build，不能使用 Expo Go。请准备 Android Studio 提供的 Android SDK / 模拟器，或一台已开启 USB 调试的 Android 手机。
+`npm run android` 编译并安装 Expo development build，不能使用 Expo Go。请准备 Android SDK、Java 构建环境及模拟器或已开启 USB 调试的 Android 手机；已有数据的设备先按 [覆盖安装流程](docs/operator-runbook.md#覆盖安装) 核对安装身份。日常命令、原生验证与发布操作见 [维护手册](docs/operator-runbook.md)。
 
-### 项目文档
+## 项目文档
+
+首次接手从 [交接说明](docs/handoff.md) 开始；执行项目任务前阅读 [AGENTS.md](AGENTS.md)。文档按下面的职责维护，同一事实的完整说明只保留在对应文档。
 
 | 文档 | 用途 |
 | --- | --- |
+| [交接说明](docs/handoff.md) | 接手顺序、事实源路由与文档收口 |
+| [产品章程](docs/product-charter.md) | 产品目标、取舍和功能准入 |
+| [设计约束](PRODUCT.md) | 品牌、视觉和无障碍要求 |
 | [产品地图](docs/product-map.md) | 当前产品行为、入口、共享 seam 与能力 ID |
 | [架构说明](docs/architecture.md) | 实现结构与数据边界 |
 | [测试标准](docs/testing-standard.md) | 测试 owner、证据层、隔离和验证强度 |
 | [代码与项目结构规范](docs/code-standards.md) | ownership、命名、结构和静态门禁 |
 | [维护手册](docs/operator-runbook.md) | 构建、覆盖安装、Replay、Smoke 和发布步骤 |
 | [回归语料库](docs/regression-corpus.md) | 已确认历史事故、根因与当前归属 |
+| [技术债务与待验收项](docs/code-cleanup-map.md) | 尚未闭合的问题、证据缺口与后续入口 |
+| [Agent Live 验收](tests/live/agent-live.md) | App 内真实来源和系统能力的验收场景 |
 
 产品或 runtime 改动请先在产品地图中选择受影响的能力 ID，并沿入口、代码 seam、自动测试和模拟器路径展开回归。不要提交 keystore、`.env.release.local` 或明文凭据。

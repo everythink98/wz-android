@@ -1071,6 +1071,51 @@ describe('notification routes', () => {
     expect(view.queryByText('重试')).toBeNull();
   });
 
+  it('opens the notification topic and exact reply after detail loading fails on a native press', async () => {
+    appQueryClient.clear();
+    const item: ForumNotification = {
+      ...notification,
+      target: {
+        type: 'topic-post',
+        topicId: '201',
+        postId: '987',
+        postNumber: 12,
+        url: 'https://www.nodeseek.com/post-201-1'
+      }
+    };
+    const gateway = {
+      loadDetail: jest.fn(async () => {
+        throw new Error('帖子内容未找到');
+      }),
+      markRead: jest.fn()
+    } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const navigation = { navigate: jest.fn() };
+    const view = await render(
+      <NotificationRouteRuntimeProvider value={routeRuntime(gateway)}>
+        <NavigationContainer>
+          <NotificationDetailRoute
+            navigation={navigation as never}
+            route={{
+              key: 'notification-detail',
+              name: 'NotificationDetail',
+              params: { notification: item, identityKey: 'nodeseek:new-account' }
+            }}
+          />
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>,
+      { wrapper: QueryTestWrapper }
+    );
+
+    await waitFor(() => expect(view.getByText('帖子内容未找到')).toBeTruthy());
+    await fireEvent.press(view.getByText('前往主题回复'), { nativeEvent: { pageX: 120, pageY: 300 } });
+
+    expect(navigation.navigate).toHaveBeenCalledWith('Topic', {
+      topic: expect.objectContaining({ source: 'nodeseek', id: '201', title: item.title }),
+      targetReply: { commentId: 987, floor: 12 }
+    });
+    expect(gateway.markRead).not.toHaveBeenCalled();
+  });
+
   it('opens a topic-only notification without inventing a reply target', async () => {
     appQueryClient.clear();
     const item: ForumNotification = {

@@ -1,7 +1,16 @@
 import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification, NotificationDetail, NotificationPage } from '@/domain/notifications/models';
-import { beginDiagnosticTrace, finishDiagnosticTrace, withDiagnosticFetcher } from '@/platform/diagnostics/diagnostics';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  withDiagnosticFetcher
+} from '@/platform/diagnostics/diagnostics';
+import {
+  annotateSourceDiagnosticSummary,
+  sourceDiagnosticSummary
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   normalizeDiagnosticReason,
   type DiagnosticFields,
@@ -61,29 +70,69 @@ function assertNotAborted(signal?: AbortSignal) {
 
 async function runWithNotificationDiagnostics<T>(
   source: NotificationSource,
-  operation: 'load' | 'refresh' | 'open' | 'mutate',
+  operation:
+    | 'notification-list'
+    | 'notification-categories'
+    | 'notification-unread'
+    | 'notification-detail'
+    | 'notification-mark-read'
+    | 'notification-reply'
+    | 'notification-upload'
+    | 'notification-mark-all-read'
+    | 'notification-poll-capabilities'
+    | 'notification-templates'
+    | 'notification-template-use',
   run: (trace: DiagnosticTrace) => Promise<T>,
   summarize: (result: T) => DiagnosticFields = () => ({})
 ) {
   const trace = beginDiagnosticTrace('source', operation, { source });
   try {
     const result = await run(trace);
-    finishDiagnosticTrace(trace, 'success', { source, ...summarize(result) });
+    const summary = sourceDiagnosticSummary(result);
+    const fields = summarize(result);
+    if (summary) markDiagnosticStage(trace, 'parse', { source, ...summary });
+    const unconfirmed = fields.isConfirmed === false;
+    finishDiagnosticTrace(
+      trace,
+      summary?.isParseEmpty
+        ? summary.validCount
+          ? 'partial'
+          : 'failure'
+        : unconfirmed || summary?.hasDegradation
+          ? 'partial'
+          : 'success',
+      {
+        source,
+        ...fields,
+        ...(summary?.isParseEmpty ? { reason: 'parse_empty' } : unconfirmed ? { reason: 'unconfirmed' } : {})
+      }
+    );
     return result;
   } catch (error) {
     const sourceError = sourceErrorFromUnknown(source, error);
     const blocked = ['login-expired', 'login-required', 'permission-denied', 'verification-required'].includes(
       sourceError.kind
     );
-    const reason = blocked
-      ? sourceError.kind === 'login-expired'
-        ? 'login_required'
-        : sourceError.kind.replace(/-/g, '_')
-      : normalizeDiagnosticReason(error);
-    finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : blocked ? 'blocked' : 'failure', {
-      source,
-      reason
-    });
+    const reason: DiagnosticFields['reason'] =
+      sourceError.reason === 'private-access-stale'
+        ? 'stale'
+        : blocked
+          ? sourceError.kind === 'login-expired'
+            ? 'login_required'
+            : sourceError.kind === 'permission-denied'
+              ? 'permission_denied'
+              : sourceError.kind === 'verification-required'
+                ? 'verification_required'
+                : 'login_required'
+          : normalizeDiagnosticReason(error);
+    finishDiagnosticTrace(
+      trace,
+      reason === 'canceled' ? 'canceled' : reason === 'stale' ? 'stale' : blocked ? 'blocked' : 'failure',
+      {
+        source,
+        reason
+      }
+    );
     throw error;
   }
 }
@@ -185,7 +234,7 @@ export function createNotificationGateway({
   ) =>
     runWithNotificationDiagnostics(
       source,
-      'load',
+      'notification-list',
       async (trace) =>
         runWithAccess(source, trace, options.signal, options.expectedIdentityKey, async (access) => {
           const page = await adapters[source].listPage({
@@ -196,19 +245,34 @@ export function createNotificationGateway({
             unreadOnly: options.unreadOnly
           });
           const hasMore = page.hasMore && Boolean(page.cursor) && page.cursor !== options.cursor;
-          return hasMore ? page : { ...page, cursor: null, hasMore: false };
+          const summary = sourceDiagnosticSummary(page);
+          return annotateSourceDiagnosticSummary(hasMore ? page : { ...page, cursor: null, hasMore: false }, {
+            parserVariant:
+              source === 'nodeseek'
+                ? 'nodeseek-notifications'
+                : source === 'linuxdo'
+                  ? 'discourse-notifications'
+                  : 'yaohuo-notifications',
+            ...summary,
+            hasRepeatedCursor: Boolean(page.hasMore && page.cursor && page.cursor === options.cursor),
+            hasDegradation: summary?.hasDegradation || (page.hasMore && !hasMore)
+          });
         }),
-      (page) => ({ itemCount: page.items.length })
+      (page) => ({ itemCount: page.items.length, hasMore: page.hasMore, hasNextCursor: Boolean(page.cursor) })
     );
 
   return {
     listPage,
 
     async getCategories(source: NotificationSource, expectedIdentityKey?: string, signal?: AbortSignal) {
-      return runWithNotificationDiagnostics(source, 'load', async (trace) =>
-        runWithAccess(source, trace, signal, expectedIdentityKey, async (access) =>
-          adapters[source].getCategories(access)
-        )
+      return runWithNotificationDiagnostics(
+        source,
+        'notification-categories',
+        async (trace) =>
+          runWithAccess(source, trace, signal, expectedIdentityKey, async (access) =>
+            adapters[source].getCategories(access)
+          ),
+        (categories) => ({ itemCount: categories.length })
       );
     },
 
@@ -254,7 +318,7 @@ export function createNotificationGateway({
     async readUnreadSnapshot(source: NotificationSource, signal?: AbortSignal) {
       return runWithNotificationDiagnostics(
         source,
-        'refresh',
+        'notification-unread',
         async (trace) =>
           runWithAccess(source, trace, signal, undefined, async (access) =>
             adapters[source].readUnreadSnapshot(access)
@@ -268,10 +332,19 @@ export function createNotificationGateway({
       expectedIdentityKey: string,
       signal?: AbortSignal
     ): Promise<NotificationDetail> {
-      return runWithNotificationDiagnostics(item.source, 'open', async (trace) =>
-        runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) =>
-          adapters[item.source].loadDetail(item, access)
-        )
+      return runWithNotificationDiagnostics(
+        item.source,
+        'notification-detail',
+        async (trace) =>
+          runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) =>
+            adapters[item.source].loadDetail(item, access)
+          ),
+        (detail) => ({
+          hasContent: Boolean(detail.contentHtml || detail.contentText || detail.messages?.length),
+          itemCount: detail.messages?.length || 0,
+          hasTopic: Boolean(detail.topic),
+          canReply: Boolean(detail.reply && !detail.reply.disabledReason)
+        })
       );
     },
 
@@ -283,7 +356,7 @@ export function createNotificationGateway({
     ) {
       return runWithNotificationDiagnostics(
         item.source,
-        'mutate',
+        'notification-mark-read',
         async (trace) =>
           runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) =>
             adapters[item.source].markRead(item, detail, access)
@@ -300,7 +373,7 @@ export function createNotificationGateway({
     ) {
       return runWithNotificationDiagnostics(
         item.source,
-        'mutate',
+        'notification-reply',
         async (trace) =>
           runWithAccess(item.source, trace, signal, expectedIdentityKey, async (access) => {
             if (!content.trim()) throw new Error('请输入回复内容');
@@ -320,7 +393,7 @@ export function createNotificationGateway({
         signal?: AbortSignal;
       }
     ) {
-      return runWithNotificationDiagnostics(source, 'mutate', async (trace) =>
+      return runWithNotificationDiagnostics(source, 'notification-upload', async (trace) =>
         runWithAccess(source, trace, options.signal, options.expectedIdentityKey, async (access) => {
           if (source === 'yaohuo') throw new Error('妖火私信仅支持纯文本');
           assertNotAborted(options.signal);
@@ -351,7 +424,7 @@ export function createNotificationGateway({
     },
 
     async loadLinuxDoPollCapabilities(expectedIdentityKey: string, signal?: AbortSignal) {
-      return runWithNotificationDiagnostics('linuxdo', 'load', async (trace) =>
+      return runWithNotificationDiagnostics('linuxdo', 'notification-poll-capabilities', async (trace) =>
         runWithAccess('linuxdo', trace, signal, expectedIdentityKey, (access) =>
           fetchLinuxDoPollCapabilities({
             fetcher: access.fetcher || fetch,
@@ -363,7 +436,7 @@ export function createNotificationGateway({
     },
 
     async loadLinuxDoTemplates(expectedIdentityKey: string, signal?: AbortSignal) {
-      return runWithNotificationDiagnostics('linuxdo', 'load', async (trace) =>
+      return runWithNotificationDiagnostics('linuxdo', 'notification-templates', async (trace) =>
         runWithAccess('linuxdo', trace, signal, expectedIdentityKey, (access) =>
           fetchLinuxDoTemplates({
             fetcher: access.fetcher || fetch,
@@ -375,7 +448,7 @@ export function createNotificationGateway({
     },
 
     async recordLinuxDoTemplateUse(id: string, expectedIdentityKey: string, signal?: AbortSignal) {
-      return runWithNotificationDiagnostics('linuxdo', 'mutate', async (trace) =>
+      return runWithNotificationDiagnostics('linuxdo', 'notification-template-use', async (trace) =>
         runWithAccess('linuxdo', trace, signal, expectedIdentityKey, (access) =>
           recordLinuxDoTemplateUsage({
             fetcher: access.fetcher || fetch,
@@ -390,7 +463,7 @@ export function createNotificationGateway({
     async markAllRead(source: NotificationSource, expectedIdentityKey: string, signal?: AbortSignal) {
       return runWithNotificationDiagnostics(
         source,
-        'mutate',
+        'notification-mark-all-read',
         async (trace) =>
           runWithAccess(source, trace, signal, expectedIdentityKey, async (access) => {
             const markAllRead = adapters[source].markAllRead;

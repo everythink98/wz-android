@@ -1,6 +1,9 @@
 import type { DiscourseTagOption, DiscourseUserOption, SearchResponse, Topic } from '@/domain/forum/models';
 import { isRecord, textExcerpt } from '@/domain/forum/html';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
+import {
+  annotateSourceDiagnosticSummary,
+  sourceDiagnosticSummary
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   discourseOriginalPoster,
   discourseTagOptions,

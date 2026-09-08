@@ -15,7 +15,7 @@ import { parseYaohuoListHtml, parseYaohuoSearchHtml } from './feedParser';
 import { parseYaohuoCurrentUserHtml } from './sessionParser';
 import { parseYaohuoFavoriteRecordId, parseYaohuoRepliesDocument, parseYaohuoTopicHtml } from './topicParser';
 import { yaohuoReplyListNextPageUrlFromRoot, yaohuoTopicListNextPageUrlFromRoot } from './protocol';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { parseHtml } from '@/domain/forum/html';
 import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE } from '@/domain/forum/forumContentMedia';
 import type { ReplyOrder, ReplyWindowPosition, Topic } from '@/domain/forum/models';

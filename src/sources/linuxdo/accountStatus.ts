@@ -62,7 +62,7 @@ export async function readLinuxDoAccountStatus({
     const canceled = signal.aborted || isCanceledRequest(error);
     const sourceError = canceled ? undefined : sourceErrorFromUnknown('linuxdo', error);
     if (sourceError?.kind === 'login-expired') {
-      finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', reason: 'expired' });
+      finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', state: 'expired', reason: 'login_required' });
       return {
         session: siteSessionStateFromEvents('linuxdo', [
           {

@@ -11,7 +11,7 @@ import {
   textExcerpt,
   toIsoString
 } from '@/domain/forum/html';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import { stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
 import { discourseAccountCount } from '@/sources/discourse/level';

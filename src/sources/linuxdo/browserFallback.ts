@@ -4,13 +4,21 @@ import { cancelRequestTimeoutForFallback, withAbortableTimeout, type Fetcher } f
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
+  diagnosticRequestFields,
   finishDiagnosticTrace,
-  markDiagnosticStage,
-  registerDiagnosticContextFetcher
+  markDiagnosticStage
 } from '@/platform/diagnostics/diagnostics';
-import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import {
+  normalizeDiagnosticReason,
+  type DiagnosticFields,
+  type DiagnosticTrace
+} from '@/platform/diagnostics/diagnosticPolicy';
 import { currentReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
-import { registerForumReadResponseEvidence } from '@/sources/forumSourceReadAttempt';
+import {
+  forumRecoveryDiagnosticFields,
+  recordForumRecoveryDecision,
+  registerForumReadResponseEvidence
+} from '@/sources/forumSourceReadAttempt';
 import { LINUXDO_BASE_URL } from './protocol';
 
 export type LinuxDoHiddenBrowserFailureReason =
@@ -99,6 +107,7 @@ async function fetchLinuxDoThroughWebView(
       reason: 'verification_required'
     });
   markDiagnosticStage(trace, 'transport', {
+    ...diagnosticRequestFields(init),
     source: 'linuxdo',
     channel: 'direct',
     state: 'fallback',
@@ -109,6 +118,7 @@ async function fetchLinuxDoThroughWebView(
     cancelRequestTimeoutForFallback(init);
     const response = await webViewFetcher(url, init);
     markDiagnosticStage(trace, 'transport', {
+      ...diagnosticRequestFields(init),
       source: 'linuxdo',
       channel: 'webview',
       state: 'finish',
@@ -125,6 +135,7 @@ async function fetchLinuxDoThroughWebView(
   } catch (error) {
     const reason = normalizeDiagnosticReason(error);
     markDiagnosticStage(trace, 'transport', {
+      ...diagnosticRequestFields(init),
       source: 'linuxdo',
       channel: 'webview',
       state: 'failure',
@@ -165,6 +176,7 @@ async function fetchLinuxDoWebViewOnly(
     });
   if (directFailure) {
     markDiagnosticStage(trace, 'transport', {
+      ...diagnosticRequestFields(init),
       source: 'linuxdo',
       channel: 'direct',
       state: 'fallback',
@@ -172,6 +184,7 @@ async function fetchLinuxDoWebViewOnly(
     });
   }
   markDiagnosticStage(trace, 'transport', {
+    ...diagnosticRequestFields(init),
     source: 'linuxdo',
     channel: 'webview',
     state: 'start',
@@ -181,6 +194,7 @@ async function fetchLinuxDoWebViewOnly(
     cancelRequestTimeoutForFallback(init);
     const response = await webViewFetcher(url, init);
     markDiagnosticStage(trace, 'transport', {
+      ...diagnosticRequestFields(init),
       source: 'linuxdo',
       channel: 'webview',
       state: 'finish',
@@ -199,6 +213,7 @@ async function fetchLinuxDoWebViewOnly(
   } catch (error) {
     const reason = normalizeDiagnosticReason(error);
     markDiagnosticStage(trace, 'transport', {
+      ...diagnosticRequestFields(init),
       source: 'linuxdo',
       channel: 'webview',
       state: 'failure',
@@ -237,19 +252,40 @@ export function createLinuxDoWebViewFallbackFetcher({
     reason: 'network_error' | 'timeout',
     ordinal: number,
     expectedEvidenceEpoch: number,
-    expectedGeneration: number
+    expectedGeneration: number,
+    diagnosticFields: DiagnosticFields
   ) => {
-    if (expectedEvidenceEpoch !== evidenceEpoch || ordinal <= latestConfirmedDirectOrdinal) return;
-    if (!recoverReadChannel) return;
+    const fields = {
+      ...diagnosticFields,
+      evidenceKind: 'fallback',
+      ordinal,
+      generation: expectedGeneration,
+      evidenceEpoch
+    } as const;
+    if (expectedEvidenceEpoch !== evidenceEpoch || ordinal <= latestConfirmedDirectOrdinal) {
+      recordForumRecoveryDecision('linuxdo', 'superseded', fields);
+      return;
+    }
+    if (!recoverReadChannel) {
+      recordForumRecoveryDecision('linuxdo', 'unavailable', fields);
+      return;
+    }
+    recordForumRecoveryDecision('linuxdo', 'commit', fields);
     evidenceEpoch += 1;
-    const trace = beginDiagnosticTrace('network', 'rotate-read-runtime', { source: 'linuxdo', reason });
+    const trace = beginDiagnosticTrace('network', 'rotate-read-runtime', {
+      ...diagnosticFields,
+      source: 'linuxdo',
+      reason
+    });
     try {
       await recoverReadChannel(expectedGeneration, trace);
-    } catch {
+    } catch (error) {
+      recordForumRecoveryDecision('linuxdo', 'failed', { ...fields, reason: normalizeDiagnosticReason(error) });
       // Native owns the terminal event once the trace crosses the bridge.
     }
   };
-  return registerDiagnosticContextFetcher(async (input, init) => {
+  return async (input, init) => {
+    const recoveryFields = forumRecoveryDiagnosticFields(init);
     const url = String(input);
     const method = String(init?.method || 'GET').toUpperCase();
     const ordinal = ++requestOrdinal;
@@ -280,7 +316,13 @@ export function createLinuxDoWebViewFallbackFetcher({
           const expectedEvidenceEpoch = evidenceEpoch;
           registerForumReadResponseEvidence(init, response, {
             commit: () =>
-              recordQualifiedReadFallback('timeout', ordinal, expectedEvidenceEpoch, requestStartGeneration),
+              recordQualifiedReadFallback(
+                'timeout',
+                ordinal,
+                expectedEvidenceEpoch,
+                requestStartGeneration,
+                recoveryFields
+              ),
             kind: 'fallback',
             ordinal,
             source: 'linuxdo'
@@ -304,7 +346,13 @@ export function createLinuxDoWebViewFallbackFetcher({
             const expectedEvidenceEpoch = evidenceEpoch;
             registerForumReadResponseEvidence(init, fallbackResponse, {
               commit: () =>
-                recordQualifiedReadFallback('network_error', ordinal, expectedEvidenceEpoch, requestStartGeneration),
+                recordQualifiedReadFallback(
+                  'network_error',
+                  ordinal,
+                  expectedEvidenceEpoch,
+                  requestStartGeneration,
+                  recoveryFields
+                ),
               kind: 'fallback',
               ordinal,
               source: 'linuxdo'
@@ -343,6 +391,13 @@ export function createLinuxDoWebViewFallbackFetcher({
           if (ordinal > latestConfirmedDirectOrdinal) {
             latestConfirmedDirectOrdinal = ordinal;
             evidenceEpoch += 1;
+            recordForumRecoveryDecision('linuxdo', 'direct-reset', {
+              ...recoveryFields,
+              evidenceKind: 'direct',
+              ordinal,
+              evidenceEpoch,
+              generation: requestStartGeneration
+            });
           }
         },
         kind: 'direct',
@@ -351,5 +406,5 @@ export function createLinuxDoWebViewFallbackFetcher({
       });
     }
     return response;
-  });
+  };
 }

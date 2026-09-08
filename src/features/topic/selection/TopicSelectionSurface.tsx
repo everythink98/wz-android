@@ -16,6 +16,8 @@ import {
 import { type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewProps } from 'react-native';
 import { useTopicSelectionBackReport } from '../useTopicRouteBeforeRemove';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
+import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 
 export type TopicSelectionItem = Readonly<{
   documentId: 'opening';
@@ -35,6 +37,7 @@ type NativeForumSelectionProps = {
   testID?: string;
   onAutoScroll?: (event: NativeSyntheticEvent<{ delta: number }>) => void;
   onSelectionChange?: (event: NativeSyntheticEvent<{ active: boolean; revision: string }>) => void;
+  onSelectionError?: (event: NativeSyntheticEvent<{ code: string; revision: string }>) => void;
 };
 
 type NativeForumSelectionRef = View & { cancelSelection?: () => void };
@@ -42,6 +45,15 @@ type NativeForumSelectionRef = View & { cancelSelection?: () => void };
 let NativeForumSelection: ComponentType<
   NativeForumSelectionProps & { ref?: RefObject<NativeForumSelectionRef | null> }
 > | null = null;
+let moduleUnavailableReported = false;
+
+function recordSelectionError(selectionError: DiagnosticFields['selectionError']) {
+  const trace = beginDiagnosticTrace('topic', 'selection-error');
+  finishDiagnosticTrace(trace, 'failure', {
+    selectionError,
+    reason: selectionError === 'module-unavailable' ? 'unsupported' : 'invalid_response'
+  });
+}
 if (Platform.OS === 'android') {
   try {
     NativeForumSelection = requireNativeViewManager<NativeForumSelectionProps>('ForumContentSelection');
@@ -145,6 +157,35 @@ export function TopicSelectionSurface({
       reportSelection(nativeEvent.active ? cancelSelection : null);
     }
   );
+  const lastErrorRef = useRef('');
+  const onSelectionError = useLatestCallback(
+    ({ nativeEvent }: NativeSyntheticEvent<{ code: string; revision: string }>) => {
+      if (!mounted.current || !nativeEnabled || nativeEvent.revision !== revision) return;
+      const code = (
+        [
+          'blank-identity',
+          'duplicate-native-id',
+          'duplicate-row-key',
+          'invalid-selection-token',
+          'revision-reused',
+          'copy-mapping-mismatch',
+          'system-actions-load',
+          'system-action-run'
+        ] as const
+      ).find((value) => value === nativeEvent.code);
+      if (!code || lastErrorRef.current === `${revision}:${code}`) return;
+      lastErrorRef.current = `${revision}:${code}`;
+      recordSelectionError(code);
+    }
+  );
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !routeActive || !snapshot.rows.length) return;
+    if (!NativeForumSelection && !moduleUnavailableReported) {
+      moduleUnavailableReported = true;
+      recordSelectionError('module-unavailable');
+    } else if (!snapshot.valid)
+      recordSelectionError(items.some((item) => !item.rowKey) ? 'blank-identity' : 'duplicate-row-key');
+  }, [items, routeActive, snapshot]);
 
   useEffect(() => {
     cancelSelection();
@@ -189,6 +230,7 @@ export function TopicSelectionSurface({
         testID="topic-selection-surface"
         onAutoScroll={onAutoScroll}
         onSelectionChange={onSelectionChange}
+        onSelectionError={onSelectionError}
       >
         <View accessible={false} style={styles.fill} testID="topic-selection-content">
           {children}

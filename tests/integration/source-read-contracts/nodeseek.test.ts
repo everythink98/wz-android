@@ -12,7 +12,7 @@ import {
   getNodeSeekUserProfile,
   resolveNodeSeekUser
 } from '@/sources/nodeseek/reader';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 vi.mock('expo-secure-store', () => ({

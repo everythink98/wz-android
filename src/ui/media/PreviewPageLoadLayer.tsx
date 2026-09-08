@@ -3,6 +3,7 @@ import { StyleSheet, type ImageURISource } from 'react-native';
 import { Image as ExpoImage, type ImageLoadEventData, type ImageProgressEventData } from 'expo-image';
 
 import { compatibleImageRequestIdentity, type CompatibleSvgArtifact } from '@/platform/media/compatibleImageSources';
+import { useImageLoadDiagnostics } from '@/platform/media/imageLoadDiagnostics';
 import { type PreviewBitmapDecodeTarget, withPreviewBitmapDecodeTarget } from '@/platform/media/previewBitmapBudget';
 
 export function PreviewPageLoadLayer({
@@ -53,7 +54,7 @@ export function PreviewPageLoadLayer({
   onAnimatedPosterDisplay: () => void;
   onAnimatedPosterError: () => void;
   onDisplay: () => void;
-  onError: () => void;
+  onError: (diagnosticSource: ImageURISource) => void;
   onLoad: (event: ImageLoadEventData) => void;
   onLoadStart: () => void;
   onPosterDisplay: () => void;
@@ -80,6 +81,13 @@ export function PreviewPageLoadLayer({
   const displaySourceIdentity = useMemo(() => compatibleImageRequestIdentity(displaySource), [displaySource]);
   const originalSourceIdentity = useMemo(() => compatibleImageRequestIdentity(originalSource), [originalSource]);
   const displayUnderlayVisible = showDisplayUnderlay && displayUri !== originalUri;
+  const diagnostic = useImageLoadDiagnostics(
+    boundedAnimatedPosterSource || boundedKnownPosterSource || boundedOriginalSource,
+    retryVersion,
+    'glide',
+    true,
+    originalUri
+  );
 
   if (activeAnimatedArtifact) {
     return (
@@ -103,8 +111,14 @@ export function PreviewPageLoadLayer({
             ? styles.hiddenMedia
             : null
         ]}
-        onDisplay={onAnimatedPosterDisplay}
-        onError={onAnimatedPosterError}
+        onDisplay={() => {
+          diagnostic.displayed();
+          onAnimatedPosterDisplay();
+        }}
+        onError={(error) => {
+          diagnostic.failed(error);
+          onAnimatedPosterError();
+        }}
       />
     );
   }
@@ -121,8 +135,14 @@ export function PreviewPageLoadLayer({
         recyclingKey={`${mediaSessionIdentity}:${sourceIdentity}:${knownArtifact.posterRevision}:poster`}
         source={boundedKnownPosterSource!}
         style={StyleSheet.absoluteFill}
-        onDisplay={onPosterDisplay}
-        onError={onPosterError}
+        onDisplay={() => {
+          diagnostic.displayed();
+          onPosterDisplay();
+        }}
+        onError={(error) => {
+          diagnostic.failed(error);
+          onPosterError();
+        }}
       />
     );
   }
@@ -153,11 +173,20 @@ export function PreviewPageLoadLayer({
         contentFit="contain"
         priority={active ? 'high' : 'low'}
         recyclingKey={`${originalSourceIdentity}:${retryVersion}:native`}
-        source={boundedOriginalSource}
+        source={diagnostic.source}
         style={StyleSheet.absoluteFill}
-        onDisplay={onDisplay}
-        onError={onError}
-        onLoad={onLoad}
+        onDisplay={() => {
+          diagnostic.displayed();
+          onDisplay();
+        }}
+        onError={(error) => {
+          diagnostic.failed(error);
+          onError(diagnostic.source);
+        }}
+        onLoad={(event) => {
+          diagnostic.loaded(event.cacheType);
+          onLoad(event);
+        }}
         onLoadStart={onLoadStart}
         onProgress={onProgress}
       />

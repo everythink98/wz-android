@@ -23,11 +23,14 @@ import { sessionSources } from '@/domain/forum/sourceCatalog';
 import type { UserProfile } from '@/domain/forum/models';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 
 const mockCheckYaohuoLogin = jest.mocked(checkYaohuoLogin);
 const mockGetCurrentUser = jest.mocked(getCurrentUserProfile);
 const mockReadLinuxDoCookieHeader = jest.fn<() => Promise<string | undefined>>();
 const mockReadYaohuoCookieHeader = jest.fn<() => Promise<string | undefined>>();
+let diagnosticEvents: DiagnosticEvent[] = [];
 
 const linuxUser: UserProfile = {
   source: 'linuxdo',
@@ -154,6 +157,10 @@ describe('account status queries', () => {
     appQueryClient.clear();
     await AsyncStorage.clear();
     jest.clearAllMocks();
+    diagnosticEvents = [];
+    setDiagnosticWriter((line) => {
+      diagnosticEvents.push(JSON.parse(line));
+    });
     mockReadLinuxDoCookieHeader.mockResolvedValue(undefined);
     mockReadYaohuoCookieHeader.mockResolvedValue(undefined);
     mockCheckYaohuoLogin.mockResolvedValue({
@@ -191,6 +198,9 @@ describe('account status queries', () => {
     });
     expect(mockGetCurrentUser).not.toHaveBeenCalled();
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
+    expect(
+      diagnosticEvents.filter((event) => event.operation === 'account-restore' && event.phase === 'finish')
+    ).toEqual([expect.objectContaining({ outcome: 'success', state: 'restored', itemCount: 1 })]);
   });
 
   it('probes only migration candidates and marks the one-time migration complete', async () => {
@@ -241,6 +251,9 @@ describe('account status queries', () => {
       expect(hook.result.current.hydrated).toBe(true);
       expect(hook.result.current.statusBusy).toBe(false);
       expect(await AsyncStorage.getItem('account-session.migration.v1')).toBe('1');
+      expect(
+        diagnosticEvents.filter((event) => event.operation === 'account-migration' && event.phase === 'finish')
+      ).toEqual([expect.objectContaining({ outcome: 'partial', reason: 'timeout' })]);
 
       mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
       await act(async () => {
@@ -262,6 +275,72 @@ describe('account status queries', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    setDiagnosticWriter(null);
+    jest.restoreAllMocks();
+  });
+
+  it('keeps confirmed results and refresh notifications unchanged while diagnosing snapshot save failure as partial', async () => {
+    mockGetCurrentUser.mockResolvedValue(nodeSeekUser);
+    const { hook, notify, onAccountStatusChanged } = await renderStatusController({
+      enabledSources: ['nodeseek'],
+      readNodeSeekCookieHeader: async () => 'session=PRIVATE_ACCOUNT_COOKIE'
+    });
+    const save = jest.spyOn(AsyncStorage, 'setItem').mockRejectedValueOnce(new Error('PRIVATE_ACCOUNT_STORAGE'));
+    const productResult = await act(async () => hook.result.current.reconcileAccountStatus('nodeseek'));
+    expect(productResult).toMatchObject({
+      status: 'same',
+      session: { identityTrust: 'confirmed', currentUser: nodeSeekUser }
+    });
+    expect('partial' in productResult && productResult.partial).not.toBe(true);
+    await waitFor(() =>
+      expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nodeSeekUser)
+    );
+    expect(onAccountStatusChanged).not.toHaveBeenCalled();
+    save.mockRejectedValueOnce(new Error('PRIVATE_ACCOUNT_STORAGE'));
+    await act(async () => {
+      await hook.result.current.refreshAccountStatus();
+    });
+    expect(notify).toHaveBeenCalledWith('账号状态已刷新');
+    expect(
+      diagnosticEvents.filter((event) => event.operation === 'account-reconcile' && event.phase === 'finish')
+    ).toEqual([
+      expect.objectContaining({ outcome: 'partial', reason: 'storage_error', didPersist: false }),
+      expect.objectContaining({ outcome: 'partial', reason: 'storage_error', didPersist: false })
+    ]);
+    expect(
+      diagnosticEvents.find((event) => event.operation === 'account-refresh' && event.phase === 'finish')
+    ).toMatchObject({ outcome: 'partial', reason: 'storage_error', errorCount: 1 });
+    expect(JSON.stringify(diagnosticEvents)).not.toMatch(/PRIVATE_ACCOUNT|session=|bob|space\/17/);
+  });
+
+  it('finishes hydration with diagnostic partial when the migration marker cannot be saved', async () => {
+    jest.spyOn(AsyncStorage, 'setItem').mockRejectedValueOnce(new Error('PRIVATE_MIGRATION_STORAGE'));
+    const { hook } = await renderStatusController({ enabledSources: [], enabledSourcesReady: true });
+    await waitFor(() => expect(hook.result.current.hydrated).toBe(true));
+    expect(mockGetCurrentUser).not.toHaveBeenCalled();
+    expect(
+      diagnosticEvents.filter((event) => event.operation === 'account-migration' && event.phase === 'finish')
+    ).toEqual([expect.objectContaining({ outcome: 'partial', reason: 'storage_error' })]);
+    expect(
+      diagnosticEvents.filter((event) => event.operation === 'account-restore' && event.phase === 'finish')
+    ).toEqual([expect.objectContaining({ outcome: 'partial', reason: 'storage_error' })]);
+    expect(JSON.stringify(diagnosticEvents)).not.toContain('PRIVATE_MIGRATION_STORAGE');
+  });
+
+  it('emits one canceled restore terminal when unmounted before storage resolves', async () => {
+    const marker = Promise.withResolvers<string | null>();
+    jest.spyOn(AsyncStorage, 'getItem').mockImplementationOnce(() => marker.promise);
+    const { hook } = await renderStatusController({ enabledSourcesReady: true });
+    expect(hook.result.current.hydrated).toBe(false);
+    await hook.unmount();
+    await act(async () => {
+      marker.resolve('1');
+      await Promise.resolve();
+    });
+    expect(
+      diagnosticEvents.filter((event) => event.operation === 'account-restore' && event.phase === 'finish')
+    ).toEqual([expect.objectContaining({ outcome: 'canceled', reason: 'canceled' })]);
+    expect(mockGetCurrentUser).not.toHaveBeenCalled();
   });
 
   it('probes only enabled sources and treats disabled reconciliation as stale', async () => {
@@ -277,6 +356,11 @@ describe('account status queries', () => {
     expect(mockGetCurrentUser).not.toHaveBeenCalledWith(expect.objectContaining({ source: 'linuxdo' }));
     expect(mockCheckYaohuoLogin).not.toHaveBeenCalled();
     await expect(hook.result.current.reconcileAccountStatus('linuxdo')).resolves.toEqual({ status: 'stale' });
+    expect(
+      diagnosticEvents.filter(
+        (event) => event.operation === 'account-reconcile' && event.source === 'linuxdo' && event.phase === 'finish'
+      )
+    ).toEqual([expect.objectContaining({ outcome: 'stale', reason: 'source_disabled' })]);
   });
 
   it('starts all-disabled without probes or an identity barrier', async () => {
@@ -719,7 +803,10 @@ describe('account status queries', () => {
 
   it('commits the linux.do current user to the stable snapshot in one response', async () => {
     mockReadLinuxDoCookieHeader.mockResolvedValue('cf_clearance=verification; _t=active-session');
-    mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'linuxdo' ? linuxUser : (null as never)));
+    mockGetCurrentUser.mockImplementation(async ({ source, fetcher }) => {
+      await fetcher?.('https://linux.do/session/current.json');
+      return source === 'linuxdo' ? linuxUser : (null as never);
+    });
     const { hook } = await renderStatusController({ enabledSources: ['linuxdo'] });
 
     await act(async () => {
@@ -745,6 +832,13 @@ describe('account status queries', () => {
         discourseAuth: { userAgent: 'safe-agent' }
       })
     );
+    const request = diagnosticEvents.find(
+      (event) => event.operation === 'account-reconcile' && event.phase === 'transport' && event.state === 'finish'
+    );
+    expect(request).toMatchObject({ status: 200, requestId: expect.any(String), parentRequestId: expect.any(String) });
+    expect(
+      diagnosticEvents.some((event) => event.requestId === request?.parentRequestId && event.operation === 'refresh')
+    ).toBe(true);
   });
 
   it('commits the changed snapshot before advancing the source scope', async () => {
@@ -1372,6 +1466,14 @@ describe('account status queries', () => {
     await waitFor(() =>
       expect(hook.result.current.accountSessionViewModels.nodeseek.currentUser).toEqual(nextNodeSeekUser)
     );
+    const terminals = diagnosticEvents.filter(
+      (event) => event.operation === 'account-reconcile' && event.phase === 'finish'
+    );
+    expect(terminals).toEqual([
+      expect.objectContaining({ outcome: 'stale', reason: 'superseded' }),
+      expect.objectContaining({ outcome: 'success' })
+    ]);
+    expect(new Set(terminals.map((event) => event.traceId)).size).toBe(2);
   });
 
   it('invalidates a closing probe when a newer login surface opens', async () => {
@@ -1429,6 +1531,12 @@ describe('account status queries', () => {
       storedCookie.resolve(undefined);
       await Promise.all([first, second]);
     });
+    expect(
+      diagnosticEvents.filter((event) => event.operation === 'account-reconcile' && event.phase === 'intent')
+    ).toHaveLength(1);
+    expect(
+      diagnosticEvents.filter((event) => event.operation === 'account-reconcile' && event.phase === 'finish')
+    ).toHaveLength(1);
   });
 
   it('keeps the Account snapshot stable when only the forum epoch changes', async () => {

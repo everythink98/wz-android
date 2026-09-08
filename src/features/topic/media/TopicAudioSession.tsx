@@ -20,6 +20,7 @@ import {
 import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { forumMediaPlayerSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { playerLoadDiagnosticAttempt } from '@/platform/media/mediaPlaybackDiagnostics';
 import {
   releaseReadNetworkRuntimeGeneration,
   retainReadNetworkRuntimeGeneration
@@ -89,6 +90,7 @@ class TopicAudioSession {
   private paused: boolean;
   private pendingPlay = false;
   private player: VideoPlayer | null = null;
+  private loadDiagnostic: ReturnType<typeof playerLoadDiagnosticAttempt> | null = null;
   private playerSubscriptions: { remove: () => void }[] = [];
   private replaceQueue: Promise<void> = Promise.resolve();
   private retainedGeneration: number | null = null;
@@ -191,6 +193,7 @@ class TopicAudioSession {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.loadDiagnostic?.canceled();
     this.loadRevision += 1;
     this.pendingPlay = false;
     this.acceptPlayerEvents = false;
@@ -221,6 +224,8 @@ class TopicAudioSession {
     this.pendingPlay = playWhenReady && this.active && !this.paused;
     const revision = ++this.loadRevision;
     const generation = this.runtimeGeneration;
+    this.loadDiagnostic?.canceled();
+    this.loadDiagnostic = playerLoadDiagnosticAttempt(descriptor.src, 'audio', generation);
     const restorePosition = this.getSnapshot(id).position;
     this.updateSnapshot(id, { error: null, playing: false, status: 'loading' });
     this.replaceQueue = this.replaceQueue
@@ -245,6 +250,7 @@ class TopicAudioSession {
     const targetGeneration = generation;
     let previousGeneration = this.retainedGeneration;
     if (previousGeneration !== targetGeneration) {
+      this.loadDiagnostic?.stage('runtime-lease');
       const lease = await retainReadNetworkRuntimeGeneration(targetGeneration).catch(() => null);
       if (this.disposed || revision !== this.loadRevision) {
         if (lease?.retained) void releaseReadNetworkRuntimeGeneration(targetGeneration).catch(() => undefined);
@@ -269,6 +275,7 @@ class TopicAudioSession {
       previousGeneration = null;
     }
     try {
+      this.loadDiagnostic?.stage('player-replace');
       const player = this.ensurePlayer();
       this.acceptPlayerEvents = false;
       await player.replaceAsync(
@@ -287,11 +294,11 @@ class TopicAudioSession {
       player.currentTime = restorePosition;
       this.acceptPlayerEvents = true;
       this.applyStatus({ status: player.status });
-    } catch {
+    } catch (error) {
       if (previousGeneration !== null) {
         void releaseReadNetworkRuntimeGeneration(previousGeneration).catch(() => undefined);
       }
-      if (!this.disposed && revision === this.loadRevision && this.activeId === id) this.fail(id);
+      if (!this.disposed && revision === this.loadRevision && this.activeId === id) this.fail(id, error);
     }
   }
 
@@ -311,11 +318,11 @@ class TopicAudioSession {
     return player;
   }
 
-  private applyStatus({ status }: Pick<StatusChangeEventPayload, 'status'>) {
+  private applyStatus({ status, error }: Pick<StatusChangeEventPayload, 'status' | 'error'>) {
     const id = this.activeId;
     if (!id || !this.acceptPlayerEvents) return;
     if (status === 'error') {
-      this.fail(id);
+      this.fail(id, error);
       return;
     }
     if (status !== 'readyToPlay') {
@@ -335,6 +342,7 @@ class TopicAudioSession {
     const duration = safeMediaTime(player?.duration || this.getSnapshot(id).duration);
     const position = Math.min(duration || Number.POSITIVE_INFINITY, safeMediaTime(player?.currentTime || 0));
     this.updateSnapshot(id, { duration, error: null, position, status: 'ready' });
+    this.loadDiagnostic?.ready();
     this.settleAttachments(id, 'displayed');
     if (this.pendingPlay && this.active && !this.paused && player) {
       this.pendingPlay = false;
@@ -390,7 +398,8 @@ class TopicAudioSession {
     this.updateSnapshot(id, { duration, playing: false, position });
   }
 
-  private fail(id: string) {
+  private fail(id: string, error?: unknown) {
+    this.loadDiagnostic?.failed(error);
     this.pendingPlay = false;
     this.updateSnapshot(id, { error: '音频加载失败', playing: false, status: 'error' });
     this.settleAttachments(id, 'error');

@@ -1,5 +1,11 @@
 # 测试标准
 
+## 阅读导航
+
+- 设计测试：[Canonical owner](#一canonical-owner-模型)、[证据层](#二证据层)、[测试设计](#三测试设计)。
+- 修复与重放：[随机顺序](#四随机顺序与可重放性)、[TDD 与历史事故](#五tdd-与历史事故)。
+- 执行与交付：[授权边界](#六范围与授权)、[按改动类型验证](#七按改动类型验证)、[交付记录](#八交付记录)。
+
 ## 文档职责
 
 本文件只定义测试 owner、证据层、隔离规则、授权边界和不同改动的验证强度。当前产品行为与 canonical evidence 在 `docs/product-map.md`；历史事故在 `docs/regression-corpus.md`；设备、Replay、Smoke 和发布命令在 `docs/operator-runbook.md`；真实 App 场景在 `tests/live/agent-live.md`。
@@ -72,6 +78,18 @@ Android 主楼正文连续选择的 canonical evidence 分三层且互不替代�
 
 ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Select all 并把可执行 Copy 留在一级菜单，端点缩回后 Select all 恢复；oracle 不得依赖系统是否提供浮动菜单返回箭头，也不得用菜单阶段状态机代替从逻辑范围直接派生。平台动作另以可控 Android seam 固定三类来源及顺序：首个 enabled classifier action、Copy、Share、Select all、其余 classifier actions、`PROCESS_TEXT` 依次使用 order 0/5/7/8/50+/100+，其中首个 classifier action 和 Copy 为 always，Share/Select all/`PROCESS_TEXT` 为 if-room，其余 classifier actions 为 overflow。标准 Share 必须验证 `ACTION_SEND`、`text/plain`、`EXTRA_TEXT` 与 chooser；超长选区按 100,000 UTF-16 字符 parcel-safe 裁剪且不劈 surrogate，成功 launch 结束选区，`ActivityNotFoundException`/`SecurityException` 保留选区。API 23+ `ACTION_PROCESS_TEXT` 必须按当前 query 结果和 AOSP same-package/exported/permission 规则生成显式 Component，验证 Manifest `<queries>`、resolver label、只读 extra 与点击时的当前 canonical 文本，不能断言设备一定存在“翻译”。classifier seam 必须分别证明 API 24–25 零 classifier 动作；API 26–27 fake legacy classification 只产生一个一级动作并复用 label/icon，点击优先调用 onClick listener、缺失时才启动 intent；API 28+ fake TextClassifier classification 不在主线程、只接收选区纯文本、首个/次级 enabled `RemoteAction` 排序正确。API 26+ 都必须证明选择变化、取消、destroy 或 generation 过期后不回填，点击只执行仍匹配 snapshot 的 legacy callback/intent 或 `PendingIntent`。测试还必须覆盖无 handler、重复 Component/PendingIntent identity、相同标题但不同身份、query/classifier/launch/send 失败；失败不得移除 Copy/Select all 或崩溃。Intent/classifier capture 还必须断言未携带 Cookie、凭据、来源 URL、HTML、marker、manifest、logical tape 或布局诊断；不以 JS mock、硬编码 Translate/第三方 Share 或真实外部数据披露代替该 owner。
 
+### 发布版事后诊断
+
+`MORE-02` 按可独立损坏的边界选择 owner：`src/platform/diagnostics/diagnostics.test.ts` 验证真实 schema、脱敏、Hermes 坐标、并发/复制 RequestInit 关联；gateway 与 `src/sources/forumSourceReadAttempt.test.ts` 验证真实 fallback/恢复门禁、证据结算和终态。不能只断言写入函数被调用；要读取序列化事件，确认阶段和值没有被变成 unknown/redacted、没有丢失关联，也没有泄露 fixture secret。
+
+`src/platform/diagnostics/diagnosticFileStore.test.ts` 负责导出窗口、原 build/process 身份、超过旧 512 条 ring 的持久事件、损坏行、各来源覆盖状态/首尾时间、不可用/超时通道与临时分享文件清理；必须固定单个在写 batch、合并待写事件及合计 128 KiB 上限；超时只记录健康错误，底层调用未结算时不得启动下一批，导出仍按五秒 deadline 返回，并证明致命摘要保存尚未批量落盘的最后 JS 阶段。`src/platform/diagnostics/diagnosticRuntime.test.ts` 负责 RN listener、legacy ExceptionsManager/ErrorUtils 委派、重复安装和发布版 Promise 观察。生成的 `DiagnosticLogStoreTest` 用实际文件证明分段容量、过期、重启读取、健康计数跨进程保存和写失败；过期淘汰、读取失败和崩溃读取失败分别报告。`NetworkProxyRuntimeTest` 用真实 OkHttp/受控服务证明同一 session/trace 下多个 request 的关联与所有内部 header 出网前消失。mock Native module 不能证明真实进程退出后的存活，Native 致命路径最多等待 250ms flush 仍需隔离真实进程证据。
+
+`tests/tooling/diagnostic-symbols.test.ts` 固定 bootstrap 顺序、构建身份、exact source map/R8/APK 归档校验及 Hermes/RN parsed 坐标约定；Native 使用 SDK 官方 Retrace 的小型 fixture 验证类名、源码行、内联帧和错误 mapping 拒绝，CLI 另验证混合 build 只还原目标并准确报告跳过计数。真实 Retrace fixture 形成 tooling `UNIT_PASS`，对应源码文本检查只证明生成结构。`scripts/run-diagnostic-device-proof.mjs` 在唯一隔离 `WZ_ImageRuntime_Test_API35` 验证发布模式 Hermes 的 JS、renderer、Promise 和 Native 故障后重启读取、脱敏、前一进程归属及匹配 source map 还原。该 proof 使用开发签名、保留 R8/minify/resource shrink 和独立随机 buildId 的隔离构建，必须与恢复正常入口 APK 的 buildId 分离，并归档该 APK 实际生成的 source map/mapping；Java 栈用这份 mapping 经 SDK Retrace 还原。先前未混淆 proof 与 SDK fixture 的通过不能代表这条设备链；proof 仍不代替正式签名 APK、系统分享 UI、真实 ANR 或 OOM，故障注入不得在保留登录态设备运行。只有实际执行并取得相应产物才报告通过，未运行分支记 `NOT_VERIFIED`，缺少隔离环境记 `BLOCKED_BY_ENV`。
+
+异常观察必须覆盖 Native listener 已存在但 `RN$useAlwaysAvailableJSErrorHandling` 不为 true 的真实 legacy 路径：`ExceptionsManager.handleException` 的直接 renderer 调用、该入口缺失时的 ErrorUtils fallback、重复安装和跨入口委托均保留原 this/参数/返回值/异常传播且不重复记录。四场景 proof 要求故障前尚未 finish 的 startup intent/apply 跨重启保留，JS appSessionId 与原会话对应，异常跨 JS/Native/crash 通道合并去重后恰好一份。JS/renderer proof 同时要求致命事件与归属于前一进程的有效系统退出记录；系统可能报告 `resource-limit` 等其他原因，不能把期望固定为 crash 或覆盖原始 exitReasonCode。Java 分支仍要求 crash，Promise 分支以三秒等待覆盖普通 Error 的两秒原生宽限并确认 rejection，再主动结束并要求 user-stopped；它证明 rejection 留存，不证明 Promise 会使 App 崩溃。
+
+业务日志接线分别由已有 account/storage/update/notification/composer/selection/media/deep-link owner 验证失败后仍保留原产品状态、计数和最终 outcome；相同日志合同不再复制新测试树。新增 operation/枚举必须同时经过类型门禁与一个真实 producer 的序列化事件断言；保留运行时恶意输入测试，类型封闭不代替隐私白名单。
+
 ### 可视状态语料库
 
 `tests/ui/visual/` 是以 `docs/product-map.md` 为覆盖索引的可重复视觉证据 owner。每个能力族在自己的 `scenarios/<family>/manifest.tsx` 声明稳定场景 ID、能力 ID 与 `rendered`、`device-only` 或 `non-visual` 分类；根 catalog 只负责聚合和渲染，不复制生产控件。
@@ -97,7 +115,7 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 - 普通用例的数据 identity 默认逐测试唯一；只有验证缓存复用、single-flight 或同会话连续行为时才显式共享。不得为测试向 production 暴露 reset API。
 - 测试 fixture 使用最小语义数据，但必须保留被测边界需要的合法身份、权限、生命周期和错误形状；不要用类型断言掩盖无效 fixture。
 
-## 四、随机顺序与可重放性
+### 阅读与性能专项 oracle
 
 楼层导航的 canonical oracle 必须经过真实编译与 renderer 点击：普通 mention 进入 User，V2EX 明确楼层携带作者约束，代码/数学/已有链接和解析 fallback 不信任伪造内部属性。adapter 测同 ID 冲突不被去重掩盖，包括初始/cursor 的已加载捷径：正文可读但带冲突标记的回复不能精确定位，完全一致重复仍去重；作者与楼层反例分别只改变一个字段。controller 测未加载目标的错误作者、重复楼层、缺失与迟到结果不替换窗口，已加载可信目标零请求；列表测 NodeSeek 本人权限投影克隆后仍能定位。其他 adapter 已确认 partial target 的原契约保留，不能为统一谓词改写既有测试预期。
 
@@ -112,6 +130,8 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 性能合同以语义输入、工作量和提交次数为 oracle：相同 viewability 不提交 state，离窗注册不提交无变化 idle，同一 pages 在 loading/error 变化时不重新合并，User 单 lane 更新不重算另一 lane，空 ReaderData 事务不持久化；媒体 callback 必须覆盖同 key 重注册、回收 A→B→A 与旧 attempt，通知覆盖慢 worker 下来源合并、一次补跑和身份/权限/停用/卸载失效。对比性能必须保留修改前源码基线，在同一 runtime、同一 workload 预热后多轮取中位数，分别记录计算与渲染提交；不加入墙钟阈值。Native、模拟器和 Release 性能证据各自独立，不能用耗时改善或局部绿灯代替缺失证据。
 
 纯算法优化必须以固定输入对照原输出，包括顺序、重复项、权限、错误和删除保护；已授权的 Bug 修正单列，不能伪称等价。随机差分需保存 seed 与输入范围，不宣称穷尽证明。Search 覆盖较新/较旧预览都不截断已有分页，以及首屏重复项的权限合并；User 两 lane 必须并发并分别先完成，不能用顺序请求代替。通知调度组合 owner 运行真实 worker/store，只 mock 外部读取与 Native acknowledgement，证明两来源慢投递期间的重复触发有界合并，未读总数相同但消息 ID 替换仍会投递。NS 内容 owner 使用不同主楼/回复全文，覆盖空/部分/完整终端的 bridge/rendered 链路、两侧身份歧义与块数量不符；无源码的无 class xterm 行也须保持完整文本、ANSI 和邻接内容。
+
+## 四、随机顺序与可重放性
 
 `npm test` 使用 Vitest shuffled sequence；`npm run test:ui` 使用 Jest randomize 并输出 seed；`npm run verify` 自然继承两者。随机顺序是常规隔离门禁，不再称为“确定性门禁”。
 
@@ -128,7 +148,7 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 - 标题使用静态字符串，且只引用一个 canonical REG；
 - 对应 corpus 条目存在且状态为 `OPEN`；
 - 用例固定真实失败 oracle，不把 expected-failure 计为 `UI_PASS`；
-- 产品修复后改为行为标题的普通测试，并把 corpus 状态更新为 `RESOLVED`。
+- 产品修复后改为行为标题的普通测试；达到该事故的关闭条件后再把 corpus 状态更新为 `RESOLVED`。条目要求的设备或 Live 验收尚未完成时，保留其未闭合状态与证据边界。
 
 已修复事故不要求专属测试永久存在。若当前行为已由更强 owner 覆盖，可让多个历史 REG 指向该 owner；需求被取代则标记 `SUPERSEDED`。不得删除历史 ID，也不得把历史标题继续堆进通过测试。
 

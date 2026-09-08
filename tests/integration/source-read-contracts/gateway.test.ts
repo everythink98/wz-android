@@ -13,7 +13,7 @@ import {
 import { getLinuxDoCurrentUserProfile } from '@/sources/linuxdo/account';
 import { createNodeSeekWebViewFallbackFetcher } from '@/sources/nodeseek/browserFallback';
 import { getNodeSeekCurrentUserProfile, getNodeSeekReplies } from '@/sources/nodeseek/reader';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -1540,17 +1540,35 @@ describe('Android local sources', () => {
       owner: 'account',
       priority: 'background'
     });
-    const events = lines.map((line) => JSON.parse(line)).filter(({ operation }) => operation === 'transport-fallback');
+    const allEvents = lines.map((line) => JSON.parse(line));
+    const parent = allEvents.find(
+      (event) => event.area === 'session' && event.operation === 'refresh' && event.phase === 'intent'
+    );
+    const events = allEvents.filter((event) => event.owner === 'account');
     expect(events).toEqual([
-      expect.objectContaining({ phase: 'intent', channel: 'direct', owner: 'account', reason: 'network_error' }),
       expect.objectContaining({ phase: 'transport', channel: 'direct', owner: 'account', reason: 'network_error' }),
       expect.objectContaining({ phase: 'transport', channel: 'webview', owner: 'account', state: 'start' }),
-      expect.objectContaining({ phase: 'transport', channel: 'webview', owner: 'account', status: 200 }),
-      expect.objectContaining({ phase: 'finish', channel: 'webview', owner: 'account', outcome: 'success' })
+      expect.objectContaining({ phase: 'transport', channel: 'webview', owner: 'account', status: 200 })
     ]);
+    expect(events.every((event) => event.traceId === parent.traceId && event.requestId === events[0].requestId)).toBe(
+      true
+    );
+    expect(events[0].requestId).toMatch(/^request-/);
+    expect(allEvents.filter((event) => event.traceId === parent.traceId && event.phase === 'finish')).toEqual([
+      expect.objectContaining({ outcome: 'success' })
+    ]);
+    expect(allEvents).toContainEqual(
+      expect.objectContaining({
+        operation: 'rotate-read-runtime',
+        parentTraceId: parent.traceId,
+        requestId: events[0].requestId
+      })
+    );
     expect(
       JSON.stringify(events, (key, value) =>
-        ['time', 'appSessionId', 'traceId', 'durationMs'].includes(key) ? undefined : value
+        ['time', 'appSessionId', 'traceId', 'requestId', 'parentTraceId', 'durationMs'].includes(key)
+          ? undefined
+          : value
       )
     ).not.toMatch(/session\/current|https?:|cookie|alice|42/iu);
   });

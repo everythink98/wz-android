@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { Linking } from 'react-native';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+afterEach(() => setDiagnosticWriter(null));
 
 const mockPushTopicRoute = jest.fn(() => true);
 const mockAddEventListener =
@@ -35,6 +37,30 @@ function internalTopicLink(topicUrl: string) {
 }
 
 describe('app deep-link navigation', () => {
+  it('records an initial URL failure without the rejected URL or message', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    mockGetInitialURL.mockRejectedValue(new Error('https://secret.invalid/private'));
+    mockAddEventListener.mockReturnValue({ remove: jest.fn() });
+    const hook = await renderHook(() =>
+      useAppDeepLinkNavigation(
+        { addEventListener: mockAddEventListener, getInitialURL: mockGetInitialURL } as unknown as Pick<
+          typeof Linking,
+          'addEventListener' | 'getInitialURL'
+        >,
+        mockPushTopicRoute
+      )
+    );
+    await waitFor(() =>
+      expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({ operation: 'deep-link', outcome: 'failure', phase: 'finish' })
+      )
+    );
+    expect(lines.join('')).not.toContain('secret.invalid');
+    await act(async () => hook.unmount());
+  });
   beforeEach(() => {
     mockAddEventListener.mockReset();
     mockGetInitialURL.mockReset();

@@ -1,8 +1,11 @@
+import type { DiagnosticFields } from './diagnosticPolicy';
+
 export type SourceDiagnosticSummary = {
-  parserVariant: string;
+  parserVariant: NonNullable<DiagnosticFields['parserVariant']>;
   candidateCount: number;
   validCount: number;
   droppedCount: number;
+  filteredCount?: number;
   partialErrorCount: number;
   missingFloorCount: number;
   missingTitleCount?: number;
@@ -35,6 +38,7 @@ function normalizedSummary(input: SourceDiagnosticSummaryInput): SourceDiagnosti
     candidateCount,
     validCount,
     droppedCount,
+    ...(input.filteredCount === undefined ? {} : { filteredCount: count(input.filteredCount) }),
     partialErrorCount,
     missingFloorCount,
     ...(input.missingTitleCount === undefined ? {} : { missingTitleCount }),
@@ -70,7 +74,7 @@ export function copySourceDiagnosticSummary<T extends object>(result: T, source:
 
 export function mergeSourceDiagnosticSummaries<T extends object>(
   result: T,
-  parserVariant: string,
+  parserVariant: SourceDiagnosticSummary['parserVariant'],
   sources: unknown[],
   overrides: Partial<SourceDiagnosticSummary> = {}
 ): T {
@@ -81,6 +85,9 @@ export function mergeSourceDiagnosticSummaries<T extends object>(
     candidateCount: values.reduce((total, value) => total + value.candidateCount, 0),
     validCount: values.reduce((total, value) => total + value.validCount, 0),
     droppedCount: values.reduce((total, value) => total + value.droppedCount, 0),
+    ...(values.some((value) => value.filteredCount !== undefined)
+      ? { filteredCount: values.reduce((total, value) => total + (value.filteredCount || 0), 0) }
+      : {}),
     partialErrorCount: values.reduce((total, value) => total + value.partialErrorCount, 0),
     missingFloorCount: values.reduce((total, value) => total + value.missingFloorCount, 0),
     ...(hasMissingTitleCount

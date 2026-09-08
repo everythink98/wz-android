@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { MAX_BACKUP_JSON_BYTES } from '@/domain/reader/readerBackup';
 import { loadReaderData, loadReaderSettings, saveCleanReaderData, saveReaderSettings } from './readerDataStore';
@@ -58,7 +59,49 @@ const topic: Topic = {
 };
 
 describe('reader data store', () => {
+  let diagnosticLines: string[] = [];
+  const restoreEvents = () =>
+    diagnosticLines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((event) => event.area === 'reader-data' && event.operation === 'restore');
+
+  it('records a settings fallback when storage fails without logging its contents', async () => {
+    await loadReaderSettings();
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('private settings content'));
+      await expect(loadReaderSettings()).resolves.toEqual(createEmptyReaderData().settings);
+      expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          operation: 'load-settings',
+          outcome: 'partial',
+          reason: 'storage_error',
+          state: 'fallback'
+        })
+      );
+      expect(lines.join('')).not.toContain('private settings content');
+      const previousCount = lines.length;
+      vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('private settings content'));
+      await loadReaderSettings();
+      expect(lines).toHaveLength(previousCount);
+      await loadReaderSettings();
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({
+        operation: 'load-settings',
+        state: 'missing',
+        outcome: 'noop'
+      });
+    } finally {
+      setDiagnosticWriter(null);
+    }
+  });
   beforeEach(() => {
+    diagnosticLines = [];
+    setDiagnosticWriter((line) => {
+      diagnosticLines.push(line);
+    });
     secureStore.__store.clear();
     asyncStorage.__store.clear();
     vi.clearAllMocks();
@@ -73,6 +116,7 @@ describe('reader data store', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    setDiagnosticWriter(null);
   });
 
   it('saves reader data in AsyncStorage instead of SecureStore', async () => {
@@ -118,6 +162,9 @@ describe('reader data store', () => {
     asyncStorage.__store.set('reader-settings', JSON.stringify({ ...data.settings, theme: 'dark' }));
 
     await expect(loadReaderData()).resolves.toMatchObject({ settings: { theme: 'dark' } });
+    expect(restoreEvents()).toEqual([
+      expect.objectContaining({ phase: 'finish', outcome: 'success', state: 'restored', hasStoredData: true })
+    ]);
   });
 
   it('keeps a valid persisted content-source order and enabled set', async () => {
@@ -365,6 +412,9 @@ describe('reader data store', () => {
     secureStore.__store.set('nodeseek-cookie-header', 'session=secret');
 
     await expect(loadReaderData()).resolves.toEqual(createEmptyReaderData());
+    expect(restoreEvents()).toEqual([
+      expect.objectContaining({ phase: 'finish', outcome: 'noop', state: 'missing', hasStoredData: false })
+    ]);
 
     expect(SecureStore.getItemAsync).not.toHaveBeenCalledWith('reader-data');
     expect(SecureStore.deleteItemAsync).not.toHaveBeenCalledWith('reader-data');
@@ -373,20 +423,29 @@ describe('reader data store', () => {
   });
 
   it('preserves damaged AsyncStorage data instead of replacing it with empty data', async () => {
-    asyncStorage.__store.set('reader-data', '{bad json');
+    asyncStorage.__store.set('reader-data', '{private damaged data');
 
     await expect(loadReaderData()).rejects.toThrow('本机资料已损坏');
+    expect(restoreEvents()).toEqual([
+      expect.objectContaining({ phase: 'finish', outcome: 'failure', state: 'invalid', reason: 'invalid_response' })
+    ]);
+    expect(diagnosticLines.join('')).not.toContain('private damaged data');
 
-    expect(asyncStorage.__store.get('reader-data')).toBe('{bad json');
+    expect(asyncStorage.__store.get('reader-data')).toBe('{private damaged data');
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 
   it('rejects when the reader-data read rejects even if settings can fall back', async () => {
+    const failure = new Error('private reader data unavailable');
     vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
-      key === 'reader-data' ? Promise.reject(new Error('reader data unavailable')) : Promise.resolve(null)
+      key === 'reader-data' ? Promise.reject(failure) : Promise.resolve(null)
     );
 
-    await expect(loadReaderData()).rejects.toThrow('reader data unavailable');
+    await expect(loadReaderData()).rejects.toBe(failure);
+    expect(restoreEvents()).toEqual([
+      expect.objectContaining({ phase: 'finish', outcome: 'failure', state: 'recovery-mode', reason: 'storage_error' })
+    ]);
+    expect(diagnosticLines.join('')).not.toContain(failure.message);
   });
 
   it('rejects when the reader-data read never settles', async () => {
@@ -399,6 +458,9 @@ describe('reader data store', () => {
     await vi.runAllTimersAsync();
 
     await load;
+    expect(restoreEvents()).toEqual([
+      expect.objectContaining({ phase: 'finish', outcome: 'failure', state: 'recovery-mode', reason: 'timeout' })
+    ]);
   });
 
   it('keeps a reader-data timeout settled after the storage promise resolves late', async () => {
@@ -414,10 +476,12 @@ describe('reader data store', () => {
 
     await vi.runAllTimersAsync();
     expect(await outcome).toBe('本机资料读取超时；为防止覆盖，未自动重置。');
+    expect(restoreEvents()).toHaveLength(1);
     stored.resolve(JSON.stringify(createEmptyReaderData()));
     await Promise.resolve();
 
     expect(await outcome).toBe('本机资料读取超时；为防止覆盖，未自动重置。');
+    expect(restoreEvents()).toHaveLength(1);
   });
 
   it('preserves unsupported reader data versions instead of replacing them with empty data', async () => {
@@ -425,8 +489,29 @@ describe('reader data store', () => {
     asyncStorage.__store.set('reader-data', raw);
 
     await expect(loadReaderData()).rejects.toThrow('本机资料版本不受支持');
+    expect(restoreEvents()).toEqual([
+      expect.objectContaining({ phase: 'finish', outcome: 'failure', state: 'invalid', reason: 'invalid_response' })
+    ]);
 
     expect(asyncStorage.__store.get('reader-data')).toBe(raw);
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('reports an empty stored value as fallback without rewriting the original data', async () => {
+    asyncStorage.__store.set('reader-data', '');
+
+    await expect(loadReaderData()).resolves.toEqual(createEmptyReaderData());
+
+    expect(restoreEvents()).toEqual([
+      expect.objectContaining({
+        phase: 'finish',
+        outcome: 'partial',
+        state: 'fallback',
+        reason: 'invalid_response',
+        hasStoredData: true
+      })
+    ]);
+    expect(asyncStorage.__store.get('reader-data')).toBe('');
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 

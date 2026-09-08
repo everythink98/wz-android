@@ -10,7 +10,10 @@ import {
   textExcerpt,
   toIsoString
 } from '@/domain/forum/html';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
+import {
+  annotateSourceDiagnosticSummary,
+  sourceDiagnosticSummary
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   V2EX_BASE_URL as BASE_URL,
   safeV2exTopicUrl as safeTopicUrl,

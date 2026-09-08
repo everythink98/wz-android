@@ -1,4 +1,8 @@
 import { absoluteUrl, isRecord, recordText as text, toIsoString } from '@/domain/forum/html';
+import {
+  annotateSourceDiagnosticSummary,
+  mergeSourceDiagnosticSummaries
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type {
   ForumNotification,
   NotificationCategory,
@@ -277,10 +281,20 @@ export const nodeSeekNotificationAdapter = {
         const data = await fetchJson(`/api/notification/${group}/list?page=${page}`, options);
         const rows = findRows(data, groupConfig[group].listKey);
         if (!rows) throw new Error('NodeSeek 消息返回内容格式不正确');
-        return {
-          items: rows.map((row) => rowNotification(group, row, options.userId)).filter(Boolean),
-          hasMore: hasMore(data, page, rows.length)
-        };
+        const items = rows.map((row) => rowNotification(group, row, options.userId)).filter(Boolean);
+        return annotateSourceDiagnosticSummary(
+          {
+            items,
+            hasMore: hasMore(data, page, rows.length)
+          },
+          {
+            parserVariant: 'nodeseek-notifications',
+            candidateCount: rows.length,
+            validCount: items.length,
+            isExpectedEmpty: rows.length === 0,
+            hasDegradation: items.length < rows.length
+          }
+        );
       })
     );
     const parsedItems = results.flatMap((result) => result.items) as ForumNotification[];
@@ -292,7 +306,17 @@ export const nodeSeekNotificationAdapter = {
         !(item.id.startsWith('message:fallback:') && (idCounts.get(item.id) || 0) > 1)
     );
     const more = results.some((result) => result.hasMore);
-    return { items, cursor: more ? String(page + 1) : null, hasMore: more };
+    return mergeSourceDiagnosticSummaries(
+      { items, cursor: more ? String(page + 1) : null, hasMore: more },
+      'nodeseek-notifications',
+      results,
+      {
+        filteredCount: parsedItems.filter((item) => options.unreadOnly && !item.unread).length,
+        ...(parsedItems.some((item) => item.id.startsWith('message:fallback:') && (idCounts.get(item.id) || 0) > 1)
+          ? { hasDegradation: true }
+          : {})
+      }
+    );
   },
 
   async readUnreadSnapshot(options: NotificationAdapterAccess) {

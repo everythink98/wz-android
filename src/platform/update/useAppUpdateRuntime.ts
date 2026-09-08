@@ -127,7 +127,14 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
       settledUpdateOperation = execution.catch(() => undefined);
       try {
         await execution;
-        finishDiagnosticTrace(trace, current() ? 'success' : 'canceled');
+        finishDiagnosticTrace(trace, current() ? 'success' : 'canceled', {
+          ...(operation === 'download'
+            ? {
+                state: artifactRef.current?.ready ? 'verified' : 'paused',
+                downloadedBytes: artifactRef.current?.downloadedBytes || 0
+              }
+            : {})
+        });
       } catch (error) {
         finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
         if (current() && !silent) {
@@ -183,9 +190,15 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
       transition('verifying');
       const installer = NativeModules.ApkInstallerModule as ApkInstaller | undefined;
       const file = appUpdateFile(target.update, true);
+      markDiagnosticStage(trace, 'parse', { state: 'package-verification', versionCode: target.update.versionCode });
       try {
         await verifyDownloadedApk(installer, file.uri, target.update);
+        markDiagnosticStage(trace, 'parse', { state: 'verified' });
       } catch (error) {
+        markDiagnosticStage(trace, 'parse', {
+          state: 'failure',
+          reason: isInvalidApk(error) ? 'invalid_response' : normalizeDiagnosticReason(error)
+        });
         if (current() && isInvalidApk(error)) {
           if (file.exists) file.delete();
           applyArtifact({ ...target, ready: false, downloadedBytes: 0 });
@@ -229,12 +242,19 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
                 pendingSave = pendingSave
                   .then(() => saveAppUpdateArtifact(snapshot))
                   .catch((error) => {
+                    markDiagnosticStage(trace, 'persist', { state: 'failure', reason: 'storage_error' });
                     saveError = error;
                   });
               }
             });
             taskRef.current = task;
-            markDiagnosticStage(trace, 'transport', { endpoint: 'github', method: 'GET', state: 'start' });
+            markDiagnosticStage(trace, 'transport', {
+              endpoint: 'github',
+              method: 'GET',
+              state: task.state === 'paused' ? 'resuming' : 'start',
+              downloadedBytes: latest.downloadedBytes,
+              retryCount: attempt
+            });
             try {
               const result = await (task.state === 'paused' ? task.resumeAsync() : task.downloadAsync());
               if (!current()) return;
@@ -242,7 +262,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
               await pendingSave;
               transition('verifying');
               setAppUpdateMessage('下载完成，正在校验安装包');
-              latest = await finishAppUpdateDownload(latest);
+              latest = await finishAppUpdateDownload(latest, trace);
               if (saveError) throw saveError;
               break;
             } catch (error) {
@@ -252,11 +272,16 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
                 attempt === 0 &&
                 ['ERR_DOWNLOAD_RANGE', 'ERR_DOWNLOAD_RANGE_NOT_SATISFIABLE'].includes(String(code))
               ) {
-                latest = await inspectAppUpdateArtifact(latest);
+                latest = await inspectAppUpdateArtifact(latest, trace);
                 if (latest.ready) break;
                 const partial = appUpdateFile(latest.update);
                 if (partial.exists) partial.delete();
                 latest = { ...latest, totalBytes: null, downloadedBytes: 0 };
+                markDiagnosticStage(trace, 'transport', {
+                  state: 'full-download-retry',
+                  retryCount: 1,
+                  downloadedBytes: 0
+                });
                 await pendingSave;
                 await saveAppUpdateArtifact(latest);
                 setAppUpdateMessage('断点已失效，正在重新下载');
@@ -299,7 +324,7 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
       const existing = artifactRef.current;
       if (!current()) return;
       const target =
-        sameAppUpdate(existing?.update, update) && existing ? existing : await prepareAppUpdateArtifact(update);
+        sameAppUpdate(existing?.update, update) && existing ? existing : await prepareAppUpdateArtifact(update, trace);
       if (!current()) return;
       applyArtifact(target);
       await transfer(target, current, trace);
@@ -310,13 +335,14 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
     const target = artifactRef.current;
     if (!target || target.ready) return;
     await runOperation('downloading', 'download', async (current, trace) => {
-      const restored = await inspectAppUpdateArtifact(target);
+      const restored = await inspectAppUpdateArtifact(target, trace);
       if (current()) await transfer(restored, current, trace);
     });
   }, [runOperation, transfer]);
 
   const pauseAppUpdateDownload = useCallback(async () => {
     if (phaseRef.current !== 'downloading') return;
+    const trace = beginDiagnosticTrace('update', 'pause');
     pauseRequestedRef.current = true;
     transition('pausing');
     const task = taskRef.current;
@@ -324,9 +350,11 @@ export function useAppUpdateRuntime({ autoCheck = false, beforeRequest, fetcher,
       try {
         await task.pauseAsync();
       } catch (error) {
+        finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
         if (mountedRef.current) setAppUpdateMessage(errorMessage(error));
       }
     }
+    finishDiagnosticTrace(trace, 'success', { state: 'paused' });
   }, [transition]);
 
   const installAppUpdate = useCallback(async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { nodeSeekNotificationAdapter } from './notifications';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), {
@@ -17,6 +18,31 @@ function html(value: string) {
 }
 
 describe('NodeSeek notifications', () => {
+  it('counts invalid message rows separately from a normal unread filter', async () => {
+    const page = await nodeSeekNotificationAdapter.listPage({
+      categoryId: 'messages',
+      unreadOnly: true,
+      identityKey: 'nodeseek:7',
+      userId: '7',
+      fetcher: async () => json({ msgArray: [{ id: 1, sender_id: 9, receiver_id: 7, viewed: true }, {}] })
+    });
+    expect(page.items).toEqual([]);
+    expect(sourceDiagnosticSummary(page)).toMatchObject({
+      candidateCount: 2,
+      validCount: 1,
+      droppedCount: 1,
+      filteredCount: 1,
+      isParseEmpty: false,
+      hasDegradation: true
+    });
+    const invalid = await nodeSeekNotificationAdapter.listPage({
+      categoryId: 'messages',
+      identityKey: 'nodeseek:7',
+      userId: '7',
+      fetcher: async () => json({ msgArray: [{}] })
+    });
+    expect(sourceDiagnosticSummary(invalid)).toMatchObject({ isParseEmpty: true, isExpectedEmpty: false });
+  });
   it('exposes the categories shown by the current NodeSeek site', async () => {
     await expect(
       nodeSeekNotificationAdapter.getCategories({ identityKey: 'nodeseek:7', userId: '7' })

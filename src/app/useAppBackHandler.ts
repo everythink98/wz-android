@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { BackHandler } from 'react-native';
 import type { Screen } from '@/ui/navigation/types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 import { isNativeStackScreen } from './appNavigation';
 
 export function useAppBackHandler({
@@ -10,7 +11,7 @@ export function useAppBackHandler({
   getCurrentScreen
 }: {
   changeScreen: (screen: Screen) => void;
-  closeTopmostAccountSurface: () => string | null;
+  closeTopmostAccountSurface: () => DiagnosticFields['state'] | null;
   getCurrentScreen: () => Screen;
 }) {
   useEffect(() => {

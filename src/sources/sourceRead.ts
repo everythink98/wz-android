@@ -41,7 +41,11 @@ import type {
 } from '@/domain/forum/models';
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
-import { copySourceDiagnosticSummary, mergeSourceDiagnosticSummaries, sourceDiagnosticSummary } from './diagnostics';
+import {
+  copySourceDiagnosticSummary,
+  mergeSourceDiagnosticSummaries,
+  sourceDiagnosticSummary
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { dispatchSourceRead } from './readAggregation';
 import { parseHtml } from '@/domain/forum/html';
 function pageNumberFromUrl(url: string) {

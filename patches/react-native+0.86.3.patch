@@ -10,7 +10,19 @@ index f5e3f8a..8095a5f 100644
    onLoad,
    onLoadEnd,
    onError,
-@@ -232,6 +233,11 @@ let BaseImage: AbstractImageAndroid = ({
+@@ -215,7 +216,10 @@ let BaseImage: AbstractImageAndroid = ({
+     ];
+     nativeProps.source = source_;
+   } else {
+-    const {uri, width: sourceWidth, height: sourceHeight} = source_;
++    const {uri, headers: sourceHeaders, width: sourceWidth, height: sourceHeight} = source_;
++    if (sourceHeaders != null) {
++      nativeProps.headers = sourceHeaders;
++    }
+     if (uri === '') {
+       console.warn('source.uri should not be an empty string');
+     }
+@@ -232,6 +236,11 @@ let BaseImage: AbstractImageAndroid = ({
      nativeProps.onLoadStart = onLoadStart;
    }
  
@@ -346,18 +358,81 @@ index eacec69..75eaedd 100644
        assets: AssetManager,
        attributedString: MapBuffer,
 diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt
-index 5d30f85..37e3888 100644
+index 5d30f853..5a06b24a 100644
 --- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt
 +++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpan.kt
-@@ -8,6 +8,7 @@
+@@ -8,7 +8,11 @@
  package com.facebook.react.views.text.internal.span
  
  import android.graphics.Paint.FontMetricsInt
 +import android.text.Spanned
++import android.text.TextPaint
  import android.text.style.LineHeightSpan
++import android.text.style.MetricAffectingSpan
++import android.text.style.ReplacementSpan
  import kotlin.math.ceil
  import kotlin.math.floor
-@@ -38,7 +39,19 @@ internal class CustomLineHeightSpan(height: Float) : LineHeightSpan, ReactSpan {
+ 
+@@ -17,9 +21,57 @@ import kotlin.math.floor
+  * LineHeightSpan.Standard which only effects space between the baselines of adjacent line boxes
+  * (does not impact space before the first line or after the last).
+  */
+-internal class CustomLineHeightSpan(height: Float) : LineHeightSpan, ReactSpan {
++internal class CustomLineHeightSpan(height: Float) : LineHeightSpan.WithDensity, ReactSpan {
+   val lineHeight: Int = ceil(height.toDouble()).toInt()
+ 
++  override fun chooseHeight(
++      text: CharSequence,
++      start: Int,
++      end: Int,
++      spanstartv: Int,
++      v: Int,
++      fm: FontMetricsInt,
++      paint: TextPaint,
++  ) {
++    if (text is Spanned && start < end) {
++      val paragraphStart = text.lastIndexOf('\n', start - 1) + 1
++      val followsInlineView = text.getSpans(paragraphStart, start, TextInlineViewPlaceholderSpan::class.java)
++          .any { text.getSpanStart(it) < start }
++      val containsReplacement = text.getSpans(start, end, ReplacementSpan::class.java)
++          .any { text.getSpanStart(it) < end && text.getSpanEnd(it) > start }
++      if (followsInlineView && !containsReplacement) {
++        // StaticLayout can carry the attachment's ascent into later lines of the same
++        // metric run. Recover this line's styled font metrics before applying leading.
++        val runPaint = TextPaint()
++        val runMetrics = FontMetricsInt()
++        var runStart = start
++        while (runStart < end) {
++          val runEnd = text.nextSpanTransition(runStart, end, MetricAffectingSpan::class.java)
++          runPaint.set(paint)
++          for (span in text.getSpans(runStart, runEnd, MetricAffectingSpan::class.java)) {
++            if (text.getSpanStart(span) < runEnd && text.getSpanEnd(span) > runStart) {
++              span.updateMeasureState(runPaint)
++            }
++          }
++          runPaint.getFontMetricsInt(runMetrics)
++          if (runStart == start) {
++            fm.top = runMetrics.top
++            fm.ascent = runMetrics.ascent
++            fm.descent = runMetrics.descent
++            fm.bottom = runMetrics.bottom
++          } else {
++            fm.top = minOf(fm.top, runMetrics.top)
++            fm.ascent = minOf(fm.ascent, runMetrics.ascent)
++            fm.descent = maxOf(fm.descent, runMetrics.descent)
++            fm.bottom = maxOf(fm.bottom, runMetrics.bottom)
++          }
++          runStart = runEnd
++        }
++      }
++    }
++    chooseHeight(text, start, end, spanstartv, v, fm)
++  }
++
+   override fun chooseHeight(
+       text: CharSequence,
+       start: Int,
+@@ -38,7 +90,19 @@ internal class CustomLineHeightSpan(height: Float) : LineHeightSpan, ReactSpan {
      // if line-fit-edge is not leading and this is not the root inline box, if the half-leading is
      // positive, treat it as zero. The layout bounds exactly encloses this effective A′ and D′.
  
@@ -775,6 +850,256 @@ new file mode 100644
 +
 +    override fun handleException(t: Throwable) {
 +      throw t
++    }
++  }
++}
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/fresco/FrescoModule.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/fresco/FrescoModule.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/fresco/FrescoModule.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/fresco/FrescoModule.kt
+@@ -26,6 +26,8 @@
+ import com.facebook.react.modules.network.ForwardingCookieHandler
+ import com.facebook.react.modules.network.OkHttpClientProvider
+ import com.facebook.react.turbomodule.core.interfaces.TurboModule
++import java.util.concurrent.Executor
++import okhttp3.Call
+ import okhttp3.JavaNetCookieJar
+ 
+ /**
+@@ -130,6 +132,18 @@
+   public companion object {
+     public const val NAME: String = "FrescoModule"
+     private var hasBeenInitialized = false
++    @Volatile private var networkFetcherFactory: Pair<Call.Factory, Executor>? = null
++
++    /** Install before React Native initializes Fresco; both dependencies must outlive the pipeline. */
++    @JvmStatic
++    public fun setNetworkFetcherFactory(callFactory: Call.Factory, cancellationExecutor: Executor) {
++      check(!hasBeenInitialized) { "Fresco has already been initialized" }
++      networkFetcherFactory = callFactory to cancellationExecutor
++    }
++
++    internal fun createNetworkFetcher(client: okhttp3.OkHttpClient): ReactOkHttpNetworkFetcher =
++        networkFetcherFactory?.let { (factory, executor) -> ReactOkHttpNetworkFetcher(factory, executor) }
++            ?: ReactOkHttpNetworkFetcher(client)
+ 
+     /**
+      * Check whether the FrescoModule has already been initialized. If this is the case, Calls to
+@@ -165,7 +179,7 @@
+       container.setCookieJar(JavaNetCookieJar(handler))
+       val builder =
+           OkHttpImagePipelineConfigFactory.newBuilder(context.applicationContext, client)
+-              .setNetworkFetcher(ReactOkHttpNetworkFetcher(client))
++              .setNetworkFetcher(createNetworkFetcher(client))
+               .setDownsampleMode(DownsampleMode.AUTO)
+               .setRequestListeners(requestListeners)
+       builder.experiment().setBinaryXmlEnabled(true)
+diff --git a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/fresco/ReactOkHttpNetworkFetcher.kt b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/fresco/ReactOkHttpNetworkFetcher.kt
+--- a/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/fresco/ReactOkHttpNetworkFetcher.kt
++++ b/node_modules/react-native/ReactAndroid/src/main/java/com/facebook/react/modules/fresco/ReactOkHttpNetworkFetcher.kt
+@@ -11,14 +11,18 @@
+ import com.facebook.imagepipeline.backends.okhttp3.OkHttpNetworkFetcher
+ import com.facebook.imagepipeline.producers.NetworkFetcher
+ import com.facebook.react.bridge.ReadableMap
++import java.util.concurrent.Executor
+ import java.util.concurrent.TimeUnit
++import okhttp3.Call
+ import okhttp3.CacheControl
+ import okhttp3.Headers
+ import okhttp3.OkHttpClient
+ import okhttp3.Request
+ 
+-internal class ReactOkHttpNetworkFetcher(okHttpClient: OkHttpClient) :
+-    OkHttpNetworkFetcher(okHttpClient) {
++internal class ReactOkHttpNetworkFetcher(callFactory: Call.Factory, cancellationExecutor: Executor) :
++    OkHttpNetworkFetcher(callFactory, cancellationExecutor) {
++  constructor(okHttpClient: OkHttpClient) : this(okHttpClient, okHttpClient.dispatcher.executorService)
++
+   private fun getHeaders(readableMap: ReadableMap?): Map<String, String>? {
+     if (readableMap == null) {
+       return null
+diff --git a/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/modules/fresco/ReactOkHttpNetworkFetcherTest.kt b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/modules/fresco/ReactOkHttpNetworkFetcherTest.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/modules/fresco/ReactOkHttpNetworkFetcherTest.kt
+@@ -0,0 +1,103 @@
++/*
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ *
++ * This source code is licensed under the MIT license found in the
++ * LICENSE file in the root directory of this source tree.
++ */
++
++package com.facebook.react.modules.fresco
++
++import android.net.Uri
++import com.facebook.imagepipeline.producers.NetworkFetcher
++import com.facebook.imagepipeline.producers.ProducerContext
++import com.facebook.imagepipeline.producers.ProducerContextCallbacks
++import com.facebook.imagepipeline.request.ImageRequestBuilder
++import com.facebook.react.bridge.JavaOnlyMap
++import java.io.InputStream
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.Executor
++import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicInteger
++import java.util.concurrent.atomic.AtomicReference
++import okhttp3.Call
++import okhttp3.OkHttpClient
++import okhttp3.Protocol
++import okhttp3.Request
++import okhttp3.Response
++import okhttp3.ResponseBody.Companion.toResponseBody
++import org.junit.After
++import org.junit.Assert.*
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.mockito.kotlin.any
++import org.mockito.kotlin.doAnswer
++import org.mockito.kotlin.mock
++import org.mockito.kotlin.whenever
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [33])
++class ReactOkHttpNetworkFetcherTest {
++  @After
++  fun resetInjection() {
++    FrescoModule::class.java.getDeclaredField("networkFetcherFactory").apply {
++      isAccessible = true
++      set(null, null)
++    }
++  }
++
++  @Test
++  fun retainedFetcherUsesInjectedFactoryAndIndependentCancellationExecutor() {
++    val observed = AtomicReference<Request>()
++    fun client() = OkHttpClient.Builder().addInterceptor { chain ->
++      observed.set(chain.request())
++      Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
++          .code(200).message("OK").body("image".toResponseBody()).build()
++    }.build()
++    val old = client()
++    val current = AtomicReference(old)
++    val cancellations = AtomicInteger()
++    FrescoModule.setNetworkFetcherFactory(
++        Call.Factory { current.get().newCall(it) },
++        Executor { cancellations.incrementAndGet(); it.run() })
++    val fetcher = FrescoModule.createNetworkFetcher(old)
++    current.set(client())
++    old.dispatcher.executorService.shutdown()
++    try {
++      val context = mock<ProducerContext>()
++      val cancellation = AtomicReference<ProducerContextCallbacks>()
++      whenever(context.imageRequest).thenReturn(ReactNetworkImageRequest.fromBuilderWithHeaders(
++          ImageRequestBuilder.newBuilderWithSource(Uri.parse("https://example.test/image")),
++          JavaOnlyMap.of("X-Test", "retained"), ImageCacheControl.RELOAD))
++      doAnswer { cancellation.set(it.getArgument(0)); null }.whenever(context).addCallbacks(any())
++      val completed = CountDownLatch(1)
++      val result = AtomicReference<String>()
++      fetcher.fetch(fetcher.createFetchState(mock(), context), object : NetworkFetcher.Callback {
++        override fun onResponse(stream: InputStream, length: Int) {
++          result.set(stream.bufferedReader().readText()); completed.countDown()
++        }
++        override fun onFailure(error: Throwable) { completed.countDown() }
++        override fun onCancellation() { completed.countDown() }
++      })
++      assertTrue(completed.await(5, TimeUnit.SECONDS))
++      assertEquals("image", result.get())
++      assertEquals("retained", observed.get().header("X-Test"))
++      assertTrue(observed.get().cacheControl.noCache)
++      cancellation.get().onCancellationRequested()
++      assertEquals(1, cancellations.get())
++    } finally { current.get().dispatcher.executorService.shutdown(); current.get().connectionPool.evictAll() }
++  }
++
++  @Test
++  fun defaultFetcherStillUsesTheSuppliedClient() {
++    val calls = AtomicInteger()
++    val client = OkHttpClient.Builder().eventListenerFactory { calls.incrementAndGet(); okhttp3.EventListener.NONE }.build()
++    val fetcher = FrescoModule.createNetworkFetcher(client)
++    val factory = com.facebook.imagepipeline.backends.okhttp3.OkHttpNetworkFetcher::class.java
++        .getDeclaredField("callFactory").apply { isAccessible = true }.get(fetcher) as Call.Factory
++    factory.newCall(Request.Builder().url("https://example.test/image").build())
++    assertEquals(1, calls.get())
++    assertSame(client, factory)
++  }
++}
+diff --git a/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpanTest.kt b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpanTest.kt
+new file mode 100644
+index e69de29b..230e367a 100644
+--- /dev/null
++++ b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/text/internal/span/CustomLineHeightSpanTest.kt
+@@ -0,0 +1,72 @@
++package com.facebook.react.views.text.internal.span
++
++import android.graphics.Bitmap
++import android.graphics.Canvas
++import android.graphics.Color
++import android.graphics.Paint
++import android.text.Layout
++import android.text.SpannableStringBuilder
++import android.text.Spanned
++import android.text.StaticLayout
++import android.text.TextPaint
++import android.text.style.AbsoluteSizeSpan
++import org.assertj.core.api.Assertions.assertThat
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++import org.robolectric.annotation.GraphicsMode
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [35])
++@GraphicsMode(GraphicsMode.Mode.NATIVE)
++class CustomLineHeightSpanTest {
++  @Test
++  fun `plain text retains explicit tight line height`() {
++    val text = SpannableStringBuilder("ordinary text wraps across several lines without an attachment")
++    text.setSpan(CustomLineHeightSpan(18f), 0, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++    val paint = TextPaint().apply { textSize = 20f }
++    val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, 160).setIncludePad(false).build()
++    assertThat(layout.lineCount).isGreaterThan(1)
++    for (line in 0 until layout.lineCount) {
++      assertThat(layout.getLineBottom(line) - layout.getLineTop(line)).isEqualTo(18)
++    }
++  }
++
++  @Test
++  fun `text after a tall inline view draws inside its own fixed height lines`() {
++    for (imageHeight in listOf(60, 600)) for (fontSize in listOf(20, 28)) {
++    val prefix = "前文 before "
++    val suffix = " 后续文字仍然完整显示 after the image wraps onto several ordinary text lines"
++    val text = SpannableStringBuilder(prefix + "\uFFFC" + suffix)
++    val anchor = prefix.length
++    text.setSpan(TextInlineViewPlaceholderSpan(1, 290, imageHeight), anchor, anchor + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++    for ((start, end) in listOf(0 to anchor, anchor + 1 to text.length)) {
++      text.setSpan(AbsoluteSizeSpan(fontSize), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++      text.setSpan(CustomLineHeightSpan(fontSize * 1.6f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
++    }
++    val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 20f; color = Color.BLACK }
++    val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, 320)
++      .setIncludePad(false).setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY).build()
++    val bitmap = Bitmap.createBitmap(320, layout.height, Bitmap.Config.ARGB_8888)
++    val canvas = Canvas(bitmap)
++    canvas.drawColor(Color.WHITE)
++    layout.draw(canvas)
++    val imageLine = layout.getLineForOffset(anchor)
++    assertThat(layout.getLineBottom(imageLine) - layout.getLineTop(imageLine)).isGreaterThanOrEqualTo(imageHeight)
++    assertThat(layout.lineCount).isGreaterThan(imageLine + 1)
++    for (line in imageLine + 1 until layout.lineCount) {
++      val top = layout.getLineTop(line)
++      val bottom = layout.getLineBottom(line)
++      assertThat(bottom - top).describedAs("ordinary line %s height", line).isEqualTo(kotlin.math.ceil(fontSize * 1.6).toInt())
++      assertThat(layout.getLineBaseline(line)).describedAs("line %s baseline", line).isBetween(top, bottom)
++      var ink = 0
++      for (y in top until bottom) for (x in 0 until bitmap.width) {
++        if (Color.red(bitmap.getPixel(x, y)) < 128) ink++
++      }
++      assertThat(ink).describedAs("line %s visible text", line).isGreaterThan(0)
++    }
++    bitmap.recycle()
 +    }
 +  }
 +}

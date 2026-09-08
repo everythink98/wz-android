@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification } from '@/domain/notifications/models';
 import { buildSourceNotificationDigest, runNotificationBackgroundWorker } from './notificationWorker';
@@ -66,6 +67,190 @@ function testRecord(state: NotificationState) {
 }
 
 describe('background notification digest', () => {
+  it.each(['failure', 'partial'] as const)(
+    'keeps parser %s visible at delivery, worker, and task completion without changing the worker result',
+    async (outcome) => {
+      const state = defaultNotificationState();
+      state.globalEnabled = true;
+      state.sources.nodeseek = {
+        ...state.sources.nodeseek,
+        intentEnabled: true,
+        identityKey: 'nodeseek:PRIVATE_USER',
+        baselineReady: true
+      };
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => {
+        lines.push(line);
+      });
+      try {
+        const parentTrace = beginDiagnosticTrace('app', 'notification-background-task');
+        const result = await runNotificationBackgroundWorker({
+          sources: ['nodeseek'],
+          parentTrace,
+          sourceAllowed,
+          network: {
+            restoreProxy: async () => undefined,
+            probeAccess: async () => ({ identityKey: 'nodeseek:PRIVATE_USER', userId: 'PRIVATE_USER' }),
+            listPage: async () =>
+              annotateSourceDiagnosticSummary(
+                { items: [], cursor: null, hasMore: false },
+                {
+                  parserVariant: 'nodeseek-notifications',
+                  candidateCount: outcome === 'failure' ? 1 : 0,
+                  hasDegradation: true
+                }
+              )
+          },
+          store: { load: async () => state, clearForContentDisable, record: testRecord(state) },
+          system: { permissionGranted, reconcileDigests, presentDigest: vi.fn(), dismissDigest }
+        });
+        expect(result).toEqual({ status: 'success', delivered: 0, failedSources: 0, timedOut: false });
+        finishDiagnosticTrace(parentTrace, 'success');
+      } finally {
+        setDiagnosticWriter(null);
+      }
+      const finishes = lines.map((line) => JSON.parse(line)).filter((event) => event.phase === 'finish');
+      for (const operation of ['notification-delivery', 'notification-worker', 'notification-background-task']) {
+        expect(finishes.filter((event) => event.operation === operation)).toEqual([
+          expect.objectContaining({ outcome, reason: outcome === 'failure' ? 'parse_empty' : 'invalid_response' })
+        ]);
+      }
+      expect(lines.join('')).not.toContain('PRIVATE_');
+    }
+  );
+
+  it('keeps the original delivery failure and failed compensation in separate safe stages', async () => {
+    const state = defaultNotificationState();
+    state.globalEnabled = true;
+    state.sources.nodeseek = {
+      ...state.sources.nodeseek,
+      intentEnabled: true,
+      identityKey: 'nodeseek:PRIVATE_USER',
+      baselineReady: true,
+      notificationIdentifier: 'PRIVATE_PREVIOUS'
+    };
+    const item: ForumNotification = {
+      source: 'nodeseek',
+      id: 'PRIVATE_ID',
+      kind: 'reply',
+      actor: { name: 'PRIVATE_ACTOR' },
+      title: 'PRIVATE_TITLE',
+      createdAt: null,
+      unread: true,
+      target: { type: 'information' }
+    };
+    const record = testRecord(state);
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      const result = await runNotificationBackgroundWorker({
+        sources: ['nodeseek'],
+        sourceAllowed,
+        network: {
+          restoreProxy: async () => undefined,
+          probeAccess: async () => ({ identityKey: 'nodeseek:PRIVATE_USER', userId: 'PRIVATE_USER' }),
+          listPage: async () => ({ items: [item], cursor: null, hasMore: false })
+        },
+        store: {
+          load: async () => state,
+          clearForContentDisable,
+          record: async (...args) => ({
+            ...(await record(...args)),
+            rollback: async () => {
+              throw new Error('storage PRIVATE_ROLLBACK');
+            }
+          })
+        },
+        system: {
+          permissionGranted,
+          reconcileDigests,
+          presentDigest: async (_source, _digest, identifier) => identifier,
+          dismissDigest: async () => {
+            throw new Error('network PRIVATE_DISMISS');
+          }
+        }
+      });
+      expect(result).toMatchObject({ failedSources: 1 });
+    } finally {
+      setDiagnosticWriter(null);
+    }
+    const events = lines.map((line) => JSON.parse(line));
+    const round = events.find((event) => event.operation === 'notification-worker' && event.phase === 'intent');
+    expect(events).toContainEqual(
+      expect.objectContaining({ operation: 'notification-delivery', phase: 'intent', parentTraceId: round.traceId })
+    );
+    expect(events).toContainEqual(expect.objectContaining({ phase: 'apply', state: 'present', result: 'success' }));
+    expect(events).toContainEqual(expect.objectContaining({ phase: 'persist', result: 'success' }));
+    expect(events).toContainEqual(
+      expect.objectContaining({ phase: 'apply', state: 'dismiss-previous', result: 'failure', reason: 'network_error' })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        phase: 'rollback',
+        state: 'rollback-delivery',
+        result: 'failure',
+        reason: 'storage_error'
+      })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        operation: 'notification-worker',
+        phase: 'finish',
+        outcome: 'partial',
+        failedSources: 1
+      })
+    );
+    expect(lines.join('')).not.toContain('PRIVATE_');
+  });
+
+  it.each(['permission-check', 'global-disabled', 'no-enabled-sources', 'state-load'] as const)(
+    'records the worker exit at %s before any source probe',
+    async (expectedState) => {
+      const state = defaultNotificationState();
+      state.globalEnabled = expectedState !== 'global-disabled';
+      const lines: string[] = [];
+      const probeAccess = vi.fn();
+      setDiagnosticWriter((line) => {
+        lines.push(line);
+      });
+      try {
+        const run = runNotificationBackgroundWorker({
+          sources: ['nodeseek'],
+          sourceAllowed,
+          network: { restoreProxy: async () => undefined, probeAccess, listPage: vi.fn() },
+          store: {
+            load: async () => {
+              if (expectedState === 'state-load') throw new Error('storage unavailable');
+              return state;
+            },
+            record: vi.fn(),
+            clearForContentDisable
+          },
+          system: {
+            permissionGranted: async () => expectedState !== 'permission-check',
+            reconcileDigests,
+            presentDigest: vi.fn(),
+            dismissDigest
+          }
+        });
+        if (expectedState === 'state-load') await expect(run).rejects.toThrow('storage unavailable');
+        else await run;
+      } finally {
+        setDiagnosticWriter(null);
+      }
+      expect(probeAccess).not.toHaveBeenCalled();
+      const finishes = lines
+        .map((line) => JSON.parse(line))
+        .filter((event) => event.operation === 'notification-worker' && event.phase === 'finish');
+      expect(finishes).toHaveLength(1);
+      expect(finishes[0]).toMatchObject({
+        state: expectedState,
+        outcome: expectedState === 'state-load' ? 'failure' : expectedState === 'permission-check' ? 'blocked' : 'noop'
+      });
+    }
+  );
   it('parses each message date once while choosing the latest actor without reordering input', () => {
     const items: ForumNotification[] = Array.from({ length: 60 }, (_, index) => {
       const minute = (index * 17) % 60;
@@ -164,6 +349,10 @@ describe('background notification digest', () => {
     const listPage = vi.fn();
     const presentDigest = vi.fn();
 
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
     const result = await runNotificationBackgroundWorker({
       sources: ['nodeseek'],
       sourceAllowed,
@@ -180,12 +369,20 @@ describe('background notification digest', () => {
         clearForContentDisable
       },
       system: { permissionGranted, reconcileDigests, presentDigest, dismissDigest }
-    });
+    }).finally(() => setDiagnosticWriter(null));
 
     expect(result).toMatchObject({ status: 'failed', reason: 'proxy' });
     expect(probeAccess).not.toHaveBeenCalled();
     expect(listPage).not.toHaveBeenCalled();
     expect(presentDigest).not.toHaveBeenCalled();
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        operation: 'notification-worker',
+        phase: 'finish',
+        outcome: 'failure',
+        state: 'proxy-restore'
+      })
+    );
   });
 
   it('stops before account probes when the OS notification permission has been revoked', async () => {
@@ -1204,7 +1401,7 @@ describe('background notification digest', () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         area: 'source',
-        operation: 'refresh',
+        operation: 'notification-delivery',
         phase: 'finish',
         outcome: 'failure',
         source: 'nodeseek'

@@ -11,6 +11,8 @@ import {
 } from 'react';
 import { type Source } from '@/domain/forum/sourceCatalog';
 import { useReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkRuntime';
+import { recordImageBudgetTimeout } from '@/platform/media/imageLoadDiagnostics';
+import { recordMediaBudgetTimeout } from '@/platform/media/mediaPlaybackDiagnostics';
 import { TopicAudioSessionProvider } from './TopicAudioSession';
 
 const MAX_WARM_BLOCK_MEDIA = 8;
@@ -552,6 +554,9 @@ class TopicBodyMediaCoordinator {
         let timedOutCount = 0;
         for (const entry of this.entries.values()) {
           if (entry.status === 'running' && entry.deadline !== null && entry.deadline <= now) {
+            if (entry.kind !== 'audio' && entry.kind !== 'video') {
+              recordImageBudgetTimeout(entry.requestIdentity, MEDIA_NO_PROGRESS_TIMEOUT_MS);
+            } else recordMediaBudgetTimeout(entry.requestIdentity, entry.kind, MEDIA_NO_PROGRESS_TIMEOUT_MS);
             timedOutIdentities.set(
               entry.requestIdentity,
               (timedOutIdentities.get(entry.requestIdentity) ?? true) && entry.automaticRetry

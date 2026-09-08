@@ -9,6 +9,7 @@ import { useTopicBodyMediaLease } from './TopicBodyMediaCoordinator';
 import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import { ManagedTopicMediaImage } from './ManagedTopicMediaImage';
 import { useTopicAudioControl } from './TopicAudioSession';
+import { linkDiagnosticRefs } from '@/platform/diagnostics/diagnosticPolicy';
 
 export function ManagedTopicContentVideo({
   boundarySpacing,
@@ -107,6 +108,7 @@ function useManagedTopicContentMediaAdmission(
   );
   const resolvedReferer = requestHeaders?.Referer || 'none';
   const requestIdentity = `${kind}:${mediaContext.sessionIdentity}:${src}:referrer:${resolvedReferer}`;
+  linkDiagnosticRefs('media', [src, requestIdentity]);
   const admission = useTopicBodyMediaLease({
     automaticRetry: false,
     kind,

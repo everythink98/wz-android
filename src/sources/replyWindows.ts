@@ -1,5 +1,5 @@
 import type { RepliesResponse, ReplyOrder } from '@/domain/forum/models';
-import { copySourceDiagnosticSummary } from './diagnostics';
+import { copySourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 export function orientReplyWindow(result: RepliesResponse, order: ReplyOrder): RepliesResponse {
   if (order === 'oldest') return result;

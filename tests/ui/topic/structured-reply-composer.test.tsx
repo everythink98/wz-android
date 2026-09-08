@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useState } from 'react';
+import { createRef, useState } from 'react';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { StructuredReplyComposer } from '@/ui/composer/StructuredReplyComposer';
+import { StructuredReplyComposer, type StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
 import type { ComposerPresentation, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 import { composerHostMessageSchema } from '@/ui/composer/structuredComposerBridge';
 import { StyleSheet } from 'react-native';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTheme } from '@/ui/theme/tokens';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
-import { fireEvent, render, waitFor } from '../render';
+import { act, fireEvent, render, waitFor } from '../render';
 
 function message(type: string, payload: unknown) {
   return { nativeEvent: { data: JSON.stringify({ type, payload }) } };
@@ -18,6 +18,87 @@ function message(type: string, payload: unknown) {
 afterEach(() => setDiagnosticWriter(null));
 
 describe('StructuredReplyComposer', () => {
+  it('records snapshot timeouts even when the closing caller handles the rejection', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const ref = createRef<StructuredReplyComposerHandle>();
+    const view = await render(
+      <StructuredReplyComposer
+        ref={ref}
+        actionBusy={false}
+        closeLabel="收起回复"
+        content="private draft"
+        discourseEmojiUrls={{}}
+        focusSignal={0}
+        intent={{ kind: 'reply', site: 'linuxdo', topicId: '42' }}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        submitLabel="发送回复"
+        title="回复"
+        visible
+        onOpenChange={jest.fn()}
+        onPresentationChange={jest.fn()}
+        onSnapshot={jest.fn()}
+        onSubmit={jest.fn()}
+      />
+    );
+    const webView = view.getByTestId('structured-composer-webview');
+    await fireEvent(webView, 'loadEnd');
+    await fireEvent(webView, 'message', message('READY', { revision: 0 }));
+    await act(async () => {
+      await ref.current!.requestSnapshot().catch(() => undefined);
+    });
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        operation: 'composer-snapshot',
+        phase: 'finish',
+        outcome: 'failure',
+        reason: 'timeout'
+      })
+    );
+    expect(lines.join('')).not.toContain('private draft');
+  });
+  it('records renderer loss and runtime parse failures without the draft', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const view = await render(
+      <StructuredReplyComposer
+        actionBusy={false}
+        closeLabel="收起回复"
+        content="private draft"
+        discourseEmojiUrls={{}}
+        focusSignal={0}
+        intent={{ kind: 'reply', site: 'linuxdo', topicId: '42' }}
+        pendingNodeSeekPolls={[]}
+        presentation="sheet"
+        submitLabel="发送回复"
+        title="回复"
+        visible
+        onOpenChange={jest.fn()}
+        onPresentationChange={jest.fn()}
+        onSnapshot={jest.fn()}
+        onSubmit={jest.fn()}
+      />
+    );
+    const webView = view.getByTestId('structured-composer-webview');
+    await fireEvent(
+      webView,
+      'message',
+      message('ERROR', { code: 'markdown-parse-failed', message: 'private draft', revision: 0 })
+    );
+    await fireEvent(webView, 'renderProcessGone', { nativeEvent: { didCrash: true } });
+    expect(lines.map((line) => JSON.parse(line))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ operation: 'composer-error', phase: 'finish', editorError: 'markdown-parse-failed' }),
+        expect.objectContaining({ operation: 'composer-error', phase: 'finish', reason: 'renderer_gone' })
+      ])
+    );
+    expect(lines.join('')).not.toContain('private draft');
+  });
   it('forwards LinuxDo poll capabilities through the existing host-action seam', async () => {
     const onLoadLinuxDoPollCapabilities = jest.fn(async () => ({
       groups: [{ id: 10, name: 'trust_level_1', displayName: '信任级别 1' }],
@@ -330,7 +411,7 @@ describe('StructuredReplyComposer', () => {
     const diagnosticEvents = diagnosticLines.map((line) => JSON.parse(line));
     expect(
       diagnosticEvents
-        .filter((event) => event.phase === 'intent')
+        .filter((event) => event.phase === 'intent' && event.operation === 'webview-transport')
         .map(({ area, operation, site, channel, isReady, isVisible }) => ({
           area,
           operation,
@@ -366,7 +447,9 @@ describe('StructuredReplyComposer', () => {
       }
     ]);
     expect(
-      diagnosticEvents.filter((event) => event.phase === 'finish').map(({ outcome, reason }) => ({ outcome, reason }))
+      diagnosticEvents
+        .filter((event) => event.phase === 'finish' && event.operation === 'webview-transport')
+        .map(({ outcome, reason }) => ({ outcome, reason }))
     ).toEqual([
       { outcome: 'failure', reason: 'invalid_response' },
       { outcome: 'failure', reason: 'invalid_response' },

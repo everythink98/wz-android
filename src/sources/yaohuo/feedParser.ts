@@ -9,7 +9,10 @@ import {
   textExcerpt
 } from '@/domain/forum/html';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
-import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from '@/sources/diagnostics';
+import {
+  annotateSourceDiagnosticSummary,
+  sourceDiagnosticSummary
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   YAOHUO_BASE_URL as BASE_URL,
   YAOHUO_CATEGORIES,

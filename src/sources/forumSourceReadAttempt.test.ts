@@ -1,13 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beginDiagnosticTrace, setDiagnosticWriter, withDiagnosticFetcher } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { forumReadEvidenceFetcher } from '../../tests/helpers/forumReadEvidence';
 import {
   acceptForumReadResponse,
+  rejectForumReadResponse,
   runForumSourceReadAggregateAttempt,
   runForumSourceReadAttempt,
   withForumSourceReadEligibility
 } from './forumSourceReadAttempt';
 
 describe('forum source read-attempt eligibility', () => {
+  const events: DiagnosticEvent[] = [];
+  beforeEach(() => {
+    events.length = 0;
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+  });
+  afterEach(() => setDiagnosticWriter(null));
+
+  const decisions = () =>
+    events.filter((event) => event.operation === 'recovery-decision').map((event) => event.recoveryDecision);
   async function startAggregateRead({
     aggregateIsEligible,
     gatewayIsEligible = () => true
@@ -18,7 +32,8 @@ describe('forum source read-attempt eligibility', () => {
     const childFinished = Promise.withResolvers<void>();
     const finishSibling = Promise.withResolvers<void>();
     const recoverReadChannel = vi.fn(async () => undefined);
-    const transport = forumReadEvidenceFetcher(recoverReadChannel);
+    const trace = beginDiagnosticTrace('feed', 'load');
+    const transport = withDiagnosticFetcher(trace, forumReadEvidenceFetcher(recoverReadChannel));
     const gatewayFetcher = withForumSourceReadEligibility(transport, gatewayIsEligible);
     const read = runForumSourceReadAggregateAttempt(
       gatewayFetcher,
@@ -52,6 +67,13 @@ describe('forum source read-attempt eligibility', () => {
 
     await expect(fixture.read).resolves.toEqual({ child: 'parsed child' });
     expect(fixture.recoverReadChannel).not.toHaveBeenCalled();
+    expect(decisions()).toEqual(['accepted', 'aggregate-pending', 'ineligible']);
+    const transport = events.find((event) => event.phase === 'transport');
+    expect(
+      events
+        .filter((event) => event.operation === 'recovery-decision')
+        .every((event) => event.requestId === transport?.requestId && event.parentTraceId === transport?.traceId)
+    ).toBe(true);
   });
 
   it('discards a completed child proof when the outer Gateway is superseded', async () => {
@@ -76,6 +98,7 @@ describe('forum source read-attempt eligibility', () => {
 
     await expect(fixture.read).resolves.toEqual({ child: 'parsed child' });
     expect(fixture.recoverReadChannel).toHaveBeenCalledTimes(1);
+    expect(decisions()).toEqual(['accepted', 'aggregate-pending', 'evidence-commit']);
   });
 
   it('inherits the owning gateway eligibility through an aggregate child fetcher', async () => {
@@ -105,4 +128,30 @@ describe('forum source read-attempt eligibility', () => {
     await expect(read).resolves.toBe('parsed result');
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
+
+  it.each(['rejected', 'pending', 'failed'] as const)(
+    'records why %s fallback evidence does not recover silently',
+    async (scenario) => {
+      const commit = vi.fn(async () => {
+        if (scenario === 'failed') throw new Error('storage failed');
+      });
+      const trace = beginDiagnosticTrace('topic', 'open');
+      const transport = withDiagnosticFetcher(trace, forumReadEvidenceFetcher(commit));
+      await runForumSourceReadAttempt(
+        'nodeseek',
+        transport,
+        async (fetcher) => {
+          const response = await fetcher('https://www.nodeseek.com/private?token=secret');
+          if (scenario === 'rejected') rejectForumReadResponse(response);
+          if (scenario === 'failed') acceptForumReadResponse(response);
+          return 'usable parsed result';
+        },
+        () => true
+      );
+      expect(decisions()).toEqual(scenario === 'failed' ? ['accepted', 'evidence-commit', 'failed'] : [scenario]);
+      expect(commit).toHaveBeenCalledTimes(scenario === 'failed' ? 1 : 0);
+      if (scenario === 'failed') expect(events.at(-1)).toMatchObject({ outcome: 'failure', reason: 'storage_error' });
+      expect(JSON.stringify(events)).not.toMatch(/private|secret|token|www\.nodeseek/);
+    }
+  );
 });

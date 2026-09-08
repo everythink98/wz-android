@@ -17,7 +17,7 @@ import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 import { sourceLabel } from '@/domain/forum/presentation';
 import { isFeedFilterSource, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   formatSourceErrorMessages,
   linuxDoVerificationNavigationMessage,

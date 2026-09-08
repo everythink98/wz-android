@@ -7,7 +7,7 @@ vi.mock('expo-secure-store', () => ({
 }));
 
 import { getUserProfile } from './sourceRead';
-import { sourceDiagnosticSummary } from './diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 describe('source user read', () => {
   it('routes user profile reads to each public source site', async () => {

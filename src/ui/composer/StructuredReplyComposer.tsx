@@ -22,6 +22,7 @@ import type { ReaderSettings } from '@/domain/reader/readerData';
 import { fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
 import { AppButton, IconButton } from '@/ui/controls/ButtonControls';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 
 type TemplateSummary = { id: string; title: string; content: string };
 type EmojiUrlMap = Record<string, string>;
@@ -208,6 +209,7 @@ export const StructuredReplyComposer = forwardRef<
           resolve: (snapshot: ComposerSnapshot) => void;
           reject: (error: Error) => void;
           timer: ReturnType<typeof setTimeout>;
+          trace: DiagnosticTrace;
         }
       >()
     );
@@ -233,6 +235,7 @@ export const StructuredReplyComposer = forwardRef<
     const sentDiscourseEmojiRef = useRef<readonly { name: string; url: string }[] | null>(null);
     const wasVisibleRef = useRef(visible);
     const readyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const initializationTraceRef = useRef<DiagnosticTrace | null>(null);
     const source = useMemo(() => ({ html: editorDocument.html, baseUrl: 'https://composer.local/' }), []);
     const intentKey =
       intent.kind === 'private-message'
@@ -282,6 +285,10 @@ export const StructuredReplyComposer = forwardRef<
 
     const sendInit = useCallback(() => {
       if (!modeLoaded) return;
+      if (initializationTraceRef.current)
+        finishDiagnosticTrace(initializationTraceRef.current, 'stale', { reason: 'superseded' });
+      const trace = beginDiagnosticTrace('webview', 'composer-init', { site: intent.site, mode });
+      initializationTraceRef.current = trace;
       setLocalError('');
       const initialTheme = editorThemeRef.current;
       pendingNodeSeekPolls.forEach((poll) => {
@@ -308,7 +315,10 @@ export const StructuredReplyComposer = forwardRef<
       lastExternalSentRef.current = content;
       lastRevisionRef.current = 0;
       if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
-      readyTimerRef.current = setTimeout(() => setLocalError('编辑器启动超时，可重载后继续'), 1500);
+      readyTimerRef.current = setTimeout(() => {
+        finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
+        setLocalError('编辑器启动超时，可重载后继续');
+      }, 1500);
     }, [
       content,
       discourseEmoji,
@@ -374,17 +384,26 @@ export const StructuredReplyComposer = forwardRef<
     }, [content, intent.kind, ready, send, sendInit]);
 
     const requestSnapshot = useCallback(() => {
-      if (!ready) return Promise.reject(new Error('编辑器尚未就绪'));
+      const trace = beginDiagnosticTrace('webview', 'composer-snapshot', {
+        site: intent.site,
+        isReady: ready,
+        revision: lastRevisionRef.current
+      });
+      if (!ready) {
+        finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
+        return Promise.reject(new Error('编辑器尚未就绪'));
+      }
       const id = requestId();
       return new Promise<ComposerSnapshot>((resolve, reject) => {
         const timer = setTimeout(() => {
           snapshotResolversRef.current.delete(id);
+          finishDiagnosticTrace(trace, 'failure', { reason: 'timeout' });
           reject(new Error('无法取得最新正文，草稿已保留'));
         }, 1500);
-        snapshotResolversRef.current.set(id, { resolve, reject, timer });
+        snapshotResolversRef.current.set(id, { resolve, reject, timer, trace });
         send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: id } });
       });
-    }, [ready, send]);
+    }, [intent.site, ready, send]);
 
     useImperativeHandle(
       ref,
@@ -416,8 +435,11 @@ export const StructuredReplyComposer = forwardRef<
     useEffect(
       () => () => {
         if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
-        snapshotResolversRef.current.forEach(({ reject, timer }) => {
+        if (initializationTraceRef.current)
+          finishDiagnosticTrace(initializationTraceRef.current, 'canceled', { reason: 'canceled' });
+        snapshotResolversRef.current.forEach(({ reject, timer, trace }) => {
           clearTimeout(timer);
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
           reject(new Error('编辑器已关闭'));
         });
         snapshotResolversRef.current.clear();
@@ -446,6 +468,8 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         if (message.type === 'READY') {
+          if (initializationTraceRef.current)
+            finishDiagnosticTrace(initializationTraceRef.current, 'success', { state: 'ready' });
           if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
           readyTimerRef.current = null;
           setReady(true);
@@ -484,6 +508,7 @@ export const StructuredReplyComposer = forwardRef<
             if (resolver) {
               clearTimeout(resolver.timer);
               snapshotResolversRef.current.delete(message.payload.requestId!);
+              finishDiagnosticTrace(resolver.trace, 'stale', { reason: 'stale', revision: snapshot.revision });
               resolver.reject(new Error('编辑器返回了过期正文，请重试'));
             }
             return;
@@ -504,6 +529,7 @@ export const StructuredReplyComposer = forwardRef<
           if (resolver && message.payload.requestId) {
             clearTimeout(resolver.timer);
             snapshotResolversRef.current.delete(message.payload.requestId);
+            finishDiagnosticTrace(resolver.trace, 'success', { revision: snapshot.revision });
             resolver.resolve(snapshot);
           }
           return;
@@ -545,7 +571,21 @@ export const StructuredReplyComposer = forwardRef<
           })();
           return;
         }
-        if (message.payload.revision >= lastRevisionRef.current) setLocalError(message.payload.message);
+        if (message.payload.revision >= lastRevisionRef.current) {
+          const editorError = (
+            ['markdown-invalid', 'markdown-parse-failed', 'image-upload-pending', 'template-usage-failed'] as const
+          ).find((code) => code === message.payload.code);
+          const trace = beginDiagnosticTrace('webview', 'composer-error', {
+            site: intent.site,
+            revision: message.payload.revision
+          });
+          finishDiagnosticTrace(
+            trace,
+            editorError === 'markdown-invalid' || editorError === 'image-upload-pending' ? 'blocked' : 'failure',
+            { reason: 'invalid_response', ...(editorError ? { editorError } : {}) }
+          );
+          setLocalError(message.payload.message);
+        }
       },
       [
         intent.site,
@@ -644,6 +684,8 @@ export const StructuredReplyComposer = forwardRef<
               <AppButton
                 label="重载编辑器"
                 onPress={() => {
+                  const trace = beginDiagnosticTrace('webview', 'recover', { site: intent.site });
+                  finishDiagnosticTrace(trace, 'success', { state: 'started' });
                   setRendererGone(false);
                   setReady(false);
                   setWebLoaded(false);
@@ -678,6 +720,13 @@ export const StructuredReplyComposer = forwardRef<
               }}
               onMessage={handleMessage}
               onRenderProcessGone={() => {
+                if (initializationTraceRef.current)
+                  finishDiagnosticTrace(initializationTraceRef.current, 'failure', { reason: 'renderer_gone' });
+                const trace = beginDiagnosticTrace('webview', 'composer-error', {
+                  site: intent.site,
+                  revision: lastRevisionRef.current
+                });
+                finishDiagnosticTrace(trace, 'failure', { reason: 'renderer_gone' });
                 setReady(false);
                 setRendererGone(true);
                 setLocalError('编辑器进程已退出，最后确认草稿仍在');

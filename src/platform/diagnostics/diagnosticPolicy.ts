@@ -47,14 +47,23 @@ const DIAGNOSTIC_REASONS = [
   'renderer_gone',
   'refresh_failed',
   'source_disabled',
+  'identity_changed',
+  'identity_pending',
+  'identity_unavailable',
+  'object_forbidden',
+  'topic_ended',
+  'missing_target',
+  'already_complete',
+  'invalid_request',
+  'invalid_generation',
+  'runtime_rotation',
+  'unconfirmed',
   'unknown'
 ] as const;
 
 export type DiagnosticReason = (typeof DIAGNOSTIC_REASONS)[number];
 
 export type DiagnosticScalar = string | number | boolean | null;
-
-export type DiagnosticFields = Readonly<Record<string, DiagnosticScalar>>;
 
 export type DiagnosticWriter = (line: string) => void | Promise<void>;
 
@@ -66,7 +75,7 @@ export interface DiagnosticEvent {
   appSessionId: string;
   traceId: string;
   area: DiagnosticArea;
-  operation: string;
+  operation: DiagnosticOperation;
   phase: DiagnosticPhase;
   outcome: DiagnosticOutcome;
   durationMs: number;
@@ -77,51 +86,15 @@ export interface DiagnosticTrace {
   readonly appSessionId: string;
   readonly traceId: string;
   readonly area: DiagnosticArea;
-  readonly operation: string;
+  readonly operation: DiagnosticOperation;
   readonly startedAt: number;
 }
 
-const stringFieldKeys = new Set([
-  'source',
-  'site',
+const specialStringFieldKeys = closedValues(
   'endpoint',
   'method',
   'contentType',
   'reason',
-  'variant',
-  'channel',
-  'state',
-  'previousState',
-  'nextState',
-  'owner',
-  'priority',
-  'store',
-  'provider',
-  'route',
-  'routeKind',
-  'emptyReason',
-  'mutationReason',
-  'action',
-  'mode',
-  'flow',
-  'requestType',
-  'credentialSource',
-  'parserVariant',
-  'transport',
-  'kind',
-  'screen',
-  'section',
-  'surface',
-  'mediaClass',
-  'fallback',
-  'terminalReason',
-  'protocol',
-  'eventType',
-  'result',
-  'level',
-  'queueState',
-  'csrfSource',
-  'userAgentSource',
   'errorName',
   'message',
   'stack',
@@ -129,20 +102,74 @@ const stringFieldKeys = new Set([
   'userRef',
   'cursorRef',
   'mediaRef',
-  'mediaRole',
-  'candidateKind',
-  'cacheType',
-  'replyOrder',
-  'positionKind',
-  'navigationClass',
+  'requestId',
+  'parentRequestId',
+  'parentTraceId',
   'navigationHost',
   'navigationPath',
   'navigationParamKeys'
-]);
+);
 
-const closedValues = (...values: string[]) => new Set(values);
+function closedValues<const T extends readonly string[]>(...values: T) {
+  return new Set<T[number]>(values) as unknown as ReadonlySet<T[number]> & { has(value: string): value is T[number] };
+}
+
+type ClosedValue<T> = T extends { values(): IterableIterator<infer Value> } ? Value : never;
 
 const operationValues = closedValues(
+  'account-reconcile',
+  'account-restore',
+  'account-migration',
+  'account-refresh',
+  'image-load',
+  'image-budget',
+  'install',
+  'prefetch-post',
+  'stardust-status',
+  'stardust-payment',
+  'load-templates',
+  'load-poll-capabilities',
+  'use-template',
+  'manage-poll',
+  'migrate-cookie-snapshots',
+  'recovery-decision',
+  'notification-list',
+  'notification-categories',
+  'notification-unread',
+  'notification-detail',
+  'notification-mark-read',
+  'notification-reply',
+  'notification-upload',
+  'notification-mark-all-read',
+  'notification-poll-capabilities',
+  'notification-templates',
+  'notification-template-use',
+  'notification-worker',
+  'notification-delivery',
+  'notification-background-task',
+  'notification-permission',
+  'notification-registration',
+  'notification-runtime',
+  'notification-cleanup',
+  'notification-response',
+  'notification-snapshot',
+  'notification-identity',
+  'notification-state-load',
+  'load-settings',
+  'restore',
+  'pause',
+  'composer-init',
+  'composer-snapshot',
+  'composer-error',
+  'selection-error',
+  'deep-link',
+  'player-load',
+  'player-error',
+  'media-budget',
+  'start',
+  'startup',
+  'lifecycle',
+  'unhandled-rejection',
   'apply',
   'attendance',
   'auth',
@@ -210,8 +237,11 @@ const operationValues = closedValues(
   'uncaught-error',
   'user-back',
   'vote',
-  'webview-transport'
+  'webview-transport',
+  'unknown'
 );
+
+export type DiagnosticOperation = ClosedValue<typeof operationValues>;
 
 const sourceValues = closedValues('all', ...registeredSources, 'unknown');
 
@@ -228,6 +258,55 @@ const sessionStateValues = closedValues(
 );
 
 const stateValues = closedValues(
+  'published',
+  'synchronized',
+  'inactive-route',
+  'cache-removed',
+  'refresh-unconfirmed',
+  'resolve',
+  'resuming-read',
+  'native-stack-back',
+  'proxy-restore',
+  'permission-check',
+  'state-load',
+  'global-disabled',
+  'no-enabled-sources',
+  'reconcile',
+  'probe-access',
+  'present',
+  'dismiss-previous',
+  'dismiss-staged',
+  'rollback-delivery',
+  'clear-disabled-source',
+  'register',
+  'unregister',
+  'unchanged',
+  'recovered',
+  'read-blocked',
+  'read-resumed',
+  'missing',
+  'invalid',
+  'paused',
+  'resuming',
+  'full-download-retry',
+  'renderer-gone',
+  'module-unavailable',
+  'runtime-lease',
+  'player-replace',
+  'player-ready',
+  'native-selection',
+  'foreground',
+  'background',
+  'memory-pressure',
+  'evidence-accepted',
+  'evidence-rejected',
+  'evidence-pending',
+  'recovery-skipped',
+  'recovery-qualified',
+  'recovery-committed',
+  'recovery-failed',
+  'direct-evidence-reset',
+  'displayed',
   ...sessionStateValues,
   'active',
   'applied',
@@ -370,6 +449,10 @@ const mutationReasonValues = closedValues(
 );
 
 const parserVariantValues = closedValues(
+  'nodeseek-notifications',
+  'discourse-notifications',
+  'discourse-private-messages',
+  'yaohuo-notifications',
   'access-restricted-topic',
   'aggregate-categories',
   'aggregate-feed',
@@ -384,6 +467,7 @@ const parserVariantValues = closedValues(
   'discourse-categories',
   'discourse-feed',
   'discourse-replies',
+  'discourse-near-replies',
   'discourse-search',
   'discourse-search-page',
   'discourse-ai-search',
@@ -402,6 +486,8 @@ const parserVariantValues = closedValues(
   'html-replies',
   'html-search',
   'html-topic',
+  'html-topic-partial',
+  'api-topic-partial',
   'html-topic-fallback',
   'html-topic-with-replies',
   'html-user',
@@ -420,7 +506,22 @@ const parserVariantValues = closedValues(
   'unsupported-replies'
 );
 
-const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
+const mediaFailureValues = closedValues(
+  'executor_rejected',
+  'timeout',
+  'canceled',
+  'http_error',
+  'decode_error',
+  'tls_error',
+  'dns_error',
+  'network_error',
+  'unknown'
+);
+
+const categoricalFieldValues = {
+  imageConsumer: closedValues('fresco', 'glide'),
+  imageFailure: mediaFailureValues,
+  mediaFailure: mediaFailureValues,
   source: sourceValues,
   site: closedValues(...sessionSources),
   variant: parserVariantValues,
@@ -430,11 +531,20 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   nextState: closedValues(...screenValues, ...sessionStateValues),
   owner: closedValues('account', 'feed', 'search', 'topic', 'user', 'write'),
   priority: closedValues('background', 'foreground', 'write'),
-  store: closedValues('android-webview', 'cookie-manager', 'multi-store', 'secure-store'),
+  store: closedValues(
+    'android-webview',
+    'cookie-manager',
+    'multi-store',
+    'secure-store',
+    'account-session',
+    'account-session-migration',
+    'reader-settings'
+  ),
   provider: closedValues('document-picker', 'file-system', 'media-library', 'sharing'),
   route: screenValues,
   routeKind: closedValues('stack', 'tab'),
   emptyReason: closedValues(
+    'route-owned',
     'load-failed',
     'loading',
     'no-items',
@@ -449,10 +559,10 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   ),
   mutationReason: mutationReasonValues,
   action: closedValues('bookmark', 'collection', 'dislike', 'like', 'nodeseek-verification', 'upvote', 'yaohuo-login'),
-  mode: closedValues('add', 'after-submit', 'manual', 'open', 'refresh', 'remove', 'silent'),
+  mode: closedValues('add', 'after-submit', 'manual', 'open', 'refresh', 'remove', 'silent', 'rich', 'source'),
   flow: closedValues('background', 'foreground', 'write'),
   requestType: requestTypeValues,
-  credentialSource: closedValues('nodeimage', 'none', 'secure-store'),
+  credentialSource: closedValues('nodeimage', 'none', 'secure-store', 'managed-cookie-jar'),
   parserVariant: parserVariantValues,
   transport: closedValues('direct', 'managed', 'native', 'webview'),
   kind: closedValues(
@@ -493,8 +603,55 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   level: closedValues('debug', 'error', 'info', 'warning'),
   queueState: closedValues('active', 'idle', 'queued'),
   csrfSource: closedValues('local-generated', 'none', 'session-endpoint'),
-  userAgentSource: closedValues('default', 'stored', 'webview')
-};
+  userAgentSource: closedValues('default', 'stored', 'webview'),
+  mediaKind: closedValues('audio', 'video'),
+  editorError: closedValues(
+    'markdown-invalid',
+    'markdown-parse-failed',
+    'image-upload-pending',
+    'template-usage-failed'
+  ),
+  selectionError: closedValues(
+    'blank-identity',
+    'duplicate-native-id',
+    'duplicate-row-key',
+    'invalid-selection-token',
+    'revision-reused',
+    'copy-mapping-mismatch',
+    'system-actions-load',
+    'system-action-run',
+    'module-unavailable'
+  ),
+  origin: closedValues('cold', 'warm'),
+  recoveryDecision: closedValues(
+    'accepted',
+    'evidence-commit',
+    'rejected',
+    'pending',
+    'ineligible',
+    'superseded',
+    'threshold',
+    'unavailable',
+    'commit',
+    'failed',
+    'direct-reset',
+    'aggregate-pending',
+    'aggregate-failed',
+    'source-failed'
+  ),
+  evidenceKind: closedValues('direct', 'fallback'),
+  stackFormat: closedValues('rn-parsed', 'hermes', 'source'),
+  closeReason: closedValues(
+    'authoritative-recovery',
+    'cancel',
+    'close-button',
+    'hardware-back',
+    'navigation-away',
+    'source-disabled',
+    'success',
+    'switch-surface'
+  )
+} satisfies Readonly<Record<string, ReadonlySet<string>>>;
 
 const reasonValues = new Set<string>(DIAGNOSTIC_REASONS);
 
@@ -541,7 +698,18 @@ const contentTypeValues = closedValues(
   'unknown'
 );
 
-const numberFieldKeys = new Set([
+const numberFieldKeys = closedValues(
+  'filteredCount',
+  'failedSources',
+  'delivered',
+  'revision',
+  'versionCode',
+  'downloadedBytes',
+  'evidenceEpoch',
+  'ordinal',
+  'threshold',
+  'qualifiedCount',
+  'previousGeneration',
   'status',
   'byteCount',
   'count',
@@ -596,7 +764,45 @@ const numberFieldKeys = new Set([
   'errorCount',
   'displayCount',
   'retryCount'
-]);
+);
+
+type UpperAscii =
+  | 'A'
+  | 'B'
+  | 'C'
+  | 'D'
+  | 'E'
+  | 'F'
+  | 'G'
+  | 'H'
+  | 'I'
+  | 'J'
+  | 'K'
+  | 'L'
+  | 'M'
+  | 'N'
+  | 'O'
+  | 'P'
+  | 'Q'
+  | 'R'
+  | 'S'
+  | 'T'
+  | 'U'
+  | 'V'
+  | 'W'
+  | 'X'
+  | 'Y'
+  | 'Z';
+type BooleanFieldKey =
+  `${'has' | 'is' | 'can' | 'did' | 'was' | 'should' | 'server' | 'local' | 'refresh' | 'save' | 'message' | 'fresh' | 'native' | 'apiKey' | 'markup'}${UpperAscii}${string}`;
+
+export type DiagnosticFields = Readonly<
+  Partial<
+    { [Key in keyof typeof categoricalFieldValues]: ClosedValue<(typeof categoricalFieldValues)[Key]> } & {
+      [Key in ClosedValue<typeof specialStringFieldKeys>]: Key extends 'reason' | 'message' ? DiagnosticReason : string;
+    } & { [Key in ClosedValue<typeof numberFieldKeys>]: number } & { [Key in BooleanFieldKey]: boolean }
+  >
+>;
 
 const reservedFieldKeys = new Set([
   'schemaVersion',
@@ -649,13 +855,14 @@ export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {
   const typedReason =
     error && typeof error === 'object' && typeof (error as { reason?: unknown }).reason === 'string'
       ? (error as { reason: string }).reason
-      : '';
-  if (typedReason === 'parse_empty') {
-    return 'parse_empty';
-  }
-  if (typedReason === 'source-disabled') {
-    return 'source_disabled';
-  }
+      : typeof error === 'string'
+        ? error
+        : '';
+  const normalizedReason = typedReason.replace(/-/g, '_');
+  if (reasonValues.has(normalizedReason)) return normalizedReason as DiagnosticReason;
+  if (normalizedReason === 'pending') return 'busy';
+  if (normalizedReason === 'expired') return 'login_required';
+  if (normalizedReason === 'http_401') return 'login_required';
   const text =
     error instanceof Error
       ? `${error.name} ${error.message}`.toLowerCase()
@@ -694,21 +901,22 @@ export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {
 export function sanitizeErrorStack(stack: string, errorName: string) {
   const frames = stack
     .split(/\r?\n/)
-    .slice(1, 25)
-    .filter((line) => /^\s*at\s+/.test(line))
+    .filter((line) => /^\s*at\s+/.test(line) && !/\(address at InternalBytecode\.js:\d+:\d+\)/.test(line))
+    .slice(0, 24)
     .map((line) => {
       const location = line.match(/:(\d{1,9}):(\d{1,9})\)?\s*$/);
-      return location ? `    at [frame] ([bundle]:${location[1]}:${location[2]})` : '    at [frame]';
+      const address = /\(address at /.test(line) ? 'address at ' : '';
+      return location ? `    at [frame] (${address}[bundle]:${location[1]}:${location[2]})` : '    at [frame]';
     });
   return [safeErrorName(errorName), ...frames].join('\n');
 }
 
-export function safeFields(fields: DiagnosticFields) {
+export function safeFields(fields: Readonly<Record<string, unknown>>) {
   const safe: Record<string, DiagnosticScalar> = {};
   let count = 0;
   for (const [key, value] of Object.entries(fields)) {
     if (count >= 24 || reservedFieldKeys.has(key)) continue;
-    if (typeof value === 'string' && stringFieldKeys.has(key)) {
+    if (typeof value === 'string' && (specialStringFieldKeys.has(key) || Object.hasOwn(categoricalFieldValues, key))) {
       safe[key] = safeStringField(key, value);
       count += 1;
     } else if (typeof value === 'number' && Number.isFinite(value) && numberFieldKeys.has(key)) {
@@ -798,6 +1006,7 @@ function referenceFor(kind: string, raw: unknown) {
 }
 
 function safeStringField(key: string, value: string) {
+  if (key === 'imageFailure' || key === 'mediaFailure') return mediaFailureValues.has(value) ? value : 'unknown';
   if (key === 'endpoint') return endpointClass(value);
   if (key === 'method') return safeMethod(value);
   if (key === 'contentType') return safeContentType(value) || 'unknown';
@@ -808,6 +1017,9 @@ function safeStringField(key: string, value: string) {
   if (key === 'userRef') return safeReference(value, 'user');
   if (key === 'cursorRef') return safeReference(value, 'cursor');
   if (key === 'mediaRef') return safeReference(value, 'media');
+  if (key === 'requestId' || key === 'parentRequestId')
+    return /^request-[1-9][0-9]{0,9}$/.test(value) ? value : 'redacted';
+  if (key === 'parentTraceId') return /^trace-[1-9][0-9]{0,9}$/.test(value) ? value : 'redacted';
   if (key === 'navigationHost') {
     return closedValues('www.google.com', 'consent.google.com', 'accounts.google.com').has(value) ? value : 'redacted';
   }
@@ -820,7 +1032,8 @@ function safeStringField(key: string, value: string) {
       ? value
       : 'redacted';
   }
-  return categoricalFieldValues[key]?.has(value) ? value : 'redacted';
+  const values = (categoricalFieldValues as Readonly<Record<string, ReadonlySet<string>>>)[key];
+  return values?.has(value) ? value : 'redacted';
 }
 
 function safeErrorName(value: string) {
@@ -833,7 +1046,7 @@ function safeStack(value: string) {
     value.length > 2_048 ||
     !errorNameValues.has(lines[0] || '') ||
     lines.length > 25 ||
-    lines.slice(1).some((line) => !/^    at \[frame\](?: \(\[bundle\]:\d{1,9}:\d{1,9}\))?$/.test(line))
+    lines.slice(1).some((line) => !/^    at \[frame\](?: \((?:address at )?\[bundle\]:\d{1,9}:\d{1,9}\))?$/.test(line))
   ) {
     return 'redacted';
   }

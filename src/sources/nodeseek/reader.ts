@@ -78,7 +78,7 @@ import {
   copySourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries,
   sourceDiagnosticSummary
-} from '@/sources/diagnostics';
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   acceptForumReadResponse,
   proveForumReadResponse,
@@ -704,7 +704,7 @@ function annotateNodeSeekReplies(
     missingFloorCount: number;
     offset: number;
     page: number;
-    parserVariant: string;
+    parserVariant: Parameters<typeof annotateSourceDiagnosticSummary>[1]['parserVariant'];
   }
 ) {
   return annotateSourceDiagnosticSummary(result, {

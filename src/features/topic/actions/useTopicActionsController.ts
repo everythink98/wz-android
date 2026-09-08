@@ -134,7 +134,7 @@ class HandledMutationError extends Error {
   constructor(
     message: string,
     readonly outcome: 'blocked' | 'canceled' | 'failure' | 'stale',
-    readonly reason: string,
+    readonly reason: ReturnType<typeof normalizeDiagnosticReason>,
     readonly serverConfirmed = false,
     readonly serverRejected = false
   ) {
@@ -443,7 +443,7 @@ export function useTopicActionsController({
           const message = errorMessage(error);
           notify(message);
           onSessionExpired(variables.ticket.source, variables.ticket.sessionEpoch);
-          throw new HandledMutationError(message, 'failure', 'http-401');
+          throw new HandledMutationError(message, 'failure', 'login_required');
         }
         throw error;
       }
@@ -702,7 +702,7 @@ export function useTopicActionsController({
         if (message) notify(message);
         finishDiagnosticTrace(variables.trace, 'blocked', {
           source: actionTopic.source,
-          reason: decision.reason
+          reason: normalizeDiagnosticReason({ reason: decision.reason })
         });
         return false;
       }
@@ -747,7 +747,7 @@ export function useTopicActionsController({
           notify(error.message);
           finishDiagnosticTrace(variables.trace, 'blocked', {
             source: actionTopic.source,
-            reason: error.reason
+            reason: normalizeDiagnosticReason(error)
           });
         } else {
           notify(errorMessage(error));
@@ -2131,7 +2131,10 @@ export function useTopicActionsController({
       if (!initialDecision.allowed) {
         const message = topicActionDecisionMessage(initialDecision);
         if (message) notify(message);
-        finishDiagnosticTrace(trace, 'blocked', { source: 'nodeseek', reason: initialDecision.reason });
+        finishDiagnosticTrace(trace, 'blocked', {
+          source: 'nodeseek',
+          reason: normalizeDiagnosticReason({ reason: initialDecision.reason })
+        });
         return;
       }
       const submit = async () => {

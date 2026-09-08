@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import apkSigning from './apk-signing.cjs';
+import { archiveDiagnosticSymbols } from './diagnostic-symbols.mjs';
 import {
   RELEASE_SIGNING_ENV_NAMES,
   RELEASE_REQUIRED_TRACKED_INPUTS,
@@ -429,6 +430,7 @@ run('npm', [
   ...(releaseOptions['replay-directory'] ? ['--replay-directory', releaseOptions['replay-directory']] : [])
 ]);
 const sha256 = releaseApkSha256();
+archiveDiagnosticSymbols({ rootDir, androidDir, apkPaths: [releaseApkPath, builtSmokeApkPath], gitSha });
 writeReleaseManifest({
   sha256,
   signerSha256,

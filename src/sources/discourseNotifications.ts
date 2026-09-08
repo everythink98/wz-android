@@ -1,4 +1,8 @@
 import { isRecord, recordText as text, textContentFromHtml, toIsoString } from '@/domain/forum/html';
+import {
+  annotateSourceDiagnosticSummary,
+  copySourceDiagnosticSummary
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type {
   ForumNotification,
   NotificationCategory,
@@ -222,9 +226,14 @@ function privateMessageItems(data: Record<string, unknown>, ownUsername: string,
   const users = data.users.filter(isRecord);
   const userById = new Map(users.map((user) => [text(user, 'id'), user]));
   const userByUsername = new Map(users.map((user) => [text(user, 'username'), user]));
+  let filteredCount = 0;
   const notifications = [...data.unread_notifications, ...data.read_notifications].flatMap((value) => {
     const item = parseNotification(value);
-    if (!item || (unreadOnly && !item.unread)) return [];
+    if (!item) return [];
+    if (unreadOnly && !item.unread) {
+      filteredCount += 1;
+      return [];
+    }
     if (item.target.type !== 'private-conversation') return [item];
     return [
       {
@@ -249,7 +258,10 @@ function privateMessageItems(data: Record<string, unknown>, ownUsername: string,
     const actorId = actor ? text(actor, 'id') : '';
     const avatarTemplate = actor ? text(actor, 'avatar_template') : '';
     const unread = boolean(value.unread) || Number(value.unread_posts) > 0;
-    if (unreadOnly && !unread) return [];
+    if (unreadOnly && !unread) {
+      filteredCount += 1;
+      return [];
+    }
     const createdValue = text(value, 'bumped_at', 'last_posted_at', 'created_at');
     return [
       {
@@ -270,7 +282,16 @@ function privateMessageItems(data: Record<string, unknown>, ownUsername: string,
       } satisfies ForumNotification
     ];
   });
-  return [...notifications, ...topics];
+  const items = [...notifications, ...topics];
+  const candidateCount = data.unread_notifications.length + data.read_notifications.length + data.topics.length;
+  return annotateSourceDiagnosticSummary(items, {
+    parserVariant: 'discourse-private-messages',
+    candidateCount,
+    validCount: items.length + filteredCount,
+    filteredCount,
+    isExpectedEmpty: candidateCount === 0,
+    hasDegradation: candidateCount > items.length + filteredCount
+  });
 }
 
 function notificationRows(data: Record<string, unknown>) {
@@ -307,6 +328,7 @@ async function runMarkRead(id: string | undefined, options: NotificationAdapterA
 export const linuxDoNotificationAdapter = {
   async getCategories(options: NotificationAdapterAccess) {
     let hasChat = true;
+    let discoveryFailed = false;
     try {
       const names = notificationTypeNames(await fetchSite(options));
       if (names.length) hasChat = names.some((name) => discourseChatTypeNames.has(name));
@@ -320,12 +342,19 @@ export const linuxDoNotificationAdapter = {
       )
         throw error;
       // Optional Chat discovery may fail, but an authentication barrier must reach the caller.
+      discoveryFailed = true;
     }
-    return [
+    const categories = [
       ...discourseCoreCategories,
       ...(hasChat ? [discourseChatCategory] : []),
       discourseOtherCategory
     ] satisfies readonly NotificationCategory[];
+    return annotateSourceDiagnosticSummary(categories, {
+      parserVariant: 'discourse-notifications',
+      candidateCount: categories.length,
+      validCount: categories.length,
+      partialErrorCount: discoveryFailed ? 1 : 0
+    });
   },
 
   async listPage(options: NotificationListOptions): Promise<NotificationPage> {
@@ -334,10 +363,17 @@ export const linuxDoNotificationAdapter = {
     if (options.categoryId === 'messages') {
       const data = await fetchPrivateMessageTopics(options);
       const items = privateMessageItems(data, options.username?.trim() || '', Boolean(options.unreadOnly));
-      return { items, cursor: null, hasMore: false };
+      return copySourceDiagnosticSummary({ items, cursor: null, hasMore: false }, items);
     }
     const selectedTypeIds = await categoryTypeIds(options.categoryId || 'all', options);
-    if (selectedTypeIds?.size === 0) return { items: [], cursor: null, hasMore: false };
+    if (selectedTypeIds?.size === 0)
+      return annotateSourceDiagnosticSummary(
+        { items: [], cursor: null, hasMore: false },
+        {
+          parserVariant: 'discourse-notifications',
+          isExpectedEmpty: true
+        }
+      );
     const data = await fetchNotifications(options, offset, limit);
     const rawRows = notificationRows(data);
     const rows = rawRows.filter(
@@ -346,11 +382,24 @@ export const linuxDoNotificationAdapter = {
         (!selectedTypeIds || (isRecord(row) && selectedTypeIds.has(Number(row.notification_type))))
     );
     const items = rows.map(parseNotification).filter(Boolean) as ForumNotification[];
+    const malformedFilteredCount =
+      rawRows.filter((row) => !isRecord(row)).length - rows.filter((row) => !isRecord(row)).length;
+    const candidateCount = rows.length + malformedFilteredCount;
     const nextOffset = offset + rawRows.length;
     const total = Number(data.total_rows_notifications ?? data.total_rows ?? 0);
     const hasMore =
       rawRows.length > 0 && (data.load_more_notifications === true || (Number.isFinite(total) && total > nextOffset));
-    return { items, cursor: hasMore ? String(nextOffset) : null, hasMore };
+    return annotateSourceDiagnosticSummary(
+      { items, cursor: hasMore ? String(nextOffset) : null, hasMore },
+      {
+        parserVariant: 'discourse-notifications',
+        candidateCount,
+        validCount: items.length,
+        filteredCount: rawRows.length - rows.length - malformedFilteredCount,
+        isExpectedEmpty: candidateCount === 0,
+        hasDegradation: candidateCount > items.length
+      }
+    );
   },
 
   async readUnreadSnapshot(options: NotificationAdapterAccess) {

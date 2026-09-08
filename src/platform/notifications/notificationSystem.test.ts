@@ -41,6 +41,7 @@ vi.mock('expo-notifications', () => ({
 }));
 
 import { defaultNotificationState } from './notificationStore';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import {
   dismissSourceNotification,
   dismissSourceNotificationExact,
@@ -57,6 +58,37 @@ beforeEach(() => {
 });
 
 describe('Android notification system', () => {
+  it('records a failed registration and a later successful registration without exposing the failure text', async () => {
+    const state = defaultNotificationState();
+    state.globalEnabled = true;
+    state.sources.nodeseek = { ...state.sources.nodeseek, intentEnabled: true, identityKey: 'nodeseek:PRIVATE_USER' };
+    mocks.register.mockRejectedValueOnce(new Error('PRIVATE_REGISTRATION'));
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      await expect(syncNotificationBackgroundRegistration(state, true, ['nodeseek'])).rejects.toThrow(
+        'PRIVATE_REGISTRATION'
+      );
+      await syncNotificationBackgroundRegistration(state, true, ['nodeseek']);
+    } finally {
+      setDiagnosticWriter(null);
+    }
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events).toContainEqual(
+      expect.objectContaining({ operation: 'notification-registration', phase: 'finish', outcome: 'failure' })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        operation: 'notification-registration',
+        phase: 'finish',
+        outcome: 'success',
+        state: 'register'
+      })
+    );
+    expect(lines.join('')).not.toContain('PRIVATE_');
+  });
   it('registers only with permission, user intent, and a bound account identity', async () => {
     const state = defaultNotificationState();
     state.globalEnabled = true;

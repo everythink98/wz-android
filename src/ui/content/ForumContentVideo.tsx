@@ -5,6 +5,7 @@ import { VideoView, useVideoPlayer, type VideoPlayer } from 'expo-video';
 import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { forumMediaPlayerSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { playerLoadDiagnosticAttempt } from '@/platform/media/mediaPlaybackDiagnostics';
 import {
   releaseReadNetworkRuntimeGeneration,
   retainReadNetworkRuntimeGeneration
@@ -101,6 +102,7 @@ function ForumContentVideoRuntime({
     status: 'acquiring' | 'failed' | 'retained';
   } | null>(null);
   const pendingRetryGeneration = useRef(0);
+  const loadDiagnosticRef = useRef<ReturnType<typeof playerLoadDiagnosticAttempt> | null>(null);
 
   useEffect(() => {
     if (retryRuntimeGeneration > playerGeneration) {
@@ -121,6 +123,9 @@ function ForumContentVideoRuntime({
     }
     let disposed = false;
     let retained = false;
+    const diagnostic = playerLoadDiagnosticAttempt(src, 'video', playerGeneration);
+    loadDiagnosticRef.current = diagnostic;
+    diagnostic.stage('runtime-lease');
     setPlayerStatus('idle');
     setRuntimeLease({ admissionAttemptId: admission.attemptId, generation: playerGeneration, status: 'acquiring' });
     void retainReadNetworkRuntimeGeneration(playerGeneration)
@@ -141,6 +146,7 @@ function ForumContentVideoRuntime({
                 status: 'failed'
               });
               admission.settle('error');
+              diagnostic.failed();
             }
           }
           return;
@@ -150,23 +156,26 @@ function ForumContentVideoRuntime({
           return;
         }
         retained = true;
+        diagnostic.stage('player-replace');
         setRuntimeLease({
           admissionAttemptId: admission.attemptId,
           generation: playerGeneration,
           status: 'retained'
         });
       })
-      .catch(() => {
+      .catch((error) => {
         if (!disposed) {
+          diagnostic.failed(error);
           setRuntimeLease({ admissionAttemptId: admission.attemptId, generation: playerGeneration, status: 'failed' });
           admission.settle('error');
         }
       });
     return () => {
       disposed = true;
+      diagnostic.canceled();
       if (retained) void releaseReadNetworkRuntimeGeneration(playerGeneration).catch(() => undefined);
     };
-  }, [admission.admitted, admission.attemptId, admission.settle, playerGeneration, runtimeSnapshot]);
+  }, [admission.admitted, admission.attemptId, admission.settle, playerGeneration, runtimeSnapshot, src]);
 
   useEffect(() => {
     if (
@@ -180,11 +189,16 @@ function ForumContentVideoRuntime({
   }, [playerGeneration, runtimeLease, runtimeSnapshot]);
 
   const handleStatusChange = useCallback(
-    (status: string) => {
+    (status: string, error?: unknown) => {
       const nextStatus = status || 'idle';
       setPlayerStatus(nextStatus);
-      if (nextStatus === 'readyToPlay') admission.settle('displayed');
-      else if (nextStatus === 'error') admission.settle('error');
+      if (nextStatus === 'readyToPlay') {
+        loadDiagnosticRef.current?.ready();
+        admission.settle('displayed');
+      } else if (nextStatus === 'error') {
+        loadDiagnosticRef.current?.failed(error);
+        admission.settle('error');
+      }
     },
     [admission.settle]
   );
@@ -263,7 +277,7 @@ function ForumContentVideoPlayer({
   theme
 }: Omit<ForumContentVideoProps, 'admission'> & {
   onProgress: (value: number) => void;
-  onStatusChange: (status: string) => void;
+  onStatusChange: (status: string, error?: unknown) => void;
   runtimeGeneration: number;
 }) {
   const source = useMemo(
@@ -281,7 +295,8 @@ function ForumContentVideoPlayer({
   const lastBufferedPositionRef = useRef(
     Number.isFinite(player.bufferedPosition) ? Math.max(0, player.bufferedPosition) : 0
   );
-  const status = useEvent(player, 'statusChange', { status: player.status }).status;
+  const statusEvent = useEvent(player, 'statusChange', { status: player.status });
+  const status = statusEvent.status;
   const videoTrack = useEvent(player, 'videoTrackChange', { videoTrack: player.videoTrack }).videoTrack;
   const timeUpdate = useEvent(player, 'timeUpdate', {
     bufferedPosition: player.bufferedPosition,
@@ -299,7 +314,7 @@ function ForumContentVideoPlayer({
     lastBufferedPositionRef.current = timeUpdate.bufferedPosition;
     onProgress(timeUpdate.bufferedPosition);
   }, [onProgress, timeUpdate.bufferedPosition]);
-  useEffect(() => onStatusChange(status || 'idle'), [onStatusChange, status]);
+  useEffect(() => onStatusChange(status || 'idle', statusEvent.error), [onStatusChange, status, statusEvent.error]);
   const loadFailed = status === 'error';
   const loading = status === 'idle' || status === 'loading';
   return (

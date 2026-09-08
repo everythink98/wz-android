@@ -41,6 +41,7 @@
       "./plugins/withForumSearchCustomTab",
       "./plugins/withSecureRandomModule",
       "./plugins/withNotificationDigestModule",
+      "./plugins/withDiagnosticJournal",
       "./plugins/withNetworkProxyModule",
       "./plugins/withPreviewRegionImageNative",
       "./plugins/withSvgRendererModule",

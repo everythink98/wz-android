@@ -37,7 +37,7 @@ import {
   v2exMemberUrl as memberUrl,
   v2exNodeIdFromHref as nodeIdFromHref
 } from './protocol';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { orientReplyWindow } from '@/sources/replyWindows';
 import { findReplyLocation, matchesReplyLocation } from '@/domain/forum/replyLocation';
 

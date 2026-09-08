@@ -1,14 +1,20 @@
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { safeFileName } from '@/platform/storage/backupFiles';
-import { recordDiagnosticError, setDiagnosticWriter } from './diagnostics';
-import { readNativeReadNetworkDiagnosticLines } from './nativeReadNetworkDiagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } from './diagnostics';
+import {
+  normalizeNativeReadNetworkDiagnosticEvents,
+  readNativeReadNetworkDiagnosticLines
+} from './nativeReadNetworkDiagnostics';
+import { diagnosticBuildContext, nativeDiagnosticJournal, readDiagnosticJournal } from './nativeDiagnosticJournal';
+import { installDiagnosticExceptionHandlers } from './diagnosticRuntime';
 
 const MAX_LOG_BYTES = 1024 * 1024;
 const CURRENT_LOG_NAME = 'forum-reader-diagnostic-current.jsonl';
 const PREVIOUS_LOG_NAME = 'forum-reader-diagnostic-previous.jsonl';
-const ERROR_HANDLER_MARK = '__forumReaderDiagnosticHandler';
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+const MAX_PENDING_BYTES = 128 * 1024;
 
 export type DiagnosticSessionStatus =
   | 'anonymous'
@@ -38,18 +44,17 @@ export type DiagnosticExportMetadata = {
   yaohuoSession?: DiagnosticSessionStatus;
 };
 
-type GlobalErrorHandler = ((error: unknown, isFatal?: boolean) => void) & {
-  [ERROR_HANDLER_MARK]?: true;
-};
-
-type ErrorUtilsLike = {
-  getGlobalHandler: () => GlobalErrorHandler;
-  setGlobalHandler: (handler: GlobalErrorHandler) => void;
-};
-
 let writerInstalled = false;
 let flushScheduled = false;
 let pendingLogLines: Uint8Array[] = [];
+let pendingBytes = 0;
+let nativeWrites: Promise<void> = Promise.resolve();
+let nativeWriting = false;
+let inFlightNativeLines = '';
+let queuedNativeBytes = 0;
+let droppedCount = 0;
+let writeFailureCount = 0;
+let rotationCount = 0;
 let activeLogHandle: {
   handle: {
     close: () => void;
@@ -87,6 +92,7 @@ function rotateIfNeeded(incomingBytes: number) {
     previous.delete();
   }
   current.moveSync(previous);
+  rotationCount += 1;
   return logFile(CURRENT_LOG_NAME);
 }
 
@@ -115,10 +121,59 @@ function joinedBytes(chunks: Uint8Array[], byteLength: number) {
   return joined;
 }
 
+async function appendNativeBatch(append: () => Promise<void>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      append(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('diagnostic write timeout')), 5_000);
+      })
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 function flushPendingDiagnosticLines() {
   flushScheduled = false;
+  if (nativeWriting) return;
   const pending = pendingLogLines;
   pendingLogLines = [];
+  pendingBytes = 0;
+  const native = nativeDiagnosticJournal();
+  if (native?.appendBatch && pending.length) {
+    const lines = decoder.decode(
+      joinedBytes(
+        pending,
+        pending.reduce((sum, bytes) => sum + bytes.byteLength, 0)
+      )
+    );
+    const byteCount = pending.reduce((sum, bytes) => sum + bytes.byteLength, 0);
+    queuedNativeBytes += byteCount;
+    nativeWriting = true;
+    inFlightNativeLines = lines;
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      writeFailureCount += 1;
+    }, 5_000);
+    // A watchdog cannot cancel the bridge call; only its real settlement releases this slot.
+    nativeWrites = Promise.resolve()
+      .then(() => native.appendBatch!(lines))
+      .catch(() => {
+        if (!timedOut) writeFailureCount += 1;
+        droppedCount += pending.length;
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        queuedNativeBytes -= byteCount;
+        nativeWriting = false;
+        inFlightNativeLines = '';
+        if (pendingLogLines.length) flushPendingDiagnosticLines();
+      });
+    return;
+  }
   try {
     let batch: Uint8Array[] = [];
     let batchBytes = 0;
@@ -142,6 +197,8 @@ function flushPendingDiagnosticLines() {
     }
     writeBatch();
   } catch {
+    writeFailureCount += 1;
+    droppedCount += pending.length;
     closeActiveLogHandle();
     // A failed batch is dropped so logging cannot create retry pressure on the app.
   }
@@ -161,8 +218,31 @@ function scheduleDiagnosticFlush() {
 
 export function appendDiagnosticLogLine(line: string) {
   try {
+    try {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (event.schemaVersion === 1 && typeof event.traceId === 'string') {
+        line = `${JSON.stringify({ ...event, ...diagnosticBuildContext() })}\n`;
+        if (event.isFatal === true) {
+          try {
+            const lastStages = inFlightNativeLines + decoder.decode(joinedBytes(pendingLogLines, pendingBytes));
+            if (nativeDiagnosticJournal()?.persistCrashSync?.(lastStages + line) === false) writeFailureCount += 1;
+          } catch {
+            writeFailureCount += 1;
+          }
+        }
+      }
+    } catch {
+      /* Compatibility writer callers may provide a damaged legacy line. */
+    }
     const bytes = encoder.encode(line.endsWith('\n') ? line : `${line}\n`);
+    // Keep the JS->Native queue bounded even while native storage is unavailable.
+    const limit = nativeDiagnosticJournal()?.appendBatch ? MAX_PENDING_BYTES : 3 * MAX_LOG_BYTES;
+    if (bytes.byteLength + pendingBytes + queuedNativeBytes > limit) {
+      droppedCount += 1;
+      return;
+    }
     pendingLogLines.push(bytes);
+    pendingBytes += bytes.byteLength;
     scheduleDiagnosticFlush();
   } catch {
     // Diagnostic persistence must never change app behavior.
@@ -217,10 +297,13 @@ function safeScreen(value: DiagnosticExportMetadata['currentScreen']) {
 }
 
 function metadataLine(metadata: DiagnosticExportMetadata) {
+  const { buildId, processSessionId } = diagnosticBuildContext();
   return JSON.stringify({
     type: 'diagnostic-metadata',
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
+    ...(buildId ? { buildId } : {}),
+    ...(processSessionId ? { processSessionId } : {}),
     platform: 'android',
     appVersion: safeLabel(metadata.appVersion),
     versionCode: safeInteger(metadata.versionCode, 1_000_000_000),
@@ -245,11 +328,12 @@ async function readLog(name: string) {
   return file.exists ? file.text() : '';
 }
 
-function mergeDiagnosticLinesChronologically(...contents: string[]) {
-  return contents
+function mergeDiagnosticLinesChronologically(contents: string[]) {
+  let damagedLineCount = 0;
+  const lines = contents
     .flatMap((content) => content.split('\n'))
     .filter(Boolean)
-    .map((line, index) => {
+    .flatMap((line, index) => {
       let time = Number.NEGATIVE_INFINITY;
       try {
         const parsed = JSON.parse(line) as { time?: unknown };
@@ -258,28 +342,141 @@ function mergeDiagnosticLinesChronologically(...contents: string[]) {
           if (Number.isFinite(candidate)) time = candidate;
         }
       } catch {
-        // Persisted lines are already privacy-filtered; keep a damaged line in its stable oldest position.
+        damagedLineCount += 1;
+        return [];
       }
-      return { index, line, time };
+      return [{ index, line, time }];
     })
     .sort((left, right) => left.time - right.time || left.index - right.index)
-    .map(({ line }) => line)
-    .join('\n');
+    .map(({ line }) => line);
+  return { lines: [...new Set(lines)], damagedLineCount };
+}
+
+function sourceCoverage(content: string, status: string) {
+  const merged = mergeDiagnosticLinesChronologically([content]);
+  const times = merged.lines.flatMap((line) => {
+    const event = JSON.parse(line) as { time?: unknown };
+    return typeof event.time === 'string' && Number.isFinite(Date.parse(event.time)) ? [event.time] : [];
+  });
+  return {
+    status: merged.damagedLineCount && status === 'available' ? 'partial' : status,
+    eventCount: merged.lines.length,
+    damagedLineCount: merged.damagedLineCount,
+    ...(times.length ? { firstEventAt: times[0], lastEventAt: times.at(-1) } : {})
+  };
 }
 
 export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
   flushPendingDiagnosticLines();
   closeActiveLogHandle();
-  const [previous, current, nativeReadNetwork] = await Promise.all([
+  let writerStatus = 'settled';
+  try {
+    await appendNativeBatch(async () => {
+      while (nativeWriting) await nativeWrites;
+    });
+  } catch {
+    writerStatus = 'timeout';
+  }
+  const [previous, current, journal] = await Promise.allSettled([
     readLog(PREVIOUS_LOG_NAME),
     readLog(CURRENT_LOG_NAME),
-    readNativeReadNetworkDiagnosticLines()
+    readDiagnosticJournal()
   ]);
+  const legacyReadFailures = [previous, current].filter((result) => result.status === 'rejected').length;
+  const persisted = journal.status === 'fulfilled' ? journal.value : undefined;
+  let legacyNativeLines = '';
+  let legacyNativeStatus = 'not-needed';
+  if (persisted?.status !== 'available') {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const value = await Promise.race([
+        readNativeReadNetworkDiagnosticLines(),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), 5_000);
+        })
+      ]);
+      legacyNativeLines = value || '';
+      legacyNativeStatus = value === null ? 'timeout' : value === undefined ? 'unavailable' : 'available';
+    } catch {
+      legacyNativeStatus = 'failed';
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+  const networkEvents: unknown[] = [];
+  const nativeAppLines: string[] = [];
+  let damagedNativeLines = 0;
+  for (const line of (persisted?.nativeLines || '').split('\n').filter(Boolean)) {
+    try {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (event.diagnosticKind === 'network') networkEvents.push(event);
+      else nativeAppLines.push(line);
+    } catch {
+      damagedNativeLines += 1;
+    }
+  }
+  const normalizedNetwork = normalizeNativeReadNetworkDiagnosticEvents(networkEvents).map((event) =>
+    JSON.stringify(event)
+  );
+  const merged = mergeDiagnosticLinesChronologically([
+    previous.status === 'fulfilled' ? previous.value : '',
+    current.status === 'fulfilled' ? current.value : '',
+    persisted?.jsLines || '',
+    persisted?.crashLines || '',
+    nativeAppLines.join('\n'),
+    normalizedNetwork.join('\n'),
+    legacyNativeLines
+  ]);
+  const timestamps = merged.lines.flatMap((line) => {
+    const value = (JSON.parse(line) as { time?: unknown }).time;
+    return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? [value] : [];
+  });
+  const coverage = JSON.stringify({
+    type: 'diagnostic-coverage',
+    schemaVersion: 1,
+    writerStatus,
+    journalStatus: persisted?.status || 'failed',
+    legacyStatus: legacyReadFailures ? 'partial' : 'available',
+    legacyNativeStatus,
+    legacyReadFailures,
+    ...(timestamps.length ? { firstEventAt: timestamps[0], lastEventAt: timestamps.at(-1) } : {}),
+    eventCount: merged.lines.length,
+    damagedLineCount: merged.damagedLineCount + damagedNativeLines,
+    nativeRejectedEventCount: networkEvents.length - normalizedNetwork.length,
+    droppedCount,
+    writeFailureCount,
+    rotationCount,
+    ...persisted?.health,
+    sources: {
+      legacyPrevious: sourceCoverage(
+        previous.status === 'fulfilled' ? previous.value : '',
+        previous.status === 'fulfilled' ? 'available' : 'failed'
+      ),
+      legacyCurrent: sourceCoverage(
+        current.status === 'fulfilled' ? current.value : '',
+        current.status === 'fulfilled' ? 'available' : 'failed'
+      ),
+      js: sourceCoverage(
+        persisted?.jsLines || '',
+        persisted?.health.jsReadFailureCount ? 'partial' : persisted?.status || 'failed'
+      ),
+      native: sourceCoverage(
+        [...nativeAppLines, ...normalizedNetwork].join('\n'),
+        persisted?.health.nativeReadFailureCount || damagedNativeLines ? 'partial' : persisted?.status || 'failed'
+      ),
+      crash: sourceCoverage(
+        persisted?.crashLines || '',
+        persisted?.health.crashReadFailureCount ? 'partial' : persisted?.status || 'failed'
+      ),
+      legacyNative: sourceCoverage(legacyNativeLines, legacyNativeStatus)
+    }
+  });
   const temporary = new File(Paths.cache, safeFileName('forum-reader-diagnostic', 'txt'));
   try {
     temporary.create({ overwrite: true });
-    const diagnosticLines = mergeDiagnosticLinesChronologically(previous, current, nativeReadNetwork);
-    temporary.write(`${metadataLine(metadata)}\n${diagnosticLines}${diagnosticLines ? '\n' : ''}`);
+    temporary.write(
+      `${metadataLine(metadata)}\n${coverage}\n${merged.lines.join('\n')}${merged.lines.length ? '\n' : ''}`
+    );
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('当前设备不支持分享诊断日志。');
     }
@@ -298,40 +495,16 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
   }
 }
 
-function installGlobalErrorHandler() {
-  try {
-    const errorUtils = (globalThis as typeof globalThis & { ErrorUtils?: ErrorUtilsLike }).ErrorUtils;
-    if (!errorUtils) {
-      return;
-    }
-    const originalHandler = errorUtils.getGlobalHandler();
-    if (originalHandler?.[ERROR_HANDLER_MARK]) {
-      return;
-    }
-    const handler: GlobalErrorHandler = (error, isFatal) => {
-      try {
-        recordDiagnosticError('app', 'js-error', error);
-        flushPendingDiagnosticLines();
-      } catch {
-        // The original React Native handler must always run.
-      }
-      originalHandler?.(error, isFatal);
-    };
-    handler[ERROR_HANDLER_MARK] = true;
-    errorUtils.setGlobalHandler(handler);
-  } catch {
-    // Diagnostics must not make startup fail.
-  }
-}
-
 export function initializeDiagnosticFileLogging() {
   if (!writerInstalled) {
     try {
       setDiagnosticWriter(appendDiagnosticLogLine);
       writerInstalled = true;
+      const trace = beginDiagnosticTrace('app', 'startup');
+      finishDiagnosticTrace(trace, 'success');
     } catch {
       // Diagnostics must not make startup fail.
     }
   }
-  installGlobalErrorHandler();
+  installDiagnosticExceptionHandlers(flushPendingDiagnosticLines);
 }

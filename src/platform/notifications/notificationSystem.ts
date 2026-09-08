@@ -5,6 +5,8 @@ import * as TaskManager from 'expo-task-manager';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { NotificationState } from './notificationStore';
 import { notificationIdentifiersForIdentity } from './notificationWorker';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
 
 export const NOTIFICATION_BACKGROUND_TASK = 'wz-message-notifications';
 export const NOTIFICATION_CHANNEL_ID = 'message-notifications';
@@ -45,14 +47,34 @@ export async function ensureMessageNotificationChannel() {
 }
 
 export async function notificationPermissionGranted() {
-  const permissions = await Notifications.getPermissionsAsync();
-  return permissions.granted;
+  const trace = beginDiagnosticTrace('app', 'notification-permission', { mode: 'silent' });
+  try {
+    const permissions = await Notifications.getPermissionsAsync();
+    finishDiagnosticTrace(trace, permissions.granted ? 'success' : 'blocked', {
+      isGranted: permissions.granted,
+      ...(!permissions.granted ? { reason: 'permission_denied' } : {})
+    });
+    return permissions.granted;
+  } catch (error) {
+    finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+    throw error;
+  }
 }
 
 export async function requestNotificationPermission() {
-  await ensureMessageNotificationChannel();
-  const permissions = await Notifications.requestPermissionsAsync();
-  return permissions.granted;
+  const trace = beginDiagnosticTrace('app', 'notification-permission', { mode: 'manual' });
+  try {
+    await ensureMessageNotificationChannel();
+    const permissions = await Notifications.requestPermissionsAsync();
+    finishDiagnosticTrace(trace, permissions.granted ? 'success' : 'blocked', {
+      isGranted: permissions.granted,
+      ...(!permissions.granted ? { reason: 'permission_denied' } : {})
+    });
+    return permissions.granted;
+  } catch (error) {
+    finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+    throw error;
+  }
 }
 
 export function openNotificationSystemSettings() {
@@ -71,13 +93,22 @@ export function syncNotificationBackgroundRegistration(
     permissionGranted &&
     eligibleSources.some((source) => state.sources[source].intentEnabled && state.sources[source].identityKey);
   const operation = backgroundRegistrationQueue.then(async () => {
-    const registered = await TaskManager.isTaskRegisteredAsync(NOTIFICATION_BACKGROUND_TASK);
-    if (shouldRun && !registered) {
-      await BackgroundTask.registerTaskAsync(NOTIFICATION_BACKGROUND_TASK, { minimumInterval: 15 });
-    } else if (!shouldRun && registered) {
-      await BackgroundTask.unregisterTaskAsync(NOTIFICATION_BACKGROUND_TASK);
+    const trace = beginDiagnosticTrace('app', 'notification-registration', { shouldRun, isGranted: permissionGranted });
+    try {
+      const registered = await TaskManager.isTaskRegisteredAsync(NOTIFICATION_BACKGROUND_TASK);
+      const state = shouldRun && !registered ? 'register' : !shouldRun && registered ? 'unregister' : 'unchanged';
+      markDiagnosticStage(trace, 'apply', { state });
+      if (shouldRun && !registered) {
+        await BackgroundTask.registerTaskAsync(NOTIFICATION_BACKGROUND_TASK, { minimumInterval: 15 });
+      } else if (!shouldRun && registered) {
+        await BackgroundTask.unregisterTaskAsync(NOTIFICATION_BACKGROUND_TASK);
+      }
+      finishDiagnosticTrace(trace, state === 'unchanged' ? 'noop' : 'success', { state });
+      return shouldRun;
+    } catch (error) {
+      finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+      throw error;
     }
-    return shouldRun;
   });
   backgroundRegistrationQueue = operation.catch(() => undefined);
   return operation;
@@ -111,6 +142,8 @@ export async function reconcileSourceNotificationSlots(
 }
 
 export async function dismissSourceNotification(source: NotificationSource, identifier?: string, identityKey?: string) {
+  const trace = beginDiagnosticTrace('source', 'notification-cleanup', { source });
+  let errorCount = 0;
   await Promise.all(
     [
       ...new Set(
@@ -120,6 +153,12 @@ export async function dismissSourceNotification(source: NotificationSource, iden
           `wz-message-${source}`
         ].filter((value): value is string => Boolean(value))
       )
-    ].map((value) => Notifications.dismissNotificationAsync(value).catch(() => undefined))
+    ].map((value) =>
+      Notifications.dismissNotificationAsync(value).catch((error) => {
+        errorCount += 1;
+        markDiagnosticStage(trace, 'apply', { source, result: 'failure', reason: normalizeDiagnosticReason(error) });
+      })
+    )
   );
+  finishDiagnosticTrace(trace, errorCount ? 'partial' : 'success', { source, errorCount });
 }

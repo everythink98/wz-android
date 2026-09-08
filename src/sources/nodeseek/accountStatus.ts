@@ -60,7 +60,7 @@ export async function readNodeSeekAccountStatus({
     const canceled = signal.aborted || isCanceledRequest(error);
     const sourceError = canceled ? undefined : sourceErrorFromUnknown('nodeseek', error);
     if (sourceError?.kind === 'login-expired') {
-      finishDiagnosticTrace(trace, 'success', { source: 'nodeseek', reason: 'expired' });
+      finishDiagnosticTrace(trace, 'success', { source: 'nodeseek', state: 'expired', reason: 'login_required' });
       return {
         session: siteSessionStateFromEvents('nodeseek', [
           {

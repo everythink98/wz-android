@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
+import { recordDiagnosticError } from '@/platform/diagnostics/diagnostics';
 
 export const NOTIFICATION_STORAGE_KEY = 'wz.notifications.v1';
 const MAX_DELIVERED_IDS = 200;
@@ -85,7 +86,8 @@ export async function loadNotificationState() {
   if (!raw) return defaultNotificationState();
   try {
     return normalizeNotificationState(JSON.parse(raw));
-  } catch {
+  } catch (error) {
+    recordDiagnosticError('app', 'notification-state-load', error);
     return defaultNotificationState();
   }
 }

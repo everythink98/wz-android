@@ -3,7 +3,7 @@ import { searchTimeRangeStartEpoch, type V2exSearchFilter } from '@/domain/forum
 import type { SearchResponse, Topic } from '@/domain/forum/models';
 import { isRecord, textExcerpt, toIsoString } from '@/domain/forum/html';
 import { accessRequirementFromObject } from '@/domain/forum/accessRequirements';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { SOV2EX_URL, V2EX_BASE_URL as BASE_URL } from './protocol';
 import { fetchJson, topicId, type V2exOptions } from './reader';
 

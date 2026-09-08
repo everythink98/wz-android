@@ -12,6 +12,7 @@ import {
   type DiagnosticFetcher,
   type DiagnosticFields,
   type DiagnosticOutcome,
+  type DiagnosticOperation,
   type DiagnosticPhase,
   type DiagnosticScalar,
   type DiagnosticTrace,
@@ -30,11 +31,13 @@ const outcomeHints = new WeakMap<
   }
 >();
 
-const requestTraces = new WeakMap<RequestInit, DiagnosticTrace>();
+const DIAGNOSTIC_REQUEST = Symbol('wz.diagnosticRequest');
 
-const diagnosticContextFetchers = new WeakSet<DiagnosticFetcher>();
+type DiagnosticRequestContext = { trace: DiagnosticTrace; requestId: string; active: boolean };
+type DiagnosticRequestInit = RequestInit & { [DIAGNOSTIC_REQUEST]?: DiagnosticRequestContext };
 
 let traceSequence = 0;
+let requestSequence = 0;
 
 let writer: DiagnosticWriter | null = null;
 
@@ -44,7 +47,7 @@ export function setDiagnosticWriter(nextWriter: DiagnosticWriter | null) {
 
 export function beginDiagnosticTrace(
   area: DiagnosticArea,
-  operation: string,
+  operation: DiagnosticOperation,
   fields: DiagnosticFields = {},
   now = Date.now()
 ): DiagnosticTrace {
@@ -109,15 +112,16 @@ export function hintDiagnosticOutcome(
 export function withDiagnosticFetcher(trace: DiagnosticTrace, fetcher: DiagnosticFetcher): DiagnosticFetcher {
   return async (input, init) => {
     const startedAt = Date.now();
-    const requestInit = init || (diagnosticContextFetchers.has(fetcher) ? {} : undefined);
+    const parent = diagnosticRequestContext(init);
+    const context = { trace, requestId: `request-${++requestSequence}`, active: true };
+    const requestInit: DiagnosticRequestInit = { ...init, [DIAGNOSTIC_REQUEST]: context };
     const requestFields: DiagnosticFields = {
+      requestId: context.requestId,
+      ...(parent ? { parentRequestId: parent.requestId } : {}),
       endpoint: endpointClass(input, requestInit?.method),
       method: safeMethod(requestInit?.method)
     };
     emit(trace, 'transport', 'success', { ...requestFields, state: 'start' }, startedAt);
-    if (requestInit) {
-      requestTraces.set(requestInit, trace);
-    }
     try {
       const response = await fetcher(input, requestInit);
       const finishedAt = Date.now();
@@ -155,31 +159,52 @@ export function withDiagnosticFetcher(trace: DiagnosticTrace, fetcher: Diagnosti
       );
       throw error;
     } finally {
-      if (requestInit && requestTraces.get(requestInit) === trace) {
-        requestTraces.delete(requestInit);
-      }
+      context.active = false;
     }
   };
 }
 
-export function registerDiagnosticContextFetcher<T extends DiagnosticFetcher>(fetcher: T): T {
-  diagnosticContextFetchers.add(fetcher);
-  return fetcher;
+export function diagnosticRequestContext(init?: RequestInit) {
+  const context = (init as DiagnosticRequestInit | undefined)?.[DIAGNOSTIC_REQUEST];
+  return context?.active ? context : undefined;
 }
 
 export function diagnosticTraceForRequest(init?: RequestInit) {
-  return init ? requestTraces.get(init) : undefined;
+  return diagnosticRequestContext(init)?.trace;
 }
 
-export function recordDiagnosticError(area: DiagnosticArea, operation: string, error: unknown) {
+export function diagnosticRequestFields(init?: RequestInit): Pick<DiagnosticFields, 'requestId'> {
+  const context = diagnosticRequestContext(init);
+  return context ? { requestId: context.requestId } : {};
+}
+
+export function withNativeDiagnosticRequest(init?: RequestInit): RequestInit | undefined {
+  const context = diagnosticRequestContext(init);
+  if (!context) return init;
+  const headers = new Headers(init?.headers);
+  headers.set('X-WZ-Diagnostic-Session', context.trace.appSessionId);
+  headers.set('X-WZ-Diagnostic-Trace', context.trace.traceId);
+  headers.set('X-WZ-Diagnostic-Request', context.requestId);
+  return { ...init, headers };
+}
+
+export function recordDiagnosticError(
+  area: DiagnosticArea,
+  operation: DiagnosticOperation,
+  error: unknown,
+  context: DiagnosticFields = {}
+) {
   const now = Date.now();
   const trace = createTrace(area, operation, now);
   const reason = normalizeDiagnosticReason(error);
-  const fields: Record<string, DiagnosticScalar> = { reason };
+  const fields: Record<string, DiagnosticScalar | undefined> = { ...context, reason };
   if (error instanceof Error) {
     fields.errorName = error.name;
     fields.message = reason;
-    if (error.stack) fields.stack = sanitizeErrorStack(error.stack, error.name);
+    if (error.stack) {
+      fields.stack = sanitizeErrorStack(error.stack, error.name);
+      fields.stackFormat = context.stackFormat || (/\(address at /.test(error.stack) ? 'hermes' : 'source');
+    }
   }
   finishedTraces.add(trace);
   emit(trace, 'finish', 'failure', fields, now);
@@ -189,7 +214,7 @@ function emit(
   trace: DiagnosticTrace,
   phase: DiagnosticPhase,
   outcome: DiagnosticOutcome,
-  fields: DiagnosticFields,
+  fields: Readonly<Record<string, unknown>>,
   now: number
 ) {
   if (!writer) {
@@ -214,7 +239,11 @@ function emit(
   }
 }
 
-function createTrace(area: DiagnosticArea, operation: string, startedAt: number): DiagnosticTrace {
+export function createTrace(
+  area: DiagnosticArea,
+  operation: DiagnosticOperation,
+  startedAt = Date.now()
+): DiagnosticTrace {
   return {
     appSessionId,
     traceId: `trace-${++traceSequence}`,

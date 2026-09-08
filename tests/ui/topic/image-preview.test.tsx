@@ -1340,7 +1340,7 @@ describe('Image preview', () => {
       await act(lateDisplay);
       expect(view.getByText('图片加载失败')).toBeTruthy();
       expect(view.queryByTestId('preview-image-0')).toBeNull();
-      const events = diagnosticLines.map((line) => JSON.parse(line));
+      const events = diagnosticLines.map((line) => JSON.parse(line)).filter((event) => event.operation === 'load');
       expect(events).toContainEqual(expect.objectContaining({ area: 'media', phase: 'intent', surface: 'preview' }));
       const timeoutEvent = events.find((event) => event.outcome === 'failure' && event.terminalReason === 'timeout');
       expect(timeoutEvent).toBeTruthy();
@@ -1419,7 +1419,7 @@ describe('Image preview', () => {
       jest.setSystemTime(1_030);
       await fireEvent(image, 'display');
 
-      const events = diagnosticLines.map((line) => JSON.parse(line));
+      const events = diagnosticLines.map((line) => JSON.parse(line)).filter((event) => event.operation === 'load');
       expect(events[0]).toEqual(
         expect.objectContaining({
           candidateKind: 'lightbox',

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { NotificationAdapter, NotificationAdapterAccess } from './notificationAdapter';
 import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { createNotificationGateway as createProductionNotificationGateway } from './notificationGateway';
 
 type GatewayOptions = Parameters<typeof createProductionNotificationGateway>[0];
@@ -49,6 +50,25 @@ function adapter(result: 'ok' | 'fail'): NotificationAdapter {
 }
 
 describe('notification gateway', () => {
+  it('records changed private access as stale rather than a new login failure', async () => {
+    const gateway = createNotificationGateway({
+      adapters: { nodeseek: adapter('ok'), linuxdo: adapter('ok'), yaohuo: adapter('ok') },
+      readAccess: async () => ({ identityKey: 'nodeseek:user', userId: 'user' }),
+      privateAccessAllowed: () => false
+    });
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      await expect(gateway.listPage('nodeseek')).rejects.toMatchObject({ reason: 'private-access-stale' });
+    } finally {
+      setDiagnosticWriter(null);
+    }
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({ phase: 'finish', outcome: 'stale', reason: 'stale' })
+    );
+  });
   it('expires the captured notification epoch only for raw HTTP 401', async () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.listPage = vi.fn(async (options) => {
@@ -272,7 +292,7 @@ describe('notification gateway', () => {
       };
 
       const operation = operations[operationName]();
-      await vi.waitFor(() => expect(transport).toHaveBeenCalledWith('/first', undefined));
+      await vi.waitFor(() => expect(transport.mock.calls[0]?.[0]).toBe('/first'));
       privateAccessCurrent = false;
       firstResponse.resolve(new Response('{}', { status: 200 }));
 
@@ -505,6 +525,14 @@ describe('notification gateway', () => {
     }
 
     expect(lines.join('')).not.toContain('PRIVATE_REPLY_BODY');
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        operation: 'notification-reply',
+        phase: 'finish',
+        outcome: 'partial',
+        reason: 'unconfirmed'
+      })
+    );
     expect(sourceAdapter.replyToConversation).toHaveBeenCalledWith(
       item,
       'PRIVATE_REPLY_BODY',
@@ -724,7 +752,7 @@ describe('notification gateway', () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         area: 'source',
-        operation: 'load',
+        operation: 'notification-list',
         phase: 'finish',
         outcome: 'success',
         source: 'nodeseek',
@@ -732,5 +760,45 @@ describe('notification gateway', () => {
       })
     );
     expect(lines.join('')).not.toMatch(/private-id|PRIVATE_ACTOR|PRIVATE_TITLE|PRIVATE_PREVIEW/);
+  });
+
+  it('distinguishes parser loss and repeated cursors from an expected empty notification page', async () => {
+    const sourceAdapter = adapter('ok');
+    sourceAdapter.listPage = vi.fn(async ({ cursor }) =>
+      annotateSourceDiagnosticSummary(
+        { items: [], cursor: cursor || null, hasMore: Boolean(cursor) },
+        {
+          parserVariant: 'nodeseek-notifications',
+          candidateCount: cursor ? 2 : 0,
+          validCount: 0,
+          isExpectedEmpty: !cursor
+        }
+      )
+    );
+    const gateway = createNotificationGateway({
+      adapters: { nodeseek: sourceAdapter, linuxdo: adapter('ok'), yaohuo: adapter('ok') },
+      readAccess: async () => ({ identityKey: 'nodeseek:user', userId: 'user' })
+    });
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      await gateway.listPage('nodeseek');
+      await gateway.listPage('nodeseek', { cursor: 'PRIVATE_CURSOR' });
+    } finally {
+      setDiagnosticWriter(null);
+    }
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events).toContainEqual(
+      expect.objectContaining({ phase: 'parse', isExpectedEmpty: true, isParseEmpty: false })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ phase: 'parse', candidateCount: 2, droppedCount: 2, hasRepeatedCursor: true })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ phase: 'finish', outcome: 'failure', reason: 'parse_empty' })
+    );
+    expect(lines.join('')).not.toContain('PRIVATE_CURSOR');
   });
 });

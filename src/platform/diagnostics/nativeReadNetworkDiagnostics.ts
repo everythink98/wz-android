@@ -10,6 +10,10 @@ type NativeReadNetworkOperation = 'install' | 'request' | 'rotate-read-runtime';
 const operations = new Set<NativeReadNetworkOperation>(['install', 'request', 'rotate-read-runtime']);
 const phases = new Set([
   'call-start',
+  'image-lease-released',
+  'image-call-failed',
+  'response-body-end',
+  'response-failed',
   'dns-start',
   'dns-end',
   'connect-start',
@@ -56,7 +60,8 @@ const countKeys = [
   'runningCount',
   'leaseCount',
   'cronetActiveCount',
-  'status'
+  'status',
+  'byteCount'
 ] as const;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -105,7 +110,7 @@ function eventOutcome(operation: NativeReadNetworkOperation, phase: string, valu
 function diagnosticPhase(operation: NativeReadNetworkOperation, phase: string) {
   if (operation === 'request') {
     if (phase === 'call-start') return 'intent';
-    if (phase === 'call-end' || phase === 'call-failed') return 'finish';
+    if (phase === 'call-end' || phase === 'call-failed' || phase === 'image-call-failed') return 'finish';
     return 'transport';
   }
   if (phase === 'intent') return 'intent';
@@ -125,9 +130,10 @@ function nativeTraceId(operation: NativeReadNetworkOperation, input: Record<stri
   return `native-install-${safeCount(input.generation) || 0}`;
 }
 
-export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown) {
+export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maximumEvents?: number) {
   if (!Array.isArray(value)) return [];
-  return value.slice(-512).flatMap((candidate, index) => {
+  const candidates = maximumEvents === undefined ? value : value.slice(-maximumEvents);
+  return candidates.flatMap((candidate, index) => {
     const input = record(candidate);
     if (!input) return [];
     const operation = closedString(input.operation, operations) as NativeReadNetworkOperation | undefined;
@@ -140,7 +146,10 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown) {
       schemaVersion: 1,
       time: new Date(timeMs).toISOString(),
       appSessionId: 'native-read-runtime',
-      traceId: nativeTraceId(operation, input, index),
+      traceId:
+        safeTraceIdentity(input.traceId) ||
+        safeTraceIdentity(input.imageTraceId) ||
+        nativeTraceId(operation, input, index),
       area: 'network',
       operation,
       phase: diagnosticPhase(operation, nativePhase),
@@ -156,6 +165,45 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown) {
     const proxyType = closedString(input.proxyType, proxyTypes);
     const tlsVersion = closedString(input.tlsVersion, tlsVersions);
     const errorType = safeErrorType(input.errorType);
+    if (typeof input.appSessionId === 'string' && /^session-[a-z0-9]{1,16}-[a-z0-9]{1,16}$/.test(input.appSessionId))
+      output.appSessionId = input.appSessionId;
+    if (typeof input.requestId === 'string' && /^request-[1-9][0-9]{0,9}$/.test(input.requestId))
+      output.requestId = input.requestId;
+    if (typeof input.processSessionId === 'string' && /^process-[0-9a-f]{32}$/.test(input.processSessionId))
+      output.processSessionId = input.processSessionId;
+    if (
+      typeof input.buildId === 'string' &&
+      /^(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i.test(input.buildId)
+    )
+      output.buildId = input.buildId;
+    const versionCode = safeCount(input.versionCode);
+    if (versionCode !== undefined) output.versionCode = versionCode;
+    if (
+      typeof input.imageSessionId === 'string' &&
+      /^session-[a-z0-9]{1,16}-[a-z0-9]{1,16}$/.test(input.imageSessionId)
+    )
+      output.appSessionId = input.imageSessionId;
+    if (typeof input.mediaRef === 'string' && /^media-[1-9][0-9]{0,9}$/.test(input.mediaRef))
+      output.mediaRef = input.mediaRef;
+    for (const [key, allowed] of Object.entries({
+      imageConsumer: new Set(['fresco', 'glide', 'svg-probe']),
+      imageFailure: new Set([
+        'executor_rejected',
+        'timeout',
+        'canceled',
+        'http_error',
+        'read_error',
+        'decode_error',
+        'tls_error',
+        'dns_error',
+        'network_error',
+        'unknown'
+      ]),
+      imageContentType: new Set(['image', 'svg', 'html', 'other', 'unknown'])
+    })) {
+      const field = closedString(input[key], allowed);
+      if (field) output[key] = field;
+    }
     if (source) output.source = source;
     if (lane) output.lane = lane;
     if (method) output.method = method;
@@ -179,12 +227,9 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown) {
 export async function readNativeReadNetworkDiagnosticLines(
   module: NativeReadNetworkModule | undefined = NativeModules.NetworkProxyModule as NativeReadNetworkModule | undefined
 ) {
-  if (!module?.readNetworkDiagnosticEvents) return '';
-  try {
-    const events = normalizeNativeReadNetworkDiagnosticEvents(await module.readNetworkDiagnosticEvents());
-    return events.length ? `${events.map((event) => JSON.stringify(event)).join('\n')}\n` : '';
-  } catch {
-    // Native diagnostics are supplemental and must never block export.
-    return '';
-  }
+  if (!module?.readNetworkDiagnosticEvents) return undefined;
+  const raw = await module.readNetworkDiagnosticEvents();
+  if (!Array.isArray(raw)) throw new Error('Native diagnostic collection unavailable');
+  const events = normalizeNativeReadNetworkDiagnosticEvents(raw);
+  return events.length ? `${events.map((event) => JSON.stringify(event)).join('\n')}\n` : '';
 }

@@ -289,7 +289,7 @@ export function useVerificationController({
           state: 'linuxdo-panel-closed'
         });
         if (!authoritativeResult) {
-          finishLinuxDoVerificationTrace(trace, 'canceled', { reason });
+          finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled', closeReason: reason });
         }
       }
       if (linuxDoPanelClosingSessionRef.current !== null) {

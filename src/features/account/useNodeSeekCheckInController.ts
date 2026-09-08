@@ -11,7 +11,11 @@ import {
   markDiagnosticStage,
   withDiagnosticFetcher
 } from '@/platform/diagnostics/diagnostics';
-import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
+import {
+  normalizeDiagnosticReason,
+  type DiagnosticReason,
+  type DiagnosticTrace
+} from '@/platform/diagnostics/diagnosticPolicy';
 import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
 
 type AttendanceVariables = {
@@ -22,7 +26,7 @@ type AttendanceVariables = {
 class AttendanceError extends Error {
   constructor(
     message: string,
-    readonly reason: string,
+    readonly reason: DiagnosticReason,
     readonly serverConfirmed = false
   ) {
     super(message);
@@ -114,7 +118,7 @@ export function useNodeSeekCheckInController({
     } catch (error) {
       if (error instanceof WritableSessionBlockedError) {
         notify(error.message);
-        finishDiagnosticTrace(trace, 'blocked', { source: 'nodeseek', reason: error.reason });
+        finishDiagnosticTrace(trace, 'blocked', { source: 'nodeseek', reason: normalizeDiagnosticReason(error) });
       }
     }
   }, [ensureWritableSession, mutation.mutateAsync, notify]);

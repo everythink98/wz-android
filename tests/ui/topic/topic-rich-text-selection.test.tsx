@@ -15,6 +15,7 @@ import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRe
 import type { Reply, TopicDetail } from '@/domain/forum/models';
 import { act, fireEvent, render, within } from '../render';
 import { TopicRouteBackBoundary } from '@/features/topic/useTopicRouteBeforeRemove';
+import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 let mockPreventRemove = false;
 let mockHandleBack = () => {};
@@ -317,6 +318,50 @@ function ProductionContentList({
 }
 
 describe('topic rich-text selection', () => {
+  it('records current native selection errors and ignores stale documents without exposing selection contents', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    try {
+      const row = compileForumContent({ html: '<p>private selected text</p>', role: 'opening', source: 'nodeseek' })
+        .rows[0]!;
+      const screen = await render(
+        <TopicSelectionSurface
+          active
+          items={[{ documentId: 'opening', rowKey: 'private-row', selectionToken: row.selectionToken }]}
+          listRef={{ current: { getAbsoluteLastScrollOffset: () => 0, scrollToOffset: jest.fn() } }}
+          sessionKey="private-session"
+        >
+          <View />
+        </TopicSelectionSurface>
+      );
+      const surface = screen.getByTestId('topic-selection-surface');
+      await fireEvent(surface, 'selectionError', {
+        nativeEvent: { code: 'copy-mapping-mismatch', revision: 'old-document' }
+      });
+      expect(lines).toHaveLength(0);
+      await fireEvent(surface, 'selectionError', {
+        nativeEvent: {
+          code: 'copy-mapping-mismatch',
+          revision: surface.props.revision,
+          rowKey: 'private-row',
+          text: 'private selected text'
+        }
+      });
+      expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          operation: 'selection-error',
+          phase: 'finish',
+          selectionError: 'copy-mapping-mismatch',
+          outcome: 'failure'
+        })
+      );
+      expect(lines.join('')).not.toMatch(/private selected text|private-row|private-session/);
+    } finally {
+      setDiagnosticWriter(null);
+    }
+  });
   it('reports only current native selection to the route without rerendering body consumers', async () => {
     const row = compileForumContent({ html: '<p>正文</p>', role: 'opening', source: 'nodeseek' }).rows[0]!;
     const item: TopicSelectionItem = {

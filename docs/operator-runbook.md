@@ -2,38 +2,40 @@
 
 本手册只维护可执行操作。产品契约、能力 ID 和共享 seam 见 [产品地图](product-map.md)，历史 oracle 见 [回归语料库](regression-corpus.md)，证据层与授权规则见 [测试标准](testing-standard.md)，代码边界见 [代码规范](code-standards.md) 与 [架构说明](architecture.md)。当前版本始终从 `package.json` 和 `app.json` 读取。
 
+## 阅读导航
+
+- 本地开发：[标准命令](#标准命令)、[依赖补丁](#依赖补丁可安装性)、[可视状态](#可视状态语料库)。
+- 设备验证：[覆盖安装](#覆盖安装)、[Replay](#replay)、[首页手势](#首页手势完整回归)、[Release 性能](#release-性能回归)。
+- 真实来源：[Agent Live](#agent-live)、[直达主题](#直接打开主题链接)。
+- 交付收口：[正式发布](#正式发布)、[工具进程](#工具进程收口)。
+
 ## 开发与交付
 
-1. 产品/runtime 改动在产品地图选择直接影响的能力 ID并展开共享 seam；纯测试、文档或治理改动记录 evidence owner。
+1. 产品/runtime 改动在产品地图选择直接影响的能力 ID 并展开共享 seam；纯测试、文档或治理改动记录 evidence owner。
 2. 只有改动命中已知事故 seam 时才查回归语料库；当前必跑项以 product map 的 canonical evidence 与测试标准为准。
 3. 记录 Git revision 与 dirty 状态，完成最小完整改动。
 4. 按测试标准运行最低可靠证据；涉及设备、真实来源或写操作时遵守相应授权边界。
-5. 交付时按能力 ID 报告证据层、恢复状态和未验证范围。
+5. 交付时按能力 ID 或 evidence owner 报告证据层、恢复状态和未验证范围。
 
 ## 标准命令
 
-```powershell
-npm install
-npm run verify
-npm test
-npm run test:ui
-npm run test:docs
-npm run check:docs
-npm run typecheck
-npm run check:architecture
-npm run test:architecture
-npm run visual:gallery
-npm run check:react
-npm run android
-npm run test:device
-npm run test:device:logged-out
-npm run test:native:forum-selection
-npm run test:instrumented:forum-selection
-npm run smoke:android
-npm run release:android
-```
+命令定义以 `package.json` 为准。首次开发使用 Node 22，执行 `npm ci` 安装 lockfile 中的依赖；postinstall 会应用 source patch 并构建 Composer。启动 Android 前准备 SDK、Java 环境，并核对下文的安装身份。
 
-`npm run verify` 是随机顺序总门禁，具体组合始终以 `package.json` 为准。Vitest 与 Jest 会输出可重放 seed；局部开发可先运行受影响测试，交付前仍按改动风险补齐门禁。
+| 任务 | 命令与前置条件 |
+| --- | --- |
+| 日常开发 | `npm run android` 编译并安装 development build；已安装匹配构建时用 `npm start` 启动 Metro。 |
+| 完整自动检查 | `npm run verify`；组合以 package scripts 为准。 |
+| 定向逻辑 / UI | `npm test`、`npm run test:ui`；按测试标准选择文件。 |
+| 文档整理 | `npm run test:docs`、`npm run check:docs`、`git diff --check`。 |
+| 类型 / 架构 | `npm run typecheck`、`npm run check:architecture`、`npm run test:architecture`。 |
+| React 检查 | `npm run check:react`。 |
+| 可视状态 | `npm run visual:gallery`；见下文开发入口。 |
+| 主设备 / 未登录 Replay | `npm run test:device`、`npm run test:device:logged-out`；使用各自匹配设备。 |
+| 正文选择 Native | `npm run test:native:forum-selection`；独立 AVD 具备条件后才运行 `npm run test:instrumented:forum-selection`。 |
+| 覆盖安装与启动检查 | `npm run smoke:android`；先完成下文安装身份检查。 |
+| 正式发布 | 仅在当次明确授权后，按[正式发布](#正式发布)执行。 |
+
+Vitest 与 Jest 的默认随机顺序及 seed 重放规则见[测试标准](testing-standard.md#四随机顺序与可重放性)。局部开发先运行受影响测试，交付前按改动风险补齐门禁。
 
 ### 依赖补丁可安装性
 
@@ -64,6 +66,44 @@ npm run visual:gallery -- --port 8081
 
 主登录态 AVD 保存 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态。设备安全边界以仓库根目录 `AGENTS.md` 为准；下面只列操作入口。
 
+### 诊断导出与崩溃还原
+
+用户设备上的事后排障先使用“更多 → 问题诊断”导出，不靠重现故障或结束进程取代已有证据。新 Android journal 在私有非备份目录保存 JS/Native 各四份 2 MiB、最长七天和独立最多 256 KiB 最近崩溃文件；旧两份 1 MiB cache 仍参与导出。高流量会提前轮转，操作系统强杀前的异步队列可能未写盘，不能承诺七天完整记录。
+
+先读导出的 `diagnostic-metadata` 与 `diagnostic-coverage`：核对 buildId、versionCode、事件时间范围、journal/writer 状态和丢弃/损坏/读写失败计数；`sources` 分别声明 JS、Native、crash、两份旧 cache 和旧 Native ring 的状态、事件数、损坏行及首尾时间，没有事件时不凭空补时间。Native 的 JS/Native 分段健康计数跨进程保存，`expiredSegmentCount` 区分保留期淘汰，`crashReadFailureCount` 区分最近崩溃文件读取失败。再按事件自身 buildId/processSessionId 分组；普通请求用 `appSessionId + traceId + requestId` 串联 JS transport、Native DNS/connect/response 和 fallback，恢复事件用 `parentTraceId/requestId` 追溯证据与阈值，不能只看最后一次 `rotate-read-runtime`。`previous-exit` 只说明 Android 为对应前一进程提供的退出原因；无记录不证明没有崩溃，ANR/native-crash 原因不等于已有完整堆栈。
+
+JS 同时只有一个 Native batch 在写，其余事件合并等待，在写与待写合计最多 128 KiB；单次写超时只记录健康错误，底层调用实际结算前不提交下一批，不能用超时释放并发占位。导出等待写队列最多五秒，超时仍尝试收集可用证据。致命异常摘要包含尚未批量落盘的最后 JS 阶段，Native 致命处理还会最多等待 250ms 刷出已排队事件，然后继续原异常处理；这个有界等待不能覆盖操作系统直接结束进程或磁盘不可写。
+
+异常入口按真实 RN 管线判断，不能只看是否存在 `RN$registerExceptionListener`：当 `RN$useAlwaysAvailableJSErrorHandling` 不为 true 时，已就绪的 JS/renderer 异常仍走 legacy 入口。当前保留 Native listener，同时包装 `ExceptionsManager.handleException`（不可用才用 ErrorUtils），完整委托并去重。系统 `ApplicationExitInfo` 的 EXCESSIVE_RESOURCE_USAGE 记录为 `resource-limit`，保留 `exitReasonCode`；即使同一进程已有 JS 致命异常，也不把该退出原因猜成 crash。
+
+发布脚本把 exact combined source map、R8 mapping 和 APK SHA 归档到 ignored `diagnostic-symbols/<buildId>/`。保留对应目录，不用重建产物覆盖。JS、renderer、Promise 与 Java/Kotlin 未捕获异常统一使用以下脱敏堆栈还原命令：
+
+```powershell
+node scripts/symbolicate-diagnostic.mjs --log <导出的日志文件> --symbols diagnostic-symbols/<buildId>
+```
+
+工具自动处理 `js-error`、`unhandled-rejection` 与 `native-crash`。混合进程/版本日志无需预先切分，只还原符号目录 buildId 对应的事件，其余（含缺少合法 buildId）跳过，并在 stderr 输出 `symbolicated/skipped/skippedBuilds` JSON 计数；需要其他版本时更换对应符号目录再次执行。JS 校验 source map SHA，按 `stackFormat` 区分 RN 已解析坐标、Hermes bytecode offset 和普通 source column；Native 校验 mapping SHA 后使用 SDK 官方 Retrace 还原类名、源码行和内联帧。Retrace 自动从 `ANDROID_HOME`、`ANDROID_SDK_ROOT` 或 PATH 中的 SDK cmdline-tools 查找，要求 Java 17+；也可显式添加 `--retrace-jar <R8 jar>`。没有匹配符号或 Retrace 不可用时保留原始脱敏坐标并记 `NOT_VERIFIED`，不得把跳过数量当作还原成功。
+
+验证存储/异常链时先运行 `diagnostics`、`diagnosticRuntime`、`diagnosticFileStore` 与 `diagnostic-symbols` 对应单测；fresh prebuild 后生成的 `DiagnosticLogStoreTest` 和 `NetworkProxyRuntimeTest` 使用实际文件/OkHttp 验证存储与出网标记。真实故障 proof 仅在唯一已连接的 `WZ_ImageRuntime_Test_API35` 执行，前置匹配 fresh prebuild 产物与构建身份文件，且 App 进程已退出：
+
+```powershell
+node scripts/run-diagnostic-device-proof.mjs
+```
+
+runner 拒绝参数，不接受手工 serial 或其他 AVD。它临时使用开发签名的 Release Hermes entry，保留发布配置的 R8/minify 与 resource shrink；Gradle overlay 为本次 proof 分配独立随机 buildId，与恢复后的正常入口 APK 身份隔离，并按该 ID 归档本次 APK 的实际 combined source map、R8 mapping 和校验值。依次验证 JS/renderer/Promise/Native 故障、重启后的原进程与 build 归属、脱敏、退出原因、JS source map 与 Java SDK Retrace 还原；最后重新构建正常入口并仅覆盖恢复该隔离 AVD。它不创建或重置 AVD，身份异常立即冻结设备变更。stdout 只报告进度与结果路径；`.codex-tmp/diagnostic-device-proof-report-<UUID>.json` 保存 APK/符号校验值、场景、符号化结果和恢复状态，只有四场景及恢复覆盖安装全部完成才为 `PASS`。失败保留已取得的部分证据；未运行不能沿用 tooling 单测或先前未混淆 proof 的通过状态，缺少隔离 AVD 记 `BLOCKED_BY_ENV`。不得在保留登录态设备注入异常，正式签名 APK、真实 ANR/OOM 与系统分享 UI 仍分别验收。
+
+proof 的 JS/renderer 分支要求异常记录、旧进程归属和系统退出记录均存在，但保留任一有效系统退出原因作为实际证据，不要求它一定叫 crash；Java 未捕获异常仍要求 `crash`。普通 Error 的 Hermes Promise tracker 有两秒原生宽限，proof 等待三秒取得 rejection 记录后才主动结束进程，因此该分支要求 `user-stopped`，不能把主动结束当作 Promise 导致崩溃。
+
+四场景还必须核对故障前未 finish 的 startup intent/apply 在重启后仍存在，JS 事件属于原 appSessionId，且同一异常从 JS journal、Native journal 与 crash 合并去重后恰好一份；不能只验证最后的异常行。Java 结果必须由该 proof APK 的真实 mapping 经 SDK Retrace 还原，未混淆 Java 栈加独立 Retrace fixture 不代替这条设备证据。
+
+### 图片运行时 Native 验证
+
+排查图片失败时导出“更多 → 问题诊断”的现有日志。按 `appSessionId + traceId` 关联 JS `image-load` 与 Native request，以 `mediaRef` 找同图的后续重试；多个原生请求再以 `callId` 区分。`imageConsumer=svg-probe` 表示显示失败后的兼容探测，其 200 不能证明 Fresco/Glide 成功。JS `finish/success` 表示显示，`imageFailure` 为闭集错误分类，`unknown` 表示现有原生回调没有足够信息；Native `response-headers`、`response-body-end`、`image-call-failed` 和 `image-lease-released` 分别表示响应头、读取、失败与资源释放。缓存命中可能只有 JS 显示终态，没有网络 Call；不凭缺少 Call 单独断言缓存命中。Native 事件已进入跨进程 journal，512 条 ring 仅为旧桥接兼容窗口；先按上节 coverage 判断可用时间范围。
+
+fresh prebuild 后，用 `android/gradlew.bat -p android :app:testReleaseUnitTest --tests '*NetworkProxyRuntimeTest' --no-daemon` 执行生成的网络 canonical owner；RN 注入 wiring 使用 `:react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests '*ReactOkHttpNetworkFetcherTest'`。两份 XML 报告都必须包含非零用例。
+
+设备链路先启动独立 `WZ_ImageRuntime_Test_API35`，执行 `node scripts/run-network-image-instrumented-tests.mjs`。runner 精确匹配该 AVD，以开发签名 Release 和真实 RN/Fresco 初始化验证图片、Glide 两种 model、缓存、回收、取消、连续轮换及 SVG。仅该测试构建允许 `127.0.0.1/localhost` HTTP，其他地址仍禁止明文流量；测试后的 finally 移除临时 manifest/resources 并重新构建默认 Release，测试 APK 不用于保留数据设备验收。runner 不创建、清理或重置 AVD；保留数据设备仍按安装身份核对与只读 Live 流程单独验收。
+
 ### 下拉刷新 Native 验证
 
 取消、迟到 UP/nested-scroll stop、取消后的再次刷新与进行中刷新保留，使用真实 AndroidX 控件的 JVM 测试，不连接设备。测试同时覆盖控件直接持有触摸，以及内部 ScrollView 持有触摸时的完整 dispatch 路径；推进动画后确认取消不产生迟到刷新回调：
@@ -81,7 +121,7 @@ cd android
 
 ```powershell
 cd android
-.\gradlew.bat :react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests com.facebook.react.views.text.TextLayoutManagerInlineViewSizeTest --no-daemon
+.\gradlew.bat :react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests com.facebook.react.views.text.TextLayoutManagerInlineViewSizeTest --tests com.facebook.react.views.text.internal.span.CustomLineHeightSpanTest --no-daemon
 ```
 
 真实 Fabric 换行另用独立开发入口 `dev/inline-layout-proof/index.tsx`。在已有 Metro 的端口上，用 development-client URL 打开 `http://127.0.0.1:<port>/dev/inline-layout-proof/index.bundle?platform=android&dev=true&minify=false`。页面直接测量 Text 和嵌入 View；五个结果都必须为 PASS，大图相对行首偏移及右侧越界均不得超过 `1px`，小图继续留在文字后面。它不依赖 HTML、网络图片或生产账号，不以 RNTL mock 代替原生排版。
@@ -176,9 +216,7 @@ npm run test:device:logged-out
 
 runner 会拒绝与 `WZ_ANDROID_TEST_DEVICE` 或 `WZ_ANDROID_SMOKE_DEVICE` 相同的设备。不要克隆、卸载或清除主 AVD 来制造未登录状态。
 
-### 证据含义
-
-#### 首页手势完整回归顺序
+### 首页手势完整回归
 
 相关改动按 `docs/testing-standard.md` 执行以下整套流程；各项共用已核对的 APK 和独占设备输入，不能把一项通过当成整套通过。
 
@@ -298,7 +336,7 @@ adb shell am start -W -a android.intent.action.VIEW -d "exp+wz-android://open-to
 
 ### 打包基线
 
-本轮额外打包优化已废弃，后续发布沿用撤回后的配置：保留原有 RN source build、release minify 与 resource shrink；不启用 `useLegacyPackaging=true`、`enableBundleCompression=true`，不恢复 `withAndroidReleaseOptimization`、`proguard-android-optimize.txt` 或额外的 `android.r8.optimizedResourceShrinking` 开关。图标恢复包根入口导入，`react-native-render-html` 使用锁定原版，不恢复为缩包添加的 Ramda 导入补丁，也不启用实验性全局 tree shaking。版本递增、签名、覆盖安装和验证门禁沿用下述流程。
+当前打包配置由 `app.json`、plugin 和 source patch 维护：保留 RN source build、release minify 与 resource shrink；不启用 `useLegacyPackaging=true`、`enableBundleCompression=true`，不恢复 `withAndroidReleaseOptimization`、`proguard-android-optimize.txt` 或额外的 `android.r8.optimizedResourceShrinking` 开关。图标使用包根入口导入，`react-native-render-html` 使用锁定原版，不恢复为缩包添加的 Ramda 导入补丁，也不启用实验性全局 tree shaking。版本递增、签名、覆盖安装和验证门禁沿用下述流程。
 
 fresh prebuild 后核对生成的 `android/gradle.properties` 与 `android/app/build.gradle`：原生库采用默认非 legacy packaging，bundle compression 默认关闭，默认 ProGuard 文件为 `proguard-android.txt`。生成目录中的旧开关不得继续沿用；长期配置只从 `app.json`、plugin 和 source patch 生成。`tests/tooling/release-packaging.test.ts` 固定打包配置边界。
 
@@ -332,8 +370,9 @@ npm run release:android
 - `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`：正式上传包。
 - `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`：仅用于本机 Smoke，不上传。
 - `release-manifest.json`：与正式 APK 一同上传，供更新检查和 provenance 使用。
+- `diagnostic-symbols/<buildId>/`：本机 ignored 符号归档，含 combined source map、R8 mapping、Git SHA 与两个 APK 的 SHA-256；符号缺失或同 buildId 产物冲突使发布失败。该目录保留用于事后还原，不随 APK 上传，不进入 Git。
 
-脚本不执行 Git commit、tag 或 GitHub 上传。Smoke 和 Replay 通过后，发布 `app-arm64-v8a-release.apk` 与 `release-manifest.json`；发布说明记录正式 APK SHA-256。不要提交或输出 keystore、`.env.release.local`、密码或 token。
+脚本不执行 Git commit、tag 或 GitHub 上传。Smoke 和 Replay 通过且当次明确获准远端上传后，发布 `app-arm64-v8a-release.apk` 与 `release-manifest.json`；发布说明记录正式 APK SHA-256。不要提交或输出 keystore、`.env.release.local`、密码或 token。
 
 ## 工具进程收口
 

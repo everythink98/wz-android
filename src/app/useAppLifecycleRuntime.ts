@@ -8,10 +8,12 @@ import { errorMessage } from '@/platform/network/errors';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { LOGIN_WEBVIEW_ALLOWED_HOSTS, shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNavigation';
 import type { Screen } from '@/ui/navigation/types';
+import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useAppDeepLinkNavigation } from './useAppDeepLinkNavigation';
-import { navigateAppScreen, pushUserRoute, shouldUpdateAppRootScreen } from './appNavigation';
+import { navigateAppScreen, navigationRef, pushUserRoute, shouldUpdateAppRootScreen } from './appNavigation';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { diagnosticRef, type DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 import { useInitialForegroundRuntime } from './useInitialForegroundRuntime';
 
 export function useAppLifecycleRuntime() {
@@ -21,6 +23,7 @@ export function useAppLifecycleRuntime() {
     () => AppState.currentState !== 'background' && AppState.currentState !== 'inactive'
   );
   const screenRef = useRef<Screen>('feed');
+  const screenRouteKeyRef = useRef('');
   const onNavigationReady = useAppDeepLinkNavigation();
   const initialForeground = useInitialForegroundRuntime();
   useCommitRefValue(screenRef, screen);
@@ -64,18 +67,38 @@ export function useAppLifecycleRuntime() {
   );
   const onScreenChange = useCallback((nextScreen: Screen, routeKey: string) => {
     const previousScreen = screenRef.current;
-    const trace = beginDiagnosticTrace('navigation', 'screen-change', {
+    const route = navigationRef.getCurrentRoute();
+    const topicDestination = route?.name === 'Topic' ? (route.params as RootStackParamList['Topic']) : undefined;
+    const userDestination = route?.name === 'User' ? (route.params as RootStackParamList['User']) : undefined;
+    const topic = topicDestination?.topic;
+    const user = userDestination?.user;
+    const fields: DiagnosticFields = {
       previousState: previousScreen,
       nextState: nextScreen,
-      routeKind: routeKey ? 'stack' : 'tab'
-    });
-    if (previousScreen === nextScreen) {
-      finishDiagnosticTrace(trace, 'noop', { state: 'same-screen' });
+      routeKind: route?.name === nextScreen ? 'tab' : 'stack',
+      ...(topic
+        ? {
+            source: topic.source,
+            topicRef: diagnosticRef('topic', `${topic.source}:${topic.id}`),
+            hasTargetReply: Boolean(topicDestination?.targetReply)
+          }
+        : user
+          ? {
+              source: user.source,
+              userRef: diagnosticRef('user', `${user.source}:${user.id || user.username}`)
+            }
+          : {})
+    };
+    const trace = beginDiagnosticTrace('navigation', 'screen-change', fields);
+    const sameRoute = previousScreen === nextScreen && screenRouteKeyRef.current === routeKey;
+    screenRouteKeyRef.current = routeKey;
+    if (sameRoute) {
+      finishDiagnosticTrace(trace, 'noop', { ...fields, state: 'same-screen' });
       return;
     }
     screenRef.current = nextScreen;
     if (shouldUpdateAppRootScreen(previousScreen, nextScreen)) setScreen(nextScreen);
-    finishDiagnosticTrace(trace, 'success', { state: 'applied' });
+    finishDiagnosticTrace(trace, 'success', { ...fields, state: 'applied' });
   }, []);
 
   useEffect(() => {

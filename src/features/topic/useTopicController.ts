@@ -72,7 +72,7 @@ import {
 } from '@/platform/diagnostics/diagnosticPolicy';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { isDiscourseSource, isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';

@@ -13,7 +13,7 @@ import {
 import { prepareSanitizedForumContent } from '@/domain/forum/topicContentSplit';
 import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE } from '@/domain/forum/forumContentMedia';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   YAOHUO_BASE_URL as BASE_URL,
   extractYaohuoTopicParts as extractTopicParts,

@@ -1,20 +1,25 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it } from 'vitest';
 import {
   beginDiagnosticTrace,
+  diagnosticRequestContext,
+  diagnosticRequestFields,
   diagnosticTraceForRequest,
   finishDiagnosticTrace,
   hintDiagnosticOutcome,
   markDiagnosticStage,
   recordDiagnosticError,
-  registerDiagnosticContextFetcher,
   setDiagnosticWriter,
-  withDiagnosticFetcher
+  withDiagnosticFetcher,
+  withNativeDiagnosticRequest
 } from './diagnostics';
 import {
   type DiagnosticFields,
   diagnosticRef,
   linkDiagnosticRefs,
-  normalizeDiagnosticReason
+  normalizeDiagnosticReason,
+  safeDiagnosticOperation,
+  safeFields,
+  type DiagnosticOperation
 } from './diagnosticPolicy';
 
 function captureEvents() {
@@ -30,6 +35,79 @@ afterEach(() => {
 });
 
 describe('diagnostic traces', () => {
+  it('keeps production operations, stages and typed reasons after sanitization', () => {
+    expectTypeOf<string>().not.toExtend<DiagnosticOperation>();
+    expectTypeOf<string>().not.toExtend<DiagnosticFields['state']>();
+    expectTypeOf<string>().not.toExtend<DiagnosticFields['reason']>();
+    const operations = [
+      'install',
+      'prefetch-post',
+      'migrate-cookie-snapshots',
+      'stardust-payment',
+      'load-templates',
+      'manage-poll'
+    ] as const satisfies readonly DiagnosticOperation[];
+    expect(operations.map(safeDiagnosticOperation)).toEqual(operations);
+    const fields = {
+      state: 'published',
+      credentialSource: 'managed-cookie-jar',
+      emptyReason: 'route-owned',
+      hasResult: true,
+      count: 2,
+      reason: 'identity_pending'
+    } as const satisfies DiagnosticFields;
+    expect(safeFields(fields)).toEqual(fields);
+    expect(normalizeDiagnosticReason({ reason: 'identity-pending' })).toBe('identity_pending');
+    expect(normalizeDiagnosticReason({ reason: 'object-forbidden' })).toBe('object_forbidden');
+    expect(normalizeDiagnosticReason({ reason: 'source-disabled' })).toBe('source_disabled');
+    expect(safeFields({ privateCount: 3, reason: 'private-reason' })).toEqual({ reason: 'unknown' });
+  });
+
+  it('preserves Hermes bytecode coordinates while excluding internal frames and private text', () => {
+    const events = captureEvents();
+    const error = new Error('private message');
+    error.stack =
+      'Error: private message\n    at privateName (address at index.android.bundle:1:1048576)\n    at internal (address at InternalBytecode.js:1:640)\n    at other (private/path.js:2:15)\n    at apply (native)';
+    recordDiagnosticError('app', 'js-error', error, { isFatal: true });
+    expect(events()[0]).toMatchObject({
+      isFatal: true,
+      stackFormat: 'hermes',
+      stack: 'Error\n    at [frame] (address at [bundle]:1:1048576)\n    at [frame] ([bundle]:2:15)\n    at [frame]'
+    });
+    expect(JSON.stringify(events())).not.toMatch(/private|InternalBytecode|640/);
+  });
+
+  it('correlates concurrent copied request options without mutating the caller', async () => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('topic', 'open');
+    const original = Object.freeze({ method: 'GET', headers: Object.freeze({ Accept: 'application/json' }) });
+    const contexts: { requestId?: string; headers: Headers }[] = [];
+    const copies: RequestInit[] = [];
+    const fetcher = withDiagnosticFetcher(trace, async (_input, init) => {
+      const copied = { ...init, signal: new AbortController().signal };
+      copies.push(copied);
+      const native = withNativeDiagnosticRequest(copied);
+      contexts.push({ ...diagnosticRequestFields(copied), headers: new Headers(native?.headers) });
+      expect(diagnosticTraceForRequest(copied)).toBe(trace);
+      await Promise.resolve();
+      return new Response('ok');
+    });
+    await Promise.all([fetcher('https://linux.do/t/1.json', original), fetcher('https://linux.do/t/2.json', original)]);
+    expect(contexts[0].requestId).not.toBe(contexts[1].requestId);
+    for (const context of contexts) {
+      expect(context.headers.get('X-WZ-Diagnostic-Request')).toBe(context.requestId);
+      expect(context.headers.get('X-WZ-Diagnostic-Trace')).toBe(trace.traceId);
+      expect(context.headers.get('X-WZ-Diagnostic-Session')).toBe(trace.appSessionId);
+      expect(
+        events()
+          .filter((event) => event.requestId === context.requestId)
+          .map((event) => event.state)
+      ).toEqual(['start', 'finish']);
+    }
+    expect(copies.every((copy) => diagnosticRequestContext(copy) === undefined)).toBe(true);
+    expect(original).toEqual({ method: 'GET', headers: { Accept: 'application/json' } });
+  });
+
   it('allowlists only aggregate topic body media counters', () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('media', 'topic-body-media', {
@@ -112,14 +190,14 @@ describe('diagnostic traces', () => {
       credentialSource: 'nodeimage',
       nonce: 'nonce-secret',
       state: 'session-check'
-    });
+    } as unknown as DiagnosticFields);
 
     for (const state of ['session-expired', 'connect-started', 'connect-finished', 'key-saved']) {
       markDiagnosticStage(trace, 'credential', {
         apiKey: 'api-key-secret',
         payload: 'payload-secret',
         state
-      });
+      } as unknown as DiagnosticFields);
     }
     finishDiagnosticTrace(trace, 'success');
 
@@ -146,11 +224,11 @@ describe('diagnostic traces', () => {
       payload: 'payload-secret',
       state: 'timeout',
       url: 'https://www.nodeseek.com/connect?target=secret'
-    });
+    } as unknown as DiagnosticFields);
     finishDiagnosticTrace(trace, 'failure', {
       documentUrl: 'https://www.nodeimage.com/?secret=1',
       reason: 'timeout'
-    });
+    } as unknown as DiagnosticFields);
 
     expect(events()).toEqual([
       expect.objectContaining({ state: 'session-check' }),
@@ -219,7 +297,7 @@ describe('diagnostic traces', () => {
     expect(events().filter((event) => event.phase === 'intent')).toHaveLength(1);
   });
 
-  it('preserves an absent RequestInit for fetchers that do not need nested context', async () => {
+  it('adds only process-local context when the caller omits request options', async () => {
     const trace = beginDiagnosticTrace('media', 'save-image');
     let receivedInit: RequestInit | undefined = { method: 'POST' };
     const fetcher = withDiagnosticFetcher(trace, async (_input, init) => {
@@ -229,7 +307,8 @@ describe('diagnostic traces', () => {
 
     await fetcher('https://example.com/image.jpg');
 
-    expect(receivedInit).toBeUndefined();
+    expect(Object.keys(receivedInit || {})).toEqual([]);
+    expect(diagnosticRequestContext(receivedInit)).toBeUndefined();
   });
 
   it('keeps media diagnostics categorical and drops URLs', () => {
@@ -239,7 +318,7 @@ describe('diagnostic traces', () => {
       surface: 'preview',
       mediaClass: 'cross-source',
       url: 'https://secret.example/private.png?token=secret'
-    });
+    } as unknown as DiagnosticFields);
     finishDiagnosticTrace(trace, 'failure', { fallback: 'svg', terminalReason: 'fallback-error' });
 
     expect(events().at(-1)).toEqual(
@@ -299,14 +378,11 @@ describe('diagnostic traces', () => {
     const trace = beginDiagnosticTrace('topic', 'open');
     let nestedInit: RequestInit | undefined;
     let nestedTrace: unknown;
-    const fetcher = withDiagnosticFetcher(
-      trace,
-      registerDiagnosticContextFetcher(async (_input, receivedInit) => {
-        nestedInit = receivedInit;
-        nestedTrace = diagnosticTraceForRequest(receivedInit);
-        return new Response('ok');
-      })
-    );
+    const fetcher = withDiagnosticFetcher(trace, async (_input, receivedInit) => {
+      nestedInit = receivedInit;
+      nestedTrace = diagnosticTraceForRequest(receivedInit);
+      return new Response('ok');
+    });
 
     await fetcher('https://linux.do/t/42.json');
 
@@ -367,7 +443,7 @@ describe('diagnostic traces', () => {
     );
   });
 
-  it.each(['html-topic', 'html-topic-fallback', 'api-topic-fallback'])(
+  it.each(['html-topic', 'html-topic-fallback', 'api-topic-fallback'] as const)(
     'keeps the allowlisted parser variant %s',
     (parserVariant) => {
       const events = captureEvents();
@@ -452,7 +528,12 @@ describe('diagnostic traces', () => {
       payload: { token: 'ULTRA_FAKE_SECRET_9' }
     } as unknown as DiagnosticFields;
 
-    beginDiagnosticTrace('source', '/users/private?token=ULTRA_FAKE_SECRET_9', unsafeFields, 1_000);
+    beginDiagnosticTrace(
+      'source',
+      safeDiagnosticOperation('/users/private?token=ULTRA_FAKE_SECRET_9'),
+      unsafeFields,
+      1_000
+    );
 
     expect(events()[0]).toEqual(
       expect.objectContaining({
@@ -520,11 +601,11 @@ describe('diagnostic traces', () => {
       cursorRef: 'redacted'
     } as const;
 
-    beginDiagnosticTrace('search', 'PRIVATE_OPERATION_91827');
+    beginDiagnosticTrace('search', safeDiagnosticOperation('PRIVATE_OPERATION_91827'));
     for (const key of Object.keys(fallbackByField)) {
       beginDiagnosticTrace('search', 'request', {
         [key]: key === 'route' ? 'codex' : `PRIVATE_${key}_91827`
-      });
+      } as unknown as DiagnosticFields);
     }
 
     expect(events()[0]).toEqual(expect.objectContaining({ operation: 'unknown' }));
@@ -542,7 +623,7 @@ describe('diagnostic traces', () => {
       privateStatus: 40123,
       topicRef: 'topic-91827',
       contentType: 'export-secret/private'
-    });
+    } as unknown as DiagnosticFields);
 
     expect(events()[0]).toEqual(
       expect.objectContaining({
@@ -679,12 +760,12 @@ describe('diagnostic traces', () => {
     setDiagnosticWriter(() => {
       throw new Error('disk failed');
     });
-    expect(() => beginDiagnosticTrace('diagnostic', 'sync-writer-failure')).not.toThrow();
+    expect(() => beginDiagnosticTrace('diagnostic', 'request')).not.toThrow();
 
     setDiagnosticWriter(async () => {
       throw new Error('async disk failed');
     });
-    expect(() => beginDiagnosticTrace('diagnostic', 'async-writer-failure')).not.toThrow();
+    expect(() => beginDiagnosticTrace('diagnostic', 'request')).not.toThrow();
     await Promise.resolve();
   });
 });

@@ -9,20 +9,57 @@ import {
 } from '@/domain/reader/readerData';
 import { assertBackupJsonSize } from '@/domain/reader/readerBackup';
 import { isRecord } from '@/domain/forum/html';
+import { createTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import {
+  normalizeDiagnosticReason,
+  type DiagnosticFields,
+  type DiagnosticOutcome,
+  type DiagnosticTrace
+} from '@/platform/diagnostics/diagnosticPolicy';
 
 const READER_DATA_STORAGE_KEY = 'reader-data';
 const READER_SETTINGS_STORAGE_KEY = 'reader-settings';
 const READER_STORAGE_LOAD_TIMEOUT_MS = 3_000;
+let lastSettingsLoadResult = '';
 
-function settingsFromStorage(raw: string | null, fallback: ReaderSettings) {
-  if (!raw) {
-    return fallback;
-  }
+function recordSettingsLoad(trace: DiagnosticTrace, outcome: DiagnosticOutcome, fields: DiagnosticFields) {
+  const result = `${outcome}:${fields.state}:${fields.reason || ''}`;
+  if (lastSettingsLoadResult === result) return;
+  lastSettingsLoadResult = result;
+  finishDiagnosticTrace(trace, outcome, { store: 'reader-settings', ...fields });
+}
+
+function settingsFromStorage(parsed: unknown, fallback: ReaderSettings) {
   try {
-    const parsed: unknown = JSON.parse(raw);
     return isRecord(parsed) ? sanitizeReaderSettings(parsed) : fallback;
   } catch {
     return fallback;
+  }
+}
+
+async function readStoredSettings() {
+  const trace = createTrace('reader-data', 'load-settings');
+  let reading = true;
+  try {
+    const raw = await readStorageItem(READER_SETTINGS_STORAGE_KEY, '阅读设置读取超时。');
+    reading = false;
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    const valid = isRecord(parsed);
+    recordSettingsLoad(trace, raw && !valid ? 'partial' : raw ? 'success' : 'noop', {
+      state: raw ? (valid ? 'restored' : 'fallback') : 'missing',
+      ...(raw && !valid ? { reason: 'invalid_response' } : {})
+    });
+    return parsed;
+  } catch (error) {
+    recordSettingsLoad(trace, 'partial', {
+      state: 'fallback',
+      reason: reading
+        ? normalizeDiagnosticReason(error) === 'timeout'
+          ? 'timeout'
+          : 'storage_error'
+        : 'invalid_response'
+    });
+    return null;
   }
 }
 
@@ -49,39 +86,60 @@ function readStorageItem(key: string, timeoutMessage: string) {
 }
 
 export async function loadReaderData() {
+  const trace = createTrace('reader-data', 'restore');
   const defaultSettings = createEmptyReaderData().settings;
-  const [raw, rawSettings] = await Promise.all([
-    readStorageItem(READER_DATA_STORAGE_KEY, '本机资料读取超时；为防止覆盖，未自动重置。'),
-    readStorageItem(READER_SETTINGS_STORAGE_KEY, '阅读设置读取超时。').catch(() => null)
-  ]);
-  let clean: ReaderData;
-  if (!raw) {
-    clean = createEmptyReaderData();
-  } else {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      throw new Error('本机资料已损坏；为防止覆盖，未自动重置。');
+  let reading = true;
+  try {
+    const [raw, rawSettings] = await Promise.all([
+      readStorageItem(READER_DATA_STORAGE_KEY, '本机资料读取超时；为防止覆盖，未自动重置。'),
+      readStoredSettings()
+    ]);
+    reading = false;
+    let clean: ReaderData;
+    if (!raw) {
+      clean = createEmptyReaderData();
+    } else {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new Error('本机资料已损坏；为防止覆盖，未自动重置。');
+      }
+      if (!isRecord(parsed) || parsed.version !== readerDataVersion) {
+        throw new Error('本机资料版本不受支持；为防止覆盖，未自动重置。');
+      }
+      clean = sanitizeReaderData(parsed);
     }
-    if (!isRecord(parsed) || parsed.version !== readerDataVersion) {
-      throw new Error('本机资料版本不受支持；为防止覆盖，未自动重置。');
-    }
-    clean = sanitizeReaderData(parsed);
+    const result = {
+      ...clean,
+      settings: settingsFromStorage(rawSettings, {
+        ...clean.settings,
+        contentSources: defaultSettings.contentSources
+      })
+    };
+    finishDiagnosticTrace(trace, raw === null ? 'noop' : raw ? 'success' : 'partial', {
+      state: raw === null ? 'missing' : raw ? 'restored' : 'fallback',
+      hasStoredData: raw !== null,
+      ...(raw === '' ? { reason: 'invalid_response' } : {})
+    });
+    return result;
+  } catch (error) {
+    finishDiagnosticTrace(trace, 'failure', {
+      state: reading ? 'recovery-mode' : 'invalid',
+      reason: reading
+        ? normalizeDiagnosticReason(error) === 'timeout'
+          ? 'timeout'
+          : 'storage_error'
+        : 'invalid_response'
+    });
+    throw error;
   }
-  return {
-    ...clean,
-    settings: settingsFromStorage(rawSettings, {
-      ...clean.settings,
-      contentSources: defaultSettings.contentSources
-    })
-  };
 }
 
 export async function loadReaderSettings() {
   const fallback = createEmptyReaderData().settings;
   try {
-    return settingsFromStorage(await readStorageItem(READER_SETTINGS_STORAGE_KEY, '阅读设置读取超时。'), fallback);
+    return settingsFromStorage(await readStoredSettings(), fallback);
   } catch {
     return fallback;
   }

@@ -10,21 +10,22 @@
 4. 按能力或 owner 检索 `docs/regression-corpus.md`，确认历史逃逸问题的状态、根因与当前归属。
 5. 按任务读取 `docs/code-standards.md`、`docs/architecture.md`、`docs/testing-standard.md` 与 `docs/operator-runbook.md`；不要把它们全部复制进任务说明。
 6. 本机存在 `memory/MEMORY.md` 时，只按索引读取相关补充事实；需要模拟器证据时，只采用与当前 revision、App 版本和 APK 身份同时匹配的 `docs/emulator-baseline.md` 记录。
-7. 安装依赖并运行 `npm run verify`；只有任务确实涉及真实页面或设备行为时，才按测试标准扩大验证。
+7. 按维护手册准备依赖，再按测试标准选择验证强度；首次建立开发基线运行 `npm run verify`，纯文档整理只运行文档门禁。涉及真实页面或设备行为时再扩大验证。
 
 ## 事实源地图
 
 | 事实 | 权威位置 |
 | --- | --- |
-| 品牌、视觉和 accessibility | 根目录 `PRODUCT.md` |
-| 产品取舍与功能准入 | `docs/product-charter.md` |
-| 现有能力、入口、能力 ID 与共享 seam | `docs/product-map.md` |
-| 历史逃逸问题的状态、根因与当前 owner | `docs/regression-corpus.md` |
-| ownership、import、测试归属与质量门禁 | `docs/code-standards.md` |
-| module、interface、数据与原生配置边界 | `docs/architecture.md` |
-| 测试方法、证据层与授权边界 | `docs/testing-standard.md` |
-| 构建、覆盖安装、Replay、Smoke 与发布操作 | `docs/operator-runbook.md` |
-| 已确认待处理技术债务 | `docs/code-cleanup-map.md` |
+| 品牌、视觉和 accessibility | [设计约束](../PRODUCT.md) |
+| 产品取舍与功能准入 | [产品章程](product-charter.md) |
+| 现有能力、入口、能力 ID 与共享 seam | [产品地图](product-map.md) |
+| 历史逃逸问题的状态、根因与当前 owner | [回归语料库](regression-corpus.md) |
+| ownership、import、测试归属与质量门禁 | [代码规范](code-standards.md) |
+| module、interface、数据与原生配置边界 | [架构说明](architecture.md) |
+| 测试方法、证据层与授权边界 | [测试标准](testing-standard.md) |
+| 构建、覆盖安装、Replay、Smoke 与发布操作 | [维护手册](operator-runbook.md) |
+| App 内真实来源与系统验收场景 | [Agent Live](../tests/live/agent-live.md) |
+| 已确认待处理技术债务与验收缺口 | [待处理项](code-cleanup-map.md) |
 | 当前实现和可运行行为 | 代码、配置与实际运行结果 |
 | 本机专项取证与设备历史证据 | `memory/` 与 `docs/emulator-baseline.md` |
 
@@ -50,6 +51,6 @@ node -p "require('./app.json').expo.android.versionCode"
 1. 枚举 tracked Markdown，并按需检查本机 `memory/`、`docs/emulator-baseline.md` 和 workspace residue。
 2. 以用户要求、当前代码、配置及匹配身份的运行结果核对事实；每类事实只在上表的权威位置写完整版本。
 3. 删除过时的现役说法和重复索引；历史事故留在回归语料库，历史设备证据留在模拟器基线，普通演进交给 Git。
-4. `memory/MEMORY.md` 只做索引，`memory/project.md` 只保留本机独有事实和权威文档指针。
-5. 运行 `npm run test:docs`、`npm run check:docs` 与 `git diff --check`；代码或工具发生变化时，再运行相应测试、`npm run typecheck` 和 `npm run verify`。
+4. 本机 `memory/MEMORY.md` 只做索引，主题文件只保留本机独有事实和权威文档指针；普通文档整理按需只读，不补造本机文件或改写宿主生成记忆。
+5. 运行 `npm run test:docs`、`npm run check:docs` 与 `git diff --check`，另核对新增/调整的标题锚点、REG 编号唯一性和文档职责。现有检查器校验文件路径、能力与 REG 引用、状态字段及 npm script，不校验标题锚点或重复 REG 定义。代码或工具发生变化时，再运行相应测试、`npm run typecheck` 和 `npm run verify`。
 6. 交付时现场报告最近完整基线、眼前 dirty WIP、已确认技术债务、未验证范围和清理候选；未经确认不删除录屏、`tmp/`、dogfood 结果或额外 worktree。

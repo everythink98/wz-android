@@ -7,7 +7,7 @@ import { useUserController } from '@/features/user/useUserController';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { Source, UserProfile, UserReference } from '@/domain/forum/models';
 import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';

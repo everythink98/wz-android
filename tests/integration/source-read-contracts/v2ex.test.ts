@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getFeed } from '@/sources/feedRead';
 import { searchTopics } from '@/sources/searchRead';
 import { getReplies, getTopic } from '@/sources/sourceRead';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
 vi.mock('expo-secure-store', () => ({

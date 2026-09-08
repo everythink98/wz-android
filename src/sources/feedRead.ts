@@ -20,7 +20,7 @@ import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/reque
 import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { sortTopicsByTime } from '@/domain/forum/html';
-import { mergeSourceDiagnosticSummaries } from './diagnostics';
+import { mergeSourceDiagnosticSummaries } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from './forumSourceReadAttempt';
 import {
   dispatchSourceRead,

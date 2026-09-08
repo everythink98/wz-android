@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { linuxDoNotificationAdapter } from './discourseNotifications';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), {
@@ -10,6 +11,33 @@ function json(value: unknown) {
 }
 
 describe('Discourse notifications', () => {
+  it('reports optional category-discovery degradation while keeping its existing fallback categories', async () => {
+    const categories = await linuxDoNotificationAdapter.getCategories({
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      fetcher: async () => {
+        throw new Error('network unavailable');
+      }
+    });
+    expect(categories.some((category) => category.id === 'chat')).toBe(true);
+    expect(sourceDiagnosticSummary(categories)).toMatchObject({ partialErrorCount: 1, hasDegradation: true });
+  });
+  it('does not classify malformed rows as a normal unread filter', async () => {
+    const page = await linuxDoNotificationAdapter.listPage({
+      identityKey: 'linuxdo:7',
+      userId: '7',
+      unreadOnly: true,
+      fetcher: async () => json({ notifications: [null], total_rows_notifications: 1 })
+    });
+    expect(page.items).toEqual([]);
+    expect(sourceDiagnosticSummary(page)).toMatchObject({
+      candidateCount: 1,
+      droppedCount: 1,
+      filteredCount: 0,
+      isParseEmpty: true,
+      isExpectedEmpty: false
+    });
+  });
   it('exposes the current Discourse menu categories and advertised Chat support', async () => {
     const fetcher = vi.fn(async (input: string) => {
       expect(new URL(input).pathname).toBe('/site.json');
@@ -87,6 +115,11 @@ describe('Discourse notifications', () => {
     expect(notificationUrls[0]?.searchParams.get('filter')).toBe('all');
     expect(notificationUrls[0]?.searchParams.has('recent')).toBe(false);
     expect(firstPage).toMatchObject({ items: [], cursor: '2', hasMore: true });
+    expect(sourceDiagnosticSummary(firstPage)).toMatchObject({
+      filteredCount: 2,
+      isExpectedEmpty: true,
+      isParseEmpty: false
+    });
     expect(secondPage.items.map((item) => item.id)).toEqual(['3']);
   });
 

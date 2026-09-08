@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { Image, NativeModules, StyleSheet, Text } from 'react-native';
@@ -18,6 +18,7 @@ import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import type { MediaReferrerContext, MediaReferrerPolicy, TopicDetail } from '@/domain/forum/models';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+afterEach(() => setDiagnosticWriter(null));
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { cachedImageDisplayDimensions } from '@/platform/media/imageDisplayDimensions';
 import {
@@ -1164,6 +1165,10 @@ describe('topic block image loading', () => {
   it.each(['readyToPlay', 'error'] as const)(
     'settles %s before admitting the next body video',
     async (settledStatus) => {
+      const diagnosticLines: string[] = [];
+      setDiagnosticWriter((line) => {
+        diagnosticLines.push(line);
+      });
       const firstVideoUrl = `https://cdn.example.com/${settledStatus}-first.mp4`;
       const secondVideoUrl = `https://cdn.example.com/${settledStatus}-second.mp4`;
       const tree = () => (
@@ -1201,6 +1206,15 @@ describe('topic block image loading', () => {
           mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
         ).toBe(true)
       );
+      expect(diagnosticLines.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          operation: 'player-load',
+          mediaKind: 'video',
+          phase: 'finish',
+          outcome: settledStatus === 'readyToPlay' ? 'success' : 'failure'
+        })
+      );
+      expect(diagnosticLines.join('')).not.toContain(firstVideoUrl);
     }
   );
 
@@ -2083,7 +2097,7 @@ describe('topic block image loading', () => {
     });
   });
 
-  it('keeps a displayed image mounted when the preview action changes', async () => {
+  it('keeps a displayed image mounted with the same native request when the preview action changes', async () => {
     const firstPreviewAction = jest.fn();
     const latestPreviewAction = jest.fn();
     const screen = await render(<TopicImageHarness onOpenImagePreview={firstPreviewAction} />);
@@ -2091,7 +2105,9 @@ describe('topic block image loading', () => {
     await loadAndDisplayImage(latestImageProps(imageUrl));
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
 
+    const displayedSource = latestImageProps(imageUrl).source;
     await screen.rerender(<TopicImageHarness onOpenImagePreview={latestPreviewAction} />);
+    expect(latestImageProps(imageUrl).source).toBe(displayedSource);
 
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
     fireEvent.press(screen.getByLabelText('测试图片'));
@@ -2324,7 +2340,7 @@ describe('topic block image loading', () => {
     });
   });
 
-  it('does not emit a diagnostic trace for each body image', async () => {
+  it('records the body image attempt through decoding and display without logging its URL', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => {
       diagnosticLines.push(line);
@@ -2347,7 +2363,11 @@ describe('topic block image loading', () => {
       jest.setSystemTime(1_030);
       await act(() => imageProps.onDisplay?.());
 
-      expect(diagnosticLines).toEqual([]);
+      const events = diagnosticLines.map((line) => JSON.parse(line));
+      expect(events.map((event) => event.phase)).toEqual(['intent', 'parse', 'finish']);
+      expect(new Set(events.map((event) => event.traceId)).size).toBe(1);
+      expect(events.at(-1)).toMatchObject({ outcome: 'success', state: 'displayed' });
+      expect(diagnosticLines.join('')).not.toContain(imageUrl);
     } finally {
       setDiagnosticWriter(null);
       jest.useRealTimers();
@@ -2701,6 +2721,10 @@ describe('topic block image loading', () => {
   });
 
   it('retries failed native Topic audio only after the user asks', async () => {
+    const diagnosticLines: string[] = [];
+    setDiagnosticWriter((line) => {
+      diagnosticLines.push(line);
+    });
     const audioUrl = 'https://cdn.example.com/retry-topic-audio.mp3';
     const tree = () => (
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['audio-row']}>
@@ -2721,6 +2745,13 @@ describe('topic block image loading', () => {
     mockVideoStatus = 'readyToPlay';
     await fireEvent.press(screen.getByLabelText('音频加载失败，点按重试'));
     await waitFor(() => expect(player.replaceAsync).toHaveBeenCalledTimes(2));
+    expect(diagnosticLines.map((line) => JSON.parse(line))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ operation: 'player-load', mediaKind: 'audio', phase: 'finish', outcome: 'failure' }),
+        expect.objectContaining({ operation: 'player-load', mediaKind: 'audio', phase: 'finish', outcome: 'success' })
+      ])
+    );
+    expect(diagnosticLines.join('')).not.toContain(audioUrl);
   });
 
   it('follows intrinsic video ratio within its parent width', async () => {
@@ -3428,7 +3459,13 @@ describe('topic block image loading', () => {
       await waitFor(() => expect(screen.getByText('测试图片')).toBeTruthy());
       expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
       expect(screen.queryByTestId('expo-image')).toBeNull();
-      expect(diagnosticLines).toEqual([]);
+      expect(diagnosticLines.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          phase: 'finish',
+          outcome: 'failure',
+          imageFailure: 'decode_error'
+        })
+      );
     } finally {
       setDiagnosticWriter(null);
       fetchSpy.mockRestore();
@@ -3436,6 +3473,10 @@ describe('topic block image loading', () => {
   });
 
   it('gives each stalled body-image attempt one 30 second no-progress budget', async () => {
+    const diagnosticLines: string[] = [];
+    setDiagnosticWriter((line) => {
+      diagnosticLines.push(line);
+    });
     const timeoutImageUrl = 'https://img.example.com/stalled-body-image.png';
     const onDiagnosticFinish = jest.fn((_aggregate: unknown) => undefined);
     jest.useFakeTimers();
@@ -3488,7 +3529,15 @@ describe('topic block image loading', () => {
       expect(onDiagnosticFinish).toHaveBeenCalledWith(
         expect.objectContaining({ retryCount: 1, timeoutCount: 2, timerHighWater: 1 })
       );
+      const budgetEvents = diagnosticLines
+        .map((line) => JSON.parse(line))
+        .filter((event) => event.operation === 'image-budget');
+      expect(budgetEvents).toHaveLength(2);
+      expect(budgetEvents.every((event) => event.imageFailure === 'timeout' && event.timeoutMs === 30_000)).toBe(true);
+      expect(new Set(budgetEvents.map((event) => event.mediaRef)).size).toBe(1);
+      expect(diagnosticLines.join('')).not.toContain(timeoutImageUrl);
     } finally {
+      setDiagnosticWriter(null);
       jest.useRealTimers();
     }
   });
@@ -3546,7 +3595,9 @@ describe('topic block image loading', () => {
       await act(() => latestImageProps(svgImageUrl).onError?.({ error: 'native SVG failure' }));
       await screen.unmount();
 
-      expect(diagnosticLines).toEqual([]);
+      const terminalEvents = () =>
+        diagnosticLines.map((line) => JSON.parse(line)).filter((event) => event.phase === 'finish');
+      expect(terminalEvents()).toHaveLength(1);
       await act(async () => {
         resolvePendingResponse(
           new Response('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"></svg>', {
@@ -3556,7 +3607,7 @@ describe('topic block image loading', () => {
         await pendingResponse;
       });
       expect(mockRenderSvgPoster).not.toHaveBeenCalled();
-      expect(diagnosticLines).toEqual([]);
+      expect(terminalEvents()).toHaveLength(1);
     } finally {
       fetchSpy.mockRestore();
       setDiagnosticWriter(null);

@@ -945,33 +945,43 @@ describe('Android release evidence guards', () => {
     const moreRoute = readProjectFile('src', 'features', 'more', 'MoreRoute.tsx');
     const utilityPanels = readProjectFile('src', 'features', 'more', 'components', 'MoreUtilityPanels.tsx');
 
-    expect(entry).toContain(
-      "import { initializeDiagnosticFileLogging } from '@/platform/diagnostics/diagnosticFileStore';"
-    );
+    const bootstrapImport = "import '@/platform/diagnostics/diagnosticBootstrap';";
+    const bootstrap = readProjectFile('src', 'platform', 'diagnostics', 'diagnosticBootstrap.ts');
     const bootstrapCalls = (source: string) => {
       const calls: string[] = [];
-      const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
-      runInNewContext(code, {
-        exports: {},
-        require: (name: string) =>
-          name === 'expo'
-            ? { registerRootComponent: () => calls.push('register') }
-            : name.endsWith('/diagnosticFileStore')
-              ? { initializeDiagnosticFileLogging: () => calls.push('diagnostics') }
-              : name.endsWith('/notificationSystem')
-                ? { installMessageNotificationHandler: () => calls.push('notifications') }
-                : {}
-      });
+      const execute = (input: string) => {
+        const code = ts.transpileModule(input, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+        runInNewContext(code, {
+          exports: {},
+          require: (name: string) => {
+            if (name.endsWith('/diagnosticBootstrap')) {
+              execute(bootstrap);
+              return {};
+            }
+            if (name === './App') {
+              calls.push('app-import');
+              return {};
+            }
+            if (name === 'expo') return { registerRootComponent: () => calls.push('register') };
+            if (name.endsWith('/diagnosticFileStore'))
+              return { initializeDiagnosticFileLogging: () => calls.push('diagnostics') };
+            if (name.endsWith('/notificationSystem'))
+              return { installMessageNotificationHandler: () => calls.push('notifications') };
+            return {};
+          }
+        });
+      };
+      execute(source);
       return calls;
     };
-    const expected = ['diagnostics', 'notifications', 'register'];
+    const expected = ['diagnostics', 'app-import', 'notifications', 'register'];
     expect(bootstrapCalls(entry)).toEqual(expected);
-    expect(bootstrapCalls(entry.replace('initializeDiagnosticFileLogging();', ''))).not.toEqual(expected);
+    expect(bootstrapCalls(entry.replace(bootstrapImport, ''))).not.toEqual(expected);
     expect(
       bootstrapCalls(
         entry
-          .replace('initializeDiagnosticFileLogging();', '')
-          .replace('registerRootComponent(App);', 'registerRootComponent(App); initializeDiagnosticFileLogging();')
+          .replace(bootstrapImport, '')
+          .replace("import App from './App';", `import App from './App'; ${bootstrapImport}`)
       )
     ).not.toEqual(expected);
     expect(moreRoute).toMatch(

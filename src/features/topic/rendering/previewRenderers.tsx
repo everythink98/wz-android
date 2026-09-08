@@ -22,6 +22,7 @@ import {
   type IMGElementProps
 } from 'react-native-render-html';
 import type { ReaderSettings } from '@/domain/reader/readerData';
+import { useImageLoadDiagnostics } from '@/platform/media/imageLoadDiagnostics';
 import { imageSourceFromUrl, normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
 import {
   selectImageDisplaySource,
@@ -79,10 +80,12 @@ function useImageSourceAttempt(source: ImageURISource, attemptId: string) {
 
 function useCompatibleBodyImageArtifact({
   attemptIdentity,
+  imageConsumer = 'glide',
   onTerminalFailure,
   source
 }: {
   attemptIdentity: string;
+  imageConsumer?: 'fresco' | 'glide';
   onTerminalFailure: () => void;
   source: ImageURISource;
 }) {
@@ -102,6 +105,13 @@ function useCompatibleBodyImageArtifact({
     if (cachedArtifact) promoteCachedCompatibleSvgArtifact(requestIdentity);
   }, [cachedArtifact, requestIdentity]);
   const activeArtifact = artifact?.requestIdentity === requestIdentity ? artifact : cachedArtifact;
+  const diagnostic = useImageLoadDiagnostics(
+    activeArtifact?.posterSource || source,
+    attemptIdentity,
+    imageConsumer,
+    true,
+    source.uri
+  );
   useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -129,14 +139,16 @@ function useCompatibleBodyImageArtifact({
   }, [settle]);
   const recover = useCallback(async () => {
     try {
-      const recovered = await recoverCompatibleSvgArtifact(source, { signal: consumption.controller.signal });
+      const recovered = await recoverCompatibleSvgArtifact(diagnostic.source, {
+        signal: consumption.controller.signal
+      });
       if (!isCurrent() || isSettled()) return;
       if (recovered) setArtifact(recovered, true);
       else fail();
     } catch {
       fail();
     }
-  }, [consumption, fail, isCurrent, isSettled, setArtifact, source]);
+  }, [consumption, diagnostic.source, fail, isCurrent, isSettled, setArtifact]);
   const refresh = useCallback(
     async (currentArtifact: CompatibleSvgArtifact) => {
       try {
@@ -151,22 +163,27 @@ function useCompatibleBodyImageArtifact({
     },
     [consumption, fail, isCurrent, isSettled, setArtifact]
   );
-  const handleError = useCallback(() => {
-    if (!isCurrent() || isSettled()) return;
-    if (!activeArtifact) {
-      void recover();
-      return;
-    }
-    if (posterRefreshIdentityRef.current === attemptIdentity) {
-      fail();
-      return;
-    }
-    posterRefreshIdentityRef.current = attemptIdentity;
-    void refresh(activeArtifact);
-  }, [activeArtifact, attemptIdentity, fail, isCurrent, isSettled, recover, refresh]);
+  const handleError = useCallback(
+    (error?: unknown) => {
+      if (!isCurrent() || isSettled()) return;
+      diagnostic.failed(error);
+      if (!activeArtifact) {
+        void recover();
+        return;
+      }
+      if (posterRefreshIdentityRef.current === attemptIdentity) {
+        fail();
+        return;
+      }
+      posterRefreshIdentityRef.current = attemptIdentity;
+      void refresh(activeArtifact);
+    },
+    [activeArtifact, attemptIdentity, diagnostic, fail, isCurrent, isSettled, recover, refresh]
+  );
   return {
     activeArtifact,
-    activeSource: activeArtifact?.posterSource || source,
+    activeSource: diagnostic.source,
+    diagnostic,
     handleError,
     isCurrent,
     isSettled,
@@ -245,6 +262,7 @@ function ManagedOriginalImageLayer({
     if (lease.failure) onTerminalFailure();
   }, [lease.failure, onTerminalFailure]);
   const attemptedSource = useImageSourceAttempt(source, lease.attemptId);
+  const diagnostic = useImageLoadDiagnostics(attemptedSource, lease.attemptId, 'glide', lease.admitted);
   if (!lease.admitted) return null;
   return (
     <ExpoImage
@@ -254,16 +272,18 @@ function ManagedOriginalImageLayer({
       contentFit="contain"
       priority={forced ? 'high' : 'low'}
       recyclingKey={`${compatibleImageRequestIdentity(source)}:body-original`}
-      source={attemptedSource}
+      source={diagnostic.source}
       style={StyleSheet.absoluteFill}
       transition={150}
       onDisplay={() => {
         if (activeAttemptIdRef.current !== lease.attemptId) return;
+        diagnostic.displayed();
         lease.settle('displayed');
         onDisplay();
       }}
-      onError={() => {
+      onError={(error) => {
         if (activeAttemptIdRef.current !== lease.attemptId) return;
+        diagnostic.failed(error);
         if (!onRequestError()) return;
         lease.settle('error');
         if (lease.attemptId === 'unmanaged') onTerminalFailure();
@@ -330,6 +350,7 @@ function AdmittedPreviewImageBlock({
   const {
     activeArtifact,
     activeSource: activeImageSource,
+    diagnostic,
     handleError: handleImageError,
     isCurrent: isCurrentImageAttempt,
     isSettled: isImageAttemptSettled,
@@ -359,6 +380,7 @@ function AdmittedPreviewImageBlock({
   const handleImageLoad = useCallback(
     (event: ImageLoadEventData) => {
       if (!isCurrentImageAttempt() || isImageAttemptSettled()) return;
+      diagnostic.loaded(event.cacheType);
       const width = Number(event.source.width);
       const height = Number(event.source.height);
       if (!(width > 0 && height > 0)) {
@@ -379,6 +401,7 @@ function AdmittedPreviewImageBlock({
     [
       bodyRequestIdentity,
       cacheKey,
+      diagnostic,
       imageLoadIdentity,
       isCurrentImageAttempt,
       isImageAttemptSettled,
@@ -389,8 +412,9 @@ function AdmittedPreviewImageBlock({
   );
   const handleImageDisplay = useCallback(() => {
     if (!isCurrentImageAttempt() || isImageAttemptSettled()) return;
+    diagnostic.displayed();
     setDisplayedImageLoadIdentity(imageLoadIdentity, true);
-  }, [imageLoadIdentity, isCurrentImageAttempt, isImageAttemptSettled, setDisplayedImageLoadIdentity]);
+  }, [diagnostic, imageLoadIdentity, isCurrentImageAttempt, isImageAttemptSettled, setDisplayedImageLoadIdentity]);
   const handleImageProgress = useCallback(
     (event: { loaded: number }) => {
       if (!isCurrentImageAttempt() || isImageAttemptSettled()) return;
@@ -639,6 +663,7 @@ function ManagedSemanticInlineForumImage({
     () => ({ ...source, uri: inlineFrescoSourceUri(source.uri, requestIdentity) }),
     [requestIdentity, source]
   );
+  const diagnostic = useImageLoadDiagnostics(nativeSource, lease.attemptId, 'fresco', lease.admitted);
   if (lease.failure) {
     return (
       <Text
@@ -666,12 +691,13 @@ function ManagedSemanticInlineForumImage({
       key={lease.attachmentKey}
       testID={lease.admitted ? 'topic-inline-image' : 'topic-inline-image-waiting'}
       resizeMode="contain"
-      source={lease.admitted ? nativeSource : undefined}
+      source={lease.admitted ? diagnostic.source : undefined}
       style={attachmentSize}
       onError={
         lease.admitted
           ? (event) => {
               if (!isInlineImageRequestEvent(event, requestGeneration)) return;
+              diagnostic.failed(event);
               lease.settle('error');
             }
           : undefined
@@ -680,6 +706,7 @@ function ManagedSemanticInlineForumImage({
         lease.admitted
           ? (event) => {
               if (!isInlineImageRequestEvent(event, requestGeneration)) return;
+              diagnostic.displayed();
               if (!isInlineForumImage(attributes) || isBoundedInlineForumImage(attributes)) {
                 const loadedSource = (event as { nativeEvent?: { source?: { height?: unknown; width?: unknown } } })
                   .nativeEvent?.source;
@@ -777,11 +804,13 @@ function ManagedMixedForumImage({
     () => setFailedAttemptIdentity(attemptIdentity, true),
     [attemptIdentity, setFailedAttemptIdentity]
   );
-  const { activeArtifact, activeSource, handleError, isCurrent, isSettled, settle } = useCompatibleBodyImageArtifact({
-    attemptIdentity,
-    onTerminalFailure: handleTerminalFailure,
-    source
-  });
+  const { activeArtifact, activeSource, diagnostic, handleError, isCurrent, isSettled, settle } =
+    useCompatibleBodyImageArtifact({
+      attemptIdentity,
+      imageConsumer: 'fresco',
+      onTerminalFailure: handleTerminalFailure,
+      source
+    });
   useLayoutEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -886,7 +915,7 @@ function ManagedMixedForumImage({
           lease.admitted
             ? (event) => {
                 if (!isInlineImageRequestEvent(event, requestGeneration)) return;
-                handleError();
+                handleError(event);
               }
             : undefined
         }
@@ -894,6 +923,7 @@ function ManagedMixedForumImage({
           lease.admitted
             ? (event) => {
                 if (!isInlineImageRequestEvent(event, requestGeneration) || !isCurrent() || isSettled()) return;
+                diagnostic.displayed();
                 const loadedSource = (event as { nativeEvent?: { source?: { height?: unknown; width?: unknown } } })
                   .nativeEvent?.source;
                 const width = Number(loadedSource?.width);

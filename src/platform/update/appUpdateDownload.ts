@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, DownloadTask, File, Paths, type DownloadProgress } from 'expo-file-system';
 import { NativeModules } from 'react-native';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import {
   ApkVerificationError,
   type ApkInstaller,
@@ -28,8 +30,19 @@ export function appUpdateFile(update: AppUpdateInfo, complete = false) {
   return new File(updateDirectory(), `wz-update-${update.versionCode}-${update.sha256}.${complete ? 'apk' : 'part'}`);
 }
 
-async function verify(file: File, update: AppUpdateInfo) {
-  await verifyDownloadedApk(NativeModules.ApkInstallerModule as ApkInstaller | undefined, file.uri, update);
+async function verify(file: File, update: AppUpdateInfo, trace?: DiagnosticTrace) {
+  if (trace) markDiagnosticStage(trace, 'parse', { state: 'package-verification', versionCode: update.versionCode });
+  try {
+    await verifyDownloadedApk(NativeModules.ApkInstallerModule as ApkInstaller | undefined, file.uri, update);
+    if (trace) markDiagnosticStage(trace, 'parse', { state: 'verified' });
+  } catch (error) {
+    if (trace)
+      markDiagnosticStage(trace, 'parse', {
+        state: 'failure',
+        reason: isInvalidApk(error) ? 'invalid_response' : normalizeDiagnosticReason(error)
+      });
+    throw error;
+  }
 }
 
 function pruneUpdateFiles(keep?: AppUpdateInfo) {
@@ -54,13 +67,16 @@ export async function saveAppUpdateArtifact(artifact: AppUpdateArtifact) {
   );
 }
 
-export async function inspectAppUpdateArtifact(artifact: AppUpdateArtifact): Promise<AppUpdateArtifact> {
+export async function inspectAppUpdateArtifact(
+  artifact: AppUpdateArtifact,
+  trace?: DiagnosticTrace
+): Promise<AppUpdateArtifact> {
   const complete = appUpdateFile(artifact.update, true);
   const partial = appUpdateFile(artifact.update);
   const file = complete.exists ? complete : partial;
   if (file.exists) {
     try {
-      await verify(file, artifact.update);
+      await verify(file, artifact.update, trace);
       if (file === partial) await partial.move(complete);
       return { ...artifact, ready: true, downloadedBytes: complete.size, totalBytes: complete.size };
     } catch (error) {
@@ -78,40 +94,62 @@ export async function inspectAppUpdateArtifact(artifact: AppUpdateArtifact): Pro
 }
 
 export async function restoreAppUpdateArtifact(): Promise<AppUpdateArtifact | null> {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-  let artifact: AppUpdateArtifact;
+  const trace = beginDiagnosticTrace('update', 'restore');
   try {
-    const saved = JSON.parse(raw);
-    if (saved?.format !== 1) throw new Error('更新记录格式不正确。');
-    const update = parseSavedAppUpdate(saved.update);
-    const totalBytes = saved.totalBytes;
-    if (totalBytes !== null && (!Number.isSafeInteger(totalBytes) || totalBytes <= 0)) {
-      throw new Error('更新记录大小不正确。');
+    const raw = await AsyncStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      finishDiagnosticTrace(trace, 'noop', { state: 'missing' });
+      return null;
     }
-    artifact = { update, totalBytes, downloadedBytes: 0, ready: false };
-  } catch {
-    await AsyncStorage.removeItem(STORAGE_KEY);
-    pruneUpdateFiles();
-    return null;
+    let artifact: AppUpdateArtifact;
+    try {
+      const saved = JSON.parse(raw);
+      if (saved?.format !== 1) throw new Error('更新记录格式不正确。');
+      const update = parseSavedAppUpdate(saved.update);
+      const totalBytes = saved.totalBytes;
+      if (totalBytes !== null && (!Number.isSafeInteger(totalBytes) || totalBytes <= 0)) {
+        throw new Error('更新记录大小不正确。');
+      }
+      artifact = { update, totalBytes, downloadedBytes: 0, ready: false };
+    } catch {
+      markDiagnosticStage(trace, 'parse', { state: 'invalid', reason: 'invalid_response' });
+      await AsyncStorage.removeItem(STORAGE_KEY);
+      pruneUpdateFiles();
+      finishDiagnosticTrace(trace, 'partial', { state: 'cleared', reason: 'invalid_response' });
+      return null;
+    }
+    const restored = await inspectAppUpdateArtifact(artifact, trace);
+    finishDiagnosticTrace(trace, 'success', {
+      state: restored.ready ? 'verified' : 'restored',
+      versionCode: restored.update.versionCode,
+      downloadedBytes: restored.downloadedBytes
+    });
+    return restored;
+  } catch (error) {
+    finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+    throw error;
   }
-  return inspectAppUpdateArtifact(artifact);
 }
 
-export async function prepareAppUpdateArtifact(update: AppUpdateInfo): Promise<AppUpdateArtifact> {
+export async function prepareAppUpdateArtifact(
+  update: AppUpdateInfo,
+  trace?: DiagnosticTrace
+): Promise<AppUpdateArtifact> {
   const trusted = parseSavedAppUpdate(update);
   const folder = updateDirectory();
   folder.create({ idempotent: true, intermediates: true });
   let artifact: AppUpdateArtifact = { update: trusted, totalBytes: null, downloadedBytes: 0, ready: false };
   // Persist the selected identity before starting any native writer or replacing an older task.
+  if (trace) markDiagnosticStage(trace, 'persist', { state: 'started', versionCode: trusted.versionCode });
   await saveAppUpdateArtifact(artifact);
+  if (trace) markDiagnosticStage(trace, 'persist', { state: 'persisted' });
   const complete = appUpdateFile(trusted, true);
   if (!complete.exists) {
     for (const folder of [Paths.cache, Paths.document]) {
       const legacy = new File(folder, complete.name);
       if (!legacy.exists) continue;
       try {
-        await verify(legacy, trusted);
+        await verify(legacy, trusted, trace);
         await legacy.move(complete);
         break;
       } catch (error) {
@@ -120,14 +158,14 @@ export async function prepareAppUpdateArtifact(update: AppUpdateInfo): Promise<A
     }
   }
   pruneUpdateFiles(trusted);
-  artifact = await inspectAppUpdateArtifact(artifact);
+  artifact = await inspectAppUpdateArtifact(artifact, trace);
   return artifact;
 }
 
-export async function finishAppUpdateDownload(artifact: AppUpdateArtifact) {
+export async function finishAppUpdateDownload(artifact: AppUpdateArtifact, trace?: DiagnosticTrace) {
   const partial = appUpdateFile(artifact.update);
   try {
-    await verify(partial, artifact.update);
+    await verify(partial, artifact.update, trace);
   } catch (error) {
     if (isInvalidApk(error) && partial.exists) partial.delete();
     throw error;

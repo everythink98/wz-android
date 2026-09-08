@@ -58,6 +58,7 @@ class ForumContentSelectionView(
   ViewTreeObserver.OnScrollChangedListener {
   val onAutoScroll by EventDispatcher<Map<String, Any>>()
   val onSelectionChange by EventDispatcher<Map<String, Any>>()
+  val onSelectionError by EventDispatcher<Map<String, Any>>()
 
   internal var pendingEnabled = true
   internal var pendingRevision = ""
@@ -1030,6 +1031,7 @@ class ForumContentSelectionView(
         (systemActionLoaderForTest ?: platformSystemActions.get()::load).invoke(text, publishSmartActions)
       }.onFailure {
         Log.w(LOG_TAG, "system text actions could not load", it)
+        emitError("system-actions-load")
       }.getOrDefault(emptyList())
       systemActions = immediateActions
       systemActionMenuDirty = true
@@ -1067,6 +1069,7 @@ class ForumContentSelectionView(
     }
     val invoked = runCatching(bound.action.invoke).onFailure {
       Log.w(LOG_TAG, "system text action could not run", it)
+      emitError("system-action-run")
     }.getOrDefault(false)
     if (invoked && bound.action.finishSelectionOnSuccess) actionMode?.finish()
     return true
@@ -1209,6 +1212,7 @@ class ForumContentSelectionView(
     val diagnosticKey = if (rowKey == null) code else "$code:$rowKey"
     if (lastErrorCode == diagnosticKey) return
     lastErrorCode = diagnosticKey
+    onSelectionError(mapOf("code" to code, "revision" to pendingRevision))
     Log.w(LOG_TAG, if (rowKey == null) "selection-error code=$code" else "selection-error code=$code rowKey=$rowKey")
   }
 

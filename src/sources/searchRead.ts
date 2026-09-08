@@ -19,7 +19,10 @@ import {
 } from '@/domain/forum/searchFilters';
 import type { Category, FeedSource, SearchResponse, Source, Topic } from '@/domain/forum/models';
 import type { Fetcher } from '@/platform/network/request';
-import { copySourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from './diagnostics';
+import {
+  copySourceDiagnosticSummary,
+  mergeSourceDiagnosticSummaries
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { runForumSourceReadAggregateAttempt, runForumSourceReadAttempt } from './forumSourceReadAttempt';
 import {
   dispatchSourceRead,

@@ -7,7 +7,7 @@ import { browserFetchIntentFromInit } from '@/platform/network/browserFetchInten
 import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
 import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
-import { sourceDiagnosticSummary } from '@/sources/diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { DEFAULT_SEARCH_FILTERS } from '@/domain/forum/searchFilters';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 

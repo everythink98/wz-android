@@ -1,6 +1,6 @@
 import type { Source, SourceErrors } from '@/domain/forum/models';
 import { REQUEST_CANCELED_MESSAGE, withAbortableTimeout } from '@/platform/network/request';
-import { sourceDiagnosticSummary } from './diagnostics';
+import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { sourceErrorFromUnknown } from './sourceErrors';
 
 export const AGGREGATE_SOURCE_BUDGET_MS = 5_000;

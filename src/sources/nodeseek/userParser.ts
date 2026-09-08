@@ -9,7 +9,7 @@ import {
   toIsoString
 } from '@/domain/forum/html';
 import { accessRequirementFromObject } from '@/domain/forum/accessRequirements';
-import { annotateSourceDiagnosticSummary } from '@/sources/diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   NODESEEK_BASE_URL,
   extractNodeSeekEmbeddedData,

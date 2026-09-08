@@ -20,7 +20,7 @@ import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/n
 import { RequestCanceledError, RequestTimeoutError, type Fetcher } from '@/platform/network/request';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import type { SessionSource } from '@/domain/forum/sourceCatalog';
-import { annotateSourceDiagnosticSummary } from './diagnostics';
+import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { acceptForumReadResponse, registerForumReadResponseEvidence } from './forumSourceReadAttempt';
 import { forumReadEvidenceFetcher } from '../../tests/helpers/forumReadEvidence';
 import { getYaohuoFeedDirect, getYaohuoTopicDirect } from '@/sources/yaohuo/reader';
