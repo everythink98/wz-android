@@ -7,6 +7,7 @@ type NativeDiagnosticModule = {
   appendBatch?: (lines: string) => Promise<void>;
   persistCrashSync?: (lines: string) => boolean;
   snapshot?: () => Promise<unknown>;
+  recordStartupPhase?: (phase: string) => void;
 };
 
 export function nativeDiagnosticJournal(): NativeDiagnosticModule | undefined {

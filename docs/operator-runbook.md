@@ -102,7 +102,15 @@ proof 的 JS/renderer 分支要求异常记录、旧进程归属和系统退出�
 
 fresh prebuild 后，用 `android/gradlew.bat -p android :app:testReleaseUnitTest --tests '*NetworkProxyRuntimeTest' --no-daemon` 执行生成的网络 canonical owner；RN 注入 wiring 使用 `:react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests '*ReactOkHttpNetworkFetcherTest'`。两份 XML 报告都必须包含非零用例。
 
-设备链路先启动独立 `WZ_ImageRuntime_Test_API35`，执行 `node scripts/run-network-image-instrumented-tests.mjs`。runner 精确匹配该 AVD，以开发签名 Release 和真实 RN/Fresco 初始化验证图片、Glide 两种 model、缓存、回收、取消、连续轮换及 SVG。仅该测试构建允许 `127.0.0.1/localhost` HTTP，其他地址仍禁止明文流量；测试后的 finally 移除临时 manifest/resources 并重新构建默认 Release，测试 APK 不用于保留数据设备验收。runner 不创建、清理或重置 AVD；保留数据设备仍按安装身份核对与只读 Live 流程单独验收。
+设备链路先启动独立 `WZ_ImageRuntime_Test_API35`，执行 `node scripts/run-network-image-instrumented-tests.mjs`。runner 精确匹配该 AVD，以开发签名 Release 同时运行 `ManagedCookieResponsesInstrumentedTest` 的合成 HTTP 轮换、平台 Cookie 属性/定向过期验证，以及真实 RN/Fresco 初始化验证图片、Glide 两种 model、缓存、回收、取消、连续轮换及 SVG。仅该测试构建允许 `127.0.0.1/localhost` HTTP，其他地址仍禁止明文流量；测试后的 finally 移除临时 manifest/resources 并重新构建默认 Release，测试 APK 不用于保留数据设备验收。runner 不创建、清理或重置 AVD；保留数据设备仍按安装身份核对与只读 Live 流程单独验收。
+
+### L 站续签与登录态诊断
+
+沿用上面的隔离 runner；它分两个 instrumentation 进程执行持久型 Cookie 续签并 flush、停止进程、重启后真实 HTTP 认证，断言 PID 改变，并检查原 Native journal 的原因字段仍在且敏感字段已过滤。会话型 Cookie 只按 Android 实际语义观察，不能把内存接受当作重启持久化证据。多个 Domain/Path 的同名 Cookie、Secure/HttpOnly 与定向删除由同一个平台 owner 验证。
+
+导出先看 `diagnostic-account-summary`：`localSnapshot` 是本地身份，`lastCheckResult/lastCheckAt/checkedInCurrentProcess` 才说明日志中的最近核对。按请求 trace/request/call 与账号隔离 epoch 关联 `cookie-request`（实际发送的登录 Cookie 是否存在）、`cookie-response`（类别、设置/删除/未知、平台逐项接受）、`cookie-persist`（persisted/flush_failed）和 `cookie-barrier`（闭集原因与开启/释放）。`settled/accepted` 不等于已落盘，`flush_failed` 不等于已清除。source_denied、redirect_denied、barrier_blocked、epoch_changed、canceled、callback_timeout、pending_write 和平台 rejected 各自处理，旧日志 stale/baseline_changed 只作旧语义读取。WebView 内部响应不可见；只记录可信页面交接和前后凭据存在、最终协议结果，不推测内部 Set-Cookie。
+
+现场只在按安装身份步骤覆盖安装正常开发包后，用现有登录态进行只读浏览，等至少两次自然登录 Cookie 更新并看到落盘确认，再按保留数据方式结束/重启 App，核对 `/session/current.json` 与账号结果。不得清 Cookie、自动登录或重放写操作来制造条件。无真实登录或观察窗口内没有自然续签记 `NOT_VERIFIED`，缺隔离设备记 `BLOCKED_BY_ENV`。若服务端明确删除，继续追溯此前是否有客户端漏续签；不能只因 stale 消失就关闭 `REG-ACCOUNT-048`。
 
 ### 下拉刷新 Native 验证
 
@@ -198,6 +206,8 @@ node scripts/smoke-android.mjs <apkPath>
 
 需要可信安装的 `agent-device >= 0.19.0`，并显式指定设备与目标 APK：
 
+Windows runner 优先直接执行 PATH 中可信 npm 安装旁的 Node CLI，避免 PowerShell shim 启动停滞，并原样传递设备名和参数；其他安装布局仍沿用原 shim。
+
 ```powershell
 $env:WZ_ANDROID_TEST_DEVICE = '<device>'
 $env:WZ_ANDROID_TEST_APK = '<absolute-apk-path>'
@@ -286,6 +296,34 @@ node scripts/check-notification-refresh-cancel.mjs '<ignored-evidence-directory>
 脚本先等待聚合通知进入 data、empty 或 partial 终态，排除首次加载圆圈，再使用已安装的 `pngjs` 读取原生截图，证明下拉指示器出现，验证 CANCEL 后 1 秒内收起、下一次正常下拉在 60 秒内结算。证据目录必须 ignored；不打开消息、不标已读。当前像素探针适用于已验的 1080×2400 与 1264×2780 浅色 viewport；其他布局需先核对截图与探针范围，不能把“未拉出指示器”算作通过。
 
 `npm run smoke:android` 在覆盖安装后的第一次启动前写入日志 marker，只检查有界启动窗口、前台包名、崩溃、ANR 与 RedBox，形成 `APK_SANITY`；随后 Replay 独立形成 `DEVICE_REPLAY_PASS`。二者都不等于真实来源当天数据或全部功能通过，也不授权任何远端写操作。
+
+### 冷启动对照
+
+启动图通过 `expo-splash-screen` 的 drawable 配置和 `plugins/withSharedAppIcon.js` 共用 `assets/icon.webp`；React 占位用原生资源名，不再 require 完整 PNG。WebP 是 `assets/icon.png` 的无损副本；更新图标时同步转换并核对解码后的 RGBA 像素一致（Pillow：`image.save(path, lossless=True, method=6, exact=True)`）。`assets/splashscreen.xml` 保持原生 288dp 画布内居中 200dp 图标；两种入口的显示尺寸同时核对。缩包验收比较同签名、同 ABI 的 release APK，并确认只保留一份 `reader_app_icon`，无 `assets_icon` 或五档 `splashscreen_logo` 位图。
+
+使用相同配置的 Release Hermes 测试包，先按覆盖安装规则确认签名、APK SHA 与 firstInstallTime，再执行：
+
+```powershell
+node scripts/check-cold-start.mjs --serial <serial> --apk <匹配的本地APK路径> --output .codex-tmp/<任务目录>/startup-results.json
+```
+
+输出父目录须已存在，文件必须是 `.codex-tmp` 内的新路径。默认三批、每批十次；工具不安装或清数据，只 force-stop 指定 App 并通过 launcher 启动。每轮校验 COLD 启动、新进程身份和阶段所属 buildId，以进程启动以来的 Native 单调毫秒记录 `page-ready`、本机恢复及首批 Feed；`TotalTime` 单列为系统显示指标，不与 Native 毫秒相加。Feed 空态、失败和二十秒内缺少内容阶段不补零，不算帖子成功。各轮等本轮内容终态或采样截止后再间隔五秒，保持请求波顺序执行。工具不会清 logcat；仅读取当前 PID 的固定 `WzStartup` 阶段。
+
+首次覆盖安装、旧版迁移和设备重启后的启动单独观察，不纳入普通冷启动。前后保持来源设置、资料规模、设备、电源状态和构建类型一致；计时期间不运行构建、测试、Hermes sampling 或其他设备操作。报告三批中位数、p90、最慢值，以及首次详情/公式/编辑器和通知/深链接的独立结果；页面就绪信号不能代替实际交互或首批帖子。退出、缺少页面就绪、构建或安装身份变化立即停止并保留结果。原生图标视觉必须使用 Release 包检查，开发客户端不作效果证据。
+
+### ReaderData SQLite 升级验收
+
+只使用新建隔离 AVD `WZ_ReaderStorage_API30_20260910` / `WZ_ReaderStorage_API35_20260910`，分别安装 Google APIs x86_64 的 API 30 / 35 系统镜像。先完成 fresh prebuild；不在主登录设备运行 fixture，不卸载或清数据。使用同一测试包覆盖安装第二台隔离 AVD：
+
+```powershell
+npx expo prebuild --platform android --clean --no-install
+node scripts/run-reader-storage-device-proof.mjs --serial <隔离serial> --build --output .codex-tmp/<任务目录>/sqlite-api30.json
+node scripts/run-reader-storage-device-proof.mjs --serial <另一隔离serial> --apk <上一步保留的reader-storage-proof.apk> --output .codex-tmp/<任务目录>/sqlite-api35.json
+```
+
+Runner 在临时 Gradle overlay 中选择 `dev/reader-storage-proof/index.tsx`，编译 Release Hermes 并仅为隔离取证开启 run-as；生产入口没有故障开关。每轮 force-stop 后以唯一 token 启动，核对 buildId、processSessionId、PID 和安装身份，保留不含资料正文的 receipt。覆盖普通、6000 条收藏/历史组合、5002 条历史、大行及超 5 MiB 旧数据，逐字段和顺序核对；在提交前后、部分/全部删除旧 key 后暂停，由外部进程终止再恢复；清理失败后写入新设置再重启，验证不回退旧快照。真实 SQL trigger 验证历史/收藏原子回滚，第二连接持锁验证 3 秒等待，EXPLAIN QUERY PLAN 核对时间索引。
+
+`--seed-only supported` 只重建 runner 自己标记的隔离资料，可用于旧版仍完整支持规模的性能对照。随后覆盖安装正常生产入口的 Release 测试包，再执行冷启动采样；proof 包的核对与故障开销不能作为产品性能样本。迁移和清理 trace 的 `elapsedMs` 使用单调时钟，旧 trace `durationMs` 不作为该阶段性能依据。输出必须是 ignored `.codex-tmp` 下的新文件；测试数据与 APK 不提交。
 
 ### Release 性能回归
 

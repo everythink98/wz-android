@@ -1,4 +1,5 @@
-import type { ReplyLocationTarget, Source, Topic, UserReference } from './models';
+import type { ReplyLocationTarget, Source, Topic, TopicLocationTarget, UserReference } from './models';
+import { topicLocationForReply } from './topicLocation';
 import { isNodeSeekHost, sourceCatalog } from './sourceCatalog';
 
 const YAOHUO_CATEGORY_NAMES: Record<string, string> = {
@@ -104,7 +105,7 @@ function positiveLocationPart(value: string | null | undefined) {
 export function parseForumTopicDestination(
   href: string,
   baseUrl?: string
-): { topic: Topic; targetReply?: ReplyLocationTarget } | null {
+): { topic: Topic; location?: TopicLocationTarget } | null {
   const topic = parseForumTopicLink(href, baseUrl);
   const url = forumLinkUrl(href, baseUrl);
   if (!topic || !url) return null;
@@ -126,7 +127,7 @@ export function parseForumTopicDestination(
     const pageHint = positiveLocationPart(url.searchParams.get('p'));
     if (commentId) targetReply = { commentId, ...(pageHint ? { pageHint } : {}) };
   }
-  return { topic, ...(targetReply ? { targetReply } : {}) };
+  return { topic, ...(targetReply ? { location: topicLocationForReply(topic.source, targetReply) } : {}) };
 }
 
 export function parseInternalTopicOpenLink(value: string) {

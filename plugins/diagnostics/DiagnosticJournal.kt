@@ -9,6 +9,8 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
+import android.os.SystemClock
+import android.util.Log
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -151,6 +153,7 @@ internal object DiagnosticJournal {
   fun install(application: Application) {
     if (storage != null) return
     try {
+      recordStartupPhase("diagnostics-start")
       val directory = File(application.noBackupFilesDir, "diagnostics")
       check(directory.isDirectory || directory.mkdirs())
       storage = directory
@@ -158,8 +161,10 @@ internal object DiagnosticJournal {
       nativeStore = DiagnosticLogStore(directory, "native")
       val sessionFile = File(directory, "process.json")
       previous = try { JSONObject(sessionFile.readText()) } catch (_: Exception) { null }
+      recordStartupPhase("diagnostics-read")
       val session = JSONObject(context()).put("pid", Process.myPid()).put("startedAt", System.currentTimeMillis())
       try { atomicWrite(sessionFile, session.toString()) } catch (_: Exception) { crashWriteFailureCount++ }
+      recordStartupPhase("diagnostics-written")
       recordApp("startup", "success", mapOf("state" to "started"))
       executor.execute { collectPreviousExit(application) }
       val original = Thread.getDefaultUncaughtExceptionHandler()
@@ -204,6 +209,29 @@ internal object DiagnosticJournal {
 
   private fun recordApp(operation: String, outcome: String, fields: Map<String, Any>) =
     enqueue("native", event(operation, outcome, fields).toString())
+
+  private val startupPhases = setOf(
+    "diagnostics-start", "diagnostics-read", "diagnostics-written", "network-start", "network-client",
+    "glide-start", "glide-ready", "image-loader-ready", "network-ready", "js-entry", "react-mounted",
+    "reader-start", "reader-read", "reader-parsed", "reader-cleaned", "reader-serialized", "reader-ready",
+    "sessions-start", "sessions-read", "sessions-ready", "navigation-ready", "page-layout", "page-ready",
+    "splash-hidden", "feed-content", "feed-empty", "feed-error"
+  )
+  private val recordedStartupPhases = mutableSetOf<String>()
+
+  @Synchronized
+  fun recordStartupPhase(phase: String): Boolean {
+    if (phase !in startupPhases || !recordedStartupPhases.add(phase)) return false
+    try {
+      val fields = mapOf<String, Any>("state" to phase,
+        "elapsedMs" to (SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime()))
+      val line = event("startup-timing", "success", fields).toString()
+      // Only closed phase names and build/process identity enter logcat, never user data.
+      Log.i("WzStartup", line)
+      if (storage != null) enqueue("native", line)
+    } catch (_: Exception) { /* Timing must not change startup. */ }
+    return true
+  }
 
   private fun collectPreviousExit(application: Application) {
     if (Build.VERSION.SDK_INT < 30) {
@@ -340,7 +368,15 @@ internal object DiagnosticJournal {
   }
 
   private val networkEnums = mapOf(
-      "operation" to setOf("install", "request", "rotate-read-runtime"),
+      "operation" to setOf("install", "request", "rotate-read-runtime", "cookie-response", "cookie-request", "cookie-persist", "cookie-barrier"),
+      "cookieKind" to setOf("login", "session", "clearance", "connect", "other"),
+      "cookieAction" to setOf("set", "delete", "unknown"),
+      "cookieLifetime" to setOf("session", "persistent", "expired", "unknown"),
+      "cookieAccepted" to setOf("accepted", "rejected", "not_submitted", "pending"),
+      "cookieEndpoint" to setOf("auth", "connect", "categories", "notifications", "topic", "feed", "other"),
+      "cookieTransport" to setOf("okhttp", "cronet", "webview"),
+      "cookieBarrierReason" to setOf("startup", "source-change", "surface-open", "surface-close", "identity-change", "explicit-clear"),
+      "cookieResult" to setOf("settled", "persisted", "flush_failed", "redirect_denied", "barrier_blocked", "epoch_changed", "callback_timeout", "pending_write", "absent", "applied", "source_denied", "stale", "canceled", "baseline_changed", "write_failed"),
       "phase" to setOf("call-start", "image-lease-released", "image-call-failed", "response-body-end", "response-failed", "dns-start", "dns-end", "connect-start", "tls-start", "tls-end", "connect-end", "connect-failed", "connection-acquired", "connection-released", "response-start", "response-headers", "call-end", "call-failed", "call-canceled", "intent", "publish", "cancel", "drain", "finish"),
       "source" to setOf("v2ex", "nodeseek", "linuxdo", "yaohuo", "anonymous"),
       "lane" to setOf("forum", "media"), "method" to setOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"),
@@ -353,13 +389,14 @@ internal object DiagnosticJournal {
       "imageFailure" to setOf("executor_rejected", "timeout", "canceled", "http_error", "read_error", "decode_error", "tls_error", "dns_error", "network_error", "unknown"),
       "imageContentType" to setOf("image", "svg", "html", "other", "unknown")
     )
-  private val networkNumbers = setOf("generation", "previousGeneration", "elapsedMs", "queuedCount", "runningCount", "leaseCount", "cronetActiveCount", "status", "byteCount", "attempt")
+  private val networkNumbers = setOf("surfaceGeneration", "generation", "previousGeneration", "elapsedMs", "queuedCount", "runningCount", "leaseCount", "cronetActiveCount", "status", "byteCount", "attempt", "cookieCount", "cookieRevision", "cookieIndex", "cookieEpoch", "requestCookieEpoch", "cookieWriteSequence")
   private val networkIdentities = setOf("callId", "clientId", "poolId", "dispatcherId", "connectionId", "forumPoolId", "mediaPoolId", "imageClientId")
 
   private fun safeNetworkFields(fields: Map<String, Any>): Map<String, Any> {
     val output = mutableMapOf<String, Any>()
     for ((key, value) in fields) {
       when {
+        value is Boolean && key in setOf("hasLoginCookie", "loginCookieChanged", "cookieBarrierBlocked") -> output[key] = value
         value is String && networkEnums[key]?.contains(value) == true -> output[key] = value
         value is Number && key in networkNumbers && value.toDouble().isFinite() && value.toDouble() in 0.0..1_000_000_000.0 -> output[key] = value
         value is String && key in networkIdentities && value.matches(Regex("[0-9a-f]{1,8}")) -> output[key] = value

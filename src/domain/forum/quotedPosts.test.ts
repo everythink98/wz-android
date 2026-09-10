@@ -3,11 +3,27 @@ import {
   discourseQuotedPostReferenceFromAttributes,
   quotedPostReferenceFromReply,
   quotedPostReferenceKey,
-  replyForQuotedPost
+  replyForQuotedPost,
+  topicForQuotedPost
 } from './quotedPosts';
 import type { Reply } from './models';
 
 describe('quoted post contract', () => {
+  it('uses a valid quote reference without a URL and refuses conflicting topic URLs', () => {
+    const reference = { source: 'linuxdo' as const, topicId: '42', postNumber: 6 };
+    expect(topicForQuotedPost({ reference })).toMatchObject({
+      source: 'linuxdo',
+      id: '42',
+      url: 'https://linux.do/t/42'
+    });
+    expect(topicForQuotedPost({ reference, topicUrl: '/t/topic/42/6' }, 'https://linux.do/t/99')).toMatchObject({
+      id: '42'
+    });
+    for (const topicUrl of ['https://linux.do/t/99', 'https://www.v2ex.com/t/42', 'https://evil.example/t/42']) {
+      expect(topicForQuotedPost({ reference, topicUrl })).toBeNull();
+    }
+    expect(topicForQuotedPost({ reference: { ...reference, topicId: '../42' } })).toBeNull();
+  });
   it('normalizes topic-body and reply quotes to the same reference shape', () => {
     const topicBodyReference = discourseQuotedPostReferenceFromAttributes(
       'linuxdo',

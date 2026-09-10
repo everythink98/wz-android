@@ -3,7 +3,6 @@ import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 import { ChevronDown, CodeXml, Maximize2, Minimize2, Redo2, TextCursorInput, Undo2, X } from 'lucide-react-native';
-import editorDocument from './generated/editorDocument.json';
 import type { LinuxDoPollCapabilities } from '@/domain/forum/linuxDoPoll';
 import type {
   ComposerIntent,
@@ -236,7 +235,11 @@ export const StructuredReplyComposer = forwardRef<
     const wasVisibleRef = useRef(visible);
     const readyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const initializationTraceRef = useRef<DiagnosticTrace | null>(null);
-    const source = useMemo(() => ({ html: editorDocument.html, baseUrl: 'https://composer.local/' }), []);
+    const source = useMemo(() => {
+      // The bundled document is evaluated only when an editor mounts; Metro caches it.
+      const editorDocument = require('./generated/editorDocument.json') as { html: string };
+      return { html: editorDocument.html, baseUrl: 'https://composer.local/' };
+    }, []);
     const intentKey =
       intent.kind === 'private-message'
         ? `${intent.site}:pm:${intent.conversationId}`

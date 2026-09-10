@@ -31,6 +31,7 @@ import com.facebook.react.modules.network.OkHttpClientProvider
 import com.google.net.cronet.okhttptransport.CronetInterceptor
 import com.google.net.cronet.okhttptransport.RedirectStrategy
 import expo.modules.image.okhttp.GlideUrlWrapper
+import expo.modules.image.okhttp.GlideUrlWithDiagnosticHeaders
 import expo.modules.video.ReadNetworkVideoClientRegistry
 import java.io.EOFException
 import java.io.ByteArrayOutputStream
@@ -333,6 +334,12 @@ internal class CloseSafeGlideStreamFetcher(
   override fun loadData(priority: Priority, callback: DataFetcher.DataCallback<in InputStream>) {
     val requestBuilder = Request.Builder().url(glideUrl.toStringUrl())
     glideUrl.headers.forEach { (name, value) -> requestBuilder.addHeader(name, value) }
+    val diagnostics = (glideUrl as? GlideUrlWithDiagnosticHeaders)?.diagnosticHeaders.orEmpty()
+    if (diagnostics.isNotEmpty()) {
+      fun marker(name: String) = diagnostics.entries.firstOrNull { it.key.equals(name, true) }?.value
+      requestBuilder.tag(ImageDiagnosticTag::class.java, ImageDiagnosticTag(
+        marker("X-WZ-Image-Trace"), marker("X-WZ-Image-Ref"), marker("X-WZ-Image-Session"), "glide"))
+    }
     val nextCall = callFactory.newCall(requestBuilder.build())
     val shouldEnqueue = synchronized(lock) {
       if (canceled || cleaned) {
@@ -681,6 +688,7 @@ private fun createCronetMediaTransport(
 }
 
 internal class ReadOnlyWebViewCookieHandler(
+  private val responses: ManagedCookieResponses = LinuxDoCookieResponses.store,
   private val sourceForUri: (URI) -> String? = ::managedCookieSource,
   private val cookieReader: (String) -> String? = { CookieManager.getInstance().getCookie(it) }
 ) : CookieHandler() {
@@ -697,12 +705,17 @@ internal class ReadOnlyWebViewCookieHandler(
     val mediaPolicy = MediaRequestCookieContext.current()
     val source = sourceForUri(uri)
     if (mediaPolicy != null && !mediaPolicy.allows(source)) {
+      responses.observed(uri.toString(), null, null)
       return null
     }
-    source ?: return null
+    if (source == null) {
+      responses.observed(uri.toString(), null, null)
+      return null
+    }
     return try {
-      cookieReader(uri.toString())
+      cookieReader(uri.toString()).also { responses.observed(uri.toString(), source, it) }
     } catch (error: Exception) {
+      responses.observed(uri.toString(), null, null)
       if (mediaPolicy == null) throw error else null
     }
   }
@@ -866,7 +879,7 @@ internal data class ReadNetworkDiagnosticEvent(
   val fields: Map<String, Any>
 )
 
-private object ReadNetworkDiagnostics {
+internal object ReadNetworkDiagnostics {
   private const val MAX_EVENTS = 512
   private val lock = Any()
   private val events = ArrayDeque<ReadNetworkDiagnosticEvent>()
@@ -928,10 +941,11 @@ internal data class ImageDiagnosticTag(
 }
 
 internal fun imageDiagnosticRequest(request: Request, imageLane: Boolean): Request {
+  val metadata = request.tag(ImageDiagnosticTag::class.java)
   val tag = ImageDiagnosticTag(
-    request.header("X-WZ-Image-Trace")?.takeIf { it.matches(Regex("trace-[1-9][0-9]{0,9}")) },
-    request.header("X-WZ-Image-Ref")?.takeIf { it.matches(Regex("media-[1-9][0-9]{0,9}")) },
-    request.header("X-WZ-Image-Session")?.takeIf { it.matches(Regex("session-[a-z0-9]{1,16}-[a-z0-9]{1,16}")) },
+    (metadata?.traceId ?: request.header("X-WZ-Image-Trace"))?.takeIf { it.matches(Regex("trace-[1-9][0-9]{0,9}")) },
+    (metadata?.mediaRef ?: request.header("X-WZ-Image-Ref"))?.takeIf { it.matches(Regex("media-[1-9][0-9]{0,9}")) },
+    (metadata?.sessionId ?: request.header("X-WZ-Image-Session"))?.takeIf { it.matches(Regex("session-[a-z0-9]{1,16}-[a-z0-9]{1,16}")) },
     if (request.tag(ImageRequestPurpose::class.java) == ImageRequestPurpose.SVG_PROBE) "svg-probe"
     else if (imageLane) "glide" else "fresco"
   )
@@ -1412,6 +1426,10 @@ private class ReadNetworkRuntimeGeneration(
     builder.addInterceptor(RequestDiagnosticInterceptor())
     builder.addInterceptor(ForumReadRequestInterceptor())
     builder.addInterceptor(ForumMediaRequestInterceptor())
+    builder.interceptors().removeAll { it is CookieResponseContextInterceptor }
+    builder.networkInterceptors().removeAll { it is CookieResponseInterceptor }
+    builder.addInterceptor(CookieResponseContextInterceptor(LinuxDoCookieResponses.store))
+    builder.addNetworkInterceptor(CookieResponseInterceptor(LinuxDoCookieResponses.store))
     return builder
   }
 }
@@ -1556,6 +1574,7 @@ object NetworkProxyRuntime {
   private var installed = false
 
   fun install(context: Context) {
+    DiagnosticJournal.recordStartupPhase("network-start")
     val previous: ReadNetworkRuntimeGeneration
     val installedGeneration: ReadNetworkRuntimeGeneration
     val appContext = context.applicationContext
@@ -1564,6 +1583,7 @@ object NetworkProxyRuntime {
       selector.setDelegate(ProxySelector.getDefault())
       ProxySelector.setDefault(selector)
       baseClientTemplate = OkHttpClientProvider.createClientBuilder(appContext).build()
+      DiagnosticJournal.recordStartupPhase("network-client")
       previous = currentGeneration
       installedGeneration = ReadNetworkRuntimeGeneration(
         previous.generation,
@@ -1582,6 +1602,7 @@ object NetworkProxyRuntime {
     }
     FrescoModule.setNetworkFetcherFactory(frescoCallFactory, imageCancellationExecutor)
     installExpoImageClientOnMainThread(appContext, imageCallFactory)
+    DiagnosticJournal.recordStartupPhase("network-ready")
     previous.finishRetirement()
     Log.i(LOG_TAG, "installed read runtime " + runtimeIdentityFields(installedGeneration))
     ReadNetworkDiagnostics.record(
@@ -1644,7 +1665,11 @@ object NetworkProxyRuntime {
       context,
       localProxy,
       cronetLifecycleExecutor
-    ).execute(request, outerCall)
+    ).execute(LinuxDoCookieResponses.store.fallbackRequest(request).also {
+      LinuxDoCookieResponses.store.sending(it, outerCall, "cronet")
+    }, outerCall)?.also {
+      LinuxDoCookieResponses.store.receive(it, outerCall)
+    }
   }
 
   internal fun imageClientForTests(): OkHttpClient = currentGeneration.imageClient
@@ -1972,7 +1997,8 @@ object NetworkProxyRuntime {
   internal fun supportsManagedCookieUrl(url: String): Boolean =
     isManagedCookieUrl(url)
 
-  internal fun clearManagedLoginCookies(source: String): Boolean {
+  internal fun clearManagedLoginCookies(source: String, diagnostics: Map<String, Any> = emptyMap()): Boolean {
+    if (source == "linuxdo") LinuxDoCookieResponses.store.setBarrier(true, "explicit-clear", diagnostics)
     val plan = managedLoginCookieClearPlan(source)
     val cookieManager = CookieManager.getInstance()
     val completion = CountDownLatch(plan.expirations.size)
@@ -2023,11 +2049,13 @@ internal fun expoImageClient(client: OkHttpClient, generation: Long = 0L): OkHtt
     .callTimeout(0, TimeUnit.MILLISECONDS)
     .connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(30, TimeUnit.SECONDS)
-    .addNetworkInterceptor(ForumMediaCloudflareFallbackInterceptor(generation))
+    .apply { networkInterceptors().add(0, ForumMediaCloudflareFallbackInterceptor(generation)) }
     .build()
 
 private fun installExpoImageClient(context: Context, callFactory: Call.Factory) {
+  DiagnosticJournal.recordStartupPhase("glide-start")
   val registry = Glide.get(context).registry
+  DiagnosticJournal.recordStartupPhase("glide-ready")
   registry.replace(
     GlideUrl::class.java,
     InputStream::class.java,
@@ -2038,6 +2066,7 @@ private fun installExpoImageClient(context: Context, callFactory: Call.Factory) 
     InputStream::class.java,
     CloseSafeGlideUrlWrapperLoader.Factory(callFactory)
   )
+  DiagnosticJournal.recordStartupPhase("image-loader-ready")
 }
 
 internal fun awaitImageLoaderInstallation(
@@ -3277,10 +3306,22 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   }
 
   @ReactMethod
-  fun clearManagedLoginCookies(source: String, promise: Promise) {
+  fun setLinuxDoCookieResponseBarrier(blocked: Boolean, reason: String, diagnostics: ReadableMap, promise: Promise) {
     worker.execute {
       try {
-        promise.resolve(NetworkProxyRuntime.clearManagedLoginCookies(source))
+        LinuxDoCookieResponses.store.setBarrier(blocked, reason, diagnostics.toHashMap().filterValues { it != null }.mapValues { it.value!! })
+        promise.resolve(null)
+      } catch (_: Exception) {
+        promise.reject("cookie_barrier_failed", "登录会话交接未完成，请重试")
+      }
+    }
+  }
+
+  @ReactMethod
+  fun clearManagedLoginCookies(source: String, diagnostics: ReadableMap, promise: Promise) {
+    worker.execute {
+      try {
+        promise.resolve(NetworkProxyRuntime.clearManagedLoginCookies(source, diagnostics.toHashMap().filterValues { it != null }.mapValues { it.value!! }))
       } catch (error: Exception) {
         promise.reject("cookie_clear_failed", "无法清除登录 Cookie", error)
       }
@@ -4678,6 +4719,27 @@ class NetworkProxyRuntimeTest {
       .header("X-WZ-Image-Trace", "secret-url-cookie").header("X-WZ-Image-Ref", "secret").build(), true)
     assertNull(invalid.tag(ImageDiagnosticTag::class.java)!!.traceId)
     assertNull(invalid.tag(ImageDiagnosticTag::class.java)!!.mediaRef)
+  }
+
+  @Test
+  fun glideDiagnosticMetadataReachesBothLoadersWithoutBecomingRequestHeaders() {
+    for (wrapped in listOf(false, true)) {
+      val model = object : expo.modules.image.okhttp.GlideUrlWithDiagnosticHeaders(
+        "https://images.example.test/a.png", object : Headers { override fun getHeaders() = emptyMap<String, String>() },
+        mapOf("x-wz-image-trace" to "trace-91829", "X-WZ-Image-Ref" to "media-91829", "X-WZ-Image-Session" to "session-test-91829")
+      ) { override fun toStringUrl() = "https://images.example.test/a.png" }
+      val factory = ControllableGlideCallFactory()
+      val fetcher = if (wrapped) CloseSafeGlideUrlWrapperLoader(factory).buildLoadData(GlideUrlWrapper(model), 48, 48, Options()).fetcher
+        else CloseSafeGlideUrlLoader(factory).buildLoadData(model, 48, 48, Options()).fetcher
+      fetcher.loadData(Priority.NORMAL, RecordingGlideCallback())
+      val request = factory.latest.request()
+      assertNull(request.header("X-WZ-Image-Trace"))
+      assertNull(request.header("X-WZ-Image-Ref"))
+      assertNull(request.header("X-WZ-Image-Session"))
+      val normalized = imageDiagnosticRequest(request, true)
+      assertEquals(ImageDiagnosticTag("trace-91829", "media-91829", "session-test-91829", "glide"), normalized.tag(ImageDiagnosticTag::class.java))
+      fetcher.cancel(); fetcher.cleanup()
+    }
   }
 
   @Test
@@ -6458,6 +6520,112 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NetworkImageRuntimeInstrumentedTest {
   @Test
+  fun diagnosticMarkersDoNotSplitConcurrentImageJobs() {
+    val instrumentation = InstrumentationRegistry.getInstrumentation()
+    val context = instrumentation.targetContext
+    val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    val png = ByteArrayOutputStream().also { output ->
+      Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888).apply {
+        eraseColor(Color.MAGENTA); compress(Bitmap.CompressFormat.PNG, 100, output); recycle()
+      }
+    }.toByteArray()
+    val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+    val workers = Executors.newCachedThreadPool()
+    val requests = AtomicInteger()
+    val decodes = AtomicInteger()
+    val fixtureOption = com.bumptech.glide.load.Option.memory<Boolean>("wz.diagnostic-identity-fixture", false)
+    Glide.get(context).registry.prepend(java.io.InputStream::class.java, Bitmap::class.java,
+      object : com.bumptech.glide.load.ResourceDecoder<java.io.InputStream, Bitmap> {
+        override fun handles(source: java.io.InputStream, options: com.bumptech.glide.load.Options) = options.get(fixtureOption) == true
+        override fun decode(source: java.io.InputStream, width: Int, height: Int, options: com.bumptech.glide.load.Options): com.bumptech.glide.load.engine.Resource<Bitmap>? {
+          decodes.incrementAndGet()
+          val bitmap = android.graphics.BitmapFactory.decodeStream(source) ?: return null
+          return com.bumptech.glide.load.resource.bitmap.BitmapResource.obtain(bitmap, Glide.get(context).bitmapPool)
+        }
+      })
+    workers.execute {
+      try {
+        while (!server.isClosed) {
+          val socket = server.accept()
+          workers.execute {
+            socket.use {
+              try {
+                val reader = socket.getInputStream().bufferedReader()
+                while (!reader.readLine().isNullOrEmpty()) Unit
+                requests.incrementAndGet()
+                Thread.sleep(500) // Keep the first job in flight while the second consumer attaches.
+                val header = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: " + png.size + "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+                socket.getOutputStream().apply { write(header.toByteArray()); write(png); flush() }
+              } catch (_: IOException) { } catch (_: InterruptedException) { }
+            }
+          }
+        }
+      } catch (_: IOException) { }
+    }
+    val targets = mutableListOf<Target<Bitmap>>()
+    val splitJobs = mutableListOf<String>()
+    try {
+      for (wrapped in listOf(false, true)) for (customCacheKey in listOf(false, true))
+      for (variant in listOf("same", "referer", "epoch", "uri", "size", "transform", "cancel")) {
+        val url = "http://127.0.0.1:" + server.localPort + "/identity-" + wrapped + "-" + customCacheKey + "-" + variant + ".png"
+        fun model(attempt: Int): Any {
+          val uri = url + if (variant == "uri" && attempt == 2) "?version=2" else ""
+          val epoch = if (variant == "epoch" && attempt == 2) "42" else "41"
+          val source: expo.modules.image.records.Source = expo.modules.image.records.SourceMap(uri = uri, cacheKey = if (customCacheKey) "epoch-" + epoch + ":" + uri else null,
+            headers = mapOf("Referer" to if (variant == "referer" && attempt == 2) "https://media.test/other" else "https://media.test/topic", "X-WZ-Forum-Media-Identity" to "fixture:" + epoch,
+              "X-WZ-Image-Trace" to "trace-" + attempt, "X-WZ-Image-Ref" to "media-" + attempt,
+              "X-WZ-Image-Session" to "session-fixture-" + attempt))
+          val result = source.createGlideModelProvider(context)!!.getGlideModel() as GlideUrlWrapper
+          if (wrapped) result.progressListener = expo.modules.image.events.OkHttpProgressListener(
+            java.lang.ref.WeakReference<expo.modules.image.ExpoImageViewWrapper>(null))
+          return if (wrapped) result else result.glideUrl
+        }
+        val models = listOf(model(1), model(2))
+        val finished = CountDownLatch(2)
+        val failures = AtomicInteger()
+        val resources = arrayOfNulls<Bitmap>(2)
+        val requestStart = requests.get()
+        val decodeStart = decodes.get()
+        instrumentation.runOnMainSync {
+          models.forEachIndexed { index, model ->
+            val request = Glide.with(activity).asBitmap().load(model).override(if (variant == "size" && index == 1) 24 else 48, 48)
+              .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE).skipMemoryCache(true)
+              .set(fixtureOption, true)
+            if (variant == "transform" && index == 1) request.centerCrop()
+            targets.add(request.into(object : com.bumptech.glide.request.target.CustomTarget<Bitmap>(48, 48) {
+                override fun onResourceReady(resource: Bitmap, transition: com.bumptech.glide.request.transition.Transition<in Bitmap>?) {
+                  resources[index] = resource; finished.countDown()
+                }
+                override fun onLoadFailed(errorDrawable: Drawable?) { failures.incrementAndGet(); finished.countDown() }
+                override fun onLoadCleared(placeholder: Drawable?) = Unit
+              }))
+          }
+          if (variant == "cancel") { Glide.with(activity).clear(targets[0]); finished.countDown() }
+        }
+        assertTrue("both image consumers must finish", finished.await(15, TimeUnit.SECONDS))
+        assertEquals(0, failures.get())
+        val label = "wrapped=" + wrapped + " customCacheKey=" + customCacheKey + " variant=" + variant
+        instrumentation.sendStatus(0, android.os.Bundle().apply {
+          putString("stream", "\nIMAGE_IDENTITY " + label + " network=" + (requests.get() - requestStart) + " decode=" + (decodes.get() - decodeStart) + " equal=" + (models[0] == models[1]) + "\n")
+        })
+        val shared = variant == "same" || variant == "cancel"
+        val expected = if (shared) 1 else 2
+        val sameModel = variant in listOf("same", "size", "transform", "cancel")
+        if (requests.get() - requestStart != expected || decodes.get() - decodeStart != expected ||
+          (models[0] == models[1]) != sameModel || (sameModel && models[0].hashCode() != models[1].hashCode()) ||
+          (variant != "cancel" && (resources[0] === resources[1]) != shared) || resources[1] == null) {
+          splitJobs.add(label + " network=" + (requests.get() - requestStart) + " decode=" + (decodes.get() - decodeStart))
+        }
+        instrumentation.runOnMainSync { targets.forEach { Glide.with(activity).clear(it) }; targets.clear() }
+      }
+      assertTrue("image jobs must share diagnostics-only changes and isolate real request changes: " + splitJobs.joinToString(), splitJobs.isEmpty())
+    } finally {
+      instrumentation.runOnMainSync { targets.forEach { Glide.with(activity).clear(it) }; activity.finish() }
+      server.close(); workers.shutdownNow(); assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS))
+    }
+  }
+
+  @Test
   fun mountedImagesAndSvgRecoverAfterRuntimeRetirement() {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val context = instrumentation.targetContext
@@ -6516,9 +6684,11 @@ class NetworkImageRuntimeInstrumentedTest {
       container.addView(preview, LinearLayout.LayoutParams(360, 360))
       activity.addContentView(container, ViewGroup.LayoutParams(-1, -1))
     }
-    fun load(path: String) {
+    var imageAttempt = 0
+    fun load(path: String): List<DataSource> {
       val completed = CountDownLatch(3)
       val failures = AtomicInteger()
+      val cacheSources = mutableListOf<DataSource>()
       instrumentation.runOnMainSync {
         emoji.controller = Fresco.newDraweeControllerBuilder().setUri(Uri.parse(base + path + "-emoji.png"))
           .setOldController(emoji.controller).setControllerListener(object : BaseControllerListener<ImageInfo>() {
@@ -6527,17 +6697,20 @@ class NetworkImageRuntimeInstrumentedTest {
           }).build()
         for ((index, view) in listOf(picture, preview).withIndex()) {
           val url = base + path + "-" + index + ".png"
-          val model = GlideUrlWithCustomCacheKey(url, com.bumptech.glide.load.model.Headers.DEFAULT, url)
+          val source: expo.modules.image.records.Source = expo.modules.image.records.SourceMap(uri = url, cacheKey = url,
+            headers = mapOf("X-WZ-Image-Trace" to "trace-" + (++imageAttempt), "X-WZ-Image-Ref" to "media-91830", "X-WZ-Image-Session" to "session-test-91830"))
+          val model = (source.createGlideModelProvider(context)!!.getGlideModel() as GlideUrlWrapper).glideUrl
           Glide.with(activity).load(if (index == 0) GlideUrlWrapper(model) else model)
             .listener(object : RequestListener<Drawable> {
               override fun onLoadFailed(error: GlideException?, model: Any?, target: Target<Drawable>, first: Boolean): Boolean { failures.incrementAndGet(); completed.countDown(); return false }
-              override fun onResourceReady(resource: Drawable, model: Any, target: Target<Drawable>?, source: DataSource, first: Boolean): Boolean { completed.countDown(); return false }
+              override fun onResourceReady(resource: Drawable, model: Any, target: Target<Drawable>?, source: DataSource, first: Boolean): Boolean { cacheSources.add(source); completed.countDown(); return false }
             }).into(view)
         }
       }
       assertTrue("mounted image callbacks must complete", completed.await(15, TimeUnit.SECONDS))
       assertEquals(0, failures.get())
       instrumentation.runOnMainSync { assertNotNull(picture.drawable); assertNotNull(preview.drawable) }
+      return cacheSources
     }
     fun rotateAndDrain() {
       val before = NetworkProxyRuntime.imageClientForTests()
@@ -6556,8 +6729,9 @@ class NetworkImageRuntimeInstrumentedTest {
         emoji.controller = null
         Glide.with(activity).clear(picture); Glide.with(activity).clear(preview)
       }
-      load("/after-first")
+      val remountedSources = load("/after-first")
       assertEquals("memory cache must keep its identity", cachedRequests, requests.get())
+      assertEquals("new diagnostics must not turn recycled memory hits into decodes", listOf(DataSource.MEMORY_CACHE, DataSource.MEMORY_CACHE), remountedSources)
       instrumentation.runOnMainSync {
         container.removeView(emoji); container.addView(emoji, 0)
         Glide.with(activity).clear(picture); Glide.with(activity).clear(preview)
@@ -6614,6 +6788,12 @@ function withNetworkProxyModule(config) {
       );
       fs.mkdirSync(outputDir, { recursive: true });
       fs.writeFileSync(path.join(outputDir, 'NetworkProxyRuntime.kt'), networkProxyRuntimeSource(packageName));
+      fs.writeFileSync(
+        path.join(outputDir, 'ManagedCookieResponses.kt'),
+        fs
+          .readFileSync(path.join(__dirname, 'network', 'ManagedCookieResponses.kt'), 'utf8')
+          .replace('package com.wz.reader', `package ${packageName}`)
+      );
       fs.writeFileSync(path.join(outputDir, 'NetworkProxyModule.kt'), networkProxyModuleSource(packageName));
       fs.writeFileSync(path.join(outputDir, 'NetworkProxyPackage.kt'), networkProxyPackageSource(packageName));
       const testOutputDir = path.join(
@@ -6625,6 +6805,12 @@ function withNetworkProxyModule(config) {
         androidPackagePath(packageName)
       );
       fs.mkdirSync(testOutputDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(testOutputDir, 'ManagedCookieResponsesTest.kt'),
+        fs
+          .readFileSync(path.join(__dirname, 'network', 'ManagedCookieResponsesTest.kt'), 'utf8')
+          .replace('package com.wz.reader', `package ${packageName}`)
+      );
       fs.writeFileSync(
         path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt'),
         networkProxyRuntimeTestSource(packageName)
@@ -6638,6 +6824,12 @@ function withNetworkProxyModule(config) {
         androidPackagePath(packageName)
       );
       fs.mkdirSync(instrumentedDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(instrumentedDir, 'ManagedCookieResponsesInstrumentedTest.kt'),
+        fs
+          .readFileSync(path.join(__dirname, 'network', 'ManagedCookieResponsesInstrumentedTest.kt'), 'utf8')
+          .replace('package com.wz.reader', `package ${packageName}`)
+      );
       fs.writeFileSync(
         path.join(instrumentedDir, 'NetworkImageRuntimeInstrumentedTest.kt'),
         networkImageRuntimeInstrumentedTestSource(packageName)

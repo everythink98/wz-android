@@ -17,6 +17,31 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
+## `REG-ACCOUNT-047` L 站频繁失效与原站续期入口缺失
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `EVIDENCE_GAP` |
+| 能力 ID | `ACCOUNT-01`、`SEARCH-02/04`、`WRITE-01`、`TOPIC-01/02/03`、`MORE-01/02` |
+| 历史症状与根因 | 2026-09-09 用户诊断在 12:23、12:57、13:09（北京时间）三次账号核对为匿名，之前通知/操作已提示登录失效；未发现 App 主动 clear 事件。原生默认响应保存 no-op 确认丢弃续期，但现有日志没有原始响应更新证据，不能断言它是三次失效的唯一原因。 |
+| 修复范围 | 仅合格 L 站原站响应受控转交 Android CookieManager；保留默认只读 Jar、禁止快照与手工凭据、按站显式清除、RN/Fresco 容器和代理隔离；原生 revision/基线与账号屏障拒绝旧响应。 |
+| 当前 owner | `plugins/network/ManagedCookieResponsesTest.kt`、`plugins/network/ManagedCookieResponsesInstrumentedTest.kt`；既有 `plugins/withNetworkProxyModule.js` 生成 `NetworkProxyRuntimeTest`；`src/features/account/useVerificationController.test.ts` 与 `tests/ui/account/account-runtime.test.tsx`。 |
+| 失败 oracle | 实际 HTTP 服务先发凭据 B、下次只接受 B；2026-09-09 修复前 native 测试 expected 200 / actual 401，修复后成功。Cookie 值仅为合成测试数据。 |
+| 续期修复证据 | 2026-09-09 原生实际 HTTP 轮换及隔离测试 9 项、既有网络 runtime 77 项、独立 AVD instrumentation 4 项通过。最终候选 `1.3.140/144`、buildId `d7303c65c98c4f289465703bca7aa9f9` 在保留登录的主 AVD 上观察 14:32:05—14:52:28（北京时间，20.4 分钟，超过两个上游默认轮换间隔）；14:37:04、14:47:08 实际应用原站更新，14:48:22 与 14:51:58 后续独立账号核对确认已登录。搜索、通知列表、主题读取及前后台切换成功，窗口内未出现 App clear、写入失败或账号转匿名事件。 |
+| 剩余证据缺口 | 响应续期缺失已有修复与真实更新证据；原始三次失效是否全部由该缺陷导致仍无法归因，频繁失效事故保留 `EVIDENCE_GAP`。真实回复、物理 ARM64 安装与长期登录留存保持 `NOT_VERIFIED`；不清登录态制造场景，不发送真实回复。 |
+
+## `REG-ACCOUNT-046` L 站操作要求登录但未触发账号核对
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-01`、`SEARCH-02/04`、`WRITE-01` |
+| 历史症状与根因 | 2026-09-09 用户日志中回复与搜索均返回 403 并提示需要登录，账号仍为 logged-in，期间无 account-reconcile；当前模拟器同时显示搜索登录提示与账号已登录。协议把明确登录要求当作普通权限错误，读取和主题 mutation 只接收原始 http-401；回复还包装并丢失错误语义。诊断按文字记录 login_required 不会驱动身份核对。 |
+| 修复范围 | 共用 L 站错误解析产生 account-recheck-required；读取直接/聚合错误与主题 mutation 交给 Account runtime，按当前 epoch、来源与登录面板边界核对，复用 single-flight 和唯一身份提交；不重发写操作、不按 403 直接退出。 |
+| 当前 owner | `src/sources/readGateway.test.ts` 使用真实搜索解析链覆盖单站/聚合；`src/sources/linuxdo/actionClient.test.ts` 覆盖写协议与负向分类；`tests/ui/account/account-runtime.test.tsx` 覆盖核对、并发、终态与过期信号；`tests/ui/topic/topic-actions-controller.test.tsx` 使用真实 action client 固定回复核对与零重发。 |
+| 失败 oracle | 修复前 Vitest seed 1788925249814 的三项测试失败，Jest seed -776346605 的真实回复解析测试未调用核对；修复后同 seed 通过。 |
+| 关闭证据与边界 | 2026-09-09 完整 verify 通过；主 API 35 AVD 覆盖安装匹配源码的开发签名候选，首次安装时间不变。11:58:01（北京时间）真实搜索 403 触发一次带父 trace 的 account-reconcile，canonical 账号接口 404 确认 anonymous；搜索转为公共入口，账号中心登录数从 3/3 变为 2/3，L 站显示访客“已验证”，其他两站仍已登录。搜索/回复核对、不误退、并发及迟到隔离由上述自动化 owner 承接；真实回复未发送，其 Live 证据保持 NOT_VERIFIED。 |
+
 ## `REG-NOTIFY-062` 通知重试绕过账号核验且未就绪没有登录入口
 
 | 字段 | 内容 |
@@ -1775,7 +1800,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`SEARCH-01`、`SEARCH-02`、`SEARCH-04`、`TOPIC-01`、`TOPIC-03`、`USER-01`、`ACCOUNT-01`、`ACCOUNT-02`、`MORE-01`、`WRITE-01`、`WRITE-03` |
 | 历史症状与根因 | App 读取原站 Cookie 发起请求后，服务端响应的 `Set-Cookie` 又经 React Native 默认 CookieJar 改写 WebView 会话，导致账号状态、原站页面和后续请求相互污染。若为隔离 Cookie 另建 client，还可能绕过代理 fail-closed 与既有连接资源；根因：`src/platform/network/request.ts` 的受管 credentials 边界、`src/sources/readGateway.ts` 的 public `native-no-cookie` 最外层边界与 `plugins/withNetworkProxyModule.js` 生成的共享 OkHttp client 必须共同表达两条不同 lane。 |
-| 当前 owner | `src/platform/network/request.test.ts` |
+| 当前 owner | `src/platform/network/request.test.ts` 与 `plugins/network/ManagedCookieResponsesTest.kt`；旧的“一律禁止响应写入”已收窄为“默认 Jar 不写，仅合格 L 站原站响应可写”，其他隔离继续保留。 |
 
 
 ## `REG-ACCOUNT-028` 空凭据被动读取误清可信身份
@@ -1805,7 +1830,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `FEED-01`、`SEARCH-01`、`TOPIC-01`、`TOPIC-02`、`USER-01`、`ACCOUNT-01`、`MORE-01`、`WRITE-01` |
 | 历史症状与根因 | 当前 Android 包连接 Metro 后在 `MainActivity` 显示 “There was a problem loading the project”，堆栈为 `JavaNetCookieJar cannot be cast to CookieJarContainer`；若只换成默认可变容器规避崩溃，RN/Fresco 又会恢复可写 `ForwardingCookieHandler`；根因：`plugins/withNetworkProxyModule.js` 生成的共享 OkHttp client 同时承担 RN Networking、Fresco、Expo Image、代理和 WebView Cookie 只读边界，却没有满足 RN 的容器生命周期契约。 |
-| 当前 owner | `plugins/withNetworkProxyModule.js` |
+| 当前 owner | `plugins/withNetworkProxyModule.js` 生成的 `NetworkProxyRuntimeTest`；容器继续拒绝 RN/Fresco 替换，合格 L 站响应通过独立受控入口，不恢复默认可写 delegate。 |
 
 
 ## `REG-ACCOUNT-031` 登录页面打开即破坏会话，关闭后又继续信任旧账号
@@ -4381,6 +4406,18 @@
 | 当前 owner | `tests/ui/topic/structured-reply-composer.test.tsx` |
 
 
+## `REG-ACCOUNT-048` L 站并发 Cookie 更新丢弃与频繁登录失效
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `OPEN` |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`NOTIFY-03` |
+| 历史症状与根因 | 2026-09-10 用户两次导出显示：刚确认登录后重启，分类响应应用 Cookie，首页响应因 stale 被拒绝，随后通知 JSON 403 login_required；日志未见主动清除事务。已用修复前失败的实际 HTTP 并发测试确认客户端缺陷：任意响应推进共享 revision、整份 Header 基线检查都会误丢同账号在途更新；原生响应也缺少明确 flush。现拆开隔离代次与回写序号，正常更新按平台语义串行应用，并补充回调恢复、落盘与诊断。但旧日志没有被丢弃 Cookie 的类别/设置或删除证据，不能断言该响应一定是登录续签，也不能排除服务端独立失效。历史事故继续开放，待真实登录自然续签至少两次、重启及协议核对闭环。 |
+| 当前 owner | `plugins/network/ManagedCookieResponsesTest.kt`、`plugins/network/ManagedCookieResponsesInstrumentedTest.kt`、`tests/ui/account/account-runtime.test.tsx` |
+| 2026-09-10 新包现场 | 主 API 35 AVD 在 16:20:31（北京时间）手动登录后 current-user 核对成功，WebView 交接 flush 成功；16:23:33 再次核对成功。16:27:06 通知请求发送时 hasLoginCookie=true，响应 403/login_required、Set-Cookie 数为 0。16:29:39 账号请求仍带登录 Cookie，响应 404 并明确下发 login/delete/expired；平台接受后 hasLoginCookie=false，flush 成功，账号按 session-404 变为 anonymous。同一进程内，交接后此前原生响应没有 login/set、拒绝续签或写入/落盘失败；未发生显式清除。用户确认未在其他设备退出、结束会话或修改安全设置。该次删除有服务端指令证据，但服务端失效原因、WebView 内部不可见更新及原手机事故仍未归因；两次自然续签后的重启验收未完成，不能关闭事故。 |
+| 后续对照与通过范围 | 同日再次手动登录后，网站 WebView 保持约 11 分钟、三次普通刷新仍登录，期间零原生请求/回写；16:44:36 原生账号核对成功。16:54:38、17:04:38 两次通知响应明确下发 login/set/persistent，分别得到平台接受、凭据变化及 flush 成功记录；两次更新后的账号接口均确认已登录。加入首页、图片及主题读取后仍正常，17:05 保留数据冷启动 PID 29412→32037，17:06:08 新进程 current-user 200 并持久化 confirmed。该条续签→落盘→重启认证链为 `LIVE_PASS`；早先 16:29 的失效原因及原手机事故仍未关闭，不把后续一次成功对照当作排除间歇故障。 |
+
+
 ## `REG-FEED-017` 来源重排后旧 Pager 会话卡在 Loading
 
 | 字段 | 内容 |
@@ -5238,3 +5275,25 @@
 | 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx` 的预览回调变化与已显示图片原生请求连续性；`tests/ui/shared/android-image-headers.test.tsx` 的 Fresco/Glide 等值 source、重试及真实参数变化；原帖录屏与 Native trace 独立验证实际重载。 |
 | 失败 oracle | 2026-09-08 修复前 seed `-238043428` 的 3 项检查均失败：仅普通重渲染即可让 trace 改变。设备 `1.3.140/144` 上预览返回及 `120px` 滚动各出现同批 6 次 `ExpoImage load new image`，对应 `UPDATE_PROPS`，resize/force 均为 false。修复应按原生参数值及真实 attempt 保持诊断生命周期，不能删除诊断、禁用动图或放宽会话隔离。 |
 | 验证边界 | 同 seed 的 3 项失败 oracle 已转绿，相关 UI 222 项、媒体单测 43 项通过。2026-09-08 无窗口 Android API 35 模拟器覆盖安装修复包（`1.3.140/144`，SHA-256 `055341b1d8d26ddb422ec929ed42f2aec0f7da5e53b0ba0bd765766c26bc026c`）并冷启，安装身份与 firstInstallTime 保持不变。原帖静止、小幅 `120px` 滚动、首图及第 4、5 张预览返回的 Native trace 均为 0 次重复加载；第 3–5 张预览切换正常，返回录屏采样中图片连续显示、动图继续播放。实体手机及其他站点完整链路为 `NOT_VERIFIED`。 |
+
+
+## `REG-NAV-005` 主楼引用误定位、跨主题回复引用丢失目标及评论 ID 定位缺口
+
+专项设备复核还发现：回复深链定位完成后切换倒序，已消费的 route 目标仍阻止新窗口首批读取，页面持续显示“正在读取最新回复”。同一 controller owner 的失败 seed `-1371965630` 固定此缺口；新顺序恢复普通读取，旧命令不重放。经主楼评论 ID 解析的主楼命令也必须使旧回复请求失效，失败 seed `-624460301` 固定迟到窗口不能覆盖主楼。
+
+目标缺失且没有内嵌评论时，禁用的普通 Query 仍为 pending，旧 loading 计算会在错误反馈后一直转圈。失败 seed `1006293921` 固定此终态；回复定位只在实际请求期间显示 loading，失败保留主题及既有错误/恢复入口，不显示定位成功。
+
+后续获准核对打包门禁：新增 `diagnostics` 参数与登录/Cookie 诊断修复的 JS→Native 调用一致，旧签名断言确已过时。已同步 `tests/tooling/release-packaging.test.ts` 三处签名匹配，保留按站删除范围、回调等待、flush 与回读顺序的全部检查；原失败 seed `1789042244534` 的打包及 Cookie bridge 测试 39 项通过，全量 Vitest seed `1789045321102` 的 2411 项通过。完整 `npm run verify` 随后以退出码 0 通过（Vitest 2411 项、UI 1345 项，含静态、文档及类型门禁）。下表的打包失败是修复测试前的历史结果。
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-02`、`NAV-03`、`TOPIC-03`、`NOTIFY-02` |
+| 历史症状与根因 | 2026-09-10 在 App 1.3.140 打开 linux.do 主题 2885866，第 9 楼引用主题 2686247 的首帖；点击引用编号或标题，主题已打开却报“linux.do 目标楼层未找到”。引用直接生成 floor=1，绕过已有通知首帖保护；列表虽识别主楼，controller 仍请求排除了首帖的回复窗口，且无内嵌回复时普通评论读取被目标参数阻断。四站入口审查还确认主楼正文跨主题引用不传 post number，以及 linux.do 仅评论 ID 的目标被拒绝；跨主题引用缺少 URL 时还会错误调用当前主题的同号楼层定位。导航改为明确主楼/回复意图，统一主楼识别；跨主题引用保留目标并共享 canonical 身份解析、拒绝冲突 URL，ID 目标按站点返回的真实 post number 读取窗口，显式定位统一核对唯一实体。 |
+| 当前 owner | `src/domain/forum/topicLocation.test.ts`、`tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/ui/topic/topic-components.test.tsx`、`tests/integration/source-read-contracts/discourse.test.ts` |
+| 自动验证 | `STATIC_PASS`：lint、格式、架构及 23 项架构测试、25 项文档测试、文档引用、typecheck、unused、版本一致性及 diff 检查。`UI_PASS`：75 套件 / 1345 项，seed `-203118996`。本专项领域及四站来源 owner 为 `UNIT_PASS`；全量 Vitest 为 2410 通过 / 1 失败。最终 `npm run verify` seed `1789043593600` 未全绿：原有 `tests/tooling/release-packaging.test.ts` 仍断言 `clearManagedLoginCookies(source: String, promise: Promise)` 旧签名，工作区插件已增加 `diagnostics: ReadableMap` 参数；本任务未改该插件和打包测试，原 seed `1789042244534` 单独重放仍失败。 |
+| 设备构建 | 本地 targeted assembleRelease，未运行正式发布；Android API 35，`1.3.140/144`，最终 APK SHA-256 `b0ef6b128e0577b1cd0475458834bc37603402ddfa78d216d4c40c2c097b02e1`。`APK_SANITY`：同包名同签名覆盖安装，firstInstallTime 保持 `2026-07-26 16:51:37`，未清数据或登录态。 |
+| linux.do Live | `LIVE_PASS`：指定 2885866 第 9 楼的引用展开只显示预览；编号与标题均打开 2686247 主楼、无楼层错误，返回保留第 9 楼及展开状态；回复 #6 滚到头部并高亮。深链后切换倒序正常读取最新回复；查找仅剩第 9 楼时点 #6 清除查找并保持 6→5→4→3 倒序。 |
+| 四站启动与负向控制 | 最终构建 `LIVE_PASS`：linux.do `2885866/9`、NodeSeek `post-832584-16#155`、V2EX `945124#r_13198746`（第 6 楼）、妖火 `book_re.aspx?id=1560939&classid=177&tofloor=90` 冷热启动到达真实目标；冷启后返回没有重复 Topic 层。NodeSeek 无 hash 页码链接、V2EX `#reply6` 均显示普通主题；linux.do、妖火普通主题也独立验收。 |
+| 真实入口补充 | 同轮主修复构建 `LIVE_PASS`：NodeSeek 第 156 楼回复关系 → #154 → 跨页 #149，目标头部可见并高亮；V2EX 945124 第 7 楼正文 `@Pipecraft #6` 定位高亮，正文 `960065?p=3` 只打开主题；妖火 #90 回复关系 → #88 定位高亮。最终构建另复核上行四站精确深链；这些样本不替代指定 linux.do 案例。 |
+| 未验证范围 | `NOT_VERIFIED`：实体手机；通知真实点击、已采纳答案真实入口、写后真实回调；四站分别穷举的倒序/筛选/查找、账号切换、快速切换和网络/权限失败组合；V2EX 跨页真实 ID 样本。上述已有共享 UI/来源确定性 owner，Live 写入未执行，写后行为由 mock 证明。本专项未运行 `.ad` Replay，不声明 `DEVICE_REPLAY_PASS`。 |

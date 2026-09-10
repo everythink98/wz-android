@@ -203,15 +203,15 @@ function Navigator({
       moreBadgeState={moreBadgeState ?? (moreHasBadge ? 'update' : 'none')}
       navigationTheme={DefaultTheme}
       FeedRouteComponent={FeedTab}
-      LibraryRouteComponent={LibraryTab}
-      MoreRouteComponent={MoreTab}
-      NotificationDetailRouteComponent={NotificationDetailRoute}
-      NotificationSettingsRouteComponent={NotificationSettingsRoute}
-      NotificationsRouteComponent={NotificationsRoute}
-      ReadingSettingsRouteComponent={ReadingSettingsRoute}
-      SearchRouteComponent={SearchTab}
-      TopicRouteComponent={StatefulTopicRoute}
-      UserRouteComponent={StatefulUserRoute}
+      getLibraryRoute={() => LibraryTab}
+      getMoreRoute={() => MoreTab}
+      getNotificationDetailRoute={() => NotificationDetailRoute}
+      getNotificationSettingsRoute={() => NotificationSettingsRoute}
+      getNotificationsRoute={() => NotificationsRoute}
+      getReadingSettingsRoute={() => ReadingSettingsRoute}
+      getSearchRoute={() => SearchTab}
+      getTopicRoute={() => StatefulTopicRoute}
+      getUserRoute={() => StatefulUserRoute}
       styles={styles}
       theme={theme}
       onReady={jest.fn()}
@@ -275,7 +275,7 @@ describe('App navigator UI state', () => {
     const routeKeys: string[] = [];
     const captureRouteKey = () => routeKeys.push(navigationRef.getCurrentRoute()!.key);
     await act(async () => {
-      pushTopicRoute({ topic: privateTopicA, targetReply: { floor: 7 } });
+      pushTopicRoute({ topic: privateTopicA, location: { kind: 'reply', target: { floor: 7 } } });
     });
     await waitFor(() => expect(view.getByText('PRIVATE_TITLE_A')).toBeTruthy());
     captureRouteKey();
@@ -371,7 +371,7 @@ describe('App navigator UI state', () => {
   it('preserves the complete destination when pushing a Topic route', async () => {
     await renderNavigator();
     const destination: RootStackParamList['Topic'] = {
-      targetReply: { floor: 155, pageHint: 16 },
+      location: { kind: 'reply', target: { floor: 155, pageHint: 16 } },
       topic: topicA
     };
     await act(async () => {

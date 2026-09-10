@@ -1,6 +1,7 @@
+import { filterLibraryRecords } from '@/features/library/model/libraryFilters';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Alert, View } from 'react-native';
 import type { LibraryTab } from '@/domain/forum/feed';
 import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
@@ -195,15 +196,64 @@ function LibraryHarness({
   onRemoveUser?: (user: UserProfile) => void;
 } = {}) {
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
+  const [sourceFilter, setSourceFilter] = useState<import('@/domain/forum/models').FeedSource>('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const sourcesKey = enabledSources.join('|');
+  const visibleFavorites = useMemo(
+    () => favoriteRecords.filter((record) => enabledSources.includes(record.topic.source)),
+    [favoriteRecords, sourcesKey]
+  );
+  const visibleHistory = useMemo(
+    () => historyRecords.filter((record) => enabledSources.includes(record.topic.source)),
+    [historyRecords, sourcesKey]
+  );
+  const visibleUsers = useMemo(
+    () => libraryUsers.filter((record) => enabledSources.includes(record.user.source)),
+    [libraryUsers, sourcesKey]
+  );
+  const filteredFavorites = useMemo(
+    () => filterLibraryRecords(visibleFavorites, { source: sourceFilter, category: categoryFilter }),
+    [visibleFavorites, sourceFilter, categoryFilter]
+  );
+  const filteredHistory = useMemo(
+    () => filterLibraryRecords(visibleHistory, { source: sourceFilter, category: categoryFilter }),
+    [visibleHistory, sourceFilter, categoryFilter]
+  );
+  const filteredUsers = useMemo(
+    () => visibleUsers.filter((record) => sourceFilter === 'all' || record.user.source === sourceFilter),
+    [visibleUsers, sourceFilter]
+  );
+
   return (
     <View>
       <LibraryScreen
         active={active}
+        sourceFilter={sourceFilter}
+        categoryFilter={categoryFilter}
+        onSourceFilter={setSourceFilter}
+        onCategoryFilter={setCategoryFilter}
+        total={
+          libraryTab === 'users'
+            ? filteredUsers.length
+            : libraryTab === 'history'
+              ? filteredHistory.length
+              : filteredFavorites.length
+        }
+        visibleTotal={
+          libraryTab === 'users'
+            ? visibleUsers.length
+            : libraryTab === 'history'
+              ? visibleHistory.length
+              : visibleFavorites.length
+        }
+        error={false}
+        onRetry={noop}
+        onLoadMore={noop}
         categories={categories}
         enabledSources={enabledSources}
-        favoriteRecords={favoriteRecords}
-        followedUsers={libraryUsers}
-        historyRecords={historyRecords}
+        favoriteRecords={filteredFavorites}
+        followedUsers={filteredUsers}
+        historyRecords={filteredHistory}
         libraryTab={libraryTab}
         loaded
         topicStateIndex={topicStateIndex}
@@ -371,40 +421,18 @@ describe('Library filters', () => {
     expect(mockFlashListMountCount).toBe(3);
   });
 
-  it('prewarms one viewport per loaded frame and releases inactive viewports on blur', async () => {
-    const frameCallbacks: ((time: number) => void)[] = [];
-    jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
-      frameCallbacks.push(callback);
-      return frameCallbacks.length;
-    });
+  it('mounts another collection only after selection and releases inactive viewports on blur', async () => {
     mockFlashListMountCount = 0;
     mockFlashListUnmountCount = 0;
-    mockFlashListRenders.length = 0;
-    mockFlashListOnLoadByData.clear();
-    const view = await render(<LibraryHarness historyRecords={records.slice(0, 2)} />);
-    const favoriteData = mockFlashListRenders.find(
-      (renderState) => renderState.testID === 'library-favorites-ready'
-    )?.data;
-
+    const view = await render(<LibraryHarness />);
     expect(mockFlashListMountCount).toBe(1);
-    await act(async () => mockFlashListOnLoadByData.get(favoriteData || [])?.({ elapsedTimeInMs: 1 }));
-    expect(frameCallbacks).toHaveLength(1);
-    await act(async () => frameCallbacks.shift()?.(0));
-    expect(mockFlashListMountCount).toBe(2);
-    const historyData = mockFlashListRenders.find((renderState) => renderState.dataLength === 3)?.data;
-
-    await act(async () => mockFlashListOnLoadByData.get(historyData || [])?.({ elapsedTimeInMs: 1 }));
-    expect(frameCallbacks).toHaveLength(1);
-    await act(async () => frameCallbacks.shift()?.(0));
-    expect(mockFlashListMountCount).toBe(3);
-    expect(view.queryByTestId('library-history-viewport')).toBeNull();
-    expect(view.getByTestId('library-history-viewport', { includeHiddenElements: true })).toBeTruthy();
-
-    mockFlashListUnmountCount = 0;
-    await view.rerender(<LibraryHarness active={false} historyRecords={records.slice(0, 2)} />);
-    expect(mockFlashListUnmountCount).toBe(2);
     expect(view.queryByTestId('library-history-viewport', { includeHiddenElements: true })).toBeNull();
+    await fireEvent.press(view.getByTestId('library-tab-history'));
+    expect(mockFlashListMountCount).toBe(2);
     expect(view.queryByTestId('library-users-viewport', { includeHiddenElements: true })).toBeNull();
+    await view.rerender(<LibraryHarness active={false} />);
+    expect(mockFlashListUnmountCount).toBe(1);
+    expect(view.queryByTestId('library-favorites-viewport', { includeHiddenElements: true })).toBeNull();
   });
 
   it('retains each populated dataset item array across tab switches', async () => {

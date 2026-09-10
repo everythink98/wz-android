@@ -18,6 +18,8 @@ const ALLOWED_DEPENDENCIES = {
 const CODE_EXTENSIONS = ['.ts', '.tsx'];
 const METRO_RESOLUTION_EXTENSIONS = ['.android.ts', '.android.tsx', '.native.ts', '.native.tsx', ...CODE_EXTENSIONS];
 const APP_COMPOSITION_ALLOWED_INTERNAL_IMPORTS = new Set([
+  '@/ui/navigation/startupPageLayout',
+  './useAppStartupRuntime',
   './AppRoutes',
   './useAppRuntime',
   '@/platform/media/mediaSessionEpoch',
@@ -27,11 +29,17 @@ const APP_ROUTES_ALLOWED_INTERNAL_IMPORTS = new Set([
   './AppNavigator',
   '@/features/feed/FeedRoute',
   '@/features/library/LibraryRoute',
+  '@/features/library/LibraryRouteRuntime',
   '@/features/more/MoreRoute',
+  '@/features/more/MoreRouteRuntime',
   '@/features/notifications/NotificationRoute',
+  '@/features/notifications/NotificationRouteRuntime',
   '@/features/search/SearchRoute',
+  '@/features/search/SearchRouteRuntime',
   '@/features/topic/TopicRoute',
-  '@/features/user/UserRoute'
+  '@/features/topic/TopicRouteRuntime',
+  '@/features/user/UserRoute',
+  '@/features/user/UserRouteRuntime'
 ]);
 const FORBIDDEN_RAW_STATE_HOOKS = new Set(['useCallback', 'useEffect', 'useRef', 'useState']);
 const FORBIDDEN_DOMAIN_IO_GLOBALS = new Set(['AbortSignal', 'RequestInit', 'XMLHttpRequest', 'WebSocket', 'fetch']);
@@ -50,7 +58,8 @@ const ACCOUNT_RUNTIME_WRITE_CAPABILITIES = new Set([
   'ensureNodeImageApiKey',
   'ensureWritableSession',
   'isWritableSessionTicketCurrent',
-  'onSessionExpired'
+  'onSessionExpired',
+  'requestAccountRecheck'
 ]);
 const ACCOUNT_RUNTIME_CENTER_CAPABILITIES = new Set([
   'account',
@@ -301,7 +310,7 @@ function globalWebViewPluginIssues(projectRoot) {
     readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
       const entryPath = path.join(directory, entry.name);
       if (entry.isDirectory()) return pluginFiles(entryPath);
-      return entry.isFile() && entry.name.endsWith('.js') ? [entryPath] : [];
+      return entry.isFile() && /\.(js|kt)$/.test(entry.name) ? [entryPath] : [];
     });
   return pluginFiles(pluginsDir).flatMap((pluginPath) => {
     const sourceText = readFileSync(pluginPath, 'utf8');

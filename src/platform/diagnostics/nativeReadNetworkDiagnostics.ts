@@ -5,9 +5,24 @@ type NativeReadNetworkModule = {
   readNetworkDiagnosticEvents?: () => Promise<unknown>;
 };
 
-type NativeReadNetworkOperation = 'install' | 'request' | 'rotate-read-runtime';
+type NativeReadNetworkOperation =
+  | 'install'
+  | 'request'
+  | 'rotate-read-runtime'
+  | 'cookie-response'
+  | 'cookie-request'
+  | 'cookie-persist'
+  | 'cookie-barrier';
 
-const operations = new Set<NativeReadNetworkOperation>(['install', 'request', 'rotate-read-runtime']);
+const operations = new Set<NativeReadNetworkOperation>([
+  'install',
+  'request',
+  'rotate-read-runtime',
+  'cookie-response',
+  'cookie-request',
+  'cookie-persist',
+  'cookie-barrier'
+]);
 const phases = new Set([
   'call-start',
   'image-lease-released',
@@ -53,6 +68,13 @@ const identityKeys = [
   'imageClientId'
 ] as const;
 const countKeys = [
+  'surfaceGeneration',
+  'cookieIndex',
+  'cookieEpoch',
+  'requestCookieEpoch',
+  'cookieWriteSequence',
+  'cookieCount',
+  'cookieRevision',
   'generation',
   'previousGeneration',
   'elapsedMs',
@@ -119,6 +141,8 @@ function diagnosticPhase(operation: NativeReadNetworkOperation, phase: string) {
 }
 
 function nativeTraceId(operation: NativeReadNetworkOperation, input: Record<string, unknown>, index: number) {
+  if (operation.startsWith('cookie-'))
+    return `native-cookie-${safeIdentity(input.callId) || `${safeCount(input.cookieEpoch) ?? 0}-${index}`}`;
   if (operation === 'request') {
     return `native-${safeIdentity(input.callId) || `request-${safeCount(input.generation) || 0}-${index}`}`;
   }
@@ -141,7 +165,7 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
     const timeMs = safeTimestamp(input.timeMs);
     if (!operation || !nativePhase || timeMs === undefined) return [];
 
-    const output: Record<string, string | number> = {
+    const output: Record<string, string | number | boolean> = {
       type: 'native-read-network',
       schemaVersion: 1,
       time: new Date(timeMs).toISOString(),
@@ -186,6 +210,37 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
     if (typeof input.mediaRef === 'string' && /^media-[1-9][0-9]{0,9}$/.test(input.mediaRef))
       output.mediaRef = input.mediaRef;
     for (const [key, allowed] of Object.entries({
+      cookieKind: new Set(['login', 'session', 'clearance', 'connect', 'other']),
+      cookieAction: new Set(['set', 'delete', 'unknown']),
+      cookieLifetime: new Set(['session', 'persistent', 'expired', 'unknown']),
+      cookieAccepted: new Set(['accepted', 'rejected', 'not_submitted', 'pending']),
+      cookieEndpoint: new Set(['auth', 'connect', 'categories', 'notifications', 'topic', 'feed', 'other']),
+      cookieTransport: new Set(['okhttp', 'cronet', 'webview']),
+      cookieBarrierReason: new Set([
+        'startup',
+        'source-change',
+        'surface-open',
+        'surface-close',
+        'identity-change',
+        'explicit-clear'
+      ]),
+      cookieResult: new Set([
+        'settled',
+        'persisted',
+        'flush_failed',
+        'redirect_denied',
+        'barrier_blocked',
+        'epoch_changed',
+        'callback_timeout',
+        'pending_write',
+        'absent',
+        'applied',
+        'source_denied',
+        'stale',
+        'canceled',
+        'baseline_changed',
+        'write_failed'
+      ]),
       imageConsumer: new Set(['fresco', 'glide', 'svg-probe']),
       imageFailure: new Set([
         'executor_rejected',
@@ -212,6 +267,9 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
     if (proxyType) output.proxyType = proxyType;
     if (tlsVersion) output.tlsVersion = tlsVersion;
     if (errorType) output.errorType = errorType;
+    for (const key of ['hasLoginCookie', 'loginCookieChanged', 'cookieBarrierBlocked']) {
+      if (typeof input[key] === 'boolean') output[key] = input[key];
+    }
     for (const key of identityKeys) {
       const identity = safeIdentity(input[key]);
       if (identity) output[key] = identity;

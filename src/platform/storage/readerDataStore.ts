@@ -1,181 +1,286 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 import {
   createEmptyReaderData,
-  readerDataVersion,
-  sanitizeReaderData,
+  mergeReaderData,
   sanitizeReaderSettings,
-  type ReaderData,
+  validateStoredReaderData,
   type ReaderSettings
 } from '@/domain/reader/readerData';
-import { assertBackupJsonSize } from '@/domain/reader/readerBackup';
+import { exportReaderBackupJson, parseReaderBackupJson } from '@/domain/reader/readerBackup';
+import type { ReaderCommand, ReaderPageRequest } from '@/domain/reader/readerRecordState';
 import { isRecord } from '@/domain/forum/html';
 import { createTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
 import {
-  normalizeDiagnosticReason,
-  type DiagnosticFields,
-  type DiagnosticOutcome,
-  type DiagnosticTrace
-} from '@/platform/diagnostics/diagnosticPolicy';
+  readerSchema,
+  readReaderBootstrap,
+  readReaderMeta,
+  readReaderPage,
+  readReaderSnapshot,
+  ReaderTransaction
+} from './readerDatabase';
 
-const READER_DATA_STORAGE_KEY = 'reader-data';
-const READER_SETTINGS_STORAGE_KEY = 'reader-settings';
-const READER_STORAGE_LOAD_TIMEOUT_MS = 3_000;
-let lastSettingsLoadResult = '';
+const DATABASE_NAME = 'reader-data.db';
+const LEGACY_KEYS = ['reader-data', 'reader-settings'];
+let databasePromise: Promise<SQLiteDatabase> | undefined;
+let queue: Promise<unknown> = Promise.resolve();
+let transactionUncertain = false;
 
-function recordSettingsLoad(trace: DiagnosticTrace, outcome: DiagnosticOutcome, fields: DiagnosticFields) {
-  const result = `${outcome}:${fields.state}:${fields.reason || ''}`;
-  if (lastSettingsLoadResult === result) return;
-  lastSettingsLoadResult = result;
-  finishDiagnosticTrace(trace, outcome, { store: 'reader-settings', ...fields });
+function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+  const result = queue.then(operation, operation);
+  queue = result.catch(() => undefined);
+  return result;
 }
 
-function settingsFromStorage(parsed: unknown, fallback: ReaderSettings) {
+async function connect() {
+  const db = await openDatabaseAsync(DATABASE_NAME, { useNewConnection: true });
   try {
-    return isRecord(parsed) ? sanitizeReaderSettings(parsed) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-async function readStoredSettings() {
-  const trace = createTrace('reader-data', 'load-settings');
-  let reading = true;
-  try {
-    const raw = await readStorageItem(READER_SETTINGS_STORAGE_KEY, '阅读设置读取超时。');
-    reading = false;
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    const valid = isRecord(parsed);
-    recordSettingsLoad(trace, raw && !valid ? 'partial' : raw ? 'success' : 'noop', {
-      state: raw ? (valid ? 'restored' : 'fallback') : 'missing',
-      ...(raw && !valid ? { reason: 'invalid_response' } : {})
-    });
-    return parsed;
-  } catch (error) {
-    recordSettingsLoad(trace, 'partial', {
-      state: 'fallback',
-      reason: reading
-        ? normalizeDiagnosticReason(error) === 'timeout'
-          ? 'timeout'
-          : 'storage_error'
-        : 'invalid_response'
-    });
-    return null;
-  }
-}
-
-function readStorageItem(key: string, timeoutMessage: string) {
-  return new Promise<string | null>((resolve, reject) => {
-    let settled = false;
-    let timeout: ReturnType<typeof setTimeout>;
-    const finish = (complete: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      complete();
-    };
-    timeout = setTimeout(() => finish(() => reject(new Error(timeoutMessage))), READER_STORAGE_LOAD_TIMEOUT_MS);
-    try {
-      void AsyncStorage.getItem(key).then(
-        (value) => finish(() => resolve(value)),
-        (error) => finish(() => reject(error))
-      );
-    } catch (error) {
-      finish(() => reject(error));
-    }
-  });
-}
-
-export async function loadReaderData() {
-  const trace = createTrace('reader-data', 'restore');
-  const defaultSettings = createEmptyReaderData().settings;
-  let reading = true;
-  try {
-    const [raw, rawSettings] = await Promise.all([
-      readStorageItem(READER_DATA_STORAGE_KEY, '本机资料读取超时；为防止覆盖，未自动重置。'),
-      readStoredSettings()
-    ]);
-    reading = false;
-    let clean: ReaderData;
-    if (!raw) {
-      clean = createEmptyReaderData();
-    } else {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        throw new Error('本机资料已损坏；为防止覆盖，未自动重置。');
+    await db.execAsync('PRAGMA busy_timeout = 3000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+    const version = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+    if (version && version.user_version > 1) throw new Error('本机资料版本较新，未修改原资料。');
+    if (!version?.user_version) await db.execAsync(readerSchema);
+    else {
+      const tables = await db.getAllAsync<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table'");
+      if (
+        ['reader_meta', 'reader_counts', 'reader_records', 'reader_deleted'].some(
+          (name) => !tables.some((table) => table.name === name)
+        )
+      ) {
+        throw new Error('本机数据库不完整，未回退或重置资料。');
       }
-      if (!isRecord(parsed) || parsed.version !== readerDataVersion) {
-        throw new Error('本机资料版本不受支持；为防止覆盖，未自动重置。');
-      }
-      clean = sanitizeReaderData(parsed);
     }
-    const result = {
-      ...clean,
-      settings: settingsFromStorage(rawSettings, {
-        ...clean.settings,
-        contentSources: defaultSettings.contentSources
-      })
-    };
-    finishDiagnosticTrace(trace, raw === null ? 'noop' : raw ? 'success' : 'partial', {
-      state: raw === null ? 'missing' : raw ? 'restored' : 'fallback',
-      hasStoredData: raw !== null,
-      ...(raw === '' ? { reason: 'invalid_response' } : {})
-    });
-    return result;
+    return db;
   } catch (error) {
-    finishDiagnosticTrace(trace, 'failure', {
-      state: reading ? 'recovery-mode' : 'invalid',
-      reason: reading
-        ? normalizeDiagnosticReason(error) === 'timeout'
-          ? 'timeout'
-          : 'storage_error'
-        : 'invalid_response'
-    });
+    await db.closeAsync();
     throw error;
   }
 }
 
-export async function loadReaderSettings() {
-  const fallback = createEmptyReaderData().settings;
+// All statements on this connection belong to the owner queue. BEGIN IMMEDIATE
+// reserves the writer before reading; no unrelated async query can join it.
+async function transaction<T>(db: SQLiteDatabase, write: boolean, task: () => Promise<T>): Promise<T> {
+  if (transactionUncertain) throw new Error('本机资料事务状态不明，请重新启动后恢复。');
+  await db.execAsync(write ? 'BEGIN IMMEDIATE' : 'BEGIN DEFERRED');
   try {
-    return settingsFromStorage(await readStoredSettings(), fallback);
-  } catch {
-    return fallback;
+    const value = await task();
+    await db.execAsync('COMMIT');
+    return value;
+  } catch (error) {
+    try {
+      await db.execAsync('ROLLBACK');
+    } catch (rollback) {
+      transactionUncertain = true;
+      throw new AggregateError([error, rollback], '本机资料事务无法确认，已停止修改。');
+    }
+    throw error;
   }
 }
 
-export async function saveReaderSettings(settings: ReaderSettings) {
-  await AsyncStorage.setItem(READER_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+async function readLegacySettings(): Promise<ReaderSettings | null> {
+  const trace = createTrace('reader-data', 'load-settings');
+  try {
+    const raw = await AsyncStorage.getItem('reader-settings');
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    const valid = isRecord(parsed);
+    finishDiagnosticTrace(trace, valid ? 'success' : raw === null ? 'noop' : 'partial', {
+      state: valid ? 'restored' : raw === null ? 'missing' : 'fallback'
+    });
+    return valid ? sanitizeReaderSettings(parsed) : null;
+  } catch (error) {
+    finishDiagnosticTrace(trace, 'partial', { state: 'fallback', reason: normalizeDiagnosticReason(error) });
+    return null;
+  }
 }
 
-export async function saveCleanReaderData(
-  clean: ReaderData,
-  previousJson?: string | null,
-  cleanJson = JSON.stringify(clean)
-) {
-  const json = cleanJson;
-  assertBackupJsonSize(json);
-  if (json !== previousJson) {
-    const previousSettings = await AsyncStorage.getItem(READER_SETTINGS_STORAGE_KEY);
-    await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, json);
-    try {
-      await saveReaderSettings(clean.settings);
-    } catch (error) {
-      const rollbackResults = await Promise.allSettled([
-        previousJson == null
-          ? AsyncStorage.removeItem(READER_DATA_STORAGE_KEY)
-          : AsyncStorage.setItem(READER_DATA_STORAGE_KEY, previousJson),
-        previousSettings == null
-          ? AsyncStorage.removeItem(READER_SETTINGS_STORAGE_KEY)
-          : AsyncStorage.setItem(READER_SETTINGS_STORAGE_KEY, previousSettings)
-      ]);
-      const rollbackErrors = rollbackResults.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
-      if (rollbackErrors.length) {
-        throw new AggregateError([error, ...rollbackErrors], '本机资料保存失败，且无法恢复先前快照。');
+async function cleanupLegacy(db: SQLiteDatabase) {
+  const started = performance.now();
+  const trace = createTrace('reader-data', 'migration-cleanup');
+  try {
+    await AsyncStorage.removeMany(LEGACY_KEYS);
+    const remaining = await AsyncStorage.getAllKeys();
+    if (LEGACY_KEYS.some((key) => remaining.includes(key))) throw new Error('旧资料清理尚未完成。');
+    await transaction(db, true, () => db.runAsync("UPDATE reader_meta SET status='ready' WHERE id=1"));
+    finishDiagnosticTrace(trace, 'success', { state: 'ready', elapsedMs: performance.now() - started });
+  } catch (error) {
+    finishDiagnosticTrace(trace, 'partial', {
+      state: 'cleanup-pending',
+      elapsedMs: performance.now() - started,
+      reason: normalizeDiagnosticReason(error)
+    });
+  }
+}
+
+async function verifyCommitted(expected?: import('@/domain/reader/readerData').ReaderData) {
+  const connection = await connect();
+  try {
+    await transaction(connection, false, async () => {
+      await readReaderBootstrap(connection);
+      if (expected && JSON.stringify(await readReaderSnapshot(connection)) !== JSON.stringify(expected)) {
+        throw new Error('已提交资料核对失败，未清理旧资料。');
       }
+    });
+  } finally {
+    await connection.closeAsync();
+  }
+}
+
+async function initializeDatabase() {
+  const db = await connect();
+  try {
+    const meta = await readReaderMeta(db);
+    if (meta && !['ready', 'cleanup_pending'].includes(meta.status)) throw new Error('本机资料状态不完整，未重置。');
+    if (!meta) {
+      const started = performance.now();
+      const trace = createTrace('reader-data', 'migrate');
+      try {
+        // Migration has no total timeout: a large but valid transaction must finish.
+        const [raw, settings] = await Promise.all([AsyncStorage.getItem('reader-data'), readLegacySettings()]);
+        const data = raw === null ? createEmptyReaderData() : validateStoredReaderData(JSON.parse(raw));
+        data.settings = settings ?? {
+          ...data.settings,
+          contentSources: createEmptyReaderData().settings.contentSources
+        };
+        await transaction(db, true, async () => {
+          const writer = await ReaderTransaction.initialize(db, data.settings);
+          await writer.seed(data);
+          await writer.finish(true);
+          const actual = await readReaderSnapshot(db);
+          if (JSON.stringify(actual) !== JSON.stringify(data)) throw new Error('资料迁移核对失败，未清理旧资料。');
+        });
+        await verifyCommitted(data);
+        finishDiagnosticTrace(trace, 'success', { state: 'cleanup-pending', elapsedMs: performance.now() - started });
+      } catch (error) {
+        finishDiagnosticTrace(trace, 'failure', {
+          elapsedMs: performance.now() - started,
+          reason: normalizeDiagnosticReason(error)
+        });
+        throw error;
+      }
+    }
+    if (!meta || meta.status === 'cleanup_pending') {
+      if (meta) await verifyCommitted();
+      await cleanupLegacy(db);
+    }
+    return db;
+  } catch (error) {
+    await db.closeAsync();
+    throw error;
+  }
+}
+
+function database() {
+  databasePromise ??= initializeDatabase().catch((error) => {
+    databasePromise = undefined;
+    throw error;
+  });
+  return databasePromise;
+}
+
+export function loadReaderState() {
+  return enqueue(async () => {
+    recordStartupPhase('reader-start');
+    const trace = createTrace('reader-data', 'restore');
+    try {
+      const db = await database();
+      const state = await transaction(db, false, () => readReaderBootstrap(db));
+      recordStartupPhase('reader-read');
+      finishDiagnosticTrace(trace, 'success', {
+        state: 'restored',
+        count: state.counts.favorites + state.counts.history + state.counts.followedUsers
+      });
+      return state;
+    } catch (error) {
+      finishDiagnosticTrace(trace, 'failure', { state: 'recovery-mode', reason: normalizeDiagnosticReason(error) });
       throw error;
     }
-  }
-  return clean;
+  });
+}
+
+export function commitReaderCommand(command: ReaderCommand) {
+  return enqueue(async () => {
+    const db = await database();
+    return transaction(db, true, async () => {
+      const writer = await ReaderTransaction.open(db);
+      await writer.apply(command);
+      return writer.finish();
+    });
+  });
+}
+
+export function queryReaderPage(request: ReaderPageRequest) {
+  return enqueue(async () => {
+    const db = await database();
+    return transaction(db, false, () => readReaderPage(db, request));
+  });
+}
+
+export function readHistoryReplyCount(key: string) {
+  return enqueue(async () => {
+    const db = await database();
+    const row = await db.getFirstAsync<{ value: string }>(
+      "SELECT value FROM reader_records WHERE kind='history' AND key=?",
+      key
+    );
+    if (!row) return 0;
+    const record: import('@/domain/reader/readerData').TopicRecord = JSON.parse(row.value);
+    return record.topic.replyCount || 0;
+  });
+}
+
+export function exportReaderDataBackup() {
+  return enqueue(async () => {
+    const db = await database();
+    return exportReaderBackupJson(await transaction(db, false, () => readReaderSnapshot(db)));
+  });
+}
+
+export function importReaderDataBackup(json: string, recovery = false) {
+  const parsed = parseReaderBackupJson(json);
+  return enqueue(async () => {
+    // Explicit backup recovery may replace unreadable legacy data, never a corrupt
+    // committed database. Opening/schema errors still preserve recovery protection.
+    const db = recovery && !databasePromise ? await connect() : await database();
+    try {
+      const state = await transaction(db, true, async () => {
+        const meta = await readReaderMeta(db);
+        const current = meta ? await readReaderSnapshot(db) : createEmptyReaderData();
+        const merged = mergeReaderData(current, parsed);
+        const writer = meta
+          ? await ReaderTransaction.open(db)
+          : await ReaderTransaction.initialize(db, merged.settings);
+        await writer.replaceBackupSnapshot(merged);
+        await writer.finish();
+        return readReaderBootstrap(db);
+      });
+      if (recovery && !databasePromise) {
+        await verifyCommitted();
+        await cleanupLegacy(db);
+        databasePromise = Promise.resolve(db);
+      }
+      return state;
+    } catch (error) {
+      if (!databasePromise) await db.closeAsync();
+      throw error;
+    }
+  });
+}
+
+export function loadReaderSettings() {
+  return enqueue(async () => {
+    // Headless notification startup reads the authority without migrating payloads.
+    const owned = databasePromise !== undefined;
+    const db = owned ? await databasePromise! : await connect();
+    try {
+      const meta = await readReaderMeta(db);
+      if (meta) {
+        if (!['ready', 'cleanup_pending'].includes(meta.status)) throw new Error('本机资料状态不完整。');
+        return sanitizeReaderSettings(JSON.parse(meta.settings));
+      }
+      return (await readLegacySettings()) ?? createEmptyReaderData().settings;
+    } finally {
+      if (!owned) await db.closeAsync();
+    }
+  });
 }

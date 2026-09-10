@@ -1,3 +1,4 @@
+import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { memo, useMemo, useRef } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Switch, Text, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
@@ -5,7 +6,7 @@ import RenderHTML, { HTMLContentModel, HTMLElementModel } from 'react-native-ren
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { notificationSources, sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { parseForumTopicDestination } from '@/domain/forum/links';
-import type { ReplyLocationTarget, SourceErrorInfo, Topic } from '@/domain/forum/models';
+import type { TopicLocationTarget, SourceErrorInfo, Topic } from '@/domain/forum/models';
 import type { ForumNotification, NotificationCategory, NotificationDetail } from '@/domain/notifications/models';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
@@ -304,8 +305,10 @@ export const NotificationsScreen = memo(function NotificationsScreen({
       ) : null}
     </View>
   );
+  const onPageLayout = useStartupPageLayout();
   return (
     <FlashList
+      onLayout={onPageLayout}
       nestedScrollEnabled={false}
       accessibilityLabel="消息列表"
       testID={outcome ? `notification-outcome-${outcome}-${source}` : undefined}
@@ -391,8 +394,9 @@ export function NotificationSettingsScreen({
   onToggleSource: (source: NotificationSource, enabled: boolean) => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
+  const onPageLayout = useStartupPageLayout();
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.settingsContent}>
+    <ScrollView onLayout={onPageLayout} style={styles.screen} contentContainerStyle={styles.settingsContent}>
       <Text style={styles.settingsIntro}>
         Android 通知默认关闭。启用后，系统会在本机约每 15
         分钟安排一次检查；force-stop、省电策略和系统调度都可能造成延迟。
@@ -463,7 +467,7 @@ function DetailHtml({
   message?: boolean;
   source: NotificationSource;
   onOpenExternalUrl: (url: string) => void;
-  onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
+  onOpenTopic: (topic: Topic, location?: TopicLocationTarget) => void;
 }) {
   const { settings, styles } = useReaderThemeStyles(createNotificationStyles);
   const mediaContext = useForumMediaRequestContext(source);
@@ -489,7 +493,7 @@ function DetailHtml({
             return;
           }
           event.stopPropagation?.();
-          if (destination.targetReply) onOpenTopic(destination.topic, destination.targetReply);
+          if (destination.location) onOpenTopic(destination.topic, destination.location);
           else onOpenTopic(destination.topic);
         }
       }
@@ -558,7 +562,7 @@ export function NotificationDetailScreen({
   routeActive?: boolean;
   topicReplyAction?: boolean;
   onOpenExternalUrl: (url: string) => void;
-  onOpenTopic: (topic?: Topic, targetReply?: ReplyLocationTarget) => void;
+  onOpenTopic: (topic?: Topic, location?: TopicLocationTarget) => void;
   onOpenReply?: () => void;
   onReplyClose?: () => void;
   onReplyContentChange?: (content: string) => void;
@@ -570,6 +574,7 @@ export function NotificationDetailScreen({
   onUseLinuxDoTemplate?: (id: string) => Promise<void>;
   onUploadReplyImage?: () => unknown;
 }) {
+  const onPageLayout = useStartupPageLayout();
   const { styles, theme } = useReaderThemeStyles(createNotificationStyles);
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
@@ -579,7 +584,7 @@ export function NotificationDetailScreen({
     topicReplyAction || detail?.notification.kind === 'mention' || detail?.notification.kind === 'reply';
   if (loading) {
     return (
-      <View style={[styles.screen, styles.centeredState]} accessibilityLiveRegion="polite">
+      <View style={[styles.screen, styles.centeredState]} onLayout={onPageLayout} accessibilityLiveRegion="polite">
         <ActivityIndicator color={theme.primary} />
         <Text style={styles.stateText}>正在读取消息详情</Text>
       </View>
@@ -587,7 +592,7 @@ export function NotificationDetailScreen({
   }
   if (!detail) {
     return (
-      <View style={styles.screen}>
+      <View style={styles.screen} onLayout={onPageLayout}>
         <EmptyState
           title="详情暂不可用"
           text={error || '请稍后重试。'}
@@ -610,7 +615,7 @@ export function NotificationDetailScreen({
     item.kind === 'system' ? '系统通知由原站提供为只读。' : '原站没有为这条通知提供可回复的会话或主题。';
   const conversationKey = detail.messages?.map((message) => message.id).join(':') || '';
   return (
-    <View style={styles.screen}>
+    <View style={styles.screen} onLayout={onPageLayout}>
       <ScrollView
         ref={scrollRef}
         testID="notification-detail-scroll"

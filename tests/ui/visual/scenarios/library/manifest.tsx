@@ -100,6 +100,15 @@ function LibraryScenario({
   return (
     <LibraryScreen
       active
+      sourceFilter="all"
+      categoryFilter="all"
+      onSourceFilter={noop}
+      onCategoryFilter={noop}
+      total={empty ? 0 : tab === 'users' ? createFollowedUsers().length : createRecords().length}
+      visibleTotal={empty ? 0 : tab === 'users' ? createFollowedUsers().length : createRecords().length}
+      error={false}
+      onRetry={noop}
+      onLoadMore={noop}
       categories={createCategories()}
       enabledSources={sources}
       favoriteRecords={empty ? [] : createRecords()}

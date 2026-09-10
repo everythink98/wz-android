@@ -5,6 +5,7 @@ import { Animated, Platform, StyleSheet } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { FeedScreen } from '@/features/feed/FeedScreen';
+import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -40,6 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setStartupTimingRecorder(undefined);
   jest.restoreAllMocks();
 });
 
@@ -94,7 +96,9 @@ jest.mock('@shopify/flash-list', () => {
         mockFlashListMountCount += 1;
         return undefined;
       });
-      ReactModule.useEffect(() => onLoad?.(), [onLoad]);
+      ReactModule.useEffect(() => {
+        if (data.length) onLoad?.();
+      }, [data.length, onLoad]);
       ReactModule.useImperativeHandle(ref, () => ({
         scrollToOffset: (options: { animated: boolean; offset: number }) => {
           mockFlashListScrollToOffset(options);
@@ -261,13 +265,29 @@ function renderFeed(
 }
 
 describe('feed initial content readiness', () => {
-  it('reports readiness only after a terminal FlashList has loaded', async () => {
+  it.each(['empty', 'error', 'auth', 'disabled'] as const)('does not count %s as visible posts', async (outcome) => {
+    const phases: StartupPhase[] = [];
+    setStartupTimingRecorder((phase) => phases.push(phase));
+    const view = await render(
+      renderFeed(false, outcome === 'disabled' ? [topic] : [], {
+        ...(outcome === 'disabled' ? { enabledFeedSources: [] } : { feedOutcomeKind: outcome })
+      })
+    );
+    expect(phases).toEqual([]);
+    await fireEvent(view.getByTestId('feed-empty-state'), 'layout');
+    await fireEvent(view.getByTestId('feed-empty-state'), 'layout');
+    expect(phases).toEqual([outcome === 'error' || outcome === 'auth' ? 'feed-error' : 'feed-empty']);
+  });
+
+  it('reports empty readiness once after the actual empty state has laid out', async () => {
     const onInitialContentReady = jest.fn();
     const view = await render(renderFeed(true, [], { onInitialContentReady }));
 
     expect(onInitialContentReady).not.toHaveBeenCalled();
     await view.rerender(renderFeed(false, [], { onInitialContentReady }));
-
+    expect(onInitialContentReady).not.toHaveBeenCalled();
+    await fireEvent(view.getByTestId('feed-empty-state'), 'layout');
+    await fireEvent(view.getByTestId('feed-empty-state'), 'layout');
     expect(onInitialContentReady).toHaveBeenCalledTimes(1);
   });
 });

@@ -40,7 +40,8 @@ import {
 } from '@/platform/network/browserFetchIntent';
 import { recoverReadNetworkRuntime } from '@/platform/network/networkProxy';
 import { getReadNetworkRuntimeSnapshot } from '@/platform/network/readNetworkRuntime';
-import { sourceErrorFromUnknown } from './sourceErrors';
+import { errorRequiresAccountRecheck, sourceErrorFromUnknown } from './sourceErrors';
+import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -200,6 +201,7 @@ type ReadGatewayDependencies = {
   linuxDoUserAgent?: () => string;
   nodeSeekUserAgent: () => string;
   onSessionExpired?: (source: SessionSource, requestSessionEpoch: number) => void;
+  requestAccountRecheck?: RequestAccountRecheck;
   readSessionRuntimeSnapshot: (source: SessionSource) => SessionRuntimeSnapshot;
 };
 
@@ -644,13 +646,18 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         if (
           error &&
           typeof error === 'object' &&
-          (error as { reason?: unknown }).reason === 'http-401' &&
+          ((error as { reason?: unknown }).reason === 'http-401' ||
+            (planSource === 'linuxdo' && errorRequiresAccountRecheck(error))) &&
           session?.authenticated &&
           session.identityTrust === 'confirmed' &&
           plan?.state === 'ready' &&
           plan.lane === 'authenticated'
         ) {
-          dependencies.onSessionExpired?.(planSource, session.sessionEpoch);
+          if (errorRequiresAccountRecheck(error)) {
+            dependencies.requestAccountRecheck?.(planSource, session.sessionEpoch, trace.traceId);
+          } else {
+            dependencies.onSessionExpired?.(planSource, session.sessionEpoch);
+          }
         }
       }
       if (!readIsCurrent()) throw new Error(REQUEST_CANCELED_MESSAGE);
@@ -691,7 +698,11 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         throw new Error(REQUEST_CANCELED_MESSAGE);
       }
       const sourceError = sourceErrorFromUnknown(source, error);
-      if (source !== 'all' && isSessionSource(source) && sourceError.reason === 'http-401') {
+      if (
+        source !== 'all' &&
+        isSessionSource(source) &&
+        (sourceError.reason === 'http-401' || (source === 'linuxdo' && errorRequiresAccountRecheck(sourceError)))
+      ) {
         const session = sessionSnapshots.get(source);
         const plan = planSnapshot.get(source);
         if (
@@ -700,7 +711,11 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
           plan?.state === 'ready' &&
           plan.lane === 'authenticated'
         ) {
-          dependencies.onSessionExpired?.(source, session.sessionEpoch);
+          if (errorRequiresAccountRecheck(sourceError)) {
+            dependencies.requestAccountRecheck?.(source, session.sessionEpoch, trace.traceId);
+          } else {
+            dependencies.onSessionExpired?.(source, session.sessionEpoch);
+          }
         }
       }
       if (!readIsCurrent()) {

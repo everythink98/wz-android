@@ -11,6 +11,43 @@ import { buildDiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 
 describe('linux.do action client', () => {
+  it.each([
+    ['没有权限执行该操作', 403],
+    ['需要等级 Lv3 才能查看', 403],
+    ['CSRF token invalid，请先登录', 403],
+    ['login settings failed', 500]
+  ])('does not request account rechecks for %s', async (message, status) => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: [message] }), { status: Number(status) }));
+    const error = await runLinuxDoAction({
+      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
+      fetcher
+    }).catch((error) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toHaveProperty('reason', 'account-recheck-required');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves an explicit login requirement as an account recheck signal without retrying the write', async () => {
+    const fetcher = vi.fn(async (input: string) =>
+      input.endsWith('/session/csrf')
+        ? new Response(JSON.stringify({ csrf: 'token' }))
+        : new Response(JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }), { status: 403 })
+    );
+    await expect(
+      runLinuxDoAction({
+        request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
+        fetcher
+      })
+    ).rejects.toMatchObject({
+      message: '您需要登录才能执行此操作。',
+      source: 'linuxdo',
+      status: 403,
+      kind: 'login-required',
+      reason: 'account-recheck-required'
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('gets a CSRF token through the read-only cookie jar and preserves write priority', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://linux.do/session/csrf') {

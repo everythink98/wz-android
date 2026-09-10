@@ -1,178 +1,90 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  createEmptyReaderData,
-  recordHistory,
-  toggleFavorite,
-  topicKey,
-  updateFavoriteTopic
-} from '@/domain/reader/readerData';
-import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { describe, expect, it, vi } from 'vitest';
+import { applyReaderChange, createEmptyReaderState, projectReaderCommand } from '@/domain/reader/readerRecordState';
 import type { Topic } from '@/domain/forum/models';
-import { loadInitialReaderData, prepareReaderDataCommit, rollbackFailedReaderDataSave } from './useReaderRuntime';
-
+vi.mock('@/platform/storage/readerDataStore', () => ({ loadReaderState: vi.fn() }));
+import { loadInitialReaderData } from './useReaderRuntime';
 const topic: Topic = {
   source: 'nodeseek',
-  id: '723704',
-  title: 'NodeSeek topic',
+  id: '1',
+  title: 'Topic',
   author: 'alice',
-  category: '日常',
-  url: 'https://www.nodeseek.com/post-723704-1',
-  createdAt: '2026-05-18T11:34:13.000Z',
-  replyCount: 2
+  url: 'https://www.nodeseek.com/post-1-1',
+  createdAt: '2026-01-01T00:00:00Z'
 };
 
-afterEach(() => {
-  setDiagnosticWriter(null);
-});
-
-describe('reader data controller helpers', () => {
-  it('skips persistence when a commit updater returns the current object', () => {
-    const current = createEmptyReaderData();
-
-    expect(prepareReaderDataCommit(current, (value) => value)).toBeNull();
-  });
-
-  it('keeps sanitized reader data commits and lets storage skip unchanged writes', () => {
-    const current = createEmptyReaderData();
-
-    const next = prepareReaderDataCommit(current, (value) => ({
-      ...value,
-      favorites: undefined as unknown as typeof value.favorites
-    }));
-
-    expect(next).toEqual(current);
-    expect(next).not.toBe(current);
-  });
-
-  it('sanitizes changed reader data before persistence', () => {
-    const current = createEmptyReaderData();
-    const next = prepareReaderDataCommit(current, (value) => toggleFavorite(value, topic));
-
-    expect(next?.favorites[topicKey(topic)]?.topic).toEqual(topic);
-    expect(next?.history).toBe(current.history);
-    expect(next?.followedUsers).toBe(current.followedUsers);
-    expect(next?.settings).toBe(current.settings);
-    expect(next?.deletedRecords).toBe(current.deletedRecords);
-  });
-
-  it('validates changed partitions without rebuilding unchanged deletion maps', () => {
-    const current = toggleFavorite(createEmptyReaderData(), topic);
-    const next = prepareReaderDataCommit(
-      current,
-      (value) => ({
-        ...value,
-        deletedRecords: { ...value.deletedRecords, favorites: { bad: 'invalid', good: topic.createdAt } },
-        settings: { ...value.settings, fontScale: 100 }
-      }),
-      'favorite-toggled'
-    );
-    expect(next?.deletedRecords.favorites).toEqual({ good: topic.createdAt });
-    expect(next?.deletedRecords.history).toBe(current.deletedRecords.history);
-    expect(next?.deletedRecords.followedUsers).toBe(current.deletedRecords.followedUsers);
-    expect(next?.favorites).toBe(current.favorites);
-    expect(next?.settings.fontScale).toBe(1.4);
-  });
-
-  it('trusts only bounded history-recorded mutations without rebuilding the snapshot', () => {
-    const current = toggleFavorite(createEmptyReaderData(), topic);
-    const refreshedTopic = { ...topic, title: 'Updated topic' };
-    const updated = updateFavoriteTopic(recordHistory(current, refreshedTopic), refreshedTopic);
-
-    const historyCommit = prepareReaderDataCommit(current, () => updated, 'history-recorded');
-    const regularCommit = prepareReaderDataCommit(current, () => updated, 'favorite-toggled');
-
-    expect(historyCommit).toBe(updated);
-    expect(historyCommit?.favorites[topicKey(topic)]?.topic.title).toBe('Updated topic');
-    expect(regularCommit).not.toBe(updated);
-    expect(regularCommit?.history[topicKey(topic)]?.visitCount).toBe(1);
-  });
-
-  it('keeps record maps untouched when only settings change', () => {
-    const current = toggleFavorite(createEmptyReaderData(), topic);
-    const next = prepareReaderDataCommit(current, (value) => ({
-      ...value,
-      settings: {
-        ...value.settings,
-        theme: 'dark'
-      }
-    }));
-
-    expect(next?.settings.theme).toBe('dark');
-    expect(next?.favorites).toBe(current.favorites);
-    expect(next?.history).toBe(current.history);
-    expect(next?.followedUsers).toBe(current.followedUsers);
-    expect(next?.deletedRecords).toBe(current.deletedRecords);
-  });
-
-  it('rolls reader data back when the failed save is still the visible state', () => {
-    const previous = createEmptyReaderData();
-    const failed = toggleFavorite(previous, topic);
-
-    expect(rollbackFailedReaderDataSave(failed, failed, previous)).toBe(previous);
-  });
-
-  it('keeps newer reader data when an older save fails later', () => {
-    const previous = createEmptyReaderData();
-    const failed = toggleFavorite(previous, topic);
-    const newer = {
-      ...failed,
-      settings: {
-        ...failed.settings,
-        theme: 'dark' as const
-      }
-    };
-
-    expect(rollbackFailedReaderDataSave(newer, failed, previous)).toBe(newer);
-  });
-
-  it('rolls reader data back to the last persisted state after chained optimistic saves fail', () => {
-    const persisted = createEmptyReaderData();
-    const firstOptimistic = toggleFavorite(persisted, topic);
-    const secondTopic: Topic = { ...topic, id: '723705', title: 'Second topic' };
-    const failed = toggleFavorite(firstOptimistic, secondTopic);
-
-    expect(rollbackFailedReaderDataSave(failed, failed, firstOptimistic, persisted)).toBe(persisted);
-  });
-
-  it('enters recovery mode from a failed load path', async () => {
-    const diagnosticLines: string[] = [];
-    setDiagnosticWriter((line) => {
-      diagnosticLines.push(line);
+describe('reader runtime state projection', () => {
+  it('keeps key references when committed visits only update an existing record', () => {
+    const current = projectReaderCommand(createEmptyReaderState(), { type: 'visit', topic, at: topic.createdAt });
+    const next = applyReaderChange(current, {
+      membership: [{ collection: 'history', key: 'nodeseek:1', present: true }],
+      counts: { history: 1 },
+      changed: ['history']
     });
-    const notify = vi.fn();
-    const onLoaded = vi.fn();
-    const onLoadFailed = vi.fn();
-
+    expect(next.history).toBe(current.history);
+    expect(next.favorites).toBe(current.favorites);
+    expect(next.revisions.history).toBe(1);
+  });
+  it('absolute favorite intent is idempotent during optimistic rebase', () => {
+    const command = { type: 'favorite' as const, topic, enabled: true, at: topic.createdAt };
+    const once = projectReaderCommand(createEmptyReaderState(), command);
+    expect(projectReaderCommand(once, command)).toBe(once);
+    expect(once.counts.favorites).toBe(1);
+  });
+  it('changes only the affected membership and deduplicates batch removal', () => {
+    const current = projectReaderCommand(createEmptyReaderState(), {
+      type: 'favorite',
+      topic,
+      enabled: true,
+      at: topic.createdAt
+    });
+    const next = projectReaderCommand(current, {
+      type: 'delete',
+      collection: 'favorites',
+      keys: ['nodeseek:1', 'nodeseek:1'],
+      at: topic.createdAt
+    });
+    expect(next.counts.favorites).toBe(0);
+    expect(next.history).toBe(current.history);
+  });
+  it('enters existing recovery mode when local restore fails', async () => {
+    const notify = vi.fn(),
+      onLoaded = vi.fn(),
+      onLoadFailed = vi.fn();
     await loadInitialReaderData({
       isActive: () => true,
       load: async () => {
-        throw new Error('bad storage');
+        throw new Error('storage failed');
       },
       notify,
       onLoaded,
       onLoadFailed
     });
-
-    expect(onLoadFailed).toHaveBeenCalled();
-    expect(onLoaded).toHaveBeenCalledWith(createEmptyReaderData());
-    expect(notify).toHaveBeenCalledWith('本机资料读取失败，已进入恢复模式；请先导入备份再修改本机资料：bad storage');
-    const events = diagnosticLines.map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(events).toEqual([
-      expect.objectContaining({ area: 'reader-data', operation: 'load', phase: 'intent' }),
-      expect.objectContaining({
-        area: 'reader-data',
-        operation: 'load',
-        phase: 'apply',
-        state: 'recovery-mode'
-      }),
-      expect.objectContaining({
-        area: 'reader-data',
-        operation: 'load',
-        phase: 'finish',
-        outcome: 'failure',
-        reason: 'storage_error'
-      })
-    ]);
-    expect(new Set(events.map((event) => event.traceId)).size).toBe(1);
+    expect(onLoadFailed).toHaveBeenCalledOnce();
+    expect(onLoaded).toHaveBeenCalledWith(createEmptyReaderState());
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('恢复模式'));
+  });
+  it('discards late load success and failure after unmount', async () => {
+    const notify = vi.fn(),
+      onLoaded = vi.fn(),
+      onLoadFailed = vi.fn();
+    await loadInitialReaderData({
+      isActive: () => false,
+      load: async () => createEmptyReaderState(),
+      notify,
+      onLoaded,
+      onLoadFailed
+    });
+    await loadInitialReaderData({
+      isActive: () => false,
+      load: async () => {
+        throw new Error('late');
+      },
+      notify,
+      onLoaded,
+      onLoadFailed
+    });
+    expect(onLoaded).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+    expect(onLoadFailed).not.toHaveBeenCalled();
   });
 });

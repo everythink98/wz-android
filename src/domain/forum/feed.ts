@@ -1,4 +1,5 @@
-import { categoryKey, topicKey, type ReaderData } from '@/domain/reader/readerData';
+import type { ReaderMembership } from '@/domain/reader/readerRecordState';
+import { categoryKey, topicKey } from '@/domain/reader/readerData';
 import type { Category, Reply, Topic } from './models';
 import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, sourceLabel } from './presentation';
 
@@ -33,7 +34,11 @@ export function positiveSearchQuery(query: string) {
   return expression.exclude.length ? expression.include.join(' ') : query;
 }
 
-export function applyFeedFilter(items: Topic[], data: ReaderData, filter: ReadingFilter) {
+export function applyFeedFilter(
+  items: Topic[],
+  data: Pick<ReaderMembership, 'favorites' | 'history'>,
+  filter: ReadingFilter
+) {
   if (filter === 'unread') {
     return items.filter((topic) => !data.history[topicKey(topic)]);
   }

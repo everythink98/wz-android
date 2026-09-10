@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, ScrollView } from 'react-native';
 import {
   type NavigationProp,
@@ -9,62 +9,19 @@ import {
   useRoute,
   useScrollToTop
 } from '@react-navigation/native';
-import type { ReaderData, ReaderDataMutationReason } from '@/domain/reader/readerData';
-import type { Screen } from '@/ui/navigation/types';
-import type { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
-import type { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
+
 import { MoreScreen } from './MoreScreen';
-import type { MoreUtilityCapabilities } from './components/MoreUtilityPanels';
+
 import { ReadingSettingsScreen } from './ReadingSettingsScreen';
 import { useBackupStatusController } from './useBackupStatusController';
 import { useDiagnosticLogController } from './useDiagnosticLogController';
 import { useReaderSettingsController } from './useReaderSettingsController';
-import type { MoreAccountCapabilities } from './components/MoreAccountPanel';
+
 import type { MainTabParamList } from '@/ui/navigation/appRouteTypes';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
+import { useMoreRouteRuntime } from './MoreRouteRuntime';
 
-export type MoreRouteRuntimeValue = {
-  account: MoreAccountCapabilities;
-  diagnostics: {
-    getCurrentScreen: () => Screen;
-    metadata: Parameters<typeof useDiagnosticLogController>[0]['metadata'];
-  };
-  notify: (message: string) => void;
-  notifications: MoreUtilityCapabilities['notifications'];
-  proxy: Pick<
-    ReturnType<typeof useNetworkProxyRuntime>,
-    | 'activeProfile'
-    | 'applyError'
-    | 'applyStatus'
-    | 'deleteProxyProfile'
-    | 'proxyState'
-    | 'selectProxyProfile'
-    | 'setProxyEnabled'
-    | 'summary'
-    | 'testProxyProfile'
-    | 'upsertProxyProfile'
-  >;
-  reader: {
-    commit: (reason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
-    data: ReaderData;
-    dataRef: { current: ReaderData };
-    replace: (reason: ReaderDataMutationReason, value: ReaderData) => Promise<void>;
-    waitForSave: () => Promise<void>;
-  };
-  update: ReturnType<typeof useAppUpdateRuntime>;
-};
-
-const MoreRouteRuntimeContext = createContext<MoreRouteRuntimeValue | null>(null);
-
-export function MoreRouteRuntimeProvider({ children, value }: { children: ReactNode; value: MoreRouteRuntimeValue }) {
-  return <MoreRouteRuntimeContext.Provider value={value}>{children}</MoreRouteRuntimeContext.Provider>;
-}
-
-function useMoreRouteRuntime() {
-  const runtime = useContext(MoreRouteRuntimeContext);
-  if (!runtime) throw new Error('MoreRouteRuntimeProvider is required');
-  return runtime;
-}
+export { MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from './MoreRouteRuntime';
 
 export function MoreRoute() {
   const runtime = useMoreRouteRuntime();
@@ -79,9 +36,8 @@ export function MoreRoute() {
   const { updateSettings } = useReaderSettingsController({ commitReaderData: runtime.reader.commit });
   const { backupBusy, exportBackupFile, importBackupFile } = useBackupStatusController({
     notify: runtime.notify,
-    readerDataRef: runtime.reader.dataRef,
-    replaceReaderData: runtime.reader.replace,
-    waitForReaderDataSave: runtime.reader.waitForSave
+    importBackup: runtime.reader.importBackup,
+    exportBackup: runtime.reader.exportBackup
   });
   const { diagnosticBusy, exportDiagnosticLogFile } = useDiagnosticLogController({
     getCurrentScreen: runtime.diagnostics.getCurrentScreen,

@@ -37,7 +37,12 @@ export async function readLinuxDoAccountStatus({
     const cookieHeader = managedCookieHeaderOrThrow(await readManagedCookieHeader(LINUXDO_ACCOUNT_STATUS_URL));
     if (signal.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
     cookieSummary = summarizeLinuxDoCookieHeader(cookieHeader);
-    markDiagnosticStage(trace, 'credential', { source: 'linuxdo', hasCredential: Boolean(cookieHeader) });
+    markDiagnosticStage(trace, 'credential', {
+      source: 'linuxdo',
+      hasCredential: Boolean(cookieHeader),
+      hasLoginCookie: cookieHeader.split(';').some((part) => /^_t=.+/.test(part.trim())),
+      hasVerificationCookie: cookieSummary.hasClearance
+    });
     const currentUser = await getCurrentUserProfile({
       source: 'linuxdo',
       fetcher: withDiagnosticFetcher(trace, fetcher),
@@ -45,7 +50,7 @@ export async function readLinuxDoAccountStatus({
       signal
     });
     if (signal.aborted) throw new Error(REQUEST_CANCELED_MESSAGE);
-    finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
+    finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', state: 'confirmed', accountEvidence: 'current-user' });
     return {
       session: siteSessionStateFromEvents('linuxdo', [
         {
@@ -62,7 +67,13 @@ export async function readLinuxDoAccountStatus({
     const canceled = signal.aborted || isCanceledRequest(error);
     const sourceError = canceled ? undefined : sourceErrorFromUnknown('linuxdo', error);
     if (sourceError?.kind === 'login-expired') {
-      finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', state: 'expired', reason: 'login_required' });
+      const evidence = (error as { accountEvidence?: unknown }).accountEvidence;
+      finishDiagnosticTrace(trace, 'success', {
+        source: 'linuxdo',
+        state: 'expired',
+        reason: 'login_required',
+        ...(evidence === 'session-404' || evidence === 'null-user' ? { accountEvidence: evidence } : {})
+      });
       return {
         session: siteSessionStateFromEvents('linuxdo', [
           {

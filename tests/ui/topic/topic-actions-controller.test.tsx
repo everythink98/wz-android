@@ -206,6 +206,7 @@ async function renderActions({
   isWritableSessionTicketCurrent,
   notify = jest.fn(),
   onSessionExpired = jest.fn(),
+  requestAccountRecheck = jest.fn(),
   readPlanScope = '',
   refreshTopicReplies = jest.fn(async () => 'completed'),
   siteSessionViewModels,
@@ -223,6 +224,7 @@ async function renderActions({
   isWritableSessionTicketCurrent?: (ticket: WritableSessionTicket) => boolean;
   notify?: (message: string) => void;
   onSessionExpired?: (source: ActionSource, requestSessionEpoch: number) => void;
+  requestAccountRecheck?: (source: ActionSource, requestSessionEpoch: number, parentTraceId?: string) => void;
   readPlanScope?: string;
   refreshTopicReplies?: () => Promise<unknown>;
   showYaohuoLogin?: (message?: string) => void;
@@ -261,6 +263,7 @@ async function renderActions({
         getNodeSeekUserAgent: () => 'safe-agent',
         notify,
         onSessionExpired,
+        requestAccountRecheck,
         readGateway: {
           getReadPlan: () => ({
             state: 'ready',
@@ -1912,6 +1915,47 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith('请刷新原帖确认最新状态');
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarked).toBe(false);
+  });
+
+  it('rechecks a parsed linux.do reply login failure once and preserves the failed draft', async () => {
+    mockRunLinuxDoAction.mockImplementationOnce(runLinuxDoActionActual);
+    const fetcher = jest.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/session/csrf')
+        ? new Response(JSON.stringify({ csrf: 'token' }))
+        : new Response(JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }), { status: 403 })
+    );
+    const requestAccountRecheck = jest.fn();
+    const onSessionExpired = jest.fn();
+    const showLinuxDoVerification = jest.fn();
+    const notify = jest.fn();
+    const linuxDetail = detailFor('linuxdo', { polls: [] });
+    seedTopicCache(linuxDetail);
+    const hook = await renderActions({
+      fetcher,
+      requestAccountRecheck,
+      onSessionExpired,
+      showLinuxDoVerification,
+      notify,
+      topicDetail: linuxDetail
+    });
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('reply draft');
+    });
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+    expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+    expect(requestAccountRecheck).toHaveBeenCalledWith(
+      'linuxdo',
+      initialForumSessionEpochs.linuxdo,
+      expect.stringMatching(/^trace-/)
+    );
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(onSessionExpired).not.toHaveBeenCalled();
+    expect(showLinuxDoVerification).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('您需要登录才能执行此操作。');
+    expect(hook.result.current.canReplyAtRender).toBe(true);
+    expect(hook.result.current.topicSession.state.replyContent).toBe('reply draft');
   });
 
   it('expires a write ticket once on raw HTTP 401 without replaying the write', async () => {

@@ -43,7 +43,8 @@ test('allows documented build output paths before generated files exist', async 
       'Output directory: `android/app/build/outputs/apk/release/`.',
       'Published APK: `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`.',
       'Smoke APK: `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`.',
-      'Native test report: `node_modules/expo-file-system/android/build/test-results/testDebugUnitTest/`.'
+      'Native test report: `node_modules/expo-file-system/android/build/test-results/testDebugUnitTest/`.',
+      'RN test report: `node_modules/react-native/ReactAndroid/build/test-results/testDebugUnitTest/`.'
     ].join('\n')
   );
   await mkdir(path.join(rootDir, 'node_modules'));

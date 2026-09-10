@@ -1,9 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
-import type { ReaderData, ReaderDataMutationReason } from '@/domain/reader/readerData';
-import { exportReaderBackupJson, importReaderBackupJson } from '@/domain/reader/readerBackup';
 import { safeFileName } from '@/platform/storage/backupFiles';
 import { readBackupFileText } from '@/platform/storage/backupImportFile';
 import { runBackupOperation } from '@/platform/storage/backupOperation';
@@ -12,14 +9,12 @@ import { normalizeDiagnosticReason, type DiagnosticReason } from '@/platform/dia
 
 export function useBackupStatusController({
   notify,
-  readerDataRef,
-  replaceReaderData,
-  waitForReaderDataSave
+  importBackup,
+  exportBackup
 }: {
   notify: (message: string) => void;
-  readerDataRef: { current: ReaderData };
-  replaceReaderData: (mutationReason: ReaderDataMutationReason, nextValue: ReaderData) => Promise<void>;
-  waitForReaderDataSave: () => Promise<void>;
+  importBackup: (json: string) => Promise<void>;
+  exportBackup: () => Promise<string>;
 }) {
   const backupBusyRef = useRef(false);
   const [backupBusy, setBackupBusy] = useState(false);
@@ -33,6 +28,8 @@ export function useBackupStatusController({
     const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
     try {
       await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- Share capability is loaded only during export.
+      const Sharing = require('expo-sharing') as typeof import('expo-sharing');
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType });
       } else {
@@ -60,8 +57,7 @@ export function useBackupStatusController({
       task: async () => {
         try {
           markDiagnosticStage(trace, 'guard', { state: 'waiting-for-save' });
-          await waitForReaderDataSave();
-          const content = exportReaderBackupJson(readerDataRef.current);
+          const content = await exportBackup();
           markDiagnosticStage(trace, 'persist', { byteCount: new TextEncoder().encode(content).byteLength });
           await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
           markDiagnosticStage(trace, 'apply', { state: 'share-completed' });
@@ -77,7 +73,7 @@ export function useBackupStatusController({
       }
     });
     finishDiagnosticTrace(trace, completed ? 'success' : 'failure', completed ? {} : { reason: failureReason });
-  }, [notify, readerDataRef, shareTextFile, waitForReaderDataSave]);
+  }, [notify, exportBackup, shareTextFile]);
 
   const importBackupFile = useCallback(async () => {
     const trace = beginDiagnosticTrace('backup', 'import');
@@ -108,9 +104,8 @@ export function useBackupStatusController({
           try {
             const content = await readBackupFileText(pickedAsset);
             markDiagnosticStage(trace, 'parse', { byteCount: new TextEncoder().encode(content).byteLength });
-            const merged = importReaderBackupJson(readerDataRef.current, content);
             markDiagnosticStage(trace, 'apply', { state: 'merge-started' });
-            await replaceReaderData('backup-imported', merged);
+            await importBackup(content);
             notify('备份已恢复，本机资料已合并');
           } finally {
             if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
@@ -132,7 +127,7 @@ export function useBackupStatusController({
       canceled ? 'canceled' : completed ? 'success' : 'failure',
       canceled ? { reason: 'canceled' } : completed ? {} : { reason: failureReason }
     );
-  }, [notify, readerDataRef, replaceReaderData]);
+  }, [notify, importBackup]);
 
   return {
     backupBusy,

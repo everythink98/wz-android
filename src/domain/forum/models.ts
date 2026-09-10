@@ -118,6 +118,8 @@ export interface ReplyLocationTarget {
   expectedAuthorUsername?: string;
 }
 
+export type TopicLocationTarget = { kind: 'opening' } | { kind: 'reply'; target: ReplyLocationTarget };
+
 export type ReplyOrder = 'oldest' | 'newest';
 
 export type ReplyCompleteness = 'complete' | 'partial';

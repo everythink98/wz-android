@@ -69,6 +69,7 @@ export function useVerificationController({
   onLoginWebViewFailure,
   onLinuxDoSurfaceClosed = () => undefined,
   onLinuxDoSurfaceOpened = () => undefined,
+  prepareLinuxDoCookieResponseBarrier,
   reconcileAccountStatus,
   setChecking,
   setLinuxDoWebViewError,
@@ -94,6 +95,7 @@ export function useVerificationController({
   onLoginWebViewFailure: (site: 'linuxdo', attempt: number, reason: LoginWebViewFailureReason) => void;
   onLinuxDoSurfaceClosed?: (options: { authoritativeResult: boolean; reason: AuthSurfaceCloseReason }) => void;
   onLinuxDoSurfaceOpened?: (options: { accountBarrier: boolean }) => void;
+  prepareLinuxDoCookieResponseBarrier?: () => Promise<void>;
   reconcileAccountStatus: (source: 'linuxdo') => Promise<AccountReconcileResult>;
   setChecking: Dispatch<SetStateAction<boolean>>;
   setLinuxDoWebViewError: Dispatch<SetStateAction<string>>;
@@ -233,13 +235,20 @@ export function useVerificationController({
     setChecking(false);
     setLoadingLinuxDoPageForSession(true, nextSession);
     setLinuxDoWebViewErrorForSession('', nextSession);
-    linuxDoWebViewMountTimerRef.current = setTimeout(() => {
-      linuxDoWebViewMountTimerRef.current = null;
-      if (linuxDoWebViewSessionRef.current !== nextSession || !isLinuxDoSurfaceVisible()) {
-        return;
-      }
-      setMountLinuxDoWebView(true);
-    }, 80);
+    const mount = () => {
+      if (linuxDoWebViewSessionRef.current !== nextSession || !isLinuxDoSurfaceVisible()) return;
+      linuxDoWebViewMountTimerRef.current = setTimeout(() => {
+        linuxDoWebViewMountTimerRef.current = null;
+        if (linuxDoWebViewSessionRef.current !== nextSession || !isLinuxDoSurfaceVisible()) return;
+        setMountLinuxDoWebView(true);
+      }, 80);
+    };
+    if (prepareLinuxDoCookieResponseBarrier) {
+      void prepareLinuxDoCookieResponseBarrier().then(mount, () => {
+        setLoadingLinuxDoPageForSession(false, nextSession);
+        setLinuxDoWebViewErrorForSession('登录会话交接未完成，请点击刷新页面重试。', nextSession);
+      });
+    } else mount();
   }, [
     checkingRequestIdRef,
     currentLinuxDoVerificationTrace,
@@ -249,6 +258,7 @@ export function useVerificationController({
     linuxDoWebViewSessionRef,
     isLinuxDoSurfaceVisible,
     nextLinuxDoWebViewSession,
+    prepareLinuxDoCookieResponseBarrier,
     setChecking,
     setLinuxDoWebViewErrorForSession,
     setLoadingLinuxDoPageForSession,

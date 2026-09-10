@@ -1,5 +1,6 @@
-import type { QuotedPostMetadata, QuotedPostReference, Reply, Source, TopicDetail } from './models';
-import type { DiscourseSource } from './sourceCatalog';
+import type { QuotedPostMetadata, QuotedPostReference, Reply, Source, Topic, TopicDetail } from './models';
+import { isDiscourseSource, sourceCatalog, type DiscourseSource } from './sourceCatalog';
+import { parseForumTopicLink } from './links';
 import { textContentFromHtml } from './html';
 
 export type { QuotedPostReference } from './models';
@@ -18,6 +19,18 @@ export interface ToggleReplyQuoteOptions {
 }
 
 const MAX_QUOTED_POST_PREVIEW_CHARACTERS = 320;
+
+export function topicForQuotedPost(quote: QuotedPostMetadata, baseUrl?: string): Topic | null {
+  const { source, topicId } = quote.reference;
+  const url =
+    quote.topicUrl ||
+    (isDiscourseSource(source) && /^\d+$/.test(topicId) ? `${sourceCatalog[source].baseUrl}/t/${topicId}` : undefined);
+  if (!url) return null;
+  const topic = parseForumTopicLink(url, baseUrl);
+  return topic?.source === source && topic.id === topicId
+    ? { ...topic, ...(quote.topicTitle ? { title: quote.topicTitle } : {}) }
+    : null;
+}
 
 export function boundedQuotedPostPreview(value: string | undefined) {
   const normalized = String(value || '')

@@ -37,7 +37,7 @@ function runtime(identityKey: string | undefined = 'nodeseek:123', available = t
     nodeSeekMessaging: { identityKey, available },
     appActive: true,
     notify: jest.fn(),
-    reader: { data, commit: jest.fn() },
+    reader: { data, dataRef: { current: data }, commit: jest.fn() },
     topicStateIndex: createTopicListItemStateIndex(data)
   };
 }

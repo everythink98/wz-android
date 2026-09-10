@@ -1,3 +1,4 @@
+import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createUserStyles, type UserStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View, useWindowDimensions } from 'react-native';
@@ -181,6 +182,7 @@ export const UserScreen = memo(function UserScreen({
   onRefresh: () => void;
   onToggleFollow: (user: UserProfile) => void;
 }) {
+  const onPageLayout = useStartupPageLayout();
   const { styles, theme, settings } = useReaderThemeStyles(createUserStyles);
   const { fontScale } = useWindowDimensions();
   const user = profile || requestedUser;
@@ -464,11 +466,15 @@ export const UserScreen = memo(function UserScreen({
   );
 
   if (!user) {
-    return <EmptyText text="未选择用户" />;
+    return (
+      <View style={styles.screen} onLayout={onPageLayout}>
+        <EmptyText text="未选择用户" />
+      </View>
+    );
   }
 
   return (
-    <View style={styles.screen}>
+    <View style={styles.screen} onLayout={onPageLayout}>
       <ScreenTopBar>
         <IconButton icon={ChevronLeft} compact ghost label="返回" onPress={onBack} />
         <ScreenTopBarTitle>

@@ -23,7 +23,7 @@ export function useAppDeepLinkNavigation(
       markDiagnosticStage(trace, 'parse', {
         source: destination.topic.source,
         topicRef: diagnosticRef('topic', `${destination.topic.source}:${destination.topic.id}`),
-        hasTargetReply: Boolean(destination.targetReply)
+        hasTargetReply: destination.location?.kind === 'reply'
       });
       let applied: boolean;
       try {

@@ -2,40 +2,63 @@ import { describe, expect, it } from 'vitest';
 import { parseForumTopicDestination, parseInternalTopicOpenLink } from './links';
 
 describe('forum links', () => {
+  it.each(['https://linux.do/t/456/1', 'https://linux.do/t/topic/456/1', '/t/topic/456/1'])(
+    'preserves an explicit opening destination for %s',
+    (href) => {
+      expect(parseForumTopicDestination(href, 'https://linux.do/t/42')).toMatchObject({
+        topic: { source: 'linuxdo', id: '456' },
+        location: { kind: 'opening' }
+      });
+    }
+  );
+
+  it.each([
+    'https://linux.do/t/456',
+    'https://linux.do/t/topic/456',
+    'https://www.nodeseek.com/post-123-16',
+    'https://www.nodeseek.com/post-123-1#0',
+    'https://www.v2ex.com/t/789?p=2',
+    'https://www.v2ex.com/t/789#reply12',
+    'https://www.yaohuo.me/bbs-321.html',
+    'https://www.yaohuo.me/bbs/book_re.aspx?id=321&page=3'
+  ])('does not create a location from an ordinary topic or page link: %s', (href) => {
+    expect(parseForumTopicDestination(href)?.topic).toBeTruthy();
+    expect(parseForumTopicDestination(href)?.location).toBeUndefined();
+  });
   it('keeps the exact Yaohuo full-reply floor from the original link', () => {
     expect(
       parseForumTopicDestination(
         'https://www.yaohuo.me/bbs/book_re.aspx?classid=177&id=1560939&tofloor=90&fromuserid=1000'
-      )?.targetReply
-    ).toEqual({ floor: 90 });
+      )?.location
+    ).toEqual({ kind: 'reply', target: { floor: 90 } });
     expect(
-      parseForumTopicDestination('https://www.yaohuo.me/bbs/book_re.aspx?id=1&tofloor=0')?.targetReply
+      parseForumTopicDestination('https://www.yaohuo.me/bbs/book_re.aspx?id=1&tofloor=0')?.location
     ).toBeUndefined();
     expect(
-      parseForumTopicDestination('https://www.yaohuo.me/bbs/book_re.aspx?id=1&tofloor=1.5')?.targetReply
+      parseForumTopicDestination('https://www.yaohuo.me/bbs/book_re.aspx?id=1&tofloor=1.5')?.location
     ).toBeUndefined();
-    expect(parseForumTopicDestination('https://www.yaohuo.me/bbs-1.html?tofloor=90')?.targetReply).toBeUndefined();
+    expect(parseForumTopicDestination('https://www.yaohuo.me/bbs-1.html?tofloor=90')?.location).toBeUndefined();
     expect(parseForumTopicDestination('https://evil.example/bbs/book_re.aspx?id=1&tofloor=90')).toBeNull();
   });
 
   it('preserves native topic anchors for all four sources', () => {
     expect(parseForumTopicDestination('https://www.nodeseek.com/post-123-16#155')).toMatchObject({
       topic: { source: 'nodeseek', id: '123' },
-      targetReply: { floor: 155, pageHint: 16 }
+      location: { kind: 'reply', target: { floor: 155, pageHint: 16 } }
     });
     expect(parseForumTopicDestination('https://linux.do/t/topic/456/90')).toMatchObject({
       topic: { source: 'linuxdo', id: '456' },
-      targetReply: { floor: 90 }
+      location: { kind: 'reply', target: { floor: 90 } }
     });
     expect(
       parseForumTopicDestination('https://www.yaohuo.me/bbs/book_re.aspx?id=321&classid=177&tofloor=90')
     ).toMatchObject({
       topic: { source: 'yaohuo', id: '321' },
-      targetReply: { floor: 90 }
+      location: { kind: 'reply', target: { floor: 90 } }
     });
     expect(parseForumTopicDestination('https://www.v2ex.com/t/789?p=2#r_12345')).toMatchObject({
       topic: { source: 'v2ex', id: '789' },
-      targetReply: { commentId: 12345, pageHint: 2 }
+      location: { kind: 'reply', target: { commentId: 12345, pageHint: 2 } }
     });
   });
 
@@ -57,7 +80,10 @@ describe('forum links', () => {
   ])('preserves the complete %s destination through the internal Topic link', (_, url, topic, targetReply) => {
     const deepLink = `exp+wz-android://open-topic?url=${encodeURIComponent(url)}`;
 
-    expect(parseInternalTopicOpenLink(deepLink)).toMatchObject({ topic, targetReply });
+    expect(parseInternalTopicOpenLink(deepLink)).toMatchObject({
+      topic,
+      location: { kind: 'reply', target: targetReply }
+    });
   });
 
   it.each(['#reply12', '#reply0', '#r_0', '#r_1.5', '#r_9007199254740992'])(
@@ -66,7 +92,7 @@ describe('forum links', () => {
       expect(parseForumTopicDestination(`https://www.v2ex.com/t/789${hash}`)).toMatchObject({
         topic: { source: 'v2ex', id: '789' }
       });
-      expect(parseForumTopicDestination(`https://www.v2ex.com/t/789${hash}`)?.targetReply).toBeUndefined();
+      expect(parseForumTopicDestination(`https://www.v2ex.com/t/789${hash}`)?.location).toBeUndefined();
     }
   );
 });

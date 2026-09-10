@@ -10,7 +10,7 @@ import {
   shouldUseReadingFilter
 } from '@/domain/forum/feedOptions';
 import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '@/domain/forum/feed';
-import type { ReaderData } from '@/domain/reader/readerData';
+import type { ReaderView } from '@/domain/reader/readerRecordState';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { forumReadPlanScopesKey } from '@/domain/forum/readPlan';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
@@ -225,7 +225,7 @@ export function useFeedController({
   sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
   notify: (message: string) => void;
-  readerData: ReaderData;
+  readerData: ReaderView;
   readerDataLoaded: boolean;
   showLinuxDoVerification: (
     message?: string,

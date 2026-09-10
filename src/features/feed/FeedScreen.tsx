@@ -1,4 +1,6 @@
+import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createFeedStyles } from './styles';
+import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   Pressable,
@@ -127,8 +129,17 @@ export const FeedScreen = memo(function FeedScreen({
   const reportInitialContentReady = useCallback(() => {
     if (initialContentReadyReportedRef.current) return;
     initialContentReadyReportedRef.current = true;
+    recordStartupPhase(
+      allSourcesDisabled
+        ? 'feed-empty'
+        : feedItems.length
+          ? 'feed-content'
+          : feedOutcomeKind === 'error' || feedOutcomeKind === 'auth'
+            ? 'feed-error'
+            : 'feed-empty'
+    );
     onInitialContentReady?.();
-  }, [onInitialContentReady]);
+  }, [allSourcesDisabled, feedItems.length, feedOutcomeKind, onInitialContentReady]);
   const handleInitialListLoad = useCallback(() => {
     initialListLoadedRef.current = true;
     if (initialContentTerminal) reportInitialContentReady();
@@ -428,14 +439,18 @@ export const FeedScreen = memo(function FeedScreen({
             ListEmptyComponent={
               busy ? (
                 <LoadingState text="正在读取主题..." />
-              ) : allSourcesDisabled ? (
-                <RecoverableEmptyState
-                  message="尚未启用内容源"
-                  actionLabel="前往更多管理"
-                  onAction={onManageContentSources}
-                />
               ) : (
-                <EmptyText text={feedEmptyText} />
+                <View testID="feed-empty-state" onLayout={handleInitialListLoad}>
+                  {allSourcesDisabled ? (
+                    <RecoverableEmptyState
+                      message="尚未启用内容源"
+                      actionLabel="前往更多管理"
+                      onAction={onManageContentSources}
+                    />
+                  ) : (
+                    <EmptyText text={feedEmptyText} />
+                  )}
+                </View>
               )
             }
             ListFooterComponent={
@@ -581,8 +596,9 @@ export const FeedScreen = memo(function FeedScreen({
     ]
   );
 
+  const onPageLayout = useStartupPageLayout();
   return (
-    <View style={styles.content}>
+    <View style={styles.content} onLayout={onPageLayout}>
       {feedFilterMenu}
       <TabView
         animationEnabled={false}

@@ -26,7 +26,11 @@ import {
   LEGACY_COOKIE_SNAPSHOT_KEYS,
   migrateLegacyCookieSnapshots
 } from '@/platform/storage/legacyCookieSnapshotMigration';
-import { createCredentialWriteGate, replaceCredentialWrite } from '@/platform/storage/credentialWriteGate';
+import {
+  advanceCredentialWriteGeneration,
+  createCredentialWriteGate,
+  replaceCredentialWrite
+} from '@/platform/storage/credentialWriteGate';
 import {
   beginDiagnosticTrace,
   diagnosticTraceForRequest,
@@ -530,6 +534,13 @@ export function useSessionController({
   );
   useCommitRefValue(rejectLinuxDoBrowserFetchRef, rejectLinuxDoBrowserFetch);
 
+  const cancelLinuxDoBrowserHandoff = useCallback(() => {
+    advanceCredentialWriteGeneration(linuxDoCredentialGateRef.current);
+    const current = linuxDoBrowserFetchCurrentRef.current;
+    if (current) rejectLinuxDoBrowserFetch(current, '账号页面交接，请求已取消');
+    else startNextLinuxDoBrowserFetch();
+  }, [rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);
+
   const linuxDoFetchWithWebView: Fetcher = useCallback(
     async (input, init) => {
       const url = String(input);
@@ -723,7 +734,7 @@ export function useSessionController({
             : yaohuoCredentialGateRef.current;
       try {
         const cleared = await replaceCredentialWrite(gate, async ({ isCurrent }) => {
-          await clearManagedLoginCookies(source);
+          await clearManagedLoginCookies(source, undefined, trace);
           return isCurrent();
         });
         if (!cleared) {
@@ -778,6 +789,7 @@ export function useSessionController({
   const clearYaohuoLoginState = useCallback(() => clearManagedLoginState('yaohuo'), [clearManagedLoginState]);
 
   return {
+    cancelLinuxDoBrowserHandoff,
     clearNodeSeekLoginState,
     clearLinuxDoLoginState,
     clearYaohuoLoginState,

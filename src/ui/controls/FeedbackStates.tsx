@@ -1,3 +1,4 @@
+import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import type { ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { sourceCatalog, type Source } from '@/domain/forum/sourceCatalog';
@@ -133,8 +134,9 @@ export function ContentSourceDisabledState({
   const { styles } = useReaderThemeStyles(createStyles);
   const title = `${sourceCatalog[source].label}已停用`;
   const text = '该内容源已停用，启用后才能查看此内容。';
+  const onPageLayout = useStartupPageLayout();
   return (
-    <View style={[styles.state, styles.routeState]}>
+    <View style={[styles.state, styles.routeState]} onLayout={onPageLayout}>
       <Text accessibilityRole="header" style={styles.stateTitle}>
         {title}
       </Text>

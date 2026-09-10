@@ -79,6 +79,8 @@ import { fetchLinuxDoTemplates, recordLinuxDoTemplateUse } from '@/sources/linux
 import { fetchLinuxDoPollCapabilities } from '@/sources/linuxdo/pollCapabilities';
 import { forumMutationKeys, forumQueryKeys } from '@/platform/query/serverState';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
+import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
+import { errorRequiresAccountRecheck } from '@/sources/sourceErrors';
 import {
   canSubmitReplyToTopic,
   canVotePollOnTopic,
@@ -280,6 +282,7 @@ export function useTopicActionsController({
   getNodeSeekUserAgent,
   notify,
   onSessionExpired,
+  requestAccountRecheck,
   readGateway,
   refreshTopicReplies,
   siteSessionViewModels,
@@ -298,6 +301,7 @@ export function useTopicActionsController({
   getNodeSeekUserAgent: () => string;
   notify: (message: string) => void;
   onSessionExpired: (source: SessionSite, requestSessionEpoch: number) => void;
+  requestAccountRecheck: RequestAccountRecheck;
   readGateway: Pick<ReadGateway, 'getReadPlan'>;
   refreshTopicReplies: (command?: ReplyRefreshCommand, trace?: DiagnosticTrace) => Promise<unknown>;
   siteSessionViewModels: SiteSessionViewModels;
@@ -444,6 +448,13 @@ export function useTopicActionsController({
           notify(message);
           onSessionExpired(variables.ticket.source, variables.ticket.sessionEpoch);
           throw new HandledMutationError(message, 'failure', 'login_required');
+        }
+        if (
+          variables.source === 'linuxdo' &&
+          errorRequiresAccountRecheck(error) &&
+          isWritableSessionTicketCurrent(variables.ticket)
+        ) {
+          requestAccountRecheck(variables.ticket.source, variables.ticket.sessionEpoch, variables.trace.traceId);
         }
         throw error;
       }
@@ -988,7 +999,7 @@ export function useTopicActionsController({
         return result ?? true;
       } catch (error) {
         if (error instanceof HandledMutationError) throw error;
-        if (isRawUnauthorized(error)) throw error;
+        if (isRawUnauthorized(error) || errorRequiresAccountRecheck(error)) throw error;
         const message = errorMessage(error);
         if (isLoginRequiredError(error)) {
           showLinuxDoVerification(message);

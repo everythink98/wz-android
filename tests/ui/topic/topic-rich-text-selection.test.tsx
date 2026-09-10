@@ -202,8 +202,8 @@ it('opens the V2EX user from a mention and the exact reply from its compiled inl
   await fireEvent.press(view.getByText('#6'));
   expect(replyReads).toBeLessThanOrEqual(32);
   expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ source: 'v2ex', id: '945124' }), {
-    floor: 6,
-    expectedAuthorUsername: 'Pipecraft'
+    kind: 'reply',
+    target: { floor: 6, expectedAuthorUsername: 'Pipecraft' }
   });
   await fireEvent.press(view.getByText('@Pipecraft'));
   expect(onOpenUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'v2ex', username: 'Pipecraft' }));

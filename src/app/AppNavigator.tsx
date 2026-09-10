@@ -38,16 +38,16 @@ function QuietTabBarButton(props: BottomTabBarButtonProps) {
 function MainTabsHost({
   moreBadgeState,
   FeedRouteComponent,
-  LibraryRouteComponent,
-  MoreRouteComponent,
-  SearchRouteComponent,
+  getLibraryRoute,
+  getMoreRoute,
+  getSearchRoute,
   styles
 }: {
   moreBadgeState: MoreBadgeState;
   FeedRouteComponent: ComponentType;
-  LibraryRouteComponent: ComponentType;
-  MoreRouteComponent: ComponentType;
-  SearchRouteComponent: ComponentType;
+  getLibraryRoute: () => ComponentType;
+  getMoreRoute: () => ComponentType;
+  getSearchRoute: () => ComponentType;
   styles: AppStyles;
 }) {
   return (
@@ -76,9 +76,9 @@ function MainTabsHost({
       }}
     >
       <Tab.Screen name="feed" component={FeedRouteComponent} options={{ title: '首页' }} />
-      <Tab.Screen name="search" component={SearchRouteComponent} options={{ title: '搜索' }} />
-      <Tab.Screen name="library" component={LibraryRouteComponent} options={{ title: '收藏' }} />
-      <Tab.Screen name="more" component={MoreRouteComponent} options={{ title: '更多' }} />
+      <Tab.Screen name="search" getComponent={getSearchRoute} options={{ title: '搜索' }} />
+      <Tab.Screen name="library" getComponent={getLibraryRoute} options={{ title: '收藏' }} />
+      <Tab.Screen name="more" getComponent={getMoreRoute} options={{ title: '更多' }} />
     </Tab.Navigator>
   );
 }
@@ -87,15 +87,15 @@ export const AppNavigator = memo(function AppNavigator({
   moreBadgeState,
   navigationTheme,
   FeedRouteComponent,
-  LibraryRouteComponent,
-  MoreRouteComponent,
-  NotificationDetailRouteComponent,
-  NotificationSettingsRouteComponent,
-  NotificationsRouteComponent,
-  ReadingSettingsRouteComponent,
-  SearchRouteComponent,
-  TopicRouteComponent,
-  UserRouteComponent,
+  getLibraryRoute,
+  getMoreRoute,
+  getNotificationDetailRoute,
+  getNotificationSettingsRoute,
+  getNotificationsRoute,
+  getReadingSettingsRoute,
+  getSearchRoute,
+  getTopicRoute,
+  getUserRoute,
   styles,
   theme,
   onReady,
@@ -104,15 +104,15 @@ export const AppNavigator = memo(function AppNavigator({
   moreBadgeState: MoreBadgeState;
   navigationTheme: Theme;
   FeedRouteComponent: ComponentType;
-  LibraryRouteComponent: ComponentType;
-  MoreRouteComponent: ComponentType;
-  NotificationDetailRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'NotificationDetail'>>;
-  NotificationSettingsRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'NotificationSettings'>>;
-  NotificationsRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'Notifications'>>;
-  ReadingSettingsRouteComponent: ComponentType;
-  SearchRouteComponent: ComponentType;
-  TopicRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'Topic'>>;
-  UserRouteComponent: ComponentType<NativeStackScreenProps<RootStackParamList, 'User'>>;
+  getLibraryRoute: () => ComponentType;
+  getMoreRoute: () => ComponentType;
+  getNotificationDetailRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'NotificationDetail'>>;
+  getNotificationSettingsRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'NotificationSettings'>>;
+  getNotificationsRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'Notifications'>>;
+  getReadingSettingsRoute: () => ComponentType;
+  getSearchRoute: () => ComponentType;
+  getTopicRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'Topic'>>;
+  getUserRoute: () => ComponentType<NativeStackScreenProps<RootStackParamList, 'User'>>;
   styles: AppStyles;
   theme: ReaderTheme;
   onReady: () => void;
@@ -157,17 +157,17 @@ export const AppNavigator = memo(function AppNavigator({
             <MainTabsHost
               moreBadgeState={moreBadgeState}
               FeedRouteComponent={FeedRouteComponent}
-              LibraryRouteComponent={LibraryRouteComponent}
-              MoreRouteComponent={MoreRouteComponent}
-              SearchRouteComponent={SearchRouteComponent}
+              getLibraryRoute={getLibraryRoute}
+              getMoreRoute={getMoreRoute}
+              getSearchRoute={getSearchRoute}
               styles={styles}
             />
           )}
         </Stack.Screen>
-        <Stack.Screen name="Topic" component={TopicRouteComponent} />
+        <Stack.Screen name="Topic" getComponent={getTopicRoute} />
         <Stack.Screen
           name="Notifications"
-          component={NotificationsRouteComponent}
+          getComponent={getNotificationsRoute}
           options={({ navigation }) => ({
             headerShown: true,
             title: '消息',
@@ -185,20 +185,20 @@ export const AppNavigator = memo(function AppNavigator({
         />
         <Stack.Screen
           name="NotificationDetail"
-          component={NotificationDetailRouteComponent}
+          getComponent={getNotificationDetailRoute}
           options={{ headerShown: true, title: '消息详情' }}
         />
         <Stack.Screen
           name="NotificationSettings"
-          component={NotificationSettingsRouteComponent}
+          getComponent={getNotificationSettingsRoute}
           options={{ headerShown: true, title: '消息通知设置' }}
         />
         <Stack.Screen
           name="ReadingSettings"
-          component={ReadingSettingsRouteComponent}
+          getComponent={getReadingSettingsRoute}
           options={{ headerShown: true, title: '阅读设置' }}
         />
-        <Stack.Screen name="User" component={UserRouteComponent} />
+        <Stack.Screen name="User" getComponent={getUserRoute} />
       </Stack.Navigator>
     </NavigationContainer>
   );

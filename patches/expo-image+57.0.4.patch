@@ -154,3 +154,98 @@ index 0000000..de520b8
 +    )
 +  }
 +}
+diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt
+index 617dbf9..ba0d6ec 100644
+--- a/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt
++++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/GlideModelProvider.kt
+@@ -19,7 +19,9 @@ data class DecodedModelProvider(
+ }
+ 
+ data class UrlModelProvider(
+-  private val glideUrl: GlideUrl
++  private val glideUrl: GlideUrl,
++  // A new consumer attempt must still reach RequestManager (including explicit retry).
++  private val diagnosticHeaders: Map<String, String> = emptyMap()
+ ) : GlideModelProvider {
+   override fun getGlideModel() = GlideUrlWrapper(glideUrl)
+ }
+diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt
+index aded0c8..8a1a3c1 100644
+--- a/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt
++++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/okhttp/ExpoImageOkHttpClientGlideModule.kt
+@@ -12,6 +12,16 @@ import com.facebook.react.modules.network.OkHttpClientProvider
+ import expo.modules.image.events.OkHttpProgressListener
+ import java.io.InputStream
+ 
++fun isImageDiagnosticHeader(name: String): Boolean =
++  name.equals("X-WZ-Image-Trace", true) || name.equals("X-WZ-Image-Ref", true) || name.equals("X-WZ-Image-Session", true)
++
++/** Per-consumer diagnostics do not participate in Glide's engine or cache identity. */
++open class GlideUrlWithDiagnosticHeaders(
++  uri: String?,
++  headers: Headers?,
++  val diagnosticHeaders: Map<String, String> = emptyMap()
++) : GlideUrl(uri, headers)
++
+ /**
+  * GlideUrl with custom cache key.
+  * It wraps the base implementation and overrides logic behind cache key and when two
+@@ -28,8 +38,9 @@ class GlideUrlWithCustomCacheKey(
+    * to display a remote image. [LocalFileGlideModelLoader] reads the file at this path and lets
+    * Glide store its bytes under [cacheKey], so a later load using the same cache key hits the cache.
+    */
+-  val localFilePath: String? = null
+-) : GlideUrl(uri, headers) {
++  val localFilePath: String? = null,
++  diagnosticHeaders: Map<String, String> = emptyMap()
++) : GlideUrlWithDiagnosticHeaders(uri, headers, diagnosticHeaders) {
+   /**
+    * Cached hash code value
+    */
+diff --git a/node_modules/expo-image/android/src/main/java/expo/modules/image/records/SourceMap.kt b/node_modules/expo-image/android/src/main/java/expo/modules/image/records/SourceMap.kt
+index 0071b4f..67b1fa4 100644
+--- a/node_modules/expo-image/android/src/main/java/expo/modules/image/records/SourceMap.kt
++++ b/node_modules/expo-image/android/src/main/java/expo/modules/image/records/SourceMap.kt
+@@ -4,7 +4,6 @@ import android.content.Context
+ import android.graphics.drawable.Drawable
+ import android.net.Uri
+ import com.bumptech.glide.load.engine.DiskCacheStrategy
+-import com.bumptech.glide.load.model.GlideUrl
+ import com.bumptech.glide.load.model.Headers
+ import com.bumptech.glide.load.model.LazyHeaders
+ import com.bumptech.glide.request.RequestOptions
+@@ -19,6 +18,8 @@ import expo.modules.image.UrlModelProvider
+ import expo.modules.image.ResourceIdHelper
+ import expo.modules.image.customize
+ import expo.modules.image.okhttp.GlideUrlWithCustomCacheKey
++import expo.modules.image.okhttp.GlideUrlWithDiagnosticHeaders
++import expo.modules.image.okhttp.isImageDiagnosticHeader
+ import expo.modules.kotlin.records.Field
+ import expo.modules.kotlin.records.Record
+ import expo.modules.kotlin.types.OptimizedRecord
+@@ -134,12 +135,13 @@ data class SourceMap(
+       return RawModelProvider(parsedUri!!.toString())
+     }
+ 
++    val diagnosticHeaders = headers.orEmpty().filterKeys(::isImageDiagnosticHeader)
+     val glideUrl = if (cacheKey == null) {
+-      GlideUrl(uri, getCustomHeaders())
++      GlideUrlWithDiagnosticHeaders(uri, getCustomHeaders(), diagnosticHeaders)
+     } else {
+-      GlideUrlWithCustomCacheKey(uri, getCustomHeaders(), cacheKey)
++      GlideUrlWithCustomCacheKey(uri, getCustomHeaders(), cacheKey, diagnosticHeaders = diagnosticHeaders)
+     }
+-    return UrlModelProvider(glideUrl)
++    return UrlModelProvider(glideUrl, diagnosticHeaders)
+   }
+ 
+   override fun createGlideOptions(context: Context): RequestOptions {
+@@ -167,7 +169,7 @@ data class SourceMap(
+       .Builder()
+       .apply {
+         headers.forEach { (key, value) ->
+-          addHeader(key, value)
++          if (!isImageDiagnosticHeader(key)) addHeader(key, value)
+         }
+       }
+       .build()

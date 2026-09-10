@@ -88,7 +88,10 @@ describe('app deep-link navigation', () => {
       await act(async () => onUrl?.({ url: internalTopicLink(url) }));
 
       expect(mockPushTopicRoute).toHaveBeenCalledWith(
-        expect.objectContaining({ topic: expect.objectContaining(topic), targetReply })
+        expect.objectContaining({
+          topic: expect.objectContaining(topic),
+          location: { kind: 'reply', target: targetReply }
+        })
       );
       await act(async () => hook.unmount());
     }
@@ -115,7 +118,10 @@ describe('app deep-link navigation', () => {
       await act(async () => onUrl?.({ url }));
 
       expect(mockPushTopicRoute).toHaveBeenCalledWith(
-        expect.objectContaining({ topic: expect.objectContaining(topic), targetReply })
+        expect.objectContaining({
+          topic: expect.objectContaining(topic),
+          location: { kind: 'reply', target: targetReply }
+        })
       );
       await act(async () => hook.unmount());
     }
@@ -138,7 +144,10 @@ describe('app deep-link navigation', () => {
     await act(async () => hook.result.current());
     expect(mockPushTopicRoute).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ topic: expect.objectContaining(topic), targetReply })
+      expect.objectContaining({
+        topic: expect.objectContaining(topic),
+        location: { kind: 'reply', target: targetReply }
+      })
     );
     await act(async () => hook.unmount());
     expect(remove).toHaveBeenCalledTimes(1);
@@ -186,11 +195,17 @@ describe('app deep-link navigation', () => {
     expect(mockPushTopicRoute).toHaveBeenCalledTimes(2);
     expect(mockPushTopicRoute).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ topic: expect.objectContaining(topic), targetReply })
+      expect.objectContaining({
+        topic: expect.objectContaining(topic),
+        location: { kind: 'reply', target: targetReply }
+      })
     );
     expect(mockPushTopicRoute).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ topic: expect.objectContaining(topic), targetReply })
+      expect.objectContaining({
+        topic: expect.objectContaining(topic),
+        location: { kind: 'reply', target: targetReply }
+      })
     );
 
     await act(async () => hook.unmount());

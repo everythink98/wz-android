@@ -31,6 +31,7 @@ import {
   linuxDoAvatarUrl as avatarUrl,
   linuxDoFeedParams,
   linuxDoFeedPath,
+  linuxDoRequestError,
   linuxDoUserUrl as userUrl,
   preferredLinuxDoAccessRequirement
 } from './protocol';
@@ -412,28 +413,14 @@ export async function fetchLinuxDoJson<T>(
         const accessRequirement = accessRequirementFromText(bodyMessage);
         if (!response.ok || accessRequirement) {
           const message = accessRequirement ? bodyMessage : `HTTP ${response.status}`;
-          const error = new Error(message);
-          Object.assign(error, {
-            status: response.status,
-            ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
-          });
-          throw error;
+          throw linuxDoRequestError(message, response.status);
         }
         throw new Error('linux.do 返回内容格式不正确');
       }
     }
     if (!response.ok) {
       const message = linuxDoErrorText(data, `HTTP ${response.status}`);
-      const accessRequirement = preferredLinuxDoAccessRequirement(
-        accessRequirementFromObject(data),
-        accessRequirementFromText(message)
-      );
-      const error = new Error(message);
-      Object.assign(error, {
-        status: response.status,
-        ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
-      });
-      throw error;
+      throw linuxDoRequestError(message, response.status, data);
     }
     return data as T;
   });
@@ -677,7 +664,18 @@ export async function getLinuxDoReplies(
   options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
   const limit = options.limit || 30;
   if (options.position.kind === 'target') {
-    const targetFloor = options.position.target.floor;
+    let targetFloor = options.position.target.floor;
+    const targetCommentId = options.position.target.commentId;
+    if (targetCommentId !== undefined) {
+      if (!Number.isSafeInteger(targetCommentId) || targetCommentId <= 0) throw new Error('linux.do 目标评论不正确');
+      const posts = await fetchPosts(id, [targetCommentId], options);
+      const matches = posts.filter(
+        (post) =>
+          isRecord(post) && post.id === targetCommentId && (post.topic_id === undefined || String(post.topic_id) === id)
+      );
+      if (matches.length !== 1) throw new Error('linux.do 目标楼层未找到');
+      targetFloor = parsePositiveInteger((matches[0] as Record<string, unknown>).post_number);
+    }
     if (!Number.isSafeInteger(targetFloor) || targetFloor! <= 0) {
       throw new Error('linux.do 目标楼层不正确');
     }
@@ -686,7 +684,6 @@ export async function getLinuxDoReplies(
       window.posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],
       options
     );
-    const targetCommentId = options.position.target.commentId;
     const hasTarget = items.some((reply) =>
       targetCommentId === undefined ? reply.floor === targetFloor : reply.commentId === targetCommentId
     );

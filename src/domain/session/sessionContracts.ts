@@ -4,6 +4,12 @@ import type { SiteSessionState } from './siteSessionState';
 
 export type CredentialSite = SessionSource;
 
+export type RequestAccountRecheck = (
+  source: SessionSource,
+  requestSessionEpoch: number,
+  parentTraceId?: string
+) => void;
+
 export type AccountReconcileResult =
   | { status: 'anonymous' | 'changed' | 'same'; session: SiteSessionState; partial?: boolean }
   | { status: 'stale' }

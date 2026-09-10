@@ -1,25 +1,20 @@
-import { createContext, type ReactNode, useCallback, useContext, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { Linking, Share, type NativeScrollEvent, type NativeSyntheticEvent, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FlashListRef } from '@shopify/flash-list';
 import * as Clipboard from 'expo-clipboard';
 import * as WebBrowser from 'expo-web-browser';
-import type { Fetcher } from '@/platform/network/request';
+
 import { errorMessage } from '@/platform/network/errors';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { useForumMediaSessionIdentity } from '@/platform/media/mediaSessionEpoch';
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
-import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import type { ReadGateway } from '@/sources/readGateway';
-import { toggleFavorite, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
+
+import { topicKey } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
-import type { ReplyLocationTarget, Topic, UserReference } from '@/domain/forum/models';
-import type { SessionSource } from '@/domain/forum/sourceCatalog';
-import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
-import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
-import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
+import type { TopicLocationTarget, Topic, UserReference } from '@/domain/forum/models';
+
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
 import { useCommitRefValue } from '@/ui/hooks/useCommittedRef';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
@@ -37,54 +32,9 @@ import { useStableTopicLayoutDetail } from './useStableTopicLayoutDetail';
 import { useTopicController } from './useTopicController';
 import { useTopicSessionController } from './useTopicSessionController';
 import { TopicRouteBackBoundary } from './useTopicRouteBeforeRemove';
+import { useTopicRouteRuntime, type TopicRouteRuntimeValue } from './TopicRouteRuntime';
 
-export type TopicRouteRuntimeValue = {
-  account: {
-    sessionEpochs: ForumSessionEpochs;
-    sessionViewModels: SiteSessionViewModels;
-    ensureNodeImageApiKey: () => Promise<string | null>;
-    ensureWritableSession: (source: SessionSource) => Promise<WritableSessionTicket>;
-    isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
-    getLinuxDoUserAgent: () => string;
-    linuxDoVerificationVisible: boolean;
-    getNodeSeekUserAgent: () => string;
-    nodeSeekUserId: number | null;
-    onSessionExpired: (source: SessionSource, requestSessionEpoch: number) => void;
-    readGateway: ReadGateway;
-    reconcileAccountStatus: (source: SessionSource) => Promise<unknown>;
-    requestNodeSeekVerification: (message: string, recovery: LinuxDoReadRecovery) => void;
-    showLinuxDoVerification: (
-      message?: string,
-      recovery?: LinuxDoReadRecovery
-    ) => void | boolean | Promise<void | boolean>;
-    showYaohuoLogin: (message?: string) => void;
-  };
-  appActive: boolean;
-  contentWidth: number;
-  ensureNetworkProxyReady: () => Promise<void>;
-  fetcher: Fetcher;
-  networkProxyWebViewBlockMessage: string;
-  nodeSeekMediaUserAgent: string;
-  notify: (message: string) => void;
-  reader: {
-    commit: (reason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
-    data: ReaderData;
-    dataRef: { current: ReaderData };
-  };
-  readerStyle: ReaderStyleContextValue;
-};
-
-const TopicRouteRuntimeContext = createContext<TopicRouteRuntimeValue | null>(null);
-
-export function TopicRouteRuntimeProvider({ children, value }: { children: ReactNode; value: TopicRouteRuntimeValue }) {
-  return <TopicRouteRuntimeContext.Provider value={value}>{children}</TopicRouteRuntimeContext.Provider>;
-}
-
-function useTopicRouteRuntime() {
-  const runtime = useContext(TopicRouteRuntimeContext);
-  if (!runtime) throw new Error('TopicRouteRuntimeProvider is required');
-  return runtime;
-}
+export { TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from './TopicRouteRuntime';
 
 type TopicRouteProps = NativeStackScreenProps<RootStackParamList, 'Topic'>;
 
@@ -110,30 +60,34 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const active = useIsFocused() && runtime.appActive;
   const topic = route.params.topic;
   const toggleTopicFavorite = useCallback(
-    () => runtime.reader.commit('favorite-toggled', (current) => toggleFavorite(current, topic)),
+    () =>
+      runtime.reader.commit({
+        type: 'favorite',
+        topic,
+        enabled: !runtime.reader.dataRef.current.favorites[topicKey(topic)],
+        at: new Date().toISOString()
+      }),
     [runtime.reader, topic]
   );
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
-  const targetReplyRequestIdRef = useRef(route.params.targetReplyRequestId ?? 0);
+  const locationRequestIdRef = useRef(route.params.locationRequestId ?? 0);
   const topicSession = useTopicSessionController({ notify: runtime.notify, topic });
   const {
     state: { replyComposerIntent, selectedTopic },
     commands: { composer: topicComposer, view: topicView }
   } = topicSession;
   const openTopicRoute = useCallback(
-    (nextTopic: Topic, targetReply?: ReplyLocationTarget) =>
-      navigation.push('Topic', { topic: nextTopic, targetReply }),
+    (nextTopic: Topic, location?: TopicLocationTarget) => navigation.push('Topic', { topic: nextTopic, location }),
     [navigation]
   );
-  const requestReplyLocation = useCallback(
-    (targetReply: ReplyLocationTarget) => {
+  const requestTopicLocation = useCallback(
+    (location: TopicLocationTarget) => {
       topicView.changeCommentQuery('');
       topicView.changeReplyFilter('all');
-      targetReplyRequestIdRef.current =
-        Math.max(targetReplyRequestIdRef.current, route.params.targetReplyRequestId ?? 0) + 1;
-      navigation.setParams({ targetReply, targetReplyRequestId: targetReplyRequestIdRef.current });
+      locationRequestIdRef.current = Math.max(locationRequestIdRef.current, route.params.locationRequestId ?? 0) + 1;
+      navigation.setParams({ location, locationRequestId: locationRequestIdRef.current });
     },
-    [navigation, route.params.targetReplyRequestId, topicView]
+    [navigation, route.params.locationRequestId, topicView]
   );
   const topicController = useTopicController({
     active,
@@ -143,14 +97,13 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     onRetryIdentityStatus: runtime.account.reconcileAccountStatus,
     onNodeSeekTopicVerificationRequired: runtime.account.requestNodeSeekVerification,
     onOpenTopic: openTopicRoute,
-    onReplyLocationResolved: requestReplyLocation,
+    onReplyLocationResolved: requestTopicLocation,
     readerData: runtime.reader.data,
-    readerDataRef: runtime.reader.dataRef,
     showLinuxDoVerification: runtime.account.showLinuxDoVerification,
     showYaohuoLogin: runtime.account.showYaohuoLogin,
     readGateway: runtime.account.readGateway,
-    targetReply: route.params.targetReply,
-    targetReplyRequestId: route.params.targetReplyRequestId,
+    location: route.params.location,
+    locationRequestId: route.params.locationRequestId,
     topic,
     topicSession
   });
@@ -166,18 +119,18 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     topicReplies
   } = topicController;
   const openTopicDestination = useCallback(
-    (nextTopic: Topic, targetReply?: ReplyLocationTarget) => {
-      if (!targetReply) {
+    (nextTopic: Topic, location?: TopicLocationTarget) => {
+      if (!location) {
         void openTopic(nextTopic);
         return;
       }
       if (nextTopic.source === topic.source && nextTopic.id === topic.id) {
-        requestReplyLocation(targetReply);
+        requestTopicLocation(location);
         return;
       }
-      openTopicRoute(nextTopic, targetReply);
+      openTopicRoute(nextTopic, location);
     },
-    [openTopic, openTopicRoute, requestReplyLocation, topic.id, topic.source]
+    [openTopic, openTopicRoute, requestTopicLocation, topic.id, topic.source]
   );
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
   const mediaSessionIdentity = useForumMediaSessionIdentity(topic.source);
@@ -241,6 +194,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     ensureNodeImageApiKey: runtime.account.ensureNodeImageApiKey,
     notify: runtime.notify,
     onSessionExpired: runtime.account.onSessionExpired,
+    requestAccountRecheck: runtime.account.requestAccountRecheck,
     readGateway: runtime.account.readGateway,
     refreshTopicReplies,
     siteSessionViewModels: runtime.account.sessionViewModels,
@@ -336,8 +290,8 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
             onImagePreviewDescriptors={imagePreviewController.registerImagePreviewDescriptors}
             read={topicController}
             session={topicSession}
-            targetReply={route.params.targetReply}
-            targetReplyRequestId={route.params.targetReplyRequestId}
+            location={route.params.location}
+            locationRequestId={route.params.locationRequestId}
             topicScrollRef={topicScrollRef}
           />
           <ImagePreviewModal

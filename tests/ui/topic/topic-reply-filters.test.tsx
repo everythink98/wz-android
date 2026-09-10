@@ -3,10 +3,20 @@ import { act, fireEvent, render, waitFor, within } from '../render';
 import React, { useEffect, useRef, useState } from 'react';
 import { PixelRatio, StyleSheet, Text, ToastAndroid, View, type StyleProp, type ViewStyle } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import type { Reply, ReplyOrder, Source, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import type {
+  Reply,
+  ReplyOrder,
+  Source,
+  SourceErrorInfo,
+  Topic,
+  TopicDetail,
+  TopicPoll,
+  TopicLocationTarget
+} from '@/domain/forum/models';
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import type { ReplyFilter } from '@/features/topic/model/types';
-import type { TopicSessionController } from '@/features/topic/useTopicSessionController';
+import { useTopicSessionController, type TopicSessionController } from '@/features/topic/useTopicSessionController';
+import type { ReplyComposerSheet } from '@/features/topic/components/ReplyComposerSheet';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { discoursePollPlaceholder, prepareReplyContent, prepareTopicContent } from '@/domain/forum/topicContentSplit';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
@@ -30,8 +40,16 @@ import { renderHook } from '@testing-library/react-native';
 import { useRecyclerViewController } from '@shopify/flash-list/dist/recyclerview/hooks/useRecyclerViewController';
 import { useBoundDetection } from '@shopify/flash-list/dist/recyclerview/hooks/useBoundDetection';
 
+jest.mock('react-native-reanimated', () => ({
+  __esModule: true,
+  ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated'),
+  withTiming: (value: unknown) => value
+}));
+
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
+const mockReplyComposerSheet = jest.fn<(_props: React.ComponentProps<typeof ReplyComposerSheet>) => null>(() => null);
 const mockScrollToIndex = jest.fn();
+const mockScrollToOffset = jest.fn();
 const mockCompileForumContent = jest.fn();
 const mockNodeSeekTopicReactionStats = jest.fn<(item: TopicDetail) => { label: string; value: number }[]>(() => []);
 let lastFlashListItemTypes: string[] = [];
@@ -76,11 +94,11 @@ jest.mock('@shopify/flash-list', () => {
         testID?: string;
         [key: string]: unknown;
       },
-      ref: React.ForwardedRef<{ scrollToIndex: (options: unknown) => void; scrollToOffset: () => void }>
+      ref: React.ForwardedRef<{ scrollToIndex: (options: unknown) => void; scrollToOffset: (options: unknown) => void }>
     ) {
       ReactModule.useImperativeHandle(ref, () => ({
         scrollToIndex: (options: unknown) => mockScrollToIndex(options),
-        scrollToOffset: () => undefined
+        scrollToOffset: (options: unknown) => mockScrollToOffset(options)
       }));
       lastFlashListItemTypes = data.map((item) => String((item as { type?: unknown }).type || 'unknown'));
       lastFlashListItemKeys = data.map((item, index) => keyExtractor?.(item, index) ?? String(index));
@@ -439,7 +457,9 @@ jest.mock('@/features/topic/components/TopicPolls', () => {
     }
   };
 });
-jest.mock('@/features/topic/components/ReplyComposerSheet', () => ({ ReplyComposerSheet: () => null }));
+jest.mock('@/features/topic/components/ReplyComposerSheet', () => ({
+  ReplyComposerSheet: (props: React.ComponentProps<typeof ReplyComposerSheet>) => mockReplyComposerSheet(props)
+}));
 jest.mock('@/features/topic/components/TopicMenu', () => ({ TopicMenu: () => null }));
 jest.mock('@/features/topic/components/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
@@ -609,6 +629,8 @@ function TopicFilterHarness({
   mediaSessionIdentity,
   nodeSeekUserId = null,
   onLocateReply = jest.fn(async () => 'completed'),
+  onOpenTopic = jest.fn(),
+  location,
   onLoadMoreReplies = jest.fn(),
   onLoadPreviousReplies = jest.fn(),
   onInteract = jest.fn(),
@@ -632,6 +654,7 @@ function TopicFilterHarness({
   replyRowsPartial = false,
   repliesError = null,
   repliesLoading = false,
+  sessionOverride,
   selectedTopic = topic,
   topicReplies = sourceReplies,
   topicDetail = topic,
@@ -659,6 +682,8 @@ function TopicFilterHarness({
   onInteract?: (type: InteractionType, commentId?: number) => void;
   onImagePreviewDescriptors?: (descriptors: readonly ForumImagePreviewDescriptor[]) => void;
   onLocateReply?: (target: { commentId?: number; floor?: number; pageHint?: number }) => Promise<string>;
+  onOpenTopic?: (topic: Topic, location?: TopicLocationTarget) => void;
+  location?: TopicLocationTarget;
   onRefreshWholeTopic?: () => void;
   onRetryReplies?: (edge?: 'start' | 'end') => void;
   onReplyComposerOpenChange?: (open: boolean) => void;
@@ -678,6 +703,7 @@ function TopicFilterHarness({
   replyRowsPartial?: boolean;
   repliesError?: SourceErrorInfo | null;
   repliesLoading?: boolean;
+  sessionOverride?: TopicSessionController;
   selectedTopic?: Topic;
   topicReplies?: Reply[];
   topicDetail?: TopicDetail | null;
@@ -821,7 +847,7 @@ function TopicFilterHarness({
             onScroll: jest.fn(),
             openOriginal: jest.fn(),
             openReadingSettings: jest.fn(),
-            openTopic: jest.fn(),
+            openTopic: onOpenTopic,
             openUser: jest.fn(),
             refreshReplies: jest.fn(),
             refreshTopic: onRefreshWholeTopic,
@@ -851,9 +877,9 @@ function TopicFilterHarness({
           nodeSeekUserId={nodeSeekUserId}
           onImagePreviewDescriptors={onImagePreviewDescriptors}
           read={read}
-          session={session}
-          targetReply={targetReply}
-          targetReplyRequestId={targetReplyRequestId}
+          session={sessionOverride || session}
+          location={location || (targetReply ? { kind: 'reply', target: targetReply } : undefined)}
+          locationRequestId={targetReplyRequestId}
           topicScrollRef={topicScrollRef}
         />
         <Text testID="active-filter">{replyFilter}</Text>
@@ -881,12 +907,63 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it.each([1, 6])('preserves the destination of an opening-body cross-topic quote to post %s', async (postNumber) => {
+    const onOpenTopic = jest.fn();
+    const onLocateReply = jest.fn(async () => 'completed');
+    const quoteTopic: TopicDetail = {
+      ...topic,
+      source: 'linuxdo',
+      id: '2885866',
+      url: 'https://linux.do/t/2885866',
+      contentHtml: `<aside class="quote" data-post="${postNumber}" data-topic="2686247"><div class="title"><a href="https://linux.do/t/2686247/${postNumber}">引用主题</a></div><blockquote>preview</blockquote></aside>`
+    };
+    const view = await render(
+      <TopicFilterHarness
+        selectedTopic={quoteTopic}
+        topicDetail={quoteTopic}
+        onOpenTopic={onOpenTopic}
+        onLocateReply={onLocateReply}
+      />
+    );
+    await fireEvent.press(view.getByLabelText('打开引用主题，引用主题'));
+    expect(onOpenTopic).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '2686247', source: 'linuxdo' }),
+      postNumber === 1 ? { kind: 'opening' } : { kind: 'reply', target: { floor: 6 } }
+    );
+    expect(onLocateReply).not.toHaveBeenCalled();
+  });
+
+  it('scrolls an explicit opening independently of replies and repeats only for new commands', async () => {
+    const onLocateReply = jest.fn(async () => 'completed');
+    const opening = { ...topic, source: 'linuxdo' as const, commentId: 100, replies: [], replyCount: 0 };
+    const tree = (requestId: number, location?: TopicLocationTarget) => (
+      <TopicFilterHarness
+        selectedTopic={opening}
+        topicDetail={opening}
+        topicReplies={[]}
+        location={location}
+        targetReplyRequestId={requestId}
+        onLocateReply={onLocateReply}
+      />
+    );
+    mockScrollToOffset.mockClear();
+    const view = await render(tree(0));
+    expect(mockScrollToOffset).not.toHaveBeenCalled();
+    await view.rerender(tree(1, { kind: 'opening' }));
+    await waitFor(() => expect(mockScrollToOffset).toHaveBeenCalledWith({ animated: true, offset: 0 }));
+    const count = mockScrollToOffset.mock.calls.length;
+    await view.rerender(tree(1, { kind: 'opening' }));
+    expect(mockScrollToOffset).toHaveBeenCalledTimes(count);
+    await view.rerender(tree(2, { kind: 'opening' }));
+    await waitFor(() => expect(mockScrollToOffset).toHaveBeenCalledTimes(count + 1));
+    expect(onLocateReply).not.toHaveBeenCalled();
+  });
   it('shows an ended empty Yaohuo topic without reply tools or an error state', async () => {
     const ended: TopicDetail = { ...topic, source: 'yaohuo', closed: true, replyCount: 0, replies: [] };
     const view = await render(<TopicFilterHarness topicDetail={ended} selectedTopic={ended} topicReplies={[]} />);
     expect(view.getByText('已结束')).toBeTruthy();
     expect(view.getByText('暂无回复')).toBeTruthy();
-    expect(view.queryByText('写回复')).toBeNull();
+    expect(view.queryByLabelText('写回复')).toBeNull();
     expect(view.queryByText('只看楼主')).toBeNull();
     expect(view.queryByLabelText('评论内查找')).toBeNull();
     expect(view.queryByLabelText('回复排序，当前正序')).toBeNull();
@@ -901,7 +978,7 @@ describe('Topic reply filters', () => {
     expect(view.getByText('已结束')).toBeTruthy();
     expect(view.getByLabelText('评论内查找')).toBeTruthy();
     expect(view.getByLabelText('回复排序，当前正序')).toBeTruthy();
-    expect(view.queryByText('写回复')).toBeNull();
+    expect(view.queryByLabelText('写回复')).toBeNull();
     expect(view.queryByText('暂无回复')).toBeNull();
   });
   it('copies the complete accepted answer from any visible accepted content row', async () => {
@@ -3392,6 +3469,10 @@ describe('Topic reply filters', () => {
       url: 'https://www.nodeseek.com/post-2-1'
     };
     await view.rerender(
+      <TopicFilterHarness canUseNodeSeekActions selectedTopic={nodeSeekTopic} topicDetail={null} topicBusy />
+    );
+    expect(view.queryByLabelText('写回复')).toBeNull();
+    await view.rerender(
       <TopicFilterHarness
         canUseNodeSeekActions
         selectedTopic={nodeSeekTopic}
@@ -3399,8 +3480,98 @@ describe('Topic reply filters', () => {
         onReplyComposerOpenChange={onReplyComposerOpenChange}
       />
     );
+    expect(view.getAllByLabelText('写回复')).toHaveLength(1);
+    expect(within(view.getByTestId('topic-detail-loaded')).queryByLabelText('写回复')).toBeNull();
     await fireEvent.press(view.getByLabelText('写回复'));
     expect(onReplyComposerOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it('hides the topic reply action while reading down and reveals it on a deliberate upward scroll', async () => {
+    const writableTopic: TopicDetail = { ...topic, source: 'linuxdo', url: 'https://linux.do/t/1' };
+    const screen = (item = writableTopic) => (
+      <TopicFilterHarness canUseLinuxDoActions selectedTopic={item} topicDetail={item} />
+    );
+    const view = await render(screen());
+    const bottomPadding = StyleSheet.flatten(lastFlashListProps.contentContainerStyle).paddingBottom;
+    const scroll = async (y: number) =>
+      fireEvent.scroll(view.getByTestId('topic-detail-loaded'), {
+        nativeEvent: { ...replyListDragEvent.nativeEvent, contentOffset: { x: 0, y } }
+      });
+
+    expect(view.getByLabelText('写回复')).toBeEnabled();
+    await scroll(0);
+    await scroll(4);
+    await scroll(8);
+    expect(view.getByLabelText('写回复')).toBeEnabled();
+    await scroll(16);
+    expect(view.queryByLabelText('写回复')).toBeNull();
+    expect(view.getByLabelText('写回复', { includeHiddenElements: true })).toBeDisabled();
+    expect(StyleSheet.flatten(lastFlashListProps.contentContainerStyle).paddingBottom).toBe(bottomPadding);
+
+    const rendersWhileHidden = mockReplyComposerSheet.mock.calls.length;
+    for (let y = 20; y <= 800; y += 4) await scroll(y);
+    expect(mockReplyComposerSheet.mock.calls.length).toBe(rendersWhileHidden);
+    for (const y of [840, 837, 844, 841]) await scroll(y);
+    expect(view.queryByLabelText('写回复')).toBeNull();
+    await scroll(830);
+    expect(view.getByLabelText('写回复')).toBeEnabled();
+
+    for (const y of [9200, 9220, 9200]) await scroll(y);
+    expect(view.queryByLabelText('写回复')).toBeNull();
+    await scroll(9187);
+    expect(view.getByLabelText('写回复')).toBeEnabled();
+    await scroll(-10);
+    expect(view.getByLabelText('写回复')).toBeEnabled();
+    await scroll(20);
+    expect(view.queryByLabelText('写回复')).toBeNull();
+    await view.rerender(screen({ ...writableTopic, id: 'another-topic' }));
+    expect(view.getByLabelText('写回复')).toBeEnabled();
+  });
+
+  it('reserves room for the floating reply action and keeps the reading layout and draft during composition', async () => {
+    const writableTopic: TopicDetail = { ...topic, source: 'linuxdo', url: 'https://linux.do/t/1' };
+    const hook = await renderHook(() => useTopicSessionController({ notify: jest.fn(), topic: writableTopic }));
+    const screen = () => (
+      <TopicFilterHarness
+        canUseLinuxDoActions
+        selectedTopic={writableTopic}
+        topicDetail={writableTopic}
+        sessionOverride={hook.result.current}
+      />
+    );
+    const view = await render(screen());
+    const entry = view.getByLabelText('写回复');
+    const bar = entry.parent;
+    if (!bar) throw new Error('reply action container missing');
+    await fireEvent(bar, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 120, height: 120 } } });
+    const bottomPadding = StyleSheet.flatten(lastFlashListProps.contentContainerStyle).paddingBottom;
+    expect(bottomPadding).toBeGreaterThanOrEqual(152);
+    await fireEvent.press(entry);
+    await view.rerender(screen());
+
+    expect(mockReplyComposerSheet.mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({ visible: true, intent: { kind: 'new' } })
+    );
+    expect(view.queryByLabelText('写回复')).toBeNull();
+    const hiddenEntry = view.getByLabelText('写回复', { includeHiddenElements: true });
+    expect(hiddenEntry).toBeDisabled();
+    expect(hiddenEntry.parent).toBe(bar);
+    expect(bar.props.pointerEvents).toBe('none');
+    const openedComposer = hook.result.current.state.replyComposerIntent;
+    await fireEvent.press(hiddenEntry);
+    expect(hook.result.current.state.replyComposerIntent).toBe(openedComposer);
+    expect(StyleSheet.flatten(lastFlashListProps.contentContainerStyle).paddingBottom).toBe(bottomPadding);
+    await act(async () => {
+      mockReplyComposerSheet.mock.lastCall?.[0].onReplyContentChange('读到最后留下的草稿');
+      mockReplyComposerSheet.mock.lastCall?.[0].onReplyComposerOpenChange(false);
+    });
+    await view.rerender(screen());
+    expect(view.getByLabelText('写回复')).toBeEnabled();
+    await fireEvent.press(view.getByLabelText('写回复'));
+    await view.rerender(screen());
+    expect(mockReplyComposerSheet.mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({ visible: true, replyContent: '读到最后留下的草稿', intent: { kind: 'new' } })
+    );
   });
 
   it('shows a single detail loading state before the selected topic is available', async () => {

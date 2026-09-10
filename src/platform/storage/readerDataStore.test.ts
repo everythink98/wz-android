@@ -1,538 +1,339 @@
+// @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
-import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
-import { MAX_BACKUP_JSON_BYTES } from '@/domain/reader/readerBackup';
-import { loadReaderData, loadReaderSettings, saveCleanReaderData, saveReaderSettings } from './readerDataStore';
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createEmptyReaderData, topicKey, type ReaderData } from '@/domain/reader/readerData';
 import type { Topic } from '@/domain/forum/models';
 
-vi.mock('expo-secure-store', () => {
-  const store = new Map<string, string>();
+const harness = vi.hoisted(() => ({
+  directory: '',
+  connections: [] as { close(): void }[],
+  legacy: new Map<string, string>(),
+  queries: [] as string[],
+  fail: ''
+}));
+vi.mock('expo-sqlite', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { join } = await import('node:path');
   return {
-    getItemAsync: vi.fn(async (key: string) => store.get(key) ?? null),
-    setItemAsync: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    deleteItemAsync: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    __store: store
+    openDatabaseAsync: vi.fn(async (name: string) => {
+      const db = new DatabaseSync(join(harness.directory, name));
+      harness.connections.push(db);
+      const parameters = (args: unknown[]) => (Array.isArray(args[0]) ? args[0] : args) as (string | number | null)[];
+      const check = (sql: string) => {
+        harness.queries.push(sql);
+        if (harness.fail && sql.includes(harness.fail)) {
+          harness.fail = '';
+          throw new Error('injected storage failure');
+        }
+      };
+      return {
+        execAsync: async (sql: string) => {
+          check(sql);
+          db.exec(sql);
+        },
+        runAsync: async (sql: string, ...args: unknown[]) => {
+          check(sql);
+          return db.prepare(sql).run(...parameters(args));
+        },
+        getAllAsync: async (sql: string, ...args: unknown[]) => {
+          check(sql);
+          return db.prepare(sql).all(...parameters(args));
+        },
+        getFirstAsync: async (sql: string, ...args: unknown[]) => {
+          check(sql);
+          return db.prepare(sql).get(...parameters(args)) ?? null;
+        },
+        closeAsync: async () => {
+          db.close();
+          harness.connections = harness.connections.filter((item) => item !== db);
+        }
+      };
+    })
   };
 });
-
-vi.mock('@react-native-async-storage/async-storage', () => {
-  const store = new Map<string, string>();
-  return {
-    default: {
-      getItem: vi.fn(async (key: string) => store.get(key) ?? null),
-      setItem: vi.fn(async (key: string, value: string) => {
-        store.set(key, value);
-      }),
-      removeItem: vi.fn(async (key: string) => {
-        store.delete(key);
-      }),
-      __store: store
-    }
-  };
-});
-
-const secureStore = SecureStore as typeof SecureStore & { __store: Map<string, string> };
-const asyncStorage = AsyncStorage as typeof AsyncStorage & { __store: Map<string, string> };
-
-const defaultContentSources = [
-  { source: 'v2ex', enabled: true },
-  { source: 'linuxdo', enabled: true },
-  { source: 'nodeseek', enabled: true },
-  { source: 'yaohuo', enabled: true }
-] as const;
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: {
+    getItem: vi.fn(async (key: string) => harness.legacy.get(key) ?? null),
+    removeMany: vi.fn(async (keys: string[]) => {
+      for (const key of keys) harness.legacy.delete(key);
+    }),
+    getAllKeys: vi.fn(async () => [...harness.legacy.keys()])
+  }
+}));
 
 const topic: Topic = {
   source: 'nodeseek',
-  id: '723704',
-  title: 'NodeSeek topic',
+  id: '1',
+  title: '中文 😀 " \\',
   author: 'alice',
   category: '日常',
-  url: 'https://www.nodeseek.com/post-723704-1',
+  url: 'https://www.nodeseek.com/post-1-1',
   createdAt: '2026-05-18T11:34:13.000Z',
   replyCount: 2
 };
+const at = '2026-09-10T00:00:00.000Z';
+const seed = (data: ReaderData) => {
+  harness.legacy.set('reader-data', JSON.stringify(data));
+  harness.legacy.set('reader-settings', JSON.stringify(data.settings));
+};
+const reopen = async () => {
+  vi.resetModules();
+  return import('./readerDataStore');
+};
+const inspect = <T>(sql: string): T => {
+  const db = new DatabaseSync(join(harness.directory, 'reader-data.db'));
+  try {
+    return db.prepare(sql).get() as T;
+  } finally {
+    db.close();
+  }
+};
 
-describe('reader data store', () => {
-  let diagnosticLines: string[] = [];
-  const restoreEvents = () =>
-    diagnosticLines
-      .map((line) => JSON.parse(line) as Record<string, unknown>)
-      .filter((event) => event.area === 'reader-data' && event.operation === 'restore');
+beforeEach(() => {
+  vi.resetModules();
+  vi.clearAllMocks();
+  harness.fail = '';
+  harness.queries = [];
+  harness.legacy.clear();
+  harness.directory = mkdtempSync(join(tmpdir(), 'reader-store-'));
+});
+afterEach(() => {
+  for (const connection of harness.connections) connection.close();
+  harness.connections = [];
+  rmSync(harness.directory, { recursive: true, force: true });
+});
 
-  it('records a settings fallback when storage fails without logging its contents', async () => {
-    await loadReaderSettings();
-    const lines: string[] = [];
-    setDiagnosticWriter((line) => {
-      lines.push(line);
-    });
-    try {
-      vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('private settings content'));
-      await expect(loadReaderSettings()).resolves.toEqual(createEmptyReaderData().settings);
-      expect(lines.map((line) => JSON.parse(line))).toContainEqual(
-        expect.objectContaining({
-          operation: 'load-settings',
-          outcome: 'partial',
-          reason: 'storage_error',
-          state: 'fallback'
-        })
-      );
-      expect(lines.join('')).not.toContain('private settings content');
-      const previousCount = lines.length;
-      vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('private settings content'));
-      await loadReaderSettings();
-      expect(lines).toHaveLength(previousCount);
-      await loadReaderSettings();
-      expect(JSON.parse(lines.at(-1)!)).toMatchObject({
-        operation: 'load-settings',
-        state: 'missing',
-        outcome: 'noop'
-      });
-    } finally {
-      setDiagnosticWriter(null);
-    }
-  });
-  beforeEach(() => {
-    diagnosticLines = [];
-    setDiagnosticWriter((line) => {
-      diagnosticLines.push(line);
-    });
-    secureStore.__store.clear();
-    asyncStorage.__store.clear();
-    vi.clearAllMocks();
-    vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) => asyncStorage.__store.get(key) ?? null);
-    vi.mocked(AsyncStorage.setItem).mockImplementation(async (key, value) => {
-      asyncStorage.__store.set(key, value);
-    });
-    vi.mocked(AsyncStorage.removeItem).mockImplementation(async (key) => {
-      asyncStorage.__store.delete(key);
-    });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    setDiagnosticWriter(null);
-  });
-
-  it('saves reader data in AsyncStorage instead of SecureStore', async () => {
+describe('reader data storage authority', () => {
+  it('does not trim grandfathered deletion markers when deletion changes no record', async () => {
     const data = createEmptyReaderData();
-
-    await saveCleanReaderData(data);
-
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
-    expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
+    for (let i = 0; i < 1002; i++) data.deletedRecords.history[`nodeseek:${i}`] = at;
+    seed(data);
+    const store = await reopen();
+    await store.loadReaderState();
+    harness.queries = [];
+    await store.commitReaderCommand({ type: 'delete', collection: 'history', keys: ['nodeseek:absent'], at });
+    await store.commitReaderCommand({ type: 'clear-history', at });
+    expect(harness.queries.some((sql) => /^(INSERT|UPDATE|DELETE)/.test(sql))).toBe(false);
+    expect(JSON.parse(await store.exportReaderDataBackup())).toEqual(data);
   });
 
-  it('returns the same already-clean reader data object after saving', async () => {
+  it('migrates complete records in order, keeps other owners, then never reads legacy keys again', async () => {
     const data = createEmptyReaderData();
-
-    const saved = await saveCleanReaderData(data);
-
-    expect(saved).toBe(data);
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
+    data.history[topicKey(topic)] = { topic, savedAt: at, visitCount: 12 };
+    data.favorites[topicKey(topic)] = { topic: { ...topic, title: '独立收藏快照' }, savedAt: '2025-01-01T00:00:00Z' };
+    data.deletedRecords.history['nodeseek:deleted'] = at;
+    seed(data);
+    harness.legacy.set('session-marker', 'preserved');
+    const store = await reopen();
+    const state = await store.loadReaderState();
+    expect(state.history).toEqual({ 'nodeseek:1': true });
+    expect(JSON.parse(await store.exportReaderDataBackup())).toEqual(data);
+    expect([...harness.legacy.keys()]).toEqual(['session-marker']);
+    const storage = (await import('@react-native-async-storage/async-storage')).default;
+    vi.mocked(storage.getItem).mockClear();
+    await (await reopen()).loadReaderState();
+    expect(storage.getItem).not.toHaveBeenCalled();
+    expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'ready' });
   });
 
-  it('skips AsyncStorage writes when the clean JSON has not changed', async () => {
+  it('rolls back a failed migration and retains both legacy keys for retry', async () => {
     const data = createEmptyReaderData();
-
-    const saved = await saveCleanReaderData(data, JSON.stringify(data));
-
-    expect(saved).toBe(data);
-    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+    data.history[topicKey(topic)] = { topic, savedAt: at };
+    seed(data);
+    harness.fail = 'INSERT INTO reader_records';
+    const store = await reopen();
+    await expect(store.loadReaderState()).rejects.toThrow('injected');
+    expect(harness.legacy.size).toBe(2);
+    expect(inspect('SELECT count(*) AS count FROM reader_meta')).toEqual({ count: 0 });
+    await expect(store.loadReaderState()).resolves.toMatchObject({ counts: { history: 1 } });
   });
 
-  it('persists settings without rewriting the full reader-data snapshot', async () => {
-    const settings = { ...createEmptyReaderData().settings, theme: 'dark' as const };
-
-    await saveReaderSettings(settings);
-
-    expect(AsyncStorage.setItem).toHaveBeenCalledTimes(1);
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-settings', JSON.stringify(settings));
-    expect(AsyncStorage.setItem).not.toHaveBeenCalledWith('reader-data', expect.any(String));
-  });
-
-  it('loads separately persisted settings over the full reader-data snapshot', async () => {
+  it('rejects an unsupported record instead of dropping it and announcing migration success', async () => {
     const data = createEmptyReaderData();
-    asyncStorage.__store.set('reader-data', JSON.stringify(data));
-    asyncStorage.__store.set('reader-settings', JSON.stringify({ ...data.settings, theme: 'dark' }));
-
-    await expect(loadReaderData()).resolves.toMatchObject({ settings: { theme: 'dark' } });
-    expect(restoreEvents()).toEqual([
-      expect.objectContaining({ phase: 'finish', outcome: 'success', state: 'restored', hasStoredData: true })
-    ]);
+    data.history['wrong-key'] = { topic, savedAt: at };
+    seed(data);
+    const store = await reopen();
+    await expect(store.loadReaderState()).rejects.toThrow('完整迁移');
+    expect(harness.legacy.size).toBe(2);
   });
 
-  it('keeps a valid persisted content-source order and enabled set', async () => {
+  it('uses committed data after partial cleanup and retries cleanup once next process', async () => {
+    seed(createEmptyReaderData());
+    const storage = (await import('@react-native-async-storage/async-storage')).default;
+    vi.mocked(storage.removeMany).mockImplementationOnce(async () => {
+      harness.legacy.delete('reader-data');
+      throw new Error('cleanup failed');
+    });
+    const store = await reopen();
+    await store.loadReaderState();
+    expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'cleanup_pending' });
+    await store.commitReaderCommand({ type: 'visit', topic, at });
+    await store.loadReaderState();
+    expect(storage.removeMany).toHaveBeenCalledTimes(1);
+    const next = await reopen();
+    await expect(next.loadReaderState()).resolves.toMatchObject({ counts: { history: 1 } });
+    expect(harness.legacy.size).toBe(0);
+    expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'ready' });
+  });
+
+  it('reads current database settings in a fresh background lifecycle after legacy cleanup', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    await store.commitReaderCommand({
+      type: 'settings',
+      patch: { fontScale: 1.2, contentSources: [{ source: 'nodeseek', enabled: false }] }
+    });
+    expect(
+      (await (await reopen()).loadReaderSettings()).contentSources.find((item) => item.source === 'nodeseek')?.enabled
+    ).toBe(false);
+    expect(harness.legacy.size).toBe(0);
+  });
+
+  it('normal bootstrap queries keys and counts without selecting complete record payloads', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    harness.queries = [];
+    await (await reopen()).loadReaderState();
+    expect(harness.queries.filter((sql) => /SELECT .*value.*FROM reader_records/i.test(sql))).toEqual([]);
+  });
+
+  it('uses maintained totals for the unfiltered page without scanning records to count twice', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    await store.commitReaderCommand({ type: 'visit', topic, at });
+    harness.queries = [];
+    const page = await store.queryReaderPage({
+      collection: 'history',
+      sources: ['nodeseek', 'linuxdo', 'yaohuo', 'v2ex'],
+      source: 'all',
+      category: 'all'
+    });
+    expect(page).toMatchObject({ total: 1, visibleTotal: 1 });
+    expect(harness.queries.some((sql) => /COUNT\(/.test(sql))).toBe(false);
+  });
+
+  it('updates history and existing favorite summary atomically while preserving favorite time', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    await store.commitReaderCommand({ type: 'favorite', topic, enabled: true, at });
+    await store.commitReaderCommand({ type: 'visit', topic: { ...topic, replyCount: 10 }, at: '2026-09-11T00:00:00Z' });
+    let snapshot = JSON.parse(await store.exportReaderDataBackup());
+    expect(snapshot.favorites['nodeseek:1'].savedAt).toBe(at);
+    expect(snapshot.favorites['nodeseek:1'].topic.replyCount).toBe(10);
+    harness.fail = 'COMMIT';
+    await expect(
+      store.commitReaderCommand({ type: 'visit', topic: { ...topic, replyCount: 20 }, at: '2026-09-12T00:00:00Z' })
+    ).rejects.toThrow();
+    snapshot = JSON.parse(await store.exportReaderDataBackup());
+    expect(snapshot.history['nodeseek:1'].visitCount).toBe(1);
+    expect(snapshot.favorites['nodeseek:1'].topic.replyCount).toBe(10);
+  });
+
+  it('queues export and import among writes without overwriting later commands', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    const first = store.commitReaderCommand({ type: 'visit', topic, at });
+    const exported = store.exportReaderDataBackup();
+    const second = store.commitReaderCommand({ type: 'visit', topic: { ...topic, id: '2' }, at });
+    await first;
+    expect(Object.keys(JSON.parse(await exported).history)).toEqual(['nodeseek:1']);
+    await second;
+    const incoming = createEmptyReaderData();
+    incoming.favorites['nodeseek:3'] = { topic: { ...topic, id: '3' }, savedAt: at };
+    const imported = store.importReaderDataBackup(JSON.stringify(incoming));
+    const deleted = store.commitReaderCommand({ type: 'delete', collection: 'favorites', keys: ['nodeseek:3'], at });
+    await imported;
+    await deleted;
+    const final = JSON.parse(await store.exportReaderDataBackup());
+    expect(Object.keys(final.history)).toHaveLength(2);
+    expect(final.favorites).toEqual({});
+    expect(final.deletedRecords.favorites['nodeseek:3']).toBe(at);
+  });
+
+  it('rolls back a failed bulk backup import before applying later queued writes', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    await store.commitReaderCommand({ type: 'favorite', topic, enabled: true, at });
+    const incoming = createEmptyReaderData();
+    incoming.history['nodeseek:2'] = { topic: { ...topic, id: '2' }, savedAt: at };
+    harness.fail = 'INSERT INTO reader_records';
+    const imported = store.importReaderDataBackup(JSON.stringify(incoming));
+    const later = store.commitReaderCommand({ type: 'visit', topic: { ...topic, id: '3' }, at });
+    await expect(imported).rejects.toThrow('injected storage failure');
+    await later;
+    const final = JSON.parse(await store.exportReaderDataBackup());
+    expect(Object.keys(final.favorites)).toEqual(['nodeseek:1']);
+    expect(Object.keys(final.history)).toEqual(['nodeseek:3']);
+  });
+
+  it('paginates tied timestamps with stable cursors and filters category fallback', async () => {
     const data = createEmptyReaderData();
-    asyncStorage.__store.set('reader-data', JSON.stringify(data));
-    asyncStorage.__store.set(
-      'reader-settings',
-      JSON.stringify({
-        ...data.settings,
-        contentSources: [
-          { source: 'linuxdo', enabled: false },
-          { source: 'v2ex', enabled: true },
-          { source: 'nodeseek', enabled: true },
-          { source: 'yaohuo', enabled: false }
-        ]
-      })
-    );
-
-    await expect(loadReaderData()).resolves.toMatchObject({
-      settings: {
-        contentSources: [
-          { source: 'linuxdo', enabled: false },
-          { source: 'v2ex', enabled: true },
-          { source: 'nodeseek', enabled: true },
-          { source: 'yaohuo', enabled: false }
-        ]
-      }
-    });
-  });
-
-  it('loads headless settings only from the settings key and falls back safely', async () => {
-    asyncStorage.__store.set('reader-settings', '{bad json');
-
-    await expect(loadReaderSettings()).resolves.toEqual(createEmptyReaderData().settings);
-    expect(AsyncStorage.getItem).toHaveBeenCalledTimes(1);
-    expect(AsyncStorage.getItem).toHaveBeenCalledWith('reader-settings');
-    expect(AsyncStorage.getItem).not.toHaveBeenCalledWith('reader-data');
-  });
-
-  it('uses default settings when the headless settings key is missing', async () => {
-    await expect(loadReaderSettings()).resolves.toEqual(createEmptyReaderData().settings);
-    expect(AsyncStorage.getItem).toHaveBeenCalledTimes(1);
-    expect(AsyncStorage.getItem).toHaveBeenCalledWith('reader-settings');
-  });
-
-  it.each(['null', '[]', '"not settings"'])('uses default settings when the headless value is %s', async (raw) => {
-    asyncStorage.__store.set('reader-settings', raw);
-
-    await expect(loadReaderSettings()).resolves.toMatchObject({ contentSources: defaultContentSources });
-  });
-
-  it('uses default settings when the headless settings read rejects', async () => {
-    vi.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('settings storage unavailable'));
-
-    await expect(loadReaderSettings()).resolves.toMatchObject({ contentSources: defaultContentSources });
-  });
-
-  it('uses default settings when the headless settings read never settles', async () => {
-    vi.useFakeTimers();
-    vi.mocked(AsyncStorage.getItem).mockReturnValueOnce(new Promise(() => undefined));
-    const load = loadReaderSettings();
-
-    await vi.runAllTimersAsync();
-
-    await expect(load).resolves.toMatchObject({ contentSources: defaultContentSources });
-  });
-
-  it('ignores a settings value that resolves after the local-read deadline', async () => {
-    vi.useFakeTimers();
-    const stored = Promise.withResolvers<string | null>();
-    vi.mocked(AsyncStorage.getItem).mockReturnValueOnce(stored.promise);
-    const load = loadReaderSettings();
-
-    await vi.runAllTimersAsync();
-    const settled = await load;
-    stored.resolve(
-      JSON.stringify({
-        ...createEmptyReaderData().settings,
-        contentSources: [{ source: 'v2ex', enabled: false }]
-      })
-    );
-    await Promise.resolve();
-
-    expect(settled.contentSources).toEqual(defaultContentSources);
-  });
-
-  it('normalizes missing and invalid content source settings in headless reads', async () => {
-    asyncStorage.__store.set('reader-settings', JSON.stringify({ theme: 'dark' }));
-
-    await expect(loadReaderSettings()).resolves.toMatchObject({
-      theme: 'dark',
-      contentSources: [
-        { source: 'v2ex', enabled: true },
-        { source: 'linuxdo', enabled: true },
-        { source: 'nodeseek', enabled: true },
-        { source: 'yaohuo', enabled: true }
-      ]
-    });
-
-    asyncStorage.__store.set('reader-settings', JSON.stringify({ contentSources: [{ source: 'v2ex', enabled: 1 }] }));
-
-    await expect(loadReaderSettings()).resolves.toMatchObject({
-      contentSources: [
-        { source: 'v2ex', enabled: true },
-        { source: 'linuxdo', enabled: true },
-        { source: 'nodeseek', enabled: true },
-        { source: 'yaohuo', enabled: true }
-      ]
-    });
-  });
-
-  it.each([
-    ['missing', null],
-    ['malformed', '{bad json'],
-    ['non-object', '[]']
-  ] as const)(
-    'defaults content sources when reader-settings is %s without discarding reader data',
-    async (_case, raw) => {
-      const data = createEmptyReaderData();
-      data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
-      data.settings = {
-        ...data.settings,
-        theme: 'dark',
-        contentSources: data.settings.contentSources.map((preference) => ({
-          ...preference,
-          enabled: preference.source !== 'linuxdo'
-        }))
-      };
-      vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) =>
-        key === 'reader-data' ? JSON.stringify(data) : raw
-      );
-
-      await expect(loadReaderData()).resolves.toMatchObject({
-        history: data.history,
-        settings: {
-          theme: 'dark',
-          contentSources: defaultContentSources
-        }
-      });
-    }
-  );
-
-  it('defaults content sources when neither settings store has a valid preference field', async () => {
-    const data = createEmptyReaderData();
-    const raw = JSON.stringify({
-      ...data,
-      settings: { ...data.settings, theme: 'dark', contentSources: 'invalid' }
-    });
-    vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) => (key === 'reader-data' ? raw : null));
-
-    await expect(loadReaderData()).resolves.toMatchObject({
-      settings: { theme: 'dark', contentSources: defaultContentSources }
-    });
-  });
-
-  it('keeps valid reader data and defaults content sources when the separate settings read rejects', async () => {
-    const data = createEmptyReaderData();
-    data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
-    data.settings.contentSources[1] = { source: 'linuxdo', enabled: false };
-    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
-      key === 'reader-data'
-        ? Promise.resolve(JSON.stringify(data))
-        : Promise.reject(new Error('settings storage unavailable'))
-    );
-
-    await expect(loadReaderData()).resolves.toMatchObject({
-      history: data.history,
-      settings: {
-        contentSources: defaultContentSources
-      }
-    });
-  });
-
-  it('keeps valid reader data and defaults content sources when the separate settings read exceeds the local deadline', async () => {
-    vi.useFakeTimers();
-    const data = createEmptyReaderData();
-    data.history[topicKey(topic)] = { topic, savedAt: '2026-05-20T00:00:00.000Z' };
-    data.settings.contentSources[1] = { source: 'linuxdo', enabled: false };
-    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
-      key === 'reader-data' ? Promise.resolve(JSON.stringify(data)) : new Promise(() => undefined)
-    );
-    const load = loadReaderData();
-
-    await vi.runAllTimersAsync();
-
-    await expect(load).resolves.toMatchObject({
-      history: data.history,
-      settings: {
-        contentSources: defaultContentSources
-      }
-    });
-  });
-
-  it('restores the previous full snapshot when the paired settings write fails', async () => {
-    const previous = createEmptyReaderData();
-    const next = {
-      ...previous,
-      settings: { ...previous.settings, theme: 'dark' as const }
+    for (let i = 0; i < 123; i++) data.history[`nodeseek:${i}`] = { topic: { ...topic, id: String(i) }, savedAt: at };
+    seed(data);
+    const store = await reopen();
+    await store.loadReaderState();
+    const request = {
+      collection: 'history' as const,
+      sources: ['nodeseek'] as const,
+      source: 'all' as const,
+      category: '日常'
     };
-    const previousJson = JSON.stringify(previous);
-    const nextJson = JSON.stringify(next);
-    asyncStorage.__store.set('reader-data', previousJson);
-    asyncStorage.__store.set('reader-settings', JSON.stringify(previous.settings));
-    let settingsWriteCount = 0;
-    vi.mocked(AsyncStorage.setItem).mockImplementation(async (key: string, value: string) => {
-      if (key === 'reader-settings' && ++settingsWriteCount === 1) {
-        throw new Error('settings write failed');
-      }
-      asyncStorage.__store.set(key, value);
-    });
-
-    await expect(saveCleanReaderData(next, previousJson, nextJson)).rejects.toThrow('settings write failed');
-
-    expect(asyncStorage.__store.get('reader-data')).toBe(previousJson);
-    expect(asyncStorage.__store.get('reader-settings')).toBe(JSON.stringify(previous.settings));
+    const one = await store.queryReaderPage(request);
+    const two = await store.queryReaderPage({ ...request, after: one.next });
+    const three = await store.queryReaderPage({ ...request, after: two.next });
+    expect([one.records.length, two.records.length, three.records.length]).toEqual([50, 50, 23]);
+    expect(one.total).toBe(123);
+    expect(three.next).toBeUndefined();
+    const records = [...one.records, ...two.records, ...three.records];
+    expect(records.map((record) => ('topic' in record ? record.topic.id : ''))).toEqual(
+      Array.from({ length: 123 }, (_, i) => String(i))
+    );
   });
 
-  it('rejects oversized clean data before writing AsyncStorage', async () => {
+  it('retains over-cap migrated history and shrinks the effective limit only after explicit deletions', async () => {
     const data = createEmptyReaderData();
-    const largeText = 'x'.repeat(4096);
-    for (let index = 0; JSON.stringify(data).length < MAX_BACKUP_JSON_BYTES + 4096; index += 1) {
-      const item: Topic = {
-        ...topic,
-        id: String(index),
-        title: largeText,
-        author: largeText,
-        category: largeText,
-        excerpt: largeText,
-        url: `https://www.nodeseek.com/post-${index}-1?pad=${largeText.slice(0, 512)}`
+    for (let i = 0; i < 5002; i++)
+      data.history[`nodeseek:${i}`] = {
+        topic: { ...topic, id: String(i) },
+        savedAt: new Date(1_700_000_000_000 + i).toISOString()
       };
-      data.history[topicKey(item)] = {
-        topic: item,
-        savedAt: new Date(Date.UTC(2026, 4, 20, 0, index)).toISOString()
-      };
+    seed(data);
+    const store = await reopen();
+    expect((await store.loadReaderState()).counts.history).toBe(5002);
+    expect(Object.keys(JSON.parse(await store.exportReaderDataBackup()).history)).toHaveLength(5002);
+    await store.commitReaderCommand({ type: 'visit', topic: { ...topic, id: 'new' }, at });
+    expect((await store.loadReaderState()).counts.history).toBe(5002);
+    await store.commitReaderCommand({ type: 'delete', collection: 'history', keys: ['nodeseek:1', 'nodeseek:2'], at });
+    await store.commitReaderCommand({ type: 'visit', topic: { ...topic, id: 'another' }, at });
+    expect((await store.loadReaderState()).counts.history).toBe(5000);
+  });
+
+  it('maintains exact UTF-8 JSON bytes through a deterministic random operation sequence', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    let random = 42;
+    for (let i = 0; i < 120; i++) {
+      random = (Math.imul(random, 1664525) + 1013904223) >>> 0;
+      const item = { ...topic, id: `${random % 13}😀"\\` };
+      const op = random % 4;
+      await store.commitReaderCommand(
+        op === 0
+          ? { type: 'visit', topic: item, at }
+          : op === 1
+            ? { type: 'favorite', topic: item, enabled: true, at }
+            : op === 2
+              ? { type: 'delete', collection: 'history', keys: [topicKey(item)], at }
+              : { type: 'favorite', topic: item, enabled: false, at }
+      );
+      const { readReaderSnapshot } = await import('./readerDatabase');
+      const { openDatabaseAsync } = await import('expo-sqlite');
+      const db = await openDatabaseAsync('reader-data.db');
+      const actual = Buffer.byteLength(JSON.stringify(await readReaderSnapshot(db)), 'utf8');
+      await db.closeAsync();
+      expect(inspect<{ bytes: number }>('SELECT bytes FROM reader_meta').bytes).toBe(actual);
     }
-
-    await expect(saveCleanReaderData(data)).rejects.toThrow('备份文件过大');
-
-    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
-  });
-
-  it('starts with clean Android reader data when AsyncStorage is empty', async () => {
-    const oldData = createEmptyReaderData();
-    secureStore.__store.set('reader-data', JSON.stringify(oldData));
-    secureStore.__store.set('nodeseek-cookie-header', 'session=secret');
-
-    await expect(loadReaderData()).resolves.toEqual(createEmptyReaderData());
-    expect(restoreEvents()).toEqual([
-      expect.objectContaining({ phase: 'finish', outcome: 'noop', state: 'missing', hasStoredData: false })
-    ]);
-
-    expect(SecureStore.getItemAsync).not.toHaveBeenCalledWith('reader-data');
-    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalledWith('reader-data');
-    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
-    expect(secureStore.__store.get('nodeseek-cookie-header')).toBe('session=secret');
-  });
-
-  it('preserves damaged AsyncStorage data instead of replacing it with empty data', async () => {
-    asyncStorage.__store.set('reader-data', '{private damaged data');
-
-    await expect(loadReaderData()).rejects.toThrow('本机资料已损坏');
-    expect(restoreEvents()).toEqual([
-      expect.objectContaining({ phase: 'finish', outcome: 'failure', state: 'invalid', reason: 'invalid_response' })
-    ]);
-    expect(diagnosticLines.join('')).not.toContain('private damaged data');
-
-    expect(asyncStorage.__store.get('reader-data')).toBe('{private damaged data');
-    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
-  });
-
-  it('rejects when the reader-data read rejects even if settings can fall back', async () => {
-    const failure = new Error('private reader data unavailable');
-    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
-      key === 'reader-data' ? Promise.reject(failure) : Promise.resolve(null)
-    );
-
-    await expect(loadReaderData()).rejects.toBe(failure);
-    expect(restoreEvents()).toEqual([
-      expect.objectContaining({ phase: 'finish', outcome: 'failure', state: 'recovery-mode', reason: 'storage_error' })
-    ]);
-    expect(diagnosticLines.join('')).not.toContain(failure.message);
-  });
-
-  it('rejects when the reader-data read never settles', async () => {
-    vi.useFakeTimers();
-    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
-      key === 'reader-data' ? new Promise(() => undefined) : Promise.resolve(null)
-    );
-    const load = expect(loadReaderData()).rejects.toThrow('本机资料读取超时');
-
-    await vi.runAllTimersAsync();
-
-    await load;
-    expect(restoreEvents()).toEqual([
-      expect.objectContaining({ phase: 'finish', outcome: 'failure', state: 'recovery-mode', reason: 'timeout' })
-    ]);
-  });
-
-  it('keeps a reader-data timeout settled after the storage promise resolves late', async () => {
-    vi.useFakeTimers();
-    const stored = Promise.withResolvers<string | null>();
-    vi.mocked(AsyncStorage.getItem).mockImplementation((key) =>
-      key === 'reader-data' ? stored.promise : Promise.resolve(null)
-    );
-    const outcome = loadReaderData().then(
-      () => 'loaded',
-      (error: Error) => error.message
-    );
-
-    await vi.runAllTimersAsync();
-    expect(await outcome).toBe('本机资料读取超时；为防止覆盖，未自动重置。');
-    expect(restoreEvents()).toHaveLength(1);
-    stored.resolve(JSON.stringify(createEmptyReaderData()));
-    await Promise.resolve();
-
-    expect(await outcome).toBe('本机资料读取超时；为防止覆盖，未自动重置。');
-    expect(restoreEvents()).toHaveLength(1);
-  });
-
-  it('preserves unsupported reader data versions instead of replacing them with empty data', async () => {
-    const raw = JSON.stringify({ ...createEmptyReaderData(), version: 1 });
-    asyncStorage.__store.set('reader-data', raw);
-
-    await expect(loadReaderData()).rejects.toThrow('本机资料版本不受支持');
-    expect(restoreEvents()).toEqual([
-      expect.objectContaining({ phase: 'finish', outcome: 'failure', state: 'invalid', reason: 'invalid_response' })
-    ]);
-
-    expect(asyncStorage.__store.get('reader-data')).toBe(raw);
-    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
-  });
-
-  it('reports an empty stored value as fallback without rewriting the original data', async () => {
-    asyncStorage.__store.set('reader-data', '');
-
-    await expect(loadReaderData()).resolves.toEqual(createEmptyReaderData());
-
-    expect(restoreEvents()).toEqual([
-      expect.objectContaining({
-        phase: 'finish',
-        outcome: 'partial',
-        state: 'fallback',
-        reason: 'invalid_response',
-        hasStoredData: true
-      })
-    ]);
-    expect(asyncStorage.__store.get('reader-data')).toBe('');
-    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
-  });
-
-  it('keeps valid sections without rewriting current-version data during load', async () => {
-    const raw = JSON.stringify({
-      ...createEmptyReaderData(),
-      favorites: 'bad',
-      history: {
-        [topicKey(topic)]: {
-          topic,
-          savedAt: '2026-05-20T00:00:00.000Z'
-        }
-      }
-    });
-    asyncStorage.__store.set('reader-data', raw);
-
-    const data = await loadReaderData();
-
-    expect(data.history[topicKey(topic)]?.topic).toEqual(topic);
-    expect(data.favorites).toEqual({});
-    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
-    expect(AsyncStorage.setItem).not.toHaveBeenCalledWith('reader-data-corrupt-backup', raw);
   });
 });

@@ -80,7 +80,7 @@ export function useAppLifecycleRuntime() {
         ? {
             source: topic.source,
             topicRef: diagnosticRef('topic', `${topic.source}:${topic.id}`),
-            hasTargetReply: Boolean(topicDestination?.targetReply)
+            hasTargetReply: topicDestination?.location?.kind === 'reply'
           }
         : user
           ? {

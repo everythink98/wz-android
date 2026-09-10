@@ -1,3 +1,8 @@
+jest.mock('@/platform/storage/readerDataStore', () => ({
+  queryReaderPage: jest.fn(async () => ({ records: [], total: 0, visibleTotal: 0 }))
+}));
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
 import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { cleanup } from '@testing-library/react-native';
@@ -181,8 +186,8 @@ const libraryRuntime = {
   notify: jest.fn(),
   reader: {
     commit: jest.fn(),
-    data: readerData,
-    dataRef: { current: readerData },
+    data: { ...createEmptyReaderState(), ...readerData },
+    dataRef: { current: { ...createEmptyReaderState(), ...readerData } },
     loaded: true
   },
   topicStateIndex
@@ -197,8 +202,8 @@ const moreRuntime = {
     commit: jest.fn(),
     data: readerData,
     dataRef: { current: readerData },
-    replace: jest.fn(async () => undefined),
-    waitForSave: jest.fn(async () => undefined)
+    importBackup: jest.fn(async () => undefined),
+    exportBackup: jest.fn(async () => '{}')
   },
   update: {}
 } as unknown as MoreRouteRuntimeValue;
@@ -256,26 +261,28 @@ function EmptyRoute() {
 
 function Navigator({ feedRuntimeValue = feedRuntime }: { feedRuntimeValue?: FeedRouteRuntimeValue }) {
   return (
-    <FeedTestRuntimeContext.Provider value={feedRuntimeValue}>
-      <AppNavigator
-        moreBadgeState="none"
-        navigationTheme={DefaultTheme}
-        FeedRouteComponent={FeedTab}
-        LibraryRouteComponent={LibraryTab}
-        MoreRouteComponent={MoreTab}
-        NotificationDetailRouteComponent={EmptyRoute}
-        NotificationSettingsRouteComponent={EmptyRoute}
-        NotificationsRouteComponent={EmptyRoute}
-        ReadingSettingsRouteComponent={EmptyRoute}
-        SearchRouteComponent={SearchTab}
-        TopicRouteComponent={TopicScreen}
-        UserRouteComponent={EmptyRoute}
-        styles={styles}
-        theme={theme}
-        onReady={jest.fn()}
-        onScreenChange={jest.fn()}
-      />
-    </FeedTestRuntimeContext.Provider>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { gcTime: 0, retry: false } } })}>
+      <FeedTestRuntimeContext.Provider value={feedRuntimeValue}>
+        <AppNavigator
+          moreBadgeState="none"
+          navigationTheme={DefaultTheme}
+          FeedRouteComponent={FeedTab}
+          getLibraryRoute={() => LibraryTab}
+          getMoreRoute={() => MoreTab}
+          getNotificationDetailRoute={() => EmptyRoute}
+          getNotificationSettingsRoute={() => EmptyRoute}
+          getNotificationsRoute={() => EmptyRoute}
+          getReadingSettingsRoute={() => EmptyRoute}
+          getSearchRoute={() => SearchTab}
+          getTopicRoute={() => TopicScreen}
+          getUserRoute={() => EmptyRoute}
+          styles={styles}
+          theme={theme}
+          onReady={jest.fn()}
+          onScreenChange={jest.fn()}
+        />
+      </FeedTestRuntimeContext.Provider>
+    </QueryClientProvider>
   );
 }
 

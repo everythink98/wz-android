@@ -741,7 +741,7 @@ describe('Android reader data helpers', () => {
     expect(local.favorites[topicKey(yaohuoTopic)]?.topic.title).toBe('妖火帖子');
   });
 
-  it('limits history to the newest records', () => {
+  it('validates history without trimming existing records', () => {
     const history: Record<string, unknown> = {};
     for (let index = 0; index < MAX_HISTORY_RECORDS + 20; index += 1) {
       const item = {
@@ -758,12 +758,12 @@ describe('Android reader data helpers', () => {
       history
     });
 
-    expect(Object.keys(data.history)).toHaveLength(MAX_HISTORY_RECORDS);
-    expect(data.history['nodeseek:0']).toBeUndefined();
+    expect(Object.keys(data.history)).toHaveLength(MAX_HISTORY_RECORDS + 20);
+    expect(data.history['nodeseek:0']).toBeDefined();
     expect(data.history[`nodeseek:${MAX_HISTORY_RECORDS + 19}`]?.topic.title).toBe(`Topic ${MAX_HISTORY_RECORDS + 19}`);
   });
 
-  it('limits deleted record markers to the newest entries', () => {
+  it('validates deletion markers without trimming persisted records', () => {
     const favorites: Record<string, string> = {};
     for (let index = 0; index < MAX_DELETED_RECORDS + 2; index += 1) {
       favorites[`nodeseek:${index}`] = new Date(Date.UTC(2026, 4, 20, 0, index)).toISOString();
@@ -778,8 +778,8 @@ describe('Android reader data helpers', () => {
       }
     });
 
-    expect(Object.keys(data.deletedRecords.favorites)).toHaveLength(MAX_DELETED_RECORDS);
-    expect(data.deletedRecords.favorites['nodeseek:0']).toBeUndefined();
+    expect(Object.keys(data.deletedRecords.favorites)).toHaveLength(MAX_DELETED_RECORDS + 2);
+    expect(data.deletedRecords.favorites['nodeseek:0']).toBeDefined();
     expect(data.deletedRecords.favorites[`nodeseek:${MAX_DELETED_RECORDS + 1}`]).toEqual(expect.any(String));
   });
 

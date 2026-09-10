@@ -125,10 +125,12 @@ async function renderStatusController({
   };
   const hook = await renderNativeHook(
     ({
-      renderedEnabledSources
+      renderedEnabledSources,
+      renderedEnabledSourcesReady = enabledSourcesReady
     }: {
       renderedSessionEpochs: ForumSessionEpochs;
       renderedEnabledSources?: readonly (typeof sessionSources)[number][];
+      renderedEnabledSourcesReady?: boolean;
     }) =>
       useAccountStatusController({
         fetcher,
@@ -138,7 +140,7 @@ async function renderStatusController({
         notify,
         onAccountStatusChanged: commitAccountStatusChange,
         readManagedCookieHeader,
-        enabledSourcesReady
+        enabledSourcesReady: renderedEnabledSourcesReady
       }),
     {
       initialProps: { renderedSessionEpochs: sessionEpochs, renderedEnabledSources: enabledSources },
@@ -172,6 +174,35 @@ describe('account status queries', () => {
       reason: 'expired'
     });
     mockGetCurrentUser.mockImplementation(async ({ source }) => (source === 'nodeseek' ? (null as never) : linuxUser));
+  });
+
+  it('reads account records before settings settle but publishes identity only after settings are ready', async () => {
+    await AsyncStorage.setMany({
+      'account-session.migration.v1': '1',
+      'account-session.v1.nodeseek': JSON.stringify({ version: 1, state: 'authenticated', identity: nodeSeekUser })
+    });
+    const read = jest.spyOn(AsyncStorage, 'getItem');
+    try {
+      const { hook } = await renderStatusController({ enabledSourcesReady: false });
+      await waitFor(() => expect(read).toHaveBeenCalledWith('account-session.v1.nodeseek'));
+      expect(hook.result.current.hydrated).toBe(false);
+      expect(
+        appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'))?.currentUser
+      ).toBeUndefined();
+      expect(mockGetCurrentUser).not.toHaveBeenCalled();
+      const reads = read.mock.calls.length;
+      await act(async () =>
+        hook.rerender({ renderedSessionEpochs: initialForumSessionEpochs, renderedEnabledSourcesReady: true })
+      );
+      await waitFor(() => expect(hook.result.current.hydrated).toBe(true));
+      expect(
+        appQueryClient.getQueryData<AccountSessionSnapshot>(accountQueryKeys.snapshot('nodeseek'))?.currentUser?.id
+      ).toBe('17');
+      expect(read).toHaveBeenCalledTimes(reads);
+      expect(mockGetCurrentUser).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it('restores the last confirmed identity without probing the account endpoint', async () => {

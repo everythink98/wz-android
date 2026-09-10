@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { useWindowDimensions } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import type { FlashListRef } from '@shopify/flash-list';
 
 import type { TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
@@ -28,6 +29,7 @@ type TopicScene =
   | 'replies-loading-more'
   | 'replies-partial'
   | 'replies-populated'
+  | 'replies-long'
   | 'structured-content';
 
 const FIXED_TIME = '2026-08-29T08:00:00.000Z';
@@ -71,6 +73,19 @@ function createTopic(source: Source, state: ActionState, scene: TopicScene) {
   const selected = state === 'selected' || state === 'success';
   const replies =
     scene.startsWith('replies-') && scene !== 'replies-empty' && scene !== 'replies-loading' ? createReplies() : [];
+  if (scene === 'replies-long') {
+    const sample = replies[0];
+    replies.splice(
+      0,
+      replies.length,
+      ...Array.from({ length: 30 }, (_, index) => ({
+        ...sample,
+        commentId: 201 + index,
+        floor: index + 1,
+        contentHtml: `<p>第 ${index + 1} 条回复。读到这里也可以直接使用底部入口，继续参与讨论。</p>`
+      }))
+    );
+  }
   const base: TopicDetail = {
     author: '示例作者',
     commentId: 101,
@@ -124,7 +139,7 @@ function decisionForScenario(
   pendingTarget?: PendingTarget
 ): TopicActionDecisionFor {
   return ({ action, interaction, reply }) => {
-    if (scene === 'replies-populated') {
+    if (scene === 'replies-populated' || scene === 'replies-long') {
       const allowed =
         action === 'reply' ||
         (action === 'edit' && reply?.canEdit === true) ||
@@ -208,7 +223,7 @@ function TopicScenarioScreen({
         loadingPreviousReplies: false,
         loadingQuotedFloors: {},
         locateReply: async () => 'completed' as const,
-        replyCollectionComplete: scene === 'replies-empty' || scene === 'replies-populated',
+        replyCollectionComplete: scene === 'replies-empty' || scene === 'replies-populated' || scene === 'replies-long',
         replyEndError,
         replyHasMore: scene === 'replies-loading-more',
         replyHasPrevious: false,
@@ -226,7 +241,7 @@ function TopicScenarioScreen({
   );
   const session = useTopicSessionController({ notify: noop, topic });
   const { settings, theme } = useReaderThemeStyles(noStyles);
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const mediaSessionIdentity = `${source}:visual`;
   const html = useHtmlRenderingController({
     mediaSessionIdentity,
@@ -243,42 +258,49 @@ function TopicScenarioScreen({
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
 
   return (
-    <TopicScreen
-      actions={actions}
-      article={{
-        busy: false,
-        error: null,
-        topic,
-        ...(source === 'yaohuo' ? { yaohuoBookmarked: topic.bookmarked } : {})
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { x: 0, y: 0, width, height },
+        insets: { top: 0, right: 0, bottom: 0, left: 0 }
       }}
-      chrome={{
-        back: noop,
-        favorite,
-        getDiscourseEmojiUrls: getEmptyDiscourseEmojiUrls,
-        onScroll: noop,
-        openOriginal: noop,
-        openReadingSettings: noop,
-        openTopic: noop,
-        openUser: noop,
-        refreshReplies: noop,
-        refreshTopic: noop,
-        share: noop,
-        toggleFavorite: noop,
-        verifyLinuxDo: noop,
-        verifyNodeSeek: noop
-      }}
-      currentNodeSeekUser={undefined}
-      html={{
-        ...html,
-        contentWidth: Math.min(width - 40, contentWidthValue(settings.contentWidth)),
-        mediaSessionIdentity
-      }}
-      nodeSeekUserId={null}
-      onImagePreviewDescriptors={noop}
-      read={read}
-      session={session}
-      topicScrollRef={topicScrollRef}
-    />
+    >
+      <TopicScreen
+        actions={actions}
+        article={{
+          busy: false,
+          error: null,
+          topic,
+          ...(source === 'yaohuo' ? { yaohuoBookmarked: topic.bookmarked } : {})
+        }}
+        chrome={{
+          back: noop,
+          favorite,
+          getDiscourseEmojiUrls: getEmptyDiscourseEmojiUrls,
+          onScroll: noop,
+          openOriginal: noop,
+          openReadingSettings: noop,
+          openTopic: noop,
+          openUser: noop,
+          refreshReplies: noop,
+          refreshTopic: noop,
+          share: noop,
+          toggleFavorite: noop,
+          verifyLinuxDo: noop,
+          verifyNodeSeek: noop
+        }}
+        currentNodeSeekUser={undefined}
+        html={{
+          ...html,
+          contentWidth: Math.min(width - 40, contentWidthValue(settings.contentWidth)),
+          mediaSessionIdentity
+        }}
+        nodeSeekUserId={null}
+        onImagePreviewDescriptors={noop}
+        read={read}
+        session={session}
+        topicScrollRef={topicScrollRef}
+      />
+    </SafeAreaProvider>
   );
 }
 
@@ -320,6 +342,14 @@ function actionScenario(
 }
 
 export const topicVisualScenarios: readonly VisualScenarioDefinition[] = [
+  {
+    capabilityIds: ['TOPIC-03', 'WRITE-01'],
+    id: 'topic.replies.bottom-bar',
+    kind: 'rendered',
+    tags: ['topic', 'replies', 'composer', 'bottom-bar', 'long-content'],
+    title: '长帖与悬浮回复按钮',
+    render: () => <TopicScenarioScreen scene="replies-long" source="linuxdo" />
+  },
   actionScenario('topic.actions.nodeseek.default', 'NodeSeek 主帖操作·默认', 'nodeseek', 'default', ['default']),
   actionScenario('topic.actions.nodeseek.selected', 'NodeSeek 主帖操作·已选', 'nodeseek', 'selected', ['selected']),
   actionScenario('topic.actions.nodeseek.success', 'NodeSeek 主帖操作·成功稳态', 'nodeseek', 'success', ['success']),

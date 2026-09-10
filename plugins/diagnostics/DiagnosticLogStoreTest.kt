@@ -9,6 +9,12 @@ import java.io.File
 class DiagnosticLogStoreTest {
   @get:Rule val temporary = TemporaryFolder()
 
+  @Test fun startupTimingRejectsUnknownPhasesAndRecordsEachPhaseOnce() {
+    assertFalse(DiagnosticJournal.recordStartupPhase("PRIVATE_STARTUP_PAYLOAD"))
+    assertTrue(DiagnosticJournal.recordStartupPhase("page-ready"))
+    assertFalse(DiagnosticJournal.recordStartupPhase("page-ready"))
+  }
+
   @Test fun keepsFourBoundedSegmentsAndReopensAfterRestart() {
     val directory = temporary.newFolder()
     val store = DiagnosticLogStore(directory, "js", { 1000L }, 16, 4)

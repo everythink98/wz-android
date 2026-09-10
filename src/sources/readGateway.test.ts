@@ -9,10 +9,52 @@ vi.mock('@/platform/network/networkProxy', () => ({
   recoverReadNetworkRuntime: vi.fn()
 }));
 
-import { getTopic } from './readGateway';
+import { createReadGateway, getTopic } from './readGateway';
 import type { Topic } from '@/domain/forum/models';
 
 describe('source gateway reads', () => {
+  it.each(['linuxdo', 'all'] as const)(
+    'requests one account recheck for a parsed %s search login failure',
+    async (source) => {
+      const requestAccountRecheck = vi.fn();
+      const onSessionExpired = vi.fn();
+      const fetcher = vi.fn(async (input: string) =>
+        input.includes('/session/csrf')
+          ? new Response(JSON.stringify({ csrf: 'token' }))
+          : new Response(JSON.stringify({ errors: ['您需要登录才能执行此操作。'] }), { status: 403 })
+      );
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => ['linuxdo'],
+        nodeSeekUserAgent: () => 'test-agent',
+        requestAccountRecheck,
+        onSessionExpired,
+        readSessionRuntimeSnapshot: (site) => ({
+          source: site,
+          authenticated: true,
+          identityTrust: 'confirmed',
+          identityKey: `${site}:7`,
+          sessionEpoch: 4,
+          authSurfaceOpen: false,
+          sourceEnabled: true
+        })
+      });
+      const read = gateway.searchTopics({ source, query: 'AI' });
+      const expected = {
+        kind: 'login-required',
+        reason: 'account-recheck-required',
+        message: '您需要登录才能执行此操作。'
+      };
+      if (source === 'all') await expect(read).resolves.toMatchObject({ errors: { linuxdo: expected } });
+      else await expect(read).rejects.toMatchObject(expected);
+      expect(requestAccountRecheck).toHaveBeenCalledTimes(1);
+      expect(requestAccountRecheck).toHaveBeenCalledWith('linuxdo', 4, expect.stringMatching(/^trace-/));
+      expect(onSessionExpired).not.toHaveBeenCalled();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
+  );
+
   it('reads a partial yaohuo topic seed without duplicating the replies request', async () => {
     const topic: Topic = {
       source: 'yaohuo',

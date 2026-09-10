@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Text, View, type ViewStyle } from 'react-native';
 import { SvgXml } from 'react-native-svg';
-import { renderMathJaxSvg, type MathJaxSvgResult } from './mathJaxSvg';
+import type { MathJaxSvgResult } from './mathJaxSvg';
 
 export type ForumMathProps = {
   boundarySpacing?: Pick<ViewStyle, 'marginBottom' | 'marginTop'>;
@@ -17,9 +17,16 @@ export function ForumMath({ boundarySpacing, color, contentWidth, display, fontS
   const [rendered, setRendered] = useState<{ key: string; svg: MathJaxSvgResult } | null>(null);
   useEffect(() => {
     let active = true;
-    renderMathJaxSvg(source, display === 'block')
+    Promise.resolve()
+      .then(() => {
+        if (!active) return null;
+        // Defer module evaluation, including font registration, until a formula mounts.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { renderMathJaxSvg } = require('./mathJaxSvg') as typeof import('./mathJaxSvg');
+        return renderMathJaxSvg(source, display === 'block');
+      })
       .then((svg) => {
-        if (active) setRendered({ key, svg });
+        if (active && svg) setRendered({ key, svg });
       })
       .catch(() => undefined);
     return () => {

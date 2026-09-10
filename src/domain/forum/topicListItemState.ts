@@ -1,4 +1,5 @@
-import { topicKey, type ReaderData, type ReaderSettings } from '@/domain/reader/readerData';
+import type { ReaderMembership } from '@/domain/reader/readerRecordState';
+import { topicKey, type ReaderSettings } from '@/domain/reader/readerData';
 import type { Topic } from './models';
 
 export interface TopicListItemState {
@@ -7,12 +8,12 @@ export interface TopicListItemState {
   read: boolean;
 }
 export interface TopicListItemStateIndex {
-  favorites: Readonly<ReaderData['favorites']>;
-  history: Readonly<ReaderData['history']>;
+  favorites: ReaderMembership['favorites'];
+  history: ReaderMembership['history'];
   listDensity: ReaderSettings['listDensity'];
 }
 
-type TopicListItemStateData = Pick<ReaderData, 'favorites' | 'history'> & {
+type TopicListItemStateData = Pick<ReaderMembership, 'favorites' | 'history'> & {
   settings: Pick<ReaderSettings, 'listDensity'>;
 };
 

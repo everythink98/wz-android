@@ -9,15 +9,12 @@ import {
   type UseQueryResult
 } from '@tanstack/react-query';
 import type { ReadGateway } from '@/sources/readGateway';
-import {
-  recordHistory,
-  topicKey,
-  updateFavoriteTopic,
-  type ReaderData,
-  type ReaderDataMutationReason
-} from '@/domain/reader/readerData';
+import { topicKey } from '@/domain/reader/readerData';
+import type { ReaderCommand, ReaderView } from '@/domain/reader/readerRecordState';
+import { readHistoryReplyCount } from '@/platform/storage/readerDataStore';
 import { replyKey as replyRenderKey } from '@/domain/forum/feed';
 import { findReplyLocation } from '@/domain/forum/replyLocation';
+import { resolveTopicLocation, topicLocationForReply } from '@/domain/forum/topicLocation';
 import { isCanceledRequest } from '@/platform/network/errors';
 import {
   firstReplyData,
@@ -47,6 +44,7 @@ import {
 import type {
   Reply,
   ReplyLocationTarget,
+  TopicLocationTarget,
   ReplyOrder,
   ReplyWindowPosition,
   Source,
@@ -79,8 +77,6 @@ import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import { reverseReplyWindow } from '@/sources/replyWindows';
 import { NODESEEK_FLOORS_PER_PAGE } from '@/sources/nodeseek/protocol';
-
-type MutableRef<T> = { current: T };
 
 type QuoteQueryProjection = Pick<
   UseQueryResult<Reply>,
@@ -157,33 +153,31 @@ export function useTopicController({
   onOpenTopic,
   onReplyLocationResolved,
   readerData,
-  readerDataRef,
   showLinuxDoVerification,
   showYaohuoLogin,
   readGateway,
-  targetReply,
-  targetReplyRequestId,
+  location,
+  locationRequestId,
   topic,
   topicSession
 }: {
   active: boolean;
-  commitReaderData: (mutationReason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
+  commitReaderData: (command: ReaderCommand) => void;
   sessionEpochs?: ForumSessionEpochs;
   notify: (message: string) => void;
   onRetryIdentityStatus?: (source: SessionSource) => Promise<unknown> | unknown;
   onNodeSeekTopicVerificationRequired: (message: string, recovery: LinuxDoReadRecovery) => void;
   onOpenTopic: (topic: Topic) => void;
-  onReplyLocationResolved?: (target: ReplyLocationTarget) => void;
-  readerData: ReaderData;
-  readerDataRef: MutableRef<ReaderData>;
+  onReplyLocationResolved?: (location: TopicLocationTarget) => void;
+  readerData: ReaderView;
   showLinuxDoVerification: (
     message?: string,
     recovery?: LinuxDoReadRecovery
   ) => void | boolean | Promise<void | boolean>;
   showYaohuoLogin: (message?: string) => void;
   readGateway: ReadGateway;
-  targetReply?: ReplyLocationTarget;
-  targetReplyRequestId?: number;
+  location?: TopicLocationTarget;
+  locationRequestId?: number;
   topic: Topic;
   topicSession: TopicSessionController;
 }) {
@@ -202,15 +196,14 @@ export function useTopicController({
       }
     >
   >({});
-  const unreadBaselineRef = useRef<Record<string, number>>({
-    [topicKey(topic)]: readerDataRef.current.history[topicKey(topic)]?.topic.replyCount || 0
-  });
+  const [unreadBaseline, setUnreadBaseline] = useState<{ key: string; replies: number } | null>(null);
+  const baselineKey = topicKey(topic);
   const recordedTopicUpdateRef = useRef('');
   const handledTopicErrorRef = useRef(0);
   const handledRepliesErrorRef = useRef(0);
   const handledQuoteErrorsRef = useRef<Record<string, number>>({});
   const targetWindowCacheOwnedRef = useRef(new Map<ReplyOrder, readonly unknown[]>());
-  const handledRouteTargetRef = useRef('');
+  const handledRouteTargetRef = useRef<{ key: string; queryIdentity: string } | null>(null);
   const replyWindowGenerationRef = useRef(0);
   const selectedSource = selectedTopic?.source || 'v2ex';
   const selectedTopicId = selectedTopic?.id || '';
@@ -349,6 +342,31 @@ export function useTopicController({
   });
 
   const topicDetail = detailQuery.data || null;
+  const resolvedLocation = resolveTopicLocation(topicDetail, location);
+  const targetReply = resolvedLocation?.kind === 'reply' ? resolvedLocation.target : undefined;
+  const targetSessionEpoch = selectedSource === 'v2ex' ? 0 : sessionEpochs[selectedSource];
+  const routeTargetKey = targetReply
+    ? `${selectedTopicKey}:${targetSessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}:${targetReply.expectedAuthorUsername ?? ''}:request:${locationRequestId ?? ''}`
+    : '';
+  const targetBelongsToPreviousWindow =
+    handledRouteTargetRef.current?.key === routeTargetKey &&
+    handledRouteTargetRef.current.queryIdentity !== repliesQueryIdentity;
+  useEffect(() => {
+    if (!topicDetail || unreadBaseline?.key === baselineKey) return;
+    let active = true;
+    void readHistoryReplyCount(baselineKey).then(
+      (replies) => {
+        if (active) setUnreadBaseline({ key: baselineKey, replies });
+      },
+      () => {
+        if (active) setUnreadBaseline({ key: baselineKey, replies: 0 });
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, [baselineKey, topicDetail, unreadBaseline]);
+
   const loadReplyPage = useCallback(
     async (
       detail: TopicDetail,
@@ -403,7 +421,8 @@ export function useTopicController({
   );
   const repliesQuery = useInfiniteQuery({
     queryKey: repliesQueryKey,
-    enabled: enabled && Boolean(topicDetail) && (!targetReply || Boolean(initialReplies)),
+    enabled:
+      enabled && Boolean(topicDetail) && (!targetReply || Boolean(initialReplies) || targetBelongsToPreviousWindow),
     initialPageParam: { kind: 'start' } satisfies ReplyPageParam,
     initialData: initialReplies,
     initialDataUpdatedAt: initialReplies ? detailQuery.dataUpdatedAt || undefined : undefined,
@@ -552,13 +571,12 @@ export function useTopicController({
 
   useEffect(() => {
     if (!topicDetail || !detailQuery.dataUpdatedAt) return;
+    if (unreadBaseline?.key !== topicKey(topicDetail)) return;
     const recordKey = `${topicKey(topicDetail)}:${detailQuery.dataUpdatedAt}`;
     if (recordedTopicUpdateRef.current === recordKey) return;
     recordedTopicUpdateRef.current = recordKey;
-    commitReaderData('history-recorded', (current) =>
-      updateFavoriteTopic(recordHistory(current, topicDetail), topicDetail)
-    );
-  }, [commitReaderData, detailQuery.dataUpdatedAt, topicDetail]);
+    commitReaderData({ type: 'visit', topic: topicDetail, at: new Date().toISOString() });
+  }, [commitReaderData, detailQuery.dataUpdatedAt, topicDetail, unreadBaseline]);
 
   useEffect(() => {
     if (!selectedTopic || !detailQuery.error || handledTopicErrorRef.current === detailQuery.errorUpdatedAt) return;
@@ -1043,7 +1061,8 @@ export function useTopicController({
             cached && typeof replyCount === 'number' ? { ...cached, replyCount } : cached
           );
           setReplyWindowFailuresByKey({});
-          if (command.kind === 'created' && createdTarget) onReplyLocationResolved?.(createdTarget);
+          if (command.kind === 'created' && createdTarget)
+            onReplyLocationResolved?.(topicLocationForReply(selectedTopic.source, createdTarget));
           const refreshCompleted = !nodeSeekCreatedCommand || Boolean(createdTarget);
           if (ownsTrace) {
             finishDiagnosticTrace(trace, refreshCompleted ? 'success' : 'partial', {
@@ -1215,7 +1234,11 @@ export function useTopicController({
 
   const locateReply = useCallback(
     async (target: ReplyLocationTarget, { silent = false }: { silent?: boolean } = {}) => {
-      if (!selectedTopic || !topicDetail || repliesReadBlocked) return 'stale';
+      if (!active || !selectedTopic || !topicDetail || repliesReadBlocked) return 'stale';
+      if (topicLocationForReply(selectedTopic.source, target, topicDetail).kind === 'opening') {
+        replyWindowGenerationRef.current += 1;
+        return 'completed';
+      }
       const commentId =
         target.commentId && Number.isSafeInteger(target.commentId) && target.commentId > 0
           ? target.commentId
@@ -1296,7 +1319,7 @@ export function useTopicController({
           }
           const resolvedPage = page.currentPage!;
           const resolvedReply = findReplyLocation(page.items, normalizedTarget);
-          if (selectedTopic.source === 'v2ex' && !resolvedReply) throw new Error('目标楼层未找到或引用不匹配');
+          if (!resolvedReply) throw new Error('目标楼层未找到或引用不匹配');
           const resolvedOffset = page.currentOffset ?? null;
           queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, {
             pages: [page],
@@ -1312,10 +1335,6 @@ export function useTopicController({
             positionKind: 'target',
             resolvedPage
           });
-          if (!silent) {
-            const resolvedFloor = resolvedReply?.floor ?? normalizedTarget.floor;
-            notify(resolvedFloor ? `已定位到第 ${resolvedFloor} 楼` : '已定位到目标回复');
-          }
           return 'completed' as const;
         } catch (error) {
           if (
@@ -1360,6 +1379,7 @@ export function useTopicController({
       }
     },
     [
+      active,
       activeRepliesQueryIdentityRef,
       clearReplyWindowErrors,
       handleReadError,
@@ -1379,19 +1399,23 @@ export function useTopicController({
   );
 
   useEffect(() => {
-    if (!targetReply || !topicDetail || !selectedTopic || repliesReadBlocked) return;
-    const sessionEpoch = selectedTopic.source === 'v2ex' ? 0 : sessionEpochs[selectedTopic.source];
-    const targetKey = `${topicKey(selectedTopic)}:${sessionEpoch}:${targetReply.commentId ?? ''}:${targetReply.floor ?? ''}:${targetReply.pageHint ?? ''}:${targetReply.expectedAuthorUsername ?? ''}:request:${targetReplyRequestId ?? ''}`;
-    if (handledRouteTargetRef.current === targetKey) return;
-    handledRouteTargetRef.current = targetKey;
+    if (resolvedLocation?.kind === 'opening') replyWindowGenerationRef.current += 1;
+  }, [resolvedLocation?.kind, locationRequestId]);
+
+  useEffect(() => {
+    if (!active || !targetReply || !topicDetail || !selectedTopic || repliesReadBlocked) return;
+    if (handledRouteTargetRef.current?.key === routeTargetKey) return;
+    handledRouteTargetRef.current = { key: routeTargetKey, queryIdentity: repliesQueryIdentity };
     void locateReply(targetReply, { silent: true });
   }, [
     locateReply,
     repliesReadBlocked,
     selectedTopic,
-    sessionEpochs,
+    repliesQueryIdentity,
+    routeTargetKey,
     targetReply,
-    targetReplyRequestId,
+    locationRequestId,
+    active,
     topicDetail,
     topicReplies
   ]);
@@ -1535,7 +1559,8 @@ export function useTopicController({
     typeof topicDetail?.replyCount === 'number'
       ? Math.max(
           0,
-          topicDetail.replyCount - (unreadBaselineRef.current[topicKey(topicDetail)] || topicDetail.replyCount)
+          topicDetail.replyCount -
+            ((unreadBaseline?.key === topicKey(topicDetail) ? unreadBaseline.replies : 0) || topicDetail.replyCount)
         )
       : 0;
 
@@ -1566,7 +1591,9 @@ export function useTopicController({
     repliesLoading:
       enabled &&
       Boolean(topicDetail) &&
-      ((repliesQuery.isPending && !repliesQuery.data) ||
+      ((repliesQuery.isPending &&
+        !repliesQuery.data &&
+        (!targetReply || loadingTargetReply || repliesQuery.isFetching)) ||
         (Boolean(replyWindowFailures.refresh) && detailQuery.isFetching)),
     retryReplies: retryFailedReplies,
     replyRowsPartial,

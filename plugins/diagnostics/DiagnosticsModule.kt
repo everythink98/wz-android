@@ -23,6 +23,9 @@ class DiagnosticsModule(context: ReactApplicationContext) : ReactContextBaseJava
   @ReactMethod(isBlockingSynchronousMethod = true)
   fun persistCrashSync(lines: String): Boolean = DiagnosticJournal.persistJsCrash(lines)
 
+  @ReactMethod(isBlockingSynchronousMethod = true)
+  fun recordStartupPhase(phase: String): Boolean = DiagnosticJournal.recordStartupPhase(phase)
+
   @ReactMethod
   fun snapshot(promise: Promise) {
     try { DiagnosticJournal.snapshot { promise.resolve(Arguments.makeNativeMap(it)) } }

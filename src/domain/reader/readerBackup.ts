@@ -51,13 +51,19 @@ export function assertBackupJsonSize(size: number | string | null | undefined) {
   }
 }
 
-export function importReaderBackupJson(local: ReaderData, json: string) {
+export function parseReaderBackupJson(json: string) {
   assertBackupJsonSize(json);
   const parsed = JSON.parse(json);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== readerDataVersion) {
     throw new Error('备份格式不兼容，请使用当前 Android 版本导出的 JSON。');
   }
-  const merged = mergeReaderData(local, stripSensitive(parsed));
-  assertBackupJsonSize(JSON.stringify(merged));
+  return stripSensitive(parsed);
+}
+
+export function importReaderBackupJson(local: ReaderData, json: string) {
+  const merged = mergeReaderData(local, parseReaderBackupJson(json));
+  if (utf8ByteLength(JSON.stringify(merged)) > Math.max(MAX_BACKUP_JSON_BYTES, utf8ByteLength(JSON.stringify(local)))) {
+    throw new Error(BACKUP_TOO_LARGE_MESSAGE);
+  }
   return merged;
 }

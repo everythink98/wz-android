@@ -380,7 +380,7 @@ describe('disabled content source route gates', () => {
     const route = {
       key: 'topic',
       name: 'Topic',
-      params: { targetReply: { floor: 5 }, targetReplyRequestId: 7, topic: enabledTopic }
+      params: { location: { kind: 'reply', target: { floor: 5 } }, locationRequestId: 7, topic: enabledTopic }
     } as const;
     const runtime = {
       account: {
@@ -460,18 +460,20 @@ describe('disabled content source route gates', () => {
     await fireEvent.press(floorLink);
     await fireEvent.press(floorLink);
     expect(navigation.setParams).toHaveBeenNthCalledWith(1, {
-      targetReply: { floor: 9, pageHint: 1 },
-      targetReplyRequestId: 8
+      location: { kind: 'reply', target: { floor: 9, pageHint: 1 } },
+      locationRequestId: 8
     });
     expect(navigation.setParams).toHaveBeenNthCalledWith(2, {
-      targetReply: { floor: 9, pageHint: 1 },
-      targetReplyRequestId: 9
+      location: { kind: 'reply', target: { floor: 9, pageHint: 1 } },
+      locationRequestId: 9
     });
     const resolveCreatedReply = jest.mocked(useTopicController).mock.calls.at(-1)?.[0].onReplyLocationResolved;
-    await act(async () => resolveCreatedReply?.({ commentId: 12187538, floor: 16, pageHint: 2 }));
+    await act(async () =>
+      resolveCreatedReply?.({ kind: 'reply', target: { commentId: 12187538, floor: 16, pageHint: 2 } })
+    );
     expect(navigation.setParams).toHaveBeenNthCalledWith(3, {
-      targetReply: { commentId: 12187538, floor: 16, pageHint: 2 },
-      targetReplyRequestId: 10
+      location: { kind: 'reply', target: { commentId: 12187538, floor: 16, pageHint: 2 } },
+      locationRequestId: 10
     });
     expect(locateReply).not.toHaveBeenCalled();
   });

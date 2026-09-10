@@ -1,13 +1,16 @@
-import { memo, type RefObject, useCallback, useEffect, useState } from 'react';
-import { type NativeScrollEvent, type NativeSyntheticEvent, Text, View } from 'react-native';
+import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
+import { memo, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { type NativeScrollEvent, type NativeSyntheticEvent, Pressable, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import type { FlashListRef } from '@shopify/flash-list';
-import { ChevronLeft, MoreHorizontal, Star } from 'lucide-react-native';
+import { ChevronLeft, MoreHorizontal, SquarePen, Star } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 
 import { sourceLabel } from '@/domain/forum/presentation';
 import { topicWithAuthorFallback } from '@/domain/forum/userNavigation';
 import { isDiscourseSource, type DiscourseSource } from '@/domain/forum/sourceCatalog';
-import type { ReplyLocationTarget, SourceErrorInfo, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
+import type { TopicLocationTarget, SourceErrorInfo, Topic, TopicDetail, UserReference } from '@/domain/forum/models';
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { authNoticeForSourceError } from '@/domain/session/siteSessionPrompts';
@@ -30,6 +33,7 @@ import type { useTopicController } from './useTopicController';
 import type { TopicSessionController } from './useTopicSessionController';
 
 const EMPTY_DISCOURSE_EMOJI_URLS: DiscourseEmojiUrlMap = {};
+const AnimatedSafeAreaView = Animated.createAnimatedComponent(SafeAreaView);
 
 export const TopicScreen = memo(function TopicScreen({
   active = true,
@@ -43,8 +47,8 @@ export const TopicScreen = memo(function TopicScreen({
   onImagePreviewDescriptors,
   read,
   session,
-  targetReply,
-  targetReplyRequestId,
+  location,
+  locationRequestId,
   topicScrollRef
 }: {
   active?: boolean;
@@ -65,7 +69,7 @@ export const TopicScreen = memo(function TopicScreen({
     back: () => void;
     openOriginal: (url: string) => void;
     openReadingSettings: () => void;
-    openTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
+    openTopic: (topic: Topic, location?: TopicLocationTarget) => void;
     openUser: (user: UserReference) => void;
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
     refreshReplies: () => void;
@@ -81,10 +85,11 @@ export const TopicScreen = memo(function TopicScreen({
   onImagePreviewDescriptors: (descriptors: readonly ForumImagePreviewDescriptor[]) => void;
   read: ReturnType<typeof useTopicController>;
   session: TopicSessionController;
-  targetReply?: ReplyLocationTarget;
-  targetReplyRequestId?: number;
+  location?: TopicLocationTarget;
+  locationRequestId?: number;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
+  const onPageLayout = useStartupPageLayout();
   const { state, commands } = session;
   const { actionBusy, decisionFor } = actions;
   const { error: topicError, topic } = article;
@@ -93,6 +98,16 @@ export const TopicScreen = memo(function TopicScreen({
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const itemSource = topic?.source;
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
+  const [replyActionHeight, setReplyActionHeight] = useState(0);
+  const [replyActionVisible, setReplyActionVisible] = useState(true);
+  const replyScrollRef = useRef<{ offset: number; anchor: number; direction: number } | null>(null);
+  const replyComposerIntent = state.replyComposerIntent;
+  const replyComposerOpen = replyComposerIntent.kind !== 'closed';
+  const replyActionHidden = replyComposerOpen || !active || !replyActionVisible;
+  const replyActionAnimation = useAnimatedStyle(() => ({
+    opacity: withTiming(replyActionHidden ? 0 : 1, { duration: 160 }),
+    transform: [{ translateY: withTiming(replyActionHidden ? 8 : 0, { duration: 160 }) }]
+  }));
   const discourseEmojiSource = active && isDiscourseSource(itemSource) ? itemSource : null;
   const { data: discourseEmojiData, refetch: refetchDiscourseEmojiUrls } = useQuery({
     queryKey: forumQueryKeys.emojiUrls(discourseEmojiSource),
@@ -110,6 +125,32 @@ export const TopicScreen = memo(function TopicScreen({
   useEffect(() => {
     setTopicMenuOpen(false);
   }, [item?.id, item?.source]);
+  useEffect(() => {
+    replyScrollRef.current = null;
+    setReplyActionVisible(true);
+  }, [active, item?.id, item?.source]);
+
+  const updateReplyActionForScroll = useCallback(
+    ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!active || replyComposerOpen) return;
+      const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
+      const maxOffset = Math.max(0, contentSize.height - layoutMeasurement.height);
+      const offset = Math.max(0, Math.min(contentOffset.y, maxOffset));
+      const previous = replyScrollRef.current;
+      if (!previous) {
+        replyScrollRef.current = { offset, anchor: offset, direction: 0 };
+        return;
+      }
+      if (offset === previous.offset) return;
+      const direction = Math.sign(offset - previous.offset);
+      const anchor = direction === previous.direction ? previous.anchor : previous.offset;
+      replyScrollRef.current = { offset, anchor, direction };
+      if (offset > 12 && Math.abs(offset - anchor) < 12) return;
+      const visible = offset <= 12 || direction < 0;
+      if (visible !== replyActionVisible) setReplyActionVisible(visible);
+    },
+    [active, replyActionVisible, replyComposerOpen]
+  );
 
   const runTopicMenuAction = useCallback((action: () => void) => {
     setTopicMenuOpen(false);
@@ -121,11 +162,14 @@ export const TopicScreen = memo(function TopicScreen({
   }, [chrome.refreshTopic, discourseEmojiSource, refetchDiscourseEmojiUrls]);
 
   if (!item) {
-    return <EmptyText text="未选择主题" />;
+    return (
+      <View style={styles.topicScreenRoot} onLayout={onPageLayout}>
+        <EmptyText text="未选择主题" />
+      </View>
+    );
   }
 
-  const canWrite = decisionFor({ action: 'reply' }).allowed;
-  const replyComposerIntent = state.replyComposerIntent;
+  const canWrite = Boolean(topic && decisionFor({ action: 'reply' }).allowed);
   const canUseDiscourseInteractions = Boolean(
     topic &&
     isDiscourseSource(topic.source) &&
@@ -168,7 +212,7 @@ export const TopicScreen = memo(function TopicScreen({
   );
 
   return (
-    <View style={styles.topicScreenRoot}>
+    <View style={styles.topicScreenRoot} onLayout={onPageLayout}>
       <ScreenTopBar>
         <IconButton icon={ChevronLeft} compact ghost label="返回" onPress={chrome.back} />
         <ScreenTopBarTitle>
@@ -200,6 +244,7 @@ export const TopicScreen = memo(function TopicScreen({
         actions={actions}
         article={article}
         bodyMediaPaused={bodyMediaPaused}
+        bottomContentInset={canWrite ? replyActionHeight + styles.replyActionPosition.bottom + 16 : 0}
         currentNodeSeekUser={currentNodeSeekUser}
         discourseEmojiUrls={discourseEmojiUrls}
         headerState={headerState}
@@ -209,12 +254,36 @@ export const TopicScreen = memo(function TopicScreen({
         onOpenTopic={chrome.openTopic}
         onOpenUser={chrome.openUser}
         onScroll={chrome.onScroll}
+        onScrollProgress={canWrite ? updateReplyActionForScroll : undefined}
         read={read}
         session={session}
-        targetReply={targetReply}
-        targetReplyRequestId={targetReplyRequestId}
+        location={location}
+        locationRequestId={locationRequestId}
         topicScrollRef={topicScrollRef}
       />
+      {canWrite ? (
+        <AnimatedSafeAreaView
+          edges={['bottom']}
+          pointerEvents={replyActionHidden ? 'none' : 'box-none'}
+          style={[styles.replyActionPosition, replyActionAnimation]}
+          onLayout={(event) => setReplyActionHeight(event.nativeEvent.layout.height)}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="写回复"
+            accessibilityHint="打开回复编辑器"
+            accessibilityState={{ disabled: replyActionHidden }}
+            accessibilityElementsHidden={replyActionHidden}
+            importantForAccessibility={replyActionHidden ? 'no-hide-descendants' : 'auto'}
+            disabled={replyActionHidden}
+            style={styles.replyAction}
+            onPress={() => commands.composer.toggle(true)}
+          >
+            <SquarePen size={20} color={theme.onPrimary} strokeWidth={1.8} />
+            <Text style={styles.replyActionText}>回复</Text>
+          </Pressable>
+        </AnimatedSafeAreaView>
+      ) : null}
       <TopicMenu
         onOpenOriginal={chrome.openOriginal}
         onOpenReadingSettings={chrome.openReadingSettings}

@@ -3,6 +3,30 @@ import { parseHtml } from './html';
 import { sanitizeContentHtml } from './contentSanitizer';
 
 describe('forum content sanitizer media referrer policy', () => {
+  it('validates absolute media without resolving the same base for every image', () => {
+    const baseUrl = 'https://example.com/topic/123';
+    const NativeURL = URL;
+    let baseResolutions = 0;
+    class CountingURL extends NativeURL {
+      constructor(value: string | URL, base?: string | URL) {
+        super(value, base);
+        if (base === baseUrl) baseResolutions++;
+      }
+    }
+    vi.stubGlobal('URL', CountingURL);
+    try {
+      const html = Array.from({ length: 20 }, (_, index) => `<img src="https://cdn.example/${index}.jpg">`).join('');
+      expect(sanitizeContentHtml(html, baseUrl)).toBe(html);
+      expect(baseResolutions).toBeLessThanOrEqual(2);
+      expect(sanitizeContentHtml('<img src="https://cdn.example/a">', 'invalid base')).toBe('<img>');
+      expect(sanitizeContentHtml('<a href="../b">relative</a><img src="javascript:alert(1)">', baseUrl)).toBe(
+        '<a href="https://example.com/b">relative</a><img>'
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('normalizes large terminal reports without an argument-count ceiling', () => {
     const text = '\n'.repeat(20_000) + '  A\r\n    B\r\n\r\n  C' + '\n'.repeat(20_000);
     const wrap = (body: string) =>

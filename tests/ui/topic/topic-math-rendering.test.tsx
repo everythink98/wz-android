@@ -68,4 +68,17 @@ describe('Topic formula rendering', () => {
     expect(view.getByText('\\bad').props.selectable).toBe(false);
     expect(view.queryByTestId('forum-math-svg')).toBeNull();
   });
+
+  it('ignores a conversion that completes after the formula changes', async () => {
+    let resolveOld!: (result: MathJaxSvgResult) => void;
+    mockRenderMathJaxSvg.mockReturnValueOnce(new Promise((resolve) => (resolveOld = resolve)));
+    const props = { color: '#102030', contentWidth: 300, display: 'inline' as const, fontScale: 1 };
+    const view = await render(<ForumMath {...props} source="old" />);
+    mockRenderMathJaxSvg.mockResolvedValueOnce({ ...svgResult, xml: '<svg>new</svg>' });
+    await view.rerender(<ForumMath {...props} source="new" />);
+    await waitFor(() => expect(view.getByTestId('forum-math-svg').props.xml).toBe('<svg>new</svg>'));
+    await act(async () => resolveOld(svgResult));
+    expect(view.getByTestId('forum-math-svg').props.xml).toBe('<svg>new</svg>');
+    await view.unmount();
+  });
 });

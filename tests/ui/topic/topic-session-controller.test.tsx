@@ -1,3 +1,4 @@
+jest.mock('@/platform/storage/readerDataStore', () => ({ readHistoryReplyCount: jest.fn(async () => 0) }));
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
@@ -10,7 +11,7 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import type { ReadGateway } from '@/sources/readGateway';
-import type { RepliesResponse, Reply, ReplyLocationTarget, Source, Topic, TopicDetail } from '@/domain/forum/models';
+import type { RepliesResponse, Reply, TopicLocationTarget, Source, Topic, TopicDetail } from '@/domain/forum/models';
 import { resolveForumReadPlan } from '@/domain/forum/readPlan';
 import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
@@ -110,8 +111,9 @@ function renderTopicController({
   readGateway,
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
   showYaohuoLogin = jest.fn<(message?: string) => void>(),
-  targetReply,
-  getTargetReplyRequestId = () => undefined,
+  location,
+  getLocation = () => location,
+  getLocationRequestId = () => undefined,
   topic = firstTopic
 }: {
   getActive?: () => boolean;
@@ -123,12 +125,13 @@ function renderTopicController({
   onRetryIdentityStatus?: (source: Source) => Promise<unknown> | unknown;
   onNodeSeekTopicVerificationRequired?: (message: string, recovery: LinuxDoReadRecovery) => void;
   onOpenTopic?: (topic: Topic) => void;
-  onReplyLocationResolved?: (target: ReplyLocationTarget) => void;
+  onReplyLocationResolved?: (location: TopicLocationTarget) => void;
   readGateway: TestReadGateway;
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showYaohuoLogin?: (message?: string) => void;
-  targetReply?: ReplyLocationTarget;
-  getTargetReplyRequestId?: () => number | undefined;
+  location?: TopicLocationTarget;
+  getLocation?: () => TopicLocationTarget | undefined;
+  getLocationRequestId?: () => number | undefined;
   topic?: Topic;
 }) {
   const readerData = createEmptyReaderData();
@@ -168,12 +171,12 @@ function renderTopicController({
         onOpenTopic,
         onReplyLocationResolved,
         readerData,
-        readerDataRef: { current: readerData },
+
         showLinuxDoVerification,
         showYaohuoLogin,
         readGateway: gateway,
-        targetReply,
-        targetReplyRequestId: getTargetReplyRequestId(),
+        location: getLocation(),
+        locationRequestId: getLocationRequestId(),
         topic,
         topicSession: session
       });
@@ -192,6 +195,102 @@ describe('topic query controller', () => {
     });
     setDiagnosticWriter(null);
   });
+
+  it('loads the new order normally after consuming a route reply location', async () => {
+    const target = { ...firstReply, floor: 9, commentId: 109 };
+    const tail = { ...firstReply, floor: 40, commentId: 140 };
+    const detail = { ...firstDetail, replies: [], replyCount: 40 };
+    const getReplies = jest.fn<TestGetReplies>(async (request) => ({
+      items: [request.position.kind === 'target' ? target : tail],
+      currentPage: request.position.kind === 'target' ? 1 : 4,
+      hasMore: false,
+      nextPage: null
+    }));
+    const hook = await renderTopicController({
+      location: { kind: 'reply', target: { floor: 9 } },
+      readGateway: { getTopic: async () => detail, getReplies }
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
+    await act(async () => {
+      hook.result.current.session.commands.view.changeReplyOrder('newest');
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([tail]));
+    expect(getReplies.mock.calls.map(([request]) => [request.order, request.position.kind])).toEqual([
+      ['oldest', 'target'],
+      ['newest', 'start']
+    ]);
+  });
+
+  it('settles the loading indicator when an explicit missing reply has no seeded window', async () => {
+    const notify = jest.fn();
+    const getReplies = jest.fn<TestGetReplies>(async () => {
+      throw new Error('目标楼层未找到');
+    });
+    const hook = await renderTopicController({
+      location: { kind: 'reply', target: { floor: 90 } },
+      notify,
+      readGateway: { getTopic: async () => ({ ...firstDetail, replies: [] }), getReplies }
+    });
+    await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(notify).toHaveBeenCalled());
+    await waitFor(() => expect(hook.result.current.controller.repliesLoading).toBe(false));
+    expect(hook.result.current.controller.topicDetail).not.toBeNull();
+    expect(hook.result.current.controller.topicReplies).toEqual([]);
+  });
+
+  it.each<TopicLocationTarget>([{ kind: 'opening' }, { kind: 'reply', target: { commentId: 100 } }])(
+    'keeps the opening authoritative when a previous reply location finishes late: %j',
+    async (opening) => {
+      let location: TopicLocationTarget = { kind: 'reply', target: { floor: 90 } };
+      let finish!: (value: RepliesResponse) => void;
+      const getReplies = jest.fn<TestGetReplies>(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      );
+      const hook = await renderTopicController({
+        getLocation: () => location,
+        readGateway: { getTopic: async () => ({ ...firstDetail, commentId: 100 }), getReplies }
+      });
+      await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
+      location = opening;
+      await act(async () => hook.rerender(undefined));
+      await act(async () =>
+        finish({
+          items: [{ ...firstReply, floor: 90, commentId: 900 }],
+          currentPage: 9,
+          hasMore: false,
+          nextPage: null,
+          completeness: 'complete'
+        })
+      );
+      expect(hook.result.current.controller.topicReplies).toEqual([firstReply]);
+    }
+  );
+
+  it.each<TopicLocationTarget>([{ kind: 'opening' }, { kind: 'reply', target: { commentId: 100 } }])(
+    'opens a quoted Discourse opening post without looking for it in replies and still loads comments: %j',
+    async (location) => {
+      const topic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
+      const detail = { ...firstDetail, ...topic, commentId: 100, replies: [] };
+      const reply = { ...firstReply, floor: 2 };
+      const notify = jest.fn();
+      const getReplies = jest.fn<TestGetReplies>(async (request) => {
+        if (request.position.kind === 'target') throw new Error('linux.do 目标楼层未找到');
+        return { items: [reply], currentPage: 1, hasMore: false, nextPage: null, completeness: 'complete' };
+      });
+      const hook = await renderTopicController({
+        topic,
+        location,
+        notify,
+        readGateway: { getTopic: async () => detail, getReplies }
+      });
+      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([reply]));
+      expect(getReplies.mock.calls.map(([request]) => request.position)).toEqual([{ kind: 'start' }]);
+      expect(notify).not.toHaveBeenCalled();
+    }
+  );
 
   it('reads a public LinuxDo Topic while account identity remains pending', async () => {
     const topic = {
@@ -1137,7 +1236,7 @@ describe('topic query controller', () => {
         });
       const hook = await renderTopicController({
         readGateway: { getReplies, getTopic },
-        targetReply: { floor: 20 },
+        location: { kind: 'reply', target: { floor: 20 } },
         topic
       });
 
@@ -1240,7 +1339,7 @@ describe('topic query controller', () => {
         getTopic: jest.fn<TestGetTopic>(async () => ({ ...firstDetail, replyCount: 30 })),
         getReplies
       },
-      targetReply: { floor: 20 }
+      location: { kind: 'reply', target: { floor: 20 } }
     });
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([anchor]));
@@ -1371,7 +1470,7 @@ describe('topic query controller', () => {
         getTopic: jest.fn<TestGetTopic>(async () => detail),
         getReplies
       },
-      targetReply: { floor: 155 }
+      location: { kind: 'reply', target: { floor: 155 } }
     });
 
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
@@ -1587,7 +1686,7 @@ describe('topic query controller', () => {
         getTopic: jest.fn<TestGetTopic>(async () => detail),
         getReplies
       },
-      targetReply: { commentId: 31 }
+      location: { kind: 'reply', target: { commentId: 31 } }
     });
 
     await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([target]));
@@ -1604,7 +1703,7 @@ describe('topic query controller', () => {
     );
   });
 
-  it('displays a non-V2EX adapter-confirmed target window', async () => {
+  it('rejects an explicit target window without a matching identity and retains the readable replies', async () => {
     const topic: Topic = {
       ...firstTopic,
       source: 'yaohuo',
@@ -1642,16 +1741,14 @@ describe('topic query controller', () => {
 
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
     await act(async () => {
-      await expect(hook.result.current.controller.locateReply({ floor: 90 }, { silent: true })).resolves.toBe(
-        'completed'
-      );
+      await expect(hook.result.current.controller.locateReply({ floor: 90 }, { silent: true })).resolves.toBe('failed');
     });
 
     expect(getReplies).toHaveBeenCalledWith(
       expect.objectContaining({ position: { kind: 'target', target: { floor: 90 } } }),
       expect.any(Object)
     );
-    expect(hook.result.current.controller.topicReplies).toEqual([sourceOwnedTarget]);
+    expect(hook.result.current.controller.topicReplies).toEqual([firstReply]);
   });
 
   it.each(['wrong-author', 'duplicate-floor', 'missing'] as const)(
@@ -1700,7 +1797,7 @@ describe('topic query controller', () => {
         getTopic: jest.fn<TestGetTopic>(async () => detail),
         getReplies
       },
-      targetReply: { floor: 12 },
+      location: { kind: 'reply', target: { floor: 12 } },
       topic
     });
 
@@ -1738,7 +1835,7 @@ describe('topic query controller', () => {
         getTopic: jest.fn<TestGetTopic>(async () => detail),
         getReplies
       },
-      targetReply: { floor: 2 },
+      location: { kind: 'reply', target: { floor: 2 } },
       topic
     });
 
@@ -1797,12 +1894,12 @@ describe('topic query controller', () => {
       throw new Error('来源未确认目标楼层');
     });
     const hook = await renderTopicController({
-      getTargetReplyRequestId: () => requestId,
+      getLocationRequestId: () => requestId,
       readGateway: {
         getTopic: jest.fn<TestGetTopic>(async () => firstDetail),
         getReplies
       },
-      targetReply: { floor: 99 }
+      location: { kind: 'reply', target: { floor: 99 } }
     });
 
     await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
@@ -1826,7 +1923,7 @@ describe('topic query controller', () => {
         getTopic: jest.fn<TestGetTopic>(async () => detail),
         getReplies
       },
-      targetReply: { floor: 99, commentId: 999 }
+      location: { kind: 'reply', target: { floor: 99, commentId: 999 } }
     });
 
     await waitFor(() => expect(getReplies).toHaveBeenCalledTimes(1));
@@ -1857,7 +1954,7 @@ describe('topic query controller', () => {
         getTopic: jest.fn<TestGetTopic>(async () => firstDetail),
         getReplies
       },
-      targetReply: { floor: 90, commentId: 900 }
+      location: { kind: 'reply', target: { floor: 90, commentId: 900 } }
     });
 
     await waitFor(() => expect(onNodeSeekTopicVerificationRequired).toHaveBeenCalledTimes(1));
@@ -1899,7 +1996,7 @@ describe('topic query controller', () => {
         getTopic: jest.fn<TestGetTopic>(async () => detail),
         getReplies
       },
-      targetReply: { floor: 90, commentId: 900 },
+      location: { kind: 'reply', target: { floor: 90, commentId: 900 } },
       topic
     });
 
@@ -2127,7 +2224,10 @@ describe('topic query controller', () => {
       expect(hook.result.current.controller.replyRowsPartial).toBe(false);
     });
     expect(onReplyLocationResolved).toHaveBeenCalledTimes(1);
-    expect(onReplyLocationResolved).toHaveBeenCalledWith({ commentId: 129, floor: 29, pageHint: 3 });
+    expect(onReplyLocationResolved).toHaveBeenCalledWith({
+      kind: 'reply',
+      target: { commentId: 129, floor: 29, pageHint: 3 }
+    });
     expect(appQueryClient.getQueryData(newestKey)).toBeDefined();
     expect(appQueryClient.getQueryState(newestKey)?.isInvalidated).toBe(true);
     const repliesQueryKey = forumQueryKeys.replies(
@@ -2207,7 +2307,10 @@ describe('topic query controller', () => {
       expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([4391, 4392])
     );
     expect(hook.result.current.controller.replyHasPrevious).toBe(true);
-    expect(onReplyLocationResolved).toHaveBeenCalledWith({ commentId: 14391, floor: 4391, pageHint: 440 });
+    expect(onReplyLocationResolved).toHaveBeenCalledWith({
+      kind: 'reply',
+      target: { commentId: 14391, floor: 4391, pageHint: 440 }
+    });
   });
 
   it('applies the NodeSeek tail without guessing when the submitted reply is ambiguous', async () => {
@@ -2298,7 +2401,10 @@ describe('topic query controller', () => {
     ]);
     await waitFor(() => expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([21]));
     expect(onReplyLocationResolved).toHaveBeenCalledTimes(1);
-    expect(onReplyLocationResolved).toHaveBeenCalledWith({ commentId: 121, floor: 21, pageHint: 3 });
+    expect(onReplyLocationResolved).toHaveBeenCalledWith({
+      kind: 'reply',
+      target: { commentId: 121, floor: 21, pageHint: 3 }
+    });
   });
 
   it('reanchors after deleting the only reply in the current tail window', async () => {

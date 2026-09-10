@@ -12,6 +12,7 @@ import {
   toIsoString
 } from '@/domain/forum/html';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
+import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { proveForumReadResponse } from '@/sources/forumSourceReadAttempt';
 import { stripDiscourseCalloutMarkersFromExcerpt } from '@/sources/discourse/content';
 import { discourseAccountCount } from '@/sources/discourse/level';
@@ -253,14 +254,27 @@ export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOp
     options
   );
   const text = await response.text();
+  const accountTrace = beginDiagnosticTrace('session', 'check', { source: 'linuxdo', status: response.status });
+  const accountEvidence = (
+    evidence: 'current-user' | 'session-404' | 'null-user' | 'challenge' | 'http-error' | 'invalid-response'
+  ) => {
+    finishDiagnosticTrace(accountTrace, evidence === 'current-user' ? 'success' : 'blocked', {
+      source: 'linuxdo',
+      status: response.status,
+      accountEvidence: evidence
+    });
+  };
   const data = await proveForumReadResponse(response, () => {
     if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
+      accountEvidence('challenge');
       throw new LinuxDoCloudflareError();
     }
     if (response.status === 404) {
+      accountEvidence('session-404');
       throw Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
         source: 'linuxdo' as const,
         kind: 'login-expired' as const,
+        accountEvidence: 'session-404' as const,
         loginRequired: true,
         reason: 'expired' as const
       });
@@ -269,17 +283,21 @@ export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOp
     try {
       parsed = text ? JSON.parse(text) : {};
     } catch {
+      accountEvidence('invalid-response');
       throw new Error('linux.do 当前用户返回内容格式不正确');
     }
     if (!response.ok) {
+      accountEvidence('http-error');
       throw new Error(linuxDoErrorText(parsed, `HTTP ${response.status}`));
     }
     return parsed;
   });
   if (isRecord(data) && (data.current_user === null || data.user === null)) {
+    accountEvidence('null-user');
     throw Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
       source: 'linuxdo' as const,
       kind: 'login-expired' as const,
+      accountEvidence: 'null-user' as const,
       loginRequired: true,
       reason: 'expired' as const
     });
@@ -289,8 +307,10 @@ export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOp
   const merged = { ...user, ...currentUser };
   const username = String(merged.username || '').trim();
   if (!username) {
+    accountEvidence('invalid-response');
     throw new Error('无法读取当前 linux.do 用户名，请重新检测 linux.do 登录状态。');
   }
+  accountEvidence('current-user');
   const displayName = typeof merged.name === 'string' ? merged.name : username;
   const levelLabel = linuxDoLevelLabel(merged);
   return {

@@ -1,68 +1,56 @@
 import { useCallback, type RefObject } from 'react';
-import {
-  clearRecords,
-  removeFollowedUsers,
-  removeRecords,
-  toggleFavorite,
-  toggleFollowedUser,
-  type ReaderData,
-  type ReaderDataMutationReason
-} from '@/domain/reader/readerData';
+import { topicKey, userKey } from '@/domain/reader/readerData';
+import type { ReaderCommand, ReaderState } from '@/domain/reader/readerRecordState';
 import type { Topic, UserProfile } from '@/domain/forum/models';
-
-type CommitReaderData = (
-  mutationReason: ReaderDataMutationReason,
-  updater: (current: ReaderData) => ReaderData
-) => void;
 
 export function useReaderDataActionsController({
   commitReaderData,
   readerDataRef
 }: {
-  commitReaderData: CommitReaderData;
-  readerDataRef: RefObject<ReaderData>;
+  commitReaderData: (command: ReaderCommand) => void;
+  readerDataRef: RefObject<ReaderState>;
 }) {
   const toggleTopicFavorite = useCallback(
     (topic: Topic) => {
-      commitReaderData('favorite-toggled', (current) => toggleFavorite(current, topic));
+      commitReaderData({
+        type: 'favorite',
+        topic,
+        enabled: !readerDataRef.current.favorites[topicKey(topic)],
+        at: new Date().toISOString()
+      });
     },
-    [commitReaderData]
+    [commitReaderData, readerDataRef]
   );
-
   const toggleUserFollow = useCallback(
     (user: UserProfile) => {
-      commitReaderData('follow-toggled', (current) => toggleFollowedUser(current, user));
+      commitReaderData({
+        type: 'follow',
+        user,
+        enabled: !readerDataRef.current.followedUsers[userKey(user)],
+        at: new Date().toISOString()
+      });
     },
-    [commitReaderData]
+    [commitReaderData, readerDataRef]
   );
-
   const removeFollowedUser = useCallback(
     (user: UserProfile) => {
-      commitReaderData('follow-removed', (current) => removeFollowedUsers(current, [user]));
+      commitReaderData({
+        type: 'delete',
+        collection: 'followedUsers',
+        keys: [userKey(user)],
+        at: new Date().toISOString()
+      });
     },
     [commitReaderData]
   );
-
   const removeLibraryTopic = useCallback(
-    (topic: Topic, section: 'favorites' | 'history') => {
-      commitReaderData('library-topic-removed', (current) => removeRecords(current, section, [topic]));
+    (topic: Topic, collection: 'favorites' | 'history') => {
+      commitReaderData({ type: 'delete', collection, keys: [topicKey(topic)], at: new Date().toISOString() });
     },
     [commitReaderData]
   );
-
   const clearHistory = useCallback(() => {
-    const records = readerDataRef.current.history;
-    if (!Object.keys(records).length) {
-      return;
-    }
-    commitReaderData('history-cleared', (current) => clearRecords(current, 'history'));
+    if (readerDataRef.current.counts.history) commitReaderData({ type: 'clear-history', at: new Date().toISOString() });
   }, [commitReaderData, readerDataRef]);
-
-  return {
-    clearHistory,
-    removeFollowedUser,
-    removeLibraryTopic,
-    toggleTopicFavorite,
-    toggleUserFollow
-  };
+  return { clearHistory, removeFollowedUser, removeLibraryTopic, toggleTopicFavorite, toggleUserFollow };
 }

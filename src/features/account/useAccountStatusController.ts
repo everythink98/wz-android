@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { recordStartupPhase } from '@/platform/diagnostics/startupTiming';
 import { CancelledError, useQuery } from '@tanstack/react-query';
 import { isCanceledRequest } from '@/platform/network/errors';
 import {
@@ -130,6 +131,11 @@ export function useAccountStatusController({
   }, []);
 
   const [hydrated, setHydrated] = useState(false);
+  const [restoredAccounts, setRestoredAccounts] = useState<{
+    migrationCompleted: boolean;
+    stored: readonly (readonly [SessionSource, AccountSessionSnapshot | null])[];
+    trace: DiagnosticTrace;
+  } | null>(null);
   const hydrationStartedRef = useRef(false);
   // Diagnostic aggregation must not change the public reconciliation result or identity rules.
   const persistenceFailedResultsRef = useRef(new WeakSet<AccountReconcileResult>());
@@ -217,6 +223,7 @@ export function useAccountStatusController({
         publishAnonymous?: boolean;
         signal?: AbortSignal;
         surfaceGeneration?: number;
+        parentTraceId?: string;
       } = {}
     ): Promise<AccountReconcileResult> => {
       if (!enabledSourcesRef.current.has(source)) {
@@ -227,7 +234,12 @@ export function useAccountStatusController({
       const requestedSurfaceGeneration = options.surfaceGeneration || 0;
       const activeProbe = activeProbeRef.current[source];
       if (activeProbe && requestedSurfaceGeneration <= activeProbe.surfaceGeneration) {
-        markDiagnosticStage(activeProbe.trace, 'guard', { source, state: 'busy', reason: 'duplicate' });
+        markDiagnosticStage(activeProbe.trace, 'guard', {
+          source,
+          state: 'busy',
+          reason: 'duplicate',
+          parentTraceId: options.parentTraceId
+        });
         return activeProbe.promise;
       }
       activeProbe?.controller.abort();
@@ -238,7 +250,17 @@ export function useAccountStatusController({
           ? probeGenerationRef.current[source] + 1
           : Math.max(probeGenerationRef.current[source] + 1, options.surfaceGeneration);
       probeGenerationRef.current[source] = generation;
-      const trace = beginDiagnosticTrace('session', 'account-reconcile', { source, generation });
+      const trace = beginDiagnosticTrace('session', 'account-reconcile', {
+        source,
+        generation,
+        surfaceGeneration: requestedSurfaceGeneration,
+        accountCheckTrigger: options.parentTraceId
+          ? 'read-failure'
+          : requestedSurfaceGeneration
+            ? 'surface-close'
+            : 'explicit-refresh',
+        parentTraceId: options.parentTraceId
+      });
       const settle = (result: AccountReconcileResult, outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
         if (fields.reason === 'storage_error') persistenceFailedResultsRef.current.add(result);
         finishDiagnosticTrace(trace, outcome, { source, generation, ...fields });
@@ -386,10 +408,33 @@ export function useAccountStatusController({
   );
 
   useEffect(() => {
-    if (!enabledSourcesReady || hydrationStartedRef.current) return;
+    let active = true;
+    const trace = beginDiagnosticTrace('session', 'account-restore', { store: 'account-session' });
+    recordStartupPhase('sessions-start');
+    void Promise.all([
+      loadAccountSessionMigrationCompleted(),
+      Promise.all(sessionSources.map(async (source) => [source, await loadAccountSessionSnapshot(source)] as const))
+    ])
+      .then(([migrationCompleted, stored]) => {
+        if (!active) return;
+        recordStartupPhase('sessions-read');
+        setRestoredAccounts({ migrationCompleted, stored, trace });
+      })
+      .catch((error) => {
+        finishDiagnosticTrace(trace, 'failure', { reason: 'storage_error' });
+        throw error;
+      });
+    return () => {
+      active = false;
+      finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!enabledSourcesReady || !restoredAccounts || hydrationStartedRef.current) return;
     hydrationStartedRef.current = true;
     let active = true;
-    const restoreTrace = beginDiagnosticTrace('session', 'account-restore', { store: 'account-session' });
+    const restoreTrace = restoredAccounts.trace;
     let migrationTrace: DiagnosticTrace | undefined;
     const degradeRestore = (fields: DiagnosticFields) => {
       hintDiagnosticOutcome(restoreTrace, 'partial', fields);
@@ -397,10 +442,7 @@ export function useAccountStatusController({
     };
     void (async () => {
       try {
-        const [migrationCompleted, stored] = await Promise.all([
-          loadAccountSessionMigrationCompleted(),
-          Promise.all(sessionSources.map(async (source) => [source, await loadAccountSessionSnapshot(source)] as const))
-        ]);
+        const { migrationCompleted, stored } = restoredAccounts;
         if (!active) return;
         for (const [source, snapshot] of stored) {
           if (snapshot) appQueryClient.setQueryData(accountQueryKeys.snapshot(source), snapshot);
@@ -409,6 +451,7 @@ export function useAccountStatusController({
         markDiagnosticStage(restoreTrace, 'apply', { state: 'restored', itemCount: restoredCount });
         if (migrationCompleted) {
           setHydrated(true);
+          recordStartupPhase('sessions-ready');
           finishDiagnosticTrace(restoreTrace, 'success', { state: 'restored', itemCount: restoredCount });
           return;
         }
@@ -483,7 +526,10 @@ export function useAccountStatusController({
         await markAccountSessionMigrationCompleted().catch(() => {
           degradeRestore({ reason: 'storage_error' });
         });
-        if (active) setHydrated(true);
+        if (active) {
+          setHydrated(true);
+          recordStartupPhase('sessions-ready');
+        }
         finishDiagnosticTrace(migrationTrace, 'success', { state: 'complete', candidateCount: candidates.length });
         finishDiagnosticTrace(restoreTrace, 'success', { state: 'restored', itemCount: restoredCount });
       } catch (error) {
@@ -498,7 +544,14 @@ export function useAccountStatusController({
       if (migrationTrace) finishDiagnosticTrace(migrationTrace, 'canceled', { reason: 'canceled' });
       finishDiagnosticTrace(restoreTrace, 'canceled', { reason: 'canceled' });
     };
-  }, [commitAccountSnapshot, enabledSourcesReady, readManagedCookieHeader, reconcileAccountStatus, supersedeProbe]);
+  }, [
+    commitAccountSnapshot,
+    enabledSourcesReady,
+    readManagedCookieHeader,
+    reconcileAccountStatus,
+    restoredAccounts,
+    supersedeProbe
+  ]);
 
   const previousEnabledSourcesRef = useRef(new Set<StatusSource>(enabledSources));
   useEffect(() => {

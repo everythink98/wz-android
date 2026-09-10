@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { XMLParser } from 'fast-xml-parser';
 
 const rootDir = path.resolve(__dirname, '../..');
 
@@ -9,6 +11,34 @@ function readProjectFile(...parts: string[]) {
 }
 
 describe('Android release packaging guards', () => {
+  it('copies one shared native icon for the splash and React placeholder', async () => {
+    const withSharedAppIcon = require('../../plugins/withSharedAppIcon');
+    const app = JSON.parse(readProjectFile('app.json')).expo;
+    const splash = app.plugins.find(
+      (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-splash-screen'
+    )[1];
+    expect(splash.image).toBeUndefined();
+    expect(app.plugins).toContain('./plugins/withSharedAppIcon');
+    const drawable = new XMLParser({ ignoreAttributes: false }).parse(readProjectFile(splash.drawable.icon)).inset;
+    expect(drawable['@_android:drawable']).toBe('@drawable/reader_app_icon');
+    // Fixed dp child sizes do not follow Android 12+ system icon bounds and crop the artwork.
+    expect(drawable['@_android:inset']).toMatch(/%$/);
+    expect(parseFloat(drawable['@_android:inset']) / 100).toBeCloseTo((288 - 200) / 2 / 288, 7);
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'wz-shared-icon-'));
+    try {
+      const config = withSharedAppIcon({ name: 'test', slug: 'test' });
+      await config.mods.android.dangerous({
+        ...config,
+        modRequest: { projectRoot: rootDir, platformProjectRoot: directory }
+      });
+      expect(readFileSync(path.join(directory, 'app/src/main/res/drawable-xxxhdpi/reader_app_icon.webp'))).toEqual(
+        readFileSync(path.join(rootDir, 'assets/icon.webp'))
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('uses the same complete verification entrypoint in CI and release', () => {
     const pkg = JSON.parse(readProjectFile('package.json'));
     const ciWorkflow = readProjectFile('.github', 'workflows', 'ci.yml');
@@ -260,7 +290,7 @@ describe('Android release packaging guards', () => {
       'OkHttpClientProvider.setOkHttpClientFactory',
       'NetworkingModule.setCustomClientBuilder',
       'fun readManagedCookieHeader(exactUrl: String, promise: Promise)',
-      'fun clearManagedLoginCookies(source: String, promise: Promise)',
+      'fun clearManagedLoginCookies(source: String, diagnostics: ReadableMap, promise: Promise)',
       'WebSettings.getDefaultUserAgent(reactContext)',
       "path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt')"
     ]) {
@@ -284,7 +314,7 @@ describe('Android release packaging guards', () => {
     expect(
       plugin.slice(
         plugin.indexOf('fun readManagedCookieHeader(exactUrl: String, promise: Promise)'),
-        plugin.indexOf('fun clearManagedLoginCookies(source: String, promise: Promise)')
+        plugin.indexOf('fun clearManagedLoginCookies(source: String, diagnostics: ReadableMap, promise: Promise)')
       )
     ).not.toContain('flush()');
     const clearCookiePlan = plugin.slice(
@@ -292,7 +322,9 @@ describe('Android release packaging guards', () => {
       plugin.indexOf('object NetworkProxyRuntime')
     );
     const clearCookieFlow = plugin.slice(
-      plugin.indexOf('internal fun clearManagedLoginCookies(source: String): Boolean'),
+      plugin.indexOf(
+        'internal fun clearManagedLoginCookies(source: String, diagnostics: Map<String, Any> = emptyMap()): Boolean'
+      ),
       plugin.indexOf('fun currentLocalProxy(): Proxy?')
     );
     expect(clearCookiePlan).toContain('listOf("yaohuo.me", "www.yaohuo.me")');
@@ -444,7 +476,15 @@ describe('Android release packaging guards', () => {
   it('keeps SecureStore backup config without adding an unowned Expo Video capability', () => {
     const app = JSON.parse(readProjectFile('app.json'));
 
-    expect(app.expo.plugins).toContainEqual(['expo-secure-store', { configureAndroidBackup: true }]);
+    expect(app.expo.plugins).toContainEqual(['expo-secure-store', { configureAndroidBackup: false }]);
+    expect(app.expo.plugins).toContain('./plugins/withReaderDataBackup');
+    const backup = readProjectFile('plugins', 'withReaderDataBackup.js');
+    expect(backup).toContain('<exclude domain="sharedpref" path="SecureStore" />');
+    for (const suffix of ['', '-wal', '-shm']) {
+      expect(backup).toContain(`<include domain="file" path="SQLite/reader-data.db${suffix}" />`);
+    }
+    expect(backup).toContain('<cloud-backup>');
+    expect(backup).toContain('<device-transfer>');
     expect(app.expo.plugins.some((plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-video')).toBe(false);
   });
 

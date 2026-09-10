@@ -10,7 +10,8 @@ import {
 import { mergeTopics } from '@/domain/forum/feed';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
-import { isUserFollowed, type ReaderData } from '@/domain/reader/readerData';
+import type { ReaderView } from '@/domain/reader/readerRecordState';
+import { isUserFollowed } from '@/domain/reader/readerData';
 import { nodeSeekUserIdFromValue, normalizeUserReference } from '@/domain/forum/userNavigation';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { sourceErrorFromUnknown, sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
@@ -85,7 +86,7 @@ export function useUserController({
   sessionEpochs?: ForumSessionEpochs;
   notify: (message: string) => void;
   onRetryIdentityStatus?: (source: SessionSource) => Promise<unknown> | unknown;
-  readerData: ReaderData;
+  readerData: ReaderView;
   showLinuxDoVerification: (
     message?: string,
     recovery?: LinuxDoReadRecovery

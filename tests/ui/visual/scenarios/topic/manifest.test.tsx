@@ -84,7 +84,7 @@ describe('topic visual scenarios', () => {
         .every(({ capabilityIds }) => capabilityIds.includes('WRITE-03'))
     ).toBe(true);
     expect(new Set(topicVisualScenarios.flatMap(({ capabilityIds }) => capabilityIds))).toEqual(
-      new Set(['TOPIC-01', 'TOPIC-02', 'TOPIC-03', 'TOPIC-04', 'WRITE-02', 'WRITE-03'])
+      new Set(['TOPIC-01', 'TOPIC-02', 'TOPIC-03', 'TOPIC-04', 'WRITE-01', 'WRITE-02', 'WRITE-03'])
     );
   });
 

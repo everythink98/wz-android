@@ -1,3 +1,4 @@
+import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createSearchStyles, type SearchStyles } from './styles';
 import { SearchFilterSheet } from './SearchFilterSheet';
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
@@ -781,8 +782,9 @@ export const SearchScreen = memo(function SearchScreen({
     ]
   );
 
+  const onPageLayout = useStartupPageLayout();
   return (
-    <View style={styles.content}>
+    <View style={styles.content} onLayout={onPageLayout}>
       <FlashList
         ref={listRef}
         accessibilityLabel={hasSubmittedQuery && !searchBusy ? completedSearchAccessibilityLabel : '搜索结果'}

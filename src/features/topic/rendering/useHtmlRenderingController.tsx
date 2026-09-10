@@ -5,10 +5,12 @@ import type { ReaderSettings } from '@/domain/reader/readerData';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { isPreviewableImageUrl, type ImageDisplaySize } from '@/platform/media/imagePreviewCatalog';
 import { parseForumTopicDestination, parseForumUserLink } from '@/domain/forum/links';
+import { topicLocationForReply } from '@/domain/forum/topicLocation';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
 import type {
   MediaReferrerPolicy,
   ReplyLocationTarget,
+  TopicLocationTarget,
   Topic,
   TopicDetail,
   UserReference
@@ -49,7 +51,7 @@ export function useHtmlRenderingController({
     renderedPosterUri?: string,
     referrerPolicy?: MediaReferrerPolicy
   ) => void;
-  onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void | Promise<void>;
+  onOpenTopic: (topic: Topic, location?: TopicLocationTarget) => void | Promise<void>;
   onOpenUser: (user: UserReference) => void | Promise<void>;
   nodeSeekMediaUserAgent?: string;
   selectedTopic: Topic | null;
@@ -101,11 +103,14 @@ export function useHtmlRenderingController({
       }
       const destination = parseForumTopicDestination(href, baseUrl);
       if (destination) {
-        const target =
-          destination.topic.source === 'v2ex' && destination.topic.id === selectedTopic?.id
-            ? explicitTarget || destination.targetReply
-            : destination.targetReply;
-        void (target ? onOpenTopic(destination.topic, target) : onOpenTopic(destination.topic));
+        const location =
+          destination.topic.source === 'v2ex' &&
+          selectedTopic?.source === 'v2ex' &&
+          destination.topic.id === selectedTopic.id &&
+          explicitTarget
+            ? topicLocationForReply('v2ex', explicitTarget)
+            : destination.location;
+        void (location ? onOpenTopic(destination.topic, location) : onOpenTopic(destination.topic));
         return;
       }
       if (isHttpOrHttpsUrl(href)) {

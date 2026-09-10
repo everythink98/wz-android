@@ -17,7 +17,8 @@ const boundary = vi.hoisted(() => ({
   openCount: 0,
   writeCount: 0,
   shared: [] as { content: string; uri: string }[],
-  sharingAvailable: true
+  sharingAvailable: true,
+  sharingModuleLoads: 0
 }));
 
 vi.mock('react-native', () => ({
@@ -127,15 +128,18 @@ vi.mock('expo-file-system', () => {
   return { File, Paths: { cache } };
 });
 
-vi.mock('expo-sharing', () => ({
-  isAvailableAsync: vi.fn(async () => boundary.sharingAvailable),
-  shareAsync: vi.fn(async (uri: string) => {
-    boundary.shared.push({
-      content: new TextDecoder().decode(boundary.files.get(uri) || new Uint8Array()),
-      uri
-    });
-  })
-}));
+vi.mock('expo-sharing', () => {
+  boundary.sharingModuleLoads += 1;
+  return {
+    isAvailableAsync: vi.fn(async () => boundary.sharingAvailable),
+    shareAsync: vi.fn(async (uri: string) => {
+      boundary.shared.push({
+        content: new TextDecoder().decode(boundary.files.get(uri) || new Uint8Array()),
+        uri
+      });
+    })
+  };
+});
 
 import {
   appendDiagnosticLogLine,
@@ -146,6 +150,7 @@ import {
 import { beginDiagnosticTrace, finishDiagnosticTrace, recordDiagnosticError, setDiagnosticWriter } from './diagnostics';
 import { diagnosticRef, type DiagnosticFields } from './diagnosticPolicy';
 import { readNativeReadNetworkDiagnosticLines } from './nativeReadNetworkDiagnostics';
+const sharingLoadsAtImport = boundary.sharingModuleLoads;
 
 const metadata: DiagnosticExportMetadata = {
   androidApiLevel: 35,
@@ -178,6 +183,9 @@ beforeEach(() => {
 });
 
 describe('diagnostic file store', () => {
+  it('does not load native sharing while installing startup diagnostics', () => {
+    expect(sharingLoadsAtImport).toBe(0);
+  });
   it('distinguishes missing and failed legacy collection from an available empty window', async () => {
     expect(await readNativeReadNetworkDiagnosticLines({})).toBeUndefined();
     expect(await readNativeReadNetworkDiagnosticLines({ readNetworkDiagnosticEvents: async () => [] })).toBe('');
@@ -321,6 +329,91 @@ describe('diagnostic file store', () => {
     expect(boundary.shared[0].content).not.toContain('PRIVATE_SECRET');
   });
 
+  it('exports persisted cookie decisions and separates an old protocol check from the local identity', async () => {
+    const results = [
+      'source_denied',
+      'redirect_denied',
+      'barrier_blocked',
+      'epoch_changed',
+      'canceled',
+      'callback_timeout',
+      'pending_write',
+      'settled',
+      'applied',
+      'flush_failed',
+      'persisted'
+    ];
+    const nativeLines = results
+      .map((cookieResult, index) =>
+        JSON.stringify({
+          diagnosticKind: 'network',
+          timeMs: 1_786_199_367_200 + index,
+          phase: 'finish',
+          operation: ['flush_failed', 'persisted'].includes(cookieResult) ? 'cookie-persist' : 'cookie-response',
+          source: 'linuxdo',
+          cookieResult,
+          cookieKind: 'login',
+          cookieAction: 'set',
+          cookieLifetime: 'persistent',
+          cookieAccepted: index % 2 ? 'not_submitted' : 'rejected',
+          cookieEpoch: 3,
+          requestCookieEpoch: 2,
+          cookieWriteSequence: 7,
+          hasLoginCookie: true,
+          loginCookieChanged: false,
+          surfaceGeneration: 9,
+          processSessionId: `process-${'a'.repeat(32)}`,
+          appSessionId: 'session-old-1',
+          traceId: 'trace-42',
+          callId: 'abc',
+          cookieName: 'PRIVATE_COOKIE',
+          cookieHash: 'PRIVATE_COOKIE',
+          headers: 'PRIVATE_COOKIE'
+        })
+      )
+      .join('\n');
+    boundary.nativeJournal = {
+      buildId: 'b'.repeat(32),
+      processSessionId: `process-${'b'.repeat(32)}`,
+      appendBatch: async () => undefined,
+      persistCrashSync: () => true,
+      snapshot: async () => ({
+        nativeLines,
+        crashLines: '',
+        health: { available: true },
+        jsLines: JSON.stringify({
+          source: 'linuxdo',
+          operation: 'account-reconcile',
+          phase: 'finish',
+          state: 'confirmed',
+          time: new Date(1_786_199_367_190).toISOString(),
+          processSessionId: `process-${'a'.repeat(32)}`
+        })
+      })
+    };
+    await exportDiagnosticLog({ ...metadata, linuxDoSession: 'logged-in' });
+    const exported = boundary.shared[0].content;
+    const events = exported
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(events.filter((event) => event.cookieResult).map((event) => event.cookieResult)).toEqual(results);
+    expect(events.find((event) => event.type === 'diagnostic-account-summary')).toMatchObject({
+      localSnapshot: 'logged-in',
+      lastCheckResult: 'authenticated',
+      checkedInCurrentProcess: false
+    });
+    expect(events.find((event) => event.cookieResult === 'flush_failed')).toMatchObject({
+      surfaceGeneration: 9,
+      cookieWriteSequence: 7,
+      traceId: 'trace-42',
+      callId: 'abc',
+      hasLoginCookie: true
+    });
+    expect(exported).toContain('"cookieAccepted":"not_submitted"');
+    expect(exported).not.toContain('PRIVATE_COOKIE');
+  });
+
   it('exports available logs when native collection fails and reports damaged legacy lines', async () => {
     boundary.nativeJournal = {
       buildId: 'a'.repeat(32),
@@ -387,7 +480,8 @@ describe('diagnostic file store', () => {
       })
     );
     expect(JSON.parse(lines[1])).toMatchObject({ type: 'diagnostic-coverage', journalStatus: 'unavailable' });
-    expect(lines.slice(2).map((line) => JSON.parse(line))).toEqual([{ sequence: 1 }, { sequence: 2 }]);
+    expect(JSON.parse(lines[2])).toMatchObject({ type: 'diagnostic-account-summary', lastCheckResult: 'unknown' });
+    expect(lines.slice(3).map((line) => JSON.parse(line))).toEqual([{ sequence: 1 }, { sequence: 2 }]);
     expect(boundary.shared[0].uri).toMatch(/forum-reader-diagnostic-\d+\.txt$/);
     expect(boundary.files.has(boundary.shared[0].uri)).toBe(false);
   });
@@ -521,6 +615,28 @@ describe('diagnostic file store', () => {
       generation: 4,
       outcome: 'retired'
     });
+    boundary.nativeEvents.push({
+      timeMs: 1_786_199_367_271,
+      operation: 'cookie-response',
+      phase: 'finish',
+      source: 'linuxdo',
+      traceId: 'trace-42',
+      cookieCount: 2,
+      cookieRevision: 7,
+      cookieResult: 'applied',
+      cookieEpoch: 3,
+      requestCookieEpoch: 2,
+      cookieWriteSequence: 5,
+      cookieKind: 'login',
+      cookieAction: 'delete',
+      cookieLifetime: 'expired',
+      cookieAccepted: 'accepted',
+      hasLoginCookie: false,
+      cookie: secret,
+      cookieHash: secret,
+      headers: { 'Set-Cookie': secret },
+      url: `https://linux.do/private?${secret}`
+    });
     appendDiagnosticLogLine(
       JSON.stringify({
         type: 'test-event',
@@ -534,6 +650,15 @@ describe('diagnostic file store', () => {
     const exported = boundary.shared[0].content;
     expect(exported).toContain('"type":"native-read-network"');
     expect(exported).toContain('"nativePhase":"connection-acquired"');
+    expect(exported).toContain('"operation":"cookie-response"');
+    expect(exported).toContain('"cookieCount":2');
+    expect(exported).toContain('"cookieResult":"applied"');
+    expect(exported).toContain('"cookieKind":"login"');
+    expect(exported).toContain('"cookieAction":"delete"');
+    expect(exported).toContain('"hasLoginCookie":false');
+    expect(exported).toContain('"requestCookieEpoch":2');
+    expect(exported).toContain('"checkedInCurrentProcess":false');
+    expect(exported).not.toContain('cookieHash');
     expect(exported).toContain('"traceId":"trace-43"');
     expect(exported).toContain('"appSessionId":"session-native-91827"');
     expect(exported).toContain('"mediaRef":"media-43"');

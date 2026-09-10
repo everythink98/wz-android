@@ -3,7 +3,7 @@ import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@reac
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic } from '@/domain/forum/models';
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import type { ReaderData } from '@/domain/reader/readerData';
+import type { ReaderView } from '@/domain/reader/readerRecordState';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -30,7 +30,7 @@ export type FeedRouteRuntimeValue = {
   onInitialContentReady: () => void;
   topicStateIndex: TopicListItemStateIndex;
   reader: {
-    data: ReaderData;
+    data: ReaderView;
     loaded: boolean;
   };
 };

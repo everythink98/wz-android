@@ -1,48 +1,23 @@
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
-import type { Category, Topic, UserReference } from '@/domain/forum/models';
+import type { Topic, UserReference, FeedSource } from '@/domain/forum/models';
 import type { LibraryTab } from '@/domain/forum/feed';
-import type { Source } from '@/domain/forum/sourceCatalog';
-import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+
 import { normalizeUserReference } from '@/domain/forum/userNavigation';
-import type { FollowedUserRecord, ReaderData, ReaderDataMutationReason } from '@/domain/reader/readerData';
+
+import type { FollowedUserRecord, TopicRecord } from '@/domain/reader/readerData';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { LibraryListItem } from './libraryScreenItems';
 import { LibraryScreen } from './LibraryScreen';
-import { sortLibraryRecords } from './model/libraryFilters';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { queryReaderPage } from '@/platform/storage/readerDataStore';
+import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
+
 import { useReaderDataActionsController } from './useReaderDataActionsController';
+import { useLibraryRouteRuntime } from './LibraryRouteRuntime';
 
-export type LibraryRouteRuntimeValue = {
-  categories: Category[];
-  enabledSources: readonly Source[];
-  notify: (message: string) => void;
-  topicStateIndex: TopicListItemStateIndex;
-  reader: {
-    commit: (reason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
-    data: ReaderData;
-    dataRef: { current: ReaderData };
-    loaded: boolean;
-  };
-};
-
-const LibraryRouteRuntimeContext = createContext<LibraryRouteRuntimeValue | null>(null);
-
-export function LibraryRouteRuntimeProvider({
-  children,
-  value
-}: {
-  children: ReactNode;
-  value: LibraryRouteRuntimeValue;
-}) {
-  return <LibraryRouteRuntimeContext.Provider value={value}>{children}</LibraryRouteRuntimeContext.Provider>;
-}
-
-function useLibraryRouteRuntime() {
-  const runtime = useContext(LibraryRouteRuntimeContext);
-  if (!runtime) throw new Error('LibraryRouteRuntimeProvider is required');
-  return runtime;
-}
+export { LibraryRouteRuntimeProvider, type LibraryRouteRuntimeValue } from './LibraryRouteRuntime';
 
 export function LibraryRoute() {
   const runtime = useLibraryRouteRuntime();
@@ -55,19 +30,28 @@ export function LibraryRoute() {
     commitReaderData: runtime.reader.commit,
     readerDataRef: runtime.reader.dataRef
   });
-  const followedUsers = useMemo(
-    () =>
-      Object.values(runtime.reader.data.followedUsers)
-        .map((record) => ({ record, time: Date.parse(record.followedAt) }))
-        .sort((left, right) => right.time - left.time)
-        .map(({ record }) => record),
-    [runtime.reader.data.followedUsers]
-  );
-  const favoriteRecords = useMemo(
-    () => sortLibraryRecords(runtime.reader.data.favorites),
-    [runtime.reader.data.favorites]
-  );
-  const historyRecords = useMemo(() => sortLibraryRecords(runtime.reader.data.history), [runtime.reader.data.history]);
+  const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const collection = libraryTab === 'users' ? 'followedUsers' : libraryTab;
+  const source = sourceFilter === 'all' || runtime.enabledSources.includes(sourceFilter) ? sourceFilter : 'all';
+  const category = source === sourceFilter ? categoryFilter : 'all';
+  const pages = useInfiniteQuery({
+    queryKey: ['reader-library', collection, runtime.enabledSources.join('|'), source, category],
+    enabled: active && runtime.reader.loaded,
+    initialPageParam: undefined as ReaderPageRequest['after'],
+    queryFn: ({ pageParam }) =>
+      queryReaderPage({ collection, sources: runtime.enabledSources, source, category, after: pageParam }),
+    getNextPageParam: (last) => last.next,
+    staleTime: Infinity,
+    retry: false
+  });
+  const records = useMemo(() => pages.data?.pages.flatMap((page) => page.records) ?? [], [pages.data]);
+  const favoriteRecords = libraryTab === 'favorites' ? (records as TopicRecord[]) : [];
+  const historyRecords = libraryTab === 'history' ? (records as TopicRecord[]) : [];
+  const followedUsers = libraryTab === 'users' ? (records as FollowedUserRecord[]) : [];
+  const loadMore = useCallback(() => {
+    if (active && pages.hasNextPage && !pages.isFetching) void pages.fetchNextPage();
+  }, [active, pages]);
   const openTopic = useCallback(
     (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),
     [navigation]
@@ -94,7 +78,18 @@ export function LibraryRoute() {
       followedUsers={followedUsers}
       historyRecords={historyRecords}
       libraryTab={libraryTab}
-      loaded={runtime.reader.loaded}
+      loaded={runtime.reader.loaded && !pages.isPending}
+      sourceFilter={sourceFilter}
+      categoryFilter={categoryFilter}
+      onSourceFilter={setSourceFilter}
+      onCategoryFilter={setCategoryFilter}
+      total={pages.data?.pages[0]?.total ?? 0}
+      visibleTotal={pages.data?.pages[0]?.visibleTotal ?? 0}
+      error={pages.isError}
+      onRetry={() => {
+        void pages.refetch();
+      }}
+      onLoadMore={loadMore}
       scrollRef={listRef}
       topicStateIndex={runtime.topicStateIndex}
       onClearHistory={actions.clearHistory}

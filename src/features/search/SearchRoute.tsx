@@ -1,59 +1,20 @@
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
-import type { Category, Topic } from '@/domain/forum/models';
-import { isDiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
-import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import type { ReaderData } from '@/domain/reader/readerData';
+import type { Topic } from '@/domain/forum/models';
+import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
+
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
-import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
-import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
-import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import type { ReadGateway } from '@/sources/readGateway';
+
 import { openForumSearchCustomTab } from '@/platform/android/forumSearchCustomTab';
 import { errorMessage } from '@/platform/network/errors';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { SearchListItem } from './listItems';
 import { SearchScreen } from './SearchScreen';
 import { useSearchController } from './useSearchController';
+import { useSearchRouteRuntime } from './SearchRouteRuntime';
 
-export type SearchRouteRuntimeValue = {
-  account: {
-    linuxDoVerificationVisible: boolean;
-    readGateway: ReadGateway;
-    reconcileAccountStatus: (source: SessionSource) => Promise<AccountReconcileResult>;
-    requestNodeSeekVerification: (message: string, recovery?: LinuxDoReadRecovery) => void;
-    sessionEpochs: ForumSessionEpochs;
-    sessionViewModels: SiteSessionViewModels;
-    showLinuxDoVerification: (
-      message?: string,
-      recovery?: LinuxDoReadRecovery
-    ) => void | boolean | Promise<void | boolean>;
-    showYaohuoLogin: (message?: string) => void;
-  };
-  catalogCategories: Category[];
-  notify: (message: string) => void;
-  readerData: ReaderData;
-  topicStateIndex: TopicListItemStateIndex;
-};
-
-const SearchRouteRuntimeContext = createContext<SearchRouteRuntimeValue | null>(null);
-
-export function SearchRouteRuntimeProvider({
-  children,
-  value
-}: {
-  children: ReactNode;
-  value: SearchRouteRuntimeValue;
-}) {
-  return <SearchRouteRuntimeContext.Provider value={value}>{children}</SearchRouteRuntimeContext.Provider>;
-}
-
-function useSearchRouteRuntime() {
-  const runtime = useContext(SearchRouteRuntimeContext);
-  if (!runtime) throw new Error('SearchRouteRuntimeProvider is required');
-  return runtime;
-}
+export { SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from './SearchRouteRuntime';
 
 export function SearchRoute() {
   const runtime = useSearchRouteRuntime();

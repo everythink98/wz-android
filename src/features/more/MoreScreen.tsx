@@ -1,3 +1,4 @@
+import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { memo, type RefObject } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -23,8 +24,10 @@ export const MoreScreen = memo(function MoreScreen({
   onContentSourcesExpandedChange: (expanded: boolean) => void;
 }) {
   const { styles } = useReaderThemeStyles(createMoreScreenStyles);
+  const onPageLayout = useStartupPageLayout();
   return (
     <ScrollView
+      onLayout={onPageLayout}
       ref={scrollRef}
       style={styles.content}
       contentContainerStyle={styles.moreContentInner}

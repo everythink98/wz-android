@@ -1,5 +1,4 @@
 import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
 import { safeFileName } from '@/platform/storage/backupFiles';
 import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } from './diagnostics';
 import {
@@ -472,11 +471,33 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
     }
   });
   const temporary = new File(Paths.cache, safeFileName('forum-reader-diagnostic', 'txt'));
+  // The metadata status is a local snapshot, not a fresh authentication result.
+  const checks = merged.lines
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter(
+      (event) => event.source === 'linuxdo' && event.operation === 'account-reconcile' && event.phase === 'finish'
+    );
+  const lastCheck = checks.at(-1);
+  const accountSummary = JSON.stringify({
+    type: 'diagnostic-account-summary',
+    schemaVersion: 1,
+    source: 'linuxdo',
+    localSnapshot: safeSessionStatus(metadata.linuxDoSession),
+    lastCheckResult:
+      lastCheck?.state === 'confirmed' ? 'authenticated' : lastCheck?.state === 'anonymous' ? 'anonymous' : 'unknown',
+    ...(lastCheck && typeof lastCheck.time === 'string' && Number.isFinite(Date.parse(lastCheck.time))
+      ? { lastCheckAt: lastCheck.time }
+      : {}),
+    checkedInCurrentProcess: Boolean(
+      lastCheck?.processSessionId && lastCheck.processSessionId === diagnosticBuildContext().processSessionId
+    )
+  });
   try {
     temporary.create({ overwrite: true });
     temporary.write(
-      `${metadataLine(metadata)}\n${coverage}\n${merged.lines.join('\n')}${merged.lines.length ? '\n' : ''}`
+      `${metadataLine(metadata)}\n${coverage}\n${accountSummary}\n${merged.lines.join('\n')}${merged.lines.length ? '\n' : ''}`
     );
+    const Sharing = await import('expo-sharing');
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('当前设备不支持分享诊断日志。');
     }

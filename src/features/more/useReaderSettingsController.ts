@@ -1,34 +1,17 @@
 import { useCallback } from 'react';
-import type { ReaderData, ReaderDataMutationReason, ReaderSettings } from '@/domain/reader/readerData';
-
-export function applyReaderSettingsPatch(current: ReaderData, patch: Partial<ReaderSettings>) {
-  const hasChanges = Object.entries(patch).some(
-    ([key, value]) => current.settings[key as keyof ReaderSettings] !== value
-  );
-  if (!hasChanges) {
-    return current;
-  }
-
-  return {
-    ...current,
-    settings: {
-      ...current.settings,
-      ...patch
-    }
-  };
-}
+import type { ReaderSettings } from '@/domain/reader/readerData';
+import type { ReaderCommand } from '@/domain/reader/readerRecordState';
 
 export function useReaderSettingsController({
   commitReaderData
 }: {
-  commitReaderData: (mutationReason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
+  commitReaderData: (command: ReaderCommand) => void;
 }) {
   const updateSettings = useCallback(
     (patch: Partial<ReaderSettings>) => {
-      commitReaderData('settings-updated', (current) => applyReaderSettingsPatch(current, patch));
+      commitReaderData({ type: 'settings', patch });
     },
     [commitReaderData]
   );
-
   return { updateSettings };
 }

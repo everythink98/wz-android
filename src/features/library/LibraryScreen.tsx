@@ -1,3 +1,4 @@
+import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createLibraryStyles, type LibraryStyles } from './styles';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react';
 import {
@@ -15,7 +16,7 @@ import { ChevronDown, Star, Trash2, type LucideIcon } from 'lucide-react-native'
 import type { FeedSource, Topic, UserProfile, UserReference } from '@/domain/forum/models';
 import { type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
 import { type LibraryTab } from '@/domain/forum/feed';
-import { filterLibraryRecords, libraryCategoryFilterItems } from './model/libraryFilters';
+import { libraryCategoryFilterItems } from './model/libraryFilters';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { sourceCatalog, sourceValues, type Source } from '@/domain/forum/sourceCatalog';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
@@ -32,8 +33,6 @@ import { TOPIC_LIST_PERFORMANCE_PROPS } from '@/ui/list/performance';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import {
   createLibraryListItems,
-  filterFollowedUsersBySource,
-  libraryCountLabel,
   libraryDataItemKey,
   libraryDataItemType,
   type LibraryDataItem,
@@ -106,7 +105,7 @@ const LibraryViewportList = memo(function LibraryViewportList({
   renderItem,
   styles,
   tab,
-  onLoad
+  onLoadMore
 }: {
   accessibilityLabel?: string;
   data: LibraryDataItem[];
@@ -117,7 +116,7 @@ const LibraryViewportList = memo(function LibraryViewportList({
   renderItem: ListRenderItem<LibraryDataItem>;
   styles: LibraryStyles;
   tab: LibraryTab;
-  onLoad: (tab: LibraryTab) => void;
+  onLoadMore: () => void;
 }) {
   return (
     <FlashList
@@ -135,7 +134,8 @@ const LibraryViewportList = memo(function LibraryViewportList({
       ListHeaderComponent={header}
       ListEmptyComponent={empty}
       renderItem={renderItem}
-      onLoad={() => onLoad(tab)}
+      onEndReached={onLoadMore}
+      onEndReachedThreshold={0.5}
     />
   );
 });
@@ -143,6 +143,15 @@ const LibraryViewportList = memo(function LibraryViewportList({
 export const LibraryScreen = memo(function LibraryScreen({
   active,
   libraryTab,
+  sourceFilter,
+  categoryFilter,
+  onSourceFilter: setSourceFilter,
+  onCategoryFilter: setCategoryFilter,
+  total,
+  visibleTotal,
+  error,
+  onRetry,
+  onLoadMore,
   categories,
   enabledSources,
   favoriteRecords,
@@ -160,6 +169,15 @@ export const LibraryScreen = memo(function LibraryScreen({
   onTabChange
 }: {
   active: boolean;
+  sourceFilter: FeedSource;
+  categoryFilter: string;
+  onSourceFilter: (source: FeedSource) => void;
+  onCategoryFilter: (category: string) => void;
+  total: number;
+  visibleTotal: number;
+  error: boolean;
+  onRetry: () => void;
+  onLoadMore: () => void;
   libraryTab: LibraryTab;
   categories: Parameters<typeof libraryCategoryFilterItems>[0];
   enabledSources: readonly Source[];
@@ -179,16 +197,16 @@ export const LibraryScreen = memo(function LibraryScreen({
 }) {
   const { styles, theme } = useReaderThemeStyles(createLibraryStyles);
   const { height: windowHeight } = useWindowDimensions();
+  const [mountedTabs, setMountedTabs] = useState<LibraryTab[]>([libraryTab]);
+  useEffect(() => {
+    if (!active)
+      setMountedTabs((current) => (current.length === 1 && current[0] === libraryTab ? current : [libraryTab]));
+  }, [active, libraryTab]);
   const favoriteListRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   const historyListRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   const userListRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   const favoriteCategoryMenuTriggerRef = useRef<View>(null);
   const historyCategoryMenuTriggerRef = useRef<View>(null);
-  const loadedTabsRef = useRef(new Set<LibraryTab>());
-  const prewarmFrameRef = useRef<number | null>(null);
-  const [mountedTabs, setMountedTabs] = useState<LibraryTab[]>([libraryTab]);
-  const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
-  const [categoryFilter, setCategoryFilter] = useState('all');
   const [categoryMenuTab, setCategoryMenuTab] = useState<'favorites' | 'history' | null>(null);
   const [categoryMenuPlacement, setCategoryMenuPlacement] = useState<ViewStyle>({
     position: 'absolute',
@@ -215,93 +233,22 @@ export const LibraryScreen = memo(function LibraryScreen({
   const effectiveSourceFilter =
     sourceFilter === 'all' || enabledSourceSet.has(sourceFilter as Source) ? sourceFilter : 'all';
   const effectiveCategoryFilter = effectiveSourceFilter === sourceFilter ? categoryFilter : 'all';
-  const visibleFollowedUsers = useMemo(
-    () => followedUsers.filter((record) => enabledSourceSet.has(record.user.source)),
-    [enabledSourceSet, followedUsers]
-  );
-  const visibleFavoriteRecords = useMemo(
-    () => favoriteRecords.filter((record) => enabledSourceSet.has(record.topic.source)),
-    [enabledSourceSet, favoriteRecords]
-  );
-  const visibleHistoryRecords = useMemo(
-    () => historyRecords.filter((record) => enabledSourceSet.has(record.topic.source)),
-    [enabledSourceSet, historyRecords]
-  );
-  const userRecords = useMemo(
-    () => filterFollowedUsersBySource(visibleFollowedUsers, effectiveSourceFilter),
-    [effectiveSourceFilter, visibleFollowedUsers]
-  );
+  const userRecords = followedUsers;
   const categoryItems = useMemo(
     () => libraryCategoryFilterItems(categories, effectiveSourceFilter),
     [categories, effectiveSourceFilter]
   );
   const categoryLabel =
     categoryItems.find((item) => item.value === effectiveCategoryFilter)?.label || categoryItems[0]?.label || '全部';
-  const filteredFavoriteRecords = useMemo(
-    () =>
-      filterLibraryRecords(visibleFavoriteRecords, {
-        source: effectiveSourceFilter,
-        category: effectiveCategoryFilter
-      }),
-    [effectiveCategoryFilter, effectiveSourceFilter, visibleFavoriteRecords]
-  );
-  const filteredHistoryRecords = useMemo(
-    () =>
-      filterLibraryRecords(visibleHistoryRecords, {
-        source: effectiveSourceFilter,
-        category: effectiveCategoryFilter
-      }),
-    [effectiveCategoryFilter, effectiveSourceFilter, visibleHistoryRecords]
-  );
   const favoriteListItems = useMemo<LibraryListItem[]>(
-    () => createLibraryListItems(filteredFavoriteRecords),
-    [filteredFavoriteRecords]
+    () => createLibraryListItems(favoriteRecords),
+    [favoriteRecords]
   );
-  const historyListItems = useMemo<LibraryListItem[]>(
-    () => createLibraryListItems(filteredHistoryRecords),
-    [filteredHistoryRecords]
-  );
+  const historyListItems = useMemo<LibraryListItem[]>(() => createLibraryListItems(historyRecords), [historyRecords]);
   const scrollLibraryToTop = useCallback((tab: LibraryTab) => {
     const listRef = tab === 'favorites' ? favoriteListRef : tab === 'history' ? historyListRef : userListRef;
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, []);
-  const scheduleNextPrewarm = useLatestCallback(() => {
-    if (!active || prewarmFrameRef.current !== null) return;
-    prewarmFrameRef.current = requestAnimationFrame(() => {
-      prewarmFrameRef.current = null;
-      const order: LibraryTab[] =
-        libraryTab === 'favorites'
-          ? ['history', 'users']
-          : libraryTab === 'history'
-            ? ['favorites', 'users']
-            : ['favorites', 'history'];
-      setMountedTabs((current) => {
-        const next = order.find((tab) => !current.includes(tab));
-        return next ? [...current, next] : current;
-      });
-    });
-  });
-  const handleViewportLoad = useCallback(
-    (tab: LibraryTab) => {
-      loadedTabsRef.current.add(tab);
-      scheduleNextPrewarm();
-    },
-    [scheduleNextPrewarm]
-  );
-  useEffect(() => {
-    if (!active) {
-      if (prewarmFrameRef.current !== null) cancelAnimationFrame(prewarmFrameRef.current);
-      prewarmFrameRef.current = null;
-      setMountedTabs((current) => (current.length === 1 && current[0] === libraryTab ? current : [libraryTab]));
-      loadedTabsRef.current = loadedTabsRef.current.has(libraryTab) ? new Set([libraryTab]) : new Set();
-      return;
-    }
-    if (loadedTabsRef.current.has(libraryTab)) scheduleNextPrewarm();
-    return () => {
-      if (prewarmFrameRef.current !== null) cancelAnimationFrame(prewarmFrameRef.current);
-      prewarmFrameRef.current = null;
-    };
-  }, [active, libraryTab, scheduleNextPrewarm]);
   useEffect(() => {
     if (!scrollRef) return;
     const activeListRef =
@@ -322,10 +269,13 @@ export const LibraryScreen = memo(function LibraryScreen({
     onTabChange(nextTab);
     requestAnimationFrame(() => scrollLibraryToTop(nextTab));
   });
-  const changeSourceFilter = useCallback((value: string) => {
-    setCategoryMenuTab(null);
-    setSourceFilter(value as FeedSource);
-  }, []);
+  const changeSourceFilter = useCallback(
+    (value: string) => {
+      setCategoryMenuTab(null);
+      setSourceFilter(value as FeedSource);
+    },
+    [setSourceFilter]
+  );
   const openCategoryMenu = useCallback(
     (tab: 'favorites' | 'history') => {
       if (categoryItems.length <= 1) return;
@@ -346,22 +296,25 @@ export const LibraryScreen = memo(function LibraryScreen({
     [categoryItems.length, windowHeight]
   );
   const closeCategoryMenu = useCallback(() => setCategoryMenuTab(null), []);
-  const selectCategory = useCallback((value: string) => {
-    setCategoryMenuTab(null);
-    setCategoryFilter(value);
-  }, []);
+  const selectCategory = useCallback(
+    (value: string) => {
+      setCategoryMenuTab(null);
+      setCategoryFilter(value);
+    },
+    [setCategoryFilter]
+  );
   useEffect(() => {
     if (sourceFilter !== 'all' && !enabledSourceSet.has(sourceFilter as Source)) {
       setCategoryMenuTab(null);
       setSourceFilter('all');
       setCategoryFilter('all');
     }
-  }, [enabledMembershipKey, enabledSourceSet, sourceFilter]);
+  }, [enabledMembershipKey, enabledSourceSet, sourceFilter, setSourceFilter, setCategoryFilter]);
   useEffect(() => {
     if (effectiveCategoryFilter !== 'all' && !categoryItems.some((item) => item.value === effectiveCategoryFilter)) {
       setCategoryFilter('all');
     }
-  }, [categoryItems, effectiveCategoryFilter]);
+  }, [categoryItems, effectiveCategoryFilter, setCategoryFilter]);
   const confirmRemoveFavorite = useCallback(
     (topic: Topic) => {
       Alert.alert('确定取消收藏吗？', topic.title || '这条收藏将从本机移除。', [
@@ -472,8 +425,6 @@ export const LibraryScreen = memo(function LibraryScreen({
 
   const renderHeader = useCallback(
     (viewportTab: LibraryTab) => {
-      const viewportVisibleRecords = viewportTab === 'history' ? visibleHistoryRecords : visibleFavoriteRecords;
-      const viewportFilteredRecords = viewportTab === 'history' ? filteredHistoryRecords : filteredFavoriteRecords;
       const viewportCategoryButtonHidden = viewportTab === 'users';
       const viewportCategorySelectionAvailable = !viewportCategoryButtonHidden && categoryItems.length > 1;
       const categoryMenuTriggerRef =
@@ -487,13 +438,11 @@ export const LibraryScreen = memo(function LibraryScreen({
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>收藏</Text>
             <Text style={styles.meta}>
-              {libraryCountLabel({
-                filteredRecords: viewportFilteredRecords,
-                followedUsers: visibleFollowedUsers,
-                libraryTab: viewportTab,
-                records: viewportVisibleRecords,
-                userRecords
-              })}
+              {viewportTab === 'users'
+                ? `${total} / ${visibleTotal} 人`
+                : total === visibleTotal
+                  ? `${total} 条`
+                  : `${total} / ${visibleTotal} 条`}
             </Text>
           </View>
           <PillRail
@@ -569,7 +518,7 @@ export const LibraryScreen = memo(function LibraryScreen({
               </PopupMenu>
             ) : null}
           </View>
-          {viewportTab === 'history' && viewportVisibleRecords.length ? (
+          {viewportTab === 'history' && visibleTotal > 0 ? (
             <View style={styles.actions}>
               <AppButton compact label="清空历史" variant="danger" onPress={confirmClearHistory} />
             </View>
@@ -589,17 +538,13 @@ export const LibraryScreen = memo(function LibraryScreen({
       confirmClearHistory,
       effectiveCategoryFilter,
       effectiveSourceFilter,
-      filteredFavoriteRecords,
-      filteredHistoryRecords,
       openCategoryMenu,
       selectCategory,
       sourceItems,
       styles,
       theme,
-      userRecords,
-      visibleFavoriteRecords,
-      visibleFollowedUsers,
-      visibleHistoryRecords
+      total,
+      visibleTotal
     ]
   );
   const favoriteHeader = useMemo(() => renderHeader('favorites'), [renderHeader]);
@@ -609,14 +554,18 @@ export const LibraryScreen = memo(function LibraryScreen({
   const renderEmpty = useCallback(
     (viewportTab: LibraryTab, recordCount: number) => (
       <View testID={loaded && viewportTab === 'favorites' && !recordCount ? 'library-favorites-empty' : undefined}>
-        {enabledSources.length === 0 ? (
+        {error ? (
+          <RecoverableEmptyState message="本机资料加载失败" actionLabel="重试" onAction={onRetry} />
+        ) : !loaded ? (
+          <EmptyText text="正在读取本机资料" />
+        ) : enabledSources.length === 0 ? (
           <RecoverableEmptyState message="尚未启用内容源" actionLabel="管理内容源" onAction={onManageContentSources} />
         ) : (
           <EmptyText text={viewportTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} />
         )}
       </View>
     ),
-    [enabledSources.length, loaded, onManageContentSources]
+    [enabledSources.length, loaded, onManageContentSources, error, onRetry]
   );
   const favoriteEmpty = useMemo(
     () => renderEmpty('favorites', favoriteListItems.length),
@@ -657,7 +606,7 @@ export const LibraryScreen = memo(function LibraryScreen({
           readyTestID={loaded ? readyTestID : undefined}
           accessibilityLabel={
             loaded && viewportTab === 'favorites'
-              ? filteredFavoriteRecords.length
+              ? favoriteRecords.length
                 ? '收藏列表，已加载，有收藏'
                 : '收藏列表，已加载，没有收藏'
               : '收藏列表'
@@ -675,14 +624,15 @@ export const LibraryScreen = memo(function LibraryScreen({
           }
           styles={styles}
           tab={viewportTab}
-          onLoad={handleViewportLoad}
+          onLoadMore={onLoadMore}
         />
       </View>
     );
   };
 
+  const onPageLayout = useStartupPageLayout();
   return (
-    <View style={styles.libraryViewportStack}>
+    <View style={styles.libraryViewportStack} onLayout={onPageLayout}>
       {renderViewport('favorites')}
       {renderViewport('history')}
       {renderViewport('users')}

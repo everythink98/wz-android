@@ -11,16 +11,11 @@ export function createAppStyles(theme: ReaderTheme) {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 8
+      backgroundColor: '#ffffff'
     },
-    bootstrapTitle: {
-      color: theme.ink,
-      fontSize: 22,
-      fontWeight: '700'
-    },
-    bootstrapStatus: {
-      color: theme.muted,
-      fontSize: 15
+    bootstrapIcon: {
+      width: 200,
+      height: 200
     },
     navItem: {
       flex: 1,

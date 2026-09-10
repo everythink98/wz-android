@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
@@ -8,6 +9,7 @@ import {
   capturedAgentDeviceOutput,
   deviceSelectionArgs,
   isVersionSupported,
+  runAgentDevice,
   MIN_AGENT_DEVICE_VERSION
 } from '../../scripts/agent-device-runtime.mjs';
 import { parseBootedAndroidDevice, runApkSanity, withSmokeSession } from '../../scripts/smoke-android.mjs';
@@ -81,6 +83,23 @@ describe('Android release evidence guards', () => {
   it('requires one explicitly selected device', () => {
     expect(() => deviceSelectionArgs('')).toThrow('WZ_ANDROID_TEST_DEVICE');
     expect(deviceSelectionArgs('  WZ Pixel API 35  ')).toEqual(['--device', 'WZ Pixel API 35']);
+  });
+
+  it.runIf(process.platform === 'win32')('runs the installed Windows Node CLI with unchanged arguments', () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'agent-device-command-'));
+    const originalPath = process.env.PATH;
+    try {
+      const bin = path.join(directory, 'node_modules', 'agent-device', 'bin');
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(path.join(directory, 'agent-device.ps1'), "throw 'Do not launch a PowerShell shim'");
+      writeFileSync(path.join(bin, 'agent-device.mjs'), 'process.stdout.write(JSON.stringify(process.argv.slice(2)))');
+      process.env.PATH = directory;
+      const args = ['--device', 'WZ Pixel API 35', '带空格 " 引号'];
+      expect(JSON.parse(runAgentDevice(args, { capture: true, echoCapture: false }))).toEqual(args);
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('keeps successful agent-device diagnostics out of captured JSON', () => {
@@ -965,6 +984,11 @@ describe('Android release evidence guards', () => {
             if (name === 'expo') return { registerRootComponent: () => calls.push('register') };
             if (name.endsWith('/diagnosticFileStore'))
               return { initializeDiagnosticFileLogging: () => calls.push('diagnostics') };
+            if (name.endsWith('/startupTiming'))
+              return {
+                setStartupTimingRecorder: () => calls.push('timing-installed'),
+                recordStartupPhase: (phase: string) => calls.push(phase)
+              };
             if (name.endsWith('/notificationSystem'))
               return { installMessageNotificationHandler: () => calls.push('notifications') };
             return {};
@@ -974,7 +998,7 @@ describe('Android release evidence guards', () => {
       execute(source);
       return calls;
     };
-    const expected = ['diagnostics', 'app-import', 'notifications', 'register'];
+    const expected = ['diagnostics', 'timing-installed', 'js-entry', 'app-import', 'notifications', 'register'];
     expect(bootstrapCalls(entry)).toEqual(expected);
     expect(bootstrapCalls(entry.replace(bootstrapImport, ''))).not.toEqual(expected);
     expect(

@@ -21,7 +21,7 @@ import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './videoEmbeds';
 import { normalizeMediaReferrerPolicy } from './mediaReferrer';
 import { FORUM_BOUNDED_INLINE_IMAGE_ATTRIBUTE, FORUM_FLOW_IMAGE_CONTEXT_ATTRIBUTE } from './forumContentMedia';
 
-function parsedAbsoluteUrl(value: unknown, baseUrl: string) {
+function parsedAbsoluteUrl(value: unknown, baseUrl?: string) {
   const text = String(value || '').trim();
   if (!text) return null;
   try {
@@ -31,7 +31,7 @@ function parsedAbsoluteUrl(value: unknown, baseUrl: string) {
   }
 }
 
-function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: string) {
+function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl?: string) {
   const url = parsedAbsoluteUrl(value, baseUrl);
   if (!url) return undefined;
   const next = url.toString();
@@ -43,7 +43,7 @@ function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: str
   return undefined;
 }
 
-function sanitizedHttpMediaUrl(value: unknown, baseUrl: string) {
+function sanitizedHttpMediaUrl(value: unknown, baseUrl?: string) {
   const url = parsedAbsoluteUrl(value, baseUrl);
   if (!url) return '';
   const protocol = url.protocol.toLowerCase();
@@ -843,6 +843,8 @@ export function sanitizeContentHtmlWithRoot(
   if (markup.includes('bilibili.com')) sanitizeNsVideoImages(root, baseUrl);
   if (markup.includes('<aside')) sanitizeDiscourseOneboxes(root, baseUrl);
   if (markup.includes('<div')) removeForumImageMetadata(root);
+  // Validate the base once; fully qualified HTTP URLs still use the standard URL parser.
+  const absoluteAttributeBase = parsedAbsoluteUrl(baseUrl, baseUrl) ? undefined : baseUrl;
   root.querySelectorAll('*').forEach((node) => {
     const tagName = safeTagName(node);
     for (const [name, rawValue] of Object.entries(node.attributes)) {
@@ -886,10 +888,11 @@ export function sanitizeContentHtmlWithRoot(
         lower === 'image-src' ||
         lower === 'icon-src'
       ) {
+        const attributeBase = /^https?:\/\//i.test(value) ? absoluteAttributeBase : baseUrl;
         const next =
           (tagName === FORUM_AUDIO_TAG || tagName === FORUM_VIDEO_TAG) && lower === 'src'
-            ? sanitizedHttpMediaUrl(value, baseUrl)
-            : sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, baseUrl);
+            ? sanitizedHttpMediaUrl(value, attributeBase)
+            : sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, attributeBase);
         if (next) {
           node.setAttribute(name, next);
         } else {

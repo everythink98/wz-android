@@ -51,175 +51,88 @@ describe('Backup status controller', () => {
     mockWriteAsStringAsync.mockResolvedValue(undefined);
     mockGetDocumentAsync.mockResolvedValue({
       canceled: false,
-      assets: [{ uri: 'file:///cache/broken-backup.json', size: 8 }]
+      assets: [{ uri: 'file:///cache/backup.json', size: 8 }]
     });
     mockGetInfoAsync.mockResolvedValue({ exists: true, isDirectory: false, size: 8 });
     mockReadAsStringAsync.mockResolvedValue('{broken');
   });
-
-  it('does not replace current reader data when a picked backup is invalid', async () => {
-    const current = createEmptyReaderData();
-    current.settings.theme = 'dark';
-    const readerDataRef = { current };
-    const notify = jest.fn<(message: string) => void>();
-    const replaceReaderData = jest.fn(async () => undefined);
+  it('reports a rejected import and removes only the picker cache copy', async () => {
+    const notify = jest.fn();
+    const importBackup = jest.fn(async () => {
+      throw new Error('备份格式不兼容');
+    });
     const hook = await renderHook(() =>
-      useBackupStatusController({
-        notify,
-        readerDataRef,
-        replaceReaderData,
-        waitForReaderDataSave: jest.fn(async () => undefined)
-      })
+      useBackupStatusController({ notify, importBackup, exportBackup: async () => '{}' })
     );
-
     await act(async () => {
       await hook.result.current.importBackupFile();
     });
-
-    expect(replaceReaderData).not.toHaveBeenCalled();
-    expect(readerDataRef.current).toBe(current);
-    expect(readerDataRef.current.settings.theme).toBe('dark');
-    expect(notify).toHaveBeenCalledTimes(1);
-    expect(mockDeleteAsync).toHaveBeenCalledWith('file:///cache/broken-backup.json', { idempotent: true });
+    expect(importBackup).toHaveBeenCalledWith('{broken');
+    expect(notify).toHaveBeenCalledWith('备份格式不兼容');
+    expect(mockDeleteAsync).toHaveBeenCalledWith('file:///cache/backup.json', { idempotent: true });
     expect(hook.result.current.backupBusy).toBe(false);
   });
-
-  it('treats a canceled document picker as a no-op without notifying or replacing data', async () => {
+  it('canceled picker does not call storage, notify, or delete other files', async () => {
     mockGetDocumentAsync.mockResolvedValue({ canceled: true, assets: [] });
-    const readerDataRef = { current: createEmptyReaderData() };
-    const notify = jest.fn<(message: string) => void>();
-    const replaceReaderData = jest.fn(async () => undefined);
+    const notify = jest.fn(),
+      importBackup = jest.fn(async () => undefined);
     const hook = await renderHook(() =>
-      useBackupStatusController({
-        notify,
-        readerDataRef,
-        replaceReaderData,
-        waitForReaderDataSave: jest.fn(async () => undefined)
-      })
+      useBackupStatusController({ notify, importBackup, exportBackup: async () => '{}' })
     );
-
     await act(async () => {
       await hook.result.current.importBackupFile();
     });
-
-    expect(replaceReaderData).not.toHaveBeenCalled();
+    expect(importBackup).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
     expect(mockDeleteAsync).not.toHaveBeenCalled();
-    expect(hook.result.current.backupBusy).toBe(false);
   });
-
-  it('merges a valid picked backup and deletes only the picker cache copy', async () => {
-    const current = createEmptyReaderData();
-    current.history['v2ex:local'] = {
-      topic: {
-        source: 'v2ex',
-        id: 'local',
-        title: '本机历史',
-        author: 'alice',
-        url: 'https://www.v2ex.com/t/local',
-        createdAt: '2026-07-13T00:00:00.000Z',
-        replyCount: 0
-      },
-      savedAt: '2026-07-14T00:00:00.000Z'
-    };
-    const imported = createEmptyReaderData();
-    imported.history['linuxdo:remote'] = {
-      topic: {
-        source: 'linuxdo',
-        id: 'remote',
-        title: '备份历史',
-        author: 'bob',
-        url: 'https://linux.do/t/remote',
-        createdAt: '2026-07-13T00:00:00.000Z',
-        replyCount: 1
-      },
-      savedAt: '2026-07-14T01:00:00.000Z'
-    };
-    imported.settings.theme = 'dark';
-    mockGetDocumentAsync.mockResolvedValue({
-      canceled: false,
-      assets: [{ uri: 'file:///cache/valid-backup.json', size: 512 }]
-    });
-    mockGetInfoAsync.mockResolvedValue({ exists: true, isDirectory: false, size: 512 });
-    mockReadAsStringAsync.mockResolvedValue(exportReaderBackupJson(imported));
-    const notify = jest.fn<(message: string) => void>();
-    const replaceReaderData = jest.fn(async () => undefined);
+  it('hands the complete file to the storage owner for merge against latest committed data', async () => {
+    const json = exportReaderBackupJson(createEmptyReaderData());
+    mockReadAsStringAsync.mockResolvedValue(json);
+    const notify = jest.fn(),
+      importBackup = jest.fn(async () => undefined);
     const hook = await renderHook(() =>
-      useBackupStatusController({
-        notify,
-        readerDataRef: { current },
-        replaceReaderData,
-        waitForReaderDataSave: jest.fn(async () => undefined)
-      })
+      useBackupStatusController({ notify, importBackup, exportBackup: async () => '{}' })
     );
-
     await act(async () => {
       await hook.result.current.importBackupFile();
     });
-
-    expect(replaceReaderData).toHaveBeenCalledWith(
-      'backup-imported',
-      expect.objectContaining({
-        history: expect.objectContaining({
-          'v2ex:local': expect.any(Object),
-          'linuxdo:remote': expect.any(Object)
-        }),
-        settings: expect.objectContaining({ theme: 'dark' })
-      })
-    );
+    expect(importBackup).toHaveBeenCalledWith(json);
     expect(notify).toHaveBeenCalledWith('备份已恢复，本机资料已合并');
-    expect(mockDeleteAsync).toHaveBeenCalledWith('file:///cache/valid-backup.json', { idempotent: true });
   });
-
-  it('waits for pending data saves, shares an export and cleans up its temporary file', async () => {
-    const readerDataRef = { current: createEmptyReaderData() };
-    const notify = jest.fn<(message: string) => void>();
-    const waitForReaderDataSave = jest.fn(async () => undefined);
+  it('waits for a consistent storage export before creating and sharing a temporary file', async () => {
+    const exported = Promise.withResolvers<string>();
+    const notify = jest.fn();
+    const exportBackup = jest.fn(() => exported.promise);
     const hook = await renderHook(() =>
-      useBackupStatusController({
-        notify,
-        readerDataRef,
-        replaceReaderData: jest.fn(async () => undefined),
-        waitForReaderDataSave
-      })
+      useBackupStatusController({ notify, importBackup: async () => undefined, exportBackup })
     );
-
+    let result: Promise<void>;
     await act(async () => {
-      await hook.result.current.exportBackupFile();
+      result = hook.result.current.exportBackupFile();
     });
-
-    expect(waitForReaderDataSave).toHaveBeenCalledTimes(1);
-    expect(mockWriteAsStringAsync).toHaveBeenCalledWith(
-      expect.stringMatching(/^file:\/\/\/cache\/forum-reader-backup-.+\.json$/),
-      expect.any(String),
-      { encoding: 'utf8' }
-    );
-    const exportedUri = mockWriteAsStringAsync.mock.calls[0]?.[0];
-    expect(mockShareAsync).toHaveBeenCalledWith(exportedUri, { mimeType: 'application/json' });
-    expect(mockDeleteAsync).toHaveBeenCalledWith(exportedUri, { idempotent: true });
-    expect(notify).toHaveBeenCalledWith('备份文件已生成');
+    expect(mockWriteAsStringAsync).not.toHaveBeenCalled();
+    expect(mockIsSharingAvailableAsync).not.toHaveBeenCalled();
+    await act(async () => {
+      exported.resolve('{}');
+      await result;
+    });
+    expect(exportBackup).toHaveBeenCalledTimes(1);
+    const uri = mockWriteAsStringAsync.mock.calls[0]?.[0];
+    expect(mockShareAsync).toHaveBeenCalledWith(uri, { mimeType: 'application/json' });
+    expect(mockDeleteAsync).toHaveBeenCalledWith(uri, { idempotent: true });
   });
-
-  it('reports an export sharing failure and still removes the temporary file', async () => {
+  it('cleans up the temporary export even when sharing fails', async () => {
     mockShareAsync.mockRejectedValue(new Error('用户取消了系统分享'));
-    const notify = jest.fn<(message: string) => void>();
+    const notify = jest.fn();
     const hook = await renderHook(() =>
-      useBackupStatusController({
-        notify,
-        readerDataRef: { current: createEmptyReaderData() },
-        replaceReaderData: jest.fn(async () => undefined),
-        waitForReaderDataSave: jest.fn(async () => undefined)
-      })
+      useBackupStatusController({ notify, importBackup: async () => undefined, exportBackup: async () => '{}' })
     );
-
     await act(async () => {
       await hook.result.current.exportBackupFile();
     });
-
-    const exportedUri = mockWriteAsStringAsync.mock.calls[0]?.[0];
     expect(notify).toHaveBeenCalledWith('用户取消了系统分享');
-    expect(notify).not.toHaveBeenCalledWith('备份文件已生成');
-    expect(mockDeleteAsync).toHaveBeenCalledWith(exportedUri, { idempotent: true });
+    expect(mockDeleteAsync).toHaveBeenCalledWith(mockWriteAsStringAsync.mock.calls[0]?.[0], { idempotent: true });
     expect(hook.result.current.backupBusy).toBe(false);
   });
 });

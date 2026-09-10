@@ -36,6 +36,10 @@ function agentDeviceCommand() {
   if (!shimPath) {
     throw new Error('未找到已安装的 agent-device。请先将可信安装加入 PATH。');
   }
+  const nodeCli = path.join(path.dirname(shimPath), 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
+  if (existsSync(nodeCli)) {
+    return { command: process.execPath, prefixArgs: [nodeCli] };
+  }
   return {
     command: 'powershell.exe',
     prefixArgs: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', shimPath]

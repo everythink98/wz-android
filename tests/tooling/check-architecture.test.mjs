@@ -100,14 +100,14 @@ test('rejects process-global WebView cleanup in tracked Android plugins', () => 
     {},
     {
       'plugins/safe.js': 'cookieManager.setCookie(url, expired);',
-      'plugins/android/unsafe.js':
+      'plugins/android/unsafe.kt':
         'cookieManager.removeAllCookies(null); cookieManager.removeSessionCookies(null); webStorage.deleteAllData(); webView.clearCache(true);'
     }
   );
   const issues = analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'global-webview-state-owner');
 
   assert.equal(issues.length, 4);
-  assert.ok(issues.every((issue) => issue.message.includes('plugins/android/unsafe.js')));
+  assert.ok(issues.every((issue) => issue.message.includes('plugins/android/unsafe.kt')));
 });
 
 test('rejects invalid source roots and barrel files', () => {
@@ -245,6 +245,14 @@ test('keeps NodeImage credential ensure in the Account write capability', () => 
       (issue) => issue.code === 'raw-account-center-capability' && issue.message.includes('ensure')
     )
   );
+});
+
+test('allows the explicit account recheck command without exposing raw session state', () => {
+  const srcDir = architectureFixture({
+    'features/account/useAccountRuntime.ts':
+      'export function useAccountRuntime() { return { read: {}, write: { requestAccountRecheck() {} }, center: {}, hosts: {} }; }'
+  });
+  assert.deepEqual(analyzeArchitecture(srcDir).issues, []);
 });
 
 test('keeps source-string contracts in tooling instead of behavior suites', () => {

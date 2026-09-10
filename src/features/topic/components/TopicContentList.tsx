@@ -1,3 +1,4 @@
+import { resolveTopicLocation, topicLocationForReply } from '@/domain/forum/topicLocation';
 import { createTopicStyles, type TopicStyles } from '../styles';
 import {
   memo,
@@ -31,6 +32,7 @@ import { findReplyLocation } from '@/domain/forum/replyLocation';
 import type {
   Reply,
   ReplyLocationTarget,
+  TopicLocationTarget,
   ReplyOrder,
   SourceErrorInfo,
   Topic,
@@ -69,7 +71,7 @@ import type { InteractionType } from '@/domain/forum/topicActionState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { discourseReactionStats, type DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { linuxDoReactionStats } from '@/sources/linuxdo/reactions';
-import { replyForQuotedPost, topicOpeningPostAsReply } from '@/domain/forum/quotedPosts';
+import { replyForQuotedPost, topicOpeningPostAsReply, topicForQuotedPost } from '@/domain/forum/quotedPosts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import { TopicPolls } from './TopicPolls';
 import { AcceptedAnswerPreview } from './AcceptedAnswerPreview';
@@ -360,6 +362,7 @@ export const TopicContentList = memo(function TopicContentList({
   actions,
   article,
   bodyMediaPaused = false,
+  bottomContentInset = 0,
   currentNodeSeekUser,
   discourseEmojiUrls,
   headerState,
@@ -369,10 +372,11 @@ export const TopicContentList = memo(function TopicContentList({
   onOpenTopic,
   onOpenUser,
   onScroll: onTopicScroll,
+  onScrollProgress,
   read,
   session,
-  targetReply,
-  targetReplyRequestId,
+  location,
+  locationRequestId,
   topicScrollRef
 }: {
   active?: boolean;
@@ -384,19 +388,21 @@ export const TopicContentList = memo(function TopicContentList({
     yaohuoBookmarked?: boolean;
   };
   bodyMediaPaused?: boolean;
+  bottomContentInset?: number;
   currentNodeSeekUser: SiteSessionViewModels['nodeseek']['currentUser'];
   discourseEmojiUrls: DiscourseEmojiUrlMap;
   headerState: ReactNode;
   html: ReturnType<typeof useHtmlRenderingController> & { contentWidth: number; mediaSessionIdentity: string };
   nodeSeekUserId: number | null;
   onImagePreviewDescriptors: (descriptors: readonly ForumImagePreviewDescriptor[]) => void;
-  onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
+  onOpenTopic: (topic: Topic, location?: TopicLocationTarget) => void;
   onOpenUser: (user: UserReference) => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onScrollProgress?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   read: ReturnType<typeof useTopicController>;
   session: TopicSessionController;
-  targetReply?: ReplyLocationTarget;
-  targetReplyRequestId?: number;
+  location?: TopicLocationTarget;
+  locationRequestId?: number;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
   const { state, commands } = session;
@@ -434,7 +440,6 @@ export const TopicContentList = memo(function TopicContentList({
   const expandedQuotes = state.expandedQuotes;
   const replyHighlightQuery = state.debouncedCommentQuery;
   const quoteStateVersion = state.quoteStateVersion;
-  const replyComposerOpen = state.replyComposerIntent.kind !== 'closed';
   const replyFilter = state.replyFilter;
   const replyOrder = state.replyOrder;
   const sourceReplies = read.topicReplies;
@@ -459,7 +464,6 @@ export const TopicContentList = memo(function TopicContentList({
   const onLoadMoreReplies = read.loadMoreReplies;
   const onLoadPreviousReplies = read.loadPreviousReplies;
   const onLocateReply = read.locateReply;
-  const onReplyComposerOpenChange = commands.composer.toggle;
   const onReplyToFloor = commands.composer.replyToFloor;
   const onToggleReplyQuote = read.toggleReplyQuote;
   const onToggleTopicBodyQuote = read.toggleTopicBodyQuote;
@@ -563,7 +567,6 @@ export const TopicContentList = memo(function TopicContentList({
   const canUseDiscourseInteractions = Boolean(
     topic && isDiscourseSource(topic.source) && (likeDecision.allowed || likeDecision.reason === 'pending')
   );
-  const canWrite = decisionFor({ action: 'reply' }).allowed;
   const replyTotalCount = item ? item.replyCount : replies.length;
   const replyDisplayCount =
     replyFilter === 'author' || replyFilter === 'images' || replyHighlightQuery.trim()
@@ -587,7 +590,6 @@ export const TopicContentList = memo(function TopicContentList({
     () => ({
       actionBusy,
       quoteStateVersion,
-      replyComposerOpen,
       replyCollectionComplete,
       replyEndError,
       replyOrder,
@@ -602,7 +604,6 @@ export const TopicContentList = memo(function TopicContentList({
       replyCollectionComplete,
       repliesError,
       repliesLoading,
-      replyComposerOpen,
       replyEndError,
       replyOrder,
       replyOrderMenuOpen,
@@ -1062,18 +1063,25 @@ export const TopicContentList = memo(function TopicContentList({
     requestId: number;
     target: ReplyLocationTarget;
   } | null>(null);
-  const activeTargetReply = replyLocationCommand?.target || targetReply;
+  const targetReply = location?.kind === 'reply' ? location.target : undefined;
+  const activeLocation = resolveTopicLocation(
+    topic,
+    replyLocationCommand ? { kind: 'reply', target: replyLocationCommand.target } : location
+  );
+  const activeTargetReply = activeLocation?.kind === 'reply' ? activeLocation.target : undefined;
   const targetReplyIdentity =
-    typeof activeTargetReply?.commentId === 'number'
-      ? `comment:${activeTargetReply.commentId}:${activeTargetReply.expectedAuthorUsername ?? ''}`
-      : typeof activeTargetReply?.floor === 'number'
-        ? `floor:${activeTargetReply.floor}:${activeTargetReply.expectedAuthorUsername ?? ''}`
-        : '';
+    activeLocation?.kind === 'opening'
+      ? 'opening'
+      : typeof activeTargetReply?.commentId === 'number'
+        ? `comment:${activeTargetReply.commentId}:${activeTargetReply.expectedAuthorUsername ?? ''}`
+        : typeof activeTargetReply?.floor === 'number'
+          ? `floor:${activeTargetReply.floor}:${activeTargetReply.expectedAuthorUsername ?? ''}`
+          : '';
   const targetReplyCommandKey = replyLocationCommand
     ? `request:${replyLocationCommand.requestId}`
     : targetReplyIdentity
-      ? typeof targetReplyRequestId === 'number'
-        ? `route-request:${targetReplyRequestId}`
+      ? typeof locationRequestId === 'number'
+        ? `route-request:${locationRequestId}`
         : `route:${targetReplyIdentity}`
       : '';
   const resolvedTargetReplyKey = useMemo(() => {
@@ -1089,14 +1097,7 @@ export const TopicContentList = memo(function TopicContentList({
         )
       : -1;
   }, [resolvedTargetReplyKey, targetReplyCommandKey, topicListItems]);
-  const targetIsOpeningPost = Boolean(
-    targetReplyCommandKey &&
-    ((typeof activeTargetReply?.commentId === 'number' && topic?.commentId === activeTargetReply.commentId) ||
-      (typeof activeTargetReply?.commentId !== 'number' &&
-        activeTargetReply?.floor === 1 &&
-        itemSource &&
-        isDiscourseSource(itemSource)))
-  );
+  const targetIsOpeningPost = activeLocation?.kind === 'opening';
   const handledTargetReplyRef = useRef('');
   const targetHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [highlightedTargetKey, setHighlightedTargetKey] = useState('');
@@ -1108,11 +1109,12 @@ export const TopicContentList = memo(function TopicContentList({
     setReplyLocationCommand(null);
   }, [
     detailTopicStateKey,
+    location?.kind,
     targetReply?.commentId,
     targetReply?.floor,
     targetReply?.pageHint,
     targetReply?.expectedAuthorUsername,
-    targetReplyRequestId
+    locationRequestId
   ]);
   useEffect(
     () => () => {
@@ -1133,6 +1135,7 @@ export const TopicContentList = memo(function TopicContentList({
   );
   useEffect(() => {
     if (
+      !active ||
       loadedDetailKey !== detailTopicStateKey ||
       !targetReplyCommandKey ||
       !canShowReplies ||
@@ -1161,6 +1164,7 @@ export const TopicContentList = memo(function TopicContentList({
       });
     }
   }, [
+    active,
     canShowReplies,
     commentQuery,
     detailTopicStateKey,
@@ -1722,7 +1726,9 @@ export const TopicContentList = memo(function TopicContentList({
         const { reference } = quote;
         const quotedPost = replyForQuotedPost(reference, itemSource, item?.id, repliesByFloor, loadedQuotedReplies);
         const expanded = Boolean(expandedQuotes[instanceKey]);
-        const canOpenReference = reference.topicId === item?.id || Boolean(quote.topicUrl);
+        const sameTopic = reference.source === itemSource && reference.topicId === item?.id;
+        const quotedTopic = sameTopic ? null : topicForQuotedPost(quote, item?.url);
+        const canOpenReference = sameTopic || Boolean(quotedTopic);
         return renderTopicListItemFrame(
           <View style={[styles.replyListItem, topicColumnStyle]}>
             <TopicBodyQuoteCard
@@ -1731,24 +1737,20 @@ export const TopicContentList = memo(function TopicContentList({
               header={
                 <Pressable
                   accessibilityLabel={
-                    reference.topicId === item?.id
+                    sameTopic
                       ? `定位引用回复，第 ${reference.postNumber} 楼`
                       : `打开引用主题，${quote.topicTitle || `第 ${reference.postNumber} 楼`}`
                   }
                   accessibilityRole={canOpenReference ? 'button' : undefined}
                   disabled={!canOpenReference}
                   onPress={() => {
-                    if (reference.topicId === item?.id) {
+                    if (sameTopic) {
                       requestReplyLocation({ floor: reference.postNumber });
-                    } else if (quote.topicUrl) {
-                      onOpenTopic({
-                        source: reference.source,
-                        id: reference.topicId,
-                        title: quote.topicTitle || `引用 #${reference.postNumber}`,
-                        author: quote.author?.label || '',
-                        url: quote.topicUrl,
-                        createdAt: ''
-                      });
+                    } else if (quotedTopic) {
+                      onOpenTopic(
+                        quotedTopic,
+                        topicLocationForReply(reference.source, { floor: reference.postNumber })
+                      );
                     }
                   }}
                 >
@@ -1833,13 +1835,6 @@ export const TopicContentList = memo(function TopicContentList({
                   <Text style={styles.countText}> {replyDisplayCount} 条</Text>
                 ) : null}
               </Text>
-              {canWrite ? (
-                <AppButton
-                  label={replyComposerOpen ? '收起回复' : '写回复'}
-                  variant={replyComposerOpen ? 'ghost' : 'default'}
-                  onPress={() => onReplyComposerOpenChange(!replyComposerOpen)}
-                />
-              ) : null}
             </View>
             {repliesPartialStatus ? <Text style={styles.noticeText}>{repliesPartialStatus}</Text> : null}
             {!endedEmpty ? (
@@ -2015,7 +2010,6 @@ export const TopicContentList = memo(function TopicContentList({
       acceptedAnswerReply,
       acceptedAnswerViewKey,
       actionBusy,
-      canWrite,
       endedEmpty,
       closeReplyOrderMenu,
       commentQuery,
@@ -2027,6 +2021,7 @@ export const TopicContentList = memo(function TopicContentList({
       htmlRenderersProps,
       item?.author,
       item?.id,
+      item?.url,
       loadedQuotedReplies,
       loadingPreviousReplies,
       loadingQuotedFloors,
@@ -2042,7 +2037,6 @@ export const TopicContentList = memo(function TopicContentList({
       onToggleTopicBodyQuote,
       openReplyOrderMenu,
       markReplyQuoteContentLayout,
-      onReplyComposerOpenChange,
       onReplyFilterChange,
       onReplyToFloor,
       onToggleReplyQuote,
@@ -2055,7 +2049,6 @@ export const TopicContentList = memo(function TopicContentList({
       requestWindowStartLoad,
       requestReplyLocation,
       itemSource,
-      replyComposerOpen,
       replyHighlightQuery,
       replyFilter,
       replyCollectionComplete,
@@ -2212,12 +2205,17 @@ export const TopicContentList = memo(function TopicContentList({
                   accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
                   testID={topic ? 'topic-detail-loaded' : undefined}
                   style={[styles.content, styles.topicContent]}
-                  contentContainerStyle={styles.topicContentInner}
+                  contentContainerStyle={[
+                    styles.topicContentInner,
+                    { paddingBottom: Math.max(styles.topicContentInner.paddingBottom, bottomContentInset) }
+                  ]}
                   data={topicListItems}
                   keyExtractor={topicListItemKey}
                   getItemType={topicListItemType}
                   ItemSeparatorComponent={TopicListItemSeparator}
                   keyboardShouldPersistTaps="always"
+                  onScroll={onScrollProgress}
+                  scrollEventThrottle={16}
                   onMomentumScrollEnd={onTopicScroll}
                   onScrollEndDrag={onTopicScroll}
                   onEndReachedThreshold={REPLY_END_REACHED_THRESHOLD}

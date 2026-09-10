@@ -2,9 +2,28 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', () => ({ NativeModules: {} }));
 
-import { clearManagedLoginCookies, readManagedCookieHeader, type ManagedCookieNativeModule } from './managedCookies';
+import {
+  clearManagedLoginCookies,
+  readManagedCookieHeader,
+  setLinuxDoCookieResponseBarrier,
+  type ManagedCookieNativeModule
+} from './managedCookies';
 
 describe('managed WebView Cookie boundary', () => {
+  it('requires native acknowledgement of the account barrier', async () => {
+    await expect(setLinuxDoCookieResponseBarrier(true, 'surface-open', 7, {})).rejects.toThrow();
+    const native = {
+      setLinuxDoCookieResponseBarrier: vi.fn(async () => {
+        throw new Error('pending');
+      })
+    };
+    await expect(setLinuxDoCookieResponseBarrier(true, 'surface-open', 7, native)).rejects.toThrow('pending');
+    expect(native.setLinuxDoCookieResponseBarrier).toHaveBeenCalledWith(
+      true,
+      'surface-open',
+      expect.objectContaining({ surfaceGeneration: 7, traceId: expect.stringMatching(/^trace-/) })
+    );
+  });
   it('preserves the difference between an empty exact-url result and an unsupported bridge', async () => {
     const exactUrl = 'https://linux.do/session/current.json';
     const supported: ManagedCookieNativeModule = {
@@ -40,6 +59,6 @@ describe('managed WebView Cookie boundary', () => {
     };
 
     await expect(clearManagedLoginCookies('yaohuo', module)).resolves.toBe(true);
-    expect(module.clearManagedLoginCookies).toHaveBeenCalledWith('yaohuo');
+    expect(module.clearManagedLoginCookies).toHaveBeenCalledWith('yaohuo', {});
   });
 });

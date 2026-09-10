@@ -1,3 +1,4 @@
+import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { memo } from 'react';
 import { ScrollView } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
@@ -13,8 +14,10 @@ export const ReadingSettingsScreen = memo(function ReadingSettingsScreen({
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   const { styles, theme } = useReaderThemeStyles(createMoreScreenStyles);
+  const onPageLayout = useStartupPageLayout();
   return (
     <ScrollView
+      onLayout={onPageLayout}
       style={styles.content}
       contentContainerStyle={styles.moreContentInner}
       keyboardShouldPersistTaps="handled"

@@ -207,6 +207,30 @@ describe('Android local sources', () => {
     ).rejects.toThrow('目标楼层未找到');
   });
 
+  it.each([undefined, 99])(
+    'locates a linux.do reply from its comment ID with an absent or stale floor hint: %s',
+    async (floor) => {
+      const post = {
+        id: 101,
+        topic_id: 42,
+        post_number: 2,
+        username: 'alice',
+        cooked: '<p>reply</p>',
+        created_at: null
+      };
+      const fetcher = vi.fn(async () => json({ id: 42, post_stream: { stream: [100, 101], posts: [post] } }));
+      const result = await getReplies({
+        source: 'linuxdo',
+        id: '42',
+        order: 'oldest',
+        position: { kind: 'target', target: { commentId: 101, floor } },
+        fetcher
+      });
+      expect(result.items).toEqual([expect.objectContaining({ commentId: 101, floor: 2 })]);
+      expect(fetcher.mock.calls.length).toBeLessThanOrEqual(2);
+    }
+  );
+
   it('maps linux.do Discourse polls from topic JSON', async () => {
     const fetcher = vi.fn(async () =>
       json({

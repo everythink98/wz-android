@@ -1111,7 +1111,7 @@ describe('notification routes', () => {
 
     expect(navigation.navigate).toHaveBeenCalledWith('Topic', {
       topic: expect.objectContaining({ source: 'nodeseek', id: '201', title: item.title }),
-      targetReply: { commentId: 987, floor: 12 }
+      location: { kind: 'reply', target: { commentId: 987, floor: 12 } }
     });
     expect(gateway.markRead).not.toHaveBeenCalled();
   });
@@ -1178,76 +1178,79 @@ describe('notification routes', () => {
 
     expect(navigation.navigate).toHaveBeenCalledWith('Topic', {
       topic: expect.objectContaining({ source: 'linuxdo', id: '201' }),
-      targetReply: undefined
+      location: undefined
     });
   });
 
-  it('opens a Discourse opening-post notification without inventing a reply target', async () => {
-    appQueryClient.clear();
-    const item: ForumNotification = {
-      source: 'linuxdo',
-      id: 'watching-first-post:54',
-      kind: 'system',
-      actor: { name: 'everythink98' },
-      title: 'LINUX DO 社区抽奖规则',
-      createdAt: '2026-08-06T23:50:00.000Z',
-      unread: false,
-      target: {
-        type: 'topic-post',
-        topicId: '201',
-        postId: '777',
-        postNumber: 1,
-        url: 'https://linux.do/t/lottery-rules/201/1'
-      }
-    };
-    const topic = {
-      source: 'linuxdo' as const,
-      id: '201',
-      title: item.title,
-      author: item.actor.name,
-      url: item.target.type === 'topic-post' ? item.target.url : '',
-      createdAt: item.createdAt || ''
-    };
-    const gateway = {
-      loadDetail: jest.fn(async () => ({
-        notification: item,
+  it.each(['777', undefined])(
+    'preserves a notification opening identity until it can be confirmed: %s',
+    async (postId) => {
+      appQueryClient.clear();
+      const item: ForumNotification = {
+        source: 'linuxdo',
+        id: 'watching-first-post:54',
+        kind: 'system',
+        actor: { name: 'everythink98' },
+        title: 'LINUX DO 社区抽奖规则',
+        createdAt: '2026-08-06T23:50:00.000Z',
+        unread: false,
+        target: {
+          type: 'topic-post',
+          topicId: '201',
+          postId,
+          postNumber: 1,
+          url: 'https://linux.do/t/lottery-rules/201/1'
+        }
+      };
+      const topic = {
+        source: 'linuxdo' as const,
+        id: '201',
         title: item.title,
-        contentText: '抽奖规则正文',
-        topic
-      })),
-      markRead: jest.fn(async () => ({ confirmed: true }))
-    } as unknown as NotificationRouteRuntimeValue['gateway'];
-    const runtime = {
-      ...routeRuntime(gateway),
-      activeSources: ['linuxdo'] as const,
-      identityKeys: { linuxdo: 'linuxdo:alice' },
-      identitySignature: 'linuxdo:alice'
-    } as NotificationRouteRuntimeValue;
-    const navigation = { navigate: jest.fn() };
-    const view = await render(
-      <NotificationRouteRuntimeProvider value={runtime}>
-        <NavigationContainer>
-          <NotificationDetailRoute
-            navigation={navigation as never}
-            route={{
-              key: 'notification-detail',
-              name: 'NotificationDetail',
-              params: { notification: item, identityKey: 'linuxdo:alice' }
-            }}
-          />
-        </NavigationContainer>
-      </NotificationRouteRuntimeProvider>,
-      { wrapper: QueryTestWrapper }
-    );
+        author: item.actor.name,
+        url: item.target.type === 'topic-post' ? item.target.url : '',
+        createdAt: item.createdAt || ''
+      };
+      const gateway = {
+        loadDetail: jest.fn(async () => ({
+          notification: item,
+          title: item.title,
+          contentText: '抽奖规则正文',
+          topic
+        })),
+        markRead: jest.fn(async () => ({ confirmed: true }))
+      } as unknown as NotificationRouteRuntimeValue['gateway'];
+      const runtime = {
+        ...routeRuntime(gateway),
+        activeSources: ['linuxdo'] as const,
+        identityKeys: { linuxdo: 'linuxdo:alice' },
+        identitySignature: 'linuxdo:alice'
+      } as NotificationRouteRuntimeValue;
+      const navigation = { navigate: jest.fn() };
+      const view = await render(
+        <NotificationRouteRuntimeProvider value={runtime}>
+          <NavigationContainer>
+            <NotificationDetailRoute
+              navigation={navigation as never}
+              route={{
+                key: 'notification-detail',
+                name: 'NotificationDetail',
+                params: { notification: item, identityKey: 'linuxdo:alice' }
+              }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>,
+        { wrapper: QueryTestWrapper }
+      );
 
-    await waitFor(() => expect(view.getByText('抽奖规则正文')).toBeTruthy());
-    await fireEvent.press(view.getByText('查看相关主题'));
+      await waitFor(() => expect(view.getByText('抽奖规则正文')).toBeTruthy());
+      await fireEvent.press(view.getByText('查看相关主题'));
 
-    expect(navigation.navigate).toHaveBeenCalledWith('Topic', {
-      topic: expect.objectContaining({ source: 'linuxdo', id: '201' }),
-      targetReply: undefined
-    });
-  });
+      expect(navigation.navigate).toHaveBeenCalledWith('Topic', {
+        topic: expect.objectContaining({ source: 'linuxdo', id: '201' }),
+        location: postId ? { kind: 'reply', target: { commentId: 777, floor: 1 } } : { kind: 'opening' }
+      });
+    }
+  );
 
   it('forwards the Yaohuo full-reply floor into the Topic route', async () => {
     appQueryClient.clear();
@@ -1302,7 +1305,7 @@ describe('notification routes', () => {
 
     expect(navigation.navigate).toHaveBeenCalledWith('Topic', {
       topic: expect.objectContaining({ source: 'yaohuo', id: '1560939', categoryId: '177' }),
-      targetReply: { floor: 90 }
+      location: { kind: 'reply', target: { floor: 90 } }
     });
   });
 

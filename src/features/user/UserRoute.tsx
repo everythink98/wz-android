@@ -1,57 +1,23 @@
-import { createContext, type ReactNode, useCallback, useContext } from 'react';
+import { useCallback } from 'react';
 import { Linking } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { Topic } from '@/domain/forum/models';
-import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
-import { toggleFollowedUser, type ReaderData, type ReaderDataMutationReason } from '@/domain/reader/readerData';
+
+import { userKey } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
-import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
-import type { SessionSource } from '@/domain/forum/sourceCatalog';
+
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { errorMessage } from '@/platform/network/errors';
-import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
-import type { ReadGateway } from '@/sources/readGateway';
+
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { UserScreen } from './UserScreen';
 import { useUserController } from './useUserController';
+import { useUserRouteRuntime, type UserRouteRuntimeValue } from './UserRouteRuntime';
 
-export type UserRouteRuntimeValue = {
-  account: {
-    linuxDoVerificationVisible: boolean;
-    readGateway: ReadGateway;
-    reconcileAccountStatus: (source: SessionSource) => Promise<unknown>;
-    requestNodeSeekVerification: (message: string, recovery?: LinuxDoReadRecovery) => void;
-    sessionEpochs: ForumSessionEpochs;
-    showLinuxDoVerification: (
-      message?: string,
-      recovery?: LinuxDoReadRecovery
-    ) => void | boolean | Promise<void | boolean>;
-    showYaohuoLogin: (message?: string) => void;
-  };
-  appActive: boolean;
-  nodeSeekMessaging: { identityKey: string | undefined; available: boolean };
-  notify: (message: string) => void;
-  topicStateIndex: TopicListItemStateIndex;
-  reader: {
-    commit: (reason: ReaderDataMutationReason, updater: (current: ReaderData) => ReaderData) => void;
-    data: ReaderData;
-  };
-};
-
-const UserRouteRuntimeContext = createContext<UserRouteRuntimeValue | null>(null);
-
-export function UserRouteRuntimeProvider({ children, value }: { children: ReactNode; value: UserRouteRuntimeValue }) {
-  return <UserRouteRuntimeContext.Provider value={value}>{children}</UserRouteRuntimeContext.Provider>;
-}
-
-function useUserRouteRuntime() {
-  const runtime = useContext(UserRouteRuntimeContext);
-  if (!runtime) throw new Error('UserRouteRuntimeProvider is required');
-  return runtime;
-}
+export { UserRouteRuntimeProvider, type UserRouteRuntimeValue } from './UserRouteRuntime';
 
 type UserRouteProps = NativeStackScreenProps<RootStackParamList, 'User'>;
 
@@ -102,8 +68,13 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     void controller.refreshUser();
   }, [controller]);
   const toggleUserFollow = useCallback(
-    (user: Parameters<typeof toggleFollowedUser>[1]) => {
-      runtime.reader.commit('follow-toggled', (current) => toggleFollowedUser(current, user));
+    (user: import('@/domain/forum/models').UserProfile) => {
+      runtime.reader.commit({
+        type: 'follow',
+        user,
+        enabled: !runtime.reader.dataRef.current.followedUsers[userKey(user)],
+        at: new Date().toISOString()
+      });
     },
     [runtime.reader]
   );

@@ -565,7 +565,8 @@ describe('notification screens', () => {
     expect(onOpenExternalUrl).not.toHaveBeenCalled();
     expect(onOpenTopic).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: '321', source: 'yaohuo' }));
     expect(onOpenTopic).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: '321', source: 'yaohuo' }), {
-      floor: 90
+      kind: 'reply',
+      target: { floor: 90 }
     });
   });
 

@@ -63,6 +63,7 @@ const anonymousSession: SiteSessionState = {
 function createController(
   options: {
     onBeforeLinuxDoSurfaceOpened?: () => void;
+    prepareLinuxDoCookieResponseBarrier?: () => Promise<void>;
     reconcileAccountStatus?: (source: 'linuxdo') => Promise<AccountReconcileResult>;
   } = {}
 ) {
@@ -84,6 +85,7 @@ function createController(
     options.reconcileAccountStatus || (async () => ({ status: 'same', session: loggedInSession }) as const)
   );
   const setLinuxDoWebViewError = vi.fn();
+  const setMountLinuxDoWebView = vi.fn();
   const setLinuxDoWebViewUserAgent = vi.fn();
   const commitLinuxDoWebViewUserAgent = vi.fn((userAgent: string) => {
     linuxDoWebViewUserAgentRef.current = userAgent;
@@ -103,6 +105,7 @@ function createController(
     isLinuxDoSurfaceVisible: () => showLinuxDoPanelRef.current,
     notify,
     onBeforeLinuxDoSurfaceOpened: options.onBeforeLinuxDoSurfaceOpened,
+    prepareLinuxDoCookieResponseBarrier: options.prepareLinuxDoCookieResponseBarrier,
     onLoginWebViewFailure,
     onLinuxDoSurfaceClosed,
     onLinuxDoSurfaceOpened,
@@ -111,7 +114,7 @@ function createController(
     setLinuxDoWebViewError,
     setLinuxDoWebViewKey: vi.fn(),
     setLoadingLinuxDoPage: vi.fn(),
-    setMountLinuxDoWebView: vi.fn(),
+    setMountLinuxDoWebView,
     updateLinuxDoSession,
     updateNodeSeekSession: vi.fn()
   });
@@ -129,6 +132,7 @@ function createController(
     );
   return {
     controller,
+    setMountLinuxDoWebView,
     commitLinuxDoWebViewUserAgent,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,
@@ -152,6 +156,37 @@ afterEach(() => {
 });
 
 describe('linux.do visible verification coordinator', () => {
+  it('waits for native cookie writes to settle before mounting the login page', async () => {
+    vi.useFakeTimers();
+    let settle!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const { controller, setMountLinuxDoWebView } = createController({
+      prepareLinuxDoCookieResponseBarrier: () => barrier
+    });
+    await controller.showLinuxDoVerification();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(setMountLinuxDoWebView).not.toHaveBeenCalledWith(true);
+    settle();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(setMountLinuxDoWebView).toHaveBeenCalledWith(true);
+  });
+
+  it('keeps a failed cookie handoff unmounted and allows refresh to retry', async () => {
+    vi.useFakeTimers();
+    const prepare = vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue(undefined);
+    const { controller, setMountLinuxDoWebView, setLinuxDoWebViewError } = createController({
+      prepareLinuxDoCookieResponseBarrier: prepare
+    });
+    await controller.showLinuxDoVerification();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(setMountLinuxDoWebView).not.toHaveBeenCalledWith(true);
+    expect(setLinuxDoWebViewError).toHaveBeenCalledWith(expect.stringContaining('重试'));
+    controller.resetLinuxDoWebView();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(setMountLinuxDoWebView).toHaveBeenCalledWith(true);
+  });
   it('opens the surface without probing identity or accepting page cookies', async () => {
     const {
       controller,

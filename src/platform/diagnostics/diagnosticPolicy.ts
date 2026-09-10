@@ -156,6 +156,8 @@ const operationValues = closedValues(
   'notification-identity',
   'notification-state-load',
   'load-settings',
+  'migrate',
+  'migration-cleanup',
   'restore',
   'pause',
   'composer-init',
@@ -179,6 +181,7 @@ const operationValues = closedValues(
   'check',
   'collection',
   'cookie-store-read',
+  'cookie-barrier',
   'clear',
   'clear-login-only',
   'delete',
@@ -373,6 +376,7 @@ const stateValues = closedValues(
   'quote-expanded',
   'ready',
   'recovery-mode',
+  'cleanup-pending',
   'refresh',
   'refresh-blocked',
   'refresh-canceled',
@@ -563,8 +567,25 @@ const categoricalFieldValues = {
   flow: closedValues('background', 'foreground', 'write'),
   requestType: requestTypeValues,
   credentialSource: closedValues('nodeimage', 'none', 'secure-store', 'managed-cookie-jar'),
+  cookieBarrierReason: closedValues(
+    'startup',
+    'source-change',
+    'surface-open',
+    'surface-close',
+    'identity-change',
+    'explicit-clear'
+  ),
   parserVariant: parserVariantValues,
   transport: closedValues('direct', 'managed', 'native', 'webview'),
+  accountCheckTrigger: closedValues('read-failure', 'surface-close', 'explicit-refresh'),
+  accountEvidence: closedValues(
+    'current-user',
+    'session-404',
+    'null-user',
+    'challenge',
+    'http-error',
+    'invalid-response'
+  ),
   kind: closedValues(
     'action-required',
     'failed',
@@ -699,6 +720,8 @@ const contentTypeValues = closedValues(
 );
 
 const numberFieldKeys = closedValues(
+  'surfaceGeneration',
+  'elapsedMs',
   'filteredCount',
   'failedSources',
   'delivered',
@@ -863,6 +886,7 @@ export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {
   if (normalizedReason === 'pending') return 'busy';
   if (normalizedReason === 'expired') return 'login_required';
   if (normalizedReason === 'http_401') return 'login_required';
+  if (normalizedReason === 'account_recheck_required') return 'login_required';
   const text =
     error instanceof Error
       ? `${error.name} ${error.message}`.toLowerCase()

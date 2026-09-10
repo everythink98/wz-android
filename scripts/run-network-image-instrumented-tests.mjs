@@ -88,7 +88,7 @@ try {
       '-r',
       '-e',
       'class',
-      'com.wz.reader.NetworkImageRuntimeInstrumentedTest',
+      'com.wz.reader.NetworkImageRuntimeInstrumentedTest,com.wz.reader.ManagedCookieResponsesInstrumentedTest',
       'com.wz.reader.test/androidx.test.runner.AndroidJUnitRunner'
     ],
     { encoding: 'utf8', timeout: 120_000 }
@@ -96,6 +96,35 @@ try {
   process.stdout.write(result);
   if (!/OK \([1-9]\d* tests?\)/u.test(result))
     throw new Error('Image instrumentation did not pass a nonzero test count.');
+  for (const [stage, method] of [
+    ['write', 'persistRenewalBeforeProcessExit'],
+    ['read', 'restartedProcessAuthenticatesWithPersistedRenewal']
+  ]) {
+    // This synthetic origin and process interruption belong exclusively to the isolated AVD.
+    execFileSync('adb', ['-s', serial, 'shell', 'am', 'force-stop', 'com.wz.reader']);
+    const proof = execFileSync(
+      'adb',
+      [
+        '-s',
+        serial,
+        'shell',
+        'am',
+        'instrument',
+        '-w',
+        '-r',
+        '-e',
+        'cookieProofStage',
+        stage,
+        '-e',
+        'class',
+        `com.wz.reader.ManagedCookieResponsesInstrumentedTest#${method}`,
+        'com.wz.reader.test/androidx.test.runner.AndroidJUnitRunner'
+      ],
+      { encoding: 'utf8', timeout: 60_000 }
+    );
+    process.stdout.write(proof);
+    if (!/OK \(1 test\)/u.test(proof)) throw new Error(`Cookie restart proof ${stage} failed.`);
+  }
 } finally {
   if (path.dirname(path.resolve(fixture)) !== path.resolve(scratchRoot))
     throw new Error('Invalid fixture cleanup path.');

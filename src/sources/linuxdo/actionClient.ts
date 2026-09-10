@@ -3,7 +3,7 @@ import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { discourseActionResponseMessage, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
-import { LINUXDO_BASE_URL } from './protocol';
+import { LINUXDO_BASE_URL, linuxDoRequestError } from './protocol';
 
 const LINUXDO_ACTION_HEADERS = {
   Accept: 'application/json,text/plain,*/*',
@@ -24,17 +24,10 @@ function linuxDoLoginRequiredError() {
 
 function linuxDoActionError(data: Record<string, unknown>, status: number) {
   const message = discourseActionResponseMessage(data, `linux.do 请求失败：HTTP ${status}`);
-  if (status === 401 || /login|log in|csrf|登录已失效|重新登录|请先.*登录/i.test(message)) {
+  if (status === 401) {
     return linuxDoLoginRequiredError();
   }
-  const error = new Error(message);
-  if (status === 403) {
-    Object.assign(error, {
-      source: 'linuxdo',
-      reason: 'permission'
-    });
-  }
-  return error;
+  return linuxDoRequestError(message, status, data);
 }
 
 async function readJsonResponse(response: Response) {
@@ -86,9 +79,7 @@ async function getCsrfToken({
   );
   const data = await readJsonResponse(response);
   if (!response.ok) {
-    throw response.status === 401 || response.status === 403
-      ? linuxDoLoginRequiredError()
-      : new Error(`linux.do 请求失败：HTTP ${response.status}`);
+    throw linuxDoActionError(data, response.status);
   }
   const token = typeof data.csrf === 'string' ? data.csrf : typeof data.csrf_token === 'string' ? data.csrf_token : '';
   if (!token) {

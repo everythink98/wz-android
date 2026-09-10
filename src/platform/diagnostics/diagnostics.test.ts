@@ -60,6 +60,7 @@ describe('diagnostic traces', () => {
     expect(normalizeDiagnosticReason({ reason: 'identity-pending' })).toBe('identity_pending');
     expect(normalizeDiagnosticReason({ reason: 'object-forbidden' })).toBe('object_forbidden');
     expect(normalizeDiagnosticReason({ reason: 'source-disabled' })).toBe('source_disabled');
+    expect(normalizeDiagnosticReason({ reason: 'account-recheck-required' })).toBe('login_required');
     expect(safeFields({ privateCount: 3, reason: 'private-reason' })).toEqual({ reason: 'unknown' });
   });
 

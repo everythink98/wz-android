@@ -15,6 +15,10 @@ function errorFlag(error: unknown, key: 'loginRequired' | 'verificationRequired'
   return Boolean(error && typeof error === 'object' && (error as Record<string, unknown>)[key]);
 }
 
+export function errorRequiresAccountRecheck(error: unknown) {
+  return errorProperty(error, 'reason') === 'account-recheck-required';
+}
+
 function errorStatus(error: unknown) {
   const status = errorProperty(error, 'status') ?? errorProperty(error, 'statusCode');
   return typeof status === 'number' ? status : Number(status) || 0;

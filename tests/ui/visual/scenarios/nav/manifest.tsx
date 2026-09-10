@@ -65,15 +65,15 @@ function NavShellScenario() {
       moreBadgeState="messages"
       navigationTheme={navigationTheme}
       FeedRouteComponent={FeedTabSurface}
-      LibraryRouteComponent={LibraryRoute}
-      MoreRouteComponent={MoreRoute}
-      NotificationDetailRouteComponent={PlaceholderRoute}
-      NotificationSettingsRouteComponent={PlaceholderRoute}
-      NotificationsRouteComponent={PlaceholderRoute}
-      ReadingSettingsRouteComponent={PlaceholderRoute}
-      SearchRouteComponent={SearchTabSurface}
-      TopicRouteComponent={PlaceholderRoute}
-      UserRouteComponent={PlaceholderRoute}
+      getLibraryRoute={() => LibraryRoute}
+      getMoreRoute={() => MoreRoute}
+      getNotificationDetailRoute={() => PlaceholderRoute}
+      getNotificationSettingsRoute={() => PlaceholderRoute}
+      getNotificationsRoute={() => PlaceholderRoute}
+      getReadingSettingsRoute={() => PlaceholderRoute}
+      getSearchRoute={() => SearchTabSurface}
+      getTopicRoute={() => PlaceholderRoute}
+      getUserRoute={() => PlaceholderRoute}
       styles={styles}
       theme={theme}
       onReady={noop}

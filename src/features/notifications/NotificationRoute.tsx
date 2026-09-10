@@ -1,4 +1,5 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { topicLocationForReply } from '@/domain/forum/topicLocation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
@@ -7,14 +8,10 @@ import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { SourceErrorInfo } from '@/domain/forum/models';
-import type {
-  AccountReconcileResult,
-  LinuxDoReadRecovery,
-  LinuxDoReadResumeOutcome
-} from '@/domain/session/sessionContracts';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification } from '@/domain/notifications/models';
-import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
+
 import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 import { parseForumTopicLink } from '@/domain/forum/links';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
@@ -23,14 +20,14 @@ import { errorMessage } from '@/platform/network/errors';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
-import type { ReadGateway } from '@/sources/readGateway';
+
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
 import { normalizeReplyImageAsset } from '@/sources/imageUpload';
 import { currentNodeImageApiKeyGeneration } from '@/sources/nodeimage/credentials';
 import { isNodeImageApiKeyExpiredError } from '@/sources/nodeimage/upload';
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
-import type { NotificationsRuntimeValue } from './useNotificationsRuntime';
+
 import { notificationErrorAction, sortNotifications } from './notificationPresentation';
 import {
   NotificationDetailScreen,
@@ -38,37 +35,9 @@ import {
   NotificationsScreen,
   type NotificationFilterSource
 } from './NotificationScreens';
+import { useNotificationRouteRuntime, type NotificationRouteRuntimeValue } from './NotificationRouteRuntime';
 
-export type NotificationRouteRuntimeValue = NotificationsRuntimeValue & {
-  composer: {
-    ensureNodeImageApiKey: () => Promise<string | null>;
-    ensureWritableSession: (source: NotificationSource) => Promise<WritableSessionTicket>;
-    getDiscourseEmojiUrls: ReadGateway['getEmojiUrls'];
-    isWritableSessionTicketCurrent: (ticket: WritableSessionTicket) => boolean;
-  };
-  contentWidth: number;
-  notify: (message: string) => void;
-  reconcileAccountStatus: (source: NotificationSource) => Promise<AccountReconcileResult>;
-  openAccountSurface: (source: NotificationSource, message: string, recovery?: LinuxDoReadRecovery) => Promise<void>;
-};
-
-const NotificationRouteRuntimeContext = createContext<NotificationRouteRuntimeValue | null>(null);
-
-export function NotificationRouteRuntimeProvider({
-  children,
-  value
-}: {
-  children: ReactNode;
-  value: NotificationRouteRuntimeValue;
-}) {
-  return <NotificationRouteRuntimeContext.Provider value={value}>{children}</NotificationRouteRuntimeContext.Provider>;
-}
-
-function useNotificationRouteRuntime() {
-  const runtime = useContext(NotificationRouteRuntimeContext);
-  if (!runtime) throw new Error('NotificationRouteRuntimeProvider is required');
-  return runtime;
-}
+export { NotificationRouteRuntimeProvider, type NotificationRouteRuntimeValue } from './NotificationRouteRuntime';
 
 type NotificationPageParam = {
   sourceCursor?: string | null;
@@ -733,16 +702,13 @@ function EnabledNotificationDetailRoute({
     item.target.type === 'topic' || item.target.type === 'topic-post' ? parseForumTopicLink(item.target.url) : null;
   const targetTopic = detailQuery.data?.topic || (fallbackTopic ? { ...fallbackTopic, title: item.title } : null);
   const targetCommentId = item.target.type === 'topic-post' ? Number(item.target.postId) : 0;
-  const targetIsDiscourseOpeningPost =
-    item.target.type === 'topic-post' && isDiscourseSource(item.source) && item.target.postNumber === 1;
-  const targetReply =
+  const location =
     item.target.type === 'topic-post' &&
-    !targetIsDiscourseOpeningPost &&
     ((Number.isSafeInteger(targetCommentId) && targetCommentId > 0) || item.target.postNumber)
-      ? {
+      ? topicLocationForReply(item.source, {
           ...(Number.isSafeInteger(targetCommentId) && targetCommentId > 0 ? { commentId: targetCommentId } : {}),
           ...(item.target.postNumber ? { floor: item.target.postNumber } : {})
-        }
+        })
       : undefined;
   const openExternalUrl = useCallback(
     (url: string) => {
@@ -942,9 +908,9 @@ function EnabledNotificationDetailRoute({
       onRetry={() => {
         if (canAccessSource) void detailQuery.refetch();
       }}
-      onOpenTopic={(linkedTopic, linkedTargetReply) => {
+      onOpenTopic={(linkedTopic, linkedLocation) => {
         const topic = linkedTopic || targetTopic;
-        if (topic) navigation.navigate('Topic', { topic, targetReply: linkedTopic ? linkedTargetReply : targetReply });
+        if (topic) navigation.navigate('Topic', { topic, location: linkedTopic ? linkedLocation : location });
       }}
       onOpenReply={() => {
         setReplyError('');

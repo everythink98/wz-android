@@ -1214,8 +1214,30 @@ describe('Topic real child components', () => {
     const view = await render(<FloorLinkHarness />);
     await fireEvent.press(view.getByTestId('html-link-#155'));
     expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', id: '832584' }), {
-      floor: 155,
-      pageHint: 16
+      kind: 'reply',
+      target: { floor: 155, pageHint: 16 }
+    });
+  });
+
+  it('uses a cross-topic quote identity without falling back to the current topic when its URL is absent', async () => {
+    const onOpenTopic = jest.fn();
+    const onLocateReply = jest.fn();
+    const props = replyProps({
+      source: 'linuxdo',
+      topicId: '2885866',
+      onOpenTopic,
+      onLocateReply,
+      reply: {
+        ...replyProps().reply,
+        quotedPosts: [{ reference: { source: 'linuxdo', topicId: '2686247', postNumber: 6 } }]
+      }
+    });
+    const view = await render(<VirtualizedReplyRows props={props} />);
+    await fireEvent.press(view.getByText('引用 #6'));
+    expect(onLocateReply).not.toHaveBeenCalled();
+    expect(onOpenTopic).toHaveBeenCalledWith(expect.objectContaining({ id: '2686247', source: 'linuxdo' }), {
+      kind: 'reply',
+      target: { floor: 6 }
     });
   });
 
@@ -1265,8 +1287,10 @@ describe('Topic real child components', () => {
         id: '2679944',
         title: '跨主题引用标题'
       }),
-      { floor: 1 }
+      { kind: 'opening' }
     );
+    await fireEvent.press(view.getByText('引用 #1'));
+    expect(onOpenTopic).toHaveBeenLastCalledWith(expect.objectContaining({ id: '2679944' }), { kind: 'opening' });
     await fireEvent.press(view.getByText('展开'));
     expect(onToggleReplyQuote).toHaveBeenCalledWith({
       replyKey: 'comment:22',

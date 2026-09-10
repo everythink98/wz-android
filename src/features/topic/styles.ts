@@ -186,6 +186,35 @@ export function createTopicStyles(theme: ReaderTheme, settings: ReaderSettings) 
     topicScreenRoot: {
       flex: 1
     },
+    replyActionPosition: {
+      position: 'absolute',
+      right: 16,
+      bottom: 16
+    },
+    replyAction: {
+      minHeight: 56,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingHorizontal: 20,
+      paddingVertical: 14,
+      borderRadius: 999,
+      backgroundColor: theme.dark ? theme.primary : theme.primaryStrong,
+      elevation: 3,
+      shadowColor: '#000000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.16,
+      shadowRadius: 4
+    },
+    replyActionText: {
+      flexShrink: 1,
+      color: theme.onPrimary,
+      fontFamily: appFontFamily,
+      fontWeight: '500',
+      fontSize: Math.round(14 * fontScale),
+      lineHeight: Math.round(20 * fontScale)
+    },
     topicContentInner: {
       gap: 0,
       padding: 16,

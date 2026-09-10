@@ -1,10 +1,29 @@
 import type { DiscourseFeedFilter, Topic } from '@/domain/forum/models';
+import { accessRequirementFromObject, accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { accessRequirementLevelValue, accessRequirementSpecificity } from '@/domain/forum/presentation';
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 import { discourseAvatarUrl } from '@/sources/discourse/content';
 
 export const LINUXDO_BASE_URL: string = sourceCatalog.linuxdo.baseUrl;
 export const LINUXDO_UNCATEGORIZED_CATEGORY_NAME = '未分类';
+
+export function linuxDoRequestError(message: string, status: number, data?: unknown) {
+  const accessRequirement = preferredLinuxDoAccessRequirement(
+    accessRequirementFromObject(data),
+    accessRequirementFromText(message)
+  );
+  const recheck = accessRequirement?.type === 'login' && !/csrf|authenticity[ _-]?token/i.test(message);
+  return Object.assign(new Error(message), {
+    source: 'linuxdo',
+    status,
+    ...(accessRequirement ? { accessRequirement } : {}),
+    ...(recheck
+      ? { kind: 'login-required', reason: 'account-recheck-required' }
+      : status === 403
+        ? { reason: 'permission' }
+        : {})
+  });
+}
 
 const LINUXDO_FEED_PATHS: Record<DiscourseFeedFilter, string> = {
   latest: '/latest.json',

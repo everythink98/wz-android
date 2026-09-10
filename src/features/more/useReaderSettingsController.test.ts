@@ -1,32 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { applyReaderSettingsPatch } from './useReaderSettingsController';
+import { createEmptyReaderState, projectReaderCommand } from '@/domain/reader/readerRecordState';
 
-describe('reader settings controller helpers', () => {
-  it('updates only reader settings fields from the patch', () => {
-    const current = createEmptyReaderData();
-    const next = applyReaderSettingsPatch(current, {
-      fontScale: 1.15,
-      theme: 'dark'
-    });
-
-    expect(next).not.toBe(current);
-    expect(next.settings).toEqual({
-      ...current.settings,
-      fontScale: 1.15,
-      theme: 'dark'
-    });
-    expect(next.favorites).toBe(current.favorites);
+describe('reader settings commands', () => {
+  it('validates settings while preserving all record memberships', () => {
+    const current = createEmptyReaderState();
+    const next = projectReaderCommand(current, { type: 'settings', patch: { fontScale: 100, theme: 'dark' } });
+    expect(next.settings.fontScale).toBe(1.4);
+    expect(next.settings.theme).toBe('dark');
     expect(next.history).toBe(current.history);
+    expect(next.favorites).toBe(current.favorites);
   });
-
-  it('skips unchanged settings patches', () => {
-    const current = createEmptyReaderData();
-    const next = applyReaderSettingsPatch(current, {
-      fontScale: current.settings.fontScale,
-      theme: current.settings.theme
-    });
-
-    expect(next).toBe(current);
+  it('unchanged settings preserve the current state', () => {
+    const current = createEmptyReaderState();
+    expect(projectReaderCommand(current, { type: 'settings', patch: { theme: current.settings.theme } })).toBe(current);
   });
 });

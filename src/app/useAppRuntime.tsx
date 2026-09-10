@@ -4,11 +4,11 @@ import { useAppUpdateRuntime } from '@/platform/update/useAppUpdateRuntime';
 import { useAccountRuntime } from '@/features/account/useAccountRuntime';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import type { FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
-import type { LibraryRouteRuntimeValue } from '@/features/library/LibraryRoute';
-import type { MoreRouteRuntimeValue } from '@/features/more/MoreRoute';
-import type { SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
-import type { TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
-import type { UserRouteRuntimeValue } from '@/features/user/UserRoute';
+import type { LibraryRouteRuntimeValue } from '@/features/library/LibraryRouteRuntime';
+import type { MoreRouteRuntimeValue } from '@/features/more/MoreRouteRuntime';
+import type { SearchRouteRuntimeValue } from '@/features/search/SearchRouteRuntime';
+import type { TopicRouteRuntimeValue } from '@/features/topic/TopicRouteRuntime';
+import type { UserRouteRuntimeValue } from '@/features/user/UserRouteRuntime';
 import { nodeSeekUserIdForSession } from '@/domain/session/siteSessionState';
 import { useAppTheme } from './useAppTheme';
 import { useForumCatalogRuntime } from './useForumCatalogRuntime';
@@ -16,7 +16,7 @@ import { useAppBackHandler } from './useAppBackHandler';
 import { useAppDiagnosticsRuntime } from './useAppDiagnosticsRuntime';
 import { useAppLifecycleRuntime } from './useAppLifecycleRuntime';
 import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
-import type { NotificationRouteRuntimeValue } from '@/features/notifications/NotificationRoute';
+import type { NotificationRouteRuntimeValue } from '@/features/notifications/NotificationRouteRuntime';
 import { moreBadgeState as notificationMoreBadgeState } from '@/ui/navigation/moreBadge';
 import { openNotificationsRoute } from './appNavigation';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
@@ -40,7 +40,7 @@ export function useAppRuntime() {
     screen,
     width
   } = lifecycle;
-  const { commitReaderData, readerData, readerDataLoaded, readerDataRef, replaceReaderData, waitForReaderDataSave } =
+  const { commitReaderData, readerData, readerDataLoaded, readerDataRef, importBackup, exportBackup } =
     useReaderRuntime({ notify });
 
   const { favorites, history } = readerData;
@@ -99,8 +99,13 @@ export function useAppRuntime() {
     sessionsReady,
     statusBusy
   } = accountRuntime.read;
-  const { ensureNodeImageApiKey, ensureWritableSession, isWritableSessionTicketCurrent, onSessionExpired } =
-    accountRuntime.write;
+  const {
+    ensureNodeImageApiKey,
+    ensureWritableSession,
+    isWritableSessionTicketCurrent,
+    onSessionExpired,
+    requestAccountRecheck
+  } = accountRuntime.write;
   const {
     closeTopmostSurface: closeTopmostAccountSurface,
     linuxDoVerificationVisible: showLinuxDoPanel,
@@ -205,6 +210,7 @@ export function useAppRuntime() {
         getNodeSeekUserAgent,
         nodeSeekUserId: effectiveNodeSeekUserId,
         onSessionExpired,
+        requestAccountRecheck,
         readGateway,
         reconcileAccountStatus,
         requestNodeSeekVerification,
@@ -245,6 +251,7 @@ export function useAppRuntime() {
       notify,
       onSessionExpired,
       readGateway,
+      requestAccountRecheck,
       readerData,
       readerDataRef,
       readerStyleContext,
@@ -274,7 +281,8 @@ export function useAppRuntime() {
       notify,
       reader: {
         commit: commitReaderData,
-        data: readerData
+        data: readerData,
+        dataRef: readerDataRef
       },
       topicStateIndex
     }),
@@ -287,6 +295,7 @@ export function useAppRuntime() {
       notify,
       readGateway,
       readerData,
+      readerDataRef,
       reconcileAccountStatus,
       requestNodeSeekVerification,
       showLinuxDoPanel,
@@ -457,8 +466,8 @@ export function useAppRuntime() {
         commit: commitReaderData,
         data: readerData,
         dataRef: readerDataRef,
-        replace: replaceReaderData,
-        waitForSave: waitForReaderDataSave
+        importBackup,
+        exportBackup
       },
       update: updateRuntime
     }),
@@ -489,9 +498,9 @@ export function useAppRuntime() {
       notify,
       readerData,
       readerDataRef,
-      replaceReaderData,
+      importBackup,
       updateRuntime,
-      waitForReaderDataSave
+      exportBackup
     ]
   );
   return {

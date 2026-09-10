@@ -1,27 +1,40 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- React Navigation getComponent defers synchronous page evaluation. */
 import type { ComponentProps } from 'react';
 import { AppNavigator } from './AppNavigator';
 import { FeedRoute, FeedRouteRuntimeProvider, type FeedRouteRuntimeValue } from '@/features/feed/FeedRoute';
+import { LibraryRouteRuntimeProvider, type LibraryRouteRuntimeValue } from '@/features/library/LibraryRouteRuntime';
+import { MoreRouteRuntimeProvider, type MoreRouteRuntimeValue } from '@/features/more/MoreRouteRuntime';
+import { SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRouteRuntime';
+import { TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRouteRuntime';
+import { UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRouteRuntime';
 import {
-  LibraryRoute,
-  LibraryRouteRuntimeProvider,
-  type LibraryRouteRuntimeValue
-} from '@/features/library/LibraryRoute';
-import {
-  MoreRoute,
-  MoreRouteRuntimeProvider,
-  ReadingSettingsRoute,
-  type MoreRouteRuntimeValue
-} from '@/features/more/MoreRoute';
-import { SearchRoute, SearchRouteRuntimeProvider, type SearchRouteRuntimeValue } from '@/features/search/SearchRoute';
-import { TopicRoute, TopicRouteRuntimeProvider, type TopicRouteRuntimeValue } from '@/features/topic/TopicRoute';
-import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
-import {
-  NotificationDetailRoute,
   NotificationRouteRuntimeProvider,
-  NotificationSettingsRoute,
-  NotificationsRoute,
   type NotificationRouteRuntimeValue
-} from '@/features/notifications/NotificationRoute';
+} from '@/features/notifications/NotificationRouteRuntime';
+
+const getLibraryRoute = () =>
+  require('@/features/library/LibraryRoute')
+    .LibraryRoute as typeof import('@/features/library/LibraryRoute').LibraryRoute;
+const getMoreRoute = () =>
+  require('@/features/more/MoreRoute').MoreRoute as typeof import('@/features/more/MoreRoute').MoreRoute;
+const getSearchRoute = () =>
+  require('@/features/search/SearchRoute').SearchRoute as typeof import('@/features/search/SearchRoute').SearchRoute;
+const getTopicRoute = () =>
+  require('@/features/topic/TopicRoute').TopicRoute as typeof import('@/features/topic/TopicRoute').TopicRoute;
+const getUserRoute = () =>
+  require('@/features/user/UserRoute').UserRoute as typeof import('@/features/user/UserRoute').UserRoute;
+const getNotificationsRoute = () =>
+  require('@/features/notifications/NotificationRoute')
+    .NotificationsRoute as typeof import('@/features/notifications/NotificationRoute').NotificationsRoute;
+const getReadingSettingsRoute = () =>
+  require('@/features/more/MoreRoute')
+    .ReadingSettingsRoute as typeof import('@/features/more/MoreRoute').ReadingSettingsRoute;
+const getNotificationDetailRoute = () =>
+  require('@/features/notifications/NotificationRoute')
+    .NotificationDetailRoute as typeof import('@/features/notifications/NotificationRoute').NotificationDetailRoute;
+const getNotificationSettingsRoute = () =>
+  require('@/features/notifications/NotificationRoute')
+    .NotificationSettingsRoute as typeof import('@/features/notifications/NotificationRoute').NotificationSettingsRoute;
 
 type NavigatorProps = ComponentProps<typeof AppNavigator>;
 
@@ -66,15 +79,15 @@ export function AppRoutes({
                     moreBadgeState={moreBadgeState}
                     navigationTheme={navigationTheme}
                     FeedRouteComponent={FeedRoute}
-                    LibraryRouteComponent={LibraryRoute}
-                    MoreRouteComponent={MoreRoute}
-                    NotificationDetailRouteComponent={NotificationDetailRoute}
-                    NotificationSettingsRouteComponent={NotificationSettingsRoute}
-                    NotificationsRouteComponent={NotificationsRoute}
-                    ReadingSettingsRouteComponent={ReadingSettingsRoute}
-                    SearchRouteComponent={SearchRoute}
-                    TopicRouteComponent={TopicRoute}
-                    UserRouteComponent={UserRoute}
+                    getLibraryRoute={getLibraryRoute}
+                    getMoreRoute={getMoreRoute}
+                    getNotificationDetailRoute={getNotificationDetailRoute}
+                    getNotificationSettingsRoute={getNotificationSettingsRoute}
+                    getNotificationsRoute={getNotificationsRoute}
+                    getReadingSettingsRoute={getReadingSettingsRoute}
+                    getSearchRoute={getSearchRoute}
+                    getTopicRoute={getTopicRoute}
+                    getUserRoute={getUserRoute}
                     styles={styles}
                     theme={theme}
                     onReady={onReady}

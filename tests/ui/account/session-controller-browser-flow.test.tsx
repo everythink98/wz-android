@@ -9,6 +9,7 @@ import {
   publishReadNetworkRuntimeRotation
 } from '@/platform/network/readNetworkRuntime';
 import { proveForumReadResponse, runForumSourceReadAttempt } from '@/sources/forumSourceReadAttempt';
+import { withLinuxDoConnectSessionRecoveryIntent } from '@/sources/linuxdo/browserFallback';
 
 jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(async () => undefined),
@@ -55,6 +56,38 @@ function renderSessionController(
 describe('session controller browser flow', () => {
   afterEach(() => {
     mockRecoverReadNetworkRuntime.mockReset();
+  });
+
+  it('cancels active and queued Connect work at handoff without changing account identity', async () => {
+    const onSiteSessionEvent = jest.fn<(event: ScopedSiteSessionEvent) => void>();
+    const hook = await renderSessionController(
+      jest.fn(async () => new Response('{}')),
+      onSiteSessionEvent
+    );
+    const epoch = hook.result.current.forumSessionEpochs.linuxdo;
+    let requests!: Promise<Response | Error>[];
+    await act(async () => {
+      requests = [0, 1].map(() =>
+        hook.result.current
+          .forumFetchWithWebViewFallback('https://connect.linux.do/', withLinuxDoConnectSessionRecoveryIntent({}))
+          .catch((error: Error) => error)
+      );
+    });
+    await waitFor(() => expect(hook.result.current.hiddenBrowserFetchRequests.linuxDo).not.toBeNull());
+    const oldId = hook.result.current.hiddenBrowserFetchRequests.linuxDo!.id;
+    await act(async () => {
+      hook.result.current.cancelLinuxDoBrowserHandoff();
+      const results = await Promise.all(requests);
+      expect(results.every((result) => result instanceof Error)).toBe(true);
+      await hook.result.current.completeLinuxDoBrowserFetch({
+        id: oldId,
+        url: 'https://connect.linux.do/',
+        body: '<html>old identity</html>'
+      });
+    });
+    expect(hook.result.current.hiddenBrowserFetchRequests.linuxDo).toBeNull();
+    expect(hook.result.current.forumSessionEpochs.linuxdo).toBe(epoch);
+    expect(onSiteSessionEvent).not.toHaveBeenCalled();
   });
 
   it('wires a parsed fallback to the generation captured before HiddenBrowserHost starts', async () => {
@@ -142,7 +175,10 @@ describe('session controller browser flow', () => {
         ]();
       });
 
-      expect(clearManagedLoginCookies).toHaveBeenCalledWith(source);
+      expect(clearManagedLoginCookies).toHaveBeenCalledWith(source, {
+        appSessionId: expect.stringMatching(/^session-/),
+        traceId: expect.stringMatching(/^trace-/)
+      });
       expect(onSiteSessionEvent).toHaveBeenCalledWith({ site: source, type: 'cleared' });
       expect(hook.result.current.forumSessionEpochs[source]).toBe(initialForumSessionEpochs[source]);
     }

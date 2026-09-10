@@ -6,9 +6,9 @@ import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
 import { CheckCircle, Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react-native';
 import type {
-  QuotedPostMetadata,
   Reply,
   ReplyLocationTarget,
+  TopicLocationTarget,
   ReplyTargetAuthor,
   Source,
   Topic,
@@ -19,7 +19,7 @@ import type {
 import { highlightHtml } from '@/ui/text/highlight';
 import { stripHtml } from '@/domain/forum/text';
 import { formatDateTime } from '@/domain/forum/presentation';
-import { parseForumTopicLink } from '@/domain/forum/links';
+import { topicLocationForReply } from '@/domain/forum/topicLocation';
 import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
 import {
   discourseReactionStats,
@@ -31,6 +31,7 @@ import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import {
   quotedPostsForSource,
   replyForQuotedPost,
+  topicForQuotedPost,
   replyQuotedPostInstanceKey,
   type ToggleReplyQuoteOptions
 } from '@/domain/forum/quotedPosts';
@@ -55,14 +56,6 @@ type ReplyItemSection = Extract<
       'replyStart' | 'replyQuoteSummary' | 'replyQuoteContent' | 'replyContent' | 'replySignatureContent' | 'replyEnd';
   }
 >;
-
-function topicForQuotedPost(quote: QuotedPostMetadata, baseUrl?: string): Topic | null {
-  if (!quote.topicUrl) return null;
-  const topic = parseForumTopicLink(quote.topicUrl, baseUrl);
-  return topic?.source === quote.reference.source && topic.id === quote.reference.topicId
-    ? { ...topic, ...(quote.topicTitle ? { title: quote.topicTitle } : {}) }
-    : null;
-}
 
 function userFromReplyTarget(source: Source | undefined, author: ReplyTargetAuthor | undefined) {
   if (!source || !author) return null;
@@ -248,7 +241,7 @@ export function ReplyItem({
   onEditReply: (reply: Reply) => void;
   onLocateReply: (target: ReplyLocationTarget) => void;
   onLockPoll?: (poll: TopicPoll) => void;
-  onOpenTopic: (topic: Topic, targetReply?: ReplyLocationTarget) => void;
+  onOpenTopic: (topic: Topic, location?: TopicLocationTarget) => void;
   onOpenUser: (user: UserReference) => void;
   onQuoteContentLayout?: (options: { contentToken: string; instanceKey: string }) => void;
   onReplyToFloor: (reply: Reply) => void;
@@ -620,10 +613,8 @@ export function ReplyItem({
                   : quote.author?.username
                     ? userReferenceFromUsername(reference.source, quote.author.username, quote.author.label)
                     : null;
-                const quotedTopic =
-                  reference.source !== source || reference.topicId !== topicId
-                    ? topicForQuotedPost(quote, topicBaseUrl)
-                    : null;
+                const sameTopic = reference.source === source && reference.topicId === topicId;
+                const quotedTopic = !sameTopic ? topicForQuotedPost(quote, topicBaseUrl) : null;
                 const expanded =
                   section?.type === 'replyQuoteSummary' ? section.expanded : Boolean(expandedQuotes[key]);
                 const loading =
@@ -664,10 +655,14 @@ export function ReplyItem({
                           <Pressable
                             accessibilityRole="link"
                             hitSlop={8}
+                            disabled={!sameTopic && !quotedTopic}
                             onPress={() =>
                               quotedTopic
-                                ? onOpenTopic(quotedTopic, { floor: reference.postNumber })
-                                : onLocateReply({ floor: reference.postNumber })
+                                ? onOpenTopic(
+                                    quotedTopic,
+                                    topicLocationForReply(reference.source, { floor: reference.postNumber })
+                                  )
+                                : sameTopic && onLocateReply({ floor: reference.postNumber })
                             }
                           >
                             <Text style={styles.replyMeta}>引用 #{reference.postNumber}</Text>
@@ -692,7 +687,12 @@ export function ReplyItem({
                       <Pressable
                         accessibilityRole="link"
                         style={styles.quoteTopicLink}
-                        onPress={() => onOpenTopic(quotedTopic, { floor: reference.postNumber })}
+                        onPress={() =>
+                          onOpenTopic(
+                            quotedTopic,
+                            topicLocationForReply(reference.source, { floor: reference.postNumber })
+                          )
+                        }
                       >
                         <Text style={styles.quoteTopicLinkText} numberOfLines={2}>
                           {quotedTopic.title}
