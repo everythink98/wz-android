@@ -2,14 +2,15 @@ context platform=android
 context timeout=240000
 context retries=0
 env APP_ID=com.wz.reader
-# Pixel API 35, 1264 x 2780 px. Override coordinates for another viewport.
-env RIGHT_X=1030
+# Pixel API 35, 1080 x 2400 px and larger. Keep both endpoints clear of system back edges.
+# Override coordinates for another viewport.
+env RIGHT_X=850
 env LEFT_X=220
 env LOW_Y=2000
 env HIGH_Y=700
 env DX=650
 env DY=1100
-env PAGE_DX=900
+env PAGE_DX=630
 env PAGE_Y=1300
 
 open ${APP_ID} --relaunch
