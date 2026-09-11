@@ -485,7 +485,7 @@ export function useAccountRuntime({
   });
   const closeLinuxDoPanel = verification.closeLinuxDoPanel;
   const showNodeSeekVerification = verification.showNodeSeekVerification;
-  const stopLinuxDoVerificationForInactiveApp = verification.stopLinuxDoVerificationForInactiveApp;
+  const cancelLinuxDoCheckForInactiveApp = verification.cancelLinuxDoCheckForInactiveApp;
   const linuxDoSourceEnabled = enabledSessionSourceSet.has('linuxdo');
   const linuxDoCookieBarrierInitializedRef = useRef(false);
   useEffect(() => {
@@ -498,8 +498,8 @@ export function useAccountRuntime({
     ).catch(() => notify('登录会话交接未完成，请刷新账号页面重试。'));
   }, [linuxDoSourceEnabled, notify, cancelLinuxDoBrowserHandoff]);
   useEffect(() => {
-    if (!appActive) stopLinuxDoVerificationForInactiveApp();
-  }, [appActive, stopLinuxDoVerificationForInactiveApp]);
+    if (!appActive) cancelLinuxDoCheckForInactiveApp();
+  }, [appActive, cancelLinuxDoCheckForInactiveApp]);
   const closeNodeImageAuthPanel = nodeImage.panel.close;
   const closeAuthSurface = useCallback(
     (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {

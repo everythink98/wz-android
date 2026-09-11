@@ -405,14 +405,37 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
 
-  it('treats App inactive as a temporary unmount, not a logical close', async () => {
-    const { controller, onLinuxDoSurfaceClosed, showLinuxDoPanelRef } = createController();
+  it('allows a pending login page mount to finish while the App is inactive', async () => {
+    vi.useFakeTimers();
+    const { controller, onLinuxDoSurfaceClosed, showLinuxDoPanelRef, setMountLinuxDoWebView } = createController();
     await controller.showLinuxDoVerification();
 
-    controller.stopLinuxDoVerificationForInactiveApp();
+    controller.cancelLinuxDoCheckForInactiveApp();
+    await vi.advanceTimersByTimeAsync(100);
 
     expect(showLinuxDoPanelRef.current).toBe(true);
     expect(onLinuxDoSurfaceClosed).not.toHaveBeenCalled();
+    expect(setMountLinuxDoWebView).toHaveBeenLastCalledWith(true);
+  });
+
+  it('ignores a late login check after backgrounding and permits a fresh check', async () => {
+    let complete!: (result: AccountReconcileResult) => void;
+    const pending = new Promise<AccountReconcileResult>((resolve) => {
+      complete = resolve;
+    });
+    const { controller, onLinuxDoSurfaceClosed, linuxDoWebViewSessionRef } = createController({
+      reconcileAccountStatus: () => pending
+    });
+    await controller.showLinuxDoVerification();
+    const session = linuxDoWebViewSessionRef.current;
+    const check = controller.checkLinuxDoCookie();
+    controller.cancelLinuxDoCheckForInactiveApp();
+    complete({ status: 'same', session: loggedInSession });
+    await check;
+    expect(onLinuxDoSurfaceClosed).not.toHaveBeenCalled();
+    expect(linuxDoWebViewSessionRef.current).toBe(session);
+    await controller.checkLinuxDoCookie();
+    expect(onLinuxDoSurfaceClosed).toHaveBeenCalledTimes(1);
   });
 
   it('closes a visible surface once and makes hidden repeated closes no-op', async () => {

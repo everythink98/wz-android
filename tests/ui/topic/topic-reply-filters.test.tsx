@@ -20,7 +20,7 @@ import type { ReplyComposerSheet } from '@/features/topic/components/ReplyCompos
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { discoursePollPlaceholder, prepareReplyContent, prepareTopicContent } from '@/domain/forum/topicContentSplit';
 import { sanitizeLinuxDoContentHtml } from '@/sources/linuxdo/parser';
-import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
+import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { TopicScreen } from '@/features/topic/TopicScreen';
 import { createTheme } from '@/ui/theme/tokens';
@@ -137,6 +137,7 @@ jest.mock('@/features/topic/selection/TopicSelectionSurface', () => {
     TopicSelectionRowProvider: ({ active, children }: { active: boolean; children?: React.ReactNode }) =>
       ReactModule.createElement(RowContext.Provider, { value: active }, children),
     useTopicSelectionCancel: () => null,
+    useTopicSelectionHorizontalTarget: () => undefined,
     useTopicSelectionRowActive: () => ReactModule.useContext(RowContext),
     useTopicSelectionRowRef: () => ({ active: true, nativeID: undefined, ref: { current: null } })
   };

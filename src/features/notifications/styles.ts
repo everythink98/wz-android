@@ -1,6 +1,6 @@
 import { StyleSheet } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
-import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';
+import { alphaColor, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '@/ui/theme/tokens';
 
 export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const fontFamily = fontFamilyValue(settings.fontFamily);
@@ -151,7 +151,12 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
     },
     detailTitle: { color: theme.ink, fontFamily, fontSize: scaled(18), fontWeight: '700', lineHeight: scaled(26) },
     detailMeta: { color: theme.muted, fontFamily, fontSize: scaled(12), lineHeight: scaled(18) },
-    detailBody: { color: theme.ink, fontFamily, fontSize: scaled(15), lineHeight: scaled(23) },
+    detailBody: {
+      color: theme.ink,
+      fontFamily,
+      fontSize: scaled(15),
+      lineHeight: Math.round(scaled(15) * lineHeightMultiplier(settings.lineHeight))
+    },
     detailLink: { color: theme.primary, fontWeight: '600' },
     conversationNotice: {
       color: theme.muted,
@@ -194,7 +199,12 @@ export function createNotificationStyles(theme: ReaderTheme, settings: ReaderSet
       lineHeight: scaled(15),
       marginHorizontal: 4
     },
-    messageBody: { color: theme.ink, fontFamily, fontSize: scaled(14), lineHeight: scaled(21) },
+    messageBody: {
+      color: theme.ink,
+      fontFamily,
+      fontSize: scaled(14),
+      lineHeight: Math.round(scaled(14) * lineHeightMultiplier(settings.lineHeight))
+    },
     replyDock: {
       backgroundColor: theme.surface,
       borderTopColor: theme.line,

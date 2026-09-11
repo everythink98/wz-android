@@ -198,6 +198,17 @@ internal class ForumSelectionDocument {
     isEnabled && selectAllDocumentId != documentId &&
       rows.any { it.definition.documentId == documentId && it.token.owners.isNotEmpty() }
 
+  fun atDocumentBoundary(anchor: ForumSelectionAnchor, towardEnd: Boolean): Boolean {
+    val row = if (towardEnd) rows.lastOrNull {
+      it.definition.documentId == anchor.documentId && it.token.owners.isNotEmpty()
+    } else rows.firstOrNull {
+      it.definition.documentId == anchor.documentId && it.token.owners.isNotEmpty()
+    }
+    return row != null && row.definition.rowKey == anchor.rowKey &&
+      anchor.ownerOrdinal == (if (towardEnd) row.token.owners.lastIndex else 0) &&
+      anchor.utf16Offset == (if (towardEnd) row.token.owners.last().text.length else 0)
+  }
+
   fun selectAll(documentId: String): Boolean {
     val selectableRows = rows.filter { it.definition.documentId == documentId && it.token.owners.isNotEmpty() }
     if (selectableRows.isEmpty()) return false

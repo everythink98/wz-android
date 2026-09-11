@@ -4,7 +4,7 @@ import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, ToastAndroid, View, type StyleProp, type ViewStyle } from 'react-native';
 import { compileForumContent, type CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
-import { TopicSelectionSurface } from '@/features/topic/selection/TopicSelectionSurface';
+import { TopicSelectionSurface, TopicSelectionRowProvider } from '@/features/topic/selection/TopicSelectionSurface';
 import {
   createTopicTableRenderers,
   TopicHorizontalScroll,
@@ -185,6 +185,7 @@ jest.mock('react-native-reanimated', () => {
       }, [prepare, react]);
     },
     useAnimatedRef: () => ReactModule.useRef(null),
+    useEvent: (handler: (event: unknown) => void) => (event: { nativeEvent: unknown }) => handler(event.nativeEvent),
     useSharedValue: <Value,>(initialValue: Value) => ReactModule.useRef(sharedValue(initialValue)).current,
     withDecay: (options: { clamp: [number, number]; velocity: number }) => mockWithDecay(options)
   };
@@ -575,6 +576,61 @@ describe('native topic structured rendering', () => {
     mockWithDecay.mockClear();
     await fireEvent(scroll, 'deactivate', { canceled: true, velocityX: -900 });
     expect(mockWithDecay).not.toHaveBeenCalled();
+  });
+
+  it('routes drag scroll to shared table offsets and rejects finished or stale drags', async () => {
+    const row = compileForumContent({ html: '<pre>one two</pre>', role: 'opening', source: 'nodeseek' }).rows[0]!;
+    const screen = await render(
+      <TopicSelectionSurface
+        active
+        items={[{ documentId: 'opening', rowKey: 'code', selectionToken: row.selectionToken }]}
+        listRef={{ current: null }}
+        sessionKey="horizontal-proof"
+      >
+        <TopicSelectionRowProvider active>
+          <TopicTableScrollProvider>
+            <TopicSplitDisclosureScope scopeKey="opening">
+              {['first', 'second', 'unrelated'].map((id) => (
+                <TopicHorizontalScroll
+                  key={id}
+                  accessibilityLabel={id}
+                  testID={id}
+                  semanticId={id === 'unrelated' ? 'other-table' : 'shared-table'}
+                  contentWidth={640}
+                  viewportWidth={320}
+                >
+                  <View />
+                </TopicHorizontalScroll>
+              ))}
+            </TopicSplitDisclosureScope>
+          </TopicTableScrollProvider>
+        </TopicSelectionRowProvider>
+      </TopicSelectionSurface>
+    );
+    const surface = screen.getByTestId('topic-selection-surface');
+    const targetId = screen.getByTestId('first').props.nativeID;
+    expect(new Set(surface.props.horizontalTargets).size).toBe(3);
+    const identity = { revision: surface.props.revision, dragId: 1 };
+    surface.props.onSelectionDragChange({ nativeEvent: { ...identity, active: true } });
+    mockAnimatedScrollTo.mockClear();
+    surface.props.onHorizontalAutoScroll({ nativeEvent: { ...identity, targetId, offsetDp: 64 } });
+    expect(mockAnimatedScrollTo.mock.calls.filter(([, x]) => x === 64)).toHaveLength(2);
+    expect(mockAnimatedScrollTo.mock.calls.filter(([, x]) => x !== 0 && x !== 64)).toHaveLength(0);
+    surface.props.onSelectionDragChange({ nativeEvent: { ...identity, active: false } });
+    surface.props.onSelectionDragChange({ nativeEvent: { ...identity, active: true } });
+    mockAnimatedScrollTo.mockClear();
+    surface.props.onHorizontalAutoScroll({ nativeEvent: { ...identity, targetId, offsetDp: 128 } });
+    expect(mockAnimatedScrollTo).not.toHaveBeenCalled();
+    surface.props.onSelectionDragChange({ nativeEvent: { ...identity, dragId: 2, active: true } });
+    mockAnimatedScrollTo.mockClear();
+    surface.props.onHorizontalAutoScroll({ nativeEvent: { ...identity, targetId, offsetDp: 128 } });
+    surface.props.onHorizontalAutoScroll({
+      nativeEvent: { ...identity, dragId: 2, revision: 'old', targetId, offsetDp: 128 }
+    });
+    expect(mockAnimatedScrollTo).not.toHaveBeenCalled();
+    await fireEvent(screen.getByTestId('second'), 'begin', {});
+    await fireEvent(screen.getByTestId('second'), 'update', { translationX: -16, translationY: 0 });
+    expect(mockAnimatedScrollTo.mock.calls.filter(([, x]) => x === 80)).toHaveLength(2);
   });
 
   it('cancels native selection only after the horizontal pan claims the drag', async () => {

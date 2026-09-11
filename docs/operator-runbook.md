@@ -153,6 +153,10 @@ npm run test:instrumented:forum-selection
 
 runner 要求恰好一个已连接且名称精确匹配的 `WZ_ForumSelection_Test_API35`，并只用该 serial 设置 Gradle 的 `ANDROID_SERIAL`；不存在、重复或不匹配时立即失败。不得通过 `WZ_FORUM_SELECTION_TEST_AVD` 改指主登录态、Smoke、普通 Replay 或未登录 AVD，不得在这些保留数据设备上手工执行 `connectedDebugAndroidTest`。缺少独立 AVD 时报告 `BLOCKED_BY_ENV`，不卸载、不清数据、不重置主 AVD。instrumentation 与 `dumpsys vibrator_manager` 只证明隔离 proof 和系统触感请求；真实 RNRH/Fabric、FlashList、原站正文与 PSS 仍需下方匹配 APK 的只读 Live，实际触感和系统关闭触感后的静默只接受物理 Android 设备证据，缺少设备时记 `NOT_VERIFIED`。
 
+真实横向事件链使用独立开发入口 `dev/forum-selection-proof/index.tsx`，只覆盖安装到上述独立 AVD；它复用生产 Native surface、Reanimated 横向 owner 和 FlashList。构建可在单独 PowerShell 进程设置 `$env:ENTRY_FILE='dev/forum-selection-proof/index.tsx'` 后执行 `android/gradlew.bat -p android :app:assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon`，不使用正式发布流程。普通入口构建必须不带该环境变量；proof APK 不装到保留登录态设备。instrumentation 与 agent-device 的 UiAutomation 会争用同一设备，必须先结束当前设备自动化会话再运行 instrumentation，不能并发。
+
+入口第一行测试短文，后续两个宽片段共享一张表的位置，第三个独立；Measure 按钮读取实际 Fabric 文字坐标。拖选到右缘并持握后，前两个 x 必须相等且持续减小，第三个不变；松手后再次测量必须稳定，普通横滑必须从新位置接续。下方长文用 FlashList 验证至少三个 viewport、回收与反向拖回；短文微斜、跨行、菜单长时间隐藏及松手恢复同时检查。UI mock 的共享 offset 断言不替代此设备链；同帧像素与物理设备触感仍按原专项独立验收。
+
 ### 更新下载证据
 
 `MORE-04` 的原生测试使用真实 OkHttp、本机受控 HTTP 服务与 source patch 中的 `DownloadResponseTest`，不操作设备：
@@ -374,9 +378,9 @@ adb shell am start -W -a android.intent.action.VIEW -d "exp+wz-android://open-to
 
 ### 打包基线
 
-当前打包配置由 `app.json`、plugin 和 source patch 维护：保留 RN source build、release minify 与 resource shrink；不启用 `useLegacyPackaging=true`、`enableBundleCompression=true`，不恢复 `withAndroidReleaseOptimization`、`proguard-android-optimize.txt` 或额外的 `android.r8.optimizedResourceShrinking` 开关。图标使用包根入口导入，`react-native-render-html` 使用锁定原版，不恢复为缩包添加的 Ramda 导入补丁，也不启用实验性全局 tree shaking。版本递增、签名、覆盖安装和验证门禁沿用下述流程。
+当前打包配置由 `app.json`、plugin 和 source patch 维护：保留 RN source build、release minify 与 resource shrink；启用 `useLegacyPackaging=true`，仅对原生库做 APK ZIP 压缩，并显式设置 `enableBundleCompression=false`，保持 Hermes bundle 为 ZIP stored，避免引入 bundle 冷启动解压。原生库由系统在安装时解压，运行时加载解压后的相同库文件；APK 下载更小，但安装时需要解压且安装占用可能增加。保留 `proguard-android.txt` 的 `-dontoptimize`，不恢复 `withAndroidReleaseOptimization`、`proguard-android-optimize.txt` 或额外的 `android.r8.optimizedResourceShrinking` 开关。候选必须与同源码、同签名、同 ABI 的未压缩包分别比较 APK 大小、安装占用和本节的 Release 性能，并核对 ZIP 条目、签名、对齐及正文复制、刷新手势、公式、媒体和编辑器的真实运行。图标使用包根入口导入，`react-native-render-html` 使用锁定原版，不恢复为缩包添加的 Ramda 导入补丁，也不启用实验性全局 tree shaking。版本递增、签名、覆盖安装和验证门禁沿用下述流程。
 
-fresh prebuild 后核对生成的 `android/gradle.properties` 与 `android/app/build.gradle`：原生库采用默认非 legacy packaging，bundle compression 默认关闭，默认 ProGuard 文件为 `proguard-android.txt`。生成目录中的旧开关不得继续沿用；长期配置只从 `app.json`、plugin 和 source patch 生成。`tests/tooling/release-packaging.test.ts` 固定打包配置边界。
+fresh prebuild 后核对生成的 `android/gradle.properties` 与 `android/app/build.gradle`：`expo.useLegacyPackaging=true`、`android.enableBundleCompression=false`，默认 ProGuard 文件为 `proguard-android.txt`。未压缩对照构建只用 Gradle 参数 `-Pexpo.useLegacyPackaging=false` 覆盖原生库打包方式；其余源码、配置和签名保持相同。长期配置只从 `app.json`、plugin 和 source patch 生成。`tests/tooling/release-packaging.test.ts` 固定打包配置边界。
 
 涉及 Feed/Pager/RefreshControl 的候选，发布前执行本节前面的下拉刷新 Native 测试，并按 `tests/live/agent-live.md` 的 `LIVE-FEED-01` 验收 Tab 点击、双向滑动、回拖取消与刷新交叉操作。`npm run verify` 的 UI mock 和 app native tests 不代替这项 RN source test 或设备证据。正文长按复制按 `TOPIC-01/02/03` 的现有 owner 验收，不能以包体积下降或 App 启动成功替代。
 

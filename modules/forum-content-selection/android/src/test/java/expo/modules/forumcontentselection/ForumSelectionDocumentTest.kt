@@ -162,6 +162,11 @@ class ForumSelectionDocumentTest {
 
     assertTrue(document.selectAll("reply:42"))
     assertEquals("[leading sticker]\nbody", document.copySelection())
+    val range = requireNotNull(document.selection())
+    assertTrue(document.atDocumentBoundary(range.start, towardEnd = false))
+    assertTrue(document.atDocumentBoundary(range.end, towardEnd = true))
+    assertFalse(document.atDocumentBoundary(range.start.copy(utf16Offset = 1), towardEnd = false))
+    assertFalse(document.atDocumentBoundary(range.end.copy(utf16Offset = 3), towardEnd = true))
   }
 
   @Test

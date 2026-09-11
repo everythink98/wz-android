@@ -13,8 +13,12 @@ import {
   NotificationsScreen
 } from '@/features/notifications/NotificationScreens';
 import { fireEvent, render, waitFor } from '../render';
-import { createTheme } from '@/ui/theme/tokens';
+import { createTheme, lineHeightMultiplier } from '@/ui/theme/tokens';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
+
+// Metro uses the source entry and React 19's JSX runtime. The CommonJS entry
+// uses createElement, which still applies defaultProps and hides missing styles.
+jest.mock('react-native-render-html', () => jest.requireActual('react-native-render-html/src'));
 
 const ignoreExternalUrl = () => undefined;
 
@@ -940,6 +944,77 @@ describe('notification screens', () => {
     expect(onReplySnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it.each(
+    (['detail', 'original', 'message'] as const).flatMap((surface) =>
+      (['light', 'dark'] as const).map((theme) => ({ surface, theme }))
+    )
+  )('preserves rich-text formatting in $surface content with $theme appearance', async ({ surface, theme: mode }) => {
+    const settings = {
+      ...createEmptyReaderData().settings,
+      theme: mode,
+      fontScale: mode === 'dark' ? 1.3 : 1,
+      lineHeight: mode === 'dark' ? ('loose' as const) : ('standard' as const),
+      fontFamily: 'serif' as const
+    };
+    const theme = createTheme(settings);
+    const html =
+      '<h2>小标题</h2><p>正文段落</p><p><strong>强调</strong> <em>斜体</em></p><blockquote>引用文字</blockquote><pre><code>const value = 1;</code></pre><p><span class="bbcode-u">下划线</span></p>' +
+      '<p>表情前<img class="emoji" src="https://linux.do/images/emoji/twemoji/face_with_peeking_eye.png" alt=":face_with_peeking_eye:" width="20" height="20">表情后</p>';
+    const view = await render(
+      <NotificationDetailScreen
+        contentWidth={360}
+        detail={{
+          notification,
+          title: '通知',
+          ...(surface !== 'message' ? { contentHtml: html } : {}),
+          ...(surface !== 'detail'
+            ? {
+                messages:
+                  surface === 'message'
+                    ? [{ id: 'formatted', author: '作者', contentHtml: html, createdAt: null, mine: false }]
+                    : []
+              }
+            : {})
+        }}
+        loading={false}
+        onOpenTopic={jest.fn()}
+        onRetry={jest.fn()}
+      />,
+      { wrapper: ({ children }) => <ReaderStyleProvider value={{ settings, theme }}>{children}</ReaderStyleProvider> }
+    );
+    const style = (text: string) => StyleSheet.flatten(view.getByText(text).props.style);
+    const ancestorStyles = (text: string) => {
+      const styles = [];
+      for (let node = view.getByText(text); node; node = node.parent!) {
+        styles.push(StyleSheet.flatten(node.props.style));
+      }
+      return styles;
+    };
+    expect(style('小标题').fontSize).toBeGreaterThan(style('正文段落').fontSize);
+    expect(style('正文段落')).toMatchObject({
+      color: theme.ink,
+      fontFamily: 'serif',
+      fontSize: Math.round((surface === 'message' ? 14 : 15) * settings.fontScale),
+      lineHeight: Math.round(
+        Math.round((surface === 'message' ? 14 : 15) * settings.fontScale) * lineHeightMultiplier(settings.lineHeight)
+      )
+    });
+    expect(['bold', '700']).toContain(style('强调').fontWeight);
+    expect(style('斜体').fontStyle).toBe('italic');
+    expect(style('下划线').textDecorationLine).toBe('underline');
+    expect(style('const value = 1;').fontFamily).toBe('monospace');
+    expect(ancestorStyles('正文段落')).toContainEqual(expect.objectContaining({ marginBottom: 10 }));
+    expect(ancestorStyles('引用文字')).toContainEqual(expect.objectContaining({ borderLeftWidth: 3 }));
+    expect(view.getByText('表情前表情后')).toBeTruthy();
+    const emoji = view.getByLabelText(':face_with_peeking_eye:');
+    expect(StyleSheet.flatten(emoji.props.style)).toMatchObject({
+      height: Math.round(20 * settings.fontScale),
+      width: Math.round(20 * settings.fontScale) + 4
+    });
+    await fireEvent(emoji, 'error', { nativeEvent: { error: 'unavailable' } });
+    expect(view.getByText('表情前:face_with_peeking_eye:表情后')).toBeTruthy();
+  });
+
   it('renders NodeSeek private-message Markdown and stickers as forum content', async () => {
     const detail = {
       notification: { ...notification, kind: 'private-message' as const },
@@ -968,7 +1043,7 @@ describe('notification screens', () => {
       />
     );
 
-    expect(StyleSheet.flatten(view.getByText('WZ-NS-RENDER').props.style).fontWeight).toBe('bold');
+    expect(StyleSheet.flatten(view.getByText('WZ-NS-RENDER').props.style).fontWeight).toBe('700');
     expect(view.getByLabelText('ac04')).toBeTruthy();
   });
 

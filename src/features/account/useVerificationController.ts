@@ -753,42 +753,17 @@ export function useVerificationController({
     showLinuxDoVerification,
     updateLinuxDoSession
   ]);
-  const stopLinuxDoVerificationForInactiveApp = useCallback(() => {
-    if (!isLinuxDoSurfaceVisible()) {
+  const cancelLinuxDoCheckForInactiveApp = useCallback(() => {
+    if (!isLinuxDoSurfaceVisible() || linuxDoActiveCheckRef.current === null) {
       return;
     }
+    invalidateLinuxDoCheck();
+    linuxDoVerificationPhaseRef.current = 'awaiting-clearance';
     const trace = linuxDoVerificationTraceRef.current;
     if (trace) {
-      markDiagnosticStage(trace, 'apply', {
-        source: 'linuxdo',
-        state: 'linuxdo-panel-closed'
-      });
       finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled' });
     }
-    checkingRequestIdRef.current += 1;
-    linuxDoActiveCheckRef.current = null;
-    linuxDoWebViewSessionRef.current += 1;
-    setLinuxDoWebViewKey(linuxDoWebViewSessionRef.current);
-    if (linuxDoWebViewMountTimerRef.current) {
-      clearTimeout(linuxDoWebViewMountTimerRef.current);
-      linuxDoWebViewMountTimerRef.current = null;
-    }
-    linuxDoWebViewRef.current?.stopLoading();
-    setMountLinuxDoWebView(false);
-    setLoadingLinuxDoPage(false);
-    setChecking(false);
-  }, [
-    checkingRequestIdRef,
-    finishLinuxDoVerificationTrace,
-    isLinuxDoSurfaceVisible,
-    linuxDoWebViewMountTimerRef,
-    linuxDoWebViewRef,
-    linuxDoWebViewSessionRef,
-    setChecking,
-    setLinuxDoWebViewKey,
-    setLoadingLinuxDoPage,
-    setMountLinuxDoWebView
-  ]);
+  }, [finishLinuxDoVerificationTrace, invalidateLinuxDoCheck, isLinuxDoSurfaceVisible]);
 
   return {
     changeLinuxDoPanel,
@@ -800,6 +775,6 @@ export function useVerificationController({
     setLoadingLinuxDoPageForSession,
     showLinuxDoVerification,
     showNodeSeekVerification,
-    stopLinuxDoVerificationForInactiveApp
+    cancelLinuxDoCheckForInactiveApp
   };
 }

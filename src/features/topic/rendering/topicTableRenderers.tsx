@@ -15,7 +15,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import type { CustomBlockRenderer } from 'react-native-render-html';
 import type { ForumContentPart } from '@/domain/forum/topicContentSplit';
 import { ForumContentWidthBoundary, useForumContentWidth } from '@/ui/content/ForumContentWidth';
-import { useTopicSelectionCancel } from '../selection/TopicSelectionSurface';
+import { useTopicSelectionCancel, useTopicSelectionHorizontalTarget } from '../selection/TopicSelectionSurface';
 import type { HtmlRenderers } from './types';
 import { useTopicSplitDisclosureScopeKey } from './TopicSplitDisclosure';
 
@@ -204,6 +204,7 @@ export function TopicHorizontalScroll({
   const offset = useTopicHorizontalOffset(semanticId);
   const initialMaximum = contentWidth === undefined ? 0 : Math.max(0, contentWidth - viewportWidth);
   const maximumOffset = useSharedValue(initialMaximum);
+  const selectionNativeId = useTopicSelectionHorizontalTarget(offset, maximumOffset);
   const horizontalPanClaimed = useSharedValue(false);
   const pointerStartX = useSharedValue(0);
   const pointerStartY = useSharedValue(0);
@@ -295,6 +296,7 @@ export function TopicHorizontalScroll({
   return (
     <GestureDetector gesture={horizontalPan}>
       <Animated.ScrollView
+        nativeID={selectionNativeId}
         ref={scrollViewRef}
         accessibilityActions={
           enabled

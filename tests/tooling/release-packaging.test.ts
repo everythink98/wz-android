@@ -164,7 +164,7 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toMatch(/if \(result\.status !== 0\) \{\s+if \(result\.stdout\) \{/);
   });
 
-  it('keeps baseline release shrinking without extra compression or the optimizer plugin', () => {
+  it('compresses release native libraries without compressing the bundle or enabling the optimizer plugin', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const buildProperties = app.expo.plugins.find(
       (plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-build-properties'
@@ -173,10 +173,10 @@ describe('Android release packaging guards', () => {
     expect(buildProperties?.[1]?.android).toMatchObject({
       buildReactNativeFromSource: true,
       enableMinifyInReleaseBuilds: true,
-      enableShrinkResourcesInReleaseBuilds: true
+      enableShrinkResourcesInReleaseBuilds: true,
+      enableBundleCompression: false,
+      useLegacyPackaging: true
     });
-    expect(buildProperties?.[1]?.android?.useLegacyPackaging).not.toBe(true);
-    expect(buildProperties?.[1]?.android?.enableBundleCompression).not.toBe(true);
     expect(app.expo.plugins).not.toContain('./plugins/withAndroidReleaseOptimization');
   });
 

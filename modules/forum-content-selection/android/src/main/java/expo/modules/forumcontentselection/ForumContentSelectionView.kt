@@ -25,12 +25,15 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.TextView
+import android.widget.HorizontalScrollView
+import android.widget.ScrollView
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import java.util.IdentityHashMap
 import java.util.Locale
 import kotlin.math.hypot
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -59,6 +62,9 @@ class ForumContentSelectionView(
   val onAutoScroll by EventDispatcher<Map<String, Any>>()
   val onSelectionChange by EventDispatcher<Map<String, Any>>()
   val onSelectionError by EventDispatcher<Map<String, Any>>()
+  val onSelectionDragChange by EventDispatcher<Map<String, Any>>()
+  val onHorizontalAutoScroll by EventDispatcher<Map<String, Any>>()
+  internal var horizontalTargets: Set<String> = emptySet()
 
   internal var pendingEnabled = true
   internal var pendingRevision = ""
@@ -120,14 +126,25 @@ class ForumContentSelectionView(
   private var startHandlePoint: PointF? = null
   private var endHandlePoint: PointF? = null
   private var alignmentBuildCount = 0
+  private var dragId = 0
+  private var dragUpdatePending = false
+  private var dragLine: DragLine? = null
+  private var lastAutoScrollTime = 0L
+  private val menuHideDuration = ViewConfiguration.getDefaultActionModeHideDuration().toLong().coerceAtLeast(100L)
+  private val hideMenuRunnable = object : Runnable {
+    override fun run() {
+      if (!coordinatorOwnsGesture || draggingHandle == null || !selectionActive) return
+      actionMode?.hide(menuHideDuration)
+      postDelayed(this, menuHideDuration / 2)
+    }
+  }
   private val longPressRunnable = Runnable { beginLongPressSelection() }
   private val autoScrollRunnable = object : Runnable {
     override fun run() {
       autoScrollPosted = false
       if (!selectionActive || draggingHandle == null) return
-      val payload = runAutoScrollFrame() ?: return
-      onAutoScroll(payload.asEventMap())
-      postAutoScroll()
+      dragUpdatePending = true
+      invalidate()
     }
   }
 
@@ -229,6 +246,7 @@ class ForumContentSelectionView(
           cancelSelectionOnTap = false
           coordinatorOwnsGesture = true
           parent?.requestDisallowInterceptTouchEvent(true)
+          beginHandleDrag()
           return true
         }
         cancelSelectionOnTap = selectionActive
@@ -250,7 +268,8 @@ class ForumContentSelectionView(
         lastTouchX = x
         lastTouchY = y
         if (coordinatorOwnsGesture) {
-          updateDraggedHandle(x, y)
+          dragUpdatePending = true
+          invalidate()
           postAutoScroll()
           return true
         }
@@ -282,6 +301,7 @@ class ForumContentSelectionView(
       MotionEvent.ACTION_POINTER_DOWN -> {
         cancelSelectionOnTap = false
         removeCallbacks(longPressRunnable)
+        if (coordinatorOwnsGesture) return finishOwnedGesture(cancelled = true)
       }
     }
     return try {
@@ -330,6 +350,7 @@ class ForumContentSelectionView(
       handleDragOffsetX = point.x - downX
       handleDragOffsetY = point.y - downY
     }
+    beginHandleDrag()
     requestHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
   }
 
@@ -349,18 +370,40 @@ class ForumContentSelectionView(
     }
   }
 
-  private fun updateDraggedHandle(x: Float, y: Float) {
+  private fun beginHandleDrag() {
+    dragId += 1
+    dragLine = null
+    val range = selectionDocument.selection()
+    val anchor = if (draggingHandle == DraggingHandle.RawStart) range?.start else range?.end
+    if (anchor != null) dragHitTest(mountedOwners(this), anchor,
+      lastTouchX + handleDragOffsetX, lastTouchY + handleDragOffsetY)
+    lastAutoScrollTime = 0L
+    clearSystemActionRequest()
+    onSelectionDragChange(dragEvent(true))
+    removeCallbacks(hideMenuRunnable)
+    hideMenuRunnable.run()
+  }
+
+  private fun dragEvent(active: Boolean): Map<String, Any> = mapOf(
+    "revision" to activeSelectionRevision, "dragId" to dragId, "active" to active
+  )
+
+  private fun updateDraggedHandle(
+    x: Float,
+    y: Float,
+    mounted: MountedOwnerCollection = mountedOwners(this),
+    refresh: Boolean = true
+  ) {
     val endpoint = draggingHandle ?: return
     val adjustedX = (x + handleDragOffsetX).coerceIn(0f, max(0f, width - 1f))
     val adjustedY = (y + handleDragOffsetY).coerceIn(0f, max(0f, height - 1f))
-    // A line-bottom hotspot sits on the previous row's bottom-exclusive edge.
-    val hitY = adjustedY - 0.5f
-    val mounted = mountedOwners(markedSelectionRowAt(adjustedX, hitY) ?: return)
-    if (mounted.deferred) return
-    val hit = hitTest(mounted.owners, adjustedX, hitY) ?: return
     val current = selectionDocument.selection() ?: return
     val currentEndpoint = if (endpoint == DraggingHandle.RawStart) current.start else current.end
     val otherEndpoint = if (endpoint == DraggingHandle.RawStart) current.end else current.start
+    val hit = dragHitTest(mounted, currentEndpoint, adjustedX, adjustedY) ?: run {
+      dragUpdatePending = true
+      return
+    }
     val provisional = selectionDocument.anchor(
       hit.owner.row.documentId,
       hit.owner.row.rowKey,
@@ -377,8 +420,7 @@ class ForumContentSelectionView(
       selectionDocument.select(current.start, anchor)
     }
     if (updated) {
-      refreshOverlay()
-      actionMode?.invalidate()
+      if (refresh) refreshOverlay(owners = mounted.owners)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
         requestHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
       }
@@ -386,9 +428,17 @@ class ForumContentSelectionView(
   }
 
   private fun finishOwnedGesture(cancelled: Boolean): Boolean {
+    if (!cancelled && (lastTouchX != downX || lastTouchY != downY || dragUpdatePending || scrollRedrawPending)) {
+      updateDraggedHandle(lastTouchX, lastTouchY)
+    }
+    onSelectionDragChange(dragEvent(false))
     removeCallbacks(longPressRunnable)
     removeCallbacks(autoScrollRunnable)
+    removeCallbacks(hideMenuRunnable)
     autoScrollPosted = false
+    dragUpdatePending = false
+    dragLine = null
+    lastAutoScrollTime = 0L
     draggingHandle = null
     handleDragOffsetX = 0f
     handleDragOffsetY = 0f
@@ -399,6 +449,8 @@ class ForumContentSelectionView(
     parent?.requestDisallowInterceptTouchEvent(false)
     if (cancelled && selectionDocument.selection() == null) setSelectionActive(false)
     actionMode?.invalidate()
+    actionMode?.invalidateContentRect()
+    actionMode?.hide(0)
     return true
   }
 
@@ -408,6 +460,11 @@ class ForumContentSelectionView(
   }
 
   internal fun cancelSelection() {
+    if (draggingHandle != null) onSelectionDragChange(dragEvent(false))
+    removeCallbacks(hideMenuRunnable)
+    dragUpdatePending = false
+    dragLine = null
+    lastAutoScrollTime = 0L
     clearSystemActionRequest()
     selectionDocument.cancel()
     removeCallbacks(longPressRunnable)
@@ -443,10 +500,16 @@ class ForumContentSelectionView(
 
   override fun onPreDraw(): Boolean {
     if (selectionActive) {
-      refreshOverlay(invalidate = false)
+      val mounted = mountedOwners(this)
+      if (draggingHandle != null && (dragUpdatePending || scrollRedrawPending)) {
+        dragUpdatePending = false
+        updateDraggedHandle(lastTouchX, lastTouchY, mounted, refresh = false)
+        if (dispatchAutoScrollFrame()) postAutoScroll()
+      }
+      refreshOverlay(invalidate = false, owners = mounted.owners)
       if (scrollRedrawPending) {
         scrollRedrawPending = false
-        actionMode?.invalidateContentRect()
+        if (draggingHandle == null) actionMode?.invalidateContentRect()
       }
     }
     return true
@@ -459,12 +522,12 @@ class ForumContentSelectionView(
     endLocalHandle?.drawable?.invalidateSelf()
   }
 
-  private fun refreshOverlay(invalidate: Boolean = true) {
+  private fun refreshOverlay(invalidate: Boolean = true, owners: List<MountedOwner>? = null) {
     if (!selectionActive || selectionDocument.selection() == null || width <= 0 || height <= 0) {
       clearOverlay(invalidate)
       return
     }
-    val mounted = mountedOwners(this).owners
+    val mounted = owners ?: mountedOwners(this).owners
     val normalized = selectionDocument.normalizedSelection()
     if (normalized == null) {
       clearOverlay(invalidate)
@@ -507,7 +570,7 @@ class ForumContentSelectionView(
     )
     if (invalidate) {
       invalidate()
-      actionMode?.invalidateContentRect()
+      if (draggingHandle == null) actionMode?.invalidateContentRect()
     }
   }
 
@@ -689,10 +752,12 @@ class ForumContentSelectionView(
     val owners = ArrayList<MountedOwner>()
     val mountedRoots = IdentityHashMap<View, Boolean>()
     var deferred = false
+    val deferredRoots = ArrayList<View>()
     markerRoots.values.forEach { roots ->
       if (roots.size != 1) {
         roots.forEach(markedRowAlignments::remove)
         deferred = true
+        deferredRoots += roots
         return@forEach
       }
       val markerRoot = roots.single()
@@ -701,7 +766,10 @@ class ForumContentSelectionView(
       val row = selectionDocument.rowForNativeId(nativeId) ?: return@forEach
       when (val alignment = alignMarkedRow(markerRoot, row)) {
         is MarkedRowAlignment.Ready -> owners += alignment.owners
-        MarkedRowAlignment.Deferred -> deferred = true
+        MarkedRowAlignment.Deferred -> {
+          deferred = true
+          deferredRoots += markerRoot
+        }
       }
     }
     if (root === this) {
@@ -710,7 +778,7 @@ class ForumContentSelectionView(
         if (!mountedRoots.containsKey(iterator.next())) iterator.remove()
       }
     }
-    return MountedOwnerCollection(owners, deferred)
+    return MountedOwnerCollection(owners, deferred, deferredRoots)
   }
 
   private fun collectMarkedRows(view: View, output: MutableMap<String, MutableList<View>>) {
@@ -832,6 +900,92 @@ class ForumContentSelectionView(
       }
     }
     return null
+  }
+
+  private fun dragHitTest(
+    mounted: MountedOwnerCollection,
+    anchor: ForumSelectionAnchor,
+    hostX: Float,
+    hotspotY: Float
+  ): HitResult? {
+    getLocationOnScreen(hostScreenLocation)
+    val currentOwner = mounted.owners.firstOrNull { it.matches(anchor) }
+    val currentLayout = currentOwner?.view?.layout
+    val currentOffset = currentOwner?.offsetMap?.layoutOffset(anchor.utf16Offset, anchor.affinity)
+    val currentLine = if (currentLayout != null && currentOffset != null) currentLayout.getLineForOffset(currentOffset) else null
+    val lines = ArrayList<DragLine>()
+    mounted.owners.forEach { owner ->
+      if (owner.row.documentId != anchor.documentId || owner.text.isEmpty()) return@forEach
+      val view = owner.view
+      val layout = view.layout ?: return@forEach
+      val clip = ownerVisibleClip(view) ?: return@forEach
+      view.getLocationOnScreen(childScreenLocation)
+      val originX = childScreenLocation[0] - hostScreenLocation[0] + view.totalPaddingLeft - view.scrollX
+      val originY = childScreenLocation[1] - hostScreenLocation[1] + view.totalPaddingTop - view.scrollY
+      val first = layout.getLineForVertical((clip.top - originY).toInt().coerceAtLeast(0))
+      val last = layout.getLineForVertical((clip.bottom - originY).toInt().coerceAtMost(layout.height - 1))
+      for (line in first..last) {
+        val top = max(clip.top, originY + layout.getLineTop(line).toFloat())
+        val bottom = min(clip.bottom, originY + lineBottomWithoutSpacing(layout, line, layout.getLineStart(line)))
+        if (top >= bottom) continue
+        val left = (originX + layout.getLineLeft(line)).coerceIn(clip.left, clip.right)
+        val right = (originX + layout.getLineRight(line)).coerceIn(left, clip.right)
+        lines += DragLine(owner, line, RectF(left, top, right, bottom), originX.toFloat())
+      }
+    }
+    if (lines.isEmpty()) return null
+    val previous = lines.firstOrNull {
+      it.owner.view === currentOwner?.view && it.line == currentLine
+    }
+    fun xDistance(line: DragLine): Float = max(max(line.bounds.left - hostX, hostX - line.bounds.right), 0f)
+    // Convert the line-bottom handle hotspot with each candidate's own line height.
+    // Reusing the previous font's height skips tall emoji / mixed-size lines.
+    fun probeY(line: DragLine): Float = hotspotY - line.bounds.height() / 2f
+    fun yDistance(line: DragLine): Float = abs(probeY(line) - line.bounds.centerY())
+    fun documentOrder(left: DragLine, right: DragLine): Int = selectionDocument.compareAnchors(
+      anchor.copy(rowKey = left.owner.row.rowKey, ownerOrdinal = left.owner.ownerOrdinal, utf16Offset = 0),
+      anchor.copy(rowKey = right.owner.row.rowKey, ownerOrdinal = right.owner.ownerOrdinal, utf16Offset = 0)
+    )?.takeIf { it != 0 } ?: left.line.compareTo(right.line)
+    val overlapping = lines.filter { probeY(it) >= it.bounds.top && probeY(it) <= it.bounds.bottom }
+    var candidate = if (overlapping.isNotEmpty()) overlapping.minWithOrNull(compareBy<DragLine> {
+      xDistance(it)
+    }.thenBy { yDistance(it) }.thenBy { if (it === previous) 0 else 1 }.thenComparator(::documentOrder))!!
+    else lines.minWithOrNull(compareBy<DragLine> {
+      yDistance(it)
+    }.thenBy { xDistance(it) }.thenBy { if (it === previous) 0 else 1 }.thenComparator(::documentOrder)) ?: return null
+    if (previous != null && candidate !== previous) {
+      val separation = abs(candidate.bounds.bottom - previous.bounds.bottom)
+      val slop = min(ViewConfiguration.get(context).scaledTouchSlop.toFloat(), separation / 4f)
+      val separateRows = candidate.bounds.top >= previous.bounds.bottom || previous.bounds.top >= candidate.bounds.bottom
+      if (separateRows && separation > 0f && yDistance(previous) <= yDistance(candidate) + 2f * slop) candidate = previous
+    }
+    // A row whose layout is being committed is a gap, never permission to jump over it.
+    if (mounted.deferredRoots.any { root ->
+      if (!root.getGlobalVisibleRect(localVisibleRect)) return@any false
+      val y = probeY(candidate) + hostScreenLocation[1]
+      val distance = max(max(localVisibleRect.top - y, y - localVisibleRect.bottom), 0f)
+      distance <= yDistance(candidate)
+    }) return null
+    dragLine = candidate
+    val layout = candidate.owner.view.layout ?: return null
+    val offset = layout.getOffsetForHorizontal(candidate.line, hostX - candidate.originX)
+    return hitAtLayoutOffset(candidate.owner, offset)
+  }
+
+  private fun hitAtLayoutOffset(owner: MountedOwner, rawOffset: Int): HitResult {
+    val boundaries = owner.characterBoundaries
+    var layoutOffset = rawOffset.coerceIn(0, owner.view.layout.text.length)
+    if (!boundaries.isBoundary(layoutOffset)) {
+      val before = boundaries.preceding(layoutOffset)
+      val after = boundaries.following(layoutOffset)
+      layoutOffset = if (layoutOffset - before <= after - layoutOffset) before else after
+    }
+    val logicalOffset = owner.offsetMap.layoutToLogical(layoutOffset).coerceIn(0, owner.text.length)
+    val removedRange = owner.offsetMap.removedRangeAt(layoutOffset)
+    val mediaSide = if (removedRange == null) null else if (layoutOffset * 2 <= removedRange.start + removedRange.end) {
+      MediaSide.Before
+    } else MediaSide.After
+    return HitResult(owner, logicalOffset, mediaSide)
   }
 
   private fun hitTest(owners: List<MountedOwner>, hostX: Float, hostY: Float): HitResult? {
@@ -1096,9 +1250,51 @@ class ForumContentSelectionView(
   }
 
   private fun postAutoScroll() {
-    if (autoScrollPosted || forumEdgeScrollDeltaPx(lastTouchY, height, density) == 0f) return
+    if (autoScrollPosted || draggingHandle == null || !selectionActive) return
     autoScrollPosted = true
     postOnAnimation(autoScrollRunnable)
+  }
+
+  private fun dispatchAutoScrollFrame(): Boolean {
+    val owner = dragLine?.owner ?: return false
+    if (!owner.view.isShown || owner.overlayHost.getTag(R.id.view_tag_native_id) != owner.row.nativeId) return false
+    val now = SystemClock.uptimeMillis()
+    val frameScale = if (lastAutoScrollTime == 0L) 1f else ((now - lastAutoScrollTime) / (1000f / 60f)).coerceIn(0f, 2f)
+    lastAutoScrollTime = now
+    val verticalDelta = forumEdgeScrollDeltaPx(lastTouchY, height, density) * frameScale
+    var ancestor: View? = dragLine?.owner?.view
+    var horizontal: HorizontalScrollView? = null
+    var vertical: ScrollView? = null
+    while (ancestor != null && ancestor !== this) {
+      if (ancestor is HorizontalScrollView && horizontal == null &&
+        (ancestor.getTag(R.id.view_tag_native_id) as? String) in horizontalTargets) horizontal = ancestor
+      if (ancestor is ScrollView) vertical = ancestor
+      ancestor = ancestor.parent as? View
+    }
+    if (verticalDelta != 0f) {
+      val range = selectionDocument.selection() ?: return false
+      val anchor = if (draggingHandle == DraggingHandle.RawStart) range.start else range.end
+      if (selectionDocument.atDocumentBoundary(anchor, towardEnd = verticalDelta > 0f)) return false
+      if (vertical?.canScrollVertically(if (verticalDelta < 0f) -1 else 1) != true) return false
+      onAutoScroll(mapOf("revision" to activeSelectionRevision, "dragId" to dragId, "delta" to verticalDelta / density))
+      return true
+    }
+    val scroll = horizontal ?: return false
+    if (!scroll.isAttachedToWindow || !scroll.getGlobalVisibleRect(localVisibleRect)) return false
+    getLocationOnScreen(hostScreenLocation)
+    val x = lastTouchX + hostScreenLocation[0] - localVisibleRect.left
+    val delta = forumEdgeScrollDeltaPx(x, localVisibleRect.width(), density) * frameScale
+    if (delta == 0f) return false
+    // TopicHorizontalScroll disables native touch scrolling; RN's canScrollHorizontally
+    // therefore returns false even when its worklet-controlled content overflows.
+    val maximum = max(0, (scroll.getChildAt(0)?.width ?: 0) - scroll.width + scroll.paddingLeft + scroll.paddingRight)
+    val next = (scroll.scrollX + delta).coerceIn(0f, maximum.toFloat())
+    if (next == scroll.scrollX.toFloat()) return false
+    onHorizontalAutoScroll(mapOf(
+      "revision" to activeSelectionRevision, "dragId" to dragId,
+      "targetId" to (scroll.getTag(R.id.view_tag_native_id) as String), "offsetDp" to next / density
+    ))
+    return true
   }
 
   private fun runAutoScrollFrame(): ForumAutoScrollPayload? {
@@ -1245,6 +1441,9 @@ class ForumContentSelectionView(
     val text: String,
     val offsetMap: ForumTextOffsetMap
   ) {
+    val characterBoundaries: BreakIterator by lazy {
+      BreakIterator.getCharacterInstance(Locale.getDefault()).apply { setText(view.layout.text.toString()) }
+    }
     fun matches(anchor: ForumSelectionAnchor): Boolean =
       row.documentId == anchor.documentId && row.rowKey == anchor.rowKey && ownerOrdinal == anchor.ownerOrdinal
   }
@@ -1300,8 +1499,11 @@ class ForumContentSelectionView(
 
   private data class MountedOwnerCollection(
     val owners: List<MountedOwner>,
-    val deferred: Boolean
+    val deferred: Boolean,
+    val deferredRoots: List<View> = emptyList()
   )
+
+  private data class DragLine(val owner: MountedOwner, val line: Int, val bounds: RectF, val originX: Float)
 
   private sealed interface MarkedRowAlignment {
     data class Ready(val owners: List<MountedOwner>) : MarkedRowAlignment

@@ -45,7 +45,8 @@ import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { HtmlRenderers } from '../rendering/types';
 import type { ReplyFilter } from '../model/types';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '@/domain/forum/presentation';
-import { contentBoundaryForContinuation, HTML_ALLOWED_INLINE_STYLES } from '../rendering/htmlStyles';
+import { contentBoundaryForContinuation } from '../rendering/htmlStyles';
+import { HTML_ALLOWED_INLINE_STYLES } from '@/ui/content/forumHtmlStyles';
 import {
   NODESEEK_STARDUST_PLACEHOLDER_TAG,
   nodeSeekStardustReceiveFromAttributes

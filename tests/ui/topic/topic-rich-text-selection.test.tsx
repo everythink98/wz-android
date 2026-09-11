@@ -9,7 +9,7 @@ import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
 import { useTopicSessionController } from '@/features/topic/useTopicSessionController';
 import { createHtmlCustomElementModels } from '@/features/topic/rendering/htmlElementModels';
-import { buildHtmlRenderingStyles } from '@/features/topic/rendering/htmlStyles';
+import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
 import { createTheme } from '@/ui/theme/tokens';
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
@@ -50,6 +50,17 @@ jest.mock('expo-video', () => ({
 }));
 
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => undefined) }));
+
+jest.mock('react-native-reanimated', () => {
+  const ReactModule = require('react') as typeof React;
+  const actual = jest.requireActual('react-native-reanimated/mock') as typeof import('react-native-reanimated');
+  return {
+    ...actual,
+    isSharedValue: (value: unknown) => Boolean(value && typeof value === 'object' && 'value' in value),
+    useSharedValue: <T,>(value: T) => ReactModule.useRef(actual.useSharedValue(value)).current,
+    useEvent: (handler: (event: unknown) => void) => (event: { nativeEvent: unknown }) => handler(event.nativeEvent)
+  };
+});
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -572,8 +583,13 @@ describe('topic rich-text selection', () => {
     expect(screen.getByTestId('topic-inline-image')).toBeTruthy();
     expect(screen.getByTestId('topic-image-frame')).toBeTruthy();
     expect(screen.getByText('const face = "😀";').parent?.props.selectable).toBe(false);
-    surface.props.onAutoScroll({ nativeEvent: { delta: -24 } });
+    const identity = { revision: surface.props.revision, dragId: 1 };
+    surface.props.onSelectionDragChange({ nativeEvent: { ...identity, active: true } });
+    surface.props.onAutoScroll({ nativeEvent: { ...identity, delta: -24 } });
     expect(scrollToOffset).toHaveBeenCalledWith({ animated: false, offset: 96 });
+    surface.props.onSelectionDragChange({ nativeEvent: { ...identity, active: false } });
+    surface.props.onAutoScroll({ nativeEvent: { ...identity, delta: -24 } });
+    expect(scrollToOffset).toHaveBeenCalledTimes(1);
   });
 
   it('connects visible opening markers and real code selection while excluding replies, signatures, and accepted answers', async () => {

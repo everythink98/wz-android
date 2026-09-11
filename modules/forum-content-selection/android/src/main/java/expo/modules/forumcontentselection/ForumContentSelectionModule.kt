@@ -19,7 +19,11 @@ class ForumContentSelectionModule : Module() {
     Name("ForumContentSelection")
 
     View(ForumContentSelectionView::class) {
-      Events("onAutoScroll", "onSelectionChange", "onSelectionError")
+      Events("onAutoScroll", "onSelectionChange", "onSelectionError", "onSelectionDragChange", "onHorizontalAutoScroll")
+
+      Prop("horizontalTargets") { view: ForumContentSelectionView, targets: List<String>? ->
+        view.horizontalTargets = targets.orEmpty().filter(String::isNotBlank).toSet()
+      }
 
       Prop("enabled") { view: ForumContentSelectionView, enabled: Boolean? ->
         view.pendingEnabled = enabled != false

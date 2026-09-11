@@ -14,6 +14,7 @@ import {
   useState
 } from 'react';
 import { type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewProps } from 'react-native';
+import Animated, { cancelAnimation, type SharedValue, useEvent, useSharedValue } from 'react-native-reanimated';
 import { useTopicSelectionBackReport } from '../useTopicRouteBeforeRemove';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
@@ -26,6 +27,10 @@ export type TopicSelectionItem = Readonly<{
 }>;
 
 type NativeSelectionRow = TopicSelectionItem & { nativeId: string };
+type SelectionDrag = { revision: string; dragId: number; active: boolean };
+type SelectionHorizontalTarget = { offset: SharedValue<number>; maximum: SharedValue<number> };
+type SelectionHorizontalScroll = { revision: string; dragId: number; targetId: string; offsetDp: number };
+type SelectionAutoScroll = { revision: string; dragId: number; delta: number };
 
 type NativeForumSelectionProps = {
   accessible: boolean;
@@ -33,18 +38,22 @@ type NativeForumSelectionProps = {
   enabled: boolean;
   revision: string;
   rows: readonly NativeSelectionRow[];
+  horizontalTargets: readonly string[];
   style: ViewProps['style'];
   testID?: string;
-  onAutoScroll?: (event: NativeSyntheticEvent<{ delta: number }>) => void;
+  onAutoScroll?: (event: NativeSyntheticEvent<SelectionAutoScroll>) => void;
+  onSelectionDragChange?: (event: NativeSyntheticEvent<SelectionDrag>) => void;
+  onHorizontalAutoScroll?: (event: NativeSyntheticEvent<SelectionHorizontalScroll>) => void;
   onSelectionChange?: (event: NativeSyntheticEvent<{ active: boolean; revision: string }>) => void;
   onSelectionError?: (event: NativeSyntheticEvent<{ code: string; revision: string }>) => void;
 };
 
 type NativeForumSelectionRef = View & { cancelSelection?: () => void };
 
-let NativeForumSelection: ComponentType<
+type NativeSelectionComponent = ComponentType<
   NativeForumSelectionProps & { ref?: RefObject<NativeForumSelectionRef | null> }
-> | null = null;
+>;
+let NativeForumSelection: NativeSelectionComponent | null = null;
 let moduleUnavailableReported = false;
 
 function recordSelectionError(selectionError: DiagnosticFields['selectionError']) {
@@ -56,7 +65,11 @@ function recordSelectionError(selectionError: DiagnosticFields['selectionError']
 }
 if (Platform.OS === 'android') {
   try {
-    NativeForumSelection = requireNativeViewManager<NativeForumSelectionProps>('ForumContentSelection');
+    NativeForumSelection = Animated.createAnimatedComponent(
+      requireNativeViewManager<NativeForumSelectionProps & { ref?: RefObject<NativeForumSelectionRef | null> }>(
+        'ForumContentSelection'
+      )
+    ) as NativeSelectionComponent;
   } catch {
     // The stable per-TextView and reply-copy paths remain available without the optional native module.
   }
@@ -66,12 +79,14 @@ type TopicSelectionContextValue = {
   cancelSelection: (() => void) | null;
   enabled: boolean;
   sessionKey: string;
+  registerHorizontalTarget: (id: string, target: SelectionHorizontalTarget) => () => void;
 };
 
 const TopicSelectionContext = createContext<TopicSelectionContextValue>({
   cancelSelection: null,
   enabled: false,
-  sessionKey: ''
+  sessionKey: '',
+  registerHorizontalTarget: () => () => undefined
 });
 const TopicSelectionRowContext = createContext(false);
 
@@ -132,12 +147,56 @@ export function TopicSelectionSurface({
   const [document, setDocument] = useState({ key: lifecycleKey, generation: 0 });
   if (document.key !== lifecycleKey) setDocument({ key: lifecycleKey, generation: document.generation + 1 });
   const revision = `${documentKey}:${surfaceId}:${document.generation}`;
+  const [horizontalTargets, setHorizontalTargets] = useState<Record<string, SelectionHorizontalTarget>>({});
+  const registerHorizontalTarget = useCallback((id: string, target: SelectionHorizontalTarget) => {
+    setHorizontalTargets((current) => ({ ...current, [id]: target }));
+    return () =>
+      setHorizontalTargets((current) => {
+        if (current[id] !== target) return current;
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+  }, []);
+  const drag = useSharedValue<SelectionDrag>({ revision: '', dragId: 0, active: false });
+  const onSelectionDragChange = useEvent<NativeSyntheticEvent<SelectionDrag>>(
+    (event) => {
+      'worklet';
+      if (event.revision !== revision || !nativeEnabled || !Number.isFinite(event.dragId)) return;
+      if (event.dragId < drag.value.dragId && drag.value.revision === revision) return;
+      if (event.dragId === drag.value.dragId && drag.value.revision === revision && event.active) return;
+      drag.set({ revision, dragId: event.dragId, active: event.active });
+    },
+    ['onSelectionDragChange'],
+    true
+  );
+  const onHorizontalAutoScroll = useEvent<NativeSyntheticEvent<SelectionHorizontalScroll>>(
+    (event) => {
+      'worklet';
+      if (
+        !nativeEnabled ||
+        event.revision !== revision ||
+        !drag.value.active ||
+        drag.value.revision !== revision ||
+        event.dragId !== drag.value.dragId ||
+        !Number.isFinite(event.offsetDp)
+      )
+        return;
+      const target = horizontalTargets[event.targetId];
+      if (!target) return;
+      cancelAnimation(target.offset);
+      target.offset.set(Math.max(0, Math.min(target.maximum.value, event.offsetDp)));
+    },
+    ['onHorizontalAutoScroll'],
+    true
+  );
   const reportSelection = useTopicSelectionBackReport();
   const mounted = useRef(false);
   const cancelSelection = useCallback(() => {
+    drag.set({ ...drag.value, active: false });
     reportSelection(null);
     nativeRef.current?.cancelSelection?.();
-  }, [reportSelection]);
+  }, [drag, reportSelection]);
   useLayoutEffect(() => {
     mounted.current = true;
     return () => {
@@ -191,27 +250,38 @@ export function TopicSelectionSurface({
     cancelSelection();
   }, [cancelSelection, revision, routeActive]);
 
-  const onAutoScroll = useCallback(
-    ({ nativeEvent }: NativeSyntheticEvent<{ delta: number }>) => {
-      const list = listRef.current;
-      const currentOffset = list?.getAbsoluteLastScrollOffset();
-      if (
-        !list ||
-        typeof currentOffset !== 'number' ||
-        !Number.isFinite(currentOffset) ||
-        !Number.isFinite(nativeEvent.delta)
-      )
-        return;
-      list.scrollToOffset({
-        animated: false,
-        offset: Math.max(0, currentOffset + nativeEvent.delta)
-      });
-    },
-    [listRef]
-  );
+  const onAutoScroll = useLatestCallback(({ nativeEvent }: NativeSyntheticEvent<SelectionAutoScroll>) => {
+    const list = listRef.current;
+    const currentOffset = list?.getAbsoluteLastScrollOffset();
+    const activeDrag = drag.value;
+    if (
+      !mounted.current ||
+      !nativeEnabled ||
+      nativeEvent.revision !== revision ||
+      !activeDrag.active ||
+      activeDrag.revision !== revision ||
+      nativeEvent.dragId !== activeDrag.dragId ||
+      !list ||
+      typeof currentOffset !== 'number' ||
+      !Number.isFinite(currentOffset) ||
+      !Number.isFinite(nativeEvent.delta)
+    )
+      return;
+    const offset = Math.max(0, currentOffset + nativeEvent.delta);
+    if (offset === currentOffset) return;
+    list.scrollToOffset({
+      animated: false,
+      offset
+    });
+  });
   const context = useMemo(
-    () => ({ cancelSelection: nativeEnabled ? cancelSelection : null, enabled: nativeEnabled, sessionKey }),
-    [cancelSelection, nativeEnabled, sessionKey]
+    () => ({
+      cancelSelection: nativeEnabled ? cancelSelection : null,
+      enabled: nativeEnabled,
+      sessionKey,
+      registerHorizontalTarget
+    }),
+    [cancelSelection, nativeEnabled, sessionKey, registerHorizontalTarget]
   );
 
   if (Platform.OS !== 'android' || !NativeForumSelection) {
@@ -226,9 +296,12 @@ export function TopicSelectionSurface({
         enabled={nativeEnabled}
         revision={revision}
         rows={snapshot.valid ? snapshot.rows : []}
+        horizontalTargets={Object.keys(horizontalTargets)}
         style={styles.fill}
         testID="topic-selection-surface"
         onAutoScroll={onAutoScroll}
+        onSelectionDragChange={onSelectionDragChange}
+        onHorizontalAutoScroll={onHorizontalAutoScroll}
         onSelectionChange={onSelectionChange}
         onSelectionError={onSelectionError}
       >
@@ -242,6 +315,17 @@ export function TopicSelectionSurface({
 
 export function useTopicSelectionCancel() {
   return useContext(TopicSelectionContext).cancelSelection;
+}
+
+export function useTopicSelectionHorizontalTarget(offset: SharedValue<number>, maximum: SharedValue<number>) {
+  const { enabled, sessionKey, registerHorizontalTarget } = useContext(TopicSelectionContext);
+  const opening = useContext(TopicSelectionRowContext);
+  const id = useId();
+  const nativeID = enabled && opening ? `topic-horizontal-${hashRevision([sessionKey, id])}` : undefined;
+  useLayoutEffect(() => {
+    if (nativeID) return registerHorizontalTarget(nativeID, { offset, maximum });
+  }, [nativeID, offset, maximum, registerHorizontalTarget]);
+  return nativeID;
 }
 
 export function useTopicSelectionRowRef(rowKey?: string) {

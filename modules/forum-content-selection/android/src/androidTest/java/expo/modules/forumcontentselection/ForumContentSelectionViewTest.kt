@@ -574,6 +574,7 @@ class ForumContentSelectionViewTest {
 
         val changedX = fixture.pointInText(fixture.first.text, utf16Offset = 5).first
         fixture.send(MotionEvent.ACTION_MOVE, changedX, end.y + grabOffset, downTime)
+        fixture.surface.onPreDraw()
         assertTrue(fixture.surface.selectionSnapshotForTest() != before)
         assertEquals(listOf(android.view.HapticFeedbackConstants.TEXT_HANDLE_MOVE), hapticRequests)
         fixture.send(MotionEvent.ACTION_UP, changedX, end.y + grabOffset, downTime)
@@ -591,6 +592,141 @@ class ForumContentSelectionViewTest {
         assertEquals(selectAllCopy, fixture.surface.copySelectionToClipboardForTest())
         assertTrue(hapticRequests.isEmpty())
         fixture.send(MotionEvent.ACTION_UP, selectAllStart.x, selectAllStart.y, selectAllDownTime)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun singleLineHandleKeepsTrackingOutsideTheTextBounds() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.first.text.layoutParams = FrameLayout.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        fixture.send(MotionEvent.ACTION_UP, target.first, target.second, fixture.gestureDownTime)
+        val handle = requireNotNull(fixture.surface.overlayHandlesForTest().second)
+        val gripY = handle.y + 24f * fixture.activity.resources.displayMetrics.density
+        val downTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, handle.x, gripY, downTime)
+        for (offset in listOf(4, 5, 6, 7, 5, 4)) {
+          val x = fixture.pointInText(fixture.first.text, offset).first
+          val beforeFrame = fixture.surface.selectionSnapshotForTest()
+          fixture.send(MotionEvent.ACTION_MOVE, x, gripY + 6f, downTime)
+          assertEquals(beforeFrame, fixture.surface.selectionSnapshotForTest())
+          fixture.surface.onPreDraw()
+          assertEquals(offset, fixture.surface.selectionSnapshotForTest()?.end?.utf16Offset)
+          val expected = fixture.expectedHandleHotspot(fixture.first.text, offset)
+          val actual = requireNotNull(fixture.surface.overlayHandlesForTest().second)
+          assertEquals(expected.first, actual.x, 2f)
+          assertEquals(expected.second, actual.y, 2f)
+        }
+        fixture.send(MotionEvent.ACTION_UP, fixture.pointInText(fixture.first.text, 6).first, gripY + 6f, downTime)
+        assertEquals(6, fixture.surface.selectionSnapshotForTest()?.end?.utf16Offset)
+        val start = requireNotNull(fixture.surface.overlayHandlesForTest().first)
+        val startGrip = start.y + 24f * fixture.activity.resources.displayMetrics.density
+        val startDown = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, start.x, startGrip, startDown)
+        for (offset in listOf(2, 3, 1, 0)) {
+          fixture.send(MotionEvent.ACTION_MOVE, fixture.pointInText(fixture.first.text, offset).first, startGrip + 6f, startDown)
+          fixture.surface.onPreDraw()
+          assertEquals(offset, fixture.surface.selectionSnapshotForTest()?.start?.utf16Offset)
+          val expected = fixture.expectedHandleHotspot(fixture.first.text, offset)
+          val actual = requireNotNull(fixture.surface.overlayHandlesForTest().first)
+          assertEquals(expected.first, actual.x, 2f)
+          assertEquals(expected.second, actual.y, 2f)
+        }
+        fixture.send(MotionEvent.ACTION_CANCEL, start.x, startGrip, startDown)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun equallyNearRecycledRowsUseDocumentOrderInsteadOfMountOrder() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      scenario.onActivity { activity -> fixture = SurfaceFixture(activity) }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      val target = holdLongPressSelection(scenario, fixture)
+      scenario.onActivity {
+        val handle = requireNotNull(fixture.surface.overlayHandlesForTest().second)
+        val dx = handle.x - target.first
+        val dy = handle.y - target.second
+        val recycled = FrameLayout(fixture.activity)
+        // Identical geometry, reverse mounting order, and no mounted previous endpoint.
+        for (cell in listOf(fixture.last, fixture.second)) {
+          recycled.addView(cell.root, FrameLayout.LayoutParams(500, 200))
+        }
+        fixture.mountRoot(recycled)
+        val surface = fixture.surface
+        surface.measure(
+          View.MeasureSpec.makeMeasureSpec(surface.width, View.MeasureSpec.EXACTLY),
+          View.MeasureSpec.makeMeasureSpec(surface.height, View.MeasureSpec.EXACTLY)
+        )
+        surface.layout(surface.left, surface.top, surface.right, surface.bottom)
+        val hotspot = fixture.expectedHandleHotspot(fixture.second.text, 0)
+        fixture.send(MotionEvent.ACTION_MOVE, hotspot.first - dx, hotspot.second - dy, fixture.gestureDownTime)
+        surface.onPreDraw()
+        assertEquals("second", surface.selectionSnapshotForTest()?.end?.rowKey)
+        assertEquals(0, surface.selectionSnapshotForTest()?.end?.utf16Offset)
+        val actual = requireNotNull(surface.overlayHandlesForTest().second)
+        assertEquals(hotspot.first, actual.x, 2f)
+        assertEquals(hotspot.second, actual.y, 2f)
+        fixture.send(MotionEvent.ACTION_CANCEL, target.first, target.second, fixture.gestureDownTime)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun heldLongPressCrossesLinesAndKeepsCombiningCharactersWhole() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      lateinit var target: Pair<Float, Float>
+      val value = "one two\nthree \uD83D\uDE00 e\u0301\nlast line"
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.configureFirstText(value, View.TEXT_DIRECTION_FIRST_STRONG_LTR, View.LAYOUT_DIRECTION_LTR)
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        target = fixture.pointInText(fixture.first.text, 1)
+        fixture.gestureDownTime = SystemClock.uptimeMillis()
+        fixture.send(MotionEvent.ACTION_DOWN, target.first, target.second, fixture.gestureDownTime)
+      }
+      Thread.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 120L)
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      scenario.onActivity {
+        val initial = requireNotNull(fixture.surface.overlayHandlesForTest().second)
+        val dx = initial.x - target.first
+        val dy = initial.y - target.second
+        for (offset in listOf(5, 11, 16, 19, value.length, 22, 11, 5)) {
+          val hotspot = fixture.expectedHandleHotspot(fixture.first.text, offset)
+          fixture.send(MotionEvent.ACTION_MOVE, hotspot.first - dx, hotspot.second - dy + 6f, fixture.gestureDownTime)
+          fixture.surface.onPreDraw()
+          assertEquals(offset, fixture.surface.selectionSnapshotForTest()?.end?.utf16Offset)
+          val handle = requireNotNull(fixture.surface.overlayHandlesForTest().second)
+          assertEquals(hotspot.first, handle.x, 2f)
+          assertEquals(hotspot.second, handle.y, 2f)
+        }
+        fixture.send(MotionEvent.ACTION_CANCEL, target.first, target.second, fixture.gestureDownTime)
+        assertTrue(fixture.surface.interactionStateForTest().active)
+        assertFalse(fixture.surface.interactionStateForTest().ownsGesture)
+        assertEquals(5, fixture.surface.selectionSnapshotForTest()?.end?.utf16Offset)
         fixture.close()
       }
     }
@@ -2376,7 +2512,8 @@ class ForumContentSelectionViewTest {
       return (
         viewLocation[0] - surfaceLocation[0] + textView.totalPaddingLeft + layout.getPrimaryHorizontal(offset)
         ) to (
-        viewLocation[1] - surfaceLocation[1] + textView.totalPaddingTop + layout.getLineBottom(line) / 2f
+        viewLocation[1] - surfaceLocation[1] + textView.totalPaddingTop +
+          (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f
         )
     }
 

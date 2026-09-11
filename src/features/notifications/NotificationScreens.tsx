@@ -1,8 +1,8 @@
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
-import { memo, useMemo, useRef } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Switch, Text, View } from 'react-native';
+import { memo, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, Switch, Text, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
-import RenderHTML, { HTMLContentModel, HTMLElementModel } from 'react-native-render-html';
+import RenderHTML, { HTMLContentModel, HTMLElementModel, type CustomTextualRenderer } from 'react-native-render-html';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { notificationSources, sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import { parseForumTopicDestination } from '@/domain/forum/links';
@@ -29,15 +29,36 @@ import { createNotificationStyles } from './styles';
 import { MessageReplyComposerSheet } from './MessageReplyComposerSheet';
 import type { LinuxDoTemplate } from '@/sources/linuxdo/templates';
 import type { LinuxDoPollCapabilities } from '@/domain/forum/linuxDoPoll';
-import { normalizeForumStickerMediaHtml } from '@/domain/forum/forumContentMedia';
+import {
+  INLINE_FORUM_IMAGE_TAG,
+  isInlineForumImage,
+  normalizeForumStickerMediaHtml
+} from '@/domain/forum/forumContentMedia';
+import { normalizeMediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
+import { imageSourceFromUrl } from '@/platform/media/imageRequestSource';
+import { inlineForumImageAlignmentStyle, inlineForumImageAttachmentSize } from '@/platform/media/inlineMedia';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import { createForumStickerRenderers } from '@/ui/content/ForumStickerContent';
 import { FORUM_STICKER_ELEMENT_MODELS } from '@/ui/content/forumStickerElementModels';
 import { createConversationAutoScrollController } from './conversationAutoScroll';
 import { FORUM_AUDIO_TAG } from '@/domain/forum/html';
+import { buildHtmlRenderingStyles, HTML_ALLOWED_INLINE_STYLES } from '@/ui/content/forumHtmlStyles';
+
+const NOTIFICATION_HTML_FONTS = ['sans-serif', 'serif', 'monospace'];
+
+const NOTIFICATION_HTML_VISITORS: ComponentProps<typeof RenderHTML>['domVisitors'] = {
+  onElement(element) {
+    if (element.name === 'img' && isInlineForumImage(element.attribs)) element.name = INLINE_FORUM_IMAGE_TAG;
+  }
+};
 
 const NOTIFICATION_HTML_ELEMENT_MODELS = {
   ...FORUM_STICKER_ELEMENT_MODELS,
+  [INLINE_FORUM_IMAGE_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: INLINE_FORUM_IMAGE_TAG,
+    contentModel: HTMLContentModel.textual,
+    isOpaque: true
+  }),
   [FORUM_AUDIO_TAG]: HTMLElementModel.fromCustomModel({
     tagName: FORUM_AUDIO_TAG,
     contentModel: HTMLContentModel.mixed,
@@ -469,20 +490,49 @@ function DetailHtml({
   onOpenExternalUrl: (url: string) => void;
   onOpenTopic: (topic: Topic, location?: TopicLocationTarget) => void;
 }) {
-  const { settings, styles } = useReaderThemeStyles(createNotificationStyles);
+  const { settings, styles, theme } = useReaderThemeStyles(createNotificationStyles);
   const mediaContext = useForumMediaRequestContext(source);
   const renderableHtml = useMemo(() => normalizeForumStickerMediaHtml(html), [html]);
-  const tagsStyles = useMemo(() => ({ a: styles.detailLink }), [styles.detailLink]);
-  const renderers = useMemo(
-    () =>
-      createForumStickerRenderers({
+  const { htmlTagsStyles, htmlClassesStyles, htmlIgnoredStyles } = useMemo(
+    () => buildHtmlRenderingStyles({ settings, theme, enableDiscourseCallouts: source === 'linuxdo' }),
+    [settings, source, theme]
+  );
+  const tagsStyles = useMemo(() => ({ ...htmlTagsStyles, a: styles.detailLink }), [htmlTagsStyles, styles.detailLink]);
+  const bodyStyle = message ? styles.messageBody : styles.detailBody;
+  const renderers = useMemo(() => {
+    const InlineImageRenderer: CustomTextualRenderer = ({ tnode }) => {
+      const attributes = tnode.attributes;
+      const src = attributes.src || '';
+      const identity = `${mediaContext.sessionIdentity}:${src}`;
+      const [failedSource, setFailedSource] = useState('');
+      const label = attributes.alt || attributes.title || '表情';
+      if (!src || failedSource === identity) return <Text style={tnode.styles.nativeTextFlow}>{label}</Text>;
+      const size = inlineForumImageAttachmentSize(attributes, settings.fontScale, contentWidth);
+      return (
+        <View style={[size, inlineForumImageAlignmentStyle(attributes, settings.fontScale, bodyStyle.lineHeight)]}>
+          <Image
+            accessibilityLabel={label}
+            resizeMode="contain"
+            source={imageSourceFromUrl(src, {
+              mediaContext,
+              referrerPolicy: normalizeMediaReferrerPolicy(attributes.referrerpolicy)
+            })}
+            style={size}
+            onError={() => setFailedSource(identity)}
+          />
+        </View>
+      );
+    };
+    return {
+      ...createForumStickerRenderers({
         fontScale: settings.fontScale,
         mediaContext,
         mediaSessionIdentity: mediaContext.sessionIdentity,
-        textStyle: message ? styles.messageBody : styles.detailBody
+        textStyle: bodyStyle
       }),
-    [mediaContext, message, settings.fontScale, styles.detailBody, styles.messageBody]
-  );
+      [INLINE_FORUM_IMAGE_TAG]: InlineImageRenderer
+    };
+  }, [bodyStyle, contentWidth, mediaContext, settings.fontScale]);
   const renderersProps = useMemo(
     () => ({
       a: {
@@ -502,13 +552,21 @@ function DetailHtml({
   );
   return (
     <RenderHTML
-      baseStyle={message ? styles.messageBody : styles.detailBody}
+      baseStyle={bodyStyle}
+      allowedStyles={HTML_ALLOWED_INLINE_STYLES}
+      classesStyles={htmlClassesStyles}
       contentWidth={contentWidth}
       customHTMLElementModels={NOTIFICATION_HTML_ELEMENT_MODELS}
+      domVisitors={NOTIFICATION_HTML_VISITORS}
+      emSize={bodyStyle.fontSize}
+      enableUserAgentStyles
+      enableCSSInlineProcessing
+      ignoredStyles={htmlIgnoredStyles}
       renderers={renderers}
       renderersProps={renderersProps}
       source={{ html: renderableHtml }}
       tagsStyles={tagsStyles}
+      systemFonts={NOTIFICATION_HTML_FONTS}
     />
   );
 }

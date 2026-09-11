@@ -8,8 +8,22 @@ import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 import type { Fetcher } from '@/platform/network/request';
 import type { Source } from '@/domain/forum/models';
 import { QueryTestWrapper } from '../QueryTestWrapper';
+import { fireEvent, render } from '../render';
 
-jest.mock('@/features/account/AccountHosts', () => ({ AccountHosts: () => null }));
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 })
+}));
+
+jest.mock('react-native-webview', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  return {
+    WebView: React.forwardRef(function MockWebView(props: Record<string, unknown>, ref: unknown) {
+      React.useImperativeHandle(ref, () => ({ stopLoading: jest.fn(), injectJavaScript: jest.fn() }), []);
+      return React.createElement(View, { ...props, testID: 'login-webview' });
+    })
+  };
+});
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual('@/platform/network/managedCookies'),
   setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
@@ -58,6 +72,45 @@ beforeEach(() => {
   });
 });
 afterEach(() => setDiagnosticWriter(null));
+
+it.each(['loading', 'ready'] as const)(
+  'preserves the same login page across background and foreground: %s',
+  async (phase) => {
+    seedAccount();
+    const fetcher = jest.fn(async () => new Response('{}'));
+    const options = {
+      enabledSources: ['linuxdo'] as Source[],
+      fetcher,
+      loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+      notify: jest.fn(),
+      nodeSeekRecoveryThreshold: 1,
+      openUser: async () => undefined,
+      ready: false,
+      screen: 'search' as const,
+      webViewBlockMessage: ''
+    };
+    let runtime!: ReturnType<typeof useAccountRuntime>;
+    function Harness({ appActive }: { appActive: boolean }) {
+      runtime = useAccountRuntime({ ...options, appActive });
+      return runtime.hosts.element;
+    }
+    const view = await render(<Harness appActive />, { wrapper: QueryTestWrapper });
+    await act(async () => runtime.center.handleAccountCenterCommand({ type: 'open-login', site: 'linuxdo' }));
+    const webView = await view.findByTestId('login-webview');
+    if (phase === 'ready') await fireEvent(webView, 'loadEnd', { nativeEvent: {} });
+    const epoch = runtime.read.forumSessionEpochs.linuxdo;
+    const handoffs = jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.length;
+
+    await view.rerender(<Harness appActive={false} />);
+    expect(view.getByTestId('login-webview')).toBe(webView);
+    await view.rerender(<Harness appActive />);
+    expect(view.getByTestId('login-webview')).toBe(webView);
+    expect(runtime.hosts.linuxDoVerificationVisible).toBe(true);
+    expect(runtime.read.forumSessionEpochs.linuxdo).toBe(epoch);
+    expect(setLinuxDoCookieResponseBarrier).toHaveBeenCalledTimes(handoffs);
+    expect(fetcher).not.toHaveBeenCalled();
+  }
+);
 
 it.each(['anonymous', 'same', 'changed', 'unknown'] as const)(
   'settles concurrent login contradictions through one account probe: %s',

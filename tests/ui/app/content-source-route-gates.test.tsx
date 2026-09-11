@@ -20,7 +20,7 @@ import { useTopicActionsController } from '@/features/topic/actions/useTopicActi
 import { useHtmlRenderingController } from '@/features/topic/rendering/useHtmlRenderingController';
 import { useImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
-import { HTML_ALLOWED_INLINE_STYLES } from '@/features/topic/rendering/htmlStyles';
+import { HTML_ALLOWED_INLINE_STYLES } from '@/ui/content/forumHtmlStyles';
 import { createHtmlCustomElementModels } from '@/features/topic/rendering/htmlElementModels';
 import { UserRoute, UserRouteRuntimeProvider, type UserRouteRuntimeValue } from '@/features/user/UserRoute';
 import { useUserController } from '@/features/user/useUserController';

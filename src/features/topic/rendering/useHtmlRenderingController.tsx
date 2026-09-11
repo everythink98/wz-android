@@ -16,7 +16,8 @@ import type {
   UserReference
 } from '@/domain/forum/models';
 import type { HtmlRenderers, HtmlRenderersProps } from './types';
-import { buildHtmlRenderingStyles, createHtmlRendererStyles } from './htmlStyles';
+import { createHtmlRendererStyles } from './htmlStyles';
+import { buildHtmlRenderingStyles } from '@/ui/content/forumHtmlStyles';
 import { useContentBoundarySpacing } from './TopicContentPresentation';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';

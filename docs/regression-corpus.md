@@ -17,6 +17,18 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
+## `REG-ACCOUNT-049` L 站登录页面切后台再返回白屏
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-02/03` |
+| 历史症状与根因 | 2026-09-11 主模拟器上 linux.do 原站已完整显示，Home 后返回只剩登录面板按钮，WebView 节点消失，App PID 未变；手动刷新恢复。`useAccountRuntime` 将 App inactive 接到 `useVerificationController` 的页面卸载、session 递增与待挂载定时任务取消，但面板未关闭，前台也不重新挂载。旧测试只断言面板保持可见，未验证网页实例。 |
+| 修复方向 | 页面生命周期独立于 App 活跃状态；后台保留 WebView 与原页面，只取消正在检测的迟到界面结算，保持账号屏障、Cookie 交接及关闭/刷新 owner。 |
+| 当前 owner | `tests/ui/account/account-runtime.test.tsx` 挂载真实 runtime、AccountHosts 与登录面板；`src/features/account/useVerificationController.test.ts` 覆盖待挂载和迟到检测，`tests/ui/account/account-site-panels.test.tsx` 保留超时及渲染进程退出后的显式刷新。 |
+| 失败 oracle | 修复前加载中/完成后切后台均丢失 WebView 节点；待挂载任务无法完成，后台递增页面 session。对应 UI 两例与单元两例先失败，修复后通过。 |
+| 验收边界 | 匹配候选 APK 在主登录态 AVD 完成原站打开后的连续前后台切换、超过 15 秒后台停留、滚动位置保留，以及手动刷新、关闭重开和检测状态，均为 targeted `LIVE_PASS`；一次已滚动页面前后截图 SHA-256 完全一致，整个验收 App PID 不变。20 项 unit、28 项 UI、类型/Lint/架构/文档检查及 x86_64 Release 构建通过。物理手机、未登录表单填写和系统回收 WebView renderer 的设备分支为 `NOT_VERIFIED`，未清登录态制造场景。 |
+
 ## `REG-ACCOUNT-047` L 站频繁失效与原站续期入口缺失
 
 | 字段 | 内容 |
@@ -5297,3 +5309,44 @@
 | 四站启动与负向控制 | 最终构建 `LIVE_PASS`：linux.do `2885866/9`、NodeSeek `post-832584-16#155`、V2EX `945124#r_13198746`（第 6 楼）、妖火 `book_re.aspx?id=1560939&classid=177&tofloor=90` 冷热启动到达真实目标；冷启后返回没有重复 Topic 层。NodeSeek 无 hash 页码链接、V2EX `#reply6` 均显示普通主题；linux.do、妖火普通主题也独立验收。 |
 | 真实入口补充 | 同轮主修复构建 `LIVE_PASS`：NodeSeek 第 156 楼回复关系 → #154 → 跨页 #149，目标头部可见并高亮；V2EX 945124 第 7 楼正文 `@Pipecraft #6` 定位高亮，正文 `960065?p=3` 只打开主题；妖火 #90 回复关系 → #88 定位高亮。最终构建另复核上行四站精确深链；这些样本不替代指定 linux.do 案例。 |
 | 未验证范围 | `NOT_VERIFIED`：实体手机；通知真实点击、已采纳答案真实入口、写后真实回调；四站分别穷举的倒序/筛选/查找、账号切换、快速切换和网络/权限失败组合；V2EX 跨页真实 ID 样本。上述已有共享 UI/来源确定性 owner，Live 写入未执行，写后行为由 mock 证明。本专项未运行 `.ad` Replay，不声明 `DEVICE_REPLAY_PASS`。 |
+
+## `REG-NOTIFY-063` 通知正文缺少标题、强调和段落样式
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02`、`TOPIC-02` |
+| 历史症状与根因 | 2026-09-11 查看三站六条公告、回复和私信，公告的段落/图片间距紧贴，标题和强调层级丢失。通知 DetailHtml 依赖 react-native-render-html 函数组件 defaultProps；React 19 的现代 JSX 入口不补默认值，未显式开启 enableUserAgentStyles。旧 UI 测试读取 CommonJS 入口，createElement 补默认值，掩盖了 Android 实际行为。 |
+| 修复范围 | 通知共用入口显式启用基础 HTML 样式、受限行内 CSS、em 字号和字体；帖子纯 HTML 样式下沉 ui/content 供两条旅程复用，详情/原消息和气泡保留基础字号并响应阅读行距。气泡、底部对齐、媒体交互与来源协议不变。 |
+| 当前 owner | `tests/ui/notifications/notifications-screen.test.tsx` 使用真实源码入口覆盖三容器的标题、强调、斜体、段落、引用、代码、站点类名和深浅主题/字号；`src/ui/content/forumHtmlStyles.test.ts` 固定共享样式；帖子渲染与通知 route 既有 owner 继续验证消费链。 |
+| 失败 oracle | seed 2120019208 修复前三容器小标题均与正文同字号；修复后原用例通过，随后扩充深色、放大字号和 serif 字体场景。 |
+| 验证 | `UNIT_PASS`：共享样式与边界 9 项；`UI_PASS`：通知 screen/route、帖子渲染和来源门禁共 236 项；`STATIC_PASS`：类型、架构、lint、格式、unused 与文档检查。`LIVE_PASS`：匹配开发签名构建复看 linux.do 公告/系统消息/私信、NodeSeek 回复/私信和妖火原消息，标题/强调/代码/引用与段落恢复，图片/贴纸不越界，滚动和返回正常；`APK_SANITY`：覆盖安装保持首次安装时间与三站登录，当前进程无 JS/Native fatal。 |
+| 验证边界 | 深浅主题、130% 字号、serif 字体和阅读行距由真实源码入口 UI 测试证明；本轮设备六样本使用浅色、100% 字号，未跑 tracked Replay 或实体手机，不声明全站富媒体完整验收。 |
+
+## `REG-NOTIFY-064` 通知 Emoji 被拆成居中块图片
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02`；回归展开 `TOPIC-02` |
+| 历史症状与根因 | 2026-09-11 用户指出 Nicolas 的 linux.do 互动通知仍排版异常：文字中间的 Emoji 被单独居中换行。同一内容在关联帖子中连续显示。前一轮六样本没有覆盖文字夹普通 Emoji；通知仅注册了贴纸 renderer，普通 img 仍走 RNRH 块图片默认模型，启用 HTML 样式不能修复其内容模型。 |
+| 修复范围 | 通知共用 DetailHtml 用已有 isInlineForumImage 识别规则把 Emoji 转为 textual 附件，复用 inlineMedia 尺寸/对齐与带会话的图片请求；三个正文入口保持前后文字流和字号缩放，加载失败在原位显示 alt。普通图片和贴纸保持原路径，Topic 交互不变。 |
+| 当前 owner | `tests/ui/notifications/notifications-screen.test.tsx` 的现有富文本行为用例，在真实 JSX 源码入口覆盖详情、原消息、私信 × 深浅主题/100%–130% 字号的连续文字流、附件尺寸与失败回退；通知 route 和 Topic 渲染既有 owner 回归。 |
+| 失败 oracle | seed `-1533022250` 下六种组合均无法在同一 Text 中找到表情前后文字，修复后同 seed 全通过；扩充尺寸和失败回退后，五套相关 UI 共 236 项通过，seed `-255944687`。 |
+| 验证 | `STATIC_PASS`：typecheck、架构、lint、格式和 diff；`UI_PASS`：236 项。`APK_SANITY`：1.3.141/145、buildId `4da7bf4b63bc4f05afd65e90d5a62d22`，APK SHA-256 `9c36aecca4f585c6c096dbd7f5dc60d83de9ab8bac5f6d89c142bd667bf10ca7`，同签名覆盖安装，firstInstallTime 保持 `2026-07-26 16:51:37`，三站登录保留。`LIVE_PASS`：匹配构建重新打开用户指定互动通知，Emoji 回到原位置随文字换行；关联帖子与返回详情核对。 |
+| 验证边界 | 本轮设备为 API 35 模拟器、浅色/100%；深色、130% 和失败回退由 UI 测试覆盖，实体机与 tracked Replay 为 `NOT_VERIFIED`；前次六样本通过不代表已覆盖全部媒体形态。 |
+
+## `REG-TOPIC-156` 短主楼手柄微斜拖动停止更新
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`；回归展开 `TOPIC-01/03`、`NAV-02/03` |
+| 历史症状与根因 | 2026-09-11，NodeSeek `post-923467-1` 单行主楼长按后水平拖选可更新，加入约 6px 向下偏移后停更。连续拖选仍依赖 marked row/TextView 的严格命中，行底仅减 0.5px；轻微越界便直接返回。原生失败 oracle 在预期 offset 4 时仍为 3。该命中中断已确认，不代表所有掉帧均由它引起。 |
+| 修复范围 | 严格长按入口保留；接管后的端点统一按可见、有效映射的最近文字行求解，保留抓取偏移、字符边界与回收恢复。MOVE 按帧合并，UP 结算；拖动期间续期隐藏 Android ActionMode，结束后更新最终菜单。纵滚继续经 FlashList，横滚通过 Native 事件与 Reanimated 更新既有共享 offset，并校验 revision、dragId 和独立 viewport 身份。 |
+| 当前 owner | `ForumContentSelectionViewTest.kt` 的微斜拖选、跨行组合字符及既有同帧像素行为；`ForumSelectionDocumentTest.kt` 的文档边界；`tests/ui/topic/topic-rich-text-selection.test.tsx`、`tests/ui/topic/topic-table-rendering.test.tsx` 的生命周期与共享横滚；`dev/forum-selection-proof/index.tsx` 独立验证真实 Expo → Reanimated → ScrollView 和 FlashList 回收。 |
+| 自动验证 | `UNIT_PASS`：Native JVM 27 项、相关 Vitest 110 项。`UI_PASS`：选择/表格及主题/导航六套件共 298 项。独立 API 35 AVD instrumentation 最终 46 项通过，包含反向挂载等距裁决与手柄像素专项；保留逻辑 offset、手柄误差不超过 2px、正文 bounds/baseline 和回流首帧 oracle。类型、unused、lint、格式、架构、文档及 diff 按本次范围检查。 |
+| 设备证据 | 原帖 `LIVE_PASS`：同位置手柄向右及向左加入 6px 偏移均连续更新，Back 取消选区且留在原帖，正文 bounds 与修改前一致。独立 fixture：自动横滚后两个同表片段实际 x 同为 -279.2dp，无关表仍为 16dp；松手位置稳定，普通横滑接续当前 offset。纵向持握经过 60 个段落及回收，返回首屏选区和起点手柄恢复；持握 8 秒菜单持续隐藏，松手恢复。此轮不是 tracked `.ad` Replay，不声明 `DEVICE_REPLAY_PASS`。 |
+| 主模拟器补验 | 2026-09-11 按用户要求在 `WZ_Pixel_API_35 / emulator-5554` 当前正式入口开发包只读复测：末端手柄分两段向右并加入 6px 向下偏移，高亮依次扩展后可缩回单字；起点手柄向左扩展正常。长按不松手继续拖选正常，抓住手柄持握 8 秒菜单持续隐藏，UP 恢复。拖到回复区仍只选择主楼；Back 取消后普通纵滚及返回首屏正常，正文 bounds 保持 `53,753,975,63`。回复长按仍显示“评论已复制”且不出现主楼手柄；本轮未读取剪贴板内容。未重装、清数据或改变设备配置；此补验为该原帖的 `LIVE_PASS`，不扩大为主模拟器宽表/长文或完整性能矩阵通过。 |
+| 性能边界 | 同一主 AVD、同 Release 构建类型、同原帖，三轮水平往返 gfxinfo 帧耗时 P95：修改前 23.6–24.3ms，修改后 23.2–23.4ms；修改后微斜为 23.3–23.7ms。旧微斜因停更几乎不产帧，不能拿它作流畅度基线。该短帖路径未见持续回退；跨行、自动横纵滚、菜单恢复的独立性能对照及实体机触感/高刷新率仍为 `NOT_VERIFIED`，不声明完整性能矩阵通过。 |
+| 安装与交付 | `APK_SANITY`：本地开发 assembleRelease 1.3.141/145，SHA-256 `375cd2316d300bc21bd523d7209a6bb8ce3e587e78b4f9cddb591549892123dc`；同签名覆盖安装，firstInstallTime 保持 `2026-07-26 16:51:37`，当前 PID 无 JS/Native fatal。未执行版本递增、正式 release、提交或远端写入。 |
