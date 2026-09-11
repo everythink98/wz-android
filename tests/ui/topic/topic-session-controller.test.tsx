@@ -2437,6 +2437,7 @@ describe('topic query controller', () => {
     });
     const hook = await renderTopicController({ readGateway: { getReplies, getTopic }, topic });
 
+    await waitFor(() => expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([31]));
     await act(async () => {
       hook.result.current.session.commands.view.changeReplyOrder('newest');
     });
@@ -2453,9 +2454,10 @@ describe('topic query controller', () => {
     });
 
     expect(getTopic).toHaveBeenCalledTimes(2);
-    expect(getReplies.mock.calls.map(([request]) => [request.position, request.replyCount])).toEqual([
-      [{ kind: 'start' }, 31],
-      [{ kind: 'start' }, 30]
+    expect(getReplies.mock.calls.map(([request]) => [request.order, request.position, request.replyCount])).toEqual([
+      ['oldest', { kind: 'start' }, 31],
+      ['newest', { kind: 'start' }, 31],
+      ['newest', { kind: 'start' }, 30]
     ]);
     await waitFor(() => expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([30]));
   });
