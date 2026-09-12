@@ -53,6 +53,7 @@ import {
 } from '@/sources/discourse/model';
 import { prepareLinuxDoContent } from './parser';
 import { orientReplyWindow } from '@/sources/replyWindows';
+import { discourseReadingFromJson } from '@/domain/forum/discourseReading';
 
 export const LIST_PAGE_SIZE = 30;
 
@@ -73,6 +74,7 @@ export interface LinuxDoOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   trackVisit?: boolean;
+  trackView?: boolean;
 }
 
 export function linuxDoOptionsWithBrowserIntent<T extends LinuxDoOptions>(
@@ -217,9 +219,12 @@ export function normalizeTopic(
   const authorName = author || String(createdBy.username || (author === null ? '' : raw.last_poster_username) || '');
   const authorAvatar = avatarUrl(authorData?.avatar_template || createdBy.avatar_template);
   const authorLevelLabel = linuxDoLevelLabel(authorData) || linuxDoLevelLabel(createdBy);
+  const reading = discourseReadingFromJson(raw);
   return {
     ...fields,
     source: 'linuxdo',
+    ...(raw.archetype === 'private_message' ? { isPrivateMessage: true } : {}),
+    ...(reading ? { reading } : {}),
     author: authorName,
     authorId: authorName || undefined,
     authorAvatar,
@@ -305,6 +310,7 @@ function normalizePost(raw: unknown, topicId?: string): Reply | null {
   const authorLevelLabel = linuxDoLevelLabel(raw);
   return {
     ...replyFields,
+    ...(typeof raw.read === 'boolean' ? { serverRead: raw.read } : {}),
     authorId: fields.author || undefined,
     authorAvatar: avatarUrl(raw.avatar_template),
     authorUrl: fields.author ? userUrl(fields.author) : undefined,
@@ -393,7 +399,12 @@ export async function fetchLinuxDoJson<T>(
     url.toString(),
     withBrowserFetchIntent(
       {
-        headers: linuxDoHeaders(options.linuxDoAccess, requestOptions.referer, requestOptions.csrfToken)
+        headers: {
+          ...linuxDoHeaders(options.linuxDoAccess, requestOptions.referer, requestOptions.csrfToken),
+          ...(options.trackView && /^\/t\/\d+(?:\/\d+)?\.json$/.test(url.pathname)
+            ? { 'Discourse-Track-View': '1', 'Discourse-Track-View-Topic-Id': url.pathname.match(/^\/t\/(\d+)/)![1] }
+            : {})
+        }
       },
       options.browserFetchIntent || { owner: 'feed', priority: 'foreground' }
     ),
@@ -679,7 +690,9 @@ export async function getLinuxDoReplies(
     if (!Number.isSafeInteger(targetFloor) || targetFloor! <= 0) {
       throw new Error('linux.do 目标楼层不正确');
     }
-    const window = discourseReplyWindow(await topicData(id, options, targetFloor), limit);
+    const data = await topicData(id, options, targetFloor);
+    const reading = discourseReadingFromJson(data);
+    const window = discourseReplyWindow(data, limit);
     const items = await hydrateEditableReplyContent(
       window.posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],
       options
@@ -687,7 +700,7 @@ export async function getLinuxDoReplies(
     const hasTarget = items.some((reply) =>
       targetCommentId === undefined ? reply.floor === targetFloor : reply.commentId === targetCommentId
     );
-    if (!hasTarget) {
+    if (!hasTarget && !options.position.target.readingResume) {
       throw new Error('linux.do 目标楼层未找到');
     }
     const { posts, ...windowState } = window;
@@ -695,6 +708,8 @@ export async function getLinuxDoReplies(
       {
         items,
         ...windowState,
+        ...(data.archetype === 'private_message' ? { isPrivateMessage: true } : {}),
+        ...(reading ? { reading } : {}),
         completeness: items.length === posts.length ? ('complete' as const) : ('partial' as const)
       },
       {
@@ -707,7 +722,13 @@ export async function getLinuxDoReplies(
     );
     return orientReplyWindow(chronological, options.order);
   }
-  const streamState = topicStreamState(await topicData(id, options));
+  const data = await topicData(id, options);
+  const reading = discourseReadingFromJson(data);
+  const metadata = {
+    ...(data.archetype === 'private_message' ? { isPrivateMessage: true } : {}),
+    ...(reading ? { reading } : {})
+  };
+  const streamState = topicStreamState(data);
   const stream = streamState.stream;
   const { postIds, ...windowState } = discourseStreamReplyWindow(stream, {
     limit,
@@ -716,7 +737,7 @@ export async function getLinuxDoReplies(
   });
   if (!postIds.length) {
     return annotateSourceDiagnosticSummary(
-      { items: [], ...windowState },
+      { items: [], ...windowState, ...metadata },
       {
         parserVariant: 'discourse-replies',
         candidateCount: 0,
@@ -736,6 +757,7 @@ export async function getLinuxDoReplies(
   const result = {
     items,
     ...windowState,
+    ...metadata,
     completeness:
       posts.length === postIds.length && items.length === postIds.length ? ('complete' as const) : ('partial' as const)
   };

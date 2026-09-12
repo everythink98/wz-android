@@ -135,4 +135,33 @@ describe('linux.do action client', () => {
       reason: 'permission'
     });
   });
+
+  it('preserves plaintext permission status without exposing the response body', async () => {
+    const fetcher = vi.fn(async () => new Response('permission detail '.repeat(1000), { status: 403 }));
+    const error = await runLinuxDoAction({
+      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
+      csrfToken: 'test',
+      fetcher
+    }).catch((error) => error);
+    expect(error).toMatchObject({ status: 403, reason: 'permission', message: 'linux.do 请求失败：HTTP 403' });
+    expect(error).not.toHaveProperty('loginRequired');
+  });
+
+  it('rejects malformed successful JSON and continues to identify Cloudflare before parsing', async () => {
+    const request = buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true });
+    await expect(
+      runLinuxDoAction({ request, csrfToken: 'test', fetcher: async () => new Response('invalid json') })
+    ).rejects.toThrow('linux.do 返回内容格式不正确');
+    await expect(
+      runLinuxDoAction({
+        request,
+        csrfToken: 'test',
+        fetcher: async () =>
+          new Response('challenge', {
+            status: 429,
+            headers: { 'cf-mitigated': 'challenge', 'Retry-After': '60' }
+          })
+      })
+    ).rejects.toMatchObject({ reason: 'cloudflare' });
+  });
 });

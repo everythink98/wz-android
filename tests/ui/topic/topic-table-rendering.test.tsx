@@ -37,7 +37,7 @@ let mockGestureDetectorBindings: MockGestureDetectorBinding[] = [];
 let mockAnimatedReactionRunners: (() => void)[] = [];
 let mockNextGestureHandlerTag = 0;
 const mockGestureStateManagers = new Map<number, { activate: () => void; fail: () => void }>();
-const mockCancelNativeSelection = jest.fn();
+const mockCancelNativeSelection = jest.fn<() => Promise<void>>(() => Promise.resolve());
 const mockAnimatedScrollTo = jest.fn();
 const mockWithDecay = jest.fn(({ clamp }: { clamp: [number, number] }) => clamp[0]);
 
@@ -67,7 +67,7 @@ jest.mock('expo-modules-core', () => {
   const actual = jest.requireActual<typeof import('expo-modules-core')>('expo-modules-core');
   const NativeSelectionView = ReactModule.forwardRef(function NativeSelectionView(
     props: Record<string, unknown> & { children?: React.ReactNode },
-    ref: React.ForwardedRef<{ cancelSelection: () => void }>
+    ref: React.ForwardedRef<{ cancelSelection: () => Promise<void> }>
   ) {
     ReactModule.useImperativeHandle(ref, () => ({ cancelSelection: mockCancelNativeSelection }));
     return ReactModule.createElement(NativeView, props, props.children);

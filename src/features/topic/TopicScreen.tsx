@@ -244,6 +244,7 @@ export const TopicScreen = memo(function TopicScreen({
         actions={actions}
         article={article}
         bodyMediaPaused={bodyMediaPaused}
+        readingPaused={topicMenuOpen || state.replyComposerIntent.kind !== 'closed'}
         bottomContentInset={canWrite ? replyActionHeight + styles.replyActionPosition.bottom + 16 : 0}
         currentNodeSeekUser={currentNodeSeekUser}
         discourseEmojiUrls={discourseEmojiUrls}
@@ -285,6 +286,7 @@ export const TopicScreen = memo(function TopicScreen({
         </AnimatedSafeAreaView>
       ) : null}
       <TopicMenu
+        onOpenOpening={item.source === 'linuxdo' ? () => chrome.openTopic(item, { kind: 'opening' }) : undefined}
         onOpenOriginal={chrome.openOriginal}
         onOpenReadingSettings={chrome.openReadingSettings}
         onRefreshTopic={chrome.refreshReplies}

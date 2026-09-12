@@ -575,7 +575,7 @@ describe('Discourse notifications', () => {
   });
 
   it('loads a Discourse private topic as an ordered replyable conversation', async () => {
-    const fetcher = vi.fn(async (_input: string) =>
+    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) =>
       json({
         id: 201,
         title: '私信主题',
@@ -631,6 +631,8 @@ describe('Discourse notifications', () => {
     expect(detailUrl.pathname).toBe('/t/201.json');
     expect(detailUrl.searchParams.get('track_visit')).toBe('true');
     expect(detailUrl.searchParams.get('forceLoad')).toBe('true');
+    expect(detail.topic).toMatchObject({ isPrivateMessage: true });
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).has('Discourse-Track-View')).toBe(false);
     await expect(
       linuxDoNotificationAdapter.markRead(item, detail, {
         fetcher,

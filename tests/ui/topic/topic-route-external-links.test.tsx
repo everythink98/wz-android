@@ -68,6 +68,7 @@ describe('Topic Route external links', () => {
       }
     } as never);
     jest.mocked(useTopicController).mockReturnValue({
+      readingEntry: { location: undefined },
       openTopic: jest.fn(),
       refreshTopicReplies: jest.fn(),
       refreshWholeTopic: jest.fn(),

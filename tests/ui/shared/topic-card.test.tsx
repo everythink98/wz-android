@@ -57,6 +57,18 @@ const topic: Topic = {
 };
 
 describe('Topic card visible behavior', () => {
+  it('keeps an already read title dimmed while showing new replies, including memoized updates', async () => {
+    const onOpenTopic = jest.fn();
+    const state = { favorite: false, read: true, listDensity: 'loose' as const };
+    const view = await render(<MemoizedTopicCard topic={topic} readerState={state} onOpenTopic={onOpenTopic} />);
+    expect(view.queryByText('有新回复')).toBeNull();
+    await view.rerender(
+      <MemoizedTopicCard topic={topic} readerState={{ ...state, hasNewReplies: true }} onOpenTopic={onOpenTopic} />
+    );
+    expect(view.getByText('有新回复')).toBeTruthy();
+    expect(StyleSheet.flatten(view.getByText(topic.title).parent?.props.style)).toMatchObject({ color: theme.muted });
+  });
+
   it('shows source metadata, local state, tag limits, access rules and the loose excerpt', async () => {
     const onOpenTopic = jest.fn();
     const view = await render(

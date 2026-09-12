@@ -303,6 +303,14 @@ export class ReaderTransaction {
   }
 
   async apply(command: ReaderCommand) {
+    if (command.type === 'topic-summary') {
+      const topic = topicSummary(command.topic);
+      for (const kind of ['history', 'favorites'] as const) {
+        const existing = await this.row(kind, topicKey(topic));
+        if (existing) await this.put(kind, topicKey(topic), { ...JSON.parse(existing.value), topic });
+      }
+      return;
+    }
     if (command.type === 'settings') {
       this.setSettings(sanitizeReaderSettings({ ...JSON.parse(this.meta.settings), ...command.patch }));
       return;

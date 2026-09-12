@@ -5,8 +5,10 @@ import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import type { Source } from '@/domain/forum/sourceCatalog';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { createReadGateway } from '@/sources/readGateway';
+import type { DiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 
 export function useSessionReadGateway({
+  reading,
   anonymousFetcher,
   fetcher,
   getEnabledSources,
@@ -16,6 +18,7 @@ export function useSessionReadGateway({
   requestAccountRecheck,
   readSessionRuntimeSnapshot
 }: {
+  reading?: DiscourseReadingRuntime;
   anonymousFetcher: Fetcher;
   fetcher: Fetcher;
   getEnabledSources: () => readonly Source[];
@@ -28,6 +31,7 @@ export function useSessionReadGateway({
   return useMemo(
     () =>
       createReadGateway({
+        reading,
         anonymousFetcher,
         fetcher,
         getEnabledSources,
@@ -38,6 +42,7 @@ export function useSessionReadGateway({
         readSessionRuntimeSnapshot
       }),
     [
+      reading,
       anonymousFetcher,
       fetcher,
       getEnabledSources,

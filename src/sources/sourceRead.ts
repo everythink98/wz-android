@@ -66,6 +66,7 @@ export function getTopic({
   nodeSeekUserAgent,
   discourseAuth,
   diagnosticTrace,
+  trackVisit,
   signal,
   timeoutMs
 }: {
@@ -76,6 +77,7 @@ export function getTopic({
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   diagnosticTrace?: DiagnosticTrace;
+  trackVisit?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
@@ -83,6 +85,8 @@ export function getTopic({
   if (isDiscourseSource(source)) {
     return getDiscourseTopic(id, {
       auth: discourseAuth,
+      trackVisit,
+      trackView: trackVisit,
       fetcher,
       signal,
       timeoutMs

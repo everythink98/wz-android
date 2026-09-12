@@ -1,8 +1,9 @@
 import type { TopicStyles } from '../styles';
-import { ExternalLink, RefreshCw, Settings, Share2 } from 'lucide-react-native';
+import { ArrowUp, ExternalLink, RefreshCw, Settings, Share2 } from 'lucide-react-native';
 import { PopupMenu, PopupMenuItem } from '@/ui/controls/PopupMenu';
 
 export function TopicMenu({
+  onOpenOpening,
   onOpenOriginal,
   onOpenReadingSettings,
   onRefreshTopic,
@@ -14,6 +15,7 @@ export function TopicMenu({
   topicUrl,
   visible
 }: {
+  onOpenOpening?: () => void;
   onOpenOriginal: (url: string) => void;
   onOpenReadingSettings: () => void;
   onRefreshTopic: () => void;
@@ -33,6 +35,9 @@ export function TopicMenu({
       onRequestClose={onRequestClose}
     >
       <PopupMenuItem icon={Share2} label="分享" onPress={() => runTopicMenuAction(onShareTopic)} />
+      {onOpenOpening ? (
+        <PopupMenuItem icon={ArrowUp} label="回到主楼" onPress={() => runTopicMenuAction(onOpenOpening)} />
+      ) : null}
       <PopupMenuItem icon={RefreshCw} label="刷新评论" onPress={() => runTopicMenuAction(onRefreshTopic)} />
       <PopupMenuItem icon={RefreshCw} label="刷新全文" onPress={() => runTopicMenuAction(onRefreshWholeTopic)} />
       <PopupMenuItem icon={Settings} label="阅读设置" onPress={() => runTopicMenuAction(onOpenReadingSettings)} />

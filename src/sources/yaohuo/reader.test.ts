@@ -1554,7 +1554,8 @@ describe('Android direct yaohuo API', () => {
       previousPage: null,
       nextPage: null,
       hasMore: false,
-      completeness: 'partial'
+      completeness: 'complete',
+      totalCount: 8
     });
   });
 
@@ -1579,7 +1580,7 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(result.items).toEqual([expect.objectContaining({ contentHtml: 'still readable', floor: 8 })]);
-    expect(result).toMatchObject({ currentPage: 1, completeness: 'partial' });
+    expect(result).toMatchObject({ currentPage: 1, completeness: 'complete', totalCount: 8 });
   });
 
   it('fails closed on an empty 妖火 ordinary window without requesting a count refresh', async () => {
@@ -1662,12 +1663,31 @@ describe('Android direct yaohuo API', () => {
     expect(newest.items.map((reply) => reply.floor)).toEqual(Array.from({ length: 30 }, (_, index) => 558 - index));
     expect(newest).toMatchObject({ currentPage: 1, previousPage: null, nextPage: 2 });
     expect(older.items.map((reply) => reply.floor)).toEqual(Array.from({ length: 30 }, (_, index) => 528 - index));
+    expect(older.totalCount).toBeUndefined();
     expect(newestAgain.items.map((reply) => reply.floor)).toEqual(newest.items.map((reply) => reply.floor));
     expect(oldest.items.map((reply) => reply.floor)).toEqual(Array.from({ length: 17 }, (_, index) => index + 1));
     expect(oldest).toMatchObject({ currentPage: 19, previousPage: null, nextPage: 18 });
+    expect(oldest.totalCount).toBeUndefined();
     expect(newer.items.map((reply) => reply.floor)).toEqual(Array.from({ length: 30 }, (_, index) => index + 18));
     expect(newer).toMatchObject({ currentPage: 18, previousPage: 19, nextPage: 17 });
     expect(oldestAgain.items.map((reply) => reply.floor)).toEqual(oldest.items.map((reply) => reply.floor));
+  });
+
+  it.each(['inferred floor', 'truncated rows'] as const)('keeps the 妖火 total unknown for %s', async (degradation) => {
+    const result = await getYaohuoRepliesDirect({
+      id: '1560941',
+      order: 'newest',
+      position: { kind: 'start' },
+      replyCount: 8,
+      limit: degradation === 'truncated rows' ? 1 : 30,
+      yaohuoFetcher: async () =>
+        new Response(
+          '<input name="page" value="1" />' +
+            '<div class="list-reply" data-floor="8"><span class="retext">eight</span></div>' +
+            `<div class="list-reply" ${degradation === 'inferred floor' ? '' : 'data-floor="7"'}><span class="retext">seven</span></div>`
+        )
+    });
+    expect(result.totalCount).toBeUndefined();
   });
 
   it('rejects a wrong 妖火 tail page but renders a confirmed changing edge', async () => {
@@ -1711,10 +1731,12 @@ describe('Android direct yaohuo API', () => {
     );
     await expect(getYaohuoRepliesDirect({ ...options, yaohuoFetcher: advancingFetcher })).resolves.toMatchObject({
       currentPage: 1,
+      totalCount: 559,
       items: [expect.objectContaining({ floor: 559 }), expect.objectContaining({ floor: 558 })]
     });
     await expect(getYaohuoRepliesDirect({ ...options, yaohuoFetcher: staleCountFetcher })).resolves.toMatchObject({
       currentPage: 1,
+      totalCount: 557,
       items: [expect.objectContaining({ floor: 557 })]
     });
     const emptyError = await getYaohuoRepliesDirect({ ...options, yaohuoFetcher: emptyFetcher }).then(

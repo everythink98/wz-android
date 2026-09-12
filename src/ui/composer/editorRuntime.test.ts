@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Editor } from '@tiptap/core';
+import { GapCursor } from '@tiptap/pm/gapcursor';
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -92,6 +93,145 @@ async function mountRuntime({
 }
 
 describe('Composer editor runtime codec', () => {
+  const resizeCallbacks = new Map<Element, () => void>();
+  beforeEach(() => {
+    resizeCallbacks.clear();
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private callback: () => void) {}
+        observe(target: Element) {
+          resizeCallbacks.set(target, this.callback);
+        }
+        disconnect() {
+          resizeCallbacks.forEach((callback, target) => {
+            if (callback === this.callback) resizeCallbacks.delete(target);
+          });
+        }
+      }
+    );
+  });
+  it.each(['nodeseek', 'linuxdo'] as const)(
+    'keeps pending and failed %s reply images visible and retries without changing the document',
+    async (site) => {
+      const markdown = '![长图](https://example.com/long.png "原图标题")';
+      const { host, send } = await mountRuntime({ site, markdown, runtimeStyle: true });
+      const dom = host.querySelector<HTMLElement>('.composer-document')!;
+      const editor = (dom as HTMLElement & { editor: Editor }).editor;
+      const original = editor.getMarkdown();
+      const feedback = dom.querySelector<HTMLButtonElement>('.composer-image-feedback');
+      expect(feedback?.textContent).toBe('图片加载中…');
+      expect(feedback?.hidden).toBe(false);
+      expect(Number.parseFloat(getComputedStyle(feedback!).minHeight)).toBeGreaterThanOrEqual(48);
+      const first = dom.querySelector('img')!;
+      await act(async () => first.dispatchEvent(new Event('error')));
+      expect(feedback?.textContent).toBe('图片加载失败，点击重试');
+      expect(feedback?.disabled).toBe(false);
+      await act(async () => feedback?.click());
+      const retry = dom.querySelector('img')!;
+      expect(retry).not.toBe(first);
+      expect(retry.getAttribute('src')).toBe(first.getAttribute('src'));
+      await act(async () => first.dispatchEvent(new Event('load')));
+      expect(feedback?.hidden).toBe(false);
+      await act(async () => retry.dispatchEvent(new Event('load')));
+      expect(feedback?.hidden).toBe(true);
+      expect(retry.hidden).toBe(false);
+      expect(editor.getMarkdown()).toBe(original);
+      expect(editor.can().undo()).toBe(false);
+      await send({ type: 'SET_MODE', payload: { mode: 'source' } });
+      await send({ type: 'SET_MODE', payload: { mode: 'rich' } });
+      expect(editor.getMarkdown()).toBe(original);
+      expect(dom.querySelector('img')).toBe(retry);
+    }
+  );
+
+  it('turns an image gap into one text paragraph and preserves images through undo and mode switches', async () => {
+    const markdown = '![第一张](https://example.com/one.png)\n\n![第二张](https://example.com/two.png)';
+    const { host, send } = await mountRuntime({ markdown });
+    const dom = host.querySelector<HTMLElement>('.composer-document')!;
+    const editor = (dom as HTMLElement & { editor: Editor }).editor;
+    await act(async () =>
+      editor.view.dispatch(editor.state.tr.setSelection(new GapCursor(editor.state.doc.resolve(1))))
+    );
+    expect(editor.state.selection.$from.parent.type.name).toBe('paragraph');
+    expect(editor.getJSON().content?.map((node) => node.type)).toEqual(['image', 'paragraph', 'image', 'paragraph']);
+    const withTextGap = editor.getMarkdown();
+    expect(withTextGap.replace(/\n{3,}/g, '\n\n').trim()).toBe(markdown);
+    await send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown: '两图之间' } });
+    expect(dom.children[1]?.textContent).toBe('两图之间');
+    await send({ type: 'COMMAND', payload: { name: 'undo' } });
+    expect(editor.getMarkdown()).toBe(withTextGap);
+    expect(dom.querySelectorAll('img')).toHaveLength(2);
+    await send({ type: 'SET_MODE', payload: { mode: 'source' } });
+    await send({ type: 'SET_MODE', payload: { mode: 'rich' } });
+    expect(editor.getMarkdown()).toBe(withTextGap);
+    expect(editor.getJSON().content?.map((node) => node.type)).toEqual(['image', 'paragraph', 'image', 'paragraph']);
+    expect(dom.querySelectorAll('img')).toHaveLength(2);
+  });
+
+  it.each(['nodeseek', 'linuxdo'] as const)('places typing after uploaded %s images', async (site) => {
+    const { host, send, postMessage } = await mountRuntime({ site });
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="图片"]')?.click());
+    const request = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((entry: { type: string }) => entry.type === 'REQUEST_HOST_ACTION');
+    await send({
+      type: 'COMMAND',
+      payload: {
+        name: 'host-action-result',
+        requestId: request.payload.requestId,
+        result: { markdown: '![第一张](https://example.com/one.png)\n\n![第二张](https://example.com/two.png)' }
+      }
+    });
+    const dom = host.querySelector<HTMLElement>('.composer-document')!;
+    const editor = (dom as HTMLElement & { editor: Editor }).editor;
+    expect(editor.state.selection.$from.parent.type.name).toBe('paragraph');
+    expect(editor.state.selection.$from.nodeBefore).toBeNull();
+    const scrolls = vi.fn();
+    editor.on('transaction', ({ transaction }) => {
+      if (transaction.scrolledIntoView) scrolls();
+    });
+    await act(async () => resizeCallbacks.get(dom)?.());
+    expect(scrolls).toHaveBeenCalledTimes(1);
+    await act(async () => resizeCallbacks.get(document.documentElement)?.());
+    expect(scrolls).toHaveBeenCalledTimes(2);
+    dom.dispatchEvent(new Event('pointerdown'));
+    await act(async () => resizeCallbacks.get(dom)?.());
+    expect(scrolls).toHaveBeenCalledTimes(2);
+    await send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown: '图片下方继续输入' } });
+    expect(editor.getJSON().content?.map((node) => node.type)).toEqual(['image', 'image', 'paragraph']);
+    expect(dom.lastElementChild?.textContent).toBe('图片下方继续输入');
+  });
+
+  it.each([false, true])(
+    'keeps typing after an uploaded image before existing content (replace first: %s)',
+    async (replaceFirst) => {
+      const { host, send, postMessage } = await mountRuntime({
+        markdown: `${replaceFirst ? '![替换图片](https://example.com/replace.png)' : '前文'}\n\n![原有图片](https://example.com/old.png)`
+      });
+      const dom = host.querySelector<HTMLElement>('.composer-document')!;
+      const editor = (dom as HTMLElement & { editor: Editor }).editor;
+      await act(async () => (replaceFirst ? editor.commands.setNodeSelection(0) : editor.commands.setTextSelection(3)));
+      await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="图片"]')?.click());
+      const request = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((entry: { type: string }) => entry.type === 'REQUEST_HOST_ACTION');
+      await send({
+        type: 'COMMAND',
+        payload: {
+          name: 'host-action-result',
+          requestId: request.payload.requestId,
+          result: { markdown: '![上传图片](https://example.com/new.png)' }
+        }
+      });
+      await send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown: '继续输入' } });
+      const nodes = editor.getJSON().content!;
+      const newImageIndex = nodes.findIndex((node) => node.attrs?.src === 'https://example.com/new.png');
+      expect(editor.state.doc.child(newImageIndex + 1).textContent).toBe('继续输入');
+      expect(nodes[newImageIndex + 2]?.attrs?.src).toBe('https://example.com/old.png');
+    }
+  );
+
   it.each(['nodeseek', 'linuxdo'] as const)(
     'recovers failed %s expressions without inserting or replacing successful images',
     async (site) => {
@@ -985,6 +1125,7 @@ describe('Composer editor runtime codec', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(host.querySelector('img[src="https://example.com/image.png"]')).not.toBeNull();
+    const originalURL = URL;
     vi.stubGlobal(
       'URL',
       vi.fn(() => {
@@ -1004,7 +1145,7 @@ describe('Composer editor runtime codec', () => {
       refInput?.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Stardust 收款卡片"] .primary')?.click());
-    vi.unstubAllGlobals();
+    vi.stubGlobal('URL', originalURL);
     const stardustCard = host.querySelector<HTMLElement>('[data-composer-node="nodeseek-stardust"]');
     expect(stardustCard?.textContent).toContain('1 Stardust 收款卡片');
     expect(stardustCard?.textContent).toContain('收款人 #54874 · Ref 123456');

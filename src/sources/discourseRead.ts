@@ -31,7 +31,11 @@ export type DiscourseFeedReadOptions = DiscourseReadOptions & {
   page?: number;
 };
 
-export type DiscourseTopicReadOptions = DiscourseReadOptions & { replyLimit?: number; trackVisit?: boolean };
+export type DiscourseTopicReadOptions = DiscourseReadOptions & {
+  replyLimit?: number;
+  trackVisit?: boolean;
+  trackView?: boolean;
+};
 
 export type DiscourseRepliesReadOptions = DiscourseReadOptions & {
   limit?: number;

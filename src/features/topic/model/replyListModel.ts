@@ -170,8 +170,14 @@ function plannedReplyContent(reply: Reply, source: Source): PlannedReplyContentE
   return entry;
 }
 
-export function imagePreviewDescriptorsForReplies(replies: readonly Reply[], source: Source) {
-  return replies.flatMap((reply) => plannedReplyContent(reply, source).previewImages);
+export function imagePreviewDescriptorsForReplies(replies: readonly Reply[], source: Source, topicId?: string) {
+  return replies.flatMap((reply) =>
+    plannedReplyContent(reply, source).previewImages.map((descriptor) =>
+      source === 'linuxdo' && topicId && reply.floor
+        ? { ...descriptor, readingOrigin: { topicId, floor: reply.floor } }
+        : descriptor
+    )
+  );
 }
 
 function quotedPostContent(reply: Reply, source: Source): QuotedPostContentEntry {

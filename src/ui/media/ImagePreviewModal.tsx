@@ -87,6 +87,8 @@ type ImagePreviewModalProps = {
   onClose: () => void;
   onSave: () => void;
   onSelect: (index: number) => void;
+  onVisibleImageChange?: (item: ImagePreviewItem | null) => void;
+  onInteraction?: () => void;
 };
 
 type PreviewPageProps = {
@@ -102,6 +104,7 @@ type PreviewPageProps = {
   onRegisterZoom: (index: number, reference: ResumableZoomRefType | null) => void;
   onResolution: (requestIdentity: string, resolution: PreviewResolution) => void;
   onToggleChrome: () => void;
+  onVisibleImageChange?: ImagePreviewModalProps['onVisibleImageChange'];
   onZoomGestureSettled: (index: number, scale: number) => void;
   onZoomGestureStart: (index: number) => void;
   onZoomUpdate: (index: number, scale: number) => void;
@@ -176,7 +179,9 @@ function ImagePreviewModalContent({
   mediaContext,
   onClose,
   onSave,
-  onSelect
+  onSelect,
+  onVisibleImageChange,
+  onInteraction
 }: ImagePreviewModalProps & { mediaContext: ForumMediaRequestContext }) {
   const { styles, theme } = useReaderThemeStyles(createStyles);
   const { width, height } = useWindowDimensions();
@@ -213,6 +218,8 @@ function ImagePreviewModalContent({
   const closing = useSharedValue(false);
   const ringTranslateX = useSharedValue(0);
   const activeZoomScale = useSharedValue(1);
+  const zoomGestureActive = useSharedValue(false);
+  const lastInteractionAt = useSharedValue(0);
   const activeIndexOnUI = useSharedValue(requestedIndex);
   const transitioning = useSharedValue(false);
   const gestureAxis = useSharedValue(0);
@@ -354,28 +361,50 @@ function ImagePreviewModalContent({
       zoomRefs.current.delete(index);
     }
   }, []);
-  const handleZoomGestureStart = useCallback((index: number) => {
-    if (activeIndexRef.current !== index) {
-      return;
+  const reportInteraction = useCallback(() => {
+    lastInteractionAt.value = performance.now();
+    onInteraction?.();
+  }, [lastInteractionAt, onInteraction]);
+  const reportContinuousInteraction = useCallback(() => {
+    'worklet';
+    const now = performance.now();
+    if (onInteraction && now - lastInteractionAt.value >= 1000) {
+      lastInteractionAt.value = now;
+      scheduleOnRN(onInteraction);
     }
-    setAnimatedSvgZoomSuspended(true);
-  }, []);
-  const handleZoomGestureSettled = useCallback((index: number, scale: number) => {
-    if (activeIndexRef.current !== index) {
-      return;
-    }
-    const zoomed = Math.abs(scale - 1) > 0.001;
-    setActiveZoomed(zoomed);
-    setAnimatedSvgZoomSuspended(zoomed);
-  }, []);
+  }, [lastInteractionAt, onInteraction]);
+  const handleZoomGestureStart = useCallback(
+    (index: number) => {
+      if (activeIndexRef.current !== index) return;
+      zoomGestureActive.value = true;
+      reportInteraction();
+      setAnimatedSvgZoomSuspended(true);
+    },
+    [reportInteraction, zoomGestureActive]
+  );
+  const handleZoomGestureSettled = useCallback(
+    (index: number, scale: number) => {
+      if (activeIndexRef.current !== index) return;
+      if (zoomGestureActive.value) reportInteraction();
+      zoomGestureActive.value = false;
+      const zoomed = Math.abs(scale - 1) > 0.001;
+      setActiveZoomed(zoomed);
+      setAnimatedSvgZoomSuspended(zoomed);
+    },
+    [reportInteraction, zoomGestureActive]
+  );
+  useLayoutEffect(() => {
+    zoomGestureActive.value = false;
+  }, [activeIndex, zoomGestureActive]);
   const handleZoomUpdate = useCallback(
     (index: number, scale: number) => {
       'worklet';
       if (activeIndexOnUI.value === index) {
         activeZoomScale.value = scale;
+        if (zoomGestureActive.value) reportContinuousInteraction();
       }
     },
-    [activeIndexOnUI, activeZoomScale]
+    [activeIndexOnUI, activeZoomScale, reportContinuousInteraction, zoomGestureActive]
   );
 
   const markTransitionStarted = useCallback(
@@ -619,6 +648,7 @@ function ImagePreviewModalContent({
       gestureQueuesTransition.value = transitioning.value;
       gestureStartX.value = touch.absoluteX;
       gestureStartY.value = touch.absoluteY;
+      if (onInteraction) scheduleOnRN(reportInteraction);
     },
     onTouchesMove: (event) => {
       'worklet';
@@ -644,6 +674,7 @@ function ImagePreviewModalContent({
     },
     onUpdate: (event) => {
       'worklet';
+      reportContinuousInteraction();
       if (gestureQueuesTransition.value) {
         return;
       }
@@ -762,7 +793,11 @@ function ImagePreviewModalContent({
                         nodeSeekUserAgent={nodeSeekMediaUserAgent}
                         onRegisterZoom={registerZoom}
                         onResolution={handleResolution}
-                        onToggleChrome={() => setChromeVisible((current) => !current)}
+                        onToggleChrome={() => {
+                          reportInteraction();
+                          setChromeVisible((current) => !current);
+                        }}
+                        onVisibleImageChange={onVisibleImageChange}
                         onZoomGestureSettled={handleZoomGestureSettled}
                         onZoomGestureStart={handleZoomGestureStart}
                         onZoomUpdate={handleZoomUpdate}
@@ -930,6 +965,7 @@ function PreviewPage({
   onRegisterZoom,
   onResolution,
   onToggleChrome,
+  onVisibleImageChange,
   onZoomGestureSettled,
   onZoomGestureStart,
   onZoomUpdate,
@@ -1053,6 +1089,11 @@ function PreviewPage({
   });
   const [regionSuspended, setRegionSuspended] = useState(false);
   const status = imageState.sourceIdentity === sourceIdentity ? imageState.status : 'loading';
+  useLayoutEffect(() => {
+    if (!active) return;
+    onVisibleImageChange?.(status === 'loaded' ? item : null);
+    return () => onVisibleImageChange?.(null);
+  }, [active, item, onVisibleImageChange, status]);
   const regionEligible = imageState.sourceIdentity === sourceIdentity && imageState.regionEligible;
   const suppressLoadingOverlay =
     displayedBeforeMount && !knownArtifact && !nativeFailedRef.current && retryVersion === 0;

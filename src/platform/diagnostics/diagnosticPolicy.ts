@@ -241,6 +241,8 @@ const operationValues = closedValues(
   'user-back',
   'vote',
   'webview-transport',
+  'reading-timings',
+  'reading-state',
   'unknown'
 );
 
@@ -523,6 +525,17 @@ const mediaFailureValues = closedValues(
 );
 
 const categoricalFieldValues = {
+  exceptionKind: closedValues(
+    'fetch-wrapper',
+    'fetch-request-canceled',
+    'fetch-request-cancel',
+    'fetch-stream-cancel',
+    'native-unexpected',
+    'native-function',
+    'selection-cancel',
+    'selection-view-missing',
+    'unknown'
+  ),
   imageConsumer: closedValues('fresco', 'glide'),
   imageFailure: mediaFailureValues,
   mediaFailure: mediaFailureValues,
@@ -641,6 +654,7 @@ const categoricalFieldValues = {
     'copy-mapping-mismatch',
     'system-actions-load',
     'system-action-run',
+    'cancel-command',
     'module-unavailable'
   ),
   origin: closedValues('cold', 'warm'),
@@ -720,6 +734,8 @@ const contentTypeValues = closedValues(
 );
 
 const numberFieldKeys = closedValues(
+  'topicTimeMs',
+  'postTimeMs',
   'surfaceGeneration',
   'elapsedMs',
   'filteredCount',
@@ -872,6 +888,28 @@ export function linkDiagnosticRefs(kind: string, rawValues: readonly unknown[]) 
   values.forEach((value) => rememberReferenceMapping(refs, value, linkedRef));
   rememberIssuedReference(safeKind, linkedRef);
   return linkedRef;
+}
+
+export function safeExceptionKind(error: unknown): DiagnosticFields['exceptionKind'] {
+  if (!(error instanceof Error)) return 'unknown';
+  if (error.message.startsWith('fetch failed: ')) return 'fetch-wrapper';
+  // Expo's view name and derived error code can be changed by R8; the exported method name is stable.
+  if (/^Call to function '[^']+\.cancelSelection' has been rejected\./.test(error.message)) {
+    return /Unable to find the [^\r\n]+ view with tag \d+/.test(error.message)
+      ? 'selection-view-missing'
+      : 'selection-cancel';
+  }
+  const code = (error as Error & { code?: unknown }).code;
+  if (code === 'ERR_FETCH_REQUEST_CANCELED') return 'fetch-request-canceled';
+  if (code === 'ERR_UNEXPECTED') return 'native-unexpected';
+  if (code === 'ERR_FUNCTION_CALL') {
+    if (error.message.startsWith("Call to function 'NativeRequest.cancel' has been rejected."))
+      return 'fetch-request-cancel';
+    if (error.message.startsWith("Call to function 'NativeResponse.cancelStreaming' has been rejected."))
+      return 'fetch-stream-cancel';
+    return 'native-function';
+  }
+  return 'unknown';
 }
 
 export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {

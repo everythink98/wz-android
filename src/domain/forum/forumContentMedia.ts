@@ -51,6 +51,7 @@ export const FORUM_CONTENT_BLOCK_TAGS = new Set([
 ]);
 
 export type ForumImagePreviewDescriptor = {
+  readonly readingOrigin?: { topicId: string; floor: number };
   readonly dataOriginal?: string;
   readonly dataSource?: string;
   readonly displayCandidateKind?: 'data-original' | 'data-src' | 'src';

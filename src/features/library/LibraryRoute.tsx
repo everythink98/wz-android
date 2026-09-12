@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Topic, UserReference, FeedSource } from '@/domain/forum/models';
@@ -46,6 +46,26 @@ export function LibraryRoute() {
     retry: false
   });
   const records = useMemo(() => pages.data?.pages.flatMap((page) => page.records) ?? [], [pages.data]);
+  const readingAttempts = useRef(new Set<string>());
+  const readingScope = runtime.readingGateway?.reading?.scope();
+  useEffect(() => {
+    if (!active || !readingScope || !runtime.readingGateway || collection === 'followedUsers') return;
+    const ids = (records as TopicRecord[]).flatMap(({ topic }) => {
+      const key = `${readingScope}:${topic.id}`;
+      if (
+        topic.source !== 'linuxdo' ||
+        topic.isPrivateMessage ||
+        runtime.reader.data.history[`linuxdo:${topic.id}`] ||
+        readingAttempts.current.has(key)
+      )
+        return [];
+      readingAttempts.current.add(key);
+      return [topic.id];
+    });
+    if (!ids.length) return;
+    // Returning only republishes local records; previously attempted IDs never trigger a return fetch.
+    void runtime.readingGateway.getReadingBatch(ids).catch(() => undefined);
+  }, [active, collection, readingScope, records, runtime.readingGateway, runtime.reader.data.history]);
   const favoriteRecords = libraryTab === 'favorites' ? (records as TopicRecord[]) : [];
   const historyRecords = libraryTab === 'history' ? (records as TopicRecord[]) : [];
   const followedUsers = libraryTab === 'users' ? (records as FollowedUserRecord[]) : [];

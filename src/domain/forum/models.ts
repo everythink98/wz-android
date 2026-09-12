@@ -73,6 +73,23 @@ export interface Topic {
   slowModeSeconds?: number;
   isAiGenerated?: boolean;
   siteExtension?: SiteExtension;
+  reading?: DiscourseTopicReading;
+  isPrivateMessage?: boolean;
+}
+
+export interface DiscourseTopicReading {
+  topicId: string;
+  lastReadPostNumber?: number | null;
+  highestPostNumber?: number;
+  unreadPosts?: number;
+  readPostNumbers?: number[];
+}
+
+export interface ReadingAnchor {
+  floor: number;
+  revision?: string;
+  rowKey?: string;
+  offset?: number;
 }
 
 export interface ReactionSummary {
@@ -116,6 +133,8 @@ export interface ReplyLocationTarget {
   floor?: number;
   pageHint?: number;
   expectedAuthorUsername?: string;
+  /** Only an implicit reading resume may choose a neighbouring surviving post. */
+  readingResume?: boolean;
 }
 
 export type TopicLocationTarget = { kind: 'opening' } | { kind: 'reply'; target: ReplyLocationTarget };
@@ -146,6 +165,7 @@ export interface Reply {
   preparedContent?: PreparedForumContent;
   createdAt: string;
   floor?: number;
+  serverRead?: boolean;
   quotedPosts?: QuotedPostMetadata[];
   commentId?: number;
   /** Source conflict remains readable; a floor conflict does not invalidate a unique comment ID. */
@@ -310,6 +330,8 @@ export interface FeedResponse {
 }
 
 export interface RepliesResponse {
+  isPrivateMessage?: boolean;
+  reading?: DiscourseTopicReading;
   items: Reply[];
   completeness?: ReplyCompleteness;
   currentPage?: number;

@@ -28,7 +28,9 @@ import type { InteractionType } from '@/domain/forum/topicActionState';
 import type { TopicActionDecisionFor } from '@/features/topic/actions/topicActionDecision';
 import type { TopicActionsController } from '@/features/topic/actions/useTopicActionsController';
 import type { useTopicController } from '@/features/topic/useTopicController';
-import type { TopicListItem } from '@/features/topic/model/topicListModel';
+import { topicListReadingFloor, type TopicListItem } from '@/features/topic/model/topicListModel';
+import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
+import { QueryClient } from '@tanstack/react-query';
 import type { ToggleTopicBodyQuoteOptions } from '@/domain/forum/quotedPosts';
 import type { DiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { DiscourseEmojiUrlMap } from '@/sources/discourse/reactions';
@@ -50,6 +52,8 @@ const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 const mockReplyComposerSheet = jest.fn<(_props: React.ComponentProps<typeof ReplyComposerSheet>) => null>(() => null);
 const mockScrollToIndex = jest.fn();
 const mockScrollToOffset = jest.fn();
+const mockGetLayout = jest.fn<(index: number) => { x: number; y: number; width: number; height: number } | undefined>();
+const mockGetFirstItemOffset = jest.fn<() => number>();
 const mockCompileForumContent = jest.fn();
 const mockNodeSeekTopicReactionStats = jest.fn<(item: TopicDetail) => { label: string; value: number }[]>(() => []);
 let lastFlashListItemTypes: string[] = [];
@@ -92,13 +96,18 @@ jest.mock('@shopify/flash-list', () => {
         ListHeaderComponent?: React.ReactNode;
         renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
         testID?: string;
+        style?: React.ComponentProps<typeof View>['style'];
+        importantForAccessibility?: React.ComponentProps<typeof View>['importantForAccessibility'];
+        accessibilityElementsHidden?: boolean;
         [key: string]: unknown;
       },
       ref: React.ForwardedRef<{ scrollToIndex: (options: unknown) => void; scrollToOffset: (options: unknown) => void }>
     ) {
       ReactModule.useImperativeHandle(ref, () => ({
         scrollToIndex: (options: unknown) => mockScrollToIndex(options),
-        scrollToOffset: (options: unknown) => mockScrollToOffset(options)
+        scrollToOffset: (options: unknown) => mockScrollToOffset(options),
+        getLayout: (index: number) => mockGetLayout(index),
+        getFirstItemOffset: () => mockGetFirstItemOffset()
       }));
       lastFlashListItemTypes = data.map((item) => String((item as { type?: unknown }).type || 'unknown'));
       lastFlashListItemKeys = data.map((item, index) => keyExtractor?.(item, index) ?? String(index));
@@ -112,7 +121,13 @@ jest.mock('@shopify/flash-list', () => {
       }, [data.length, props.onLoad]);
       return ReactModule.createElement(
         NativeView,
-        { accessibilityLabel, testID },
+        {
+          accessibilityLabel,
+          testID,
+          style: props.style,
+          importantForAccessibility: props.importantForAccessibility,
+          accessibilityElementsHidden: props.accessibilityElementsHidden
+        },
         ListHeaderComponent,
         ...data.map((item, index) =>
           ReactModule.createElement(
@@ -647,6 +662,8 @@ function TopicFilterHarness({
   onDiscourseBookmark = jest.fn(),
   onToggleTopicBodyQuote = jest.fn(),
   prepareContent = true,
+  readingRuntime,
+  readingEntry,
   replyHasMore = false,
   replyHasPrevious = false,
   replyEndError = null,
@@ -696,6 +713,8 @@ function TopicFilterHarness({
   onDiscourseBookmark?: () => void;
   onToggleTopicBodyQuote?: (options: ToggleTopicBodyQuoteOptions) => void;
   prepareContent?: boolean;
+  readingRuntime?: ReturnType<typeof useTopicController>['readingRuntime'];
+  readingEntry?: ReturnType<typeof useTopicController>['readingEntry'];
   replyHasMore?: boolean;
   replyHasPrevious?: boolean;
   replyEndError?: SourceErrorInfo | null;
@@ -772,6 +791,8 @@ function TopicFilterHarness({
     votePoll: async (poll: TopicPoll, optionIds: string[]) => onVotePoll(poll, optionIds)
   } satisfies TopicActionsController;
   const read = {
+    readingRuntime,
+    readingEntry,
     loadPreviousReplies: async (options?: { silent?: boolean }) => {
       onLoadPreviousReplies(options);
       return true;
@@ -1258,6 +1279,97 @@ describe('Topic reply filters', () => {
     }
   );
 
+  it.each(['cold', 'cached', 'positioning'] as const)(
+    'keeps the normal topic header visible during %s reading entry',
+    async (stage) => {
+      const targetTopic: TopicDetail = { ...topic, source: 'linuxdo', title: '续读时也显示完整标题' };
+      const entry = {
+        ready: stage === 'positioning',
+        positionReady: false,
+        windowReady: false,
+        windowLoaded: jest.fn(),
+        anchor: undefined,
+        location: undefined,
+        baseline: undefined,
+        highest: undefined,
+        positioned: jest.fn(),
+        failed: jest.fn()
+      };
+      const view = await render(
+        <TopicFilterHarness
+          selectedTopic={targetTopic}
+          topicDetail={stage === 'cold' ? null : targetTopic}
+          readingEntry={entry}
+        />
+      );
+      const titleStyle = view.getByText(targetTopic.title).props.style;
+      expect(view.getByTestId('topic-author')).toBeVisible();
+      expect(view.getByText('正在读取主题...')).toBeVisible();
+      expect(view.queryByTestId('topic-detail-loaded')).toBeNull();
+      await view.rerender(
+        <TopicFilterHarness
+          selectedTopic={targetTopic}
+          topicDetail={targetTopic}
+          readingEntry={{ ...entry, ready: true, positionReady: true, windowReady: true }}
+        />
+      );
+      expect(view.getByText(targetTopic.title)).toHaveStyle(titleStyle);
+      expect(view.getByTestId('topic-author')).toBeVisible();
+      expect(view.queryByText('正在读取主题...')).toBeNull();
+      expect(view.getByTestId('topic-detail-loaded')).toBeVisible();
+    }
+  );
+
+  it.each([false, true])(
+    'waits for the confirmed resume window before locating a deleted=%s target',
+    async (deleted) => {
+      const targetTopic: TopicDetail = { ...topic, source: 'linuxdo', id: '181', replies: [], replyCount: 250 };
+      const replies = (start: number) =>
+        Array.from({ length: 20 }, (_, index) => ({
+          author: 'reader',
+          contentHtml: '<p>reply</p>',
+          createdAt: '',
+          floor: start + index
+        })).filter((reply) => !deleted || reply.floor !== 181);
+      const location: TopicLocationTarget = { kind: 'reply', target: { floor: 181, readingResume: true } };
+      const positioned = jest.fn();
+      const tree = (windowReady: boolean) => (
+        <TopicFilterHarness
+          selectedTopic={targetTopic}
+          topicDetail={targetTopic}
+          topicReplies={replies(windowReady ? 171 : 20)}
+          location={location}
+          readingEntry={{
+            ready: true,
+            positionReady: false,
+            windowReady,
+            windowLoaded: jest.fn(),
+            anchor: undefined,
+            location,
+            baseline: 180,
+            highest: 250,
+            positioned,
+            failed: jest.fn()
+          }}
+        />
+      );
+      mockScrollToIndex.mockClear();
+      const view = await render(tree(false));
+      expect(mockScrollToIndex).not.toHaveBeenCalled();
+      expect(positioned).not.toHaveBeenCalled();
+      await view.rerender(tree(true));
+      await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(1));
+      expect(mockScrollToIndex).toHaveBeenCalledWith(
+        expect.objectContaining({
+          animated: false,
+          index: lastReplyListIndex(deleted ? 182 : 181)
+        })
+      );
+      expect(positioned).toHaveBeenCalledTimes(1);
+      await view.unmount();
+    }
+  );
+
   it('consumes repeated same-topic HTML floor links as distinct route commands', async () => {
     const replies: Reply[] = [
       {
@@ -1312,6 +1424,155 @@ describe('Topic reply filters', () => {
       mockFlashListLayoutReady = true;
     }
   });
+
+  it.each(['opening', 'compact reply', 'split reply'])(
+    'restores the same content position after leaving and reopening a tall %s',
+    async (content) => {
+      jest.useFakeTimers({ doNotFake: ['performance'] });
+      let clock = 0;
+      const reading = createDiscourseReadingRuntime({
+        queryClient: new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } }),
+        scope: () => 'reading-position',
+        send: async () => undefined,
+        now: () => clock
+      });
+      const imageHtml = '<p>tall image caption<br><img src="https://images.invalid/tall.png"></p>';
+      const bodyHtml = content === 'split reply' ? `<p>before image</p><pre>code</pre>${imageHtml}` : imageHtml;
+      const replies = [
+        { ...sourceReplies[0], floor: 2, contentHtml: bodyHtml },
+        { ...sourceReplies[1], floor: 3 },
+        { ...sourceReplies[2], floor: 4 }
+      ];
+      const tallTopic: TopicDetail = {
+        ...topic,
+        source: 'linuxdo',
+        id: '76291',
+        url: 'https://linux.do/t/76291',
+        contentHtml: content === 'opening' ? bodyHtml : '<p>opening</p>',
+        replies
+      };
+      let targetIndex = -1;
+      let headerHeight = 128;
+      let nativeOffset = 0;
+      const layouts = () => {
+        let y = 0;
+        return lastFlashListItemKeys.map((_, index) => {
+          const height = index === targetIndex ? 1800 : 240;
+          const layout = { x: 0, y, width: 320, height };
+          y += height;
+          return layout;
+        });
+      };
+      mockGetLayout.mockImplementation((index) => layouts()[index]);
+      mockGetFirstItemOffset.mockImplementation(() => headerHeight);
+      try {
+        const view = await render(
+          <TopicFilterHarness
+            selectedTopic={tallTopic}
+            topicDetail={tallTopic}
+            topicReplies={replies}
+            readingRuntime={reading}
+          />
+        );
+        const floor = content === 'opening' ? 1 : 2;
+        const items = lastFlashListProps.data as TopicListItem[];
+        const candidates = items.flatMap((item, index) => (topicListReadingFloor(item) === floor ? [index] : []));
+        targetIndex = candidates.at(-1)!;
+        expect(items[targetIndex].type).toBe(
+          content === 'opening' ? 'topicContent' : content === 'split reply' ? 'replyContent' : 'reply'
+        );
+        if (content === 'split reply') expect(candidates.length).toBeGreaterThan(1);
+        const stoppedOffset = headerHeight + layouts()[targetIndex].y + 520;
+        await act(async () => {
+          lastFlashListProps.onViewableItemsChanged({
+            viewableItems: [{ item: items[targetIndex], index: targetIndex, isViewable: true }]
+          });
+          lastFlashListProps.onScroll({
+            nativeEvent: { ...replyListDragEvent.nativeEvent, contentOffset: { x: 0, y: stoppedOffset } }
+          });
+          clock += 1000;
+          await jest.advanceTimersByTimeAsync(1000);
+        });
+        const anchor = reading.state()[tallTopic.id]?.anchor;
+        expect(anchor).toEqual(expect.objectContaining({ floor, rowKey: items[targetIndex].key, offset: 520 }));
+        await view.unmount();
+        reading.dispose();
+        jest.useRealTimers();
+
+        // A new route may have a different header height; only the content-relative offset survives.
+        headerHeight = 236;
+        mockScrollToIndex.mockClear();
+        const location: TopicLocationTarget =
+          floor === 1 ? { kind: 'opening' } : { kind: 'reply', target: { floor, readingResume: true } };
+        const reopened = await render(
+          <TopicFilterHarness
+            selectedTopic={tallTopic}
+            topicDetail={tallTopic}
+            topicReplies={replies}
+            location={location}
+            readingEntry={{
+              ready: true,
+              positionReady: false,
+              windowReady: true,
+              windowLoaded: jest.fn(),
+              anchor,
+              location,
+              baseline: floor,
+              highest: 4,
+              positioned: jest.fn(),
+              failed: jest.fn()
+            }}
+          />
+        );
+        await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledTimes(1));
+        const manager = {
+          get props() {
+            return { data: lastFlashListProps.data, horizontal: false };
+          },
+          firstItemOffset: headerHeight,
+          getDataLength: () => lastFlashListProps.data.length,
+          getDataKey: (index: number) => lastFlashListItemKeys[index],
+          getIsFirstLayoutComplete: () => true,
+          shouldMaintainVisibleContentPosition: () => true,
+          hasStableDataKeys: () => true,
+          getLayout: (index: number) => layouts()[index],
+          getWindowSize: () => ({ width: 320, height: 800 }),
+          getAbsoluteLastScrollOffset: () => nativeOffset,
+          getMaxScrollOffset: () => headerHeight + layouts().at(-1)!.y + layouts().at(-1)!.height - 800,
+          updateScrollOffset: () => undefined,
+          setOffsetProjectionEnabled: () => undefined,
+          setScrollDirection: () => undefined,
+          computeVisibleIndices: () => ({ startIndex: targetIndex, endIndex: targetIndex })
+        };
+        const hook = await renderHook(() =>
+          useRecyclerViewController(
+            manager as unknown as Parameters<typeof useRecyclerViewController>[0],
+            null,
+            {
+              current: {
+                scrollTo: ({ y }: { y: number }) => {
+                  nativeOffset = Math.max(0, Math.min(manager.getMaxScrollOffset(), y));
+                }
+              }
+            } as unknown as Parameters<typeof useRecyclerViewController>[2],
+            { current: { scrollBy: () => undefined } }
+          )
+        );
+        const command = mockScrollToIndex.mock.calls[0][0] as Parameters<
+          typeof hook.result.current.handlerMethods.scrollToIndex
+        >[0];
+        await act(async () => hook.result.current.handlerMethods.scrollToIndex(command));
+        expect(headerHeight + layouts()[targetIndex].y - nativeOffset).toBe(-520);
+        await reopened.unmount();
+        await hook.unmount();
+      } finally {
+        reading.dispose();
+        mockGetLayout.mockReset();
+        mockGetFirstItemOffset.mockReset();
+        jest.useRealTimers();
+      }
+    }
+  );
 
   it.each(['target', 'order', 'target-late-measurement', 'target-layout-before-ack', 'target-ack-before-layout'])(
     'keeps a reply header visible after cold and warm %s navigation',

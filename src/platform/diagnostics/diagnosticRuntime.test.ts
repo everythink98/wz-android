@@ -2,10 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setDiagnosticWriter } from './diagnostics';
 import { installDiagnosticExceptionHandlers } from './diagnosticRuntime';
 
-afterEach(() => setDiagnosticWriter(null));
+afterEach(() => {
+  setDiagnosticWriter(null);
+  vi.useRealTimers();
+});
 
 describe('release exception diagnostics', () => {
   it('observes renderer exceptions once without suppressing RN handling or exposing private data', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-12T05:02:45.999Z'));
     const events: Record<string, unknown>[] = [];
     setDiagnosticWriter((line) => {
       events.push(JSON.parse(line));
@@ -39,7 +44,8 @@ describe('release exception diagnostics', () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ operation: 'js-error', isFatal: true, stackFormat: 'rn-parsed' });
     expect(events[0].stack).toContain('[bundle]:1:91827');
-    expect(JSON.stringify(events)).not.toMatch(/PRIVATE_|999/);
+    expect(events[0].stack).not.toContain(':999');
+    expect(JSON.stringify(events)).not.toContain('PRIVATE_');
   });
 
   it('observes the legacy manager for direct renderer and ErrorUtils calls even when a native listener exists', () => {

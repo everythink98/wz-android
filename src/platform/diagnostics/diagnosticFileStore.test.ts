@@ -544,6 +544,24 @@ describe('diagnostic file store', () => {
 
   it('exports allowlisted native runtime phases without network secrets', async () => {
     const secret = 'NATIVE_RUNTIME_SECRET_91827';
+    const connectionPhases = [
+      'request-headers-start',
+      'request-headers-end',
+      'request-failed',
+      'connection-write-stalled'
+    ];
+    for (const phase of connectionPhases) {
+      boundary.nativeEvents.push({
+        timeMs: 1_786_199_367_264,
+        operation: 'request',
+        phase,
+        connectionId: '5e6f70',
+        source: 'anonymous',
+        lane: 'media',
+        headers: { Cookie: secret },
+        url: `https://private.test/${secret}`
+      });
+    }
     boundary.nativeEvents.push({
       timeMs: 1_786_199_367_265,
       operation: 'rotate-read-runtime',
@@ -649,6 +667,7 @@ describe('diagnostic file store', () => {
 
     const exported = boundary.shared[0].content;
     expect(exported).toContain('"type":"native-read-network"');
+    for (const phase of connectionPhases) expect(exported).toContain(`"nativePhase":"${phase}"`);
     expect(exported).toContain('"nativePhase":"connection-acquired"');
     expect(exported).toContain('"operation":"cookie-response"');
     expect(exported).toContain('"cookieCount":2');

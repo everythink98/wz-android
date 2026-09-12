@@ -2,6 +2,8 @@ import type { ReaderMembership } from '@/domain/reader/readerRecordState';
 import { categoryKey, topicKey } from '@/domain/reader/readerData';
 import type { Category, Reply, Topic } from './models';
 import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, sourceLabel } from './presentation';
+import { isTopicVisited } from './topicListItemState';
+import type { DiscourseVisitedState } from './discourseReading';
 
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
 export type SearchSort = 'relevance' | 'time';
@@ -37,13 +39,14 @@ export function positiveSearchQuery(query: string) {
 export function applyFeedFilter(
   items: Topic[],
   data: Pick<ReaderMembership, 'favorites' | 'history'>,
-  filter: ReadingFilter
+  filter: ReadingFilter,
+  reading?: DiscourseVisitedState
 ) {
   if (filter === 'unread') {
-    return items.filter((topic) => !data.history[topicKey(topic)]);
+    return items.filter((topic) => !isTopicVisited(data.history, topic, reading));
   }
   if (filter === 'read') {
-    return items.filter((topic) => Boolean(data.history[topicKey(topic)]));
+    return items.filter((topic) => isTopicVisited(data.history, topic, reading));
   }
   if (filter === 'favorite') {
     return items.filter((topic) => Boolean(data.favorites[topicKey(topic)]));

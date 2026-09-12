@@ -72,6 +72,33 @@ function deletedReplyFetcher() {
 }
 
 describe('linux.do reader', () => {
+  it('registers only an explicit topic entry and retains server reading evidence', async () => {
+    const data = {
+      ...deletedReplyTopic(),
+      highest_post_number: 3,
+      last_read_post_number: 2,
+      unread_posts: 0
+    };
+    const fetcher = vi.fn(async (_input: string, _init?: RequestInit) => json(data));
+    const detail = await getLinuxDoTopic('2835903', { fetcher, trackVisit: true, trackView: true });
+    const [url, init] = fetcher.mock.calls[0];
+    expect(new URL(url).searchParams.get('track_visit')).toBe('true');
+    expect(new Headers(init?.headers).get('Discourse-Track-View')).toBe('1');
+    expect(new Headers(init?.headers).get('Discourse-Track-View-Topic-Id')).toBe('2835903');
+    expect(detail).toMatchObject({ reading: { lastReadPostNumber: 2, highestPostNumber: 3, unreadPosts: 0 } });
+    fetcher.mockClear();
+    await getLinuxDoReplies('2835903', {
+      fetcher,
+      order: 'oldest',
+      position: { kind: 'target', target: { floor: 3 } }
+    });
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).has('Discourse-Track-View')).toBe(false);
+    fetcher.mockImplementation(async () => json({ ...data, archetype: 'private_message' }));
+    const privateTopic = await getLinuxDoTopic('2835903', { fetcher });
+    expect(privateTopic.isPrivateMessage).toBe(true);
+    expect(privateTopic.reading).toBeUndefined();
+  });
+
   it('keeps an author-deleted reply in initial, stream, target, and direct reads', async () => {
     const fetcher = deletedReplyFetcher();
 

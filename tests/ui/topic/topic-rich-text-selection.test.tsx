@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import React, { type ReactNode } from 'react';
+import React, { type ReactNode, type RefObject } from 'react';
+import type { FlashListRef } from '@shopify/flash-list';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import RenderHTML, { RenderHTMLConfigProvider, TRenderEngineProvider, useContentWidth } from 'react-native-render-html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
@@ -16,8 +17,28 @@ import type { Reply, TopicDetail } from '@/domain/forum/models';
 import { act, fireEvent, render, within } from '../render';
 import { TopicRouteBackBoundary } from '@/features/topic/useTopicRouteBeforeRemove';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { QueryClient } from '@tanstack/react-query';
+import { createDiscourseReadingRuntime, type DiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
+import { topicListReadingFloor, type TopicListItem } from '@/features/topic/model/topicListModel';
+
+let mockReadingList: {
+  data: TopicListItem[];
+  onLoad: () => void;
+  onViewableItemsChanged: (event: {
+    viewableItems: { item: TopicListItem; index: number; isViewable: boolean }[];
+  }) => void;
+};
 
 let mockPreventRemove = false;
+const mockCancelNativeSelection = jest.fn<() => Promise<void>>(() => Promise.resolve());
+const mockReadingImages = new Map<string, { onDisplay?: () => void; onLoad?: (event: unknown) => void }>();
+jest.mock('expo-image', () => ({
+  ...jest.requireActual<typeof import('expo-image')>('expo-image'),
+  Image: (props: { source?: { uri?: string }; onDisplay?: () => void; onLoad?: (event: unknown) => void }) => {
+    if (props.source?.uri) mockReadingImages.set(props.source.uri, props);
+    return require('react').createElement(require('react-native').View, props);
+  }
+}));
 let mockHandleBack = () => {};
 jest.mock('@react-navigation/native', () => ({
   ...jest.requireActual<typeof import('@react-navigation/native')>('@react-navigation/native'),
@@ -65,8 +86,10 @@ jest.mock('react-native-reanimated', () => {
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
   return {
-    FlashList: ({ data, renderItem }: { data: { key: string }[]; renderItem: (info: unknown) => ReactNode }) =>
-      ReactModule.createElement(
+    FlashList: (props: typeof mockReadingList & { renderItem: (info: unknown) => ReactNode }) => {
+      mockReadingList = props;
+      const { data, renderItem } = props;
+      return ReactModule.createElement(
         require('react-native').View,
         null,
         data.map((item, index) =>
@@ -76,7 +99,8 @@ jest.mock('@shopify/flash-list', () => {
             renderItem({ item, index, target: 'Cell' })
           )
         )
-      ),
+      );
+    },
     useMappingHelper: () => ({ getMappingKey: (key: string) => key }),
     useRecyclingState: <T,>(initialState: T | (() => T), dependencies: React.DependencyList) => {
       const value = ReactModule.useRef<T | undefined>(undefined);
@@ -100,8 +124,9 @@ jest.mock('expo-modules-core', () => {
   const actual = jest.requireActual<typeof import('expo-modules-core')>('expo-modules-core');
   const NativeSelectionView = ReactModule.forwardRef(function NativeSelectionView(
     props: Record<string, unknown> & { children?: ReactNode },
-    _ref: unknown
+    ref: React.Ref<{ cancelSelection: () => Promise<void> }>
   ) {
+    ReactModule.useImperativeHandle(ref, () => ({ cancelSelection: mockCancelNativeSelection }), []);
     return ReactModule.createElement(NativeView, props, props.children);
   });
   return { ...actual, requireNativeViewManager: jest.fn(() => NativeSelectionView) };
@@ -221,12 +246,233 @@ it('opens the V2EX user from a mention and the exact reply from its compiled inl
   expect(onOpenTopic).toHaveBeenCalledTimes(1);
 });
 
+it('reports only visible production content floors after layout and pauses while an editor covers the list', async () => {
+  jest.useFakeTimers({ doNotFake: ['performance'] });
+  let clock = 0;
+  const send = jest.fn(async () => undefined);
+  const reading = createDiscourseReadingRuntime({
+    queryClient: new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } }),
+    scope: () => 'alice',
+    send,
+    now: () => clock
+  });
+  const topic = prepareTopicContent({
+    ...selectionTopic,
+    id: '42',
+    source: 'linuxdo',
+    contentHtml: '<p>opening body</p><pre>opening code</pre>',
+    replyCount: 100,
+    replies: [2, 100].map((floor) =>
+      prepareReplyContent(
+        { author: 'reader', floor, commentId: floor, contentHtml: `<p>reply ${floor}</p>`, createdAt: '' },
+        'linuxdo'
+      )
+    )
+  });
+  const tree = (paused = false) => (
+    <QueryTestWrapper>
+      <ProductionContentList topic={topic} quotedReplies={{}} readingRuntime={reading} readingPaused={paused} />
+    </QueryTestWrapper>
+  );
+  try {
+    const view = await render(tree());
+    const visible = () =>
+      mockReadingList.data.flatMap((item, index) =>
+        [1, 100].includes(topicListReadingFloor(item) || 0) ? [{ item, index, isViewable: true }] : []
+      );
+    await act(async () => {
+      mockReadingList.onViewableItemsChanged({ viewableItems: visible() });
+    });
+    await act(async () => {
+      clock += 1000;
+      await jest.advanceTimersByTimeAsync(1000);
+    });
+    expect(send).not.toHaveBeenCalled();
+    await act(async () => mockReadingList.onLoad());
+    await act(async () => {
+      clock += 1000;
+      await jest.advanceTimersByTimeAsync(1000);
+    });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ topicTime: 1000, timings: { 1: 1000, 100: 1000 } }),
+      'alice',
+      expect.anything()
+    );
+    expect(reading.state()['42'].readPosts[2]).toBeUndefined();
+    await view.rerender(tree(true));
+    const before = send.mock.calls.length;
+    await act(async () => {
+      clock += 10000;
+      await jest.advanceTimersByTimeAsync(10000);
+    });
+    expect(send).toHaveBeenCalledTimes(before);
+    await view.unmount();
+  } finally {
+    reading.dispose();
+    jest.useRealTimers();
+  }
+});
+
+it('waits for actual pixels before recording an image-only visible content row', async () => {
+  jest.useFakeTimers({ doNotFake: ['performance'] });
+  let clock = 0;
+  const send = jest.fn(async () => undefined);
+  const reading = createDiscourseReadingRuntime({
+    queryClient: new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } }),
+    scope: () => 'alice',
+    send,
+    now: () => clock
+  });
+  const topic = prepareTopicContent({
+    ...selectionTopic,
+    id: '43',
+    source: 'linuxdo',
+    replyCount: 0,
+    replies: [],
+    contentHtml: '<img src="https://images.invalid/reading.png" width="100" height="100">'
+  });
+  try {
+    const view = await render(
+      <QueryTestWrapper>
+        <ProductionContentList topic={topic} quotedReplies={{}} readingRuntime={reading} />
+      </QueryTestWrapper>
+    );
+    await act(async () => {
+      mockReadingList.onViewableItemsChanged({
+        viewableItems: mockReadingList.data.flatMap((item, index) =>
+          topicListReadingFloor(item) === 1 ? [{ item, index, isViewable: true }] : []
+        )
+      });
+      mockReadingList.onLoad();
+    });
+    await act(async () => {
+      clock += 1000;
+      await jest.advanceTimersByTimeAsync(1000);
+    });
+    expect(send).not.toHaveBeenCalled();
+    const image = mockReadingImages.get('https://images.invalid/reading.png');
+    expect(image).toBeDefined();
+    await act(async () => {
+      image!.onLoad?.({ source: { width: 100, height: 100 } });
+      image!.onDisplay?.();
+    });
+    await act(async () => {
+      clock += 1000;
+      await jest.advanceTimersByTimeAsync(1000);
+    });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ topicTime: 1000, timings: { 1: 1000 } }),
+      'alice',
+      expect.anything()
+    );
+    await view.unmount();
+  } finally {
+    reading.dispose();
+    jest.useRealTimers();
+  }
+});
+
+it('records the current floor when filtering replaces content at the same visible index', async () => {
+  jest.useFakeTimers({ doNotFake: ['performance'] });
+  let clock = 0;
+  const send = jest.fn(async () => undefined);
+  const reading = createDiscourseReadingRuntime({
+    queryClient: new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } }),
+    scope: () => 'reading-filter',
+    send,
+    now: () => clock
+  });
+  const topic = prepareTopicContent({
+    ...selectionTopic,
+    id: '44',
+    author: 'op',
+    source: 'linuxdo',
+    contentHtml: '<p>opening</p>',
+    replyCount: 2,
+    replies: [
+      { author: 'reader', floor: 2, commentId: 2, contentHtml: '<p>other reply</p>', createdAt: '' },
+      { author: 'op', floor: 100, commentId: 100, contentHtml: '<p>author reply</p>', createdAt: '' }
+    ].map((reply) => prepareReplyContent(reply, 'linuxdo'))
+  });
+  let visibleIndices: number[] = [];
+  const ViewabilityHelper = require('@shopify/flash-list/src/recyclerview/viewability/ViewabilityHelper').default;
+  const helper = new ViewabilityHelper({ minimumViewTime: 0 }, (indices: number[]) => {
+    mockReadingList.onViewableItemsChanged({
+      viewableItems: indices.map((index) => ({
+        index,
+        item: mockReadingList.data[index],
+        isViewable: true
+      }))
+    });
+  });
+  const report = () =>
+    helper.updateViewableItems(
+      false,
+      0,
+      { width: 320, height: 100 },
+      () => ({ x: 0, y: 0, width: 320, height: 100 }),
+      visibleIndices
+    );
+  const scrollRef = {
+    current: {
+      recomputeViewableItems: () => {
+        helper.clearLastReportedViewableIndices();
+        report();
+      }
+    }
+  } as RefObject<FlashListRef<TopicListItem> | null>;
+  try {
+    const view = await render(
+      <QueryTestWrapper>
+        <ProductionContentList topic={topic} quotedReplies={{}} readingRuntime={reading} scrollRef={scrollRef} />
+      </QueryTestWrapper>
+    );
+    const index = mockReadingList.data.findIndex((item) => topicListReadingFloor(item) === 2);
+    expect(index).toBeGreaterThan(-1);
+    visibleIndices = [index];
+    await act(async () => {
+      mockReadingList.onLoad();
+      report();
+    });
+    await act(async () => {
+      clock = 500;
+      await jest.advanceTimersByTimeAsync(500);
+    });
+    await fireEvent.press(view.getByLabelText('只看楼主'));
+    expect(topicListReadingFloor(mockReadingList.data[index])).toBe(100);
+    await act(async () => report());
+    await act(async () => {
+      clock = 1500;
+      await jest.advanceTimersByTimeAsync(1000);
+    });
+    expect(reading.state()[topic.id]?.readPosts[100]).toBe(true);
+    expect(reading.state()[topic.id]?.readPosts[2]).toBeUndefined();
+    expect(reading.state()[topic.id]?.anchor?.floor).toBe(100);
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ timings: { 100: 1000 } }),
+      'reading-filter',
+      expect.anything()
+    );
+    await view.unmount();
+  } finally {
+    helper.dispose();
+    reading.dispose();
+    jest.useRealTimers();
+  }
+});
+
 function ProductionContentList({
   topic,
-  quotedReplies
+  quotedReplies,
+  readingRuntime,
+  readingPaused = false,
+  scrollRef
 }: {
   topic: ReturnType<typeof prepareTopicContent>;
   quotedReplies: Record<string, Reply>;
+  readingRuntime?: DiscourseReadingRuntime;
+  readingPaused?: boolean;
+  scrollRef?: RefObject<FlashListRef<TopicListItem> | null>;
 }) {
   const session = useTopicSessionController({ topic, notify: () => undefined });
   const topicScrollRef = React.useRef(null);
@@ -247,6 +493,7 @@ function ProductionContentList({
   }, []);
   return (
     <TopicContentList
+      readingPaused={readingPaused}
       actions={React.useMemo(
         () => ({
           actionBusy: false,
@@ -281,8 +528,22 @@ function ProductionContentList({
       onOpenUser={unexpected}
       onScroll={() => undefined}
       session={session}
-      topicScrollRef={topicScrollRef}
+      topicScrollRef={scrollRef || topicScrollRef}
       read={{
+        readingRuntime,
+        readingEntry: {
+          ready: true,
+          positionReady: true,
+          windowReady: true,
+          windowLoaded: () => undefined,
+          anchor: undefined,
+          location: undefined,
+          baseline: undefined,
+          highest: undefined,
+          positioned: () => undefined,
+          failed: () => undefined
+        },
+        hasNewReplies: false,
         cancelTopicQueries: unexpected,
         currentTopic: topic,
         currentTopicKey: `${topic.source}:${topic.id}`,
@@ -329,6 +590,84 @@ function ProductionContentList({
 }
 
 describe('topic rich-text selection', () => {
+  it.each([false, true])('owns a rejected native selection cancellation after unmount=%s', async (unmount) => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const row = compileForumContent({ html: '<p>private selection</p>', role: 'opening', source: 'linuxdo' }).rows[0]!;
+    let rejectCancellation!: (error: Error) => void;
+    const cancellation = new Promise<void>((_resolve, reject) => {
+      rejectCancellation = reject;
+    });
+    // Keep a broken owner from leaking into other tests; the oracle requires its own failure diagnostic.
+    const observedRejection = cancellation.catch((error: unknown) => error);
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    try {
+      view = await render(
+        <TopicRouteBackBoundary
+          imagePreviewOpen={false}
+          replyComposerOpen={false}
+          closeImagePreview={jest.fn()}
+          closeReplyComposer={jest.fn()}
+        >
+          <TopicSelectionSurface
+            active
+            items={[{ documentId: 'opening', rowKey: 'private-row', selectionToken: row.selectionToken }]}
+            listRef={{ current: null }}
+            sessionKey="private-session"
+          >
+            <Text>selection content</Text>
+          </TopicSelectionSurface>
+        </TopicRouteBackBoundary>
+      );
+      const surface = view.getByTestId('topic-selection-surface').props;
+      await act(async () => surface.onSelectionChange({ nativeEvent: { active: true, revision: surface.revision } }));
+      expect(mockPreventRemove).toBe(true);
+      mockCancelNativeSelection.mockClear();
+      mockCancelNativeSelection.mockImplementationOnce(() => cancellation);
+      await act(async () => mockHandleBack());
+      expect(mockCancelNativeSelection).toHaveBeenCalledTimes(1);
+      expect(mockPreventRemove).toBe(false);
+      if (unmount) {
+        await view.unmount();
+        view = undefined;
+      } else {
+        await act(async () => surface.onSelectionChange({ nativeEvent: { active: true, revision: surface.revision } }));
+        expect(mockPreventRemove).toBe(true);
+      }
+      const error = Object.assign(
+        new Error(
+          "Call to function 'ForumContentSelectionView.cancelSelection' has been rejected.\n→ Caused by: Unable to find the class expo.modules.forumcontentselection.ForumContentSelectionView view with tag 123\nPRIVATE_SELECTION_COMMAND"
+        ),
+        { code: 'ERR_L' }
+      );
+      await act(async () => {
+        rejectCancellation(error);
+        expect(await observedRejection).toBe(error);
+      });
+      expect(mockCancelNativeSelection).toHaveBeenCalledTimes(1);
+      expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+        expect.objectContaining({
+          operation: 'selection-error',
+          phase: 'finish',
+          selectionError: 'cancel-command',
+          exceptionKind: 'selection-view-missing',
+          outcome: 'failure'
+        })
+      );
+      expect(lines.join('')).not.toMatch(/PRIVATE_SELECTION_COMMAND|private-row|private-session|private selection/);
+      if (view) {
+        expect(view.getByText('selection content')).toBeTruthy();
+        expect(mockPreventRemove).toBe(true);
+      }
+    } finally {
+      await view?.unmount();
+      mockCancelNativeSelection.mockReset().mockImplementation(() => Promise.resolve());
+      setDiagnosticWriter(null);
+    }
+  });
+
   it('records current native selection errors and ignores stale documents without exposing selection contents', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {

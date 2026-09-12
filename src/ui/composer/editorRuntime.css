@@ -363,6 +363,31 @@ select:focus-visible {
   margin: 8px 0;
   border-radius: 8px;
 }
+.composer-image {
+  margin: 8px 0;
+  border-radius: 8px;
+}
+.composer-image > img {
+  margin: 0;
+}
+.composer-image > [hidden] {
+  display: none;
+}
+.composer-image-feedback {
+  width: 100%;
+  min-height: 72px;
+  border-color: var(--line);
+  background: var(--surface-2);
+  white-space: normal;
+}
+.composer-image-feedback:disabled {
+  color: var(--muted);
+  opacity: 1;
+}
+.composer-image.ProseMirror-selectednode {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 .composer-document blockquote {
   margin: 12px 0;
   padding: 4px 12px;

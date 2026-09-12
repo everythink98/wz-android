@@ -154,6 +154,18 @@ describe('Android reader data helpers', () => {
     expect(data.history[key]).not.toHaveProperty('note');
   });
 
+  it('preserves private conversation kind through history restore without saving account reading', () => {
+    const privateTopic = {
+      ...topic,
+      source: 'linuxdo' as const,
+      isPrivateMessage: true,
+      reading: { topicId: topic.id, lastReadPostNumber: 12 }
+    };
+    const data = sanitizeReaderData(recordHistory(createEmptyReaderData(), privateTopic));
+    expect(data.history[topicKey(privateTopic)].topic.isPrivateMessage).toBe(true);
+    expect(data.history[topicKey(privateTopic)].topic).not.toHaveProperty('reading');
+  });
+
   it('keeps direct history writes capped at the newest 1000 records', () => {
     const history: ReaderData['history'] = {};
     for (let index = 0; index < MAX_HISTORY_RECORDS; index += 1) {

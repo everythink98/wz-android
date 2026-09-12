@@ -349,19 +349,23 @@ describe('disabled content source route gates', () => {
       }
     } as never);
     const locateReply = jest.fn();
-    jest.mocked(useTopicController).mockReturnValue({
-      loadedQuotedReplies: {},
-      locateReply,
-      openTopic: jest.fn(),
-      refreshTopicReplies: jest.fn(),
-      refreshWholeTopic: jest.fn(),
-      topicBusy: false,
-      topicDetail: null,
-      topicError: null,
-      topicFavorite: false,
-      topicQueryKey: ['forum', 'nodeseek', 'topic'],
-      topicReplies: []
-    } as never);
+    jest.mocked(useTopicController).mockImplementation(
+      ({ location }) =>
+        ({
+          readingEntry: { location },
+          loadedQuotedReplies: {},
+          locateReply,
+          openTopic: jest.fn(),
+          refreshTopicReplies: jest.fn(),
+          refreshWholeTopic: jest.fn(),
+          topicBusy: false,
+          topicDetail: null,
+          topicError: null,
+          topicFavorite: false,
+          topicQueryKey: ['forum', 'nodeseek', 'topic'],
+          topicReplies: []
+        }) as never
+    );
     jest.mocked(useTopicActionsController).mockReturnValue({} as never);
     jest.mocked(useImagePreviewController).mockReturnValue({
       closeImagePreview: jest.fn(),

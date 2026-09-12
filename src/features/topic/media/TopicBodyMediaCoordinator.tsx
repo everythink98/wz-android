@@ -100,6 +100,8 @@ class TopicBodyMediaCoordinator {
   private diagnosticFinished = false;
   private diagnosticSession: TopicBodyMediaDiagnosticSession | undefined;
   private displayCount = 0;
+  private displayedRows = new Set<string>();
+  private displayedRowsListener: ((rows: ReadonlySet<string>) => void) | undefined;
   private disposed = false;
   private entries = new Map<string, TopicBodyMediaEntry>();
   private errorCount = 0;
@@ -136,6 +138,14 @@ class TopicBodyMediaCoordinator {
     this.runtimeGeneration = runtimeGeneration;
     this.visibleRowKeys = visibleRowKeys;
     this.viewportRowKeys = viewportRowKeys;
+  }
+
+  observeDisplayedRows(listener: ((rows: ReadonlySet<string>) => void) | undefined) {
+    this.displayedRowsListener = listener;
+    listener?.(this.displayedRows);
+    return () => {
+      if (this.displayedRowsListener === listener) this.displayedRowsListener = undefined;
+    };
   }
 
   register(
@@ -526,6 +536,16 @@ class TopicBodyMediaCoordinator {
         entry.listener(next);
       }
     }
+    const displayedRows = new Set(
+      [...this.entries.values()].filter((entry) => entry.status === 'displayed').map((entry) => entry.rowKey)
+    );
+    if (
+      displayedRows.size !== this.displayedRows.size ||
+      [...displayedRows].some((key) => !this.displayedRows.has(key))
+    ) {
+      this.displayedRows = displayedRows;
+      this.displayedRowsListener?.(displayedRows);
+    }
   }
 
   private scheduleTimer() {
@@ -608,6 +628,7 @@ export function TopicBodyMediaCoordinatorProvider({
   children: ReactNode;
   diagnosticSession?: TopicBodyMediaDiagnosticSession;
   onDiagnosticFinish?: TopicBodyMediaAggregateReporter;
+  onDisplayedRowsChange?: (rows: ReadonlySet<string>) => void;
   visibleRowKeys?: readonly string[];
 }) {
   const runtimeGeneration = useReadNetworkRuntimeGeneration(diagnosticSession?.source);
@@ -631,6 +652,7 @@ function TopicBodyMediaCoordinatorSessionProvider({
   children,
   diagnosticSession,
   onDiagnosticFinish,
+  onDisplayedRowsChange,
   paused,
   runtimeGeneration,
   visibleRowKeys,
@@ -639,6 +661,7 @@ function TopicBodyMediaCoordinatorSessionProvider({
   children: ReactNode;
   diagnosticSession?: TopicBodyMediaDiagnosticSession;
   onDiagnosticFinish?: TopicBodyMediaAggregateReporter;
+  onDisplayedRowsChange?: (rows: ReadonlySet<string>) => void;
   runtimeGeneration: number;
 }) {
   const [coordinator] = useState(
@@ -656,6 +679,7 @@ function TopicBodyMediaCoordinatorSessionProvider({
   useLayoutEffect(() => {
     coordinator.updateDiagnosticReporter(diagnosticSession, onDiagnosticFinish);
   }, [coordinator, diagnosticSession, onDiagnosticFinish]);
+  useLayoutEffect(() => coordinator.observeDisplayedRows(onDisplayedRowsChange), [coordinator, onDisplayedRowsChange]);
   useLayoutEffect(() => {
     coordinator.restartRunningForRuntimeGeneration(runtimeGeneration);
   }, [coordinator, runtimeGeneration]);

@@ -240,6 +240,18 @@ internal data class ForumMediaRequestTag(
   val kind: String? = null
 )
 
+private class ImageRuntimeGuardInterceptor(private val generation: Long) : Interceptor {
+  override fun intercept(chain: Interceptor.Chain): Response {
+    if (chain.request().tag(ImageDiagnosticTag::class.java) != null &&
+      generation != NetworkProxyRuntime.currentReadNetworkGeneration()) {
+      // A non-recoverable failure must reach the consumer. Call.cancel() would make Fresco
+      // treat this as an unmounted image and suppress its failure callback.
+      throw java.net.ProtocolException("Image runtime retired")
+    }
+    return chain.proceed(chain.request())
+  }
+}
+
 internal data class ForumReadRequestTag(
   val source: String,
   val cancelClass: String
@@ -1051,11 +1063,14 @@ private class ReadNetworkEventListener(
   private val clientIdentity: Any,
   private val connectionPool: ConnectionPool,
   private val dispatcher: Dispatcher,
-  private val call: Call
+  private val call: Call,
+  private val mediaHealth: MediaConnectionHealth?
 ) : ForwardingReadNetworkEventListener(delegate) {
   private val startedAt = SystemClock.elapsedRealtime()
   private val source = readNetworkDiagnosticSource(call.request())
   private val requestTag = requestDiagnosticTag(call.request())
+  private var acquiredConnection: Connection? = null
+  private var headerWriteTimeout: okio.AsyncTimeout? = null
 
   private fun record(phase: String, extra: Map<String, Any> = emptyMap()) {
     val imageTag = call.request().tag(ImageDiagnosticTag::class.java)
@@ -1152,6 +1167,7 @@ private class ReadNetworkEventListener(
 
   override fun connectionAcquired(call: Call, connection: Connection) {
     super.connectionAcquired(call, connection)
+    acquiredConnection = connection
     record(
       "connection-acquired",
       mapOf(
@@ -1164,12 +1180,39 @@ private class ReadNetworkEventListener(
 
   override fun connectionReleased(call: Call, connection: Connection) {
     super.connectionReleased(call, connection)
+    headerWriteTimeout?.exit()
+    headerWriteTimeout = null
+    acquiredConnection = null
     record("connection-released", mapOf("connectionId" to opaqueNetworkIdentity(connection)))
   }
 
   override fun responseHeadersStart(call: Call) {
     super.responseHeadersStart(call)
     record("response-start")
+  }
+
+  override fun requestHeadersStart(call: Call) {
+    super.requestHeadersStart(call)
+    record("request-headers-start")
+    acquiredConnection?.let { connection ->
+      headerWriteTimeout = mediaHealth?.startHeaders(connection) {
+        record("connection-write-stalled", mapOf("connectionId" to opaqueNetworkIdentity(connection)))
+      }
+    }
+  }
+
+  override fun requestHeadersEnd(call: Call, request: Request) {
+    headerWriteTimeout?.exit()
+    headerWriteTimeout = null
+    super.requestHeadersEnd(call, request)
+    record("request-headers-end")
+  }
+
+  override fun requestFailed(call: Call, ioe: IOException) {
+    headerWriteTimeout?.exit()
+    headerWriteTimeout = null
+    super.requestFailed(call, ioe)
+    record("request-failed", mapOf("errorType" to ioe.javaClass.simpleName))
   }
 
   override fun responseHeadersEnd(call: Call, response: Response) {
@@ -1224,7 +1267,8 @@ private class ReadNetworkEventListenerFactory(
   private val lane: String,
   private val clientIdentity: Any,
   private val connectionPool: ConnectionPool,
-  private val dispatcher: Dispatcher
+  private val dispatcher: Dispatcher,
+  private val mediaHealth: MediaConnectionHealth?
 ) : EventListener.Factory {
   override fun create(call: Call): EventListener = ReadNetworkEventListener(
     delegate.create(call),
@@ -1233,7 +1277,8 @@ private class ReadNetworkEventListenerFactory(
     clientIdentity,
     connectionPool,
     dispatcher,
-    call
+    call,
+    mediaHealth
   )
 }
 
@@ -1254,6 +1299,7 @@ private class ReadNetworkRuntimeGeneration(
   proxySelectorDelegate: ProxySelector
 ) {
   private val baseEventListenerFactory = baseClient.eventListenerFactory
+  private val mediaHealth = MediaConnectionHealth(baseClient)
   val dispatcher = Dispatcher()
   val forumConnectionPool = ConnectionPool()
   val mediaConnectionPool = ConnectionPool()
@@ -1285,7 +1331,7 @@ private class ReadNetworkRuntimeGeneration(
     configureClient(builder, forumConnectionPool, "forum")
 
   fun configureMediaClient(builder: OkHttpClient.Builder): OkHttpClient.Builder =
-    configureClient(builder, mediaConnectionPool, "media")
+    mediaHealth.configure(configureClient(builder, mediaConnectionPool, "media"))
 
   fun currentMediaTransportGeneration(): Long = synchronized(cronetLock) {
     generation * 1_000_000L + mediaTransportRevision
@@ -1417,7 +1463,8 @@ private class ReadNetworkRuntimeGeneration(
         lane,
         clientIdentity,
         connectionPool,
-        dispatcher
+        dispatcher,
+        if (lane == "media") mediaHealth else null
       )
     )
     builder.interceptors().removeAll { interceptor -> interceptor is ForumReadRequestInterceptor }
@@ -1430,6 +1477,8 @@ private class ReadNetworkRuntimeGeneration(
     builder.networkInterceptors().removeAll { it is CookieResponseInterceptor }
     builder.addInterceptor(CookieResponseContextInterceptor(LinuxDoCookieResponses.store))
     builder.addNetworkInterceptor(CookieResponseInterceptor(LinuxDoCookieResponses.store))
+    builder.networkInterceptors().removeAll { it is ImageRuntimeGuardInterceptor }
+    if (lane == "media") builder.addNetworkInterceptor(ImageRuntimeGuardInterceptor(generation))
     return builder
   }
 }
@@ -3616,6 +3665,34 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NetworkProxyRuntimeTest {
+  @Test
+  fun staleHttp2ImagesRecoverOnNewConnectionAfterCancelAndReopen() =
+    Http2ImageFaultFixture().use { it.assertRecoveryAfterReopen() }
+
+  @Test
+  fun blockedHttp2WriterCannotTrapCancellationOrConnectionRecovery() =
+    Http2ImageFaultFixture(blockWrites = true).use { it.assertRecoveryAfterReopen() }
+
+  @Test
+  fun blockedTlsHttp2WriterClosesRawSocketBeforeTlsShutdown() =
+    Http2ImageFaultFixture(blockWrites = true, tls = true).use { it.assertRecoveryAfterReopen() }
+
+  @Test
+  fun explicitHttp2DisconnectRecoversWithoutWaitingForHealthTimer() =
+    Http2ImageFaultFixture().use { it.assertExplicitDisconnect() }
+
+  @Test
+  fun healthyHttp2SlowHeadersAndContinuousBodyKeepTheirConnection() =
+    Http2ImageFaultFixture().use { it.assertHealthySlowResponses() }
+
+  @Test
+  fun unavailableHttp2NetworkEndsWithoutUnboundedTransportRetries() =
+    Http2ImageFaultFixture().use { it.assertOfflineTerminates() }
+
+  @Test
+  fun retiredRuntimeCannotReplayStaleHttp2ImageContext() =
+    Http2ImageFaultFixture().use { it.assertRetiredRuntimeDoesNotReplay() }
+
   private class ControllableGlideCall(private val request: Request) : Call {
     private var callback: Callback? = null
     private val canceled = AtomicBoolean(false)
@@ -6455,6 +6532,13 @@ function injectCronetProguardRules(contents) {
 
 function injectNetworkProxyTestSupport(contents) {
   let next = contents;
+  for (const configuration of ['testImplementation', 'androidTestImplementation']) {
+    for (const artifact of ['mockwebserver', 'okhttp-tls']) {
+      const dependency = `${configuration}("com.squareup.okhttp3:${artifact}:4.12.0")`;
+      if (!next.includes(dependency))
+        next = next.replace(/dependencies\s*\{/, (match) => `${match}\n    ${dependency}`);
+    }
+  }
   if (!next.includes('testImplementation("junit:junit:4.13.2")')) {
     const dependenciesPattern = /dependencies\s*\{/;
     if (!dependenciesPattern.test(next)) {
@@ -6519,6 +6603,80 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NetworkImageRuntimeInstrumentedTest {
+  @Test
+  fun mountedFrescoAndGlideRecoverFromStaleHttp2WithoutRestart() {
+    val instrumentation = InstrumentationRegistry.getInstrumentation()
+    val context = instrumentation.targetContext
+    val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    val initialized = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+    while ((!FrescoModule.hasBeenInitialized() || NetworkProxyRuntime.currentLocalProxy() != null) && System.nanoTime() < initialized) Thread.sleep(100)
+    assertTrue(FrescoModule.hasBeenInitialized())
+    assertNull(NetworkProxyRuntime.currentLocalProxy())
+    val png = ByteArrayOutputStream().also { output ->
+      Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888).apply {
+        eraseColor(Color.MAGENTA); compress(Bitmap.CompressFormat.PNG, 100, output); recycle()
+      }
+    }.toByteArray()
+    try {
+      for (scenario in listOf("drop", "blocked", "retired")) Http2ImageFaultFixture(blockWrites = scenario == "blocked", tls = true, imageBytes = png).use { fixture ->
+        val blocked = scenario == "blocked"
+        fixture.warmAndDrop()
+        val generation = NetworkProxyRuntime.currentReadNetworkGeneration()
+        lateinit var container: LinearLayout
+        lateinit var fresco: SimpleDraweeView
+        lateinit var glide: ImageView
+        val done = CountDownLatch(2)
+        val failures = AtomicInteger()
+        val displayed = AtomicInteger()
+        val start = System.nanoTime()
+        try {
+          instrumentation.runOnMainSync {
+            container = LinearLayout(activity)
+            fresco = SimpleDraweeView(activity); glide = ImageView(activity)
+            container.addView(fresco, LinearLayout.LayoutParams(100, 100))
+            container.addView(glide, LinearLayout.LayoutParams(100, 100))
+            activity.addContentView(container, ViewGroup.LayoutParams(-1, -1))
+            fresco.controller = Fresco.newDraweeControllerBuilder().setUri(Uri.parse(fixture.url("/fresco.png")))
+              .setControllerListener(object : BaseControllerListener<ImageInfo>() {
+                override fun onFinalImageSet(id: String?, info: ImageInfo?, animatable: android.graphics.drawable.Animatable?) { if (info != null) displayed.incrementAndGet(); done.countDown() }
+                override fun onFailure(id: String?, error: Throwable?) { failures.incrementAndGet(); done.countDown() }
+              }).build()
+            val source: expo.modules.image.records.Source = expo.modules.image.records.SourceMap(uri = fixture.url("/glide.png"))
+            val model = source.createGlideModelProvider(context)!!.getGlideModel() as GlideUrlWrapper
+            Glide.with(activity).load(if (blocked) model else model.glideUrl)
+              .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.NONE).skipMemoryCache(true)
+              .listener(object : RequestListener<Drawable> {
+                override fun onLoadFailed(error: GlideException?, model: Any?, target: Target<Drawable>, first: Boolean): Boolean { failures.incrementAndGet(); done.countDown(); return false }
+                override fun onResourceReady(resource: Drawable, model: Any, target: Target<Drawable>?, source: DataSource, first: Boolean): Boolean { displayed.incrementAndGet(); done.countDown(); return false }
+              }).into(glide)
+          }
+          fixture.assertWriteFaultObserved()
+          if (scenario == "retired") {
+            fixture.awaitStalledImages(2)
+            NetworkProxyRuntime.recoverForumReadChannel("linuxdo")
+          }
+          val remaining = 15_000 - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
+          assertTrue("real Fresco/Glide images must display inside 15s", remaining > 0 && done.await(remaining, TimeUnit.MILLISECONDS))
+          if (scenario == "retired") {
+            assertEquals("both consumers must receive a failure, not silent cancellation", 2, failures.get())
+            assertEquals(0, displayed.get())
+            fixture.assertNoReplay()
+          } else {
+            assertEquals(0, failures.get()); assertEquals(2, displayed.get())
+            instrumentation.runOnMainSync { assertNotNull(glide.drawable) }
+            fixture.assertFreshConnection(start)
+            assertEquals("recovery must not replace the runtime", generation, NetworkProxyRuntime.currentReadNetworkGeneration())
+          }
+          instrumentation.sendStatus(0, android.os.Bundle().apply {
+            putString("stream", "\nHTTP2_IMAGES scenario=" + scenario + " displayed=" + displayed.get() + " failures=" + failures.get() + " elapsedMs=" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start) + "\n")
+          })
+        } finally {
+          instrumentation.runOnMainSync { fresco.controller = null; Glide.with(activity).clear(glide); (container.parent as? ViewGroup)?.removeView(container) }
+        }
+      }
+    } finally { instrumentation.runOnMainSync { activity.finish() } }
+  }
+
   @Test
   fun diagnosticMarkersDoNotSplitConcurrentImageJobs() {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -6789,6 +6947,12 @@ function withNetworkProxyModule(config) {
       fs.mkdirSync(outputDir, { recursive: true });
       fs.writeFileSync(path.join(outputDir, 'NetworkProxyRuntime.kt'), networkProxyRuntimeSource(packageName));
       fs.writeFileSync(
+        path.join(outputDir, 'MediaConnectionHealth.kt'),
+        fs
+          .readFileSync(path.join(__dirname, 'network', 'MediaConnectionHealth.kt'), 'utf8')
+          .replace('package com.wz.reader', `package ${packageName}`)
+      );
+      fs.writeFileSync(
         path.join(outputDir, 'ManagedCookieResponses.kt'),
         fs
           .readFileSync(path.join(__dirname, 'network', 'ManagedCookieResponses.kt'), 'utf8')
@@ -6824,6 +6988,14 @@ function withNetworkProxyModule(config) {
         androidPackagePath(packageName)
       );
       fs.mkdirSync(instrumentedDir, { recursive: true });
+      for (const destination of [testOutputDir, instrumentedDir]) {
+        fs.writeFileSync(
+          path.join(destination, 'Http2ImageFaultFixture.kt'),
+          fs
+            .readFileSync(path.join(__dirname, 'network', 'Http2ImageFaultFixture.kt'), 'utf8')
+            .replace('package com.wz.reader', `package ${packageName}`)
+        );
+      }
       fs.writeFileSync(
         path.join(instrumentedDir, 'ManagedCookieResponsesInstrumentedTest.kt'),
         fs

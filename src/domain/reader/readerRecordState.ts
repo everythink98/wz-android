@@ -22,6 +22,7 @@ export interface ReaderState extends ReaderView {
 
 export type ReaderCommand =
   | { type: 'visit'; topic: Topic; at: string }
+  | { type: 'topic-summary'; topic: Topic }
   | { type: 'favorite'; topic: Topic; enabled: boolean; at: string }
   | { type: 'follow'; user: UserProfile; enabled: boolean; at: string }
   | { type: 'delete'; collection: ReaderCollection; keys: readonly string[]; at: string }

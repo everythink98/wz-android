@@ -107,6 +107,25 @@ afterEach(() => {
 });
 
 describe('reader data storage authority', () => {
+  it('completes a visited topic summary without changing its visit count or exporting account reading fields', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    const item = { ...topic, source: 'linuxdo' as const };
+    await store.commitReaderCommand({ type: 'visit', topic: item, at });
+    await store.commitReaderCommand({
+      type: 'topic-summary',
+      topic: {
+        ...item,
+        title: 'loaded',
+        replyCount: 9,
+        reading: { topicId: item.id, lastReadPostNumber: 8, highestPostNumber: 10 }
+      }
+    });
+    const saved = JSON.parse(await store.exportReaderDataBackup()).history['linuxdo:1'];
+    expect(saved).toMatchObject({ savedAt: at, visitCount: 1, topic: { title: 'loaded', replyCount: 9 } });
+    expect(saved.topic).not.toHaveProperty('reading');
+  });
+
   it('does not trim grandfathered deletion markers when deletion changes no record', async () => {
     const data = createEmptyReaderData();
     for (let i = 0; i < 1002; i++) data.deletedRecords.history[`nodeseek:${i}`] = at;

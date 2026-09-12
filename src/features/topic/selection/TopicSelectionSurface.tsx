@@ -17,7 +17,7 @@ import { type NativeSyntheticEvent, Platform, StyleSheet, View, type ViewProps }
 import Animated, { cancelAnimation, type SharedValue, useEvent, useSharedValue } from 'react-native-reanimated';
 import { useTopicSelectionBackReport } from '../useTopicRouteBeforeRemove';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
-import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, recordDiagnosticError } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 
 export type TopicSelectionItem = Readonly<{
@@ -48,7 +48,7 @@ type NativeForumSelectionProps = {
   onSelectionError?: (event: NativeSyntheticEvent<{ code: string; revision: string }>) => void;
 };
 
-type NativeForumSelectionRef = View & { cancelSelection?: () => void };
+type NativeForumSelectionRef = View & { cancelSelection?: () => Promise<void> };
 
 type NativeSelectionComponent = ComponentType<
   NativeForumSelectionProps & { ref?: RefObject<NativeForumSelectionRef | null> }
@@ -195,7 +195,10 @@ export function TopicSelectionSurface({
   const cancelSelection = useCallback(() => {
     drag.set({ ...drag.value, active: false });
     reportSelection(null);
-    nativeRef.current?.cancelSelection?.();
+    // The native view may disappear before this queued command runs; the caller owns its rejection.
+    void nativeRef.current?.cancelSelection?.().catch((error: unknown) => {
+      recordDiagnosticError('topic', 'selection-error', error, { selectionError: 'cancel-command' });
+    });
   }, [drag, reportSelection]);
   useLayoutEffect(() => {
     mounted.current = true;

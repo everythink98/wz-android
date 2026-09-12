@@ -284,6 +284,7 @@ export function topicSummary(topic: Topic): Topic {
     replyCount: topic.replyCount === undefined ? undefined : cleanNonNegativeInteger(topic.replyCount),
     viewCount: cleanOptionalNonNegativeInteger(topic.viewCount),
     excerpt: cleanOptionalString(topic.excerpt),
+    ...(topic.source === 'linuxdo' && topic.isPrivateMessage === true ? { isPrivateMessage: true } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };
 }

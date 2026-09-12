@@ -1,8 +1,15 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
+import { withBrowserFetchIntent, type BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { discourseActionResponseMessage, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
+import {
+  diagnosticRequestFields,
+  diagnosticTraceForRequest,
+  markDiagnosticStage,
+  withDiagnosticFetcher
+} from '@/platform/diagnostics/diagnostics';
+import { diagnosticRef, type DiagnosticFields, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { LINUXDO_BASE_URL, linuxDoRequestError } from './protocol';
 
 const LINUXDO_ACTION_HEADERS = {
@@ -17,21 +24,45 @@ function linuxDoLoginRequiredError() {
   const error = new Error('linux.do 登录已失效，请重新登录');
   Object.assign(error, {
     source: 'linuxdo',
+    status: 401,
     loginRequired: true
   });
   return error;
 }
 
-function linuxDoActionError(data: Record<string, unknown>, status: number) {
-  const message = discourseActionResponseMessage(data, `linux.do 请求失败：HTTP ${status}`);
+function linuxDoActionError(data: Record<string, unknown> | unknown[], response: Response) {
+  const payload = Array.isArray(data) ? { errors: data.filter((value) => typeof value === 'string') } : data;
+  const { status } = response;
+  const message = discourseActionResponseMessage(payload, `linux.do 请求失败：HTTP ${status}`);
   if (status === 401) {
     return linuxDoLoginRequiredError();
   }
-  return linuxDoRequestError(message, status, data);
+  const error = linuxDoRequestError(message, status, payload);
+  if (status === 429) {
+    const retry = response.headers.get('Retry-After');
+    const seconds = Number(retry);
+    const retryAfterMs =
+      retry && !Number.isFinite(seconds) ? Math.max(0, Date.parse(retry) - Date.now()) : seconds * 1000;
+    Object.assign(error, { safeToRetry: true, retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 0 });
+  }
+  return error;
 }
 
-async function readJsonResponse(response: Response) {
+async function readJsonResponse(
+  response: Response,
+  diagnostics?: { trace: DiagnosticTrace; fields: DiagnosticFields }
+) {
   const text = await response.text();
+  if (diagnostics) {
+    markDiagnosticStage(diagnostics.trace, 'parse', {
+      ...diagnostics.fields,
+      state: 'body-ready',
+      status: response.status,
+      isBodyEmpty: text.length === 0,
+      // Size of the consumed UTF-8 text, independent of Content-Length and transfer compression.
+      byteCount: new TextEncoder().encode(text).byteLength
+    });
+  }
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     const error = new Error('linux.do 需要完成 Cloudflare 验证');
     Object.assign(error, {
@@ -47,22 +78,24 @@ async function readJsonResponse(response: Response) {
     return JSON.parse(text) as Record<string, unknown>;
   } catch {
     if (!response.ok) {
-      throw new Error(`linux.do 请求失败：HTTP ${response.status}`);
+      return {};
     }
     throw new Error('linux.do 返回内容格式不正确');
   }
 }
 
-async function getCsrfToken({
+export async function getLinuxDoCsrfToken({
   fetcher,
   signal,
   timeoutMs,
-  userAgent
+  userAgent,
+  browserFetchIntent = { owner: 'write', priority: 'write' }
 }: {
   fetcher: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
   userAgent?: string;
+  browserFetchIntent?: BrowserFetchIntent;
 }) {
   const response = await fetchWithTimeout(
     `${LINUXDO_BASE_URL}/session/csrf`,
@@ -73,13 +106,13 @@ async function getCsrfToken({
           'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT
         }
       },
-      { owner: 'write', priority: 'write' }
+      browserFetchIntent
     ),
     { fetcher, signal, timeoutMs }
   );
   const data = await readJsonResponse(response);
   if (!response.ok) {
-    throw linuxDoActionError(data, response.status);
+    throw linuxDoActionError(data, response);
   }
   const token = typeof data.csrf === 'string' ? data.csrf : typeof data.csrf_token === 'string' ? data.csrf_token : '';
   if (!token) {
@@ -93,15 +126,57 @@ export async function runLinuxDoAction({
   fetcher = fetch,
   signal,
   timeoutMs,
-  userAgent
+  userAgent,
+  csrfToken: suppliedCsrf,
+  readingDiagnostics,
+  browserFetchIntent = { owner: 'write', priority: 'write' }
 }: {
   request: DiscourseActionRequest;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
   userAgent?: string;
+  csrfToken?: string;
+  readingDiagnostics?: { trace: DiagnosticTrace; topicId: string };
+  browserFetchIntent?: BrowserFetchIntent;
 }) {
-  const csrfToken = request.method === 'GET' ? '' : await getCsrfToken({ fetcher, signal, timeoutMs, userAgent });
+  const csrfToken =
+    request.method === 'GET'
+      ? ''
+      : suppliedCsrf || (await getLinuxDoCsrfToken({ fetcher, signal, timeoutMs, userAgent, browserFetchIntent }));
+  let responseDiagnostics: { trace: DiagnosticTrace; fields: DiagnosticFields } | undefined;
+  const requestFetcher =
+    readingDiagnostics && request.path === '/topics/timings' && request.method === 'POST'
+      ? withDiagnosticFetcher(readingDiagnostics.trace, (input, init) => {
+          const trace = diagnosticTraceForRequest(init)!;
+          const form = new URLSearchParams(typeof init?.body === 'string' ? init.body : '');
+          const fields: DiagnosticFields = {
+            ...diagnosticRequestFields(init),
+            source: 'linuxdo',
+            endpoint: 'action',
+            method: 'POST',
+            topicRef: diagnosticRef('topic', `linuxdo:${form.get('topic_id')}`)
+          };
+          responseDiagnostics = { trace, fields };
+          const timings = [...form].filter(([key]) => /^timings\[\d+\]$/.test(key));
+          markDiagnosticStage(trace, 'transport', {
+            ...fields,
+            state: 'summary',
+            isTopicIdMatch: form.get('topic_id') === readingDiagnostics.topicId,
+            isFormEncoded: new Headers(init?.headers).get('Content-Type') === 'application/x-www-form-urlencoded',
+            topicTimeMs: Number(form.get('topic_time') ?? Number.NaN),
+            itemCount: timings.length
+          });
+          for (const [key, milliseconds] of timings) {
+            markDiagnosticStage(trace, 'transport', {
+              ...fields,
+              floor: Number(key.slice(8, -1)),
+              postTimeMs: Number(milliseconds)
+            });
+          }
+          return fetcher(input, init);
+        })
+      : fetcher;
   const response = await fetchWithTimeout(
     `${LINUXDO_BASE_URL}${request.path}`,
     withBrowserFetchIntent(
@@ -115,13 +190,13 @@ export async function runLinuxDoAction({
         },
         body: request.body
       },
-      { owner: 'write', priority: 'write' }
+      browserFetchIntent
     ),
-    { fetcher, signal, timeoutMs }
+    { fetcher: requestFetcher, signal, timeoutMs }
   );
-  const data = await readJsonResponse(response);
+  const data = await readJsonResponse(response, responseDiagnostics);
   if (!response.ok) {
-    throw linuxDoActionError(data, response.status);
+    throw linuxDoActionError(data, response);
   }
   return data;
 }

@@ -22,6 +22,7 @@ import { openNotificationsRoute } from './appNavigation';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { useContentSourceQueryCleanup } from './useContentSourceQueryCleanup';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
+import { useDiscourseVisited } from '@/platform/query/useDiscourseVisited';
 
 export function useAppRuntime() {
   const lifecycle = useAppLifecycleRuntime();
@@ -45,10 +46,6 @@ export function useAppRuntime() {
 
   const { favorites, history } = readerData;
   const { fontScale, listDensity } = readerData.settings;
-  const topicStateIndex = useMemo(
-    () => createTopicListItemStateIndex({ favorites, history, settings: { listDensity } }),
-    [favorites, history, listDensity]
-  );
   const { appStyles, contentWidth, navigationTheme, readerStyleContext, theme } = useAppTheme(
     readerData.settings,
     width
@@ -88,6 +85,11 @@ export function useAppRuntime() {
     fetcher: networkProxyFetcher,
     notify
   });
+  const readingState = useDiscourseVisited(accountRuntime.read.readGateway.reading?.scope());
+  const topicStateIndex = useMemo(
+    () => createTopicListItemStateIndex({ favorites, history, settings: { listDensity }, reading: readingState }),
+    [favorites, history, listDensity, readingState]
+  );
   const {
     accountSessionViewModels,
     forumSessionEpochs,
@@ -377,6 +379,7 @@ export function useAppRuntime() {
 
   const libraryRouteRuntime = useMemo<LibraryRouteRuntimeValue>(
     () => ({
+      readingGateway: readGateway,
       categories: catalogCategories,
       enabledSources,
       notify,
@@ -389,6 +392,7 @@ export function useAppRuntime() {
       topicStateIndex
     }),
     [
+      readGateway,
       catalogCategories,
       commitReaderData,
       enabledSources,

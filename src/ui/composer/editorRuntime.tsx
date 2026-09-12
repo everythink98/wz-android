@@ -7,6 +7,8 @@ import {
 } from '@tiptap/core';
 import { Markdown } from '@tiptap/markdown';
 import { NodeSelection, Plugin, Selection, TextSelection } from '@tiptap/pm/state';
+import { createParagraphNear } from '@tiptap/pm/commands';
+import { GapCursor } from '@tiptap/pm/gapcursor';
 import { selectedRect } from '@tiptap/pm/tables';
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
@@ -800,6 +802,102 @@ const StrictGfmTableHeaders = Extension.create({
   }
 });
 
+const ComposerTextCaret = Extension.create({
+  name: 'composerTextCaret',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        view(view) {
+          let followCaret = false;
+          const pause = () => {
+            followCaret = false;
+          };
+          const resize = new ResizeObserver(() => {
+            if (followCaret && view.hasFocus() && view.state.selection instanceof TextSelection) {
+              view.dispatch(view.state.tr.scrollIntoView());
+            }
+          });
+          resize.observe(view.dom);
+          resize.observe(document.documentElement);
+          document.addEventListener('pointerdown', pause, true);
+          document.addEventListener('wheel', pause, true);
+          return {
+            update(current, previous) {
+              if (current.state.doc !== previous.doc || !current.state.selection.eq(previous.selection))
+                followCaret = true;
+            },
+            destroy() {
+              resize.disconnect();
+              document.removeEventListener('pointerdown', pause, true);
+              document.removeEventListener('wheel', pause, true);
+            }
+          };
+        },
+        appendTransaction(_transactions, _oldState, state) {
+          if (!(state.selection instanceof GapCursor)) return null;
+          let paragraph = null;
+          createParagraphNear(state, (transaction) => {
+            paragraph = transaction.setMeta('addToHistory', false);
+          });
+          return paragraph;
+        }
+      })
+    ];
+  }
+});
+
+const ComposerImage = Image.extend({
+  addNodeView() {
+    return ({ HTMLAttributes }) => {
+      const dom = document.createElement('div');
+      dom.className = 'composer-image';
+      dom.contentEditable = 'false';
+      const feedback = document.createElement('button');
+      feedback.type = 'button';
+      feedback.className = 'tiptap-button composer-image-feedback';
+      feedback.setAttribute('aria-live', 'polite');
+      dom.append(feedback);
+      let image: HTMLImageElement | undefined;
+      const releaseImage = () => {
+        if (!image) return;
+        image.onload = null;
+        image.onerror = null;
+        image.remove();
+      };
+      const settle = (state: 'loading' | 'loaded' | 'failed') => {
+        dom.setAttribute('aria-busy', String(state === 'loading'));
+        feedback.hidden = state === 'loaded';
+        feedback.disabled = state !== 'failed';
+        feedback.textContent = state === 'failed' ? '图片加载失败，点击重试' : '图片加载中…';
+        if (image) image.hidden = state !== 'loaded';
+      };
+      const load = () => {
+        releaseImage();
+        image = document.createElement('img');
+        Object.entries(HTMLAttributes).forEach(([key, value]) => {
+          if (key !== 'src' && value != null) image!.setAttribute(key, String(value));
+        });
+        image.onload = () => settle('loaded');
+        image.onerror = () => settle('failed');
+        settle('loading');
+        dom.prepend(image);
+        image.src = String(HTMLAttributes.src || '');
+      };
+      feedback.onclick = load;
+      load();
+      return {
+        dom,
+        stopEvent: (event) => event.target === feedback,
+        ignoreMutation: () => true,
+        destroy: () => {
+          feedback.onclick = null;
+          releaseImage();
+        }
+      };
+    };
+  }
+});
+
 export const composerEditorExtensions = [
   StarterKit.configure({
     link: { openOnClick: false, autolink: true },
@@ -810,9 +908,10 @@ export const composerEditorExtensions = [
   TableKit.configure({ table: false }),
   StrictGfmTable.configure({ resizable: false }),
   StrictGfmTableHeaders,
+  ComposerTextCaret,
   TaskList,
   TaskItem.configure({ nested: true }),
-  Image.configure({ allowBase64: false, resize: false }),
+  ComposerImage.configure({ allowBase64: false, resize: false }),
   ForumExpressionNode,
   PendingNodeSeekPollNode,
   NodeSeekRemotePollNode,
@@ -843,8 +942,13 @@ function focusTextAfterBlock(editor: TiptapEditor) {
     return;
   }
   const next = Selection.findFrom(editor.state.doc.resolve(editor.state.selection.to), 1, true);
-  if (next instanceof TextSelection) editor.view.dispatch(editor.state.tr.setSelection(next));
-  else editor.commands.createParagraphNear();
+  if (next instanceof TextSelection && next.from <= editor.state.selection.to + 1) {
+    editor.view.dispatch(editor.state.tr.setSelection(next));
+  } else {
+    const position = editor.state.selection.to;
+    const transaction = editor.state.tr.insert(position, editor.schema.nodes.paragraph!.create());
+    editor.view.dispatch(transaction.setSelection(TextSelection.create(transaction.doc, position + 1)));
+  }
   editor.commands.focus(undefined, { scrollIntoView: false });
 }
 
@@ -877,7 +981,13 @@ async function uploadImageAtSelection(editor: TiptapEditor) {
     const result = await requestHostAction('upload-image');
     const markdown = typeof result === 'string' ? result : (result as { markdown?: string })?.markdown;
     if (markdown && !editor.isDestroyed) {
-      editor.chain().focus().insertContentAt({ from, to }, markdown, { contentType: 'markdown' }).run();
+      editor
+        .chain()
+        .focus(undefined, { scrollIntoView: false })
+        .insertContentAt({ from, to }, markdown, { contentType: 'markdown' })
+        .run();
+      focusTextAfterBlock(editor);
+      editor.commands.scrollIntoView();
     }
   } catch (error) {
     window.alert(error instanceof Error ? error.message : '图片上传失败');

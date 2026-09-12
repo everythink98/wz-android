@@ -1,0 +1,50 @@
+diff --git a/node_modules/expo/src/winter/fetch/NativeRequest.ts b/node_modules/expo/src/winter/fetch/NativeRequest.ts
+index 8f348d4b..9e4eb6ae 100644
+--- a/node_modules/expo/src/winter/fetch/NativeRequest.ts
++++ b/node_modules/expo/src/winter/fetch/NativeRequest.ts
+@@ -8,7 +8,7 @@ export declare class NativeRequest extends SharedObject {
+     requestInit: NativeRequestInit,
+     requestBody: Uint8Array | null
+   ): Promise<NativeResponse>;
+-  public cancel(): void;
++  public cancel(): Promise<void>;
+ }
+ 
+ export interface NativeRequestInit {
+@@ -33,7 +33,7 @@ export declare class NativeResponse extends SharedObject<NativeResponseEvents> {
+   get url(): string;
+   get redirected(): boolean;
+   startStreaming(): Promise<Uint8Array<ArrayBuffer> | null>;
+-  cancelStreaming(reason: string): void;
++  cancelStreaming(reason: string): Promise<void>;
+   arrayBuffer(): Promise<ArrayBuffer>;
+   text(): Promise<string>;
+ }
+diff --git a/node_modules/expo/src/winter/fetch/FetchResponse.ts b/node_modules/expo/src/winter/fetch/FetchResponse.ts
+index f55d6a01..78788336 100644
+--- a/node_modules/expo/src/winter/fetch/FetchResponse.ts
++++ b/node_modules/expo/src/winter/fetch/FetchResponse.ts
+@@ -334,7 +334,7 @@ export class FetchResponse extends ConcreteNativeResponse implements Response {
+             // Flag first — the stream is already `closed` when this callback
+             // runs, so the guard must not go stale if cancelStreaming throws.
+             this.bodyStreamClosed = true;
+-            this.cancelStreaming(String(reason));
++            return this.cancelStreaming(String(reason));
+           },
+         },
+         {
+diff --git a/node_modules/expo/src/winter/fetch/fetch.ts b/node_modules/expo/src/winter/fetch/fetch.ts
+index cbe32225..5f564fc6 100644
+--- a/node_modules/expo/src/winter/fetch/fetch.ts
++++ b/node_modules/expo/src/winter/fetch/fetch.ts
+@@ -81,7 +81,9 @@ export async function fetch(
+     // Abort the body stream before canceling the native request, so late
+     // native events can't reach an abandoned controller.
+     response.abort(signal?.reason);
+-    request.cancel();
++    // The abort reason already owns the fetch/body rejection. Native teardown
++    // is asynchronous and must not create a second, unhandled rejection.
++    void request.cancel().catch(() => {});
+   });
+   try {
+     await request.start(`${url}`, nativeRequestInit, requestBody);

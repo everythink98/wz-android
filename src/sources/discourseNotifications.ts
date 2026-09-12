@@ -462,7 +462,7 @@ export const linuxDoNotificationAdapter = {
         ],
         reply: { format: 'markdown' },
         ...(historyNotice ? { historyNotice } : {}),
-        topic
+        topic: { ...topic, isPrivateMessage: true }
       };
     }
     if (item.target.type === 'topic') {

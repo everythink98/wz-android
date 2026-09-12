@@ -3,6 +3,8 @@ import type { CompiledForumContentRow } from '@/domain/forum/topicContentSplit';
 import type { TopicContentItem } from './topicOpeningPresentation';
 import type { TopicReplyListItem } from './replyListModel';
 import type { TopicSelectionItem } from '../selection/TopicSelectionSurface';
+import { stableTextHash } from './contentIdentity';
+import { stripHtml } from '@/domain/forum/text';
 
 type TopicQuoteSummaryItem = Extract<TopicContentItem, { type: 'quoteSummary' }>;
 
@@ -17,6 +19,40 @@ export type TopicListItem =
 
 export function topicListItemKey(item: TopicListItem) {
   return item.key;
+}
+
+export function topicListReadingFloor(item: TopicListItem, acceptedFloor?: number): number | undefined {
+  if (item.type === 'topicContent' && item.content.type === 'content') return 1;
+  if (item.type === 'topicQuoteContent' && item.content.type === 'content') return 1;
+  if (item.type === 'topicAcceptedAnswerContent' && !item.preview) return acceptedFloor;
+  if (item.type === 'reply' || item.type === 'replyContent' || item.type === 'replyQuoteContent') {
+    if (item.reply.hidden || item.reply.systemAction) return;
+    return item.reply.floor;
+  }
+}
+
+const readingRevisions = new WeakMap<CompiledForumContentRow, string>();
+const mediaOnlyRows = new WeakMap<CompiledForumContentRow, boolean>();
+export function topicListReadingNeedsDisplayedMedia(item: TopicListItem) {
+  const row = topicListCompiledRow(item) || (item.type === 'reply' ? item.bodyContent : undefined);
+  if (!row) return false;
+  let mediaOnly = mediaOnlyRows.get(row);
+  if (mediaOnly === undefined) {
+    mediaOnly = row.type === 'video' || (row.type === 'richText' && !stripHtml(row.html).trim());
+    mediaOnlyRows.set(row, mediaOnly);
+  }
+  return mediaOnly;
+}
+
+export function topicListReadingRevision(item: TopicListItem) {
+  const row = topicListCompiledRow(item) || (item.type === 'reply' ? item.bodyContent : undefined);
+  if (!row) return;
+  let revision = readingRevisions.get(row);
+  if (!revision) {
+    revision = stableTextHash(row.selectionToken);
+    readingRevisions.set(row, revision);
+  }
+  return revision;
 }
 
 export function topicListCompiledRow(item: TopicListItem): CompiledForumContentRow | null {

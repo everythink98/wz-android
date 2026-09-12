@@ -1,4 +1,5 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ImagePreviewItem } from '@/platform/media/imagePreviewCatalog';
 import { Linking, Share, type NativeScrollEvent, type NativeSyntheticEvent, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -182,6 +183,27 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     notify: runtime.notify
   });
   useCommitRefValue(openImagePreviewRef, imagePreviewController.openImagePreview);
+  const [displayedPreview, setDisplayedPreview] = useState<ImagePreviewItem | null>(null);
+  const previewOrigin = imagePreviewController.imagePreview ? displayedPreview?.readingOrigin : undefined;
+  const previewInteractionRef = useRef<(() => void) | null>(null);
+  const interactWithPreview = useCallback(() => previewInteractionRef.current?.(), []);
+  const readingRuntime = topicController.readingRuntime;
+  const readingScope = readingRuntime?.scope();
+  useEffect(() => {
+    if (!active || topic.source !== 'linuxdo' || previewOrigin?.topicId !== topic.id || !readingRuntime) return;
+    const preview = readingRuntime.begin(topic.id);
+    const anchor = readingRuntime.state()[topic.id]?.anchor;
+    preview.visible(
+      [previewOrigin.floor],
+      anchor?.floor === previewOrigin.floor ? anchor : { floor: previewOrigin.floor }
+    );
+    preview.active(true);
+    previewInteractionRef.current = preview.interact;
+    return () => {
+      previewInteractionRef.current = null;
+      preview.end();
+    };
+  }, [active, previewOrigin?.floor, previewOrigin?.topicId, readingRuntime, readingScope, topic.id, topic.source]);
   const actions = useTopicActionsController({
     active,
     sessionEpochs: runtime.account.sessionEpochs,
@@ -290,7 +312,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
             onImagePreviewDescriptors={imagePreviewController.registerImagePreviewDescriptors}
             read={topicController}
             session={topicSession}
-            location={route.params.location}
+            location={topicController.readingEntry.location}
             locationRequestId={route.params.locationRequestId}
             topicScrollRef={topicScrollRef}
           />
@@ -300,6 +322,8 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
             onClose={imagePreviewController.closeImagePreview}
             onSave={imagePreviewController.savePreviewImage}
             onSelect={imagePreviewController.selectPreviewImage}
+            onVisibleImageChange={setDisplayedPreview}
+            onInteraction={interactWithPreview}
           />
         </View>
       </OriginalImageUpgradeBoundary>

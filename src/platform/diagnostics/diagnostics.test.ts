@@ -78,6 +78,44 @@ describe('diagnostic traces', () => {
     expect(JSON.stringify(events())).not.toMatch(/private|InternalBytecode|640/);
   });
 
+  it('retains only closed exception classifications and reading durations', () => {
+    const events = captureEvents();
+    const fixtures = [
+      ['fetch failed: PRIVATE_URL', undefined, 'fetch-wrapper'],
+      ['PRIVATE_URL', 'ERR_FETCH_REQUEST_CANCELED', 'fetch-request-canceled'],
+      [
+        "Call to function 'NativeRequest.cancel' has been rejected. PRIVATE_URL",
+        'ERR_FUNCTION_CALL',
+        'fetch-request-cancel'
+      ],
+      [
+        "Call to function 'NativeResponse.cancelStreaming' has been rejected. PRIVATE_URL",
+        'ERR_FUNCTION_CALL',
+        'fetch-stream-cancel'
+      ],
+      ['PRIVATE_URL', 'ERR_UNEXPECTED', 'native-unexpected'],
+      [
+        "Call to function 'a.b.cancelSelection' has been rejected.\n→ Caused by: Unable to find the class a.b view with tag 123",
+        'ERR_L',
+        'selection-view-missing'
+      ],
+      ["Call to function 'a.b.cancelSelection' has been rejected. PRIVATE_URL", 'ERR_X', 'selection-cancel'],
+      ["Call to function 'PRIVATE_MODULE.cancel' has been rejected.", 'ERR_FUNCTION_CALL', 'native-function'],
+      ['canceled PRIVATE_URL', 'PRIVATE_CODE', 'unknown']
+    ] as const;
+    for (const [message, code] of fixtures) {
+      recordDiagnosticError('app', 'unhandled-rejection', Object.assign(new Error(message), { code }));
+    }
+    expect(events().map((event) => event.exceptionKind)).toEqual(fixtures.map((fixture) => fixture[2]));
+    expect(JSON.stringify(events())).not.toMatch(/PRIVATE_|ERR_|NativeRequest|NativeResponse|fetch failed/);
+    expect(JSON.stringify(events())).not.toMatch(/a\.b|view with tag|cancelSelection/);
+    expect(safeFields({ topicTimeMs: 1200, postTimeMs: 1000, exceptionKind: 'PRIVATE_KIND' })).toEqual({
+      topicTimeMs: 1200,
+      postTimeMs: 1000,
+      exceptionKind: 'redacted'
+    });
+  });
+
   it('correlates concurrent copied request options without mutating the caller', async () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('topic', 'open');

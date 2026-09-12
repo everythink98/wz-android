@@ -57,7 +57,7 @@ import {
 } from '@/platform/diagnostics/diagnosticPolicy';
 import { copySourceDiagnosticSummary, sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { runForumSourceReadAttempt, withForumSourceReadEligibility } from './forumSourceReadAttempt';
-import type { FeedSource, Source, SourceErrors, Topic } from '@/domain/forum/models';
+import type { FeedSource, Source, SourceErrors, Topic, DiscourseTopicReading } from '@/domain/forum/models';
 import {
   prepareRepliesContent,
   prepareReplyContent,
@@ -69,6 +69,9 @@ import {
 import { resolveForumReadPlan, type ForumReadOperation, type ForumReadPlan } from '@/domain/forum/readPlan';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { isSessionSource, sourceValues, type DiscourseSource, type SessionSource } from '@/domain/forum/sourceCatalog';
+
+import type { DiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
+import { getLinuxDoReadingBatch, getLinuxDoTopicReading } from '@/sources/linuxdo/reading';
 
 export { getCurrentUserProfile } from './sourceRead';
 export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/sources/linuxdo/level';
@@ -145,6 +148,7 @@ export async function getTopic(options: GetTopicOptions, trace?: DiagnosticTrace
 
 type GetRepliesOptions = Parameters<typeof getForumReplies>[0] & {
   categoryId?: string;
+  isPrivateMessage?: boolean;
 };
 
 export async function getReplies(
@@ -195,6 +199,7 @@ export async function getUserProfile(options: GetUserProfileOptions) {
 }
 
 type ReadGatewayDependencies = {
+  reading?: DiscourseReadingRuntime;
   anonymousFetcher: Fetcher;
   fetcher: Fetcher;
   getEnabledSources?: () => readonly Source[];
@@ -399,6 +404,7 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     signal?: AbortSignal,
     intentFields: DiagnosticFields = {}
   ) => {
+    const readingRequest = dependencies.reading?.startRequest();
     const ownsTrace = !context?.trace;
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source, ...intentFields });
     if (context?.trace && Object.keys(intentFields).length) {
@@ -661,6 +667,41 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         }
       }
       if (!readIsCurrent()) throw new Error(REQUEST_CANCELED_MESSAGE);
+      if (readingRequest && dependencies.reading && linuxDoAuthenticated) {
+        const record = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+        const candidates: unknown[] = Array.isArray(result)
+          ? result
+          : [
+              result,
+              ...(Array.isArray(record.items) ? record.items : []),
+              ...(Array.isArray(record.topics) ? record.topics : [])
+            ];
+        const missing: string[] = [];
+        for (const candidate of candidates) {
+          if (!candidate || typeof candidate !== 'object') continue;
+          const value = candidate as {
+            source?: string;
+            id?: string;
+            topicId?: string;
+            reading?: DiscourseTopicReading;
+            isPrivateMessage?: boolean;
+          };
+          if (value.isPrivateMessage) continue;
+          if (value.reading) dependencies.reading.observe(value.reading, readingRequest);
+          else if (value.topicId && /^\d+$/.test(value.topicId))
+            dependencies.reading.observe(value as DiscourseTopicReading, readingRequest);
+          if (
+            value.source === 'linuxdo' &&
+            value.id &&
+            /^\d+$/.test(value.id) &&
+            value.reading?.lastReadPostNumber === undefined
+          )
+            missing.push(value.id);
+        }
+        if (missing.length && ['feed', 'search', 'semantic-search', 'user-profile'].includes(readOperation)) {
+          void getReadingBatch(missing, signal).catch(() => undefined);
+        }
+      }
       const summary = summarizeReadResult(result);
       markDiagnosticStage(trace, 'parse', { source, ...summary });
       const parseEmpty = summary.isParseEmpty === true;
@@ -738,7 +779,52 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
     }
   };
 
+  const readingFetches = new Map<string, Promise<DiscourseTopicReading | undefined>>();
+  const getReadingBatch = async (ids: readonly string[], signal?: AbortSignal) => {
+    const scope = dependencies.reading?.scope();
+    const plan = getReadPlan('linuxdo', 'feed');
+    if (!scope || plan.state !== 'ready' || plan.lane !== 'authenticated') return [];
+    const unique = [...new Set(ids)].filter((id) => /^\d+$/.test(id));
+    const fresh = unique.filter((id) => !readingFetches.has(`${scope}:${id}`));
+    if (fresh.length) {
+      const request = read(
+        'linuxdo',
+        'reading-state',
+        'feed',
+        ({ fetcher, discourseAuth }) =>
+          getLinuxDoReadingBatch(fresh, { signal, fetcher, linuxDoAccess: discourseAuth }),
+        undefined,
+        signal
+      );
+      fresh.forEach((id) => {
+        const key = `${scope}:${id}`;
+        const item = request.then((snapshots) => snapshots.find((snapshot) => snapshot.topicId === id));
+        readingFetches.set(key, item);
+        void item
+          .finally(() => {
+            if (readingFetches.get(key) === item) readingFetches.delete(key);
+          })
+          .catch(() => undefined);
+      });
+    }
+    const snapshots = await Promise.all(unique.map((id) => readingFetches.get(`${scope}:${id}`)));
+    return snapshots.filter((snapshot): snapshot is DiscourseTopicReading => Boolean(snapshot));
+  };
+
   return {
+    reading: dependencies.reading,
+    getTopicReading(id: string, options: { signal?: AbortSignal; trackVisit?: boolean } = {}) {
+      return read(
+        'linuxdo',
+        'getTopic',
+        'topic',
+        ({ fetcher, discourseAuth }) =>
+          getLinuxDoTopicReading(id, { ...options, fetcher, linuxDoAccess: discourseAuth }),
+        undefined,
+        options.signal
+      );
+    },
+    getReadingBatch,
     getReadPlan,
     async hasYaohuoCredential() {
       const plan = getReadPlan('yaohuo', 'feed');
@@ -900,14 +986,32 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         options.source,
         'getReplies',
         'replies',
-        ({ trace, ...credentials }) =>
-          getReplies(
+        async ({ trace, ...credentials }) => {
+          const result = await getReplies(
             {
               ...options,
               ...credentials
             },
             trace
-          ),
+          );
+          if (options.isPrivateMessage || result.isPrivateMessage)
+            return { ...result, isPrivateMessage: true, reading: undefined };
+          return options.source === 'linuxdo'
+            ? {
+                ...result,
+                reading: {
+                  ...result.reading,
+                  topicId: options.id,
+                  readPostNumbers: [
+                    ...new Set([
+                      ...(result.reading?.readPostNumbers || []),
+                      ...result.items.flatMap((reply) => (reply.serverRead && reply.floor ? [reply.floor] : []))
+                    ])
+                  ]
+                }
+              }
+            : result;
+        },
         context,
         options.signal,
         { replyOrder: options.order, positionKind: options.position.kind }

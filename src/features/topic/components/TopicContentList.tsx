@@ -18,6 +18,8 @@ import {
   type NativeSyntheticEvent,
   type ViewStyle,
   Pressable,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   ToastAndroid,
@@ -29,6 +31,13 @@ import * as Clipboard from 'expo-clipboard';
 import { RenderHTMLConfigProvider, TRenderEngineProvider, type CustomBlockRenderer } from 'react-native-render-html';
 import { Bookmark, BookmarkCheck, ChevronDown, Ham, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import { findReplyLocation } from '@/domain/forum/replyLocation';
+import type { ReadingSession } from '@/platform/query/discourseReadingRuntime';
+import {
+  topicListReadingFloor,
+  topicListReadingNeedsDisplayedMedia,
+  topicListReadingRevision
+} from '../model/topicListModel';
+import { findReadingResumeReply } from '@/domain/forum/discourseReading';
 import type {
   Reply,
   ReplyLocationTarget,
@@ -363,6 +372,7 @@ export const TopicContentList = memo(function TopicContentList({
   actions,
   article,
   bodyMediaPaused = false,
+  readingPaused = false,
   bottomContentInset = 0,
   currentNodeSeekUser,
   discourseEmojiUrls,
@@ -389,6 +399,7 @@ export const TopicContentList = memo(function TopicContentList({
     yaohuoBookmarked?: boolean;
   };
   bodyMediaPaused?: boolean;
+  readingPaused?: boolean;
   bottomContentInset?: number;
   currentNodeSeekUser: SiteSessionViewModels['nodeseek']['currentUser'];
   discourseEmojiUrls: DiscourseEmojiUrlMap;
@@ -678,6 +689,8 @@ export const TopicContentList = memo(function TopicContentList({
     return next;
   }, [quoteStateVersion, sourceReplies, topic]);
   const newReplyFloorStart = useMemo(() => {
+    if (topic?.source === 'linuxdo')
+      return read.readingEntry?.baseline ? read.readingEntry.baseline + 1 : Number.POSITIVE_INFINITY;
     if (unreadReplyCount <= 0) {
       return Number.POSITIVE_INFINITY;
     }
@@ -688,7 +701,7 @@ export const TopicContentList = memo(function TopicContentList({
       return Number.POSITIVE_INFINITY;
     }
     return Math.max(...floors) - unreadReplyCount + 1;
-  }, [sourceReplies, unreadReplyCount]);
+  }, [sourceReplies, unreadReplyCount, topic?.source, read.readingEntry?.baseline]);
   const [pollSelections, setPollSelections] = useState<Record<string, string[]>>({});
   const togglePollSelection = useCallback((key: string, poll: TopicPoll, optionId: string) => {
     setPollSelections((current) => {
@@ -739,12 +752,16 @@ export const TopicContentList = memo(function TopicContentList({
     () =>
       itemSource
         ? [
-            ...openingPreviewImages,
-            ...imagePreviewDescriptorsForReplies(sourceReplies, itemSource),
+            ...openingPreviewImages.map((descriptor) =>
+              itemSource === 'linuxdo'
+                ? { ...descriptor, readingOrigin: { topicId: selectedTopic.id, floor: 1 } }
+                : descriptor
+            ),
+            ...imagePreviewDescriptorsForReplies(sourceReplies, itemSource, selectedTopic.id),
             ...imagePreviewDescriptorsForReplies(loadedQuotedReplyValues, itemSource)
           ]
         : openingPreviewImages,
-    [itemSource, loadedQuotedReplyValues, openingPreviewImages, sourceReplies]
+    [itemSource, loadedQuotedReplyValues, openingPreviewImages, sourceReplies, selectedTopic.id]
   );
   const catalogReadyElapsedRef = useRef<{ elapsedMs?: number; topicRef: string }>({ topicRef: '' });
   useLayoutEffect(() => {
@@ -1086,9 +1103,15 @@ export const TopicContentList = memo(function TopicContentList({
         : `route:${targetReplyIdentity}`
       : '';
   const resolvedTargetReplyKey = useMemo(() => {
-    const reply = activeTargetReply && findReplyLocation(sourceReplies, activeTargetReply);
+    if (activeTargetReply?.readingResume && read.readingEntry?.windowReady === false) return null;
+    const reply =
+      activeTargetReply &&
+      (findReplyLocation(sourceReplies, activeTargetReply) ||
+        (activeTargetReply.readingResume
+          ? findReadingResumeReply(sourceReplies, activeTargetReply.floor || 1)
+          : undefined));
     return reply ? getReplyKey(reply) : null;
-  }, [activeTargetReply, sourceReplies]);
+  }, [activeTargetReply, read.readingEntry?.windowReady, sourceReplies]);
   const targetReplyListIndex = useMemo(() => {
     const target = resolvedTargetReplyKey;
     return targetReplyCommandKey && target
@@ -1150,32 +1173,56 @@ export const TopicContentList = memo(function TopicContentList({
     }
     if (targetIsOpeningPost) {
       handledTargetReplyRef.current = targetReplyCommandKey;
-      topicScrollRef.current?.scrollToOffset({ animated: true, offset: 0 });
+      const anchor = read.readingEntry?.anchor;
+      const index = anchor?.rowKey
+        ? topicListItems.findIndex(
+            (item) => item.key === anchor.rowKey && topicListReadingRevision(item) === anchor.revision
+          )
+        : -1;
+      const result =
+        index >= 0
+          ? topicScrollRef.current?.scrollToIndex({ animated: false, index, viewOffset: anchor?.offset || 0 })
+          : topicScrollRef.current?.scrollToOffset({ animated: !anchor, offset: 0 });
+      void Promise.resolve(result).then(() => read.readingEntry?.positioned());
       return;
     }
     if (targetReplyListIndex >= 0) {
       handledTargetReplyRef.current = targetReplyCommandKey;
       if (targetHighlightTimerRef.current) clearTimeout(targetHighlightTimerRef.current);
-      setHighlightedTargetKey(targetReplyCommandKey);
-      targetHighlightTimerRef.current = setTimeout(() => setHighlightedTargetKey(''), 1800);
-      topicScrollRef.current?.scrollToIndex({
-        animated: true,
-        index: targetReplyListIndex,
-        viewPosition: 0
-      });
+      if (!activeTargetReply?.readingResume) {
+        setHighlightedTargetKey(targetReplyCommandKey);
+        targetHighlightTimerRef.current = setTimeout(() => setHighlightedTargetKey(''), 1800);
+      }
+      const anchor = activeTargetReply?.readingResume ? read.readingEntry?.anchor : undefined;
+      const rowIndex = anchor?.rowKey
+        ? topicListItems.findIndex(
+            (item) => item.key === anchor.rowKey && topicListReadingRevision(item) === anchor.revision
+          )
+        : -1;
+      void Promise.resolve(
+        topicScrollRef.current?.scrollToIndex({
+          animated: !activeTargetReply?.readingResume,
+          index: rowIndex >= 0 ? rowIndex : targetReplyListIndex,
+          viewPosition: 0,
+          viewOffset: rowIndex >= 0 ? anchor?.offset || 0 : 0
+        })
+      ).then(() => read.readingEntry?.positioned());
     }
   }, [
     active,
+    activeTargetReply?.readingResume,
     canShowReplies,
     commentQuery,
     detailTopicStateKey,
     loadedDetailKey,
     onCommentQueryChange,
     onReplyFilterChange,
+    read.readingEntry,
     replyFilter,
     targetIsOpeningPost,
     targetReplyCommandKey,
     targetReplyListIndex,
+    topicListItems,
     topicScrollRef
   ]);
   const acceptedAnswerListIndex = useMemo(() => {
@@ -1209,6 +1256,89 @@ export const TopicContentList = memo(function TopicContentList({
     topicScrollRef.current?.scrollToIndex({ animated: true, index: acceptedAnswerListIndex });
   }, [acceptedAnswerListIndex, topicScrollRef]);
   const windowStartWithinPrefetchRef = useRef(false);
+  const readingSessionRef = useRef<ReadingSession | null>(null);
+  const readingVisibleRef = useRef<{ index?: number | null; item: TopicListItem }[]>([]);
+  const readingScrollOffset = useRef(0);
+  const readingDisplayedRows = useRef<ReadonlySet<string>>(new Set());
+  const reportReadingVisible = useCallback(() => {
+    const visible = readingVisibleRef.current.flatMap(({ item, index }) => {
+      if (topicListReadingNeedsDisplayedMedia(item) && !readingDisplayedRows.current.has(item.key)) return [];
+      const floor = topicListReadingFloor(item, topic?.acceptedAnswerFloor);
+      return floor ? [{ floor, rowKey: item.key, revision: topicListReadingRevision(item), index }] : [];
+    });
+    const first = visible[0];
+    const layout =
+      first?.index === undefined || first.index === null ? undefined : topicScrollRef.current?.getLayout?.(first.index);
+    readingSessionRef.current?.visible(
+      visible.map(({ floor }) => floor),
+      first
+        ? {
+            floor: first.floor,
+            rowKey: first.rowKey,
+            revision: first.revision,
+            offset: layout
+              ? Math.max(
+                  0,
+                  readingScrollOffset.current - (topicScrollRef.current?.getFirstItemOffset?.() || 0) - layout.y
+                )
+              : 0
+          }
+        : undefined
+    );
+  }, [topic?.acceptedAnswerFloor, topicScrollRef]);
+  const reportDisplayedRows = useCallback(
+    (rows: ReadonlySet<string>) => {
+      readingDisplayedRows.current = rows;
+      reportReadingVisible();
+    },
+    [reportReadingVisible]
+  );
+  const readingScope = read.readingRuntime?.scope();
+  useLayoutEffect(() => {
+    const session = read.readingRuntime?.begin(selectedTopic.id);
+    readingSessionRef.current = session || null;
+    reportReadingVisible();
+    return () => {
+      session?.end();
+      readingSessionRef.current = null;
+    };
+  }, [read.readingRuntime, readingScope, reportReadingVisible, selectedTopic.id]);
+  useLayoutEffect(() => {
+    if (!read.readingRuntime) return;
+    // FlashList reports index changes, so a new item at the same index needs a fresh observation.
+    readingVisibleRef.current = readingVisibleRef.current.flatMap(({ item, index }) => {
+      const current = typeof index === 'number' ? topicListItems[index] : undefined;
+      return current?.key === item.key ? [{ item: current, index }] : [];
+    });
+    reportReadingVisible();
+    topicScrollRef.current?.recomputeViewableItems?.();
+  }, [read.readingRuntime, reportReadingVisible, topicListItems, topicScrollRef]);
+  const readingPositionReady = read.readingEntry?.ready !== false && read.readingEntry?.positionReady !== false;
+  useEffect(() => {
+    readingSessionRef.current?.active(
+      Boolean(
+        active &&
+        topic &&
+        !topicShowsAccessNotice &&
+        readingPositionReady &&
+        !readingPaused &&
+        !bodyMediaPaused &&
+        loadedDetailKey === detailTopicStateKey
+      )
+    );
+  }, [
+    active,
+    bodyMediaPaused,
+    readingPaused,
+    read.readingRuntime,
+    reportReadingVisible,
+    readingPositionReady,
+    topic,
+    topicShowsAccessNotice,
+    loadedDetailKey,
+    detailTopicStateKey,
+    readingScope
+  ]);
   const loadWindowStart = useCallback(() => {
     if (replyStartError || !replyHasPrevious || loadingPreviousReplies || !autoLoadRepliesArmedRef.current) return;
     autoLoadRepliesArmedRef.current = false;
@@ -1217,6 +1347,10 @@ export const TopicContentList = memo(function TopicContentList({
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: { index?: number | null; isViewable?: boolean; item: TopicListItem }[] }) => {
       observeViewableItems({ viewableItems });
+      readingVisibleRef.current = viewableItems
+        .filter((item) => item.isViewable !== false)
+        .sort((a, b) => (a.index || 0) - (b.index || 0));
+      reportReadingVisible();
       const visibleReplyIndexes = new Set<number>();
       let windowStartVisible = false;
       viewableItems.forEach(({ isViewable, item: listItem }) => {
@@ -1235,7 +1369,7 @@ export const TopicContentList = memo(function TopicContentList({
         windowStartVisible || (visibleReplyIndexes.size > 0 && firstVisibleReplyIndex <= visibleReplyIndexes.size);
       if (windowStartWithinPrefetchRef.current) loadWindowStart();
     },
-    [loadWindowStart, observeViewableItems, replyWindowIndexByKey]
+    [loadWindowStart, observeViewableItems, replyWindowIndexByKey, reportReadingVisible]
   );
   const handleReplyEndReached = useCallback(() => {
     if (replyEndError || !replyHasMore || loadingMoreReplies || !autoLoadRepliesArmedRef.current) return;
@@ -1244,6 +1378,7 @@ export const TopicContentList = memo(function TopicContentList({
   }, [loadingMoreReplies, onLoadMoreReplies, replyEndError, replyHasMore]);
   const armReplyAutoLoad = useCallback(
     ({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) => {
+      readingSessionRef.current?.interact();
       autoLoadRepliesArmedRef.current = true;
       if (windowStartWithinPrefetchRef.current) loadWindowStart();
       // A location can consume FlashList's one-shot end event before any drag.
@@ -1891,7 +2026,11 @@ export const TopicContentList = memo(function TopicContentList({
                     </>
                   ) : null}
                 </View>
-                {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
+                {read.hasNewReplies ? (
+                  <Text style={styles.noticeText}>有新回复</Text>
+                ) : unreadReplyCount > 0 ? (
+                  <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text>
+                ) : null}
                 <View style={styles.searchRow}>
                   <TextInput
                     accessibilityLabel="评论内查找"
@@ -2028,6 +2167,7 @@ export const TopicContentList = memo(function TopicContentList({
       loadingQuotedFloors,
       loadAcceptedAnswer,
       discourseEmojiUrls,
+      read.hasNewReplies,
       newReplyFloorStart,
       onCommentQueryChange,
       onDeleteReply,
@@ -2166,6 +2306,7 @@ export const TopicContentList = memo(function TopicContentList({
           ) : null}
         </View>
         {headerState}
+        {topic && !topicError && !readingPositionReady ? <LoadingState text="正在读取主题..." /> : null}
       </View>
     </View>
   );
@@ -2189,6 +2330,7 @@ export const TopicContentList = memo(function TopicContentList({
             active={active}
             diagnosticSession={bodyMediaDiagnosticSession}
             onDiagnosticFinish={finishBodyMediaDiagnostic}
+            onDisplayedRowsChange={read.readingRuntime ? reportDisplayedRows : undefined}
             paused={bodyMediaPaused}
             visibleRowKeys={bodyMediaVisibleRowKeys}
             viewportRowKeys={bodyMediaViewportRowKeys}
@@ -2200,12 +2342,23 @@ export const TopicContentList = memo(function TopicContentList({
               sessionKey={topicSelectionSessionKey}
             >
               <TopicSelectionRenderHtmlConfig renderers={genericHtmlRenderers} renderersProps={htmlRenderersProps}>
+                {!readingPositionReady ? (
+                  <ScrollView
+                    style={[styles.content, styles.topicContent, StyleSheet.absoluteFill]}
+                    contentContainerStyle={styles.topicContentInner}
+                  >
+                    {listHeader}
+                  </ScrollView>
+                ) : null}
                 <FlashList
                   ref={topicScrollRef}
                   onLoad={onListLoad}
                   accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
                   testID={topic ? 'topic-detail-loaded' : undefined}
-                  style={[styles.content, styles.topicContent]}
+                  style={[styles.content, styles.topicContent, !readingPositionReady && { opacity: 0 }]}
+                  pointerEvents={readingPositionReady ? 'auto' : 'none'}
+                  accessibilityElementsHidden={!readingPositionReady}
+                  importantForAccessibility={readingPositionReady ? 'auto' : 'no-hide-descendants'}
                   contentContainerStyle={[
                     styles.topicContentInner,
                     { paddingBottom: Math.max(styles.topicContentInner.paddingBottom, bottomContentInset) }
@@ -2215,7 +2368,12 @@ export const TopicContentList = memo(function TopicContentList({
                   getItemType={topicListItemType}
                   ItemSeparatorComponent={TopicListItemSeparator}
                   keyboardShouldPersistTaps="always"
-                  onScroll={onScrollProgress}
+                  onScroll={(event) => {
+                    onScrollProgress?.(event);
+                    readingScrollOffset.current = event.nativeEvent.contentOffset.y;
+                    readingSessionRef.current?.interact();
+                    reportReadingVisible();
+                  }}
                   scrollEventThrottle={16}
                   onMomentumScrollEnd={onTopicScroll}
                   onScrollEndDrag={onTopicScroll}

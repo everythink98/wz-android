@@ -40,6 +40,7 @@ function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) 
     previous.testID === next.testID &&
     previous.readerState.favorite === next.readerState.favorite &&
     previous.readerState.read === next.readerState.read &&
+    previous.readerState.hasNewReplies === next.readerState.hasNewReplies &&
     previous.readerState.listDensity === next.readerState.listDensity &&
     previous.topic === next.topic
   );
@@ -171,6 +172,7 @@ export function TopicCard({
             </View>
           </View>
           <View renderToHardwareTextureAndroid style={styles.topicStatGroup}>
+            {readerState.hasNewReplies ? <Text style={styles.topicStatText}>有新回复</Text> : null}
             {!hideReplyCount && typeof topic.replyCount === 'number' ? (
               <View style={styles.topicStatItem}>
                 <MessageCircle size={14} color={theme.muted} strokeWidth={1.9} />

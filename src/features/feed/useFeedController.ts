@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import type { ReadGateway } from '@/sources/readGateway';
+import { useDiscourseVisited } from '@/platform/query/useDiscourseVisited';
 import {
   defaultFeedFilters,
   shouldAllowFeedRemotePagination,
@@ -236,6 +237,7 @@ export function useFeedController({
   readGateway: ReadGateway;
 }) {
   const queryClient = useQueryClient();
+  const serverReading = useDiscourseVisited(readGateway.reading?.scope());
   const feedActive = active;
   const { enabledSources: enabledFeedSources } = projectContentSourcePreferences(readerData.settings.contentSources);
   const enabledSourcesKey = canonicalEnabledSourcesKey(readerData.settings.contentSources);
@@ -441,8 +443,13 @@ export function useFeedController({
     feedSourceRequestEnabled && shouldAllowFeedRemotePagination(feedSource, readingFilter);
   const shownFeedItems = useMemo(
     () =>
-      applyFeedFilter(activeFeedState.items, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
-    [activeFeedState.items, feedSource, readerData.favorites, readerData.history, readingFilter]
+      applyFeedFilter(
+        activeFeedState.items,
+        readerData,
+        shouldUseReadingFilter(feedSource) ? readingFilter : 'all',
+        serverReading
+      ),
+    [activeFeedState.items, feedSource, readerData.favorites, readerData.history, readingFilter, serverReading]
   );
   const settledFeedOutcomeKind = !feedSourceRequestEnabled
     ? 'empty'

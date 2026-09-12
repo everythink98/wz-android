@@ -30,6 +30,7 @@ export interface ImageDisplaySize {
 }
 
 export interface ImagePreviewItem {
+  readingOrigin?: { topicId: string; floor: number };
   displayUri: string;
   originalUri: string;
   displaySize?: ImageDisplaySize;
@@ -153,6 +154,7 @@ function imagePreviewEntryFromDescriptor(
     item: {
       displayUri: displayUri || originalUri,
       originalUri,
+      ...(descriptor.readingOrigin ? { readingOrigin: descriptor.readingOrigin } : {}),
       ...(displaySize ? { displaySize } : {}),
       ...(descriptor.referrerPolicy ? { referrerPolicy: descriptor.referrerPolicy } : {})
     },
@@ -191,6 +193,9 @@ function createImagePreviewCatalogFromEntries(
       itemIndex = items.length;
       itemIndexByOriginalUri.set(originalIdentity, itemIndex);
       items.push(entry.item);
+    } else if (JSON.stringify(items[itemIndex].readingOrigin) !== JSON.stringify(entry.item.readingOrigin)) {
+      // A shared image cannot identify which post the user opened it from.
+      items[itemIndex] = { ...items[itemIndex], readingOrigin: undefined };
     }
     aliases.forEach((url) => {
       itemIndexBySourceUrl[requestIdentity(url, entry.item.referrerPolicy)] = itemIndex;

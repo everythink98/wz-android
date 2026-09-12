@@ -394,6 +394,72 @@ describe('Image preview', () => {
     };
   });
 
+  it('reports only the displayed current image and real gesture activity for visible reading', async () => {
+    const onVisibleImageChange =
+      jest.fn<NonNullable<React.ComponentProps<typeof ImagePreviewModal>['onVisibleImageChange']>>();
+    const onInteraction = jest.fn<() => void>();
+    const first = previewItem('https://example.com/visible-reading-first.png');
+    const second = previewItem('https://example.com/visible-reading-second.png');
+    const replacement = previewItem('https://example.com/visible-reading-replacement.png');
+    const sharedCallbacks = callbacks();
+    const modal = (items = [first, second]) => (
+      <ImagePreviewModal
+        preview={previewProps(items)}
+        {...sharedCallbacks}
+        onVisibleImageChange={onVisibleImageChange}
+        onInteraction={onInteraction}
+      />
+    );
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+    let now = performance.now();
+    const clock = jest.spyOn(performance, 'now').mockImplementation(() => now);
+    try {
+      const view = await render(modal());
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(null);
+      await fireEvent(view.getByTestId('preview-image-1'), 'display');
+      await fireEvent(view.getByTestId('preview-image-0'), 'load', { source: { width: 640, height: 480 } });
+      expect(onVisibleImageChange.mock.calls.every(([item]) => item === null)).toBe(true);
+      await fireEvent(view.getByTestId('preview-image-0'), 'display');
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(first);
+      expect(onInteraction).not.toHaveBeenCalled();
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 2 });
+      expect(onInteraction).not.toHaveBeenCalled();
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'pinchStart');
+      expect(onInteraction).toHaveBeenCalledTimes(1);
+      now += 180_001;
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 2 });
+      expect(onInteraction).toHaveBeenCalledTimes(2);
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 2.1 });
+      expect(onInteraction).toHaveBeenCalledTimes(2);
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
+      expect(onInteraction).toHaveBeenCalledTimes(3);
+      now += 1500;
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'update', { scale: 1 });
+      expect(onInteraction).toHaveBeenCalledTimes(3);
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'panStart');
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'gestureEnd');
+      await fireEvent(view.getByTestId('preview-zoom-0'), 'tap');
+      expect(onInteraction).toHaveBeenCalledTimes(6);
+      await swipePreviewNext(view);
+      expect(onInteraction.mock.calls.length).toBeGreaterThan(6);
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(second);
+      await view.rerender(modal([replacement]));
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(null);
+      await fireEvent(view.getByTestId('preview-image-0'), 'error');
+      await waitFor(() => expect(view.getByText('图片加载失败')).toBeTruthy());
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(null);
+      await fireEvent.press(view.getByLabelText('重试加载图片'));
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(null);
+      await fireEvent(view.getByTestId('preview-image-0'), 'display');
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(replacement);
+      await view.unmount();
+      expect(onVisibleImageChange).toHaveBeenLastCalledWith(null);
+    } finally {
+      fetchSpy.mockRestore();
+      clock.mockRestore();
+    }
+  });
+
   it('applies the tapped-item override without replacing the logical catalog', async () => {
     const items = [
       previewItem('https://example.com/first.png'),

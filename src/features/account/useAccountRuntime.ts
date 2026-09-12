@@ -54,6 +54,7 @@ import { useNodeImageAuthController } from './useNodeImageAuthController';
 import { useNodeSeekCheckInController } from './useNodeSeekCheckInController';
 import { useSessionController } from './useSessionController';
 import { useSessionReadGateway } from './useSessionReadGateway';
+import { useLinuxDoReadingRuntime } from './useLinuxDoReadingRuntime';
 import { useVerificationController } from './useVerificationController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
 import { AccountHosts, type AccountHostsProps } from './AccountHosts';
@@ -296,7 +297,23 @@ export function useAccountRuntime({
     completeLinuxDoBrowserFetch: session.completeLinuxDoBrowserFetch,
     completeNodeSeekBrowserFetch: session.completeNodeSeekBrowserFetch
   });
+  const getLinuxDoUserAgent = useCallback(() => linuxDoWebViewUserAgentRef.current, []);
+  const linuxDoReadingSnapshot = useCallback(() => readSessionRuntimeSnapshot('linuxdo'), [readSessionRuntimeSnapshot]);
+  const linuxDoReadingExpired = useCallback(
+    (epoch: number) => handleSessionExpired('linuxdo', epoch),
+    [handleSessionExpired]
+  );
+  const reading = useLinuxDoReadingRuntime({
+    appActive,
+    verificationVisible: showLinuxDoPanel,
+    fetcher: session.forumFetchWithWebViewFallback,
+    snapshot: linuxDoReadingSnapshot,
+    userAgent: getLinuxDoUserAgent,
+    onSessionExpired: linuxDoReadingExpired,
+    requestAccountRecheck
+  });
   const readGateway = useSessionReadGateway({
+    reading,
     anonymousFetcher: fetcher,
     fetcher: session.forumFetchWithWebViewFallback,
     getEnabledSources,
@@ -688,7 +705,6 @@ export function useAccountRuntime({
       validateWritableSessionTicket(ticket, readWritableSessionSnapshot(ticket.source)),
     [readWritableSessionSnapshot]
   );
-  const getLinuxDoUserAgent = useCallback(() => linuxDoWebViewUserAgentRef.current, []);
   const getNodeSeekUserAgent = useCallback(() => nodeSeekWebViewUserAgentRef.current, []);
   const nodeSeekCheckIn = useNodeSeekCheckInController({
     ensureWritableSession,

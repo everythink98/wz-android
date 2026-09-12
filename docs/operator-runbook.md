@@ -102,6 +102,8 @@ proof 的 JS/renderer 分支要求异常记录、旧进程归属和系统退出�
 
 fresh prebuild 后，用 `android/gradlew.bat -p android :app:testReleaseUnitTest --tests '*NetworkProxyRuntimeTest' --no-daemon` 执行生成的网络 canonical owner；RN 注入 wiring 使用 `:react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests '*ReactOkHttpNetworkFetcherTest'`。两份 XML 报告都必须包含非零用例。
 
+HTTP/2 故障子集可用 `--tests '*NetworkProxyRuntimeTest.*Http2*'`。共享 `plugins/network/Http2ImageFaultFixture.kt` 使用与实际 OkHttp 4.12.0 对齐的 test-only MockWebServer/TLS、loopback TCP relay 和可关闭的阻塞写 socket；不修改公网、系统网络或用户代理。报告中的 `HTTP2_RECOVERY/RESET/PROGRESS/OFFLINE` 记录实际建连数、请求数、耗时与终态；并发建连可能产生被 OkHttp 丢弃的候选，必须同时断言最终取得的连接身份和旧 runtime 释放。慢响应保留正常 PONG，连续响应体实际传输超过 30 秒。设备 `HTTP2_IMAGES` 必须由已初始化的 Fresco/Glide 实际解码并显示，HTTP 200 不能代替它。原生诊断新增 `request-headers-start/end`、`request-failed`、`connection-write-stalled`，只含脱敏连接标识和阶段。
+
 设备链路先启动独立 `WZ_ImageRuntime_Test_API35`，执行 `node scripts/run-network-image-instrumented-tests.mjs`。runner 精确匹配该 AVD，以开发签名 Release 同时运行 `ManagedCookieResponsesInstrumentedTest` 的合成 HTTP 轮换、平台 Cookie 属性/定向过期验证，以及真实 RN/Fresco 初始化验证图片、Glide 两种 model、缓存、回收、取消、连续轮换及 SVG。仅该测试构建允许 `127.0.0.1/localhost` HTTP，其他地址仍禁止明文流量；测试后的 finally 移除临时 manifest/resources 并重新构建默认 Release，测试 APK 不用于保留数据设备验收。runner 不创建、清理或重置 AVD；保留数据设备仍按安装身份核对与只读 Live 流程单独验收。
 
 ### L 站续签与登录态诊断

@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook } from '@testing-library/react-native';
+import { act, renderHook as renderNativeHook } from '@testing-library/react-native';
+import { QueryTestWrapper } from '../QueryTestWrapper';
 import { useAppRuntime } from '@/app/useAppRuntime';
 import { useInitialForegroundRuntime } from '@/app/useInitialForegroundRuntime';
 import type { ReaderData } from '@/domain/reader/readerData';
 
 const mockUseAccountRuntime = jest.fn();
+const renderHook: typeof renderNativeHook = (callback, options) =>
+  renderNativeHook(callback, { wrapper: QueryTestWrapper, ...options });
 const mockUseAppUpdateRuntime = jest.fn();
 const mockUseForumCatalogRuntime = jest.fn();
 const mockHandleNavigationReady = jest.fn();

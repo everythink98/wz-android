@@ -1,9 +1,11 @@
 import {
+  diagnosticRef,
   endpointClass,
   normalizeDiagnosticReason,
   safeByteCount,
   safeContentType,
   safeDiagnosticOperation,
+  safeExceptionKind,
   safeFields,
   safeMethod,
   sanitizeErrorStack,
@@ -121,6 +123,22 @@ export function withDiagnosticFetcher(trace: DiagnosticTrace, fetcher: Diagnosti
       endpoint: endpointClass(input, requestInit?.method),
       method: safeMethod(requestInit?.method)
     };
+    try {
+      const url = new URL(input);
+      const topicId = url.hostname === 'linux.do' && url.pathname.match(/^\/t\/(\d+)(?:\/\d+)?\.json$/)?.[1];
+      if (topicId && safeMethod(requestInit.method) === 'GET') {
+        const headers = new Headers(requestInit.headers);
+        Object.assign(requestFields, {
+          source: 'linuxdo',
+          topicRef: diagnosticRef('topic', `linuxdo:${topicId}`),
+          isTrackVisit: url.searchParams.get('track_visit') === 'true',
+          hasTrackView: headers.get('Discourse-Track-View') === '1',
+          isTrackViewTopicIdMatch: headers.get('Discourse-Track-View-Topic-Id') === topicId
+        });
+      }
+    } catch {
+      // A diagnostic projection must never prevent the original request.
+    }
     emit(trace, 'transport', 'success', { ...requestFields, state: 'start' }, startedAt);
     try {
       const response = await fetcher(input, requestInit);
@@ -197,7 +215,11 @@ export function recordDiagnosticError(
   const now = Date.now();
   const trace = createTrace(area, operation, now);
   const reason = normalizeDiagnosticReason(error);
-  const fields: Record<string, DiagnosticScalar | undefined> = { ...context, reason };
+  const fields: Record<string, DiagnosticScalar | undefined> = {
+    ...context,
+    reason,
+    exceptionKind: safeExceptionKind(error)
+  };
   if (error instanceof Error) {
     fields.errorName = error.name;
     fields.message = reason;
