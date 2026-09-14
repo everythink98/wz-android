@@ -62,6 +62,7 @@ const proxyTypes = new Set(['direct', 'http', 'socks']);
 const tlsVersions = new Set(['TLSv1.3', 'TLSv1.2', 'TLSv1.1', 'TLSv1', 'SSLv3', 'unknown']);
 const outcomes = new Set(['success', 'failure', 'canceled', 'noop', 'rollback', 'retired']);
 const identityKeys = [
+  'userAgentHash',
   'callId',
   'clientId',
   'poolId',
@@ -214,7 +215,7 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
     if (typeof input.mediaRef === 'string' && /^media-[1-9][0-9]{0,9}$/.test(input.mediaRef))
       output.mediaRef = input.mediaRef;
     for (const [key, allowed] of Object.entries({
-      cookieKind: new Set(['login', 'session', 'clearance', 'connect', 'other']),
+      cookieKind: new Set(['login', 'session', 'clearance', 'bot-management', 'connect', 'other']),
       cookieAction: new Set(['set', 'delete', 'unknown']),
       cookieLifetime: new Set(['session', 'persistent', 'expired', 'unknown']),
       cookieAccepted: new Set(['accepted', 'rejected', 'not_submitted', 'pending']),
@@ -271,7 +272,16 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
     if (proxyType) output.proxyType = proxyType;
     if (tlsVersion) output.tlsVersion = tlsVersion;
     if (errorType) output.errorType = errorType;
-    for (const key of ['hasLoginCookie', 'loginCookieChanged', 'cookieBarrierBlocked']) {
+    for (const key of [
+      'hasLoginCookie',
+      'hasDiscoursePresent',
+      'loginCookieChanged',
+      'cookieBarrierBlocked',
+      'hasCfClearance',
+      'hasStoredCfClearance',
+      'isCfClearanceCurrent',
+      'didCfClearanceChange'
+    ]) {
       if (typeof input[key] === 'boolean') output[key] = input[key];
     }
     for (const key of identityKeys) {

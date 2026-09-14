@@ -185,7 +185,7 @@ export function replyKey(reply: Reply) {
     return `comment:${reply.commentId}`;
   }
   if (typeof reply.floor === 'number') {
-    return `floor:${reply.floor}`;
+    return `floor:${JSON.stringify([reply.floor, reply.authorId || reply.author, reply.createdAt])}`;
   }
   return `body:${reply.author}:${reply.createdAt}:${reply.contentHtml.slice(0, 80)}`;
 }

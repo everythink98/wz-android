@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react-native';
 import { AppState, type AppStateStatus, type NativeEventSubscription } from 'react-native';
 import { useAppLifecycleRuntime } from '@/app/useAppLifecycleRuntime';
 import { fetchWithTimeout, RequestTimeoutError } from '@/platform/network/request';
+import { userPresent } from '@/platform/network/userPresence';
 
 jest.mock('@/app/useAppDeepLinkNavigation', () => ({
   useAppDeepLinkNavigation: () => jest.fn()
@@ -30,6 +31,26 @@ describe('App lifecycle request timeout', () => {
   afterEach(() => {
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it('renews presence on foreground startup and resume without letting rerenders renew it', async () => {
+    const originalState = AppState.currentState;
+    AppState.currentState = 'active';
+    const runtime = await renderHook(useAppLifecycleRuntime);
+    try {
+      expect(userPresent()).toBe(true);
+      await act(async () => jest.advanceTimersByTime(60_000));
+      await runtime.rerender({});
+      expect(userPresent()).toBe(false);
+      for (const state of ['background', 'unknown', 'active'] as const) {
+        AppState.currentState = state;
+        await act(async () => onAppStateChange?.(state));
+        expect(userPresent()).toBe(state === 'active');
+      }
+    } finally {
+      await runtime.unmount();
+      AppState.currentState = originalState;
+    }
   });
 
   it('counts background wall time toward the existing request deadline', async () => {

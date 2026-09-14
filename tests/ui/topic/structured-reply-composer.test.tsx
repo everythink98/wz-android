@@ -3,9 +3,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createRef, useState } from 'react';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { StructuredReplyComposer, type StructuredReplyComposerHandle } from '@/ui/composer/StructuredReplyComposer';
-import type { ComposerPresentation, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
+import type { ComposerIntent, ComposerPresentation, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 import { composerHostMessageSchema } from '@/ui/composer/structuredComposerBridge';
-import { StyleSheet } from 'react-native';
+import { AppState, StyleSheet } from 'react-native';
+import { recordUserInteraction, userPresent } from '@/platform/network/userPresence';
 import { ReaderStyleProvider } from '@/ui/theme/ReaderStyleProvider';
 import { createTheme } from '@/ui/theme/tokens';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
@@ -18,6 +19,51 @@ function message(type: string, payload: unknown) {
 afterEach(() => setDiagnosticWriter(null));
 
 describe('StructuredReplyComposer', () => {
+  it('renews activity only for an explicit input message from a visible composer', async () => {
+    const previous = AppState.currentState;
+    AppState.currentState = 'active';
+    let now = 100_000;
+    const clock = jest.spyOn(performance, 'now').mockImplementation(() => now);
+    recordUserInteraction();
+    try {
+      const view = await render(
+        <StructuredReplyComposer
+          actionBusy={false}
+          closeLabel="收起回复"
+          discourseEmojiUrls={{}}
+          focusSignal={0}
+          intent={{ site: 'linuxdo', kind: 'reply', topicId: '12' }}
+          content=""
+          pendingNodeSeekPolls={[]}
+          presentation="sheet"
+          submitLabel="发送回复"
+          title="回复"
+          visible
+          onOpenChange={jest.fn()}
+          onPresentationChange={jest.fn()}
+          onSnapshot={jest.fn()}
+          onSubmit={jest.fn()}
+        />
+      );
+      const webView = view.getByTestId('structured-composer-webview');
+      now += 60_000;
+      await fireEvent(webView, 'message', message('READY', { revision: 0 }));
+      await fireEvent(
+        webView,
+        'message',
+        message('STATE_CHANGED', { revision: 1, mode: 'rich', isEmpty: false, canUndo: true, canRedo: false })
+      );
+      expect(userPresent()).toBe(false);
+      await fireEvent(webView, 'message', message('USER_INTERACTION', {}));
+      expect(userPresent()).toBe(true);
+      now += 60_000;
+      await fireEvent(webView, 'message', message('USER_INTERACTION', { text: 'must-not-cross' }));
+      expect(userPresent()).toBe(false);
+    } finally {
+      clock.mockRestore();
+      AppState.currentState = previous;
+    }
+  });
   it('records snapshot timeouts even when the closing caller handles the rejection', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
@@ -474,12 +520,16 @@ describe('StructuredReplyComposer', () => {
     });
   });
 
-  it('resets confirmed private-message content with an empty INIT after send', async () => {
+  it.each<ComposerIntent>([
+    { kind: 'private-message', site: 'nodeseek', conversationId: 'kongb' },
+    { kind: 'reply', site: 'nodeseek', topicId: '42', replyTo: { floor: 2, author: '楼友' } },
+    { kind: 'reply', site: 'linuxdo', topicId: '42', replyTo: { floor: 2, author: '楼友' } }
+  ])('clears submitted content before reopening $site $kind and preserves unsent drafts', async (intent) => {
     const props = {
       actionBusy: false,
       closeLabel: '关闭私信',
       focusSignal: 0,
-      intent: { kind: 'private-message' as const, site: 'nodeseek' as const, conversationId: 'kongb' },
+      intent,
       pendingNodeSeekPolls: [],
       presentation: 'sheet' as const,
       submitLabel: '发送私信',
@@ -500,7 +550,12 @@ describe('StructuredReplyComposer', () => {
     await fireEvent(webView, 'message', message('READY', { revision: 0 }));
     postMessage.mockClear();
 
-    await view.rerender(<StructuredReplyComposer {...props} content="" />);
+    await view.rerender(<StructuredReplyComposer {...props} content="已发送正文" visible={false} />);
+    await view.rerender(<StructuredReplyComposer {...props} content="已发送正文" />);
+    expect(messages().map((entry: { type: string }) => entry.type)).not.toContain('INIT');
+    postMessage.mockClear();
+
+    await view.rerender(<StructuredReplyComposer {...props} content="" visible={false} />);
 
     await waitFor(() =>
       expect(messages()).toContainEqual({
@@ -515,6 +570,9 @@ describe('StructuredReplyComposer', () => {
 
     await fireEvent(webView, 'message', message('READY', { revision: 0 }));
     postMessage.mockClear();
+    await view.rerender(<StructuredReplyComposer {...props} content="" />);
+    expect(view.getByTestId('structured-composer-webview').props.postMessageMock).toBe(postMessage);
+    expect(messages().map((entry: { type: string }) => entry.type)).not.toContain('INIT');
     await view.rerender(<StructuredReplyComposer {...props} content="外部追加" />);
     await waitFor(() =>
       expect(messages()).toContainEqual({

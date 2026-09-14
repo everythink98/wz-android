@@ -190,7 +190,7 @@ export function forumMediaPlayerSourceFromUrl(
   url: string,
   options: ImageRequestOptions & { kind: 'audio' | 'video'; runtimeGeneration: number }
 ) {
-  const headers = {
+  const headers: Record<string, string> = {
     ...(imageRequestHeadersForUrl(url, options) || {}),
     Accept: options.kind === 'audio' ? AUDIO_ACCEPT : VIDEO_ACCEPT,
     [FORUM_MEDIA_KIND_HEADER]: 'video',
@@ -198,6 +198,7 @@ export function forumMediaPlayerSourceFromUrl(
   };
   return {
     uri: url,
+    useCaching: true,
     ...(Object.keys(headers).length ? { headers } : {}),
     contentType: 'progressive' as const
   };

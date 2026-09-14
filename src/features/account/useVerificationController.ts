@@ -1,6 +1,7 @@
-import { useCallback, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { hashKey } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
-import { sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
+import { sanitizeLinuxDoUserAgent, diagnosticUserAgentHash } from '@/platform/android/linuxDoUserAgent';
 import { errorMessage } from '@/platform/network/errors';
 import type { SiteSessionEvent } from '@/domain/session/siteSessionState';
 import type { LoginWebViewFailureReason } from './credentialDiagnostics';
@@ -16,7 +17,7 @@ import { shouldOpenLoginWebViewUrl } from '@/platform/network/loginWebViewNaviga
 import { appQueryClient } from '@/platform/query/serverState';
 import type {
   AccountReconcileResult,
-  LinuxDoReadRecovery,
+  LinuxDoVerificationRecovery as LinuxDoReadRecovery,
   LinuxDoReadResumeOutcome
 } from '@/domain/session/sessionContracts';
 import type { AuthSurfaceCloseReason } from '@/domain/session/authSurfaceCoordinator';
@@ -28,9 +29,24 @@ type Ref<T> = RefObject<T>;
 type LinuxDoVerificationPhase =
   'idle' | 'preparing' | 'awaiting-clearance' | 'checking-clearance' | 'resuming-read' | 'closing';
 
-type ActiveLinuxDoReadRecovery = {
-  generation: number;
+type RecoveryTarget = {
+  id: string;
   recovery: LinuxDoReadRecovery;
+  outcome: 'pending' | LinuxDoReadResumeOutcome;
+  error?: string;
+};
+
+export type LinuxDoRecoveryPanel = {
+  phase: 'idle' | 'web' | 'checking' | 'result';
+  dedicated: boolean;
+  results: { kind: 'page' | 'reading'; outcome: RecoveryTarget['outcome']; error?: string }[];
+};
+
+type RecoverySession = {
+  scope: string;
+  phase: LinuxDoRecoveryPanel['phase'];
+  dedicated: boolean;
+  targets: RecoveryTarget[];
 };
 
 type QueuedLinuxDoVerification = {
@@ -41,6 +57,7 @@ type QueuedLinuxDoVerification = {
 };
 
 function isActiveRecoveryQuery(recovery: LinuxDoReadRecovery) {
+  if ('kind' in recovery) return recovery.isCurrent();
   return (
     appQueryClient
       .getQueryCache()
@@ -54,6 +71,10 @@ function isActiveRecoveryQuery(recovery: LinuxDoReadRecovery) {
 
 export function useVerificationController({
   canOpenLinuxDoPanel = () => true,
+  awaitLinuxDoCookieHandoff = async () => undefined,
+  awaitLinuxDoWebViewUnmount = async () => undefined,
+  getRecoveryScope = () => '',
+  onRecoveryStateChanged = () => undefined,
   changeNodeSeekLoginPanel,
   checkingRequestIdRef,
   closeYaohuoLoginPanel,
@@ -80,6 +101,10 @@ export function useVerificationController({
   updateNodeSeekSession
 }: {
   canOpenLinuxDoPanel?: () => boolean;
+  awaitLinuxDoCookieHandoff?: () => Promise<void>;
+  awaitLinuxDoWebViewUnmount?: () => Promise<void>;
+  getRecoveryScope?: () => string;
+  onRecoveryStateChanged?: (panel: LinuxDoRecoveryPanel) => void;
   changeNodeSeekLoginPanel: (visible: boolean, closeReason?: AuthSurfaceCloseReason) => void;
   checkingRequestIdRef: Ref<number>;
   closeYaohuoLoginPanel: (reason?: AuthSurfaceCloseReason) => void;
@@ -109,13 +134,78 @@ export function useVerificationController({
   const linuxDoVerificationPhaseRef = useRef<LinuxDoVerificationPhase>('idle');
   const linuxDoVerificationGenerationRef = useRef(0);
   const linuxDoTerminalWebViewSessionRef = useRef<number | null>(null);
-  const linuxDoReadRecoveryRef = useRef<ActiveLinuxDoReadRecovery | null>(null);
+  const recoverySessionRef = useRef<RecoverySession | null>(null);
+  const canceledQueriesRef = useRef(new WeakMap<object, number | undefined>());
   const linuxDoCanceledRecoveriesRef = useRef(new WeakSet<LinuxDoReadRecovery>());
   const linuxDoActiveCheckRef = useRef<number | null>(null);
   const queuedLinuxDoVerificationRef = useRef<QueuedLinuxDoVerification | null>(null);
   const showLinuxDoVerificationRef = useRef<
     ((message?: string, recovery?: LinuxDoReadRecovery) => Promise<boolean>) | null
   >(null);
+
+  const publishRecovery = useCallback(() => {
+    const session = recoverySessionRef.current;
+    onRecoveryStateChanged({
+      phase: session?.phase || 'idle',
+      dedicated: session?.dedicated || false,
+      results:
+        session?.targets.map(({ recovery, outcome, error }) => ({
+          kind: 'kind' in recovery ? 'reading' : 'page',
+          outcome,
+          error
+        })) || []
+    });
+  }, [onRecoveryStateChanged]);
+
+  const cancelRecoveryTarget = useCallback((target: { recovery: LinuxDoReadRecovery }) => {
+    linuxDoCanceledRecoveriesRef.current.add(target.recovery);
+    if ('kind' in target.recovery) target.recovery.cancel();
+    else {
+      const query = appQueryClient.getQueryCache().find({ queryKey: target.recovery.queryKey, exact: true });
+      if (query) canceledQueriesRef.current.set(query, query.state?.errorUpdatedAt);
+      void appQueryClient.cancelQueries({ queryKey: target.recovery.queryKey, exact: true });
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      ++linuxDoVerificationGenerationRef.current;
+      recoverySessionRef.current?.targets
+        .filter((target) => target.outcome !== 'completed')
+        .forEach(cancelRecoveryTarget);
+      recoverySessionRef.current = null;
+      ++checkingRequestIdRef.current;
+      const queued = queuedLinuxDoVerificationRef.current;
+      if (queued?.recovery) cancelRecoveryTarget({ recovery: queued.recovery });
+      queuedLinuxDoVerificationRef.current?.resolve(false);
+      queuedLinuxDoVerificationRef.current = null;
+      if (linuxDoWebViewMountTimerRef.current) clearTimeout(linuxDoWebViewMountTimerRef.current);
+      if (linuxDoPanelCloseSettleTimerRef.current) clearTimeout(linuxDoPanelCloseSettleTimerRef.current);
+    },
+    [cancelRecoveryTarget, checkingRequestIdRef, linuxDoWebViewMountTimerRef, linuxDoPanelCloseSettleTimerRef]
+  );
+
+  const validateRecoveryTargets = useCallback(
+    (session: RecoverySession) => {
+      for (const target of session.targets) {
+        if (target.outcome !== 'pending' && target.outcome !== 'verification-required') continue;
+        const recovery = target.recovery;
+        if (
+          session.scope !== getRecoveryScope() ||
+          !isActiveRecoveryQuery(recovery) ||
+          ('kind' in recovery && recovery.isExpired?.())
+        ) {
+          target.outcome = 'stale';
+          target.error = 'kind' in recovery ? '待同步阅读记录已过期或失效，本次未补发。' : '原页面已离开或账号已变化。';
+          cancelRecoveryTarget(target);
+        }
+      }
+      return session.targets.some(
+        (target) => target.outcome === 'pending' || target.outcome === 'verification-required'
+      );
+    },
+    [cancelRecoveryTarget, getRecoveryScope]
+  );
 
   const finishLinuxDoVerificationTrace = useCallback(
     (trace: DiagnosticTrace, outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
@@ -210,7 +300,24 @@ export function useVerificationController({
   );
 
   const resetLinuxDoWebView = useCallback(() => {
-    if (linuxDoPanelClosingSessionRef.current !== null) {
+    if (
+      !canOpenLinuxDoPanel() ||
+      linuxDoPanelClosingSessionRef.current !== null ||
+      (recoverySessionRef.current && recoverySessionRef.current.phase !== 'web')
+    )
+      return;
+    const session = recoverySessionRef.current;
+    if (session && !validateRecoveryTargets(session)) {
+      session.phase = 'result';
+      nextLinuxDoWebViewSession();
+      linuxDoWebViewRef.current?.stopLoading();
+      setMountLinuxDoWebView(false);
+      setLoadingLinuxDoPageForSession(false);
+      void awaitLinuxDoWebViewUnmount().then(() => {
+        if (recoverySessionRef.current === session && isLinuxDoSurfaceVisible())
+          onLinuxDoSurfaceClosed({ authoritativeResult: true, reason: 'authoritative-recovery' });
+      });
+      publishRecovery();
       return;
     }
     const trace =
@@ -250,6 +357,11 @@ export function useVerificationController({
       });
     } else mount();
   }, [
+    awaitLinuxDoWebViewUnmount,
+    canOpenLinuxDoPanel,
+    onLinuxDoSurfaceClosed,
+    publishRecovery,
+    validateRecoveryTargets,
     checkingRequestIdRef,
     currentLinuxDoVerificationTrace,
     linuxDoPanelClosingSessionRef,
@@ -273,21 +385,22 @@ export function useVerificationController({
 
   const closeLinuxDoPanel = useCallback(
     (cancelCurrentRecovery = true, reason: AuthSurfaceCloseReason = 'close-button', authoritativeResult = false) => {
-      if (!isLinuxDoSurfaceVisible() && linuxDoPanelClosingSessionRef.current === null) {
-        return;
+      const session = recoverySessionRef.current;
+      if (!isLinuxDoSurfaceVisible() && !session && linuxDoPanelClosingSessionRef.current === null) return;
+      if (session && cancelCurrentRecovery) {
+        session.targets.filter((target) => target.outcome !== 'completed').forEach(cancelRecoveryTarget);
+        if (session.targets.some((target) => 'kind' in target.recovery && target.outcome !== 'completed'))
+          notify('本次阅读同步已停止，未确认的请求不会重发。');
       }
-      const activeRecovery = linuxDoReadRecoveryRef.current;
-      if (cancelCurrentRecovery && activeRecovery) {
-        linuxDoCanceledRecoveriesRef.current.add(activeRecovery.recovery);
-      }
+      recoverySessionRef.current = null;
+      publishRecovery();
       linuxDoVerificationGenerationRef.current += 1;
       linuxDoVerificationPhaseRef.current = 'closing';
-      linuxDoReadRecoveryRef.current = null;
       invalidateLinuxDoCheck();
       if (cancelCurrentRecovery) {
         const queuedRecovery = queuedLinuxDoVerificationRef.current;
         if (queuedRecovery?.recovery) {
-          linuxDoCanceledRecoveriesRef.current.add(queuedRecovery.recovery);
+          cancelRecoveryTarget({ recovery: queuedRecovery.recovery });
         }
         queuedRecovery?.resolve(false);
         queuedLinuxDoVerificationRef.current = null;
@@ -366,6 +479,8 @@ export function useVerificationController({
       }, LINUXDO_PANEL_CLOSE_SETTLE_MS);
     },
     [
+      cancelRecoveryTarget,
+      publishRecovery,
       finishLinuxDoVerificationTrace,
       invalidateLinuxDoCheck,
       isLinuxDoSurfaceVisible,
@@ -375,6 +490,7 @@ export function useVerificationController({
       linuxDoWebViewRef,
       nextLinuxDoWebViewSession,
       onLinuxDoSurfaceClosed,
+      notify,
       setLinuxDoWebViewError,
       setLinuxDoWebViewErrorForSession,
       setLoadingLinuxDoPage,
@@ -412,18 +528,16 @@ export function useVerificationController({
         onBeforeLinuxDoSurfaceOpened();
         markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'open' });
         if (linuxDoVerificationPhaseRef.current !== 'preparing') {
-          const previousRecovery = linuxDoReadRecoveryRef.current;
-          if (previousRecovery) {
-            linuxDoCanceledRecoveriesRef.current.add(previousRecovery.recovery);
-          }
+          const session = recoverySessionRef.current;
+          session?.targets.filter((target) => target.outcome !== 'completed').forEach(cancelRecoveryTarget);
+          recoverySessionRef.current = null;
+          publishRecovery();
           linuxDoVerificationGenerationRef.current += 1;
           invalidateLinuxDoCheck();
-          linuxDoReadRecoveryRef.current = null;
-          linuxDoVerificationPhaseRef.current = 'preparing';
         }
         const wasVisible = isLinuxDoSurfaceVisible();
         if (!wasVisible) {
-          onLinuxDoSurfaceOpened({ accountBarrier: !linuxDoReadRecoveryRef.current });
+          onLinuxDoSurfaceOpened({ accountBarrier: !recoverySessionRef.current });
         }
         linuxDoVerificationPhaseRef.current = 'awaiting-clearance';
         resetLinuxDoWebView();
@@ -433,6 +547,8 @@ export function useVerificationController({
       return true;
     },
     [
+      cancelRecoveryTarget,
+      publishRecovery,
       closeLinuxDoPanel,
       canOpenLinuxDoPanel,
       currentLinuxDoVerificationTrace,
@@ -449,8 +565,34 @@ export function useVerificationController({
   const showLinuxDoVerification = useCallback(
     async (message = 'linux.do 需要完成 Cloudflare 验证', recovery?: LinuxDoReadRecovery) => {
       if (!canOpenLinuxDoPanel()) return false;
-      if (recovery && (linuxDoCanceledRecoveriesRef.current.has(recovery) || !isActiveRecoveryQuery(recovery))) {
-        return false;
+      if (!recovery && recoverySessionRef.current) return true;
+      if (recovery) {
+        if (linuxDoCanceledRecoveriesRef.current.has(recovery) || !isActiveRecoveryQuery(recovery)) return false;
+        if ('kind' in recovery && recovery.isExpired?.()) {
+          recovery.cancel();
+          linuxDoCanceledRecoveriesRef.current.add(recovery);
+          notify('待同步阅读记录已过期或失效，本次未补发。');
+          return false;
+        }
+        const id = 'kind' in recovery ? 'reading:' + recovery.batchId : hashKey(recovery.queryKey);
+        if (!('kind' in recovery)) {
+          const query = appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true });
+          if (
+            query &&
+            canceledQueriesRef.current.has(query) &&
+            canceledQueriesRef.current.get(query) === query.state?.errorUpdatedAt
+          )
+            return false;
+          if (query) canceledQueriesRef.current.delete(query);
+        }
+        const session = recoverySessionRef.current;
+        if (session) {
+          if (!session.targets.some((target) => target.id === id)) {
+            session.targets.push({ id, recovery, outcome: 'pending' });
+            publishRecovery();
+          }
+          return true;
+        }
       }
       if (linuxDoPanelClosingSessionRef.current !== null) {
         const previousQueued = queuedLinuxDoVerificationRef.current;
@@ -460,7 +602,7 @@ export function useVerificationController({
           return previousQueued.promise;
         }
         if (previousQueued?.recovery) {
-          linuxDoCanceledRecoveriesRef.current.add(previousQueued.recovery);
+          cancelRecoveryTarget({ recovery: previousQueued.recovery });
         }
         previousQueued?.resolve(false);
         let resolveQueued!: (accepted: boolean) => void;
@@ -477,25 +619,25 @@ export function useVerificationController({
         return queuedPromise;
       }
       if (recovery) {
-        const previousRecovery = linuxDoReadRecoveryRef.current;
-        if (previousRecovery && previousRecovery.recovery !== recovery) {
-          linuxDoCanceledRecoveriesRef.current.add(previousRecovery.recovery);
-        }
-        const generation = ++linuxDoVerificationGenerationRef.current;
+        recoverySessionRef.current = {
+          scope: getRecoveryScope(),
+          phase: 'web',
+          dedicated: !isLinuxDoSurfaceVisible(),
+          targets: [
+            {
+              id: 'kind' in recovery ? 'reading:' + recovery.batchId : hashKey(recovery.queryKey),
+              recovery,
+              outcome: 'pending'
+            }
+          ]
+        };
+        publishRecovery();
+        ++linuxDoVerificationGenerationRef.current;
         invalidateLinuxDoCheck();
         linuxDoVerificationPhaseRef.current = 'preparing';
-        const activeRecovery = { generation, recovery };
-        linuxDoReadRecoveryRef.current = activeRecovery;
-        const trace = startLinuxDoVerificationTrace('open');
-        if (linuxDoReadRecoveryRef.current !== activeRecovery) {
-          return false;
-        }
-        if (!isActiveRecoveryQuery(recovery)) {
-          linuxDoReadRecoveryRef.current = null;
-          linuxDoVerificationPhaseRef.current = 'idle';
-          finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
-          return false;
-        }
+        startLinuxDoVerificationTrace('open');
+        // Attaching recovery to manual login must preserve its current document.
+        if (isLinuxDoSurfaceVisible()) return true;
       }
       changeNodeSeekLoginPanel(false, 'switch-surface');
       closeYaohuoLoginPanel('switch-surface');
@@ -510,7 +652,12 @@ export function useVerificationController({
     },
     [
       changeLinuxDoPanel,
+      cancelRecoveryTarget,
+      getRecoveryScope,
+      publishRecovery,
       canOpenLinuxDoPanel,
+      isLinuxDoSurfaceVisible,
+      currentLinuxDoVerificationTrace,
       changeNodeSeekLoginPanel,
       closeYaohuoLoginPanel,
       finishLinuxDoVerificationTrace,
@@ -553,11 +700,11 @@ export function useVerificationController({
             source: 'linuxdo',
             messageRecognized: data.type === 'linuxdo-webview',
             userAgentSource:
-              data.type === 'linuxdo-webview' && typeof data.userAgent === 'string' ? 'webview' : 'default'
+              data.type === 'linuxdo-webview' && typeof data.userAgent === 'string' ? 'webview' : 'unknown',
+            ...(data.type === 'linuxdo-webview' && typeof data.userAgent === 'string'
+              ? { userAgentHash: diagnosticUserAgentHash(sanitizeLinuxDoUserAgent(data.userAgent)) }
+              : {})
           });
-        }
-        if (data.type === 'linuxdo-webview') {
-          setLinuxDoWebViewErrorForSession('', webViewKey);
         }
         if (data.type === 'linuxdo-webview' && typeof data.userAgent === 'string') {
           const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
@@ -580,14 +727,149 @@ export function useVerificationController({
     [commitLinuxDoWebViewUserAgent, linuxDoWebViewSessionRef, isLinuxDoSurfaceVisible, setLinuxDoWebViewErrorForSession]
   );
 
+  const retryLinuxDoRecovery = useCallback(() => {
+    const session = recoverySessionRef.current;
+    if (!session || session.phase !== 'result' || !canOpenLinuxDoPanel()) return;
+    if (validateRecoveryTargets(session)) {
+      session.phase = 'web';
+      onBeforeLinuxDoSurfaceOpened();
+      onLinuxDoSurfaceOpened({ accountBarrier: false });
+      resetLinuxDoWebView();
+    }
+    publishRecovery();
+  }, [
+    canOpenLinuxDoPanel,
+    onBeforeLinuxDoSurfaceOpened,
+    onLinuxDoSurfaceOpened,
+    publishRecovery,
+    resetLinuxDoWebView,
+    validateRecoveryTargets
+  ]);
+
+  const checkRecovery = useCallback(
+    async (session: RecoverySession) => {
+      if (session.phase !== 'web' || !canOpenLinuxDoPanel()) return;
+      session.phase = 'checking';
+      const generation = linuxDoVerificationGenerationRef.current;
+      const current = () =>
+        recoverySessionRef.current === session &&
+        session.phase === 'checking' &&
+        generation === linuxDoVerificationGenerationRef.current &&
+        session.scope === getRecoveryScope() &&
+        canOpenLinuxDoPanel();
+      const trace = currentLinuxDoVerificationTrace('manual');
+      publishRecovery();
+      setChecking(true);
+      nextLinuxDoWebViewSession();
+      if (linuxDoWebViewMountTimerRef.current) {
+        clearTimeout(linuxDoWebViewMountTimerRef.current);
+        linuxDoWebViewMountTimerRef.current = null;
+      }
+      linuxDoWebViewRef.current?.stopLoading();
+      setMountLinuxDoWebView(false);
+      setLoadingLinuxDoPage(false);
+      setLinuxDoWebViewError('');
+      try {
+        validateRecoveryTargets(session);
+        await awaitLinuxDoWebViewUnmount();
+        if (!current()) return;
+        onLinuxDoSurfaceClosed({ authoritativeResult: true, reason: 'authoritative-recovery' });
+        await awaitLinuxDoCookieHandoff();
+        if (!current()) return;
+        markDiagnosticStage(trace, 'apply', { source: 'linuxdo', state: 'resuming-read' });
+        // Snapshot this check's targets; notifications arriving later wait for another explicit check.
+        for (const target of [...session.targets]) {
+          if (!current()) return;
+          validateRecoveryTargets(session);
+          if (target.outcome !== 'pending' && target.outcome !== 'verification-required') continue;
+          try {
+            const outcome = await target.recovery.resume();
+            if (!current()) return;
+            target.outcome = outcome;
+            if (outcome === 'failed') {
+              if ('kind' in target.recovery) target.error = target.recovery.failureMessage;
+              else {
+                const error = appQueryClient.getQueryCache().find({ queryKey: target.recovery.queryKey, exact: true })
+                  ?.state?.error;
+                if (error) target.error = errorMessage(error);
+              }
+            }
+          } catch (error) {
+            if (!current()) return;
+            target.outcome = 'failed';
+            target.error = errorMessage(error);
+          }
+          publishRecovery();
+        }
+        if (!current()) return;
+        if (session.targets.every((target) => target.outcome === 'completed')) {
+          const hasPage = session.targets.some((target) => !('kind' in target.recovery));
+          const hasReading = session.targets.some((target) => 'kind' in target.recovery);
+          closeLinuxDoPanel(false, 'authoritative-recovery', true);
+          notify(
+            hasPage && hasReading
+              ? 'linux.do 页面已恢复，阅读记录已同步。'
+              : hasReading
+                ? 'linux.do 阅读记录已同步。'
+                : 'linux.do 验证已通过，页面已恢复。'
+          );
+          finishLinuxDoVerificationTrace(trace, 'success');
+        } else {
+          session.phase = 'result';
+          publishRecovery();
+          const blocked = session.targets.some((target) => target.outcome === 'verification-required');
+          finishLinuxDoVerificationTrace(trace, blocked ? 'blocked' : 'failure', {
+            reason: blocked ? 'verification_required' : 'refresh_failed'
+          });
+        }
+      } catch (error) {
+        if (!current()) return;
+        for (const target of session.targets) {
+          if (target.outcome !== 'pending' && target.outcome !== 'verification-required') continue;
+          target.outcome = 'failed';
+          target.error = `会话交接失败：${errorMessage(error)}`;
+          cancelRecoveryTarget(target);
+        }
+        session.phase = 'result';
+        publishRecovery();
+        finishLinuxDoVerificationTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+      } finally {
+        if (recoverySessionRef.current === session) setChecking(false);
+      }
+    },
+    [
+      awaitLinuxDoCookieHandoff,
+      awaitLinuxDoWebViewUnmount,
+      canOpenLinuxDoPanel,
+      cancelRecoveryTarget,
+      closeLinuxDoPanel,
+      currentLinuxDoVerificationTrace,
+      finishLinuxDoVerificationTrace,
+      getRecoveryScope,
+      linuxDoWebViewMountTimerRef,
+      linuxDoWebViewRef,
+      nextLinuxDoWebViewSession,
+      notify,
+      onLinuxDoSurfaceClosed,
+      publishRecovery,
+      setChecking,
+      setLinuxDoWebViewError,
+      setLoadingLinuxDoPage,
+      setMountLinuxDoWebView,
+      validateRecoveryTargets
+    ]
+  );
+
   const checkLinuxDoCookie = useCallback(async () => {
+    const session = recoverySessionRef.current;
+    if (session) return checkRecovery(session);
+    if (!canOpenLinuxDoPanel() || !isLinuxDoSurfaceVisible()) return;
     if (linuxDoActiveCheckRef.current !== null) {
       return;
     }
     const requestId = ++checkingRequestIdRef.current;
     linuxDoActiveCheckRef.current = requestId;
     const flowGeneration = linuxDoVerificationGenerationRef.current;
-    const activeRecovery = linuxDoReadRecoveryRef.current;
     const trace = currentLinuxDoVerificationTrace('manual');
     markDiagnosticStage(trace, 'credential', {
       source: 'linuxdo',
@@ -610,9 +892,6 @@ export function useVerificationController({
       if (flowGeneration !== linuxDoVerificationGenerationRef.current) {
         return false;
       }
-      if (activeRecovery !== linuxDoReadRecoveryRef.current) {
-        return false;
-      }
       if (linuxDoVerificationPhaseRef.current === 'closing' || linuxDoVerificationPhaseRef.current === 'idle') {
         return false;
       }
@@ -622,64 +901,6 @@ export function useVerificationController({
     linuxDoVerificationPhaseRef.current = 'checking-clearance';
     setLinuxDoWebViewError('');
     try {
-      const recovery = activeRecovery?.recovery;
-      if (recovery && activeRecovery) {
-        const recoveryIsCurrent = linuxDoReadRecoveryRef.current === activeRecovery && isActiveRecoveryQuery(recovery);
-        if (!recoveryIsCurrent) {
-          finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
-          linuxDoReadRecoveryRef.current = null;
-          closeLinuxDoPanel(false, 'authoritative-recovery', true);
-          return;
-        }
-        linuxDoReadRecoveryRef.current = null;
-        closeLinuxDoPanel(false, 'authoritative-recovery', true);
-        const closedGeneration = linuxDoVerificationGenerationRef.current;
-        markDiagnosticStage(trace, 'apply', {
-          source: 'linuxdo',
-          state: 'resuming-read'
-        });
-        linuxDoVerificationPhaseRef.current = 'resuming-read';
-        let outcome: LinuxDoReadResumeOutcome;
-        try {
-          outcome = await recovery.resume();
-        } catch (error) {
-          if (linuxDoVerificationGenerationRef.current !== closedGeneration) {
-            finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
-            return;
-          }
-          const message = `原页面恢复失败：${errorMessage(error)}`;
-          notify(message);
-          finishLinuxDoVerificationTrace(trace, 'failure', {
-            reason: normalizeDiagnosticReason(error)
-          });
-          return;
-        }
-        if (linuxDoVerificationGenerationRef.current !== closedGeneration) {
-          finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
-          return;
-        }
-        if (outcome === 'verification-required') {
-          const message = '验证仍未生效，请继续完成验证后点击检测状态。';
-          finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'verification_required' });
-          if (isActiveRecoveryQuery(recovery)) {
-            void showLinuxDoVerification(message, recovery);
-          }
-          return;
-        }
-        if (outcome === 'stale') {
-          finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
-          return;
-        }
-        if (outcome === 'failed') {
-          const message = '原页面恢复失败，请返回原页面重试。';
-          notify(message);
-          finishLinuxDoVerificationTrace(trace, 'failure', { reason: 'refresh_failed' });
-          return;
-        }
-        notify('linux.do 验证已通过，页面已恢复。');
-        finishLinuxDoVerificationTrace(trace, 'success');
-        return;
-      }
       const result = await reconcileAccountStatus('linuxdo');
       if (!isCurrentLinuxDoCheck()) {
         finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
@@ -740,6 +961,9 @@ export function useVerificationController({
       }
     }
   }, [
+    canOpenLinuxDoPanel,
+    checkRecovery,
+    awaitLinuxDoCookieHandoff,
     checkingRequestIdRef,
     closeLinuxDoPanel,
     currentLinuxDoVerificationTrace,
@@ -754,6 +978,32 @@ export function useVerificationController({
     updateLinuxDoSession
   ]);
   const cancelLinuxDoCheckForInactiveApp = useCallback(() => {
+    const session = recoverySessionRef.current;
+    if (session?.phase === 'checking') {
+      ++linuxDoVerificationGenerationRef.current;
+      recoverySessionRef.current = {
+        ...session,
+        phase: 'result',
+        targets: session.targets.map((target) =>
+          target.outcome === 'completed'
+            ? target
+            : {
+                ...target,
+                outcome: 'failed',
+                error: '检测因切到后台而中断；未确认的阅读请求不会重发。'
+              }
+        )
+      };
+      recoverySessionRef.current.targets
+        .filter((target) => target.outcome !== 'completed')
+        .forEach(cancelRecoveryTarget);
+      if (isLinuxDoSurfaceVisible())
+        onLinuxDoSurfaceClosed({ authoritativeResult: true, reason: 'authoritative-recovery' });
+      setChecking(false);
+      publishRecovery();
+      const trace = linuxDoVerificationTraceRef.current;
+      if (trace) finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled' });
+    }
     if (!isLinuxDoSurfaceVisible() || linuxDoActiveCheckRef.current === null) {
       return;
     }
@@ -763,9 +1013,18 @@ export function useVerificationController({
     if (trace) {
       finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled' });
     }
-  }, [finishLinuxDoVerificationTrace, invalidateLinuxDoCheck, isLinuxDoSurfaceVisible]);
+  }, [
+    cancelRecoveryTarget,
+    finishLinuxDoVerificationTrace,
+    invalidateLinuxDoCheck,
+    isLinuxDoSurfaceVisible,
+    onLinuxDoSurfaceClosed,
+    publishRecovery,
+    setChecking
+  ]);
 
   return {
+    retryLinuxDoRecovery,
     changeLinuxDoPanel,
     checkLinuxDoCookie,
     closeLinuxDoPanel,

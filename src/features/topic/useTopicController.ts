@@ -976,6 +976,8 @@ export function useTopicController({
       const generation = ++replyWindowGenerationRef.current;
       let createdTarget: ReplyLocationTarget | undefined;
       const nodeSeekCreatedCommand = command.kind === 'created' && selectedTopic.source === 'nodeseek' ? command : null;
+      const discourseCreatedCommand =
+        command.kind === 'created' && isDiscourseSource(selectedTopic.source) ? command : null;
       const ownsWindow = () =>
         activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
         replyWindowGenerationRef.current === generation;
@@ -1011,7 +1013,7 @@ export function useTopicController({
       const pageOffset = capturedPosition?.offset ?? targetPage?.currentOffset ?? targetPage?.requestedOffset ?? null;
       let refreshedDetail = topicDetail;
       try {
-        if (command.kind !== 'edited' && !nodeSeekCreatedCommand) {
+        if (command.kind !== 'edited' && !nodeSeekCreatedCommand && !discourseCreatedCommand) {
           const result = await detailQuery.refetch();
           if (!ownsWindow()) return 'stale';
           if (result.error) {
@@ -1082,6 +1084,33 @@ export function useTopicController({
             queryKey: refreshKey,
             staleTime: 0,
             queryFn: async ({ signal }) => {
+              if (discourseCreatedCommand) {
+                const target = discourseCreatedCommand.discourseTarget;
+                markDiagnosticStage(trace, 'apply', {
+                  state: 'refresh-unconfirmed',
+                  hasTarget: Boolean(target)
+                });
+                if (!target) throw new Error('回复已提交，但原站未返回可定位的评论');
+                const page = await loadReplyPage(
+                  refreshedDetail,
+                  replyOrder,
+                  { kind: 'target', target: { floor: target.floor } },
+                  signal,
+                  trace
+                );
+                const matches = page.items.filter(
+                  (reply) => reply.commentId === target.commentId && reply.floor === target.floor
+                );
+                markDiagnosticStage(trace, 'apply', {
+                  state: matches.length === 1 ? 'refresh-success' : 'refresh-unconfirmed',
+                  hasTarget: true,
+                  isTargetMatched: matches.length === 1,
+                  itemCount: page.items.length
+                });
+                if (matches.length !== 1) throw new Error('回复已提交，但回读未找到该评论');
+                createdTarget = replyLocationTarget(matches[0], page.currentPage);
+                return page;
+              }
               if (nodeSeekCreatedCommand) {
                 const tail = await loadReplyPage(refreshedDetail, 'newest', refreshPosition, signal, trace);
                 const matches = tail.items.filter((reply) =>
@@ -1135,6 +1164,7 @@ export function useTopicController({
               ? { commentId: command.target.commentId, contentMarkdown: command.contentMarkdown }
               : undefined;
           const refreshedPage = { ...page, items: removeRepliesForRefresh(page.items, deleted) };
+          if (discourseCreatedCommand) replyEntry.current.settled = true;
           const pageParam: ReplyCursorPosition = {
             kind: 'cursor',
             page: page.requestedPage,
@@ -1198,6 +1228,11 @@ export function useTopicController({
             return 'stale';
           }
           if (ownsTrace) finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+          else
+            markDiagnosticStage(trace, 'apply', {
+              state: 'refresh-unconfirmed',
+              reason: normalizeDiagnosticReason(error)
+            });
           const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
           setReplyWindowFailure('refresh', replyFailure(selectedTopic.source, error, refreshPosition, command));
           handleReadError(

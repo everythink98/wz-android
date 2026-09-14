@@ -1,8 +1,32 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDiscourseActionRequest, discourseImageUrlFromUploadResponse } from './actionRequest';
+import {
+  buildDiscourseActionRequest,
+  discourseCreatedReplyTarget,
+  discourseImageUrlFromUploadResponse
+} from './actionRequest';
 
 describe('Discourse action requests', () => {
+  it('locates only a valid created post belonging to the submitted topic', () => {
+    const post = { id: 121, post_number: 21, topic_id: 42 };
+    expect(discourseCreatedReplyTarget(post, '42')).toEqual({ commentId: 121, floor: 21 });
+    expect(discourseCreatedReplyTarget({ post }, '42')).toEqual({ commentId: 121, floor: 21 });
+    for (const result of [
+      null,
+      {},
+      { success: true },
+      { action: 'enqueued', post },
+      { success: false, post },
+      { ...post, topic_id: 43 },
+      { ...post, id: 0 },
+      { ...post, id: '121' },
+      { ...post, post_number: 1 },
+      { ...post, post_number: 1.5 },
+      { ...post, post_number: Number.MAX_SAFE_INTEGER + 1 }
+    ]) {
+      expect(discourseCreatedReplyTarget(result, '42')).toBeUndefined();
+    }
+  });
   it('builds an existing-topic reply without knowing the site', () => {
     const request = buildDiscourseActionRequest({
       type: 'reply',

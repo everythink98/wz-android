@@ -5,6 +5,7 @@ import { createLinuxDoReadingSender, getLinuxDoReadingBatch } from './reading';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
 import type { Fetcher } from '@/platform/network/request';
 import { fetchLinuxDoJson } from './reader';
+import { createLinuxDoWebViewFallbackFetcher } from './browserFallback';
 import {
   beginDiagnosticTrace,
   diagnosticRequestFields,
@@ -27,10 +28,12 @@ function setupReadingRuntime(fetcher: Fetcher) {
   vi.useFakeTimers();
   let clock = 0;
   const scope = () => 'alice';
+  const sender = createLinuxDoReadingSender({ fetcher, scope, userAgent: () => 'fixture-agent' });
   const runtime = createDiscourseReadingRuntime({
     queryClient: new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } }),
     scope,
-    send: createLinuxDoReadingSender({ fetcher, scope, userAgent: () => 'fixture-agent' }),
+    send: (batch, identity, signal, context) =>
+      sender(batch, identity, signal, undefined, context.recovery, context.beforePost),
     now: () => clock
   });
   const advance = async (ms: number) => {
@@ -43,6 +46,77 @@ function setupReadingRuntime(fetcher: Fetcher) {
 }
 
 describe('LinuxDo reading transport', () => {
+  it.each([true, false])(
+    'preserves CSRF challenge cooldown after hidden fallback fails (header=%s)',
+    async (header) => {
+      const fetcher = createLinuxDoWebViewFallbackFetcher({
+        defaultFetcher: async () =>
+          new Response('<title>Just a moment...</title>', {
+            status: 429,
+            headers: {
+              'content-type': 'text/html',
+              ...(header ? { 'cf-mitigated': 'challenge' } : {}),
+              'Retry-After': '60',
+              'cf-ray': '0123456789abcdef-HKG'
+            }
+          }),
+        webViewFetcher: async () => {
+          throw new Error('hidden browser unavailable');
+        }
+      });
+      const sender = createLinuxDoReadingSender({ fetcher, scope: () => 'alice', userAgent: () => 'fixture-agent' });
+      await expect(sender(batch, 'alice', new AbortController().signal)).rejects.toMatchObject({
+        reason: 'cloudflare',
+        status: 429,
+        retryAfterMs: 60000,
+        cfRay: '0123456789abcdef-HKG',
+        hasCfMitigatedChallenge: header,
+        hasCfChallengeBody: true
+      });
+    }
+  );
+
+  it.each(['/session/csrf', '/topics/timings'])(
+    'retains challenge evidence and refreshes CSRF for recovery from %s',
+    async (path) => {
+      let challenge = true;
+      const fetcher = vi.fn<Fetcher>(async (url) => {
+        if (challenge && url.endsWith(path))
+          return new Response('<title>Just a moment...</title>', {
+            status: 429,
+            headers: {
+              'content-type': 'text/html',
+              'cf-mitigated': 'challenge',
+              'Retry-After': '2',
+              'cf-ray': '0123456789abcdef-HKG'
+            }
+          });
+        return url.endsWith('/session/csrf') ? json({ csrf: 'fixture' }) : new Response('');
+      });
+      const sender = createLinuxDoReadingSender({ fetcher, scope: () => 'alice', userAgent: () => 'fixture-agent' });
+      const signal = new AbortController().signal;
+      await expect(sender(batch, 'alice', signal)).rejects.toMatchObject({
+        reason: 'cloudflare',
+        status: 429,
+        retryAfterMs: 2000,
+        hasCfMitigatedChallenge: true,
+        hasCfChallengeBody: true,
+        cfRay: '0123456789abcdef-HKG'
+      });
+      challenge = false;
+      await sender(batch, 'alice', signal, undefined, true);
+      expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/session/csrf'))).toHaveLength(2);
+      const posts = fetcher.mock.calls.filter(([url]) => url.endsWith('/topics/timings'));
+      expect(posts.at(-1)?.[1]?.body).toBe(
+        new URLSearchParams({
+          topic_id: '12',
+          topic_time: '1000',
+          'timings[1]': '1000',
+          'timings[40]': '1000'
+        }).toString()
+      );
+    }
+  );
   it.each(['/session/csrf', '/topics/timings'])(
     'retains each reading increment across an HTTP 429 from %s without sending during Retry-After',
     async (rejectedPath) => {
@@ -347,4 +421,67 @@ describe('LinuxDo reading transport', () => {
     fetcher.mockResolvedValueOnce(json({ topic_list: { topics: [{ id: 999 }] } }));
     await expect(getLinuxDoReadingBatch(['1'], { fetcher })).rejects.toThrow('未按话题 ID');
   });
+});
+
+it.each(['background', 'expired'] as const)('holds recovery POST when CSRF completes after %s', async (reason) => {
+  vi.useFakeTimers();
+  let clock = 0;
+  const posts: string[] = [];
+  let csrfCalls = 0;
+  const csrfReady = Promise.withResolvers<Response>();
+  const scope = () => 'alice';
+  const sender = createLinuxDoReadingSender({
+    scope,
+    userAgent: () => 'fixture-agent',
+    fetcher: async (url, init) => {
+      if (url.endsWith('/session/csrf')) return ++csrfCalls === 2 ? csrfReady.promise : json({ csrf: 'fixture' });
+      posts.push(String(init?.body));
+      return posts.length === 1
+        ? new Response('<title>Just a moment...</title>', { status: 403, headers: { 'content-type': 'text/html' } })
+        : new Response('');
+    }
+  });
+  let recovery!: import('@/domain/session/sessionContracts').LinuxDoReadingRecovery;
+  const runtime = createDiscourseReadingRuntime({
+    queryClient: new QueryClient(),
+    scope,
+    now: () => clock,
+    onVerificationRequired: (value) => {
+      recovery = value;
+    },
+    send: (batch, identity, signal, context) =>
+      sender(batch, identity, signal, undefined, context.recovery, context.beforePost)
+  });
+  try {
+    const session = runtime.begin('12');
+    session.visible([1]);
+    session.active(true);
+    clock = 1000;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(posts).toHaveLength(1);
+    const pending = recovery.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(csrfCalls).toBe(2);
+    if (reason === 'background') {
+      runtime.setAppActive(false);
+      runtime.foreground(false);
+    } else {
+      clock = 100001;
+    }
+    csrfReady.resolve(json({ csrf: 'refreshed' }));
+    expect(await pending).toBe('stale');
+    expect(posts).toHaveLength(1);
+    if (reason === 'background') {
+      expect(recovery.isCurrent()).toBe(true);
+      runtime.setAppActive(true);
+      expect(await recovery.resume()).toBe('completed');
+      expect(posts).toEqual([posts[0], posts[0]]);
+    } else {
+      expect(recovery.isCurrent()).toBe(false);
+      expect(await recovery.resume()).toBe('stale');
+      expect(posts).toHaveLength(1);
+    }
+  } finally {
+    runtime.dispose();
+  }
 });

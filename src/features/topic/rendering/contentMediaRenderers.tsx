@@ -398,7 +398,6 @@ export function createContentMediaRenderers({
   const ForumVideoRenderer: CustomBlockRenderer = (props) => {
     const boundarySpacing = useContentBoundarySpacing(props.tnode);
     const attributes = props.tnode.attributes || {};
-    const poster = attributes.poster || '';
     const src = attributes.src || '';
     const referrerPolicy = normalizeMediaReferrerPolicy(attributes.referrerpolicy);
     if (!src) {
@@ -410,7 +409,6 @@ export function createContentMediaRenderers({
         boundarySpacing={boundarySpacing}
         mediaContext={mediaContext}
         nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-        poster={poster}
         referrerPolicy={referrerPolicy}
         src={src}
         theme={theme}

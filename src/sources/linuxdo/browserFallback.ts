@@ -1,4 +1,8 @@
-import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
+import {
+  cloudflareChallengeDiagnostics,
+  isCloudflareChallengeResponse,
+  LinuxDoCloudflareError
+} from '@/platform/network/cloudflareChallenge';
 import { browserFetchIntentFromInit, withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { cancelRequestTimeoutForFallback, withAbortableTimeout, type Fetcher } from '@/platform/network/request';
 import {
@@ -97,8 +101,11 @@ async function fetchLinuxDoThroughWebView(
   webViewFetcher: Fetcher,
   url: string,
   init: RequestInit | undefined,
-  directStatus: number
+  directResponse: Response,
+  directBody: string
 ) {
+  const evidence = cloudflareChallengeDiagnostics(directResponse, directBody);
+  const challenge = Object.assign(new LinuxDoCloudflareError(directResponse), evidence);
   const inheritedTrace = diagnosticTraceForRequest(init);
   const trace =
     inheritedTrace ||
@@ -112,7 +119,7 @@ async function fetchLinuxDoThroughWebView(
     channel: 'direct',
     state: 'fallback',
     reason: 'verification_required',
-    status: directStatus
+    ...evidence
   });
   try {
     cancelRequestTimeoutForFallback(init);
@@ -156,7 +163,7 @@ async function fetchLinuxDoThroughWebView(
     ) {
       throw error;
     }
-    throw new LinuxDoCloudflareError();
+    throw challenge;
   }
 }
 
@@ -368,21 +375,31 @@ export function createLinuxDoWebViewFallbackFetcher({
     }
     if (isCloudflareChallengeResponse(response)) {
       return allowWebViewFallback(url)
-        ? fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status)
+        ? fetchLinuxDoThroughWebView(
+            webViewFetcher,
+            url,
+            init,
+            response,
+            await response
+              .clone()
+              .text()
+              .catch(() => '')
+          )
         : response;
     }
     const contentType = response.headers.get('content-type') || '';
     const shouldInspectBody = !response.ok && /html/i.test(contentType);
+    const bodyText = shouldInspectBody ? await response.clone().text() : '';
     if (
       shouldInspectBody &&
       isCloudflareChallengeResponse({
         status: response.status,
         headers: response.headers,
-        bodyText: await response.clone().text()
+        bodyText
       })
     ) {
       return allowWebViewFallback(url)
-        ? fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status)
+        ? fetchLinuxDoThroughWebView(webViewFetcher, url, init, response, bodyText)
         : response;
     }
     if (response.ok && !qualifiedFallback) {

@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Modal, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -31,7 +32,11 @@ export function LoginWebViewModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.loginWebViewModal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View
+        onTouchStart={recordUserInteraction}
+        onTouchMove={recordUserInteraction}
+        style={[styles.loginWebViewModal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+      >
         <View style={styles.loginWebViewHeader}>
           <View style={styles.loginWebViewTitleBlock}>
             <Text style={styles.loginWebViewTitle}>{title}</Text>

@@ -17,6 +17,18 @@ export type AccountReconcileResult =
 
 export type LinuxDoReadResumeOutcome = 'completed' | 'failed' | 'verification-required' | 'stale';
 
+export type LinuxDoReadingRecovery = {
+  kind: 'reading';
+  batchId: number;
+  isCurrent: () => boolean;
+  isExpired?: () => boolean;
+  failureMessage?: string;
+  resume: () => Promise<LinuxDoReadResumeOutcome>;
+  cancel: () => void;
+};
+
+export type LinuxDoVerificationRecovery = LinuxDoReadRecovery | LinuxDoReadingRecovery;
+
 export type LinuxDoReadRecovery = {
   queryKey: readonly unknown[];
   resume: () => Promise<LinuxDoReadResumeOutcome>;

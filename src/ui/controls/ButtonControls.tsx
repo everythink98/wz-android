@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
@@ -129,7 +130,10 @@ export function FloatingIconButton({
       accessibilityState={{ disabled }}
       disabled={disabled}
       style={[styles.floating, disabled && styles.disabled]}
-      onPress={onPress}
+      onPress={() => {
+        recordUserInteraction();
+        onPress();
+      }}
     >
       {loading ? (
         <ActivityIndicator color={theme.primary} size="small" />
@@ -187,7 +191,10 @@ export function IconButton({
         disabled && styles.disabled
       ]}
       disabled={disabled || loading}
-      onPress={onPress}
+      onPress={() => {
+        recordUserInteraction();
+        onPress();
+      }}
     >
       {loading ? (
         <ActivityIndicator
@@ -248,7 +255,10 @@ export function AppButton({
         disabled && styles.disabled
       ]}
       disabled={disabled}
-      onPress={onPress}
+      onPress={() => {
+        recordUserInteraction();
+        onPress();
+      }}
     >
       <Text
         style={[

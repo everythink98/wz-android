@@ -1,8 +1,387 @@
+diff --git a/node_modules/expo-video/android/build.gradle b/node_modules/expo-video/android/build.gradle
+index ebbe5c0..4133845 100644
+--- a/node_modules/expo-video/android/build.gradle
++++ b/node_modules/expo-video/android/build.gradle
+@@ -11,10 +11,15 @@ android {
+   defaultConfig {
+     versionCode 1
+     versionName '57.0.3'
++    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+   }
++  packaging { jniLibs.pickFirsts += ['**/libc++_shared.so', '**/libfbjni.so'] }
+ }
+ 
+ dependencies {
++  androidTestImplementation 'androidx.test.ext:junit:1.3.0'
++  androidTestImplementation 'androidx.test:runner:1.7.0'
++  androidTestImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+   implementation 'com.facebook.react:react-android'
+ 
+   // Remember to keep this in sync with the version in `expo-audio`
+diff --git a/node_modules/expo-video/android/src/androidTest/AndroidManifest.xml b/node_modules/expo-video/android/src/androidTest/AndroidManifest.xml
+new file mode 100644
+index 0000000..b08f05c
+--- /dev/null
++++ b/node_modules/expo-video/android/src/androidTest/AndroidManifest.xml
+@@ -0,0 +1,6 @@
++<manifest xmlns:android="http://schemas.android.com/apk/res/android">
++  <uses-permission android:name="android.permission.INTERNET" />
++  <application android:label="Playback Proof" android:usesCleartextTraffic="true">
++    <activity android:name="expo.modules.video.ReaderPlaybackTestActivity" android:exported="false" />
++  </application>
++</manifest>
+diff --git a/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt b/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt
+new file mode 100644
+index 0000000..598b064
+--- /dev/null
++++ b/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackInstrumentedTest.kt
+@@ -0,0 +1,311 @@
++package expo.modules.video
++
++import android.net.Uri
++import android.content.Intent
++import android.media.MediaCodec
++import android.media.MediaCodecInfo
++import android.media.MediaFormat
++import android.media.MediaMuxer
++import android.os.SystemClock
++import android.util.Log
++import androidx.media3.common.C
++import androidx.media3.common.Player
++import androidx.media3.common.util.UnstableApi
++import androidx.media3.datasource.DataSpec
++import androidx.media3.exoplayer.ExoPlayer
++import androidx.test.ext.junit.runners.AndroidJUnit4
++import androidx.test.core.app.ActivityScenario
++import androidx.test.platform.app.InstrumentationRegistry
++import expo.modules.video.managers.VideoManager
++import expo.modules.video.records.VideoSource
++import okhttp3.OkHttpClient
++import okhttp3.mockwebserver.Dispatcher
++import okhttp3.mockwebserver.MockResponse
++import okhttp3.mockwebserver.MockWebServer
++import okhttp3.mockwebserver.RecordedRequest
++import okio.Buffer
++import org.junit.After
++import org.junit.Assert.*
++import org.junit.Before
++import org.junit.Test
++import org.junit.runner.RunWith
++import java.nio.ByteBuffer
++import java.nio.ByteOrder
++import java.util.Collections
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.TimeUnit
++
++@androidx.annotation.OptIn(UnstableApi::class)
++@RunWith(AndroidJUnit4::class)
++class ReaderPlaybackInstrumentedTest {
++  private val instrumentation = InstrumentationRegistry.getInstrumentation()
++  private val context get() = instrumentation.targetContext
++  private lateinit var server: MockWebServer
++  private val ranges = Collections.synchronizedList(mutableListOf<String>())
++  private var bytes = wav()
++  private var mime = "audio/wav"
++  private val client = OkHttpClient()
++
++  @Before fun setup() {
++    VideoManager.cache = VideoCache(context)
++    VideoManager.cache.setMaxCacheSize(256 * 1024 * 1024L)
++    VideoManager.cache.clear()
++    server = MockWebServer()
++    server.dispatcher = object : Dispatcher() {
++      override fun dispatch(request: RecordedRequest): MockResponse {
++        val range = request.getHeader("Range")
++        ranges.add(range ?: "full")
++        val match = range?.let { Regex("bytes=(\\d+)-(\\d*)").matchEntire(it) }
++        val start = match?.groupValues?.get(1)?.toInt() ?: 0
++        val end = match?.groupValues?.get(2)?.toIntOrNull()?.coerceAtMost(bytes.lastIndex) ?: bytes.lastIndex
++        if (start > end) return MockResponse().setResponseCode(416)
++        return MockResponse().setResponseCode(if (range == null) 200 else 206)
++          .setHeader("Content-Type", mime)
++          .setHeader("Accept-Ranges", "bytes")
++          .setHeader("Content-Range", "bytes $start-$end/${bytes.size}")
++          .setBody(Buffer().write(bytes, start, end - start + 1))
++      }
++    }
++    server.start()
++    ReadNetworkVideoClientRegistry.register(9L, client)
++  }
++
++  @After fun teardown() {
++    VideoManager.cache.release()
++    ReadNetworkVideoClientRegistry.unregister(9L, client)
++    client.dispatcher.executorService.shutdown()
++    client.connectionPool.evictAll()
++    server.shutdown()
++  }
++
++  private fun source(cached: Boolean = true, identity: String = "forum:epoch-1", referer: String = "https://example.invalid/") = VideoSource(
++    uri = Uri.parse(server.url("/fixture.wav").toString()),
++    useCaching = cached,
++    contentType = expo.modules.video.enums.ContentType.PROGRESSIVE,
++    headers = mapOf(
++      READ_NETWORK_GENERATION_HEADER to "9",
++      "X-WZ-Forum-Media-Source" to "nodeseek",
++      "X-WZ-Forum-Media-Identity" to identity,
++      "Referer" to referer
++    )
++  )
++
++  private fun read(source: VideoSource, start: Long, length: Long) {
++    val factory = if (source.useCaching) buildCacheDataSourceFactory(context, source) else buildBaseDataSourceFactory(context, source)
++    val data = factory.createDataSource()
++    val output = Buffer()
++    try {
++      data.open(DataSpec.Builder().setUri(source.uri!!).setPosition(start).setLength(length).build())
++      val block = ByteArray(4096)
++      while (true) {
++        val count = data.read(block, 0, block.size)
++        if (count == C.RESULT_END_OF_INPUT) break
++        output.write(block, 0, count)
++      }
++      assertArrayEquals(bytes.copyOfRange(start.toInt(), (start + length).toInt()), output.readByteArray())
++    } finally { data.close() }
++  }
++
++  @Test fun cachedRangesAvoidUpstreamAndTransportRotationPreservesIdentity() {
++    val uncached = source(false)
++    repeat(2) { read(uncached, 1000, 4000) }
++    assertEquals(2, ranges.size) // Negative control matching the previous production source.
++    val cached = source()
++    read(cached, 0, bytes.size.toLong())
++    val loadedRequests = ranges.size
++    for (position in listOf(6000L, 1000L, 18000L, 0L)) read(cached, position, 4000)
++    cached.headers = cached.headers!! + (READ_NETWORK_GENERATION_HEADER to "10")
++    read(cached, 8000, 4000)
++    assertEquals(loadedRequests, ranges.size)
++    Log.i("ReaderPlaybackProof", "cached-seek upstreamRequests=0 ranges=$ranges")
++  }
++
++  @Test fun uncachedRangesAndDifferentRepresentationsReachTheServer() {
++    val cached = source()
++    read(cached, 0, 4000)
++    read(cached, 12000, 4000)
++    assertEquals(listOf("bytes=0-3999", "bytes=12000-15999"), ranges.toList())
++    read(source(identity = "forum:epoch-2"), 0, 4000)
++    read(source(referer = "https://other.invalid/"), 0, 4000)
++    assertEquals(4, ranges.size)
++    val key = forumVideoCacheKey(cached, cached.uri.toString())
++    assertTrue(key.matches(Regex("[0-9a-f]{64}")))
++    assertFalse(key.contains("epoch"))
++  }
++
++  @Test fun evictionRemainsBoundedAndMissingCachedSpansReload() {
++    VideoManager.cache.setMaxCacheSize(8192)
++    val cached = source()
++    read(cached, 0, 4000)
++    read(cached, 8000, 4000)
++    read(cached, 16000, 4000)
++    assertTrue(VideoManager.cache.instance.cacheSpace <= 8192)
++    val before = ranges.size
++    read(cached, 0, 4000)
++    assertEquals(before + 1, ranges.size)
++    // Restore only this test APK's cache setting.
++    VideoManager.cache.setMaxCacheSize(256 * 1024 * 1024L)
++  }
++
++  @Test fun missingCacheFileFallsBackToUpstream() {
++    val cached = source()
++    read(cached, 0, 4000)
++    val key = forumVideoCacheKey(cached, cached.uri.toString())
++    val span = VideoManager.cache.instance.getCachedSpans(key).first()
++    assertTrue(span.file!!.delete())
++    read(cached, 0, 4000)
++    assertEquals(2, ranges.size)
++  }
++
++  @Test fun downloadedVideoSeeksRenderFramesAndKeepCompactNativeControls() {
++    bytes = mp4()
++    mime = "video/mp4"
++    val cached = source().apply { uri = Uri.parse(server.url("/fixture.mp4").toString()) }
++    read(cached, 0, bytes.size.toLong())
++    val requests = ranges.size
++    val frameUs = java.util.concurrent.atomic.AtomicLong(-1L)
++    val scenario = ActivityScenario.launch<ReaderPlaybackTestActivity>(Intent(context, ReaderPlaybackTestActivity::class.java))
++    var player: ExoPlayer? = null
++    try {
++      scenario.onActivity { activity ->
++        player = ExoPlayer.Builder(activity).build().apply {
++          setVideoFrameMetadataListener { presentationTimeUs, _, _, _ -> frameUs.set(presentationTimeUs) }
++          activity.playerView.player = this
++          setMediaSource(buildExpoVideoMediaSource(activity, cached))
++          prepare()
++        }
++      }
++      awaitReady(player!!)
++      for ((index, position) in listOf(3000L, 1000L, 6000L, 2000L, 7900L, 0L).withIndex()) {
++        val started = SystemClock.elapsedRealtime()
++        instrumentation.runOnMainSync { player!!.playWhenReady = index % 2 == 0; player!!.seekTo(position) }
++        awaitReady(player!!)
++        val deadline = SystemClock.elapsedRealtime() + 10_000
++        while (kotlin.math.abs(frameUs.get() / 1000 - position) > 500 && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(10)
++        assertTrue("No decoded frame near $position; last=${frameUs.get()}", kotlin.math.abs(frameUs.get() / 1000 - position) <= 500)
++        Log.i("ReaderPlaybackProof", "videoSeekMs=$position frameMs=${SystemClock.elapsedRealtime() - started} upstreamRequests=${ranges.size - requests}")
++      }
++      assertEquals(requests, ranges.size)
++      scenario.onActivity { activity ->
++        player!!.pause()
++        for (fullscreen in listOf(false, true)) {
++          activity.playerView.applyReaderControls(fullscreen)
++          activity.playerView.showController()
++          val button = activity.playerView.findViewById<android.widget.ImageButton>(androidx.media3.ui.R.id.exo_play_pause)
++          val density = activity.resources.displayMetrics.density
++          assertEquals((56 * density).toInt(), button.layoutParams.width)
++          val expectedIcon = ((if (fullscreen) 48 else 40) * density).toInt()
++          assertTrue(kotlin.math.abs(expectedIcon - (button.layoutParams.width - button.paddingLeft - button.paddingRight)) <= 1)
++          assertNotNull(button.contentDescription)
++        }
++        activity.playerView.applyReaderControls(false)
++      }
++      instrumentation.waitForIdleSync()
++      val bitmap = instrumentation.uiAutomation.takeScreenshot()
++      try {
++        val target = java.io.File(context.getExternalFilesDir(null), "reader-video-controls.png")
++        target.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
++      } finally { bitmap.recycle() }
++    } finally {
++      instrumentation.runOnMainSync { player?.release() }
++      scenario.close()
++    }
++  }
++
++  @Test fun realPlayerSeeksWithinDownloadedAudioWithoutNewRequests() {
++    val cached = source()
++    read(cached, 0, bytes.size.toLong())
++    val requests = ranges.size
++    var player: ExoPlayer? = null
++    try {
++      instrumentation.runOnMainSync {
++        player = ExoPlayer.Builder(context).build().apply {
++          setMediaSource(buildExpoVideoMediaSource(context, cached))
++          prepare()
++        }
++      }
++      awaitReady(player!!)
++      for ((index, position) in listOf(3000L, 1000L, 6000L, 2000L, 7900L, 0L).withIndex()) {
++        val started = SystemClock.elapsedRealtime()
++        instrumentation.runOnMainSync { player!!.playWhenReady = index % 2 == 0; player!!.seekTo(position) }
++        awaitReady(player!!)
++        instrumentation.runOnMainSync { assertTrue(kotlin.math.abs(player!!.currentPosition - position) < 1000L) }
++        Log.i("ReaderPlaybackProof", "seekMs=$position readyMs=${SystemClock.elapsedRealtime() - started}")
++      }
++      assertEquals(requests, ranges.size)
++    } finally { instrumentation.runOnMainSync { player?.release() } }
++  }
++
++  private fun awaitReady(player: ExoPlayer) {
++    val ready = CountDownLatch(1)
++    var error: Exception? = null
++    val listener = object : Player.Listener {
++      override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_READY) ready.countDown() }
++      override fun onPlayerError(failure: androidx.media3.common.PlaybackException) { error = failure; ready.countDown() }
++    }
++    instrumentation.runOnMainSync {
++      player.addListener(listener)
++      if (player.playbackState == Player.STATE_READY) ready.countDown()
++    }
++    try { assertTrue("Player did not become ready", ready.await(15, TimeUnit.SECONDS)); error?.let { throw it } }
++    finally { instrumentation.runOnMainSync { player.removeListener(listener) } }
++  }
++
++  private fun wav(): ByteArray {
++    val samples = 8000 * 8
++    return ByteBuffer.allocate(44 + samples * 2).order(ByteOrder.LITTLE_ENDIAN).apply {
++      put("RIFF".toByteArray()); putInt(36 + samples * 2); put("WAVEfmt ".toByteArray())
++      putInt(16); putShort(1); putShort(1); putInt(8000); putInt(16000); putShort(2); putShort(16)
++      put("data".toByteArray()); putInt(samples * 2)
++      repeat(samples) { putShort(0) }
++    }.array()
++  }
++
++  private fun mp4(): ByteArray {
++    val file = java.io.File(context.cacheDir, "reader-playback-fixture.mp4")
++    val codec = MediaCodec.createEncoderByType("video/avc")
++    val muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
++    var muxing = false
++    try {
++      codec.configure(MediaFormat.createVideoFormat("video/avc", 160, 96).apply {
++        setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
++        setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
++        setInteger(MediaFormat.KEY_FRAME_RATE, 10)
++        setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
++      }, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
++      codec.start()
++      var frame = 0
++      var track = -1
++      val info = MediaCodec.BufferInfo()
++      val deadline = SystemClock.elapsedRealtime() + 30_000
++      while (SystemClock.elapsedRealtime() < deadline) {
++        if (frame <= 80) {
++          val inputIndex = codec.dequeueInputBuffer(10_000)
++          if (inputIndex >= 0) {
++            val data = ByteArray(160 * 96 * 3 / 2) { 128.toByte() }
++            java.util.Arrays.fill(data, 0, 160 * 96, (32 + frame * 2).toByte())
++            codec.getInputBuffer(inputIndex)!!.put(data)
++            codec.queueInputBuffer(inputIndex, 0, if (frame == 80) 0 else data.size, frame * 100_000L,
++              if (frame == 80) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0)
++            frame++
++          }
++        }
++        val index = codec.dequeueOutputBuffer(info, 10_000)
++        if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
++          track = muxer.addTrack(codec.outputFormat); muxer.start(); muxing = true
++        } else if (index >= 0) {
++          if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) muxer.writeSampleData(track, codec.getOutputBuffer(index)!!, info)
++          codec.releaseOutputBuffer(index, false)
++          if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
++        }
++      }
++      check(muxing && frame == 81) { "Synthetic MP4 encoder did not finish" }
++      muxer.stop(); muxing = false
++      return file.readBytes()
++    } finally {
++      codec.stop(); codec.release()
++      if (muxing) muxer.stop()
++      muxer.release(); file.delete()
++    }
++  }
++}
+diff --git a/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackTestActivity.kt b/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackTestActivity.kt
+new file mode 100644
+index 0000000..b77e1bf
+--- /dev/null
++++ b/node_modules/expo-video/android/src/androidTest/java/expo/modules/video/ReaderPlaybackTestActivity.kt
+@@ -0,0 +1,16 @@
++package expo.modules.video
++
++import android.app.Activity
++import android.os.Bundle
++import androidx.media3.ui.PlayerView
++
++@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
++class ReaderPlaybackTestActivity : Activity() {
++  lateinit var playerView: PlayerView
++  override fun onCreate(state: Bundle?) {
++    super.onCreate(state)
++    playerView = layoutInflater.inflate(R.layout.texture_player_view, null) as PlayerView
++    playerView.applyReaderControls(false)
++    setContentView(playerView)
++  }
++}
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
-index 45d3d7b..61363cf 100644
+index 45d3d7b..4467624 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/FullscreenPlayerActivity.kt
-@@ -11,7 +11,6 @@ import android.view.View
+@@ -8,10 +8,14 @@ import android.os.Bundle
+ import android.content.Context
+ import android.util.Log
+ import android.view.View
++import android.view.TextureView
++import android.widget.ImageView
++import android.widget.FrameLayout
++import androidx.media3.common.Player
++import androidx.media3.common.PlaybackException
  import android.view.accessibility.CaptioningManager
  import android.view.WindowInsets
  import android.view.WindowInsetsController
@@ -10,7 +389,122 @@ index 45d3d7b..61363cf 100644
  import androidx.media3.ui.PlayerView
  import expo.modules.kotlin.exception.CodedException
  import expo.modules.video.listeners.VideoManagerListener
-@@ -200,9 +199,7 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+@@ -38,9 +42,33 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+   private lateinit var options: FullscreenOptions
+   private var orientationHelper: FullscreenActivityOrientationHelper? = null
+   private var captioningChangeListener: CaptioningManager.CaptioningChangeListener? = null
++  private var transitionFrame: ImageView? = null
++  private val transitionListener = object : Player.Listener {
++    override fun onRenderedFirstFrame() {
++      videoPlayer?.player?.removeListener(this)
++      // The decoder callback precedes composition; keep the last frame through that draw.
++      transitionFrame?.postOnAnimation { transitionFrame?.postOnAnimation { clearTransitionFrame() } }
++    }
++
++    override fun onPlayerError(error: PlaybackException) {
++      clearTransitionFrame()
++    }
++  }
++
++  private fun clearTransitionFrame() {
++    transitionFrame?.let {
++      playerView.overlayFrameLayout?.removeView(it)
++      it.setImageDrawable(null)
++    }
++    transitionFrame = null
++  }
+ 
+   override fun onCreate(savedInstanceState: Bundle?) {
+     super.onCreate(savedInstanceState)
++    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
++      overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
++      overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
++    }
+ 
+     try {
+       videoViewId = intent.getStringExtra(VideoManager.INTENT_PLAYER_KEY)
+@@ -78,9 +106,20 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+     setContentView(R.layout.fullscreen_player_activity)
+     mContentView = findViewById(R.id.enclosing_layout)
+     playerView = findViewById(R.id.player_view)
++    playerView.setKeepContentOnPlayerReset(true)
+     requestedOrientation = options.orientation.toActivityOrientation()
+ 
+     videoPlayer = videoView.videoPlayer
++    (videoView.playerView.videoSurfaceView as? TextureView)?.takeUnless { videoView.shouldHideSurfaceView }?.bitmap?.let { bitmap ->
++      transitionFrame = ImageView(this).apply {
++        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
++        scaleType = ImageView.ScaleType.FIT_CENTER
++        setImageBitmap(bitmap)
++      }
++      playerView.overlayFrameLayout?.addView(transitionFrame, FrameLayout.LayoutParams(-1, -1))
++      videoPlayer?.player?.addListener(transitionListener)
++    }
++    videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
+     videoPlayer?.player?.let {
+       PlayerView.switchTargetView(it, videoView.playerView, playerView)
+       videoPlayer?.hasBeenDisconnectedFromVideoView() // The video player is disconnected. We are only using the ExoPlayer it contained
+@@ -121,16 +160,21 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+   }
+ 
+   override fun finish() {
+-    super.finish()
+     didFinish = true
+     videoViewId?.let {
+       try {
+-        VideoManager.getVideoView(it).attachPlayer()
++        val inlineView = VideoManager.getVideoView(it)
++        if (::playerView.isInitialized) {
++          videoPlayer?.player?.let { player -> PlayerView.switchTargetView(player, playerView, inlineView.playerView) }
++        }
++        inlineView.attachPlayer()
+       } catch (e: VideoViewNotFoundException) {
+         Log.w("ExpoVideo", "VideoView $it already unmounted when finishing fullscreen — skipping attachPlayer")
+       }
+     }
+ 
++    super.finish()
++
+     // Disable the exit transition
+     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+       overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+@@ -141,6 +185,7 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+   }
+ 
+   override fun onResume() {
++    videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
+     orientationHelper?.startOrientationEventListener()
+     playerView.useController = true
+     // Reconfigure subtitles when resuming (handles returning from settings)
+@@ -149,8 +194,9 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+   }
+ 
+   override fun onPause() {
++    if (!didFinish) videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true, false))
+     if (videoPlayer?.staysActiveInBackground != true && !didFinish) {
+-      wasAutoPaused = videoPlayer?.player?.isPlaying == true
++      wasAutoPaused = videoPlayer?.player?.playWhenReady == true
+       if (wasAutoPaused) {
+         playerView.useController = false
+         videoPlayer?.player?.pause()
+@@ -171,6 +217,8 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+   }
+ 
+   override fun onDestroy() {
++    videoPlayer?.player?.removeListener(transitionListener)
++    clearTransitionFrame()
+     super.onDestroy()
+ 
+     // Clean up captioning change listener
+@@ -183,6 +231,7 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
+     if (::videoView.isInitialized) {
+       videoView.exitFullscreen()
+     }
++    videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(false))
+     VideoManager.unregisterListener(this)
+     videoViewId?.let { VideoManager.unregisterFullscreenPlayerActivity(it) }
+     orientationHelper?.stopOrientationEventListener()
+@@ -200,9 +249,7 @@ class FullscreenPlayerActivity : Activity(), VideoManagerListener {
  
    private fun setupFullscreenButton() {
      playerView.setFullscreenButtonClickListener { finish() }
@@ -22,15 +516,38 @@ index 45d3d7b..61363cf 100644
  
    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration?) {
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
-index 235844e..e0ca1b9 100644
+index 235844e..20234f3 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/PlayerViewExtension.kt
-@@ -35,6 +35,19 @@ internal fun PlayerView.setFullscreenButtonVisibility(visible: Boolean) {
+@@ -4,6 +4,21 @@ import android.graphics.Color
+ import androidx.media3.ui.DefaultTimeBar
+ import androidx.media3.ui.PlayerView
+ 
++@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
++internal fun PlayerView.applyReaderControls(fullscreen: Boolean) {
++  val density = resources.displayMetrics.density
++  val button = findViewById<android.widget.ImageButton>(androidx.media3.ui.R.id.exo_play_pause)
++  val target = (56 * density).toInt()
++  val padding = (((56 - if (fullscreen) 48 else 40) / 2) * density).toInt()
++  button?.let {
++    it.layoutParams = it.layoutParams.apply { width = target; height = target }
++    it.setPadding(padding, padding, padding, padding)
++    it.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
++  }
++  findViewById<android.view.View>(androidx.media3.ui.R.id.exo_controls_background)
++    ?.setBackgroundColor(0x66000000)
++}
++
+ @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+ internal fun PlayerView.applyRequiresLinearPlayback(requireLinearPlayback: Boolean) {
+   setShowFastForwardButton(!requireLinearPlayback)
+@@ -35,6 +50,20 @@ internal fun PlayerView.setFullscreenButtonVisibility(visible: Boolean) {
    }
  }
  
 +@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 +internal fun PlayerView.syncFullscreenButtonState(isFullscreen: Boolean) {
++  applyReaderControls(isFullscreen)
 +  val fullscreenButton = findViewById<android.widget.ImageButton>(androidx.media3.ui.R.id.exo_fullscreen) ?: return
 +  fullscreenButton.setImageResource(
 +    if (isFullscreen) androidx.media3.ui.R.drawable.exo_icon_fullscreen_exit
@@ -45,8 +562,30 @@ index 235844e..e0ca1b9 100644
  @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
  internal fun PlayerView.setSettingsButtonVisibility(visible: Boolean) {
    val settingsButton = findViewById<android.widget.ImageButton>(androidx.media3.ui.R.id.exo_settings)
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoCache.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoCache.kt
+index b880e87..0caf646 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoCache.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoCache.kt
+@@ -18,7 +18,7 @@ private const val SHARED_PREFERENCES_NAME = "ExpoVideoCache"
+ private const val CACHE_SIZE_KEY = "cacheSize"
+ private const val VIDEO_CACHE_PARENT_DIR = "ExpoVideoCache"
+ private const val VIDEO_CACHE_DIR_KEY = "cacheDir"
+-private const val DEFAULT_CACHE_SIZE = 1024 * 1024 * 1024L // 1GB
++private const val DEFAULT_CACHE_SIZE = 256 * 1024 * 1024L
+ 
+ @UnstableApi
+ class VideoCache(context: Context) {
+@@ -35,7 +35,7 @@ class VideoCache(context: Context) {
+ 
+   // Function that gets the cache size from shared preferences
+   private fun getMaxCacheSize(): Long {
+-    return sharedPreferences.getLong(CACHE_SIZE_KEY, DEFAULT_CACHE_SIZE)
++    return sharedPreferences.getLong(CACHE_SIZE_KEY, DEFAULT_CACHE_SIZE).coerceIn(1L, DEFAULT_CACHE_SIZE)
+   }
+ 
+   fun release() {
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
-index 58c8b10..fbb5597 100644
+index 58c8b10..ff81b7e 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/VideoView.kt
 @@ -10,7 +10,6 @@ import android.view.LayoutInflater
@@ -57,7 +596,31 @@ index 58c8b10..fbb5597 100644
  import androidx.media3.common.Tracks
  import androidx.media3.ui.PlayerView
  import com.facebook.react.bridge.ReactContext
-@@ -241,8 +240,7 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+@@ -185,6 +184,8 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+   }
+ 
+   init {
++    playerView.applyReaderControls(false)
++    playerView.setKeepContentOnPlayerReset(true)
+     VideoManager.registerVideoView(this)
+     playerView.setFullscreenButtonClickListener { enterFullscreen() }
+     // The prop `useNativeControls` prop is sometimes applied after the view is created, and sometimes there is a visible
+@@ -222,12 +223,11 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
+     intent.putExtra(FullscreenPlayerActivity.INTENT_FULLSCREEN_OPTIONS_KEY, fullscreenOptions)
+     // Set before starting the activity to avoid entering PiP unintentionally
+     isInFullscreen = true
++    videoPlayer?.sendEvent(expo.modules.video.player.PlayerEvent.FullscreenChanged(true))
+     currentActivity.startActivity(intent)
+ 
+     // Disable the enter transition
+-    if (Build.VERSION.SDK_INT >= 34) {
+-      currentActivity.overrideActivityTransition(Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+-    } else {
++    if (Build.VERSION.SDK_INT < 34) {
+       @Suppress("DEPRECATION")
+       currentActivity.overridePendingTransition(0, 0)
+     }
+@@ -241,8 +241,7 @@ open class VideoView(context: Context, appContext: AppContext, useTextureView: B
  
    fun exitFullscreen() {
      // Fullscreen uses a different PlayerView instance, because of that we need to manually update the non-fullscreen player icon after exiting
@@ -67,20 +630,106 @@ index 58c8b10..fbb5597 100644
      attachPlayer()
      onFullscreenExit(Unit)
      isInFullscreen = false
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/player/PlayerEvent.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/player/PlayerEvent.kt
+index 5fcf3e5..b84ef26 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/player/PlayerEvent.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/player/PlayerEvent.kt
+@@ -30,6 +30,10 @@ import expo.modules.video.records.VolumeChangedEventPayload
+ 
+ @OptIn(UnstableApi::class)
+ sealed class PlayerEvent {
++  data class FullscreenChanged(val fullscreen: Boolean, val active: Boolean = fullscreen) : PlayerEvent() {
++    override val name = "fullscreenChange"
++    override val jsEventPayload = expo.modules.video.records.FullscreenEventPayload(fullscreen, active)
++  }
+   open val name: String = ""
+   open val jsEventPayload: VideoEventPayload? = null
+   open val emitToJS: Boolean = true
+@@ -44,6 +48,16 @@ sealed class PlayerEvent {
+     override val jsEventPayload = IsPlayingEventPayload(isPlaying, oldIsPlaying)
+   }
+ 
++  data class PlayWhenReadyChanged(val playWhenReady: Boolean) : PlayerEvent() {
++    override val name = "playWhenReadyChange"
++    override val jsEventPayload = expo.modules.video.records.PlayWhenReadyEventPayload(playWhenReady)
++  }
++
++  data class PositionDiscontinuity(val currentTime: Double) : PlayerEvent() {
++    override val name = "positionDiscontinuity"
++    override val jsEventPayload = expo.modules.video.records.PositionDiscontinuityEventPayload(currentTime)
++  }
++
+   data class VolumeChanged(val volume: Float, val oldVolume: Float?) : PlayerEvent() {
+     override val name = "volumeChange"
+     override val jsEventPayload = VolumeChangedEventPayload(volume, oldVolume)
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/player/VideoPlayer.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
+index 8bae522..133ff77 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
+@@ -188,9 +188,6 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+       if (player.currentMediaItem == null) {
+         return -1.0
+       }
+-      if (player.playbackState == STATE_BUFFERING) {
+-        return 0.0
+-      }
+       return player.bufferedPosition / 1000.0
+     }
+ 
+@@ -233,6 +230,14 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+   var keepScreenOnWhilePlaying by VideoPlayerKeepAwake(this, appContext)
+ 
+   private val playerListener = object : Player.Listener {
++    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
++      sendEvent(PlayerEvent.PlayWhenReadyChanged(playWhenReady))
++    }
++
++    override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
++      sendEvent(PlayerEvent.PositionDiscontinuity(newPosition.positionMs / 1000.0))
++    }
++
+     override fun onIsPlayingChanged(isPlaying: Boolean) {
+       this@VideoPlayer.playing = isPlaying
+     }
+@@ -518,7 +523,7 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+     }
+   }
+ 
+-  private fun sendEvent(event: PlayerEvent) {
++  internal fun sendEvent(event: PlayerEvent) {
+     val listenersSnapshot = synchronized(listeners) {
+       listeners.mapNotNull { it.get() }
+     }
+diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/records/VideoEventPayloads.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/records/VideoEventPayloads.kt
+index 2cbc397..a0d80f1 100644
+--- a/node_modules/expo-video/android/src/main/java/expo/modules/video/records/VideoEventPayloads.kt
++++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/records/VideoEventPayloads.kt
+@@ -6,6 +6,10 @@ import expo.modules.video.enums.PlayerStatus
+ import java.io.Serializable
+ 
+ interface VideoEventPayload : Record, Serializable
++class FullscreenEventPayload(@Field val fullscreen: Boolean, @Field val active: Boolean) : VideoEventPayload
++
++class PlayWhenReadyEventPayload(@Field val playWhenReady: Boolean) : VideoEventPayload
++class PositionDiscontinuityEventPayload(@Field val currentTime: Double) : VideoEventPayload
+ 
+ class StatusChangedEventPayload(
+   @Field val status: PlayerStatus,
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
-index 460fb7b..9e329a7 100644
+index 460fb7b..a9fe39b 100644
 --- a/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
 +++ b/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
-@@ -13,7 +13,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+@@ -13,7 +13,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
  import androidx.media3.exoplayer.source.MediaSource
  import expo.modules.video.records.VideoSource
  import expo.modules.video.managers.VideoManager
 -import okhttp3.OkHttpClient
 +import com.facebook.react.modules.network.OkHttpClientProvider
++import java.security.MessageDigest
  
  @OptIn(UnstableApi::class)
  fun buildBaseDataSourceFactory(context: Context, videoSource: VideoSource): DataSource.Factory {
-@@ -26,7 +26,9 @@ fun buildBaseDataSourceFactory(context: Context, videoSource: VideoSource): Data
+@@ -26,7 +27,9 @@ fun buildBaseDataSourceFactory(context: Context, videoSource: VideoSource): Data
  
  @OptIn(UnstableApi::class)
  fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): OkHttpDataSource.Factory {
@@ -91,7 +740,7 @@ index 460fb7b..9e329a7 100644
  
    // If the application name has ANY non-ASCII characters, we need to strip them out. This is because using non-ASCII characters
    // in the User-Agent header can cause issues with getting the media to play.
-@@ -35,7 +37,7 @@ fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): Ok
+@@ -35,7 +38,7 @@ fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): Ok
    val defaultUserAgent = Util.getUserAgent(context, applicationName)
  
    return OkHttpDataSource.Factory(client).apply {
@@ -100,6 +749,37 @@ index 460fb7b..9e329a7 100644
      headers?.takeIf { it.isNotEmpty() }?.let {
        setDefaultRequestProperties(it)
      }
+@@ -48,11 +51,30 @@ fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): Ok
+ fun buildCacheDataSourceFactory(context: Context, videoSource: VideoSource): DataSource.Factory {
+   return CacheDataSource.Factory().apply {
+     setCache(VideoManager.cache.instance)
++    setCacheKeyFactory { dataSpec -> forumVideoCacheKey(videoSource, dataSpec.uri.toString()) }
+     setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+     setUpstreamDataSourceFactory(buildBaseDataSourceFactory(context, videoSource))
+   }
+ }
+ 
++// Hash the complete representation identity; transport rotation does not change the resource.
++fun forumVideoCacheKey(videoSource: VideoSource, resourceUri: String): String {
++  val digest = MessageDigest.getInstance("SHA-256")
++  fun field(value: String) {
++    val bytes = value.toByteArray(Charsets.UTF_8)
++    digest.update(java.nio.ByteBuffer.allocate(4).putInt(bytes.size).array())
++    digest.update(bytes)
++  }
++  field("wz-media-v1")
++  field(resourceUri)
++  field(videoSource.contentType.value)
++  videoSource.headers.orEmpty().entries
++    .filterNot { it.key.equals(READ_NETWORK_GENERATION_HEADER, ignoreCase = true) }
++    .sortedBy { it.key.lowercase(java.util.Locale.ROOT) }
++    .forEach { field(it.key.lowercase(java.util.Locale.ROOT)); field(it.value) }
++  return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
++}
++
+ fun buildMediaSourceFactory(context: Context, dataSourceFactory: DataSource.Factory): MediaSource.Factory {
+   return DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory)
+ }
 diff --git a/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/ReadNetworkVideoClientRegistry.kt b/node_modules/expo-video/android/src/main/java/expo/modules/video/utils/ReadNetworkVideoClientRegistry.kt
 new file mode 100644
 index 0000000..6910017
@@ -129,3 +809,108 @@ index 0000000..6910017
 +    return clients[generation]
 +  }
 +}
+diff --git a/node_modules/expo-video/android/src/main/res/drawable/wz_media_pause.xml b/node_modules/expo-video/android/src/main/res/drawable/wz_media_pause.xml
+new file mode 100644
+index 0000000..ca64e26
+--- /dev/null
++++ b/node_modules/expo-video/android/src/main/res/drawable/wz_media_pause.xml
+@@ -0,0 +1,4 @@
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++  android:width="28dp" android:height="28dp" android:viewportWidth="24" android:viewportHeight="24">
++  <path android:fillColor="#FFFFFFFF" android:pathData="M6,5 H10 V19 H6 Z M14,5 H18 V19 H14 Z" />
++</vector>
+diff --git a/node_modules/expo-video/android/src/main/res/drawable/wz_media_play.xml b/node_modules/expo-video/android/src/main/res/drawable/wz_media_play.xml
+new file mode 100644
+index 0000000..bf7f83f
+--- /dev/null
++++ b/node_modules/expo-video/android/src/main/res/drawable/wz_media_play.xml
+@@ -0,0 +1,4 @@
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++  android:width="28dp" android:height="28dp" android:viewportWidth="24" android:viewportHeight="24">
++  <path android:fillColor="#FFFFFFFF" android:pathData="M8,5 L19,12 L8,19 Z" />
++</vector>
+diff --git a/node_modules/expo-video/android/src/main/res/layout/fullscreen_player_activity.xml b/node_modules/expo-video/android/src/main/res/layout/fullscreen_player_activity.xml
+index f0d98a7..0bb3ba7 100644
+--- a/node_modules/expo-video/android/src/main/res/layout/fullscreen_player_activity.xml
++++ b/node_modules/expo-video/android/src/main/res/layout/fullscreen_player_activity.xml
+@@ -15,6 +15,9 @@
+     android:layout_height="match_parent"
+     android:background="@android:color/black"
+     android:keepScreenOn="true"
++    app:surface_type="texture_view"
++    app:play_icon="@drawable/wz_media_play"
++    app:pause_icon="@drawable/wz_media_pause"
+     app:use_controller="true" />
+ 
+ </FrameLayout>
+diff --git a/node_modules/expo-video/android/src/main/res/layout/surface_player_view.xml b/node_modules/expo-video/android/src/main/res/layout/surface_player_view.xml
+index 51a7571..0df4888 100644
+--- a/node_modules/expo-video/android/src/main/res/layout/surface_player_view.xml
++++ b/node_modules/expo-video/android/src/main/res/layout/surface_player_view.xml
+@@ -4,4 +4,6 @@
+   android:id="@+id/surface_player_view"
+   android:layout_width="match_parent"
+   android:layout_height="match_parent"
++  app:play_icon="@drawable/wz_media_play"
++  app:pause_icon="@drawable/wz_media_pause"
+   app:surface_type="surface_view" />
+diff --git a/node_modules/expo-video/android/src/main/res/layout/texture_player_view.xml b/node_modules/expo-video/android/src/main/res/layout/texture_player_view.xml
+index d5199a9..6231620 100644
+--- a/node_modules/expo-video/android/src/main/res/layout/texture_player_view.xml
++++ b/node_modules/expo-video/android/src/main/res/layout/texture_player_view.xml
+@@ -4,4 +4,6 @@
+   android:id="@+id/texture_player_view"
+   android:layout_width="match_parent"
+   android:layout_height="match_parent"
++  app:play_icon="@drawable/wz_media_play"
++  app:pause_icon="@drawable/wz_media_pause"
+   app:surface_type="texture_view" />
+diff --git a/node_modules/expo-video/android/src/main/res/values/styles.xml b/node_modules/expo-video/android/src/main/res/values/styles.xml
+index aea6151..a80f686 100644
+--- a/node_modules/expo-video/android/src/main/res/values/styles.xml
++++ b/node_modules/expo-video/android/src/main/res/values/styles.xml
+@@ -1,5 +1,7 @@
+ <resources>
+   <style name="Fullscreen" parent="Theme.AppCompat.Light.NoActionBar">
++    <item name="android:windowBackground">@android:color/black</item>
++    <item name="android:windowIsTranslucent">true</item>
+     <item name="android:statusBarColor">@android:color/transparent</item>
+     <item name="android:windowActionBar">false</item>
+     <item name="android:windowTranslucentStatus">true</item>
+diff --git a/node_modules/expo-video/build/VideoPlayerEvents.types.d.ts b/node_modules/expo-video/build/VideoPlayerEvents.types.d.ts
+index 2de2f7b..8712f22 100644
+--- a/node_modules/expo-video/build/VideoPlayerEvents.types.d.ts
++++ b/node_modules/expo-video/build/VideoPlayerEvents.types.d.ts
+@@ -3,6 +3,9 @@ import type { PlayerError, SubtitleTrack, VideoPlayerStatus, VideoSource, VideoT
+  * Handlers for events which can be emitted by the player.
+  */
+ export type VideoPlayerEvents = {
++    fullscreenChange(payload: { fullscreen: boolean; active?: boolean }): void;
++    playWhenReadyChange(payload: { playWhenReady: boolean }): void;
++    positionDiscontinuity(payload: { currentTime: number }): void;
+     /**
+      * Handler for an event emitted when the status of the player changes.
+      */
+@@ -275,4 +278,4 @@ export type IsExternalPlaybackActiveChangeEventPayload = {
+     oldIsExternalPlaybackActive?: boolean;
+ };
+ export {};
+-//# sourceMappingURL=VideoPlayerEvents.types.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=VideoPlayerEvents.types.d.ts.map
+diff --git a/node_modules/expo-video/src/VideoPlayerEvents.types.ts b/node_modules/expo-video/src/VideoPlayerEvents.types.ts
+index 96bff11..a3f1e76 100644
+--- a/node_modules/expo-video/src/VideoPlayerEvents.types.ts
++++ b/node_modules/expo-video/src/VideoPlayerEvents.types.ts
+@@ -11,6 +11,11 @@ import type {
+  * Handlers for events which can be emitted by the player.
+  */
+ export type VideoPlayerEvents = {
++  fullscreenChange(payload: { fullscreen: boolean; active?: boolean }): void;
++  /** Android playback intent, including native controls while buffering. */
++  playWhenReadyChange(payload: { playWhenReady: boolean }): void;
++  /** Android seek/discontinuity: resets this buffering interval's progress baseline. */
++  positionDiscontinuity(payload: { currentTime: number }): void;
+   /**
+    * Handler for an event emitted when the status of the player changes.
+    */

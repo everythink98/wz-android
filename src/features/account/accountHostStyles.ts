@@ -38,6 +38,24 @@ export function createAccountHostStyles(theme: ReaderTheme, settings: ReaderSett
       fontSize: 12,
       lineHeight: 17
     },
+    recoveryMessage: {
+      padding: 20,
+      gap: 12
+    },
+    endedChallengeWebView: {
+      flex: 1,
+      opacity: 0
+    },
+    challengeEnded: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+      padding: 24,
+      justifyContent: 'center',
+      backgroundColor: theme.surface
+    },
     webViewErrorPlaceholder: {
       flex: 1,
       backgroundColor: theme.surface

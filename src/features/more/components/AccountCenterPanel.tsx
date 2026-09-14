@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { MoreScreenStyles } from '../styles';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
@@ -374,6 +375,7 @@ function CredentialEditor({
               style={styles.input}
               value={account}
               onFocus={() => setKeyboardAvoidingEnabled(true)}
+              onChange={recordUserInteraction}
               onChangeText={setAccount}
             />
           </View>
@@ -390,6 +392,7 @@ function CredentialEditor({
               style={styles.input}
               value={password}
               onFocus={() => setKeyboardAvoidingEnabled(true)}
+              onChange={recordUserInteraction}
               onChangeText={setPassword}
             />
           </View>

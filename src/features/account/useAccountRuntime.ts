@@ -1,4 +1,4 @@
-import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { WebView } from 'react-native-webview';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
@@ -33,6 +33,7 @@ import type {
   AccountReconcileResult,
   CredentialSite,
   LinuxDoReadRecovery,
+  LinuxDoReadingRecovery,
   LinuxDoReadResumeOutcome,
   RequestAccountRecheck
 } from '@/domain/session/sessionContracts';
@@ -126,6 +127,23 @@ export function useAccountRuntime({
   const [linuxDoWebViewError, setLinuxDoWebViewError] = useState('');
   const [linuxDoWebViewKey, setLinuxDoWebViewKey] = useState(0);
   const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);
+  const [recoveryPanel, setRecoveryPanel] = useState<import('./useVerificationController').LinuxDoRecoveryPanel>({
+    phase: 'idle',
+    dedicated: false,
+    results: []
+  });
+  const mountedLinuxDoWebViewRef = useRef(false);
+  const linuxDoUnmountWaitersRef = useRef<(() => void)[]>([]);
+  useLayoutEffect(() => {
+    mountedLinuxDoWebViewRef.current = mountLinuxDoWebView;
+    if (!mountLinuxDoWebView) linuxDoUnmountWaitersRef.current.splice(0).forEach((resolve) => resolve());
+  }, [mountLinuxDoWebView]);
+  useEffect(
+    () => () => {
+      linuxDoUnmountWaitersRef.current.splice(0).forEach((resolve) => resolve());
+    },
+    []
+  );
   const [checking, setChecking] = useState(false);
   const [yaohuoLoginPrompt, setYaohuoLoginPrompt] = useState('');
   const handleCredentialLoginWebViewFailure = useCallback(
@@ -143,6 +161,7 @@ export function useAccountRuntime({
   const showLoginPanel = visibleAuthSurface === 'nodeseek-login';
   const showYaohuoLoginPanel = visibleAuthSurface === 'yaohuo-login';
   const showLinuxDoPanel = visibleAuthSurface === 'linuxdo-login';
+  const linuxDoPanelVisible = showLinuxDoPanel || recoveryPanel.phase !== 'idle';
   const showNodeImagePanel = visibleAuthSurface === 'nodeimage-auth';
   const authSurfaceVisible = useCallback(
     (surface: AuthSurface) => isAuthSurfaceVisible(authSurfaceRegistryRef.current, surface),
@@ -203,6 +222,10 @@ export function useAccountRuntime({
     },
     [readSessionRuntimeSnapshot]
   );
+  const linuxDoCookieHandoffRef = useRef<Promise<void>>(Promise.resolve());
+  const verificationAppActiveRef = useRef(appActive);
+  useCommitRefValue(verificationAppActiveRef, appActive);
+  const readingVerificationRef = useRef<(recovery: LinuxDoReadingRecovery) => void>(() => undefined);
   const finishAuthSurfaceTicket = useCallback(
     (surface: AuthSurface, reason: AuthSurfaceCloseReason) => {
       const wasVisible = isAuthSurfaceVisible(authSurfaceRegistryRef.current, surface);
@@ -217,6 +240,7 @@ export function useAccountRuntime({
               ticket?.generation || authSurfaceRegistryRef.current.generation
             )
           : Promise.resolve();
+      if (surface === 'linuxdo-login') linuxDoCookieHandoffRef.current = handoff;
       if (!ticket?.shouldReconcile) {
         void handoff.catch(() => notify('登录会话交接未完成，请刷新账号页面重试。'));
         return null;
@@ -305,12 +329,13 @@ export function useAccountRuntime({
   );
   const reading = useLinuxDoReadingRuntime({
     appActive,
-    verificationVisible: showLinuxDoPanel,
+    verificationVisible: linuxDoPanelVisible,
     fetcher: session.forumFetchWithWebViewFallback,
     snapshot: linuxDoReadingSnapshot,
     userAgent: getLinuxDoUserAgent,
     onSessionExpired: linuxDoReadingExpired,
-    requestAccountRecheck
+    requestAccountRecheck,
+    requestVerification: (recovery) => readingVerificationRef.current(recovery)
   });
   const readGateway = useSessionReadGateway({
     reading,
@@ -472,7 +497,22 @@ export function useAccountRuntime({
     return setLinuxDoCookieResponseBarrier(true, 'surface-open', authSurfaceRegistryRef.current.generation);
   }, [cancelLinuxDoBrowserHandoff]);
   const verification = useVerificationController({
-    canOpenLinuxDoPanel: () => enabledSessionSourceSet.has('linuxdo'),
+    onRecoveryStateChanged: setRecoveryPanel,
+    getRecoveryScope: () => {
+      const snapshot = readSessionRuntimeSnapshot('linuxdo');
+      return JSON.stringify([
+        snapshot.identityKey,
+        snapshot.identityTrust,
+        snapshot.sessionEpoch,
+        snapshot.sourceEnabled
+      ]);
+    },
+    awaitLinuxDoWebViewUnmount: () =>
+      mountedLinuxDoWebViewRef.current
+        ? new Promise<void>((resolve) => linuxDoUnmountWaitersRef.current.push(resolve))
+        : Promise.resolve(),
+    awaitLinuxDoCookieHandoff: () => linuxDoCookieHandoffRef.current,
+    canOpenLinuxDoPanel: () => verificationAppActiveRef.current && enabledSourcesRef.current.includes('linuxdo'),
     changeNodeSeekLoginPanel,
     checkingRequestIdRef,
     closeYaohuoLoginPanel,
@@ -488,6 +528,11 @@ export function useAccountRuntime({
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     onLinuxDoSurfaceClosed: ({ authoritativeResult, reason }) => {
       finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason);
+      if (authoritativeResult)
+        void linuxDoCookieHandoffRef.current.then(
+          () => reading.verified(),
+          () => undefined
+        );
     },
     onLinuxDoSurfaceOpened: handleLinuxDoSurfaceOpened,
     prepareLinuxDoCookieResponseBarrier,
@@ -500,7 +545,23 @@ export function useAccountRuntime({
     updateLinuxDoSession: session.updateLinuxDoSession,
     updateNodeSeekSession: session.updateNodeSeekSession
   });
+  useCommitRefValue(readingVerificationRef, (recovery: LinuxDoReadingRecovery) => {
+    void verification.showLinuxDoVerification('阅读记录同步需要完成 Cloudflare 验证', recovery);
+  });
   const closeLinuxDoPanel = verification.closeLinuxDoPanel;
+  const recoveryIdentity = readSessionRuntimeSnapshot('linuxdo');
+  const recoveryScope = JSON.stringify([
+    recoveryIdentity.identityKey,
+    recoveryIdentity.identityTrust,
+    recoveryIdentity.sessionEpoch,
+    recoveryIdentity.sourceEnabled
+  ]);
+  const previousRecoveryScopeRef = useRef(recoveryScope);
+  useEffect(() => {
+    if (previousRecoveryScopeRef.current !== recoveryScope && recoveryPanel.phase !== 'idle')
+      closeLinuxDoPanel(true, 'navigation-away');
+    previousRecoveryScopeRef.current = recoveryScope;
+  }, [closeLinuxDoPanel, recoveryScope, recoveryPanel.phase]);
   const showNodeSeekVerification = verification.showNodeSeekVerification;
   const cancelLinuxDoCheckForInactiveApp = verification.cancelLinuxDoCheckForInactiveApp;
   const linuxDoSourceEnabled = enabledSessionSourceSet.has('linuxdo');
@@ -572,7 +633,7 @@ export function useAccountRuntime({
     nodeSeekLoginPanelRequestRef,
     notify,
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
-    linuxDoVerificationActive: showLinuxDoPanel,
+    linuxDoVerificationActive: linuxDoPanelVisible,
     linuxDoIdentityPending: readSessionRuntimeSnapshot('linuxdo').identityTrust !== 'confirmed',
     resetLinuxDoLevelState,
     resetLinuxDoWebView: verification.resetLinuxDoWebView,
@@ -678,6 +739,10 @@ export function useAccountRuntime({
     closeLinuxDoPanel(true, 'navigation-away');
   }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]);
   const closeTopmostSurface = useCallback(() => {
+    if (recoveryPanel.phase !== 'idle') {
+      closeLinuxDoPanel(true, 'hardware-back');
+      return 'linuxdo-panel-closed';
+    }
     const surface = authSurfaceRegistryRef.current.visible;
     if (!surface) return null;
     closeAuthSurface(surface, 'hardware-back');
@@ -685,7 +750,7 @@ export function useAccountRuntime({
     if (surface === 'nodeimage-auth') return 'image-auth-panel-closed';
     if (surface === 'yaohuo-login') return 'yaohuo-panel-closed';
     return 'linuxdo-panel-closed';
-  }, [closeAuthSurface]);
+  }, [closeAuthSurface, closeLinuxDoPanel, recoveryPanel.phase]);
 
   const readWritableSessionSnapshot = useCallback(
     (source: SessionSite): WritableSessionSnapshot => readSessionRuntimeSnapshot(source),
@@ -743,7 +808,8 @@ export function useAccountRuntime({
       nodeSeekWebViewUserAgent,
       setLoadingLoginPage,
       setLoadingYaohuoLoginPage,
-      showLinuxDoPanel,
+      showLinuxDoPanel: linuxDoPanelVisible,
+      recoveryPanel,
       showLoginPanel,
       showYaohuoLoginPanel,
       webViewRef,
@@ -798,12 +864,12 @@ export function useAccountRuntime({
       closePanels,
       closeTopmostSurface,
       element: hostElement,
-      linuxDoVerificationVisible: showLinuxDoPanel,
+      linuxDoVerificationVisible: linuxDoPanelVisible,
       showYaohuoLogin,
       requestNodeSeekVerification,
       showLinuxDoVerification: verification.showLinuxDoVerification,
       surfaces: {
-        linuxdo: showLinuxDoPanel,
+        linuxdo: linuxDoPanelVisible,
         nodeseek: showLoginPanel,
         yaohuo: showYaohuoLoginPanel
       }

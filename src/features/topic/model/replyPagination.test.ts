@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Reply, TopicDetail } from '@/domain/forum/models';
+import { replyKey } from '@/domain/forum/feed';
 import {
   firstReplyData,
   hasNextReplyPage,
@@ -103,14 +104,44 @@ describe('topic query pagination', () => {
       requestedOffset: (requestedPage - 1) * 10
     });
 
-    expect(
-      mergedReplyPages({
-        pages: [page([first], 1), page([second], 2)],
-        pageParams: [
-          { kind: 'cursor', page: 1, offset: 0 },
-          { kind: 'cursor', page: 2, offset: 10 }
-        ]
-      })
-    ).toEqual([first, second]);
+    const merged = mergedReplyPages({
+      pages: [page([first], 1), page([second], 2)],
+      pageParams: [
+        { kind: 'cursor', page: 1, offset: 0 },
+        { kind: 'cursor', page: 2, offset: 10 }
+      ]
+    });
+    expect(merged).toEqual([first, second]);
+    expect(new Set(merged.map(replyKey)).size).toBe(2);
   });
+
+  it.each(['prepend', 'append'] as const)(
+    'shows overlapping reply windows once after %s without changing cursors',
+    (direction) => {
+      const reply = (floor: number): Reply => ({
+        author: `author-${floor}`,
+        authorId: `${floor}`,
+        floor,
+        createdAt: '2026-09-14T00:00:00Z',
+        contentHtml: `<p>reply ${floor}</p>`
+      });
+      const page = (floors: number[], requestedPage: number): ReplyPage => ({
+        items: floors.map(reply),
+        completeness: 'complete',
+        currentPage: requestedPage,
+        requestedPage,
+        requestedOffset: null,
+        hasMore: true,
+        nextPage: requestedPage + 1
+      });
+      const older = page(direction === 'prepend' ? [2, 3, 4] : [4, 3, 2], 2);
+      const newer = page(direction === 'prepend' ? [4, 5, 6] : [6, 5, 4], 1);
+      const data = { pages: direction === 'prepend' ? [older, newer] : [newer, older], pageParams: [] };
+      const merged = mergedReplyPages(data);
+      expect(merged.map((reply) => reply.floor)).toEqual(direction === 'prepend' ? [2, 3, 4, 5, 6] : [6, 5, 4, 3, 2]);
+      expect(new Set(merged.map(replyKey)).size).toBe(merged.length);
+      expect(data.pages.map((page) => page.items.length)).toEqual([3, 3]);
+      expect(data.pages.map((page) => page.nextPage)).toEqual(direction === 'prepend' ? [3, 2] : [2, 3]);
+    }
+  );
 });

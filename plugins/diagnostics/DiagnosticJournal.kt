@@ -369,7 +369,7 @@ internal object DiagnosticJournal {
 
   private val networkEnums = mapOf(
       "operation" to setOf("install", "request", "rotate-read-runtime", "cookie-response", "cookie-request", "cookie-persist", "cookie-barrier"),
-      "cookieKind" to setOf("login", "session", "clearance", "connect", "other"),
+      "cookieKind" to setOf("login", "session", "clearance", "bot-management", "connect", "other"),
       "cookieAction" to setOf("set", "delete", "unknown"),
       "cookieLifetime" to setOf("session", "persistent", "expired", "unknown"),
       "cookieAccepted" to setOf("accepted", "rejected", "not_submitted", "pending"),
@@ -377,7 +377,7 @@ internal object DiagnosticJournal {
       "cookieTransport" to setOf("okhttp", "cronet", "webview"),
       "cookieBarrierReason" to setOf("startup", "source-change", "surface-open", "surface-close", "identity-change", "explicit-clear"),
       "cookieResult" to setOf("settled", "persisted", "flush_failed", "redirect_denied", "barrier_blocked", "epoch_changed", "callback_timeout", "pending_write", "absent", "applied", "source_denied", "stale", "canceled", "baseline_changed", "write_failed"),
-      "phase" to setOf("call-start", "image-lease-released", "image-call-failed", "response-body-end", "response-failed", "dns-start", "dns-end", "connect-start", "tls-start", "tls-end", "connect-end", "connect-failed", "connection-acquired", "connection-released", "response-start", "response-headers", "call-end", "call-failed", "call-canceled", "intent", "publish", "cancel", "drain", "finish"),
+      "phase" to setOf("request-headers-start", "request-headers-end", "request-failed", "connection-write-stalled", "call-start", "image-lease-released", "image-call-failed", "response-body-end", "response-failed", "dns-start", "dns-end", "connect-start", "tls-start", "tls-end", "connect-end", "connect-failed", "connection-acquired", "connection-released", "response-start", "response-headers", "call-end", "call-failed", "call-canceled", "intent", "publish", "cancel", "drain", "finish"),
       "source" to setOf("v2ex", "nodeseek", "linuxdo", "yaohuo", "anonymous"),
       "lane" to setOf("forum", "media"), "method" to setOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"),
       "addressFamily" to setOf("ipv4", "ipv6", "ipv4,ipv6", "unknown"),
@@ -390,13 +390,13 @@ internal object DiagnosticJournal {
       "imageContentType" to setOf("image", "svg", "html", "other", "unknown")
     )
   private val networkNumbers = setOf("surfaceGeneration", "generation", "previousGeneration", "elapsedMs", "queuedCount", "runningCount", "leaseCount", "cronetActiveCount", "status", "byteCount", "attempt", "cookieCount", "cookieRevision", "cookieIndex", "cookieEpoch", "requestCookieEpoch", "cookieWriteSequence")
-  private val networkIdentities = setOf("callId", "clientId", "poolId", "dispatcherId", "connectionId", "forumPoolId", "mediaPoolId", "imageClientId")
+  private val networkIdentities = setOf("userAgentHash", "callId", "clientId", "poolId", "dispatcherId", "connectionId", "forumPoolId", "mediaPoolId", "imageClientId")
 
-  private fun safeNetworkFields(fields: Map<String, Any>): Map<String, Any> {
+  internal fun safeNetworkFields(fields: Map<String, Any>): Map<String, Any> {
     val output = mutableMapOf<String, Any>()
     for ((key, value) in fields) {
       when {
-        value is Boolean && key in setOf("hasLoginCookie", "loginCookieChanged", "cookieBarrierBlocked") -> output[key] = value
+        value is Boolean && key in setOf("hasDiscoursePresent", "hasLoginCookie", "loginCookieChanged", "cookieBarrierBlocked", "hasCfClearance", "hasStoredCfClearance", "isCfClearanceCurrent", "didCfClearanceChange") -> output[key] = value
         value is String && networkEnums[key]?.contains(value) == true -> output[key] = value
         value is Number && key in networkNumbers && value.toDouble().isFinite() && value.toDouble() in 0.0..1_000_000_000.0 -> output[key] = value
         value is String && key in networkIdentities && value.matches(Regex("[0-9a-f]{1,8}")) -> output[key] = value

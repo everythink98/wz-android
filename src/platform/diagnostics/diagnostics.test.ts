@@ -30,6 +30,44 @@ function captureEvents() {
   return () => lines.map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+it('exports reading recovery correlation and challenge evidence without raw credentials', () => {
+  const events = captureEvents();
+  const fields = {
+    batchId: 7,
+    batchAgeMs: 1500,
+    attempt: 2,
+    readingRecoveryState: 'resuming',
+    isRecovery: true,
+    status: 429,
+    retryAfterMs: 2000,
+    hasCfMitigatedChallenge: true,
+    hasCfChallengeBody: true,
+    cfRay: '0123456789abcdef-HKG',
+    userAgentHash: '0123abcd',
+    userAgentSource: 'unknown',
+    cookie: 'PRIVATE_COOKIE',
+    cookieHash: 'PRIVATE_HASH',
+    csrf: 'PRIVATE_CSRF',
+    body: 'PRIVATE_BODY'
+  } as const;
+  const trace = beginDiagnosticTrace('source', 'reading-recovery', fields);
+  finishDiagnosticTrace(trace, 'success');
+  expect(events()[0]).toMatchObject({
+    batchId: 7,
+    attempt: 2,
+    isRecovery: true,
+    hasCfMitigatedChallenge: true,
+    hasCfChallengeBody: true,
+    userAgentHash: '0123abcd',
+    cfRay: '0123456789abcdef-HKG'
+  });
+  expect(JSON.stringify(events())).not.toContain('PRIVATE');
+  expect(safeFields({ cfRay: 'PRIVATE', userAgentHash: 'PRIVATE' })).toEqual({
+    cfRay: 'redacted',
+    userAgentHash: 'redacted'
+  });
+});
+
 afterEach(() => {
   setDiagnosticWriter(null);
 });
@@ -59,6 +97,7 @@ describe('diagnostic traces', () => {
     expect(safeFields(fields)).toEqual(fields);
     expect(normalizeDiagnosticReason({ reason: 'identity-pending' })).toBe('identity_pending');
     expect(normalizeDiagnosticReason({ reason: 'object-forbidden' })).toBe('object_forbidden');
+    expect(normalizeDiagnosticReason({ reason: 'site-notice' })).toBe('site_notice');
     expect(normalizeDiagnosticReason({ reason: 'source-disabled' })).toBe('source_disabled');
     expect(normalizeDiagnosticReason({ reason: 'account-recheck-required' })).toBe('login_required');
     expect(safeFields({ privateCount: 3, reason: 'private-reason' })).toEqual({ reason: 'unknown' });

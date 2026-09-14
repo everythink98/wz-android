@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
-import type { RequestAccountRecheck } from '@/domain/session/sessionContracts';
+import type { LinuxDoReadingRecovery, RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 import { createLinuxDoReadingSender } from '@/sources/linuxdo/reading';
 import type { Fetcher } from '@/platform/network/request';
@@ -16,7 +16,8 @@ export function useLinuxDoReadingRuntime({
   snapshot,
   userAgent,
   onSessionExpired,
-  requestAccountRecheck
+  requestAccountRecheck,
+  requestVerification
 }: {
   appActive: boolean;
   verificationVisible: boolean;
@@ -25,9 +26,17 @@ export function useLinuxDoReadingRuntime({
   userAgent: () => string;
   onSessionExpired: (epoch: number) => void;
   requestAccountRecheck: RequestAccountRecheck;
+  requestVerification: (recovery: LinuxDoReadingRecovery) => void;
 }) {
   const queryClient = useQueryClient();
-  const dependencies = useCommittedRef({ fetcher, snapshot, userAgent, onSessionExpired, requestAccountRecheck });
+  const dependencies = useCommittedRef({
+    fetcher,
+    snapshot,
+    userAgent,
+    onSessionExpired,
+    requestAccountRecheck,
+    requestVerification
+  });
   const runtime = useMemo(() => {
     const scope = () => {
       const value = dependencies.current.snapshot();
@@ -46,14 +55,32 @@ export function useLinuxDoReadingRuntime({
     return createDiscourseReadingRuntime({
       queryClient,
       scope,
-      send: async (batch, identity, signal) => {
-        const trace = beginDiagnosticTrace('source', 'reading-timings', { source: 'linuxdo' });
+      onVerificationRequired: (recovery) => dependencies.current.requestVerification(recovery),
+      send: async (batch, identity, signal, context) => {
+        const { beforePost, ...diagnostics } = context;
+        const trace = beginDiagnosticTrace('source', 'reading-timings', {
+          source: 'linuxdo',
+          ...diagnostics,
+          isRecovery: context.recovery
+        });
         try {
-          await send(batch, identity, signal, trace);
+          await send(batch, identity, signal, trace, context.recovery, beforePost);
           finishDiagnosticTrace(trace, 'success');
         } catch (error) {
+          const cf = error as {
+            status?: number;
+            retryAfterMs?: number;
+            hasCfMitigatedChallenge?: boolean;
+            hasCfChallengeBody?: boolean;
+            cfRay?: string;
+          };
           finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
-            reason: normalizeDiagnosticReason(error)
+            reason: normalizeDiagnosticReason(error),
+            status: cf.status,
+            retryAfterMs: cf.retryAfterMs,
+            hasCfMitigatedChallenge: cf.hasCfMitigatedChallenge,
+            hasCfChallengeBody: cf.hasCfChallengeBody,
+            cfRay: cf.cfRay
           });
           if (scope() === identity) {
             const failure = error as { status?: number; reason?: string };
@@ -72,6 +99,7 @@ export function useLinuxDoReadingRuntime({
     runtime.sessionChanged();
   });
   const canRead = appActive && !verificationVisible && !snapshot().authSurfaceOpen;
+  useLayoutEffect(() => runtime.setAppActive(appActive), [appActive, runtime]);
   useEffect(() => {
     runtime.foreground(canRead);
   }, [canRead, runtime]);

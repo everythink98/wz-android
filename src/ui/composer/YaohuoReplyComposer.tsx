@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BottomSheetTextInput } from '@gorhom/bottom-sheet';
@@ -314,6 +315,7 @@ export function YaohuoReplyComposer({
         placeholderTextColor={theme.muted}
         cursorColor={theme.primary}
         selectionColor={theme.primary}
+        onChange={recordUserInteraction}
         onChangeText={changeContent}
         onFocus={() => setFacePanelOpen(false)}
         onSelectionChange={(event) => updateSelection(event.nativeEvent.selection)}

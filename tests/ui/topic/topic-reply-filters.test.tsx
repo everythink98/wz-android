@@ -980,6 +980,24 @@ describe('Topic reply filters', () => {
     await waitFor(() => expect(mockScrollToOffset).toHaveBeenCalledTimes(count + 1));
     expect(onLocateReply).not.toHaveBeenCalled();
   });
+  it('shows a Yaohuo site notice without fabricated content or reply tools', async () => {
+    const view = await render(
+      <TopicFilterHarness
+        selectedTopic={{ ...topic, source: 'yaohuo' }}
+        topicDetail={null}
+        topicReplies={[]}
+        topicError={{ kind: 'ordinary', message: '妖火提示：正在审核中！', reason: 'site-notice' }}
+      />
+    );
+    expect(view.getByText('妖火提示：正在审核中！')).toBeTruthy();
+    expect(view.getByText('重试')).toBeTruthy();
+    expect(view.queryByTestId('topic-author')).toBeNull();
+    expect(view.queryByText(topic.title)).toBeNull();
+    expect(view.queryByLabelText('写回复')).toBeNull();
+    expect(view.queryByLabelText('评论内查找')).toBeNull();
+    expect(view.queryByText('重试评论')).toBeNull();
+  });
+
   it('shows an ended empty Yaohuo topic without reply tools or an error state', async () => {
     const ended: TopicDetail = { ...topic, source: 'yaohuo', closed: true, replyCount: 0, replies: [] };
     const view = await render(<TopicFilterHarness topicDetail={ended} selectedTopic={ended} topicReplies={[]} />);

@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import { resolveTopicLocation, topicLocationForReply } from '@/domain/forum/topicLocation';
 import { createTopicStyles, type TopicStyles } from '../styles';
 import {
@@ -324,7 +325,8 @@ function TopicSelectionMarkedFrame({
   const marker = useTopicSelectionRowRef(rowKey);
   return (
     <TopicSelectionRowProvider active={marker.active}>
-      <View ref={marker.ref} nativeID={marker.nativeID} style={style} onLayout={onLayout}>
+      {/* Removing nativeID in the background must not reparent the video surface. */}
+      <View ref={marker.ref} collapsable={false} nativeID={marker.nativeID} style={style} onLayout={onLayout}>
         {children}
       </View>
     </TopicSelectionRowProvider>
@@ -1603,7 +1605,6 @@ export const TopicContentList = memo(function TopicContentList({
               boundarySpacing={contentBoundarySpacing}
               mediaContext={mediaContext}
               nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-              poster={contentItem.row.poster}
               referrerPolicy={contentItem.row.referrerPolicy}
               src={contentItem.row.src}
               theme={theme}
@@ -2036,6 +2037,7 @@ export const TopicContentList = memo(function TopicContentList({
                     accessibilityLabel="评论内查找"
                     style={[styles.input, styles.flex]}
                     value={commentQuery}
+                    onChange={recordUserInteraction}
                     onChangeText={onCommentQueryChange}
                     placeholder="评论内查找"
                     placeholderTextColor={theme.muted}
@@ -2230,81 +2232,88 @@ export const TopicContentList = memo(function TopicContentList({
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
-        <View style={styles.topicMetaStack}>
-          <View style={styles.topicBadgeRow}>
-            <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>
-              {sourceLabel(item.source)}
-            </Text>
-            {item.category ? (
-              <Text style={styles.topicCategoryBadge} numberOfLines={1}>
-                {item.category}
+        {topic || topicError?.reason !== 'site-notice' ? (
+          <View style={styles.topicMetaStack}>
+            <View style={styles.topicBadgeRow}>
+              <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>
+                {sourceLabel(item.source)}
               </Text>
+              {item.category ? (
+                <Text style={styles.topicCategoryBadge} numberOfLines={1}>
+                  {item.category}
+                </Text>
+              ) : null}
+            </View>
+            <Text selectable style={styles.articleTitle}>
+              {item.title}
+            </Text>
+            <Pressable
+              testID="topic-author"
+              accessibilityRole="button"
+              disabled={!userFromTopic(item)}
+              style={styles.topicAuthorRow}
+              onPress={() => {
+                const user = userFromTopic(item);
+                if (user) {
+                  onOpenUser(user);
+                }
+              }}
+            >
+              <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} />
+              <View style={styles.topicAuthorMeta}>
+                <View style={styles.replyAuthorNameRow}>
+                  <Text style={styles.replyAuthor} numberOfLines={1}>
+                    {item.author || '未知作者'}
+                  </Text>
+                  {item.authorLevelLabel ? (
+                    <Text
+                      style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}
+                      numberOfLines={1}
+                    >
+                      {item.authorLevelLabel}
+                    </Text>
+                  ) : null}
+                </View>
+                <Text style={styles.meta}>
+                  {formatDateTime(item.createdAt)}
+                  {typeof item.replyCount === 'number' ? ` · ${item.replyCount} 回复` : ''}
+                  {item.viewCount ? ` · ${item.viewCount} 浏览` : ''}
+                </Text>
+              </View>
+            </Pressable>
+            {itemAccessRequirementText ? (
+              <Text style={styles.topicAccessBadge}>{itemAccessRequirementText}</Text>
+            ) : null}
+            {topicHeaderStatusBadges.length ? (
+              <View style={styles.topicStatusRow}>
+                {topicHeaderStatusBadges.map((badge) => (
+                  <View
+                    key={badge.label}
+                    style={[styles.topicStatusBadge, topicStatusBadgeColorStyle(badge.tone, theme)]}
+                  >
+                    <Text
+                      style={[styles.topicStatusBadgeText, topicStatusBadgeTextColorStyle(badge.tone, theme)]}
+                      numberOfLines={1}
+                    >
+                      {badge.label}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            {item.tags?.length ? (
+              <View style={styles.topicTagRow}>
+                {item.tags.map((tag, index) => (
+                  <View key={`${tag}-${index}`} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
+                    <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme)]} numberOfLines={1}>
+                      {tag}
+                    </Text>
+                  </View>
+                ))}
+              </View>
             ) : null}
           </View>
-          <Text selectable style={styles.articleTitle}>
-            {item.title}
-          </Text>
-          <Pressable
-            testID="topic-author"
-            accessibilityRole="button"
-            disabled={!userFromTopic(item)}
-            style={styles.topicAuthorRow}
-            onPress={() => {
-              const user = userFromTopic(item);
-              if (user) {
-                onOpenUser(user);
-              }
-            }}
-          >
-            <Avatar contentSource={item.source} name={item.author} uri={item.authorAvatar} />
-            <View style={styles.topicAuthorMeta}>
-              <View style={styles.replyAuthorNameRow}>
-                <Text style={styles.replyAuthor} numberOfLines={1}>
-                  {item.author || '未知作者'}
-                </Text>
-                {item.authorLevelLabel ? (
-                  <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]} numberOfLines={1}>
-                    {item.authorLevelLabel}
-                  </Text>
-                ) : null}
-              </View>
-              <Text style={styles.meta}>
-                {formatDateTime(item.createdAt)}
-                {typeof item.replyCount === 'number' ? ` · ${item.replyCount} 回复` : ''}
-                {item.viewCount ? ` · ${item.viewCount} 浏览` : ''}
-              </Text>
-            </View>
-          </Pressable>
-          {itemAccessRequirementText ? <Text style={styles.topicAccessBadge}>{itemAccessRequirementText}</Text> : null}
-          {topicHeaderStatusBadges.length ? (
-            <View style={styles.topicStatusRow}>
-              {topicHeaderStatusBadges.map((badge) => (
-                <View
-                  key={badge.label}
-                  style={[styles.topicStatusBadge, topicStatusBadgeColorStyle(badge.tone, theme)]}
-                >
-                  <Text
-                    style={[styles.topicStatusBadgeText, topicStatusBadgeTextColorStyle(badge.tone, theme)]}
-                    numberOfLines={1}
-                  >
-                    {badge.label}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-          {item.tags?.length ? (
-            <View style={styles.topicTagRow}>
-              {item.tags.map((tag, index) => (
-                <View key={`${tag}-${index}`} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
-                  <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme)]} numberOfLines={1}>
-                    {tag}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </View>
+        ) : null}
         {headerState}
         {topic && !topicError && !readingPositionReady ? <LoadingState text="正在读取主题..." /> : null}
       </View>

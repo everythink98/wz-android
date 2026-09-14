@@ -100,6 +100,7 @@ export const composerHostMessageSchema = z.discriminatedUnion('type', [
 ]);
 
 export const composerEditorMessageSchema = z.discriminatedUnion('type', [
+  strictObject({ type: z.literal('USER_INTERACTION'), payload: strictObject({}) }),
   strictObject({ type: z.literal('READY'), payload: strictObject({ revision: z.number().int().nonnegative() }) }),
   strictObject({
     type: z.literal('STATE_CHANGED'),

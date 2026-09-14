@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -763,7 +764,11 @@ function ImagePreviewModalContent({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <GestureHandlerRootView style={[styles.imagePreviewOverlay, componentStyles.transparentOverlay]}>
+      <GestureHandlerRootView
+        onTouchStart={recordUserInteraction}
+        onTouchMove={recordUserInteraction}
+        style={[styles.imagePreviewOverlay, componentStyles.transparentOverlay]}
+      >
         <Animated.View pointerEvents="none" style={[componentStyles.overlayBackground, backgroundStyle]} />
         <GestureDetector gesture={previewGesture}>
           <Animated.View style={[styles.imagePreviewScroll, previewPullStyle]}>

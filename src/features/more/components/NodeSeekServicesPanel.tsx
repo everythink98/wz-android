@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
 import { CheckCircle, Image as ImageIcon } from 'lucide-react-native';
@@ -82,6 +83,7 @@ export function NodeSeekServicesPanel({
                 secureTextEntry
                 style={styles.input}
                 value={draft}
+                onChange={recordUserInteraction}
                 onChangeText={setDraft}
               />
               <View style={styles.actions}>

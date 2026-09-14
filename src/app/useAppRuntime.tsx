@@ -23,6 +23,7 @@ import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/d
 import { useContentSourceQueryCleanup } from './useContentSourceQueryCleanup';
 import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { useDiscourseVisited } from '@/platform/query/useDiscourseVisited';
+import { withLinuxDoPresence } from '@/sources/linuxdo/presence';
 
 export function useAppRuntime() {
   const lifecycle = useAppLifecycleRuntime();
@@ -50,7 +51,8 @@ export function useAppRuntime() {
     readerData.settings,
     width
   );
-  const networkRuntime = useNetworkProxyRuntime({ notify });
+  const baseFetcher = useMemo(() => withLinuxDoPresence(fetch), []);
+  const networkRuntime = useNetworkProxyRuntime({ notify, baseFetcher });
   const {
     ensureNetworkProxyReady,
     networkProxyFetcher,
@@ -509,6 +511,7 @@ export function useAppRuntime() {
   );
   return {
     accountHost: accountRuntime.hosts.element,
+    onUserInteraction: lifecycle.onUserInteraction,
     appStyles,
     mediaTransportIdentity: networkRuntime.applyStatus,
     readerStyleContext,

@@ -2,7 +2,8 @@ import { projectTestAccountSessions } from '../../helpers/accountSessions';
 import { describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render as renderNative, waitFor } from '../render';
 import React, { useState } from 'react';
-import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
+import { recordUserInteraction, userPresent } from '@/platform/network/userPresence';
 import { createEmptyReaderData, type ReaderSettings } from '@/domain/reader/readerData';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState, type SourceSearchFilter } from '@/domain/forum/searchFilters';
 import type { SearchGroup } from '@/features/search/listItems';
@@ -463,6 +464,25 @@ function renderSearchScreen(
 }
 
 describe('Search state', () => {
+  it('counts native text input as activity but not controlled value updates', async () => {
+    const previous = AppState.currentState;
+    AppState.currentState = 'active';
+    let now = 100_000;
+    const clock = jest.spyOn(performance, 'now').mockImplementation(() => now);
+    recordUserInteraction();
+    try {
+      const props = createSearchScreenProps();
+      const view = await render(<SearchScreen {...props} />);
+      now += 60_000;
+      await view.rerender(<SearchScreen {...props} query="程序赋值" />);
+      expect(userPresent()).toBe(false);
+      await fireEvent(view.getByTestId('search-query'), 'change', { nativeEvent: { text: '真实输入' } });
+      expect(userPresent()).toBe(true);
+    } finally {
+      clock.mockRestore();
+      AppState.currentState = previous;
+    }
+  });
   it('invalidates the mounted result list when reader appearance changes', async () => {
     const darkSettings: ReaderSettings = { ...createEmptyReaderData().settings, theme: 'dark' };
     const lightSettings: ReaderSettings = { ...darkSettings, theme: 'light' };

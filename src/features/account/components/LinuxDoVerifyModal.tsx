@@ -1,5 +1,5 @@
 import { memo, type RefObject, useEffect, useRef, useState } from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { LINUXDO_URL } from '@/domain/forum/sourceUrls';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
@@ -11,9 +11,12 @@ import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import type { AccountHostStyles } from '../accountHostStyles';
 
 const LINUXDO_VERIFY_URL = LINUXDO_URL + '/latest';
+const LINUXDO_CHALLENGE_URL = LINUXDO_URL + '/challenge';
 const LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
 
 export function LinuxDoVerifyModal({
+  recoveryPanel,
+  onRetryRecovery = () => undefined,
   checking,
   credentialAttempt,
   credentialFillPending,
@@ -39,6 +42,8 @@ export function LinuxDoVerifyModal({
   onSetLoadingLinuxDoPage,
   onShowLinuxDoPanelChange
 }: {
+  recoveryPanel?: import('../useVerificationController').LinuxDoRecoveryPanel;
+  onRetryRecovery?: () => void;
   checking: boolean;
   credentialAttempt: number;
   credentialFillPending: boolean;
@@ -66,6 +71,16 @@ export function LinuxDoVerifyModal({
 }) {
   const linuxDoWebViewReadyRef = useRef(false);
   const [webViewNeedsRemount, setWebViewNeedsRemount] = useState(false);
+  const [challengeEnded, setChallengeEnded] = useState(false);
+  const documentKeyRef = useRef(linuxDoWebViewKey);
+  const httpErrorRef = useRef(false);
+  const documentUrlRef = useRef('');
+  const recovery = recoveryPanel && recoveryPanel.phase !== 'idle' ? recoveryPanel : undefined;
+  const web = !recovery || recovery.phase === 'web';
+  const blocked = recovery?.results.some((result) => result.outcome === 'verification-required');
+  const canRetry = recovery?.results.some(
+    (result) => result.outcome === 'pending' || result.outcome === 'verification-required'
+  );
   const markLinuxDoPageReady = () => {
     linuxDoWebViewReadyRef.current = true;
     onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
@@ -73,6 +88,10 @@ export function LinuxDoVerifyModal({
 
   useEffect(() => {
     linuxDoWebViewReadyRef.current = false;
+    documentKeyRef.current = linuxDoWebViewKey;
+    setChallengeEnded(false);
+    httpErrorRef.current = false;
+    documentUrlRef.current = '';
     setWebViewNeedsRemount(false);
   }, [linuxDoWebViewKey, showLinuxDoPanel]);
 
@@ -101,28 +120,85 @@ export function LinuxDoVerifyModal({
   return (
     <LoginWebViewModal
       visible={showLinuxDoPanel}
-      title="linux.do 登录 / 验证"
-      subtitle={linuxDoSession.summaryLabel === '匿名可用' ? '匿名可用，登录后内容更完整' : linuxDoSession.summaryLabel}
-      loading={!webViewBlockMessage && loadingLinuxDoPage}
+      title={recovery ? 'linux.do 请求恢复' : 'linux.do 登录 / 验证'}
+      subtitle={
+        recovery
+          ? recovery.results.some((result) => result.kind === 'page')
+            ? '恢复页面读取'
+            : '恢复阅读记录同步'
+          : linuxDoSession.summaryLabel === '匿名可用'
+            ? '匿名可用，登录后内容更完整'
+            : linuxDoSession.summaryLabel
+      }
+      loading={web && !webViewBlockMessage && loadingLinuxDoPage}
       loadingText="正在打开 linux.do..."
-      error={webViewBlockMessage || linuxDoWebViewError}
+      error={web ? webViewBlockMessage || linuxDoWebViewError : ''}
       onClose={() => onShowLinuxDoPanelChange(false)}
       actions={
         <View style={styles.actions}>
-          {credentialSaved ? (
+          {!recovery && credentialSaved ? (
             <AppButton label="填入已保存登录信息" disabled={credentialFillPending} onPress={onRequestCredentialFill} />
           ) : null}
-          <AppButton label={checking ? '检测中' : '检测状态'} disabled={checking} onPress={onCheckLinuxDoCookie} />
-          <AppButton label="清除登录" variant="danger" onPress={onClearLinuxDoCookie} />
-          <AppButton label="刷新页面" variant="ghost" onPress={onResetLinuxDoWebView} />
+          {web ? (
+            <AppButton
+              label={checking ? '检测中' : '检测状态'}
+              disabled={checking}
+              onPress={() => {
+                onCheckLinuxDoCookie();
+              }}
+            />
+          ) : null}
+          {!recovery ? <AppButton label="清除登录" variant="danger" onPress={onClearLinuxDoCookie} /> : null}
+          {web ? <AppButton label="刷新页面" variant="ghost" onPress={onResetLinuxDoWebView} /> : null}
+          {recovery?.phase === 'result' && canRetry ? <AppButton label="重新验证" onPress={onRetryRecovery} /> : null}
+          {recovery ? (
+            <AppButton label="返回原页面" variant="ghost" onPress={() => onShowLinuxDoPanelChange(false)} />
+          ) : null}
         </View>
       }
     >
-      {showLinuxDoPanel && mountLinuxDoWebView && !webViewBlockMessage && !webViewNeedsRemount ? (
+      {recovery?.phase === 'checking' ? (
+        <View style={styles.recoveryMessage} accessibilityLiveRegion="polite">
+          <Text style={styles.meta}>正在检测原请求是否恢复，可以随时返回。</Text>
+        </View>
+      ) : recovery?.phase === 'result' ? (
+        <View style={styles.recoveryMessage} accessibilityLiveRegion="polite">
+          {blocked ? <Text style={styles.meta}>请求仍被站点拦截，尚未恢复。</Text> : null}
+          {recovery.results.map((result, index) => (
+            <Text key={index} style={styles.meta}>
+              {result.kind === 'page' ? '页面' : '阅读记录'}：
+              {result.outcome === 'completed'
+                ? result.kind === 'page'
+                  ? '已恢复'
+                  : '已同步'
+                : result.error ||
+                  (result.outcome === 'verification-required'
+                    ? '仍被站点拦截'
+                    : result.outcome === 'stale'
+                      ? '已过期或失效，本次未恢复'
+                      : result.outcome === 'pending'
+                        ? '等待检测'
+                        : '恢复失败，请返回原页面重试')}
+            </Text>
+          ))}
+        </View>
+      ) : recovery ? (
+        <Text style={[styles.meta, styles.recoveryMessage]}>
+          网页没有显示验证码也可以检测；是否恢复以原请求的结果为准。
+        </Text>
+      ) : null}
+      {web && showLinuxDoPanel && mountLinuxDoWebView && !webViewBlockMessage && !webViewNeedsRemount ? (
         <WebView
           key={linuxDoWebViewKey}
           ref={linuxDoWebViewRef}
-          source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.linuxdo.loginUrl : LINUXDO_VERIFY_URL }}
+          source={{
+            uri: loginFormMode
+              ? LOGIN_FORM_ADAPTERS.linuxdo.loginUrl
+              : recovery?.dedicated
+                ? LINUXDO_CHALLENGE_URL
+                : LINUXDO_VERIFY_URL
+          }}
+          style={challengeEnded ? styles.endedChallengeWebView : styles.flex}
           androidLayerType="software"
           javaScriptEnabled
           javaScriptCanOpenWindowsAutomatically={false}
@@ -138,8 +214,9 @@ export function LinuxDoVerifyModal({
             }
           }}
           onLoadEnd={(event) => {
+            if (documentKeyRef.current !== linuxDoWebViewKey) return;
             markLinuxDoPageReady();
-            if (!('code' in event.nativeEvent)) {
+            if (!httpErrorRef.current && !('code' in event.nativeEvent)) {
               onSetLinuxDoWebViewError('', linuxDoWebViewKey, credentialAttempt);
             }
             linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
@@ -147,7 +224,11 @@ export function LinuxDoVerifyModal({
               linuxDoWebViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.linuxdo.probeScript(credentialAttempt));
             }
           }}
-          onLoadStart={() => {
+          onLoadStart={(event) => {
+            if (documentKeyRef.current !== linuxDoWebViewKey) return;
+            documentUrlRef.current = event?.nativeEvent.url || '';
+            httpErrorRef.current = false;
+            setChallengeEnded(false);
             linuxDoWebViewReadyRef.current = false;
             setWebViewNeedsRemount(false);
             onSetLinuxDoWebViewError('', linuxDoWebViewKey, credentialAttempt);
@@ -166,6 +247,20 @@ export function LinuxDoVerifyModal({
               credentialAttempt
             );
           }}
+          onHttpError={(event) => {
+            if (documentKeyRef.current !== linuxDoWebViewKey) return;
+            const { statusCode, url } = event.nativeEvent;
+            if (documentUrlRef.current && documentUrlRef.current !== url) return;
+            httpErrorRef.current = true;
+            // Android WebView emits this event only for the current main document.
+            if (recovery?.dedicated && url === LINUXDO_CHALLENGE_URL && statusCode === 404) {
+              setChallengeEnded(true);
+              markLinuxDoPageReady();
+            } else {
+              onSetLinuxDoWebViewError(`linux.do 页面返回 HTTP ${statusCode}，请刷新或返回。`, linuxDoWebViewKey);
+              markLinuxDoPageReady();
+            }
+          }}
           renderError={() => <View style={styles.webViewErrorPlaceholder} />}
           onRenderProcessGone={() => {
             setWebViewNeedsRemount(true);
@@ -174,6 +269,11 @@ export function LinuxDoVerifyModal({
           }}
           onShouldStartLoadWithRequest={handleLinuxDoNavigation}
         />
+      ) : null}
+      {web && challengeEnded ? (
+        <View style={styles.challengeEnded}>
+          <Text style={styles.meta}>验证页面已结束，请检测原请求是否恢复。</Text>
+        </View>
       ) : null}
     </LoginWebViewModal>
   );

@@ -3,9 +3,32 @@ export class LinuxDoCloudflareError extends Error {
   reason = 'cloudflare' as const;
   verificationRequired = true as const;
 
-  constructor() {
+  status?: number;
+  retryAfterMs?: number;
+
+  constructor(response?: Pick<Response, 'status' | 'headers'>) {
     super('linux.do 需要完成 Cloudflare 验证');
+    this.status = response?.status;
+    this.retryAfterMs = response ? responseRetryAfterMs(response.headers) : undefined;
   }
+}
+
+export function responseRetryAfterMs(headers: Pick<Headers, 'get'>) {
+  const value = headers.get('Retry-After');
+  if (!value) return undefined;
+  const delay = /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(0, delay) : undefined;
+}
+
+export function cloudflareChallengeDiagnostics(response: Pick<Response, 'status' | 'headers'>, body: string) {
+  const ray = response.headers.get('cf-ray');
+  return {
+    status: response.status,
+    hasCfMitigatedChallenge: /challenge/i.test(response.headers.get('cf-mitigated') || ''),
+    hasCfChallengeBody: canContainCloudflareChallengePage(response.headers) && isCloudflareChallengeBody(body),
+    retryAfterMs: responseRetryAfterMs(response.headers),
+    ...(ray && /^[a-f0-9]{16,32}-[A-Z]{3}$/i.test(ray) ? { cfRay: ray } : {})
+  };
 }
 
 function isCloudflareChallengeBody(body: string) {

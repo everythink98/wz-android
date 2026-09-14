@@ -1,8 +1,12 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { withBrowserFetchIntent, type BrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { discourseActionResponseMessage, type DiscourseActionRequest } from '@/sources/discourse/actionRequest';
-import { isCloudflareChallengeResponse } from '@/platform/network/cloudflareChallenge';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
+import {
+  isCloudflareChallengeResponse,
+  LinuxDoCloudflareError,
+  cloudflareChallengeDiagnostics
+} from '@/platform/network/cloudflareChallenge';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT, diagnosticUserAgentHash } from '@/platform/android/linuxDoUserAgent';
 import {
   diagnosticRequestFields,
   diagnosticTraceForRequest,
@@ -64,12 +68,12 @@ async function readJsonResponse(
     });
   }
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
-    const error = new Error('linux.do 需要完成 Cloudflare 验证');
-    Object.assign(error, {
-      source: 'linuxdo',
-      reason: 'cloudflare'
-    });
-    throw error;
+    if (diagnostics)
+      markDiagnosticStage(diagnostics.trace, 'guard', {
+        ...diagnostics.fields,
+        ...cloudflareChallengeDiagnostics(response, text)
+      });
+    throw Object.assign(new LinuxDoCloudflareError(response), cloudflareChallengeDiagnostics(response, text));
   }
   if (!text) {
     return {};
@@ -155,6 +159,8 @@ export async function runLinuxDoAction({
             source: 'linuxdo',
             endpoint: 'action',
             method: 'POST',
+            userAgentHash: diagnosticUserAgentHash(new Headers(init?.headers).get('User-Agent') || ''),
+            userAgentSource: userAgent ? 'provided' : 'default',
             topicRef: diagnosticRef('topic', `linuxdo:${form.get('topic_id')}`)
           };
           responseDiagnostics = { trace, fields };

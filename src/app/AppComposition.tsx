@@ -18,7 +18,11 @@ export function AppComposition() {
         sessionEpochs={runtime.sessionEpochs}
         transportIdentity={runtime.mediaTransportIdentity}
       >
-        <GestureHandlerRootView style={runtime.appStyles.screen}>
+        <GestureHandlerRootView
+          style={runtime.appStyles.screen}
+          onTouchStart={runtime.onUserInteraction}
+          onTouchMove={runtime.onUserInteraction}
+        >
           <SafeAreaProvider>
             <KeyboardAvoidingView style={runtime.appStyles.screen}>
               <SafeAreaView edges={['left', 'right']} style={runtime.appStyles.screen}>

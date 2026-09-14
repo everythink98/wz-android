@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { MoreStyles } from '../styles';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -299,6 +300,8 @@ export function NetworkProxyModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={selecting ? () => setSelectedIds([]) : onClose}>
       <View
+        onTouchStart={recordUserInteraction}
+        onTouchMove={recordUserInteraction}
         style={[
           styles.loginWebViewModal,
           { backgroundColor: pageColor, paddingTop: insets.top, paddingBottom: insets.bottom }
@@ -607,6 +610,7 @@ function ProxyInput({
         style={styles.input}
         textContentType={secureTextEntry ? 'password' : undefined}
         value={value}
+        onChange={recordUserInteraction}
         onChangeText={onChangeText}
       />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}

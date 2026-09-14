@@ -15,6 +15,7 @@ import type { useSessionController } from './useSessionController';
 import type { useVerificationController } from './useVerificationController';
 
 type AccountHostsView = {
+  recoveryPanel: import('./useVerificationController').LinuxDoRecoveryPanel;
   checking: boolean;
   checkNodeSeekLoginAndRetry: () => unknown;
   changeNodeSeekLoginPanel: (visible: boolean) => void;
@@ -96,6 +97,8 @@ export function AccountHosts({
         onNodeSeekHttpErrorStatus={session.markNodeSeekBrowserFetchHttpError}
       />
       <AccountHost
+        recoveryPanel={view.recoveryPanel}
+        retryLinuxDoRecovery={verification.retryLinuxDoRecovery}
         checking={view.checking}
         credentialFillAttempt={
           credentials.credentialFillAttempt?.site === 'linuxdo' ? credentials.credentialFillAttempt.attempt : 0

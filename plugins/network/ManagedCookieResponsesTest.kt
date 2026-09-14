@@ -143,6 +143,32 @@ class ManagedCookieResponsesTest {
   }
 
   private val url = "https://linux.do/session/current.json"
+  @Test fun observesClearanceHandoffAndActualRequestWithoutExportingCookieValues() {
+    val events = mutableListOf<Map<String, Any>>()
+    var current = "_t=private-login; cf_clearance=private-before"
+    val store = ManagedCookieResponses({ current }, { _, values ->
+      CookieResponseBatch(values.size).also { batch -> values.forEach { batch.complete(true) } }
+    }, report = { events.add(it) })
+    store.setBarrier(true, "surface-open")
+    current = "_t=private-login; cf_clearance=private-after"
+    store.setBarrier(false, "surface-close")
+    store.within {
+      store.observed(url, "linuxdo", null)
+      store.sending(Request.Builder().url(url).header("Cookie", "_t=private-login; cf_clearance=private-before")
+        .header("User-Agent", "fixture-agent").build(), null)
+      store.sending(Request.Builder().url(url).header("Cookie", current).build(), null)
+      store.sending(Request.Builder().url(url).build(), null)
+    }
+    assertTrue(events.any { it["cookieBarrierReason"] == "surface-close" && it["didCfClearanceChange"] == true })
+    val sent = events.filter { it["operation"] == "cookie-request" }
+    assertEquals(listOf(false, true, false), sent.map { it["isCfClearanceCurrent"] })
+    assertEquals(listOf(true, true, false), sent.map { it["hasCfClearance"] })
+    assertEquals("%08x".format("fixture-agent".hashCode()), sent[0]["userAgentHash"])
+    assertFalse(events.toString().contains("private-"))
+    assertEquals("clearance", cookieResponseItem(Request.Builder().url(url).build(), "cf_clearance=x", 0)["cookieKind"])
+    assertEquals("bot-management", cookieResponseItem(Request.Builder().url(url).build(), "__cf_bm=x", 0)["cookieKind"])
+  }
+
   private fun response(vararg values: String, status: Int = 200): Response = Response.Builder()
     .request(Request.Builder().url(url).build()).protocol(Protocol.HTTP_1_1).code(status).message("fixture")
     .apply { values.forEach { addHeader("Set-Cookie", it) } }.build()

@@ -652,6 +652,12 @@ describe('diagnostic file store', () => {
       hasLoginCookie: false,
       cookie: secret,
       cookieHash: secret,
+      hasCfClearance: true,
+      hasDiscoursePresent: false,
+      hasStoredCfClearance: true,
+      isCfClearanceCurrent: false,
+      didCfClearanceChange: true,
+      userAgentHash: '0123abcd',
       headers: { 'Set-Cookie': secret },
       url: `https://linux.do/private?${secret}`
     });
@@ -678,6 +684,12 @@ describe('diagnostic file store', () => {
     expect(exported).toContain('"requestCookieEpoch":2');
     expect(exported).toContain('"checkedInCurrentProcess":false');
     expect(exported).not.toContain('cookieHash');
+    expect(exported).toContain('"hasCfClearance":true');
+    expect(exported).toContain('"hasDiscoursePresent":false');
+    expect(exported).toContain('"hasStoredCfClearance":true');
+    expect(exported).toContain('"isCfClearanceCurrent":false');
+    expect(exported).toContain('"didCfClearanceChange":true');
+    expect(exported).toContain('"userAgentHash":"0123abcd"');
     expect(exported).toContain('"traceId":"trace-43"');
     expect(exported).toContain('"appSessionId":"session-native-91827"');
     expect(exported).toContain('"mediaRef":"media-43"');

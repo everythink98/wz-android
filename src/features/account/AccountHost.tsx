@@ -9,6 +9,8 @@ import type { NodeImageAuthDocument } from './useNodeImageAuthController';
 import type { AccountHostStyles } from './accountHostStyles';
 
 export function AccountHost({
+  recoveryPanel,
+  retryLinuxDoRecovery,
   checking,
   credentialFillAttempt,
   credentialFillPending,
@@ -44,6 +46,8 @@ export function AccountHost({
   styles,
   webViewBlockMessage
 }: {
+  recoveryPanel?: import('./useVerificationController').LinuxDoRecoveryPanel;
+  retryLinuxDoRecovery?: () => void;
   checking: boolean;
   credentialFillAttempt: number;
   credentialFillPending: boolean;
@@ -82,6 +86,8 @@ export function AccountHost({
   return (
     <>
       <MemoizedLinuxDoVerifyModal
+        recoveryPanel={recoveryPanel}
+        onRetryRecovery={retryLinuxDoRecovery}
         checking={checking}
         credentialAttempt={credentialFillAttempt}
         credentialFillPending={credentialFillPending}

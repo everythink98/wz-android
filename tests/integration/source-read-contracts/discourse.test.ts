@@ -1254,11 +1254,13 @@ describe('Android local sources', () => {
         username: floor === 90 ? 'target' : `user-${floor}`,
         cooked: `<p>reply ${floor}</p>`,
         created_at: '2026-08-05T00:00:00.000Z',
-        can_edit: false
+        can_edit: floor === 90,
+        ...(floor === 90 ? { raw: 'editable reply 90' } : {})
       };
     });
     const fetcher = vi.fn(async (input: string) => {
       expect(new URL(input).pathname).toBe('/t/900/90.json');
+      expect(new URL(input).searchParams.get('include_raw')).toBe('true');
       return json({ chunk_size: 20, post_stream: { posts, stream } });
     });
 
@@ -1283,7 +1285,9 @@ describe('Android local sources', () => {
       nextOffset: 99,
       totalCount: 119
     });
-    expect(replies.items).toContainEqual(expect.objectContaining({ floor: 90, author: 'target' }));
+    expect(replies.items).toContainEqual(
+      expect.objectContaining({ floor: 90, author: 'target', canEdit: true, contentMarkdown: 'editable reply 90' })
+    );
   });
 
   it('reads only the linux.do stream tail IDs and then the adjacent older IDs', async () => {
@@ -2109,7 +2113,7 @@ describe('Android local sources', () => {
     expect(search.items.map((item) => item.id)).toEqual(['901', '902']);
   });
 
-  it('matches the official linux.do search request from the logged-in page', async () => {
+  it('builds authenticated linux.do search headers before transport adds user presence', async () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
       if (url.pathname === '/session/csrf.json') {
@@ -2148,11 +2152,11 @@ describe('Android local sources', () => {
     expect(calls).not.toContain('https://linux.do/discourse-ai/embeddings/semantic-search');
     const searchCall = fetcher.mock.calls.find((call) => new URL(String(call[0])).pathname === '/search');
     const init = searchCall?.[1];
+    expect(new Headers(init?.headers).get('Discourse-Present')).toBeNull();
     expect(init).toEqual(
       expect.objectContaining({
         headers: expect.objectContaining({
           Accept: 'application/json, text/javascript, */*; q=0.01',
-          'Discourse-Present': 'true',
           Referer: 'https://linux.do/search?expanded=true&q=keyword',
           'X-CSRF-Token': 'csrf-token',
           'X-Requested-With': 'XMLHttpRequest'

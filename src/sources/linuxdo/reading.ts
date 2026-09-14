@@ -54,7 +54,15 @@ export function createLinuxDoReadingSender({
   userAgent: () => string;
 }) {
   let csrf: { identity: string; agent: string; token: Promise<string> } | undefined;
-  return async (batch: ReadingBatch, identity: string, signal: AbortSignal, trace?: DiagnosticTrace) => {
+  return async (
+    batch: ReadingBatch,
+    identity: string,
+    signal: AbortSignal,
+    trace?: DiagnosticTrace,
+    recovering = false,
+    beforePost?: () => void
+  ) => {
+    if (recovering) csrf = undefined;
     const agent = userAgent();
     const assertCurrent = () => {
       if (signal.aborted || scope() !== identity || userAgent() !== agent) throw new RequestCanceledError();
@@ -96,10 +104,11 @@ export function createLinuxDoReadingSender({
               'Discourse-Background': 'true'
             }
           },
-          fetcher: (input, init) => {
+          fetcher: withFetchGuard((input, init) => {
+            beforePost?.();
             started = true;
-            return guardedFetcher(input, init);
-          },
+            return fetcher(input, init);
+          }, assertCurrent),
           signal,
           csrfToken,
           userAgent: agent,
@@ -117,7 +126,13 @@ export function createLinuxDoReadingSender({
           csrf = undefined;
           continue;
         }
-        if (!started && !signal.aborted && failure.status !== 401 && failure.status !== 403) {
+        if (
+          !started &&
+          !signal.aborted &&
+          failure.status !== 401 &&
+          failure.status !== 403 &&
+          (failure as { reason?: string }).reason !== 'cloudflare'
+        ) {
           Object.assign(failure, { safeToRetry: true });
         }
         throw error;

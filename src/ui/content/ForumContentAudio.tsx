@@ -4,13 +4,14 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, t
 import { Pause, Play, RotateCcw } from 'lucide-react-native';
 import type { ReaderTheme } from '@/ui/theme/tokens';
 
-export type ForumContentAudioStatus = 'error' | 'idle' | 'loading' | 'ready';
+export type ForumContentAudioStatus = 'error' | 'idle' | 'loading' | 'buffering' | 'ready';
 
 export function ForumContentAudio({
   boundarySpacing,
   duration,
   error,
   playing,
+  playWhenReady = playing,
   position,
   status,
   theme,
@@ -23,6 +24,7 @@ export function ForumContentAudio({
   duration: number;
   error: string | null;
   playing: boolean;
+  playWhenReady?: boolean;
   position: number;
   status: ForumContentAudioStatus;
   theme: ReaderTheme;
@@ -41,7 +43,7 @@ export function ForumContentAudio({
   const loading = status === 'loading';
   const failed = status === 'error';
   const sliderDisabled = loading || failed || safeDuration <= 0;
-  const buttonLabel = failed ? '音频加载失败，点按重试' : playing ? '暂停音频' : '播放音频';
+  const buttonLabel = failed ? '音频加载失败，点按重试' : playWhenReady ? '暂停音频' : '播放音频';
 
   return (
     <View
@@ -53,7 +55,7 @@ export function ForumContentAudio({
         accessibilityRole="button"
         accessibilityState={{ disabled: loading }}
         disabled={loading}
-        onPress={failed ? onRetry : playing ? onPause : onPlay}
+        onPress={failed ? onRetry : playWhenReady ? onPause : onPlay}
         style={styles.playButton}
       >
         <View
@@ -68,7 +70,7 @@ export function ForumContentAudio({
             <ActivityIndicator color={theme.onPrimary} />
           ) : failed ? (
             <RotateCcw color={theme.onPrimary} size={18} strokeWidth={2} />
-          ) : playing ? (
+          ) : playWhenReady ? (
             <Pause color={theme.onPrimary} fill={theme.onPrimary} size={18} strokeWidth={1.8} />
           ) : (
             <Play color={theme.onPrimary} fill={theme.onPrimary} size={18} strokeWidth={1.8} />

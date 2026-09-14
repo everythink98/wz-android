@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
 import type { ReaderSettings } from '@/domain/reader/readerData';
@@ -89,6 +90,8 @@ export function ModalSheetFrame({
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onRequestClose}>
       {keyboardAvoiding ? (
         <KeyboardAvoidingView
+          onTouchStart={recordUserInteraction}
+          onTouchMove={recordUserInteraction}
           key={Platform.OS === 'android' ? `${visible}-${androidKeyboardResetKey}` : undefined}
           behavior="height"
           enabled={keyboardAvoidingEnabled && visible && (Platform.OS !== 'android' || androidKeyboardVisible)}
@@ -97,7 +100,9 @@ export function ModalSheetFrame({
           {sheet}
         </KeyboardAvoidingView>
       ) : (
-        <View style={styles.root}>{sheet}</View>
+        <View style={styles.root} onTouchStart={recordUserInteraction} onTouchMove={recordUserInteraction}>
+          {sheet}
+        </View>
       )}
     </Modal>
   );

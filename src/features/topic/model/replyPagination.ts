@@ -1,6 +1,7 @@
 import type { InfiniteData } from '@tanstack/react-query';
 import type { RepliesResponse, ReplyOrder, ReplyWindowPosition, TopicDetail } from '@/domain/forum/models';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
+import { replyKey } from '@/domain/forum/feed';
 
 export const REPLY_PAGE_SIZE = 30;
 
@@ -51,7 +52,17 @@ export function firstReplyData(
 }
 
 export function mergedReplyPages(data: InfiniteData<ReplyPage, ReplyPageParam> | undefined) {
-  return data?.pages.flatMap((page) => page.items) ?? [];
+  const seen = new Set<string>();
+  return (
+    data?.pages
+      .flatMap((page) => page.items)
+      .filter((reply) => {
+        const key = replyKey(reply);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }) ?? []
+  );
 }
 
 function isLoadedReplyPage(pages: ReplyPage[], candidate: ReplyCursorPosition) {

@@ -6,6 +6,12 @@ import type { NetworkProxyProfile, NetworkProxyState } from '@/platform/network/
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
 import { fetchWithTimeout } from '@/platform/network/request';
 import * as SecureStore from 'expo-secure-store';
+import { getLinuxDoCurrentUserProfile } from '@/sources/linuxdo/account';
+import { createLinuxDoReadingSender } from '@/sources/linuxdo/reading';
+import { withLinuxDoPresence } from '@/sources/linuxdo/presence';
+import { recordUserInteraction } from '@/platform/network/userPresence';
+import { AppState } from 'react-native';
+import { linuxDoNotificationAdapter } from '@/sources/discourseNotifications';
 
 const mockLoadNetworkProxyState = jest.fn<() => Promise<NetworkProxyState>>();
 const mockSaveNetworkProxyState = jest.fn<(state: NetworkProxyState) => Promise<NetworkProxyState>>();
@@ -54,6 +60,93 @@ describe('network proxy controller', () => {
 
   afterEach(() => {
     setDiagnosticWriter(null);
+  });
+
+  it('marks foreground account checks and reading reports at the actual transport', async () => {
+    const previousState = AppState.currentState;
+    AppState.currentState = 'active';
+    recordUserInteraction();
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const actualFetch = jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith('/session/current.json'))
+        return new Response(JSON.stringify({ current_user: { username: 'alice' } }));
+      if (url.endsWith('/session/csrf')) return new Response(JSON.stringify({ csrf: 'fixture' }));
+      return new Response('');
+    });
+    try {
+      const baseFetcher = withLinuxDoPresence((input, init) => fetch(input, init));
+      const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+      const fetcher = hook.result.current.networkProxyFetcher;
+      await getLinuxDoCurrentUserProfile({ fetcher });
+      const send = createLinuxDoReadingSender({ fetcher, scope: () => 'alice', userAgent: () => 'fixture' });
+      await send({ topicId: '12', topicTime: 1000, timings: { 1: 1000 } }, 'alice', new AbortController().signal);
+      expect(calls.map(({ url }) => new URL(url).pathname)).toEqual([
+        '/session/current.json',
+        '/session/csrf',
+        '/topics/timings'
+      ]);
+      expect(calls.map(({ init }) => new Headers(init?.headers).get('Discourse-Present'))).toEqual([
+        'true',
+        'true',
+        'true'
+      ]);
+      expect(calls[2].init?.body).toBe('topic_id=12&topic_time=1000&timings%5B1%5D=1000');
+    } finally {
+      actualFetch.mockRestore();
+      AppState.currentState = previousState;
+    }
+  });
+
+  it('uses the same presence rule for foreground notifications and omits it after backgrounding', async () => {
+    const previousState = AppState.currentState;
+    AppState.currentState = 'active';
+    recordUserInteraction();
+    const dispatch = jest.fn<import('@/platform/network/request').Fetcher>(
+      async () => new Response(JSON.stringify({ notifications: [] }))
+    );
+    const baseFetcher = withLinuxDoPresence(dispatch);
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+    try {
+      const access = { identityKey: 'linuxdo:42', userId: '42', fetcher: hook.result.current.networkProxyFetcher };
+      await linuxDoNotificationAdapter.listPage(access);
+      AppState.currentState = 'background';
+      await linuxDoNotificationAdapter.listPage(access);
+      expect(dispatch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/notifications', '/notifications']);
+      expect(dispatch.mock.calls.map(([, init]) => new Headers(init?.headers).get('Discourse-Present'))).toEqual([
+        'true',
+        null
+      ]);
+    } finally {
+      AppState.currentState = previousState;
+    }
+  });
+
+  it('decides presence after an already pending proxy setup completes', async () => {
+    const previousState = AppState.currentState;
+    AppState.currentState = 'active';
+    recordUserInteraction();
+    const load = deferred<NetworkProxyState>();
+    mockLoadNetworkProxyState.mockImplementationOnce(() => load.promise);
+    const dispatch = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('{}'));
+    const baseFetcher = withLinuxDoPresence(dispatch);
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+    try {
+      const pending = hook.result.current.networkProxyFetcher('https://linux.do/latest.json', {
+        headers: { 'X-Requested-With': 'XMLHttpRequest', 'Discourse-Present': 'true' }
+      });
+      expect(dispatch).not.toHaveBeenCalled();
+      AppState.currentState = 'background';
+      await act(async () => {
+        load.resolve({ enabled: false, activeId: null, profiles: [] });
+        await pending;
+      });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(new Headers(dispatch.mock.calls[0][1]?.headers).has('Discourse-Present')).toBe(false);
+    } finally {
+      AppState.currentState = previousState;
+    }
   });
 
   it('can reset an unreadable saved proxy to a confirmed direct connection', async () => {

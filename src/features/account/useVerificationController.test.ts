@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const effectCleanups = vi.hoisted(() => [] as (() => void)[]);
+
 vi.mock('react', () => ({
   useCallback: <T>(callback: T) => callback,
-  useEffect: (effect: () => void) => effect(),
+  useEffect: (effect: () => void | (() => void)) => {
+    const cleanup = effect();
+    if (cleanup) effectCleanups.push(cleanup);
+  },
   useLayoutEffect: (effect: () => void) => effect(),
   useRef: <T>(value: T) => ({ current: value })
 }));
@@ -22,18 +27,15 @@ const serverStateMocks = vi.hoisted(() => ({
 
 vi.mock('@/platform/query/serverState', () => ({
   appQueryClient: {
+    cancelQueries: vi.fn(async () => undefined),
     getQueryCache: () => ({
       find: () => ({ isActive: serverStateMocks.recoveryActive })
     })
   }
 }));
 
-vi.mock('@/platform/android/linuxDoUserAgent', () => ({
-  sanitizeLinuxDoUserAgent: (userAgent: string) => userAgent.trim()
-}));
-
 import type { SiteSessionEvent, SiteSessionState } from '@/domain/session/siteSessionState';
-import type { AccountReconcileResult } from '@/domain/session/sessionContracts';
+import type { AccountReconcileResult, LinuxDoReadingRecovery } from '@/domain/session/sessionContracts';
 import { useVerificationController } from './useVerificationController';
 
 const ref = <T>(current: T) => ({ current });
@@ -65,6 +67,10 @@ function createController(
     onBeforeLinuxDoSurfaceOpened?: () => void;
     prepareLinuxDoCookieResponseBarrier?: () => Promise<void>;
     reconcileAccountStatus?: (source: 'linuxdo') => Promise<AccountReconcileResult>;
+    awaitLinuxDoCookieHandoff?: () => Promise<void>;
+    awaitLinuxDoWebViewUnmount?: () => Promise<void>;
+    canOpenLinuxDoPanel?: () => boolean;
+    getRecoveryScope?: () => string;
   } = {}
 ) {
   const showLinuxDoPanelRef = ref(false);
@@ -86,6 +92,7 @@ function createController(
   );
   const setLinuxDoWebViewError = vi.fn();
   const setMountLinuxDoWebView = vi.fn();
+  const onRecoveryStateChanged = vi.fn();
   const setLinuxDoWebViewUserAgent = vi.fn();
   const commitLinuxDoWebViewUserAgent = vi.fn((userAgent: string) => {
     linuxDoWebViewUserAgentRef.current = userAgent;
@@ -93,6 +100,11 @@ function createController(
   });
   const updateLinuxDoSession = vi.fn<(event: SiteSessionEvent) => void>();
   const controller = useVerificationController({
+    awaitLinuxDoCookieHandoff: options.awaitLinuxDoCookieHandoff,
+    awaitLinuxDoWebViewUnmount: options.awaitLinuxDoWebViewUnmount,
+    canOpenLinuxDoPanel: options.canOpenLinuxDoPanel,
+    getRecoveryScope: options.getRecoveryScope,
+    onRecoveryStateChanged,
     changeNodeSeekLoginPanel: vi.fn(),
     checkingRequestIdRef: ref(0),
     closeYaohuoLoginPanel: vi.fn(),
@@ -131,6 +143,7 @@ function createController(
       webViewKey
     );
   return {
+    onRecoveryStateChanged,
     controller,
     setMountLinuxDoWebView,
     commitLinuxDoWebViewUserAgent,
@@ -150,12 +163,51 @@ function createController(
 }
 
 afterEach(() => {
+  effectCleanups.splice(0).forEach((cleanup) => cleanup());
   vi.clearAllMocks();
   serverStateMocks.recoveryActive.mockReset().mockReturnValue(true);
   vi.useRealTimers();
 });
 
 describe('linux.do visible verification coordinator', () => {
+  it('attaches reading to an existing verification without resetting its WebView', async () => {
+    const { controller, linuxDoWebViewSessionRef, reconcileAccountStatus } = createController();
+    const resumePage = vi.fn(async () => 'completed' as const);
+    await controller.showLinuxDoVerification('页面验证', { queryKey: ['page'], resume: resumePage });
+    const generation = linuxDoWebViewSessionRef.current;
+    const recovery: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 1,
+      isCurrent: () => true,
+      resume: vi.fn(async () => 'completed' as const),
+      cancel: vi.fn()
+    };
+    await controller.showLinuxDoVerification('阅读验证', recovery);
+    await controller.showLinuxDoVerification('阅读验证', recovery);
+    expect(linuxDoWebViewSessionRef.current).toBe(generation);
+    await controller.checkLinuxDoCookie();
+    expect(resumePage).toHaveBeenCalledTimes(1);
+    expect(recovery.resume).toHaveBeenCalledTimes(1);
+    expect(reconcileAccountStatus).not.toHaveBeenCalled();
+  });
+
+  it('uses reading ownership without an active query and cancels it when dismissed', async () => {
+    serverStateMocks.recoveryActive.mockReturnValue(false);
+    const { controller } = createController();
+    const recovery: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 1,
+      isCurrent: () => true,
+      resume: vi.fn(async () => 'completed' as const),
+      cancel: vi.fn()
+    };
+    expect(await controller.showLinuxDoVerification('阅读验证', recovery)).toBe(true);
+    controller.closeLinuxDoPanel();
+    expect(recovery.cancel).toHaveBeenCalledTimes(1);
+    await controller.checkLinuxDoCookie();
+    expect(recovery.resume).not.toHaveBeenCalled();
+  });
+
   it('waits for native cookie writes to settle before mounting the login page', async () => {
     vi.useFakeTimers();
     let settle!: () => void;
@@ -345,7 +397,7 @@ describe('linux.do visible verification coordinator', () => {
   it('keeps a recovery open for another explicit check when verification is still required', async () => {
     vi.useFakeTimers();
     const resume = vi.fn(async () => 'verification-required' as const);
-    const { controller, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
+    const { controller, showLinuxDoPanelRef, updateLinuxDoSession, onRecoveryStateChanged } = createController();
     await controller.showLinuxDoVerification('需要验证', {
       queryKey: recoveryQueryKeyFor('feed'),
       resume
@@ -355,8 +407,12 @@ describe('linux.do visible verification coordinator', () => {
       await controller.checkLinuxDoCookie();
       expect(showLinuxDoPanelRef.current).toBe(false);
       await vi.advanceTimersByTimeAsync(350);
+      expect(showLinuxDoPanelRef.current).toBe(false);
+      expect(onRecoveryStateChanged).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'result' }));
+      await controller.checkLinuxDoCookie();
+      expect(resume).toHaveBeenCalledTimes(1);
+      controller.retryLinuxDoRecovery();
       expect(showLinuxDoPanelRef.current).toBe(true);
-
       await controller.checkLinuxDoCookie();
       expect(showLinuxDoPanelRef.current).toBe(false);
       await vi.advanceTimersByTimeAsync(350);
@@ -366,14 +422,14 @@ describe('linux.do visible verification coordinator', () => {
 
     expect(resume).toHaveBeenCalledTimes(2);
     expect(updateLinuxDoSession).not.toHaveBeenCalled();
-    expect(showLinuxDoPanelRef.current).toBe(true);
+    expect(showLinuxDoPanelRef.current).toBe(false);
   });
 
   it('reports a CF recovery exception without mutating account state', async () => {
     const resume = vi.fn(async () => {
       throw new Error('resume exploded');
     });
-    const { controller, notify, onLinuxDoSurfaceClosed, updateLinuxDoSession } = createController();
+    const { controller, onRecoveryStateChanged, onLinuxDoSurfaceClosed, updateLinuxDoSession } = createController();
     await controller.showLinuxDoVerification('需要验证', {
       queryKey: recoveryQueryKeyFor('throwing'),
       resume
@@ -385,7 +441,12 @@ describe('linux.do visible verification coordinator', () => {
       authoritativeResult: true,
       reason: 'authoritative-recovery'
     });
-    expect(notify).toHaveBeenCalledWith('原页面恢复失败：resume exploded');
+    expect(onRecoveryStateChanged).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        phase: 'result',
+        results: [{ kind: 'page', outcome: 'failed', error: 'resume exploded' }]
+      })
+    );
     expect(updateLinuxDoSession).not.toHaveBeenCalled();
   });
 
@@ -451,6 +512,41 @@ describe('linux.do visible verification coordinator', () => {
       authoritativeResult: false,
       reason: 'close-button'
     });
+  });
+
+  it.each(['close', 'replace', 'unmount'] as const)('cancels queued reading ownership on %s', async (action) => {
+    vi.useFakeTimers();
+    const { controller, showLinuxDoPanelRef } = createController();
+    await controller.showLinuxDoVerification();
+    controller.closeLinuxDoPanel();
+    const reading: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 1,
+      isCurrent: () => true,
+      resume: vi.fn(async () => 'completed' as const),
+      cancel: vi.fn()
+    };
+    const queued = controller.showLinuxDoVerification('阅读验证', reading);
+    const replacement = {
+      queryKey: recoveryQueryKeyFor('replacement'),
+      resume: vi.fn(async () => 'completed' as const)
+    };
+    let next: Promise<boolean> | undefined;
+    if (action === 'close') controller.closeLinuxDoPanel(true, 'navigation-away');
+    else if (action === 'replace') next = controller.showLinuxDoVerification('页面验证', replacement);
+    else effectCleanups.splice(0).forEach((cleanup) => cleanup());
+
+    await expect(queued).resolves.toBe(false);
+    expect(reading.cancel).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(reading.resume).not.toHaveBeenCalled();
+    if (next) {
+      await expect(next).resolves.toBe(true);
+      await controller.checkLinuxDoCookie();
+      expect(replacement.resume).toHaveBeenCalledTimes(1);
+    } else if (action === 'close') {
+      expect(showLinuxDoPanelRef.current).toBe(false);
+    }
   });
 
   it('keeps only the latest foreground recovery queued while the panel is closing', async () => {
@@ -545,5 +641,153 @@ describe('linux.do visible verification coordinator', () => {
 
     expect(onLoginWebViewFailure).toHaveBeenCalledTimes(1);
     expect(onLoginWebViewFailure).toHaveBeenCalledWith('linuxdo', 9, 'renderer_gone');
+  });
+});
+
+describe('reading recovery ownership', () => {
+  it('resumes reading attached to a manually opened verification panel', async () => {
+    const { controller, showLinuxDoPanelRef } = createController();
+    await controller.showLinuxDoVerification();
+    const reading: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 8001,
+      isCurrent: () => true,
+      resume: vi.fn(async () => 'completed' as const),
+      cancel: vi.fn()
+    };
+    await controller.showLinuxDoVerification('reading', reading);
+    await controller.checkLinuxDoCookie();
+    expect(showLinuxDoPanelRef.current).toBe(false);
+    expect(reading.resume).toHaveBeenCalledTimes(1);
+  });
+  it.each(['before-check', 'during-resume'] as const)(
+    'resumes valid reading when its attached page query becomes inactive %s',
+    async (phase) => {
+      const { controller } = createController();
+      await controller.showLinuxDoVerification('page', {
+        queryKey: ['page'],
+        resume: vi.fn(async () => 'stale' as const)
+      });
+      const reading: LinuxDoReadingRecovery = {
+        kind: 'reading',
+        batchId: 8002,
+        isCurrent: () => true,
+        resume: vi.fn(async () => 'completed' as const),
+        cancel: vi.fn()
+      };
+      await controller.showLinuxDoVerification('reading', reading);
+      if (phase === 'before-check') serverStateMocks.recoveryActive.mockReturnValue(false);
+      await controller.checkLinuxDoCookie();
+      expect(reading.resume).toHaveBeenCalledTimes(1);
+    }
+  );
+});
+
+describe('bounded recovery sessions', () => {
+  it.each([
+    ['completed', 'verification-required'],
+    ['verification-required', 'completed'],
+    ['completed', 'failed'],
+    ['failed', 'completed']
+  ] as const)('settles page %s and reading %s independently', async (pageOutcome, readingOutcome) => {
+    const page = { queryKey: ['partial'], resume: vi.fn(async () => pageOutcome) };
+    const reading: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 8,
+      isCurrent: () => true,
+      cancel: vi.fn(),
+      resume: vi.fn(async () => readingOutcome)
+    };
+    const { controller, onRecoveryStateChanged, onLinuxDoSurfaceOpened } = createController();
+    await controller.showLinuxDoVerification('page', page);
+    await controller.showLinuxDoVerification('reading', reading);
+    await controller.checkLinuxDoCookie();
+    expect(onRecoveryStateChanged).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        phase: 'result',
+        results: [
+          { kind: 'page', outcome: pageOutcome, error: undefined },
+          { kind: 'reading', outcome: readingOutcome, error: undefined }
+        ]
+      })
+    );
+    await controller.showLinuxDoVerification('duplicate page', { ...page });
+    await controller.showLinuxDoVerification('duplicate reading', { ...reading });
+    await controller.checkLinuxDoCookie();
+    expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(1);
+    expect(page.resume).toHaveBeenCalledTimes(1);
+    expect(reading.resume).toHaveBeenCalledTimes(1);
+    controller.retryLinuxDoRecovery();
+    await controller.checkLinuxDoCookie();
+    expect(page.resume).toHaveBeenCalledTimes(pageOutcome === 'verification-required' ? 2 : 1);
+    expect(reading.resume).toHaveBeenCalledTimes(readingOutcome === 'verification-required' ? 2 : 1);
+    controller.closeLinuxDoPanel();
+  });
+
+  it.each(['unmount', 'handoff', 'request'] as const)(
+    'cancels at %s and ignores its late completion',
+    async (stage) => {
+      vi.useFakeTimers();
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const reading: LinuxDoReadingRecovery = {
+        kind: 'reading',
+        batchId: 9,
+        isCurrent: () => true,
+        cancel: vi.fn(),
+        resume: vi.fn(async () => {
+          if (stage === 'request') await pending;
+          return 'verification-required' as const;
+        })
+      };
+      const { controller, onRecoveryStateChanged, onLinuxDoSurfaceOpened } = createController({
+        awaitLinuxDoWebViewUnmount: () => (stage === 'unmount' ? pending : Promise.resolve()),
+        awaitLinuxDoCookieHandoff: () => (stage === 'handoff' ? pending : Promise.resolve())
+      });
+      await controller.showLinuxDoVerification('reading', reading);
+      const checking = controller.checkLinuxDoCookie();
+      await Promise.resolve();
+      await Promise.resolve();
+      controller.closeLinuxDoPanel();
+      release();
+      await checking;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(reading.cancel).toHaveBeenCalledTimes(1);
+      expect(reading.resume).toHaveBeenCalledTimes(stage === 'request' ? 1 : 0);
+      expect(await controller.showLinuxDoVerification('late', reading)).toBe(false);
+      expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(1);
+      expect(onRecoveryStateChanged).toHaveBeenLastCalledWith({ phase: 'idle', dedicated: false, results: [] });
+    }
+  );
+
+  it('does not load verification for an expired batch on retry or first notification', async () => {
+    let expired = false;
+    const reading: LinuxDoReadingRecovery = {
+      kind: 'reading',
+      batchId: 10,
+      isCurrent: () => true,
+      isExpired: () => expired,
+      cancel: vi.fn(),
+      resume: vi.fn(async () => 'verification-required' as const)
+    };
+    const { controller, onLinuxDoSurfaceOpened, onRecoveryStateChanged } = createController();
+    await controller.showLinuxDoVerification('reading', reading);
+    await controller.checkLinuxDoCookie();
+    expired = true;
+    controller.retryLinuxDoRecovery();
+    expect(onLinuxDoSurfaceOpened).toHaveBeenCalledTimes(1);
+    expect(reading.resume).toHaveBeenCalledTimes(1);
+    expect(onRecoveryStateChanged).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        phase: 'result',
+        results: [expect.objectContaining({ outcome: 'stale' })]
+      })
+    );
+    controller.closeLinuxDoPanel();
+    const next = createController();
+    await next.controller.showLinuxDoVerification('expired', { ...reading, batchId: 11 });
+    expect(next.onLinuxDoSurfaceOpened).not.toHaveBeenCalled();
   });
 });

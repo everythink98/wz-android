@@ -25,6 +25,29 @@ function parseReplies(html: string, options?: Parameters<typeof parseYaohuoRepli
 }
 
 describe('Android direct yaohuo API', () => {
+  it('preserves site notices for topic and reply reads without inventing a topic or fetching favorites', async () => {
+    const html =
+      '<html><head><title>提示信息 - 妖火茶馆</title></head><body><div class="title">温馨提示</div><div class="tip">正在<strong>审核</strong>中！</div><div class="btBox">返回</div></body></html>';
+    const yaohuoFetcher = vi.fn(async () => new Response(html));
+    const topic = { id: '1580807', source: 'yaohuo', url: 'https://www.yaohuo.me/bbs-1580807.html' } as Topic;
+    await expect(getYaohuoTopicDirect({ topic, yaohuoFetcher })).rejects.toMatchObject({
+      message: '妖火提示：正在审核中！',
+      reason: 'site-notice'
+    });
+    expect(yaohuoFetcher).toHaveBeenCalledTimes(1);
+    await expect(
+      getYaohuoRepliesDirect({ id: topic.id, order: 'newest', position: { kind: 'start' }, yaohuoFetcher })
+    ).rejects.toMatchObject({
+      message: '妖火提示：正在审核中！',
+      reason: 'site-notice'
+    });
+    const authored =
+      '<title>提示信息 - 妖火茶馆</title><div class="bbscontent"><div class="title">温馨提示</div><div class="tip">正在审核中！</div></div>';
+    await expect(
+      getYaohuoTopicDirect({ topic, yaohuoFetcher: async () => new Response(authored) })
+    ).resolves.toMatchObject({ id: topic.id });
+  });
+
   it('reads ended status and explicit empty replies from site chrome instead of authored content', async () => {
     const opening = '<div class="content">[标题] topic</div><div class="bbscontent">正文</div>';
     const ended = '<div class="tipmini">{alice(ID7)结束原因: 已结束 09-06 19:55}</div>';

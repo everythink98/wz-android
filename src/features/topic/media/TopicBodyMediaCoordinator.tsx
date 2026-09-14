@@ -14,6 +14,7 @@ import { useReadNetworkRuntimeGeneration } from '@/platform/network/readNetworkR
 import { recordImageBudgetTimeout } from '@/platform/media/imageLoadDiagnostics';
 import { recordMediaBudgetTimeout } from '@/platform/media/mediaPlaybackDiagnostics';
 import { TopicAudioSessionProvider } from './TopicAudioSession';
+import { MediaPlaybackSession, MediaPlaybackSessionContext } from '@/platform/media/mediaPlaybackSession';
 
 const MAX_WARM_BLOCK_MEDIA = 8;
 const MAX_IN_FLIGHT_BODY_MEDIA = 4;
@@ -664,6 +665,9 @@ function TopicBodyMediaCoordinatorSessionProvider({
   onDisplayedRowsChange?: (rows: ReadonlySet<string>) => void;
   runtimeGeneration: number;
 }) {
+  const [playback] = useState(() => new MediaPlaybackSession());
+  useLayoutEffect(() => playback.updateGate(active && !paused, !paused), [active, paused, playback]);
+  useEffect(() => () => playback.dispose(), [playback]);
   const [coordinator] = useState(
     () =>
       new TopicBodyMediaCoordinator(
@@ -686,9 +690,11 @@ function TopicBodyMediaCoordinatorSessionProvider({
   useEffect(() => () => coordinator.dispose(), [coordinator]);
   return (
     <TopicBodyMediaCoordinatorContext.Provider value={coordinator}>
-      <TopicAudioSessionProvider active={active} paused={paused} runtimeGeneration={runtimeGeneration}>
-        {children}
-      </TopicAudioSessionProvider>
+      <MediaPlaybackSessionContext.Provider value={playback}>
+        <TopicAudioSessionProvider active={active} paused={paused} runtimeGeneration={runtimeGeneration}>
+          {children}
+        </TopicAudioSessionProvider>
+      </MediaPlaybackSessionContext.Provider>
     </TopicBodyMediaCoordinatorContext.Provider>
   );
 }

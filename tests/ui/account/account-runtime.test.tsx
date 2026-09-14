@@ -22,10 +22,14 @@ jest.mock('react-native-webview', () => {
   return {
     WebView: React.forwardRef(function MockWebView(props: Record<string, unknown>, ref: unknown) {
       React.useImperativeHandle(ref, () => ({ stopLoading: jest.fn(), injectJavaScript: jest.fn() }), []);
+      React.useEffect(() => {
+        mockWebViewLoads.push((props.source as { uri?: string })?.uri || '');
+      }, []);
       return React.createElement(View, { ...props, testID: 'login-webview' });
     })
   };
 });
+let mockWebViewLoads: string[] = [];
 jest.mock('@/platform/network/managedCookies', () => ({
   ...jest.requireActual('@/platform/network/managedCookies'),
   setLinuxDoCookieResponseBarrier: jest.fn(async () => undefined),
@@ -68,12 +72,256 @@ async function renderRuntime(fetcher: Fetcher) {
 }
 
 beforeEach(() => {
+  mockWebViewLoads = [];
   events = [];
   setDiagnosticWriter((line) => {
     events.push(JSON.parse(line) as DiagnosticEvent);
   });
 });
 afterEach(() => setDiagnosticWriter(null));
+
+it('keeps a blocked reading recovery in one panel until explicit retry, then waits for cookie handoff', async () => {
+  jest.useFakeTimers({ doNotFake: ['performance'] });
+  let clock = 0;
+  const monotonic = jest.spyOn(performance, 'now').mockImplementation(() => clock);
+  let challenged = true;
+  const bodies: string[] = [];
+  const fetcher: Fetcher = async (url, init) => {
+    if (url.endsWith('/session/csrf')) return new Response(JSON.stringify({ csrf: 'fixture' }));
+    bodies.push(String(init?.body));
+    return challenged
+      ? new Response('<title>Just a moment...</title>', {
+          status: 403,
+          headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+        })
+      : new Response('');
+  };
+  seedAccount();
+  let runtime!: ReturnType<typeof useAccountRuntime>;
+  const notify = jest.fn();
+  function Harness({ appActive = true }: { appActive?: boolean }) {
+    runtime = useAccountRuntime({
+      appActive,
+      enabledSources: ['linuxdo'],
+      fetcher,
+      loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+      notify,
+      nodeSeekRecoveryThreshold: 1,
+      openUser: async () => undefined,
+      ready: false,
+      screen: 'search',
+      webViewBlockMessage: ''
+    });
+    return runtime.hosts.element;
+  }
+  const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  const advance = async (milliseconds: number) =>
+    act(async () => {
+      for (let elapsed = 0; elapsed < milliseconds; elapsed += 1000) {
+        clock += 1000;
+        await jest.advanceTimersByTimeAsync(1000);
+      }
+    });
+  try {
+    const reading = runtime.read.readGateway.reading!;
+    const scope = reading.scope();
+    const session = reading.begin('12');
+    session.visible([1]);
+    session.active(true);
+    await advance(1000);
+    expect(runtime.hosts.linuxDoVerificationVisible).toBe(true);
+    expect(reading.scope()).toBe(scope);
+    session.visible([2]);
+    await advance(10000);
+    expect(mockWebViewLoads).toEqual(['https://linux.do/challenge']);
+    expect(bodies).toHaveLength(1);
+    expect(reading.state()['12'].readPosts[2]).toBeUndefined();
+    await fireEvent.press(view.getByText('检测状态'));
+    expect(bodies).toHaveLength(2);
+    expect(runtime.hosts.linuxDoVerificationVisible).toBe(true);
+    expect(view.queryByTestId('login-webview')).toBeNull();
+    expect(view.getByText('请求仍被站点拦截，尚未恢复。')).toBeTruthy();
+    await view.rerender(<Harness appActive={false} />);
+    await view.rerender(<Harness appActive />);
+    await advance(10000);
+    expect(bodies).toHaveLength(2);
+    expect(view.queryByTestId('login-webview')).toBeNull();
+    expect(mockWebViewLoads).toEqual(['https://linux.do/challenge']);
+    await fireEvent.press(view.getByText('重新验证'));
+    await advance(1000);
+    let release!: () => void;
+    jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        })
+    );
+    challenged = false;
+    await fireEvent.press(view.getByText('检测状态'));
+    expect(bodies).toHaveLength(2);
+    expect(runtime.hosts.linuxDoVerificationVisible).toBe(true);
+    await act(async () => release());
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2]).toBe(bodies[0]);
+    expect(reading.scope()).toBe(scope);
+    expect(reading.state()['12'].server.lastReadPostNumber).toBe(1);
+    expect(runtime.hosts.linuxDoVerificationVisible).toBe(false);
+    expect(notify).toHaveBeenCalledWith('linux.do 阅读记录已同步。');
+  } finally {
+    await view.unmount();
+    monotonic.mockRestore();
+    jest.useRealTimers();
+  }
+});
+
+it.each([
+  ['handoff', 'close'],
+  ['csrf', 'back'],
+  ['timings', 'background'],
+  ['handoff', 'source'],
+  ['handoff', 'identity']
+] as const)('ends reading recovery during %s on %s without late sends or reopened panels', async (stage, exit) => {
+  jest.useFakeTimers({ doNotFake: ['performance'] });
+  let clock = 0;
+  const monotonic = jest.spyOn(performance, 'now').mockImplementation(() => clock);
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let posts = 0;
+  let csrf = 0;
+  const fetcher: Fetcher = async (url) => {
+    if (url.endsWith('/session/csrf')) {
+      if (++csrf === 2 && stage === 'csrf') await pending;
+      return new Response(JSON.stringify({ csrf: 'fixture' }));
+    }
+    if (++posts === 1)
+      return new Response('<title>Just a moment...</title>', {
+        status: 403,
+        headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+      });
+    if (stage === 'timings') await pending;
+    return new Response('');
+  };
+  seedAccount();
+  const notify = jest.fn();
+  let runtime!: ReturnType<typeof useAccountRuntime>;
+  function Harness({ active = true, enabled = true }: { active?: boolean; enabled?: boolean }) {
+    runtime = useAccountRuntime({
+      appActive: active,
+      enabledSources: enabled ? ['linuxdo'] : [],
+      fetcher,
+      loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+      notify,
+      nodeSeekRecoveryThreshold: 1,
+      openUser: async () => undefined,
+      ready: false,
+      screen: 'search',
+      webViewBlockMessage: ''
+    });
+    return runtime.hosts.element;
+  }
+  const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  try {
+    const session = runtime.read.readGateway.reading!.begin('12');
+    session.visible([1]);
+    session.active(true);
+    await act(async () => {
+      clock += 1000;
+      await jest.advanceTimersByTimeAsync(1000);
+    });
+    expect(posts).toBe(1);
+    await act(async () => {
+      clock += 10000;
+      await jest.advanceTimersByTimeAsync(10000);
+    });
+    if (stage === 'handoff') jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(() => pending);
+    await fireEvent.press(view.getByText('检测状态'));
+    expect(view.getByText('正在检测原请求是否恢复，可以随时返回。')).toBeTruthy();
+    if (exit === 'close') await fireEvent.press(view.getByLabelText('关闭'));
+    if (exit === 'back')
+      await act(async () => {
+        expect(runtime.hosts.closeTopmostSurface()).toBe('linuxdo-panel-closed');
+      });
+    if (exit === 'source') await view.rerender(<Harness enabled={false} />);
+    if (exit === 'identity')
+      await act(async () => {
+        seedAccount('bob');
+      });
+    if (exit === 'background') await view.rerender(<Harness active={false} />);
+    await act(async () => {
+      release();
+    });
+    if (exit === 'background') {
+      await view.rerender(<Harness />);
+      expect(view.getByText(/检测因切到后台而中断/)).toBeTruthy();
+      await fireEvent.press(view.getByText('返回原页面'));
+    }
+    await act(async () => {
+      clock += 30000;
+      await jest.advanceTimersByTimeAsync(30000);
+    });
+    expect(posts).toBe(stage === 'timings' ? 2 : 1);
+    expect(runtime.hosts.linuxDoVerificationVisible).toBe(false);
+    expect(mockWebViewLoads).toEqual(['https://linux.do/challenge']);
+  } finally {
+    release();
+    await view.unmount();
+    monotonic.mockRestore();
+    jest.useRealTimers();
+  }
+});
+
+it('suppresses canceled query notifications until a new explicit request produces a new error', async () => {
+  jest.useFakeTimers();
+  const queryKey = ['cancel-recovery-query'];
+  let attempts = 0;
+  const observer = new QueryObserver(appQueryClient, {
+    queryKey,
+    retry: false,
+    queryFn: async () => {
+      ++attempts;
+      throw new Error('blocked');
+    }
+  });
+  const unsubscribe = observer.subscribe(() => undefined);
+  const hook = await renderRuntime(async () => new Response('{}'));
+  const resume = jest.fn(async () => 'verification-required' as const);
+  try {
+    await act(async () => {
+      await observer.refetch();
+    });
+    await act(async () => {
+      expect(await hook.result.current.hosts.showLinuxDoVerification('page', { queryKey, resume })).toBe(true);
+    });
+    await act(async () => {
+      hook.result.current.hosts.closeTopmostSurface();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(500);
+    });
+    await act(async () => {
+      expect(await hook.result.current.hosts.showLinuxDoVerification('duplicate', { queryKey, resume })).toBe(false);
+    });
+    const previousAttempts = attempts;
+    await act(async () => {
+      await observer.refetch();
+    });
+    expect(attempts).toBe(previousAttempts + 1);
+    await act(async () => {
+      expect(await hook.result.current.hosts.showLinuxDoVerification('new request', { queryKey, resume })).toBe(true);
+    });
+    expect(resume).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      hook.result.current.hosts.closePanels();
+    });
+    await hook.unmount();
+    unsubscribe();
+    observer.destroy();
+    jest.useRealTimers();
+  }
+});
 
 it('accepts fresh server reading after changing the NodeSeek recovery setting', async () => {
   seedAccount();

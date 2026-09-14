@@ -136,6 +136,8 @@ describe('Topic Route external links', () => {
         chrome: { openOriginal: (url: string) => void };
         html: ReturnType<typeof useHtmlRenderingController>;
       };
+      const [nativeFrame] = view.container.queryAll((node) => node.props.accessibilityElementsHidden === false);
+      expect(nativeFrame.props.collapsable).toBe(false);
 
       screen.html.htmlRenderersProps.a?.onPress?.(
         { stopPropagation: jest.fn() } as never,
@@ -159,6 +161,8 @@ describe('Topic Route external links', () => {
         </ForumSessionEpochProvider>
       );
       expect((mockTopicScreen.mock.calls.at(-1)?.[0] as { active: boolean }).active).toBe(false);
+      expect(view.container.queryAll((node) => node.props.accessibilityElementsHidden === true)).toEqual([nativeFrame]);
+      expect(nativeFrame.props.collapsable).toBe(false);
     } finally {
       openBrowserAsync.mockRestore();
       openURL.mockRestore();

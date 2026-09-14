@@ -159,6 +159,20 @@ runner 要求恰好一个已连接且名称精确匹配的 `WZ_ForumSelection_Te
 
 入口第一行测试短文，后续两个宽片段共享一张表的位置，第三个独立；Measure 按钮读取实际 Fabric 文字坐标。拖选到右缘并持握后，前两个 x 必须相等且持续减小，第三个不变；松手后再次测量必须稳定，普通横滑必须从新位置接续。下方长文用 FlashList 验证至少三个 viewport、回收与反向拖回；短文微斜、跨行、菜单长时间隐藏及松手恢复同时检查。UI mock 的共享 offset 断言不替代此设备链；同帧像素与物理设备触感仍按原专项独立验收。
 
+### 音视频 Native 验证
+
+`patches/expo-video+57.0.3.patch` 内的 `ReaderPlaybackInstrumentedTest` 使用独立的 `expo.modules.video.test` 测试 APK；它不覆盖阅坛包，不读取真实账号，临时 WAV/MP4 在设备本地生成，只访问测试进程内的回环 Range 服务。
+
+完成 fresh prebuild 后，先编译测试包与 Release Kotlin，再明确指定 serial 安装测试包：
+
+```powershell
+android/gradlew.bat -p android :expo-video:assembleDebugAndroidTest :expo-video:compileReleaseKotlin -PreactNativeArchitectures=x86_64 --no-daemon
+adb -s <serial> install -r node_modules/expo-video/android/build/outputs/apk/androidTest/debug/expo-video-debug-androidTest.apk
+adb -s <serial> shell am instrument -w -r -e class expo.modules.video.ReaderPlaybackInstrumentedTest expo.modules.video.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+必须看到非零测试全部通过。覆盖真实缓存字节、Range 回源、epoch/Referer 隔离、LRU 淘汰、缺失文件回源、音视频真实 seek 与视频目标帧、40/48dp 图标和 56dp 点击范围；负向控制保留旧的不缓存路径。测试阶段以 `ReaderPlaybackProof` 输出仅含合成数据的请求计数与 seek 耗时，截图只写测试 APK 的 external files；任务证据复制到 ignored scratch，不进入 Git。完成后只停止本次测试进程，保留阅坛数据与设备状态。生产 App 中四站正文/回复/引用/采纳答案及实际全屏返回仍需匹配 APK 单独验收，这组 instrumentation 不能替代 Live。
+
 ### 更新下载证据
 
 `MORE-04` 的原生测试使用真实 OkHttp、本机受控 HTTP 服务与 source patch 中的 `DownloadResponseTest`，不操作设备：
@@ -185,7 +199,19 @@ adb -s <serial> reverse tcp:39082 tcp:39082
 
 按 `tests/live/agent-live.md` 的 `LOCAL-UPDATE-01` 分开验证下载链与生产 More；fixture 的 package/version/signer 只用于 test entry 校验，不代表正式 manifest 合格。权限页、返回/取消、断网、进程重启、代理阻断分别记证据；生产完整链缺少合格新版 APK 时记 `NOT_VERIFIED`。结束仅清理本任务 fixture、reverse 映射和服务，必要时用原 APK 覆盖恢复并复核 firstInstallTime。不得卸载、清 App 数据、重置 AVD，或在保留数据设备上执行 connectedDebugAndroidTest。
 
+L 站阅读同步诊断：按 `appSessionId + batchId` 关联 `reading-timings` 初次发送、补发与 `reading-recovery` 状态，再由每次 `traceId + requestId` 关联 Native 请求。`hasCfClearance` 表示实际请求携带通行 Cookie，`hasStoredCfClearance` 与 `isCfClearanceCurrent` 表示当时共享存储及一致性；字段缺失表示未知，不等于 false。面板交接的 `didCfClearanceChange` 只比较开关面板时的通行 Cookie；`cookieKind=clearance` 与 `bot-management` 分开记录。`userAgentHash` 是 Java String hashCode 对应的八位十六进制比较摘要，WebView、JS、Native 可对照；它不是凭据，也不能单独证明浏览器环境相同。网页消息 `userAgentSource=unknown` 不代表实际请求退回默认 UA。CF 响应记录识别依据、状态、Retry-After 和格式校验后的 Ray ID；服务端具体规则仍未知。检查覆盖时间范围和原生丢弃计数后再下结论，不导出 Cookie、Cookie 哈希、CSRF 或验证正文。
+
+L 站 CSRF 请求经隐藏 WebView 接力失败时，保留原始 CF 响应的状态、Retry-After、Ray ID 与识别依据，阅读恢复继续遵守该等待时间。网络写入的 `request-headers-start/end`、`request-failed` 和 `connection-write-stalled` 同时进入 Native 持久 journal，重启后仍可追溯。写后回读用同一提交 trace 的 `hasTarget`、`isTargetMatched`、`itemCount` 与 `refresh-unconfirmed` 区分定位目标缺失、回读不匹配和请求失败；妖火表单阶段只记录 `hasReplyForm`、`hasCsrfToken`、`isSameOrigin`，不记录表单或 token 值。
+
+L 站访问活跃诊断：按原有 `traceId + requestId` 对照 JS 修饰后的 transport 事件和 Native `request-headers-end` 的 `hasDiscoursePresent`。true/false 表示该观察点的实际请求头，缺失表示未知；修饰前日志、HTTP 200、空响应及阅读时长增长均不能证明访问或等级已入账。不记录交互时间、账号或正文。
+
+当天访问验收必须保留既有登录态，首次 App 访问之前用不携带 Present 的 XHR 读取最近访问、阅读和官方统计基线，不先开网页、Connect 或 SSO 链路。之后只在 App 阅读未读普通帖，分别记录最近访问时间、新帖子入账及官方等级结果；按服务器日期和统计窗口解释访问天数，旧一天可能同时移出，不能固定要求总数 +1。官方结果只能经 SSO 获取时，应先完成并留存 App 阅读后的访问与入账证据，另标明等级展示链路的影响；无法隔离则此项为 `NOT_VERIFIED`。标记正确且新帖成功上报但等级未更新时继续定位入账与展示差异，不追加猜测请求头、历史补报或请求。
+
+等级的两组数据须分开判断：官方 Connect 要求与用户 summary 活跃数据不是同一响应。上游 [UsersController.summary](https://github.com/discourse/discourse/blob/main/app/controllers/users_controller.rb#L474) 将 JSON 缓存一小时；当前部署期限未知时只作可能原因，不把刷新时间当作统计入账时间，也不为追求立即变化添加绕缓存请求。
+
 ### 覆盖安装
+
+本机 `WZ_Pixel_API_35` 已于 2026-09-14 经用户授权保留数据扩容到 16 GiB，完成文件系统离线校验和冷启动后 `/data` 约 16G、剩余约 10G，随后开发包覆盖安装及 `APK_SANITY` 通过，首次安装时间和登录态不变。该 AVD 的旧 QCOW2 带历史快照，单改 `disk.dataPartition.size` 不扩大已有磁盘；本次保留完整备份，以 `qemu-img convert/compare` 核对当前内容一致后扩副本，最后扩展 Android 加密映射中的 ext4。在线 resize 的保留块错误不可用反复重试或强制忽略绕过；离线扩容后须通过 e2fsck 并核对原数据。临时只读系统组件内存副本和 root ADB 已随重启退出；原磁盘及完整备份保留在本机，不提交到仓库。
 
 安装前后都记录 `firstInstallTime`，并要求值不变：
 

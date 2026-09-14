@@ -25,6 +25,7 @@ import {
 } from '@/sources/yaohuo/actionRequest';
 import {
   buildDiscourseActionRequest,
+  discourseCreatedReplyTarget,
   discourseImageUrlFromUploadResponse,
   type DiscourseAction
 } from '@/sources/discourse/actionRequest';
@@ -955,7 +956,11 @@ export function useTopicActionsController({
         assertWritableTicket(ticket);
         if (draftRequest.path === '/bbs/book_re.aspx') assertReplyNotEnded();
         const result = await runYaohuoAction({
-          fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+          trace,
+          fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () => {
+            assertWritableTicket(ticket);
+            if (draftRequest.path === '/bbs/book_re.aspx') assertReplyNotEnded();
+          }),
           request: requestFactory(cookieRead.header)
         });
         if (result.status === 'unknown') {
@@ -1226,7 +1231,7 @@ export function useTopicActionsController({
               void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' })
           );
         },
-        afterSuccess: () =>
+        afterSuccess: (result) =>
           refreshRepliesAfterWrite(
             actionTopic as TopicDetail,
             trace,
@@ -1237,10 +1242,16 @@ export function useTopicActionsController({
                   nodeSeekContentMarkdown: sentContent,
                   silent: true
                 }
-              : { kind: 'created', silent: true }
+              : {
+                  kind: 'created',
+                  ...(isDiscourseSource(actionTopic.source)
+                    ? { discourseTarget: discourseCreatedReplyTarget(result, actionTopic.id) }
+                    : {}),
+                  silent: true
+                }
           ),
         successMessage: (_result, refreshed) =>
-          isNodeSeekActionTopic(actionTopic) && refreshed === false
+          (isNodeSeekActionTopic(actionTopic) || isDiscourseSource(actionTopic.source)) && refreshed === false
             ? '回复已提交，但暂未能显示；请手动刷新，勿重复发送'
             : '回复已提交'
       });

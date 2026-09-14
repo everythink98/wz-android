@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerChangeEvent } from '@react-native-community/datetimepicker';
@@ -86,6 +87,7 @@ function FilterTextField({
         accessibilityLabel={label}
         style={styles.input}
         value={value}
+        onChange={recordUserInteraction}
         onChangeText={onChange}
         placeholder={placeholder}
         placeholderTextColor={theme.muted}
@@ -138,6 +140,7 @@ function FilterNumberField({
       accessibilityLabel={label}
       style={[styles.input, styles.flex]}
       value={value === null ? '' : String(value)}
+      onChange={recordUserInteraction}
       onChangeText={(nextValue) => {
         if (!/^\d*$/.test(nextValue)) {
           return;

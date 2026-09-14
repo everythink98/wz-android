@@ -519,6 +519,43 @@ describe('Account site panels', () => {
     expect(view.getByTestId('nodeseek-login-webview-settled')).toBeTruthy();
   });
 
+  it.each(['https://linux.do/challenge', 'https://linux.do/latest'])(
+    'treats main-document 404 at %s as display information only',
+    async (url) => {
+      const props = linuxDoVerifyProps({
+        recoveryPanel: {
+          phase: 'web',
+          dedicated: true,
+          results: [{ kind: 'page', outcome: 'pending' }]
+        }
+      });
+      const view = await render(<LinuxDoVerifyModal {...props} />);
+      expect(mockLoginWebViewProps.source.uri).toBe('https://linux.do/challenge');
+      const mounts = mockLoginWebViewMountCount;
+      await act(async () => {
+        mockLoginWebViewProps.onLoadStart({ nativeEvent: { url } });
+        mockLoginWebViewProps.onHttpError({ nativeEvent: { url, statusCode: 404 } });
+      });
+      await act(async () => mockLoginWebViewProps.onLoadEnd({ nativeEvent: { url } }));
+      if (url.endsWith('/challenge')) {
+        expect(view.getByText('验证页面已结束，请检测原请求是否恢复。')).toBeTruthy();
+        expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      } else {
+        expect(view.queryByText('验证页面已结束，请检测原请求是否恢复。')).toBeNull();
+        expect(props.onSetLinuxDoWebViewError).toHaveBeenLastCalledWith(
+          'linux.do 页面返回 HTTP 404，请刷新或返回。',
+          1
+        );
+      }
+      expect(mockLoginWebViewMountCount).toBe(mounts);
+      expect(props.onCheckLinuxDoCookie).not.toHaveBeenCalled();
+      const oldError = mockLoginWebViewProps.onHttpError;
+      await view.rerender(<LinuxDoVerifyModal {...props} linuxDoWebViewKey={2} />);
+      await act(async () => oldError({ nativeEvent: { url: 'https://linux.do/challenge', statusCode: 404 } }));
+      expect(view.queryByText('验证页面已结束，请检测原请求是否恢复。')).toBeNull();
+    }
+  );
+
   it('lets Android choose the NodeSeek verification WebView user agent', async () => {
     await render(<NodeSeekLoginHost {...nodeSeekProps({ visible: true })} />);
 
@@ -617,34 +654,41 @@ describe('Account site panels', () => {
     expect(mockLoginWebViewProps.userAgent).toBeUndefined();
   });
 
-  it('unmounts a timed-out linux.do WebView until the user refreshes', async () => {
-    jest.useFakeTimers();
-    try {
-      const onResetLinuxDoWebView = jest.fn();
-      const props = linuxDoVerifyProps({ onResetLinuxDoWebView });
-      const view = await render(<LinuxDoVerifyModal {...props} />);
+  it.each([false, true])(
+    'unmounts a timed-out linux.do WebView until explicit refresh, recovery: %s',
+    async (dedicated) => {
+      jest.useFakeTimers();
+      try {
+        const onResetLinuxDoWebView = jest.fn();
+        const recoveryPanel = dedicated
+          ? { phase: 'web' as const, dedicated, results: [{ kind: 'page' as const, outcome: 'pending' as const }] }
+          : undefined;
+        const props = linuxDoVerifyProps({ onResetLinuxDoWebView, recoveryPanel });
+        const view = await render(<LinuxDoVerifyModal {...props} />);
 
-      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
-      await act(async () => {
-        jest.advanceTimersByTime(12_000);
-      });
+        expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+        await act(async () => {
+          jest.advanceTimersByTime(12_000);
+        });
 
-      expect(view.queryByTestId('mock-login-webview')).toBeNull();
-      await fireEvent.press(view.getByLabelText('刷新页面'));
-      expect(onResetLinuxDoWebView).toHaveBeenCalledTimes(1);
-      await view.rerender(
-        <LinuxDoVerifyModal
-          {...linuxDoVerifyProps({
-            linuxDoWebViewKey: 2,
-            onResetLinuxDoWebView
-          })}
-        />
-      );
-      expect(view.getByTestId('mock-login-webview')).toBeTruthy();
-    } finally {
-      jest.useRealTimers();
+        expect(view.queryByTestId('mock-login-webview')).toBeNull();
+        await fireEvent.press(view.getByLabelText('刷新页面'));
+        expect(onResetLinuxDoWebView).toHaveBeenCalledTimes(1);
+        await view.rerender(
+          <LinuxDoVerifyModal
+            {...linuxDoVerifyProps({
+              linuxDoWebViewKey: 2,
+              recoveryPanel,
+              onResetLinuxDoWebView
+            })}
+          />
+        );
+        expect(view.getByTestId('mock-login-webview')).toBeTruthy();
+      } finally {
+        jest.useRealTimers();
+      }
     }
-  });
+  );
 
   it('invalidates the linux.do document probe on every navigation after the page was ready', async () => {
     const onSetLoadingLinuxDoPage = jest.fn();

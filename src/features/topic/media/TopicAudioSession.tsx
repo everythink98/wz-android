@@ -22,6 +22,11 @@ import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestCont
 import { forumMediaPlayerSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { playerLoadDiagnosticAttempt } from '@/platform/media/mediaPlaybackDiagnostics';
 import {
+  MediaPlaybackSession,
+  type MediaPlaybackHandle,
+  useMediaPlaybackSession
+} from '@/platform/media/mediaPlaybackSession';
+import {
   releaseReadNetworkRuntimeGeneration,
   retainReadNetworkRuntimeGeneration
 } from '@/platform/network/networkProxy';
@@ -42,8 +47,9 @@ export type TopicAudioSnapshot = Readonly<{
   duration: number;
   error: string | null;
   playing: boolean;
+  playWhenReady: boolean;
   position: number;
-  status: 'error' | 'idle' | 'loading' | 'ready';
+  status: 'error' | 'idle' | 'loading' | 'buffering' | 'ready';
 }>;
 
 type TopicAudioDescriptor = {
@@ -61,6 +67,7 @@ const IDLE_AUDIO_SNAPSHOT: TopicAudioSnapshot = Object.freeze({
   duration: 0,
   error: null,
   playing: false,
+  playWhenReady: false,
   position: 0,
   status: 'idle'
 });
@@ -74,6 +81,7 @@ function sameSnapshot(left: TopicAudioSnapshot, right: TopicAudioSnapshot) {
     left.duration === right.duration &&
     left.error === right.error &&
     left.playing === right.playing &&
+    left.playWhenReady === right.playWhenReady &&
     left.position === right.position &&
     left.status === right.status
   );
@@ -90,6 +98,8 @@ class TopicAudioSession {
   private paused: boolean;
   private pendingPlay = false;
   private player: VideoPlayer | null = null;
+  private playbackHandle: MediaPlaybackHandle | null = null;
+  private cancelPreparation: (() => void) | null = null;
   private loadDiagnostic: ReturnType<typeof playerLoadDiagnosticAttempt> | null = null;
   private playerSubscriptions: { remove: () => void }[] = [];
   private replaceQueue: Promise<void> = Promise.resolve();
@@ -99,7 +109,10 @@ class TopicAudioSession {
   private snapshots = new Map<string, TopicAudioSnapshot>();
   private sources = new Map<string, TopicAudioDescriptor>();
 
-  constructor({ active, paused, runtimeGeneration }: { active: boolean; paused: boolean; runtimeGeneration: number }) {
+  constructor(
+    { active, paused, runtimeGeneration }: { active: boolean; paused: boolean; runtimeGeneration: number },
+    private playback: MediaPlaybackSession
+  ) {
     this.active = active;
     this.paused = paused;
     this.runtimeGeneration = runtimeGeneration;
@@ -118,6 +131,19 @@ class TopicAudioSession {
   };
 
   attach(id: string, key: string, descriptor: TopicAudioDescriptor, admission: TopicAudioAdmission) {
+    const previous = this.activeId ? this.sources.get(this.activeId) : null;
+    if (
+      previous &&
+      previous.mediaContext.contentSource === descriptor.mediaContext.contentSource &&
+      previous.mediaContext.sessionIdentity !== descriptor.mediaContext.sessionIdentity
+    ) {
+      this.pauseActive();
+      this.playbackHandle?.dispose();
+      this.playbackHandle = null;
+      this.acceptPlayerEvents = false;
+      this.loadRevision += 1;
+      this.activeId = null;
+    }
     const attachments = this.attachments.get(id) || new Map<string, TopicAudioAttachment>();
     attachments.set(key, { admission });
     this.attachments.set(id, attachments);
@@ -153,14 +179,15 @@ class TopicAudioSession {
     if (becameInactive) this.pauseActive();
     if (runtimeGeneration > this.runtimeGeneration) {
       this.runtimeGeneration = runtimeGeneration;
-      if (this.activeId) this.load(this.activeId, false);
+      if (this.activeId && this.getSnapshot(this.activeId).status === 'loading') this.load(this.activeId, false);
     }
   }
 
   play(id: string) {
     if (!this.active || this.paused) return;
     const snapshot = this.getSnapshot(id);
-    if (this.activeId === id && snapshot.status === 'ready' && this.player) {
+    if (this.activeId === id && (snapshot.status === 'ready' || snapshot.status === 'buffering') && this.player) {
+      this.playbackHandle?.intent(true);
       this.pendingPlay = false;
       if (snapshot.duration > 0 && snapshot.position >= snapshot.duration) {
         this.player.replay();
@@ -168,7 +195,7 @@ class TopicAudioSession {
       } else {
         this.player.play();
       }
-      this.updateSnapshot(id, { playing: true });
+      this.updateSnapshot(id, { playWhenReady: true });
       return;
     }
     if (snapshot.status !== 'error') this.load(id, true);
@@ -182,7 +209,10 @@ class TopicAudioSession {
   seek(id: string, position: number) {
     const snapshot = this.getSnapshot(id);
     const nextPosition = Math.min(snapshot.duration || Number.POSITIVE_INFINITY, safeMediaTime(position));
-    if (this.activeId === id && this.player) this.player.currentTime = nextPosition;
+    if (this.activeId === id && this.player) {
+      this.playbackHandle?.seek();
+      this.player.currentTime = nextPosition;
+    }
     this.updateSnapshot(id, { position: nextPosition });
   }
 
@@ -193,10 +223,13 @@ class TopicAudioSession {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.cancelPreparation?.();
     this.loadDiagnostic?.canceled();
     this.loadRevision += 1;
     this.pendingPlay = false;
     this.acceptPlayerEvents = false;
+    this.playbackHandle?.dispose();
+    this.playbackHandle = null;
     for (const subscription of this.playerSubscriptions) subscription.remove();
     this.playerSubscriptions = [];
     try {
@@ -220,14 +253,21 @@ class TopicAudioSession {
     const descriptor = this.sources.get(id);
     if (!descriptor || this.disposed) return;
     if (this.activeId) this.rememberActivePosition();
+    this.playbackHandle?.dispose();
+    this.playbackHandle = null;
+    this.acceptPlayerEvents = false;
     this.activeId = id;
     this.pendingPlay = playWhenReady && this.active && !this.paused;
     const revision = ++this.loadRevision;
+    this.cancelPreparation?.();
+    this.cancelPreparation = this.playback.prepare(id, 'audio', () => {
+      if (revision === this.loadRevision) this.fail(id);
+    });
     const generation = this.runtimeGeneration;
     this.loadDiagnostic?.canceled();
     this.loadDiagnostic = playerLoadDiagnosticAttempt(descriptor.src, 'audio', generation);
     const restorePosition = this.getSnapshot(id).position;
-    this.updateSnapshot(id, { error: null, playing: false, status: 'loading' });
+    this.updateSnapshot(id, { error: null, playing: false, playWhenReady: this.pendingPlay, status: 'loading' });
     this.replaceQueue = this.replaceQueue
       .catch(() => undefined)
       .then(() => this.replaceSource({ descriptor, generation, id, restorePosition, revision }));
@@ -292,7 +332,19 @@ class TopicAudioSession {
       }
       if (this.disposed || revision !== this.loadRevision || this.activeId !== id) return;
       player.currentTime = restorePosition;
+      this.cancelPreparation?.();
+      this.cancelPreparation = null;
       this.acceptPlayerEvents = true;
+      this.playbackHandle = this.playback.attach(player, id, 'audio', {
+        onIntent: (playWhenReady) => {
+          if (this.activeId !== id || revision !== this.loadRevision) return;
+          if (!playWhenReady) this.pendingPlay = false;
+          this.updateSnapshot(id, { playWhenReady });
+        },
+        onTimeout: () => {
+          if (this.activeId === id && revision === this.loadRevision) this.fail(id);
+        }
+      });
       this.applyStatus({ status: player.status });
     } catch (error) {
       if (previousGeneration !== null) {
@@ -335,7 +387,7 @@ class TopicAudioSession {
       ) {
         return;
       }
-      this.updateSnapshot(id, { status: 'loading' });
+      this.updateSnapshot(id, { status: snapshot.duration > 0 ? 'buffering' : 'loading' });
       return;
     }
     const player = this.player;
@@ -346,8 +398,9 @@ class TopicAudioSession {
     this.settleAttachments(id, 'displayed');
     if (this.pendingPlay && this.active && !this.paused && player) {
       this.pendingPlay = false;
+      this.playbackHandle?.intent(true);
       player.play();
-      this.updateSnapshot(id, { playing: true });
+      this.updateSnapshot(id, { playWhenReady: true });
     }
   }
 
@@ -376,17 +429,18 @@ class TopicAudioSession {
     const id = this.activeId;
     if (!id || !this.acceptPlayerEvents) return;
     const duration = this.getSnapshot(id).duration;
-    this.updateSnapshot(id, { playing: false, position: duration });
+    this.updateSnapshot(id, { playing: false, playWhenReady: false, position: duration });
   }
 
   private pauseActive() {
     this.pendingPlay = false;
+    this.playbackHandle?.pause();
     try {
       this.player?.pause();
     } catch {
       // A route deactivation must still complete if native playback has already ended.
     }
-    if (this.activeId) this.updateSnapshot(this.activeId, { playing: false });
+    if (this.activeId) this.updateSnapshot(this.activeId, { playing: false, playWhenReady: false });
   }
 
   private rememberActivePosition() {
@@ -395,13 +449,18 @@ class TopicAudioSession {
     const duration = safeMediaTime(this.player.duration || this.getSnapshot(id).duration);
     const position = Math.min(duration || Number.POSITIVE_INFINITY, safeMediaTime(this.player.currentTime));
     this.player.pause();
-    this.updateSnapshot(id, { duration, playing: false, position });
+    this.updateSnapshot(id, { duration, playing: false, playWhenReady: false, position });
   }
 
   private fail(id: string, error?: unknown) {
+    this.cancelPreparation?.();
+    this.cancelPreparation = null;
+    this.loadRevision += 1;
     this.loadDiagnostic?.failed(error);
     this.pendingPlay = false;
-    this.updateSnapshot(id, { error: '音频加载失败', playing: false, status: 'error' });
+    this.acceptPlayerEvents = false;
+    this.playbackHandle?.pause();
+    this.updateSnapshot(id, { error: '音频加载失败', playing: false, playWhenReady: false, status: 'error' });
     this.settleAttachments(id, 'error');
   }
 
@@ -433,7 +492,10 @@ export function TopicAudioSessionProvider({
   paused: boolean;
   runtimeGeneration: number;
 }) {
-  const [session] = useState(() => new TopicAudioSession({ active, paused, runtimeGeneration }));
+  const playback = useMediaPlaybackSession();
+  const [session] = useState(
+    () => new TopicAudioSession({ active, paused, runtimeGeneration }, playback || new MediaPlaybackSession())
+  );
   useLayoutEffect(() => {
     session.updateGate({ active, paused, runtimeGeneration });
   }, [active, paused, runtimeGeneration, session]);

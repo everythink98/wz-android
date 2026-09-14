@@ -93,6 +93,66 @@ async function mountRuntime({
 }
 
 describe('Composer editor runtime codec', () => {
+  it.each([
+    ['nodeseek', 'rich'],
+    ['linuxdo', 'rich'],
+    ['nodeseek', 'source'],
+    ['linuxdo', 'source']
+  ] as const)('clears the submitted %s %s document before the next reply', async (site, mode) => {
+    const { host, postMessage, send } = await mountRuntime({ site, mode, markdown: '已发送正文' });
+    await send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown: '补充内容' } });
+    await send({
+      type: 'INIT',
+      payload: {
+        site,
+        intentKind: 'reply',
+        markdown: '',
+        pendingNodeSeekPolls: [],
+        mode,
+        discourseEmoji: [],
+        theme: TEST_THEME
+      }
+    });
+    expect(host.querySelector('.ProseMirror')?.textContent).toBe('');
+    expect(host.querySelector('.cm-content')?.textContent || '').toBe('');
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'next-reply' } });
+    const snapshot = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .findLast((event) => event.payload?.requestId === 'next-reply').payload.snapshot;
+    expect(snapshot).toMatchObject({ markdown: '', isEmpty: true, pendingNodeSeekPolls: [] });
+  });
+
+  it('reports trusted input without treating programmatic editor updates as activity', async () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    const { postMessage, send, root } = await mountRuntime();
+    try {
+      const registered = add.mock.calls.find(
+        ([event, , options]) =>
+          event === 'input' && typeof options === 'object' && options.capture === true && options.passive === true
+      );
+      expect(registered).toBeDefined();
+      const input = registered![1] as (event: Event) => void;
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'passive-read' } });
+      input({ isTrusted: false } as Event);
+      expect(postMessage.mock.calls.map(([raw]) => JSON.parse(raw).type)).not.toContain('USER_INTERACTION');
+      input({ isTrusted: true } as Event);
+      expect(
+        postMessage.mock.calls.map(([raw]) => JSON.parse(raw)).filter((event) => event.type === 'USER_INTERACTION')
+      ).toEqual([{ type: 'USER_INTERACTION', payload: {} }]);
+      await act(async () => root.unmount());
+      mountedRuntimes
+        .splice(
+          mountedRuntimes.findIndex((item) => item.root === root),
+          1
+        )[0]
+        .host.remove();
+      expect(remove).toHaveBeenCalledWith('input', input, true);
+    } finally {
+      add.mockRestore();
+      remove.mockRestore();
+    }
+  });
   const resizeCallbacks = new Map<Element, () => void>();
   beforeEach(() => {
     resizeCallbacks.clear();

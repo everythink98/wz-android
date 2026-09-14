@@ -373,7 +373,6 @@ function linuxDoHeaders(access: LinuxDoOptions['linuxDoAccess'], referer = `${BA
     Accept: 'application/json, text/javascript, */*; q=0.01',
     Referer: referer,
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Discourse-Present': 'true',
     'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
     ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     'X-Requested-With': 'XMLHttpRequest',
@@ -533,7 +532,10 @@ export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promis
 async function topicData(id: string, options: LinuxDoOptions, targetFloor?: number) {
   const data = await fetchLinuxDoJson<Record<string, unknown>>(
     `/t/${encodeURIComponent(id)}${targetFloor ? `/${targetFloor}` : ''}.json`,
-    options.trackVisit ? { track_visit: 'true', forceLoad: 'true' } : undefined,
+    {
+      ...(options.trackVisit ? { track_visit: 'true', forceLoad: 'true' } : {}),
+      ...(targetFloor ? { include_raw: 'true' } : {})
+    },
     options
   );
   assertDiscourseTopicIdentity(data, id);

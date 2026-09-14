@@ -5,6 +5,8 @@ import { elementText, parseHtml, textContentFromHtml } from '@/domain/forum/html
 import { parseYaohuoFavoriteRecordId } from './topicParser';
 import { yaohuoLoginRequirementReason } from './sessionParser';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, YAOHUO_LOGIN_URL } from './protocol';
+import { markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 
 const YAOHUO_ACTION_HEADERS = {
   accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -17,7 +19,9 @@ const YAOHUO_ACTION_HEADERS = {
   ...(DEFAULT_ANDROID_WEBVIEW_USER_AGENT ? { 'user-agent': DEFAULT_ANDROID_WEBVIEW_USER_AGENT } : {})
 };
 const YAOHUO_ACTION_FAILURE_PATTERN = /(失败|权限不足|请勿重复|重复提交|错误|禁止|无权|不允许|请选择|不能为空|未成功)/;
-const YAOHUO_ACTION_SUCCESS_PATTERN = /^评论成功$/;
+const YAOHUO_ACTION_SUCCESS_PATTERN =
+  /^(?:评论成功|回复成功！(?:\s*获得妖晶:\d+，获得经验:\d+)?(?:\s*跳转中\.\.\.返回)?)$/;
+const YAOHUO_REPLY_PATH_PATTERN = /^\/bbs\/book_re\.aspx$/i;
 const YAOHUO_REPLY_DELETE_PATH_PATTERN = /^\/bbs\/book_re_del\.aspx$/i;
 const YAOHUO_FAVORITE_ENTRY_PATH_PATTERN = /^\/bbs\/share\.aspx$/i;
 const YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN = /^\/bbs\/favlist\.aspx$/i;
@@ -40,15 +44,15 @@ function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired'
   return error;
 }
 
-function actionMessage(html: string): YaohuoActionResult {
+function actionMessage(html: string, reply = false): YaohuoActionResult {
   const tip = parseHtml(html).querySelector('.tip');
   const text = tip ? elementText(tip) : textContentFromHtml(html);
   if (!text || (!tip && text.length > 80)) {
     return { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
   }
   assertYaohuoActionSuccess(text);
-  if (!tip && !YAOHUO_ACTION_SUCCESS_PATTERN.test(text)) {
-    return { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
+  if ((reply || !tip) && !YAOHUO_ACTION_SUCCESS_PATTERN.test(text)) {
+    return { status: 'unknown', message: tip && text.length <= 80 ? text : YAOHUO_ACTION_UNKNOWN_MESSAGE };
   }
   return {
     status: 'confirmed',
@@ -190,13 +194,59 @@ export async function runYaohuoAction({
   request,
   fetcher = fetch,
   signal,
-  timeoutMs
+  timeoutMs,
+  trace
 }: {
   request: YaohuoActionRequest;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
+  trace?: DiagnosticTrace;
 }): Promise<YaohuoActionResult> {
+  const requestUrl = new URL(request.path, YAOHUO_BASE_URL);
+  const isReply = request.method === 'POST' && YAOHUO_REPLY_PATH_PATTERN.test(requestUrl.pathname);
+  if (isReply) {
+    const body = new URLSearchParams(request.body);
+    const topicId = body.get('id') || '';
+    if (!/^[1-9]\d*$/.test(topicId)) throw new Error('帖子 id 不正确');
+    const formPath = `/bbs-${topicId}.html`;
+    const formUrl = `${YAOHUO_BASE_URL}${formPath}`;
+    const formResponse = await fetchYaohuoActionHtml({
+      request: { path: formPath, method: 'GET', headers: { 'cache-control': 'no-cache' } },
+      path: formPath,
+      fetcher,
+      signal,
+      timeoutMs
+    });
+    const form = parseHtml(formResponse.html)
+      .querySelectorAll('form[action]')
+      .find((candidate) => {
+        try {
+          const url = new URL(candidate.getAttribute('action') || '', formUrl);
+          return (
+            url.origin === YAOHUO_BASE_URL &&
+            YAOHUO_REPLY_PATH_PATTERN.test(url.pathname) &&
+            candidate.querySelector('input[name="id"]')?.getAttribute('value') === topicId
+          );
+        } catch {
+          return false;
+        }
+      });
+    const token = form?.querySelector('input[name="__CSRFToken"]')?.getAttribute('value')?.trim();
+    const isSameOrigin = !formResponse.responseUrl || new URL(formResponse.responseUrl).origin === YAOHUO_BASE_URL;
+    if (trace)
+      markDiagnosticStage(trace, 'credential', {
+        source: 'yaohuo',
+        hasReplyForm: Boolean(form),
+        hasCsrfToken: Boolean(token),
+        isSameOrigin
+      });
+    if (!token || !isSameOrigin) {
+      throw new Error('无法读取妖火回复验证信息，请刷新后重试');
+    }
+    body.set('__CSRFToken', token);
+    request = { ...request, body: body.toString(), headers: { ...request.headers, referer: formUrl } };
+  }
   let { html, responseUrl } = await fetchYaohuoActionHtml({
     request,
     fetcher,
@@ -205,7 +255,6 @@ export async function runYaohuoAction({
     timeoutMs
   });
 
-  const requestUrl = new URL(request.path, YAOHUO_BASE_URL);
   if (request.method === 'GET' && YAOHUO_REPLY_DELETE_PATH_PATTERN.test(requestUrl.pathname)) {
     const confirmationPath = deleteConfirmationPath(html);
     if (confirmationPath) {
@@ -241,5 +290,5 @@ export async function runYaohuoAction({
     return { status: 'unknown', message: YAOHUO_ACTION_UNKNOWN_MESSAGE };
   }
 
-  return actionMessage(html);
+  return actionMessage(html, isReply);
 }

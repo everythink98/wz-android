@@ -17,6 +17,69 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
+## `REG-TOPIC-166` 音视频回拖反复加载与缓冲期间无法控制
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `OPEN` |
+| 能力 ID | `TOPIC-02`；共享 `TOPIC-01/03`、`NAV-03`、`ACCOUNT-01` |
+| 历史症状与根因 | 用户报告已加载视频回拖仍转圈、中央图案过大。代码确认音视频未启用磁盘缓存，视频把后续 loading 重新覆盖为首次 poster，音频缓冲时禁用暂停与 seek，ready 后没有播放阶段预算。原生 bufferedPosition 在缓冲时被报为零，播放意图与实际 playing 混用；真实来源数秒停顿的网络/解码占比尚未分离。 |
+| 处置 | 保留 Expo Video/Media3 与原生 controls，Topic 播放协调统一互斥、进度、30 秒无进展预算、暂停/后台和全屏生命周期。启用 256 MiB LRU，SHA-256 身份包含来源/会话/Referer/表示请求头且排除网络代；缓存故障允许回源。原生视频不再请求或展示 HTML poster，首次 loading 等待真实首帧，缓冲仍可控制，失败手动重试取得当前网络代。中央图形去掉实心圆；用户设备反馈后保留更易识别的 40/48dp 图标与 56dp 触控范围。 |
+| 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-media-coordinator.test.tsx`、`src/platform/media/mediaPlaybackSession.test.ts` 与既有媒体请求 owner；Native 缓存、真实 seek 和控件由 Expo Video patch 的 `ReaderPlaybackInstrumentedTest` 承接。 |
+| 失败 oracle | 修复前 poster/缓冲中控制/健康音频切代三项 UI 失败（seed 92947533）；补查视频手动重试仍取旧网络代，修复前失败（seed -1161124266），修复后两组媒体 UI 共 169 项通过（seed -980341200）。Native 负向控制中禁用缓存的重复 Range 两次回源，启用后完整缓存区间重复 seek 零新增上游。 |
+| 验证边界 | `STATIC_PASS`、`UNIT_PASS`、`UI_PASS`：完整 verify 通过（2529 unit、1439 UI），最终增量 169 项媒体 UI 和 44 项 unit/patch owner 复核通过。`APK_SANITY`：fresh prebuild 与开发签名 x86_64 Release 编译；保留数据覆盖安装，首次安装时间未变。独立 Native 六项实际测试通过，覆盖 Range、身份/Referer 隔离、淘汰、故障、音视频 seek 与目标帧；受控 MP4 六次目标帧恢复为几十毫秒且无新增上游字节。`LIVE_PASS` 仅限匹配 APK 的妖火主楼 `bbs-1581015.html`：暂停中 0→6 秒、结束后 12→2 秒，播放中全屏往返后仍显示 Pause 且 2→4 秒；后台返回停在 10/12 秒，等待手动继续。最新按钮设备截图确认已放大且没有实心圆。这不代表四站全链路通过。 |
+| 首帧补查 | 2026-09-14 用户再次报告已加载视频仍黑屏。确认 ForumContentVideo 误将 readyToPlay 当作已绘制首帧；原测试也要求此时撤下 poster。canonical UI owner 改为先保留 poster、再发实际 onFirstFrameRender；修复前失败（seed 2107668605），修复后与 coordinator 共 169 项通过（seed 208410000）。复用 Expo 现有首帧事件，标记按 player 隔离，seek 不重盖封面。两个已知妖火样本在改动前都有画面，当时尚未确认本次黑屏样本；不得把时序修复当作该黑屏已复现或全部解决。类型、lint、格式、架构、文档和开发 Android 构建通过；新包覆盖安装返回 INSTALL_FAILED_INSUFFICIENT_STORAGE，/data 剩余约 409 MiB，首次安装时间不变，未清应用数据。此首帧增量的匹配 APK Live 为 BLOCKED_BY_ENV，设备仍保留上一轮包。 |
+| 临时封面与闪烁补查 | 用户随后确认仍为妖火 `bbs-1581015.html`，并要求加载时只显示 loading。移除原生视频的 poster 请求与覆盖层，HTML/虚拟视频行共用该行为；保留实际首帧事件作为首次 loading 的结束信号。修复前 HTML poster oracle 失败（seed -1594374434），修复后媒体 UI 168 项通过（seed -671783530），类型检查通过。旧 APK 的同链接录屏覆盖播放、结束和重播，33.2 秒录像未捕获黑帧，不能据此否定用户闪烁，也不将此次封面删除宣称为闪烁根因修复。用户先取消扩容，随后授权仅改配置试验：将同一 AVD 的 disk.dataPartition.size 从 6G 改为 16G，保留数据冷启动后 hardware-qemu.ini 已读取 16g，但 /data 仍为 5.8G；未自动扩展现有磁盘/文件系统，网站登录及自动填入均保持 3/3。最新增量 lint、架构、文档与开发 Release 编译通过（APK SHA-256 `f99b43f206d8d3bb2c6628f8a7137dc8e6e470e439b606db5825beaf93372717`）；再次覆盖安装仍返回 INSTALL_FAILED_INSUFFICIENT_STORAGE，故该增量设备/Live 验收为 `BLOCKED_BY_ENV`。首次安装时间保持 2026-07-26 16:51:37，设备仍为 13:32 的旧包；原有网站登录 3/3、自动填入 3/3，无清数据或扩盘。播放闪烁根因与新包真实首帧行为仍为 `NOT_VERIFIED`。 |
+| 扩容后补验 | 用户随后授权保留数据实际扩盘。2026-09-14 同一 WZ_Pixel_API_35 的 QCOW2 当前内容经完整备份、逐字节 compare 后扩为 16 GiB；Android 加密映射识别新大小，ext4 在线扩容受保留块元数据限制，改为卸载后 resize2fs，并由 e2fsck 修正扩容 inode 7 的大小，最终完整校验为 clean。重启后 /data 为 16G、剩余约 10G。上述 SHA 的修复包成功覆盖安装，lastUpdateTime 为设备报告的 2026-09-14 14:25:51，firstInstallTime 保持 2026-07-26 16:51:37；网站登录和自动填入均 3/3。仓库 runApkSanity 实际通过，解除新包的空间环境阻碍。`TOPIC-02` 的 `LIVE_PASS` 仅限同一妖火 bbs-1581015.html：未播放时已有实际首帧，0→12 秒播放结束，结束后 seek 到 4 秒恢复 Pause/播放状态；13.1 秒录屏按 10fps 采样未捕获黑帧，不能据此关闭间歇闪烁，真实长时间停顿根因仍 `NOT_VERIFIED`。本次未重跑全屏、后台和音频链路，不将旧 APK 的 Live 证据继承为新包全链路通过。 |
+| 真实音频补验 | 2026-09-14 用户要求继续 CF 验证后，在相同 APK 中完成复选验证并点击“检测状态”，恢复 linux.do `t/topic/2825663`；没有清 Cookie 或重新登录。`LIVE_PASS` 限第 3 楼 4:18 音频：进度 0:00→0:21，暂停中 0:21→2:09→0:22，播放中三次连续跳转后 2:23→2:28；Android 同 App UID 的 AudioTrack 为 started、48 kHz、未静音。滚到底部、音频卡不可见时音轨保持 started；后台返回后停在 3:00，等待手动继续。4:16 播到 4:18 后音轨 stopped，回拖到 0:22 后恢复并推进到 0:43；离开 Topic 后对应音轨释放。未复现本样本长时间转圈。Windows host 的音量探针不支持此 Android emulator，未作实际听感/音质结论；卡片不可见不能单独证明 FlashList 已执行物理回收，回收 owner 仍由 UI 测试承接。 |
+| 历史重进与整页闪烁补查 | 用户给出“历史重进”稳定入口后，旧包三次回到同帖均为 0:00 黑屏；原生 READY/首帧事件已发出但 TextureView 为黑，点击 Play 或暂停中切全屏立即显示有效帧。改为 VideoView 非零布局后加载，诊断包连续三次历史重进显示真实首帧；切换 SurfaceView 未解决，撤回试验。立即加载负向控制实际失败；排查用 cached paused frame 原生实验仅证明受控源首帧，不能独立复现 App 历史入口竞态，后续清理已移除；真实 seek/目标帧由原有原生 owner 承接。完整调用栈及父链进一步确认，退出全屏约 150ms 内，TopicRoute 门禁容器和主楼 selection nativeID 容器同时发生 Fabric flatten/unflatten，同一 VideoView 两次 detach/attach，销毁 SurfaceTexture；单独固定任何一层仍闪，两层同时 collapsable=false 后原生实例与表面保持，暂停/播放缩回录屏未再出现两次闪白。GitHub 的 [TextureView reparent issue](https://github.com/kirillzyusko/react-native-teleport/issues/165) 在 RN 0.86 / Expo Video 57 报告相同输出表面机制，提供旁证，不替代本机 oracle。窗口切换仍独立验证：原生 SurfaceView/不透明窗口恢复后出现黑色矩形与入场空窗，关闭启动预览又露出桌面，均不作为通过方案。最终保留 TextureView、宿主窗口与提前配置的 Activity 切换；进入全屏以当前已显示视频帧覆盖输出交接间隙，实际目标首帧后的两次动画帧回调清除。最终开发签名 APK 1.3.143/147、SHA-256 `7ac4e3ca63d9c6187fdb8982efe448b837cab10deb12a8f0d8caccbd7bd90ecf` 完成覆盖安装，firstInstallTime 保持 `2026-07-26 16:51:37`。同帖三次历史重进均显示真实首帧；30fps 录屏检查暂停及播放中的进入/退出，无黑白空帧；暂停 0→6→2 秒，播放缩回后 2→4 秒，结束后 12→6 秒可继续；全屏播放时 Home 再返回停在 7 秒，稍后复查仍为 Play/7 秒。上述 `TOPIC-02`、`NAV-03` 为此指定入口的 `LIVE_PASS`；对应 UI 187 项（seed 703715178）、unit/patch 15 项、Native 7 项、typecheck/lint/format/architecture/docs、隔离 pristine postinstall 与 Release/native-test 编译通过。无原生 crash 记录；其他来源及设备仍按关闭条件保留证据缺口。 |
+| 后续清理与测试包 | 2026-09-15 删除视频组件对播放协调器的重复状态/缓冲转发及单行包装函数；移除不能复现历史入口竞态的原生布局实验，保留首帧布局 UI 与 Native 缓存/目标帧 owner。清理后 `STATIC_PASS`、`UNIT_PASS`（15 项）、`UI_PASS`（187 项，seed -1000043691），Native 六项、pristine postinstall 与补丁反向检查通过。同源码开发签名 x86_64 包保留数据覆盖安装获得 `APK_SANITY`。提供沿用固定签名的 ARM64 本地测试 APK 1.3.143/147，SHA-256 `afee612457ed5f498c03037817859d7c5208e3ec80a4a8cae947f5c025acbcc9`；已核对签名、ABI、内置 Hermes 与 ZIP 对齐，不递增版本或执行正式发布。真机实际播放仍 `NOT_VERIFIED`。 |
+| 关闭条件 | 用户原始数秒停顿场景仍缺同条件网络字节/实例/目标帧关联；四站主楼、回复、展开引用、采纳答案的真实音视频、不同横竖比、深浅色/字体缩放及物理设备手感未全部覆盖，标为 `NOT_VERIFIED`。本条保持 OPEN，不把受控缓存命中或转圈消失当作所有真实来源卡顿已解决。 |
+
+## `REG-TOPIC-165` 妖火审核提示页被渲染成空帖子
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03`，共享妖火只读 transport、`WRITE-01` 入口 |
+| 历史症状与根因 | 用户给出妖火帖子 `1580807`。模拟器 App 登录态原站返回独立“提示信息”页，正文提示“正在审核中！”；详情解析把页面标题当作有效主题，填入当前时间，显示未知作者、空正文和回复入口，回复读取再报普通窗口为空。 |
+| 处置 | 共享只读响应边界在登录检查后识别独立提示页，抛出携带站点提示的错误，复用详情与回复既有失败展示；无已加载详情时隐藏路由占位头部，仍保留已有可信详情。真实正文内引用的提示样式不触发；日志只记闭集原因 `site_notice`。 |
+| 当前 owner | `src/sources/yaohuo/reader.test.ts` 的主题、回复与正文引用行为；`tests/ui/topic/topic-reply-filters.test.tsx` 的提示页展示和回复入口；`src/platform/diagnostics/diagnostics.test.ts` 的脱敏原因。 |
+| 失败 oracle | 修复前读取审核页返回带空作者、当前时间和“提示信息”标题的 TopicDetail，期望拒绝的测试失败；修复后保留原站提示并停止额外收藏读取。 |
+| 验证边界 | `UNIT_PASS`：来源和诊断 199 项；`UI_PASS`：提示页、可信内容保留与头部相关 8 项，补强作者节点断言先红后绿。`STATIC_PASS`：typecheck、lint、架构和文档检查。`APK_SANITY`、`LIVE_PASS`：匹配 APK 在保留登录态模拟器直达同主题，提示正确、无占位头部及回复入口，重试后仍正确；持久日志保留 `site_notice`。物理真机与其他原站提示分支 `NOT_VERIFIED`。 |
+
+## `REG-ACCOUNT-051` 仅 App 阅读后原站访问记录与等级未更新
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `OPEN` |
+| 能力 ID | `ACCOUNT-01/04`、`TOPIC-01/03`；共享 `NOTIFY-01` transport |
+| 历史症状与根因 | 2026-09-14 用户报告当天未使用网页，仅 App 阅读后访问记录与等级未更新。已确认账号检测与 timings 缺少 `Discourse-Present`，Reader 却固定为 true，等级 JSON 还缺 XHR 标识；这是活跃语义不一致的协议缺口，不能据此断言等级统计只有这一处原因。 |
+| 处置 | App 在现有代理就绪之后、实际 fetch 之前装配来源修饰函数，精确匹配 linux.do XHR；前台且最近真实交互不足 60 秒才带 Present。复用 AppState 和一个进程内单调时间戳，移除 Reader 固定头；保留访问、阅读计时、批次、取消和重试语义。JS 修饰后与 Native 实际 request-headers-end 记录同请求 ID 的布尔值。 |
+| 当前 owner | `tests/ui/more/network-proxy-controller.test.tsx` 的真实 Account/reading/transport 组合；`src/sources/linuxdo/presence.test.ts`；`tests/ui/app/app-lifecycle-request-timeout.test.tsx`、`tests/ui/shared/modal-sheet-frame.test.tsx`、搜索与结构化编辑器既有 UI owner；生成的 `NetworkProxyRuntimeTest` 实际发送头诊断。 |
+| 修复证据 | 修复前组合链三次实际请求的 Present 均为 null，期望 true 的行为 oracle 失败；修复后通过。59/60 秒、后台/未知/恢复、等待代理、CSRF 重试、请求内容及诊断关联另有协议与 UI 证据。 |
+| 本次验证 | `STATIC_PASS`：lint、typecheck、架构与文档检查。`UNIT_PASS`：相关来源/阅读/诊断/编辑器 199 项（seed 1789351803825），补充通知隔离与取消 35 项（seed 1789351933894）；fresh prebuild 后 Release Kotlin 编译及 Native 诊断 6 项通过。`UI_PASS`：Account、阅读 transport、生命周期、Modal、搜索和编辑器 113 项（seed 967150168）；新增通知 transport 与组合层复核 69 项（seed -518922577）。各轮含重复 owner，不相加作独立测试总数。 |
+| 可见模拟器补验 | 2026-09-14：`WZ_Pixel_API_35 / emulator-5554` 以保留数据冷启动恢复旧 Quick Boot 的 heartbeat=0/ADB offline。开发签名 x86_64 Release `1.3.143/147`，buildId `a4d4611c74714381b5b9c92be017b2d8`，APK 与设备 SHA-256 同为 `a7ada10674d058285a7d8a00f1b5b86dc72f9010f6d671cdc29bb287632460e9`；仅覆盖安装，证书一致，`firstInstallTime=2026-07-26 16:51:37` 不变。`LIVE_PASS` 仅限标记发送：前台账号 `request-23/trace-56` 与通知 `request-15/trace-42` 均在 JS transport 和 Native request-headers-end 记录 Present=true；独立后台认证请求 Native Present=false。进入 More、展开账号、切站和刷新按钮可操作。 |
+| 初次设备阻碍（已解除） | 最初为 `BLOCKED_BY_ENV`：新包启动后首次 Cookie barrier 在任何来源响应前即为 hasLoginCookie=false、hasCfClearance=true；后台认证和前台账号检查均返回 404，通知返回 403。UI 原先恢复的“已登录”缓存经核对变为“已验证/登录后查看”。缺失登录 Cookie 的发生时点和原因未知，不能归因于本次修复或声称已保留有效会话；未卸载、清 Cookie、清数据或自动重新登录，发现差异后冻结设备变更，只读取证。 |
+| 用户重新登录后的补验 | 同日用户手动恢复 L 站登录后，保持同包与可见主 AVD，`LIVE_PASS`：新普通帖主楼的 8 批 timings 均携带登录 Cookie、Native POST 200，并由 JS 单次正文消费确认；共提交约 304635 ms。首次 `request-56` Present=true，无操作约 63 秒后的 `request-57` 为 false，滚动/长按后 `request-66/67` 恢复 true；后台尾批 `request-68` 为 false，约 51 秒后台期间没有新增 timings，返回前台通知立即为 true，恢复后的首批 `request-77` 仅约 15954 ms，未补入后台时间。上述 Present 均由 JS 与 Native 相同请求 ID 交叉核对。独立 PopupMenu 静置超过 60 秒后点击刷新评论，`request-78` 恢复 true。纵滚、正文长按和跨段拖动选区、原生评论查找输入与清空、WebView 富文本输入均可操作；本次编辑器临时文字已清至 0 字符，发送保持禁用，没有发表或互动写入。 |
+| 原站统计结果 | 同次 App 阅读前后，官方 Connect 的浏览帖子 `1744 → 1745`，访问天数 `44 → 44`、浏览话题 `221 → 221`；确认新帖子统计有增量，不能外推其他统计也已更新。summary 活跃数据仍为访问 112 天、话题 285、帖子 2034、时长 4 小时 47 分。客户端刷新确实发起并完成 summary GET；[Discourse 上游 UsersController.summary](https://github.com/discourse/discourse/blob/main/app/controllers/users_controller.rb#L474) 对此 JSON 使用一小时服务端缓存，该差异与其一致，但没有当前 L 站部署缓存期限的直接证据。不得追加请求绕缓存或把旧 summary 当作上报失败。 |
+| 原站网页对照 | 同日按用户要求，从 More 的“检测或重新登录”进入已登录原站 WebView，打开一个新建、单主楼、初始明确显示“帖子未读”的普通 Lv1 话题并停留阅读；未读标记随后消失。UTC 03:03:13 基线与 03:06:49、03:07:59 两次返回刷新均为 Connect 帖子 1745、话题 221、访问 44 天；summary 仍为 112/285/2034/4 小时 47 分。`LIVE_PASS` 仅限网页请求观察：通过只读 CDP 监听捕获 03:06:05 的网页原生 POST `/topics/timings`，Present=true、Background=true、XHR=XMLHttpRequest，表单包含 `topic_id`、`topic_time=60000`、单楼层 `timings=60000`，响应 200；与 App 已核对的关键头、字段一致。网页 Content-Type 额外声明 UTF-8、表单字段顺序及毫秒取值不同，没有证据表明这些格式差异导致入账差异。本次网页也没有即时 +1，不能据此认定 App 仍缺协议字段；网页最终入账与 Connect 展示刷新机制仍为 `NOT_VERIFIED`。监听未修改请求、页面或缓存，临时 ADB 转发与监听进程已清理。 |
+| 关闭条件与未验范围 | `NOT_VERIFIED`：仅 App 触发当天首次访问、最近访问时间的独立前后对照、访问天数入账及 summary 缓存过期后的最终数值。此次用户重新登录已经经过网页流程，无法作为干净当天样本；按 runbook 另取首次 App 访问前无 Present 的 XHR 基线，再仅 App 阅读未读普通帖。问题仍为 OPEN，不能以此次 POST 200 或帖子 +1 关闭每日访问事故；窗口天数也不能机械要求 +1。设备手势证据仅来自模拟器注入，不代表实体手机手感。 |
+
+## `REG-ACCOUNT-050` 阅读上报遇到 CF 验证后静默丢弃
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03`、`ACCOUNT-02`；共享阅读状态和 Cookie 交接 |
+| 历史症状与根因 | 2026-09-13 用户手机 1.3.143 日志中，同一构建阅读上报 134 次失败、25 次成功；失败为 132 次 403 HTML 与 2 次 429 HTML，均被识别为 CF 验证。action client 已识别挑战，但 reading hook 未接验证面板；队列丢弃该批次并继续处理后续阅读。再次触发 CF 的具体服务端原因没有充分证据，不能归因于固定标识缺失。 |
+| 修复 | 现有 runtime 同步暂停并保留被拒绝增量，复用验证面板及 Cookie 交接；显式检测后刷新 CSRF，原样补发，成功才继续。取消、后台、过期、身份切换和再次拦截均有界处理，未知 POST 结果不重放。诊断补齐批次关联、CF 识别依据、通行 Cookie 存在/变化/一致性及三处 UA 摘要，不记录凭据。 |
+| 当前 owner | `src/platform/query/discourseReadingRuntime.test.ts`、`src/sources/linuxdo/reading.test.ts`、`src/features/account/useVerificationController.test.ts` 与 `tests/ui/account/account-runtime.test.tsx`；诊断由现有 JS 导出和 Native Cookie/journal owner 承接。 |
+| 失败 oracle | 修复前真实 Account runtime 接线测试 seed `292265768`：收到 CF 上报响应后验证面板仍不可见。修复后该行为扩展为等待 Cookie 交接、原样补发及保持账号代次的 UI 用例；runtime 单测独立覆盖暂停、限时、取消、后台和重复拦截；审查追加的三个失败场景（seed `1789268700`）为手动面板附加阅读未执行、原 Query 失效阻断阅读、CSRF 等待期间切后台仍补发。现由相同 controller/source owner 覆盖，另核对回到前台原样恢复及 CSRF 完成时已过期不发送。 |
+| 验证边界 | 自动测试证明恢复与接线。2026-09-13 匹配构建覆盖安装后，模拟器新话题 POST 200；在已登录 App WebView 打开话题前，官网 JSON 已返回 1～4 楼已读、5～10 楼未读，页面随后对应 `read-state read`。Native 实发通行 Cookie 与共享存储一致，WebView/JS/Native UA 摘要一致；统计面板前后仍为 111 天、208 话题、1691 帖子，统计增长未获验证。未自然遇到 CF，真实 CF 恢复与实体手机表现仍为 `NOT_VERIFIED`，不以正常上报代替 CF Live 证据。 |
+
+2026-09-14 未提交代码审查补充：关闭面板的 350ms 收尾期间，排队中的阅读恢复被取消、替换或随 controller 卸载时，只结算了面板 Promise，未调用阅读 owner 的取消逻辑，导致旧 recovery 持续阻止后续阅读。修复复用现有取消 owner；`src/features/account/useVerificationController.test.ts` 的三个分支在修复前均因取消次数为 0 失败（seed `1789360754393`），修复后与阅读 runtime owner 共 55 项通过。此为受控取消证据，不代表真实 CF 放行或统计入账。
+
 ## `REG-TOPIC-162` 原生文字选择取消的 Promise 未被接收
 
 | 字段 | 内容 |
@@ -792,7 +855,12 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`SEARCH-01`、`SEARCH-02`、`SEARCH-03`、`SEARCH-04`、`TOPIC-01`、`TOPIC-03`、`USER-01`、`ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04` |
 | 历史症状与根因 | 首页聚合的 linux.do child 命中 CF 后面板不拉起，或检测一次后自动循环重开；只剩 V2EX 的 partial 内容还可能被当成新的账号/ReadPlan 状态；根因：`src/features/feed/useFeedController.ts` 的聚合 partial error 投影，以及 `src/features/account/useVerificationController.ts` 对 read recovery 与登录 surface 的责任边界。 |
-| 当前 owner | `tests/ui/feed/feed-controller-session.test.tsx` |
+| 当前 owner | `tests/ui/account/account-runtime.test.tsx` 承接共享恢复生命周期；`src/features/account/useVerificationController.test.ts` 承接分项结果与取消；`tests/ui/account/account-site-panels.test.tsx` 承接网页展示；Feed 入口仍由 `tests/ui/feed/feed-controller-session.test.tsx` 承接。 |
+| 后续事故 | 2026-09-14 用户日志中，同一阅读批次连续四次明确 CF 403，第五次 POST 200；用户看到的验证网页一直没有可操作验证码。Cookie 已存在且与发送代次一致，不能归因为 Cookie 未保存。检测先关闭 surface、恢复失败再打开，造成反复弹出；普通网页正常也不证明 timings 放行。 |
+| 修复 | 一次恢复会话保留面板至最终结果，WebView 与 UI 占用分离。取消覆盖 Cookie 交接和请求等待，重复通知不重新加载；页面与阅读分别结算，完成项不重发，过期批次不再加载验证页。专用入口只影响展示，不增加 POST 栈、凭据轮询或清理。 |
+| 失败 oracle | 共享 Account 跨层用例在旧实现第一次检测仍被拦截后，面板可见值为 false（期望 true）。修复后持续 CF、前后台重复通知及静置期间 WebView 加载数和请求数不再增长；关闭、系统返回、切站、换号及等待阶段的迟到响应均由同一 owner 证明。分项成功、普通失败、过期与精确目标去重由 controller owner 承接。 |
+| 自动验证 | `UNIT_PASS`：206 文件 / 2503 项，seed `1789359529381`；`UI_PASS`：75 套件 / 1426 项，seed `-100568505`，最终 Account 专项 48 项（seed `47538508`）。`STATIC_PASS`：lint、格式、architecture、typecheck、unused、文档及 diff 检查，按项执行通过。全量检查曾被工作区已有 Present 请求头迁移的一条过期搜索断言阻断，修正测试归属后按原 seed 定向重放通过，再完成全量单测。 |
+| 验证边界 | 设备上的面板连续性、`/challenge` 实际表现、真实 CF 放行与阅读入账均为 `NOT_VERIFIED`；没有将 UI mock 或 HTTP 404 当作服务端验证成功，也未执行真实补报写入或发布。 |
 
 
 ## `REG-LINUXDO-003` 验证后的原页面恢复失败却提示成功
@@ -5507,3 +5575,61 @@
 | 设备证据 | 开发包 `1.3.142/146`、SHA-256 `e0739eec80b6877a1670ad922b7a7558b7003c89a18cb4f27ee59902a7200aa9` 的原帖本地编辑为 `LIVE_PASS`；Android WebView 受控 12 秒延迟时四个占位均为 72px，原文 564 字符；自然完成后四图均为 1264×2780，光标仍在 320px 视口内。受控四个图片请求失败后，原生点击末图重试只增加一个请求，仅末图 DOM 被替换且成功；Markdown 完全相同、undo=false，源码/富文本和全屏切换保留结果。上述受控证据不等同外部图片服务可用性保证。 |
 | 验证边界 | 没有上传新文件、发送或保存远端编辑；所有本地编辑取消，干预只限当前 WebView 图片请求，不清全局缓存。实体手机、linux.do 实时站点、真实上传服务与完整设备 Replay 为 `NOT_VERIFIED`。 |
 | 最终包收口 | 最后仅提高占位对比度并增加底色/边框，重新生成 bundle 后构建包 SHA-256 `50a8a2a28f354458f4fa68434a4df4e54358f598426399deb99acca527d705a4`，同签名覆盖安装，firstInstallTime 仍为 `2026-07-26 16:51:37`、登录 3/3，当前 PID 无 JS/Native fatal（`APK_SANITY`）。此包重复原帖受控 12 秒延迟，四个占位均为 72px、opacity=1，之后四图自然加载成功；原生输入在末图后，光标 top=297.214、bottom=315.119，处于 320px 视口。取消重开后仍为原四图、564 字符且无测试文字。失败重试证据取自上一行所列交互包，最终包此项未重复；两包仅上述 CSS 不同。 |
+
+## `REG-WRITE-079` 妖火缺少回复验证字段且把拒绝提示当成成功
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01`；共享 `TOPIC-03`、`ACCOUNT-01/02` |
+| 历史症状与根因 | 2026-09-14，原生回复后关闭编辑器并跳到旧末楼，原站没有新回复。实际 POST 返回 HTTP 200 和“页面已过期，请刷新后重试”；App 更多内的已登录原站表单包含 `__CSRFToken`，原生 request 缺少该字段，结果解析又仅排除少数失败词。补齐字段后真实写入成功，但当天原站成功文本已是“回复成功！”加奖励/跳转尾文，旧“评论成功”判断不足。 |
+| 当前 owner | `src/sources/yaohuo/actionClient.ts` 每次提交前读取同站、同帖表单，仅携带当前验证值并严格确认已知成功响应；既有 `withFetchGuard` 在每次网络请求前后复核写票据及结束状态。协议归 `src/sources/yaohuo/actionClient.test.ts`，草稿、刷新和身份变化接线归 `tests/ui/topic/topic-actions-controller.test.tsx`。 |
+| 失败 oracle | 缺字段及拒绝提示的 9 个行为在 seed `1789377849494` 下失败并转绿；实际新成功文本在 seed `1789378335360` 下失败并修复。 |
+| 设备证据 | 用户授权在生日帖 1581016 回复至首次成功。修复 token 的开发包 `20585d44365b64d5e5ea191f1c642d796bcbb59603a64fdef95a732101893f27` 仅提交一次，17:29 原站第 112 楼已出现当前账号回复，SystemUI ToastLog 留下真实成功提示。此后零新增提交；最终包在原生列表只读核对该楼正文、作者和后续楼层。 |
+| 验证边界 | 真实 POST 写入为 `LIVE_PASS`；最终成功提示识别、关闭编辑器及写后刷新由真实 adapter 接入 UI 的受控响应证明（`UI_PASS`），不冒充最终包重复 Live 提交。未发布，保留数据覆盖安装。 |
+
+## `REG-TOPIC-163` 重叠回复页和备用身份碰撞破坏列表唯一性
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03`；共享 `NAV-02/03`、`WRITE-01` |
+| 历史症状与根因 | 用户报告写后向上加载出现空白。已确认分页合并直接 flatMap，重叠页产生重复实体和虚拟列表 key；没有 commentId 时仅以 floor 作 key，不同作者/时间的同楼层也发生碰撞。用户日志未包含直接的重复 key 报错，不能把所有空白都归为此原因。 |
+| 当前 owner | `mergedReplyPages` 按共享 `replyKey` 去重，不改原页、游标与顺序；备用 key 纳入作者身份和发表时间，正文更新不换 key，不吞同楼层的不同回复。Canonical owner：`src/features/topic/model/replyPagination.test.ts`、`src/features/topic/model/replyListModel.test.ts`；Topic 会话、列表和媒体 UI 回归展开。 |
+| 失败 oracle | seed `1789378785650`：正反序跨页重叠和不同实体同楼层共 3 个行为失败；修复后 key 唯一，所有内容保留，原页游标不变。 |
+| 设备证据与边界 | 最终包 `4f45385ba8c6074c5ba0627b8b3b1a3152f3c540c9ddcd9fa8ba732c2e66e044` 在 1581016 定位第 112 楼后连续向上到第 78 楼，跨页可见内容、楼层与位置正常（`LIVE_PASS`）。同页动态插入造成的精确重叠时序由受控 oracle 证明；未声称一对一复现用户历史空白，其他来源现场与实体手机为 `NOT_VERIFIED`。 |
+
+## `REG-TOPIC-164` 视频播放结束重新覆盖加载海报和转圈
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`；共享所有原生正文视频 |
+| 历史症状与根因 | 1581015 的 12 秒视频播放结束后持续转圈。Expo Android 将无错误的 STATE_ENDED 映射为 idle，同时先发送 playToEnd；App 把 idle 统一当加载，重新覆盖海报与 spinner。 |
+| 当前 owner | `ForumContentVideo` 订阅结束/重新播放事件，把结束后的 idle 投影为 ended，重播恢复正常状态；按播放器实例移除订阅并重置状态。`tests/ui/topic/topic-image-loading.test.tsx` 现有原生控件 owner 覆盖加载→就绪→结束→重播，不新建播放器或丢失控件。 |
+| 失败 oracle | seed `-417587487` 下实际 ended 事件与 idle 顺序导致仍有 ActivityIndicator；修复后通过。 |
+| 设备证据 | 最终包在原帖自然播放两次至 00:12/00:12，保留末帧与原生控件，没有海报和转圈重新覆盖，重播正常（`LIVE_PASS`）。此前模拟器图形服务卡住后按授权冷启动同一 AVD，无清数据/快照恢复。 |
+| 本轮共同验证 | `UNIT_PASS`：7 文件 177 项，seed `1789378963191`。`UI_PASS`：回复 action/composer 108 项，seed `941882150`；Topic 会话/列表/正文/媒体 411 项，seed `821661515`。`STATIC_PASS`：typecheck、相关 lint/format、architecture、docs 和 diff。`APK_SANITY`：1.3.143/147 开发签名 x86_64 包，firstInstallTime 保持 `2026-07-26 16:51:37`，当前 App 无 JS/Native fatal；完整 tracked Replay、其他来源现场和实体手机为 `NOT_VERIFIED`。 |
+
+## `REG-WRITE-080` 帖子回复成功后共用富文本编辑器残留已发送正文
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/05`；NodeSeek、linux.do 共用 Composer |
+| 历史症状与根因 | 用户报告回复别人后再次打开回复仍有旧正文。提交 controller 已清空宿主草稿，但 `StructuredReplyComposer` 只对 private-message 的空内容执行 INIT；帖子 reply 则发送 insert-markdown 空串，没有清除 WebView 文档。同帖重开继续使用同一实例，因此正文残留。 |
+| 当前 owner | `tests/ui/topic/structured-reply-composer.test.tsx` 合并原私信清空用例，覆盖两站楼层回复、收起保留、提交清空、同实例重开与后续追加；`src/ui/composer/editorRuntime.test.ts` 验证两站富文本/源码实际 DOM 和下一次快照为空。运行修复仅移除共享清空分支的私信限定。 |
+| 失败 oracle | seed `-1573364675` 下私信通过，两站帖子回复均收到 insert-markdown 空串而非清空 INIT，2 项失败；修复后通过。 |
+| 自动验证与边界 | `UI_PASS`：Composer、topic actions、topic session 220 项，seed `969286052`。`UNIT_PASS`：实际编辑器 50 项，seed `1789379573607`；首轮既有 LinuxDo 表格工具栏可见性断言失败，同 seed 重放通过，未修改该工具栏行为。按用户要求仅代码与本地测试判断，本轮没有真实回复、设备安装或发布；本次修复的设备/Live 为 `NOT_VERIFIED`。 |
+
+
+## `REG-WRITE-081` linux.do 回复提交后串行重复回读
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01`、`TOPIC-03`；共享 action controller 展开 `WRITE-*`、`ACCOUNT-01` |
+| 历史症状与根因 | 用户反馈回复他人成功后等待较久。代码将已确认的 POST 响应丢弃，先刷新详情，再发现末尾，正序另读取目标窗口；可编辑回复还可能逐条补原文。已确认重复请求，未测量用户设备历史耗时。 |
+| 当前 owner | `src/sources/discourse/actionRequest.test.ts` 校验提交目标；`tests/integration/source-read-contracts/discourse.test.ts` 固定含编辑原文的单次 near-post GET；`tests/ui/topic/topic-actions-controller.test.tsx` 固定确认目标传递和 partial 提示；`tests/ui/topic/topic-session-controller.test.tsx` 合并旧末尾发现 owner，覆盖正倒序单窗口、并发他人回复、失败保留、同目标重试与排序切换。 |
+| 失败 oracle | seed `1806424205` 下正倒序两项均因写后额外读取主题而失败；修复后单窗口通过，且阻止窗口应用后由未结算入口状态触发额外读取。 |
+| 验证边界 | 本机自动测试验证请求与状态契约；未执行真实回复、设备安装或发布，设备和 Live 为 `NOT_VERIFIED`。 |

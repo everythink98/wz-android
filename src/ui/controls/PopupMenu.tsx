@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -75,7 +76,7 @@ export function PopupMenu({
   const { styles } = useReaderThemeStyles(createStyles);
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onRequestClose}>
-      <View style={styles.layer}>
+      <View style={styles.layer} onTouchStart={recordUserInteraction} onTouchMove={recordUserInteraction}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}

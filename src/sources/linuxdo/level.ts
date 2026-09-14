@@ -247,6 +247,7 @@ async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
     {
       headers: {
         Accept: 'application/json,text/plain,*/*',
+        'X-Requested-With': 'XMLHttpRequest',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         Referer: `${LINUXDO_BASE_URL}/latest`,
         ...(options.userAgent ? { 'User-Agent': options.userAgent } : {})

@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beginDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
+
+afterEach(() => setDiagnosticWriter(null));
 
 vi.mock('@/platform/android/androidWebViewUserAgent', () => ({
   DEFAULT_ANDROID_WEBVIEW_USER_AGENT: 'native-provider-user-agent'
@@ -22,7 +26,109 @@ function htmlResponse(body: string, status = 200, url = 'https://www.yaohuo.me/b
   return response;
 }
 
+function replyForm(token = 'fresh-form-token') {
+  return `<form action="/bbs/book_re.aspx" method="post">
+    <input name="id" value="123" type="hidden" />
+    <input name="__CSRFToken" value="${token}" type="hidden" />
+    <textarea name="content"></textarea>
+  </form>`;
+}
+
+function replyFetcher(html: string) {
+  return vi.fn(async (url: string, init?: RequestInit) =>
+    htmlResponse(init?.method === 'GET' ? replyForm() : html, 200, url)
+  );
+}
+
 describe('runYaohuoAction', () => {
+  it('reads a fresh reply form before each submit and preserves the intended reply fields', async () => {
+    let reads = 0;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'GET') return htmlResponse(replyForm(`token-${++reads}`), 200, url);
+      const body = new URLSearchParams(String(init?.body));
+      return htmlResponse(
+        `<div class="tip">${body.get('__CSRFToken') === `token-${reads}` && reads > 0 ? '评论成功' : '页面已过期，请刷新后重试'}</div>`
+      );
+    });
+    const request = buildYaohuoReplyRequest({
+      topicId: '123',
+      classId: '177',
+      content: '生日快乐',
+      face: '微笑',
+      replyFloor: 11,
+      toUserId: 22,
+      sid: 'secret'
+    });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await expect(runYaohuoAction({ request, fetcher })).resolves.toEqual({
+        status: 'confirmed',
+        message: '评论成功'
+      });
+      const [url, init] = fetcher.mock.calls.at(-1)!;
+      expect(url).toBe('https://www.yaohuo.me/bbs/book_re.aspx');
+      expect(Object.fromEntries(new URLSearchParams(String(init?.body)))).toEqual({
+        ...Object.fromEntries(new URLSearchParams(request.body)),
+        __CSRFToken: `token-${attempt}`
+      });
+      expect(init?.headers).toMatchObject({ referer: 'https://www.yaohuo.me/bbs-123.html' });
+    }
+    expect(reads).toBe(2);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    '页面已过期，请刷新后重试',
+    '操作太频繁，请稍后再试',
+    '请先输入验证码',
+    '评论成功了吗',
+    '回复成功！页面已过期，请刷新后重试'
+  ])('does not confirm the original reply rejection: %s', async (message) => {
+    const fetcher = replyFetcher(`<div class="tip">${message}</div>`);
+    await expect(
+      runYaohuoAction({
+        request: buildYaohuoReplyRequest({ topicId: '123', classId: '177', content: '生日快乐' }),
+        fetcher
+      })
+    ).resolves.toEqual({ status: 'unknown', message });
+  });
+
+  it.each([
+    ['missing token', replyForm('')],
+    ['another form', replyForm().replace('book_re.aspx', 'sendmoney_freeMain.aspx')],
+    ['another topic', replyForm().replace('value="123"', 'value="456"')],
+    ['foreign action', replyForm().replace('/bbs/book_re.aspx', 'https://example.com/bbs/book_re.aspx')]
+  ])('does not POST when the current reply form has %s', async (_kind, html) => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    const trace = beginDiagnosticTrace('reply', 'submit');
+    const fetcher = vi.fn(async (url: string) => htmlResponse(html, 200, url));
+    await expect(
+      runYaohuoAction({
+        request: buildYaohuoReplyRequest({ topicId: '123', classId: '177', content: '生日快乐' }),
+        fetcher,
+        trace
+      })
+    ).rejects.toThrow('无法读取妖火回复验证信息，请刷新后重试');
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        traceId: trace.traceId,
+        phase: 'credential',
+        source: 'yaohuo',
+        hasReplyForm: _kind === 'missing token',
+        hasCsrfToken: false,
+        isSameOrigin: true
+      })
+    );
+    expect(JSON.stringify(events)).not.toMatch(/fresh-form-token|生日快乐/);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.yaohuo.me/bbs-123.html',
+      expect.objectContaining({ method: 'GET', body: undefined })
+    );
+  });
+
   it('confirms a private reply only from the exact original success text', async () => {
     const request = buildYaohuoMessageReplyRequest({ content: '收到', fields: { action: 'add', toid: '9' } });
 
@@ -35,7 +141,7 @@ describe('runYaohuoAction', () => {
   });
 
   it('sends yaohuo writes through the native read-only cookie jar', async () => {
-    const fetcher = vi.fn(async () => htmlResponse('<div class="tip">评论成功</div>'));
+    const fetcher = replyFetcher('<div class="tip">评论成功</div>');
 
     const result = await runYaohuoAction({
       request: buildYaohuoReplyRequest({
@@ -57,7 +163,7 @@ describe('runYaohuoAction', () => {
           'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
           'content-type': 'application/x-www-form-urlencoded',
           origin: 'https://www.yaohuo.me',
-          referer: 'https://www.yaohuo.me/bbs/',
+          referer: 'https://www.yaohuo.me/bbs-123.html',
           'sec-fetch-site': 'same-origin',
           'user-agent': 'native-provider-user-agent'
         }),
@@ -278,8 +384,14 @@ describe('runYaohuoAction', () => {
     });
   });
 
-  it('keeps short yaohuo action text when no tip wrapper exists', async () => {
-    const fetcher = vi.fn(async () => htmlResponse('<html>评论成功</html>'));
+  it.each([
+    ['评论成功', '<html>评论成功</html>'],
+    [
+      '回复成功！ 获得妖晶:30，获得经验:0 跳转中...返回',
+      '<div class="tip"><strong>回复成功！</strong> 获得妖晶:30，获得经验:0 <span>跳转中...</span><a>返回</a></div>'
+    ]
+  ])('confirms the original reply success response: %s', async (message, html) => {
+    const fetcher = replyFetcher(html);
 
     const result = await runYaohuoAction({
       request: buildYaohuoReplyRequest({
@@ -290,7 +402,7 @@ describe('runYaohuoAction', () => {
       fetcher
     });
 
-    expect(result).toMatchObject({ status: 'confirmed', message: '评论成功' });
+    expect(result).toMatchObject({ status: 'confirmed', message });
   });
 
   it.each([
@@ -298,7 +410,7 @@ describe('runYaohuoAction', () => {
     ['unrecognized short', '<html>请求处理中</html>'],
     ['ambiguous success wording', '<html>评论成功了吗</html>']
   ])('marks %s action text unknown without a success oracle', async (_kind, html) => {
-    const fetcher = vi.fn(async () => htmlResponse(html));
+    const fetcher = replyFetcher(html);
 
     const result = await runYaohuoAction({
       request: buildYaohuoReplyRequest({
@@ -316,7 +428,7 @@ describe('runYaohuoAction', () => {
   });
 
   it('rejects short yaohuo failure tips', async () => {
-    const failedReplyFetcher = vi.fn(async () => htmlResponse('<div class="tip">评论失败</div>'));
+    const failedReplyFetcher = replyFetcher('<div class="tip">评论失败</div>');
     await expect(
       runYaohuoAction({
         request: buildYaohuoReplyRequest({
@@ -339,14 +451,12 @@ describe('runYaohuoAction', () => {
   });
 
   it('rejects long yaohuo failure tips before shortening the message', async () => {
-    const fetcher = vi.fn(async () =>
-      htmlResponse(`
+    const fetcher = replyFetcher(`
       <div class="tip">
         评论失败，当前内容未能提交。请检查当前账号状态、帖子权限、重复提交限制和内容格式后再试，
         这段失败提示超过八十个字，不能因为过长就被当成操作已提交，也不能隐藏原始失败原因。
       </div>
-    `)
-    );
+    `);
 
     await expect(
       runYaohuoAction({

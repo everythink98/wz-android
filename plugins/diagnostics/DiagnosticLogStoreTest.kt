@@ -7,6 +7,26 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 class DiagnosticLogStoreTest {
+  @Test fun retainsRequestWriteFailurePhasesForPostRestartDiagnostics() {
+    val phases = listOf("request-headers-start", "request-headers-end", "request-failed", "connection-write-stalled")
+    assertEquals(phases, phases.map { phase ->
+      DiagnosticJournal.safeNetworkFields(mapOf("phase" to phase))["phase"]
+    })
+    assertFalse(DiagnosticJournal.safeNetworkFields(mapOf("phase" to "PRIVATE_PHASE")).containsKey("phase"))
+  }
+
+  @Test fun retainsClearanceDiagnosticsWithoutExportingCredentials() {
+    val fields = DiagnosticJournal.safeNetworkFields(mapOf(
+      "cookieKind" to "bot-management", "hasCfClearance" to true, "hasStoredCfClearance" to true,
+      "isCfClearanceCurrent" to false, "didCfClearanceChange" to true, "userAgentHash" to "0123abcd",
+      "cookie" to "PRIVATE_COOKIE", "cookieHash" to "PRIVATE_HASH", "userAgent" to "PRIVATE_UA"
+    ))
+    assertEquals(6, fields.size)
+    assertEquals("0123abcd", fields["userAgentHash"])
+    assertEquals(false, fields["isCfClearanceCurrent"])
+    assertFalse(fields.toString().contains("PRIVATE"))
+  }
+
   @get:Rule val temporary = TemporaryFolder()
 
   @Test fun startupTimingRejectsUnknownPhasesAndRecordsEachPhaseOnce() {

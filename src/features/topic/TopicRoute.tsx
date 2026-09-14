@@ -274,7 +274,9 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
       closeReplyComposer={closeReplyComposer}
     >
       <OriginalImageUpgradeBoundary enabled={active}>
+        {/* Background accessibility props must not change the native parent of media views. */}
         <View
+          collapsable={false}
           accessibilityElementsHidden={!active}
           importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
           pointerEvents={active ? 'auto' : 'none'}

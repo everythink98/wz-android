@@ -1,4 +1,21 @@
 import { appendFileToFormData, type NormalizedReplyImageAsset } from '@/sources/imageUpload';
+import { isRecord } from '@/domain/forum/html';
+
+export function discourseCreatedReplyTarget(data: unknown, topicId: string) {
+  if (!isRecord(data) || data.action === 'enqueued' || data.success === false) return undefined;
+  const post = isRecord(data.post) ? data.post : data;
+  if (
+    String(post.topic_id) !== topicId ||
+    typeof post.id !== 'number' ||
+    !Number.isSafeInteger(post.id) ||
+    post.id <= 0 ||
+    typeof post.post_number !== 'number' ||
+    !Number.isSafeInteger(post.post_number) ||
+    post.post_number <= 1
+  )
+    return undefined;
+  return { commentId: post.id, floor: post.post_number };
+}
 
 export interface DiscourseActionRequest {
   path: string;

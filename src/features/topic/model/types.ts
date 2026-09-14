@@ -27,6 +27,7 @@ export type ReplyRefreshCommand =
   | { kind: 'manual'; silent?: boolean }
   | {
       kind: 'created';
+      discourseTarget?: { commentId: number; floor: number };
       nodeSeekAuthorId?: string;
       nodeSeekContentMarkdown?: string;
       silent?: boolean;

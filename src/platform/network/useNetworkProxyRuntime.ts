@@ -76,7 +76,13 @@ function enqueueProxyEnabledTransition(
   return task;
 }
 
-export function useNetworkProxyRuntime({ notify }: { notify: (message: string) => void }) {
+export function useNetworkProxyRuntime({
+  notify,
+  baseFetcher = fetch
+}: {
+  notify: (message: string) => void;
+  baseFetcher?: Fetcher;
+}) {
   const [proxyState, setProxyState] = useState<NetworkProxyState>(() => createEmptyNetworkProxyState());
   const [loaded, setLoaded] = useState(false);
   const [applyStatus, setApplyStatus] = useState<NetworkProxyApplyStatus>('loading');
@@ -451,9 +457,9 @@ export function useNetworkProxyRuntime({ notify }: { notify: (message: string) =
     async (input, init) => {
       await ensureNetworkProxyReady();
       const requestInit = Platform.OS === 'android' ? withNativeDiagnosticRequest(init) : init;
-      return fetch(input, withNativeForumReadIntent(input, requestInit));
+      return baseFetcher(input, withNativeForumReadIntent(input, requestInit));
     },
-    [ensureNetworkProxyReady]
+    [baseFetcher, ensureNetworkProxyReady]
   );
 
   useEffect(() => setDefaultAvatarFetcher(networkProxyFetcher), [networkProxyFetcher]);

@@ -40,6 +40,7 @@ const DIAGNOSTIC_REASONS = [
   'missing_credential',
   'storage_error',
   'parse_empty',
+  'site_notice',
   'superseded',
   'duplicate',
   'unsupported',
@@ -91,6 +92,8 @@ export interface DiagnosticTrace {
 }
 
 const specialStringFieldKeys = closedValues(
+  'userAgentHash',
+  'cfRay',
   'endpoint',
   'method',
   'contentType',
@@ -117,6 +120,7 @@ function closedValues<const T extends readonly string[]>(...values: T) {
 type ClosedValue<T> = T extends { values(): IterableIterator<infer Value> } ? Value : never;
 
 const operationValues = closedValues(
+  'reading-recovery',
   'account-reconcile',
   'account-restore',
   'account-migration',
@@ -637,7 +641,19 @@ const categoricalFieldValues = {
   level: closedValues('debug', 'error', 'info', 'warning'),
   queueState: closedValues('active', 'idle', 'queued'),
   csrfSource: closedValues('local-generated', 'none', 'session-endpoint'),
-  userAgentSource: closedValues('default', 'stored', 'webview'),
+  userAgentSource: closedValues('default', 'stored', 'webview', 'provided', 'unknown'),
+  readingRecoveryState: closedValues(
+    'paused',
+    'resuming',
+    'blocked',
+    'completed',
+    'failed',
+    'canceled',
+    'expired',
+    'stale',
+    'opened',
+    'reused'
+  ),
   mediaKind: closedValues('audio', 'video'),
   editorError: closedValues(
     'markdown-invalid',
@@ -734,6 +750,9 @@ const contentTypeValues = closedValues(
 );
 
 const numberFieldKeys = closedValues(
+  'batchId',
+  'batchAgeMs',
+  'retryAfterMs',
   'topicTimeMs',
   'postTimeMs',
   'surfaceGeneration',
@@ -1068,6 +1087,8 @@ function referenceFor(kind: string, raw: unknown) {
 }
 
 function safeStringField(key: string, value: string) {
+  if (key === 'cfRay') return /^[a-f0-9]{16,32}-[A-Z]{3}$/i.test(value) ? value : 'redacted';
+  if (key === 'userAgentHash') return /^[a-f0-9]{8}$/.test(value) ? value : 'redacted';
   if (key === 'imageFailure' || key === 'mediaFailure') return mediaFailureValues.has(value) ? value : 'unknown';
   if (key === 'endpoint') return endpointClass(value);
   if (key === 'method') return safeMethod(value);

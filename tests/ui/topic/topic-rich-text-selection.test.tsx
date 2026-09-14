@@ -296,6 +296,7 @@ it('reports only visible production content floors after layout and pauses while
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({ topicTime: 1000, timings: { 1: 1000, 100: 1000 } }),
       'alice',
+      expect.anything(),
       expect.anything()
     );
     expect(reading.state()['42'].readPosts[2]).toBeUndefined();
@@ -363,6 +364,7 @@ it('waits for actual pixels before recording an image-only visible content row',
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({ topicTime: 1000, timings: { 1: 1000 } }),
       'alice',
+      expect.anything(),
       expect.anything()
     );
     await view.unmount();
@@ -451,6 +453,7 @@ it('records the current floor when filtering replaces content at the same visibl
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({ timings: { 100: 1000 } }),
       'reading-filter',
+      expect.anything(),
       expect.anything()
     );
     await view.unmount();
@@ -1016,6 +1019,11 @@ describe('topic rich-text selection', () => {
     const renderedTree = JSON.stringify(screen.toJSON());
     const markers = [...renderedTree.matchAll(/"nativeID":"(topic-selection-[^"]+)"/g)].map((match) => match[1]);
     expect(markers.sort()).toEqual(nativeRows.map((row) => row.nativeId).sort());
+    const nativeMarkers = screen.container.queryAll((node) => markers.includes(node.props.nativeID));
+    expect(nativeMarkers).toHaveLength(nativeRows.length);
+    for (const marker of nativeMarkers) {
+      expect(marker.props.collapsable).toBe(false);
+    }
     expect(screen.getByText('opening code').parent?.props.selectable).toBe(false);
     expect(screen.getByText('accepted code').parent?.props.selectable).toBe(false);
     expect(screen.getByText('reply code').parent?.props.selectable).toBe(false);

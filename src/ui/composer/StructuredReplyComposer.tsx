@@ -11,6 +11,7 @@ import type {
   ComposerSnapshot,
   PendingNodeSeekPoll
 } from '@/domain/forum/structuredComposer';
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import {
   composerEditorMessageSchema,
   MAX_COMPOSER_EMOJI_COUNT,
@@ -376,7 +377,7 @@ export const StructuredReplyComposer = forwardRef<
 
     useEffect(() => {
       if (!ready || content === lastConfirmedMarkdownRef.current || content === lastExternalSentRef.current) return;
-      if (intent.kind === 'private-message' && !content) {
+      if (!content) {
         sendInit();
         return;
       }
@@ -384,7 +385,7 @@ export const StructuredReplyComposer = forwardRef<
       const confirmed = lastConfirmedMarkdownRef.current;
       const markdown = content.startsWith(confirmed) ? content.slice(confirmed.length) : content;
       send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown } });
-    }, [content, intent.kind, ready, send, sendInit]);
+    }, [content, ready, send, sendInit]);
 
     const requestSnapshot = useCallback(() => {
       const trace = beginDiagnosticTrace('webview', 'composer-snapshot', {
@@ -466,6 +467,10 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         const message = parsed.data;
+        if (message.type === 'USER_INTERACTION') {
+          if (visible) recordUserInteraction();
+          return;
+        }
         if (message.type === 'ERROR' && message.payload.code.startsWith('bridge-invalid')) {
           recordInvalidBridgeMessage('webview');
           return;
@@ -600,7 +605,8 @@ export const StructuredReplyComposer = forwardRef<
         onUseLinuxDoTemplate,
         recordInvalidBridgeMessage,
         rendererGone,
-        send
+        send,
+        visible
       ]
     );
 

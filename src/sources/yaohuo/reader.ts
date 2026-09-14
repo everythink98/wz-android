@@ -1,7 +1,7 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import { DEFAULT_ANDROID_WEBVIEW_USER_AGENT } from '@/platform/android/androidWebViewUserAgent';
 import { normalizeMediaReferrerPolicyHeader } from '@/domain/forum/mediaReferrer';
-import { parseHtml, parsePositiveInteger } from '@/domain/forum/html';
+import { elementText, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
 import type {
   FeedResponse,
   RepliesResponse,
@@ -78,6 +78,16 @@ export async function fetchYaohuoHtml(url: string, fetcher: Fetcher = fetch, opt
   }
   if (validateLogin) {
     ensureYaohuoHtmlLoggedIn(html, responseUrl);
+    const root = parseHtml(html);
+    if (
+      /^提示信息(?:\s*-\s*妖火茶馆)?$/.test(elementText(root.querySelector('title'))) &&
+      !root.querySelector('.bbscontent, .listdata, .recontent')
+    ) {
+      const notice = elementText(root.querySelector('body > .tip'));
+      if (notice) {
+        throw Object.assign(new Error(`妖火提示：${notice}`), { source: 'yaohuo', reason: 'site-notice' });
+      }
+    }
   }
   return {
     html,

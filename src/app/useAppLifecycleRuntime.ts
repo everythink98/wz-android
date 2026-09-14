@@ -15,6 +15,7 @@ import { navigateAppScreen, navigationRef, pushUserRoute, shouldUpdateAppRootScr
 import { beginDiagnosticTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { diagnosticRef, type DiagnosticFields } from '@/platform/diagnostics/diagnosticPolicy';
 import { useInitialForegroundRuntime } from './useInitialForegroundRuntime';
+import { recordUserInteraction } from '@/platform/network/userPresence';
 
 export function useAppLifecycleRuntime() {
   const { height, width } = useWindowDimensions();
@@ -103,9 +104,11 @@ export function useAppLifecycleRuntime() {
 
   useEffect(() => {
     const initialActive = AppState.currentState !== 'background' && AppState.currentState !== 'inactive';
+    recordUserInteraction();
     focusManager.setFocused(initialActive);
     const subscription = AppState.addEventListener('change', (next) => {
       const active = next === 'active';
+      if (active) recordUserInteraction();
       setAppActive(active);
       focusManager.setFocused(active);
     });
@@ -117,6 +120,7 @@ export function useAppLifecycleRuntime() {
 
   return {
     appActive,
+    onUserInteraction: recordUserInteraction,
     changeScreen,
     getCurrentScreen,
     height,

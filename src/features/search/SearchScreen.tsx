@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useStartupPageLayout } from '@/ui/navigation/startupPageLayout';
 import { createSearchStyles, type SearchStyles } from './styles';
 import { SearchFilterSheet } from './SearchFilterSheet';
@@ -70,6 +71,7 @@ function SearchInputField({
         accessibilityLabel="搜索关键词"
         style={styles.searchInput}
         value={query}
+        onChange={recordUserInteraction}
         onChangeText={onQueryChange}
         placeholder="输入关键词"
         placeholderTextColor={theme.muted}

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 import { createDiscourseReadingRuntime, discourseReadingQueryKey, type ReadingBatch } from './discourseReadingRuntime';
 import { readingResumeAnchor } from '@/domain/forum/discourseReading';
+import type { LinuxDoReadingRecovery } from '@/domain/session/sessionContracts';
 
 afterEach(() => vi.useRealTimers());
 
@@ -11,10 +12,12 @@ function setup() {
   let identity = 'alice';
   const queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
   const send = vi.fn<(batch: ReadingBatch, scope: string, signal: AbortSignal) => Promise<void>>(async () => undefined);
+  const verify = vi.fn<(recovery: LinuxDoReadingRecovery) => void>();
   const runtime = createDiscourseReadingRuntime({
     queryClient,
     scope: () => identity,
     send,
+    onVerificationRequired: verify,
     now: () => clock
   });
   const advance = async (ms: number) => {
@@ -27,6 +30,7 @@ function setup() {
     runtime,
     queryClient,
     send,
+    verify,
     advance,
     switchAccount: () => {
       identity = 'bob';
@@ -36,6 +40,101 @@ function setup() {
 }
 
 describe('Discourse reading lifecycle', () => {
+  it('honors Retry-After once and cancels the verification wait when backgrounded', async () => {
+    const { runtime, send, verify, advance } = setup();
+    send.mockRejectedValueOnce({ reason: 'cloudflare', retryAfterMs: 12000 });
+    const session = runtime.begin('1');
+    session.visible([1]);
+    session.active(true);
+    await advance(1000);
+    const recovery = verify.mock.calls[0][0];
+    const pending = recovery.resume();
+    expect(await recovery.resume()).toBe('stale');
+    await advance(5000);
+    expect(send).toHaveBeenCalledTimes(1);
+    runtime.setAppActive(false);
+    expect(await pending).toBe('stale');
+    runtime.setAppActive(true);
+    const resumed = recovery.resume();
+    await advance(7000);
+    expect(await resumed).toBe('completed');
+    expect(send).toHaveBeenCalledTimes(2);
+    runtime.dispose();
+  });
+
+  it('pauses immediately for verification and replays only the rejected increment', async () => {
+    const { runtime, send, verify, advance } = setup();
+    send.mockRejectedValueOnce({ reason: 'cloudflare', status: 403 });
+    const session = runtime.begin('1');
+    session.visible([1]);
+    session.active(true);
+    await advance(1000);
+    const original = send.mock.calls[0][0];
+    expect(verify).toHaveBeenCalledTimes(1);
+    session.visible([2]);
+    await advance(10000);
+    runtime.foreground(false);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(runtime.state()['1'].readPosts[2]).toBeUndefined();
+    expect(runtime.state()['1'].server.lastReadPostNumber).toBeUndefined();
+    expect(await verify.mock.calls[0][0].resume()).toBe('completed');
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0]).toEqual(original);
+    expect(runtime.state()['1'].server.lastReadPostNumber).toBe(1);
+    runtime.foreground(true);
+    await advance(1000);
+    expect(runtime.state()['1'].readPosts[2]).toBe(true);
+    runtime.dispose();
+  });
+
+  it('waits for another explicit verification after the replay is challenged again', async () => {
+    const { runtime, send, verify, advance } = setup();
+    send.mockRejectedValue({ reason: 'cloudflare', status: 429 });
+    const session = runtime.begin('1');
+    session.visible([1]);
+    session.active(true);
+    await advance(1000);
+    const recovery = verify.mock.calls[0][0];
+    expect(await recovery.resume()).toBe('verification-required');
+    await advance(10000);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(verify).toHaveBeenCalledTimes(1);
+    runtime.dispose();
+  });
+
+  it.each(['cancel', 'expire', 'identity', 'dispose', 'background'] as const)(
+    'does not replay invalid or inactive reading: %s',
+    async (reason) => {
+      const { runtime, send, verify, advance, switchAccount } = setup();
+      send.mockRejectedValueOnce({ reason: 'cloudflare' });
+      const session = runtime.begin('1');
+      session.visible([1]);
+      session.active(true);
+      await advance(1000);
+      const recovery = verify.mock.calls[0][0];
+      if (reason === 'cancel') recovery.cancel();
+      if (reason === 'expire') await advance(100001);
+      if (reason === 'identity') switchAccount();
+      if (reason === 'dispose') runtime.dispose();
+      if (reason === 'background') runtime.setAppActive(false);
+      expect(await recovery.resume()).toBe('stale');
+      expect(send).toHaveBeenCalledTimes(1);
+      runtime.dispose();
+    }
+  );
+
+  it('never replays an ambiguous failure after verification', async () => {
+    const { runtime, send, verify, advance } = setup();
+    send.mockRejectedValueOnce({ reason: 'cloudflare' }).mockRejectedValueOnce(new Error('timeout'));
+    const session = runtime.begin('1');
+    session.visible([1]);
+    session.active(true);
+    await advance(1000);
+    expect(await verify.mock.calls[0][0].resume()).toBe('failed');
+    await advance(10000);
+    expect(send).toHaveBeenCalledTimes(2);
+    runtime.dispose();
+  });
   it('reuses the read-floor map until a new floor is read and preserves earlier snapshots', async () => {
     const { runtime, queryClient, send, advance } = setup();
     send.mockImplementationOnce(() => new Promise<void>(() => undefined));

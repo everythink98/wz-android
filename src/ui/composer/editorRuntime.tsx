@@ -1773,6 +1773,13 @@ function linuxDoPollCloseIso(date: string, time: string) {
 }
 
 export function ComposerEditorRuntime() {
+  useEffect(() => {
+    const onInput = (event: Event) => {
+      if (event.isTrusted) postMessage('USER_INTERACTION', {});
+    };
+    document.addEventListener('input', onInput, { capture: true, passive: true });
+    return () => document.removeEventListener('input', onInput, true);
+  }, []);
   const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const configRef = useRef<RuntimeConfig | null>(null);
   const maskedMarkdownRef = useRef<{ markdown: string; masked: string } | null>(null);

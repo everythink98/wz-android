@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useEvent } from 'expo';
-import { VideoView, useVideoPlayer, type VideoPlayer } from 'expo-video';
+import { VideoView, createVideoPlayer, type VideoPlayer } from 'expo-video';
+import { useReleasingSharedObjectWithLifecycle } from 'expo-modules-core';
 import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { forumMediaPlayerSourceFromUrl } from '@/platform/media/imageRequestSource';
 import { playerLoadDiagnosticAttempt } from '@/platform/media/mediaPlaybackDiagnostics';
+import {
+  MediaPlaybackSession,
+  type MediaPlaybackHandle,
+  useMediaPlaybackSession
+} from '@/platform/media/mediaPlaybackSession';
 import {
   releaseReadNetworkRuntimeGeneration,
   retainReadNetworkRuntimeGeneration
@@ -20,10 +26,6 @@ import type { ReaderTheme } from '@/ui/theme/tokens';
 const VIDEO_TIME_UPDATE_INTERVAL_SECONDS = 1;
 const DEFAULT_VIDEO_ASPECT_RATIO = 16 / 9;
 const MIN_VIDEO_ASPECT_RATIO = 1 / 2;
-
-function configureVideoPlayer(player: VideoPlayer) {
-  player.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
-}
 
 function videoAspectRatio(size: { height?: number; width?: number } | null | undefined) {
   const width = Number(size?.width);
@@ -56,7 +58,6 @@ type ForumContentVideoProps = {
   boundarySpacing?: StyleProp<ViewStyle>;
   mediaContext: ForumMediaRequestContext;
   nodeSeekMediaUserAgent?: string;
-  poster?: ReactNode;
   referrerPolicy?: MediaReferrerPolicy;
   src: string;
   theme: ReaderTheme;
@@ -83,13 +84,12 @@ function ForumContentVideoRuntime({
   boundarySpacing,
   mediaContext,
   nodeSeekMediaUserAgent,
-  poster,
   referrerPolicy,
   runtimeSnapshot,
   src,
   theme
 }: Required<Pick<ForumContentVideoProps, 'admission' | 'mediaContext' | 'src' | 'theme'>> &
-  Pick<ForumContentVideoProps, 'boundarySpacing' | 'nodeSeekMediaUserAgent' | 'poster' | 'referrerPolicy'> & {
+  Pick<ForumContentVideoProps, 'boundarySpacing' | 'nodeSeekMediaUserAgent' | 'referrerPolicy'> & {
     runtimeSnapshot: ReadNetworkRuntimeSnapshot | null;
   }) {
   const retryRuntimeGeneration =
@@ -102,14 +102,27 @@ function ForumContentVideoRuntime({
     status: 'acquiring' | 'failed' | 'retained';
   } | null>(null);
   const pendingRetryGeneration = useRef(0);
+  const acquiredAttempt = useRef(admission.attemptId);
+  const hasBeenReady = useRef(false);
   const loadDiagnosticRef = useRef<ReturnType<typeof playerLoadDiagnosticAttempt> | null>(null);
+  const playerHandles = useRef(new Map<string, MediaPlaybackHandle>());
+  const leaseKey = `${admission.attemptId}:${playerGeneration}`;
+  const handlePlayer = useCallback(
+    (handle: MediaPlaybackHandle) => {
+      playerHandles.current.set(leaseKey, handle);
+    },
+    [leaseKey]
+  );
 
   useEffect(() => {
     if (retryRuntimeGeneration > playerGeneration) {
       pendingRetryGeneration.current = Math.max(pendingRetryGeneration.current, retryRuntimeGeneration);
     }
     if (pendingRetryGeneration.current <= playerGeneration) return;
-    if (playerStatus === 'idle' || playerStatus === 'loading' || playerStatus === 'error') {
+    if (
+      playerStatus === 'error' ||
+      (!hasBeenReady.current && (playerStatus === 'idle' || playerStatus === 'loading'))
+    ) {
       pendingRetryGeneration.current = 0;
       setPlayerStatus('idle');
       setPlayerGeneration(runtimeSnapshot?.generation ?? playerGeneration);
@@ -120,6 +133,15 @@ function ForumContentVideoRuntime({
     if (!admission.admitted) {
       setRuntimeLease(null);
       return undefined;
+    }
+    if (acquiredAttempt.current !== admission.attemptId) {
+      acquiredAttempt.current = admission.attemptId;
+      hasBeenReady.current = false;
+      const generation = getReadNetworkRuntimeSnapshot().generation;
+      if (generation !== playerGeneration) {
+        setPlayerGeneration(generation);
+        return undefined;
+      }
     }
     let disposed = false;
     let retained = false;
@@ -173,9 +195,17 @@ function ForumContentVideoRuntime({
     return () => {
       disposed = true;
       diagnostic.canceled();
-      if (retained) void releaseReadNetworkRuntimeGeneration(playerGeneration).catch(() => undefined);
+      if (retained) {
+        const release = () => {
+          playerHandles.current.delete(leaseKey);
+          void releaseReadNetworkRuntimeGeneration(playerGeneration).catch(() => undefined);
+        };
+        const handle = playerHandles.current.get(leaseKey);
+        if (handle) handle.afterDispose(release);
+        else release();
+      }
     };
-  }, [admission.admitted, admission.attemptId, admission.settle, playerGeneration, runtimeSnapshot, src]);
+  }, [admission.admitted, admission.attemptId, admission.settle, leaseKey, playerGeneration, src]);
 
   useEffect(() => {
     if (
@@ -193,6 +223,7 @@ function ForumContentVideoRuntime({
       const nextStatus = status || 'idle';
       setPlayerStatus(nextStatus);
       if (nextStatus === 'readyToPlay') {
+        hasBeenReady.current = true;
         loadDiagnosticRef.current?.ready();
         admission.settle('displayed');
       } else if (nextStatus === 'error') {
@@ -209,7 +240,6 @@ function ForumContentVideoRuntime({
         style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
         testID="forum-content-video-frame"
       >
-        <VideoPosterLayer poster={poster} />
         {admission.failure ? (
           <Pressable
             accessibilityLabel="视频加载失败，点按重试"
@@ -235,7 +265,6 @@ function ForumContentVideoRuntime({
         style={[styles.frame, { borderColor: theme.line, backgroundColor: theme.surface2 }, boundarySpacing]}
         testID="forum-content-video-frame"
       >
-        <VideoPosterLayer poster={poster} />
         <View style={styles.videoState}>
           {failed ? (
             <Text style={{ color: theme.muted }}>视频加载失败</Text>
@@ -253,12 +282,12 @@ function ForumContentVideoRuntime({
       boundarySpacing={boundarySpacing}
       mediaContext={mediaContext}
       nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-      poster={poster}
       referrerPolicy={referrerPolicy}
       runtimeGeneration={playerGeneration}
       src={src}
       theme={theme}
       onProgress={admission.progress}
+      onHandle={handlePlayer}
       onStatusChange={handleStatusChange}
     />
   );
@@ -269,14 +298,15 @@ function ForumContentVideoPlayer({
   mediaContext,
   nodeSeekMediaUserAgent,
   onProgress,
+  onHandle,
   onStatusChange,
-  poster,
   referrerPolicy,
   runtimeGeneration,
   src,
   theme
 }: Omit<ForumContentVideoProps, 'admission'> & {
   onProgress: (value: number) => void;
+  onHandle: (handle: MediaPlaybackHandle) => void;
   onStatusChange: (status: string, error?: unknown) => void;
   runtimeGeneration: number;
 }) {
@@ -291,12 +321,72 @@ function ForumContentVideoPlayer({
       }),
     [mediaContext, nodeSeekMediaUserAgent, referrerPolicy, runtimeGeneration, src]
   );
-  const player = useVideoPlayer(source, configureVideoPlayer);
+  const sourceKey = JSON.stringify(source);
+  const releaseHandles = useRef(new WeakMap<VideoPlayer, MediaPlaybackHandle>());
+  const player = useReleasingSharedObjectWithLifecycle(
+    {
+      factory: () => {
+        const player = createVideoPlayer(null);
+        player.timeUpdateEventInterval = VIDEO_TIME_UPDATE_INTERVAL_SECONDS;
+        return player;
+      },
+      release: (player) => {
+        const handle = releaseHandles.current.get(player);
+        if (handle) handle.detach(() => player.release());
+        else player.release();
+      }
+    },
+    [sourceKey]
+  );
+  const statusCallback = useRef(onStatusChange);
+  statusCallback.current = onStatusChange;
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const [laidOutPlayer, setLaidOutPlayer] = useState<VideoPlayer | null>(null);
+  useEffect(() => {
+    if (laidOutPlayer !== player) return;
+    let active = true;
+    void player.replaceAsync(sourceRef.current).catch((error) => {
+      if (active) statusCallback.current('error', error);
+    });
+    return () => {
+      active = false;
+    };
+  }, [laidOutPlayer, player]);
+  const routePlayback = useMediaPlaybackSession();
+  const [playback] = useState(() => routePlayback || new MediaPlaybackSession());
+  const mediaIdentity = JSON.stringify([mediaContext.sessionIdentity, src, source.headers?.Referer || 'none']);
+  useLayoutEffect(() => {
+    const handle = playback.attach(player, mediaIdentity, 'video', {
+      onTimeout: () => statusCallback.current('error', new Error('Video buffering timed out'))
+    });
+    releaseHandles.current.set(player, handle);
+    onHandle(handle);
+    return () => {
+      handle.detach(() => undefined);
+    };
+  }, [mediaIdentity, onHandle, playback, player]);
+  const [ended, setEnded] = useState(false);
+  const [renderedPlayer, setRenderedPlayer] = useState<VideoPlayer | null>(null);
+  const hasReadyFrame = renderedPlayer === player;
+  useEffect(() => {
+    setEnded(false);
+    const endSubscription = player.addListener('playToEnd', () => {
+      if (player.duration > 0) setEnded(true);
+    });
+    const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
+      if (isPlaying) setEnded(false);
+    });
+    return () => {
+      endSubscription.remove();
+      playingSubscription.remove();
+    };
+  }, [player]);
   const lastBufferedPositionRef = useRef(
     Number.isFinite(player.bufferedPosition) ? Math.max(0, player.bufferedPosition) : 0
   );
   const statusEvent = useEvent(player, 'statusChange', { status: player.status });
-  const status = statusEvent.status;
+  const status = statusEvent.status === 'idle' && ended ? 'ended' : statusEvent.status;
   const videoTrack = useEvent(player, 'videoTrackChange', { videoTrack: player.videoTrack }).videoTrack;
   const timeUpdate = useEvent(player, 'timeUpdate', {
     bufferedPosition: player.bufferedPosition,
@@ -316,7 +406,7 @@ function ForumContentVideoPlayer({
   }, [onProgress, timeUpdate.bufferedPosition]);
   useEffect(() => onStatusChange(status || 'idle', statusEvent.error), [onStatusChange, status, statusEvent.error]);
   const loadFailed = status === 'error';
-  const loading = status === 'idle' || status === 'loading';
+  const loading = !loadFailed && (status === 'idle' || status === 'loading' || (!hasReadyFrame && !ended));
   return (
     <View
       style={[
@@ -327,16 +417,20 @@ function ForumContentVideoPlayer({
       testID="forum-content-video-frame"
     >
       <VideoView
+        key={sourceKey}
+        onLayout={({ nativeEvent: { layout } }) => {
+          if (layout.width > 0 && layout.height > 0) setLaidOutPlayer(player);
+        }}
         contentFit="contain"
         fullscreenOptions={{ enable: true }}
         nativeControls
+        onFirstFrameRender={() => setRenderedPlayer(player)}
         player={player}
         style={styles.video}
         surfaceType="textureView"
       />
-      {loading ? <VideoPosterLayer poster={poster} /> : null}
       {loading || loadFailed ? (
-        <View style={styles.videoState}>
+        <View pointerEvents="none" style={styles.videoState}>
           {loadFailed ? (
             <Text style={{ color: theme.muted }}>视频加载失败</Text>
           ) : (
@@ -348,20 +442,6 @@ function ForumContentVideoPlayer({
   );
 }
 
-function VideoPosterLayer({ poster }: { poster?: ReactNode }) {
-  return poster ? (
-    <View
-      accessibilityElementsHidden
-      accessible={false}
-      importantForAccessibility="no-hide-descendants"
-      pointerEvents="none"
-      style={styles.poster}
-    >
-      {poster}
-    </View>
-  ) : null;
-}
-
 const styles = StyleSheet.create({
   frame: {
     alignSelf: 'stretch',
@@ -371,9 +451,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginTop: 8,
     overflow: 'hidden'
-  },
-  poster: {
-    ...StyleSheet.absoluteFill
   },
   video: {
     flex: 1

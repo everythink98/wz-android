@@ -1205,7 +1205,9 @@ private class ReadNetworkEventListener(
     headerWriteTimeout?.exit()
     headerWriteTimeout = null
     super.requestHeadersEnd(call, request)
-    record("request-headers-end")
+    record("request-headers-end", if (request.url.scheme == "https" && request.url.host == "linux.do" &&
+      request.url.port == 443 && request.header("X-Requested-With") == "XMLHttpRequest")
+      mapOf("hasDiscoursePresent" to (request.header("Discourse-Present") == "true")) else emptyMap())
   }
 
   override fun requestFailed(call: Call, ioe: IOException) {
@@ -5430,6 +5432,26 @@ class NetworkProxyRuntimeTest {
     assertFalse(serialized.contains(secretPath))
     assertFalse(serialized.contains("must-not-leak"))
     assertFalse(diagnostics.any { event -> event.fields.keys.any { key -> key.contains("url", true) || key == "ip" } })
+  }
+
+  @Test
+  fun presenceDiagnosticsUseTheActuallySentHeaders() {
+    val client = NetworkProxyRuntime.configureManagedClient(OkHttpClient.Builder()).build()
+    val initial = Request.Builder().url("https://linux.do/topics/timings")
+      .header("X-Requested-With", "XMLHttpRequest")
+      .header("X-WZ-Diagnostic-Session", "session-presence-test")
+      .header("X-WZ-Diagnostic-Trace", "trace-981")
+      .header("X-WZ-Diagnostic-Request", "request-981").build()
+    val call = client.newCall(initial)
+    val listener = client.eventListenerFactory.create(call)
+    listener.requestHeadersEnd(call, initial.newBuilder().header("Discourse-Present", "true").build())
+    listener.requestHeadersEnd(call, initial)
+    listener.requestHeadersEnd(call, initial.newBuilder().url("https://connect.linux.do/").build())
+    val fields = NetworkProxyRuntime.readNetworkDiagnosticEvents()
+      .filter { it.fields["phase"] == "request-headers-end" && it.fields["requestId"] == "request-981" }
+      .map { DiagnosticJournal.safeNetworkFields(it.fields) }
+    assertEquals(listOf(true, false, null), fields.map { it["hasDiscoursePresent"] })
+    assertTrue(fields.all { it["traceId"] == "trace-981" })
   }
 
   @Test

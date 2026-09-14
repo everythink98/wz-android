@@ -1,3 +1,4 @@
+import { recordUserInteraction } from '@/platform/network/userPresence';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pressable, ScrollView, Text, TextInput, type ViewStyle, View } from 'react-native';
@@ -283,6 +284,7 @@ export function DiscourseFilterPickers({
             accessibilityLabel="搜索标签"
             style={styles.input}
             value={tags.query}
+            onChange={recordUserInteraction}
             onChangeText={tags.setQuery}
             placeholder="搜索站点标签"
             placeholderTextColor={theme.muted}
@@ -344,6 +346,7 @@ export function DiscourseFilterPickers({
             accessibilityLabel="搜索分类"
             style={styles.input}
             value={category.query}
+            onChange={recordUserInteraction}
             onChangeText={category.setQuery}
             placeholder="搜索分类"
             placeholderTextColor={theme.muted}
@@ -416,6 +419,7 @@ export function DiscourseFilterPickers({
             accessibilityLabel="搜索作者"
             style={styles.input}
             value={users.query}
+            onChange={recordUserInteraction}
             onChangeText={users.setQuery}
             placeholder="输入用户名"
             placeholderTextColor={theme.muted}

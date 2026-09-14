@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import * as SplashScreen from 'expo-splash-screen';
-import { act, renderHook } from '@testing-library/react-native';
+import { act, fireEvent, renderHook } from '@testing-library/react-native';
 import { useAppStartupRuntime } from '@/app/useAppStartupRuntime';
 import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
 import { Text } from 'react-native';
@@ -56,7 +56,9 @@ describe('App composition bootstrap', () => {
   it('exposes a static accessible status while the startup gate is pending', async () => {
     const settings = createEmptyReaderData().settings;
     const theme = createTheme(settings);
+    const onInteraction = jest.fn();
     jest.mocked(useAppRuntime).mockReturnValue({
+      onUserInteraction: onInteraction,
       accountHost: (<Text>账号 WebView 已阻止</Text>) as ReturnType<typeof useAppRuntime>['accountHost'],
       appStyles: createAppStyles(theme),
       mediaTransportIdentity: 'loading',
@@ -80,6 +82,10 @@ describe('App composition bootstrap', () => {
     expect(icon.props.source).toEqual({ uri: 'reader_app_icon' });
     expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
     expect(SplashScreen.hide).not.toHaveBeenCalled();
+    expect(onInteraction).not.toHaveBeenCalled();
+    await fireEvent(view.getByText('账号 WebView 已阻止'), 'touchStart');
+    await fireEvent(view.getByText('账号 WebView 已阻止'), 'touchMove');
+    expect(onInteraction).toHaveBeenCalledTimes(2);
   });
 
   it.each(['navigation-first', 'layout-first'])(

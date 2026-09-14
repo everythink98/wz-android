@@ -4,10 +4,9 @@ import { imageRequestHeadersForUrl } from '@/platform/media/imageRequestSource';
 import { ForumContentAudio } from '@/ui/content/ForumContentAudio';
 import { ForumContentVideo, type ForumContentMediaAdmission } from '@/ui/content/ForumContentVideo';
 import type { ReaderTheme } from '@/ui/theme/tokens';
-import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import { useTopicBodyMediaLease } from './TopicBodyMediaCoordinator';
 import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
-import { ManagedTopicMediaImage } from './ManagedTopicMediaImage';
 import { useTopicAudioControl } from './TopicAudioSession';
 import { linkDiagnosticRefs } from '@/platform/diagnostics/diagnosticPolicy';
 
@@ -15,7 +14,6 @@ export function ManagedTopicContentVideo({
   boundarySpacing,
   mediaContext,
   nodeSeekMediaUserAgent,
-  poster,
   referrerPolicy,
   src,
   theme
@@ -23,7 +21,6 @@ export function ManagedTopicContentVideo({
   boundarySpacing?: StyleProp<ViewStyle>;
   mediaContext: ForumMediaRequestContext;
   nodeSeekMediaUserAgent?: string;
-  poster?: string;
   referrerPolicy?: MediaReferrerPolicy;
   src: string;
   theme: ReaderTheme;
@@ -41,20 +38,6 @@ export function ManagedTopicContentVideo({
       boundarySpacing={boundarySpacing}
       mediaContext={mediaContext}
       nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-      poster={
-        poster ? (
-          <ManagedTopicMediaImage
-            contentFit="cover"
-            decorative
-            kind="poster"
-            mediaContext={mediaContext}
-            nodeSeekMediaUserAgent={nodeSeekMediaUserAgent}
-            referrerPolicy={referrerPolicy}
-            src={poster}
-            style={StyleSheet.absoluteFill}
-          />
-        ) : undefined
-      }
       referrerPolicy={referrerPolicy}
       src={src}
       theme={theme}

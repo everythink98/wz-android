@@ -689,6 +689,7 @@ describe('topic action query mutations', () => {
   });
 
   it('marks write caches stale without a competing refetch', async () => {
+    mockRunLinuxDoAction.mockResolvedValueOnce({ id: 121, post_number: 21, topic_id: 42 });
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
       lines.push(line);
@@ -708,10 +709,13 @@ describe('topic action query mutations', () => {
     });
 
     expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
-    expect(refreshTopicReplies).toHaveBeenCalledWith({ kind: 'created', silent: true }, expect.any(Object));
+    expect(refreshTopicReplies).toHaveBeenCalledWith(
+      { kind: 'created', discourseTarget: { commentId: 121, floor: 21 }, silent: true },
+      expect.any(Object)
+    );
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: detailKey, exact: true, refetchType: 'none' });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: repliesKey, exact: true, refetchType: 'none' });
-    expect(notify).toHaveBeenCalledWith('回复已提交');
+    expect(notify).toHaveBeenCalledWith('回复已提交，但暂未能显示；请手动刷新，勿重复发送');
     expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent)).toContainEqual(
       expect.objectContaining({
         area: 'reply',
@@ -1916,6 +1920,61 @@ describe('topic action query mutations', () => {
     expect(notify).toHaveBeenCalledWith('请刷新原帖确认最新状态');
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.bookmarked).toBe(false);
   });
+
+  it.each(['server rejection', 'identity changes during form read', 'original success response'])(
+    'settles the Yaohuo reply draft and list for %s',
+    async (scenario) => {
+      mockRunYaohuoAction.mockImplementationOnce(
+        jest.requireActual<typeof import('@/sources/yaohuo/actionClient')>('@/sources/yaohuo/actionClient')
+          .runYaohuoAction
+      );
+      let ticketCurrent = true;
+      const topic = detailFor('yaohuo', { categoryId: '177', polls: [] });
+      const fetcher = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'GET') {
+          if (scenario === 'identity changes during form read') ticketCurrent = false;
+          return new Response(
+            `<form action="/bbs/book_re.aspx" method="post"><input name="id" value="${topic.id}"><input name="__CSRFToken" value="test-token"><textarea name="content"></textarea></form>`
+          );
+        }
+        return new Response(
+          `<div class="tip">${scenario === 'original success response' ? '回复成功！ 获得妖晶:30，获得经验:0 跳转中...返回' : '页面已过期，请刷新后重试'}</div>`
+        );
+      });
+      const refreshTopicReplies = jest.fn(async () => 'refreshed');
+      const notify = jest.fn();
+      const { detailKey } = seedTopicCache(topic);
+      const hook = await renderActions({
+        topicDetail: topic,
+        fetcher,
+        refreshTopicReplies,
+        notify,
+        isWritableSessionTicketCurrent: () => ticketCurrent
+      });
+      await act(async () => {
+        hook.result.current.topicSession.commands.composer.changeContent('生日快乐');
+      });
+      await act(async () => {
+        await hook.result.current.actions.submitReply();
+      });
+      expect(fetcher.mock.calls.map(([, init]) => init?.method)).toEqual(
+        scenario === 'identity changes during form read' ? ['GET'] : ['GET', 'POST']
+      );
+      if (scenario === 'original success response') {
+        expect(hook.result.current.topicSession.state.replyContent).toBe('');
+        expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
+        expect(refreshTopicReplies).toHaveBeenCalledTimes(1);
+        expect(notify).toHaveBeenCalledWith('回复已提交');
+        return;
+      }
+      expect(hook.result.current.topicSession.state.replyContent).toBe('生日快乐');
+      expect(hook.result.current.topicSession.state.replyComposerIntent.kind).not.toBe('closed');
+      expect(refreshTopicReplies).not.toHaveBeenCalled();
+      expect(appQueryClient.getQueryState(detailKey)?.isInvalidated).toBe(false);
+      if (scenario === 'server rejection') expect(notify).toHaveBeenCalledWith('页面已过期，请刷新后重试');
+      expect(notify).not.toHaveBeenCalledWith('回复已提交');
+    }
+  );
 
   it('rechecks a parsed linux.do reply login failure once and preserves the failed draft', async () => {
     mockRunLinuxDoAction.mockImplementationOnce(runLinuxDoActionActual);

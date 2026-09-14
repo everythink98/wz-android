@@ -18,6 +18,10 @@ import okhttp3.Request
 import okhttp3.Response
 
 // Request-local observations only; CookieManager is the sole credential store.
+internal fun cfClearanceValue(header: String?): String? = header?.split(';')
+  ?.map { it.trim() }?.firstOrNull { it.startsWith("cf_clearance=") }
+  ?.substringAfter('=')?.takeIf { it.isNotEmpty() }
+
 internal class CookieResponseScope(val epoch: Long) {
   var downgraded = false
   var url: String? = null
@@ -70,7 +74,8 @@ internal fun cookieResponseItem(request: Request, value: String, index: Int): Ma
   return mapOf(
     "cookieIndex" to index,
     "cookieKind" to when (name) {
-      "_t" -> "login"; "_forum_session" -> "session"; "cf_clearance", "_cfuvid", "__cf_bm" -> "clearance"
+      "_t" -> "login"; "_forum_session" -> "session"; "cf_clearance" -> "clearance"
+      "_cfuvid", "__cf_bm" -> "bot-management"
       "auth.session-token" -> "connect"; else -> "other"
     },
     "cookieAction" to if (cookie == null) "unknown" else if (expired) "delete" else "set",
@@ -99,6 +104,8 @@ internal class ManagedCookieResponses(
   private var writeSequence = 0L
   private var blocked = false
   private var pending: PendingCookieWrite? = null
+  private var surfaceClearance: String? = null
+  private var hasSurfaceClearanceBaseline = false
   private var dirty: Map<String, Any>? = null
   private val local = ThreadLocal<CookieResponseScope?>()
 
@@ -125,9 +132,15 @@ internal class ManagedCookieResponses(
   fun sending(request: Request, call: Call?, transport: String = "okhttp") {
     val scope = local.get() ?: return
     if (request.url.host != "linux.do" && !request.url.host.endsWith(".linux.do")) return
+    val clearance = cfClearanceValue(request.header("Cookie"))
+    val stored = runCatching { cfClearanceValue(reader(request.url.toString())) }
     emit(requestFields(request, call) + mapOf("operation" to "cookie-request", "cookieTransport" to transport,
       "requestCookieEpoch" to scope.epoch, "cookieEpoch" to epoch,
-      "hasLoginCookie" to (loginCookieValue(request.header("Cookie")) != null)))
+      "hasCfClearance" to (clearance != null),
+      "hasLoginCookie" to (loginCookieValue(request.header("Cookie")) != null)) +
+      (if (stored.isSuccess) mapOf("hasStoredCfClearance" to (stored.getOrNull() != null),
+        "isCfClearanceCurrent" to (clearance == stored.getOrNull())) else emptyMap()) +
+      (request.header("User-Agent")?.let { mapOf("userAgentHash" to "%08x".format(it.hashCode())) } ?: emptyMap()))
   }
 
   private fun requestFields(request: Request, call: Call?): Map<String, Any> = buildMap {
@@ -182,11 +195,23 @@ internal class ManagedCookieResponses(
     require(reason in setOf("startup", "source-change", "surface-open", "surface-close", "identity-change", "explicit-clear"))
     if (reason != "startup" || blocked != value) epoch++
     blocked = value
+    val clearance = runCatching { cfClearanceValue(reader("https://linux.do/")) }
+    if (reason == "surface-open") {
+      surfaceClearance = clearance.getOrNull()
+      hasSurfaceClearanceBaseline = clearance.isSuccess
+    }
     val fields = diagnostics.filterKeys { it in setOf("appSessionId", "traceId", "surfaceGeneration") } +
       mapOf("operation" to "cookie-barrier", "cookieEpoch" to epoch, "cookieBarrierReason" to reason) +
       (try { mapOf("hasLoginCookie" to (loginCookieValue(reader("https://linux.do/")) != null)) }
         catch (_: Exception) { emptyMap() }) +
-      (if (reason == "surface-open" || reason == "surface-close") mapOf("cookieTransport" to "webview") else emptyMap())
+      (if (reason == "surface-open" || reason == "surface-close") mapOf("cookieTransport" to "webview") else emptyMap()) +
+      (if (clearance.isSuccess) mapOf("hasCfClearance" to (clearance.getOrNull() != null)) else emptyMap()) +
+      (if (reason == "surface-close" && hasSurfaceClearanceBaseline && clearance.isSuccess)
+        mapOf("didCfClearanceChange" to (surfaceClearance != clearance.getOrNull())) else emptyMap())
+    if (reason == "surface-close" || reason == "identity-change" || reason == "explicit-clear") {
+      surfaceClearance = null
+      hasSurfaceClearanceBaseline = false
+    }
     emit(fields + mapOf("phase" to "intent", "cookieBarrierBlocked" to true))
     if (!settlePending(timeoutMs)) {
       emit(fields + mapOf("cookieResult" to "callback_timeout", "outcome" to "failure"))

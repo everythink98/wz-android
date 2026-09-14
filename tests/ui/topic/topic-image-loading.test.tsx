@@ -56,50 +56,23 @@ let mockVideoBufferedPosition = 0;
 let mockVideoCurrentTime = 0;
 let mockVideoDuration = 0;
 let mockVideoTrack: { size: { height: number; width: number } } | null = null;
-let mockReleaseVideoPlayersOnUnmount = false;
 let mockReleasedVideoPlayerAccesses = 0;
-const mockUseVideoPlayer = jest.fn((source: unknown) => {
-  let released = false;
-  let timeUpdateEventInterval = 0;
-  const player = {
-    bufferedPosition: mockVideoBufferedPosition,
-    currentTime: mockVideoCurrentTime,
-    duration: mockVideoDuration,
-    pause: jest.fn(),
-    play: jest.fn(),
-    playing: mockVideoPlaying,
-    replay: jest.fn(),
-    release: () => {
-      released = true;
-    },
-    status: mockVideoStatus,
-    source,
-    videoTrack: mockVideoTrack
-  };
-  Object.defineProperty(player, 'timeUpdateEventInterval', {
-    get: () => {
-      if (released) {
-        mockReleasedVideoPlayerAccesses += 1;
-        throw new Error('Cannot use shared object that was already released');
-      }
-      return timeUpdateEventInterval;
-    },
-    set: (value: number) => {
-      if (released) {
-        mockReleasedVideoPlayerAccesses += 1;
-        throw new Error('Cannot use shared object that was already released');
-      }
-      timeUpdateEventInterval = value;
-    }
-  });
-  return player;
+// Observe source replacement on the same real mock player for both audio and video.
+const mockReplaceMediaSource = jest.fn(function (
+  this: ReturnType<typeof createMockManualVideoPlayer>,
+  _source: unknown
+) {
+  return this;
 });
+let mockVideoLayout = true;
 function createMockManualVideoPlayer(_source: unknown) {
+  let released = false;
+  let interval = 0;
   let currentTime = mockVideoCurrentTime;
   let duration = mockVideoDuration;
   let playing = mockVideoPlaying;
   let source: unknown = null;
-  let status = mockVideoStatus;
+  let status = 'idle';
   const listeners = new Map<string, Set<(payload?: never) => void>>();
   const emit = (eventName: string, payload?: unknown) => {
     for (const listener of listeners.get(eventName) || []) listener(payload as never);
@@ -137,13 +110,19 @@ function createMockManualVideoPlayer(_source: unknown) {
     get playing() {
       return playing;
     },
-    release: jest.fn(),
+    bufferedPosition: mockVideoBufferedPosition,
+    videoTrack: mockVideoTrack,
+    release: jest.fn(() => {
+      released = true;
+    }),
     replaceAsync: jest.fn(async (nextSource: unknown) => {
+      mockReplaceMediaSource.call(player, nextSource);
       source = nextSource;
       currentTime = mockVideoCurrentTime;
       duration = mockVideoDuration;
       playing = mockVideoPlaying;
       status = mockVideoStatus;
+      emit('statusChange', { status });
     }),
     get source() {
       return source;
@@ -152,11 +131,24 @@ function createMockManualVideoPlayer(_source: unknown) {
     get status() {
       return status;
     },
-    timeUpdateEventInterval: 0
+    get timeUpdateEventInterval() {
+      return interval;
+    },
+    set timeUpdateEventInterval(value: number) {
+      if (released) {
+        mockReleasedVideoPlayerAccesses += 1;
+        throw new Error('Cannot use shared object that was already released');
+      }
+      interval = value;
+    }
   };
   return player;
 }
-const mockCreateVideoPlayer = jest.fn(createMockManualVideoPlayer);
+const mockCreateVideoPlayer = jest.fn((source: unknown) => {
+  const player = createMockManualVideoPlayer(null);
+  if (source !== null) void player.replaceAsync(source);
+  return player;
+});
 const mockRetainReadNetworkGeneration = jest.fn(async (generation: number) => ({ generation, retained: true }));
 const mockReleaseReadNetworkGeneration = jest.fn(async (_generation: number) => true);
 const mockRenderSvgPoster = jest.fn(async (_svgBase64: string, _cacheKey: string) => ({
@@ -255,38 +247,37 @@ jest.mock('@shopify/flash-list/dist/recyclerview/RecyclerViewContextProvider', (
 }));
 
 jest.mock('expo', () => ({
-  useEvent: jest.fn((_player, eventName, initialValue) =>
-    eventName === 'statusChange'
-      ? { status: mockVideoStatus }
-      : eventName === 'playingChange'
-        ? { isPlaying: mockVideoPlaying }
-        : eventName === 'videoTrackChange'
-          ? { videoTrack: mockVideoTrack }
-          : eventName === 'timeUpdate'
-            ? { bufferedPosition: mockVideoBufferedPosition, currentTime: mockVideoCurrentTime }
-            : initialValue
+  useEvent: jest.fn(
+    (player: ReturnType<typeof createMockManualVideoPlayer>, eventName: string, initialValue: unknown) => {
+      const ReactModule = require('react') as typeof React;
+      const [, refresh] = ReactModule.useReducer((value: number) => value + 1, 0);
+      ReactModule.useEffect(() => {
+        const subscription = player.addListener(eventName, () => refresh());
+        return () => {
+          subscription.remove();
+        };
+      }, [player, eventName]);
+      return eventName === 'statusChange'
+        ? { status: player.source === null ? 'idle' : mockVideoStatus }
+        : eventName === 'playingChange'
+          ? { isPlaying: mockVideoPlaying }
+          : eventName === 'videoTrackChange'
+            ? { videoTrack: mockVideoTrack }
+            : eventName === 'timeUpdate'
+              ? { bufferedPosition: mockVideoBufferedPosition, currentTime: mockVideoCurrentTime }
+              : initialValue;
+    }
   )
 }));
 
 jest.mock('expo-video', () => ({
   createVideoPlayer: (source: unknown) => mockCreateVideoPlayer(source),
-  VideoView: (props: unknown) => mockVideoView(props),
-  useVideoPlayer: (source: unknown, setup?: (player: ReturnType<typeof mockUseVideoPlayer>) => void) => {
+  VideoView: (props: { onLayout?: (event: unknown) => void }) => {
     const ReactModule = require('react') as typeof React;
-    const player = ReactModule.useMemo(() => {
-      const player = mockUseVideoPlayer(source);
-      setup?.(player);
-      return player;
-    }, [setup, source]);
-    ReactModule.useEffect(
-      () => () => {
-        if (mockReleaseVideoPlayersOnUnmount) {
-          player.release();
-        }
-      },
-      [player]
-    );
-    return player;
+    ReactModule.useEffect(() => {
+      if (mockVideoLayout) props.onLayout?.({ nativeEvent: { layout: { width: 320, height: 180 } } });
+    }, [props.onLayout]);
+    return mockVideoView(props);
   }
 }));
 
@@ -589,8 +580,8 @@ function FourMediaLeaseBlockers() {
 
 const nodeSeekVideoMediaContext = { contentSource: 'nodeseek' as const, sessionIdentity: 'nodeseek:video-test' };
 
-function CoordinatedVideoHarness({ poster, src }: { poster?: string; src: string }) {
-  return <ManagedTopicContentVideo mediaContext={nodeSeekVideoMediaContext} poster={poster} src={src} theme={theme} />;
+function CoordinatedVideoHarness({ src }: { src: string }) {
+  return <ManagedTopicContentVideo mediaContext={nodeSeekVideoMediaContext} src={src} theme={theme} />;
 }
 
 const linkCardIconUrl = 'https://img.example.com/link-icon.png';
@@ -653,7 +644,8 @@ describe('topic block image loading', () => {
     mockInlineImageGetSize.mockClear();
     mockInlineImageGetSize.mockImplementation(() => undefined);
     mockUseImage.mockClear();
-    mockUseVideoPlayer.mockClear();
+    mockVideoLayout = true;
+    mockReplaceMediaSource.mockClear();
     mockCreateVideoPlayer.mockClear();
     mockVideoStatus = 'idle';
     mockVideoPlaying = false;
@@ -661,7 +653,6 @@ describe('topic block image loading', () => {
     mockVideoCurrentTime = 0;
     mockVideoDuration = 0;
     mockVideoTrack = null;
-    mockReleaseVideoPlayersOnUnmount = false;
     mockReleasedVideoPlayerAccesses = 0;
     mockRetainReadNetworkGeneration.mockClear();
     mockReleaseReadNetworkGeneration.mockClear();
@@ -1039,7 +1030,7 @@ describe('topic block image loading', () => {
     );
 
     expect(mockRetainReadNetworkGeneration).not.toHaveBeenCalled();
-    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    expect(mockReplaceMediaSource).not.toHaveBeenCalled();
   });
 
   it('retains the exact native generation and creates a player only after video admission', async () => {
@@ -1055,15 +1046,17 @@ describe('topic block image loading', () => {
     const screen = await render(tree(true));
 
     expect(mockRetainReadNetworkGeneration).not.toHaveBeenCalled();
-    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    expect(mockReplaceMediaSource).not.toHaveBeenCalled();
 
     await screen.rerender(tree(false));
     const generation = getReadNetworkRuntimeSnapshot().generation;
     await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenCalledWith(generation));
     await waitFor(() =>
-      expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(true)
+      expect(mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(
+        true
+      )
     );
-    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+    expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
       expect.objectContaining({
         headers: expect.objectContaining({ 'X-WZ-Read-Network-Generation': String(generation) }),
         uri: videoUrl
@@ -1091,9 +1084,11 @@ describe('topic block image loading', () => {
       />
     );
     const screen = await render(tree());
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
 
-    expect(mockUseVideoPlayer.mock.results[0]?.value).toEqual(expect.objectContaining({ timeUpdateEventInterval: 1 }));
+    expect(mockReplaceMediaSource.mock.results[0]?.value).toEqual(
+      expect.objectContaining({ timeUpdateEventInterval: 1 })
+    );
     expect(progress).not.toHaveBeenCalled();
 
     mockVideoBufferedPosition = 1;
@@ -1139,9 +1134,9 @@ describe('topic block image loading', () => {
     try {
       const screen = await render(tree());
       await waitFor(() =>
-        expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(
-          true
-        )
+        expect(
+          mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)
+        ).toBe(true)
       );
 
       for (const bufferedPosition of [1, 2, 3, 4]) {
@@ -1192,18 +1187,18 @@ describe('topic block image loading', () => {
 
       await waitFor(() =>
         expect(
-          mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === firstVideoUrl)
+          mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === firstVideoUrl)
         ).toBe(true)
       );
       expect(
-        mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
+        mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
       ).toBe(false);
 
       mockVideoStatus = settledStatus;
       await screen.rerender(tree());
       await waitFor(() =>
         expect(
-          mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
+          mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
         ).toBe(true)
       );
       expect(diagnosticLines.map((line) => JSON.parse(line))).toContainEqual(
@@ -1244,19 +1239,19 @@ describe('topic block image loading', () => {
     const generation = getReadNetworkRuntimeSnapshot().generation;
 
     await waitFor(() =>
-      expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === firstVideoUrl)).toBe(
-        true
-      )
+      expect(
+        mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === firstVideoUrl)
+      ).toBe(true)
     );
-    expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)).toBe(
-      false
-    );
+    expect(
+      mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
+    ).toBe(false);
 
     await screen.rerender(tree(false));
     await waitFor(() => expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledWith(generation));
     await waitFor(() =>
       expect(
-        mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
+        mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === secondVideoUrl)
       ).toBe(true)
     );
   });
@@ -1636,37 +1631,37 @@ describe('topic block image loading', () => {
     );
     const before = getReadNetworkRuntimeSnapshot();
     const loadingVideo = await render(tree());
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
-    const loadingPlayerCount = mockUseVideoPlayer.mock.calls.length;
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    const loadingPlayerCount = mockReplaceMediaSource.mock.calls.length;
 
     await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(loadingPlayerCount + 1));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(loadingPlayerCount + 1));
     await loadingVideo.unmount();
     mockRetainReadNetworkGeneration.mockClear();
     mockReleaseReadNetworkGeneration.mockClear();
 
     mockVideoStatus = 'readyToPlay';
-    const healthyPlayerCountBeforeRender = mockUseVideoPlayer.mock.calls.length;
+    const healthyPlayerCountBeforeRender = mockReplaceMediaSource.mock.calls.length;
     const healthyVideo = await render(tree());
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCountBeforeRender + 1));
-    const healthyPlayerCount = mockUseVideoPlayer.mock.calls.length;
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(healthyPlayerCountBeforeRender + 1));
+    const healthyPlayerCount = mockReplaceMediaSource.mock.calls.length;
     const current = getReadNetworkRuntimeSnapshot();
     await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenLastCalledWith(current.generation));
 
     await act(() => publishReadNetworkRuntimeRotation(current.generation + 1, 'nodeseek'));
 
-    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCount);
+    expect(mockReplaceMediaSource).toHaveBeenCalledTimes(healthyPlayerCount);
     expect(mockReleaseReadNetworkGeneration).not.toHaveBeenCalledWith(current.generation);
 
     await act(() => publishReadNetworkRuntimeRotation(current.generation + 2, 'linuxdo'));
 
-    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCount);
+    expect(mockReplaceMediaSource).toHaveBeenCalledTimes(healthyPlayerCount);
     expect(mockReleaseReadNetworkGeneration).not.toHaveBeenCalledWith(current.generation);
 
     mockVideoStatus = 'error';
     await healthyVideo.rerender(tree());
     await waitFor(() => expect(healthyVideo.getByLabelText('视频加载失败，点按重试')).toBeTruthy());
-    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(healthyPlayerCount);
+    expect(mockReplaceMediaSource).toHaveBeenCalledTimes(healthyPlayerCount);
     await waitFor(() => expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledWith(current.generation));
     await healthyVideo.unmount();
   });
@@ -1697,11 +1692,11 @@ describe('topic block image loading', () => {
         </TopicBodyMediaCoordinatorProvider>
       );
       await waitFor(() =>
-        expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(
-          true
-        )
+        expect(
+          mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)
+        ).toBe(true)
       );
-      const firstPlayerCount = mockUseVideoPlayer.mock.calls.length;
+      const firstPlayerCount = mockReplaceMediaSource.mock.calls.length;
       await act(async () => {
         jest.advanceTimersByTime(29_900);
       });
@@ -1709,7 +1704,7 @@ describe('topic block image loading', () => {
 
       await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
-      await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(firstPlayerCount + 1));
+      await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(firstPlayerCount + 1));
       await act(async () => {
         jest.advanceTimersByTime(200);
       });
@@ -1740,12 +1735,12 @@ describe('topic block image loading', () => {
     );
 
     await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(1));
-    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    expect(mockReplaceMediaSource).not.toHaveBeenCalled();
 
     await act(() => publishReadNetworkRuntimeRotation(leasedGeneration + 1, 'linuxdo'));
     await act(() => resolveRetain?.({ generation: leasedGeneration, retained: true }));
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
-    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
       expect.objectContaining({
         headers: expect.objectContaining({
           'X-WZ-Read-Network-Generation': String(leasedGeneration)
@@ -1773,8 +1768,8 @@ describe('topic block image loading', () => {
 
     await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenNthCalledWith(1, staleGeneration));
     await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenNthCalledWith(2, nativeCurrentGeneration));
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
-    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
       expect.objectContaining({
         headers: expect.objectContaining({
           'X-WZ-Read-Network-Generation': String(nativeCurrentGeneration)
@@ -1813,8 +1808,8 @@ describe('topic block image loading', () => {
 
     await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenNthCalledWith(1, staleGeneration));
     await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenNthCalledWith(2, nativeCurrentGeneration));
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
-    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
       expect.objectContaining({
         headers: expect.objectContaining({
           'X-WZ-Read-Network-Generation': String(nativeCurrentGeneration)
@@ -1851,10 +1846,10 @@ describe('topic block image loading', () => {
 
     await waitFor(() => expect(video.getByLabelText('视频加载失败，点按重试')).toBeTruthy());
     expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(1);
-    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    expect(mockReplaceMediaSource).not.toHaveBeenCalled();
     await fireEvent.press(video.getByLabelText('视频加载失败，点按重试'));
     await waitFor(() => expect(mockRetainReadNetworkGeneration).toHaveBeenCalledTimes(2));
-    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    expect(mockReplaceMediaSource).not.toHaveBeenCalled();
     await video.unmount();
   });
 
@@ -2438,7 +2433,7 @@ describe('topic block image loading', () => {
     );
 
     await waitFor(() =>
-      expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+      expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
         expect.objectContaining({
           headers: expect.objectContaining({
             Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8',
@@ -2509,6 +2504,164 @@ describe('topic block image loading', () => {
     await fireEvent(progress, 'slidingComplete', 129.156);
     expect(onSeek).toHaveBeenCalledTimes(1);
     expect(onSeek).toHaveBeenCalledWith(129.156);
+  });
+
+  it('keeps pause and seek available while an already loaded audio buffers', async () => {
+    mockVideoStatus = 'readyToPlay';
+    mockVideoDuration = 90;
+    const screen = await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['audio-row']}>
+        <TopicBodyMediaRowBoundary rowKey="audio-row">
+          <NodeSeekCustomMediaHarness
+            rendererKey={FORUM_AUDIO_TAG}
+            attributes={{ src: 'https://cdn.example.com/buffer.mp3' }}
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    await waitFor(() => expect(screen.getByLabelText('播放音频')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('播放音频'));
+    const player = mockCreateVideoPlayer.mock.results[0]!.value as ReturnType<typeof createMockManualVideoPlayer>;
+    await act(() => player.emit('statusChange', { status: 'loading' }));
+    await act(() => player.emit('playingChange', { isPlaying: false }));
+    expect(screen.getByTestId('forum-content-audio-progress').props.disabled).toBe(false);
+    await fireEvent(screen.getByTestId('forum-content-audio-progress'), 'slidingComplete', 25);
+    expect(player.currentTime).toBe(25);
+    await fireEvent.press(screen.getByLabelText('暂停音频'));
+    expect(player.pause).toHaveBeenCalled();
+    const plays = player.play.mock.calls.length;
+    await act(() => player.emit('statusChange', { status: 'readyToPlay' }));
+    expect(player.play).toHaveBeenCalledTimes(plays);
+  });
+
+  it('pauses audio when native video controls request playback and pauses video when audio starts', async () => {
+    mockVideoStatus = 'readyToPlay';
+    mockVideoDuration = 90;
+    const mediaContext = { contentSource: 'nodeseek' as const, sessionIdentity: 'nodeseek:mutual' };
+    const screen = await render(
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['mixed']}>
+        <TopicBodyMediaRowBoundary rowKey="mixed">
+          <NodeSeekCustomMediaHarness
+            rendererKey={FORUM_AUDIO_TAG}
+            attributes={{ src: 'https://cdn.example.com/mutual.mp3' }}
+          />
+          <ManagedTopicContentVideo
+            src="https://cdn.example.com/mutual.mp4"
+            mediaContext={mediaContext}
+            theme={theme}
+          />
+        </TopicBodyMediaRowBoundary>
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(2));
+    await fireEvent.press(screen.getByLabelText('播放音频'));
+    const audio = mockCreateVideoPlayer.mock.results[0]!.value as ReturnType<typeof createMockManualVideoPlayer>;
+    const video = mockCreateVideoPlayer.mock.results
+      .map((result) => result.value as ReturnType<typeof createMockManualVideoPlayer>)
+      .find((player) => (player.source as { uri?: string })?.uri?.endsWith('mutual.mp4'))!;
+    audio.pause.mockClear();
+    await act(() => video.emit('playWhenReadyChange', { playWhenReady: true }));
+    expect(audio.pause).toHaveBeenCalled();
+    expect(screen.getByLabelText('播放音频')).toBeTruthy();
+    video.pause.mockClear();
+    await fireEvent.press(screen.getByLabelText('播放音频'));
+    expect(video.pause).toHaveBeenCalled();
+  });
+
+  it('times out post-ready audio buffering but never counts paused time as a stall', async () => {
+    jest.useFakeTimers();
+    try {
+      mockVideoStatus = 'readyToPlay';
+      mockVideoDuration = 90;
+      const screen = await render(
+        <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['audio']}>
+          <TopicBodyMediaRowBoundary rowKey="audio">
+            <NodeSeekCustomMediaHarness
+              rendererKey={FORUM_AUDIO_TAG}
+              attributes={{ src: 'https://cdn.example.com/stall.mp3' }}
+            />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      await waitFor(() => expect(screen.getByLabelText('播放音频')).toBeTruthy());
+      const player = mockCreateVideoPlayer.mock.results[0]!.value as ReturnType<typeof createMockManualVideoPlayer>;
+      await fireEvent.press(screen.getByLabelText('播放音频'));
+      await act(() => player.emit('statusChange', { status: 'loading' }));
+      await fireEvent.press(screen.getByLabelText('暂停音频'));
+      await act(() => jest.advanceTimersByTime(60_000));
+      expect(screen.queryByLabelText('音频加载失败，点按重试')).toBeNull();
+      await fireEvent.press(screen.getByLabelText('播放音频'));
+      player.currentTime = 17;
+      await act(() => jest.advanceTimersByTime(30_001));
+      expect(screen.getByLabelText('音频加载失败，点按重试')).toBeTruthy();
+      const plays = player.play.mock.calls.length;
+      await act(() => player.emit('statusChange', { status: 'readyToPlay' }));
+      expect(screen.getByLabelText('音频加载失败，点按重试')).toBeTruthy();
+      expect(player.play).toHaveBeenCalledTimes(plays);
+      await fireEvent.press(screen.getByLabelText('音频加载失败，点按重试'));
+      await waitFor(() => expect(player.replaceAsync).toHaveBeenCalledTimes(2));
+      expect(player.currentTime).toBe(17);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('retains a fullscreen player and generation until the recycled view exits fullscreen', async () => {
+    mockVideoStatus = 'readyToPlay';
+    const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:fullscreen' };
+    const tree = (mounted: boolean) => (
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video']}>
+        {mounted ? (
+          <TopicBodyMediaRowBoundary rowKey="video">
+            <ManagedTopicContentVideo
+              src="https://cdn.example.com/full.mp4"
+              mediaContext={mediaContext}
+              theme={theme}
+            />
+          </TopicBodyMediaRowBoundary>
+        ) : null}
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const screen = await render(tree(true));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    const video = mockReplaceMediaSource.mock.results[0]!.value as ReturnType<typeof mockReplaceMediaSource>;
+    await act(() => video.emit('fullscreenChange', { fullscreen: true }));
+    await screen.rerender(tree(false));
+    expect(video.release).not.toHaveBeenCalled();
+    expect(mockReleaseReadNetworkGeneration).not.toHaveBeenCalled();
+    await act(() => video.emit('fullscreenChange', { fullscreen: false }));
+    expect(video.release).toHaveBeenCalledTimes(1);
+    expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledTimes(1);
+  });
+
+  it('remembers the recycled video position and does not resume it automatically', async () => {
+    mockVideoStatus = 'readyToPlay';
+    const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:position' };
+    const tree = (mounted: boolean) => (
+      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video']}>
+        {mounted ? (
+          <TopicBodyMediaRowBoundary rowKey="video">
+            <ManagedTopicContentVideo
+              src="https://cdn.example.com/position.mp4"
+              mediaContext={mediaContext}
+              theme={theme}
+            />
+          </TopicBodyMediaRowBoundary>
+        ) : null}
+      </TopicBodyMediaCoordinatorProvider>
+    );
+    const screen = await render(tree(true));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
+    const video = mockReplaceMediaSource.mock.results[0]!.value as ReturnType<typeof mockReplaceMediaSource>;
+    video.currentTime = 23;
+    await screen.rerender(tree(false));
+    expect(video.pause).toHaveBeenCalled();
+    expect(video.release).toHaveBeenCalledTimes(1);
+    await screen.rerender(tree(true));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(2));
+    const restored = mockReplaceMediaSource.mock.results[1]!.value as ReturnType<typeof mockReplaceMediaSource>;
+    expect(restored.currentTime).toBe(23);
+    expect(restored.play).not.toHaveBeenCalled();
   });
 
   it('routes canonical audio through the shared native Topic media renderer', async () => {
@@ -2682,7 +2835,7 @@ describe('topic block image loading', () => {
     expect(mockCreateVideoPlayer).toHaveBeenCalledTimes(1);
   });
 
-  it('rotates an active Topic audio source while preserving its paused position', async () => {
+  it('keeps a healthy Topic audio on its retained generation', async () => {
     const audioUrl = 'https://cdn.example.com/rotated-topic-audio.mp3';
     mockVideoStatus = 'readyToPlay';
     mockVideoDuration = 90;
@@ -2708,16 +2861,10 @@ describe('topic block image loading', () => {
 
     await act(() => publishReadNetworkRuntimeRotation(before.generation + 1, 'nodeseek'));
 
-    await waitFor(() => expect(player.replaceAsync).toHaveBeenCalledTimes(2));
-    expect(player.replaceAsync.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({
-        headers: expect.objectContaining({ 'X-WZ-Read-Network-Generation': String(before.generation + 1) }),
-        uri: audioUrl
-      })
-    );
+    expect(player.replaceAsync).toHaveBeenCalledTimes(1);
     expect(player.currentTime).toBe(17);
     expect(player.play).not.toHaveBeenCalled();
-    await waitFor(() => expect(mockReleaseReadNetworkGeneration).toHaveBeenCalledWith(retainedGeneration));
+    expect(mockReleaseReadNetworkGeneration).not.toHaveBeenCalledWith(retainedGeneration);
   });
 
   it('retries failed native Topic audio only after the user asks', async () => {
@@ -2759,7 +2906,7 @@ describe('topic block image loading', () => {
     const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:portrait' };
     const tree = () => <ForumContentVideo mediaContext={mediaContext} src={videoUrl} theme={theme} />;
     const screen = await render(tree());
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
     const initialFrameStyle = StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style);
     expect(initialFrameStyle).toMatchObject({ alignSelf: 'stretch', aspectRatio: 16 / 9 });
     expect(initialFrameStyle).not.toHaveProperty('width');
@@ -2769,106 +2916,96 @@ describe('topic block image loading', () => {
     expect(StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style)).toMatchObject({
       aspectRatio: 9 / 16
     });
-    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
+    expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1);
 
     mockVideoTrack = { size: { height: 1000, width: 360 } };
     await screen.rerender(tree());
     expect(StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style)).toMatchObject({
       aspectRatio: 1 / 2
     });
-    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
+    expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1);
 
     mockVideoTrack = { size: { height: 0, width: 576 } };
     await screen.rerender(tree());
     expect(StyleSheet.flatten(screen.getByTestId('forum-content-video-frame').props.style)).toMatchObject({
       aspectRatio: 16 / 9
     });
-    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
+    expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1);
   });
 
-  it('uses native video controls after the loading poster clears', async () => {
+  it('loads only after a nonzero video layout and keeps the source through equivalent renders and fullscreen events', async () => {
+    mockVideoLayout = false;
+    const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:layout' };
+    const tree = () => (
+      <ForumContentVideo mediaContext={{ ...mediaContext }} src="https://cdn.example.com/layout.mp4" theme={theme} />
+    );
+    const screen = await render(tree());
+    await waitFor(() => expect(mockCreateVideoPlayer).toHaveBeenCalledTimes(1));
+    const player = mockCreateVideoPlayer.mock.results[0]!.value as ReturnType<typeof createMockManualVideoPlayer>;
+    expect(player.replaceAsync).not.toHaveBeenCalled();
+    const layout = (width: number, height: number) =>
+      act(() => {
+        const props = mockVideoView.mock.calls.at(-1)![0] as { onLayout: (event: unknown) => void };
+        props.onLayout({ nativeEvent: { layout: { width, height } } });
+      });
+    await act(() => player.emit('playToEnd'));
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    await layout(0, 180);
+    expect(player.replaceAsync).not.toHaveBeenCalled();
+    await layout(320, 180);
+    await waitFor(() => expect(player.replaceAsync).toHaveBeenCalledTimes(1));
+    await screen.rerender(tree());
+    await layout(1080, 1920);
+    await act(() => player.emit('fullscreenChange', { fullscreen: true }));
+    await act(() => player.emit('fullscreenChange', { fullscreen: false }));
+    await layout(320, 180);
+    expect(mockCreateVideoPlayer).toHaveBeenCalledTimes(1);
+    expect(player.replaceAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows loading until the first video frame and preserves the player through seek and replay', async () => {
+    mockVideoDuration = 12;
     const videoUrl = 'https://cdn.example.com/poster-first.mp4';
     const mediaContext = { contentSource: 'yaohuo' as const, sessionIdentity: 'yaohuo:poster-first' };
     mockVideoStatus = 'loading';
-    const tree = () => (
-      <ForumContentVideo
-        mediaContext={mediaContext}
-        poster={<Text testID="forum-content-video-poster">poster</Text>}
-        src={videoUrl}
-        theme={theme}
-      />
-    );
+    const tree = () => <ForumContentVideo mediaContext={mediaContext} src={videoUrl} theme={theme} />;
     const screen = await render(tree());
-    await waitFor(() => expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1));
 
-    expect(screen.getByTestId('forum-content-video-poster', { includeHiddenElements: true })).toBeTruthy();
     expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
     expect(screen.queryByLabelText('播放视频')).toBeNull();
 
     mockVideoStatus = 'readyToPlay';
     await screen.rerender(tree());
-    expect(screen.queryByTestId('forum-content-video-poster', { includeHiddenElements: true })).toBeNull();
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    const videoProps = mockVideoView.mock.calls.at(-1)?.[0] as { onFirstFrameRender?: () => void };
+    await act(() => videoProps.onFirstFrameRender?.());
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
     expect(mockVideoView.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({ fullscreenOptions: { enable: true }, nativeControls: true })
     );
     expect(screen.queryByLabelText('播放视频')).toBeNull();
     expect(screen.queryByLabelText('全屏播放')).toBeNull();
-    expect(mockUseVideoPlayer).toHaveBeenCalledTimes(1);
-  });
+    expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1);
 
-  it('gives poster images their own referrer-aware request identity', async () => {
-    const posterUrl = 'https://cdn.example.com/shared-poster.webp';
-    const mediaContext = {
-      contentSource: 'v2ex' as const,
-      sessionIdentity: 'public:poster-policy',
-      referrer: { documentUrl: 'https://www.v2ex.com/t/1233346' }
-    };
+    const player = mockReplaceMediaSource.mock.results[0]!.value as ReturnType<typeof createMockManualVideoPlayer>;
+    await act(() => player.emit('playToEnd'));
+    mockVideoStatus = 'idle';
+    await screen.rerender(tree());
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1);
+
+    await act(() => player.emit('playingChange', { isPlaying: true }));
+    mockVideoStatus = 'loading';
+    await screen.rerender(tree());
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
     mockVideoStatus = 'readyToPlay';
-
-    await render(
-      <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video-one', 'video-two']}>
-        <TopicBodyMediaRowBoundary rowKey="video-one">
-          <ManagedTopicContentVideo
-            mediaContext={mediaContext}
-            poster={posterUrl}
-            referrerPolicy="no-referrer"
-            src="https://cdn.example.com/video-one.mp4"
-            theme={theme}
-          />
-        </TopicBodyMediaRowBoundary>
-        <TopicBodyMediaRowBoundary rowKey="video-two">
-          <ManagedTopicContentVideo
-            mediaContext={mediaContext}
-            poster={posterUrl}
-            referrerPolicy="origin"
-            src="https://cdn.example.com/video-two.mp4"
-            theme={theme}
-          />
-        </TopicBodyMediaRowBoundary>
-      </TopicBodyMediaCoordinatorProvider>
-    );
-
-    await waitFor(() =>
-      expect(
-        new Set(
-          mockExpoImageProps.mock.calls
-            .map(([props]) => props as MockExpoImageProps)
-            .filter((props) => props.source?.uri === posterUrl)
-            .map((props) => props.source?.headers?.Referer || 'none')
-        )
-      ).toEqual(new Set(['none', 'https://www.v2ex.com/']))
-    );
-    const posters = mockExpoImageProps.mock.calls
-      .map(([props]) => props as MockExpoImageProps & { accessible?: boolean })
-      .filter((props) => props.source?.uri === posterUrl);
-    const noReferrerPoster = posters.findLast((props) => !props.source?.headers?.Referer)!;
-    const originPoster = posters.findLast((props) => props.source?.headers?.Referer === 'https://www.v2ex.com/')!;
-    expect(noReferrerPoster.source?.cacheKey).not.toBe(originPoster.source?.cacheKey);
-    expect(noReferrerPoster.recyclingKey).not.toBe(originPoster.recyclingKey);
-    expect(posters.every((props) => props.accessible === false)).toBe(true);
+    await screen.rerender(tree());
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+    expect(mockReplaceMediaSource).toHaveBeenCalledTimes(1);
   });
 
-  it('passes an HTML video poster through the image contract without coupling failures', async () => {
+  it('loads video directly without requesting or displaying its HTML poster', async () => {
     const posterUrl = 'https://cdn.example.com/html-video-poster.webp';
     const videoUrl = 'https://cdn.example.com/html-video.mp4';
     mockVideoStatus = 'readyToPlay';
@@ -2880,21 +3017,18 @@ describe('topic block image loading', () => {
         rendererKey={FORUM_VIDEO_TAG}
       />
     );
-    await waitFor(() => expect(latestImageProps(posterUrl)).toBeTruthy());
-    const posterProps = latestImageProps(posterUrl);
-    expect(posterProps.contentFit).toBe('cover');
-    expect(posterProps.source?.headers).not.toHaveProperty('Referer');
-    expect(posterProps.accessible).toBe(false);
+    await waitFor(() => expect(mockReplaceMediaSource).toHaveBeenCalled());
     expect(
-      mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
+      mockExpoImageProps.mock.calls.some(([props]) => (props as MockExpoImageProps).source?.uri === posterUrl)
+    ).toBe(false);
+    expect(
+      mockReplaceMediaSource.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
     ).toHaveLength(1);
-
-    await act(() => posterProps.onError?.({ error: 'poster failed' }));
 
     expect(mockVideoView.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ nativeControls: true }));
     expect(screen.queryByLabelText('播放视频')).toBeNull();
     expect(
-      mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
+      mockReplaceMediaSource.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
     ).toHaveLength(1);
   });
 
@@ -2924,7 +3058,7 @@ describe('topic block image loading', () => {
     );
     await waitFor(() =>
       expect(
-        mockUseVideoPlayer.mock.calls.find(([source]) => (source as { uri?: string }).uri === videoUrl)?.[0]
+        mockReplaceMediaSource.mock.calls.find(([source]) => (source as { uri?: string }).uri === videoUrl)?.[0]
       ).toEqual(
         expect.objectContaining({
           headers: expect.not.objectContaining({ Referer: expect.any(String) }),
@@ -2992,10 +3126,10 @@ describe('topic block image loading', () => {
 
     await waitFor(() =>
       expect(
-        mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
+        mockReplaceMediaSource.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl)
       ).toHaveLength(2)
     );
-    const sources = mockUseVideoPlayer.mock.calls
+    const sources = mockReplaceMediaSource.mock.calls
       .map(([source]) => source as { headers?: Record<string, string>; uri?: string })
       .filter((source) => source.uri === videoUrl);
     expect(sources.map((source) => source.headers?.Referer)).toEqual(
@@ -3005,34 +3139,37 @@ describe('topic block image loading', () => {
 
   it('does not recreate an Expo player until the user retries a failed native video', async () => {
     const videoUrl = 'https://cdn.example.com/no-auto-retry.mp4';
-    const posterUrl = 'https://cdn.example.com/no-auto-retry-poster.webp';
     const tree = () => (
       <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['video-row']}>
         <TopicBodyMediaRowBoundary rowKey="video-row">
-          <CoordinatedVideoHarness poster={posterUrl} src={videoUrl} />
+          <CoordinatedVideoHarness src={videoUrl} />
         </TopicBodyMediaRowBoundary>
       </TopicBodyMediaCoordinatorProvider>
     );
     const screen = await render(tree());
     const playerCalls = () =>
-      mockUseVideoPlayer.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl);
+      mockReplaceMediaSource.mock.calls.filter(([source]) => (source as { uri?: string }).uri === videoUrl);
     await waitFor(() => expect(playerCalls()).toHaveLength(1));
 
     mockVideoStatus = 'error';
     await screen.rerender(tree());
     await waitFor(() => expect(screen.getByLabelText('视频加载失败，点按重试')).toBeTruthy());
-    expect(screen.getByTestId('expo-image', { includeHiddenElements: true })).toBeTruthy();
-    expect(latestImageProps(posterUrl).contentFit).toBe('cover');
     expect(playerCalls()).toHaveLength(1);
 
+    const recoveryGeneration = getReadNetworkRuntimeSnapshot().generation + 1;
+    await act(() => publishReadNetworkRuntimeRotation(recoveryGeneration, 'nodeseek'));
     mockVideoStatus = 'idle';
     await fireEvent.press(screen.getByLabelText('视频加载失败，点按重试'));
     await waitFor(() => expect(playerCalls()).toHaveLength(2));
+    expect(playerCalls()[1][0]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-WZ-Read-Network-Generation': String(recoveryGeneration) })
+      })
+    );
   });
 
   it('lets Expo release an unmounted native player without later shared-object access', async () => {
     const videoUrl = 'https://cdn.example.com/unmount.mp4';
-    mockReleaseVideoPlayersOnUnmount = true;
     const screen = await render(
       <ForumContentVideo
         mediaContext={{ contentSource: 'yaohuo', sessionIdentity: 'yaohuo:unmount' }}
@@ -3041,7 +3178,9 @@ describe('topic block image loading', () => {
       />
     );
     await waitFor(() =>
-      expect(mockUseVideoPlayer.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(true)
+      expect(mockReplaceMediaSource.mock.calls.some(([source]) => (source as { uri?: string }).uri === videoUrl)).toBe(
+        true
+      )
     );
 
     await screen.unmount();
@@ -3053,7 +3192,7 @@ describe('topic block image loading', () => {
     const fallbackUrl = 'https://www.nodeseek.com/static/image/sticker/emoji/13.png';
     const screen = await render(<NodeSeekVideoStickerHarness />);
 
-    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    expect(mockReplaceMediaSource).not.toHaveBeenCalled();
     expect(latestImageProps(fallbackUrl).source?.uri).toBe(fallbackUrl);
     expect(mockWebView).toHaveBeenCalledTimes(1);
     const firstWebViewProps = mockWebView.mock.calls[0][0] as {
@@ -3083,7 +3222,7 @@ describe('topic block image loading', () => {
     );
 
     await screen.rerender(<NodeSeekVideoStickerHarness />);
-    expect(mockUseVideoPlayer).not.toHaveBeenCalled();
+    expect(mockReplaceMediaSource).not.toHaveBeenCalled();
     expect((mockWebView.mock.calls.at(-1)?.[0] as { source?: unknown }).source).toBe(firstWebViewProps.source);
   });
 
@@ -3167,13 +3306,13 @@ describe('topic block image loading', () => {
     ) => React.ReactElement<typeof ForumContentVideo>;
 
     const video = await render(React.createElement(firstRenderer, videoProps));
-    expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+    expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
       expect.objectContaining({
         headers: expect.objectContaining({ 'X-WZ-Forum-Media-Source': 'yaohuo' }),
         uri: videoUrl
       })
     );
-    expect(mockUseVideoPlayer.mock.calls.at(-1)?.[0]).not.toEqual(
+    expect(mockReplaceMediaSource.mock.calls.at(-1)?.[0]).not.toEqual(
       expect.objectContaining({
         headers: expect.objectContaining({ Cookie: expect.any(String) })
       })
@@ -3186,7 +3325,7 @@ describe('topic block image loading', () => {
     expect(secondRenderer).not.toBe(firstRenderer);
     await video.rerender(React.createElement(secondRenderer, videoProps));
     await waitFor(() =>
-      expect(mockUseVideoPlayer).toHaveBeenLastCalledWith(
+      expect(mockReplaceMediaSource).toHaveBeenLastCalledWith(
         expect.objectContaining({
           headers: expect.objectContaining({ 'X-WZ-Forum-Media-Source': 'yaohuo' }),
           uri: videoUrl

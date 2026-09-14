@@ -1,8 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
-import { Keyboard, Platform, Text } from 'react-native';
+import { AppState, Keyboard, Platform, Text } from 'react-native';
+import { userPresent, recordUserInteraction } from '@/platform/network/userPresence';
+import { AppButton } from '@/ui/controls/ButtonControls';
 import { ModalSheetFrame } from '@/ui/controls/ModalSheetFrame';
-import { act, render } from '../render';
+import { act, fireEvent, render } from '../render';
 
 jest.mock('react-native', () => {
   const ReactModule = require('react') as typeof React;
@@ -24,6 +26,34 @@ jest.mock('react-native', () => {
 });
 
 describe('ModalSheetFrame', () => {
+  it('renews activity from modal touch and accessible button activation without consuming gestures', async () => {
+    const previous = AppState.currentState;
+    AppState.currentState = 'active';
+    let now = 100_000;
+    const clock = jest.spyOn(performance, 'now').mockImplementation(() => now);
+    recordUserInteraction();
+    const press = jest.fn();
+    try {
+      const view = await render(
+        <ModalSheetFrame backdropLabel="关闭" visible onRequestClose={jest.fn()}>
+          <Text>触摸目标</Text>
+          <AppButton label="测试按钮" onPress={press} />
+        </ModalSheetFrame>
+      );
+      now += 60_000;
+      expect(userPresent()).toBe(false);
+      await fireEvent(view.getByText('触摸目标'), 'touchMove', { nativeEvent: {} });
+      expect(userPresent()).toBe(true);
+      now += 60_000;
+      await fireEvent.press(view.getByRole('button', { name: '测试按钮' }));
+      expect(press).toHaveBeenCalledTimes(1);
+      expect(userPresent()).toBe(true);
+      expect(view.getByTestId('keyboard-avoiding-view').props.onStartShouldSetResponder).toBeUndefined();
+    } finally {
+      clock.mockRestore();
+      AppState.currentState = previous;
+    }
+  });
   it('releases Android keyboard avoidance after every keyboard dismissal', async () => {
     const originalPlatform = Platform.OS;
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
