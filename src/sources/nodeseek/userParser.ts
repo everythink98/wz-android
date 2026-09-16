@@ -1,4 +1,12 @@
-import type { Topic, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
+import type {
+  Topic,
+  UserIdentity,
+  UserDetails,
+  UserTopicsPage,
+  UserRepliesPage,
+  UserReference,
+  UserReplyActivity
+} from '@/domain/forum/models';
 import {
   absoluteUrl,
   elementText,
@@ -30,7 +38,7 @@ function nodeSeekLevelLabel(user: Record<string, unknown>) {
   return Number.isInteger(level) && level >= 0 ? `Lv${level}` : undefined;
 }
 
-function nodeSeekCurrentUserFromRecord(user: Record<string, unknown>): UserProfile | null {
+function nodeSeekCurrentUserFromRecord(user: Record<string, unknown>): UserIdentity | null {
   const id = String(user.member_id || user.uid || user.id || user.userId || user.user_id || '').trim();
   const username = String(user.member_name || user.username || user.name || user.displayName || '').trim();
   if (!id || !username) {
@@ -42,12 +50,11 @@ function nodeSeekCurrentUserFromRecord(user: Record<string, unknown>): UserProfi
     username,
     displayName: username,
     avatar: absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(id)}.png`, BASE_URL),
-    url: nodeSeekSpaceUrl(id),
-    topics: []
+    url: nodeSeekSpaceUrl(id)
   };
 }
 
-export function nodeSeekCurrentUserFromConfig(value: unknown): UserProfile | null {
+export function nodeSeekCurrentUserFromConfig(value: unknown): UserIdentity | null {
   if (!isRecord(value) || !isRecord(value.user)) {
     return null;
   }
@@ -136,8 +143,7 @@ export function parseNodeSeekCurrentUserRoot(
     username,
     displayName: username,
     avatar: absoluteUrl(img?.getAttribute('src'), BASE_URL),
-    url: nodeSeekSpaceUrl(id),
-    topics: []
+    url: nodeSeekSpaceUrl(id)
   };
 }
 
@@ -227,29 +233,36 @@ export function parseNodeSeekUserIdentity(requestedId: string, data: unknown) {
   return data.detail;
 }
 
-export function parseNodeSeekUserProfile({
-  comments,
-  cursor,
-  cursorPage,
-  cursorType,
-  discussions,
-  partialErrorCount,
-  requestedId,
-  user
-}: {
-  comments: unknown[];
-  cursor?: string | null;
-  cursorPage: number;
-  cursorType?: 'topics' | 'replies';
-  discussions: unknown[];
-  partialErrorCount: number;
-  requestedId: string;
-  user: Record<string, unknown>;
-}): UserProfile {
+export function parseNodeSeekUserDetails(requestedId: string, user: Record<string, unknown>): UserDetails {
   const username = String(user.member_name || user.username || user.name || requestedId).trim() || requestedId;
-  const avatar = absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(requestedId)}.png`, BASE_URL);
-  const wantsTopics = cursorType !== 'replies';
-  const wantsReplies = cursorType !== 'topics';
+  const levelLabel = nodeSeekLevelLabel(user);
+  const topicCount = optionalNonNegativeInteger(user.nPost);
+  const hasIdentity = Boolean(user.member_name || user.username || user.name || user.member_id || user.id);
+  return annotateSourceDiagnosticSummary(
+    {
+      source: 'nodeseek',
+      id: requestedId,
+      username,
+      displayName: username,
+      avatar: absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(requestedId)}.png`, BASE_URL),
+      url: nodeSeekSpaceUrl(requestedId),
+      bio: String(user.bio || user.readme || '').trim() || undefined,
+      joinedAt: toIsoString(user.created_at || user.createdAt || user.createdDate) || undefined,
+      topicCount,
+      postCount: topicCount,
+      replyCount: optionalNonNegativeInteger(user.nComment),
+      ...(levelLabel ? { levelLabel } : {})
+    },
+    { parserVariant: 'api-user', candidateCount: 1, validCount: hasIdentity ? 1 : 0, isParseEmpty: !hasIdentity }
+  );
+}
+
+export function parseNodeSeekUserTopics(
+  profile: UserDetails,
+  discussions: unknown[],
+  cursorPage: number
+): UserTopicsPage {
+  const { id: requestedId, username, avatar, topicCount } = profile;
   const topics = discussions.filter(isRecord).map((discussion) => {
     const topicId = String(discussion.post_id || discussion.postId || discussion.id || '').trim();
     const title = String(discussion.title || discussion.titleText || '').trim();
@@ -292,62 +305,52 @@ export function parseNodeSeekUserProfile({
       ...(excerpt ? { excerpt } : {}),
       ...(accessRequirement ? { accessRequirement } : {})
     };
-  }) as (Topic | null)[];
-  const visibleTopics = sortNodeSeekUserTopics(topics.filter(Boolean) as Topic[]);
-  const replyCandidateCount = comments.length;
-  const missingFloorCount = comments.filter(
-    (comment) => isRecord(comment) && !parsePositiveInteger(comment.floor_id || comment.floor || comment.rank)
-  ).length;
-  const replies = comments
-    .filter(isRecord)
-    .map((comment) => normalizeNodeSeekUserReply(comment, username, requestedId, avatar))
-    .filter(Boolean) as UserReplyActivity[];
-  const levelLabel = nodeSeekLevelLabel(user);
-  const topicCount = optionalNonNegativeInteger(user.nPost);
-  const replyCount = optionalNonNegativeInteger(user.nComment);
+  });
+  const visibleTopics = sortNodeSeekUserTopics(topics.filter((topic) => topic !== null));
+
   const hasMoreTopics =
-    wantsTopics &&
     visibleTopics.length > 0 &&
     (topicCount === undefined
       ? discussions.length >= USER_ACTIVITY_PAGE_SIZE
       : cursorPage * USER_ACTIVITY_PAGE_SIZE < topicCount);
+  return annotateSourceDiagnosticSummary(
+    { topics: visibleTopics, hasMoreTopics, nextTopicsCursor: hasMoreTopics ? String(cursorPage + 1) : null },
+    {
+      parserVariant: 'api-user',
+      candidateCount: discussions.length,
+      validCount: visibleTopics.length,
+      droppedCount: Math.max(0, discussions.length - visibleTopics.length),
+      isExpectedEmpty: discussions.length === 0
+    }
+  );
+}
+
+export function parseNodeSeekUserReplies(
+  profile: UserDetails,
+  comments: unknown[],
+  cursorPage: number
+): UserRepliesPage {
+  const { id, username, avatar, replyCount } = profile;
+  const replies = comments
+    .filter(isRecord)
+    .map((comment) => normalizeNodeSeekUserReply(comment, username, id, avatar))
+    .filter((reply): reply is UserReplyActivity => reply !== null);
   const hasMoreReplies =
-    wantsReplies &&
     replies.length > 0 &&
     (replyCount === undefined
       ? comments.length >= USER_ACTIVITY_PAGE_SIZE
       : cursorPage * USER_ACTIVITY_PAGE_SIZE < replyCount);
-  const result: UserProfile = {
-    source: 'nodeseek',
-    id: requestedId,
-    username,
-    displayName: username,
-    avatar,
-    url: nodeSeekSpaceUrl(requestedId),
-    bio: String(user.bio || user.readme || '').trim() || undefined,
-    joinedAt: toIsoString(user.created_at || user.createdAt || user.createdDate) || undefined,
-    topicCount: topicCount ?? (visibleTopics.length || undefined),
-    postCount: topicCount ?? (visibleTopics.length || undefined),
-    replyCount,
-    ...(levelLabel ? { levelLabel } : {}),
-    topics: visibleTopics,
-    hasMoreTopics,
-    nextTopicsCursor: hasMoreTopics ? String(cursorPage + 1) : null,
-    replies,
-    hasMoreReplies,
-    nextRepliesCursor: hasMoreReplies ? String(cursorPage + 1) : null
-  };
-  const candidateCount = 1 + discussions.length + replyCandidateCount;
-  const hasUserIdentity = Boolean(user.member_name || user.username || user.name || user.member_id || user.id);
-  const validCount = (hasUserIdentity ? 1 : 0) + visibleTopics.length + replies.length;
-  return annotateSourceDiagnosticSummary(result, {
-    parserVariant: 'api-user',
-    candidateCount,
-    validCount,
-    droppedCount: Math.max(0, candidateCount - validCount),
-    partialErrorCount,
-    missingFloorCount,
-    hasRepeatedCursor: result.nextTopicsCursor === cursor || result.nextRepliesCursor === cursor,
-    isParseEmpty: !hasUserIdentity && visibleTopics.length === 0 && replies.length === 0
-  });
+  return annotateSourceDiagnosticSummary(
+    { replies, hasMoreReplies, nextRepliesCursor: hasMoreReplies ? String(cursorPage + 1) : null },
+    {
+      parserVariant: 'api-user',
+      candidateCount: comments.length,
+      validCount: replies.length,
+      droppedCount: Math.max(0, comments.length - replies.length),
+      isExpectedEmpty: comments.length === 0,
+      missingFloorCount: comments.filter(
+        (comment) => isRecord(comment) && !parsePositiveInteger(comment.floor_id || comment.floor || comment.rank)
+      ).length
+    }
+  );
 }

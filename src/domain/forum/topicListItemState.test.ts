@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyReaderData, recordHistory, toggleFavorite } from '@/domain/reader/readerData';
+import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { createTopicListItemStateIndex, getTopicListItemStateFromIndex } from './topicListItemState';
 import type { Topic } from './models';
 
@@ -26,8 +26,8 @@ describe('Android topic list item state', () => {
         listDensity: 'compact'
       }
     };
-    data = recordHistory(data, topic);
-    data = toggleFavorite(data, topic);
+    data.history[topicKey(topic)] = { topic, savedAt: topic.createdAt, visitCount: 1 };
+    data.favorites[topicKey(topic)] = { topic, savedAt: topic.createdAt };
 
     const index = createTopicListItemStateIndex(data);
 
@@ -40,7 +40,9 @@ describe('Android topic list item state', () => {
   });
 
   it('looks up topic row state without enumerating ReaderData records', () => {
-    const data = toggleFavorite(recordHistory(createEmptyReaderData(), topic), topic);
+    const data = createEmptyReaderData();
+    data.history[topicKey(topic)] = { topic, savedAt: topic.createdAt, visitCount: 1 };
+    data.favorites[topicKey(topic)] = { topic, savedAt: topic.createdAt };
     let ownKeysCalls = 0;
     const countOwnKeys = <T extends object>(value: T) =>
       new Proxy(value, {

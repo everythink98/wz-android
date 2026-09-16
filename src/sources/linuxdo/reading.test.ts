@@ -3,7 +3,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 import { createLinuxDoReadingSender, getLinuxDoReadingBatch } from './reading';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
-import type { Fetcher } from '@/platform/network/request';
+import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import { fetchLinuxDoJson } from './reader';
 import { createLinuxDoWebViewFallbackFetcher } from './browserFallback';
 import {
@@ -46,6 +46,49 @@ function setupReadingRuntime(fetcher: Fetcher) {
 }
 
 describe('LinuxDo reading transport', () => {
+  it.each(['/session/csrf', '/topics/timings'])(
+    'does not send %s after proxy preparation outlives its scope',
+    async (path) => {
+      let identity = 'alice';
+      const pending = Promise.withResolvers<void>();
+      const started = Promise.withResolvers<void>();
+      const sent: string[] = [];
+      const sender = createLinuxDoReadingSender({
+        scope: () => identity,
+        userAgent: () => 'fixture-agent',
+        fetcher: async (url, init) => {
+          if (url.endsWith(path)) {
+            started.resolve();
+            await pending.promise;
+          }
+          prepareRequestToSend(init);
+          sent.push(url);
+          return url.endsWith('/session/csrf') ? json({ csrf: 'fixture' }) : new Response('');
+        }
+      });
+      const result = sender(batch, 'alice', new AbortController().signal);
+      const rejected = expect(result).rejects.toThrow('请求已取消');
+      await started.promise;
+      identity = 'bob';
+      pending.resolve();
+      await rejected;
+      expect(sent.some((url) => url.endsWith(path))).toBe(false);
+    }
+  );
+
+  it('preserves a confirmed timings response when the scope changes after sending', async () => {
+    let identity = 'alice';
+    const sender = createLinuxDoReadingSender({
+      scope: () => identity,
+      userAgent: () => 'fixture-agent',
+      fetcher: async (url) => {
+        if (url.endsWith('/session/csrf')) return json({ csrf: 'fixture' });
+        identity = 'bob';
+        return new Response('');
+      }
+    });
+    await expect(sender(batch, 'alice', new AbortController().signal)).resolves.toBeUndefined();
+  });
   it.each([true, false])(
     'preserves CSRF challenge cooldown after hidden fallback fails (header=%s)',
     async (header) => {

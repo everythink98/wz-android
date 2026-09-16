@@ -58,6 +58,7 @@ type QueuedLinuxDoVerification = {
 
 function isActiveRecoveryQuery(recovery: LinuxDoReadRecovery) {
   if ('kind' in recovery) return recovery.isCurrent();
+  if (recovery.isCurrent) return recovery.isCurrent();
   return (
     appQueryClient
       .getQueryCache()

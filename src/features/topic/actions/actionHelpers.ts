@@ -1,7 +1,7 @@
 import type { ReplyEditTarget, ReplyRefreshTarget } from '../model/types';
 import { nodeSeekMarkdownToHtml } from '@/sources/nodeseek/markdown';
 import { sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
-import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '@/domain/forum/models';
+import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserIdentity } from '@/domain/forum/models';
 import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
 
 type TopicActionTopic = Topic | TopicDetail;
@@ -97,7 +97,7 @@ export function shouldApplyEditedReplyFallback(
 
 export function markCurrentNodeSeekOwnRepliesUnlikable(
   replies: Reply[],
-  currentUser: UserProfile | undefined,
+  currentUser: UserIdentity | undefined,
   currentUserId?: number | null
 ) {
   const cleanCurrentUserId =
@@ -125,7 +125,7 @@ export function markCurrentNodeSeekOwnRepliesUnlikable(
   return changed ? next : replies;
 }
 
-function isCurrentNodeSeekReply(reply: Reply, currentUser: UserProfile | undefined, currentUserId: string) {
+function isCurrentNodeSeekReply(reply: Reply, currentUser: UserIdentity | undefined, currentUserId: string) {
   if (currentUser && currentUser.source !== 'nodeseek') {
     return false;
   }

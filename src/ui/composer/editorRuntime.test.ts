@@ -93,6 +93,115 @@ async function mountRuntime({
 }
 
 describe('Composer editor runtime codec', () => {
+  it.each(
+    (['rich', 'source'] as const).flatMap((mode) =>
+      (['success', 'cancel', 'failure'] as const).map((outcome) => ({ mode, outcome }))
+    )
+  )('hands off $mode focus before picking and keeps input closed on $outcome', async ({ mode, outcome }) => {
+    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+    const { host, send, postMessage } = await mountRuntime({ mode, markdown: '保留草稿' });
+    const input = host.querySelector<HTMLElement>(mode === 'rich' ? '.composer-document' : '.cm-content')!;
+    await send({ type: 'COMMAND', payload: { name: 'focus' } });
+    expect(document.activeElement).toBe(input);
+    let focusedAtRequest = false;
+    postMessage.mockImplementation((raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === 'REQUEST_HOST_ACTION' && message.payload.action === 'upload-image') {
+        focusedAtRequest = document.activeElement === input;
+      }
+    });
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="图片"]')!.click());
+    const request = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((message) => message.payload?.action === 'upload-image');
+    expect(focusedAtRequest).toBe(false);
+    expect(document.activeElement).not.toBe(input);
+    await send({
+      type: 'COMMAND',
+      payload: {
+        name: 'host-action-result',
+        requestId: request.payload.requestId,
+        ...(outcome === 'success'
+          ? { result: { markdown: '![测试](https://example.com/image.png)' } }
+          : outcome === 'failure'
+            ? { error: '上传失败' }
+            : {})
+      }
+    });
+    expect(document.activeElement).not.toBe(input);
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'after-picker' } });
+    const snapshot = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(String(raw)))
+      .findLast((message) => message.payload?.requestId === 'after-picker').payload.snapshot;
+    expect(snapshot.markdown).toContain('保留草稿');
+    expect(snapshot.markdown.includes('https://example.com/image.png')).toBe(outcome === 'success');
+  });
+
+  it('resolves newly inserted uploads but fails closed for malformed or foreign-site short URLs', async () => {
+    const { host, send, postMessage } = await mountRuntime();
+    await send({ type: 'COMMAND', payload: { name: 'insert-markdown', markdown: '![new](upload://aB12.webp)' } });
+    const lookup = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .findLast((event) => event.payload?.action === 'resolve-linuxdo-upload');
+    await send({
+      type: 'COMMAND',
+      payload: {
+        name: 'host-action-result',
+        requestId: lookup.payload.requestId,
+        result: { url: 'https://cdn.example.com/aB12.webp' }
+      }
+    });
+    expect(host.querySelector<HTMLImageElement>('.composer-image img')!.src).toBe('https://cdn.example.com/aB12.webp');
+    for (const [site, markdown] of [
+      ['linuxdo', '![bad](upload://../secret.png)'],
+      ['nodeseek', '![foreign](upload://abc.png)']
+    ] as const) {
+      const mounted = await mountRuntime({ site, markdown });
+      expect(mounted.host.querySelector<HTMLImageElement>('.composer-image img')!.hasAttribute('src')).toBe(false);
+      expect(mounted.host.querySelector('.composer-image-feedback')!.textContent).toContain('图片加载失败');
+    }
+  });
+
+  it('previews Discourse uploads over HTTPS without rewriting draft Markdown', async () => {
+    const url = 'upload://abc123.png';
+    const markdown = `![photo](${url})`;
+    const { host, postMessage, send } = await mountRuntime({ markdown });
+    const preview = () => host.querySelector<HTMLImageElement>('.composer-image img')!;
+    const failedLookup = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .findLast((event) => event.payload?.action === 'resolve-linuxdo-upload');
+    await send({
+      type: 'COMMAND',
+      payload: { name: 'host-action-result', requestId: failedLookup.payload.requestId, error: 'lookup unavailable' }
+    });
+    expect(host.querySelector('.composer-image-feedback')!.textContent).toContain('图片加载失败');
+    await act(async () => host.querySelector<HTMLButtonElement>('.composer-image-feedback')!.click());
+    const lookup = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .findLast((event) => event.payload?.action === 'resolve-linuxdo-upload');
+    expect(lookup.payload.requestId).not.toBe(failedLookup.payload.requestId);
+    await send({
+      type: 'COMMAND',
+      payload: {
+        name: 'host-action-result',
+        requestId: lookup.payload.requestId,
+        result: { url: 'https://cdn.example.com/abc123.png' }
+      }
+    });
+    expect(preview().src).toBe('https://cdn.example.com/abc123.png');
+    await act(async () => preview().dispatchEvent(new Event('error')));
+    await act(async () => host.querySelector<HTMLButtonElement>('.composer-image-feedback')!.click());
+    expect(preview().src).toBe('https://cdn.example.com/abc123.png');
+    await send({ type: 'SET_MODE', payload: { mode: 'source' } });
+    await send({ type: 'SET_MODE', payload: { mode: 'rich' } });
+    expect(preview().src).toBe('https://cdn.example.com/abc123.png');
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'upload-preview' } });
+    const snapshot = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .findLast((event) => event.payload?.requestId === 'upload-preview').payload.snapshot;
+    expect(snapshot.markdown.trim()).toBe(markdown);
+  });
+
   it.each([
     ['nodeseek', 'rich'],
     ['linuxdo', 'rich'],
@@ -247,6 +356,7 @@ describe('Composer editor runtime codec', () => {
     const editor = (dom as HTMLElement & { editor: Editor }).editor;
     expect(editor.state.selection.$from.parent.type.name).toBe('paragraph');
     expect(editor.state.selection.$from.nodeBefore).toBeNull();
+    await send({ type: 'COMMAND', payload: { name: 'focus' } });
     const scrolls = vi.fn();
     editor.on('transaction', ({ transaction }) => {
       if (transaction.scrolledIntoView) scrolls();

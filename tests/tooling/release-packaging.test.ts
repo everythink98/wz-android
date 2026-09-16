@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,6 +8,15 @@ const rootDir = path.resolve(__dirname, '../..');
 
 function readProjectFile(...parts: string[]) {
   return readFileSync(path.join(rootDir, ...parts), 'utf8');
+}
+
+function readNativePlugin(plugin: string, directory: string) {
+  return [
+    readProjectFile('plugins', plugin),
+    ...readdirSync(path.join(rootDir, 'plugins', directory))
+      .filter((name) => name.endsWith('.kt'))
+      .map((name) => readProjectFile('plugins', directory, name))
+  ].join('\n');
 }
 
 describe('Android release packaging guards', () => {
@@ -234,7 +243,12 @@ describe('Android release packaging guards', () => {
     ['withNetworkProxyModule.js', 'NetworkProxy'],
     ['withSvgRendererModule.js', 'SvgRenderer']
   ])('generates %s with the RN 0.86 lazy package API', (pluginFile, owner) => {
-    const plugin = readProjectFile('plugins', pluginFile);
+    const plugin =
+      owner === 'NetworkProxy'
+        ? readNativePlugin(pluginFile, 'network')
+        : owner === 'SvgRenderer'
+          ? readNativePlugin(pluginFile, 'svg')
+          : readProjectFile('plugins', pluginFile);
 
     expect(plugin).toContain(`class ${owner}Package : BaseReactPackage()`);
     expect(plugin).toContain(
@@ -281,7 +295,7 @@ describe('Android release packaging guards', () => {
   it('keeps the Android network proxy and narrow managed-Cookie boundary enabled', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const packageJson = JSON.parse(readProjectFile('package.json'));
-    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
 
     expect(app.expo.plugins).toContain('./plugins/withNetworkProxyModule');
     for (const required of [
@@ -304,10 +318,7 @@ describe('Android release packaging guards', () => {
     ]) {
       expect(plugin).not.toContain(forbidden);
     }
-    const moduleSource = plugin.slice(
-      plugin.indexOf('function networkProxyModuleSource'),
-      plugin.indexOf('function networkProxyPackageSource')
-    );
+    const moduleSource = readProjectFile('plugins', 'network', 'NetworkProxyModule.kt');
     expect(moduleSource).toContain('import android.webkit.WebSettings');
     expect(moduleSource).toContain('WebSettings.getDefaultUserAgent(reactContext)');
     expect(app.expo.plugins).not.toContain('./plugins/withLinuxDoCookieModule');
@@ -366,7 +377,7 @@ describe('Android release packaging guards', () => {
 
   it('keeps preview region decoding in its own Android package', () => {
     const app = JSON.parse(readProjectFile('app.json'));
-    const networkPlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const networkPlugin = readNativePlugin('withNetworkProxyModule.js', 'network');
     const previewPlugin = readProjectFile('plugins', 'withPreviewRegionImageNative.js');
 
     expect(app.expo.plugins).toContain('./plugins/withPreviewRegionImageNative');
@@ -390,7 +401,7 @@ describe('Android release packaging guards', () => {
 
   it('generates the isolated single-WebView SVG poster renderer', () => {
     const app = JSON.parse(readProjectFile('app.json'));
-    const plugin = readProjectFile('plugins', 'withSvgRendererModule.js');
+    const plugin = readNativePlugin('withSvgRendererModule.js', 'svg');
 
     expect(app.expo.plugins).toContain('./plugins/withSvgRendererModule');
     for (const required of [
@@ -426,7 +437,7 @@ describe('Android release packaging guards', () => {
   });
 
   it('keeps native proxy lifecycle logs free of destinations and upstream addresses', () => {
-    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
 
     expect(plugin).toContain('Log.i(LOG_TAG, "local proxy started")');
     expect(plugin).not.toContain('select proxy for ');
@@ -437,14 +448,14 @@ describe('Android release packaging guards', () => {
   });
 
   it('rejects invalid IPv4 literals before encoding SOCKS5 addresses', () => {
-    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
 
     expect(plugin).toContain('Invalid SOCKS5 IPv4 host');
     expect(plugin).not.toContain('output.write(part.toInt() and 0xff)');
   });
 
   it('keeps local Android development hosts direct even when a system proxy exists', () => {
-    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
     const localHostIndex = plugin.indexOf('if (isLocalDevHost(targetHost))');
     const noProxyIndex = plugin.indexOf('return mutableListOf(Proxy.NO_PROXY)', localHostIndex);
     const delegateIndex = plugin.indexOf('delegate?.select(uri)', localHostIndex);
@@ -455,7 +466,7 @@ describe('Android release packaging guards', () => {
   });
 
   it('keeps the phone system proxy available when the app proxy is disabled', () => {
-    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const plugin = readNativePlugin('withNetworkProxyModule.js', 'network');
     const disabledIndex = plugin.indexOf('if (proxy == null)');
     const delegateIndex = plugin.indexOf('delegate?.select(uri)', disabledIndex);
 
@@ -524,7 +535,7 @@ describe('Android release packaging guards', () => {
       'utils',
       'ReadNetworkVideoClientRegistry.kt'
     );
-    const networkPlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const networkPlugin = readNativePlugin('withNetworkProxyModule.js', 'network');
 
     expect(pkg.dependencies['expo-video']).toBe('~57.0.3');
     expect(lock.packages['node_modules/expo-video'].version).toBe('57.0.3');

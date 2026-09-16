@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const readers = vi.hoisted(() => ({
   getLinuxDoCategories: vi.fn(),
-  getLinuxDoCurrentUserProfile: vi.fn(),
+  getLinuxDoCurrentUserIdentity: vi.fn(),
   getLinuxDoEmojiUrls: vi.fn(),
   getLinuxDoFeed: vi.fn(),
   getLinuxDoReplies: vi.fn(),
   getLinuxDoReply: vi.fn(),
   getLinuxDoTopic: vi.fn(),
-  getLinuxDoUserProfile: vi.fn(),
+  getLinuxDoUserDetails: vi.fn(),
   searchLinuxDo: vi.fn(),
   searchLinuxDoTags: vi.fn(),
   searchLinuxDoUsers: vi.fn()
@@ -24,8 +24,8 @@ vi.mock('@/sources/linuxdo/reader', () => ({
 }));
 
 vi.mock('@/sources/linuxdo/account', () => ({
-  getLinuxDoCurrentUserProfile: readers.getLinuxDoCurrentUserProfile,
-  getLinuxDoUserProfile: readers.getLinuxDoUserProfile
+  getLinuxDoCurrentUserIdentity: readers.getLinuxDoCurrentUserIdentity,
+  getLinuxDoUserDetails: readers.getLinuxDoUserDetails
 }));
 
 vi.mock('@/sources/linuxdo/search', () => ({
@@ -34,7 +34,7 @@ vi.mock('@/sources/linuxdo/search', () => ({
   searchLinuxDoUsers: readers.searchLinuxDoUsers
 }));
 
-import { getDiscourseCurrentUserProfile, getDiscourseFeed } from './discourseRead';
+import { getDiscourseCurrentUserIdentity, getDiscourseFeed } from './discourseRead';
 
 describe('Discourse read composition', () => {
   beforeEach(() => {
@@ -59,12 +59,12 @@ describe('Discourse read composition', () => {
   });
 
   it('keeps site authentication inside the read composition seam', async () => {
-    readers.getLinuxDoCurrentUserProfile.mockResolvedValueOnce({ source: 'linuxdo' });
+    readers.getLinuxDoCurrentUserIdentity.mockResolvedValueOnce({ source: 'linuxdo' });
     const auth = { authenticated: true, userAgent: 'android' };
 
-    await getDiscourseCurrentUserProfile({ auth });
+    await getDiscourseCurrentUserIdentity({ auth });
 
-    expect(readers.getLinuxDoCurrentUserProfile).toHaveBeenCalledWith({
+    expect(readers.getLinuxDoCurrentUserIdentity).toHaveBeenCalledWith({
       linuxDoUserAgent: 'android'
     });
   });

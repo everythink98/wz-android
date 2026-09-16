@@ -9,7 +9,7 @@ describe('startup module evaluation', () => {
       '@/features/topic/TopicRoute',
       '@/features/user/UserRoute',
       '@/features/notifications/NotificationRoute',
-      '@/ui/composer/generated/editorDocument.json',
+      '@/ui/composer/generated/editorDocument.js',
       '@/features/topic/rendering/mathJaxSvg',
       'expo-sharing'
     ];
@@ -27,7 +27,7 @@ describe('startup module evaluation', () => {
   it('does not evaluate the bundled editor document when importing the editor', () => {
     const loadDocument = jest.fn(() => ({ html: '<html>editor</html>' }));
     jest.isolateModules(() => {
-      jest.doMock('@/ui/composer/generated/editorDocument.json', loadDocument);
+      jest.doMock('@/ui/composer/generated/editorDocument.js', loadDocument);
       require('@/ui/composer/StructuredReplyComposer');
       expect(loadDocument).not.toHaveBeenCalled();
     });

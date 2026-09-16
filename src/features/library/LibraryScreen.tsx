@@ -116,7 +116,7 @@ const LibraryViewportList = memo(function LibraryViewportList({
   renderItem: ListRenderItem<LibraryDataItem>;
   styles: LibraryStyles;
   tab: LibraryTab;
-  onLoadMore: () => void;
+  onLoadMore: (tab: LibraryTab) => void;
 }) {
   return (
     <FlashList
@@ -134,7 +134,7 @@ const LibraryViewportList = memo(function LibraryViewportList({
       ListHeaderComponent={header}
       ListEmptyComponent={empty}
       renderItem={renderItem}
-      onEndReached={onLoadMore}
+      onEndReached={() => onLoadMore(tab)}
       onEndReachedThreshold={0.5}
     />
   );
@@ -177,7 +177,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   visibleTotal: number;
   error: boolean;
   onRetry: () => void;
-  onLoadMore: () => void;
+  onLoadMore: (tab: LibraryTab) => void;
   libraryTab: LibraryTab;
   categories: Parameters<typeof libraryCategoryFilterItems>[0];
   enabledSources: readonly Source[];

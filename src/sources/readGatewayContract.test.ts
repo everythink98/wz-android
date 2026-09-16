@@ -27,7 +27,7 @@ import { getYaohuoFeedDirect, getYaohuoTopicDirect } from '@/sources/yaohuo/read
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
-  getCurrentUserProfile: vi.fn(),
+  getCurrentUserIdentity: vi.fn(),
   getFeed: vi.fn(async (_options: { fetcher: Fetcher }): Promise<FeedResponse> => ({
     items: [],
     errors: {},
@@ -47,7 +47,7 @@ const forumMocks = vi.hoisted(() => ({
     contentHtml: '',
     replies: []
   })),
-  getUserProfile: vi.fn(async ({ id, source }) => ({ source, id, username: id, displayName: id, url: '', topics: [] })),
+  getUserDetails: vi.fn(async ({ id, source }) => ({ source, id, username: id, displayName: id, url: '', topics: [] })),
   searchTopics: vi.fn(
     async (_options: {
       source: Source | 'all';
@@ -121,7 +121,7 @@ import {
   getFeed,
   getReplies,
   getTopic,
-  getUserProfile,
+  getUserDetails,
   searchTopics
 } from './readGateway';
 
@@ -1402,7 +1402,7 @@ describe('source gateway read contract', () => {
       fetcher: vi.fn(),
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getUserProfile.mockResolvedValueOnce(
+    forumMocks.getUserDetails.mockResolvedValueOnce(
       annotateSourceDiagnosticSummary(
         {
           source: 'v2ex',
@@ -1423,7 +1423,7 @@ describe('source gateway read contract', () => {
       )
     );
 
-    await gateway.getUserProfile({ source: 'v2ex', id: 'user' }, { trace });
+    await gateway.getUserDetails({ source: 'v2ex', id: 'user' }, { trace });
     markDiagnosticStage(trace, 'apply', { itemCount: 1 });
     finishDiagnosticTrace(trace, 'success');
 
@@ -1491,7 +1491,7 @@ describe('source gateway read contract', () => {
     await searchTopics({ source, query: 'codex' });
     await getTopic({ source, id: 'topic-1' });
     await getReplies({ source, id: 'topic-1', order: 'oldest', position: { kind: 'start' } });
-    await getUserProfile({ source, id: 'user-1' });
+    await getUserDetails({ source, id: 'user-1' });
 
     expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source }));
     expect(forumMocks.searchTopics).toHaveBeenCalledWith(expect.objectContaining({ source, query: 'codex' }));
@@ -1499,7 +1499,7 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getReplies).toHaveBeenCalledWith(
       expect.objectContaining({ source, id: 'topic-1', order: 'oldest', position: { kind: 'start' } })
     );
-    expect(forumMocks.getUserProfile).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'user-1' }));
+    expect(forumMocks.getUserDetails).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'user-1' }));
   });
 
   it('records order, position kind, and resolved page without reply content', async () => {
@@ -1638,7 +1638,7 @@ describe('source gateway read contract', () => {
       position: { kind: 'start' }
     });
     await gateway.getReply({ source: 'linuxdo', id: 'topic-1', floor: 2 });
-    await gateway.getUserProfile({ source: 'nodeseek', id: 'user-1' });
+    await gateway.getUserDetails({ source: 'nodeseek', id: 'user-1' });
 
     expect(currentSessionEpoch).toHaveBeenCalledWith('nodeseek');
     expect(forumMocks.getCategories).toHaveBeenCalledWith(
@@ -1684,7 +1684,7 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getReply).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'linuxdo', id: 'topic-1', floor: 2, fetcher: expect.any(Function) })
     );
-    expect(forumMocks.getUserProfile).toHaveBeenCalledWith(
+    expect(forumMocks.getUserDetails).toHaveBeenCalledWith(
       expect.objectContaining({
         source: 'nodeseek',
         id: 'user-1',
@@ -1707,7 +1707,7 @@ describe('source gateway read contract', () => {
         url: string;
         topics: never[];
       }>();
-      forumMocks.getUserProfile.mockReturnValueOnce(response.promise);
+      forumMocks.getUserDetails.mockReturnValueOnce(response.promise);
       const gateway = createReadGateway({
         currentSessionEpoch: () => generation,
         fetcher: vi.fn(),
@@ -1715,8 +1715,8 @@ describe('source gateway read contract', () => {
         nodeSeekUserAgent: () => ''
       });
 
-      const read = gateway.getUserProfile({ source, id: '7' });
-      await vi.waitFor(() => expect(forumMocks.getUserProfile).toHaveBeenCalledTimes(1));
+      const read = gateway.getUserDetails({ source, id: '7' });
+      await vi.waitFor(() => expect(forumMocks.getUserDetails).toHaveBeenCalledTimes(1));
       generation += 1;
       response.resolve({ source, id: '7', username: 'old-user', displayName: 'Old User', url: '', topics: [] });
 
@@ -1820,7 +1820,7 @@ describe('source gateway read contract', () => {
       isSourceAuthenticated: (source) => source === 'yaohuo',
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getUserProfile.mockRejectedValueOnce(
+    forumMocks.getUserDetails.mockRejectedValueOnce(
       Object.assign(new Error('妖火登录已失效'), {
         loginRequired: true,
         reason: 'expired',
@@ -1828,7 +1828,7 @@ describe('source gateway read contract', () => {
       })
     );
 
-    await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
+    await expect(gateway.getUserDetails({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
       kind: 'login-expired',
       message: '妖火登录已失效'
     });
@@ -1890,10 +1890,10 @@ describe('source gateway read contract', () => {
       isSourceAuthenticated: () => true,
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getUserProfile.mockReturnValueOnce(response.promise);
+    forumMocks.getUserDetails.mockReturnValueOnce(response.promise);
 
-    const read = gateway.getUserProfile({ source: 'yaohuo', id: '7' });
-    await vi.waitFor(() => expect(forumMocks.getUserProfile).toHaveBeenCalledTimes(1));
+    const read = gateway.getUserDetails({ source: 'yaohuo', id: '7' });
+    await vi.waitFor(() => expect(forumMocks.getUserDetails).toHaveBeenCalledTimes(1));
     generation += 1;
     response.reject(
       Object.assign(new Error('旧妖火登录已失效'), {
@@ -1912,7 +1912,7 @@ describe('source gateway read contract', () => {
       isSourceAuthenticated: (source) => source === 'yaohuo',
       nodeSeekUserAgent: () => ''
     });
-    forumMocks.getUserProfile.mockRejectedValueOnce(
+    forumMocks.getUserDetails.mockRejectedValueOnce(
       Object.assign(new Error('妖火需要完成访问验证'), {
         loginRequired: true,
         reason: 'verification',
@@ -1921,7 +1921,7 @@ describe('source gateway read contract', () => {
       })
     );
 
-    await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
+    await expect(gateway.getUserDetails({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
       kind: 'verification-required',
       message: '妖火需要完成访问验证'
     });

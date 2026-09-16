@@ -3,7 +3,7 @@ import { summarizeYaohuoCookieHeader } from './session';
 import { errorMessage, isCanceledRequest } from '@/platform/network/errors';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '@/platform/network/request';
 import { managedCookieHeaderOrThrow, type ManagedCookieReadResult } from '@/platform/network/managedCookies';
-import type { UserProfile } from '@/domain/forum/models';
+import type { UserIdentity } from '@/domain/forum/models';
 import { parseHtml } from '@/domain/forum/html';
 import {
   siteSessionStateFromEvents,
@@ -24,7 +24,7 @@ import { YAOHUO_BASE_URL, yaohuoUserProfileTopicListUrlFromRoot } from './protoc
 
 export const YAOHUO_ACCOUNT_STATUS_URL = `${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`;
 
-async function enrichYaohuoAccountName(user: UserProfile, fetcher: Fetcher, signal: AbortSignal) {
+async function enrichYaohuoAccountName(user: UserIdentity, fetcher: Fetcher, signal: AbortSignal) {
   if ((user.displayName || user.username).trim() !== user.id) return user;
   const profilePage = await fetchYaohuoHtml(
     `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(user.id)}&siteid=1000`,
@@ -33,9 +33,12 @@ async function enrichYaohuoAccountName(user: UserProfile, fetcher: Fetcher, sign
   );
   const profileRoot = parseHtml(profilePage.html);
   const parsedProfile = parseYaohuoUserProfileDocument(profileRoot, { id: user.id, username: user.username });
-  const profile = {
-    ...parsedProfile,
-    topics: []
+  const profile: UserIdentity = {
+    ...user,
+    username: parsedProfile.username,
+    displayName: parsedProfile.displayName,
+    avatar: parsedProfile.avatar,
+    levelLabel: parsedProfile.levelLabel
   };
   if ((profile.displayName || profile.username).trim() !== user.id) return profile;
 

@@ -24,7 +24,6 @@ import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
 import { ContentSourceDisabledState } from '@/ui/controls/FeedbackStates';
 import { useTopicActionsController } from './actions/useTopicActionsController';
 import { useImagePreviewController } from './media/useImagePreviewController';
-import { verifyLinuxDoTopic } from './model/topicVerification';
 import { useHtmlRenderingController } from './rendering/useHtmlRenderingController';
 import { shareTopicWithClipboardFallback } from './shareTopic';
 import { TopicScreen } from './TopicScreen';
@@ -112,6 +111,7 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
+    isReadRecoveryCurrent,
     topicBusy,
     topicDetail,
     topicError,
@@ -228,24 +228,22 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
   const refreshCurrentTopic = useCallback(() => {
     void refreshWholeTopic();
   }, [refreshWholeTopic]);
-  const verifyLinuxDo = useCallback(
-    () =>
-      verifyLinuxDoTopic({
-        identityPending: false,
-        refreshTopic: (current) => openTopic(current, true),
-        selectedTopic,
-        showVerification: () => Promise.resolve(runtime.account.showLinuxDoVerification()),
-        topicDetail
-      }),
-    [openTopic, runtime, selectedTopic, topicDetail]
-  );
+  const verifyLinuxDo = useCallback(() => {
+    if (topic.source !== 'linuxdo') return;
+    return runtime.account.showLinuxDoVerification(topicError?.message, {
+      queryKey: [...topicQueryKey, 'manual-verification'],
+      isCurrent: isReadRecoveryCurrent,
+      resume: refreshWholeTopic
+    });
+  }, [isReadRecoveryCurrent, refreshWholeTopic, runtime.account, topic.source, topicError?.message, topicQueryKey]);
   const verifyNodeSeek = useCallback(() => {
     if (topic.source !== 'nodeseek') return;
     runtime.account.requestNodeSeekVerification(topicError?.message || 'NodeSeek 需要完成 Cloudflare 验证', {
       queryKey: topicQueryKey,
+      isCurrent: isReadRecoveryCurrent,
       resume: refreshWholeTopic
     });
-  }, [refreshWholeTopic, runtime, topic.source, topicError?.message, topicQueryKey]);
+  }, [isReadRecoveryCurrent, refreshWholeTopic, runtime, topic.source, topicError?.message, topicQueryKey]);
   const shareTopic = useCallback(async () => {
     const current = topicDetail || topic;
     await shareTopicWithClipboardFallback({

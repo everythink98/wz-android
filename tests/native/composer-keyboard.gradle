@@ -1,0 +1,6 @@
+beforeProject { p ->
+    p.plugins.withId('com.android.application') {
+        p.extensions.getByName('android').sourceSets.getByName('test').java.srcDir(new File(p.rootDir.parentFile, 'tests/native'))
+        p.dependencies.add('testImplementation', 'org.robolectric:robolectric:4.16')
+    }
+}

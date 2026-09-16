@@ -19,8 +19,7 @@ const loggedInSession: SiteSessionState = {
     source: 'nodeseek',
     id: '42',
     username: 'alice',
-    url: 'https://www.nodeseek.com/people/alice',
-    topics: []
+    url: 'https://www.nodeseek.com/people/alice'
   }
 };
 

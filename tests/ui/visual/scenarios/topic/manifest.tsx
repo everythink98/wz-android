@@ -195,6 +195,9 @@ function TopicScenarioScreen({
         interact: async (_type: InteractionType, _commentId?: number) => undefined,
         loadLinuxDoPollCapabilities: async () => ({ groups: [], canUseStaffResults: false }),
         loadLinuxDoTemplates: async () => [],
+        resolveLinuxDoUpload: async () => {
+          throw new Error('Unexpected image lookup');
+        },
         loadNodeSeekStardustStatus: async () => ({
           participantCount: 0,
           totalAmount: 0,

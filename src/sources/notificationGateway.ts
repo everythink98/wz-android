@@ -1,3 +1,4 @@
+import { resolveLinuxDoUpload } from '@/sources/linuxdo/uploadUrls';
 import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification, NotificationDetail, NotificationPage } from '@/domain/notifications/models';
@@ -30,7 +31,7 @@ import {
   fetchLinuxDoTemplates,
   recordLinuxDoTemplateUse as recordLinuxDoTemplateUsage
 } from '@/sources/linuxdo/templates';
-import { rejectUnauthorizedResponse, withFetchGuard } from '@/platform/network/request';
+import { rejectUnauthorizedResponse, withFetchGuard, withRequestBeforeSend } from '@/platform/network/request';
 
 export type NotificationAccessReader = (
   source: NotificationSource
@@ -71,6 +72,7 @@ function assertNotAborted(signal?: AbortSignal) {
 async function runWithNotificationDiagnostics<T>(
   source: NotificationSource,
   operation:
+    | 'image-load'
     | 'notification-list'
     | 'notification-categories'
     | 'notification-unread'
@@ -193,7 +195,12 @@ export function createNotificationGateway({
     return {
       ...access,
       fetcher: withFetchGuard(
-        withDiagnosticFetcher(trace, rejectUnauthorizedResponse(access.fetcher || fetch)),
+        withDiagnosticFetcher(
+          trace,
+          source === 'nodeseek' && trace.operation === 'notification-upload'
+            ? access.fetcher || fetch
+            : rejectUnauthorizedResponse(access.fetcher || fetch)
+        ),
         assertCurrent
       ),
       ...(signal ? { signal } : {})
@@ -390,6 +397,7 @@ export function createNotificationGateway({
         expectedIdentityKey: string;
         file: NormalizedReplyImageAsset;
         nodeImageApiKey?: string;
+        beforeSend?: () => void;
         signal?: AbortSignal;
       }
     ) {
@@ -402,7 +410,9 @@ export function createNotificationGateway({
             imageUrl = await uploadNodeSeekReplyImage({
               apiKey: options.nodeImageApiKey || '',
               file: options.file,
-              fetcher: access.fetcher,
+              fetcher: options.beforeSend
+                ? withRequestBeforeSend(access.fetcher || fetch, options.beforeSend)
+                : access.fetcher,
               signal: options.signal,
               timeoutMs: access.timeoutMs
             });
@@ -423,6 +433,18 @@ export function createNotificationGateway({
       );
     },
 
+    async resolveLinuxDoUpload(shortUrl: string, expectedIdentityKey: string, signal?: AbortSignal) {
+      return runWithNotificationDiagnostics('linuxdo', 'image-load', (trace) =>
+        runWithAccess('linuxdo', trace, signal, expectedIdentityKey, (access) =>
+          resolveLinuxDoUpload({
+            shortUrl,
+            fetcher: access.fetcher || fetch,
+            signal,
+            userAgent: access.userAgent || ''
+          })
+        )
+      );
+    },
     async loadLinuxDoPollCapabilities(expectedIdentityKey: string, signal?: AbortSignal) {
       return runWithNotificationDiagnostics('linuxdo', 'notification-poll-capabilities', async (trace) =>
         runWithAccess('linuxdo', trace, signal, expectedIdentityKey, (access) =>

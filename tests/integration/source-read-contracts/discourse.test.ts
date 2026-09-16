@@ -4,10 +4,18 @@ import { searchTopics } from '@/sources/searchRead';
 import { getReplies, getReply, getTopic } from '@/sources/sourceRead';
 import { isLinuxDoCloudflareError } from '@/sources/errors';
 import { browserFetchIntentFromInit } from '@/platform/network/browserFetchIntent';
-import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
+import {
+  getLinuxDoCurrentUserIdentity,
+  getLinuxDoUserDetails,
+  getLinuxDoUserTopics,
+  getLinuxDoUserReplies
+} from '@/sources/linuxdo/account';
 import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
-import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
+import {
+  sourceDiagnosticSummary,
+  mergeSourceDiagnosticSummaries
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { DEFAULT_SEARCH_FILTERS } from '@/domain/forum/searchFilters';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 
@@ -927,8 +935,7 @@ describe('Android local sources', () => {
       })
     );
 
-    const profile = await getLinuxDoUserProfile('newbie', 'newbie', {
-      cursorType: 'topics',
+    const profile = await getLinuxDoUserDetails('newbie', 'newbie', {
       fetcher
     });
 
@@ -966,11 +973,11 @@ describe('Android local sources', () => {
       });
     });
 
-    const firstPage = await getLinuxDoUserProfile('alice', 'alice', {
+    const firstPage = await readLinuxDoUser('alice', 'alice', {
       cursorType: 'topics',
       fetcher
     });
-    const lastPage = await getLinuxDoUserProfile('alice', 'alice', {
+    const lastPage = await readLinuxDoUser('alice', 'alice', {
       cursor: '1',
       cursorType: 'topics',
       fetcher
@@ -1020,7 +1027,7 @@ describe('Android local sources', () => {
         });
       });
 
-      const profile = await getLinuxDoUserProfile('alice', 'alice', {
+      const profile = await readLinuxDoUser('alice', 'alice', {
         cursorType: 'topics',
         fetcher
       });
@@ -1061,11 +1068,11 @@ describe('Android local sources', () => {
       });
     });
 
-    const firstPage = await getLinuxDoUserProfile('alice', 'alice', {
+    const firstPage = await readLinuxDoUser('alice', 'alice', {
       cursorType: 'replies',
       fetcher
     });
-    const lastPage = await getLinuxDoUserProfile('alice', 'alice', {
+    const lastPage = await readLinuxDoUser('alice', 'alice', {
       cursor: '30',
       cursorType: 'replies',
       fetcher
@@ -1118,11 +1125,11 @@ describe('Android local sources', () => {
       });
     });
 
-    const firstPage = await getLinuxDoUserProfile('alice', 'alice', {
+    const firstPage = await readLinuxDoUser('alice', 'alice', {
       cursorType: 'replies',
       fetcher
     });
-    const secondPage = await getLinuxDoUserProfile('alice', 'alice', {
+    const secondPage = await readLinuxDoUser('alice', 'alice', {
       cursor: '30',
       cursorType: 'replies',
       fetcher
@@ -1176,7 +1183,7 @@ describe('Android local sources', () => {
       });
     });
 
-    const profile = await getLinuxDoUserProfile('alice', 'alice', { fetcher });
+    const profile = await readLinuxDoUser('alice', 'alice', { fetcher });
 
     expect(started).toEqual(new Set(['topics', 'replies']));
     expect(profile).toMatchObject({
@@ -1186,7 +1193,7 @@ describe('Android local sources', () => {
     expect(sourceDiagnosticSummary(profile)).toMatchObject({ partialErrorCount: 0 });
   });
 
-  it('keeps summary topics after an initial linux.do topic-page failure but rejects an explicit lane read', async () => {
+  it('keeps profile success separate from an unavailable linux.do topic page', async () => {
     const fetcher = routeFetcher([
       [
         '/u/alice/summary.json',
@@ -1212,17 +1219,10 @@ describe('Android local sources', () => {
       ['/user_actions.json', json({ user_actions: [] })]
     ]);
 
-    const initial = await getLinuxDoUserProfile('alice', 'alice', { fetcher });
-
-    expect(initial).toMatchObject({
-      topics: [expect.objectContaining({ id: '42' })],
-      hasMoreTopics: false,
-      nextTopicsCursor: null
-    });
-    expect(sourceDiagnosticSummary(initial)).toMatchObject({ partialErrorCount: 1 });
-    await expect(getLinuxDoUserProfile('alice', 'alice', { cursorType: 'topics', fetcher })).rejects.toThrow(
-      'topics unavailable'
-    );
+    const initial = await getLinuxDoUserDetails('alice', 'alice', { fetcher });
+    expect(initial).toMatchObject({ username: 'alice', topicCount: 1 });
+    expect(initial).not.toHaveProperty('topics');
+    await expect(getLinuxDoUserTopics(initial, { fetcher })).rejects.toThrow('topics unavailable');
   });
 
   it('terminates full linux.do user pages when no source rows can be parsed', async () => {
@@ -1237,8 +1237,8 @@ describe('Android local sources', () => {
       return json({ user_actions: Array.from({ length: 31 }, () => ({})) });
     });
 
-    const topics = await getLinuxDoUserProfile('alice', 'alice', { cursorType: 'topics', fetcher });
-    const replies = await getLinuxDoUserProfile('alice', 'alice', { cursorType: 'replies', fetcher });
+    const topics = await readLinuxDoUser('alice', 'alice', { cursorType: 'topics', fetcher });
+    const replies = await readLinuxDoUser('alice', 'alice', { cursorType: 'replies', fetcher });
 
     expect(topics).toMatchObject({ topics: [], hasMoreTopics: false, nextTopicsCursor: null });
     expect(replies).toMatchObject({ replies: [], hasMoreReplies: false, nextRepliesCursor: null });
@@ -2333,7 +2333,7 @@ describe('Android local sources', () => {
 
     await getFeed({ source: 'linuxdo', fetcher: visibleFetcher });
     await getCategories({ source: 'linuxdo', fetcher: visibleFetcher });
-    await getLinuxDoCurrentUserProfile({ fetcher: accountFetcher });
+    await getLinuxDoCurrentUserIdentity({ fetcher: accountFetcher });
 
     const visibleIntents = (visibleFetcher.mock.calls as unknown as [string, RequestInit?][]).map(([, init]) =>
       browserFetchIntentFromInit(init)
@@ -2572,3 +2572,33 @@ describe('Android local sources', () => {
     ).rejects.toThrow('network down');
   });
 });
+
+// Compose only the lanes explicitly requested by this parser fixture.
+async function readLinuxDoUser(
+  id: string,
+  username: string,
+  options: Parameters<typeof getLinuxDoUserDetails>[2] = {}
+): Promise<
+  import('@/domain/forum/models').UserDetails &
+    Partial<import('@/domain/forum/models').UserTopicsPage> &
+    import('@/domain/forum/models').UserRepliesPage
+> {
+  const profile = await getLinuxDoUserDetails(id, username, options);
+  if (options.cursorType === 'topics') {
+    const page = await getLinuxDoUserTopics(profile, options);
+    return mergeSourceDiagnosticSummaries({ ...profile, ...page }, 'discourse-user', [profile, page]);
+  }
+  if (options.cursorType === 'replies') {
+    const page = await getLinuxDoUserReplies(profile, options);
+    return mergeSourceDiagnosticSummaries({ ...profile, ...page }, 'discourse-user', [profile, page]);
+  }
+  const [topics, replies] = await Promise.all([
+    getLinuxDoUserTopics(profile, options),
+    getLinuxDoUserReplies(profile, options)
+  ]);
+  return mergeSourceDiagnosticSummaries({ ...profile, ...topics, ...replies }, 'discourse-user', [
+    profile,
+    topics,
+    replies
+  ]);
+}

@@ -8,7 +8,10 @@ import { runAgentDevice } from './agent-device-runtime.mjs';
 const serial = process.env.ANDROID_SERIAL;
 const evidence = process.argv[2];
 const mode = process.argv[3] || 'all';
-assert(['all', 'interactions'].includes(mode), 'Select all boundaries or focused interactions.');
+assert(['all', 'interactions', 'rail'].includes(mode), 'Select all boundaries, interactions or the category rail.');
+const railSources = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
+const railSource = process.argv[4];
+assert(!railSource || (mode === 'rail' && railSources.includes(railSource)), 'Select a supported rail source.');
 assert(serial && evidence, 'Set ANDROID_SERIAL and pass an ignored evidence directory.');
 execFileSync('git', ['check-ignore', path.resolve(evidence)]);
 mkdirSync(evidence, { recursive: true });
@@ -36,6 +39,88 @@ async function check(name, expected) {
   results.push({ name, source: expected, rect });
   writeFileSync(path.join(evidence, 'results.json'), JSON.stringify(results, null, 2));
   console.log(`PASS ${name}`);
+}
+async function checkCategoryRails() {
+  for (const source of railSources.filter((source) => !railSource || source === railSource)) {
+    device('press', 'id="feed-source-all"');
+    device('press', `id="feed-source-${source}"`);
+    const nodes = snapshot();
+    const header = nodes.find((n) => n.identifier === `feed-secondary-${source}`)?.rect;
+    const viewport = nodes.find(
+      (n) =>
+        n.type === 'android.widget.HorizontalScrollView' && n.rect.y >= header?.y && n.rect.y < header.y + header.height
+    )?.rect;
+    assert(viewport?.width > 0, `${source}: category viewport required`);
+    const buttons = () =>
+      snapshot().filter(
+        (n) =>
+          n.type === 'android.widget.Button' &&
+          n.rect.y >= viewport.y &&
+          n.rect.y < viewport.y + viewport.height &&
+          n.rect.x >= viewport.x &&
+          n.rect.x < viewport.x + viewport.width
+      );
+    const geometry = (items) => items.map(({ label, rect }) => ({ label, x: rect.x, width: rect.width }));
+    const initialButtons = buttons();
+    const drag = async (direction) => {
+      pan(
+        Math.round(viewport.x + viewport.width * (direction < 0 ? 0.85 : 0.15)),
+        Math.round(viewport.y + viewport.height / 2),
+        Math.round(viewport.width * 0.7 * direction),
+        0
+      );
+      await check(`${source}-category-drag-${direction}`, `feed-source-${source}`);
+      return buttons();
+    };
+    try {
+      const moved = await drag(-1);
+      assert.notDeepEqual(
+        geometry(moved),
+        geometry(initialButtons),
+        `${source}: hidden categories must scroll into view`
+      );
+      const revealed = moved.find((n) => !initialButtons.some((old) => old.label === n.label));
+      assert(revealed, `${source}: reveal a previously hidden category`);
+      const returned = await drag(1);
+      assert.notDeepEqual(geometry(returned), geometry(moved), `${source}: reverse drag moves the categories back`);
+      assert.deepEqual(
+        geometry(await drag(1)),
+        geometry(initialButtons),
+        `${source}: reverse drags reach the rail start`
+      );
+      assert.deepEqual(
+        geometry(await drag(1)),
+        geometry(initialButtons),
+        `${source}: start boundary stays in the rail`
+      );
+      let previous = initialButtons;
+      let end;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const current = await drag(-1);
+        if (JSON.stringify(geometry(current)) === JSON.stringify(geometry(previous))) {
+          end = current;
+          break;
+        }
+        previous = current;
+      }
+      assert(end, `${source}: reach a finite category rail end`);
+      const target = end.find((n) => !initialButtons.some((old) => old.label === n.label));
+      assert(target, `${source}: end contains a previously hidden category`);
+      device('press', `@${target.ref}`);
+      device('wait', `label="${target.label}，已选择"`, '5000');
+      assert(
+        buttons().some((n) => n.label === `${target.label}，已选择`),
+        `${source}: hidden category is selectable`
+      );
+      await check(`${source}-hidden-category-selected`, `feed-source-${source}`);
+    } finally {
+      device('press', 'id="feed-source-all"');
+    }
+  }
+}
+if (mode === 'rail') {
+  await checkCategoryRails();
+  process.exit(0);
 }
 if (mode === 'all') {
   for (const [tab, direction] of [
@@ -125,39 +210,8 @@ execFileSync('adb', [
 ]);
 await check('fling-then-distant-tab', target.identifier);
 assert(!snapshot().some((n) => n.label === '回到顶部'), 'A source tap must clear the previous list top button.');
-device('press', 'id="feed-source-yaohuo"');
-device('wait', 'id="feed-outcome-data-yaohuo-default"', '60000');
-device('wait', 'id="feed-topic-first"', '60000');
-const sourceIndex = tabs.findIndex((n) => n.identifier === 'feed-source-yaohuo');
-const next = tabs[sourceIndex + 1] || tabs[sourceIndex - 1];
-const direction = tabs[sourceIndex + 1] ? -1 : 1;
-await setTimeout(500);
-const railNodes = snapshot();
-const currentRail = railNodes.find((n) => n.identifier === 'feed-secondary-yaohuo')?.rect;
-assert(currentRail?.x === 0 && currentRail.height > 0, 'Use the current source category rail geometry.');
-const beforeRail = railNodes.filter(
-  (n) =>
-    n.type === 'android.widget.Button' && n.rect.y >= currentRail.y && n.rect.y < currentRail.y + currentRail.height
-);
-assert(beforeRail.length > 0, 'The rail must have real category controls.');
-pan(px(direction > 0 ? 0.15 : 0.85), Math.round(currentRail.y + currentRail.height / 2), direction * px(0.7), 0);
-await setTimeout(1000);
-const afterRail = snapshot();
-const railSource = afterRail.find(
-  (n) => n.identifier?.startsWith('feed-source-') && n.label?.includes('已选择')
-)?.identifier;
-assert(
-  ['feed-source-yaohuo', next.identifier].includes(railSource),
-  'A swipe over the secondary rail may keep the source or switch to its neighbour.'
-);
-if (railSource === 'feed-source-yaohuo') {
-  assert(
-    afterRail.some((n) => n.label === beforeRail.find((tab) => tab.label?.includes('已选择'))?.label),
-    'A swipe must not select another category; categories are selected by tapping.'
-  );
-}
-await check('secondary-rail-horizontal', railSource);
+await checkCategoryRails();
 device('press', 'id="main-tab-more"');
 device('press', 'id="main-tab-feed"');
-await check('bottom-tab-return', railSource);
+await check('bottom-tab-return', 'feed-source-all');
 console.log(`PASS: ${results.length} Feed boundary and interruption checks.`);

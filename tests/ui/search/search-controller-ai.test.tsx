@@ -96,8 +96,7 @@ const loggedInYaohuoSessions = projectTestAccountSessions(
         source: 'yaohuo',
         id: '7',
         username: 'tester',
-        url: 'https://www.yaohuo.me/space-7.html',
-        topics: []
+        url: 'https://www.yaohuo.me/space-7.html'
       }
     }
   })

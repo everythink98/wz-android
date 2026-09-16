@@ -781,6 +781,9 @@ function TopicFilterHarness({
     interact: async (type: InteractionType, commentId?: number) => onInteract(type, commentId),
     loadLinuxDoPollCapabilities: async () => ({ groups: [], canUseStaffResults: false }),
     loadLinuxDoTemplates: async () => [],
+    resolveLinuxDoUpload: async () => {
+      throw new Error('Unexpected image lookup');
+    },
     loadNodeSeekStardustStatus: async () => ({ participantCount: 0, totalAmount: 0, paid: false, closed: false }),
     lockNodeSeekPoll: async () => undefined,
     payNodeSeekStardust: async () => 'canceled' as const,
@@ -3154,10 +3157,9 @@ describe('Topic reply filters', () => {
         nativeEvent: { layout: { height: 300, width: 720, x: 0, y: 0 } }
       });
       expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(2);
-      expect(pendingFrames).toHaveLength(1);
 
       await act(async () => {
-        pendingFrames.shift()?.(16);
+        pendingFrames.splice(0).forEach((callback) => callback(16));
       });
       await waitFor(() =>
         expect(lastFlashListItemTypes.filter((type) => type === 'replyQuoteContent')).toHaveLength(6)

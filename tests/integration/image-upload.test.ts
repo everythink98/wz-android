@@ -1,4 +1,46 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
+import { withRequestBeforeSend } from '@/platform/network/request';
+
+const nativeImage = vi.hoisted(() => ({
+  bytes: new Uint8Array([0xff, 0xd8, 0xff]),
+  size: 1024,
+  outputSize: 512,
+  delete: vi.fn(),
+  close: vi.fn(),
+  releaseContext: vi.fn(),
+  releaseImage: vi.fn(),
+  save: vi.fn(),
+  render: vi.fn()
+}));
+vi.mock('expo-file-system', () => ({
+  File: class {
+    constructor(readonly uri: string) {}
+    exists = true;
+    get size() {
+      return this.uri.endsWith('converted.webp') ? nativeImage.outputSize : nativeImage.size;
+    }
+    open() {
+      return { readBytes: () => nativeImage.bytes, close: nativeImage.close };
+    }
+    delete() {
+      nativeImage.delete(this.uri);
+    }
+  }
+}));
+vi.mock('expo-image-manipulator', () => ({
+  SaveFormat: { WEBP: 'webp' },
+  ImageManipulator: { manipulate: () => ({ renderAsync: nativeImage.render, release: nativeImage.releaseContext }) }
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  nativeImage.bytes = new Uint8Array([0xff, 0xd8, 0xff]);
+  nativeImage.size = 1024;
+  nativeImage.outputSize = 512;
+  nativeImage.save.mockResolvedValue({ uri: 'file:///cache/converted.webp', width: 400, height: 600 });
+  nativeImage.render.mockResolvedValue({ saveAsync: nativeImage.save, release: nativeImage.releaseImage });
+});
 import { buildNodeSeekReplyRequest } from '@/sources/nodeseek/actionRequest';
 import {
   appendReplyImageMarkup,
@@ -17,6 +59,109 @@ import {
 import { uploadYaohuoReplyImage, yaohuoImageUrlFromUploadResponse } from '@/sources/yaohuo/imageUpload';
 
 describe('reply image upload helpers', () => {
+  const localImage = { uri: 'file:///cache/wechat.jpg', name: 'wechat.jpg', mimeType: 'image/jpeg' };
+  const uploaded = () => new Response(JSON.stringify({ url: 'https://img.example/photo.webp' }));
+
+  it.each([
+    ['GIF89a123456', 'gif'],
+    ['RIFF1234WEBP', 'webp']
+  ])('preserves actual %s bytes even when the picker names them JPEG', async (header, extension) => {
+    nativeImage.bytes = Uint8Array.from(header, (char) => char.charCodeAt(0));
+    const append = vi.spyOn(FormData.prototype, 'append');
+    try {
+      await uploadNodeSeekReplyImage({ apiKey: 'key', file: localImage, fetcher: async () => uploaded() });
+      expect(append).toHaveBeenCalledWith('image', {
+        uri: localImage.uri,
+        name: `wechat.${extension}`,
+        type: `image/${extension}`
+      });
+      expect(nativeImage.render).not.toHaveBeenCalled();
+      expect(nativeImage.delete).not.toHaveBeenCalled();
+      expect(nativeImage.close).toHaveBeenCalledTimes(1);
+    } finally {
+      append.mockRestore();
+    }
+  });
+
+  it.each(['input-limit', 'output-limit', 'empty-output', 'decode-failure', 'save-failure'])(
+    'rejects %s before any network upload and releases owned resources',
+    async (failure) => {
+      if (failure === 'input-limit') nativeImage.size = 20 * 1024 * 1024 + 1;
+      if (failure === 'output-limit') nativeImage.outputSize = 20 * 1024 * 1024 + 1;
+      if (failure === 'empty-output') nativeImage.outputSize = 0;
+      if (failure === 'decode-failure') nativeImage.render.mockRejectedValueOnce(new Error('decode'));
+      if (failure === 'save-failure') nativeImage.save.mockRejectedValueOnce(new Error('save'));
+      const fetcher = vi.fn(async () => uploaded());
+      await expect(uploadNodeSeekReplyImage({ apiKey: 'key', file: localImage, fetcher })).rejects.toMatchObject({
+        reason: 'image_conversion_failed'
+      });
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(nativeImage.delete).toHaveBeenCalledTimes(['output-limit', 'empty-output'].includes(failure) ? 1 : 0);
+      expect(nativeImage.releaseContext).toHaveBeenCalledTimes(failure === 'input-limit' ? 0 : 1);
+      expect(nativeImage.releaseImage).toHaveBeenCalledTimes(
+        ['input-limit', 'decode-failure'].includes(failure) ? 0 : 1
+      );
+    }
+  );
+
+  it.each(['cancel', 'identity', 'key-generation'])(
+    'blocks %s changes during conversion before sending the file',
+    async (change) => {
+      const controller = new AbortController();
+      let current = true;
+      nativeImage.save.mockImplementationOnce(async () => {
+        if (change === 'cancel') controller.abort();
+        else current = false;
+        return { uri: 'file:///cache/converted.webp' };
+      });
+      const transport = vi.fn(async () => uploaded());
+      const fetcher = withRequestBeforeSend(transport, () => {
+        if (!current) throw Object.assign(new Error(change), { reason: 'stale' });
+      });
+      await expect(
+        uploadNodeSeekReplyImage({ apiKey: 'key', file: localImage, fetcher, signal: controller.signal })
+      ).rejects.toBeInstanceOf(Error);
+      expect(transport).not.toHaveBeenCalled();
+      expect(nativeImage.delete).toHaveBeenCalledExactlyOnceWith('file:///cache/converted.webp');
+    }
+  );
+
+  it.each(['success', 'network-failure'])('releases the converted copy after %s without retrying', async (outcome) => {
+    const fetcher = vi.fn(async () => {
+      if (outcome === 'network-failure') throw new TypeError('Network request failed');
+      return uploaded();
+    });
+    const result = uploadNodeSeekReplyImage({ apiKey: 'key', file: localImage, fetcher });
+    if (outcome === 'success') await expect(result).resolves.toBe('https://img.example/photo.webp');
+    else await expect(result).rejects.toThrow('Network request failed');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(nativeImage.delete).toHaveBeenCalledExactlyOnceWith('file:///cache/converted.webp');
+  });
+
+  it('uploads a quality-100 WebP copy and releases it after server rejection', async () => {
+    const append = vi.spyOn(FormData.prototype, 'append');
+    try {
+      await expect(
+        uploadNodeSeekReplyImage({
+          apiKey: 'test-key',
+          file: { uri: 'file:///cache/wechat.jpg', name: 'wechat.jpg', mimeType: 'image/jpeg' },
+          fetcher: async () => new Response(JSON.stringify({ message: '文件类型验证失败' }), { status: 400 })
+        })
+      ).rejects.toSatisfy((error: unknown) => normalizeDiagnosticReason(error) === 'upload_rejected');
+      expect(nativeImage.save).toHaveBeenCalledWith({ format: 'webp', compress: 1 });
+      expect(append).toHaveBeenCalledWith('image', {
+        uri: 'file:///cache/converted.webp',
+        name: 'wechat.webp',
+        type: 'image/webp'
+      });
+      expect(nativeImage.delete).toHaveBeenCalledExactlyOnceWith('file:///cache/converted.webp');
+      expect(nativeImage.releaseContext).toHaveBeenCalledTimes(1);
+      expect(nativeImage.releaseImage).toHaveBeenCalledTimes(1);
+    } finally {
+      append.mockRestore();
+    }
+  });
+
   it('supports image uploads only where an upload path is known', () => {
     expect(replyImageUploadSupported('linuxdo')).toBe(true);
     expect(replyImageUploadSupported('yaohuo')).toBe(true);

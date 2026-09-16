@@ -110,6 +110,9 @@ export const FeedScreen = memo(function FeedScreen({
   const { styles, theme } = useReaderThemeStyles(createFeedStyles);
   const internalListRef = useRef<FlashListRef<Topic>>(null);
   const listRef = scrollRef || internalListRef;
+  const renderedSourceRef = useRef({ source: feedSource, hasList: false });
+  if (renderedSourceRef.current.source !== feedSource)
+    renderedSourceRef.current = { source: feedSource, hasList: false };
   const { width: pagerWidth } = useWindowDimensions();
   const requestedFeedPageRef = useRef<number | null>(null);
   const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
@@ -402,9 +405,10 @@ export const FeedScreen = memo(function FeedScreen({
       if (!routeSource || routeSource !== feedSource) {
         return renderFeedLoadingScene();
       }
-      if (visibleFeedItems.length === 0 && busy) {
+      if (visibleFeedItems.length === 0 && busy && !renderedSourceRef.current.hasList) {
         return renderFeedLoadingScene();
       }
+      renderedSourceRef.current.hasList = true;
       return (
         <View style={styles.content}>
           <FlashList
@@ -422,8 +426,9 @@ export const FeedScreen = memo(function FeedScreen({
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled={false}
             refreshControl={
-              allSourcesDisabled || (busy && visibleFeedItems.length === 0) ? undefined : (
+              allSourcesDisabled ? undefined : (
                 <RefreshControl
+                  enabled={!busy || visibleFeedItems.length > 0}
                   refreshing={refreshing}
                   onRefresh={onRefresh}
                   colors={[theme.primary]}
@@ -530,9 +535,9 @@ export const FeedScreen = memo(function FeedScreen({
                   if (active) changeReadingFilter(value);
                 }}
               />
-            ) : routeShowsFilter ? (
-              <View style={styles.feedSecondaryRow}>
-                <View style={styles.feedCategoryRailSlot}>
+            ) : (
+              <View style={routeShowsFilter ? styles.feedSecondaryRow : undefined}>
+                <View style={routeShowsFilter ? styles.feedCategoryRailSlot : undefined}>
                   <PillRail
                     variant="subtabs"
                     disabled={!active}
@@ -544,34 +549,25 @@ export const FeedScreen = memo(function FeedScreen({
                     }}
                   />
                 </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="列表筛选"
-                  accessibilityState={{ expanded: active && filterMenuOpen }}
-                  disabled={!active}
-                  hitSlop={TOUCH_HIT_SLOP}
-                  style={styles.linuxDoFilterButton}
-                  onPress={() => {
-                    if (active) toggleFeedFilterMenu();
-                  }}
-                >
-                  <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>
-                    {feedFilterLabel(routeSource, routeFilter)}
-                  </Text>
-                  <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
-                </Pressable>
+                {routeShowsFilter ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="列表筛选"
+                    accessibilityState={{ expanded: active && filterMenuOpen }}
+                    disabled={!active}
+                    hitSlop={TOUCH_HIT_SLOP}
+                    style={styles.linuxDoFilterButton}
+                    onPress={() => {
+                      if (active) toggleFeedFilterMenu();
+                    }}
+                  >
+                    <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>
+                      {feedFilterLabel(routeSource, routeFilter)}
+                    </Text>
+                    <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
+                  </Pressable>
+                ) : null}
               </View>
-            ) : (
-              <PillRail
-                variant="subtabs"
-                disabled={!active}
-                items={categoryItems}
-                value={routeCategory}
-                resetScrollKey={Number(active)}
-                onChange={(value) => {
-                  if (active) changeCategoryFilter(value);
-                }}
-              />
             )}
           </View>
           {renderFeedContent({ route })}

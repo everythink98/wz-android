@@ -136,6 +136,9 @@ function NotificationRow({
 }
 
 export const NotificationsScreen = memo(function NotificationsScreen({
+  initializationError = '',
+  storageReady = true,
+  onRetryInitialization,
   activeSources,
   categories = [],
   categoryId = '',
@@ -162,6 +165,9 @@ export const NotificationsScreen = memo(function NotificationsScreen({
   onRetryAccountStatus,
   onRetrySource
 }: {
+  initializationError?: string;
+  storageReady?: boolean;
+  onRetryInitialization?: () => void;
   activeSources: readonly NotificationSource[];
   categories?: readonly NotificationCategory[];
   categoryId?: string;
@@ -249,6 +255,12 @@ export const NotificationsScreen = memo(function NotificationsScreen({
             : 'empty';
   const header = (
     <View>
+      {initializationError ? (
+        <View style={styles.sourceNotice} accessibilityLiveRegion="polite">
+          <Text style={styles.errorText}>{initializationError}</Text>
+          {onRetryInitialization ? <AppButton label="重试通知初始化" onPress={onRetryInitialization} /> : null}
+        </View>
+      ) : null}
       <View style={styles.toolbar}>
         <PillRail
           variant="tabs"
@@ -327,6 +339,18 @@ export const NotificationsScreen = memo(function NotificationsScreen({
     </View>
   );
   const onPageLayout = useStartupPageLayout();
+  if (!storageReady)
+    return (
+      <EmptyState
+        title={initializationError ? '通知初始化失败' : '正在恢复通知'}
+        text={initializationError || '正在读取本机通知设置和记录。'}
+        action={
+          initializationError && onRetryInitialization
+            ? { label: '重试通知初始化', run: onRetryInitialization }
+            : undefined
+        }
+      />
+    );
   return (
     <FlashList
       onLayout={onPageLayout}
@@ -392,6 +416,8 @@ function sourceSettingStatus(source: NotificationSource, state: NotificationStat
 }
 
 export function NotificationSettingsScreen({
+  initializationError = '',
+  onRetryInitialization,
   backgroundEnabled,
   backgroundError,
   busy,
@@ -403,6 +429,8 @@ export function NotificationSettingsScreen({
   onToggleGlobal,
   onToggleSource
 }: {
+  initializationError?: string;
+  onRetryInitialization?: () => void;
   backgroundEnabled: boolean;
   backgroundError: string;
   busy: boolean;
@@ -418,6 +446,12 @@ export function NotificationSettingsScreen({
   const onPageLayout = useStartupPageLayout();
   return (
     <ScrollView onLayout={onPageLayout} style={styles.screen} contentContainerStyle={styles.settingsContent}>
+      {initializationError ? (
+        <View style={styles.permissionBox} accessibilityLiveRegion="polite">
+          <Text style={styles.errorText}>{initializationError}</Text>
+          {onRetryInitialization ? <AppButton label="重试通知初始化" onPress={onRetryInitialization} /> : null}
+        </View>
+      ) : null}
       <Text style={styles.settingsIntro}>
         Android 通知默认关闭。启用后，系统会在本机约每 15
         分钟安排一次检查；force-stop、省电策略和系统调度都可能造成延迟。
@@ -598,6 +632,7 @@ export function NotificationDetailScreen({
   onRetry,
   onSubmitReply = () => undefined,
   onLoadLinuxDoPollCapabilities,
+  onResolveLinuxDoUpload,
   onLoadLinuxDoTemplates,
   onUseLinuxDoTemplate,
   onUploadReplyImage
@@ -628,6 +663,7 @@ export function NotificationDetailScreen({
   onRetry: () => void;
   onSubmitReply?: (snapshot?: ComposerSnapshot) => unknown;
   onLoadLinuxDoPollCapabilities?: () => Promise<LinuxDoPollCapabilities>;
+  onResolveLinuxDoUpload?: (shortUrl: string) => Promise<string>;
   onLoadLinuxDoTemplates?: () => Promise<LinuxDoTemplate[]>;
   onUseLinuxDoTemplate?: (id: string) => Promise<void>;
   onUploadReplyImage?: () => unknown;
@@ -843,6 +879,7 @@ export function NotificationDetailScreen({
           onSnapshot={onReplySnapshot}
           onSubmit={onSubmitReply}
           onLoadLinuxDoPollCapabilities={onLoadLinuxDoPollCapabilities}
+          onResolveLinuxDoUpload={onResolveLinuxDoUpload}
           onLoadLinuxDoTemplates={onLoadLinuxDoTemplates}
           onUseLinuxDoTemplate={onUseLinuxDoTemplate}
           onUploadImage={detail.reply.format === 'markdown' ? onUploadReplyImage : undefined}

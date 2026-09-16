@@ -281,25 +281,17 @@ const embedStyles = StyleSheet.create({
   }
 });
 
-export function createContentMediaRenderers({
+export function createIframeRenderer({
   htmlRendererStyles,
-  mediaContext,
   mediaSessionIdentity,
-  nodeSeekMediaUserAgent,
-  openHtmlLink,
-  settings,
   theme,
   webViewBlockMessage
 }: {
   htmlRendererStyles: ReturnType<typeof createHtmlRendererStyles>;
-  mediaContext: ForumMediaRequestContext;
   mediaSessionIdentity: string;
-  nodeSeekMediaUserAgent?: string;
-  openHtmlLink: (href: string, event?: { stopPropagation?: () => void }) => void;
-  settings: Pick<ReaderSettings, 'fontScale'>;
   theme: ReaderTheme;
   webViewBlockMessage: string;
-}): HtmlRenderers {
+}): CustomBlockRenderer {
   const VideoEmbedWebView = ({ embedUrl }: { embedUrl: string }) => {
     const lease = useTopicBodyMediaLease({
       kind: 'video',
@@ -346,6 +338,35 @@ export function createContentMediaRenderers({
     </View>
   );
 
+  const IframeRenderer: CustomBlockRenderer = (props) => {
+    const boundarySpacing = useContentBoundarySpacing(props.tnode);
+    const src = props.tnode.attributes.src || '';
+    const embed = nsEmbedFromUrl(src);
+    if (embed?.type !== 'bilibili') {
+      return null;
+    }
+    return <VideoEmbedBlock boundarySpacing={boundarySpacing} embedUrl={embed.embedUrl} />;
+  };
+  return IframeRenderer;
+}
+
+export function createContentMediaRenderers({
+  htmlRendererStyles,
+  mediaContext,
+  mediaSessionIdentity,
+  nodeSeekMediaUserAgent,
+  openHtmlLink,
+  settings,
+  theme
+}: {
+  htmlRendererStyles: ReturnType<typeof createHtmlRendererStyles>;
+  mediaContext: ForumMediaRequestContext;
+  mediaSessionIdentity: string;
+  nodeSeekMediaUserAgent?: string;
+  openHtmlLink: (href: string, event?: { stopPropagation?: () => void }) => void;
+  settings: Pick<ReaderSettings, 'fontScale'>;
+  theme: ReaderTheme;
+}): HtmlRenderers {
   const ForumVideoStickerRenderer: CustomBlockRenderer = (props) => {
     const boundarySpacing = useContentBoundarySpacing(props.tnode);
     const attributes = props.tnode.attributes || {};
@@ -508,15 +529,6 @@ export function createContentMediaRenderers({
     );
   };
 
-  const IframeRenderer: CustomBlockRenderer = (props) => {
-    const boundarySpacing = useContentBoundarySpacing(props.tnode);
-    const src = props.tnode.attributes.src || '';
-    const embed = nsEmbedFromUrl(src);
-    if (embed?.type !== 'bilibili') {
-      return null;
-    }
-    return <VideoEmbedBlock boundarySpacing={boundarySpacing} embedUrl={embed.embedUrl} />;
-  };
   return {
     ...createForumStickerRenderers({
       fontScale: settings.fontScale,
@@ -539,8 +551,7 @@ export function createContentMediaRenderers({
     [FORUM_AUDIO_TAG]: ForumAudioRenderer,
     [FORUM_LINK_CARD_TAG]: LinkCardRenderer,
     [FORUM_VIDEO_TAG]: ForumVideoRenderer,
-    [FORUM_VIDEO_STICKER_TAG]: ForumVideoStickerRenderer,
-    iframe: IframeRenderer
+    [FORUM_VIDEO_STICKER_TAG]: ForumVideoStickerRenderer
   };
 }
 

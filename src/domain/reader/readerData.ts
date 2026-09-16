@@ -3,7 +3,15 @@ import { parseForumUserLink } from '@/domain/forum/links';
 import { decodeHtml } from '@/domain/forum/html';
 import { accessRequirementFromText } from '@/domain/forum/accessRequirements';
 import { sourceCatalog, sourceValues } from '@/domain/forum/sourceCatalog';
-import type { AccessRequirement, Category, Source, Topic, UserProfile } from '@/domain/forum/models';
+import type {
+  AccessRequirement,
+  Category,
+  Source,
+  Topic,
+  UserProfile,
+  UserDetails,
+  UserTopicsPage
+} from '@/domain/forum/models';
 import {
   defaultContentSourcePreferences,
   normalizeContentSourcePreferences,
@@ -54,16 +62,6 @@ export interface ReaderData {
   deletedRecords: DeletedRecords;
   settings: ReaderSettings;
 }
-
-export type ReaderDataMutationReason =
-  | 'backup-imported'
-  | 'favorite-toggled'
-  | 'follow-removed'
-  | 'follow-toggled'
-  | 'history-cleared'
-  | 'history-recorded'
-  | 'library-topic-removed'
-  | 'settings-updated';
 
 function createDefaultReaderSettings(): ReaderSettings {
   return {
@@ -177,10 +175,6 @@ function canonicalTopicAuthorUrl(topic: Topic) {
   return authorId ? userProfileUrl(topic.source, authorId, authorId) : '';
 }
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
 function isTopic(value: unknown): value is Topic {
   return topicShapeSchema.safeParse(value).success;
 }
@@ -289,7 +283,7 @@ export function topicSummary(topic: Topic): Topic {
   };
 }
 
-export function userSummary(user: UserProfile): UserProfile {
+export function userSummary(user: UserDetails & Partial<UserTopicsPage>): UserProfile {
   const id = cleanString(user.id || user.username).trim();
   const username = cleanString(user.username || user.displayName);
   const displayName = cleanUserDisplayName(user);
@@ -334,7 +328,7 @@ function createEmptyDeletedRecords(): DeletedRecords {
   };
 }
 
-function cleanUserDisplayName(user: UserProfile) {
+function cleanUserDisplayName(user: UserDetails) {
   const displayName = cleanString(user.displayName).trim();
   if (user.source === 'yaohuo' && isPollutedYaohuoUserText(displayName)) {
     return user.username || user.id;
@@ -471,16 +465,12 @@ function limitDeletedRecordMap(records: Record<string, string>) {
   return limitRecordMap(records, MAX_DELETED_RECORDS, (time) => time);
 }
 
-function normalizeDeletedRecords(value: unknown, current?: DeletedRecords): DeletedRecords {
+function normalizeDeletedRecords(value: unknown): DeletedRecords {
   const base = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<DeletedRecords>) : {};
   return {
-    favorites:
-      current && base.favorites === current.favorites ? current.favorites : normalizeDeletedRecordMap(base.favorites),
-    history: current && base.history === current.history ? current.history : normalizeDeletedRecordMap(base.history),
-    followedUsers:
-      current && base.followedUsers === current.followedUsers
-        ? current.followedUsers
-        : normalizeDeletedRecordMap(base.followedUsers)
+    favorites: normalizeDeletedRecordMap(base.favorites),
+    history: normalizeDeletedRecordMap(base.history),
+    followedUsers: normalizeDeletedRecordMap(base.followedUsers)
   };
 }
 
@@ -590,12 +580,7 @@ export function validateStoredReaderData(value: unknown): ReaderData {
   };
 }
 
-// Only immutable in-memory mutations may reuse previously validated partitions.
-export function sanitizeReaderDataMutation(current: ReaderData, updated: ReaderData): ReaderData {
-  return normalizeReaderData(updated, current);
-}
-
-function normalizeReaderData(value: unknown, current?: ReaderData): ReaderData {
+function normalizeReaderData(value: unknown): ReaderData {
   const parsed = readerDataSchema.safeParse(value);
   if (!parsed.success) {
     return createEmptyReaderData();
@@ -603,17 +588,11 @@ function normalizeReaderData(value: unknown, current?: ReaderData): ReaderData {
   const data = parsed.data as Partial<ReaderData>;
   return {
     version: readerDataVersion,
-    favorites: current && data.favorites === current.favorites ? current.favorites : normalizeRecordMap(data.favorites),
-    history: current && data.history === current.history ? current.history : normalizeRecordMap(data.history),
-    followedUsers:
-      current && data.followedUsers === current.followedUsers
-        ? current.followedUsers
-        : normalizeFollowedUsers(data.followedUsers),
-    deletedRecords:
-      current && data.deletedRecords === current.deletedRecords
-        ? current.deletedRecords
-        : normalizeDeletedRecords(data.deletedRecords, current?.deletedRecords),
-    settings: current && data.settings === current.settings ? current.settings : sanitizeReaderSettings(data.settings)
+    favorites: normalizeRecordMap(data.favorites),
+    history: normalizeRecordMap(data.history),
+    followedUsers: normalizeFollowedUsers(data.followedUsers),
+    deletedRecords: normalizeDeletedRecords(data.deletedRecords),
+    settings: sanitizeReaderSettings(data.settings)
   };
 }
 
@@ -679,31 +658,6 @@ function mergeTimedMapWithDeleted<T>(
   return { records, deleted };
 }
 
-function markDeleted(
-  deletedRecords: DeletedRecords,
-  section: keyof DeletedRecords,
-  key: string,
-  deletedAt = nowIso()
-): DeletedRecords {
-  return {
-    ...deletedRecords,
-    [section]: limitDeletedRecordMap({
-      ...deletedRecords[section],
-      [key]: deletedAt
-    })
-  };
-}
-
-function clearDeleted(deletedRecords: DeletedRecords, section: keyof DeletedRecords, key: string): DeletedRecords {
-  if (!Object.hasOwn(deletedRecords[section], key)) return deletedRecords;
-  const next = { ...deletedRecords[section] };
-  delete next[key];
-  return {
-    ...deletedRecords,
-    [section]: next
-  };
-}
-
 export function mergeReaderData(localValue: unknown, remoteValue: unknown): ReaderData {
   const local = sanitizeReaderData(localValue);
   const remote = sanitizeReaderData(remoteValue);
@@ -746,117 +700,6 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
     },
     settings: mergeReaderSettings(local.settings, remoteSettings)
   });
-}
-
-export function recordHistory(data: ReaderData, topic: Topic) {
-  const summary = topicSummary(topic);
-  const key = topicKey(summary);
-  const existing = data.history[key];
-  let history = {
-    ...data.history,
-    [key]: {
-      ...existing,
-      topic: summary,
-      savedAt: nowIso(),
-      visitCount: (existing?.visitCount || 0) + 1
-    }
-  };
-  const limit = Math.max(MAX_HISTORY_RECORDS, Object.keys(data.history).length);
-  if (Object.keys(history).length > limit) {
-    history = limitRecordMap(history, limit, (record) => record.savedAt);
-  }
-  return {
-    ...data,
-    history,
-    deletedRecords: clearDeleted(data.deletedRecords, 'history', key)
-  };
-}
-
-export function toggleFavorite(data: ReaderData, topic: Topic) {
-  const summary = topicSummary(topic);
-  const key = topicKey(summary);
-  const next = { ...data.favorites };
-  let deletedRecords = data.deletedRecords;
-  if (next[key]) {
-    delete next[key];
-    deletedRecords = markDeleted(deletedRecords, 'favorites', key);
-  } else {
-    next[key] = { topic: summary, savedAt: nowIso() };
-    deletedRecords = clearDeleted(deletedRecords, 'favorites', key);
-  }
-  return { ...data, favorites: next, deletedRecords };
-}
-
-export function updateFavoriteTopic(data: ReaderData, topic: Topic) {
-  const summary = topicSummary(topic);
-  const key = topicKey(summary);
-  const existing = data.favorites[key];
-  if (!existing) {
-    return data;
-  }
-  return {
-    ...data,
-    favorites: {
-      ...data.favorites,
-      [key]: {
-        ...existing,
-        topic: summary
-      }
-    }
-  };
-}
-
-export function toggleFollowedUser(data: ReaderData, user: UserProfile) {
-  const summary = userSummary(user);
-  const key = userKey(summary);
-  const next = { ...data.followedUsers };
-  let deletedRecords = data.deletedRecords;
-  if (next[key]) {
-    delete next[key];
-    deletedRecords = markDeleted(deletedRecords, 'followedUsers', key);
-  } else {
-    next[key] = { user: summary, followedAt: nowIso() };
-    deletedRecords = clearDeleted(deletedRecords, 'followedUsers', key);
-  }
-  return { ...data, followedUsers: next, deletedRecords };
-}
-
-export function removeRecords(
-  data: ReaderData,
-  section: 'favorites' | 'history',
-  topics: Pick<Topic, 'source' | 'id'>[]
-) {
-  return removeRecordKeys(data, section, topics.map(topicKey));
-}
-
-export function removeFollowedUsers(data: ReaderData, users: Pick<UserProfile, 'source' | 'id'>[]) {
-  return removeRecordKeys(data, 'followedUsers', users.map(userKey));
-}
-
-function removeRecordKeys(data: ReaderData, section: keyof DeletedRecords, keys: string[]): ReaderData {
-  let next: (typeof data)[typeof section] | undefined;
-  let deleted: Record<string, string> | undefined;
-  for (const key of keys) {
-    if (!(next ?? data[section])[key]) continue;
-    next ??= { ...data[section] };
-    deleted ??= { ...data.deletedRecords[section] };
-    delete next[key];
-    deleted[key] = nowIso();
-  }
-  if (!next || !deleted) return data;
-  return {
-    ...data,
-    [section]: next,
-    deletedRecords: { ...data.deletedRecords, [section]: limitDeletedRecordMap(deleted) }
-  };
-}
-
-export function clearRecords(data: ReaderData, section: 'history') {
-  return removeRecords(
-    data,
-    section,
-    Object.values(data[section]).map((record) => record.topic)
-  );
 }
 
 export function isUserFollowed(

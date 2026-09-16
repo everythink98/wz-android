@@ -6,7 +6,7 @@ import {
   type SessionSite,
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
-import type { UserProfile } from '@/domain/forum/models';
+import type { UserIdentity } from '@/domain/forum/models';
 
 export type { CredentialSummaries } from '@/platform/storage/credentialVault';
 export type AccountPrimaryAction = 'open-user' | 'open-login' | 'open-login-with-fill' | 'none';
@@ -30,7 +30,7 @@ export type SiteAccountView = {
   primaryLabel: string;
   primaryDisabled: boolean;
   needsAttention: boolean;
-  user?: UserProfile;
+  user?: UserIdentity;
 };
 
 function primaryActionFor(view: SiteSessionViewModels[SessionSite], hasCredential: boolean) {

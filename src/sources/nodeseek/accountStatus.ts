@@ -1,4 +1,4 @@
-import { getCurrentUserProfile } from '@/sources/readGateway';
+import { getCurrentUserIdentity } from '@/sources/readGateway';
 import { summarizeNodeSeekCookieHeader } from './session';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { isCanceledRequest } from '@/platform/network/errors';
@@ -35,7 +35,7 @@ export async function readNodeSeekAccountStatus({
     const summary = summarizeNodeSeekCookieHeader(cookieHeader);
     cookieSummary = summary.names;
     markDiagnosticStage(trace, 'credential', { source: 'nodeseek', hasCredential: summary.count > 0 });
-    const currentUser = await getCurrentUserProfile({
+    const currentUser = await getCurrentUserIdentity({
       source: 'nodeseek',
       nodeSeekAuthenticated: true,
       fetcher: withDiagnosticFetcher(trace, fetcher),

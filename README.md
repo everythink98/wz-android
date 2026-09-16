@@ -78,7 +78,7 @@
 - Cookie 和本机资料不上传到阅坛自有服务；认证材料只用于对应原站、NodeImage 或用户配置代理的请求，不进入阅坛自有服务。
 - NodeSeek、linux.do 和妖火 Cookie 由网站 WebView 与 Android `CookieManager` 持有，不复制到 SecureStore、ReaderData 或备份。
 - NodeImage API Key、保存的账号密码和服务器代理配置使用 Android SecureStore。
-- 本机资料保存在 `AsyncStorage`，通过当前版本 JSON 备份 / 恢复。
+- 本机资料由 SQLite 事务保存，通过当前版本 JSON 备份 / 恢复；旧 AsyncStorage 资料在首次加载时迁移。
 - 备份 JSON 不保存 Cookie、token、password、session、sid、csrf、proxy 等敏感字段。
 
 ## 开发

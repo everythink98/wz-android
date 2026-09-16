@@ -2,14 +2,14 @@ import * as SecureStore from 'expo-secure-store';
 import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  getCurrentUserProfile: vi.fn()
+  getCurrentUserIdentity: vi.fn()
 }));
 
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn()
 }));
 vi.mock('./sourceRead', () => ({
-  getCurrentUserProfile: mocks.getCurrentUserProfile
+  getCurrentUserIdentity: mocks.getCurrentUserIdentity
 }));
 vi.mock('@/sources/linuxdo/auth', () => ({
   loadLinuxDoCredentials: vi.fn()
@@ -26,7 +26,7 @@ describe('background notification access', () => {
           resolveCredential = resolve;
         })
     );
-    mocks.getCurrentUserProfile.mockResolvedValue({ id: '7', username: 'user' });
+    mocks.getCurrentUserIdentity.mockResolvedValue({ id: '7', username: 'user' });
     let allowed = true;
     const probe = probeBackgroundNotificationAccess('nodeseek', new AbortController().signal, async () => {
       if (allowed) return;
@@ -38,6 +38,6 @@ describe('background notification access', () => {
     resolveCredential(null);
 
     await expect(probe).rejects.toMatchObject({ reason: 'source-disabled', source: 'nodeseek' });
-    expect(mocks.getCurrentUserProfile).not.toHaveBeenCalled();
+    expect(mocks.getCurrentUserIdentity).not.toHaveBeenCalled();
   });
 });

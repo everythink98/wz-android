@@ -1,0 +1,394 @@
+diff --git a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/Keyboard.kt b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/Keyboard.kt
+index 53e300b..30cbd30 100644
+--- a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/Keyboard.kt
++++ b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/Keyboard.kt
+@@ -17,6 +17,8 @@ class Keyboard {
+ 
+     fun getHeight(): Int = mHeight
+ 
++    fun isAnimating(): Boolean = mActiveTransitionCounter > 0
++
+     fun updateHeight(
+         insets: WindowInsetsCompat,
+         isNavigationBarTranslucent: Boolean,
+@@ -26,15 +28,10 @@ class Keyboard {
+             if (isNavigationBarTranslucent) 0 else insets.getInsets(SYSTEM_BAR_TYPE_MASK).bottom
+         val keyboardHeightDip = contentBottomInset - systemBarBottomInset
+         val keyboardHeight = PixelUtil.toDIPFromPixel(Math.max(0, keyboardHeightDip).toFloat()).toInt()
+-        if (keyboardHeight <= 0 && mState == KeyboardState.OPEN) {
+-      /*
+-      When the keyboard is being canceling, for one frame the insets show a keyboard height of 0,
+-      causing a jump of the keyboard. We can avoid it by ignoring that frame and calling
+-      the listeners on the following frame.
+-       */
+-            return
+-        }
+         mHeight = keyboardHeight
++        if (!isAnimating()) {
++            mState = if (mHeight <= 0) KeyboardState.CLOSED else KeyboardState.OPEN
++        }
+     }
+ 
+     fun onAnimationStart() {
+diff --git a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationCallback.kt b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationCallback.kt
+index a47d33b..374913d 100644
+--- a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationCallback.kt
++++ b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationCallback.kt
+@@ -7,23 +7,18 @@ class KeyboardAnimationCallback(
+     private val mKeyboard: Keyboard,
+     private val mNotifyAboutKeyboardChange: NotifyAboutKeyboardChangeFunction,
+     private val mIsNavigationBarTranslucent: Boolean,
++    private val mGetRootWindowInsets: () -> WindowInsetsCompat?,
+ ) : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+     companion object {
+         private val CONTENT_TYPE_MASK = WindowInsetsCompat.Type.ime()
+     }
+ 
+-    private var mPendingStartDispatch = false
+-
+-    override fun onStart(
+-        animation: WindowInsetsAnimationCompat,
+-        bounds: WindowInsetsAnimationCompat.BoundsCompat,
+-    ): WindowInsetsAnimationCompat.BoundsCompat {
+-        if (!isKeyboardAnimation(animation)) {
+-            return bounds
++    override fun onPrepare(animation: WindowInsetsAnimationCompat) {
++        if (isKeyboardAnimation(animation)) {
++            // onApplyWindowInsets receives the target before onStart. Do not
++            // publish that target as a frame of the running keyboard animation.
++            mKeyboard.onAnimationStart()
+         }
+-        mKeyboard.onAnimationStart()
+-        mPendingStartDispatch = true
+-        return super.onStart(animation, bounds)
+     }
+ 
+     override fun onProgress(
+@@ -38,7 +33,6 @@ class KeyboardAnimationCallback(
+             }
+         }
+         if (isAnyKeyboardAnimationRunning) {
+-            mPendingStartDispatch = false
+             mKeyboard.updateHeight(insets, mIsNavigationBarTranslucent)
+             mNotifyAboutKeyboardChange.call()
+         }
+@@ -47,11 +41,12 @@ class KeyboardAnimationCallback(
+ 
+     override fun onEnd(animation: WindowInsetsAnimationCompat) {
+         if (isKeyboardAnimation(animation)) {
+-            if (mPendingStartDispatch) {
+-                mNotifyAboutKeyboardChange.call()
+-            }
+-            mPendingStartDispatch = false
+             mKeyboard.onAnimationEnd()
++            if (!mKeyboard.isAnimating()) {
++                // Opening another activity can cancel IME at an intermediate
++                // frame. The window, not the last animation frame, owns rest.
++                mGetRootWindowInsets()?.let { mKeyboard.updateHeight(it, mIsNavigationBarTranslucent) }
++            }
+             mNotifyAboutKeyboardChange.call()
+         }
+     }
+diff --git a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationManager.kt b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationManager.kt
+index bd9c2d1..ae751fe 100644
+--- a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationManager.kt
++++ b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/KeyboardAnimationManager.kt
+@@ -25,7 +25,7 @@ class KeyboardAnimationManager(
+         val listenerId = mNextListenerId++
+         if (mListeners.isEmpty()) {
+             val keyboardAnimationCallback =
+-                KeyboardAnimationCallback(mKeyboard, ::notifyAboutKeyboardChange, isNavigationBarTranslucent)
++                KeyboardAnimationCallback(mKeyboard, ::notifyAboutKeyboardChange, isNavigationBarTranslucent, mWindowsInsetsManager::getRootWindowInsets)
+             mWindowsInsetsManager.startObservingChanges(keyboardAnimationCallback, isStatusBarTranslucent, isNavigationBarTranslucent)
+         }
+         mListeners[listenerId] = callback
+diff --git a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/WindowsInsetsManager.kt b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/WindowsInsetsManager.kt
+index b0b8cfb..2e12d8b 100644
+--- a/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/WindowsInsetsManager.kt
++++ b/node_modules/react-native-reanimated/android/src/main/java/com/swmansion/reanimated/keyboard/WindowsInsetsManager.kt
+@@ -24,6 +24,8 @@ class WindowsInsetsManager(
+ 
+     private fun getCurrentActivity(): Activity? = mReactContext.get()?.currentActivity
+ 
++    fun getRootWindowInsets(): WindowInsetsCompat? = getCurrentActivity()?.window?.decorView?.let { ViewCompat.getRootWindowInsets(it) }
++
+     fun startObservingChanges(
+         keyboardAnimationCallback: KeyboardAnimationCallback,
+         isStatusBarTranslucent: Boolean,
+@@ -75,7 +77,7 @@ class WindowsInsetsManager(
+         insets: WindowInsetsCompat,
+     ): WindowInsetsCompat {
+         val defaultInsets = ViewCompat.onApplyWindowInsets(view, insets)
+-        if (mKeyboard.getState() == KeyboardState.OPEN) {
++        if (!mKeyboard.isAnimating()) {
+             mKeyboard.updateHeight(insets, mIsNavigationBarTranslucent)
+             mNotifyAboutKeyboardChange.call()
+         }
+diff --git a/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.cpp b/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.cpp
+index 2db064ce01b7..89323e2386c9 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.cpp
++++ b/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.cpp
+@@ -5,8 +5,10 @@
+ 
+ #include <react/debug/react_native_assert.h>
+ 
++#include <functional>
+ #include <memory>
+ #include <utility>
++#include <vector>
+ 
+ namespace reanimated {
+ 
+@@ -35,26 +37,65 @@ void AnimatedPropsRegistry::update(jsi::Runtime &rt, const jsi::Value &operation
+       addUpdatesToBatch(shadowNode->getFamilyShared(), jsi::dynamicFromValue(rt, updates));
+     }
+ 
+-    if constexpr (StaticFeatureFlags::getFlag("FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS")) {
+-      timestampMap_[shadowNode->getTag()] = timestamp;
++    // When USE_ANIMATION_BACKEND is enabled, updates bypass `updatesRegistry_`,
++    // so entries added to `timestampMap_` would never be synced and thus never
++    // evicted, leaking until view unmount.
++    if constexpr (
++        StaticFeatureFlags::getFlag("FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS") &&
++        !StaticFeatureFlags::getFlag("USE_ANIMATION_BACKEND")) {
++      const auto tag = shadowNode->getTag();
++      timestampMap_[tag] = timestamp;
++      // If JS already has a `settledProps` snapshot for this tag, it is now
++      // stale — schedule a refresh on the next `collectSettledUpdates`.
++      if (syncedTags_.erase(tag) > 0) {
++        invalidatedTags_.insert(tag);
++      }
+     }
+   }
+ }
+ 
+-jsi::Value AnimatedPropsRegistry::getUpdatesOlderThanTimestamp(
+-    jsi::Runtime &rt,
+-    const double timestamp,
+-    const double cleanupTimestamp) {
++jsi::Value AnimatedPropsRegistry::collectSettledUpdates(jsi::Runtime &rt, const double settledTimestamp) {
+   react_native_assert(UpdatesRegistryManager::isLockedByCurrentThread());
+-  removeUpdatesOlderThanTimestamp(cleanupTimestamp);
+ 
+   std::vector<std::pair<Tag, std::reference_wrapper<const folly::dynamic>>> updates;
+ 
+-  for (const auto &[viewTag, pair] : updatesRegistry_) {
+-    auto it = timestampMap_.find(viewTag);
+-    if (it != timestampMap_.end() && it->second < timestamp) {
+-      updates.emplace_back(viewTag, std::cref(pair.second));
++  for (auto it = updatesRegistry_.begin(); it != updatesRegistry_.end();) {
++    const auto viewTag = it->first;
++
++    if (syncedTags_.contains(viewTag)) {
++      // React already has the latest value for this tag (synced on a previous
++      // call, so the `settledProps` state is committed by now) — the registry
++      // entry is redundant. `syncedTags_` is intentionally retained to detect
++      // re-animation staleness. Note that `syncedTags_` and `invalidatedTags_`
++      // are disjoint — `update()` moves tags from the former to the latter.
++      timestampMap_.erase(viewTag);
++      it = updatesRegistry_.erase(it);
++      continue;
++    }
++
++    const auto timestampIt = timestampMap_.find(viewTag);
++    if (timestampIt == timestampMap_.end()) {
++      ++it;
++      continue;
++    }
++    const bool isSettled = timestampIt->second < settledTimestamp;
++    const auto invalidatedIt = invalidatedTags_.find(viewTag);
++    const bool isInvalidated = invalidatedIt != invalidatedTags_.end();
++    if (isSettled || isInvalidated) {
++      updates.emplace_back(viewTag, std::cref(it->second.second));
++      if (isSettled) {
++        // Only settled-path tags are tracked as "synced" so that an ongoing
++        // animation doesn't re-trigger an invalidation/sync on every GC tick.
++        syncedTags_.insert(viewTag);
++      }
++      if (isInvalidated) {
++        // Only erase serviced invalidations; if a tag was invalidated but the
++        // matching update batch hasn't been flushed into updatesRegistry_ yet,
++        // we leave the entry so the next sync picks it up.
++        invalidatedTags_.erase(invalidatedIt);
++      }
+     }
++    ++it;
+   }
+ 
+   const jsi::Array array(rt, updates.size());
+@@ -69,22 +110,11 @@ jsi::Value AnimatedPropsRegistry::getUpdatesOlderThanTimestamp(
+   return jsi::Value(rt, array);
+ }
+ 
+-void AnimatedPropsRegistry::removeUpdatesOlderThanTimestamp(const double timestamp) {
+-  for (auto it = timestampMap_.begin(); it != timestampMap_.end();) {
+-    const auto viewTag = it->first;
+-    const auto viewTimestamp = it->second;
+-    if (viewTimestamp < timestamp) {
+-      it = timestampMap_.erase(it);
+-      updatesRegistry_.erase(viewTag);
+-    } else {
+-      it++;
+-    }
+-  }
+-}
+-
+ void AnimatedPropsRegistry::removeTag(const Tag tag) {
+   updatesRegistry_.erase(tag);
+   timestampMap_.erase(tag);
++  syncedTags_.erase(tag);
++  invalidatedTags_.erase(tag);
+ }
+ 
+ } // namespace reanimated
+diff --git a/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.h b/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.h
+index 2197eec76c6f..a9cb24ce5f74 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.h
++++ b/node_modules/react-native-reanimated/Common/cpp/reanimated/Fabric/updates/AnimatedPropsRegistry.h
+@@ -4,10 +4,8 @@
+ 
+ #include <react/renderer/uimanager/UIManager.h>
+ 
+-#include <memory>
+-#include <string>
+ #include <unordered_map>
+-#include <vector>
++#include <unordered_set>
+ 
+ namespace reanimated {
+ 
+@@ -15,13 +13,22 @@ class AnimatedPropsRegistry : public UpdatesRegistry {
+  public:
+   void update(jsi::Runtime &rt, const jsi::Value &operations, double timestamp);
+ 
+-  /// Also removes updates older than `cleanupTimestamp` from the registry.
+-  jsi::Value getUpdatesOlderThanTimestamp(jsi::Runtime &rt, double timestamp, double cleanupTimestamp);
++  /// Returns updates that settled (received no update since `settledTimestamp`)
++  /// or whose synced `settledProps` snapshot was invalidated by a fresh update.
++  /// Also evicts entries that have already been synced to React — by the time
++  /// of the next call, the corresponding `settledProps` state is guaranteed to
++  /// be committed, so the registry entries are redundant.
++  jsi::Value collectSettledUpdates(jsi::Runtime &rt, double settledTimestamp);
+ 
+  private:
+   std::unordered_map<Tag, double> timestampMap_;
++  // Tags whose latest values have already been pushed to React `settledProps`.
++  // Intentionally retained after eviction to detect re-animation staleness.
++  std::unordered_set<Tag> syncedTags_;
++  // Tags that were synced to React but received a fresh worklet update since;
++  // their `settledProps` are stale and need to be refreshed on the next sync.
++  std::unordered_set<Tag> invalidatedTags_;
+ 
+-  void removeUpdatesOlderThanTimestamp(double timestamp);
+   void removeTag(Tag tag) override;
+ };
+ 
+diff --git a/node_modules/react-native-reanimated/Common/cpp/reanimated/NativeModules/ReanimatedModuleProxy.cpp b/node_modules/react-native-reanimated/Common/cpp/reanimated/NativeModules/ReanimatedModuleProxy.cpp
+index 073bd24e8442..8ce82bccbd5f 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/reanimated/NativeModules/ReanimatedModuleProxy.cpp
++++ b/node_modules/react-native-reanimated/Common/cpp/reanimated/NativeModules/ReanimatedModuleProxy.cpp
+@@ -651,16 +651,14 @@ jsi::Value ReanimatedModuleProxy::getSettledUpdates(jsi::Runtime &rt) {
+       StaticFeatureFlags::getFlag("FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS") &&
+       "getSettledUpdates requires FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS static feature flag to be enabled");
+ 
++  constexpr double SETTLED_ANIMATION_THRESHOLD_MS = 1000;
++
+   // TODO(future): use unified timestamp
+   const auto currentTimestamp = getAnimationTimestamp_();
+ 
+-  // TODO: fix bug when threshold difference is smaller than 1 second
+   // TODO(future): flush updates from CSS animations and CSS transitions registries
+-  // TODO(future): find a better way to obtain timestamp for removing updates
+-  // TODO(future): move removing old updates to separate method
+   auto lock = updatesRegistryManager_->lock();
+-  return animatedPropsRegistry_->getUpdatesOlderThanTimestamp(
+-      rt, currentTimestamp - 1000 /* 1 second */, currentTimestamp - 2000 /* 2 seconds */);
++  return animatedPropsRegistry_->collectSettledUpdates(rt, currentTimestamp - SETTLED_ANIMATION_THRESHOLD_MS);
+ }
+ 
+ bool ReanimatedModuleProxy::handleEvent(
+diff --git a/node_modules/react-native-reanimated/android/build.gradle.kts b/node_modules/react-native-reanimated/android/build.gradle.kts
+index cb63d9ad6b0d..ea51425f0e5d 100644
+--- a/node_modules/react-native-reanimated/android/build.gradle.kts
++++ b/node_modules/react-native-reanimated/android/build.gradle.kts
+@@ -117,6 +117,15 @@ fun validateConflictingFeatureFlags(featureFlags: HashMap<String, String>) {
+             "[Reanimated] The feature flags `ANDROID_SYNCHRONOUSLY_UPDATE_UI_PROPS` and `ENABLE_SHARED_ELEMENT_TRANSITIONS` cannot be enabled simultaneously. Please disable one of them in your package.json."
+         )
+     }
++
++    val useAnimationBackend = featureFlags["USE_ANIMATION_BACKEND"] == "true"
++    val forceReactRenderForSettledAnimations = featureFlags["FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS"] == "true"
++
++    if (useAnimationBackend && forceReactRenderForSettledAnimations) {
++        throw GradleException(
++            "[Reanimated] The feature flags `USE_ANIMATION_BACKEND` and `FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS` cannot be enabled simultaneously. If you want to use the animation backend, you need to explicitly disable `FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS` feature flag (enabled by default) in your package.json."
++        )
++    }
+ }
+ 
+ if (project != rootProject) {
+diff --git a/node_modules/react-native-reanimated/scripts/reanimated_utils.rb b/node_modules/react-native-reanimated/scripts/reanimated_utils.rb
+index 2368ca6b0f7c..f447e8bb02e1 100644
+--- a/node_modules/react-native-reanimated/scripts/reanimated_utils.rb
++++ b/node_modules/react-native-reanimated/scripts/reanimated_utils.rb
+@@ -62,6 +62,13 @@ def assert_conflicting_feature_flags(feature_flags)
+     if ios_sync_ui_props && shared_element_transitions
+       raise "[Reanimated] The feature flags `IOS_SYNCHRONOUSLY_UPDATE_UI_PROPS` and `ENABLE_SHARED_ELEMENT_TRANSITIONS` cannot be enabled simultaneously. Please disable one of them in your package.json"
+     end
++
++    use_animation_backend = feature_flags['USE_ANIMATION_BACKEND'] == 'true'
++    force_react_render_for_settled_animations = feature_flags['FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS'] == 'true'
++
++    if use_animation_backend && force_react_render_for_settled_animations
++      raise "[Reanimated] The feature flags `USE_ANIMATION_BACKEND` and `FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS` cannot be enabled simultaneously. If you want to use the animation backend, you need to explicitly disable `FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS` feature flag (enabled by default) in your package.json"
++    end
+   end
+ 
+   def get_static_feature_flags()
+diff --git a/node_modules/react-native-reanimated/src/PropsRegistryGarbageCollector.ts b/node_modules/react-native-reanimated/src/PropsRegistryGarbageCollector.ts
+index f917ce5a8586..32148fbac8a9 100644
+--- a/node_modules/react-native-reanimated/src/PropsRegistryGarbageCollector.ts
++++ b/node_modules/react-native-reanimated/src/PropsRegistryGarbageCollector.ts
+@@ -11,7 +11,6 @@ import { ReanimatedModule } from './ReanimatedModule';
+ const FLUSH_INTERVAL_MS = 500;
+ 
+ export const PropsRegistryGarbageCollector = {
+-  viewsCount: 0,
+   viewsMap: new Map<number, IAnimatedComponentInternal>(),
+   intervalId: null as NodeJS.Timeout | null,
+ 
+@@ -25,16 +24,14 @@ export const PropsRegistryGarbageCollector = {
+       return;
+     }
+     this.viewsMap.set(viewTag, component);
+-    this.viewsCount++;
+-    if (this.viewsCount === 1) {
++    if (this.viewsMap.size === 1) {
+       this.registerInterval();
+     }
+   },
+ 
+   unregisterView(viewTag: number) {
+-    this.viewsMap.delete(viewTag);
+-    this.viewsCount--;
+-    if (this.viewsCount === 0) {
++    const deleted = this.viewsMap.delete(viewTag);
++    if (deleted && this.viewsMap.size === 0) {
+       this.unregisterInterval();
+     }
+   },
+diff --git a/node_modules/react-native-reanimated/src/createAnimatedComponent/AnimatedComponent.tsx b/node_modules/react-native-reanimated/src/createAnimatedComponent/AnimatedComponent.tsx
+index fcead1cf3227..27f7d784c48f 100644
+--- a/node_modules/react-native-reanimated/src/createAnimatedComponent/AnimatedComponent.tsx
++++ b/node_modules/react-native-reanimated/src/createAnimatedComponent/AnimatedComponent.tsx
+@@ -51,7 +51,9 @@ if (IS_WEB) {
+ }
+ 
+ const FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS =
+-  getStaticFeatureFlag('FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS') && !IS_WEB;
++  getStaticFeatureFlag('FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS') &&
++  !getStaticFeatureFlag('USE_ANIMATION_BACKEND') &&
++  !IS_WEB;
+ 
+ export type Options<P> = {
+   setNativeProps?: (ref: AnimatedComponentRef, props: P) => void;

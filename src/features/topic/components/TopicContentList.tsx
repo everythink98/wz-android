@@ -2,11 +2,13 @@ import { recordUserInteraction } from '@/platform/network/userPresence';
 import { resolveTopicLocation, topicLocationForReply } from '@/domain/forum/topicLocation';
 import { createTopicStyles, type TopicStyles } from '../styles';
 import {
+  createContext,
   memo,
   type ComponentProps,
   type ReactNode,
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -182,17 +184,27 @@ function topicListItemVisible(item: TopicListItem, disclosureStore: Parameters<t
   return !row || !scopeKey || topicSemanticRowVisible(row, scopeKey, disclosureStore);
 }
 
+const TopicStardustActionsContext = createContext<TopicActionsController | null>(null);
+
+const NodeSeekStardustRenderer: CustomBlockRenderer = (props) => {
+  const actions = useContext(TopicStardustActionsContext);
+  const receive = nodeSeekStardustReceiveFromAttributes(props.tnode.attributes);
+  return actions && receive ? <NodeSeekStardustCard actions={actions} receive={receive} /> : null;
+};
+
 function TopicSelectionRenderHtmlConfig({
+  actions,
   children,
   renderers,
   renderersProps,
   selectable
 }: Pick<ComponentProps<typeof RenderHTMLConfigProvider>, 'renderers' | 'renderersProps'> & {
+  actions?: TopicActionsController;
   children: ReactNode;
   selectable?: boolean;
 }) {
   const rowActive = useTopicSelectionRowActive();
-  return (
+  const content = (
     <RenderHTMLConfigProvider
       renderers={renderers}
       renderersProps={renderersProps}
@@ -203,6 +215,11 @@ function TopicSelectionRenderHtmlConfig({
     >
       {children}
     </RenderHTMLConfigProvider>
+  );
+  return actions ? (
+    <TopicStardustActionsContext.Provider value={actions}>{content}</TopicStardustActionsContext.Provider>
+  ) : (
+    content
   );
 }
 
@@ -1411,18 +1428,18 @@ export const TopicContentList = memo(function TopicContentList({
     windowStartWithinPrefetchRef.current = false;
     pendingAcceptedAnswerScrollRef.current = false;
   }, [item?.id, item?.source]);
+  const tableRenderers = useMemo(
+    () =>
+      createTopicTableRenderers({
+        minColumnWidth: Math.round(
+          96 *
+            (typeof htmlBaseStyle.fontSize === 'number' && htmlBaseStyle.fontSize > 0 ? htmlBaseStyle.fontSize / 16 : 1)
+        ),
+        styles
+      }),
+    [htmlBaseStyle.fontSize, styles]
+  );
   const genericHtmlRenderers = useMemo<HtmlRenderers>(() => {
-    const tableRenderers = createTopicTableRenderers({
-      minColumnWidth: Math.round(
-        96 *
-          (typeof htmlBaseStyle.fontSize === 'number' && htmlBaseStyle.fontSize > 0 ? htmlBaseStyle.fontSize / 16 : 1)
-      ),
-      styles
-    });
-    const NodeSeekStardustRenderer: CustomBlockRenderer = (props) => {
-      const receive = nodeSeekStardustReceiveFromAttributes(props.tnode.attributes);
-      return receive ? <NodeSeekStardustCard actions={actions} receive={receive} /> : null;
-    };
     return {
       ...htmlRenderers,
       ...tableRenderers,
@@ -1437,7 +1454,7 @@ export const TopicContentList = memo(function TopicContentList({
       p: ContentBoundarySpacingRenderer,
       ul: ContentBoundarySpacingRenderer
     };
-  }, [actions, htmlBaseStyle.fontSize, htmlRenderers, styles]);
+  }, [htmlRenderers, tableRenderers]);
   const renderTopicListItemFrame = useCallback(
     (children: ReactNode, key?: string, onLayout?: (event: LayoutChangeEvent) => void) => {
       const frame = (
@@ -2350,7 +2367,11 @@ export const TopicContentList = memo(function TopicContentList({
               listRef={topicScrollRef}
               sessionKey={topicSelectionSessionKey}
             >
-              <TopicSelectionRenderHtmlConfig renderers={genericHtmlRenderers} renderersProps={htmlRenderersProps}>
+              <TopicSelectionRenderHtmlConfig
+                actions={actions}
+                renderers={genericHtmlRenderers}
+                renderersProps={htmlRenderersProps}
+              >
                 {!readingPositionReady ? (
                   <ScrollView
                     style={[styles.content, styles.topicContent, StyleSheet.absoluteFill]}

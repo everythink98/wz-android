@@ -148,6 +148,27 @@ function userScreen(overrides: Partial<React.ComponentProps<typeof UserScreen>> 
 }
 
 describe('User screen behavior', () => {
+  it('shows a lane failure with its own retry and preserves the other activity', async () => {
+    const onRetryTopics = jest.fn();
+    const onRefresh = jest.fn();
+    const view = await render(
+      userScreen({
+        profile: { ...profile, topics: undefined },
+        topicsError: { kind: 'ordinary', message: '主题读取失败', retryable: true },
+        onRetryTopics,
+        onRefresh
+      })
+    );
+    expect(view.getByText('主题读取失败')).toBeTruthy();
+    expect(view.queryByText('这个用户暂时没有可显示的主题')).toBeNull();
+    await fireEvent.press(view.getByRole('button', { name: '重试主题' }));
+    expect(onRetryTopics).toHaveBeenCalledTimes(1);
+    expect(onRefresh).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByLabelText('回复'));
+    expect(view.getByText('回复摘要')).toBeTruthy();
+    expect(view.queryByText('主题读取失败')).toBeNull();
+  });
+
   it('shows the optional private message action beside follow with a 48dp target', async () => {
     const onPrivateMessage = jest.fn<() => void>();
     const view = await render(userScreen({ profile: { ...profile, source: 'nodeseek' }, onPrivateMessage }));

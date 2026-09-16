@@ -157,8 +157,7 @@ describe('notification delivery state', () => {
     await saveNotificationState(state);
 
     const result = await recordNotificationDelivery('nodeseek', 'nodeseek:7', ['new'], {
-      lastSuccessAt: '2026-08-03T00:00:00Z',
-      unreadCount: 1
+      lastSuccessAt: '2026-08-03T00:00:00Z'
     });
 
     expect(result.newIds).toEqual([]);
@@ -181,7 +180,7 @@ describe('notification delivery state', () => {
       'nodeseek',
       'nodeseek:7',
       ['new'],
-      { lastSuccessAt: '2026-08-03T00:00:00Z', unreadCount: 1 },
+      { lastSuccessAt: '2026-08-03T00:00:00Z' },
       { expectedNewIds: ['new'], previousIdentifier: undefined, notificationIdentifier: 'staged-id' }
     );
     await first.rollback();
@@ -189,7 +188,7 @@ describe('notification delivery state', () => {
       'nodeseek',
       'nodeseek:7',
       ['new'],
-      { lastSuccessAt: '2026-08-03T00:01:00Z', unreadCount: 1 },
+      { lastSuccessAt: '2026-08-03T00:01:00Z' },
       { expectedNewIds: ['new'], previousIdentifier: undefined, notificationIdentifier: 'staged-id' }
     );
 
@@ -216,7 +215,7 @@ describe('notification delivery state', () => {
       'nodeseek',
       'nodeseek:7',
       ['new'],
-      { lastSuccessAt: '2026-08-03T00:01:00Z', unreadCount: 1 },
+      { lastSuccessAt: '2026-08-03T00:01:00Z' },
       {
         expectedNewIds: ['new'],
         previousIdentifier: 'old-id',
@@ -259,7 +258,7 @@ describe('notification delivery state', () => {
         'nodeseek',
         'nodeseek:7',
         ['new'],
-        { lastSuccessAt: '2026-08-03T00:00:00Z', unreadCount: 1 },
+        { lastSuccessAt: '2026-08-03T00:00:00Z' },
         { expectedNewIds: ['new'], previousIdentifier: undefined, notificationIdentifier: 'stale-id' }
       );
       const updated = await loadNotificationState();
@@ -286,14 +285,14 @@ describe('notification delivery state', () => {
       'nodeseek',
       'nodeseek:7',
       ['one'],
-      { lastSuccessAt: '2026-08-03T00:00:00Z', unreadCount: 1 },
+      { lastSuccessAt: '2026-08-03T00:00:00Z' },
       { expectedNewIds: ['one'], previousIdentifier: 'old-id', notificationIdentifier: 'staged-a' }
     );
     const second = await recordNotificationDelivery(
       'nodeseek',
       'nodeseek:7',
       ['two', 'one'],
-      { lastSuccessAt: '2026-08-03T00:01:00Z', unreadCount: 2 },
+      { lastSuccessAt: '2026-08-03T00:01:00Z' },
       { expectedNewIds: ['two'], previousIdentifier: 'staged-a', notificationIdentifier: 'staged-b' }
     );
 
@@ -324,7 +323,7 @@ describe('notification delivery state', () => {
       'nodeseek',
       'nodeseek:7',
       ['new', ...previousIds],
-      { lastSuccessAt: '2026-08-03T00:01:00Z', unreadCount: 201 },
+      { lastSuccessAt: '2026-08-03T00:01:00Z' },
       { expectedNewIds: ['new'], previousIdentifier: 'old-id', notificationIdentifier: 'staged-id' }
     );
     await committed.rollback();

@@ -72,6 +72,11 @@ jest.mock('expo-video', () => ({
 
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => undefined) }));
 
+jest.mock('react-native-gesture-handler', () => ({
+  ...jest.requireActual<typeof import('react-native-gesture-handler')>('react-native-gesture-handler'),
+  ScrollView: require('react-native').ScrollView
+}));
+
 jest.mock('react-native-reanimated', () => {
   const ReactModule = require('react') as typeof React;
   const actual = jest.requireActual('react-native-reanimated/mock') as typeof import('react-native-reanimated');
@@ -465,12 +470,16 @@ it('records the current floor when filtering replaces content at the same visibl
 });
 
 function ProductionContentList({
+  active = true,
+  actions,
   topic,
   quotedReplies,
   readingRuntime,
   readingPaused = false,
   scrollRef
 }: {
+  active?: boolean;
+  actions?: Partial<React.ComponentProps<typeof TopicContentList>['actions']>;
   topic: ReturnType<typeof prepareTopicContent>;
   quotedReplies: Record<string, Reply>;
   readingRuntime?: DiscourseReadingRuntime;
@@ -496,30 +505,30 @@ function ProductionContentList({
   }, []);
   return (
     <TopicContentList
+      active={active}
       readingPaused={readingPaused}
-      actions={React.useMemo(
-        () => ({
-          actionBusy: false,
-          decisionFor: () => ({ allowed: false, reason: 'login-required' }),
-          bookmarkOnDiscourseSite: unexpected,
-          collectOnNodeSeekSite: unexpected,
-          deleteReply: unexpected,
-          editReply: unexpected,
-          favoriteOnYaohuoSite: unexpected,
-          interact: unexpected,
-          loadLinuxDoPollCapabilities: unexpected,
-          loadLinuxDoTemplates: unexpected,
-          loadNodeSeekStardustStatus: unexpected,
-          lockNodeSeekPoll: unexpected,
-          payNodeSeekStardust: unexpected,
-          submitReply: unexpected,
-          uploadReplyImage: unexpected,
-          uploadReplyImageMarkup: unexpected,
-          useLinuxDoTemplate: unexpected,
-          votePoll: unexpected
-        }),
-        [unexpected]
-      )}
+      actions={{
+        actionBusy: false,
+        decisionFor: () => ({ allowed: false, reason: 'login-required' }),
+        bookmarkOnDiscourseSite: unexpected,
+        collectOnNodeSeekSite: unexpected,
+        deleteReply: unexpected,
+        editReply: unexpected,
+        favoriteOnYaohuoSite: unexpected,
+        interact: unexpected,
+        loadLinuxDoPollCapabilities: unexpected,
+        loadLinuxDoTemplates: unexpected,
+        resolveLinuxDoUpload: unexpected,
+        loadNodeSeekStardustStatus: unexpected,
+        lockNodeSeekPoll: unexpected,
+        payNodeSeekStardust: unexpected,
+        submitReply: unexpected,
+        uploadReplyImage: unexpected,
+        uploadReplyImageMarkup: unexpected,
+        useLinuxDoTemplate: unexpected,
+        votePoll: unexpected,
+        ...actions
+      }}
       article={{ busy: false, error: null, topic }}
       currentNodeSeekUser={undefined}
       discourseEmojiUrls={{}}
@@ -533,6 +542,7 @@ function ProductionContentList({
       session={session}
       topicScrollRef={scrollRef || topicScrollRef}
       read={{
+        isReadRecoveryCurrent: () => true,
         readingRuntime,
         readingEntry: {
           ready: true,
@@ -593,6 +603,77 @@ function ProductionContentList({
 }
 
 describe('topic rich-text selection', () => {
+  it('keeps Stardust status and payment guards while using the latest actions', async () => {
+    const topic = prepareTopicContent({
+      ...selectionTopic,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-42-1',
+      contentHtml:
+        '<forum-nodeseek-stardust member-id="42" ref-id="100" amount="5" data-one-time="false"></forum-nodeseek-stardust>'
+    });
+    const actions = {
+      actionBusy: false,
+      decisionFor: () => ({ allowed: true, reason: 'allowed' as const }),
+      loadNodeSeekStardustStatus: jest.fn(async () => ({
+        participantCount: 2,
+        totalAmount: 10,
+        paid: false,
+        closed: false
+      })),
+      payNodeSeekStardust: jest.fn(async () => 'unknown' as const)
+    };
+    const tree = (
+      nextActions: Partial<React.ComponentProps<typeof TopicContentList>['actions']> = actions,
+      active = true
+    ) => (
+      <QueryTestWrapper>
+        <ProductionContentList active={active} topic={topic} quotedReplies={{}} actions={nextActions} />
+      </QueryTestWrapper>
+    );
+    const view = await render(tree());
+    const card = view.getByTestId('nodeseek-stardust-card');
+    expect(actions.loadNodeSeekStardustStatus).toHaveBeenCalledTimes(1);
+    for (const active of [false, true]) {
+      await view.rerender(tree({ ...actions, actionBusy: true }, active));
+      expect(view.getByTestId('nodeseek-stardust-card') === card).toBe(true);
+      if (active) expect(view.getByRole('button', { name: '支付 5 Stardust' })).toBeDisabled();
+    }
+    expect(actions.loadNodeSeekStardustStatus).toHaveBeenCalledTimes(1);
+    expect(view.getByText('2 人已付 · 累计 10 Stardust')).toBeTruthy();
+    await view.rerender(tree({ ...actions, decisionFor: () => ({ allowed: false, reason: 'login-required' }) }));
+    expect(view.getByRole('button', { name: '支付 5 Stardust' })).toBeDisabled();
+    const latestPay = jest.fn(async () => 'unknown' as const);
+    await view.rerender(tree({ ...actions, payNodeSeekStardust: latestPay }));
+    await fireEvent.press(view.getByRole('button', { name: '支付 5 Stardust' }));
+    expect(latestPay).toHaveBeenCalledTimes(1);
+    expect(actions.payNodeSeekStardust).not.toHaveBeenCalled();
+    expect(view.getByRole('button', { name: '结果待确认' })).toBeDisabled();
+    await view.rerender(tree());
+    expect(view.getByRole('button', { name: '结果待确认' })).toBeDisabled();
+    await fireEvent.press(view.getByRole('button', { name: '结果待确认' }));
+    expect(actions.payNodeSeekStardust).not.toHaveBeenCalled();
+  });
+
+  it('keeps table hosts mounted across background and foreground action updates', async () => {
+    const topic = prepareTopicContent({
+      ...selectionTopic,
+      contentHtml: '<table><tr><th>项目</th><th>内容</th></tr><tr><td>表格</td><td>保持位置</td></tr></table>'
+    });
+    const tree = (active: boolean) => (
+      <QueryTestWrapper>
+        <ProductionContentList active={active} topic={topic} quotedReplies={{}} />
+      </QueryTestWrapper>
+    );
+    const view = await render(tree(true));
+    const scroll = view.getByTestId('topic-html-table-scroll');
+    const cell = view.getByText('保持位置');
+    for (const active of [true, false, true]) {
+      await view.rerender(tree(active));
+      expect(view.getByTestId('topic-html-table-scroll') === scroll).toBe(true);
+      expect(view.getByText('保持位置') === cell).toBe(true);
+    }
+  });
+
   it.each([false, true])('owns a rejected native selection cancellation after unmount=%s', async (unmount) => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {

@@ -1,5 +1,5 @@
 import type { HTMLElement } from 'node-html-parser';
-import type { UserProfile } from '@/domain/forum/models';
+import type { UserIdentity } from '@/domain/forum/models';
 import { elementText, parseHtml, textContentFromHtml } from '@/domain/forum/html';
 import {
   YAOHUO_BASE_URL as BASE_URL,
@@ -124,7 +124,7 @@ function hasYaohuoSelfAccountNavigation(contextNode: HTMLElement) {
   return hasFixedDestinations && hasSelfProfile;
 }
 
-export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProfile | null {
+export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserIdentity | null {
   if (isYaohuoLoginRequiredHtml(html, url)) {
     return null;
   }
@@ -145,8 +145,7 @@ export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProf
       id,
       username,
       displayName: username,
-      url: userUrl(id),
-      topics: []
+      url: userUrl(id)
     };
   }
   return null;

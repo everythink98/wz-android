@@ -1,18 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createEmptyReaderData, toggleFavorite } from '@/domain/reader/readerData';
+import type { TopicRecord } from '@/domain/reader/readerData';
 import { sortLibraryRecords } from './libraryFilters';
 
 describe('library time ordering', () => {
   it('parses saved times once per record and keeps tie order and record references', () => {
-    const base = toggleFavorite(createEmptyReaderData(), {
-      source: 'v2ex',
-      id: '1',
-      title: 'one',
-      author: 'a',
-      url: 'https://www.v2ex.com/t/1',
-      createdAt: '2026-01-01T00:00:00Z',
-      replyCount: 0
-    }).favorites['v2ex:1'];
+    const base: TopicRecord = {
+      savedAt: '2026-01-01T00:00:00Z',
+      topic: {
+        source: 'v2ex',
+        id: '1',
+        title: 'one',
+        author: 'a',
+        url: 'https://www.v2ex.com/t/1',
+        createdAt: '2026-01-01T00:00:00Z',
+        replyCount: 0
+      }
+    };
     const records = Object.fromEntries(
       Array.from({ length: 100 }, (_, index) => [
         String(index),

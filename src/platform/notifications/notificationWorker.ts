@@ -75,7 +75,7 @@ export interface NotificationWorkerDependencies<Access extends NotificationWorke
       source: NotificationSource,
       identityKey: string,
       scannedIds: string[],
-      fields: { lastSuccessAt: string; unreadCount: number },
+      fields: { lastSuccessAt: string },
       delivery?: NotificationDeliveryCommit
     ): Promise<{ committed: boolean; newIds: string[]; rollback(): Promise<unknown> }>;
     clearForContentDisable(source: NotificationSource): Promise<unknown>;
@@ -333,8 +333,7 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
             const scanned = items.filter((item) => item.unread && deliverableKinds.has(item.kind));
             const scannedIds = scanned.map((item) => item.id);
             const fields = {
-              lastSuccessAt: (dependencies.now?.() || new Date()).toISOString(),
-              unreadCount: items.filter((item) => item.unread).length
+              lastSuccessAt: (dependencies.now?.() || new Date()).toISOString()
             };
             const latestState = await assertPrivateAccessCurrent(source, capturedIdentityKey);
             const latestSourceState = latestState.sources[source];

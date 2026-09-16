@@ -11,8 +11,7 @@ const loggedIn = createSiteSessionViewModel({
     source: 'linuxdo',
     id: '7',
     username: 'alice',
-    url: 'https://linux.do/u/alice',
-    topics: []
+    url: 'https://linux.do/u/alice'
   }
 });
 

@@ -42,6 +42,8 @@
 
 ## 来源边界
 
+- User 读取在现有 gateway 中分为 `getCurrentUserIdentity`、`getUserDetails`、`getUserTopics`、`getUserReplies`。`UserIdentity` 仅承载已确认身份，资料与活动分别返回 canonical 字段的窄投影；这些是本地接口，不是新增原站字段。Query 分别拥有资料、主题和回复的 data/error/retry；失败活动不再以空数组播种成功。妖火首个活动 URL 仍从资料 HTML 解析，因此保留必要的资料读取；后台身份核对直接使用已确认 `currentUser`。各站字段和请求依据见[本次取证记录](review-remediation.md#字段与请求证据)。
+
 - Feature controller 通过 `src/sources/readGateway.ts` 的 `getFeed`、`searchTopics`、`getTopic`、`getReplies` 和用户资料 interface 读取四站数据；NodeSeek username 定位只通过 managed `resolveNodeSeekUser` 进入 `src/sources/nodeseek/reader.ts`，Controller 不直接调用具体 provider。
 - `src/domain/forum/sourceCatalog.ts` 是来源集合的唯一静态事实源；来源类型、四站主 `baseUrl`、规范来源顺序与 Search 聚合顺序、筛选状态、managed session、credential/诊断枚举、页面 action capability 和 NodeSeek canonical host 判定都从这里派生。当前所有来源都进入 Feed/Search，不维护恒真的逐站聚合开关；既有 provider protocol 常量只 alias catalog 值，登录、迁移、链接、读取与 action endpoint 从对应 `baseUrl` 组合。SoV2EX、NodeImage、`connect.linux.do` 等独立服务仍保留各自协议边界。
 - `sourceCatalog` 只描述 App 支持什么；`ReaderSettings.contentSources` 描述用户启用什么以及展示顺序；Account canonical identity 描述当前账号事实。`src/domain/reader/contentSourcePreferences.ts` 负责清洗旧设置、补齐新来源并投影唯一 enabled set 及 Session/Notification 子集，Feed/Search 直接消费同一 enabled set。页面按用户顺序展示，“全部”固定第一；Query 和 cursor 使用按 Catalog 规范化的 enabled-set key，因此重排不触发网络，启停才切换请求快照。
@@ -51,7 +53,7 @@
 
 - `src/domain/forum/readPlan.ts` 按 `source + operation` 把一次读取纯派生为 `local`、`public`、`authenticated` 或 typed `blocked`；ReadPlan 不持久化，也不是新的流程状态机。公开 lane 只使用 `native-no-cookie` transport，并在 Gateway 强制 `credentials: 'omit'`，不读取 Cookie、SecureStore 或启用 managed WebView fallback；authenticated lane 才使用受管会话。V2EX 公开读取，NodeSeek/linux.do 的 Feed/Search/Topic/Replies/Reply/User Profile 允许公开读取；用户名解析、筛选候选、AI、等级及其他私有能力保持严格。妖火只有 Categories 为本地能力，所有远程读取都要求已确认会话。每个 Query key 和聚合 child 都绑定 ReadPlan `cacheScope`，计划改变会使迟到结果 stale。
 - App 冷启动并行读取 ReaderData 与每来源持久化账号终态。Account controller 的本机快照和迁移标记读取不等待来源设置，结果只留在本次挂载生命周期；来源设置就绪后才应用身份、执行既有迁移并发布 hydrated。卸载丢弃迟到读取；两者结算前只显示原生图标。正常启动不做 Account probe，恢复完成后从唯一账号快照派生一次 ReadPlan，再分别启动一次 Feed 与 Categories transport，不等待 `Linking.getInitialURL()`。首次升级没有账号快照时，只对当前已启用且确有 Cookie/SecureStore 候选的来源做一次有界精确核对，完成或失败后写一个全局迁移 marker；以后不自动补核。Feed 首次 `FlashList.onLoad` 与 Categories 终态共同标记首屏完成，之后才启动自动更新和远端通知。外部 Topic link 只保留 navigation-ready 前排队与之后直达的正确性，不参与普通启动门禁，也不作为冷启动性能目标。站内从 Feed/Search/Library/Notifications 进入 Topic 后，同一 query key 的返回再进入直接复用唯一 `QueryClient` 的进程内 RAM 数据；默认不因 mount/focus/reconnect 重取，UI 不重编译正文，不建立第二套缓存。真实身份、ReadPlan、来源设置变化和用户显式刷新仍通过新 key 或明确命令合法读取。`reader-settings` 缺失、损坏、非对象、读取拒绝或超过 3 秒时，内容源回退为四站全启用并保留已成功读取的 ReaderData；迟到设置不得二次发布。headless 通过同一 `loadReaderSettings()` 取得相同默认值。`ReadGateway` 和 `NotificationGateway` 在读取 Cookie、SecureStore 或 adapter 前检查当前 enabled set，并在异步返回后复核；聚合读取只遍历 Query key 捕获的 `includedSources`。停用会精确取消该站和旧 enabled-set 的聚合 Query，迟到结果不得提交；Topic、User 与 NotificationDetail 在 route 外层显示停用态，不挂载远端 controller。ReaderData 自身损坏或读取失败继续进入既有只读恢复模式，不用设置默认值覆盖用户资料。
-- 用户链接先归一为轻量 `UserReference`，只承载 source、可选 id/username、原站 URL 和展示 hint；它不是完整远端资料，不能进入 ReaderData 或关注。NodeSeek `/space/{uid}` 直接形成 canonical reference；`/member?t=username` 始终形成内部 reference，当前 Topic/detail candidates 只提供有界数字 UID hint，miss 不改变内部导航判定。username-only resolution 按严格 ReadPlan 解析 canonical 数字 UID；已有 canonical UID 的 Profile 可按公开 ReadPlan 读取。Profile、主题、回复、分页与关注随后只消费完整 `UserProfile`。Discourse 只有明确 username 才形成 reference，display label 不参与身份推断。
+- 用户链接先归一为轻量 `UserReference`，只承载 source、可选 id/username、原站 URL 和展示 hint；它不是完整远端资料，不能进入 ReaderData 或关注。NodeSeek `/space/{uid}` 直接形成 canonical reference；`/member?t=username` 始终形成内部 reference，当前 Topic/detail candidates 只提供有界数字 UID hint，miss 不改变内部导航判定。username-only resolution 按严格 ReadPlan 解析 canonical 数字 UID；已有 canonical UID 的 Profile 可按公开 ReadPlan 读取。资料使用 `UserDetails`，主题/回复分页分别使用窄结果；关注仅消费已确认资料字段。兼容备份结构仍由 ReaderData owner 维护。Discourse 只有明确 username 才形成 reference，display label 不参与身份推断。
 
 ### 协议与内容归一化
 
@@ -114,6 +116,8 @@ Controller 确认当前命令的目标窗口后才开放隐式定位，UI 的删
 
 ### 取消、超时与读取恢复
 
+- Topic 的读取 recovery 可携带本地 `isCurrent` 回调，使用现有 route 活跃性、ReadPlan/Query 身份和请求归属判定；缺省仍检查 Query 是否 active。手动“去验证”直接打开 Account 的验证能力，成功后显式刷新当前详情；普通返回的访问登记策略不变。User 刷新先取消并等待两条活动 Query，再读取资料与新首屏；刷新期间不续页，失败保留可信旧数据。
+
 - Topic 回复窗口确认后，通过既有 Query invalidation 标记同主题详情和另一排序的回复快照过期，保留当前已加载内容。内嵌回复仅在 active 且详情未失效时播种空缓存，并继承详情的 `dataUpdatedAt`；不对已有缓存执行同值 `setQueryData`，避免意外清除 invalidation。回复 Query 单独启用 `refetchOnMount: true`，仅重读失效窗口；全局 `staleTime: Infinity` 与其他自动重发默认不变。定位/写后窗口只在原有 ownership 校验通过后失效旁路快照，取消结果不能触发失效。
 
 - Feed/Search/Topic/User/等级的 Query `queryFn` 只使用 TanStack 提供的 `AbortSignal`，并直接传给 managed `readGateway`。`useAccountStatusController` 是稳定 snapshot 的唯一提交 seam；同来源并发核对复用一个 Promise，核对 activity 只写 `isVerifying`，不改身份事实或 ReadPlan。`readGateway` 负责 enabled set、ReadPlan/current scope、epoch、adapter、transport 和标准化错误，不承担 UI 请求归属。已确认身份在核对、网络、解析、403、429 或验证失败时继续有效；真正 unknown 的来源不阻断公开计划，严格计划在 transport 前返回 `identity-pending`、`identity-unavailable` 或 `login-required`，供页面结算并提供对应恢复动作。来源返回失败、需要验证或 `parse_empty` 时不保存为可信数据；刷新或分页失败由 Query 保留此前可信 data/pages 和 cursor。
@@ -159,6 +163,8 @@ Controller 确认当前命令的目标窗口后才开放隐式定位，UI 的删
 - `src/features/user/UserRoute.tsx` 以完整、可序列化的 `UserReference` 参数创建 route-local resolution/Profile/两条分页 Query；`UserScreen` 在该 route 实例内持有主题/回复筛选、列表 ref 与滚动状态。User A → User B、User → Topic 返回时由 native stack 恢复原实例；inactive route 取消请求且拒绝刷新、分页和验证恢复。
 
 ## 首页筛选
+
+同来源冷筛选在已挂载列表内显示 loading/empty，保留 FlashList 宿主但隐藏旧筛选条目；来源切换与来源重排仍沿用原有挂载策略。
 
 - 首页聚合页只显示阅读筛选：`全部`、`未读`、`已读`、`收藏`。
 - linux.do 单站分类行右侧显示排序菜单，支持 `最新`、`热门`、`新·所有`、`新·话题`、`新·回复`；分类和排序同时进入请求 key，避免列表缓存串用。
@@ -207,6 +213,8 @@ Controller 确认当前命令的目标窗口后才开放隐式定位，UI 的删
 - linux.do 验证弹层由 `src/features/account/components/LinuxDoVerifyModal.tsx` 与 Account-owned `AccountHost` 承载。
 
 ## 消息与后台通知
+
+通知初始化分别结算 Store 恢复和权限探测。`ready` 只表示已安全恢复存储；局部 `storageError`/`permissionError` 与 `retryInitialization` 支持显式重试，并复用在途 Promise。存储失败禁止依赖该状态的写入，权限未知禁止系统投递和后台注册；存储就绪且身份有效时仍可读取站内消息。权威 `unreadCount` 仅由 snapshot 写入，最多 60 条的投递扫描只维护投递 ID、水位与 identifier，不能覆盖总数。
 
 - `src/domain/forum/sourceCatalog.ts` 的 `notifications` capability 派生 `NotificationSource`；三站 adapter 表必须满足完整的 `Record<NotificationSource, NotificationAdapter>`。V2EX 当前 capability 为 false，不创建占位 adapter；未来开启时由 TypeScript 强制补齐协议实现。
 - `src/domain/notifications/models.ts` 只定义消息真实共性：跨站展示类型、来源稳定 ID、参与者、可选时间、远端已读、目标、opaque 来源分组/cursor、会话消息和可选回复能力；带 fetch、signal、timeout 与来源 credential 的 adapter I/O 契约归 `src/sources/notificationAdapter.ts`。目标语义分为 `topic` 与 `topic-post`：前者只有主题身份，后者必须至少有原站明确的 `postId` 或 `postNumber`；adapter 不得从通知类型、标题或主题 URL 猜具体帖子，route 也不得为 `topic` 制造 `ReplyLocationTarget`。`NotificationKind` 只负责跨站展示，不承担站点筛选；`NotificationCategory` 由每个 adapter 返回并解释，聚合页不传 category。`src/sources/notificationGateway.ts` 统一处理 canonical identity、取消、错误归一化及 `Promise.allSettled` 来源隔离；NodeSeek、Discourse 与妖火 adapter 只处理各自分类、传输、解析和明确成功 oracle。通知 gateway 复用既有底层 fetch、账号和错误能力，但不扩展前台 `ReadGateway` 生命周期，也不依赖 React 或 WebView fallback；同一 adapter 可由前台和 headless task 组合使用。来源解析必须固定真实协议边界：NodeSeek 详情以 `commentId` 为主身份，floor 只作首个页提示或缺 ID 时的降级；提示错误时按响应 `postPageCount` / pager 的有界页拓扑继续匹配 commentId，不依赖 `replyCount`；NodeSeek 列表只有明确 `viewed/is_read/read=true` 才表示已读，省略标记仍是未读；Discourse 同时读取顶层通知字段；妖火把时间与删除动作分开，并按 exact detail URL 解析官方 `.content` 的“内容”字段，写操作不得作为正文，聊天气泡保持独立，逐条已读复核保留原分类与原页。
@@ -281,6 +289,8 @@ Controller 确认当前命令的目标窗口后才开放隐式定位，UI 的删
 
 ## 回复写操作
 
+普通 action、模板使用、上传和阅读上报使用本地无状态 `withRequestBeforeSend`；校验回调通过 Symbol 元数据随请求透传，在代理准备完成、底层 fetch 前执行并移除，不进入 HTTP。发送后保留已有服务器确认与身份隔离处理，不由双向 fetch 守卫把已确认结果改成发送失败。回复编辑/上传允许同一实体的一致分页重叠；全部观察必须明确可编辑，任一身份、内容或权限冲突继续拒绝。
+
 - linux.do/NodeSeek 的 Topic 回复、楼层回复、回复编辑和 Markdown 私信统一进入 `StructuredReplyComposer`；妖火继续由独立 UBB/纯文本 `YaohuoReplyComposer` 负责，V2EX 不挂写入口。`ComposerBottomSheet` 只拥有蒙层、75% Sheet、同实例全屏、键盘/Back 和安全区；APK 内离线 WebView runtime 拥有 Tiptap 文档、CodeMirror 源码、选区、撤销栈、Markdown codec 和唯一一套通用 Tiptap UI。标题/列表/链接/表格等 GFM 控件共用同一实现，可见能力按站点发布协议投影：NodeSeek 与 linux.do 均展示原站支持的删除线，NodeSeek 仅隐藏原站未提供的下划线，linux.do 保留两者；Emoji/贴纸、投票、Stardust、模板和私有语法仍按站点区分。表格上下文菜单直接由当前 table selection 决定可见性与命令能力，锚定整张 `<table>`，不写入共享 Builder 或保存第二份 selection。Markdown 与 NodeSeek pending-poll sidecar 是唯一草稿边界，Tiptap JSON/HTML 不持久化也不发送。RN→Editor 只发送初始化、命令、模式、主题和 snapshot 请求，Editor→RN 只发送 ready、revision state、snapshot、受限 host action 和 error；所有 payload 经 Zod 严格解析，Cookie、CSRF、签名、session ticket、上传凭据和正文 diagnostics 永不跨入 WebView。输入不逐键过桥，停止 600ms 自动 snapshot，关闭、路由离开、后台、模式切换和提交前强制结算；提交只接受不旧于当前 revision 的 snapshot，renderer gone 只以最后确认 Markdown/sidecar 重载，不回退旧 TextInput。
 - `StructuredReplyComposer` 的 WebView origin、CSP、导航和文档存储配置只隔离编辑器文档；它不得创建、切换或清理 Android WebView profile。具体禁用项和 `global-webview-state-owner` 门禁由 `docs/code-standards.md` 唯一维护。
 - Editor runtime 的通用 GFM 与每种站点私有语法分别由 Tiptap extension/Markdown codec 持有：严格表格不允许 merge/width/color；Emoji/贴纸 marker 由内联原子节点只保存原始源码，预览由 extension-local NodeView 从当前目录解析，目录晚到只刷新已挂载视图，不改写 ProseMirror 文档。所有 block 私有节点通过同一插入函数在其他 atom 后建立尾随段落与文本选区，同类型选中节点才原位更新；StarterKit 的官方 TrailingNode 保证 INIT、编辑预填和源码重解析后的任意终止 block 后仍有可输入段落，不能用 GapCursor CSS 或站点分支掩盖。CodeMirror 与 Tiptap 的程序同步均不进入用户 undo history；源码未变化时不重建富文本文档，直接保留原 selection 与 BubbleMenu。linux.do poll、details、spoiler、footnote、date/time、formula、ToC、scrolling、Mermaid、Build Chart、Graphviz 和未知 paired block 保持结构或原始源码；poll 用户组通过受限 host action 在同一 writable ticket 前后并行读取 `/site.json` 与 `/session/current.json`，WebView 只接收经校验的组目录和 Staff 能力。动态模板只经 host action 读取后插入当前选区。NodeSeek pending poll 在编辑期只使用受保护本地 token/sidecar；提交方取得同 revision snapshot 和 writable ticket 后才创建远端 poll，并在每次成功物化后立即保存 `localId + fingerprint + remoteId` journal，回复失败的手动重试复用同 fingerprint，明确 create 失败可重试，结果不明 fail closed。journal 仅存储 key 不存在时默认返回空，合法空数组仍有效；读取、JSON、结构、任一条目或重复 localId 校验失败均阻断物化，不清空、不覆盖、不自动重发。新主题容器、分类、标签和 rank 不属于该模块。
@@ -298,6 +308,8 @@ Controller 确认当前命令的目标窗口后才开放隐式定位，UI 的删
 - 删除回复只在来源解析出明确权限时显示：Discourse 使用 `can_delete`，妖火使用原站删除链接；NodeSeek 未确认删除入口时不显示删除。
 
 ## 收藏页
+
+Library 已访问集合各自观察唯一 QueryClient 的对应集合，只有当前集合启动读取。分页回调绑定所属 tab 并检查当前活跃集合；隐藏列表不能为其他集合续页。切 tab 重置来源与分类的规则不变。
 
 - `src/features/library/LibraryScreen.tsx` 承载收藏、历史和关注用户页展示。
 - `src/features/library/libraryScreenItems.ts` 承载收藏页列表分组、列表 key、item type 和数量文案。
@@ -329,6 +341,8 @@ Controller 确认当前命令的目标窗口后才开放隐式定位，UI 的删
 - `android/`、`.expo/`、临时截图、日志和 Cookie 数据库都不进入仓库。
 
 ## 稳定入口与生成边界
+
+- Network/SVG 固定 Kotlin 源码和测试位于 `plugins/network/`、`plugins/svg/`，plugin 读取模板并替换 package 后注入。关联变更通过静态路径表选择现有 selection module/App JVM 任务，并要求新生成、用例数非零的报告；instrumentation 仍独立运行。
 
 - `App.tsx` 是真实 Expo bootstrap；`src/app/AppRoot.tsx` 是无业务状态的入口，实际组合链为 `AppComposition → AppRoutes → AppNavigator`。
 - `android/` 是生成目录；Android 长期配置通过 `app.json` 与 `plugins/` 持久化。`withAndroidGradleJvmMemory` 将 Gradle daemon 固定为 4 GiB heap / 1 GiB metaspace，避免源码构建沿用模板的 2 GiB / 512 MiB 上限；不直接维护生成的 `android/gradle.properties`。六个 Native plugin 的 package 路径与 `MainApplication` 注册只由 `plugins/androidPackageRegistration.js` 生成；各 plugin 只声明具体 package class，并继续拥有自己的 Kotlin、Gradle、Manifest 与失败边界。

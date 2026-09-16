@@ -8,6 +8,13 @@ import { createNotificationGateway as createProductionNotificationGateway } from
 
 type GatewayOptions = Parameters<typeof createProductionNotificationGateway>[0];
 
+vi.mock('@/platform/media/prepareUploadImage', () => ({
+  prepareUploadImage: vi.fn(async (file) => ({
+    file: { ...file, uri: 'file:///converted.webp', name: 'image.webp', mimeType: 'image/webp' },
+    cleanup: vi.fn()
+  }))
+}));
+
 function createNotificationGateway(
   options: Omit<GatewayOptions, 'privateAccessAllowed' | 'sourceAllowed'> &
     Partial<Pick<GatewayOptions, 'privateAccessAllowed' | 'sourceAllowed'>>
@@ -538,6 +545,52 @@ describe('notification gateway', () => {
       'PRIVATE_REPLY_BODY',
       expect.objectContaining({ identityKey: 'nodeseek:user' })
     );
+  });
+
+  it('keeps NodeImage key rejection separate from the NodeSeek login session', async () => {
+    const onSessionExpired = vi.fn();
+    const gateway = createNotificationGateway({
+      onSessionExpired,
+      readAccess: async () => ({
+        identityKey: 'nodeseek:user',
+        userId: 'user',
+        fetcher: async () => new Response('{"message":"Invalid API Key"}', { status: 401 })
+      })
+    });
+    await expect(
+      gateway.uploadReplyImage('nodeseek', {
+        expectedIdentityKey: 'nodeseek:user',
+        file: { uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png' },
+        nodeImageApiKey: 'key'
+      })
+    ).rejects.toMatchObject({ reason: 'missing_credential', nodeImageApiKeyExpired: true });
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the private composer guard after preparing an image and before transport', async () => {
+    const { prepareUploadImage } = await import('@/platform/media/prepareUploadImage');
+    let current = true;
+    const cleanup = vi.fn();
+    vi.mocked(prepareUploadImage).mockImplementationOnce(async (file) => {
+      current = false;
+      return { file: { ...file, size: 512 }, cleanup };
+    });
+    const fetcher = vi.fn(async () => new Response('{}'));
+    const gateway = createNotificationGateway({
+      readAccess: async () => ({ identityKey: 'nodeseek:user', userId: 'user', fetcher })
+    });
+    await expect(
+      gateway.uploadReplyImage('nodeseek', {
+        expectedIdentityKey: 'nodeseek:user',
+        file: { uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png' },
+        nodeImageApiKey: 'key',
+        beforeSend: () => {
+          if (!current) throw new Error('stale');
+        }
+      })
+    ).rejects.toThrow('stale');
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
   it('uploads private-message images through the existing NodeImage and Discourse clients', async () => {

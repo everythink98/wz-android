@@ -7,13 +7,21 @@ import { useUserController } from '@/features/user/useUserController';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { LinuxDoCloudflareError } from '@/platform/network/cloudflareChallenge';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
-import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
+import {
+  annotateSourceDiagnosticSummary,
+  copySourceDiagnosticSummary
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { Source, UserProfile, UserReference } from '@/domain/forum/models';
 import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
 import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { QueryTestWrapper } from '../QueryTestWrapper';
+
+type UserFixtureRead = (
+  request: Parameters<ReadGateway['getUserDetails']>[0] & { cursor?: string | null; cursorType?: 'topics' | 'replies' },
+  context?: Parameters<ReadGateway['getUserDetails']>[1]
+) => Promise<UserProfile>;
 
 function renderHook<Result>(callback: () => Result) {
   return renderNativeHook(callback, { wrapper: QueryTestWrapper });
@@ -48,13 +56,42 @@ function renderUserController({
   getSessionEpochs?: () => ForumSessionEpochs;
   getSourceEnabled?: (source: Source) => boolean;
   getUser?: () => UserReference;
-  getUserProfile: ReadGateway['getUserProfile'];
+  getUserProfile: UserFixtureRead;
   onRetryIdentityStatus?: (source: Source) => Promise<unknown> | unknown;
   resolveNodeSeekUser?: ReadGateway['resolveNodeSeekUser'];
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showNodeSeekVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
   showYaohuoLogin?: (message?: string) => void;
 }) {
+  // Session fixtures provide all lanes together. Adapt only this fixture to the split read boundary;
+  // independent source failures are exercised through the real gateway in user-activity-reads.test.tsx.
+  let currentProfile: UserProfile | undefined;
+  const getUserDetails: ReadGateway['getUserDetails'] = async (request, context) => {
+    const value = await getUserProfile(request, context);
+    currentProfile = value;
+    const { topics, replies, hasMoreTopics, hasMoreReplies, nextTopicsCursor, nextRepliesCursor, ...details } = value;
+    return copySourceDiagnosticSummary(details, value);
+  };
+  const getUserTopics: ReadGateway['getUserTopics'] = async (request, context) => {
+    const value = request.cursor
+      ? await getUserProfile(
+          { ...request, id: request.profile.id, username: request.profile.username, cursorType: 'topics' },
+          context
+        )
+      : currentProfile;
+    if (!value) throw new Error('Missing profile fixture');
+    return { topics: value.topics, hasMoreTopics: value.hasMoreTopics, nextTopicsCursor: value.nextTopicsCursor };
+  };
+  const getUserReplies: ReadGateway['getUserReplies'] = async (request, context) => {
+    const value = request.cursor
+      ? await getUserProfile(
+          { ...request, id: request.profile.id, username: request.profile.username, cursorType: 'replies' },
+          context
+        )
+      : currentProfile;
+    if (!value) throw new Error('Missing profile fixture');
+    return { replies: value.replies, hasMoreReplies: value.hasMoreReplies, nextRepliesCursor: value.nextRepliesCursor };
+  };
   return renderHook(() =>
     useUserController({
       active: getActive(),
@@ -86,7 +123,9 @@ function renderUserController({
               : undefined
           );
         },
-        getUserProfile,
+        getUserDetails,
+        getUserTopics,
+        getUserReplies,
         resolveNodeSeekUser
       } as unknown as ReadGateway,
       user: getUser()
@@ -110,7 +149,7 @@ describe('user query controller', () => {
       url: 'https://linux.do/u/alice'
     };
     const profile: UserProfile = { ...user, ...requested, displayName: 'Alice', topics: [] };
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => profile);
+    const getUserProfile = jest.fn<UserFixtureRead>(async () => profile);
     const hook = await renderUserController({
       getIdentityBarriers: () => ['linuxdo'],
       getUser: () => requested,
@@ -146,7 +185,7 @@ describe('user query controller', () => {
     const hook = await renderUserController({
       getIdentityBarriers: () => ['nodeseek'],
       getUser: () => requested,
-      getUserProfile: jest.fn<ReadGateway['getUserProfile']>(),
+      getUserProfile: jest.fn<UserFixtureRead>(),
       resolveNodeSeekUser
     });
 
@@ -163,7 +202,7 @@ describe('user query controller', () => {
       url: 'https://www.yaohuo.me/space-7.html'
     };
     const onRetryIdentityStatus = jest.fn(async () => undefined);
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => {
+    const getUserProfile = jest.fn<UserFixtureRead>(async () => {
       throw Object.assign(new Error('登录状态核对失败，请重试'), {
         kind: 'ordinary' as const,
         reason: 'identity-unavailable',
@@ -196,7 +235,7 @@ describe('user query controller', () => {
       url: 'https://www.yaohuo.me/space-7.html'
     };
     const showYaohuoLogin = jest.fn();
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => {
+    const getUserProfile = jest.fn<UserFixtureRead>(async () => {
       throw Object.assign(new Error('请先登录该内容源'), {
         kind: 'login-required' as const,
         loginRequired: true,
@@ -219,7 +258,7 @@ describe('user query controller', () => {
     let active = false;
     let signal: AbortSignal | undefined;
     const pending = Promise.withResolvers<UserProfile>();
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async (request) => {
+    const getUserProfile = jest.fn<UserFixtureRead>(async (request) => {
       signal = request.signal;
       return pending.promise;
     });
@@ -255,7 +294,7 @@ describe('user query controller', () => {
     };
     const resolution = Promise.withResolvers<UserReference>();
     const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async () => resolution.promise);
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ cursorType }) => ({
+    const getUserProfile = jest.fn<UserFixtureRead>(async ({ cursorType }) => ({
       ...user,
       id: '8052',
       username: 'xy',
@@ -314,7 +353,7 @@ describe('user query controller', () => {
         username: 'xy',
         url: 'https://www.nodeseek.com/space/8052'
       });
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => ({
+    const getUserProfile = jest.fn<UserFixtureRead>(async () => ({
       ...user,
       id: '8052',
       username: 'xy'
@@ -352,7 +391,7 @@ describe('user query controller', () => {
         username: 'xy',
         url: 'https://www.nodeseek.com/space/8052'
       });
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => ({
+    const getUserProfile = jest.fn<UserFixtureRead>(async () => ({
       ...user,
       id: '8052',
       username: 'xy'
@@ -377,7 +416,7 @@ describe('user query controller', () => {
 
   it('preserves the exact canonical profile query for NodeSeek verification recovery', async () => {
     const getUserProfile = jest
-      .fn<ReadGateway['getUserProfile']>()
+      .fn<UserFixtureRead>()
       .mockRejectedValueOnce(
         Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), {
           source: 'nodeseek',
@@ -415,9 +454,9 @@ describe('user query controller', () => {
     expect(getUserProfile).toHaveBeenCalledTimes(2);
   });
 
-  it('does not turn a NodeSeek pagination failure into a user-route recovery', async () => {
+  it('recovers only the failed NodeSeek activity lane after verification', async () => {
     const getUserProfile = jest
-      .fn<ReadGateway['getUserProfile']>()
+      .fn<UserFixtureRead>()
       .mockResolvedValueOnce({
         ...user,
         id: '1414',
@@ -447,7 +486,13 @@ describe('user query controller', () => {
       await hook.result.current.loadMoreUserTopics();
     });
     await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
-    expect(showNodeSeekVerification.mock.calls[0]?.[1]).toBeUndefined();
+    const recovery = showNodeSeekVerification.mock.calls[0]?.[1];
+    expect(recovery?.queryKey.at(-1)).toBe('topics');
+    getUserProfile.mockResolvedValueOnce({ ...user, id: '1414', username: '男朋友', hasMoreTopics: false });
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('completed');
+    });
+    expect(getUserProfile).toHaveBeenCalledTimes(3);
   });
 
   it('keeps a known logged-out resolution error out of Cloudflare recovery', async () => {
@@ -464,7 +509,7 @@ describe('user query controller', () => {
         username: 'xy',
         url: 'https://www.nodeseek.com/member?t=xy'
       }),
-      getUserProfile: jest.fn<ReadGateway['getUserProfile']>(),
+      getUserProfile: jest.fn<UserFixtureRead>(),
       resolveNodeSeekUser,
       showNodeSeekVerification
     });
@@ -495,7 +540,7 @@ describe('user query controller', () => {
         url: 'https://www.nodeseek.com/space/8052'
       };
     });
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => ({
+    const getUserProfile = jest.fn<UserFixtureRead>(async () => ({
       ...user,
       id: '8052',
       username: 'xy'
@@ -541,7 +586,7 @@ describe('user query controller', () => {
         url: 'https://www.nodeseek.com/space/22'
       };
     });
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ id, username }) => ({
+    const getUserProfile = jest.fn<UserFixtureRead>(async ({ id, username }) => ({
       ...user,
       id,
       username: username || id,
@@ -586,7 +631,7 @@ describe('user query controller', () => {
 
   it('loads the profile once and seeds both pagination lanes without repeating first-page transport', async () => {
     const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>();
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => ({
+    const getUserProfile = jest.fn<UserFixtureRead>(async () => ({
       ...user,
       topics: [
         {
@@ -611,7 +656,7 @@ describe('user query controller', () => {
 
   it('isolates cached authenticated profile from a pending public read', async () => {
     let identityBarriers: SessionSource[] = [];
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async () => user);
+    const getUserProfile = jest.fn<UserFixtureRead>(async () => user);
     const hook = await renderUserController({
       getIdentityBarriers: () => identityBarriers,
       getUserProfile
@@ -657,7 +702,7 @@ describe('user query controller', () => {
     async (repliesFirst) => {
       const topicsReady = Promise.withResolvers<void>();
       const repliesReady = Promise.withResolvers<void>();
-      const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ cursorType }) => {
+      const getUserProfile = jest.fn<UserFixtureRead>(async ({ cursorType }) => {
         if (!cursorType) {
           return {
             ...user,
@@ -727,7 +772,7 @@ describe('user query controller', () => {
       expect(hook.result.current.userProfile?.[firstLane]).toBe(loadedFirstLane);
 
       await waitFor(() => {
-        expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-2']);
+        expect(hook.result.current.userProfile?.topics?.map(({ id }) => id)).toEqual(['topic-2']);
         expect(hook.result.current.userProfile?.replies?.map(({ id }) => id)).toEqual(['reply-2']);
       });
       expect(getUserProfile.mock.calls.map(([request]) => request.cursorType)).toEqual([
@@ -766,9 +811,56 @@ describe('user query controller', () => {
       nextRepliesCursor: 'replies-2'
     };
 
+    it.each(['page-first', 'refresh-first'] as const)(
+      'keeps the refreshed first screen when pagination settles %s',
+      async (order) => {
+        const page = Promise.withResolvers<UserProfile>();
+        const refresh = Promise.withResolvers<UserProfile>();
+        const fresh = { ...firstPage, topics: [{ ...firstTopic, id: 'fresh-topic' }] };
+        const getUserProfile = jest
+          .fn<UserFixtureRead>()
+          .mockResolvedValueOnce(firstPage)
+          .mockImplementationOnce(() => page.promise)
+          .mockImplementationOnce(() => refresh.promise);
+        const hook = await renderUserController({ getUserProfile });
+        await waitFor(() => expect(hook.result.current.userProfile?.topics).toHaveLength(1));
+        let paging: Promise<unknown> | undefined;
+        let refreshing: Promise<unknown> | undefined;
+        await act(async () => {
+          paging = hook.result.current.loadMoreUserTopics();
+        });
+        await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(2));
+        await act(async () => {
+          refreshing = hook.result.current.refreshUser();
+        });
+        await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(3));
+        const finishPage = async () => {
+          page.resolve({ ...firstPage, topics: [{ ...firstTopic, id: 'old-page-topic' }] });
+          await paging;
+        };
+        const finishRefresh = async () => {
+          refresh.resolve(fresh);
+          await refreshing;
+        };
+        await act(async () => {
+          if (order === 'page-first') {
+            await finishPage();
+            await finishRefresh();
+          } else {
+            await finishRefresh();
+            await finishPage();
+          }
+        });
+        await waitFor(() =>
+          expect(hook.result.current.userProfile?.topics?.map(({ id }) => id)).toEqual(['fresh-topic'])
+        );
+        await hook.unmount();
+      }
+    );
+
     it.each([false, true])('preserves both loaded lanes after refresh failure with more pages: %s', async (hasMore) => {
       const getUserProfile = jest
-        .fn<ReadGateway['getUserProfile']>()
+        .fn<UserFixtureRead>()
         .mockResolvedValueOnce(firstPage)
         .mockResolvedValueOnce({
           ...firstPage,
@@ -832,7 +924,7 @@ describe('user query controller', () => {
           ['replies', 'replies-3']
         ]);
         await waitFor(() => {
-          expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual([
+          expect(hook.result.current.userProfile?.topics?.map(({ id }) => id)).toEqual([
             'topic-1',
             'topic-2',
             'topic-3'
@@ -865,7 +957,7 @@ describe('user query controller', () => {
         let epochs = initialForumSessionEpochs;
         let signal: AbortSignal | undefined;
         const getUserProfile = jest
-          .fn<ReadGateway['getUserProfile']>()
+          .fn<UserFixtureRead>()
           .mockResolvedValueOnce(firstPage)
           .mockResolvedValueOnce({ ...firstPage, topics: [{ ...firstTopic, id: 'topic-2' }] });
         if (change === 'cancel-after-error') getUserProfile.mockRejectedValueOnce(new Error('上次刷新失败'));
@@ -936,7 +1028,7 @@ describe('user query controller', () => {
       async (scenario) => {
         const pending = Promise.withResolvers<UserProfile>();
         const getUserProfile = jest
-          .fn<ReadGateway['getUserProfile']>()
+          .fn<UserFixtureRead>()
           .mockResolvedValueOnce(firstPage)
           .mockResolvedValueOnce({ ...firstPage, topics: [{ ...firstTopic, id: 'topic-2' }] })
           .mockImplementationOnce(async () => pending.promise);
@@ -1009,7 +1101,7 @@ describe('user query controller', () => {
     };
     const refresh = Promise.withResolvers<UserProfile>();
     const getUserProfile = jest
-      .fn<ReadGateway['getUserProfile']>()
+      .fn<UserFixtureRead>()
       .mockResolvedValueOnce({
         ...user,
         topics: [firstTopic],
@@ -1029,7 +1121,7 @@ describe('user query controller', () => {
       await hook.result.current.loadMoreUserTopics();
     });
     await waitFor(() =>
-      expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-1', 'topic-2'])
+      expect(hook.result.current.userProfile?.topics?.map(({ id }) => id)).toEqual(['topic-1', 'topic-2'])
     );
 
     let refreshOpen!: Promise<unknown>;
@@ -1052,7 +1144,7 @@ describe('user query controller', () => {
 
     await waitFor(() => {
       expect(hook.result.current.userBusy).toBe(false);
-      expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-3']);
+      expect(hook.result.current.userProfile?.topics?.map(({ id }) => id)).toEqual(['topic-3']);
       expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('fresh-topics-2');
     });
   });
@@ -1078,7 +1170,7 @@ describe('user query controller', () => {
       ]
     };
     const getUserProfile = jest
-      .fn<ReadGateway['getUserProfile']>()
+      .fn<UserFixtureRead>()
       .mockResolvedValueOnce(oldRouteProfile)
       .mockImplementationOnce(async () => replacement.promise);
     let sessionEpochs = initialForumSessionEpochs;
@@ -1138,7 +1230,7 @@ describe('user query controller', () => {
       replyCount: 0
     };
     let attempts = 0;
-    const getUserProfile = jest.fn<ReadGateway['getUserProfile']>(async ({ cursorType }) => {
+    const getUserProfile = jest.fn<UserFixtureRead>(async ({ cursorType }) => {
       if (!cursorType) return linuxUser;
       attempts += 1;
       if (attempts === 1) throw new LinuxDoCloudflareError();
@@ -1174,7 +1266,7 @@ describe('user query controller', () => {
       url: 'https://linux.do/u/alice'
     };
     const getUserProfile = jest
-      .fn<ReadGateway['getUserProfile']>()
+      .fn<UserFixtureRead>()
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new Error('恢复后网络失败'));
@@ -1210,7 +1302,7 @@ describe('user query controller', () => {
       }
     );
     const hook = await renderUserController({
-      getUserProfile: jest.fn<ReadGateway['getUserProfile']>(async () => parsedEmpty)
+      getUserProfile: jest.fn<UserFixtureRead>(async () => parsedEmpty)
     });
     await waitFor(() => expect(hook.result.current.userError?.message).toContain('解析为空'));
     expect(hook.result.current.userProfile).toBeNull();

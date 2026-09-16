@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, waitFor } from '@testing-library/react-native';
+import { act, render, waitFor } from '../render';
+import React from 'react';
 import type { ComponentProps } from 'react';
 import { LibraryRoute } from '@/features/library/LibraryRoute';
 import { LibraryRouteRuntimeProvider } from '@/features/library/LibraryRouteRuntime';
@@ -12,14 +13,33 @@ import { createTopicListItemStateIndex } from '@/domain/forum/topicListItemState
 
 let mockScreen: ComponentProps<typeof LibraryScreen>;
 let mockFocused = true;
+const mockListFrames: { testID?: string; data: unknown[]; onEndReached?: () => void }[] = [];
+jest.mock('@shopify/flash-list', () => {
+  const ReactModule = require('react') as typeof React;
+  const { View } = require('react-native') as typeof import('react-native');
+  return {
+    FlashList: ReactModule.forwardRef(function List(
+      props: { testID?: string; data: unknown[]; onEndReached?: () => void; ListHeaderComponent?: React.ReactNode },
+      ref
+    ) {
+      mockListFrames.push(props);
+      ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: () => undefined }));
+      return ReactModule.createElement(View, { testID: props.testID }, props.ListHeaderComponent);
+    })
+  };
+});
 jest.mock('@/features/library/LibraryScreen', () => ({
   LibraryScreen: (props: typeof mockScreen) => {
     mockScreen = props;
-    return null;
+    const Actual = jest.requireActual<typeof import('@/features/library/LibraryScreen')>(
+      '@/features/library/LibraryScreen'
+    ).LibraryScreen;
+    return <Actual {...props} />;
   }
 }));
 jest.mock('@/platform/storage/readerDataStore', () => ({ queryReaderPage: jest.fn() }));
 jest.mock('@react-navigation/native', () => ({
+  ...jest.requireActual<typeof import('@react-navigation/native')>('@react-navigation/native'),
   useIsFocused: () => mockFocused,
   useNavigation: () => ({ dispatch: jest.fn() }),
   useScrollToTop: jest.fn(),
@@ -48,7 +68,7 @@ async function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   const data = createEmptyReaderState();
   const value = {
-    categories: [],
+    categories: [{ source: 'nodeseek' as const, id: 'daily', name: '日常' }],
     enabledSources: ['nodeseek'] as const,
     notify: jest.fn(),
     topicStateIndex: createTopicListItemStateIndex(data),
@@ -66,8 +86,31 @@ async function mount() {
 beforeEach(() => {
   query.mockReset();
   mockFocused = true;
+  mockListFrames.length = 0;
 });
 describe('Library route database query lifecycle', () => {
+  it('keeps each collection subscribed and rejects a hidden collection pagination callback', async () => {
+    const cursor = { time: 123, ordinal: 50 };
+    query.mockImplementation(async ({ collection }) => page(collection, cursor));
+    const view = await mount();
+    await waitFor(() => expect(mockScreen.favoriteRecords).toHaveLength(1));
+    const favorites = mockScreen.favoriteRecords;
+    const favoriteFrame = mockListFrames.filter((frame) => frame.testID === 'library-favorites-ready').at(-1);
+    expect(favoriteFrame?.data.length).toBeGreaterThan(0);
+    const hiddenLoad = favoriteFrame?.onEndReached;
+    expect(hiddenLoad).toBeDefined();
+    await act(async () => mockScreen.onTabChange('history'));
+    await waitFor(() => expect(mockScreen.historyRecords).toHaveLength(1));
+    expect(mockScreen.favoriteRecords).toEqual(favorites);
+    expect(mockListFrames.filter((frame) => frame.testID === 'library-favorites-ready').at(-1)?.data).toEqual(
+      favoriteFrame?.data
+    );
+    const calls = query.mock.calls.length;
+    await act(async () => hiddenLoad?.());
+    expect(query).toHaveBeenCalledTimes(calls);
+    await view.unmount();
+    view.client.clear();
+  });
   it('loads only the selected collection and appends the returned cursor page', async () => {
     const cursor = { time: 123, ordinal: 50 };
     query.mockResolvedValueOnce(page('1', cursor)).mockResolvedValueOnce(page('2')).mockResolvedValue(page('3'));
@@ -75,7 +118,7 @@ describe('Library route database query lifecycle', () => {
     await waitFor(() => expect(mockScreen.favoriteRecords).toHaveLength(1));
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0][0]).toMatchObject({ collection: 'favorites', after: undefined });
-    await act(async () => mockScreen.onLoadMore());
+    await act(async () => mockScreen.onLoadMore('favorites'));
     await waitFor(() => expect(mockScreen.favoriteRecords).toHaveLength(2));
     expect(query.mock.calls[1][0].after).toEqual(cursor);
     await act(async () => mockScreen.onTabChange('history'));

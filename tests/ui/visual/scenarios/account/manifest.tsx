@@ -31,8 +31,7 @@ function createLoggedInSessions() {
           id: '42',
           username: 'visual-user',
           displayName: '示例用户',
-          url: 'https://account.visual.invalid/nodeseek/users/42',
-          topics: []
+          url: 'https://account.visual.invalid/nodeseek/users/42'
         }
       },
       linuxdo: {
@@ -45,8 +44,7 @@ function createLoggedInSessions() {
           id: 'visual-linuxdo',
           username: 'visual-linuxdo',
           displayName: '示例用户',
-          url: 'https://account.visual.invalid/linuxdo/users/visual-linuxdo',
-          topics: []
+          url: 'https://account.visual.invalid/linuxdo/users/visual-linuxdo'
         }
       },
       yaohuo: {
@@ -72,8 +70,7 @@ function createMixedSessions() {
           id: '42',
           username: 'visual-user',
           displayName: '示例用户',
-          url: 'https://account.visual.invalid/nodeseek/users/42',
-          topics: []
+          url: 'https://account.visual.invalid/nodeseek/users/42'
         }
       },
       linuxdo: {

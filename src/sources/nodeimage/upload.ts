@@ -1,5 +1,10 @@
 import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
-import { appendFileToFormData, type NormalizedReplyImageAsset } from '@/sources/imageUpload';
+import {
+  appendFileToFormData,
+  MAX_REPLY_IMAGE_UPLOAD_BYTES,
+  type NormalizedReplyImageAsset
+} from '@/sources/imageUpload';
+import { prepareUploadImage } from '@/platform/media/prepareUploadImage';
 
 const NODEIMAGE_UPLOAD_URL = 'https://api.nodeimage.com/api/upload';
 type NodeImageUploadError = Error & { nodeImageApiKeyExpired?: boolean };
@@ -55,36 +60,48 @@ export async function uploadNodeSeekReplyImage({
   if (!cleanApiKey) {
     throw new Error('请先保存 NodeImage API Key');
   }
-  const body = new FormData();
-  appendFileToFormData(body, 'image', file);
-  const response = await fetchWithTimeout(
-    NODEIMAGE_UPLOAD_URL,
-    {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'X-API-Key': cleanApiKey
-      },
-      body
-    },
-    {
-      fetcher,
-      signal,
-      timeoutMs
-    }
-  );
-  let data: unknown;
+  const prepared = await prepareUploadImage(file, MAX_REPLY_IMAGE_UPLOAD_BYTES, signal);
   try {
-    data = await response.json();
-  } catch {
-    data = null;
+    const body = new FormData();
+    appendFileToFormData(body, 'image', prepared.file);
+    const response = await fetchWithTimeout(
+      NODEIMAGE_UPLOAD_URL,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'X-API-Key': cleanApiKey
+        },
+        body
+      },
+      {
+        fetcher,
+        signal,
+        timeoutMs
+      }
+    );
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    if (!response.ok) {
+      const error = new Error(nodeImageUploadErrorMessage(data, response.status)) as NodeImageUploadError;
+      error.nodeImageApiKeyExpired = response.status === 401 || response.status === 403;
+      Object.assign(error, {
+        reason: error.nodeImageApiKeyExpired
+          ? 'missing_credential'
+          : response.status < 500
+            ? 'upload_rejected'
+            : 'http_error'
+      });
+      throw error;
+    }
+    return nodeImageUrlFromUploadResponse(data);
+  } finally {
+    prepared.cleanup();
   }
-  if (!response.ok) {
-    const error = new Error(nodeImageUploadErrorMessage(data, response.status)) as NodeImageUploadError;
-    error.nodeImageApiKeyExpired = response.status === 401 || response.status === 403;
-    throw error;
-  }
-  return nodeImageUrlFromUploadResponse(data);
 }
 
 export async function uploadNodeSeekReplyImageWithApiKey({

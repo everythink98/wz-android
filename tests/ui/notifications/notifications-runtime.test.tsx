@@ -124,8 +124,7 @@ function nodeSeekSessions(identityTrust: 'confirmed' | 'unknown' | 'none', userI
           source: 'nodeseek',
           id: userId,
           username: 'alice',
-          url: `https://www.nodeseek.com/space/${userId}`,
-          topics: []
+          url: `https://www.nodeseek.com/space/${userId}`
         }
       }
     })
@@ -152,8 +151,7 @@ function nodeSeekAndLinuxDoSessions() {
           source: 'nodeseek',
           id: '42',
           username: 'alice',
-          url: 'https://www.nodeseek.com/space/42',
-          topics: []
+          url: 'https://www.nodeseek.com/space/42'
         }
       },
       linuxdo: {
@@ -165,8 +163,7 @@ function nodeSeekAndLinuxDoSessions() {
           source: 'linuxdo',
           id: '84',
           username: 'bob',
-          url: 'https://linux.do/u/bob',
-          topics: []
+          url: 'https://linux.do/u/bob'
         }
       }
     })
@@ -231,6 +228,78 @@ async function settleStartedRuntimeTasks(unmount = true) {
 }
 
 describe('notification runtime', () => {
+  it('retries failed storage restoration once and preserves the persisted watermark and settings', async () => {
+    const stored = defaultNotificationState();
+    stored.hasOptedIn = true;
+    stored.sources.nodeseek = {
+      intentEnabled: true,
+      identityKey: 'nodeseek:42',
+      baselineReady: true,
+      deliveredIds: ['old'],
+      lastSuccessAt: '2026-09-15T00:00:00.000Z',
+      unreadCount: 80
+    };
+    const persisted = JSON.stringify(stored);
+    jest
+      .mocked(AsyncStorage.getItem)
+      .mockRejectedValueOnce(new Error('storage unavailable'))
+      .mockResolvedValue(persisted);
+    const options = runtimeOptions(undefined, nodeSeekSessions('confirmed'), ['nodeseek', 'linuxdo', 'yaohuo']);
+    const hook = await renderHook(() => useNotificationsRuntime(options), { wrapper: QueryTestWrapper });
+    await waitFor(() => expect(hook.result.current.initializationError).toContain('存储'));
+    await expect(hook.result.current.setGlobalEnabled(true)).rejects.toThrow();
+    await expect(hook.result.current.setSourceEnabled('nodeseek', false)).rejects.toThrow();
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+    await act(async () => {
+      const first = hook.result.current.retryInitialization();
+      expect(hook.result.current.retryInitialization()).toBe(first);
+      await first;
+    });
+    expect(hook.result.current.ready).toBe(true);
+    expect(hook.result.current.initializationError).toBe('');
+    expect(hook.result.current.state.sources.nodeseek).toEqual(stored.sources.nodeseek);
+    expect(await loadNotificationState()).toEqual(stored);
+    await settleStartedRuntimeTasks();
+  });
+
+  it('keeps restored in-app messages available when permission probing throws', async () => {
+    jest.mocked(notificationPermissionGranted).mockRejectedValue(new Error('permission unavailable'));
+    const hook = await renderHook(
+      () => useNotificationsRuntime(runtimeOptions(undefined, nodeSeekSessions('confirmed'), ['nodeseek'])),
+      { wrapper: QueryTestWrapper }
+    );
+    await waitFor(() => expect(hook.result.current.ready).toBe(true));
+    expect(hook.result.current.activeSources).toContain('nodeseek');
+    expect(hook.result.current.permission).toBe('unavailable');
+    expect(hook.result.current.initializationError).toContain('权限');
+    expect(hook.result.current.backgroundEnabled).toBe(false);
+    expect(presentSourceNotification).not.toHaveBeenCalled();
+    const reads = jest.mocked(loadNotificationState).mock.calls.length;
+    jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
+    await act(async () => {
+      await hook.result.current.retryInitialization();
+    });
+    expect(hook.result.current.permission).toBe('denied');
+    expect(hook.result.current.initializationError).toBe('');
+    expect(loadNotificationState).toHaveBeenCalledTimes(reads);
+    await settleStartedRuntimeTasks();
+  });
+
+  it('does not publish a late initialization after unmount', async () => {
+    const pending = Promise.withResolvers<string | null>();
+    jest.mocked(AsyncStorage.getItem).mockReturnValueOnce(pending.promise);
+    const hook = await renderHook(() => useNotificationsRuntime(runtimeOptions()), { wrapper: QueryTestWrapper });
+    const before = hook.result.current;
+    await hook.unmount();
+    await act(async () => {
+      pending.resolve(JSON.stringify(defaultNotificationState()));
+    });
+    expect(before.ready).toBe(false);
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+    expect(syncNotificationBackgroundRegistration).not.toHaveBeenCalled();
+    await settleStartedRuntimeTasks(false);
+  });
+
   it('records restoration failure without starting notification reads', async () => {
     jest.mocked(loadNotificationState).mockRejectedValueOnce(new Error('storage PRIVATE_RESTORE'));
     const lines: string[] = [];
@@ -990,6 +1059,81 @@ describe('notification runtime', () => {
     } finally {
       toast.mockRestore();
     }
+  });
+
+  it('retains an authoritative unread hint across a read-only scan, remount and failed snapshots', async () => {
+    const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.sources.nodeseek = {
+      ...stored.sources.nodeseek,
+      identityKey: 'nodeseek:42',
+      intentEnabled: true,
+      baselineReady: true,
+      unreadCount: 1
+    };
+    let persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    const worker = jest.requireActual<typeof import('@/platform/notifications/notificationWorker')>(
+      '@/platform/notifications/notificationWorker'
+    ).runNotificationBackgroundWorker;
+    await worker({
+      sources: ['nodeseek'],
+      sourceAllowed: () => true,
+      network: {
+        restoreProxy: async () => undefined,
+        probeAccess: async () => ({ identityKey: 'nodeseek:42', userId: '42' }),
+        listPage: async () => ({
+          items: Array.from({ length: 20 }, (_, index) => ({
+            source: 'nodeseek' as const,
+            id: `read-${index}`,
+            kind: 'reply' as const,
+            actor: { name: 'fixture' },
+            title: 'read sample',
+            createdAt: null,
+            unread: false,
+            target: { type: 'information' as const }
+          })),
+          cursor: null,
+          hasMore: false
+        })
+      },
+      store: {
+        load: loadNotificationState,
+        record: recordNotificationDelivery,
+        clearForContentDisable: clearNotificationSourceForContentDisable
+      },
+      system: {
+        permissionGranted: async () => true,
+        reconcileDigests: async () => undefined,
+        presentDigest: async (_source, _digest, identifier) => identifier,
+        dismissDigest: async () => undefined
+      }
+    });
+    expect((await loadNotificationState()).sources.nodeseek.unreadCount).toBe(1);
+    for (let mount = 0; mount < 2; mount += 1) {
+      appQueryClient.clear();
+      const hook = await renderHook(
+        () =>
+          useNotificationsRuntime({
+            ...runtimeOptions(
+              jest.fn(() => true),
+              nodeSeekAndLinuxDoSessions(),
+              ['nodeseek']
+            ),
+            appActive: true,
+            fetcher: async () => new Response('snapshot unavailable', { status: 503 })
+          }),
+        { wrapper: QueryTestWrapper }
+      );
+      await waitFor(() => expect(hook.result.current.snapshotErrors.nodeseek).toBeTruthy());
+      expect(hook.result.current.unreadTotal).toBe(1);
+      await hook.unmount();
+      await settleStartedRuntimeTasks();
+    }
+    expect(JSON.parse(persisted).sources.nodeseek.unreadCount).toBe(1);
   });
 
   it('keeps identity keys stable when the session container changes without an identity change', async () => {

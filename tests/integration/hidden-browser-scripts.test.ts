@@ -305,6 +305,28 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
+  it.each([10000, 12000, 20000])('preserves a %i-character JSON payload across the NodeSeek bridge', (size) => {
+    // Synthetic payload exercises the bridge boundary, not a claimed upstream response field.
+    const body = JSON.stringify({ message: '文'.repeat(size) });
+    const { postMessage, evaluateAgain } = runNodeSeekBrowserFetchScript('/api/account/status', `<pre>${body}</pre>`);
+    evaluateAgain();
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload.error).toBeUndefined();
+    expect(payload.challenge).toBe(false);
+    expect(JSON.parse(payload.html)).toEqual(JSON.parse(body));
+  });
+
+  it('rejects oversized NodeSeek JSON instead of returning a truncated success', () => {
+    const body = JSON.stringify({ message: 'x'.repeat(900000) });
+    const { postMessage, evaluateAgain } = runNodeSeekBrowserFetchScript('/api/account/status', `<pre>${body}</pre>`);
+    evaluateAgain();
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload.error).toBe('NodeSeek 页面内容过大，已停止读取');
+    expect(payload.html).toBeUndefined();
+  });
+
   it('prefers readable NodeSeek content over injected challenge-platform markup', () => {
     const { postMessage, stop } = runNodeSeekBrowserFetchScript(
       '/post-777280-1',

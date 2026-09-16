@@ -365,7 +365,8 @@ function TopicImageHarness({
   originalImageUpgradeEnabled = true,
   rendererKey = 'img',
   textAlign,
-  topicSource = 'yaohuo'
+  topicSource = 'yaohuo',
+  webViewBlockMessage = ''
 }: {
   attributes?: Record<string, string>;
   contentWidth?: number;
@@ -382,6 +383,7 @@ function TopicImageHarness({
   rendererKey?: string;
   textAlign?: 'center' | 'right';
   topicSource?: TopicDetail['source'];
+  webViewBlockMessage?: string;
 }) {
   const selectedTopicWithoutReferrer =
     topicSource === topic.source
@@ -405,7 +407,7 @@ function TopicImageHarness({
     settings: readerData.settings,
     theme,
     topicDetail: selectedTopic,
-    webViewBlockMessage: ''
+    webViewBlockMessage
   });
   const ImageRenderer = htmlRenderers[rendererKey] as unknown as
     React.ComponentType<Record<string, unknown>> | undefined;
@@ -702,6 +704,13 @@ describe('topic block image loading', () => {
 
     expect(view.getByText('代理状态切换中')).toBeTruthy();
     expect(mockWebView).not.toHaveBeenCalled();
+    await view.rerender(<NodeSeekIframeHarness webViewBlockMessage="代理未生效" />);
+    expect(view.getByText('代理未生效')).toBeTruthy();
+    expect(view.queryByText('代理状态切换中')).toBeNull();
+    expect(mockWebView).not.toHaveBeenCalled();
+    await view.rerender(<NodeSeekIframeHarness webViewBlockMessage="" />);
+    expect(view.queryByText('代理未生效')).toBeNull();
+    expect(mockWebView).toHaveBeenCalled();
   });
 
   it('does not let whitespace-only art consume the remaining media permit', async () => {
@@ -2091,6 +2100,51 @@ describe('topic block image loading', () => {
       width: 140
     });
   });
+
+  it('keeps a displayed image mounted when only the WebView block message changes', async () => {
+    const view = await render(<TopicImageHarness />);
+    await loadAndDisplayImage(latestImageProps(imageUrl));
+    const image = view.getByTestId('topic-image-frame');
+    await view.rerender(<TopicImageHarness webViewBlockMessage="代理状态切换中" />);
+    expect(view.getByTestId('topic-image-frame') === image).toBe(true);
+    expect(view.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+  });
+
+  it.each([
+    { rendererKey: FORUM_AUDIO_TAG, testID: 'forum-content-audio-frame', src: 'https://cdn.example.com/stable.mp3' },
+    { rendererKey: FORUM_VIDEO_TAG, testID: 'forum-content-video-frame', src: 'https://cdn.example.com/stable.mp4' }
+  ])(
+    'keeps $rendererKey playback mounted through WebView blocking and recovery',
+    async ({ rendererKey, testID, src }) => {
+      mockVideoStatus = 'readyToPlay';
+      const tree = (webViewBlockMessage = '') => (
+        <TopicBodyMediaCoordinatorProvider active paused={false} viewportRowKeys={['stable-media']}>
+          <TopicBodyMediaRowBoundary rowKey="stable-media">
+            <NodeSeekCustomMediaHarness
+              attributes={{ src }}
+              rendererKey={rendererKey}
+              webViewBlockMessage={webViewBlockMessage}
+            />
+          </TopicBodyMediaRowBoundary>
+        </TopicBodyMediaCoordinatorProvider>
+      );
+      const view = await render(tree());
+      await waitFor(() => expect(mockCreateVideoPlayer).toHaveBeenCalledTimes(1));
+      const player = mockCreateVideoPlayer.mock.results[0]!.value as ReturnType<typeof createMockManualVideoPlayer>;
+      await waitFor(() => expect(player.replaceAsync).toHaveBeenCalledTimes(1));
+      const frame = view.getByTestId(testID);
+      player.currentTime = 17;
+      await act(() => player.play());
+      for (const message of ['代理状态切换中', '']) {
+        await view.rerender(tree(message));
+        expect(view.getByTestId(testID) === frame).toBe(true);
+        expect(player.currentTime).toBe(17);
+        expect(player.playing).toBe(true);
+        expect(player.release).not.toHaveBeenCalled();
+        expect(player.replaceAsync).toHaveBeenCalledTimes(1);
+      }
+    }
+  );
 
   it('keeps a displayed image mounted with the same native request when the preview action changes', async () => {
     const firstPreviewAction = jest.fn();

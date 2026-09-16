@@ -318,6 +318,7 @@ export const TopicScreen = memo(function TopicScreen({
         onReplySnapshot={commands.composer.changeSnapshot}
         onSubmitReply={actions.submitReply}
         onLoadLinuxDoPollCapabilities={item.source === 'linuxdo' ? actions.loadLinuxDoPollCapabilities : undefined}
+        onResolveLinuxDoUpload={item.source === 'linuxdo' ? actions.resolveLinuxDoUpload : undefined}
         onLoadLinuxDoTemplates={item.source === 'linuxdo' ? actions.loadLinuxDoTemplates : undefined}
         onUseLinuxDoTemplate={item.source === 'linuxdo' ? actions.useLinuxDoTemplate : undefined}
         onUploadReplyImage={

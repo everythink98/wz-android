@@ -3,7 +3,9 @@ import {
   getReply as getForumReply,
   getReplies as getForumReplies,
   getTopic as getForumTopic,
-  getUserProfile as getForumUserProfile
+  getUserDetails as getForumUserDetails,
+  getUserTopics as getForumUserTopics,
+  getUserReplies as getForumUserReplies
 } from './sourceRead';
 import { searchTopics as searchForumTopics } from './searchRead';
 import {
@@ -73,7 +75,7 @@ import { isSessionSource, sourceValues, type DiscourseSource, type SessionSource
 import type { DiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 import { getLinuxDoReadingBatch, getLinuxDoTopicReading } from '@/sources/linuxdo/reading';
 
-export { getCurrentUserProfile } from './sourceRead';
+export { getCurrentUserIdentity } from './sourceRead';
 export { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '@/sources/linuxdo/level';
 export { checkYaohuoLoginDirect as checkYaohuoLogin } from '@/sources/yaohuo/reader';
 
@@ -192,11 +194,7 @@ export async function getReply(
   return result;
 }
 
-type GetUserProfileOptions = Parameters<typeof getForumUserProfile>[0];
-
-export async function getUserProfile(options: GetUserProfileOptions) {
-  return getForumUserProfile(options);
-}
+export { getUserDetails, getUserTopics, getUserReplies } from './sourceRead';
 
 type ReadGatewayDependencies = {
   reading?: DiscourseReadingRuntime;
@@ -228,7 +226,8 @@ type ManagedSearchTopicsOptions = Omit<SearchTopicsOptions, ManagedReadKeys>;
 type ManagedGetTopicOptions = Omit<GetTopicOptions, ManagedReadKeys>;
 type ManagedGetRepliesOptions = Omit<GetRepliesOptions, ManagedReadKeys>;
 type ManagedGetReplyOptions = Omit<GetReplyOptions, ManagedReadKeys>;
-type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, ManagedReadKeys>;
+type ManagedUserDetailsOptions = Omit<Parameters<typeof getForumUserDetails>[0], ManagedReadKeys>;
+type ManagedUserActivityOptions = Omit<Parameters<typeof getForumUserTopics>[0], ManagedReadKeys>;
 type ManagedResolveNodeSeekUserOptions = {
   signal?: AbortSignal;
   username: string;
@@ -1034,16 +1033,32 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
         options.signal
       );
     },
-    getUserProfile(options: ManagedGetUserProfileOptions, context?: ReadGatewayReadContext) {
+    getUserDetails(options: ManagedUserDetailsOptions, context?: ReadGatewayReadContext) {
       return read(
         options.source,
         'getUserProfile',
         'user-profile',
-        (credentials) =>
-          getUserProfile({
-            ...options,
-            ...credentials
-          }),
+        (credentials) => getForumUserDetails({ ...options, ...credentials }),
+        context,
+        options.signal
+      );
+    },
+    getUserTopics(options: ManagedUserActivityOptions, context?: ReadGatewayReadContext) {
+      return read(
+        options.source,
+        'getUserProfile',
+        'user-profile',
+        (credentials) => getForumUserTopics({ ...options, ...credentials }),
+        context,
+        options.signal
+      );
+    },
+    getUserReplies(options: ManagedUserActivityOptions, context?: ReadGatewayReadContext) {
+      return read(
+        options.source,
+        'getUserProfile',
+        'user-profile',
+        (credentials) => getForumUserReplies({ ...options, ...credentials }),
         context,
         options.signal
       );

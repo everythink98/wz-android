@@ -6,7 +6,7 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { getCurrentUserProfile } from './sourceRead';
+import { getCurrentUserIdentity } from './sourceRead';
 
 describe('source account read', () => {
   it('reads all three current identities only from their proven session seams', async () => {
@@ -51,37 +51,40 @@ describe('source account read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true });
-    const linuxdo = await getCurrentUserProfile({
+    const nodeseek = await getCurrentUserIdentity({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true });
+    const linuxdo = await getCurrentUserIdentity({
       source: 'linuxdo',
       fetcher,
       discourseAuth: { authenticated: true }
     });
-    const yaohuo = await getCurrentUserProfile({ source: 'yaohuo', fetcher });
+    const yaohuo = await getCurrentUserIdentity({ source: 'yaohuo', fetcher });
 
     expect(nodeseek).toMatchObject({
       source: 'nodeseek',
       id: '48872',
       username: '我是ikun',
-      url: 'https://www.nodeseek.com/space/48872',
-      topics: []
+      url: 'https://www.nodeseek.com/space/48872'
     });
     expect(linuxdo).toMatchObject({
       source: 'linuxdo',
       id: 'alice',
       username: 'alice',
       displayName: 'Alice',
-      levelLabel: 'Lv2',
-      topics: []
+      levelLabel: 'Lv2'
     });
     expect(yaohuo).toMatchObject({
       source: 'yaohuo',
       id: '7',
-      username: '火友',
-      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7',
-      topics: []
+      username: '7',
+      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7'
     });
-    expect(() => getCurrentUserProfile({ source: 'v2ex', fetcher })).toThrow('V2EX 不支持当前登录身份读取');
+    for (const identity of [nodeseek, linuxdo, yaohuo]) expect(identity).not.toHaveProperty('topics');
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      'https://www.nodeseek.com/',
+      'https://linux.do/session/current.json',
+      'https://www.yaohuo.me/wapindex.aspx?sid=-2'
+    ]);
+    expect(() => getCurrentUserIdentity({ source: 'v2ex', fetcher })).toThrow('V2EX 不支持当前登录身份读取');
   });
 
   it('classifies the documented anonymous linux.do current-session 404 as an expired login', async () => {
@@ -94,7 +97,7 @@ describe('source account read', () => {
     );
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'linuxdo',
         fetcher,
         discourseAuth: { authenticated: true }
@@ -116,7 +119,7 @@ describe('source account read', () => {
     );
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'linuxdo',
         fetcher,
         discourseAuth: { authenticated: true }
@@ -136,7 +139,7 @@ describe('source account read', () => {
           headers: { 'content-type': 'application/json' }
         })
     );
-    const failure = await getCurrentUserProfile({
+    const failure = await getCurrentUserIdentity({
       source: 'linuxdo',
       fetcher,
       discourseAuth: { authenticated: true }
@@ -160,7 +163,7 @@ describe('source account read', () => {
     let failure: unknown;
 
     try {
-      await getCurrentUserProfile({
+      await getCurrentUserIdentity({
         source: 'linuxdo',
         fetcher,
         discourseAuth: { authenticated: true }
@@ -187,7 +190,7 @@ describe('source account read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow(
+    await expect(getCurrentUserIdentity({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow(
       '无法读取当前 NodeSeek 用户身份'
     );
     expect(fetcher).not.toHaveBeenCalledWith(
@@ -214,7 +217,7 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'nodeseek',
         fetcher,
         nodeSeekAuthenticated: true
@@ -233,7 +236,7 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'nodeseek',
         fetcher,
         nodeSeekAuthenticated: true
@@ -263,7 +266,7 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'nodeseek',
         fetcher,
         nodeSeekAuthenticated: true
@@ -299,7 +302,7 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'nodeseek',
         fetcher,
         nodeSeekAuthenticated: true
@@ -321,7 +324,7 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'nodeseek',
         fetcher,
         nodeSeekAuthenticated: true
@@ -343,7 +346,7 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'nodeseek',
         fetcher,
         nodeSeekAuthenticated: true
@@ -366,7 +369,7 @@ describe('source account read', () => {
       let failure: unknown;
 
       try {
-        await getCurrentUserProfile({
+        await getCurrentUserIdentity({
           source: 'nodeseek',
           fetcher,
           nodeSeekAuthenticated: true
@@ -393,12 +396,11 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })
+      getCurrentUserIdentity({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })
     ).resolves.toMatchObject({
       source: 'nodeseek',
       id: '15105',
-      username: '新账号',
-      topics: []
+      username: '新账号'
     });
   });
 
@@ -417,7 +419,7 @@ describe('source account read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow(
+    await expect(getCurrentUserIdentity({ source: 'nodeseek', fetcher, nodeSeekAuthenticated: true })).rejects.toThrow(
       '无法读取当前 NodeSeek 用户身份'
     );
   });
@@ -434,7 +436,7 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'nodeseek',
         fetcher,
         nodeSeekAuthenticated: true
@@ -442,7 +444,7 @@ describe('source account read', () => {
     ).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
-  it('reads the current yaohuo account name from the signed-in user topic list when the profile only exposes an id', async () => {
+  it('keeps a proven Yaohuo identity without reading profile or activity pages', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response(
@@ -469,25 +471,15 @@ describe('source account read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(getCurrentUserProfile({ source: 'yaohuo', fetcher })).resolves.toMatchObject({
+    await expect(getCurrentUserIdentity({ source: 'yaohuo', fetcher })).resolves.toMatchObject({
       source: 'yaohuo',
       id: '45245',
-      username: '流金岁月',
-      displayName: '流金岁月',
-      topics: [],
-      replies: [
-        {
-          author: '流金岁月',
-          authorId: '45245',
-          floor: 71,
-          excerpt: '阿根廷没问题。',
-          displayTimeText: '2026-07-03 13:45'
-        }
-      ]
+      username: '45245'
     });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['https://www.yaohuo.me/wapindex.aspx?sid=-2']);
   });
 
-  it('preserves a proven Yaohuo identity when optional profile enrichment fails', async () => {
+  it('does not depend on optional profile enrichment for a proven Yaohuo identity', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response(
@@ -501,16 +493,16 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'yaohuo',
         fetcher
       })
     ).resolves.toMatchObject({
       source: 'yaohuo',
       id: '7',
-      username: '火友',
-      topics: []
+      username: '火友'
     });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['https://www.yaohuo.me/wapindex.aspx?sid=-2']);
   });
 
   it('uses the canonical Yaohuo login-form protocol for current-user reads', async () => {
@@ -531,7 +523,7 @@ describe('source account read', () => {
     });
 
     await expect(
-      getCurrentUserProfile({
+      getCurrentUserIdentity({
         source: 'yaohuo',
         fetcher
       })

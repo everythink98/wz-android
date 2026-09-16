@@ -6,10 +6,65 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async () => undefined)
 }));
 
-import { getUserProfile } from './sourceRead';
-import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
+import { getUserDetails, getUserTopics, getUserReplies, type UserReadOptions } from './sourceRead';
+import type { UserDetails } from '@/domain/forum/models';
+type UserFixtureOptions = UserReadOptions & { cursor?: string | null; cursorType?: 'topics' | 'replies' };
+async function readProfileTopics(options: UserFixtureOptions) {
+  const profile = await getUserDetails(options);
+  const topics = await getUserTopics({ ...options, profile });
+  return mergeSourceDiagnosticSummaries(
+    { ...profile, ...topics },
+    sourceDiagnosticSummary(profile)?.parserVariant || 'api-user',
+    [profile, topics]
+  );
+}
+async function readProfileAll(options: UserFixtureOptions) {
+  const profile = await readProfileTopics(options);
+  const replies = await getUserReplies({ ...options, profile });
+  return mergeSourceDiagnosticSummaries(
+    { ...profile, ...replies },
+    sourceDiagnosticSummary(profile)?.parserVariant || 'api-user',
+    [profile, replies]
+  );
+}
+async function readProfileReplies(options: UserFixtureOptions) {
+  const profile = await getUserDetails(options);
+  return getUserReplies({ ...options, profile });
+}
+const yaohuoCursorUser: UserDetails = {
+  source: 'yaohuo',
+  id: '7',
+  username: '火友',
+  url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7'
+};
+import {
+  sourceDiagnosticSummary,
+  mergeSourceDiagnosticSummaries
+} from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 describe('source user read', () => {
+  // Existing parser shapes; only the HTTP failure is synthetic fault injection.
+  it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
+    'does not report failed %s activity as a successful empty profile',
+    async (source) => {
+      const fetcher = async (url: string) => {
+        if (url.includes('/api/account/getInfo/'))
+          return Response.json({ success: true, detail: { member_id: 7, member_name: 'alice' } });
+        if (url.includes('/summary.json'))
+          return Response.json({ user_summary: { user: { id: 7, username: 'alice' } } });
+        if (url.includes('/api/members/show.json')) return Response.json({ id: 7, username: 'alice' });
+        if (url.includes('/userinfo.aspx'))
+          return new Response(
+            '<h1>alice</h1><a href="/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7">回复(1)</a>'
+          );
+        if (url.includes('list-discussions')) return Response.json({ success: true, discussions: [] });
+        return new Response('activity unavailable', { status: 503 });
+      };
+      const profile = await getUserDetails({ source, id: '7', username: 'alice', fetcher });
+      await expect(getUserReplies({ source, profile, fetcher })).rejects.toThrow();
+    }
+  );
+
   it('routes user profile reads to each public source site', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
@@ -153,10 +208,10 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
-    const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
-    const v2ex = await getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
-    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
+    const nodeseek = await readProfileAll({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const linuxdo = await readProfileAll({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
+    const v2ex = await readProfileAll({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
+    const yaohuo = await readProfileAll({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(nodeseek).toMatchObject({
       source: 'nodeseek',
@@ -293,7 +348,7 @@ describe('source user read', () => {
     expect(yaohuo.nextRepliesCursor).toContain('page=2');
   });
 
-  it('keeps four-site user subrequest degradation out of the response while exposing a safe summary', async () => {
+  it('keeps four-site profile success separate from reply failure', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com/api/account/getInfo/1?readme=1')) {
         return new Response(JSON.stringify({ success: true, detail: { member_name: 'node', member_id: 1 } }));
@@ -337,15 +392,16 @@ describe('source user read', () => {
     });
 
     const profiles = await Promise.all([
-      getUserProfile({ source: 'nodeseek', id: '1', fetcher }),
-      getUserProfile({ source: 'linuxdo', id: 'linux', fetcher }),
-      getUserProfile({ source: 'v2ex', id: 'v2', fetcher }),
-      getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher })
+      getUserDetails({ source: 'nodeseek', id: '1', fetcher }),
+      getUserDetails({ source: 'linuxdo', id: 'linux', fetcher }),
+      getUserDetails({ source: 'v2ex', id: 'v2', fetcher }),
+      getUserDetails({ source: 'yaohuo', id: '7', username: '火友', fetcher })
     ]);
-
-    expect(profiles.map((profile) => sourceDiagnosticSummary(profile)?.partialErrorCount)).toEqual([1, 1, 1, 1]);
-    expect(profiles.every((profile) => sourceDiagnosticSummary(profile)?.hasDegradation)).toBe(true);
-    expect(profiles.every((profile) => !('diagnostic' in profile))).toBe(true);
+    for (const profile of profiles) {
+      expect(profile).not.toHaveProperty('topics');
+      expect(profile).not.toHaveProperty('replies');
+      await expect(getUserReplies({ source: profile.source, profile, fetcher })).rejects.toThrow('unavailable');
+    }
   });
 
   it('loads user replies from each source reply cursor', async () => {
@@ -398,7 +454,7 @@ describe('source user read', () => {
     });
 
     await expect(
-      getUserProfile({
+      readProfileReplies({
         source: 'nodeseek',
         id: '48872',
         username: '我是ikun',
@@ -412,7 +468,7 @@ describe('source user read', () => {
       nextRepliesCursor: null
     });
     await expect(
-      getUserProfile({
+      readProfileReplies({
         source: 'linuxdo',
         id: 'alice',
         username: 'alice',
@@ -426,7 +482,7 @@ describe('source user read', () => {
       nextRepliesCursor: null
     });
     await expect(
-      getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', cursor: '2', cursorType: 'replies', fetcher })
+      readProfileReplies({ source: 'v2ex', id: 'neo', username: 'neo', cursor: '2', cursorType: 'replies', fetcher })
     ).resolves.toMatchObject({
       replies: [
         {
@@ -440,12 +496,10 @@ describe('source user read', () => {
       ]
     });
     await expect(
-      getUserProfile({
+      getUserReplies({
         source: 'yaohuo',
-        id: '7',
-        username: '火友',
+        profile: yaohuoCursorUser,
         cursor: 'https://www.yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7&page=2',
-        cursorType: 'replies',
         fetcher
       })
     ).resolves.toMatchObject({
@@ -550,10 +604,10 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
-    const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
-    const v2ex = await getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
-    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
+    const nodeseek = await readProfileTopics({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const linuxdo = await readProfileTopics({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
+    const v2ex = await readProfileTopics({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
+    const yaohuo = await readProfileTopics({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(nodeseek.topics[0]).toMatchObject({
       id: '101',
@@ -600,7 +654,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
+    const profile = await readProfileTopics({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(profile.topicCount).toBe(2);
     expect(profile.topics.map((topic) => topic.id)).toEqual(['67', '66']);
@@ -636,7 +690,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
+    const profile = await readProfileTopics({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(profile.topics).toHaveLength(30);
     expect(profile).toMatchObject({
@@ -664,7 +718,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'yaohuo', id: '36925', username: '李慕婉o', fetcher });
+    const profile = await readProfileTopics({ source: 'yaohuo', id: '36925', username: '李慕婉o', fetcher });
 
     expect(profile.displayName).toBe('李慕婉o');
     expect(profile.topicCount).toBe(1659);
@@ -727,7 +781,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'yaohuo', id: '36925', username: '李慕婉o', fetcher });
+    const profile = await readProfileTopics({ source: 'yaohuo', id: '36925', username: '李慕婉o', fetcher });
 
     expect(profile.displayName).toBe('李慕婉o');
     expect(profile.topicCount).toBe(1659);
@@ -756,10 +810,9 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({
+    const profile = await getUserTopics({
       source: 'yaohuo',
-      id: '7',
-      username: '火友',
+      profile: yaohuoCursorUser,
       fetcher,
       cursor: 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2'
     });
@@ -773,10 +826,9 @@ describe('source user read', () => {
     const fetcher = vi.fn(async () => new Response(''));
 
     await expect(
-      getUserProfile({
+      getUserTopics({
         source: 'yaohuo',
-        id: '7',
-        username: '火友',
+        profile: yaohuoCursorUser,
         fetcher,
         cursor: 'https://evil.example/bbs/book_list.aspx?page=2'
       })
@@ -809,7 +861,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'v2ex', id: 'haonanaaaaaa', username: 'haonanaaaaaa', fetcher });
+    const profile = await readProfileTopics({ source: 'v2ex', id: 'haonanaaaaaa', username: 'haonanaaaaaa', fetcher });
 
     expect(profile.topics.map((topic) => topic.id)).toEqual(['1212849', '1214608']);
   });
@@ -856,7 +908,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const profile = await getUserProfile({ source: 'v2ex', id: 'haonanaaaaaa', username: 'haonanaaaaaa', fetcher });
+    const profile = await readProfileTopics({ source: 'v2ex', id: 'haonanaaaaaa', username: 'haonanaaaaaa', fetcher });
 
     expect(profile.topics.map((topic) => topic.id)).toEqual(['1214608', '1212849']);
     expect(profile.topics[0]).toMatchObject({
@@ -962,10 +1014,10 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
-    const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
-    const v2ex = await getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
-    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher });
+    const nodeseek = await readProfileTopics({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const linuxdo = await readProfileTopics({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
+    const v2ex = await readProfileTopics({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
+    const yaohuo = await readProfileTopics({ source: 'yaohuo', id: '7', username: '火友', fetcher });
 
     expect(nodeseek.topics.map((topic) => topic.id)).toEqual(['102', '101']);
     expect(linuxdo.topics.map((topic) => topic.id)).toEqual(['42', '41']);
@@ -989,7 +1041,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const nodeseek = await readProfileTopics({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
 
     expect(nodeseek.topics[0]).toMatchObject({
@@ -998,7 +1050,7 @@ describe('source user read', () => {
     expect(nodeseek.topics[0].createdAt).toBe('');
     expect(nodeseek.topics[0].lastReplyAt).toBe('');
     expect(calls).not.toContain('nodeseek.com/post-101-1');
-    expect(calls).toContain('list-comments');
+    expect(calls).not.toContain('list-comments');
     expect(fetcher.mock.calls.every(([, init]) => new Headers(init?.headers).get('x-dynamic-sign') === null)).toBe(
       true
     );
@@ -1025,7 +1077,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '15105', username: 'Bugs', fetcher });
+    const nodeseek = await readProfileTopics({ source: 'nodeseek', id: '15105', username: 'Bugs', fetcher });
 
     expect(nodeseek).toMatchObject({
       source: 'nodeseek',
@@ -1064,7 +1116,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const nodeseek = await readProfileTopics({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
 
     expect(nodeseek.topics[0]).toMatchObject({
@@ -1073,7 +1125,7 @@ describe('source user read', () => {
       lastReplyAt: '2026-05-22T16:06:25.000Z'
     });
     expect(calls).not.toContain('nodeseek.com/post-101-1');
-    expect(calls).toContain('list-comments');
+    expect(calls).not.toContain('list-comments');
   });
 
   it('keeps untimed NodeSeek user profile posts in their original list order', async () => {
@@ -1095,7 +1147,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const nodeseek = await readProfileTopics({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
 
     expect(nodeseek.topics.map((topic) => topic.id)).toEqual(['101', '102']);
     expect(nodeseek.topics.every((topic) => topic.createdAt === '' && topic.lastReplyAt === '')).toBe(true);
@@ -1122,7 +1174,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const nodeseek = await readProfileTopics({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
 
     expect(nodeseek.topics.map((topic) => topic.id)).toEqual(['103', '101', '102', '104']);
     expect(nodeseek.topics.slice(2).map((topic) => topic.createdAt)).toEqual(['', '']);
@@ -1180,7 +1232,7 @@ describe('source user read', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
+    const linuxdo = await readProfileTopics({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
 
     expect(linuxdo.topics[0]).toMatchObject({
       categoryId: '4',

@@ -1,8 +1,31 @@
 diff --git a/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt b/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt
-index 5eaa6069..c27e8649 100644
+index 5eaa606..d21eb9d 100644
 --- a/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt
 +++ b/node_modules/react-native-pager-view/android/src/main/java/com/reactnativepagerview/ComposePagerView.kt
-@@ -56,6 +56,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -9,7 +9,10 @@ import android.widget.FrameLayout
+ import androidx.compose.foundation.ExperimentalFoundationApi
+ import androidx.compose.foundation.LocalOverscrollConfiguration
+ import androidx.compose.foundation.interaction.DragInteraction
++import androidx.compose.foundation.gestures.ScrollScope
++import androidx.compose.foundation.gestures.TargetedFlingBehavior
+ import androidx.compose.foundation.pager.HorizontalPager
++import androidx.compose.foundation.pager.PagerDefaults
+ import androidx.compose.foundation.pager.VerticalPager
+ import androidx.compose.foundation.pager.rememberPagerState
+ import androidx.compose.runtime.Composable
+@@ -17,9 +20,11 @@ import androidx.compose.runtime.CompositionLocalProvider
+ import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.mutableStateListOf
+ import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
+ import androidx.compose.runtime.snapshotFlow
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.geometry.Offset
+ import androidx.compose.ui.platform.ComposeView
+ import androidx.compose.ui.platform.ViewCompositionStrategy
+ import androidx.compose.ui.unit.dp
+@@ -56,6 +61,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
    // untouched. It only reaches DESTROYED for real in dispose() below.
    private val composeLifecycleOwner = ComposeViewLifecycleOwner()
    private var composeView: ComposeView? = null
@@ -10,7 +33,15 @@ index 5eaa6069..c27e8649 100644
    private val pages = mutableStateListOf<View>()
    private val scrollEnabledState = mutableStateOf(true)
    private val orientationState = mutableStateOf(Orientation.Horizontal)
-@@ -86,6 +87,8 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -71,6 +77,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+   private var touchSlop = 0
+   private var initialTouchX = 0f
+   private var initialTouchY = 0f
++  private var gestureDisplacement = Offset.Zero
+   private var didDelegateGestureToAncestor = false
+   private val scrollCommandState = mutableStateOf<ScrollCommand?>(null)
+   private var lastEmittedScrollState: String? = null
+@@ -86,6 +93,8 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
  
    private fun createComposeView(): ComposeView {
      return ComposeView(context).apply {
@@ -19,12 +50,30 @@ index 5eaa6069..c27e8649 100644
        layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
        isSaveEnabled = false
        layoutDirection = androidLayoutDirection()
-@@ -155,6 +158,22 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -142,12 +151,16 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+       MotionEvent.ACTION_DOWN -> {
+         initialTouchX = event.x
+         initialTouchY = event.y
++        gestureDisplacement = Offset.Zero
+         didDelegateGestureToAncestor = false
+         updateSameOrientationAncestorsGestureState(true)
+       }
+       MotionEvent.ACTION_MOVE -> updateSameOrientationAncestorsGestureStateForMove(event)
+       MotionEvent.ACTION_UP,
+       MotionEvent.ACTION_CANCEL -> {
++        gestureDisplacement = if (event.actionMasked == MotionEvent.ACTION_UP) {
++          Offset(event.x - initialTouchX, event.y - initialTouchY)
++        } else Offset.Zero
+         didDelegateGestureToAncestor = false
+         updateSameOrientationAncestorsGestureState(false)
+       }
+@@ -155,6 +168,23 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
      return super.dispatchTouchEvent(event)
    }
  
 +  override fun onTouchEvent(event: MotionEvent): Boolean {
 +    if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
++      gestureDisplacement = Offset.Zero
 +      // Native gesture coordinators cancel each View directly. Compose consumes
 +      // input in dispatchTouchEvent, so bridge cancellation to the pager only.
 +      cancellingPagerTouch = true
@@ -42,7 +91,46 @@ index 5eaa6069..c27e8649 100644
    override fun canScrollHorizontally(direction: Int): Boolean {
      if (orientationState.value != Orientation.Horizontal) {
        return false
-@@ -586,7 +605,14 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+@@ -546,6 +576,22 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+     }
+ 
+     val pageSpacing = pageMarginState.value.dp
++    val nativeFling = PagerDefaults.flingBehavior(pagerState)
++    val flingBehavior = remember(pagerState, nativeFling) {
++      object : TargetedFlingBehavior {
++        override suspend fun ScrollScope.performFling(
++          initialVelocity: Float,
++          onRemainingDistanceUpdated: (Float) -> Unit
++        ): Float {
++          // Compose 1.7.8's dragDirectionDetector misses consumed CANCEL and can
++          // pair this UP with an earlier DOWN. Repair its input, keeping native
++          // thresholds, velocity and animation. Remove when upstream handles cancellation.
++          @Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
++          pagerState.upDownDifference = gestureDisplacement
++          return with(nativeFling) { performFling(initialVelocity, onRemainingDistanceUpdated) }
++        }
++      }
++    }
+     val beyondViewportPageCount = getBeyondViewportPageCount()
+     val userScrollEnabled = scrollEnabledState.value && !sameOrientationChildGestureState.value
+     val overscrollConfiguration = if (overScrollModeState.value == OverScrollMode.Never) {
+@@ -558,6 +604,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+       if (orientationState.value == Orientation.Vertical) {
+         VerticalPager(
+           state = pagerState,
++          flingBehavior = flingBehavior,
+           modifier = Modifier.fillMaxSize(),
+           pageSpacing = pageSpacing,
+           userScrollEnabled = userScrollEnabled,
+@@ -569,6 +616,7 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
+       } else {
+         HorizontalPager(
+           state = pagerState,
++          flingBehavior = flingBehavior,
+           modifier = Modifier.fillMaxSize(),
+           pageSpacing = pageSpacing,
+           userScrollEnabled = userScrollEnabled,
+@@ -586,7 +634,14 @@ class ComposePagerView(context: Context) : FrameLayout(context) {
      AndroidView(
        modifier = Modifier.fillMaxSize(),
        factory = { context ->

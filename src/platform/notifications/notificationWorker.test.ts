@@ -23,7 +23,7 @@ function testRecord(state: NotificationState) {
     source: NotificationSource,
     identityKey: string,
     scannedIds: string[],
-    _fields: { lastSuccessAt: string; unreadCount: number },
+    _fields: { lastSuccessAt: string },
     delivery?: NotificationDeliveryCommit
   ) => {
     const sourceState = state.sources[source];

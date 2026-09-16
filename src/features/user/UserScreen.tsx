@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronLeft, ExternalLink, RefreshCw } from 'lucide-react-native';
-import type { SourceErrorInfo, Topic, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
+import type { SourceErrorInfo, Topic, UserReference, UserReplyActivity } from '@/domain/forum/models';
 import { formatDateTime, sourceLabel } from '@/domain/forum/presentation';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
@@ -21,7 +21,8 @@ import {
   userListItemKey,
   userListItemType,
   type UserActivityTab,
-  type UserListItem
+  type UserListItem,
+  type UserProfileView
 } from './userScreenItems';
 
 const USER_LIST_POSITION_PROPS = { disabled: true };
@@ -150,6 +151,13 @@ function UserReplyCard({
 export const UserScreen = memo(function UserScreen({
   busy,
   error,
+  topicsError,
+  repliesError,
+  topicsBusy = false,
+  repliesBusy = false,
+  onRetryTopics,
+  onRetryReplies,
+  onRetryProfile,
   followed,
   profile,
   requestedUser,
@@ -167,8 +175,15 @@ export const UserScreen = memo(function UserScreen({
 }: {
   busy: boolean;
   error: SourceErrorInfo | null;
+  topicsError?: SourceErrorInfo | null;
+  repliesError?: SourceErrorInfo | null;
+  topicsBusy?: boolean;
+  repliesBusy?: boolean;
+  onRetryTopics?: () => void;
+  onRetryReplies?: () => void;
+  onRetryProfile?: () => void;
   followed: boolean;
-  profile: UserProfile | null;
+  profile: UserProfileView | null;
   requestedUser: UserReference | null;
   topicStateIndex: TopicListItemStateIndex;
   loadingMoreReplies: boolean;
@@ -180,7 +195,7 @@ export const UserScreen = memo(function UserScreen({
   onOpenTopic: (topic: Topic) => void;
   onPrivateMessage?: () => void;
   onRefresh: () => void;
-  onToggleFollow: (user: UserProfile) => void;
+  onToggleFollow: (user: UserProfileView) => void;
 }) {
   const onPageLayout = useStartupPageLayout();
   const { styles, theme, settings } = useReaderThemeStyles(createUserStyles);
@@ -189,6 +204,10 @@ export const UserScreen = memo(function UserScreen({
   const topics = profile?.topics || EMPTY_TOPICS;
   const replies = profile?.replies || EMPTY_REPLIES;
   const [userTab, setUserTab] = useState<UserActivityTab>('topics');
+  const activityError = userTab === 'topics' ? topicsError : repliesError;
+  const activityBusy = userTab === 'topics' ? topicsBusy : repliesBusy;
+  const activityData = userTab === 'topics' ? profile?.topics : profile?.replies;
+  const retryActivity = userTab === 'topics' ? onRetryTopics : onRetryReplies;
   const [bioExpanded, setBioExpanded] = useState(false);
   const userIdentity = user ? `${user.source}:${user.id || user.username}` : '';
   const displayName = user?.displayName || user?.username || user?.id || '用户';
@@ -376,11 +395,12 @@ export const UserScreen = memo(function UserScreen({
         {error ? (
           userAuthNotice ? (
             <AuthNoticeBox notice={userAuthNotice}>
-              <AppButton compact label="重试" disabled={busy} onPress={onRefresh} />
+              <AppButton compact label="重试" disabled={busy} onPress={onRetryProfile || onRefresh} />
             </AuthNoticeBox>
           ) : (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{error.message}</Text>
+              <AppButton compact label="重试资料" disabled={busy} onPress={onRetryProfile || onRefresh} />
             </View>
           )
         ) : null}
@@ -413,6 +433,7 @@ export const UserScreen = memo(function UserScreen({
     followed,
     fontScale,
     onRefresh,
+    onRetryProfile,
     onPrivateMessage,
     onToggleFollow,
     profile,
@@ -515,7 +536,22 @@ export const UserScreen = memo(function UserScreen({
         {...TOPIC_LIST_PERFORMANCE_PROPS}
         ListFooterComponent={
           <>
-            {profile && !(userTab === 'replies' ? replies.length : topics.length) ? (
+            {profile && activityError ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{activityError.message}</Text>
+                {retryActivity ? (
+                  <AppButton
+                    label={userTab === 'topics' ? '重试主题' : '重试回复'}
+                    disabled={activityBusy}
+                    onPress={retryActivity}
+                  />
+                ) : null}
+              </View>
+            ) : profile && activityBusy && !activityData ? (
+              <View style={styles.emptyActivity}>
+                <ActivityIndicator accessibilityLabel={userTab === 'topics' ? '正在读取主题' : '正在读取回复'} />
+              </View>
+            ) : profile && activityData && !activityData.length ? (
               <View style={styles.emptyActivity}>
                 <EmptyText
                   text={userTab === 'replies' ? '这个用户暂时没有可显示的回复' : '这个用户暂时没有可显示的主题'}

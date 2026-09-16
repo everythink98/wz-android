@@ -10,9 +10,9 @@ import {
   LinuxDoHiddenBrowserFailureError,
   withLinuxDoConnectSessionRecoveryIntent
 } from '@/sources/linuxdo/browserFallback';
-import { getLinuxDoCurrentUserProfile } from '@/sources/linuxdo/account';
+import { getLinuxDoCurrentUserIdentity } from '@/sources/linuxdo/account';
 import { createNodeSeekWebViewFallbackFetcher } from '@/sources/nodeseek/browserFallback';
-import { getNodeSeekCurrentUserProfile, getNodeSeekReplies } from '@/sources/nodeseek/reader';
+import { getNodeSeekCurrentUserIdentity, getNodeSeekReplies } from '@/sources/nodeseek/reader';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import {
   beginDiagnosticTrace,
@@ -104,7 +104,7 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    await expect(getNodeSeekCurrentUserProfile({ fetcher })).rejects.toMatchObject({
+    await expect(getNodeSeekCurrentUserIdentity({ fetcher })).rejects.toMatchObject({
       loginRequired: true,
       reason: 'expired'
     });
@@ -132,7 +132,7 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    await expect(getNodeSeekCurrentUserProfile({ fetcher })).rejects.toMatchObject({
+    await expect(getNodeSeekCurrentUserIdentity({ fetcher })).rejects.toMatchObject({
       loginRequired: true,
       reason: 'expired'
     });
@@ -157,7 +157,7 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    await expect(getNodeSeekCurrentUserProfile({ fetcher })).rejects.toMatchObject({
+    await expect(getNodeSeekCurrentUserIdentity({ fetcher })).rejects.toMatchObject({
       loginRequired: true,
       reason: 'expired'
     });
@@ -1613,7 +1613,7 @@ describe('Android local sources', () => {
       )
     });
 
-    const error = await getLinuxDoCurrentUserProfile({ fetcher }).catch((caught) => caught);
+    const error = await getLinuxDoCurrentUserIdentity({ fetcher }).catch((caught) => caught);
 
     expect(isLinuxDoCloudflareError(error)).toBe(true);
     expect(recoverReadChannel).not.toHaveBeenCalled();
@@ -1632,7 +1632,7 @@ describe('Android local sources', () => {
       })
     });
 
-    await expect(getLinuxDoCurrentUserProfile({ fetcher })).rejects.toBe(hiddenError);
+    await expect(getLinuxDoCurrentUserIdentity({ fetcher })).rejects.toBe(hiddenError);
     expect(recoverReadChannel).not.toHaveBeenCalled();
   });
 

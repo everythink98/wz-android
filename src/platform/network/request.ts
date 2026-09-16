@@ -1,5 +1,28 @@
 export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
+// Local request metadata, never an upstream field or HTTP header.
+const REQUEST_BEFORE_SEND = Symbol.for('wz.requestBeforeSend');
+type GuardedRequestInit = RequestInit & { [REQUEST_BEFORE_SEND]?: () => void };
+
+export function withRequestBeforeSend(fetcher: Fetcher, assertCurrent: () => void): Fetcher {
+  return async (input, init) => {
+    const inherited = (init as GuardedRequestInit | undefined)?.[REQUEST_BEFORE_SEND];
+    const beforeSend = () => {
+      inherited?.();
+      assertCurrent();
+    };
+    beforeSend();
+    return fetcher(input, { ...init, [REQUEST_BEFORE_SEND]: beforeSend } as GuardedRequestInit);
+  };
+}
+
+export function prepareRequestToSend(init?: RequestInit): RequestInit | undefined {
+  if (!init) return init;
+  const { [REQUEST_BEFORE_SEND]: beforeSend, ...transportInit } = init as GuardedRequestInit;
+  beforeSend?.();
+  return beforeSend ? transportInit : init;
+}
+
 export function rejectUnauthorizedResponse(fetcher: Fetcher): Fetcher {
   return async (input, init) => {
     const response = await fetcher(input, init);

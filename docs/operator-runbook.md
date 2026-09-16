@@ -37,6 +37,10 @@
 
 Vitest 与 Jest 的默认随机顺序及 seed 重放规则见[测试标准](testing-standard.md#四随机顺序与可重放性)。局部开发先运行受影响测试，交付前按改动风险补齐门禁。
 
+Composer 原生键盘补丁的定向回归使用实际 Reanimated Kotlin 类与 Robolectric Android 35：`android/gradlew.bat -p android :app:testReleaseUnitTest --tests com.wz.reader.ComposerKeyboardTest --tests com.wz.reader.ComposerWebViewInsetsTest -I ../tests/native/composer-keyboard.gradle -PreactNativeArchitectures=x86_64 --no-daemon`。该 init script 仅为测试增加 source set 与 JVM Android 环境，不改变产品 APK；没有安装或清理设备状态。之后仍须用匹配 APK 验证系统选图器返回和键盘连续开合，并记录 `adb shell dumpsys webviewupdate` 的实际 provider/version。WebView 124 的通过不能代替 139+ 的 IME visual viewport 行为；录屏要分别检查原生标题、HTML 工具栏、正文、底部发送栏。
+
+直接调用 Gradle 构建开发/测试 APK 前先执行 `npm run build:composer`。生成的 `src/ui/composer/generated/editorDocument.js` 为懒加载 CommonJS 模块，保持在 ignored 生成目录中；其 JS 文件后缀使 Gradle `BundleHermesCTask` 能追踪编辑器载荷变化。修改编辑器后必须核对 APK 内实际载荷，不能把单测通过或 Gradle `UP-TO-DATE` 当成包内代码已更新。
+
 ### 依赖补丁可安装性
 
 普通 `npm run verify` 会在已执行 postinstall 的依赖树上，对全部 `patches/*.patch` 做真实 reverse-apply dry check。修改补丁时还要从未打补丁的干净依赖证明 forward apply，再执行真实 postinstall：
@@ -63,6 +67,8 @@ npm run visual:gallery -- --port 8081
 交付前运行 `npm run test:architecture` 和视觉 catalog 测试，确认全部 App capability 已分类、场景可双主题挂载，并且生产入口不含视觉工具。截图和人工走查报告只写入任务专用的 ignored evidence 目录，不提交账号、凭据、日志或真实内容。
 
 ## Android 覆盖安装、Replay 与 Smoke
+
+关联 Native 变更可在 fresh prebuild 后运行 `node scripts/run-related-native-tests.mjs`；本地读取相对 HEAD 的修改与未跟踪文件，CI 使用 `--base <revision>`。静态映射选择已有 selection module/App JVM 任务并检查新鲜、非零用例报告；selection 不能只编译 App。配置/补丁合同继续保留，instrumentation 按下文独立 AVD 规则执行。本次修复及证据边界见[取证记录](review-remediation.md)。
 
 主登录态 AVD 保存 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态。设备安全边界以仓库根目录 `AGENTS.md` 为准；下面只列操作入口。
 
@@ -137,6 +143,18 @@ cd android
 真实 Fabric 换行另用独立开发入口 `dev/inline-layout-proof/index.tsx`。在已有 Metro 的端口上，用 development-client URL 打开 `http://127.0.0.1:<port>/dev/inline-layout-proof/index.bundle?platform=android&dev=true&minify=false`。页面直接测量 Text 和嵌入 View；五个结果都必须为 PASS，大图相对行首偏移及右侧越界均不得超过 `1px`，小图继续留在文字后面。它不依赖 HTML、网络图片或生产账号，不以 RNTL mock 代替原生排版。
 
 尺寸矩阵使用同一保留数据 AVD：`1264×2780 / 560dpi`、`1265×2780 / 560dpi` 和设备原参数，并覆盖 `font_scale=0.9/1.0`。修改前读取 `wm size`、`wm density`、`settings get system font_scale`，结束恢复；用户明确要求保留可见验收画面时，保留对应窗口、参数和必要调试服务并在交付中列明。原帖最终验收仍需匹配 APK、自然尺寸加载、滚离回收后返回和预览返回证据。
+
+### 审查修复的隔离设备故障验证
+
+先按 Reader SQLite 设备流程准备已有的 `WZ_ReaderStorage_API35_20260910`，确认其 fixture ownership marker。使用 Node 22、当前 lockfile 和已完成 fresh prebuild 的生成目录：
+
+```powershell
+node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --build --output .codex-tmp/<任务目录>/runtime.json
+```
+
+runner 精确拒绝其他 AVD，包括主登录设备；仅覆盖安装开发签名的 Release Hermes proof APK，保留安装身份。临时 Gradle overlay 选择 `dev/review-remediation-proof/index.tsx`，不修改生产入口或持久原生配置。HTTP 使用已有四站样本和明确故障注入；WebView 使用禁远端资源的内联页面，禁止测试入口未经隔离的 fetch。通知测试临时撤销再授予该测试 App 的系统权限，finally 恢复原权限；只清理本轮合成摘要，恢复原通知存储键。
+
+receipt 核对 token、Release/Hermes、41 项结果和 APK hash。覆盖真实 WebView 脚本、User Query 竞态、Feed 原生宿主、Account 恢复核心、发送前校验、通知存储与系统投递事务。Account 探针隔离了面板和身份核对边界，不代表 TopicRoute 到原站 Cloudflare 的完整验证；受控 HTTP 也不代表真实写操作。失败保留部分结果，不计为全通过。proof APK 不装主设备；普通入口另行构建并做匹配 APK 只读验收，正式发布不用于开发验证。
 
 ### Forum selection Native 验证
 
@@ -289,6 +307,8 @@ node scripts/check-feed-gestures.mjs '<ignored-evidence-directory>' yaohuo
 
 首页惯性另从已打开的首页运行，沿用以上显式设备与 session：
 
+判断慢拖手感时区分实际跟手位移与松手结算：短慢拖可以自然回弹，长慢拖超过原生阈值应换页。尤其检查“先纵滚再横拖”，不能沿用上一段被取消手势的按下位置。需要诊断时在本机记录 MotionEvent、页面进度和归位输入，临时日志不得进入补丁或最终 APK；完整矩阵仍是 canonical owner，自动注入不代表物理触感。
+
 ```powershell
 node scripts/check-feed-fling.mjs '<ignored-evidence-directory>'
 ```
@@ -317,7 +337,9 @@ node scripts/check-feed-refresh.mjs '<ignored-evidence-directory>' interruptions
 node scripts/check-feed-boundaries.mjs '<ignored-evidence-directory>'
 ```
 
-按当前来源顺序验证首尾页快慢向外滑；每次碰边界后，反向短滑 20% 屏宽、120ms 必须切至邻页，再向原方向短滑必须返回边界页。首屏向右、末屏向左本来就没有相邻页，向外不切页不能单独作为拦截 Bug。其余用例覆盖列表顶部和实际尾部双向斜滑、双指后恢复单指、快甩后点远端 Tab、二级栏横滑及切底栏返回。尾部固定选择“全部 → 已读”的有限列表，并确认“已经到底了”；不要在未筛选的来源中追逐自动追加的帖子，也不为准备数据打开未读帖子。已读为空时脚本明确停止，首尾斜滑记为 `NOT_VERIFIED`；末尾添加 `interactions` 可独立运行后四项交互，不代替完整边界验收。连续手势矩阵仍使用长列表验证中段。刷新尚未结算时切来源/底栏仍按 `LIVE-FEED-01` 单独取证，不能用正常切页结果代替。
+按当前来源顺序验证首尾页快慢向外滑；每次碰边界后，反向短滑 20% 屏宽、120ms 必须切至邻页，再向原方向短滑必须返回边界页。首屏向右、末屏向左本来就没有相邻页，向外不切页不能单独作为拦截 Bug。其余用例覆盖列表顶部和实际尾部双向斜滑、双指后恢复单指、快甩后点远端 Tab、二级栏横滑及切底栏返回。尾部固定选择“全部 → 已读”的有限列表，并确认“已经到底了”；不要在未筛选的来源中追逐自动追加的帖子，也不为准备数据打开未读帖子。已读为空时脚本明确停止，首尾斜滑记为 `NOT_VERIFIED`；末尾添加 `interactions` 可独立运行后四项交互，不代替完整边界验收。末尾添加 `rail` 只诊断四站分类栏：要求四站启用、存在溢出分类，逐站验证双向位移、两端继续拖动不换来源及点击隐藏分类，结束回到“全部”。分类不溢出或来源验证页遮挡时前置条件不成立，不计入通过。连续手势矩阵仍使用长列表验证中段。刷新尚未结算时切来源/底栏仍按 `LIVE-FEED-01` 单独取证，不能用正常切页结果代替。
+
+`rail` 后可再指定 `v2ex`、`linuxdo`、`nodeseek` 或 `yaohuo`，用于独立重放中断来源。反向拖动先验证实际回移，再继续拖至起点检查边界，不假定两次等距输入必然抵消原生惯性。
 
 通知刷新取消另在浅色主题、“消息通知 → 全部”、列表顶部运行，沿用以上显式设备与 session：
 

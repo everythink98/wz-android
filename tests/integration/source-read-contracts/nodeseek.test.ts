@@ -6,10 +6,12 @@ import { browserFetchIntentFromInit } from '@/platform/network/browserFetchInten
 import { textContentFromHtml } from '@/domain/forum/html';
 import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import {
-  getNodeSeekCurrentUserProfile,
+  getNodeSeekCurrentUserIdentity,
   getNodeSeekReplies,
   getNodeSeekTopic,
-  getNodeSeekUserProfile,
+  getNodeSeekUserDetails,
+  getNodeSeekUserTopics,
+  getNodeSeekUserReplies,
   resolveNodeSeekUser
 } from '@/sources/nodeseek/reader';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
@@ -3047,7 +3049,7 @@ describe('Android local sources', () => {
       ]
     ]);
 
-    const profile = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher });
+    const profile = await readNodeSeekUser('7', { cursorType: 'topics', fetcher });
 
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
@@ -3064,7 +3066,7 @@ describe('Android local sources', () => {
       ['/api/content/list-discussions', json({ discussions: [{ post_id: 101, title: 'Only topic' }] })]
     ]);
 
-    const profile = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher });
+    const profile = await readNodeSeekUser('7', { cursorType: 'topics', fetcher });
 
     expect(profile).toMatchObject({
       hasMoreTopics: false,
@@ -3084,7 +3086,7 @@ describe('Android local sources', () => {
       ['/api/content/list-comments', json({ comments: [{ post_id: 101, title: 'Only reply topic', floor_id: 1 }] })]
     ]);
 
-    const profile = await getNodeSeekUserProfile('7', { cursorType: 'replies', fetcher });
+    const profile = await readNodeSeekUser('7', { cursorType: 'replies', fetcher });
 
     expect(profile).toMatchObject({
       hasMoreReplies: false,
@@ -3116,8 +3118,8 @@ describe('Android local sources', () => {
       ]
     ]);
 
-    const first = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher });
-    const second = await getNodeSeekUserProfile('7', { cursor: '2', cursorType: 'topics', fetcher });
+    const first = await readNodeSeekUser('7', { cursorType: 'topics', fetcher });
+    const second = await readNodeSeekUser('7', { cursor: '2', cursorType: 'topics', fetcher });
 
     expect(first).toMatchObject({ hasMoreTopics: true, nextTopicsCursor: '2' });
     expect(second).toMatchObject({ hasMoreTopics: false, nextTopicsCursor: null });
@@ -3148,8 +3150,8 @@ describe('Android local sources', () => {
       ]
     ]);
 
-    const first = await getNodeSeekUserProfile('7', { cursorType: 'replies', fetcher });
-    const second = await getNodeSeekUserProfile('7', { cursor: '2', cursorType: 'replies', fetcher });
+    const first = await readNodeSeekUser('7', { cursorType: 'replies', fetcher });
+    const second = await readNodeSeekUser('7', { cursor: '2', cursorType: 'replies', fetcher });
 
     expect(first).toMatchObject({ hasMoreReplies: true, nextRepliesCursor: '2' });
     expect(second).toMatchObject({ hasMoreReplies: false, nextRepliesCursor: null });
@@ -3171,7 +3173,7 @@ describe('Android local sources', () => {
         ]
       ]);
 
-      const profile = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher });
+      const profile = await readNodeSeekUser('7', { cursorType: 'topics', fetcher });
 
       expect(profile).toMatchObject({ hasMoreTopics: hasMore, nextTopicsCursor: cursor });
     }
@@ -3197,7 +3199,7 @@ describe('Android local sources', () => {
         ]
       ]);
 
-      const profile = await getNodeSeekUserProfile('7', { cursorType: 'replies', fetcher });
+      const profile = await readNodeSeekUser('7', { cursorType: 'replies', fetcher });
 
       expect(profile).toMatchObject({ hasMoreReplies: hasMore, nextRepliesCursor: cursor });
     }
@@ -3214,8 +3216,8 @@ describe('Android local sources', () => {
       ['/api/content/list-comments', json({ comments: Array.from({ length: 15 }, () => ({})) })]
     ]);
 
-    const topics = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher: topicsFetcher });
-    const replies = await getNodeSeekUserProfile('7', { cursorType: 'replies', fetcher: repliesFetcher });
+    const topics = await readNodeSeekUser('7', { cursorType: 'topics', fetcher: topicsFetcher });
+    const replies = await readNodeSeekUser('7', { cursorType: 'replies', fetcher: repliesFetcher });
 
     expect(topics).toMatchObject({ topics: [], hasMoreTopics: false, nextTopicsCursor: null });
     expect(replies).toMatchObject({ replies: [], hasMoreReplies: false, nextRepliesCursor: null });
@@ -3367,7 +3369,7 @@ describe('Android local sources', () => {
   it('rejects a non-numeric NodeSeek profile id before transport', async () => {
     const fetcher = vi.fn();
 
-    await expect(getNodeSeekUserProfile('alice', { fetcher })).rejects.toThrow('数字用户 ID');
+    await expect(readNodeSeekUser('alice', { fetcher })).rejects.toThrow('数字用户 ID');
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -3380,7 +3382,7 @@ describe('Android local sources', () => {
     );
 
     await expect(
-      getNodeSeekUserProfile('7', {
+      readNodeSeekUser('7', {
         cursorType: 'topics',
         fetcher
       })
@@ -3939,7 +3941,7 @@ describe('Android local sources', () => {
 
     await getFeed({ source: 'nodeseek', fetcher: visibleFetcher });
     await getCategories({ source: 'nodeseek', fetcher: visibleFetcher });
-    await getNodeSeekCurrentUserProfile({ fetcher: accountFetcher });
+    await getNodeSeekCurrentUserIdentity({ fetcher: accountFetcher });
 
     const visibleIntents = (visibleFetcher.mock.calls as unknown as [string, RequestInit?][]).map(([, init]) =>
       browserFetchIntentFromInit(init)
@@ -4566,3 +4568,22 @@ describe('Android local sources', () => {
     expect(url.searchParams.has('order')).toBe(false);
   });
 });
+
+// Compose only the lanes explicitly requested by this parser fixture.
+async function readNodeSeekUser(
+  id: string,
+  options: Parameters<typeof getNodeSeekUserDetails>[1] = {}
+): Promise<
+  import('@/domain/forum/models').UserDetails &
+    Partial<import('@/domain/forum/models').UserTopicsPage> &
+    import('@/domain/forum/models').UserRepliesPage
+> {
+  const profile = await getNodeSeekUserDetails(id, options);
+  if (options.cursorType === 'topics') return { ...profile, ...(await getNodeSeekUserTopics(profile, options)) };
+  if (options.cursorType === 'replies') return { ...profile, ...(await getNodeSeekUserReplies(profile, options)) };
+  const [topics, replies] = await Promise.all([
+    getNodeSeekUserTopics(profile, options),
+    getNodeSeekUserReplies(profile, options)
+  ]);
+  return { ...profile, ...topics, ...replies };
+}

@@ -200,7 +200,7 @@ export function recordNotificationDelivery(
   source: NotificationSource,
   identityKey: string,
   scannedIds: string[],
-  fields: { lastSuccessAt: string; unreadCount: number },
+  fields: { lastSuccessAt: string },
   delivery?: NotificationDeliveryCommit
 ) {
   let newIds: string[] = [];
@@ -234,7 +234,6 @@ export function recordNotificationDelivery(
         [source]: {
           ...advanced.state,
           lastSuccessAt: fields.lastSuccessAt,
-          unreadCount: fields.unreadCount,
           ...(delivery ? { notificationIdentifier: delivery.notificationIdentifier } : {})
         }
       }

@@ -19,7 +19,7 @@ function session(source: SiteSessionViewModel['site']): SiteSessionViewModel {
       id: '42',
       username: 'alice',
       displayName: 'Alice',
-      topics: [],
+
       url: 'https://example.com/u/alice'
     }
   };

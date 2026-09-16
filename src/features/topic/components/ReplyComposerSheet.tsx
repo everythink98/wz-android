@@ -36,6 +36,7 @@ export function ReplyComposerSheet({
   onReplySnapshot,
   onSubmitReply,
   onLoadLinuxDoPollCapabilities,
+  onResolveLinuxDoUpload,
   onLoadLinuxDoTemplates,
   onUseLinuxDoTemplate,
   onUploadReplyImage
@@ -59,6 +60,7 @@ export function ReplyComposerSheet({
   onReplySnapshot?: (snapshot: ComposerSnapshot) => void;
   onSubmitReply: (snapshot?: ComposerSnapshot) => unknown;
   onLoadLinuxDoPollCapabilities?: () => Promise<LinuxDoPollCapabilities>;
+  onResolveLinuxDoUpload?: (shortUrl: string) => Promise<string>;
   onLoadLinuxDoTemplates?: () => Promise<LinuxDoTemplate[]>;
   onUseLinuxDoTemplate?: (id: string) => Promise<void>;
   onUploadReplyImage?: () => unknown;
@@ -162,6 +164,7 @@ export function ReplyComposerSheet({
             title={title}
             visible={visible}
             onLoadLinuxDoPollCapabilities={onLoadLinuxDoPollCapabilities}
+            onResolveLinuxDoUpload={onResolveLinuxDoUpload}
             onLoadLinuxDoTemplates={onLoadLinuxDoTemplates}
             onOpenChange={handleOpenChange}
             onPresentationChange={setPresentation}

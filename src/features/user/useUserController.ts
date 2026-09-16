@@ -15,7 +15,15 @@ import { isUserFollowed } from '@/domain/reader/readerData';
 import { nodeSeekUserIdFromValue, normalizeUserReference } from '@/domain/forum/userNavigation';
 import { sourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { sourceErrorFromUnknown, sourceReadRecoveryOutcome } from '@/sources/sourceErrors';
-import type { Source, SourceErrorInfo, UserProfile, UserReference, UserReplyActivity } from '@/domain/forum/models';
+import type {
+  Source,
+  SourceErrorInfo,
+  UserDetails,
+  UserTopicsPage,
+  UserRepliesPage,
+  UserReference,
+  UserReplyActivity
+} from '@/domain/forum/models';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -24,6 +32,7 @@ import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 
 type UserLane = 'topics' | 'replies';
+type UserActivityPage = Partial<UserTopicsPage & UserRepliesPage>;
 
 function mergeUserReplies(incoming: UserReplyActivity[]) {
   const seen = new Set<string>();
@@ -58,16 +67,12 @@ export function hasNextUserPage(
   return Boolean(hasMore && nextCursor && nextCursor !== requestedCursor);
 }
 
-function nextUserCursor(profile: UserProfile, lane: UserLane) {
+function nextUserCursor(profile: UserActivityPage, lane: UserLane) {
   return lane === 'topics' ? profile.nextTopicsCursor : profile.nextRepliesCursor;
 }
 
-function hasMoreUserLane(profile: UserProfile, lane: UserLane) {
+function hasMoreUserLane(profile: UserActivityPage, lane: UserLane) {
   return lane === 'topics' ? profile.hasMoreTopics : profile.hasMoreReplies;
-}
-
-function firstLaneData(profile: UserProfile): InfiniteData<UserProfile, string | null> {
-  return { pages: [profile], pageParams: [null] };
 }
 
 export function useUserController({
@@ -185,17 +190,18 @@ export function useUserController({
     queryKey: profileKey,
     enabled,
     queryFn: async ({ signal }) => {
-      const user = canonicalUser!;
+      const user = canonicalUser;
+      if (!user?.id) throw new Error('用户信息不完整');
       const trace = beginDiagnosticTrace('user', 'open', {
         source: user.source,
         userRef: diagnosticRef('user', `${user.source}:${identity}`)
       });
       try {
         markDiagnosticStage(trace, 'guard', { source: user.source, state: 'open' });
-        const profile = await readGateway.getUserProfile(
+        const profile = await readGateway.getUserDetails(
           {
             source: user.source,
-            id: user.id!,
+            id: user.id,
             username: user.username,
             signal
           },
@@ -206,8 +212,7 @@ export function useUserController({
         }
         markDiagnosticStage(trace, 'apply', {
           source: user.source,
-          topicCount: profile.topics.length,
-          replyCount: profile.replies?.length || 0
+          state: 'success'
         });
         finishDiagnosticTrace(trace, 'success', { source: user.source });
         return profile;
@@ -221,101 +226,54 @@ export function useUserController({
     }
   });
 
-  const createLaneQuery = (lane: UserLane, queryKey: QueryKey) => ({
+  const createLaneQuery = (lane: UserLane, queryKey: QueryKey, details = profileQuery.data) => ({
     queryKey,
-    enabled: enabled && Boolean(profileQuery.data),
+    enabled: enabled && Boolean(details),
     initialPageParam: null as string | null,
-    initialData: profileQuery.data ? firstLaneData(profileQuery.data) : undefined,
-    initialDataUpdatedAt: profileQuery.dataUpdatedAt || undefined,
-    queryFn: async ({ pageParam, signal }: { pageParam: string | null; signal: AbortSignal }) => {
-      if (!pageParam) return profileQuery.data!;
-      const user = canonicalUser!;
-      const trace = beginDiagnosticTrace('user', `load-more-${lane}`, {
-        source: user.source,
-        userRef: diagnosticRef('user', `${user.source}:${identity}`),
-        hasCursor: true,
-        cursorRef: diagnosticRef('cursor', pageParam)
-      });
-      try {
-        markDiagnosticStage(trace, 'guard', { source: user.source, state: 'load-more', hasCursor: true });
-        const page = await readGateway.getUserProfile(
-          {
-            source: user.source,
-            id: user.id!,
-            username: user.username,
-            cursor: pageParam,
-            cursorType: lane,
-            signal
-          },
-          { readPlanScope: profileReadPlan.cacheScope, trace }
-        );
-        if (sourceDiagnosticSummary(page)?.isParseEmpty) {
-          throw new Error(`用户${lane === 'topics' ? '帖子' : '回复'}解析为空，无法加载下一页，请重试。`);
-        }
-        markDiagnosticStage(trace, 'apply', {
-          source: user.source,
-          itemCount: lane === 'topics' ? page.topics.length : page.replies?.length || 0
-        });
-        finishDiagnosticTrace(trace, 'success', { source: user.source });
-        return page;
-      } catch (error) {
-        finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
-          source: user.source,
-          reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
-        });
-        throw error;
-      }
+    queryFn: async ({
+      pageParam,
+      signal
+    }: {
+      pageParam: string | null;
+      signal: AbortSignal;
+    }): Promise<UserActivityPage> => {
+      if (!details) throw new Error('用户资料尚未读取');
+      const options = { source: details.source, profile: details, cursor: pageParam, signal };
+      const context = { readPlanScope: profileReadPlan.cacheScope };
+      const page =
+        lane === 'topics'
+          ? await readGateway.getUserTopics(options, context)
+          : await readGateway.getUserReplies(options, context);
+      if (sourceDiagnosticSummary(page)?.isParseEmpty)
+        throw new Error(`用户${lane === 'topics' ? '主题' : '回复'}响应无法解析`);
+      return page;
     },
-    getNextPageParam: (lastPage: UserProfile, _pages: UserProfile[], lastCursor: string | null) => {
+    getNextPageParam: (lastPage: UserActivityPage, _pages: UserActivityPage[], lastCursor: string | null) => {
       const next = nextUserCursor(lastPage, lane);
       return hasNextUserPage(hasMoreUserLane(lastPage, lane), next, lastCursor) ? next : undefined;
     }
   });
   const topicsQuery = useInfiniteQuery(createLaneQuery('topics', topicKey));
   const repliesQuery = useInfiniteQuery(createLaneQuery('replies', replyKey));
-
-  const seedUserLane = useCallback(
-    (key: QueryKey) => {
-      const profile = profileQuery.data;
-      if (!profile) return;
-      const state = queryClient.getQueryState(key);
-      if (!state || profileQuery.dataUpdatedAt > state.dataUpdatedAt) {
-        queryClient.setQueryData<InfiniteData<UserProfile, string | null>>(
-          key,
-          (current) =>
-            current
-              ? {
-                  pages: [profile, ...current.pages.slice(1)],
-                  pageParams: [null, ...current.pageParams.slice(1)]
-                }
-              : firstLaneData(profile),
-          { updatedAt: profileQuery.dataUpdatedAt }
-        );
-      }
-    },
-    [profileQuery.data, profileQuery.dataUpdatedAt, queryClient]
-  );
-
-  useEffect(() => {
-    seedUserLane(topicKey);
-    seedUserLane(replyKey);
-  }, [replyKey, seedUserLane, topicKey]);
-
   const topicPages = topicsQuery.data?.pages;
   const replyPages = repliesQuery.data?.pages;
-  const profile = profileQuery.data || topicPages?.[0] || replyPages?.[0];
-  const fallbackTopics = topicPages ? undefined : profile?.topics;
-  const fallbackReplies = replyPages ? undefined : profile?.replies;
+  const profile = profileQuery.data;
   const topics = useMemo(
-    () => mergeTopics([], topicPages ? topicPages.flatMap((page) => page.topics || []) : fallbackTopics || []),
-    [fallbackTopics, topicPages]
+    () =>
+      topicPages
+        ? mergeTopics(
+            [],
+            topicPages.flatMap((page) => page.topics || [])
+          )
+        : undefined,
+    [topicPages]
   );
   const replies = useMemo(
-    () => mergeUserReplies(replyPages ? replyPages.flatMap((page) => page.replies || []) : fallbackReplies || []),
-    [fallbackReplies, replyPages]
+    () => (replyPages ? mergeUserReplies(replyPages.flatMap((page) => page.replies || [])) : undefined),
+    [replyPages]
   );
-  const lastTopicPage = topicPages?.at(-1) || profile;
-  const lastReplyPage = replyPages?.at(-1) || profile;
+  const lastTopicPage = topicPages?.at(-1);
+  const lastReplyPage = replyPages?.at(-1);
   const userProfile = useMemo(
     () =>
       profile
@@ -323,15 +281,15 @@ export function useUserController({
             ...profile,
             topics,
             replies,
-            hasMoreTopics: Boolean(lastTopicPage?.hasMoreTopics && lastTopicPage.nextTopicsCursor),
-            nextTopicsCursor: lastTopicPage?.nextTopicsCursor ?? null,
-            hasMoreReplies: Boolean(lastReplyPage?.hasMoreReplies && lastReplyPage.nextRepliesCursor),
-            nextRepliesCursor: lastReplyPage?.nextRepliesCursor ?? null
+            hasMoreTopics: lastTopicPage?.hasMoreTopics,
+            nextTopicsCursor: lastTopicPage?.nextTopicsCursor,
+            hasMoreReplies: lastReplyPage?.hasMoreReplies,
+            nextRepliesCursor: lastReplyPage?.nextRepliesCursor
           }
         : null,
     [lastReplyPage, lastTopicPage, profile, replies, topics]
   );
-  const queryError = resolutionQuery.error || profileQuery.error || topicsQuery.error || repliesQuery.error;
+  const queryError = resolutionQuery.error || profileQuery.error;
   const userError = queryError && selectedUser ? sourceErrorFromUnknown(selectedUser.source, queryError) : null;
   const currentUserFollowed = Boolean(userProfile && isUserFollowed(readerData, userProfile));
 
@@ -364,11 +322,14 @@ export function useUserController({
         };
         void showLinuxDoVerification(sourceError.message, recovery);
       } else if (target === 'nodeseek-verification') {
-        if (lane !== 'resolution' && lane !== 'profile') {
-          showNodeSeekVerification(sourceError.message);
-          return;
-        }
-        const queryKey = lane === 'resolution' ? resolutionKey : profileKey;
+        const queryKey =
+          lane === 'resolution'
+            ? resolutionKey
+            : lane === 'profile'
+              ? profileKey
+              : lane === 'topics'
+                ? topicKey
+                : replyKey;
         const recovery: LinuxDoReadRecovery = {
           queryKey,
           resume: async () => {
@@ -467,10 +428,15 @@ export function useUserController({
       return result.isError ? 'failed' : 'completed';
     }
     if (!identity) return 'completed';
+    await Promise.all([
+      queryClient.cancelQueries({ queryKey: topicKey, exact: true }),
+      queryClient.cancelQueries({ queryKey: replyKey, exact: true })
+    ]);
+    if (!activeRef.current || profileKeyHashRef.current !== profileKeyHash) return 'stale';
     const before = queryClient.getQueryState(profileKey);
     await queryClient.invalidateQueries({ queryKey: profileKey, exact: true, refetchType: 'active' });
     if (!activeRef.current || profileKeyHashRef.current !== profileKeyHash) return 'stale';
-    const state = queryClient.getQueryState<UserProfile>(profileKey);
+    const state = queryClient.getQueryState<UserDetails>(profileKey);
     if (state?.status === 'error') return state.errorUpdateCount > (before?.errorUpdateCount ?? 0) ? 'failed' : 'stale';
     if (
       !state?.data ||
@@ -479,9 +445,16 @@ export function useUserController({
       state.dataUpdateCount <= (before?.dataUpdateCount ?? 0)
     )
       return 'stale';
-    queryClient.setQueryData(topicKey, firstLaneData(state.data));
-    queryClient.setQueryData(replyKey, firstLaneData(state.data));
-    return 'completed';
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: topicKey, exact: true, refetchType: 'none' }),
+      queryClient.invalidateQueries({ queryKey: replyKey, exact: true, refetchType: 'none' })
+    ]);
+    const outcomes = await Promise.allSettled([
+      queryClient.fetchInfiniteQuery({ ...createLaneQuery('topics', topicKey, state.data), pages: 1, staleTime: 0 }),
+      queryClient.fetchInfiniteQuery({ ...createLaneQuery('replies', replyKey, state.data), pages: 1, staleTime: 0 })
+    ]);
+    if (!activeRef.current || profileKeyHashRef.current !== profileKeyHash) return 'stale';
+    return outcomes.some((outcome) => outcome.status === 'rejected') ? 'failed' : 'completed';
   }, [
     active,
     activeRef,
@@ -504,12 +477,12 @@ export function useUserController({
 
   const loadMoreUserTopics = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!active) return 'stale';
+    if (queryClient.getQueryState(profileKey)?.fetchStatus === 'fetching') return 'completed';
     if (topicsQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
-    seedUserLane(topicKey);
     if (queryClient.getQueryState(topicKey)?.fetchStatus === 'fetching') {
-      await topicsQuery.refetch({ cancelRefetch: false });
+      return 'completed';
     }
-    const cached = queryClient.getQueryData<InfiniteData<UserProfile, string | null>>(topicKey);
+    const cached = queryClient.getQueryData<InfiniteData<UserActivityPage, string | null>>(topicKey);
     const lastPage = cached?.pages.at(-1);
     const lastCursor = cached?.pageParams.at(-1) ?? null;
     if (
@@ -521,9 +494,9 @@ export function useUserController({
     return result.isError ? 'failed' : 'completed';
   }, [
     active,
+    profileKey,
     profileQuery.data,
     queryClient,
-    seedUserLane,
     topicKey,
     topicsQuery.fetchNextPage,
     topicsQuery.isFetchingNextPage,
@@ -531,12 +504,12 @@ export function useUserController({
   ]);
   const loadMoreUserReplies = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!active) return 'stale';
+    if (queryClient.getQueryState(profileKey)?.fetchStatus === 'fetching') return 'completed';
     if (repliesQuery.isFetchingNextPage || !profileQuery.data) return 'completed';
-    seedUserLane(replyKey);
     if (queryClient.getQueryState(replyKey)?.fetchStatus === 'fetching') {
-      await repliesQuery.refetch({ cancelRefetch: false });
+      return 'completed';
     }
-    const cached = queryClient.getQueryData<InfiniteData<UserProfile, string | null>>(replyKey);
+    const cached = queryClient.getQueryData<InfiniteData<UserActivityPage, string | null>>(replyKey);
     const lastPage = cached?.pages.at(-1);
     const lastCursor = cached?.pageParams.at(-1) ?? null;
     if (
@@ -548,13 +521,13 @@ export function useUserController({
     return result.isError ? 'failed' : 'completed';
   }, [
     active,
+    profileKey,
     profileQuery.data,
     queryClient,
     repliesQuery.fetchNextPage,
     repliesQuery.isFetchingNextPage,
     repliesQuery.refetch,
-    replyKey,
-    seedUserLane
+    replyKey
   ]);
 
   useEffect(() => {
@@ -583,6 +556,13 @@ export function useUserController({
     selectedUser,
     userBusy: (resolutionQuery.isFetching && resolutionEnabled) || (profileQuery.isFetching && enabled),
     userError,
+    userTopicsError: topicsQuery.error ? sourceErrorFromUnknown(selectedSource, topicsQuery.error) : null,
+    userRepliesError: repliesQuery.error ? sourceErrorFromUnknown(selectedSource, repliesQuery.error) : null,
+    userTopicsBusy: topicsQuery.isFetching,
+    userRepliesBusy: repliesQuery.isFetching,
+    retryUserTopics: () => topicsQuery.refetch({ cancelRefetch: false }),
+    retryUserReplies: () => repliesQuery.refetch({ cancelRefetch: false }),
+    retryUserProfile: () => profileQuery.refetch({ cancelRefetch: false }),
     userLoadingMoreReplies: repliesQuery.isFetchingNextPage,
     userLoadingMoreTopics: topicsQuery.isFetchingNextPage,
     userProfile

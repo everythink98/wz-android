@@ -37,6 +37,7 @@ jest.mock('lucide-react-native', () => {
 jest.mock('react-native-gesture-handler', () => {
   const ReactModule = require('react') as typeof React;
   return {
+    ScrollView: require('react-native').ScrollView,
     usePanGesture: (config: Record<string, unknown>) => ({ config }),
     GestureDetector: ({ children }: { children: React.ReactNode }) =>
       ReactModule.createElement(ReactModule.Fragment, null, children)

@@ -4,9 +4,9 @@ import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
 import type { NetworkProxyProfile, NetworkProxyState } from '@/platform/network/networkProxy';
 import { withBrowserFetchIntent } from '@/platform/network/browserFetchIntent';
-import { fetchWithTimeout } from '@/platform/network/request';
+import { fetchWithTimeout, withRequestBeforeSend } from '@/platform/network/request';
 import * as SecureStore from 'expo-secure-store';
-import { getLinuxDoCurrentUserProfile } from '@/sources/linuxdo/account';
+import { getLinuxDoCurrentUserIdentity } from '@/sources/linuxdo/account';
 import { createLinuxDoReadingSender } from '@/sources/linuxdo/reading';
 import { withLinuxDoPresence } from '@/sources/linuxdo/presence';
 import { recordUserInteraction } from '@/platform/network/userPresence';
@@ -51,6 +51,30 @@ const profileB: NetworkProxyProfile = {
 };
 
 describe('network proxy controller', () => {
+  it('rechecks a write after proxy preparation and keeps its guard off the transport', async () => {
+    const loaded = deferred<NetworkProxyState>();
+    mockLoadNetworkProxyState.mockReturnValue(loaded.promise);
+    let current = true;
+    const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () => new Response('{}'));
+    const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+    const send = withRequestBeforeSend(hook.result.current.networkProxyFetcher, () => {
+      if (!current) throw new Error('stale ticket');
+    });
+    const request = send('https://linux.do/posts/1.json', { method: 'PUT', body: 'raw=fixture' });
+    const failed = expect(request).rejects.toThrow('stale ticket');
+    current = false;
+    await act(async () => {
+      loaded.resolve({ enabled: false, activeId: null, profiles: [] });
+    });
+    await failed;
+    expect(baseFetcher).not.toHaveBeenCalled();
+    current = true;
+    await send('https://linux.do/posts/1.json', { method: 'PUT', body: 'raw=fixture' });
+    expect(baseFetcher).toHaveBeenCalledTimes(1);
+    const init = baseFetcher.mock.calls[0]?.[1];
+    expect(Object.getOwnPropertySymbols(init ?? {}).map(String)).not.toContain('Symbol(wz.requestBeforeSend)');
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockLoadNetworkProxyState.mockResolvedValue({ enabled: false, activeId: null, profiles: [] });
@@ -79,7 +103,7 @@ describe('network proxy controller', () => {
       const baseFetcher = withLinuxDoPresence((input, init) => fetch(input, init));
       const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
       const fetcher = hook.result.current.networkProxyFetcher;
-      await getLinuxDoCurrentUserProfile({ fetcher });
+      await getLinuxDoCurrentUserIdentity({ fetcher });
       const send = createLinuxDoReadingSender({ fetcher, scope: () => 'alice', userAgent: () => 'fixture' });
       await send({ topicId: '12', topicTime: 1000, timings: { 1: 1000 } }, 'alice', new AbortController().signal);
       expect(calls.map(({ url }) => new URL(url).pathname)).toEqual([

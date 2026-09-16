@@ -1,5 +1,5 @@
 import { sessionSources, type SessionSource } from '@/domain/forum/sourceCatalog';
-import type { UserProfile } from '@/domain/forum/models';
+import type { UserIdentity } from '@/domain/forum/models';
 
 export type SessionSite = SessionSource;
 export { sessionSources };
@@ -12,7 +12,7 @@ export type SiteSessionState = {
   status: SiteSessionStatus;
   cookieSummary: string[];
   isVerifying: boolean;
-  currentUser?: UserProfile;
+  currentUser?: UserIdentity;
   lastVerifiedAt?: string;
   lastError?: string;
 };
@@ -38,7 +38,7 @@ export type SiteSessionViewModel = {
   isVerifying: boolean;
   canWrite: boolean;
   identityTrust: IdentityTrust;
-  currentUser?: UserProfile;
+  currentUser?: UserIdentity;
   lastVerifiedAt?: string;
   lastError?: string;
 };
@@ -50,7 +50,7 @@ export type SiteSessionEvent =
       cookieSummary?: string[];
       hasVerification?: boolean;
       loggedIn?: boolean;
-      currentUser?: UserProfile | null;
+      currentUser?: UserIdentity | null;
       at?: string;
     }
   | {
@@ -58,7 +58,7 @@ export type SiteSessionEvent =
       cookieSummary?: string[];
       hasVerification?: boolean;
       loggedIn?: boolean;
-      currentUser?: UserProfile | null;
+      currentUser?: UserIdentity | null;
       at?: string;
     }
   | { type: 'verification-required'; message?: string; at?: string }
@@ -194,13 +194,18 @@ export function siteSessionStateFromEvents(site: SessionSite, events: SiteSessio
   return events.reduce<SiteSessionState>(reduceSiteSessionState, createSiteSessionStates()[site]);
 }
 
-function currentUserForSite(site: SessionSite, currentUser: UserProfile | null | undefined, loggedIn?: boolean) {
+function currentUserForSite(site: SessionSite, currentUser: UserIdentity | null | undefined, loggedIn?: boolean) {
   if (!loggedIn || !currentUser || currentUser.source !== site || !currentUser.id || !currentUser.username) {
     return undefined;
   }
   return {
-    ...currentUser,
-    topics: []
+    source: currentUser.source,
+    id: currentUser.id,
+    username: currentUser.username,
+    displayName: currentUser.displayName,
+    avatar: currentUser.avatar,
+    url: currentUser.url,
+    levelLabel: currentUser.levelLabel
   };
 }
 
@@ -210,7 +215,7 @@ function stateWithCookieFacts(
     cookieSummary?: string[];
     hasVerification?: boolean;
     loggedIn?: boolean;
-    currentUser?: UserProfile | null;
+    currentUser?: UserIdentity | null;
     at?: string;
   }
 ) {

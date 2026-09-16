@@ -23,7 +23,11 @@ jobs:
       - run: npx expo prebuild --platform android --clean --no-install
         env:
           NODE_ENV: production
-      - run: ./gradlew :app:testReleaseUnitTest :app:compileReleaseKotlin --no-daemon --console=plain
+      - run: node scripts/run-related-native-tests.mjs --base "$NATIVE_BASE"
+        env:
+          NATIVE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          NODE_ENV: production
+      - run: ./gradlew :app:compileReleaseKotlin --no-daemon --console=plain
         working-directory: android
         env:
           NODE_ENV: production

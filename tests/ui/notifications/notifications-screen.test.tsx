@@ -102,7 +102,10 @@ jest.mock('@gorhom/bottom-sheet', () => {
     }),
     BottomSheetView: ({ children }: { children?: React.ReactNode }) =>
       ReactModule.createElement(NativeView, null, children),
-    useBottomSheetInternal: () => ({ animatedKeyboardState: { set: jest.fn() } })
+    useBottomSheetInternal: () => ({
+      animatedKeyboardState: { set: jest.fn() },
+      animatedLayoutState: { get: () => ({ rawContainerHeight: 800, containerHeight: 800 }), modify: jest.fn() }
+    })
   };
 });
 
@@ -1110,8 +1113,7 @@ describe('notification screens', () => {
             source: 'linuxdo',
             id: '7',
             username: 'temple-user',
-            url: 'https://linux.do/u/temple-user',
-            topics: []
+            url: 'https://linux.do/u/temple-user'
           }
         }
       })

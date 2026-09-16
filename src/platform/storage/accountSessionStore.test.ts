@@ -74,22 +74,24 @@ describe('account session store', () => {
   });
 
   it('restores only the non-sensitive identity from a confirmed session', async () => {
+    // Fault injection: older callers may still carry a full profile; persistence must narrow it.
+    const remoteUser = {
+      source: 'nodeseek' as const,
+      id: '42',
+      username: 'alice',
+      displayName: 'Alice',
+      avatar: 'https://img.example/avatar.png',
+      url: 'https://www.nodeseek.com/space/42',
+      bio: 'remote profile data',
+      topics: []
+    };
     const snapshot: AccountSessionSnapshot = {
       site: 'nodeseek',
       status: 'logged-in',
       cookieSummary: ['session=<REDACTED>'],
       isVerifying: false,
       identityTrust: 'confirmed',
-      currentUser: {
-        source: 'nodeseek',
-        id: '42',
-        username: 'alice',
-        displayName: 'Alice',
-        avatar: 'https://img.example/avatar.png',
-        url: 'https://www.nodeseek.com/space/42',
-        bio: 'remote profile data',
-        topics: []
-      }
+      currentUser: remoteUser
     };
 
     await saveAccountSessionSnapshot(snapshot);
@@ -106,8 +108,7 @@ describe('account session store', () => {
         username: 'alice',
         displayName: 'Alice',
         avatar: 'https://img.example/avatar.png',
-        url: 'https://www.nodeseek.com/space/42',
-        topics: []
+        url: 'https://www.nodeseek.com/space/42'
       }
     });
     const stored = [...asyncStorage.__store.values()].join('');

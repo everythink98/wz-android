@@ -50,7 +50,7 @@ import {
   runNotificationSourceCleanup
 } from './notificationSourceLifecycle';
 
-export type NotificationPermissionState = 'checking' | 'granted' | 'denied';
+export type NotificationPermissionState = 'checking' | 'granted' | 'denied' | 'unavailable';
 
 type ForegroundDelivery = {
   source: NotificationSource;
@@ -225,6 +225,10 @@ export function useNotificationsRuntime({
   const lastResponseRef = useRef('');
   const [state, setState] = useState(stateRef.current);
   const [ready, setReady] = useState(false);
+  const storageRestoredRef = useRef(false);
+  const initializationRef = useRef<Promise<void> | undefined>(undefined);
+  const [storageError, setStorageError] = useState('');
+  const [permissionError, setPermissionError] = useState('');
   const [centerVisible, setCenterVisibleState] = useState(false);
   const [permission, setPermission] = useState<NotificationPermissionState>('checking');
   const [backgroundError, setBackgroundError] = useState('');
@@ -299,29 +303,54 @@ export function useNotificationsRuntime({
     };
   }, []);
 
-  useEffect(() => {
-    let current = true;
-    const trace = beginDiagnosticTrace('app', 'notification-runtime', { state: 'state-load' });
-    void Promise.all([loadNotificationState(), notificationPermissionGranted()])
-      .then(([stored, granted]) => {
-        if (!current) {
+  const retryInitialization = useCallback(() => {
+    if (initializationRef.current) return initializationRef.current;
+    if (!mountedRef.current) return Promise.resolve();
+    const restore = async () => {
+      if (storageRestoredRef.current) return;
+      const trace = beginDiagnosticTrace('app', 'notification-runtime', { state: 'state-load' });
+      try {
+        const stored = await loadNotificationState();
+        if (!mountedRef.current) {
           finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
           return;
         }
-        permissionRef.current = granted;
+        storageRestoredRef.current = true;
         commitState(stored);
-        setPermission(granted ? 'granted' : 'denied');
+        setStorageError('');
         setReady(true);
-        finishDiagnosticTrace(trace, 'success', { isGranted: granted, isEnabled: stored.globalEnabled });
-      })
-      .catch((error) =>
-        finishDiagnosticTrace(trace, 'failure', { state: 'state-load', reason: normalizeDiagnosticReason(error) })
-      );
-    return () => {
-      current = false;
-      finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+        finishDiagnosticTrace(trace, 'success', { isEnabled: stored.globalEnabled });
+      } catch (error) {
+        if (mountedRef.current) setStorageError('通知存储读取失败，请重试；原设置和通知记录已保留。');
+        finishDiagnosticTrace(trace, 'failure', { state: 'state-load', reason: normalizeDiagnosticReason(error) });
+      }
     };
+    const probePermission = async () => {
+      try {
+        const granted = await notificationPermissionGranted();
+        if (!mountedRef.current) return;
+        permissionRef.current = granted;
+        setPermission(granted ? 'granted' : 'denied');
+        setPermissionError('');
+      } catch (error) {
+        if (!mountedRef.current) return;
+        permissionRef.current = false;
+        setPermission('unavailable');
+        setPermissionError('系统通知权限读取失败，请重试；站内消息仍可使用。');
+        recordDiagnosticError('app', 'notification-permission', error);
+      }
+    };
+    const pending = Promise.all([restore(), probePermission()])
+      .then(() => undefined)
+      .finally(() => {
+        initializationRef.current = undefined;
+      });
+    initializationRef.current = pending;
+    return pending;
   }, [commitState]);
+  useEffect(() => {
+    void retryInitialization();
+  }, [retryInitialization]);
 
   const nodeseekIdentity = identityNeedsTrustedFallback('nodeseek', sessions)
     ? state.sources.nodeseek.identityKey
@@ -695,7 +724,7 @@ export function useNotificationsRuntime({
   }, 0);
 
   useEffect(() => {
-    if (!appActive || !runtimeReady) return;
+    if (!appActive || !runtimeReady || permission === 'checking' || permission === 'unavailable') return;
     let current = true;
     void notificationPermissionGranted()
       .then((granted) => {
@@ -703,13 +732,21 @@ export function useNotificationsRuntime({
         const changed = permissionRef.current !== granted;
         permissionRef.current = granted;
         if (changed) setPermission(granted ? 'granted' : 'denied');
+        setPermissionError('');
         void syncBackground(stateRef.current, granted, eligibleSources);
       })
-      .catch((error) => recordDiagnosticError('app', 'notification-permission', error));
+      .catch((error) => {
+        if (!current) return;
+        permissionRef.current = false;
+        setPermission('unavailable');
+        setPermissionError('系统通知权限读取失败，请重试；站内消息仍可使用。');
+        void syncBackground(stateRef.current, false, eligibleSources);
+        recordDiagnosticError('app', 'notification-permission', error);
+      });
     return () => {
       current = false;
     };
-  }, [appActive, eligibleSources, runtimeReady, syncBackground]);
+  }, [appActive, eligibleSources, permission, runtimeReady, syncBackground]);
 
   const handleNotificationResponse = useCallback(
     (response: Notifications.NotificationResponse) => {
@@ -786,6 +823,7 @@ export function useNotificationsRuntime({
 
   const setGlobalEnabled = useCallback(
     async (enabled: boolean) => {
+      if (!runtimeReadyRef.current) throw new Error('通知存储尚未恢复，请先重试初始化');
       const firstOptIn = enabled && !stateRef.current.hasOptedIn;
       const next = await setGlobalNotificationIntent(enabled);
       commitState(next);
@@ -817,6 +855,7 @@ export function useNotificationsRuntime({
 
   const setSourceEnabled = useCallback(
     async (source: NotificationSource, enabled: boolean) => {
+      if (!runtimeReadyRef.current) throw new Error('通知存储尚未恢复，请先重试初始化');
       const next = await setSourceNotificationIntent(source, enabled);
       commitState(next);
       if (!enabled) {
@@ -846,6 +885,8 @@ export function useNotificationsRuntime({
     activeSources,
     backgroundEnabled,
     backgroundError,
+    initializationError: storageError || permissionError,
+    retryInitialization,
     gateway,
     identityKeys,
     identitySignature,

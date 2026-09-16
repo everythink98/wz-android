@@ -43,8 +43,8 @@ if (compressedBytes > 1.5 * 1024 * 1024) {
 }
 mkdirSync(outputDirectory, { recursive: true });
 writeFileSync(
-  path.join(outputDirectory, 'editorDocument.json'),
-  `${JSON.stringify({ html, compressedBytes })}\n`,
+  path.join(outputDirectory, 'editorDocument.js'),
+  `module.exports = ${JSON.stringify({ html, compressedBytes })};\n`,
   'utf8'
 );
 console.log(`Composer editor: ${compressedBytes} compressed bytes`);

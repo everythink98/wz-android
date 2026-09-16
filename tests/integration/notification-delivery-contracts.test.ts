@@ -32,6 +32,7 @@ import {
   defaultNotificationState,
   loadNotificationState,
   recordNotificationDelivery,
+  recordNotificationSnapshot,
   saveNotificationState
 } from '@/platform/notifications/notificationStore';
 import {
@@ -54,6 +55,56 @@ beforeEach(() => {
 });
 
 describe('notification delivery settlement', () => {
+  it.each([
+    { total: 80, scanned: 60, unread: true },
+    { total: 1, scanned: 20, unread: false }
+  ])(
+    'preserves authoritative unread total $total after scanning $scanned items',
+    async ({ total, scanned, unread }) => {
+      const identityKey = 'nodeseek:7';
+      const state = defaultNotificationState();
+      state.globalEnabled = true;
+      state.sources.nodeseek = { ...state.sources.nodeseek, intentEnabled: true, identityKey };
+      await saveNotificationState(state);
+      await recordNotificationSnapshot('nodeseek', identityKey, total, '2026-09-16T00:00:00.000Z');
+      const result = await runNotificationBackgroundWorker({
+        sources: ['nodeseek'],
+        sourceAllowed: () => true,
+        network: {
+          restoreProxy: async () => undefined,
+          probeAccess: async () => ({ identityKey, userId: '7' }),
+          listPage: async () => ({
+            items: Array.from({ length: scanned }, (_, index) => ({
+              source: 'nodeseek' as const,
+              id: String(index),
+              kind: 'reply' as const,
+              actor: { name: '甲' },
+              title: '回复',
+              createdAt: null,
+              unread,
+              target: { type: 'information' as const }
+            })),
+            cursor: scanned === 60 ? 'next' : null,
+            hasMore: scanned === 60
+          })
+        },
+        store: {
+          load: loadNotificationState,
+          record: recordNotificationDelivery,
+          clearForContentDisable: clearNotificationSourceForContentDisable
+        },
+        system: {
+          permissionGranted: notificationPermissionGranted,
+          reconcileDigests: reconcileSourceNotificationSlots,
+          presentDigest: presentSourceNotification,
+          dismissDigest: (_source, identifier) => dismissSourceNotificationExact(identifier)
+        }
+      });
+      expect(result.status).toBe('success');
+      expect((await loadNotificationState()).sources.nodeseek.unreadCount).toBe(total);
+    }
+  );
+
   it.each([
     'reconciliation',
     'failed reconciliation',

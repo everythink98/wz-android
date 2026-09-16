@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, within } from '../render';
+import { act, fireEvent, render, within, waitFor } from '../render';
 import React, { useState } from 'react';
 import { Animated, Platform, StyleSheet } from 'react-native';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { FeedScreen } from '@/features/feed/FeedScreen';
+import { useFeedController } from '@/features/feed/useFeedController';
+import { createReadGateway, type ReadGateway } from '@/sources/readGateway';
+import { appQueryClient } from '@/platform/query/serverState';
+import { QueryTestWrapper } from '../QueryTestWrapper';
 import { setStartupTimingRecorder, type StartupPhase } from '@/platform/diagnostics/startupTiming';
 import { createTheme } from '@/ui/theme/tokens';
 import { createTestStyles as createStyles } from '../styleFixture';
@@ -264,7 +268,128 @@ function renderFeed(
   );
 }
 
+function ControllerFeed({ gateway }: { gateway: ReadGateway }) {
+  const data = React.useMemo(
+    () => ({
+      ...readerData,
+      settings: {
+        ...readerData.settings,
+        contentSources: readerData.settings.contentSources.map((entry) => ({
+          ...entry,
+          enabled: entry.source === 'linuxdo'
+        }))
+      }
+    }),
+    []
+  );
+  const controller = useFeedController({
+    active: true,
+    catalogCategories: categories,
+    linuxDoVerificationActive: false,
+    notify: jest.fn(),
+    readerData: data,
+    readerDataLoaded: true,
+    showLinuxDoVerification: () => undefined,
+    showNodeSeekVerification: () => undefined,
+    showYaohuoLogin: () => undefined,
+    readGateway: gateway
+  });
+  return renderFeed(controller.feedBusy, controller.shownFeedItems, {
+    categories: controller.feedCategories,
+    categoryFilter: controller.categoryFilter,
+    feedOutcomeKind: controller.feedOutcomeKind,
+    feedHasMore: controller.activeFeedState.hasMore,
+    feedPage: controller.activeFeedState.page,
+    feedSource: controller.feedSource,
+    feedFilters: controller.feedFilters,
+    feedFilter: controller.feedFilter,
+    enabledFeedSources: controller.enabledFeedSources,
+    loadMoreFailureSignal: controller.activeFeedState.loadMoreFailureSignal,
+    loadingMore: controller.activeFeedState.loadingMore,
+    refreshing: controller.activeFeedState.refreshing,
+    readingFilter: controller.readingFilter,
+    onFeedSourceChange: controller.changeFeedSource,
+    onFeedFilterChange: controller.setFeedFilter,
+    onCategoryChange: controller.setCategoryFilter,
+    onReadingFilterChange: controller.setReadingFilter,
+    onRefresh: controller.refreshFeed
+  });
+}
+
 describe('feed initial content readiness', () => {
+  it.each(['success', 'failure'] as const)(
+    'keeps the controller-driven list mounted through a pending cold filter and %s',
+    async (outcome) => {
+      appQueryClient.clear();
+      const pending = Promise.withResolvers<Response>();
+      const response = (title: string) =>
+        Response.json({
+          topic_list: { topics: [{ id: 1, title, slug: 'sample', created_at: '2026-05-20T00:00:00Z', posts_count: 1 }] }
+        });
+      const urls: string[] = [];
+      const fetcher = async (url: string) => {
+        urls.push(url);
+        return url.includes('/new.json') ? pending.promise : response('真实初始主题');
+      };
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => ['linuxdo'],
+        nodeSeekUserAgent: () => 'test',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          sourceEnabled: true,
+          authenticated: true,
+          authSurfaceOpen: false,
+          identityKey: `${source}:7`,
+          identityTrust: 'confirmed',
+          sessionEpoch: 0
+        })
+      });
+      const view = await render(
+        <QueryTestWrapper>
+          <ControllerFeed gateway={gateway} />
+        </QueryTestWrapper>
+      );
+      await waitFor(() => expect(view.getByText('真实初始主题')).toBeTruthy());
+      await fireEvent.press(view.getByTestId('feed-source-linuxdo'));
+      await waitFor(() => expect(view.getByText('真实初始主题')).toBeTruthy());
+      const mounts = mockFlashListMountCount;
+      await fireEvent.press(view.getByLabelText('列表筛选'));
+      await fireEvent.press(view.getByText('话题'));
+      await waitFor(() => expect(urls.some((url) => url.includes('/new.json'))).toBe(true));
+      expect(view.queryByText('真实初始主题')).toBeNull();
+      expect(mockFlashListMountCount).toBe(mounts);
+      await act(async () =>
+        pending.resolve(outcome === 'success' ? response('新筛选结果') : new Response('unavailable', { status: 503 }))
+      );
+      if (outcome === 'success') await waitFor(() => expect(view.getByText('新筛选结果')).toBeTruthy());
+      else await waitFor(() => expect(view.getByTestId('feed-empty-state')).toBeTruthy());
+      expect(mockFlashListMountCount).toBe(mounts);
+      await view.unmount();
+      appQueryClient.clear();
+    }
+  );
+  it.each(['data', 'error'] as const)(
+    'retains the list host during a cold same-source filter ending in %s',
+    async (outcome) => {
+      const initial = { feedSource: 'linuxdo' as const, enabledFeedSources: ['linuxdo'] as const };
+      const view = await render(renderFeed(false, [{ ...topic, source: 'linuxdo' }], initial));
+      const mounts = mockFlashListMountCount;
+      await view.rerender(
+        renderFeed(true, [], { ...initial, feedFilters: { ...defaultFeedFilters, linuxdo: 'new-topics' } })
+      );
+      expect(view.queryByText(topic.title)).toBeNull();
+      await view.rerender(
+        renderFeed(false, outcome === 'data' ? [{ ...topic, source: 'linuxdo', title: 'new result' }] : [], {
+          ...initial,
+          feedFilters: { ...defaultFeedFilters, linuxdo: 'new-topics' },
+          feedOutcomeKind: outcome
+        })
+      );
+      expect(mockFlashListMountCount).toBe(mounts);
+    }
+  );
   it.each(['empty', 'error', 'auth', 'disabled'] as const)('does not count %s as visible posts', async (outcome) => {
     const phases: StartupPhase[] = [];
     setStartupTimingRecorder((phase) => phases.push(phase));
@@ -770,13 +895,12 @@ describe('Feed loading', () => {
     const nativeTags = createHandler.mock.calls
       .filter(([name]) => name === 'NativeViewGestureHandler')
       .map(([, tag]) => tag);
-    expect(nativeTags).toHaveLength(2);
     const scrollTag = configureHandler.mock.calls.find(
       ([, config]) => config.testID === 'feed-outcome-data-all-default'
     )?.[0];
     expect(nativeTags).toContain(scrollTag);
-    const refreshTag = nativeTags.find((tag) => tag !== scrollTag);
     const relations = new Map(configureRelations.mock.calls);
+    const refreshTag = nativeTags.find((tag) => relations.get(tag)?.blocksHandlers?.includes(scrollTag!));
     expect(relations.get(refreshTag!)).toMatchObject({ blocksHandlers: [scrollTag] });
     expect(relations.get(scrollTag!)).toMatchObject({ blocksHandlers: [] });
   });

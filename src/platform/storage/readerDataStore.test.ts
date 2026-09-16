@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createEmptyReaderData, topicKey, type ReaderData } from '@/domain/reader/readerData';
+import { createEmptyReaderData, MAX_HISTORY_RECORDS, topicKey, type ReaderData } from '@/domain/reader/readerData';
 import type { Topic } from '@/domain/forum/models';
 
 const harness = vi.hoisted(() => ({
@@ -107,6 +107,74 @@ afterEach(() => {
 });
 
 describe('reader data storage authority', () => {
+  it('keeps only canonical summaries through favorite, follow, delete and refavorite commands', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    const item = {
+      ...topic,
+      contentHtml: '<p>not stored</p>',
+      displayTimeText: '今天',
+      authorLevelLabel: 'Lv2',
+      accessRequirement: { type: 'level' as const, label: '需等级', detail: 'Lv2' },
+      token: 'PRIVATE_TOKEN'
+    };
+    const user = {
+      source: 'linuxdo' as const,
+      id: 'alice',
+      username: 'alice',
+      url: '',
+      topics: [],
+      levelLabel: 'Lv2',
+      token: 'PRIVATE_TOKEN'
+    };
+    await store.commitReaderCommand({ type: 'favorite', topic: item, enabled: true, at });
+    await store.commitReaderCommand({ type: 'follow', user, enabled: true, at });
+    await store.commitReaderCommand({ type: 'visit', topic: item, at });
+    const first = JSON.parse(await store.exportReaderDataBackup());
+    expect(first.favorites['nodeseek:1'].topic).not.toHaveProperty('contentHtml');
+    expect(first.favorites['nodeseek:1'].topic.accessRequirement).toEqual(item.accessRequirement);
+    expect(first.favorites['nodeseek:1'].topic.authorLevelLabel).toBe('Lv2');
+    expect(first.history['nodeseek:1'].topic).not.toHaveProperty('displayTimeText');
+    expect(first.followedUsers['linuxdo:alice'].user).toMatchObject({
+      id: 'alice',
+      url: 'https://linux.do/u/alice',
+      levelLabel: 'Lv2'
+    });
+    expect(JSON.stringify(first)).not.toContain('PRIVATE_TOKEN');
+    const later = '2026-09-11T00:00:00.000Z';
+    await store.commitReaderCommand({ type: 'favorite', topic, enabled: false, at: later });
+    await store.commitReaderCommand({ type: 'follow', user, enabled: false, at: later });
+    const deleted = JSON.parse(await store.exportReaderDataBackup());
+    expect(deleted.deletedRecords.favorites['nodeseek:1']).toBe(later);
+    expect(deleted.deletedRecords.followedUsers['linuxdo:alice']).toBe(later);
+    expect(deleted.followedUsers).toEqual({});
+    const newest = '2026-09-12T00:00:00.000Z';
+    await store.commitReaderCommand({ type: 'favorite', topic, enabled: true, at: newest });
+    const restored = JSON.parse(await store.exportReaderDataBackup());
+    expect(restored.favorites['nodeseek:1'].savedAt).toBe(newest);
+    expect(restored.deletedRecords.favorites['nodeseek:1']).toBeUndefined();
+  });
+
+  it('caps new history at the canonical limit and serializes import then clear without restoring deleted entries', async () => {
+    const data = createEmptyReaderData();
+    for (let index = 0; index < MAX_HISTORY_RECORDS; index++)
+      data.history[`nodeseek:${index}`] = {
+        topic: { ...topic, id: String(index) },
+        savedAt: new Date(Date.UTC(2020, 0, 1, 0, index)).toISOString()
+      };
+    seed(data);
+    const store = await reopen();
+    await store.loadReaderState();
+    await store.commitReaderCommand({ type: 'visit', topic: { ...topic, id: 'newest' }, at });
+    const saved = JSON.parse(await store.exportReaderDataBackup());
+    expect(Object.keys(saved.history)).toHaveLength(MAX_HISTORY_RECORDS);
+    expect(saved.history['nodeseek:0']).toBeUndefined();
+    expect(saved.history['nodeseek:newest'].visitCount).toBe(1);
+    const imported = store.importReaderDataBackup(JSON.stringify(saved));
+    const cleared = store.commitReaderCommand({ type: 'clear-history', at: '2026-09-13T00:00:00.000Z' });
+    await Promise.all([imported, cleared]);
+    expect((await store.loadReaderState()).counts.history).toBe(0);
+  });
   it('completes a visited topic summary without changing its visit count or exporting account reading fields', async () => {
     const store = await reopen();
     await store.loadReaderState();

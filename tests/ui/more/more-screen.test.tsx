@@ -165,8 +165,7 @@ const authorizedLinuxDoSessions = projectTestAccountSessions(
         id: 'alice',
         username: 'alice',
         displayName: 'Alice',
-        url: 'https://linux.do/u/alice',
-        topics: []
+        url: 'https://linux.do/u/alice'
       }
     }
   })

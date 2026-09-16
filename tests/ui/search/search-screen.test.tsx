@@ -594,8 +594,7 @@ describe('Search state', () => {
             source: 'linuxdo',
             id: '8',
             username: 'linux-tester',
-            url: 'https://linux.do/u/linux-tester',
-            topics: []
+            url: 'https://linux.do/u/linux-tester'
           }
         }
       })

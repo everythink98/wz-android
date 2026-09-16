@@ -1,4 +1,7 @@
-import type { Topic, UserReplyActivity } from '@/domain/forum/models';
+import type { Topic, UserReplyActivity, UserDetails, UserTopicsPage, UserRepliesPage } from '@/domain/forum/models';
+
+// Local presentation data: a missing lane has not produced a trustworthy result yet.
+export type UserProfileView = UserDetails & Partial<UserTopicsPage> & UserRepliesPage;
 
 export type UserActivityTab = 'topics' | 'replies';
 

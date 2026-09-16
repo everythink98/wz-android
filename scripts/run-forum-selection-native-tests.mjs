@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { verifyNativeTestReports } from './native-test-plan.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,6 +18,7 @@ if (!existsSync(gradleWrapper)) {
 
 const gradleArgs = [
   mode === 'unit' ? ':forum-content-selection:testDebugUnitTest' : ':forum-content-selection:connectedDebugAndroidTest',
+  '--rerun',
   '--no-daemon'
 ];
 const childEnvironment = { ...process.env };
@@ -41,9 +43,10 @@ if (mode === 'instrumented') {
     throw new Error(`Expected exactly one connected ${expectedAvd} AVD; found ${matches.length}.`);
   }
   childEnvironment.ANDROID_SERIAL = matches[0];
-  gradleArgs.push('--rerun', '-PreactNativeArchitectures=x86_64');
+  gradleArgs.push('-PreactNativeArchitectures=x86_64');
 }
 
+const startedAt = Date.now();
 const result = spawnSync(gradleWrapper, gradleArgs, {
   cwd: androidRoot,
   env: childEnvironment,
@@ -53,27 +56,14 @@ const result = spawnSync(gradleWrapper, gradleArgs, {
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
 
-if (mode === 'instrumented') {
-  const resultsRoot = path.join(
-    projectRoot,
-    'modules',
-    'forum-content-selection',
-    'android',
-    'build',
-    'outputs',
-    'androidTest-results',
-    'connected',
-    'debug'
-  );
-  const resultFiles = existsSync(resultsRoot)
-    ? readdirSync(resultsRoot, { recursive: true })
-        .map((entry) => path.join(resultsRoot, entry.toString()))
-        .filter((entry) => entry.endsWith('.xml'))
-    : [];
-  const testCount = resultFiles.reduce((total, resultFile) => {
-    const report = readFileSync(resultFile, 'utf8');
-    const match = report.match(/<testsuite\b[^>]*\btests="(\d+)"/u);
-    return total + Number(match?.[1] || 0);
-  }, 0);
-  if (testCount === 0) throw new Error('Forum selection instrumentation completed without running any tests.');
-}
+const resultsRoot = path.join(
+  projectRoot,
+  'modules',
+  'forum-content-selection',
+  'android',
+  'build',
+  ...(mode === 'unit'
+    ? ['test-results', 'testDebugUnitTest']
+    : ['outputs', 'androidTest-results', 'connected', 'debug'])
+);
+console.log(`Forum selection ${mode}: ${verifyNativeTestReports(resultsRoot, startedAt)} tests`);

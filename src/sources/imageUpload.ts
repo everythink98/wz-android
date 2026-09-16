@@ -1,5 +1,6 @@
 import type { Source } from '@/domain/forum/models';
 import { sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
+import type { UploadImageAsset } from '@/platform/media/prepareUploadImage';
 
 export type ReplyImageAsset = {
   uri: string;
@@ -8,12 +9,7 @@ export type ReplyImageAsset = {
   size?: number;
 };
 
-export type NormalizedReplyImageAsset = {
-  uri: string;
-  name: string;
-  mimeType: string;
-  size?: number;
-};
+export type NormalizedReplyImageAsset = UploadImageAsset;
 
 export const MAX_REPLY_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024;
 
@@ -64,11 +60,7 @@ export function appendFileToFormData(body: FormData, fieldName: string, file: No
     name: file.name,
     type: file.mimeType
   };
-  try {
-    body.append(fieldName, uploadFile as unknown as Blob);
-  } catch {
-    body.append(fieldName, new Blob([]), file.name);
-  }
+  body.append(fieldName, uploadFile as unknown as Blob);
 }
 
 function fileNameFromUri(uri: string) {

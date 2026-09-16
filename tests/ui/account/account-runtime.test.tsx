@@ -43,7 +43,7 @@ function seedAccount(username = 'alice') {
     accountSessionSnapshotFromEvent(createAccountSessionSnapshot('linuxdo'), {
       type: 'session-updated',
       loggedIn: true,
-      currentUser: { source: 'linuxdo', id: username, username, url: `https://linux.do/u/${username}`, topics: [] }
+      currentUser: { source: 'linuxdo', id: username, username, url: `https://linux.do/u/${username}` }
     })
   );
 }
@@ -321,6 +321,25 @@ it('suppresses canceled query notifications until a new explicit request produce
     observer.destroy();
     jest.useRealTimers();
   }
+});
+
+it('accepts an explicitly current read recovery without an active Query observer', async () => {
+  const hook = await renderRuntime(async () => new Response('{}'));
+  const resume = jest.fn(async () => 'completed' as const);
+  await act(async () => {
+    expect(
+      await hook.result.current.hosts.showLinuxDoVerification('page', {
+        queryKey: ['explicit-detail-refresh'],
+        isCurrent: () => true,
+        resume
+      })
+    ).toBe(true);
+  });
+  expect(hook.result.current.hosts.linuxDoVerificationVisible).toBe(true);
+  await act(async () => {
+    hook.result.current.hosts.closePanels();
+  });
+  await hook.unmount();
 });
 
 it('accepts fresh server reading after changing the NodeSeek recovery setting', async () => {

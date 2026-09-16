@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import type { NotificationAdapterAccess } from './notificationAdapter';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
-import { getCurrentUserProfile } from './sourceRead';
+import { getCurrentUserIdentity } from './sourceRead';
 import { LINUXDO_USER_AGENT_STORAGE_KEY, sanitizeLinuxDoUserAgent } from '@/platform/android/linuxDoUserAgent';
 import { NODESEEK_USER_AGENT_STORAGE_KEY, sanitizeNodeSeekUserAgent } from '@/platform/android/nodeSeekUserAgent';
 import { withFetchGuard } from '@/platform/network/request';
@@ -18,7 +18,7 @@ export async function probeBackgroundNotificationAccess(
   const nodeSeekUserAgent = sanitizeNodeSeekUserAgent(nodeSeekUserAgentValue || undefined);
   const linuxDoUserAgent = sanitizeLinuxDoUserAgent(linuxDoUserAgentValue || undefined);
   await assertCurrent();
-  const profile = await getCurrentUserProfile({
+  const profile = await getCurrentUserIdentity({
     source,
     fetcher: withFetchGuard(fetch, assertCurrent),
     nodeSeekAuthenticated: source === 'nodeseek',

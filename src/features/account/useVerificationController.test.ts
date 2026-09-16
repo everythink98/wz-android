@@ -50,8 +50,7 @@ const loggedInSession: SiteSessionState = {
     id: '42',
     username: 'alice',
     displayName: 'Alice',
-    url: 'https://linux.do/u/alice',
-    topics: []
+    url: 'https://linux.do/u/alice'
   },
   lastVerifiedAt: '2026-07-24T00:00:00.000Z'
 };

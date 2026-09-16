@@ -16,8 +16,23 @@ import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
 
 import { useReaderDataActionsController } from './useReaderDataActionsController';
 import { useLibraryRouteRuntime } from './LibraryRouteRuntime';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 export { LibraryRouteRuntimeProvider, type LibraryRouteRuntimeValue } from './LibraryRouteRuntime';
+
+function useCollectionPages(request: Omit<ReaderPageRequest, 'after'>, enabled: boolean) {
+  const query = useInfiniteQuery({
+    queryKey: ['reader-library', request.collection, request.sources.join('|'), request.source, request.category],
+    enabled,
+    initialPageParam: undefined as ReaderPageRequest['after'],
+    queryFn: ({ pageParam }) => queryReaderPage({ ...request, after: pageParam }),
+    getNextPageParam: (last) => last.next,
+    staleTime: Infinity,
+    retry: false
+  });
+  const records = useMemo(() => query.data?.pages.flatMap((page) => page.records) ?? [], [query.data]);
+  return { query, records };
+}
 
 export function LibraryRoute() {
   const runtime = useLibraryRouteRuntime();
@@ -35,22 +50,33 @@ export function LibraryRoute() {
   const collection = libraryTab === 'users' ? 'followedUsers' : libraryTab;
   const source = sourceFilter === 'all' || runtime.enabledSources.includes(sourceFilter) ? sourceFilter : 'all';
   const category = source === sourceFilter ? categoryFilter : 'all';
-  const pages = useInfiniteQuery({
-    queryKey: ['reader-library', collection, runtime.enabledSources.join('|'), source, category],
-    enabled: active && runtime.reader.loaded,
-    initialPageParam: undefined as ReaderPageRequest['after'],
-    queryFn: ({ pageParam }) =>
-      queryReaderPage({ collection, sources: runtime.enabledSources, source, category, after: pageParam }),
-    getNextPageParam: (last) => last.next,
-    staleTime: Infinity,
-    retry: false
+  const requestFor = (candidate: ReaderPageRequest['collection']) => ({
+    collection: candidate,
+    sources: runtime.enabledSources,
+    source: candidate === collection ? source : ('all' as const),
+    category: candidate === collection ? category : 'all'
   });
-  const records = useMemo(() => pages.data?.pages.flatMap((page) => page.records) ?? [], [pages.data]);
+  const favorites = useCollectionPages(
+    requestFor('favorites'),
+    active && runtime.reader.loaded && collection === 'favorites'
+  );
+  const history = useCollectionPages(
+    requestFor('history'),
+    active && runtime.reader.loaded && collection === 'history'
+  );
+  const users = useCollectionPages(
+    requestFor('followedUsers'),
+    active && runtime.reader.loaded && collection === 'followedUsers'
+  );
+  const { query: pages, records } = libraryTab === 'favorites' ? favorites : libraryTab === 'history' ? history : users;
+  const currentTabRef = useCommittedRef(active ? libraryTab : undefined);
   const readingAttempts = useRef(new Set<string>());
   const readingScope = runtime.readingGateway?.reading?.scope();
   useEffect(() => {
     if (!active || !readingScope || !runtime.readingGateway || collection === 'followedUsers') return;
-    const ids = (records as TopicRecord[]).flatMap(({ topic }) => {
+    const ids = records.flatMap((record) => {
+      if (!('topic' in record)) return [];
+      const { topic } = record;
       const key = `${readingScope}:${topic.id}`;
       if (
         topic.source !== 'linuxdo' ||
@@ -66,12 +92,25 @@ export function LibraryRoute() {
     // Returning only republishes local records; previously attempted IDs never trigger a return fetch.
     void runtime.readingGateway.getReadingBatch(ids).catch(() => undefined);
   }, [active, collection, readingScope, records, runtime.readingGateway, runtime.reader.data.history]);
-  const favoriteRecords = libraryTab === 'favorites' ? (records as TopicRecord[]) : [];
-  const historyRecords = libraryTab === 'history' ? (records as TopicRecord[]) : [];
-  const followedUsers = libraryTab === 'users' ? (records as FollowedUserRecord[]) : [];
-  const loadMore = useCallback(() => {
-    if (active && pages.hasNextPage && !pages.isFetching) void pages.fetchNextPage();
-  }, [active, pages]);
+  const favoriteRecords = useMemo(
+    () => favorites.records.filter((record): record is TopicRecord => 'topic' in record),
+    [favorites.records]
+  );
+  const historyRecords = useMemo(
+    () => history.records.filter((record): record is TopicRecord => 'topic' in record),
+    [history.records]
+  );
+  const followedUsers = useMemo(
+    () => users.records.filter((record): record is FollowedUserRecord => 'user' in record),
+    [users.records]
+  );
+  const loadMore = useCallback(
+    (tab: LibraryTab) => {
+      if (tab !== libraryTab || currentTabRef.current !== tab) return;
+      if (pages.hasNextPage && !pages.isFetching) void pages.fetchNextPage();
+    },
+    [currentTabRef, libraryTab, pages]
+  );
   const openTopic = useCallback(
     (topic: Topic) => navigation.dispatch(StackActions.push('Topic', { topic })),
     [navigation]

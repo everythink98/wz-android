@@ -14,7 +14,7 @@ import {
   siteSessionIdentityKey,
   type SiteSessionState
 } from './siteSessionState';
-import type { UserProfile } from '@/domain/forum/models';
+import type { UserIdentity } from '@/domain/forum/models';
 
 describe('site session state', () => {
   it('keeps identity facts and trust in one normalized account snapshot', () => {
@@ -29,8 +29,7 @@ describe('site session state', () => {
           source: 'linuxdo',
           id: '42',
           username: 'alice',
-          url: 'https://linux.do/u/alice',
-          topics: []
+          url: 'https://linux.do/u/alice'
         }
       }
     });
@@ -93,8 +92,7 @@ describe('site session state', () => {
           source: 'linuxdo',
           id: '7',
           username: 'bob',
-          url: 'https://www.linux.do/user/7',
-          topics: []
+          url: 'https://www.linux.do/user/7'
         }
       }
     });
@@ -125,7 +123,7 @@ describe('site session state', () => {
 
   it('derives identity only from a confirmed logged-in user', () => {
     expect(
-      siteSessionIdentityKey({ site: 'nodeseek', status: 'logged-in', currentUser: { id: '42' } as UserProfile })
+      siteSessionIdentityKey({ site: 'nodeseek', status: 'logged-in', currentUser: { id: '42' } as UserIdentity })
     ).toBe('nodeseek:42');
     expect(siteSessionIdentityKey({ site: 'nodeseek', status: 'anonymous' })).toBe('nodeseek:anonymous');
   });
@@ -342,8 +340,7 @@ describe('site session state', () => {
             source: 'nodeseek',
             id: '48872',
             username: '当前账号',
-            url: 'https://www.nodeseek.com/space/48872',
-            topics: []
+            url: 'https://www.nodeseek.com/space/48872'
           }
         }
       })
@@ -446,12 +443,11 @@ describe('site session state', () => {
   });
 
   it('keeps a confirmed identity while a challenged read recovery is retried', () => {
-    const currentUser: UserProfile = {
+    const currentUser: UserIdentity = {
       source: 'linuxdo',
       id: '42',
       username: 'alice',
-      url: 'https://linux.do/u/alice',
-      topics: []
+      url: 'https://linux.do/u/alice'
     };
     const loggedIn = reduceSiteSessionState(createSiteSessionStates().linuxdo, {
       type: 'cookie-loaded',
@@ -483,13 +479,12 @@ describe('site session state', () => {
   it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
     'keeps the confirmed %s identity when a read path only observes credentials',
     (site) => {
-      const currentUser: UserProfile = {
+      const currentUser: UserIdentity = {
         source: site,
         id: `${site}-user-id`,
         username: `${site}-user`,
         displayName: `${site} user`,
-        url: `https://example.com/${site}`,
-        topics: []
+        url: `https://example.com/${site}`
       };
       const loggedIn = reduceSiteSessionState(createSiteSessionStates()[site], {
         type: 'cookie-loaded',
@@ -540,13 +535,12 @@ describe('site session state', () => {
   );
 
   it('removes write capability and current user after confirmed expiry', () => {
-    const currentUser: UserProfile = {
+    const currentUser: UserIdentity = {
       source: 'yaohuo',
       id: '7',
       username: '火友',
       displayName: '火友',
-      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7',
-      topics: []
+      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7'
     };
 
     const loggedIn = reduceSiteSessionState(createSiteSessionStates().yaohuo, {

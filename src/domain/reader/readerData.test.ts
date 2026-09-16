@@ -1,26 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  clearRecords,
   createEmptyReaderData,
   FONT_SCALE_MAX,
   FONT_SCALE_MIN,
-  isUserFollowed,
   MAX_DELETED_RECORDS,
   MAX_HISTORY_RECORDS,
   MAX_READER_STRING_LENGTH,
   mergeReaderData,
   normalizeFontScale,
-  recordHistory,
-  removeFollowedUsers,
-  removeRecords,
   sanitizeReaderData,
   sanitizeReaderSettings,
-  toggleFavorite,
-  toggleFollowedUser,
   topicKey,
-  updateFavoriteTopic,
-  userKey,
-  type ReaderData
+  userKey
 } from './readerData';
 import type { Topic, UserProfile } from '@/domain/forum/models';
 
@@ -47,44 +38,6 @@ const profile: UserProfile = {
 };
 
 describe('Android reader data helpers', () => {
-  it('preserves the snapshot when deletion has no target', () => {
-    const data = createEmptyReaderData();
-    expect(removeRecords(data, 'favorites', [topic])).toBe(data);
-    expect(removeRecords(data, 'history', [])).toBe(data);
-    expect(removeFollowedUsers(data, [profile])).toBe(data);
-    expect(clearRecords(data, 'history')).toBe(data);
-  });
-
-  it('batches deletion timestamps once while retaining stable ties and the tombstone limit', () => {
-    const data = createEmptyReaderData();
-    const topics = Array.from({ length: 1_001 }, (_, index) => ({ ...topic, id: String(index) }));
-    data.favorites = Object.fromEntries(
-      topics.map((item) => [topicKey(item), { topic: item, savedAt: topic.createdAt }])
-    );
-    const parse = vi.spyOn(Date, 'parse');
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-09-04T00:00:00.000Z'));
-    try {
-      const next = removeRecords(data, 'favorites', [...topics, topics[0]!]);
-      expect(next.favorites).toEqual({});
-      expect(Object.keys(next.deletedRecords.favorites)).toHaveLength(MAX_DELETED_RECORDS);
-      expect(Object.keys(next.deletedRecords.favorites).slice(0, 3)).toEqual([
-        'nodeseek:0',
-        'nodeseek:1',
-        'nodeseek:2'
-      ]);
-      expect(next.deletedRecords.favorites['nodeseek:1000']).toBeUndefined();
-      expect(next.deletedRecords.favorites['nodeseek:0']).toBe('2026-09-04T00:00:00.000Z');
-      expect(next.history).toBe(data.history);
-      expect(next.deletedRecords.history).toBe(data.deletedRecords.history);
-      expect(parse.mock.calls.length).toBeLessThanOrEqual(topics.length);
-      expect(Object.keys(data.favorites)).toHaveLength(1_001);
-    } finally {
-      parse.mockRestore();
-      vi.useRealTimers();
-    }
-  });
-
   it('normalizes font scale to 5% steps between 85% and 140%', () => {
     expect(normalizeFontScale(0.2)).toBe(FONT_SCALE_MIN);
     expect(normalizeFontScale(2)).toBe(FONT_SCALE_MAX);
@@ -125,165 +78,6 @@ describe('Android reader data helpers', () => {
     });
 
     expect(data).toEqual(createEmptyReaderData());
-  });
-
-  it('stores only a topic summary when recording history', () => {
-    const detail = {
-      ...topic,
-      contentHtml: '<p>body</p>',
-      replies: []
-    };
-    const key = topicKey(topic);
-    const empty = createEmptyReaderData();
-    const first = recordHistory(
-      {
-        ...empty,
-        deletedRecords: {
-          ...empty.deletedRecords,
-          history: { [key]: '2026-05-17T00:00:00.000Z' }
-        }
-      },
-      detail
-    );
-    const data = recordHistory(first, { ...detail, title: 'Updated topic' });
-
-    expect(data.history[key].topic).toEqual({ ...topic, title: 'Updated topic' });
-    expect(data.history[key].visitCount).toBe(2);
-    expect(data.deletedRecords.history[key]).toBeUndefined();
-    expect(data.history[key]).not.toHaveProperty('tags');
-    expect(data.history[key]).not.toHaveProperty('note');
-  });
-
-  it('preserves private conversation kind through history restore without saving account reading', () => {
-    const privateTopic = {
-      ...topic,
-      source: 'linuxdo' as const,
-      isPrivateMessage: true,
-      reading: { topicId: topic.id, lastReadPostNumber: 12 }
-    };
-    const data = sanitizeReaderData(recordHistory(createEmptyReaderData(), privateTopic));
-    expect(data.history[topicKey(privateTopic)].topic.isPrivateMessage).toBe(true);
-    expect(data.history[topicKey(privateTopic)].topic).not.toHaveProperty('reading');
-  });
-
-  it('keeps direct history writes capped at the newest 1000 records', () => {
-    const history: ReaderData['history'] = {};
-    for (let index = 0; index < MAX_HISTORY_RECORDS; index += 1) {
-      const item = { ...topic, id: String(index), title: `Topic ${index}` };
-      history[topicKey(item)] = {
-        topic: item,
-        savedAt: new Date(Date.UTC(2020, 0, 1, 0, index)).toISOString()
-      };
-    }
-    const current: ReaderData = {
-      ...createEmptyReaderData(),
-      history
-    };
-    const newest = { ...topic, id: 'newest', title: 'Newest topic' };
-
-    const data = recordHistory(current, newest);
-
-    expect(Object.keys(data.history)).toHaveLength(MAX_HISTORY_RECORDS);
-    expect(data.history[topicKey(newest)]?.topic.title).toBe('Newest topic');
-    expect(data.history['nodeseek:0']).toBeUndefined();
-  });
-
-  it('does not persist source-provided display time text when recording history', () => {
-    const yaohuoTopic: Topic = {
-      ...topic,
-      source: 'yaohuo',
-      id: '1539321',
-      title: '妖火主题',
-      url: 'https://yaohuo.me/bbs-1539321.html',
-      displayTimeText: '今天 晚上'
-    };
-
-    const data = recordHistory(createEmptyReaderData(), yaohuoTopic);
-
-    expect(data.history[topicKey(yaohuoTopic)].topic.displayTimeText).toBeUndefined();
-  });
-
-  it('toggles favorites with deletion markers only', () => {
-    let data = createEmptyReaderData();
-    data = toggleFavorite(data, topic);
-
-    expect(Boolean(data.favorites[topicKey(topic)])).toBe(true);
-
-    data = toggleFavorite(data, topic);
-    expect(Boolean(data.favorites[topicKey(topic)])).toBe(false);
-    expect(data.deletedRecords.favorites[topicKey(topic)]).toEqual(expect.any(String));
-    expect(data).not.toHaveProperty('later');
-  });
-
-  it('keeps access requirements when storing favorite topic summaries', () => {
-    const restrictedTopic: Topic = {
-      ...topic,
-      id: '760813',
-      title: '求新闻类app分流域名合集',
-      accessRequirement: {
-        type: 'level',
-        label: '需等级',
-        detail: 'Lv2'
-      }
-    };
-
-    const data = toggleFavorite(createEmptyReaderData(), restrictedTopic);
-
-    expect(data.favorites[topicKey(restrictedTopic)].topic.accessRequirement).toEqual({
-      type: 'level',
-      label: '需等级',
-      detail: 'Lv2'
-    });
-  });
-
-  it('keeps author and profile levels in local reader data summaries', () => {
-    const leveledTopic: Topic = {
-      ...topic,
-      authorLevelLabel: 'Lv6'
-    };
-    const leveledProfile: UserProfile = {
-      ...profile,
-      levelLabel: 'Lv6',
-      topics: [leveledTopic]
-    };
-
-    const data = toggleFollowedUser(toggleFavorite(createEmptyReaderData(), leveledTopic), leveledProfile);
-
-    expect(data.favorites[topicKey(leveledTopic)].topic.authorLevelLabel).toBe('Lv6');
-    expect(data.followedUsers[userKey(leveledProfile)].user.levelLabel).toBe('Lv6');
-    expect(data.followedUsers[userKey(leveledProfile)].user.topics[0].authorLevelLabel).toBe('Lv6');
-  });
-
-  it('updates existing favorite topic summaries with access requirements without changing saved time', () => {
-    const savedAt = '2026-06-04T06:59:04.776Z';
-    const restrictedTopic: Topic = {
-      ...topic,
-      id: '760813',
-      title: '求新闻类app分流域名合集',
-      accessRequirement: {
-        type: 'level',
-        label: '需等级',
-        detail: 'Lv2'
-      }
-    };
-    const current = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      favorites: {
-        [topicKey(restrictedTopic)]: {
-          topic: { ...restrictedTopic, accessRequirement: undefined },
-          savedAt
-        }
-      }
-    });
-
-    const data = updateFavoriteTopic(current, restrictedTopic);
-
-    expect(data.favorites[topicKey(restrictedTopic)].savedAt).toBe(savedAt);
-    expect(data.favorites[topicKey(restrictedTopic)].topic.accessRequirement).toEqual({
-      type: 'level',
-      label: '需等级',
-      detail: 'Lv2'
-    });
   });
 
   it('drops old inferred NodeSeek inside-category access markers from readable favorite summaries', () => {
@@ -386,63 +180,9 @@ describe('Android reader data helpers', () => {
     expect(data).not.toHaveProperty('subscriptions');
   });
 
-  it('stores followed users separately from favorite topics', () => {
-    let data = createEmptyReaderData();
-
-    data = toggleFollowedUser(data, profile);
-
-    expect(isUserFollowed(data, profile)).toBe(true);
-    expect(data.followedUsers[userKey(profile)]).toMatchObject({
-      user: profile,
-      followedAt: expect.any(String)
-    });
-    expect(data.favorites).toEqual({});
-
-    data = toggleFollowedUser(data, profile);
-
-    expect(isUserFollowed(data, profile)).toBe(false);
-    expect(data.deletedRecords.followedUsers[userKey(profile)]).toEqual(expect.any(String));
-  });
-
   it('never creates a NodeSeek followed-user key from a username', () => {
     expect(() => userKey({ source: 'nodeseek', id: 'xy' })).toThrow('NodeSeek 用户 ID 必须是数字');
     expect(userKey({ source: 'nodeseek', id: '8052' })).toBe('nodeseek:8052');
-  });
-
-  it('keeps followed users created from topic authors even when the profile url is missing', () => {
-    const partialProfile: UserProfile = {
-      source: 'v2ex',
-      id: 'neo',
-      username: 'neo',
-      displayName: 'neo',
-      url: '',
-      topics: []
-    };
-
-    const data = toggleFollowedUser(createEmptyReaderData(), partialProfile);
-
-    expect(data.followedUsers[userKey(partialProfile)]?.user.url).toBe('https://www.v2ex.com/member/neo');
-    expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe(
-      'https://www.v2ex.com/member/neo'
-    );
-  });
-
-  it('restores a missing LinuxDo profile url to the LinuxDo user page', () => {
-    const partialProfile: UserProfile = {
-      source: 'linuxdo',
-      id: 'temple-user',
-      username: 'temple-user',
-      displayName: 'temple-user',
-      url: '',
-      topics: []
-    };
-
-    const data = toggleFollowedUser(createEmptyReaderData(), partialProfile);
-
-    expect(data.followedUsers[userKey(partialProfile)]?.user.url).toBe('https://linux.do/u/temple-user');
-    expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe(
-      'https://linux.do/u/temple-user'
-    );
   });
 
   it('drops polluted yaohuo followed user display names during sanitizing', () => {
@@ -518,15 +258,6 @@ describe('Android reader data helpers', () => {
     expect(data.followedUsers['nodeseek:48872']?.user.topicCount).toBeUndefined();
     expect(data.followedUsers['nodeseek:48872']?.user.postCount).toBeUndefined();
     expect(data.followedUsers['yaohuo:7']?.user.postCount).toBe(4);
-  });
-
-  it('removes followed users with deletion markers', () => {
-    let data = toggleFollowedUser(createEmptyReaderData(), profile);
-
-    data = removeFollowedUsers(data, [profile]);
-
-    expect(data.followedUsers).toEqual({});
-    expect(data.deletedRecords.followedUsers[userKey(profile)]).toEqual(expect.any(String));
   });
 
   it('drops sensitive NodeSeek fields while sanitizing reader data', () => {
@@ -670,23 +401,6 @@ describe('Android reader data helpers', () => {
     expect(merged.favorites[topicKey(localOnly)]?.topic.title).toBe('Local only');
     expect(merged.favorites[topicKey(remoteOnly)]?.topic.title).toBe('Remote only');
     expect(merged.favorites[topicKey(sharedLocal)]?.topic.title).toBe('Local newer');
-  });
-
-  it('removes records and clears history with deletion markers', () => {
-    const secondTopic: Topic = { ...topic, id: '2', title: 'Second topic' };
-    let data = createEmptyReaderData();
-    data = toggleFavorite(data, topic);
-    data = toggleFavorite(data, secondTopic);
-
-    data = removeRecords(data, 'favorites', [topic, secondTopic]);
-    expect(data.favorites).toEqual({});
-    expect(Object.keys(data.deletedRecords.favorites)).toHaveLength(2);
-
-    data = recordHistory(data, topic);
-    data = recordHistory(data, secondTopic);
-    data = clearRecords(data, 'history');
-    expect(data.history).toEqual({});
-    expect(Object.keys(data.deletedRecords.history)).toHaveLength(2);
   });
 
   it('lets newer deletion markers suppress older imported records', () => {

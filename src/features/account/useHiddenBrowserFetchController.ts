@@ -15,7 +15,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   const challengeHeadingPattern = challengeTitlePattern;
   const pageText = (limit = 12000) => (document.body?.innerText || document.documentElement?.innerText || document.body?.textContent || document.documentElement?.textContent || "").trim().slice(0, limit);
   const jsonText = () => {
-    const text = pageText();
+    const text = pageText(Infinity);
     return /^\\s*[{[]/.test(text) ? text : "";
   };
   const isChallengePage = () => {

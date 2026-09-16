@@ -27,6 +27,7 @@ import android.view.ViewTreeObserver
 import android.widget.TextView
 import android.widget.HorizontalScrollView
 import android.widget.ScrollView
+import android.widget.Toast
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -71,6 +72,7 @@ class ForumContentSelectionView(
   internal var pendingRows: List<ForumSelectionRowRecord> = emptyList()
   internal var hapticFeedbackObserverForTest: ((Int) -> Unit)? = null
   internal var selectionChangeObserverForTest: ((Map<String, Any>) -> Unit)? = null
+  internal var clipboardWriterForTest: ((ClipData) -> Unit)? = null
   internal var systemActionLoaderForTest:
     ((String, (List<ForumSelectionSystemAction>) -> Unit) -> List<ForumSelectionSystemAction>)? = null
 
@@ -1110,8 +1112,7 @@ class ForumContentSelectionView(
 
     override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean = when (item.itemId) {
       MENU_COPY -> {
-        copyToClipboard()
-        mode.finish()
+        if (copyToClipboard() != null) mode.finish()
         true
       }
       MENU_SELECT_ALL -> {
@@ -1244,9 +1245,16 @@ class ForumContentSelectionView(
       failClosed("copy-mapping-mismatch")
       return null
     }
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    clipboard.setPrimaryClip(ClipData.newPlainText("forum-content", copied))
-    return copied
+    return try {
+      val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+      val clip = ClipData.newPlainText("forum-content", copied)
+      clipboardWriterForTest?.invoke(clip) ?: clipboard.setPrimaryClip(clip)
+      copied
+    } catch (_: SecurityException) {
+      emitError("copy-denied")
+      Toast.makeText(context, R.string.forum_selection_copy_denied, Toast.LENGTH_SHORT).show()
+      null
+    }
   }
 
   private fun postAutoScroll() {

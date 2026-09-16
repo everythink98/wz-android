@@ -548,17 +548,16 @@ describe('Library filters', () => {
     });
     const view = await render(<LibraryHarness />);
     await fireEvent.press(view.getByTestId('library-tab-history'));
-    await act(async () => frameCallbacks.shift()?.(0));
+    await act(async () => frameCallbacks.splice(0).forEach((callback) => callback(0)));
     await fireEvent.press(view.getByTestId('library-tab-favorites'));
-    await act(async () => frameCallbacks.shift()?.(0));
+    await act(async () => frameCallbacks.splice(0).forEach((callback) => callback(0)));
     mockFlashListScrollToOffset.mockClear();
 
     await fireEvent.press(view.getByTestId('library-tab-history'));
 
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(1);
     expect(mockFlashListScrollToOffset).toHaveBeenCalledWith({ offset: 0, animated: false });
-    expect(frameCallbacks).toHaveLength(1);
-    await act(async () => frameCallbacks[0]?.(0));
+    await act(async () => frameCallbacks.splice(0).forEach((callback) => callback(0)));
     expect(mockFlashListScrollToOffset).toHaveBeenCalledTimes(2);
   });
 

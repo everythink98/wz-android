@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { setDefaultAvatarFetcher } from '@/platform/media/avatarImages';
 import { withNativeForumReadIntent } from './browserFetchIntent';
-import type { Fetcher } from './request';
+import { prepareRequestToSend, type Fetcher } from './request';
 import { errorMessage } from './errors';
 import {
   beginDiagnosticTrace,
@@ -457,7 +457,7 @@ export function useNetworkProxyRuntime({
     async (input, init) => {
       await ensureNetworkProxyReady();
       const requestInit = Platform.OS === 'android' ? withNativeDiagnosticRequest(init) : init;
-      return baseFetcher(input, withNativeForumReadIntent(input, requestInit));
+      return baseFetcher(input, prepareRequestToSend(withNativeForumReadIntent(input, requestInit)));
     },
     [baseFetcher, ensureNetworkProxyReady]
   );

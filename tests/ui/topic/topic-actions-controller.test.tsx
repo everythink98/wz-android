@@ -62,7 +62,12 @@ import {
   normalizePendingNodeSeekPoll,
   type ComposerSnapshot
 } from '@/domain/forum/structuredComposer';
-import { WritableSessionBlockedError, type WritableSessionTicket } from '@/domain/session/writableSessionGate';
+import {
+  WritableSessionBlockedError,
+  validateWritableSessionTicket,
+  type WritableSessionSnapshot,
+  type WritableSessionTicket
+} from '@/domain/session/writableSessionGate';
 import { readNodeSeekPollJournalEntry, saveNodeSeekPollJournalEntry } from '@/platform/persistence/nodeSeekPollJournal';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
@@ -133,8 +138,7 @@ function nodeSeekLoggedInViewModels() {
       source: 'nodeseek',
       id: '7',
       username: 'payer',
-      url: 'https://www.nodeseek.com/space/7',
-      topics: []
+      url: 'https://www.nodeseek.com/space/7'
     }
   };
   return projectTestAccountSessions(states);
@@ -506,6 +510,54 @@ describe('topic action query mutations', () => {
     expect(failure).toBeInstanceOf(Error);
     expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual(['https://linux.do/session/csrf']);
   });
+
+  it.each(['identity', 'epoch', 'source-disabled', 'auth-surface'])(
+    'does not send an edit when the ticket becomes stale during CSRF (%s)',
+    async (change) => {
+      const snapshot: WritableSessionSnapshot = {
+        source: 'linuxdo',
+        authenticated: true,
+        authSurfaceOpen: false,
+        identityKey: 'linuxdo:7',
+        identityTrust: 'confirmed',
+        sessionEpoch: 0,
+        sourceEnabled: true
+      };
+      const ticket: WritableSessionTicket = {
+        source: snapshot.source,
+        identityKey: snapshot.identityKey,
+        sessionEpoch: snapshot.sessionEpoch
+      };
+      mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+      const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+        const csrf = String(input).endsWith('/session/csrf');
+        if (csrf) {
+          if (change === 'identity') snapshot.identityKey = 'linuxdo:8';
+          if (change === 'epoch') snapshot.sessionEpoch += 1;
+          if (change === 'source-disabled') snapshot.sourceEnabled = false;
+          if (change === 'auth-surface') snapshot.authSurfaceOpen = true;
+        }
+        return new Response(JSON.stringify(csrf ? { csrf: 'fixture' } : {}));
+      });
+      const topic = detailFor('linuxdo', { polls: [], replies: [editableReply] });
+      seedTopicCache(topic, [editableReply]);
+      const hook = await renderActions({
+        topicDetail: topic,
+        topicReplies: [editableReply],
+        fetcher,
+        ensureWritableSession: async () => ticket,
+        isWritableSessionTicketCurrent: (candidate) => validateWritableSessionTicket(candidate, snapshot)
+      });
+      await act(async () => {
+        await hook.result.current.actions.editReply(editableReply);
+        hook.result.current.topicSession.commands.composer.changeContent('preserved draft');
+      });
+      await act(async () => {
+        await hook.result.current.actions.submitReply();
+      });
+      expect(fetcher.mock.calls.map(([input]) => new URL(String(input)).pathname)).toEqual(['/session/csrf']);
+    }
+  );
 
   it('treats a completed NodeSeek target as the same decision-chain outcome', async () => {
     const completed = { ...detail, upvoted: true };
@@ -915,15 +967,18 @@ describe('topic action query mutations', () => {
       lines.push(line);
     });
     let ticketCurrent = true;
-    mockRunLinuxDoAction.mockImplementationOnce(async () => {
-      ticketCurrent = false;
-      return { success: true };
+    mockRunLinuxDoAction.mockImplementation(runLinuxDoActionActual);
+    const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+      const csrf = String(input).endsWith('/session/csrf');
+      if (!csrf) ticketCurrent = false;
+      return new Response(JSON.stringify(csrf ? { csrf: 'fixture' } : { success: true }));
     });
     const notify = jest.fn();
     const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
     seedTopicCache(linuxDetail);
     const hook = await renderActions({
       isWritableSessionTicketCurrent: () => ticketCurrent,
+      fetcher,
       notify,
       topicDetail: linuxDetail
     });
@@ -1489,6 +1544,36 @@ describe('topic action query mutations', () => {
     expect(mockRunLinuxDoAction).not.toHaveBeenCalled();
     expect(hook.result.current.topicSession.state.replyComposerIntent.kind).toBe('closed');
     expect(hook.result.current.topicSession.state.replyContent).toBe('跨页权限冲突时保留的正文');
+  });
+
+  it.each([
+    { name: 'identical observations', patch: {}, allowed: true },
+    { name: 'unknown permission', patch: { canEdit: undefined }, allowed: false },
+    { name: 'conflicting content', patch: { contentMarkdown: 'changed' }, allowed: false },
+    { name: 'conflicting author', patch: { authorId: 'another-author' }, allowed: false },
+    { name: 'ambiguous identity', patch: { replyLocationConflict: 'identity' as const }, allowed: false }
+  ])('checks overlapping edit observations with $name', async ({ patch, allowed }) => {
+    const reply: Reply = { ...editableReply, authorId: 'alice-id' };
+    const topic = detailFor('linuxdo', { polls: [], replies: [reply] });
+    const { repliesKey } = seedTopicCache(topic, [reply]);
+    const hook = await renderActions({ topicDetail: topic, topicReplies: [reply] });
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('updated draft');
+    });
+    appQueryClient.setQueryData(repliesKey, {
+      pages: [{ items: [reply] }, { items: [{ ...reply, ...patch }] }],
+      pageParams: [null, 2]
+    });
+    mockGetDocument.mockResolvedValueOnce({ canceled: true, assets: null });
+    await act(async () => {
+      await hook.result.current.actions.uploadReplyImage();
+    });
+    expect(mockGetDocument).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+    expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(allowed ? 1 : 0);
   });
 
   it('immediately detaches an edit when refreshed replies revoke or remove it', async () => {
@@ -2346,6 +2431,45 @@ describe('topic action query mutations', () => {
     expect(dispatchSiteSessionEvent).not.toHaveBeenCalled();
     expect(showYaohuoLogin).not.toHaveBeenCalled();
   });
+
+  it.each(['identity', 'key-generation'] as const)(
+    'blocks NodeImage transport when %s changes during file preparation',
+    async (change) => {
+      let ticketCurrent = true;
+      let generation = 0;
+      mockCurrentNodeImageGeneration.mockImplementation(() => generation);
+      const prepared = Promise.withResolvers<void>();
+      const authenticatedFetcher = jest.fn(async () => new Response('{}'));
+      mockUploadNodeSeekReplyImage.mockImplementationOnce(async ({ fetcher }) => {
+        await prepared.promise;
+        await fetcher!('https://api.nodeimage.com/api/upload', { method: 'POST' });
+        return 'https://nodeimage.com/image.webp';
+      });
+      mockGetDocument.mockResolvedValueOnce({
+        canceled: false,
+        assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+      });
+      seedTopicCache();
+      const hook = await renderActions({
+        fetcher: authenticatedFetcher,
+        ensureNodeImageApiKey: async () => 'key',
+        isWritableSessionTicketCurrent: () => ticketCurrent
+      });
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending = hook.result.current.actions.uploadReplyImage();
+      });
+      await waitFor(() => expect(mockUploadNodeSeekReplyImage).toHaveBeenCalledTimes(1));
+      if (change === 'identity') ticketCurrent = false;
+      else generation++;
+      await act(async () => {
+        prepared.resolve();
+        await pending;
+      });
+      expect(authenticatedFetcher).not.toHaveBeenCalled();
+      expect(hook.result.current.topicSession.state.replyContent).toBe('');
+    }
+  );
 
   it('does not insert a NodeImage upload completed by a cleared API key', async () => {
     const lines: string[] = [];

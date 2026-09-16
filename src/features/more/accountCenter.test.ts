@@ -84,8 +84,7 @@ describe('account center view', () => {
             id: 'alice',
             username: 'alice',
             displayName: 'Alice',
-            url: '',
-            topics: []
+            url: ''
           }
         }
       })
@@ -150,8 +149,7 @@ describe('account center view', () => {
             source: 'nodeseek',
             id: '7',
             username: 'alice',
-            url: 'https://www.nodeseek.com/space/7',
-            topics: []
+            url: 'https://www.nodeseek.com/space/7'
           }
         }
       })
@@ -176,8 +174,7 @@ describe('account center view', () => {
             source: 'nodeseek',
             id: '7',
             username: 'alice',
-            url: 'https://www.nodeseek.com/space/7',
-            topics: []
+            url: 'https://www.nodeseek.com/space/7'
           }
         }
       })

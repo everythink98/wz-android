@@ -2,7 +2,7 @@ import type { DiscourseTopicReading } from '@/domain/forum/models';
 import { discourseReadingFromJson } from '@/domain/forum/discourseReading';
 import { isRecord } from '@/domain/forum/html';
 import type { ReadingBatch } from '@/platform/query/discourseReadingRuntime';
-import { withFetchGuard, type Fetcher, RequestCanceledError } from '@/platform/network/request';
+import { withRequestBeforeSend, type Fetcher, RequestCanceledError } from '@/platform/network/request';
 import { withDiagnosticFetcher } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 import { getLinuxDoCsrfToken, runLinuxDoAction } from './actionClient';
@@ -67,7 +67,7 @@ export function createLinuxDoReadingSender({
     const assertCurrent = () => {
       if (signal.aborted || scope() !== identity || userAgent() !== agent) throw new RequestCanceledError();
     };
-    const guardedFetcher = withFetchGuard(fetcher, assertCurrent);
+    const guardedFetcher = withRequestBeforeSend(fetcher, assertCurrent);
     const intent = { owner: 'write', priority: 'background' } as const;
     const token = async () => {
       assertCurrent();
@@ -104,7 +104,7 @@ export function createLinuxDoReadingSender({
               'Discourse-Background': 'true'
             }
           },
-          fetcher: withFetchGuard((input, init) => {
+          fetcher: withRequestBeforeSend((input, init) => {
             beforePost?.();
             started = true;
             return fetcher(input, init);

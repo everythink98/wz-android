@@ -194,6 +194,8 @@ function expressionPreview(config: RuntimeConfig | null, raw: string): Expressio
 
 function setExpressionConfig(editor: TiptapEditor | null, config: RuntimeConfig | null) {
   if (!editor) return;
+  ((editor.storage as unknown as Record<string, unknown>).image as { site?: RuntimeConfig['site'] }).site =
+    config?.site;
   const storage = (editor.storage as unknown as Record<string, unknown>).forumExpression as ExpressionStorage;
   storage.config = config;
   storage.refreshers.forEach((refresh) => refresh());
@@ -227,7 +229,12 @@ function runtimeError(code: string, message: string, revision: number) {
 }
 
 function requestHostAction(
-  action: 'upload-image' | 'load-linuxdo-templates' | 'use-linuxdo-template' | 'load-linuxdo-poll-capabilities',
+  action:
+    | 'upload-image'
+    | 'load-linuxdo-templates'
+    | 'use-linuxdo-template'
+    | 'load-linuxdo-poll-capabilities'
+    | 'resolve-linuxdo-upload',
   data?: unknown
 ) {
   const requestId = `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
@@ -847,6 +854,9 @@ const ComposerTextCaret = Extension.create({
 });
 
 const ComposerImage = Image.extend({
+  addStorage() {
+    return { site: undefined as RuntimeConfig['site'] | undefined };
+  },
   addNodeView() {
     return ({ HTMLAttributes }) => {
       const dom = document.createElement('div');
@@ -858,11 +868,13 @@ const ComposerImage = Image.extend({
       feedback.setAttribute('aria-live', 'polite');
       dom.append(feedback);
       let image: HTMLImageElement | undefined;
+      let resolvedSrc: string | undefined;
       const releaseImage = () => {
         if (!image) return;
         image.onload = null;
         image.onerror = null;
         image.remove();
+        image = undefined;
       };
       const settle = (state: 'loading' | 'loaded' | 'failed') => {
         dom.setAttribute('aria-busy', String(state === 'loading'));
@@ -881,7 +893,36 @@ const ComposerImage = Image.extend({
         image.onerror = () => settle('failed');
         settle('loading');
         dom.prepend(image);
-        image.src = String(HTMLAttributes.src || '');
+        const src = String(HTMLAttributes.src || '');
+        if (/^upload:/i.test(src)) {
+          const short = /^upload:\/\/([a-zA-Z0-9]{1,64}\.[a-zA-Z0-9_-]{1,16})$/.exec(src);
+          if (this.storage.site !== 'linuxdo' || !short) {
+            settle('failed');
+            return;
+          }
+          if (resolvedSrc) {
+            image.src = resolvedSrc;
+            return;
+          }
+          const currentImage = image;
+          void requestHostAction('resolve-linuxdo-upload', { shortUrl: src }).then(
+            (result) => {
+              if (image !== currentImage) return;
+              const url = (result as { url?: unknown } | undefined)?.url;
+              if (typeof url !== 'string' || !url.startsWith('https://')) {
+                settle('failed');
+                return;
+              }
+              resolvedSrc = url;
+              image.src = url;
+            },
+            () => {
+              if (image === currentImage) settle('failed');
+            }
+          );
+        } else {
+          image.src = src;
+        }
       };
       feedback.onclick = load;
       load();
@@ -933,12 +974,11 @@ function insertMarkdown(editor: TiptapEditor, markdown: string) {
   const chain = editor.chain().focus(undefined, { scrollIntoView: false });
   if (target === undefined) chain.insertContent(markdown, { contentType: 'markdown' }).run();
   else chain.insertContentAt(target, markdown, { contentType: 'markdown', updateSelection: true }).run();
-  focusTextAfterBlock(editor);
+  ensureTextSelectionAfterBlock(editor);
 }
 
-function focusTextAfterBlock(editor: TiptapEditor) {
+function ensureTextSelectionAfterBlock(editor: TiptapEditor) {
   if (editor.state.selection instanceof TextSelection) {
-    editor.commands.focus(undefined, { scrollIntoView: false });
     return;
   }
   const next = Selection.findFrom(editor.state.doc.resolve(editor.state.selection.to), 1, true);
@@ -949,7 +989,6 @@ function focusTextAfterBlock(editor: TiptapEditor) {
     const transaction = editor.state.tr.insert(position, editor.schema.nodes.paragraph!.create());
     editor.view.dispatch(transaction.setSelection(TextSelection.create(transaction.doc, position + 1)));
   }
-  editor.commands.focus(undefined, { scrollIntoView: false });
 }
 
 function insertBlockContent(editor: TiptapEditor, type: string, attrs: Record<string, unknown>) {
@@ -962,7 +1001,7 @@ function insertBlockContent(editor: TiptapEditor, type: string, attrs: Record<st
   if (sameNode) chain.updateAttributes(type, attrs).run();
   else if (selected?.isAtom) chain.insertContentAt(selection.to, { type, attrs }, { updateSelection: true }).run();
   else chain.insertContent({ type, attrs }).run();
-  focusTextAfterBlock(editor);
+  ensureTextSelectionAfterBlock(editor);
 }
 
 async function uploadImageAtSelection(editor: TiptapEditor) {
@@ -981,12 +1020,8 @@ async function uploadImageAtSelection(editor: TiptapEditor) {
     const result = await requestHostAction('upload-image');
     const markdown = typeof result === 'string' ? result : (result as { markdown?: string })?.markdown;
     if (markdown && !editor.isDestroyed) {
-      editor
-        .chain()
-        .focus(undefined, { scrollIntoView: false })
-        .insertContentAt({ from, to }, markdown, { contentType: 'markdown' })
-        .run();
-      focusTextAfterBlock(editor);
+      editor.chain().insertContentAt({ from, to }, markdown, { contentType: 'markdown' }).run();
+      ensureTextSelectionAfterBlock(editor);
       editor.commands.scrollIntoView();
     }
   } catch (error) {
@@ -2275,6 +2310,10 @@ export function ComposerEditorRuntime() {
 
   const uploadImage = async () => {
     if (imageBusyRef.current) return;
+    // Hand off focus before the native picker opens. Completing a background
+    // upload changes the document/selection, not the user's keyboard intent.
+    editorRef.current?.view.dom.blur();
+    sourceViewRef.current?.contentDOM.blur();
     imageBusyRef.current = true;
     setImageBusy(true);
     try {
@@ -2294,7 +2333,6 @@ export function ComposerEditorRuntime() {
           changes: { from: uploadRange.from, to: uploadRange.to, insert: markdown },
           selection: { anchor: uploadRange.from + markdown.length }
         });
-        view.focus();
       }
     } catch (error) {
       window.alert(error instanceof Error ? error.message : '图片上传失败');

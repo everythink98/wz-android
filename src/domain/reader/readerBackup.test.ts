@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyReaderData, toggleFollowedUser, topicKey } from './readerData';
+import { createEmptyReaderData, topicKey, userSummary } from './readerData';
 import { MAX_BACKUP_JSON_BYTES, exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import type { Topic } from '@/domain/forum/models';
 
@@ -8,12 +8,13 @@ describe('reader JSON backup', () => {
     'preserves the %s identity and its deletion across backups',
     (id) => {
       const user = { source: 'v2ex' as const, id, username: id, url: `https://www.v2ex.com/member/${id}`, topics: [] };
-      const followed = toggleFollowedUser(createEmptyReaderData(), user);
-      followed.followedUsers[`v2ex:${id}`].followedAt = '2026-01-01T00:00:00.000Z';
+      const followed = createEmptyReaderData();
+      followed.followedUsers[`v2ex:${id}`] = { user: userSummary(user), followedAt: '2026-01-01T00:00:00.000Z' };
       const imported = importReaderBackupJson(createEmptyReaderData(), exportReaderBackupJson(followed));
       expect(imported.followedUsers[`v2ex:${id}`]?.user.id).toBe(id);
 
-      const deleted = toggleFollowedUser(followed, user);
+      const deleted = createEmptyReaderData();
+      deleted.deletedRecords.followedUsers[`v2ex:${id}`] = '2026-01-02T00:00:00.000Z';
       const merged = importReaderBackupJson(followed, exportReaderBackupJson(deleted));
       expect(merged.followedUsers).toEqual({});
       expect(merged.deletedRecords.followedUsers[`v2ex:${id}`]).toBe(

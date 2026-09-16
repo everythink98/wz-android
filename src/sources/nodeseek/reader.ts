@@ -19,7 +19,8 @@ import type {
   ReplyWindowPosition,
   SearchResponse,
   TopicPoll,
-  UserProfile,
+  UserIdentity,
+  UserDetails,
   UserReference
 } from '@/domain/forum/models';
 import { elementText, isRecord, parseHtml, parsePositiveInteger } from '@/domain/forum/html';
@@ -69,7 +70,9 @@ import {
   nodeSeekCurrentUserFromConfig,
   parseNodeSeekCurrentUserRoot,
   parseNodeSeekUserIdentity,
-  parseNodeSeekUserProfile,
+  parseNodeSeekUserDetails,
+  parseNodeSeekUserTopics,
+  parseNodeSeekUserReplies,
   parseNodeSeekUserReference
 } from './userParser';
 import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './polls';
@@ -1044,55 +1047,35 @@ export async function resolveNodeSeekUser(username: string, options: NodeSeekOpt
   return parseNodeSeekUserReference(requestedUsername, data);
 }
 
-export async function getNodeSeekUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
+export async function getNodeSeekUserDetails(id: string, options: NodeSeekOptions = {}): Promise<UserDetails> {
   const requestedId = id.trim();
-  if (!/^\d+$/.test(requestedId)) {
-    throw new Error('NodeSeek 用户主页需要数字用户 ID');
-  }
+  if (!/^\d+$/.test(requestedId)) throw new Error('NodeSeek 用户主页需要数字用户 ID');
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground');
-  const userData = await fetchNodeSeekJson(
+  const data = await fetchNodeSeekJson(
     `/api/account/getInfo/${encodeURIComponent(requestedId)}?readme=1`,
     requestOptions
   );
-  const user = parseNodeSeekUserIdentity(requestedId, userData);
-  const cursorPage = parsePositiveInteger(options.cursor) || 1;
-  const wantsTopics = options.cursorType !== 'replies';
-  const wantsReplies = options.cursorType !== 'topics';
-  let discussions: unknown[] = [];
-  if (wantsTopics) {
-    const discussionData = await fetchNodeSeekJson(
-      `/api/content/list-discussions?uid=${encodeURIComponent(requestedId)}&page=${cursorPage}`,
-      requestOptions
-    );
-    discussions =
-      isRecord(discussionData) && Array.isArray(discussionData.discussions) ? discussionData.discussions : [];
-  }
-  let comments: unknown[] = [];
-  let partialErrorCount = 0;
-  if (wantsReplies) {
-    try {
-      const commentData = await fetchNodeSeekJson(
-        `/api/content/list-comments?uid=${encodeURIComponent(requestedId)}&page=${cursorPage}`,
-        requestOptions
-      );
-      comments = isRecord(commentData) && Array.isArray(commentData.comments) ? commentData.comments : [];
-    } catch (error) {
-      if (options.cursorType === 'replies') {
-        throw error;
-      }
-      partialErrorCount += 1;
-    }
-  }
-  return parseNodeSeekUserProfile({
-    comments,
-    cursor: options.cursor,
-    cursorPage,
-    cursorType: options.cursorType,
-    discussions,
-    partialErrorCount,
-    requestedId,
-    user
-  });
+  return parseNodeSeekUserDetails(requestedId, parseNodeSeekUserIdentity(requestedId, data));
+}
+
+export async function getNodeSeekUserTopics(profile: UserDetails, options: NodeSeekOptions = {}) {
+  const page = parsePositiveInteger(options.cursor) || 1;
+  const data = await fetchNodeSeekJson(
+    `/api/content/list-discussions?uid=${encodeURIComponent(profile.id)}&page=${page}`,
+    nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground')
+  );
+  if (!isRecord(data) || !Array.isArray(data.discussions)) throw new Error('NodeSeek 主题列表响应不完整');
+  return parseNodeSeekUserTopics(profile, data.discussions, page);
+}
+
+export async function getNodeSeekUserReplies(profile: UserDetails, options: NodeSeekOptions = {}) {
+  const page = parsePositiveInteger(options.cursor) || 1;
+  const data = await fetchNodeSeekJson(
+    `/api/content/list-comments?uid=${encodeURIComponent(profile.id)}&page=${page}`,
+    nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground')
+  );
+  if (!isRecord(data) || !Array.isArray(data.comments)) throw new Error('NodeSeek 回复列表响应不完整');
+  return parseNodeSeekUserReplies(profile, data.comments, page);
 }
 
 function nodeSeekLoginExpiredError() {
@@ -1104,7 +1087,7 @@ function nodeSeekLoginExpiredError() {
   });
 }
 
-export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {}): Promise<UserProfile> {
+export async function getNodeSeekCurrentUserIdentity(options: NodeSeekOptions = {}): Promise<UserIdentity> {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'account', 'background');
   for (const path of ['/', '/setting']) {
     const { pageDocument, response } = await fetchNodeSeekTextResult(path, requestOptions);

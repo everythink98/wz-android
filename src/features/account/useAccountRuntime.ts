@@ -701,6 +701,7 @@ export function useAccountRuntime({
     pendingNodeSeekRecoveryRef.current = null;
     changeNodeSeekLoginPanel(false, 'authoritative-recovery');
     if (!recovery) return true;
+    if (recovery.isCurrent && !recovery.isCurrent()) return false;
 
     const recoveryRequest = nodeSeekLoginPanelRequestRef.current;
     setChecking(true);
@@ -717,6 +718,7 @@ export function useAccountRuntime({
     if (nodeSeekLoginPanelRequestRef.current !== recoveryRequest) return false;
     if (outcome === 'verification-required') {
       const queryIsActive =
+        recovery.isCurrent?.() ??
         appQueryClient.getQueryCache().find({ queryKey: recovery.queryKey, exact: true })?.isActive() === true;
       if (queryIsActive && !pendingNodeSeekRecoveryRef.current) {
         requestNodeSeekVerification('NodeSeek 验证仍未生效，请继续验证后再次检测。', recovery);

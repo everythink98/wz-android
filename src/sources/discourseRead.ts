@@ -6,10 +6,15 @@ import {
   getLinuxDoReply,
   getLinuxDoTopic
 } from '@/sources/linuxdo/reader';
-import { getLinuxDoCurrentUserProfile, getLinuxDoUserProfile } from '@/sources/linuxdo/account';
+import {
+  getLinuxDoCurrentUserIdentity,
+  getLinuxDoUserDetails,
+  getLinuxDoUserTopics,
+  getLinuxDoUserReplies
+} from '@/sources/linuxdo/account';
 import { searchLinuxDo, searchLinuxDoTags, searchLinuxDoUsers } from '@/sources/linuxdo/search';
 import type { Fetcher } from '@/platform/network/request';
-import type { DiscourseFeedFilter, ReplyOrder, ReplyWindowPosition } from '@/domain/forum/models';
+import type { DiscourseFeedFilter, ReplyOrder, ReplyWindowPosition, UserDetails } from '@/domain/forum/models';
 
 export type DiscourseReadAuth = {
   authenticated?: boolean;
@@ -94,6 +99,18 @@ export function getDiscourseCategories(options: DiscourseReadOptions) {
   return getLinuxDoCategories(withLinuxDoAuth(options));
 }
 
+export function getDiscourseUserDetails(id: string, username: string, options: DiscourseReadOptions) {
+  return getLinuxDoUserDetails(id, username, withLinuxDoAuth(options));
+}
+
+export function getDiscourseUserTopics(profile: UserDetails, options: DiscourseUserReadOptions) {
+  return getLinuxDoUserTopics(profile, withLinuxDoAuth(options));
+}
+
+export function getDiscourseUserReplies(profile: UserDetails, options: DiscourseUserReadOptions) {
+  return getLinuxDoUserReplies(profile, withLinuxDoAuth(options));
+}
+
 export function getDiscourseTopic(id: string, options: DiscourseTopicReadOptions) {
   return getLinuxDoTopic(id, withLinuxDoAuth(options));
 }
@@ -106,12 +123,8 @@ export function getDiscourseReply(id: string, floor: number, options: DiscourseR
   return getLinuxDoReply(id, floor, withLinuxDoAuth(options));
 }
 
-export function getDiscourseUserProfile(id: string, username: string, options: DiscourseUserReadOptions) {
-  return getLinuxDoUserProfile(id, username, withLinuxDoAuth(options));
-}
-
-export function getDiscourseCurrentUserProfile({ auth, ...options }: DiscourseReadOptions) {
-  return getLinuxDoCurrentUserProfile({
+export function getDiscourseCurrentUserIdentity({ auth, ...options }: DiscourseReadOptions) {
+  return getLinuxDoCurrentUserIdentity({
     ...options,
     linuxDoUserAgent: auth?.userAgent
   });

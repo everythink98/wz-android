@@ -41,6 +41,7 @@ export function MessageReplyComposerSheet({
   onChangeContent,
   onClose,
   onLoadLinuxDoPollCapabilities,
+  onResolveLinuxDoUpload,
   onLoadLinuxDoTemplates,
   onSnapshot,
   onSubmit,
@@ -66,6 +67,7 @@ export function MessageReplyComposerSheet({
   onSnapshot?: (snapshot: ComposerSnapshot) => void;
   onUploadImage?: () => unknown;
   onLoadLinuxDoPollCapabilities?: () => Promise<LinuxDoPollCapabilities>;
+  onResolveLinuxDoUpload?: (shortUrl: string) => Promise<string>;
   onLoadLinuxDoTemplates?: () => Promise<LinuxDoTemplate[]>;
   onUseLinuxDoTemplate?: (id: string) => Promise<void>;
 }) {
@@ -126,6 +128,7 @@ export function MessageReplyComposerSheet({
             title="回复私信"
             visible={visible}
             onLoadLinuxDoPollCapabilities={onLoadLinuxDoPollCapabilities}
+            onResolveLinuxDoUpload={onResolveLinuxDoUpload}
             onLoadLinuxDoTemplates={onLoadLinuxDoTemplates}
             onOpenChange={(open) => {
               if (!open) handleClose();

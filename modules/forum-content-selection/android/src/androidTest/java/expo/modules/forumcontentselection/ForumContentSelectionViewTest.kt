@@ -806,6 +806,60 @@ class ForumContentSelectionViewTest {
   }
 
   @Test
+  fun clipboardWriteDenialKeepsSelectionAndAllowsRetry() {
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.clipboardWriterForTest = { throw SecurityException("injected clipboard denial") }
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      val target = holdLongPressSelection(scenario, fixture)
+      releaseLongPressSelection(scenario, fixture, target)
+      scenario.onActivity { activity ->
+        val selected = fixture.surface.selectionSnapshotForTest()
+        assertTrue(fixture.surface.copyFromActionModeForTest())
+        assertEquals(selected, fixture.surface.selectionSnapshotForTest())
+        assertTrue(fixture.surface.interactionStateForTest().hasActionMode)
+        fixture.surface.clipboardWriterForTest = null
+        assertTrue(fixture.surface.copyFromActionModeForTest())
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        assertEquals("one", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
+  fun longUnicodeDocumentCopiesCompletelyToPlatformClipboard() {
+    val longText = "完整复制🙂中文\n".repeat(10_000)
+    ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
+      lateinit var fixture: SurfaceFixture
+      scenario.onActivity { activity ->
+        fixture = SurfaceFixture(activity)
+        fixture.surface.pendingRevision = "long-copy"
+        fixture.surface.pendingRows = listOf(
+          ForumSelectionRowRecord("doc", "first", "native-first", textToken("one two", "\n")),
+          ForumSelectionRowRecord("doc", "long", "native-long", textToken(longText, ""))
+        )
+        fixture.surface.commitProps()
+      }
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      val target = holdLongPressSelection(scenario, fixture)
+      releaseLongPressSelection(scenario, fixture, target)
+      scenario.onActivity { activity ->
+        assertTrue(fixture.surface.selectAllFromActionModeForTest())
+        assertTrue(fixture.surface.copyFromActionModeForTest())
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val actual = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+        // Do not include document text in assertion output or device logs.
+        assertTrue("clipboard must contain the complete Unicode document", actual == "one two\n" + longText)
+        fixture.close()
+      }
+    }
+  }
+
+  @Test
   fun systemTextActionsShowImmediateAndDelayedDeviceActionsForTheSelection() {
     ActivityScenario.launch(ForumSelectionTestActivity::class.java).use { scenario ->
       lateinit var fixture: SurfaceFixture

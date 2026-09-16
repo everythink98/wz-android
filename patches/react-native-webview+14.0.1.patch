@@ -1,5 +1,4 @@
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
-index f83033b..c60eb23 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewManagerImpl.kt
 @@ -1,6 +1,7 @@
@@ -10,7 +9,7 @@ index f83033b..c60eb23 100644
  import android.content.pm.ActivityInfo
  import android.graphics.Bitmap
  import android.graphics.Color
-@@ -11,6 +12,7 @@ import android.util.Log
+@@ -11,6 +12,7 @@
  import android.view.View
  import android.view.ViewGroup
  import android.view.WindowManager
@@ -18,7 +17,7 @@ index f83033b..c60eb23 100644
  import android.webkit.CookieManager
  import android.webkit.DownloadListener
  import android.webkit.WebSettings
-@@ -344,7 +346,14 @@ class RNCWebViewManagerImpl(private val newArch: Boolean = false) {
+@@ -344,7 +346,14 @@
            webView.progressChangedFilter.setWaitingForCommandLoadUrl(false)
            webView.loadUrl(url)
          }
@@ -34,8 +33,48 @@ index f83033b..c60eb23 100644
          "clearFormData" -> webView.clearFormData()
          "clearCache" -> {
            val includeDiskFiles = args != null && args.getBoolean(0)
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewWrapper.kt
+@@ -5,6 +5,10 @@
+ import android.view.View
+ import android.webkit.WebView
+ import android.widget.FrameLayout
++import androidx.core.graphics.Insets
++import androidx.core.view.ViewCompat
++import androidx.core.view.WindowInsetsCompat
++import androidx.core.view.WindowInsetsAnimationCompat
+ 
+ /**
+  * A [FrameLayout] container to hold the [RNCWebView].
+@@ -23,6 +27,26 @@
+   val webView: RNCWebView = getChildAt(0) as RNCWebView
+ 
+   companion object {
++    @JvmStatic
++    fun setAutomaticallyAdjustContentInsets(view: View, enabled: Boolean) {
++      if (enabled) {
++        ViewCompat.setOnApplyWindowInsetsListener(view, null)
++        ViewCompat.setWindowInsetsAnimationCallback(view, null)
++        ViewCompat.requestApplyInsets(view)
++        return
++      }
++      // The native parent already moves/resizes this WebView above the IME.
++      // Pass zero (not CONSUMED) so WebView 139+ also clears prior IME offsets.
++      fun handledInsets(insets: WindowInsetsCompat) = WindowInsetsCompat.Builder(insets)
++        .setInsets(WindowInsetsCompat.Type.ime(), Insets.NONE)
++        .build()
++      ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets -> handledInsets(insets) }
++      ViewCompat.setWindowInsetsAnimationCallback(view, object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
++        override fun onProgress(insets: WindowInsetsCompat, runningAnimations: MutableList<WindowInsetsAnimationCompat>): WindowInsetsCompat = handledInsets(insets)
++      })
++      ViewCompat.requestApplyInsets(view)
++    }
++
+     /**
+      * A helper to get react tag id by given WebView
+      */
 diff --git a/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java b/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
-index fa8efb8..986466b 100644
 --- a/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
 +++ b/node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
 @@ -1,5 +1,7 @@
@@ -46,7 +85,18 @@ index fa8efb8..986466b 100644
  import androidx.annotation.NonNull;
  import androidx.annotation.Nullable;
  
-@@ -466,7 +468,13 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+@@ -358,7 +360,9 @@
+     public void setAllowsLinkPreview(RNCWebViewWrapper view, boolean value) {}
+ 
+     @Override
+-    public void setAutomaticallyAdjustContentInsets(RNCWebViewWrapper view, boolean value) {}
++    public void setAutomaticallyAdjustContentInsets(RNCWebViewWrapper view, boolean value) {
++        RNCWebViewWrapper.setAutomaticallyAdjustContentInsets(view, value);
++    }
+ 
+     @Override
+     public void setAutoManageStatusBarEnabled(RNCWebViewWrapper view, boolean value) {}
+@@ -466,7 +470,13 @@
  
    @Override
    public void requestFocus(RNCWebViewWrapper view) {
@@ -62,10 +112,9 @@ index fa8efb8..986466b 100644
  
    @Override
 diff --git a/node_modules/react-native-webview/index.d.ts b/node_modules/react-native-webview/index.d.ts
-index 10b9c14..8487b10 100644
 --- a/node_modules/react-native-webview/index.d.ts
 +++ b/node_modules/react-native-webview/index.d.ts
-@@ -5,7 +5,7 @@ export { FileDownload, WebViewMessageEvent, WebViewNavigation } from './lib/WebV
+@@ -5,7 +5,7 @@
  
  export type WebViewProps = IOSWebViewProps & AndroidWebViewProps & WindowsWebViewProps;
  

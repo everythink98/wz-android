@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { UserProfile } from '@/domain/forum/models';
+import type { UserIdentity } from '@/domain/forum/models';
 import type { AccountSessionSnapshot, SessionSite } from '@/domain/session/siteSessionState';
 import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
@@ -8,7 +8,7 @@ const STORAGE_KEY_PREFIX = 'account-session.v1.';
 const MIGRATION_STORAGE_KEY = 'account-session.migration.v1';
 const operations = createKeyedSerialRunner<string>();
 
-type StoredAccountIdentity = Pick<UserProfile, 'avatar' | 'displayName' | 'id' | 'source' | 'url' | 'username'>;
+type StoredAccountIdentity = Pick<UserIdentity, 'avatar' | 'displayName' | 'id' | 'source' | 'url' | 'username'>;
 type StoredAccountSessionV1 =
   { version: 1; state: 'authenticated'; identity: StoredAccountIdentity } | { version: 1; state: 'anonymous' };
 
@@ -59,7 +59,7 @@ function snapshotFromStored(value: unknown, site: SessionSite): AccountSessionSn
         cookieSummary: [],
         isVerifying: false,
         identityTrust: 'confirmed',
-        currentUser: { ...identity, topics: [] }
+        currentUser: { ...identity }
       }
     : null;
 }

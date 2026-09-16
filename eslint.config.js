@@ -11,6 +11,7 @@ module.exports = defineConfig([
     '.expo/**',
     'coverage/**',
     'node_modules/**',
+    'src/ui/composer/generated/**',
     'tmp/**',
     'tmp-*',
     'android-*.bundle',

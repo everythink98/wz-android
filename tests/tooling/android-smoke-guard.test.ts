@@ -48,7 +48,10 @@ describe('Android release evidence guards', () => {
   it('keeps logged-out testing outside the App and on an explicit isolated device', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
     const moreScreen = readProjectFile('src', 'features', 'more', 'MoreScreen.tsx');
-    const nativePlugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const nativePlugin =
+      readProjectFile('plugins', 'withNetworkProxyModule.js') +
+      readProjectFile('plugins', 'network', 'NetworkProxyRuntime.kt') +
+      readProjectFile('plugins', 'network', 'NetworkProxyModule.kt');
 
     expect(moreScreen).not.toContain('devAnonymous');
     expect(moreScreen).not.toContain('title="测试工具"');

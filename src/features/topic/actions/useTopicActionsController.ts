@@ -1,3 +1,4 @@
+import { resolveLinuxDoUpload as fetchLinuxDoUploadUrl } from '@/sources/linuxdo/uploadUrls';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -46,7 +47,12 @@ import {
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
 import type { ReplyEditTarget, ReplyRefreshCommand, ReplyRefreshTarget } from '../model/types';
 import { topicKey } from '@/domain/reader/readerData';
-import { rejectUnauthorizedResponse, withFetchGuard, type Fetcher } from '@/platform/network/request';
+import {
+  rejectUnauthorizedResponse,
+  withFetchGuard,
+  withRequestBeforeSend,
+  type Fetcher
+} from '@/platform/network/request';
 import type { ReadGateway } from '@/sources/readGateway';
 import { errorMessage } from '@/platform/network/errors';
 import { canToggleDiscourseLike } from '@/sources/discourse/permissions';
@@ -260,15 +266,25 @@ function replyEditTargetIsCurrent(
   ) {
     return false;
   }
-  let matchingReplyCount = 0;
+  let matchingReply: Reply | undefined;
   for (const page of cachedReplies?.pages || []) {
     for (const reply of page.items) {
       if (reply.commentId !== target.commentId) continue;
-      matchingReplyCount += 1;
-      if (matchingReplyCount > 1 || reply.canEdit !== true) return false;
+      if (reply.canEdit !== true || reply.replyLocationConflict === 'identity') return false;
+      if (
+        matchingReply &&
+        (reply.author !== matchingReply.author ||
+          reply.authorId !== matchingReply.authorId ||
+          reply.authorUrl !== matchingReply.authorUrl ||
+          reply.contentHtml !== matchingReply.contentHtml ||
+          reply.contentMarkdown !== matchingReply.contentMarkdown ||
+          reply.createdAt !== matchingReply.createdAt)
+      )
+        return false;
+      matchingReply = reply;
     }
   }
-  return matchingReplyCount === 1;
+  return Boolean(matchingReply);
 }
 
 export function useTopicActionsController({
@@ -957,7 +973,7 @@ export function useTopicActionsController({
         if (draftRequest.path === '/bbs/book_re.aspx') assertReplyNotEnded();
         const result = await runYaohuoAction({
           trace,
-          fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () => {
+          fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () => {
             assertWritableTicket(ticket);
             if (draftRequest.path === '/bbs/book_re.aspx') assertReplyNotEnded();
           }),
@@ -995,7 +1011,10 @@ export function useTopicActionsController({
       try {
         assertWritableTicket(ticket);
         const result = await runLinuxDoAction({
-          fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+          fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () => {
+            assertWritableTicket(ticket);
+            preTransport?.();
+          }),
           request: buildDiscourseActionRequest(action),
           userAgent: linuxDoUserAgent()
         });
@@ -1513,7 +1532,13 @@ export function useTopicActionsController({
           try {
             imageUrl = await uploadNodeSeekReplyImageWithApiKey({
               ensureApiKey: async () => nodeSeekApiKey,
-              fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+              fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () => {
+                assertWritableTicket(ticket);
+                assertCurrentEditTarget();
+                if (nodeImageGeneration !== currentNodeImageApiKeyGeneration()) {
+                  throw new HandledMutationError('NodeImage 凭据已变化', 'stale', 'stale');
+                }
+              }),
               file
             });
           } catch (error) {
@@ -1891,6 +1916,32 @@ export function useTopicActionsController({
     [assertWritableTicket, executeMutation, notify, runNodeSeekRequest, selectedTopic, topicDetail]
   );
 
+  const resolveLinuxDoUpload = useCallback(
+    async (shortUrl: string) => {
+      const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
+      if (actionTopic?.source !== 'linuxdo') throw new Error('当前入口不支持图片地址解析');
+      const trace = beginDiagnosticTrace('reply', 'image-load', { source: 'linuxdo' });
+      try {
+        const ticket = await ensureWritableSession('linuxdo');
+        assertWritableTicket(ticket);
+        const url = await fetchLinuxDoUploadUrl({
+          shortUrl,
+          userAgent: linuxDoUserAgent(),
+          fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
+            assertWritableTicket(ticket)
+          )
+        });
+        assertWritableTicket(ticket);
+        finishDiagnosticTrace(trace, 'success');
+        return url;
+      } catch (error) {
+        finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+        throw error;
+      }
+    },
+    [topicDetail, selectedTopic, ensureWritableSession, assertWritableTicket, authenticatedFetcher, linuxDoUserAgent]
+  );
+
   const loadLinuxDoTemplates = useCallback(async () => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
     const trace = beginDiagnosticTrace('reply', 'load-templates', {
@@ -1979,7 +2030,7 @@ export function useTopicActionsController({
         const ticket = await ensureWritableSession('linuxdo');
         assertWritableTicket(ticket);
         await recordLinuxDoTemplateUse({
-          fetcher: withFetchGuard(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
+          fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
             assertWritableTicket(ticket)
           ),
           id,
@@ -2276,6 +2327,7 @@ export function useTopicActionsController({
     loadNodeSeekStardustStatus,
     loadLinuxDoPollCapabilities,
     loadLinuxDoTemplates,
+    resolveLinuxDoUpload,
     lockNodeSeekPoll,
     payNodeSeekStardust,
     submitReply,

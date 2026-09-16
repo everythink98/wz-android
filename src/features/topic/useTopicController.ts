@@ -262,7 +262,11 @@ export function useTopicController({
     [repliesReadPlan.cacheScope, replyOrder, topicQueryKey]
   );
   const repliesQueryIdentity = JSON.stringify(repliesQueryKey);
-  const activeRepliesQueryIdentityRef = useCommittedRef(enabled ? repliesQueryIdentity : '');
+  const activeRepliesQueryIdentityRef = useCommittedRef(enabled && !selectedReadBlocked ? repliesQueryIdentity : '');
+  const isReadRecoveryCurrent = useCallback(
+    () => activeRepliesQueryIdentityRef.current === repliesQueryIdentity,
+    [activeRepliesQueryIdentityRef, repliesQueryIdentity]
+  );
   const [replyWindowFailuresByKey, setReplyWindowFailuresByKey] = useState<Record<string, ReplyWindowFailures>>({});
   const replyWindowFailures = replyWindowFailuresByKey[repliesQueryIdentity] || EMPTY_REPLY_WINDOW_FAILURES;
   const setReplyWindowFailure = useCallback(
@@ -648,10 +652,16 @@ export function useTopicController({
       nodeSeekFallback?: (recovery: LinuxDoReadRecovery) => void
     ): SourceErrorInfo => {
       const sourceError = sourceErrorFromUnknown(source, error);
+      const isCurrent = recovery.isCurrent || isReadRecoveryCurrent;
+      const currentRecovery: LinuxDoReadRecovery = {
+        ...recovery,
+        isCurrent,
+        resume: () => (isCurrent() ? recovery.resume() : Promise.resolve('stale'))
+      };
       if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
-        void showLinuxDoVerification(sourceError.message, recovery);
+        void showLinuxDoVerification(sourceError.message, currentRecovery);
       } else if (source === 'nodeseek' && sourceError.kind === 'verification-required') {
-        nodeSeekFallback?.(recovery);
+        nodeSeekFallback?.(currentRecovery);
       } else if (source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
         showYaohuoLogin(sourceError.kind === 'login-expired' ? '妖火登录已失效，请重新登录。' : sourceError.message);
       } else if (!isCanceledRequest(error)) {
@@ -659,7 +669,7 @@ export function useTopicController({
       }
       return sourceError;
     },
-    [notify, showLinuxDoVerification, showYaohuoLogin]
+    [isReadRecoveryCurrent, notify, showLinuxDoVerification, showYaohuoLogin]
   );
 
   useEffect(() => {
@@ -927,6 +937,7 @@ export function useTopicController({
         if (!ownsWindow()) return 'stale';
         const recovery: LinuxDoReadRecovery = {
           queryKey: [...repliesQueryKey, 'whole-refresh'],
+          isCurrent: ownsWindow,
           resume: () => runAttempt(false)
         };
         const sourceError = sourceErrorFromUnknown(selectedTopic.source, error);
@@ -1240,6 +1251,7 @@ export function useTopicController({
             error,
             {
               queryKey: refreshKey,
+              isCurrent: ownsWindow,
               resume: () =>
                 activeRepliesQueryIdentityRef.current === repliesQueryIdentity
                   ? refreshReplies(command)
@@ -1263,6 +1275,7 @@ export function useTopicController({
           error,
           {
             queryKey: repliesQueryKey,
+            isCurrent: ownsWindow,
             resume: () =>
               activeRepliesQueryIdentityRef.current === repliesQueryIdentity
                 ? refreshReplies(command)
@@ -1527,6 +1540,9 @@ export function useTopicController({
       } catch (error) {
         const recovery: LinuxDoReadRecovery = {
           queryKey: targetQueryKey,
+          isCurrent: () =>
+            activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
+            replyWindowGenerationRef.current === generation,
           resume: async () => {
             queryClient.removeQueries({ queryKey: targetQueryKey, exact: true });
             try {
@@ -1763,6 +1779,7 @@ export function useTopicController({
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
+    isReadRecoveryCurrent,
     repliesError:
       replyWindowFailures.refresh?.error ||
       (repliesQuery.error &&

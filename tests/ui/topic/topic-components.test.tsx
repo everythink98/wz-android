@@ -126,7 +126,10 @@ jest.mock('@gorhom/bottom-sheet', () => {
     }),
     BottomSheetView: ({ children, ...props }: { children?: React.ReactNode; style?: StyleProp<ViewStyle> }) =>
       ReactModule.createElement(NativeView, { ...props, testID: 'composer-bottom-sheet-content' }, children),
-    useBottomSheetInternal: () => ({ animatedKeyboardState: { set: mockAnimatedKeyboardStateSet } })
+    useBottomSheetInternal: () => ({
+      animatedKeyboardState: { set: mockAnimatedKeyboardStateSet },
+      animatedLayoutState: { get: () => ({ rawContainerHeight: 800, containerHeight: 800 }), modify: jest.fn() }
+    })
   };
 });
 
@@ -1921,18 +1924,11 @@ describe('Topic real child components', () => {
 
     expect(view.getByText('回复')).toBeTruthy();
     const sheetProps = view.getByTestId('composer-bottom-sheet').props;
-    expect(sheetProps.android_keyboardInputMode).toBe('adjustPan');
+    expect(sheetProps.android_keyboardInputMode).toBe('adjustResize');
     expect(sheetProps.bottomInset).toBe(0);
     expect(sheetProps.enableContentPanningGesture).toBe(false);
     expect(sheetProps.keyboardBehavior).toBe('interactive');
-    const keyboardTargetSetter = mockAnimatedKeyboardStateSet.mock.calls
-      .map(([setter]) => setter)
-      .filter(
-        (setter): setter is (state: { status: number; target?: number }) => { status: number; target?: number } =>
-          typeof setter === 'function'
-      )
-      .find((setter) => setter({ status: 0 }).target !== undefined);
-    expect(keyboardTargetSetter?.({ status: 0 }).target).toBeTruthy();
+    expect(mockAnimatedKeyboardStateSet).not.toHaveBeenCalled();
     expect(view.getByLabelText('富文本').props.accessibilityState.selected).toBe(true);
     expect(view.getByLabelText('全屏')).toBeTruthy();
     expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
@@ -2051,6 +2047,26 @@ describe('Topic real child components', () => {
     });
     await waitFor(() => expect(onReplyComposerOpenChange).toHaveBeenCalledWith(false));
     expect(onReplySnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('focuses once per opening rather than refocusing after keyboard layout changes', async () => {
+    const { ComposerBottomSheet } =
+      require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
+    const onOpenChange = jest.fn();
+    const host = (visible: boolean) => (
+      <ComposerBottomSheet dark={false} fixedContent visible={visible} onOpenChange={onOpenChange}>
+        {(signal) => <Text testID="focus-signal">{signal}</Text>}
+      </ComposerBottomSheet>
+    );
+    const view = await render(host(true));
+    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', 0);
+    expect(view.getByTestId('focus-signal').props.children).toBe(1);
+    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', 0);
+    expect(view.getByTestId('focus-signal').props.children).toBe(1);
+    await view.rerender(host(false));
+    await view.rerender(host(true));
+    await fireEvent(view.getByTestId('composer-bottom-sheet'), 'change', 0);
+    expect(view.getByTestId('focus-signal').props.children).toBe(2);
   });
 
   it('keeps one controlled close path while fullscreen closes', async () => {

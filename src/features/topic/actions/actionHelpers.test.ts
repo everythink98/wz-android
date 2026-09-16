@@ -116,8 +116,7 @@ describe('topic action controller helpers', () => {
       source: 'nodeseek',
       id: '48872',
       username: '凡想世界',
-      url: 'https://www.nodeseek.com/space/48872',
-      topics: []
+      url: 'https://www.nodeseek.com/space/48872'
     })[0];
 
     expect(marked).toMatchObject({ canLike: false });
@@ -139,8 +138,7 @@ describe('topic action controller helpers', () => {
         source: 'nodeseek',
         id: '48872',
         username: '凡想世界',
-        url: 'https://www.nodeseek.com/space/48872',
-        topics: []
+        url: 'https://www.nodeseek.com/space/48872'
       })
     ).toBe(replies);
   });

@@ -231,6 +231,7 @@ export function TopicSelectionSurface({
           'invalid-selection-token',
           'revision-reused',
           'copy-mapping-mismatch',
+          'copy-denied',
           'system-actions-load',
           'system-action-run'
         ] as const

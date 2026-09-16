@@ -55,6 +55,7 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
   const runtime = useNotificationRouteRuntime();
   const isFocused = useIsFocused();
   const setCenterVisible = runtime.setCenterVisible;
+  const refreshSnapshots = runtime.refreshSnapshots;
   const queryClient = useQueryClient();
   const enabledSourcesKey = runtime.enabledNotificationSources.join('|');
   const routeSourceRef = useRef(route.params?.source);
@@ -89,8 +90,9 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
   useFocusEffect(
     useCallback(() => {
       setCenterVisible(true);
+      void refreshSnapshots();
       return () => setCenterVisible(false);
-    }, [setCenterVisible])
+    }, [refreshSnapshots, setCenterVisible])
   );
   const identityKey = source === 'all' ? runtime.identitySignature : runtime.identityKeys[source] || `${source}:none`;
   const sourceAvailable = source === 'all' ? runtime.activeSources.length > 0 : runtime.activeSources.includes(source);
@@ -268,7 +270,7 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
     return result;
   }, [categoriesQuery.error, listQuery.data, runtime, source]);
   const refetch = listQuery.refetch;
-  const refresh = useCallback(() => void refetch(), [refetch]);
+  const refresh = useCallback(() => void Promise.all([refetch(), refreshSnapshots()]), [refetch, refreshSnapshots]);
   const retryReadSource = useCallback(
     async (candidate: NotificationSource): Promise<LinuxDoReadResumeOutcome> => {
       const expectedIdentityKey = runtime.identityKeys[candidate];
@@ -462,8 +464,10 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
           setMarkAllBusy(true);
           void runtime.gateway
             .markAllRead(source, expectedIdentityKey, controller.signal)
-            .then(async (result) => {
+            .then((result) => {
               runtime.notify(result.confirmed ? '已按原站状态标记全部已读' : result.message || '原站未确认已读');
+            })
+            .finally(async () => {
               await Promise.all([
                 queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications(source) }),
                 queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications('all') }),
@@ -507,6 +511,9 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
   }, [retrySource, runtime, source]);
   return (
     <NotificationsScreen
+      initializationError={runtime.initializationError}
+      storageReady={runtime.ready}
+      onRetryInitialization={() => void runtime.retryInitialization()}
       activeSources={runtime.activeSources}
       categories={categories}
       categoryId={categoryId}
@@ -677,9 +684,13 @@ function EnabledNotificationDetailRoute({
     let current = true;
     void gateway
       .markRead(item, detail, identityKey, controller.signal)
-      .then(async (result) => {
+      .then((result) => {
         if (!current) return;
         setMarkMessage(result.confirmed ? '' : result.message || '原站未确认已读状态');
+      })
+      .finally(async () => {
+        if (markControllerRef.current === controller) markControllerRef.current = undefined;
+        // Canceling the response cannot undo a read already applied by the server.
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications(item.source) }),
           queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications('all') }),
@@ -688,9 +699,6 @@ function EnabledNotificationDetailRoute({
       })
       .catch((error) => {
         if (current) setMarkMessage(`已读状态未更新：${errorMessage(error)}`);
-      })
-      .finally(() => {
-        if (markControllerRef.current === controller) markControllerRef.current = undefined;
       });
     return () => {
       current = false;
@@ -729,6 +737,10 @@ function EnabledNotificationDetailRoute({
       composerControllersRef.current.delete(controller);
     }
   }, []);
+  const resolveLinuxDoUpload = useCallback(
+    (shortUrl: string) => runComposerRequest((signal) => gateway.resolveLinuxDoUpload(shortUrl, identityKey, signal)),
+    [gateway, identityKey, runComposerRequest]
+  );
   const loadLinuxDoPollCapabilities = useCallback(
     () => runComposerRequest((signal) => gateway.loadLinuxDoPollCapabilities(identityKey, signal)),
     [gateway, identityKey, runComposerRequest]
@@ -823,6 +835,7 @@ function EnabledNotificationDetailRoute({
     setReplyStatus('');
     try {
       const ticket = await runtime.composer.ensureWritableSession(item.source);
+      let nodeImageGeneration: number | undefined;
       const assertCurrent = () => {
         if (
           controller.signal.aborted ||
@@ -833,10 +846,12 @@ function EnabledNotificationDetailRoute({
           error.name = 'AbortError';
           throw error;
         }
+        if (nodeImageGeneration !== undefined && nodeImageGeneration !== currentNodeImageApiKeyGeneration()) {
+          throw Object.assign(new Error('NodeImage 凭据已变化'), { reason: 'stale' });
+        }
       };
       assertCurrent();
       let nodeImageApiKey: string | undefined;
-      let nodeImageGeneration: number | undefined;
       if (item.source === 'nodeseek') {
         nodeImageApiKey = (await runtime.composer.ensureNodeImageApiKey()) || undefined;
         assertCurrent();
@@ -857,12 +872,10 @@ function EnabledNotificationDetailRoute({
         expectedIdentityKey: identityKey,
         file,
         nodeImageApiKey,
+        beforeSend: assertCurrent,
         signal: controller.signal
       });
       assertCurrent();
-      if (nodeImageGeneration !== undefined && nodeImageGeneration !== currentNodeImageApiKeyGeneration()) {
-        throw new Error('NodeImage 凭据已变化');
-      }
       setReplyStatus('图片已插入草稿');
       return result.markup;
     } catch (error) {
@@ -925,6 +938,7 @@ function EnabledNotificationDetailRoute({
       }}
       onSubmitReply={submitReply}
       onLoadLinuxDoPollCapabilities={item.source === 'linuxdo' ? loadLinuxDoPollCapabilities : undefined}
+      onResolveLinuxDoUpload={item.source === 'linuxdo' ? resolveLinuxDoUpload : undefined}
       onLoadLinuxDoTemplates={item.source === 'linuxdo' ? loadLinuxDoTemplates : undefined}
       onUseLinuxDoTemplate={item.source === 'linuxdo' ? useLinuxDoTemplate : undefined}
       onUploadReplyImage={uploadReplyImage}
@@ -968,9 +982,11 @@ export function NotificationSettingsRoute() {
   );
   return (
     <NotificationSettingsScreen
+      initializationError={runtime.initializationError}
+      onRetryInitialization={() => run(runtime.retryInitialization)}
       backgroundEnabled={runtime.backgroundEnabled}
       backgroundError={runtime.backgroundError}
-      busy={busy}
+      busy={busy || !runtime.ready}
       enabledSources={runtime.enabledNotificationSources}
       permission={runtime.permission}
       sessions={runtime.sessions}

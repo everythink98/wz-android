@@ -3324,6 +3324,7 @@ describe('topic query controller', () => {
     });
     await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    expect(recovery?.isCurrent?.()).toBe(true);
     expect(recovery?.queryKey).toEqual([
       'forum',
       'linuxdo',
@@ -3335,6 +3336,36 @@ describe('topic query controller', () => {
     });
     await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(linuxDetail));
     expect(getTopic).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['leave', 'epoch', 'disabled'])('rejects a captured detail recovery after %s', async (change) => {
+    const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
+    let active = true;
+    let enabled = true;
+    let epochs = initialForumSessionEpochs;
+    const getTopic = jest.fn<TestGetTopic>(async () => {
+      throw new LinuxDoCloudflareError();
+    });
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const hook = await renderTopicController({
+      topic: linuxTopic,
+      readGateway: { getTopic },
+      showLinuxDoVerification,
+      getActive: () => active,
+      getSourceEnabled: () => enabled,
+      getSessionEpochs: () => epochs
+    });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalled());
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    if (change === 'leave') active = false;
+    if (change === 'disabled') enabled = false;
+    if (change === 'epoch') epochs = { ...epochs, linuxdo: epochs.linuxdo + 1 };
+    await act(async () => hook.rerender(undefined));
+    const attempts = getTopic.mock.calls.length;
+    await act(async () => {
+      await expect(recovery?.resume()).resolves.toBe('stale');
+    });
+    expect(getTopic).toHaveBeenCalledTimes(attempts);
   });
 
   it('keeps a loaded quoted post stable across an unrelated rerender', async () => {

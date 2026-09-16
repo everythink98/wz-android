@@ -22,7 +22,7 @@ import { useContentBoundarySpacing } from './TopicContentPresentation';
 import { FORUM_REPLY_REFERENCE_TAG } from '@/domain/forum/topicContentHtml';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
-import { createContentMediaRenderers } from './contentMediaRenderers';
+import { createContentMediaRenderers, createIframeRenderer } from './contentMediaRenderers';
 import { createPreviewRenderers } from './previewRenderers';
 import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { FORUM_MATH_BLOCK_TAG, FORUM_MATH_INLINE_TAG } from '@/domain/forum/html';
@@ -119,7 +119,7 @@ export function useHtmlRenderingController({
       }
     }
   );
-  const htmlRenderers = useMemo<HtmlRenderers>(() => {
+  const contentRenderers = useMemo<HtmlRenderers>(() => {
     const BlockquoteRenderer: CustomBlockRenderer = (props) => {
       const boundarySpacing = useContentBoundarySpacing(props.tnode);
       const { InternalRenderer, ...internalRendererProps } = props;
@@ -234,8 +234,7 @@ export function useHtmlRenderingController({
         nodeSeekMediaUserAgent,
         openHtmlLink,
         settings,
-        theme,
-        webViewBlockMessage
+        theme
       }),
       ...createPreviewRenderers({
         htmlBaseStyle,
@@ -278,9 +277,16 @@ export function useHtmlRenderingController({
     theme.primarySoft,
     theme.primaryStrong,
     theme.surface,
-    theme.surface2,
-    webViewBlockMessage
+    theme.surface2
   ]);
+  const iframeRenderer = useMemo(
+    () => createIframeRenderer({ htmlRendererStyles, mediaSessionIdentity, theme, webViewBlockMessage }),
+    [htmlRendererStyles.inlineForumImageText, mediaSessionIdentity, theme, webViewBlockMessage]
+  );
+  const htmlRenderers = useMemo<HtmlRenderers>(
+    () => ({ ...contentRenderers, iframe: iframeRenderer }),
+    [contentRenderers, iframeRenderer]
+  );
 
   const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => {
     const listRendererProps = {

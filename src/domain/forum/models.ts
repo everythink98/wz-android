@@ -304,22 +304,34 @@ interface UserReferenceBase {
 
 export type UserReference = UserReferenceBase & ({ id: string; username?: string } | { id?: string; username: string });
 
-export interface UserProfile extends UserReferenceBase {
+export interface UserIdentity extends UserReferenceBase {
   id: string;
   username: string;
   levelLabel?: string;
+}
+
+// Local read interfaces: existing canonical profile fields, without activity placeholders.
+export interface UserDetails extends UserIdentity {
   bio?: string;
   joinedAt?: string;
   topicCount?: number;
   replyCount?: number;
   postCount?: number;
+}
+
+export interface UserTopicsPage {
   topics: Topic[];
   hasMoreTopics?: boolean;
   nextTopicsCursor?: string | null;
+}
+
+export interface UserRepliesPage {
   replies?: UserReplyActivity[];
   hasMoreReplies?: boolean;
   nextRepliesCursor?: string | null;
 }
+
+export interface UserProfile extends UserDetails, UserTopicsPage, UserRepliesPage {}
 
 export interface FeedResponse {
   items: Topic[];

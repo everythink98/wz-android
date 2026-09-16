@@ -1,4 +1,4 @@
-import { getCurrentUserProfile } from '@/sources/readGateway';
+import { getCurrentUserIdentity } from '@/sources/readGateway';
 import { summarizeLinuxDoCookieHeader } from './session';
 import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import { isCanceledRequest } from '@/platform/network/errors';
@@ -43,7 +43,7 @@ export async function readLinuxDoAccountStatus({
       hasLoginCookie: cookieHeader.split(';').some((part) => /^_t=.+/.test(part.trim())),
       hasVerificationCookie: cookieSummary.hasClearance
     });
-    const currentUser = await getCurrentUserProfile({
+    const currentUser = await getCurrentUserIdentity({
       source: 'linuxdo',
       fetcher: withDiagnosticFetcher(trace, fetcher),
       discourseAuth: { userAgent },

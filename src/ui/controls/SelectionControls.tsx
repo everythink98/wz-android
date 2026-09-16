@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
 import type { ReaderSettings } from '@/domain/reader/readerData';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { alphaColor, fontFamilyValue, type ReaderTheme } from '@/ui/theme/tokens';

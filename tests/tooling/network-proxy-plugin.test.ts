@@ -9,7 +9,7 @@ const plugin = require('../../plugins/withNetworkProxyModule') as {
 };
 
 describe('withNetworkProxyModule local relay hardening', () => {
-  const pluginSource = readFileSync(join(process.cwd(), 'plugins', 'withNetworkProxyModule.js'), 'utf8');
+  const pluginSource = readFileSync(join(process.cwd(), 'plugins', 'network', 'NetworkProxyRuntime.kt'), 'utf8');
 
   it('binds the relay with the connection cap as its backlog', () => {
     expect(pluginSource).toContain('ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))');

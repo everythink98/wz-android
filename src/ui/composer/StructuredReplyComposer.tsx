@@ -129,6 +129,7 @@ export const StructuredReplyComposer = forwardRef<
     title: string;
     visible: boolean;
     onLoadLinuxDoPollCapabilities?: () => Promise<LinuxDoPollCapabilities>;
+    onResolveLinuxDoUpload?: (shortUrl: string) => Promise<string>;
     onLoadLinuxDoTemplates?: () => Promise<TemplateSummary[]>;
     onOpenChange: (open: boolean) => void;
     onPresentationChange: (presentation: ComposerPresentation) => void;
@@ -156,6 +157,7 @@ export const StructuredReplyComposer = forwardRef<
       title,
       visible,
       onLoadLinuxDoPollCapabilities,
+      onResolveLinuxDoUpload,
       onLoadLinuxDoTemplates,
       onOpenChange,
       onPresentationChange,
@@ -238,7 +240,8 @@ export const StructuredReplyComposer = forwardRef<
     const initializationTraceRef = useRef<DiagnosticTrace | null>(null);
     const source = useMemo(() => {
       // The bundled document is evaluated only when an editor mounts; Metro caches it.
-      const editorDocument = require('./generated/editorDocument.json') as { html: string };
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- Evaluate the large payload only when opening the editor.
+      const editorDocument = require('./generated/editorDocument.js') as { html: string };
       return { html: editorDocument.html, baseUrl: 'https://composer.local/' };
     }, []);
     const intentKey =
@@ -559,6 +562,11 @@ export const StructuredReplyComposer = forwardRef<
                 if (!onUploadImage) throw new Error('当前入口不支持上传图片');
                 const markdown = await onUploadImage();
                 reply(typeof markdown === 'string' ? { markdown } : undefined);
+              } else if (message.payload.action === 'resolve-linuxdo-upload') {
+                if (intent.site !== 'linuxdo' || !onResolveLinuxDoUpload) throw new Error('当前入口不支持图片地址解析');
+                const shortUrl = (message.payload.data as { shortUrl?: unknown } | undefined)?.shortUrl;
+                if (typeof shortUrl !== 'string') throw new Error('图片短地址不正确');
+                reply({ url: await onResolveLinuxDoUpload(shortUrl) });
               } else if (message.payload.action === 'load-linuxdo-templates') {
                 if (!onLoadLinuxDoTemplates) throw new Error('当前入口不支持动态模板');
                 reply({ templates: await onLoadLinuxDoTemplates() });
@@ -599,6 +607,7 @@ export const StructuredReplyComposer = forwardRef<
         intent.site,
         localError,
         onLoadLinuxDoPollCapabilities,
+        onResolveLinuxDoUpload,
         onLoadLinuxDoTemplates,
         onSnapshot,
         onUploadImage,
@@ -721,6 +730,7 @@ export const StructuredReplyComposer = forwardRef<
               javaScriptCanOpenWindowsAutomatically={false}
               setSupportMultipleWindows={false}
               mixedContentMode="never"
+              automaticallyAdjustContentInsets={false}
               nestedScrollEnabled
               overScrollMode="never"
               textZoom={100}

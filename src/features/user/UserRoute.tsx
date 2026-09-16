@@ -68,7 +68,7 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     void controller.refreshUser();
   }, [controller]);
   const toggleUserFollow = useCallback(
-    (user: import('@/domain/forum/models').UserProfile) => {
+    (user: import('./userScreenItems').UserProfileView) => {
       runtime.reader.commit({
         type: 'follow',
         user,
@@ -115,6 +115,13 @@ function EnabledUserRoute({ navigation, route, runtime }: UserRouteProps & { run
     <UserScreen
       busy={controller.userBusy}
       error={controller.userError || null}
+      topicsError={controller.userTopicsError}
+      repliesError={controller.userRepliesError}
+      topicsBusy={controller.userTopicsBusy}
+      repliesBusy={controller.userRepliesBusy}
+      onRetryTopics={controller.retryUserTopics}
+      onRetryReplies={controller.retryUserReplies}
+      onRetryProfile={controller.retryUserProfile}
       followed={controller.currentUserFollowed}
       profile={controller.userProfile}
       requestedUser={controller.selectedUser}

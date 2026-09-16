@@ -1,4 +1,4 @@
-import type { Source, Topic, UserProfile } from '@/domain/forum/models';
+import type { Source, Topic, UserDetails, UserTopicsPage } from '@/domain/forum/models';
 import { createEmptyReaderData, sanitizeReaderSettings, topicKey, userKey, type ReaderSettings } from './readerData';
 
 export const readerCollections = ['favorites', 'history', 'followedUsers'] as const;
@@ -24,7 +24,7 @@ export type ReaderCommand =
   | { type: 'visit'; topic: Topic; at: string }
   | { type: 'topic-summary'; topic: Topic }
   | { type: 'favorite'; topic: Topic; enabled: boolean; at: string }
-  | { type: 'follow'; user: UserProfile; enabled: boolean; at: string }
+  | { type: 'follow'; user: UserDetails & Partial<UserTopicsPage>; enabled: boolean; at: string }
   | { type: 'delete'; collection: ReaderCollection; keys: readonly string[]; at: string }
   | { type: 'clear-history'; at: string }
   | { type: 'settings'; patch: Partial<ReaderSettings> };

@@ -124,7 +124,8 @@ export const composerEditorMessageSchema = z.discriminatedUnion('type', [
         'upload-image',
         'load-linuxdo-templates',
         'use-linuxdo-template',
-        'load-linuxdo-poll-capabilities'
+        'load-linuxdo-poll-capabilities',
+        'resolve-linuxdo-upload'
       ]),
       data: z.unknown().optional()
     })

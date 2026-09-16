@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, Keyboard, View, type StyleProp, type ViewStyle, useWindowDimensions } from 'react-native';
+import { useAnimatedKeyboard, useAnimatedReaction } from 'react-native-reanimated';
 import BottomSheet, {
   BottomSheetBackdrop,
   BottomSheetView,
@@ -9,21 +10,38 @@ import BottomSheet, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ComposerPresentation } from '@/domain/forum/structuredComposer';
 
-const COMPOSER_KEYBOARD_TARGET = -2147483648;
-
-function ComposerKeyboardCoordinator() {
-  const { animatedKeyboardState } = useBottomSheetInternal();
-
-  useEffect(() => {
-    // WebView owns the editable element, so BottomSheet never receives a BottomSheetTextInput focus target.
-    animatedKeyboardState.set((state) => ({ ...state, target: COMPOSER_KEYBOARD_TARGET }));
-    return () => {
-      animatedKeyboardState.set((state) =>
-        state.target === COMPOSER_KEYBOARD_TARGET ? { ...state, target: undefined } : state
-      );
-    };
-  }, [animatedKeyboardState]);
-
+function ComposerKeyboardViewport() {
+  const { animatedLayoutState } = useBottomSheetInternal();
+  // Edge-to-edge Android delivers IME insets instead of resizing the window.
+  // The native IME animation resizes this viewport; BottomSheet must not offset it again.
+  const keyboard = useAnimatedKeyboard({
+    isStatusBarTranslucentAndroid: true,
+    isNavigationBarTranslucentAndroid: true
+  });
+  useAnimatedReaction(
+    () => {
+      const raw = animatedLayoutState.get().rawContainerHeight;
+      return raw < 0 ? raw : Math.max(0, raw - keyboard.height.value);
+    },
+    (height) => {
+      if (height < 0 || animatedLayoutState.get().containerHeight === height) return;
+      animatedLayoutState.modify((state) => {
+        'worklet';
+        state.containerHeight = height;
+        return state;
+      });
+    }
+  );
+  useEffect(
+    () => () => {
+      animatedLayoutState.modify((state) => {
+        'worklet';
+        state.containerHeight = state.rawContainerHeight;
+        return state;
+      });
+    },
+    [animatedLayoutState]
+  );
   return null;
 }
 
@@ -54,6 +72,12 @@ export function ComposerBottomSheet({
   const { height } = useWindowDimensions();
   const bottomSheetRef = useRef<BottomSheet>(null);
   const [focusSignal, setFocusSignal] = useState(0);
+  const [keyboardActive, setKeyboardActive] = useState(visible);
+  const initialFocusPending = useRef(visible);
+  useLayoutEffect(() => {
+    initialFocusPending.current = visible;
+    if (visible) setKeyboardActive(true);
+  }, [visible]);
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (
       <BottomSheetBackdrop
@@ -67,6 +91,7 @@ export function ComposerBottomSheet({
     [dark]
   );
   const close = useCallback(() => {
+    setKeyboardActive(false);
     Keyboard.dismiss();
     if (visible) onOpenChange(false);
   }, [onOpenChange, visible]);
@@ -102,7 +127,10 @@ export function ComposerBottomSheet({
   }, [visible]);
   const handleSheetChange = useCallback(
     (nextIndex: number) => {
-      if (visible && nextIndex === 0) setFocusSignal((value) => value + 1);
+      if (visible && nextIndex === 0 && initialFocusPending.current) {
+        initialFocusPending.current = false;
+        setFocusSignal((value) => value + 1);
+      }
     },
     [visible]
   );
@@ -137,14 +165,14 @@ export function ComposerBottomSheet({
       handleComponent={null}
       keyboardBehavior="interactive"
       keyboardBlurBehavior="restore"
-      android_keyboardInputMode="adjustPan"
+      android_keyboardInputMode="adjustResize"
       maxDynamicContentSize={Math.round(availableContentHeight * (presentation === 'fullscreen' ? 1 : 0.75))}
       snapPoints={snapPoints}
       topInset={presentation === 'fullscreen' ? insets.top : 0}
       onChange={handleSheetChange}
       onClose={close}
     >
-      <ComposerKeyboardCoordinator />
+      {keyboardActive && <ComposerKeyboardViewport />}
       {fixedContent ? (
         <View testID="composer-bottom-sheet-content" style={fixedContentStyle}>
           {children(focusSignal)}

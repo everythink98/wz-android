@@ -145,7 +145,8 @@ describe('StructuredReplyComposer', () => {
     );
     expect(lines.join('')).not.toContain('private draft');
   });
-  it('forwards LinuxDo poll capabilities through the existing host-action seam', async () => {
+  it('forwards LinuxDo poll capabilities and image lookup through the existing host-action seam', async () => {
+    const onResolveLinuxDoUpload = jest.fn(async () => 'https://cdn.example.com/photo.png');
     const onLoadLinuxDoPollCapabilities = jest.fn(async () => ({
       groups: [{ id: 10, name: 'trust_level_1', displayName: '信任级别 1' }],
       canUseStaffResults: false
@@ -164,6 +165,7 @@ describe('StructuredReplyComposer', () => {
         title="回复"
         visible
         onLoadLinuxDoPollCapabilities={onLoadLinuxDoPollCapabilities}
+        onResolveLinuxDoUpload={onResolveLinuxDoUpload}
         onOpenChange={jest.fn()}
         onPresentationChange={jest.fn()}
         onSnapshot={jest.fn()}
@@ -182,6 +184,26 @@ describe('StructuredReplyComposer', () => {
     );
 
     await waitFor(() => expect(onLoadLinuxDoPollCapabilities).toHaveBeenCalledTimes(1));
+    await fireEvent(
+      webView,
+      'message',
+      message('REQUEST_HOST_ACTION', {
+        requestId: 'image-url',
+        action: 'resolve-linuxdo-upload',
+        data: { shortUrl: 'upload://abc.png' }
+      })
+    );
+    await waitFor(() => expect(onResolveLinuxDoUpload).toHaveBeenCalledWith('upload://abc.png'));
+    await waitFor(() =>
+      expect(webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw))).toContainEqual({
+        type: 'COMMAND',
+        payload: {
+          name: 'host-action-result',
+          requestId: 'image-url',
+          result: { url: 'https://cdn.example.com/photo.png' }
+        }
+      })
+    );
     await waitFor(() =>
       expect(webView.props.postMessageMock.mock.calls.map(([raw]: [string]) => JSON.parse(raw))).toContainEqual({
         type: 'COMMAND',
@@ -250,6 +272,7 @@ describe('StructuredReplyComposer', () => {
     };
     const view = await render(<StructuredReplyComposer {...props} discourseEmojiUrls={{}} />);
     const webView = view.getByTestId('structured-composer-webview');
+    expect(webView.props.automaticallyAdjustContentInsets).toBe(false);
     const postMessage = webView.props.postMessageMock;
     await fireEvent(webView, 'loadEnd');
     await fireEvent(webView, 'message', message('READY', { revision: 0 }));

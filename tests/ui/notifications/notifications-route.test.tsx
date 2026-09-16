@@ -3,7 +3,10 @@ import { describe, expect, it, jest } from '@jest/globals';
 import React from 'react';
 import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Alert } from 'react-native';
+import { Alert, Text } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNotificationsRuntime } from '@/features/notifications/useNotificationsRuntime';
+import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
 import type { ForumNotification } from '@/domain/notifications/models';
@@ -17,6 +20,7 @@ import {
   type NotificationRouteRuntimeValue
 } from '@/features/notifications/NotificationRoute';
 import { defaultNotificationState } from '@/platform/notifications/notificationStore';
+import { notificationPermissionGranted } from '@/platform/notifications/notificationSystem';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import type { NotificationAdapter, NotificationAdapterAccess } from '@/sources/notificationAdapter';
 import { createNotificationGateway } from '@/sources/notificationGateway';
@@ -27,26 +31,54 @@ jest.mock('expo-document-picker', () => ({
   getDocumentAsync: jest.fn()
 }));
 
+jest.mock('@/platform/notifications/notificationSystem', () => ({
+  notificationPermissionGranted: jest.fn(async () => false),
+  syncNotificationBackgroundRegistration: jest.fn(async () => false),
+  reconcileSourceNotificationSlots: jest.fn(async () => undefined),
+  dismissSourceNotification: jest.fn(async () => undefined)
+}));
+
+jest.mock('expo-notifications', () => ({
+  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  clearLastNotificationResponse: jest.fn(),
+  getLastNotificationResponse: jest.fn(() => null)
+}));
+
+jest.mock('react-native-gesture-handler', () => ({
+  ...jest.requireActual<typeof import('react-native-gesture-handler')>('react-native-gesture-handler'),
+  ScrollView: require('react-native').ScrollView
+}));
+
 const mockGetDocumentAsync = jest.mocked(DocumentPicker.getDocumentAsync);
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
-  const { View } = require('react-native') as typeof import('react-native');
+  const { Text, View } = require('react-native') as typeof import('react-native');
   return {
     FlashList: ({
       data = [],
       ListEmptyComponent,
       ListHeaderComponent,
+      refreshControl,
       renderItem
     }: {
       data?: unknown[];
       ListEmptyComponent?: React.ReactNode;
       ListHeaderComponent?: React.ReactNode;
+      refreshControl?: React.ReactNode;
       renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
     }) =>
       ReactModule.createElement(
         View,
         null,
+        refreshControl,
+        ReactModule.isValidElement<{ onRefresh?: () => void }>(refreshControl)
+          ? ReactModule.createElement(
+              Text,
+              { testID: 'notification-list-refresh', onPress: refreshControl.props.onRefresh },
+              '刷新'
+            )
+          : null,
         ListHeaderComponent,
         data.length === 0 ? ListEmptyComponent : null,
         ...data.map((item, index) => ReactModule.createElement(View, { key: index }, renderItem?.({ item, index })))
@@ -228,11 +260,224 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
     setSourceEnabled: jest.fn(async () => undefined),
     snapshotErrors: {},
     state: defaultNotificationState(),
-    unreadTotal: 0
+    unreadTotal: 0,
+    initializationError: '',
+    retryInitialization: jest.fn(async () => undefined)
   } as NotificationRouteRuntimeValue;
 }
 
 describe('notification routes', () => {
+  it.each(['storage', 'permission'] as const)(
+    'recovers a %s initialization failure through the real route retry',
+    async (failure) => {
+      appQueryClient.clear();
+      const stored = defaultNotificationState();
+      stored.sources.nodeseek.identityKey = 'nodeseek:42';
+      stored.sources.nodeseek.baselineReady = true;
+      stored.sources.nodeseek.deliveredIds = ['existing-watermark'];
+      let persisted = JSON.stringify(stored);
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+        persisted = value;
+      });
+      if (failure === 'storage')
+        jest.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('injected storage read'));
+      else jest.mocked(notificationPermissionGranted).mockRejectedValueOnce(new Error('injected permission probe'));
+      const sessions = projectTestAccountSessions(
+        createSiteSessionStates({
+          nodeseek: {
+            site: 'nodeseek',
+            status: 'logged-in',
+            cookieSummary: [],
+            isVerifying: false,
+            currentUser: { source: 'nodeseek', id: '42', username: 'alice', url: 'https://www.nodeseek.com/space/42' }
+          }
+        })
+      );
+      function Harness() {
+        const runtime = useNotificationsRuntime({
+          appActive: true,
+          contentSourcesReady: true,
+          enabledNotificationSources: ['nodeseek'],
+          fetcher: async (url) =>
+            new Response(JSON.stringify(url.endsWith('/unread-count') ? { reply: 0 } : { data: [] })),
+          getLinuxDoUserAgent: () => 'test',
+          getNodeSeekUserAgent: () => 'test',
+          onSessionExpired: jest.fn(),
+          openSource: () => true,
+          privateAccessAllowed: () => true,
+          remoteReady: true,
+          sessionEpochs: initialForumSessionEpochs,
+          sessions
+        });
+        return (
+          <NotificationRouteRuntimeProvider value={{ ...routeRuntime(runtime.gateway), ...runtime }}>
+            <NavigationContainer>
+              <FocusTestStack.Navigator initialRouteName="Notifications">
+                <FocusTestStack.Screen name="Notifications">
+                  {(props) => (
+                    <NotificationsRoute navigation={props.navigation as never} route={props.route as never} />
+                  )}
+                </FocusTestStack.Screen>
+              </FocusTestStack.Navigator>
+            </NavigationContainer>
+          </NotificationRouteRuntimeProvider>
+        );
+      }
+      const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+      try {
+        await waitFor(() => expect(view.getByText('重试通知初始化')).toBeTruthy());
+        expect(view.queryByText('请先登录')).toBeNull();
+        if (failure === 'storage')
+          expect(JSON.parse(persisted).sources.nodeseek.deliveredIds).toEqual(['existing-watermark']);
+        await fireEvent.press(view.getByText('重试通知初始化'));
+        await waitFor(() => expect(view.queryByText('重试通知初始化')).toBeNull());
+        await waitFor(() => expect(view.getByText('暂无消息')).toBeTruthy());
+        expect(JSON.parse(persisted).sources.nodeseek.deliveredIds).toEqual(['existing-watermark']);
+      } finally {
+        await view.unmount();
+        jest.mocked(AsyncStorage.getItem).mockImplementation(async () => null);
+        jest.mocked(AsyncStorage.setItem).mockImplementation(async () => undefined);
+        jest.mocked(notificationPermissionGranted).mockResolvedValue(false);
+      }
+    }
+  );
+  it.each([
+    { action: 'return during read', remaining: 0 },
+    { action: 'return during read', remaining: 1 },
+    { action: 'return during read', remaining: 2 },
+    { action: 'confirmed read', remaining: 0 },
+    { action: 'return during mark all', remaining: 0 },
+    { action: 'pull to refresh', remaining: 0 },
+    { action: 'reopen notifications', remaining: 0 }
+  ])('reconciles $remaining unread after $action', async ({ action, remaining }) => {
+    appQueryClient.clear();
+    let persisted: string | null = null;
+    jest.mocked(AsyncStorage.getItem).mockImplementation(async () => persisted);
+    jest.mocked(AsyncStorage.setItem).mockImplementation(async (_key, value) => {
+      persisted = value;
+    });
+    let unread = 2;
+    let writeSignal: AbortSignal | undefined;
+    const fetcher = jest.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/unread-count')) {
+        return new Response(JSON.stringify({ reply: unread }), { status: 200 });
+      }
+      if (url.includes('/markViewed')) {
+        // The server has applied the read; returning cancels receipt of its response.
+        unread = remaining;
+        if (action === 'confirmed read') return new Response(JSON.stringify({ success: true }), { status: 200 });
+        writeSignal = init?.signal || undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          writeSignal?.addEventListener('abort', () => reject(new Error('操作已取消')), { once: true });
+        });
+      }
+      if (url.includes('/list?page=')) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const sessions = projectTestAccountSessions(
+      createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: [],
+          isVerifying: false,
+          currentUser: {
+            source: 'nodeseek',
+            id: 'read-badge',
+            username: 'reader',
+            url: 'https://www.nodeseek.com/space/read-badge'
+          }
+        }
+      })
+    );
+    const options = {
+      appActive: true,
+      contentSourcesReady: true,
+      enabledNotificationSources: ['nodeseek'] as const,
+      fetcher,
+      getLinuxDoUserAgent: () => 'test',
+      getNodeSeekUserAgent: () => 'test',
+      onSessionExpired: jest.fn(),
+      openSource: () => true,
+      privateAccessAllowed: () => true,
+      remoteReady: true,
+      sessionEpochs: initialForumSessionEpochs,
+      sessions
+    };
+    const navigationRef = createNavigationContainerRef<FocusTestStackParamList>();
+    function Harness() {
+      const runtime = useNotificationsRuntime(options);
+      return (
+        <>
+          <Text testID="unread-total">{runtime.unreadTotal}</Text>
+          <NotificationRouteRuntimeProvider value={{ ...routeRuntime(runtime.gateway), ...runtime }}>
+            <NavigationContainer ref={navigationRef}>
+              <FocusTestStack.Navigator initialRouteName="Other">
+                <FocusTestStack.Screen name="Other">{() => null}</FocusTestStack.Screen>
+                <FocusTestStack.Screen name="Notifications">
+                  {(props) => (
+                    <NotificationsRoute navigation={props.navigation as never} route={props.route as never} />
+                  )}
+                </FocusTestStack.Screen>
+                <FocusTestStack.Screen name="NotificationDetail">
+                  {(props) => (
+                    <NotificationDetailRoute navigation={props.navigation as never} route={props.route as never} />
+                  )}
+                </FocusTestStack.Screen>
+              </FocusTestStack.Navigator>
+            </NavigationContainer>
+          </NotificationRouteRuntimeProvider>
+        </>
+      );
+    }
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    let alert: ReturnType<typeof jest.spyOn> | undefined;
+    try {
+      await waitFor(() => expect(view.getByTestId('unread-total').props.children).toBe(2));
+      if (action === 'return during read' || action === 'confirmed read') {
+        await act(async () =>
+          navigationRef.navigate('NotificationDetail', {
+            notification: { ...notification, id: 'reply:read-badge', remoteReadId: '1', remoteGroup: 'reply-to-me' },
+            identityKey: 'nodeseek:read-badge'
+          })
+        );
+        if (action === 'return during read') await waitFor(() => expect(writeSignal).toBeDefined());
+        else await waitFor(() => expect(view.getByTestId('unread-total').props.children).toBe(remaining));
+        await act(async () => navigationRef.goBack());
+        if (writeSignal) expect(writeSignal.aborted).toBe(true);
+      } else if (action === 'return during mark all') {
+        await act(async () => navigationRef.navigate('Notifications'));
+        await fireEvent.press(view.getByTestId('notification-source-nodeseek'));
+        await waitFor(() => expect(view.getByText('全部已读')).toBeTruthy());
+        alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+          buttons?.find((button) => button.text === '确认')?.onPress?.();
+        });
+        await fireEvent.press(view.getByText('全部已读'));
+        await waitFor(() => expect(writeSignal).toBeDefined());
+        await act(async () => navigationRef.goBack());
+        expect(writeSignal?.aborted).toBe(true);
+      } else {
+        await act(async () => navigationRef.navigate('Notifications'));
+        await waitFor(() => expect(view.getByText('暂无消息')).toBeTruthy());
+        unread = remaining;
+        if (action === 'pull to refresh') {
+          await fireEvent.press(view.getByTestId('notification-list-refresh'));
+        } else {
+          await act(async () => navigationRef.goBack());
+          await act(async () => navigationRef.navigate('Notifications'));
+        }
+      }
+      await waitFor(() => expect(view.getByTestId('unread-total').props.children).toBe(remaining));
+      await waitFor(() => expect(JSON.parse(persisted!).sources.nodeseek.unreadCount).toBe(remaining));
+    } finally {
+      alert?.mockRestore();
+      await view.unmount();
+      jest.mocked(AsyncStorage.getItem).mockImplementation(async () => null);
+      jest.mocked(AsyncStorage.setItem).mockImplementation(async () => undefined);
+    }
+  });
+
   it.each(notificationSources)('opens %s login directly from its account-not-ready state', async (source) => {
     appQueryClient.clear();
     const gateway = {

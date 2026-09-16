@@ -31,5 +31,7 @@ export type LinuxDoVerificationRecovery = LinuxDoReadRecovery | LinuxDoReadingRe
 
 export type LinuxDoReadRecovery = {
   queryKey: readonly unknown[];
+  // Local owner callback: explicit reads may have no automatically enabled Query observer.
+  isCurrent?: () => boolean;
   resume: () => Promise<LinuxDoReadResumeOutcome>;
 };

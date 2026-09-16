@@ -177,6 +177,8 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 
 多个入口受影响时逐类报告，不能用一个局部绿灯代表全部。相关验证失败且仍有安全、可证伪、在授权范围内的修复路径时继续修复；计划外既有产品 Bug 则停在证据和授权边界。
 
+Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证原生 Insets 分发，`tests/native/ComposerKeyboardTest.kt` 验证 IME 动画目标与当前帧；`tests/tooling/reanimated-settled-props.test.ts` 仅拥有嵌套 host 的同步 GC 生命周期。新版 WebView、外部选图 Activity 暂停/恢复与 settledProps 的 C++ 应用结果必须用匹配构建同设备录屏确认，不能用上述局部测试代替。
+
 ## 八、交付记录
 
 交付至少包含：

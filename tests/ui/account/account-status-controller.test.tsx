@@ -6,10 +6,10 @@ jest.mock('@react-native-async-storage/async-storage', () => require('@react-nat
 
 jest.mock('@/sources/readGateway', () => ({
   checkYaohuoLogin: jest.fn(),
-  getCurrentUserProfile: jest.fn()
+  getCurrentUserIdentity: jest.fn()
 }));
 
-import { checkYaohuoLogin, getCurrentUserProfile } from '@/sources/readGateway';
+import { checkYaohuoLogin, getCurrentUserIdentity } from '@/sources/readGateway';
 import { useAccountStatusController } from '@/features/account/useAccountStatusController';
 import { accountQueryKeys, appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -20,48 +20,44 @@ import {
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
 import { sessionSources } from '@/domain/forum/sourceCatalog';
-import type { UserProfile } from '@/domain/forum/models';
+import type { UserIdentity } from '@/domain/forum/models';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import type { DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
 
 const mockCheckYaohuoLogin = jest.mocked(checkYaohuoLogin);
-const mockGetCurrentUser = jest.mocked(getCurrentUserProfile);
+const mockGetCurrentUser = jest.mocked(getCurrentUserIdentity);
 const mockReadLinuxDoCookieHeader = jest.fn<() => Promise<string | undefined>>();
 const mockReadYaohuoCookieHeader = jest.fn<() => Promise<string | undefined>>();
 let diagnosticEvents: DiagnosticEvent[] = [];
 
-const linuxUser: UserProfile = {
+const linuxUser: UserIdentity = {
   source: 'linuxdo',
   id: '7',
   username: 'alice',
-  url: 'https://linux.do/u/alice',
-  topics: []
+  url: 'https://linux.do/u/alice'
 };
 
-const nodeSeekUser: UserProfile = {
+const nodeSeekUser: UserIdentity = {
   source: 'nodeseek',
   id: '17',
   username: 'bob',
-  url: 'https://www.nodeseek.com/space/17',
-  topics: []
+  url: 'https://www.nodeseek.com/space/17'
 };
 
-const nextNodeSeekUser: UserProfile = {
+const nextNodeSeekUser: UserIdentity = {
   source: 'nodeseek',
   id: '18',
   username: 'charlie',
-  url: 'https://www.nodeseek.com/space/18',
-  topics: []
+  url: 'https://www.nodeseek.com/space/18'
 };
 
-const yaohuoUser: UserProfile = {
+const yaohuoUser: UserIdentity = {
   source: 'yaohuo',
   id: '31',
   username: 'dave',
-  url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31',
-  topics: []
+  url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31'
 };
 
 type ReadManagedCookieHeader = NonNullable<Parameters<typeof useAccountStatusController>[0]['readManagedCookieHeader']>;
@@ -979,7 +975,7 @@ describe('account status queries', () => {
   });
 
   it('makes an authoritative terminal identity win over a late probe', async () => {
-    const identity = Promise.withResolvers<UserProfile>();
+    const identity = Promise.withResolvers<UserIdentity>();
     mockGetCurrentUser.mockImplementationOnce(async () => identity.promise);
     const { hook } = await renderStatusController({
       readNodeSeekCookieHeader: jest.fn(async () => 'session=safe')
@@ -1052,7 +1048,7 @@ describe('account status queries', () => {
       })
     );
 
-    const closingIdentity = Promise.withResolvers<UserProfile>();
+    const closingIdentity = Promise.withResolvers<UserIdentity>();
     mockGetCurrentUser.mockImplementationOnce(async () => closingIdentity.promise);
     let closingProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
     await act(async () => {
@@ -1122,7 +1118,7 @@ describe('account status queries', () => {
     await waitFor(() => expect(hook.result.current.accountSessionViewModels.nodeseek.identityTrust).toBe('confirmed'));
     onAccountStatusChanged.mockClear();
 
-    const failedIdentity = Promise.withResolvers<UserProfile>();
+    const failedIdentity = Promise.withResolvers<UserIdentity>();
     mockGetCurrentUser.mockImplementationOnce(async () => failedIdentity.promise);
     let failedProbe!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
     await act(async () => {
@@ -1153,7 +1149,7 @@ describe('account status queries', () => {
     );
     expect(onAccountStatusChanged).not.toHaveBeenCalled();
 
-    const retryIdentity = Promise.withResolvers<UserProfile>();
+    const retryIdentity = Promise.withResolvers<UserIdentity>();
     mockGetCurrentUser.mockImplementationOnce(async () => retryIdentity.promise);
     let retry!: ReturnType<typeof hook.result.current.reconcileAccountStatus>;
     await act(async () => {
@@ -1617,8 +1613,7 @@ describe('account status queries', () => {
         source: 'yaohuo',
         id: '31',
         username: '31',
-        url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31',
-        topics: []
+        url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31'
       }
     });
     const fetcher = jest.fn(async (input: string) => {
@@ -1638,8 +1633,7 @@ describe('account status queries', () => {
         source: 'yaohuo',
         id: '31',
         username: 'dave',
-        url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31',
-        topics: []
+        url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31'
       })
     );
     expect(readManagedCookieHeader).toHaveBeenCalledWith('https://www.yaohuo.me/wapindex.aspx?sid=-2');
@@ -1672,8 +1666,7 @@ describe('account status queries', () => {
         source: 'yaohuo',
         id: '31',
         username: '31',
-        url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31',
-        topics: []
+        url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=31'
       }
     });
     const fetcher = jest.fn(async (input: string) => {
