@@ -25,9 +25,9 @@
 | 来源 | 身份 / 资料入口 | 活动入口与游标 | 原始字段和 canonical 来源 |
 | --- | --- | --- | --- |
 | linux.do | `/session/current.json`；`/u/{username}/summary.json` | `/topics/created-by/{username}.json`：既有 30 条 page；`/user_actions.json`：既有 `filter=5`、offset、31 条 lookahead。分类信息必要时仍读既有分类来源。 | `current_user`；summary 的 `user_summary`、`user`、`users`、明确的 topic/reply/post count；活动 `topic_list.topics`、`user_actions`。`src/sources/linuxdo/account.ts`、`tests/integration/source-read-contracts/discourse.test.ts`。不把失败活动替换为 summary 片段。 |
-| NodeSeek | 既有 `/`、必要时 `/setting` 身份解析；数字 UID 的 `/api/account/getInfo/{uid}?readme=1`；username-only 先走已有 `/api/account/find/{username}` | `/api/content/list-discussions?uid=…&page=…`；`/api/content/list-comments?uid=…&page=…`；沿用 15 条和已知计数的分页语义。 | `detail.member_id/member_name`、`nPost/nComment`、`discussions`、`comments`；身份仅使用已有配置/明确自身链接。缺少实际列表字段抛错。`userParser.ts`、`sourceUserRead.test.ts`、`source-read-contracts/nodeseek.test.ts`。 |
-| V2EX | 无登录身份能力；`/api/members/show.json?username=…` | `/member/{username}/topics`、`/replies`，只使用现有 HTML 下一页解析；主题首屏保留 `/feed/member/{username}.xml` fallback。HTML 与 feed 都失败则抛错。 | `id/username/name/avatar_*/tagline/pro` 与已有 HTML/ATOM parser；不把首屏已读数量当总计。`src/sources/v2ex/account.ts`、`sourceUserRead.test.ts`。 |
-| 妖火 | 既有 session 检查的 `currentUser`；资料 `/bbs/userinfo.aspx?touserid=…&siteid=1000` | 首次活动链接从资料 HTML 的真实 href 提取；后续 cursor 继续使用已有安全 URL、next-page parser。主题首屏最多 10 页/30 条，后续每次一页，保留原顺序。 | `sessionParser.ts` 与 `protocol.ts` 的既有身份、昵称、统计、帖子/回复链接解析。未知且缺活动链接时报不支持；只有已知 0 或实际解析结果可显示空。后台直接消费已确认身份；Account 为展示名保留必要资料读取。 |
+| NodeSeek | 既有 `/`、必要时 `/setting` 身份解析；数字 UID 的 `/api/account/getInfo/{uid}?readme=1`；username-only 先走已有 `/api/account/find/{username}` | `/api/content/list-discussions?uid=…&page=…`；`/api/content/list-comments?uid=…&page=…`；沿用 15 条和已知计数的分页语义。 | `detail.member_id/member_name`、`nPost/nComment`、`discussions`、`comments`；身份仅使用已有配置/明确自身链接。缺少实际列表字段抛错。`src/sources/nodeseek/userParser.ts`、`src/sources/sourceUserRead.test.ts`、`tests/integration/source-read-contracts/nodeseek.test.ts`。 |
+| V2EX | 无登录身份能力；`/api/members/show.json?username=…` | `/member/{username}/topics`、`/replies`，只使用现有 HTML 下一页解析；主题首屏保留 `/feed/member/{username}.xml` fallback。HTML 与 feed 都失败则抛错。 | `id/username/name/avatar_*/tagline/pro` 与已有 HTML/ATOM parser；不把首屏已读数量当总计。`src/sources/v2ex/account.ts`、`src/sources/sourceUserRead.test.ts`。 |
+| 妖火 | 既有 session 检查的 `currentUser`；资料 `/bbs/userinfo.aspx?touserid=…&siteid=1000` | 首次活动链接从资料 HTML 的真实 href 提取；后续 cursor 继续使用已有安全 URL、next-page parser。主题首屏最多 10 页/30 条，后续每次一页，保留原顺序。 | `src/sources/yaohuo/sessionParser.ts` 与 `src/sources/yaohuo/protocol.ts` 的既有身份、昵称、统计、帖子/回复链接解析。未知且缺活动链接时报不支持；只有已知 0 或实际解析结果可显示空。后台直接消费已确认身份；Account 为展示名保留必要资料读取。 |
 
 四站非空固定样本的首屏请求数由 `tests/ui/user/user-activity-reads.test.tsx` 验证：linux.do、NodeSeek、V2EX 各为资料 1 + 主题 1 + 回复 1；妖火为资料 3 + 活动 2，其中两次资料读取分别解析主题与回复入口。单活动重试前三站 1 请求、妖火 2 请求，不重读另一活动。V2EX 首屏 feed fallback、linux.do 分类补全、NodeSeek username resolution 和妖火多页聚合按各自实际条件增加请求；这些数字不代表耗电或延迟收益。
 
@@ -81,7 +81,7 @@
 
 ### 补验发现与最小修复
 
-第二轮运行时检查为 39/41：Feed 两个原生宿主断言失败。当前 RN `ScrollView.js` 在 Android 上将有 RefreshControl 的 ScrollView 包在刷新容器内，移除 RefreshControl 会改变层级；原修复仅保留 FlashList 组件，未保住底层原生视图。现在在既有 Feed owner 内保留 RNGH RefreshControl，冷筛选时只设 `enabled=false`。相同设备检查转为 41/41，相关 Feed/User 三个 UI owner 108 项通过（seed `1048951387`）。没有新增状态机或生产接口。
+第二轮运行时检查为 39/41：Feed 两个原生宿主断言失败。当前 RN `node_modules/react-native/Libraries/Components/ScrollView/ScrollView.js` 在 Android 上将有 RefreshControl 的 ScrollView 包在刷新容器内，移除 RefreshControl 会改变层级；原修复仅保留 FlashList 组件，未保住底层原生视图。现在在既有 Feed owner 内保留 RNGH RefreshControl，冷筛选时只设 `enabled=false`。相同设备检查转为 41/41，相关 Feed/User 三个 UI owner 108 项通过（seed `1048951387`）。没有新增状态机或生产接口。
 
 首轮试验还暴露两处测试接线错误：linux.do 脚本被测试重复注入、NodeSeek 下一页错用了 1 而非生产 cursor 2。按真实实现纠正后通过；这些不记录为产品缺陷。四站样本从既有 UI owner 原样提取为 `tests/fixtures/userActivityEvidence.ts`，该 UI owner 的 24 项独立回归通过（seed `-1583372232`）。新增 HookProbe / recovery probe 都是隔离测试的本地接口，不代表服务器协议。
 
