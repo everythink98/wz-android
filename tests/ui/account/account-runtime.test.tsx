@@ -80,6 +80,61 @@ beforeEach(() => {
 });
 afterEach(() => setDiagnosticWriter(null));
 
+it.each(['current', 'stale', 'identity-changed'] as const)(
+  'settles %s NodeSeek verification without requiring public readers to log in',
+  async (state) => {
+    let runtime!: ReturnType<typeof useAccountRuntime>;
+    const notify = jest.fn();
+    const fetcher: Fetcher = async () =>
+      new Response('<html><meta name="nodeseekAccountState" content="anonymous"></html>', {
+        headers: { 'content-type': 'text/html' }
+      });
+    function Harness() {
+      runtime = useAccountRuntime({
+        appActive: true,
+        enabledSources: ['nodeseek'],
+        fetcher,
+        loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+        notify,
+        nodeSeekRecoveryThreshold: 1,
+        openUser: async () => undefined,
+        ready: false,
+        screen: 'topic',
+        webViewBlockMessage: ''
+      });
+      return runtime.hosts.element;
+    }
+    const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+    await act(async () => {
+      if (state === 'identity-changed') {
+        appQueryClient.setQueryData(
+          accountQueryKeys.snapshot('nodeseek'),
+          accountSessionSnapshotFromEvent(createAccountSessionSnapshot('nodeseek'), {
+            type: 'session-updated',
+            loggedIn: true,
+            currentUser: { source: 'nodeseek', id: '42', username: 'alice', url: 'https://www.nodeseek.com/space/42' }
+          })
+        );
+      }
+    });
+    const resume = jest.fn(async () => 'completed' as const);
+    await act(async () =>
+      runtime.hosts.requestNodeSeekVerification('需要验证', {
+        queryKey: ['nodeseek-public-topic'],
+        isCurrent: () => state !== 'stale',
+        resume
+      })
+    );
+    expect(runtime.read.accountSessionViewModels.nodeseek.isLoggedIn).toBe(state === 'identity-changed');
+    await fireEvent.press(view.getByText('检测登录'));
+    await waitFor(() => expect(runtime.hosts.surfaces.nodeseek).toBe(false));
+    expect(resume).toHaveBeenCalledTimes(state === 'current' ? 1 : 0);
+    expect(runtime.read.accountSessionViewModels.nodeseek.isLoggedIn).toBe(false);
+    expect(notify).not.toHaveBeenCalledWith('NodeSeek当前未登录。');
+    await view.unmount();
+  }
+);
+
 it('keeps a blocked reading recovery in one panel until explicit retry, then waits for cookie handoff', async () => {
   jest.useFakeTimers({ doNotFake: ['performance'] });
   let clock = 0;

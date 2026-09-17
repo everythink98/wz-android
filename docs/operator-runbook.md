@@ -82,6 +82,8 @@ JS 同时只有一个 Native batch 在写，其余事件合并等待，在写与
 
 异常入口按真实 RN 管线判断，不能只看是否存在 `RN$registerExceptionListener`：当 `RN$useAlwaysAvailableJSErrorHandling` 不为 true 时，已就绪的 JS/renderer 异常仍走 legacy 入口。当前保留 Native listener，同时包装 `ExceptionsManager.handleException`（不可用才用 ErrorUtils），完整委托并去重。系统 `ApplicationExitInfo` 的 EXCESSIVE_RESOURCE_USAGE 记录为 `resource-limit`，保留 `exitReasonCode`；即使同一进程已有 JS 致命异常，也不把该退出原因猜成 crash。
 
+鸿蒙详情触摸专项探针已在真机复测通过后撤除；不再采集逐次触摸、视图路径或每秒心跳。常规脱敏请求、Cookie 存在性、验证恢复与错误日志沿用现有有界 journal。历史专项日志按其原 buildId 使用已归档符号，不用新包覆盖旧符号；事故结论见 `REG-TOPIC-172`。
+
 发布脚本把 exact combined source map、R8 mapping 和 APK SHA 归档到 ignored `diagnostic-symbols/<buildId>/`。保留对应目录，不用重建产物覆盖。JS、renderer、Promise 与 Java/Kotlin 未捕获异常统一使用以下脱敏堆栈还原命令：
 
 ```powershell

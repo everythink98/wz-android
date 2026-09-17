@@ -105,7 +105,7 @@ jest.mock('@gorhom/bottom-sheet', () => {
         onChange,
         testID: 'composer-bottom-sheet'
       } as React.ComponentProps<typeof NativeView>,
-      backdropComponent?.({}),
+      backdropComponent?.({ animatedIndex: { value: -0.9999999626794105 } }),
       children,
       ReactModule.createElement(
         NativePressable,
@@ -2069,6 +2069,27 @@ describe('Topic real child components', () => {
     expect(view.getByTestId('focus-signal').props.children).toBe(2);
   });
 
+  it('releases the backdrop hit target while closed across content layout changes', async () => {
+    const { ComposerBottomSheet } =
+      require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
+    const host = (visible: boolean, fixedContent: boolean) => (
+      <ComposerBottomSheet dark={false} fixedContent={fixedContent} visible={visible} onOpenChange={() => {}}>
+        {() => <Text>保留的草稿</Text>}
+      </ComposerBottomSheet>
+    );
+    const view = await render(host(false, false));
+    const backdrop = () => view.getByTestId('composer-bottom-sheet-backdrop', { includeHiddenElements: true });
+    expect(backdrop()).toHaveProp('pointerEvents', 'none');
+    await view.rerender(host(false, true));
+    expect(backdrop()).toHaveProp('pointerEvents', 'none');
+    expect(backdrop()).toHaveProp('importantForAccessibility', 'no-hide-descendants');
+    await view.rerender(host(true, true));
+    expect(backdrop()).toHaveProp('pointerEvents', 'auto');
+    await view.rerender(host(false, true));
+    expect(backdrop()).toHaveProp('pointerEvents', 'none');
+    expect(view.getByText('保留的草稿')).toBeTruthy();
+  });
+
   it('keeps one controlled close path while fullscreen closes', async () => {
     const { ComposerBottomSheet } =
       require('@/ui/sheets/ComposerBottomSheet') as typeof import('@/ui/sheets/ComposerBottomSheet');
@@ -2093,7 +2114,9 @@ describe('Topic real child components', () => {
     expect(mockComposerBottomSheetProps?.index).toBe(0);
     expect(sheetSnapPoints).toHaveLength(1);
     expect(view.getByTestId('composer-bottom-sheet')).toHaveProp('enablePanDownToClose', false);
-    expect(view.getByTestId('composer-bottom-sheet-backdrop')).toHaveProp('pressBehavior', 'none');
+    const backdrop = view.getByTestId('composer-bottom-sheet-backdrop', { includeHiddenElements: true });
+    expect(backdrop).toHaveProp('pointerEvents', 'auto');
+    expect(backdrop.props.onTouchEnd).toBeUndefined();
 
     await view.rerender(
       <ComposerBottomSheet

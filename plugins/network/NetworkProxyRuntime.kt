@@ -163,6 +163,7 @@ internal const val FORUM_MEDIA_KIND_HEADER = "X-WZ-Forum-Media-Kind"
 internal const val FORUM_MEDIA_GENERATION_HEADER = "X-WZ-Read-Network-Generation"
 internal const val FORUM_READ_SOURCE_HEADER = "X-WZ-Forum-Read-Source"
 internal const val FORUM_READ_CANCEL_CLASS_HEADER = "X-WZ-Forum-Read-Cancel-Class"
+internal const val FORUM_READ_COOKIE_POLICY_HEADER = "X-WZ-Forum-Read-Cookie-Policy"
 
 private class MediaRequestCookiePolicy(
   private val credentialSource: String?
@@ -251,16 +252,30 @@ internal data class ForumReadRequestTag(
   val cancelClass: String
 )
 
+internal class ForumReadClearancePolicy(val source: String?, val origin: HttpUrl) {
+  var downgraded = false
+}
+
 internal class ForumReadRequestInterceptor : Interceptor {
   override fun intercept(chain: Interceptor.Chain): okhttp3.Response {
     val request = chain.request()
     val source = request.header(FORUM_READ_SOURCE_HEADER)
     val cancelClass = request.header(FORUM_READ_CANCEL_CLASS_HEADER)
-    if (source == null && cancelClass == null) return chain.proceed(request)
+    val cookiePolicy = request.header(FORUM_READ_COOKIE_POLICY_HEADER)
+    if (source == null && cancelClass == null && cookiePolicy == null) return chain.proceed(request)
     val sanitized = request.newBuilder()
       .removeHeader(FORUM_READ_SOURCE_HEADER)
       .removeHeader(FORUM_READ_CANCEL_CLASS_HEADER)
+      .removeHeader(FORUM_READ_COOKIE_POLICY_HEADER)
       .apply {
+        if (cookiePolicy != null) {
+          removeHeader("Cookie")
+          tag(ForumReadClearancePolicy::class.java, ForumReadClearancePolicy(
+            source.takeIf { cookiePolicy == "clearance-only" && (it == "linuxdo" || it == "nodeseek") },
+            request.url
+          ))
+          cacheControl(CacheControl.Builder().noStore().build())
+        }
         if (
           source != null &&
           (cancelClass == "content" || cancelClass == "health" || cancelClass == "retained")
@@ -270,6 +285,29 @@ internal class ForumReadRequestInterceptor : Interceptor {
       }
       .build()
     return chain.proceed(sanitized)
+  }
+}
+
+// Runs after OkHttp's cookie jar on every redirect, including RN credentials: omit.
+internal class ForumReadClearanceInterceptor(
+  private val sourceForUri: (URI) -> String? = ::managedCookieSource,
+  private val cookieReader: (String) -> String? = { CookieManager.getInstance().getCookie(it) },
+  private val responses: ManagedCookieResponses = LinuxDoCookieResponses.store
+) : Interceptor {
+  override fun intercept(chain: Interceptor.Chain): Response {
+    val request = chain.request()
+    val policy = request.tag(ForumReadClearancePolicy::class.java) ?: return chain.proceed(request)
+    val url = request.url
+    if (policy.source == null || sourceForUri(URI(url.toString())) != policy.source ||
+      url.scheme != policy.origin.scheme || url.host != policy.origin.host || url.port != policy.origin.port ||
+      (request.method != "GET" && request.method != "HEAD")) policy.downgraded = true
+    val sanitized = request.newBuilder().removeHeader("Cookie")
+    if (!policy.downgraded) {
+      cfClearanceValue(cookieReader(url.toString()))?.let { sanitized.header("Cookie", "cf_clearance=$it") }
+    }
+    // Clearance-only reads never own authenticated response-cookie writes or fallback.
+    responses.observed(url.toString(), null, null)
+    return chain.proceed(sanitized.build())
   }
 }
 
@@ -1471,7 +1509,9 @@ private class ReadNetworkRuntimeGeneration(
     builder.addInterceptor(ForumMediaRequestInterceptor())
     builder.interceptors().removeAll { it is CookieResponseContextInterceptor }
     builder.networkInterceptors().removeAll { it is CookieResponseInterceptor }
+    builder.networkInterceptors().removeAll { it is ForumReadClearanceInterceptor }
     builder.addInterceptor(CookieResponseContextInterceptor(LinuxDoCookieResponses.store))
+    builder.addNetworkInterceptor(ForumReadClearanceInterceptor())
     builder.addNetworkInterceptor(CookieResponseInterceptor(LinuxDoCookieResponses.store))
     builder.networkInterceptors().removeAll { it is ImageRuntimeGuardInterceptor }
     if (lane == "media") builder.addNetworkInterceptor(ImageRuntimeGuardInterceptor(generation))

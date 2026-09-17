@@ -24,6 +24,29 @@ function session(
 }
 
 describe('forum read plans', () => {
+  it.each(['linuxdo', 'nodeseek'] as const)('keeps %s clearance on every public identity state', (source) => {
+    for (const state of [
+      { authenticated: false, identityTrust: 'none' as const },
+      { authenticated: true, identityTrust: 'unknown' as const },
+      { authenticated: true, identityTrust: 'confirmed' as const, authSurfaceOpen: true }
+    ]) {
+      expect(resolveForumReadPlan(source, 'topic', true, session(source, state))).toMatchObject({
+        lane: 'public',
+        transport: 'native-clearance-only'
+      });
+    }
+    expect(
+      resolveForumReadPlan(
+        source,
+        'topic',
+        true,
+        session(source, {
+          authenticated: true,
+          identityTrust: 'confirmed'
+        })
+      )
+    ).toMatchObject({ lane: 'authenticated', transport: 'managed-session' });
+  });
   it('keeps public reads available while identity is unknown or an auth surface is open', () => {
     expect(
       ['v2ex', 'linuxdo', 'nodeseek'].filter((source) =>

@@ -698,3 +698,14 @@ More → useNetworkProxyRuntime → networkProxy + Android generated module
 4. 交付按能力 ID 报告：改动、自动测试、模拟器路径、真实写操作结果、已恢复状态和未验证范围。
 5. 确认且获准修复的逃逸 Bug 同步更新 `docs/regression-corpus.md`，并先建立修复前失败的最低可靠 owner；历史条目可以共享 owner，不要求一条 REG 永久对应一个测试。
 6. 代码、测试或路径变化后运行 `npm run test:docs`、`npm run check:docs` 和 `git diff --check`，确保引用存在且本机资料未进入 Git。
+
+### CF 验证交接与关闭回复面板的触摸边界
+
+`ACCOUNT-02` 与 `FEED-*`、`TOPIC-01/03`、`USER-01` 共享 ReadGateway：L/NS 公开读取省略账号 Cookie，但通过 `native-clearance-only` 携带平台当前 URL 的 `cf_clearance`；已确认登录继续完整会话。CF Cookie 不证明账号登录，也不把 `public:omit` 缓存升级为 authenticated。NS 有待恢复的公开读取时，账号检测得到未登录仍可恢复；身份改变、取消、旧任务失效不能恢复，成功以实际原请求完成为准。V2EX 保留不带 Cookie 的公开读取；药火远程读取仍要求登录；L/NS 公开搜索仍走既有外部入口。
+
+`WRITE-01` 与 `TOPIC-01/03`、消息回复共享 `ComposerBottomSheet`：关闭背景必须 `pointerEvents=none`，视觉动画值不拥有触摸命中权；打开时保持遮挡，背景不作为无障碍元素。编辑器、草稿和键盘生命周期不因该背景策略改变。
+
+canonical evidence：`src/domain/forum/readPlan.test.ts`、`src/sources/readGatewayContract.test.ts`、`plugins/network/NetworkProxyRuntimeTest.kt`（真实 HTTP 重试与重定向）、`tests/ui/account/account-runtime.test.tsx`（NS 未登录恢复与失效）、`tests/ui/topic/topic-components.test.tsx`（关闭背景命中与布局切换）。HarmonyOS/卓易通和普通 Android 的实际触摸、原站 CF 为独立设备验收，不能以 UI 测试代替。
+
+
+`ACCOUNT-02` 的 L/NS/妖火登录与验证页共用紧凑工具栏：检测为唯一主操作，填入使用短标签，刷新为带完整无障碍名称的图标按钮，清除登录保留明确文字与危险色；按用户指定采用 32dp 最小按钮高度、16dp 图标和 6dp 圆角，操作保持单行，大字号或窄屏横向滚动。关闭入口独立保留，loading/disabled 与原有回调不变。共享外观由 `LoginWebViewModal`/`loginWebViewStyles` 拥有，交互回归仍由 `tests/ui/account/account-site-panels.test.tsx` 承接。

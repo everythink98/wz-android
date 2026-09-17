@@ -6,8 +6,8 @@ import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
 import { NODESEEK_URL } from '@/domain/forum/sourceUrls';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '@/platform/network/loginWebViewScripts';
-import { AppButton } from '@/ui/controls/ButtonControls';
-import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
+import { KeyRound, LogOut, RefreshCw, ShieldCheck } from 'lucide-react-native';
+import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { AccountHostStyles } from '../accountHostStyles';
 
 const LOGIN_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
@@ -109,17 +109,25 @@ export function NodeSeekLoginHost({
       onClose={onClose}
       actions={
         <View style={styles.actions}>
-          {credentialSaved ? (
-            <AppButton label="填入已保存登录信息" disabled={credentialFillPending} onPress={onRequestCredentialFill} />
-          ) : null}
-          <AppButton
+          <LoginWebViewAction
             testID={settledForReplay || webViewBlockMessage ? 'nodeseek-login-webview-settled' : undefined}
+            icon={ShieldCheck}
+            primary
             label={checking ? '检测中' : '检测登录'}
             disabled={checking}
             onPress={onCheck}
           />
-          <AppButton label="清除登录" variant="danger" onPress={onClear} />
-          <AppButton label="刷新页面" variant="ghost" onPress={refresh} />
+          {credentialSaved ? (
+            <LoginWebViewAction
+              icon={KeyRound}
+              label="填入已保存登录信息"
+              displayLabel="填入"
+              disabled={credentialFillPending}
+              onPress={onRequestCredentialFill}
+            />
+          ) : null}
+          <LoginWebViewAction icon={RefreshCw} label="刷新页面" displayLabel="" onPress={refresh} />
+          <LoginWebViewAction icon={LogOut} label="清除登录" danger onPress={onClear} />
         </View>
       }
     >

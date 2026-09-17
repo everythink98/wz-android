@@ -5865,3 +5865,23 @@
 | 历史症状与根因 | 独立测试 AVD 对实际 selection View 的剪贴板边界注入 SecurityException，异常逃出 ActionMode；这是受控复现，不是历史生产崩溃报告。 |
 | 当前 owner | `ForumContentSelectionViewTest.kt`；局部捕获已证实的平台拒绝，提示并保留选区，成功才结束。Native copy-denied 为本地事件。 |
 | 失败 oracle 与边界 | 修复前 instrumentation 48 项中 1 项失败，修复后 48 项通过，包含拒绝后重试及长 Unicode 全文复制读回。不截断或记录正文；其他平台异常、物理设备为 `NOT_VERIFIED`。 |
+
+## `REG-ACCOUNT-053` CF 验证后公开读取仍未携带凭据
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `ACCOUNT-02`、`FEED-*`、`TOPIC-01/03`、`USER-01` |
+| 历史症状与根因 | 鸿蒙/卓易通日志中 L 站 23 次详情请求均有 stored clearance、无 sent clearance；验证后重试仍遭挑战。ReadGateway 的公开通道强制 omit 丢弃全部 Cookie。NS 共享该问题，且检测得到 anonymous 时提前返回、不恢复公开任务。 |
+| 当前 owner | `src/domain/forum/readPlan.test.ts`、`src/sources/readGatewayContract.test.ts`、`plugins/network/NetworkProxyRuntimeTest.kt` 与 `tests/ui/account/account-runtime.test.tsx`。原生真实 HTTP oracle 在模拟验证更新平台 Cookie 后，修复前仍返回 403；NS 未登录恢复 oracle 修复前零 resume。 |
+| 修复与边界 | 原生按每跳准确 URL 读取 CF-only，拒绝账号 Cookie 和跨 origin 传播，保留响应写入边界；NS 允许未登录的当前公开任务恢复，身份变化与取消仍失效。Android 模拟器的已登录与匿名 L 站均完成真实 CF 后恢复原详情；匿名连续打开 5 个帖子并刷新原帖，日志确认验证后 7 次详情请求带最新 CF、无账号 Cookie。NS 真实 CF 与故障鸿蒙真机仍为 `NOT_VERIFIED`，不承诺服务端一定接受既有 clearance。 |
+
+## `REG-TOPIC-172` 关闭的回复背景拦截详情全部触摸
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03`、`WRITE-01` |
+| 历史症状与根因 | 鸿蒙/卓易通中 L/NS 详情初始可滚，加载后返回、回复、滚动均失效；日志确认触摸进入共享回复面板的全屏 AUTO 背景，alpha 约 1.418e-8，面板 visible=false，JS 与主线程仍响应。库以动画 index 的精确边界决定穿透；机型触发差异的底层原因尚未证实。 |
+| 当前 owner | `tests/ui/topic/topic-components.test.tsx` 固定接近 -1 的动画值、关闭状态与动态/固定布局切换，修复前背景没有受控 none；既有 composer keyboard/structured/message owner 承接打开与编辑器行为。 |
+| 修复与关闭条件 | 共享背景由 visible 直接决定触摸，动画只负责透明度；不改编辑器挂载顺序、不加机型特判。代码/UI oracle 已修复；普通 Android 模拟器的匿名 L/NS 详情滚动与返回、已登录 L/NS 回复面板开关后继续滚动已通过。2026-09-17 用户反馈鸿蒙真机使用本次测试包后问题已消失，据此关闭设备事故；此为用户复测证据。随后撤除临时触摸/心跳/视图路径探针，保留修复及常规诊断。 |

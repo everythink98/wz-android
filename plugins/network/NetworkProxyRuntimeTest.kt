@@ -58,6 +58,150 @@ import org.junit.Test
 
 class NetworkProxyRuntimeTest {
   @Test
+  fun publicReadRetriesUseLatestClearanceWithoutAccountCookies() {
+    for (source in listOf("linuxdo", "nodeseek")) {
+      ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).use { server ->
+        server.soTimeout = 5000
+        val executor = Executors.newSingleThreadExecutor()
+        val requests = executor.submit<List<Map<String, String>>> {
+          (0..2).map {
+            server.accept().use { socket ->
+              val reader = socket.getInputStream().bufferedReader()
+              reader.readLine()
+              val headers = mutableMapOf<String, String>()
+              while (true) {
+                val line = reader.readLine() ?: break
+                if (line.isEmpty()) break
+                headers[line.substringBefore(':').lowercase()] = line.substringAfter(':').trim()
+              }
+              val status = if (headers["cookie"] == "cf_clearance=fresh") "200 OK" else "403 Forbidden"
+              socket.getOutputStream().apply {
+                write(("HTTP/1.1 $status\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").toByteArray())
+                flush()
+              }
+              headers
+            }
+          }
+        }
+        var stored = "session=account; _t=account"
+        val client = OkHttpClient.Builder()
+          .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+          .addInterceptor(ForumReadRequestInterceptor())
+          .addNetworkInterceptor(ForumReadClearanceInterceptor({ source }, { stored }))
+          .build()
+        val request = Request.Builder().url("http://127.0.0.1:${server.localPort}/t/42.json")
+          .header(FORUM_READ_SOURCE_HEADER, source)
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, "content")
+          .header("X-WZ-Forum-Read-Cookie-Policy", "clearance-only")
+          .header("Cookie", "session=caller-must-not-bypass")
+          .build()
+        try {
+          client.newCall(request).execute().use { assertEquals(403, it.code) }
+          stored += "; cf_clearance=fresh"
+          client.newCall(request).execute().use { assertEquals(200, it.code) }
+          stored = "cf_clearance=rejected; session=account"
+          client.newCall(request).execute().use { assertEquals(403, it.code) }
+          val sent = requests.get(5, TimeUnit.SECONDS)
+          assertEquals(listOf(null, "cf_clearance=fresh", "cf_clearance=rejected"), sent.map { it["cookie"] })
+          assertTrue(sent.all { headers -> headers.keys.none { it.startsWith("x-wz-") } })
+        } finally {
+          server.close()
+          executor.shutdownNow()
+          client.connectionPool.evictAll()
+        }
+      }
+    }
+  }
+
+  @Test
+  fun clearanceReadsDropCookiesAcrossRedirectsAndNeverRestoreThemOnReturn() {
+    ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).use { server ->
+      server.soTimeout = 5000
+      val executor = Executors.newSingleThreadExecutor()
+      val recorded = executor.submit<List<String?>> {
+        (0..2).map { index ->
+          server.accept().use { socket ->
+            val reader = socket.getInputStream().bufferedReader()
+            reader.readLine()
+            var cookie: String? = null
+            while (true) {
+              val line = reader.readLine() ?: break
+              if (line.isEmpty()) break
+              if (line.startsWith("Cookie:", true)) cookie = line.substringAfter(':').trim()
+            }
+            val response = when (index) {
+              0 -> "302 Found\r\nLocation: http://external.test:${server.localPort}/away"
+              1 -> "302 Found\r\nLocation: http://same.test:${server.localPort}/return"
+              else -> "200 OK"
+            }
+            socket.getOutputStream().apply {
+              write("HTTP/1.1 $response\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+              flush()
+            }
+            cookie
+          }
+        }
+      }
+      val reads = mutableListOf<String>()
+      val client = OkHttpClient.Builder()
+        .dns(object : okhttp3.Dns {
+          override fun lookup(hostname: String) = listOf(InetAddress.getByName("127.0.0.1"))
+        })
+        .cookieJar(JavaNetCookieJar(ReadOnlyWebViewCookieHandler(sourceForUri = { "nodeseek" }) {
+          "session=account; cf_clearance=stale"
+        }))
+        .addInterceptor(ForumReadRequestInterceptor())
+        .addNetworkInterceptor(ForumReadClearanceInterceptor(
+          { if (it.host == "same.test") "nodeseek" else null },
+          { url -> reads.add(url); "session=account; cf_clearance=fresh" }
+        ))
+        .build()
+      try {
+        client.newCall(Request.Builder().url("http://same.test:${server.localPort}/start")
+          .header(FORUM_READ_SOURCE_HEADER, "nodeseek")
+          .header(FORUM_READ_CANCEL_CLASS_HEADER, "content")
+          .header(FORUM_READ_COOKIE_POLICY_HEADER, "clearance-only").build()).execute().close()
+        assertEquals(listOf("cf_clearance=fresh", null, null), recorded.get(5, TimeUnit.SECONDS))
+        assertEquals(1, reads.size)
+      } finally {
+        server.close()
+        executor.shutdownNow()
+        client.connectionPool.evictAll()
+      }
+    }
+  }
+
+  @Test
+  fun clearancePolicyRejectsUnsupportedSourcesOriginsAndMethodsWithoutReadingCookies() {
+    val cases = listOf(
+      Triple("linuxdo", "https://nodeseek.com/t/1", "GET"),
+      Triple("linuxdo", "http://linux.do/t/1", "GET"),
+      Triple("linuxdo", "https://evillinux.do/t/1", "GET"),
+      Triple("v2ex", "https://www.v2ex.com/t/1", "GET"),
+      Triple("yaohuo", "https://yaohuo.me/t/1", "GET"),
+      Triple("linuxdo", "https://linux.do/t/1", "POST")
+    )
+    for ((source, url, method) in cases) {
+      var sent: Request? = null
+      val client = OkHttpClient.Builder()
+        .addInterceptor(ForumReadRequestInterceptor())
+        .addInterceptor(ForumReadClearanceInterceptor(cookieReader = { error("Must not read account cookies") }))
+        .addInterceptor { chain ->
+          sent = chain.request()
+          Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+            .body("".toResponseBody()).build()
+        }.build()
+      client.newCall(Request.Builder().url(url)
+        .method(method, if (method == "POST") "".toRequestBody() else null)
+        .header(FORUM_READ_SOURCE_HEADER, source)
+        .header(FORUM_READ_COOKIE_POLICY_HEADER, "clearance-only")
+        .header("Cookie", "session=caller").build()).execute().close()
+      assertNull(sent!!.header("Cookie"))
+      assertNull(sent!!.header(FORUM_READ_COOKIE_POLICY_HEADER))
+    }
+  }
+
+  @Test
   fun staleHttp2ImagesRecoverOnNewConnectionAfterCancelAndReopen() =
     Http2ImageFaultFixture().use { it.assertRecoveryAfterReopen() }
 
@@ -975,6 +1119,7 @@ class NetworkProxyRuntimeTest {
     assertSame(first.dispatcher, second.dispatcher)
     assertSame(first.connectionPool, second.connectionPool)
     assertEquals(1, reapplied.interceptors.count { it is ForumReadRequestInterceptor })
+    assertEquals(1, reapplied.networkInterceptors.count { it is ForumReadClearanceInterceptor })
     assertEquals(1, reapplied.interceptors.count { it is ForumMediaRequestInterceptor })
   }
 

@@ -12,18 +12,19 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSet
     loginWebViewHeader: {
       alignItems: 'center',
       borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
-      gap: 12,
+      gap: 8,
       justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingVertical: 10
+      paddingLeft: 16,
+      paddingRight: 8,
+      paddingVertical: 4,
+      backgroundColor: theme.surface
     },
     loginWebViewTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 16,
-      fontWeight: '700'
+      fontSize: Math.round(15 * settings.fontScale),
+      fontWeight: '600'
     },
     loginWebViewTitleBlock: {
       flex: 1,
@@ -32,13 +33,43 @@ export function createLoginWebViewStyles(theme: ReaderTheme, settings: ReaderSet
     loginWebViewSubtitle: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12
+      fontSize: Math.round(11 * settings.fontScale)
     },
     loginWebViewToolbar: {
+      flexGrow: 0,
+      flexShrink: 0,
+      backgroundColor: theme.surface,
       borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    },
+    toolbarContent: {
       paddingHorizontal: 12,
-      paddingVertical: 8
+      paddingBottom: 4
+    },
+    action: {
+      minHeight: 32,
+      minWidth: 32,
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      borderRadius: 6
+    },
+    actionPrimary: {
+      backgroundColor: theme.primaryStrong
+    },
+    actionIcon: {
+      paddingHorizontal: 0
+    },
+    actionDimmed: {
+      opacity: 0.5
+    },
+    actionText: {
+      fontFamily: appFontFamily,
+      fontSize: Math.round(13 * settings.fontScale),
+      fontWeight: '600'
     },
     loginWebViewBody: {
       flex: 1,

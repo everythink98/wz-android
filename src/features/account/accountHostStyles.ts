@@ -8,8 +8,8 @@ export function createAccountHostStyles(theme: ReaderTheme, settings: ReaderSett
     actions: {
       alignItems: 'center',
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
+      flexWrap: 'nowrap',
+      gap: 4
     },
     flex: {
       flex: 1

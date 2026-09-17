@@ -1,10 +1,59 @@
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Modal, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { X, type LucideIcon } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppButton } from '@/ui/controls/ButtonControls';
 import { useReaderThemeStyles } from '@/ui/theme/ReaderStyleProvider';
 import { createLoginWebViewStyles } from './loginWebViewStyles';
+
+export function LoginWebViewAction({
+  label,
+  displayLabel = label,
+  icon: Icon,
+  primary = false,
+  danger = false,
+  disabled = false,
+  testID,
+  onPress
+}: {
+  label: string;
+  displayLabel?: string;
+  icon: LucideIcon;
+  primary?: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+  testID?: string;
+  onPress: () => void;
+}) {
+  const { styles, theme } = useReaderThemeStyles(createLoginWebViewStyles);
+  const color = primary ? theme.onPrimary : danger ? theme.danger : theme.ink;
+  return (
+    <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={() => {
+        recordUserInteraction();
+        onPress();
+      }}
+      style={[
+        styles.action,
+        primary && styles.actionPrimary,
+        !displayLabel && styles.actionIcon,
+        disabled && styles.actionDimmed
+      ]}
+    >
+      <Icon size={16} strokeWidth={1.8} color={color} accessible={false} />
+      {displayLabel ? (
+        <Text numberOfLines={1} style={[styles.actionText, { color }]}>
+          {displayLabel}
+        </Text>
+      ) : null}
+    </Pressable>
+  );
+}
 
 export function LoginWebViewModal({
   actions,
@@ -42,9 +91,18 @@ export function LoginWebViewModal({
             <Text style={styles.loginWebViewTitle}>{title}</Text>
             <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text>
           </View>
-          <AppButton label="关闭" variant="ghost" onPress={onClose} />
+          <LoginWebViewAction label="关闭" displayLabel="" icon={X} onPress={onClose} />
         </View>
-        {actions ? <View style={styles.loginWebViewToolbar}>{actions}</View> : null}
+        {actions ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.loginWebViewToolbar}
+            contentContainerStyle={styles.toolbarContent}
+          >
+            {actions}
+          </ScrollView>
+        ) : null}
         {error ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{error}</Text>

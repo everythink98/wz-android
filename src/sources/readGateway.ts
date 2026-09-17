@@ -37,6 +37,7 @@ import {
 } from '@/platform/network/request';
 import {
   browserFetchIntentFromInit,
+  FORUM_READ_COOKIE_POLICY_HEADER,
   withBrowserFetchIntent,
   type BrowserFetchIntent
 } from '@/platform/network/browserFetchIntent';
@@ -497,6 +498,14 @@ export function createReadGateway<Dependencies extends ReadGatewayDependencies>(
       const sourcePlanFetcher = (planSource: Source): Fetcher => {
         const plan = planFor(planSource);
         if (!plan || plan.state === 'blocked' || plan.transport === 'none') return localFetcher;
+        if (plan.transport === 'native-clearance-only') {
+          return (input, init) => {
+            const headers = new Headers(init?.headers);
+            headers.delete('Cookie');
+            headers.set(FORUM_READ_COOKIE_POLICY_HEADER, 'clearance-only');
+            return anonymousFetcher(input, { ...init, headers });
+          };
+        }
         return plan.transport === 'native-no-cookie' ? anonymousFetcher : authenticatedFetcher;
       };
       const operationFetcher = source === 'all' ? localFetcher : sourcePlanFetcher(source);

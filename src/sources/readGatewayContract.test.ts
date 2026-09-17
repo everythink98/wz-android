@@ -213,7 +213,7 @@ describe('source gateway read contract', () => {
     ).resolves.toMatchObject({ completeness: 'partial' });
   });
 
-  it('executes pending public Topic reads only through the native no-cookie lane', async () => {
+  it('executes pending public Topic reads with native clearance and no account credentials', async () => {
     const managedFetcher = vi.fn<Fetcher>();
     const anonymousFetcher = vi.fn<Fetcher>(async () => new Response('public'));
     forumMocks.getTopic.mockImplementationOnce(async ({ fetcher, id, source }) => {
@@ -250,6 +250,9 @@ describe('source gateway read contract', () => {
       expect.objectContaining({ credentials: 'omit' })
     );
     expect(managedFetcher).not.toHaveBeenCalled();
+    expect(new Headers(anonymousFetcher.mock.calls[0][1]?.headers).get('X-WZ-Forum-Read-Cookie-Policy')).toBe(
+      'clearance-only'
+    );
   });
 
   it('settles pending Yaohuo local categories but blocks remote reads before transport', async () => {

@@ -25,6 +25,11 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return {
+    X: Icon,
+    ArrowLeft: Icon,
+    KeyRound: Icon,
+    LogOut: Icon,
+    ShieldCheck: Icon,
     CheckCircle: Icon,
     ChevronDown: Icon,
     ChevronRight: Icon,

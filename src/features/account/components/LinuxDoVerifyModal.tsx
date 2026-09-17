@@ -3,8 +3,8 @@ import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { LINUXDO_URL } from '@/domain/forum/sourceUrls';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
-import { AppButton } from '@/ui/controls/ButtonControls';
-import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
+import { ArrowLeft, KeyRound, LogOut, RefreshCw, ShieldCheck } from 'lucide-react-native';
+import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '@/platform/network/loginWebViewScripts';
 import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
@@ -136,11 +136,10 @@ export function LinuxDoVerifyModal({
       onClose={() => onShowLinuxDoPanelChange(false)}
       actions={
         <View style={styles.actions}>
-          {!recovery && credentialSaved ? (
-            <AppButton label="填入已保存登录信息" disabled={credentialFillPending} onPress={onRequestCredentialFill} />
-          ) : null}
           {web ? (
-            <AppButton
+            <LoginWebViewAction
+              icon={ShieldCheck}
+              primary
               label={checking ? '检测中' : '检测状态'}
               disabled={checking}
               onPress={() => {
@@ -148,11 +147,32 @@ export function LinuxDoVerifyModal({
               }}
             />
           ) : null}
-          {!recovery ? <AppButton label="清除登录" variant="danger" onPress={onClearLinuxDoCookie} /> : null}
-          {web ? <AppButton label="刷新页面" variant="ghost" onPress={onResetLinuxDoWebView} /> : null}
-          {recovery?.phase === 'result' && canRetry ? <AppButton label="重新验证" onPress={onRetryRecovery} /> : null}
+          {!recovery && credentialSaved ? (
+            <LoginWebViewAction
+              icon={KeyRound}
+              label="填入已保存登录信息"
+              displayLabel="填入"
+              disabled={credentialFillPending}
+              onPress={onRequestCredentialFill}
+            />
+          ) : null}
+          {web ? (
+            <LoginWebViewAction icon={RefreshCw} label="刷新页面" displayLabel="" onPress={onResetLinuxDoWebView} />
+          ) : null}
+          {!recovery ? (
+            <LoginWebViewAction
+              icon={LogOut}
+              label="清除登录"
+
+              danger
+              onPress={onClearLinuxDoCookie}
+            />
+          ) : null}
+          {recovery?.phase === 'result' && canRetry ? (
+            <LoginWebViewAction icon={ShieldCheck} primary label="重新验证" onPress={onRetryRecovery} />
+          ) : null}
           {recovery ? (
-            <AppButton label="返回原页面" variant="ghost" onPress={() => onShowLinuxDoPanelChange(false)} />
+            <LoginWebViewAction icon={ArrowLeft} label="返回原页面" onPress={() => onShowLinuxDoPanelChange(false)} />
           ) : null}
         </View>
       }

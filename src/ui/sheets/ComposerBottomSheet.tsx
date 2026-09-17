@@ -1,14 +1,51 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Keyboard, View, type StyleProp, type ViewStyle, useWindowDimensions } from 'react-native';
-import { useAnimatedKeyboard, useAnimatedReaction } from 'react-native-reanimated';
+import {
+  BackHandler,
+  Keyboard,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type ViewStyle,
+  useWindowDimensions
+} from 'react-native';
+import Animated, {
+  Extrapolation,
+  interpolate,
+  useAnimatedStyle,
+  useAnimatedKeyboard,
+  useAnimatedReaction
+} from 'react-native-reanimated';
 import BottomSheet, {
-  BottomSheetBackdrop,
   BottomSheetView,
   type BottomSheetBackdropProps,
   useBottomSheetInternal
 } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ComposerPresentation } from '@/domain/forum/structuredComposer';
+
+function ComposerBackdrop({
+  animatedIndex,
+  style,
+  visible,
+  dark
+}: BottomSheetBackdropProps & {
+  visible: boolean;
+  dark: boolean;
+}) {
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(animatedIndex.value, [-1, 0], [0, dark ? 0.56 : 0.38], Extrapolation.CLAMP)
+  }));
+  return (
+    <Animated.View
+      testID="composer-bottom-sheet-backdrop"
+      pointerEvents={visible ? 'auto' : 'none'}
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={[StyleSheet.absoluteFill, style, { backgroundColor: 'black' }, animatedStyle]}
+    />
+  );
+}
 
 function ComposerKeyboardViewport() {
   const { animatedLayoutState } = useBottomSheetInternal();
@@ -79,16 +116,8 @@ export function ComposerBottomSheet({
     if (visible) setKeyboardActive(true);
   }, [visible]);
   const renderBackdrop = useCallback(
-    (props: BottomSheetBackdropProps) => (
-      <BottomSheetBackdrop
-        {...props}
-        appearsOnIndex={0}
-        disappearsOnIndex={-1}
-        opacity={dark ? 0.56 : 0.38}
-        pressBehavior="none"
-      />
-    ),
-    [dark]
+    (props: BottomSheetBackdropProps) => <ComposerBackdrop {...props} visible={visible} dark={dark} />,
+    [dark, visible]
   );
   const close = useCallback(() => {
     setKeyboardActive(false);

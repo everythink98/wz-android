@@ -73,7 +73,10 @@ export function useAccountController({
   linuxDoIdentityPending?: boolean;
   resetLinuxDoLevelState: () => void;
   resetLinuxDoWebView: () => void;
-  reconcileAccountStatus: (source: AccountSource) => Promise<AccountReconcileResult>;
+  reconcileAccountStatus: (
+    source: AccountSource,
+    options?: { publishAnonymous?: boolean }
+  ) => Promise<AccountReconcileResult>;
   setChecking: Dispatch<SetStateAction<boolean>>;
   screen: Screen;
   showLinuxDoVerification: (
@@ -403,12 +406,14 @@ export function useAccountController({
   );
 
   const checkAccount = useCallback(
-    async (source: AccountSource) => {
+    async (source: AccountSource, allowAnonymous = false) => {
       const trace = currentLoginTrace(source, 'manual');
       const requestId = ++checkingRequestIdRef.current;
       setChecking(true);
       try {
-        const result = await reconcileAccountStatus(source);
+        const result = await (allowAnonymous
+          ? reconcileAccountStatus(source, { publishAnonymous: true })
+          : reconcileAccountStatus(source));
         if (requestId !== checkingRequestIdRef.current || result.status === 'stale') {
           finishLoginTrace(source, trace, 'stale', { reason: 'stale' });
           return { status: 'stale' } as const;
@@ -419,8 +424,13 @@ export function useAccountController({
           return result;
         }
         if (result.status === 'anonymous') {
-          notify(`${source === 'nodeseek' ? 'NodeSeek' : '妖火'}当前未登录。`);
-          finishLoginTrace(source, trace, 'blocked', { reason: 'login_required' });
+          if (!allowAnonymous) notify(`${source === 'nodeseek' ? 'NodeSeek' : '妖火'}当前未登录。`);
+          finishLoginTrace(
+            source,
+            trace,
+            allowAnonymous ? 'success' : 'blocked',
+            allowAnonymous ? {} : { reason: 'login_required' }
+          );
           return result;
         }
         notify(`已确认${source === 'nodeseek' ? ' NodeSeek' : '妖火'}当前账号。`);
@@ -452,7 +462,10 @@ export function useAccountController({
     const result = await checkAccount('nodeseek');
     return result.status === 'same' || result.status === 'changed';
   }, [checkAccount]);
-  const checkNodeSeekAccount = useCallback(() => checkAccount('nodeseek'), [checkAccount]);
+  const checkNodeSeekAccount = useCallback(
+    (allowAnonymous = false) => checkAccount('nodeseek', allowAnonymous),
+    [checkAccount]
+  );
   const checkYaohuoCookie = useCallback(async () => {
     const result = await checkAccount('yaohuo');
     return result.status === 'same' || result.status === 'changed';

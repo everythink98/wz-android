@@ -12,6 +12,7 @@ const BROWSER_FETCH_INTENT = Symbol.for('wz.browserFetchIntent');
 
 export const FORUM_READ_SOURCE_HEADER = 'X-WZ-Forum-Read-Source';
 export const FORUM_READ_CANCEL_CLASS_HEADER = 'X-WZ-Forum-Read-Cancel-Class';
+export const FORUM_READ_COOKIE_POLICY_HEADER = 'X-WZ-Forum-Read-Cookie-Policy';
 
 export type ForumReadCancelClass = 'content' | 'health' | 'retained';
 

@@ -5,8 +5,8 @@ import { YAOHUO_URL } from '@/domain/forum/sourceUrls';
 import { LOGIN_FORM_ADAPTERS } from '@/domain/session/loginFormAdapters';
 import type { LoginNavigationRequest } from '@/domain/session/loginNavigation';
 import type { SiteSessionViewModel } from '@/domain/session/siteSessionState';
-import { AppButton } from '@/ui/controls/ButtonControls';
-import { LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
+import { KeyRound, LogOut, RefreshCw, ShieldCheck } from 'lucide-react-native';
+import { LoginWebViewAction, LoginWebViewModal } from '@/ui/navigation/LoginWebViewModal';
 import type { AccountHostStyles } from '../accountHostStyles';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
@@ -106,12 +106,24 @@ export function YaohuoLoginHost({
       onClose={onClose}
       actions={
         <View style={styles.actions}>
+          <LoginWebViewAction
+            icon={ShieldCheck}
+            primary
+            label={checking ? '检测中' : '检测登录'}
+            disabled={checking}
+            onPress={onCheck}
+          />
           {credentialSaved ? (
-            <AppButton label="填入已保存登录信息" disabled={credentialFillPending} onPress={onRequestCredentialFill} />
+            <LoginWebViewAction
+              icon={KeyRound}
+              label="填入已保存登录信息"
+              displayLabel="填入"
+              disabled={credentialFillPending}
+              onPress={onRequestCredentialFill}
+            />
           ) : null}
-          <AppButton label={checking ? '检测中' : '检测登录'} disabled={checking} onPress={onCheck} />
-          <AppButton label="清除登录" variant="danger" onPress={onClear} />
-          <AppButton label="刷新页面" variant="ghost" onPress={refresh} />
+          <LoginWebViewAction icon={RefreshCw} label="刷新页面" displayLabel="" onPress={refresh} />
+          <LoginWebViewAction icon={LogOut} label="清除登录" danger onPress={onClear} />
         </View>
       }
     >

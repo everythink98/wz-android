@@ -20,7 +20,7 @@ export type ForumReadPlan =
   | {
       state: 'ready';
       lane: 'local' | 'public' | 'authenticated';
-      transport: 'none' | 'native-no-cookie' | 'managed-session';
+      transport: 'none' | 'native-no-cookie' | 'native-clearance-only' | 'managed-session';
       cacheScope: string;
     }
   | {
@@ -60,7 +60,10 @@ function publicTransport(
   source: Source,
   operation: ForumReadOperation
 ): Extract<ForumReadPlan, { state: 'ready' }>['transport'] {
-  return operation === 'search' && (source === 'linuxdo' || source === 'nodeseek') ? 'none' : 'native-no-cookie';
+  if (source === 'linuxdo' || source === 'nodeseek') {
+    return operation === 'search' ? 'none' : 'native-clearance-only';
+  }
+  return 'native-no-cookie';
 }
 
 export function resolveForumReadPlan(

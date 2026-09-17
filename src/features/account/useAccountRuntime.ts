@@ -392,8 +392,8 @@ export function useAccountRuntime({
     [reconcileAccountStatusBase]
   );
   const reconcileAuthSurfaceAccountStatus = useCallback(
-    (source: SessionSite, options: { surfaceGeneration?: number } = {}) =>
-      reconcileAccountStatus(source, { ...options, publishAnonymous: false }),
+    (source: SessionSite, options: { surfaceGeneration?: number; publishAnonymous?: boolean } = {}) =>
+      reconcileAccountStatus(source, { publishAnonymous: false, ...options }),
     [reconcileAccountStatus]
   );
   useCommitRefValue(beginAccountIdentityCheckRef, status.beginAccountIdentityCheck);
@@ -689,15 +689,20 @@ export function useAccountRuntime({
   );
   const checkNodeSeekLoginAndRetry = useCallback(async () => {
     const checkRequest = nodeSeekLoginPanelRequestRef.current;
-    const accountResult = await account.checkNodeSeekAccount();
+    const recovery = pendingNodeSeekRecoveryRef.current;
+    const identityBeforeCheck = readSessionRuntimeSnapshot('nodeseek').identityKey;
+    const accountResult = await account.checkNodeSeekAccount(Boolean(recovery));
     if (nodeSeekLoginPanelRequestRef.current !== checkRequest) return false;
-    if (accountResult.status === 'changed') {
+    if (pendingNodeSeekRecoveryRef.current !== recovery) return false;
+    if (
+      accountResult.status === 'changed' ||
+      (recovery && readSessionRuntimeSnapshot('nodeseek').identityKey !== identityBeforeCheck)
+    ) {
       changeNodeSeekLoginPanel(false, 'authoritative-recovery');
       return false;
     }
-    if (accountResult.status !== 'same') return false;
+    if (accountResult.status !== 'same' && !(recovery && accountResult.status === 'anonymous')) return false;
 
-    const recovery = pendingNodeSeekRecoveryRef.current;
     pendingNodeSeekRecoveryRef.current = null;
     changeNodeSeekLoginPanel(false, 'authoritative-recovery');
     if (!recovery) return true;
@@ -710,7 +715,7 @@ export function useAccountRuntime({
       outcome = await recovery.resume();
     } catch (error) {
       if (nodeSeekLoginPanelRequestRef.current === recoveryRequest) {
-        notify(`NodeSeek 身份已确认，但原页面恢复失败：${errorMessage(error)}`);
+        notify(`NodeSeek 原页面恢复失败：${errorMessage(error)}`);
       }
     } finally {
       if (nodeSeekLoginPanelRequestRef.current === recoveryRequest) setChecking(false);
@@ -730,10 +735,10 @@ export function useAccountRuntime({
       return false;
     }
     if (outcome === 'failed') {
-      notify('NodeSeek 身份已确认，但原页面恢复失败，请返回原页面重试。');
+      notify('NodeSeek 原页面恢复失败，请返回原页面重试。');
     }
     return outcome === 'completed';
-  }, [account, changeNodeSeekLoginPanel, notify, requestNodeSeekVerification, session]);
+  }, [account, changeNodeSeekLoginPanel, notify, readSessionRuntimeSnapshot, requestNodeSeekVerification, session]);
   const closePanels = useCallback(() => {
     changeNodeSeekLoginPanel(false, 'navigation-away');
     closeNodeImageAuthPanel('navigation-away');
