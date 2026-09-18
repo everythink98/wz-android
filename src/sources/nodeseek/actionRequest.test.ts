@@ -10,10 +10,37 @@ import {
   buildNodeSeekStardustPrepareRequest,
   buildNodeSeekStardustSendRequest,
   buildNodeSeekVoteRequest,
-  nodeSeekActionErrorMessage
+  nodeSeekActionErrorMessage,
+  nodeSeekCreatedReplyTarget
 } from './actionRequest';
 
 describe('NodeSeek action request builders', () => {
+  it.each(['/post-856117-4', 'https://www.nodeseek.com/post-856117-4'])(
+    'uses the server redirect to identify a created reply: %s',
+    (redirect) => {
+      expect(nodeSeekCreatedReplyTarget({ success: true, redirect, redirectHash: '#32' }, '856117')).toEqual({
+        floor: 32,
+        pageHint: 4
+      });
+    }
+  );
+
+  it.each([
+    null,
+    { success: true },
+    { success: false, redirect: '/post-856117-4', redirectHash: '#32' },
+    { success: true, redirect: '/post-999-4', redirectHash: '#32' },
+    { success: true, redirect: 'https://example.com/post-856117-4', redirectHash: '#32' },
+    { success: true, redirect: '/post-856117-4', redirectHash: '#0' },
+    { success: true, redirect: '/post-856117-4', redirectHash: '#9007199254740992' },
+    { success: true, redirect: '/post-856117-4', redirectHash: '32' },
+    { success: true, redirect: '/post-856117-4#19', redirectHash: '#32' },
+    { success: true, redirect: '/post-856117-0', redirectHash: '#32' },
+    { success: true, redirect: '/post-856117-2', redirectHash: '#32' }
+  ])('does not guess a created reply from an invalid redirect: %j', (response) => {
+    expect(nodeSeekCreatedReplyTarget(response, '856117')).toBeUndefined();
+  });
+
   it('builds a reply request with a csrf token and the expected payload', () => {
     const request = buildNodeSeekReplyRequest({
       postId: '723704',

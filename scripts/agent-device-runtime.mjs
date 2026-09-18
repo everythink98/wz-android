@@ -70,7 +70,10 @@ export function runAgentDevice(
     throw new Error(`agent-device 启动失败：${result.error.message}`);
   }
   if (result.status !== 0) {
-    throw new Error(`agent-device ${args.join(' ')} 失败（退出码 ${result.status ?? 'unknown'}）`);
+    const error = new Error(`agent-device ${args.join(' ')} 失败（退出码 ${result.status ?? 'unknown'}）`);
+    error.stdout = String(result.stdout || '');
+    error.stderr = String(result.stderr || '');
+    throw error;
   }
   return capturedAgentDeviceOutput(result);
 }

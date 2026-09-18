@@ -24,7 +24,10 @@ function renderHook<Result>(callback: () => Result) {
 
 const defaultEnabledSourcesKey = canonicalEnabledSourcesKey(createEmptyReaderData().settings.contentSources);
 
-type FeedRuntimeOptions = Omit<Parameters<typeof useFeedController>[0], 'catalogCategories'> & {
+type FeedRuntimeOptions = Omit<
+  Parameters<typeof useFeedController>[0],
+  'catalogCategories' | 'enabledSources' | 'enabledSourcesKey'
+> & {
   anonymousSources?: readonly SessionSource[];
   catalogActive?: boolean;
   identityBarriers?: readonly SessionSource[];
@@ -93,7 +96,13 @@ function useFeedRuntime({ catalogActive, ...options }: FeedRuntimeOptions) {
     readGateway,
     sessionEpochs: options.sessionEpochs
   });
-  return useFeedController({ ...options, readGateway, catalogCategories: catalog.categories });
+  return useFeedController({
+    ...options,
+    enabledSources: sourceProjection.enabledSources,
+    enabledSourcesKey: canonicalEnabledSourcesKey(options.readerData.settings.contentSources),
+    readGateway,
+    catalogCategories: catalog.categories
+  });
 }
 
 function readerDataWithEnabledSources(enabledSources: readonly Source[]) {

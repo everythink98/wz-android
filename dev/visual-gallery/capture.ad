@@ -1,0 +1,18 @@
+context platform=android
+context timeout=90000
+context retries=0
+
+open com.wz.reader
+wait id="visual-gallery-search" 30000
+fill id="visual-gallery-search" "${SCENE}"
+press label="${THEME_LABEL}"
+press label="${FONT_LABEL}"
+press label="标准"
+press label="全屏预览"
+wait id="visual-frame-${SCENE}-${THEME}-${FONT}-full" 10000
+wait id="visual-gallery-ready" 10000
+# Layout, fonts and deterministic content settle before the CLI stabilized capture.
+wait 1000
+screenshot "${IMAGE}"
+back
+close

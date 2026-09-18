@@ -29,6 +29,7 @@ export type MoreRouteRuntimeValue = {
     | 'upsertProxyProfile'
   >;
   reader: {
+    status: import('@/domain/reader/readerRecordState').ReaderStatus;
     commit: (command: ReaderCommand) => void;
     data: ReaderState;
     dataRef: { current: ReaderState };

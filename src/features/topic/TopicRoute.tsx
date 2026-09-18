@@ -13,7 +13,6 @@ import { useForumMediaSessionIdentity } from '@/platform/media/mediaSessionEpoch
 import { OriginalImageUpgradeBoundary } from '@/platform/media/originalImageLoading';
 
 import { topicKey } from '@/domain/reader/readerData';
-import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { TopicLocationTarget, Topic, UserReference } from '@/domain/forum/models';
 
 import { ImagePreviewModal } from '@/ui/media/ImagePreviewModal';
@@ -41,9 +40,7 @@ type TopicRouteProps = NativeStackScreenProps<RootStackParamList, 'Topic'>;
 export function TopicRoute({ navigation, route }: TopicRouteProps) {
   const runtime = useTopicRouteRuntime();
   const topic = route.params.topic;
-  const sourceEnabled = projectContentSourcePreferences(
-    runtime.reader.data.settings.contentSources
-  ).enabledSources.includes(topic.source);
+  const sourceEnabled = runtime.enabledSources.includes(topic.source);
   if (!sourceEnabled) {
     return (
       <ContentSourceDisabledState

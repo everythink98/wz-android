@@ -299,6 +299,65 @@ describe('linux.do visible verification coordinator', () => {
     expect(showLinuxDoPanelRef.current).toBe(false);
   });
 
+  it('waits for page removal and cookie handoff before starting the manual identity request', async () => {
+    const unmount = Promise.withResolvers<void>();
+    const handoff = Promise.withResolvers<void>();
+    const { controller, reconcileAccountStatus, setMountLinuxDoWebView } = createController({
+      awaitLinuxDoWebViewUnmount: () => unmount.promise,
+      awaitLinuxDoCookieHandoff: () => handoff.promise
+    });
+    await controller.showLinuxDoVerification();
+    const check = controller.checkLinuxDoCookie();
+    expect(setMountLinuxDoWebView).toHaveBeenLastCalledWith(false);
+    expect(reconcileAccountStatus).not.toHaveBeenCalled();
+    unmount.resolve();
+    await Promise.resolve();
+    expect(reconcileAccountStatus).not.toHaveBeenCalled();
+    handoff.resolve();
+    await check;
+    expect(reconcileAccountStatus).toHaveBeenCalledOnce();
+  });
+
+  it.each(['close', 'refresh', 'background', 'disabled', 'unmount'] as const)(
+    'does not start an obsolete manual handoff after %s interrupts page removal',
+    async (exit) => {
+      const unmount = Promise.withResolvers<void>();
+      let enabled = true;
+      const handoff = vi.fn(async () => undefined);
+      const { controller, reconcileAccountStatus } = createController({
+        awaitLinuxDoWebViewUnmount: () => unmount.promise,
+        awaitLinuxDoCookieHandoff: handoff,
+        canOpenLinuxDoPanel: () => enabled
+      });
+      await controller.showLinuxDoVerification();
+      const check = controller.checkLinuxDoCookie();
+      if (exit === 'close') controller.closeLinuxDoPanel();
+      if (exit === 'refresh') controller.resetLinuxDoWebView();
+      if (exit === 'background') controller.cancelLinuxDoCheckForInactiveApp();
+      if (exit === 'disabled') enabled = false;
+      if (exit === 'unmount') effectCleanups.splice(0).forEach((cleanup) => cleanup());
+      unmount.resolve();
+      await check;
+      expect(handoff).not.toHaveBeenCalled();
+      expect(reconcileAccountStatus).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps the panel available to retry a failed handoff without probing identity', async () => {
+    const handoff = vi.fn().mockRejectedValueOnce(new Error('disk unavailable')).mockResolvedValue(undefined);
+    const { controller, reconcileAccountStatus, showLinuxDoPanelRef, setLinuxDoWebViewError } = createController({
+      awaitLinuxDoCookieHandoff: handoff
+    });
+    await controller.showLinuxDoVerification();
+    await controller.checkLinuxDoCookie();
+    expect(reconcileAccountStatus).not.toHaveBeenCalled();
+    expect(showLinuxDoPanelRef.current).toBe(true);
+    expect(setLinuxDoWebViewError).toHaveBeenCalledWith(expect.stringContaining('disk unavailable'));
+    await controller.checkLinuxDoCookie();
+    expect(reconcileAccountStatus).toHaveBeenCalledOnce();
+    expect(showLinuxDoPanelRef.current).toBe(false);
+  });
+
   it('reports confirmed anonymous without clearing cookies or synthesizing login expiry', async () => {
     const { controller, setLinuxDoWebViewError, showLinuxDoPanelRef, updateLinuxDoSession } = createController({
       reconcileAccountStatus: async () => ({
@@ -310,7 +369,7 @@ describe('linux.do visible verification coordinator', () => {
 
     await controller.checkLinuxDoCookie();
 
-    expect(setLinuxDoWebViewError).toHaveBeenCalledWith('linux.do 当前为未登录状态，请登录后再检测。');
+    expect(setLinuxDoWebViewError).toHaveBeenCalledWith('linux.do 当前为未登录状态，请刷新页面登录后再检测。');
     expect(updateLinuxDoSession).not.toHaveBeenCalledWith(
       expect.objectContaining({
         type: expect.stringMatching(/^(?:cleared|login-expired|session-updated)$/)
@@ -487,8 +546,8 @@ describe('linux.do visible verification coordinator', () => {
       reconcileAccountStatus: () => pending
     });
     await controller.showLinuxDoVerification();
-    const session = linuxDoWebViewSessionRef.current;
     const check = controller.checkLinuxDoCookie();
+    const session = linuxDoWebViewSessionRef.current;
     controller.cancelLinuxDoCheckForInactiveApp();
     complete({ status: 'same', session: loggedInSession });
     await check;

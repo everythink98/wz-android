@@ -31,6 +31,16 @@ import {
 import { runNotificationBackgroundWorker } from '@/platform/notifications/notificationWorker';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
+import { useReaderRuntime } from '@/app/useReaderRuntime';
+import { createEmptyReaderState, type ReaderState } from '@/domain/reader/readerRecordState';
+import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
+
+const mockLoadReader = jest.fn<Promise<ReaderState>, []>();
+const mockImportReader = jest.fn<Promise<ReaderState>, []>();
+jest.mock('@/platform/storage/readerDataStore', () => ({
+  loadReaderState: () => mockLoadReader(),
+  importReaderDataBackup: () => mockImportReader()
+}));
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
@@ -529,6 +539,60 @@ describe('notification runtime', () => {
     await waitFor(() => expect(hook.result.current.ready).toBe(true));
     await waitFor(() => expect(fetcher).toHaveBeenCalled());
     expect(Notifications.addNotificationResponseReceivedListener).toHaveBeenCalled();
+    await settleStartedRuntimeTasks();
+  });
+
+  it('preserves notification intent and delivery state through Reader recovery and failed import', async () => {
+    mockLoadReader.mockRejectedValueOnce(new Error('disk unavailable'));
+    mockImportReader.mockRejectedValueOnce(new Error('bad backup'));
+    const stored = defaultNotificationState();
+    stored.globalEnabled = true;
+    stored.sources.nodeseek.identityKey = 'nodeseek:42';
+    stored.sources.nodeseek.intentEnabled = true;
+    stored.sources.nodeseek.deliveredIds = ['previous-delivery'];
+    const persisted = JSON.stringify(stored);
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(persisted);
+    const fetcher = jest.fn(async () => new Response('{"atMe":0,"reply":0,"message":0}'));
+    const notify = jest.fn();
+    const options = runtimeOptions(
+      jest.fn(() => true),
+      nodeSeekSessions('confirmed')
+    );
+    const hook = await renderHook(
+      () => {
+        const reader = useReaderRuntime({ notify });
+        const trusted = reader.readerStatus === 'ready';
+        const projection = projectContentSourcePreferences(reader.readerData.settings.contentSources, trusted);
+        const notifications = useNotificationsRuntime({
+          ...options,
+          contentSourcesReady: trusted,
+          enabledNotificationSources: projection.notificationSources,
+          fetcher
+        });
+        return { reader, notifications };
+      },
+      { wrapper: QueryTestWrapper }
+    );
+    await waitFor(() => expect(hook.result.current.reader.readerStatus).toBe('recovery'));
+    await act(async () => {
+      await expect(hook.result.current.reader.importBackup('bad')).rejects.toThrow('bad backup');
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(clearNotificationSourceForContentDisable).not.toHaveBeenCalled();
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+    expect(hook.result.current.notifications.ready).toBe(false);
+    const restored = createEmptyReaderState();
+    restored.settings.contentSources = restored.settings.contentSources.map((entry) => ({
+      ...entry,
+      enabled: entry.source === 'nodeseek'
+    }));
+    mockImportReader.mockResolvedValueOnce(restored);
+    await act(async () => {
+      await hook.result.current.reader.importBackup('restored');
+    });
+    await waitFor(() => expect(hook.result.current.notifications.ready).toBe(true));
+    expect(hook.result.current.notifications.state.globalEnabled).toBe(true);
+    expect(hook.result.current.notifications.state.sources.nodeseek.intentEnabled).toBe(true);
     await settleStartedRuntimeTasks();
   });
 

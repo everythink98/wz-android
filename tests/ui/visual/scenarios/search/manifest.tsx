@@ -23,6 +23,7 @@ function topic(source: Source, index: number): Topic {
     author: `搜索作者 ${index}`,
     category: source === 'v2ex' ? '问与答' : '开发交流',
     createdAt: FIXED_TIME,
+    displayTimeText: '2026-08-29',
     excerpt: '固定搜索摘要用于观察关键词高亮、分站标题与结果卡片层级。',
     id: `search-${source}-${index}`,
     replyCount: 3 + index,

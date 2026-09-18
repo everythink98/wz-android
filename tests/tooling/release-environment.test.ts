@@ -185,7 +185,11 @@ describe('release environment boundary', () => {
   });
 
   it('requires Node 22 and a clean checkout before release work', () => {
-    expect(() => assertReleaseNode22('22.18.0')).not.toThrow();
+    expect(() => assertReleaseNode22('22.22.1')).toThrow('Node 22');
+    expect(() => assertReleaseNode22('22.22.2')).not.toThrow();
+    expect(() => assertReleaseNode22('22.23.2')).not.toThrow();
+    expect(() => assertReleaseNode22('21.99.99')).toThrow('Node 22');
+    expect(() => assertReleaseNode22('23.0.0')).toThrow('Node 22');
     expect(() => assertReleaseNode22('25.2.1')).toThrow('Node 22');
     expect(() => assertCleanReleaseCheckout('')).not.toThrow();
     expect(() => assertCleanReleaseCheckout(' M scripts/release-android.mjs')).toThrow('未提交改动');

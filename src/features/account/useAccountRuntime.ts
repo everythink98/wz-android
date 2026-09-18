@@ -1,4 +1,5 @@
 import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { CancelledError, isCancelledError } from '@tanstack/react-query';
 import type { WebView } from 'react-native-webview';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '@/platform/android/linuxDoUserAgent';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '@/platform/android/nodeSeekUserAgent';
@@ -134,12 +135,21 @@ export function useAccountRuntime({
   });
   const mountedLinuxDoWebViewRef = useRef(false);
   const linuxDoUnmountWaitersRef = useRef<(() => void)[]>([]);
+  const linuxDoCookieHandoffRef = useRef<Promise<void> | null>(null);
+  const awaitLinuxDoWebViewUnmount = useCallback(
+    () =>
+      mountedLinuxDoWebViewRef.current
+        ? new Promise<void>((resolve) => linuxDoUnmountWaitersRef.current.push(resolve))
+        : Promise.resolve(),
+    []
+  );
   useLayoutEffect(() => {
     mountedLinuxDoWebViewRef.current = mountLinuxDoWebView;
     if (!mountLinuxDoWebView) linuxDoUnmountWaitersRef.current.splice(0).forEach((resolve) => resolve());
   }, [mountLinuxDoWebView]);
   useEffect(
     () => () => {
+      linuxDoCookieHandoffRef.current = null;
       linuxDoUnmountWaitersRef.current.splice(0).forEach((resolve) => resolve());
     },
     []
@@ -222,7 +232,24 @@ export function useAccountRuntime({
     },
     [readSessionRuntimeSnapshot]
   );
-  const linuxDoCookieHandoffRef = useRef<Promise<void>>(Promise.resolve());
+  const handoffLinuxDoCookies = useCallback((): Promise<void> => {
+    if (linuxDoCookieHandoffRef.current) return linuxDoCookieHandoffRef.current;
+    const generation = authSurfaceRegistryRef.current.generation;
+    const handoff = awaitLinuxDoWebViewUnmount().then(() => {
+      // A refreshed/replaced WebView owns a new handoff; the old one must not unlock it.
+      if (linuxDoCookieHandoffRef.current !== handoff) throw new CancelledError();
+      return setLinuxDoCookieResponseBarrier(
+        !enabledSourcesRef.current.includes('linuxdo'),
+        'surface-close',
+        generation
+      );
+    });
+    linuxDoCookieHandoffRef.current = handoff;
+    void handoff.catch(() => {
+      if (linuxDoCookieHandoffRef.current === handoff) linuxDoCookieHandoffRef.current = null;
+    });
+    return handoff;
+  }, [awaitLinuxDoWebViewUnmount]);
   const verificationAppActiveRef = useRef(appActive);
   useCommitRefValue(verificationAppActiveRef, appActive);
   const readingVerificationRef = useRef<(recovery: LinuxDoReadingRecovery) => void>(() => undefined);
@@ -232,26 +259,28 @@ export function useAccountRuntime({
       const ticket = finishAuthSurface(authSurfaceRegistryRef.current, surface, reason, true);
       if (!ticket && !wasVisible) return null;
       refreshAuthSurfaces((revision) => revision + 1);
-      const handoff =
-        surface === 'linuxdo-login'
-          ? setLinuxDoCookieResponseBarrier(
-              !enabledSourcesRef.current.includes('linuxdo'),
-              'surface-close',
-              ticket?.generation || authSurfaceRegistryRef.current.generation
-            )
-          : Promise.resolve();
-      if (surface === 'linuxdo-login') linuxDoCookieHandoffRef.current = handoff;
       if (!ticket?.shouldReconcile) {
-        void handoff.catch(() => notify('登录会话交接未完成，请刷新账号页面重试。'));
+        const handoff = surface === 'linuxdo-login' ? handoffLinuxDoCookies() : Promise.resolve();
+        void handoff.catch((error) => {
+          if (!isCancelledError(error)) notify('登录会话交接未完成，请刷新账号页面重试。');
+        });
         return null;
       }
-      const reconciliation = handoff
-        .then(() => reconcileAccountStatusRef.current(ticket.source, { surfaceGeneration: ticket.generation }))
-        .catch((error): AccountReconcileResult => ({
-          status: 'unknown',
-          error: errorMessage(error),
-          errorInfo: sourceErrorFromUnknown(ticket.source, error)
-        }));
+      const reconciliation = Promise.resolve()
+        .then(() =>
+          authSurfaceRegistryRef.current.active[surface]?.generation === ticket.generation
+            ? reconcileAccountStatusRef.current(ticket.source, { surfaceGeneration: ticket.generation })
+            : ({ status: 'stale' } as const)
+        )
+        .catch((error): AccountReconcileResult =>
+          isCancelledError(error)
+            ? { status: 'stale' }
+            : {
+                status: 'unknown',
+                error: errorMessage(error),
+                errorInfo: sourceErrorFromUnknown(ticket.source, error)
+              }
+        );
       void reconciliation.then((result) => {
         if (result.status === 'changed') {
           const username =
@@ -265,7 +294,7 @@ export function useAccountRuntime({
       });
       return reconciliation;
     },
-    [notify]
+    [handoffLinuxDoCookies, notify]
   );
   const handleSiteSessionEvent = useCallback((event: ScopedSiteSessionEvent) => {
     applyAccountSessionEventRef.current(event);
@@ -355,9 +384,11 @@ export function useAccountRuntime({
       commitAccountStatusChange(source);
       if (source === 'linuxdo') {
         cancelLinuxDoBrowserHandoff();
+        const nativeOwnsCookies = linuxDoCookieHandoffRef.current !== null;
+        linuxDoCookieHandoffRef.current = null;
         void setLinuxDoCookieResponseBarrier(
           !enabledSourcesRef.current.includes('linuxdo') ||
-            isAuthSurfaceVisible(authSurfaceRegistryRef.current, 'linuxdo-login'),
+            (isAuthSurfaceVisible(authSurfaceRegistryRef.current, 'linuxdo-login') && !nativeOwnsCookies),
           'identity-change'
         ).catch(() => notify('登录会话交接未完成，请刷新账号页面重试。'));
       }
@@ -375,21 +406,49 @@ export function useAccountRuntime({
   });
   const reconcileAccountStatusBase = status.reconcileAccountStatus;
   const reconcileAccountStatus = useCallback(
-    async (...args: Parameters<typeof reconcileAccountStatusBase>) => {
-      const result = await reconcileAccountStatusBase(...args);
+    async (...args: Parameters<typeof reconcileAccountStatusBase>): Promise<AccountReconcileResult> => {
+      const source = args[0];
+      const tickets = Object.values(authSurfaceRegistryRef.current.active).filter(
+        (ticket) => ticket?.source === source && ticket.phase === 'reconciling'
+      );
+      const needsHandoff = source === 'linuxdo' && tickets.length > 0;
+      const isCurrent = () =>
+        enabledSourcesRef.current.includes(source) &&
+        tickets.every(
+          (ticket) => authSurfaceRegistryRef.current.active[ticket.surface]?.generation === ticket.generation
+        );
+      let result: AccountReconcileResult;
+      try {
+        if (!isCurrent()) return { status: 'stale' };
+        result = await reconcileAccountStatusBase(source, {
+          ...args[1],
+          ...(needsHandoff
+            ? {
+                beforeProbe: async () => {
+                  await handoffLinuxDoCookies();
+                  if (!isCurrent()) throw new CancelledError();
+                }
+              }
+            : {})
+        });
+        if (needsHandoff && (result.status === 'same' || result.status === 'changed' || result.status === 'anonymous'))
+          await handoffLinuxDoCookies();
+        if (!isCurrent()) return { status: 'stale' };
+      } catch (error) {
+        return isCancelledError(error) || !isCurrent()
+          ? { status: 'stale' }
+          : { status: 'unknown', error: errorMessage(error), errorInfo: sourceErrorFromUnknown(source, error) };
+      }
       if (result.status === 'same' || result.status === 'changed' || result.status === 'anonymous') {
-        const source = args[0];
         let released = false;
-        for (const [surface, ticket] of Object.entries(authSurfaceRegistryRef.current.active)) {
-          if (ticket?.source !== source || ticket.phase !== 'reconciling') continue;
-          released =
-            releaseAuthSurface(authSurfaceRegistryRef.current, surface as AuthSurface, ticket.generation) || released;
+        for (const ticket of tickets) {
+          released = releaseAuthSurface(authSurfaceRegistryRef.current, ticket.surface, ticket.generation) || released;
         }
         if (released) refreshAuthSurfaces((revision) => revision + 1);
       }
       return result;
     },
-    [reconcileAccountStatusBase]
+    [handoffLinuxDoCookies, reconcileAccountStatusBase]
   );
   const reconcileAuthSurfaceAccountStatus = useCallback(
     (source: SessionSite, options: { surfaceGeneration?: number; publishAnonymous?: boolean } = {}) =>
@@ -494,6 +553,7 @@ export function useAccountRuntime({
   );
   const prepareLinuxDoCookieResponseBarrier = useCallback(() => {
     cancelLinuxDoBrowserHandoff();
+    linuxDoCookieHandoffRef.current = null;
     return setLinuxDoCookieResponseBarrier(true, 'surface-open', authSurfaceRegistryRef.current.generation);
   }, [cancelLinuxDoBrowserHandoff]);
   const verification = useVerificationController({
@@ -507,11 +567,9 @@ export function useAccountRuntime({
         snapshot.sourceEnabled
       ]);
     },
-    awaitLinuxDoWebViewUnmount: () =>
-      mountedLinuxDoWebViewRef.current
-        ? new Promise<void>((resolve) => linuxDoUnmountWaitersRef.current.push(resolve))
-        : Promise.resolve(),
-    awaitLinuxDoCookieHandoff: () => linuxDoCookieHandoffRef.current,
+    awaitLinuxDoWebViewUnmount,
+    awaitLinuxDoCookieHandoff: () => linuxDoCookieHandoffRef.current || Promise.resolve(),
+    handoffLinuxDoCookies,
     canOpenLinuxDoPanel: () => verificationAppActiveRef.current && enabledSourcesRef.current.includes('linuxdo'),
     changeNodeSeekLoginPanel,
     checkingRequestIdRef,
@@ -529,14 +587,17 @@ export function useAccountRuntime({
     onLinuxDoSurfaceClosed: ({ authoritativeResult, reason }) => {
       finishAuthSurfaceTicket('linuxdo-login', authoritativeResult ? 'authoritative-recovery' : reason);
       if (authoritativeResult)
-        void linuxDoCookieHandoffRef.current.then(
+        void linuxDoCookieHandoffRef.current?.then(
           () => reading.verified(),
           () => undefined
         );
     },
     onLinuxDoSurfaceOpened: handleLinuxDoSurfaceOpened,
     prepareLinuxDoCookieResponseBarrier,
-    reconcileAccountStatus: reconcileAuthSurfaceAccountStatus,
+    reconcileAccountStatus: (source) =>
+      reconcileAuthSurfaceAccountStatus(source, {
+        surfaceGeneration: authSurfaceRegistryRef.current.active['linuxdo-login']?.generation
+      }),
     setChecking,
     setLinuxDoWebViewError,
     setLinuxDoWebViewKey,
@@ -568,6 +629,7 @@ export function useAccountRuntime({
   const linuxDoCookieBarrierInitializedRef = useRef(false);
   useEffect(() => {
     if (!linuxDoSourceEnabled) cancelLinuxDoBrowserHandoff();
+    linuxDoCookieHandoffRef.current = null;
     const reason = linuxDoCookieBarrierInitializedRef.current ? 'source-change' : 'startup';
     linuxDoCookieBarrierInitializedRef.current = true;
     void setLinuxDoCookieResponseBarrier(
@@ -654,7 +716,7 @@ export function useAccountRuntime({
     changeYaohuoLoginPanel,
     linuxDoWebViewRef,
     notify,
-    refreshAccountStatus: status.refreshAccountStatus,
+    refreshAccountStatus: () => status.refreshAccountStatus({ reconcile: reconcileAccountStatus }),
     setYaohuoLoginPrompt,
     webViewRef,
     webViewBlockMessage,

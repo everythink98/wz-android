@@ -1,0 +1,27 @@
+context platform=android
+context timeout=120000
+context retries=0
+
+# Runner launches the isolated notification URL before replay.
+open com.wz.reader
+wait text="受控消息正文" 30000
+press label="覆盖详情"
+wait "label=\"Navigate up\"" 10000
+back
+wait text="受控消息正文" 10000
+press label="响应失败"
+wait text="已读状态未更新：隔离服务器失败" 10000
+press label="刷新详情"
+press label="重试已读状态"
+press label="响应未确认"
+wait text="隔离服务器未确认" 10000
+press label="重试已读状态"
+press label="重试已读状态"
+press label="刷新详情"
+press label="响应成功"
+press label="覆盖详情"
+wait "label=\"Navigate up\"" 10000
+back
+wait text="受控消息正文" 10000
+press label="核对通知"
+close

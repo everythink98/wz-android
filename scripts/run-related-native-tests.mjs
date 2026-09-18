@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { relatedNativeTasks, verifyNativeTestReports } from './native-test-plan.mjs';
+import { nativeTestTasks, relatedNativeTasks, verifyNativeTestReports } from './native-test-plan.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -17,16 +17,16 @@ const files =
       ? git('ls-files')
       : [...git('diff', '--name-only', 'HEAD', '--'), ...git('ls-files', '--others', '--exclude-standard')];
 for (const task of relatedNativeTasks(files)) {
+  const plan = nativeTestTasks[task];
   const startedAt = Date.now();
   const result = spawnSync(
     process.platform === 'win32' ? 'gradlew.bat' : './gradlew',
-    [task, '--rerun', '--no-daemon', '--console=plain'],
+    [task, ...plan.args, '--rerun', '--no-daemon', '--console=plain'],
     { cwd: path.join(root, 'android'), stdio: 'inherit', shell: process.platform === 'win32' }
   );
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
-  const reports = task.startsWith(':app:')
-    ? 'android/app/build/test-results/testReleaseUnitTest'
-    : 'modules/forum-content-selection/android/build/test-results/testDebugUnitTest';
-  console.log(`${task}: ${verifyNativeTestReports(path.join(root, reports), startedAt)} tests`);
+  console.log(
+    `${task}: ${verifyNativeTestReports(path.join(root, plan.reports), startedAt, plan.classes)} tests (${((Date.now() - startedAt) / 1000).toFixed(1)}s)`
+  );
 }

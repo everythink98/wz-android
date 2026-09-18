@@ -13,6 +13,7 @@ import {
   buildNodeSeekStardustPrepareRequest,
   buildNodeSeekStardustSendRequest,
   buildNodeSeekVoteRequest,
+  nodeSeekCreatedReplyTarget,
   type NodeSeekActionRequest
 } from '@/sources/nodeseek/actionRequest';
 import {
@@ -818,7 +819,9 @@ export function useTopicActionsController({
       try {
         assertWritableTicket(ticket);
         const result = await runNodeSeekAction({
-          fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+          fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
+            assertWritableTicket(ticket)
+          ),
           request,
           userAgent: getNodeSeekUserAgent()
         });
@@ -1167,7 +1170,11 @@ export function useTopicActionsController({
               );
               void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true, refetchType: 'none' });
             });
-            if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
+            if (
+              topicCommands.getCurrentKey() === actionTopicKey &&
+              replyComposerIntentRef.current === replyComposerIntent
+            )
+              topicComposer.completeSubmission();
           },
           afterSuccess: () =>
             refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
@@ -1242,7 +1249,11 @@ export function useTopicActionsController({
           );
         },
         applyResult: () => {
-          if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
+          if (
+            topicCommands.getCurrentKey() === actionTopicKey &&
+            replyComposerIntentRef.current === replyComposerIntent
+          )
+            topicComposer.completeSubmission();
           const { detailKey, replyKeys } = cacheKeys(actionTopic as TopicDetail);
           void queryClient.invalidateQueries({ queryKey: detailKey, exact: true, refetchType: 'none' });
           replyKeys.forEach(
@@ -1251,24 +1262,15 @@ export function useTopicActionsController({
           );
         },
         afterSuccess: (result) =>
-          refreshRepliesAfterWrite(
-            actionTopic as TopicDetail,
-            trace,
-            isNodeSeekActionTopic(actionTopic)
-              ? {
-                  kind: 'created',
-                  nodeSeekAuthorId: nodeSeekUserId ? String(nodeSeekUserId) : undefined,
-                  nodeSeekContentMarkdown: sentContent,
-                  silent: true
-                }
-              : {
-                  kind: 'created',
-                  ...(isDiscourseSource(actionTopic.source)
-                    ? { discourseTarget: discourseCreatedReplyTarget(result, actionTopic.id) }
-                    : {}),
-                  silent: true
-                }
-          ),
+          refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+            kind: 'created',
+            createdTarget: isNodeSeekActionTopic(actionTopic)
+              ? nodeSeekCreatedReplyTarget(result, actionTopic.id)
+              : isDiscourseSource(actionTopic.source)
+                ? discourseCreatedReplyTarget(result, actionTopic.id)
+                : undefined,
+            silent: true
+          }),
         successMessage: (_result, refreshed) =>
           (isNodeSeekActionTopic(actionTopic) || isDiscourseSource(actionTopic.source)) && refreshed === false
             ? '回复已提交，但暂未能显示；请手动刷新，勿重复发送'

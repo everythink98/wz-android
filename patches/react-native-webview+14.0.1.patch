@@ -123,3 +123,23 @@ diff --git a/node_modules/react-native-webview/index.d.ts b/node_modules/react-n
    /**
     * Go back one page in the webview's history.
     */
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+@@ -9,6 +9,7 @@
+ import android.view.MenuItem;
+ import android.view.MotionEvent;
+ import android.view.View;
++import android.webkit.CookieManager;
+ import android.webkit.JavascriptInterface;
+ import android.webkit.ValueCallback;
+ import android.webkit.WebChromeClient;
+@@ -420,6 +421,8 @@
+             mWebChromeClient.onHideCustomView();
+         }
+         super.destroy();
++        // Cancellation can destroy a page before onPageFinished persists its response cookies.
++        CookieManager.getInstance().flush();
+     }
+ 
+   public ThemedReactContext getThemedReactContext() {

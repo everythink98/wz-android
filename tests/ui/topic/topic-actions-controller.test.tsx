@@ -71,6 +71,15 @@ import {
 import { readNodeSeekPollJournalEntry, saveNodeSeekPollJournalEntry } from '@/platform/persistence/nodeSeekPollJournal';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
+import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
+import type { NetworkProxyState } from '@/platform/network/networkProxy';
+
+const mockLoadProxy = jest.fn<() => Promise<NetworkProxyState>>();
+jest.mock('@/platform/network/networkProxy', () => ({
+  ...jest.requireActual<typeof import('@/platform/network/networkProxy')>('@/platform/network/networkProxy'),
+  loadNetworkProxyState: () => mockLoadProxy(),
+  applyNetworkProxy: async () => ({ ok: true })
+}));
 
 const mockRunNodeSeekAction = jest.mocked(runNodeSeekAction);
 const mockFetchNodeSeekVoteInfo = jest.mocked(fetchNodeSeekVoteInfo);
@@ -511,6 +520,52 @@ describe('topic action query mutations', () => {
     expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual(['https://linux.do/session/csrf']);
   });
 
+  it.each(['identity', 'epoch', 'source-disabled', 'auth-surface', 'unchanged'])(
+    'rechecks NodeSeek replies after proxy preparation (%s)',
+    async (change) => {
+      mockRunNodeSeekAction.mockImplementation(
+        jest.requireActual<typeof import('@/sources/nodeseek/actionClient')>('@/sources/nodeseek/actionClient')
+          .runNodeSeekAction
+      );
+      const loaded = Promise.withResolvers<NetworkProxyState>();
+      mockLoadProxy.mockReturnValue(loaded.promise);
+      const snapshot: WritableSessionSnapshot = {
+        source: 'nodeseek',
+        identityKey: 'nodeseek:7',
+        sessionEpoch: 0,
+        authenticated: true,
+        authSurfaceOpen: false,
+        identityTrust: 'confirmed',
+        sourceEnabled: true
+      };
+      const ticket: WritableSessionTicket = { source: 'nodeseek', identityKey: snapshot.identityKey, sessionEpoch: 0 };
+      const baseFetcher = jest.fn(async () => new Response('{"success":true}'));
+      const proxy = await renderNativeHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+      const hook = await renderActions({
+        fetcher: (input, init) => proxy.result.current.networkProxyFetcher(String(input), init),
+        ensureWritableSession: async () => ticket,
+        isWritableSessionTicketCurrent: (candidate) => validateWritableSessionTicket(candidate, snapshot)
+      });
+      await act(async () => {
+        hook.result.current.topicSession.commands.composer.changeContent('preserved draft');
+      });
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending = hook.result.current.actions.submitReply();
+      });
+      await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
+      if (change === 'identity') snapshot.identityKey = 'nodeseek:8';
+      if (change === 'epoch') snapshot.sessionEpoch++;
+      if (change === 'source-disabled') snapshot.sourceEnabled = false;
+      if (change === 'auth-surface') snapshot.authSurfaceOpen = true;
+      await act(async () => {
+        loaded.resolve({ enabled: false, activeId: null, profiles: [] });
+        await pending;
+      });
+      expect(baseFetcher).toHaveBeenCalledTimes(change === 'unchanged' ? 1 : 0);
+    }
+  );
+
   it.each(['identity', 'epoch', 'source-disabled', 'auth-surface'])(
     'does not send an edit when the ticket becomes stale during CSRF (%s)',
     async (change) => {
@@ -762,7 +817,7 @@ describe('topic action query mutations', () => {
 
     expect(mockRunLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(refreshTopicReplies).toHaveBeenCalledWith(
-      { kind: 'created', discourseTarget: { commentId: 121, floor: 21 }, silent: true },
+      { kind: 'created', createdTarget: { commentId: 121, floor: 21 }, silent: true },
       expect.any(Object)
     );
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: detailKey, exact: true, refetchType: 'none' });
@@ -779,10 +834,12 @@ describe('topic action query mutations', () => {
     );
   });
 
-  it('reports a confirmed NodeSeek reply as submitted but unlocated without resending it', async () => {
-    const refreshTopicReplies = jest.fn(async () => 'failed');
+  it.each([true, false])('refreshes a confirmed NodeSeek reply without resending it (located: %s)', async (located) => {
+    const refreshTopicReplies = jest.fn(async () => (located ? 'completed' : 'failed'));
     const notify = jest.fn();
-    mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
+    mockRunNodeSeekAction.mockResolvedValueOnce(
+      located ? { success: true, redirect: '/post-42-4', redirectHash: '#32' } : { success: true }
+    );
     seedTopicCache();
     const hook = await renderActions({
       notify,
@@ -802,13 +859,11 @@ describe('topic action query mutations', () => {
       {
         kind: 'created',
         silent: true,
-        nodeSeekAuthorId: '7',
-        nodeSeekContentMarkdown: 'same reply'
+        createdTarget: located ? { floor: 32, pageHint: 4 } : undefined
       },
       expect.any(Object)
     );
-    expect(notify).toHaveBeenCalledWith('回复已提交，但暂未能显示；请手动刷新，勿重复发送');
-    expect(notify).not.toHaveBeenCalledWith('回复已提交');
+    expect(notify).toHaveBeenCalledWith(located ? '回复已提交' : '回复已提交，但暂未能显示；请手动刷新，勿重复发送');
   });
 
   it('settles a server-confirmed write as stale when its ticket changes during refresh', async () => {

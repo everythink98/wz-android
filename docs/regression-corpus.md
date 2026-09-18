@@ -17,6 +17,31 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
+## `REG-WRITE-090` NodeSeek 新回复定位到旧的同文回复
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01`、`TOPIC-03`、`NAV-03` |
+| 历史症状与根因 | 2026-09-18 在已登录主模拟器的 `post-856117-1` 只加载第一页后发送“测试”，新回复实际为 #32，App 却定位到旧的 #19。原站有 `postPageCount=4`，但没有总回复数；代码把已加载的最高楼层 10 当成尾部，猜测新回复在第二页，再以账号和相同正文命中旧评论。该路径由 2026-09-01 的 `71eca0367748205200d8c4718c225dd17211a87b`（v1.3.132，关联 `REG-WRITE-074`）引入。 |
+| 处置 | 解析成功 POST 的 `redirect + redirectHash`，直读服务端确认的新回复所在页，回读唯一楼层并取得 commentId；复用已有定位与相邻窗口加载，保持当前正倒序，取消猜页和正文匹配。无法确认时保留旧窗口，不重发。 |
+| 当前 owner | `src/sources/nodeseek/actionRequest.test.ts`、`tests/ui/topic/topic-actions-controller.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx`（真实 NodeSeek reader）。 |
+| 失败 oracle 与边界 | 修复前正倒序目标窗口用例失败（seed 839305153）；修复后验证缺失总回复数、同文旧回复、并发他人回复、唯一定位、相邻页连续加载至第一页且无重复；缺失目标、目标不匹配及离线保持旧窗口。linux.do 共用确认目标路径的既有用例通过。相关解析/读取 239 项与 UI 279 项通过；`STATIC_PASS`：类型、定向 lint、架构、格式、文档及 diff 检查。 |
+| 模拟器验收 | `APK_SANITY`：主 AVD `emulator-5554` 同签名覆盖安装正常入口开发包 1.3.146/150（SHA-256 `2dea7587f23b9125b793c48aa5c117aab0a49c7d719de853bc0c324b33c2c62b`），首次安装时间仍为 `2026-07-26 16:51:37`，网站登录 3/3。`LIVE_PASS`：用户授权的同一测试帖，正序只读第一页后提交得到 #33，末页保持 31→32→33，向上加载可回到 #1；倒序再次提交得到 #34，保持 34→33→32→31，继续向下读取 #30。并发他人回复由真实 reader 的受控用例验证，未制造原站并发写入；其他站点本轮无 Live 写入。 |
+
+## `REG-WRITE-089` 提交成功后面板残留及全屏顶部露底
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/05`、`NOTIFY-02`；关联 `WRITE-04` |
+| 历史症状与根因 | 带键盘回复确认成功后业务已关闭、草稿已清空，但屏幕残留高度等于 IME；先收键盘正常。BottomSheet 5.2.14 未观察 closed detent 的变化，读取 detents[-1] 提前退出，容器变化只追踪 GESTURE 关闭；直接定位又在记录目标后 stopAnimation，丢掉目标索引与完成回调。全屏 topInset 把整个背景下移，生产根布局 statusBarScrim 还会覆盖嵌套 route 内的全屏背景。 |
+| 逃逸原因 | 原测试直接完成 session 或断言 close()，没有经过生产按钮/响应解析，也没有在真实 IME 动画与 App 根布局中核对屏幕和重开聚焦。新增用例另外发现旧主题键闭包、迟到 snapshot 恢复已发送正文及测试模式存储串扰。 |
+| 处置 | 依赖 source/CommonJS/module 同步补丁，关闭中重新打开可中断旧动画，重复关闭不重复结算；全屏内部安全区、同一 WebView 与根 Portal，Portal 随 routeActive 隐藏；文档代次隔离旧消息，超时请求丢弃，初始化在途去重；异步 Topic 完成同时核对 committed 当前键和编辑会话。立即重开可能稳定在原索引而不触发 onChange，额外观察索引及动画完成状态，仍由同一个每次打开首次聚焦门禁结算。 |
+| 当前 owner | `tests/ui/topic/composer-submission.test.tsx`、`src/ui/composer/editorRuntime.test.ts`、`tests/ui/topic/composer-keyboard-viewport.test.tsx`、`dev/composer-proof/`、`scripts/run-composer-device-proof.mjs`、`tests/tooling/composer-device-proof.test.ts` 与既有 native Composer 两类测试。 |
+| 失败 oracle | 修复前 tracked 回放确认普通/全屏带键盘均在业务结算后仍有 Bottom Sheet；无键盘对照无残留。顶部背景起点为 63px；实际根布局另检测到状态栏底色 seam。先只修关闭，普通转绿且全屏仅剩顶部失败。负向控制撤掉关闭后布局修正，再次检测到业务结算/正文空/键盘隐藏但面板可见；恢复旧 topInset，再次检测到顶部 63px 偏移。控制包的自动定位/冷启动异常不计为产品红例，经当前 token/buildId 校验后从真实按钮继续并运行同一几何 oracle。UI 的旧快照/过期请求/换主题及同主题新会话、迟到聚焦回调、inactive route 的 Portal 保护均有修复前失败。 |
+| 验证边界 | `STATIC_PASS`；`UNIT_PASS`：完整 2,637 项、最终增量设备 oracle 5 项及原生 IME/Insets 4 项；`UI_PASS`：79 套 / 1,612 项（seed 1757504483），生产提交 owner 48 项。`DEVICE_REPLAY_PASS`：同一匹配源码的 Release Hermes Mock 包完整 40 项、定向重开/失败保稿 6 项、大挖孔 3 项；实际 cutout 顶部 Insets 为 136px，覆盖深浅全屏及 5 倍窗口动画下立即重开。旧 overlay 虽启用但实际 Insets 为 0 的回放未计入挖孔证据。关闭及顶部负向控制均检出失败，独立干净安装的补丁正向应用、postinstall、反向校验通过。全部发送为 Mock；物理设备与真实来源写入 `NOT_VERIFIED`，不以模拟器替代真机结论。 |
+
 ## `REG-TOPIC-166` 音视频回拖反复加载与缓冲期间无法控制
 
 | 字段 | 内容 |
@@ -4598,7 +4623,9 @@
 | 当前 owner | `plugins/network/ManagedCookieResponsesTest.kt`、`plugins/network/ManagedCookieResponsesInstrumentedTest.kt`、`tests/ui/account/account-runtime.test.tsx` |
 | 2026-09-10 新包现场 | 主 API 35 AVD 在 16:20:31（北京时间）手动登录后 current-user 核对成功，WebView 交接 flush 成功；16:23:33 再次核对成功。16:27:06 通知请求发送时 hasLoginCookie=true，响应 403/login_required、Set-Cookie 数为 0。16:29:39 账号请求仍带登录 Cookie，响应 404 并明确下发 login/delete/expired；平台接受后 hasLoginCookie=false，flush 成功，账号按 session-404 变为 anonymous。同一进程内，交接后此前原生响应没有 login/set、拒绝续签或写入/落盘失败；未发生显式清除。用户确认未在其他设备退出、结束会话或修改安全设置。该次删除有服务端指令证据，但服务端失效原因、WebView 内部不可见更新及原手机事故仍未归因；两次自然续签后的重启验收未完成，不能关闭事故。 |
 | 后续对照与通过范围 | 同日再次手动登录后，网站 WebView 保持约 11 分钟、三次普通刷新仍登录，期间零原生请求/回写；16:44:36 原生账号核对成功。16:54:38、17:04:38 两次通知响应明确下发 login/set/persistent，分别得到平台接受、凭据变化及 flush 成功记录；两次更新后的账号接口均确认已登录。加入首页、图片及主题读取后仍正常，17:05 保留数据冷启动 PID 29412→32037，17:06:08 新进程 current-user 200 并持久化 confirmed。该条续签→落盘→重启认证链为 `LIVE_PASS`；早先 16:29 的失效原因及原手机事故仍未关闭，不把后续一次成功对照当作排除间歇故障。 |
-
+| 2026-09-18 客户端补修 | 修复前真实 HTTP 取消实验中，下次请求仍发送 A 而非续签 B；手动检测测试确认 WebView 交接前已发身份请求。现统一卸载→交接→核对，并接受已收到的同代合格响应，不因消费者取消而丢弃；交接回调或 flush 失败不再放行，账号页刷新可重试且不会永久 busy。隔离 AVD 中，真实安装依赖的 WebView 在收到 Cookie B 后于加载完成前销毁，进程重启仍读到 A；正常完成与异步网络错误路径可持久化。现于既有 RN WebView source patch 的 destroy 入口补平台 flush，覆盖提前取消；该受控缺陷不证明手机事故由隐藏 WebView 引起。9 月 17 日日志两次请求携带登录 Cookie 后收到服务端明确删除，不能用这两处缺陷替代服务端归因；本条保持 OPEN，原手机自然续签与外部浏览器对照仍需现场证据。 |
+| 本轮受控验证 | `ACCOUNT-01/02/04` 与共享 `NOTIFY-03`：相关 JS 单测 157、账号与相邻页面 RNTL 124、原生 JVM 116 项通过；隔离 API 35 / WebView 124 AVD 验证真实 HTTP 更新/删除（含接收后取消）、平台属性与原生续签后进程重启认证。安装依赖的 WebView 完成/错误/取消三路径各经过写入与重启回读，取消路径由红转绿。普通配置开发包覆盖安装后 `APK_SANITY` 通过，首次安装时间与签名不变；真实账号面板检测先卸载 WebView，遇到自然 CF 返回保留说明与重试，刷新重挂载、关闭后恢复可刷新状态。React 消息传输在该原生探针中为替身，不能替代整条 App 登录验收；该受控阶段尚未覆盖原手机两次自然续签、自然浏览器掉线对照、真实 Connect 与后台通知；主模拟器后续 Live 结果见下行。 |
+| 2026-09-18 主模拟器复测 | 可见主 API 35 AVD 保留数据覆盖安装同版本修复包，首次安装时间与签名不变。12:23（北京时间）旧会话的 `/site.json` 请求发送唯一且与平台存储一致的 `_t`，HTTP 200 明确下发 login/delete/expired，平台接受并落盘；这仍不能确定后台失效原因。用户完成 App 内验证后，12:32 current-user 确认登录并持久化；本轮未操作外部浏览器。12:37:49.726 手动检测先完成 WebView 交接落盘，12:37:49.753 才发送唯一身份请求，随后 confirmed 并关闭面板。12:41:48 通知响应自然下发 login/set/persistent，平台确认凭据变化、接受并 flush；12:42:03 后续身份请求携带当前唯一凭据并确认登录。12:42 Connect 真实请求 200，等级页显示“官方要求”，没有使用本机估算。12:52:33 第二次通知响应再次自然更新持久型登录 Cookie 并确认凭据变化、平台接受与 flush；12:53:03 身份核对成功。随后保留数据停止并重启 App，PID 3073→5252；12:53:36 新进程发送平台当前唯一凭据，current-user 200、confirmed 并持久化。ACCOUNT-01/02 的 App 登录、手动交接、两次续签及重启认证与 ACCOUNT-04 的真实 Connect 读取为 `LIVE_PASS`；共享 NOTIFY-03 的前台请求 Cookie 接收与持久化链通过，独立系统后台任务投递、原手机及外部浏览器自然掉线对照仍为 `NOT_VERIFIED`。切后台再返回没有丢失会话。该成功样本不解释启动时旧凭据为何被服务端删除，事故保持 OPEN。 |
 
 ## `REG-FEED-017` 来源重排后旧 Pager 会话卡在 Loading
 
@@ -5317,7 +5344,7 @@
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `WRITE-01`、`TOPIC-03`、`NAV-03` |
-| 历史症状与根因 | 回复 POST 后先刷新主题详情，再读尾页、目标页；末页发现又沿 `next` 循环，评论数越多耗时和请求数越不可控，最终还用尾窗首项猜新回复。当前 NodeSeek 写后专属路径以当前详情计数和已加载最高楼层计算下一楼页，只执行一次 POST 与一次直达列表 GET；不用 `start` 发现末页，也不补读。普通浏览的 `start` 尾窗发现仍以入口页加一次直达末页为硬上限。回读只以当前账号和实际提交内容唯一确认实体，无法确认时提示手动刷新且绝不重发。linux.do 与妖火流程不变。 |
+| 历史症状与根因 | 回复 POST 后先刷新主题详情，再读尾页、目标页；末页发现又沿 `next` 循环，评论数越多耗时和请求数越不可控，最终还用尾窗首项猜新回复。当时 NodeSeek 写后专属路径以当前详情计数和已加载最高楼层计算下一楼页，只执行一次 POST 与一次直达列表 GET；不用 `start` 发现末页，也不补读。普通浏览的 `start` 尾窗发现仍以入口页加一次直达末页为硬上限。当时回读以当前账号和实际提交内容唯一确认实体，无法确认时提示手动刷新且绝不重发。该猜页与正文匹配随后引发 `REG-WRITE-090`，现由 POST 确认目标取代，保留单次直读和相邻分页 owner。 |
 | 当前 owner | `tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/topic/topic-actions-controller.test.tsx`、`tests/integration/source-read-contracts/nodeseek.test.ts` |
 
 
@@ -5674,10 +5701,11 @@
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `RESOLVED` |
-| 能力 ID | `WRITE-01/02/03/04`；linux.do 阅读上报 |
+| 能力 ID | `WRITE-01/02/03/04/05/06`、`ACCOUNT-04`；linux.do 阅读上报 |
 | 历史症状与根因 | 审查后受控 HTTP 复现：CSRF 或代理准备未完成时身份/epoch/来源/认证 surface 变化，普通 action 缺少发送点复核；阅读 sender 的双向守卫还会在已确认响应后抛取消。 |
-| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx`、`tests/ui/more/network-proxy-controller.test.tsx`、`src/sources/linuxdo/reading.test.ts`；本地 Symbol 发送前回调透传并在底层 fetch 前剥离，模板、上传和妖火同类入口一并检查。 |
+| 当前 owner | `tests/ui/topic/topic-actions-controller.test.tsx`、`tests/ui/more/network-proxy-controller.test.tsx`、`tests/ui/account/nodeseek-check-in-controller.test.tsx`、`src/sources/linuxdo/reading.test.ts`；本地 Symbol 发送前回调透传并在底层 fetch 前剥离，模板、上传和妖火同类入口一并检查。 |
 | 失败 oracle 与边界 | action 4、proxy 1、reading 3 项修复前失败；对应回归通过，既有 serverConfirmed、未知写结果不自动重试保留。无真实发帖/编辑/上传/阅读补发验收，Live 为 `NOT_VERIFIED`。 |
+| 2026-09-17 遗漏补齐 | NodeSeek Topic 共用 action 与独立签到入口接入同一 `withRequestBeforeSend`。真实 client 经真实代理等待后，身份/epoch/来源/认证界面四类变化 × 两入口的 8 个反例修复前均发生 POST，修复后均为零；正常各一次。签到过期结果不再通知新身份，保留诊断与 serverConfirmed；未执行真实签到或发帖。 |
 
 ## `REG-ACCOUNT-052` NodeSeek hidden WebView 截断合法 JSON
 
@@ -5885,3 +5913,77 @@
 | 历史症状与根因 | 鸿蒙/卓易通中 L/NS 详情初始可滚，加载后返回、回复、滚动均失效；日志确认触摸进入共享回复面板的全屏 AUTO 背景，alpha 约 1.418e-8，面板 visible=false，JS 与主线程仍响应。库以动画 index 的精确边界决定穿透；机型触发差异的底层原因尚未证实。 |
 | 当前 owner | `tests/ui/topic/topic-components.test.tsx` 固定接近 -1 的动画值、关闭状态与动态/固定布局切换，修复前背景没有受控 none；既有 composer keyboard/structured/message owner 承接打开与编辑器行为。 |
 | 修复与关闭条件 | 共享背景由 visible 直接决定触摸，动画只负责透明度；不改编辑器挂载顺序、不加机型特判。代码/UI oracle 已修复；普通 Android 模拟器的匿名 L/NS 详情滚动与返回、已登录 L/NS 回复面板开关后继续滚动已通过。2026-09-17 用户反馈鸿蒙真机使用本次测试包后问题已消失，据此关闭设备事故；此为用户复测证据。随后撤除临时触摸/心跳/视图路径探针，保留修复及常规诊断。 |
+
+## `REG-DATA-009` 备份合并提前裁剪删除标记导致复活
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-03` |
+| 历史症状与根因 | 受控合并及实际 SQLite 导入/重开均复现：删除标记并集超过 1000 条时，旧但有效的删除标记先被裁掉，再导入更旧记录导致复活。 |
+| 当前 owner | `src/domain/reader/readerData.test.ts` 三类集合 × 999/1000/1001 × 记录较新/删除较新/同时间；`src/platform/storage/readerDataStore.test.ts` 实际导入和重开。 |
+| 修复与边界 | 完整并集先解决冲突，最后执行原有裁剪；同时间删除优先，保留上限、备份 v2 和 schema 不变。新反例修复前失败，修复后通过；不扩大为永久保存删除历史。 |
+
+## `REG-DATA-010` 恢复模式将默认设置误当来源许可
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02`、`MORE-05`；共享来源消费者 |
+| 历史症状与根因 | ReaderData 读取失败仍发布 loaded=true 与默认设置，App 和部分页面据此启用来源；“本地启动结算”与“设置可信”混用。 |
+| 当前 owner | `tests/ui/library/reader-data-controller.test.tsx`、`tests/ui/app/app-runtime-startup.test.tsx`、`tests/ui/notifications/notifications-runtime.test.tsx`，沿既有 route gates 覆盖页面。 |
+| 修复与边界 | 单一 loading/ready/recovery 状态；本地恢复可达，网络来源投影为空，通知设置未可信且不清理意图。失败导入保持保护，成功导入准确放行，首次安装默认行为保留。UI/存储边界验证不代表设备损坏数据库恢复已验收。 |
+
+## `REG-NOTIFY-068` 详情已读尝试被永久当作完成
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02`；关联 `NOTIFY-01/03` |
+| 历史症状与根因 | 详情永久记录“已开始”，离页取消后同一实例返回不能重试；详情变化还会取消在途标记。直接漏写主要影响 NodeSeek 与 linux.do 非私信。 |
+| 当前 owner | `tests/ui/notifications/notifications-route.test.tsx`，真实导航保留详情实例；失败/未确认显式重试先刷新详情，防双击、普通刷新不取消或重试，确认后不重复。 |
+| 修复与边界 | 尝试与确认分开，并绑定当前请求；生命周期取消与详情刷新分离。成功、失败、取消仍对账，旧回调不能污染新请求，对账失败不降级确认。`REG-NOTIFY-065` 已修复的取消后对账事实保留。未执行真实远端已读写入。 |
+
+
+## `REG-SEARCH-029` 等待写入时删除搜索历史后复活
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02` |
+| 历史症状与根因 | 去重标记只在旧写入完成后更新；删除等于旧磁盘快照时被跳过，导致界面与队列目标分叉。 |
+| 当前 owner | `tests/ui/search/search-controller-ai.test.tsx` |
+| 失败 oracle 与边界 | 真实 controller 与写入队列延迟添加→删除、A→B→A、失败后重试与重挂载。修复前两项反例失败；按最新排队目标去重后通过。 产品反例以 Node 22.22.2 验证；受控测试不代表原站 Live。 |
+
+
+## `REG-TOPIC-173` NodeSeek DOM 缺行时作者与正文错配
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03` |
+| 历史症状与根因 | 无 ID/楼层匹配时按数组位置取正文，DOM 缺行会把相邻作者正文拼接给当前评论；重复身份与交叉冲突也未拒绝。 |
+| 当前 owner | `tests/integration/hidden-browser-scripts.test.ts` |
+| 失败 oracle 与边界 | 真实注入脚本与最终解析共同核对缺行、乱序、重复 DOM/embedded 身份、重复楼层、ID/楼层冲突和楼层 0。新增反例修复前失败，唯一一致匹配后通过；没有请求原站。 产品反例以 Node 22.22.2 验证；受控测试不代表原站 Live。 |
+
+
+## `REG-USER-012` 妖火用户主题聚合截断导致下一游标漏项
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 首轮已消费多页 HTML 后用 slice(0,30) 丢弃尾部，却返回这些页之后的游标。 |
+| 当前 owner | `src/sources/sourceUserRead.test.ts` |
+| 失败 oracle 与边界 | 真实适配器遍历 14+15+15+2、20+20、29+1、29+30、跨页重复与末页；修复前两项缺项，返回已读取页全部去重记录后完整且无重复。 产品反例以 Node 22.22.2 验证；受控测试不代表原站 Live。 |
+
+
+## `REG-USER-013` 无关 NodeSeek 解析错误污染其他用户页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | disabled Query 仍可读到缓存 error；页面无条件展示，旧验证恢复闭包还可通过 QueryObserver refetch 作用到新用户。 |
+| 当前 owner | `tests/ui/user/user-controller-session.test.tsx` |
+| 失败 oracle 与边界 | 同名跨来源、数字 UID、新/同实例、用户名/epoch切换、卸载与迟到响应；修复前旧错误及恢复作用域反例失败。只有当前解析需求和作用域可消费错误及执行恢复，真实当前解析失败仍可重试。 产品反例以 Node 22.22.2 验证；受控测试不代表原站 Live。 |

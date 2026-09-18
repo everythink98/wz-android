@@ -48,31 +48,26 @@ describe('reader runtime state projection', () => {
   });
   it('enters existing recovery mode when local restore fails', async () => {
     const notify = vi.fn(),
-      onLoaded = vi.fn(),
-      onLoadFailed = vi.fn();
+      onLoaded = vi.fn();
     await loadInitialReaderData({
       isActive: () => true,
       load: async () => {
         throw new Error('storage failed');
       },
       notify,
-      onLoaded,
-      onLoadFailed
+      onLoaded
     });
-    expect(onLoadFailed).toHaveBeenCalledOnce();
-    expect(onLoaded).toHaveBeenCalledWith(createEmptyReaderState());
+    expect(onLoaded).toHaveBeenCalledWith(createEmptyReaderState(), 'recovery');
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('恢复模式'));
   });
   it('discards late load success and failure after unmount', async () => {
     const notify = vi.fn(),
-      onLoaded = vi.fn(),
-      onLoadFailed = vi.fn();
+      onLoaded = vi.fn();
     await loadInitialReaderData({
       isActive: () => false,
       load: async () => createEmptyReaderState(),
       notify,
-      onLoaded,
-      onLoadFailed
+      onLoaded
     });
     await loadInitialReaderData({
       isActive: () => false,
@@ -80,11 +75,9 @@ describe('reader runtime state projection', () => {
         throw new Error('late');
       },
       notify,
-      onLoaded,
-      onLoadFailed
+      onLoaded
     });
     expect(onLoaded).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
-    expect(onLoadFailed).not.toHaveBeenCalled();
   });
 });

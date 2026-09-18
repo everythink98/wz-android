@@ -1,10 +1,10 @@
+import type { Source } from '@/domain/forum/sourceCatalog';
 import { createContext, type ReactNode, useCallback, useContext, useRef } from 'react';
 import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Category, Topic } from '@/domain/forum/models';
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { ReaderView } from '@/domain/reader/readerRecordState';
-import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import type { LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
@@ -13,6 +13,8 @@ import { FeedScreen } from './FeedScreen';
 import { useFeedController } from './useFeedController';
 
 export type FeedRouteRuntimeValue = {
+  enabledSources: Source[];
+  enabledSourcesKey: string;
   account: {
     linuxDoVerificationVisible: boolean;
     readGateway: ReadGateway;
@@ -54,6 +56,8 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
   useScrollToTop(listRef);
   const controller = useFeedController({
     active,
+    enabledSources: runtime.enabledSources,
+    enabledSourcesKey: runtime.enabledSourcesKey,
     catalogCategories: runtime.catalogCategories,
     sessionEpochs: runtime.account.sessionEpochs,
     linuxDoVerificationActive: runtime.account.linuxDoVerificationVisible,
@@ -110,10 +114,7 @@ function FeedRouteSession({ runtime }: { runtime: FeedRouteRuntimeValue }) {
 
 export function FeedRoute() {
   const runtime = useFeedRouteRuntime();
-  const sourceOrderKey = projectContentSourcePreferences(
-    runtime.reader.data.settings.contentSources,
-    runtime.reader.loaded
-  ).enabledSources.join('|');
+  const sourceOrderKey = runtime.enabledSources.join('|');
 
   return <FeedRouteSession key={sourceOrderKey} runtime={runtime} />;
 }

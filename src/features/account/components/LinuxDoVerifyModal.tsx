@@ -152,7 +152,7 @@ export function LinuxDoVerifyModal({
               icon={KeyRound}
               label="填入已保存登录信息"
               displayLabel="填入"
-              disabled={credentialFillPending}
+              disabled={credentialFillPending || !mountLinuxDoWebView}
               onPress={onRequestCredentialFill}
             />
           ) : null}
@@ -177,9 +177,11 @@ export function LinuxDoVerifyModal({
         </View>
       }
     >
-      {recovery?.phase === 'checking' ? (
+      {recovery?.phase === 'checking' || (!recovery && checking) ? (
         <View style={styles.recoveryMessage} accessibilityLiveRegion="polite">
-          <Text style={styles.meta}>正在检测原请求是否恢复，可以随时返回。</Text>
+          <Text style={styles.meta}>
+            {recovery ? '正在检测原请求是否恢复，可以随时返回。' : '正在确认登录状态，可以随时返回。'}
+          </Text>
         </View>
       ) : recovery?.phase === 'result' ? (
         <View style={styles.recoveryMessage} accessibilityLiveRegion="polite">

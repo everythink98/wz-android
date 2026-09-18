@@ -24,6 +24,7 @@ export type MoreUtilityCapabilities = {
     summary: string;
   };
   backup: {
+    recovery: boolean;
     busy: boolean;
     exportFile: () => void;
     importFile: () => void;
@@ -111,6 +112,11 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
           />
         </View>
       </ExpandablePanel>
+      {runtime.backup.recovery ? (
+        <Text accessibilityRole="alert" style={styles.meta}>
+          本机资料读取失败，来源访问已暂停。请导入备份恢复；原设置、凭据和通知意图会保留。
+        </Text>
+      ) : null}
       <ExpandablePanel
         quiet
         title="备份 / 恢复"
@@ -123,7 +129,7 @@ export function MoreUtilityPanels({ runtime }: { runtime: MoreUtilityCapabilitie
           <View style={styles.actions}>
             <AppButton
               label={runtime.backup.busy ? '处理中' : '导出备份文件'}
-              disabled={runtime.backup.busy}
+              disabled={runtime.backup.busy || runtime.backup.recovery}
               onPress={runtime.backup.exportFile}
             />
             <AppButton

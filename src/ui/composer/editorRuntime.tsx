@@ -1929,7 +1929,11 @@ export function ComposerEditorRuntime() {
 
   const postSnapshot = useCallback(
     (requestId?: string, forcedMode?: ComposerMode) => {
-      postMessage('SNAPSHOT', { ...(requestId ? { requestId } : {}), snapshot: makeSnapshot(forcedMode) });
+      postMessage('SNAPSHOT', {
+        documentEpoch: configRef.current?.documentEpoch ?? 0,
+        ...(requestId ? { requestId } : {}),
+        snapshot: makeSnapshot(forcedMode)
+      });
     },
     [makeSnapshot]
   );
@@ -1938,6 +1942,7 @@ export function ComposerEditorRuntime() {
     const currentEditor = editorRef.current;
     const currentMode = modeRef.current;
     postMessage('STATE_CHANGED', {
+      documentEpoch: configRef.current?.documentEpoch ?? 0,
       revision: revisionRef.current,
       mode: currentMode,
       isEmpty:
@@ -2042,7 +2047,7 @@ export function ComposerEditorRuntime() {
       modeRef.current = next.mode;
       setMode(next.mode);
       initializedRef.current = true;
-      postMessage('READY', { revision: 0 });
+      postMessage('READY', { documentEpoch: next.documentEpoch ?? 0, revision: 0 });
       postState();
     },
     [editorRef, postState, setSource]

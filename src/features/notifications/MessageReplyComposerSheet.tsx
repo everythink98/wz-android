@@ -102,7 +102,7 @@ export function MessageReplyComposerSheet({
       dark={theme.dark}
       fixedContent={structured}
       presentation={presentation}
-      visible={visible}
+      visible={visible && routeActive}
       onOpenChange={(open) => {
         if (!open) handleClose();
       }}
@@ -126,7 +126,7 @@ export function MessageReplyComposerSheet({
             status={status}
             submitLabel="发送回复"
             title="回复私信"
-            visible={visible}
+            visible={visible && routeActive}
             onLoadLinuxDoPollCapabilities={onLoadLinuxDoPollCapabilities}
             onResolveLinuxDoUpload={onResolveLinuxDoUpload}
             onLoadLinuxDoTemplates={onLoadLinuxDoTemplates}

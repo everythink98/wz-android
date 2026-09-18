@@ -127,6 +127,8 @@ jest.mock('@gorhom/bottom-sheet', () => {
     BottomSheetView: ({ children, ...props }: { children?: React.ReactNode; style?: StyleProp<ViewStyle> }) =>
       ReactModule.createElement(NativeView, { ...props, testID: 'composer-bottom-sheet-content' }, children),
     useBottomSheetInternal: () => ({
+      animatedIndex: { get: () => -1 },
+      animatedAnimationState: { get: () => ({ nextIndex: undefined }) },
       animatedKeyboardState: { set: mockAnimatedKeyboardStateSet },
       animatedLayoutState: { get: () => ({ rawContainerHeight: 800, containerHeight: 800 }), modify: jest.fn() }
     })
@@ -1900,7 +1902,7 @@ describe('Topic real child components', () => {
     expect(onOpenExternalUrl).toHaveBeenCalledWith('https://example.com/path');
   });
 
-  it('keeps the composer sheet visibility and close gesture connected to the parent state', async () => {
+  it('keeps composer visibility and the close button connected to the parent state', async () => {
     mockAnimatedKeyboardStateSet.mockClear();
     const onReplyComposerOpenChange = jest.fn();
     const onReplySnapshot = jest.fn();
@@ -2022,7 +2024,18 @@ describe('Topic real child components', () => {
 
     await view.rerender(<ReplyComposerSheet {...props} />);
     onReplySnapshot.mockClear();
-    await fireEvent.press(view.getByLabelText('模拟关闭回复面板'));
+    const reopenedInit = [...webView.props.postMessageMock.mock.calls]
+      .map(([message]: [string]) => JSON.parse(message))
+      .findLast((message) => message.type === 'INIT');
+    await fireEvent(webView, 'message', {
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'READY',
+          payload: { revision: 0, documentEpoch: reopenedInit.payload.documentEpoch }
+        })
+      }
+    });
+    await fireEvent.press(view.getByLabelText('收起回复'));
     const request = [...webView.props.postMessageMock.mock.calls]
       .map(([message]: [string]) => JSON.parse(message))
       .findLast((message) => message.type === 'REQUEST_SNAPSHOT');
@@ -2033,6 +2046,7 @@ describe('Topic real child components', () => {
           type: 'SNAPSHOT',
           payload: {
             requestId: request.payload.requestId,
+            documentEpoch: reopenedInit.payload.documentEpoch,
             snapshot: {
               revision: 1,
               markdown: '保留中的草稿',

@@ -44,6 +44,7 @@ function renderUserController({
   getSourceEnabled = () => true,
   getUser = () => user,
   getUserProfile,
+  notify = jest.fn<(message: string) => void>(),
   onRetryIdentityStatus = jest.fn(),
   resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(),
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
@@ -57,6 +58,7 @@ function renderUserController({
   getSourceEnabled?: (source: Source) => boolean;
   getUser?: () => UserReference;
   getUserProfile: UserFixtureRead;
+  notify?: (message: string) => void;
   onRetryIdentityStatus?: (source: Source) => Promise<unknown> | unknown;
   resolveNodeSeekUser?: ReadGateway['resolveNodeSeekUser'];
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
@@ -96,7 +98,7 @@ function renderUserController({
     useUserController({
       active: getActive(),
       sessionEpochs: getSessionEpochs(),
-      notify: jest.fn(),
+      notify,
       onRetryIdentityStatus,
       readerData: createEmptyReaderData(),
       showLinuxDoVerification,
@@ -140,6 +142,62 @@ describe('user query controller', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
   });
+
+  it.each([
+    { source: 'v2ex', id: 'alice', remount: false },
+    { source: 'nodeseek', id: '123', remount: false },
+    { source: 'v2ex', id: 'alice', remount: true },
+    { source: 'nodeseek', id: '123', remount: true }
+  ] as const)(
+    'ignores cached username resolution errors for $source with an ID, remount=$remount',
+    async ({ source, id, remount }) => {
+      let selected: UserReference = {
+        source: 'nodeseek',
+        username: 'alice',
+        url: 'https://www.nodeseek.com/member?t=alice'
+      };
+      const notify = jest.fn<(message: string) => void>();
+      const showNodeSeekVerification = jest.fn();
+      const showLinuxDoVerification = jest.fn();
+      const resolveNodeSeekUser = jest.fn<ReadGateway['resolveNodeSeekUser']>(async () => {
+        throw new Error('username resolver failed');
+      });
+      const options = {
+        getUser: () => selected,
+        getUserProfile: async () => ({ ...user, ...selected, id: selected.id!, topics: [] }),
+        notify,
+        resolveNodeSeekUser,
+        showNodeSeekVerification,
+        showLinuxDoVerification
+      };
+      let hook = await renderUserController(options);
+      try {
+        await waitFor(() => expect(hook.result.current.userError?.message).toBe('username resolver failed'));
+        expect(notify).toHaveBeenCalledTimes(1);
+        notify.mockClear();
+        selected = {
+          source,
+          id,
+          username: 'alice',
+          url: source === 'v2ex' ? 'https://www.v2ex.com/member/alice' : 'https://www.nodeseek.com/space/123'
+        };
+        if (remount) {
+          await hook.unmount();
+          hook = await renderUserController(options);
+        } else {
+          await hook.rerender(undefined);
+        }
+        await waitFor(() => expect(hook.result.current.userProfile?.source).toBe(source));
+        expect(hook.result.current.userError).toBeNull();
+        expect(notify).not.toHaveBeenCalled();
+        expect(showNodeSeekVerification).not.toHaveBeenCalled();
+        expect(showLinuxDoVerification).not.toHaveBeenCalled();
+        expect(resolveNodeSeekUser).toHaveBeenCalledTimes(1);
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
 
   it('reads a public LinuxDo User while account identity remains pending', async () => {
     const requested: UserReference = {
@@ -369,6 +427,102 @@ describe('user query controller', () => {
     await waitFor(() => expect(hook.result.current.userProfile?.id).toBe('8052'));
     expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2);
     expect(getUserProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['canonical', 'source', 'username', 'epoch', 'unmount'] as const)(
+    'rejects an old username recovery after changing %s',
+    async (change) => {
+      let selected: UserReference = {
+        source: 'nodeseek',
+        username: 'alice',
+        url: 'https://www.nodeseek.com/member?t=alice'
+      };
+      let epochs = initialForumSessionEpochs;
+      const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+      const resolveNodeSeekUser = jest
+        .fn<ReadGateway['resolveNodeSeekUser']>()
+        .mockRejectedValue(
+          Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), { source: 'nodeseek', reason: 'cloudflare' })
+        );
+      const hook = await renderUserController({
+        getUser: () => selected,
+        getSessionEpochs: () => epochs,
+        getUserProfile: async () => ({ ...user, ...selected, id: selected.id || '123' }),
+        resolveNodeSeekUser,
+        showNodeSeekVerification
+      });
+      try {
+        await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
+        const recovery = showNodeSeekVerification.mock.calls[0][1]!;
+        if (change === 'canonical') selected = { ...selected, id: '123' };
+        if (change === 'source')
+          selected = { source: 'v2ex', id: 'alice', username: 'alice', url: 'https://www.v2ex.com/member/alice' };
+        if (change === 'username')
+          selected = { source: 'nodeseek', username: 'bob', url: 'https://www.nodeseek.com/member?t=bob' };
+        if (change === 'epoch') epochs = { ...epochs, nodeseek: epochs.nodeseek + 1 };
+        if (change === 'unmount') await hook.unmount();
+        else await hook.rerender(undefined);
+        await waitFor(() =>
+          expect(resolveNodeSeekUser).toHaveBeenCalledTimes(change === 'username' || change === 'epoch' ? 2 : 1)
+        );
+        const calls = resolveNodeSeekUser.mock.calls.length;
+        await act(async () => {
+          await expect(recovery.resume()).resolves.toBe('stale');
+        });
+        expect(recovery.isCurrent?.()).toBe(false);
+        expect(resolveNodeSeekUser).toHaveBeenCalledTimes(calls);
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
+
+  it('ignores a username recovery that settles after the target changes', async () => {
+    let selected: UserReference = {
+      source: 'nodeseek',
+      username: 'alice',
+      url: 'https://www.nodeseek.com/member?t=alice'
+    };
+    const pending = Promise.withResolvers<UserReference>();
+    const showNodeSeekVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const resolveNodeSeekUser = jest
+      .fn<ReadGateway['resolveNodeSeekUser']>()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('NodeSeek 需要完成 Cloudflare 验证'), { source: 'nodeseek', reason: 'cloudflare' })
+      )
+      .mockImplementationOnce(({ signal }) => {
+        signal?.addEventListener('abort', () => pending.reject(new Error('canceled')), { once: true });
+        return pending.promise;
+      })
+      .mockRejectedValue(new Error('new username failed'));
+    const notify = jest.fn<(message: string) => void>();
+    const hook = await renderUserController({
+      getUser: () => selected,
+      getUserProfile: async () => user,
+      resolveNodeSeekUser,
+      showNodeSeekVerification,
+      notify
+    });
+    let outcome: ReturnType<LinuxDoReadRecovery['resume']> | undefined;
+    try {
+      await waitFor(() => expect(showNodeSeekVerification).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        outcome = showNodeSeekVerification.mock.calls[0][1]!.resume();
+      });
+      await waitFor(() => expect(resolveNodeSeekUser).toHaveBeenCalledTimes(2));
+      selected = { source: 'nodeseek', username: 'bob', url: 'https://www.nodeseek.com/member?t=bob' };
+      await hook.rerender(undefined);
+      await act(async () => {
+        pending.resolve({ ...user });
+        await expect(outcome).resolves.toBe('stale');
+      });
+      await waitFor(() => expect(hook.result.current.userError?.message).toBe('new username failed'));
+      expect(notify).toHaveBeenCalledWith('new username failed');
+    } finally {
+      pending.resolve({ ...user });
+      await Promise.allSettled([pending.promise, outcome]);
+      await hook.unmount();
+    }
   });
 
   it('preserves the exact resolution query for NodeSeek verification recovery', async () => {

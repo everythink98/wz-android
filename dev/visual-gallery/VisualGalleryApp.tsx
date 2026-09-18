@@ -28,6 +28,7 @@ function Choice({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
       accessibilityState={{ selected: active }}
       style={[styles.choice, dark && styles.darkChoice, active && styles.choiceActive]}
       onPress={onPress}
@@ -87,7 +88,10 @@ export function VisualGalleryApp() {
     <SafeAreaProvider>
       <GestureHandlerRootView style={styles.flex} testID="visual-gallery-root">
         <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
-        <SafeAreaView style={[styles.flex, dark && styles.darkRoot]}>
+        <SafeAreaView
+          testID={`visual-frame-${selected?.id}-${appearance.theme}-${appearance.fontScale}-${fullScreen ? 'full' : 'controls'}`}
+          style={[styles.flex, dark && styles.darkRoot]}
+        >
           {!fullScreen ? (
             <View style={[styles.toolbar, dark && styles.darkToolbar]}>
               <View style={styles.headingRow}>
@@ -95,6 +99,7 @@ export function VisualGalleryApp() {
                 <Choice active={false} dark={dark} label="全屏预览" onPress={() => setFullScreen(true)} />
               </View>
               <TextInput
+                testID="visual-gallery-search"
                 accessibilityLabel="搜索视觉场景"
                 placeholder="能力、场景或状态"
                 placeholderTextColor={dark ? '#888888' : '#777777'}

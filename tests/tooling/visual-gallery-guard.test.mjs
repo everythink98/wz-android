@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -31,11 +32,10 @@ test('keeps the visual gallery outside the production import graph', () => {
   assert.equal(JSON.parse(read('package.json')).scripts['visual:gallery'], 'node scripts/start-visual-gallery.mjs');
 });
 
-test('keeps visual scenarios deterministic and free of credentials or direct I/O', () => {
-  const scenarioRoot = path.join(projectRoot, 'tests', 'ui', 'visual', 'scenarios');
-  const manifests = sourceFiles(scenarioRoot).filter((file) => path.basename(file) === 'manifest.tsx');
-  assert.ok(manifests.length > 0);
-  for (const file of manifests) {
+function assertVisualSources(scenarioRoot) {
+  const sources = sourceFiles(scenarioRoot).filter((file) => !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file));
+  assert.ok(sources.length > 0);
+  for (const file of sources) {
     const source = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|WebSocket)\s*\(/);
     assert.doesNotMatch(source, /\b(?:Linking\.openURL|WebBrowser\.openBrowserAsync)\s*\(/);
@@ -44,20 +44,22 @@ test('keeps visual scenarios deterministic and free of credentials or direct I/O
       assert.match(new URL(match[0]).hostname, /\.invalid$/);
     }
   }
+}
+
+test('keeps visual scenarios deterministic and free of credentials or direct I/O', () => {
+  assertVisualSources(path.join(projectRoot, 'tests', 'ui', 'visual'));
 });
 
-test('classifies every App capability in the visual manifests', () => {
-  const productMap = read('docs/product-map.md');
-  const expected = Array.from(productMap.matchAll(/`([A-Z]+-\d{2})`/g), (match) => match[1])
-    .filter((id) => !id.startsWith('RELEASE-'))
-    .filter((id, index, ids) => ids.indexOf(id) === index)
-    .sort();
-  const scenarioRoot = path.join(projectRoot, 'tests', 'ui', 'visual', 'scenarios');
-  const manifests = sourceFiles(scenarioRoot).filter((file) => path.basename(file) === 'manifest.tsx');
-  const actual = Array.from(
-    new Set(manifests.flatMap((file) => fs.readFileSync(file, 'utf8').match(/\b[A-Z]+-\d{2}\b/g) || []))
-  ).sort();
-
-  assert.equal(expected.length, 42);
-  assert.deepEqual(actual, expected);
+test('rejects direct I/O hidden in a visual helper', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wz-visual-guard-'));
+  try {
+    fs.writeFileSync(path.join(directory, 'manifest.tsx'), 'export const scenario = {};');
+    fs.writeFileSync(
+      path.join(directory, 'helper.ts'),
+      "export const load = () => fetch('https://visual.invalid/data');"
+    );
+    assert.throws(() => assertVisualSources(directory), /fetch/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });

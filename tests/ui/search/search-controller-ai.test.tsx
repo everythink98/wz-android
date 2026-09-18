@@ -1443,6 +1443,105 @@ describe('linux.do AI search controller', () => {
     );
   });
 
+  it.each([{ original: [] }, { original: ['A'] }])(
+    'persists deletion during a pending history write from $original',
+    async ({ original }) => {
+      const disk = new Map([['reader-search-history', JSON.stringify(original)]]);
+      const pending = Promise.withResolvers<void>();
+      const writes: Promise<void>[] = [];
+      mockStorageGetItem.mockImplementation(async (key) => disk.get(key) ?? null);
+      mockStorageSetItem.mockImplementation((key, value) => {
+        const write = (writes.length ? Promise.resolve() : pending.promise).then(() => {
+          disk.set(key, value);
+        });
+        writes.push(write);
+        return write;
+      });
+      const gateway = createGateway({
+        searchTopics: async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })
+      });
+      const hook = await renderSearchController(gateway);
+      try {
+        await waitFor(() => expect(hook.result.current.recentSearches).toEqual(original));
+        await act(async () => {
+          await hook.result.current.runSearch({ query: 'B', source: 'v2ex' });
+        });
+        await waitFor(() => expect(writes).toHaveLength(1));
+        await act(async () => hook.result.current.removeRecentSearch('B'));
+        expect(hook.result.current.recentSearches).toEqual(original);
+        await act(async () => {
+          pending.resolve();
+          await Promise.all(writes);
+        });
+        await waitFor(() => expect(disk.get('reader-search-history')).toBe(JSON.stringify(original)));
+        await hook.unmount();
+        const reopened = await renderSearchController(gateway);
+        try {
+          await waitFor(() => expect(reopened.result.current.recentSearches).toEqual(original));
+        } finally {
+          await reopened.unmount();
+        }
+      } finally {
+        pending.resolve();
+        await Promise.allSettled(writes);
+        await hook.unmount();
+        mockStorageGetItem.mockReset().mockResolvedValue(null);
+        mockStorageSetItem.mockReset().mockResolvedValue(undefined);
+      }
+    }
+  );
+
+  it.each([false, true])(
+    'retries a failed history write without invalidating a newer intent: %s',
+    async (newerIntent) => {
+      const pending = Promise.withResolvers<void>();
+      const writes: Promise<void>[] = [];
+      let saved = '[]';
+      mockStorageGetItem.mockImplementation(async () => saved);
+      mockStorageSetItem.mockImplementation((_key, value) => {
+        const write = (writes.length ? Promise.resolve() : pending.promise).then(() => {
+          saved = value;
+        });
+        writes.push(write);
+        return write;
+      });
+      const hook = await renderSearchController(
+        createGateway({
+          searchTopics: async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })
+        })
+      );
+      try {
+        await act(async () => {
+          await hook.result.current.runSearch({ query: 'B', source: 'v2ex' });
+        });
+        await waitFor(() => expect(writes).toHaveLength(1));
+        if (newerIntent) await act(async () => hook.result.current.removeRecentSearch('B'));
+        await act(async () => {
+          pending.reject(new Error('storage unavailable'));
+          await Promise.allSettled(writes);
+        });
+        if (newerIntent) {
+          await waitFor(() => expect(writes).toHaveLength(2));
+          await act(async () => hook.result.current.removeRecentSearch('missing'));
+          expect(saved).toBe('[]');
+        } else {
+          expect(writes).toHaveLength(1);
+          await act(async () => {
+            await hook.result.current.runSearch({ query: 'B', source: 'v2ex' });
+          });
+          await waitFor(() => expect(saved).toBe('["B"]'));
+        }
+        expect(writes).toHaveLength(2);
+      } finally {
+        pending.resolve();
+        await Promise.allSettled(writes);
+        await hook.unmount();
+        mockStorageGetItem.mockReset().mockResolvedValue(null);
+        mockStorageSetItem.mockReset().mockResolvedValue(undefined);
+      }
+    }
+  );
+
   it('persists a search submitted before saved history finishes loading', async () => {
     const storedHistory = Promise.withResolvers<string | null>();
     mockStorageGetItem.mockImplementationOnce(async () => storedHistory.promise);

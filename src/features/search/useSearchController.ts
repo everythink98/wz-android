@@ -181,7 +181,7 @@ export function useSearchController({
   const searchActive = active;
   const aggregateSources = enabledSearchSources;
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
-  const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
+  const lastQueuedRecentSearchesRef = useRef<string[] | null>(null);
   const recentSearchHistoryHydratedRef = useRef(false);
   const recentSearchHistoryReadFailedRef = useRef(false);
   const pendingRecentSearchRemovalKeysRef = useRef(new Set<string>());
@@ -219,7 +219,7 @@ export function useSearchController({
         const removedKeys = new Set(pendingRecentSearchRemovalKeysRef.current);
         recentSearchHistoryHydratedRef.current = true;
         pendingRecentSearchRemovalKeysRef.current.clear();
-        lastSavedRecentSearchesRef.current = storedHistory;
+        lastQueuedRecentSearchesRef.current = storedHistory;
         setRecentSearches((current) => {
           const merged = mergeLoadedSearchHistory(current, raw).filter((item) => !removedKeys.has(item.toLowerCase()));
           return sameSearchHistory(current, merged) ? current : merged;
@@ -235,17 +235,16 @@ export function useSearchController({
   }, [recentSearchHistoryReadAttempt]);
 
   useEffect(() => {
-    if (!recentSearchesHydrated || sameSearchHistory(lastSavedRecentSearchesRef.current, recentSearches)) {
+    if (!recentSearchesHydrated || sameSearchHistory(lastQueuedRecentSearchesRef.current, recentSearches)) {
       return;
     }
     const next = recentSearches;
+    lastQueuedRecentSearchesRef.current = next;
     void enqueueSearchHistoryWrite(recentSearchWriteQueueRef.current, () =>
       AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next))
-    )
-      .then(() => {
-        lastSavedRecentSearchesRef.current = next;
-      })
-      .catch(() => undefined);
+    ).catch(() => {
+      if (lastQueuedRecentSearchesRef.current === next) lastQueuedRecentSearchesRef.current = null;
+    });
   }, [recentSearches, recentSearchesHydrated]);
 
   const retryRecentSearchHistoryRead = useCallback(() => {

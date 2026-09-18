@@ -1,5 +1,7 @@
 import { NODESEEK_VOTE_API_HEADERS } from './polls';
 import { NODESEEK_BASE_URL, NODESEEK_FLOORS_PER_PAGE, nodeSeekTopicPagePath } from './protocol';
+import { isRecord } from '@/domain/forum/html';
+import { parseForumTopicDestination } from '@/domain/forum/links';
 import {
   normalizeNodeSeekStardustRefId,
   type NodeSeekStardustReceive,
@@ -15,6 +17,27 @@ export interface NodeSeekActionRequest {
 }
 
 type NodeSeekInteractionType = 'upvote' | 'like' | 'dislike';
+
+export function nodeSeekCreatedReplyTarget(data: unknown, topicId: string) {
+  if (
+    !isRecord(data) ||
+    data.success !== true ||
+    typeof data.redirect !== 'string' ||
+    typeof data.redirectHash !== 'string' ||
+    !/^#\d+$/.test(data.redirectHash)
+  )
+    return undefined;
+  const destination = parseForumTopicDestination(data.redirect + data.redirectHash, NODESEEK_BASE_URL);
+  const target = destination?.location?.kind === 'reply' ? destination.location.target : undefined;
+  if (
+    destination?.topic.source !== 'nodeseek' ||
+    destination.topic.id !== topicId ||
+    !target?.floor ||
+    target.pageHint !== Math.ceil(target.floor / NODESEEK_FLOORS_PER_PAGE)
+  )
+    return undefined;
+  return { floor: target.floor, pageHint: target.pageHint };
+}
 
 const NODESEEK_CONTENT_TOKEN_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 

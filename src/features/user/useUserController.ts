@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   hashKey,
   useInfiniteQuery,
@@ -129,6 +129,14 @@ export function useUserController({
     [resolutionReadPlan.cacheScope, sessionEpochs.nodeseek, selectedUsername]
   );
   const resolutionEnabled = Boolean(selectedNeedsResolution && active);
+  const resolutionKeyHash = hashKey(resolutionKey);
+  const resolutionScopeRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    resolutionScopeRef.current = resolutionEnabled ? resolutionKeyHash : null;
+    return () => {
+      resolutionScopeRef.current = null;
+    };
+  }, [resolutionEnabled, resolutionKeyHash]);
   const resolutionQuery = useQuery({
     queryKey: resolutionKey,
     enabled: resolutionEnabled,
@@ -289,7 +297,8 @@ export function useUserController({
         : null,
     [lastReplyPage, lastTopicPage, profile, replies, topics]
   );
-  const queryError = resolutionQuery.error || profileQuery.error;
+  const resolutionError = selectedNeedsResolution ? resolutionQuery.error : null;
+  const queryError = resolutionError || profileQuery.error;
   const userError = queryError && selectedUser ? sourceErrorFromUnknown(selectedUser.source, queryError) : null;
   const currentUserFollowed = Boolean(userProfile && isUserFollowed(readerData, userProfile));
 
@@ -299,9 +308,11 @@ export function useUserController({
       lane: 'resolution' | 'profile' | UserLane,
       resume: () => Promise<{ error: unknown; errorUpdatedAt: number; isError: boolean }>
     ) => {
-      if (!active || !selectedUser) return;
+      if (!active || !selectedUser || (lane === 'resolution' && !selectedNeedsResolution)) return;
       const sourceError = sourceErrorFromUnknown(selectedUser.source, error);
       const target = userSourceRecoveryTarget(selectedUser.source, sourceError);
+      const isCurrent = () =>
+        activeRef.current && (lane !== 'resolution' || resolutionScopeRef.current === resolutionKeyHash);
       if (target === 'linuxdo-verification') {
         const queryKey =
           lane === 'resolution'
@@ -313,9 +324,11 @@ export function useUserController({
                 : replyKey;
         const recovery: LinuxDoReadRecovery = {
           queryKey,
+          isCurrent,
           resume: async () => {
-            if (!activeRef.current) return 'stale';
+            if (!isCurrent()) return 'stale';
             const result = await resume();
+            if (!isCurrent()) return 'stale';
             handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
             return result.isError ? sourceReadRecoveryOutcome('linuxdo', result.error) : 'completed';
           }
@@ -332,9 +345,11 @@ export function useUserController({
                 : replyKey;
         const recovery: LinuxDoReadRecovery = {
           queryKey,
+          isCurrent,
           resume: async () => {
-            if (!activeRef.current) return 'stale';
+            if (!isCurrent()) return 'stale';
             const result = await resume();
+            if (!isCurrent()) return 'stale';
             handledUserErrorAtRef.current[lane] = result.errorUpdatedAt;
             return result.isError ? sourceReadRecoveryOutcome('nodeseek', result.error) : 'completed';
           }
@@ -352,6 +367,8 @@ export function useUserController({
       profileKey,
       replyKey,
       resolutionKey,
+      resolutionKeyHash,
+      selectedNeedsResolution,
       selectedUser,
       showLinuxDoVerification,
       showNodeSeekVerification,
@@ -361,11 +378,11 @@ export function useUserController({
   );
 
   useEffect(() => {
-    if (resolutionQuery.error && handledUserErrorAtRef.current.resolution !== resolutionQuery.errorUpdatedAt) {
+    if (resolutionError && handledUserErrorAtRef.current.resolution !== resolutionQuery.errorUpdatedAt) {
       handledUserErrorAtRef.current.resolution = resolutionQuery.errorUpdatedAt;
-      handleError(resolutionQuery.error, 'resolution', () => resolutionQuery.refetch({ cancelRefetch: false }));
+      handleError(resolutionError, 'resolution', () => resolutionQuery.refetch({ cancelRefetch: false }));
     }
-  }, [handleError, resolutionQuery.error, resolutionQuery.errorUpdatedAt, resolutionQuery.refetch, selectedUsername]);
+  }, [handleError, resolutionError, resolutionQuery.errorUpdatedAt, resolutionQuery.refetch, selectedUsername]);
 
   useEffect(() => {
     if (profileQuery.error && handledUserErrorAtRef.current.profile !== profileQuery.errorUpdatedAt) {

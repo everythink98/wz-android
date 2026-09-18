@@ -1,11 +1,23 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook as renderNativeHook } from '@testing-library/react-native';
+import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { useAppRuntime } from '@/app/useAppRuntime';
 import { useInitialForegroundRuntime } from '@/app/useInitialForegroundRuntime';
 import type { ReaderData } from '@/domain/reader/readerData';
+import { createEmptyReaderState } from '@/domain/reader/readerRecordState';
+import { useFeedController } from '@/features/feed/useFeedController';
+import type { ReadGateway } from '@/sources/readGateway';
 
 const mockUseAccountRuntime = jest.fn();
+const mockNotify = jest.fn<(message?: string) => void>();
+const mockUseNotificationsRuntime = jest.fn();
+let mockActualReader = false;
+const mockLoadReader = jest.fn<() => Promise<import('@/domain/reader/readerRecordState').ReaderState>>();
+const mockImportReader = jest.fn<() => Promise<import('@/domain/reader/readerRecordState').ReaderState>>();
+jest.mock('@/platform/storage/readerDataStore', () => ({
+  loadReaderState: () => mockLoadReader(),
+  importReaderDataBackup: () => mockImportReader()
+}));
 const renderHook: typeof renderNativeHook = (callback, options) =>
   renderNativeHook(callback, { wrapper: QueryTestWrapper, ...options });
 const mockUseAppUpdateRuntime = jest.fn();
@@ -17,7 +29,12 @@ let mockReaderDataLoaded = true;
 let mockSessionsReady = true;
 let mockInitialForegroundReady = false;
 let mockScreen = 'feed';
-const mockReadGateway = { getEmojiUrls: jest.fn() };
+const mockReadGateway = {
+  getEmojiUrls: jest.fn(),
+  getReadPlan: () => ({ state: 'ready', cacheScope: 'public:fixture' }),
+  getFeed: jest.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+  getCategories: jest.fn(async () => ({ items: [], errors: {} }))
+};
 const mockForumSessionEpochs = { linuxdo: 7, nodeseek: 7, yaohuo: 7 };
 const mockOnFeedInitialContentReady = jest.fn(() => {
   mockInitialForegroundReady = true;
@@ -31,7 +48,7 @@ jest.mock('@/app/useAppLifecycleRuntime', () => ({
     height: 800,
     initialForegroundReady: mockInitialForegroundReady,
     loginNavigation: {},
-    notify: jest.fn(),
+    notify: mockNotify,
     onCatalogSettled: jest.fn(),
     onFeedInitialContentReady: mockOnFeedInitialContentReady,
     onReady: mockHandleNavigationReady,
@@ -43,7 +60,11 @@ jest.mock('@/app/useAppLifecycleRuntime', () => ({
 }));
 
 jest.mock('@/app/useReaderRuntime', () => ({
-  useReaderRuntime: () => {
+  useReaderRuntime: (options: Parameters<typeof import('@/app/useReaderRuntime').useReaderRuntime>[0]) => {
+    if (mockActualReader)
+      return jest
+        .requireActual<typeof import('@/app/useReaderRuntime')>('@/app/useReaderRuntime')
+        .useReaderRuntime(options);
     const { createEmptyReaderData } =
       jest.requireActual<typeof import('@/domain/reader/readerData')>('@/domain/reader/readerData');
     const readerData = (mockReaderData ||= createEmptyReaderData());
@@ -51,6 +72,7 @@ jest.mock('@/app/useReaderRuntime', () => ({
       commitReaderData: jest.fn(),
       readerData,
       readerDataLoaded: mockReaderDataLoaded,
+      readerStatus: mockReaderDataLoaded ? 'ready' : 'loading',
       readerDataRef: { current: readerData },
       replaceReaderData: jest.fn(),
       waitForReaderDataSave: jest.fn(async () => undefined)
@@ -145,14 +167,17 @@ jest.mock('@/platform/update/useAppUpdateRuntime', () => ({
 }));
 
 jest.mock('@/features/notifications/useNotificationsRuntime', () => ({
-  useNotificationsRuntime: () => ({
-    identityKeys: {},
-    activeSources: [],
-    backgroundEnabled: false,
-    onNavigationReady: mockNotificationNavigationReady,
-    partialUnavailable: false,
-    unreadTotal: 0
-  })
+  useNotificationsRuntime: (options: unknown) => {
+    mockUseNotificationsRuntime(options);
+    return {
+      identityKeys: {},
+      activeSources: [],
+      backgroundEnabled: false,
+      onNavigationReady: mockNotificationNavigationReady,
+      partialUnavailable: false,
+      unreadTotal: 0
+    };
+  }
 }));
 
 jest.mock('@/app/useForumCatalogRuntime', () => ({
@@ -167,6 +192,7 @@ jest.mock('@/app/useContentSourceQueryCleanup', () => ({ useContentSourceQueryCl
 
 describe('app runtime startup', () => {
   beforeEach(() => {
+    mockActualReader = false;
     mockReaderDataLoaded = true;
     mockSessionsReady = true;
     mockInitialForegroundReady = false;
@@ -177,6 +203,90 @@ describe('app runtime startup', () => {
     mockUseAccountRuntime.mockClear();
     mockUseAppUpdateRuntime.mockClear();
     mockUseForumCatalogRuntime.mockClear();
+  });
+
+  it('settles local routes without trusting fallback settings, then enables only restored sources', async () => {
+    mockActualReader = true;
+    mockLoadReader.mockRejectedValue(new Error('unreadable database'));
+    const empty = createEmptyReaderState();
+    mockReadGateway.getFeed.mockClear();
+    mockReadGateway.getCategories.mockClear();
+    const hook = await renderHook(() => {
+      const app = useAppRuntime();
+      const feed = app.routes?.feedRouteRuntime;
+      useFeedController({
+        active: true,
+        enabledSources: feed?.enabledSources || [],
+        enabledSourcesKey: feed?.enabledSourcesKey || '',
+        readerData: feed?.reader.data || empty,
+        readerDataLoaded: feed?.reader.loaded || false,
+        catalogCategories: [],
+        linuxDoVerificationActive: false,
+        notify: mockNotify,
+        showLinuxDoVerification: mockNotify,
+        showNodeSeekVerification: mockNotify,
+        showYaohuoLogin: mockNotify,
+        readGateway: mockReadGateway as unknown as ReadGateway
+      });
+      return app;
+    });
+    await waitFor(() => expect(hook.result.current.routes).not.toBeNull());
+    const routes = hook.result.current.routes!;
+    expect(routes.moreRouteRuntime.reader.status).toBe('recovery');
+    for (const runtime of [
+      routes.feedRouteRuntime,
+      routes.searchRouteRuntime,
+      routes.topicRouteRuntime,
+      routes.userRouteRuntime,
+      routes.libraryRouteRuntime
+    ]) {
+      expect(runtime.enabledSources).toEqual([]);
+    }
+    expect(mockUseAccountRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ready: true, enabledSources: [] })
+    );
+    expect(mockUseNotificationsRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ contentSourcesReady: false, enabledNotificationSources: [] })
+    );
+    expect(mockUseForumCatalogRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ active: false, enabledFeedSources: [] })
+    );
+    mockImportReader.mockRejectedValueOnce(new Error('bad backup'));
+    await act(async () => {
+      await expect(routes.moreRouteRuntime.reader.importBackup('bad')).rejects.toThrow('bad backup');
+    });
+    expect(hook.result.current.routes!.feedRouteRuntime.enabledSources).toEqual([]);
+    expect(mockReadGateway.getFeed).not.toHaveBeenCalled();
+    expect(mockReadGateway.getCategories).not.toHaveBeenCalled();
+    const restored = createEmptyReaderState();
+    restored.settings.contentSources = restored.settings.contentSources.map((entry) => ({
+      ...entry,
+      enabled: entry.source === 'nodeseek'
+    }));
+    mockImportReader.mockResolvedValueOnce(restored);
+    await act(async () => {
+      await routes.moreRouteRuntime.reader.importBackup('backup');
+    });
+    expect(hook.result.current.routes!.moreRouteRuntime.reader.status).toBe('ready');
+    expect(hook.result.current.routes!.feedRouteRuntime.enabledSources).toEqual(['nodeseek']);
+    expect(mockUseNotificationsRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({ contentSourcesReady: true, enabledNotificationSources: ['nodeseek'] })
+    );
+    await waitFor(() => expect(mockReadGateway.getFeed).toHaveBeenCalled());
+  });
+
+  it('trusts the successfully loaded defaults on first install', async () => {
+    mockActualReader = true;
+    mockLoadReader.mockResolvedValueOnce(createEmptyReaderState());
+    const hook = await renderHook(() => useAppRuntime());
+    await waitFor(() => expect(hook.result.current.routes).not.toBeNull());
+    expect(hook.result.current.routes!.moreRouteRuntime.reader.status).toBe('ready');
+    expect(hook.result.current.routes!.feedRouteRuntime.enabledSources).toEqual([
+      'v2ex',
+      'linuxdo',
+      'nodeseek',
+      'yaohuo'
+    ]);
   });
 
   it('exposes local routes while keeping WebViews blocked during proxy load', async () => {

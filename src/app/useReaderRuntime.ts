@@ -7,6 +7,7 @@ import {
   createEmptyReaderState,
   projectReaderCommand,
   type ReaderCommand,
+  type ReaderStatus,
   type ReaderState
 } from '@/domain/reader/readerRecordState';
 import {
@@ -22,35 +23,35 @@ export async function loadInitialReaderData({
   isActive,
   load = loadReaderState,
   notify,
-  onLoadFailed,
   onLoaded
 }: {
   isActive: () => boolean;
   load?: () => Promise<ReaderState>;
   notify: (message: string) => void;
-  onLoadFailed?: () => void;
-  onLoaded: (data: ReaderState) => void;
+  onLoaded: (data: ReaderState, status: Exclude<ReaderStatus, 'loading'>) => void;
 }) {
   try {
     const state = await load();
-    if (isActive()) onLoaded(state);
+    if (isActive()) onLoaded(state, 'ready');
   } catch (error) {
     if (!isActive()) return;
     notify(`本机资料读取失败，已进入恢复模式；请先导入备份再修改本机资料：${errorMessage(error)}`);
-    onLoadFailed?.();
-    onLoaded(createEmptyReaderState());
+    onLoaded(createEmptyReaderState(), 'recovery');
   }
 }
 
 export function useReaderRuntime({ notify }: { notify: (message: string) => void }) {
   const queryClient = useQueryClient();
   const [readerData, setReaderData] = useState(createEmptyReaderState);
-  const [readerDataLoaded, setReaderDataLoaded] = useState(false);
+  const [readerStatus, setReaderStatus] = useState<ReaderStatus>('loading');
+  const active = useRef(false);
+  const statusRef = useRef<ReaderStatus>('loading');
+  const updateStatus = useCallback((status: ReaderStatus) => {
+    statusRef.current = status;
+    if (active.current) setReaderStatus(status);
+  }, []);
   const readerDataRef = useRef(readerData);
   const committed = useRef(readerData);
-  const loaded = useRef(false);
-  const suspended = useRef(false);
-  const active = useRef(false);
   const pending = useRef<{ command: ReaderCommand }[]>([]);
 
   const publish = useCallback(() => {
@@ -64,9 +65,11 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
 
   const commitReaderData = useCallback(
     (command: ReaderCommand) => {
-      if (!loaded.current || suspended.current) {
+      if (statusRef.current !== 'ready') {
         notify(
-          loaded.current ? '本机资料读取失败，请先导入备份再修改本机资料。' : '本机资料尚未加载完成，请稍后再试。'
+          statusRef.current === 'recovery'
+            ? '本机资料读取失败，请先导入备份再修改本机资料。'
+            : '本机资料尚未加载完成，请稍后再试。'
         );
         return;
       }
@@ -85,7 +88,7 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
             finishDiagnosticTrace(trace, 'success');
           },
           (error) => {
-            if (error instanceof AggregateError) suspended.current = true;
+            if (error instanceof AggregateError) updateStatus('recovery');
             finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
             notify(errorMessage(error));
           }
@@ -96,32 +99,37 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
         });
       void result;
     },
-    [notify, publish, queryClient]
+    [notify, publish, queryClient, updateStatus]
   );
 
   const importBackup = useCallback(
     async (json: string) => {
-      if (!loaded.current) throw new Error('本机资料尚未加载完成，请稍后再试。');
-      const result = importReaderDataBackup(json, suspended.current).then((state) => {
-        // Import invalidates all loaded collections, even when membership is equal.
-        state.revisions = {
-          favorites: committed.current.revisions.favorites + 1,
-          history: committed.current.revisions.history + 1,
-          followedUsers: committed.current.revisions.followedUsers + 1
-        };
-        committed.current = state;
-        void queryClient.invalidateQueries({ queryKey: ['reader-library'] });
-        suspended.current = false;
-        publish();
-      });
+      if (statusRef.current === 'loading') throw new Error('本机资料尚未加载完成，请稍后再试。');
+      const result = importReaderDataBackup(json, statusRef.current === 'recovery')
+        .then((state) => {
+          // Import invalidates all loaded collections, even when membership is equal.
+          state.revisions = {
+            favorites: committed.current.revisions.favorites + 1,
+            history: committed.current.revisions.history + 1,
+            followedUsers: committed.current.revisions.followedUsers + 1
+          };
+          committed.current = state;
+          void queryClient.invalidateQueries({ queryKey: ['reader-library'] });
+          publish();
+          updateStatus('ready');
+        })
+        .catch((error) => {
+          if (error instanceof AggregateError) updateStatus('recovery');
+          throw error;
+        });
 
       return result;
     },
-    [publish, queryClient]
+    [publish, queryClient, updateStatus]
   );
 
   const exportBackup = useCallback(() => {
-    if (!loaded.current || suspended.current) return Promise.reject(new Error('本机资料尚未恢复，无法导出。'));
+    if (statusRef.current !== 'ready') return Promise.reject(new Error('本机资料尚未恢复，无法导出。'));
     return exportReaderDataBackup();
   }, []);
 
@@ -131,14 +139,10 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
     void loadInitialReaderData({
       isActive: () => current,
       notify,
-      onLoadFailed: () => {
-        suspended.current = true;
-      },
-      onLoaded: (state) => {
+      onLoaded: (state, status) => {
         committed.current = state;
-        loaded.current = true;
         publish();
-        setReaderDataLoaded(true);
+        updateStatus(status);
         recordStartupPhase('reader-ready');
       }
     });
@@ -146,7 +150,15 @@ export function useReaderRuntime({ notify }: { notify: (message: string) => void
       current = false;
       active.current = false;
     };
-  }, [notify, publish]);
+  }, [notify, publish, updateStatus]);
 
-  return { commitReaderData, readerData, readerDataLoaded, readerDataRef, importBackup, exportBackup };
+  return {
+    commitReaderData,
+    readerData,
+    readerStatus,
+    readerDataLoaded: readerStatus !== 'loading',
+    readerDataRef,
+    importBackup,
+    exportBackup
+  };
 }

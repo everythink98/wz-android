@@ -52,6 +52,7 @@ function UtilityOverviewScenario() {
       summary: '暂无未读·后台通知未开启'
     },
     backup: {
+      recovery: false,
       busy: false,
       exportFile: noop,
       importFile: noop

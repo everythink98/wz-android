@@ -19,9 +19,14 @@ class DiagnosticLogStoreTest {
     val fields = DiagnosticJournal.safeNetworkFields(mapOf(
       "cookieKind" to "bot-management", "hasCfClearance" to true, "hasStoredCfClearance" to true,
       "isCfClearanceCurrent" to false, "didCfClearanceChange" to true, "userAgentHash" to "0123abcd",
+      "cookieEndpoint" to "site-config", "loginCookieCount" to 2, "storedLoginCookieCount" to 1, "isLoginCookieCurrent" to false,
       "cookie" to "PRIVATE_COOKIE", "cookieHash" to "PRIVATE_HASH", "userAgent" to "PRIVATE_UA"
     ))
-    assertEquals(6, fields.size)
+    assertEquals(10, fields.size)
+    assertEquals("site-config", fields["cookieEndpoint"])
+    assertEquals(2, fields["loginCookieCount"])
+    assertEquals(1, fields["storedLoginCookieCount"])
+    assertEquals(false, fields["isLoginCookieCurrent"])
     assertEquals("0123abcd", fields["userAgentHash"])
     assertEquals(false, fields["isCfClearanceCurrent"])
     assertFalse(fields.toString().contains("PRIVATE"))

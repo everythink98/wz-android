@@ -74,6 +74,7 @@ export function useVerificationController({
   canOpenLinuxDoPanel = () => true,
   awaitLinuxDoCookieHandoff = async () => undefined,
   awaitLinuxDoWebViewUnmount = async () => undefined,
+  handoffLinuxDoCookies = awaitLinuxDoCookieHandoff,
   getRecoveryScope = () => '',
   onRecoveryStateChanged = () => undefined,
   changeNodeSeekLoginPanel,
@@ -104,6 +105,7 @@ export function useVerificationController({
   canOpenLinuxDoPanel?: () => boolean;
   awaitLinuxDoCookieHandoff?: () => Promise<void>;
   awaitLinuxDoWebViewUnmount?: () => Promise<void>;
+  handoffLinuxDoCookies?: () => Promise<void>;
   getRecoveryScope?: () => string;
   onRecoveryStateChanged?: (panel: LinuxDoRecoveryPanel) => void;
   changeNodeSeekLoginPanel: (visible: boolean, closeReason?: AuthSurfaceCloseReason) => void;
@@ -394,10 +396,12 @@ export function useVerificationController({
           notify('本次阅读同步已停止，未确认的请求不会重发。');
       }
       recoverySessionRef.current = null;
-      publishRecovery();
-      linuxDoVerificationGenerationRef.current += 1;
-      linuxDoVerificationPhaseRef.current = 'closing';
-      invalidateLinuxDoCheck();
+      if (linuxDoPanelClosingSessionRef.current === null) {
+        publishRecovery();
+        linuxDoVerificationGenerationRef.current += 1;
+        linuxDoVerificationPhaseRef.current = 'closing';
+        invalidateLinuxDoCheck();
+      }
       if (cancelCurrentRecovery) {
         const queuedRecovery = queuedLinuxDoVerificationRef.current;
         if (queuedRecovery?.recovery) {
@@ -876,8 +880,16 @@ export function useVerificationController({
       source: 'linuxdo',
       state: 'started'
     });
-    const linuxDoWebViewSession = linuxDoWebViewSessionRef.current;
+    const linuxDoWebViewSession = nextLinuxDoWebViewSession();
+    if (linuxDoWebViewMountTimerRef.current) {
+      clearTimeout(linuxDoWebViewMountTimerRef.current);
+      linuxDoWebViewMountTimerRef.current = null;
+    }
+    linuxDoWebViewRef.current?.stopLoading();
+    setMountLinuxDoWebView(false);
+    setLoadingLinuxDoPage(false);
     const isCurrentLinuxDoCheck = () => {
+      if (!canOpenLinuxDoPanel()) return false;
       if (linuxDoActiveCheckRef.current !== requestId) {
         return false;
       }
@@ -902,6 +914,10 @@ export function useVerificationController({
     linuxDoVerificationPhaseRef.current = 'checking-clearance';
     setLinuxDoWebViewError('');
     try {
+      await awaitLinuxDoWebViewUnmount();
+      if (!isCurrentLinuxDoCheck()) return;
+      await handoffLinuxDoCookies();
+      if (!isCurrentLinuxDoCheck()) return;
       const result = await reconcileAccountStatus('linuxdo');
       if (!isCurrentLinuxDoCheck()) {
         finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
@@ -911,6 +927,10 @@ export function useVerificationController({
         finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
         return;
       }
+      // Committing a changed identity can advance the native epoch. Join that handoff
+      // before releasing the Account business barrier, even though the page is already gone.
+      await handoffLinuxDoCookies();
+      if (!isCurrentLinuxDoCheck()) return;
       if (result.status === 'unknown') {
         const message = `linux.do 登录状态暂时无法确认：${result.error}`;
         setLinuxDoWebViewError(message);
@@ -926,7 +946,7 @@ export function useVerificationController({
         isLoggedIn: loginConfirmed
       });
       if (!loginConfirmed) {
-        const message = 'linux.do 当前为未登录状态，请登录后再检测。';
+        const message = 'linux.do 当前为未登录状态，请刷新页面登录后再检测。';
         setLinuxDoWebViewError(message);
         notify(message);
         linuxDoVerificationPhaseRef.current = 'awaiting-clearance';
@@ -942,6 +962,7 @@ export function useVerificationController({
       });
     } catch (error) {
       if (isCurrentLinuxDoCheck()) {
+        setLinuxDoWebViewError(`登录会话交接或检测失败：${errorMessage(error)}，请重试检测或刷新页面。`);
         notify(errorMessage(error));
         finishLinuxDoVerificationTrace(trace, 'failure', {
           reason: normalizeDiagnosticReason(error)
@@ -964,13 +985,19 @@ export function useVerificationController({
   }, [
     canOpenLinuxDoPanel,
     checkRecovery,
-    awaitLinuxDoCookieHandoff,
+    awaitLinuxDoWebViewUnmount,
+    handoffLinuxDoCookies,
     checkingRequestIdRef,
     closeLinuxDoPanel,
     currentLinuxDoVerificationTrace,
     finishLinuxDoVerificationTrace,
     isLinuxDoSurfaceVisible,
     linuxDoWebViewSessionRef,
+    nextLinuxDoWebViewSession,
+    linuxDoWebViewMountTimerRef,
+    linuxDoWebViewRef,
+    setMountLinuxDoWebView,
+    setLoadingLinuxDoPage,
     notify,
     reconcileAccountStatus,
     setChecking,

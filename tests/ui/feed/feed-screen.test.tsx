@@ -283,6 +283,8 @@ function ControllerFeed({ gateway }: { gateway: ReadGateway }) {
     []
   );
   const controller = useFeedController({
+    enabledSources: ['linuxdo'],
+    enabledSourcesKey: 'linuxdo',
     active: true,
     catalogCategories: categories,
     linuxDoVerificationActive: false,

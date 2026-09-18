@@ -1,0 +1,5 @@
+context platform=android
+context device="WZ ComposerInsets 0916"
+context timeout=45000
+context retries=0
+press label="${CLOSE_LABEL}"

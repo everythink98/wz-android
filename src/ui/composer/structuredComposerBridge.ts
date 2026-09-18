@@ -60,6 +60,7 @@ export const composerHostMessageSchema = z.discriminatedUnion('type', [
   strictObject({
     type: z.literal('INIT'),
     payload: strictObject({
+      documentEpoch: z.number().int().nonnegative().optional(),
       site: composerSiteSchema,
       intentKind: z.enum(['reply', 'edit-reply', 'private-message']),
       markdown: z.string().max(MAX_COMPOSER_MARKDOWN_LENGTH),
@@ -101,10 +102,17 @@ export const composerHostMessageSchema = z.discriminatedUnion('type', [
 
 export const composerEditorMessageSchema = z.discriminatedUnion('type', [
   strictObject({ type: z.literal('USER_INTERACTION'), payload: strictObject({}) }),
-  strictObject({ type: z.literal('READY'), payload: strictObject({ revision: z.number().int().nonnegative() }) }),
+  strictObject({
+    type: z.literal('READY'),
+    payload: strictObject({
+      documentEpoch: z.number().int().nonnegative().optional(),
+      revision: z.number().int().nonnegative()
+    })
+  }),
   strictObject({
     type: z.literal('STATE_CHANGED'),
     payload: strictObject({
+      documentEpoch: z.number().int().nonnegative().optional(),
       revision: z.number().int().nonnegative(),
       mode: composerModeSchema,
       isEmpty: z.boolean(),
@@ -114,7 +122,11 @@ export const composerEditorMessageSchema = z.discriminatedUnion('type', [
   }),
   strictObject({
     type: z.literal('SNAPSHOT'),
-    payload: strictObject({ requestId: z.string().max(80).optional(), snapshot: snapshotSchema })
+    payload: strictObject({
+      documentEpoch: z.number().int().nonnegative().optional(),
+      requestId: z.string().max(80).optional(),
+      snapshot: snapshotSchema
+    })
   }),
   strictObject({
     type: z.literal('REQUEST_HOST_ACTION'),

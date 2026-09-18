@@ -16,6 +16,7 @@ import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/struc
 import { parseForumTopicLink } from '@/domain/forum/links';
 import { manageContentSourcesAction } from '@/ui/navigation/appRouteActions';
 import type { RootStackParamList } from '@/ui/navigation/appRouteTypes';
+import { useLatestCallback } from '@/ui/hooks/useLatestCallback';
 import { errorMessage } from '@/platform/network/errors';
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { forumQueryKeys } from '@/platform/query/serverState';
@@ -574,7 +575,14 @@ export function NotificationDetailRoute({ navigation, route }: NotificationDetai
       />
     );
   }
-  return <EnabledNotificationDetailRoute navigation={navigation} route={route} runtime={runtime} />;
+  return (
+    <EnabledNotificationDetailRoute
+      key={`${source}:${route.params.identityKey}:${route.params.notification.id}`}
+      navigation={navigation}
+      route={route}
+      runtime={runtime}
+    />
+  );
 }
 
 function EnabledNotificationDetailRoute({
@@ -594,7 +602,9 @@ function EnabledNotificationDetailRoute({
   const gateway = runtime.gateway;
   const notify = runtime.notify;
   const refreshSnapshots = runtime.refreshSnapshots;
-  const markStartedRef = useRef('');
+  const markPhaseRef = useRef<'idle' | 'pending' | 'confirmed' | 'retryable'>('idle');
+  const markAttemptedThisVisit = useRef(false);
+  const [markPhase, setMarkPhase] = useState(markPhaseRef.current);
   const markControllerRef = useRef<AbortController | undefined>(undefined);
   const replyControllerRef = useRef<AbortController | undefined>(undefined);
   const composerControllersRef = useRef(new Set<AbortController>());
@@ -635,8 +645,6 @@ function EnabledNotificationDetailRoute({
   }, [detailQuery.data?.messages, detailQuery.data?.title, navigation]);
   useEffect(
     () => () => {
-      markControllerRef.current?.abort();
-      markControllerRef.current = undefined;
       replyControllerRef.current?.abort();
       replyControllerRef.current = undefined;
       composerControllersRef.current.forEach((controller) => controller.abort());
@@ -647,8 +655,6 @@ function EnabledNotificationDetailRoute({
   );
   useEffect(() => {
     if (routeFocused) return;
-    markControllerRef.current?.abort();
-    markControllerRef.current = undefined;
     replyControllerRef.current?.abort();
     replyControllerRef.current = undefined;
     composerControllersRef.current.forEach((controller) => controller.abort());
@@ -673,39 +679,72 @@ function EnabledNotificationDetailRoute({
     setReplyStatus('');
     setReplyVisible(false);
   }, [canAccessSource, currentIdentityKey, identityKey]);
+  const updateMarkPhase = useCallback((phase: typeof markPhaseRef.current) => {
+    markPhaseRef.current = phase;
+    setMarkPhase(phase);
+  }, []);
   useEffect(() => {
-    const detail = detailQuery.data;
-    const markKey = `${identityKey}:${item.id}`;
-    if (!routeFocused || !canAccessSource || !detail || !item.unread || markStartedRef.current === markKey) return;
-    markStartedRef.current = markKey;
-    const controller = new AbortController();
-    markControllerRef.current?.abort();
-    markControllerRef.current = controller;
-    let current = true;
-    void gateway
-      .markRead(item, detail, identityKey, controller.signal)
-      .then((result) => {
-        if (!current) return;
-        setMarkMessage(result.confirmed ? '' : result.message || '原站未确认已读状态');
-      })
-      .finally(async () => {
-        if (markControllerRef.current === controller) markControllerRef.current = undefined;
-        // Canceling the response cannot undo a read already applied by the server.
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications(item.source) }),
-          queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications('all') }),
-          refreshSnapshots()
-        ]);
-      })
-      .catch((error) => {
-        if (current) setMarkMessage(`已读状态未更新：${errorMessage(error)}`);
-      });
+    markAttemptedThisVisit.current = false;
+    setMarkPhase(markPhaseRef.current);
     return () => {
-      current = false;
-      controller.abort();
-      if (markControllerRef.current === controller) markControllerRef.current = undefined;
+      markControllerRef.current?.abort();
+      markControllerRef.current = undefined;
+      if (markPhaseRef.current === 'pending') markPhaseRef.current = 'retryable';
+      markAttemptedThisVisit.current = false;
     };
-  }, [canAccessSource, detailQuery.data, gateway, identityKey, item, queryClient, refreshSnapshots, routeFocused]);
+  }, [routeFocused, canAccessSource]);
+  const markRead = useLatestCallback(async (refreshDetail: boolean) => {
+    if (
+      !routeFocused ||
+      !canAccessSource ||
+      !item.unread ||
+      markPhaseRef.current === 'pending' ||
+      markPhaseRef.current === 'confirmed'
+    )
+      return;
+    markAttemptedThisVisit.current = true;
+    const controller = new AbortController();
+    markControllerRef.current = controller;
+    updateMarkPhase('pending');
+    const current = () => markControllerRef.current === controller && !controller.signal.aborted;
+    try {
+      const refreshed = refreshDetail ? await detailQuery.refetch() : undefined;
+      if (!current()) return;
+      if (refreshed?.error) throw refreshed.error;
+      const detail = refreshed ? refreshed.data : detailQuery.data;
+      if (!detail) throw new Error('消息详情暂不可用');
+      const result = await gateway.markRead(item, detail, identityKey, controller.signal);
+      if (current()) {
+        updateMarkPhase(result.confirmed ? 'confirmed' : 'retryable');
+        setMarkMessage(result.confirmed ? '' : result.message || '原站未确认已读状态');
+      }
+    } catch (error) {
+      if (current()) {
+        updateMarkPhase('retryable');
+        setMarkMessage(`已读状态未更新：${errorMessage(error)}`);
+      }
+    } finally {
+      if (markControllerRef.current === controller) markControllerRef.current = undefined;
+      // A canceled response cannot undo a server write. Reconciliation failure
+      // must not turn a confirmed write back into a retryable attempt.
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications(item.source) }),
+        queryClient.invalidateQueries({ queryKey: forumQueryKeys.notifications('all') }),
+        refreshSnapshots()
+      ]);
+    }
+  });
+  useEffect(() => {
+    if (
+      routeFocused &&
+      canAccessSource &&
+      detailQuery.data &&
+      !detailQuery.isFetching &&
+      !markAttemptedThisVisit.current
+    ) {
+      void markRead(false);
+    }
+  }, [canAccessSource, detailQuery.data, detailQuery.isFetching, markRead, routeFocused]);
   const fallbackTopic =
     item.target.type === 'topic' || item.target.type === 'topic-post' ? parseForumTopicLink(item.target.url) : null;
   const targetTopic = detailQuery.data?.topic || (fallbackTopic ? { ...fallbackTopic, title: item.title } : null);
@@ -903,6 +942,14 @@ function EnabledNotificationDetailRoute({
       error={canAccessSource ? (detailQuery.error ? errorMessage(detailQuery.error) : undefined) : accessError}
       loading={canAccessSource && detailQuery.isPending}
       markMessage={markMessage}
+      markBusy={markPhase === 'pending'}
+      onRetryMark={
+        canAccessSource && routeFocused && markPhase !== 'confirmed'
+          ? () => {
+              void markRead(true);
+            }
+          : undefined
+      }
       nodeSeekMemberId={
         item.source === 'nodeseek' && runtime.sessions.nodeseek.currentUser?.id
           ? String(runtime.sessions.nodeseek.currentUser.id)

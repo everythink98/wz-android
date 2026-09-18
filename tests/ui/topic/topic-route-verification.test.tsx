@@ -125,6 +125,7 @@ async function mount() {
       webViewBlockMessage: ''
     });
     const runtime: TopicRouteRuntimeValue = {
+      enabledSources: ['linuxdo', 'nodeseek', 'yaohuo', 'v2ex'],
       account: {
         ...account.write,
         sessionEpochs: account.read.forumSessionEpochs,

@@ -213,6 +213,7 @@ describe('Composer editor runtime codec', () => {
     await send({
       type: 'INIT',
       payload: {
+        documentEpoch: 7,
         site,
         intentKind: 'reply',
         markdown: '',
@@ -224,6 +225,10 @@ describe('Composer editor runtime codec', () => {
     });
     expect(host.querySelector('.ProseMirror')?.textContent).toBe('');
     expect(host.querySelector('.cm-content')?.textContent || '').toBe('');
+    expect(
+      postMessage.mock.calls.map(([raw]) => JSON.parse(raw)).findLast((event) => event.type === 'READY').payload
+        .documentEpoch
+    ).toBe(7);
     await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'next-reply' } });
     const snapshot = postMessage.mock.calls
       .map(([raw]) => JSON.parse(raw))

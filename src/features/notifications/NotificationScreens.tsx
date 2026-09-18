@@ -614,6 +614,8 @@ export function NotificationDetailScreen({
   error,
   loading,
   markMessage,
+  markBusy = false,
+  onRetryMark,
   nodeSeekMemberId,
   replyBusy = false,
   replyContent = '',
@@ -645,6 +647,8 @@ export function NotificationDetailScreen({
   error?: string;
   loading: boolean;
   markMessage?: string;
+  markBusy?: boolean;
+  onRetryMark?: () => void;
   nodeSeekMemberId?: string;
   replyBusy?: boolean;
   replyContent?: string;
@@ -753,6 +757,7 @@ export function NotificationDetailScreen({
         {markMessage ? (
           <View style={styles.readFailure} accessibilityLiveRegion="polite">
             <Text style={styles.errorText}>{markMessage}</Text>
+            {onRetryMark ? <AppButton label="重试已读状态" disabled={markBusy} onPress={onRetryMark} /> : null}
           </View>
         ) : null}
         {conversation && (detail.contentHtml || detail.contentText) ? (

@@ -61,6 +61,7 @@ import { withRequestBeforeSend } from '@/platform/network/request';
 import { validateWritableSessionTicket, type SessionRuntimeSnapshot } from '@/domain/session/writableSessionGate';
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { buildDiscourseActionRequest } from '@/sources/discourse/actionRequest';
+import { AcceptanceProof } from './acceptance';
 
 // Isolated developer entry only. Synthetic payloads test boundaries, never upstream protocol claims.
 // HTTP is replaced at the supplied fetcher; WebView uses inline documents with no remote resources.
@@ -855,6 +856,8 @@ function FeedProbe({
   observe: (value: ReturnType<typeof useFeedController>) => void;
 }) {
   const controller = useFeedController({
+    enabledSources: ['linuxdo'],
+    enabledSourcesKey: 'linuxdo',
     active: true,
     catalogCategories: [],
     linuxDoVerificationActive: false,
@@ -945,6 +948,12 @@ function ProofApp() {
   const [status, setStatus] = useState('Isolated remediation proof');
   useEffect(() => {
     void Linking.getInitialURL().then((url) => {
+      const acceptance = /^wzreviewproof:\/\/(boundaries|recovery|notification)\/([a-f0-9]{32})$/.exec(url || '');
+      if (acceptance) {
+        setContent(<AcceptanceProof mode={acceptance[1]} token={acceptance[2]} />);
+        setStatus('Pro 修复专项设备验收');
+        return;
+      }
       const token = /^wzreviewproof:\/\/run\/([a-f0-9]{32})$/.exec(url || '')?.[1];
       if (token) void execute(token, setContent, setStatus).catch((error: unknown) => setStatus(String(error)));
     });

@@ -26,6 +26,7 @@ function userTopic(index: number, source: UserProfile['source']): Topic {
     author: '示例用户',
     category: '开发调优',
     createdAt: FIXED_TIME,
+    displayTimeText: '2026-08-29',
     excerpt: '用户主页中的固定主题摘要。',
     id: `user-topic-${index}`,
     replyCount: index * 4,

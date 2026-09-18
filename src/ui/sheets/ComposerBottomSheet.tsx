@@ -13,7 +13,8 @@ import Animated, {
   interpolate,
   useAnimatedStyle,
   useAnimatedKeyboard,
-  useAnimatedReaction
+  useAnimatedReaction,
+  runOnJS
 } from 'react-native-reanimated';
 import BottomSheet, {
   BottomSheetView,
@@ -21,7 +22,9 @@ import BottomSheet, {
   useBottomSheetInternal
 } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Portal } from '@gorhom/portal';
 import type { ComposerPresentation } from '@/domain/forum/structuredComposer';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 
 function ComposerBackdrop({
   animatedIndex,
@@ -47,8 +50,14 @@ function ComposerBackdrop({
   );
 }
 
-function ComposerKeyboardViewport() {
-  const { animatedLayoutState } = useBottomSheetInternal();
+function ComposerKeyboardViewport({
+  visible,
+  onOpenReady
+}: {
+  visible: boolean;
+  onOpenReady: (index: number) => void;
+}) {
+  const { animatedLayoutState, animatedIndex, animatedAnimationState } = useBottomSheetInternal();
   // Edge-to-edge Android delivers IME insets instead of resizing the window.
   // The native IME animation resizes this viewport; BottomSheet must not offset it again.
   const keyboard = useAnimatedKeyboard({
@@ -68,6 +77,15 @@ function ComposerKeyboardViewport() {
         return state;
       });
     }
+  );
+  // An interrupted close can settle at the previous index without an onChange.
+  // Observe completion too, so that opening still receives its one initial focus.
+  useAnimatedReaction(
+    () => visible && animatedIndex.get() === 0 && animatedAnimationState.get().nextIndex === undefined,
+    (ready) => {
+      if (ready) runOnJS(onOpenReady)(0);
+    },
+    [visible, onOpenReady]
   );
   useEffect(
     () => () => {
@@ -108,6 +126,7 @@ export function ComposerBottomSheet({
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const bottomSheetRef = useRef<BottomSheet>(null);
+  const committedVisible = useCommittedRef(visible);
   const [focusSignal, setFocusSignal] = useState(0);
   const [keyboardActive, setKeyboardActive] = useState(visible);
   const initialFocusPending = useRef(visible);
@@ -120,21 +139,26 @@ export function ComposerBottomSheet({
     [dark, visible]
   );
   const close = useCallback(() => {
+    // This controlled sheet has no close gesture. An old animation must not
+    // dismiss a newly opened editor or release its keyboard subscription.
+    if (committedVisible.current) return;
     setKeyboardActive(false);
     Keyboard.dismiss();
-    if (visible) onOpenChange(false);
-  }, [onOpenChange, visible]);
+  }, [committedVisible]);
   const availableContentHeight = Math.max(320, height - insets.top - insets.bottom);
   const fixedSheetContentHeight = Math.min(
     Math.round(availableContentHeight * 0.75),
     Math.max(360, Math.min(480, Math.round(availableContentHeight * 0.52)))
   );
   const fixedSheetHeight = fixedSheetContentHeight + insets.bottom;
-  const fullscreenHeight = Math.max(320, height - insets.top);
+  const fullscreenHeight = height;
   const paddedContentStyle = useMemo(() => [contentStyle, { paddingBottom: 8 }], [contentStyle]);
   const fixedContentStyle = useMemo(
-    () => [contentStyle, { flex: 1, paddingBottom: insets.bottom }],
-    [contentStyle, insets.bottom]
+    () => [
+      contentStyle,
+      { flex: 1, paddingBottom: insets.bottom, paddingTop: presentation === 'fullscreen' ? insets.top : 0 }
+    ],
+    [contentStyle, insets.bottom, insets.top, presentation]
   );
   const resolvedBackgroundStyle = useMemo(
     () => [backgroundStyle, presentation === 'fullscreen' && { borderTopLeftRadius: 0, borderTopRightRadius: 0 }],
@@ -156,12 +180,12 @@ export function ComposerBottomSheet({
   }, [visible]);
   const handleSheetChange = useCallback(
     (nextIndex: number) => {
-      if (visible && nextIndex === 0 && initialFocusPending.current) {
+      if (committedVisible.current && nextIndex === 0 && initialFocusPending.current) {
         initialFocusPending.current = false;
         setFocusSignal((value) => value + 1);
       }
     },
-    [visible]
+    [committedVisible]
   );
   useEffect(() => {
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -181,36 +205,38 @@ export function ComposerBottomSheet({
   }, [onOpenChange, onPresentationChange, presentation, visible]);
 
   return (
-    <BottomSheet
-      ref={bottomSheetRef}
-      index={index}
-      backgroundStyle={resolvedBackgroundStyle}
-      backdropComponent={renderBackdrop}
-      bottomInset={fixedContent ? 0 : insets.bottom}
-      containerStyle={containerStyle}
-      enableDynamicSizing={!fixedContent}
-      enableContentPanningGesture={false}
-      enablePanDownToClose={false}
-      handleComponent={null}
-      keyboardBehavior="interactive"
-      keyboardBlurBehavior="restore"
-      android_keyboardInputMode="adjustResize"
-      maxDynamicContentSize={Math.round(availableContentHeight * (presentation === 'fullscreen' ? 1 : 0.75))}
-      snapPoints={snapPoints}
-      topInset={presentation === 'fullscreen' ? insets.top : 0}
-      onChange={handleSheetChange}
-      onClose={close}
-    >
-      {keyboardActive && <ComposerKeyboardViewport />}
-      {fixedContent ? (
-        <View testID="composer-bottom-sheet-content" style={fixedContentStyle}>
-          {children(focusSignal)}
-        </View>
-      ) : (
-        <BottomSheetView testID="composer-bottom-sheet-content" style={paddedContentStyle}>
-          {children(focusSignal)}
-        </BottomSheetView>
-      )}
-    </BottomSheet>
+    <Portal>
+      <BottomSheet
+        ref={bottomSheetRef}
+        index={index}
+        backgroundStyle={resolvedBackgroundStyle}
+        backdropComponent={renderBackdrop}
+        bottomInset={fixedContent ? 0 : insets.bottom}
+        containerStyle={containerStyle}
+        enableDynamicSizing={!fixedContent}
+        enableContentPanningGesture={false}
+        enablePanDownToClose={false}
+        handleComponent={null}
+        keyboardBehavior="interactive"
+        keyboardBlurBehavior="restore"
+        android_keyboardInputMode="adjustResize"
+        maxDynamicContentSize={Math.round(availableContentHeight * (presentation === 'fullscreen' ? 1 : 0.75))}
+        snapPoints={snapPoints}
+        topInset={0}
+        onChange={handleSheetChange}
+        onClose={close}
+      >
+        {keyboardActive && <ComposerKeyboardViewport visible={visible} onOpenReady={handleSheetChange} />}
+        {fixedContent ? (
+          <View testID="composer-bottom-sheet-content" style={fixedContentStyle}>
+            {children(focusSignal)}
+          </View>
+        ) : (
+          <BottomSheetView testID="composer-bottom-sheet-content" style={paddedContentStyle}>
+            {children(focusSignal)}
+          </BottomSheetView>
+        )}
+      </BottomSheet>
+    </Portal>
   );
 }

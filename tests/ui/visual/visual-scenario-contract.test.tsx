@@ -1,4 +1,6 @@
 import type { ForwardedRef } from 'react';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { render } from '@testing-library/react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
@@ -41,8 +43,13 @@ jest.mock('@/features/topic/components/ReplyComposerSheet', () => ({ ReplyCompos
 import { visualScenarioCatalog, VisualScenarioView } from './catalog';
 
 describe('visual scenario catalog', () => {
-  it('classifies all 42 App capabilities', () => {
-    expect(new Set(visualScenarioCatalog.flatMap((scenario) => scenario.capabilityIds)).size).toBe(42);
+  it('classifies exactly the App capabilities declared in the product map', () => {
+    const productMap = readFileSync(path.resolve(__dirname, '../../../docs/product-map.md'), 'utf8');
+    const expected = [...new Set(Array.from(productMap.matchAll(/`([A-Z]+-\d{2})`/g), (match) => match[1]))]
+      .filter((id) => !id.startsWith('RELEASE-'))
+      .sort();
+    expect(expected.length).toBeGreaterThan(0);
+    expect([...new Set(visualScenarioCatalog.flatMap((scenario) => scenario.capabilityIds))].sort()).toEqual(expected);
   });
 
   it('uses unique stable scenario and capability ids', () => {
@@ -67,4 +74,25 @@ describe('visual scenario catalog', () => {
       }
     }
   });
+
+  it.each(['search.aggregate.partial', 'user.profile.long'])(
+    'keeps %s dates stable across capture days',
+    async (id) => {
+      const clock = jest.spyOn(Date, 'now');
+      try {
+        for (const day of ['2026-09-17T12:00:00Z', '2026-10-17T12:00:00Z']) {
+          clock.mockReturnValue(Date.parse(day));
+          const view = await render(
+            <GestureHandlerRootView>
+              <VisualScenarioView id={id} />
+            </GestureHandlerRootView>
+          );
+          expect(view.getAllByText('2026-08-29').length).toBeGreaterThan(0);
+          await view.unmount();
+        }
+      } finally {
+        clock.mockRestore();
+      }
+    }
+  );
 });

@@ -267,6 +267,167 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
 }
 
 describe('notification routes', () => {
+  async function renderReadLifecycle(markRead: NotificationRouteRuntimeValue['gateway']['markRead']) {
+    appQueryClient.clear();
+    const detail = { notification, title: 'Read lifecycle', contentText: 'detail' };
+    const loadDetail = jest.fn(async () => ({ ...detail }));
+    const gateway = { loadDetail, markRead } as unknown as NotificationRouteRuntimeValue['gateway'];
+    const runtime = routeRuntime(gateway);
+    const navigation = createNavigationContainerRef<FocusTestStackParamList>();
+    const tree = (value: NotificationRouteRuntimeValue) => (
+      <NotificationRouteRuntimeProvider value={value}>
+        <NavigationContainer ref={navigation}>
+          <FocusTestStack.Navigator initialRouteName="NotificationDetail">
+            <FocusTestStack.Screen
+              name="NotificationDetail"
+              initialParams={{ notification, identityKey: 'nodeseek:new-account' }}
+            >
+              {(props) => (
+                <NotificationDetailRoute navigation={props.navigation as never} route={props.route as never} />
+              )}
+            </FocusTestStack.Screen>
+            <FocusTestStack.Screen name="Other">{() => null}</FocusTestStack.Screen>
+          </FocusTestStack.Navigator>
+        </NavigationContainer>
+      </NotificationRouteRuntimeProvider>
+    );
+    const view = await render(tree(runtime), { wrapper: QueryTestWrapper });
+    return {
+      view,
+      navigation,
+      loadDetail,
+      runtime,
+      updateRuntime: (value: NotificationRouteRuntimeValue) => view.rerender(tree(value))
+    };
+  }
+
+  it.each(['identity-pending', 'source-disabled'] as const)(
+    'cancels read access during %s and permits a fresh attempt after restoration',
+    async (change) => {
+      const markRead = jest
+        .fn<NotificationRouteRuntimeValue['gateway']['markRead']>()
+        .mockImplementationOnce(
+          (_item, _detail, _identity, signal) =>
+            new Promise((_resolve, reject) => {
+              signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+            })
+        )
+        .mockResolvedValue({ confirmed: true });
+      const { runtime, updateRuntime } = await renderReadLifecycle(markRead);
+      await waitFor(() => expect(markRead).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await updateRuntime(
+          change === 'identity-pending'
+            ? { ...runtime, identityKeys: {}, activeSources: [] }
+            : { ...runtime, enabledNotificationSources: [], activeSources: [] }
+        );
+      });
+      expect(markRead.mock.calls[0][3]!.aborted).toBe(true);
+      await waitFor(() => expect(runtime.refreshSnapshots).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await updateRuntime(runtime);
+      });
+      await waitFor(() => expect(markRead).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(runtime.refreshSnapshots).toHaveBeenCalledTimes(2));
+    }
+  );
+
+  it('retries a canceled read on returning to the same detail instance and keeps confirmation', async () => {
+    const markRead = jest
+      .fn<NotificationRouteRuntimeValue['gateway']['markRead']>()
+      .mockImplementationOnce(
+        (_item, _detail, _identity, signal) =>
+          new Promise((_resolve, reject) => {
+            signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          })
+      )
+      .mockResolvedValue({ confirmed: true });
+    const { navigation, runtime } = await renderReadLifecycle(markRead);
+    await waitFor(() => expect(markRead).toHaveBeenCalledTimes(1));
+    await act(async () => navigation.navigate('Other'));
+    expect(markRead.mock.calls[0][3]!.aborted).toBe(true);
+    await waitFor(() => expect(runtime.refreshSnapshots).toHaveBeenCalledTimes(1));
+    await act(async () => navigation.goBack());
+    await waitFor(() => expect(markRead).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(runtime.refreshSnapshots).toHaveBeenCalledTimes(2));
+    await act(async () => navigation.navigate('Other'));
+    await act(async () => navigation.goBack());
+    expect(markRead).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['failure', 'unconfirmed'] as const)(
+    'allows explicit retry after %s without retrying on detail refresh',
+    async (failure) => {
+      const markRead = jest.fn<NotificationRouteRuntimeValue['gateway']['markRead']>();
+      if (failure === 'failure') markRead.mockRejectedValueOnce(new Error('offline'));
+      else markRead.mockResolvedValueOnce({ confirmed: false, message: 'unknown' });
+      const pending = Promise.withResolvers<Awaited<ReturnType<typeof markRead>>>();
+      markRead.mockReturnValueOnce(pending.promise);
+      const { view, loadDetail } = await renderReadLifecycle(markRead);
+      await waitFor(() => expect(view.getByLabelText('重试已读状态')).toBeTruthy());
+      await act(async () => {
+        await appQueryClient.invalidateQueries({
+          queryKey: forumQueryKeys.notificationDetail({
+            source: notification.source,
+            identityKey: 'nodeseek:new-account',
+            notificationId: notification.id
+          })
+        });
+      });
+      expect(markRead).toHaveBeenCalledTimes(1);
+      const before = loadDetail.mock.calls.length;
+      await fireEvent.press(view.getByLabelText('重试已读状态'));
+      await fireEvent.press(view.getByLabelText('重试已读状态'));
+      await waitFor(() => expect(markRead).toHaveBeenCalledTimes(2));
+      expect(loadDetail).toHaveBeenCalledTimes(before + 1);
+      const signal = markRead.mock.calls[1][3]!;
+      await act(async () => {
+        await appQueryClient.invalidateQueries({
+          queryKey: forumQueryKeys.notificationDetail({
+            source: notification.source,
+            identityKey: 'nodeseek:new-account',
+            notificationId: notification.id
+          })
+        });
+      });
+      expect(signal.aborted).toBe(false);
+      await act(async () => {
+        pending.resolve({ confirmed: true });
+        await pending.promise;
+      });
+      await waitFor(() => expect(view.queryByLabelText('重试已读状态')).toBeNull());
+      expect(markRead).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('ignores an old canceled result and keeps a new confirmation when reconciliation fails', async () => {
+    const old = Promise.withResolvers<{ confirmed: boolean; message?: string }>();
+    const current = Promise.withResolvers<{ confirmed: boolean }>();
+    const markRead = jest
+      .fn<NotificationRouteRuntimeValue['gateway']['markRead']>()
+      .mockReturnValueOnce(old.promise)
+      .mockReturnValueOnce(current.promise);
+    const { navigation, view, runtime } = await renderReadLifecycle(markRead);
+    await waitFor(() => expect(markRead).toHaveBeenCalledTimes(1));
+    await act(async () => navigation.navigate('Other'));
+    await act(async () => navigation.goBack());
+    await waitFor(() => expect(markRead).toHaveBeenCalledTimes(2));
+    jest.mocked(runtime.refreshSnapshots).mockRejectedValue(new Error('snapshot offline'));
+    await act(async () => {
+      current.resolve({ confirmed: true });
+      await current.promise;
+    });
+    await act(async () => {
+      old.resolve({ confirmed: false, message: 'old failure' });
+      await old.promise;
+    });
+    expect(view.queryByText('old failure')).toBeNull();
+    expect(view.queryByLabelText('重试已读状态')).toBeNull();
+    await act(async () => navigation.navigate('Other'));
+    await act(async () => navigation.goBack());
+    expect(markRead).toHaveBeenCalledTimes(2);
+  });
+
   it.each(['storage', 'permission'] as const)(
     'recovers a %s initialization failure through the real route retry',
     async (failure) => {
@@ -1994,8 +2155,10 @@ describe('notification routes', () => {
       target: { type: 'private-conversation', conversationId: '9' }
     };
     const replyToConversation = jest.fn(
-      (_item: ForumNotification, _content: string, _identityKey: string, _signal: AbortSignal) =>
-        new Promise<never>(() => undefined)
+      (_item: ForumNotification, _content: string, _identityKey: string, signal: AbortSignal) =>
+        new Promise<never>((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        )
     );
     const gateway = {
       getCategories: jest.fn(),

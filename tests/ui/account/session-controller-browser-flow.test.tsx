@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { NativeModules } from 'react-native';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
@@ -54,8 +54,14 @@ function renderSessionController(
 }
 
 describe('session controller browser flow', () => {
+  let originalNetworkProxy: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    originalNetworkProxy = Object.getOwnPropertyDescriptor(NativeModules, 'NetworkProxyModule');
+  });
   afterEach(() => {
     mockRecoverReadNetworkRuntime.mockReset();
+    if (originalNetworkProxy) Object.defineProperty(NativeModules, 'NetworkProxyModule', originalNetworkProxy);
+    else delete NativeModules.NetworkProxyModule;
   });
 
   it('cancels active and queued Connect work at handoff without changing account identity', async () => {

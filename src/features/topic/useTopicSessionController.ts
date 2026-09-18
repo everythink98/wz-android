@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { filterRepliesByQuery } from './model/replySearch';
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from './model/types';
 import { appendReplyImageMarkup } from '@/sources/imageUpload';
@@ -98,6 +99,7 @@ export function filterTopicSessionReplies({
 }
 
 export function useTopicSessionController({ notify, topic }: { notify: (message: string) => void; topic: Topic }) {
+  const currentTopicKey = useCommittedRef(`${topic.source}:${topic.id}`);
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyOrder, setReplyOrder] = useState<ReplyOrder>('oldest');
   const [replyComposer, dispatchReplyComposer] = useReducer(transitionReplyComposer, INITIAL_REPLY_COMPOSER_STATE);
@@ -210,7 +212,7 @@ export function useTopicSessionController({ notify, topic }: { notify: (message:
         isExpanded: (key: string) => Boolean(expandedQuotes[key])
       },
       topic: {
-        getCurrentKey: () => `${topic.source}:${topic.id}`
+        getCurrentKey: () => currentTopicKey.current
       },
       view: {
         changeCommentQuery: setCommentQuery,

@@ -1,0 +1,51 @@
+context platform=android
+context timeout=180000
+context retries=0
+env VALID_FILE=acceptance-valid.json
+env INVALID_FILE=acceptance-invalid.json
+
+# Launch the isolated recovery URL and stage its two JSON files before replay.
+open com.wz.reader
+wait id="main-tab-more" 60000
+press id="main-tab-more"
+wait label="核对保护" 10000
+press label="核对保护"
+wait text="保护状态核对通过" 10000
+press "label=\"展开备份 / 恢复\""
+# Pan inside the App scroll area below the proof header on the fixed 1080x2400 AVD.
+gesture pan 540 1750 0 -700 500
+wait label="选择备份文件恢复" 10000
+press label="选择备份文件恢复"
+wait "label=\"Show roots\"" 10000
+press "label=\"Show roots\""
+wait 500
+wait text="Downloads" 10000
+press text="Downloads"
+wait 500
+wait text="Downloads" 10000
+wait text="${INVALID_FILE}" 10000
+press text="${INVALID_FILE}"
+wait "text=\"备份格式不兼容，请使用当前 Android 版本导出的 JSON。\"" 10000
+# Android picker closing animation still intercepts touches after App nodes reappear.
+wait 1000
+wait label="核对保护" 10000
+press label="核对保护"
+wait text="保护状态核对通过" 10000
+# Pan inside the App scroll area below the proof header on the fixed 1080x2400 AVD.
+gesture pan 540 1750 0 -700 500
+wait label="选择备份文件恢复" 10000
+press label="选择备份文件恢复"
+wait text="${VALID_FILE}" 10000
+press text="${VALID_FILE}"
+# Android picker closing animation still intercepts touches after App nodes reappear.
+wait 1000
+wait id="main-tab-feed" 10000
+press id="main-tab-feed"
+wait label="V2EX" 10000
+press label="核对恢复"
+wait text="恢复结果核对通过" 10000
+press id="main-tab-library"
+wait text="恢复验收资料" 10000
+press label="结束恢复验收"
+wait text="恢复业务核对通过" 10000
+close

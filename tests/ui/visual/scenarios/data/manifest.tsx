@@ -24,6 +24,7 @@ function BackupScenario() {
       summary: '暂无未读'
     },
     backup: {
+      recovery: false,
       busy: false,
       exportFile: noop,
       importFile: noop

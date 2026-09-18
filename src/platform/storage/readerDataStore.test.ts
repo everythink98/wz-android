@@ -107,6 +107,33 @@ afterEach(() => {
 });
 
 describe('reader data storage authority', () => {
+  it.each(['favorites', 'history', 'followedUsers'] as const)(
+    'does not resurrect deleted %s after importing excess markers and reopening',
+    async (collection) => {
+      const local = createEmptyReaderData();
+      local.deletedRecords[collection][topicKey(topic)] = '2026-06-02T00:00:00Z';
+      seed(local);
+      const store = await reopen();
+      await store.loadReaderState();
+      const incoming = createEmptyReaderData();
+      if (collection === 'followedUsers')
+        incoming.followedUsers[topicKey(topic)] = {
+          user: { source: topic.source, id: topic.id, username: 'alice', url: '', topics: [] },
+          followedAt: '2026-06-01T00:00:00Z'
+        };
+      else incoming[collection][topicKey(topic)] = { topic, savedAt: '2026-06-01T00:00:00Z' };
+      for (let index = 0; index < 1000; index++) {
+        incoming.deletedRecords[collection][`nodeseek:other-${index}`] = '2026-07-01T00:00:00Z';
+      }
+      await store.importReaderDataBackup(JSON.stringify(incoming));
+      const restored = await reopen();
+      await restored.loadReaderState();
+      const backup = JSON.parse(await restored.exportReaderDataBackup()) as ReaderData;
+      expect(backup[collection][topicKey(topic)]).toBeUndefined();
+      expect(Object.keys(backup.deletedRecords[collection])).toHaveLength(1000);
+    }
+  );
+
   it('keeps only canonical summaries through favorite, follow, delete and refavorite commands', async () => {
     const store = await reopen();
     await store.loadReaderState();

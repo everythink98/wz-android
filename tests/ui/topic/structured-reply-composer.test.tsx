@@ -591,7 +591,8 @@ describe('StructuredReplyComposer', () => {
       payload: { name: 'insert-markdown', markdown: '' }
     });
 
-    await fireEvent(webView, 'message', message('READY', { revision: 0 }));
+    const documentEpoch = messages().findLast((entry: { type: string }) => entry.type === 'INIT').payload.documentEpoch;
+    await fireEvent(webView, 'message', message('READY', { documentEpoch, revision: 0 }));
     postMessage.mockClear();
     await view.rerender(<StructuredReplyComposer {...props} content="" />);
     expect(view.getByTestId('structured-composer-webview').props.postMessageMock).toBe(postMessage);
@@ -627,6 +628,13 @@ describe('StructuredReplyComposer', () => {
     );
 
     const webView = view.getByTestId('structured-composer-webview');
+    await fireEvent(webView, 'message', message('READY', { revision: 0 }));
+    await fireEvent(webView, 'loadEnd');
+    await waitFor(() =>
+      expect(webView.props.postMessageMock.mock.calls.some(([raw]: [string]) => JSON.parse(raw).type === 'INIT')).toBe(
+        true
+      )
+    );
     await fireEvent(webView, 'message', message('READY', { revision: 0 }));
     await waitFor(() => expect(view.getByText('0 字符')).toBeTruthy());
     await view.rerender(

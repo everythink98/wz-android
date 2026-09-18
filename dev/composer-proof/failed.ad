@@ -1,0 +1,5 @@
+context platform=android
+context device="WZ ComposerInsets 0916"
+context timeout=45000
+context retries=0
+wait text "Mock network offline" 15000

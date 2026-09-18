@@ -1,10 +1,8 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { StackActions, useIsFocused, useNavigation, useScrollToTop } from '@react-navigation/native';
 import type { FlashListRef } from '@shopify/flash-list';
 import type { Topic } from '@/domain/forum/models';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
-
-import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 
 import { openForumSearchCustomTab } from '@/platform/android/forumSearchCustomTab';
 import { errorMessage } from '@/platform/network/errors';
@@ -22,10 +20,7 @@ export function SearchRoute() {
   const navigation = useNavigation();
   const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
   useScrollToTop(listRef);
-  const enabledSearchSources = useMemo(
-    () => projectContentSourcePreferences(runtime.readerData.settings.contentSources).enabledSources,
-    [runtime.readerData.settings.contentSources]
-  );
+  const enabledSearchSources = runtime.enabledSources;
   const openExternalSearch = useCallback(
     async (url: string) => {
       try {

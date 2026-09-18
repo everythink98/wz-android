@@ -37,7 +37,15 @@
 
 账号 fixture 经真实 observation → Account snapshot → view model 投影，合法登录显式提供用户身份，不用测试工厂放行未知身份。选择 wiring 由 `tests/ui/topic/topic-rich-text-selection.test.tsx` 挂载真实 `TopicContentList → TopicSelectionSurface → TopicContentBlock`，保留该业务链，仅隔离平台与昂贵第三方边界；全树 marker 必须与 manifest 一一相等，并检查实际代码文字的 selectable。查询清理归 integration owner，Callout 初始化归真实 `forum-callout` UI owner；bootstrap 检查执行调用顺序，缺失或颠倒初始化都必须失败。
 
+发送安全的 Topic 与签到 owner 必须使用真实 NodeSeek action client 和真实代理等待链，在 identity/epoch/来源/认证 surface 变化后证明零 POST，并有正常一次发送对照。通知详情 owner 保留同一导航实例验证取消后返回、显式重试、防重及旧回调隔离；所有受控 Promise 都响应 abort 或主动释放并等待结算。恢复模式由真实 ReaderRuntime 与来源消费者组合验证零业务请求及通知意图保留，不能只断言 loaded 布尔值。
+
+隔离设备补充证据沿用 `dev/reader-storage-proof/deletionBoundaries.ts` 与 `dev/review-remediation-proof/acceptance.tsx`，只验证 Android SQLite、完整 App 的系统文件导入和原生导航接线。恢复/通知 `.ad` 与最终带 token 的业务 receipt 必须同时通过；Node runner 的独立 checkpoint 还原和来源请求统计不可省略，HTTP/adapter 故障注入不冒充原站写入。执行命令以 operator runbook 为准。
+
+Native tooling owner `tests/tooling/native-test-plan.test.ts` 维护路径到既有 JVM 任务的映射及报告拒绝反例。静态任务表的预期类逐一核对新鲜、非跳过且零失败/错误报告；任务退出 0 或其他类通过不能作为目标 owner 的证据。设备 instrumentation 继续独立执行。
+
 ## 二、证据层
+
+Composer 的 Mock 成功结算不等于原生面板关闭。UI owner 必须从生产发送按钮经过 snapshot、校验、controller/gateway、响应确认和草稿结算；只能在 HTTP/adapter 边界注入结果，不直接调用 `completeSubmission()`。WebView mock 按 INIT/documentEpoch、READY、REQUEST_SNAPSHOT 和 SNAPSHOT 协议工作，初始模式存储与受控 Promise 按用例隔离。BottomSheet mock 隐藏时仍保留子组件，不能用卸载替代生产的关闭动画；关闭从真实按钮触发，不能把动画 onClose 当成用户手势。RNTL 的动画 mock 不能证明实际几何：必须由带新 token、匹配源码/APK/buildId 的 Android replay 另外检查面板与可见屏幕无交集、遮罩消失、底层可点击、重开为空，以及包含生产根布局/状态栏的全屏背景与内部 Insets。立即/延迟成功、失败保稿、未确认、刷新失败、防重、快照超时/迟到、换主题/账号/会话、根 Portal 随路由隐藏分别取证；真实系统 IME、WebView、Insets 和物理设备边界独立报告。
 
 | 证据 | 只证明 |
 | --- | --- |
@@ -191,3 +199,14 @@ Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证
 - 本任务进程与 scratch 是否回到基线。
 
 不使用覆盖率、mutation、LOC、测试数量或文档长度作为门禁。只有测试证明不了关键行为时才增加工具，不为“治理”创建新的长期框架。
+
+
+### 设备 proof 与视觉结果结算
+
+`tests/tooling/review-proof-checkpoint.test.ts` 是隔离备份/恢复的唯一 tooling owner。runner 在固定隔离 AVD 取得 OS 排他租约，安装后再次停止 App，备份 Reader、AsyncStorage 与 WAL/SHM 的六个固定文件；校验隔离 owner、安装身份、存在性、字节哈希及独立 SQLite 逻辑内容。业务失败、回放失败、超时或 App 中断仍由 runner 恢复，业务与恢复分别记录，双方通过才整体通过。旧 `running` 必须阻断新运行；只有 `restoring` 且当前文件匹配已记录的原始或待恢复哈希、安装身份一致时才允许显式续接。App 不以固定等待后自行还原作为完成证明。
+
+无效导入必须是合法 JSON 的错误版本，回放观察生产代码实际发出的格式不兼容提示；proof 壳只把该短 Toast 留存为可观察文本，结束断言还要求该回调恰好一次。取消文件选择或漏掉回调不能通过。通知 proof 的计数称为“对账请求次数”，实际摘要读取与持久化仍归既有 runtime owner。
+
+视觉 catalog 测试独自比较实际能力集合与 product map 的非 RELEASE 集合，另保留场景 ID 唯一、分类及双主题挂载。静态守卫扫描视觉目录全部非测试运行源码及 helper；它只是直接 I/O 守卫，不能宣称完整网络隔离。`NativeModules` 测试必须恢复原属性描述符，原来不存在则删除。图片尺寸、顺序与预览仍由原 owner 证明，不保留只重复编译同一输入的伪“动态加载”测试。`verify` 在 `check:unused` 执行一次严格类型检查，独立 `typecheck` 入口保留。
+
+`tests/tooling/visual-device.test.ts` 拥有视觉结果判定合同，实际像素 oracle 由 `npm run test:visual:device` 调用 agent-device CLI。首批六场景双主题及两帧 140% 字号共 14 帧，标准密度；专用 API35、1080×2400、420dpi、系统字号1、en-US，记录系统镜像/工具/APK/代码身份。基准须同构建连续三次像素一致并审阅后显式批准；缺基准、环境不符、尺寸变化、基准被改写或非零差异均失败。颜色阈值固定0.1，不自动放宽；截图差异是待分析证据，不自动宣称产品 Bug。Gallery 仅证明模拟器上生产组件的固定视觉状态，不替代业务 E2E、真实来源或设备生命周期。

@@ -99,7 +99,7 @@ export async function getYaohuoUserTopics(profile: UserDetails, options: UserRea
   }
   return mergeSourceDiagnosticSummaries(
     {
-      topics: sortTopicsByCreatedAt(topics).slice(0, 30),
+      topics: sortTopicsByCreatedAt(topics),
       hasMoreTopics: Boolean(nextUrl),
       nextTopicsCursor: nextUrl || null
     },

@@ -477,6 +477,113 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      name: 'missing reply',
+      rows: [
+        [100, '0', 'main'],
+        [102, '2', 'Bob']
+      ],
+      expected: ['main', 'original Alice', 'Bob']
+    },
+    {
+      name: 'reordered replies',
+      rows: [
+        [102, '2', 'Bob'],
+        [100, '0', 'main'],
+        [101, '1', 'Alice']
+      ],
+      expected: ['main', 'Alice', 'Bob']
+    },
+    {
+      name: 'duplicate comment ID',
+      rows: [
+        [101, '1', 'wrong'],
+        [101, '1', 'Alice']
+      ],
+      expected: ['original main', 'original Alice', 'original Bob']
+    },
+    {
+      name: 'duplicate floor',
+      rows: [
+        [101, '1', 'Alice'],
+        [null, '1', 'wrong']
+      ],
+      expected: ['original main', 'original Alice', 'original Bob']
+    },
+    {
+      name: 'conflicting ID and floor',
+      rows: [[101, '2', 'wrong']],
+      expected: ['original main', 'original Alice', 'original Bob']
+    },
+    {
+      name: 'ID and floor in different rows',
+      rows: [
+        [101, 'comment-101', 'wrong'],
+        [null, '1', 'also wrong']
+      ],
+      expected: ['original main', 'original Alice', 'original Bob']
+    },
+    {
+      name: 'comment-prefixed element ID',
+      rows: [[null, 'comment-101', 'Alice']],
+      expected: ['original main', 'Alice', 'original Bob']
+    },
+    {
+      name: 'unique floor zero',
+      rows: [
+        [null, '1', 'Alice'],
+        [null, '0', 'main']
+      ],
+      expected: ['main', 'Alice', 'original Bob']
+    },
+    {
+      name: 'duplicate embedded ID',
+      duplicate: 'id',
+      rows: [[101, '1', 'wrong']],
+      expected: ['original main', 'original Alice', 'original Bob']
+    },
+    {
+      name: 'duplicate embedded floor',
+      duplicate: 'floor',
+      rows: [[101, '1', 'wrong']],
+      expected: ['original main', 'original Alice', 'original Bob']
+    }
+  ])('keeps NodeSeek author and body identity with $name', ({ rows, expected, duplicate }) => {
+    const comments = ['main', 'Alice', 'Bob'].map((name, floorIndex) => ({
+      commentId: 100 + floorIndex,
+      floorIndex,
+      content: `<p>original ${name}</p>`,
+      poster: { uid: 10 + floorIndex, name }
+    }));
+    if (duplicate === 'id') comments[2].commentId = 101;
+    if (duplicate === 'floor') comments[2].floorIndex = 1;
+    Object.defineProperty(window, '__config__', {
+      configurable: true,
+      value: { postData: { postId: 123, comments } }
+    });
+    const html = rows
+      .map(
+        ([commentId, id, body]) =>
+          `<div class="content-item" id="${id}"${commentId === null ? '' : ` data-comment-id="${commentId}"`}><article class="post-content"><p>${body}</p></article></div>`
+      )
+      .join('');
+    const { postMessage } = runNodeSeekBrowserFetchScript('/post-123-1', html);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0][0]);
+    const encoded = payload.html.match(/id="temp-script"[^>]*>([\s\S]*?)<\/script>/)[1];
+    const data = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')).postData;
+    expect(data.comments).toEqual(
+      comments.map((comment, index) => ({ ...comment, content: `<p>${expected[index]}</p>` }))
+    );
+    const detail = normalizePostData(data, '123', 'https://www.nodeseek.com/post-123-1');
+    expect(detail.contentHtml).toBe(`<p>${expected[0]}</p>`);
+    expect(detail.replies.map(({ author, commentId, contentHtml }) => ({ author, commentId, contentHtml }))).toEqual([
+      { author: 'Alice', commentId: 101, contentHtml: `<p>${expected[1]}</p>` },
+      { author: 'Bob', commentId: duplicate === 'id' ? 101 : 102, contentHtml: `<p>${expected[2]}</p>` }
+    ]);
+  });
+
   it('does not wait for vote widgets when NodeSeek embedded post data is ready', () => {
     const { postMessage, stop } = runNodeSeekBrowserFetchScript(
       '/post-777285-1',

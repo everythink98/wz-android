@@ -11,7 +11,20 @@ import { useNodeSeekCheckInController } from '@/features/account/useNodeSeekChec
 import { appQueryClient } from '@/platform/query/serverState';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { type DiagnosticEvent } from '@/platform/diagnostics/diagnosticPolicy';
-import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
+import {
+  type WritableSessionTicket,
+  validateWritableSessionTicket,
+  type WritableSessionSnapshot
+} from '@/domain/session/writableSessionGate';
+import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
+import type { NetworkProxyState } from '@/platform/network/networkProxy';
+
+const mockLoadProxy = jest.fn<() => Promise<NetworkProxyState>>();
+jest.mock('@/platform/network/networkProxy', () => ({
+  ...jest.requireActual<typeof import('@/platform/network/networkProxy')>('@/platform/network/networkProxy'),
+  loadNetworkProxyState: () => mockLoadProxy(),
+  applyNetworkProxy: async () => ({ ok: true })
+}));
 
 const mockRunNodeSeekAction = jest.mocked(runNodeSeekAction);
 const ticket: WritableSessionTicket = {
@@ -48,6 +61,46 @@ async function renderController(
 }
 
 describe('NodeSeek account check-in controller', () => {
+  it.each(['identity', 'epoch', 'source-disabled', 'auth-surface', 'unchanged'])(
+    'rechecks attendance after proxy preparation (%s)',
+    async (change) => {
+      mockRunNodeSeekAction.mockImplementation(
+        jest.requireActual<typeof import('@/sources/nodeseek/actionClient')>('@/sources/nodeseek/actionClient')
+          .runNodeSeekAction
+      );
+      const loaded = Promise.withResolvers<NetworkProxyState>();
+      mockLoadProxy.mockReturnValue(loaded.promise);
+      const snapshot: WritableSessionSnapshot = {
+        ...ticket,
+        authenticated: true,
+        authSurfaceOpen: false,
+        identityTrust: 'confirmed',
+        sourceEnabled: true
+      };
+      const baseFetcher = jest.fn(async () => new Response('{"success":true}'));
+      const proxy = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+      const { hook, notify } = await renderController({
+        fetcher: (input, init) => proxy.result.current.networkProxyFetcher(String(input), init),
+        current: () => validateWritableSessionTicket(ticket, snapshot)
+      });
+      let pending!: Promise<void>;
+      await act(async () => {
+        pending = hook.result.current.checkIn();
+      });
+      await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
+      if (change === 'identity') snapshot.identityKey = 'nodeseek:bob';
+      if (change === 'epoch') snapshot.sessionEpoch++;
+      if (change === 'source-disabled') snapshot.sourceEnabled = false;
+      if (change === 'auth-surface') snapshot.authSurfaceOpen = true;
+      await act(async () => {
+        loaded.resolve({ enabled: false, activeId: null, profiles: [] });
+        await pending;
+      });
+      expect(baseFetcher).toHaveBeenCalledTimes(change === 'unchanged' ? 1 : 0);
+      if (change !== 'unchanged') expect(notify).not.toHaveBeenCalled();
+    }
+  );
+
   beforeEach(() => {
     appQueryClient.clear();
     mockRunNodeSeekAction.mockReset();

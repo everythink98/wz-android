@@ -636,7 +636,7 @@ function mergeDeletedMap(local: Record<string, string>, remote: Record<string, s
       merged[key] = remoteDeletedAt;
     }
   }
-  return limitDeletedRecordMap(merged);
+  return merged;
 }
 
 function mergeTimedMapWithDeleted<T>(

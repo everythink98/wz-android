@@ -152,7 +152,7 @@ describe('disabled content source route gates', () => {
     const route = { key: 'topic', name: 'Topic', params: { topic } } as const;
 
     const view = await render(
-      <TopicRouteRuntimeProvider value={{ reader: { data } } as unknown as TopicRouteRuntimeValue}>
+      <TopicRouteRuntimeProvider value={{ enabledSources: [], reader: { data } } as unknown as TopicRouteRuntimeValue}>
         <TopicRoute navigation={navigation} route={route} />
       </TopicRouteRuntimeProvider>
     );
@@ -182,7 +182,7 @@ describe('disabled content source route gates', () => {
     const route = { key: 'user', name: 'User', params: { user } } as const;
 
     const view = await render(
-      <UserRouteRuntimeProvider value={{ reader: { data } } as unknown as UserRouteRuntimeValue}>
+      <UserRouteRuntimeProvider value={{ enabledSources: [], reader: { data } } as unknown as UserRouteRuntimeValue}>
         <UserRoute navigation={navigation} route={route} />
       </UserRouteRuntimeProvider>
     );
@@ -407,6 +407,7 @@ describe('disabled content source route gates', () => {
       networkProxyWebViewBlockMessage: '',
       nodeSeekMediaUserAgent: '',
       notify: jest.fn(),
+      enabledSources: ['nodeseek'],
       reader: { commit: jest.fn(), data, dataRef: { current: data } },
       readerStyle: { settings: data.settings, theme: createTheme(data.settings) }
     } as unknown as TopicRouteRuntimeValue;

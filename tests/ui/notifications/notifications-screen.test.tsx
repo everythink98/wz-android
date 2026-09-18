@@ -53,24 +53,21 @@ jest.mock('@gorhom/bottom-sheet', () => {
     {
       children,
       index,
-      maxDynamicContentSize,
-      onClose
-    }: { children?: React.ReactNode; index: number; maxDynamicContentSize?: number; onClose?: () => void },
+      maxDynamicContentSize
+    }: { children?: React.ReactNode; index: number; maxDynamicContentSize?: number },
     ref
   ) {
     ReactModule.useImperativeHandle(ref, () => ({ close: () => undefined }));
-    return index < 0
-      ? null
-      : ReactModule.createElement(
-          NativeView,
-          { maxDynamicContentSize, testID: 'composer-bottom-sheet' } as React.ComponentProps<typeof NativeView>,
-          children,
-          ReactModule.createElement(
-            require('react-native').Pressable,
-            { accessibilityRole: 'button', accessibilityLabel: '模拟关闭回复面板', onPress: onClose },
-            ReactModule.createElement(require('react-native').Text, null, '模拟关闭回复面板')
-          )
-        );
+    return ReactModule.createElement(
+      NativeView,
+      {
+        maxDynamicContentSize,
+        testID: 'composer-bottom-sheet',
+        accessibilityElementsHidden: index < 0,
+        importantForAccessibility: index < 0 ? 'no-hide-descendants' : 'auto'
+      } as React.ComponentProps<typeof NativeView>,
+      children
+    );
   });
   return {
     __esModule: true,
@@ -103,6 +100,8 @@ jest.mock('@gorhom/bottom-sheet', () => {
     BottomSheetView: ({ children }: { children?: React.ReactNode }) =>
       ReactModule.createElement(NativeView, null, children),
     useBottomSheetInternal: () => ({
+      animatedIndex: { get: () => -1 },
+      animatedAnimationState: { get: () => ({ nextIndex: undefined }) },
       animatedKeyboardState: { set: jest.fn() },
       animatedLayoutState: { get: () => ({ rawContainerHeight: 800, containerHeight: 800 }), modify: jest.fn() }
     })
@@ -813,7 +812,7 @@ describe('notification screens', () => {
 
     onReplyClose.mockClear();
     onReplySnapshot.mockClear();
-    await fireEvent.press(view.getByLabelText('模拟关闭回复面板'));
+    await fireEvent.press(view.getByLabelText('取消'));
     const closeRequest = [...webView.props.postMessageMock.mock.calls]
       .map(([message]: [string]) => JSON.parse(message))
       .findLast((message) => message.type === 'REQUEST_SNAPSHOT');

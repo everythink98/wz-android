@@ -42,7 +42,7 @@ export function useAppRuntime() {
     screen,
     width
   } = lifecycle;
-  const { commitReaderData, readerData, readerDataLoaded, readerDataRef, importBackup, exportBackup } =
+  const { commitReaderData, readerData, readerDataLoaded, readerStatus, readerDataRef, importBackup, exportBackup } =
     useReaderRuntime({ notify });
 
   const { favorites, history } = readerData;
@@ -59,14 +59,18 @@ export function useAppRuntime() {
     proxyState: networkProxyState,
     webViewBlockMessage: networkProxyWebViewBlockMessage
   } = networkRuntime;
-  const contentSourceProjection = projectContentSourcePreferences(readerData.settings.contentSources, readerDataLoaded);
+  const settingsTrusted = readerStatus === 'ready';
+  const contentSourceProjection = useMemo(
+    () => projectContentSourcePreferences(readerData.settings.contentSources, settingsTrusted),
+    [readerData.settings.contentSources, settingsTrusted]
+  );
   const {
     enabledSources,
     notificationSources: enabledNotificationSources,
     sessionSources: enabledSessionSources
   } = contentSourceProjection;
   const enabledFeedSources = enabledSources;
-  const enabledSourcesKey = readerDataLoaded ? canonicalEnabledSourcesKey(readerData.settings.contentSources) : '';
+  const enabledSourcesKey = settingsTrusted ? canonicalEnabledSourcesKey(readerData.settings.contentSources) : '';
   useContentSourceQueryCleanup(enabledSources, enabledSourcesKey);
 
   const accountRuntime = useAccountRuntime({
@@ -121,7 +125,7 @@ export function useAppRuntime() {
   const effectiveNodeSeekUserId = nodeSeekUserIdForSession(accountSessionViewModels.nodeseek);
   const notificationsRuntime = useNotificationsRuntime({
     appActive,
-    contentSourcesReady: readerDataLoaded,
+    contentSourcesReady: settingsTrusted,
     enabledNotificationSources,
     fetcher: networkProxyFetcher,
     getLinuxDoUserAgent,
@@ -178,7 +182,7 @@ export function useAppRuntime() {
   );
 
   const { categories: catalogCategories } = useForumCatalogRuntime({
-    active: readerDataLoaded && sessionsReady && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
+    active: settingsTrusted && sessionsReady && (screen === 'feed' || screen === 'search') && !showLinuxDoPanel,
     enabledFeedSources,
     enabledSourcesKey,
     notify,
@@ -203,6 +207,7 @@ export function useAppRuntime() {
 
   const topicRouteRuntime = useMemo<TopicRouteRuntimeValue>(
     () => ({
+      enabledSources,
       account: {
         sessionEpochs: forumSessionEpochs,
         sessionViewModels: accountSessionViewModels,
@@ -236,6 +241,7 @@ export function useAppRuntime() {
       readerStyle: readerStyleContext
     }),
     [
+      enabledSources,
       accountSessionViewModels,
       appActive,
       commitReaderData,
@@ -268,6 +274,7 @@ export function useAppRuntime() {
 
   const userRouteRuntime = useMemo<UserRouteRuntimeValue>(
     () => ({
+      enabledSources,
       account: {
         linuxDoVerificationVisible: showLinuxDoPanel,
         readGateway,
@@ -291,6 +298,7 @@ export function useAppRuntime() {
       topicStateIndex
     }),
     [
+      enabledSources,
       appActive,
       commitReaderData,
       forumSessionEpochs,
@@ -311,6 +319,8 @@ export function useAppRuntime() {
 
   const feedRouteRuntime = useMemo<FeedRouteRuntimeValue>(
     () => ({
+      enabledSources,
+      enabledSourcesKey,
       account: {
         linuxDoVerificationVisible: showLinuxDoPanel,
         readGateway,
@@ -330,6 +340,8 @@ export function useAppRuntime() {
       topicStateIndex
     }),
     [
+      enabledSources,
+      enabledSourcesKey,
       appActive,
       catalogCategories,
       forumSessionEpochs,
@@ -348,6 +360,7 @@ export function useAppRuntime() {
 
   const searchRouteRuntime = useMemo<SearchRouteRuntimeValue>(
     () => ({
+      enabledSources,
       account: {
         linuxDoVerificationVisible: showLinuxDoPanel,
         readGateway,
@@ -364,6 +377,7 @@ export function useAppRuntime() {
       topicStateIndex
     }),
     [
+      enabledSources,
       accountSessionViewModels,
       catalogCategories,
       forumSessionEpochs,
@@ -472,6 +486,7 @@ export function useAppRuntime() {
         commit: commitReaderData,
         data: readerData,
         dataRef: readerDataRef,
+        status: readerStatus,
         importBackup,
         exportBackup
       },
@@ -505,6 +520,7 @@ export function useAppRuntime() {
       readerData,
       readerDataRef,
       importBackup,
+      readerStatus,
       updateRuntime,
       exportBackup
     ]

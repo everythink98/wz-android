@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { verifyNativeTestReports } from './native-test-plan.mjs';
+import { nativeTestTasks, verifyNativeTestReports } from './native-test-plan.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -66,4 +66,6 @@ const resultsRoot = path.join(
     ? ['test-results', 'testDebugUnitTest']
     : ['outputs', 'androidTest-results', 'connected', 'debug'])
 );
-console.log(`Forum selection ${mode}: ${verifyNativeTestReports(resultsRoot, startedAt)} tests`);
+console.log(
+  `Forum selection ${mode}: ${verifyNativeTestReports(resultsRoot, startedAt, mode === 'unit' ? nativeTestTasks[':forum-content-selection:testDebugUnitTest'].classes : [])} tests`
+);

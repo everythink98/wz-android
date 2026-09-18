@@ -80,6 +80,37 @@ beforeEach(() => {
 });
 afterEach(() => setDiagnosticWriter(null));
 
+async function renderManualLogin(fetcher: Fetcher) {
+  let runtime!: ReturnType<typeof useAccountRuntime>;
+  const notify = jest.fn();
+  function Harness({ active = true, enabled = true }: { active?: boolean; enabled?: boolean }) {
+    runtime = useAccountRuntime({
+      appActive: active,
+      enabledSources: enabled ? ['linuxdo'] : [],
+      fetcher,
+      loginNavigation: { linuxdo: () => true, nodeseek: () => true, yaohuo: () => true, nodeimage: () => true },
+      notify,
+      nodeSeekRecoveryThreshold: 1,
+      openUser: async () => undefined,
+      ready: false,
+      screen: 'search',
+      webViewBlockMessage: ''
+    });
+    return runtime.hosts.element;
+  }
+  seedAccount();
+  const view = await render(<Harness />, { wrapper: QueryTestWrapper });
+  await act(async () => {
+    await runtime.hosts.showLinuxDoVerification('登录');
+  });
+  await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+  return {
+    view,
+    runtime: () => runtime,
+    change: (props: { active?: boolean; enabled?: boolean }) => view.rerender(<Harness {...props} />)
+  };
+}
+
 it.each(['current', 'stale', 'identity-changed'] as const)(
   'settles %s NodeSeek verification without requiring public readers to log in',
   async (state) => {
@@ -895,3 +926,131 @@ it('awaits the native cookie handoff before probing after login closes', async (
   });
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
 });
+
+it('retries a failed close handoff before the account-center refresh and releases private access only afterward', async () => {
+  const fetcher = jest.fn(
+    async () => new Response(JSON.stringify({ current_user: { id: 'alice', username: 'alice' } }))
+  );
+  const hook = await renderRuntime(fetcher);
+  await act(async () => {
+    await hook.result.current.hosts.showLinuxDoVerification('登录');
+  });
+  jest.mocked(setLinuxDoCookieResponseBarrier).mockRejectedValueOnce(new Error('disk unavailable'));
+  await act(async () => {
+    hook.result.current.hosts.closePanels();
+  });
+  expect(fetcher).not.toHaveBeenCalled();
+  await waitFor(() => expect(hook.result.current.read.statusBusy).toBe(false));
+  expect(hook.result.current.read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(false);
+  const gate = Promise.withResolvers<void>();
+  jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(() => gate.promise);
+  let refresh!: Promise<void>;
+  await act(async () => {
+    refresh = hook.result.current.center.handleAccountCenterCommand({ type: 'refresh' });
+  });
+  expect(fetcher).not.toHaveBeenCalled();
+  await act(async () => {
+    gate.resolve();
+    await refresh;
+  });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(hook.result.current.read.notificationPrivateAccessAllowed('linuxdo', 'linuxdo:alice')).toBe(true);
+});
+
+it.each(['alice', 'bob'])(
+  'hands off cookies before manual verification of %s and keeps native renewal enabled',
+  async (username) => {
+    jest.useFakeTimers();
+    let release!: () => void;
+    const identityHandoff = Promise.withResolvers<void>();
+    let blocked = true;
+    let cookie = 'A';
+    const fetcher = jest.fn(async () => {
+      // The native receiver owns response cookies; an open WebView barrier rejects renewal.
+      if (!blocked) cookie = 'B';
+      return new Response(JSON.stringify({ current_user: { id: username, username } }));
+    });
+    const { view, runtime } = await renderManualLogin(fetcher);
+    try {
+      jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(async () => {
+        expect(view.queryByTestId('login-webview')).toBeNull();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        blocked = false;
+      });
+      if (username === 'bob') {
+        // Native barrier calls share one worker; the final handoff joins identity-change.
+        jest
+          .mocked(setLinuxDoCookieResponseBarrier)
+          .mockImplementationOnce(() => identityHandoff.promise)
+          .mockImplementationOnce(() => identityHandoff.promise);
+      }
+      await fireEvent.press(view.getByText('检测状态'));
+      await waitFor(() => expect(view.queryByTestId('login-webview')).toBeNull());
+      expect(view.getByText('检测中')).toBeTruthy();
+      expect(fetcher).not.toHaveBeenCalled();
+      await act(async () => {
+        release();
+      });
+      if (username === 'bob') {
+        expect(view.getByText('检测中')).toBeTruthy();
+        await act(async () => {
+          identityHandoff.resolve();
+        });
+      }
+      await waitFor(() => expect(runtime().hosts.linuxDoVerificationVisible).toBe(false));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(cookie).toBe('B');
+      expect(jest.mocked(setLinuxDoCookieResponseBarrier).mock.calls.at(-1)?.[0]).toBe(false);
+    } finally {
+      release?.();
+      identityHandoff.resolve();
+      await view.unmount();
+      jest.useRealTimers();
+    }
+  }
+);
+
+it.each(['refresh', 'background', 'disabled', 'close', 'failure'] as const)(
+  'settles a pending manual cookie handoff on %s without an obsolete identity request',
+  async (exit) => {
+    jest.useFakeTimers();
+    const fetcher = jest.fn(
+      async () => new Response(JSON.stringify({ current_user: { id: 'alice', username: 'alice' } }))
+    );
+    const { view, runtime, change } = await renderManualLogin(fetcher);
+    const gate = Promise.withResolvers<void>();
+    jest.mocked(setLinuxDoCookieResponseBarrier).mockImplementationOnce(async () => {
+      await gate.promise;
+      if (exit === 'failure') throw new Error('disk unavailable');
+    });
+    try {
+      await fireEvent.press(view.getByText('检测状态'));
+      await fireEvent.press(view.getByText('检测中'));
+      expect(fetcher).not.toHaveBeenCalled();
+      if (exit === 'refresh') await fireEvent.press(view.getByLabelText('刷新页面'));
+      if (exit === 'background') await change({ active: false });
+      if (exit === 'disabled') await change({ enabled: false });
+      if (exit === 'close') await fireEvent.press(view.getByLabelText('关闭'));
+      await act(async () => {
+        gate.resolve();
+      });
+      expect(fetcher).toHaveBeenCalledTimes(exit === 'close' ? 1 : 0);
+      if (exit === 'refresh') {
+        await waitFor(() => expect(view.getByTestId('login-webview')).toBeTruthy());
+        expect(setLinuxDoCookieResponseBarrier).toHaveBeenLastCalledWith(true, 'surface-open', expect.any(Number));
+      } else if (exit === 'background' || exit === 'failure') {
+        if (exit === 'background') await change({ active: true });
+        if (exit === 'failure') expect(view.getByText(/disk unavailable/)).toBeTruthy();
+        await fireEvent.press(view.getByText('检测状态'));
+        await waitFor(() => expect(runtime().hosts.linuxDoVerificationVisible).toBe(false));
+        expect(fetcher).toHaveBeenCalledTimes(1);
+      } else expect(runtime().hosts.linuxDoVerificationVisible).toBe(false);
+    } finally {
+      gate.resolve();
+      await view.unmount();
+      jest.useRealTimers();
+    }
+  }
+);

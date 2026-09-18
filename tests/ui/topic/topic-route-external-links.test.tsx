@@ -109,6 +109,7 @@ describe('Topic Route external links', () => {
       networkProxyWebViewBlockMessage: '',
       nodeSeekMediaUserAgent: '',
       notify,
+      enabledSources: ['linuxdo', 'nodeseek', 'yaohuo', 'v2ex'],
       reader: { commit: jest.fn(), data, dataRef: { current: data } },
       readerStyle: { settings: data.settings, theme: createTheme(data.settings) }
     } as unknown as TopicRouteRuntimeValue;

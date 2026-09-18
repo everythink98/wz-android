@@ -271,6 +271,23 @@ test('keeps source-string contracts in tooling instead of behavior suites', () =
   assert.match(issues[0].message, /tests\/integration\/source-contract\.test\.ts/);
 });
 
+test('allows only the catalog owner to read product-map metadata, never production source', () => {
+  const owner = 'tests/ui/visual/visual-scenario-contract.test.tsx';
+  const read =
+    "import { readFileSync } from 'node:fs'; import path from 'node:path'; const map = readFileSync(path.resolve(__dirname, '../../../docs/product-map.md'), 'utf8');";
+  for (const [file, source, count] of [
+    [owner, read, 0],
+    [owner, `${read} readFileSync('src/App.tsx', 'utf8');`, 1],
+    ['tests/ui/other.test.tsx', read, 1]
+  ]) {
+    const srcDir = architectureFixture({}, { [file]: source });
+    assert.equal(
+      analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'behavior-test-source-read').length,
+      count
+    );
+  }
+});
+
 test('rejects legacy files and unresolved imports without compatibility shells', () => {
   const srcDir = architectureFixture({
     'app/useDeferredNavigationTask.ts': 'export const deferred = true;',

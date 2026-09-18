@@ -1,0 +1,6 @@
+context platform=android
+context device="WZ ComposerInsets 0916"
+context timeout=45000
+context retries=0
+fill editable=true "Local mock reply; never sent."
+wait text "Local mock reply; never sent." 10000

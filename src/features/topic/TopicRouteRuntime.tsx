@@ -1,15 +1,16 @@
+import type { Source, SessionSource } from '@/domain/forum/sourceCatalog';
 import { createContext, useContext, type ReactNode } from 'react';
 import type { Fetcher } from '@/platform/network/request';
 import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
 import type { ReaderView, ReaderCommand } from '@/domain/reader/readerRecordState';
-import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import type { LinuxDoReadRecovery, RequestAccountRecheck } from '@/domain/session/sessionContracts';
 import type { WritableSessionTicket } from '@/domain/session/writableSessionGate';
 import type { ReaderStyleContextValue } from '@/ui/theme/ReaderStyleProvider';
 
 export type TopicRouteRuntimeValue = {
+  enabledSources: Source[];
   account: {
     sessionEpochs: ForumSessionEpochs;
     sessionViewModels: SiteSessionViewModels;

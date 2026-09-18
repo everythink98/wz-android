@@ -75,8 +75,6 @@ import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/q
 import { forumQueryKeys } from '@/platform/query/serverState';
 import { useCommittedRef } from '@/ui/hooks/useCommittedRef';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
-import { reverseReplyWindow } from '@/sources/replyWindows';
-import { NODESEEK_FLOORS_PER_PAGE } from '@/sources/nodeseek/protocol';
 import { useTopicReadingEntry, type TopicEntryVisit } from './useTopicReadingEntry';
 import { findReadingResumeReply } from '@/domain/forum/discourseReading';
 
@@ -126,21 +124,6 @@ function replyLocationTarget(reply: Reply | undefined, pageHint?: number): Reply
     ...(reply.floor ? { floor: reply.floor } : {}),
     ...(pageHint ? { pageHint } : {})
   };
-}
-
-function matchesCreatedNodeSeekReply(reply: Reply, authorId: string | undefined, contentMarkdown: string | undefined) {
-  const expectedAuthorId = String(authorId || '').trim();
-  const expectedContent = String(contentMarkdown || '')
-    .replace(/\r\n?/g, '\n')
-    .trim();
-  const actualContent = String(reply.contentMarkdown || '')
-    .replace(/\r\n?/g, '\n')
-    .trim();
-  return (
-    Boolean(expectedAuthorId && expectedContent) &&
-    String(reply.authorId || '').trim() === expectedAuthorId &&
-    (actualContent === expectedContent || actualContent.endsWith(`\n\n${expectedContent}`))
-  );
 }
 
 const readOutcome = sourceReadRecoveryOutcome;
@@ -986,9 +969,10 @@ export function useTopicController({
 
       const generation = ++replyWindowGenerationRef.current;
       let createdTarget: ReplyLocationTarget | undefined;
-      const nodeSeekCreatedCommand = command.kind === 'created' && selectedTopic.source === 'nodeseek' ? command : null;
-      const discourseCreatedCommand =
-        command.kind === 'created' && isDiscourseSource(selectedTopic.source) ? command : null;
+      const targetedCreatedCommand =
+        command.kind === 'created' && (selectedTopic.source === 'nodeseek' || isDiscourseSource(selectedTopic.source))
+          ? command
+          : null;
       const ownsWindow = () =>
         activeRepliesQueryIdentityRef.current === repliesQueryIdentity &&
         replyWindowGenerationRef.current === generation;
@@ -1024,7 +1008,7 @@ export function useTopicController({
       const pageOffset = capturedPosition?.offset ?? targetPage?.currentOffset ?? targetPage?.requestedOffset ?? null;
       let refreshedDetail = topicDetail;
       try {
-        if (command.kind !== 'edited' && !nodeSeekCreatedCommand && !discourseCreatedCommand) {
+        if (command.kind !== 'edited' && !targetedCreatedCommand) {
           const result = await detailQuery.refetch();
           if (!ownsWindow()) return 'stale';
           if (result.error) {
@@ -1058,20 +1042,7 @@ export function useTopicController({
         const position: ReplyPageParam = reanchor
           ? { kind: 'start' }
           : { kind: 'cursor', page: pageNumber, offset: pageOffset };
-        const knownNodeSeekFloor = nodeSeekCreatedCommand
-          ? Math.max(
-              typeof refreshedDetail.replyCount === 'number' ? refreshedDetail.replyCount : 0,
-              ...(current?.pages.flatMap((page) => page.items.map((reply) => reply.floor || 0)) || [])
-            )
-          : 0;
-        const nodeSeekCreatedPage = Math.floor(knownNodeSeekFloor / NODESEEK_FLOORS_PER_PAGE) + 1;
-        const refreshPosition: ReplyPageParam = nodeSeekCreatedCommand
-          ? {
-              kind: 'cursor',
-              page: nodeSeekCreatedPage,
-              offset: (nodeSeekCreatedPage - 1) * NODESEEK_FLOORS_PER_PAGE
-            }
-          : position;
+        const refreshPosition = position;
         const refreshKey = [
           ...forumQueryKeys.replyRefresh(
             repliesQueryKey,
@@ -1087,7 +1058,7 @@ export function useTopicController({
             source: selectedTopic.source,
             replyOrder,
             positionKind:
-              reanchor && replyOrder === 'oldest' && !nodeSeekCreatedCommand ? 'target' : refreshPosition.kind
+              targetedCreatedCommand || (reanchor && replyOrder === 'oldest') ? 'target' : refreshPosition.kind
           });
         const ownsTrace = !diagnosticTrace;
         try {
@@ -1095,8 +1066,8 @@ export function useTopicController({
             queryKey: refreshKey,
             staleTime: 0,
             queryFn: async ({ signal }) => {
-              if (discourseCreatedCommand) {
-                const target = discourseCreatedCommand.discourseTarget;
+              if (targetedCreatedCommand) {
+                const target = targetedCreatedCommand.createdTarget;
                 markDiagnosticStage(trace, 'apply', {
                   state: 'refresh-unconfirmed',
                   hasTarget: Boolean(target)
@@ -1105,36 +1076,24 @@ export function useTopicController({
                 const page = await loadReplyPage(
                   refreshedDetail,
                   replyOrder,
-                  { kind: 'target', target: { floor: target.floor } },
+                  {
+                    kind: 'target',
+                    target: { floor: target.floor, ...(target.pageHint ? { pageHint: target.pageHint } : {}) }
+                  },
                   signal,
                   trace
                 );
-                const matches = page.items.filter(
-                  (reply) => reply.commentId === target.commentId && reply.floor === target.floor
-                );
+                const match = findReplyLocation(page.items, target);
+                const matched = Boolean(match && match.floor === target.floor);
                 markDiagnosticStage(trace, 'apply', {
-                  state: matches.length === 1 ? 'refresh-success' : 'refresh-unconfirmed',
+                  state: matched ? 'refresh-success' : 'refresh-unconfirmed',
                   hasTarget: true,
-                  isTargetMatched: matches.length === 1,
+                  isTargetMatched: matched,
                   itemCount: page.items.length
                 });
-                if (matches.length !== 1) throw new Error('回复已提交，但回读未找到该评论');
-                createdTarget = replyLocationTarget(matches[0], page.currentPage);
+                if (!matched) throw new Error('回复已提交，但回读未找到该评论');
+                createdTarget = replyLocationTarget(match, page.currentPage);
                 return page;
-              }
-              if (nodeSeekCreatedCommand) {
-                const tail = await loadReplyPage(refreshedDetail, 'newest', refreshPosition, signal, trace);
-                const matches = tail.items.filter((reply) =>
-                  matchesCreatedNodeSeekReply(
-                    reply,
-                    nodeSeekCreatedCommand.nodeSeekAuthorId,
-                    nodeSeekCreatedCommand.nodeSeekContentMarkdown
-                  )
-                );
-                if (matches.length === 1) {
-                  createdTarget = replyLocationTarget(matches[0], tail.currentPage);
-                }
-                return replyOrder === 'oldest' ? reverseReplyWindow(tail) : tail;
               }
               if (reanchor && replyOrder === 'oldest' && hasKnownReplies) {
                 const tail = await loadReplyPage(refreshedDetail, 'newest', { kind: 'start' }, signal, trace);
@@ -1175,7 +1134,7 @@ export function useTopicController({
               ? { commentId: command.target.commentId, contentMarkdown: command.contentMarkdown }
               : undefined;
           const refreshedPage = { ...page, items: removeRepliesForRefresh(page.items, deleted) };
-          if (discourseCreatedCommand) replyEntry.current.settled = true;
+          if (targetedCreatedCommand) replyEntry.current.settled = true;
           const pageParam: ReplyCursorPosition = {
             kind: 'cursor',
             page: page.requestedPage,
@@ -1213,26 +1172,27 @@ export function useTopicController({
           if (reanchor && replyOrder === 'oldest') {
             targetWindowCacheOwnedRef.current.set(replyOrder, repliesQueryKey);
           }
-          const replyCount = nodeSeekCreatedCommand ? page.totalCount : (page.totalCount ?? refreshedDetail.replyCount);
+          const replyCount =
+            selectedTopic.source === 'nodeseek' && targetedCreatedCommand
+              ? page.totalCount
+              : (page.totalCount ?? refreshedDetail.replyCount);
           commitReplySnapshot(replyCount);
           setReplyWindowFailuresByKey({});
           if (command.kind === 'created' && createdTarget)
             onReplyLocationResolved?.(topicLocationForReply(selectedTopic.source, createdTarget));
-          const refreshCompleted = !nodeSeekCreatedCommand || Boolean(createdTarget);
           if (ownsTrace) {
-            finishDiagnosticTrace(trace, refreshCompleted ? 'success' : 'partial', {
+            finishDiagnosticTrace(trace, 'success', {
               itemCount: page.items.length,
-              hasMore: Boolean(page.hasMore),
-              ...(!refreshCompleted ? { reason: 'refresh_failed' } : {})
+              hasMore: Boolean(page.hasMore)
             });
           } else {
             markDiagnosticStage(trace, 'apply', {
-              state: refreshCompleted ? 'refresh-success' : 'refresh-unconfirmed',
+              state: 'refresh-success',
               itemCount: page.items.length
             });
           }
-          if (!command.silent && refreshCompleted) notify('评论已更新');
-          return refreshCompleted ? 'completed' : 'failed';
+          if (!command.silent) notify('评论已更新');
+          return 'completed';
         } catch (error) {
           if (!ownsWindow()) {
             if (ownsTrace) finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });

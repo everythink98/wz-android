@@ -18,6 +18,7 @@ import type { SessionRuntimeSnapshot } from '@/domain/session/writableSessionGat
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
+import { getNodeSeekReplies } from '@/sources/nodeseek/reader';
 
 const firstTopic: Topic = {
   source: 'nodeseek',
@@ -236,7 +237,7 @@ describe('topic query controller', () => {
         await expect(
           hook.result.current.controller.refreshTopicReplies({
             kind: 'created',
-            discourseTarget: { commentId: 121, floor: 21 },
+            createdTarget: { commentId: 121, floor: 21 },
             silent: true
           })
         ).resolves.toBe('completed');
@@ -267,78 +268,84 @@ describe('topic query controller', () => {
       if (order === 'oldest') await waitFor(() => expect(appQueryClient.getQueryData(repliesKey)).toBeUndefined());
     }
   );
-  it.each(['missing', 'unmatched', 'offline'] as const)(
-    'preserves the linux.do window after a %s created-reply result',
-    async (failure) => {
-      const events: DiagnosticEvent[] = [];
-      setDiagnosticWriter((line) => {
-        events.push(JSON.parse(line));
-      });
-      const trace = beginDiagnosticTrace('reply', 'submit');
-      const topic = { ...firstTopic, source: 'linuxdo' as const };
-      const detail = { ...firstDetail, ...topic, replyCompleteness: 'complete' as const };
-      const getTopic = jest.fn<TestGetTopic>(async () => detail);
-      const getReplies = jest.fn<TestGetReplies>(async () => {
-        if (failure === 'offline') throw new Error('offline');
-        return {
-          items: [{ ...firstReply, floor: 21, commentId: 999 }],
-          currentPage: 1,
-          currentOffset: 0,
-          hasMore: false,
-          nextPage: null
-        };
-      });
-      const onReplyLocationResolved = jest.fn();
-      const hook = await renderTopicController({
-        topic,
-        readGateway: { getTopic, getReplies },
-        onReplyLocationResolved
-      });
-      await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual(detail.replies));
-      getTopic.mockClear();
-      getReplies.mockClear();
-      await act(async () => {
-        await expect(
-          hook.result.current.controller.refreshTopicReplies(
-            {
-              kind: 'created',
-              discourseTarget: failure === 'missing' ? undefined : { commentId: 121, floor: 21 },
-              silent: true
-            },
-            trace
-          )
-        ).resolves.toBe('failed');
-      });
-      expect(getTopic).not.toHaveBeenCalled();
-      expect(getReplies).toHaveBeenCalledTimes(failure === 'missing' ? 0 : 1);
-      expect(hook.result.current.controller.topicReplies).toEqual(detail.replies);
-      expect(onReplyLocationResolved).not.toHaveBeenCalled();
+  it.each(
+    (['linuxdo', 'nodeseek'] as const).flatMap((source) =>
+      (['missing', 'unmatched', 'offline'] as const).map((failure) => ({ source, failure }))
+    )
+  )('preserves the $source window after a $failure created-reply result', async ({ source, failure }) => {
+    const events: DiagnosticEvent[] = [];
+    setDiagnosticWriter((line) => {
+      events.push(JSON.parse(line));
+    });
+    const trace = beginDiagnosticTrace('reply', 'submit');
+    const topic = { ...firstTopic, source };
+    const detail = { ...firstDetail, ...topic, replyCompleteness: 'complete' as const };
+    const getTopic = jest.fn<TestGetTopic>(async () => detail);
+    const getReplies = jest.fn<TestGetReplies>(async () => {
+      if (failure === 'offline') throw new Error('offline');
+      return {
+        items: [{ ...firstReply, floor: source === 'nodeseek' ? 19 : 21, commentId: 999 }],
+        currentPage: 1,
+        currentOffset: 0,
+        hasMore: false,
+        nextPage: null
+      };
+    });
+    const onReplyLocationResolved = jest.fn();
+    const hook = await renderTopicController({
+      topic,
+      readGateway: { getTopic, getReplies },
+      onReplyLocationResolved
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual(detail.replies));
+    getTopic.mockClear();
+    getReplies.mockClear();
+    await act(async () => {
+      await expect(
+        hook.result.current.controller.refreshTopicReplies(
+          {
+            kind: 'created',
+            createdTarget:
+              failure === 'missing'
+                ? undefined
+                : source === 'nodeseek'
+                  ? { floor: 21, pageHint: 3 }
+                  : { commentId: 121, floor: 21 },
+            silent: true
+          },
+          trace
+        )
+      ).resolves.toBe('failed');
+    });
+    expect(getTopic).not.toHaveBeenCalled();
+    expect(getReplies).toHaveBeenCalledTimes(failure === 'missing' ? 0 : 1);
+    expect(hook.result.current.controller.topicReplies).toEqual(detail.replies);
+    expect(onReplyLocationResolved).not.toHaveBeenCalled();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        traceId: trace.traceId,
+        phase: 'apply',
+        state: 'refresh-unconfirmed',
+        hasTarget: failure !== 'missing'
+      })
+    );
+    if (failure === 'unmatched')
       expect(events).toContainEqual(
         expect.objectContaining({
           traceId: trace.traceId,
-          phase: 'apply',
-          state: 'refresh-unconfirmed',
-          hasTarget: failure !== 'missing'
+          isTargetMatched: false,
+          itemCount: 1
         })
       );
-      if (failure === 'unmatched')
-        expect(events).toContainEqual(
-          expect.objectContaining({
-            traceId: trace.traceId,
-            isTargetMatched: false,
-            itemCount: 1
-          })
-        );
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          traceId: trace.traceId,
-          phase: 'apply',
-          state: 'refresh-unconfirmed',
-          reason: expect.any(String)
-        })
-      );
-    }
-  );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        traceId: trace.traceId,
+        phase: 'apply',
+        state: 'refresh-unconfirmed',
+        reason: expect.any(String)
+      })
+    );
+  });
   beforeEach(() => appQueryClient.clear());
   afterEach(async () => {
     await act(async () => {
@@ -2458,7 +2465,7 @@ describe('topic query controller', () => {
     await act(async () => {
       refresh = hook.result.current.controller.refreshTopicReplies({
         kind: 'created',
-        discourseTarget: { commentId: 121, floor: 21 },
+        createdTarget: { commentId: 121, floor: 21 },
         silent: true
       });
       await Promise.resolve();
@@ -2973,122 +2980,108 @@ describe('topic query controller', () => {
     });
   });
 
-  it('confirms a created NodeSeek reply from one newest window without refreshing topic detail', async () => {
-    const detail: TopicDetail = {
-      ...firstDetail,
-      replyCount: 4390,
-      replyHasMore: true,
-      replyNextPage: 2,
-      replyNextOffset: 10
-    };
-    const submitted = {
-      ...firstReply,
-      author: 'alice',
-      authorId: '7',
-      commentId: 14391,
-      contentMarkdown: '@KongB [#1](https://www.nodeseek.com/post-1-1#1)\n\nAPP 回复定位测试',
-      floor: 4391
-    };
-    const concurrent = {
-      ...firstReply,
-      author: 'other',
-      authorId: '8',
-      commentId: 14392,
-      contentMarkdown: 'concurrent reply',
-      floor: 4392
-    };
-    const getTopic = jest.fn<TestGetTopic>(async () => detail);
-    const getReplies = jest.fn<TestGetReplies>(async () => ({
-      items: [concurrent, submitted],
-      completeness: 'complete',
-      currentPage: 440,
-      currentOffset: 4390,
-      previousPage: null,
-      previousOffset: null,
-      hasMore: true,
-      nextPage: 439,
-      nextOffset: 4380,
-      totalCount: 4392
-    }));
-    const onReplyLocationResolved = jest.fn();
-    const hook = await renderTopicController({ onReplyLocationResolved, readGateway: { getReplies, getTopic } });
-
-    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
-    await act(async () => {
-      await expect(
-        hook.result.current.controller.refreshTopicReplies({
-          kind: 'created',
-          silent: true,
-          nodeSeekAuthorId: '7',
-          nodeSeekContentMarkdown: 'APP 回复定位测试'
-        })
-      ).resolves.toBe('completed');
-    });
-
-    expect(getTopic).toHaveBeenCalledTimes(1);
-    expect(getReplies).toHaveBeenCalledTimes(1);
-    expect(getReplies).toHaveBeenCalledWith(
-      expect.objectContaining({
-        order: 'newest',
-        position: { kind: 'cursor', page: 440, offset: 4390 },
-        replyCount: 4390
-      }),
-      expect.any(Object)
-    );
-    await waitFor(() =>
-      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([4391, 4392])
-    );
-    expect(hook.result.current.controller.replyHasPrevious).toBe(true);
-    expect(onReplyLocationResolved).toHaveBeenCalledWith({
-      kind: 'reply',
-      target: { commentId: 14391, floor: 4391, pageHint: 440 }
-    });
-  });
-
-  it('applies the NodeSeek tail without guessing when the submitted reply is ambiguous', async () => {
-    const detail: TopicDetail = { ...firstDetail, replyCount: 20 };
-    const duplicates = [21, 22].map((floor) => ({
-      ...firstReply,
-      author: 'alice',
-      authorId: '7',
-      commentId: 100 + floor,
-      contentMarkdown: 'same reply',
-      floor
-    }));
-    const getTopic = jest.fn<TestGetTopic>(async () => detail);
-    const getReplies = jest.fn<TestGetReplies>(async () => ({
-      items: [...duplicates].reverse(),
-      currentPage: 3,
-      currentOffset: 20,
-      previousPage: null,
-      previousOffset: null,
-      hasMore: true,
-      nextPage: 2,
-      nextOffset: 10,
-      totalCount: 22
-    }));
-    const onReplyLocationResolved = jest.fn();
-    const hook = await renderTopicController({ onReplyLocationResolved, readGateway: { getReplies, getTopic } });
-
-    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
-    await act(async () => {
-      await expect(
-        hook.result.current.controller.refreshTopicReplies({
-          kind: 'created',
-          silent: true,
-          nodeSeekAuthorId: '7',
-          nodeSeekContentMarkdown: 'same reply'
-        })
-      ).resolves.toBe('failed');
-    });
-
-    expect(getTopic).toHaveBeenCalledTimes(1);
-    expect(getReplies).toHaveBeenCalledTimes(1);
-    await waitFor(() =>
-      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([21, 22])
-    );
-    expect(onReplyLocationResolved).not.toHaveBeenCalled();
-  });
+  it.each(['oldest', 'newest'] as const)(
+    'anchors the created NodeSeek reply and reads adjacent pages in %s order',
+    async (order) => {
+      const topic = { ...firstTopic, replyCount: undefined };
+      const initial = Array.from({ length: 10 }, (_, i) => ({ ...firstReply, floor: i + 1, commentId: 100 + i + 1 }));
+      const detail: TopicDetail = {
+        ...firstDetail,
+        ...topic,
+        replies: initial,
+        replyHasMore: true,
+        replyNextPage: 2,
+        replyNextOffset: 10
+      };
+      const getTopic = jest.fn<TestGetTopic>(async () => detail);
+      const requestedPages: number[] = [];
+      const fetcher = jest.fn(async (input: string) => {
+        const page = Number(input.match(/post-1-(\d+)/)?.[1]);
+        requestedPages.push(page);
+        const floors = page === 4 ? [31, 32, 33] : Array.from({ length: 10 }, (_, i) => (page - 1) * 10 + i + 1);
+        const payload = Buffer.from(
+          JSON.stringify({
+            postData: {
+              postId: 1,
+              postPage: page,
+              postPageCount: 4,
+              title: 'First',
+              comments: [...(page === 1 ? [0] : []), ...floors].map((floor) => ({
+                commentId: 100 + floor,
+                floorIndex: floor,
+                poster: { name: floor === 33 ? 'other' : 'alice', uid: floor === 33 ? 8 : 7 },
+                markdown: '测试',
+                time: { createdDate: '2026-09-18T10:00:00Z' }
+              }))
+            }
+          })
+        ).toString('base64');
+        return new Response(`<script>window.payload="${payload}"</script>`);
+      });
+      const getReplies = jest.fn<TestGetReplies>((request) => getNodeSeekReplies(request.id, { ...request, fetcher }));
+      let location: TopicLocationTarget | undefined;
+      const onReplyLocationResolved = jest.fn((target: TopicLocationTarget) => {
+        location = target;
+      });
+      const hook = await renderTopicController({
+        topic,
+        getLocation: () => location,
+        onReplyLocationResolved,
+        readGateway: { getReplies, getTopic }
+      });
+      await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+      await act(async () => {
+        hook.result.current.session.commands.view.changeReplyOrder(order);
+      });
+      await waitFor(() =>
+        expect(hook.result.current.controller.topicReplies[0]?.floor).toBe(order === 'newest' ? 33 : 1)
+      );
+      requestedPages.length = 0;
+      getReplies.mockClear();
+      getTopic.mockClear();
+      await act(async () => {
+        await expect(
+          hook.result.current.controller.refreshTopicReplies({
+            kind: 'created',
+            silent: true,
+            createdTarget: { floor: 32, pageHint: 4 }
+          })
+        ).resolves.toBe('completed');
+      });
+      await act(async () => {
+        hook.rerender(undefined);
+      });
+      expect(requestedPages).toEqual([4]);
+      expect(getTopic).not.toHaveBeenCalled();
+      expect(onReplyLocationResolved).toHaveBeenCalledTimes(1);
+      expect(onReplyLocationResolved).toHaveBeenCalledWith({
+        kind: 'reply',
+        target: { commentId: 132, floor: 32, pageHint: 4 }
+      });
+      expect(hook.result.current.controller.topicReplies.map((r) => r.floor)).toEqual(
+        order === 'oldest' ? [31, 32, 33] : [33, 32, 31]
+      );
+      expect(hook.result.current.session.state.replyOrder).toBe(order);
+      for (const page of [3, 2, 1]) {
+        await act(async () => {
+          await (order === 'oldest'
+            ? hook.result.current.controller.loadPreviousReplies()
+            : hook.result.current.controller.loadMoreReplies());
+        });
+        const expected = Array.from({ length: 34 - ((page - 1) * 10 + 1) }, (_, i) => (page - 1) * 10 + 1 + i);
+        expect(hook.result.current.controller.topicReplies.map((r) => r.floor)).toEqual(
+          order === 'oldest' ? expected : expected.reverse()
+        );
+      }
+      expect(requestedPages).toEqual([4, 3, 2, 1]);
+      expect(onReplyLocationResolved).toHaveBeenCalledTimes(1);
+      expect(
+        order === 'oldest'
+          ? hook.result.current.controller.replyHasPrevious
+          : hook.result.current.controller.replyHasMore
+      ).toBe(false);
+    }
+  );
 
   it('reanchors after deleting the only reply in the current tail window', async () => {
     const topic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
@@ -3181,7 +3174,7 @@ describe('topic query controller', () => {
       await expect(
         hook.result.current.controller.refreshTopicReplies({
           kind: 'created',
-          discourseTarget: { commentId: 121, floor: 21 },
+          createdTarget: { commentId: 121, floor: 21 },
           silent: true
         })
       ).resolves.toBe('failed');

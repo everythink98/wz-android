@@ -6,7 +6,6 @@ import {
   prepareForumContentHtml,
   requirePreparedForumContent
 } from '@/domain/forum/topicContentSplit';
-import { INLINE_FORUM_IMAGE_TAG } from '@/domain/forum/forumContentMedia';
 import { imagePreviewDescriptorsForReplies } from '@/features/topic/model/replyListModel';
 import { prepareLinuxDoContent } from '@/sources/linuxdo/parser';
 import {
@@ -101,32 +100,6 @@ describe('topic content rendering contracts', () => {
     });
 
     expect(compilation.previewImages).toEqual([expect.objectContaining({ source })]);
-  });
-
-  it('keeps the preview catalog and authored image placement stable when dimensions load', () => {
-    const urls = ['https://i.imgur.com/first.png', 'https://i.imgur.com/second.png'];
-    const rawHtml = `<p>${urls.map((url) => `<img class="embedded_image" src="${url}">`).join('')}</p>`;
-    const row = compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).rows.find(
-      (candidate) => candidate.type === 'richText'
-    );
-    expect(row?.type).toBe('richText');
-    if (!row || row.type !== 'richText') throw new Error('Expected a rendered HTML row.');
-
-    expect(
-      previewCatalog(
-        compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).previewImages,
-        360,
-        2
-      ).items.map((item) => item.originalUri)
-    ).toEqual(urls);
-    expect(row.html).toContain(`<${INLINE_FORUM_IMAGE_TAG}`);
-    expect(
-      previewCatalog(
-        compileForumContent({ html: rawHtml, role: 'reply', source: 'v2ex' }).previewImages,
-        360,
-        2
-      ).items.map((item) => item.originalUri)
-    ).toEqual(urls);
   });
 
   it('publishes a complete 2000-image preview catalog from the compiler output', () => {

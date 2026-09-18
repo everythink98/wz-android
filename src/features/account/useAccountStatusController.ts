@@ -48,7 +48,10 @@ import {
   type DiagnosticTrace
 } from '@/platform/diagnostics/diagnosticPolicy';
 
-type RefreshAccountStatusOptions = { silent?: boolean };
+type RefreshAccountStatusOptions = {
+  silent?: boolean;
+  reconcile?: (source: SessionSource) => Promise<AccountReconcileResult>;
+};
 type StatusSource = SessionSource;
 type SnapshotUpdater = (current: AccountSessionSnapshot) => AccountSessionSnapshot;
 
@@ -224,6 +227,7 @@ export function useAccountStatusController({
         signal?: AbortSignal;
         surfaceGeneration?: number;
         parentTraceId?: string;
+        beforeProbe?: () => Promise<void>;
       } = {}
     ): Promise<AccountReconcileResult> => {
       if (!enabledSourcesRef.current.has(source)) {
@@ -274,6 +278,15 @@ export function useAccountStatusController({
       options.signal?.addEventListener('abort', abortProbe, { once: true });
       const promise = (async (): Promise<AccountReconcileResult> => {
         try {
+          if (options.beforeProbe) {
+            await options.beforeProbe();
+            if (
+              probeGenerationRef.current[source] !== generation ||
+              !enabledSourcesRef.current.has(source) ||
+              controller.signal.aborted
+            )
+              throw new CancelledError();
+          }
           const observation = await readAccountStatus(source, {
             fetcher: withDiagnosticFetcher(trace, rejectUnauthorizedResponse(fetcher)),
             linuxDoUserAgent: linuxDoUserAgentRef.current,
@@ -584,7 +597,7 @@ export function useAccountStatusController({
         return;
       }
       const results = await Promise.all(
-        sources.map(async (source) => ({ source, result: await reconcileAccountStatus(source) }))
+        sources.map(async (source) => ({ source, result: await (options.reconcile || reconcileAccountStatus)(source) }))
       );
       const persistenceFailures = results.filter(({ result }) => persistenceFailedResultsRef.current.has(result));
       const failures = results.filter(

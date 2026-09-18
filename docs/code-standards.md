@@ -57,7 +57,7 @@
 
 - 确定性单元测试与实现同目录，使用 Vitest。
 - 跨模块安全、数据与行为契约放在 `tests/integration/`。
-- 脚本、plugin、release 和构建门禁测试放在 `tests/tooling/`。
+- 脚本、plugin、release 和构建门禁测试放在 `tests/tooling/`。视觉 catalog 的既有 UI owner 可精确读取 `docs/product-map.md` 的能力元数据并比较实际 catalog；该许可只覆盖这一次文档读取，额外生产源码读取仍由架构门禁拒绝。
 - React Native 用户可见行为按能力族放在 `tests/ui/<family>/`；共享 fixture 只保留在 `tests/ui/` 根目录。
 - 可重复视觉状态放在 `tests/ui/visual/scenarios/<family>/manifest.tsx`；每个能力族只维护自己的 manifest，`tests/ui/visual/catalog.tsx` 是唯一聚合 owner。场景复用生产组件和领域类型，不建立第二套控件、共享 style registry 或通用场景 DSL。
 - `dev/visual-gallery/` 只承载独立开发入口和浏览壳；生产 `App.tsx`、`index.ts` 与 `src/` 不得导入开发入口或视觉场景。

@@ -143,7 +143,7 @@ export function ReplyComposerSheet({
       dark={theme.dark}
       fixedContent={structured}
       presentation={presentation}
-      visible={visible}
+      visible={visible && routeActive}
       onOpenChange={handleOpenChange}
       onPresentationChange={setPresentation}
     >
@@ -162,7 +162,7 @@ export function ReplyComposerSheet({
             presentation={presentation}
             submitLabel={submitLabel}
             title={title}
-            visible={visible}
+            visible={visible && routeActive}
             onLoadLinuxDoPollCapabilities={onLoadLinuxDoPollCapabilities}
             onResolveLinuxDoUpload={onResolveLinuxDoUpload}
             onLoadLinuxDoTemplates={onLoadLinuxDoTemplates}

@@ -94,6 +94,7 @@ export function MoreRoute() {
       utilities={{
         notifications: runtime.notifications,
         backup: {
+          recovery: runtime.reader.status === 'recovery',
           busy: backupBusy,
           exportFile: exportBackupFile,
           importFile: importBackupFile

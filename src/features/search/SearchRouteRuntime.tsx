@@ -1,6 +1,6 @@
+import type { Source, SessionSource } from '@/domain/forum/sourceCatalog';
 import { createContext, useContext, type ReactNode } from 'react';
 import type { Category } from '@/domain/forum/models';
-import type { SessionSource } from '@/domain/forum/sourceCatalog';
 import type { TopicListItemStateIndex } from '@/domain/forum/topicListItemState';
 import type { ReaderView } from '@/domain/reader/readerRecordState';
 import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
@@ -9,6 +9,7 @@ import type { ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import type { ReadGateway } from '@/sources/readGateway';
 
 export type SearchRouteRuntimeValue = {
+  enabledSources: Source[];
   account: {
     linuxDoVerificationVisible: boolean;
     readGateway: ReadGateway;

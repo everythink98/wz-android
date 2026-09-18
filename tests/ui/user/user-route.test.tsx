@@ -25,6 +25,7 @@ const data = createEmptyReaderData();
 
 function runtime(identityKey: string | undefined = 'nodeseek:123', available = true): UserRouteRuntimeValue {
   return {
+    enabledSources: ['nodeseek'],
     account: {
       linuxDoVerificationVisible: false,
       readGateway: {} as UserRouteRuntimeValue['account']['readGateway'],

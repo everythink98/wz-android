@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { buildNodeSeekAttendanceRequest } from '@/sources/nodeseek/actionRequest';
 import { runNodeSeekAction } from '@/sources/nodeseek/actionClient';
 import { errorMessage } from '@/platform/network/errors';
-import { rejectUnauthorizedResponse, type Fetcher } from '@/platform/network/request';
+import { rejectUnauthorizedResponse, withRequestBeforeSend, type Fetcher } from '@/platform/network/request';
 import { forumMutationKeys } from '@/platform/query/serverState';
 import {
   beginDiagnosticTrace,
@@ -64,13 +64,17 @@ export function useNodeSeekCheckInController({
       });
       try {
         await runNodeSeekAction({
-          fetcher: withDiagnosticFetcher(trace, authenticatedFetcher),
+          fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () => {
+            if (!isWritableSessionTicketCurrent(ticket)) {
+              throw new AttendanceError('登录状态已变化，请重试', 'stale');
+            }
+          }),
           request: buildNodeSeekAttendanceRequest({ random: false }),
           userAgent: nodeSeekUserAgentRef.current
         });
       } catch (error) {
         const message = errorMessage(error);
-        notify(message);
+        if (isWritableSessionTicketCurrent(ticket)) notify(message);
         if (
           isWritableSessionTicketCurrent(ticket) &&
           error &&

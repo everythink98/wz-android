@@ -1,9 +1,12 @@
 import React from 'react';
-import { describe, expect, it, jest } from '@jest/globals';
+import { Text } from 'react-native';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
 import { ComposerBottomSheet } from '@/ui/sheets/ComposerBottomSheet';
 
 let mockLayout = { rawContainerHeight: 800, containerHeight: 800 };
+let mockIndex = -1;
+let mockNextIndex: number | undefined;
 const mockKeyboard = { height: { value: 0 }, state: { value: 0 } };
 const mockFrames = new Set<() => void>();
 const mockLayoutState = {
@@ -15,7 +18,7 @@ const mockLayoutState = {
 jest.mock('react-native-reanimated', () => ({
   ...jest.requireActual<typeof import('react-native-reanimated')>('react-native-reanimated'),
   useAnimatedKeyboard: () => mockKeyboard,
-  useAnimatedReaction: (prepare: () => number, react: (height: number) => void) => {
+  useAnimatedReaction: (prepare: () => unknown, react: (value: unknown) => void) => {
     const { useEffect } = require('react') as typeof React;
     useEffect(() => {
       const frame = () => react(prepare());
@@ -36,7 +39,12 @@ jest.mock('@gorhom/bottom-sheet', () => ({
       props.children
     ),
   BottomSheetView: require('react-native').View,
-  useBottomSheetInternal: () => ({ animatedLayoutState: mockLayoutState, animatedKeyboardState: { set: jest.fn() } })
+  useBottomSheetInternal: () => ({
+    animatedLayoutState: mockLayoutState,
+    animatedKeyboardState: { set: jest.fn() },
+    animatedIndex: { get: () => mockIndex },
+    animatedAnimationState: { get: () => ({ nextIndex: mockNextIndex }) }
+  })
 }));
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -44,6 +52,63 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 describe('Composer native keyboard viewport', () => {
+  beforeEach(() => {
+    mockLayout = { rawContainerHeight: 800, containerHeight: 800 };
+    mockKeyboard.height.value = 0;
+    mockIndex = -1;
+    mockNextIndex = undefined;
+  });
+  it('focuses once after an interrupted close settles at the same open index without another onChange', async () => {
+    const host = (visible: boolean) => (
+      <ComposerBottomSheet dark={false} visible={visible} onOpenChange={() => {}}>
+        {(focusSignal) => <Text>{`focus=${focusSignal}`}</Text>}
+      </ComposerBottomSheet>
+    );
+    const view = await render(host(true));
+    mockIndex = 0;
+    await fireEvent(view.getByTestId('sheet'), 'change', 0);
+    expect(view.getByText('focus=1')).toBeTruthy();
+    mockNextIndex = -1;
+    await view.rerender(host(false));
+    await view.rerender(host(true));
+    expect(view.getByText('focus=1')).toBeTruthy();
+    mockNextIndex = undefined;
+    await act(() => mockFrames.forEach((frame) => frame()));
+    expect(view.getByText('focus=2')).toBeTruthy();
+    await act(() => mockFrames.forEach((frame) => frame()));
+    expect(view.getByText('focus=2')).toBeTruthy();
+  });
+  it('focuses a new opening once when an animation delivers an older change callback', async () => {
+    const host = (visible: boolean) => (
+      <ComposerBottomSheet dark={false} visible={visible} onOpenChange={() => {}}>
+        {(focusSignal) => <Text>{`focus=${focusSignal}`}</Text>}
+      </ComposerBottomSheet>
+    );
+    const view = await render(host(false));
+    const oldChange = view.getByTestId('sheet').props.onChange;
+    await view.rerender(host(true));
+    await act(() => oldChange(0));
+    expect(view.getByText('focus=1')).toBeTruthy();
+    await act(() => oldChange(0));
+    expect(view.getByText('focus=1')).toBeTruthy();
+  });
+  it('ignores a queued close callback after a new opening has started', async () => {
+    const onOpenChange = jest.fn();
+    const host = (visible: boolean) => (
+      <ComposerBottomSheet dark={false} visible={visible} onOpenChange={onOpenChange}>
+        {() => null}
+      </ComposerBottomSheet>
+    );
+    const view = await render(host(true));
+    const previousOpenCallback = view.getByTestId('sheet').props.onClose;
+    await view.rerender(host(false));
+    const closingCallback = view.getByTestId('sheet').props.onClose;
+    await view.rerender(host(true));
+    await act(() => closingCallback());
+    await act(() => previousOpenCallback());
+    expect(mockFrames.size).toBe(2);
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
   it('uses each IME frame once without waiting for a JS layout, and keeps ownership until the sheet closes', async () => {
     const host = (visible: boolean) => (
       <ComposerBottomSheet dark={false} visible={visible} onOpenChange={() => {}}>

@@ -1,0 +1,309 @@
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheet/BottomSheet.js b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheet/BottomSheet.js
+index a7748c0..84bb0cb 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheet/BottomSheet.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/commonjs/components/bottomSheet/BottomSheet.js
+@@ -375,7 +375,7 @@ const BottomSheetComponent = /*#__PURE__*/(0, _react.forwardRef)(function Bottom
+     if (nextIndex !== animatedCurrentIndex.get()) {
+       (0, _reactNativeReanimated.runOnJS)(handleOnChange)(nextIndex, nextPosition);
+     }
+-    if (nextIndex === -1) {
++    if (nextIndex === -1 && animatedCurrentIndex.get() !== -1) {
+       (0, _reactNativeReanimated.runOnJS)(handleOnClose)();
+     }
+     animatedCurrentIndex.set(nextIndex);
+@@ -408,7 +408,7 @@ const BottomSheetComponent = /*#__PURE__*/(0, _react.forwardRef)(function Bottom
+     if (position === undefined) {
+       return;
+     }
+-    if (position === animatedPosition.get()) {
++    if (position === animatedPosition.get() && animatedAnimationState.get().status !== _constants.ANIMATION_STATUS.RUNNING) {
+       return;
+     }
+ 
+@@ -498,7 +498,7 @@ const BottomSheetComponent = /*#__PURE__*/(0, _react.forwardRef)(function Bottom
+   const setToPosition = (0, _react.useCallback)(function setToPosition(targetPosition) {
+     'worklet';
+ 
+-    if (!targetPosition) {
++    if (targetPosition === undefined) {
+       return;
+     }
+     if (targetPosition === animatedPosition.get()) {
+@@ -528,6 +528,7 @@ const BottomSheetComponent = /*#__PURE__*/(0, _react.forwardRef)(function Bottom
+     /**
+      * store next position
+      */
++    stopAnimation();
+     const {
+       detents
+     } = animatedDetentsState.get();
+@@ -541,12 +542,10 @@ const BottomSheetComponent = /*#__PURE__*/(0, _react.forwardRef)(function Bottom
+         nextIndex: index
+       };
+     });
+-    stopAnimation();
+-
+     // set values
+     animatedPosition.value = targetPosition;
+-    animatedContainerHeightDidChange.value = false;
+-  }, [stopAnimation, animatedPosition, animatedContainerHeightDidChange, animatedAnimationState, animatedDetentsState]);
++    animateToPositionCompleted(true);
++  }, [stopAnimation, animateToPositionCompleted, animatedPosition, animatedContainerHeightDidChange, animatedAnimationState, animatedDetentsState]);
+   //#endregion
+ 
+   //#region private methods
+@@ -574,7 +573,7 @@ const BottomSheetComponent = /*#__PURE__*/(0, _react.forwardRef)(function Bottom
+      */
+     if (source === _constants.ANIMATION_SOURCE.KEYBOARD && keyboardBlurBehavior === _constants.KEYBOARD_BLUR_BEHAVIOR.restore && keyboardStatus === _constants.KEYBOARD_STATUS.HIDDEN && animatedContentGestureState.value !== _reactNativeGestureHandler.State.ACTIVE && animatedHandleGestureState.value !== _reactNativeGestureHandler.State.ACTIVE) {
+       isInTemporaryPosition.value = false;
+-      const nextPosition = detents[currentIndex];
++      const nextPosition = currentIndex === -1 ? closedDetentPosition : detents[currentIndex];
+       return nextPosition;
+     }
+ 
+@@ -637,13 +636,13 @@ const BottomSheetComponent = /*#__PURE__*/(0, _react.forwardRef)(function Bottom
+      * https://github.com/gorhom/react-native-bottom-sheet/issues/2431
+      */
+     if (source === _constants.ANIMATION_SOURCE.SNAP_POINT_CHANGE && status === _constants.ANIMATION_STATUS.RUNNING && nextIndex !== undefined && nextPosition !== undefined && detents[nextIndex] !== nextPosition) {
+-      return detents[nextIndex];
++      return nextIndex === -1 ? closedDetentPosition : detents[nextIndex];
+     }
+ 
+     /**
+      * return the current index position.
+      */
+-    return detents[currentIndex];
++    return currentIndex === -1 ? closedDetentPosition : detents[currentIndex];
+   }, [animatedContentGestureState, animatedCurrentIndex, animatedHandleGestureState, animatedAnimationState, animatedKeyboardState, animatedPosition, animatedDetentsState, isInTemporaryPosition, didAnimateOnMount, keyboardBehavior, keyboardBlurBehavior, _providedIndex, android_keyboardInputMode]);
+ 
+   /**
+@@ -1084,8 +1083,8 @@ const BottomSheetComponent = /*#__PURE__*/(0, _react.forwardRef)(function Bottom
+       source: animationSource,
+       nextIndex
+     } = animatedAnimationState.get();
+-    if (animationStatus === _constants.ANIMATION_STATUS.RUNNING && animationSource === _constants.ANIMATION_SOURCE.GESTURE && nextIndex === -1) {
+-      animateToPosition(closedDetentPosition, _constants.ANIMATION_SOURCE.GESTURE);
++    if (animationStatus === _constants.ANIMATION_STATUS.RUNNING && nextIndex === -1) {
++      animateToPosition(closedDetentPosition, animationSource);
+     }
+   }, [animatedContainerHeightDidChange, animatedAnimationState, animatedDetentsState]);
+ 
+@@ -1095,7 +1094,10 @@ const BottomSheetComponent = /*#__PURE__*/(0, _react.forwardRef)(function Bottom
+    *
+    * @alias OnSnapPointsChange
+    */
+-  (0, _reactNativeReanimated.useAnimatedReaction)(() => animatedDetentsState.get().detents, (result, previous) => {
++  (0, _reactNativeReanimated.useAnimatedReaction)(() => {
++        const { detents, closedDetentPosition } = animatedDetentsState.get();
++        return { detents, closedDetentPosition };
++      }, (result, previous) => {
+     /**
+      * if values did not change, and did handle on mount animation
+      * then we early exit the method.
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheet/BottomSheet.js b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheet/BottomSheet.js
+index ca4bb3b..813afde 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheet/BottomSheet.js
++++ b/node_modules/@gorhom/bottom-sheet/lib/module/components/bottomSheet/BottomSheet.js
+@@ -368,7 +368,7 @@ const BottomSheetComponent = /*#__PURE__*/forwardRef(function BottomSheet(props,
+     if (nextIndex !== animatedCurrentIndex.get()) {
+       runOnJS(handleOnChange)(nextIndex, nextPosition);
+     }
+-    if (nextIndex === -1) {
++    if (nextIndex === -1 && animatedCurrentIndex.get() !== -1) {
+       runOnJS(handleOnClose)();
+     }
+     animatedCurrentIndex.set(nextIndex);
+@@ -401,7 +401,7 @@ const BottomSheetComponent = /*#__PURE__*/forwardRef(function BottomSheet(props,
+     if (position === undefined) {
+       return;
+     }
+-    if (position === animatedPosition.get()) {
++    if (position === animatedPosition.get() && animatedAnimationState.get().status !== ANIMATION_STATUS.RUNNING) {
+       return;
+     }
+ 
+@@ -491,7 +491,7 @@ const BottomSheetComponent = /*#__PURE__*/forwardRef(function BottomSheet(props,
+   const setToPosition = useCallback(function setToPosition(targetPosition) {
+     'worklet';
+ 
+-    if (!targetPosition) {
++    if (targetPosition === undefined) {
+       return;
+     }
+     if (targetPosition === animatedPosition.get()) {
+@@ -521,6 +521,7 @@ const BottomSheetComponent = /*#__PURE__*/forwardRef(function BottomSheet(props,
+     /**
+      * store next position
+      */
++    stopAnimation();
+     const {
+       detents
+     } = animatedDetentsState.get();
+@@ -534,12 +535,10 @@ const BottomSheetComponent = /*#__PURE__*/forwardRef(function BottomSheet(props,
+         nextIndex: index
+       };
+     });
+-    stopAnimation();
+-
+     // set values
+     animatedPosition.value = targetPosition;
+-    animatedContainerHeightDidChange.value = false;
+-  }, [stopAnimation, animatedPosition, animatedContainerHeightDidChange, animatedAnimationState, animatedDetentsState]);
++    animateToPositionCompleted(true);
++  }, [stopAnimation, animateToPositionCompleted, animatedPosition, animatedContainerHeightDidChange, animatedAnimationState, animatedDetentsState]);
+   //#endregion
+ 
+   //#region private methods
+@@ -567,7 +566,7 @@ const BottomSheetComponent = /*#__PURE__*/forwardRef(function BottomSheet(props,
+      */
+     if (source === ANIMATION_SOURCE.KEYBOARD && keyboardBlurBehavior === KEYBOARD_BLUR_BEHAVIOR.restore && keyboardStatus === KEYBOARD_STATUS.HIDDEN && animatedContentGestureState.value !== State.ACTIVE && animatedHandleGestureState.value !== State.ACTIVE) {
+       isInTemporaryPosition.value = false;
+-      const nextPosition = detents[currentIndex];
++      const nextPosition = currentIndex === -1 ? closedDetentPosition : detents[currentIndex];
+       return nextPosition;
+     }
+ 
+@@ -630,13 +629,13 @@ const BottomSheetComponent = /*#__PURE__*/forwardRef(function BottomSheet(props,
+      * https://github.com/gorhom/react-native-bottom-sheet/issues/2431
+      */
+     if (source === ANIMATION_SOURCE.SNAP_POINT_CHANGE && status === ANIMATION_STATUS.RUNNING && nextIndex !== undefined && nextPosition !== undefined && detents[nextIndex] !== nextPosition) {
+-      return detents[nextIndex];
++      return nextIndex === -1 ? closedDetentPosition : detents[nextIndex];
+     }
+ 
+     /**
+      * return the current index position.
+      */
+-    return detents[currentIndex];
++    return currentIndex === -1 ? closedDetentPosition : detents[currentIndex];
+   }, [animatedContentGestureState, animatedCurrentIndex, animatedHandleGestureState, animatedAnimationState, animatedKeyboardState, animatedPosition, animatedDetentsState, isInTemporaryPosition, didAnimateOnMount, keyboardBehavior, keyboardBlurBehavior, _providedIndex, android_keyboardInputMode]);
+ 
+   /**
+@@ -1077,8 +1076,8 @@ const BottomSheetComponent = /*#__PURE__*/forwardRef(function BottomSheet(props,
+       source: animationSource,
+       nextIndex
+     } = animatedAnimationState.get();
+-    if (animationStatus === ANIMATION_STATUS.RUNNING && animationSource === ANIMATION_SOURCE.GESTURE && nextIndex === -1) {
+-      animateToPosition(closedDetentPosition, ANIMATION_SOURCE.GESTURE);
++    if (animationStatus === ANIMATION_STATUS.RUNNING && nextIndex === -1) {
++      animateToPosition(closedDetentPosition, animationSource);
+     }
+   }, [animatedContainerHeightDidChange, animatedAnimationState, animatedDetentsState]);
+ 
+@@ -1088,7 +1087,10 @@ const BottomSheetComponent = /*#__PURE__*/forwardRef(function BottomSheet(props,
+    *
+    * @alias OnSnapPointsChange
+    */
+-  useAnimatedReaction(() => animatedDetentsState.get().detents, (result, previous) => {
++  useAnimatedReaction(() => {
++        const { detents, closedDetentPosition } = animatedDetentsState.get();
++        return { detents, closedDetentPosition };
++      }, (result, previous) => {
+     /**
+      * if values did not change, and did handle on mount animation
+      * then we early exit the method.
+diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheet/BottomSheet.tsx b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheet/BottomSheet.tsx
+index fc52033..99992f4 100644
+--- a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheet/BottomSheet.tsx
++++ b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheet/BottomSheet.tsx
+@@ -557,7 +557,7 @@ const BottomSheetComponent = forwardRef<BottomSheet, BottomSheetProps>(
+           runOnJS(handleOnChange)(nextIndex, nextPosition);
+         }
+ 
+-        if (nextIndex === -1) {
++        if (nextIndex === -1 && animatedCurrentIndex.get() !== -1) {
+           runOnJS(handleOnClose)();
+         }
+ 
+@@ -607,7 +607,7 @@ const BottomSheetComponent = forwardRef<BottomSheet, BottomSheetProps>(
+           return;
+         }
+ 
+-        if (position === animatedPosition.get()) {
++        if (position === animatedPosition.get() && animatedAnimationState.get().status !== ANIMATION_STATUS.RUNNING) {
+           return;
+         }
+ 
+@@ -718,7 +718,7 @@ const BottomSheetComponent = forwardRef<BottomSheet, BottomSheetProps>(
+     const setToPosition = useCallback(
+       function setToPosition(targetPosition: number) {
+         'worklet';
+-        if (!targetPosition) {
++        if (targetPosition === undefined) {
+           return;
+         }
+ 
+@@ -752,6 +752,7 @@ const BottomSheetComponent = forwardRef<BottomSheet, BottomSheetProps>(
+         /**
+          * store next position
+          */
++        stopAnimation();
+         const { detents } = animatedDetentsState.get();
+         const index = detents?.indexOf(targetPosition) ?? -1;
+         animatedAnimationState.set(state => {
+@@ -763,14 +764,13 @@ const BottomSheetComponent = forwardRef<BottomSheet, BottomSheetProps>(
+           };
+         });
+ 
+-        stopAnimation();
+-
+         // set values
+         animatedPosition.value = targetPosition;
+-        animatedContainerHeightDidChange.value = false;
++        animateToPositionCompleted(true);
+       },
+       [
+         stopAnimation,
++        animateToPositionCompleted,
+         animatedPosition,
+         animatedContainerHeightDidChange,
+         animatedAnimationState,
+@@ -812,7 +812,7 @@ const BottomSheetComponent = forwardRef<BottomSheet, BottomSheetProps>(
+           animatedHandleGestureState.value !== State.ACTIVE
+         ) {
+           isInTemporaryPosition.value = false;
+-          const nextPosition = detents[currentIndex];
++          const nextPosition = currentIndex === -1 ? closedDetentPosition : detents[currentIndex];
+           return nextPosition;
+         }
+ 
+@@ -894,13 +894,13 @@ const BottomSheetComponent = forwardRef<BottomSheet, BottomSheetProps>(
+           nextPosition !== undefined &&
+           detents[nextIndex] !== nextPosition
+         ) {
+-          return detents[nextIndex];
++          return nextIndex === -1 ? closedDetentPosition : detents[nextIndex];
+         }
+ 
+         /**
+          * return the current index position.
+          */
+-        return detents[currentIndex];
++        return currentIndex === -1 ? closedDetentPosition : detents[currentIndex];
+       },
+       [
+         animatedContentGestureState,
+@@ -1564,10 +1564,9 @@ const BottomSheetComponent = forwardRef<BottomSheet, BottomSheetProps>(
+         } = animatedAnimationState.get();
+         if (
+           animationStatus === ANIMATION_STATUS.RUNNING &&
+-          animationSource === ANIMATION_SOURCE.GESTURE &&
+           nextIndex === -1
+         ) {
+-          animateToPosition(closedDetentPosition, ANIMATION_SOURCE.GESTURE);
++          animateToPosition(closedDetentPosition, animationSource);
+         }
+       },
+       [
+@@ -1584,7 +1583,10 @@ const BottomSheetComponent = forwardRef<BottomSheet, BottomSheetProps>(
+      * @alias OnSnapPointsChange
+      */
+     useAnimatedReaction(
+-      () => animatedDetentsState.get().detents,
++      () => {
++        const { detents, closedDetentPosition } = animatedDetentsState.get();
++        return { detents, closedDetentPosition };
++      },
+       (result, previous) => {
+         /**
+          * if values did not change, and did handle on mount animation

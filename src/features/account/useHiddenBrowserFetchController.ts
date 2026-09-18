@@ -103,8 +103,9 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
         return null;
       }
       const rowId = row.getAttribute("data-comment-id") || (String(row.id || "").match(/comment[-_]?(\\d+)/i) || [])[1] || "";
-      const floorText = row.getAttribute("id") || row.querySelector(".floor-link, .floor, .no")?.textContent || "";
-      const floorIndex = Number((String(floorText).match(/#?(\\d+)/) || [])[1] || 0);
+      const floorText = /^\\d+$/.test(row.id || "") ? row.id : row.querySelector(".floor-link, .floor, .no")?.textContent || "";
+      const floorMatch = String(floorText).match(/^\\s*#?(\\d+)\\s*$/);
+      const floorIndex = floorMatch ? Number(floorMatch[1]) : null;
       const signature = row.querySelector(".signature, .post-signature, .content-signature");
       return {
         commentId: String(rowId).trim(),
@@ -113,21 +114,36 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
         signature: signature ? childMarkup(signature) : ""
       };
     }).filter(Boolean);
-    const renderedRowForComment = (rows, comment, index) => {
+    const commentFloor = (comment) => {
+      const value = comment?.floorIndex ?? comment?.floor;
+      return value !== null && value !== undefined && /^\\d+$/.test(String(value)) ? Number(value) : null;
+    };
+    const renderedRowForComment = (rows, comments, comment) => {
       const commentId = String(comment?.commentId || "").trim();
-      const floorIndex = Number(comment?.floorIndex || comment?.floor || 0);
-      return (commentId && rows.find((row) => row.commentId === commentId))
-        || (floorIndex && rows.find((row) => row.floorIndex === floorIndex))
-        || rows[index];
+      const floorIndex = commentFloor(comment);
+      const byId = commentId ? rows.filter((row) => row.commentId === commentId) : [];
+      const byFloor = floorIndex !== null ? rows.filter((row) => row.floorIndex === floorIndex) : [];
+      if (byId.length > 1 || byFloor.length > 1) return null;
+      if (byId[0] && byFloor[0] && byId[0] !== byFloor[0]) return null;
+      const row = byId[0] || byFloor[0];
+      if (!row || (commentId && row.commentId && row.commentId !== commentId)
+        || (floorIndex !== null && row.floorIndex !== null && row.floorIndex !== floorIndex)) return null;
+      if ((row.commentId && rows.filter((candidate) => candidate.commentId === row.commentId).length !== 1)
+        || (row.floorIndex !== null && rows.filter((candidate) => candidate.floorIndex === row.floorIndex).length !== 1)) return null;
+      const owners = comments.filter((candidate) => candidate && typeof candidate === "object" && (
+        (row.commentId && String(candidate.commentId || "").trim() === row.commentId)
+        || (row.floorIndex !== null && commentFloor(candidate) === row.floorIndex)
+      ));
+      return owners.length === 1 && owners[0] === comment ? row : null;
     };
     const postData = clonePostData(config.postData);
     if (postData && typeof postData === "object" && Array.isArray(postData.comments)) {
       const rows = renderedRows();
-      postData.comments.forEach((comment, index) => {
+      postData.comments.forEach((comment) => {
         if (!comment || typeof comment !== "object") {
           return;
         }
-        const row = renderedRowForComment(rows, comment, index);
+        const row = renderedRowForComment(rows, postData.comments, comment);
         if (row?.content) {
           comment.content = row.content;
         }

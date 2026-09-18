@@ -652,6 +652,10 @@ describe('diagnostic file store', () => {
       hasLoginCookie: false,
       cookie: secret,
       cookieHash: secret,
+      cookieEndpoint: 'site-config',
+      loginCookieCount: 2,
+      storedLoginCookieCount: 1,
+      isLoginCookieCurrent: false,
       hasCfClearance: true,
       hasDiscoursePresent: false,
       hasStoredCfClearance: true,
@@ -684,6 +688,10 @@ describe('diagnostic file store', () => {
     expect(exported).toContain('"requestCookieEpoch":2');
     expect(exported).toContain('"checkedInCurrentProcess":false');
     expect(exported).not.toContain('cookieHash');
+    expect(exported).toContain('"cookieEndpoint":"site-config"');
+    expect(exported).toContain('"loginCookieCount":2');
+    expect(exported).toContain('"storedLoginCookieCount":1');
+    expect(exported).toContain('"isLoginCookieCurrent":false');
     expect(exported).toContain('"hasCfClearance":true');
     expect(exported).toContain('"hasDiscoursePresent":false');
     expect(exported).toContain('"hasStoredCfClearance":true');

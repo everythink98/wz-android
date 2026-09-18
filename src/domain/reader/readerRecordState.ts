@@ -1,6 +1,8 @@
 import type { Source, Topic, UserDetails, UserTopicsPage } from '@/domain/forum/models';
 import { createEmptyReaderData, sanitizeReaderSettings, topicKey, userKey, type ReaderSettings } from './readerData';
 
+export type ReaderStatus = 'loading' | 'ready' | 'recovery';
+
 export const readerCollections = ['favorites', 'history', 'followedUsers'] as const;
 export type ReaderCollection = (typeof readerCollections)[number];
 export type ReaderKeys = Readonly<Record<string, unknown>>;

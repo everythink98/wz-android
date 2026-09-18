@@ -5,7 +5,6 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { Topic } from '@/domain/forum/models';
 
 import { userKey } from '@/domain/reader/readerData';
-import { projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 
 import { isHttpOrHttpsUrl } from '@/platform/media/imageRequestSource';
 import { errorMessage } from '@/platform/network/errors';
@@ -24,9 +23,7 @@ type UserRouteProps = NativeStackScreenProps<RootStackParamList, 'User'>;
 export function UserRoute({ navigation, route }: UserRouteProps) {
   const runtime = useUserRouteRuntime();
   const user = route.params.user;
-  const sourceEnabled = projectContentSourcePreferences(
-    runtime.reader.data.settings.contentSources
-  ).enabledSources.includes(user.source);
+  const sourceEnabled = runtime.enabledSources.includes(user.source);
   if (!sourceEnabled) {
     return (
       <ContentSourceDisabledState

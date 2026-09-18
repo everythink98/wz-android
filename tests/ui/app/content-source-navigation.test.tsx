@@ -153,6 +153,8 @@ const readGateway = {
 const sessionViewModels = projectTestAccountSessions(createSiteSessionStates());
 
 const feedRuntime = {
+  enabledSources: readerData.settings.contentSources.filter((entry) => entry.enabled).map((entry) => entry.source),
+  enabledSourcesKey: 'v2ex,linuxdo,nodeseek,yaohuo',
   account: {
     linuxDoVerificationVisible: false,
     readGateway,
@@ -170,6 +172,7 @@ const feedRuntime = {
 } as FeedRouteRuntimeValue;
 const FeedTestRuntimeContext = React.createContext(feedRuntime);
 const searchRuntime = {
+  enabledSources: feedRuntime.enabledSources,
   account: {
     ...feedRuntime.account,
     reconcileAccountStatus: jest.fn(async () => ({ status: 'stale' as const })),
@@ -246,6 +249,7 @@ function TopicScreen(props: React.ComponentProps<typeof TopicRoute>) {
     <TopicRouteRuntimeProvider
       value={
         {
+          enabledSources: [],
           reader: { data: disabledTopicReaderData }
         } as unknown as TopicRouteRuntimeValue
       }
@@ -365,6 +369,7 @@ describe('content-source management navigation', () => {
     const [first, second, ...rest] = readerData.settings.contentSources;
     const reorderedFeedRuntime = {
       ...feedRuntime,
+      enabledSources: [second, first, ...rest].filter((entry) => entry.enabled).map((entry) => entry.source),
       reader: {
         ...feedRuntime.reader,
         data: {

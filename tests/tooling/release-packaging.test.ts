@@ -68,11 +68,16 @@ describe('Android release packaging guards', () => {
         'npm run test:ui',
         'npm run test:docs',
         'npm run check:docs',
-        'npm run typecheck',
         'npm run check:unused',
         'node scripts/check-version.mjs'
       ])
     );
+    expect(verifySteps).not.toContain('npm run typecheck');
+    expect(pkg.scripts['check:unused']).toBe(
+      'tsc --noEmit --noUnusedLocals --noUnusedParameters --allowUnreachableCode false --allowUnusedLabels false'
+    );
+    expect(pkg.scripts['pretest:ui']).toBe('npm run build:composer');
+    expect(pkg.scripts.typecheck).toBe('tsc --noEmit');
     expect(pkg.scripts.test).toMatch(/^vitest run\b/);
     expect(pkg.scripts.test).toContain('--sequence.shuffle');
     expect(pkg.scripts['test:ui']).toMatch(/^jest\b/);

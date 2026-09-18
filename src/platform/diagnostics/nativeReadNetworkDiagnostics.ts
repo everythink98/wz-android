@@ -79,6 +79,8 @@ const countKeys = [
   'requestCookieEpoch',
   'cookieWriteSequence',
   'cookieCount',
+  'loginCookieCount',
+  'storedLoginCookieCount',
   'cookieRevision',
   'generation',
   'previousGeneration',
@@ -219,7 +221,16 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
       cookieAction: new Set(['set', 'delete', 'unknown']),
       cookieLifetime: new Set(['session', 'persistent', 'expired', 'unknown']),
       cookieAccepted: new Set(['accepted', 'rejected', 'not_submitted', 'pending']),
-      cookieEndpoint: new Set(['auth', 'connect', 'categories', 'notifications', 'topic', 'feed', 'other']),
+      cookieEndpoint: new Set([
+        'auth',
+        'connect',
+        'site-config',
+        'categories',
+        'notifications',
+        'topic',
+        'feed',
+        'other'
+      ]),
       cookieTransport: new Set(['okhttp', 'cronet', 'webview']),
       cookieBarrierReason: new Set([
         'startup',
@@ -280,6 +291,7 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
       'hasCfClearance',
       'hasStoredCfClearance',
       'isCfClearanceCurrent',
+      'isLoginCookieCurrent',
       'didCfClearanceChange'
     ]) {
       if (typeof input[key] === 'boolean') output[key] = input[key];

@@ -77,8 +77,9 @@ export function signingReleaseChildEnv(unsigned, release) {
 }
 
 export function assertReleaseNode22(version) {
-  if (!/^22(?:\.|$)/.test(String(version))) {
-    throw new Error(`正式发布要求 Node 22，当前为 ${version || 'unknown'}。`);
+  const match = /^22\.(\d+)\.(\d+)$/u.exec(String(version));
+  if (!match || Number(match[1]) < 22 || (Number(match[1]) === 22 && Number(match[2]) < 2)) {
+    throw new Error(`正式发布要求 Node 22 >=22.22.2 <23，当前为 ${version || 'unknown'}。`);
   }
 }
 

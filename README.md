@@ -83,7 +83,7 @@
 
 ## 开发
 
-使用 Node 22 和仓库 lockfile 安装依赖：
+使用 Node 22（`>=22.22.2 <23`） 和仓库 lockfile 安装依赖：
 
 ```powershell
 npm ci

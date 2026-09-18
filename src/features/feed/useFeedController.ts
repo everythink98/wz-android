@@ -12,7 +12,6 @@ import {
 } from '@/domain/forum/feedOptions';
 import { applyFeedFilter, mergeCategories, mergeTopics, type ReadingFilter } from '@/domain/forum/feed';
 import type { ReaderView } from '@/domain/reader/readerRecordState';
-import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { forumReadPlanScopesKey } from '@/domain/forum/readPlan';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
@@ -210,6 +209,8 @@ export function feedOutcomeKind(itemCount: number, errors: SourceErrors): Source
 
 export function useFeedController({
   active,
+  enabledSources: enabledFeedSources,
+  enabledSourcesKey,
   catalogCategories,
   sessionEpochs = initialForumSessionEpochs,
   linuxDoVerificationActive,
@@ -222,6 +223,8 @@ export function useFeedController({
   readGateway
 }: {
   active: boolean;
+  enabledSources: Source[];
+  enabledSourcesKey: string;
   catalogCategories: Category[];
   sessionEpochs?: ForumSessionEpochs;
   linuxDoVerificationActive: boolean;
@@ -239,8 +242,6 @@ export function useFeedController({
   const queryClient = useQueryClient();
   const serverReading = useDiscourseVisited(readGateway.reading?.scope());
   const feedActive = active;
-  const { enabledSources: enabledFeedSources } = projectContentSourcePreferences(readerData.settings.contentSources);
-  const enabledSourcesKey = canonicalEnabledSourcesKey(readerData.settings.contentSources);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilterState] = useState('');

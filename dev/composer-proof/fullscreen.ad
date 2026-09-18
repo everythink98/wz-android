@@ -1,0 +1,6 @@
+context platform=android
+context device="WZ ComposerInsets 0916"
+context timeout=30000
+context retries=0
+press label="全屏"
+wait label="退出全屏" 30000

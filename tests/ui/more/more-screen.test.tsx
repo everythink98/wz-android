@@ -278,6 +278,7 @@ function moreProps(overrides: MoreScreenOverrides = {}): MoreScreenProps {
         ...overrides.utilities?.notifications
       },
       backup: {
+        recovery: false,
         busy: false,
         exportFile: jest.fn(),
         importFile: jest.fn(),
@@ -1088,6 +1089,21 @@ describe('More screen state and actions', () => {
     const view = await render(<MoreScreen {...moreProps()} />);
 
     expect(view.queryByLabelText('展开测试工具')).toBeNull();
+  });
+
+  it('explains recovery and keeps backup import reachable while export is protected', async () => {
+    const exportFile = jest.fn();
+    const importFile = jest.fn();
+    const view = await render(
+      <MoreScreen {...moreProps({ utilities: { backup: { recovery: true, exportFile, importFile } } })} />
+    );
+    expect(view.getByText(/本机资料读取失败，来源访问已暂停/)).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('展开备份 / 恢复'));
+    expect(view.getByLabelText('导出备份文件').props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByLabelText('导出备份文件'));
+    await fireEvent.press(view.getByLabelText('选择备份文件恢复'));
+    expect(exportFile).not.toHaveBeenCalled();
+    expect(importFile).toHaveBeenCalledTimes(1);
   });
 
   it('updates the read-channel threshold from Account Center', async () => {

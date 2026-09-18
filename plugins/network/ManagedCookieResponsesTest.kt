@@ -158,11 +158,17 @@ class ManagedCookieResponsesTest {
         .header("User-Agent", "fixture-agent").build(), null)
       store.sending(Request.Builder().url(url).header("Cookie", current).build(), null)
       store.sending(Request.Builder().url(url).build(), null)
+      store.sending(Request.Builder().url("https://linux.do/site.json")
+        .header("Cookie", "_t=private-login; _t=private-duplicate").build(), null)
     }
     assertTrue(events.any { it["cookieBarrierReason"] == "surface-close" && it["didCfClearanceChange"] == true })
     val sent = events.filter { it["operation"] == "cookie-request" }
-    assertEquals(listOf(false, true, false), sent.map { it["isCfClearanceCurrent"] })
-    assertEquals(listOf(true, true, false), sent.map { it["hasCfClearance"] })
+    assertEquals(listOf(false, true, false, false), sent.map { it["isCfClearanceCurrent"] })
+    assertEquals(listOf(true, true, false, false), sent.map { it["hasCfClearance"] })
+    assertEquals(listOf(1, 1, 0, 2), sent.map { it["loginCookieCount"] })
+    assertEquals(listOf(1, 1, 1, 1), sent.map { it["storedLoginCookieCount"] })
+    assertEquals(listOf(true, true, false, false), sent.map { it["isLoginCookieCurrent"] })
+    assertEquals("site-config", sent.last()["cookieEndpoint"])
     assertEquals("%08x".format("fixture-agent".hashCode()), sent[0]["userAgentHash"])
     assertFalse(events.toString().contains("private-"))
     assertEquals("clearance", cookieResponseItem(Request.Builder().url(url).build(), "cf_clearance=x", 0)["cookieKind"])
@@ -263,6 +269,12 @@ class ManagedCookieResponsesTest {
     assertEquals(1, flushes)
     store.within {
       store.observed(url, "linuxdo", "_t=A")
+      store.receive(response("_t=still-blocked"))
+    }
+    assertEquals("a failed handoff must stay blocked until explicitly retried", 1, writes)
+    store.setBarrier(false)
+    store.within {
+      store.observed(url, "linuxdo", "_t=A")
       store.receive(response("_t=C"))
     }
     assertEquals("a settled close must not permanently block future responses", 2, writes)
@@ -328,20 +340,89 @@ class ManagedCookieResponsesTest {
     assertEquals(2, flushes)
   }
 
-  @Test fun canceledResponseCannotDeleteTheCurrentLogin() {
-    var current = "_t=A"
-    val store = ManagedCookieResponses({ current }, { _, values ->
-      current = values.single(); CookieResponseBatch(1).also { it.complete(true) }
+  @Test fun failedWebViewFlushKeepsNativeResponsesBlockedUntilHandoffRetries() {
+    var failFlush = true
+    var writes = 0
+    val store = ManagedCookieResponses({ "_t=A" }, { _, _ ->
+      writes++; CookieResponseBatch(1).also { it.complete(true) }
+    }, flusher = { if (failFlush) throw java.io.IOException("synthetic disk failure") })
+    store.setBarrier(true, "surface-open")
+    assertThrows(java.io.IOException::class.java) { store.setBarrier(false, "surface-close") }
+    store.within { store.observed(url, "linuxdo", "_t=A"); store.receive(response("_t=B")) }
+    assertEquals(0, writes)
+    failFlush = false
+    store.setBarrier(false, "surface-close")
+    store.within { store.observed(url, "linuxdo", "_t=A"); store.receive(response("_t=B")) }
+    assertEquals(1, writes)
+  }
+
+  @Test fun cancellationBeforeResponseHeadersCannotWriteCookies() {
+    var writes = 0
+    val store = ManagedCookieResponses({ "_t=A" }, { _, _ ->
+      writes++; CookieResponseBatch(1).also { it.complete(true) }
     })
-    val client = OkHttpClient()
-    val call = client.newCall(Request.Builder().url(url).build())
-    call.cancel()
-    store.within {
-      store.observed(url, "linuxdo", current)
-      store.receive(response("_t=; Max-Age=0; Path=/"), call)
+    val client = OkHttpClient.Builder()
+      .cookieJar(JavaNetCookieJar(ReadOnlyWebViewCookieHandler(store, { "linuxdo" }) { "_t=A" }))
+      .addInterceptor(CookieResponseContextInterceptor(store))
+      .addNetworkInterceptor(CookieResponseInterceptor(store)).build()
+    try {
+      val call = client.newCall(Request.Builder().url("http://127.0.0.1:1/").build())
+      call.cancel()
+      assertThrows(java.io.IOException::class.java) { call.execute().close() }
+      assertEquals(0, writes)
+    } finally {
+      client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll()
     }
-    assertEquals("_t=A", current)
-    client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll()
+  }
+
+  @Test fun receivedCookieUpdatesSurviveConsumerCancellation() {
+    for (update in listOf("_t=B; Path=/", "_t=; Max-Age=0; Path=/")) {
+      val current = AtomicReference("_t=A")
+      val seen = mutableListOf<String?>()
+      var flushes = 0
+      val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1")).apply { soTimeout = 5000 }
+      val worker = Executors.newSingleThreadExecutor()
+      val served = worker.submit {
+        repeat(2) { index -> server.accept().use { socket ->
+          socket.soTimeout = 5000
+          val input = socket.getInputStream().bufferedReader()
+          var cookie: String? = null
+          while (true) {
+            val line = input.readLine() ?: break
+            if (line.isEmpty()) break
+            if (line.startsWith("Cookie:", true)) cookie = line.substringAfter(':').trim()
+          }
+          seen.add(cookie)
+          val headers = if (index == 0) "Set-Cookie: $update\r\n" else ""
+          socket.getOutputStream().write(("HTTP/1.1 200 OK\r\n${headers}Content-Length: 0\r\nConnection: close\r\n\r\n").toByteArray())
+        } }
+      }
+      val store = ManagedCookieResponses({ current.get() }, { _, values ->
+        current.set(values.single().substringBefore(';'))
+        CookieResponseBatch(1).also { it.complete(true) }
+      }, flusher = { flushes++ })
+      val cancel = java.util.concurrent.atomic.AtomicBoolean(true)
+      val client = OkHttpClient.Builder()
+        .cookieJar(JavaNetCookieJar(ReadOnlyWebViewCookieHandler(store, { "linuxdo" }) { current.get() }))
+        .addInterceptor(CookieResponseContextInterceptor(store))
+        .addNetworkInterceptor(CookieResponseInterceptor(store))
+        .addNetworkInterceptor { chain ->
+          val response = chain.proceed(chain.request())
+          if (cancel.getAndSet(false)) chain.call().cancel()
+          response
+        }.build()
+      try {
+        val request = Request.Builder().url("http://127.0.0.1:${server.localPort}/session").build()
+        runCatching { client.newCall(request).execute().close() }
+        client.newCall(request).execute().close()
+        served.get(5, TimeUnit.SECONDS)
+        assertEquals(listOf("_t=A", update.substringBefore(';')), seen)
+        assertEquals(1, flushes)
+      } finally {
+        server.close(); worker.shutdownNow()
+        client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll()
+      }
+    }
   }
 
   @Test fun cronetFallbackUsesTheUpdatedPlatformCookieAndRejectsStaleScope() {

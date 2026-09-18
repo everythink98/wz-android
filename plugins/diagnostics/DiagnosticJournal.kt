@@ -373,7 +373,7 @@ internal object DiagnosticJournal {
       "cookieAction" to setOf("set", "delete", "unknown"),
       "cookieLifetime" to setOf("session", "persistent", "expired", "unknown"),
       "cookieAccepted" to setOf("accepted", "rejected", "not_submitted", "pending"),
-      "cookieEndpoint" to setOf("auth", "connect", "categories", "notifications", "topic", "feed", "other"),
+      "cookieEndpoint" to setOf("auth", "connect", "site-config", "categories", "notifications", "topic", "feed", "other"),
       "cookieTransport" to setOf("okhttp", "cronet", "webview"),
       "cookieBarrierReason" to setOf("startup", "source-change", "surface-open", "surface-close", "identity-change", "explicit-clear"),
       "cookieResult" to setOf("settled", "persisted", "flush_failed", "redirect_denied", "barrier_blocked", "epoch_changed", "callback_timeout", "pending_write", "absent", "applied", "source_denied", "stale", "canceled", "baseline_changed", "write_failed"),
@@ -389,14 +389,14 @@ internal object DiagnosticJournal {
       "imageFailure" to setOf("executor_rejected", "timeout", "canceled", "http_error", "read_error", "decode_error", "tls_error", "dns_error", "network_error", "unknown"),
       "imageContentType" to setOf("image", "svg", "html", "other", "unknown")
     )
-  private val networkNumbers = setOf("surfaceGeneration", "generation", "previousGeneration", "elapsedMs", "queuedCount", "runningCount", "leaseCount", "cronetActiveCount", "status", "byteCount", "attempt", "cookieCount", "cookieRevision", "cookieIndex", "cookieEpoch", "requestCookieEpoch", "cookieWriteSequence")
+  private val networkNumbers = setOf("surfaceGeneration", "generation", "previousGeneration", "elapsedMs", "queuedCount", "runningCount", "leaseCount", "cronetActiveCount", "status", "byteCount", "attempt", "cookieCount", "loginCookieCount", "storedLoginCookieCount", "cookieRevision", "cookieIndex", "cookieEpoch", "requestCookieEpoch", "cookieWriteSequence")
   private val networkIdentities = setOf("userAgentHash", "callId", "clientId", "poolId", "dispatcherId", "connectionId", "forumPoolId", "mediaPoolId", "imageClientId")
 
   internal fun safeNetworkFields(fields: Map<String, Any>): Map<String, Any> {
     val output = mutableMapOf<String, Any>()
     for ((key, value) in fields) {
       when {
-        value is Boolean && key in setOf("hasDiscoursePresent", "hasLoginCookie", "loginCookieChanged", "cookieBarrierBlocked", "hasCfClearance", "hasStoredCfClearance", "isCfClearanceCurrent", "didCfClearanceChange") -> output[key] = value
+        value is Boolean && key in setOf("hasDiscoursePresent", "hasLoginCookie", "loginCookieChanged", "cookieBarrierBlocked", "hasCfClearance", "hasStoredCfClearance", "isCfClearanceCurrent", "isLoginCookieCurrent", "didCfClearanceChange") -> output[key] = value
         value is String && networkEnums[key]?.contains(value) == true -> output[key] = value
         value is Number && key in networkNumbers && value.toDouble().isFinite() && value.toDouble() in 0.0..1_000_000_000.0 -> output[key] = value
         value is String && key in networkIdentities && value.matches(Regex("[0-9a-f]{1,8}")) -> output[key] = value

@@ -449,6 +449,26 @@ describe('Android reader data helpers', () => {
     expect(merged.deletedRecords.favorites[key]).toBeUndefined();
   });
 
+  it.each([999, 1000, 1001])('resolves deletion conflicts before retaining %s markers', (count) => {
+    for (const collection of ['favorites', 'history', 'followedUsers'] as const) {
+      for (const day of [1, 2, 3]) {
+        const local = createEmptyReaderData();
+        const remote = createEmptyReaderData();
+        const key = collection === 'followedUsers' ? userKey(profile) : topicKey(topic);
+        local.deletedRecords[collection][key] = '2026-06-02T00:00:00Z';
+        for (let index = 0; index < count - 1; index++) {
+          remote.deletedRecords[collection][`nodeseek:other-${index}`] = '2026-07-01T00:00:00Z';
+        }
+        const at = `2026-06-0${day}T00:00:00Z`;
+        if (collection === 'followedUsers') remote.followedUsers[key] = { user: profile, followedAt: at };
+        else remote[collection][key] = { topic, savedAt: at };
+        const merged = mergeReaderData(local, remote);
+        expect(Boolean(merged[collection][key]), `${collection}: day ${day}`).toBe(day > 2);
+        expect(Object.keys(merged.deletedRecords[collection]).length).toBeLessThanOrEqual(MAX_DELETED_RECORDS);
+      }
+    }
+  });
+
   it('keeps yaohuo data in local Android backups', () => {
     const yaohuoTopic: Topic = {
       ...topic,

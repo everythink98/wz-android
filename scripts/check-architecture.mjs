@@ -574,7 +574,30 @@ function behaviorTestSourceReadIssues(projectRoot) {
         }
         return /\breadFile(?:Sync)?\b/.test(sourceText);
       });
-      if (importsProductionSource) {
+      const catalogReads = [];
+      const collectCatalogRead = (node) => {
+        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'readFileSync')
+          catalogReads.push(node.getText(sourceFile).replace(/\s+/g, ' '));
+        ts.forEachChild(node, collectCatalogRead);
+      };
+      const catalogOwner =
+        path.relative(projectRoot, filePath).replaceAll('\\', '/') ===
+        'tests/ui/visual/visual-scenario-contract.test.tsx';
+      if (catalogOwner) collectCatalogRead(sourceFile);
+      // This owner compares live catalog metadata with the canonical document, not source text.
+      const readsOnlyProductMap =
+        catalogOwner &&
+        catalogReads.length === 1 &&
+        catalogReads[0] === "readFileSync(path.resolve(__dirname, '../../../docs/product-map.md'), 'utf8')" &&
+        sourceFile.statements
+          .filter(
+            (statement) =>
+              ts.isImportDeclaration(statement) &&
+              ts.isStringLiteralLike(statement.moduleSpecifier) &&
+              /^(?:node:)?fs(?:\/promises)?$/.test(statement.moduleSpecifier.text)
+          )
+          .every((statement) => statement.getText(sourceFile) === "import { readFileSync } from 'node:fs';");
+      if (importsProductionSource && !readsOnlyProductMap) {
         issues.push({
           code: 'behavior-test-source-read',
           message: `${path.relative(projectRoot, filePath).replaceAll('\\', '/')} 不得读取生产源码字符串证明行为`

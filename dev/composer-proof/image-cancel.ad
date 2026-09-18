@@ -1,0 +1,8 @@
+context platform=android
+context device="WZ ComposerInsets 0916"
+context timeout=45000
+context retries=0
+press label="图片"
+wait text="Recent" 15000
+back
+wait label="发送回复" 15000

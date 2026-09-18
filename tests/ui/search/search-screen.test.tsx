@@ -192,6 +192,7 @@ function createSearchRouteRuntime({
   sessionViewModels: SearchRouteRuntimeValue['account']['sessionViewModels'];
 }): SearchRouteRuntimeValue {
   return {
+    enabledSources: readerData.settings.contentSources.filter((entry) => entry.enabled).map((entry) => entry.source),
     account: {
       linuxDoVerificationVisible,
       readGateway,

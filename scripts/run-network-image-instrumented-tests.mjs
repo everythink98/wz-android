@@ -125,6 +125,38 @@ try {
     process.stdout.write(proof);
     if (!/OK \(1 test\)/u.test(proof)) throw new Error(`Cookie restart proof ${stage} failed.`);
   }
+  const webViewFailures = [];
+  for (const mode of ['complete', 'error', 'cancel']) {
+    for (const method of [
+      'observeWebViewTerminalCookieBeforeProcessExit',
+      'observeWebViewTerminalCookieAfterProcessRestart'
+    ]) {
+      execFileSync('adb', ['-s', serial, 'shell', 'am', 'force-stop', 'com.wz.reader']);
+      const proof = execFileSync(
+        'adb',
+        [
+          '-s',
+          serial,
+          'shell',
+          'am',
+          'instrument',
+          '-w',
+          '-r',
+          '-e',
+          'webViewCookieMode',
+          mode,
+          '-e',
+          'class',
+          `com.wz.reader.ManagedCookieResponsesInstrumentedTest#${method}`,
+          'com.wz.reader.test/androidx.test.runner.AndroidJUnitRunner'
+        ],
+        { encoding: 'utf8', timeout: 60_000 }
+      );
+      process.stdout.write(proof);
+      if (!/OK \(1 test\)/u.test(proof)) webViewFailures.push(`${mode}: ${method}`);
+    }
+  }
+  if (webViewFailures.length) throw new Error(`WebView cookie restart proof failed: ${webViewFailures.join(', ')}.`);
 } finally {
   if (path.dirname(path.resolve(fixture)) !== path.resolve(scratchRoot))
     throw new Error('Invalid fixture cleanup path.');

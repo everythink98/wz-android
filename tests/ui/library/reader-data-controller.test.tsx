@@ -131,6 +131,13 @@ describe('reader command optimistic persistence', () => {
   it('blocks ordinary writes in recovery and uses the explicit backup recovery operation', async () => {
     mockLoad.mockRejectedValue(new Error('bad disk'));
     const { hook, notify } = await setup();
+    expect(hook.result.current.readerStatus).toBe('recovery');
+    await expect(hook.result.current.exportBackup()).rejects.toThrow('尚未恢复');
+    mockImport.mockRejectedValueOnce(new Error('invalid backup'));
+    await act(async () => {
+      await expect(hook.result.current.importBackup('bad')).rejects.toThrow('invalid backup');
+    });
+    expect(hook.result.current.readerStatus).toBe('recovery');
     await act(async () => {
       hook.result.current.commitReaderData(favorite);
     });
@@ -140,6 +147,7 @@ describe('reader command optimistic persistence', () => {
       await hook.result.current.importBackup('{"version":2}');
     });
     expect(mockImport).toHaveBeenCalledWith('{"version":2}', true);
+    expect(hook.result.current.readerStatus).toBe('ready');
     await act(async () => {
       hook.result.current.commitReaderData(favorite);
     });
@@ -148,6 +156,7 @@ describe('reader command optimistic persistence', () => {
   it('blocks later mutations when rollback cannot establish committed state', async () => {
     mockCommit.mockRejectedValueOnce(new AggregateError([], 'rollback failed'));
     const { hook } = await setup();
+    expect(hook.result.current.readerStatus).toBe('ready');
     await act(async () => {
       hook.result.current.commitReaderData(favorite);
     });
@@ -155,5 +164,16 @@ describe('reader command optimistic persistence', () => {
       hook.result.current.commitReaderData(favorite);
     });
     expect(mockCommit).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.readerStatus).toBe('recovery');
+  });
+  it('protects settings when backup import rollback fails after a ready startup', async () => {
+    const { hook } = await setup();
+    mockImport.mockRejectedValueOnce(new AggregateError([], 'import rollback failed'));
+    await act(async () => {
+      await expect(hook.result.current.importBackup('backup')).rejects.toThrow('import rollback failed');
+      hook.result.current.commitReaderData(favorite);
+    });
+    expect(hook.result.current.readerStatus).toBe('recovery');
+    expect(mockCommit).not.toHaveBeenCalled();
   });
 });

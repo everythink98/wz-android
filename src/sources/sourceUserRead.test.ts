@@ -798,6 +798,50 @@ describe('source user read', () => {
     expect(calls).not.toContain('book_list_log.aspx');
   });
 
+  it.each([
+    { counts: [14, 15, 15, 2], total: 46 },
+    { counts: [20, 20], total: 40 },
+    { counts: [20, 20], overlap: 5, total: 35 },
+    { counts: [29, 1], total: 30 },
+    { counts: [29, 30], total: 59 },
+    { counts: [15, 15, 15, 2], total: 47 }
+  ])('retains every Yaohuo user topic across pages of $counts', async ({ counts, total, overlap = 0 }) => {
+    let nextId = 1000000;
+    const pages = counts.map((count, index) => {
+      if (index) nextId -= overlap;
+      const rows = Array.from({ length: count }, () => {
+        const id = nextId++;
+        return `<div class="listdata"><a href="/bbs/book_view.aspx?siteid=1000&classid=201&id=${id}">主题 ${id}</a>/火友/阅1/2026-05-28 23:00</div>`;
+      }).join('');
+      return (
+        rows +
+        (index + 1 < counts.length
+          ? `<a href="/bbs/book_list_search.aspx?action=search&key=7&type=pub&page=${index + 2}">下一页</a>`
+          : '')
+      );
+    });
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname.endsWith('/userinfo.aspx'))
+        return new Response(
+          '<div class="uinfo"><a class="uinfo-stat posts" href="/bbs/book_list_search.aspx?action=search&key=7&type=pub"><div class="label">帖子</div><div class="value">100</div></a></div>'
+        );
+      const page = Number(url.searchParams.get('page') || 1);
+      if (!pages[page - 1]) throw new Error(`Unexpected page ${page}`);
+      return new Response(pages[page - 1]);
+    });
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await getUserTopics({ source: 'yaohuo', profile: yaohuoCursorUser, cursor, fetcher });
+      ids.push(...page.topics.map(({ id }) => id));
+      cursor = page.nextTopicsCursor || null;
+      expect(fetcher.mock.calls.length).toBeLessThanOrEqual(counts.length + 1);
+    } while (cursor);
+    expect(ids.toSorted()).toEqual(Array.from({ length: total }, (_, index) => String(1000000 + index)));
+    expect(fetcher).toHaveBeenCalledTimes(counts.length + 1);
+  });
+
   it('loads yaohuo user profile topics from the next topic cursor', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (

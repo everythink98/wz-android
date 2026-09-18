@@ -19,7 +19,11 @@
 
 ## 标准命令
 
-命令定义以 `package.json` 为准。首次开发使用 Node 22，执行 `npm ci` 安装 lockfile 中的依赖；postinstall 会应用 source patch 并构建 Composer。启动 Android 前准备 SDK、Java 环境，并核对下文的安装身份。
+命令定义以 `package.json` 为准。首次开发使用 Node 22（`>=22.22.2 <23`），执行 `npm ci` 安装 lockfile 中的依赖；postinstall 会应用 source patch 并构建 Composer。启动 Android 前准备 SDK、Java 环境，并核对下文的安装身份。
+
+Composer 专项使用 `npm run test:composer:device -- --serial emulator-5556 --build --output .codex-tmp/composer-<独立运行名>`。需先启动隔离 AVD `WZ_ComposerInsets_0916`，选择真实系统 IME，准备现有安装、Java/Android SDK/Windows C++ 工具链；runner 不自动创建、卸载、清数据或重置设备。它仅构建开发签名 Release Hermes 诊断入口，不走正式发布。复用时把 `--build` 换为 `--apk <composer-proof.apk>`，须同时保留紧邻的 `<APK>.json` 身份文件；`--cases <逗号分隔的场景 ID>` 可定向，例如 `nodeseek-rich-sheet-shown,nodeseek-rich-fullscreen-shown`。输出目录必须全新且位于 `.codex-tmp`，包含环境、每场景 token/receipt、原生节点和截图、结果清单。
+
+专项只接受当前源码与 APK 哈希、buildId 匹配且 `isDev=false/isHermes=true` 的包；先比对已装 APK 签名，再覆盖安装并复核 `firstInstallTime`。默认 40 场景矩阵定义在 `scripts/run-composer-device-proof.mjs`，含两站 16 种编辑模式/面板/键盘组合、各独立写入口、失败保稿/重开、深浅全屏及竞态/选图取消。`stress-ime-fast/slow` 在隔离设备分别使用 0/5 倍 window animation scale，记录并最终恢复原值；这些压力条件不代替原生 IME 帧顺序单测。所有发送使用合成账号与 HTTP/adapter 响应，未匹配请求立即失败；不得将这些结果标为 `LIVE_PASS`。较大挖孔须在同一隔离 AVD 单独切换系统 cutout overlay、记录实际 Insets，并添加 `--require-cutout` 重跑深浅全屏，最后恢复原 overlay；overlay 已启用不等于生效，cutout Insets 仍为 0 时必须失败，工具栏按状态栏与 cutout 的较大值验收。可参考 [Android 官方挖孔测试说明](https://developer.android.com/develop/ui/compose/system/test-cutouts)。真实物理设备没有对应证据时仍为 `NOT_VERIFIED`。结束后 runner 释放自己的 agent-device session 并恢复 IME/动画设置；操作者只关闭本次启动的隔离模拟器。
 
 | 任务 | 命令与前置条件 |
 | --- | --- |
@@ -68,7 +72,7 @@ npm run visual:gallery -- --port 8081
 
 ## Android 覆盖安装、Replay 与 Smoke
 
-关联 Native 变更可在 fresh prebuild 后运行 `node scripts/run-related-native-tests.mjs`；本地读取相对 HEAD 的修改与未跟踪文件，CI 使用 `--base <revision>`。静态映射选择已有 selection module/App JVM 任务并检查新鲜、非零用例报告；selection 不能只编译 App。配置/补丁合同继续保留，instrumentation 按下文独立 AVD 规则执行。本次修复及证据边界见[取证记录](review-remediation.md)。
+关联 Native 变更可在 fresh prebuild 后运行 `node scripts/run-related-native-tests.mjs`；本地读取相对 HEAD 的修改与未跟踪文件，CI 使用 `--base <revision>`。静态任务表覆盖 selection、App（含 Composer）、ReactAndroid、Expo FileSystem 和 Expo Image 五类 JVM owner。App 通过 `tests/native/composer-keyboard.gradle` 一次挂入 Composer 测试。每个预期测试类必须有本次新鲜报告、非跳过用例且零失败/错误；邻近测试通过不能替代缺席 owner。runner 输出每项耗时；selection 不能只编译 App。CI 使用 Node `22.22.2` 验证最低支持版本。配置/补丁合同继续保留，instrumentation 按下文独立 AVD 规则执行。本次修复及证据边界见[取证记录](review-remediation.md)。
 
 主登录态 AVD 保存 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态。设备安全边界以仓库根目录 `AGENTS.md` 为准；下面只列操作入口。
 
@@ -116,9 +120,9 @@ HTTP/2 故障子集可用 `--tests '*NetworkProxyRuntimeTest.*Http2*'`。共享 
 
 ### L 站续签与登录态诊断
 
-沿用上面的隔离 runner；它分两个 instrumentation 进程执行持久型 Cookie 续签并 flush、停止进程、重启后真实 HTTP 认证，断言 PID 改变，并检查原 Native journal 的原因字段仍在且敏感字段已过滤。会话型 Cookie 只按 Android 实际语义观察，不能把内存接受当作重启持久化证据。多个 Domain/Path 的同名 Cookie、Secure/HttpOnly 与定向删除由同一个平台 owner 验证。
+沿用上面的隔离 runner；它分两个 instrumentation 进程执行持久型 Cookie 续签并 flush、停止进程、重启后真实 HTTP 认证，断言 PID 改变，并检查原 Native journal 的原因字段仍在且敏感字段已过滤。同一 runner 还分别驱动安装依赖的真实 WebView 正常完成、网络错误和加载提前取消，在独立进程重启后回读平台 Cookie；React 消息传输使用替身，平台 Cookie 与 HTTP 不替换。销毁入口的 flush 由既有 RN WebView patch 提供，不能把该原生探针算作 L 站成功登录或整个 React Host 的端到端验收。会话型 Cookie 只按 Android 实际语义观察，不能把内存接受当作重启持久化证据。多个 Domain/Path 的同名 Cookie、Secure/HttpOnly 与定向删除由同一个平台 owner 验证。
 
-导出先看 `diagnostic-account-summary`：`localSnapshot` 是本地身份，`lastCheckResult/lastCheckAt/checkedInCurrentProcess` 才说明日志中的最近核对。按请求 trace/request/call 与账号隔离 epoch 关联 `cookie-request`（实际发送的登录 Cookie 是否存在）、`cookie-response`（类别、设置/删除/未知、平台逐项接受）、`cookie-persist`（persisted/flush_failed）和 `cookie-barrier`（闭集原因与开启/释放）。`settled/accepted` 不等于已落盘，`flush_failed` 不等于已清除。source_denied、redirect_denied、barrier_blocked、epoch_changed、canceled、callback_timeout、pending_write 和平台 rejected 各自处理，旧日志 stale/baseline_changed 只作旧语义读取。WebView 内部响应不可见；只记录可信页面交接和前后凭据存在、最终协议结果，不推测内部 Set-Cookie。
+导出先看 `diagnostic-account-summary`：`localSnapshot` 是本地身份，`lastCheckResult/lastCheckAt/checkedInCurrentProcess` 才说明日志中的最近核对。按请求 trace/request/call 与账号隔离 epoch 关联 `cookie-request`（实际发送的登录 Cookie 是否存在）、`cookie-response`（类别、设置/删除/未知、平台逐项接受）、`cookie-persist`（persisted/flush_failed）和 `cookie-barrier`（闭集原因与开启/释放）。`settled/accepted` 不等于已落盘，`flush_failed` 不等于已清除。source_denied、redirect_denied、barrier_blocked、epoch_changed、callback_timeout、pending_write 和平台 rejected 各自处理；旧日志 canceled 表示旧版本丢弃已收到的响应，新版本消费者取消不再丢弃合格 Cookie 更新，旧日志 stale/baseline_changed 只作旧语义读取。`site-config` 单独标识 `/site.json`；`loginCookieCount/storedLoginCookieCount/isLoginCookieCurrent` 仅比较实际发送 Header 与当时准确 URL 的存储，缺字段表示未知；并发写入可能造成比较不一致，不能单凭 false 定性旧凭据。WebView 内部响应不可见；只记录可信页面交接和前后凭据存在、最终协议结果，不推测内部 Set-Cookie。
 
 现场只在按安装身份步骤覆盖安装正常开发包后，用现有登录态进行只读浏览，等至少两次自然登录 Cookie 更新并看到落盘确认，再按保留数据方式结束/重启 App，核对 `/session/current.json` 与账号结果。不得清 Cookie、自动登录或重放写操作来制造条件。无真实登录或观察窗口内没有自然续签记 `NOT_VERIFIED`，缺隔离设备记 `BLOCKED_BY_ENV`。若服务端明确删除，继续追溯此前是否有客户端漏续签；不能只因 stale 消失就关闭 `REG-ACCOUNT-048`。
 
@@ -148,7 +152,7 @@ cd android
 
 ### 审查修复的隔离设备故障验证
 
-先按 Reader SQLite 设备流程准备已有的 `WZ_ReaderStorage_API35_20260910`，确认其 fixture ownership marker。使用 Node 22、当前 lockfile 和已完成 fresh prebuild 的生成目录：
+先按 Reader SQLite 设备流程准备已有的 `WZ_ReaderStorage_API35_20260910`，确认其 fixture ownership marker。使用 Node 22（`>=22.22.2 <23`）、当前 lockfile 和已完成 fresh prebuild 的生成目录：
 
 ```powershell
 node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --build --output .codex-tmp/<任务目录>/runtime.json
@@ -157,6 +161,16 @@ node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --b
 runner 精确拒绝其他 AVD，包括主登录设备；仅覆盖安装开发签名的 Release Hermes proof APK，保留安装身份。临时 Gradle overlay 选择 `dev/review-remediation-proof/index.tsx`，不修改生产入口或持久原生配置。HTTP 使用已有四站样本和明确故障注入；WebView 使用禁远端资源的内联页面，禁止测试入口未经隔离的 fetch。通知测试临时撤销再授予该测试 App 的系统权限，finally 恢复原权限；只清理本轮合成摘要，恢复原通知存储键。
 
 receipt 核对 token、Release/Hermes、41 项结果和 APK hash。覆盖真实 WebView 脚本、User Query 竞态、Feed 原生宿主、Account 恢复核心、发送前校验、通知存储与系统投递事务。Account 探针隔离了面板和身份核对边界，不代表 TopicRoute 到原站 Cloudflare 的完整验证；受控 HTTP 也不代表真实写操作。失败保留部分结果，不计为全通过。proof APK 不装主设备；普通入口另行构建并做匹配 APK 只读验收，正式发布不用于开发验证。
+
+同一 runner 的 `--acceptance boundaries|recovery|notification` 用于 Pro 修复的专项验收，可复用上一步 APK，输出必须为新的 ignored 路径：
+
+```powershell
+node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance boundaries --output .codex-tmp/<任务目录>/boundaries.json
+node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance recovery --output .codex-tmp/<任务目录>/recovery.json
+node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance notification --output .codex-tmp/<任务目录>/notification.json
+```
+
+`boundaries` 经生产 storage 导入并用独立 Android SQLite 连接核对三类集合 × 999/1000/1001 删除标记 × 三种时间关系的 27 个组合，最后还原原 fixture。`recovery` 挂载完整 App，在读取边界注入一次失败，使用真实系统文件选择器分别导入无效与仅启用 V2EX 的有效备份；核对恢复前业务请求为零、原资料/通知意图不变、恢复后来源准确、收藏可见，结束由 runner 停止 App 后还原六个白名单数据库文件并独立重读。`notification` 使用真实 NotificationDetailRoute、gateway 和 native stack，隔离 adapter 响应；核对失焦取消、同一实例返回、失败/未确认重试、刷新不循环、防并发和确认后不重复。后两者执行 `dev/review-remediation-proof/recovery.ad`、`dev/review-remediation-proof/notification.ad`，零重试，最终还要核对包含当次 token 和构建身份的设备 receipt；UI 回放退出 0 不替代业务断言。picker 关闭后等待一次平台过渡动画，再操作 App；等待不作为导入成功 oracle。runner 只删除自己以当次 token 命名的 Download 文件。验收不连接原站，不证明真实写入或系统自然故障。
 
 ### Forum selection Native 验证
 
@@ -187,7 +201,7 @@ runner 要求恰好一个已连接且名称精确匹配的 `WZ_ForumSelection_Te
 
 ```powershell
 android/gradlew.bat -p android :expo-video:assembleDebugAndroidTest :expo-video:compileReleaseKotlin -PreactNativeArchitectures=x86_64 --no-daemon
-adb -s <serial> install -r node_modules/expo-video/android/build/outputs/apk/androidTest/debug/expo-video-debug-androidTest.apk
+adb -s <serial> install -r <node_modules/expo-video/android/build/outputs/apk/androidTest/debug/expo-video-debug-androidTest.apk>
 adb -s <serial> shell am instrument -w -r -e class expo.modules.video.ReaderPlaybackInstrumentedTest expo.modules.video.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
@@ -438,7 +452,7 @@ fresh prebuild 后核对生成的 `android/gradle.properties` 与 `android/app/b
 
 ### 执行发布
 
-发布前准备 Node 22、完整 Git history/tags、clean working tree、本机 `agent-device >= 0.19.0`，以及不进入 Git 的 `.env.release.local`。至少配置：
+发布前准备 Node 22（`>=22.22.2 <23`）、完整 Git history/tags、clean working tree、本机 `agent-device >= 0.19.0`，以及不进入 Git 的 `.env.release.local`。至少配置：
 
 ```text
 WZ_ANDROID_KEYSTORE_PATH
@@ -474,3 +488,30 @@ npm run release:android
 - Replay 由 runner 清理自己的 session；手工探索只关闭本次 session。共享 MCP、模拟器与 ADB 不关闭，未知 scratch 不删除。
 - 本任务启动了 Gradle daemon 且不再构建时，可执行 `android\gradlew.bat --stop`；有意保留服务时报告 PID、端口和原因。
 - 无法确认归属的进程或文件不强制清理，交付时列为残留。
+
+
+### 自动视觉回归与 checkpoint 续接
+
+使用已存在的 `WZ_ReaderStorage_API35_20260910` 专用 AVD；不得借用主登录设备或重置 AVD。两个 runner 共享本机127.0.0.1:42187的 OS 排他租约，进程退出后租约释放，checkpoint 状态继续约束下一次运行。端口被占用时先确认正在运行的 owner，不杀未知进程。
+
+固定条件为 API 35、1080×2400、420 dpi、系统字号 100%、en-US；环境清单另记录镜像 fingerprint、时区、导航模式、系统主题及工具版本。14帧中的140%是应用字号，列表密度保持标准；搜索和用户主题样本使用固定展示日期，不能依赖当天相对时间。Gallery仅证明这些生产组件的设备视觉结果，不替代业务导航与原站链路。
+
+```powershell
+# 首次捕获候选：临时 overlay 构建独立 Release Gallery，14帧各捕获三次。
+npm run test:visual:device -- --serial <隔离serial> --build --capture-baseline
+# 审阅候选画面及变更后显式批准。不得自动批准。
+npm run test:visual:device -- --approve-baseline .codex-tmp/visual-runs/<候选目录>
+# 固定回归：指定 Gallery APK；模型无需逐步点击。
+npm run test:visual:device -- --serial <隔离serial> --apk <gallery-apk>
+# 仅恢复中断的 restoring checkpoint 可续接；不安装 APK。
+node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --resume-restore --output .codex-tmp/<任务目录>/restore.json
+# 故意失败与 App 中断的还原验收：返回非零是预期，另核对 restoration.phase=restored。
+node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance recovery --exercise-failure after-replay --output .codex-tmp/<任务目录>/failure.json
+node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance recovery --exercise-failure app-stop --output .codex-tmp/<任务目录>/interrupted.json
+# 取消系统文件选择必须失败，不能冒充格式校验成功；仍须完成数据库还原。
+node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --apk <proof-apk> --acceptance recovery --exercise-failure cancel-import --output .codex-tmp/<任务目录>/canceled.json
+```
+
+基准持久保存在 ignored `.codex-tmp/visual-baselines/<环境目录>/`；每轮画面、差异图、步骤、失败材料及环境清单在 `.codex-tmp/visual-runs/`。不提交截图、APK或数据库。只有 `DEVICE_REPLAY_PASS` 代表已有批准基准的比较与数据还原共同通过；`NEEDS_REVIEW` 只是三次稳定候选，须逐帧审阅关键操作区、遮挡和长文本再批准。后续更新仍须显式捕获与批准，并审阅相对旧基准的差异，不能在回归中自动修脚本或自动放宽阈值。该入口独立于普通 `verify`。
+
+checkpoint 在 `.codex-tmp/review-remediation-checkpoints/<AVD>/`。恢复失败保留业务与恢复错误，阻止下一轮；旧 `running` 即使 runner 被杀也不能自动还原或覆盖，应先保留数据并人工检查。`restoring` 续接先核对安装身份及每个文件哈希，发现后来变化便拒绝。数据库还原不等同权限/通知业务成功，须同时查看两部分结果；安装身份变化时冻结设备变更。

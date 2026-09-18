@@ -230,6 +230,8 @@ export const StructuredReplyComposer = forwardRef<
     const lastConfirmedMarkdownRef = useRef(content);
     const lastExternalSentRef = useRef(content);
     const lastRevisionRef = useRef(0);
+    const documentEpochRef = useRef(-1);
+    const initializingRef = useRef(false);
     const modePreferenceRef = useRef<ComposerMode>('rich');
     const initKeyRef = useRef('');
     const editorThemeRef = useRef(editorTheme);
@@ -292,6 +294,14 @@ export const StructuredReplyComposer = forwardRef<
 
     const sendInit = useCallback(() => {
       if (!modeLoaded) return;
+      documentEpochRef.current++;
+      initializingRef.current = true;
+      snapshotResolversRef.current.forEach(({ reject, timer, trace }) => {
+        clearTimeout(timer);
+        finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
+        reject(new Error('编辑文档已切换，请重试'));
+      });
+      snapshotResolversRef.current.clear();
       if (initializationTraceRef.current)
         finishDiagnosticTrace(initializationTraceRef.current, 'stale', { reason: 'superseded' });
       const trace = beginDiagnosticTrace('webview', 'composer-init', { site: intent.site, mode });
@@ -305,6 +315,7 @@ export const StructuredReplyComposer = forwardRef<
       send({
         type: 'INIT',
         payload: {
+          documentEpoch: documentEpochRef.current,
           site: intent.site,
           intentKind: intent.kind,
           markdown: content,
@@ -358,7 +369,7 @@ export const StructuredReplyComposer = forwardRef<
     }, [intent.site]);
 
     useEffect(() => {
-      if (webLoaded && modeLoaded && !ready) sendInit();
+      if (webLoaded && modeLoaded && !ready && !initializingRef.current) sendInit();
     }, [modeLoaded, ready, sendInit, webLoaded]);
 
     useEffect(() => {
@@ -396,7 +407,7 @@ export const StructuredReplyComposer = forwardRef<
         isReady: ready,
         revision: lastRevisionRef.current
       });
-      if (!ready) {
+      if (!ready || initializingRef.current) {
         finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
         return Promise.reject(new Error('编辑器尚未就绪'));
       }
@@ -470,6 +481,12 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         const message = parsed.data;
+        // Revisions restart on INIT. A previous document can still have bridge messages in flight.
+        if (
+          (message.type === 'READY' || message.type === 'STATE_CHANGED' || message.type === 'SNAPSHOT') &&
+          (message.payload.documentEpoch ?? 0) !== documentEpochRef.current
+        )
+          return;
         if (message.type === 'USER_INTERACTION') {
           if (visible) recordUserInteraction();
           return;
@@ -479,6 +496,7 @@ export const StructuredReplyComposer = forwardRef<
           return;
         }
         if (message.type === 'READY') {
+          initializingRef.current = false;
           if (initializationTraceRef.current)
             finishDiagnosticTrace(initializationTraceRef.current, 'success', { state: 'ready' });
           if (readyTimerRef.current) clearTimeout(readyTimerRef.current);
@@ -515,6 +533,7 @@ export const StructuredReplyComposer = forwardRef<
           const resolver = message.payload.requestId
             ? snapshotResolversRef.current.get(message.payload.requestId)
             : undefined;
+          if (message.payload.requestId && !resolver) return;
           if (snapshot.revision < lastRevisionRef.current) {
             if (resolver) {
               clearTimeout(resolver.timer);
@@ -706,6 +725,7 @@ export const StructuredReplyComposer = forwardRef<
                   finishDiagnosticTrace(trace, 'success', { state: 'started' });
                   setRendererGone(false);
                   setReady(false);
+                  initializingRef.current = false;
                   setWebLoaded(false);
                   webViewRef.current?.reload();
                 }}
@@ -747,6 +767,7 @@ export const StructuredReplyComposer = forwardRef<
                 });
                 finishDiagnosticTrace(trace, 'failure', { reason: 'renderer_gone' });
                 setReady(false);
+                initializingRef.current = false;
                 setRendererGone(true);
                 setLocalError('编辑器进程已退出，最后确认草稿仍在');
               }}
