@@ -103,7 +103,6 @@ export async function getLinuxDoUserDetails(
   const listedUser =
     listedUsers.find((item) => String(item.username || item.name || '').toLowerCase() === name.toLowerCase()) ||
     listedUsers.find((item) => String(item.id || '') === String(summaryUser.id || dataUser.id || id)) ||
-    listedUsers[0] ||
     {};
   const user = { ...listedUser, ...dataUser, ...summaryUser };
   const resolvedUsername = String(user.username || name);
@@ -111,7 +110,10 @@ export async function getLinuxDoUserDetails(
   const avatar = avatarUrl(user.avatar_template);
   const levelLabel = linuxDoLevelLabel(user);
 
-  const hasIdentity = Boolean(user.username || user.name || user.id);
+  // A standard Discourse summary has no target user relation; root users may instead be badge grantors.
+  const hasProfile =
+    Boolean(user.username || user.name || user.id) ||
+    (typeof summary.can_see_summary_stats === 'boolean' && typeof summary.can_see_user_actions === 'boolean');
   return annotateSourceDiagnosticSummary(
     {
       source: 'linuxdo',
@@ -131,7 +133,7 @@ export async function getLinuxDoUserDetails(
       postCount: discourseAccountCount(summary.post_count),
       ...(levelLabel ? { levelLabel } : {})
     },
-    { parserVariant: 'discourse-user', candidateCount: 1, validCount: hasIdentity ? 1 : 0, isParseEmpty: !hasIdentity }
+    { parserVariant: 'discourse-user', candidateCount: 1, validCount: hasProfile ? 1 : 0, isParseEmpty: !hasProfile }
   );
 }
 

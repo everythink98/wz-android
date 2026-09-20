@@ -13,10 +13,22 @@ import {
   type ForumContentAncestorFrame
 } from './topicContentSplit';
 import { topicOpeningPostAsReply } from './quotedPosts';
+import { sanitizeContentHtml } from './contentSanitizer';
 
 function renderedContentRows(compilation: Pick<CompiledForumContent, 'rows'>) {
   return compilation.rows.filter((row): row is Extract<CompiledForumContentRow, { html: string }> => 'html' in row);
 }
+
+it('preserves text order and image previews between separate ANSI report sections', () => {
+  const html = sanitizeContentHtml(
+    '<p>💻 CPU</p><code class="language-ansi">first</code><p>important explanation</p><img src="https://example.com/proof.png"><p>🌐 Network</p><code class="language-ansi">second</code>',
+    'https://www.nodeseek.com/post-1-1'
+  );
+  const compilation = compileForumContent({ html, role: 'opening', source: 'nodeseek', topicId: '1' });
+  const text = compilation.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text)).join('\n');
+  expect(text).toMatch(/first[\s\S]*important explanation[\s\S]*second/);
+  expect(compilation.previewImages.map((image) => image.source)).toEqual(['https://example.com/proof.png']);
+});
 
 it('makes explicit V2EX floors navigable without changing mention text or copy order', () => {
   const compilation = compileForumContent({
@@ -230,6 +242,39 @@ function parsedBalancedTable(html: string) {
 }
 
 describe('Android topic content splitting', () => {
+  it('keeps table captions readable once before the split table and in selection order', () => {
+    const tableRows = Array.from(
+      { length: 9 },
+      (_, index) => `<tr><td>第 ${index + 1} 行</td><td><img src="https://img.invalid/row-${index}.png"></td></tr>`
+    ).join('');
+    const prepared = prepareSanitizedForumContent(
+      `<blockquote><table><caption>表格说明 <a href="/t/2">原帖</a><img src="https://img.invalid/caption.png" alt="说明图片" onerror="bad()"><a href="javascript:bad()">安全文字</a></caption><tbody>${tableRows}</tbody></table></blockquote>`,
+      { source: 'v2ex', topicId: '1', role: 'opening', baseUrl: 'https://www.v2ex.com/t/1' }
+    );
+    const { rows, previewImages } = prepared.contentPlan;
+    expect(rows.map((row) => row.type)).toEqual(['richText', 'table', 'table', 'table']);
+    const html = renderedContentRows(prepared.contentPlan)
+      .map((row) => row.html)
+      .join('');
+    expect(html.match(/表格说明/g)).toHaveLength(1);
+    expect(html).toContain('href="https://www.v2ex.com/t/2"');
+    expect(html).not.toMatch(/<caption|javascript:|onerror=/);
+    expect(rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text))).toEqual([
+      '表格说明 原帖安全文字',
+      ...Array.from({ length: 9 }, (_, index) => `第 ${index + 1} 行`)
+    ]);
+    expect(previewImages.map((image) => image.source)).toEqual([
+      'https://img.invalid/caption.png',
+      ...Array.from({ length: 9 }, (_, index) => `https://img.invalid/row-${index}.png`)
+    ]);
+    expect(rows.every((row) => row.ancestorFrames.some((frame) => frame.kind === 'blockquote'))).toBe(true);
+    expect(rows.filter((row) => row.type === 'table').map((row) => [row.columns, row.part])).toEqual([
+      [2, 'first'],
+      [2, 'middle'],
+      [2, 'last']
+    ]);
+  });
+
   it('keeps same-line image runs in bounded rich-text rows', () => {
     const urls = Array.from({ length: 9 }, (_, index) => `https://img.example/${index}.webp`);
     const pure = compileForumContent({
@@ -513,6 +558,43 @@ describe('Android topic content splitting', () => {
       expect(rows.map((row) => row.type)).toEqual(['richText', 'poll', 'richText']);
       expect(rows[1]).toMatchObject({ poll, type: 'poll' });
     }
+  });
+
+  it.each(['caption', 'cell'] as const)('keeps a table caption and its %s poll exactly once', (placement) => {
+    const poll = { name: 'choice', options: [{ id: 'a', label: 'A' }] };
+    const marker = '<forum-discourse-poll name="choice"></forum-discourse-poll>';
+    const compilation = compileForumContent({
+      html: `<table><caption>caption-before<img src="https://img.invalid/caption.png">${placement === 'caption' ? marker : ''}caption-after</caption><tbody><tr><td>cell-before${placement === 'cell' ? marker : ''}cell-after</td></tr></tbody></table>`,
+      polls: [poll],
+      role: 'reply',
+      source: 'linuxdo'
+    });
+    const html = renderedContentRows(compilation)
+      .map((row) => row.html)
+      .join('');
+    expect(compilation.rows.filter((row) => row.type === 'poll')).toHaveLength(1);
+    expect(html.match(/caption-before/g)).toHaveLength(1);
+    expect(html.match(/caption-after/g)).toHaveLength(1);
+    expect(parseHtml(html).querySelectorAll('[src="https://img.invalid/caption.png"]')).toHaveLength(1);
+    expect(compilation.previewImages.map((image) => image.source)).toEqual(['https://img.invalid/caption.png']);
+    expect(html).not.toContain('<caption');
+    expect(compilation.rows.flatMap((row) => selectionToken(row).owners.map((owner) => owner.text)).join('')).toBe(
+      'caption-beforecaption-aftercell-beforecell-after'
+    );
+    const ordered = compilation.rows
+      .map((row) =>
+        row.type === 'poll'
+          ? 'POLL'
+          : selectionToken(row)
+              .owners.map((owner) => owner.text)
+              .join('')
+      )
+      .join('');
+    expect(ordered).toBe(
+      placement === 'caption'
+        ? 'caption-beforePOLLcaption-aftercell-beforecell-after'
+        : 'caption-beforecaption-aftercell-beforePOLLcell-after'
+    );
   });
 
   it('preserves poll order when a typed marker appears inside a table cell', () => {

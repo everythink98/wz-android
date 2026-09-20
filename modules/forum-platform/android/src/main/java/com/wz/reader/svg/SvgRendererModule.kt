@@ -579,6 +579,7 @@ private object SvgPosterRendererRuntime {
   private val queue = ArrayDeque<RenderRequest>()
   private var active: RenderRequest? = null
   private var webView: WebView? = null
+  private var clearingRenderer = false
   private val webViewCreations = AtomicInteger(0)
   private val webViewDestructions = AtomicInteger(0)
 
@@ -645,7 +646,7 @@ private object SvgPosterRendererRuntime {
 
   private fun startNext() {
     check(Looper.myLooper() == Looper.getMainLooper())
-    if (active != null) {
+    if (active != null || clearingRenderer) {
       return
     }
     while (queue.isNotEmpty()) {
@@ -724,6 +725,11 @@ private object SvgPosterRendererRuntime {
       }
 
       override fun onPageFinished(view: WebView, url: String) {
+        if (clearingRenderer && webView === view && url == "about:blank" && view.url == "about:blank") {
+          clearingRenderer = false
+          startNext()
+          return
+        }
         pageFinished(view, url)
       }
 
@@ -744,9 +750,9 @@ private object SvgPosterRendererRuntime {
           return true
         }
         destroyRenderer(view)
-        active?.let {
-          fail(it, "svg_renderer_gone", "Chromium SVG 渲染进程已退出。", null)
-        }
+        val current = active
+        if (current != null) fail(current, "svg_renderer_gone", "Chromium SVG 渲染进程已退出。", null)
+        else startNext()
         return true
       }
     }
@@ -776,7 +782,7 @@ private object SvgPosterRendererRuntime {
       view.scrollTo(0, 0)
       val pageUrl = "https://svg-renderer.invalid/render/" + request.id + "/"
       request.expectedPageUrl = pageUrl
-      view.loadDataWithBaseURL(pageUrl, prepared.html, "text/html", "UTF-8", null)
+      view.loadDataWithBaseURL(pageUrl, prepared.html, "text/html", "UTF-8", pageUrl)
     } catch (error: Exception) {
       fail(request, "svg_render_failed", error.message ?: "Chromium SVG 渲染启动失败。", error)
     }
@@ -877,7 +883,7 @@ private object SvgPosterRendererRuntime {
     if (!settle(request)) {
       return
     }
-    if (wasActive) {
+    if (wasActive || (active == null && queue.isEmpty())) {
       releaseRendererAfterSettle()
     }
     if (error == null) {
@@ -896,6 +902,9 @@ private object SvgPosterRendererRuntime {
     }
     try {
       view.stopLoading()
+      // A subsequent loadDataWithBaseURL can be treated as a reload while the previous
+      // data URL is still committed. Await this navigation before reusing the renderer.
+      clearingRenderer = true
       view.loadUrl("about:blank")
     } catch (_: Exception) {
       destroyRenderer(view)
@@ -905,6 +914,7 @@ private object SvgPosterRendererRuntime {
   private fun destroyRenderer(view: WebView) {
     if (webView === view) {
       webView = null
+      clearingRenderer = false
     }
     try {
       view.stopLoading()

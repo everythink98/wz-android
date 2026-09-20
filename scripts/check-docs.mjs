@@ -154,7 +154,7 @@ function filesBelow(directory) {
 }
 
 function parseRegressionEntries(text) {
-  const headings = [...text.matchAll(/^## `((?:REG)-[A-Z0-9]+-\d+)`[^\r\n]*$/gm)];
+  const headings = [...text.matchAll(/^#{1,6}[\t ]+`?(REG-[A-Z0-9]+-\d+)\b`?[^\r\n]*$/gm)];
   return headings.map((heading, index) => ({
     id: heading[1],
     index: heading.index ?? 0,
@@ -174,7 +174,7 @@ function testCallKind(expression) {
   while (true) {
     if (ts.isPropertyAccessExpression(current)) {
       each ||= current.name.text === 'each';
-      failing ||= current.name.text === 'failing';
+      failing ||= current.name.text === 'failing' || current.name.text === 'fails';
       current = current.expression;
       continue;
     }
@@ -207,21 +207,21 @@ function findTestTitleErrors(root, files, knownRegressionIds, statusByRegression
           const titleNode = node.arguments[0];
           if (kind.each && kind.failing) {
             errors.push(
-              `${relativeFile}:${line} 不支持 .failing.each；请拆成使用静态字符串标题的 it.failing/test.failing`
+              `${relativeFile}:${line} 不支持 .failing.each / .fails.each；请拆成使用静态字符串标题的预期失败测试`
             );
           } else if (kind.failing && (!titleNode || !ts.isStringLiteral(titleNode))) {
-            errors.push(`${relativeFile}:${line} it.failing 必须使用含一个 canonical REG ID 的静态字符串标题`);
+            errors.push(`${relativeFile}:${line} 预期失败测试必须使用含一个 canonical REG ID 的静态字符串标题`);
           } else if (titleNode && ts.isStringLiteralLike(titleNode)) {
             const ids = [...titleNode.text.matchAll(/\bREG-[A-Z0-9]+-\d+\b/g)].map((match) => match[0]);
             if (!kind.failing && ids.length) {
               errors.push(`${relativeFile}:${line} 通过测试标题不得包含 REG；请改为当前行为标题`);
             } else if (kind.failing) {
               if (ids.length !== 1) {
-                errors.push(`${relativeFile}:${line} it.failing 必须且只能引用一个 canonical REG ID`);
+                errors.push(`${relativeFile}:${line} 预期失败测试必须且只能引用一个 canonical REG ID`);
               } else if (!knownRegressionIds.has(ids[0])) {
-                errors.push(`${relativeFile}:${line} it.failing 引用的 ${ids[0]} 不存在`);
+                errors.push(`${relativeFile}:${line} 预期失败测试引用的 ${ids[0]} 不存在`);
               } else if (statusByRegressionId.get(ids[0]) !== 'OPEN') {
-                errors.push(`${relativeFile}:${line} it.failing 引用的 ${ids[0]} 状态不是 OPEN`);
+                errors.push(`${relativeFile}:${line} 预期失败测试引用的 ${ids[0]} 状态不是 OPEN`);
               }
             }
           }
@@ -253,8 +253,13 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
   const regressionCorpus = readFileSync(regressionCorpusPath, 'utf8');
   const regressionEntries = parseRegressionEntries(regressionCorpus);
   const knownRegressionIds = new Set(regressionEntries.map((entry) => entry.id));
+  const regressionLocations = new Map();
   const statusByRegressionId = new Map();
   for (const entry of regressionEntries) {
+    const location = `docs/regression-corpus.md:${regressionCorpus.slice(0, entry.index).split('\n').length}`;
+    const previousLocation = regressionLocations.get(entry.id);
+    if (previousLocation) errors.push(`${entry.id} 重复定义：${previousLocation}、${location}`);
+    else regressionLocations.set(entry.id, location);
     const status = regressionField(entry, '状态')?.replaceAll('`', '').trim();
     const capability = regressionField(entry, '能力 ID');
     const history = regressionField(entry, '历史症状与根因');
@@ -262,7 +267,7 @@ export function findKnowledgeContractErrors(root, markdownFiles = stableMarkdown
     if (!status || !regressionStatuses.has(status)) {
       errors.push(`docs/regression-corpus.md：${entry.id} 缺少合法状态`);
     } else {
-      statusByRegressionId.set(entry.id, status);
+      if (!previousLocation) statusByRegressionId.set(entry.id, status);
     }
     if (!capability || !/\b[A-Z]+-\d+\b/.test(capability)) {
       errors.push(`docs/regression-corpus.md：${entry.id} 缺少 capability`);

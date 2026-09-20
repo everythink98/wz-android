@@ -1004,7 +1004,7 @@ function insertBlockContent(editor: TiptapEditor, type: string, attrs: Record<st
   ensureTextSelectionAfterBlock(editor);
 }
 
-async function uploadImageAtSelection(editor: TiptapEditor) {
+async function uploadImageAtSelection(editor: TiptapEditor, isCurrentDocument: () => boolean) {
   let from = editor.state.selection.from;
   let to = editor.state.selection.to;
   const trackSelection = ({
@@ -1019,13 +1019,11 @@ async function uploadImageAtSelection(editor: TiptapEditor) {
   try {
     const result = await requestHostAction('upload-image');
     const markdown = typeof result === 'string' ? result : (result as { markdown?: string })?.markdown;
-    if (markdown && !editor.isDestroyed) {
+    if (markdown && isCurrentDocument() && !editor.isDestroyed) {
       editor.chain().insertContentAt({ from, to }, markdown, { contentType: 'markdown' }).run();
       ensureTextSelectionAfterBlock(editor);
       editor.commands.scrollIntoView();
     }
-  } catch (error) {
-    window.alert(error instanceof Error ? error.message : '图片上传失败');
   } finally {
     editor.off('transaction', trackSelection);
   }
@@ -1822,6 +1820,7 @@ export function ComposerEditorRuntime() {
   const modeRef = useRef<ComposerMode>('rich');
   const revisionRef = useRef(0);
   const initializedRef = useRef(false);
+  const documentGenerationRef = useRef(0);
   const suppressChangesRef = useRef(false);
   const sourceProgrammaticRef = useRef(false);
   const sourceHostRef = useRef<HTMLDivElement | null>(null);
@@ -2023,13 +2022,26 @@ export function ComposerEditorRuntime() {
     [editorRef, postSnapshot, postState, setSource, validate]
   );
 
+  const cancelHostActions = useCallback(() => {
+    documentGenerationRef.current += 1;
+    sourceUploadRangeRef.current = null;
+    imageBusyRef.current = false;
+    linuxPollCapabilitiesRequestRef.current = null;
+    hostActionResolvers.forEach((resolver) => resolver.reject(new Error('编辑文档已关闭')));
+    hostActionResolvers.clear();
+  }, []);
+
   const applyInit = useCallback(
     (next: RuntimeConfig) => {
+      cancelHostActions();
       maskedMarkdownRef.current = null;
       configRef.current = next;
       setConfig(next);
       setBuilder(null);
       setBuilderError('');
+      setImageBusy(false);
+      setTemplates([]);
+      setTemplateBusy(false);
       setEmojiLimit(120);
       setLinuxPollCapabilities(null);
       setLinuxPollCapabilitiesBusy(false);
@@ -2040,6 +2052,8 @@ export function ComposerEditorRuntime() {
       next.pendingNodeSeekPolls.forEach((poll) => pendingPolls.set(poll.localId, poll));
       suppressChangesRef.current = true;
       setExpressionConfig(editorRef.current, next);
+      // Identical content can reuse NodeViews with requests from the previous document.
+      if (initializedRef.current) replaceRichMarkdownDocument(editorRef.current, '');
       replaceRichMarkdownDocument(editorRef.current, next.markdown);
       setSource(next.markdown);
       suppressChangesRef.current = false;
@@ -2050,7 +2064,7 @@ export function ComposerEditorRuntime() {
       postMessage('READY', { documentEpoch: next.documentEpoch ?? 0, revision: 0 });
       postState();
     },
-    [editorRef, postState, setSource]
+    [cancelHostActions, editorRef, postState, setSource]
   );
 
   const handleHostMessage = useCallback(
@@ -2073,12 +2087,12 @@ export function ComposerEditorRuntime() {
         return;
       }
       if (message.type === 'DESTROY') {
+        cancelHostActions();
+        initializedRef.current = false;
         maskedMarkdownRef.current = null;
         editorRef.current?.destroy();
         sourceViewRef.current?.destroy();
         sourceViewRef.current = null;
-        hostActionResolvers.forEach((resolver) => resolver.reject(new Error('编辑器已关闭')));
-        hostActionResolvers.clear();
         return;
       }
       const command = message.payload;
@@ -2114,7 +2128,7 @@ export function ComposerEditorRuntime() {
         else resolver?.resolve(command.result);
       }
     },
-    [applyInit, changeMode, editorRef, postSnapshot]
+    [applyInit, cancelHostActions, changeMode, editorRef, postSnapshot]
   );
 
   useEffect(() => {
@@ -2191,10 +2205,11 @@ export function ComposerEditorRuntime() {
 
   useEffect(
     () => () => {
+      cancelHostActions();
       if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);
       if (stateTimerRef.current !== null) window.clearTimeout(stateTimerRef.current);
     },
-    []
+    [cancelHostActions]
   );
 
   const showBuilder = (next: Exclude<ComposerBuilder, null>) => {
@@ -2315,6 +2330,8 @@ export function ComposerEditorRuntime() {
 
   const uploadImage = async () => {
     if (imageBusyRef.current) return;
+    const documentGeneration = documentGenerationRef.current;
+    const isCurrentDocument = () => documentGenerationRef.current === documentGeneration;
     // Hand off focus before the native picker opens. Completing a background
     // upload changes the document/selection, not the user's keyboard intent.
     editorRef.current?.view.dom.blur();
@@ -2323,7 +2340,7 @@ export function ComposerEditorRuntime() {
     setImageBusy(true);
     try {
       if (modeRef.current === 'rich' && editorRef.current) {
-        await uploadImageAtSelection(editorRef.current);
+        await uploadImageAtSelection(editorRef.current, isCurrentDocument);
         return;
       }
       const view = sourceViewRef.current;
@@ -2333,18 +2350,25 @@ export function ComposerEditorRuntime() {
       sourceUploadRangeRef.current = uploadRange;
       const result = await requestHostAction('upload-image');
       const markdown = typeof result === 'string' ? result : (result as { markdown?: string })?.markdown;
-      if (markdown && sourceViewRef.current === view && sourceUploadRangeRef.current === uploadRange) {
+      if (
+        markdown &&
+        isCurrentDocument() &&
+        sourceViewRef.current === view &&
+        sourceUploadRangeRef.current === uploadRange
+      ) {
         view.dispatch({
           changes: { from: uploadRange.from, to: uploadRange.to, insert: markdown },
           selection: { anchor: uploadRange.from + markdown.length }
         });
       }
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : '图片上传失败');
+      if (isCurrentDocument()) window.alert(error instanceof Error ? error.message : '图片上传失败');
     } finally {
-      sourceUploadRangeRef.current = null;
-      imageBusyRef.current = false;
-      setImageBusy(false);
+      if (isCurrentDocument()) {
+        sourceUploadRangeRef.current = null;
+        imageBusyRef.current = false;
+        setImageBusy(false);
+      }
     }
   };
 
@@ -2537,15 +2561,20 @@ export function ComposerEditorRuntime() {
   };
 
   const loadTemplates = async () => {
+    const documentGeneration = documentGenerationRef.current;
     setTemplateBusy(true);
     setBuilderError('');
     try {
       const result = (await requestHostAction('load-linuxdo-templates')) as { templates?: TemplateSummary[] };
-      setTemplates(Array.isArray(result?.templates) ? result.templates : []);
+      if (documentGenerationRef.current === documentGeneration) {
+        setTemplates(Array.isArray(result?.templates) ? result.templates : []);
+      }
     } catch (error) {
-      setBuilderError(error instanceof Error ? error.message : '模板读取失败');
+      if (documentGenerationRef.current === documentGeneration) {
+        setBuilderError(error instanceof Error ? error.message : '模板读取失败');
+      }
     } finally {
-      setTemplateBusy(false);
+      if (documentGenerationRef.current === documentGeneration) setTemplateBusy(false);
     }
   };
 
@@ -2556,7 +2585,9 @@ export function ComposerEditorRuntime() {
     }
     insertAtSelection(template.content);
     setBuilder(null);
+    const documentGeneration = documentGenerationRef.current;
     void requestHostAction('use-linuxdo-template', { id: template.id }).catch(() => {
+      if (documentGenerationRef.current !== documentGeneration) return;
       runtimeError('template-usage-failed', '模板已插入，但使用次数记录失败', revisionRef.current);
     });
   };

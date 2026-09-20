@@ -146,6 +146,36 @@ test('reports regression entries that reference an unknown capability', async ()
   assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /FEED-99.*不存在/);
 });
 
+for (const status of ['RESOLVED', 'OPEN']) {
+  test(`rejects duplicate regression identifiers with ${status} status and reports both lines`, async () => {
+    const first = regressionEntry('REG-FEED-001', 'FEED-01', 'RESOLVED');
+    const rootDir = await createKnowledgeFixture({
+      productMap: ['## 能力清单', '| `FEED-01` | feed |', '## 四站能力矩阵'].join('\n'),
+      regressionCorpus: first + regressionEntry('REG-FEED-001', 'FEED-01', status)
+    });
+    const errors = findKnowledgeContractErrors(rootDir).join('\n');
+    assert.match(errors, /REG-FEED-001.*重复定义/);
+    assert.ok(errors.includes('docs/regression-corpus.md:1'));
+    assert.ok(errors.includes(`docs/regression-corpus.md:${first.split('\n').length}`));
+  });
+}
+
+test('rejects repeated regression headings regardless of heading level or code formatting', async () => {
+  const first = regressionEntry('REG-FEED-001', 'FEED-01', 'RESOLVED');
+  const duplicate = regressionEntry('REG-FEED-001', 'FEED-01', 'RESOLVED').replace(
+    '## `REG-FEED-001`',
+    '### REG-FEED-001'
+  );
+  const rootDir = await createKnowledgeFixture({
+    productMap: ['## 能力清单', '| `FEED-01` | feed |', '## 四站能力矩阵'].join('\n'),
+    regressionCorpus: first + duplicate
+  });
+  const errors = findKnowledgeContractErrors(rootDir).join('\n');
+  assert.match(errors, /REG-FEED-001.*重复定义/);
+  assert.ok(errors.includes('docs/regression-corpus.md:1'));
+  assert.ok(errors.includes(`docs/regression-corpus.md:${first.split('\n').length}`));
+});
+
 test('reports tracked Markdown references to undefined npm scripts', async () => {
   const rootDir = await createKnowledgeFixture({
     productMap: ['## 能力清单', '| `RELEASE-01` | first |', '## 四站能力矩阵'].join('\n'),
@@ -333,6 +363,28 @@ test('allows expected failures only for one open regression', async () => {
   });
 
   assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /REG-TOPIC-001.*状态不是 OPEN/);
+});
+
+test('checks Vitest expected failures against the same static open-regression contract', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: ['## 能力清单', '| `TOPIC-03` | first |', '## 四站能力矩阵'].join('\n'),
+    regressionCorpus:
+      regressionEntry('REG-TOPIC-001', 'TOPIC-03', 'OPEN') + regressionEntry('REG-TOPIC-002', 'TOPIC-03')
+  });
+  const testFile = path.join(rootDir, 'src', 'expected-failure.test.ts');
+  for (const [source, expectedError] of [
+    ["it.fails('[REG-TOPIC-001] keeps the current topic', () => {});", undefined],
+    ["test.fails('keeps the current topic', () => {});", /必须且只能引用一个 canonical REG ID/],
+    ["it.fails('[REG-TOPIC-002] keeps the current topic', () => {});", /状态不是 OPEN/],
+    ["test.fails('[REG-TOPIC-999] keeps the current topic', () => {});", /不存在/],
+    ['it.fails(title, () => {});', /静态字符串标题/],
+    ["test.fails.each([[1]])('[REG-TOPIC-001] topic %s', () => {});", /不支持 .*each/]
+  ]) {
+    await writeFile(testFile, source);
+    const errors = findKnowledgeContractErrors(rootDir);
+    if (expectedError) assert.match(errors.join('\n'), expectedError, source);
+    else assert.deepEqual(errors, [], source);
+  }
 });
 
 test('requires legal status, capability, and current owner on every regression entry', async () => {

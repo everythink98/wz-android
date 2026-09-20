@@ -10,7 +10,15 @@ index 7abe582..69ec84a 100644
  
    /**
     * @returns the view which is currently active or will be used when both views are empty
-@@ -425,13 +426,27 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+@@ -147,6 +148,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+   var recyclingKey: String? = null
+     set(value) {
++      if (field != value) resizeRerenderGeneration++
+       clearViewBeforeChangingSource = field != null && value != null && value != field
+       field = value
+     }
+ 
+@@ -425,13 +427,27 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
      return bestSource
    }
  
@@ -43,7 +51,29 @@ index 7abe582..69ec84a 100644
    }
  
    private fun createPropOptions(): RequestOptions {
-@@ -562,6 +562,8 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+@@ -467,6 +483,7 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+   fun onViewDestroys() {
++    resizeRerenderGeneration++
+     firstView.setImageDrawable(null)
+     secondView.setImageDrawable(null)
+ 
+     requestManager.clear(firstTarget)
+     requestManager.clear(secondTarget)
+@@ -537,10 +554,12 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
+       val sourceToLoad = bestSource?.createGlideModelProvider(context)
+       val placeholder = bestPlaceholder?.createGlideModelProvider(context)
++      val sourceChanged = sourceToLoad != loadedSource || placeholder != loadedPlaceholder
++      if (sourceChanged) resizeRerenderGeneration++
+ 
+       if (cleanIfNeeded(bestSource, sourceToLoad, placeholder)) {
+         // the view was cleaned
+         return@trace
+       }
+ 
+-      val shouldRerender = sourceToLoad != loadedSource || placeholder != loadedPlaceholder || shouldRerender || (sourceToLoad == null && placeholder != null)
++      val shouldRerender = sourceChanged || shouldRerender || (sourceToLoad == null && placeholder != null)
+       if (!shouldRerender && !shouldRerenderBecauseOfResize) {
+@@ -562,6 +581,8 @@ class ExpoImageViewWrapper(context: Context, appContext: AppContext) : ExpoView(
        } else {
          secondTarget
        }
@@ -249,3 +279,212 @@ index 0071b4f..67b1fa4 100644
          }
        }
        .build()
+diff --git a/node_modules/expo-image/android/build.gradle b/node_modules/expo-image/android/build.gradle
+--- a/node_modules/expo-image/android/build.gradle
++++ b/node_modules/expo-image/android/build.gradle
+@@ -68,3 +68,4 @@ dependencies {
+   testImplementation 'junit:junit:4.13.2'
+   testImplementation 'org.robolectric:robolectric:4.16'
++  testImplementation 'org.mockito:mockito-inline:3.12.4'
+ }
+diff --git a/node_modules/expo-image/android/src/test/java/expo/modules/image/ExpoImageViewWrapperTest.kt b/node_modules/expo-image/android/src/test/java/expo/modules/image/ExpoImageViewWrapperTest.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/expo-image/android/src/test/java/expo/modules/image/ExpoImageViewWrapperTest.kt
+@@ -0,0 +1,196 @@
++package expo.modules.image
++
++import android.app.Activity
++import android.graphics.Color
++import android.graphics.drawable.ColorDrawable
++import android.graphics.drawable.Drawable
++import android.os.Looper
++import android.widget.FrameLayout
++import com.bumptech.glide.RequestBuilder
++import com.bumptech.glide.RequestManager
++import com.bumptech.glide.request.target.Target
++import com.facebook.react.bridge.BridgeReactContext
++import expo.modules.kotlin.AppContext
++import expo.modules.kotlin.viewevent.ViewEvent
++import expo.modules.image.decodedsource.DecodedModel
++import expo.modules.image.records.DecodedSource
++import java.lang.ref.WeakReference
++import org.junit.After
++import org.junit.Assert.*
++import org.junit.Before
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.mockito.Mockito.*
++import org.robolectric.Robolectric
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.Shadows.shadowOf
++import org.robolectric.annotation.Config
++import org.robolectric.annotation.LooperMode
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [33], manifest = Config.NONE)
++@LooperMode(LooperMode.Mode.PAUSED)
++class ExpoImageViewWrapperTest {
++  private val activity = Robolectric.buildActivity(Activity::class.java).setup().visible()
++  private lateinit var parent: FrameLayout
++  private lateinit var view: ExpoImageViewWrapper
++  private lateinit var requests: RequestManager
++
++  @Before
++  fun setUp() {
++    val appContext = mock(AppContext::class.java)
++    `when`(appContext.throwingActivity).thenReturn(activity.get())
++    requests = mock(RequestManager::class.java)
++    setCache("requestManager", requests)
++    setCache("appContextRef", WeakReference(appContext))
++    setCache("activityRef", WeakReference(activity.get()))
++    parent = FrameLayout(activity.get())
++    activity.get().setContentView(parent)
++    view = ExpoImageViewWrapper(BridgeReactContext(activity.get()), appContext)
++    parent.addView(view, FrameLayout.LayoutParams(100, 100))
++    shadowOf(Looper.getMainLooper()).idle()
++    view.layout(0, 0, 100, 100)
++    shadowOf(Looper.getMainLooper()).idle()
++    assertTrue(view.isAttachedToWindow)
++    clearInvocations(requests)
++  }
++
++  @After
++  fun tearDown() {
++    if (::parent.isInitialized) parent.removeAllViews()
++    shadowOf(Looper.getMainLooper()).idle()
++    activity.pause().stop().destroy()
++    setCache("requestManager", null)
++    setCache("appContextRef", WeakReference<AppContext>(null))
++    setCache("activityRef", WeakReference<Activity>(null))
++  }
++
++  @Test
++  fun resizeWaitsForTheCallbackStackAndOnlyTheLatestSizeRuns() {
++    view.layout(0, 0, 200, 200)
++    view.layout(0, 0, 300, 300)
++    view.layout(0, 0, 200, 200)
++    verifyNoInteractions(requests)
++    shadowOf(Looper.getMainLooper()).idle()
++    // An empty source clears the two real wrapper targets when rerenderIfNeeded runs.
++    verify(requests, times(2)).clear(any(Target::class.java))
++    verifyNoMoreInteractions(requests)
++  }
++
++  @Test
++  fun detachedViewsDoNotRunQueuedResizeWork() {
++    view.layout(0, 0, 200, 200)
++    parent.removeView(view)
++    shadowOf(Looper.getMainLooper()).idle()
++    verifyNoInteractions(requests)
++  }
++
++  @Test
++  fun destroyedViewsDoNotRestartQueuedResizeWork() {
++    view.layout(0, 0, 200, 200)
++    view.onViewDestroys()
++    clearInvocations(requests)
++    shadowOf(Looper.getMainLooper()).idle()
++    verifyNoInteractions(requests)
++  }
++
++  @Test
++  fun changingTheRecyclingKeyInvalidatesThePreviousConsumersResize() {
++    view.recyclingKey = "old-consumer"
++    view.layout(0, 0, 200, 200)
++    view.recyclingKey = "new-consumer"
++    view.rerenderIfNeeded()
++    clearInvocations(requests)
++    shadowOf(Looper.getMainLooper()).idle()
++    verifyNoInteractions(requests)
++  }
++
++  @Test
++  fun recyclingToANewImageDoesNotReplayThePreviousImagesResize() {
++    replaceImageWhileResizeIsQueued(changeRecyclingKey = true)
++  }
++
++  @Test
++  fun changingOnlyTheSourceDoesNotReplayThePreviousImagesResize() {
++    replaceImageWhileResizeIsQueued(changeRecyclingKey = false)
++  }
++
++  private fun replaceImageWhileResizeIsQueued(changeRecyclingKey: Boolean) {
++    val first = ColorDrawable(Color.RED)
++    val second = ColorDrawable(Color.BLUE)
++    val requested = mutableListOf<Drawable>()
++    val targets = mutableListOf<Target<Drawable>>()
++    val events = mutableListOf<String>()
++    // Control only Glide's load completion and the external JS event sink. The wrapper chooses
++    // sources/targets, queues the display, clears the previous image and renders real Drawables.
++    @Suppress("UNCHECKED_CAST")
++    val request = mock(RequestBuilder::class.java, RETURNS_SELF) as RequestBuilder<Drawable>
++    var selected: Drawable? = null
++    `when`(requests.asDrawable()).thenReturn(request)
++    doAnswer {
++      selected = (it.getArgument<Any>(0) as DecodedModel).drawable
++      request
++    }.`when`(request).load(any<Any>())
++    doAnswer {
++      val target = it.getArgument<Target<Drawable>>(0)
++      requested.add(selected!!)
++      targets.add(target)
++      target.onResourceReady(selected!!, null)
++      target
++    }.`when`(request).into(any<Target<Drawable>>())
++    mockConstruction(ViewEvent::class.java) { event, construction ->
++      @Suppress("UNCHECKED_CAST")
++      val callback = event as ViewEvent<Any>
++      doAnswer { events.add(construction.arguments()[0] as String); null }.`when`(callback).invoke(Unit)
++    }.use {
++      view.recyclingKey = "consumer-a"
++      view.sources = listOf(DecodedSource(first))
++      view.rerenderIfNeeded()
++      shadowOf(Looper.getMainLooper()).idle()
++      assertSame(first, displayedDrawable())
++      assertEquals(listOf("onLoadStart", "onDisplay"), events)
++
++      view.layoutParams = FrameLayout.LayoutParams(200, 200)
++      view.layout(0, 0, 200, 200)
++      if (changeRecyclingKey) view.recyclingKey = "consumer-b"
++      view.sources = listOf(DecodedSource(second))
++      view.rerenderIfNeeded()
++      assertEquals(listOf(first, second), requested)
++      val currentTarget = targets.last()
++      clearInvocations(requests)
++      shadowOf(Looper.getMainLooper()).idle()
++
++      assertEquals("old resize must not restart the new source", listOf(first, second), requested)
++      verify(requests, never()).clear(currentTarget)
++      assertEquals(listOf("onLoadStart", "onDisplay", "onLoadStart", "onDisplay"), events)
++      assertSame(second, displayedDrawable())
++      assertSame(second, (view.sources.single() as DecodedSource).drawable)
++
++      // Rewrapping an unchanged source must not discard a legitimate size update.
++      requested.clear()
++      events.clear()
++      view.layoutParams = FrameLayout.LayoutParams(300, 300)
++      view.layout(0, 0, 300, 300)
++      view.sources = listOf(DecodedSource(second))
++      view.rerenderIfNeeded()
++      assertTrue(requested.isEmpty())
++      shadowOf(Looper.getMainLooper()).idle()
++      assertEquals(listOf(second), requested)
++      assertEquals(listOf("onLoadStart", "onDisplay"), events)
++      assertSame(second, displayedDrawable())
++    }
++  }
++
++  private fun displayedDrawable(): Drawable {
++    val images = view.getChildAt(0) as FrameLayout
++    return (0 until images.childCount).map { images.getChildAt(it) as ExpoImageView }
++      .mapNotNull { it.drawable }.single()
++  }
++
++  private fun setCache(name: String, value: Any?) {
++    ExpoImageViewWrapper::class.java.getDeclaredField(name).apply {
++      isAccessible = true
++      set(null, value)
++    }
++  }
++}

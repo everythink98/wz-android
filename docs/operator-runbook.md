@@ -72,7 +72,7 @@ npm run visual:gallery -- --port 8081
 
 ## Android 覆盖安装、Replay 与 Smoke
 
-关联 Native 变更可在 fresh prebuild 后运行 `node scripts/run-related-native-tests.mjs`；本地读取相对 HEAD 的修改与未跟踪文件，CI 使用 `--base <revision>`。静态任务表覆盖 selection、App（含 Composer）、ReactAndroid、Expo FileSystem 和 Expo Image 五类 JVM owner。App 通过 `tests/native/composer-keyboard.gradle` 一次挂入 Composer 测试。每个预期测试类必须有本次新鲜报告、非跳过用例且零失败/错误；邻近测试通过不能替代缺席 owner。runner 输出每项耗时；selection 不能只编译 App。CI 使用 Node `22.22.2` 验证最低支持版本。配置/补丁合同继续保留，instrumentation 按下文独立 AVD 规则执行。本次修复及证据边界见[取证记录](review-remediation.md)。
+关联 Native 变更可在 fresh prebuild 后运行 `node scripts/run-related-native-tests.mjs`；本地读取相对 HEAD 的修改与未跟踪文件，CI 使用 `--base <revision>`。静态任务表覆盖 forum-platform、selection、App、ReactAndroid、Expo FileSystem 和 Expo Image 六类 JVM owner；App 通过 `tests/native/composer-keyboard.gradle` 挂入 Composer 测试。每个预期测试类必须有本次新鲜报告、非跳过用例且零失败/错误；邻近测试通过不能替代缺席 owner。runner 输出每项耗时；selection 不能只编译 App。CI 使用 Node `22.22.2` 验证最低支持版本。配置/补丁合同继续保留，instrumentation 按下文独立 AVD 规则执行。本次修复及证据边界见[取证记录](review-remediation.md)。
 
 主登录态 AVD 保存 App 数据、WebView Cookie、SecureStore 与 Quick Boot 状态。设备安全边界以仓库根目录 `AGENTS.md` 为准；下面只列操作入口。
 
@@ -96,7 +96,7 @@ node scripts/symbolicate-diagnostic.mjs --log <导出的日志文件> --symbols 
 
 工具自动处理 `js-error`、`unhandled-rejection` 与 `native-crash`。混合进程/版本日志无需预先切分，只还原符号目录 buildId 对应的事件，其余（含缺少合法 buildId）跳过，并在 stderr 输出 `symbolicated/skipped/skippedBuilds` JSON 计数；需要其他版本时更换对应符号目录再次执行。JS 校验 source map SHA，按 `stackFormat` 区分 RN 已解析坐标、Hermes bytecode offset 和普通 source column；Native 校验 mapping SHA 后使用 SDK 官方 Retrace 还原类名、源码行和内联帧。Retrace 自动从 `ANDROID_HOME`、`ANDROID_SDK_ROOT` 或 PATH 中的 SDK cmdline-tools 查找，要求 Java 17+；也可显式添加 `--retrace-jar <R8 jar>`。没有匹配符号或 Retrace 不可用时保留原始脱敏坐标并记 `NOT_VERIFIED`，不得把跳过数量当作还原成功。
 
-验证存储/异常链时先运行 `diagnostics`、`diagnosticRuntime`、`diagnosticFileStore` 与 `diagnostic-symbols` 对应单测；fresh prebuild 后生成的 `DiagnosticLogStoreTest` 和 `NetworkProxyRuntimeTest` 使用实际文件/OkHttp 验证存储与出网标记。真实故障 proof 仅在唯一已连接的 `WZ_ImageRuntime_Test_API35` 执行，前置匹配 fresh prebuild 产物与构建身份文件，且 App 进程已退出：
+验证存储/异常链时先运行 `diagnostics`、`diagnosticRuntime`、`diagnosticFileStore` 与 `diagnostic-symbols` 对应单测；fresh prebuild 后编译模块内的 `DiagnosticLogStoreTest` 和 `NetworkProxyRuntimeTest` 使用实际文件/OkHttp 验证存储与出网标记。真实故障 proof 仅在唯一已连接的 `WZ_ImageRuntime_Test_API35` 执行，前置匹配 fresh prebuild 产物与构建身份文件，且 App 进程已退出：
 
 ```powershell
 node scripts/run-diagnostic-device-proof.mjs
@@ -112,11 +112,25 @@ proof 的 JS/renderer 分支要求异常记录、旧进程归属和系统退出�
 
 排查图片失败时导出“更多 → 问题诊断”的现有日志。按 `appSessionId + traceId` 关联 JS `image-load` 与 Native request，以 `mediaRef` 找同图的后续重试；多个原生请求再以 `callId` 区分。`imageConsumer=svg-probe` 表示显示失败后的兼容探测，其 200 不能证明 Fresco/Glide 成功。JS `finish/success` 表示显示，`imageFailure` 为闭集错误分类，`unknown` 表示现有原生回调没有足够信息；Native `response-headers`、`response-body-end`、`image-call-failed` 和 `image-lease-released` 分别表示响应头、读取、失败与资源释放。缓存命中可能只有 JS 显示终态，没有网络 Call；不凭缺少 Call 单独断言缓存命中。Native 事件已进入跨进程 journal，512 条 ring 仅为旧桥接兼容窗口；先按上节 coverage 判断可用时间范围。
 
-fresh prebuild 后，用 `android/gradlew.bat -p android :app:testReleaseUnitTest --tests '*NetworkProxyRuntimeTest' --no-daemon` 执行生成的网络 canonical owner；RN 注入 wiring 使用 `:react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests '*ReactOkHttpNetworkFetcherTest'`。两份 XML 报告都必须包含非零用例。
+fresh prebuild 后，用 `android/gradlew.bat -p android :forum-platform:testDebugUnitTest --tests '*NetworkProxyRuntimeTest' --no-daemon` 执行模块内网络 canonical owner；RN 注入 wiring 使用 `:react-native:packages:react-native:ReactAndroid:testDebugUnitTest --tests '*ReactOkHttpNetworkFetcherTest'`。两份 XML 报告都必须包含非零用例。
 
-HTTP/2 故障子集可用 `--tests '*NetworkProxyRuntimeTest.*Http2*'`。共享 `plugins/network/Http2ImageFaultFixture.kt` 使用与实际 OkHttp 4.12.0 对齐的 test-only MockWebServer/TLS、loopback TCP relay 和可关闭的阻塞写 socket；不修改公网、系统网络或用户代理。报告中的 `HTTP2_RECOVERY/RESET/PROGRESS/OFFLINE` 记录实际建连数、请求数、耗时与终态；并发建连可能产生被 OkHttp 丢弃的候选，必须同时断言最终取得的连接身份和旧 runtime 释放。慢响应保留正常 PONG，连续响应体实际传输超过 30 秒。设备 `HTTP2_IMAGES` 必须由已初始化的 Fresco/Glide 实际解码并显示，HTTP 200 不能代替它。原生诊断新增 `request-headers-start/end`、`request-failed`、`connection-write-stalled`，只含脱敏连接标识和阶段。
+HTTP/2 故障子集可用 `--tests '*NetworkProxyRuntimeTest.*Http2*'`。共享 `modules/forum-platform/android/src/testShared/java/com/wz/reader/network/Http2ImageFaultFixture.kt` 使用与实际 OkHttp 4.12.0 对齐的 test-only MockWebServer/TLS、loopback TCP relay 和可关闭的阻塞写 socket；不修改公网、系统网络或用户代理。报告中的 `HTTP2_RECOVERY/RESET/PROGRESS/OFFLINE` 记录实际建连数、请求数、耗时与终态；并发建连可能产生被 OkHttp 丢弃的候选，必须同时断言最终取得的连接身份和旧 runtime 释放。慢响应保留正常 PONG，连续响应体实际传输超过 30 秒。设备 `HTTP2_IMAGES` 必须由已初始化的 Fresco/Glide 实际解码并显示，HTTP 200 不能代替它。原生诊断新增 `request-headers-start/end`、`request-failed`、`connection-write-stalled`，只含脱敏连接标识和阶段。
 
 设备链路先启动独立 `WZ_ImageRuntime_Test_API35`，执行 `node scripts/run-network-image-instrumented-tests.mjs`。runner 精确匹配该 AVD，以开发签名 Release 同时运行 `ManagedCookieResponsesInstrumentedTest` 的合成 HTTP 轮换、平台 Cookie 属性/定向过期验证，以及真实 RN/Fresco 初始化验证图片、Glide 两种 model、缓存、回收、取消、连续轮换及 SVG。仅该测试构建允许 `127.0.0.1/localhost` HTTP，其他地址仍禁止明文流量；测试后的 finally 移除临时 manifest/resources 并重新构建默认 Release，测试 APK 不用于保留数据设备验收。runner 不创建、清理或重置 AVD；保留数据设备仍按安装身份核对与只读 Live 流程单独验收。
+
+`--svg-only` 只运行真实静态海报队列和动态 SVG，不重复 Cookie 重启分段；默认命令仍运行全部网络、Cookie 和 SVG owner。使用 `--help` 查看互斥选项，帮助命令不连接设备。每次 proof 独立分配 buildId，不能与正常构建共用身份。
+
+### 备份、诊断分享与图片保存验证
+
+同一隔离 AVD 上执行 `node scripts/run-network-image-instrumented-tests.mjs --platform-exports`，运行大文件流式下载和系统文件联合 owner；只重放系统保存、延迟接收和相册流程使用 `--platform-export-ui`。runner 恢复本次临时图片权限，owner 只删除本次创建的 provider、相册、诊断和缓存文件。
+
+`node scripts/run-network-image-instrumented-tests.mjs --platform-file-faults` 只运行四项文件故障 owner：备份部分写入后的 EIO/ENOSPC、图片 ENOSPC 与已存在临时文件清理、可靠 descriptor 已报告的关闭错误，以及真实备份桥失败后释放操作锁。沿用 `WZ_ImageRuntime_Test_API35` 隔离检查、开发签名 Release proof 入口和安装身份检查；仅允许 `127.0.0.1` 明文，不授予 `READ_MEDIA_IMAGES`。故障 provider 只打包进测试 APK，校验调用方 UID 与签名；这些用例验证受控 provider 的真实 Android errno/错误协议传播，不代表实际 Android 分区耗尽。关闭检查只处理本地关闭前已经到达的远端错误，不等待或证明云端同步完成；失败不删除外部 provider 文档。
+
+使用隔离测试安装验证系统文件和相册操作，不能把 provider 或原生单测当成真实交付证据。备份由系统保存文件对话框选择目标，固定 JSON MIME；逐项验证取消、Unicode/重名、接近 5 MiB 备份及读回重导入。provider 的打开、写入、flush/close 失败必须报失败；Activity 重建和重复发起不能交错两份 JSON，失败不删除外部文档。保存成功仅表示 provider 已接受并关闭。
+
+诊断分享由延迟接收方在 chooser 返回后读取并核对完整字节；分享调用后拒绝仍保留文件。启动与下次导出只清理超过 24 小时的本功能文件，验证 32 份/128 MiB 满额拒绝，以及调用前失败清理。诊断存储的七天轮转和导出副本的 24 小时保留属于不同边界。
+
+图片在受控 HTTP 来源使用 1、25、100 MiB 样本，记录完整 hash、实际字节和 JS/Native 内存曲线；验证同一托管网络的 Cookie/Referrer/代理/重定向、取消、身份变化、截断响应和磁盘失败。目标是消除 JS 全量二进制/Base64 副本，不能以普通 HTTP 成功或小图保存替代大图内存证据。相册写入完成后再核对本次临时文件清理。原生单元 owner 位于 `modules/forum-platform/android/src/test/java/com/wz/reader/storage/BackupExportTest.kt` 和 `modules/forum-platform/android/src/test/java/com/wz/reader/media/ImageDownloadTest.kt`，由 `:forum-platform:testDebugUnitTest` 执行。
 
 ### L 站续签与登录态诊断
 
@@ -160,7 +174,22 @@ node scripts/run-review-remediation-device-proof.mjs --serial <隔离serial> --b
 
 runner 精确拒绝其他 AVD，包括主登录设备；仅覆盖安装开发签名的 Release Hermes proof APK，保留安装身份。临时 Gradle overlay 选择 `dev/review-remediation-proof/index.tsx`，不修改生产入口或持久原生配置。HTTP 使用已有四站样本和明确故障注入；WebView 使用禁远端资源的内联页面，禁止测试入口未经隔离的 fetch。通知测试临时撤销再授予该测试 App 的系统权限，finally 恢复原权限；只清理本轮合成摘要，恢复原通知存储键。
 
-receipt 核对 token、Release/Hermes、41 项结果和 APK hash。覆盖真实 WebView 脚本、User Query 竞态、Feed 原生宿主、Account 恢复核心、发送前校验、通知存储与系统投递事务。Account 探针隔离了面板和身份核对边界，不代表 TopicRoute 到原站 Cloudflare 的完整验证；受控 HTTP 也不代表真实写操作。失败保留部分结果，不计为全通过。proof APK 不装主设备；普通入口另行构建并做匹配 APK 只读验收，正式发布不用于开发验证。
+receipt 核对 token、Release/Hermes、44 项结果和 APK hash。覆盖真实 WebView 脚本、User Query 竞态、Feed 原生宿主、Account 恢复核心、发送前校验、通知存储与系统投递事务；通知质量包含失败、恢复后静默基线和重复分页的真实 Store/Android sink。Account 探针隔离了面板和身份核对边界，不代表 TopicRoute 到原站 Cloudflare 的完整验证；受控 HTTP 也不代表真实写操作。失败保留部分结果，不计为全通过。proof APK 不装主设备；普通入口另行构建并做匹配 APK 只读验收，正式发布不用于开发验证。
+
+保持上述 proof APK 安装在同一隔离设备，执行 `node scripts/run-notification-background-device-proof.mjs --serial <隔离serial> --output .codex-tmp/<任务目录>/background.json`。runner 先建立数据库 checkpoint，再在系统 HOME 下通过 JobScheduler 显式触发真实 WorkManager；合成读取验证正常完成和原 50 秒超时。receipt 必须同时证明全程 background、同一 PID、业务终态和原生 headless finish。结束注销自己的 task、恢复通知权限与数据库；不得用该结果声称自然唤醒通过。
+
+自然调度另行观察：记录原 job、最早执行时间、设备时钟、PID 和安装身份后退到 HOME，不强制执行 job、不改时钟、充电状态或调度约束。冷进程分支使用 `am kill` 结束已在后台的进程，不能使用 `force-stop`；确认 PID 消失、包仍 `stopped=false`、原 job 保留。通过需要同一次 JobScheduler 自然 START/STOP、新 PID 的 Expo headless 开始/结束，以及业务诊断终态；单独 `Ready=true` 或 WorkManager 成功不能代替。15 分钟是最小延迟，不是交付截止时间；记录实际观察区间，系统未派发时不归为业务失败，也不计通过。隔离 proof 仍须 checkpoint、恢复权限、注销自己的 task 并清理本轮进程。
+
+Android 15 的文本 `dumpsys jobscheduler` 会在输出 Ready 时重新评估 controller 状态，不是严格无副作用的观察器。自然等待期间只观察 PID、日志和业务 receipt，任务终结后再取调度历史；不要跨最早执行时刻反复查询文本 job 状态。相关时序见 [AOSP TimeController](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-15.0.0_r1/apex/jobscheduler/service/java/com/android/server/job/controllers/TimeController.java)。
+
+冷进程复验必须使用实际启用 R8 的 Release Hermes proof，并归档 APK hash、构建身份和 mapping；普通 Native instrumentation 为方便宿主测试而关闭压缩的包不能替代。复用同一 owner：
+
+```powershell
+node scripts/run-notification-background-device-proof.mjs --serial <隔离serial> --cold --output .codex-tmp/<任务目录>/background-cold.json
+node scripts/run-notification-background-device-proof.mjs --serial <隔离serial> --cold --natural --output .codex-tmp/<任务目录>/background-cold-natural.json
+```
+
+第一条仍显式触发 job，覆盖正常完成和原 50 秒 deadline；可用 `--mode success` 或 `--mode deadline` 定向重放。第二条只执行自然 success，最长观察 45 分钟；必须从本轮新登记且最小延迟尚未到的 job 开始，无进程阶段之后取得不同 PID 和 JS process session，并关联本轮业务、headless 与 WorkManager 完成。超出观察窗口只说明未取得通过证据，不能修改约束或用强制结果替代。
 
 同一 runner 的 `--acceptance boundaries|recovery|notification` 用于 Pro 修复的专项验收，可复用上一步 APK，输出必须为新的 ignored 路径：
 
@@ -236,6 +265,29 @@ adb -s <serial> reverse tcp:39082 tcp:39082
 L 站阅读同步诊断：按 `appSessionId + batchId` 关联 `reading-timings` 初次发送、补发与 `reading-recovery` 状态，再由每次 `traceId + requestId` 关联 Native 请求。`hasCfClearance` 表示实际请求携带通行 Cookie，`hasStoredCfClearance` 与 `isCfClearanceCurrent` 表示当时共享存储及一致性；字段缺失表示未知，不等于 false。面板交接的 `didCfClearanceChange` 只比较开关面板时的通行 Cookie；`cookieKind=clearance` 与 `bot-management` 分开记录。`userAgentHash` 是 Java String hashCode 对应的八位十六进制比较摘要，WebView、JS、Native 可对照；它不是凭据，也不能单独证明浏览器环境相同。网页消息 `userAgentSource=unknown` 不代表实际请求退回默认 UA。CF 响应记录识别依据、状态、Retry-After 和格式校验后的 Ray ID；服务端具体规则仍未知。检查覆盖时间范围和原生丢弃计数后再下结论，不导出 Cookie、Cookie 哈希、CSRF 或验证正文。
 
 L 站 CSRF 请求经隐藏 WebView 接力失败时，保留原始 CF 响应的状态、Retry-After、Ray ID 与识别依据，阅读恢复继续遵守该等待时间。网络写入的 `request-headers-start/end`、`request-failed` 和 `connection-write-stalled` 同时进入 Native 持久 journal，重启后仍可追溯。写后回读用同一提交 trace 的 `hasTarget`、`isTargetMatched`、`itemCount` 与 `refresh-unconfirmed` 区分定位目标缺失、回读不匹配和请求失败；妖火表单阶段只记录 `hasReplyForm`、`hasCsrfToken`、`isSameOrigin`，不记录表单或 token 值。
+
+### CF 验证循环：先核对实际出口
+
+出现原生请求要求挑战、验证页却不出现挑战或验证后仍失败时，先按以下顺序排查。历史反例见[回归语料库的代理出口案例](regression-corpus.md#环境反例2026-09-20-cf-验证与上报出口不一致)。这是环境诊断步骤，不授权修改用户网络，也不把普通 403 一律归为 CF。
+
+1. 留存原请求的状态与识别依据；`cf-mitigated: challenge` 是明确挑战证据。核对实际发送的 Cookie 是否与当前共享存储一致、UA 是否一致，不能只看存储中存在 Cookie。
+2. 在同一时间窗口，分别经真实原生通道与验证 WebView 对同源 `/cdn-cgi/trace` 做不带凭据的只读探测，比较 CF 实际看到的公网 IP、地址族与协议。只保留地址族、协议和本轮出口是否相同的布尔值；若需跨进程比较，使用只驻内存的随机盐，不持久化公网 IP、盐或 Cookie。trace 的 200 只证明出口可观测，不证明业务上报成功。
+3. Android 系统代理为空、App 标记 direct、处于同一模拟器、使用同一代理节点，都不证明公网出口相同。宿主 TUN、远端 DNS、双栈选址及 TCP/UDP 转发仍可能造成不同出口。先排除这一层，再试 TLS 指纹、Cookie 格式或替换网络库；H3 成功而 H2 失败时尤其要同时核对出口，不能直接归因为协议。
+4. 需要调整网络时，只改变获准的最小范围并记录原配置。目标是验证与业务请求使用同一公网出口，不是全局关闭 IPv6。代理客户端的 IPv6 DNS 开关、连接节点的 `ip-version`，不等于节点访问原站的出口版本。对相关站点限制 QUIC/UDP、统一走 TCP 可作为待验证的客户端兼容办法；必须确认规则实际命中、WebView 实际回落，以及两边出口一致，不能只以配置保存成功结算。
+5. 出口对齐后重新完成验证，以原 App 的真实业务请求与批次终态验收。协议/UA/Cookie 变化、trace 成功或验证页关闭都不能替代业务成功。实验上报仅可使用已明确遭 CF 拒绝、未超过 100 秒的真实阅读批次；接受或结果不明后不得换通道重放，更不能制造阅读时长来验证。结束恢复约定的用户配置和本任务资源。
+
+[Cloudflare 官方限制](https://developers.cloudflare.com/cloudflare-challenges/concepts/how-challenges-work/#limitations)说明挑战与解题使用不同 IP 可导致循环；[Mihomo 的 ip-version 说明](https://wiki.metacubex.one/en/config/proxies/#ip-version)区分本地连接代理服务器与目标出口。读 journal 时检查轮转后的新文件，旧文件没有新终态不代表请求仍在阻塞。
+
+Mihomo 客户端可试验以下定向规则，插在已有规则之前并保留其余规则；这是尚未完成 Live 验收的兼容候选，只限制两个主机的 UDP 443，不改变 IPv6 配置：
+
+```yaml
+- AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN,linux.do)),REJECT
+- AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN,challenges.cloudflare.com)),REJECT
+```
+
+按[官方规则说明](https://wiki.metacubex.one/config/rules/)从上到下匹配；域名条件依赖 DNS 映射或嗅探提供域名，不能仅凭规则存在判断命中。使用客户端的持久覆写入口，不直接编辑自动生成的配置。验收新连接的规则命中、协议回退、实际出口和业务终态；若效果不符，移除这两条即可，不清登录态。
+
+### L 站访问与等级入账验收
 
 L 站访问活跃诊断：按原有 `traceId + requestId` 对照 JS 修饰后的 transport 事件和 Native `request-headers-end` 的 `hasDiscoursePresent`。true/false 表示该观察点的实际请求头，缺失表示未知；修饰前日志、HTTP 200、空响应及阅读时长增长均不能证明访问或等级已入账。不记录交互时间、账号或正文。
 
@@ -382,6 +434,12 @@ node scripts/check-cold-start.mjs --serial <serial> --apk <匹配的本地APK路
 首次覆盖安装、旧版迁移和设备重启后的启动单独观察，不纳入普通冷启动。前后保持来源设置、资料规模、设备、电源状态和构建类型一致；计时期间不运行构建、测试、Hermes sampling 或其他设备操作。报告三批中位数、p90、最慢值，以及首次详情/公式/编辑器和通知/深链接的独立结果；页面就绪信号不能代替实际交互或首批帖子。退出、缺少页面就绪、构建或安装身份变化立即停止并保留结果。原生图标视觉必须使用 Release 包检查，开发客户端不作效果证据。
 
 ### ReaderData SQLite 升级验收
+
+投票 journal 的独立设备验证复用同一隔离 runner：`node scripts/run-reader-storage-device-proof.mjs --serial <serial> --build --journal-only --output .codex-tmp/<新文件>.json`。也可传匹配源码的 `--apk` 替代 `--build`。该模式不 seed 或删除数据库，以唯一 token 隔离投票账号，验证并发/超过 32 条/严格迁移/损坏阻断/ReaderData 导入清空隔离，随后 force-stop 重开并核对已知和未知结果；恢复原 ReaderData 并删除本轮 fixture 后才通过。它仍只接受既有允许的 ReaderStorage 专用 AVD，不能改用于保留真实账号的主设备。
+
+该模式同时经过真实 action/client/request：最终合成 transport 前用第二 SQLite 连接确认 claim，网络请求仍 pending 时 force-stop，重开必须保留未知并拒绝再次发送（transport 次数为 0）。终端不访问原站，不创建真实投票。
+
+`--sidecar-only` 与 `--journal-only` 互斥，使用同一构建和输出参数。分别运行 settings read、cleanup remove、cleanup keys 挂起的 seed→启动→新进程验证，共九阶段；只 gate 对应 AsyncStorage 操作，SQLite 使用真实实现。该模式会写入专属 fixture，已有隔离状态须用 `scripts/review-proof-checkpoint.mjs` 的 `withProofCheckpoint` 包围，完成后核对六个白名单文件及独立逻辑快照还原。
 
 只使用新建隔离 AVD `WZ_ReaderStorage_API30_20260910` / `WZ_ReaderStorage_API35_20260910`，分别安装 Google APIs x86_64 的 API 30 / 35 系统镜像。先完成 fresh prebuild；不在主登录设备运行 fixture，不卸载或清数据。使用同一测试包覆盖安装第二台隔离 AVD：
 

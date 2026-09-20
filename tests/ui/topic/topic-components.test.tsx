@@ -1995,14 +1995,14 @@ describe('Topic real child components', () => {
         ticket: { source: 'linuxdo' as const, identityKey: 'linuxdo:alice', sessionEpoch: 1 }
       }
     };
-    await view.rerender(<ReplyComposerSheet {...props} intent={editIntent} />);
+    await view.rerender(<ReplyComposerSheet {...props} actionBusy intent={editIntent} />);
     expect(view.getByText('编辑 #4')).toBeTruthy();
     expect(view.queryByPlaceholderText('编辑回复内容')).toBeNull();
     expect(view.getByLabelText('取消编辑')).toBeTruthy();
     expect(view.getByLabelText('保存编辑')).toBeTruthy();
 
     onReplySnapshot.mockClear();
-    await view.rerender(<ReplyComposerSheet {...props} visible={false} />);
+    await view.rerender(<ReplyComposerSheet {...props} actionBusy visible={false} />);
     await fireEvent(webView, 'message', {
       nativeEvent: {
         data: JSON.stringify({
@@ -2022,11 +2022,12 @@ describe('Topic real child components', () => {
     });
     expect(onReplySnapshot).not.toHaveBeenCalled();
 
-    await view.rerender(<ReplyComposerSheet {...props} />);
+    await view.rerender(<ReplyComposerSheet {...props} actionBusy />);
     onReplySnapshot.mockClear();
     const reopenedInit = [...webView.props.postMessageMock.mock.calls]
       .map(([message]: [string]) => JSON.parse(message))
       .findLast((message) => message.type === 'INIT');
+    expect(reopenedInit.payload.intentKind).toBe('reply');
     await fireEvent(webView, 'message', {
       nativeEvent: {
         data: JSON.stringify({
@@ -2165,7 +2166,7 @@ describe('Topic real child components', () => {
     expect(onPresentationChange).not.toHaveBeenCalled();
     expect(mockComposerBottomSheetClose).toHaveBeenCalledTimes(1);
 
-    mockComposerBottomSheetOnClose?.();
+    await act(async () => mockComposerBottomSheetOnClose?.());
     expect(onPresentationChange).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalled();
 

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Editor } from '@tiptap/core';
@@ -93,6 +94,119 @@ async function mountRuntime({
 }
 
 describe('Composer editor runtime codec', () => {
+  it.each(['rich', 'source'] as const)(
+    'keeps a replacement %s document unchanged when an old upload completes',
+    async (mode) => {
+      const alert = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+      const { host, postMessage, send } = await mountRuntime({ mode, markdown: '旧草稿' });
+      await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="图片"]')!.click());
+      const request = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((message) => message.payload?.action === 'upload-image');
+      await send({
+        type: 'INIT',
+        payload: {
+          documentEpoch: 1,
+          site: 'linuxdo',
+          intentKind: 'reply',
+          markdown: '新文档必须完整保留',
+          pendingNodeSeekPolls: [],
+          mode,
+          theme: TEST_THEME
+        }
+      });
+      expect(alert).not.toHaveBeenCalled();
+      const imageButton = host.querySelector<HTMLButtonElement>('button[aria-label="图片"]')!;
+      expect(imageButton.disabled).toBe(false);
+      await act(async () => imageButton.click());
+      const currentRequest = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((message) => message.payload?.action === 'upload-image');
+      expect(currentRequest.payload.requestId).not.toBe(request.payload.requestId);
+      await send({
+        type: 'COMMAND',
+        payload: {
+          name: 'host-action-result',
+          requestId: request.payload.requestId,
+          result: { markdown: '![旧图片](https://example.com/old.png)' }
+        }
+      });
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'replacement-after-upload' } });
+      const snapshot = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((message) => message.payload?.requestId === 'replacement-after-upload').payload.snapshot;
+      expect(snapshot.markdown.trim()).toBe('新文档必须完整保留');
+      expect(host.querySelector<HTMLButtonElement>('button[aria-label="上传中…"]')?.disabled).toBe(true);
+      await send({
+        type: 'COMMAND',
+        payload: { name: 'host-action-result', requestId: request.payload.requestId, error: '旧上传失败' }
+      });
+      expect(alert).not.toHaveBeenCalled();
+      await send({
+        type: 'COMMAND',
+        payload: {
+          name: 'host-action-result',
+          requestId: currentRequest.payload.requestId,
+          result: { markdown: '![新图片](https://example.com/new.png)' }
+        }
+      });
+      await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'current-after-upload' } });
+      const currentSnapshot = postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((message) => message.payload?.requestId === 'current-after-upload').payload.snapshot;
+      expect(currentSnapshot.markdown).toContain('新文档必须完整保留');
+      expect(currentSnapshot.markdown).toContain('![新图片](https://example.com/new.png)');
+      expect(currentSnapshot.markdown).not.toContain('旧图片');
+      expect(host.querySelector<HTMLButtonElement>('button[aria-label="图片"]')?.disabled).toBe(false);
+    }
+  );
+
+  it('keeps replacement template loading independent of cancelled document requests', async () => {
+    const { host, postMessage, send } = await mountRuntime();
+    const openTemplates = async () => {
+      await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="动态模板"]')!.click());
+      return postMessage.mock.calls
+        .map(([raw]) => JSON.parse(String(raw)))
+        .findLast((entry) => entry.payload?.action === 'load-linuxdo-templates').payload.requestId;
+    };
+    const oldRequest = await openTemplates();
+    await send({
+      type: 'INIT',
+      payload: {
+        documentEpoch: 1,
+        site: 'linuxdo',
+        intentKind: 'reply',
+        markdown: '',
+        pendingNodeSeekPolls: [],
+        mode: 'rich',
+        theme: TEST_THEME
+      }
+    });
+    const currentRequest = await openTemplates();
+    await send({
+      type: 'COMMAND',
+      payload: {
+        name: 'host-action-result',
+        requestId: oldRequest,
+        result: { templates: [{ id: 'old', title: '旧模板', content: '旧正文' }] }
+      }
+    });
+    expect(host.textContent).not.toContain('旧模板');
+    expect(host.textContent).toContain('正在读取模板…');
+    expect(host.querySelector('.error')).toBeNull();
+    await send({
+      type: 'COMMAND',
+      payload: {
+        name: 'host-action-result',
+        requestId: currentRequest,
+        result: { templates: [{ id: 'new', title: '新模板', content: '新正文' }] }
+      }
+    });
+    expect(host.textContent).toContain('新模板');
+    expect(host.textContent).not.toContain('正在读取模板…');
+    expect(host.textContent).not.toContain('旧模板');
+  });
+
   it.each(
     (['rich', 'source'] as const).flatMap((mode) =>
       (['success', 'cancel', 'failure'] as const).map((outcome) => ({ mode, outcome }))
@@ -192,13 +306,69 @@ describe('Composer editor runtime codec', () => {
     await act(async () => preview().dispatchEvent(new Event('error')));
     await act(async () => host.querySelector<HTMLButtonElement>('.composer-image-feedback')!.click());
     expect(preview().src).toBe('https://cdn.example.com/abc123.png');
+    const loadedPreview = preview();
     await send({ type: 'SET_MODE', payload: { mode: 'source' } });
     await send({ type: 'SET_MODE', payload: { mode: 'rich' } });
+    expect(preview()).toBe(loadedPreview);
     expect(preview().src).toBe('https://cdn.example.com/abc123.png');
     await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'upload-preview' } });
     const snapshot = postMessage.mock.calls
       .map(([raw]) => JSON.parse(raw))
       .findLast((event) => event.payload?.requestId === 'upload-preview').payload.snapshot;
+    expect(snapshot.markdown.trim()).toBe(markdown);
+  });
+
+  it('restarts identical upload previews for the replacement document', async () => {
+    const markdown = '![photo](upload://abc123.png)';
+    const { host, postMessage, send } = await mountRuntime({ markdown });
+    const requests = () =>
+      postMessage.mock.calls
+        .map(([raw]) => JSON.parse(raw))
+        .filter((event) => event.payload?.action === 'resolve-linuxdo-upload');
+    const oldRequest = requests().at(-1);
+    const initialMessageCount = postMessage.mock.calls.length;
+    await send({
+      type: 'INIT',
+      payload: {
+        documentEpoch: 1,
+        site: 'linuxdo',
+        intentKind: 'reply',
+        markdown,
+        pendingNodeSeekPolls: [],
+        mode: 'rich',
+        theme: TEST_THEME
+      }
+    });
+    expect(requests()).toHaveLength(2);
+    const replacementMessages = postMessage.mock.calls.slice(initialMessageCount).map(([raw]) => JSON.parse(raw));
+    expect(replacementMessages.filter((message) => message.type === 'SNAPSHOT')).toEqual([]);
+    expect(
+      replacementMessages.filter((message) => message.type === 'STATE_CHANGED').map((message) => message.payload)
+    ).toEqual([expect.objectContaining({ documentEpoch: 1, revision: 0, isEmpty: false })]);
+    await send({
+      type: 'COMMAND',
+      payload: {
+        name: 'host-action-result',
+        requestId: oldRequest.payload.requestId,
+        result: { url: 'https://cdn.example.com/old.png' }
+      }
+    });
+    expect(host.querySelector<HTMLImageElement>('.composer-image img')!.hasAttribute('src')).toBe(false);
+    await send({
+      type: 'COMMAND',
+      payload: {
+        name: 'host-action-result',
+        requestId: requests().at(-1).payload.requestId,
+        result: { url: 'https://cdn.example.com/new.png' }
+      }
+    });
+    expect(host.querySelector<HTMLImageElement>('.composer-image img')!.src).toBe('https://cdn.example.com/new.png');
+    expect(host.querySelector('.composer-image-feedback')!.textContent).not.toContain('图片加载失败');
+    await send({ type: 'REQUEST_SNAPSHOT', payload: { requestId: 'replacement-preview' } });
+    const snapshot = postMessage.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .findLast((message) => message.payload?.requestId === 'replacement-preview').payload.snapshot;
+    expect(snapshot).toMatchObject({ revision: 0, isEmpty: false });
     expect(snapshot.markdown.trim()).toBe(markdown);
   });
 

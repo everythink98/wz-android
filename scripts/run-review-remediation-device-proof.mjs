@@ -306,7 +306,7 @@ if (values.acceptance) {
                 if (
                   !receipt.isHermes ||
                   receipt.isDev !== false ||
-                  receipt.results.length !== 41 ||
+                  receipt.results.length !== 44 ||
                   !receipt.results.every((result) => result.passed)
                 )
                   throw new Error('Incomplete Release Hermes proof');

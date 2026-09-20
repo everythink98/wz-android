@@ -9,6 +9,7 @@ import {
 } from '@/domain/reader/readerData';
 import { exportReaderBackupJson, parseReaderBackupJson } from '@/domain/reader/readerBackup';
 import type { ReaderCommand, ReaderPageRequest } from '@/domain/reader/readerRecordState';
+import type { Topic } from '@/domain/forum/models';
 import { isRecord } from '@/domain/forum/html';
 import { createTrace, finishDiagnosticTrace } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason } from '@/platform/diagnostics/diagnosticPolicy';
@@ -78,10 +79,24 @@ async function transaction<T>(db: SQLiteDatabase, write: boolean, task: () => Pr
   }
 }
 
+async function boundedLegacyIo<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('旧资料存储读取超时')), 3_000);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function readLegacySettings(): Promise<ReaderSettings | null> {
   const trace = createTrace('reader-data', 'load-settings');
   try {
-    const raw = await AsyncStorage.getItem('reader-settings');
+    const raw = await boundedLegacyIo(AsyncStorage.getItem('reader-settings'));
     const parsed: unknown = raw ? JSON.parse(raw) : null;
     const valid = isRecord(parsed);
     finishDiagnosticTrace(trace, valid ? 'success' : raw === null ? 'noop' : 'partial', {
@@ -98,9 +113,14 @@ async function cleanupLegacy(db: SQLiteDatabase) {
   const started = performance.now();
   const trace = createTrace('reader-data', 'migration-cleanup');
   try {
-    await AsyncStorage.removeMany(LEGACY_KEYS);
-    const remaining = await AsyncStorage.getAllKeys();
-    if (LEGACY_KEYS.some((key) => remaining.includes(key))) throw new Error('旧资料清理尚未完成。');
+    await boundedLegacyIo(
+      (async () => {
+        await AsyncStorage.removeMany(LEGACY_KEYS);
+        const remaining = await AsyncStorage.getAllKeys();
+        if (LEGACY_KEYS.some((key) => remaining.includes(key))) throw new Error('旧资料清理尚未完成。');
+      })()
+    );
+    // Only the owner queue may mark ready; a late legacy operation never reaches SQLite.
     await transaction(db, true, () => db.runAsync("UPDATE reader_meta SET status='ready' WHERE id=1"));
     finishDiagnosticTrace(trace, 'success', { state: 'ready', elapsedMs: performance.now() - started });
   } catch (error) {
@@ -216,16 +236,22 @@ export function queryReaderPage(request: ReaderPageRequest) {
   });
 }
 
-export function readHistoryReplyCount(key: string) {
+export function readHistoryReplyBaseline(
+  key: string
+): Promise<Pick<Topic, 'replyCount' | 'replyWatermark'> | undefined> {
   return enqueue(async () => {
     const db = await database();
     const row = await db.getFirstAsync<{ value: string }>(
       "SELECT value FROM reader_records WHERE kind='history' AND key=?",
       key
     );
-    if (!row) return 0;
+    if (!row) return undefined;
     const record: import('@/domain/reader/readerData').TopicRecord = JSON.parse(row.value);
-    return record.topic.replyCount || 0;
+    const { replyCount, replyWatermark } = record.topic;
+    return {
+      replyCount: Number.isSafeInteger(replyCount) && replyCount! >= 0 ? replyCount : undefined,
+      replyWatermark: Number.isSafeInteger(replyWatermark) && replyWatermark! >= 0 ? replyWatermark : undefined
+    };
   });
 }
 

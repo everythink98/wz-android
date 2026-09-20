@@ -47,11 +47,13 @@
 - 按 owner 和独立变化原因拆分，不按行数拆分。一个复杂 hook 若仍是唯一生命周期 owner，就保留 cohesive module。
 - Screen 只拥有渲染与局部交互；远端状态、取消、草稿、返回栈、身份 epoch 等状态继续由现有 controller 或 Query owner 管理。
 - Runtime 跨 owner 只暴露按旅程分组的语义能力。Account 的公开接口固定为 `read`、`write`、`center`、`hosts`；`hosts` 只提供 Account 自己生成的 host 节点、surface 状态和语义命令，不得泄漏 raw session、setter、ref、WebView controller 或 registry。Route runtime 不得用 `ComponentProps<typeof Screen>` 反向复制 Screen props。
-- Android WebView 共享状态由 Account 单一 owner 管理：功能组件只能显式传入文档级 WebView props，不得用 props spread 暴露原生组件能力；truthy/dynamic `incognito`、`removeAllCookies`、`removeSessionCookies`、`WebStorage.deleteAllData` 与 `clearCache(true)` 在生产 TypeScript 和 tracked plugin 中一律由 `global-webview-state-owner` 拒绝。显式 `incognito={false}` 与实例级 `clearCache(false)` 允许；`sharedCookiesEnabled={false}` 不承担 Android 隔离语义。
+- Android WebView 共享状态由 Account 单一 owner 管理：功能组件只能显式传入文档级 WebView props，不得用 props spread 暴露原生组件能力；truthy/dynamic `incognito`、`removeAllCookies`、`removeSessionCookies`、`WebStorage.deleteAllData` 与 `clearCache(true)` 在生产 TypeScript、tracked plugin 和 `modules/*/android/src/main` 中一律由 `global-webview-state-owner` 拒绝。显式 `incognito={false}` 与实例级 `clearCache(false)` 允许；`sharedCookiesEnabled={false}` 不承担 Android 隔离语义。
 - 可复用必须以语义、生命周期、权限和错误处理一致为前提。只相似但行为不同的 provider、feature 和写操作保持独立。
 - 样式跟随 owner：feature 样式位于对应 feature，跨旅程 token/primitive 位于 UI；`ReaderStyleContextValue` 只提供 `theme/settings`，控件和 feature 用自己的 style factory 消费，禁止恢复全局 feature-style registry。
 - 通用有状态 UI 在自研前依次核对平台控件、现有依赖和成熟受控组件；展示组件可以拥有拖动中的临时预览，但最终值、播放真相、网络身份、错误语义和领域生命周期必须留在现有 owner，禁止为了现成皮肤引入第二套播放内核或网络边界。
 - 不增加未要求的扩展点、配置层或单实现 interface。新增抽象必须减少现有重复或切断真实反向依赖。
+
+`modules/forum-platform` 直接拥有网络、诊断、SVG、文件保存源码与测试；plugin 仅修改配置及必要启动注册。新原生能力优先进入已有模块，不恢复 Kotlin 复制、包名替换或测试源码注入。原生具体启动及 source set 边界见 `docs/architecture.md`。
 
 ## 测试归属
 

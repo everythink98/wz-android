@@ -31,7 +31,7 @@ class SvgRendererInstrumentedTest {
     get() = InstrumentationRegistry.getInstrumentation()
 
   private fun fixture(): String =
-    instrumentation.context.assets.open("svg_renderer/complex-svg-document.svg")
+    instrumentation.context.assets.open("complex-svg-document.svg")
       .bufferedReader()
       .use { it.readText() }
 
@@ -99,37 +99,46 @@ class SvgRendererInstrumentedTest {
     val creationsBefore = svgPosterWebViewCreationCount()
     val destructionsBefore = svgPosterWebViewDestructionCount()
     val nonce = System.nanoTime().toString()
-    val pending = (0 until 10).map { index ->
+    // Two pending requests prove reuse and queue draining; queue capacity has its own oracle.
+    val pending = (0 until 2).map { index ->
       enqueuePoster(svg, "instrumented-" + nonce + "-" + index)
     }
-    val posters = pending.map(::awaitPoster)
-    assertEquals(
-      "poster queue must reuse one WebView while work remains",
-      1,
-      svgPosterWebViewCreationCount() - creationsBefore
-    )
-    assertEquals(
-      "idle poster renderer must destroy its WebView",
-      1,
-      svgPosterWebViewDestructionCount() - destructionsBefore
-    )
-    assertFalse("idle poster renderer must not retain its WebView", hasRetainedRenderer())
-    val creationsAfterBatch = svgPosterWebViewCreationCount()
-    val destructionsAfterBatch = svgPosterWebViewDestructionCount()
-    awaitPoster(enqueuePoster(svg, "instrumented-" + nonce + "-0"))
-    assertEquals("poster cache hit must not create a WebView", creationsAfterBatch, svgPosterWebViewCreationCount())
-    assertEquals("poster cache hit must not destroy a WebView", destructionsAfterBatch, svgPosterWebViewDestructionCount())
-    assertFalse("poster cache hit must not retain a WebView", hasRetainedRenderer())
-    posters.forEach { poster ->
-      val bitmap = checkNotNull(BitmapFactory.decodeFile(checkNotNull(Uri.parse(poster.getString("uri")).path)))
-      try {
-        assertEquals(poster.getInt("width"), bitmap.width)
-        assertEquals(poster.getInt("height"), bitmap.height)
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        assertTrue("Chromium poster must contain visible pixels", pixels.any { Color.alpha(it) != 0 })
-      } finally {
-        bitmap.recycle()
+    try {
+      val posters = pending.map(::awaitPoster)
+      assertEquals(
+        "poster queue must reuse one WebView while work remains",
+        1,
+        svgPosterWebViewCreationCount() - creationsBefore
+      )
+      assertEquals(
+        "idle poster renderer must destroy its WebView",
+        1,
+        svgPosterWebViewDestructionCount() - destructionsBefore
+      )
+      assertFalse("idle poster renderer must not retain its WebView", hasRetainedRenderer())
+      val creationsAfterBatch = svgPosterWebViewCreationCount()
+      val destructionsAfterBatch = svgPosterWebViewDestructionCount()
+      awaitPoster(enqueuePoster(svg, "instrumented-" + nonce + "-0"))
+      assertEquals("poster cache hit must not create a WebView", creationsAfterBatch, svgPosterWebViewCreationCount())
+      assertEquals("poster cache hit must not destroy a WebView", destructionsAfterBatch, svgPosterWebViewDestructionCount())
+      assertFalse("poster cache hit must not retain a WebView", hasRetainedRenderer())
+      posters.forEach { poster ->
+        val bitmap = checkNotNull(BitmapFactory.decodeFile(checkNotNull(Uri.parse(poster.getString("uri")).path)))
+        try {
+          assertEquals(poster.getInt("width"), bitmap.width)
+          assertEquals(poster.getInt("height"), bitmap.height)
+          val pixels = IntArray(bitmap.width * bitmap.height)
+          bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+          assertTrue("Chromium poster must contain visible pixels", pixels.any { Color.alpha(it) != 0 })
+        } finally {
+          bitmap.recycle()
+        }
+      }
+    } finally {
+      pending.mapNotNull { it.result?.getString("uri") }.distinct().forEach { uri ->
+        val file = java.io.File(checkNotNull(Uri.parse(uri).path)).canonicalFile
+        check(file.toPath().startsWith(instrumentation.targetContext.cacheDir.canonicalFile.toPath()))
+        assertTrue("owned poster cleanup failed", !file.exists() || file.delete())
       }
     }
   }

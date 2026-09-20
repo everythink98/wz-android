@@ -37,6 +37,7 @@ function topicReplyPage(detail: TopicDetail, order: ReplyOrder): ReplyPage {
       : (detail.replyNextPage ?? null),
     nextOffset,
     totalCount: detail.replyCount,
+    replyWatermark: detail.replyWatermark,
     requestedPage: 1,
     requestedOffset: 0
   };

@@ -50,8 +50,32 @@ describe('Android release evidence guards', () => {
     const moreScreen = readProjectFile('src', 'features', 'more', 'MoreScreen.tsx');
     const nativePlugin =
       readProjectFile('plugins', 'withNetworkProxyModule.js') +
-      readProjectFile('plugins', 'network', 'NetworkProxyRuntime.kt') +
-      readProjectFile('plugins', 'network', 'NetworkProxyModule.kt');
+      readProjectFile(
+        'modules',
+        'forum-platform',
+        'android',
+        'src',
+        'main',
+        'java',
+        'com',
+        'wz',
+        'reader',
+        'network',
+        'NetworkProxyRuntime.kt'
+      ) +
+      readProjectFile(
+        'modules',
+        'forum-platform',
+        'android',
+        'src',
+        'main',
+        'java',
+        'com',
+        'wz',
+        'reader',
+        'network',
+        'NetworkProxyModule.kt'
+      );
 
     expect(moreScreen).not.toContain('devAnonymous');
     expect(moreScreen).not.toContain('title="测试工具"');
@@ -116,10 +140,10 @@ describe('Android release evidence guards', () => {
 
   it('lets each Replay own its wall-clock budget', () => {
     const runner = readProjectFile('scripts', 'run-device-replay.mjs');
-    const fourSourceFeed = readProjectFile('tests', 'device', 'four-source-feed.ad');
+    const feedSourceControls = readProjectFile('tests', 'device', 'feed-source-controls.ad');
 
     expect(runner).not.toContain("'--timeout', '180000'");
-    expect(fourSourceFeed).toContain('context timeout=240000');
+    expect(feedSourceControls).toContain('context timeout=240000');
   });
 
   it('selects the explicit targeted Replay directory while retaining APK sanity', () => {
@@ -602,7 +626,7 @@ describe('Android release evidence guards', () => {
     const expected = [
       'account-readonly.ad',
       'feed-gesture-priority.ad',
-      'four-source-feed.ad',
+      'feed-source-controls.ad',
       'library-return.ad',
       'more-readonly.ad',
       'nodeseek-session.ad',
@@ -674,14 +698,17 @@ describe('Android release evidence guards', () => {
     expect(nodeSeekReplay).not.toContain('nodeseek-login-webview-ready');
     expect(nodeSeekReplay).not.toMatch(/role=\\"(?:webview|image)\\"|label="新帖子"/);
 
-    const fourSourceReplay = readFileSync(path.join(deviceDir, 'four-source-feed.ad'), 'utf8').replace(/\r\n/g, '\n');
-    expect(fourSourceReplay).toContain(
+    const feedSourceReplay = readFileSync(path.join(deviceDir, 'feed-source-controls.ad'), 'utf8').replace(
+      /\r\n/g,
+      '\n'
+    );
+    expect(feedSourceReplay).toContain(
       'wait "id=\\"feed-outcome-data-all-default\\" || id=\\"feed-outcome-empty-all-default\\" || id=\\"feed-outcome-partial-all-default\\" || id=\\"feed-outcome-error-all-default\\" || id=\\"feed-outcome-auth-all-default\\"" 60000'
     );
     for (const source of ['all', 'v2ex', 'linuxdo', 'nodeseek', 'yaohuo']) {
-      expect(fourSourceReplay).toContain(`feed-source-${source}`);
+      expect(feedSourceReplay).toContain(`feed-source-${source}`);
     }
-    expect(fourSourceReplay).not.toMatch(/feed-topic-first|topic-detail-loaded|scroll down|列表筛选/);
+    expect(feedSourceReplay).not.toMatch(/feed-topic-first|topic-detail-loaded|scroll down|列表筛选/);
 
     const multiSourceSearchReplay = readFileSync(path.join(deviceDir, 'search-multi-source.ad'), 'utf8');
     expect(multiSourceSearchReplay).not.toContain('search-page-loaded-');
@@ -796,7 +823,7 @@ describe('Android release evidence guards', () => {
       }
     }
 
-    const feedReplay = readProjectFile('tests', 'device', 'four-source-feed.ad');
+    const feedReplay = readProjectFile('tests', 'device', 'feed-source-controls.ad');
     const loggedOutReplay = readProjectFile('tests', 'device-logged-out', 'logged-out-readonly.ad');
     for (const replay of [feedReplay, loggedOutReplay]) {
       expect(replay).toContain('feed-outcome-data-all-default');
@@ -833,7 +860,7 @@ describe('Android release evidence guards', () => {
     expect(releaseReplayNames).toEqual([
       'account-readonly.ad',
       'feed-gesture-priority.ad',
-      'four-source-feed.ad',
+      'feed-source-controls.ad',
       'library-return.ad',
       'more-readonly.ad',
       'nodeseek-session.ad',

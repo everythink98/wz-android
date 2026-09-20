@@ -1,79 +1,35 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import { Buffer } from 'buffer';
+import { requireOptionalNativeModule } from 'expo';
 import { safeFileName } from '@/platform/storage/backupFiles';
 import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './imageRequestSource';
-import { fetchWithTimeout, type Fetcher } from '@/platform/network/request';
 import type { ForumMediaRequestContext } from './mediaRequestContext';
 import type { MediaReferrerPolicy } from '@/domain/forum/mediaReferrer';
-import {
-  beginDiagnosticTrace,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  withDiagnosticFetcher
-} from '@/platform/diagnostics/diagnostics';
+import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage } from '@/platform/diagnostics/diagnostics';
 import { normalizeDiagnosticReason, type DiagnosticTrace } from '@/platform/diagnostics/diagnosticPolicy';
 
 export interface ImageSaveRequestOptions {
   mediaContext: ForumMediaRequestContext;
   nodeSeekUserAgent?: string;
   referrerPolicy?: MediaReferrerPolicy;
+  signal?: AbortSignal;
+  assertCurrent?: () => void;
 }
 
-function imageFileExtension(uri: string) {
-  const extension = uri.match(/\.(apng|avif|bmp|gif|heic|heif|jpe?g|png|webp)(?:[?#]|$)/i)?.[1]?.toLowerCase();
-  return extension === 'jpeg' ? 'jpg' : extension || 'jpg';
+interface NativeImageDownload {
+  createDownload(): string;
+  download(
+    id: string,
+    url: string,
+    headers: Record<string, string>
+  ): Promise<{ uri: string; contentType: string; byteCount: number }>;
+  cancelDownload(id: string): void;
+  releaseDownload(id: string): void;
 }
 
-function responseContentType(response: Response) {
-  return response.headers.get('content-type') || '';
-}
-
-function imageFileExtensionFromContentType(contentType: string) {
-  switch (contentType.split(';', 1)[0]?.trim().toLowerCase()) {
-    case 'image/apng':
-      return 'apng';
-    case 'image/avif':
-      return 'avif';
-    case 'image/bmp':
-    case 'image/x-ms-bmp':
-      return 'bmp';
-    case 'image/gif':
-      return 'gif';
-    case 'image/heic':
-      return 'heic';
-    case 'image/heif':
-      return 'heif';
-    case 'image/jpeg':
-    case 'image/jpg':
-    case 'image/pjpeg':
-      return 'jpg';
-    case 'image/png':
-    case 'image/x-png':
-      return 'png';
-    case 'application/svg+xml':
-    case 'image/svg+xml':
-      return 'svg';
-    case 'image/webp':
-      return 'webp';
-    default:
-      return '';
-  }
-}
-
-function isImageContentType(contentType: string) {
-  const mimeType = contentType.split(';', 1)[0]?.trim().toLowerCase() || '';
-  return mimeType.startsWith('image/') || mimeType === 'application/svg+xml';
-}
-
-function assertDownloadedImage(response: Response) {
-  if (!response.ok) {
-    throw new Error('图片下载失败');
-  }
-  const contentType = responseContentType(response);
-  if (contentType && !isImageContentType(contentType)) {
-    throw new Error('下载内容不是图片');
-  }
+function assertCurrent(options: ImageSaveRequestOptions) {
+  if (options.signal?.aborted) throw new Error('图片保存已取消');
+  options.assertCurrent?.();
 }
 
 async function assertReadableImageFile(uri: string) {
@@ -83,33 +39,9 @@ async function assertReadableImageFile(uri: string) {
   }
 }
 
-async function downloadImageWithFetcher(
-  uri: string,
-  fetcher: Fetcher,
-  trace: DiagnosticTrace,
-  requestOptions: ImageSaveRequestOptions
-) {
-  const headers = imageRequestHeadersForUrl(uri, {
-    mediaContext: requestOptions.mediaContext,
-    nodeSeekUserAgent: requestOptions.nodeSeekUserAgent,
-    referrerPolicy: requestOptions.referrerPolicy
-  });
-  const response = await fetchWithTimeout(uri, headers ? { headers } : {}, {
-    fetcher: withDiagnosticFetcher(trace, fetcher)
-  });
-  assertDownloadedImage(response);
-  const contentType = responseContentType(response);
-  markDiagnosticStage(trace, 'parse', { contentType: contentType || 'unknown' });
-  return {
-    base64: Buffer.from(await response.arrayBuffer()).toString('base64'),
-    extension: imageFileExtensionFromContentType(contentType)
-  };
-}
-
 export async function saveImageUriToLibrary(
   uri: string,
   requestOptions: ImageSaveRequestOptions,
-  fetcher: Fetcher = fetch,
   parentTrace?: DiagnosticTrace
 ) {
   const dataImage = dataImageFileFromUrl(uri);
@@ -123,39 +55,50 @@ export async function saveImageUriToLibrary(
     if (!dataImage && !isHttpOrHttpsUrl(uri)) {
       throw new Error('图片地址不支持保存');
     }
+    assertCurrent(requestOptions);
     const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
     markDiagnosticStage(trace, 'credential', { isGranted: permission.granted });
     if (!permission.granted) {
       throw new Error('没有图片保存权限');
     }
-    const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-    if (!baseDirectory) {
-      throw new Error('无法创建图片文件');
-    }
-    const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
+    assertCurrent(requestOptions);
     let savedUri = '';
+    let native: NativeImageDownload | null = null;
+    let downloadId: string | undefined;
+    const abort = () => {
+      if (downloadId) native?.cancelDownload(downloadId);
+    };
     try {
-      const fallbackExtension = dataImage?.extension || imageFileExtension(uri);
-      savedUri = `${baseDirectory}${safeFileName('forum-image', fallbackExtension)}`;
       markDiagnosticStage(trace, 'persist', { state: 'temporary-file' });
       if (dataImage) {
+        const baseDirectory = FileSystem.cacheDirectory;
+        if (!baseDirectory) throw new Error('无法创建图片文件');
+        savedUri = `${baseDirectory}${safeFileName('forum-image', dataImage.extension)}`;
         await FileSystem.writeAsStringAsync(savedUri, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
       } else {
-        const downloaded = await downloadImageWithFetcher(uri, fetcher, trace, requestOptions);
-        if (downloaded.extension && downloaded.extension !== fallbackExtension) {
-          savedUri = `${baseDirectory}${safeFileName('forum-image', downloaded.extension)}`;
-        }
-        await FileSystem.writeAsStringAsync(savedUri, downloaded.base64, { encoding: FileSystem.EncodingType.Base64 });
+        native = requireOptionalNativeModule<NativeImageDownload>('ImageDownload');
+        if (!native) throw new Error('当前安装包不支持保存图片，请更新后重试。');
+        downloadId = native.createDownload();
+        requestOptions.signal?.addEventListener('abort', abort);
+        assertCurrent(requestOptions);
+        const downloaded = await native.download(downloadId, uri, imageRequestHeadersForUrl(uri, requestOptions) || {});
+        savedUri = downloaded.uri;
+        markDiagnosticStage(trace, 'parse', {
+          contentType: downloaded.contentType || 'unknown',
+          byteCount: downloaded.byteCount
+        });
       }
+      assertCurrent(requestOptions);
       await assertReadableImageFile(savedUri);
+      assertCurrent(requestOptions);
       markDiagnosticStage(trace, 'parse', { state: 'file-readable' });
       markDiagnosticStage(trace, 'persist', { state: 'media-library-start' });
       await MediaLibrary.Asset.create(savedUri);
       markDiagnosticStage(trace, 'persist', { state: 'media-library' });
     } finally {
-      if (shouldDeleteFile && savedUri) {
-        await FileSystem.deleteAsync(savedUri, { idempotent: true }).catch(() => undefined);
-      }
+      requestOptions.signal?.removeEventListener('abort', abort);
+      if (native && downloadId) native.releaseDownload(downloadId);
+      else if (savedUri) await FileSystem.deleteAsync(savedUri, { idempotent: true }).catch(() => undefined);
     }
     if (ownsTrace) {
       finishDiagnosticTrace(trace, 'success');

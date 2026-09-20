@@ -316,8 +316,6 @@ function authoredImageLines(container: ParsedForumImageNode) {
     }
     if (!root && tagName && (FORUM_CONTENT_BLOCK_TAGS.has(tagName) || ['td', 'th'].includes(tagName))) {
       breakLine();
-      (element.childNodes || []).forEach((child) => visit(child));
-      breakLine();
       return;
     }
     if (!tagName) {

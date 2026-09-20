@@ -1,4 +1,5 @@
 import type { ForumNotification, NotificationPage } from '@/domain/notifications/models';
+import { notificationPageError } from '@/domain/notifications/notificationQuality';
 import { sourceCatalog, type NotificationSource } from '@/domain/forum/sourceCatalog';
 import {
   beginDiagnosticTrace,
@@ -302,10 +303,11 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
               }),
               signal: controller.signal
             };
-            const items: ForumNotification[] = [];
+            const uniqueItems = new Map<string, ForumNotification>();
+            let rawScannedCount = 0;
             const seenCursors = new Set<string>();
             let cursor: string | null | undefined;
-            while (items.length < 60) {
+            while (rawScannedCount < 60) {
               await assertPrivateAccessCurrent(source, capturedIdentityKey);
               const page = await beforeDeadline(
                 dependencies.network.listPage(source, diagnosticAccess, controller.signal, cursor)
@@ -319,17 +321,29 @@ export async function runNotificationBackgroundWorker<Access extends Notificatio
                 hasNextCursor: Boolean(page.cursor),
                 hasRepeatedCursor: Boolean(page.hasMore && page.cursor && seenCursors.has(page.cursor))
               });
-              if (summary?.isParseEmpty) hintParseOutcome(summary.validCount ? 'partial' : 'failure', 'parse_empty');
-              else if (summary?.hasDegradation || (page.hasMore && (!page.cursor || seenCursors.has(page.cursor))))
-                hintParseOutcome('partial', 'invalid_response');
+              const invalidCursor = page.hasMore && (!page.cursor || seenCursors.has(page.cursor));
+              const qualityError = notificationPageError(invalidCursor ? 'partial' : page.quality);
+              if (qualityError) {
+                hintParseOutcome(
+                  page.quality === 'invalid' ? 'failure' : 'partial',
+                  page.quality === 'invalid' ? 'parse_empty' : 'invalid_response'
+                );
+                throw qualityError;
+              }
               await assertPrivateAccessCurrent(source, capturedIdentityKey);
-              items.push(...page.items.slice(0, 60 - items.length));
+              const scannedPage = page.items.slice(0, 60 - rawScannedCount);
+              rawScannedCount += scannedPage.length;
+              for (const item of scannedPage) {
+                const key = `${item.source}:${item.id}`;
+                if (!uniqueItems.has(key)) uniqueItems.set(key, item);
+              }
               const nextCursor = page.hasMore ? page.cursor : null;
               if (!nextCursor || seenCursors.has(nextCursor)) break;
               seenCursors.add(nextCursor);
               cursor = nextCursor;
             }
             if (controller.signal.aborted) throw deadlineError;
+            const items = [...uniqueItems.values()];
             const scanned = items.filter((item) => item.unread && deliverableKinds.has(item.kind));
             const scannedIds = scanned.map((item) => item.id);
             const fields = {

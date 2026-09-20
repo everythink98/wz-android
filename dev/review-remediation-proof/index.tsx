@@ -62,9 +62,13 @@ import { validateWritableSessionTicket, type SessionRuntimeSnapshot } from '@/do
 import { runLinuxDoAction } from '@/sources/linuxdo/actionClient';
 import { buildDiscourseActionRequest } from '@/sources/discourse/actionRequest';
 import { AcceptanceProof } from './acceptance';
+import { PlatformExportsProof } from './platformExports';
+import { verifyNotificationQuality } from './notificationQuality';
+import { prepareBackgroundProof } from './background';
 
 // Isolated developer entry only. Synthetic payloads test boundaries, never upstream protocol claims.
-// HTTP is replaced at the supplied fetcher; WebView uses inline documents with no remote resources.
+// HTTP fixtures use the supplied fetcher; the platform-export route uses an instrumentation-owned loopback server.
+// WebView uses inline documents with no remote resources.
 const delay = (ms = 30) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 function check(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -727,6 +731,7 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
               listPage: async () => {
                 pageRequests += 1;
                 return {
+                  quality: 'complete',
                   items: Array.from({ length: 60 }, (_, index) => ({
                     source: 'nodeseek' as const,
                     id: String(index),
@@ -798,6 +803,8 @@ async function execute(token: string, mount: (node: ReactNode) => void, status: 
         }
       });
     }
+    for (const quality of ['partial', 'invalid', 'legacy'] as const)
+      await run(`notification-quality-${quality}`, () => verifyNotificationQuality(quality));
   } finally {
     globalThis.fetch = originalFetch;
     if (originalNotificationState === null) await AsyncStorage.removeItem(NOTIFICATION_STORAGE_KEY);
@@ -948,6 +955,19 @@ function ProofApp() {
   const [status, setStatus] = useState('Isolated remediation proof');
   useEffect(() => {
     void Linking.getInitialURL().then((url) => {
+      const background = /^wzreviewproof:\/\/background\/(success|deadline|cleanup)\/([a-f0-9]{32})$/.exec(url || '');
+      if (background) {
+        void prepareBackgroundProof(background[1] as 'success' | 'deadline' | 'cleanup', background[2]).then(
+          () => setStatus(`Background proof ${background[1]} ready`),
+          (error: unknown) => setStatus(String(error))
+        );
+        return;
+      }
+      const exports = /^wzreviewproof:\/\/exports\/([a-f0-9]{32})$/.exec(url || '');
+      if (exports) {
+        setContent(<PlatformExportsProof token={exports[1]} />);
+        return;
+      }
       const acceptance = /^wzreviewproof:\/\/(boundaries|recovery|notification)\/([a-f0-9]{32})$/.exec(url || '');
       if (acceptance) {
         setContent(<AcceptanceProof mode={acceptance[1]} token={acceptance[2]} />);

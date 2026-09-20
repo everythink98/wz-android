@@ -5,12 +5,13 @@ import { File, Paths } from 'expo-file-system';
 import { deleteDatabaseAsync, openDatabaseAsync, SQLiteDatabase } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
 import { Linking, Text, View } from 'react-native';
-import { createEmptyReaderData, type ReaderData } from '@/domain/reader/readerData';
+import { createEmptyReaderData, MAX_DELETED_RECORDS, type ReaderData } from '@/domain/reader/readerData';
 import type { Topic } from '@/domain/forum/models';
 import type { ReaderPageRequest } from '@/domain/reader/readerRecordState';
 import { readReaderMeta, readReaderSnapshot, utf8Bytes } from '@/platform/storage/readerDatabase';
 import * as store from '@/platform/storage/readerDataStore';
 import { diagnosticBuildContext } from '@/platform/diagnostics/nativeDiagnosticJournal';
+import { exercisePollJournal, verifyReopenedPollJournal } from './pollJournal';
 
 // Only the isolated Android runner selects this entry; production has no fault switches.
 const marker = 'reader-storage-proof-owner';
@@ -23,7 +24,7 @@ function topic(id: number, padding = 0): Topic {
     author: 'fixture',
     category: '日常',
     url: `https://www.nodeseek.com/post-${id}-1`,
-    createdAt: '2026-05-18T11:34:13.000Z',
+    createdAt: id === 0 ? '' : '2026-05-18T11:34:13.000Z',
     replyCount: 2
   };
 }
@@ -79,6 +80,76 @@ async function execute(mode: string, profile: string, token: string, status: (te
       return;
     }
     check((await AsyncStorage.getItem(marker)) === 'isolated', 'Missing isolated fixture owner');
+    if (mode === 'poll-journal-exercise' || mode === 'poll-journal-reopen') {
+      const result =
+        mode === 'poll-journal-exercise' ? await exercisePollJournal(token) : await verifyReopenedPollJournal();
+      write('passed', { capability: 'WRITE-05', ...result });
+      return;
+    }
+    if (['settings-hang', 'cleanup-remove-hang', 'cleanup-keys-hang'].includes(mode)) {
+      const originalGet = AsyncStorage.getItem;
+      const originalRemove = AsyncStorage.removeMany;
+      const originalKeys = AsyncStorage.getAllKeys;
+      const pending = Promise.withResolvers<void>();
+      let intercepted = false;
+      try {
+        if (mode === 'settings-hang') {
+          AsyncStorage.getItem = async (key) => {
+            if (key !== 'reader-settings') return originalGet.call(AsyncStorage, key);
+            intercepted = true;
+            await pending.promise;
+            return JSON.stringify({ ...createEmptyReaderData().settings, fontScale: 1.8 });
+          };
+        } else if (mode === 'cleanup-remove-hang') {
+          AsyncStorage.removeMany = async () => {
+            intercepted = true;
+            await pending.promise;
+          };
+        } else {
+          AsyncStorage.getAllKeys = async () => {
+            intercepted = true;
+            await pending.promise;
+            return [];
+          };
+        }
+        const loadStarted = performance.now();
+        const restored = await store.loadReaderState();
+        const loadMs = performance.now() - loadStarted;
+        check(intercepted && loadMs >= 2900 && loadMs < 10000, 'Legacy I/O did not settle within its own deadline');
+        const db = await openDatabaseAsync('reader-data.db', { useNewConnection: true });
+        try {
+          const expected = fixture(profile);
+          check(restored.counts.history === Object.keys(expected.history).length, 'Timed-out sidecar lost ReaderData');
+          check(
+            JSON.stringify(restored.settings) === JSON.stringify(expected.settings),
+            'Timed-out sidecar changed settings'
+          );
+          const expectedStatus = mode === 'settings-hang' ? 'ready' : 'cleanup_pending';
+          check((await readReaderMeta(db))?.status === expectedStatus, 'Cleanup state was not retained');
+          pending.resolve();
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
+          check(
+            JSON.stringify(await readReaderSnapshot(db)) === JSON.stringify(expected),
+            'Late sidecar mutated committed data'
+          );
+          check((await readReaderMeta(db))?.status === expectedStatus, 'Late cleanup completed a stale transaction');
+          write('passed', {
+            loadMs,
+            history: restored.counts.history,
+            lateResultIgnored: true,
+            cleanupStatus: expectedStatus
+          });
+        } finally {
+          await db.closeAsync();
+        }
+      } finally {
+        pending.resolve();
+        AsyncStorage.getItem = originalGet;
+        AsyncStorage.removeMany = originalRemove;
+        AsyncStorage.getAllKeys = originalKeys;
+      }
+      return;
+    }
     const pause = async () => {
       write('paused');
       await new Promise<void>(() => undefined);
@@ -202,6 +273,14 @@ async function execute(mode: string, profile: string, token: string, status: (te
       });
       const exported = JSON.parse(await exportSnapshot) as ReaderData;
       check(!exported.history['nodeseek:90000'], 'Export included a later queued write');
+      for (const collection of ['favorites', 'history'] as const) {
+        check(
+          exported[collection]['nodeseek:0']?.topic.createdAt === '' &&
+            exported[collection]['nodeseek:0']?.topic.lastReplyAt === undefined &&
+            exported[collection]['nodeseek:1']?.topic.createdAt === topic(1).createdAt,
+          `Export lost or invented topic dates: ${collection}`
+        );
+      }
       await laterVisit;
       check((await readReaderSnapshot(db)).history['nodeseek:90000'], 'Newer visit was not retained');
       const incoming = createEmptyReaderData();
@@ -218,6 +297,14 @@ async function execute(mode: string, profile: string, token: string, status: (te
       const importMs = performance.now() - importStarted;
       await laterDelete;
       const final = await readReaderSnapshot(db);
+      for (const collection of ['favorites', 'history'] as const) {
+        check(
+          final[collection]['nodeseek:0']?.topic.createdAt === '' &&
+            final[collection]['nodeseek:0']?.topic.lastReplyAt === undefined &&
+            final[collection]['nodeseek:1']?.topic.createdAt === topic(1).createdAt,
+          `Import lost or invented topic dates: ${collection}`
+        );
+      }
       check(
         final.history['nodeseek:90000'] &&
           !final.favorites['nodeseek:90001'] &&
@@ -228,6 +315,25 @@ async function execute(mode: string, profile: string, token: string, status: (te
         (await readReaderMeta(db))?.bytes === utf8Bytes(JSON.stringify(final)),
         'Bytes drifted after native backup merge'
       );
+      const historyKeys = Object.keys(final.history);
+      const clearStarted = performance.now();
+      const clearedChange = await store.commitReaderCommand({ type: 'clear-history', at: '2026-09-12T00:00:00.000Z' });
+      const clearMs = performance.now() - clearStarted;
+      const cleared = await readReaderSnapshot(db);
+      check(
+        Object.keys(cleared.history).length === 0 &&
+          clearedChange.membership.length === historyKeys.length &&
+          clearedChange.membership.every((item) => item.collection === 'history' && !item.present) &&
+          Object.keys(cleared.deletedRecords.history).length ===
+            Math.min(MAX_DELETED_RECORDS, new Set([...historyKeys, ...Object.keys(final.deletedRecords.history)]).size),
+        'Bulk history deletion lost membership or deletion markers'
+      );
+      check(
+        JSON.stringify(cleared.favorites) === JSON.stringify(final.favorites) &&
+          JSON.stringify(cleared.followedUsers) === JSON.stringify(final.followedUsers) &&
+          (await readReaderMeta(db))?.bytes === utf8Bytes(JSON.stringify(cleared)),
+        'Bulk history deletion changed other collections or byte accounting'
+      );
       write('passed', {
         loadMs,
         firstPageMs,
@@ -235,6 +341,8 @@ async function execute(mode: string, profile: string, token: string, status: (te
         writeMs,
         importMs,
         lockMs,
+        clearMs,
+        clearedHistoryCount: historyKeys.length,
         counts: state.counts,
         plans,
         backupQueuePassed: true

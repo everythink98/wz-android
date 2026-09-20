@@ -11,23 +11,32 @@ const selectionClasses = [
 ].map((name) => `expo.modules.forumcontentselection.${name}`);
 const appClasses = [
   'ApkInstallerSignerTest',
-  'DiagnosticLogStoreTest',
   'ForumSearchCustomTabUrlTest',
-  'ManagedCookieResponsesTest',
-  'NetworkProxyRuntimeTest',
   'NotificationDigestExecutorTest',
   'PreviewRegionImageMathTest',
-  'SvgRendererPolicyTest',
   'ComposerKeyboardTest',
   'ComposerWebViewInsetsTest'
 ].map((name) => `com.wz.reader.${name}`);
 const reactClasses = [
   'com.facebook.react.modules.fresco.ReactOkHttpNetworkFetcherTest',
   'com.facebook.react.views.swiperefresh.ReactSwipeRefreshLayoutTest',
+  'com.facebook.react.views.image.ReactImageViewEventTest',
   'com.facebook.react.views.text.TextLayoutManagerInlineViewSizeTest',
   'com.facebook.react.views.text.internal.span.CustomLineHeightSpanTest'
 ];
 export const nativeTestTasks = {
+  ':forum-platform:testDebugUnitTest': {
+    args: [],
+    reports: 'modules/forum-platform/android/build/test-results/testDebugUnitTest',
+    classes: [
+      'DiagnosticLogStoreTest',
+      'ManagedCookieResponsesTest',
+      'NetworkProxyRuntimeTest',
+      'SvgRendererPolicyTest',
+      'BackupExportTest',
+      'ImageDownloadTest'
+    ].map((name) => `com.wz.reader.${name}`)
+  },
   ':forum-content-selection:testDebugUnitTest': {
     args: [],
     reports: 'modules/forum-content-selection/android/build/test-results/testDebugUnitTest',
@@ -49,9 +58,14 @@ export const nativeTestTasks = {
     classes: ['expo.modules.filesystem.DownloadResponseTest']
   },
   ':expo-image:testDebugUnitTest': {
-    args: ['--tests', 'expo.modules.image.events.GlideRequestListenerTest'],
+    args: [
+      '--tests',
+      'expo.modules.image.events.GlideRequestListenerTest',
+      '--tests',
+      'expo.modules.image.ExpoImageViewWrapperTest'
+    ],
     reports: 'node_modules/expo-image/android/build/test-results/testDebugUnitTest',
-    classes: ['expo.modules.image.events.GlideRequestListenerTest']
+    classes: ['expo.modules.image.events.GlideRequestListenerTest', 'expo.modules.image.ExpoImageViewWrapperTest']
   }
 };
 
@@ -94,6 +108,19 @@ export function relatedNativeTasks(files) {
         file.startsWith('src/platform/diagnostics/')
     );
   return [
+    ...(shared ||
+    changed.some(
+      (file) =>
+        file.startsWith('modules/forum-platform/') ||
+        file.startsWith('plugins/') ||
+        file.startsWith('src/platform/network/') ||
+        file.startsWith('src/platform/diagnostics/') ||
+        file.startsWith('src/platform/media/') ||
+        file.startsWith('src/platform/storage/backup') ||
+        file === 'src/features/more/useBackupStatusController.ts'
+    )
+      ? [':forum-platform:testDebugUnitTest']
+      : []),
     ...(selection ? [':forum-content-selection:testDebugUnitTest'] : []),
     ...(app ? [':app:testReleaseUnitTest'] : []),
     ...(shared ||
@@ -101,6 +128,7 @@ export function relatedNativeTasks(files) {
       (file) =>
         file.startsWith('patches/react-native+') ||
         file.startsWith('plugins/network/') ||
+        file.startsWith('modules/forum-platform/') ||
         file === 'plugins/withNetworkProxyModule.js' ||
         file.startsWith('src/platform/network/')
     )

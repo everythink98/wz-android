@@ -110,6 +110,19 @@ test('rejects process-global WebView cleanup in tracked Android plugins', () => 
   assert.ok(issues.every((issue) => issue.message.includes('plugins/android/unsafe.kt')));
 });
 
+test('rejects process-global cleanup in local native modules without scanning generated builds', () => {
+  const srcDir = architectureFixture(
+    {},
+    {
+      'modules/forum-platform/android/src/main/java/Unsafe.kt': 'webStorage.deleteAllData();',
+      'modules/forum-platform/android/build/generated/Cache.kt': 'webStorage.deleteAllData();'
+    }
+  );
+  const issues = analyzeArchitecture(srcDir).issues.filter((issue) => issue.code === 'global-webview-state-owner');
+  assert.equal(issues.length, 1);
+  assert.ok(issues[0].message.includes('modules/forum-platform/android/src/main/java/Unsafe.kt'));
+});
+
 test('rejects invalid source roots and barrel files', () => {
   const srcDir = architectureFixture({
     'domain/index.ts': 'export const model = true;',

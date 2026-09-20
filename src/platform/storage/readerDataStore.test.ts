@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEmptyReaderData, MAX_HISTORY_RECORDS, topicKey, type ReaderData } from '@/domain/reader/readerData';
-import type { Topic } from '@/domain/forum/models';
+import type { Topic, UserDetails } from '@/domain/forum/models';
 
 const harness = vi.hoisted(() => ({
   directory: '',
@@ -101,12 +101,141 @@ beforeEach(() => {
   harness.directory = mkdtempSync(join(tmpdir(), 'reader-store-'));
 });
 afterEach(() => {
+  vi.useRealTimers();
   for (const connection of harness.connections) connection.close();
   harness.connections = [];
   rmSync(harness.directory, { recursive: true, force: true });
 });
 
 describe('reader data storage authority', () => {
+  it.each(['exported', 'empty'] as const)(
+    'retains untimed source topics after merging an %s backup and reopening',
+    async (backup) => {
+      // sourceUserRead.test.ts owns the parser contract that missing source dates stay unknown.
+      const profile: UserDetails = {
+        source: 'nodeseek',
+        id: '48872',
+        username: 'alice',
+        url: 'https://www.nodeseek.com/space/48872'
+      };
+      const untimed: Topic = {
+        ...topic,
+        id: '101',
+        url: 'https://www.nodeseek.com/post-101-1',
+        createdAt: '',
+        lastReplyAt: '',
+        replyCount: 0
+      };
+      const store = await reopen();
+      await store.loadReaderState();
+      await store.commitReaderCommand({ type: 'visit', topic: untimed, at });
+      await store.commitReaderCommand({ type: 'favorite', topic: untimed, enabled: true, at });
+      await store.commitReaderCommand({ type: 'follow', user: { ...profile, topics: [untimed] }, enabled: true, at });
+      const json =
+        backup === 'exported' ? await store.exportReaderDataBackup() : JSON.stringify(createEmptyReaderData());
+      if (backup === 'exported') {
+        const exported: ReaderData = JSON.parse(json);
+        expect(exported.favorites['nodeseek:101'].topic.createdAt).toBe('');
+        expect(exported.history['nodeseek:101'].topic.createdAt).toBe('');
+        expect(exported.followedUsers['nodeseek:48872'].user.topics[0].createdAt).toBe('');
+      }
+      await store.importReaderDataBackup(json);
+      expect((await (await reopen()).loadReaderState()).counts).toEqual({ favorites: 1, history: 1, followedUsers: 1 });
+      for (const kind of ['favorites', 'history'] as const) {
+        const row = inspect<{ value: string }>(
+          `SELECT value FROM reader_records WHERE kind='${kind}' AND key='nodeseek:101'`
+        );
+        expect(JSON.parse(row.value)).toMatchObject({ savedAt: at, topic: { createdAt: '', replyCount: 0 } });
+      }
+      const followed = inspect<{ value: string }>(
+        "SELECT value FROM reader_records WHERE kind='followedUsers' AND key='nodeseek:48872'"
+      );
+      expect(JSON.parse(followed.value).user.topics).toMatchObject([{ createdAt: '' }]);
+      expect(await store.readHistoryReplyBaseline('nodeseek:101')).toEqual({ replyCount: 0 });
+    }
+  );
+
+  it('distinguishes missing, zero and known reply baselines without inferring a floor from a count', async () => {
+    const store = await reopen();
+    await store.loadReaderState();
+    expect(await store.readHistoryReplyBaseline(topicKey(topic))).toBeUndefined();
+    await store.commitReaderCommand({ type: 'visit', topic: { ...topic, replyCount: 0 }, at });
+    expect(await store.readHistoryReplyBaseline(topicKey(topic))).toEqual({ replyCount: 0 });
+    await store.commitReaderCommand({ type: 'visit', topic: { ...topic, replyCount: 2, replyWatermark: 7 }, at });
+    expect(await store.readHistoryReplyBaseline(topicKey(topic))).toEqual({ replyCount: 2, replyWatermark: 7 });
+    const backup = await store.exportReaderDataBackup();
+    await store.importReaderDataBackup(backup);
+    expect(await store.readHistoryReplyBaseline(topicKey(topic))).toEqual({ replyCount: 2, replyWatermark: 7 });
+    await store.commitReaderCommand({ type: 'visit', topic: { ...topic, replyCount: undefined }, at });
+    expect(await store.readHistoryReplyBaseline(topicKey(topic))).toEqual({});
+  });
+
+  it('settles a hung legacy settings read after three seconds and ignores its late value', async () => {
+    vi.useFakeTimers();
+    const data = createEmptyReaderData();
+    data.history[topicKey(topic)] = { topic, savedAt: at };
+    seed(data);
+    const storage = (await import('@react-native-async-storage/async-storage')).default;
+    let resolveSettings!: (value: string) => void;
+    vi.mocked(storage.getItem).mockImplementationOnce(async () => JSON.stringify(data));
+    vi.mocked(storage.getItem).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSettings = resolve;
+        })
+    );
+    const store = await reopen();
+    let restored: Awaited<ReturnType<typeof store.loadReaderState>> | undefined;
+    const loading = store.loadReaderState().then((state) => {
+      restored = state;
+    });
+    await vi.advanceTimersByTimeAsync(3_000);
+    try {
+      expect(restored?.counts.history).toBe(1);
+      expect(restored?.settings).toEqual(data.settings);
+    } finally {
+      resolveSettings(JSON.stringify({ ...data.settings, fontScale: 1.8 }));
+      await loading;
+    }
+    expect((await store.loadReaderState()).settings).toEqual(data.settings);
+  });
+
+  it.each(['removeMany', 'getAllKeys'] as const)(
+    'releases committed data when legacy %s hangs without a late database write',
+    async (method) => {
+      vi.useFakeTimers();
+      seed(createEmptyReaderData());
+      const storage = (await import('@react-native-async-storage/async-storage')).default;
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (method === 'removeMany') vi.mocked(storage.removeMany).mockImplementationOnce(() => pending);
+      else
+        vi.mocked(storage.getAllKeys).mockImplementationOnce(async () => {
+          await pending;
+          return [];
+        });
+      const store = await reopen();
+      let restored = false;
+      const loading = store.loadReaderState().then(() => {
+        restored = true;
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      try {
+        expect(restored).toBe(true);
+        expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'cleanup_pending' });
+        await store.commitReaderCommand({ type: 'visit', topic, at });
+      } finally {
+        release();
+        await loading;
+      }
+      expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'cleanup_pending' });
+      expect((await store.loadReaderState()).counts.history).toBe(1);
+      await (await reopen()).loadReaderState();
+      expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'ready' });
+    }
+  );
   it.each(['favorites', 'history', 'followedUsers'] as const)(
     'does not resurrect deleted %s after importing excess markers and reopening',
     async (collection) => {
@@ -202,6 +331,67 @@ describe('reader data storage authority', () => {
     await Promise.all([imported, cleared]);
     expect((await store.loadReaderState()).counts.history).toBe(0);
   });
+
+  it('clears full history with bounded SQL work while retaining the same deletion window after reopen', async () => {
+    const data = createEmptyReaderData();
+    for (let i = 0; i < MAX_HISTORY_RECORDS; i++)
+      data.history[`nodeseek:${i}`] = {
+        topic: { ...topic, id: String(i), url: `https://www.nodeseek.com/post-${i}-1` },
+        savedAt: at
+      };
+    data.favorites['nodeseek:kept'] = {
+      topic: { ...topic, id: 'kept', url: 'https://www.nodeseek.com/post-kept-1' },
+      savedAt: at
+    };
+    seed(data);
+    const store = await reopen();
+    await store.loadReaderState();
+    harness.queries = [];
+    const change = await store.commitReaderCommand({ type: 'clear-history', at });
+    const work = harness.queries.length;
+    expect(change.membership).toHaveLength(MAX_HISTORY_RECORDS);
+    expect(change.counts).toEqual({ history: 0 });
+    const reopened = await reopen();
+    const saved: ReaderData = JSON.parse(await reopened.exportReaderDataBackup());
+    expect(saved.history).toEqual({});
+    expect(saved.favorites).toEqual(data.favorites);
+    const expectedKeys = Object.keys(data.history).sort().slice(0, 1000);
+    expect(Object.keys(saved.deletedRecords.history)).toEqual(expectedKeys);
+    expect(Object.values(saved.deletedRecords.history).every((value) => value === at)).toBe(true);
+    expect(inspect<{ bytes: number }>('SELECT bytes FROM reader_meta').bytes).toBe(
+      Buffer.byteLength(JSON.stringify(saved), 'utf8')
+    );
+    expect(work).toBeLessThan(1000);
+  });
+
+  it('rolls back a failed bulk deletion and preserves duplicate, missing and existing tombstone semantics', async () => {
+    const data = createEmptyReaderData();
+    for (let i = 0; i < 103; i++)
+      data.history[`nodeseek:${i}`] = {
+        topic: { ...topic, id: String(i), url: `https://www.nodeseek.com/post-${i}-1` },
+        savedAt: at
+      };
+    data.deletedRecords.history['nodeseek:1'] = '2026-09-09T00:00:00.000Z';
+    data.deletedRecords.history['nodeseek:2'] = at;
+    seed(data);
+    const store = await reopen();
+    await store.loadReaderState();
+    const keys = ['nodeseek:missing', 'nodeseek:2', ...Object.keys(data.history).reverse(), 'nodeseek:2'];
+    harness.fail = 'INSERT INTO reader_deleted';
+    await expect(store.commitReaderCommand({ type: 'delete', collection: 'history', keys, at })).rejects.toThrow(
+      'injected'
+    );
+    expect(JSON.parse(await (await reopen()).exportReaderDataBackup())).toEqual(data);
+    const current = await reopen();
+    const change = await current.commitReaderCommand({ type: 'delete', collection: 'history', keys, at });
+    expect(change.membership).toHaveLength(103);
+    const saved: ReaderData = JSON.parse(await current.exportReaderDataBackup());
+    expect(saved.history).toEqual({});
+    expect(saved.deletedRecords.history).toEqual(Object.fromEntries(Object.keys(data.history).map((key) => [key, at])));
+    expect(inspect<{ bytes: number }>('SELECT bytes FROM reader_meta').bytes).toBe(
+      Buffer.byteLength(JSON.stringify(saved), 'utf8')
+    );
+  });
   it('completes a visited topic summary without changing its visit count or exporting account reading fields', async () => {
     const store = await reopen();
     await store.loadReaderState();
@@ -234,24 +424,28 @@ describe('reader data storage authority', () => {
     expect(JSON.parse(await store.exportReaderDataBackup())).toEqual(data);
   });
 
-  it('migrates complete records in order, keeps other owners, then never reads legacy keys again', async () => {
-    const data = createEmptyReaderData();
-    data.history[topicKey(topic)] = { topic, savedAt: at, visitCount: 12 };
-    data.favorites[topicKey(topic)] = { topic: { ...topic, title: '独立收藏快照' }, savedAt: '2025-01-01T00:00:00Z' };
-    data.deletedRecords.history['nodeseek:deleted'] = at;
-    seed(data);
-    harness.legacy.set('session-marker', 'preserved');
-    const store = await reopen();
-    const state = await store.loadReaderState();
-    expect(state.history).toEqual({ 'nodeseek:1': true });
-    expect(JSON.parse(await store.exportReaderDataBackup())).toEqual(data);
-    expect([...harness.legacy.keys()]).toEqual(['session-marker']);
-    const storage = (await import('@react-native-async-storage/async-storage')).default;
-    vi.mocked(storage.getItem).mockClear();
-    await (await reopen()).loadReaderState();
-    expect(storage.getItem).not.toHaveBeenCalled();
-    expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'ready' });
-  });
+  it.each(['2026-05-18T11:34:13.000Z', ''])(
+    'migrates complete records with publication date %j and keeps unrelated legacy keys',
+    async (createdAt) => {
+      const data = createEmptyReaderData();
+      const item = { ...topic, createdAt };
+      data.history[topicKey(item)] = { topic: item, savedAt: at, visitCount: 12 };
+      data.favorites[topicKey(item)] = { topic: { ...item, title: '独立收藏快照' }, savedAt: '2025-01-01T00:00:00Z' };
+      data.deletedRecords.history['nodeseek:deleted'] = at;
+      seed(data);
+      harness.legacy.set('session-marker', 'preserved');
+      const store = await reopen();
+      const state = await store.loadReaderState();
+      expect(state.history).toEqual({ 'nodeseek:1': true });
+      expect(JSON.parse(await store.exportReaderDataBackup())).toEqual(data);
+      expect([...harness.legacy.keys()]).toEqual(['session-marker']);
+      const storage = (await import('@react-native-async-storage/async-storage')).default;
+      vi.mocked(storage.getItem).mockClear();
+      await (await reopen()).loadReaderState();
+      expect(storage.getItem).not.toHaveBeenCalled();
+      expect(inspect('SELECT status FROM reader_meta')).toEqual({ status: 'ready' });
+    }
+  );
 
   it('rolls back a failed migration and retains both legacy keys for retry', async () => {
     const data = createEmptyReaderData();
@@ -365,6 +559,110 @@ describe('reader data storage authority', () => {
     expect(Object.keys(final.history)).toHaveLength(2);
     expect(final.favorites).toEqual({});
     expect(final.deletedRecords.favorites['nodeseek:3']).toBe(at);
+  });
+
+  it('persists sanitized backup records and merges local data, settings and identity deletion markers', async () => {
+    const local = createEmptyReaderData();
+    local.history[topicKey(topic)] = { topic, savedAt: at };
+    const ids = ['sidney', 'session-user', 'proxy-reader', 'token-owner'];
+    for (const id of ids) {
+      local.followedUsers[`v2ex:${id}`] = {
+        user: { source: 'v2ex', id, username: id, url: `https://www.v2ex.com/member/${id}`, topics: [] },
+        followedAt: '2026-01-01T00:00:00.000Z'
+      };
+    }
+    seed(local);
+    const store = await reopen();
+    await store.loadReaderState();
+    const unsafeTopic = {
+      ...topic,
+      id: '42',
+      authorId: '7',
+      url: 'https://user:pass@www.nodeseek.com/post-42-9?unknown_credential=fake-topic#reply',
+      authorUrl: 'https://user:pass@www.nodeseek.com/space/7?unknown_credential=fake-author#profile',
+      authorAvatar: 'https://user:pass@cdn.example.com/avatar.png?X-Amz-Signature=fake-amz#profile',
+      authorization: 'fake-authorization'
+    };
+    const incoming = {
+      ...createEmptyReaderData(),
+      favorites: {
+        'nodeseek:42': { topic: unsafeTopic, savedAt: at },
+        'linuxdo:1': {
+          topic: { ...topic, source: 'linuxdo', url: 'https://linux.do/t/slug/1?session=fake-session&safe=1' },
+          savedAt: at
+        }
+      },
+      followedUsers: {
+        'linuxdo:88': {
+          user: {
+            source: 'linuxdo',
+            id: '88',
+            username: 'alice',
+            url: 'https://user:pass@linux.do/u/wrong?unknown_credential=fake-profile#profile',
+            avatar: 'https://user:pass@cdn.example.com/user.png?Signature=fake-user#profile',
+            topics: []
+          },
+          followedAt: at
+        }
+      },
+      deletedRecords: {
+        ...createEmptyReaderData().deletedRecords,
+        followedUsers: Object.fromEntries(ids.map((id) => [`v2ex:${id}`, at])),
+        subscriptions: { 'v2ex:create': at }
+      },
+      settings: {
+        theme: 'dark',
+        contentSources: [{ source: 'linuxdo', enabled: false }],
+        token: 'fake-token',
+        trackedKeywords: ['linux'],
+        blockedKeywords: ['广告'],
+        blockedUsers: ['spammer'],
+        blockedCategories: ['v2ex:create']
+      },
+      subscriptions: { 'v2ex:create': { source: 'v2ex', id: 'create' } },
+      secret: 'fake-secret'
+    };
+    await store.importReaderDataBackup(JSON.stringify(incoming));
+    const restored = await reopen();
+    expect((await restored.loadReaderState()).counts).toEqual({ favorites: 2, history: 1, followedUsers: 1 });
+    const { readReaderSnapshot } = await import('./readerDatabase');
+    const { openDatabaseAsync } = await import('expo-sqlite');
+    const db = await openDatabaseAsync('reader-data.db');
+    const saved = await readReaderSnapshot(db);
+    await db.closeAsync();
+
+    expect(saved.history).toEqual(local.history);
+    expect(saved.favorites['nodeseek:42'].topic).toMatchObject({
+      url: 'https://www.nodeseek.com/post-42-1',
+      authorUrl: 'https://www.nodeseek.com/space/7',
+      authorAvatar: 'https://cdn.example.com/avatar.png'
+    });
+    expect(saved.favorites['linuxdo:1'].topic.url).toBe('https://linux.do/t/1');
+    expect(saved.followedUsers['linuxdo:88'].user).toMatchObject({
+      url: 'https://linux.do/u/alice',
+      avatar: 'https://cdn.example.com/user.png'
+    });
+    expect(saved.deletedRecords.followedUsers).toEqual(incoming.deletedRecords.followedUsers);
+    expect(saved.settings).toEqual({
+      ...local.settings,
+      theme: 'dark',
+      contentSources: [
+        { source: 'linuxdo', enabled: false },
+        { source: 'v2ex', enabled: true },
+        { source: 'nodeseek', enabled: true },
+        { source: 'yaohuo', enabled: true }
+      ]
+    });
+    expect(JSON.stringify(saved)).not.toMatch(/fake-|authorization|subscriptions/);
+  });
+
+  it.each(['{broken', '{"version":1}'])('rejects invalid backup %s without changing committed data', async (json) => {
+    const store = await reopen();
+    await store.loadReaderState();
+    await store.commitReaderCommand({ type: 'favorite', topic, enabled: true, at });
+    const before = await store.exportReaderDataBackup();
+    await expect(async () => store.importReaderDataBackup(json)).rejects.toThrow();
+    expect(await (await reopen()).exportReaderDataBackup()).toBe(before);
   });
 
   it('rolls back a failed bulk backup import before applying later queued writes', async () => {

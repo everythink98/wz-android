@@ -1023,8 +1023,10 @@ describe('Search state', () => {
     dismissKeyboard.mockRestore();
   });
 
-  it('ends an empty source search without a pagination sentinel', async () => {
-    const view = await renderSearchScreen({
+  it('continues an empty source page only on request and stops at the terminal page', async () => {
+    const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
+    const props = createSearchScreenProps({
+      onLoadMoreSearchSource,
       searchSource: 'nodeseek',
       searchGroups: [
         {
@@ -1036,9 +1038,43 @@ describe('Search state', () => {
         }
       ]
     });
+    const view = await render(<SearchScreen {...props} />);
 
     expect(view.getByText('NodeSeek 没有匹配结果')).toBeTruthy();
     expect(view.queryByText('继续下滑加载更多 NodeSeek')).toBeNull();
+    expect(onLoadMoreSearchSource).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByRole('button', { name: '继续搜索 NodeSeek' }));
+    expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(1);
+    expect(onLoadMoreSearchSource).toHaveBeenLastCalledWith('nodeseek', 2);
+
+    await view.rerender(<SearchScreen {...props} searchGroups={[{ ...props.searchGroups[0], loadingMore: true }]} />);
+    expect(view.getByRole('button', { name: '继续搜索 NodeSeek' }).props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByRole('button', { name: '继续搜索 NodeSeek' }));
+    expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(1);
+
+    await view.rerender(
+      <SearchScreen {...props} searchGroups={[{ ...props.searchGroups[0], hasMore: false, nextPage: null }]} />
+    );
+    expect(view.getByText('NodeSeek 没有匹配结果')).toBeTruthy();
+    expect(view.queryByRole('button', { name: '继续搜索 NodeSeek' })).toBeNull();
+  });
+
+  it('opens an empty overview source with a next page but disables a terminal empty source', async () => {
+    const onSearchSourceChange = jest.fn<(source: FeedSource) => void>();
+    const view = await renderSearchScreen({
+      onSearchSourceChange,
+      searchGroups: [
+        { source: 'v2ex', label: 'V2EX', items: [], hasMore: true, nextPage: 2 },
+        { source: 'nodeseek', label: 'NodeSeek', items: [], hasMore: false, nextPage: null }
+      ]
+    });
+    expect(view.queryByRole('button', { name: '继续搜索 V2EX' })).toBeNull();
+    expect(view.getByLabelText('查看 V2EX 全部搜索结果').props.accessibilityState.disabled).toBe(false);
+    await fireEvent.press(view.getByLabelText('查看 V2EX 全部搜索结果'));
+    expect(onSearchSourceChange).toHaveBeenCalledWith('v2ex');
+    expect(view.getByLabelText('查看 NodeSeek 全部搜索结果').props.accessibilityState.disabled).toBe(true);
+    await fireEvent.press(view.getByLabelText('查看 NodeSeek 全部搜索结果'));
+    expect(onSearchSourceChange).toHaveBeenCalledTimes(1);
   });
 
   it('loads the active source after a user scroll and never from initial render', async () => {

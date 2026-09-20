@@ -6,7 +6,7 @@ import { useForumCatalogRuntime } from '@/app/useForumCatalogRuntime';
 import { createEmptyReaderData, topicKey } from '@/domain/reader/readerData';
 import { canonicalEnabledSourcesKey, projectContentSourcePreferences } from '@/domain/reader/contentSourcePreferences';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
-import type { ReadGateway } from '@/sources/readGateway';
+import { createReadGateway, type ReadGateway } from '@/sources/readGateway';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
 import { initialForumSessionEpochs, type ForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import { resetForumSourceQueries } from '@/features/account/sessionQueryOwnership';
@@ -125,6 +125,88 @@ describe('Feed controller sessions', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+  });
+
+  it('finishes readable aggregate pages and restores a blocked source only after its real session changes', async () => {
+    const enabledSources: Source[] = ['linuxdo', 'yaohuo'];
+    const readerData = readerDataWithEnabledSources(enabledSources);
+    let authenticated = false;
+    let sessionEpochs = initialForumSessionEpochs;
+    const fetcher = jest.fn(async (url: string) => {
+      if (url.includes('linux.do')) {
+        return Response.json({
+          topic_list: {
+            topics: [
+              { id: 1, title: 'public topic', slug: 'public', created_at: '2026-09-20T00:00:00Z', posts_count: 1 }
+            ]
+          }
+        });
+      }
+      if (url.includes('yaohuo.me')) {
+        return new Response('<div class="listdata"><a href="/bbs-2.html">authenticated topic</a></div>');
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => enabledSources,
+      nodeSeekUserAgent: () => 'test',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        sourceEnabled: enabledSources.includes(source),
+        authenticated: source === 'yaohuo' && authenticated,
+        authSurfaceOpen: false,
+        identityKey: `${source}:${authenticated ? 'confirmed' : 'anonymous'}`,
+        identityTrust: source === 'yaohuo' && authenticated ? 'confirmed' : 'none',
+        sessionEpoch: sessionEpochs[source]
+      })
+    });
+    const hook = await renderHook(() =>
+      useFeedController({
+        active: true,
+        readerData,
+        readerDataLoaded: true,
+        enabledSources,
+        enabledSourcesKey: canonicalEnabledSourcesKey(readerData.settings.contentSources),
+        catalogCategories: [],
+        sessionEpochs,
+        linuxDoVerificationActive: false,
+        notify: jest.fn(),
+        showLinuxDoVerification: jest.fn(),
+        showNodeSeekVerification: jest.fn(),
+        showYaohuoLogin: jest.fn(),
+        readGateway: gateway
+      })
+    );
+    const identities = () => hook.result.current.activeFeedState.items.map((topic) => `${topic.source}:${topic.id}`);
+    await waitFor(() => expect(identities()).toEqual(['linuxdo:1']));
+    expect(hook.result.current.activeFeedState.hasMore).toBe(false);
+    await act(async () => {
+      await hook.result.current.loadFeed();
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      authenticated = true;
+      sessionEpochs = { ...sessionEpochs, yaohuo: sessionEpochs.yaohuo + 1 };
+      hook.rerender({});
+    });
+    await waitFor(() => expect(identities()).toEqual(expect.arrayContaining(['linuxdo:1', 'yaohuo:2'])));
+    expect(identities()).toHaveLength(2);
+    expect(hook.result.current.activeFeedState.hasMore).toBe(false);
+    expect(fetcher.mock.calls.filter(([url]) => url.includes('yaohuo.me'))).toHaveLength(1);
+
+    await act(async () => {
+      authenticated = false;
+      sessionEpochs = { ...sessionEpochs, yaohuo: sessionEpochs.yaohuo + 1 };
+      hook.rerender({});
+    });
+    await waitFor(() => expect(hook.result.current.feedBusy).toBe(false));
+    await waitFor(() => expect(identities()).toEqual(['linuxdo:1']));
+    expect(hook.result.current.activeFeedState.hasMore).toBe(false);
+    expect(fetcher.mock.calls.filter(([url]) => url.includes('yaohuo.me'))).toHaveLength(1);
+    await hook.unmount();
   });
 
   it.each(['success', 'failure'] as const)(

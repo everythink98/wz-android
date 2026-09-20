@@ -9,7 +9,7 @@ import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '@/domain/forum/s
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
 import type { SiteSessionViewModels } from '@/domain/session/siteSessionState';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
-import type { ReadGateway } from '@/sources/readGateway';
+import { createReadGateway, type ReadGateway } from '@/sources/readGateway';
 import type { SearchResponse, Source, Topic } from '@/domain/forum/models';
 import { aggregateSearchSources, isSessionSource, type SessionSource } from '@/domain/forum/sourceCatalog';
 import { resolveForumReadPlan, type ForumReadOperation } from '@/domain/forum/readPlan';
@@ -951,6 +951,95 @@ describe('linux.do AI search controller', () => {
       );
     }
   });
+
+  it.each([false, true])(
+    'keeps all matching HTTP search results through paging (empty first page: %s)',
+    async (emptyFirstPage) => {
+      const hits = Array.from({ length: 110 }, (_, index) => ({
+        _source: {
+          id: index + 1,
+          title: (emptyFirstPage && index < 30) || index % 7 === 0 ? 'keep excluded' : 'keep match',
+          member: 'alice',
+          created: '2026-09-01T00:00:00.000Z',
+          replies: 0
+        }
+      }));
+      const fetcher = jest.fn(async (input: string) => {
+        const url = new URL(input);
+        const from = Number(url.searchParams.get('from'));
+        const size = Number(url.searchParams.get('size'));
+        // SOV2EX API.md and server validateParams cap one response at 50 results.
+        if (size > 50) return Response.json({ message: 'too large size' }, { status: 400 });
+        return Response.json({ hits: hits.slice(from, from + size), total: hits.length });
+      });
+      const gateway = createReadGateway({
+        fetcher,
+        anonymousFetcher: fetcher,
+        getEnabledSources: () => ['v2ex'],
+        nodeSeekUserAgent: () => 'fixture',
+        readSessionRuntimeSnapshot: (source) => ({
+          source,
+          authenticated: false,
+          authSurfaceOpen: false,
+          identityKey: `${source}:anonymous`,
+          identityTrust: 'none',
+          sessionEpoch: 0,
+          sourceEnabled: false
+        })
+      });
+      const hook = await renderSearchController(
+        gateway,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () => ['v2ex']
+      );
+      try {
+        await act(async () => {
+          await hook.result.current.runSearch({ query: 'keep -excluded', source: 'all' });
+        });
+        await waitFor(() => expect(hook.result.current.searchGroups[0]?.loading).toBe(false));
+        expect(hook.result.current.searchGroups[0]?.error).toBeUndefined();
+        if (emptyFirstPage) {
+          expect(hook.result.current.searchGroups[0]).toMatchObject({ items: [], hasMore: true, nextPage: 2 });
+        } else {
+          expect(hook.result.current.searchGroups[0]?.items.length).toBeGreaterThan(0);
+        }
+        const previewItems = hook.result.current.searchGroups[0].items;
+        const previewRequests = fetcher.mock.calls.length;
+        expect(previewRequests).toBe(1);
+        await act(async () => hook.result.current.setSearchSource('v2ex'));
+        await waitFor(() => expect(hook.result.current.searchSource).toBe('v2ex'));
+        expect(hook.result.current.searchGroups[0].items).toEqual(previewItems);
+        expect(fetcher).toHaveBeenCalledTimes(previewRequests);
+
+        for (let request = 0; request < hits.length + 1; request += 1) {
+          const group = hook.result.current.searchGroups[0];
+          if (!group.hasMore) break;
+          expect(group.nextPage).toEqual(expect.any(Number));
+          const previousIds = group.items.map(({ id }) => id);
+          const previousRequests = fetcher.mock.calls.length;
+          await act(async () => {
+            await hook.result.current.loadMoreSearchSource('v2ex', group.nextPage!);
+          });
+          await waitFor(() => expect(hook.result.current.searchGroups[0]?.nextPage).not.toBe(group.nextPage));
+          expect(fetcher).toHaveBeenCalledTimes(previousRequests + 1);
+          expect(hook.result.current.searchGroups[0].items.slice(0, previousIds.length).map(({ id }) => id)).toEqual(
+            previousIds
+          );
+        }
+        expect(hook.result.current.searchGroups[0].hasMore).toBe(false);
+        expect(hook.result.current.searchGroups[0].items.map(({ id }) => id)).toEqual(
+          hits.filter(({ _source: hit }) => !hit.title.includes('excluded')).map(({ _source: hit }) => String(hit.id))
+        );
+      } finally {
+        await hook.unmount();
+      }
+    }
+  );
 
   it('reuses a settled aggregate first page when opening the matching paged source', async () => {
     const v2exTopics: Topic[] = [1, 2, 3].map((id) => ({

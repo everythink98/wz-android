@@ -2,6 +2,7 @@ import { resolveLinuxDoUpload } from '@/sources/linuxdo/uploadUrls';
 import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification, NotificationDetail, NotificationPage } from '@/domain/notifications/models';
+import { notificationPageError } from '@/domain/notifications/notificationQuality';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -36,11 +37,8 @@ import { rejectUnauthorizedResponse, withFetchGuard, withRequestBeforeSend } fro
 export type NotificationAccessReader = (
   source: NotificationSource
 ) => NotificationAdapterAccess | Promise<NotificationAdapterAccess>;
-export type NotificationSourceAllowed = (source: NotificationSource) => boolean | Promise<boolean>;
-export type NotificationPrivateAccessAllowed = (
-  source: NotificationSource,
-  identityKey: string
-) => boolean | Promise<boolean>;
+export type NotificationSourceAllowed = (source: NotificationSource) => boolean;
+export type NotificationPrivateAccessAllowed = (source: NotificationSource, identityKey: string) => boolean;
 
 interface NotificationBatchResult {
   items: ForumNotification[];
@@ -48,6 +46,7 @@ interface NotificationBatchResult {
 }
 
 interface NotificationBatchPage extends NotificationBatchResult {
+  qualities: Partial<Record<NotificationSource, NotificationPage['quality']>>;
   nextCursors: Partial<Record<NotificationSource, string | null>>;
   hasMore: boolean;
 }
@@ -154,22 +153,20 @@ export function createNotificationGateway({
   requestSessionEpoch?: (source: NotificationSource) => number;
   sourceAllowed: NotificationSourceAllowed;
 }) {
-  const assertSourceAllowed = async (source: NotificationSource) => {
-    if (await sourceAllowed(source)) return;
+  const assertSourceAllowed = (source: NotificationSource) => {
+    if (sourceAllowed(source)) return;
     throw Object.assign(new Error('内容源已停用'), { reason: 'source-disabled', source });
   };
-  const assertPrivateAccessCurrent = async (source: NotificationSource, identityKey: string, signal?: AbortSignal) => {
+  const assertPrivateAccessCurrent = (source: NotificationSource, identityKey: string, signal?: AbortSignal) => {
     assertNotAborted(signal);
-    await assertSourceAllowed(source);
-    if (!(await privateAccessAllowed(source, identityKey))) {
+    assertSourceAllowed(source);
+    if (!privateAccessAllowed(source, identityKey)) {
       throw Object.assign(new Error('账号状态已变化'), {
         loginRequired: true,
         reason: 'private-access-stale',
         source
       });
     }
-    await assertSourceAllowed(source);
-    assertNotAborted(signal);
   };
   const accessFor = async (
     source: NotificationSource,
@@ -178,8 +175,8 @@ export function createNotificationGateway({
     expectedIdentityKey?: string
   ) => {
     assertNotAborted(signal);
-    await assertSourceAllowed(source);
-    if (expectedIdentityKey) await assertPrivateAccessCurrent(source, expectedIdentityKey, signal);
+    assertSourceAllowed(source);
+    if (expectedIdentityKey) assertPrivateAccessCurrent(source, expectedIdentityKey, signal);
     const access = assertConfirmedAccess(source, await readAccess(source));
     if (expectedIdentityKey && access.identityKey !== expectedIdentityKey) {
       throw Object.assign(new Error('账号状态已变化'), {
@@ -188,18 +185,19 @@ export function createNotificationGateway({
         source
       });
     }
-    await assertPrivateAccessCurrent(source, access.identityKey, signal);
-    const assertCurrent = async () => {
-      await assertPrivateAccessCurrent(source, access.identityKey, signal);
-    };
+    const assertCurrent = () => assertPrivateAccessCurrent(source, access.identityKey, signal);
+    assertCurrent();
     return {
       ...access,
       fetcher: withFetchGuard(
         withDiagnosticFetcher(
           trace,
-          source === 'nodeseek' && trace.operation === 'notification-upload'
-            ? access.fetcher || fetch
-            : rejectUnauthorizedResponse(access.fetcher || fetch)
+          withRequestBeforeSend(
+            source === 'nodeseek' && trace.operation === 'notification-upload'
+              ? access.fetcher || fetch
+              : rejectUnauthorizedResponse(access.fetcher || fetch),
+            assertCurrent
+          )
         ),
         assertCurrent
       ),
@@ -224,7 +222,7 @@ export function createNotificationGateway({
       }
       throw error;
     }
-    await assertPrivateAccessCurrent(source, access.identityKey, signal);
+    assertPrivateAccessCurrent(source, access.identityKey, signal);
     return result;
   };
 
@@ -253,17 +251,21 @@ export function createNotificationGateway({
           });
           const hasMore = page.hasMore && Boolean(page.cursor) && page.cursor !== options.cursor;
           const summary = sourceDiagnosticSummary(page);
-          return annotateSourceDiagnosticSummary(hasMore ? page : { ...page, cursor: null, hasMore: false }, {
-            parserVariant:
-              source === 'nodeseek'
-                ? 'nodeseek-notifications'
-                : source === 'linuxdo'
-                  ? 'discourse-notifications'
-                  : 'yaohuo-notifications',
-            ...summary,
-            hasRepeatedCursor: Boolean(page.hasMore && page.cursor && page.cursor === options.cursor),
-            hasDegradation: summary?.hasDegradation || (page.hasMore && !hasMore)
-          });
+          const quality = page.hasMore && !hasMore && page.quality === 'complete' ? 'partial' : page.quality;
+          return annotateSourceDiagnosticSummary(
+            { ...page, quality, cursor: hasMore ? page.cursor : null, hasMore },
+            {
+              parserVariant:
+                source === 'nodeseek'
+                  ? 'nodeseek-notifications'
+                  : source === 'linuxdo'
+                    ? 'discourse-notifications'
+                    : 'yaohuo-notifications',
+              ...summary,
+              hasRepeatedCursor: Boolean(page.hasMore && page.cursor && page.cursor === options.cursor),
+              hasDegradation: summary?.hasDegradation || (page.hasMore && !hasMore)
+            }
+          );
         }),
       (page) => ({ itemCount: page.items.length, hasMore: page.hasMore, hasNextCursor: Boolean(page.cursor) })
     );
@@ -303,13 +305,21 @@ export function createNotificationGateway({
       );
       const pages: Partial<Record<NotificationSource, NotificationPage>> = {};
       const errors: NotificationBatchResult['errors'] = {};
-      const nextCursors: NotificationBatchPage['nextCursors'] = {};
+      const nextCursors: NotificationBatchPage['nextCursors'] = Object.fromEntries(
+        options.sources.map((source) => [source, null])
+      );
+      const qualities: NotificationBatchPage['qualities'] = {};
       settled.forEach((result, index) => {
         const source = sources[index]!;
         if (result.status === 'fulfilled') {
-          pages[source] = result.value;
+          qualities[source] = result.value.quality;
+          if (result.value.quality !== 'invalid') pages[source] = result.value;
+          const error = notificationPageError(result.value.quality);
+          if (error) errors[source] = sourceErrorFromUnknown(source, error);
           nextCursors[source] = result.value.hasMore ? result.value.cursor : null;
+          if (error) nextCursors[source] = null;
         } else {
+          qualities[source] = 'invalid';
           errors[source] = sourceErrorFromUnknown(source, result.reason);
           nextCursors[source] = null;
         }
@@ -317,6 +327,7 @@ export function createNotificationGateway({
       return {
         items: sources.flatMap((source) => pages[source]?.items || []),
         errors,
+        qualities,
         nextCursors,
         hasMore: Object.values(nextCursors).some((cursor) => cursor !== null)
       };

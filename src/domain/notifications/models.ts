@@ -38,6 +38,7 @@ export interface ForumNotification {
 }
 
 export interface NotificationPage {
+  quality: 'complete' | 'partial' | 'invalid';
   items: ForumNotification[];
   cursor: string | null;
   hasMore: boolean;

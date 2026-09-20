@@ -27,6 +27,7 @@ describe('NodeSeek notifications', () => {
       fetcher: async () => json({ msgArray: [{ id: 1, sender_id: 9, receiver_id: 7, viewed: true }, {}] })
     });
     expect(page.items).toEqual([]);
+    expect(page.quality).toBe('partial');
     expect(sourceDiagnosticSummary(page)).toMatchObject({
       candidateCount: 2,
       validCount: 1,
@@ -42,6 +43,24 @@ describe('NodeSeek notifications', () => {
       fetcher: async () => json({ msgArray: [{}] })
     });
     expect(sourceDiagnosticSummary(invalid)).toMatchObject({ isParseEmpty: true, isExpectedEmpty: false });
+    expect(invalid.quality).toBe('invalid');
+  });
+
+  it('does not turn missing unread counters into a trustworthy zero', async () => {
+    await expect(
+      nodeSeekNotificationAdapter.readUnreadSnapshot({
+        identityKey: 'nodeseek:7',
+        userId: '7',
+        fetcher: async () => json({ success: true, atMe: 0 })
+      })
+    ).rejects.toThrow();
+    await expect(
+      nodeSeekNotificationAdapter.readUnreadSnapshot({
+        identityKey: 'nodeseek:7',
+        userId: '7',
+        fetcher: async () => json({ atMe: 0, reply: 0, message: 0 })
+      })
+    ).resolves.toMatchObject({ total: 0 });
   });
   it('exposes the categories shown by the current NodeSeek site', async () => {
     await expect(
@@ -180,6 +199,113 @@ describe('NodeSeek notifications', () => {
     });
 
     expect(page.items).toEqual([expect.objectContaining({ id: 'message:21', kind: 'private-message', unread: false })]);
+  });
+
+  it.each(['messages', 'all'])(
+    'reads max_id conversation rows as a complete %s page without same-time collisions',
+    async (categoryId) => {
+      // Sanitized current /message/list shape: max_id is the site's latestMsg.id; no row id is present.
+      const rows = [101, 102, 103, 104].map((max_id, index) => ({
+        receiver_id: index === 1 ? 10 : 7,
+        sender_id: index === 1 ? 7 : 9 + index,
+        max_id,
+        content: '脱敏消息',
+        created_at: '2026-09-19T10:00:00Z',
+        viewed: index === 2 ? 1 : 0,
+        sender_name: '发送方',
+        receiver_name: '接收方'
+      }));
+      const page = await nodeSeekNotificationAdapter.listPage({
+        categoryId,
+        identityKey: 'nodeseek:7',
+        userId: '7',
+        fetcher: async (input) =>
+          json(
+            new URL(input).pathname.endsWith('/message/list')
+              ? { success: true, msgArray: rows }
+              : { success: true, data: [] }
+          )
+      });
+
+      expect(page.quality).toBe('complete');
+      expect(page.items.map((item) => item.id)).toEqual(['message:101', 'message:102', 'message:103', 'message:104']);
+      expect(page.items.map((item) => item.unread)).toEqual([true, false, false, true]);
+      expect(page.items.map((item) => item.target)).toEqual(
+        ['9', '10', '11', '12'].map((conversationId) => ({ type: 'private-conversation', conversationId }))
+      );
+      expect(sourceDiagnosticSummary(page)).toMatchObject({
+        candidateCount: 4,
+        validCount: 4,
+        droppedCount: 0,
+        hasDegradation: false
+      });
+      expect(page.items.every((item) => item.remoteReadId === undefined)).toBe(true);
+    }
+  );
+
+  it('keeps max_id delivery identity across rereads and changed time or content, and changes it for a newer message', async () => {
+    const load = (max_id: number, created_at: string, content: string) =>
+      nodeSeekNotificationAdapter.listPage({
+        categoryId: 'messages',
+        identityKey: 'nodeseek:7',
+        userId: '7',
+        fetcher: async () =>
+          json({ success: true, msgArray: [{ receiver_id: 7, sender_id: 9, max_id, created_at, content, viewed: 0 }] })
+      });
+    const first = await load(101, '2026-09-19T10:00:00Z', '原文');
+    const repeated = await load(101, '2026-09-19T10:00:00Z', '原文');
+    const changed = await load(101, '2026-09-19T11:00:00Z', '编辑后的正文');
+    const newer = await load(102, '2026-09-19T11:00:00Z', '编辑后的正文');
+
+    expect([first, repeated, changed, newer].map((page) => page.items[0]?.id)).toEqual([
+      'message:101',
+      'message:101',
+      'message:101',
+      'message:102'
+    ]);
+    expect([first, repeated, changed, newer].every((page) => page.quality === 'complete')).toBe(true);
+
+    const fetcher = vi.fn(async () => json({ success: true }));
+    await nodeSeekNotificationAdapter.markRead(
+      first.items[0]!,
+      { notification: first.items[0]!, title: '脱敏会话', unreadMessageIds: ['88', '89'] },
+      { identityKey: 'nodeseek:7', userId: '7', fetcher }
+    );
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/api/notification/message/markViewed',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ messages: [88, 89] }) })
+    );
+  });
+
+  it.each([undefined, null, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '', 'not-an-id', true, {}, []])(
+    'keeps a missing or invalid max_id %j behind the partial fallback guard',
+    async (max_id) => {
+      const page = await nodeSeekNotificationAdapter.listPage({
+        categoryId: 'messages',
+        identityKey: 'nodeseek:7',
+        userId: '7',
+        fetcher: async () =>
+          json({ msgArray: [{ max_id, sender_id: 9, receiver_id: 7, created_at: '2026-09-19T10:00:00Z' }] })
+      });
+      expect(page.quality).toBe('partial');
+      expect(page.items[0]?.id).toMatch(/^message:fallback:/);
+      expect(sourceDiagnosticSummary(page)).toMatchObject({ hasDegradation: true });
+    }
+  );
+
+  it('does not use private-message max_id as the identity of mentions or replies', async () => {
+    const page = await nodeSeekNotificationAdapter.listPage({
+      identityKey: 'nodeseek:7',
+      userId: '7',
+      fetcher: async (input) =>
+        json(
+          new URL(input).pathname.endsWith('/message/list')
+            ? { msgArray: [] }
+            : { data: [{ max_id: 999, post_id: 101 }] }
+        )
+    });
+    expect(page.quality).toBe('invalid');
+    expect(page.items).toEqual([]);
   });
 
   it('uses comment_id for delivery identity and the row id for mark-read', async () => {

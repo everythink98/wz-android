@@ -80,14 +80,16 @@ const sourceSchema = z.enum(sourceValues as [Source, ...Source[]]);
 const storedStringSchema = z.string().max(MAX_READER_STRING_LENGTH);
 const requiredStoredStringSchema = storedStringSchema.min(1);
 const dateStringSchema = storedStringSchema.refine((value) => dateValue(value) > 0);
+// Source publication times may be unknown; local operation times must remain valid.
+const topicDateSchema = z.union([dateStringSchema, z.literal('')]);
 const topicShapeSchema = z
   .object({
     source: sourceSchema,
     id: requiredStoredStringSchema,
     title: requiredStoredStringSchema,
     url: requiredStoredStringSchema,
-    createdAt: dateStringSchema,
-    lastReplyAt: dateStringSchema.optional()
+    createdAt: topicDateSchema,
+    lastReplyAt: topicDateSchema.optional()
   })
   .loose();
 const userProfileShapeSchema = z
@@ -276,6 +278,9 @@ export function topicSummary(topic: Topic): Topic {
     createdAt: cleanString(topic.createdAt),
     lastReplyAt: cleanOptionalString(topic.lastReplyAt),
     replyCount: topic.replyCount === undefined ? undefined : cleanNonNegativeInteger(topic.replyCount),
+    ...(topic.source !== 'linuxdo' && Number.isSafeInteger(topic.replyWatermark) && topic.replyWatermark! >= 0
+      ? { replyWatermark: topic.replyWatermark }
+      : {}),
     viewCount: cleanOptionalNonNegativeInteger(topic.viewCount),
     excerpt: cleanOptionalString(topic.excerpt),
     ...(topic.source === 'linuxdo' && topic.isPrivateMessage === true ? { isPrivateMessage: true } : {}),

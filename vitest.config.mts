@@ -8,7 +8,7 @@ export default defineConfig({
     }
   },
   test: {
-    environment: 'jsdom',
+    environment: 'node',
     pool: 'forks',
     maxWorkers: 2,
     server: {

@@ -89,7 +89,6 @@ export function parseYaohuoUserRepliesDocument(
 ): UserReplyActivity[] {
   const author = username || id;
   const seen = new Set<string>();
-  const seenTopicDates = new Set<string>();
   const replyRows = root.querySelectorAll('div.listdata, div.line1, div.line2');
   const rows = replyRows.length ? replyRows : root.querySelectorAll('div');
   const replies = rows
@@ -108,7 +107,7 @@ export function parseYaohuoUserRepliesDocument(
       const floor = parsePositiveInteger(text.match(/#\s*(\d+)/)?.[1]);
       const createdAt = parseYaohuoDate(dateText || text);
       const topicTitle = /^查看$/.test(elementText(viewLink)) ? '查看原帖' : elementText(viewLink) || '查看原帖';
-      let excerpt = text
+      const contentText = text
         .replace(dateText, ' ')
         .replace(new RegExp(`^\\s*${author.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'i'), ' ')
         .replace(new RegExp(`\\(${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), ' ')
@@ -116,21 +115,16 @@ export function parseYaohuoUserRepliesDocument(
         .replace(/查看/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-      excerpt = textExcerpt(excerpt);
-      const replyIdentity =
-        floor || createdAt
-          ? [topicId, floor || '', createdAt || ''].join(':')
-          : excerpt
-            ? `${topicId}:${excerpt}`
-            : `${topicId}:row:${index}`;
-      const topicDateIdentity = createdAt ? `${topicId}:${createdAt}` : '';
-      if (seen.has(replyIdentity) || (!floor && topicDateIdentity && seenTopicDates.has(topicDateIdentity))) {
+      const excerpt = textExcerpt(contentText);
+      const replyIdentity = floor
+        ? [topicId, floor, createdAt || ''].join(':')
+        : contentText || createdAt
+          ? [topicId, '', createdAt || '', contentText].join(':')
+          : `${topicId}:row:${index}`;
+      if (seen.has(replyIdentity)) {
         return null;
       }
       seen.add(replyIdentity);
-      if (topicDateIdentity) {
-        seenTopicDates.add(topicDateIdentity);
-      }
       return {
         source: 'yaohuo' as const,
         id: replyIdentity,
@@ -150,15 +144,27 @@ export function parseYaohuoUserRepliesDocument(
       };
     })
     .filter(Boolean) as UserReplyActivity[];
+  const populatedTopicDates = new Set(
+    replies.flatMap((reply) =>
+      reply.createdAt && (reply.floor || reply.excerpt) ? [`${reply.topicId}:${reply.createdAt}`] : []
+    )
+  );
+  const items = replies.filter(
+    (reply) =>
+      reply.floor ||
+      reply.excerpt ||
+      !reply.createdAt ||
+      !populatedTopicDates.has(`${reply.topicId}:${reply.createdAt}`)
+  );
   const candidateCount = rows.filter(
     (row) => row.querySelectorAll('a[href*="/bbs-"], a[href*="book_view"]').length === 1
   ).length;
-  return annotateSourceDiagnosticSummary(replies, {
+  return annotateSourceDiagnosticSummary(items, {
     parserVariant: 'html-user-replies',
     candidateCount,
-    validCount: replies.length,
-    droppedCount: Math.max(0, candidateCount - replies.length),
-    missingFloorCount: replies.filter((reply) => !reply.floor).length,
+    validCount: items.length,
+    droppedCount: Math.max(0, candidateCount - items.length),
+    missingFloorCount: items.filter((reply) => !reply.floor).length,
     isExpectedEmpty: candidateCount === 0
   });
 }

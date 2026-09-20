@@ -22,6 +22,16 @@ const mockReadAsStringAsync = jest.fn<(...args: unknown[]) => Promise<string>>()
 const mockWriteAsStringAsync = jest.fn<(...args: unknown[]) => Promise<void>>();
 const mockIsSharingAvailableAsync = jest.fn<() => Promise<boolean>>();
 const mockShareAsync = jest.fn<(...args: unknown[]) => Promise<void>>();
+const mockSaveBackupDocument =
+  jest.fn<(...args: unknown[]) => Promise<{ status: 'saved' | 'canceled'; byteCount?: number }>>();
+
+jest.mock(
+  '@/platform/storage/backupExport',
+  () => ({
+    saveBackupDocument: (...args: unknown[]) => mockSaveBackupDocument(...args)
+  }),
+  { virtual: true }
+);
 
 jest.mock('expo-document-picker', () => ({
   getDocumentAsync: (...args: unknown[]) => mockGetDocumentAsync(...args)
@@ -48,6 +58,7 @@ describe('Backup status controller', () => {
     mockDeleteAsync.mockResolvedValue(undefined);
     mockIsSharingAvailableAsync.mockResolvedValue(true);
     mockShareAsync.mockResolvedValue(undefined);
+    mockSaveBackupDocument.mockResolvedValue({ status: 'saved', byteCount: 2 });
     mockWriteAsStringAsync.mockResolvedValue(undefined);
     mockGetDocumentAsync.mockResolvedValue({
       canceled: false,
@@ -100,7 +111,7 @@ describe('Backup status controller', () => {
     expect(importBackup).toHaveBeenCalledWith(json);
     expect(notify).toHaveBeenCalledWith('备份已恢复，本机资料已合并');
   });
-  it('waits for a consistent storage export before creating and sharing a temporary file', async () => {
+  it('saves a consistent snapshot through the system document picker without sharing a temporary file', async () => {
     const exported = Promise.withResolvers<string>();
     const notify = jest.fn();
     const exportBackup = jest.fn(() => exported.promise);
@@ -118,12 +129,14 @@ describe('Backup status controller', () => {
       await result;
     });
     expect(exportBackup).toHaveBeenCalledTimes(1);
-    const uri = mockWriteAsStringAsync.mock.calls[0]?.[0];
-    expect(mockShareAsync).toHaveBeenCalledWith(uri, { mimeType: 'application/json' });
-    expect(mockDeleteAsync).toHaveBeenCalledWith(uri, { idempotent: true });
+    expect(mockSaveBackupDocument).toHaveBeenCalledWith(expect.stringMatching(/\.json$/), '{}');
+    expect(mockWriteAsStringAsync).not.toHaveBeenCalled();
+    expect(mockShareAsync).not.toHaveBeenCalled();
+    expect(mockDeleteAsync).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('备份已保存到所选位置');
   });
-  it('cleans up the temporary export even when sharing fails', async () => {
-    mockShareAsync.mockRejectedValue(new Error('用户取消了系统分享'));
+  it('does not report a canceled document picker as a saved backup', async () => {
+    mockSaveBackupDocument.mockResolvedValue({ status: 'canceled' });
     const notify = jest.fn();
     const hook = await renderHook(() =>
       useBackupStatusController({ notify, importBackup: async () => undefined, exportBackup: async () => '{}' })
@@ -131,8 +144,21 @@ describe('Backup status controller', () => {
     await act(async () => {
       await hook.result.current.exportBackupFile();
     });
-    expect(notify).toHaveBeenCalledWith('用户取消了系统分享');
-    expect(mockDeleteAsync).toHaveBeenCalledWith(mockWriteAsStringAsync.mock.calls[0]?.[0], { idempotent: true });
+    expect(notify).not.toHaveBeenCalled();
+    expect(mockShareAsync).not.toHaveBeenCalled();
+    expect(hook.result.current.backupBusy).toBe(false);
+  });
+  it('reports document-write failures without a silent sharing fallback', async () => {
+    mockSaveBackupDocument.mockRejectedValue(new Error('备份写入失败'));
+    const notify = jest.fn();
+    const hook = await renderHook(() =>
+      useBackupStatusController({ notify, importBackup: async () => undefined, exportBackup: async () => '{}' })
+    );
+    await act(async () => {
+      await hook.result.current.exportBackupFile();
+    });
+    expect(notify).toHaveBeenCalledWith('备份写入失败');
+    expect(mockShareAsync).not.toHaveBeenCalled();
     expect(hook.result.current.backupBusy).toBe(false);
   });
 });

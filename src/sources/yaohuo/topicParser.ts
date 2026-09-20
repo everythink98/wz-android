@@ -454,6 +454,11 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     0,
     ...root
       .querySelectorAll('a[href*="tofloor="], a[href*="reply="]')
+      .filter(
+        (link) =>
+          extractTopicParts(link.getAttribute('href')).id === String(id) &&
+          !link.closest('.bbscontent, .recontent, blockquote')
+      )
       .map((link) =>
         parsePositiveInteger(link.getAttribute('href')?.match(/[?&](?:amp;)?(?:tofloor|reply)=(\d+)/i)?.[1])
       )
@@ -492,6 +497,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     lastReplyAt: createdAt,
     closed,
     replyCount: emptyReplies ? 0 : latestReplyFloor || (replyCountMatch ? Number(replyCountMatch[1]) : undefined),
+    ...(emptyReplies || latestReplyFloor > 0 ? { replyWatermark: emptyReplies ? 0 : latestReplyFloor } : {}),
     viewCount: parsePositiveInteger(contentText.match(/\(阅\s*(\d+)\)/)?.[1]) || undefined,
     excerpt: textExcerpt(contentHtml),
     contentHtml: preparedContent.contentHtml,

@@ -11,7 +11,8 @@ import {
   sanitizeReaderData,
   sanitizeReaderSettings,
   topicKey,
-  userKey
+  userKey,
+  validateStoredReaderData
 } from './readerData';
 import type { Topic, UserProfile } from '@/domain/forum/models';
 
@@ -38,6 +39,58 @@ const profile: UserProfile = {
 };
 
 describe('Android reader data helpers', () => {
+  it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
+    'preserves unknown %s publication dates in every saved topic collection',
+    (source) => {
+      const item = { ...topic, source, createdAt: '', lastReplyAt: '' };
+      const user = { ...profile, source, topics: [item] };
+      const record = { topic: item, savedAt: '2026-09-20T00:00:00.000Z' };
+      const data = {
+        ...createEmptyReaderData(),
+        favorites: { [topicKey(item)]: record },
+        history: { [topicKey(item)]: record },
+        followedUsers: { [userKey(user)]: { user, followedAt: record.savedAt } }
+      };
+      expect(validateStoredReaderData(data)).toEqual(data);
+      const clean = sanitizeReaderData(data);
+      expect(clean.favorites[topicKey(item)].topic.createdAt).toBe('');
+      expect(clean.history[topicKey(item)].topic.createdAt).toBe('');
+      expect(clean.followedUsers[userKey(user)].user.topics[0].createdAt).toBe('');
+      expect(clean.favorites[topicKey(item)].topic.lastReplyAt).toBeUndefined();
+    }
+  );
+
+  it('still rejects corrupt publication dates and missing operation times', () => {
+    const savedAt = '2026-09-20T00:00:00.000Z';
+    for (const patch of [
+      { createdAt: undefined },
+      { createdAt: null },
+      { createdAt: 123 },
+      { createdAt: 'not-a-date' },
+      { lastReplyAt: 'not-a-date' }
+    ]) {
+      const data = {
+        ...createEmptyReaderData(),
+        favorites: { [topicKey(topic)]: { topic: { ...topic, ...patch }, savedAt } }
+      };
+      expect(() => validateStoredReaderData(data)).toThrow('主题记录');
+      expect(sanitizeReaderData(data).favorites).toEqual({});
+    }
+    const item = { ...topic, createdAt: '', lastReplyAt: '' };
+    for (const invalid of [
+      { favorites: { [topicKey(item)]: { topic: item, savedAt: '' } } },
+      { followedUsers: { [userKey(profile)]: { user: profile, followedAt: '' } } },
+      { deletedRecords: { favorites: { [topicKey(item)]: '' } } }
+    ]) {
+      const data = { ...createEmptyReaderData(), ...invalid };
+      expect(() => validateStoredReaderData(data)).toThrow();
+      const clean = sanitizeReaderData(data);
+      expect(clean.favorites).toEqual({});
+      expect(clean.followedUsers).toEqual({});
+      expect(clean.deletedRecords.favorites).toEqual({});
+    }
+  });
+
   it('normalizes font scale to 5% steps between 85% and 140%', () => {
     expect(normalizeFontScale(0.2)).toBe(FONT_SCALE_MIN);
     expect(normalizeFontScale(2)).toBe(FONT_SCALE_MAX);

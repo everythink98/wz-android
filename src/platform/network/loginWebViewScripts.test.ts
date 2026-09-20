@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://www.nodeimage.com/"}
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {

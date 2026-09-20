@@ -59,6 +59,20 @@ afterEach(() => {
 });
 
 describe('Android release version gate', () => {
+  it.each<[string, string, number, string]>([
+    ['a different package version', '1.0.1', 10, 'package.json version 1.0.1 != app.json version 1.0.0'],
+    ['a zero versionCode', '1.0.0', 0, 'versionCode 必须是正整数'],
+    ['a fractional versionCode', '1.0.0', 1.5, 'versionCode 必须是正整数']
+  ])('rejects %s through the CLI', (_case, packageVersion, versionCode, message) => {
+    const repository = createRepository('1.0.0', versionCode);
+    writeFileSync(path.join(repository, 'package.json'), JSON.stringify({ version: packageVersion }));
+
+    const result = runVersionCheck(repository);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(message);
+  });
+
   it('rejects a version upgrade whose versionCode did not increase', () => {
     const repository = createRepository('1.0.0', 10);
     execFileSync('git', ['tag', 'v1.0.0'], { cwd: repository });

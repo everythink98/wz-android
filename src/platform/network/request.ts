@@ -2,9 +2,18 @@ export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
 // Local request metadata, never an upstream field or HTTP header.
 const REQUEST_BEFORE_SEND = Symbol.for('wz.requestBeforeSend');
-type GuardedRequestInit = RequestInit & { [REQUEST_BEFORE_SEND]?: () => void };
+const REQUEST_DISPATCH_STATE = Symbol.for('wz.requestDispatchState');
+export type RequestDispatchState = { mayHaveSent: boolean };
+type GuardedRequestInit = RequestInit & {
+  [REQUEST_BEFORE_SEND]?: () => void;
+  [REQUEST_DISPATCH_STATE]?: RequestDispatchState;
+};
 
-export function withRequestBeforeSend(fetcher: Fetcher, assertCurrent: () => void): Fetcher {
+export function withRequestBeforeSend(
+  fetcher: Fetcher,
+  assertCurrent: () => void,
+  dispatchState?: RequestDispatchState
+): Fetcher {
   return async (input, init) => {
     const inherited = (init as GuardedRequestInit | undefined)?.[REQUEST_BEFORE_SEND];
     const beforeSend = () => {
@@ -12,15 +21,25 @@ export function withRequestBeforeSend(fetcher: Fetcher, assertCurrent: () => voi
       assertCurrent();
     };
     beforeSend();
-    return fetcher(input, { ...init, [REQUEST_BEFORE_SEND]: beforeSend } as GuardedRequestInit);
+    return fetcher(input, {
+      ...init,
+      [REQUEST_BEFORE_SEND]: beforeSend,
+      ...(dispatchState ? { [REQUEST_DISPATCH_STATE]: dispatchState } : {})
+    } as GuardedRequestInit);
   };
 }
 
 export function prepareRequestToSend(init?: RequestInit): RequestInit | undefined {
   if (!init) return init;
-  const { [REQUEST_BEFORE_SEND]: beforeSend, ...transportInit } = init as GuardedRequestInit;
+  if (init.signal?.aborted) throw new RequestCanceledError();
+  const {
+    [REQUEST_BEFORE_SEND]: beforeSend,
+    [REQUEST_DISPATCH_STATE]: dispatchState,
+    ...transportInit
+  } = init as GuardedRequestInit;
   beforeSend?.();
-  return beforeSend ? transportInit : init;
+  if (dispatchState) dispatchState.mayHaveSent = true;
+  return beforeSend || dispatchState ? transportInit : init;
 }
 
 export function rejectUnauthorizedResponse(fetcher: Fetcher): Fetcher {

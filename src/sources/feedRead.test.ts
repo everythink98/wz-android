@@ -614,7 +614,7 @@ describe('feed read', () => {
     expect(nodeSeekCalls).toBe(2);
   });
 
-  it('skips an unavailable aggregate source and retries its original page after credentials recover', async () => {
+  it('ends the current aggregate plan without blocked sources and reads them on a fresh plan', async () => {
     const nodeSeekPage = Buffer.from(
       JSON.stringify({
         rotateTopics: [
@@ -655,32 +655,26 @@ describe('feed read', () => {
           }
         );
       }
-      if (input.includes('linux.do')) {
-        return new Response(JSON.stringify({ topic_list: { topics: [] }, categories: [] }), {
-          headers: { 'content-type': 'application/json' }
-        });
-      }
       return new Response('');
     });
 
     const first = await getFeed({
       source: 'all',
       limit: 2,
+      includedSources: ['nodeseek', 'linuxdo'],
       unavailableSources: ['nodeseek'],
       fetcher
     });
     const second = await getFeed({
       source: 'all',
-      page: first.nextPage ?? 2,
-      cursor: first.nextCursor ?? undefined,
       limit: 2,
+      includedSources: ['nodeseek', 'linuxdo'],
       fetcher
     });
 
     expect(first.items.map((item) => `${item.source}:${item.id}`)).toEqual(['linuxdo:740']);
-    expect(first.errors.nodeseek).toBeTruthy();
-    expect(first.nextCursor).toBeTruthy();
-    expect(second.items.map((item) => `${item.source}:${item.id}`)).toEqual(['nodeseek:730']);
+    expect(first).toMatchObject({ errors: {}, hasMore: false, nextPage: null, nextCursor: undefined });
+    expect(second.items.map((item) => `${item.source}:${item.id}`)).toEqual(['nodeseek:730', 'linuxdo:740']);
     expect(nodeSeekCalls).toBe(1);
   });
 
@@ -825,16 +819,14 @@ describe('feed read', () => {
       const childTerminals = diagnosticEvents.filter(
         (event) => event.phase === 'transport' && typeof event.latencyMs === 'number' && event.source !== 'all'
       );
-      expect(childTerminals).toHaveLength(4);
+      expect(childTerminals).toHaveLength(2);
       expect(childTerminals).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ source: 'nodeseek', state: 'timeout', latencyMs: 5_000 }),
-          expect.objectContaining({ source: 'v2ex', state: 'success' }),
-          expect.objectContaining({ source: 'linuxdo', state: 'failure' }),
-          expect.objectContaining({ source: 'yaohuo', state: 'failure' })
+          expect.objectContaining({ source: 'v2ex', state: 'success' })
         ])
       );
-      expect(new Set(childTerminals.map((event) => event.source)).size).toBe(4);
+      expect(new Set(childTerminals.map((event) => event.source)).size).toBe(2);
     } finally {
       setDiagnosticWriter(null);
       vi.useRealTimers();
@@ -875,9 +867,7 @@ describe('feed read', () => {
         )
       ).toEqual([
         expect.objectContaining({ source: 'nodeseek', reason: 'canceled' }),
-        expect.objectContaining({ source: 'linuxdo', reason: 'canceled' }),
-        expect.objectContaining({ source: 'v2ex', reason: 'canceled' }),
-        expect.objectContaining({ source: 'yaohuo', reason: 'canceled' })
+        expect.objectContaining({ source: 'v2ex', reason: 'canceled' })
       ]);
     } finally {
       setDiagnosticWriter(null);
@@ -982,10 +972,11 @@ describe('feed read', () => {
     const retry = await getFeed({
       source: 'all',
       cursor: oldCursor,
-      fetcher: vi.fn(),
+      fetcher: vi.fn(async () => {
+        throw new Error('temporary failure');
+      }),
       includedSources: ['v2ex'],
-      page: 2,
-      unavailableSources: ['v2ex']
+      page: 2
     });
     const retryCursor = JSON.parse(decodeURIComponent(retry.nextCursor || '')) as Record<
       string,
@@ -994,6 +985,38 @@ describe('feed read', () => {
 
     expect(retryCursor.nextPages).toEqual({ v2ex: 2 });
     expect(retryCursor.sourceCursors).toEqual({ v2ex: 'current-v2ex-cursor' });
+  });
+
+  it('discards blocked source buffers and cursors without consuming a transport or another page', async () => {
+    const fetcher = vi.fn();
+    const cursor = encodeURIComponent(
+      JSON.stringify({
+        buffers: {
+          yaohuo: [
+            {
+              source: 'yaohuo',
+              id: '1',
+              title: 'old private topic',
+              url: 'https://yaohuo.me/bbs-1.html',
+              createdAt: '2026-09-20T00:00:00Z'
+            }
+          ]
+        },
+        nextPages: { yaohuo: 2 },
+        sourceCursors: { yaohuo: 'old-private-cursor' }
+      })
+    );
+
+    await expect(
+      getFeed({ source: 'all', page: 2, cursor, includedSources: ['yaohuo'], unavailableSources: ['yaohuo'], fetcher })
+    ).resolves.toMatchObject({
+      items: [],
+      errors: {},
+      hasMore: false,
+      nextPage: null,
+      nextCursor: undefined
+    });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('returns stable empty all-source feed and categories without transport', async () => {

@@ -26,6 +26,7 @@
 | 构建、覆盖安装、Replay、Smoke 与发布操作 | [维护手册](operator-runbook.md) |
 | App 内真实来源与系统验收场景 | [Agent Live](../tests/live/agent-live.md) |
 | 已确认待处理技术债务与验收缺口 | [待处理项](code-cleanup-map.md) |
+| 审查修复的批次、已验收分支与剩余边界 | [修复取证记录](review-remediation.md) |
 | 当前实现和可运行行为 | 代码、配置与实际运行结果 |
 | 本机专项取证与设备历史证据 | `memory/` 与 `docs/emulator-baseline.md` |
 
@@ -44,6 +45,7 @@ node -p "require('./app.json').expo.android.versionCode"
 - `git status --short` 非空时，逐文件区分既有 WIP 与本任务改动；不得把 dirty tree 描述成已交付版本。
 - 发布状态以 Git、版本配置、Release 产物和实际发布结果共同判定；交接文档不维护手写进度表。
 - 模拟器记录只有在 revision、App 版本和 APK 身份全部匹配时才是当前证据；没有匹配记录就是未验证。
+- 接手审查修复时，按[修复取证记录](review-remediation.md)的后续补验更新原始缺口，不能把历史“未验证”直接当作现状。强制后台任务重放与自然调度/厂商省电分别判断；真实 SQLite 配合合成 transport 不代表完成原站写入，隔离 proof 包或 ABI 编译成功也不代表最终普通包已覆盖安装或物理设备已验证。
 - 当前技术债务以 `docs/code-cleanup-map.md` 为准；没有条目不等于可以凭猜测新增或删除能力。
 
 ## 文档与记忆收口
@@ -52,5 +54,5 @@ node -p "require('./app.json').expo.android.versionCode"
 2. 以用户要求、当前代码、配置及匹配身份的运行结果核对事实；每类事实只在上表的权威位置写完整版本。
 3. 删除过时的现役说法和重复索引；历史事故留在回归语料库，历史设备证据留在模拟器基线，普通演进交给 Git。
 4. 本机 `memory/MEMORY.md` 只做索引，主题文件只保留本机独有事实和权威文档指针；普通文档整理按需只读，不补造本机文件或改写宿主生成记忆。
-5. 运行 `npm run test:docs`、`npm run check:docs` 与 `git diff --check`，另核对新增/调整的标题锚点、REG 编号唯一性和文档职责。现有检查器校验文件路径、能力与 REG 引用、状态字段及 npm script，不校验标题锚点或重复 REG 定义。代码或工具发生变化时，再运行相应测试、`npm run typecheck` 和 `npm run verify`。
+5. 运行 `npm run test:docs`、`npm run check:docs` 与 `git diff --check`，另核对新增/调整的标题锚点、REG 编号唯一性和文档职责。现有检查器校验文件路径、能力与 REG 引用、状态字段及 npm script，同时检查全部 REG 定义唯一性并报告两处行号；标题锚点仍需人工核对。代码或工具发生变化时，再运行相应测试、`npm run typecheck` 和 `npm run verify`。
 6. 交付时现场报告最近完整基线、眼前 dirty WIP、已确认技术债务、未验证范围和清理候选；未经确认不删除录屏、`tmp/`、dogfood 结果或额外 worktree。

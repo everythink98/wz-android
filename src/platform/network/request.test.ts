@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   cancelRequestTimeoutForFallback,
   fetchWithTimeout,
+  prepareRequestToSend,
   rejectUnauthorizedResponse,
+  withRequestBeforeSend,
   RequestCanceledError,
   REQUEST_CANCELED_MESSAGE,
   RequestTimeoutError
@@ -11,6 +13,58 @@ import {
 const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 
 describe('Android request helpers', () => {
+  it('keeps a timed-out write unsent when asynchronous transport preparation settles later', async () => {
+    const prepared = Promise.withResolvers<void>();
+    const finished = Promise.withResolvers<void>();
+    const dispatch = { mayHaveSent: false };
+    const transport = vi.fn(async () => new Response('{}'));
+    const fetcher = withRequestBeforeSend(
+      async (_input, init) => {
+        try {
+          await prepared.promise;
+          prepareRequestToSend(init);
+          return await transport();
+        } finally {
+          finished.resolve();
+        }
+      },
+      () => undefined,
+      dispatch
+    );
+    await expect(
+      fetchWithTimeout('https://example.invalid/write', { method: 'POST' }, { fetcher, timeoutMs: 1 })
+    ).rejects.toBeInstanceOf(RequestTimeoutError);
+    expect(dispatch.mayHaveSent).toBe(false);
+    prepared.resolve();
+    await finished.promise;
+    expect(transport).not.toHaveBeenCalled();
+    expect(dispatch.mayHaveSent).toBe(false);
+  });
+
+  it('marks a write as possibly sent only after the final transport guard and strips local metadata', async () => {
+    const dispatch = { mayHaveSent: false };
+    let current = true;
+    let pending: RequestInit | undefined;
+    const request = withRequestBeforeSend(
+      async (_input, init) => {
+        pending = init;
+        return new Response('{}');
+      },
+      () => {
+        if (!current) throw new Error('stale');
+      },
+      dispatch
+    );
+    await request('https://example.invalid/write', { method: 'POST', body: 'payload' });
+    expect(dispatch.mayHaveSent).toBe(false);
+    current = false;
+    expect(() => prepareRequestToSend(pending)).toThrow('stale');
+    expect(dispatch.mayHaveSent).toBe(false);
+    current = true;
+    expect(prepareRequestToSend(pending)).toEqual({ method: 'POST', body: 'payload' });
+    expect(dispatch.mayHaveSent).toBe(true);
+  });
+
   it('rejects a raw HTTP 401 before adapter parsing but preserves other responses', async () => {
     const unauthorized = rejectUnauthorizedResponse(
       vi.fn(async () => new Response('<html>login</html>', { status: 401 }))

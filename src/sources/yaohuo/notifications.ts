@@ -1,4 +1,5 @@
 import { elementText, hasRenderableHtmlContent, parseHtml, toIsoString } from '@/domain/forum/html';
+import { notificationPageError, notificationPageQuality } from '@/domain/notifications/notificationQuality';
 import {
   annotateSourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries
@@ -120,7 +121,12 @@ function parsePage(html: string, unreadOnly = false, categoryId = 'all'): Notifi
   const total = Number(match?.[2]) || current;
   const hasMore = current < total;
   return annotateSourceDiagnosticSummary(
-    { items, cursor: hasMore ? String(current + 1) : null, hasMore },
+    {
+      items,
+      cursor: hasMore ? String(current + 1) : null,
+      hasMore,
+      quality: notificationPageQuality(rows.length, items.length + filteredCount)
+    },
     {
       parserVariant: 'yaohuo-notifications',
       candidateCount: rows.length,
@@ -277,16 +283,26 @@ export const yaohuoNotificationAdapter = {
     let hasMore = true;
     const items: ForumNotification[] = [];
     const pages: NotificationPage[] = [];
+    const seenCursors = new Set<number>([cursor]);
     while (hasMore && items.length < 60) {
       const page = await readListPage(options, cursor, true);
+      const qualityError = notificationPageError(page.quality);
+      if (qualityError) throw qualityError;
+      if (items.length + page.items.length > 60) throw new Error('妖火未读数量尚未完整读取');
       pages.push(page);
-      items.push(...page.items.slice(0, 60 - items.length));
+      items.push(...page.items);
       hasMore = page.hasMore;
-      cursor = Number(page.cursor) || cursor + 1;
+      if (hasMore) {
+        const next = Number(page.cursor);
+        if (!Number.isSafeInteger(next) || next < 1 || seenCursors.has(next)) throw new Error('妖火消息分页格式不正确');
+        seenCursors.add(next);
+        cursor = next;
+      }
     }
+    if (hasMore) throw new Error('妖火未读数量尚未完整读取');
     return mergeSourceDiagnosticSummaries(
       {
-        total: items.length,
+        total: new Set(items.map((item) => item.id)).size,
         checkedAt: new Date().toISOString()
       },
       'yaohuo-notifications',

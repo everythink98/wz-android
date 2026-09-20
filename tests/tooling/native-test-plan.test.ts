@@ -13,17 +13,15 @@ describe('Native behavior test selection', () => {
   ])('runs the selection module tests for %s', (file) => {
     expect(relatedNativeTasks([file])).toContain(':forum-content-selection:testDebugUnitTest');
   });
-  it.each([
-    'plugins/network/NetworkProxyRuntime.kt',
-    'plugins/svg/SvgRendererModule.kt',
-    'patches/react-native+0.86.3.patch',
-    'src/platform/network/request.ts'
-  ])('runs generated app Native tests for %s', (file) => {
-    expect(relatedNativeTasks([file])).toContain(':app:testReleaseUnitTest');
-  });
+  it.each(['patches/react-native+0.86.3.patch', 'src/platform/network/request.ts'])(
+    'runs generated app Native tests for %s',
+    (file) => {
+      expect(relatedNativeTasks([file])).toContain(':app:testReleaseUnitTest');
+    }
+  );
   it('does not schedule Native tests for unrelated content and includes all owners after dependency changes', () => {
     expect(relatedNativeTasks(['README.md', 'src/features/user/UserScreen.tsx'])).toEqual([]);
-    expect(relatedNativeTasks(['package-lock.json'])).toHaveLength(5);
+    expect(relatedNativeTasks(['package-lock.json'])).toHaveLength(6);
   });
   it('executes App and Composer together with the test source overlay', () => {
     const tasks = relatedNativeTasks([
@@ -39,6 +37,14 @@ describe('Native behavior test selection', () => {
     );
   });
   it.each([
+    [
+      'modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt',
+      ':forum-platform:testDebugUnitTest'
+    ],
+    [
+      'modules/forum-platform/android/src/main/java/com/wz/reader/svg/SvgRendererModule.kt',
+      ':forum-platform:testDebugUnitTest'
+    ],
     ['patches/react-native+0.86.3.patch', ':react-native:packages:react-native:ReactAndroid:testDebugUnitTest'],
     ['plugins/withNetworkProxyModule.js', ':react-native:packages:react-native:ReactAndroid:testDebugUnitTest'],
     ['patches/expo-file-system+57.0.6.patch', ':expo-file-system:testDebugUnitTest'],

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PixelRatio } from 'react-native';
 import type { ForumImagePreviewDescriptor } from '@/domain/forum/forumContentMedia';
 import { normalizeImagePreviewUrl } from '@/platform/media/imageRequestSource';
@@ -14,7 +14,6 @@ import {
 } from '@/platform/media/imagePreviewCatalog';
 import { errorMessage } from '@/platform/network/errors';
 import { saveImageUriToLibrary } from '@/platform/media/imageSave';
-import type { Fetcher } from '@/platform/network/request';
 import { useForumMediaRequestContext } from '@/platform/media/mediaSessionEpoch';
 import type { ForumMediaRequestContext } from '@/platform/media/mediaRequestContext';
 import type { Source } from '@/domain/forum/models';
@@ -40,7 +39,6 @@ export function useImagePreviewController({
   beforeSave,
   contentSource,
   contentWidth,
-  fetcher,
   mediaReferrer,
   nodeSeekMediaUserAgent,
   notify
@@ -48,7 +46,6 @@ export function useImagePreviewController({
   beforeSave?: () => Promise<void>;
   contentSource: Source | null;
   contentWidth: number;
-  fetcher?: Fetcher;
   mediaReferrer?: MediaReferrerContext;
   nodeSeekMediaUserAgent?: string;
   notify: (message: string) => void;
@@ -66,6 +63,14 @@ export function useImagePreviewController({
     [imagePreview?.referrer, previewSessionContext]
   );
   const saveBusyRef = useRef(false);
+  const saveAbortRef = useRef<AbortController | null>(null);
+  const previewMediaContextRef = useCommittedRef(previewMediaContext);
+  useEffect(
+    () => () => {
+      saveAbortRef.current?.abort();
+    },
+    [previewMediaContext.sessionIdentity]
+  );
   const catalogRef = useRef<ImagePreviewCatalog | null>(null);
   const catalogRegistrationRef = useRef<{
     descriptors: readonly ForumImagePreviewDescriptor[];
@@ -166,6 +171,16 @@ export function useImagePreviewController({
       return;
     }
     saveBusyRef.current = true;
+    const abortController = new AbortController();
+    saveAbortRef.current = abortController;
+    const assertCurrent = () => {
+      if (
+        abortController.signal.aborted ||
+        previewMediaContextRef.current.sessionIdentity !== previewMediaContext.sessionIdentity
+      ) {
+        throw new Error('图片保存已取消');
+      }
+    };
     try {
       const item = imagePreviewItemAt(imagePreview, imagePreview.index) || imagePreview.items[0];
       const uri = item.originalUri;
@@ -176,22 +191,25 @@ export function useImagePreviewController({
         {
           mediaContext: previewMediaContext,
           nodeSeekUserAgent: nodeSeekMediaUserAgent,
-          referrerPolicy: item.referrerPolicy
+          referrerPolicy: item.referrerPolicy,
+          signal: abortController.signal,
+          assertCurrent
         },
-        fetcher,
         trace
       );
+      assertCurrent();
       markDiagnosticStage(trace, 'apply', { state: 'saved' });
       finishDiagnosticTrace(trace, 'success');
       notify('图片已保存');
     } catch (error) {
       const reason = normalizeDiagnosticReason(error);
       finishDiagnosticTrace(trace, reason === 'permission_denied' ? 'blocked' : 'failure', { reason });
-      notify(errorMessage(error));
+      if (!abortController.signal.aborted) notify(errorMessage(error));
     } finally {
+      saveAbortRef.current = null;
       saveBusyRef.current = false;
     }
-  }, [beforeSave, fetcher, imagePreview, nodeSeekMediaUserAgent, notify, previewMediaContext]);
+  }, [beforeSave, imagePreview, nodeSeekMediaUserAgent, notify, previewMediaContext]);
 
   return {
     closeImagePreview,

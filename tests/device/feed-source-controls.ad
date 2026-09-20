@@ -1,6 +1,9 @@
 context platform=android
 context timeout=240000
 context retries=0
+
+# Checks source controls and All/V2EX request settlement; error outcomes are accepted.
+# Does not prove that all four sources returned live data or that Topic content loaded.
 env APP_ID=com.wz.reader
 
 open ${APP_ID} --relaunch

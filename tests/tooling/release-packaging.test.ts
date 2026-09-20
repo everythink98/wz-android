@@ -11,11 +11,13 @@ function readProjectFile(...parts: string[]) {
 }
 
 function readNativePlugin(plugin: string, directory: string) {
+  const sources = ['modules', 'forum-platform', 'android', 'src', 'main', 'java', 'com', 'wz', 'reader', directory];
   return [
     readProjectFile('plugins', plugin),
-    ...readdirSync(path.join(rootDir, 'plugins', directory))
+    readProjectFile('modules', 'forum-platform', 'android', 'build.gradle'),
+    ...readdirSync(path.join(rootDir, ...sources))
       .filter((name) => name.endsWith('.kt'))
-      .map((name) => readProjectFile('plugins', directory, name))
+      .map((name) => readProjectFile(...sources, name))
   ].join('\n');
 }
 
@@ -108,15 +110,6 @@ describe('Android release packaging guards', () => {
     expect(pkg.dependencies['expo-system-ui']).toBeDefined();
   });
 
-  it('keeps version truth in config instead of duplicating it in stable docs', () => {
-    const versionCheck = readProjectFile('scripts', 'check-version.mjs');
-
-    expect(versionCheck).toContain('version !== appVersion');
-    expect(versionCheck).toContain('Number.isInteger(versionCode)');
-    expect(versionCheck).not.toContain("readText('README.md')");
-    expect(versionCheck).not.toContain("readText('memory', 'project.md')");
-  });
-
   it('keeps the published APK arm64-only and development signing limited to the smoke APK', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const releaseHelpers = readProjectFile('scripts', 'release-environment.mjs');
@@ -192,15 +185,6 @@ describe('Android release packaging guards', () => {
       useLegacyPackaging: true
     });
     expect(app.expo.plugins).not.toContain('./plugins/withAndroidReleaseOptimization');
-  });
-
-  it('persists the Gradle JVM limits through Expo prebuild', () => {
-    const app = JSON.parse(readProjectFile('app.json'));
-    const plugin = readProjectFile('plugins', 'withAndroidGradleJvmMemory.js');
-
-    expect(app.expo.plugins).toContain('./plugins/withAndroidGradleJvmMemory');
-    expect(plugin).toContain("const GRADLE_JVM_ARGS = '-Xmx4096m -XX:MaxMetaspaceSize=1024m'");
-    expect(plugin).toContain('withGradleProperties');
   });
 
   it('keeps the RN fetch implementation and reviewed Expo version exceptions explicit', () => {
@@ -310,8 +294,7 @@ describe('Android release packaging guards', () => {
       'NetworkingModule.setCustomClientBuilder',
       'fun readManagedCookieHeader(exactUrl: String, promise: Promise)',
       'fun clearManagedLoginCookies(source: String, diagnostics: ReadableMap, promise: Promise)',
-      'WebSettings.getDefaultUserAgent(reactContext)',
-      "path.join(testOutputDir, 'NetworkProxyRuntimeTest.kt')"
+      'WebSettings.getDefaultUserAgent(reactContext)'
     ]) {
       expect(plugin).toContain(required);
     }
@@ -323,7 +306,19 @@ describe('Android release packaging guards', () => {
     ]) {
       expect(plugin).not.toContain(forbidden);
     }
-    const moduleSource = readProjectFile('plugins', 'network', 'NetworkProxyModule.kt');
+    const moduleSource = readProjectFile(
+      'modules',
+      'forum-platform',
+      'android',
+      'src',
+      'main',
+      'java',
+      'com',
+      'wz',
+      'reader',
+      'network',
+      'NetworkProxyModule.kt'
+    );
     expect(moduleSource).toContain('import android.webkit.WebSettings');
     expect(moduleSource).toContain('WebSettings.getDefaultUserAgent(reactContext)');
     expect(app.expo.plugins).not.toContain('./plugins/withLinuxDoCookieModule');
@@ -365,13 +360,13 @@ describe('Android release packaging guards', () => {
       'GlideUrlWrapperLoader.Factory(callFactory)',
       'org.chromium.net:cronet-bundled:500.0.2',
       'com.google.net.cronet:cronet-okhttp:0.1.1',
-      'exclude group: "com.squareup.okhttp3", module: "okhttp"',
-      'exclude group: "com.squareup.okio", module: "okio"',
-      'exclude group: "org.chromium.net", module: "cronet-api"',
+      "exclude group: 'com.squareup.okhttp3', module: 'okhttp'",
+      "exclude group: 'com.squareup.okio', module: 'okio'",
+      "exclude group: 'org.chromium.net', module: 'cronet-api'",
       'RedirectStrategy.withoutRedirects()',
       'CronetProxyOptions.ALL_PROXIES_FAILED_BEHAVIOR_DISALLOW_DIRECT',
       'androidx.webkit:webkit:1.17.0',
-      'testImplementation("junit:junit:4.13.2")'
+      "testImplementation('junit:junit:4.13.2')"
     ]) {
       expect(plugin).toContain(required);
     }
@@ -420,12 +415,7 @@ describe('Android release packaging guards', () => {
       'javaScriptEnabled = false',
       'allowFileAccess = false',
       'allowContentAccess = false',
-      "default-src 'none'",
-      'fs.copyFileSync(',
-      "'SvgRendererPolicyTest.kt'",
-      "'SvgRendererInstrumentedTest.kt'",
-      'testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"',
-      'androidTestImplementation("androidx.test:runner:1.7.0")'
+      "default-src 'none'"
     ]) {
       expect(plugin).toContain(required);
     }

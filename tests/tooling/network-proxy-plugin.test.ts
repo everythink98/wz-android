@@ -1,30 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const require = createRequire(import.meta.url);
-const plugin = require('../../plugins/withNetworkProxyModule') as {
-  injectCronetProguardRules: (contents: string) => string;
-};
-
-describe('withNetworkProxyModule local relay hardening', () => {
-  const pluginSource = readFileSync(join(process.cwd(), 'plugins', 'network', 'NetworkProxyRuntime.kt'), 'utf8');
-
-  it('binds the relay with the connection cap as its backlog', () => {
-    expect(pluginSource).toContain('ServerSocket(0, MAX_PROXY_CONNECTIONS, InetAddress.getByName("127.0.0.1"))');
-  });
-
-  it('injects only the optional Cronet platform warnings once', () => {
-    const first = plugin.injectCronetProguardRules('# project rules\n');
-    const second = plugin.injectCronetProguardRules(first);
-
-    expect(second).toBe(first);
-    expect(first.match(/-dontwarn android\.app\.privatecompute\.PccSandboxManager/g)).toHaveLength(1);
-    expect(first.match(/-dontwarn android\.net\.http\.Proxy\$HttpConnectCallback/g)).toHaveLength(1);
-    expect(first.match(/-dontwarn android\.net\.http\.Proxy$/gm)).toHaveLength(1);
-    expect(first.match(/-dontwarn android\.net\.http\.ProxyOptions/g)).toHaveLength(1);
-    expect(first).not.toContain('-ignorewarnings');
-    expect(first).not.toContain('-dontwarn android.**');
+describe('forum platform native ownership', () => {
+  it('keeps runtime sources and test dependencies in the library, not generated App copies', () => {
+    for (const name of ['withNetworkProxyModule.js', 'withDiagnosticJournal.js', 'withSvgRendererModule.js']) {
+      const plugin = readFileSync(join(process.cwd(), 'plugins', name), 'utf8');
+      expect(plugin).not.toContain('.kt');
+      expect(plugin).not.toContain('testImplementation');
+      expect(plugin).not.toContain('androidPackagePath');
+    }
+    const rules = readFileSync('modules/forum-platform/android/consumer-rules.pro', 'utf8');
+    expect(rules.split('\n').filter((line) => line.startsWith('-'))).toEqual([
+      '-dontwarn android.app.privatecompute.PccSandboxManager',
+      '-dontwarn android.net.http.Proxy$HttpConnectCallback',
+      '-dontwarn android.net.http.Proxy',
+      '-dontwarn android.net.http.ProxyOptions'
+    ]);
   });
 });

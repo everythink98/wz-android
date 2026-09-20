@@ -1,25 +1,50 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData, topicKey, userSummary } from './readerData';
-import { MAX_BACKUP_JSON_BYTES, exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
+import { MAX_BACKUP_JSON_BYTES, exportReaderBackupJson, parseReaderBackupJson } from './readerBackup';
 import type { Topic } from '@/domain/forum/models';
 
 describe('reader JSON backup', () => {
+  it.each([undefined, 0, 12, -1, 1.2, '12'])(
+    'exports only a trustworthy optional reply watermark %s',
+    (replyWatermark) => {
+      const data = createEmptyReaderData();
+      data.history['nodeseek:1'] = {
+        topic: {
+          source: 'nodeseek',
+          id: '1',
+          title: 'topic',
+          author: 'alice',
+          url: 'https://www.nodeseek.com/post-1-1',
+          createdAt: '2026-01-01T00:00:00Z',
+          replyCount: 2,
+          replyWatermark
+        } as Topic,
+        savedAt: '2026-01-02T00:00:00Z'
+      };
+      const exported = JSON.parse(exportReaderBackupJson(data));
+      expect(exported.history['nodeseek:1'].topic.replyWatermark).toBe(
+        typeof replyWatermark === 'number' && Number.isSafeInteger(replyWatermark) && replyWatermark >= 0
+          ? replyWatermark
+          : undefined
+      );
+      expect(exported.history['nodeseek:1'].topic.replyCount).toBe(2);
+    }
+  );
   it.each(['sidney', 'session-user', 'proxy-reader', 'token-owner'])(
-    'preserves the %s identity and its deletion across backups',
+    'preserves the %s identity and deletion key through export and parsing',
     (id) => {
       const user = { source: 'v2ex' as const, id, username: id, url: `https://www.v2ex.com/member/${id}`, topics: [] };
       const followed = createEmptyReaderData();
       followed.followedUsers[`v2ex:${id}`] = { user: userSummary(user), followedAt: '2026-01-01T00:00:00.000Z' };
-      const imported = importReaderBackupJson(createEmptyReaderData(), exportReaderBackupJson(followed));
-      expect(imported.followedUsers[`v2ex:${id}`]?.user.id).toBe(id);
+      expect(parseReaderBackupJson(exportReaderBackupJson(followed))).toMatchObject({
+        followedUsers: { [`v2ex:${id}`]: { user: { id } } }
+      });
 
       const deleted = createEmptyReaderData();
       deleted.deletedRecords.followedUsers[`v2ex:${id}`] = '2026-01-02T00:00:00.000Z';
-      const merged = importReaderBackupJson(followed, exportReaderBackupJson(deleted));
-      expect(merged.followedUsers).toEqual({});
-      expect(merged.deletedRecords.followedUsers[`v2ex:${id}`]).toBe(
-        deleted.deletedRecords.followedUsers[`v2ex:${id}`]
-      );
+      expect(parseReaderBackupJson(exportReaderBackupJson(deleted))).toMatchObject({
+        deletedRecords: { followedUsers: deleted.deletedRecords.followedUsers }
+      });
     }
   );
 
@@ -44,19 +69,7 @@ describe('reader JSON backup', () => {
     expect(json).not.toContain('sidyaohuo');
   });
 
-  it('imports only current Android backup format', () => {
-    const local = createEmptyReaderData();
-    const remote = createEmptyReaderData();
-    remote.settings.theme = 'dark';
-
-    const imported = importReaderBackupJson(local, JSON.stringify(remote));
-
-    expect(imported.settings.theme).toBe('dark');
-    expect(imported.version).toBe(2);
-  });
-
-  it('preserves content source preferences through current JSON backups', () => {
-    const local = createEmptyReaderData();
+  it('exports current content source preferences once in their configured order', () => {
     const remote = createEmptyReaderData();
     remote.settings.contentSources = [
       { source: 'linuxdo', enabled: false },
@@ -66,30 +79,16 @@ describe('reader JSON backup', () => {
       { source: 'yaohuo', enabled: true }
     ];
 
-    const imported = importReaderBackupJson(local, exportReaderBackupJson(remote));
-
-    expect(imported.version).toBe(2);
-    expect(imported.settings.contentSources[0]).toEqual({ source: 'linuxdo', enabled: false });
-  });
-
-  it('adds default content sources when importing an old v2 backup', () => {
-    const oldBackup = JSON.parse(JSON.stringify(createEmptyReaderData()));
-    delete oldBackup.settings.contentSources;
-
-    const imported = importReaderBackupJson(createEmptyReaderData(), JSON.stringify(oldBackup));
-
-    expect(imported.version).toBe(2);
-    expect(imported.settings.contentSources).toEqual([
+    const exported = JSON.parse(exportReaderBackupJson(remote));
+    expect(exported.settings.contentSources).toEqual([
+      { source: 'linuxdo', enabled: false },
       { source: 'v2ex', enabled: true },
-      { source: 'linuxdo', enabled: true },
       { source: 'nodeseek', enabled: true },
       { source: 'yaohuo', enabled: true }
     ]);
   });
 
   it('rejects non-current backup versions', () => {
-    const local = createEmptyReaderData();
-    local.settings.theme = 'dark';
     const oldBackup = {
       version: 1,
       favorites: {},
@@ -100,23 +99,18 @@ describe('reader JSON backup', () => {
       savedSearches: [{ id: 'all:test', source: 'all', query: 'test', savedAt: '2026-05-20T00:00:00.000Z' }]
     };
 
-    expect(() => importReaderBackupJson(local, JSON.stringify(oldBackup))).toThrow('备份格式不兼容');
+    expect(() => parseReaderBackupJson(JSON.stringify(oldBackup))).toThrow('备份格式不兼容');
   });
 
   it('rejects backup JSON that is too large to import safely', () => {
-    expect(() => importReaderBackupJson(createEmptyReaderData(), ' '.repeat(MAX_BACKUP_JSON_BYTES + 1))).toThrow(
-      '备份文件过大'
-    );
+    expect(() => parseReaderBackupJson(' '.repeat(MAX_BACKUP_JSON_BYTES + 1))).toThrow('备份文件过大');
   });
 
   it('uses UTF-8 bytes instead of string length for import size checks', () => {
-    expect(() =>
-      importReaderBackupJson(createEmptyReaderData(), '界'.repeat(Math.ceil(MAX_BACKUP_JSON_BYTES / 3) + 1))
-    ).toThrow('备份文件过大');
+    expect(() => parseReaderBackupJson('界'.repeat(Math.ceil(MAX_BACKUP_JSON_BYTES / 3) + 1))).toThrow('备份文件过大');
   });
 
-  it('strips sensitive fields before importing current backups', () => {
-    const local = createEmptyReaderData();
+  it('strips sensitive fields recursively while parsing current backups', () => {
     const remote = {
       ...createEmptyReaderData(),
       settings: {
@@ -127,40 +121,9 @@ describe('reader JSON backup', () => {
       nodeseekCookie: 'secret'
     };
 
-    const imported = importReaderBackupJson(local, JSON.stringify(remote));
-
-    expect(imported.settings.theme).toBe('dark');
-    expect(JSON.stringify(imported)).not.toContain('secret');
-  });
-
-  it('imports current backups using only active Android fields', () => {
-    const local = createEmptyReaderData();
-    const remote = {
-      ...createEmptyReaderData(),
-      subscriptions: {
-        'v2ex:create': { source: 'v2ex', id: 'create', name: '分享创造', subscribedAt: '2026-05-20T00:00:00.000Z' }
-      },
-      deletedRecords: {
-        ...createEmptyReaderData().deletedRecords,
-        subscriptions: { 'v2ex:create': '2026-05-20T01:00:00.000Z' }
-      },
-      settings: {
-        ...createEmptyReaderData().settings,
-        trackedKeywords: ['linux'],
-        blockedKeywords: ['广告'],
-        blockedUsers: ['spammer'],
-        blockedCategories: ['v2ex:create']
-      }
-    };
-
-    const imported = importReaderBackupJson(local, JSON.stringify(remote));
-
-    expect(imported).not.toHaveProperty('subscriptions');
-    expect(imported.deletedRecords).not.toHaveProperty('subscriptions');
-    expect(imported.settings).not.toHaveProperty('trackedKeywords');
-    expect(imported.settings).not.toHaveProperty('blockedKeywords');
-    expect(imported.settings).not.toHaveProperty('blockedUsers');
-    expect(imported.settings).not.toHaveProperty('blockedCategories');
+    const parsed = parseReaderBackupJson(JSON.stringify(remote));
+    expect(parsed).toMatchObject({ settings: { theme: 'dark' } });
+    expect(JSON.stringify(parsed)).not.toContain('secret');
   });
 
   it('keeps yaohuo reader records in current local JSON backups', () => {
@@ -182,7 +145,7 @@ describe('reader JSON backup', () => {
     expect(backup.favorites[topicKey(topic)]?.topic.title).toBe('妖火帖子');
   });
 
-  it('canonicalizes record links and removes every portable URL credential', () => {
+  it('exports canonical record links without portable URL credentials', () => {
     const topic: Topic = {
       source: 'nodeseek',
       id: '42',
@@ -214,18 +177,14 @@ describe('reader JSON backup', () => {
     };
 
     const exported = JSON.parse(exportReaderBackupJson(remote));
-    const imported = importReaderBackupJson(createEmptyReaderData(), JSON.stringify(remote));
-
-    for (const data of [exported, imported]) {
-      const clean = data.favorites[topicKey(topic)]?.topic;
-      expect(clean?.url).toBe('https://www.nodeseek.com/post-42-1');
-      expect(clean?.authorUrl).toBe('https://www.nodeseek.com/space/7');
-      expect(clean?.authorAvatar).toBe('https://cdn.example.com/avatar.png');
-      expect(data.followedUsers['linuxdo:88']?.user.url).toBe('https://linux.do/u/alice');
-      expect(data.followedUsers['linuxdo:88']?.user.avatar).toBe('https://cdn.example.com/user.png');
-      expect(JSON.stringify(clean)).not.toContain('fake-');
-      expect(JSON.stringify(data.followedUsers)).not.toContain('fake-');
-      expect(data.version).toBe(2);
-    }
+    const clean = exported.favorites[topicKey(topic)]?.topic;
+    expect(clean?.url).toBe('https://www.nodeseek.com/post-42-1');
+    expect(clean?.authorUrl).toBe('https://www.nodeseek.com/space/7');
+    expect(clean?.authorAvatar).toBe('https://cdn.example.com/avatar.png');
+    expect(exported.followedUsers['linuxdo:88']?.user.url).toBe('https://linux.do/u/alice');
+    expect(exported.followedUsers['linuxdo:88']?.user.avatar).toBe('https://cdn.example.com/user.png');
+    expect(JSON.stringify(clean)).not.toContain('fake-');
+    expect(JSON.stringify(exported.followedUsers)).not.toContain('fake-');
+    expect(exported.version).toBe(2);
   });
 });

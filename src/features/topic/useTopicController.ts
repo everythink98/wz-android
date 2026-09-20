@@ -11,7 +11,7 @@ import {
 import type { ReadGateway } from '@/sources/readGateway';
 import { topicKey } from '@/domain/reader/readerData';
 import type { ReaderCommand, ReaderView } from '@/domain/reader/readerRecordState';
-import { readHistoryReplyCount } from '@/platform/storage/readerDataStore';
+import { readHistoryReplyBaseline } from '@/platform/storage/readerDataStore';
 import { replyKey as replyRenderKey } from '@/domain/forum/feed';
 import { findReplyLocation } from '@/domain/forum/replyLocation';
 import { resolveTopicLocation, topicLocationForReply } from '@/domain/forum/topicLocation';
@@ -129,7 +129,8 @@ function replyLocationTarget(reply: Reply | undefined, pageHint?: number): Reply
 const readOutcome = sourceReadRecoveryOutcome;
 
 export function useTopicController({
-  active,
+  focused,
+  appActive,
   commitReaderData,
   sessionEpochs = initialForumSessionEpochs,
   notify,
@@ -146,7 +147,8 @@ export function useTopicController({
   topic,
   topicSession
 }: {
-  active: boolean;
+  focused: boolean;
+  appActive: boolean;
   commitReaderData: (command: ReaderCommand) => void;
   sessionEpochs?: ForumSessionEpochs;
   notify: (message: string) => void;
@@ -181,7 +183,9 @@ export function useTopicController({
       }
     >
   >({});
-  const [unreadBaseline, setUnreadBaseline] = useState<{ key: string; replies: number } | null>(null);
+  const [unreadBaseline, setUnreadBaseline] = useState<
+    ({ key: string } & Pick<Topic, 'replyCount' | 'replyWatermark'>) | null
+  >(null);
   const baselineKey = topicKey(topic);
   const recordedTopicUpdateRef = useRef('');
   const handledTopicErrorRef = useRef(0);
@@ -198,7 +202,8 @@ export function useTopicController({
   const topicReadBlocked = topicReadPlan.state === 'blocked';
   const repliesReadBlocked = repliesReadPlan.state === 'blocked';
   const selectedReadBlocked = topicReadBlocked || repliesReadBlocked;
-  const enabled = Boolean(active);
+  const active = focused && appActive;
+  const enabled = focused;
   const topicQueryKey = useMemo(
     () =>
       forumQueryKeys.topic({
@@ -246,9 +251,10 @@ export function useTopicController({
   );
   const repliesQueryIdentity = JSON.stringify(repliesQueryKey);
   const activeRepliesQueryIdentityRef = useCommittedRef(enabled && !selectedReadBlocked ? repliesQueryIdentity : '');
+  const interactionActiveRef = useCommittedRef(active);
   const isReadRecoveryCurrent = useCallback(
-    () => activeRepliesQueryIdentityRef.current === repliesQueryIdentity,
-    [activeRepliesQueryIdentityRef, repliesQueryIdentity]
+    () => interactionActiveRef.current && activeRepliesQueryIdentityRef.current === repliesQueryIdentity,
+    [activeRepliesQueryIdentityRef, interactionActiveRef, repliesQueryIdentity]
   );
   const [replyWindowFailuresByKey, setReplyWindowFailuresByKey] = useState<Record<string, ReplyWindowFailures>>({});
   const replyWindowFailures = replyWindowFailuresByKey[repliesQueryIdentity] || EMPTY_REPLY_WINDOW_FAILURES;
@@ -341,10 +347,10 @@ export function useTopicController({
           itemCount: detail.replies?.length || 0,
           hasContent: Boolean(detail.contentHtml?.trim())
         });
-        entryVisit.settled = true;
+        if (!signal.aborted) entryVisit.settled = true;
         return detail;
       } catch (error) {
-        entryVisit.settled = true;
+        if (!signal.aborted && !isCanceledRequest(error)) entryVisit.settled = true;
         finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
           source: topic.source,
           reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
@@ -356,12 +362,18 @@ export function useTopicController({
 
   const topicDetail = detailQuery.data || null;
   const commitReplySnapshot = useCallback(
-    (totalCount?: number) => {
-      if (totalCount !== undefined && Number.isSafeInteger(totalCount) && totalCount >= 0) {
-        queryClient.setQueryData<TopicDetail>(topicQueryKey, (cached) =>
-          cached && cached.replyCount !== totalCount ? { ...cached, replyCount: totalCount } : undefined
-        );
-      }
+    (totalCount?: number, replyWatermark?: number) => {
+      const count = Number.isSafeInteger(totalCount) && totalCount! >= 0 ? totalCount : undefined;
+      const watermark = Number.isSafeInteger(replyWatermark) && replyWatermark! >= 0 ? replyWatermark : undefined;
+      if (count !== undefined || watermark !== undefined)
+        queryClient.setQueryData<TopicDetail>(topicQueryKey, (cached) => {
+          if (!cached) return undefined;
+          return {
+            ...cached,
+            ...(count !== undefined ? { replyCount: count } : {}),
+            ...(watermark !== undefined ? { replyWatermark: watermark } : {})
+          };
+        });
       void queryClient.invalidateQueries({ queryKey: topicQueryKey, exact: true, refetchType: 'none' });
       void queryClient.invalidateQueries({ queryKey: otherRepliesQueryKey, exact: true, refetchType: 'none' });
     },
@@ -369,6 +381,7 @@ export function useTopicController({
   );
   const readingEntry = useTopicReadingEntry({
     active,
+    focused,
     topic: selectedTopic,
     detail: topicDetail,
     location,
@@ -388,12 +401,12 @@ export function useTopicController({
   useEffect(() => {
     if (ordinaryLinuxDoTopic || !topicDetail || unreadBaseline?.key === baselineKey) return;
     let active = true;
-    void readHistoryReplyCount(baselineKey).then(
-      (replies) => {
-        if (active) setUnreadBaseline({ key: baselineKey, replies });
+    void readHistoryReplyBaseline(baselineKey).then(
+      (baseline) => {
+        if (active) setUnreadBaseline({ key: baselineKey, ...baseline });
       },
       () => {
-        if (active) setUnreadBaseline({ key: baselineKey, replies: 0 });
+        if (active) setUnreadBaseline({ key: baselineKey });
       }
     );
     return () => {
@@ -498,7 +511,7 @@ export function useTopicController({
       });
       try {
         const page = await loadReplyPage(detail, replyOrder, pageParam, signal, trace);
-        if (!signal.aborted) commitReplySnapshot(page.totalCount);
+        if (!signal.aborted) commitReplySnapshot(page.totalCount, page.replyWatermark);
         finishDiagnosticTrace(trace, 'success', {
           itemCount: page.items.length,
           hasMore: Boolean(nextReplyPage(page)),
@@ -594,7 +607,7 @@ export function useTopicController({
             return false;
           }
           rebuilt = { pages: [page], pageParams: [{ kind: 'start' }] };
-          commitReplySnapshot(page.totalCount);
+          commitReplySnapshot(page.totalCount, page.replyWatermark);
           finishDiagnosticTrace(trace, 'success', { resolvedPage: page.currentPage || page.requestedPage });
         } catch (error) {
           if (!ownsWindow()) return false;
@@ -635,7 +648,7 @@ export function useTopicController({
       nodeSeekFallback?: (recovery: LinuxDoReadRecovery) => void
     ): SourceErrorInfo => {
       const sourceError = sourceErrorFromUnknown(source, error);
-      const isCurrent = recovery.isCurrent || isReadRecoveryCurrent;
+      const isCurrent = () => interactionActiveRef.current && (recovery.isCurrent || isReadRecoveryCurrent)();
       const currentRecovery: LinuxDoReadRecovery = {
         ...recovery,
         isCurrent,
@@ -652,13 +665,13 @@ export function useTopicController({
       }
       return sourceError;
     },
-    [isReadRecoveryCurrent, notify, showLinuxDoVerification, showYaohuoLogin]
+    [interactionActiveRef, isReadRecoveryCurrent, notify, showLinuxDoVerification, showYaohuoLogin]
   );
 
   useEffect(() => {
     if (!topicDetail || !detailQuery.dataUpdatedAt) return;
     if (!ordinaryLinuxDoTopic && unreadBaseline?.key !== topicKey(topicDetail)) return;
-    const recordKey = `${topicKey(topicDetail)}:${detailQuery.dataUpdatedAt}:${topicDetail.replyCount}`;
+    const recordKey = `${topicKey(topicDetail)}:${detailQuery.dataUpdatedAt}:${topicDetail.replyCount}:${topicDetail.replyWatermark}`;
     if (recordedTopicUpdateRef.current === recordKey) return;
     recordedTopicUpdateRef.current = recordKey;
     commitReaderData(
@@ -872,12 +885,12 @@ export function useTopicController({
   );
 
   useEffect(() => {
-    if (!active) {
+    if (!focused) {
       // Keep the route's target, but release an interrupted attempt so focus can resume it.
       if (handledRouteTargetRef.current?.pending) handledRouteTargetRef.current = null;
       cancelTopicQueries();
     }
-  }, [active, cancelTopicQueries]);
+  }, [focused, cancelTopicQueries]);
 
   const refreshWholeTopic = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!selectedTopic) return 'stale';
@@ -1176,7 +1189,7 @@ export function useTopicController({
             selectedTopic.source === 'nodeseek' && targetedCreatedCommand
               ? page.totalCount
               : (page.totalCount ?? refreshedDetail.replyCount);
-          commitReplySnapshot(replyCount);
+          commitReplySnapshot(replyCount, page.replyWatermark);
           setReplyWindowFailuresByKey({});
           if (command.kind === 'created' && createdTarget)
             onReplyLocationResolved?.(topicLocationForReply(selectedTopic.source, createdTarget));
@@ -1458,7 +1471,7 @@ export function useTopicController({
             pages: [page],
             pageParams: [{ kind: 'cursor', page: resolvedPage, offset: resolvedOffset }]
           });
-          commitReplySnapshot(page.totalCount);
+          commitReplySnapshot(page.totalCount, page.replyWatermark);
           clearReplyWindowErrors(true);
           if (ordinaryLinuxDoTopic && target.readingResume) {
             targetWindowCacheOwnedRef.current.delete(replyOrder);
@@ -1713,11 +1726,21 @@ export function useTopicController({
       ? Math.max(
           0,
           topicDetail.replyCount -
-            ((unreadBaseline?.key === topicKey(topicDetail) ? unreadBaseline.replies : 0) || topicDetail.replyCount)
+            (unreadBaseline?.key === topicKey(topicDetail)
+              ? (unreadBaseline.replyCount ?? topicDetail.replyCount)
+              : topicDetail.replyCount)
         )
       : 0;
 
+  const newReplyFloorStart = ordinaryLinuxDoTopic
+    ? readingEntry.baseline === undefined
+      ? undefined
+      : readingEntry.baseline + 1
+    : unreadBaseline?.key === currentTopicKey && unreadBaseline.replyWatermark !== undefined
+      ? unreadBaseline.replyWatermark + 1
+      : undefined;
   return {
+    ...(newReplyFloorStart !== undefined ? { newReplyFloorStart } : {}),
     readingEntry,
     readingRuntime: ordinaryLinuxDoTopic ? readGateway.reading : undefined,
     hasNewReplies:

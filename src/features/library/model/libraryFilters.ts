@@ -1,21 +1,9 @@
 import type { Category, FeedSource } from '@/domain/forum/models';
 import type { TopicRecord } from '@/domain/reader/readerData';
 
-export interface LibraryFilter {
-  source: FeedSource;
-  category: string;
-}
-
 export interface LibrarySection {
   label: string;
   records: TopicRecord[];
-}
-
-export function sortLibraryRecords(records: Record<string, TopicRecord>) {
-  return Object.values(records)
-    .map((record) => ({ record, time: Date.parse(record.savedAt) }))
-    .sort((left, right) => right.time - left.time)
-    .map(({ record }) => record);
 }
 
 export function libraryCategoryKey(source: FeedSource, categoryId: string) {
@@ -27,17 +15,6 @@ function libraryCategoryLabel(source: FeedSource, category: Category) {
     return '未分类';
   }
   return category.name || category.id;
-}
-
-export function filterLibraryRecords(records: TopicRecord[], filter: LibraryFilter) {
-  return records.filter(
-    (record) =>
-      (filter.source === 'all' || record.topic.source === filter.source) &&
-      (filter.category === 'all' ||
-        libraryCategoryKey(record.topic.source, record.topic.categoryId || record.topic.category || '') ===
-          filter.category ||
-        record.topic.category === filter.category)
-  );
 }
 
 export function libraryCategoryFilterItems(categories: Category[], source: FeedSource) {

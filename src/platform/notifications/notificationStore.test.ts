@@ -78,6 +78,17 @@ describe('notification delivery state', () => {
     });
   });
 
+  it.each([
+    { identityKey: 'nodeseek:7', retainedId: 'message:101' },
+    { identityKey: 'nodeseek:7', retainedId: 'reply-to-me:fallback:legacy' },
+    { identityKey: 'linuxdo:7', retainedId: 'message:fallback:legacy' }
+  ])('keeps the existing delivery baseline for $identityKey and $retainedId', ({ identityKey, retainedId }) => {
+    const previous = advanceNotificationDelivery(undefined, identityKey, [retainedId]).state;
+    const advanced = advanceNotificationDelivery(previous, identityKey, [retainedId, 'new']);
+    expect(advanced.newIds).toEqual(['new']);
+    expect(advanced.state.deliveredIds).toEqual([retainedId, 'new']);
+  });
+
   it('drops message content and credentials from persisted state', () => {
     const normalized = normalizeNotificationState({
       globalEnabled: true,

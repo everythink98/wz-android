@@ -40,18 +40,14 @@ function filterExcludedSearchItems(items: Topic[], expression: SearchExpression)
   });
 }
 
-function filterSearchItems(
-  response: SearchResponse,
-  query: string,
-  limit: number,
-  filter?: SourceSearchFilter
-): SearchResponse {
+function filterSearchItems(response: SearchResponse, query: string, filter?: SourceSearchFilter): SearchResponse {
   const expression = parseSearchExpression(query);
   const scopedItems = filterSearchResponseItems(response.items, filter, query);
   return copySourceDiagnosticSummary(
     {
       ...response,
-      items: filterExcludedSearchItems(scopedItems, expression).slice(0, limit)
+      // The cursor has consumed the whole adapter page; keep every surviving item.
+      items: filterExcludedSearchItems(scopedItems, expression)
     },
     response
   );
@@ -107,10 +103,9 @@ export async function searchTopics({
   timeoutMs?: number;
 }): Promise<SearchResponse> {
   const adapterQuery = positiveSearchQuery(query);
-  const adapterLimit = parseSearchExpression(query).exclude.length ? Math.min(100, limit * 3) : limit;
   const options = {
     authenticated: nodeSeekAuthenticated,
-    limit: adapterLimit,
+    limit,
     page,
     fetcher,
     nodeSeekUserAgent,
@@ -134,7 +129,7 @@ export async function searchTopics({
                     authenticated: item === 'linuxdo' && linuxDoAuthenticated === true,
                     auth: discourseAuth,
                     fetcher: sourceFetcher,
-                    limit: adapterLimit,
+                    limit,
                     page,
                     signal,
                     timeoutMs
@@ -154,7 +149,7 @@ export async function searchTopics({
                   await searchYaohuoDirect({
                     query: adapterQuery,
                     page,
-                    limit: adapterLimit,
+                    limit,
                     yaohuoFetcher: sourceFetcher,
                     signal,
                     timeoutMs
@@ -176,7 +171,7 @@ export async function searchTopics({
               results.flatMap((result) => (result.status === 'fulfilled' ? result.value.items : [])),
               expression
             )
-          ).slice(0, limit),
+          ),
           errors: mergeSettledSourceErrors(results, sources),
           hasMore: results.some((result) => result.status === 'fulfilled' && result.value.hasMore),
           nextPage: results.some((result) => result.status === 'fulfilled' && result.value.hasMore) ? page + 1 : null
@@ -210,7 +205,7 @@ export async function searchTopics({
           authenticated: source === 'linuxdo' && linuxDoAuthenticated === true,
           auth: discourseAuth,
           fetcher,
-          limit: adapterLimit,
+          limit,
           page,
           signal,
           timeoutMs
@@ -229,5 +224,5 @@ export async function searchTopics({
             filter: activeFilter?.source === 'v2ex' ? activeFilter : undefined
           })
       });
-  return filterSearchItems(requireSearchTopicTitles(response), query, limit, activeFilter);
+  return filterSearchItems(requireSearchTopicTitles(response), query, activeFilter);
 }

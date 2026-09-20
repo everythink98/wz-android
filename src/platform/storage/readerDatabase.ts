@@ -278,28 +278,80 @@ export class ReaderTransaction {
   private async remove(kind: ReaderCollection, key: string, deleted = false) {
     const row = await this.row(kind, key, deleted);
     if (!row) return false;
-    const column = deleted ? 'deleted' : 'records';
-    this.meta.bytes -= row.bytes + (this.counts[kind][column] > 1 ? 1 : 0);
-    this.counts[kind][column]--;
-    this.dirtyCounts.add(kind);
-    await this.sql.runAsync(
-      `DELETE FROM ${deleted ? 'reader_deleted' : 'reader_records'} WHERE kind = ? AND key = ?`,
-      kind,
-      key
-    );
-    if (!deleted) this.mark(kind, key, false);
+    await this.removeRows(kind, [row], deleted);
     return true;
+  }
+
+  private async removeRows(kind: ReaderCollection, rows: Pick<RecordRow, 'key' | 'bytes'>[], deleted = false) {
+    const column = deleted ? 'deleted' : 'records';
+    for (let offset = 0; offset < rows.length; offset += 50) {
+      const batch = rows.slice(offset, offset + 50);
+      for (const row of batch) {
+        this.meta.bytes -= row.bytes + (this.counts[kind][column] > 1 ? 1 : 0);
+        this.counts[kind][column]--;
+        if (!deleted) this.mark(kind, row.key, false);
+      }
+      this.dirtyCounts.add(kind);
+      await this.sql.runAsync(
+        `DELETE FROM ${deleted ? 'reader_deleted' : 'reader_records'} WHERE kind = ? AND key IN (${batch.map(() => '?').join(',')})`,
+        [kind, ...batch.map((row) => row.key)]
+      );
+    }
   }
 
   private async trim(kind: ReaderCollection, limit: number, deleted = false) {
     const excess = this.counts[kind][deleted ? 'deleted' : 'records'] - limit;
     if (excess <= 0) return;
-    const rows = await this.sql.getAllAsync<{ key: string }>(
-      `SELECT key FROM ${deleted ? 'reader_deleted' : 'reader_records'} WHERE kind = ? ORDER BY time ASC, ordinal DESC LIMIT ?`,
+    const rows = await this.sql.getAllAsync<Pick<RecordRow, 'key' | 'bytes'>>(
+      `SELECT key, bytes FROM ${deleted ? 'reader_deleted' : 'reader_records'} WHERE kind = ? ORDER BY time ASC, ordinal DESC LIMIT ?`,
       kind,
       excess
     );
-    for (const row of rows) await this.remove(kind, row.key, deleted);
+    await this.removeRows(kind, rows, deleted);
+  }
+
+  private async deleteRecords(kind: ReaderCollection, keys: string[], at: string) {
+    let removed = false;
+    const json = JSON.stringify(at);
+    for (let offset = 0; offset < keys.length; offset += 50) {
+      const batch = keys.slice(offset, offset + 50);
+      const placeholders = batch.map(() => '?').join(',');
+      const records = await this.sql.getAllAsync<Pick<RecordRow, 'key' | 'bytes'>>(
+        `SELECT key, bytes FROM reader_records WHERE kind = ? AND key IN (${placeholders})`,
+        [kind, ...batch]
+      );
+      if (!records.length) continue;
+      const byKey = new Map(records.map((row) => [row.key, row]));
+      // Keep command order: tied deletion times retain the original ordinal window.
+      const rows = batch.flatMap((key) => (byKey.has(key) ? [byKey.get(key)!] : []));
+      const oldDeleted = new Map(
+        (
+          await this.sql.getAllAsync<RecordRow>(
+            `SELECT key, value, ordinal, bytes FROM reader_deleted WHERE kind = ? AND key IN (${placeholders})`,
+            [kind, ...batch]
+          )
+        ).map((row) => [row.key, row])
+      );
+      await this.removeRows(kind, rows);
+      removed = true;
+      const params: (string | number)[] = [];
+      for (const row of rows) {
+        const old = oldDeleted.get(row.key);
+        if (old?.value === json) continue;
+        const bytes = utf8Bytes(JSON.stringify(row.key)) + 1 + utf8Bytes(json);
+        this.meta.bytes += bytes - (old?.bytes || 0) + (!old && this.counts[kind].deleted > 0 ? 1 : 0);
+        if (!old) this.counts[kind].deleted++;
+        params.push(kind, row.key, json, Date.parse(at), old?.ordinal ?? this.meta.nextOrdinal++, bytes);
+      }
+      if (params.length) {
+        await this.sql.runAsync(
+          `INSERT INTO reader_deleted(kind,key,value,time,ordinal,bytes) VALUES ${Array.from({ length: params.length / 6 }, () => '(?,?,?,?,?,?)').join(',')}
+          ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value,time=excluded.time,bytes=excluded.bytes`,
+          params
+        );
+      }
+    }
+    if (removed) await this.trim(kind, MAX_DELETED_RECORDS, true);
   }
 
   async apply(command: ReaderCommand) {
@@ -357,14 +409,7 @@ export class ReaderTransaction {
             (row) => row.key
           )
         : [...new Set(command.keys)];
-    let removed = false;
-    for (const key of keys) {
-      if (await this.remove(kind, key)) {
-        removed = true;
-        await this.put(kind, key, command.at, true);
-      }
-    }
-    if (removed) await this.trim(kind, MAX_DELETED_RECORDS, true);
+    await this.deleteRecords(kind, keys, command.at);
   }
 
   setSettings(settings: ReaderSettings) {

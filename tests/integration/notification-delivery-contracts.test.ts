@@ -45,6 +45,7 @@ import {
   runNotificationBackgroundWorker,
   type NotificationWorkerDependencies
 } from '@/platform/notifications/notificationWorker';
+import type { ForumNotification, NotificationPage } from '@/domain/notifications/models';
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -55,6 +56,179 @@ beforeEach(() => {
 });
 
 describe('notification delivery settlement', () => {
+  const item = (id: string): ForumNotification => ({
+    source: 'nodeseek',
+    id,
+    kind: 'reply',
+    actor: { name: '甲' },
+    title: '回复',
+    createdAt: null,
+    unread: true,
+    target: { type: 'information' }
+  });
+  async function delivery(pages: NotificationPage[], baselineReady = false) {
+    const state = defaultNotificationState();
+    state.globalEnabled = true;
+    state.sources.nodeseek = {
+      ...state.sources.nodeseek,
+      intentEnabled: true,
+      identityKey: 'nodeseek:7',
+      baselineReady
+    };
+    await saveNotificationState(state);
+    const presentDigest = vi.fn(async (_source, _digest, identifier) => identifier);
+    const listPage = vi.fn(async (_source, _access, _signal, cursor?: string | null) => pages[Number(cursor) || 0]);
+    const run = () =>
+      runNotificationBackgroundWorker({
+        sources: ['nodeseek'],
+        sourceAllowed: () => true,
+        network: {
+          restoreProxy: async () => undefined,
+          probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
+          listPage
+        },
+        store: {
+          load: loadNotificationState,
+          record: recordNotificationDelivery,
+          clearForContentDisable: clearNotificationSourceForContentDisable
+        },
+        system: {
+          permissionGranted: async () => true,
+          reconcileDigests: async () => undefined,
+          presentDigest,
+          dismissDigest: async () => undefined
+        }
+      });
+    return { run, presentDigest, listPage };
+  }
+
+  it.each(['invalid', 'partial'] as const)(
+    'keeps the initial baseline untouched after a %s scan, then quietly accepts the first complete scan',
+    async (quality) => {
+      const pages: NotificationPage[] = [
+        { items: quality === 'partial' ? [item('old')] : [], cursor: null, hasMore: false, quality }
+      ];
+      const worker = await delivery(pages);
+      expect(await worker.run()).toMatchObject({ failedSources: 1, delivered: 0 });
+      expect((await loadNotificationState()).sources.nodeseek).toMatchObject({
+        baselineReady: false,
+        deliveredIds: []
+      });
+      expect((await loadNotificationState()).sources.nodeseek.lastSuccessAt).toBeUndefined();
+      pages[0] = { items: [item('old')], cursor: null, hasMore: false, quality: 'complete' };
+      await worker.run();
+      expect(worker.presentDigest).not.toHaveBeenCalled();
+      pages[0].items.push(item('new'));
+      expect(await worker.run()).toMatchObject({ delivered: 1, failedSources: 0 });
+      expect(worker.presentDigest).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('rejects the entire source scan if a later page is partial', async () => {
+    const worker = await delivery(
+      [
+        { items: [item('a')], cursor: '1', hasMore: true, quality: 'complete' },
+        { items: [item('b')], cursor: null, hasMore: false, quality: 'partial' }
+      ],
+      true
+    );
+    expect(await worker.run()).toMatchObject({ failedSources: 1, delivered: 0 });
+    expect((await loadNotificationState()).sources.nodeseek.deliveredIds).toEqual([]);
+    expect(worker.presentDigest).not.toHaveBeenCalled();
+  });
+
+  it('keeps a legacy private-message baseline through a partial scan and silently replaces it only after a complete scan', async () => {
+    const message = (id: string): ForumNotification => ({
+      ...item(id),
+      kind: 'private-message',
+      target: { type: 'private-conversation', conversationId: '9' }
+    });
+    const pages: NotificationPage[] = [
+      { items: [message('message:101'), item('reply-to-me:50')], cursor: null, hasMore: false, quality: 'partial' }
+    ];
+    const worker = await delivery(pages, true);
+    const initial = await loadNotificationState();
+    initial.hasOptedIn = true;
+    initial.sources.nodeseek = {
+      ...initial.sources.nodeseek,
+      deliveredIds: ['message:fallback:legacy', 'reply-to-me:50'],
+      unreadCount: 3,
+      notificationIdentifier: 'previous-digest',
+      lastSuccessAt: '2026-09-18T00:00:00.000Z'
+    };
+    initial.sources.linuxdo = {
+      intentEnabled: true,
+      identityKey: 'linuxdo:8',
+      baselineReady: true,
+      deliveredIds: ['202'],
+      unreadCount: 1
+    };
+    const previous = await saveNotificationState(initial);
+    native.write.mockClear();
+
+    expect(await worker.run()).toMatchObject({ failedSources: 1, delivered: 0 });
+    expect(await loadNotificationState()).toEqual(previous);
+    expect(native.write).not.toHaveBeenCalled();
+    expect(worker.presentDigest).not.toHaveBeenCalled();
+
+    pages[0].quality = 'complete';
+    expect(await worker.run()).toMatchObject({ failedSources: 0, delivered: 0 });
+    expect(worker.presentDigest).not.toHaveBeenCalled();
+    const rebuilt = await loadNotificationState();
+    expect(rebuilt).toMatchObject({ globalEnabled: true, hasOptedIn: true });
+    expect(rebuilt.sources.nodeseek).toMatchObject({
+      intentEnabled: true,
+      identityKey: 'nodeseek:7',
+      baselineReady: true,
+      deliveredIds: ['message:101', 'reply-to-me:50'],
+      unreadCount: 3,
+      notificationIdentifier: 'previous-digest'
+    });
+    expect(rebuilt.sources.linuxdo).toEqual(previous.sources.linuxdo);
+    expect(rebuilt.sources.yaohuo).toEqual(previous.sources.yaohuo);
+
+    pages[0].items[0] = message('message:102');
+    expect(await worker.run()).toMatchObject({ failedSources: 0, delivered: 1 });
+    expect(await worker.run()).toMatchObject({ failedSources: 0, delivered: 0 });
+    expect(worker.presentDigest).toHaveBeenCalledTimes(1);
+    expect((await loadNotificationState()).sources.nodeseek.deliveredIds).toEqual([
+      'message:102',
+      'reply-to-me:50',
+      'message:101'
+    ]);
+  });
+
+  it('deduplicates overlapping pages before computing the digest and delivered count', async () => {
+    const worker = await delivery(
+      [
+        { items: [item('a')], cursor: '1', hasMore: true, quality: 'complete' },
+        { items: [item('a'), item('b')], cursor: null, hasMore: false, quality: 'complete' }
+      ],
+      true
+    );
+    expect(await worker.run()).toMatchObject({ delivered: 2 });
+    expect(worker.presentDigest.mock.calls[0][1].body).toContain('另有 1 条');
+    expect((await loadNotificationState()).sources.nodeseek.deliveredIds.sort()).toEqual(['a', 'b']);
+  });
+
+  it('keeps the raw scan budget when every row repeats an earlier identity', async () => {
+    const worker = await delivery(
+      [
+        { items: Array.from({ length: 30 }, () => item('a')), cursor: '1', hasMore: true, quality: 'complete' },
+        { items: Array.from({ length: 30 }, () => item('a')), cursor: '2', hasMore: true, quality: 'complete' }
+      ],
+      true
+    );
+    expect(await worker.run()).toMatchObject({ delivered: 1 });
+    expect(worker.listPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts a legitimate empty page as a complete initial baseline', async () => {
+    const worker = await delivery([{ items: [], cursor: null, hasMore: false, quality: 'complete' }]);
+    expect(await worker.run()).toMatchObject({ failedSources: 0 });
+    expect((await loadNotificationState()).sources.nodeseek.baselineReady).toBe(true);
+  });
+
   it.each([
     { total: 80, scanned: 60, unread: true },
     { total: 1, scanned: 20, unread: false }
@@ -74,6 +248,7 @@ describe('notification delivery settlement', () => {
           restoreProxy: async () => undefined,
           probeAccess: async () => ({ identityKey, userId: '7' }),
           listPage: async () => ({
+            quality: 'complete' as const,
             items: Array.from({ length: scanned }, (_, index) => ({
               source: 'nodeseek' as const,
               id: String(index),
@@ -183,6 +358,7 @@ describe('notification delivery settlement', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey, userId: stage }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',

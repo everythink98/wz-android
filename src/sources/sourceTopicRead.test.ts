@@ -39,7 +39,7 @@ describe('source topic read', () => {
 
   it('keeps single quoted-floor reads on linux.do public JSON endpoints', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input.includes('/t/42.json')) {
+      if (input.includes('/t/42/2.json')) {
         return new Response(
           JSON.stringify({
             id: 42,
@@ -66,7 +66,8 @@ describe('source topic read', () => {
     const reply = await getReply({ source: 'linuxdo', id: '42', floor: 2, fetcher });
 
     expect(reply).toMatchObject({ author: 'bob', floor: 2 });
-    expect(fetcher.mock.calls[0][0]).toBe('https://linux.do/t/42.json');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][0]).toBe('https://linux.do/t/42/2.json?include_raw=true');
   });
 
   it('does not return a different linux.do post when the quoted floor is missing', async () => {

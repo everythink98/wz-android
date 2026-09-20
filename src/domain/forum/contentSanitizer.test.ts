@@ -3,6 +3,36 @@ import { parseHtml } from './html';
 import { sanitizeContentHtml } from './contentSanitizer';
 
 describe('forum content sanitizer media referrer policy', () => {
+  it.each([
+    '<p>important explanation</p><img src="https://example.com/proof.png">',
+    '<ul><li>important explanation</li></ul>',
+    'important explanation',
+    '</section><section><p>important explanation</p>'
+  ])('preserves ordinary content between separate terminal sections: %s', (middle) => {
+    const html = sanitizeContentHtml(
+      `<section><p>💻 CPU</p><div class="forum-terminal-code">first</div>${middle}<p>🌐 Network</p><div class="forum-terminal-code">second</div></section>`,
+      'https://www.nodeseek.com/post-1-1'
+    );
+    const root = parseHtml(html);
+    expect(root.textContent).toMatch(/first[\s\S]*important explanation[\s\S]*second/);
+    expect(root.querySelector('forum-terminal-report')).toBeNull();
+    if (middle.includes('<img'))
+      expect(root.querySelector('img')?.getAttribute('src')).toBe('https://example.com/proof.png');
+  });
+
+  it('groups only contiguous terminal sections in their existing parent', () => {
+    const section = (title: string) => `<p>${title}</p><div class="forum-terminal-code">output</div>`;
+    const root = parseHtml(
+      sanitizeContentHtml(
+        `<section>${section('💻 CPU')} \n ${section('🌐 Network')}<p>keep me</p>${section('🎬 Media')}${section('📍 Location')}</section>`,
+        'https://www.nodeseek.com/post-1-1'
+      )
+    );
+    expect(root.querySelectorAll('section > forum-terminal-report')).toHaveLength(2);
+    expect(root.querySelectorAll('forum-terminal-tab')).toHaveLength(4);
+    expect(root.querySelector('section > p')?.textContent).toBe('keep me');
+  });
+
   it('validates absolute media without resolving the same base for every image', () => {
     const baseUrl = 'https://example.com/topic/123';
     const NativeURL = URL;

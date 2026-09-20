@@ -707,20 +707,7 @@ export const TopicContentList = memo(function TopicContentList({
     });
     return next;
   }, [quoteStateVersion, sourceReplies, topic]);
-  const newReplyFloorStart = useMemo(() => {
-    if (topic?.source === 'linuxdo')
-      return read.readingEntry?.baseline ? read.readingEntry.baseline + 1 : Number.POSITIVE_INFINITY;
-    if (unreadReplyCount <= 0) {
-      return Number.POSITIVE_INFINITY;
-    }
-    const floors = sourceReplies
-      .map((reply) => reply.floor)
-      .filter((floor): floor is number => typeof floor === 'number');
-    if (!floors.length) {
-      return Number.POSITIVE_INFINITY;
-    }
-    return Math.max(...floors) - unreadReplyCount + 1;
-  }, [sourceReplies, unreadReplyCount, topic?.source, read.readingEntry?.baseline]);
+  const newReplyFloorStart = read.newReplyFloorStart ?? Number.POSITIVE_INFINITY;
   const [pollSelections, setPollSelections] = useState<Record<string, string[]>>({});
   const togglePollSelection = useCallback((key: string, poll: TopicPoll, optionId: string) => {
     setPollSelections((current) => {
@@ -2047,7 +2034,7 @@ export const TopicContentList = memo(function TopicContentList({
                 {read.hasNewReplies ? (
                   <Text style={styles.noticeText}>有新回复</Text>
                 ) : unreadReplyCount > 0 ? (
-                  <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text>
+                  <Text style={styles.noticeText}>较上次多 {unreadReplyCount} 条回复</Text>
                 ) : null}
                 <View style={styles.searchRow}>
                   <TextInput

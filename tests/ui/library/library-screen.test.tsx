@@ -1,7 +1,6 @@
-import { filterLibraryRecords } from '@/features/library/model/libraryFilters';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '../render';
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Alert, View } from 'react-native';
 import type { LibraryTab } from '@/domain/forum/feed';
 import { createEmptyReaderData, type FollowedUserRecord, type TopicRecord } from '@/domain/reader/readerData';
@@ -176,6 +175,8 @@ function LibraryHarness({
   followedUsers: libraryUsers = followedUsers,
   favoriteRecords = records,
   historyRecords = records,
+  total,
+  visibleTotal,
   onClearHistory = noop,
   onManageContentSources = noop,
   onOpenTopic = noopTopic,
@@ -188,6 +189,8 @@ function LibraryHarness({
   followedUsers?: FollowedUserRecord[];
   favoriteRecords?: TopicRecord[];
   historyRecords?: TopicRecord[];
+  total?: number;
+  visibleTotal?: number;
   onClearHistory?: () => void;
   onManageContentSources?: () => void;
   onOpenTopic?: (topic: Topic) => void;
@@ -198,31 +201,12 @@ function LibraryHarness({
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
   const [sourceFilter, setSourceFilter] = useState<import('@/domain/forum/models').FeedSource>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const sourcesKey = enabledSources.join('|');
-  const visibleFavorites = useMemo(
-    () => favoriteRecords.filter((record) => enabledSources.includes(record.topic.source)),
-    [favoriteRecords, sourcesKey]
-  );
-  const visibleHistory = useMemo(
-    () => historyRecords.filter((record) => enabledSources.includes(record.topic.source)),
-    [historyRecords, sourcesKey]
-  );
-  const visibleUsers = useMemo(
-    () => libraryUsers.filter((record) => enabledSources.includes(record.user.source)),
-    [libraryUsers, sourcesKey]
-  );
-  const filteredFavorites = useMemo(
-    () => filterLibraryRecords(visibleFavorites, { source: sourceFilter, category: categoryFilter }),
-    [visibleFavorites, sourceFilter, categoryFilter]
-  );
-  const filteredHistory = useMemo(
-    () => filterLibraryRecords(visibleHistory, { source: sourceFilter, category: categoryFilter }),
-    [visibleHistory, sourceFilter, categoryFilter]
-  );
-  const filteredUsers = useMemo(
-    () => visibleUsers.filter((record) => sourceFilter === 'all' || record.user.source === sourceFilter),
-    [visibleUsers, sourceFilter]
-  );
+  const recordCount =
+    libraryTab === 'users'
+      ? libraryUsers.length
+      : libraryTab === 'history'
+        ? historyRecords.length
+        : favoriteRecords.length;
 
   return (
     <View>
@@ -232,28 +216,16 @@ function LibraryHarness({
         categoryFilter={categoryFilter}
         onSourceFilter={setSourceFilter}
         onCategoryFilter={setCategoryFilter}
-        total={
-          libraryTab === 'users'
-            ? filteredUsers.length
-            : libraryTab === 'history'
-              ? filteredHistory.length
-              : filteredFavorites.length
-        }
-        visibleTotal={
-          libraryTab === 'users'
-            ? visibleUsers.length
-            : libraryTab === 'history'
-              ? visibleHistory.length
-              : visibleFavorites.length
-        }
+        total={total ?? recordCount}
+        visibleTotal={visibleTotal ?? recordCount}
         error={false}
         onRetry={noop}
         onLoadMore={noop}
         categories={categories}
         enabledSources={enabledSources}
-        favoriteRecords={filteredFavorites}
-        followedUsers={filteredUsers}
-        historyRecords={filteredHistory}
+        favoriteRecords={favoriteRecords}
+        followedUsers={libraryUsers}
+        historyRecords={historyRecords}
         libraryTab={libraryTab}
         loaded
         topicStateIndex={topicStateIndex}
@@ -278,13 +250,9 @@ beforeEach(() => {
   jest.spyOn(global, 'cancelAnimationFrame').mockImplementation(() => undefined);
 });
 
-describe('Library filters', () => {
-  it('projects source rails and local records in user order without mutating stored data, then restores re-enabled data', async () => {
-    const recordsSnapshot = JSON.stringify(records);
-    const recordReferences = [...records];
-    const followedUsersSnapshot = JSON.stringify(followedUsers);
-    const followedUserReferences = [...followedUsers];
-    const view = await render(<LibraryHarness enabledSources={['linuxdo']} />);
+describe('Library presentation', () => {
+  it('renders supplied collection pages and source rails in user order', async () => {
+    const view = await render(<LibraryHarness enabledSources={['linuxdo']} favoriteRecords={[records[2]]} />);
 
     expect(
       view
@@ -300,20 +268,14 @@ describe('Library filters', () => {
     expect(view.getByText('V2EX 问答主题')).toBeTruthy();
     expect(view.getByText('V2EX 工作主题')).toBeTruthy();
     expect(view.getByText('linux.do 开发主题')).toBeTruthy();
-    expect(JSON.stringify(records)).toBe(recordsSnapshot);
-    expect(records).toEqual(recordReferences);
-    expect(records.every((record, index) => record === recordReferences[index])).toBe(true);
 
     await fireEvent.press(view.getByTestId('library-tab-users'));
-    await view.rerender(<LibraryHarness enabledSources={['linuxdo']} />);
+    await view.rerender(<LibraryHarness enabledSources={['linuxdo']} followedUsers={[followedUsers[1]]} />);
     expect(view.queryByText('Neo')).toBeNull();
     expect(view.getByText('Alice')).toBeTruthy();
     await view.rerender(<LibraryHarness enabledSources={['linuxdo', 'v2ex']} />);
     expect(view.getByText('Neo')).toBeTruthy();
     expect(view.getByText('Alice')).toBeTruthy();
-    expect(JSON.stringify(followedUsers)).toBe(followedUsersSnapshot);
-    expect(followedUsers).toEqual(followedUserReferences);
-    expect(followedUsers.every((record, index) => record === followedUserReferences[index])).toBe(true);
   });
 
   it('reorders the rail without changing selection, category or local data actions', async () => {
@@ -353,14 +315,14 @@ describe('Library filters', () => {
     expect(onRemoveUser).not.toHaveBeenCalled();
   });
 
-  it('returns a disabled active source to all, clears category selection and restores it only as unfiltered data', async () => {
+  it('resets unavailable source and category controls without restoring stale selections', async () => {
     const view = await render(<LibraryHarness enabledSources={['v2ex', 'linuxdo']} />);
     await fireEvent.press(view.getByTestId('library-source-v2ex'));
     await fireEvent.press(view.getByTestId('library-category-menu-button'));
     await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
-    expect(view.getByText('1 / 3 条')).toBeTruthy();
+    expect(view.getByLabelText('分类：问与答')).toBeTruthy();
 
-    await view.rerender(<LibraryHarness enabledSources={['linuxdo']} />);
+    await view.rerender(<LibraryHarness enabledSources={['linuxdo']} favoriteRecords={[records[2]]} />);
     expect(view.getByTestId('library-source-all').props.accessibilityState.selected).toBe(true);
     expect(view.queryByTestId('library-source-v2ex')).toBeNull();
     expect(view.getByText('linux.do 开发主题')).toBeTruthy();
@@ -382,6 +344,9 @@ describe('Library filters', () => {
     const view = await render(
       <LibraryHarness
         enabledSources={[]}
+        favoriteRecords={[]}
+        followedUsers={[]}
+        historyRecords={[]}
         onClearHistory={onClearHistory}
         onManageContentSources={onManageContentSources}
         onRemove={onRemove}
@@ -538,6 +503,8 @@ describe('Library filters', () => {
     const historyRenders = mockFlashListRenders.filter((renderState) => renderState.testID === 'library-history-ready');
     expect(historyRenders).toHaveLength(1);
     expect(historyRenders[0]).toMatchObject({ dataLength: 4, testID: 'library-history-ready' });
+    expect(view.getByTestId('library-source-all').props.accessibilityState.selected).toBe(true);
+    expect(view.getByLabelText('分类：全部')).toBeTruthy();
   });
 
   it('resets the list position before switching tabs without animation', async () => {
@@ -562,7 +529,7 @@ describe('Library filters', () => {
   });
 
   it('leaves filters and position unchanged when the selected tab is pressed again', async () => {
-    const view = await render(<LibraryHarness />);
+    const view = await render(<LibraryHarness favoriteRecords={[records[0]]} total={1} visibleTotal={3} />);
     await fireEvent.press(view.getByTestId('library-source-v2ex'));
     await fireEvent.press(view.getByTestId('library-category-menu-button'));
     await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
@@ -646,41 +613,5 @@ describe('Library filters', () => {
     await fireEvent.press(view.getAllByLabelText('取消关注')[0]);
     expect(onRemoveUser).toHaveBeenCalledWith(followedUsers[0]?.user);
     expect(onOpenUser).not.toHaveBeenCalled();
-  });
-
-  it('filters by source and category, then resets both when the tab changes', async () => {
-    const view = await render(<LibraryHarness />);
-
-    expect(view.getByText('3 条')).toBeTruthy();
-    await fireEvent.press(view.getByTestId('library-source-v2ex'));
-    expect(view.getByText('2 / 3 条')).toBeTruthy();
-    expect(view.queryByText('linux.do 开发主题')).toBeNull();
-
-    await fireEvent.press(view.getByTestId('library-category-menu-button'));
-    await fireEvent.press(view.getByRole('menuitem', { name: '问与答' }));
-    expect(view.getByText('1 / 3 条')).toBeTruthy();
-    expect(view.getByText('V2EX 问答主题')).toBeTruthy();
-    expect(view.queryByText('V2EX 工作主题')).toBeNull();
-
-    await fireEvent.press(view.getByTestId('library-tab-users'));
-    expect(view.getByTestId('library-source-all').props.accessibilityState.selected).toBe(true);
-    expect(view.queryByTestId('library-category-menu-button')).toBeNull();
-    expect(view.getByText('2 / 2 人')).toBeTruthy();
-    await fireEvent.press(view.getByTestId('library-source-v2ex'));
-    expect(view.getByText('1 / 2 人')).toBeTruthy();
-    expect(view.getByText('Neo')).toBeTruthy();
-    expect(view.queryByText('Alice')).toBeNull();
-
-    await fireEvent.press(view.getByTestId('library-tab-history'));
-    expect(view.getByTestId('library-source-all').props.accessibilityState.selected).toBe(true);
-    expect(view.getAllByLabelText('全部，已选择')).toHaveLength(1);
-    expect(view.getByLabelText('分类：全部')).toBeTruthy();
-    expect(view.getByText('3 条')).toBeTruthy();
-    await fireEvent.press(view.getByTestId('library-source-linuxdo'));
-    await fireEvent.press(view.getByTestId('library-category-menu-button'));
-    await fireEvent.press(view.getByRole('menuitem', { name: '开发调优' }));
-    expect(view.getByText('1 / 3 条')).toBeTruthy();
-    expect(view.getByText('linux.do 开发主题')).toBeTruthy();
-    expect(view.queryByText('V2EX 问答主题')).toBeNull();
   });
 });

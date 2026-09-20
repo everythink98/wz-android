@@ -2139,10 +2139,25 @@ function compileSemanticEntries(
       continue;
     }
     if (tagName === 'table') {
+      for (const [captionIndex, caption] of (node.childNodes || []).entries()) {
+        if (nodeTagName(caption) !== 'caption') continue;
+        rows.push(
+          ...compileSemanticEntries(
+            (caption.childNodes || []).map((child, index) => ({
+              node: child,
+              path: `${path}.caption-${captionIndex}.${index}`
+            })),
+            wrappers,
+            context
+          )
+        );
+      }
       rows.push(
         ...(context.containsTypedDirective.has(node)
           ? compileSemanticEntries(
-              (node.childNodes || []).map((child, index) => ({ node: child, path: `${path}.${index}` })),
+              (node.childNodes || [])
+                .map((child, index) => ({ node: child, path: `${path}.${index}` }))
+                .filter((child) => nodeTagName(child.node) !== 'caption'),
               [...wrappers, { node }],
               context
             )

@@ -8,7 +8,9 @@
 
 | 问题或缺口 | 历史入口 | 下一份有效证据 |
 | --- | --- | --- |
-| 本轮架构审查修复的剩余实境分支 | [取证与批次记录](review-remediation.md) | 隔离 Android 已通过 31 项 SQLite 和 41 项运行时故障检查，并补修 Feed 底层滚动视图重建；完整原站挑战、真实写入、Library 隐藏分页设备注入/导入 UI 及系统后台唤醒仍按记录单独验收。 |
+| 前轮架构审查保留的实境分支 | [取证与批次记录](review-remediation.md) | 完整原站挑战、真实写入、Library 隐藏分页设备注入/导入 UI 等历史分支仍依原记录独立验收。本轮通知、持久化与受控后台执行的新增证据不关闭这些无关分支。 |
+| 2026-09-19 全仓修复的剩余实境边界 | [全仓复核方案落实](review-remediation.md#2026-09-19全仓复核方案落实) | NodeSeek max_id 与妖火稀疏楼层修复已通过对应 Live；四源原在途请求在后台完成、妖火双向各 19 页及末端观察区间无额外调用已有诊断证据，原 deadline 和冷请求失焦恢复已有真实 Route 组合验证。通知质量、sidecar 三类挂起及 journal 在途进程终止/重开已通过隔离设备重放。强制 JobScheduler→WorkManager→Expo 后台执行、隔离 R8 冷进程成功与 deadline、主普通包自然暖/冷进程均通过；冷启动发现的反射类裁剪已修复并复验。厂商省电、物理设备及真实站点写入仍未验证；请求预算结论只限已断言区间，不外推完整历史日志或所有来源。 |
+| 本轮原生文件故障与最终普通包 | [追加验收记录](review-remediation.md) | 生产流的主机 ENOSPC 与 Android 受控 provider 写入故障已有证据；provider 关闭故障已有修复前失败、修复后通过。真实 SAF 同名 Unicode 文件分别保存、旧文件不变及重新导入，与相册/延迟接收联合 owner 均通过。SVG 已在 WebView 124 及隔离设备原有 156 两版本通过；图片保存中途推进同站 session epoch 的真实 controller 组合通过。最终普通双 ABI Release/Hermes 包已同签名覆盖主设备，实际安装 APK hash 与目标产物一致，firstInstallTime 不变，三站刷新仍已登录；最新普通包自然冷进程 headless 约 3.69 秒完成，三站业务扫描全部成功。Android 实际磁盘耗尽、其他未测 WebView 与物理设备仍未验证。 |
 | 重图自动原图生命周期与整体容量 | `REG-TOPIC-144`、`REG-PERF-025` | 匹配源码 Release 的同条件重图流程；代码修复与局部成功不关闭完整设备门槛，App 故障与模拟器故障分别取证。 |
 | 正文连续选择 | `REG-TOPIC-100`、`REG-TOPIC-146` | 独立 AVD instrumentation，以及匹配 APK 的主楼复制、跨回收窗口、返回与逐帧几何；物理设备触感单列。 |
 | 续读与超高回复定位 | `REG-TOPIC-148/149` | 四站无按钮双向续读、重复定位和关联交互；尾窗底部收缩须核对 content layout 夹紧与 Native MVCP 的真实顺序。 |

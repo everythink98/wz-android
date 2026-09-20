@@ -11,6 +11,7 @@ import {
   yaohuoFavoriteActionKey
 } from './actionHelpers';
 import type { Reply, UserProfile } from '@/domain/forum/models';
+import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 
 describe('topic action controller helpers', () => {
   it('uses different request keys for different non-optimistic actions on the same topic', () => {
@@ -179,6 +180,31 @@ describe('topic action controller helpers', () => {
     expect(updated[0].contentHtml).toContain('<strong>重点</strong>');
     expect(updated[0].preparedContent?.contentHtml).toBe(updated[0].contentHtml);
     expect(updated[1]).toBe(replies[1]);
+  });
+
+  it.each<[string, string[]]>([
+    ['纯文本', []],
+    ['前文\n\nnsapp://vote?id=3200\n\n后文', ['3200']],
+    ['`nsapp://vote?id=3199`\n\n[普通链接](nsapp://vote?id=3200)', []]
+  ])('keeps only polls still referenced by the edited NodeSeek body: %s', (contentMarkdown, ids) => {
+    const reply: Reply = {
+      author: 'alice',
+      commentId: 9,
+      contentHtml: '<p>nsapp://vote?id=3199</p><p>nsapp://vote?id=3200</p>',
+      createdAt: '2026-09-20T00:00:00.000Z',
+      polls: ['3199', '3200'].map((id) => ({ id, title: `Poll ${id}`, options: [{ id: '1', label: 'A' }] }))
+    };
+    const [updated] = applyEditedReplyContent([reply], { commentId: 9, contentMarkdown }, 'nodeseek');
+    const plan = requirePreparedForumContent(updated.preparedContent, updated.contentHtml, {
+      polls: updated.polls,
+      role: 'reply',
+      source: 'nodeseek'
+    });
+    expect(updated.polls?.map((poll) => poll.id) || []).toEqual(ids);
+    expect(plan.rows.filter((row) => row.type === 'poll').map((row) => row.poll.id)).toEqual(ids);
+    if (ids.length) {
+      expect(plan.rows.map((row) => row.type)).toEqual(['richText', 'poll', 'richText']);
+    }
   });
 
   it('does not apply NodeSeek markdown fallback to linux.do edited replies', () => {

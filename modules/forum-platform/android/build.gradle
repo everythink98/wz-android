@@ -1,0 +1,37 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'com.wz.reader.platform'
+version = '1.0.0'
+
+expoModule { canBePublished = false }
+
+android {
+  namespace = 'com.wz.reader.platform'
+  defaultConfig {
+    versionCode = 1
+    versionName = '1.0.0'
+    consumerProguardFiles('consumer-rules.pro')
+  }
+  testOptions { unitTests.returnDefaultValues = true }
+  sourceSets {
+    test.java.srcDir('src/testShared/java')
+    test.resources.srcDir('../../../tests/fixtures')
+  }
+}
+
+dependencies {
+  implementation('com.facebook.react:react-android')
+  implementation project(':expo-image')
+  implementation project(':expo-video')
+  implementation('androidx.webkit:webkit:1.17.0')
+  implementation('org.chromium.net:cronet-bundled:500.0.2')
+  implementation('com.google.net.cronet:cronet-okhttp:0.1.1') {
+    exclude group: 'com.squareup.okhttp3', module: 'okhttp'
+    exclude group: 'com.squareup.okio', module: 'okio'
+    exclude group: 'org.chromium.net', module: 'cronet-api'
+  }
+  testImplementation('junit:junit:4.13.2')
+  testImplementation('com.squareup.okhttp3:mockwebserver:4.12.0')
+  testImplementation('com.squareup.okhttp3:okhttp-tls:4.12.0')
+}

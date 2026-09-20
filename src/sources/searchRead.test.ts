@@ -25,6 +25,57 @@ const nodeSeekPayload = Buffer.from(
 ).toString('base64');
 
 describe('search read', () => {
+  it.each(['v2ex', 'linuxdo'] as const)(
+    'keeps all matching %s results across pages with an excluded search term',
+    async (source) => {
+      const hits = Array.from({ length: 8 }, (_, index) => ({
+        _source: {
+          id: index + 1,
+          title: 'keep match',
+          member: 'alice',
+          created: '2026-09-01T00:00:00.000Z',
+          replies: 0
+        }
+      }));
+      const fetcher = async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname === '/session/csrf.json') return Response.json({ csrf: 'fixture-token' });
+        if (url.hostname === 'linux.do') {
+          const offset = (Number(url.searchParams.get('page')) - 1) * 50;
+          return Response.json({
+            topics: hits.slice(offset, offset + 50).map(({ _source: hit }) => ({
+              id: hit.id,
+              title: hit.title,
+              created_at: hit.created,
+              posts_count: 1
+            })),
+            grouped_search_result: { more_full_page_results: offset + 50 < hits.length }
+          });
+        }
+        const from = Number(url.searchParams.get('from'));
+        const size = Number(url.searchParams.get('size'));
+        return Response.json({ hits: hits.slice(from, from + size), total: hits.length });
+      };
+      const ids: string[] = [];
+      let page: number | null = 1;
+      for (let request = 0; page !== null && request < hits.length + 1; request += 1) {
+        const result = await searchTopics({
+          source,
+          query: 'keep -excluded',
+          limit: 2,
+          page,
+          fetcher,
+          linuxDoAuthenticated: true,
+          discourseAuth: { authenticated: true, userAgent: 'fixture' }
+        });
+        ids.push(...result.items.map((item) => item.id));
+        page = result.hasMore ? (result.nextPage ?? null) : null;
+      }
+      expect(page).toBeNull();
+      expect(ids).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+    }
+  );
+
   it('returns per-source errors for aggregated search instead of failing other sources', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com')) {
@@ -108,7 +159,7 @@ describe('search read', () => {
     expect(result.items).toEqual([expect.objectContaining({ source: 'yaohuo', id: '321', title: '妖火聚合结果' })]);
   });
 
-  it('orders all-source Android search by time without using the project search endpoint', async () => {
+  it('keeps every consumed aggregate search result in time order without using the project search endpoint', async () => {
     const manyNodeSeekTopics = Buffer.from(
       JSON.stringify({
         rotateTopics: Array.from({ length: 4 }, (_, index) => ({
@@ -165,7 +216,7 @@ describe('search read', () => {
     const result = await searchTopics({
       source: 'all',
       query: 'match',
-      limit: 6,
+      limit: 4,
       fetcher,
       discourseAuth: {
         authenticated: true,

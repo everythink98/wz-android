@@ -947,7 +947,7 @@ internal object ReadNetworkDiagnostics {
 private fun opaqueNetworkIdentity(value: Any): String =
   Integer.toHexString(System.identityHashCode(value))
 
-internal enum class ImageRequestPurpose { SVG_PROBE }
+internal enum class ImageRequestPurpose { SVG_PROBE, IMAGE_SAVE }
 
 internal data class RequestDiagnosticTag(val appSessionId: String, val traceId: String, val requestId: String) {
   fun fields(): Map<String, Any> = mapOf("appSessionId" to appSessionId, "traceId" to traceId, "requestId" to requestId)
@@ -990,8 +990,11 @@ internal fun imageDiagnosticRequest(request: Request, imageLane: Boolean): Reque
     (metadata?.traceId ?: request.header("X-WZ-Image-Trace"))?.takeIf { it.matches(Regex("trace-[1-9][0-9]{0,9}")) },
     (metadata?.mediaRef ?: request.header("X-WZ-Image-Ref"))?.takeIf { it.matches(Regex("media-[1-9][0-9]{0,9}")) },
     (metadata?.sessionId ?: request.header("X-WZ-Image-Session"))?.takeIf { it.matches(Regex("session-[a-z0-9]{1,16}-[a-z0-9]{1,16}")) },
-    if (request.tag(ImageRequestPurpose::class.java) == ImageRequestPurpose.SVG_PROBE) "svg-probe"
-    else if (imageLane) "glide" else "fresco"
+    when (request.tag(ImageRequestPurpose::class.java)) {
+      ImageRequestPurpose.SVG_PROBE -> "svg-probe"
+      ImageRequestPurpose.IMAGE_SAVE -> "save-image"
+      else -> if (imageLane) "glide" else "fresco"
+    }
   )
   return request.newBuilder()
     .removeHeader("X-WZ-Image-Trace").removeHeader("X-WZ-Image-Ref").removeHeader("X-WZ-Image-Session")

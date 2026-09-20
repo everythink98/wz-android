@@ -202,31 +202,41 @@ describe('release environment boundary', () => {
     ).toThrow('.env');
   });
 
-  it('runs unsigned native validation before the only signed build', () => {
-    const ordinary = unsignedReleaseChildEnv({ PATH: 'tools', ...signing }, {});
-    const calls: { command: string; args: string[]; options: { cwd: string; env: Record<string, string> } }[] = [];
+  it.each([
+    { ENTRY_FILE: 'dev/forum-selection-proof/index.tsx' },
+    { ENTRY_FILE: '' },
+    { Entry_File: 'dev/visual-gallery/index.tsx' }
+  ])(
+    'runs unsigned validation and signed production builds without inherited development entries: %j',
+    (entryOverride) => {
+      const inherited = { PATH: 'tools', ...signing, ...entryOverride };
+      const ordinary = unsignedReleaseChildEnv(inherited, {});
+      const calls: { command: string; args: string[]; options: { cwd: string; env: Record<string, string> } }[] = [];
 
-    runReleaseBuildStages({
-      androidDir: 'android',
-      builtAbis: ['arm64-v8a', 'x86_64'],
-      ordinaryEnv: ordinary,
-      releaseEnv: signing,
-      run: (command: string, args: string[], options: { cwd: string; env: Record<string, string> }) =>
-        calls.push({ command, args, options })
-    });
+      runReleaseBuildStages({
+        androidDir: 'android',
+        builtAbis: ['arm64-v8a', 'x86_64'],
+        ordinaryEnv: ordinary,
+        releaseEnv: signing,
+        run: (command: string, args: string[], options: { cwd: string; env: Record<string, string> }) =>
+          calls.push({ command, args, options })
+      });
 
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.args).toEqual(expect.arrayContaining([':app:testReleaseUnitTest', ':app:compileReleaseKotlin']));
-    expect(calls[0]?.args).not.toContain(':app:assembleRelease');
-    expect(calls[1]?.args).toContain(':app:assembleRelease');
-    for (const call of calls) {
-      expect(call.args).toContain('-PEX_DEV_CLIENT_NETWORK_INSPECTOR=false');
-      expect(call.args).not.toContain('-PnewArchEnabled=true');
-      expect(call.options.env.NODE_ENV).toBe('production');
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.args).toEqual(expect.arrayContaining([':app:testReleaseUnitTest', ':app:compileReleaseKotlin']));
+      expect(calls[0]?.args).not.toContain(':app:assembleRelease');
+      expect(calls[1]?.args).toContain(':app:assembleRelease');
+      for (const call of calls) {
+        expect(call.args).toContain('-PEX_DEV_CLIENT_NETWORK_INSPECTOR=false');
+        expect(call.args).not.toContain('-PnewArchEnabled=true');
+        expect(call.options.env.NODE_ENV).toBe('production');
+        expect(Object.keys(call.options.env).map((name) => name.toUpperCase())).not.toContain('ENTRY_FILE');
+      }
+      for (const name of Object.keys(signing)) {
+        expect(calls[0]?.options.env).not.toHaveProperty(name);
+        expect(calls[1]?.options.env[name]).toBe(signing[name as keyof typeof signing]);
+      }
+      expect(inherited).toMatchObject(entryOverride);
     }
-    for (const name of Object.keys(signing)) {
-      expect(calls[0]?.options.env).not.toHaveProperty(name);
-      expect(calls[1]?.options.env[name]).toBe(signing[name as keyof typeof signing]);
-    }
-  });
+  );
 });

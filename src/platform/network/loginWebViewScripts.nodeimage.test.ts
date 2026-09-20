@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://www.nodeseek.com/connect?target=NodeImage"}
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nodeSeekNodeImageAuthScript } from './loginWebViewScripts';

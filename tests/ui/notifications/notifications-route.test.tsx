@@ -9,7 +9,9 @@ import { useNotificationsRuntime } from '@/features/notifications/useNotificatio
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
-import type { ForumNotification } from '@/domain/notifications/models';
+import type { ForumNotification, NotificationPage } from '@/domain/notifications/models';
+import { notificationPageError } from '@/domain/notifications/notificationQuality';
+import { sourceErrorFromUnknown } from '@/sources/sourceErrors';
 import type { AccountReconcileResult, LinuxDoReadRecovery } from '@/domain/session/sessionContracts';
 import { notificationSources } from '@/domain/forum/sourceCatalog';
 import { createSiteSessionStates } from '@/domain/session/siteSessionState';
@@ -267,6 +269,66 @@ function routeRuntime(gateway: NotificationRouteRuntimeValue['gateway']): Notifi
 }
 
 describe('notification routes', () => {
+  it.each(['nodeseek', 'all'] as const)(
+    'keeps partial %s messages and same-account cached rows on invalid retries',
+    async (source) => {
+      appQueryClient.clear();
+      let page: NotificationPage = { quality: 'complete', items: [notification], cursor: null, hasMore: false };
+      const gateway = {
+        getCategories: jest.fn(async () => [{ id: 'all', label: '全部' }]),
+        listPage: jest.fn(async () => page),
+        listAllPage: jest.fn(async () => {
+          const error = notificationPageError(page.quality);
+          return {
+            items: page.quality === 'invalid' ? [] : page.items,
+            qualities: { nodeseek: page.quality },
+            errors: error ? { nodeseek: sourceErrorFromUnknown('nodeseek', error) } : {},
+            nextCursors: { nodeseek: null },
+            hasMore: false
+          };
+        })
+      } as unknown as NotificationRouteRuntimeValue['gateway'];
+      const runtime = routeRuntime(gateway);
+      const tree = (value = runtime) => (
+        <NotificationRouteRuntimeProvider value={value}>
+          <NavigationContainer>
+            <NotificationsRoute
+              navigation={{ navigate: jest.fn() } as never}
+              route={{ key: 'notifications', name: 'Notifications', params: source === 'all' ? undefined : { source } }}
+            />
+          </NavigationContainer>
+        </NotificationRouteRuntimeProvider>
+      );
+      const view = await render(tree(), { wrapper: QueryTestWrapper });
+      await waitFor(() => expect(view.getByText('旧账号消息')).toBeTruthy());
+      page = { ...page, quality: 'partial', items: [{ ...notification, title: '部分有效消息' }] };
+      await fireEvent.press(view.getByTestId('notification-list-refresh'));
+      await waitFor(() => expect(view.getByText('部分有效消息')).toBeTruthy());
+      expect(view.getByText('重试 NodeSeek')).toBeTruthy();
+      page = { ...page, quality: 'invalid', items: [] };
+      await fireEvent.press(view.getByText('重试 NodeSeek'));
+      await waitFor(() => expect(view.getByText(/消息内容无法解析，请重试/)).toBeTruthy());
+      expect(view.getByText('部分有效消息')).toBeTruthy();
+      page = { ...page, quality: 'complete', items: [{ ...notification, title: '恢复后的消息' }] };
+      await fireEvent.press(view.getByText('重试 NodeSeek'));
+      await waitFor(() => expect(view.getByText('恢复后的消息')).toBeTruthy());
+      expect(view.queryByText('重试 NodeSeek')).toBeNull();
+      page = { ...page, quality: 'invalid', items: [] };
+      await fireEvent.press(view.getByTestId('notification-list-refresh'));
+      await waitFor(() => expect(view.getByText('重试 NodeSeek')).toBeTruthy());
+      expect(view.getByText('恢复后的消息')).toBeTruthy();
+      await view.rerender(
+        tree({
+          ...runtime,
+          identityKeys: { nodeseek: 'nodeseek:another-account' },
+          identitySignature: 'nodeseek:another-account'
+        })
+      );
+      await waitFor(() => expect(view.queryByText('恢复后的消息')).toBeNull());
+      expect(view.queryByText('部分有效消息')).toBeNull();
+    }
+  );
+
   async function renderReadLifecycle(markRead: NotificationRouteRuntimeValue['gateway']['markRead']) {
     appQueryClient.clear();
     const detail = { notification, title: 'Read lifecycle', contentText: 'detail' };
@@ -522,7 +584,7 @@ describe('notification routes', () => {
     let writeSignal: AbortSignal | undefined;
     const fetcher = jest.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/unread-count')) {
-        return new Response(JSON.stringify({ reply: unread }), { status: 200 });
+        return new Response(JSON.stringify({ atMe: 0, reply: unread, message: 0 }), { status: 200 });
       }
       if (url.includes('/markViewed')) {
         // The server has applied the read; returning cancels receipt of its response.
@@ -870,6 +932,7 @@ describe('notification routes', () => {
     async (kind) => {
       appQueryClient.clear();
       const listAllPage = jest.fn(async () => ({
+        qualities: {},
         items: [notification],
         errors: { linuxdo: { kind, message: '需要恢复账号' } },
         nextCursors: { nodeseek: null, linuxdo: null },
@@ -1036,6 +1099,7 @@ describe('notification routes', () => {
     const gateway = {
       getCategories,
       listAllPage: jest.fn(async () => ({
+        qualities: {},
         items: [],
         pages: {},
         errors: {},
@@ -1072,7 +1136,7 @@ describe('notification routes', () => {
       .fn<() => Promise<{ id: string; label: string }[]>>()
       .mockRejectedValueOnce(new Error('分类读取失败'))
       .mockResolvedValueOnce([{ id: 'all', label: '全部' }]);
-    const listPage = jest.fn(async () => ({ items: [], cursor: null, hasMore: false }));
+    const listPage = jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }));
     const gateway = {
       getCategories,
       listAllPage: jest.fn(),
@@ -1117,7 +1181,7 @@ describe('notification routes', () => {
             { id: 'replies', label: '回复' }
           ]
     );
-    const listPage = jest.fn(async () => ({ items: [], cursor: null, hasMore: false }));
+    const listPage = jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false }));
     const gateway = {
       getCategories,
       listAllPage: jest.fn(),
@@ -1164,13 +1228,14 @@ describe('notification routes', () => {
           _source?: string,
           _options?: unknown
         ) => Promise<{
+          quality: 'complete';
           items: ForumNotification[];
           cursor: string | null;
           hasMore: boolean;
         }>
       >()
-      .mockResolvedValueOnce({ items: [], cursor: '30', hasMore: true })
-      .mockResolvedValueOnce({ items: [notification], cursor: null, hasMore: false });
+      .mockResolvedValueOnce({ quality: 'complete' as const, items: [], cursor: '30', hasMore: true })
+      .mockResolvedValueOnce({ quality: 'complete' as const, items: [notification], cursor: null, hasMore: false });
     const gateway = {
       getCategories: jest.fn(async () => [{ id: 'replies', label: '回复' }]),
       listAllPage: jest.fn(),
@@ -1201,6 +1266,7 @@ describe('notification routes', () => {
   it('stops the mounted notification list from reading after it loses focus', async () => {
     appQueryClient.clear();
     const listAllPage = jest.fn(async () => ({
+      qualities: {},
       items: [],
       pages: {},
       errors: {},
@@ -1326,13 +1392,19 @@ describe('notification routes', () => {
     appQueryClient.clear();
     const linuxdoNotification = { ...notification, source: 'linuxdo', id: 'reply:linuxdo' } as ForumNotification;
     const listAllPage = jest.fn(async () => ({
+      qualities: {},
       items: [notification],
-      pages: { nodeseek: { items: [notification], cursor: null, hasMore: false } },
+      pages: { nodeseek: { quality: 'complete' as const, items: [notification], cursor: null, hasMore: false } },
       errors: { linuxdo: { message: '暂不可用' } },
       nextCursors: { nodeseek: null, linuxdo: null },
       hasMore: false
     }));
-    const listPage = jest.fn(async () => ({ items: [linuxdoNotification], cursor: null, hasMore: false }));
+    const listPage = jest.fn(async () => ({
+      quality: 'complete' as const,
+      items: [linuxdoNotification],
+      cursor: null,
+      hasMore: false
+    }));
     const gateway = {
       listAllPage,
       listPage,
@@ -1380,13 +1452,19 @@ describe('notification routes', () => {
   it('keeps recovered source pagination reachable after other sources already paged', async () => {
     appQueryClient.clear();
     const listAllPage = jest.fn(async () => ({
+      qualities: {},
       items: [notification],
-      pages: { nodeseek: { items: [notification], cursor: 'ns-next', hasMore: true } },
+      pages: { nodeseek: { quality: 'complete' as const, items: [notification], cursor: 'ns-next', hasMore: true } },
       errors: { linuxdo: { message: '暂不可用' } },
       nextCursors: { nodeseek: 'ns-next', linuxdo: null },
       hasMore: true
     }));
-    const listPage = jest.fn(async () => ({ items: [], cursor: 'linux-next', hasMore: true }));
+    const listPage = jest.fn(async () => ({
+      quality: 'complete' as const,
+      items: [],
+      cursor: 'linux-next',
+      hasMore: true
+    }));
     const gateway = {
       listAllPage,
       listPage,
@@ -2311,7 +2389,7 @@ describe('notification routes', () => {
     let accessCalls = 0;
     const sourceAdapter: NotificationAdapter = {
       getCategories: jest.fn(async () => [{ id: 'all', label: '全部' }]),
-      listPage: jest.fn(async () => ({ items: [], cursor: null, hasMore: false })),
+      listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false })),
       readUnreadSnapshot: jest.fn(async () => ({
         total: 0,
         checkedAt: '2026-08-03T00:00:00Z'
@@ -2375,7 +2453,7 @@ describe('notification routes', () => {
     let accessCalls = 0;
     const sourceAdapter: NotificationAdapter = {
       getCategories: jest.fn(async () => [{ id: 'all', label: '全部' }]),
-      listPage: jest.fn(async () => ({ items: [], cursor: null, hasMore: false })),
+      listPage: jest.fn(async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false })),
       readUnreadSnapshot: jest.fn(async () => ({
         total: 0,
         checkedAt: '2026-08-03T00:00:00Z'

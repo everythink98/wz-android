@@ -15,6 +15,42 @@ function normalizeForumContentMediaHtml(html: string) {
 }
 
 describe('forum content media normalization', () => {
+  it('scans nested image containers with linear work while preserving their authored anchors', () => {
+    const normalizeNested = (count: number) => {
+      const root = parseHtml(
+        Array.from(
+          { length: count },
+          (_, index) => `<div><img src="https://img.invalid/${index}.jpg"><div>text ${index}</div>`
+        ).join('') + '</div>'.repeat(count)
+      );
+      let tagReads = 0;
+      for (const node of root.querySelectorAll('*')) {
+        let tagName = node.rawTagName;
+        Object.defineProperty(node, 'rawTagName', {
+          configurable: true,
+          get() {
+            tagReads++;
+            return tagName;
+          },
+          set(value: string) {
+            tagName = value;
+          }
+        });
+      }
+      const result = normalizeForumContentMediaNodes(root);
+      const work = tagReads;
+      expect(result.previewImages.map((image) => image.source)).toEqual(
+        Array.from({ length: count }, (_, index) => `https://img.invalid/${index}.jpg`)
+      );
+      const images = root.querySelectorAll('img');
+      expect(images).toHaveLength(count);
+      expect(images.every((image) => image.getAttribute('data-forum-flow-image-context') === 'standalone')).toBe(true);
+      expect(root.textContent).toBe(Array.from({ length: count }, (_, index) => `text ${index}`).join(''));
+      return work;
+    };
+    expect(normalizeNested(60)).toBeLessThanOrEqual(normalizeNested(30) * 2.5);
+  });
+
   it('upgrades private-message stickers without taking over ordinary Markdown images', () => {
     const html =
       '<p><strong>私信正文</strong> <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/04.png" alt="ac04"> <img src="https://example.com/ordinary.png" alt="ordinary"></p>';

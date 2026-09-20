@@ -1,0 +1,38 @@
+diff --git a/node_modules/expo-task-manager/build/TaskManager.js b/node_modules/expo-task-manager/build/TaskManager.js
+index 8c25150..edae361 100644
+--- a/node_modules/expo-task-manager/build/TaskManager.js
++++ b/node_modules/expo-task-manager/build/TaskManager.js
+@@ -1,11 +1,10 @@
+ import { LegacyEventEmitter, Platform, UnavailabilityError } from 'expo-modules-core';
+ import { AppRegistry } from 'react-native';
+ import ExpoTaskManager from './ExpoTaskManager';
+-// Register a no-op headless task so that HeadlessJsTaskContext.startTask()
+-// doesn't log a warning. On Android, TaskService registers a headless task
+-// in native code to keep JS timers alive during background task execution.
++// TaskService owns this lifetime and finishes it after all Expo events settle.
++// Resolving here would let RN pause JS timers while those events are still running.
+ if (Platform.OS === 'android') {
+-    AppRegistry.registerHeadlessTask('expo-task-manager', () => async () => { });
++    AppRegistry.registerHeadlessTask('expo-task-manager', () => () => new Promise(() => { }));
+ }
+ const tasks = new Map();
+ function _validate(taskName) {
+diff --git a/node_modules/expo-task-manager/src/TaskManager.ts b/node_modules/expo-task-manager/src/TaskManager.ts
+index 7e77c18..c8ad453 100644
+--- a/node_modules/expo-task-manager/src/TaskManager.ts
++++ b/node_modules/expo-task-manager/src/TaskManager.ts
+@@ -3,11 +3,10 @@ import { AppRegistry } from 'react-native';
+ 
+ import ExpoTaskManager from './ExpoTaskManager';
+ 
+-// Register a no-op headless task so that HeadlessJsTaskContext.startTask()
+-// doesn't log a warning. On Android, TaskService registers a headless task
+-// in native code to keep JS timers alive during background task execution.
++// TaskService owns this lifetime and finishes it after all Expo events settle.
++// Resolving here would let RN pause JS timers while those events are still running.
+ if (Platform.OS === 'android') {
+-  AppRegistry.registerHeadlessTask('expo-task-manager', () => async () => {});
++  AppRegistry.registerHeadlessTask('expo-task-manager', () => () => new Promise<void>(() => {}));
+ }
+ 
+ // @needsAudit @docsMissing

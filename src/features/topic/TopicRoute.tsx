@@ -54,7 +54,8 @@ export function TopicRoute({ navigation, route }: TopicRouteProps) {
 }
 
 function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { runtime: TopicRouteRuntimeValue }) {
-  const active = useIsFocused() && runtime.appActive;
+  const focused = useIsFocused();
+  const active = focused && runtime.appActive;
   const topic = route.params.topic;
   const toggleTopicFavorite = useCallback(
     () =>
@@ -87,7 +88,8 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     [navigation, route.params.locationRequestId, topicView]
   );
   const topicController = useTopicController({
-    active,
+    focused,
+    appActive: runtime.appActive,
     commitReaderData: runtime.reader.commit,
     sessionEpochs: runtime.account.sessionEpochs,
     notify: runtime.notify,
@@ -174,7 +176,6 @@ function EnabledTopicRoute({ navigation, route, runtime }: TopicRouteProps & { r
     beforeSave: runtime.ensureNetworkProxyReady,
     contentSource: topic.source,
     contentWidth: runtime.contentWidth,
-    fetcher: runtime.fetcher,
     mediaReferrer: html.mediaContext?.referrer,
     nodeSeekMediaUserAgent: runtime.nodeSeekMediaUserAgent,
     notify: runtime.notify

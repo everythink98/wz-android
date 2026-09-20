@@ -11,6 +11,28 @@ function html(value: string) {
 }
 
 describe('Yaohuo notifications', () => {
+  it.each([10, 20])(
+    'only reports an exact unread total when the final %i rows fit the scan budget',
+    async (lastPageSize) => {
+      const fetcher = vi.fn(async (url: string) => {
+        const secondPage = new URL(url).searchParams.get('page') === '2';
+        const count = secondPage ? lastPageSize : 50;
+        const offset = secondPage ? 50 : 0;
+        return html(
+          Array.from(
+            { length: count },
+            (_, index) =>
+              `<div class="listmms"><img src="/NetImages/new.gif"><a href="/bbs/messagelist_view.aspx?id=${offset + index + 1}">消息</a></div>`
+          ).join('') + `<div class="showpage">${secondPage ? 2 : 1}/2 页</div>`
+        );
+      });
+      const result = yaohuoNotificationAdapter.readUnreadSnapshot({ fetcher, identityKey: 'yaohuo:7', userId: '7' });
+      if (lastPageSize === 10) await expect(result).resolves.toMatchObject({ total: 60 });
+      else await expect(result).rejects.toThrow('妖火未读数量尚未完整读取');
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
+  );
+
   it('retains malformed-row evidence when valid rows are filtered as read', async () => {
     const page = await yaohuoNotificationAdapter.listPage({
       identityKey: 'yaohuo:7',
@@ -82,7 +104,7 @@ describe('Yaohuo notifications', () => {
 
     await expect(
       yaohuoNotificationAdapter.listPage({ fetcher, identityKey: 'yaohuo:7', userId: '7' })
-    ).resolves.toEqual({ items: [], cursor: null, hasMore: false });
+    ).resolves.toEqual({ quality: 'complete' as const, items: [], cursor: null, hasMore: false });
   });
 
   it('ignores the trailing delete action when parsing the list timestamp', async () => {

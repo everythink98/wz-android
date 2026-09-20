@@ -153,6 +153,104 @@ describe('app deep-link navigation', () => {
     expect(remove).toHaveBeenCalledTimes(1);
   });
 
+  it.each([false, true])(
+    'keeps a newer warm destination when the initial URL resolves late (ready=%s)',
+    async (ready) => {
+      let resolveInitial!: (url: string | null) => void;
+      let onUrl: ((event: { url: string }) => void) | undefined;
+      mockGetInitialURL.mockReturnValue(
+        new Promise((resolve) => {
+          resolveInitial = resolve;
+        })
+      );
+      mockAddEventListener.mockImplementation((_type, listener) => {
+        onUrl = listener;
+        return { remove: jest.fn() };
+      });
+      mockPushTopicRoute.mockReturnValue(ready);
+      const linking = {
+        addEventListener: mockAddEventListener,
+        getInitialURL: mockGetInitialURL
+      } as unknown as Pick<typeof Linking, 'addEventListener' | 'getInitialURL'>;
+      const hook = await renderHook(() => useAppDeepLinkNavigation(linking, mockPushTopicRoute));
+      try {
+        await act(async () => onUrl?.({ url: 'https://linux.do/t/new/222/9' }));
+        await act(async () => resolveInitial('https://linux.do/t/old/111/3'));
+        mockPushTopicRoute.mockReturnValue(true);
+        await act(async () => hook.result.current());
+        expect(mockPushTopicRoute).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            topic: expect.objectContaining({ source: 'linuxdo', id: '222' }),
+            location: { kind: 'reply', target: { floor: 9 } }
+          })
+        );
+        expect(mockPushTopicRoute).not.toHaveBeenCalledWith(
+          expect.objectContaining({ topic: expect.objectContaining({ id: '111' }) })
+        );
+      } finally {
+        await act(async () => {
+          resolveInitial(null);
+          hook.unmount();
+        });
+      }
+    }
+  );
+
+  it('discards a queued destination when a newer warm link opens immediately', async () => {
+    let onUrl: ((event: { url: string }) => void) | undefined;
+    mockGetInitialURL.mockResolvedValue('https://linux.do/t/old/111/3');
+    mockAddEventListener.mockImplementation((_type, listener) => {
+      onUrl = listener;
+      return { remove: jest.fn() };
+    });
+    mockPushTopicRoute.mockReturnValueOnce(false).mockReturnValue(true);
+    const linking = {
+      addEventListener: mockAddEventListener,
+      getInitialURL: mockGetInitialURL
+    } as unknown as Pick<typeof Linking, 'addEventListener' | 'getInitialURL'>;
+    const hook = await renderHook(() => useAppDeepLinkNavigation(linking, mockPushTopicRoute));
+    try {
+      await waitFor(() => expect(mockPushTopicRoute).toHaveBeenCalledTimes(1));
+      await act(async () => onUrl?.({ url: 'https://linux.do/t/new/222/9' }));
+      await act(async () => hook.result.current());
+      expect(mockPushTopicRoute).toHaveBeenCalledTimes(2);
+      expect(mockPushTopicRoute).toHaveBeenLastCalledWith(
+        expect.objectContaining({ topic: expect.objectContaining({ id: '222' }) })
+      );
+    } finally {
+      await act(async () => hook.unmount());
+    }
+  });
+
+  it('keeps the initial destination when a newer URL is unsupported', async () => {
+    const initial = Promise.withResolvers<string | null>();
+    let onUrl: ((event: { url: string }) => void) | undefined;
+    mockGetInitialURL.mockReturnValue(initial.promise);
+    mockAddEventListener.mockImplementation((_type, listener) => {
+      onUrl = listener;
+      return { remove: jest.fn() };
+    });
+    mockPushTopicRoute.mockReturnValue(true);
+    const linking = {
+      addEventListener: mockAddEventListener,
+      getInitialURL: mockGetInitialURL
+    } as unknown as Pick<typeof Linking, 'addEventListener' | 'getInitialURL'>;
+    const hook = await renderHook(() => useAppDeepLinkNavigation(linking, mockPushTopicRoute));
+    try {
+      await act(async () => onUrl?.({ url: 'https://example.com/t/unsupported/222' }));
+      await act(async () => initial.resolve('https://linux.do/t/initial/111/3'));
+      expect(mockPushTopicRoute).toHaveBeenCalledTimes(1);
+      expect(mockPushTopicRoute).toHaveBeenLastCalledWith(
+        expect.objectContaining({ topic: expect.objectContaining({ id: '111' }) })
+      );
+    } finally {
+      await act(async () => {
+        initial.resolve(null);
+        hook.unmount();
+      });
+    }
+  });
+
   it.each([
     'https://www.google.com/search?q=site%3Alinux.do+codex',
     'https://linux.do/u/alice',

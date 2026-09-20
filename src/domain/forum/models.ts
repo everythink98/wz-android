@@ -59,6 +59,8 @@ export interface Topic {
   lastReplyAt?: string;
   displayTimeText?: string;
   replyCount?: number;
+  /** Highest reply floor confirmed for the whole topic, never a partial window's maximum. */
+  replyWatermark?: number;
   viewCount?: number;
   excerpt?: string;
   accessRequirement?: AccessRequirement;
@@ -354,6 +356,7 @@ export interface RepliesResponse {
   nextPage: number | null;
   nextOffset?: number | null;
   totalCount?: number;
+  replyWatermark?: number;
 }
 
 export interface CategoriesResponse {

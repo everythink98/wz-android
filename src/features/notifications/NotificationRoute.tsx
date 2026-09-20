@@ -11,6 +11,7 @@ import type { SourceErrorInfo } from '@/domain/forum/models';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from '@/domain/session/sessionContracts';
 import { isDiscourseSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification } from '@/domain/notifications/models';
+import { notificationPageError } from '@/domain/notifications/notificationQuality';
 
 import type { ComposerSnapshot, PendingNodeSeekPoll } from '@/domain/forum/structuredComposer';
 import { parseForumTopicLink } from '@/domain/forum/links';
@@ -190,8 +191,14 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
           previous?.pages[
             previous.pageParams.findIndex((param) => JSON.stringify(param) === JSON.stringify(pageParam))
           ];
+        const retainedSources = runtime.activeSources.filter(
+          (candidate) => blockedSources.includes(candidate) || page.qualities[candidate] === 'invalid'
+        );
         return {
-          items: [...page.items, ...(previousPage?.items.filter((item) => blockedSources.includes(item.source)) || [])],
+          items: [
+            ...page.items,
+            ...(previousPage?.items.filter((item) => retainedSources.includes(item.source)) || [])
+          ],
           errors: {
             ...page.errors,
             ...Object.fromEntries(blockedSources.map((candidate) => [candidate, runtime.getReadBlock(candidate)!]))
@@ -211,10 +218,17 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
           signal,
           unreadOnly
         });
+        const qualityError = notificationPageError(page.quality);
+        if (page.quality === 'invalid') throw qualityError;
+        const errors: Partial<Record<NotificationSource, SourceErrorInfo>> = {};
+        if (qualityError) {
+          errors[source] = sourceErrorFromUnknown(source, qualityError);
+          runtime.reportReadError(source, errors[source], runtime.sessionEpochs[source]);
+        }
         return {
           items: page.items,
-          errors: {} as Partial<Record<NotificationSource, SourceErrorInfo>>,
-          hasMore: page.hasMore,
+          errors,
+          hasMore: page.hasMore && !qualityError,
           nextPage: { sourceCursor: page.cursor } satisfies NotificationPageParam
         };
       } catch (error) {
@@ -311,12 +325,14 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
             unreadOnly
           });
           if (!current()) return 'stale';
+          const qualityError = notificationPageError(page.quality);
+          if (page.quality === 'invalid') throw qualityError;
+          const pageHasMore = page.hasMore && !qualityError;
           queryClient.setQueryData<InfiniteData<NotificationListPage, NotificationPageParam>>(listQueryKey, (data) => {
             if (!data?.pages[pageIndex]) return data;
-            const nextCursor = page.hasMore ? page.cursor : null;
+            const nextCursor = pageHasMore ? page.cursor : null;
             const withCursor = (oldPage: NotificationListPage) => {
-              if (source !== 'all')
-                return { ...oldPage, hasMore: page.hasMore, nextPage: { sourceCursor: nextCursor } };
+              if (source !== 'all') return { ...oldPage, hasMore: pageHasMore, nextPage: { sourceCursor: nextCursor } };
               const allCursors = { ...oldPage.nextPage.allCursors, [candidate]: nextCursor };
               return {
                 ...oldPage,
@@ -327,7 +343,8 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
             const pages = data.pages.map((oldPage, index) => {
               if (index !== pageIndex) return oldPage;
               const errors = { ...oldPage.errors };
-              delete errors[candidate];
+              if (qualityError) errors[candidate] = sourceErrorFromUnknown(candidate, qualityError);
+              else delete errors[candidate];
               return withCursor({
                 ...oldPage,
                 errors,
@@ -338,6 +355,7 @@ export function NotificationsRoute({ navigation, route }: NativeStackScreenProps
               pages[pages.length - 1] = withCursor(pages[pages.length - 1]!);
             return { ...data, pages };
           });
+          if (qualityError) throw qualityError;
         }
         if (!current()) return 'stale';
         runtime.clearReadBlock(candidate, epoch);

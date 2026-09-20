@@ -298,8 +298,7 @@ function globalWebViewStateIssues(filePath, relativeFile) {
 }
 
 function globalWebViewPluginIssues(projectRoot) {
-  const pluginsDir = path.join(projectRoot, 'plugins');
-  if (!existsSync(pluginsDir)) return [];
+  const nativeRoots = ['plugins', 'modules'].map((name) => path.join(projectRoot, name)).filter(existsSync);
   const forbidden = [
     /\bremoveAllCookies\s*\(/g,
     /\bremoveSessionCookies\s*\(/g,
@@ -309,10 +308,11 @@ function globalWebViewPluginIssues(projectRoot) {
   const pluginFiles = (directory) =>
     readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
       const entryPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) return pluginFiles(entryPath);
+      if (entry.isDirectory())
+        return ['build', 'node_modules', '.gradle'].includes(entry.name) ? [] : pluginFiles(entryPath);
       return entry.isFile() && /\.(js|kt)$/.test(entry.name) ? [entryPath] : [];
     });
-  return pluginFiles(pluginsDir).flatMap((pluginPath) => {
+  return nativeRoots.flatMap(pluginFiles).flatMap((pluginPath) => {
     const sourceText = readFileSync(pluginPath, 'utf8');
     const pluginFile = path.relative(projectRoot, pluginPath).replaceAll('\\', '/');
     return forbidden.flatMap((pattern) =>

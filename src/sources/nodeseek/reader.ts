@@ -439,6 +439,17 @@ export async function getNodeSeekTopic(
     const replyCandidates = Math.max(rendered.replies.length, Math.max(0, comments.length - 1));
     const result = {
       ...paged,
+      replyWatermark: confirmedNodeSeekWatermark(
+        {
+          items: paged.replies,
+          confirmedFloors: rendered.replies.flatMap((reply) => (reply.floor === undefined ? [] : [reply.floor])),
+          currentPage: 1,
+          resolvedPageConfirmed: resolvedNodeSeekPostPage(pageDocument, id, responseUrl) === 1,
+          hasMore: Boolean(paged.replyHasMore) || paged.replies.length !== replyCandidates,
+          nextPage: paged.replyNextPage ?? null
+        },
+        paged.replyCount === 0
+      ),
       mediaReferrer: { documentUrl },
       replyCompleteness: paged.replies.length === replyCandidates ? ('complete' as const) : ('partial' as const)
     };
@@ -463,6 +474,20 @@ export async function getNodeSeekTopic(
     const replyCandidates = Math.max(0, comments.length - 1);
     const result = {
       ...paged,
+      replyWatermark: confirmedNodeSeekWatermark(
+        {
+          items: paged.replies,
+          confirmedFloors: comments.slice(1).flatMap((comment) => {
+            const floor = isRecord(comment) ? optionalInteger(comment.floorIndex ?? comment.floor) : undefined;
+            return floor === undefined ? [] : [floor];
+          }),
+          currentPage: 1,
+          resolvedPageConfirmed: resolvedNodeSeekPostPage(pageDocument, id, responseUrl) === 1,
+          hasMore: Boolean(paged.replyHasMore) || paged.replies.length !== replyCandidates,
+          nextPage: paged.replyNextPage ?? null
+        },
+        paged.replyCount === 0
+      ),
       mediaReferrer: { documentUrl },
       replyCompleteness: paged.replies.length === replyCandidates ? ('complete' as const) : ('partial' as const)
     };
@@ -502,6 +527,29 @@ type NodeSeekChronologicalReplies = RepliesResponse & {
   responsePageResolved?: boolean;
   resolvedPageConfirmed?: boolean;
 };
+
+function confirmedNodeSeekWatermark(result: NodeSeekChronologicalReplies, knownEmpty = false): number | undefined {
+  if (!result.resolvedPageConfirmed || result.hasMore || result.nextPage) return undefined;
+  const page = result.currentPage;
+  if (!page) return undefined;
+  if (!result.items.length) return page === 1 && knownEmpty ? 0 : undefined;
+  const summary = sourceDiagnosticSummary(result);
+  if (summary?.droppedCount || summary?.missingFloorCount) return undefined;
+  const confirmed = new Set(result.confirmedFloors);
+  const floors = result.items.map((reply) => reply.floor);
+  if (
+    new Set(floors).size !== floors.length ||
+    floors.some(
+      (floor) =>
+        floor === undefined ||
+        !confirmed.has(floor) ||
+        floor <= (page - 1) * NODESEEK_FLOORS_PER_PAGE ||
+        floor > page * NODESEEK_FLOORS_PER_PAGE
+    )
+  )
+    return undefined;
+  return Math.max(...(floors as number[]));
+}
 
 function projectNodeSeekOrderedPageItems(
   items: RepliesResponse['items'],
@@ -1008,6 +1056,7 @@ export async function getNodeSeekReplies(
     copySourceDiagnosticSummary(
       {
         ...replyWindow,
+        replyWatermark: confirmedNodeSeekWatermark(chronological, options.replyCount === 0),
         completeness: replyWindow.completeness || 'partial'
       },
       chronological

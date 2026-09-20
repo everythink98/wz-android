@@ -13,6 +13,8 @@ const { values } = parseArgs({
     output: { type: 'string' },
     apk: { type: 'string' },
     build: { type: 'boolean' },
+    'journal-only': { type: 'boolean' },
+    'sidecar-only': { type: 'boolean' },
     'seed-only': { type: 'string' }
   }
 });
@@ -25,6 +27,8 @@ const relativeOutput = path.relative(path.join(root, '.codex-tmp'), path.resolve
 if (relativeOutput.startsWith('..') || path.isAbsolute(relativeOutput) || existsSync(output))
   throw new Error('Use a new output file under .codex-tmp');
 if (values.build && values.apk) throw new Error('Choose --build or --apk');
+if ([values['journal-only'], values['sidecar-only'], values['seed-only']].filter(Boolean).length > 1)
+  throw new Error('Choose --journal-only, --sidecar-only or --seed-only');
 if (values['seed-only'] && !['ordinary', 'supported', 'large', 'overbytes'].includes(values['seed-only']))
   throw new Error('Unsupported fixture profile');
 const adb = (...values) =>
@@ -119,7 +123,22 @@ async function launch(mode, profile, checkpoint = 'passed') {
   }
   throw new Error(`Proof ${mode}/${profile} timed out`);
 }
-if (values['seed-only']) {
+if (values['journal-only']) {
+  const exercise = await launch('poll-journal-exercise', 'ordinary');
+  const reopened = await launch('poll-journal-reopen', 'ordinary');
+  if (
+    !exercise.processSessionId ||
+    exercise.processSessionId === reopened.processSessionId ||
+    exercise.buildId !== reopened.buildId
+  )
+    throw new Error('Poll proof did not reopen in a new process of the same build');
+} else if (values['sidecar-only']) {
+  for (const mode of ['settings-hang', 'cleanup-remove-hang', 'cleanup-keys-hang']) {
+    await launch('seed', 'ordinary');
+    await launch(mode, 'ordinary');
+    await launch('verify', 'ordinary');
+  }
+} else if (values['seed-only']) {
   await launch('seed', option('--seed-only'));
 } else {
   for (const profile of ['ordinary', 'supported', 'large', 'overbytes']) {

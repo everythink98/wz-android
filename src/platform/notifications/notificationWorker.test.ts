@@ -2,15 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
-import type { NotificationSource } from '@/domain/forum/sourceCatalog';
 import type { ForumNotification } from '@/domain/notifications/models';
 import { buildSourceNotificationDigest, runNotificationBackgroundWorker } from './notificationWorker';
-import {
-  advanceNotificationDelivery,
-  defaultNotificationState,
-  type NotificationDeliveryCommit,
-  type NotificationState
-} from './notificationStore';
+import { defaultNotificationState, recordNotificationDelivery, type NotificationState } from './notificationStore';
+
+const persistence = vi.hoisted(() => ({ state: undefined as NotificationState | undefined }));
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: {
+    getItem: async () => (persistence.state ? JSON.stringify(persistence.state) : null),
+    setItem: async (_key: string, value: string) => Object.assign(persistence.state!, JSON.parse(value))
+  }
+}));
 
 const permissionGranted = async () => true;
 const dismissDigest = async () => undefined;
@@ -19,56 +21,13 @@ const sourceAllowed = async () => true;
 const clearForContentDisable = async () => undefined;
 
 function testRecord(state: NotificationState) {
-  return async (
-    source: NotificationSource,
-    identityKey: string,
-    scannedIds: string[],
-    _fields: { lastSuccessAt: string },
-    delivery?: NotificationDeliveryCommit
-  ) => {
-    const sourceState = state.sources[source];
-    const advanced = advanceNotificationDelivery(sourceState, identityKey, scannedIds);
-    const plannedIdsMatch =
-      delivery?.expectedNewIds.length === advanced.newIds.length &&
-      delivery.expectedNewIds.every((id, index) => id === advanced.newIds[index]);
-    const committed =
-      state.globalEnabled &&
-      sourceState.intentEnabled &&
-      sourceState.identityKey === identityKey &&
-      (delivery
-        ? plannedIdsMatch && sourceState.notificationIdentifier === delivery.previousIdentifier
-        : advanced.newIds.length === 0);
-    const previous = {
-      baselineReady: sourceState.baselineReady,
-      deliveredIds: sourceState.deliveredIds,
-      notificationIdentifier: sourceState.notificationIdentifier
-    };
-    if (committed) {
-      state.sources[source] = {
-        ...advanced.state,
-        ...(delivery ? { notificationIdentifier: delivery.notificationIdentifier } : {})
-      };
-    }
-    return {
-      committed,
-      newIds: advanced.newIds,
-      rollback: async () => {
-        if (
-          !committed ||
-          !delivery ||
-          state.sources[source].notificationIdentifier !== delivery.notificationIdentifier
-        ) {
-          return;
-        }
-        state.sources[source] = { ...state.sources[source], ...previous };
-      }
-    };
-  };
+  persistence.state = state;
+  return recordNotificationDelivery;
 }
 
 describe('background notification digest', () => {
   it.each(['failure', 'partial'] as const)(
-    'keeps parser %s visible at delivery, worker, and task completion without changing the worker result',
+    'rejects parser %s for delivery while preserving safe diagnostics at every level',
     async (outcome) => {
       const state = defaultNotificationState();
       state.globalEnabled = true;
@@ -93,7 +52,7 @@ describe('background notification digest', () => {
             probeAccess: async () => ({ identityKey: 'nodeseek:PRIVATE_USER', userId: 'PRIVATE_USER' }),
             listPage: async () =>
               annotateSourceDiagnosticSummary(
-                { items: [], cursor: null, hasMore: false },
+                { quality: outcome === 'failure' ? 'invalid' : 'partial', items: [], cursor: null, hasMore: false },
                 {
                   parserVariant: 'nodeseek-notifications',
                   candidateCount: outcome === 'failure' ? 1 : 0,
@@ -104,7 +63,7 @@ describe('background notification digest', () => {
           store: { load: async () => state, clearForContentDisable, record: testRecord(state) },
           system: { permissionGranted, reconcileDigests, presentDigest: vi.fn(), dismissDigest }
         });
-        expect(result).toEqual({ status: 'success', delivered: 0, failedSources: 0, timedOut: false });
+        expect(result).toEqual({ status: 'success', delivered: 0, failedSources: 1, timedOut: false });
         finishDiagnosticTrace(parentTrace, 'success');
       } finally {
         setDiagnosticWriter(null);
@@ -112,7 +71,10 @@ describe('background notification digest', () => {
       const finishes = lines.map((line) => JSON.parse(line)).filter((event) => event.phase === 'finish');
       for (const operation of ['notification-delivery', 'notification-worker', 'notification-background-task']) {
         expect(finishes.filter((event) => event.operation === operation)).toEqual([
-          expect.objectContaining({ outcome, reason: outcome === 'failure' ? 'parse_empty' : 'invalid_response' })
+          expect.objectContaining({
+            outcome: operation === 'notification-delivery' ? 'failure' : outcome,
+            reason: outcome === 'failure' ? 'parse_empty' : 'invalid_response'
+          })
         ]);
       }
       expect(lines.join('')).not.toContain('PRIVATE_');
@@ -151,7 +113,7 @@ describe('background notification digest', () => {
         network: {
           restoreProxy: async () => undefined,
           probeAccess: async () => ({ identityKey: 'nodeseek:PRIVATE_USER', userId: 'PRIVATE_USER' }),
-          listPage: async () => ({ items: [item], cursor: null, hasMore: false })
+          listPage: async () => ({ quality: 'complete' as const, items: [item], cursor: null, hasMore: false })
         },
         store: {
           load: async () => state,
@@ -536,7 +498,7 @@ describe('background notification digest', () => {
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => {
           allowed = false;
-          return { items: [], cursor: null, hasMore: false };
+          return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
         }
       },
       store: {
@@ -573,7 +535,7 @@ describe('background notification digest', () => {
         listPage: async (_source, access) => {
           await access.fetcher!('/first');
           await access.fetcher!('/second');
-          return { items: [], cursor: null, hasMore: false };
+          return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
         }
       },
       store: {
@@ -605,7 +567,7 @@ describe('background notification digest', () => {
       network: {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({ items: [], cursor: null, hasMore: false })
+        listPage: async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false })
       },
       store: {
         load: async () => state,
@@ -641,6 +603,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -698,6 +661,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -755,6 +719,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -823,6 +788,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -1012,7 +978,7 @@ describe('background notification digest', () => {
     const clearForContentDisable = vi.fn();
     const listPage = vi.fn(async () => {
       state.sources.nodeseek = { ...state.sources.nodeseek, intentEnabled: false };
-      return { items: [], cursor: 'page-2', hasMore: true };
+      return { quality: 'complete' as const, items: [], cursor: 'page-2', hasMore: true };
     });
 
     await runNotificationBackgroundWorker({
@@ -1106,6 +1072,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -1182,6 +1149,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -1252,6 +1220,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -1321,6 +1290,7 @@ describe('background notification digest', () => {
         listPage: async (source) => {
           if (source === 'linuxdo') throw new Error('temporary failure');
           return {
+            quality: 'complete' as const,
             items: [
               {
                 source,
@@ -1340,18 +1310,7 @@ describe('background notification digest', () => {
       },
       store: {
         load: async () => state,
-        record: async (source, identityKey, scannedIds) => {
-          const advanced = advanceNotificationDelivery(state.sources[source], identityKey, scannedIds);
-          state.sources[source] = advanced.state;
-          return {
-            committed: true,
-            newIds: advanced.newIds,
-            rollback: async () => {
-              const released = new Set(advanced.newIds);
-              state.sources[source].deliveredIds = state.sources[source].deliveredIds.filter((id) => !released.has(id));
-            }
-          };
-        },
+        record: testRecord(state),
         clearForContentDisable
       },
       system: { permissionGranted, reconcileDigests, presentDigest, dismissDigest }
@@ -1442,24 +1401,13 @@ describe('background notification digest', () => {
       network: {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({ items, cursor: null, hasMore: false })
+        listPage: async () => ({ quality: 'complete' as const, items, cursor: null, hasMore: false })
       },
       store: {
         load: async () => state,
-        record: async (_source, identityKey, scannedIds) => {
-          recordedIds = scannedIds;
-          const advanced = advanceNotificationDelivery(state.sources.nodeseek, identityKey, scannedIds);
-          state.sources.nodeseek = advanced.state;
-          return {
-            committed: true,
-            newIds: advanced.newIds,
-            rollback: async () => {
-              const released = new Set(advanced.newIds);
-              state.sources.nodeseek.deliveredIds = state.sources.nodeseek.deliveredIds.filter(
-                (id) => !released.has(id)
-              );
-            }
-          };
+        record: async (...args: Parameters<typeof recordNotificationDelivery>) => {
+          recordedIds = args[2];
+          return testRecord(state)(...args);
         },
         clearForContentDisable
       },
@@ -1507,17 +1455,15 @@ describe('background notification digest', () => {
         listPage: async (_source, _access, _signal, cursor?: string | null) => {
           requestedCursors.push(cursor);
           return cursor === '2'
-            ? { items: items.slice(35), cursor: null, hasMore: false }
-            : { items: items.slice(0, 35), cursor: '2', hasMore: true };
+            ? { quality: 'complete' as const, items: items.slice(35), cursor: null, hasMore: false }
+            : { quality: 'complete' as const, items: items.slice(0, 35), cursor: '2', hasMore: true };
         }
       },
       store: {
         load: async () => state,
-        record: async (_source, identityKey, scannedIds) => {
-          recordedIds = scannedIds;
-          const advanced = advanceNotificationDelivery(state.sources.yaohuo, identityKey, scannedIds);
-          state.sources.yaohuo = advanced.state;
-          return { committed: true, newIds: advanced.newIds, rollback: async () => undefined };
+        record: async (...args: Parameters<typeof recordNotificationDelivery>) => {
+          recordedIds = args[2];
+          return testRecord(state)(...args);
         },
         clearForContentDisable
       },
@@ -1568,7 +1514,7 @@ describe('background notification digest', () => {
       network: {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({ items, cursor: null, hasMore: false })
+        listPage: async () => ({ quality: 'complete' as const, items, cursor: null, hasMore: false })
       },
       store: {
         load: async () => state,
@@ -1629,6 +1575,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -1683,6 +1630,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -1736,22 +1684,7 @@ describe('background notification digest', () => {
     };
     const presentStarted = Promise.withResolvers<void>();
     const nativeAcknowledgement = Promise.withResolvers<void>();
-    const record = vi.fn(
-      async (
-        _source: 'nodeseek',
-        identityKey: string,
-        scannedIds: string[],
-        _fields: { lastSuccessAt: string; unreadCount: number },
-        delivery?: { notificationIdentifier: string }
-      ) => {
-        const advanced = advanceNotificationDelivery(state.sources.nodeseek, identityKey, scannedIds);
-        state.sources.nodeseek = {
-          ...advanced.state,
-          ...(delivery ? { notificationIdentifier: delivery.notificationIdentifier } : {})
-        };
-        return { committed: true, newIds: advanced.newIds, rollback: async () => undefined };
-      }
-    );
+    const record = vi.fn(testRecord(state));
 
     const operation = runNotificationBackgroundWorker({
       sources: ['nodeseek'],
@@ -1760,6 +1693,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -1837,6 +1771,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -1926,6 +1861,7 @@ describe('background notification digest', () => {
           restoreProxy: async () => undefined,
           probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
           listPage: async () => ({
+            quality: 'complete' as const,
             items: [
               {
                 source: 'nodeseek',
@@ -1975,7 +1911,7 @@ describe('background notification digest', () => {
         network: {
           restoreProxy: async () => undefined,
           probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-          listPage: async () => ({ items: [], cursor: null, hasMore: false })
+          listPage: async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false })
         },
         store: {
           load: async () => state,
@@ -2037,6 +1973,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek',
@@ -2118,6 +2055,7 @@ describe('background notification digest', () => {
           restoreProxy: async () => undefined,
           probeAccess: async () => ({ identityKey: 'nodeseek:cleanup', userId: 'cleanup' }),
           listPage: async () => ({
+            quality: 'complete' as const,
             items: [
               {
                 source: 'nodeseek',
@@ -2204,7 +2142,7 @@ describe('background notification digest', () => {
       network: {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({ items: [item], cursor: null, hasMore: false })
+        listPage: async () => ({ quality: 'complete' as const, items: [item], cursor: null, hasMore: false })
       },
       store: {
         load: async () => state,
@@ -2237,7 +2175,7 @@ describe('background notification digest', () => {
           await allowSecondProbe.promise;
           return { identityKey: 'nodeseek:7', userId: '7' };
         },
-        listPage: async () => ({ items: [item], cursor: null, hasMore: false })
+        listPage: async () => ({ quality: 'complete' as const, items: [item], cursor: null, hasMore: false })
       },
       store: {
         load: async () => state,
@@ -2312,7 +2250,7 @@ describe('background notification digest', () => {
       network: {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:7', userId: '7' }),
-        listPage: async () => ({ items, cursor: null, hasMore: false })
+        listPage: async () => ({ quality: 'complete' as const, items, cursor: null, hasMore: false })
       },
       store: {
         load: async () => state,
@@ -2384,6 +2322,7 @@ describe('background notification digest', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:77', userId: '77' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: [
             {
               source: 'nodeseek' as const,
@@ -2471,7 +2410,7 @@ describe('background notification digest', () => {
           order.push('probe');
           return { identityKey: 'nodeseek:7', userId: '7' };
         },
-        listPage: async () => ({ items: [], cursor: null, hasMore: false })
+        listPage: async () => ({ quality: 'complete' as const, items: [], cursor: null, hasMore: false })
       },
       store: {
         load: async () => state,

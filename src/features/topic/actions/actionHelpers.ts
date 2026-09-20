@@ -1,8 +1,8 @@
 import type { ReplyEditTarget, ReplyRefreshTarget } from '../model/types';
 import { nodeSeekMarkdownToHtml } from '@/sources/nodeseek/markdown';
+import { extractNodeSeekVoteIds, prepareNodeSeekForumContent } from '@/sources/nodeseek/topicParser';
 import { sourceSupportsTopicAction } from '@/domain/forum/sourceCatalog';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserIdentity } from '@/domain/forum/models';
-import { prepareForumContentHtml } from '@/domain/forum/topicContentSplit';
 
 type TopicActionTopic = Topic | TopicDetail;
 
@@ -68,16 +68,20 @@ export function applyEditedReplyContent(
   }
   let changed = false;
   const contentHtml = nodeSeekMarkdownToHtml(contentMarkdown);
+  const pollIds = new Set(extractNodeSeekVoteIds(contentHtml));
   const next = replies.map((reply) => {
     if (reply.commentId !== edit.commentId) {
       return reply;
     }
     changed = true;
+    const polls = reply.polls?.filter((poll) => poll.id && pollIds.has(poll.id));
+    const preparedContent = prepareNodeSeekForumContent(contentHtml, { polls, role: 'reply' });
     return {
       ...reply,
-      contentHtml,
+      contentHtml: preparedContent.contentHtml,
       contentMarkdown,
-      preparedContent: prepareForumContentHtml(contentHtml, { polls: reply.polls, role: 'reply', source })
+      polls,
+      preparedContent
     };
   });
   return changed ? next : replies;

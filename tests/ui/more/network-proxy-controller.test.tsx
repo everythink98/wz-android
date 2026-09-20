@@ -12,6 +12,12 @@ import { withLinuxDoPresence } from '@/sources/linuxdo/presence';
 import { recordUserInteraction } from '@/platform/network/userPresence';
 import { AppState } from 'react-native';
 import { linuxDoNotificationAdapter } from '@/sources/discourseNotifications';
+import { createNotificationGateway } from '@/sources/notificationGateway';
+import {
+  beginAuthSurface,
+  createAuthSurfaceRegistry,
+  hasAuthSurfaceBarrierForSource
+} from '@/domain/session/authSurfaceCoordinator';
 
 const mockLoadNetworkProxyState = jest.fn<() => Promise<NetworkProxyState>>();
 const mockSaveNetworkProxyState = jest.fn<(state: NetworkProxyState) => Promise<NetworkProxyState>>();
@@ -51,6 +57,64 @@ const profileB: NetworkProxyProfile = {
 };
 
 describe('network proxy controller', () => {
+  it.each(['account', 'source'] as const)(
+    'stops a private reply when %s access closes during proxy preparation',
+    async (blockedBy) => {
+      const loaded = deferred<NetworkProxyState>();
+      const enteredProxy = deferred<void>();
+      mockLoadNetworkProxyState.mockReturnValue(loaded.promise);
+      const authSurfaces = createAuthSurfaceRegistry();
+      const controller = new AbortController();
+      const baseFetcher = jest.fn<import('@/platform/network/request').Fetcher>(async () =>
+        Response.json({ success: true })
+      );
+      const hook = await renderHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+      let sourceEnabled = true;
+      const gateway = createNotificationGateway({
+        sourceAllowed: () => sourceEnabled,
+        privateAccessAllowed: (source) => !hasAuthSurfaceBarrierForSource(authSurfaces, source),
+        readAccess: async (source) => ({
+          identityKey: `${source}:7`,
+          userId: '7',
+          fetcher: (input, init) => {
+            enteredProxy.resolve();
+            return hook.result.current.networkProxyFetcher(input, init);
+          }
+        })
+      });
+      const item = {
+        source: 'nodeseek' as const,
+        id: 'message:9',
+        kind: 'private-message' as const,
+        actor: { name: 'Bob' },
+        title: 'Private message',
+        createdAt: null,
+        unread: false,
+        target: { type: 'private-conversation' as const, conversationId: '9' }
+      };
+      try {
+        const request = gateway.replyToConversation(item, 'fixture', 'nodeseek:7', controller.signal);
+        const rejected = expect(request).rejects.toThrow(blockedBy === 'account' ? '账号状态已变化' : '内容源已停用');
+        await enteredProxy.promise;
+        if (blockedBy === 'account')
+          beginAuthSurface(authSurfaces, {
+            source: 'nodeseek',
+            surface: 'nodeseek-login',
+            identityKey: 'nodeseek:7',
+            sessionEpoch: 1
+          });
+        else sourceEnabled = false;
+        await act(async () => loaded.resolve({ enabled: false, activeId: null, profiles: [] }));
+        await rejected;
+        expect(controller.signal.aborted).toBe(false);
+        expect(baseFetcher).not.toHaveBeenCalled();
+      } finally {
+        await act(async () => loaded.resolve({ enabled: false, activeId: null, profiles: [] }));
+        await hook.unmount();
+      }
+    }
+  );
+
   it('rechecks a write after proxy preparation and keeps its guard off the transport', async () => {
     const loaded = deferred<NetworkProxyState>();
     mockLoadNetworkProxyState.mockReturnValue(loaded.promise);

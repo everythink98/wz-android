@@ -1150,6 +1150,7 @@ describe('notification runtime', () => {
         restoreProxy: async () => undefined,
         probeAccess: async () => ({ identityKey: 'nodeseek:42', userId: '42' }),
         listPage: async () => ({
+          quality: 'complete' as const,
           items: Array.from({ length: 20 }, (_, index) => ({
             source: 'nodeseek' as const,
             id: `read-${index}`,
@@ -1733,6 +1734,7 @@ describe('notification runtime', () => {
       return identifier;
     });
     const listPage = jest.fn(async (source: NotificationSource) => ({
+      quality: 'complete' as const,
       items: [
         {
           source,

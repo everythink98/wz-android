@@ -173,7 +173,10 @@ export function advanceNotificationDelivery(
 ) {
   const ids = [...new Set(scannedIds.filter(Boolean))];
   const identityChanged = previous?.identityKey !== identityKey;
-  const baselineReady = previous?.baselineReady === true && !identityChanged;
+  // Older NodeSeek clients persisted timestamp fallbacks before recognizing the site's max_id.
+  const legacyNodeSeekMessages =
+    identityKey.startsWith('nodeseek:') && previous?.deliveredIds.some((id) => id.startsWith('message:fallback:'));
+  const baselineReady = previous?.baselineReady === true && !identityChanged && !legacyNodeSeekMessages;
   const known = new Set(baselineReady ? previous?.deliveredIds || [] : []);
   const newIds = baselineReady ? ids.filter((id) => !known.has(id)) : [];
   return {

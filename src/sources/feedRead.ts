@@ -156,8 +156,10 @@ export async function getFeed({
     return runForumSourceReadAggregateAttempt(
       fetcher || fetch,
       async (aggregateFetcher, scopeFetcher) => {
-        const sources = includedAggregateSources(includedSources, sourceValues);
         const unavailableSourceSet = new Set(unavailableSources);
+        const sources = includedAggregateSources(includedSources, sourceValues).filter(
+          (item) => !unavailableSourceSet.has(item)
+        );
         const cursorState = decodeAllFeedCursor(cursor, sources);
         const bufferedItems = sources.flatMap((item) => cursorState.buffers?.[item] || []);
         const hasRetryableCursor = Boolean(
@@ -177,9 +179,6 @@ export async function getFeed({
           sources.map((item, index) => {
             const startedAt = Date.now();
             return readWithinAggregateSourceBudget(item, signal, (sourceSignal) => {
-              if (unavailableSourceSet.has(item)) {
-                return unavailableSourceRead(item);
-              }
               if (!fetchedSources[index]) {
                 return Promise.resolve({
                   items: [],

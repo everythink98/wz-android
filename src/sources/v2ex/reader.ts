@@ -1005,6 +1005,7 @@ export async function getV2exTopic(
     ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
     ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
     replyCount,
+    ...(replyWindowComplete && replyCount !== undefined ? { replyWatermark: replyCount } : {}),
     replyCompleteness: replyWindowComplete ? ('complete' as const) : ('partial' as const),
     contentHtml: preparedContent.contentHtml,
     preparedContent,
@@ -1077,7 +1078,8 @@ export async function getV2exReplies(
           hasMore: nextPage !== null,
           nextPage,
           nextOffset: null,
-          totalCount
+          totalCount,
+          ...(complete && totalCount !== undefined ? { replyWatermark: totalCount } : {})
         },
         {
           parserVariant: complete ? 'html-topic' : 'html-topic-partial',
@@ -1194,7 +1196,8 @@ export async function getV2exReplies(
       hasMore: false,
       nextPage: null,
       nextOffset: null,
-      totalCount: credibleV2exReplyCount(replyCount, combinedReplies)
+      totalCount: credibleV2exReplyCount(replyCount, combinedReplies),
+      ...(complete ? { replyWatermark: replyCount } : {})
     },
     {
       parserVariant: complete ? 'api-topic-fallback' : 'api-topic-partial',

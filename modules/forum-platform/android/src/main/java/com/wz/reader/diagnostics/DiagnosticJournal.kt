@@ -124,7 +124,7 @@ internal class DiagnosticLogStore(
   )
 }
 
-internal object DiagnosticJournal {
+object DiagnosticJournal {
   private const val MAX_PENDING_BYTES = 256 * 1024
   private const val MAX_CRASH_BYTES = 256 * 1024
   private val processSessionId = "process-" + UUID.randomUUID().toString().replace("-", "")
@@ -143,15 +143,21 @@ internal object DiagnosticJournal {
   private var crashReadFailureCount = 0L
   private var previous: JSONObject? = null
 
-  val buildId: String get() = BuildConfig.DIAGNOSTIC_BUILD_ID
+  var buildId: String = ""
+    private set
+  private var appVersion = ""
+  private var versionCode = 0
 
   fun context(): Map<String, Any> = mapOf(
     "buildId" to buildId, "processSessionId" to processSessionId,
-    "appVersion" to BuildConfig.VERSION_NAME, "versionCode" to BuildConfig.VERSION_CODE
+    "appVersion" to appVersion, "versionCode" to versionCode
   )
 
-  fun install(application: Application) {
+  fun install(application: Application, buildId: String, appVersion: String, versionCode: Int) {
     if (storage != null) return
+    this.buildId = buildId
+    this.appVersion = appVersion
+    this.versionCode = versionCode
     try {
       recordStartupPhase("diagnostics-start")
       val directory = File(application.noBackupFilesDir, "diagnostics")

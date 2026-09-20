@@ -1,0 +1,26 @@
+// The platform's integration tests run inside the real App process, without copying its sources.
+beforeProject { p ->
+    p.plugins.withId('com.android.application') {
+        def platform = new File(p.rootDir.parentFile, 'modules/forum-platform/android')
+        def config = p.extensions.getByName('android')
+        config.defaultConfig.testInstrumentationRunner = 'androidx.test.runner.AndroidJUnitRunner'
+        config.sourceSets.getByName('androidTest').java.srcDirs(
+            new File(platform, 'src/hostTest/java'), new File(platform, 'src/testShared/java'))
+        config.sourceSets.getByName('androidTest').manifest.srcFile(new File(platform, 'src/hostTest/AndroidManifest.xml'))
+        config.sourceSets.getByName('androidTest').assets.srcDir(new File(p.rootDir.parentFile, 'tests/fixtures'))
+        p.dependencies.add('androidTestImplementation', 'androidx.test:runner:1.7.0')
+        p.dependencies.add('androidTestImplementation', 'androidx.test.ext:junit:1.3.0')
+        p.dependencies.add('androidTestImplementation', 'com.squareup.okhttp3:mockwebserver:4.12.0')
+        p.dependencies.add('androidTestImplementation', 'com.squareup.okhttp3:okhttp-tls:4.12.0')
+        p.tasks.configureEach { task ->
+            if (task.name ==~ /compile(Debug|Release)AndroidTestKotlin/) {
+                def variant = task.name.contains('Release') ? 'release' : 'debug'
+                def compileJar = "bundleLibCompileToJar${variant.capitalize()}"
+                task.dependsOn(":forum-platform:${compileJar}")
+                // Use the same compiled artifact as this host's classpath; a classes directory
+                // is not a friend of the AGP compile jar containing these internal declarations.
+                task.friendPaths.from({ p.project(':forum-platform').tasks.getByName(compileJar).outputs.files })
+            }
+        }
+    }
+}

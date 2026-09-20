@@ -2,6 +2,26 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Fetcher } from '@/platform/network/request';
 
 describe('NodeSeek reader', () => {
+  it.each([false, true])(
+    'publishes a reply watermark only for a proven terminal window (has next: %s)',
+    async (hasNext) => {
+      const page = `<a class="post-title" href="/post-42-1">Watermark</a>
+      <div class="content-item" data-comment-id="1"><a href="/space/1">alice</a><article class="post-content">opening</article></div>
+      <li id="7" class="content-item" data-comment-id="2"><a href="/space/2">bob</a><a class="floor-link">#7</a><div class="post-content">reply</div></li>
+      ${hasNext ? '<div class="nsk-pager"><a href="/post-42-2">2</a></div>' : ''}`;
+      const fetcher = vi.fn<Fetcher>(async (input) => {
+        const response = new Response(page);
+        Object.defineProperty(response, 'url', { value: String(input) });
+        return response;
+      });
+      const { getNodeSeekTopic, getNodeSeekReplies } = await import('./reader');
+      const detail = await getNodeSeekTopic('42', { fetcher });
+      expect(detail.replyWatermark).toBe(hasNext ? undefined : 7);
+      const replies = await getNodeSeekReplies('42', { fetcher, order: 'oldest', position: { kind: 'start' } });
+      expect(replies.replyWatermark).toBe(hasNext ? undefined : 7);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
+  );
   it('refuses anonymous adapter search without a transport call', async () => {
     const fetcher = vi.fn<Fetcher>();
     const { searchNodeSeek } = await import('./reader');

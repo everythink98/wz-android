@@ -94,6 +94,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 ### NAV/TOPIC：四站导航与定位覆盖矩阵
 
+`NAV-02/03` 的冷启动 URL 查询不能覆盖本次订阅已接受的较新有效链接；新目标即使立即打开，也必须清除旧排队目标。非主题/不受支持链接不废弃有效启动目标，卸载结束待处理导航；canonical owner 为 `tests/ui/app/app-deep-link-navigation.test.tsx`。
+
 已消费的回复定位命令只属于发起时的回复窗口；切换正倒序后按新顺序正常读取首批评论，不能被旧 route 目标永久阻断，也不能重放旧定位。主楼 ID 经主题详情确认后，与显式 `opening` 一样使旧回复请求失效。
 
 通知同时携带评论 ID 和首帖楼号时保留评论 ID，待 Topic 详情确认主楼；不能先按楼号丢弃 ID。没有评论 ID 的 Discourse 首帖目标直接分类为 `opening`。目标缺失的 loading 跟随实际请求结束，不使用被禁用 Query 的 pending 状态制造永久转圈。
@@ -114,6 +116,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 固定回归同时覆盖正反方向：`2885866` 第 9 楼的“引用 #1”和引用标题均打开 `2686247` 主楼，不请求回复目标；“回复 #6”仍定位第 6 楼。主楼正文跨主题引用也必须保留实际 post number，不能退化为普通主题。Live 只在匹配当前构建后按 `tests/live/agent-live.md` 的 `LIVE-NAV-02` 执行，测试通过不代替各站现场证据。
 
 ### FEED：首页与发现
+
+`FEED-01` 的聚合请求、buffer 和 cursor 只包含当前 ReadPlan 可读取的来源；当前被阻止的来源不保留伪重试页，无可推进来源时正常终止。暂时网络失败仍保留原页重试，登录/来源/epoch 变化由既有 Query scope 重建计划恢复读取。Canonical owner 为 `src/sources/feedRead.test.ts`、`src/sources/readGateway.test.ts` 与 `tests/ui/feed/feed-controller-session.test.tsx`。
 
 `FEED-01/02` 首屏内容终态须有实际布局证据：非空列表使用 FlashList `onLoad`，空列表使用空状态容器 `onLayout`，因为 FlashList 空列表不触发 `onLoad`。通知和更新仍等待该终态；诊断分别记录 `feed-content`、`feed-empty`、`feed-error`，空结果与失败不计作已有帖子。Canonical evidence 为 `tests/ui/feed/feed-screen.test.tsx`。
 
@@ -148,6 +152,10 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 ### SEARCH：搜索
 
+`SEARCH-02/03` 的 limit 控制上游请求批量，不因排除词擅自放大；共享过滤与聚合必须交付已消费页中的全部合法命中，不能再截断后沿下一页跳过剩余结果。概览仍由展示层只显示两条，单站分页追加全部合法结果并保持已加载前缀。Canonical owner 为 `src/sources/searchRead.test.ts` 与 `tests/ui/search/search-controller-ai.test.tsx`。
+
+`SEARCH-02/04` 的 V2EX adapter 遵守 SOV2EX 单次最多 50 条、可访问深度 1000 条的协议；页偏移使用稳定批量，末尾请求缩至剩余窗口，达到上限后不产生下一页或再发越界请求。30 条批量的第 34 页只请求最后 10 条，不把服务端总命中数当成全部可访问。Canonical owner 为 `tests/integration/source-read-contracts/v2ex.test.ts`。
+
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |
 | --- | --- | --- | --- | --- |
 | `SEARCH-01` | “全部”按用户顺序结算所有已启用来源：可原生搜索的来源并行请求并渐进展示最多 2 条完整 TopicCard；处于 public lane 的 linux.do/NodeSeek 不发请求，各显示一个已结算的 Google 外部搜索入口，且绝不自动打开两个 Tab。原生来源继续使用干净默认筛选、局部失败隔离、可信预览保留、稳定结算标记和可靠作者契约；外部入口不计作空结果，不参与分页、跨站混排或“查看全部”。 | `src/features/search/SearchScreen.tsx`、`src/features/search/useSearchController.ts`、`src/features/search/listItems.ts`、`src/domain/forum/externalSearch.ts`、`src/ui/topic/TopicCard.tsx` | `src/features/search/listItems.test.ts`、`tests/ui/search/search-screen.test.tsx`、`tests/ui/search/search-controller-ai.test.tsx`、`tests/device-logged-out/logged-out-readonly.ad` | 未登录 AVD 在“全部”提交关键词，确认 L/NS 按来源顺序各有一个外部入口且没有自动弹窗；主登录 AVD 确认原生来源仍显示预览并可进入单站。 |
@@ -159,7 +167,7 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 
 `SEARCH-03` 的筛选状态 owner 固定为 `src/features/search/SearchFilterSheet.tsx`、`src/features/search/SearchFilterForm.tsx` 与 `src/features/search/DiscourseFilterPickers.tsx`：sheet 自持筛选入口、visibility 和草稿事务，picker 自持 visibility、debounce、候选 Query、取消和 stale-response 拒绝；对应可见行为由 `tests/ui/search/search-screen.test.tsx` 固定。
 
-`SEARCH-02`、`SEARCH-04`：单站搜索累计结果为 0 时，空态即为终态；即使来源残留 `hasMore/nextPage`，也不得显示分页哨兵或触发自动续页。非空结果的既有自动分页与分页失败重试保持不变。
+`SEARCH-02`、`SEARCH-04`：单站搜索累计结果为 0 时，不显示分页哨兵或触发自动续页。若当前无错误且仍有有效 `hasMore/nextPage`，提供明确的“继续搜索”按钮，由用户逐次读取后页；概览允许进入该来源。真正终页不显示继续入口。这样排除词筛空一页不会被误当成整次搜索结束；非空结果的既有自动分页与分页失败重试保持不变。
 
 `SEARCH-02`、`NAV-01`：空关键词且存在最近搜索时，“最近搜索”标题与最多 20 条记录必须作为 `FlashList` 的稳定 typed items 参与虚拟化，不能塞回 `ListHeaderComponent`；Header 只拥有标题、输入、来源、筛选与 AI 控件。迁移不得改变顺序、点击搜索、逐条删除、禁用态或无障碍文案；视觉继续是一张圆角分组面板和相邻 hairline 分隔，单行点击区至少 `48dp` 且不得通过负 margin 互相覆盖。
 
@@ -174,6 +182,8 @@ Modal、BottomSheet、WebView、系统浏览器、文件选择器、系统分享
 ### TOPIC：主题详情与阅读
 
 `TOPIC-01/03`：妖火只读响应中的独立“提示信息”页保留站点提示（例如“正在审核中！”），不解析为普通主题或空回复窗口；无已加载详情时不展示虚构作者、正文或回复入口。正文内引用的提示样式不触发此判断。共享 `fetchYaohuoHtml` 保持登录检查优先，诊断原因记为 `site_notice`，不记录提示正文。Canonical evidence：`src/sources/yaohuo/reader.test.ts`、`tests/ui/topic/topic-reply-filters.test.tsx`、`src/platform/diagnostics/diagnostics.test.ts`。
+
+妖火已确认窗口的楼号允许不连续；全部候选回复正常解析且楼号明确时保持 complete，不因原站缺号误报丢行或隐藏末端。缺明确楼号、解析截断和未确认边缘仍 partial，主题/分页身份不匹配仍拒绝。末端继续由当前顺序的全部已加载页质量、相邻游标和加载/错误状态共同决定，不用楼号连续性推导。对应 owner 为 `src/sources/yaohuo/reader.test.ts` 与既有 `tests/ui/topic/topic-reply-filters.test.tsx`。
 
 `TOPIC-01/03`、`NAV-02/03`、`FEED-03`，共享 `SEARCH-02`、`LIBRARY-01/03`、`USER-01`、`NOTIFY-02`：L 站普通话题在 route 接受进入时立即记录一次本机 visit，正文失败也保留已读反馈；成功正文和可信回复计数仅补全摘要，不重复计次。Feed/Search/Library/User 使用同一已读计算；本机历史淘汰后仍可用当前账号服务端证据恢复已读，清空历史不改变原站状态。老话题有后续楼层时保留已读标题，另显示“有新回复”，不把受通知级别影响的 `unread_posts` 当成新增总数。新回复标记使用进入时固定的此前阅读基准，上传确认不改变本次标记。
 
@@ -209,6 +219,8 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 `TOPIC-01/03`、`WRITE-01`：妖火只从正文区域外的原站 `div.tipmini` 结束记录识别 `closed`，详情以中性“已结束”标签展示，隐藏主回复和楼层回复入口；已打开的编辑器在状态更新后关闭并保留草稿，提交与上传在异步准备后仍须复核结束状态。结束不删除已有评论或禁止阅读定位、收藏和分享。原站 `view-no-reply-tip` 的明确空态确认零评论，优先于旧列表计数；零评论首屏仅在同主题原站回复页或有效页码字段确认后允许无楼层页码的完整空窗口，显式 target/cursor 和异常响应不放宽。已结束且零评论显示“回复列表 0 条 / 暂无回复”，不展示筛选、排序或评论查找；请求顺序不变。Canonical evidence 为 `src/sources/yaohuo/reader.test.ts`、`src/features/topic/actions/topicActionDecision.test.ts`、`tests/ui/topic/topic-actions-controller.test.tsx` 与 `tests/ui/topic/topic-reply-filters.test.tsx`。
 
 `TOPIC-01/02/03`：共享 cooked HTML 样式补齐 `bbcode-b/i/u/s`、`kbd`、`mark/ins/del`、固定正文基准的 `big/small` 与 `mention-group`；默认颜色继续由 App 主题拥有，但来源显式旧式 `<font color>` 保留有效文字颜色，`size="1"` 至 `size="7"` 按 App 当前正文字号恢复相对层级。旧式字号的 `fontSize` 与 `lineHeight` 使用同一个相对 factor，RNRH `emSize` 跟随 App 正文基准，行高再乘当前紧凑/标准/宽松阅读倍率；来源 `line-height` 与背景样式不进入白名单。table 保持现有等宽列、最小列宽和横滑，`td/th` 只把扣除 padding/边框后的实际内容宽度提供给内部图片、贴纸和嵌套 table；视频继续随父容器 stretch，表外媒体继续使用正文宽度。不得以帖子特判、裁剪、列角色或状态机代替该宽度 owner。
+
+`TOPIC-02`：表格 caption 的安全文字、链接和媒体沿现有正文编译路径在表格前呈现一次，并进入预览和连续选择；typed directive 与分段表格不重复消费标题。正文图片按所属块扫描，祖先遇到拥有独立 owner 的块时不重复遍历其后代。对应 owner 为 `src/domain/forum/topicContentSplit.test.ts` 与 `src/domain/forum/forumContentMedia.test.ts`。
 
 `TOPIC-02/03`：NodeSeek 原站 Markdown 删除线输出原生 `<s>`，共享 Topic renderer 必须显式映射为 `line-through`，但不得复用 `<del>` 的危险语义底色。NodeSeek Composer 恢复原站支持的删除线并继续隐藏原站未提供的下划线；linux.do 仍保留两项。两站继续共用同一 Runtime，不增加帖子特判、站点样式分支或能力状态机。
 
@@ -348,6 +360,12 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 `USER-01/02`：资料、主题、回复独立结算；活动失败显示所属区域错误并可独立重试，不能显示“暂无”或覆盖成功区域。刷新失败保留旧可信数据，刷新与分页由现有 Query 取消能力协调。Canonical evidence 增加 `tests/ui/user/user-activity-reads.test.tsx`（真实 gateway/controller，四站 HTTP 边界）及既有 `tests/ui/user/user-controller-session.test.tsx`（实际 Query 竞态）。
 
+`USER-01` 的 V2EX 活动 cursor 只来自当前用户、当前活动路径的原站分页区域，页码读取唯一的正整数 `p` 参数；正文链接和用户名中的数字不参与分页。妖火缺楼层活动用完整正文区分同主题、同分钟的不同回复，展示摘要截断不改变身份；同一活动的跨页重复及无内容重复块仍折叠。Canonical owner 为 `src/sources/sourceUserRead.test.ts` 与 `src/sources/yaohuo/parser.test.ts`。
+
+V2EX 用户回复活动的 `#replyN` 是主题回复总数，不能用作活动身份或楼层。活动保留每个原站行，读取相邻正文作摘要，以页、正文指纹和同文出现序号区分；同页插入不同正文或总回复数改变不改旧行身份。原站没有稳定回复 ID 时，不能承诺准确消除更新期间移到另一页的相同活动。该边界归 `src/sources/sourceUserRead.test.ts`。
+
+linux.do 的合法 summary 可以不含目标 user；此时沿用请求身份及实际可用统计。root users 只补充明确匹配的用户资料，不能默认选第一位关联用户或徽章授予者。无合法摘要或身份的响应仍按解析失败处理；同一 source user owner 固定这组协议边界。
+
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |
 | --- | --- | --- | --- | --- |
 | `USER-01` | 从作者、可信正文用户链接或关注列表进入用户页，展示来源、身份、适用统计、主题/回复列表和原站主页；分页与来源错误可恢复，已缓存或刚由 Profile Query 显示的下一 cursor 必须立即可加载。`hasMore=true` 只能来自来源明确 next、权威总数与已验证页容量或有界前瞻，并同时提供非空且前进的 cursor；当前页非空本身不是下一页证据，`parse_empty` 不得覆盖可信资料或推进 cursor。凭据观察不得取消同站用户 Query；真实会话变化必须清除该来源旧资料、释放 Loading 并保留可重试定位字段，且不影响其他站。每个 User route 持有轻量 `UserReference`、controller、主题/回复筛选、列表 ref 与滚动状态；inactive route 停止 Query、刷新、分页和验证恢复。NodeSeek username-only reference 先在当前 session epoch 解析 canonical 数字 UID，再启用 Profile、主题和回复 Query，分页始终复用 UID。解析中和失败时留在 App User 页并提供顶栏刷新与唯一显式“原站”入口；无匹配、非法响应、网络或 429 均不自动重试或外开。头像、显示名、简介、等级、统计与活动列表只来自当前 epoch 的 canonical Profile Query。NS 资料头将头像和用户名独立成行，统计与等宽操作按钮在下方对齐，窄屏和大字号自然换行。他人资料头提供 48dp 私信入口，仅使用当前 epoch Profile 的 canonical 数字 UID；自己的主页隐藏，未确认消息访问状态时进入现有 NS 登录/验证流程。App 组合层投影当前消息身份与访问状态，UserRoute 只推入已有 NotificationDetail，返回保留当前主页上下文。资料随列表滚动，主题/回复标签吸顶；切换标签复用同一列表与资料头，两组活动项各自按数据变化计算；重复用户名和 NodeSeek/V2EX 的同义发言统计不重复展示，零值保留，简介超过两行才提供展开。首次加载显示轻量进度；已有内容刷新只在顶栏原按钮位置显示忙碌并防止重复点击，等待期间保留资料、活动、空状态及列表位置，分页忙碌独立显示在底部。刷新失败保留两组已加载分页及原游标并返回失败；取消或过期刷新不重建分页，只有当前身份的新成功结果才重置两组分页。 | `src/features/user/UserRoute.tsx`、`src/features/user/UserScreen.tsx`、`src/features/user/useUserController.ts`、`src/platform/query/serverState.ts`、`src/sources/readGateway.ts` | `tests/integration/forum-presentation-contracts.test.ts`、`tests/integration/source-read-contracts/`、`src/sources/readGateway.test.ts`、`src/sources/readGatewayContract.test.ts`、`src/features/user/useUserController.test.ts`、`src/features/account/sessionQueryOwnership.test.ts`、`src/features/account/browserFetchQueue.test.ts`、`tests/integration/query-session-contracts.test.ts`、`src/features/user/userScreenItems.test.ts`、`tests/ui/user/user-route.test.tsx`、`tests/ui/user/user-screen.test.tsx`、`tests/ui/user/user-controller-session.test.tsx`、`tests/ui/app/app-navigator.test.tsx` | Topic → 作者或正文用户链接；Library → 关注用户；切换主题/回复。NodeSeek username-only 专项见 `LIVE-READ-04`。 |
@@ -365,6 +383,8 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 `DATA-02` 的资料权威为按记录 SQLite。旧资料完整迁移、事务提交并经新连接复核后立即定向删除 `reader-data` 与 `reader-settings`，清理失败下次重试且不回退旧快照。历史正常上限 5000，旧超额记录完整保留并在显式删除后自然收敛；读取和导出不裁剪。备份保持 v2 与现有容量保护。`LIBRARY-01..03` 只查询当前子页，每页 50 条，数据库筛选与稳定游标排序，保留卡片、横滑和返回位置。普通启动只准备设置、key 集合和计数；重复访问不重建已读集合。Canonical storage evidence 为 `src/platform/storage/readerDataStore.test.ts`，Android 事务与中断证据由 `dev/reader-storage-proof/index.tsx` 和隔离 runner 补充，不能以 JS mock 代替。
 
+清空历史、批量删除和容量裁剪按有界批次读写 SQLite，保留单事务、删除标记容量、同时间 ordinal、membership 与备份字节计数；不逐条跨桥查询和删除。现有 storage owner 同时核结果、工作量上界和故障回滚，Android proof 补充真实批量清理。
+
 `LIBRARY-01..03` 的“全部来源”固定第一，其余筛选按内容源偏好的用户顺序只显示已启用来源；停用只隐藏对应收藏、关注和历史，不删除 ReaderData。全部停用时显示“尚未启用内容源”和管理入口，旧 Topic/User 路由由停用门禁接管且不挂载远端 controller，见 `MORE-05`。
 
 `LIBRARY-01..03` 的筛选控件保持稳定 Native topology：无状态 Pill 按位置槽复用，选中语义仍由外部 `value` 驱动；分类使用始终挂载的固定按钮，动态 taxonomy 只在用户显式打开现有 `PopupMenu` 时创建。关注用户时固定槽保持且按钮从视觉与无障碍树隐藏，没有可选分类时按钮保持挂载并禁用。收藏、历史和关注用户各自稳定拥有一个 viewport；当前页先可用，其余页延后挂载，离开 Library 后释放非活动 viewport。收藏与历史数据独立派生，普通 tab 切换不应重算或重渲染已有列表；筛选重置和位置锚定行为保持稳定。
@@ -373,7 +393,7 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 `ACCOUNT-02`、`TOPIC-01/04`：Topic 手动验证直接使用 Account host；取消后可重新打开，恢复只作用于当前页面和身份。组合 owner 为 `tests/ui/topic/topic-route-verification.test.tsx`。hidden fallback 的 JSON 正文完整读取，挑战检测仍采样；超过既有 900,000 字符 bridge envelope 明确失败。脚本 owner 为 `tests/integration/hidden-browser-scripts.test.ts`，展开 `USER-01` 的 JSON 消费者。
 
-`ACCOUNT-01/02`：L 站手动“检测状态”先停止并卸载 WebView，等待共享 Cookie 交接和落盘完成，再调用唯一 Account 核对。期间保留面板及账号业务 barrier；成功后关闭，匿名/未知/交接失败保留说明，允许重试检测或显式刷新。刷新重新取得网页写入权后才挂载；旧检查不能关闭新页面、放开新屏障或重复核对。切后台本身不销毁网页，已因显式检测卸载的页面不自动重建。Canonical evidence：`tests/ui/account/account-runtime.test.tsx`、`src/features/account/useVerificationController.test.ts`、`plugins/network/ManagedCookieResponsesTest.kt`。
+`ACCOUNT-01/02`：L 站手动“检测状态”先停止并卸载 WebView，等待共享 Cookie 交接和落盘完成，再调用唯一 Account 核对。期间保留面板及账号业务 barrier；成功后关闭，匿名/未知/交接失败保留说明，允许重试检测或显式刷新。刷新重新取得网页写入权后才挂载；旧检查不能关闭新页面、放开新屏障或重复核对。切后台本身不销毁网页，已因显式检测卸载的页面不自动重建。Canonical evidence：`tests/ui/account/account-runtime.test.tsx`、`src/features/account/useVerificationController.test.ts`、`modules/forum-platform/android/src/test/java/com/wz/reader/network/ManagedCookieResponsesTest.kt`。
 
 `ACCOUNT-02`：L 站读取恢复由现有 verification controller 统一拥有 `idle → web → checking → result`。首次打开说明页面读取或阅读同步；检测时面板连续存在，WebView 卸载提交后才释放 Cookie barrier、等待交接并恢复本轮 exact Query / 阅读 batchId。重复通知只合并目标，不重建 WebView、不覆盖结果或自动重试。页面与阅读分别结算，完成项不重发；失败结果页不占认证 barrier，但仍遮挡阅读计时并参与顶层返回、切站和页面离开。关闭、系统返回或“返回原页面”直接取消未完成目标，迟到响应不得重开面板。取消抑制只绑定旧目标及 Query 错误版本，新页面进入或用户刷新依旧走原入口，没有全站冷却。
 
@@ -410,7 +430,7 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 `ACCOUNT-01`、`SEARCH-04`、`TOPIC-01`、`WRITE-01/03` 共享登录投影 seam：普通页面读取凭据只能发布不带身份结论的观察事件，不得把账号检测确认的登录降级；明确的当前账号验证结果仍按站独立生效。NodeSeek 当前身份只读当前首页/设置页的 `__config__.user` 或专属 self-account 结构，不调用不存在的无 ID `getInfo` 路由，也不把 `/api/account/getInfo/{id}` 公开资料当作登录证明；Account 直连响应无证据时才补 WebView，渲染脚本不得把帖子列表 ready 当作身份 ready，配置对象自有 `user === null` 或页面准确游客控件只能授权 App 投影为失效，不能授权删除原站 Cookie。清除登录是独立的用户破坏性操作。
 
-`ACCOUNT-01`、`SEARCH-02/04`、`WRITE-01`、`TOPIC-01/02/03`、`MORE-01/02` 共用 L 站原站响应续期 seam：Android CookieManager 仍是唯一存储；只将当前受管 HTTPS L 站请求的原始响应 Cookie 转交平台，完整保留新增、续期与过期指令。默认 CookieJar 保存保持 no-op，public/omit、其他站、匿名/离源媒体均零写入；账号隔离代次只在账号交接时推进；正常响应只推进诊断回写序号，不因其他 Cookie 更新或整份 Header 改变拒绝同账号续签。同一代次按平台回写临界区顺序逐条应用，含同名覆盖与服务端删除。登录页挂载前等待原生屏障并取消旧隐藏请求，关闭后使旧代次失效、落盘再允许账号核对；业务写入仍等 Account 核对。显式清除先隔离后定向删除。回调超时保留已提交项跟踪，收敛前禁止后续回写与交接；平台拒绝不回滚已接受项。后台 flush 与平台接受分开记录，落盘失败保留内存 Cookie，在下次合法响应（含无 Cookie）重试，不重发 HTTP、不改变身份。`plugins/network/ManagedCookieResponsesTest.kt` 负责实际 HTTP 续期与隔离，`plugins/network/ManagedCookieResponsesInstrumentedTest.kt` 在隔离 AVD 验证平台 CookieManager，既有 `NetworkProxyRuntimeTest` 保留容器、代理与媒体生命周期 owner；`src/features/account/useVerificationController.test.ts` 和账号 RNTL 固定交接。原站实际轮换后成功续期和后续核对才是 Live 证据，单元通过不证明频繁失效根因闭合。
+`ACCOUNT-01`、`SEARCH-02/04`、`WRITE-01`、`TOPIC-01/02/03`、`MORE-01/02` 共用 L 站原站响应续期 seam：Android CookieManager 仍是唯一存储；只将当前受管 HTTPS L 站请求的原始响应 Cookie 转交平台，完整保留新增、续期与过期指令。默认 CookieJar 保存保持 no-op，public/omit、其他站、匿名/离源媒体均零写入；账号隔离代次只在账号交接时推进；正常响应只推进诊断回写序号，不因其他 Cookie 更新或整份 Header 改变拒绝同账号续签。同一代次按平台回写临界区顺序逐条应用，含同名覆盖与服务端删除。登录页挂载前等待原生屏障并取消旧隐藏请求，关闭后使旧代次失效、落盘再允许账号核对；业务写入仍等 Account 核对。显式清除先隔离后定向删除。回调超时保留已提交项跟踪，收敛前禁止后续回写与交接；平台拒绝不回滚已接受项。后台 flush 与平台接受分开记录，落盘失败保留内存 Cookie，在下次合法响应（含无 Cookie）重试，不重发 HTTP、不改变身份。`modules/forum-platform/android/src/test/java/com/wz/reader/network/ManagedCookieResponsesTest.kt` 负责实际 HTTP 续期与隔离，`modules/forum-platform/android/src/hostTest/java/com/wz/reader/network/ManagedCookieResponsesInstrumentedTest.kt` 在隔离 AVD 验证平台 CookieManager，既有 `NetworkProxyRuntimeTest` 保留容器、代理与媒体生命周期 owner；`src/features/account/useVerificationController.test.ts` 和账号 RNTL 固定交接。原站实际轮换后成功续期和后续核对才是 Live 证据，单元通过不证明频繁失效根因闭合。
 
 `ACCOUNT-01/02/04` 的 WebView 持久化还覆盖加载完成前取消：依赖原有完成回调负责正常 flush，`patches/react-native-webview+14.0.1.patch` 的 native destroy 入口负责提前销毁后的 flush；不改变 Cookie 内容或身份。`ManagedCookieResponsesInstrumentedTest` 通过真实安装依赖的 WebView、CookieManager、loopback HTTP 与进程重启分别验证正常完成、网络错误和取消。只有无关的 React 消息传输被替身隔离，这一证据不代表整条 React 页面或 L 站 Live 登录。
 
@@ -421,6 +441,8 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 `ACCOUNT-01/02` 与通知共享 canonical identity：已确认 `source:userId` 在普通账号核对、网络失败或 challenge 期间继续有效，不因 `isVerifying` 从 active 来源移除。只有确认 anonymous/退出或不同身份才按站清理 Query、投递水位和摘要，其他站不变。前台通知在首页首次内容 settled 且本机账号恢复完成后启动；后台 worker 保持 fail-closed，遇到 401 只停止本次任务，不成为第二个账号状态 owner。
 
 ### NOTIFY：统一消息与 Android 通知
+
+`NOTIFY-02` 的前台来源/身份授权是同步读取当前状态的判定；共享 gateway 通过最终发送守卫，在代理准备等异步步骤完成后、真正 dispatch 前再次复核。取消、停用来源或认证屏障使私信、已读和上传等共享请求零发送；后台持久化权限检查保持自己的异步 owner。Canonical evidence 为 `tests/ui/more/network-proxy-controller.test.tsx` 与 `src/sources/notificationGateway.test.ts`，受控 HTTP 不代表真实写入已验收。
 
 `NOTIFY-02`：详情已读尝试绑定来源、身份、条目与当前请求，区分 idle/pending/confirmed/retryable。初次进入、重新聚焦、同身份恢复访问或点击“重试已读状态”可发起；显式重试先重读详情，进行中不重复发送，详情刷新和普通渲染不触发循环或取消。失焦、身份失效、来源停用、换条目和卸载取消在途请求；迟到回调不能覆盖新请求。确认后不重复写入，对账失败不能降级已确认结果；成功、失败和取消仍核对列表及 snapshot。NodeSeek 与 linux.do 非私信的直接已读写入、妖火/Discourse 私信读取详情即产生已读的协议差异保持不变。canonical owner：`tests/ui/notifications/notifications-route.test.tsx`。
 
@@ -444,6 +466,12 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 `NOTIFY-03` 的本机事务边界以 native `notify()` ack 为提交前提：ack pending 时 Store 水位与 identifier 均不变；ack 后一次 compound write 原子提交二者，随后才 exact-dismiss 旧槽。native present/exact dismiss 共享 graceful-draining 的单线程 Executor；顶层 deadline 可以 bounded 返回，但同身份 single-flight lane 必须持有到已开始的槽位对账、channel 初始化、native present、Store 写入与必要 exact dismiss 全部结算。对账中单个撤销失败也要等其余已启动的撤销结束；超时前尚未开始 commit 的迟到 present 必须先等待 ack 再 exact-dismiss，不能先清理后显示。强杀在 ack 与 Store commit 之间最多导致下轮重复覆盖，不得永久漏报。
 
 冷启动时通知设置和本机调度状态可以立即恢复，但前台远端 snapshot 必须等本机账号终态恢复且首页首次内容 settled 后再启动；它不等待或触发 Account batch。headless 401 只停止本轮任务，不写 canonical Account snapshot。
+
+`NOTIFY-03` 的 Android headless 生命周期由 Expo 原生 TaskService 持有至业务事件全部结算；注册给 RN 的占位 Promise 不得提前 resolve，否则后台 JS timer 和原 50 秒 deadline 会暂停。`patches/expo-task-manager+57.0.15.patch` 保留这一所有权，`tests/tooling/expo-task-manager-headless.test.ts` 执行真实 RN/Expo 源码验证成功、失败事件不会提前释放 headless；真实 WorkManager、Hermes timer、原生存储和 native finish 由 `dev/review-remediation-proof/background.ts` 的隔离设备入口验证。强制触发调度只证明后台执行，不替代系统自然唤醒或厂商省电兼容性。
+
+同一 capability 的冷进程入口依赖 Expo 从 manifest 字符串反射创建 `RNHeadlessAppLoader`；Release 的 R8 必须保留该类名和无参构造。此构建契约由 `app.json` 的精确 ProGuard 规则负责，设备 owner 继续复用 `scripts/run-notification-background-device-proof.mjs` 与上述业务入口：结束后台进程后，必须由系统拉起新 PID、建立新的 JS process session 并完成业务及原生任务。已有 ReactContext 的暖进程通过、关闭压缩的 proof 或字符串规则断言均不能替代冷进程验收。
+
+升级 Expo 后，只有实际安装版本包含类级 `DoNotStrip` 且 consumer 规则仍保留该类，并在移除本地规则、重新 prebuild 的 R8 Release 上通过相同冷启动 owner，才删除这条兼容规则。
 
 `NOTIFY-02`、`WRITE-01`：NodeSeek 私信把十进制 `conversationId` 校验为正安全整数，并以 number `receiverUid` 发送；内容继续 trim，`markdown: true`，且只有原站精确返回 `success === true` 才确认成功。无效 ID 零请求，失败或未确认继续保留草稿，不乐观插入消息。
 
@@ -505,11 +533,15 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 `WRITE-01/04/05`、`NOTIFY-02`：系统选图前，富文本与源码编辑器同步交出 DOM 焦点；上传成功只更新正文与逻辑选区，取消、失败或成功均不主动弹出键盘，用户点回输入区才继续输入。Reanimated 键盘补丁在 Android `onPrepare` 接管过渡，禁止把布局阶段的目标 Insets 当成当前动画帧；动画中断或结束后以窗口实际 Insets 校正静止高度，重叠动画未结束时不提前应用下一动画目标。Canonical owner 为 `src/ui/composer/editorRuntime.test.ts` 与 `tests/native/ComposerKeyboardTest.kt`；设备分别核对选图返回、快速收起后重开、半屏与全屏。Composer 在 Android 显式关闭 WebView 自动 IME 避让：`react-native-webview+14.0.1.patch` 将既有 `automaticallyAdjustContentInsets=false` 接到原生 wrapper，在目标布局和逐帧动画中只将已处理的 IME Insets 置零，继续传递系统栏 Insets 和归零通知；其他 WebView 保持默认行为。最低可靠 owner 为 `tests/native/ComposerWebViewInsetsTest.kt`，跨层 prop wiring 归 `tests/ui/topic/structured-reply-composer.test.tsx`。Reanimated 4.5.1 同时回补上游 PR #9527：已结束动画按是否已同步到 React 回收，重新动画时使旧 settledProps 失效，防止外部 Activity 返回后旧样式覆盖当前几何；不关闭优化开关或增加延迟补偿。重复 native tag 卸载的同步生命周期归 `tests/tooling/reanimated-settled-props.test.ts`，暂停/恢复后的实际坐标归匹配 APK 的同设备录屏。Composer 离线文档由 `scripts/build-composer-editor.mjs` 生成懒加载 JS 模块，纳入 Gradle 的 JS 输入追踪；不可改回不会触发增量 bundle 的 JSON 资源，启动懒加载 owner 为 `tests/ui/app/startup-imports.test.tsx`。
 
+`WRITE-05` 的 NodeSeek 投票创建必须先持久化意图再发送，已知 ID 按原账号复用，结果未知阻止自动重建；旧 fingerprint 保留，移除 32 条淘汰。`src/platform/persistence/nodeSeekPollJournal.test.ts` 拥有数据库原子性与迁移证据，`tests/ui/topic/topic-actions-controller.test.tsx` 拥有创建/复用/未知和身份交互证据。具体事务边界见 architecture。
+
 `WRITE-01..06` 的远端写请求与 NodeSeek 签到统一先经 `ensureWritableSession(source)` 取得一次性 identity/epoch ticket；只有当前身份 unknown 时才在执行前定向核对。换号、退出、surface barrier 或 ticket 过期均在 Query snapshot、optimistic update、确认、文件选择、上传、transport 和写后刷新结算前终止，所有等待后再次校验。底层 response 由 `rejectUnauthorizedResponse` 在 adapter 前拦截：只有当前 ticket 的原始 HTTP 401 通知统一 Account owner，零补账号请求、零自动重放；403、429、Cloudflare、typed auth hint、ordinary 与 permission 只结算本次 mutation。任何自动逻辑都不清 WebView Cookie。NodeImage Key 继续绑定当前已确认 NodeSeek identity。
 
 `WRITE-01/05` 的离线 `StructuredReplyComposer` 保持单一编辑器实例与既有草稿/Bridge 生命周期；它只管理自己的文档状态，不得创建、切换或清理进程级 WebView 认证资产。挂载隐藏 Composer、切换 Sheet/全屏、renderer 恢复和覆盖安装都不得改变任一站点登录态。
 
 `WRITE-01/05` 在提交成功、宿主清空草稿后，帖子回复和私信共用空正文 `INIT` 重置编辑文档，不能把清空解释为插入空字符串。收起未发送草稿不重置文档；失败继续保留正文。Canonical owner 为 `tests/ui/topic/structured-reply-composer.test.tsx`，两站富文本/源码实际清空归 `src/ui/composer/editorRuntime.test.ts`。
+
+`WRITE-01/04/05`、`NOTIFY-02`：新文档 `INIT`、销毁和卸载结算旧文档尚未完成的宿主请求；旧上传、模板结果及其错误/忙碌回调不得污染新草稿。新文档重新建立图片节点及短链接解析，同文档的富文本/源码切换继续保持图片节点。该异步文档边界归 `src/ui/composer/editorRuntime.test.ts`，关闭编辑后打开新回复的真实宿主接线归 `tests/ui/topic/topic-components.test.tsx`。
 
 `WRITE-01/02` 的服务端确认后刷新保持当前 `ReplyOrder`：编辑和删除只重读实体所在的真实服务端窗口，成功后失效另一顺序缓存；NodeSeek 与 linux.do 新增回复共用服务端确认目标的单窗口回读和定位，站点响应解析各自归 action adapter；妖火沿用既有权威刷新。刷新失败保留可信窗口并报告 `partial`，不得追加第二次列表读取、把旧正序片段反转成写后倒序结果或自动重发已确认 POST。
 
@@ -521,15 +553,19 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 ### DATA：本机资料、持久化与备份
 
+历史回复数量和最高楼号是两个独立可缺失字段；旧版备份缺 `replyWatermark` 继续兼容，不能解释为 0 或按数量推断逐楼新回复。ReaderData 导入、清空与恢复不得触碰独立的投票防重复 journal。首次旧设置读取与旧键清理各自最多等待 3 秒，仅约束 AsyncStorage I/O；SQLite 事务和恢复保护保持原边界。
+
 `DATA-02`、`MORE-05`：ReaderRuntime 的 `loading | ready | recovery` 分别表达未结算、可信可修改与只读恢复。读取或回滚失败进入 recovery，失败导入不放行，成功导入才进入 ready；本地路由与账号本地恢复可结算。AppRuntime 只从 ready 设置派生有效来源和缓存 key，各页面消费同一投影；recovery 下来源业务请求为空，Notifications 的设置可信标志仍为 false，不将未知许可当作用户停用而清理持久状态。更多显示恢复说明并允许导入；普通修改和导出受保护。首次安装成功读取的默认设置仍可信。owner：`tests/ui/library/reader-data-controller.test.tsx`、`tests/ui/app/app-runtime-startup.test.tsx`、`tests/ui/notifications/notifications-runtime.test.tsx`。
 
 `DATA-03`：导入先用完整删除标记并集解决记录冲突，时间相等时删除优先，再裁剪至每类 1000 条删除标记；不承诺超过保留窗口的永久删除历史。领域 owner 覆盖三类集合与 999/1000/1001 边界，storage owner 验证实际导入并重开数据库。
+
+`DATA-01/02/03`：来源帖子的发布日期可以明确未知（`createdAt: ''`，可选的未知 `lastReplyAt` 规范为缺省），收藏、历史和关注用户内嵌帖子在旧资料迁移、导出和合并后必须保留，不补造发布日期。保存、关注及删除的本机操作时间仍必须有效；缺失必需字段和非法非空日期继续拒绝。Canonical owner 为 `src/domain/reader/readerData.test.ts`、`src/platform/storage/readerDataStore.test.ts`；Android 补充复用 `dev/reader-storage-proof/index.tsx` 的未知日期样本。
 
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |
 | --- | --- | --- | --- | --- |
 | `DATA-01` | 已读、本机收藏、关注和历史作为一个 ReaderData 领域保存；写入排队、失败回滚、旧保存完成和多次快速修改不得丢数据。 | `src/domain/reader/readerData.ts`、`src/platform/storage/readerDataStore.ts`、`src/app/useReaderRuntime.ts` | `src/domain/reader/readerData.test.ts`、`src/platform/storage/readerDataStore.test.ts`、`src/app/useReaderRuntime.test.ts` | 重启前后核对收藏/关注/历史；真实切换后恢复原状态。 |
 | `DATA-02` | 升级后 ReaderData 由 `reader-data.db` 按记录保存，备份格式仍为 version 2；旧 `reader-data` / `reader-settings` 完整迁移、核对后定向删除。正常启动只读设置、key 和计数，锁等待最多 3 秒，首次迁移不设总超时。已迁移设备和后台设置读取只认新库；旧 sidecar 缺失或损坏时沿用原内容源默认规则，不覆盖已成功读取的其他资料。数据库异常进入恢复保护，不回退旧快照。搜索历史仍用 `reader-search-history`。 | `src/platform/storage/readerDataStore.ts`、`src/domain/reader/readerData.ts`、`src/app/useReaderRuntime.ts`、`src/features/search/history.ts`、`src/features/search/useSearchController.ts` | `src/platform/storage/readerDataStore.test.ts`、`src/domain/reader/readerData.test.ts`、`src/features/search/history.test.ts`、`src/app/useReaderRuntime.test.ts` | 覆盖安装/重启后核对既有本机数据、四站默认与启动可达；不得清 App 数据制造状态。 |
-| `DATA-03` | JSON 备份只包含允许的本机资料和设置，包括内容源顺序与开关；限制大小/深度并拒绝敏感字段。合法 source:id 记录键及删除标记不能因用户名含 sid/token/proxy 被过滤，记录内部敏感字段仍拒绝。导出取消、损坏导入、合并和失败回滚要有明确结果。Cookie、密码、代理和 token 永不进入备份。 | `src/features/more/components/MoreUtilityPanels.tsx`、`src/features/more/useBackupStatusController.ts`、`src/domain/reader/readerBackup.ts`、`src/platform/storage/backupImportFile.ts`、`src/platform/storage/backupOperation.ts`、`src/platform/storage/backupFiles.ts` | `src/domain/reader/readerBackup.test.ts`、`src/platform/storage/backupImportFile.test.ts`、`src/platform/storage/backupOperation.test.ts`、`tests/integration/security-boundaries.test.ts`、`tests/ui/more/more-screen.test.tsx`、`tests/ui/more/backup-status-controller.test.tsx` | 更多 → 备份/恢复；导出或导入需按数据风险授权。 |
+| `DATA-03` | JSON 备份只包含允许的本机资料和设置，包括内容源顺序与开关；限制大小/深度并拒绝敏感字段。合法 source:id 记录键及删除标记不能因用户名含 sid/token/proxy 被过滤，记录内部敏感字段仍拒绝。导出使用系统保存文件，完整写入并关闭后才提示已保存，取消不报成功；provider 失败不回退分享；关闭前检查可靠描述符已经报告的错误，不等待云端同步。损坏导入、合并和失败回滚要有明确结果。Cookie、密码、代理和 token 永不进入备份。 | `src/features/more/components/MoreUtilityPanels.tsx`、`src/features/more/useBackupStatusController.ts`、`src/domain/reader/readerBackup.ts`、`src/platform/storage/backupImportFile.ts`、`src/platform/storage/backupOperation.ts`、`src/platform/storage/backupFiles.ts`、`src/platform/storage/backupExport.ts`、`modules/forum-platform/android/src/main/java/com/wz/reader/storage/BackupExportModule.kt` | `src/domain/reader/readerBackup.test.ts`、`src/platform/storage/backupImportFile.test.ts`、`src/platform/storage/backupOperation.test.ts`、`tests/integration/security-boundaries.test.ts`、`tests/ui/more/more-screen.test.tsx`、`tests/ui/more/backup-status-controller.test.tsx`、`modules/forum-platform/android/src/test/java/com/wz/reader/storage/BackupExportTest.kt`、`modules/forum-platform/android/src/hostTest/java/com/wz/reader/storage/PlatformFileFaultInstrumentedTest.kt`、`modules/forum-platform/android/src/hostTest/java/com/wz/reader/storage/PlatformExportInstrumentedTest.kt` | 更多 → 备份/恢复；导出或导入需按数据风险授权。 |
 
 `DATA-02/03` 与 `NOTIFY-02` 的隔离 Android 补充 owner 为 `dev/reader-storage-proof/deletionBoundaries.ts`、`dev/review-remediation-proof/acceptance.tsx` 及同目录 recovery/notification `.ad`。它们验证原生存储、系统文件选择器和详情导航生命周期；原站写入不在该证据范围。
 
@@ -537,8 +573,8 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 模拟器路径 |
 | --- | --- | --- | --- | --- |
-| `MORE-01` | HTTP/SOCKS5 服务器代理保存在安全存储，可做完整 TLS/HTTP 连通性测试并启停；密码输入必须遮蔽。proxy SecureStore load 最多等待 3 秒，且不阻断本地 routes；在 saved state 与完整 native apply 结算前，App 管理的网络请求和 WebView 仍 fail-closed，读取失败/超时、JSON/结构损坏或 enabled 缺少有效 active profile 均阻断联网并显示恢复入口，慢 native apply 不被额外 JS deadline 误判为可直连。原生 apply 先等待 AndroidX `startUpWebView` 的完整启动结果，再开始代理事务；启动失败或超时继续阻断网络，不清本机配置。原生启动、启用、切换、关闭、WebView 回调失败或配置读取失败时旧 tunnel、受管请求和 bridge 资源必须释放，并限制正常并发；共享 deadline 必须在阻塞写时仍能终止 worker。只读 WebView CookieJar 安装在同一受管 OkHttp client 上；普通站点失败不得全局 cancel/evict 或误伤其他站请求。App 级读取 runtime 必须能原子轮换并覆盖四站后续 fetch、图片和视频。普通页面请求进入 App 后台不改变 owner，共享 JS request deadline 按连续墙钟计时且不得被 AppState 暂停。 | `src/platform/network/networkProxy.ts`、`src/platform/network/readNetworkRuntime.ts`、`src/platform/network/useNetworkProxyRuntime.ts`、`src/features/more/components/NetworkProxyModal.tsx`、`plugins/withNetworkProxyModule.js` | `src/platform/network/networkProxy.test.ts`、`tests/ui/app/app-lifecycle-request-timeout.test.tsx`、`tests/ui/app/app-runtime-startup.test.tsx`、`tests/ui/more/network-proxy-controller.test.tsx`、`tests/ui/more/network-proxy-modal.test.tsx`、`tests/ui/account/hidden-browser-host.test.tsx`、`tests/ui/account/account-host.test.tsx`、`tests/ui/account/account-site-panels.test.tsx`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/tooling/release-packaging.test.ts`、生成的 `NetworkProxyRuntimeTest.kt` | 冷启动先核对本地 Library/More 可达，再只读核对服务器代理配置与密码遮蔽；真实启停和公网连通性测试必须另获授权并最终恢复关闭。 |
-| `MORE-02` | 诊断记录请求阶段、归属、恢复决策和终态，局部来源、凭据、解析或写后刷新失败将整体终态提升为 `partial`。普通请求以 session/trace/request ID 关联 JS、Native 和 fallback；Android 私有非备份目录持久化 JS/Native 各四份 2 MiB、保留七天及独立最近崩溃记录，跨进程导出保留原 build/process 身份。导出按时间合并，并声明时间范围、丢弃、损坏、轮转与读写失败；不记录 URL、Host、IP、Cookie、正文或原始错误消息，系统分享后清理临时文件。 | `src/platform/diagnostics/diagnosticPolicy.ts`、`src/platform/diagnostics/diagnostics.ts`、`src/platform/diagnostics/diagnosticFileStore.ts`、`src/platform/diagnostics/diagnosticRuntime.ts`、`src/platform/diagnostics/nativeReadNetworkDiagnostics.ts`、`plugins/withDiagnosticJournal.js`、`src/sources/readGateway.ts` | `src/platform/diagnostics/diagnostics.test.ts`、`src/platform/diagnostics/diagnosticFileStore.test.ts`、`src/platform/diagnostics/diagnosticRuntime.test.ts`、`src/sources/forumSourceReadAttempt.test.ts`、`src/sources/readGatewayContract.test.ts`、`tests/integration/source-read-contracts/gateway.test.ts`、`tests/tooling/diagnostic-symbols.test.ts`、生成的 `NetworkProxyRuntimeTest.kt` 与 `DiagnosticLogStoreTest.kt` | 更多 → 问题诊断 → 生成/分享后取消；隔离崩溃与重启 proof 见 runbook，不在保留登录态设备注入故障。 |
+| `MORE-01` | HTTP/SOCKS5 服务器代理保存在安全存储，可做完整 TLS/HTTP 连通性测试并启停；密码输入必须遮蔽。proxy SecureStore load 最多等待 3 秒，且不阻断本地 routes；在 saved state 与完整 native apply 结算前，App 管理的网络请求和 WebView 仍 fail-closed，读取失败/超时、JSON/结构损坏或 enabled 缺少有效 active profile 均阻断联网并显示恢复入口，慢 native apply 不被额外 JS deadline 误判为可直连。原生 apply 先等待 AndroidX `startUpWebView` 的完整启动结果，再开始代理事务；启动失败或超时继续阻断网络，不清本机配置。原生启动、启用、切换、关闭、WebView 回调失败或配置读取失败时旧 tunnel、受管请求和 bridge 资源必须释放，并限制正常并发；共享 deadline 必须在阻塞写时仍能终止 worker。只读 WebView CookieJar 安装在同一受管 OkHttp client 上；普通站点失败不得全局 cancel/evict 或误伤其他站请求。App 级读取 runtime 必须能原子轮换并覆盖四站后续 fetch、图片和视频。普通页面请求进入 App 后台不改变 owner，共享 JS request deadline 按连续墙钟计时且不得被 AppState 暂停。 | `src/platform/network/networkProxy.ts`、`src/platform/network/readNetworkRuntime.ts`、`src/platform/network/useNetworkProxyRuntime.ts`、`src/features/more/components/NetworkProxyModal.tsx`、`plugins/withNetworkProxyModule.js` | `src/platform/network/networkProxy.test.ts`、`tests/ui/app/app-lifecycle-request-timeout.test.tsx`、`tests/ui/app/app-runtime-startup.test.tsx`、`tests/ui/more/network-proxy-controller.test.tsx`、`tests/ui/more/network-proxy-modal.test.tsx`、`tests/ui/account/hidden-browser-host.test.tsx`、`tests/ui/account/account-host.test.tsx`、`tests/ui/account/account-site-panels.test.tsx`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/tooling/release-packaging.test.ts`、模块内 `NetworkProxyRuntimeTest.kt` | 冷启动先核对本地 Library/More 可达，再只读核对服务器代理配置与密码遮蔽；真实启停和公网连通性测试必须另获授权并最终恢复关闭。 |
+| `MORE-02` | 诊断记录请求阶段、归属、恢复决策和终态，局部来源、凭据、解析或写后刷新失败将整体终态提升为 `partial`。普通请求以 session/trace/request ID 关联 JS、Native 和 fallback；Android 私有非备份目录持久化 JS/Native 各四份 2 MiB、保留七天及独立最近崩溃记录，跨进程导出保留原 build/process 身份。导出按时间合并，并声明时间范围、丢弃、损坏、轮转与读写失败；不记录 URL、Host、IP、Cookie、正文或原始错误消息。分享文件至少保留 24 小时，只清理本功能过期文件；32 份/128 MiB 满额明确失败，chooser 返回后不得删除。 | `src/platform/diagnostics/diagnosticPolicy.ts`、`src/platform/diagnostics/diagnostics.ts`、`src/platform/diagnostics/diagnosticFileStore.ts`、`src/platform/diagnostics/diagnosticExportFiles.ts`、`src/platform/diagnostics/diagnosticRuntime.ts`、`src/platform/diagnostics/nativeReadNetworkDiagnostics.ts`、`plugins/withDiagnosticJournal.js`、`src/sources/readGateway.ts` | `src/platform/diagnostics/diagnostics.test.ts`、`src/platform/diagnostics/diagnosticFileStore.test.ts`、`src/platform/diagnostics/diagnosticRuntime.test.ts`、`src/sources/forumSourceReadAttempt.test.ts`、`src/sources/readGatewayContract.test.ts`、`tests/integration/source-read-contracts/gateway.test.ts`、`tests/tooling/diagnostic-symbols.test.ts`、模块内 `NetworkProxyRuntimeTest.kt`、`DiagnosticLogStoreTest.kt` 与 `modules/forum-platform/android/src/hostTest/java/com/wz/reader/storage/PlatformExportInstrumentedTest.kt` | 更多 → 问题诊断 → 生成/分享后取消；隔离崩溃与重启 proof 见 runbook，不在保留登录态设备注入故障。 |
 | `MORE-03` | 外观支持字号、浅/深色主题、列表密度、行距、正文宽度和字体；切换立即生效并持久化，不应挤压主要页面。 | `src/features/more/components/AppearancePanel.tsx`、`src/features/more/useReaderSettingsController.ts`、`src/ui/theme/tokens.ts`、`src/ui/theme/ReaderStyleProvider.tsx` | `src/features/more/useReaderSettingsController.test.ts`、`tests/integration/style-ownership.test.ts`、`tests/ui/shared/topic-and-more-controls.test.tsx` | 更多 → 外观；逐项切换，检查首页/详情/弹层，并恢复原值。 |
 | `MORE-04` | 检查只更新服务器新版，不替换或隐藏本地下载目标。App 级 runtime 先恢复本地任务再自动检查，统一阶段与同步互斥；离开 More 继续下载，后台尽力继续且完成不自动安装，前台完成打开安装确认。私有持久目录按 versionCode/SHA 保存 `.part`，暂停、断网、进程重启按磁盘长度手动续传；校验后改名 `.apk`，返回、取消、权限不足或安装器失败都可离线再次安装。每次安装核对 SHA、包名、版本及内置 signer；只显示已打开安装确认。显式下载不同新版才替换目标，确认已安装或文件损坏时限定清理；兼容迁移同身份完整旧缓存。受管 Expo DownloadTask 使用 identity 编码，校验 206 区间、200 覆盖、416 核验后至多全量重试一次；网络/代理失败保留有效断点。面板按真实阶段显示恢复、检查、暂停结算、校验及安装确认提示；进度支持未知总大小与无障碍读数，下载新版前说明替换本地任务。 | `src/platform/update/appUpdate.ts`、`src/platform/update/appUpdateDownload.ts`、`src/platform/update/useAppUpdateRuntime.ts`、`plugins/withApkInstaller.js`、`patches/expo-file-system+57.0.6.patch` | `src/platform/update/appUpdate.test.ts`、`tests/ui/more/app-update-runtime.test.tsx`、`tests/tooling/apk-installer-plugin.test.ts`、`tests/tooling/patch-artifacts.test.ts`；原生 `DownloadResponseTest` | 更多 → 检查/下载/暂停/继续/安装；`tests/live/agent-live.md` 的 `LOCAL-UPDATE-01`，受控 HTTP 与设备流程见 runbook。 |
 | `MORE-05` | “内容源”面板始终按用户顺序列出四站；开关独立于右侧 48dp 排序手柄，长按手柄拖拽，TalkBack 使用同一手柄的上移/下移动作。普通视觉模式在拖动和提交期间保持 source host 与 Reanimated 位置映射；screen reader 初始状态未结算或已开启时，Native children 直接按当前用户顺序渲染且 transform 为 `[]`，模式切换取消未完成 drag、清槽位并零额外持久化。排序列表只在面板展开时挂载；停用来源不删除本机内容、Cookie、凭据或可信身份，但所有业务入口 fail-closed；排序零 refetch。重新启用来源时若已有持久化终态便直接恢复，若没有则进入 unknown/public lane，不自动核对；用户可在账号中心手动刷新，通知只建立新 baseline、不补旧消息。 | `src/domain/reader/contentSourcePreferences.ts`、`src/features/more/components/ContentSourcesPanel.tsx`、`src/app/useContentSourceQueryCleanup.ts`、`src/sources/readGateway.ts`、`src/sources/notificationGateway.ts` | `src/domain/reader/contentSourcePreferences.test.ts`、`tests/ui/app/content-source-query-cleanup.test.tsx`、`tests/ui/app/content-source-navigation.test.tsx`、`tests/ui/app/content-source-route-gates.test.tsx`、`tests/ui/more/more-screen.test.tsx` | `LIVE-LOCAL-04`：记录并恢复原设置；TalkBack 下核对遍历顺序、位置朗读、上移/下移和焦点连续，关闭后再核对普通视觉拖动。不得清 Cookie 制造状态。 |
@@ -547,9 +583,13 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 `MORE-01` 的读取网络 runtime 是整个 App 共用的 generation，不是四站各自的专用 client。每代拥有新的 ProxySelector wrapper、Dispatcher、forum/media pool、Expo Image client 与 Cronet media generation，同时复用稳定 CookieJar、代理配置及 RN TLS/缓存语义；RN fetch 每次建请求读取 current，Expo Video 先取得 generation lease 再建 player，Fresco、Glide 与 SVG 持有稳定 `Call.Factory`，执行时原子绑定 current generation 并取得请求 lease；Fresco 的取消执行器独立于会退休的 generation，Glide loader 仅在启动时注册。NodeSeek/linux.do 在 Direct 失败、WebView fallback 成功且内容被确认可读时触发；V2EX/妖火在当前页面的显式 foreground `content GET/HEAD` 达到 15 秒 deadline 且读取仍有效时触发，并最多整体重放一次。全 App Native fetch 边界把读取 intent 标成内部 `content/health/retained` 归属并在出网前移除 header；未标记请求不按同域猜测归属。一次 trigger 会先发布新代，再只取消旧代同来源 `content GET/HEAD` 与对应非视频媒体；同站后台 Account health、retained、无关来源、健康视频、Cronet response body 和全部写请求自然 drain，四站之后的新请求都走新代。`all` 的 5 秒单来源聚合预算、普通错误、页面/后台取消和全部写入均不触发；只有代理 transition 保留跨 generation 全局 cancel/evict 权限。
 
-`TOPIC-02` 图片网络生命周期的 canonical owner 为 `plugins/withNetworkProxyModule.js` 生成的 `NetworkProxyRuntimeTest`：真实保留的 Glide loader 在旧执行器关闭后请求未缓存图片必须成功；创建后延迟执行、响应流跨连续切换、取消、EOF/关闭/读取失败、clone 与 SVG timeout/deadline 共同约束请求 lease。RN patch 的 `ReactOkHttpNetworkFetcherTest` 只负责注入与默认行为 wiring。生成的 `NetworkImageRuntimeInstrumentedTest` 在独立 AVD 验证已初始化 Fresco、挂载图片、Glide 两种 model、缓存/回收/重试及 SVG 下载；展开 `MORE-01`、`TOPIC-03` 和共享媒体 Cookie/代理边界。该缺陷的红绿证据不等同于已复现用户手机的原始事故。
+`TOPIC-02` 图片网络生命周期的 canonical owner 为 模块内 `NetworkProxyRuntimeTest`：真实保留的 Glide loader 在旧执行器关闭后请求未缓存图片必须成功；创建后延迟执行、响应流跨连续切换、取消、EOF/关闭/读取失败、clone 与 SVG timeout/deadline 共同约束请求 lease。RN patch 的 `ReactOkHttpNetworkFetcherTest` 只负责注入与默认行为 wiring。模块 `modules/forum-platform/android/src/hostTest` 的 `NetworkImageRuntimeInstrumentedTest` 在独立 AVD 验证已初始化 Fresco、挂载图片、Glide 两种 model、缓存/回收/重试及 SVG 下载；展开 `MORE-01`、`TOPIC-03` 和共享媒体 Cookie/代理边界。该缺陷的红绿证据不等同于已复现用户手机的原始事故。
 
-`TOPIC-02/03`、`MORE-01` 的 HTTP/2 连接健康由原生 `plugins/network/MediaConnectionHealth.kt` 拥有：媒体 client 使用协议 PING 检出静默失联；请求头写入另有独立于 HTTP/2 写队列的有界保护，直接关闭该连接的原始 TCP socket，再由 OkHttp 自身恢复。页面取消不重置仍被阻塞的写入检测；不增加页面重试预算、不轮换整个 runtime、不清缓存或 Cookie。runtime 退休后，图片在发送下一次网络请求前以不可原生重试的错误结算，使 Fresco/Glide 收到失败而非静默取消；已有健康响应流继续 drain。`NetworkProxyRuntimeTest` 经共享 `Http2ImageFaultFixture.kt` 验证实际 factory 的旧连接成功→失联→取消重开、TLS 写阻塞、明确断连、并发健康连接、持续下载和断网终态；真实 Fresco/Glide 的显示由独立 AVD instrumentation 验证。10 秒开始新连接、15 秒显示只用于新连接可用的受控小图环境。
+`TOPIC-01/03` 的内容读取由路由焦点和身份控制，切后台不取消或重置原 deadline；媒体和交互继续受前台状态控制。取消不结算未完成的 reading entry，真实错误返回保留页仍须显式重试。新回复逐楼标记使用进入时冻结的可信 watermark，不能从窗口尾部和数量差推断。
+
+`TOPIC-02` 图片保存复用原生 imageCallFactory 流式写私有文件，JS 只接收文件描述；账号/取消在发起、返回和相册写入前核对，下载失败或取消清理本次文件，相册创建后释放。canonical evidence 为 `src/platform/media/imageSave.test.ts`、`tests/ui/topic/image-preview-controller.test.tsx`、`modules/forum-platform/android/src/test/java/com/wz/reader/media/ImageDownloadTest.kt` 与 `modules/forum-platform/android/src/hostTest/java/com/wz/reader/media/ImageDownloadInstrumentedTest.kt`。
+
+`TOPIC-02/03`、`MORE-01` 的 HTTP/2 连接健康由原生 `modules/forum-platform/android/src/main/java/com/wz/reader/network/MediaConnectionHealth.kt` 拥有：媒体 client 使用协议 PING 检出静默失联；请求头写入另有独立于 HTTP/2 写队列的有界保护，直接关闭该连接的原始 TCP socket，再由 OkHttp 自身恢复。页面取消不重置仍被阻塞的写入检测；不增加页面重试预算、不轮换整个 runtime、不清缓存或 Cookie。runtime 退休后，图片在发送下一次网络请求前以不可原生重试的错误结算，使 Fresco/Glide 收到失败而非静默取消；已有健康响应流继续 drain。`NetworkProxyRuntimeTest` 经共享 `Http2ImageFaultFixture.kt` 验证实际 factory 的旧连接成功→失联→取消重开、TLS 写阻塞、明确断连、并发健康连接、持续下载和断网终态；真实 Fresco/Glide 的显示由独立 AVD instrumentation 验证。10 秒开始新连接、15 秒显示只用于新连接可用的受控小图环境。
 
 图片诊断不拥有显示请求生命周期：同一加载尝试与相同原生 source 参数（包括请求头、cache key 和解码尺寸）在滚动、预览返回或等值对象重建时必须沿用 trace 和原生 source；真实重试、换图、会话/请求头或解码参数变化才建立新 trace。`tests/ui/shared/android-image-headers.test.tsx` 验证两种图片消费者的等值与真实变化边界，`tests/ui/topic/topic-image-loading.test.tsx` 验证已显示正文图的原生请求连续性。
 
@@ -562,13 +602,19 @@ Canonical evidence：`src/domain/forum/discourseReading.test.ts`、`src/platform
 
 业务阶段覆盖账号会话/阅读设置恢复、更新恢复/下载/校验/安装器打开、通知读取/解析/身份门禁/后台 worker/投递/清理、编辑器初始化/快照/renderer gone、原生选择错误、音视频加载/播放失败/媒体预算、普通 Topic/User 同类页面跳转与冷暖 deep link。普通导航仅记录来源、匿名目标和是否有目标楼层，返回同一目标复用匿名引用；播放器 ready 后的错误以 parentTraceId 指向原加载。账号核验成功但本机快照保存失败时，诊断整体为 partial，产品返回值与身份处理规则不变。主资料恢复区分首次无键、有效空资料、格式损坏、读取失败和超时。以封闭阶段、计数、opaque ref 和结果定位，不保存原文、文件路径或身份；安装器打开不宣称安装成功，正常通知筛选不宣称解析损坏。
 
+`NOTIFY-01/03` 的解析质量是业务状态：partial 前台显示有效内容及提示，invalid 保留同账号同查询同页旧可信内容；后台单来源整轮质量或游标异常不推进 baseline/投递集合/成功时间。首次可信扫描静默，分页按来源与 ID 去重再计算摘要，仍按原始条目执行 60 条预算。缺失/坏未读计数不能当成零。
+
+NodeSeek 私信列表以原 `id` 优先、正安全整数 `max_id` 备用确定最新消息身份；两者均缺失时的时间 fallback 仍不可信。已读提交只使用详情返回的消息 ID。升级账本中仍含 `message:fallback:` 的 NodeSeek 基线，仅在整轮可信扫描后静默重建，随后新消息照常去重投递；读取账本或失败扫描不提前清除旧状态。对应 owner 为 `src/sources/nodeseek/notifications.test.ts`、`src/platform/notifications/notificationStore.test.ts` 和 `tests/integration/notification-delivery-contracts.test.ts`。
+
 `MORE-02` 同时约束消息诊断与持久化：正文、预览、参与者、会话、Cookie、token 和原始响应不得进入诊断、ReaderData、备份或 Android 通知存储；通知状态存储只允许保存公开身份键、开关、每站最多 200 个投递 ID、最后成功状态及 Android identifier，这些原始身份键不因此进入诊断。More 底部圆点按 `none | update | messages | both` 区分新消息、可用更新或二者；消息入口只消费结构化未读状态并同步显示行内红点，不能从摘要文案或更新状态猜测。
 
 `DATA-02/03` 的 `reader-settings` 与 JSON 备份现包含 `nodeSeekRecoveryThreshold`；旧数据使用默认 1，导入时取整并 clamp 到 1–5，不增加数据迁移。
 
-`MORE-01/04` 的原生 HTTP relay 在完整转发首个 `Content-Length` 请求体后停止读取下一请求，但保持上游连接直到 `Connection: close` 响应收完，不用 TCP 半关闭表示 HTTP 请求结束。只有 CONNECT 透明隧道传播双向 EOF。生成的 `NetworkProxyRuntimeTest.kt` 以真实 socket 和延迟二进制响应证明无请求体 GET、有请求体 POST 均不截断；更新设备证据使用标准 HTTP fixture server，不依赖服务器内部半关闭开关。
+`MORE-01/04` 的原生 HTTP relay 在完整转发首个 `Content-Length` 请求体后停止读取下一请求，但保持上游连接直到 `Connection: close` 响应收完，不用 TCP 半关闭表示 HTTP 请求结束。只有 CONNECT 透明隧道传播双向 EOF。模块内 `NetworkProxyRuntimeTest.kt` 以真实 socket 和延迟二进制响应证明无请求体 GET、有请求体 POST 均不截断；更新设备证据使用标准 HTTP fixture server，不依赖服务器内部半关闭开关。
 
 ### RELEASE：构建、打包与发布
+
+`RELEASE-01`：正式发布的所有子进程移除继承的 `ENTRY_FILE`（包括空值和 Windows 混合大小写名称），由项目生产入口配置决定打包入口。开发 proof 的入口覆盖只留在各自显式开发构建中。Canonical owner 为 `tests/tooling/release-environment.test.ts`，验证 unsigned 与 signed 两阶段的实际环境对象。
 
 | ID | 用户入口与行为契约 | 主要代码入口 | 自动测试 | 验收路径 |
 | --- | --- | --- | --- | --- |
@@ -657,7 +703,7 @@ More → useNetworkProxyRuntime → networkProxy + Android generated module
 | 能力族 | Canonical UI / 设备证据 | 动态或写入边界 |
 | --- | --- | --- |
 | `NAV-*` | `tests/ui/app/app-navigator.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx`、`tests/ui/library/library-screen.test.tsx`；`tests/device/library-return.ad` | 真实 Feed/Search → Topic → User → Topic 与 native 转场空白帧使用匹配 APK 只读验收。 |
-| `FEED-*` | `tests/ui/feed/feed-screen.test.tsx`、`tests/ui/feed/feed-controller-session.test.tsx`、`src/features/feed/useFeedController.test.ts`；`tests/device/four-source-feed.ad` | 四站当天数据、分页与帧指标由 Agent Live/Release trace 分层取证。 |
+| `FEED-*` | `tests/ui/feed/feed-screen.test.tsx`、`tests/ui/feed/feed-controller-session.test.tsx`、`src/features/feed/useFeedController.test.ts`；`tests/device/feed-source-controls.ad` | 四站当天数据、分页与帧指标由 Agent Live/Release trace 分层取证。 |
 | `SEARCH-*` | `src/domain/forum/searchFilters.test.ts`、`src/features/search/searchRun.test.ts`、`tests/integration/source-read-contracts/`、`tests/ui/search/search-screen.test.tsx`、`tests/ui/search/search-controller-ai.test.tsx`；`tests/device/search-multi-source.ad` | 真实候选、Custom Tab 回接与键盘几何需匹配 APK；外部页面受阻记 `BLOCKED_BY_ENV`。 |
 | `TOPIC-*` | `tests/integration/forum-presentation-contracts.test.ts`、`tests/integration/source-read-contracts/`、`tests/ui/topic/topic-components.test.tsx`、`tests/ui/topic/topic-rich-text-selection.test.tsx`、`tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-table-rendering.test.tsx`、`tests/ui/topic/image-preview.test.tsx`、`npm run test:native:forum-selection`、独立 AVD 上的 `npm run test:instrumented:forum-selection` | 原站动态正文、媒体、分页、选择与手势按 `tests/live/agent-live.md`；NodeSeek `post-877083-1` 核对主楼正文→标题→表格→表后文字的连续选择与复制顺序，`post-652056-1` 核对回复同时挂载时不阻断主楼选择且自身仍走整条长按复制，实际显示的评论/采纳答案同样做负向注册验收；`post-863650-1` 核对选择前/中/后的 row/media 预算、同条件基线的 PSS 曲线与非回退判定，以及 `0px` 布局位移；保存、互动和分享按授权。 |
 | `USER-*` | `src/features/user/useUserController.test.ts`、`tests/ui/user/user-screen.test.tsx`、`tests/ui/user/user-controller-session.test.tsx`、`tests/ui/app/app-navigator.test.tsx` | 真实 Profile/活动分页与关注切换需有效对象；本机写入记录并恢复原状态。 |
@@ -723,7 +769,7 @@ More → useNetworkProxyRuntime → networkProxy + Android generated module
 
 `WRITE-01` 与 `TOPIC-01/03`、消息回复共享 `ComposerBottomSheet`：关闭背景必须 `pointerEvents=none`，视觉动画值不拥有触摸命中权；打开时保持遮挡，背景不作为无障碍元素。编辑器、草稿和键盘生命周期不因该背景策略改变。
 
-canonical evidence：`src/domain/forum/readPlan.test.ts`、`src/sources/readGatewayContract.test.ts`、`plugins/network/NetworkProxyRuntimeTest.kt`（真实 HTTP 重试与重定向）、`tests/ui/account/account-runtime.test.tsx`（NS 未登录恢复与失效）、`tests/ui/topic/topic-components.test.tsx`（关闭背景命中与布局切换）。HarmonyOS/卓易通和普通 Android 的实际触摸、原站 CF 为独立设备验收，不能以 UI 测试代替。
+canonical evidence：`src/domain/forum/readPlan.test.ts`、`src/sources/readGatewayContract.test.ts`、`modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt`（真实 HTTP 重试与重定向）、`tests/ui/account/account-runtime.test.tsx`（NS 未登录恢复与失效）、`tests/ui/topic/topic-components.test.tsx`（关闭背景命中与布局切换）。HarmonyOS/卓易通和普通 Android 的实际触摸、原站 CF 为独立设备验收，不能以 UI 测试代替。
 
 
 `ACCOUNT-02` 的 L/NS/妖火登录与验证页共用紧凑工具栏：检测为唯一主操作，填入使用短标签，刷新为带完整无障碍名称的图标按钮，清除登录保留明确文字与危险色；按用户指定采用 32dp 最小按钮高度、16dp 图标和 6dp 圆角，操作保持单行，大字号或窄屏横向滚动。关闭入口独立保留，loading/disabled 与原有回调不变。共享外观由 `LoginWebViewModal`/`loginWebViewStyles` 拥有，交互回归仍由 `tests/ui/account/account-site-panels.test.tsx` 承接。

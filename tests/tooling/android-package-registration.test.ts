@@ -49,9 +49,9 @@ describe('Android package registration owner', () => {
     ['withForumSearchCustomTab.js', 'ForumSearchCustomTabPackage'],
     ['withSecureRandomModule.js', 'SecureRandomPackage'],
     ['withNotificationDigestModule.js', 'NotificationDigestPackage'],
-    ['withNetworkProxyModule.js', 'NetworkProxyPackage'],
+    ['withNetworkProxyModule.js', 'com.wz.reader.NetworkProxyPackage'],
     ['withPreviewRegionImageNative.js', 'PreviewRegionImagePackage'],
-    ['withSvgRendererModule.js', 'SvgRendererPackage']
+    ['withSvgRendererModule.js', 'com.wz.reader.SvgRendererPackage']
   ])('%s delegates registration for %s', (pluginFile, packageClass) => {
     const plugin = readFileSync(path.join(rootDir, 'plugins', pluginFile), 'utf8');
 

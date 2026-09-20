@@ -1,4 +1,5 @@
 import { absoluteUrl, isRecord, recordText as text, toIsoString } from '@/domain/forum/html';
+import { notificationPageQuality } from '@/domain/notifications/notificationQuality';
 import {
   annotateSourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries
@@ -93,17 +94,18 @@ function hasMore(value: unknown, page: number, rowCount: number) {
   return rowCount >= 30;
 }
 
-function count(value: unknown, ...keys: string[]): number {
-  if (!isRecord(value)) return 0;
+function count(value: unknown, ...keys: string[]): number | undefined {
+  if (!isRecord(value)) return undefined;
   for (const key of keys) {
+    if (value[key] === null || value[key] === '' || !['string', 'number'].includes(typeof value[key])) continue;
     const number = Number(value[key]);
-    if (Number.isFinite(number) && number >= 0) return Math.floor(number);
+    if (Number.isSafeInteger(number) && number >= 0) return number;
   }
   for (const child of Object.values(value)) {
     const nested = count(child, ...keys);
-    if (nested) return nested;
+    if (nested !== undefined) return nested;
   }
-  return 0;
+  return undefined;
 }
 
 async function fetchJson(path: string, options: NotificationAdapterAccess) {
@@ -194,9 +196,11 @@ function rowNotification(group: NodeSeekGroup, row: Record<string, unknown>, own
   const preview = text(row, 'content', 'comment_content', 'excerpt', 'message', 'last_content');
   const floorValue = text(row, 'floor_id', 'floor', 'floorId');
   const commentId = text(row, 'comment_id', 'message_id');
+  const maxMessageId =
+    typeof row.max_id === 'number' && Number.isSafeInteger(row.max_id) && row.max_id > 0 ? String(row.max_id) : '';
   const remoteId =
     group === 'message'
-      ? rawId || (createdValue ? stableFallbackId(createdValue) : '')
+      ? rawId || maxMessageId || (createdValue ? stableFallbackId(createdValue) : '')
       : commentId || rawId || (floorValue || createdValue ? stableFallbackId(postId, floorValue, createdValue) : '');
   if (!remoteId) return null;
   const createdAt = toIsoString(createdValue) || null;
@@ -285,6 +289,7 @@ export const nodeSeekNotificationAdapter = {
         return annotateSourceDiagnosticSummary(
           {
             items,
+            candidateCount: rows.length,
             hasMore: hasMore(data, page, rows.length)
           },
           {
@@ -306,25 +311,32 @@ export const nodeSeekNotificationAdapter = {
         !(item.id.startsWith('message:fallback:') && (idCounts.get(item.id) || 0) > 1)
     );
     const more = results.some((result) => result.hasMore);
+    const ambiguousIdentity = parsedItems.some((item) => item.id.startsWith('message:fallback:'));
+    const quality = notificationPageQuality(
+      results.reduce((count, result) => count + result.candidateCount, 0),
+      parsedItems.length,
+      ambiguousIdentity
+    );
     return mergeSourceDiagnosticSummaries(
-      { items, cursor: more ? String(page + 1) : null, hasMore: more },
+      { items, cursor: more ? String(page + 1) : null, hasMore: more, quality },
       'nodeseek-notifications',
       results,
       {
         filteredCount: parsedItems.filter((item) => options.unreadOnly && !item.unread).length,
-        ...(parsedItems.some((item) => item.id.startsWith('message:fallback:') && (idCounts.get(item.id) || 0) > 1)
-          ? { hasDegradation: true }
-          : {})
+        ...(quality !== 'complete' ? { hasDegradation: true } : {})
       }
     );
   },
 
   async readUnreadSnapshot(options: NotificationAdapterAccess) {
     const data = await fetchJson('/api/notification/unread-count', options);
-    const total =
-      count(data, 'atMe', 'at_me', 'mention') +
-      count(data, 'reply', 'replyCount') +
-      count(data, 'message', 'messages', 'msg');
+    const counts = [
+      count(data, 'atMe', 'at_me', 'mention'),
+      count(data, 'reply', 'replyCount'),
+      count(data, 'message', 'messages', 'msg')
+    ];
+    if (counts.some((value) => value === undefined)) throw new Error('NodeSeek 未读数量格式不正确');
+    const total = counts.reduce<number>((sum, value) => sum + value!, 0);
     return { total, checkedAt: new Date().toISOString() };
   },
 

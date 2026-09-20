@@ -15,6 +15,29 @@ import { QueryClient } from '@tanstack/react-query';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 
 describe('source gateway reads', () => {
+  it('ends aggregate pagination after readable sources finish while yaohuo is anonymous', async () => {
+    const fetcher = vi.fn(async () => Response.json({ topic_list: { topics: [] }, categories: [] }));
+    const gateway = createReadGateway({
+      fetcher,
+      anonymousFetcher: fetcher,
+      getEnabledSources: () => ['linuxdo', 'yaohuo'],
+      nodeSeekUserAgent: () => 'test',
+      readSessionRuntimeSnapshot: (source) => ({
+        source,
+        authenticated: false,
+        authSurfaceOpen: false,
+        identityKey: `${source}:anonymous`,
+        identityTrust: 'none',
+        sessionEpoch: 1,
+        sourceEnabled: true
+      })
+    });
+
+    const result = await gateway.getFeed({ source: 'all', limit: 30 });
+
+    expect(result).toMatchObject({ items: [], errors: {}, hasMore: false, nextPage: null });
+  });
+
   it.each(['target', 'start'] as const)(
     'merges topic progress and individual read floors from the existing %s reply request',
     async (kind) => {

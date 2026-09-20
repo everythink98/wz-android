@@ -1696,22 +1696,116 @@ describe('Android direct yaohuo API', () => {
     expect(oldestAgain.items.map((reply) => reply.floor)).toEqual(oldest.items.map((reply) => reply.floor));
   });
 
-  it.each(['inferred floor', 'truncated rows'] as const)('keeps the 妖火 total unknown for %s', async (degradation) => {
-    const result = await getYaohuoRepliesDirect({
-      id: '1560941',
+  it.each([
+    { label: 'oldest start', order: 'oldest', position: { kind: 'start' }, page: 19, nextPage: 18 },
+    { label: 'newest start', order: 'newest', position: { kind: 'start' }, page: 1, nextPage: 2 },
+    {
+      label: 'newest terminal cursor',
       order: 'newest',
-      position: { kind: 'start' },
-      replyCount: 8,
-      limit: degradation === 'truncated rows' ? 1 : 30,
-      yaohuoFetcher: async () =>
-        new Response(
-          '<input name="page" value="1" />' +
-            '<div class="list-reply" data-floor="8"><span class="retext">eight</span></div>' +
-            `<div class="list-reply" ${degradation === 'inferred floor' ? '' : 'data-floor="7"'}><span class="retext">seven</span></div>`
+      position: { kind: 'cursor', page: 19, offset: null },
+      page: 19,
+      nextPage: null
+    },
+    {
+      label: 'oldest terminal cursor',
+      order: 'oldest',
+      position: { kind: 'cursor', page: 1, offset: null },
+      page: 1,
+      nextPage: null
+    },
+    {
+      label: 'explicit target',
+      order: 'oldest',
+      position: { kind: 'target', target: { floor: 11 } },
+      page: 19,
+      nextPage: 18
+    }
+  ] as const)(
+    'reads every sparse source row in a confirmed 妖火 $label',
+    async ({ order, position, page, nextPage }) => {
+      // Source page/floor metadata only; all reply content is synthetic.
+      const floors =
+        page === 19 ? [13, 12, 11, 9, 8, 7, 6, 5, 4, 3, 2, 1] : [...Array.from({ length: 29 }, (_, i) => 558 - i), 527];
+      const url = `https://www.yaohuo.me/bbs/book_re.aspx?id=1560939&classid=177&page=${page}`;
+      const rows = floors
+        .map(
+          (floor) => `<div class="list-reply" data-floor="${floor}"><span class="retext">reply ${floor}</span></div>`
         )
+        .join('');
+      const response = new Response(
+        `<input name="page" value="${page}" />${rows}${page === 1 ? '<a href="?id=1560939&classid=177&page=2">下一页</a>' : ''}`
+      );
+      Object.defineProperty(response, 'url', { value: url });
+      const yaohuoFetcher = vi.fn(async () => response);
+      const result = await getYaohuoRepliesDirect({
+        id: '1560939',
+        categoryId: '177',
+        order,
+        position,
+        replyCount: 558,
+        yaohuoFetcher
+      });
+
+      expect(yaohuoFetcher).toHaveBeenCalledTimes(1);
+      expect(result.items.map((reply) => reply.floor)).toEqual(
+        [...floors].sort((a, b) => (order === 'oldest' ? a - b : b - a))
+      );
+      expect(sourceDiagnosticSummary(result)).toMatchObject({
+        candidateCount: floors.length,
+        validCount: floors.length,
+        droppedCount: 0,
+        missingFloorCount: 0
+      });
+      expect(result).toMatchObject({
+        completeness: 'complete',
+        currentPage: page,
+        nextPage,
+        hasMore: nextPage !== null
+      });
+      expect(result.totalCount).toBe(page === 1 ? 558 : undefined);
+      expect(result.replyWatermark).toBe(page === 1 ? 558 : undefined);
+    }
+  );
+
+  it('rejects a mismatched 妖火 cursor page even when its sparse rows are readable', async () => {
+    const response = new Response(
+      '<input name="page" value="19" /><div class="list-reply" data-floor="1"><span class="retext">one</span></div>' +
+        '<div class="list-reply" data-floor="3"><span class="retext">three</span></div>'
+    );
+    Object.defineProperty(response, 'url', {
+      value: 'https://www.yaohuo.me/bbs/book_re.aspx?id=1560939&classid=177&page=19'
     });
-    expect(result.totalCount).toBeUndefined();
+    await expect(
+      getYaohuoRepliesDirect({
+        id: '1560939',
+        order: 'newest',
+        position: { kind: 'cursor', page: 18, offset: null },
+        yaohuoFetcher: async () => response
+      })
+    ).rejects.toThrow('妖火未确认请求的回复页');
   });
+
+  it.each(['inferred floor', 'truncated rows'] as const)(
+    'keeps the 妖火 window partial and total unknown for %s',
+    async (degradation) => {
+      const result = await getYaohuoRepliesDirect({
+        id: '1560941',
+        order: 'newest',
+        position: { kind: 'start' },
+        replyCount: 8,
+        limit: degradation === 'truncated rows' ? 1 : 30,
+        yaohuoFetcher: async () =>
+          new Response(
+            '<input name="page" value="1" />' +
+              '<div class="list-reply" data-floor="8"><span class="retext">eight</span></div>' +
+              `<div class="list-reply" ${degradation === 'inferred floor' ? '' : 'data-floor="7"'}><span class="retext">seven</span></div>`
+          )
+      });
+      expect(result.totalCount).toBeUndefined();
+      expect(result.replyWatermark).toBeUndefined();
+      expect(result.completeness).toBe('partial');
+    }
+  );
 
   it('rejects a wrong 妖火 tail page but renders a confirmed changing edge', async () => {
     const row =

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { NotificationAdapter, NotificationAdapterAccess } from './notificationAdapter';
+import type { ForumNotification } from '@/domain/notifications/models';
 import { notificationSources, type NotificationSource } from '@/domain/forum/sourceCatalog';
+import { prepareRequestToSend, type Fetcher } from '@/platform/network/request';
 import { setDiagnosticWriter } from '@/platform/diagnostics/diagnostics';
 import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDiagnosticSummary';
 import { createNotificationGateway as createProductionNotificationGateway } from './notificationGateway';
@@ -33,6 +35,7 @@ function adapter(result: 'ok' | 'fail'): NotificationAdapter {
       if (result === 'fail') throw new Error('source unavailable');
       const source = options.identityKey.split(':')[0] as NotificationSource;
       return {
+        quality: 'complete' as const,
         items: [
           {
             source,
@@ -57,6 +60,146 @@ function adapter(result: 'ok' | 'fail'): NotificationAdapter {
 }
 
 describe('notification gateway', () => {
+  it.each([
+    ['nodeseek', 'mark-read', ['/api/notification/message/markViewed']],
+    [
+      'nodeseek',
+      'mark-all-read',
+      [
+        '/api/notification/at-me/markViewed',
+        '/api/notification/reply-to-me/markViewed',
+        '/api/notification/message/markViewed'
+      ]
+    ],
+    ['linuxdo', 'mark-all-read', ['/notifications/mark-read']],
+    ['nodeseek', 'upload', ['/api/upload']],
+    ['linuxdo', 'upload', ['/uploads.json']],
+    ['yaohuo', 'reply', ['/bbs/messagelist_add.aspx']]
+  ] as const)(
+    'rechecks %s %s access after transport preparation and sends each authorized write once',
+    async (source, operation, expectedPaths) => {
+      const preparing = Promise.withResolvers<void>();
+      const prepared = Promise.withResolvers<void>();
+      let current = true;
+      const transport = vi.fn<Fetcher>(async () =>
+        source === 'yaohuo'
+          ? new Response('<div class="tip">发送信息成功！</div>')
+          : Response.json(
+              operation === 'upload'
+                ? { url: 'https://img.example/image.png', short_url: '/uploads/image.png' }
+                : { success: true }
+            )
+      );
+      const fetcher: Fetcher = async (url, init) => {
+        if (!init?.method || init.method === 'GET') {
+          return source === 'yaohuo'
+            ? new Response(
+                '<form action="/bbs/messagelist_add.aspx" method="post">' +
+                  '<input type="hidden" name="action" value="add" />' +
+                  '<input type="hidden" name="toid" value="9" />' +
+                  '<textarea name="content"></textarea></form>'
+              )
+            : Response.json({ csrf: 'fixture' });
+        }
+        preparing.resolve();
+        await prepared.promise;
+        return transport(url, prepareRequestToSend(init));
+      };
+      const onSessionExpired = vi.fn();
+      const gateway = createNotificationGateway({
+        onSessionExpired,
+        privateAccessAllowed: () => current,
+        readAccess: () => ({ identityKey: `${source}:7`, userId: '7', fetcher })
+      });
+      const item: ForumNotification = {
+        source,
+        id: 'message:9',
+        kind: 'private-message',
+        actor: { name: 'Bob' },
+        title: 'Private message',
+        createdAt: null,
+        unread: true,
+        remoteGroup: 'message',
+        target:
+          source === 'yaohuo'
+            ? { type: 'message-detail', messageId: '9', url: 'https://www.yaohuo.me/bbs/messagelist_view.aspx?id=9' }
+            : { type: 'private-conversation', conversationId: '9' }
+      };
+      const run = () => {
+        const identityKey = `${source}:7`;
+        if (operation === 'upload')
+          return gateway.uploadReplyImage(source, {
+            expectedIdentityKey: identityKey,
+            file: { uri: 'file:///image.png', name: 'image.png', mimeType: 'image/png' },
+            nodeImageApiKey: 'fixture'
+          });
+        if (operation === 'reply') return gateway.replyToConversation(item, 'fixture', identityKey);
+        if (operation === 'mark-all-read') return gateway.markAllRead(source, identityKey);
+        return gateway.markRead(item, { notification: item, title: item.title, unreadMessageIds: ['9'] }, identityKey);
+      };
+      const request = run();
+      const rejected = expect(request).rejects.toMatchObject({ reason: 'private-access-stale' });
+      try {
+        await preparing.promise;
+        current = false;
+        prepared.resolve();
+        await rejected;
+        expect(transport).not.toHaveBeenCalled();
+        expect(onSessionExpired).not.toHaveBeenCalled();
+
+        current = true;
+        await expect(run()).resolves.toMatchObject(
+          operation === 'upload' ? { markup: expect.stringContaining('image.png') } : { confirmed: true }
+        );
+        expect(transport.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(expectedPaths);
+        for (const [, init] of transport.mock.calls)
+          expect(Object.getOwnPropertySymbols(init ?? {}).map(String)).not.toContain('Symbol(wz.requestBeforeSend)');
+      } finally {
+        prepared.resolve();
+        await request.catch(() => undefined);
+      }
+    }
+  );
+
+  it('returns valid partial items with a retryable source error and isolates invalid source pages', async () => {
+    const partial = adapter('ok');
+    const invalid = adapter('ok');
+    const normalPage = await partial.listPage({ identityKey: 'nodeseek:user', userId: 'user' });
+    partial.listPage = vi.fn(async () => ({ ...normalPage, quality: 'partial' as const }));
+    invalid.listPage = vi.fn(async () => ({ items: [], cursor: null, hasMore: false, quality: 'invalid' as const }));
+    const gateway = createNotificationGateway({
+      adapters: { nodeseek: partial, linuxdo: invalid, yaohuo: adapter('ok') },
+      readAccess: async (source) => ({ identityKey: `${source}:user`, userId: 'user' })
+    });
+    const result = await gateway.listAllPage({ sources: ['nodeseek', 'linuxdo'] });
+    expect(result.items).toEqual(normalPage.items);
+    expect(result.qualities).toEqual({ nodeseek: 'partial', linuxdo: 'invalid' });
+    expect(result.errors).toMatchObject({
+      nodeseek: { kind: 'ordinary', retryable: true },
+      linuxdo: { kind: 'ordinary', retryable: true }
+    });
+    expect(result.hasMore).toBe(false);
+  });
+
+  it('degrades a repeated page cursor into a retryable partial result', async () => {
+    const sourceAdapter = adapter('ok');
+    sourceAdapter.listPage = vi.fn(async () => ({
+      items: [],
+      cursor: '2',
+      hasMore: true,
+      quality: 'complete' as const
+    }));
+    const gateway = createNotificationGateway({
+      adapters: { nodeseek: sourceAdapter, linuxdo: adapter('ok'), yaohuo: adapter('ok') },
+      readAccess: async () => ({ identityKey: 'nodeseek:user', userId: 'user' })
+    });
+    await expect(gateway.listPage('nodeseek', { cursor: '2' })).resolves.toMatchObject({
+      quality: 'partial',
+      hasMore: false,
+      cursor: null
+    });
+  });
+
   it('records changed private access as stale rather than a new login failure', async () => {
     const gateway = createNotificationGateway({
       adapters: { nodeseek: adapter('ok'), linuxdo: adapter('ok'), yaohuo: adapter('ok') },
@@ -80,7 +223,7 @@ describe('notification gateway', () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.listPage = vi.fn(async (options) => {
       await options.fetcher?.('https://www.nodeseek.com/notification');
-      return { items: [], cursor: null, hasMore: false };
+      return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
     });
     const transport = vi
       .fn<NonNullable<NotificationAdapterAccess['fetcher']>>()
@@ -197,17 +340,17 @@ describe('notification gateway', () => {
     expect(sourceAdapter.listPage).not.toHaveBeenCalled();
 
     allowed = true;
-    let resolvePage!: (page: { items: []; cursor: null; hasMore: false }) => void;
+    let resolvePage!: (page: { quality: 'complete'; items: []; cursor: null; hasMore: false }) => void;
     sourceAdapter.listPage = vi.fn(
       () =>
-        new Promise<{ items: []; cursor: null; hasMore: false }>((resolve) => {
+        new Promise<{ quality: 'complete'; items: []; cursor: null; hasMore: false }>((resolve) => {
           resolvePage = resolve;
         })
     );
     const stoppedAfterAdapter = gateway.listPage('nodeseek');
     await vi.waitFor(() => expect(sourceAdapter.listPage).toHaveBeenCalledTimes(1));
     allowed = false;
-    resolvePage({ items: [], cursor: null, hasMore: false });
+    resolvePage({ quality: 'complete' as const, items: [], cursor: null, hasMore: false });
     await expect(stoppedAfterAdapter).rejects.toMatchObject({ reason: 'source-disabled' });
   });
 
@@ -258,7 +401,7 @@ describe('notification gateway', () => {
       const sourceAdapter = adapter('ok');
       sourceAdapter.listPage = vi.fn(async (access) => {
         await runPrivateTransport(access);
-        return { items: [], cursor: null, hasMore: false };
+        return { quality: 'complete' as const, items: [], cursor: null, hasMore: false };
       });
       sourceAdapter.readUnreadSnapshot = vi.fn(async (access) => {
         await runPrivateTransport(access);
@@ -709,36 +852,43 @@ describe('notification gateway', () => {
     expect(readAccess).not.toHaveBeenCalled();
   });
 
-  it('continues only sources that still have another page', async () => {
-    const adapters = Object.fromEntries(
-      (['nodeseek', 'linuxdo', 'yaohuo'] as NotificationSource[]).map((source) => [
-        source,
-        {
-          ...adapter('ok'),
-          listPage: vi.fn(async ({ cursor }) => ({
-            items: [],
-            cursor: source === 'nodeseek' && cursor !== 'next' ? 'next' : null,
-            hasMore: source === 'nodeseek' && cursor !== 'next'
-          }))
-        }
-      ])
-    ) as unknown as Record<NotificationSource, NotificationAdapter>;
-    const gateway = createNotificationGateway({
-      adapters,
-      readAccess: async (source) => ({ identityKey: `${source}:user`, userId: 'user' })
-    });
+  it.each(['complete', 'partial', 'invalid'] as const)(
+    'keeps %s stopped sources out of later aggregate pages',
+    async (quality) => {
+      const adapters = Object.fromEntries(
+        (['nodeseek', 'linuxdo', 'yaohuo'] as NotificationSource[]).map((source) => [
+          source,
+          {
+            ...adapter('ok'),
+            listPage: vi.fn(async ({ cursor }) => ({
+              quality: source === 'nodeseek' ? ('complete' as const) : quality,
+              items: [],
+              cursor: source === 'nodeseek' && cursor !== '3' ? String(Number(cursor || 1) + 1) : null,
+              hasMore: source === 'nodeseek' && cursor !== '3'
+            }))
+          }
+        ])
+      ) as unknown as Record<NotificationSource, NotificationAdapter>;
+      const gateway = createNotificationGateway({
+        adapters,
+        readAccess: async (source) => ({ identityKey: `${source}:user`, userId: 'user' })
+      });
 
-    const first = await gateway.listAllPage({ sources: notificationSources });
-    const second = await gateway.listAllPage({ cursors: first.nextCursors, sources: notificationSources });
+      const first = await gateway.listAllPage({ sources: notificationSources });
+      const second = await gateway.listAllPage({ cursors: first.nextCursors, sources: notificationSources });
+      const third = await gateway.listAllPage({ cursors: second.nextCursors, sources: notificationSources });
 
-    expect(adapters.nodeseek.listPage).toHaveBeenCalledTimes(2);
-    expect(adapters.linuxdo.listPage).toHaveBeenCalledTimes(1);
-    expect(second.hasMore).toBe(false);
-  });
+      expect(adapters.nodeseek.listPage).toHaveBeenCalledTimes(3);
+      expect(adapters.linuxdo.listPage).toHaveBeenCalledTimes(1);
+      expect(adapters.yaohuo.listPage).toHaveBeenCalledTimes(1);
+      expect(third.hasMore).toBe(false);
+    }
+  );
 
   it('continues a notification list only with a nonempty advancing cursor', async () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.listPage = vi.fn(async ({ cursor }) => ({
+      quality: 'complete' as const,
       items: [],
       cursor: cursor === 'same' ? 'same' : cursor === 'current' ? 'next' : null,
       hasMore: true
@@ -766,6 +916,7 @@ describe('notification gateway', () => {
   it('records source diagnostics without persisting notification content', async () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.listPage = vi.fn(async () => ({
+      quality: 'complete' as const,
       items: [
         {
           source: 'nodeseek' as const,
@@ -819,7 +970,7 @@ describe('notification gateway', () => {
     const sourceAdapter = adapter('ok');
     sourceAdapter.listPage = vi.fn(async ({ cursor }) =>
       annotateSourceDiagnosticSummary(
-        { items: [], cursor: cursor || null, hasMore: Boolean(cursor) },
+        { quality: 'complete' as const, items: [], cursor: cursor || null, hasMore: Boolean(cursor) },
         {
           parserVariant: 'nodeseek-notifications',
           candidateCount: cursor ? 2 : 0,

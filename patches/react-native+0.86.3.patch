@@ -1103,3 +1103,154 @@ index e69de29b..230e367a 100644
 +    }
 +  }
 +}
+diff --git a/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/image/ReactImageViewEventTest.kt b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/image/ReactImageViewEventTest.kt
+new file mode 100644
+--- /dev/null
++++ b/node_modules/react-native/ReactAndroid/src/test/java/com/facebook/react/views/image/ReactImageViewEventTest.kt
+@@ -0,0 +1,146 @@
++@file:Suppress("DEPRECATION")
++
++package com.facebook.react.views.image
++
++import android.content.Context
++import android.graphics.Canvas
++import android.graphics.ColorFilter
++import android.graphics.PixelFormat
++import android.graphics.drawable.Drawable
++import com.facebook.drawee.backends.pipeline.PipelineDraweeControllerBuilder
++import com.facebook.drawee.controller.ControllerListener
++import com.facebook.imagepipeline.image.ImageInfo
++import com.facebook.react.bridge.Arguments
++import com.facebook.react.bridge.BridgeReactContext
++import com.facebook.react.bridge.JavaOnlyArray
++import com.facebook.react.bridge.JavaOnlyMap
++import com.facebook.react.uimanager.DisplayMetricsHolder
++import com.facebook.react.uimanager.events.EventDispatcher
++import com.facebook.react.uimanager.events.EventDispatcherProvider
++import org.junit.After
++import org.junit.Assert.*
++import org.junit.Before
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.mockito.MockedStatic
++import org.mockito.Mockito
++import org.mockito.kotlin.*
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [33])
++class ReactImageViewEventTest {
++  private val events = mutableListOf<ImageLoadEvent>()
++  private val listeners = mutableListOf<ControllerListener<ImageInfo>>()
++  private lateinit var view: ReactImageView
++  private lateinit var maps: MockedStatic<Arguments>
++
++  @Before
++  fun setUp() {
++    // Replace only the JNI map allocator; event construction and payload serialization stay real.
++    maps = Mockito.mockStatic(Arguments::class.java)
++    maps.`when`<Any> { Arguments.createMap() }.thenAnswer { JavaOnlyMap() }
++    val dispatcher = mock<EventDispatcher>()
++    doAnswer { events.add(it.getArgument(0)); null }.whenever(dispatcher).dispatchEvent(any<ImageLoadEvent>())
++    val context = TestContext(RuntimeEnvironment.getApplication(), dispatcher)
++    DisplayMetricsHolder.setWindowDisplayMetrics(context.resources.displayMetrics)
++    DisplayMetricsHolder.setScreenDisplayMetrics(context.resources.displayMetrics)
++    val builder = mock<PipelineDraweeControllerBuilder>(defaultAnswer = Mockito.RETURNS_SELF)
++    doAnswer { listeners.add(it.getArgument(0)); builder }.whenever(builder).setControllerListener(any())
++    view = ReactImageView(context, builder, null, null).apply {
++      id = 42
++      layout(0, 0, 120, 80)
++      setShouldNotifyLoadEvents(true)
++    }
++  }
++
++  @After
++  fun tearDown() {
++    maps.close()
++    DisplayMetricsHolder.setWindowDisplayMetrics(null)
++    DisplayMetricsHolder.setScreenDisplayMetrics(null)
++  }
++
++  @Test
++  fun lateCallbacksKeepTheGenerationAndSourceOfTheirOwnRequest() {
++    val old = request("wz-inline-attempt-old", "https://example.test/old.png")
++    val current = request("wz-inline-attempt-current", "https://example.test/current.png")
++    val info = mock<ImageInfo> {
++      on { width } doReturn 640
++      on { height } doReturn 480
++    }
++    current.onSubmit("current", null)
++    old.onSubmit("old", null)
++    (old as ReactImageDownloadListener<ImageInfo>).onProgressChange(1, 2)
++    old.onFinalImageSet("old", info, null)
++    old.onFailure("old", IllegalStateException("old failure"))
++    current.onFinalImageSet("current", info, null)
++
++    assertEquals(
++      listOf("topLoadStart", "topLoadStart", "topProgress", "topLoad", "topLoadEnd", "topError", "topLoad", "topLoadEnd"),
++      events.map { it.eventName }
++    )
++    assertEquals(
++      listOf("current", "old", "old", "old", "old", "old", "current", "current"),
++      events.map { it.internal_getEventData()!!.getString("requestGeneration")!!.removePrefix("wz-inline-attempt-") }
++    )
++    assertEquals("https://example.test/old.png", events[3].internal_getEventData()!!.getMap("source")!!.getString("uri"))
++    assertEquals("https://example.test/current.png", events[6].internal_getEventData()!!.getMap("source")!!.getString("uri"))
++    assertEquals(640.0, events[3].internal_getEventData()!!.getMap("source")!!.getDouble("width"), 0.0)
++    assertTrue(events.none { it.canCoalesce() })
++  }
++
++  @Test
++  fun pendingPropChangesCannotRetagAFailureFromTheDisplayedRequest() {
++    request("wz-inline-attempt-displayed", "https://example.test/displayed.png")
++    // Props arrive before the next request is built, while the current drawable may still draw.
++    ReactImageManager().setInternal_AnalyticsTag(view, "wz-inline-attempt-next")
++    view.setImageDrawable(object : Drawable() {
++      override fun draw(canvas: Canvas) { throw IllegalStateException("draw failed") }
++      override fun setAlpha(alpha: Int) = Unit
++      override fun setColorFilter(colorFilter: ColorFilter?) = Unit
++      override fun getOpacity() = PixelFormat.TRANSPARENT
++    })
++    view.onDraw(Canvas())
++    assertEquals(1, events.size)
++    assertEquals("topError", events.single().eventName)
++    assertEquals("wz-inline-attempt-displayed", events.single().internal_getEventData()!!.getString("requestGeneration"))
++  }
++
++  @Test
++  fun differentRequestGenerationsCannotCoalesceAwayEachOthersProgress() {
++    val first = ImageLoadEvent.createProgressEvent(1, 42, "https://example.test/same.png", 1, 4)
++      .withRequestGeneration("wz-inline-attempt-first")
++    val second = ImageLoadEvent.createProgressEvent(1, 42, "https://example.test/same.png", 2, 4)
++      .withRequestGeneration("wz-inline-attempt-second")
++    assertEquals(first.getCoalescingKey(), second.getCoalescingKey())
++    assertFalse(first.canCoalesce())
++    assertFalse(second.canCoalesce())
++  }
++
++  @Test
++  fun ordinaryRequestsRetainStandardCoalescingAndDisabledNotificationsDoNotAttachAListener() {
++    request("unrelated-analytics-tag", "https://example.test/plain.png").onSubmit("plain", null)
++    assertFalse(events.single().internal_getEventData()!!.hasKey("requestGeneration"))
++    assertTrue(events.single().canCoalesce())
++    val count = listeners.size
++    view.setShouldNotifyLoadEvents(false)
++    view.setSource(JavaOnlyArray.of(JavaOnlyMap.of("uri", "https://example.test/quiet.png")))
++    view.maybeUpdateView()
++    assertEquals(count, listeners.size)
++  }
++
++  private fun request(generation: String, uri: String): ControllerListener<ImageInfo> {
++    ReactImageManager().setInternal_AnalyticsTag(view, generation)
++    view.setSource(JavaOnlyArray.of(JavaOnlyMap.of("uri", uri)))
++    view.maybeUpdateView()
++    return listeners.last()
++  }
++
++  private class TestContext(context: Context, private val dispatcher: EventDispatcher) :
++    BridgeReactContext(context), EventDispatcherProvider {
++    override fun getEventDispatcher() = dispatcher
++  }
++}

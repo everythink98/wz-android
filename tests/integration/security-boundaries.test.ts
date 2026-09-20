@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exportReaderBackupJson, importReaderBackupJson } from '@/domain/reader/readerBackup';
+import { exportReaderBackupJson } from '@/domain/reader/readerBackup';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { buildExternalForumSearchUrl, isExternalForumSearchUrl } from '@/domain/forum/externalSearch';
 import { isYaohuoRequestUrl, requireYaohuoRequestUrl } from '@/sources/yaohuo/protocol';
@@ -148,43 +148,5 @@ describe('Android App security review guards', () => {
     expect(exported).not.toContain('1080');
     expect(exported).not.toContain('demo-user');
     expect(exported).not.toContain(fakeSecret);
-  });
-
-  it('does not import sensitive fields from Android backup JSON', () => {
-    const merged = importReaderBackupJson(
-      createEmptyReaderData(),
-      JSON.stringify({
-        version: 2,
-        favorites: {
-          one: {
-            savedAt: '2026-06-06T00:00:00.000Z',
-            topic: {
-              source: 'linuxdo',
-              id: '1',
-              title: '导入安全测试',
-              url: `https://linux.do/t/slug/1?session=${fakeSecret}&safe=1`,
-              createdAt: '2026-06-06T00:00:00.000Z',
-              authorization: fakeSecret
-            }
-          }
-        },
-        history: {},
-        followedUsers: {},
-        deletedRecords: {
-          favorites: {},
-          history: {},
-          followedUsers: {}
-        },
-        settings: {},
-        secret: fakeSecret
-      })
-    );
-
-    const imported = JSON.stringify(merged);
-
-    expect(imported).not.toContain(fakeSecret);
-    expect(imported).not.toContain('authorization');
-    expect(imported).not.toContain('session=');
-    expect(imported).toContain('https://linux.do/t/1');
   });
 });

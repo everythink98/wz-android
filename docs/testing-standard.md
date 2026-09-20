@@ -60,6 +60,10 @@ Composer 的 Mock 成功结算不等于原生面板关闭。UI owner 必须从�
 
 按“最低但可靠”选择证据：纯数据和确定性协议优先 Vitest；必须经过 React state、布局投影或用户交互才可观察的行为使用 RNTL；真实 Android 生命周期、登录态、WebView、原站动态数据或原生手势才进入设备/Live。源码字符串、App 能启动、snapshot 或 mock 调用本身不能替代用户可见 oracle。
 
+Vitest 默认使用 Node 环境；真正执行编辑器 DOM 或 WebView 注入脚本的文件通过 `@vitest-environment jsdom` 单独声明浏览器环境。Library 排序/筛选由真实 SQLite store 与 Route 查询接线证明，不能用测试自建的内存筛选页面或已无生产调用的 helper 替代；版本与 Gradle 配置分别执行实际 CLI 和 Expo mod，不以源码包含某个常量作为成功条件。
+
+备份 parse/export 的纯领域约束留在 `src/domain/reader/readerBackup.test.ts`；导入合并、拒绝后数据不变、事务回滚和重新打开后的安全字段必须通过 `src/platform/storage/readerDataStore.test.ts` 的真实 import/SQLite owner，不再通过测试专用的旧合并 wrapper 证明生产导入。
+
 MCP 与 Replay 不互相替代：MCP 用于探索和定位；Replay 只保存经过审查的稳定入口、断言和返回路径。动态对象、当天首条、固定列表长度和固定网络耗时不得写入 Replay。
 
 Topic 内容守恒由共享 compiler 的 Vitest 契约拥有：同一 fixture 跨主楼、回复、引用、采纳答案、签名和四个来源核对安全文字、链接、图片、表格、代码、DOM 顺序、selection tape 与 preview catalog；compiler 直接生成不可变的 `row.html`、`selectionToken` 与 `previewImages`，opaque 媒体必须有非空且完全转义的降级内容。实体解码后的恶意 `alt/title` 不得重新生成节点或扩大媒体预算；有界内联语义只接受 sanitizer 后由来源 adapter 写入的可信 marker，外部 `/face/` 仍是普通预览。Topic Presentation Contract 的 canonical wiring owner 还必须从 sanitizer → compiler 真实挂载 production renderer，覆盖 standalone/mixed/figure/table、waiting/displayed/SVG poster/original/error/retry/cache/recycle/inactive/epoch；含 `forum-inline-image` 的 row 不得以空 `View` 跳过。临时破坏共享 compatible artifact seam 必须使该用例转红。单次图片事故不新增一条同义 UI 用例；RNTL 只在 Native inline renderer、自然尺寸、预览、失败重试或媒体生命周期 wiring 可独立损坏时承担额外证据。
@@ -90,7 +94,7 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 
 `MORE-02` 按可独立损坏的边界选择 owner：`src/platform/diagnostics/diagnostics.test.ts` 验证真实 schema、脱敏、Hermes 坐标、并发/复制 RequestInit 关联；gateway 与 `src/sources/forumSourceReadAttempt.test.ts` 验证真实 fallback/恢复门禁、证据结算和终态。不能只断言写入函数被调用；要读取序列化事件，确认阶段和值没有被变成 unknown/redacted、没有丢失关联，也没有泄露 fixture secret。
 
-`src/platform/diagnostics/diagnosticFileStore.test.ts` 负责导出窗口、原 build/process 身份、超过旧 512 条 ring 的持久事件、损坏行、各来源覆盖状态/首尾时间、不可用/超时通道与临时分享文件清理；必须固定单个在写 batch、合并待写事件及合计 128 KiB 上限；超时只记录健康错误，底层调用未结算时不得启动下一批，导出仍按五秒 deadline 返回，并证明致命摘要保存尚未批量落盘的最后 JS 阶段。`src/platform/diagnostics/diagnosticRuntime.test.ts` 负责 RN listener、legacy ExceptionsManager/ErrorUtils 委派、重复安装和发布版 Promise 观察。生成的 `DiagnosticLogStoreTest` 用实际文件证明分段容量、过期、重启读取、健康计数跨进程保存和写失败；过期淘汰、读取失败和崩溃读取失败分别报告。`NetworkProxyRuntimeTest` 用真实 OkHttp/受控服务证明同一 session/trace 下多个 request 的关联与所有内部 header 出网前消失。mock Native module 不能证明真实进程退出后的存活，Native 致命路径最多等待 250ms flush 仍需隔离真实进程证据。
+`src/platform/diagnostics/diagnosticFileStore.test.ts` 负责导出窗口、原 build/process 身份、超过旧 512 条 ring 的持久事件、损坏行、各来源覆盖状态/首尾时间、不可用/超时通道与临时分享文件清理；必须固定单个在写 batch、合并待写事件及合计 128 KiB 上限；超时只记录健康错误，底层调用未结算时不得启动下一批，导出仍按五秒 deadline 返回，并证明致命摘要保存尚未批量落盘的最后 JS 阶段。`src/platform/diagnostics/diagnosticRuntime.test.ts` 负责 RN listener、legacy ExceptionsManager/ErrorUtils 委派、重复安装和发布版 Promise 观察。模块内 `DiagnosticLogStoreTest` 用实际文件证明分段容量、过期、重启读取、健康计数跨进程保存和写失败；过期淘汰、读取失败和崩溃读取失败分别报告。`NetworkProxyRuntimeTest` 用真实 OkHttp/受控服务证明同一 session/trace 下多个 request 的关联与所有内部 header 出网前消失。mock Native module 不能证明真实进程退出后的存活，Native 致命路径最多等待 250ms flush 仍需隔离真实进程证据。
 
 `tests/tooling/diagnostic-symbols.test.ts` 固定 bootstrap 顺序、构建身份、exact source map/R8/APK 归档校验及 Hermes/RN parsed 坐标约定；Native 使用 SDK 官方 Retrace 的小型 fixture 验证类名、源码行、内联帧和错误 mapping 拒绝，CLI 另验证混合 build 只还原目标并准确报告跳过计数。真实 Retrace fixture 形成 tooling `UNIT_PASS`，对应源码文本检查只证明生成结构。`scripts/run-diagnostic-device-proof.mjs` 在唯一隔离 `WZ_ImageRuntime_Test_API35` 验证发布模式 Hermes 的 JS、renderer、Promise 和 Native 故障后重启读取、脱敏、前一进程归属及匹配 source map 还原。该 proof 使用开发签名、保留 R8/minify/resource shrink 和独立随机 buildId 的隔离构建，必须与恢复正常入口 APK 的 buildId 分离，并归档该 APK 实际生成的 source map/mapping；Java 栈用这份 mapping 经 SDK Retrace 还原。先前未混淆 proof 与 SDK fixture 的通过不能代表这条设备链；proof 仍不代替正式签名 APK、系统分享 UI、真实 ANR 或 OOM，故障注入不得在保留登录态设备运行。只有实际执行并取得相应产物才报告通过，未运行分支记 `NOT_VERIFIED`，缺少隔离环境记 `BLOCKED_BY_ENV`。
 
@@ -151,11 +155,11 @@ ActionMode 菜单属于 Native canonical owner：全选后必须物理移除 Sel
 
 产品 Bug 修复遵循 Red → Green → Refactor：先让最低可靠行为测试在修复前因正确原因失败，再做最小根因改动，最后在全绿下合并重复 owner。测试如果在未修复代码上已经通过，不能证明该 Bug。
 
-`it.failing`/`test.failing` 只用于已确认、当前未获准修复的产品缺陷，并必须满足：
+Jest 的 `it.failing`/`test.failing` 与 Vitest 的 `it.fails`/`test.fails` 只用于已确认、当前未获准修复的产品缺陷，并必须满足：
 
 - 标题使用静态字符串，且只引用一个 canonical REG；
 - 对应 corpus 条目存在且状态为 `OPEN`；
-- 用例固定真实失败 oracle，不把 expected-failure 计为 `UI_PASS`；
+- 用例固定真实失败 oracle，不把 expected-failure 计为产品 `UNIT_PASS` / `UI_PASS`；
 - 产品修复后改为行为标题的普通测试；达到该事故的关闭条件后再把 corpus 状态更新为 `RESOLVED`。条目要求的设备或 Live 验收尚未完成时，保留其未闭合状态与证据边界。
 
 已修复事故不要求专属测试永久存在。若当前行为已由更强 owner 覆盖，可让多个历史 REG 指向该 owner；需求被取代则标记 `SUPERSEDED`。不得删除历史 ID，也不得把历史标题继续堆进通过测试。
@@ -210,3 +214,14 @@ Composer 键盘证据分层：`tests/native/ComposerWebViewInsetsTest.kt` 验证
 视觉 catalog 测试独自比较实际能力集合与 product map 的非 RELEASE 集合，另保留场景 ID 唯一、分类及双主题挂载。静态守卫扫描视觉目录全部非测试运行源码及 helper；它只是直接 I/O 守卫，不能宣称完整网络隔离。`NativeModules` 测试必须恢复原属性描述符，原来不存在则删除。图片尺寸、顺序与预览仍由原 owner 证明，不保留只重复编译同一输入的伪“动态加载”测试。`verify` 在 `check:unused` 执行一次严格类型检查，独立 `typecheck` 入口保留。
 
 `tests/tooling/visual-device.test.ts` 拥有视觉结果判定合同，实际像素 oracle 由 `npm run test:visual:device` 调用 agent-device CLI。首批六场景双主题及两帧 140% 字号共 14 帧，标准密度；专用 API35、1080×2400、420dpi、系统字号1、en-US，记录系统镜像/工具/APK/代码身份。基准须同构建连续三次像素一致并审阅后显式批准；缺基准、环境不符、尺寸变化、基准被改写或非零差异均失败。颜色阈值固定0.1，不自动放宽；截图差异是待分析证据，不自动宣称产品 Bug。Gallery 仅证明模拟器上生产组件的固定视觉状态，不替代业务 E2E、真实来源或设备生命周期。
+
+
+## 审查修复的行为 owner
+
+详情跨后台的 deadline 证据分层：底层 fetch 测试保留；`tests/ui/topic/topic-route-verification.test.tsx` 负责真实 Route→Query→gateway 组合与验证恢复授权，`tests/ui/topic/topic-session-controller.test.tsx` 负责取消恢复/真实失败终态和冻结历史基线。缺失历史、有效 0 与未知 watermark 必须分开造样本，排序/过滤/窗口变化不改变 New 边界。
+
+通知 parser 必须断言 complete/partial/invalid，worker 组合必须调用真实 notificationStore 并同时核对 ledger、摘要和 native sink；不得在测试 helper 复制生产提交算法。至少覆盖坏扫描→首次可信旧数据静默→真正新增三轮、第二页失败、合法空页、重复分页和单来源失败；前台另覆盖 partial 展示、invalid 旧可信缓存和切账号隔离。
+
+投票 journal 的并发、重开、迁移中断、超过 32 条与已知结果单调性归数据库 owner；UI 只保留实际创建前 claim、已知复用、未知/损坏阻断、最终发送守卫及账号切换。SQLite Node 替身只替换驱动边界，Android expo-sqlite 重开仍需隔离设备证据。
+
+图片补丁的行为由真实 Native View 时序与事件证明：A resize 排队后重绑 B/回收/销毁，再执行旧任务；同时检查请求次数、当前显示与迟到事件。移除关键 guard 后必须失败，字符串存在性不算行为证据。patch 适用性、原生测试新鲜非零 XML 和 Reanimated 实际状态测试继续保留。系统备份须读回并重新导入目标文档；诊断分享用延迟接收方核对完整字节；图片流式保存测 1/25/100 MiB 内容 hash、取消/磁盘失败清理与内存曲线。

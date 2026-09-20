@@ -13,6 +13,7 @@ export interface TopicEntryVisit {
 
 export function useTopicReadingEntry({
   active,
+  focused,
   topic,
   detail,
   location,
@@ -21,6 +22,7 @@ export function useTopicReadingEntry({
   commit
 }: {
   active: boolean;
+  focused: boolean;
   topic: Topic;
   detail: TopicDetail | null;
   location?: TopicLocationTarget;
@@ -54,7 +56,7 @@ export function useTopicReadingEntry({
   }, [active, commit, ordinaryTopic, topic]);
 
   useEffect(() => {
-    if (!active || !enabled || (!visit.cached && !hasDetail) || visit.started) return;
+    if (!focused || !enabled || (!visit.cached && !hasDetail) || visit.started) return;
     // Another consumer may have supplied the in-flight Query without registering this entry.
     visit.cached = true;
     visit.started = true;
@@ -62,11 +64,11 @@ export function useTopicReadingEntry({
     void getTopicReading(topic.id, { signal: controller.signal, trackVisit: true })
       .catch(() => undefined)
       .finally(() => {
-        visit.settled = true;
+        if (!controller.signal.aborted) visit.settled = true;
         if (!controller.signal.aborted) setRegistration(visit.key);
       });
     return () => controller.abort();
-  }, [active, hasDetail, enabled, getTopicReading, topic.id, visit]);
+  }, [focused, hasDetail, enabled, getTopicReading, topic.id, visit]);
 
   useEffect(() => {
     if (!active || !enabled || (decision.key === visit.key && decision.ready)) return;

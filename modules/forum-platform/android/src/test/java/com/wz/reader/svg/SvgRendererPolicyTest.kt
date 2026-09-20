@@ -157,7 +157,7 @@ class SvgRendererPolicyTest {
 
   @Test
   fun sharedComplexSvgFixtureUsesItsViewBoxWithoutEmbeddingRawMarkupInHtml() {
-    val fixture = checkNotNull(javaClass.classLoader?.getResource("svg_renderer/complex-svg-document.svg"))
+    val fixture = checkNotNull(javaClass.classLoader?.getResource("complex-svg-document.svg"))
       .readText()
     assertTrue(fixture.contains("<animate"))
     assertTrue(fixture.contains("<filter"))

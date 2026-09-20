@@ -4,6 +4,42 @@ import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import type { DatabaseSync } from 'node:sqlite';
+
+let mockPollDatabase: DatabaseSync | undefined;
+let mockPollSqlFailure = '';
+jest.mock('expo-sqlite', () => ({
+  openDatabaseAsync: async () => {
+    const { DatabaseSync } = jest.requireActual<typeof import('node:sqlite')>('node:sqlite');
+    const db = (mockPollDatabase ??= new DatabaseSync(':memory:'));
+    const parameters = (args: unknown[]) => (Array.isArray(args[0]) ? args[0] : args) as (string | number | null)[];
+    const check = (sql: string) => {
+      if (mockPollSqlFailure && sql.includes(mockPollSqlFailure)) {
+        mockPollSqlFailure = '';
+        throw new Error('storage unavailable');
+      }
+    };
+    return {
+      execAsync: async (sql: string) => {
+        check(sql);
+        db.exec(sql);
+      },
+      runAsync: async (sql: string, ...args: unknown[]) => {
+        check(sql);
+        return db.prepare(sql).run(...parameters(args));
+      },
+      getFirstAsync: async (sql: string, ...args: unknown[]) => {
+        check(sql);
+        return db.prepare(sql).get(...parameters(args)) ?? null;
+      },
+      getAllAsync: async (sql: string, ...args: unknown[]) => {
+        check(sql);
+        return db.prepare(sql).all(...parameters(args));
+      },
+      closeAsync: async () => undefined
+    };
+  }
+}));
 
 jest.mock('@/sources/nodeseek/actionClient', () => ({
   ...jest.requireActual<typeof import('@/sources/nodeseek/actionClient')>('@/sources/nodeseek/actionClient'),
@@ -57,6 +93,7 @@ import {
   type SiteSessionViewModels
 } from '@/domain/session/siteSessionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '@/domain/forum/models';
+import { requirePreparedForumContent } from '@/domain/forum/topicContentSplit';
 import {
   nodeSeekPendingPollToken,
   normalizePendingNodeSeekPoll,
@@ -69,6 +106,7 @@ import {
   type WritableSessionTicket
 } from '@/domain/session/writableSessionGate';
 import { readNodeSeekPollJournalEntry, saveNodeSeekPollJournalEntry } from '@/platform/persistence/nodeSeekPollJournal';
+import { prepareRequestToSend } from '@/platform/network/request';
 import { QueryTestWrapper } from '../QueryTestWrapper';
 import { readManagedCookieHeader } from '@/platform/network/managedCookies';
 import { useNetworkProxyRuntime } from '@/platform/network/useNetworkProxyRuntime';
@@ -82,6 +120,9 @@ jest.mock('@/platform/network/networkProxy', () => ({
 }));
 
 const mockRunNodeSeekAction = jest.mocked(runNodeSeekAction);
+const runNodeSeekActionActual = jest.requireActual<typeof import('@/sources/nodeseek/actionClient')>(
+  '@/sources/nodeseek/actionClient'
+).runNodeSeekAction;
 const mockFetchNodeSeekVoteInfo = jest.mocked(fetchNodeSeekVoteInfo);
 const mockRunYaohuoAction = jest.mocked(runYaohuoAction);
 const mockRunLinuxDoAction = jest.mocked(runLinuxDoAction);
@@ -402,6 +443,8 @@ describe('topic action query mutations', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
   beforeEach(async () => {
+    mockPollSqlFailure = '';
+    mockPollDatabase?.exec('DELETE FROM nodeseek_poll_journal; DELETE FROM nodeseek_poll_migration;');
     await AsyncStorage.clear();
     appQueryClient.clear();
     jest.clearAllMocks();
@@ -1839,6 +1882,38 @@ describe('topic action query mutations', () => {
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: repliesKey, exact: true, refetchType: 'none' });
   });
 
+  it('removes deleted NodeSeek polls from both cached reply orders immediately after a confirmed edit', async () => {
+    const reply: Reply = {
+      ...editableReply,
+      contentMarkdown: '旧正文\n\nnsapp://vote?id=3199\n\nnsapp://vote?id=3200',
+      polls: ['3199', '3200'].map((id) => ({ id, options: [{ id: '1', label: 'A' }] }))
+    };
+    const { detailKey, repliesKey } = seedTopicCache(detail, [reply]);
+    const newestKey = forumQueryKeys.replies(detailKey, 'newest');
+    appQueryClient.setQueryData(newestKey, appQueryClient.getQueryData(repliesKey));
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    const fetcher = jest.fn(async () => new Response('{"success":true}'));
+    const hook = await renderActions({ fetcher, topicReplies: [reply] });
+    await act(async () => {
+      await hook.result.current.actions.editReply(reply);
+      hook.result.current.topicSession.commands.composer.changeContent('编辑后纯文本');
+    });
+    await act(async () => hook.result.current.actions.submitReply());
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    for (const key of [repliesKey, newestKey]) {
+      const updated = appQueryClient.getQueryData<{ pages: { items: Reply[] }[] }>(key)?.pages[0]?.items[0];
+      expect(updated?.contentMarkdown).toBe('编辑后纯文本');
+      expect(updated?.polls || []).toEqual([]);
+      const plan = requirePreparedForumContent(updated?.preparedContent, updated?.contentHtml, {
+        polls: updated?.polls,
+        role: 'reply',
+        source: 'nodeseek'
+      });
+      expect(plan.rows.some((row) => row.type === 'poll')).toBe(false);
+    }
+  });
+
   it('closes an edit composer, keeps unconfirmed content out of cache, and refreshes only replies', async () => {
     const reply: Reply = {
       author: 'alice',
@@ -3056,69 +3131,248 @@ describe('topic action query mutations', () => {
   it('blocks a second poll-create attempt after an ambiguous result', async () => {
     const snapshot = snapshotWithNodeSeekPoll('poll_unknown_01');
     const notify = jest.fn();
-    mockRunNodeSeekAction.mockRejectedValueOnce(new Error('timeout'));
-    const firstHook = await renderActions({ notify });
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    const fetcher = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      throw new Error('timeout');
+    });
+    const firstHook = await renderActions({ notify, fetcher });
 
     await act(async () => {
       await firstHook.result.current.actions.submitReply(snapshot);
     });
-    const secondHook = await renderActions({ notify });
+    const secondHook = await renderActions({ notify, fetcher });
     await act(async () => {
       await secondHook.result.current.actions.submitReply(snapshot);
     });
 
     expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('结果未知'));
   });
 
-  it.each(['storage failure', 'invalid JSON', 'invalid structure', 'invalid entry'])(
-    'blocks poll retry after %s without losing the journal',
-    async (failure) => {
-      const snapshot = snapshotWithNodeSeekPoll('poll_storage_01');
-      const notify = jest.fn();
-      mockRunNodeSeekAction.mockResolvedValueOnce({ id: 3023 }).mockRejectedValueOnce(new Error('reply failed'));
-      const hook = await renderActions({ notify });
+  it('blocks remote poll creation when the durable claim cannot be saved', async () => {
+    const snapshot = snapshotWithNodeSeekPoll('poll_storage_01');
+    const notify = jest.fn();
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    const fetcher = jest.fn(async () => new Response('{"id":3023}'));
+    const hook = await renderActions({ notify, fetcher });
+    mockPollSqlFailure = 'INSERT INTO nodeseek_poll_journal';
+    await act(async () => {
+      await hook.result.current.actions.submitReply(snapshot);
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['reply', 'unknown'],
+    ['edit', 'unknown'],
+    ['reply', 'canceled replacement'],
+    ['edit', 'canceled replacement']
+  ])('checks every poll before sending a %s with a later %s', async (mode, outcome) => {
+    const snapshot = snapshotWithNodeSeekPolls(['poll_preflight_a', 'poll_preflight_b']);
+    snapshot.markdown = `正文\n\n${snapshot.markdown}`;
+    const later = snapshot.pendingNodeSeekPolls[1]!;
+    const previous = outcome === 'unknown' ? later : normalizePendingNodeSeekPoll({ ...later, title: '旧投票' });
+    await saveNodeSeekPollJournalEntry('nodeseek:123', {
+      localId: previous.localId,
+      fingerprint: previous.fingerprint,
+      remoteId: outcome === 'unknown' ? null : '600'
+    });
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    const fetcher = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      return new Response('{"id":701}');
+    });
+    const notify = jest.fn();
+    const confirmation = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.style === 'cancel')?.onPress?.();
+    });
+    seedTopicCache(detail, [editableReply]);
+    const hook = await renderActions({ fetcher, notify, topicReplies: [editableReply] });
+    if (mode === 'edit') await act(async () => hook.result.current.actions.editReply(editableReply));
+    await act(async () => hook.result.current.actions.submitReply(snapshot));
+
+    if (outcome === 'unknown') expect(notify).toHaveBeenCalledWith(expect.stringContaining('结果未知'));
+    else expect(confirmation).toHaveBeenCalledTimes(1);
+    expect(fetcher).not.toHaveBeenCalled();
+    await expect(
+      readNodeSeekPollJournalEntry('nodeseek:123', snapshot.pendingNodeSeekPolls[0]!.localId)
+    ).resolves.toBeNull();
+  });
+
+  it('confirms a later poll replacement once before creating any poll', async () => {
+    const snapshot = snapshotWithNodeSeekPolls(['poll_confirm_a', 'poll_confirm_b']);
+    snapshot.markdown = `正文\n\n${snapshot.markdown}`;
+    const previous = normalizePendingNodeSeekPoll({ ...snapshot.pendingNodeSeekPolls[1]!, title: '旧投票' });
+    await saveNodeSeekPollJournalEntry('nodeseek:123', {
+      localId: previous.localId,
+      fingerprint: previous.fingerprint,
+      remoteId: '600'
+    });
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      prepareRequestToSend(init);
+      return new Response(String(input).endsWith('/api/vote/info') ? '{"id":701}' : '{"success":true}');
+    });
+    const confirmation = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      expect(fetcher).not.toHaveBeenCalled();
+      buttons?.find((button) => button.text === '创建新投票')?.onPress?.();
+    });
+    const hook = await renderActions({ fetcher });
+    await act(async () => hook.result.current.actions.submitReply(snapshot));
+
+    expect(confirmation).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      '/api/vote/info',
+      '/api/vote/info',
+      '/api/content/new-comment'
+    ]);
+  });
+
+  it.each(['shared', 'distinct'] as const)(
+    'materializes %s poll intents through concurrent retained Topics without losing either result',
+    async (kind) => {
+      mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+      const first = snapshotWithNodeSeekPoll('poll_parallel_01');
+      const second = kind === 'shared' ? first : snapshotWithNodeSeekPoll('poll_parallel_02');
+      const responses: ReturnType<typeof Promise.withResolvers<Response>>[] = [];
+      const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        prepareRequestToSend(init);
+        if (!String(input).endsWith('/api/vote/info')) return new Response('{"success":true}');
+        const response = Promise.withResolvers<Response>();
+        responses.push(response);
+        return response.promise;
+      });
+      const firstHook = await renderActions({ fetcher });
+      const secondHook = await renderActions({ fetcher, topicDetail: { ...detail, id: '43' } });
+      let firstSubmit!: Promise<unknown>;
+      let secondSubmit!: Promise<unknown>;
       await act(async () => {
-        await hook.result.current.actions.submitReply(snapshot);
+        firstSubmit = firstHook.result.current.actions.submitReply(first);
+        secondSubmit = secondHook.result.current.actions.submitReply(second);
       });
-      const getItem = AsyncStorage.getItem.bind(AsyncStorage);
-      const journalKey = (await AsyncStorage.getAllKeys()).find((key) =>
-        key.startsWith('wz:composer:nodeseek-polls:')
-      )!;
-      const saved = await getItem(journalKey);
-      const read = jest.spyOn(AsyncStorage, 'getItem').mockImplementation(async (key) => {
-        if (key !== journalKey) return getItem(key);
-        if (failure === 'storage failure') throw new Error('storage unavailable');
-        return failure === 'invalid JSON'
-          ? '{broken'
-          : failure === 'invalid structure'
-            ? '{}'
-            : '[{"localId":"poll_storage_01"}]';
+      await waitFor(() => expect(responses).toHaveLength(kind === 'shared' ? 1 : 2));
+      await act(async () => {
+        responses.forEach((response, index) => response.resolve(new Response(JSON.stringify({ id: 700 + index }))));
+        await Promise.all([firstSubmit, secondSubmit]);
       });
-      mockRunNodeSeekAction.mockClear();
-      notify.mockClear();
-      try {
-        await act(async () => {
-          await hook.result.current.actions.submitReply(snapshot);
+      expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/api/vote/info'))).toHaveLength(
+        kind === 'shared' ? 1 : 2
+      );
+      expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/api/content/new-comment'))).toHaveLength(2);
+      for (const snapshot of [first, second]) {
+        const poll = snapshot.pendingNodeSeekPolls[0]!;
+        await expect(
+          readNodeSeekPollJournalEntry('nodeseek:123', poll.localId, poll.fingerprint)
+        ).resolves.toMatchObject({
+          remoteId: expect.stringMatching(/^70[01]$/)
         });
-        expect(mockRunNodeSeekAction).not.toHaveBeenCalled();
-        expect(notify).toHaveBeenCalled();
-      } finally {
-        read.mockRestore();
       }
-      expect(await getItem(journalKey)).toBe(saved);
     }
   );
 
-  it('never downgrades a known remote poll id to an unknown result', async () => {
-    const identityKey = 'nodeseek:test-user';
-    const known = { localId: 'poll_stale_0001', fingerprint: '0123456789abcdef', remoteId: '3025' };
-
-    await saveNodeSeekPollJournalEntry(identityKey, known);
-    await saveNodeSeekPollJournalEntry(identityKey, { ...known, remoteId: null });
-
-    await expect(readNodeSeekPollJournalEntry(identityKey, known.localId)).resolves.toEqual(known);
+  it('releases an unsent poll claim when the final guard rejects after proxy waiting', async () => {
+    mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+    const loaded = Promise.withResolvers<NetworkProxyState>();
+    mockLoadProxy.mockReturnValue(loaded.promise);
+    const snapshot = snapshotWithNodeSeekPoll('poll_proxy_0001');
+    const poll = snapshot.pendingNodeSeekPolls[0]!;
+    let current = true;
+    const baseFetcher = jest.fn(
+      async (input: string) =>
+        new Response(String(input).endsWith('/api/vote/info') ? '{"id":703}' : '{"success":true}')
+    );
+    const proxy = await renderNativeHook(() => useNetworkProxyRuntime({ notify: jest.fn(), baseFetcher }));
+    const hook = await renderActions({
+      fetcher: (input, init) => proxy.result.current.networkProxyFetcher(String(input), init),
+      isWritableSessionTicketCurrent: () => current
+    });
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = hook.result.current.actions.submitReply(snapshot);
+    });
+    await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
+    await expect(readNodeSeekPollJournalEntry('nodeseek:123', poll.localId, poll.fingerprint)).resolves.toMatchObject({
+      remoteId: null
+    });
+    current = false;
+    await act(async () => {
+      loaded.resolve({ enabled: false, activeId: null, profiles: [] });
+      await pending;
+    });
+    expect(baseFetcher).not.toHaveBeenCalled();
+    await expect(readNodeSeekPollJournalEntry('nodeseek:123', poll.localId, poll.fingerprint)).resolves.toBeNull();
+    current = true;
+    await act(async () => {
+      await hook.result.current.actions.submitReply(snapshot);
+    });
+    expect(baseFetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      '/api/vote/info',
+      '/api/content/new-comment'
+    ]);
   });
+
+  it.each(['confirmed', 'unknown', 'rejected', 'unauthorized'] as const)(
+    'retains the original account poll result after its ticket changes in flight (%s)',
+    async (outcome) => {
+      mockRunNodeSeekAction.mockImplementation(runNodeSeekActionActual);
+      const response = Promise.withResolvers<Response>();
+      const snapshot = snapshotWithNodeSeekPoll('poll_stale_0001');
+      const poll = snapshot.pendingNodeSeekPolls[0]!;
+      let current = true;
+      const fetcher = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        prepareRequestToSend(init);
+        if (String(input).endsWith('/api/vote/info')) return response.promise;
+        return new Response('{"success":true}');
+      });
+      const hook = await renderActions({ fetcher, isWritableSessionTicketCurrent: () => current });
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending = hook.result.current.actions.submitReply(snapshot);
+      });
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      current = false;
+      await act(async () => {
+        if (outcome === 'unknown') response.reject(new Error('connection lost'));
+        else
+          response.resolve(
+            new Response(outcome === 'confirmed' ? '{"id":704}' : '{"success":false}', {
+              status: outcome === 'confirmed' ? 200 : outcome === 'unauthorized' ? 401 : 400
+            })
+          );
+        await pending;
+      });
+      const saved = await readNodeSeekPollJournalEntry('nodeseek:123', poll.localId, poll.fingerprint);
+      expect(saved).toEqual(
+        outcome === 'rejected' || outcome === 'unauthorized'
+          ? null
+          : {
+              localId: poll.localId,
+              fingerprint: poll.fingerprint,
+              remoteId: outcome === 'confirmed' ? '704' : null
+            }
+      );
+      await expect(readNodeSeekPollJournalEntry('nodeseek:other', poll.localId, poll.fingerprint)).resolves.toBeNull();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      current = true;
+      fetcher.mockImplementation(async (input, init) => {
+        prepareRequestToSend(init);
+        return new Response(String(input).endsWith('/api/vote/info') ? '{"id":705}' : '{"success":true}');
+      });
+      await act(async () => {
+        await hook.result.current.actions.submitReply(snapshot);
+      });
+      expect(fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(
+        outcome === 'unknown'
+          ? ['/api/vote/info']
+          : outcome === 'confirmed'
+            ? ['/api/vote/info', '/api/content/new-comment']
+            : ['/api/vote/info', '/api/vote/info', '/api/content/new-comment']
+      );
+    }
+  );
 
   it.each([
     ['missing sidecar', snapshotWithNodeSeekPolls(['poll_match_0001', 'poll_missing_01'], ['poll_match_0001'])],

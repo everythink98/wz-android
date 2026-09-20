@@ -1,4 +1,4 @@
-import { mergeReaderData, readerDataVersion, sanitizeReaderData, type ReaderData } from './readerData';
+import { readerDataVersion, sanitizeReaderData } from './readerData';
 import { sourceCatalog } from '@/domain/forum/sourceCatalog';
 
 const SENSITIVE_KEY_PATTERN = /(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf|proxy)/i;
@@ -58,12 +58,4 @@ export function parseReaderBackupJson(json: string) {
     throw new Error('备份格式不兼容，请使用当前 Android 版本导出的 JSON。');
   }
   return stripSensitive(parsed);
-}
-
-export function importReaderBackupJson(local: ReaderData, json: string) {
-  const merged = mergeReaderData(local, parseReaderBackupJson(json));
-  if (utf8ByteLength(JSON.stringify(merged)) > Math.max(MAX_BACKUP_JSON_BYTES, utf8ByteLength(JSON.stringify(local)))) {
-    throw new Error(BACKUP_TOO_LARGE_MESSAGE);
-  }
-  return merged;
 }

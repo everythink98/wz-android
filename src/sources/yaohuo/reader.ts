@@ -354,7 +354,8 @@ export async function getYaohuoRepliesDirect({
       previousOffset: null,
       hasMore: false,
       nextPage: null,
-      nextOffset: null
+      nextOffset: null,
+      replyWatermark: 0
     });
   }
   if (targetFloor !== undefined && !confirmedPage) {
@@ -392,9 +393,8 @@ export async function getYaohuoRepliesDirect({
   }
   const floors = items.map((reply) => reply.floor || 0).filter(Boolean);
   const minFloor = Math.min(...floors);
-  const ascendingFloors = [...new Set(floors)].sort((left, right) => left - right);
-  const hasFloorGap = ascendingFloors.some((floor, index) => index > 0 && floor !== ascendingFloors[index - 1] + 1);
   const summary = sourceDiagnosticSummary(result);
+  // 原站楼号可以稀疏，不能据此推断解析丢行。
   const hasRowDegradation = Boolean(summary?.droppedCount) || Boolean(summary?.missingFloorCount);
   // 妖火详情以最新楼号表示回复数；只有原站确认的第一页能提供同一统计，旧页不能覆盖它。
   const totalCount =
@@ -409,7 +409,7 @@ export async function getYaohuoRepliesDirect({
       : typeof (totalCount ?? replyCount) === 'number' && Math.max(...floors) === (totalCount ?? replyCount));
   const completeness = !items.length
     ? ('complete' as const)
-    : !hasRowDegradation && !hasFloorGap && edgeConfirmed
+    : !hasRowDegradation && edgeConfirmed
       ? ('complete' as const)
       : ('partial' as const);
   const olderPage = order === 'oldest' && position.kind === 'start' ? null : minFloor > 1 ? result.nextPage : null;
@@ -424,7 +424,8 @@ export async function getYaohuoRepliesDirect({
     hasMore: Boolean(order === 'newest' ? olderPage : newerPage),
     nextPage: order === 'newest' ? olderPage : newerPage,
     nextOffset: null,
-    totalCount
+    totalCount,
+    ...(totalCount !== undefined ? { replyWatermark: totalCount } : {})
   });
 }
 

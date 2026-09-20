@@ -1,4 +1,6 @@
-jest.mock('@/platform/storage/readerDataStore', () => ({ readHistoryReplyCount: jest.fn(async () => 0) }));
+jest.mock('@/platform/storage/readerDataStore', () => ({
+  readHistoryReplyBaseline: jest.fn(async () => undefined)
+}));
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook as renderNativeHook, waitFor } from '@testing-library/react-native';
 import { appQueryClient, forumQueryKeys } from '@/platform/query/serverState';
@@ -19,6 +21,8 @@ import { QueryTestWrapper } from '../QueryTestWrapper';
 import { prepareReplyContent } from '@/domain/forum/topicContentSplit';
 import { createDiscourseReadingRuntime } from '@/platform/query/discourseReadingRuntime';
 import { getNodeSeekReplies } from '@/sources/nodeseek/reader';
+import { readHistoryReplyBaseline } from '@/platform/storage/readerDataStore';
+import { withAbortableTimeout } from '@/platform/network/request';
 
 const firstTopic: Topic = {
   source: 'nodeseek',
@@ -102,6 +106,7 @@ describe('topic route sessions', () => {
 function renderTopicController({
   commitReaderData = jest.fn(),
   getActive = () => true,
+  getAppActive = () => true,
   getIdentityBarriers = () => [],
   getIdentityTrust,
   getSourceEnabled = () => true,
@@ -121,6 +126,7 @@ function renderTopicController({
 }: {
   commitReaderData?: Parameters<typeof useTopicController>[0]['commitReaderData'];
   getActive?: () => boolean;
+  getAppActive?: () => boolean;
   getIdentityBarriers?: () => SessionSource[];
   getIdentityTrust?: (source: SessionRuntimeSnapshot['source']) => SessionRuntimeSnapshot['identityTrust'];
   getSourceEnabled?: (source: Source) => boolean;
@@ -166,7 +172,8 @@ function renderTopicController({
         }
       } as ReadGateway;
       const controller = useTopicController({
-        active: getActive(),
+        focused: getActive(),
+        appActive: getAppActive(),
         commitReaderData,
         sessionEpochs: getSessionEpochs(),
         notify,
@@ -191,6 +198,123 @@ function renderTopicController({
 }
 
 describe('topic query controller', () => {
+  it.each(['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const)(
+    'keeps the original %s deadline and does not restart its timed-out read on foreground',
+    async (source) => {
+      jest.useFakeTimers();
+      let appActive = true;
+      const topic = { ...firstTopic, source };
+      const getTopic = jest.fn<TestGetTopic>(async ({ signal }) =>
+        withAbortableTimeout(() => new Promise<TopicDetail>(() => undefined), { signal, timeoutMs: 1_000 })
+      );
+      const hook = await renderTopicController({ topic, getAppActive: () => appActive, readGateway: { getTopic } });
+      try {
+        await act(async () => {
+          appActive = false;
+          hook.rerender(undefined);
+        });
+        await act(async () => {
+          jest.advanceTimersByTime(1_000);
+        });
+        await waitFor(() => expect(hook.result.current.controller.topicError).not.toBeNull());
+        await act(async () => {
+          appActive = true;
+          hook.rerender(undefined);
+        });
+        expect(hook.result.current.controller.topicBusy).toBe(false);
+        expect(getTopic).toHaveBeenCalledTimes(1);
+      } finally {
+        await hook.unmount();
+        jest.useRealTimers();
+      }
+    }
+  );
+  it.each([
+    { baseline: { replyCount: 0, replyWatermark: 0 }, count: 100, floor: 1 },
+    { baseline: { replyCount: 95, replyWatermark: 98 }, count: 5, floor: 99 },
+    { baseline: { replyCount: 95 }, count: 5, floor: undefined },
+    { baseline: undefined, count: 0, floor: undefined }
+  ])(
+    'freezes the entry baseline $baseline independently from the visible window',
+    async ({ baseline, count, floor }) => {
+      jest.mocked(readHistoryReplyBaseline).mockResolvedValueOnce(baseline);
+      const detail = { ...firstDetail, replyCount: 100, replies: [firstReply] };
+      const getTopic = jest.fn<TestGetTopic>(async () => detail);
+      const commitReaderData = jest.fn();
+      const hook = await renderTopicController({ commitReaderData, readGateway: { getTopic } });
+      await waitFor(() => expect(commitReaderData).toHaveBeenCalled());
+      expect(hook.result.current.controller.unreadReplyCount).toBe(count);
+      expect(hook.result.current.controller.newReplyFloorStart).toBe(floor);
+      await act(async () =>
+        appQueryClient.setQueryData(hook.result.current.controller.topicQueryKey, {
+          ...detail,
+          replies: [{ ...firstReply, floor: 99 }]
+        })
+      );
+      expect(hook.result.current.controller.newReplyFloorStart).toBe(floor);
+      expect(jest.mocked(readHistoryReplyBaseline)).toHaveBeenCalledTimes(1);
+    }
+  );
+  it.each(['linuxdo', 'nodeseek', 'v2ex', 'yaohuo'] as const)(
+    'keeps the original %s detail request through background and foreground',
+    async (source) => {
+      let appActive = true;
+      let resolveDetail!: (detail: TopicDetail) => void;
+      let requestSignal: AbortSignal | undefined;
+      const topic = { ...firstTopic, source };
+      const detail = { ...firstDetail, ...topic };
+      const getTopic = jest.fn<TestGetTopic>(async ({ signal }) => {
+        requestSignal = signal;
+        return new Promise((resolve, reject) => {
+          resolveDetail = resolve;
+          signal?.addEventListener('abort', () => reject(Object.assign(new Error('canceled'), { name: 'AbortError' })));
+        });
+      });
+      const hook = await renderTopicController({ topic, getAppActive: () => appActive, readGateway: { getTopic } });
+      await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        appActive = false;
+        hook.rerender(undefined);
+      });
+      expect(requestSignal?.aborted).toBe(false);
+      await act(async () => resolveDetail(detail));
+      await act(async () => {
+        appActive = true;
+        hook.rerender(undefined);
+      });
+      await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+      expect(getTopic).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('resumes a canceled cold linux.do read when its retained route returns', async () => {
+    let focused = true;
+    const topic = { ...firstTopic, source: 'linuxdo' as const };
+    const detail = { ...firstDetail, ...topic };
+    const getTopic = jest
+      .fn<TestGetTopic>()
+      .mockImplementationOnce(
+        async ({ signal }) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(Object.assign(new Error('canceled'), { name: 'AbortError' }))
+            );
+          })
+      )
+      .mockResolvedValue(detail);
+    const hook = await renderTopicController({ topic, getActive: () => focused, readGateway: { getTopic } });
+    await waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      focused = false;
+      hook.rerender(undefined);
+    });
+    await act(async () => {
+      focused = true;
+      hook.rerender(undefined);
+    });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(detail));
+    expect(getTopic).toHaveBeenCalledTimes(2);
+  });
   it.each(['oldest', 'newest'] as const)(
     'locates the confirmed linux.do reply with one %s window read',
     async (order) => {
@@ -346,7 +470,10 @@ describe('topic query controller', () => {
       })
     );
   });
-  beforeEach(() => appQueryClient.clear());
+  beforeEach(() => {
+    appQueryClient.clear();
+    jest.mocked(readHistoryReplyBaseline).mockReset().mockResolvedValue(undefined);
+  });
   afterEach(async () => {
     await act(async () => {
       await appQueryClient.cancelQueries();
@@ -3598,8 +3725,9 @@ describe('topic query controller', () => {
     }
   );
 
-  it('cancels only the active Topic detail, replies, and quote queries when leaving the route', async () => {
+  it('preserves background reads and cancels only its Topic detail, replies, and quotes when leaving the route', async () => {
     let active = true;
+    let appActive = true;
     let detailSignal: AbortSignal | undefined;
     let repliesSignal: AbortSignal | undefined;
     let quoteSignal: AbortSignal | undefined;
@@ -3630,6 +3758,7 @@ describe('topic query controller', () => {
     );
     const hook = await renderTopicController({
       getActive: () => active,
+      getAppActive: () => appActive,
       readGateway: { getReply, getReplies, getTopic }
     });
 
@@ -3667,6 +3796,14 @@ describe('topic query controller', () => {
       })
       .catch(() => undefined);
     await waitFor(() => expect(unrelatedSignal).toBeDefined());
+
+    await act(async () => {
+      appActive = false;
+      hook.rerender(undefined);
+    });
+    expect(detailSignal?.aborted).toBe(false);
+    expect(repliesSignal?.aborted).toBe(false);
+    expect(quoteSignal?.aborted).toBe(false);
 
     await act(async () => {
       active = false;

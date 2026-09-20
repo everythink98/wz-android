@@ -257,7 +257,7 @@ export function normalizeNativeReadNetworkDiagnosticEvents(value: unknown, maxim
         'baseline_changed',
         'write_failed'
       ]),
-      imageConsumer: new Set(['fresco', 'glide', 'svg-probe']),
+      imageConsumer: new Set(['fresco', 'glide', 'svg-probe', 'save-image']),
       imageFailure: new Set([
         'executor_rejected',
         'timeout',

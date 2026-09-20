@@ -540,7 +540,7 @@ export const SearchScreen = memo(function SearchScreen({
         return renderTopicCard(item.topic);
       }
       if (item.type === 'groupHeader') {
-        const canOpenSource = item.group.items.length > 0;
+        const canOpenSource = item.group.items.length > 0 || Boolean(item.group.hasMore && item.group.nextPage);
         return (
           <Pressable
             testID={`search-overview-source-${item.group.source}`}
@@ -614,9 +614,18 @@ export const SearchScreen = memo(function SearchScreen({
         return <LoadingState text={`${item.group.label} 搜索中...`} />;
       }
       if (item.type === 'groupEmpty') {
+        const nextPage = item.group.hasMore && !item.group.error ? item.group.nextPage : null;
         return (
           <View>
             <EmptyText text={searchGroupEmptyText(item.group)} />
+            {visibleSearchSource !== 'all' && nextPage ? (
+              <AppButton
+                label={`继续搜索 ${item.group.label}`}
+                variant="ghost"
+                disabled={busy || item.group.loadingMore}
+                onPress={() => onLoadMoreSearchSource(item.group.source, nextPage)}
+              />
+            ) : null}
           </View>
         );
       }

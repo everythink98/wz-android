@@ -1,17 +1,41 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, renderHook } from '@testing-library/react-native';
+import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { PixelRatio } from 'react-native';
+import * as MediaLibrary from 'expo-media-library';
 import { compileForumContent } from '@/domain/forum/topicContentSplit';
 import { useImagePreviewController as useRawImagePreviewController } from '@/features/topic/media/useImagePreviewController';
 import { imagePreviewItemAt } from '@/platform/media/imagePreviewCatalog';
 import { ForumSessionEpochProvider } from '@/platform/media/mediaSessionEpoch';
 import { initialForumSessionEpochs } from '@/platform/query/sessionEpochs';
 
-const mockSaveImageUriToLibrary = jest.fn<(...args: unknown[]) => Promise<void>>();
+type SaveImage = typeof import('@/platform/media/imageSave').saveImageUriToLibrary;
+const mockSaveImageUriToLibrary = jest.fn<SaveImage>();
+const mockImageDownload = {
+  createDownload: jest.fn<() => string>(),
+  download: jest.fn<() => Promise<{ uri: string; contentType: string; byteCount: number }>>(),
+  cancelDownload: jest.fn(),
+  releaseDownload: jest.fn()
+};
 
 jest.mock('@/platform/media/imageSave', () => ({
-  saveImageUriToLibrary: (...args: unknown[]) => mockSaveImageUriToLibrary(...args)
+  saveImageUriToLibrary: (...args: Parameters<SaveImage>) => mockSaveImageUriToLibrary(...args)
+}));
+jest.mock('expo', () => {
+  const actual = jest.requireActual<typeof import('expo')>('expo');
+  return {
+    ...actual,
+    requireOptionalNativeModule: (name: string) =>
+      name === 'ImageDownload' ? mockImageDownload : actual.requireOptionalNativeModule(name)
+  };
+});
+jest.mock('expo-media-library', () => ({
+  requestPermissionsAsync: jest.fn(async () => ({ granted: true })),
+  Asset: { create: jest.fn(async () => ({ id: 'saved-fixture-image' })) }
+}));
+jest.mock('expo-file-system/legacy', () => ({
+  ...jest.requireActual<typeof import('expo-file-system/legacy')>('expo-file-system/legacy'),
+  getInfoAsync: jest.fn(async (uri: string) => ({ exists: true, isDirectory: false, size: 12, uri }))
 }));
 
 const compiledPreviewImages = new Map<string, ReturnType<typeof compileForumContent>['previewImages']>();
@@ -77,6 +101,94 @@ describe('Image preview controller', () => {
     expect(notify).toHaveBeenCalledWith('图片已保存');
   });
 
+  it('aborts an in-flight save on unmount and does not report success afterwards', async () => {
+    let finish: (() => void) | undefined;
+    mockSaveImageUriToLibrary.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    const notify = jest.fn();
+    const hook = await renderHook(() =>
+      useImagePreviewController({ contentSource: 'nodeseek', contentWidth: 360, notify })
+    );
+    await act(() => hook.result.current.openImagePreview('https://www.nodeseek.com/a.png'));
+    const pending = hook.result.current.savePreviewImage();
+    await Promise.resolve();
+    const options = mockSaveImageUriToLibrary.mock.calls[0][1] as { signal: AbortSignal; assertCurrent: () => void };
+    await hook.unmount();
+    expect(options.signal.aborted).toBe(true);
+    expect(options.assertCurrent).toThrow('取消');
+    finish?.();
+    await pending;
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('cancels the native save on a session change and prevents its late file from entering the library', async () => {
+    const { saveImageUriToLibrary } = jest.requireActual<{ saveImageUriToLibrary: SaveImage }>(
+      '@/platform/media/imageSave'
+    );
+    mockSaveImageUriToLibrary.mockImplementation(saveImageUriToLibrary);
+    const response = Promise.withResolvers<{ uri: string; contentType: string; byteCount: number }>();
+    const downloaded = { uri: 'file:///cache/image-saves/epoch.png', contentType: 'image/png', byteCount: 12 };
+    mockImageDownload.createDownload.mockReturnValueOnce('old-save').mockReturnValueOnce('current-save');
+    mockImageDownload.download.mockImplementationOnce(() => response.promise).mockResolvedValueOnce(downloaded);
+    let setEpoch: ((epoch: number) => void) | undefined;
+    function SessionEpochHarness({ children }: { children: ReactNode }) {
+      const [epoch, updateEpoch] = useState(0);
+      useLayoutEffect(() => {
+        setEpoch = updateEpoch;
+        return () => {
+          setEpoch = undefined;
+        };
+      }, []);
+      return (
+        <ForumSessionEpochProvider sessionEpochs={{ ...initialForumSessionEpochs, nodeseek: epoch }}>
+          {children}
+        </ForumSessionEpochProvider>
+      );
+    }
+    const notify = jest.fn();
+    const hook = await renderHook(
+      () => useImagePreviewController({ contentSource: 'nodeseek', contentWidth: 360, notify }),
+      { wrapper: SessionEpochHarness }
+    );
+    let pending: Promise<void> | undefined;
+    try {
+      await act(() => hook.result.current.openImagePreview('https://www.nodeseek.com/epoch.png'));
+      await act(async () => {
+        pending = hook.result.current.savePreviewImage();
+      });
+      await waitFor(() => expect(mockImageDownload.download).toHaveBeenCalledTimes(1));
+      const oldOptions = mockSaveImageUriToLibrary.mock.calls[0][1];
+      await act(() => setEpoch?.(1));
+      expect(oldOptions.signal?.aborted).toBe(true);
+      expect(oldOptions.assertCurrent).toThrow('取消');
+      expect(mockImageDownload.cancelDownload.mock.calls).toEqual([['old-save']]);
+      await act(async () => {
+        response.resolve(downloaded);
+        await pending;
+      });
+      expect(MediaLibrary.Asset.create).not.toHaveBeenCalled();
+      expect(mockImageDownload.releaseDownload.mock.calls).toEqual([['old-save']]);
+      expect(notify).not.toHaveBeenCalled();
+
+      await act(() => hook.result.current.savePreviewImage());
+      expect(mockSaveImageUriToLibrary.mock.calls[1][1].mediaContext.sessionIdentity).not.toBe(
+        oldOptions.mediaContext.sessionIdentity
+      );
+      expect(MediaLibrary.Asset.create).toHaveBeenCalledTimes(1);
+      expect(MediaLibrary.Asset.create).toHaveBeenCalledWith(downloaded.uri);
+      expect(mockImageDownload.releaseDownload).toHaveBeenLastCalledWith('current-save');
+      expect(notify.mock.calls).toEqual([['图片已保存']]);
+    } finally {
+      response.resolve(downloaded);
+      await act(async () => pending);
+      await hook.unmount();
+    }
+  });
+
   it('forwards NodeSeek media credentials to the save request', async () => {
     mockSaveImageUriToLibrary.mockResolvedValue();
     const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
@@ -110,9 +222,11 @@ describe('Image preview controller', () => {
           contentSource: 'nodeseek',
           sessionIdentity: expect.stringMatching(/^nodeseek:/)
         },
-        nodeSeekUserAgent: 'WZ-Controller-Test'
+        nodeSeekUserAgent: 'WZ-Controller-Test',
+        referrerPolicy: undefined,
+        signal: expect.any(AbortSignal),
+        assertCurrent: expect.any(Function)
       },
-      undefined,
       expect.anything()
     );
   });
@@ -155,9 +269,10 @@ describe('Image preview controller', () => {
           sessionIdentity: expect.stringMatching(/^public:0:/)
         },
         nodeSeekUserAgent: undefined,
-        referrerPolicy: 'no-referrer'
+        referrerPolicy: 'no-referrer',
+        signal: expect.any(AbortSignal),
+        assertCurrent: expect.any(Function)
       },
-      undefined,
       expect.anything()
     );
   });

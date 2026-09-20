@@ -23,7 +23,7 @@ export const RELEASE_REQUIRED_TRACKED_INPUTS = Object.freeze([
   'vitest.config.mts'
 ]);
 
-const RELEASE_SIGNING_ENV_NAME_SET = new Set(RELEASE_SIGNING_ENV_NAMES);
+const RELEASE_CHILD_EXCLUDED_ENV_NAMES = new Set([...RELEASE_SIGNING_ENV_NAMES, 'ENTRY_FILE']);
 const RELEASE_ENV_NAMES = new Set([...RELEASE_SIGNING_ENV_NAMES, 'WZ_ANDROID_SMOKE_DEVICE', 'WZ_ANDROID_SMOKE_ABI']);
 
 function parseEnvValue(value) {
@@ -59,7 +59,7 @@ export function unsignedReleaseChildEnv(inherited, release) {
   /** @type {Record<string, string | undefined>} */
   const child = {};
   for (const [name, value] of Object.entries({ ...inherited, ...release })) {
-    if (!RELEASE_SIGNING_ENV_NAME_SET.has(name.toUpperCase())) {
+    if (!RELEASE_CHILD_EXCLUDED_ENV_NAMES.has(name.toUpperCase())) {
       child[name] = value;
     }
   }

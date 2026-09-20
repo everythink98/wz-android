@@ -798,23 +798,39 @@ function sanitizeNodeSeekAnsiCodeBlocksHtml(html: unknown) {
     );
 }
 
-const terminalSectionPattern =
-  /<(?:p|div)\b[^>]*>\s*((?:💻|🎬|🌐|📍)[^<]{0,40})\s*<\/(?:p|div)>\s*<div class="forum-terminal-code">([\s\S]*?)<\/div>/g;
-
-function sanitizeNodeSeekAnsiReportSectionsHtml(html: unknown) {
-  const source = String(html || '');
-  const matches = Array.from(source.matchAll(terminalSectionPattern));
-  if (matches.length < 2) {
-    return source;
+function sanitizeNodeSeekAnsiReportSections(root: HTMLElement) {
+  for (const parent of [root, ...root.querySelectorAll('*')]) {
+    const siblings = parent.childNodes.filter((node) => !(node instanceof TextNode && !node.textContent.trim()));
+    for (let index = 0; index < siblings.length;) {
+      const sections: { heading: HTMLElement; code: HTMLElement }[] = [];
+      while (index + 1 < siblings.length) {
+        const heading = siblings[index] as HTMLElement;
+        const code = siblings[index + 1] as HTMLElement;
+        if (
+          !['p', 'div'].includes(safeTagName(heading)) ||
+          !heading.childNodes.every((node) => node instanceof TextNode) ||
+          !/^(?:💻|🎬|🌐|📍)[\s\S]{0,40}$/u.test(elementText(heading)) ||
+          safeTagName(code) !== 'div' ||
+          !code.classList.contains('forum-terminal-code')
+        )
+          break;
+        sections.push({ heading, code });
+        index += 2;
+      }
+      if (sections.length >= 2) {
+        sections[0].heading.replaceWith(
+          terminalReportHtml(
+            sections.map(({ heading, code }) => terminalTabHtml(elementText(heading), code.toString()))
+          )
+        );
+        sections.forEach(({ heading, code }, sectionIndex) => {
+          if (sectionIndex) heading.remove();
+          code.remove();
+        });
+      }
+      if (!sections.length) index++;
+    }
   }
-  const tabs = matches.map((match) =>
-    terminalTabHtml(decodeHtml(match[1]).trim(), `<div class="forum-terminal-code">${match[2]}</div>`)
-  );
-  const first = matches[0];
-  const last = matches[matches.length - 1];
-  const start = first.index ?? 0;
-  const end = (last.index ?? 0) + last[0].length;
-  return `${source.slice(0, start)}${terminalReportHtml(tabs)}${source.slice(end)}`;
 }
 
 export function sanitizeContentHtmlWithRoot(
@@ -822,9 +838,10 @@ export function sanitizeContentHtmlWithRoot(
   baseUrl: string,
   transformRoot?: (root: HTMLElement) => void
 ) {
-  const normalizedHtml = sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html));
+  const normalizedHtml = sanitizeNodeSeekAnsiCodeBlocksHtml(html);
   const root = parseForumContentHtml(normalizedHtml);
   removeHiddenContent(root);
+  sanitizeNodeSeekAnsiReportSections(root);
   transformRoot?.(root);
   const markup = root.toString().toLowerCase();
   for (const selector of ['script', 'style', 'noscript']) {

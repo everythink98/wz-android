@@ -778,30 +778,11 @@ export async function getLinuxDoReplies(
 
 export async function getLinuxDoReply(id: string, floor: number, options: LinuxDoOptions = {}): Promise<Reply> {
   options = linuxDoOptionsWithBrowserIntent(options, 'topic', 'foreground');
-  const data = await topicData(id, options);
-  const embeddedPosts =
-    isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
-  const embedded = embeddedPosts.find((post) => isRecord(post) && post.post_number === floor);
-  if (embedded) {
-    const reply = normalizePost(embedded, id);
-    if (reply) {
-      return annotateSourceDiagnosticSummary(reply, {
-        parserVariant: 'embedded-reply',
-        candidateCount: 1,
-        validCount: 1,
-        droppedCount: 0,
-        missingFloorCount: isRecord(embedded) && !parsePositiveInteger(embedded.post_number) ? 1 : 0
-      });
-    }
-  }
-  const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
-  const guessed = stream[floor - 1];
-  if (!guessed) {
-    throw new Error('引用楼层未找到');
-  }
-  const posts = await fetchPosts(id, [guessed], options);
-  const post = posts.find((item) => isRecord(item) && item.post_number === floor);
-  const reply = normalizePost(post, id);
+  if (!Number.isSafeInteger(floor) || floor < 1) throw new Error('引用楼层不正确');
+  const data = await topicData(id, options, floor);
+  const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
+  const matches = posts.filter((post) => isRecord(post) && post.post_number === floor);
+  const reply = matches.length === 1 ? normalizePost(matches[0], id) : null;
   if (!reply) {
     throw new Error('引用楼层未找到');
   }

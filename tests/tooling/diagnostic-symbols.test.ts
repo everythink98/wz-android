@@ -68,7 +68,7 @@ describe('diagnostic build evidence', () => {
       'PackageList(this).packages.apply {\n}\noverride fun onCreate() {\n super.onCreate()\n loadReactNative(this)\n}';
     const first = plugin.injectDiagnosticStartup(template);
     expect(plugin.injectDiagnosticStartup(first)).toBe(first);
-    expect(first.indexOf('DiagnosticJournal.install(this)')).toBeLessThan(first.indexOf('loadReactNative(this)'));
+    expect(first.indexOf('DiagnosticJournal.install(this,')).toBeLessThan(first.indexOf('loadReactNative(this)'));
     const gradle = plugin.injectDiagnosticBuildId('android { defaultConfig { } }', 'a'.repeat(32));
     expect(plugin.injectDiagnosticBuildId(gradle, 'a'.repeat(32))).toBe(gradle);
     expect(() => plugin.injectDiagnosticBuildId('defaultConfig {}', 'PRIVATE_INVALID')).toThrow();

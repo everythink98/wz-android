@@ -3,6 +3,9 @@ import { File, Paths } from 'expo-file-system';
 
 const boundary = vi.hoisted(() => ({
   failWrites: false,
+  failDeletes: false,
+  sharingRejects: false,
+  randomSequence: 0,
   files: new Map<string, Uint8Array>(),
   nativeEvents: [] as Record<string, unknown>[],
   nativeJournal: undefined as
@@ -21,6 +24,10 @@ const boundary = vi.hoisted(() => ({
   sharingModuleLoads: 0
 }));
 
+vi.mock('@/platform/android/secureRandom', () => ({
+  nativeSecureRandomHex: async () => `${++boundary.randomSequence}`.padStart(32, '0')
+}));
+
 vi.mock('react-native', () => ({
   NativeModules: {
     get DiagnosticsModule() {
@@ -34,6 +41,7 @@ vi.mock('react-native', () => ({
 
 vi.mock('expo-file-system', () => {
   const cache = { uri: 'file:///cache/' };
+  const document = { uri: 'file:///documents/' };
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
@@ -41,10 +49,11 @@ vi.mock('expo-file-system', () => {
     uri: string;
 
     constructor(...parts: (string | { uri: string })[]) {
-      this.uri = parts
-        .map((part) => (typeof part === 'string' ? part : part.uri))
-        .join('')
-        .replace(/([^:])\/{2,}/g, '$1/');
+      this.uri = parts.map((part) => (typeof part === 'string' ? part : part.uri)).join('');
+    }
+
+    get name() {
+      return this.uri.split('/').at(-1)!;
     }
 
     get exists() {
@@ -63,6 +72,7 @@ vi.mock('expo-file-system', () => {
     }
 
     delete() {
+      if (boundary.failDeletes) throw new Error('delete denied');
       if (!boundary.files.delete(this.uri)) {
         throw new Error('missing file');
       }
@@ -125,7 +135,20 @@ vi.mock('expo-file-system', () => {
     }
   }
 
-  return { File, Paths: { cache } };
+  class Directory {
+    uri: string;
+    constructor(...parts: (string | { uri: string })[]) {
+      this.uri = parts.map((part) => (typeof part === 'string' ? part : part.uri)).join('') + '/';
+    }
+    get exists() {
+      return true;
+    }
+    create() {}
+    list() {
+      return [...boundary.files.keys()].filter((uri) => uri.startsWith(this.uri)).map((uri) => new File(uri));
+    }
+  }
+  return { File, Directory, Paths: { cache, document } };
 });
 
 vi.mock('expo-sharing', () => {
@@ -137,6 +160,7 @@ vi.mock('expo-sharing', () => {
         content: new TextDecoder().decode(boundary.files.get(uri) || new Uint8Array()),
         uri
       });
+      if (boundary.sharingRejects) throw new Error('chooser failed');
     })
   };
 });
@@ -149,6 +173,7 @@ import {
 } from './diagnosticFileStore';
 import { beginDiagnosticTrace, finishDiagnosticTrace, recordDiagnosticError, setDiagnosticWriter } from './diagnostics';
 import { diagnosticRef, type DiagnosticFields } from './diagnosticPolicy';
+import { createDiagnosticExport, pruneDiagnosticExports } from './diagnosticExportFiles';
 import { readNativeReadNetworkDiagnosticLines } from './nativeReadNetworkDiagnostics';
 const sharingLoadsAtImport = boundary.sharingModuleLoads;
 
@@ -173,6 +198,7 @@ const metadata: DiagnosticExportMetadata = {
 beforeEach(() => {
   setDiagnosticWriter(null);
   boundary.failWrites = false;
+  boundary.failDeletes = false;
   boundary.files.clear();
   boundary.nativeEvents.length = 0;
   boundary.nativeJournal = undefined;
@@ -180,6 +206,7 @@ beforeEach(() => {
   boundary.writeCount = 0;
   boundary.shared.length = 0;
   boundary.sharingAvailable = true;
+  boundary.sharingRejects = false;
 });
 
 describe('diagnostic file store', () => {
@@ -457,7 +484,7 @@ describe('diagnostic file store', () => {
     expect(boundary.shared[0].content).toContain('"sequence":99');
   });
 
-  it('exports a safe metadata header followed by logs and deletes the temporary file', async () => {
+  it('keeps the shared diagnostic file readable after the chooser returns', async () => {
     appendDiagnosticLogLine('{"sequence":1}');
     appendDiagnosticLogLine('{"sequence":2}');
 
@@ -482,8 +509,8 @@ describe('diagnostic file store', () => {
     expect(JSON.parse(lines[1])).toMatchObject({ type: 'diagnostic-coverage', journalStatus: 'unavailable' });
     expect(JSON.parse(lines[2])).toMatchObject({ type: 'diagnostic-account-summary', lastCheckResult: 'unknown' });
     expect(lines.slice(3).map((line) => JSON.parse(line))).toEqual([{ sequence: 1 }, { sequence: 2 }]);
-    expect(boundary.shared[0].uri).toMatch(/forum-reader-diagnostic-\d+\.txt$/);
-    expect(boundary.files.has(boundary.shared[0].uri)).toBe(false);
+    expect(boundary.shared[0].uri).toMatch(/diagnostic-\d+-\d+\.txt$/);
+    expect(boundary.files.has(boundary.shared[0].uri)).toBe(true);
   });
 
   it('keeps two one-megabyte windows and exports the previous window before the current one', async () => {
@@ -752,5 +779,59 @@ describe('diagnostic file store', () => {
     expect(persistedBeforeDelegate).toBe(true);
     expect(boundary.shared[0].content).toContain('"operation":"js-error"');
     Reflect.deleteProperty(globalThis, 'ErrorUtils');
+  });
+});
+
+describe('diagnostic export leases', () => {
+  it('retains fresh files for 24 hours while pruning expired files only', () => {
+    const now = 1720000000000;
+    const prefix = 'file:///documents/diagnostic-exports/';
+    const expired = `${prefix}diagnostic-${now - 86400000}-1.txt`;
+    const fresh = `${prefix}diagnostic-${now - 86399999}-2.txt`;
+    boundary.files.set(expired, new Uint8Array([1]));
+    boundary.files.set(fresh, new Uint8Array([2]));
+    pruneDiagnosticExports(now);
+    expect(boundary.files.has(expired)).toBe(false);
+    expect(boundary.files.has(fresh)).toBe(true);
+  });
+
+  it('rejects a full 32-file lease budget without deleting receiver-readable files', async () => {
+    const now = Date.now();
+    for (let index = 0; index < 32; index++) {
+      boundary.files.set(`file:///documents/diagnostic-exports/diagnostic-${now}-${index}.txt`, new Uint8Array([1]));
+    }
+    await expect(createDiagnosticExport('next')).rejects.toThrow('保留空间已满');
+    expect(boundary.files.size).toBe(32);
+  });
+
+  it('rejects a full byte budget without truncating or evicting an unexpired export', async () => {
+    const existing = new Uint8Array([1]);
+    Object.defineProperty(existing, 'byteLength', { value: 128 * 1024 * 1024 });
+    boundary.files.set(`file:///documents/diagnostic-exports/diagnostic-${Date.now()}-0.txt`, existing);
+    await expect(createDiagnosticExport('next')).rejects.toThrow('保留空间已满');
+    expect(boundary.files.size).toBe(1);
+  });
+  it('retains the file when the chooser rejects after sharing has been invoked', async () => {
+    boundary.sharingRejects = true;
+    await expect(exportDiagnosticLog(metadata)).rejects.toThrow('chooser failed');
+    expect(boundary.shared).toHaveLength(1);
+    expect(boundary.files.has(boundary.shared[0].uri)).toBe(true);
+  });
+
+  it('still installs the startup diagnostic writer when expired export cleanup fails', async () => {
+    vi.resetModules();
+    boundary.files.set(
+      `file:///documents/diagnostic-exports/diagnostic-${Date.now() - 86400000}-old.txt`,
+      new Uint8Array([1])
+    );
+    boundary.failDeletes = true;
+    const freshStore = await import('./diagnosticFileStore');
+    freshStore.initializeDiagnosticFileLogging();
+    await Promise.resolve();
+    const current = new File(Paths.cache, 'forum-reader-diagnostic-current.jsonl');
+    expect(current.exists).toBe(true);
+    expect(await current.text()).toContain('"operation":"startup"');
+    const freshDiagnostics = await import('./diagnostics');
+    freshDiagnostics.setDiagnosticWriter(null);
   });
 });

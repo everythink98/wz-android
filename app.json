@@ -2,7 +2,7 @@
   "expo": {
     "name": "阅坛 Android",
     "slug": "wz-android",
-    "version": "1.3.147",
+    "version": "1.3.148",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "platforms": ["android"],
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.wz.reader",
-      "versionCode": 151,
+      "versionCode": 152,
       "softwareKeyboardLayoutMode": "resize",
       "blockedPermissions": ["android.permission.SYSTEM_ALERT_WINDOW"],
       "adaptiveIcon": {
@@ -37,6 +37,7 @@
             "buildReactNativeFromSource": true,
             "enableMinifyInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
+            "extraProguardRules": "-keep class expo.modules.adapters.react.apploader.RNHeadlessAppLoader { public <init>(); }",
             "enableBundleCompression": false,
             "useLegacyPackaging": true
           }

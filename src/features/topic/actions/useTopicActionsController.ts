@@ -52,7 +52,8 @@ import {
   rejectUnauthorizedResponse,
   withFetchGuard,
   withRequestBeforeSend,
-  type Fetcher
+  type Fetcher,
+  type RequestDispatchState
 } from '@/platform/network/request';
 import type { ReadGateway } from '@/sources/readGateway';
 import { errorMessage } from '@/platform/network/errors';
@@ -81,7 +82,13 @@ import {
   nodeSeekStardustMarkerRanges,
   replacePendingNodeSeekPollToken
 } from '@/domain/forum/structuredComposer';
-import { readNodeSeekPollJournalEntry, saveNodeSeekPollJournalEntry } from '@/platform/persistence/nodeSeekPollJournal';
+import {
+  claimNodeSeekPollJournalEntry,
+  readNodeSeekPollJournalEntry,
+  releaseNodeSeekPollJournalEntry,
+  saveNodeSeekPollJournalEntry
+} from '@/platform/persistence/nodeSeekPollJournal';
+import { createKeyedSerialRunner } from '@/platform/concurrency/keyedSerialRunner';
 import { fetchNodeSeekStardustStatus, nodeSeekStardustReceiverName } from '@/sources/nodeseek/stardust';
 import { fetchLinuxDoTemplates, recordLinuxDoTemplateUse } from '@/sources/linuxdo/templates';
 import { fetchLinuxDoPollCapabilities } from '@/sources/linuxdo/pollCapabilities';
@@ -139,6 +146,7 @@ type MutationVariables = {
 };
 
 const NODEIMAGE_API_KEY_UNAVAILABLE_MESSAGE = 'NodeImage API Key 不可用，请到账号中心重新获取授权或手动粘贴';
+const nodeSeekPollCreations = createKeyedSerialRunner<string>();
 
 class HandledMutationError extends Error {
   constructor(
@@ -329,7 +337,6 @@ export function useTopicActionsController({
 }) {
   const queryClient = useQueryClient();
   const pendingActionReservationsRef = useRef(new Set<string>());
-  const uncertainNodeSeekPollsRef = useRef(new Set<string>());
   const activeRef = useCommittedRef(active);
   const sessionEpochsRef = useCommittedRef(sessionEpochs);
   const {
@@ -807,7 +814,8 @@ export function useTopicActionsController({
       request: NodeSeekActionRequest,
       trace: DiagnosticTrace,
       ticket: WritableSessionTicket,
-      notifyFailure = true
+      notifyFailure = true,
+      pollCreation?: { dispatchState: RequestDispatchState; persistResult(result: unknown): Promise<void> }
     ) => {
       assertWritableTicket(ticket);
       markDiagnosticStage(trace, 'credential', {
@@ -819,19 +827,29 @@ export function useTopicActionsController({
       try {
         assertWritableTicket(ticket);
         const result = await runNodeSeekAction({
-          fetcher: withRequestBeforeSend(withDiagnosticFetcher(trace, authenticatedFetcher), () =>
-            assertWritableTicket(ticket)
+          fetcher: withRequestBeforeSend(
+            withDiagnosticFetcher(trace, authenticatedFetcher),
+            () => assertWritableTicket(ticket),
+            pollCreation?.dispatchState
           ),
           request,
           userAgent: getNodeSeekUserAgent()
         });
+        // The remote object belongs to the captured account even if the UI ticket changed during the request.
+        if (pollCreation) await pollCreation.persistResult(result);
         markDiagnosticStage(trace, 'transport', { source: 'nodeseek', state: 'confirmed', serverConfirmed: true });
         assertWritableTicket(ticket, true);
         return result;
       } catch (error) {
         if (error instanceof HandledMutationError) throw error;
         if (isRawUnauthorized(error)) throw error;
-        assertWritableTicket(ticket);
+        if (!(
+          pollCreation &&
+          error &&
+          typeof error === 'object' &&
+          (error as { serverRejected?: unknown }).serverRejected
+        ))
+          assertWritableTicket(ticket);
         const message = errorMessage(error);
         if (notifyFailure) notify(message);
         throw new HandledMutationError(
@@ -877,12 +895,6 @@ export function useTopicActionsController({
         throw new HandledMutationError(message, 'blocked', 'invalid_response');
       }
 
-      const plans: {
-        poll: PendingNodeSeekPoll;
-        fingerprint: string;
-        uncertaintyKey: string;
-        remoteId: string;
-      }[] = [];
       for (const poll of polls) {
         assertWritableTicket(ticket);
         const fingerprint = fingerprintNodeSeekPoll(poll);
@@ -891,56 +903,74 @@ export function useTopicActionsController({
           notify(message);
           throw new HandledMutationError(message, 'blocked', 'invalid_response');
         }
-        const uncertaintyKey = `${ticket.identityKey}:${poll.localId}:${fingerprint}`;
-        if (uncertainNodeSeekPollsRef.current.has(uncertaintyKey)) {
-          const message = '该投票上次创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。';
-          notify(message);
-          throw new HandledMutationError(message, 'blocked', 'invalid_response');
-        }
-        const journal = await readNodeSeekPollJournalEntry(ticket.identityKey, poll.localId);
-        assertWritableTicket(ticket);
-        if (journal?.fingerprint === fingerprint && journal.remoteId === null) {
-          const message = '该投票上次创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。';
-          notify(message);
-          throw new HandledMutationError(message, 'blocked', 'invalid_response');
-        }
-        let remoteId = journal?.fingerprint === fingerprint ? journal.remoteId || '' : '';
-        if (!remoteId && journal && !(await confirmNodeSeekPollReplacement(poll))) {
-          throw new HandledMutationError('已取消创建新投票', 'canceled', 'canceled');
-        }
-        assertWritableTicket(ticket);
-        plans.push({ poll, fingerprint, uncertaintyKey, remoteId });
       }
 
-      for (const plan of plans) {
-        const { poll, fingerprint, uncertaintyKey } = plan;
-        let { remoteId } = plan;
-        if (!remoteId) {
-          let remoteIdSaved = false;
-          try {
-            const result = await runNodeSeekRequest(buildNodeSeekPollCreateRequest({ poll }), trace, ticket);
-            remoteId = nodeSeekCreatedPollId(result);
-            await saveNodeSeekPollJournalEntry(ticket.identityKey, { localId: poll.localId, fingerprint, remoteId });
-            remoteIdSaved = true;
-            assertWritableTicket(ticket, true);
-          } catch (error) {
-            const knownSafeFailure =
-              error instanceof HandledMutationError &&
-              (error.serverRejected || (error.outcome === 'stale' && !error.serverConfirmed));
-            if (!knownSafeFailure && !remoteIdSaved) {
-              uncertainNodeSeekPollsRef.current.add(uncertaintyKey);
-              if (!remoteId) {
-                await saveNodeSeekPollJournalEntry(ticket.identityKey, {
-                  localId: poll.localId,
-                  fingerprint,
-                  remoteId: null
-                }).catch(() => undefined);
-              }
-              notify('投票创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。');
-            }
-            throw error;
-          }
+      const confirmedReplacements = new Set<string>();
+      const unknown = () => {
+        const message = '该投票上次创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。';
+        notify(message);
+        return new HandledMutationError(message, 'blocked', 'invalid_response');
+      };
+      const checkedRemoteId = async (poll: PendingNodeSeekPoll) => {
+        assertWritableTicket(ticket);
+        const journal = await readNodeSeekPollJournalEntry(ticket.identityKey, poll.localId, poll.fingerprint);
+        assertWritableTicket(ticket);
+        if (journal?.remoteId) return journal.remoteId;
+        if (journal) throw unknown();
+        const previous = await readNodeSeekPollJournalEntry(ticket.identityKey, poll.localId);
+        assertWritableTicket(ticket);
+        if (previous && !confirmedReplacements.has(poll.localId)) {
+          if (!(await confirmNodeSeekPollReplacement(poll)))
+            throw new HandledMutationError('已取消创建新投票', 'canceled', 'canceled');
+          confirmedReplacements.add(poll.localId);
         }
+        assertWritableTicket(ticket);
+        return undefined;
+      };
+      for (const poll of polls) {
+        await nodeSeekPollCreations.run(`${ticket.identityKey}\u0000${poll.localId}\u0000${poll.fingerprint}`, () =>
+          checkedRemoteId(poll)
+        );
+      }
+
+      for (const poll of polls) {
+        const intent = { localId: poll.localId, fingerprint: poll.fingerprint };
+        const remoteId = await nodeSeekPollCreations.run(
+          `${ticket.identityKey}\u0000${poll.localId}\u0000${poll.fingerprint}`,
+          async () => {
+            const existingRemoteId = await checkedRemoteId(poll);
+            if (existingRemoteId) return existingRemoteId;
+            const reservation = await claimNodeSeekPollJournalEntry(ticket.identityKey, intent);
+            if (!reservation.claimed) {
+              if (reservation.entry.remoteId) return reservation.entry.remoteId;
+              throw unknown();
+            }
+            const dispatchState: RequestDispatchState = { mayHaveSent: false };
+            let createdId = '';
+            try {
+              await runNodeSeekRequest(buildNodeSeekPollCreateRequest({ poll }), trace, ticket, true, {
+                dispatchState,
+                persistResult: async (result) => {
+                  createdId = nodeSeekCreatedPollId(result);
+                  await saveNodeSeekPollJournalEntry(ticket.identityKey, { ...intent, remoteId: createdId });
+                }
+              });
+              return createdId;
+            } catch (error) {
+              if (
+                !createdId &&
+                (!dispatchState.mayHaveSent ||
+                  isRawUnauthorized(error) ||
+                  (error && typeof error === 'object' && (error as { serverRejected?: unknown }).serverRejected))
+              ) {
+                await releaseNodeSeekPollJournalEntry(ticket.identityKey, intent);
+              } else if (!createdId) {
+                notify('投票创建结果未知。请先到 NodeSeek 原站确认，修改或移除投票后再发送。');
+              }
+              throw error;
+            }
+          }
+        );
         markdown = replacePendingNodeSeekPollToken(markdown, poll.localId, remoteId);
       }
       if (markdown.includes('<!-- wz:nodeseek-poll:')) {

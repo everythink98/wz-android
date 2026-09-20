@@ -17,6 +17,187 @@
 | `SUPERSEDED` | 原契约已被明确的新模型取代；通过 `superseded-by` 指向后继事故。 |
 | `EVIDENCE_GAP` | 事故或当前 owner 的证据不足；不得伪造两套预期。 |
 
+## 环境反例：2026-09-20 CF 验证与上报出口不一致
+
+本条是已定位的测试环境反例，不分配产品回归 REG，也不因它撤销既有 Cookie、CSRF、身份、批次与重放保护。证据 owner 为 [维护手册的 CF 出口排查流程](operator-runbook.md#cf-验证循环先核对实际出口)；设备身份与详细运行记录保存在本机 `docs/emulator-baseline.md`。
+
+| 项 | 已确认事实与边界 |
+| --- | --- |
+| 症状 | 已安装 App 1.3.147 的 L 站阅读 POST 返回 403 且 `cf-mitigated: challenge`；WebView 可以完成验证，原生请求仍被拦截，有时验证入口只显示普通 404。Cookie 存在或已更新不能证明原请求恢复。 |
+| 容易误判的对照 | 同一真实批次的独立 OkHttp H1 与 Cronet H2 被 CF 拒绝，带 QUIC hint 的 Cronet 三次实际走 H3 并成功；实验 Cookie、CSRF 和表单一致。这一结果同时改变了出口，不能证明 H3 是必要条件或原生 TLS 指纹不兼容。hint 在另一次只读探测中实际降为 H2，也不保证 H3。 |
+| 环境证据 | 默认网络下，CF trace 显示 OkHttp/Cronet H2 为同一 IPv6 出口，验证 WebView H3 为另一个 IPv4 出口。主机 FlClash TUN 已开启，配置未发现显式 TCP/UDP 分流规则；具体差异来自本地转发、远端 DNS/双栈选址还是 NAT，尚未取得唯一归因证据。 |
+| 决定性实验 | 不改 App、不换 APK，临时令现有 HTTP 代理同时承接原生与 WebView。WebView 改走 H2，出口与原生一致；重新验证后，原 App 原生 H2 上报返回 200（267 ms），原批次 completed，随后新批次 200（301 ms）。关闭并删除临时代理后，沿用新凭据的新批次及离开收尾仍为 200（265/259 ms）。 |
+| 处置 | 保留既有产品传输与恢复实现，不引入实验 helper、不全局切换 H3、不新增“强制 IPv4”承诺。临时代理、设备 helper、转发映射与本任务进程已清理，登录态保留；证据与排查次序持久记录。本轮未证明需要修产品代码。 |
+| 未验证 | 同一外部代理未来重新签发凭据后的稳定性、实体机及其他代理、具体远端出口策略、仅通过外部代理限制 QUIC 的实际效果。一次环境恢复不等于所有网络永久兼容。 |
+
+教训：先验证两个通道在服务端的实际出口，再做网络库与协议替换实验；不要把系统代理状态当作整条网络链路的证据。[Cloudflare 对不同 IP 解题的限制](https://developers.cloudflare.com/cloudflare-challenges/concepts/how-challenges-work/#limitations)提供机制依据，不能替代本站具体规则证据。
+
+## `REG-PERF-026` 清空历史逐条跨桥读写 SQLite
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02`、`LIBRARY-01/02/03` |
+| 历史症状与根因 | 清空 5000 条历史经 ReaderTransaction 逐条读取、删除、写删除标记，容量裁剪再次逐条读取/删除，产生 28008 次串行 SQL 调用，长期占用本机写队列。既有测试只核最终条数，没有约束工作量。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts`；真实 Android SQLite 由 `dev/reader-storage-proof/index.tsx` 补充。 |
+| 修复与边界 | 每批最多 50 条，批量读取、删除与写入，裁剪直接复用已读 key/bytes；同事务、ordinal、删除标记容量、membership 与字节计数不变。普通工作量 oracle 修前失败；5000 条降至 488 次 SQL（减少 98.26%），三种 collection 的真实旧新 SQLite 差分和回滚通过。独立 API 35 Release Hermes 清理 5002 条约 795ms，checkpoint 全部恢复；没有旧版同设备耗时对照，不据此宣称帧率提升或 O(n) 变 O(1)。 |
+
+## `REG-PERF-027` 嵌套正文图片扫描重复遍历后代
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02`；四站主楼、回复及引用共享正文编译 |
+| 历史症状与根因 | 图片已按所属块建立索引，但每个祖先块的 authoredImageLines 又向嵌套块下钻，带图嵌套正文呈二次方工作量。30/60/120/240 层分别读取 1485/5670/22140/87480 次 tag。 |
+| 当前 owner | `src/domain/forum/forumContentMedia.test.ts`；内容守恒与分块由 `src/domain/forum/topicContentSplit.test.ts` 承接。 |
+| 修复与边界 | 遇到拥有独立 owner 的嵌套块只结束当前行，不重复下钻；对应工作量为 209/419/839/1679。普通规模增长 oracle 先红后绿，500 个固定 seed 混合树的完整 HTML 与 preview 逐值相等。Node 22 交错测量的 240 层中位约 6.366→0.927ms，只作算法归因，不冒充设备帧率。 |
+
+## `REG-WRITE-093` 旧编辑文档的异步结果污染新草稿
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-01/04/05`、`NOTIFY-02` |
+| 历史症状与根因 | 上传中关闭编辑，再打开新回复会复用 WebView 并 INIT 新文档；旧宿主 Promise 未失效，富文本和源码都能把旧图片插进新稿。模板及资源解析共用宿主请求表。 |
+| 当前 owner | `src/ui/composer/editorRuntime.test.ts`、`tests/ui/topic/topic-components.test.tsx`；宿主 bridge 继续归 `tests/ui/topic/structured-reply-composer.test.tsx`。 |
+| 修复与边界 | INIT、DESTROY 与卸载结算旧请求；文档代际约束旧成功、错误和 finally，避免旧 busy 清除新上传。独立复核又以普通红确认相同 upload:// 内容会复用已取消请求的图片节点，故新 INIT 同步清空后装入新文档；中间态不发快照、不加历史、不异步闪空，同稿模式切换仍复用节点。真实 DOM/Tiptap/CodeMirror owner 及宿主流程通过；未进行未经授权的真实上传或发帖。 |
+
+## `REG-WRITE-094` NodeSeek 编辑删除投票后本地仍显示旧卡片
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-02/05`、`TOPIC-03` |
+| 历史症状与根因 | 2026-09-20 主登录态模拟器中，NodeSeek 856117 的第 37 楼删除投票 3199/3200 标记并保存为纯文本后，新正文立即显示，两个旧投票仍保留；手动刷新评论后卡片消失。共享 applyEditedReplyContent 只替换正文，继续携带旧 polls，compiler 将无正文 marker 的旧 sidecar 追加在末尾；该 helper 同时用于确认编辑后的两种排序缓存和回读缺目标的本地 fallback。 |
+| 当前 owner | `src/features/topic/actions/actionHelpers.test.ts`、`tests/ui/topic/topic-actions-controller.test.tsx`；回读窗口继续由 `tests/ui/topic/topic-session-controller.test.tsx` 承接。 |
+| 修复与边界 | 按既有 NodeSeek marker 解析规则筛选新正文仍引用的投票，再复用来源正文归一；删除全部、删除部分、代码与仅 href 标记均先红后绿，保留的投票留在正文原位置，确认编辑立即清理正倒序缓存。2026-09-20 主模拟器普通 Release buildId `3b9b891326164779be4e04064cbac738` 同一第 37 楼复用 3199/3200：删第一项后立即只剩第二项且位于中间／结束正文之间，删全部后立即无卡片，均未手动刷新；随后刷新读回一致，取得 `LIVE_PASS`。截图为 ignored `.codex-tmp/review-fixes-20260920/ns-final-one-poll.png` 与 `.codex-tmp/review-fixes-20260920/ns-final-no-polls.png`。本项复验没有新建投票或提交选项。 |
+
+## `REG-USER-016` V2EX 用户页以主题回复总数折叠不同活动
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 原站同一用户的不同回复行会链接相同 /t/id#replyN，N 是主题回复总数。parser 将其用作活动 ID 和 floor，controller 按 source:id 合并后吞掉不同回复，且没有读取相邻 reply_content。真实匿名样本中 12 行有两组重复链接。 |
+| 当前 owner | `src/sources/sourceUserRead.test.ts`；页面展示与 Query 合并仍归既有 User owner。 |
+| 修复与边界 | 活动以页、完整正文指纹和同文出现序号区分，读取 .inner/.cell 的相邻正文，移除伪造楼层；同页新插入不同正文和主题总数变化不改旧行 ID。普通反例先红后绿，原站样本 12 行均保留，进入主题沿无 hash 的 topicUrl。原站无稳定回复实体 ID，更新导致行移页时无法精确去重，不新增逐帖补请求。 |
+
+## `REG-TOPIC-182` 表格分块丢弃 caption 中的安全内容
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02` |
+| 历史症状与根因 | sanitizer 保留合法 caption，但 tableRowsForNode 只重建表格行；caption 的标题、链接和图片未进入显示及选择内容。已安装 renderer 也不能直接显示原 caption 标签，仅把标签塞回表格不构成修复。 |
+| 当前 owner | `src/domain/forum/topicContentSplit.test.ts` |
+| 修复与边界 | 在表格前沿现有正文编译路径输出 caption 子内容一次，保留安全边界、preview 和选择顺序；分段表格与 typed directive 分支不重复消费标题。普通内容守恒反例先红后绿；不新增 renderer、row 类型或 colgroup 样式能力。 |
+
+## `REG-USER-017` linux.do 用户摘要误认关联用户或合法空身份摘要
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | Discourse summary 的 root users 是关联用户集合，可能包含徽章授予者，也可能完全没有目标 user。parser 任取 users[0] 会改写资料身份并用错误 username 读取主题/回复；合法 summary 无 user 时又被判 parse_empty。 |
+| 当前 owner | `src/sources/sourceUserRead.test.ts` |
+| 修复与边界 | 只使用明确匹配的关联用户，合法摘要沿用已请求身份，缺失资料不补造；合法结构与错误响应分别核对，不新增 HTTP。协议依据 Discourse 官方 UserSummarySerializer 与 UserBadgeSerializer，普通反例先红后绿。本轮主 AVD 的 Cloudflare checkbox 恢复后 canonical 检测仍未恢复可信读取，当前原站数据轴为 BLOCKED_BY_ENV，不能据此声称真实账号资料已通过。 |
+
+## `REG-DATA-013` 备份净化丢弃合法未知发布日期的本机记录
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-01/02/03`；共享 `USER-01/02`、`TOPIC-01` |
+| 历史症状与根因 | 2026-09-20 再次审查确认：NodeSeek 用户主题解析允许 `createdAt: ''`，UserRoute 传入原摘要，TopicRoute 收藏该摘要，SQLite 可以成功保存；共享 topic schema 却要求正日期，导出会过滤这条收藏，导入合法空备份的合并还会删除本机记录。历史、关注内嵌主题和旧资料迁移共用同一验证边界。 |
+| 处置 | 只有来源发布日期允许明确未知；本机操作时间和非法非空日期仍严格校验，不新增字段、备份版本或补造日期。以前已经丢失的数据无法凭此修复重建。 |
+| 当前 owner | `src/domain/reader/readerData.test.ts`、`src/platform/storage/readerDataStore.test.ts`；合法未知日期边界值 → 保存/导出/合并 → 重开 SQLite 直接读取，领域矩阵展开四来源，既有迁移 owner 覆盖已知和未知日期。来源 parser 的未知日期契约保留在 `src/sources/sourceUserRead.test.ts`，跨 parser/store 的原始审查反例保存于本机 ignored 目录。Android 补充复用 `dev/reader-storage-proof/index.tsx`。 |
+| 失败 oracle 与关闭证据 | 修复前 canonical owner 7 项普通失败；修复后相关 92 项通过（seed `20260920`），另一个随机顺序 71 项通过。日期未知记录保留，缺失/非法日期及保存/关注/删除时间损坏仍拒绝。设备与最终集成结果见 `docs/review-remediation.md` 本轮记录。 |
+
+## `REG-USER-014` V2EX 活动 cursor 误读正文链接和用户名数字
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 原 parser 全文寻找带 p 的链接并提取整个 href 的第一个数字；回复正文的外链 p=99 会制造虚假后页，数字用户名的完整分页 URL 会把用户名数字当页码。主题和回复共用此逻辑，controller 接受非空且前进的错误 cursor。 |
+| 当前 owner | 只解析当前用户和活动路径的分页区域，读取唯一正整数 p；拒绝正文、跨站、跨用户、另一活动路径及畸形参数。`src/sources/sourceUserRead.test.ts` 通过真实 reader 验证主题/回复两条入口。 |
+| 失败 oracle 与关闭证据 | 真实 reader 的两个独立普通红分别返回 99 而非 null、2026 而非 2；canonical owner 扩展正常分页和污染对照后转绿。受控 HTTP 不冒充原站当日样本，实际采样和验收边界见本轮修复记录。 |
+
+## `REG-USER-015` 妖火同主题同分钟的不同回复被误去重
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `USER-01` |
+| 历史症状与根因 | 无楼层活动按 topicId 与分钟时间形成身份并再次按 topic/time 去重，同一分钟两段不同正文只保留第一条；controller 的 source/id 合并会进一步延续同一身份错误。 |
+| 当前 owner | 缺楼层时由完整正文参与身份，展示摘要截断不影响区分；仅把有内容条目的无内容重复块折叠，保留同活动跨页去重。`src/sources/yaohuo/parser.test.ts` 与 `src/sources/sourceUserRead.test.ts` 分别承担 parser 和真实 reader 边界。 |
+| 失败 oracle 与关闭证据 | 真实 reader 普通红丢失第二段正文；修复后同分钟不同正文及长正文相同摘要前缀均保留不同身份，有楼层和无内容重复对照继续通过。没有构造真实回复或宣称原站发生频率。 |
+
+## `REG-SEARCH-031` V2EX 深分页越过 SOV2EX 的结果窗口
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-02/04`；共享 `SEARCH-01/03` |
+| 历史症状与根因 | total=1000、批量30时，第33页返回961–990并产生第34页，下一请求 from=990/size=30 违反服务端 from+size≤1000，返回400，最后10条无法读取。过去只验证两页和每次size上限，未覆盖深度边界。 |
+| 当前 owner | `src/sources/v2ex/search.ts` 保持稳定批量计算偏移，末窗缩小请求，达到1000终止；单次批量同时受50上限约束。`tests/integration/source-read-contracts/v2ex.test.ts` 使用真实搜索链，HTTP 替身执行[官方服务端校验](https://raw.githubusercontent.com/gexiao/sov2ex/v2/pkg/server/handler.go)。 |
+| 失败 oracle 与关闭证据 | 修复前普通红在最后10条请求收到400；修复后 960/30 → 990/10 → 无下一页，超过窗口零请求，普通分页和筛选仍通过。确定性协议边界已验证，不将浅页 Live 当作第34页实证。 |
+
+## `REG-OPS-021` 正式发布继承开发 ENTRY_FILE 覆盖生产入口
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `RELEASE-01` |
+| 历史症状与根因 | 发布普通子进程环境只删除签名变量，保留 ENTRY_FILE；React Native Gradle 插件优先使用该环境变量。真实 Gradle 配置取证确认生产 bundle task 可被导向 dev/forum-selection-proof/index.tsx，空值也被透传。不宣称已经签名或发布错误包。 |
+| 当前 owner | 在现有共享子进程环境净化函数移除 ENTRY_FILE（含 Windows 混合大小写），签名变量恢复仍仅发生于签名阶段。`tests/tooling/release-environment.test.ts` 检查实际两阶段环境，保留 unsigned validation 顺序与签名隔离断言。 |
+| 失败 oracle 与关闭证据 | 开发路径、空值、混合大小写三项普通红转绿；相关 tooling 70 项通过（seed `20260920`）。真实 Gradle help 使用修复后 assembleRelease 的环境，bundle task 入口为生产 index.ts，未执行正式发布或签名。 |
+
+## `REG-NOTIFY-075` 私信写请求在代理准备后越过失效的身份检查
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-02`；共享 `ACCOUNT-01`、`MORE-01` |
+| 历史症状与根因 | 2026-09-20 全仓审查确认：notificationGateway 的 accessFor 只在调用 fetcher 前后异步检查身份。真实 networkProxyFetcher 内部还要等待代理准备，等待期间访问授权失效但 signal 尚未取消时，最终 HTTP 仍可发送，返回后才报告账号状态已变化。这是 `REG-WRITE-082` 已修复 Topic/签到入口之外的通知 sibling。 |
+| 实际触发窗口 | Account 的 beginAuthSurface 先同步改认证 surface ref，再排 React 更新；notificationPrivateAccessAllowed 立即读到阻断，NotificationRoute 却要等 canAccessSource/失焦的 effect 才 abort。同一账号/epoch 即可出现这段窗口；若取消已先完成，既有 signal guard 有效，不推断所有切账号都会发送。 |
+| 当前 owner | `tests/ui/more/network-proxy-controller.test.tsx` 运行真实 notification gateway、NodeSeek adapter/action client 和代理 runtime；`src/sources/notificationGateway.test.ts` 展开逐条/全部已读、两站上传及妖火回复；仅替换存储加载、Native 与最终 HTTP。全部为普通行为测试。 |
+| 失败 oracle 与边界 | 代理状态加载 pending 时发起私信回复，进入代理等待后把 privateAccessAllowed 设为 false；释放准备后，预期零 HTTP，实际向 `/api/notification/message/send` POST 一次，再抛出账号状态已变化。普通测试 seed `20260920` 因零发送断言失败；未向真实站点发送消息。其他共用 accessFor 的写操作需在修复时展开，不能直接把本反例算作它们已验证。 |
+| 处置与关闭证据 | 前台来源/身份授权回调收紧为同步判定，共享 accessFor 复用 withRequestBeforeSend 把当前授权检查送至代理准备后的最终 dispatch；保留响应复核、诊断、取消和 401 语义。原真实代理反例与六个真实 adapter sibling 证明失效零写入、有效正常发送；撤去最终守卫时六例全部转红。定向 Vitest 143、UI 132 项固定与随机顺序均通过。实际远端发送、已读和上传本轮未执行，不将受控 HTTP 记为 Live。 |
+
+## `REG-SEARCH-030` 排除词搜索截断已消费页中的合法结果
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `SEARCH-01/02/03/04` |
+| 历史症状与根因 | 2026-09-20 全仓审查确认：`searchRead` 在查询含排除词时把 adapter limit 放大至三倍，再把过滤结果截回原 limit，却沿已经消费完放大页的上游 nextPage 继续读取。被截掉的合法结果不会出现在后页。随后匹配 APK 的 Live 又确认三倍请求把 V2EX size 从 30 放大至 90，超过上游 50 上限并收到 HTTP 400；只删除尾部裁剪不足以闭合真实链路。 |
+| 当前 owner | `src/sources/searchRead.test.ts` 运行真实 V2EX/linux.do reader，并覆盖聚合消费；`tests/ui/search/search-controller-ai.test.tsx` 从真实 controller → managed gateway → HTTP 证明概览切单站再读至终页的结果守恒，并拒绝超过官方 size 上限的请求；`tests/ui/search/search-screen.test.tsx` 证明空中间页手动继续与无自动续页。全部为普通行为测试。 |
+| 失败 oracle 与边界 | 查询 `keep -excluded`、limit 2，上游 8 条全合法，读到终页仅收到 1、2、7、8，丢失 3–6；固定 seed `20260920` 普通测试因结果不守恒失败。生产单站 V2EX limit 30 同样进入该分支；其他来源共享截断 seam，但本次没有原站 Live 样本。 |
+| 处置与关闭证据 | 删除三倍过取、共享单站后过滤及聚合合并的二次截断；limit 保持调用方批量，消费一页后交付全部合法命中，概览仍裁为两条。空中间页用既有 hasMore/nextPage 提供手动继续，不自动扫描、不增加缓存或跨层字段。V2EX/linux.do、聚合、HTTP 参数边界与真实页面链均有修复前红例；110 条原始结果最终保留全部 94 条合法命中且旧列表保持完整前缀。完整自动与设备结果见 [2026-09-20 修复记录](review-remediation.md)。 |
+
+## `REG-FEED-033` 匿名不可用来源使聚合首页持续空分页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `FEED-01` |
+| 历史症状与根因 | 2026-09-20 全仓审查确认：聚合 Feed 为当前不可用的来源持续保存原页重试 cursor；其他来源到达末页后依然返回 hasMore，外层 page 每次增加而 cursor 不变。gateway 隐藏匿名妖火的预期授权错误后，页面只见可继续加载的空成功页。 |
+| 当前 owner | `src/sources/readGateway.test.ts`、`src/sources/feedRead.test.ts` 运行真实 read plan、gateway 与聚合读取；`tests/ui/feed/feed-controller-session.test.tsx` 覆盖匿名终止、登录恢复与退出移除，全部为普通行为测试。 |
+| 失败 oracle 与边界 | 只启用 linux.do 与妖火、两站匿名、linux.do 返回合法空终页；两轮均 items 空、errors 空、hasMore 为真，page 2→3 而妖火 cursor 固定在页 1，实际网络只有一次。普通测试固定 seed `20260920` 因无法到达终态失败。未做设备或 Live 验收，不把逻辑空分页推断为原站请求风暴。 |
+| 处置与关闭证据 | 聚合请求、旧 buffer 与 cursor 只包含当前 ReadPlan 可读取的来源，删除对 unavailable 来源制造伪请求失败并保留重试页的路径；真实网络失败/超时继续保留重试页。凭据 epoch 变化沿既有 Query scope 重建计划，不增加 UI 页数上限。Gateway 与真实 Feed controller 红例转绿，负向撤去过滤后两者均转红；定向 Vitest 固定 112、扩展随机 121 项，UI 固定 49 项通过。主设备不退出账号制造匿名状态，该分支由受控 owner 验证。 |
+
+## `REG-NAV-006` 迟到的启动链接覆盖新的链接目标
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NAV-02/03` |
+| 历史症状与根因 | 2026-09-20 全仓审查确认：`useAppDeepLinkNavigation` 的 getInitialURL 只判断组件是否仍挂载；较新的 warm URL 已到达后，旧 initial URL 仍可执行。导航已就绪时旧目标再次压栈，未就绪时旧目标覆盖 pending destination。 |
+| 当前 owner | `tests/ui/app/app-deep-link-navigation.test.tsx` 使用真实 hook 与 URL parser；普通 cold/warm、四站完整目标、pending→ready 与交错时序共同由普通行为测试拥有。 |
+| 失败 oracle 与边界 | warm 主题 222/#9 先到，cold 主题 111/#3 后返回，再把导航设为 ready；最终错误打开 111/#3。普通测试 seed `20260920` 为 12 通过、1 预期断言失败。另一个临时探针确认已 ready 时也会覆盖；未做 Android intent 实境重放。 |
+| 处置与关闭证据 | 在同一订阅生命周期内记录是否已接受有效目标，迟到 initial URL 不覆盖它；每个新有效目标先结算并清除旧 pending，卸载时清空残留；不支持的 URL 不废弃有效启动目标。导航未就绪/已就绪的两个迟到 cold 场景及 warm 已打开后重放旧 pending 的三个普通红例均转绿。该 owner 固定 seed 16 项通过，连同导航组合随机 seed 31 项通过；没有增加跨页面导航状态或兼容层。 |
+
 ## `REG-WRITE-090` NodeSeek 新回复定位到旧的同文回复
 
 | 字段 | 内容 |
@@ -81,7 +262,7 @@
 | 能力 ID | `ACCOUNT-01/04`、`TOPIC-01/03`；共享 `NOTIFY-01` transport |
 | 历史症状与根因 | 2026-09-14 用户报告当天未使用网页，仅 App 阅读后访问记录与等级未更新。已确认账号检测与 timings 缺少 `Discourse-Present`，Reader 却固定为 true，等级 JSON 还缺 XHR 标识；这是活跃语义不一致的协议缺口，不能据此断言等级统计只有这一处原因。 |
 | 处置 | App 在现有代理就绪之后、实际 fetch 之前装配来源修饰函数，精确匹配 linux.do XHR；前台且最近真实交互不足 60 秒才带 Present。复用 AppState 和一个进程内单调时间戳，移除 Reader 固定头；保留访问、阅读计时、批次、取消和重试语义。JS 修饰后与 Native 实际 request-headers-end 记录同请求 ID 的布尔值。 |
-| 当前 owner | `tests/ui/more/network-proxy-controller.test.tsx` 的真实 Account/reading/transport 组合；`src/sources/linuxdo/presence.test.ts`；`tests/ui/app/app-lifecycle-request-timeout.test.tsx`、`tests/ui/shared/modal-sheet-frame.test.tsx`、搜索与结构化编辑器既有 UI owner；生成的 `NetworkProxyRuntimeTest` 实际发送头诊断。 |
+| 当前 owner | `tests/ui/more/network-proxy-controller.test.tsx` 的真实 Account/reading/transport 组合；`src/sources/linuxdo/presence.test.ts`；`tests/ui/app/app-lifecycle-request-timeout.test.tsx`、`tests/ui/shared/modal-sheet-frame.test.tsx`、搜索与结构化编辑器既有 UI owner；模块内 `NetworkProxyRuntimeTest` 实际发送头诊断。 |
 | 修复证据 | 修复前组合链三次实际请求的 Present 均为 null，期望 true 的行为 oracle 失败；修复后通过。59/60 秒、后台/未知/恢复、等待代理、CSRF 重试、请求内容及诊断关联另有协议与 UI 证据。 |
 | 本次验证 | `STATIC_PASS`：lint、typecheck、架构与文档检查。`UNIT_PASS`：相关来源/阅读/诊断/编辑器 199 项（seed 1789351803825），补充通知隔离与取消 35 项（seed 1789351933894）；fresh prebuild 后 Release Kotlin 编译及 Native 诊断 6 项通过。`UI_PASS`：Account、阅读 transport、生命周期、Modal、搜索和编辑器 113 项（seed 967150168）；新增通知 transport 与组合层复核 69 项（seed -518922577）。各轮含重复 owner，不相加作独立测试总数。 |
 | 可见模拟器补验 | 2026-09-14：`WZ_Pixel_API_35 / emulator-5554` 以保留数据冷启动恢复旧 Quick Boot 的 heartbeat=0/ADB offline。开发签名 x86_64 Release `1.3.143/147`，buildId `a4d4611c74714381b5b9c92be017b2d8`，APK 与设备 SHA-256 同为 `a7ada10674d058285a7d8a00f1b5b86dc72f9010f6d671cdc29bb287632460e9`；仅覆盖安装，证书一致，`firstInstallTime=2026-07-26 16:51:37` 不变。`LIVE_PASS` 仅限标记发送：前台账号 `request-23/trace-56` 与通知 `request-15/trace-42` 均在 JS transport 和 Native request-headers-end 记录 Present=true；独立后台认证请求 Native Present=false。进入 More、展开账号、切站和刷新按钮可操作。 |
@@ -225,7 +406,7 @@
 | 能力 ID | `ACCOUNT-01`、`SEARCH-02/04`、`WRITE-01`、`TOPIC-01/02/03`、`MORE-01/02` |
 | 历史症状与根因 | 2026-09-09 用户诊断在 12:23、12:57、13:09（北京时间）三次账号核对为匿名，之前通知/操作已提示登录失效；未发现 App 主动 clear 事件。原生默认响应保存 no-op 确认丢弃续期，但现有日志没有原始响应更新证据，不能断言它是三次失效的唯一原因。 |
 | 修复范围 | 仅合格 L 站原站响应受控转交 Android CookieManager；保留默认只读 Jar、禁止快照与手工凭据、按站显式清除、RN/Fresco 容器和代理隔离；原生 revision/基线与账号屏障拒绝旧响应。 |
-| 当前 owner | `plugins/network/ManagedCookieResponsesTest.kt`、`plugins/network/ManagedCookieResponsesInstrumentedTest.kt`；既有 `plugins/withNetworkProxyModule.js` 生成 `NetworkProxyRuntimeTest`；`src/features/account/useVerificationController.test.ts` 与 `tests/ui/account/account-runtime.test.tsx`。 |
+| 当前 owner | `modules/forum-platform/android/src/test/java/com/wz/reader/network/ManagedCookieResponsesTest.kt`、`modules/forum-platform/android/src/hostTest/java/com/wz/reader/network/ManagedCookieResponsesInstrumentedTest.kt`；模块内 `NetworkProxyRuntimeTest`；`src/features/account/useVerificationController.test.ts` 与 `tests/ui/account/account-runtime.test.tsx`。 |
 | 失败 oracle | 实际 HTTP 服务先发凭据 B、下次只接受 B；2026-09-09 修复前 native 测试 expected 200 / actual 401，修复后成功。Cookie 值仅为合成测试数据。 |
 | 续期修复证据 | 2026-09-09 原生实际 HTTP 轮换及隔离测试 9 项、既有网络 runtime 77 项、独立 AVD instrumentation 4 项通过。最终候选 `1.3.140/144`、buildId `d7303c65c98c4f289465703bca7aa9f9` 在保留登录的主 AVD 上观察 14:32:05—14:52:28（北京时间，20.4 分钟，超过两个上游默认轮换间隔）；14:37:04、14:47:08 实际应用原站更新，14:48:22 与 14:51:58 后续独立账号核对确认已登录。搜索、通知列表、主题读取及前后台切换成功，窗口内未出现 App clear、写入失败或账号转匿名事件。 |
 | 剩余证据缺口 | 响应续期缺失已有修复与真实更新证据；原始三次失效是否全部由该缺陷导致仍无法归因，频繁失效事故保留 `EVIDENCE_GAP`。真实回复、物理 ARM64 安装与长期登录留存保持 `NOT_VERIFIED`；不清登录态制造场景，不发送真实回复。 |
@@ -2007,7 +2188,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`SEARCH-01`、`SEARCH-02`、`SEARCH-04`、`TOPIC-01`、`TOPIC-03`、`USER-01`、`ACCOUNT-01`、`ACCOUNT-02`、`MORE-01`、`WRITE-01`、`WRITE-03` |
 | 历史症状与根因 | App 读取原站 Cookie 发起请求后，服务端响应的 `Set-Cookie` 又经 React Native 默认 CookieJar 改写 WebView 会话，导致账号状态、原站页面和后续请求相互污染。若为隔离 Cookie 另建 client，还可能绕过代理 fail-closed 与既有连接资源；根因：`src/platform/network/request.ts` 的受管 credentials 边界、`src/sources/readGateway.ts` 的 public `native-no-cookie` 最外层边界与 `plugins/withNetworkProxyModule.js` 生成的共享 OkHttp client 必须共同表达两条不同 lane。 |
-| 当前 owner | `src/platform/network/request.test.ts` 与 `plugins/network/ManagedCookieResponsesTest.kt`；旧的“一律禁止响应写入”已收窄为“默认 Jar 不写，仅合格 L 站原站响应可写”，其他隔离继续保留。 |
+| 当前 owner | `src/platform/network/request.test.ts` 与 `modules/forum-platform/android/src/test/java/com/wz/reader/network/ManagedCookieResponsesTest.kt`；旧的“一律禁止响应写入”已收窄为“默认 Jar 不写，仅合格 L 站原站响应可写”，其他隔离继续保留。 |
 
 
 ## `REG-ACCOUNT-028` 空凭据被动读取误清可信身份
@@ -2037,7 +2218,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `FEED-01`、`SEARCH-01`、`TOPIC-01`、`TOPIC-02`、`USER-01`、`ACCOUNT-01`、`MORE-01`、`WRITE-01` |
 | 历史症状与根因 | 当前 Android 包连接 Metro 后在 `MainActivity` 显示 “There was a problem loading the project”，堆栈为 `JavaNetCookieJar cannot be cast to CookieJarContainer`；若只换成默认可变容器规避崩溃，RN/Fresco 又会恢复可写 `ForwardingCookieHandler`；根因：`plugins/withNetworkProxyModule.js` 生成的共享 OkHttp client 同时承担 RN Networking、Fresco、Expo Image、代理和 WebView Cookie 只读边界，却没有满足 RN 的容器生命周期契约。 |
-| 当前 owner | `plugins/withNetworkProxyModule.js` 生成的 `NetworkProxyRuntimeTest`；容器继续拒绝 RN/Fresco 替换，合格 L 站响应通过独立受控入口，不恢复默认可写 delegate。 |
+| 当前 owner | 模块内 `NetworkProxyRuntimeTest`；容器继续拒绝 RN/Fresco 替换，合格 L 站响应通过独立受控入口，不恢复默认可写 delegate。 |
 
 
 ## `REG-ACCOUNT-031` 登录页面打开即破坏会话，关闭后又继续信任旧账号
@@ -4620,7 +4801,7 @@
 | 状态 | `OPEN` |
 | 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-04`、`NOTIFY-03` |
 | 历史症状与根因 | 2026-09-10 用户两次导出显示：刚确认登录后重启，分类响应应用 Cookie，首页响应因 stale 被拒绝，随后通知 JSON 403 login_required；日志未见主动清除事务。已用修复前失败的实际 HTTP 并发测试确认客户端缺陷：任意响应推进共享 revision、整份 Header 基线检查都会误丢同账号在途更新；原生响应也缺少明确 flush。现拆开隔离代次与回写序号，正常更新按平台语义串行应用，并补充回调恢复、落盘与诊断。但旧日志没有被丢弃 Cookie 的类别/设置或删除证据，不能断言该响应一定是登录续签，也不能排除服务端独立失效。历史事故继续开放，待真实登录自然续签至少两次、重启及协议核对闭环。 |
-| 当前 owner | `plugins/network/ManagedCookieResponsesTest.kt`、`plugins/network/ManagedCookieResponsesInstrumentedTest.kt`、`tests/ui/account/account-runtime.test.tsx` |
+| 当前 owner | `modules/forum-platform/android/src/test/java/com/wz/reader/network/ManagedCookieResponsesTest.kt`、`modules/forum-platform/android/src/hostTest/java/com/wz/reader/network/ManagedCookieResponsesInstrumentedTest.kt`、`tests/ui/account/account-runtime.test.tsx` |
 | 2026-09-10 新包现场 | 主 API 35 AVD 在 16:20:31（北京时间）手动登录后 current-user 核对成功，WebView 交接 flush 成功；16:23:33 再次核对成功。16:27:06 通知请求发送时 hasLoginCookie=true，响应 403/login_required、Set-Cookie 数为 0。16:29:39 账号请求仍带登录 Cookie，响应 404 并明确下发 login/delete/expired；平台接受后 hasLoginCookie=false，flush 成功，账号按 session-404 变为 anonymous。同一进程内，交接后此前原生响应没有 login/set、拒绝续签或写入/落盘失败；未发生显式清除。用户确认未在其他设备退出、结束会话或修改安全设置。该次删除有服务端指令证据，但服务端失效原因、WebView 内部不可见更新及原手机事故仍未归因；两次自然续签后的重启验收未完成，不能关闭事故。 |
 | 后续对照与通过范围 | 同日再次手动登录后，网站 WebView 保持约 11 分钟、三次普通刷新仍登录，期间零原生请求/回写；16:44:36 原生账号核对成功。16:54:38、17:04:38 两次通知响应明确下发 login/set/persistent，分别得到平台接受、凭据变化及 flush 成功记录；两次更新后的账号接口均确认已登录。加入首页、图片及主题读取后仍正常，17:05 保留数据冷启动 PID 29412→32037，17:06:08 新进程 current-user 200 并持久化 confirmed。该条续签→落盘→重启认证链为 `LIVE_PASS`；早先 16:29 的失效原因及原手机事故仍未关闭，不把后续一次成功对照当作排除间歇故障。 |
 | 2026-09-18 客户端补修 | 修复前真实 HTTP 取消实验中，下次请求仍发送 A 而非续签 B；手动检测测试确认 WebView 交接前已发身份请求。现统一卸载→交接→核对，并接受已收到的同代合格响应，不因消费者取消而丢弃；交接回调或 flush 失败不再放行，账号页刷新可重试且不会永久 busy。隔离 AVD 中，真实安装依赖的 WebView 在收到 Cookie B 后于加载完成前销毁，进程重启仍读到 A；正常完成与异步网络错误路径可持久化。现于既有 RN WebView source patch 的 destroy 入口补平台 flush，覆盖提前取消；该受控缺陷不证明手机事故由隐藏 WebView 引起。9 月 17 日日志两次请求携带登录 Cookie 后收到服务端明确删除，不能用这两处缺陷替代服务端归因；本条保持 OPEN，原手机自然续签与外部浏览器对照仍需现场证据。 |
@@ -5184,7 +5365,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-02`、`NAV-03` |
 | 历史症状与根因 | 真机系统 `font_scale=0.9` 时，妖火 `bbs-1577052.html` 的可测量行内 GIF 保持原 DIP 尺寸，文字布局为它保留的宽度却缩小，导致 #3249 的“你也一天一帖吗”和 #3247 的“我不服……”被图片覆盖；恢复默认字体或其他默认字体设备正常。根因是 React Native 0.81.5 Fabric 的两条 Spannable 构造路径把 inline View 的 DIP 宽高经 `PixelUtil.toPixelFromSP` 转换，系统小字体只缩小占位而不缩小真实子 View。当前 patch 精确回移 React Native `551d12a`：两条路径统一使用 DIP 转换并向上取整；既有 `CustomLineHeightSpan` 修复继续独立负责固定行高不得压缩含 inline View 的高行。未增加妖火、GIF、设备、楼层或字体禁用特判。 |
-| 当前 owner | `patches/react-native+0.86.3.patch` 内的 `TextLayoutManagerInlineViewSizeTest`、`tests/tooling/react-native-inline-image-events-patch.test.ts`、`tests/ui/topic/topic-image-loading.test.tsx` 与 `tests/live/agent-live.md` 的 `bbs-1577052.html` 小字体/默认字体真机验收 |
+| 当前 owner | `patches/react-native+0.86.3.patch` 内的 `TextLayoutManagerInlineViewSizeTest`、`patches/react-native+0.86.3.patch` 中的 `ReactImageViewEventTest`、`tests/ui/topic/topic-image-loading.test.tsx` 与 `tests/live/agent-live.md` 的 `bbs-1577052.html` 小字体/默认字体真机验收 |
 
 
 ## `REG-TOPIC-142` textual 普通图片迁移丢失块图能力与稳定几何
@@ -5377,6 +5558,7 @@
 | 历史症状与根因 | Feed → 空态 Search 多次出现约 42–53ms 帧；“最近搜索”标题和全部记录原先作为 `FlashList.ListHeaderComponent` 的普通子树一次性挂载，最多 20 条记录绕过 item virtualization。记录迁入 typed list data、恢复原单张圆角分组外观并消除相邻点击区重叠后，最终匹配 SHA 的 Release 三批各 10 次往返 p95 为 `23.484/23.377/23.265ms`，worst 为 `33.642/26.996/27.162ms`，两项数值门槛均通过；但按 `FrameCompleted > FrameDeadline` 统计，两个方向仍分别出现最长 `2–3` 帧与 `9` 帧连续 miss。因此 Header 的结构性 owner 已收口，完整 `NAV-01` 性能门槛尚未关闭，不能再把剩余 deadline miss 归因给最近记录或叠加 memo/延时。 |
 | 当前 owner | `tests/ui/search/search-screen.test.tsx` 与 `docs/operator-runbook.md` 的 Search Release 性能回归 |
 | 失败 oracle | 匹配 APK 在主登录态 AVD 上执行三批、每批 10 次 Feed → Search → Feed，任一批 p95 `>25ms`、worst `>35ms` 或出现连续两帧 missed deadline 即保持 `OPEN`；同时要求最近记录是稳定 typed items、UI 与原分组一致、相邻 `48dp` 点击区不重叠。 |
+| 后续核对 | 2026-09-20 最终普通 Release APK `93dc6c74…` 预热后三批各10次往返，按 post-dump reset 时间排除旧帧，并按单次转向统计连续 miss。三批 p95 为 `23.184/23.106/23.220ms`，worst 为 `33.985/33.385/26.268ms`，最长连续 miss 为 `35/34/34`，故仍 `OPEN`。独立 Perfetto 456帧中440为 Prediction Error/Early、1为 App Deadline Missed/Late 组合，未建立 React 重复渲染因果；真实导航/controller 的受控 Profiler 无重挂载或累积更新，另一次录屏780帧未检出整块闪白，均不能替代帧门禁。取证范围与限制见 `docs/review-remediation.md`“持续复审与性能核对”。 |
 
 
 ## `REG-PERF-025` 千图 Topic 的 Glide 巨大解码工作集并可拖死模拟器
@@ -5386,11 +5568,11 @@
 | 状态 | `OPEN` |
 | 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`NAV-03` |
 | 历史症状与根因 | NodeSeek `post-863650-1` 的历史 Release 样本曾出现 Feed `+172,595KB`、`Cannot add callbacks to a cancelled EngineJob`、App PID 退出和模拟器失去响应；有效 heapprofd 样本在 5 次滚动中记录约 1.14GB 总 malloc、仅约 12MB 净留存，Release mapping 将主链还原为 Glide `DecodeJob`、`BitmapFactory.decodeStream` 与 `SkJpegCodec`，说明主要风险是巨大解码工作集和分配抖动，而非持续 JS 泄漏。Glide 5.0.9 与当前 compileSdk 36 不兼容，Glide 5.0.5/回收池 40 保持固定。恢复版 APK 的本轮同条件冷启基线为 Feed `254,970KB`，同 PID 两轮 40 下/40 上的采样峰值 `487,861KB`，返回 Feed 60 秒 `358,337KB`，gfxinfo p95/p99 `18/21ms`，无 Fatal、ANR、OOM 或 EngineJob。随后已完成 `REG-TOPIC-144` 的代码修复（该条目仍等待完整设备证据关闭），并在现有 expo-image patch owner 中把 resize rerender 投递到下一主线程任务，以 generation、attach 与最终宽高丢弃 stale task；Release Kotlin、expo-image Release unit test 和 x86_64 APK 均已构建通过。候选 APK `c63fdc4d…` 经授权覆盖安装后，等待 Package Manager handler 与磁盘同步，再关闭同一 `WZ_Pixel_API_35` 并以 `-no-snapshot-load -no-snapshot-save` 冷启；后续各次冷启均保持相同 APK SHA、`1.3.134/138`、`firstInstallTime=2026-07-26 16:51:37` 与登录数据。两次完整独立候选流程均在同一 App PID 内完成两轮 40 下/40 上：其 Feed/采样峰值/返回 Feed 60 秒分别为 `254,352/428,885/352,410KB` 与 `254,142/464,721/362,399KB`，gfxinfo p95/p99 分别为 `18/21ms`、`16/19ms`，jank 为 `0.51%`、`0.38%`，均无 Fatal、ANR、OOM、EngineJob 或网络异常；原生树保持约 `61–62` 节点，顶部、5 步、中段和反向截图未见空白、4:3 回退、比例/行高/圆角/间距变化。第三次独立冷启先出现可关闭的既有 linux.do 登录 WebView，按关闭后的 Feed `296,147KB` 归一；第一轮及第二轮下行完成，第二轮反向约第 26–30 步时整个 emulator/qemu 进程退出，宿主 Android Emulator 36.5.11 同分钟生成 `48,356,112` 字节 crash dump，故该轮记 `BLOCKED_BY_ENV`，不能当成 App Fatal，也不能关闭总体容量问题。再次冷启后 APK/数据仍完整，候选 7/7 只读 Replay 全部通过。 |
-| 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`tests/tooling/expo-image-resize-patch.test.ts` 与 `docs/operator-runbook.md` 的唯一重图 Release 非回退流程 |
+| 当前 owner | `tests/ui/topic/topic-image-loading.test.tsx`、`tests/ui/topic/topic-reply-filters.test.tsx`、`patches/expo-image+57.0.4.patch` 中的 `ExpoImageViewWrapperTest` 与 `docs/operator-runbook.md` 的唯一重图 Release 非回退流程 |
 | 失败 oracle | 只在主登录态 `WZ_Pixel_API_35` 对 `post-863650-1` 执行同条件流程；以基线三轮中位数及最大自然偏差判断 PSS/帧/重复请求非回退，首次同方向超出后补一轮复测。新增或更早出现的空白、比例/行高变化、重复 identity 请求、OOM、ANR、Fatal、PID 退出或模拟器失去响应直接保持 `OPEN`；新旧均触发独立 `system_server`/AVD 故障时记 `BLOCKED_BY_ENV`。历史绝对 MB 数值只作观察，不撤销已通过行为 oracle 且性能中性的正确性修复，也不用其他图片帖稀释或替代该对象。 |
 
 
-## `REG-NOTIFY-061` 通知详情失败态前往主题时把点击事件当成主题
+## `REG-NOTIFY-069` 通知详情失败态前往主题时把点击事件当成主题
 
 | 字段 | 内容 |
 | --- | --- |
@@ -5433,7 +5615,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `MORE-01`、`MORE-04` |
 | 历史症状与根因 | 普通 HTTP 请求体已经按 Content-Length 发完，relay 仍立即 shutdownOutput；标准 Node HTTP server 收到请求侧 EOF 后结束尚未发送完的响应。设备更新下载因此在首块 65,536 字节后报 ERR_UNABLE_TO_DOWNLOAD / unexpected end of stream，区间请求应有 32,680,613 字节；既有 fixture 用内部 httpAllowHalfOpen 开关掩盖了这个组合缺陷。 |
-| 当前 owner | `plugins/withNetworkProxyModule.js` 生成的 `NetworkProxyRuntimeTest.kt`：真实 socket、GET/POST 与延迟二进制响应；`tests/tooling/app-update-proof-server.test.ts` 固定标准 HTTP fixture，真实更新下载由 `tests/live/agent-live.md` 的 `LOCAL-UPDATE-01` 验证。 |
+| 当前 owner | `modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt`：真实 socket、GET/POST 与延迟二进制响应；`tests/tooling/app-update-proof-server.test.ts` 固定标准 HTTP fixture，真实更新下载由 `tests/live/agent-live.md` 的 `LOCAL-UPDATE-01` 验证。 |
 | 失败 oracle | 修复前 native owner 期待 65,537 字节但只有 65,536；设备 App 与独立 relay 客户端同样在标准 fixture 下截断。HTTP 请求方向按已验证长度停止 copy，不再提前半关闭；响应完成、错误或共享 deadline 仍由连接 owner 关闭，CONNECT 保留半关闭语义与既有隧道测试。 |
 | 实际设备证据 | 修复后在用户指定的主 `WZ_Pixel_API_35` 验证标准 fixture：暂停、错误区间与 416 均保留 14,017,856 字节；App 重启后 206 恰传剩余 54,322,277。断流保留 34,170,066，续传 34,170,067；带 12,206,976 断点收到 200 时覆盖全量 68,340,133。三条完成路径 SHA 均为 `94b0199ce7a0ddc47b0f62a4fb93481df8c80cca64c82d8396de1b35e414126d`。代理阻断无新增 APK 请求，权限跳转、返回/取消及离线安装重试不重新下载；权限恢复 default，firstInstallTime 保持 `2026-07-26 16:51:37`。这些是受控入口证据，生产 More 的正式新版下载到最终安装仍单列 `NOT_VERIFIED`。 |
 
@@ -5456,8 +5638,8 @@
 | 能力 ID | `TOPIC-02`、`TOPIC-03`、`MORE-01`；诊断展开 `MORE-02`。 |
 | 历史症状与根因 | 2026-09-11 用户导出日志中，两张图片在后台恢复后反复取得同一条先前成功的 HTTP/2 连接，没有响应头；同时另一条媒体连接正常。请求因退出/重开在 30 秒前被取消，重启 App 后新连接约 0.4 秒显示图片。日志不能区分静默断网、客户端状态损坏或阻塞写，也不能据此认定 30 秒定时器失效。已复现的网络层缺口见下行。 |
 | 已确认缺口 | 实际解析的 OkHttp 为 4.12.0、Media3 为 1.9.0。生产 factory 的 TCP DROP oracle 重现旧连接成功→无响应→取消重开仍失败；仅配置 PING 不能救回被阻塞的 HTTP/2 writer。另一个失败 oracle 证明旧 runtime 已退休时匿名图片仍会在新连接上重发。调用方线程中断未被证明是此次手机事故根因。 |
-| 当前 owner | `plugins/network/MediaConnectionHealth.kt` 使用协议 PING 与独立请求头写入 deadline；TLS 关闭直接作用于原始 TCP socket，按 socket 合并关闭，保留平台 TLS 验证。`plugins/withNetworkProxyModule.js` 的发送前 generation guard 阻止退休图片上下文重发；沿用 OkHttp 原有恢复与图片层有限预算，不清 Cookie/cache、不关闭 HTTP/2、不重启或无条件轮换 runtime。 |
-| 失败 oracle | 基线 `24591c27863a855095cbbb5f760276ad9a785aaf` 上静默和阻塞写两用例均在 15 秒失败、仍只有旧连接；PING-only 的阻塞写仍失败。generation guard 前退休图片用例错误成功 1 次，目标为 0 次。canonical owner 为生成的 `NetworkProxyRuntimeTest`，复用 `plugins/network/Http2ImageFaultFixture.kt`，测试标题只描述行为。 |
+| 当前 owner | `modules/forum-platform/android/src/main/java/com/wz/reader/network/MediaConnectionHealth.kt` 使用协议 PING 与独立请求头写入 deadline；TLS 关闭直接作用于原始 TCP socket，按 socket 合并关闭，保留平台 TLS 验证。`modules/forum-platform/android/src/main/java/com/wz/reader/network/NetworkProxyRuntime.kt` 的发送前 generation guard 阻止退休图片上下文重发；沿用 OkHttp 原有恢复与图片层有限预算，不清 Cookie/cache、不关闭 HTTP/2、不重启或无条件轮换 runtime。 |
+| 失败 oracle | 基线 `24591c27863a855095cbbb5f760276ad9a785aaf` 上静默和阻塞写两用例均在 15 秒失败、仍只有旧连接；PING-only 的阻塞写仍失败。generation guard 前退休图片用例错误成功 1 次，目标为 0 次。canonical owner 为模块内 `NetworkProxyRuntimeTest`，复用 `modules/forum-platform/android/src/testShared/java/com/wz/reader/network/Http2ImageFaultFixture.kt`，测试标题只描述行为。 |
 | 受控结果 | 初轮完整原生 83 项通过：明确断连约 2ms 开始恢复；静默失联约 7.98 秒建新连接、8.00 秒收完小图；阻塞写约 4 秒，HTTPS 约 4.01 秒。两个消费者最终共用同一新连接；实际可能建 3 条 TCP（旧连接、采用的新连接、被 OkHttp 合并丢弃的候选）。另一条正常连接在恢复期间完成 12 秒慢响应；持续下载 33,792 字节耗时 32.23 秒，仍共用原连接；完全断网仅 2 条连接后进入一个失败终态。夹具收尾断言请求、响应体、线程与退休 executor 释放。最终完整原生 84 项、RN wiring 2 项通过；补充退休失败必须交给 Fresco/Glide，不能伪装成消费者取消。 |
 | 设备与边界 | 独立 `WZ_ImageRuntime_Test_API35` 的 instrumentation 7 项通过，另有 Cookie 持久化写入/重启读取各 1 项通过。真实 Fresco/Glide HTTPS 小图：静默失联 8.045 秒显示 2 张、写阻塞 4.049 秒显示 2 张；平台确实进入阻塞 raw write。退休场景 8.014 秒收到 2 个失败，显示 0、旧上下文重发 0；普通恢复不重启 App、不更换 runtime。正常开发 APK 只读浏览通过，范围见下行；实体手机仍未复测。时间门限仅用于健康新连接可用的受控环境。 |
 | 正常 APK / Live | `APK_SANITY`：开发签名 Release 1.3.142/146，buildId `13abb56e07024a4a81cecda54870b7bd`，SHA-256 `1029b7c5eeb20e34d3696bea3152cd3b7c7a46ef20cd17543ee9b6f8b821fd40`；正常 manifest 不带测试网络配置。同签名覆盖主 AVD 后 firstInstallTime 仍为 `2026-07-26 16:51:37`，网站登录 3/3、来源 4/4、代理关闭与浅色 100% 保留。`LIVE_PASS`：NodeSeek `post-863650-1` 正文多图、1/1381 预览重开、滚动回收、后台至少 10 秒后恢复；linux.do `t/topic/342888` 的 inline 图及 1/93 预览正常。PID 始终 7027，当前进程日志未检出 Fatal/ANR/OOM/连接泄漏。未保存图片或作远端写入。 |
@@ -5471,7 +5653,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `TOPIC-02`、`TOPIC-03`、`MORE-01`、`ACCOUNT-01` |
 | 历史症状与根因 | 关联 `REG-PROXY-010` 的运行时轮换遗漏：Fresco 初始化后同时持有旧 OkHttp client 与其取消执行器；Glide 已创建的 loader/fetcher 仍可持有旧 client，轮换时重新注册不能更新这些对象。旧 executor drain 后，新图片请求报 `executor rejected`，普通重试继续使用同一个失效入口；SVG 创建 Call 与发送之间也存在退休竞态。真实生产 Glide loader 的修复前测试失败，稳定 factory 接入后同一行为通过。手机日志只证明轮换后图片反复失败且重启恢复，缺少旧会话原生异常栈，未证明该事故根因。 |
-| 当前 owner | `plugins/withNetworkProxyModule.js` 生成的 `NetworkProxyRuntimeTest`；RN 注入 wiring 由 `patches/react-native+0.86.3.patch` 中的 `ReactOkHttpNetworkFetcherTest` 负责，设备链路由同 plugin 生成的 `NetworkImageRuntimeInstrumentedTest` 负责。 |
+| 当前 owner | 模块内 `NetworkProxyRuntimeTest`；RN 注入 wiring 由 `patches/react-native+0.86.3.patch` 中的 `ReactOkHttpNetworkFetcherTest` 负责，设备链路由本地模块 `modules/forum-platform/android/src/hostTest` 的 `NetworkImageRuntimeInstrumentedTest` 负责。 |
 | 现场证据边界 | 2026-09-08 的 V2EX 后续现场：实体手机保留原进程时，混排图片仍失败且点按重试未恢复；同期 generation 1 的媒体请求返回 200。该入口走 Fresco，失败后另经 SVG 兼容探测请求；现有记录未关联图片显示失败与具体网络 Call，且安装包未输出该图片的原始异常，故成功请求不能排除旧客户端缺陷，也不能据此认定解码故障。实体手机事故归因仍为 `NOT_VERIFIED`。 |
 
 补充诊断时通过实际 RN Android Image 组件确认：0.86.3 的单对象 source 分支遗漏 header 转发，导致 Fresco 收不到来源及图片关联标记。现有 RN patch 已补齐该分支，`tests/ui/shared/android-image-headers.test.tsx` 保留修复前失败、修复后通过的行为证据；Native owner 同时验证标记在传输前移除、响应读取与 lease 终态。该遗漏是已确认代码缺陷，仍不等同于原手机事故归因。
@@ -5549,7 +5731,7 @@
 | 验证 | `STATIC_PASS`：typecheck、架构、lint、格式和 diff；`UI_PASS`：236 项。`APK_SANITY`：1.3.141/145、buildId `4da7bf4b63bc4f05afd65e90d5a62d22`，APK SHA-256 `9c36aecca4f585c6c096dbd7f5dc60d83de9ab8bac5f6d89c142bd667bf10ca7`，同签名覆盖安装，firstInstallTime 保持 `2026-07-26 16:51:37`，三站登录保留。`LIVE_PASS`：匹配构建重新打开用户指定互动通知，Emoji 回到原位置随文字换行；关联帖子与返回详情核对。 |
 | 验证边界 | 本轮设备为 API 35 模拟器、浅色/100%；深色、130% 和失败回退由 UI 测试覆盖，实体机与 tracked Replay 为 `NOT_VERIFIED`；前次六样本通过不代表已覆盖全部媒体形态。 |
 
-## `REG-TOPIC-157` L 站续读等待期间缺少正常帖子头部
+## `REG-TOPIC-174` L 站续读等待期间缺少正常帖子头部
 
 | 字段 | 内容 |
 | --- | --- |
@@ -5576,7 +5758,7 @@
 | 性能边界 | 同一主 AVD、同 Release 构建类型、同原帖，三轮水平往返 gfxinfo 帧耗时 P95：修改前 23.6–24.3ms，修改后 23.2–23.4ms；修改后微斜为 23.3–23.7ms。旧微斜因停更几乎不产帧，不能拿它作流畅度基线。该短帖路径未见持续回退；跨行、自动横纵滚、菜单恢复的独立性能对照及实体机触感/高刷新率仍为 `NOT_VERIFIED`，不声明完整性能矩阵通过。 |
 | 安装与交付 | `APK_SANITY`：本地开发 assembleRelease 1.3.141/145，SHA-256 `375cd2316d300bc21bd523d7209a6bb8ce3e587e78b4f9cddb591549892123dc`；同签名覆盖安装，firstInstallTime 保持 `2026-07-26 16:51:37`，当前 PID 无 JS/Native fatal。未执行版本递增、正式 release、提交或远端写入。 |
 
-## `REG-WRITE-075` 长图回复使用块间光标且上传后丢失可输入位置
+## `REG-WRITE-091` 长图回复使用块间光标且上传后丢失可输入位置
 
 | 字段 | 内容 |
 | --- | --- |
@@ -5819,14 +6001,14 @@
 | 设备验证 | 用户授权更新有数据模拟器至 Chromium 官方测试 WebView 156.0.8062.0，firstInstallTime `2026-07-26 16:51:37` 保持。回补后非诊断 APK 的 NS 半屏富文本连续两次选图取消返回均贴底；4503B 合成 PNG 真实选择、上传、预览成功，返回不弹键盘；全屏源码收起/重开键盘及选图取消通过。L 首次上传尝试后账号变为匿名，冻结设备变更；用户手动重新登录后，真实上传及预览成功，源码保留 `upload://`，源码往返、全屏收起/重开键盘和选图取消通过。两站本次插入均已撤销、未发送回复，收尾账号中心仍为 3/3 已登录。录屏未重现此前工具栏单独裁切或持续悬空；不能据此宣称所有动画帧零卡顿。 |
 | 验收缺口 | `WRITE-04` 的 L/NS 本次样本为 `LIVE_PASS`；`WRITE-01/05` 回复路径有设备录屏，但物理设备、微信失败原始样本及完整编辑/私信/妖火矩阵仍为 `NOT_VERIFIED`，`NOTIFY-02` 不借用回复通过结果。保留 `OPEN` 直到物理设备复核。arm64 测试包 1.3.144 / 148，buildId `709dd17a88ea4b388c0c9ca9dc5eaa89`，签名、16K 对齐和无诊断探针检查为 `APK_SANITY`。 |
 
-## `REG-MORE-005` 新版 WebView 冷启动时代理应用早于内核就绪
+## `REG-MORE-007` 新版 WebView 冷启动时代理应用早于内核就绪
 
 | 字段 | 内容 |
 | --- | --- |
 | 状态 | `RESOLVED` |
 | 能力 ID | `MORE-01` |
 | 历史症状与根因 | 有数据模拟器更新至 Chromium WebView 156 后，冷启动显示代理异常，主题请求报 `Must be started before we block!`。加载 WebView provider 不等于 Chromium 已启动；原生代理事务在内核就绪前调用 ProxyController，重试业务请求不能修复启动失败。 |
-| 当前 owner | `plugins/network/NetworkProxyRuntimeTest.kt` 保有代理事务、超时和隔离行为；原生 `applyProxy` 在现有串行事务内等待 AndroidX `startUpWebView` 成功，再开始代理状态切换。失败沿现有错误路径返回，不清配置或登录态。 |
+| 当前 owner | `modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt` 保有代理事务、超时和隔离行为；原生 `applyProxy` 在现有串行事务内等待 AndroidX `startUpWebView` 成功，再开始代理状态切换。失败沿现有错误路径返回，不清配置或登录态。 |
 | 失败 oracle 与边界 | 更新后的原包冷启动稳定阻断首页和 NS 详情；修复包覆盖安装后冷启动加载首页与 NS 详情，首次安装时间保持。现有原生代理回归 85 项通过，启动顺序另由此真实 APK 冷启动证据验证；未把旧测试计作新启动分支的单测覆盖。物理设备为 `NOT_VERIFIED`。 |
 
 ## `REG-NOTIFY-067` 有界投递扫描覆盖权威未读总数
@@ -5901,7 +6083,7 @@
 | 状态 | `RESOLVED` |
 | 能力 ID | `ACCOUNT-02`、`FEED-*`、`TOPIC-01/03`、`USER-01` |
 | 历史症状与根因 | 鸿蒙/卓易通日志中 L 站 23 次详情请求均有 stored clearance、无 sent clearance；验证后重试仍遭挑战。ReadGateway 的公开通道强制 omit 丢弃全部 Cookie。NS 共享该问题，且检测得到 anonymous 时提前返回、不恢复公开任务。 |
-| 当前 owner | `src/domain/forum/readPlan.test.ts`、`src/sources/readGatewayContract.test.ts`、`plugins/network/NetworkProxyRuntimeTest.kt` 与 `tests/ui/account/account-runtime.test.tsx`。原生真实 HTTP oracle 在模拟验证更新平台 Cookie 后，修复前仍返回 403；NS 未登录恢复 oracle 修复前零 resume。 |
+| 当前 owner | `src/domain/forum/readPlan.test.ts`、`src/sources/readGatewayContract.test.ts`、`modules/forum-platform/android/src/test/java/com/wz/reader/network/NetworkProxyRuntimeTest.kt` 与 `tests/ui/account/account-runtime.test.tsx`。原生真实 HTTP oracle 在模拟验证更新平台 Cookie 后，修复前仍返回 403；NS 未登录恢复 oracle 修复前零 resume。 |
 | 修复与边界 | 原生按每跳准确 URL 读取 CF-only，拒绝账号 Cookie 和跨 origin 传播，保留响应写入边界；NS 允许未登录的当前公开任务恢复，身份变化与取消仍失效。Android 模拟器的已登录与匿名 L 站均完成真实 CF 后恢复原详情；匿名连续打开 5 个帖子并刷新原帖，日志确认验证后 7 次详情请求带最新 CF、无账号 Cookie。NS 真实 CF 与故障鸿蒙真机仍为 `NOT_VERIFIED`，不承诺服务端一定接受既有 clearance。 |
 
 ## `REG-TOPIC-172` 关闭的回复背景拦截详情全部触摸
@@ -5987,3 +6169,161 @@
 | 历史症状与根因 | disabled Query 仍可读到缓存 error；页面无条件展示，旧验证恢复闭包还可通过 QueryObserver refetch 作用到新用户。 |
 | 当前 owner | `tests/ui/user/user-controller-session.test.tsx` |
 | 失败 oracle 与边界 | 同名跨来源、数字 UID、新/同实例、用户名/epoch切换、卸载与迟到响应；修复前旧错误及恢复作用域反例失败。只有当前解析需求和作用域可消费错误及执行恢复，真实当前解析失败仍可重试。 产品反例以 Node 22.22.2 验证；受控测试不代表原站 Live。 |
+
+
+## `REG-TOPIC-175` 首次详情取消后失去恢复入口
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03` |
+| 历史症状与根因 | 页面把后台与路由失焦混用，取消首次请求后又将 reading entry 当成已完成，出现无数据、无请求而持续等待。 |
+| 当前 owner | `tests/ui/topic/topic-route-verification.test.tsx`、`tests/ui/topic/topic-session-controller.test.tsx` |
+| 修复与边界 | 四来源跨后台保留原 deadline，真实失焦取消后可恢复；真实失败返回仍不自动重读。媒体与验证返回授权继续受前台状态限制。 代码与受控行为证据不代表原站 Live；设备结果按本次匹配构建记录单列。 |
+
+
+## `REG-TOPIC-176` 新回复将零基线和未知楼号混为一谈
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-03`、`DATA-01/03` |
+| 历史症状与根因 | 历史缺失被表示为 0，逐楼 New 又由当前窗口最大楼号减去新增数量推断，导致旧楼误标和 0→新增不提示。 |
+| 当前 owner | `tests/ui/topic/topic-reply-filters.test.tsx`、`src/platform/storage/readerDataStore.test.ts`、`src/domain/reader/readerBackup.test.ts` |
+| 修复与边界 | 计数与可缺失的可信水位独立存储，进入时冻结；缺历史、0、未知水位、稀疏楼号、排序/过滤/窗口变化及旧备份往返由行为 owner 验证。 代码与受控行为证据不代表原站 Live；设备结果按本次匹配构建记录单列。 |
+
+
+## `REG-TOPIC-177` 非连续终端报告吞掉中间正文和图片
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/02/03` |
+| 历史症状与根因 | 跨任意 HTML 的终端分组正则以首末小节包围整段，重建时丢弃中间普通节点。 |
+| 当前 owner | `src/domain/forum/contentSanitizer.test.ts`、`src/domain/forum/topicContentSplit.test.ts`、`tests/ui/topic/topic-rich-text-selection.test.tsx` |
+| 修复与边界 | 改为同父节点连续小节 DOM 合并，文字/图片/列表中断分组并原位保留；安全过滤、ANSI 和 magic-tab 继续保留。 代码与受控行为证据不代表原站 Live；设备结果按本次匹配构建记录单列。 |
+
+
+## `REG-TOPIC-178` linux.do 稀疏楼层引用读到相邻帖子
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-03` |
+| 历史症状与根因 | 使用 stream[floor-1] 推算 post ID；删除楼层使 stream 下标与 post_number 分离。 |
+| 当前 owner | `src/sources/linuxdo/reader.test.ts` |
+| 修复与边界 | 按楼号读取目标窗口，唯一匹配 post_number 并校验主题和删除状态，不下载整帖。固定 HTTP 反例在旧实现失败，修复后目标为 25 楼而非 26 楼。 代码与受控行为证据不代表原站 Live；设备结果按本次匹配构建记录单列。 |
+
+
+## `REG-WRITE-092` 投票防重复 journal 并发覆盖及发送前无持久意图
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `WRITE-05` |
+| 历史症状与根因 | AsyncStorage 整数组读改写会丢并发记录，最多 32 条淘汰又会遗忘旧结果；发送后才登记在崩溃/断连时留下重复创建窗口。 |
+| 当前 owner | `src/platform/persistence/nodeSeekPollJournal.test.ts`、`tests/ui/topic/topic-actions-controller.test.tsx`、`src/platform/network/request.test.ts` |
+| 修复与边界 | 独立 SQLite 复合主键和发送前 claim；发送结果不明保留未知，已知结果写回捕获账号且不降级。严格迁移重读后清旧键，ReaderData 操作隔离；不提供冷启动草稿恢复。 代码与受控行为证据不代表原站 Live；设备结果按本次匹配构建记录单列。 |
+
+
+## `REG-NOTIFY-070` 不完整扫描提前建立通知基线
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/03` |
+| 历史症状与根因 | 解析诊断只是旁路，业务把部分或全部解析失败视作可信空/少量结果，推进 baseline 与成功状态。 |
+| 当前 owner | `tests/integration/notification-delivery-contracts.test.ts`、`src/platform/notifications/notificationWorker.test.ts`、`tests/ui/notifications/notifications-route.test.tsx` |
+| 修复与边界 | 必填质量进入来源返回值；后台单来源全轮可信才提交，首次可信扫描静默。前台 partial 有效项可见，invalid 保留精确身份/查询/页的旧内容，未知未读不当成零。 代码与受控行为证据不代表原站 Live；设备结果按本次匹配构建记录单列。 |
+
+
+## `REG-NOTIFY-071` 分页重叠重复摘要与完成来源重新翻页
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/03` |
+| 历史症状与根因 | 摘要按重复扫描行计数；聚合下一游标丢失之前的 null 终态，第三轮重新读取已完成来源。 |
+| 当前 owner | `tests/integration/notification-delivery-contracts.test.ts`、`src/sources/notificationGateway.test.ts`、`src/sources/yaohuo/notifications.test.ts` |
+| 修复与边界 | 先按 source/ID 去重再计算差集与摘要，仍保留原始 60 条预算；保留逐来源终态，游标异常整轮失败。妖火未读总数在末页跨预算时也不得使用截断数。 代码与受控行为证据不代表原站 Live；设备结果按本次匹配构建记录单列。 |
+
+
+## `REG-DATA-011` 旧 settings sidecar 或清理挂起阻断启动
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-02` |
+| 历史症状与根因 | AsyncStorage sidecar 与清理未使用有界等待，已读出的 ReaderData 仍可能无法交付。 |
+| 当前 owner | `src/platform/storage/readerDataStore.test.ts`、`tests/ui/app/app-runtime-startup.test.tsx` |
+| 修复与边界 | sidecar 超过 3 秒沿用默认设置并保留已读资料；旧键清理单独 3 秒，超时留下 cleanup_pending 下次重试，迟到设置不重新发布。SQLite 事务继续串行完成，不超时返回空数据。 代码与受控行为证据不代表原站 Live；设备结果按本次匹配构建记录单列。 |
+
+## `REG-TOPIC-179` 图片销毁或换绑后仍执行旧 resize 任务
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02` |
+| 历史症状与根因 | ExpoImageViewWrapper 在销毁、更换 recyclingKey 或实际 source/placeholder 改变时未更新 resize generation，排队的旧任务仍执行实际清理。同 key 的真实 A→B 换绑出现 [A,B,B] 三次请求；原补丁字符串断言不能发现关键 guard 缺失。 |
+| 当前 owner | `patches/expo-image+57.0.4.patch` 的 `ExpoImageViewWrapperTest`，关联 `patches/react-native+0.86.3.patch` 的 `ReactImageViewEventTest`；patch 适用性仍归 `tests/tooling/patch-artifacts.test.ts`。 |
+| 修复与边界 | 按销毁、recyclingKey 和实际 Glide model 变化同步递增 generation；真实 Activity/View/主队列验证同/不同 key 换绑恰有 A/B 两次请求与事件，旧队列不清理 B，最终 Drawable/source 为 B。同 model 重新包装后的合法 resize 仍执行一次。移除 generation 检查、请求绑定事件或禁合并保护时共 6 个反例失败；source-only 修复另有 1 个真实请求数红灯。恢复后 5 个 Native owner 的 17 项通过。删除两份已被替代的字符串测试；此证据不宣称历史用户设备已经串图，也不代替物理设备显示验收。 |
+
+## `REG-TOPIC-180` SVG 海报复用后丢失页面 URL 身份
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-02` |
+| 历史症状与根因 | 原生静态海报复用 WebView 后，第二张页面 URL 变为 data:，与请求的专属 https URL 不同，严格完成回调校验不能进入稳定帧阶段，最终命中 30 秒总期限。两次渲染之间异步加载 about:blank 后立即开始下一请求，清空尚未提交就再次加载相同内部 data URL；生产源码在模块迁移前后相同，单补 historyUrl 已实测不足以修复。 |
+| 当前 owner | `modules/forum-platform/android/src/hostTest/java/com/wz/reader/svg/SvgRendererInstrumentedTest.kt`，容量边界由 `modules/forum-platform/android/src/test/java/com/wz/reader/svg/SvgRendererPolicyTest.kt` 负责。 |
+| 修复与边界 | 等待当前 WebView 的 about:blank 完成且当前 URL 一致后再开始下一请求，销毁和排队请求全部超时会释放屏障；historyUrl 显式等于请求 pageUrl。保留精确 URL guard、单 WebView 复用和原 30 秒期限。API 35/WebView 124 上，同一真实二请求 owner 从超时转绿，缓存命中、排空销毁和真实像素均通过，动态 SVG 也通过；二请求修复前同样失败，已撤回“批量压力”归因。构建身份与日志见本轮修复记录，其他 WebView 版本未逐一验收。 |
+
+## `REG-NOTIFY-072` NodeSeek 私信最新消息身份未消费 max_id
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-01/03` |
+| 历史症状与根因 | 同账号原站私信列表四行均没有 id，均有唯一正整数 max_id；原站前端将 max_id 映射为 latestMsg.id。App 只认 id，退回时间身份，既可能碰撞，也在质量门禁启用后使正常列表 partial、后台整轮无法提交。直接更换身份又会使旧 fallback 账本把旧未读消息判为新事件。 |
+| 当前 owner | `src/sources/nodeseek/notifications.test.ts`、`src/platform/notifications/notificationStore.test.ts`、`tests/integration/notification-delivery-contracts.test.ts` |
+| 修复与边界 | 私信接受正安全整数数值 max_id，保留 id 优先级与非法身份的 partial 防线；已读仍消费详情消息 ID。共享 advance 对仍含旧 message:fallback: 的 NodeSeek 基线，在首轮可信扫描静默重建，失败扫描不改账本；随后真正新消息只投递一次，其他来源及正常基线不重置。不猜测已经没有旧标记的账本。解析器修前 3 红；真实 store/worker 升级 oracle 修前误投递 1 条。修后相关 168 项通过，普通包 Live 结果单列于取证记录，不执行真实已读写入。 |
+
+## `REG-TOPIC-181` 妖火完整稀疏回复页误报部分内容缺失
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `TOPIC-01/03` |
+| 历史症状与根因 | 主设备同账号原站 1560939 第 19 页正常返回 12 行、原站本身缺 10 楼；第 1 页有 30 行、缺 528/529 楼。生产 parser 全部读取、没有丢行或合成楼层，但基线既有 hasFloorGap 将完整稀疏页判 partial，正文提示缺失且不显示完整末端。缺号原因未证实，不推断为删除。 |
+| 当前 owner | `src/sources/yaohuo/reader.test.ts`；末端和真实 partial 的显示继续归 `tests/ui/topic/topic-reply-filters.test.tsx`，共享窗口投影归 `tests/ui/topic/topic-session-controller.test.tsx`。早期 ignored 复现器只保留历史证据。 |
+| 修复与边界 | 用户授权修复后，5 个稀疏窗口场景迁入正式 owner，在修复前全部因 completeness 失败；删除楼号连续性条件后转绿，并在既有降级用例补强 partial/watermark 断言、补充错误 cursor 页拒绝。缺楼号、截断、错误页/主题和不可信边缘检查保留。普通 APK 在主登录态设备的原帖 1560939 中，正序续读至 #558 显示“已到最新回复”，倒序从 #558 续读至 #1 显示“已到最早回复”；两端重复触底稳定，回复标题 558，误报提示消失。未把 UI 终态当成逐条原文比对或零额外 transport 的证据；具体构建、全量检查及只读范围见本轮取证记录。 |
+
+## `REG-NOTIFY-073` Expo 占位 headless 任务提前完成导致后台挂起
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 普通 APK 的 WorkManager 在后台启动任务，原 50 秒截止直到 156.9 秒后返回前台才结算。Expo 注册的空 async headless task 立即 resolve，真实 RN AppRegistry 随即通知完成，JavaTimerManager 在业务尚未结束时暂停后台计时。 |
+| 当前 owner | `tests/tooling/expo-task-manager-headless.test.ts`、`dev/review-remediation-proof/background.ts`；补丁安装由 `tests/tooling/patch-artifacts.test.ts` 负责。 |
+| 修复与边界 | 用户授权后让占位 Promise 保持 pending，由已有原生 TaskService 在全部 Expo 事件结算后结束。真实 RN/Expo 的源码与发布入口均先红后绿；隔离 Release Hermes 下全程后台的普通任务 528 ms 完成，挂起任务 50034 ms 按原截止失败且不改账本，两轮原生 headless 均完成。设备由 JobScheduler 显式触发，不冒充自然唤醒或厂商省电兼容证据。 |
+
+## `REG-NOTIFY-074` Release 裁剪反射加载器导致后台冷进程无法启动 JS
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `NOTIFY-03` |
+| 历史症状与根因 | 最小 15 分钟调度注册后退到 HOME，以 am kill 结束后台进程但保留 stopped=false；系统自然拉起新 PID，WorkManager 恢复任务并进入 executeTask，随后 ClassNotFoundException 指向 manifest 中的 RNHeadlessAppLoader，JS 业务回执仍停留 ready。安装的 expo-modules-core 只在 constructor 标注 DoNotStrip，consumer keepclassmembers 未保留反射类本身；minified APK 缺少该类名，关闭 minify 的 proof 则存在。暖进程已持有 ReactContext，未暴露此入口。 |
+| 当前 owner | `scripts/run-notification-background-device-proof.mjs`、`dev/review-remediation-proof/background.ts`；真实 R8 Release 产物与系统新进程、业务和原生完成记录联合验证。 |
+| 修复与边界 | 在 app.json 已有 expo-build-properties 中增加该类及 public 无参构造的精确保留规则，保持 Release 压缩。Expo [上游修复](https://github.com/expo/expo/pull/46920) 已在同一类补充类级 DoNotStrip，安装的 SDK 57 仍未包含。修后真实 R8 Release 的冷进程成功、50 秒 deadline 与自然调度均通过，包含新 PID、唯一 JS/native worker 及正常 jobFinished；自然历史的 pre-bind 重叠取消经原始记录和独立 oracle 复核，保留初次采集器拒绝记录。设备与产物身份见全仓修复验收记录，物理设备和 OEM 省电仍未验证。 |
+
+## `REG-DATA-012` 备份未检查文件提供方已经报告的关闭错误
+
+| 字段 | 内容 |
+| --- | --- |
+| 状态 | `RESOLVED` |
+| 能力 ID | `DATA-03` |
+| 历史症状与根因 | ContentResolver.openOutputStream 返回的流只关闭本地描述符，不检查可靠 provider 已报告的远端错误。独立 UID provider 接收 32768 字节后 closeWithError，真实生产输出工厂仍返回 Success(32768)，备份会误报已保存。 |
+| 当前 owner | `modules/forum-platform/android/src/hostTest/java/com/wz/reader/storage/PlatformFileFaultInstrumentedTest.kt`、`modules/forum-platform/android/src/hostTest/java/com/wz/reader/storage/PlatformExportInstrumentedTest.kt`；本地关闭与取消语义继续归 `modules/forum-platform/android/src/test/java/com/wz/reader/storage/BackupExportTest.kt`。 |
+| 修复与边界 | 输出由 ParcelFileDescriptor.AutoCloseOutputStream 管理，在关闭前检查可靠描述符已经收到的错误，并在 finally 关闭本地 FD。相同生产工厂的设备 oracle 从误成功转为拒绝，断言原始 provider 错误和 FD 关闭。受控 provider EIO/ENOSPC、真实 Expo Promise 拒绝及下次操作解除 busy、非空图片 part 清理共 4 项通过；真实 SAF 5 MiB/Unicode 往返、重建、相册和延迟分享联合 owner 复验通过。不等待或保证云端同步，不将受控 ENOSPC 当成耗尽整个设备分区。 |

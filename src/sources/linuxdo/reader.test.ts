@@ -72,6 +72,30 @@ function deletedReplyFetcher() {
 }
 
 describe('linux.do reader', () => {
+  it('locates a quoted post by its floor when the stream has a deleted gap', async () => {
+    const posts = Array.from({ length: 30 }, (_, index) => ({
+      ...deletedReply,
+      id: 1001 + index,
+      post_number: index + 1,
+      cooked: `<p>floor ${index + 1}</p>`,
+      user_deleted: false
+    })).filter((post) => post.post_number !== 5);
+    const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
+      const url = new URL(input);
+      const selected =
+        url.pathname === '/t/42/25.json'
+          ? posts.filter((post) => post.post_number >= 24 && post.post_number <= 26)
+          : url.pathname.endsWith('/posts.json')
+            ? posts.filter((post) => url.searchParams.getAll('post_ids[]').includes(String(post.id)))
+            : posts.slice(0, 20);
+      return json({ id: 42, post_stream: { stream: posts.map((post) => post.id), posts: selected } });
+    });
+    await expect(getLinuxDoReply('42', 25, { fetcher })).resolves.toMatchObject({ commentId: 1025, floor: 25 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(new URL(fetcher.mock.calls[0][0]).pathname).toBe('/t/42/25.json');
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).has('Discourse-Track-View')).toBe(false);
+  });
+
   it('registers only an explicit topic entry and retains server reading evidence', async () => {
     const data = {
       ...deletedReplyTopic(),

@@ -7,6 +7,9 @@ import { annotateSourceDiagnosticSummary } from '@/platform/diagnostics/sourceDi
 import { SOV2EX_URL, V2EX_BASE_URL as BASE_URL } from './protocol';
 import { fetchJson, topicId, type V2exOptions } from './reader';
 
+const SOV2EX_MAX_PAGE_SIZE = 50;
+const SOV2EX_MAX_PAGING_DEPTH = 1000;
+
 function sov2exHits(data: unknown) {
   if (Array.isArray(data)) {
     return data;
@@ -61,13 +64,14 @@ export async function searchV2ex(
   query: string,
   options: V2exOptions & { limit?: number; page?: number; sort?: SearchSort; filter?: V2exSearchFilter } = {}
 ): Promise<SearchResponse> {
-  const limit = options.limit || 30;
+  const limit = Math.max(1, Math.min(SOV2EX_MAX_PAGE_SIZE, Math.trunc(options.limit || 30)));
   const page = options.page || 1;
   const from = Math.max(0, page - 1) * limit;
+  const size = Math.max(0, Math.min(limit, SOV2EX_MAX_PAGING_DEPTH - from));
   const activeSort = options.filter?.sort || options.sort;
   const params = new URLSearchParams({
     q: query,
-    size: String(limit),
+    size: String(size),
     from: String(from),
     version: '1.0.1'
   });
@@ -91,7 +95,8 @@ export async function searchV2ex(
   if (gte !== undefined) {
     params.set('gte', String(gte));
   }
-  const data = await fetchJson<unknown>(`${SOV2EX_URL}/api/search?${params.toString()}`, options);
+  const data =
+    size > 0 ? await fetchJson<unknown>(`${SOV2EX_URL}/api/search?${params.toString()}`, options) : undefined;
   const hits = sov2exHits(data);
   const items = hits
     .map((hit) => {
@@ -118,7 +123,9 @@ export async function searchV2ex(
     })
     .filter(Boolean) as Topic[];
   const total = sov2exTotal(data);
-  const hasMore = typeof total === 'number' ? total > from + hits.length : hits.length >= limit;
+  const hasMore =
+    from + hits.length < SOV2EX_MAX_PAGING_DEPTH &&
+    (typeof total === 'number' ? total > from + hits.length : hits.length >= size);
   const result = {
     items,
     errors: {},

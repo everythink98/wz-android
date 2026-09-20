@@ -60,12 +60,42 @@ function v2exMemberActivityDisplayTime(text: string) {
   return text.match(/^\s*(.+?)\s*回复了/)?.[1]?.trim() || '';
 }
 
-function nextV2exMemberPageCursor(root: ReturnType<typeof parseHtml>, page: number) {
-  const pages = root
-    .querySelectorAll('a[href*="?p="], a[href*="&p="]')
-    .map((link) => parsePositiveInteger(link.getAttribute('href')))
-    .filter((value) => value > page);
-  return pages.length ? String(Math.min(...pages)) : null;
+function v2exActivityContentFingerprint(value: string) {
+  let primary = 0x811c9dc5;
+  let secondary = 0x9e3779b9;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    primary = Math.imul(primary ^ code, 0x01000193) >>> 0;
+    secondary = Math.imul(secondary ^ code, 0x01000193) >>> 0;
+  }
+  return primary.toString(16).padStart(8, '0') + secondary.toString(16).padStart(8, '0');
+}
+
+function nextV2exMemberPageCursor(root: ReturnType<typeof parseHtml>, page: number, activityUrl: string) {
+  const expected = new URL(activityUrl);
+  let nextPage: number | undefined;
+  for (const link of root.querySelectorAll('.ps_container a[href]')) {
+    if (link.closest('.reply_content, .dock_area, .item')) continue;
+    try {
+      const url = new URL(link.getAttribute('href') || '', expected);
+      const values = url.searchParams.getAll('p');
+      if (
+        url.origin !== expected.origin ||
+        url.pathname !== expected.pathname ||
+        url.username ||
+        url.password ||
+        values.length !== 1
+      )
+        continue;
+      const candidate = /^\d+$/.test(values[0]) ? Number(values[0]) : NaN;
+      if (Number.isSafeInteger(candidate) && candidate > page && (nextPage === undefined || candidate < nextPage)) {
+        nextPage = candidate;
+      }
+    } catch {
+      // Only the current member activity paginator can advance this lane.
+    }
+  }
+  return nextPage === undefined ? null : String(nextPage);
 }
 
 function parseV2exMemberReplies(
@@ -74,6 +104,7 @@ function parseV2exMemberReplies(
   avatar: string | undefined,
   page: number
 ) {
+  const occurrences = new Map<string, number>();
   const items = root
     .querySelectorAll('.dock_area')
     .map((element) => {
@@ -92,13 +123,24 @@ function parseV2exMemberReplies(
         .map((part) => part.trim())
         .filter(Boolean);
       const category = elementText(categoryLink) || (parts.length >= 2 ? parts[parts.length - 2] : undefined);
-      const floor = parsePositiveInteger(href.match(/#reply(\d+)/)?.[1]);
       const createdAt = v2exMemberActivityDate(text);
       const topicUrl = safeTopicUrl(topicId, href.split('#')[0]);
       const displayTimeText = v2exMemberActivityDisplayTime(text);
+      const sibling = element.nextElementSibling;
+      const content = sibling?.matches('.reply_content')
+        ? sibling
+        : sibling?.matches('.inner, .cell')
+          ? sibling.querySelector('.reply_content')
+          : null;
+      const contentHtml = content?.innerHTML.trim() || '';
+      // Member activity exposes a topic-count anchor, not a reply ID. Preserve every origin row.
+      const identity = JSON.stringify([topicId, page, createdAt, v2exActivityContentFingerprint(contentHtml)]);
+      const occurrence = occurrences.get(identity) || 0;
+      occurrences.set(identity, occurrence + 1);
+      const excerpt = textExcerpt(contentHtml);
       return {
         source: 'v2ex' as const,
-        id: `${topicId}:${floor || 0}`,
+        id: `${identity}:${occurrence}`,
         topicId,
         topicTitle,
         topicUrl,
@@ -111,13 +153,13 @@ function parseV2exMemberReplies(
         ...(avatar ? { authorAvatar: avatar } : {}),
         ...(createdAt ? { createdAt } : {}),
         ...(displayTimeText ? { displayTimeText } : {}),
-        ...(floor ? { floor } : {})
+        ...(excerpt ? { excerpt } : {})
       };
     })
     .filter(Boolean) as UserReplyActivity[];
   return {
     items,
-    nextCursor: nextV2exMemberPageCursor(root, page)
+    nextCursor: nextV2exMemberPageCursor(root, page, `${memberUrl(username)}/replies`)
   };
 }
 
@@ -177,7 +219,7 @@ async function fetchV2exMemberTopics(username: string, avatar: string | undefine
   return annotateSourceDiagnosticSummary(
     {
       items,
-      nextCursor: nextV2exMemberPageCursor(root, page)
+      nextCursor: nextV2exMemberPageCursor(root, page, `${memberUrl(username)}/topics`)
     },
     {
       parserVariant: 'html-user-topics',

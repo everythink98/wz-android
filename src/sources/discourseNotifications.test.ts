@@ -114,7 +114,7 @@ describe('Discourse notifications', () => {
     expect(notificationUrls[0]?.searchParams.get('offset')).toBe('0');
     expect(notificationUrls[0]?.searchParams.get('filter')).toBe('all');
     expect(notificationUrls[0]?.searchParams.has('recent')).toBe(false);
-    expect(firstPage).toMatchObject({ items: [], cursor: '2', hasMore: true });
+    expect(firstPage).toMatchObject({ quality: 'complete' as const, items: [], cursor: '2', hasMore: true });
     expect(sourceDiagnosticSummary(firstPage)).toMatchObject({
       filteredCount: 2,
       isExpectedEmpty: true,

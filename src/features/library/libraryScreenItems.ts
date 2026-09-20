@@ -1,4 +1,3 @@
-import type { FeedSource } from '@/domain/forum/models';
 import { type FollowedUserRecord, type TopicRecord, userKey } from '@/domain/reader/readerData';
 import type { LibraryTab } from '@/domain/forum/feed';
 import { groupLibraryRecordsByTime } from './model/libraryFilters';
@@ -13,10 +12,6 @@ function libraryRecordKey(record: TopicRecord) {
   return `${record.topic.source}:${record.topic.id}`;
 }
 
-export function filterFollowedUsersBySource(followedUsers: FollowedUserRecord[], sourceFilter: FeedSource) {
-  return sourceFilter === 'all' ? followedUsers : followedUsers.filter((record) => record.user.source === sourceFilter);
-}
-
 export function createLibraryListItems(records: TopicRecord[]) {
   return groupLibraryRecordsByTime(records).flatMap((section, index) => [
     { type: 'section' as const, key: `section:${section.label}`, label: section.label, first: index === 0 },
@@ -27,27 +22,6 @@ export function createLibraryListItems(records: TopicRecord[]) {
       first: index === 0 && recordIndex === 0
     }))
   ]);
-}
-
-export function libraryCountLabel({
-  filteredRecords,
-  followedUsers,
-  libraryTab,
-  records,
-  userRecords
-}: {
-  filteredRecords: TopicRecord[];
-  followedUsers: FollowedUserRecord[];
-  libraryTab: LibraryTab;
-  records: TopicRecord[];
-  userRecords: FollowedUserRecord[];
-}) {
-  if (libraryTab === 'users') {
-    return `${userRecords.length} / ${followedUsers.length} 人`;
-  }
-  return filteredRecords.length === records.length
-    ? `${records.length} 条`
-    : `${filteredRecords.length} / ${records.length} 条`;
 }
 
 export function libraryDataItemKey(item: LibraryDataItem, libraryTab: LibraryTab) {

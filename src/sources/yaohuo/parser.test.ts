@@ -20,6 +20,24 @@ function parseUserReplies(html: string, options: Parameters<typeof parseYaohuoUs
 }
 
 describe('yaohuo reply parsing', () => {
+  it('keeps reply totals distinct from origin floor evidence', () => {
+    const onlyCount = parseYaohuoTopicHtml(
+      '<div class="bbscontent">body</div><a href="/bbs/book_re.aspx?id=42">更多回帖(8)</a>',
+      { id: '42' }
+    );
+    expect(onlyCount.replyCount).toBe(8);
+    expect(onlyCount.replyWatermark).toBeUndefined();
+    const withFloor = parseYaohuoTopicHtml(
+      '<div class="bbscontent">body</div><span class="reother"><a href="/bbs/book_re.aspx?id=42&amp;tofloor=12">12楼</a></span>',
+      { id: '42' }
+    );
+    expect(withFloor.replyWatermark).toBe(12);
+    const authored = parseYaohuoTopicHtml(
+      '<div class="bbscontent"><a href="/bbs/book_re.aspx?id=42&amp;tofloor=999">quoted link</a></div><a href="/bbs/book_re.aspx?id=99&amp;tofloor=888">other topic</a>',
+      { id: '42' }
+    );
+    expect(authored.replyWatermark).toBeUndefined();
+  });
   it('keeps external download blocks in document order without duplicating nested or main content', () => {
     const downloads = Array.from(
       { length: 64 },
@@ -216,20 +234,38 @@ describe('yaohuo reply parsing', () => {
     expect(replies[1].excerpt).toBe('另一条回复。');
   });
 
-  it('drops link-only duplicate blocks for the same topic and reply time', () => {
-    const replies = parseUserReplies(
-      `
-      <div>火友 (7) #71 阿根廷没问题。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
-      <div>火友 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
-    `,
-      { id: '7', username: '火友' }
-    );
+  it.each([false, true])(
+    'drops link-only duplicate blocks regardless of document order (link first: %s)',
+    (linkFirst) => {
+      const full = '<div>火友 (7) #71 阿根廷没问题。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>';
+      const link = '<div>火友 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>';
+      const replies = parseUserReplies((linkFirst ? [link, full] : [full, link]).join(''), {
+        id: '7',
+        username: '火友'
+      });
 
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toMatchObject({
-      floor: 71,
-      excerpt: '阿根廷没问题。'
-    });
+      expect(replies).toHaveLength(1);
+      expect(replies[0]).toMatchObject({
+        floor: 71,
+        excerpt: '阿根廷没问题。'
+      });
+    }
+  );
+
+  it.each([
+    { label: 'short content', prefix: '' },
+    { label: 'the same truncated excerpt', prefix: '相同的长正文前缀'.repeat(30) }
+  ])('keeps distinct floorless replies in the same minute with $label', ({ prefix }) => {
+    const rows = ['第一条说明', '第二条补充'].map(
+      (content, index) =>
+        `<div class="line${index + 1}">火友 (7) ${prefix}${content} 2026-09-20 10:30 <a href="/bbs-66.html">查看</a></div>`
+    );
+    const replies = parseUserReplies(rows.join(''), { id: '7', username: '火友' });
+    expect(replies).toHaveLength(2);
+    expect(new Set(replies.map((reply) => reply.id)).size).toBe(2);
+    expect(replies.every((reply) => reply.excerpt && reply.createdAt && !reply.floor)).toBe(true);
+    const reversed = parseUserReplies([...rows].reverse().join(''), { id: '7', username: '火友' });
+    expect(reversed.map((reply) => reply.id)).toEqual(replies.map((reply) => reply.id).reverse());
   });
 
   it('keeps yaohuo user topic and reply display times identical to the source text', () => {

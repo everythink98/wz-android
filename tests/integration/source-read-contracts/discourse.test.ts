@@ -1411,7 +1411,7 @@ describe('Android local sources', () => {
   it('keeps a linux.do topic-body quote preview and loads its cross-topic complete post separately', async () => {
     const fetcher = routeFetcher([
       [
-        '/t/920.json',
+        '/t/920/1.json',
         json({
           id: 920,
           title: 'Referenced topic',

@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <queries><package android:name="com.wz.reader" /></queries>
+  <application>
+    <provider android:name="com.wz.reader.PlatformFileFaultProvider" android:authorities="com.wz.reader.test.file-faults" android:exported="true" />
+    <activity android:name="com.wz.reader.DelayedDiagnosticReceiverActivity" android:exported="true" android:label="Delayed diagnostic proof">
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/plain" />
+      </intent-filter>
+    </activity>
+    <service android:name="com.wz.reader.DelayedDiagnosticReceiverActivity$ReaderService" android:exported="false" />
+  </application>
+</manifest>

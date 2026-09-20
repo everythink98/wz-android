@@ -542,7 +542,7 @@ const categoricalFieldValues = {
     'selection-view-missing',
     'unknown'
   ),
-  imageConsumer: closedValues('fresco', 'glide'),
+  imageConsumer: closedValues('fresco', 'glide', 'svg-probe', 'save-image'),
   imageFailure: mediaFailureValues,
   mediaFailure: mediaFailureValues,
   source: sourceValues,

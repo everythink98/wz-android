@@ -5,6 +5,7 @@ import { Platform, StyleSheet, Text, View } from 'react-native';
 import RenderHTML, { RenderHTMLConfigProvider, TRenderEngineProvider, useContentWidth } from 'react-native-render-html';
 import { createEmptyReaderData } from '@/domain/reader/readerData';
 import { compileForumContent, prepareTopicContent, prepareReplyContent } from '@/domain/forum/topicContentSplit';
+import { sanitizeContentHtml } from '@/domain/forum/contentSanitizer';
 import { TopicContentList } from '@/features/topic/components/TopicContentList';
 import { TopicContentBlock } from '@/features/topic/components/TopicContentBlock';
 import { useForumContentWidth } from '@/ui/content/ForumContentWidth';
@@ -474,6 +475,7 @@ function ProductionContentList({
   actions,
   topic,
   quotedReplies,
+  onOpenImagePreview = () => undefined,
   readingRuntime,
   readingPaused = false,
   scrollRef
@@ -482,6 +484,7 @@ function ProductionContentList({
   actions?: Partial<React.ComponentProps<typeof TopicContentList>['actions']>;
   topic: ReturnType<typeof prepareTopicContent>;
   quotedReplies: Record<string, Reply>;
+  onOpenImagePreview?: Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview'];
   readingRuntime?: DiscourseReadingRuntime;
   readingPaused?: boolean;
   scrollRef?: RefObject<FlashListRef<TopicListItem> | null>;
@@ -491,7 +494,7 @@ function ProductionContentList({
   const controller = useHtmlRenderingController({
     mediaSessionIdentity: 'selection-test',
     onOpenExternalUrl: () => undefined,
-    onOpenImagePreview: () => undefined,
+    onOpenImagePreview,
     onOpenTopic: () => undefined,
     onOpenUser: () => undefined,
     selectedTopic: topic,
@@ -603,6 +606,45 @@ function ProductionContentList({
 }
 
 describe('topic rich-text selection', () => {
+  it('keeps prose and a clickable image in order between separate terminal sections', async () => {
+    const onOpenImagePreview = jest.fn<Parameters<typeof useHtmlRenderingController>[0]['onOpenImagePreview']>();
+    const imageUrl = 'https://img.example/terminal-proof.png';
+    const topic = prepareTopicContent({
+      ...selectionTopic,
+      contentHtml: sanitizeContentHtml(
+        '<p>💻 CPU</p><div class="forum-terminal-code">first terminal output</div>' +
+          `<p>explanation before image</p><p><img src="${imageUrl}" alt="terminal proof" width="200" height="100"></p>` +
+          '<p>explanation after image</p><p>🌐 Network</p><div class="forum-terminal-code">second terminal output</div>',
+        selectionTopic.url
+      )
+    });
+    const screen = await render(
+      <QueryTestWrapper>
+        <ProductionContentList topic={topic} quotedReplies={{}} onOpenImagePreview={onOpenImagePreview} />
+      </QueryTestWrapper>
+    );
+    await act(async () => {
+      mockReadingList.onViewableItemsChanged({
+        viewableItems: mockReadingList.data.map((item, index) => ({ item, index, isViewable: true }))
+      });
+      mockReadingList.onLoad();
+    });
+    const rendered = JSON.stringify(screen.toJSON());
+    const markers = [
+      'first terminal output',
+      'explanation before image',
+      'terminal proof',
+      'explanation after image',
+      'second terminal output'
+    ];
+    for (const text of markers.filter((text) => text !== 'terminal proof')) expect(screen.getByText(text)).toBeTruthy();
+    for (let index = 1; index < markers.length; index++) {
+      expect(rendered.indexOf(markers[index - 1]!)).toBeLessThan(rendered.indexOf(markers[index]!));
+    }
+    await fireEvent.press(screen.getByLabelText('terminal proof'));
+    expect(onOpenImagePreview).toHaveBeenCalledWith(imageUrl, undefined, undefined);
+  });
+
   it('keeps Stardust status and payment guards while using the latest actions', async () => {
     const topic = prepareTopicContent({
       ...selectionTopic,

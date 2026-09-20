@@ -1,6 +1,39 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('V2EX topic reader', () => {
+  it.each([false, true])(
+    'uses only a complete origin count/floor contract as the watermark (conflict: %s)',
+    async (conflict) => {
+      const html =
+        `<script type="application/ld+json">{"commentCount":${conflict ? 1 : 2}}</script>` +
+        [1, 2]
+          .map(
+            (floor) =>
+              `<div id="r_${floor}"><span class="no">${floor}</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">reply</div></div>`
+          )
+          .join('');
+      const fetcher = vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes('/api/topics/show.json')
+          ? new Response(
+              JSON.stringify([
+                {
+                  id: 555,
+                  title: 'topic',
+                  member: { username: 'alice' },
+                  node: { name: 'qna' },
+                  replies: 2,
+                  content_rendered: '<p>body</p>'
+                }
+              ])
+            )
+          : new Response(html)
+      );
+      const { getV2exTopic } = await import('./reader');
+      const detail = await getV2exTopic('555', { fetcher });
+      expect(detail.replyWatermark).toBe(conflict ? undefined : 2);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
+  );
   it.each(['initial', 'cursor'] as const)('keeps an ambiguous identity unlocatable in the %s window', async (entry) => {
     const html = [
       [101, 'alice', 6],

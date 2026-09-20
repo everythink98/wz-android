@@ -1,5 +1,5 @@
 import { File, Paths } from 'expo-file-system';
-import { safeFileName } from '@/platform/storage/backupFiles';
+import { createDiagnosticExport, pruneDiagnosticExports } from './diagnosticExportFiles';
 import { beginDiagnosticTrace, finishDiagnosticTrace, setDiagnosticWriter } from './diagnostics';
 import {
   normalizeNativeReadNetworkDiagnosticEvents,
@@ -470,7 +470,6 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
       legacyNative: sourceCoverage(legacyNativeLines, legacyNativeStatus)
     }
   });
-  const temporary = new File(Paths.cache, safeFileName('forum-reader-diagnostic', 'txt'));
   // The metadata status is a local snapshot, not a fresh authentication result.
   const checks = merged.lines
     .map((line) => JSON.parse(line) as Record<string, unknown>)
@@ -492,22 +491,23 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
       lastCheck?.processSessionId && lastCheck.processSessionId === diagnosticBuildContext().processSessionId
     )
   });
+  const temporary = await createDiagnosticExport(
+    `${metadataLine(metadata)}\n${coverage}\n${accountSummary}\n${merged.lines.join('\n')}${merged.lines.length ? '\n' : ''}`
+  );
+  let sharingStarted = false;
   try {
-    temporary.create({ overwrite: true });
-    temporary.write(
-      `${metadataLine(metadata)}\n${coverage}\n${accountSummary}\n${merged.lines.join('\n')}${merged.lines.length ? '\n' : ''}`
-    );
     const Sharing = await import('expo-sharing');
     if (!(await Sharing.isAvailableAsync())) {
       throw new Error('当前设备不支持分享诊断日志。');
     }
+    sharingStarted = true;
     await Sharing.shareAsync(temporary.uri, {
       dialogTitle: '分享诊断日志',
       mimeType: 'text/plain'
     });
   } finally {
     try {
-      if (temporary.exists) {
+      if (!sharingStarted && temporary.exists) {
         temporary.delete();
       }
     } catch {
@@ -518,6 +518,11 @@ export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
 
 export function initializeDiagnosticFileLogging() {
   if (!writerInstalled) {
+    try {
+      pruneDiagnosticExports();
+    } catch {
+      // Retained export cleanup cannot disable the process diagnostic writer.
+    }
     try {
       setDiagnosticWriter(appendDiagnosticLogLine);
       writerInstalled = true;

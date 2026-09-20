@@ -1940,6 +1940,55 @@ describe('Android local sources', () => {
     expect(calls).toContain('version=1.0.1');
   });
 
+  it.each([1000, 1250])('consumes the final SOV2EX window and stops at its depth limit (total %s)', async (total) => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      const from = Number(url.searchParams.get('from'));
+      const size = Number(url.searchParams.get('size'));
+      // Official handler.go permits size <= 50 and from + size <= 1000.
+      if (size > 50 || from + size > 1000) return Response.json({ message: 'too deep paging' }, { status: 400 });
+      return json({
+        total,
+        hits: Array.from({ length: size }, (_, index) => ({
+          _source: { id: from + index + 1, title: 'match', member: 'alice', created: '2026-09-01T00:00:00Z' }
+        }))
+      });
+    });
+    const read = (page: number) => searchTopics({ source: 'v2ex', query: 'match', limit: 30, page, fetcher });
+    const beforeLast = await read(33);
+    expect(beforeLast.items.map((item) => item.id)).toEqual(Array.from({ length: 30 }, (_, i) => String(961 + i)));
+    expect(beforeLast.nextPage).toBe(34);
+    const last = await read(beforeLast.nextPage!);
+    expect(last.items.map((item) => item.id)).toEqual(Array.from({ length: 10 }, (_, i) => String(991 + i)));
+    expect(last).toMatchObject({ hasMore: false, nextPage: null });
+    expect(new URL(fetcher.mock.calls[1][0]).searchParams.get('size')).toBe('10');
+    await expect(read(35)).resolves.toMatchObject({ items: [], hasMore: false, nextPage: null });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses a stable legal SOV2EX batch size when the requested limit exceeds the service maximum', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      const from = Number(url.searchParams.get('from'));
+      const size = Number(url.searchParams.get('size'));
+      if (size > 50) return Response.json({ message: 'size too large' }, { status: 400 });
+      return json({
+        total: 100,
+        hits: Array.from({ length: Math.min(size, 100 - from) }, (_, index) => ({
+          _source: { id: from + index + 1, title: 'match', member: 'alice', created: '2026-09-01T00:00:00Z' }
+        }))
+      });
+    });
+    const first = await searchTopics({ source: 'v2ex', query: 'match', limit: 90, fetcher });
+    expect(first.nextPage).toBe(2);
+    const second = await searchTopics({ source: 'v2ex', query: 'match', limit: 90, page: first.nextPage!, fetcher });
+    expect([...first.items, ...second.items].map((item) => item.id)).toEqual(
+      Array.from({ length: 100 }, (_, i) => String(i + 1))
+    );
+    expect(second).toMatchObject({ hasMore: false, nextPage: null });
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).searchParams.get('size'))).toEqual(['50', '50']);
+  });
+
   it('passes V2EX relevance and time sorting through real SOV2EX parameters', async () => {
     const fetcher = vi.fn(async () => json({ hits: [] }));
 

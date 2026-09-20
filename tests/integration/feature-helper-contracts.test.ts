@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  filterLibraryRecords,
-  groupLibraryRecordsByTime,
-  libraryCategoryFilterItems
-} from '@/features/library/model/libraryFilters';
+import { groupLibraryRecordsByTime, libraryCategoryFilterItems } from '@/features/library/model/libraryFilters';
 import { filterRepliesByQuery } from '@/features/topic/model/replySearch';
 import { highlightHtml, highlightTextParts } from '@/ui/text/highlight';
 import { domNodeCount as htmlDomNodeCount } from '../helpers/domNodeCount';
@@ -86,7 +82,7 @@ describe('Android feature helpers', () => {
     expect(stripHtml('<p><a title="VPS > private link">visible link</a></p>')).toBe('visible link');
   });
 
-  it('filters library records and groups them by recency', () => {
+  it('groups library records by recency', () => {
     const records = [
       record({ id: '1', savedAt: '2026-05-23T03:00:00.000Z' }),
       record({ id: '2', savedAt: '2026-05-20T03:00:00.000Z', topic: { ...topic, category: 'App' } }),
@@ -97,34 +93,9 @@ describe('Android feature helpers', () => {
       })
     ];
 
-    expect(filterLibraryRecords(records, { source: 'all', category: 'Daily' }).map((item) => item.topic.id)).toEqual([
-      '1'
-    ]);
     expect(
       groupLibraryRecordsByTime(records, new Date('2026-05-23T12:00:00.000Z')).map((section) => section.label)
     ).toEqual(['今天', '本周', '更早']);
-  });
-
-  it('filters library records by source-scoped category keys', () => {
-    const records = [
-      record({
-        id: '1',
-        savedAt: '2026-05-20T00:00:00.000Z',
-        topic: { ...topic, source: 'nodeseek', category: '日常', categoryId: 'daily' }
-      }),
-      record({
-        id: '2',
-        savedAt: '2026-05-20T00:00:00.000Z',
-        topic: { ...topic, source: 'v2ex', category: '分享创造', categoryId: 'daily' }
-      })
-    ];
-
-    expect(
-      filterLibraryRecords(records, { source: 'all', category: 'v2ex:daily' }).map((item) => item.topic.id)
-    ).toEqual(['2']);
-    expect(
-      filterLibraryRecords(records, { source: 'nodeseek', category: 'nodeseek:daily' }).map((item) => item.topic.id)
-    ).toEqual(['1']);
   });
 
   it('builds library category filters only from the selected source', () => {

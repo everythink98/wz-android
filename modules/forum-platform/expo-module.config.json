@@ -1,0 +1,4 @@
+{
+  "platforms": ["android"],
+  "android": { "modules": ["com.wz.reader.BackupExportModule", "com.wz.reader.ImageDownloadModule"] }
+}

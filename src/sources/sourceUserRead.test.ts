@@ -43,6 +43,151 @@ import {
 } from '@/platform/diagnostics/sourceDiagnosticSummary';
 
 describe('source user read', () => {
+  it.each([false, true])(
+    'keeps the requested LinuxDo identity when its summary has no profile user (related users: %s)',
+    async (withRelatedUsers) => {
+      // Discourse UserSummarySerializer exposes summary stats; UserBadgeSerializer may sideload related users.
+      const fetcher = vi.fn(async (input: string) => {
+        if (input.endsWith('/u/alice/summary.json'))
+          return Response.json({
+            user_summary: { can_see_summary_stats: true, can_see_user_actions: true, topic_count: 2, post_count: 8 },
+            topics: [],
+            ...(withRelatedUsers
+              ? { users: [{ id: 99, username: 'other', name: 'Other', avatar_template: '/other.png', trust_level: 4 }] }
+              : {})
+          });
+        if (input.includes('/topics/created-by/alice.json')) return Response.json({ topic_list: { topics: [] } });
+        if (input.includes('/user_actions.json') && new URL(input).searchParams.get('username') === 'alice')
+          return Response.json({ user_actions: [] });
+        throw new Error(`Unexpected profile request: ${input}`);
+      });
+      const profile = await getUserDetails({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
+      expect(profile).toMatchObject({
+        id: 'alice',
+        username: 'alice',
+        displayName: 'alice',
+        url: 'https://linux.do/u/alice',
+        topicCount: 2,
+        postCount: 8
+      });
+      expect(profile.avatar).toBeUndefined();
+      expect(profile.levelLabel).toBeUndefined();
+      expect(profile.replyCount).toBeUndefined();
+      expect(sourceDiagnosticSummary(profile)).toMatchObject({ validCount: 1, isParseEmpty: false });
+      await getUserTopics({ source: 'linuxdo', profile, fetcher });
+      await getUserReplies({ source: 'linuxdo', profile, fetcher });
+      expect(fetcher).toHaveBeenCalledTimes(3);
+    }
+  );
+
+  it('does not accept a missing LinuxDo summary as a parsed profile', async () => {
+    const profile = await getUserDetails({ source: 'linuxdo', id: 'alice', fetcher: async () => Response.json({}) });
+    expect(sourceDiagnosticSummary(profile)).toMatchObject({ validCount: 0, isParseEmpty: true });
+  });
+
+  it('preserves each V2EX activity row without inventing floors from topic reply counts', async () => {
+    const profile: UserDetails = {
+      source: 'v2ex',
+      id: 'neo',
+      username: 'neo',
+      url: 'https://www.v2ex.com/member/neo'
+    };
+    let currentReplyCount = 7;
+    let prefix = '';
+    const row = (content: string, shell = 'inner') => `
+      <div class="dock_area"><div class="fr"><span class="fade">1 天前</span></div>
+        回复了 alice 创建的主题 › 分享创造 › <a href="/t/123#reply${currentReplyCount}">主题</a>
+      </div>
+      <div class="${shell}"><div class="reply_content">${content}</div></div>`;
+    // Origin member activity has repeated topic-count links and no reply entity ID, even for distinct rows.
+    const fetcher = vi.fn(
+      async (input: string) =>
+        new Response(
+          input.includes('?p=2')
+            ? row('下一页', 'cell')
+            : prefix + row('相同正文') + row('相同正文') + row('不同正文', 'cell')
+        )
+    );
+    const read = (cursor?: string) => getUserReplies({ source: 'v2ex', profile, cursor, fetcher });
+    const first = await read();
+    const second = await read('2');
+    const firstReplies = first.replies || [];
+    const secondReplies = second.replies || [];
+    expect(new Set([...firstReplies, ...secondReplies].map((reply) => reply.id)).size).toBe(4);
+    expect(firstReplies.map((reply) => reply.excerpt)).toEqual(['相同正文', '相同正文', '不同正文']);
+    expect(secondReplies.map((reply) => reply.excerpt)).toEqual(['下一页']);
+    expect(firstReplies.every((reply) => reply.floor === undefined)).toBe(true);
+    expect(
+      firstReplies.every((reply) => reply.topicId === '123' && reply.topicUrl === 'https://www.v2ex.com/t/123')
+    ).toBe(true);
+    expect(firstReplies.every((reply) => reply.id.length < 100)).toBe(true);
+    currentReplyCount = 9;
+    prefix = row('新插入的不同正文');
+    const refreshed = await read();
+    const refreshedReplies = refreshed.replies || [];
+    expect(refreshedReplies.slice(1).map((reply) => reply.id)).toEqual(firstReplies.map((reply) => reply.id));
+    expect(firstReplies.map((reply) => reply.id)).not.toContain(refreshedReplies[0]?.id);
+  });
+
+  it.each(['topics', 'replies'] as const)('follows only the current V2EX member %s paginator', async (lane) => {
+    const profile: UserDetails = {
+      source: 'v2ex',
+      id: 'user2026',
+      username: 'user2026',
+      url: 'https://www.v2ex.com/member/user2026'
+    };
+    const path = `${profile.url}/${lane}`;
+    const fetcher = vi.fn(async (input: string) => {
+      expect([path, `${path}?p=2`]).toContain(input);
+      return new Response(`
+        <div class="cell item"><a class="topic-link" href="/t/123">主题</a></div>
+        <div class="dock_area">9 月 20 日回复了 alice 创建的主题 › <a href="/t/123#reply5">主题</a></div>
+        <div class="reply_content"><a href="?p=99">正文引用</a></div>
+        <div class="ps_container">
+          <a href="?p=1">1</a>
+          ${input === path ? `<a href="/member/user2026/${lane}?p=2">2</a>` : ''}
+          <a href="https://example.org/manual?p=3">外站</a>
+          <a href="/member/other/${lane}?p=4">另一用户</a>
+          <a href="/member/user2026/${lane === 'topics' ? 'replies' : 'topics'}?p=5">另一活动</a>
+          <a href="?p=6&p=7">重复参数</a>
+          <a href="?p=8junk">非法页码</a>
+        </div>
+      `);
+    });
+    const read = (cursor?: string | null) =>
+      lane === 'topics'
+        ? getUserTopics({ source: 'v2ex', profile, cursor, fetcher })
+        : getUserReplies({ source: 'v2ex', profile, cursor, fetcher });
+    const first = await read();
+    expect(first).toMatchObject(
+      lane === 'topics'
+        ? { hasMoreTopics: true, nextTopicsCursor: '2' }
+        : { hasMoreReplies: true, nextRepliesCursor: '2' }
+    );
+    const second = await read('2');
+    expect(second).toMatchObject(
+      lane === 'topics'
+        ? { hasMoreTopics: false, nextTopicsCursor: null }
+        : { hasMoreReplies: false, nextRepliesCursor: null }
+    );
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not turn an authored V2EX reply link into a member activity cursor', async () => {
+    const result = await getUserReplies({
+      source: 'v2ex',
+      profile: { source: 'v2ex', id: 'neo', username: 'neo', url: 'https://www.v2ex.com/member/neo' },
+      cursor: '2',
+      fetcher: async () =>
+        new Response(`
+        <div class="dock_area">9 月 20 日回复了 alice 创建的主题 › <a href="/t/123#reply5">主题</a></div>
+        <div class="reply_content"><a href="https://example.org/manual?p=99">参考文档</a></div>
+      `)
+    });
+    expect(result.replies).toHaveLength(1);
+    expect(result).toMatchObject({ hasMoreReplies: false, nextRepliesCursor: null });
+  });
+
   // Existing parser shapes; only the HTTP failure is synthetic fault injection.
   it.each(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'] as const)(
     'does not report failed %s activity as a successful empty profile',
@@ -317,7 +462,7 @@ describe('source user read', () => {
     });
     expect(v2ex.replies?.[0]).toMatchObject({
       source: 'v2ex',
-      id: '121:4',
+      id: expect.any(String),
       topicId: '121',
       topicTitle: 'V2EX topic',
       topicUrl: 'https://www.v2ex.com/t/121',
@@ -326,10 +471,10 @@ describe('source user read', () => {
       authorId: 'neo',
       authorUrl: 'https://www.v2ex.com/member/neo',
       category: '分享创造',
-      floor: 4,
       createdAt: '2026-05-20T00:00:00.000Z',
       displayTimeText: '5 月 20 日'
     });
+    expect(v2ex.replies?.[0].floor).toBeUndefined();
     expect(yaohuo.replies?.[0]).toMatchObject({
       source: 'yaohuo',
       id: '66:2:2026-05-20T02:30:00.000Z',
@@ -487,7 +632,6 @@ describe('source user read', () => {
       replies: [
         {
           topicId: '122',
-          floor: 8,
           author: 'neo',
           authorId: 'neo',
           authorUrl: 'https://www.v2ex.com/member/neo',

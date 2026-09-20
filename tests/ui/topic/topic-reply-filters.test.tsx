@@ -664,6 +664,8 @@ function TopicFilterHarness({
   prepareContent = true,
   readingRuntime,
   readingEntry,
+  newReplyFloorStart,
+  unreadReplyCount = 0,
   replyHasMore = false,
   replyHasPrevious = false,
   replyEndError = null,
@@ -715,6 +717,8 @@ function TopicFilterHarness({
   prepareContent?: boolean;
   readingRuntime?: ReturnType<typeof useTopicController>['readingRuntime'];
   readingEntry?: ReturnType<typeof useTopicController>['readingEntry'];
+  newReplyFloorStart?: number;
+  unreadReplyCount?: number;
   replyHasMore?: boolean;
   replyHasPrevious?: boolean;
   replyEndError?: SourceErrorInfo | null;
@@ -796,6 +800,7 @@ function TopicFilterHarness({
   const read = {
     readingRuntime,
     readingEntry,
+    newReplyFloorStart,
     loadPreviousReplies: async (options?: { silent?: boolean }) => {
       onLoadPreviousReplies(options);
       return true;
@@ -824,7 +829,7 @@ function TopicFilterHarness({
     toggleReplyQuote: jest.fn(),
     toggleTopicBodyQuote: onToggleTopicBodyQuote,
     topicReplies: preparedTopicReplies,
-    unreadReplyCount: 0
+    unreadReplyCount
   } as unknown as ReturnType<typeof useTopicController>;
   const session = {
     state: {
@@ -932,6 +937,39 @@ describe('NodeSeek reply count availability', () => {
 });
 
 describe('Topic reply filters', () => {
+  it('marks new rows using the fixed entry watermark across arbitrary windows and never infers it from the count', async () => {
+    const replies = jest.requireMock<typeof import('@/features/topic/components/ReplyItem')>(
+      '@/features/topic/components/ReplyItem'
+    );
+    const actual = jest.requireActual<typeof import('@/features/topic/components/ReplyItem')>(
+      '@/features/topic/components/ReplyItem'
+    );
+    const renderer = jest.spyOn(replies, 'MemoizedReplyItem').mockImplementation(actual.ReplyItem);
+    try {
+      const detail = { ...topic, source: 'nodeseek' as const, replyCount: 100 };
+      const rows = (floors: number[]) => floors.map((floor) => ({ ...sourceReplies[0], commentId: floor, floor }));
+      const tree = (floors: number[], boundary?: number) => (
+        <TopicFilterHarness
+          selectedTopic={detail}
+          topicDetail={detail}
+          topicReplies={rows(floors)}
+          unreadReplyCount={5}
+          newReplyFloorStart={boundary}
+        />
+      );
+      const view = await render(tree([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 96));
+      expect(view.queryAllByText('新增')).toHaveLength(0);
+      expect(view.getByText('较上次多 5 条回复')).toBeTruthy();
+      await view.rerender(tree([94, 95, 96, 98, 100], 96));
+      expect(view.queryAllByText('新增')).toHaveLength(3);
+      await view.rerender(tree([100, 98, 96, 95, 94], 96));
+      expect(view.queryAllByText('新增')).toHaveLength(3);
+      await view.rerender(tree([94, 95, 96, 98, 100]));
+      expect(view.queryAllByText('新增')).toHaveLength(0);
+    } finally {
+      renderer.mockRestore();
+    }
+  });
   it.each([1, 6])('preserves the destination of an opening-body cross-topic quote to post %s', async (postNumber) => {
     const onOpenTopic = jest.fn();
     const onLocateReply = jest.fn(async () => 'completed');

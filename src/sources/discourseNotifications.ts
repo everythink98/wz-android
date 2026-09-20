@@ -1,4 +1,5 @@
 import { isRecord, recordText as text, textContentFromHtml, toIsoString } from '@/domain/forum/html';
+import { notificationPageQuality } from '@/domain/notifications/notificationQuality';
 import {
   annotateSourceDiagnosticSummary,
   copySourceDiagnosticSummary
@@ -284,14 +285,17 @@ function privateMessageItems(data: Record<string, unknown>, ownUsername: string,
   });
   const items = [...notifications, ...topics];
   const candidateCount = data.unread_notifications.length + data.read_notifications.length + data.topics.length;
-  return annotateSourceDiagnosticSummary(items, {
-    parserVariant: 'discourse-private-messages',
-    candidateCount,
-    validCount: items.length + filteredCount,
-    filteredCount,
-    isExpectedEmpty: candidateCount === 0,
-    hasDegradation: candidateCount > items.length + filteredCount
-  });
+  return annotateSourceDiagnosticSummary(
+    { items, quality: notificationPageQuality(candidateCount, items.length + filteredCount) },
+    {
+      parserVariant: 'discourse-private-messages',
+      candidateCount,
+      validCount: items.length + filteredCount,
+      filteredCount,
+      isExpectedEmpty: candidateCount === 0,
+      hasDegradation: candidateCount > items.length + filteredCount
+    }
+  );
 }
 
 function notificationRows(data: Record<string, unknown>) {
@@ -362,13 +366,13 @@ export const linuxDoNotificationAdapter = {
     const limit = Math.max(1, Math.min(60, options.limit || 30));
     if (options.categoryId === 'messages') {
       const data = await fetchPrivateMessageTopics(options);
-      const items = privateMessageItems(data, options.username?.trim() || '', Boolean(options.unreadOnly));
-      return copySourceDiagnosticSummary({ items, cursor: null, hasMore: false }, items);
+      const result = privateMessageItems(data, options.username?.trim() || '', Boolean(options.unreadOnly));
+      return copySourceDiagnosticSummary({ ...result, cursor: null, hasMore: false }, result);
     }
     const selectedTypeIds = await categoryTypeIds(options.categoryId || 'all', options);
     if (selectedTypeIds?.size === 0)
       return annotateSourceDiagnosticSummary(
-        { items: [], cursor: null, hasMore: false },
+        { items: [], cursor: null, hasMore: false, quality: 'complete' },
         {
           parserVariant: 'discourse-notifications',
           isExpectedEmpty: true
@@ -376,37 +380,53 @@ export const linuxDoNotificationAdapter = {
       );
     const data = await fetchNotifications(options, offset, limit);
     const rawRows = notificationRows(data);
-    const rows = rawRows.filter(
-      (row) =>
-        (!options.unreadOnly || (isRecord(row) && row.read !== true)) &&
-        (!selectedTypeIds || (isRecord(row) && selectedTypeIds.has(Number(row.notification_type))))
-    );
-    const items = rows.map(parseNotification).filter(Boolean) as ForumNotification[];
-    const malformedFilteredCount =
-      rawRows.filter((row) => !isRecord(row)).length - rows.filter((row) => !isRecord(row)).length;
-    const candidateCount = rows.length + malformedFilteredCount;
+    let filteredCount = 0;
+    const items = rawRows.flatMap((row) => {
+      const item = parseNotification(row);
+      if (!item) return [];
+      if ((options.unreadOnly && !item.unread) || (selectedTypeIds && !selectedTypeIds.has(Number(item.remoteGroup)))) {
+        filteredCount++;
+        return [];
+      }
+      return [item];
+    });
+    const candidateCount = rawRows.length;
+    const validCount = items.length + filteredCount;
     const nextOffset = offset + rawRows.length;
     const total = Number(data.total_rows_notifications ?? data.total_rows ?? 0);
     const hasMore =
       rawRows.length > 0 && (data.load_more_notifications === true || (Number.isFinite(total) && total > nextOffset));
     return annotateSourceDiagnosticSummary(
-      { items, cursor: hasMore ? String(nextOffset) : null, hasMore },
+      {
+        items,
+        cursor: hasMore ? String(nextOffset) : null,
+        hasMore,
+        quality: notificationPageQuality(candidateCount, validCount)
+      },
       {
         parserVariant: 'discourse-notifications',
         candidateCount,
-        validCount: items.length,
-        filteredCount: rawRows.length - rows.length - malformedFilteredCount,
-        isExpectedEmpty: candidateCount === 0,
-        hasDegradation: candidateCount > items.length
+        validCount,
+        filteredCount,
+        isExpectedEmpty: candidateCount === filteredCount,
+        hasDegradation: candidateCount > validCount
       }
     );
   },
 
   async readUnreadSnapshot(options: NotificationAdapterAccess) {
     const data = await fetchNotifications({ ...options, unreadOnly: true, limit: 60 }, 0, 60);
-    const rows = notificationRows(data);
-    const rawTotal = Number(data.total_rows_notifications ?? data.total_rows ?? rows.length);
-    const total = Number.isFinite(rawTotal) && rawTotal >= 0 ? rawTotal : rows.length;
+    notificationRows(data);
+    const rawTotal = data.total_rows_notifications ?? data.total_rows;
+    const total = Number(rawTotal);
+    if (
+      !['number', 'string'].includes(typeof rawTotal) ||
+      rawTotal === '' ||
+      !Number.isSafeInteger(total) ||
+      total < 0
+    ) {
+      throw new Error('linux.do 未读数量格式不正确');
+    }
     return { total, checkedAt: new Date().toISOString() };
   },
 
